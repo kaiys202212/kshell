@@ -35,9 +35,9 @@ func (Claude) SessionFilePattern() string { return "*.jsonl" }
 
 func (Claude) ParseSession(path string, head []byte) (*Session, error) {
 	var (
-		id, cwd, title string
+		id, cwd, title   string
 		created, updated time.Time
-		haveTime        bool
+		haveTime         bool
 	)
 
 	for _, line := range strings.Split(string(head), "\n") {
