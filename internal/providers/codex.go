@@ -68,12 +68,8 @@ func (Codex) ParseSession(path string, head []byte) (*Session, error) {
 			}
 		}
 
-		if title == "" && rec.Type == "event_msg" {
-			if item, ok := rec.Payload["item"].(map[string]any); ok {
-				if item["type"] == "UserMessage" {
-					title = oneLine(messageText(item), 80)
-				}
-			}
+		if title == "" && (rec.Type == "event_msg" || rec.Type == "response_item") {
+			title = codexTitle(rec.Payload, title)
 		}
 
 		ts := rec.Timestamp
@@ -112,6 +108,40 @@ func (Codex) ParseSession(path string, head []byte) (*Session, error) {
 		Messages:  messages,
 		Path:      path,
 	}, nil
+}
+
+// codexTitle 从记录里取标题文本，兼容多种历史形状。
+// 用户消息：① payload.item.type == "UserMessage"（content 块数组）；
+// ② payload.type == "user_message" 且正文在 payload.message（本机实测的主要形状）。
+// <manually_attached_skills>/<environment_context>/<external_links> 等包装文本一律跳过；
+// 用户消息全是包装记录时（agent 自主执行的导入会话）退回首条 assistant 内容：
+// payload.item.type == "AgentMessage"、payload.type == "agent_message" 或 response_item。
+func codexTitle(payload map[string]any, current string) string {
+	if item, ok := payload["item"].(map[string]any); ok {
+		switch item["type"] {
+		case "UserMessage":
+			if text := strings.TrimSpace(messageText(item)); text != "" && !isWrapperText(text) {
+				return oneLine(text, 80)
+			}
+		case "AgentMessage":
+			if text := strings.TrimSpace(messageText(item)); text != "" && !isWrapperText(text) {
+				return oneLine(text, 80)
+			}
+		}
+	}
+	switch payload["type"] {
+	case "user_message", "agent_message":
+		if text := strings.TrimSpace(contentText(payload["message"])); text != "" && !isWrapperText(text) {
+			return oneLine(text, 80)
+		}
+	case "message": // response_item
+		if role, _ := payload["role"].(string); role == "assistant" {
+			if text := strings.TrimSpace(contentText(payload["content"])); text != "" && !isWrapperText(text) {
+				return oneLine(text, 80)
+			}
+		}
+	}
+	return current
 }
 
 func (Codex) NewSessionCmd(ws string, bin string, ctx []string) Launch {

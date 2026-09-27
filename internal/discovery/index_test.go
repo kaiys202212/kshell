@@ -81,6 +81,52 @@ func TestScanIgnoresMissingProviderDirs(t *testing.T) {
 	}
 }
 
+func TestScanRespectsGlobDepth(t *testing.T) {
+	// CodeBuddy：subagents/ 下的深层 jsonl 是子代理记录，不得当成独立会话收录
+	home := t.TempDir()
+	proj := filepath.Join(home, ".codebuddy", "projects", "d-ws-demo")
+	// 与真实 CodeBuddy 结构一致：subagents 挂在 <sessionId>\（不带 .jsonl 后缀）目录下
+	writeSessionFile(t, filepath.Join(proj, "main-1", "subagents", "agent-1.jsonl"),
+		`{"type":"session-meta","sessionId":"agent-1","timestamp":1790242904766,"cwd":"D:\\ws\\demo"}`+"\n")
+	writeSessionFile(t, filepath.Join(proj, "main-1.jsonl"),
+		`{"type":"session-meta","sessionId":"cb-1","timestamp":1790242904766,"cwd":"D:\\ws\\demo"}`+"\n"+
+			`{"type":"message","role":"user","content":[{"type":"input_text","text":"检查会话识别"}]}`+"\n")
+
+	cachePath := filepath.Join(t.TempDir(), "index.json")
+	res, err := Scan(home, []providers.Provider{genericCodebuddyProvider(t)}, cachePath, ScanOptions{})
+	if err != nil {
+		t.Fatalf("Scan error: %v", err)
+	}
+	if len(res.Sessions) != 1 || res.Sessions[0].ID != "cb-1" {
+		t.Fatalf("sessions = %+v, want only main session cb-1", res.Sessions)
+	}
+}
+
+func genericCodebuddyProvider(t *testing.T) providers.Provider {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "providers.yaml")
+	yaml := `
+providers:
+  - id: codebuddy
+    name: CodeBuddy
+    sessions:
+      glob: ~/.codebuddy/projects/*/*.jsonl
+      format: jsonl
+    fields:
+      cwd: cwd
+      id: sessionId
+      timestamp: timestamp
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	specs, err := providers.LoadGenericSpecs(path)
+	if err != nil || len(specs) != 1 {
+		t.Fatalf("LoadGenericSpecs: %v, %d specs", err, len(specs))
+	}
+	return providers.Generic{Spec: specs[0], Home: ""}
+}
+
 func TestScanWritesCacheAndReusesIt(t *testing.T) {
 	home := t.TempDir()
 	sessionsDir := filepath.Join(home, ".claude", "projects", "D--data-workspace-demo")

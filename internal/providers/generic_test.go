@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const genericYAML = `
@@ -26,6 +27,25 @@ providers:
     resume:
       args: ["--resume", "{id}"]
     verified: false
+`
+
+// codebuddyYAML 与 DefaultProvidersYAML 里的 codebuddy 预置保持同构（实测字段）。
+const codebuddyYAML = `
+providers:
+  - id: codebuddy
+    name: CodeBuddy
+    sessions:
+      glob: ~/.codebuddy/projects/*/*.jsonl
+      format: jsonl
+    fields:
+      cwd: cwd
+      id: sessionId
+      timestamp: timestamp
+      title: summary
+      titleFallbacks: ["aiTitle"]
+    resume:
+      args: ["--resume", "{id}"]
+    verified: true
 `
 
 func TestLoadGenericSpecs(t *testing.T) {
@@ -168,5 +188,109 @@ func TestRootFromGlob(t *testing.T) {
 	}
 	if got := rootFromGlob("~/.a/x.jsonl"); got != "~/.a/x.jsonl" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestGenericMatchesGlobDepth(t *testing.T) {
+	var spec GenericSpec
+	if err := yamlUnmarshalHelper(codebuddyYAML, &spec); err != nil {
+		t.Fatal(err)
+	}
+	g := Generic{Spec: spec, Home: `C:\Users\demo`}
+
+	if !g.MatchSessionRel(`ws-1/01a0.jsonl`) {
+		t.Fatal("one-level session file must match */*.jsonl")
+	}
+	if g.MatchSessionRel(`ws-1/01a0.jsonl/subagents/agent-1.jsonl`) {
+		t.Fatal("deeper subagent file must not match */*.jsonl")
+	}
+	if g.MatchSessionRel(`01a0.jsonl`) {
+		t.Fatal("root-level file must not match */*.jsonl")
+	}
+}
+
+func TestGenericParsesCodeBuddyShape(t *testing.T) {
+	// 与真实 CodeBuddy 会话文件同构：毫秒时间戳、summary/ai-title 记录、content 块数组、包装文本
+	var spec GenericSpec
+	if err := yamlUnmarshalHelper(codebuddyYAML, &spec); err != nil {
+		t.Fatal(err)
+	}
+	g := Generic{Spec: spec, Home: t.TempDir()}
+
+	content := `{"type":"session-meta","id":"m-1","sessionId":"cb-9","timestamp":1790242904766,"cwd":"D:\\ws\\demo"}` + "\n" +
+		`{"id":"m-2","timestamp":1790242904766,"type":"message","role":"user","content":[{"type":"input_text","text":"<system-reminder>Caveat</system-reminder>"}],"sessionId":"cb-9","cwd":"D:\\ws\\demo"}` + "\n" +
+		`{"id":"m-3","timestamp":1790243000000,"type":"summary","summary":"设计 RPC 任务架构","providerData":{"source":"initial-user-message"}}` + "\n" +
+		`{"id":"x-1","timestamp":1790243100000,"type":"ai-title","aiTitle":"选择方案A"}` + "\n"
+	got, err := g.ParseSession("cb.jsonl", []byte(content))
+	if err != nil {
+		t.Fatalf("ParseSession error: %v", err)
+	}
+	if got.ID != "cb-9" {
+		t.Fatalf("id = %q", got.ID)
+	}
+	if got.Workspace != `D:\ws\demo` {
+		t.Fatalf("workspace = %q", got.Workspace)
+	}
+	if got.Title != "设计 RPC 任务架构" {
+		t.Fatalf("title = %q, want summary field", got.Title)
+	}
+	want := time.UnixMilli(1790242904766)
+	if !got.CreatedAt.Equal(want) || !got.UpdatedAt.After(want) {
+		t.Fatalf("timestamps = %v ~ %v, want epoch-millis parsed", got.CreatedAt, got.UpdatedAt)
+	}
+}
+
+func TestGenericTitleFallsBackToUserText(t *testing.T) {
+	var spec GenericSpec
+	if err := yamlUnmarshalHelper(codebuddyYAML, &spec); err != nil {
+		t.Fatal(err)
+	}
+	g := Generic{Spec: spec, Home: t.TempDir()}
+
+	content := `{"type":"session-meta","sessionId":"cb-8","timestamp":1790242904766,"cwd":"D:\\ws"}` + "\n" +
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"<command-name>/clear</command-name>"}]}` + "\n" +
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"帮我检查会话识别"},{"type":"input_text","text":"第二段"}]}` + "\n"
+	got, err := g.ParseSession("cb.jsonl", []byte(content))
+	if err != nil {
+		t.Fatalf("ParseSession error: %v", err)
+	}
+	if got.Title != "帮我检查会话识别 第二段" {
+		t.Fatalf("title = %q, want first real user message", got.Title)
+	}
+}
+
+func TestGenericTitleFallsBackToAssistantText(t *testing.T) {
+	var spec GenericSpec
+	if err := yamlUnmarshalHelper(codebuddyYAML, &spec); err != nil {
+		t.Fatal(err)
+	}
+	g := Generic{Spec: spec, Home: t.TempDir()}
+
+	// 用户消息全是包装记录，但有 assistant 回复：用首条 assistant 文本当标题
+	content := `{"type":"session-meta","sessionId":"cb-7","timestamp":1790242904766,"cwd":"D:\\ws"}` + "\n" +
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"<external_links>web results"}]}` + "\n" +
+		`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"先读 Task 10 简报和相关代码"}]}` + "\n"
+	got, err := g.ParseSession("cb.jsonl", []byte(content))
+	if err != nil {
+		t.Fatalf("ParseSession error: %v", err)
+	}
+	if got.Title != "先读 Task 10 简报和相关代码" {
+		t.Fatalf("title = %q, want first assistant text", got.Title)
+	}
+}
+
+func TestGenericDropsCommandOnlyStub(t *testing.T) {
+	var spec GenericSpec
+	if err := yamlUnmarshalHelper(codebuddyYAML, &spec); err != nil {
+		t.Fatal(err)
+	}
+	g := Generic{Spec: spec, Home: t.TempDir()}
+
+	// 只有 /clear、change session 等命令记录的空壳：应整体剔除
+	content := `{"type":"session-meta","sessionId":"cb-6","timestamp":1790242904766,"cwd":"D:\\ws"}` + "\n" +
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"<command-name>/clear</command-name>"}]}` + "\n" +
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"<local-command-stdout>change session x"}]}` + "\n"
+	if _, err := g.ParseSession("cb.jsonl", []byte(content)); err != errGenericEmpty {
+		t.Fatalf("err = %v, want errGenericEmpty", err)
 	}
 }

@@ -54,6 +54,71 @@ func TestCodexParseSessionWithoutMeta(t *testing.T) {
 	}
 }
 
+func TestCodexTitleFromUserMessageShape(t *testing.T) {
+	// 本机实测的主要形状：payload.type == "user_message"，首条常是包装文本需跳过
+	dir := t.TempDir()
+	path := filepath.Join(dir, "user-message.jsonl")
+	content := `{"timestamp":"2026-09-09T09:55:35.660Z","type":"session_meta","payload":{"session_id":"cx-1","cwd":"d:\\ws"}}` + "\n" +
+		`{"timestamp":"2026-09-09T09:55:35.660Z","type":"event_msg","payload":{"type":"user_message","message":"<manually_attached_skills>\nthese are skills"}}` + "\n" +
+		`{"timestamp":"2026-09-09T09:55:35.660Z","type":"event_msg","payload":{"type":"user_message","message":"继续确认下一个决策点"}}` + "\n"
+	writeFile(t, path, content)
+
+	head, err := ReadHead(path, 64*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := (Codex{}).ParseSession(path, head)
+	if err != nil {
+		t.Fatalf("ParseSession error: %v", err)
+	}
+	if got.Title != "继续确认下一个决策点" {
+		t.Fatalf("title = %q, want real user message", got.Title)
+	}
+}
+
+func TestCodexTitleFromItemShape(t *testing.T) {
+	// 旧导入会话形状：payload.item.type == "UserMessage"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "item.jsonl")
+	content := `{"timestamp":"2026-09-08T09:58:13.982Z","type":"session_meta","payload":{"session_id":"cx-2","cwd":"d:\\ws"}}` + "\n" +
+		`{"timestamp":"2026-09-08T09:58:13.982Z","ordinal":2,"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"item-1","content":[{"type":"text","text":"修复会话标题识别"}]}}}` + "\n"
+	writeFile(t, path, content)
+
+	head, err := ReadHead(path, 64*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := (Codex{}).ParseSession(path, head)
+	if err != nil {
+		t.Fatalf("ParseSession error: %v", err)
+	}
+	if got.Title != "修复会话标题识别" {
+		t.Fatalf("title = %q", got.Title)
+	}
+}
+
+func TestCodexTitleFallsBackToAgentMessage(t *testing.T) {
+	// agent 自主执行的导入会话：用户消息全是 <external_links> 等包装文本
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent-driven.jsonl")
+	content := `{"timestamp":"2026-09-08T09:58:13.982Z","type":"session_meta","payload":{"session_id":"cx-3","cwd":"d:\\ws"}}` + "\n" +
+		`{"timestamp":"2026-09-08T09:58:13.982Z","type":"event_msg","payload":{"type":"user_message","message":"<external_links>web results"}}` + "\n" +
+		`{"timestamp":"2026-09-08T09:58:14.000Z","type":"event_msg","payload":{"type":"agent_message","message":"先读 Task 10 简报和相关代码"}}` + "\n"
+	writeFile(t, path, content)
+
+	head, err := ReadHead(path, 64*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := (Codex{}).ParseSession(path, head)
+	if err != nil {
+		t.Fatalf("ParseSession error: %v", err)
+	}
+	if got.Title != "先读 Task 10 简报和相关代码" {
+		t.Fatalf("title = %q, want first agent message", got.Title)
+	}
+}
+
 func TestCodexResumeCmd(t *testing.T) {
 	launch := (Codex{}).ResumeCmd(Session{ID: "01a0", Workspace: `d:\data\workspace`}, "codex")
 	if len(launch.Args) != 2 || launch.Args[0] != "resume" || launch.Args[1] != "01a0" {

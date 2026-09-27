@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	indexVersion     = 1
+	indexVersion     = 3 // 解析逻辑变更时递增，让旧缓存整体失效
 	defaultMaxFiles  = 20000
-	defaultHeadLimit = 64 * 1024
+	defaultHeadLimit = 256 * 1024 // codex 导入会话首条真实用户消息可能在 100KB+ 之后
 	// 单文件 JSON（Gemini）必须整文件成文才解析得出来，头读太小会整条判失败。
 	defaultSingleFileHead = 2 * 1024 * 1024
 	defaultTimeout        = 30 * time.Second
@@ -284,6 +284,13 @@ func collectSessionFiles(home string, ps []providers.Provider, maxFiles int, dea
 				}
 				if ok, _ := filepath.Match(pattern, d.Name()); !ok {
 					return nil
+				}
+				// provider 实现了 PathMatcher 时再按相对路径过滤一次（glob 目录深度）
+				if pm, ok := p.(providers.PathMatcher); ok {
+					rel, rerr := filepath.Rel(root, path)
+					if rerr != nil || !pm.MatchSessionRel(filepath.ToSlash(rel)) {
+						return nil
+					}
 				}
 				key := NormalizePath(path)
 				if seen[key] {

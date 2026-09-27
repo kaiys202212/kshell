@@ -51,6 +51,12 @@ type Provider interface {
 	ResumeCmd(s Session, bin string) Launch
 }
 
+// PathMatcher 可选接口：实现后扫描器会用「相对会话根的路径」做精确过滤，
+// 用于排除 glob 覆盖不到的深层文件（如 CodeBuddy 的 subagents/*.jsonl）。
+type PathMatcher interface {
+	MatchSessionRel(rel string) bool // rel 为相对会话根的斜杠分隔路径
+}
+
 // ReadHead 只读文件头部。会话 JSONL 动辄几十 MB，解析元信息绝不能整文件读入。
 func ReadHead(path string, limit int) ([]byte, error) {
 	f, err := os.Open(path)
@@ -131,13 +137,17 @@ func messageText(v any) string {
 		}
 		return ""
 	}
+	return contentText(msg["content"])
+}
 
-	switch content := msg["content"].(type) {
+// contentText 提取消息 content 的纯文本，兼容字符串与块数组两种形态。
+func contentText(content any) string {
+	switch c := content.(type) {
 	case string:
-		return content
+		return c
 	case []any:
 		var parts []string
-		for _, item := range content {
+		for _, item := range c {
 			block, ok := item.(map[string]any)
 			if !ok {
 				continue
