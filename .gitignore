@@ -1,4 +1,8 @@
 dist/
+build/bin/
+frontend/dist/*
+!frontend/dist/.gitkeep
+frontend/node_modules/
 *.exe
 *.test
 *.tmp

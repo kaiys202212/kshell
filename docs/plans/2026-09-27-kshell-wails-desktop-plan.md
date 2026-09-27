@@ -36,10 +36,12 @@ Expected: Node ✓、WebView2 ✓、Go ✓。失败则停止并报告缺失项�
 ### Task 1: Wails 项目骨架
 
 **Files:**
-- Create: `wails.json`、`main_wails.go`、`go.mod`（追加依赖）
+- Create: `wails.json`、`main.go`（根包，Wails 入口）、`go.mod`（追加依赖）
 - Create: `frontend/`（wails 生成 React-TS 模板）
 
-**Step 1:** 在仓库根执行 `wails init -n kshell -t react-ts`（生成 frontend/ 与模板 main.go），把模板 `main.go` 改名为 `main_wails.go`，删除其示例代码，保留最小骨架：
+**实施修订（Task 1 实际执行时确认）**：计划原定的「`cmd/kshell -desktop` 分支 + desktop 构建标签」不可行——wails 绑定生成阶段强制剔除 desktop 等标签（bindings.go: `lo.Without(tags, "desktop", ...)`），根包必须无条件可编译；且 embed 无法跨包引用 frontend/dist。实际方案：根包 `main.go` 无标签，`frontend/dist/.gitkeep` 占位保证 embed 始终可解析，桌面版唯一构建入口为 `wails build`。
+
+**Step 1:** 在仓库根执行 `wails init -n kshell -t react-ts`（生成 frontend/ 与模板 main.go），删除模板示例代码，保留最小骨架（根包 main.go，无构建标签）：
 
 ```go
 //go:build desktop
@@ -69,13 +71,13 @@ func RunDesktop() error {
 }
 ```
 
-**Step 2:** `cmd/kshell/main.go` 增加 `-desktop` 标志：为 true 时调用 `RunDesktop()`（替换原 TUI 分支）。注意 `//go:build desktop` 构建标签使 TUI 构建不受影响。
+**Step 2:** TUI 入口 `cmd/kshell/main.go` 保持零改动；桌面版通过 `wails build` 构建（根包 main.go）。
 
 **Step 3:** 验证两目标都能构建：
 
 ```powershell
-go build ./cmd/kshell                # TUI 照旧
-wails build                          # 桌面版
+go build -o dist/kshell-tui.exe ./cmd/kshell    # TUI 照旧
+wails build                                     # 桌面版
 ```
 
 Expected: 均成功，`build/bin/kshell.exe` 可弹出空窗口。

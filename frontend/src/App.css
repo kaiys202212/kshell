@@ -1,0 +1,16 @@
+/* 占位样式：Task 5 起替换为真实布局与主题 token */
+.app-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  font-family: system-ui, sans-serif;
+  color: var(--text, #e6e6e6);
+  background: var(--bg, #1b2632);
+}
+
+.app-placeholder h1 {
+  font-size: 2.5rem;
+  margin-bottom: 0.5rem;
+}
