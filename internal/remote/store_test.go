@@ -1,0 +1,158 @@
+package remote
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func tempStore(t *testing.T) *Store {
+	t.Helper()
+	return NewStore(filepath.Join(t.TempDir(), "connections.yaml"))
+}
+
+func TestAddAndRoundTrip(t *testing.T) {
+	store := tempStore(t)
+	added, err := store.Add(Connection{Name: "prod", Host: "10.0.0.1", User: "root", Port: 2222, Workspace: "D:\\ws-a"})
+	if err != nil {
+		t.Fatalf("Add error: %v", err)
+	}
+	if added.ID == "" {
+		t.Fatal("Add should generate an id")
+	}
+
+	reloaded := NewStore(store.Path())
+	if err := reloaded.Load(); err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	conns := reloaded.All()
+	if len(conns) != 1 {
+		t.Fatalf("got %d connections, want 1", len(conns))
+	}
+	if conns[0].Host != "10.0.0.1" || conns[0].User != "root" || conns[0].Port != 2222 {
+		t.Fatalf("round trip lost data: %+v", conns[0])
+	}
+	if conns[0].Workspace != "D:\\ws-a" {
+		t.Fatalf("workspace binding lost: %+v", conns[0])
+	}
+}
+
+func TestAddRejectsMissingHost(t *testing.T) {
+	store := tempStore(t)
+	if _, err := store.Add(Connection{Name: "nohost"}); err == nil {
+		t.Fatal("connection without host must be rejected")
+	}
+}
+
+func TestPortDefaultsTo22(t *testing.T) {
+	store := tempStore(t)
+	added, _ := store.Add(Connection{Name: "x", Host: "h"})
+	if added.Port != 22 {
+		t.Fatalf("port = %d, want 22", added.Port)
+	}
+}
+
+func TestListFiltersByWorkspace(t *testing.T) {
+	store := tempStore(t)
+	mustAdd(t, store, Connection{Name: "ws-a-conn", Host: "a", Workspace: "D:\\ws-a"})
+	mustAdd(t, store, Connection{Name: "ws-b-conn", Host: "b", Workspace: "D:\\ws-b"})
+	mustAdd(t, store, Connection{Name: "global", Host: "g"})
+
+	got := store.List("D:\\ws-a")
+	names := []string{}
+	for _, c := range got {
+		names = append(names, c.Name)
+	}
+	if len(names) != 2 {
+		t.Fatalf("names = %v, want ws-a-conn + global", names)
+	}
+	for _, n := range names {
+		if n == "ws-b-conn" {
+			t.Fatalf("other workspaces must not leak in: %v", names)
+		}
+	}
+}
+
+func TestDelete(t *testing.T) {
+	store := tempStore(t)
+	added, _ := store.Add(Connection{Name: "gone", Host: "h"})
+	if err := store.Delete(added.ID); err != nil {
+		t.Fatalf("Delete error: %v", err)
+	}
+	if len(store.All()) != 0 {
+		t.Fatalf("store should be empty, got %+v", store.All())
+	}
+	if err := store.Delete("nope"); err == nil {
+		t.Fatal("deleting an unknown id should fail")
+	}
+}
+
+func TestNoSecretContentPersisted(t *testing.T) {
+	store := tempStore(t)
+	_, err := store.Add(Connection{
+		Name:         "prod",
+		Host:         "10.0.0.1",
+		IdentityFile: "C:\\Users\\me\\.ssh\\id_ed25519",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(raw)
+	if !strings.Contains(content, "id_ed25519") {
+		t.Fatal("identity path should be stored")
+	}
+	for _, forbidden := range []string{"PRIVATE KEY", "password", "Password"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("secrets must never be persisted, found %q", forbidden)
+		}
+	}
+}
+
+func TestAddRejectsKeyMaterialAsIdentity(t *testing.T) {
+	store := tempStore(t)
+	_, err := store.Add(Connection{Name: "bad", Host: "h", IdentityFile: "-----BEGIN OPENSSH PRIVATE KEY-----\nabc"})
+	if err == nil {
+		t.Fatal("identity file must be a path, not key material")
+	}
+}
+
+func TestAtomicWriteLeavesNoTempFile(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(filepath.Join(dir, "connections.yaml"))
+	mustAdd(t, store, Connection{Name: "a", Host: "a"})
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Fatalf("temp file left behind: %s", e.Name())
+		}
+	}
+}
+
+func TestLoadMissingFileIsEmpty(t *testing.T) {
+	store := tempStore(t)
+	if err := store.Load(); err != nil {
+		t.Fatalf("loading a missing file must not fail: %v", err)
+	}
+	if len(store.All()) != 0 {
+		t.Fatal("expected no connections")
+	}
+}
+
+func mustAdd(t *testing.T, store *Store, c Connection) Connection {
+	t.Helper()
+	added, err := store.Add(c)
+	if err != nil {
+		t.Fatalf("Add(%+v): %v", c, err)
+	}
+	return added
+}
