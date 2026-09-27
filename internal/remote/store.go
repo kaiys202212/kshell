@@ -96,7 +96,7 @@ func (s *Store) Add(c Connection) (Connection, error) {
 	if strings.TrimSpace(c.Host) == "" {
 		return Connection{}, errMissingHost
 	}
-	if strings.Contains(c.IdentityFile, "PRIVATE KEY") {
+	if strings.Contains(strings.ToUpper(c.IdentityFile), "PRIVATE KEY") {
 		return Connection{}, errKeyMaterial
 	}
 	if c.Port <= 0 {
@@ -116,7 +116,7 @@ func (s *Store) Add(c Connection) (Connection, error) {
 func (s *Store) Update(c Connection) error {
 	for i := range s.conns {
 		if s.conns[i].ID == c.ID {
-			if strings.Contains(c.IdentityFile, "PRIVATE KEY") {
+			if strings.Contains(strings.ToUpper(c.IdentityFile), "PRIVATE KEY") {
 				return errKeyMaterial
 			}
 			s.conns[i] = c
@@ -138,6 +138,16 @@ func (s *Store) Delete(id string) error {
 
 func (s *Store) All() []Connection {
 	return s.conns
+}
+
+// Has 判断是否已存在同 host+user+port 的连接，防止重复导入产生重复条目。
+func (s *Store) Has(host, user string, port int) bool {
+	for _, c := range s.conns {
+		if strings.EqualFold(c.Host, host) && strings.EqualFold(c.User, user) && c.Port == port {
+			return true
+		}
+	}
+	return false
 }
 
 // List 返回绑定到该工作区的连接，外加未绑定工作区的「全局」连接。

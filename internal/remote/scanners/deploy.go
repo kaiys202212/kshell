@@ -53,7 +53,7 @@ func (DeployScanner) Extract(root, absPath string) ([]remote.Candidate, error) {
 
 	var out []remote.Candidate
 	seen := map[string]bool{}
-	add := func(host, user string, port int) {
+	add := func(host, user string, port, line int) {
 		if host == "" || seen[user+"@"+host] {
 			return
 		}
@@ -69,6 +69,7 @@ func (DeployScanner) Extract(root, absPath string) ([]remote.Candidate, error) {
 			Confidence: "low",
 			Source:     "deploy",
 			SourceFile: absPath,
+			SourceLine: line,
 		})
 	}
 
@@ -88,7 +89,7 @@ func (DeployScanner) Extract(root, absPath string) ([]remote.Candidate, error) {
 					port = p
 				}
 			}
-			add(m[2], m[1], port)
+			add(m[2], m[1], port, lineNo)
 			continue
 		}
 
@@ -103,7 +104,7 @@ func (DeployScanner) Extract(root, absPath string) ([]remote.Candidate, error) {
 					port = p
 				}
 			}
-			add(m[1], user, port)
+			add(m[1], user, port, lineNo)
 			continue
 		}
 
@@ -129,7 +130,7 @@ func (DeployScanner) Extract(root, absPath string) ([]remote.Candidate, error) {
 				}
 				if strings.Contains(token, "@") {
 					parts := strings.SplitN(token, "@", 2)
-					add(parts[1], parts[0], port)
+					add(parts[1], parts[0], port, lineNo)
 					break
 				}
 			}
@@ -137,10 +138,6 @@ func (DeployScanner) Extract(root, absPath string) ([]remote.Candidate, error) {
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
-	}
-
-	for i := range out {
-		out[i].SourceLine = lineNo
 	}
 	return out, nil
 }

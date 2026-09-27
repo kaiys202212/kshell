@@ -233,6 +233,46 @@ func TestBindAndDeleteConnection(t *testing.T) {
 	}
 }
 
+func TestConnectivityTestMarksVerified(t *testing.T) {
+	dir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		fakeSSH(t, dir, "exit /b 0")
+	} else {
+		fakeSSH(t, dir, "exit 0")
+	}
+	t.Setenv("PATH", dir)
+
+	m, store, root := modelWithStore(t)
+	if _, err := store.Add(remote.Connection{Name: "mine", Host: "h", Workspace: root}); err != nil {
+		t.Fatal(err)
+	}
+	m.ensureConns()
+
+	msg := m.testConnCmd()()
+	done, ok := msg.(execDoneMsg)
+	if !ok {
+		t.Fatalf("msg = %T", msg)
+	}
+	if done.err != nil || done.res.ExitCode != 0 {
+		t.Fatalf("connectivity test should pass: %+v %v", done.res, done.err)
+	}
+
+	next, _ := m.Update(done)
+	got := next.(Model)
+	if len(got.conns) != 1 || !got.conns[0].Verified {
+		t.Fatalf("successful test should light the ✓ badge, conns = %+v", got.conns)
+	}
+
+	reloaded := remote.NewStore(store.Path())
+	if err := reloaded.Load(); err != nil {
+		t.Fatal(err)
+	}
+	conns := reloaded.List(root)
+	if len(conns) != 1 || !conns[0].Verified {
+		t.Fatalf("verified flag should persist, got %+v", conns)
+	}
+}
+
 func TestShellCmdFailsWithoutSSH(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	m, store, root := modelWithStore(t)

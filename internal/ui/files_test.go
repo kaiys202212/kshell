@@ -119,9 +119,30 @@ func TestFilesPreviewShowsContent(t *testing.T) {
 	}
 	m.fileCursor = idx
 
-	out := m.View()
+	// 预览是异步加载的：先拿到加载命令，把结果喂回模型
+	load := m.ensurePreview()
+	if load == nil {
+		t.Fatal("expected a preview load command")
+	}
+	next, _ := m.Update(load())
+	got := next.(Model)
+
+	out := got.View()
 	if !strings.Contains(out, "func main()") {
 		t.Fatalf("preview should show file content:\n%s", out)
+	}
+	if strings.Contains(out, "加载中") {
+		t.Fatalf("loaded preview should not show loading:\n%s", out)
+	}
+}
+
+func TestFilesPreviewIsAsync(t *testing.T) {
+	m, _ := modelWithFiles(t)
+	m.previewPending = true
+
+	out := m.View()
+	if strings.Contains(out, "package main") {
+		t.Fatal("render must not read disk synchronously; content only arrives via previewMsg")
 	}
 }
 

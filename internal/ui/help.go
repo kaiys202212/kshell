@@ -2,7 +2,7 @@ package ui
 
 import "strings"
 
-// helpContent 是帮助面板的键位表；数据与实际按键集中在 handleKey，避免帮助与实现漂移。
+// helpContent 是帮助面板的键位表；与 handleKey 里的键位人工核对保持同步，改键位时记得更新这里。
 var helpContent = []string{
 	"键位",
 	"",

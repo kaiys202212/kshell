@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/yangk/kshell/internal/workspace"
 )
 
@@ -52,6 +53,32 @@ func (m Model) selectedFile() (workspace.Row, bool) {
 	return rows[m.fileCursor], true
 }
 
+// ensurePreview 预览缓存 miss 时发起异步加载；渲染只读缓存，绝不读盘。
+func (m *Model) ensurePreview() tea.Cmd {
+	row, ok := m.selectedFile()
+	if !ok {
+		if m.previewKey != "" {
+			m.previewKey, m.preview, m.previewPending, m.previewScroll = "", workspace.Preview{}, false, 0
+		}
+		return nil
+	}
+	if m.previewKey == row.Node.Path {
+		return nil
+	}
+
+	m.previewKey = row.Node.Path
+	m.preview = workspace.Preview{}
+	m.previewPending = true
+	m.previewScroll = 0
+	return loadPreviewCmd(row.Node.Path)
+}
+
+func loadPreviewCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		return previewMsg{key: path, preview: workspace.PreviewFile(path, 0, 500)}
+	}
+}
+
 // toggleBasket 把当前文件加入/移出上下文篮（去重、上限 maxBasket）。
 func (m *Model) toggleBasket(path string) {
 	if path == "" {
@@ -99,7 +126,9 @@ func (m *Model) toggleDir() {
 	if err := m.tree.Toggle(row.Node); err != nil {
 		m.lastFileErr = err
 		m.status, m.statusWarn = "无法展开目录："+err.Error(), true
+		return
 	}
+	m.clampCursors() // 折叠后光标可能落在已隐藏的节点上
 }
 
 func (m Model) renderFilesBody(height, width int) string {
@@ -143,13 +172,17 @@ func prefix2(expanded bool) string {
 func (m Model) renderFilesPreview(height, width int) string {
 	lines := []string{m.sectionHeader("PREVIEW", "")}
 
-	row, ok := m.selectedFile()
-	if !ok {
+	if _, ok := m.selectedFile(); !ok {
 		lines = append(lines, "", m.theme.Muted.Render("选中文件查看内容"))
 		return fitBlock(lines, height, width)
 	}
 
-	p := workspace.PreviewFile(row.Node.Path, 0, height-3)
+	if m.previewPending {
+		lines = append(lines, "", m.theme.Muted.Render("加载中…"))
+		return fitBlock(lines, height, width)
+	}
+
+	p := m.preview
 	if p.Err != nil {
 		lines = append(lines, "", m.theme.Muted.Render("读取失败："+p.Err.Error()))
 		return fitBlock(lines, height, width)
@@ -159,8 +192,29 @@ func (m Model) renderFilesPreview(height, width int) string {
 		return fitBlock(lines, height, width)
 	}
 
-	lines = append(lines, p.Lines...)
-	if p.Truncated {
+	avail := height - len(lines) - 1
+	if avail < 1 {
+		avail = 1
+	}
+	start := m.previewScroll
+	if start > len(p.Lines) {
+		start = len(p.Lines)
+	}
+	end := start + avail
+	if end > len(p.Lines) {
+		end = len(p.Lines)
+	}
+	if end-start < avail && start > 0 {
+		start = end - avail
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	lines = append(lines, p.Lines[start:end]...)
+	if start > 0 || end < len(p.Lines) {
+		lines = append(lines, m.theme.Muted.Render("…（PgUp/PgDn 翻页，"+p.Info+"）"))
+	} else if p.Truncated {
 		lines = append(lines, m.theme.Muted.Render("…（内容已截断，"+p.Info+"）"))
 	}
 	return fitBlock(lines, height, width)

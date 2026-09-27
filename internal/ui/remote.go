@@ -21,12 +21,15 @@ type candidatesMsg struct {
 
 type execDoneMsg struct {
 	command string
+	connID  string
 	res     remote.Result
 	err     error
 }
 
 type connsMsg struct {
 	imported int
+	failed   int
+	skipped  int
 	err      error
 }
 
@@ -123,7 +126,12 @@ func (m Model) renderRemoteRight(height, width int) string {
 	}
 
 	lines := []string{m.sectionHeader("OUTPUT", "")}
-	lines = append(lines, m.output...)
+	// 尾部锚定：报错和退出码通常在输出末尾，超出面板高度时优先展示最新行。
+	tail := m.output
+	if len(tail) > height-1 {
+		tail = tail[len(tail)-(height-1):]
+	}
+	lines = append(lines, tail...)
 	if m.execRunning {
 		lines = append(lines, m.theme.Muted.Render("执行中…"))
 	}
@@ -199,9 +207,13 @@ func (m Model) importCheckedCmd() tea.Cmd {
 			return connsMsg{err: errors.New("没有选中的工作区")}
 		}
 
-		imported := 0
+		imported, failed, skipped := 0, 0, 0
 		for _, c := range m.candidates {
 			if !m.candChecked[candKey(c)] {
+				continue
+			}
+			if m.store.Has(c.Host, c.User, c.Port) {
+				skipped++ // 重复导入直接跳过，不产生重复连接
 				continue
 			}
 			_, err := m.store.Add(remote.Connection{
@@ -214,11 +226,13 @@ func (m Model) importCheckedCmd() tea.Cmd {
 				Source:       c.Source,
 				SourceFile:   c.SourceFile,
 			})
-			if err == nil {
-				imported++
+			if err != nil {
+				failed++
+				continue
 			}
+			imported++
 		}
-		return connsMsg{imported: imported}
+		return connsMsg{imported: imported, failed: failed, skipped: skipped}
 	}
 }
 
@@ -229,12 +243,30 @@ func (m Model) execRemoteCmd(command string) tea.Cmd {
 			return execDoneMsg{err: errors.New("没有选中的连接")}
 		}
 		res, err := remote.Run(context.Background(), c, command, m.sshOptions())
-		return execDoneMsg{command: command, res: res, err: err}
+		return execDoneMsg{command: command, connID: c.ID, res: res, err: err}
 	}
 }
 
+// testConnCmd 连通性测试：成功后把连接标记为已验证（✓），失败只提示。
 func (m Model) testConnCmd() tea.Cmd {
 	return m.execRemoteCmd("true")
+}
+
+// markVerified 持久化连通性测试结果。
+func (m *Model) markVerified(connID string) {
+	if m.store == nil {
+		return
+	}
+	for _, c := range m.store.All() {
+		if c.ID != connID {
+			continue
+		}
+		c.Verified = true
+		if err := m.store.Update(c); err == nil {
+			m.ensureConns()
+		}
+		return
+	}
 }
 
 func (m Model) shellCmd() tea.Cmd {

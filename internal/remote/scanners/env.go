@@ -36,6 +36,7 @@ func (EnvScanner) Extract(root, absPath string) ([]remote.Candidate, error) {
 	defer f.Close()
 
 	values := map[string]string{}
+	lines := map[string]int{}
 	scanner := bufio.NewScanner(f)
 	lineNo := 0
 	for scanner.Scan() {
@@ -48,6 +49,7 @@ func (EnvScanner) Extract(root, absPath string) ([]remote.Candidate, error) {
 			key := strings.TrimSpace(strings.ToUpper(line[:i]))
 			value := strings.Trim(strings.TrimSpace(line[i+1:]), `"'`)
 			values[key] = value
+			lines[key] = lineNo
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -55,17 +57,28 @@ func (EnvScanner) Extract(root, absPath string) ([]remote.Candidate, error) {
 	}
 
 	host := firstValue(values, envHostKeys)
+	hostLine := firstLine(lines, envHostKeys)
 	user := firstValue(values, envUserKeys)
 	identity := firstValue(values, envIdentityKeys)
 
-	// user@host 合并写法：SSH_TARGET=root@1.2.3.4
+	// user@host 合并写法：SSH_TARGET=root@1.2.3.4；SSH_HOST 里也可能直接写 user@host
 	if host == "" || user == "" {
-		if target := firstValue(values, envTargetKeys); strings.Contains(target, "@") {
+		candidates := []string{}
+		if target := firstValue(values, envTargetKeys); target != "" {
+			candidates = append(candidates, target)
+		}
+		if strings.Contains(host, "@") {
+			candidates = append(candidates, host)
+		}
+		for _, target := range candidates {
+			if !strings.Contains(target, "@") {
+				continue
+			}
 			parts := strings.SplitN(target, "@", 2)
 			if user == "" {
 				user = parts[0]
 			}
-			if host == "" {
+			if host == "" || strings.Contains(host, "@") {
 				host = parts[1]
 			}
 		}
@@ -95,7 +108,7 @@ func (EnvScanner) Extract(root, absPath string) ([]remote.Candidate, error) {
 		Confidence:   "medium",
 		Source:       "env",
 		SourceFile:   absPath,
-		SourceLine:   lineNo,
+		SourceLine:   hostLine,
 	}}, nil
 }
 
@@ -106,4 +119,14 @@ func firstValue(values map[string]string, keys []string) string {
 		}
 	}
 	return ""
+}
+
+// firstLine 找到第一个命中键所在行号，供候选详情回溯来源。
+func firstLine(lines map[string]int, keys []string) int {
+	for _, k := range keys {
+		if v, ok := lines[k]; ok && v > 0 {
+			return v
+		}
+	}
+	return 0
 }

@@ -54,6 +54,17 @@ type statusMsg struct {
 	warn bool
 }
 
+type previewMsg struct {
+	key     string
+	preview workspace.Preview
+}
+
+// sessionEndedMsg 在 agent CLI 退出后触发一次重扫，让新建的会话立刻出现在列表里。
+type sessionEndedMsg struct {
+	text string
+	warn bool
+}
+
 type scanDoneMsg struct {
 	tools      []discovery.Tool
 	workspaces []discovery.Workspace
@@ -104,6 +115,11 @@ type Model struct {
 	cmdInputting bool
 	output       []string
 	execRunning  bool
+
+	previewKey     string
+	preview        workspace.Preview
+	previewPending bool
+	previewScroll  int
 }
 
 func NewModel() Model {
@@ -172,6 +188,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.ensureTree()
 	m.ensureConns()
 
+	model, cmd := m.update(msg)
+	next, ok := model.(Model)
+	if !ok {
+		return model, cmd
+	}
+	// 文件预览走异步加载：渲染路径上绝不读盘
+	if pc := next.ensurePreview(); pc != nil {
+		cmd = tea.Batch(cmd, pc)
+	}
+	return next, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		if msg.Width > 0 {
@@ -221,10 +250,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ensureConns()
 		if msg.err != nil {
 			m.status, m.statusWarn = "导入失败："+msg.err.Error(), true
-		} else {
-			m.status, m.statusWarn = "已导入 "+itoa(msg.imported)+" 条连接", false
+			return m, nil
+		}
+		text := "已导入 " + itoa(msg.imported) + " 条连接"
+		warn := false
+		if msg.skipped > 0 {
+			text += "，跳过重复 " + itoa(msg.skipped)
+		}
+		if msg.failed > 0 {
+			text += "，失败 " + itoa(msg.failed)
+			warn = true
+		}
+		m.status, m.statusWarn = text, warn
+		return m, nil
+
+	case previewMsg:
+		if msg.key == m.previewKey {
+			m.preview = msg.preview
+			m.previewPending = false
 		}
 		return m, nil
+
+	case sessionEndedMsg:
+		m.status, m.statusWarn = msg.text, msg.warn
+		return m, scanCmd(m.opts) // 新建的会话要能立刻看到
 
 	case execDoneMsg:
 		m.execRunning = false
@@ -234,6 +283,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.status, m.statusWarn = msg.command+" （退出码 "+itoa(msg.res.ExitCode)+"）", msg.res.ExitCode != 0
+		if msg.command == "true" && msg.connID != "" && msg.res.ExitCode == 0 {
+			m.markVerified(msg.connID) // 连通性测试通过 → 点亮 ✓
+		}
 		m.output = append(m.output, m.theme.Body.Render("$ "+msg.command))
 		m.output = append(m.output, splitLines(msg.res.Stdout)...)
 		if strings.TrimSpace(msg.res.Stderr) != "" {
@@ -341,6 +393,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "a":
 		if m.view == ViewFiles {
 			m.toggleShowAll()
+			return m, nil
+		}
+	case "pgup":
+		if m.view == ViewFiles {
+			m.previewScroll -= 10
+			if m.previewScroll < 0 {
+				m.previewScroll = 0
+			}
+			return m, nil
+		}
+	case "pgdown":
+		if m.view == ViewFiles {
+			m.previewScroll += 10
 			return m, nil
 		}
 	case " ":
@@ -584,14 +649,14 @@ func (m Model) launchNewCmd() tea.Cmd {
 	return execSession(m, spec, "已退出新建会话")
 }
 
-// execSession 把终端交给 agent CLI，退出后回到 kshell 并刷新一次扫描（新会话要能立刻看到）。
+// execSession 把终端交给 agent CLI，退出后回到 kshell 并触发一次重扫（新会话要能立刻看到）。
 func execSession(m Model, spec launcher.Spec, doneMsg string) tea.Cmd {
 	cmd := spec.Cmd(context.Background())
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		if err != nil {
-			return statusMsg{text: "会话退出异常：" + err.Error(), warn: true}
+			return sessionEndedMsg{text: "会话退出异常：" + err.Error(), warn: true}
 		}
-		return statusMsg{text: doneMsg}
+		return sessionEndedMsg{text: doneMsg}
 	})
 }
 

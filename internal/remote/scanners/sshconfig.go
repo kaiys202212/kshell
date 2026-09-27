@@ -48,7 +48,7 @@ func ParseSSHConfig(r io.Reader) []remote.Candidate {
 
 	var current []string // 当前 Host 行可能声明多个别名
 	var host, user, identity string
-	var port int
+	var port, hostLine int
 	inHost := false
 
 	flush := func() {
@@ -71,9 +71,10 @@ func ParseSSHConfig(r io.Reader) []remote.Candidate {
 				IdentityFile: identity,
 				Confidence:   "high",
 				Source:       "sshconfig",
+				SourceLine:   hostLine,
 			})
 		}
-		current, host, user, identity, port, inHost = nil, "", "", "", 0, false
+		current, host, user, identity, port, hostLine, inHost = nil, "", "", "", 0, 0, false
 	}
 
 	scanner := bufio.NewScanner(r)
@@ -98,6 +99,7 @@ func ParseSSHConfig(r io.Reader) []remote.Candidate {
 			inHost = true
 			current = strings.Fields(value)
 			port = 22
+			hostLine = lineNo
 		case "hostname":
 			host = value
 		case "user":
@@ -112,9 +114,6 @@ func ParseSSHConfig(r io.Reader) []remote.Candidate {
 	}
 	flush()
 
-	for i := range out {
-		out[i].SourceLine = lineNo
-	}
 	return out
 }
 
