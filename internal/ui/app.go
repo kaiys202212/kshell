@@ -12,6 +12,7 @@ import (
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/launcher"
 	"github.com/yangk/kshell/internal/providers"
+	"github.com/yangk/kshell/internal/workspace"
 )
 
 type ViewID int
@@ -80,6 +81,13 @@ type Model struct {
 	failed     int
 	loading    bool
 	basket     []string // 上下文篮：文件视图里勾选的文件，新建会话时注入
+
+	tree         *workspace.Tree
+	treeRootPath string
+	treeShowAll  bool
+	showAll      bool
+	fileCursor   int
+	lastFileErr  error
 }
 
 func NewModel() Model {
@@ -144,6 +152,8 @@ func statusCmd(text string, warn bool) tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.ensureTree()
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		if msg.Width > 0 {
@@ -234,7 +244,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.focus = focusWorkspaces
 		return m, nil
+	case "a":
+		if m.view == ViewFiles {
+			m.toggleShowAll()
+			return m, nil
+		}
+	case " ":
+		if m.view == ViewFiles {
+			if row, ok := m.selectedFile(); ok && !row.Node.IsDir {
+				m.toggleBasket(row.Node.Path)
+			}
+			return m, nil
+		}
 	case "enter":
+		if m.view == ViewFiles {
+			m.toggleDir()
+			return m, nil
+		}
 		if m.focus == focusWorkspaces {
 			m.focus = focusSessions
 			m.sessCursor = 0
@@ -248,15 +274,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) moveCursor(delta int) {
-	if m.focus == focusWorkspaces {
-		m.wsCursor += delta
-		if m.wsCursor < 0 {
-			m.wsCursor = 0
+	switch m.view {
+	case ViewFiles:
+		m.fileCursor += delta
+		if m.fileCursor < 0 {
+			m.fileCursor = 0
 		}
-	} else {
-		m.sessCursor += delta
-		if m.sessCursor < 0 {
-			m.sessCursor = 0
+	default:
+		if m.focus == focusWorkspaces {
+			m.wsCursor += delta
+			if m.wsCursor < 0 {
+				m.wsCursor = 0
+			}
+		} else {
+			m.sessCursor += delta
+			if m.sessCursor < 0 {
+				m.sessCursor = 0
+			}
 		}
 	}
 	m.clampCursors()
@@ -274,6 +308,12 @@ func (m *Model) clampCursors() {
 	}
 	if m.sessCursor < 0 {
 		m.sessCursor = 0
+	}
+	if n := len(m.fileRows()); n > 0 && m.fileCursor >= n {
+		m.fileCursor = n - 1
+	}
+	if m.fileCursor < 0 {
+		m.fileCursor = 0
 	}
 }
 
@@ -359,7 +399,7 @@ func (m Model) launchSelectedCmd() tea.Cmd {
 }
 
 func (m Model) launchNewCmd() tea.Cmd {
-	if m.view != ViewSessions {
+	if m.view != ViewSessions && m.view != ViewFiles {
 		return nil
 	}
 	launch, err := m.newSessionLaunch()
@@ -417,8 +457,7 @@ func (m Model) View() string {
 func (m Model) renderLeft(height, width int) string {
 	switch m.view {
 	case ViewFiles:
-		lines := []string{m.sectionHeader("FILES", ""), "", m.theme.Muted.Render("（文件视图待实现）")}
-		return fitBlock(lines, height, width)
+		return m.renderFilesBody(height, width)
 	case ViewRemote:
 		lines := []string{m.sectionHeader("CONNECTIONS", ""), "", m.theme.Muted.Render("（远程视图待实现）")}
 		return fitBlock(lines, height, width)
@@ -430,8 +469,7 @@ func (m Model) renderLeft(height, width int) string {
 func (m Model) renderRight(height, width int) string {
 	switch m.view {
 	case ViewFiles:
-		lines := []string{m.sectionHeader("PREVIEW", ""), "", m.theme.Muted.Render("（文件预览待实现）")}
-		return fitBlock(lines, height, width)
+		return m.renderFilesPreview(height, width)
 	case ViewRemote:
 		lines := []string{m.sectionHeader("OUTPUT", ""), "", m.theme.Muted.Render("（命令输出待实现）")}
 		return fitBlock(lines, height, width)
@@ -442,6 +480,9 @@ func (m Model) renderRight(height, width int) string {
 
 func (m Model) renderTopBar() string {
 	left := m.theme.Title.Render(" kshell ") + " " + m.renderTabs() + " " + m.renderToolChips()
+	if len(m.basket) > 0 {
+		left += " " + m.theme.TabActive.Render("篮 "+itoa(len(m.basket)))
+	}
 	right := m.theme.Muted.Render(m.workspaceHeader())
 	return joinHorizontalFit(m.width, left, right)
 }
