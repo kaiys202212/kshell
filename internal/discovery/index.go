@@ -1,0 +1,253 @@
+package discovery
+
+import (
+	"encoding/json"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sync"
+
+	"github.com/yangk/kshell/internal/providers"
+)
+
+const (
+	indexVersion     = 1
+	defaultMaxFiles  = 20000
+	defaultHeadLimit = 64 * 1024
+)
+
+// Entry 是单个会话文件的缓存记录：mtime + size 未变就直接复用解析结果，
+// 避免每次启动都重新解析几十 MB 的 JSONL。
+type Entry struct {
+	MTime   int64             `json:"mtime"`
+	Size    int64             `json:"size"`
+	Session providers.Session `json:"session"`
+}
+
+type Index struct {
+	Version int              `json:"version"`
+	Entries map[string]Entry `json:"entries"`
+}
+
+func newIndex() *Index {
+	return &Index{Version: indexVersion, Entries: map[string]Entry{}}
+}
+
+func LoadIndex(path string) *Index {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return newIndex()
+	}
+	var idx Index
+	if err := json.Unmarshal(data, &idx); err != nil || idx.Version != indexVersion {
+		return newIndex()
+	}
+	if idx.Entries == nil {
+		idx.Entries = map[string]Entry{}
+	}
+	return &idx
+}
+
+func (idx *Index) Save(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.Marshal(idx)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+func (idx *Index) shouldReuse(path string, mtime, size int64) bool {
+	entry, ok := idx.Entries[path]
+	return ok && entry.MTime == mtime && entry.Size == size
+}
+
+type ScanOptions struct {
+	MaxFiles  int
+	HeadLimit int
+}
+
+type Result struct {
+	Sessions   []providers.Session
+	Workspaces []Workspace
+	Failed     []string // 解析失败的会话文件，供状态栏提示
+}
+
+// Scan 遍历各 provider 的会话目录，优先命中缓存，最后聚合成工作区。
+func Scan(home string, ps []providers.Provider, cachePath string, opts ScanOptions) (*Result, error) {
+	if opts.MaxFiles <= 0 {
+		opts.MaxFiles = defaultMaxFiles
+	}
+	if opts.HeadLimit <= 0 {
+		opts.HeadLimit = defaultHeadLimit
+	}
+
+	files, err := collectSessionFiles(home, ps, opts.MaxFiles)
+	if err != nil {
+		return nil, err
+	}
+
+	idx := LoadIndex(cachePath)
+	workers := runtime.NumCPU()
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > 8 {
+		workers = 8
+	}
+
+	var (
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		entries = make(map[string]Entry, len(files))
+		failed  []string
+	)
+
+	jobs := make(chan string)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for path := range jobs {
+				info, err := os.Stat(path)
+				if err != nil {
+					continue
+				}
+				mtime, size := info.ModTime().Unix(), info.Size()
+
+				mu.Lock()
+				reuse := idx.shouldReuse(path, mtime, size)
+				var entry Entry
+				if reuse {
+					entry = idx.Entries[path]
+				}
+				mu.Unlock()
+
+				if !reuse {
+					head, herr := providers.ReadHead(path, opts.HeadLimit)
+					session, serr := parseWith(path, head, ps, home)
+					if herr != nil || serr != nil {
+						mu.Lock()
+						failed = append(failed, path)
+						mu.Unlock()
+						continue
+					}
+					entry = Entry{MTime: mtime, Size: size, Session: *session}
+				}
+
+				mu.Lock()
+				entries[path] = entry
+				mu.Unlock()
+			}
+		}()
+	}
+
+	for _, path := range files {
+		jobs <- path
+	}
+	close(jobs)
+	wg.Wait()
+
+	idx.Version = indexVersion
+	idx.Entries = entries
+	if err := idx.Save(cachePath); err != nil {
+		// 缓存写不进去不该影响本次扫描结果
+		failed = append(failed, cachePath)
+	}
+
+	sessions := make([]providers.Session, 0, len(entries))
+	for _, entry := range entries {
+		sessions = append(sessions, entry.Session)
+	}
+
+	return &Result{
+		Sessions:   sessions,
+		Workspaces: GroupSessions(sessions),
+		Failed:     failed,
+	}, nil
+}
+
+// parseWith 按文件所属 provider 解析：用文件所在目录去匹配 provider 的会话根。
+func parseWith(path string, head []byte, ps []providers.Provider, home string) (*providers.Session, error) {
+	dir := filepath.Dir(path)
+	for _, p := range ps {
+		for _, root := range p.SessionRoots(home) {
+			if root != "" && isUnder(dir, root) {
+				return p.ParseSession(path, head)
+			}
+		}
+	}
+	// 兜底：找不到归属就挨个试，谁解析成功算谁的
+	for _, p := range ps {
+		if s, err := p.ParseSession(path, head); err == nil && s != nil {
+			return s, nil
+		}
+	}
+	return nil, os.ErrInvalid
+}
+
+func isUnder(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || !filepath.IsAbs(rel) && rel != ".." && !hasDotDotPrefix(rel)
+}
+
+func hasDotDotPrefix(rel string) bool {
+	return len(rel) >= 2 && rel[0] == '.' && rel[1] == '.' &&
+		(len(rel) == 2 || rel[2] == filepath.Separator || rel[2] == '/')
+}
+
+func collectSessionFiles(home string, ps []providers.Provider, maxFiles int) ([]string, error) {
+	seen := map[string]bool{}
+	var files []string
+
+	for _, p := range ps {
+		pattern := p.SessionFilePattern()
+		for _, root := range p.SessionRoots(home) {
+			if root == "" {
+				continue
+			}
+			if _, err := os.Stat(root); err != nil {
+				continue // 工具没装或目录不存在，直接跳过
+			}
+			err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+				if err != nil {
+					return nil
+				}
+				if d.IsDir() {
+					return nil
+				}
+				if ok, _ := filepath.Match(pattern, d.Name()); !ok {
+					return nil
+				}
+				key := NormalizePath(path)
+				if seen[key] {
+					return nil
+				}
+				seen[key] = true
+				files = append(files, path)
+				if len(files) >= maxFiles {
+					return fs.SkipAll
+				}
+				return nil
+			})
+			if err != nil {
+				return files, err
+			}
+		}
+	}
+	return files, nil
+}
