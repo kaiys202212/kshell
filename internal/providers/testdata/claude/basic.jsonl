@@ -1,0 +1,3 @@
+{"parentUuid":null,"isSidechain":false,"type":"progress","timestamp":"2026-05-25T15:58:56.545Z","cwd":"D:\\data\\workspace\\demo","sessionId":"42a6304b-1fd3-45aa-b620-10aa37988f2a","version":"2.1.81","gitBranch":"main"}
+{"parentUuid":"c5354e8d","isSidechain":false,"type":"user","timestamp":"2026-05-25T15:59:10.100Z","cwd":"D:\\data\\workspace\\demo","sessionId":"42a6304b-1fd3-45aa-b620-10aa37988f2a","message":{"role":"user","content":"修复上传白名单校验，把 svg 从允许列表里去掉"}}
+{"parentUuid":"42a6304b","isSidechain":false,"type":"assistant","timestamp":"2026-05-25T16:01:00.000Z","cwd":"D:\\data\\workspace\\demo","sessionId":"42a6304b-1fd3-45aa-b620-10aa37988f2a","message":{"role":"assistant","content":"好的，我先看一下 FileStorageService"}}

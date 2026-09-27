@@ -18,6 +18,7 @@ func (s stubProvider) ID() string                             { return s.id }
 func (s stubProvider) DisplayName() string                    { return s.id }
 func (s stubProvider) DetectSpec(string) providers.DetectSpec { return s.spec }
 func (s stubProvider) SessionRoots(string) []string           { return nil }
+func (s stubProvider) SessionFilePattern() string             { return "*.jsonl" }
 func (s stubProvider) ParseSession(string, []byte) (*providers.Session, error) {
 	return nil, nil
 }

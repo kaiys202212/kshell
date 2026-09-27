@@ -1,8 +1,10 @@
 package providers
 
 import (
+	"bytes"
 	"io"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -44,6 +46,7 @@ type Provider interface {
 	DisplayName() string
 	DetectSpec(home string) DetectSpec
 	SessionRoots(home string) []string
+	SessionFilePattern() string // 会话文件后缀：Claude/Codex 是 *.jsonl，Gemini 是 *.json
 	ParseSession(path string, head []byte) (*Session, error)
 	NewSessionCmd(ws string, bin string, ctx []string) Launch
 	ResumeCmd(s Session, bin string) Launch
@@ -72,4 +75,81 @@ func ReadHead(path string, limit int) ([]byte, error) {
 		}
 	}
 	return buf, nil
+}
+
+// CountLines 只数换行符，用来估算消息条数——比整文件 JSON 反序列化便宜几个数量级。
+func CountLines(path string) (int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	buf := make([]byte, 256*1024)
+	count := 0
+	for {
+		n, err := f.Read(buf)
+		count += bytes.Count(buf[:n], []byte{'\n'})
+		if err == io.EOF {
+			if n > 0 && buf[n-1] != '\n' {
+				count++ // 末行没有换行符也要算一条
+			}
+			return count, nil
+		}
+		if err != nil {
+			return count, err
+		}
+	}
+}
+
+// ContextPrompt 把上下文篮里的文件拼成初始提示，新建会话时注入。
+func ContextPrompt(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("请先阅读以下文件，再开始工作：")
+	for _, p := range paths {
+		b.WriteString("\n- " + p)
+	}
+	return b.String()
+}
+
+// messageText 兼容 content 为字符串或 [{type:"text",text:"..."}] 两种形态。
+func messageText(v any) string {
+	msg, ok := v.(map[string]any)
+	if !ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+		return ""
+	}
+
+	switch content := msg["content"].(type) {
+	case string:
+		return content
+	case []any:
+		var parts []string
+		for _, item := range content {
+			block, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if text, ok := block["text"].(string); ok {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, " ")
+	}
+	return ""
+}
+
+// oneLine 把标题压成单行并截断，避免列表里出现换行或超长文本。
+func oneLine(s string, limit int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit]) + "…"
 }

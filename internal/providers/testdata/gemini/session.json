@@ -1,0 +1,10 @@
+{
+  "sessionId": "gemini-7f3c91",
+  "cwd": "D:\\data\\workspace\\demo",
+  "startTime": "2026-09-01T10:00:00Z",
+  "lastUpdated": "2026-09-01T10:12:30Z",
+  "messages": [
+    {"type": "user", "content": "帮我看下这个构建脚本"},
+    {"type": "gemini", "content": "好的"}
+  ]
+}
