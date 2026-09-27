@@ -12,6 +12,7 @@ import (
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/launcher"
 	"github.com/yangk/kshell/internal/providers"
+	"github.com/yangk/kshell/internal/remote"
 	"github.com/yangk/kshell/internal/workspace"
 )
 
@@ -37,6 +38,8 @@ type Options struct {
 	Config    config.Config
 	Providers []providers.Provider
 	CachePath string
+	Store     *remote.Store
+	Scanners  []remote.Scanner
 }
 
 var (
@@ -88,6 +91,18 @@ type Model struct {
 	showAll      bool
 	fileCursor   int
 	lastFileErr  error
+
+	store        *remote.Store
+	conns        []remote.Connection
+	connCursor   int
+	candidates   []remote.Candidate
+	candCursor   int
+	candChecked  map[string]bool
+	importing    bool
+	cmdInput     string
+	cmdInputting bool
+	output       []string
+	execRunning  bool
 }
 
 func NewModel() Model {
@@ -108,6 +123,7 @@ func NewModelWith(o Options) Model {
 		view:   ViewSessions,
 		theme:  NewTheme(),
 		opts:   o,
+		store:  o.Store,
 		focus:  focusWorkspaces,
 		status: "就绪",
 	}
@@ -153,6 +169,7 @@ func statusCmd(text string, warn bool) tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.ensureTree()
+	m.ensureConns()
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -181,6 +198,51 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case candidatesMsg:
+		m.loading = false
+		m.importing = true
+		m.candidates = msg.cands
+		m.candCursor = 0
+		m.candChecked = map[string]bool{} // 低置信度默认不勾选，由用户确认
+		if msg.err != nil {
+			m.status, m.statusWarn = "扫描失败："+msg.err.Error(), true
+		} else if len(msg.cands) == 0 {
+			m.status, m.statusWarn = "没有扫到候选连接", false
+		} else {
+			m.status, m.statusWarn = "扫到 "+itoa(len(msg.cands))+" 个候选，空格勾选后回车导入", false
+		}
+		return m, nil
+
+	case connsMsg:
+		m.importing = false
+		m.candidates = nil
+		m.candChecked = map[string]bool{}
+		m.ensureConns()
+		if msg.err != nil {
+			m.status, m.statusWarn = "导入失败："+msg.err.Error(), true
+		} else {
+			m.status, m.statusWarn = "已导入 "+itoa(msg.imported)+" 条连接", false
+		}
+		return m, nil
+
+	case execDoneMsg:
+		m.execRunning = false
+		if msg.err != nil {
+			m.status, m.statusWarn = "执行失败："+msg.err.Error(), true
+			m.output = append(m.output, m.theme.Header.Render("错误 "+msg.err.Error()))
+			return m, nil
+		}
+		m.status, m.statusWarn = msg.command+" （退出码 "+itoa(msg.res.ExitCode)+"）", msg.res.ExitCode != 0
+		m.output = append(m.output, m.theme.Body.Render("$ "+msg.command))
+		m.output = append(m.output, splitLines(msg.res.Stdout)...)
+		if strings.TrimSpace(msg.res.Stderr) != "" {
+			m.output = append(m.output, splitLines(msg.res.Stderr)...)
+		}
+		if len(m.output) > 200 {
+			m.output = m.output[len(m.output)-200:]
+		}
+		return m, nil
+
 	case statusMsg:
 		m.status, m.statusWarn = msg.text, msg.warn
 		return m, nil
@@ -193,6 +255,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+
+	if m.cmdInputting {
+		switch key {
+		case "esc":
+			m.cmdInputting = false
+			m.cmdInput = ""
+			return m, nil
+		case "enter":
+			command := strings.TrimSpace(m.cmdInput)
+			m.cmdInputting = false
+			m.cmdInput = ""
+			if command == "" {
+				return m, nil
+			}
+			m.execRunning = true
+			return m, m.execRemoteCmd(command)
+		case "backspace":
+			if len(m.cmdInput) > 0 {
+				m.cmdInput = m.cmdInput[:len(m.cmdInput)-1]
+			}
+			return m, nil
+		}
+		if len(key) == 1 {
+			m.cmdInput += key
+		}
+		return m, nil
+	}
 
 	if m.filtering {
 		switch key {
@@ -256,9 +345,50 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.view == ViewRemote && m.importing {
+			m.toggleCandidate()
+			return m, nil
+		}
+	case "i":
+		if m.view == ViewRemote {
+			m.loading = true
+			m.status, m.statusWarn = "正在扫描连接…", false
+			return m, m.scanCandidatesCmd()
+		}
+	case "x":
+		if m.view == ViewRemote {
+			m.cmdInputting = true
+			m.cmdInput = ""
+			return m, nil
+		}
+	case "s":
+		if m.view == ViewRemote {
+			return m, m.shellCmd()
+		}
+	case "t":
+		if m.view == ViewRemote {
+			m.execRunning = true
+			return m, m.testConnCmd()
+		}
+	case "d":
+		if m.view == ViewRemote {
+			m.deleteSelectedConn()
+			return m, nil
+		}
+	case "b":
+		if m.view == ViewRemote {
+			m.bindSelectedConn()
+			return m, nil
+		}
 	case "enter":
 		if m.view == ViewFiles {
 			m.toggleDir()
+			return m, nil
+		}
+		if m.view == ViewRemote {
+			if m.importing {
+				return m, m.importCheckedCmd()
+			}
 			return m, nil
 		}
 		if m.focus == focusWorkspaces {
@@ -279,6 +409,18 @@ func (m *Model) moveCursor(delta int) {
 		m.fileCursor += delta
 		if m.fileCursor < 0 {
 			m.fileCursor = 0
+		}
+	case ViewRemote:
+		if m.importing {
+			m.candCursor += delta
+			if m.candCursor < 0 {
+				m.candCursor = 0
+			}
+		} else {
+			m.connCursor += delta
+			if m.connCursor < 0 {
+				m.connCursor = 0
+			}
 		}
 	default:
 		if m.focus == focusWorkspaces {
@@ -315,6 +457,27 @@ func (m *Model) clampCursors() {
 	if m.fileCursor < 0 {
 		m.fileCursor = 0
 	}
+	if n := len(m.conns); n > 0 && m.connCursor >= n {
+		m.connCursor = n - 1
+	}
+	if m.connCursor < 0 {
+		m.connCursor = 0
+	}
+	if n := len(m.candidates); n > 0 && m.candCursor >= n {
+		m.candCursor = n - 1
+	}
+	if m.candCursor < 0 {
+		m.candCursor = 0
+	}
+}
+
+func splitLines(s string) []string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return nil
+	}
+	return lines
 }
 
 // resumeLaunch 给出恢复选中会话所需的启动描述；工具缺失可执行文件时返回错误。
@@ -459,8 +622,7 @@ func (m Model) renderLeft(height, width int) string {
 	case ViewFiles:
 		return m.renderFilesBody(height, width)
 	case ViewRemote:
-		lines := []string{m.sectionHeader("CONNECTIONS", ""), "", m.theme.Muted.Render("（远程视图待实现）")}
-		return fitBlock(lines, height, width)
+		return m.renderRemoteBody(height, width)
 	default:
 		return m.renderSessionsBody(height, width)
 	}
@@ -471,8 +633,7 @@ func (m Model) renderRight(height, width int) string {
 	case ViewFiles:
 		return m.renderFilesPreview(height, width)
 	case ViewRemote:
-		lines := []string{m.sectionHeader("OUTPUT", ""), "", m.theme.Muted.Render("（命令输出待实现）")}
-		return fitBlock(lines, height, width)
+		return m.renderRemoteRight(height, width)
 	default:
 		return m.renderSessionPreview(height, width)
 	}
@@ -520,11 +681,17 @@ func (m Model) renderTabs() string {
 }
 
 func (m Model) renderStatusBar() string {
+	if m.cmdInputting {
+		return fitBlock([]string{m.theme.Body.Render("ssh> " + m.cmdInput + "_")}, 1, m.width)
+	}
 	if m.filtering {
 		return fitBlock([]string{m.theme.Body.Render("/" + m.filter + "_")}, 1, m.width)
 	}
 
 	hint := "↑↓ 移动  ⏎ 进入  / 搜索  n 新建  r 重扫  ? 帮助  q 退出"
+	if m.view == ViewRemote {
+		hint = m.renderRemoteStatusLine()
+	}
 	return joinHorizontalFit(m.width, m.theme.Muted.Render(hint), m.statusStyle().Render(m.status))
 }
 

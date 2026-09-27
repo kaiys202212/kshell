@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	errMissingHost      = errors.New("连接缺少 host")
-	errKeyMaterial      = errors.New("identity_file 只能是密钥路径，不能放密钥内容")
+	errMissingHost       = errors.New("连接缺少 host")
+	errKeyMaterial       = errors.New("identity_file 只能是密钥路径，不能放密钥内容")
 	errUnknownConnection = errors.New("未找到该连接")
 )
 

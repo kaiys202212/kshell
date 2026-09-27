@@ -107,7 +107,10 @@ func ScanWorkspace(root string, scanners []Scanner, enabled map[string]bool, exc
 
 // Dedupe 按 host+user+port 折叠，保留置信度最高的那条（并记下来源文件）。
 func Dedupe(cands []Candidate) []Candidate {
-	type key struct{ host, user string; port int }
+	type key struct {
+		host, user string
+		port       int
+	}
 
 	best := map[key]Candidate{}
 	for _, c := range cands {
