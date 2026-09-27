@@ -1,6 +1,6 @@
 // Package desktop 是 Wails 桌面版的装配与绑定层：薄封装现有核心包暴露给前端。
 // 业务逻辑一律下沉到 discovery/providers/remote/workspace 等包，本包只做参数组装与校验。
-// 注意：本包不加构建标签（便于 go test 直接覆盖）；embed 前端资源在根包 main_wails.go（desktop 标签）。
+// 注意：本包不加构建标签（便于 go test 直接覆盖）；embed 前端资源在根包 main.go（无标签）。
 package desktop
 
 import "context"

@@ -1,13 +1,13 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "kshell",
-  "outputfilename": ".wails-tmp",
+  "outputfilename": "kshell",
   "frontend:install": "npm install",
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
   "author": {
-    "name": "勇敢的心",
+    "name": "yangk",
     "email": "yangky119@163.com"
   }
 }

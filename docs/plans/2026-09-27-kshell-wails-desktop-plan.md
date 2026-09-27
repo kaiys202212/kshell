@@ -44,12 +44,11 @@ Expected: Node ✓、WebView2 ✓、Go ✓。失败则停止并报告缺失项�
 **Step 1:** 在仓库根执行 `wails init -n kshell -t react-ts`（生成 frontend/ 与模板 main.go），删除模板示例代码，保留最小骨架（根包 main.go，无构建标签）：
 
 ```go
-//go:build desktop
-
 package main
 
 import (
 	"embed"
+	"io/fs"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -59,14 +58,14 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-func RunDesktop() error {
+func RunDesktop(src fs.FS) error {
 	return wails.Run(&options.App{
-		Title:            "kshell",
-		Width:            1280,
-		Height:           800,
-		AssetServer:      &assetserver.Options{Assets: assets},
-		OnStartup:        desktopApp.startup,
-		Bind:             []interface{}{desktopApp},
+		Title:       "kshell",
+		Width:       1280,
+		Height:      800,
+		AssetServer: &assetserver.Options{Assets: src},
+		OnStartup:   desktopApp.Startup,
+		Bind:        []interface{}{desktopApp},
 	})
 }
 ```
