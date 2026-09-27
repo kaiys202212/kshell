@@ -3,10 +3,11 @@
 package desktop
 
 import (
-	"fmt"
+	"encoding/base64"
 	"os"
 	"os/exec"
 	"strings"
+	"unicode/utf16"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -62,26 +63,54 @@ func findWt() string {
 }
 
 // Launch 弹出新终端窗口。
-// Windows Terminal 存在时：`wt -w new nt --title <title> powershell -NoExit -Command ...`；
-// 否则回退 powershell -NoExit，用 $host.UI.RawUI.WindowTitle 设置标题。
-// 工作目录双保险：cmd.Dir 设置启动进程自身工作目录（wt 通常会把启动器 cwd
-// 传给新标签页的 shell），脚本内再 Set-Location 显式切换，规避个别 wt
-// 版本不继承 cwd 的差异。
+//
+// Windows Terminal 存在时走 wt 分支：`wt -w new nt --title <title> -d <dir> powershell ...`；
+// 否则用 `cmd /c start "<title>" powershell ...`（start 的首个带引号参数即窗口标题，
+// 比依赖 $host.UI.RawUI.WindowTitle 更稳，后者在输出被重定向的场景会抛异常）。
+//
+// 命令一律经 -EncodedCommand 传递而非 -Command：Windows Terminal 会把命令行里的
+// 分号当作自身子命令分隔符，导致 -Command 多语句只有第一条生效（实测：第二条及之后
+// 全部丢失且窗口随即退出）。
+//
+// 工作目录三重保险：wt 侧用 -d <dir> 设起始目录，进程侧 cmd.Dir = dir 保证继承，
+// 命令侧再 Set-Location 兜底，覆盖个别 wt 版本不继承启动器 cwd 的差异。
 func (l *windowsLauncher) Launch(dir, title string, args []string) error {
-	inner := "Set-Location -LiteralPath " + psQuote(dir)
+	script := "Set-Location -LiteralPath " + psQuote(dir)
 	for _, a := range args {
-		inner += "; " + a
+		script += "; " + a
 	}
+	encoded := psEncode(script)
+
 	if wtPath := findWt(); wtPath != "" {
-		cmd := exec.Command(wtPath, "-w", "new", "nt", "--title", title,
-			"powershell", "-NoExit", "-Command", inner)
+		cmd := exec.Command(wtPath, "-w", "new", "nt", "--title", title, "-d", dir,
+			"powershell", "-NoExit", "-EncodedCommand", encoded)
 		cmd.Dir = dir
 		return cmd.Start()
 	}
-	script := fmt.Sprintf("$host.UI.RawUI.WindowTitle=%s; %s", psQuote(title), inner)
-	cmd := exec.Command("powershell", "-NoExit", "-Command", script)
+	// 回退路径额外在脚本内重设标题：PowerShell 启动时会把控制台标题改写为
+	// "Windows PowerShell"，仅靠 cmd start 的首个带引号参数不足以保住标题，
+	// 而标题是聚焦与存活检测的唯一键。RawUI 在输出被重定向时会抛异常，
+	// 因此包在 try/catch 里，失败也只影响标题、不影响后续命令。
+	fallbackScript := "try { $host.UI.RawUI.WindowTitle = " + psQuote(title) + " } catch { }; " + script
+	cmd := exec.Command(os.Getenv("COMSPEC"), "/c", "start", title,
+		"powershell", "-NoExit", "-EncodedCommand", psEncode(fallbackScript))
 	cmd.Dir = dir
 	return cmd.Start()
+}
+
+// psQuote 将文本包成 PowerShell 单引号字符串字面量（内嵌单引号双写转义）。
+func psQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+// psEncode 生成 PowerShell -EncodedCommand 所需的 UTF-16LE Base64 文本。
+func psEncode(script string) string {
+	units := utf16.Encode([]rune(script))
+	buf := make([]byte, 0, len(units)*2)
+	for _, u := range units {
+		buf = append(buf, byte(u), byte(u>>8))
+	}
+	return base64.StdEncoding.EncodeToString(buf)
 }
 
 // Focus 按标题精确匹配窗口并聚焦（最小化先还原）。

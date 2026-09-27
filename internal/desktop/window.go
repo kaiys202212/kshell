@@ -3,7 +3,6 @@
 package desktop
 
 import (
-	"strings"
 	"sync"
 )
 
@@ -22,7 +21,7 @@ type TerminalLauncher interface {
 type procChecker func(title string) bool
 
 // defaultProcAlive 由平台实现文件注入（window_win.go 的 init）；
-// 非 windows 构建为 nil，此时注册的窗口默认视为存活。
+// 非 windows 构建为 nil，此时登记的窗口默认视为存活。
 var defaultProcAlive procChecker
 
 // WindowManager 维护 标题→存活检查 的活跃终端窗口表。
@@ -130,9 +129,4 @@ func (m *WindowManager) Reap() []string {
 		}
 	}
 	return dead
-}
-
-// psQuote 将文本包成 PowerShell 单引号字符串字面量（内嵌单引号双写转义）。
-func psQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
