@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -119,6 +120,7 @@ func TestManagerReapRemovesDeadWindows(t *testing.T) {
 	st := &stubLauncher{}
 	var closed []string
 	m := NewWindowManager(st, func(title string) { closed = append(closed, title) })
+	m.reapGrace = 0 // 关闭宽限期，让刚登记的条目立即参与判定
 	states := map[string]bool{"kshell · a": true, "kshell · b": false}
 	m.newChecker = func(title string) procChecker {
 		return func(string) bool { return states[title] }
@@ -142,6 +144,86 @@ func TestManagerReapRemovesDeadWindows(t *testing.T) {
 	}
 	if !reflect.DeepEqual(closed, []string{"kshell · b"}) {
 		t.Fatalf("onClosed 回调收到 %v, 期望 [kshell · b]", closed)
+	}
+}
+
+func TestManagerReapGraceSkipsFreshEntries(t *testing.T) {
+	m := NewWindowManager(&stubLauncher{}, nil)
+	// 保留默认 3s 宽限期：刚登记、检查器已判死的条目不得被误杀（窗口可能尚未创建）
+	states := map[string]bool{"kshell · fresh": false}
+	m.newChecker = func(title string) procChecker {
+		return func(string) bool { return states[title] }
+	}
+	if err := m.LaunchSession("d", "fresh"); err != nil {
+		t.Fatalf("LaunchSession 返回错误: %v", err)
+	}
+	if got := m.Reap(); len(got) != 0 {
+		t.Fatalf("宽限期内 Reap 应返回空, 实际 %v", got)
+	}
+	if !m.Alive("kshell · fresh") {
+		t.Fatal("宽限期内的条目不应被移除")
+	}
+}
+
+func TestManagerReapNilCallback(t *testing.T) {
+	m := NewWindowManager(&stubLauncher{}, nil)
+	m.reapGrace = 0
+	m.newChecker = func(string) procChecker { return func(string) bool { return false } }
+	if err := m.LaunchSession("d", "x"); err != nil {
+		t.Fatalf("LaunchSession 返回错误: %v", err)
+	}
+	if got := m.Reap(); !reflect.DeepEqual(got, []string{"kshell · x"}) {
+		t.Fatalf("onClosed 为 nil 时 Reap 应正常返回 %v", got)
+	}
+	if m.Alive("kshell · x") {
+		t.Fatal("onClosed 为 nil 时死亡项仍应被移除")
+	}
+}
+
+func TestManagerOnClosedReentrant(t *testing.T) {
+	// 回调里重入 Manager（真实场景：收到 window:closed 后刷新状态）不得死锁
+	var m *WindowManager
+	m = NewWindowManager(&stubLauncher{}, func(title string) {
+		_ = m.LaunchSession("d", "re")
+	})
+	m.reapGrace = 0
+	m.newChecker = func(string) procChecker { return func(string) bool { return false } }
+	if err := m.LaunchSession("d", "x"); err != nil {
+		t.Fatalf("LaunchSession 返回错误: %v", err)
+	}
+	m.Reap() // 死锁时测试框架会超时失败
+	if !m.Alive("kshell · re") {
+		t.Fatal("回调内重入 LaunchSession 应生效")
+	}
+}
+
+func TestTerminalTitle81Boundary(t *testing.T) {
+	m := NewWindowManager(&stubLauncher{}, nil)
+	got := m.TerminalTitle(strings.Repeat("字", 72)) // 前缀 9 + 72 = 81 rune
+	if runes := []rune(got); len(runes) != 80 || !strings.HasSuffix(got, "…") {
+		t.Fatalf("81 rune 应截断为 80 rune 并以省略号结尾, got %d rune", len(runes))
+	}
+}
+
+func TestManagerConcurrentSameTitleLaunch(t *testing.T) {
+	st := &stubLauncher{}
+	m := NewWindowManager(st, nil)
+	m.newChecker = func(string) procChecker { return func(string) bool { return true } }
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := m.LaunchSession("d", "并发"); err != nil {
+				t.Errorf("并发 LaunchSession 错误: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if len(st.launches) != 1 {
+		t.Fatalf("并发同标题 LaunchSession 实际弹窗 %d 次, 期望 1", len(st.launches))
 	}
 }
 
