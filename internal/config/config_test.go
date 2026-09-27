@@ -89,13 +89,84 @@ func TestLoadRecoversFromCorruptConfig(t *testing.T) {
 	}
 
 	got, err := Load(p)
-	if err != nil {
-		t.Fatalf("corrupt config must not fail load: %v", err)
+	// 语法损坏时回退默认值，但必须把情况告诉调用方（由调用方降级为提示，不静默清空）。
+	if err == nil {
+		t.Fatal("corrupt config should report the recovery")
 	}
 	if !reflect.DeepEqual(got, Default()) {
 		t.Fatalf("got %+v, want defaults", got)
 	}
-	if _, err := os.Stat(p.Config + ".bak"); err != nil {
-		t.Fatalf("expected corrupt config to be backed up: %v", err)
+
+	entries, err := os.ReadDir(p.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backedUp := false
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".bak") {
+			backedUp = true
+		}
+	}
+	if !backedUp {
+		t.Fatalf("expected corrupt config to be backed up, entries: %v", entries)
+	}
+	if _, err := os.Stat(p.Config); err != nil {
+		t.Fatalf("expected a rebuilt config file: %v", err)
+	}
+}
+
+func TestLoadKeepsParsedFieldsOnTypeMismatch(t *testing.T) {
+	p := tempPaths(t)
+	if err := os.MkdirAll(p.Root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "scan_roots:\n  - D:\\data\nmax_depth: \"abc\"\n"
+	if err := os.WriteFile(p.Config, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Load(p)
+	if err == nil {
+		t.Fatal("type mismatch should be reported")
+	}
+	// 已解析成功的字段必须保留，不能因为一个字段写错就把整份配置清空。
+	if len(got.ScanRoots) != 1 || got.ScanRoots[0] != "D:\\data" {
+		t.Fatalf("scan_roots should survive a type error, got %+v", got.ScanRoots)
+	}
+	if got.MaxDepth != Default().MaxDepth {
+		t.Fatalf("max_depth = %d, want default %d", got.MaxDepth, Default().MaxDepth)
+	}
+
+	entries, err := os.ReadDir(p.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".bak") {
+			t.Fatalf("type mismatch must not wipe the config, found %s", e.Name())
+		}
+	}
+}
+
+func TestScannersPartiallySpecifiedKeepsDefaults(t *testing.T) {
+	p := tempPaths(t)
+	if err := os.MkdirAll(p.Root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.Config, []byte("scanners:\n  sshconfig: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if got.Scanners["sshconfig"] {
+		t.Fatal("sshconfig should stay disabled")
+	}
+	for _, name := range []string{"env", "spring", "deploy", "docs"} {
+		if !got.Scanners[name] {
+			t.Fatalf("scanner %s should keep its default (enabled)", name)
+		}
 	}
 }

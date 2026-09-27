@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 // Theme 集中定义配色，避免样式散落在各面板里。
@@ -20,6 +21,8 @@ type Theme struct {
 
 func NewTheme() Theme {
 	if os.Getenv("NO_COLOR") != "" {
+		// 全局降级，保证 Theme 之外新建的样式（列表、帮助、bubbles 组件）也不输出颜色。
+		lipgloss.SetColorProfile(termenv.Ascii)
 		return plainTheme()
 	}
 

@@ -1,7 +1,11 @@
 package config
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -42,10 +46,11 @@ func Default() Config {
 	}
 }
 
-// Load 读取配置：缺失用默认值；损坏则备份为 .bak 后回退默认值，绝不因配置问题阻断启动。
+// Load 读取配置。缺失用默认值且不报错；语法损坏才备份重建（返回 error 供调用方降级为提示，
+// 避免静默清空用户配置）；单个字段类型错误则保留已解析的部分，只把错误交给调用方。
 func Load(p Layout) (Config, error) {
 	data, err := os.ReadFile(p.Config)
-	if os.IsNotExist(err) {
+	if errors.Is(err, fs.ErrNotExist) {
 		return Default(), nil
 	}
 	if err != nil {
@@ -54,14 +59,24 @@ func Load(p Layout) (Config, error) {
 
 	var c Config
 	if err := yaml.Unmarshal(data, &c); err != nil {
-		_ = os.Rename(p.Config, p.Config+".bak")
-		_ = Save(p, Default()) // 重建一份默认配置，避免用户面对空目录
-		return Default(), nil
+		var typeErr *yaml.TypeError
+		if errors.As(err, &typeErr) {
+			return c.normalized(), fmt.Errorf("配置文件存在无法解析的字段: %w", err)
+		}
+
+		backup := fmt.Sprintf("%s.%d.bak", p.Config, time.Now().Unix())
+		if rerr := os.Rename(p.Config, backup); rerr != nil {
+			return Default(), fmt.Errorf("备份损坏配置失败: %w", rerr)
+		}
+		if serr := Save(p, Default()); serr != nil {
+			return Default(), fmt.Errorf("重建默认配置失败: %w", serr)
+		}
+		return Default(), fmt.Errorf("配置文件语法损坏，已备份为 %s 并重建: %w", backup, err)
 	}
 	return c.normalized(), nil
 }
 
-// Save 先写临时文件再 rename，避免写一半崩溃留下损坏配置。
+// Save 先写临时文件再替换，避免写一半崩溃留下损坏配置（Windows 的 os.Rename 会覆盖目标文件）。
 func Save(p Layout, c Config) error {
 	if err := EnsureRoot(p); err != nil {
 		return err
@@ -99,8 +114,17 @@ func (c Config) normalized() Config {
 	if c.SSHOptions.CommandTimeoutSeconds <= 0 {
 		c.SSHOptions.CommandTimeoutSeconds = d.SSHOptions.CommandTimeoutSeconds
 	}
-	if len(c.Scanners) == 0 {
-		c.Scanners = d.Scanners
+	if c.SSHOptions.ExtraArgs == nil {
+		c.SSHOptions.ExtraArgs = []string{}
+	}
+	// 扫描器开关按 key 合并：用户只写了一项时，其余仍走默认开启，否则等于全关。
+	for k, v := range d.Scanners {
+		if _, ok := c.Scanners[k]; !ok {
+			if c.Scanners == nil {
+				c.Scanners = map[string]bool{}
+			}
+			c.Scanners[k] = v
+		}
 	}
 	return c
 }

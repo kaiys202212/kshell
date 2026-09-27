@@ -3,8 +3,9 @@ package ui
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type ViewID int
@@ -13,6 +14,7 @@ const (
 	ViewSessions ViewID = iota
 	ViewFiles
 	ViewRemote
+	viewCount
 )
 
 var viewNames = []string{"Sessions", "Files", "Remote"}
@@ -48,15 +50,19 @@ func (m Model) Init() tea.Cmd { return nil }
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+		if msg.Width > 0 {
+			m.width = msg.Width
+		}
+		if msg.Height > 0 {
+			m.height = msg.Height
+		}
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
 		case "tab":
-			m.view = ViewID((int(m.view) + 1) % len(viewNames))
+			m.view = ViewID((int(m.view) + 1) % int(viewCount))
 			return m, nil
 		case "1", "2", "3":
 			m.view = ViewID(int(msg.String()[0] - '1'))
@@ -77,11 +83,15 @@ func (m Model) View() string {
 
 	var body string
 	if m.width < minSplitWidth || m.height < minSplitHeight {
-		// 小屏：列表与预览纵向堆叠，宽度只受终端列数约束。
-		body = lipgloss.JoinVertical(lipgloss.Left,
-			m.renderList(bodyHeight/2, m.width),
-			m.renderPreview(bodyHeight-bodyHeight/2, m.width),
-		)
+		// 极矮终端：只留预览，避免空块让 JoinVertical 多算一行把顶栏挤出屏幕。
+		if bodyHeight < 2 {
+			body = m.renderPreview(bodyHeight, m.width)
+		} else {
+			body = lipgloss.JoinVertical(lipgloss.Left,
+				m.renderList(bodyHeight/2, m.width),
+				m.renderPreview(bodyHeight-bodyHeight/2, m.width),
+			)
+		}
 	} else {
 		leftWidth := m.width * 40 / 100
 		body = lipgloss.JoinHorizontal(lipgloss.Top,
@@ -90,9 +100,7 @@ func (m Model) View() string {
 		)
 	}
 
-	out := lipgloss.JoinVertical(lipgloss.Left, top, body, bottom)
-	// 兜底：任何一行都不得超出终端列数（提示文案过长时按列宽截断）。
-	return lipgloss.NewStyle().MaxWidth(m.width).Render(out)
+	return lipgloss.JoinVertical(lipgloss.Left, top, body, bottom)
 }
 
 func (m Model) renderTopBar() string {
@@ -122,7 +130,7 @@ func (m Model) renderList(height, width int) string {
 	lines := []string{
 		m.theme.Header.Render("WORKSPACES"),
 		"",
-		m.theme.Muted.Render("(等待扫描…)"),
+		m.theme.Body.Render("(等待扫描…)"),
 		"",
 		m.theme.Header.Render("SESSIONS"),
 	}
@@ -133,28 +141,51 @@ func (m Model) renderPreview(height, width int) string {
 	lines := []string{
 		m.theme.Header.Render("PREVIEW"),
 		"",
-		m.theme.Muted.Render("选中左侧条目查看详情"),
+		m.theme.Preview.Render("选中左侧条目查看详情"),
 	}
 	return fitBlock(lines, height, width)
 }
 
+// joinHorizontalFit 把左右两段拼成恰好 width 列的一行；放不下时优先保留右侧，左侧截断加省略号。
 func joinHorizontalFit(width int, left, right string) string {
-	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
+	if width <= 0 {
+		return ""
+	}
+
+	leftWidth := lipgloss.Width(left)
+	rightWidth := lipgloss.Width(right)
+
+	if leftWidth+rightWidth+1 > width {
+		avail := width - rightWidth - 1
+		if avail > 0 {
+			left = ansi.Truncate(left, avail, "…")
+			leftWidth = lipgloss.Width(left)
+		}
+	}
+
+	gap := width - leftWidth - rightWidth
 	if gap < 1 {
-		gap = 1
+		return ansi.Truncate(left, width, "…")
 	}
 	return left + strings.Repeat(" ", gap) + right
 }
 
-// fitBlock 把若干行补齐/截断到指定高宽，保证 View() 输出的尺寸稳定。
+// fitBlock 把若干行补齐并截断到指定高宽，保证 View() 每行宽度都不超过可用列数。
+// 只补不截会让超长行把右栏挤出屏幕，所以这里必须双向处理。
 func fitBlock(lines []string, height, width int) string {
-	out := make([]string, 0, height)
+	if height < 0 {
+		height = 0
+	}
+	out := make([]string, height)
 	for i := 0; i < height; i++ {
+		s := ""
 		if i < len(lines) {
-			out = append(out, padRight(lines[i], width))
-			continue
+			s = lines[i]
 		}
-		out = append(out, padRight("", width))
+		if width > 0 {
+			s = ansi.Truncate(s, width, "…")
+		}
+		out[i] = padRight(s, width)
 	}
 	return strings.Join(out, "\n")
 }
