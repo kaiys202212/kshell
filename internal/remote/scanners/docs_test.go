@@ -15,7 +15,7 @@ func TestDocsScannerFindsHost(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".ssh", "id_ed25519"), []byte("KEY MATERIAL"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	path := writeFile(t, dir, "README.md", "部署：ssh deploy@server.internal 上去 restart 即可\n联系 a@b.com\n")
+	path := writeFile(t, dir, "README.md", "部署：ssh deploy@server.internal 上去 restart 即可\n联系 someone@gmail.com\n")
 
 	got, err := DocsScanner{}.Extract(dir, path)
 	if err != nil {
@@ -57,6 +57,19 @@ func TestDocsScannerNeverReadsKeyContent(t *testing.T) {
 		if strings.Contains(field, "PRIVATE KEY") {
 			t.Fatalf("key material leaked into a candidate: %q", field)
 		}
+	}
+}
+
+func TestDocsScannerFiltersEmailDomains(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "README.md", "联系 someone@gmail.com / ops@qq.com\n")
+
+	got, err := DocsScanner{}.Extract(dir, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("emails must not become ssh candidates: %+v", got)
 	}
 }
 
