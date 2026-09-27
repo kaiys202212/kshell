@@ -103,29 +103,29 @@ func ScanGitRepos(roots []string, maxDepth int, exclude []string) []Workspace {
 		}
 
 		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-			if err != nil || !d.IsDir() {
+			if err != nil {
 				return nil
 			}
 			if path == root {
+				return nil
+			}
+			// .git 也可能是文件（git worktree / submodule），两种形态都要认。
+			if d.Name() == ".git" {
+				repo := filepath.Dir(path)
+				key := NormalizePath(repo)
+				if !seen[key] {
+					seen[key] = true
+					out = append(out, Workspace{Path: repo, Name: filepath.Base(repo), Source: "git"})
+				}
+				return fs.SkipDir
+			}
+			if !d.IsDir() {
 				return nil
 			}
 			if skip[d.Name()] {
 				return fs.SkipDir
 			}
 			if depth(root, path) > maxDepth {
-				return fs.SkipDir
-			}
-			if d.Name() == ".git" {
-				repo := filepath.Dir(path)
-				key := NormalizePath(repo)
-				if !seen[key] {
-					seen[key] = true
-					out = append(out, Workspace{
-						Path:   repo,
-						Name:   filepath.Base(repo),
-						Source: "git",
-					})
-				}
 				return fs.SkipDir
 			}
 			return nil

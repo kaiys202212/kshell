@@ -100,14 +100,55 @@ func TestScanWritesCacheAndReusesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !idx.shouldReuse(sessionPath, info.ModTime().Unix(), info.Size()) {
+	if !idx.shouldReuse(sessionPath, info.ModTime().UnixNano(), info.Size()) {
 		t.Fatal("unchanged file should hit the cache")
 	}
-	if idx.shouldReuse(sessionPath, info.ModTime().Unix()+1, info.Size()) {
+	if idx.shouldReuse(sessionPath, info.ModTime().UnixNano()+1, info.Size()) {
 		t.Fatal("changed mtime must invalidate the cache")
 	}
-	if idx.shouldReuse(sessionPath, info.ModTime().Unix(), info.Size()+1) {
+	if idx.shouldReuse(sessionPath, info.ModTime().UnixNano(), info.Size()+1) {
 		t.Fatal("changed size must invalidate the cache")
+	}
+}
+
+func TestScanMergesGitWorkspacesWithoutDuplicates(t *testing.T) {
+	home := t.TempDir()
+	sessionsDir := filepath.Join(home, ".claude", "projects", "D--data-workspace-demo")
+	writeSessionFile(t, filepath.Join(sessionsDir, "sess-1.jsonl"), claudeFixtureContent(t))
+
+	// 一个已被会话覆盖的仓库 + 一个全新的仓库
+	scanRoot := t.TempDir()
+	mkdirAll(t, filepath.Join(scanRoot, "known", ".git"))
+	mkdirAll(t, filepath.Join(scanRoot, "fresh", ".git"))
+
+	opts := ScanOptions{Roots: []string{scanRoot}, MaxDepth: 4, Exclude: []string{".git", "node_modules"}}
+	res, err := Scan(home, []providers.Provider{providers.Claude{}}, filepath.Join(t.TempDir(), "index.json"), opts)
+	if err != nil {
+		t.Fatalf("Scan error: %v", err)
+	}
+
+	// 会话工作区 (D:\data\workspace\demo) + fresh 仓库；known 与会话目录不同名，也会被追加
+	if len(res.Workspaces) != 3 {
+		t.Fatalf("workspaces = %d, want 3: %+v", len(res.Workspaces), res.Workspaces)
+	}
+	gitCount := 0
+	for _, w := range res.Workspaces {
+		if w.Source == "git" {
+			gitCount++
+		}
+	}
+	if gitCount != 2 {
+		t.Fatalf("git workspaces = %d, want 2: %+v", gitCount, res.Workspaces)
+	}
+}
+
+func TestScanWithoutRootsSkipsGitScan(t *testing.T) {
+	res, err := Scan(t.TempDir(), []providers.Provider{providers.Claude{}}, filepath.Join(t.TempDir(), "index.json"), ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Workspaces) != 0 {
+		t.Fatalf("no roots should mean no git scan, got %+v", res.Workspaces)
 	}
 }
 

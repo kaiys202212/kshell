@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
 
+	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/providers"
 )
 
@@ -15,6 +17,9 @@ const (
 	indexVersion     = 1
 	defaultMaxFiles  = 20000
 	defaultHeadLimit = 64 * 1024
+	// 单文件 JSON（Gemini）必须整文件成文才解析得出来，头读太小会整条判失败。
+	defaultSingleFileHead = 2 * 1024 * 1024
+	defaultTimeout        = 30 * time.Second
 )
 
 // Entry 是单个会话文件的缓存记录：mtime + size 未变就直接复用解析结果，
@@ -76,6 +81,11 @@ func (idx *Index) shouldReuse(path string, mtime, size int64) bool {
 type ScanOptions struct {
 	MaxFiles  int
 	HeadLimit int
+	// git 工作区补充扫描的配置（对应 config.yaml）
+	Roots    []string
+	MaxDepth int
+	Exclude  []string
+	Timeout  time.Duration
 }
 
 type Result struct {
@@ -92,8 +102,18 @@ func Scan(home string, ps []providers.Provider, cachePath string, opts ScanOptio
 	if opts.HeadLimit <= 0 {
 		opts.HeadLimit = defaultHeadLimit
 	}
+	if opts.MaxDepth <= 0 {
+		opts.MaxDepth = config.Default().MaxDepth
+	}
+	if len(opts.Exclude) == 0 {
+		opts.Exclude = config.Default().Exclude
+	}
+	if opts.Timeout <= 0 {
+		opts.Timeout = defaultTimeout
+	}
 
-	files, err := collectSessionFiles(home, ps, opts.MaxFiles)
+	deadline := time.Now().Add(opts.Timeout)
+	files, err := collectSessionFiles(home, ps, opts.MaxFiles, deadline)
 	if err != nil {
 		return nil, err
 	}
@@ -120,11 +140,14 @@ func Scan(home string, ps []providers.Provider, cachePath string, opts ScanOptio
 		go func() {
 			defer wg.Done()
 			for path := range jobs {
+				if time.Now().After(deadline) {
+					continue // 超时后放弃剩余文件，保证启动不被挂住
+				}
 				info, err := os.Stat(path)
 				if err != nil {
 					continue
 				}
-				mtime, size := info.ModTime().Unix(), info.Size()
+				mtime, size := info.ModTime().UnixNano(), info.Size()
 
 				mu.Lock()
 				reuse := idx.shouldReuse(path, mtime, size)
@@ -135,7 +158,11 @@ func Scan(home string, ps []providers.Provider, cachePath string, opts ScanOptio
 				mu.Unlock()
 
 				if !reuse {
-					head, herr := providers.ReadHead(path, opts.HeadLimit)
+					headLimit := opts.HeadLimit
+					if filepath.Ext(path) == ".json" && headLimit < defaultSingleFileHead {
+						headLimit = defaultSingleFileHead
+					}
+					head, herr := providers.ReadHead(path, headLimit)
 					session, serr := parseWith(path, head, ps, home)
 					if herr != nil || serr != nil {
 						mu.Lock()
@@ -173,9 +200,31 @@ func Scan(home string, ps []providers.Provider, cachePath string, opts ScanOptio
 
 	return &Result{
 		Sessions:   sessions,
-		Workspaces: GroupSessions(sessions),
+		Workspaces: mergeGitWorkspaces(GroupSessions(sessions), opts),
 		Failed:     failed,
 	}, nil
+}
+
+// mergeGitWorkspaces 把 git 扫描发现的工作区追加在会话工作区之后（同名目录不重复出现）。
+func mergeGitWorkspaces(fromSessions []Workspace, opts ScanOptions) []Workspace {
+	if len(opts.Roots) == 0 {
+		return fromSessions
+	}
+
+	seen := make(map[string]bool, len(fromSessions))
+	for _, w := range fromSessions {
+		seen[NormalizePath(w.Path)] = true
+	}
+
+	out := fromSessions
+	for _, w := range ScanGitRepos(opts.Roots, opts.MaxDepth, opts.Exclude) {
+		if seen[NormalizePath(w.Path)] {
+			continue
+		}
+		seen[NormalizePath(w.Path)] = true
+		out = append(out, w)
+	}
+	return out
 }
 
 // parseWith 按文件所属 provider 解析：用文件所在目录去匹配 provider 的会话根。
@@ -210,7 +259,7 @@ func hasDotDotPrefix(rel string) bool {
 		(len(rel) == 2 || rel[2] == filepath.Separator || rel[2] == '/')
 }
 
-func collectSessionFiles(home string, ps []providers.Provider, maxFiles int) ([]string, error) {
+func collectSessionFiles(home string, ps []providers.Provider, maxFiles int, deadline time.Time) ([]string, error) {
 	seen := map[string]bool{}
 	var files []string
 
@@ -226,6 +275,9 @@ func collectSessionFiles(home string, ps []providers.Provider, maxFiles int) ([]
 			err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
 					return nil
+				}
+				if time.Now().After(deadline) {
+					return fs.SkipAll // 网络盘/挂起目录不该拖住启动
 				}
 				if d.IsDir() {
 					return nil

@@ -23,15 +23,14 @@ type DetectSpec struct {
 }
 
 type Session struct {
-	ID         string
-	ToolID     string
-	Workspace  string
-	Title      string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	Messages   int
-	Path       string
-	ResumeArgs []string
+	ID        string
+	ToolID    string
+	Workspace string
+	Title     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	Messages  int
+	Path      string
 }
 
 // Launch 描述一次进程启动：会话恢复与新建会话都用它，交给 launcher 统一处理（含 Windows 的 .ps1 shim）。
@@ -61,8 +60,16 @@ func ReadHead(path string, limit int) ([]byte, error) {
 	defer f.Close()
 
 	buf := make([]byte, 0, limit)
-	chunk := make([]byte, min(limit, 64*1024))
+	chunkCap := 64 * 1024
+	if limit < chunkCap {
+		chunkCap = limit
+	}
+	chunk := make([]byte, chunkCap)
 	for len(buf) < limit {
+		want := limit - len(buf)
+		if want < len(chunk) {
+			chunk = chunk[:want]
+		}
 		n, err := f.Read(chunk)
 		if n > 0 {
 			buf = append(buf, chunk[:n]...)

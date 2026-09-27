@@ -114,8 +114,9 @@ func (Claude) WorkspaceToSlug(ws string) string {
 	return r.Replace(ws)
 }
 
-// SlugToWorkspace 是 WorkspaceToSlug 的逆运算，用于按工作区反查会话目录。
-// 盘符形态（D--xxx）可精确还原；其余情况按当前系统的分隔符还原。
+// SlugToWorkspace 是 WorkspaceToSlug 的逆运算，仅用于展示与粗筛，**不可作为权威来源**。
+// 它是有损的：路径里自带的 '-' 会被误还原成分隔符（真实 slug 如 D--data-wps-cache-303217782）。
+// 会话的工作区一律以记录里的 cwd 为准。
 func (Claude) SlugToWorkspace(slug string) string {
 	if len(slug) >= 3 && slug[1] == '-' && slug[2] == '-' {
 		return slug[0:1] + `:\` + strings.ReplaceAll(slug[3:], "-", `\`)
