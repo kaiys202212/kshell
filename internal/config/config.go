@@ -30,7 +30,7 @@ func Default() Config {
 	return Config{
 		ScanRoots: []string{"~"},
 		MaxDepth:  4,
-		Exclude: []string{".git", "node_modules", "vendor", "dist"},
+		Exclude:   []string{".git", "node_modules", "vendor", "dist"},
 		SSHOptions: SSHOptions{
 			ConnectTimeout:        5,
 			ExtraArgs:             []string{},
