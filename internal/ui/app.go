@@ -83,6 +83,7 @@ type Model struct {
 	statusWarn bool
 	failed     int
 	loading    bool
+	showHelp   bool
 	basket     []string // 上下文篮：文件视图里勾选的文件，新建会话时注入
 
 	tree         *workspace.Tree
@@ -331,6 +332,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveCursor(1)
 		return m, nil
 	case "esc":
+		if m.showHelp {
+			m.showHelp = false
+			return m, nil
+		}
 		m.focus = focusWorkspaces
 		return m, nil
 	case "a":
@@ -349,6 +354,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.toggleCandidate()
 			return m, nil
 		}
+	case "?":
+		m.showHelp = !m.showHelp
+		return m, nil
 	case "i":
 		if m.view == ViewRemote {
 			m.loading = true
@@ -597,7 +605,9 @@ func (m Model) View() string {
 	}
 
 	var body string
-	if m.width < minSplitWidth || m.height < minSplitHeight {
+	if m.showHelp {
+		body = renderHelp(bodyHeight, m.width, m.theme)
+	} else if m.width < minSplitWidth || m.height < minSplitHeight {
 		if bodyHeight < 2 {
 			body = m.renderRight(bodyHeight, m.width)
 		} else {

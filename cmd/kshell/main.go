@@ -36,11 +36,22 @@ func main() {
 		fmt.Fprintln(os.Stderr, "kshell: 读取连接文件失败:", err)
 	}
 
+	// 自定义工具（D 类）：文件不存在时写入带预置项的模板，存在则按用户配置加载。
+	if err := providers.EnsureProvidersFile(paths.Providers); err != nil {
+		fmt.Fprintln(os.Stderr, "kshell: 无法写入 providers.yaml:", err)
+	}
+	providerList := []providers.Provider{providers.Claude{}, providers.Codex{}, providers.Gemini{}}
+	if specs, err := providers.LoadGenericSpecs(paths.Providers); err == nil {
+		for _, spec := range specs {
+			providerList = append(providerList, providers.Generic{Spec: spec, Home: home})
+		}
+	}
+
 	model := ui.NewModelWith(ui.Options{
 		Home:      home,
 		Config:    cfg,
 		CachePath: paths.CacheIndex,
-		Providers: []providers.Provider{providers.Claude{}, providers.Codex{}, providers.Gemini{}},
+		Providers: providerList,
 		Store:     store,
 		Scanners: []remote.Scanner{
 			scanners.SSHConfigScanner{},
