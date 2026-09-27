@@ -33,8 +33,9 @@ func TestViewNamesMatchViewCount(t *testing.T) {
 
 func TestThemeDropsColorWhenNoColorSet(t *testing.T) {
 	// 钉死彩色 profile，否则非 TTY 环境下本测试永远为真（实现不处理 NO_COLOR 也会通过）。
+	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
-	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
 
 	t.Setenv("NO_COLOR", "1")
 	theme := NewTheme()
