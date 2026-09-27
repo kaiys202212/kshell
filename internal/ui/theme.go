@@ -1,6 +1,10 @@
 package ui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"os"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // Theme 集中定义配色，避免样式散落在各面板里。
 type Theme struct {
@@ -15,6 +19,10 @@ type Theme struct {
 }
 
 func NewTheme() Theme {
+	if os.Getenv("NO_COLOR") != "" {
+		return plainTheme()
+	}
+
 	accent := lipgloss.Color("39")
 	dim := lipgloss.Color("245")
 	fg := lipgloss.Color("252")
@@ -28,5 +36,20 @@ func NewTheme() Theme {
 		Body:      lipgloss.NewStyle().Foreground(fg),
 		Preview:   lipgloss.NewStyle().Foreground(fg),
 		StatusBar: lipgloss.NewStyle().Foreground(dim),
+	}
+}
+
+// plainTheme 供 NO_COLOR 环境使用：保留粗体层级，不输出任何颜色转义。
+func plainTheme() Theme {
+	plain := lipgloss.NewStyle()
+	return Theme{
+		Title:     plain.Bold(true),
+		Tab:       plain,
+		TabActive: plain.Bold(true),
+		Header:    plain.Bold(true),
+		Muted:     plain,
+		Body:      plain,
+		Preview:   plain,
+		StatusBar: plain,
 	}
 }

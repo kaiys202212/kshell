@@ -24,6 +24,22 @@ func TestAppRendersThreeRegions(t *testing.T) {
 	}
 }
 
+func TestThemeDropsColorWhenNoColorSet(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	theme := NewTheme()
+	for name, style := range map[string]lipgloss.Style{
+		"Title":     theme.Title,
+		"Tab":       theme.Tab,
+		"TabActive": theme.TabActive,
+		"Header":    theme.Header,
+		"Muted":     theme.Muted,
+	} {
+		if got := style.Render("kshell"); strings.Contains(got, "\x1b[") {
+			t.Fatalf("%s emitted ANSI escape under NO_COLOR: %q", name, got)
+		}
+	}
+}
+
 func TestAppCollapsesToSingleColumnOnSmallTerminal(t *testing.T) {
 	m := NewModel()
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})

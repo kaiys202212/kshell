@@ -107,7 +107,7 @@ Expected: FAIL（undefined: NewModel）
 
 **Step 4: 最小实现**
 `internal/ui/theme.go`：定义 `Theme`（深色配色，`lipgloss.AdaptiveColor` 或检测 `NO_COLOR` 环境变量后降级为纯色）。
-`internal/ui/app.go`：`Model{ width, height, view ViewID }`，`View()` 用 `lipgloss.JoinVertical` 拼顶栏/主体/底栏；主体用 `JoinHorizontal` 拼左列表与右预览；宽度 <80 或高度 <24 时只渲染主体左栏。
+`internal/ui/app.go`：`Model{ width, height, view ViewID }`，`View()` 用 `lipgloss.JoinVertical` 拼顶栏/主体/底栏；主体用 `JoinHorizontal` 拼左列表与右预览；宽度 <80 或高度 <24 时**折叠为纵向单栏**（列表在上、预览在下，不做横向分栏）。
 `cmd/kshell/main.go`：`tea.NewProgram(ui.NewModel(), tea.WithAltScreen())`。
 
 **Step 5: 运行确认通过**

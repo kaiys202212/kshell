@@ -7,9 +7,9 @@ import (
 )
 
 // SSHOptions 影响 remote 包拼装 ssh 参数的方式，集中配置便于按环境调整。
+// BatchMode 不作为配置项：kshell 永远传 -o BatchMode=yes，避免卡在密码/密钥交互提示上。
 type SSHOptions struct {
 	ConnectTimeout        int      `yaml:"connect_timeout"`
-	BatchMode             bool     `yaml:"batch_mode"`
 	ExtraArgs             []string `yaml:"extra_args"`
 	CommandTimeoutSeconds int      `yaml:"command_timeout_seconds"`
 }
@@ -26,10 +26,9 @@ func Default() Config {
 	return Config{
 		ScanRoots: []string{"~"},
 		MaxDepth:  4,
-		Exclude:   []string{".git", "node_modules", "vendor", "dist", "build"},
+		Exclude: []string{".git", "node_modules", "vendor", "dist"},
 		SSHOptions: SSHOptions{
 			ConnectTimeout:        5,
-			BatchMode:             true,
 			ExtraArgs:             []string{},
 			CommandTimeoutSeconds: 60,
 		},
@@ -56,6 +55,7 @@ func Load(p Layout) (Config, error) {
 	var c Config
 	if err := yaml.Unmarshal(data, &c); err != nil {
 		_ = os.Rename(p.Config, p.Config+".bak")
+		_ = Save(p, Default()) // 重建一份默认配置，避免用户面对空目录
 		return Default(), nil
 	}
 	return c.normalized(), nil
