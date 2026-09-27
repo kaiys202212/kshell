@@ -4,6 +4,8 @@ frontend/dist/*
 !frontend/dist/.gitkeep
 frontend/node_modules/
 frontend/package.json.md5
+node_modules/
+.codebuddy/
 *.exe
 *.test
 *.tmp
