@@ -1,6 +1,10 @@
 // 手写的 Wails 绑定调用封装：不依赖 `wails generate module` 的生成产物，
-// 通过 window.go.main.App 动态调用 internal/desktop.App 的绑定方法，
+// 通过 window.go.desktop.App 动态调用 internal/desktop.App 的绑定方法，
 // 事件用 wailsjs/runtime 的 EventsOn 监听。后续任务可整体替换为生成绑定。
+//
+// 注意命名空间：Wails v2 按「结构体定义所在包」生成运行时绑定路径——
+// App 定义在 internal/desktop 包，所以是 window.go.desktop.App（不是 main.App），
+// 见 wailsjs/go/desktop/App.js 的生成产物（window['go']['desktop']['App']）。
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 // discovery.Workspace 的 JSON 形态（internal/discovery/workspaces.go）
@@ -110,7 +114,7 @@ interface AppBindings {
 
 declare global {
   interface Window {
-    go?: { main: { App: AppBindings } };
+    go?: { desktop: { App: AppBindings } };
   }
 }
 
@@ -118,7 +122,7 @@ declare global {
 // 并只警告一次，避免每次刷新都刷屏。
 let warnedNoBinding = false;
 function app(): AppBindings | null {
-  const a = window.go?.main?.App ?? null;
+  const a = window.go?.desktop?.App ?? null;
   if (!a && !warnedNoBinding) {
     warnedNoBinding = true;
     console.warn('未检测到 kshell 桌面端绑定，请在桌面端运行');

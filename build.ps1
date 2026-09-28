@@ -57,12 +57,19 @@ if ($Test) {
 }
 
 if ($Desktop) {
-    # wails build 会按 wails.json 自动执行 frontend 的 npm install / build，再绑定打包
+    # wails build 会按 wails.json 自动执行 frontend 的 npm install / build，再绑定打包。
+    # 经 cmd /c 间接执行：wails 把进度日志（KnownStructs 等）写到 stderr，
+    # PowerShell 5.1 在 $ErrorActionPreference='Stop' 下会把它们误判为 terminating error。
     Write-Host '==> wails build' -ForegroundColor Cyan
-    wails build
+    cmd /c "wails build"
     if ($LASTEXITCODE -ne 0) { exit 1 }
     New-Item dist -ItemType Directory -Force | Out-Null
-    Copy-Item build\bin\kshell.exe dist\kshell-desktop.exe -Force
+    try {
+        Copy-Item build\bin\kshell.exe dist\kshell-desktop.exe -Force
+    } catch [System.IO.IOException] {
+        Write-Host '[错误] dist\kshell-desktop.exe 被占用——桌面版应用正在运行，请先从托盘退出再构建' -ForegroundColor Red
+        exit 1
+    }
     $out = Get-Item dist\kshell-desktop.exe
     $size = $out.Length / 1MB
     Write-Host ("==> 完成: {0} ({1:N1} MB, {2:yyyy-MM-dd HH:mm:ss})" -f $out.FullName, $size, $out.LastWriteTime) -ForegroundColor Green
