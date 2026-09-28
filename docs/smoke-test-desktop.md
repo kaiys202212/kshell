@@ -31,9 +31,9 @@
 ## SSH 连接
 
 - [ ] **SSH 连接弹窗与聚焦复用**
-  - 前置：Remote 列表中至少有一条已保存连接；本机 PATH 里有 ssh
-  - 步骤：点击连接行的「打开」弹出 ssh 终端窗口；再次点击该行「打开」
-  - 预期：首次弹出标题为 `kshell · ssh <名称>` 的终端窗口；再次点击不弹新窗，而是聚焦复用已有窗口
+  - 前置：SSH 面板中至少有一条已保存连接；本机 PATH 里有 ssh
+  - 步骤：点击连接行的「连接」弹出 ssh 终端窗口；再次点击该行「连接」
+  - 预期：首次弹出标题为 `kshell · <连接名>` 的终端窗口；再次点击不弹新窗，而是聚焦复用已有窗口
 
 ## 托盘
 
@@ -60,14 +60,16 @@
 ## 兼容性
 
 - [ ] **WT 未安装回退 PowerShell**
-  - 前置：模拟 Windows Terminal 缺失——先记录 wt.exe 所在目录（通常 `…\Microsoft\WindowsApps`），再在一个临时 PowerShell 里启动应用并剔除该目录：
+  - 前置：模拟 Windows Terminal 缺失。**注意：仅从 PATH 剔除 WindowsApps 目录无效**——`findWt()` 在 LookPath 失败后还会回退探测 `%LOCALAPPDATA%\Microsoft\WindowsApps\wt.exe`，该路径不受 PATH 影响。有效做法是临时重命名 wt.exe（验证后还原）：
     ```powershell
-    $env:Path = ($env:Path -split ';' | Where-Object { $_ -notlike '*WindowsApps*' }) -join ';'
+    Rename-Item "$env:LOCALAPPDATA\Microsoft\WindowsApps\wt.exe" wt.exe.bak
     .\dist\kshell-desktop.exe
+    # 验证完毕后：
+    Rename-Item "$env:LOCALAPPDATA\Microsoft\WindowsApps\wt.exe.bak" wt.exe
     ```
-    （也可临时重命名 `%LOCALAPPDATA%\Microsoft\WindowsApps\wt.exe`，验证后还原。）
+    （若 wt.exe 在 PATH 的其他位置，需一并重命名或临时剔除对应目录。）
   - 步骤：在上述环境中恢复任一会话
-  - 预期：弹出的是 PowerShell 窗口（非 WT），会话正常启动；还原 PATH 后再恢复，弹回 WT 窗口
+  - 预期：弹出的是 PowerShell 窗口（非 WT），会话正常启动；还原 wt.exe 后再恢复，弹回 WT 窗口
 - [ ] **深浅色主题**
   - 步骤：Windows 设置里切换深色/浅色模式，重启应用；前端界面里若有主题跟随设置也一并切换
   - 预期：两种模式下界面配色正常、无不可读的对比度问题；托盘图标在两种模式下均可见
