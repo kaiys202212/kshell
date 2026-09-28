@@ -96,6 +96,24 @@ func TestScanSessionsDelegatesToDiscovery(t *testing.T) {
 	}
 }
 
+func TestGetSessions(t *testing.T) {
+	app, _, _ := newTestApp(t)
+
+	if got := app.GetSessions(); got == nil || len(got) != 0 {
+		t.Fatalf("未扫描时 GetSessions 应为空切片, got %+v", got)
+	}
+	app.runScan()
+	got := app.GetSessions()
+	if len(got) != 1 || got[0].ID != "s1" {
+		t.Fatalf("GetSessions = %+v", got)
+	}
+
+	// 未装配的 App 也不应返回 nil，避免前端拿到 null
+	if got := (NewApp()).GetSessions(); got == nil || len(got) != 0 {
+		t.Fatalf("未装配时 GetSessions 应为空切片, got %+v", got)
+	}
+}
+
 func TestScanSessionsTriggersBackgroundScan(t *testing.T) {
 	app, _, _ := newTestApp(t)
 

@@ -215,6 +215,19 @@ func (a *App) GetWorkspaces() []discovery.Workspace {
 	return a.result.Workspaces
 }
 
+// GetSessions 返回最近一次扫描的会话列表（未扫完时为空切片）。
+// 与 ScanSessions 不同，本方法只读缓存、不触发新的后台扫描，
+// 供前端会话列表反复刷新用，避免和 scan:done 事件形成循环。
+// 返回值是共享切片：Result 整体替换、替换后只读，调用方不得原地修改。
+func (a *App) GetSessions() []providers.Session {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.result == nil {
+		return []providers.Session{}
+	}
+	return a.result.Sessions
+}
+
 // ResumeSession 恢复指定会话：弹出新终端窗口并在其中启动 agent CLI。
 // 同一标题的窗口已存在时复用聚焦，不会重复弹窗。
 func (a *App) ResumeSession(id string) error {
