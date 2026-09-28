@@ -43,7 +43,8 @@ function App() {
       if (!e.ctrlKey) return;
       if (e.key === 'k' || e.key === 'K') {
         e.preventDefault();
-        setSwitcherOpen(true);
+        // toggle：已打开时再按关闭
+        setSwitcherOpen((v) => !v);
       } else if (e.key === 'f' || e.key === 'F') {
         e.preventDefault();
         const { activeTabId: current } = useAppStore.getState();
@@ -112,7 +113,8 @@ function App() {
         {activeTabId === SETTINGS_TAB_ID ? (
           <Settings />
         ) : activeTab ? (
-          <WorkspaceTabView tab={activeTab} />
+          // key 按工作区区分实例：页签间切换不串内部状态（预览路径/选中连接/子页签）
+          <WorkspaceTabView key={activeTab.id} tab={activeTab} />
         ) : (
           <Home />
         )}

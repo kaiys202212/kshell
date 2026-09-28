@@ -48,11 +48,9 @@ func ProbeVersion(bin string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), versionProbeTimeout)
 	defer cancel()
 
-	out, err := func() ([]byte, error) {
-		cmd := exec.CommandContext(ctx, bin, "--version")
-		executil.HideWindow(cmd) // 桌面端扫描时避免黑窗闪烁
-		return cmd.Output()
-	}()
+	cmd := exec.CommandContext(ctx, bin, "--version")
+	executil.HideWindow(cmd) // 桌面端扫描时避免黑窗闪烁
+	out, err := cmd.Output()
 	if err != nil {
 		return "unknown"
 	}

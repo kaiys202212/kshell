@@ -105,7 +105,11 @@ export const useAppStore = create<AppState>()(
 
       toasts: [],
       notify: (title, tone = 'info') =>
-        set((s) => ({ toasts: [...s.toasts, { id: nextToastId++, title, tone }] })),
+        set((s) => {
+          const toasts = [...s.toasts, { id: nextToastId++, title, tone }];
+          // 上限保护：窗口失焦时 Radix 暂停自动关闭计时，连续操作会堆积
+          return { toasts: toasts.length > 5 ? toasts.slice(toasts.length - 5) : toasts };
+        }),
       dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
       windowStatus: {},
