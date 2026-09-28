@@ -31,6 +31,7 @@ export default function SessionList({ workspacePath }: { workspacePath: string }
   const setWindowStatus = useAppStore((s) => s.setWindowStatus);
   const scanState = useAppStore((s) => s.scanState);
   const setScanState = useAppStore((s) => s.setScanState);
+  const notify = useAppStore((s) => s.notify);
 
   useEffect(() => {
     let cancelled = false;
@@ -92,8 +93,10 @@ export default function SessionList({ workspacePath }: { workspacePath: string }
     try {
       await resumeSession(s.ID);
       setWindowStatus(key, true);
-    } catch {
-      // 启动失败（未就绪等）不弹窗打断，行状态保持原样
+      notify('已在外部终端打开', 'success');
+    } catch (e: unknown) {
+      // 启动失败（未就绪等）不弹窗打断：行状态保持原样，轻量提示告知原因
+      notify(`恢复会话失败：${e instanceof Error ? e.message : String(e)}`, 'error');
     }
   };
 

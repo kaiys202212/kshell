@@ -6,6 +6,7 @@ import { getWorkspaces, onScanDone, scanSessions } from '../lib/api';
 import type { Workspace } from '../lib/api';
 import { useAppStore } from '../state/store';
 import { Badge } from '../components/ui/badge';
+import { Button } from '../components/ui/button';
 import { EmptyState } from '../components/ui/empty-state';
 import { Skeleton } from '../components/ui/skeleton';
 
@@ -56,10 +57,27 @@ export default function Home() {
     (a, b) => b.SessionCount - a.SessionCount || a.Name.localeCompare(b.Name),
   );
 
+  // 重新扫描：复用 onScanDone 订阅刷新；扫描进行中按钮禁用防重复触发
+  const handleRescan = () => {
+    if (scanState === 'scanning') return;
+    setScanState('scanning');
+    scanSessions();
+  };
+
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="max-w-2xl">
-        <h1 className="mb-4 text-lg font-semibold">工作区</h1>
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <h1 className="text-lg font-semibold">工作区</h1>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={scanState === 'scanning'}
+            onClick={handleRescan}
+          >
+            {scanState === 'scanning' ? '扫描中…' : '重新扫描'}
+          </Button>
+        </div>
         {sorted.length === 0 ? (
           // 空态按 scanState 收敛：扫描未完成（idle/scanning）用骨架屏占位，
           // done 后仍未发现才是「确实没有」

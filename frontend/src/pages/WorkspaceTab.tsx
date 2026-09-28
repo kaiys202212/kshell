@@ -9,6 +9,7 @@ import Preview from '../components/Preview';
 import SessionList from '../components/SessionList';
 import SshPanel from '../components/SshPanel';
 import { Button } from '../components/ui/button';
+import { useAppStore } from '../state/store';
 import type { WorkspaceTab } from '../state/store';
 
 type RightPane = 'files' | 'ssh';
@@ -21,15 +22,15 @@ const paneTabActive = 'bg-accent text-accent-foreground font-medium hover:bg-acc
 export default function WorkspaceTabView({ tab }: { tab: WorkspaceTab }) {
   const [rightPane, setRightPane] = useState<RightPane>('files');
   const [previewPath, setPreviewPath] = useState<string | null>(null);
-  const [newErr, setNewErr] = useState('');
+  const notify = useAppStore((s) => s.notify);
 
   // 新建会话：Go 侧自动带上上下文篮内容（篮子状态在每次增删时已按返回值同步）
   const handleNewSession = async () => {
-    setNewErr('');
     try {
       await newSession(tab.id);
+      notify('已创建会话', 'success');
     } catch {
-      setNewErr('新建会话失败（工作区未就绪或启动出错）');
+      notify('新建会话失败（工作区未就绪或启动出错）', 'error');
     }
   };
 
@@ -40,7 +41,6 @@ export default function WorkspaceTabView({ tab }: { tab: WorkspaceTab }) {
           <Button variant="secondary" className="w-full" onClick={() => void handleNewSession()}>
             新建会话
           </Button>
-          {newErr && <p className="mt-1.5 text-xs text-destructive">{newErr}</p>}
         </div>
         <SessionList workspacePath={tab.id} />
       </aside>
@@ -63,11 +63,14 @@ export default function WorkspaceTabView({ tab }: { tab: WorkspaceTab }) {
             SSH
           </button>
         </div>
-        {rightPane === 'files' ? (
+        {/* 双面板常挂载，仅用 hidden 切换显示：切「文件|SSH」页签不再卸载重载，
+            文件树展开态与 SSH 连接列表/命令历史得以保留 */}
+        <div className={cn('min-h-0 flex-1', rightPane !== 'files' && 'hidden')}>
           <FileTree wsPath={tab.id} onOpenFile={setPreviewPath} />
-        ) : (
+        </div>
+        <div className={cn('min-h-0 flex-1', rightPane !== 'ssh' && 'hidden')}>
           <SshPanel wsPath={tab.id} />
-        )}
+        </div>
       </aside>
     </div>
   );

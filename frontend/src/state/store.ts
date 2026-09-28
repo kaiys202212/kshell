@@ -1,6 +1,8 @@
 // 全局前端状态（Zustand）：工作区列表、打开的页签、上下文篮、弹窗窗口状态。
-// 不做持久化：数据来源都是 Go 绑定层，刷新即重取。
+// 页签（openTabs/activeTabId）经 persist 中间件持久化到 localStorage（key kshell-tabs），
+// 重开应用后恢复上次的工作区页签；其余字段的数据来源都是 Go 绑定层，刷新即重取，不持久化。
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { Workspace } from '../lib/api';
 
 // toast 的自增 id（模块级：store 单例，保证 id 唯一即可）
@@ -56,55 +58,64 @@ interface AppState {
   setWindowStatus(title: string, open: boolean): void;
 }
 
-export const useAppStore = create<AppState>((set) => ({
-  workspaces: [],
-  scanState: 'idle',
-  setWorkspaces: (list) => set({ workspaces: list }),
+export const useAppStore = create<AppState>()(
+  persist(
+    (set) => ({
+      workspaces: [],
+      scanState: 'idle',
+      setWorkspaces: (list) => set({ workspaces: list }),
 
-  openTabs: [],
-  activeTabId: null,
-  openTab: (ws) =>
-    set((s) => {
-      if (s.openTabs.some((t) => t.id === ws.Path)) {
-        return { activeTabId: ws.Path };
-      }
-      return {
-        openTabs: [...s.openTabs, { id: ws.Path, name: ws.Name }],
-        activeTabId: ws.Path,
-      };
+      openTabs: [],
+      activeTabId: null,
+      openTab: (ws) =>
+        set((s) => {
+          if (s.openTabs.some((t) => t.id === ws.Path)) {
+            return { activeTabId: ws.Path };
+          }
+          return {
+            openTabs: [...s.openTabs, { id: ws.Path, name: ws.Name }],
+            activeTabId: ws.Path,
+          };
+        }),
+      closeTab: (id) =>
+        set((s) => {
+          const openTabs = s.openTabs.filter((t) => t.id !== id);
+          let activeTabId = s.activeTabId;
+          if (s.activeTabId === id) {
+            // 关掉当前页签时激活右侧邻居，没有邻居就回到首页
+            const idx = s.openTabs.findIndex((t) => t.id === id);
+            activeTabId = openTabs[Math.min(idx, openTabs.length - 1)]?.id ?? null;
+          }
+          return { openTabs, activeTabId };
+        }),
+      setActiveTab: (id) => set({ activeTabId: id }),
+
+      setScanState: (scanState) => set({ scanState }),
+
+      basket: [],
+      syncBasket: (path, inBasket) =>
+        set((s) => ({
+          basket: inBasket
+            ? s.basket.includes(path)
+              ? s.basket
+              : [...s.basket, path]
+            : s.basket.filter((p) => p !== path),
+        })),
+      setBasket: (paths) => set({ basket: paths }),
+
+      toasts: [],
+      notify: (title, tone = 'info') =>
+        set((s) => ({ toasts: [...s.toasts, { id: nextToastId++, title, tone }] })),
+      dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+
+      windowStatus: {},
+      setWindowStatus: (title, open) =>
+        set((s) => ({ windowStatus: { ...s.windowStatus, [title]: open } })),
     }),
-  closeTab: (id) =>
-    set((s) => {
-      const openTabs = s.openTabs.filter((t) => t.id !== id);
-      let activeTabId = s.activeTabId;
-      if (s.activeTabId === id) {
-        // 关掉当前页签时激活右侧邻居，没有邻居就回到首页
-        const idx = s.openTabs.findIndex((t) => t.id === id);
-        activeTabId = openTabs[Math.min(idx, openTabs.length - 1)]?.id ?? null;
-      }
-      return { openTabs, activeTabId };
-    }),
-  setActiveTab: (id) => set({ activeTabId: id }),
-
-  setScanState: (scanState) => set({ scanState }),
-
-  basket: [],
-  syncBasket: (path, inBasket) =>
-    set((s) => ({
-      basket: inBasket
-        ? s.basket.includes(path)
-          ? s.basket
-          : [...s.basket, path]
-        : s.basket.filter((p) => p !== path),
-    })),
-  setBasket: (paths) => set({ basket: paths }),
-
-  toasts: [],
-  notify: (title, tone = 'info') =>
-    set((s) => ({ toasts: [...s.toasts, { id: nextToastId++, title, tone }] })),
-  dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
-
-  windowStatus: {},
-  setWindowStatus: (title, open) =>
-    set((s) => ({ windowStatus: { ...s.windowStatus, [title]: open } })),
-}));
+    {
+      name: 'kshell-tabs',
+      // 只持久化页签两字段：工作区/篮子/提示等要么来自 Go 侧、要么是易失的内存态
+      partialize: (s) => ({ openTabs: s.openTabs, activeTabId: s.activeTabId }),
+    },
+  ),
+);
