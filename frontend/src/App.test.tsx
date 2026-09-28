@@ -32,7 +32,7 @@ beforeEach(() => {
     openTabs: [],
     activeTabId: null,
     basket: [],
-    message: '',
+    toasts: [],
     windowStatus: {},
     scanState: 'idle',
   });

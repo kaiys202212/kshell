@@ -13,7 +13,6 @@ function basename(p: string): string {
 export default function BasketBar() {
   const basket = useAppStore((s) => s.basket);
   const syncBasket = useAppStore((s) => s.syncBasket);
-  const message = useAppStore((s) => s.message);
   const notify = useAppStore((s) => s.notify);
 
   const remove = async (path: string) => {
@@ -31,7 +30,6 @@ export default function BasketBar() {
       <span className="basket-title">
         上下文篮（{basket.length}/{maxBasket}）
       </span>
-      {message && <span className="app-message">{message}</span>}
       {basket.length === 0 ? (
         <span className="basket-empty">未选择文件</span>
       ) : (

@@ -54,7 +54,7 @@ beforeEach(() => {
   mocks.listConnections.mockResolvedValue(conns);
   mocks.openSSH.mockResolvedValue(undefined);
   mocks.execRemote.mockResolvedValue(result({ Stdout: 'ok' }));
-  useAppStore.setState({ windowStatus: {}, message: '' });
+  useAppStore.setState({ windowStatus: {}, toasts: [] });
 });
 
 // 按连接名找列表行（li 元素）
@@ -140,7 +140,9 @@ describe('SshPanel', () => {
     expect(useAppStore.getState().windowStatus['kshell · 生产机']).toBeUndefined();
     expect(row).not.toHaveClass('ssh-item--open');
     // 操作失败走 store 的轻量提示，面板本身保持完整渲染（列表仍在）
-    expect(useAppStore.getState().message).toContain('未找到 ssh 可执行文件');
+    expect(
+      useAppStore.getState().toasts.some((t) => t.title.includes('未找到 ssh 可执行文件')),
+    ).toBe(true);
     expect(screen.getByLabelText('SSH 连接列表')).toBeInTheDocument();
   });
 

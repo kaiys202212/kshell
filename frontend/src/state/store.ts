@@ -3,15 +3,20 @@
 import { create } from 'zustand';
 import type { Workspace } from '../lib/api';
 
-// 轻量提示的展示时长（毫秒）
-const MESSAGE_TTL_MS = 3000;
-// notify 的自动清空定时器（模块级：store 单例，定时器也只需一份）
-let messageTimer: ReturnType<typeof setTimeout> | null = null;
+// toast 的自增 id（模块级：store 单例，保证 id 唯一即可）
+let nextToastId = 1;
 
 // 一个页签对应一个打开的工作区（按路径去重，可多开、可关闭）
 export interface WorkspaceTab {
   id: string; // 工作区路径，作为页签唯一标识
   name: string;
+}
+
+// 轻量提示条目：id 用于移除，tone 决定 Toaster 的配色
+export interface Toast {
+  id: number;
+  title: string;
+  tone: 'info' | 'success' | 'error';
 }
 
 // 设置页固定页签的保留标识（带命名空间前缀，不会与工作区路径冲突）
@@ -38,10 +43,11 @@ interface AppState {
   // 用 Go GetBasket 的返回值整体重建镜像（应用挂载时调用，防刷新漂移）
   setBasket(paths: string[]): void;
 
-  // 轻量全局提示（篮满、操作失败等）：单条文本，notify 后自动消失，
-  // 不引入 toast 库。由 BasketBar 行内展示。
-  message: string;
-  notify(msg: string): void;
+  // 轻量全局提示（篮满、操作失败等）：toast 队列，notify 只负责追加，
+  // 自动关闭与移除由 Toaster 侧（Radix duration/onOpenChange）调 dismissToast 完成。
+  toasts: Toast[];
+  notify(title: string, tone?: Toast['tone']): void;
+  dismissToast(id: number): void;
 
   // 弹出的终端窗口状态（窗口标题 → 是否存活）：
   // SessionList 恢复成功把对应项置 true，"window:closed" 事件把对应项还原为 false。
@@ -93,16 +99,10 @@ export const useAppStore = create<AppState>((set) => ({
     })),
   setBasket: (paths) => set({ basket: paths }),
 
-  message: '',
-  notify: (msg) => {
-    // 连续提示只保留最后一条：先清掉未到期的新定时器再重设，避免叠加清空
-    if (messageTimer !== null) clearTimeout(messageTimer);
-    messageTimer = setTimeout(() => {
-      messageTimer = null;
-      set({ message: '' });
-    }, MESSAGE_TTL_MS);
-    set({ message: msg });
-  },
+  toasts: [],
+  notify: (title, tone = 'info') =>
+    set((s) => ({ toasts: [...s.toasts, { id: nextToastId++, title, tone }] })),
+  dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
   windowStatus: {},
   setWindowStatus: (title, open) =>

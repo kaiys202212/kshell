@@ -32,7 +32,7 @@ afterEach(cleanup);
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useAppStore.setState({ basket: [], message: '' });
+  useAppStore.setState({ basket: [], toasts: [] });
 });
 
 describe('FileTree', () => {
@@ -174,7 +174,7 @@ describe('FileTree', () => {
       fireEvent.keyDown(name, { key: ' ' });
     });
 
-    expect(useAppStore.getState().message).toContain('篮子已满');
+    expect(useAppStore.getState().toasts.some((t) => t.title.includes('篮子已满'))).toBe(true);
   });
 
   it('篮子操作抛错时提示失败，不打断浏览', async () => {
@@ -187,6 +187,6 @@ describe('FileTree', () => {
       fireEvent.keyDown(name, { key: ' ' });
     });
 
-    expect(useAppStore.getState().message).toContain('篮子操作失败');
+    expect(useAppStore.getState().toasts.some((t) => t.title.includes('篮子操作失败'))).toBe(true);
   });
 });

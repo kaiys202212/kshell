@@ -1,13 +1,9 @@
-// store 增量测试：setBasket 重建篮子镜像、notify 轻量提示自动消失。
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+// store 增量测试：setBasket 重建篮子镜像、notify/dismissToast 轻量提示队列。
+import { beforeEach, describe, expect, it } from 'vitest';
 import { SETTINGS_TAB_ID, useAppStore } from './store';
 
-afterEach(() => {
-  vi.useRealTimers();
-});
-
 beforeEach(() => {
-  useAppStore.setState({ basket: [], message: '' });
+  useAppStore.setState({ basket: [], toasts: [] });
 });
 
 describe('store', () => {
@@ -21,26 +17,38 @@ describe('store', () => {
     expect(useAppStore.getState().basket).toEqual([]);
   });
 
-  it('notify 设置提示文本，3 秒后自动消失', () => {
-    vi.useFakeTimers();
-    useAppStore.getState().notify('篮子已满');
-    expect(useAppStore.getState().message).toBe('篮子已满');
-
-    vi.advanceTimersByTime(3000);
-    expect(useAppStore.getState().message).toBe('');
-  });
-
-  it('连续 notify 只保留最后一条，且定时器不叠加', () => {
-    vi.useFakeTimers();
+  it('notify 追加提示（不截断），语气默认 info，id 互不相同', () => {
     useAppStore.getState().notify('第一条');
-    vi.advanceTimersByTime(2000);
     useAppStore.getState().notify('第二条');
 
-    vi.advanceTimersByTime(2000); // 距第一条 4s，距第二条 2s
-    expect(useAppStore.getState().message).toBe('第二条');
+    const toasts = useAppStore.getState().toasts;
+    expect(toasts).toHaveLength(2);
+    expect(toasts[0]).toMatchObject({ title: '第一条', tone: 'info' });
+    expect(toasts[1]).toMatchObject({ title: '第二条', tone: 'info' });
+    expect(new Set(toasts.map((t) => t.id)).size).toBe(2);
+  });
 
-    vi.advanceTimersByTime(1000);
-    expect(useAppStore.getState().message).toBe('');
+  it('notify 可指定语气（success/error）', () => {
+    useAppStore.getState().notify('已完成', 'success');
+    useAppStore.getState().notify('失败了', 'error');
+
+    const toasts = useAppStore.getState().toasts;
+    expect(toasts[0].tone).toBe('success');
+    expect(toasts[1].tone).toBe('error');
+  });
+
+  it('dismissToast 移除指定提示且不影响其他；移除不存在的 id 是安全空操作', () => {
+    useAppStore.getState().notify('第一条');
+    useAppStore.getState().notify('第二条');
+    const firstId = useAppStore.getState().toasts[0].id;
+
+    useAppStore.getState().dismissToast(firstId);
+    const toasts = useAppStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].title).toBe('第二条');
+
+    useAppStore.getState().dismissToast(999_999);
+    expect(useAppStore.getState().toasts).toHaveLength(1);
   });
 
   it('SETTINGS_TAB_ID 是保留的页签标识，不与工作区路径冲突', () => {

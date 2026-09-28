@@ -7,6 +7,7 @@ import { getBasket } from './lib/api';
 import Home from './pages/Home';
 import Settings from './pages/Settings';
 import WorkspaceTabView from './pages/WorkspaceTab';
+import { Toaster } from './components/ui/toaster';
 import { SETTINGS_TAB_ID, useAppStore } from './state/store';
 
 function App() {
@@ -25,46 +26,49 @@ function App() {
   }, []);
 
   return (
-    <div className="app">
-      <div className="tabbar">
-        <button
-          className={activeTabId === null ? 'tab tab-active' : 'tab'}
-          onClick={() => setActiveTab(null)}
-        >
-          首页
-        </button>
-        <button
-          className={activeTabId === SETTINGS_TAB_ID ? 'tab tab-active' : 'tab'}
-          onClick={() => setActiveTab(SETTINGS_TAB_ID)}
-        >
-          设置
-        </button>
-        {openTabs.map((t) => (
-          <div
-            key={t.id}
-            className={activeTab?.id === t.id ? 'tab tab-active' : 'tab'}
+    <>
+      <div className="app">
+        <div className="tabbar">
+          <button
+            className={activeTabId === null ? 'tab tab-active' : 'tab'}
+            onClick={() => setActiveTab(null)}
           >
-            <button className="tab-title" onClick={() => setActiveTab(t.id)}>
-              {t.name}
-            </button>
-            <button
-              className="tab-close"
-              aria-label={`关闭 ${t.name}`}
-              onClick={() => closeTab(t.id)}
+            首页
+          </button>
+          <button
+            className={activeTabId === SETTINGS_TAB_ID ? 'tab tab-active' : 'tab'}
+            onClick={() => setActiveTab(SETTINGS_TAB_ID)}
+          >
+            设置
+          </button>
+          {openTabs.map((t) => (
+            <div
+              key={t.id}
+              className={activeTab?.id === t.id ? 'tab tab-active' : 'tab'}
             >
-              ×
-            </button>
-          </div>
-        ))}
+              <button className="tab-title" onClick={() => setActiveTab(t.id)}>
+                {t.name}
+              </button>
+              <button
+                className="tab-close"
+                aria-label={`关闭 ${t.name}`}
+                onClick={() => closeTab(t.id)}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+        {activeTabId === SETTINGS_TAB_ID ? (
+          <Settings />
+        ) : activeTab ? (
+          <WorkspaceTabView tab={activeTab} />
+        ) : (
+          <Home />
+        )}
       </div>
-      {activeTabId === SETTINGS_TAB_ID ? (
-        <Settings />
-      ) : activeTab ? (
-        <WorkspaceTabView tab={activeTab} />
-      ) : (
-        <Home />
-      )}
-    </div>
+      <Toaster />
+    </>
   );
 }
 
