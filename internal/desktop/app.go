@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
+	"github.com/yangk/kshell/internal/executil"
 	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/remote"
@@ -191,6 +193,11 @@ func (a *App) StartTray() {
 	)
 }
 
+// quitRuntime 是 runtime.Quit 的包级变量抽象：测试注入用。
+// Wails 的 runtime.Quit 在 ctx 不带 frontend 值时会 log.Fatalf 直接终止进程，
+// 测试里必须替换掉才能安全验证「请求退出」这一步。
+var quitRuntime = runtime.Quit
+
 // quitApp 托盘「退出」入口：置退出标记并请求 Wails 退出进程。
 // 注意 runtime.Quit 内部会再走一次 BeforeClose（见 wails windows frontend.Quit），
 // quitting 标记保证那次调用放行，否则「退出」会被拦截成隐藏窗口、进程永远退不出去。
@@ -199,7 +206,7 @@ func (a *App) quitApp(ctx context.Context) {
 	a.quitting = true
 	a.mu.Unlock()
 	quitTrayLoop() // 先停托盘消息循环（通知区图标随之移除），再退进程
-	runtime.Quit(ctx)
+	quitRuntime(ctx)
 }
 
 // BeforeClose 供 Wails OnBeforeClose 挂载：拦截窗口关闭改为隐藏到托盘（返回 true）；
@@ -213,6 +220,26 @@ func (a *App) BeforeClose(ctx context.Context) bool {
 	}
 	runtime.WindowHide(ctx)
 	return true
+}
+
+// spawnSelf 启动应用自身新实例（包级变量便于测试注入）。
+var spawnSelf = func(exe string) error {
+	cmd := exec.Command(exe)
+	executil.HideWindow(cmd) // 重启瞬间若父进程仍持有控制台句柄，避免新实例闪黑窗
+	return cmd.Start()
+}
+
+// RestartApp 重启应用：启动新进程后走托盘退出路径（quitting 放行 BeforeClose）。
+func (a *App) RestartApp(ctx context.Context) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if err := spawnSelf(exe); err != nil {
+		return err
+	}
+	a.quitApp(ctx)
+	return nil
 }
 
 // snapshot 加锁拷贝一份选项，调用方在锁外使用副本。

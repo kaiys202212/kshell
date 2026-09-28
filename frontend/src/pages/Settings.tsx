@@ -5,9 +5,10 @@
 // 保存走 SaveProvidersYAML（Go 侧先校验 YAML 再原子写回）——
 // 保存成功不热生效，需重启应用后由重扫装配，UI 明确提示这一点。
 import { useEffect, useState } from 'react';
-import { getTools, loadProvidersYAML, saveProvidersYAML } from '../lib/api';
+import { getTools, loadProvidersYAML, restartApp, saveProvidersYAML } from '../lib/api';
 import type { ToolInfo } from '../lib/api';
 import { cn } from '../lib/cn';
+import { useAppStore } from '../state/store';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 
@@ -19,6 +20,8 @@ export default function Settings() {
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const notify = useAppStore((s) => s.notify);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,6 +56,18 @@ export default function Settings() {
       setSaveError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
+    }
+  };
+
+  // 立即重启：成功后进程退出（按钮保持禁用直到窗口消失）；失败恢复按钮并轻量提示
+  const handleRestart = async () => {
+    if (restarting) return;
+    setRestarting(true);
+    try {
+      await restartApp();
+    } catch {
+      notify('重启失败', 'error');
+      setRestarting(false);
     }
   };
 
@@ -126,7 +141,17 @@ export default function Settings() {
                   保存
                 </Button>
                 {saved && (
-                  <span className="text-sm text-muted-foreground">已保存，重启应用后生效</span>
+                  <>
+                    <span className="text-sm text-muted-foreground">已保存，重启应用后生效</span>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={restarting}
+                      onClick={() => void handleRestart()}
+                    >
+                      {restarting ? '正在重启…' : '立即重启'}
+                    </Button>
+                  </>
                 )}
                 {saveError && <span className="text-sm text-destructive">{saveError}</span>}
               </div>

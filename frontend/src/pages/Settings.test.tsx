@@ -1,16 +1,19 @@
 // Settings 页面测试：工具检测状态渲染（Source=config-dir 的 generic 工具显示「未验证」徽标、
-// 未安装灰显）、providers.yaml 回填编辑保存（成功提示重启生效、YAML 非法显示错误）。
+// 未安装灰显）、providers.yaml 回填编辑保存（成功提示重启生效、YAML 非法显示错误）、
+// 「立即重启」按钮走 RestartApp。
 // api 层整体打桩（vi.mock），与 SessionList.test 同一套模式。
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Settings from './Settings';
+import { useAppStore } from '../state/store';
 import type { ToolInfo } from '../lib/api';
 
 const mocks = vi.hoisted(() => ({
   getTools: vi.fn(),
   loadProvidersYAML: vi.fn(),
   saveProvidersYAML: vi.fn(),
+  restartApp: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -108,5 +111,36 @@ describe('Settings', () => {
 
     expect(await screen.findByText(/绑定异常/)).toBeInTheDocument();
     expect(await screen.findByText(/读取失败/)).toBeInTheDocument();
+  });
+
+  it('保存成功后可「立即重启」：调用 RestartApp；失败恢复按钮并以 error 语气提示', async () => {
+    useAppStore.setState({ toasts: [] });
+    mocks.restartApp.mockRejectedValueOnce(new Error('启动失败'));
+    render(<Settings />);
+
+    const editor = await screen.findByLabelText('providers.yaml 编辑器');
+    fireEvent.change(editor, { target: { value: 'providers: []\n' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    });
+    expect(await screen.findByText('立即重启')).toBeInTheDocument();
+
+    // 失败：恢复按钮可再试，并轻量提示
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '立即重启' }));
+    });
+    expect(mocks.restartApp).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(
+        useAppStore.getState().toasts.some((t) => t.tone === 'error' && t.title === '重启失败'),
+      ).toBe(true);
+    });
+    expect(screen.getByRole('button', { name: '立即重启' })).toBeEnabled();
+
+    // 成功：按钮进入「正在重启…」禁用态等待进程退出
+    mocks.restartApp.mockResolvedValueOnce(undefined);
+    fireEvent.click(screen.getByRole('button', { name: '立即重启' }));
+    expect(await screen.findByText('正在重启…')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '正在重启…' })).toBeDisabled();
   });
 });

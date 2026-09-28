@@ -110,6 +110,7 @@ interface AppBindings {
   GetTools(): Promise<ToolInfo[]>;
   LoadProvidersYAML(): Promise<string>;
   SaveProvidersYAML(content: string): Promise<void>;
+  RestartApp(): Promise<void>;
 }
 
 declare global {
@@ -264,4 +265,11 @@ export async function saveProvidersYAML(content: string): Promise<void> {
   const a = app();
   if (!a) return;
   await a.SaveProvidersYAML(content);
+}
+
+// RestartApp 重启应用（Go 侧先启动新实例再走托盘退出路径）。错误向上抛。
+export async function restartApp(): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.RestartApp();
 }

@@ -42,9 +42,11 @@ var desktopApp = desktop.NewAppWith(desktop.Options{TrayIcon: trayIcon()})
 // RunDesktop 用给定的前端资源启动 Wails 窗口（拆出来便于测试）。
 func RunDesktop(src fs.FS) error {
 	return wails.Run(&options.App{
-		Title:  "kshell",
-		Width:  1280,
-		Height: 800,
+		Title:     "kshell",
+		Width:     1280,
+		Height:    800,
+		MinWidth:  960,
+		MinHeight: 640,
 		AssetServer: &assetserver.Options{
 			Assets: src,
 		},
