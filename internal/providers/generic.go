@@ -163,12 +163,12 @@ func (g Generic) parseJSONL(path string, head []byte) (*Session, error) {
 			cwd = stringField(rec, g.Spec.Fields.CWD)
 		}
 		if firstAssistantText == "" && isRecord(rec, "message", "assistant") {
-			if text := strings.TrimSpace(contentText(rec["content"])); text != "" && !isWrapperText(text) {
+			if text := cleanTitle(contentText(rec["content"])); text != "" {
 				firstAssistantText = text
 			}
 		}
 		if title == "" {
-			title = oneLine(g.titleFrom(rec), 80)
+			title = oneLine(cleanTitle(g.titleFrom(rec)), 80)
 		}
 		if t := timeField(rec, g.Spec.Fields.Timestamp); !t.IsZero() {
 			if !haveTime {
@@ -239,20 +239,13 @@ func firstUserText(head string) string {
 		if rec.Role != "" && rec.Role != "user" {
 			continue
 		}
-		text := strings.TrimSpace(contentText(rec.Content))
-		if text == "" || isWrapperText(text) {
+		text := cleanTitle(contentText(rec.Content))
+		if text == "" {
 			continue
 		}
 		return text
 	}
 	return ""
-}
-
-// isWrapperText 识别 CLI 注入的包装文本（<system-reminder>、<command-*>、
-// <local-command-*>、<manually_attached_skills>、<environment_context> 等），
-// 它们都不是用户手写的内容，不适合当会话标题。
-func isWrapperText(s string) bool {
-	return strings.HasPrefix(s, "<")
 }
 
 // isRecord 判断记录的 type/role 是否匹配（空串表示不校验该维度）。

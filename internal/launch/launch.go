@@ -29,7 +29,26 @@ func ForSession(ps []providers.Provider, tools []discovery.Tool, s providers.Ses
 // ForWorkspace 为工作区挑选首选工具（优先该工作区会话数最多的），产出新建会话的启动描述。
 // ctxFiles 为上下文篮里的文件路径，作为初始提示注入新会话。
 func ForWorkspace(ps []providers.Provider, tools []discovery.Tool, ws discovery.Workspace, ctxFiles []string) (providers.Launch, error) {
-	p, tool, ok := PreferredTool(ps, tools, ws)
+	return ForWorkspaceTool(ps, tools, ws, ctxFiles, "")
+}
+
+// ForWorkspaceTool 用指定工具产出新建会话的启动描述（前端「新建会话可选工具」用）。
+// toolID 为空时回退到 ForWorkspace 的首选逻辑；
+// 指定的工具未安装（或没有可执行文件、没有对应 provider）时报 ErrToolNotRunnable。
+func ForWorkspaceTool(ps []providers.Provider, tools []discovery.Tool, ws discovery.Workspace, ctxFiles []string, toolID string) (providers.Launch, error) {
+	if toolID == "" {
+		p, tool, ok := PreferredTool(ps, tools, ws)
+		if !ok {
+			return providers.Launch{}, ErrToolNotRunnable
+		}
+		return p.NewSessionCmd(ws.Path, tool.BinPath, ctxFiles), nil
+	}
+
+	tool, ok := toolFor(tools, toolID)
+	if !ok || !tool.Installed || tool.BinPath == "" {
+		return providers.Launch{}, ErrToolNotRunnable
+	}
+	p, ok := providerFor(ps, toolID)
 	if !ok {
 		return providers.Launch{}, ErrToolNotRunnable
 	}

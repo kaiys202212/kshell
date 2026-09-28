@@ -117,27 +117,32 @@ func (Codex) ParseSession(path string, head []byte) (*Session, error) {
 // 用户消息全是包装记录时（agent 自主执行的导入会话）退回首条 assistant 内容：
 // payload.item.type == "AgentMessage"、payload.type == "agent_message" 或 response_item。
 func codexTitle(payload map[string]any, current string) string {
+	// 标题候选统一走 cleanTitle：包装标签块被整块剔除、只包着正文的标签被剥掉标记，
+	// 清洗后为空即「纯包装记录」，跳过继续找下一条。
+	pick := func(raw string) string {
+		if text := cleanTitle(raw); text != "" {
+			return oneLine(text, 80)
+		}
+		return ""
+	}
+
 	if item, ok := payload["item"].(map[string]any); ok {
 		switch item["type"] {
-		case "UserMessage":
-			if text := strings.TrimSpace(messageText(item)); text != "" && !isWrapperText(text) {
-				return oneLine(text, 80)
-			}
-		case "AgentMessage":
-			if text := strings.TrimSpace(messageText(item)); text != "" && !isWrapperText(text) {
-				return oneLine(text, 80)
+		case "UserMessage", "AgentMessage":
+			if title := pick(messageText(item)); title != "" {
+				return title
 			}
 		}
 	}
 	switch payload["type"] {
 	case "user_message", "agent_message":
-		if text := strings.TrimSpace(contentText(payload["message"])); text != "" && !isWrapperText(text) {
-			return oneLine(text, 80)
+		if title := pick(contentText(payload["message"])); title != "" {
+			return title
 		}
 	case "message": // response_item
 		if role, _ := payload["role"].(string); role == "assistant" {
-			if text := strings.TrimSpace(contentText(payload["content"])); text != "" && !isWrapperText(text) {
-				return oneLine(text, 80)
+			if title := pick(contentText(payload["content"])); title != "" {
+				return title
 			}
 		}
 	}

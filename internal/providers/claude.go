@@ -12,6 +12,10 @@ const claudeID = "claude"
 
 var errClaudeNoSessionID = errors.New("claude: 会话文件中未找到 sessionId")
 
+// errClaudeEmpty 表示整段记录里没有任何真实对话内容（只有 /clear、hook 进度、
+// 系统旁白这类记录留下的空壳会话），列表里只会是噪音，扫描阶段直接剔除。
+var errClaudeEmpty = errors.New("claude: 会话无实际内容（仅命令/系统记录）")
+
 // Claude 对应 Claude Code。会话存于 ~/.claude/projects/<slug>/<sessionId>.jsonl，
 // 每行一条 JSON，cwd / sessionId / timestamp 等元信息在任意一条记录里都可能出现。
 type Claude struct{}
@@ -36,6 +40,7 @@ func (Claude) SessionFilePattern() string { return "*.jsonl" }
 func (Claude) ParseSession(path string, head []byte) (*Session, error) {
 	var (
 		id, cwd, title   string
+		assistantTitle   string
 		created, updated time.Time
 		haveTime         bool
 	)
@@ -69,13 +74,30 @@ func (Claude) ParseSession(path string, head []byte) (*Session, error) {
 				}
 			}
 		}
-		if title == "" && rec["type"] == "user" {
-			title = oneLine(messageText(rec["message"]), 80)
+		// isMeta 记录是 CLI 自己插的旁白（<local-command-caveat>、斜杠命令回显等），
+		// 一律不参与标题；剩下的候选再过 cleanTitle，纯包装文本会变成空串被跳过。
+		if meta, _ := rec["isMeta"].(bool); !meta {
+			text := cleanTitle(messageText(rec["message"]))
+			if title == "" && text != "" && rec["type"] == "user" {
+				title = oneLine(text, 80)
+			}
+			if assistantTitle == "" && text != "" && rec["type"] == "assistant" {
+				assistantTitle = oneLine(text, 80)
+			}
 		}
 	}
 
 	if id == "" {
 		return nil, errClaudeNoSessionID
+	}
+
+	// 用户消息全是包装记录时退回首条 assistant 文本；两者都没有说明整个头部
+	// 只有 /clear、hook 进度、系统旁白这类记录，属空壳会话，直接剔除。
+	if title == "" {
+		title = assistantTitle
+	}
+	if title == "" {
+		return nil, errClaudeEmpty
 	}
 
 	messages := 0

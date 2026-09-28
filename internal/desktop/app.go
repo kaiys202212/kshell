@@ -15,6 +15,7 @@ import (
 	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/remote"
+	"github.com/yangk/kshell/internal/terminal"
 	"github.com/yangk/kshell/internal/workspace"
 )
 
@@ -37,6 +38,7 @@ type Options struct {
 	Store         *remote.Store // SSH 连接存储；nil 时 Startup 按真实环境装配
 	Scan          scanFunc
 	Windows       *WindowManager
+	Terminals     *terminal.Manager // 内嵌终端管理器；nil 时 Startup 装配真实后端（测试可注入桩）
 	Emit          func(name string, data ...any)
 	TrayIcon      []byte // 托盘图标数据（Windows 用 ICO，其它平台用 PNG）；nil 表示不启用托盘
 }
@@ -145,6 +147,9 @@ func (a *App) initRealDeps() {
 		_ = store.Load() // 读不到连接文件不阻断启动，与 TUI 行为一致
 		a.opts.Store = store
 	}
+	if a.opts.Terminals == nil { // 幂等：已注入（测试）或已装配过就不重建，避免丢掉既有终端会话
+		a.opts.Terminals = newTerminalManager(a)
+	}
 }
 
 // ready 报告选项是否已装配完整（全部走注入或已补齐真实依赖）。
@@ -207,6 +212,15 @@ func (a *App) quitApp(ctx context.Context) {
 	a.mu.Unlock()
 	quitTrayLoop() // 先停托盘消息循环（通知区图标随之移除），再退进程
 	quitRuntime(ctx)
+}
+
+// Shutdown 供 Wails OnShutdown 挂载：退出前关掉所有内嵌终端，避免残留子进程。
+// 终端进程不跨进程存活，这里不需要（也无法）持久化。
+func (a *App) Shutdown(ctx context.Context) {
+	_ = ctx // 退出清理无取消语义：无论上下文如何都要把子进程收干净
+	if m := a.snapshot().Terminals; m != nil {
+		m.CloseAll()
+	}
 }
 
 // BeforeClose 供 Wails OnBeforeClose 挂载：拦截窗口关闭改为隐藏到托盘（返回 true）；
@@ -346,17 +360,9 @@ func (a *App) ResumeSession(id string) error {
 }
 
 // NewSession 在指定工作区新建会话（wsID 为工作区路径），上下文篮文件作为初始提示注入。
+// 工具交给 launch 选工作区首选（等价于 NewSessionWithTool 的 toolID 为空）。
 func (a *App) NewSession(wsID string) error {
-	ws, tools, ok := a.workspaceByID(wsID)
-	if !ok {
-		return errWorkspaceNotFound
-	}
-	o := a.snapshot()
-	l, err := launch.ForWorkspace(o.Providers, tools, ws, a.basketSnapshot())
-	if err != nil {
-		return err
-	}
-	return a.launchWindow(o.Windows, l, ws.Name)
+	return a.NewSessionWithTool(wsID, "")
 }
 
 // FocusSession 聚焦指定会话已打开的终端窗口；未打开过返回 false。

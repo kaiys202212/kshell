@@ -279,6 +279,26 @@ func TestGenericTitleFallsBackToAssistantText(t *testing.T) {
 	}
 }
 
+// CodeBuddy/Codex 的导入会话把用户问题包在 <user_query> 里：
+// 剥掉标记后剩下的才是真标题，不该因为「以 < 开头」被整条跳过。
+func TestGenericTitleUnwrapsUserQuery(t *testing.T) {
+	var spec GenericSpec
+	if err := yamlUnmarshalHelper(codebuddyYAML, &spec); err != nil {
+		t.Fatal(err)
+	}
+	g := Generic{Spec: spec, Home: t.TempDir()}
+
+	content := `{"type":"session-meta","sessionId":"cb-9","timestamp":1790242904766,"cwd":"D:\\ws"}` + "\n" +
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"<user_info>ctx</user_info><user_query>继续对界面进行美化</user_query>"}]}` + "\n"
+	got, err := g.ParseSession("cb.jsonl", []byte(content))
+	if err != nil {
+		t.Fatalf("ParseSession error: %v", err)
+	}
+	if got.Title != "继续对界面进行美化" {
+		t.Fatalf("title = %q, want unwrapped user query", got.Title)
+	}
+}
+
 func TestGenericDropsCommandOnlyStub(t *testing.T) {
 	var spec GenericSpec
 	if err := yamlUnmarshalHelper(codebuddyYAML, &spec); err != nil {

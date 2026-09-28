@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	indexVersion     = 3 // 解析逻辑变更时递增，让旧缓存整体失效
+	indexVersion     = 4 // 解析逻辑变更时递增，让旧缓存整体失效（v4：标题清洗，不再收录包装标签）
 	defaultMaxFiles  = 20000
 	defaultHeadLimit = 256 * 1024 // codex 导入会话首条真实用户消息可能在 100KB+ 之后
 	// 单文件 JSON（Gemini）必须整文件成文才解析得出来，头读太小会整条判失败。
