@@ -123,7 +123,9 @@
 | 关闭 | `CloseTerminal(id)`（幂等）；关闭工作区页签时连带关闭该工作区所有终端 |
 
 - `lib/terminalRegistry.ts`：模块级 `Map<termId, XTermHandle>`，由 `TerminalView` 挂载/卸载时登记；`lib/api.ts` 侧的全局订阅（App 挂载时建立一次）负责把事件投递给已登记的实例，**未登记的终端不丢数据**（Go 侧缓冲兜住，重挂载时回放）。
-- `components/TerminalView.tsx`：xterm.js + FitAddon（xterm 5 `@xterm/xterm`、`@xterm/addon-fit`）；主题跟随深浅色 token；挂载时先回放 scrollback 再订阅事件；退出后显示「会话已退出（code N）」且允许「重新打开」。
+- `components/TerminalView.tsx`：xterm.js + FitAddon（xterm 5 `@xterm/xterm`、`@xterm/addon-fit`）；主题跟随深浅色 token；
+  挂载即注册到注册表、卸载即注销；进程退出后顶部显示「会话已退出（退出码 N）」状态条——
+  要重来一次，点左侧会话列表的「恢复」即可（Go 侧同 key 复用在原地重启同一终端）。
 
 **Go 侧 `internal/terminal`：**
 
