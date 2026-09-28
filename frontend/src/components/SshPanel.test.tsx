@@ -37,7 +37,7 @@ const conns: SshConnection[] = [
     Port: 2222,
     IdentityFile: '',
     Workspace: '',
-    Source: 'manual',
+    Source: 'deploy',
     SourceFile: '',
     Verified: false,
   },
@@ -77,7 +77,7 @@ describe('SshPanel', () => {
 
     const row2 = await findRow('跳板机');
     expect(within(row2).getByText('jump.example.com:2222')).toBeInTheDocument();
-    expect(within(row2).getByText('手动添加')).toBeInTheDocument();
+    expect(within(row2).getByText('部署脚本')).toBeInTheDocument();
     expect(within(row2).queryByText('✓')).not.toBeInTheDocument();
   });
 
@@ -85,6 +85,19 @@ describe('SshPanel', () => {
     mocks.listConnections.mockResolvedValue([]);
     render(<SshPanel wsPath="D:\\proj-a" />);
     expect(await screen.findByText('没有可用的 SSH 连接')).toBeInTheDocument();
+  });
+
+  it('列表加载中显示加载态，不闪错误/空态', () => {
+    mocks.listConnections.mockReturnValue(new Promise(() => {})); // 永不 resolve
+    render(<SshPanel wsPath="D:\\proj-a" />);
+    expect(screen.getByText('加载中……')).toBeInTheDocument();
+    expect(screen.queryByText('没有可用的 SSH 连接')).not.toBeInTheDocument();
+  });
+
+  it('列表加载失败时面板级 error 呈现错误信息', async () => {
+    mocks.listConnections.mockRejectedValue(new Error('绑定不可用'));
+    render(<SshPanel wsPath="D:\\proj-a" />);
+    expect(await screen.findByText(/绑定不可用/)).toBeInTheDocument();
   });
 
   it('点击「连接」调用 OpenSSH，并按窗口标题把 open 状态置 true', async () => {
@@ -115,7 +128,7 @@ describe('SshPanel', () => {
     expect(row).toHaveClass('ssh-item--open');
   });
 
-  it('OpenSSH 失败时不置 open 状态，显示错误提示', async () => {
+  it('OpenSSH 失败时不置 open 状态，走轻量提示（notify）而不炸面板', async () => {
     mocks.openSSH.mockRejectedValue(new Error('未找到 ssh 可执行文件'));
     render(<SshPanel wsPath="D:\\proj-a" />);
     const row = await findRow('生产机');
@@ -126,7 +139,9 @@ describe('SshPanel', () => {
 
     expect(useAppStore.getState().windowStatus['kshell · 生产机']).toBeUndefined();
     expect(row).not.toHaveClass('ssh-item--open');
-    expect(await screen.findByText(/未找到 ssh 可执行文件/)).toBeInTheDocument();
+    // 操作失败走 store 的轻量提示，面板本身保持完整渲染（列表仍在）
+    expect(useAppStore.getState().message).toContain('未找到 ssh 可执行文件');
+    expect(screen.getByLabelText('SSH 连接列表')).toBeInTheDocument();
   });
 
   it('命令执行：默认选中第一个连接，输入命令点「执行」调 ExecRemote，展示 Stdout 尾部 + ExitCode + Duration', async () => {

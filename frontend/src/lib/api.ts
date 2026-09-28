@@ -75,7 +75,7 @@ export interface ToolInfo {
 }
 
 // remote.Connection 的 JSON 形态（internal/remote/store.go）。
-// Source: sshconfig / env / spring / deploy / docs / manual
+// Source: sshconfig / env / spring / deploy / docs（Go 侧扫描器值集，无 manual）
 export interface SshConnection {
   ID: string;
   Name: string;

@@ -6,6 +6,9 @@
 // 维护 open 状态，与 SessionList 同一套 windowStatus 机制。
 // 命令执行走 ExecRemote（非交互）：非 0 退出码不是异常，结果里带 ExitCode；
 // Go Result 已是完整输出，前端只展示尾部（stdout/stderr 各取 OUTPUT_TAIL_LINES 行）。
+// 已知限制：windowStatus 以 terminalTitle(连接名) 为键，与 SessionList 共用一张表，
+// 不同来源的同名连接（或同名会话）会命中同一键、状态互相污染；连接名与工作区/会话名
+// 冲突概率极低，暂不做键空间隔离。
 import { useEffect, useState } from 'react';
 import { execRemote, listConnections, openSSH } from '../lib/api';
 import type { RemoteResult, SshConnection } from '../lib/api';
@@ -17,14 +20,14 @@ import { useAppStore } from '../state/store';
 // Go 侧 Result 是完整输出，截多少只影响前端展示，与后端无耦合。
 const OUTPUT_TAIL_LINES = 50;
 
-// 连接来源的中文标注（Source 取值见 internal/remote/scanners/*）
+// 连接来源的中文标注（Source 取值见 internal/remote/scanners/*，Go 侧只产生
+// sshconfig / env / spring / deploy / docs 五种；未知值回退展示原始串）
 const SOURCE_LABELS: Record<string, string> = {
   sshconfig: 'ssh 配置',
   env: '环境变量',
   spring: 'Spring 配置',
   deploy: '部署脚本',
   docs: '文档',
-  manual: '手动添加',
 };
 
 function sourceLabel(source: string): string {
@@ -39,7 +42,8 @@ function display(c: SshConnection): string {
 }
 
 export default function SshPanel({ wsPath }: { wsPath: string }) {
-  const [conns, setConns] = useState<SshConnection[]>([]);
+  // null 哨兵表示「列表尚未加载完」，与 FileTree 同款模式：避免加载瞬间闪错误/空态
+  const [conns, setConns] = useState<SshConnection[] | null>(null);
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const [cmd, setCmd] = useState('');
@@ -48,6 +52,7 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
   const [running, setRunning] = useState(false);
   const windowStatus = useAppStore((s) => s.windowStatus);
   const setWindowStatus = useAppStore((s) => s.setWindowStatus);
+  const notify = useAppStore((s) => s.notify);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,13 +71,15 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
     };
   }, [wsPath]);
 
-  // 打开/聚焦连接：open 状态下复用 OpenSSH（Go 侧幂等转聚焦），失败不置 open
+  // 打开/聚焦连接：open 状态下复用 OpenSSH（Go 侧幂等转聚焦），失败不置 open。
+  // 操作失败走轻量提示（notify）而非 setError：面板级 error 只留给列表加载失败，
+  // 不让单次「连接」失败炸掉整个面板。
   const handleOpen = async (c: SshConnection) => {
     try {
       await openSSH(c.ID);
       setWindowStatus(terminalTitle(c.Name), true);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      notify(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -95,6 +102,9 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
 
   if (error) {
     return <p className="ssh-error">{error}</p>;
+  }
+  if (conns === null) {
+    return <p className="ssh-status">加载中……</p>;
   }
 
   const selected = conns.find((c) => c.ID === selectedId) ?? null;

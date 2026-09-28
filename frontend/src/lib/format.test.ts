@@ -69,7 +69,7 @@ describe('formatDuration', () => {
     expect(formatDuration(1_500_000_000)).toBe('1.50s');
   });
 
-  it('不足 1 毫秒按微秒展示', () => {
+  it('不足 1 毫秒归零展示 0ms', () => {
     expect(formatDuration(500)).toBe('0ms'); // 低于展示精度，归零毫秒
   });
 

@@ -646,6 +646,11 @@
   font-size: 0.85rem;
 }
 
+.ssh-status {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
 .ssh-exec {
   display: flex;
   flex-direction: column;
