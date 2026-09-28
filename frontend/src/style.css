@@ -1,32 +1,54 @@
-/* 全局基线：CSS 变量主题 token + reset。
-   深浅色跟随系统（prefers-color-scheme），组件样式见 App.css。 */
+/* 全局基线：Tailwind 4 + shadcn 风格设计 token。
+   深浅色跟随系统（prefers-color-scheme），组件样式见 App.css（迁移期，逐步替换为 Tailwind 工具类）。 */
+@import "tailwindcss";
+
+/* 把 CSS 变量映射为 Tailwind 颜色/圆角 token（inline：工具类直接引用运行时变量，深浅色切换即时生效） */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-ring: var(--ring);
+  --radius: var(--radius-base);
+}
+
+/* 浅色 token：延续 GitHub 蓝主色，整体提亮、加层次 */
 :root {
-  --bg: #f5f6f8;
-  --bg-panel: #ffffff;
-  --bg-hover: #e9ebef;
-  --bg-active: #dde1e7;
-  --text: #1f2328;
-  --text-dim: #656d76;
-  --border: #d0d7de;
-  --accent: #0969da;
-  --accent-text: #ffffff;
-  --error: #c0392b;
-  --warning: #b58900;
+  --background: #f6f8fa;  --foreground: #1f2328;
+  --card: #ffffff;        --card-foreground: #1f2328;
+  --muted: #eef1f4;       --muted-foreground: #59636e;
+  --border: #d8dee4;      --input: #d8dee4;
+  --primary: #0969da;     --primary-foreground: #ffffff;
+  --secondary: #eef1f4;   --secondary-foreground: #1f2328;
+  --accent: #ddf4ff;      --accent-foreground: #0969da;
+  --destructive: #c93c37; --destructive-foreground: #ffffff;
+  --ring: #0969da99;
+  --radius-base: 8px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1b2632;
-    --bg-panel: #243244;
-    --bg-hover: #2c3b50;
-    --bg-active: #35485f;
-    --text: #e6e6e6;
-    --text-dim: #9aa4b2;
-    --border: #3b4a5e;
-    --accent: #4493f8;
-    --accent-text: #0b1522;
-    --error: #e07060;
-    --warning: #d9a72a;
+    --background: #0d1117;  --foreground: #e6edf3;
+    --card: #161b22;        --card-foreground: #e6edf3;
+    --muted: #21262d;       --muted-foreground: #8b949e;
+    --border: #2d333b;      --input: #2d333b;
+    --primary: #4493f8;     --primary-foreground: #0d1117;
+    --secondary: #21262d;   --secondary-foreground: #e6edf3;
+    --accent: #121d2f;      --accent-foreground: #4493f8;
+    --destructive: #e5534b; --destructive-foreground: #ffffff;
+    --ring: #4493f899;
   }
 }
 
@@ -39,19 +61,46 @@ body {
 body {
   font-family: system-ui, -apple-system, "Segoe UI", "Roboto", "PingFang SC",
     "Microsoft YaHei", sans-serif;
-  color: var(--text);
-  background: var(--bg);
+  color: var(--foreground);
+  background: var(--background);
 }
 
 #root {
-  height: 100vh;
+  height: 100%;
 }
 
-button {
-  font: inherit;
-  color: inherit;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0;
+/* 按钮基础 reset 由 Tailwind preflight 覆盖（font/color/background/border/padding/cursor），不再重复 */
+
+/* 全局细滚动条 */
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--muted);
+  border-radius: 3px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ===== 旧变量兼容层（迁移期）：把 App.css 仍在消费的旧变量名映射到新 token，
+   浅深色由上游变量联动。App.css 里的 --accent 语义是主色，与新 token 冲突，
+   已在 App.css 内改引 var(--primary)，此处不再定义 --accent。 ===== */
+:root {
+  --bg: var(--background);
+  --bg-panel: var(--card);
+  --bg-hover: var(--muted);
+  --bg-active: var(--secondary);
+  --text: var(--foreground);
+  --text-dim: var(--muted-foreground);
+  --accent-text: var(--primary-foreground);
+  --error: var(--destructive);
+  --warning: #d29922;
 }

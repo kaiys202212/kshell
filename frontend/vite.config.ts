@@ -1,10 +1,11 @@
 /// <reference types="vitest/config" />
 import {defineConfig} from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   build: {
     // 不清空输出目录：frontend/dist/.gitkeep 是 embed 占位文件，必须常驻
     emptyOutDir: false,

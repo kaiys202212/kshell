@@ -179,7 +179,7 @@
 
 .session-search:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--primary);
 }
 
 .session-items {
@@ -220,7 +220,7 @@
 }
 
 .session-open-mark {
-  color: var(--accent);
+  color: var(--primary);
   font-size: 0.8rem;
   flex-shrink: 0;
 }
@@ -378,7 +378,7 @@
 }
 
 .tree-basket-btn:hover {
-  color: var(--accent);
+  color: var(--primary);
 }
 
 .tree-status,
@@ -592,7 +592,7 @@
 }
 
 .ssh-open-mark {
-  color: var(--accent);
+  color: var(--primary);
   font-size: 0.8rem;
   flex-shrink: 0;
 }
@@ -637,7 +637,7 @@
 }
 
 .ssh-verified {
-  color: var(--accent);
+  color: var(--primary);
   flex-shrink: 0;
 }
 
@@ -675,7 +675,7 @@
 
 .ssh-cmd-input:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--primary);
 }
 
 .ssh-exec-btn {
@@ -823,7 +823,7 @@
 
 .yaml-editor:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--primary);
 }
 
 .settings-actions {
