@@ -16,8 +16,13 @@ import type { Session } from '../lib/api';
 import { formatRelativeTime } from '../lib/format';
 import { badgeFor } from '../lib/toolBadge';
 import { terminalTitle } from '../lib/title';
+import { cn } from '../lib/cn';
 import { useAppStore } from '../state/store';
 import WorkspaceSearch from './WorkspaceSearch';
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
+import { EmptyState } from './ui/empty-state';
+import { Skeleton } from './ui/skeleton';
 
 export default function SessionList({ workspacePath }: { workspacePath: string }) {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -93,18 +98,25 @@ export default function SessionList({ workspacePath }: { workspacePath: string }
   };
 
   return (
-    <div className="session-list">
+    <div className="flex flex-col gap-2">
       <WorkspaceSearch value={query} onChange={setQuery} />
       {visible.length === 0 ? (
-        <p className="session-empty">
-          {query.trim()
-            ? '没有匹配的会话'
-            : scanState === 'done'
-              ? '该工作区暂无会话'
-              : '暂无会话，正在扫描……'}
-        </p>
+        // 空态收敛：有关键词 → 无匹配；扫描未完成 → 骨架屏占位；
+        // done 后仍为空才是「确实没有」
+        query.trim() ? (
+          <EmptyState title="没有匹配的会话" />
+        ) : scanState !== 'done' ? (
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-16 rounded-lg border border-border" />
+            <Skeleton className="h-16 rounded-lg border border-border" />
+            <Skeleton className="h-16 rounded-lg border border-border" />
+            <Skeleton className="h-16 rounded-lg border border-border" />
+          </div>
+        ) : (
+          <EmptyState title="该工作区暂无会话" />
+        )
       ) : (
-        <ul className="session-items">
+        <ul className="flex flex-col gap-2">
           {visible.map((s) => {
             const badge = badgeFor(s.ToolID);
             const key = terminalTitle(s.Title);
@@ -112,24 +124,31 @@ export default function SessionList({ workspacePath }: { workspacePath: string }
             return (
               <li
                 key={s.ID}
-                className={open ? 'session-item session-item--open' : 'session-item'}
+                className={cn(
+                  'rounded-lg border border-border bg-card p-2.5 transition-colors',
+                  open && 'border-l-2 border-l-primary bg-primary/5',
+                )}
               >
-                <div className="session-row">
-                  <span className="session-title" title={s.Path}>
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="min-w-0 truncate text-sm font-medium" title={s.Path}>
                     {s.Title}
                   </span>
-                  {open && <span className="session-open-mark">✓</span>}
+                  {open && <span className="shrink-0 text-xs text-primary">✓</span>}
                 </div>
-                <div className="session-meta">
-                  <span className={`tool-badge ${badge.className}`}>{badge.label}</span>
-                  <span className="session-time">{formatRelativeTime(s.UpdatedAt)}</span>
-                  <span className="session-count">{s.Messages} 条</span>
-                  <button
-                    className="session-resume"
+                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                  <Badge variant={badge.className === 'tool-badge--other' ? 'muted' : 'default'}>
+                    {badge.label}
+                  </Badge>
+                  <span className="whitespace-nowrap">{formatRelativeTime(s.UpdatedAt)}</span>
+                  <span className="whitespace-nowrap">{s.Messages} 条</span>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="ml-auto shrink-0"
                     onClick={() => void handleResume(s)}
                   >
                     恢复
-                  </button>
+                  </Button>
                 </div>
               </li>
             );

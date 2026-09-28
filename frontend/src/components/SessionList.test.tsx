@@ -62,7 +62,7 @@ describe('SessionList', () => {
     await findRow('清理构建缓存');
     const titles = screen
       .getAllByRole('listitem')
-      .map((li) => li.querySelector('.session-title')?.textContent);
+      .map((li) => li.querySelector('span[title]')?.textContent);
     expect(titles).toEqual(['清理构建缓存', '修复上传白名单', '重构登录页']);
     expect(screen.queryByText('其他工作区会话')).not.toBeInTheDocument();
 
@@ -104,7 +104,7 @@ describe('SessionList', () => {
 
     expect(mocks.resumeSession).toHaveBeenCalledWith('s1');
     expect(useAppStore.getState().windowStatus['kshell · 修复上传白名单']).toBe(true);
-    expect(row).toHaveClass('session-item--open');
+    expect(row).toHaveClass('bg-primary/5');
   });
 
   it('收到 window:closed 事件后还原 open 状态', async () => {
@@ -114,12 +114,12 @@ describe('SessionList', () => {
     await act(async () => {
       fireEvent.click(within(row).getByRole('button', { name: '恢复' }));
     });
-    expect(row).toHaveClass('session-item--open');
+    expect(row).toHaveClass('bg-primary/5');
 
     await act(async () => {
       closedCb('kshell · 修复上传白名单');
     });
-    expect(row).not.toHaveClass('session-item--open');
+    expect(row).not.toHaveClass('bg-primary/5');
     expect(useAppStore.getState().windowStatus['kshell · 修复上传白名单']).toBe(false);
   });
 
@@ -148,7 +148,7 @@ describe('SessionList', () => {
 
     expect(mocks.focusSession).toHaveBeenCalledWith('s2');
     expect(useAppStore.getState().windowStatus['kshell · 重构登录页']).toBe(false);
-    expect(row).not.toHaveClass('session-item--open');
+    expect(row).not.toHaveClass('bg-primary/5');
   });
 
   it('收到 scan:done 事件后重调 GetSessions 刷新', async () => {
@@ -189,15 +189,15 @@ describe('SessionList', () => {
 
     const rowA = await findRow('任务A');
     const rowA2 = await findRow('任务A续');
-    expect(rowA).toHaveClass('session-item--open');
-    expect(rowA2).toHaveClass('session-item--open');
+    expect(rowA).toHaveClass('bg-primary/5');
+    expect(rowA2).toHaveClass('bg-primary/5');
 
     // "kshell · 任务A" 是 "kshell · 任务A续" 的前缀：旧 startsWith 匹配会误伤后者
     await act(async () => {
       closedCb('kshell · 任务A');
     });
-    expect(rowA).not.toHaveClass('session-item--open');
-    expect(rowA2).toHaveClass('session-item--open');
+    expect(rowA).not.toHaveClass('bg-primary/5');
+    expect(rowA2).toHaveClass('bg-primary/5');
     const { windowStatus } = useAppStore.getState();
     expect(windowStatus['kshell · 任务A']).toBe(false);
     expect(windowStatus['kshell · 任务A续']).toBe(true);
@@ -206,10 +206,11 @@ describe('SessionList', () => {
   it('空态区分「扫描中」与「确实没有」', async () => {
     mocks.getSessions.mockResolvedValue([]);
 
-    // 扫描未完成（idle/scanning）
+    // 扫描未完成（idle/scanning）：显示骨架屏占位而非空态文案
     useAppStore.setState({ scanState: 'scanning' });
-    const { unmount } = render(<SessionList workspacePath={'D:\\proj-a'} />);
-    expect(await screen.findByText('暂无会话，正在扫描……')).toBeInTheDocument();
+    const { unmount, container } = render(<SessionList workspacePath={'D:\\proj-a'} />);
+    expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0);
+    expect(screen.queryByText('该工作区暂无会话')).not.toBeInTheDocument();
     unmount();
 
     // 扫描已完成、该工作区确实没有会话

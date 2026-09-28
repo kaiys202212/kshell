@@ -8,7 +8,7 @@ interface Props {
 export default function WorkspaceSearch({ value, onChange }: Props) {
   return (
     <input
-      className="session-search"
+      className="h-8 rounded-md border border-input bg-card px-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
       type="search"
       aria-label="过滤会话"
       placeholder="过滤会话（标题 / 工具名）"

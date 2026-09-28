@@ -4,11 +4,18 @@
 // 前端刷新/重开后必须拉取一次，否则镜像与 Go 状态漂移。
 import { useEffect } from 'react';
 import { getBasket } from './lib/api';
+import { cn } from './lib/cn';
 import Home from './pages/Home';
 import Settings from './pages/Settings';
 import WorkspaceTabView from './pages/WorkspaceTab';
 import { Toaster } from './components/ui/toaster';
+import { TooltipProvider } from './components/ui/tooltip';
 import { SETTINGS_TAB_ID, useAppStore } from './state/store';
+
+// 页签胶囊基础态：未激活 muted 文字 + hover 反馈；激活态用 accent 填充
+const tabBase =
+  'flex h-8 shrink-0 items-center rounded-md px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground';
+const tabActive = 'bg-accent text-accent-foreground font-medium hover:bg-accent';
 
 function App() {
   const openTabs = useAppStore((s) => s.openTabs);
@@ -26,39 +33,51 @@ function App() {
   }, []);
 
   return (
-    <>
-      <div className="app">
-        <div className="tabbar">
+    <TooltipProvider>
+      <div className="flex h-screen flex-col">
+        <header className="flex h-11 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-card px-2">
+          <span className="mr-2 shrink-0 text-sm font-semibold tracking-wide">
+            <span className="text-primary">k</span>shell
+          </span>
           <button
-            className={activeTabId === null ? 'tab tab-active' : 'tab'}
+            className={cn(tabBase, activeTabId === null && tabActive)}
             onClick={() => setActiveTab(null)}
           >
             首页
           </button>
           <button
-            className={activeTabId === SETTINGS_TAB_ID ? 'tab tab-active' : 'tab'}
+            className={cn(tabBase, activeTabId === SETTINGS_TAB_ID && tabActive)}
             onClick={() => setActiveTab(SETTINGS_TAB_ID)}
           >
             设置
           </button>
-          {openTabs.map((t) => (
-            <div
-              key={t.id}
-              className={activeTab?.id === t.id ? 'tab tab-active' : 'tab'}
-            >
-              <button className="tab-title" onClick={() => setActiveTab(t.id)}>
-                {t.name}
-              </button>
-              <button
-                className="tab-close"
-                aria-label={`关闭 ${t.name}`}
-                onClick={() => closeTab(t.id)}
+          {openTabs.length > 0 && (
+            <div className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+          )}
+          {openTabs.map((t) => {
+            const active = activeTab?.id === t.id;
+            return (
+              <div
+                key={t.id}
+                className={cn('group flex shrink-0 items-center rounded-md pr-1', tabBase, active && tabActive)}
               >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
+                <button className="text-sm" onClick={() => setActiveTab(t.id)}>
+                  {t.name}
+                </button>
+                <button
+                  className={cn(
+                    'ml-0.5 flex h-5 w-5 items-center justify-center rounded text-base leading-none text-muted-foreground transition-opacity hover:bg-background hover:text-foreground',
+                    active ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100',
+                  )}
+                  aria-label={`关闭 ${t.name}`}
+                  onClick={() => closeTab(t.id)}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </header>
         {activeTabId === SETTINGS_TAB_ID ? (
           <Settings />
         ) : activeTab ? (
@@ -68,7 +87,7 @@ function App() {
         )}
       </div>
       <Toaster />
-    </>
+    </TooltipProvider>
   );
 }
 

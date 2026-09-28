@@ -7,6 +7,9 @@
 import { useEffect, useState } from 'react';
 import { getTools, loadProvidersYAML, saveProvidersYAML } from '../lib/api';
 import type { ToolInfo } from '../lib/api';
+import { cn } from '../lib/cn';
+import { Badge } from '../components/ui/badge';
+import { Button } from '../components/ui/button';
 
 export default function Settings() {
   const [tools, setTools] = useState<ToolInfo[] | null>(null);
@@ -54,73 +57,83 @@ export default function Settings() {
   };
 
   return (
-    <div className="settings">
-      <h1 className="settings-title">设置</h1>
+    <div className="flex-1 overflow-y-auto p-6">
+      <div className="max-w-2xl">
+        <h1 className="mb-4 text-lg font-semibold">设置</h1>
 
-      <section className="settings-section">
-        <h2 className="settings-subtitle">工具检测</h2>
-        {toolsError && <p className="settings-error">{toolsError}</p>}
-        {tools === null && !toolsError && <p className="settings-status">加载中……</p>}
-        {tools !== null && tools.length === 0 && (
-          <p className="settings-status">未检测到任何工具</p>
-        )}
-        {tools !== null && tools.length > 0 && (
-          <ul className="tool-list">
-            {tools.map((t) => (
-              <li
-                key={t.ID}
-                className={t.Installed ? 'tool-item' : 'tool-item tool-item--uninstalled'}
-                title={
-                  t.Source === 'config-dir'
-                    ? '只检测到配置目录，没有可执行程序，可用性未验证'
-                    : t.BinPath
-                }
-              >
-                <span className="tool-name">{t.Name}</span>
-                {t.Source === 'config-dir' && <span className="tool-unverified">未验证</span>}
-                {t.Installed ? (
-                  t.Version && <span className="tool-version">{t.Version}</span>
-                ) : (
-                  <span className="tool-missing">未安装</span>
+        <section className="mb-6 rounded-lg border border-border bg-card p-4">
+          <h2 className="mb-3 text-sm font-medium">工具检测</h2>
+          {toolsError && <p className="text-sm text-destructive">{toolsError}</p>}
+          {tools === null && !toolsError && (
+            <p className="text-sm text-muted-foreground">加载中……</p>
+          )}
+          {tools !== null && tools.length === 0 && (
+            <p className="text-sm text-muted-foreground">未检测到任何工具</p>
+          )}
+          {tools !== null && tools.length > 0 && (
+            <ul className="divide-y divide-border rounded-md border border-border">
+              {tools.map((t) => (
+                <li
+                  key={t.ID}
+                  className={cn(
+                    'flex items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-muted',
+                    !t.Installed && 'opacity-50',
+                  )}
+                  title={
+                    t.Source === 'config-dir'
+                      ? '只检测到配置目录，没有可执行程序，可用性未验证'
+                      : t.BinPath
+                  }
+                >
+                  <span className="font-medium">{t.Name}</span>
+                  {t.Source === 'config-dir' && (
+                    <Badge
+                      variant="outline"
+                      className="border-amber-500/50 text-amber-600 dark:text-amber-400"
+                    >
+                      未验证
+                    </Badge>
+                  )}
+                  {t.Installed ? (
+                    t.Version && <span className="text-xs text-muted-foreground">{t.Version}</span>
+                  ) : (
+                    <span className="ml-auto text-xs text-muted-foreground">未安装</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="rounded-lg border border-border bg-card p-4">
+          <h2 className="mb-3 text-sm font-medium">自定义工具（providers.yaml）</h2>
+          {yamlError && <p className="text-sm text-destructive">{yamlError}</p>}
+          {yaml !== null && (
+            <>
+              <textarea
+                className="min-h-[280px] w-full resize-y rounded-md border border-input bg-card p-3 font-mono text-xs leading-relaxed text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="providers.yaml 编辑器"
+                value={yaml}
+                spellCheck={false}
+                onChange={(e) => {
+                  setYaml(e.target.value);
+                  setSaved(false);
+                  setSaveError('');
+                }}
+              />
+              <div className="mt-2 flex items-center gap-2.5">
+                <Button onClick={() => void handleSave()} disabled={saving}>
+                  保存
+                </Button>
+                {saved && (
+                  <span className="text-sm text-muted-foreground">已保存，重启应用后生效</span>
                 )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="settings-section">
-        <h2 className="settings-subtitle">自定义工具（providers.yaml）</h2>
-        {yamlError && <p className="settings-error">{yamlError}</p>}
-        {yaml !== null && (
-          <>
-            <textarea
-              className="yaml-editor"
-              aria-label="providers.yaml 编辑器"
-              value={yaml}
-              spellCheck={false}
-              onChange={(e) => {
-                setYaml(e.target.value);
-                setSaved(false);
-                setSaveError('');
-              }}
-            />
-            <div className="settings-actions">
-              <button
-                className="settings-save"
-                onClick={() => void handleSave()}
-                disabled={saving}
-              >
-                保存
-              </button>
-              {saved && (
-                <span className="settings-saved">已保存，重启应用后生效</span>
-              )}
-              {saveError && <span className="settings-error">{saveError}</span>}
-            </div>
-          </>
-        )}
-      </section>
+                {saveError && <span className="text-sm text-destructive">{saveError}</span>}
+              </div>
+            </>
+          )}
+        </section>
+      </div>
     </div>
   );
 }

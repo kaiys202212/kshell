@@ -4,6 +4,9 @@
 import { useEffect, useState } from 'react';
 import { previewFile } from '../lib/api';
 import type { FilePreview } from '../lib/api';
+import { Badge } from './ui/badge';
+import { EmptyState } from './ui/empty-state';
+import { Skeleton } from './ui/skeleton';
 
 export default function Preview({ wsPath, path }: { wsPath: string; path: string | null }) {
   const [data, setData] = useState<FilePreview | null>(null);
@@ -42,24 +45,39 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
   }, [wsPath, path]);
 
   return (
-    <div className="preview">
-      <div className="preview-head">
-        <span className="preview-path" title={path ?? ''}>
+    <div className="flex min-h-0 flex-col text-sm">
+      <div className="sticky top-0 z-10 flex items-center border-b border-border bg-card py-2">
+        <span
+          className="truncate font-mono text-xs text-muted-foreground"
+          title={path ?? ''}
+        >
           {path ?? '未选择文件'}
         </span>
       </div>
-      {!path && <p className="preview-status">从右侧文件树选择文件查看预览</p>}
-      {loading && <p className="preview-status">加载中……</p>}
-      {error && <p className="preview-error">{error}</p>}
+      {!path && <EmptyState title="从右侧文件树选择文件查看预览" />}
+      {loading && (
+        <div className="mt-3 flex flex-col gap-2">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <Skeleton key={i} className="h-4" style={{ width: `${88 - (i % 3) * 18}%` }} />
+          ))}
+        </div>
+      )}
+      {error && <p className="text-sm text-destructive">{error}</p>}
       {!loading && !error && data?.Binary && (
-        <p className="preview-status">{data.Info || '二进制文件，无法预览'}</p>
+        <p className="text-sm text-muted-foreground">{data.Info || '二进制文件，无法预览'}</p>
       )}
       {!loading && !error && data && !data.Binary && (
         <>
-          {data.Info && <p className="preview-meta">{data.Info}</p>}
+          {data.Info && <p className="mb-2 text-xs text-muted-foreground">{data.Info}</p>}
           {/* 截断行数 500 与 Go 侧 internal/workspace/preview.go 的预览行数上限耦合，改一处需同步 */}
-          {data.Truncated && <p className="preview-truncated">内容已截断：仅显示前 500 行</p>}
-          <pre className="preview-pre">{data.Lines.join('\n')}</pre>
+          {data.Truncated && (
+            <Badge variant="outline" className="mb-2 w-fit">
+              内容已截断：仅显示前 500 行
+            </Badge>
+          )}
+          <pre className="overflow-auto rounded-md border border-border bg-card p-3 font-mono text-[13px] leading-relaxed whitespace-pre">
+            {data.Lines.join('\n')}
+          </pre>
         </>
       )}
     </div>

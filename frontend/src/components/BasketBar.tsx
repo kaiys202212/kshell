@@ -26,21 +26,24 @@ export default function BasketBar() {
   };
 
   return (
-    <div className="basket-bar">
-      <span className="basket-title">
+    <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5">
+      <span className="whitespace-nowrap text-xs text-muted-foreground">
         上下文篮（{basket.length}/{maxBasket}）
       </span>
       {basket.length === 0 ? (
-        <span className="basket-empty">未选择文件</span>
+        <span className="text-xs italic text-muted-foreground">未选择文件</span>
       ) : (
-        <ul className="basket-items">
+        <ul className="m-0 flex list-none flex-wrap items-center gap-1.5 p-0">
           {basket.map((p) => (
-            <li key={p} className="basket-item">
-              <span className="basket-name" title={p}>
+            <li
+              key={p}
+              className="flex items-center gap-1 rounded-full border border-border bg-secondary px-2 py-0.5 text-xs"
+            >
+              <span className="max-w-40 truncate" title={p}>
                 {basename(p)}
               </span>
               <button
-                className="basket-remove"
+                className="rounded-full leading-none text-muted-foreground transition-colors hover:text-destructive"
                 aria-label={`移出 ${p}`}
                 onClick={() => void remove(p)}
               >

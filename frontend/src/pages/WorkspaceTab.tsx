@@ -2,14 +2,21 @@
 // 中间上下文篮 + 文件预览、右侧「文件 | SSH」页签。
 import { useState } from 'react';
 import { newSession } from '../lib/api';
+import { cn } from '../lib/cn';
 import BasketBar from '../components/BasketBar';
 import FileTree from '../components/FileTree';
 import Preview from '../components/Preview';
 import SessionList from '../components/SessionList';
 import SshPanel from '../components/SshPanel';
+import { Button } from '../components/ui/button';
 import type { WorkspaceTab } from '../state/store';
 
 type RightPane = 'files' | 'ssh';
+
+// 右栏「文件 | SSH」子页签：胶囊式，激活态用 accent
+const paneTabBase =
+  'flex h-7 items-center rounded-md px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground';
+const paneTabActive = 'bg-accent text-accent-foreground font-medium hover:bg-accent';
 
 export default function WorkspaceTabView({ tab }: { tab: WorkspaceTab }) {
   const [rightPane, setRightPane] = useState<RightPane>('files');
@@ -27,30 +34,30 @@ export default function WorkspaceTabView({ tab }: { tab: WorkspaceTab }) {
   };
 
   return (
-    <div className="ws-tab">
-      <aside className="ws-pane ws-pane-left">
-        <div className="session-header">
-          <button className="new-session-btn" onClick={() => void handleNewSession()}>
+    <div className="flex min-h-0 flex-1">
+      <aside className="flex w-[260px] shrink-0 flex-col overflow-y-auto border-r border-border bg-card p-3">
+        <div className="mb-2">
+          <Button variant="secondary" className="w-full" onClick={() => void handleNewSession()}>
             新建会话
-          </button>
-          {newErr && <p className="new-session-err">{newErr}</p>}
+          </Button>
+          {newErr && <p className="mt-1.5 text-xs text-destructive">{newErr}</p>}
         </div>
         <SessionList workspacePath={tab.id} />
       </aside>
-      <main className="ws-pane ws-pane-main">
+      <main className="min-w-0 flex-1 overflow-y-auto p-3">
         <BasketBar />
         <Preview wsPath={tab.id} path={previewPath} />
       </main>
-      <aside className="ws-pane ws-pane-right">
-        <div className="ws-right-tabs">
+      <aside className="flex w-[260px] shrink-0 flex-col overflow-y-auto border-l border-border bg-card p-3">
+        <div className="mb-2 flex gap-1">
           <button
-            className={rightPane === 'files' ? 'active' : ''}
+            className={cn(paneTabBase, rightPane === 'files' && paneTabActive)}
             onClick={() => setRightPane('files')}
           >
             文件
           </button>
           <button
-            className={rightPane === 'ssh' ? 'active' : ''}
+            className={cn(paneTabBase, rightPane === 'ssh' && paneTabActive)}
             onClick={() => setRightPane('ssh')}
           >
             SSH

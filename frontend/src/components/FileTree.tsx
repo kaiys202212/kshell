@@ -6,7 +6,10 @@
 import { useEffect, useState } from 'react';
 import { listFiles, toggleBasket } from '../lib/api';
 import type { FileNode } from '../lib/api';
+import { cn } from '../lib/cn';
 import { useAppStore } from '../state/store';
+import { EmptyState } from './ui/empty-state';
+import { Skeleton } from './ui/skeleton';
 
 // 树条目：node 为 Go 返回的节点，relPath 是相对工作区的 / 分隔路径（ListFiles 用），
 // children 为 null 表示子层尚未加载（懒加载）。
@@ -17,6 +20,80 @@ interface TreeItem {
   children: TreeItem[] | null;
   expanded: boolean;
   error?: string;
+}
+
+// 手写内联 SVG（不引图标库）：chevron / folder / folder-open / file / 篮子圆点
+function ChevronIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-90')}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 4l4 4-4 4" />
+    </svg>
+  );
+}
+
+function FolderIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="h-3.5 w-3.5 shrink-0 text-primary/70"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.2"
+      aria-hidden="true"
+    >
+      {open ? (
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M1.5 5.5A1 1 0 0 1 2.5 4.5h3l1.2 1.2h5.8a1 1 0 0 1 1 1V7H5.2a1 1 0 0 0-.97.757L3 12.5H2.5a1 1 0 0 1-1-1v-6Zm2.3 7 1.1-4.1a.5.5 0 0 1 .48-.4h8.4a.5.5 0 0 1 .48.65L13.3 12a1 1 0 0 1-.96.72H3.8Z"
+        />
+      ) : (
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M1.5 4.5a1 1 0 0 1 1-1h3l1.4 1.4h5.6a1 1 0 0 1 1 1v6.1a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-7.5Z"
+        />
+      )}
+    </svg>
+  );
+}
+
+function FileIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.2"
+      aria-hidden="true"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M4 2.5h5l3 3v8a.5.5 0 0 1-.5.5h-7a.5.5 0 0 1-.5-.5v-10.5a.5.5 0 0 1 .5-.5ZM9 2.5V6h3.5"
+      />
+    </svg>
+  );
+}
+
+function BasketDotIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
+      {filled ? (
+        <circle cx="8" cy="8" r="4" fill="currentColor" />
+      ) : (
+        <circle cx="8" cy="8" r="3.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      )}
+    </svg>
+  );
 }
 
 function toItems(nodes: FileNode[], parentRel: string): TreeItem[] {
@@ -50,13 +127,15 @@ function TreeRow({ item, depth, basket, onDirToggle, onOpenFile, onBasketToggle 
   const inBasket = basket.includes(node.Path);
   return (
     <li
-      className="tree-item"
       role="treeitem"
       aria-expanded={node.IsDir ? item.expanded : undefined}
     >
-      <div className="tree-row" style={{ paddingLeft: depth * 14 }}>
+      <div
+        className="group flex h-7 items-center gap-0.5 rounded pr-1 transition-colors hover:bg-muted"
+        style={{ paddingLeft: depth * 14 }}
+      >
         <button
-          className="tree-name"
+          className="flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-0.5 text-left"
           title={node.Path}
           onClick={() => (node.IsDir ? onDirToggle(item) : onOpenFile(node.Path))}
           onKeyDown={(e) => {
@@ -67,25 +146,41 @@ function TreeRow({ item, depth, basket, onDirToggle, onOpenFile, onBasketToggle 
             }
           }}
         >
-          <span className="tree-icon" aria-hidden="true">
-            {node.IsDir ? (item.expanded ? '▾' : '▸') : ''}
+          <span className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground">
+            {node.IsDir && <ChevronIcon open={item.expanded} />}
           </span>
-          <span className={node.IsDir ? 'tree-dir' : 'tree-file'}>{node.Name}</span>
+          {node.IsDir ? <FolderIcon open={item.expanded} /> : <FileIcon />}
+          <span
+            className={cn(
+              'min-w-0 truncate text-sm',
+              node.IsDir ? 'font-medium' : 'text-foreground/90',
+            )}
+          >
+            {node.Name}
+          </span>
         </button>
         <button
-          className="tree-basket-btn"
+          className={cn(
+            'shrink-0 rounded p-0.5 transition-opacity hover:text-primary',
+            inBasket
+              ? 'text-primary opacity-100'
+              : 'text-muted-foreground opacity-0 group-hover:opacity-100',
+          )}
           aria-label={`${inBasket ? '移出' : '加入'}篮子 ${node.Name}`}
           title={inBasket ? '移出上下文篮' : '加入上下文篮'}
           onClick={() => onBasketToggle(node.Path)}
         >
-          {inBasket ? '●' : '○'}
+          <BasketDotIcon filled={inBasket} />
         </button>
       </div>
       {node.IsDir && item.expanded && item.error && (
-        <div className="tree-item-error" style={{ paddingLeft: (depth + 1) * 14 }}>
-          <span className="tree-item-error-text">{item.error}</span>
+        <div
+          className="m-0.5 flex items-center gap-1.5 text-xs"
+          style={{ paddingLeft: (depth + 1) * 14 }}
+        >
+          <span className="truncate text-destructive">{item.error}</span>
           <button
-            className="tree-item-retry"
+            className="shrink-0 rounded border border-border px-1.5 py-0.5 text-xs transition-colors hover:bg-muted"
             aria-label={`重试加载 ${node.Name}`}
             onClick={() => onDirToggle(item)}
           >
@@ -94,7 +189,7 @@ function TreeRow({ item, depth, basket, onDirToggle, onOpenFile, onBasketToggle 
         </div>
       )}
       {node.IsDir && item.expanded && item.children && (
-        <ul className="tree-group" role="group">
+        <ul role="group" className="m-0 list-none p-0">
           {item.children.map((c) => (
             <TreeRow
               key={c.node.Path}
@@ -187,15 +282,26 @@ export default function FileTree({
   };
 
   if (error) {
-    return <p className="tree-error">{error}</p>;
+    return <p className="text-sm text-destructive">{error}</p>;
   }
   if (items === null) {
-    return <p className="tree-status">加载中……</p>;
+    // 骨架屏：5 行占位，带递进缩进模拟树形结构
+    return (
+      <div className="flex flex-col gap-1.5" aria-label="工作区文件树加载中">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <Skeleton
+            key={i}
+            className="h-7"
+            style={{ marginLeft: i * 14, width: `${72 - i * 8}%` }}
+          />
+        ))}
+      </div>
+    );
   }
   return (
-    <ul className="file-tree" role="tree" aria-label="工作区文件树">
+    <ul role="tree" aria-label="工作区文件树" className="m-0 list-none p-0 text-sm">
       {items.length === 0 ? (
-        <p className="tree-status">没有可显示的文件</p>
+        <EmptyState title="没有可显示的文件" />
       ) : (
         items.map((it) => (
           <TreeRow

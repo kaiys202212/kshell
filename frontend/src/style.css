@@ -1,5 +1,5 @@
 /* 全局基线：Tailwind 4 + shadcn 风格设计 token。
-   深浅色跟随系统（prefers-color-scheme），组件样式见 App.css（迁移期，逐步替换为 Tailwind 工具类）。 */
+   深浅色跟随系统（prefers-color-scheme），组件样式全部走 Tailwind 工具类。 */
 @import "tailwindcss";
 
 /* 把 CSS 变量映射为 Tailwind 颜色/圆角 token（inline：工具类直接引用运行时变量，深浅色切换即时生效） */
@@ -90,17 +90,3 @@ body {
   background: transparent;
 }
 
-/* ===== 旧变量兼容层（迁移期）：把 App.css 仍在消费的旧变量名映射到新 token，
-   浅深色由上游变量联动。App.css 里的 --accent 语义是主色，与新 token 冲突，
-   已在 App.css 内改引 var(--primary)，此处不再定义 --accent。 ===== */
-:root {
-  --bg: var(--background);
-  --bg-panel: var(--card);
-  --bg-hover: var(--muted);
-  --bg-active: var(--secondary);
-  --text: var(--foreground);
-  --text-dim: var(--muted-foreground);
-  --accent-text: var(--primary-foreground);
-  --error: var(--destructive);
-  --warning: #d29922;
-}

@@ -87,10 +87,10 @@ describe('SshPanel', () => {
     expect(await screen.findByText('没有可用的 SSH 连接')).toBeInTheDocument();
   });
 
-  it('列表加载中显示加载态，不闪错误/空态', () => {
+  it('列表加载中显示骨架屏，不闪错误/空态', () => {
     mocks.listConnections.mockReturnValue(new Promise(() => {})); // 永不 resolve
-    render(<SshPanel wsPath="D:\\proj-a" />);
-    expect(screen.getByText('加载中……')).toBeInTheDocument();
+    const { container } = render(<SshPanel wsPath="D:\\proj-a" />);
+    expect(container.querySelectorAll('.animate-pulse')).toHaveLength(3);
     expect(screen.queryByText('没有可用的 SSH 连接')).not.toBeInTheDocument();
   });
 
@@ -110,14 +110,14 @@ describe('SshPanel', () => {
 
     expect(mocks.openSSH).toHaveBeenCalledWith('c1');
     expect(useAppStore.getState().windowStatus['kshell · 生产机']).toBe(true);
-    expect(row).toHaveClass('ssh-item--open');
+    expect(row).toHaveClass('bg-primary/5');
   });
 
   it('已 open 的连接再点「连接」仍调 OpenSSH（Go 侧幂等转聚焦），状态保持 open', async () => {
     useAppStore.setState({ windowStatus: { 'kshell · 生产机': true } });
     render(<SshPanel wsPath="D:\\proj-a" />);
     const row = await findRow('生产机');
-    expect(row).toHaveClass('ssh-item--open');
+    expect(row).toHaveClass('bg-primary/5');
 
     await act(async () => {
       fireEvent.click(within(row).getByRole('button', { name: '连接' }));
@@ -125,7 +125,7 @@ describe('SshPanel', () => {
 
     expect(mocks.openSSH).toHaveBeenCalledWith('c1');
     expect(useAppStore.getState().windowStatus['kshell · 生产机']).toBe(true);
-    expect(row).toHaveClass('ssh-item--open');
+    expect(row).toHaveClass('bg-primary/5');
   });
 
   it('OpenSSH 失败时不置 open 状态，走轻量提示（notify）而不炸面板', async () => {
@@ -138,7 +138,7 @@ describe('SshPanel', () => {
     });
 
     expect(useAppStore.getState().windowStatus['kshell · 生产机']).toBeUndefined();
-    expect(row).not.toHaveClass('ssh-item--open');
+    expect(row).not.toHaveClass('bg-primary/5');
     // 操作失败走 store 的轻量提示，面板本身保持完整渲染（列表仍在）
     expect(
       useAppStore.getState().toasts.some((t) => t.title.includes('未找到 ssh 可执行文件')),

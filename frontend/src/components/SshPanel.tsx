@@ -14,7 +14,11 @@ import { execRemote, listConnections, openSSH } from '../lib/api';
 import type { RemoteResult, SshConnection } from '../lib/api';
 import { formatDuration, tailLines } from '../lib/format';
 import { terminalTitle } from '../lib/title';
+import { cn } from '../lib/cn';
 import { useAppStore } from '../state/store';
+import { Button } from './ui/button';
+import { EmptyState } from './ui/empty-state';
+import { Skeleton } from './ui/skeleton';
 
 // 输出尾部行数：取 50 行——约两屏终端的量，足够看到命令关键结果又不撑爆右栏。
 // Go 侧 Result 是完整输出，截多少只影响前端展示，与后端无耦合。
@@ -101,10 +105,16 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
   };
 
   if (error) {
-    return <p className="ssh-error">{error}</p>;
+    return <p className="text-sm text-destructive">{error}</p>;
   }
   if (conns === null) {
-    return <p className="ssh-status">加载中……</p>;
+    return (
+      <div className="flex flex-col gap-2" aria-label="SSH 连接列表加载中">
+        <Skeleton className="h-12 rounded-lg border border-border" />
+        <Skeleton className="h-12 rounded-lg border border-border" />
+        <Skeleton className="h-12 rounded-lg border border-border" />
+      </div>
+    );
   }
 
   const selected = conns.find((c) => c.ID === selectedId) ?? null;
@@ -112,46 +122,50 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
   const stderrTail = result ? tailLines(result.Stderr, OUTPUT_TAIL_LINES) : '';
 
   return (
-    <div className="ssh-panel">
+    <div className="flex flex-col gap-2.5 text-sm">
       {conns.length === 0 ? (
-        <p className="ssh-empty">没有可用的 SSH 连接</p>
+        <EmptyState title="没有可用的 SSH 连接" />
       ) : (
-        <ul className="ssh-list" aria-label="SSH 连接列表">
+        <ul aria-label="SSH 连接列表" className="m-0 flex list-none flex-col gap-1.5 p-0">
           {conns.map((c) => {
             const open = windowStatus[terminalTitle(c.Name)] === true;
             return (
               <li
                 key={c.ID}
-                className={
+                className={cn(
+                  'rounded-lg border border-border bg-card px-2.5 py-2 transition-colors',
                   open
-                    ? 'ssh-item ssh-item--open'
-                    : c.ID === selectedId
-                      ? 'ssh-item ssh-item--selected'
-                      : 'ssh-item'
-                }
+                    ? 'border-l-2 border-l-primary bg-primary/5'
+                    : c.ID === selectedId && 'bg-muted/60',
+                )}
               >
-                <div className="ssh-row">
+                <div className="flex min-w-0 items-center gap-1.5">
                   <button
-                    className="ssh-name"
+                    className="min-w-0 truncate text-left text-sm font-medium"
                     title={c.Host}
                     onClick={() => setSelectedId(c.ID)}
                   >
                     {c.Name}
                   </button>
-                  {open && <span className="ssh-open-mark">✓</span>}
-                  <button className="ssh-connect" onClick={() => void handleOpen(c)}>
+                  {open && <span className="shrink-0 text-xs text-primary">✓</span>}
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="ml-auto shrink-0"
+                    onClick={() => void handleOpen(c)}
+                  >
                     连接
-                  </button>
+                  </Button>
                 </div>
-                <div className="ssh-meta">
-                  <span className="ssh-target">{display(c)}</span>
+                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="truncate">{display(c)}</span>
                   <span
-                    className="ssh-source"
+                    className="shrink-0 rounded-full border border-border px-1.5 py-px"
                     title={c.SourceFile || undefined}
                   >
                     {sourceLabel(c.Source)}
                   </span>
-                  {c.Verified && <span className="ssh-verified">✓</span>}
+                  {c.Verified && <span className="shrink-0 text-emerald-500">✓</span>}
                 </div>
               </li>
             );
@@ -160,10 +174,10 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
       )}
 
       {selected && (
-        <div className="ssh-exec">
-          <div className="ssh-exec-row">
+        <div className="flex flex-col gap-2">
+          <div className="flex gap-2">
             <input
-              className="ssh-cmd-input"
+              className="h-8 min-w-0 flex-1 rounded-md border border-input bg-card px-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="执行命令"
               placeholder={`在 ${selected.Name} 上执行命令`}
               value={cmd}
@@ -172,25 +186,32 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
                 if (e.key === 'Enter') void handleExec();
               }}
             />
-            <button
-              className="ssh-exec-btn"
+            <Button
+              size="sm"
+              className="shrink-0 self-center"
               onClick={() => void handleExec()}
               disabled={running || !cmd.trim()}
             >
               执行
-            </button>
+            </Button>
           </div>
-          {execError && <p className="ssh-exec-error">{execError}</p>}
+          {execError && <p className="text-xs text-destructive">{execError}</p>}
           {result && (
             <>
-              <p className="ssh-result-meta">
+              <p className="text-xs text-muted-foreground">
                 退出码 {result.ExitCode} · 耗时 {formatDuration(result.Duration)}
               </p>
-              <pre className="ssh-output" aria-label="命令输出">
+              <pre
+                className="max-h-80 overflow-auto rounded-md bg-muted p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap"
+                aria-label="命令输出"
+              >
                 {stdoutTail || '（无输出）'}
               </pre>
               {stderrTail && (
-                <pre className="ssh-output ssh-output--stderr" aria-label="错误输出">
+                <pre
+                  className="max-h-80 overflow-auto rounded-md bg-muted p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap text-destructive/90"
+                  aria-label="错误输出"
+                >
                   {stderrTail}
                 </pre>
               )}

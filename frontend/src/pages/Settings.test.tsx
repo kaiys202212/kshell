@@ -61,7 +61,7 @@ describe('Settings', () => {
 
     const gemini = screen.getByText('Gemini');
     expect(gemini.closest('li')).toHaveTextContent('未安装');
-    expect(gemini.closest('li')).toHaveClass('tool-item--uninstalled');
+    expect(gemini.closest('li')).toHaveClass('opacity-50');
   });
 
   it('Source=config-dir 的 generic 工具显示「未验证」徽标', async () => {
