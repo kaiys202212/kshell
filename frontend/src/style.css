@@ -1,20 +1,53 @@
-html {
-  background-color: rgba(27, 38, 54, 1);
-  color: white;
+/* 全局基线：CSS 变量主题 token + reset。
+   深浅色跟随系统（prefers-color-scheme），组件样式见 App.css。 */
+:root {
+  --bg: #f5f6f8;
+  --bg-panel: #ffffff;
+  --bg-hover: #e9ebef;
+  --bg-active: #dde1e7;
+  --text: #1f2328;
+  --text-dim: #656d76;
+  --border: #d0d7de;
+  --accent: #0969da;
+  --accent-text: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b2632;
+    --bg-panel: #243244;
+    --bg-hover: #2c3b50;
+    --bg-active: #35485f;
+    --text: #e6e6e6;
+    --text-dim: #9aa4b2;
+    --border: #3b4a5e;
+    --accent: #4493f8;
+    --accent-text: #0b1522;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
 }
 
 body {
-  margin: 0;
-  color: white;
-  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
-  "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
-  sans-serif;
+  font-family: system-ui, -apple-system, "Segoe UI", "Roboto", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  color: var(--text);
+  background: var(--bg);
 }
 
-@font-face {
-  font-family: "Nunito";
-  font-style: normal;
-  font-weight: 400;
-  src: local(""),
-  url("assets/fonts/nunito-v16-latin-regular.woff2") format("woff2");
+#root {
+  height: 100vh;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
 }
