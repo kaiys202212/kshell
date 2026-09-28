@@ -16,6 +16,9 @@ const mocks = vi.hoisted(() => ({
   previewFile: vi.fn(),
   toggleBasket: vi.fn(),
   newSession: vi.fn(),
+  listConnections: vi.fn(),
+  openSSH: vi.fn(),
+  execRemote: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -75,11 +78,26 @@ describe('WorkspaceTab', () => {
     expect(mocks.previewFile).toHaveBeenCalledWith('D:\\proj-a', 'D:\\proj-a\\main.ts');
   });
 
-  it('SSH 页签仍是占位，文件页签渲染文件树', async () => {
+  it('SSH 页签渲染 SshPanel 连接列表，文件页签渲染文件树', async () => {
+    mocks.listConnections.mockResolvedValue([
+      {
+        ID: 'c1',
+        Name: '生产机',
+        Host: '10.0.0.1',
+        User: 'root',
+        Port: 22,
+        IdentityFile: '',
+        Workspace: '',
+        Source: 'sshconfig',
+        SourceFile: '',
+        Verified: true,
+      },
+    ]);
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} />);
 
     expect(await screen.findByText('没有可显示的文件')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'SSH' }));
-    expect(screen.getByText('SSH 连接（待实现）')).toBeInTheDocument();
+    expect(await screen.findByText('生产机')).toBeInTheDocument();
+    expect(mocks.listConnections).toHaveBeenCalledWith('D:\\proj-a');
   });
 });

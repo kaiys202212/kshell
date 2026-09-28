@@ -10,6 +10,8 @@
   --border: #d0d7de;
   --accent: #0969da;
   --accent-text: #ffffff;
+  --error: #c0392b;
+  --warning: #b58900;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -23,6 +25,8 @@
     --border: #3b4a5e;
     --accent: #4493f8;
     --accent-text: #0b1522;
+    --error: #e07060;
+    --warning: #d9a72a;
   }
 }
 

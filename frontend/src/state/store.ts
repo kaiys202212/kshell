@@ -3,11 +3,19 @@
 import { create } from 'zustand';
 import type { Workspace } from '../lib/api';
 
+// 轻量提示的展示时长（毫秒）
+const MESSAGE_TTL_MS = 3000;
+// notify 的自动清空定时器（模块级：store 单例，定时器也只需一份）
+let messageTimer: ReturnType<typeof setTimeout> | null = null;
+
 // 一个页签对应一个打开的工作区（按路径去重，可多开、可关闭）
 export interface WorkspaceTab {
   id: string; // 工作区路径，作为页签唯一标识
   name: string;
 }
+
+// 设置页固定页签的保留标识（带命名空间前缀，不会与工作区路径冲突）
+export const SETTINGS_TAB_ID = 'kshell:settings';
 
 interface AppState {
   workspaces: Workspace[];
@@ -27,6 +35,13 @@ interface AppState {
   basket: string[]; // 上下文篮：勾选的文件路径（Go 侧篮子的镜像）
   // 以 Go ToggleBasket 的返回值为准同步（操作后是否在篮中），避免双份状态漂移
   syncBasket(path: string, inBasket: boolean): void;
+  // 用 Go GetBasket 的返回值整体重建镜像（应用挂载时调用，防刷新漂移）
+  setBasket(paths: string[]): void;
+
+  // 轻量全局提示（篮满、操作失败等）：单条文本，notify 后自动消失，
+  // 不引入 toast 库。由 BasketBar 行内展示。
+  message: string;
+  notify(msg: string): void;
 
   // 弹出的终端窗口状态（窗口标题 → 是否存活）：
   // SessionList 恢复成功把对应项置 true，"window:closed" 事件把对应项还原为 false。
@@ -76,6 +91,18 @@ export const useAppStore = create<AppState>((set) => ({
           : [...s.basket, path]
         : s.basket.filter((p) => p !== path),
     })),
+  setBasket: (paths) => set({ basket: paths }),
+
+  message: '',
+  notify: (msg) => {
+    // 连续提示只保留最后一条：先清掉未到期的新定时器再重设，避免叠加清空
+    if (messageTimer !== null) clearTimeout(messageTimer);
+    messageTimer = setTimeout(() => {
+      messageTimer = null;
+      set({ message: '' });
+    }, MESSAGE_TTL_MS);
+    set({ message: msg });
+  },
 
   windowStatus: {},
   setWindowStatus: (title, open) =>

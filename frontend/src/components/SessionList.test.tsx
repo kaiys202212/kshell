@@ -217,4 +217,21 @@ describe('SessionList', () => {
     render(<SessionList workspacePath={'D:\\proj-a'} />);
     expect(await screen.findByText('该工作区暂无会话')).toBeInTheDocument();
   });
+
+  it('onScanDone 回调把 scanState 置 done（幂等，消除死角）', async () => {
+    mocks.getSessions.mockResolvedValue([]);
+    useAppStore.setState({ scanState: 'scanning' });
+    render(<SessionList workspacePath={'D:\\proj-a'} />);
+
+    await act(async () => {
+      scanDoneCb({});
+    });
+    expect(useAppStore.getState().scanState).toBe('done');
+
+    // 重复收到事件保持 done（幂等）
+    await act(async () => {
+      scanDoneCb({});
+    });
+    expect(useAppStore.getState().scanState).toBe('done');
+  });
 });

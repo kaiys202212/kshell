@@ -57,6 +57,7 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
       {!loading && !error && data && !data.Binary && (
         <>
           {data.Info && <p className="preview-meta">{data.Info}</p>}
+          {/* 截断行数 500 与 Go 侧 internal/workspace/preview.go 的预览行数上限耦合，改一处需同步 */}
           {data.Truncated && <p className="preview-truncated">内容已截断：仅显示前 500 行</p>}
           <pre className="preview-pre">{data.Lines.join('\n')}</pre>
         </>

@@ -10,11 +10,13 @@ import { useAppStore } from '../state/store';
 
 // 树条目：node 为 Go 返回的节点，relPath 是相对工作区的 / 分隔路径（ListFiles 用），
 // children 为 null 表示子层尚未加载（懒加载）。
+// error 只用于「子目录加载失败」的行内提示（根层失败由组件级 error 整树呈现）。
 interface TreeItem {
   node: FileNode;
   relPath: string;
   children: TreeItem[] | null;
   expanded: boolean;
+  error?: string;
 }
 
 function toItems(nodes: FileNode[], parentRel: string): TreeItem[] {
@@ -79,6 +81,18 @@ function TreeRow({ item, depth, basket, onDirToggle, onOpenFile, onBasketToggle 
           {inBasket ? '●' : '○'}
         </button>
       </div>
+      {node.IsDir && item.expanded && item.error && (
+        <div className="tree-item-error" style={{ paddingLeft: (depth + 1) * 14 }}>
+          <span className="tree-item-error-text">{item.error}</span>
+          <button
+            className="tree-item-retry"
+            aria-label={`重试加载 ${node.Name}`}
+            onClick={() => onDirToggle(item)}
+          >
+            重试
+          </button>
+        </div>
+      )}
       {node.IsDir && item.expanded && item.children && (
         <ul className="tree-group" role="group">
           {item.children.map((c) => (
@@ -109,6 +123,7 @@ export default function FileTree({
   const [error, setError] = useState('');
   const basket = useAppStore((s) => s.basket);
   const syncBasket = useAppStore((s) => s.syncBasket);
+  const notify = useAppStore((s) => s.notify);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,7 +141,8 @@ export default function FileTree({
     };
   }, [wsPath]);
 
-  // 目录展开/收起：首次展开才调 ListFiles（懒加载），之后读本地缓存
+  // 目录展开/收起：首次展开才调 ListFiles（懒加载），之后读本地缓存。
+  // 加载失败只记到该目录行内（error 字段），不动整树；重试复用同一入口。
   const handleDirToggle = (item: TreeItem) => {
     if (item.children) {
       setItems((cur) =>
@@ -142,21 +158,31 @@ export default function FileTree({
             ...it,
             children: toItems(nodes, it.relPath),
             expanded: true,
+            error: undefined,
           })),
         );
       })
       .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : String(e));
+        const msg = e instanceof Error ? e.message : String(e);
+        setItems((cur) =>
+          cur && updateItems(cur, item.relPath, (it) => ({ ...it, error: msg, expanded: true })),
+        );
       });
   };
 
-  // 加入/移出篮子：以 Go ToggleBasket 的返回值为准同步 store，避免双份状态漂移
+  // 加入/移出篮子：以 Go ToggleBasket 的返回值为准同步 store，避免双份状态漂移。
+  // 篮满（返回 false 且原本不在篮中）或调用失败时用轻量提示告知，不打断浏览。
   const handleBasketToggle = async (path: string) => {
+    const wasIn = useAppStore.getState().basket.includes(path);
     try {
       const inBasket = await toggleBasket(path);
       syncBasket(path, inBasket);
+      if (!inBasket && !wasIn) {
+        // 20 与 Go 侧 maxBasket 一致（见 BasketBar 同款注释），仅用于提示文案
+        notify('篮子已满（20 个文件），请先移出部分文件再加入');
+      }
     } catch {
-      // 绑定异常时保持原状态，不打断浏览
+      notify('篮子操作失败，请稍后重试');
     }
   };
 

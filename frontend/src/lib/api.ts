@@ -54,6 +54,41 @@ export interface FilePreview {
   Info: string;
 }
 
+// remote.Result 的 JSON 形态（internal/remote/exec.go）；
+// Duration 是 Go time.Duration 的 JSON 序列化值（纳秒数）。
+export interface RemoteResult {
+  Stdout: string;
+  Stderr: string;
+  ExitCode: number;
+  Duration: number;
+}
+
+// discovery.Tool 的 JSON 形态（internal/discovery/tools.go）。
+// Source: path / install-dir / config-dir（config-dir = 只检测到配置目录，没有可执行程序）
+export interface ToolInfo {
+  ID: string;
+  Name: string;
+  BinPath: string;
+  Version: string;
+  Installed: boolean;
+  Source: string;
+}
+
+// remote.Connection 的 JSON 形态（internal/remote/store.go）。
+// Source: sshconfig / env / spring / deploy / docs / manual
+export interface SshConnection {
+  ID: string;
+  Name: string;
+  Host: string;
+  User: string;
+  Port: number;
+  IdentityFile: string;
+  Workspace: string;
+  Source: string;
+  SourceFile: string;
+  Verified: boolean;
+}
+
 interface AppBindings {
   ScanSessions(): Promise<unknown>;
   GetWorkspaces(): Promise<Workspace[]>;
@@ -65,6 +100,12 @@ interface AppBindings {
   ToggleBasket(path: string): Promise<boolean>;
   GetBasket(): Promise<string[]>;
   NewSession(wsPath: string): Promise<void>;
+  ListConnections(wsID: string): Promise<SshConnection[]>;
+  OpenSSH(connID: string): Promise<void>;
+  ExecRemote(connID: string, cmd: string): Promise<RemoteResult>;
+  GetTools(): Promise<ToolInfo[]>;
+  LoadProvidersYAML(): Promise<string>;
+  SaveProvidersYAML(content: string): Promise<void>;
 }
 
 declare global {
@@ -172,4 +213,51 @@ export async function newSession(wsPath: string): Promise<void> {
   const a = app();
   if (!a) return;
   await a.NewSession(wsPath);
+}
+
+// ListConnections 返回连接列表：wsID 传工作区路径 = 该工作区绑定连接 + 全局连接，
+// 传空串返回全部。错误向上抛，由调用方呈现。
+export async function listConnections(wsID: string): Promise<SshConnection[]> {
+  const a = app();
+  if (!a) return [];
+  return a.ListConnections(wsID);
+}
+
+// OpenSSH 弹出该连接的交互式 SSH 终端窗口（BatchMode 恒定，绝不卡密码提示）。
+// 同一连接重复调用 Go 侧幂等转聚焦。错误向上抛，由调用方呈现。
+export async function openSSH(connID: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.OpenSSH(connID);
+}
+
+// ExecRemote 在指定连接上非交互执行命令。非 0 退出码不是异常，结果里带 ExitCode。
+// 错误（连接不存在、ssh 缺失等）向上抛，由调用方呈现。
+export async function execRemote(connID: string, cmd: string): Promise<RemoteResult> {
+  const a = app();
+  if (!a) return { Stdout: '', Stderr: '', ExitCode: 0, Duration: 0 };
+  return a.ExecRemote(connID, cmd);
+}
+
+// GetTools 返回最近一次扫描的工具安装状态（含未安装项，前端灰显）
+export async function getTools(): Promise<ToolInfo[]> {
+  const a = app();
+  if (!a) return [];
+  return a.GetTools();
+}
+
+// LoadProvidersYAML 读出当前自定义工具定义全文（文件缺失时 Go 侧回填模板）。
+// 错误向上抛，由调用方呈现。
+export async function loadProvidersYAML(): Promise<string> {
+  const a = app();
+  if (!a) return '';
+  return a.LoadProvidersYAML();
+}
+
+// SaveProvidersYAML 保存自定义工具定义（Go 侧先校验 YAML 再原子写回）。
+// 注意：保存后不热生效，需重启应用。错误（含 YAML 解析失败）向上抛。
+export async function saveProvidersYAML(content: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.SaveProvidersYAML(content);
 }

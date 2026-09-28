@@ -13,13 +13,16 @@ function basename(p: string): string {
 export default function BasketBar() {
   const basket = useAppStore((s) => s.basket);
   const syncBasket = useAppStore((s) => s.syncBasket);
+  const message = useAppStore((s) => s.message);
+  const notify = useAppStore((s) => s.notify);
 
   const remove = async (path: string) => {
     try {
       const inBasket = await toggleBasket(path);
       syncBasket(path, inBasket);
     } catch {
-      // 绑定异常时保持原状态
+      // 绑定异常时保持原状态，用轻量提示告知
+      notify('篮子操作失败，请稍后重试');
     }
   };
 
@@ -28,6 +31,7 @@ export default function BasketBar() {
       <span className="basket-title">
         上下文篮（{basket.length}/{maxBasket}）
       </span>
+      {message && <span className="app-message">{message}</span>}
       {basket.length === 0 ? (
         <span className="basket-empty">未选择文件</span>
       ) : (

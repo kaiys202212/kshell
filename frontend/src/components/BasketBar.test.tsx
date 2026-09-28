@@ -61,4 +61,11 @@ describe('BasketBar', () => {
 
     expect(useAppStore.getState().basket).toContain('D:\\proj-a\\README.md');
   });
+
+  it('store 的轻量提示（篮满/操作失败）在篮子栏行内展示', () => {
+    useAppStore.setState({ message: '篮子已满（20 个文件），请先移出部分文件再加入' });
+    render(<BasketBar />);
+
+    expect(screen.getByText(/篮子已满/)).toBeInTheDocument();
+  });
 });

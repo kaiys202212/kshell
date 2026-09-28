@@ -32,7 +32,7 @@ afterEach(cleanup);
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useAppStore.setState({ basket: [] });
+  useAppStore.setState({ basket: [], message: '' });
 });
 
 describe('FileTree', () => {
@@ -141,5 +141,52 @@ describe('FileTree', () => {
     render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
 
     expect(await screen.findByText('没有可显示的文件')).toBeInTheDocument();
+  });
+
+  it('子目录加载失败：只在目标目录行内提示 + 重试入口，不整树替换', async () => {
+    mocks.listFiles
+      .mockResolvedValueOnce(root)
+      .mockRejectedValueOnce(new Error('子目录读取失败'));
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+
+    fireEvent.click(await screen.findByText('src'));
+    // 错误出现在 src 目录行内（带重试按钮），根层其他条目仍在
+    expect(await screen.findByText(/子目录读取失败/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重试加载 src' })).toBeInTheDocument();
+    expect(screen.getByText('README.md')).toBeInTheDocument();
+
+    // 重试成功后子层正常加载，错误消失
+    mocks.listFiles.mockResolvedValueOnce(srcChildren);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '重试加载 src' }));
+    });
+    expect(await screen.findByText('main.ts')).toBeInTheDocument();
+    expect(screen.queryByText(/子目录读取失败/)).not.toBeInTheDocument();
+  });
+
+  it('加入篮子被拒（篮满，Go 返回 false 且原本不在篮中）时提示篮满', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.toggleBasket.mockResolvedValue(false);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+
+    const name = await screen.findByText('README.md');
+    await act(async () => {
+      fireEvent.keyDown(name, { key: ' ' });
+    });
+
+    expect(useAppStore.getState().message).toContain('篮子已满');
+  });
+
+  it('篮子操作抛错时提示失败，不打断浏览', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.toggleBasket.mockRejectedValue(new Error('绑定异常'));
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+
+    const name = await screen.findByText('README.md');
+    await act(async () => {
+      fireEvent.keyDown(name, { key: ' ' });
+    });
+
+    expect(useAppStore.getState().message).toContain('篮子操作失败');
   });
 });

@@ -312,7 +312,7 @@
 
 .new-session-err {
   margin: 6px 0 0;
-  color: #c0392b;
+  color: var(--error);
   font-size: 0.8rem;
 }
 
@@ -388,7 +388,7 @@
 }
 
 .tree-error {
-  color: #c0392b;
+  color: var(--error);
 }
 
 /* 上下文篮（中间栏顶部） */
@@ -483,11 +483,11 @@
 
 .preview-truncated {
   margin: 0 0 8px;
-  color: #b58900;
+  color: var(--warning);
 }
 
 .preview-error {
-  color: #c0392b;
+  color: var(--error);
   font-size: 0.9rem;
 }
 
@@ -502,4 +502,350 @@
   font-size: 0.85rem;
   line-height: 1.5;
   white-space: pre;
+}
+
+/* 轻量全局提示（篮满、篮子操作失败等），行内展示、自动消失 */
+.app-message {
+  color: var(--warning);
+  font-size: 0.8rem;
+}
+
+/* 文件树：子目录加载失败的行内提示 + 重试入口 */
+.tree-item-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0;
+  font-size: 0.8rem;
+}
+
+.tree-item-error-text {
+  color: var(--error);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-item-retry {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.tree-item-retry:hover {
+  background: var(--bg-hover);
+}
+
+/* SSH 面板（右栏「SSH」页签） */
+.ssh-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 0.9rem;
+}
+
+.ssh-empty {
+  color: var(--text-dim);
+}
+
+.ssh-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ssh-item {
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.ssh-item:hover {
+  background: var(--bg-hover);
+}
+
+.ssh-item--selected {
+  background: var(--bg-hover);
+}
+
+.ssh-item--open {
+  background: var(--bg-active);
+}
+
+.ssh-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ssh-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.ssh-open-mark {
+  color: var(--accent);
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.ssh-connect {
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.ssh-connect:hover {
+  background: var(--bg-hover);
+}
+
+.ssh-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.ssh-target {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ssh-source {
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ssh-verified {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.ssh-error {
+  color: var(--error);
+  font-size: 0.85rem;
+}
+
+.ssh-exec {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ssh-exec-row {
+  display: flex;
+  gap: 6px;
+}
+
+.ssh-cmd-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.ssh-cmd-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ssh-exec-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  flex-shrink: 0;
+}
+
+.ssh-exec-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.ssh-exec-btn:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.ssh-exec-error {
+  margin: 0;
+  color: var(--error);
+  font-size: 0.8rem;
+}
+
+.ssh-result-meta {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+}
+
+.ssh-output {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  overflow: auto;
+  max-height: 320px;
+  font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+.ssh-output--stderr {
+  color: var(--error);
+}
+
+/* 设置页 */
+.settings {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 16px;
+}
+
+.settings-title {
+  margin: 0 0 16px;
+  font-size: 1.25rem;
+}
+
+.settings-section {
+  max-width: 640px;
+  margin-bottom: 24px;
+}
+
+.settings-subtitle {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.settings-status {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.settings-error {
+  margin: 6px 0;
+  color: var(--error);
+  font-size: 0.85rem;
+}
+
+.tool-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+}
+
+.tool-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.tool-item + .tool-item {
+  border-top: 1px solid var(--border);
+}
+
+.tool-item--uninstalled {
+  color: var(--text-dim);
+}
+
+.tool-name {
+  font-weight: 500;
+}
+
+.tool-version {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.tool-missing {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+/* 「未验证」徽标：只检测到配置目录的 generic 工具 */
+.tool-unverified {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  color: var(--warning);
+  border: 1px solid var(--warning);
+}
+
+.yaml-editor {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 240px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  color: var(--text);
+  font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.yaml-editor:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.settings-save {
+  padding: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-weight: 500;
+}
+
+.settings-save:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.settings-save:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.settings-saved {
+  color: var(--text-dim);
+  font-size: 0.85rem;
 }

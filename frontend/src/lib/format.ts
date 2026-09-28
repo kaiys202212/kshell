@@ -11,3 +11,20 @@ export function formatRelativeTime(iso: string): string {
   if (days < 30) return `${days} 天前`;
   return new Date(t).toLocaleDateString();
 }
+
+// 取多行文本的尾部 N 行（远端命令输出只展示最后 N 行，N 由调用方传）。
+// 行数不足时原样返回。
+export function tailLines(text: string, maxLines: number): string {
+  const lines = text.split('\n');
+  if (lines.length <= maxLines) return text;
+  return lines.slice(-maxLines).join('\n');
+}
+
+// Go time.Duration 的 JSON 纳秒值格式化为人类可读时长：
+// 毫秒级整数展示、秒级两位小数；低于 1ms 或非法值兜底 0ms（SSH 命令不会快到微秒级有意义）。
+export function formatDuration(ns: number): string {
+  if (!Number.isFinite(ns) || ns <= 0) return '0ms';
+  const ms = ns / 1e6;
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+}

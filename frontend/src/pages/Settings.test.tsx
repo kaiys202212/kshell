@@ -1,0 +1,112 @@
+// Settings 页面测试：工具检测状态渲染（Source=config-dir 的 generic 工具显示「未验证」徽标、
+// 未安装灰显）、providers.yaml 回填编辑保存（成功提示重启生效、YAML 非法显示错误）。
+// api 层整体打桩（vi.mock），与 SessionList.test 同一套模式。
+import '@testing-library/jest-dom/vitest';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import Settings from './Settings';
+import type { ToolInfo } from '../lib/api';
+
+const mocks = vi.hoisted(() => ({
+  getTools: vi.fn(),
+  loadProvidersYAML: vi.fn(),
+  saveProvidersYAML: vi.fn(),
+}));
+vi.mock('../lib/api', () => mocks);
+
+const tools: ToolInfo[] = [
+  {
+    ID: 'codebuddy',
+    Name: 'CodeBuddy',
+    BinPath: 'C:\\bin\\codebuddy.exe',
+    Version: '2.0.0',
+    Installed: true,
+    Source: 'path',
+  },
+  {
+    ID: 'mytool',
+    Name: 'MyTool',
+    BinPath: '',
+    Version: '',
+    Installed: true,
+    Source: 'config-dir',
+  },
+  {
+    ID: 'gemini',
+    Name: 'Gemini',
+    BinPath: '',
+    Version: '',
+    Installed: false,
+    Source: '',
+  },
+];
+
+afterEach(cleanup);
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.getTools.mockResolvedValue(tools);
+  mocks.loadProvidersYAML.mockResolvedValue('providers: []\n');
+  mocks.saveProvidersYAML.mockResolvedValue(undefined);
+});
+
+describe('Settings', () => {
+  it('渲染工具检测状态：已安装带版本，未安装灰显「未安装」', async () => {
+    render(<Settings />);
+
+    const codebuddy = await screen.findByText('CodeBuddy');
+    expect(codebuddy.closest('li')).toHaveTextContent('2.0.0');
+    expect(codebuddy.closest('li')).not.toHaveTextContent('未验证');
+    expect(codebuddy.closest('li')).not.toHaveTextContent('未安装');
+
+    const gemini = screen.getByText('Gemini');
+    expect(gemini.closest('li')).toHaveTextContent('未安装');
+    expect(gemini.closest('li')).toHaveClass('tool-item--uninstalled');
+  });
+
+  it('Source=config-dir 的 generic 工具显示「未验证」徽标', async () => {
+    render(<Settings />);
+
+    const mytool = await screen.findByText('MyTool');
+    expect(mytool.closest('li')).toHaveTextContent('未验证');
+    expect(mytool.closest('li')).toHaveAttribute('title', expect.stringContaining('只检测到配置目录'));
+  });
+
+  it('providers.yaml 回填编辑器，编辑后保存调用 SaveProvidersYAML 并提示重启生效', async () => {
+    render(<Settings />);
+
+    const editor = await screen.findByLabelText('providers.yaml 编辑器');
+    expect(editor).toHaveValue('providers: []\n');
+
+    fireEvent.change(editor, { target: { value: 'providers:\n  - name: foo\n' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    });
+
+    expect(mocks.saveProvidersYAML).toHaveBeenCalledWith('providers:\n  - name: foo\n');
+    expect(await screen.findByText(/已保存.*重启/)).toBeInTheDocument();
+  });
+
+  it('保存失败（YAML 解析失败等）时显示错误，不显示成功提示', async () => {
+    mocks.saveProvidersYAML.mockRejectedValue(new Error('YAML 解析失败：line 1: bad indent'));
+    render(<Settings />);
+
+    const editor = await screen.findByLabelText('providers.yaml 编辑器');
+    fireEvent.change(editor, { target: { value: 'bad: [' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    });
+
+    expect(await screen.findByText(/YAML 解析失败：line 1: bad indent/)).toBeInTheDocument();
+    expect(screen.queryByText(/已保存/)).not.toBeInTheDocument();
+  });
+
+  it('GetTools / LoadProvidersYAML 失败时分别显示错误，不崩溃', async () => {
+    mocks.getTools.mockRejectedValue(new Error('绑定异常'));
+    mocks.loadProvidersYAML.mockRejectedValue(new Error('读取失败'));
+    render(<Settings />);
+
+    expect(await screen.findByText(/绑定异常/)).toBeInTheDocument();
+    expect(await screen.findByText(/读取失败/)).toBeInTheDocument();
+  });
+});

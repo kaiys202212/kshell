@@ -1,11 +1,12 @@
 // 工作区页签：三栏布局——左会话列表（含新建会话按钮）、
-// 中间上下文篮 + 文件预览、右侧「文件 | SSH」页签（SSH 仍占位）。
+// 中间上下文篮 + 文件预览、右侧「文件 | SSH」页签。
 import { useState } from 'react';
 import { newSession } from '../lib/api';
 import BasketBar from '../components/BasketBar';
 import FileTree from '../components/FileTree';
 import Preview from '../components/Preview';
 import SessionList from '../components/SessionList';
+import SshPanel from '../components/SshPanel';
 import type { WorkspaceTab } from '../state/store';
 
 type RightPane = 'files' | 'ssh';
@@ -58,7 +59,7 @@ export default function WorkspaceTabView({ tab }: { tab: WorkspaceTab }) {
         {rightPane === 'files' ? (
           <FileTree wsPath={tab.id} onOpenFile={setPreviewPath} />
         ) : (
-          <p className="ws-placeholder">SSH 连接（待实现）</p>
+          <SshPanel wsPath={tab.id} />
         )}
       </aside>
     </div>

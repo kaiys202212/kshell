@@ -9,6 +9,7 @@ import { useAppStore } from '../state/store';
 export default function Home() {
   const workspaces = useAppStore((s) => s.workspaces);
   const setWorkspaces = useAppStore((s) => s.setWorkspaces);
+  const scanState = useAppStore((s) => s.scanState);
   const setScanState = useAppStore((s) => s.setScanState);
   const openTab = useAppStore((s) => s.openTab);
 
@@ -43,7 +44,11 @@ export default function Home() {
     <div className="home">
       <h1 className="home-title">工作区</h1>
       {sorted.length === 0 ? (
-        <p className="home-empty">未发现工作区，正在扫描……</p>
+        // 空态文案按 scanState 收敛：扫描未完成（idle/scanning）提示扫描中，
+        // done 后仍未发现才是「确实没有」
+        <p className="home-empty">
+          {scanState === 'done' ? '未发现工作区' : '未发现工作区，正在扫描……'}
+        </p>
       ) : (
         <ul className="ws-list">
           {sorted.map((ws: Workspace) => (

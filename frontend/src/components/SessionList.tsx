@@ -25,6 +25,7 @@ export default function SessionList({ workspacePath }: { workspacePath: string }
   const windowStatus = useAppStore((s) => s.windowStatus);
   const setWindowStatus = useAppStore((s) => s.setWindowStatus);
   const scanState = useAppStore((s) => s.scanState);
+  const setScanState = useAppStore((s) => s.setScanState);
 
   useEffect(() => {
     let cancelled = false;
@@ -37,7 +38,12 @@ export default function SessionList({ workspacePath }: { workspacePath: string }
           // 绑定调用异常时保持现状，等 scan:done 再触发下一轮刷新
         });
     refresh();
-    const offScan = onScanDone(() => void refresh());
+    // scan:done 同时把 scanState 置 done（幂等）：会话列表可能挂在扫描完成后
+    // 才首次订阅事件的路径上，仅靠首页置 done 存在死角
+    const offScan = onScanDone(() => {
+      setScanState('done');
+      void refresh();
+    });
     // 窗口关闭：payload 为完整窗口标题（terminalTitle 形态），严格相等匹配还原
     const offClosed = onWindowClosed((title) => {
       const { windowStatus: status, setWindowStatus: set } = useAppStore.getState();
@@ -50,7 +56,7 @@ export default function SessionList({ workspacePath }: { workspacePath: string }
       offScan();
       offClosed();
     };
-  }, []);
+  }, [setScanState]);
 
   // 工作区过滤（路径大小写不敏感，对齐 Go 侧 NormalizePath）+ 关键词过滤 + 时间降序
   const target = workspacePath.toLowerCase();
