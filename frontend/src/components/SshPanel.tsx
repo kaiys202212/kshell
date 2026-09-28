@@ -10,6 +10,7 @@
 // 不同来源的同名连接（或同名会话）会命中同一键、状态互相污染；连接名与工作区/会话名
 // 冲突概率极低，暂不做键空间隔离。
 import { useEffect, useState } from 'react';
+import type { KeyboardEvent } from 'react';
 import { execRemote, listConnections, openSSH } from '../lib/api';
 import type { RemoteResult, SshConnection } from '../lib/api';
 import { formatDuration, tailLines } from '../lib/format';
@@ -23,6 +24,12 @@ import { Skeleton } from './ui/skeleton';
 // 输出尾部行数：取 50 行——约两屏终端的量，足够看到命令关键结果又不撑爆右栏。
 // Go 侧 Result 是完整输出，截多少只影响前端展示，与后端无耦合。
 const OUTPUT_TAIL_LINES = 50;
+
+// 命令历史上限：头部插入、去重后保留最近 20 条（纯前端记忆，不落盘）
+const HISTORY_LIMIT = 20;
+
+// 历史 chip 展示条数：右栏空间有限，只露出最近 5 条
+const HISTORY_CHIPS = 5;
 
 // 连接来源的中文标注（Source 取值见 internal/remote/scanners/*，Go 侧只产生
 // sshconfig / env / spring / deploy / docs 五种；未知值回退展示原始串）
@@ -51,6 +58,11 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const [cmd, setCmd] = useState('');
+  // 命令历史（最近在前）：historyIdx 为历史浏览游标，-1 表示非浏览态；
+  // 进入浏览态时用 draft 记下当前草稿，ArrowDown 退到头时恢复
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIdx, setHistoryIdx] = useState(-1);
+  const [draft, setDraft] = useState('');
   const [result, setResult] = useState<RemoteResult | null>(null);
   const [execError, setExecError] = useState('');
   const [running, setRunning] = useState(false);
@@ -83,17 +95,20 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
       await openSSH(c.ID);
       setWindowStatus(terminalTitle(c.Name), true);
     } catch (e: unknown) {
-      notify(e instanceof Error ? e.message : String(e));
+      notify(e instanceof Error ? e.message : String(e), 'error');
     }
   };
 
-  // 执行命令：非 0 退出码照常展示结果，只有调用本身失败才算错误
+  // 执行命令：非 0 退出码照常展示结果，只有调用本身失败才算错误。
+  // 真正发起执行后命令入历史（头部插入、去重、最多 HISTORY_LIMIT 条）。
   const handleExec = async () => {
     const command = cmd.trim();
     if (!command || !selectedId || running) return;
     setRunning(true);
     setExecError('');
     setResult(null);
+    setHistory((h) => [command, ...h.filter((c) => c !== command)].slice(0, HISTORY_LIMIT));
+    setHistoryIdx(-1);
     try {
       const res = await execRemote(selectedId, command);
       setResult(res);
@@ -101,6 +116,23 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
       setExecError(e instanceof Error ? e.message : String(e));
     } finally {
       setRunning(false);
+    }
+  };
+
+  // ↑/↓ 在历史中回填：↑ 取 min(idx+1, len-1)（到头停在最早一条），
+  // ↓ 逐条退回，减到 -1（非浏览态）时恢复进入浏览态前的草稿
+  const handleHistoryKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowUp' && history.length > 0) {
+      e.preventDefault();
+      if (historyIdx === -1) setDraft(cmd);
+      const next = historyIdx === -1 ? 0 : Math.min(historyIdx + 1, history.length - 1);
+      setHistoryIdx(next);
+      setCmd(history[next]);
+    } else if (e.key === 'ArrowDown' && historyIdx !== -1) {
+      e.preventDefault();
+      const prev = historyIdx - 1;
+      setHistoryIdx(prev);
+      setCmd(prev === -1 ? draft : history[prev]);
     }
   };
 
@@ -183,7 +215,11 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
               value={cmd}
               onChange={(e) => setCmd(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') void handleExec();
+                if (e.key === 'Enter') {
+                  void handleExec();
+                  return;
+                }
+                handleHistoryKey(e);
               }}
             />
             <Button
@@ -195,6 +231,34 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
               执行
             </Button>
           </div>
+          {/* 最近命令 chip：点击回填到输入框，「清空」一键清空历史 */}
+          {history.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5" aria-label="命令历史">
+              {history.slice(0, HISTORY_CHIPS).map((c) => (
+                <button
+                  key={c}
+                  className="max-w-40 truncate rounded-full border border-border bg-secondary px-2 py-0.5 text-xs text-secondary-foreground transition-colors hover:bg-muted"
+                  title={c}
+                  onClick={() => {
+                    setCmd(c);
+                    setHistoryIdx(-1);
+                  }}
+                >
+                  {c}
+                </button>
+              ))}
+              <button
+                className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+                aria-label="清空命令历史"
+                onClick={() => {
+                  setHistory([]);
+                  setHistoryIdx(-1);
+                }}
+              >
+                清空
+              </button>
+            </div>
+          )}
           {execError && <p className="text-xs text-destructive">{execError}</p>}
           {result && (
             <>

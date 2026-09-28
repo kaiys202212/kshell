@@ -214,4 +214,62 @@ describe('SshPanel', () => {
 
     expect(mocks.execRemote).toHaveBeenCalledWith('c2', 'uptime');
   });
+
+  it('命令历史：执行后入栈，↑ 逐条回填到最早一条，↓ 退回到头恢复草稿', async () => {
+    render(<SshPanel wsPath="D:\\proj-a" />);
+    await findRow('生产机');
+    const input = screen.getByLabelText('执行命令') as HTMLInputElement;
+
+    fireEvent.change(input, { target: { value: 'uname -a' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '执行' }));
+    });
+    fireEvent.change(input, { target: { value: 'uptime' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '执行' }));
+    });
+
+    // 清空草稿后 ↑ 进入浏览态：最近一条优先
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    expect(input.value).toBe('uptime');
+    // 再 ↑：更早一条；到头后停住不越界
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    expect(input.value).toBe('uname -a');
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    expect(input.value).toBe('uname -a');
+    // ↓ 逐条退回；退到非浏览态恢复进入前的草稿（进入浏览态时输入框为空串）
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(input.value).toBe('uptime');
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(input.value).toBe('');
+  });
+
+  it('命令历史 chip 点击回填，去重入栈，「清空」后整块消失', async () => {
+    render(<SshPanel wsPath="D:\\proj-a" />);
+    await findRow('生产机');
+    const input = screen.getByLabelText('执行命令') as HTMLInputElement;
+
+    fireEvent.change(input, { target: { value: 'echo hi' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '执行' }));
+    });
+    // 再次执行相同命令：去重，历史里只有一条
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '执行' }));
+    });
+
+    const hist = screen.getByLabelText('命令历史');
+    const chips = within(hist).getAllByRole('button', { name: 'echo hi' });
+    expect(chips).toHaveLength(1);
+
+    // chip 点击回填
+    fireEvent.change(input, { target: { value: '别的命令' } });
+    fireEvent.click(chips[0]);
+    expect(input.value).toBe('echo hi');
+
+    // 清空后历史块整体消失
+    fireEvent.click(within(hist).getByRole('button', { name: '清空命令历史' }));
+    expect(screen.queryByLabelText('命令历史')).not.toBeInTheDocument();
+  });
 });

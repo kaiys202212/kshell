@@ -21,7 +21,7 @@ export default function BasketBar() {
       syncBasket(path, inBasket);
     } catch {
       // 绑定异常时保持原状态，用轻量提示告知
-      notify('篮子操作失败，请稍后重试');
+      notify('篮子操作失败，请稍后重试', 'error');
     }
   };
 

@@ -78,6 +78,17 @@ export default function Home() {
             {scanState === 'scanning' ? '扫描中…' : '重新扫描'}
           </Button>
         </div>
+        {/* 快捷键提示：kbd 风格小块（全局 Ctrl+K / Ctrl+F，见 App.tsx） */}
+        <p className="-mt-2 mb-4 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <kbd className="rounded border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-secondary-foreground">
+            Ctrl K
+          </kbd>
+          切换
+          <kbd className="rounded border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-secondary-foreground">
+            Ctrl F
+          </kbd>
+          搜索
+        </p>
         {sorted.length === 0 ? (
           // 空态按 scanState 收敛：扫描未完成（idle/scanning）用骨架屏占位，
           // done 后仍未发现才是「确实没有」

@@ -1,10 +1,14 @@
 // 文件预览（工作区页签中间栏）：只读展示，等宽字体。
 // Go 侧 PreviewFile 返回的 Lines 已带 "NNNN │ " 行号前缀，前端直接渲染、不再加行号；
 // Truncated 显示截断提示，Binary 只展示 Info 元信息。
+// 头部提供加入/移出篮子按钮（与 FileTree 共用 lib/basket 的 toggleAndSync 同步逻辑）。
 import { useEffect, useState } from 'react';
 import { previewFile } from '../lib/api';
 import type { FilePreview } from '../lib/api';
+import { toggleAndSync } from '../lib/basket';
+import { useAppStore } from '../state/store';
 import { Badge } from './ui/badge';
+import { Button } from './ui/button';
 import { EmptyState } from './ui/empty-state';
 import { Skeleton } from './ui/skeleton';
 
@@ -12,6 +16,7 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
   const [data, setData] = useState<FilePreview | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const basket = useAppStore((s) => s.basket);
 
   useEffect(() => {
     if (!path) {
@@ -44,6 +49,10 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
     };
   }, [wsPath, path]);
 
+  // 篮子按钮只在「文本内容加载完成」时显示（加载中/错误/二进制态不提供操作入口）
+  const inBasket = path !== null && basket.includes(path);
+  const showBasketButton = path !== null && !loading && !error && data !== null && !data.Binary;
+
   return (
     <div className="flex min-h-0 flex-col text-sm">
       <div className="sticky top-0 z-10 flex items-center border-b border-border bg-card py-2">
@@ -53,6 +62,16 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
         >
           {path ?? '未选择文件'}
         </span>
+        {showBasketButton && (
+          <Button
+            size="sm"
+            variant={inBasket ? 'secondary' : 'default'}
+            className="ml-auto shrink-0"
+            onClick={() => void toggleAndSync(path)}
+          >
+            {inBasket ? '移出篮子' : '加入篮子'}
+          </Button>
+        )}
       </div>
       {!path && <EmptyState title="从右侧文件树选择文件查看预览" />}
       {loading && (

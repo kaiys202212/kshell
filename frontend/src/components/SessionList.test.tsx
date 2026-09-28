@@ -66,9 +66,40 @@ describe('SessionList', () => {
     expect(titles).toEqual(['清理构建缓存', '修复上传白名单', '重构登录页']);
     expect(screen.queryByText('其他工作区会话')).not.toBeInTheDocument();
 
-    // 工具徽标与消息数
-    expect(screen.getByText('CodeBuddy')).toBeInTheDocument();
+    // 工具徽标与消息数（chip 行与会话行都有 CodeBuddy 徽标，断言放宽为「至少出现」）
+    expect(screen.getAllByText('CodeBuddy').length).toBeGreaterThan(0);
     expect(screen.getByText('12 条')).toBeInTheDocument();
+  });
+
+  it('工具 chip 行按当前工作区会话去重展示，其他工作区的工具不出现', async () => {
+    render(<SessionList workspacePath={'D:\\proj-a'} />);
+    await findRow('清理构建缓存');
+
+    const chips = screen.getByLabelText('按工具筛选');
+    expect(within(chips).getByText('CodeBuddy')).toBeInTheDocument();
+    expect(within(chips).getByText('Claude')).toBeInTheDocument();
+    expect(within(chips).getByText('Codex')).toBeInTheDocument();
+    expect(within(chips).queryByText('Gemini')).not.toBeInTheDocument(); // 属于其他工作区
+  });
+
+  it('点击工具 chip 筛选该工具会话，与文字搜索 AND 叠加，「全部」恢复', async () => {
+    render(<SessionList workspacePath={'D:\\proj-a'} />);
+    await findRow('清理构建缓存');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
+    expect(screen.getByText('清理构建缓存')).toBeInTheDocument();
+    expect(screen.queryByText('修复上传白名单')).not.toBeInTheDocument();
+    expect(screen.queryByText('重构登录页')).not.toBeInTheDocument();
+
+    // AND 叠加：Codex + 关键词「白名单」→ 无匹配（关键词命中的是 CodeBuddy 会话）
+    fireEvent.change(screen.getByLabelText('过滤会话'), { target: { value: '白名单' } });
+    expect(screen.getByText('没有匹配的会话')).toBeInTheDocument();
+
+    // 点「全部」并清空关键词恢复
+    fireEvent.click(screen.getByRole('button', { name: '全部' }));
+    fireEvent.change(screen.getByLabelText('过滤会话'), { target: { value: '' } });
+    expect(screen.getByText('修复上传白名单')).toBeInTheDocument();
+    expect(screen.getByText('清理构建缓存')).toBeInTheDocument();
   });
 
   it('过滤词匹配标题 / 工具名', async () => {

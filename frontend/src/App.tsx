@@ -2,12 +2,15 @@
 // 下方按激活页签切换首页 / 设置 / 工作区内容。
 // 挂载时调一次 GetBasket 重建篮子镜像：Go 侧篮子在应用生命周期内持续存在，
 // 前端刷新/重开后必须拉取一次，否则镜像与 Go 状态漂移。
-import { useEffect } from 'react';
+// 全局快捷键：Ctrl+K 打开快速切换器（QuickSwitcher），Ctrl+F 在工作区页签内
+// 派发 kshell:focus-search 聚焦会话过滤框（首页/设置页无过滤框，不派发）。
+import { useEffect, useState } from 'react';
 import { getBasket } from './lib/api';
 import { cn } from './lib/cn';
 import Home from './pages/Home';
 import Settings from './pages/Settings';
 import WorkspaceTabView from './pages/WorkspaceTab';
+import QuickSwitcher from './components/QuickSwitcher';
 import { Toaster } from './components/ui/toaster';
 import { TooltipProvider } from './components/ui/tooltip';
 import { SETTINGS_TAB_ID, useAppStore } from './state/store';
@@ -22,6 +25,7 @@ function App() {
   const activeTabId = useAppStore((s) => s.activeTabId);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const closeTab = useAppStore((s) => s.closeTab);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
 
   const activeTab = openTabs.find((t) => t.id === activeTabId) ?? null;
 
@@ -30,6 +34,26 @@ function App() {
     getBasket()
       .then((paths) => useAppStore.getState().setBasket(paths))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    // 单一全局 keydown：window 级监听不受输入框焦点影响（输入框聚焦时 Ctrl+K 仍触发），
+    // preventDefault 压掉浏览器/WebView 的默认快捷语义
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey) return;
+      if (e.key === 'k' || e.key === 'K') {
+        e.preventDefault();
+        setSwitcherOpen(true);
+      } else if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        const { activeTabId: current } = useAppStore.getState();
+        if (current !== null && current !== SETTINGS_TAB_ID) {
+          window.dispatchEvent(new CustomEvent('kshell:focus-search'));
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, []);
 
   return (
@@ -60,6 +84,13 @@ function App() {
               <div
                 key={t.id}
                 className={cn('group flex shrink-0 items-center rounded-md pr-1', tabBase, active && tabActive)}
+                // 中键关闭（onAuxClick 覆盖鼠标中键；preventDefault 防止触发浏览器的自动滚动/粘贴语义）
+                onAuxClick={(e) => {
+                  if (e.button === 1) {
+                    e.preventDefault();
+                    closeTab(t.id);
+                  }
+                }}
               >
                 <button className="text-sm" onClick={() => setActiveTab(t.id)}>
                   {t.name}
@@ -86,6 +117,7 @@ function App() {
           <Home />
         )}
       </div>
+      <QuickSwitcher open={switcherOpen} onOpenChange={setSwitcherOpen} />
       <Toaster />
     </TooltipProvider>
   );

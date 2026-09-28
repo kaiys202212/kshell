@@ -27,6 +27,7 @@ import { Skeleton } from './ui/skeleton';
 export default function SessionList({ workspacePath }: { workspacePath: string }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [query, setQuery] = useState('');
+  const [toolFilter, setToolFilter] = useState<string | null>(null); // null = 全部工具
   const windowStatus = useAppStore((s) => s.windowStatus);
   const setWindowStatus = useAppStore((s) => s.setWindowStatus);
   const scanState = useAppStore((s) => s.scanState);
@@ -66,10 +67,19 @@ export default function SessionList({ workspacePath }: { workspacePath: string }
 
   // 工作区过滤（路径大小写不敏感，对齐 Go 侧 NormalizePath）+ 关键词过滤 + 时间降序
   const target = workspacePath.toLowerCase();
+  // 工具 chip 选项：当前工作区会话按工具展示名去重（保持出现顺序）
+  const toolOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of sessions) {
+      if (s.Workspace.toLowerCase() === target) set.add(badgeFor(s.ToolID).label);
+    }
+    return [...set];
+  }, [sessions, target]);
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return sessions
       .filter((s) => s.Workspace.toLowerCase() === target)
+      .filter((s) => toolFilter === null || badgeFor(s.ToolID).label === toolFilter)
       .filter((s) => {
         if (!q) return true;
         return (
@@ -79,7 +89,7 @@ export default function SessionList({ workspacePath }: { workspacePath: string }
         );
       })
       .sort((a, b) => +new Date(b.UpdatedAt) - +new Date(a.UpdatedAt));
-  }, [sessions, query, target]);
+  }, [sessions, query, toolFilter, target]);
 
   const handleResume = async (s: Session) => {
     const key = terminalTitle(s.Title);
@@ -103,6 +113,26 @@ export default function SessionList({ workspacePath }: { workspacePath: string }
   return (
     <div className="flex flex-col gap-2">
       <WorkspaceSearch value={query} onChange={setQuery} />
+      {/* 工具 chip 行：「全部」+ 当前工作区去重后的工具，与文字搜索 AND 叠加 */}
+      <div className="flex flex-wrap items-center gap-1.5" aria-label="按工具筛选">
+        <button
+          className="rounded-full outline-none"
+          aria-pressed={toolFilter === null}
+          onClick={() => setToolFilter(null)}
+        >
+          <Badge variant={toolFilter === null ? 'default' : 'outline'}>全部</Badge>
+        </button>
+        {toolOptions.map((label) => (
+          <button
+            key={label}
+            className="rounded-full outline-none"
+            aria-pressed={toolFilter === label}
+            onClick={() => setToolFilter(label)}
+          >
+            <Badge variant={toolFilter === label ? 'default' : 'outline'}>{label}</Badge>
+          </button>
+        ))}
+      </div>
       {visible.length === 0 ? (
         // 空态收敛：有关键词 → 无匹配；扫描未完成 → 骨架屏占位；
         // done 后仍为空才是「确实没有」

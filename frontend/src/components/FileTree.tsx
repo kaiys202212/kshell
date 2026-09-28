@@ -4,9 +4,10 @@
 // relPath 统一用 / 拼接：Go 侧 filepath.Clean 会归一化为平台分隔符。
 // 交互：点目录展开/收起、点文件回调 onOpenFile、Space 键或 ○ 按钮加入/移出篮子。
 import { useEffect, useState } from 'react';
-import { listFiles, toggleBasket } from '../lib/api';
+import { listFiles } from '../lib/api';
 import type { FileNode } from '../lib/api';
 import { cn } from '../lib/cn';
+import { toggleAndSync } from '../lib/basket';
 import { useAppStore } from '../state/store';
 import { EmptyState } from './ui/empty-state';
 import { Skeleton } from './ui/skeleton';
@@ -217,8 +218,6 @@ export default function FileTree({
   const [items, setItems] = useState<TreeItem[] | null>(null);
   const [error, setError] = useState('');
   const basket = useAppStore((s) => s.basket);
-  const syncBasket = useAppStore((s) => s.syncBasket);
-  const notify = useAppStore((s) => s.notify);
 
   useEffect(() => {
     let cancelled = false;
@@ -265,21 +264,8 @@ export default function FileTree({
       });
   };
 
-  // 加入/移出篮子：以 Go ToggleBasket 的返回值为准同步 store，避免双份状态漂移。
-  // 篮满（返回 false 且原本不在篮中）或调用失败时用轻量提示告知，不打断浏览。
-  const handleBasketToggle = async (path: string) => {
-    const wasIn = useAppStore.getState().basket.includes(path);
-    try {
-      const inBasket = await toggleBasket(path);
-      syncBasket(path, inBasket);
-      if (!inBasket && !wasIn) {
-        // 20 与 Go 侧 maxBasket 一致（见 BasketBar 同款注释），仅用于提示文案
-        notify('篮子已满（20 个文件），请先移出部分文件再加入');
-      }
-    } catch {
-      notify('篮子操作失败，请稍后重试');
-    }
-  };
+  // 加入/移出篮子：切换 + 同步 + 提示统一走 lib/basket 的共享实现（与 Preview 一致）
+  const handleBasketToggle = (path: string) => toggleAndSync(path);
 
   if (error) {
     return <p className="text-sm text-destructive">{error}</p>;
