@@ -61,7 +61,10 @@ if ($Desktop) {
     # 经 cmd /c 间接执行：wails 把进度日志（KnownStructs 等）写到 stderr，
     # PowerShell 5.1 在 $ErrorActionPreference='Stop' 下会把它们误判为 terminating error。
     Write-Host '==> wails build' -ForegroundColor Cyan
-    cmd /c "wails build"
+    # 2>&1 在 cmd 层把 stderr 并入 stdout：PowerShell 5.1 在 EAP=Stop 下会把
+    # 子进程 stderr 行升级成 NativeCommandError 终止脚本（wails 的 KnownStructs
+    # 进度日志必走 stderr）；成功与否由 $LASTEXITCODE 判定。
+    cmd /c "wails build 2>&1"
     if ($LASTEXITCODE -ne 0) { exit 1 }
     New-Item dist -ItemType Directory -Force | Out-Null
     try {
