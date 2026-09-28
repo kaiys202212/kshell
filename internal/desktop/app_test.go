@@ -375,8 +375,8 @@ func TestScanNotReadyReturnsError(t *testing.T) {
 // 让前端把对应行的 open 状态还原。
 func TestReapOnceEmitsWindowClosed(t *testing.T) {
 	app, stub, events := newTestApp(t)
-	// 换上带 onClosed→Emit 的管理器，模拟 initRealDeps 的真实装配
-	wm := NewWindowManager(stub, func(title string) { app.Emit("window:closed", title) })
+	// 换上带 onClosed→Emit 的管理器：走 initRealDeps 同一构造工厂，覆盖真实装配路径
+	wm := newWindowManagerWithEmit(app, stub)
 	wm.reapGrace = 0 // 关闭宽限期，登记后立即参与判定
 	wm.newChecker = func(string) procChecker { return func(string) bool { return false } }
 	app.mu.Lock()

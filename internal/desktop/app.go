@@ -64,6 +64,13 @@ func NewApp() *App { return &App{} }
 // NewAppWith 用给定选项创建绑定对象（测试注入用）。
 func NewAppWith(o Options) *App { return &App{opts: o} }
 
+// newWindowManagerWithEmit 创建带 onClosed→Emit 回调的窗口管理器：
+// 回收死亡窗口后经回调推送 window:closed，让前端把对应行状态还原。
+// 真实装配（initRealDeps）与测试共用这一构造路径，保证回调装配只写一处。
+func newWindowManagerWithEmit(a *App, l TerminalLauncher) *WindowManager {
+	return NewWindowManager(l, func(title string) { a.Emit("window:closed", title) })
+}
+
 // Startup 由 Wails 在窗口启动后调用：装配真实依赖、启动托盘并触发后台扫描。
 func (a *App) Startup(ctx context.Context) {
 	a.mu.Lock()
@@ -105,9 +112,7 @@ func (a *App) initRealDeps() {
 
 	var wm *WindowManager
 	if defaultLauncherFactory != nil {
-		wm = NewWindowManager(defaultLauncherFactory(), func(title string) {
-			a.Emit("window:closed", title)
-		})
+		wm = newWindowManagerWithEmit(a, defaultLauncherFactory())
 	}
 
 	a.mu.Lock()
