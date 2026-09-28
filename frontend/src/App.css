@@ -160,3 +160,134 @@
   background: var(--bg-active);
   color: var(--text);
 }
+
+/* 会话列表（工作区页签左栏） */
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-search {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.session-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.session-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.session-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.session-item:hover {
+  background: var(--bg-hover);
+}
+
+/* 已打开（有存活弹窗）的会话行：高亮区分 */
+.session-item--open {
+  background: var(--bg-active);
+}
+
+.session-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.session-title {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-open-mark {
+  color: var(--accent);
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.session-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.tool-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 0.7rem;
+  flex-shrink: 0;
+}
+
+.tool-badge--codebuddy {
+  color: #fff;
+  background: #4f6ef7;
+}
+
+.tool-badge--codex {
+  color: #fff;
+  background: #10a37f;
+}
+
+.tool-badge--claude {
+  color: #fff;
+  background: #d97757;
+}
+
+.tool-badge--gemini {
+  color: #fff;
+  background: #8e75d2;
+}
+
+.tool-badge--other {
+  color: var(--text-dim);
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+.session-time,
+.session-count {
+  white-space: nowrap;
+}
+
+.session-resume {
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.session-resume:hover {
+  background: var(--bg-hover);
+}
+
+.session-empty {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}

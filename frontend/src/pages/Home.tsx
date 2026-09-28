@@ -14,9 +14,13 @@ export default function Home() {
   useEffect(() => {
     let cancelled = false;
     const refresh = () =>
-      getWorkspaces().then((list) => {
-        if (!cancelled) setWorkspaces(list);
-      });
+      getWorkspaces()
+        .then((list) => {
+          if (!cancelled) setWorkspaces(list);
+        })
+        .catch(() => {
+          // 绑定调用异常时静默，等 scan:done 再触发下一轮刷新
+        });
     refresh();
     scanSessions(); // 触发后台扫描，完成与否都推 "scan:done"
     const off = onScanDone(() => void refresh());

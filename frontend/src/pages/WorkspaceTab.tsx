@@ -1,6 +1,6 @@
-// 工作区页签：三栏布局——左会话列表（后续 Task 实现，先占位空态）、
-// 中间预览区（占位）、右侧「文件 | SSH」页签（占位）。
+// 工作区页签：三栏布局——左会话列表、中间预览区（占位）、右侧「文件 | SSH」页签（占位）。
 import { useState } from 'react';
+import SessionList from '../components/SessionList';
 import type { WorkspaceTab } from '../state/store';
 
 type RightPane = 'files' | 'ssh';
@@ -11,7 +11,7 @@ export default function WorkspaceTabView({ tab }: { tab: WorkspaceTab }) {
   return (
     <div className="ws-tab">
       <aside className="ws-pane ws-pane-left">
-        <p className="ws-placeholder">会话列表（待实现）</p>
+        <SessionList workspacePath={tab.id} />
       </aside>
       <main className="ws-pane ws-pane-main">
         <p className="ws-placeholder">预览区（待实现）</p>

@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import {defineConfig} from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -7,5 +8,9 @@ export default defineConfig({
   build: {
     // 不清空输出目录：frontend/dist/.gitkeep 是 embed 占位文件，必须常驻
     emptyOutDir: false,
+  },
+  test: {
+    // 组件测试跑在 jsdom 里；测试文件自身从 vitest 导入 API（未开 globals）
+    environment: 'jsdom',
   },
 })

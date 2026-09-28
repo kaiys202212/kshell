@@ -22,7 +22,9 @@ interface AppState {
   basket: string[]; // 上下文篮：勾选的文件路径
   toggleBasket(path: string): void;
 
-  // 弹出的终端窗口状态（窗口标题 → 是否存活）；window:closed 事件把对应项置为 false
+  // 弹出的终端窗口状态（窗口标题 → 是否存活）：
+  // SessionList 恢复成功把对应项置 true，"window:closed" 事件把对应项还原为 false
+  //（事件 payload 是 Go 侧的完整窗口标题，超长会按 80 rune 截断，匹配时用前缀兜底）
   windowStatus: Record<string, boolean>;
   setWindowStatus(title: string, open: boolean): void;
 }
