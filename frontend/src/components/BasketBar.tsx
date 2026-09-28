@@ -26,7 +26,7 @@ export default function BasketBar() {
   };
 
   return (
-    <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5">
+    <div className="mx-3 mt-3 mb-2 flex flex-wrap items-center gap-2 rounded border border-border bg-card px-2.5 py-1.5">
       <span className="whitespace-nowrap text-xs text-muted-foreground">
         上下文篮（{basket.length}/{maxBasket}）
       </span>
@@ -37,13 +37,13 @@ export default function BasketBar() {
           {basket.map((p) => (
             <li
               key={p}
-              className="flex items-center gap-1 rounded-full border border-border bg-secondary px-2 py-0.5 text-xs"
+              className="flex items-center gap-1 rounded-sm border border-border bg-secondary px-1.5 py-0.5 text-xs selectable"
             >
               <span className="max-w-40 truncate" title={p}>
                 {basename(p)}
               </span>
               <button
-                className="rounded-full leading-none text-muted-foreground transition-colors hover:text-destructive"
+                className="rounded-sm leading-none text-muted-foreground transition-colors hover:text-destructive"
                 aria-label={`移出 ${p}`}
                 onClick={() => void remove(p)}
               >

@@ -103,7 +103,13 @@
 ```
 
 - 中心区页签 = 固定「预览」+ 每个内嵌终端一个页签；终端页签显示会话标题 + 工具徽标，可关闭（关闭即结束进程）。
-- **所有已打开的终端组件常挂载**（`hidden` 切换），保证 xterm 缓冲与焦点不丢；工作区页签整块卸载后靠 Go 侧环形缓冲重放恢复。
+- **常挂载策略**：内容区的「首页 / 设置 / 每个工作区页签」同时挂载，非激活项用 `hidden` 隐藏；
+  工作区页签内的终端组件同理。因此 xterm 缓冲、焦点、文件树展开态、SSH 状态在整个应用生命周期内都不丢，
+  换来的是各页签在启动时各自拉一次数据（都是进程内 IPC，代价可接受）。
+  代价与边界：打开的工作区页签越多，常驻的列表/文件树订阅越多；关闭页签即结束该工作区的终端进程。
+- 因为终端不会卸载，前端不做 scrollback 回放：**每次「打开终端」都是从新进程开始**。
+  Go 侧仍保留 256 KiB 环形缓冲（`ScrollbackTerminal` 绑定），供后续需要回放的场景使用，
+  也让「前端重载后 Go 侧终端仍在跑」这种情况可被 `ListTerminals` 还原出页签。
 
 **终端数据流：**
 
@@ -114,8 +120,7 @@
 | 尺寸 | `FitAddon` + `ResizeObserver` → `ResizeTerminal(id, cols, rows)` |
 | 输出 | Go 读协程 → 事件 `terminal:data{id, data(base64)}` → 前端全局单例订阅 → 分发到注册表里的 xterm |
 | 退出 | 事件 `terminal:exit{id, exitCode}` → 页签状态改「已退出」，终端内打印收尾提示 |
-| 重挂载 | `ScrollbackTerminal(id)` → base64 回放（Go 侧每会话保留最近 256 KiB） |
-| 关闭 | `CloseTerminal(id)`（幂等） |
+| 关闭 | `CloseTerminal(id)`（幂等）；关闭工作区页签时连带关闭该工作区所有终端 |
 
 - `lib/terminalRegistry.ts`：模块级 `Map<termId, XTermHandle>`，由 `TerminalView` 挂载/卸载时登记；`lib/api.ts` 侧的全局订阅（App 挂载时建立一次）负责把事件投递给已登记的实例，**未登记的终端不丢数据**（Go 侧缓冲兜住，重挂载时回放）。
 - `components/TerminalView.tsx`：xterm.js + FitAddon（xterm 5 `@xterm/xterm`、`@xterm/addon-fit`）；主题跟随深浅色 token；挂载时先回放 scrollback 再订阅事件；退出后显示「会话已退出（code N）」且允许「重新打开」。
@@ -165,5 +170,7 @@ func (m *Manager) Scrollback(id string) ([]byte, error)
 ## 非目标 / 已知限制
 
 - 不做终端分屏、不做多窗口；终端不持久化（应用退出即结束所有内嵌会话）。
-- 跨工作区页签切换会卸载 xterm 实例，回看历史限于最近 256 KiB。
+- 终端进程的孙进程（`cmd.exe /c` 包装的 node CLI）随 ConPTY 关闭的保证较弱，
+  关闭终端页签后是否残留 node 进程列入冒烟清单人工确认。
+- 「关闭」按钮与原生 X 同语义（收进托盘），不是退出应用。
 - 不做自定义主题色/字号设置。

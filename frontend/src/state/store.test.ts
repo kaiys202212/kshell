@@ -1,12 +1,20 @@
 // store 增量测试：setBasket 重建篮子镜像、notify/dismissToast 轻量提示队列、
 // openTabs/activeTabId 经 persist 中间件落 localStorage（kshell-tabs）。
 import { beforeEach, describe, expect, it } from 'vitest';
+import type { TerminalInfo } from '../lib/api';
 import { SETTINGS_TAB_ID, useAppStore } from './store';
 
 beforeEach(() => {
   // persist 会在每次 setState 后写 localStorage，用例间必须清干净避免互相污染
   localStorage.clear();
-  useAppStore.setState({ basket: [], toasts: [], openTabs: [], activeTabId: null });
+  useAppStore.setState({
+    basket: [],
+    toasts: [],
+    openTabs: [],
+    activeTabId: null,
+    terminals: [],
+    layout: { left: 288, right: 300 },
+  });
 });
 
 describe('store', () => {
@@ -83,9 +91,61 @@ describe('store', () => {
       state: Record<string, unknown>;
     };
     expect(Object.keys(parsed.state)).toEqual(
-      expect.arrayContaining(['openTabs', 'activeTabId']),
+      expect.arrayContaining(['openTabs', 'activeTabId', 'layout']),
     );
     expect(parsed.state).not.toHaveProperty('basket');
     expect(parsed.state).not.toHaveProperty('toasts');
+    expect(parsed.state).not.toHaveProperty('terminals');
+  });
+
+  it('终端镜像：upsert 新增/覆盖、markTerminalExited 改状态、remove/setTerminals 重建', () => {
+    const t1: TerminalInfo = {
+      ID: 't1',
+      Kind: 'session',
+      SessionID: 's1',
+      Workspace: 'D:\\proj-a',
+      Title: '修登录页',
+      ToolID: 'claude',
+      Status: 'running',
+      ExitCode: 0,
+      Cols: 80,
+      Rows: 24,
+    };
+    useAppStore.getState().upsertTerminal(t1);
+    expect(useAppStore.getState().terminals).toHaveLength(1);
+
+    // 同 ID 再 upsert 是覆盖而不是追加
+    useAppStore.getState().upsertTerminal({ ...t1, Title: '改标题' });
+    expect(useAppStore.getState().terminals).toHaveLength(1);
+    expect(useAppStore.getState().terminals[0].Title).toBe('改标题');
+
+    useAppStore.getState().markTerminalExited('t1', 3);
+    expect(useAppStore.getState().terminals[0]).toMatchObject({ Status: 'exited', ExitCode: 3 });
+    // 未知 id 的退出事件不新增条目
+    useAppStore.getState().markTerminalExited('nope', 1);
+    expect(useAppStore.getState().terminals).toHaveLength(1);
+
+    useAppStore.getState().removeTerminal('t1');
+    expect(useAppStore.getState().terminals).toHaveLength(0);
+
+    useAppStore.getState().setTerminals([t1, { ...t1, ID: 't2' }]);
+    expect(useAppStore.getState().terminals.map((t) => t.ID)).toEqual(['t1', 't2']);
+  });
+
+  it('三栏宽度：setLayout 持久化且 clamp 到 [200,560]', () => {
+    useAppStore.getState().setLayout({ left: 9999, right: 10 });
+    expect(useAppStore.getState().layout).toEqual({ left: 560, right: 200 });
+
+    useAppStore.getState().setLayout({ left: 320 });
+    expect(useAppStore.getState().layout).toEqual({ left: 320, right: 200 });
+
+    // 非法值（NaN/Infinity）回落到下限而不是写进 store
+    useAppStore.getState().setLayout({ left: Number.NaN });
+    expect(useAppStore.getState().layout.left).toBe(200);
+
+    const parsed = JSON.parse(localStorage.getItem('kshell-tabs')!) as {
+      state: { layout: { left: number; right: number } };
+    };
+    expect(parsed.state.layout).toEqual({ left: 200, right: 200 });
   });
 });

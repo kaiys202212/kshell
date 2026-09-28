@@ -114,7 +114,7 @@ export default function QuickSwitcher({ open, onOpenChange }: Props) {
         <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-foreground/25" />
         <DialogPrimitive.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-20 z-50 w-[480px] max-w-[90vw] -translate-x-1/2 rounded-lg border border-border bg-card p-3 shadow-lg outline-none"
+          className="fixed left-1/2 top-20 z-50 w-[480px] max-w-[90vw] -translate-x-1/2 rounded border border-border bg-card p-3 outline-none"
         >
           <DialogPrimitive.Title className="sr-only">快速切换</DialogPrimitive.Title>
           <input

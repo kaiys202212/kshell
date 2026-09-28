@@ -1,0 +1,121 @@
+// 中心区内嵌终端：xterm.js + FitAddon 的 React 包装。
+// 约定（与设计文档第 5 节对应）：
+// - 输出不经本组件订阅：App 全局订阅一次 terminal:data，再按 id 投递到 lib/terminalRegistry；
+//   本组件只在挂载时登记、卸载时注销。
+// - 组件常挂载、由父级用 hidden 切换可见性：非激活时不做任何销毁，xterm 缓冲与历史都保留。
+// - 键盘输入 → writeTerminal(base64)；FitAddon 改变行列 → resizeTerminal（否则 PTY 仍按旧尺寸折行）。
+import { useEffect, useRef } from 'react';
+import { FitAddon } from '@xterm/addon-fit';
+import { Terminal } from '@xterm/xterm';
+import type { TerminalInfo } from '../lib/api';
+import { resizeTerminal, writeTerminal } from '../lib/api';
+import { encodeTerminalInput } from '../lib/base64';
+import { registerTerminal, unregisterTerminal } from '../lib/terminalRegistry';
+
+interface Props {
+  term: TerminalInfo; // store 里的镜像（Status/ExitCode 决定退出提示）
+  active: boolean; // 是否为当前可见页签
+}
+
+// 退出提示：只在状态首次变为 exited 时写一次，避免 store 每次 upsert 都往终端里塞一行
+const EXITED_HINT = '\r\n\x1b[90m[会话已退出]\x1b[0m\r\n';
+
+// terminalTheme 跟随系统深浅色（本轮不引入手动主题开关）。
+// matchMedia 必须在函数里取（不能在模块顶层触碰 window），并对缺失环境兜底为浅色。
+function terminalTheme() {
+  const dark =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-color-scheme: dark)').matches;
+  return dark
+    ? { background: '#0d1117', foreground: '#e6edf3' }
+    : { background: '#ffffff', foreground: '#1f2328' };
+}
+
+export default function TerminalView({ term, active }: Props) {
+  const termId = term.ID;
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const exitedHintRef = useRef(false);
+
+  // 依赖只取 termId：store 里 term 的其余字段（Status/ExitCode/Cols）变化不应重建终端实例
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    const instance = new Terminal({
+      convertEol: false,
+      cursorBlink: true,
+      fontFamily: 'Consolas, "Cascadia Mono", monospace',
+      fontSize: 13,
+      scrollback: 5000,
+      theme: terminalTheme(),
+    });
+    const fitAddon = new FitAddon();
+    instance.loadAddon(fitAddon);
+    instance.open(host);
+    termRef.current = instance;
+    fitRef.current = fitAddon;
+
+    const dataSub = instance.onData((data) => {
+      void writeTerminal(termId, encodeTerminalInput(data));
+    });
+    const resizeSub = instance.onResize(({ cols, rows }) => {
+      void resizeTerminal(termId, cols, rows);
+    });
+
+    registerTerminal(termId, {
+      write: (bytes) => instance.write(bytes),
+      focus: () => instance.focus(),
+      fit: () => fitAddon.fit(),
+    });
+
+    // 容器尺寸变化 → 下一帧再 fit：同一帧里可能还有布局变动（三栏拖动、页签切换）
+    const observer =
+      typeof ResizeObserver === 'function'
+        ? new ResizeObserver(() => {
+            requestAnimationFrame(() => fitAddon.fit());
+          })
+        : null;
+    observer?.observe(host);
+
+    return () => {
+      observer?.disconnect();
+      dataSub.dispose();
+      resizeSub.dispose();
+      unregisterTerminal(termId);
+      instance.dispose();
+      termRef.current = null;
+      fitRef.current = null;
+    };
+  }, [termId]);
+
+  // 变为可见页签时才适配尺寸并取焦点（放进 rAF：等父级 hidden→visible 的布局完成）
+  useEffect(() => {
+    if (!active) return;
+    const raf = requestAnimationFrame(() => {
+      fitRef.current?.fit();
+      termRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [active]);
+
+  // 退出提示只写一次；Status 若从 exited 回到 running（重新打开）不重置，由上层重新挂载负责
+  useEffect(() => {
+    if (term.Status !== 'exited' || exitedHintRef.current) return;
+    exitedHintRef.current = true;
+    termRef.current?.write(EXITED_HINT);
+  }, [term.Status]);
+
+  return (
+    <div className="relative flex h-full min-h-0 flex-col">
+      {term.Status === 'exited' && (
+        <div className="shrink-0 bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+          会话已退出（退出码 {term.ExitCode}）
+        </div>
+      )}
+      <div ref={hostRef} className="xterm-host h-full w-full overflow-hidden bg-card" />
+    </div>
+  );
+}

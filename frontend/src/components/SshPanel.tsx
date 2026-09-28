@@ -192,7 +192,7 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
                 <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                   <span className="truncate">{display(c)}</span>
                   <span
-                    className="shrink-0 rounded-full border border-border px-1.5 py-px"
+                    className="shrink-0 rounded-sm border border-border px-1.5 py-px"
                     title={c.SourceFile || undefined}
                   >
                     {sourceLabel(c.Source)}
@@ -237,7 +237,7 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
               {history.slice(0, HISTORY_CHIPS).map((c) => (
                 <button
                   key={c}
-                  className="max-w-40 truncate rounded-full border border-border bg-secondary px-2 py-0.5 text-xs text-secondary-foreground transition-colors hover:bg-muted"
+                  className="max-w-40 truncate rounded-sm border border-border bg-secondary px-2 py-0.5 text-xs text-secondary-foreground transition-colors hover:bg-muted"
                   title={c}
                   onClick={() => {
                     setCmd(c);

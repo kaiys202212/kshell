@@ -1,8 +1,9 @@
-/* 全局基线：Tailwind 4 + shadcn 风格设计 token。
+/* 全局基线：Tailwind 4 + shadcn 风格设计 token（扁平化）。
    深浅色跟随系统（prefers-color-scheme），组件样式全部走 Tailwind 工具类。 */
 @import "tailwindcss";
 
-/* 把 CSS 变量映射为 Tailwind 颜色/圆角 token（inline：工具类直接引用运行时变量，深浅色切换即时生效） */
+/* 把 CSS 变量映射为 Tailwind 颜色/圆角 token（inline：工具类直接引用运行时变量，深浅色切换即时生效）。
+   圆角整体收敛到 4px：扁平化靠 1px 分隔与色块层次，不靠圆角与阴影。 */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -22,31 +23,38 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-ring: var(--ring);
   --radius: var(--radius-base);
+  --radius-xs: 2px;
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 4px;
+  --radius-xl: 4px;
+  --radius-2xl: 6px;
+  --radius-3xl: 6px;
 }
 
-/* 浅色 token：延续 GitHub 蓝主色，整体提亮、加层次 */
+/* 浅色 token：延续 GitHub 蓝主色，中性灰底 + 白色面板（扁平：靠面区分，不靠边框加粗） */
 :root {
-  --background: #f6f8fa;  --foreground: #1f2328;
+  --background: #f4f6f8;  --foreground: #1f2328;
   --card: #ffffff;        --card-foreground: #1f2328;
-  --muted: #eef1f4;       --muted-foreground: #59636e;
+  --muted: #eceff2;       --muted-foreground: #59636e;
   --border: #d8dee4;      --input: #d8dee4;
   --primary: #0969da;     --primary-foreground: #ffffff;
-  --secondary: #eef1f4;   --secondary-foreground: #1f2328;
+  --secondary: #eceff2;   --secondary-foreground: #1f2328;
   --accent: #ddf4ff;      --accent-foreground: #0969da;
   --destructive: #c93c37; --destructive-foreground: #ffffff;
   --ring: #0969da99;
-  --radius-base: 8px;
+  --radius-base: 4px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0d1117;  --foreground: #e6edf3;
-    --card: #161b22;        --card-foreground: #e6edf3;
-    --muted: #21262d;       --muted-foreground: #8b949e;
+    --card: #151b23;        --card-foreground: #e6edf3;
+    --muted: #1f262e;       --muted-foreground: #8b949e;
     --border: #2d333b;      --input: #2d333b;
     --primary: #4493f8;     --primary-foreground: #0d1117;
-    --secondary: #21262d;   --secondary-foreground: #e6edf3;
-    --accent: #121d2f;      --accent-foreground: #4493f8;
+    --secondary: #1f262e;   --secondary-foreground: #e6edf3;
+    --accent: #101d2f;      --accent-foreground: #4493f8;
     --destructive: #e5534b; --destructive-foreground: #ffffff;
     --ring: #4493f899;
   }
@@ -56,20 +64,38 @@ html,
 body {
   margin: 0;
   height: 100%;
+  overflow: hidden; /* 外层不滚动：滚动都发生在各面板内部（窗口化布局） */
 }
 
 body {
   font-family: system-ui, -apple-system, "Segoe UI", "Roboto", "PingFang SC",
     "Microsoft YaHei", sans-serif;
+  font-size: 13px;
   color: var(--foreground);
   background: var(--background);
+  user-select: none; /* 桌面应用语义：默认不可选中，正文区域自行放开 */
+}
+
+:root {
+  color-scheme: light dark;
 }
 
 #root {
   height: 100%;
 }
 
-/* 按钮基础 reset 由 Tailwind preflight 覆盖（font/color/background/border/padding/cursor），不再重复 */
+::selection {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+/* 正文/终端等需要可选中复制的地方显式放开 */
+.selectable,
+input,
+textarea,
+.xterm {
+  user-select: text;
+}
 
 /* 全局细滚动条 */
 *::-webkit-scrollbar {
@@ -80,13 +106,31 @@ body {
   background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background: var(--muted);
+  background: var(--muted-foreground);
   border-radius: 3px;
+  opacity: 0.5;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: var(--muted-foreground);
+  background: var(--foreground);
 }
 *::-webkit-scrollbar-corner {
   background: transparent;
 }
 
+/* 无边框窗口的拖拽区（Wails 识别 --wails-draggable）。
+   可点元素必须显式 no-drag，否则点不动。 */
+.kshell-drag {
+  --wails-draggable: drag;
+}
+.kshell-no-drag {
+  --wails-draggable: no-drag;
+}
+
+/* 终端宿主：xterm 需要显式高度撑满容器，否则 fit 插件算不出行列数 */
+.xterm-host .xterm {
+  height: 100%;
+  padding: 4px 6px;
+}
+.xterm-host .xterm-viewport {
+  background: transparent !important;
+}

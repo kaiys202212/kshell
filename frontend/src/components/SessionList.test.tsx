@@ -1,10 +1,11 @@
-// SessionList 组件测试：排序 / 工作区过滤 / 关键词过滤 / 恢复与聚焦 / 事件还原。
+// SessionList 组件测试：排序 / 工作区过滤 / 关键词过滤 / 内嵌终端入口（恢复·切换）/
+// 外部终端入口（恢复与聚焦）/ 标题清洗显示 / 事件还原。
 // api 层整体打桩（vi.mock），事件回调通过桩捕获后手动触发。
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SessionList from './SessionList';
-import type { Session } from '../lib/api';
+import type { Session, TerminalInfo } from '../lib/api';
 import { useAppStore } from '../state/store';
 
 const mocks = vi.hoisted(() => ({
@@ -15,6 +16,9 @@ const mocks = vi.hoisted(() => ({
   onWindowClosed: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
+
+// 中心区内嵌终端入口由 WorkspaceTab 注入，这里用桩校验回调
+const onOpenTerminal = vi.fn();
 
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
@@ -44,8 +48,11 @@ beforeEach(() => {
   mocks.getSessions.mockResolvedValue(sessions);
   mocks.resumeSession.mockResolvedValue(undefined);
   mocks.focusSession.mockResolvedValue(true);
-  useAppStore.setState({ windowStatus: {} });
+  useAppStore.setState({ windowStatus: {}, terminals: [] });
 });
+
+const renderList = () =>
+  render(<SessionList workspacePath={'D:\\proj-a'} onOpenTerminal={onOpenTerminal} />);
 
 // 按标题找会话行（li 元素）
 async function findRow(title: string): Promise<HTMLElement> {
@@ -55,9 +62,26 @@ async function findRow(title: string): Promise<HTMLElement> {
   return row;
 }
 
+// 内嵌终端镜像（store.terminals）：Status running 表示会话正在中心区运行
+function terminal(over: Partial<TerminalInfo> = {}): TerminalInfo {
+  return {
+    ID: 't1',
+    Kind: 'session',
+    SessionID: 's1',
+    Workspace: 'd:\\proj-a',
+    Title: '修复上传白名单',
+    ToolID: 'codebuddy',
+    Status: 'running',
+    ExitCode: 0,
+    Cols: 120,
+    Rows: 30,
+    ...over,
+  };
+}
+
 describe('SessionList', () => {
   it('只显示当前工作区的会话（路径大小写不敏感），按 updatedAt 降序排列', async () => {
-    render(<SessionList workspacePath={'D:\\proj-a'} />);
+    renderList();
 
     await findRow('清理构建缓存');
     const titles = screen
@@ -71,8 +95,8 @@ describe('SessionList', () => {
     expect(screen.getByText('12 条')).toBeInTheDocument();
   });
 
-  it('工具 chip 行按当前工作区会话去重展示，其他工作区的工具不出现', async () => {
-    render(<SessionList workspacePath={'D:\\proj-a'} />);
+  it('工具 chip 行按当前工作区会话去重展示，其他工作区的工具不出现（扁平下划线式）', async () => {
+    renderList();
     await findRow('清理构建缓存');
 
     const chips = screen.getByLabelText('按工具筛选');
@@ -80,10 +104,19 @@ describe('SessionList', () => {
     expect(within(chips).getByText('Claude')).toBeInTheDocument();
     expect(within(chips).getByText('Codex')).toBeInTheDocument();
     expect(within(chips).queryByText('Gemini')).not.toBeInTheDocument(); // 属于其他工作区
+
+    // 扁平化：统一 rounded-sm，不用圆角胶囊；选中态用主色底 + 主色文字
+    const all = within(chips).getByRole('button', { name: '全部' });
+    expect(all).toHaveClass('rounded-sm');
+    expect(all).toHaveClass('bg-primary/10');
+    expect(all).toHaveClass('text-primary');
+    const codex = within(chips).getByRole('button', { name: 'Codex' });
+    expect(codex).not.toHaveClass('bg-primary/10');
+    expect(codex.className).not.toContain('rounded-full');
   });
 
   it('点击工具 chip 筛选该工具会话，与文字搜索 AND 叠加，「全部」恢复', async () => {
-    render(<SessionList workspacePath={'D:\\proj-a'} />);
+    renderList();
     await findRow('清理构建缓存');
 
     fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
@@ -103,7 +136,7 @@ describe('SessionList', () => {
   });
 
   it('过滤词匹配标题 / 工具名', async () => {
-    render(<SessionList workspacePath={'D:\\proj-a'} />);
+    renderList();
     await findRow('清理构建缓存');
 
     const input = screen.getByLabelText('过滤会话');
@@ -125,25 +158,65 @@ describe('SessionList', () => {
     expect(screen.getByText('没有匹配的会话')).toBeInTheDocument();
   });
 
-  it('点击「恢复」调用 ResumeSession，并把行状态置 open', async () => {
-    render(<SessionList workspacePath={'D:\\proj-a'} />);
+  it('点击「恢复」把会话交给 onOpenTerminal（中心区内嵌终端），不触发外部窗口', async () => {
+    renderList();
     const row = await findRow('修复上传白名单');
 
+    fireEvent.click(within(row).getByRole('button', { name: '恢复' }));
+
+    expect(onOpenTerminal).toHaveBeenCalledWith(expect.objectContaining({ ID: 's1' }));
+    expect(mocks.resumeSession).not.toHaveBeenCalled();
+    expect(row).not.toHaveClass('bg-primary/5');
+  });
+
+  it('该会话已有运行中的内嵌终端时文案变「切换」并走高亮样式，点击仍走 onOpenTerminal', async () => {
+    useAppStore.setState({ terminals: [terminal()] });
+    renderList();
+    const row = await findRow('修复上传白名单');
+
+    expect(within(row).queryByRole('button', { name: '恢复' })).toBeNull();
+    const sw = within(row).getByRole('button', { name: '切换' });
+    expect(sw.className).toContain('bg-primary');
+    // 运行中标记 + 行高亮
+    expect(within(row).getByText('✓')).toBeInTheDocument();
+    expect(row).toHaveClass('bg-primary/5');
+
+    fireEvent.click(sw);
+    expect(onOpenTerminal).toHaveBeenCalledWith(expect.objectContaining({ ID: 's1' }));
+  });
+
+  it('内嵌终端已退出时不改文案（仍为「恢复」）', async () => {
+    useAppStore.setState({
+      terminals: [terminal({ Status: 'exited', ExitCode: 0 })],
+    });
+    renderList();
+    const row = await findRow('修复上传白名单');
+
+    expect(within(row).getByRole('button', { name: '恢复' })).toBeInTheDocument();
+    expect(within(row).queryByText('✓')).toBeNull();
+  });
+
+  it('外部终端入口保留 aria-label，点击走 ResumeSession 并置 open', async () => {
+    renderList();
+    const row = await findRow('修复上传白名单');
+
+    const external = within(row).getByRole('button', { name: '在外部终端打开' });
     await act(async () => {
-      fireEvent.click(within(row).getByRole('button', { name: '恢复' }));
+      fireEvent.click(external);
     });
 
     expect(mocks.resumeSession).toHaveBeenCalledWith('s1');
     expect(useAppStore.getState().windowStatus['kshell · 修复上传白名单']).toBe(true);
     expect(row).toHaveClass('bg-primary/5');
+    expect(onOpenTerminal).not.toHaveBeenCalled();
   });
 
   it('收到 window:closed 事件后还原 open 状态', async () => {
-    render(<SessionList workspacePath={'D:\\proj-a'} />);
+    renderList();
     const row = await findRow('修复上传白名单');
 
     await act(async () => {
-      fireEvent.click(within(row).getByRole('button', { name: '恢复' }));
+      fireEvent.click(within(row).getByRole('button', { name: '在外部终端打开' }));
     });
     expect(row).toHaveClass('bg-primary/5');
 
@@ -154,13 +227,13 @@ describe('SessionList', () => {
     expect(useAppStore.getState().windowStatus['kshell · 修复上传白名单']).toBe(false);
   });
 
-  it('已 open 的会话点击「恢复」走 FocusSession 而非 ResumeSession', async () => {
+  it('已 open 的会话点外部按钮走 FocusSession 而非 ResumeSession', async () => {
     useAppStore.setState({ windowStatus: { 'kshell · 重构登录页': true } });
-    render(<SessionList workspacePath={'D:\\proj-a'} />);
+    renderList();
     const row = await findRow('重构登录页');
 
     await act(async () => {
-      fireEvent.click(within(row).getByRole('button', { name: '恢复' }));
+      fireEvent.click(within(row).getByRole('button', { name: '在外部终端打开' }));
     });
 
     expect(mocks.focusSession).toHaveBeenCalledWith('s2');
@@ -170,11 +243,11 @@ describe('SessionList', () => {
   it('FocusSession 返回 false（窗口实际已关）时还原状态', async () => {
     mocks.focusSession.mockResolvedValue(false);
     useAppStore.setState({ windowStatus: { 'kshell · 重构登录页': true } });
-    render(<SessionList workspacePath={'D:\\proj-a'} />);
+    renderList();
     const row = await findRow('重构登录页');
 
     await act(async () => {
-      fireEvent.click(within(row).getByRole('button', { name: '恢复' }));
+      fireEvent.click(within(row).getByRole('button', { name: '在外部终端打开' }));
     });
 
     expect(mocks.focusSession).toHaveBeenCalledWith('s2');
@@ -182,9 +255,26 @@ describe('SessionList', () => {
     expect(row).not.toHaveClass('bg-primary/5');
   });
 
+  it('标题剥掉 XML 包装标签后渲染；清洗后为空显示「(无标题)」（title 属性仍是原文）', async () => {
+    const dirty: Session[] = [
+      { ID: 'd1', ToolID: 'claude', Workspace: 'D:\\proj-a', Title: '<system-reminder>今天日期 2026-09-28</system-reminder> 帮我把登录页报错文案改一下', CreatedAt: minutesAgo(9), UpdatedAt: minutesAgo(9), Messages: 2, Path: 'x1' },
+      { ID: 'd2', ToolID: 'claude', Workspace: 'D:\\proj-a', Title: '<local-command-caveat>Caveat: 头部被截断的机器内容', CreatedAt: minutesAgo(8), UpdatedAt: minutesAgo(8), Messages: 2, Path: 'x2' },
+    ];
+    mocks.getSessions.mockResolvedValue(dirty);
+    renderList();
+
+    const row = await findRow('帮我把登录页报错文案改一下');
+    expect(row.querySelector('span[title]')?.getAttribute('title')).toContain('system-reminder');
+    expect(screen.queryByText(/local-command-caveat/)).not.toBeInTheDocument();
+
+    const empty = await screen.findByText('(无标题)');
+    expect(empty).toHaveClass('italic');
+    expect(empty.closest('li')).toBeInTheDocument();
+  });
+
   it('收到 scan:done 事件后重调 GetSessions 刷新', async () => {
     mocks.getSessions.mockResolvedValueOnce([]).mockResolvedValueOnce(sessions);
-    render(<SessionList workspacePath={'D:\\proj-a'} />);
+    renderList();
     expect(screen.queryByText('修复上传白名单')).not.toBeInTheDocument();
 
     await act(async () => {
@@ -197,7 +287,7 @@ describe('SessionList', () => {
 
   it('GetSessions 失败不崩溃，scan:done 后恢复刷新', async () => {
     mocks.getSessions.mockRejectedValueOnce(new Error('绑定异常')).mockResolvedValueOnce(sessions);
-    render(<SessionList workspacePath={'D:\\proj-a'} />);
+    renderList();
     expect(screen.queryByText('修复上传白名单')).not.toBeInTheDocument();
 
     await act(async () => {
@@ -216,7 +306,7 @@ describe('SessionList', () => {
     useAppStore.setState({
       windowStatus: { 'kshell · 任务A': true, 'kshell · 任务A续': true },
     });
-    render(<SessionList workspacePath={'D:\\proj-a'} />);
+    renderList();
 
     const rowA = await findRow('任务A');
     const rowA2 = await findRow('任务A续');
@@ -239,21 +329,21 @@ describe('SessionList', () => {
 
     // 扫描未完成（idle/scanning）：显示骨架屏占位而非空态文案
     useAppStore.setState({ scanState: 'scanning' });
-    const { unmount, container } = render(<SessionList workspacePath={'D:\\proj-a'} />);
+    const { unmount, container } = renderList();
     expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0);
     expect(screen.queryByText('该工作区暂无会话')).not.toBeInTheDocument();
     unmount();
 
     // 扫描已完成、该工作区确实没有会话
     useAppStore.setState({ scanState: 'done' });
-    render(<SessionList workspacePath={'D:\\proj-a'} />);
+    renderList();
     expect(await screen.findByText('该工作区暂无会话')).toBeInTheDocument();
   });
 
   it('onScanDone 回调把 scanState 置 done（幂等，消除死角）', async () => {
     mocks.getSessions.mockResolvedValue([]);
     useAppStore.setState({ scanState: 'scanning' });
-    render(<SessionList workspacePath={'D:\\proj-a'} />);
+    renderList();
 
     await act(async () => {
       scanDoneCb({});

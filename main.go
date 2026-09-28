@@ -40,6 +40,11 @@ func trayIcon() []byte {
 var desktopApp = desktop.NewAppWith(desktop.Options{TrayIcon: trayIcon()})
 
 // RunDesktop 用给定的前端资源启动 Wails 窗口（拆出来便于测试）。
+//
+// Frameless：标题栏由前端自绘（页签直接排进标题栏）。Wails v2 默认走
+// framelessWithDecorations 分支（DWM 扩展边框进客户区），因此缩放边框、系统阴影、
+// 最小化/最大化动画都保留，只是标题栏内容归前端——窗口拖拽靠 CSS
+// --wails-draggable:drag（见 style.css 的 .kshell-drag）。
 func RunDesktop(src fs.FS) error {
 	return wails.Run(&options.App{
 		Title:     "kshell",
@@ -47,11 +52,14 @@ func RunDesktop(src fs.FS) error {
 		Height:    800,
 		MinWidth:  960,
 		MinHeight: 640,
+		Frameless: true,
 		AssetServer: &assetserver.Options{
 			Assets: src,
 		},
 		OnStartup:     desktopApp.Startup,
 		OnBeforeClose: desktopApp.BeforeClose,
+		// 退出时收掉所有内嵌终端，避免 pty 里的 CLI 子进程残留
+		OnShutdown: desktopApp.Shutdown,
 		Bind: []interface{}{
 			desktopApp,
 		},

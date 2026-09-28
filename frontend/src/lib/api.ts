@@ -78,6 +78,22 @@ export interface ToolInfo {
   Source: string;
 }
 
+// terminal.Info 的 JSON 形态（internal/terminal/manager.go）。
+// Kind: session（恢复历史会话，同一会话幂等复用）/ new（工作区新开，每次都起新进程）
+// Status: running | exited
+export interface TerminalInfo {
+  ID: string;
+  Kind: string;
+  SessionID: string;
+  Workspace: string;
+  Title: string;
+  ToolID: string;
+  Status: string;
+  ExitCode: number;
+  Cols: number;
+  Rows: number;
+}
+
 // remote.Connection 的 JSON 形态（internal/remote/store.go）。
 // Source: sshconfig / env / spring / deploy / docs（Go 侧扫描器值集，无 manual）
 export interface SshConnection {
@@ -111,6 +127,14 @@ interface AppBindings {
   LoadProvidersYAML(): Promise<string>;
   SaveProvidersYAML(content: string): Promise<void>;
   RestartApp(): Promise<void>;
+  OpenSessionTerminal(sessionId: string, cols: number, rows: number): Promise<TerminalInfo>;
+  OpenWorkspaceTerminal(wsPath: string, toolId: string, cols: number, rows: number): Promise<TerminalInfo>;
+  WriteTerminal(id: string, data: string): Promise<void>;
+  ResizeTerminal(id: string, cols: number, rows: number): Promise<void>;
+  CloseTerminal(id: string): Promise<void>;
+  ListTerminals(): Promise<TerminalInfo[]>;
+  ScrollbackTerminal(id: string): Promise<string>;
+  NewSessionWithTool(wsPath: string, toolId: string): Promise<void>;
 }
 
 declare global {
@@ -272,4 +296,87 @@ export async function restartApp(): Promise<void> {
   const a = app();
   if (!a) return;
   await a.RestartApp();
+}
+
+// ---- 内嵌终端（中心区命令行）----
+// 约定：所有终端数据都走 base64，避免任意字节被 JSON/UTF-16 转换破坏
+//（xterm 的 onData 可能给出任意字节，Go 侧输出含 ANSI 与半截多字节序列）。
+
+// openSessionTerminal 在中心区打开（或复用）某历史会话的内嵌终端。错误向上抛。
+export async function openSessionTerminal(
+  sessionId: string,
+  cols: number,
+  rows: number,
+): Promise<TerminalInfo> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  return a.OpenSessionTerminal(sessionId, cols, rows);
+}
+
+// openWorkspaceTerminal 在工作区新开一个内嵌终端；toolId 为空串表示由 Go 侧选首选工具。
+export async function openWorkspaceTerminal(
+  wsPath: string,
+  toolId: string,
+  cols: number,
+  rows: number,
+): Promise<TerminalInfo> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  return a.OpenWorkspaceTerminal(wsPath, toolId, cols, rows);
+}
+
+// writeTerminal 把键盘输入写进终端（data 为 base64 编码的 UTF-8 字节）。
+export async function writeTerminal(id: string, data: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.WriteTerminal(id, data);
+}
+
+// resizeTerminal 同步终端尺寸（FitAddon 变化时调用）。
+export async function resizeTerminal(id: string, cols: number, rows: number): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.ResizeTerminal(id, cols, rows);
+}
+
+// closeTerminal 关闭终端并结束其进程（幂等）。
+export async function closeTerminal(id: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.CloseTerminal(id);
+}
+
+// listTerminals 返回全部内嵌终端快照（用于重挂载后还原页签）。
+export async function listTerminals(): Promise<TerminalInfo[]> {
+  const a = app();
+  if (!a) return [];
+  return a.ListTerminals();
+}
+
+// scrollbackTerminal 取终端最近输出的回放数据（base64；已退出的终端仍可读）。
+export async function scrollbackTerminal(id: string): Promise<string> {
+  const a = app();
+  if (!a) return '';
+  return a.ScrollbackTerminal(id);
+}
+
+// newSessionWithTool 在外部终端窗口新建会话（次要入口）；toolId 为空串等价于 NewSession。
+export async function newSessionWithTool(wsPath: string, toolId: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.NewSessionWithTool(wsPath, toolId);
+}
+
+// onTerminalData 订阅终端输出（data 为 base64），返回取消订阅函数
+export function onTerminalData(cb: (payload: { id: string; data: string }) => void): () => void {
+  return EventsOn('terminal:data', (p: { id?: string; data?: string }) =>
+    cb({ id: p?.id ?? '', data: p?.data ?? '' }),
+  );
+}
+
+// onTerminalExit 订阅终端退出（进程结束），返回取消订阅函数
+export function onTerminalExit(cb: (payload: { id: string; exitCode: number }) => void): () => void {
+  return EventsOn('terminal:exit', (p: { id?: string; exitCode?: number }) =>
+    cb({ id: p?.id ?? '', exitCode: p?.exitCode ?? 0 }),
+  );
 }

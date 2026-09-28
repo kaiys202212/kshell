@@ -3,7 +3,7 @@
 // 重开应用后恢复上次的工作区页签；其余字段的数据来源都是 Go 绑定层，刷新即重取，不持久化。
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Workspace } from '../lib/api';
+import type { TerminalInfo, Workspace } from '../lib/api';
 
 // toast 的自增 id（模块级：store 单例，保证 id 唯一即可）
 let nextToastId = 1;
@@ -23,6 +23,16 @@ export interface Toast {
 
 // 设置页固定页签的保留标识（带命名空间前缀，不会与工作区路径冲突）
 export const SETTINGS_TAB_ID = 'kshell:settings';
+
+// 三栏宽度（工作区页签左右两栏，单位 px）+ 拖动范围：
+// 上限留出中心区至少 360px，下限保证列表项与文件树的可用宽度。
+export interface LayoutSizes {
+  left: number;
+  right: number;
+}
+export const LAYOUT_DEFAULT: LayoutSizes = { left: 288, right: 300 };
+export const LAYOUT_MIN = 200;
+export const LAYOUT_MAX = 560;
 
 interface AppState {
   workspaces: Workspace[];
@@ -56,6 +66,25 @@ interface AppState {
   // 键与事件 payload 都是 lib/title.ts terminalTitle 的归一化形态，严格相等匹配。
   windowStatus: Record<string, boolean>;
   setWindowStatus(title: string, open: boolean): void;
+
+  // 内嵌终端页签镜像（来自 Go 侧 ListTerminals/Open* 的返回值）。
+  // 不持久化：应用重启后 Go 侧进程已随之消失，镜像应从 ListTerminals 重建。
+  terminals: TerminalInfo[];
+  upsertTerminal(info: TerminalInfo): void;
+  removeTerminal(id: string): void;
+  markTerminalExited(id: string, exitCode: number): void;
+  // 用 Go 侧 ListTerminals 的返回值整体重建镜像（前端重载后 Go 侧终端仍在运行）
+  setTerminals(list: TerminalInfo[]): void;
+
+  // 工作区页签三栏宽度（持久化，跨会话保留）
+  layout: LayoutSizes;
+  setLayout(patch: Partial<LayoutSizes>): void;
+}
+
+// clampLayout 把任意输入收敛到合法范围（拖动、持久化恢复、测试都走这里）。
+export function clampLayout(v: number): number {
+  if (!Number.isFinite(v)) return LAYOUT_MIN;
+  return Math.min(LAYOUT_MAX, Math.max(LAYOUT_MIN, Math.round(v)));
 }
 
 export const useAppStore = create<AppState>()(
@@ -115,11 +144,39 @@ export const useAppStore = create<AppState>()(
       windowStatus: {},
       setWindowStatus: (title, open) =>
         set((s) => ({ windowStatus: { ...s.windowStatus, [title]: open } })),
+
+      terminals: [],
+      upsertTerminal: (info) =>
+        set((s) => {
+          const idx = s.terminals.findIndex((t) => t.ID === info.ID);
+          if (idx < 0) return { terminals: [...s.terminals, info] };
+          const terminals = s.terminals.slice();
+          terminals[idx] = info;
+          return { terminals };
+        }),
+      removeTerminal: (id) =>
+        set((s) => ({ terminals: s.terminals.filter((t) => t.ID !== id) })),
+      markTerminalExited: (id, exitCode) =>
+        set((s) => ({
+          terminals: s.terminals.map((t) =>
+            t.ID === id ? { ...t, Status: 'exited', ExitCode: exitCode } : t,
+          ),
+        })),
+      setTerminals: (list) => set({ terminals: list }),
+
+      layout: LAYOUT_DEFAULT,
+      setLayout: (patch) =>
+        set((s) => ({
+          layout: {
+            left: patch.left === undefined ? s.layout.left : clampLayout(patch.left),
+            right: patch.right === undefined ? s.layout.right : clampLayout(patch.right),
+          },
+        })),
     }),
     {
       name: 'kshell-tabs',
-      // 只持久化页签两字段：工作区/篮子/提示等要么来自 Go 侧、要么是易失的内存态
-      partialize: (s) => ({ openTabs: s.openTabs, activeTabId: s.activeTabId }),
+      // 只持久化页签与三栏宽度：工作区/篮子/终端/提示要么来自 Go 侧、要么是易失的内存态
+      partialize: (s) => ({ openTabs: s.openTabs, activeTabId: s.activeTabId, layout: s.layout }),
     },
   ),
 );
