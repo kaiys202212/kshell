@@ -288,6 +288,11 @@ func LoadGenericSpecs(path string) ([]GenericSpec, error) {
 	if err != nil {
 		return nil, err
 	}
+	return ParseProvidersYAML(data)
+}
+
+// ParseProvidersYAML 解析并校验自定义 provider 定义，供编辑保存前预检。
+func ParseProvidersYAML(data []byte) ([]GenericSpec, error) {
 	var file genericSpecFile
 	if err := yaml.Unmarshal(data, &file); err != nil {
 		return nil, err

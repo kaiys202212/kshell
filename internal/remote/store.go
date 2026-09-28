@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -43,7 +44,10 @@ func (c Connection) Target() string {
 	return target
 }
 
+// Store 是连接的持久化存储。绑定层（桌面版）会在多个 goroutine 调用，
+// 内部状态由 mu 保护；All/List 返回副本，调用方持有的切片与内部状态解耦。
 type Store struct {
+	mu    sync.RWMutex
 	path  string
 	conns []Connection
 }
@@ -57,7 +61,9 @@ func (s *Store) Path() string { return s.path }
 func (s *Store) Load() error {
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
+		s.mu.Lock()
 		s.conns = nil
+		s.mu.Unlock()
 		return nil
 	}
 	if err != nil {
@@ -68,12 +74,21 @@ func (s *Store) Load() error {
 	if err := yaml.Unmarshal(data, &conns); err != nil {
 		return fmt.Errorf("解析连接文件失败: %w", err)
 	}
+	s.mu.Lock()
 	s.conns = conns
+	s.mu.Unlock()
 	return nil
 }
 
 // Save 先写临时文件再替换，避免写一半崩溃留下损坏配置。
 func (s *Store) Save() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.saveLocked()
+}
+
+// saveLocked 在已持有读锁时落盘（写锁是读锁的超集，RWMutex 允许）。
+func (s *Store) saveLocked() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
@@ -109,39 +124,50 @@ func (s *Store) Add(c Connection) (Connection, error) {
 		c.Name = c.Target()
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.conns = append(s.conns, c)
-	return c, s.Save()
+	return c, s.saveLocked()
 }
 
 func (s *Store) Update(c Connection) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for i := range s.conns {
 		if s.conns[i].ID == c.ID {
 			if strings.Contains(strings.ToUpper(c.IdentityFile), "PRIVATE KEY") {
 				return errKeyMaterial
 			}
 			s.conns[i] = c
-			return s.Save()
+			return s.saveLocked()
 		}
 	}
 	return errUnknownConnection
 }
 
 func (s *Store) Delete(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for i, c := range s.conns {
 		if c.ID == id {
 			s.conns = append(s.conns[:i], s.conns[i+1:]...)
-			return s.Save()
+			return s.saveLocked()
 		}
 	}
 	return errUnknownConnection
 }
 
+// All 返回全部连接的副本。
 func (s *Store) All() []Connection {
-	return s.conns
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]Connection(nil), s.conns...)
 }
 
 // Has 判断是否已存在同 host+user+port 的连接，防止重复导入产生重复条目。
 func (s *Store) Has(host, user string, port int) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	for _, c := range s.conns {
 		if strings.EqualFold(c.Host, host) && strings.EqualFold(c.User, user) && c.Port == port {
 			return true
@@ -150,8 +176,10 @@ func (s *Store) Has(host, user string, port int) bool {
 	return false
 }
 
-// List 返回绑定到该工作区的连接，外加未绑定工作区的「全局」连接。
+// List 返回绑定到该工作区的连接，外加未绑定工作区的「全局」连接（副本）。
 func (s *Store) List(workspace string) []Connection {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	out := make([]Connection, 0, len(s.conns))
 	for _, c := range s.conns {
 		if c.Workspace == "" || c.Workspace == workspace {

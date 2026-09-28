@@ -64,6 +64,8 @@ func BuildArgs(c Connection, cmd string, opts SSHOptions) []string {
 }
 
 // ShellArgs 供交互式登录使用（-t 强制分配伪终端）。
+// 契约：BuildArgs 的前 4 个参数恒为 -o BatchMode=yes -o ConnectTimeout=N 两对
+// （不受 opts/连接影响），此处按下标在其后插入 -t；改动 BuildArgs 前段时必须同步这里。
 func ShellArgs(c Connection, opts SSHOptions) []string {
 	base := BuildArgs(c, "", opts)
 	args := []string{base[0], base[1], base[2], base[3], "-t"}

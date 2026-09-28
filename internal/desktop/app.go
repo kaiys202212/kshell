@@ -11,6 +11,8 @@ import (
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/providers"
+	"github.com/yangk/kshell/internal/remote"
+	"github.com/yangk/kshell/internal/workspace"
 )
 
 var (
@@ -24,13 +26,15 @@ type scanFunc func(home string, ps []providers.Provider, cachePath string, opts 
 
 // Options 桌面版装配选项；零值字段在 Startup 里用真实环境补齐（测试可注入）。
 type Options struct {
-	Home      string
-	CachePath string
-	Config    config.Config
-	Providers []providers.Provider
-	Scan      scanFunc
-	Windows   *WindowManager
-	Emit      func(name string, data ...any)
+	Home          string
+	CachePath     string
+	ProvidersPath string // providers.yaml 完整路径；设置页读写用
+	Config        config.Config
+	Providers     []providers.Provider
+	Store         *remote.Store // SSH 连接存储；nil 时 Startup 按真实环境装配
+	Scan          scanFunc
+	Windows       *WindowManager
+	Emit          func(name string, data ...any)
 }
 
 // App 是暴露给前端的绑定对象：薄封装 discovery/providers/window 等核心包，
@@ -45,7 +49,10 @@ type App struct {
 	tools    []discovery.Tool
 	result   *discovery.Result
 	scanning bool
-	basket   []string // 上下文篮：新建会话时注入初始提示（Task 4 提供 UI 开关）
+	basket   []string // 上下文篮：文件视图勾选的文件，新建会话时注入初始提示
+
+	trees   map[string]*workspace.Tree // 工作区路径 → 文件树（懒创建，节点级缓存）
+	treeMu  sync.Mutex                 // 树操作串行化（Expand 会写节点，不能只靠 mu 快照）
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。
@@ -68,11 +75,9 @@ func (a *App) Startup(ctx context.Context) {
 }
 
 // initRealDeps 用真实环境补齐未注入的选项（与 cmd/kshell 的 TUI 装配保持同源逻辑）。
+// 不做整体早退：逐字段补齐，保证「部分注入」场景（如注入了 Home 但没注入 Store）
+// 也能拿到完整依赖，错误是显式的而非静默零值。
 func (a *App) initRealDeps() {
-	if a.snapshot().ready() {
-		return
-	}
-
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return // 无主目录时保持未就绪状态，ScanSessions 会返回 errNotReady
@@ -108,6 +113,9 @@ func (a *App) initRealDeps() {
 	if a.opts.CachePath == "" {
 		a.opts.CachePath = paths.CacheIndex
 	}
+	if a.opts.ProvidersPath == "" {
+		a.opts.ProvidersPath = paths.Providers
+	}
 	if a.opts.Config.MaxDepth <= 0 {
 		a.opts.Config = cfg
 	}
@@ -119,6 +127,11 @@ func (a *App) initRealDeps() {
 	}
 	if a.opts.Windows == nil {
 		a.opts.Windows = wm
+	}
+	if a.opts.Store == nil {
+		store := remote.NewStore(paths.Connections)
+		_ = store.Load() // 读不到连接文件不阻断启动，与 TUI 行为一致
+		a.opts.Store = store
 	}
 }
 
