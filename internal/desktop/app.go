@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/yangk/kshell/internal/config"
@@ -35,6 +36,7 @@ type Options struct {
 	Scan          scanFunc
 	Windows       *WindowManager
 	Emit          func(name string, data ...any)
+	TrayIcon      []byte // 托盘图标数据（Windows 用 ICO，其它平台用 PNG）；nil 表示不启用托盘
 }
 
 // App 是暴露给前端的绑定对象：薄封装 discovery/providers/window 等核心包，
@@ -50,6 +52,7 @@ type App struct {
 	result   *discovery.Result
 	scanning bool
 	basket   []string // 上下文篮：文件视图勾选的文件，新建会话时注入初始提示
+	quitting bool     // 托盘「退出」已发起：BeforeClose 据此放行 Wails 的退出流程
 
 	trees   map[string]*workspace.Tree // 工作区路径 → 文件树（懒创建，节点级缓存）
 	treeMu  sync.Mutex                 // 树操作串行化（Expand 会写节点，不能只靠 mu 快照）
@@ -61,7 +64,7 @@ func NewApp() *App { return &App{} }
 // NewAppWith 用给定选项创建绑定对象（测试注入用）。
 func NewAppWith(o Options) *App { return &App{opts: o} }
 
-// Startup 由 Wails 在窗口启动后调用：装配真实依赖并触发后台扫描。
+// Startup 由 Wails 在窗口启动后调用：装配真实依赖、启动托盘并触发后台扫描。
 func (a *App) Startup(ctx context.Context) {
 	a.mu.Lock()
 	a.ctx = ctx
@@ -71,7 +74,9 @@ func (a *App) Startup(ctx context.Context) {
 	a.mu.Unlock()
 
 	a.initRealDeps()
+	a.StartTray()
 	go a.runScan()
+	go a.reapLoop()
 }
 
 // initRealDeps 用真实环境补齐未注入的选项（与 cmd/kshell 的 TUI 装配保持同源逻辑）。
@@ -138,6 +143,71 @@ func (a *App) initRealDeps() {
 // ready 报告选项是否已装配完整（全部走注入或已补齐真实依赖）。
 func (o Options) ready() bool {
 	return o.Home != "" && o.Scan != nil && o.Windows != nil
+}
+
+// reapInterval 是窗口回收轮询间隔。取值需小于宽限期（3s，见 WindowManager.reapGrace）：
+// 轮询本身不做判定，只保证宽限期一过、最多再等一个间隔就能把 window:closed 推给前端，
+// 前端行状态及时还原；再调小只会增加无效探测（Reap 有宽限期门槛，代价极低）。
+const reapInterval = 2 * time.Second
+
+// reapOnce 执行一次窗口回收：Reap 发现死亡窗口后经 onClosed 回调（锁外执行）推送
+// window:closed 事件。单次回收与定时循环（reapLoop）分开：前者可测，后者只是 ticker 包装。
+func (a *App) reapOnce() {
+	wm := a.snapshot().Windows
+	if wm == nil {
+		return
+	}
+	wm.Reap()
+}
+
+// reapLoop 定期回收死亡终端窗口。与窗口同生命周期，无需取消机制：
+// 进程随 Wails 主循环退出，goroutine 一并结束。
+func (a *App) reapLoop() {
+	ticker := time.NewTicker(reapInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		a.reapOnce()
+	}
+}
+
+// StartTray 启动系统托盘（未注入托盘图标或 Wails 上下文未就绪时跳过）。
+// systray.Run 独占调用方 goroutine 跑消息循环，必须在 goroutine 里启动。
+func (a *App) StartTray() {
+	a.mu.Lock()
+	icon := a.opts.TrayIcon
+	ctx := a.ctx
+	a.mu.Unlock()
+	if len(icon) == 0 || ctx == nil {
+		return
+	}
+	go runTray(icon,
+		func() { runtime.WindowShow(ctx) },
+		func() { a.quitApp(ctx) },
+	)
+}
+
+// quitApp 托盘「退出」入口：置退出标记并请求 Wails 退出进程。
+// 注意 runtime.Quit 内部会再走一次 BeforeClose（见 wails windows frontend.Quit），
+// quitting 标记保证那次调用放行，否则「退出」会被拦截成隐藏窗口、进程永远退不出去。
+func (a *App) quitApp(ctx context.Context) {
+	a.mu.Lock()
+	a.quitting = true
+	a.mu.Unlock()
+	quitTrayLoop() // 先停托盘消息循环（通知区图标随之移除），再退进程
+	runtime.Quit(ctx)
+}
+
+// BeforeClose 供 Wails OnBeforeClose 挂载：拦截窗口关闭改为隐藏到托盘（返回 true）；
+// 托盘「退出」期间放行（返回 false），让 runtime.Quit 真正退出进程。
+func (a *App) BeforeClose(ctx context.Context) bool {
+	a.mu.Lock()
+	quitting := a.quitting
+	a.mu.Unlock()
+	if quitting {
+		return false
+	}
+	runtime.WindowHide(ctx)
+	return true
 }
 
 // snapshot 加锁拷贝一份选项，调用方在锁外使用副本。

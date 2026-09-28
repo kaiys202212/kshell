@@ -370,6 +370,44 @@ func TestScanNotReadyReturnsError(t *testing.T) {
 	}
 }
 
+// TestReapOnceEmitsWindowClosed 验证 reapOnce（单次回收）发现死亡窗口后，
+// 经 WindowManager 的 onClosed 回调把 window:closed 事件推给前端，
+// 让前端把对应行的 open 状态还原。
+func TestReapOnceEmitsWindowClosed(t *testing.T) {
+	app, stub, events := newTestApp(t)
+	// 换上带 onClosed→Emit 的管理器，模拟 initRealDeps 的真实装配
+	wm := NewWindowManager(stub, func(title string) { app.Emit("window:closed", title) })
+	wm.reapGrace = 0 // 关闭宽限期，登记后立即参与判定
+	wm.newChecker = func(string) procChecker { return func(string) bool { return false } }
+	app.mu.Lock()
+	app.opts.Windows = wm
+	app.mu.Unlock()
+
+	app.runScan()
+	setTools(t, app, fakeTools)
+	if err := app.ResumeSession("s1"); err != nil {
+		t.Fatalf("ResumeSession error: %v", err)
+	}
+	if n := len(*events); n != 1 || (*events)[0] != "scan:done" {
+		t.Fatalf("前置：仅应有 scan:done 事件, got %v", *events)
+	}
+
+	app.reapOnce()
+
+	if n := len(*events); n != 2 || (*events)[1] != "window:closed" {
+		t.Fatalf("Reap 发现死亡窗口后应推送 window:closed, got %v", *events)
+	}
+	if wm.Alive("kshell · 修复上传白名单") {
+		t.Fatal("死亡窗口应被 Reap 回收")
+	}
+}
+
+// TestReapOnceNilWindowsNoPanic 未装配窗口管理器时（如纯测试环境）回收应静默跳过。
+func TestReapOnceNilWindowsNoPanic(t *testing.T) {
+	app := NewApp()
+	app.reapOnce() // 不应 panic
+}
+
 func TestPsStatementQuotesArgs(t *testing.T) {
 	got := psStatement("claude", []string{"--resume", "it's s1"})
 	want := `& 'claude' '--resume' 'it''s s1'`
