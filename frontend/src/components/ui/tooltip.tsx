@@ -5,7 +5,9 @@ import type { ComponentProps } from 'react';
 import { cn } from '../../lib/cn';
 
 export const TooltipProvider = TooltipPrimitive.Provider;
-export const Tooltip = TooltipPrimitive.Root;
+export function Tooltip(props: ComponentProps<typeof TooltipPrimitive.Root>) {
+  return <TooltipPrimitive.Root delayDuration={300} {...props} />;
+}
 export const TooltipTrigger = TooltipPrimitive.Trigger;
 
 export function TooltipContent({

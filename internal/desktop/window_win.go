@@ -12,6 +12,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/yangk/kshell/internal/executil"
 )
 
 func init() {
@@ -99,6 +101,10 @@ func (l *windowsLauncher) Launch(dir, title string, args []string) error {
 			"powershell", "-NoExit", "-EncodedCommand", psEncode(script))
 	}
 	cmd.Dir = dir
+	// cmd /c start 回退分支里 cmd.exe 自身会闪一个黑窗（GUI 壳无控制台可继承）；
+	// CREATE_NO_WINDOW 只隐藏 cmd 自己，start 创建的 powershell 新窗口不受影响。
+	// wt 分支 wt.exe 是 GUI 程序，设置与否无区别，统一走辅助函数。
+	executil.HideWindow(cmd)
 	if err := cmd.Start(); err != nil {
 		return err
 	}

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/yangk/kshell/internal/executil"
 )
 
 var errSSHNotFound = errors.New("未找到 ssh 可执行文件（Windows 请在「可选功能」里启用 OpenSSH 客户端）")
@@ -87,6 +89,7 @@ func Run(ctx context.Context, c Connection, cmd string, opts SSHOptions) (Result
 
 	var stdout, stderr strings.Builder
 	cmdExec := exec.CommandContext(ctx, bin, BuildArgs(c, cmd, opts)...)
+	executil.HideWindow(cmdExec) // GUI 壳下 ssh 调用不闪黑窗
 	cmdExec.Stdout = &stdout
 	cmdExec.Stderr = &stderr
 	cmdExec.WaitDelay = 2 * time.Second

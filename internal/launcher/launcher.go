@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yangk/kshell/internal/executil"
 	"github.com/yangk/kshell/internal/providers"
 )
 
@@ -37,6 +38,7 @@ func Build(l providers.Launch) (Spec, error) {
 
 func (s Spec) Cmd(ctx context.Context) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, s.Path, s.Args...)
+	executil.HideWindow(cmd) // GUI 壳下调用不闪黑窗；TUI 下子进程继承父控制台，无副作用
 	if s.Dir != "" {
 		cmd.Dir = s.Dir
 	}
