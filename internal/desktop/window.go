@@ -4,9 +4,16 @@ package desktop
 
 import (
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
+
+// psQuote 将文本包成 PowerShell 单引号字符串字面量（内嵌单引号双写转义）。
+// 平台无关：绑定层组装窗口内命令语句也要用，放这里保证非 Windows 构建可用。
+func psQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
 
 // TerminalLauncher 抽象「弹新终端窗口」与「按标题聚焦已开窗口」，
 // Win32 实现之外可打桩测试。
@@ -29,6 +36,10 @@ type procChecker func(title string) bool
 // defaultProcAlive 由平台实现文件注入（window_win.go 的 init）；
 // 非 windows 构建为 nil，此时登记的窗口默认视为存活。
 var defaultProcAlive procChecker
+
+// defaultLauncherFactory 由平台实现文件注入（window_win.go / launcher_other.go 的 init），
+// 供绑定层创建默认弹窗实现；非 windows 构建为占位实现（报不支持）。
+var defaultLauncherFactory func() TerminalLauncher
 
 // windowEntry 是活跃表中的一项：存活检查 + 登记时间（宽限期判定用）。
 // pending 表示 Launch 已发起但真实检查尚未就位（占位，防并发重复弹窗）。
@@ -89,7 +100,8 @@ func (m *WindowManager) TerminalTitle(text string) string {
 // LaunchSession 在 dir 中为会话 text 弹出终端窗口：
 // 已登记则转 Focus 复用；否则先占位登记（挡住并发同标题重复弹窗）再 Launch，
 // Launch 失败回滚占位，成功后换上真实存活检查。
-func (m *WindowManager) LaunchSession(dir, text string) error {
+// args 为窗口内要执行的附加 PowerShell 语句（如启动 agent CLI），由调用方传入。
+func (m *WindowManager) LaunchSession(dir, text string, args ...string) error {
 	title := m.TerminalTitle(text)
 
 	m.mu.Lock()
@@ -109,7 +121,7 @@ func (m *WindowManager) LaunchSession(dir, text string) error {
 	m.alive[title] = e
 	m.mu.Unlock()
 
-	if err := m.launcher.Launch(dir, title, nil); err != nil {
+	if err := m.launcher.Launch(dir, title, args); err != nil {
 		m.mu.Lock()
 		if m.alive[title] == e { // 未被并发替换才回滚
 			delete(m.alive, title)

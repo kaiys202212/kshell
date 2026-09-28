@@ -1,15 +1,308 @@
-// Package desktop 是 Wails 桌面版的装配与绑定层：薄封装现有核心包暴露给前端。
-// 业务逻辑一律下沉到 discovery/providers/remote/workspace 等包，本包只做参数组装与校验。
-// 注意：本包不加构建标签（便于 go test 直接覆盖）；embed 前端资源在根包 main.go（无标签）。
 package desktop
 
-import "context"
+import (
+	"context"
+	"errors"
+	"os"
+	"sync"
 
-// App 持有绑定层状态；字段在后续任务按需补充。
-type App struct{}
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/yangk/kshell/internal/config"
+	"github.com/yangk/kshell/internal/discovery"
+	"github.com/yangk/kshell/internal/launch"
+	"github.com/yangk/kshell/internal/providers"
+)
 
-// NewApp 创建绑定对象。
+var (
+	errNotReady          = errors.New("桌面版尚未初始化完成")
+	errSessionNotFound   = errors.New("会话不存在或已被清理")
+	errWorkspaceNotFound = errors.New("工作区不存在")
+)
+
+// scanFunc 是 discovery.Scan 的签名抽象，注入便于测试。
+type scanFunc func(home string, ps []providers.Provider, cachePath string, opts discovery.ScanOptions) (*discovery.Result, error)
+
+// Options 桌面版装配选项；零值字段在 Startup 里用真实环境补齐（测试可注入）。
+type Options struct {
+	Home      string
+	CachePath string
+	Config    config.Config
+	Providers []providers.Provider
+	Scan      scanFunc
+	Windows   *WindowManager
+	Emit      func(name string, data ...any)
+}
+
+// App 是暴露给前端的绑定对象：薄封装 discovery/providers/window 等核心包，
+// 只做参数组装、状态缓存与事件推送，业务逻辑在各自包里。
+// 绑定方法会被 Wails 在多个 goroutine 调用，共享状态由 mu 保护；
+// opts 在 Startup 装配完成后视为只读，读取一律经 snapshot 加锁拷贝。
+type App struct {
+	mu   sync.Mutex
+	ctx  context.Context
+	opts Options
+
+	tools    []discovery.Tool
+	result   *discovery.Result
+	scanning bool
+	basket   []string // 上下文篮：新建会话时注入初始提示（Task 4 提供 UI 开关）
+}
+
+// NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。
 func NewApp() *App { return &App{} }
 
-// Startup 由 Wails 在窗口启动后调用（Task 3 接入扫描与事件推送）。
-func (a *App) Startup(ctx context.Context) { _ = ctx }
+// NewAppWith 用给定选项创建绑定对象（测试注入用）。
+func NewAppWith(o Options) *App { return &App{opts: o} }
+
+// Startup 由 Wails 在窗口启动后调用：装配真实依赖并触发后台扫描。
+func (a *App) Startup(ctx context.Context) {
+	a.mu.Lock()
+	a.ctx = ctx
+	if a.opts.Emit == nil && ctx != nil {
+		a.opts.Emit = func(name string, data ...any) { runtime.EventsEmit(ctx, name, data...) }
+	}
+	a.mu.Unlock()
+
+	a.initRealDeps()
+	go a.runScan()
+}
+
+// initRealDeps 用真实环境补齐未注入的选项（与 cmd/kshell 的 TUI 装配保持同源逻辑）。
+func (a *App) initRealDeps() {
+	if a.snapshot().ready() {
+		return
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return // 无主目录时保持未就绪状态，ScanSessions 会返回 errNotReady
+	}
+	paths, err := config.Paths()
+	if err != nil {
+		return
+	}
+	_ = config.EnsureRoot(paths)
+
+	cfg, _ := config.Load(paths) // 读不到配置就用默认值，不阻断启动
+
+	_ = providers.EnsureProvidersFile(paths.Providers)
+	ps := []providers.Provider{providers.Claude{}, providers.Codex{}, providers.Gemini{}}
+	if specs, err := providers.LoadGenericSpecs(paths.Providers); err == nil {
+		for _, spec := range specs {
+			ps = append(ps, providers.Generic{Spec: spec, Home: home})
+		}
+	}
+
+	var wm *WindowManager
+	if defaultLauncherFactory != nil {
+		wm = NewWindowManager(defaultLauncherFactory(), func(title string) {
+			a.Emit("window:closed", title)
+		})
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.opts.Home == "" {
+		a.opts.Home = home
+	}
+	if a.opts.CachePath == "" {
+		a.opts.CachePath = paths.CacheIndex
+	}
+	if a.opts.Config.MaxDepth <= 0 {
+		a.opts.Config = cfg
+	}
+	if len(a.opts.Providers) == 0 {
+		a.opts.Providers = ps
+	}
+	if a.opts.Scan == nil {
+		a.opts.Scan = discovery.Scan
+	}
+	if a.opts.Windows == nil {
+		a.opts.Windows = wm
+	}
+}
+
+// ready 报告选项是否已装配完整（全部走注入或已补齐真实依赖）。
+func (o Options) ready() bool {
+	return o.Home != "" && o.Scan != nil && o.Windows != nil
+}
+
+// snapshot 加锁拷贝一份选项，调用方在锁外使用副本。
+func (a *App) snapshot() Options {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.opts
+}
+
+// ScanSessions 触发一次会话扫描（已在扫则不重复），立即返回最近一次结果；
+// 前端首次调用拿到 nil 属正常，等 "scan:done" 事件后再刷新。
+// 未就绪（装配未完成）时返回 errNotReady 且不触发扫描。
+func (a *App) ScanSessions() (*discovery.Result, error) {
+	a.mu.Lock()
+	res := a.result
+	started := false
+	if !a.scanning && a.opts.ready() {
+		a.scanning = true
+		started = true
+	}
+	a.mu.Unlock()
+
+	if started {
+		go a.runScan()
+	}
+	if !a.snapshot().ready() {
+		return res, errNotReady
+	}
+	return res, nil
+}
+
+// runScan 执行一次扫描并推送 "scan:done" 事件（无论成败，前端据此刷新）。
+// 失败时保留上一次成功结果，避免一次瞬时失败让已知会话/工作区全面失联。
+func (a *App) runScan() {
+	o := a.snapshot()
+	if !o.ready() {
+		a.Emit("scan:done", map[string]any{"failed": 0, "error": errNotReady.Error()})
+		return
+	}
+	tools := discovery.DetectAll(o.Home, o.Providers)
+	res, err := o.Scan(o.Home, o.Providers, o.CachePath, discovery.ScanOptions{
+		Roots:    o.Config.ScanRoots,
+		MaxDepth: o.Config.MaxDepth,
+		Exclude:  o.Config.Exclude,
+	})
+
+	a.mu.Lock()
+	a.tools = tools
+	if err == nil {
+		a.result = res
+	}
+	a.scanning = false
+	a.mu.Unlock()
+
+	ev := map[string]any{"failed": 0}
+	if err != nil {
+		ev["error"] = err.Error()
+	}
+	if res != nil {
+		ev["sessions"] = res.Sessions
+		ev["workspaces"] = res.Workspaces
+		ev["failed"] = len(res.Failed)
+	}
+	a.Emit("scan:done", ev)
+}
+
+// GetWorkspaces 返回最近一次扫描的工作区列表（未扫完时为空切片）。
+// 返回值是共享切片：Result 整体替换、替换后只读，调用方不得原地修改。
+func (a *App) GetWorkspaces() []discovery.Workspace {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.result == nil {
+		return []discovery.Workspace{}
+	}
+	return a.result.Workspaces
+}
+
+// ResumeSession 恢复指定会话：弹出新终端窗口并在其中启动 agent CLI。
+// 同一标题的窗口已存在时复用聚焦，不会重复弹窗。
+func (a *App) ResumeSession(id string) error {
+	s, tools, ok := a.sessionByID(id)
+	if !ok {
+		return errSessionNotFound
+	}
+	o := a.snapshot()
+	l, err := launch.ForSession(o.Providers, tools, s)
+	if err != nil {
+		return err
+	}
+	return a.launchWindow(o.Windows, l, s.Title)
+}
+
+// NewSession 在指定工作区新建会话（wsID 为工作区路径），上下文篮文件作为初始提示注入。
+func (a *App) NewSession(wsID string) error {
+	ws, tools, ok := a.workspaceByID(wsID)
+	if !ok {
+		return errWorkspaceNotFound
+	}
+	o := a.snapshot()
+	l, err := launch.ForWorkspace(o.Providers, tools, ws, a.basketSnapshot())
+	if err != nil {
+		return err
+	}
+	return a.launchWindow(o.Windows, l, ws.Name)
+}
+
+// FocusSession 聚焦指定会话已打开的终端窗口；未打开过返回 false。
+func (a *App) FocusSession(id string) bool {
+	s, _, ok := a.sessionByID(id)
+	if !ok {
+		return false
+	}
+	o := a.snapshot()
+	if o.Windows == nil {
+		return false
+	}
+	return o.Windows.Focus(o.Windows.TerminalTitle(s.Title))
+}
+
+// launchWindow 把启动描述转成窗口内的 PowerShell 语句并弹窗。
+// 注意不走 launcher.Build 的 shim 解析：弹出的窗口本身就是 PowerShell，
+// .ps1 CLI 用 & 调用运算符即可原生执行，无需转 .cmd。
+func (a *App) launchWindow(wm *WindowManager, l providers.Launch, titleText string) error {
+	if wm == nil {
+		return errNotReady
+	}
+	return wm.LaunchSession(l.Dir, titleText, psStatement(l.Path, l.Args))
+}
+
+// psStatement 生成在已打开的 PowerShell 窗口里执行 CLI 的语句：
+// & 'bin' 'arg1' 'arg2'（调用运算符 + 单引号字面量，内嵌单引号双写转义）。
+func psStatement(bin string, args []string) string {
+	s := "& " + psQuote(bin)
+	for _, arg := range args {
+		s += " " + psQuote(arg)
+	}
+	return s
+}
+
+func (a *App) sessionByID(id string) (providers.Session, []discovery.Tool, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.result != nil {
+		for _, s := range a.result.Sessions {
+			if s.ID == id {
+				return s, a.tools, true
+			}
+		}
+	}
+	return providers.Session{}, nil, false
+}
+
+func (a *App) workspaceByID(id string) (discovery.Workspace, []discovery.Tool, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.result != nil {
+		for _, ws := range a.result.Workspaces {
+			if ws.Path == id {
+				return ws, a.tools, true
+			}
+		}
+	}
+	return discovery.Workspace{}, nil, false
+}
+
+// basketSnapshot 返回上下文篮的副本，避免扫描/启动并发读写同一切片。
+func (a *App) basketSnapshot() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]string, len(a.basket))
+	copy(out, a.basket)
+	return out
+}
+
+// Emit 对外转发事件（窗口关闭回调等内部使用；未就绪时静默丢弃）。
+func (a *App) Emit(name string, data ...any) {
+	emit := a.snapshot().Emit
+	if emit != nil {
+		emit(name, data...)
+	}
+}

@@ -16,6 +16,7 @@ import (
 
 func init() {
 	defaultProcAlive = windowsProcAlive
+	defaultLauncherFactory = func() TerminalLauncher { return &windowsLauncher{} }
 }
 
 var (
@@ -103,11 +104,6 @@ func (l *windowsLauncher) Launch(dir, title string, args []string) error {
 	}
 	// fire-and-forget：不等待退出，立即释放进程句柄避免长驻泄漏
 	return cmd.Process.Release()
-}
-
-// psQuote 将文本包成 PowerShell 单引号字符串字面量（内嵌单引号双写转义）。
-func psQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 // psEncode 生成 PowerShell -EncodedCommand 所需的 UTF-16LE Base64 文本。

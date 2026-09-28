@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
+	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/launcher"
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/remote"
@@ -46,7 +47,6 @@ var (
 	errNoHome              = errors.New("无法确定用户主目录")
 	errNoSessionSelected   = errors.New("没有选中的会话")
 	errNoWorkspaceSelected = errors.New("没有选中的工作区")
-	errToolNotRunnable     = errors.New("该工具没有可执行程序，无法启动会话")
 )
 
 type statusMsg struct {
@@ -553,21 +553,13 @@ func splitLines(s string) []string {
 	return lines
 }
 
-// resumeLaunch 给出恢复选中会话所需的启动描述；工具缺失可执行文件时返回错误。
+// resumeLaunch 给出恢复选中会话所需的启动描述；解析逻辑下沉在 launch 包，UI 与桌面版共用。
 func (m Model) resumeLaunch() (providers.Launch, error) {
 	s, ok := m.selectedSession()
 	if !ok {
 		return providers.Launch{}, errNoSessionSelected
 	}
-	tool, ok := m.toolFor(s.ToolID)
-	if !ok || !tool.Installed || tool.BinPath == "" {
-		return providers.Launch{}, errToolNotRunnable
-	}
-	p, ok := m.providerFor(s.ToolID)
-	if !ok {
-		return providers.Launch{}, errToolNotRunnable
-	}
-	return p.ResumeCmd(s, tool.BinPath), nil
+	return launch.ForSession(m.opts.Providers, m.tools, s)
 }
 
 func (m Model) newSessionLaunch() (providers.Launch, error) {
@@ -575,48 +567,7 @@ func (m Model) newSessionLaunch() (providers.Launch, error) {
 	if !ok {
 		return providers.Launch{}, errNoWorkspaceSelected
 	}
-	p, tool, ok := m.preferredTool(ws)
-	if !ok {
-		return providers.Launch{}, errToolNotRunnable
-	}
-	return p.NewSessionCmd(ws.Path, tool.BinPath, m.basket), nil
-}
-
-// preferredTool 选一个该工作区里可用（已安装且有可执行文件）的工具；优先会话数最多的。
-func (m Model) preferredTool(ws discovery.Workspace) (providers.Provider, discovery.Tool, bool) {
-	bestCount := -1
-	var bestProvider providers.Provider
-	var bestTool discovery.Tool
-
-	for _, p := range m.opts.Providers {
-		tool, ok := m.toolFor(p.ID())
-		if !ok || !tool.Installed || tool.BinPath == "" {
-			continue
-		}
-		count := ws.ToolCounts[p.ID()]
-		if count > bestCount {
-			bestCount, bestProvider, bestTool = count, p, tool
-		}
-	}
-	return bestProvider, bestTool, bestProvider != nil
-}
-
-func (m Model) toolFor(id string) (discovery.Tool, bool) {
-	for _, t := range m.tools {
-		if t.ID == id {
-			return t, true
-		}
-	}
-	return discovery.Tool{}, false
-}
-
-func (m Model) providerFor(id string) (providers.Provider, bool) {
-	for _, p := range m.opts.Providers {
-		if p.ID() == id {
-			return p, true
-		}
-	}
-	return nil, false
+	return launch.ForWorkspace(m.opts.Providers, m.tools, ws, m.basket)
 }
 
 func (m Model) launchSelectedCmd() tea.Cmd {
