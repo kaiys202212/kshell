@@ -291,3 +291,215 @@
   color: var(--text-dim);
   font-size: 0.9rem;
 }
+
+/* 左栏头部：新建会话 */
+.session-header {
+  margin-bottom: 8px;
+}
+
+.new-session-btn {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-weight: 500;
+}
+
+.new-session-btn:hover {
+  background: var(--bg-hover);
+}
+
+.new-session-err {
+  margin: 6px 0 0;
+  color: #c0392b;
+  font-size: 0.8rem;
+}
+
+/* 文件树（右栏「文件」页签） */
+.file-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.9rem;
+}
+
+.tree-group {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 6px;
+}
+
+.tree-row:hover {
+  background: var(--bg-hover);
+}
+
+.tree-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  padding: 3px 4px;
+  text-align: left;
+}
+
+.tree-icon {
+  width: 12px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.tree-dir {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-file {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-basket-btn {
+  padding: 0 4px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.tree-basket-btn:hover {
+  color: var(--accent);
+}
+
+.tree-status,
+.tree-error {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.tree-error {
+  color: #c0392b;
+}
+
+/* 上下文篮（中间栏顶部） */
+.basket-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  font-size: 0.85rem;
+}
+
+.basket-title {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.basket-empty {
+  color: var(--text-dim);
+}
+
+.basket-items {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.basket-item {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.basket-name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.basket-remove {
+  padding: 0 2px;
+  color: var(--text-dim);
+  border-radius: 50%;
+}
+
+.basket-remove:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+/* 文件预览（中间栏） */
+.preview {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.preview-head {
+  margin-bottom: 8px;
+}
+
+.preview-path {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-status,
+.preview-meta,
+.preview-truncated {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.preview-meta {
+  margin: 0 0 8px;
+}
+
+.preview-truncated {
+  margin: 0 0 8px;
+  color: #b58900;
+}
+
+.preview-error {
+  color: #c0392b;
+  font-size: 0.9rem;
+}
+
+.preview-pre {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  overflow: auto;
+  font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre;
+}

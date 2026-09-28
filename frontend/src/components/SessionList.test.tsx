@@ -163,4 +163,58 @@ describe('SessionList', () => {
     expect(await screen.findByText('修复上传白名单')).toBeInTheDocument();
     expect(mocks.getSessions).toHaveBeenCalledTimes(2);
   });
+
+  it('GetSessions 失败不崩溃，scan:done 后恢复刷新', async () => {
+    mocks.getSessions.mockRejectedValueOnce(new Error('绑定异常')).mockResolvedValueOnce(sessions);
+    render(<SessionList workspacePath={'D:\\proj-a'} />);
+    expect(screen.queryByText('修复上传白名单')).not.toBeInTheDocument();
+
+    await act(async () => {
+      scanDoneCb({});
+    });
+
+    expect(await screen.findByText('修复上传白名单')).toBeInTheDocument();
+  });
+
+  it('标题互为前缀的两个会话，关其一不影响另一（严格相等匹配）', async () => {
+    const prefixSessions: Session[] = [
+      { ID: 'p1', ToolID: 'codex', Workspace: 'D:\\proj-a', Title: '任务A', CreatedAt: minutesAgo(10), UpdatedAt: minutesAgo(10), Messages: 1, Path: 'q1' },
+      { ID: 'p2', ToolID: 'codex', Workspace: 'D:\\proj-a', Title: '任务A续', CreatedAt: minutesAgo(9), UpdatedAt: minutesAgo(9), Messages: 2, Path: 'q2' },
+    ];
+    mocks.getSessions.mockResolvedValue(prefixSessions);
+    useAppStore.setState({
+      windowStatus: { 'kshell · 任务A': true, 'kshell · 任务A续': true },
+    });
+    render(<SessionList workspacePath={'D:\\proj-a'} />);
+
+    const rowA = await findRow('任务A');
+    const rowA2 = await findRow('任务A续');
+    expect(rowA).toHaveClass('session-item--open');
+    expect(rowA2).toHaveClass('session-item--open');
+
+    // "kshell · 任务A" 是 "kshell · 任务A续" 的前缀：旧 startsWith 匹配会误伤后者
+    await act(async () => {
+      closedCb('kshell · 任务A');
+    });
+    expect(rowA).not.toHaveClass('session-item--open');
+    expect(rowA2).toHaveClass('session-item--open');
+    const { windowStatus } = useAppStore.getState();
+    expect(windowStatus['kshell · 任务A']).toBe(false);
+    expect(windowStatus['kshell · 任务A续']).toBe(true);
+  });
+
+  it('空态区分「扫描中」与「确实没有」', async () => {
+    mocks.getSessions.mockResolvedValue([]);
+
+    // 扫描未完成（idle/scanning）
+    useAppStore.setState({ scanState: 'scanning' });
+    const { unmount } = render(<SessionList workspacePath={'D:\\proj-a'} />);
+    expect(await screen.findByText('暂无会话，正在扫描……')).toBeInTheDocument();
+    unmount();
+
+    // 扫描已完成、该工作区确实没有会话
+    useAppStore.setState({ scanState: 'done' });
+    render(<SessionList workspacePath={'D:\\proj-a'} />);
+    expect(await screen.findByText('该工作区暂无会话')).toBeInTheDocument();
+  });
 });

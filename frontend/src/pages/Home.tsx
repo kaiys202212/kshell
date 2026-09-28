@@ -9,6 +9,7 @@ import { useAppStore } from '../state/store';
 export default function Home() {
   const workspaces = useAppStore((s) => s.workspaces);
   const setWorkspaces = useAppStore((s) => s.setWorkspaces);
+  const setScanState = useAppStore((s) => s.setScanState);
   const openTab = useAppStore((s) => s.openTab);
 
   useEffect(() => {
@@ -21,14 +22,18 @@ export default function Home() {
         .catch(() => {
           // 绑定调用异常时静默，等 scan:done 再触发下一轮刷新
         });
+    setScanState('scanning');
     refresh();
     scanSessions(); // 触发后台扫描，完成与否都推 "scan:done"
-    const off = onScanDone(() => void refresh());
+    const off = onScanDone(() => {
+      setScanState('done');
+      void refresh();
+    });
     return () => {
       cancelled = true;
       off();
     };
-  }, [setWorkspaces]);
+  }, [setWorkspaces, setScanState]);
 
   const sorted = [...workspaces].sort(
     (a, b) => b.SessionCount - a.SessionCount || a.Name.localeCompare(b.Name),

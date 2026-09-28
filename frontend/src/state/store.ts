@@ -19,18 +19,25 @@ interface AppState {
   closeTab(id: string): void;
   setActiveTab(id: string | null): void;
 
-  basket: string[]; // 上下文篮：勾选的文件路径
-  toggleBasket(path: string): void;
+  // 扫描进度：首页触发扫描时置 scanning，收到 scan:done 置 done。
+  // 空态文案据此区分「扫描中」与「确实没有」。
+  scanState: 'idle' | 'scanning' | 'done';
+  setScanState(state: 'idle' | 'scanning' | 'done'): void;
+
+  basket: string[]; // 上下文篮：勾选的文件路径（Go 侧篮子的镜像）
+  // 以 Go ToggleBasket 的返回值为准同步（操作后是否在篮中），避免双份状态漂移
+  syncBasket(path: string, inBasket: boolean): void;
 
   // 弹出的终端窗口状态（窗口标题 → 是否存活）：
-  // SessionList 恢复成功把对应项置 true，"window:closed" 事件把对应项还原为 false
-  //（事件 payload 是 Go 侧的完整窗口标题，超长会按 80 rune 截断，匹配时用前缀兜底）
+  // SessionList 恢复成功把对应项置 true，"window:closed" 事件把对应项还原为 false。
+  // 键与事件 payload 都是 lib/title.ts terminalTitle 的归一化形态，严格相等匹配。
   windowStatus: Record<string, boolean>;
   setWindowStatus(title: string, open: boolean): void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
   workspaces: [],
+  scanState: 'idle',
   setWorkspaces: (list) => set({ workspaces: list }),
 
   openTabs: [],
@@ -58,12 +65,16 @@ export const useAppStore = create<AppState>((set) => ({
     }),
   setActiveTab: (id) => set({ activeTabId: id }),
 
+  setScanState: (scanState) => set({ scanState }),
+
   basket: [],
-  toggleBasket: (path) =>
+  syncBasket: (path, inBasket) =>
     set((s) => ({
-      basket: s.basket.includes(path)
-        ? s.basket.filter((p) => p !== path)
-        : [...s.basket, path],
+      basket: inBasket
+        ? s.basket.includes(path)
+          ? s.basket
+          : [...s.basket, path]
+        : s.basket.filter((p) => p !== path),
     })),
 
   windowStatus: {},

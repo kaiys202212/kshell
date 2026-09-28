@@ -34,12 +34,37 @@ export interface ScanDonePayload {
   error?: string;
 }
 
+// workspace.Node 的 JSON 形态（internal/workspace/tree.go）。
+// 注意：Go 侧 ListFiles 只填充当前层子项，Children 字段无意义，
+// 前端目录懒加载必须再次调 listFiles(wsPath, 子目录相对路径)。
+export interface FileNode {
+  Name: string;
+  Path: string; // 绝对路径
+  IsDir: boolean;
+  Expanded: boolean;
+  Loaded: boolean;
+}
+
+// workspace.Preview 的 JSON 形态（internal/workspace/preview.go）；
+// Lines 已带 "NNNN │ " 行号前缀，前端直接渲染、不要再加行号。
+export interface FilePreview {
+  Lines: string[];
+  Truncated: boolean;
+  Binary: boolean;
+  Info: string;
+}
+
 interface AppBindings {
   ScanSessions(): Promise<unknown>;
   GetWorkspaces(): Promise<Workspace[]>;
   GetSessions(): Promise<Session[]>;
   ResumeSession(id: string): Promise<void>;
   FocusSession(id: string): Promise<boolean>;
+  ListFiles(wsPath: string, relPath: string): Promise<FileNode[]>;
+  PreviewFile(wsPath: string, path: string): Promise<FilePreview>;
+  ToggleBasket(path: string): Promise<boolean>;
+  GetBasket(): Promise<string[]>;
+  NewSession(wsPath: string): Promise<void>;
 }
 
 declare global {
@@ -105,7 +130,46 @@ export function onScanDone(cb: (payload: ScanDonePayload) => void): () => void {
   return EventsOn('scan:done', (payload: ScanDonePayload) => cb(payload ?? {}));
 }
 
-// onWindowClosed 订阅终端窗口关闭事件，payload 为完整窗口标题（超长会被 Go 侧截断）
+// onWindowClosed 订阅终端窗口关闭事件，payload 为完整窗口标题（terminalTitle 形态）
 export function onWindowClosed(cb: (title: string) => void): () => void {
   return EventsOn('window:closed', (title: string) => cb(title ?? ''));
+}
+
+// ListFiles 列出工作区内 relPath 目录的子项（懒加载；relPath 空串/"." 为根层）。
+// relPath 统一用 / 拼接：Go 侧 filepath.Clean 会归一化为平台分隔符。
+// 错误（路径越界等）向上抛，由调用方呈现。
+export async function listFiles(wsPath: string, relPath: string): Promise<FileNode[]> {
+  const a = app();
+  if (!a) return [];
+  return a.ListFiles(wsPath, relPath);
+}
+
+// PreviewFile 读取文件预览（Lines 已含行号前缀）；绑定不可用时返回 null
+export async function previewFile(wsPath: string, path: string): Promise<FilePreview | null> {
+  const a = app();
+  if (!a) return null;
+  return a.PreviewFile(wsPath, path);
+}
+
+// ToggleBasket 把文件加入/移出上下文篮，返回操作后是否在篮中
+//（篮子已满时加入失败也返回 false）。错误向上抛。
+export async function toggleBasket(path: string): Promise<boolean> {
+  const a = app();
+  if (!a) return false;
+  return a.ToggleBasket(path);
+}
+
+// GetBasket 返回上下文篮内容（Go 侧副本）
+export async function getBasket(): Promise<string[]> {
+  const a = app();
+  if (!a) return [];
+  return a.GetBasket();
+}
+
+// NewSession 在工作区新建会话（Go 侧自动带上篮子内容作为初始提示）；
+// 错误向上抛，由调用方决定如何呈现
+export async function newSession(wsPath: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.NewSession(wsPath);
 }
