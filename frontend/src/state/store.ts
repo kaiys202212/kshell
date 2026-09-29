@@ -25,14 +25,14 @@ export interface Toast {
 export const SETTINGS_TAB_ID = 'kshell:settings';
 
 // 三栏宽度（工作区页签左右两栏，单位 px）+ 拖动范围：
-// 上限留出中心区至少 360px，下限保证列表项与文件树的可用宽度。
+// 默认给足列表/文件树的阅读宽度，上限留出中心区至少 360px。
 export interface LayoutSizes {
   left: number;
   right: number;
 }
-export const LAYOUT_DEFAULT: LayoutSizes = { left: 288, right: 300 };
+export const LAYOUT_DEFAULT: LayoutSizes = { left: 340, right: 360 };
 export const LAYOUT_MIN = 200;
-export const LAYOUT_MAX = 560;
+export const LAYOUT_MAX = 720;
 
 interface AppState {
   workspaces: Workspace[];
@@ -54,6 +54,13 @@ interface AppState {
   syncBasket(path: string, inBasket: boolean): void;
   // 用 Go GetBasket 的返回值整体重建镜像（应用挂载时调用，防刷新漂移）
   setBasket(paths: string[]): void;
+  // 文件重命名后原地更新镜像路径（Go 侧篮子已同步改名，这里只跟镜像）
+  renameBasketPath(oldPath: string, newPath: string): void;
+
+  // git 状态镜像：wsPath → { relPath('/' 分隔) → 状态码 }；
+  // 数据来自 Go GitStatus；非 git 仓库时映射为空（无键=未加载，空 map=非仓库）。
+  gitStatus: Record<string, Record<string, string>>;
+  setGitStatus(wsPath: string, status: Record<string, string>): void;
 
   // 轻量全局提示（篮满、操作失败等）：toast 队列，notify 只负责追加，
   // 自动关闭与移除由 Toaster 侧（Radix duration/onOpenChange）调 dismissToast 完成。
@@ -79,6 +86,10 @@ interface AppState {
   // 工作区页签三栏宽度（持久化，跨会话保留）
   layout: LayoutSizes;
   setLayout(patch: Partial<LayoutSizes>): void;
+
+  // 新建会话选用的工具（'' = 自动：该工作区最常用；持久化，记住用户的选择）
+  newSessionTool: string;
+  setNewSessionTool(id: string): void;
 }
 
 // clampLayout 把任意输入收敛到合法范围（拖动、持久化恢复、测试都走这里）。
@@ -131,6 +142,26 @@ export const useAppStore = create<AppState>()(
             : s.basket.filter((p) => p !== path),
         })),
       setBasket: (paths) => set({ basket: paths }),
+      // 文件/目录重命名后同步镜像：精确命中换新路径；
+      // 位于改名目录之下的条目换前缀。与 Go 侧同口径用大小写不敏感比较（Windows）。
+      renameBasketPath: (oldPath, newPath) =>
+        set((s) => {
+          const lower = oldPath.toLowerCase();
+          const sep = lower.includes('/') ? '/' : '\\';
+          const prefix = lower.endsWith(sep) ? lower : lower + sep;
+          return {
+            basket: s.basket.map((p) => {
+              const lp = p.toLowerCase();
+              if (lp === lower) return newPath;
+              if (lp.startsWith(prefix)) return newPath + p.slice(oldPath.length);
+              return p;
+            }),
+          };
+        }),
+
+      gitStatus: {},
+      setGitStatus: (wsPath, status) =>
+        set((s) => ({ gitStatus: { ...s.gitStatus, [wsPath]: status } })),
 
       toasts: [],
       notify: (title, tone = 'info') =>
@@ -172,11 +203,20 @@ export const useAppStore = create<AppState>()(
             right: patch.right === undefined ? s.layout.right : clampLayout(patch.right),
           },
         })),
+
+      newSessionTool: '',
+      setNewSessionTool: (newSessionTool) => set({ newSessionTool }),
     }),
     {
       name: 'kshell-tabs',
-      // 只持久化页签与三栏宽度：工作区/篮子/终端/提示要么来自 Go 侧、要么是易失的内存态
-      partialize: (s) => ({ openTabs: s.openTabs, activeTabId: s.activeTabId, layout: s.layout }),
+      // 只持久化页签、三栏宽度与新建会话的工具选择：
+      // 工作区/篮子/终端/提示要么来自 Go 侧、要么是易失的内存态
+      partialize: (s) => ({
+        openTabs: s.openTabs,
+        activeTabId: s.activeTabId,
+        layout: s.layout,
+        newSessionTool: s.newSessionTool,
+      }),
     },
   ),
 );

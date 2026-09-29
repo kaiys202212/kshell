@@ -69,6 +69,7 @@ type App struct {
 
 	trees   map[string]*workspace.Tree // 工作区路径 → 文件树（懒创建，节点级缓存）
 	treeMu  sync.Mutex                 // 树操作串行化（Expand 会写节点，不能只靠 mu 快照）
+	treeGen uint64                     // 树缓存代数：rename 作废缓存时推进，防旧构建写回
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。

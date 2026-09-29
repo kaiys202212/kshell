@@ -1,5 +1,6 @@
 // FileTree 组件测试：目录懒加载（展开才调 ListFiles、relPath 用 / 拼接）、
-// 点文件回调、Space / 篮子按钮加入篮子并按 Go 返回值同步 store、加载错误提示。
+// 点文件回调、Space / 篮子按钮加入篮子并按 Go 返回值同步 store、加载错误提示、
+// 搜索（防抖后走后端递归搜索出平铺结果）、行内重命名（篮子同步 + 树重建）、git 状态标记。
 // api 层整体打桩（vi.mock），与 SessionList.test 同一套模式。
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
@@ -11,6 +12,9 @@ import { useAppStore } from '../state/store';
 const mocks = vi.hoisted(() => ({
   listFiles: vi.fn(),
   toggleBasket: vi.fn(),
+  searchFiles: vi.fn(),
+  renameEntry: vi.fn(),
+  gitStatus: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -32,7 +36,8 @@ afterEach(cleanup);
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useAppStore.setState({ basket: [], toasts: [] });
+  useAppStore.setState({ basket: [], toasts: [], gitStatus: {} });
+  mocks.gitStatus.mockResolvedValue({ Status: {}, IsRepo: false }); // 挂载时刷新静默通过
 });
 
 describe('FileTree', () => {
@@ -188,5 +193,115 @@ describe('FileTree', () => {
     });
 
     expect(useAppStore.getState().toasts.some((t) => t.title.includes('篮子操作失败'))).toBe(true);
+  });
+
+  it('git 标记：按 relPath 渲染状态色标，嵌套文件展开后也能渲染', async () => {
+    // 挂载时会调 GitStatus 刷新镜像，mock 直接返回状态（避免预置 store 被覆盖）
+    mocks.gitStatus.mockResolvedValue({
+      Status: { 'README.md': 'modified', 'src/main.ts': 'untracked' },
+      IsRepo: true,
+    });
+    mocks.listFiles.mockResolvedValueOnce(root).mockResolvedValueOnce(srcChildren);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+
+    await screen.findByText('README.md');
+    expect(await screen.findByText('M')).toBeInTheDocument();
+    expect(screen.getByTitle('git：已修改')).toBeInTheDocument();
+    // 未加载的子层不渲染（懒加载）
+    expect(screen.queryByText('U')).not.toBeInTheDocument();
+    // 展开子目录后，嵌套文件按自身 relPath 渲染色标
+    fireEvent.click(screen.getByText('src'));
+    expect(await screen.findByText('U')).toBeInTheDocument();
+  });
+
+  it('renameBasketPath：目录改名时篮内子路径跟随换前缀（大小写不敏感匹配）', () => {
+    useAppStore.setState({
+      basket: ['D:\\proj\\pkg\\a.go', 'D:\\proj\\pkg', 'D:\\proj\\other.txt'],
+    });
+    act(() => {
+      useAppStore.getState().renameBasketPath('D:\\proj\\PKG', 'D:\\proj\\lib');
+    });
+    expect(useAppStore.getState().basket).toEqual([
+      'D:\\proj\\lib\\a.go',
+      'D:\\proj\\lib',
+      'D:\\proj\\other.txt',
+    ]);
+  });
+
+  it('搜索：输入防抖后调 searchFiles，结果平铺展示（文件名 + 所在目录），点文件回调', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.searchFiles.mockResolvedValue([
+      { Name: 'main.go', Path: 'D:\\proj\\src\\main.go', IsDir: false, Expanded: false, Loaded: false, RelPath: 'src/main.go' },
+    ]);
+    const onOpen = vi.fn();
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={onOpen} />);
+    await screen.findByText('README.md');
+
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索文件' }), {
+      target: { value: 'main' },
+    });
+    // 防抖 200ms + 渲染，findBy 默认 1s 超时足够
+    expect(await screen.findByText('main.go')).toBeInTheDocument();
+    expect(screen.getByText('src')).toBeInTheDocument(); // 所在目录后缀
+    expect(mocks.searchFiles).toHaveBeenCalledWith('D:\\proj', 'main');
+
+    fireEvent.click(screen.getByText('main.go'));
+    expect(onOpen).toHaveBeenCalledWith('D:\\proj\\src\\main.go');
+  });
+
+  it('搜索空结果给空态文案，清空搜索恢复树', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.searchFiles.mockResolvedValue([]);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    const input = screen.getByRole('textbox', { name: '搜索文件' });
+    fireEvent.change(input, { target: { value: '不存在' } });
+    expect(await screen.findByText(/没有匹配「不存在」的文件/)).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: '' } });
+    expect(await screen.findByText('README.md')).toBeInTheDocument();
+    expect(screen.queryByText(/没有匹配/)).not.toBeInTheDocument();
+  });
+
+  it('行内重命名：铅笔按钮 → input → Enter 提交；Go 返回新路径后同步篮子并重建树', async () => {
+    mocks.listFiles
+      .mockResolvedValueOnce(root)
+      .mockResolvedValueOnce([node('RENAMED.md', false, 'RENAMED.md')]);
+    mocks.renameEntry.mockResolvedValue('D:\\proj\\RENAMED.md');
+    useAppStore.setState({ basket: ['D:\\proj\\README.md'] });
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    fireEvent.click(screen.getByRole('button', { name: '重命名 README.md' }));
+    const input = screen.getByRole('textbox', { name: '重命名 README.md' });
+    expect(input).toHaveValue('README.md');
+
+    fireEvent.change(input, { target: { value: 'RENAMED.md' } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+
+    expect(mocks.renameEntry).toHaveBeenCalledWith('D:\\proj', 'README.md', 'RENAMED.md');
+    expect(useAppStore.getState().basket).toEqual(['D:\\proj\\RENAMED.md']);
+    expect(useAppStore.getState().toasts.some((t) => t.tone === 'success')).toBe(true);
+    expect(await screen.findByText('RENAMED.md')).toBeInTheDocument();
+  });
+
+  it('重命名失败（如目标已存在）提示错误且不重建树', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.renameEntry.mockRejectedValue(new Error('目标已存在'));
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    fireEvent.click(screen.getByRole('button', { name: '重命名 README.md' }));
+    const input = screen.getByRole('textbox', { name: '重命名 README.md' });
+    fireEvent.change(input, { target: { value: 'readme.md' } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+
+    expect(useAppStore.getState().toasts.some((t) => t.title.includes('目标已存在'))).toBe(true);
+    expect(screen.getByText('README.md')).toBeInTheDocument();
   });
 });

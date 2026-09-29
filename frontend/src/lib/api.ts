@@ -109,6 +109,28 @@ export interface SshConnection {
   Verified: boolean;
 }
 
+// workspace.SearchHit 的 JSON 形态（internal/workspace/search.go）：
+// Node 内嵌字段 + '/' 分隔的相对路径（前端展示「文件名 + 所在目录」用）。
+export interface SearchHit extends FileNode {
+  RelPath: string;
+}
+
+// workspace.EditContent 的 JSON 形态（internal/workspace/editfile.go）：
+// Text 一律 \n 归一，EOL 记录原行尾（"lf"|"crlf"），保存时按原样还原。
+export interface EditContent {
+  Text: string;
+  EOL: string;
+  Size: number;
+}
+
+// desktop.GitStatusResult 的 JSON 形态（internal/desktop/files.go）：
+// Status 键为 git 原生输出的 '/' 分隔相对路径，值见 workspace.GitStatus 的状态码。
+export type GitStatusCode = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflicted';
+export interface GitStatusResult {
+  Status: Record<string, string>;
+  IsRepo: boolean;
+}
+
 interface AppBindings {
   ScanSessions(): Promise<unknown>;
   GetWorkspaces(): Promise<Workspace[]>;
@@ -117,6 +139,11 @@ interface AppBindings {
   FocusSession(id: string): Promise<boolean>;
   ListFiles(wsPath: string, relPath: string): Promise<FileNode[]>;
   PreviewFile(wsPath: string, path: string): Promise<FilePreview>;
+  SearchFiles(wsPath: string, query: string): Promise<SearchHit[]>;
+  RenameEntry(wsPath: string, relPath: string, newName: string): Promise<string>;
+  ReadFileForEdit(wsPath: string, path: string): Promise<EditContent>;
+  SaveFile(wsPath: string, path: string, text: string, eol: string): Promise<void>;
+  GitStatus(wsPath: string): Promise<GitStatusResult>;
   ToggleBasket(path: string): Promise<boolean>;
   GetBasket(): Promise<string[]>;
   NewSession(wsPath: string): Promise<void>;
@@ -219,6 +246,44 @@ export async function previewFile(wsPath: string, path: string): Promise<FilePre
   const a = app();
   if (!a) return null;
   return a.PreviewFile(wsPath, path);
+}
+
+// SearchFiles 递归搜索工作区内名字包含 query 的文件/目录（大小写不敏感，上限 2000）。
+// 忽略规则与文件树一致；错误向上抛。
+export async function searchFiles(wsPath: string, query: string): Promise<SearchHit[]> {
+  const a = app();
+  if (!a) return [];
+  return a.SearchFiles(wsPath, query);
+}
+
+// RenameEntry 重命名工作区内文件/目录（只允许改最后一段名字），返回新绝对路径。
+// Go 侧会同步篮子并作废树缓存；错误（目标已存在、越界等）向上抛。
+export async function renameEntry(wsPath: string, relPath: string, newName: string): Promise<string> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  return a.RenameEntry(wsPath, relPath, newName);
+}
+
+// ReadFileForEdit 整读文本文件供编辑（上限 1MB、拒二进制）；绑定不可用时返回 null
+export async function readFileForEdit(wsPath: string, path: string): Promise<EditContent | null> {
+  const a = app();
+  if (!a) return null;
+  return a.ReadFileForEdit(wsPath, path);
+}
+
+// SaveFile 保存编辑（原子替换，eol 指定还原的行尾 "lf"|"crlf"）。
+// 无绑定时抛错（与 renameEntry 同口径）：静默成功会让调用方误报「已保存」。错误向上抛。
+export async function saveFile(wsPath: string, path: string, text: string, eol: string): Promise<void> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  await a.SaveFile(wsPath, path, text, eol);
+}
+
+// GitStatus 取工作区 git 状态；非 git 仓库 IsRepo=false。错误向上抛（调用方可静默）
+export async function gitStatus(wsPath: string): Promise<GitStatusResult | null> {
+  const a = app();
+  if (!a) return null;
+  return a.GitStatus(wsPath);
 }
 
 // ToggleBasket 把文件加入/移出上下文篮，返回操作后是否在篮中

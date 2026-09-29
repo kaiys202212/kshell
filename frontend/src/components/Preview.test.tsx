@@ -1,5 +1,6 @@
 // Preview 组件测试：Lines 原样渲染（Go 已带行号前缀，前端不加行号）、
-// 截断提示、二进制元信息、错误与空态、加入/移出篮子按钮。
+// 截断提示、二进制元信息、错误与空态、加入/移出篮子按钮、
+// 编辑模式（整读 → textarea → Ctrl+S/保存 → 刷新预览与 git 状态）。
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,6 +9,9 @@ import { useAppStore } from '../state/store';
 
 const mocks = vi.hoisted(() => ({
   previewFile: vi.fn(),
+  readFileForEdit: vi.fn(),
+  saveFile: vi.fn(),
+  gitStatus: vi.fn(),
   // Preview 引入 lib/basket（toggleAndSync）后需要该导出存在，避免打桩代理报缺导出
   toggleBasket: vi.fn(),
 }));
@@ -17,7 +21,8 @@ afterEach(cleanup);
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useAppStore.setState({ basket: [], toasts: [] });
+  useAppStore.setState({ basket: [], toasts: [], gitStatus: {} });
+  mocks.gitStatus.mockResolvedValue({ Status: {}, IsRepo: false });
 });
 
 describe('Preview', () => {
@@ -117,5 +122,116 @@ describe('Preview', () => {
     await screen.findByText(/1 │ b/);
     expect(mocks.previewFile).toHaveBeenCalledTimes(2);
     expect(mocks.previewFile).toHaveBeenLastCalledWith('D:\\proj', 'D:\\proj\\b.ts');
+  });
+
+  it('编辑：整读进 textarea，修改出现未保存点，Ctrl+S 保存后刷新预览与 git 状态', async () => {
+    mocks.previewFile
+      .mockResolvedValueOnce({ Lines: ['   1 │ a'], Truncated: false, Binary: false, Info: '' })
+      .mockResolvedValueOnce({ Lines: ['   1 │ ab'], Truncated: false, Binary: false, Info: '' });
+    mocks.readFileForEdit.mockResolvedValue({ Text: 'a', EOL: 'lf', Size: 1 });
+    mocks.saveFile.mockResolvedValue(undefined);
+    render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);
+    await screen.findByText(/1 │ a/);
+
+    // 进入编辑态
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+    const area = (await screen.findByRole('textbox', { name: '编辑文件内容' })) as HTMLTextAreaElement;
+    expect(area.value).toBe('a');
+    // 编辑态下篮子按钮隐藏
+    expect(screen.queryByRole('button', { name: /篮子/ })).not.toBeInTheDocument();
+
+    // 未修改时保存按钮禁用
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+
+    // 修改 → 未保存点 + 保存可用
+    await act(async () => {
+      fireEvent.change(area, { target: { value: 'ab' } });
+    });
+    expect(screen.getByText('●')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存' })).toBeEnabled();
+
+    // Ctrl+S 保存 → saveFile 按整读的 EOL 落盘，重新预览
+    await act(async () => {
+      fireEvent.keyDown(screen.getByRole('textbox', { name: '编辑文件内容' }), {
+        key: 's',
+        ctrlKey: true,
+      });
+    });
+    expect(mocks.saveFile).toHaveBeenCalledWith('D:\\proj', 'D:\\proj\\a.ts', 'ab', 'lf');
+    expect(await screen.findByText(/1 │ ab/)).toBeInTheDocument();
+    expect(useAppStore.getState().toasts.some((t) => t.title === '已保存')).toBe(true);
+    expect(screen.queryByRole('textbox', { name: '编辑文件内容' })).not.toBeInTheDocument();
+  });
+
+  it('保存按钮也能保存（crlf 按 EOL 还原），保存失败提示错误且留在编辑态', async () => {
+    mocks.previewFile.mockResolvedValue({ Lines: ['   1 │ x'], Truncated: false, Binary: false, Info: '' });
+    mocks.readFileForEdit.mockResolvedValue({ Text: 'x', EOL: 'crlf', Size: 2 });
+    mocks.saveFile.mockRejectedValueOnce(new Error('磁盘已满'));
+    render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);
+    await screen.findByText(/1 │ x/);
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+    const area = await screen.findByRole('textbox', { name: '编辑文件内容' });
+    await act(async () => {
+      fireEvent.change(area, { target: { value: 'y' } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    });
+
+    expect(mocks.saveFile).toHaveBeenCalledWith('D:\\proj', 'D:\\proj\\a.ts', 'y', 'crlf');
+    expect(useAppStore.getState().toasts.some((t) => t.title.includes('磁盘已满'))).toBe(true);
+    // 失败后留在编辑态，内容不丢
+    expect(screen.getByRole('textbox', { name: '编辑文件内容' })).toHaveValue('y');
+  });
+
+  it('取消：有修改时经确认放弃，无修改直接退出', async () => {
+    mocks.previewFile.mockResolvedValue({ Lines: ['   1 │ x'], Truncated: false, Binary: false, Info: '' });
+    mocks.readFileForEdit.mockResolvedValue({ Text: 'x', EOL: 'lf', Size: 1 });
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);
+    await screen.findByText(/1 │ x/);
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+    const area = await screen.findByRole('textbox', { name: '编辑文件内容' });
+    await act(async () => {
+      fireEvent.change(area, { target: { value: 'xy' } });
+    });
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(screen.queryByRole('textbox', { name: '编辑文件内容' })).not.toBeInTheDocument();
+    confirmSpy.mockRestore();
+  });
+
+  it('编辑在途切换文件时丢弃结果，不会把旧内容带进新文件的编辑态', async () => {
+    mocks.previewFile
+      .mockResolvedValueOnce({ Lines: ['   1 │ a'], Truncated: false, Binary: false, Info: '' })
+      .mockResolvedValue({ Lines: ['   1 │ b'], Truncated: false, Binary: false, Info: '' });
+    let resolveEdit!: (v: { Text: string; EOL: string; Size: number }) => void;
+    mocks.readFileForEdit.mockReturnValue(
+      new Promise((res) => {
+        resolveEdit = res;
+      }),
+    );
+    const { rerender } = render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);
+    await screen.findByText(/1 │ a/);
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+    // 整读在途时切到 b.ts
+    rerender(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\b.ts'} />);
+    await act(async () => {
+      resolveEdit({ Text: 'A-CONTENT', EOL: 'lf', Size: 9 });
+    });
+
+    // 不应出现编辑态（更不可能把 a 的内容写进 b）
+    expect(screen.queryByRole('textbox', { name: '编辑文件内容' })).not.toBeInTheDocument();
+    expect(mocks.saveFile).not.toHaveBeenCalled();
+  });
+
+  it('二进制与加载失败不显示编辑按钮', async () => {
+    mocks.previewFile.mockResolvedValue({ Lines: [], Truncated: false, Binary: true, Info: '二进制' });
+    render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\img.png'} />);
+    await screen.findByText('二进制');
+    expect(screen.queryByRole('button', { name: '编辑' })).not.toBeInTheDocument();
   });
 });
