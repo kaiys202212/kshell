@@ -48,7 +48,7 @@ func (a *App) terminals() *terminal.Manager {
 // OpenSessionTerminal 在中心区打开（已打开则复用）某历史会话的内嵌终端。
 // key 与会话 ID 绑定，因此重复恢复同一会话不会起第二个进程。
 func (a *App) OpenSessionTerminal(sessionID string, cols, rows int) (terminal.Info, error) {
-	s, tools, ok := a.sessionByID(sessionID)
+	s, tools, ok := a.sessionByIDReady(sessionID)
 	if !ok {
 		return terminal.Info{}, errSessionNotFound
 	}
@@ -78,7 +78,7 @@ func (a *App) OpenSessionTerminal(sessionID string, cols, rows int) (terminal.In
 
 // OpenWorkspaceTerminal 在中心区为工作区新开一个内嵌终端；toolID 为空时用工作区首选工具。
 func (a *App) OpenWorkspaceTerminal(wsID string, toolID string, cols, rows int) (terminal.Info, error) {
-	ws, tools, ok := a.workspaceByID(wsID)
+	ws, tools, ok := a.workspaceByIDReady(wsID)
 	if !ok {
 		return terminal.Info{}, errWorkspaceNotFound
 	}
@@ -162,7 +162,7 @@ func (a *App) ScrollbackTerminal(id string) (string, error) {
 // NewSessionWithTool 在指定工作区用指定工具新建会话（外部终端窗口路径）；
 // toolID 为空时等价于 NewSession（交给 launch 选首选工具）。
 func (a *App) NewSessionWithTool(wsID string, toolID string) error {
-	ws, tools, ok := a.workspaceByID(wsID)
+	ws, tools, ok := a.workspaceByIDReady(wsID)
 	if !ok {
 		return errWorkspaceNotFound
 	}

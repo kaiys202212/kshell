@@ -9,7 +9,7 @@ import {
   closeTerminal,
   getTools,
   listTerminals,
-  newSessionWithTool,
+  onScanDone,
   openSessionTerminal,
   openWorkspaceTerminal,
 } from '../lib/api';
@@ -53,13 +53,18 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [centerTab, setCenterTab] = useState<string>(PREVIEW_TAB);
   const [tools, setTools] = useState<ToolInfo[]>([]);
-  const [toolId, setToolId] = useState('');
   const [busy, setBusy] = useState(false);
+  // 「新建会话」先弹 agent 选择：展开态提升到父级，选中后由 startSession 直接启动
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const layout = useAppStore((s) => s.layout);
   const setLayout = useAppStore((s) => s.setLayout);
   const terminals = useAppStore((s) => s.terminals);
   const notify = useAppStore((s) => s.notify);
+  // 新建会话的工具选择：全局持久化（'' = 自动），跨页签/重启记住用户的选择
+  const toolId = useAppStore((s) => s.newSessionTool);
+  const setToolId = useAppStore((s) => s.setNewSessionTool);
+
 
   // 本工作区的内嵌终端（按创建顺序）
   const terms = useMemo<TerminalInfo[]>(
@@ -75,9 +80,16 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   }, []);
 
   useEffect(() => {
-    getTools()
-      .then((list) => setTools(list.filter((t) => t.Installed && t.BinPath !== '')))
-      .catch(() => {});
+    // 工具列表只在挂载时取一次（用于「选择 agent」下拉），而扫描是异步的：
+    // 必须订阅 scan:done 再取一次，否则挂载早于扫描完成时下拉会一直禁用，
+    // 表现为「没有选择 agent 的选项」。
+    const refresh = () => {
+      getTools()
+        .then((list) => setTools(list.filter((t) => t.Installed && t.BinPath !== '')))
+        .catch(() => {});
+    };
+    refresh();
+    return onScanDone(refresh);
   }, []);
 
   useEffect(() => {
@@ -102,12 +114,23 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     [notify],
   );
 
-  // 新建会话：使用当前选中的工具（空 = 交给 Go 侧按该工作区最常用的工具选）
-  const handleNewSession = async () => {
+  // 新建会话：先让用户选 agent（含「自动」），选中后开中心区内嵌终端。
+  // 不再直接启动——避免用户想选 agent 时没有入口，也避免走到会弹系统黑窗的外部终端路径。
+  const handleNewSession = () => {
+    if (busy) return;
+    if (tools.length === 0) {
+      notify('未检测到可用的 agent：请先安装 Claude Code / Codex 等 CLI，或点顶栏「重扫」', 'error');
+      return;
+    }
+    setPickerOpen(true);
+  };
+
+  // 选中 agent 后启动内嵌终端（空 id = 交给 Go 侧按该工作区最常用的工具选）
+  const startSession = async (id: string) => {
     if (busy) return;
     setBusy(true);
     try {
-      const info = await openWorkspaceTerminal(tab.id, toolId, 0, 0);
+      const info = await openWorkspaceTerminal(tab.id, id, 0, 0);
       useAppStore.getState().upsertTerminal(info);
       setCenterTab(info.ID);
     } catch (e: unknown) {
@@ -115,15 +138,6 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     } finally {
       setBusy(false);
     }
-  };
-
-  // 新建会话的次要入口：原来的外部终端窗口路径
-  const handleNewSessionExternal = () => {
-    void newSessionWithTool(tab.id, toolId)
-      .then(() => notify('已在外部终端打开', 'success'))
-      .catch((e: unknown) => {
-        notify(`新建会话失败：${e instanceof Error ? e.message : String(e)}`, 'error');
-      });
   };
 
   const handleCloseTerminal = (id: string) => {
@@ -145,18 +159,16 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         aria-label="会话列表栏"
       >
         <div className="flex items-center gap-1">
-          <Button
-            className="min-w-0 flex-1"
-            disabled={busy}
-            onClick={() => void handleNewSession()}
-          >
+          <Button className="min-w-0 flex-1" disabled={busy} onClick={handleNewSession}>
             {busy ? '启动中…' : '新建会话'}
           </Button>
           <ToolPicker
             tools={tools}
             value={toolId}
             onChange={setToolId}
-            onExternal={handleNewSessionExternal}
+            open={pickerOpen}
+            onOpenChange={setPickerOpen}
+            onSelect={(id) => void startSession(id)}
           />
         </div>
         <SessionList workspacePath={tab.id} onOpenTerminal={openTerminalForSession} />

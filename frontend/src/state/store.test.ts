@@ -132,9 +132,9 @@ describe('store', () => {
     expect(useAppStore.getState().terminals.map((t) => t.ID)).toEqual(['t1', 't2']);
   });
 
-  it('三栏宽度：setLayout 持久化且 clamp 到 [200,560]', () => {
+  it('三栏宽度：setLayout 持久化且 clamp 到 [200,720]', () => {
     useAppStore.getState().setLayout({ left: 9999, right: 10 });
-    expect(useAppStore.getState().layout).toEqual({ left: 560, right: 200 });
+    expect(useAppStore.getState().layout).toEqual({ left: 720, right: 200 });
 
     useAppStore.getState().setLayout({ left: 320 });
     expect(useAppStore.getState().layout).toEqual({ left: 320, right: 200 });

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/yangk/kshell/internal/providers"
 )
@@ -195,6 +196,63 @@ func TestScanWithoutRootsSkipsGitScan(t *testing.T) {
 	}
 	if len(res.Workspaces) != 0 {
 		t.Fatalf("no roots should mean no git scan, got %+v", res.Workspaces)
+	}
+}
+
+func codexRollout(ts, sid, cwd string, msgs ...string) string {
+	out := `{"timestamp":"` + ts + `","type":"session_meta","payload":{"session_id":"` + sid + `","cwd":"` + cwd + `"}}` + "\n"
+	for _, m := range msgs {
+		out += `{"timestamp":"` + ts + `","type":"event_msg","payload":{"type":"user_message","message":"` + m + `"}}` + "\n"
+	}
+	return out
+}
+
+func TestScanDedupesCodexResumeForks(t *testing.T) {
+	// codex 每次 resume 都新开一个 rollout 文件（文件名变了），但 session_meta.session_id
+	// 不变：扫描层必须按 (工具, ID) 合并，否则同一逻辑会话在列表里出现 N 次。
+	home := t.TempDir()
+	day := func(d string) string {
+		return filepath.Join(home, ".codex", "sessions", "2026", "09", d)
+	}
+	writeSessionFile(t, filepath.Join(day("01"), "rollout-2026-09-01T10-00-00-a.jsonl"),
+		codexRollout("2026-09-01T10:00:00Z", "dx-1", `D:\\ws\\demo`, "原始任务标题"))
+	// resume 包装文件：首条 user 消息是机器引导语，标题应退回 assistant 兜底
+	writeSessionFile(t, filepath.Join(day("02"), "rollout-2026-09-02T10-00-00-b.jsonl"),
+		`{"timestamp":"2026-09-02T10:00:00Z","type":"session_meta","payload":{"session_id":"dx-1","cwd":"D:\\ws\\demo"}}`+"\n"+
+			`{"timestamp":"2026-09-02T10:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"The following is the Codex agent history whose request action you are assessing."}}`+"\n"+
+			`{"timestamp":"2026-09-02T10:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"助手兜底标题"}}`+"\n")
+	// 最新一份续写：也带自己的 user 消息
+	writeSessionFile(t, filepath.Join(day("03"), "rollout-2026-09-03T10-00-00-c.jsonl"),
+		codexRollout("2026-09-03T10:00:00Z", "dx-1", `D:\\ws\\demo`, "最新续写标题"))
+
+	res, err := Scan(home, []providers.Provider{providers.Codex{}}, filepath.Join(t.TempDir(), "index.json"), ScanOptions{})
+	if err != nil {
+		t.Fatalf("Scan error: %v", err)
+	}
+	if len(res.Sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1 after dedup: %+v", len(res.Sessions), res.Sessions)
+	}
+	s := res.Sessions[0]
+	if s.ID != "dx-1" {
+		t.Fatalf("id = %q", s.ID)
+	}
+	// 标题取创建最早的原始文件，而不是续写文件的包装/兜底标题
+	if s.Title != "原始任务标题" {
+		t.Fatalf("title = %q, want 原始任务标题", s.Title)
+	}
+	if want := "2026-09-03T10:00:00Z"; s.UpdatedAt.UTC().Format(time.RFC3339) != want {
+		t.Fatalf("updated = %v, want %s", s.UpdatedAt, want)
+	}
+	// 消息数取各文件最大值（3 + 4 + 2 行）
+	if s.Messages < 3 {
+		t.Fatalf("messages = %d, want max of all files", s.Messages)
+	}
+	// 代表文件取 UpdatedAt 最新的那份
+	if filepath.Base(s.Path) != "rollout-2026-09-03T10-00-00-c.jsonl" {
+		t.Fatalf("path = %q, want the newest fork", s.Path)
+	}
+	if len(res.Workspaces) != 1 {
+		t.Fatalf("workspaces = %d, want 1", len(res.Workspaces))
 	}
 }
 

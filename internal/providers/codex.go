@@ -114,12 +114,17 @@ func (Codex) ParseSession(path string, head []byte) (*Session, error) {
 // 用户消息：① payload.item.type == "UserMessage"（content 块数组）；
 // ② payload.type == "user_message" 且正文在 payload.message（本机实测的主要形状）。
 // <manually_attached_skills>/<environment_context>/<external_links> 等包装文本一律跳过；
-// 用户消息全是包装记录时（agent 自主执行的导入会话）退回首条 assistant 内容：
-// payload.item.type == "AgentMessage"、payload.type == "agent_message" 或 response_item。
+// resume 续写文件会把原会话历史包装成一条 "The following is the Codex agent history..."
+// 的机器引导语，也不能当标题；用户消息全是包装记录时（agent 自主执行的导入会话）
+// 退回首条 assistant 内容：payload.item.type == "AgentMessage"、
+// payload.type == "agent_message" 或 response_item。
 func codexTitle(payload map[string]any, current string) string {
 	// 标题候选统一走 cleanTitle：包装标签块被整块剔除、只包着正文的标签被剥掉标记，
 	// 清洗后为空即「纯包装记录」，跳过继续找下一条。
 	pick := func(raw string) string {
+		if isCodexResumeWrapper(raw) {
+			return ""
+		}
 		if text := cleanTitle(raw); text != "" {
 			return oneLine(text, 80)
 		}
@@ -147,6 +152,13 @@ func codexTitle(payload map[string]any, current string) string {
 		}
 	}
 	return current
+}
+
+// isCodexResumeWrapper 识别 codex resume 续写文件开头的机器引导语：
+// 原会话历史被整段塞进这样一条 user 消息里，正文不是用户手写的。
+func isCodexResumeWrapper(raw string) bool {
+	const marker = "the following is the codex agent history"
+	return strings.HasPrefix(strings.ToLower(strings.TrimLeft(raw, " \t\r\n")), marker)
 }
 
 func (Codex) NewSessionCmd(ws string, bin string, ctx []string) Launch {

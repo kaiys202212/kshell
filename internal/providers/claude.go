@@ -37,6 +37,16 @@ func (Claude) SessionRoots(home string) []string {
 
 func (Claude) SessionFilePattern() string { return "*.jsonl" }
 
+// MatchSessionRel 按目录深度过滤：~/.claude/projects/<slug>/<sessionId>.jsonl 才是会话文件。
+// <sessionId>/subagents/agent-*.jsonl 是子代理的执行记录（不能拿去 resume），
+// 没有 PathMatcher 时会被整体当会话收录，列表里出现一大批同名条目。
+func (Claude) MatchSessionRel(rel string) bool {
+	rel = filepath.ToSlash(rel)
+	rel = strings.TrimPrefix(rel, "./")
+	// 恰好两层：<工作区slug>/<会话文件>.jsonl
+	return len(strings.Split(rel, "/")) == 2 && strings.HasSuffix(rel, ".jsonl")
+}
+
 func (Claude) ParseSession(path string, head []byte) (*Session, error) {
 	var (
 		id, cwd, title   string

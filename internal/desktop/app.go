@@ -41,6 +41,12 @@ type Options struct {
 	Terminals     *terminal.Manager // 内嵌终端管理器；nil 时 Startup 装配真实后端（测试可注入桩）
 	Emit          func(name string, data ...any)
 	TrayIcon      []byte // 托盘图标数据（Windows 用 ICO，其它平台用 PNG）；nil 表示不启用托盘
+	SignalPath    string // 退出信号文件路径；nil/空时 Startup 补齐真实路径（测试可不启用）
+	// SnapshotPath 是扫描结果快照文件：启动时先端出上次结果让界面秒开，后台扫描再覆盖。
+	// 空字符串表示禁用快照（测试默认如此，避免互相污染）。
+	SnapshotPath string
+	// ToolsCachePath 是工具版本探测缓存文件：CLI 未升级时跳过 `<bin> --version` 子进程。
+	ToolsCachePath string
 }
 
 // App 是暴露给前端的绑定对象：薄封装 discovery/providers/window 等核心包，
@@ -55,6 +61,9 @@ type App struct {
 	tools    []discovery.Tool
 	result   *discovery.Result
 	scanning bool
+	// scanned 标记本进程是否完成过一轮真实扫描（快照恢复不算）：
+	// 绑定调用据此决定要不要等首扫，避免拿快照当真结果错过新工作区。
+	scanned bool
 	basket   []string // 上下文篮：文件视图勾选的文件，新建会话时注入初始提示
 	quitting bool     // 托盘「退出」已发起：BeforeClose 据此放行 Wails 的退出流程
 
@@ -86,8 +95,41 @@ func (a *App) Startup(ctx context.Context) {
 
 	a.initRealDeps()
 	a.StartTray()
+
+	// 退出信号文件：启动时先消费一次残留（旧版本写入但没人监听、或应用
+	// 退出瞬间外部脚本又写入的孤儿文件），否则新实例一启动就误判退出信号。
+	if p := a.snapshot().SignalPath; p != "" {
+		checkExitSignal(p)
+		go a.watchExitSignal(p, exitSignalInterval)
+	}
+
+	a.loadSnapshot() // 先端出上次结果（秒开），真实扫描随后覆盖
 	go a.runScan()
 	go a.reapLoop()
+}
+
+// loadSnapshot 把上次扫描的落盘快照灌进内存，让前端首次 GetWorkspaces/GetSessions
+// 立即拿到数据（秒开），不必等目录遍历与文件解析。
+// 只在本进程还没有结果时生效：已有结果说明后台扫描已经跑过一轮，不能被旧快照覆盖。
+func (a *App) loadSnapshot() {
+	o := a.snapshot()
+	if o.SnapshotPath == "" {
+		return
+	}
+	res, tools, err := discovery.LoadSnapshot(o.SnapshotPath)
+	if err != nil || res == nil {
+		return // 快照缺失/损坏/版本不符都无所谓：后台扫描会补上
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.result != nil {
+		return
+	}
+	a.result = res
+	if len(a.tools) == 0 && len(tools) > 0 {
+		a.tools = tools
+	}
 }
 
 // initRealDeps 用真实环境补齐未注入的选项（与 cmd/kshell 的 TUI 装配保持同源逻辑）。
@@ -149,6 +191,15 @@ func (a *App) initRealDeps() {
 	}
 	if a.opts.Terminals == nil { // 幂等：已注入（测试）或已装配过就不重建，避免丢掉既有终端会话
 		a.opts.Terminals = newTerminalManager(a)
+	}
+	if a.opts.SignalPath == "" {
+		a.opts.SignalPath = paths.SignalExit
+	}
+	if a.opts.SnapshotPath == "" {
+		a.opts.SnapshotPath = paths.CacheSnapshot
+	}
+	if a.opts.ToolsCachePath == "" {
+		a.opts.ToolsCachePath = paths.CacheTools
 	}
 }
 
@@ -293,7 +344,7 @@ func (a *App) runScan() {
 		a.Emit("scan:done", map[string]any{"failed": 0, "error": errNotReady.Error()})
 		return
 	}
-	tools := discovery.DetectAll(o.Home, o.Providers)
+	tools := discovery.DetectAllCached(o.Home, o.Providers, o.ToolsCachePath)
 	res, err := o.Scan(o.Home, o.Providers, o.CachePath, discovery.ScanOptions{
 		Roots:    o.Config.ScanRoots,
 		MaxDepth: o.Config.MaxDepth,
@@ -304,9 +355,15 @@ func (a *App) runScan() {
 	a.tools = tools
 	if err == nil {
 		a.result = res
+		a.scanned = true
 	}
 	a.scanning = false
 	a.mu.Unlock()
+
+	// 落盘快照（锁外写文件）；失败只影响下次启动的秒开体验，不影响本次结果
+	if err == nil {
+		_ = discovery.SaveSnapshot(o.SnapshotPath, res, tools)
+	}
 
 	ev := map[string]any{"failed": 0}
 	if err != nil {
@@ -318,6 +375,39 @@ func (a *App) runScan() {
 		ev["failed"] = len(res.Failed)
 	}
 	a.Emit("scan:done", ev)
+}
+
+// scanReadyTimeout 是「等首轮扫描结果」的上限。真实扫描通常几百毫秒，
+// 超时只是兜底：结果始终没就绪就按不存在处理，不让绑定调用无限挂起。
+const scanReadyTimeout = 3 * time.Second
+
+// ensureScanReady 等待本进程的首轮真实扫描结果就绪：尚未扫完且依赖已装配时触发一轮
+// 扫描（可能已在后台进行，不重复触发），轮询等待结果落位后返回。
+// 已扫完（scanned）立即返回——本方法只兜底「应用刚启动还没扫完」，
+// 不为「结果里确实没有」的场景再做全量扫描，避免无谓等待。
+// 注意：启动时用快照灌入的 result 不算「已扫完」，否则新出现的工作区/会话会被判为不存在。
+func (a *App) ensureScanReady() {
+	deadline := time.Now().Add(scanReadyTimeout)
+	for {
+		a.mu.Lock()
+		if (a.result != nil && a.scanned) || !a.opts.ready() {
+			a.mu.Unlock()
+			return
+		}
+		started := false
+		if !a.scanning {
+			a.scanning = true
+			started = true
+		}
+		a.mu.Unlock()
+		if started {
+			go a.runScan()
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 // GetWorkspaces 返回最近一次扫描的工作区列表（未扫完时为空切片）。
@@ -347,7 +437,7 @@ func (a *App) GetSessions() []providers.Session {
 // ResumeSession 恢复指定会话：弹出新终端窗口并在其中启动 agent CLI。
 // 同一标题的窗口已存在时复用聚焦，不会重复弹窗。
 func (a *App) ResumeSession(id string) error {
-	s, tools, ok := a.sessionByID(id)
+	s, tools, ok := a.sessionByIDReady(id)
 	if !ok {
 		return errSessionNotFound
 	}
@@ -411,17 +501,42 @@ func (a *App) sessionByID(id string) (providers.Session, []discovery.Tool, bool)
 	return providers.Session{}, nil, false
 }
 
+// workspaceByID 按路径查工作区。匹配走 discovery.NormalizePath 归一化：
+// 前端页签 id 持久化的是上次扫描时 Workspace.Path 的原始形态，而每次扫描
+// Path 取自「第一个出现的会话 cwd」——盘符大小写/分隔符一变（D:\ 与 d:\、
+// \ 与 /），严格相等就会误报「工作区不存在」，必须与聚合 key 同口径比较。
 func (a *App) workspaceByID(id string) (discovery.Workspace, []discovery.Tool, bool) {
+	want := discovery.NormalizePath(id)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.result != nil {
 		for _, ws := range a.result.Workspaces {
-			if ws.Path == id {
+			if discovery.NormalizePath(ws.Path) == want {
 				return ws, a.tools, true
 			}
 		}
 	}
 	return discovery.Workspace{}, nil, false
+}
+
+// workspaceByIDReady 在 workspaceByID 基础上兜底「首轮扫描未完成」：
+// 查不到时等一轮扫描（最多 scanReadyTimeout）再查一次，避免应用刚启动、
+// 前端持久化页签立即点新建/终端时误报工作区不存在。
+func (a *App) workspaceByIDReady(id string) (discovery.Workspace, []discovery.Tool, bool) {
+	if ws, tools, ok := a.workspaceByID(id); ok {
+		return ws, tools, true
+	}
+	a.ensureScanReady()
+	return a.workspaceByID(id)
+}
+
+// sessionByIDReady 在 sessionByID 基础上兜底「首轮扫描未完成」，语义同 workspaceByIDReady。
+func (a *App) sessionByIDReady(id string) (providers.Session, []discovery.Tool, bool) {
+	if s, tools, ok := a.sessionByID(id); ok {
+		return s, tools, true
+	}
+	a.ensureScanReady()
+	return a.sessionByID(id)
 }
 
 // basketSnapshot 返回上下文篮的副本，避免扫描/启动并发读写同一切片。

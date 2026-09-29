@@ -15,6 +15,13 @@ type Layout struct {
 	Providers   string
 	Cache       string
 	CacheIndex  string
+	// CacheSnapshot 是上次扫描结果的快照：启动时先端出它让界面秒开，后台再扫描刷新。
+	CacheSnapshot string
+	// CacheTools 是工具版本探测结果的缓存：可执行文件未变就跳过 `<bin> --version` 子进程。
+	CacheTools string
+	// SignalExit 是退出信号文件：外部脚本（如 build.ps1）创建它即可请求
+	// 运行中的桌面版优雅退出，供无人值守构建/调试使用。
+	SignalExit string
 }
 
 func Paths() (Layout, error) {
@@ -26,12 +33,15 @@ func Paths() (Layout, error) {
 	cache := filepath.Join(root, "cache")
 
 	return Layout{
-		Root:        root,
-		Config:      filepath.Join(root, "config.yaml"),
-		Connections: filepath.Join(root, "connections.yaml"),
-		Providers:   filepath.Join(root, "providers.yaml"),
-		Cache:       cache,
-		CacheIndex:  filepath.Join(cache, "index.json"),
+		Root:          root,
+		Config:        filepath.Join(root, "config.yaml"),
+		Connections:   filepath.Join(root, "connections.yaml"),
+		Providers:     filepath.Join(root, "providers.yaml"),
+		Cache:         cache,
+		CacheIndex:    filepath.Join(cache, "index.json"),
+		CacheSnapshot: filepath.Join(cache, "snapshot.json"),
+		CacheTools:    filepath.Join(cache, "tools.json"),
+		SignalExit:    filepath.Join(root, "exit.signal"),
 	}, nil
 }
 

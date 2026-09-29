@@ -4,6 +4,8 @@
 #   .\build.ps1 -Test        # 先跑全量测试再编译
 #   .\build.ps1 -Clean       # 先清空 dist 再编译
 #   .\build.ps1 -Desktop     # wails build 桌面版（自动构建前端），产物拷到 dist\kshell-desktop.exe
+# 桌面版构建前会经 ~/.kshell/exit.signal 请求运行中的实例优雅退出并等待，
+# 因此调试迭代不再需要手动从托盘退出旧实例（旧版本实例不支持信号时会提示）。
 param(
     [switch]$Test,
     [switch]$Clean,
@@ -46,6 +48,31 @@ if ($Clean -and (Test-Path dist)) {
     Remove-Item dist -Recurse -Force
 }
 
+# Stop-RunningKshellDesktop 请求运行中的 kshell 桌面版优雅退出并等待：
+# 写 ~/.kshell/exit.signal（应用轮询到即走与托盘退出相同的收尾链路），
+# 最多等 15s。只匹配桌面版进程（TUI 不监听信号文件，避免无谓等待）。
+function Stop-RunningKshellDesktop {
+    $desktopProcs = @(Get-Process -Name kshell -ErrorAction SilentlyContinue | Where-Object {
+            $_.Path -like '*\kshell-desktop.exe' -or $_.Path -like '*\build\bin\kshell.exe'
+        })
+    if ($desktopProcs.Count -eq 0) { return }
+    Write-Host '==> 检测到 kshell 桌面版正在运行，发送退出信号并等待…' -ForegroundColor Cyan
+    $signal = Join-Path $env:USERPROFILE '.kshell\exit.signal'
+    New-Item -Path (Split-Path -Parent $signal) -ItemType Directory -Force | Out-Null
+    Set-Content -Path $signal -Value ('exit ' + (Get-Date -Format o)) -Encoding UTF8
+    $deadline = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $deadline) {
+        if (-not (Get-Process -Name kshell -ErrorAction SilentlyContinue |
+                Where-Object { $_.Path -like '*\kshell-desktop.exe' -or $_.Path -like '*\build\bin\kshell.exe' })) {
+            Write-Host '==> 旧实例已退出' -ForegroundColor Green
+            Remove-Item $signal -Force -ErrorAction SilentlyContinue
+            return
+        }
+        Start-Sleep -Milliseconds 300
+    }
+    Write-Host '[警告] 旧实例 15 秒内未退出（旧版本不支持信号退出时请从托盘手动退出），继续构建' -ForegroundColor Yellow
+}
+
 Write-Host '==> go vet' -ForegroundColor Cyan
 go vet ./...
 if ($LASTEXITCODE -ne 0) { exit 1 }
@@ -57,6 +84,9 @@ if ($Test) {
 }
 
 if ($Desktop) {
+    # 旧实例占用 dist\kshell-desktop.exe 会让最后的拷贝失败，先请求其退出
+    Stop-RunningKshellDesktop
+
     # wails build 会按 wails.json 自动执行 frontend 的 npm install / build，再绑定打包。
     # 经 cmd /c 间接执行：wails 把进度日志（KnownStructs 等）写到 stderr，
     # PowerShell 5.1 在 $ErrorActionPreference='Stop' 下会把它们误判为 terminating error。

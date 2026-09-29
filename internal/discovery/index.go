@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	indexVersion     = 4 // 解析逻辑变更时递增，让旧缓存整体失效（v4：标题清洗，不再收录包装标签）
+	indexVersion     = 5 // 解析逻辑变更时递增，让旧缓存整体失效（v5：codex resume 续写文件按会话 ID 去重）
 	defaultMaxFiles  = 20000
 	defaultHeadLimit = 256 * 1024 // codex 导入会话首条真实用户消息可能在 100KB+ 之后
 	// 单文件 JSON（Gemini）必须整文件成文才解析得出来，头读太小会整条判失败。
@@ -197,12 +197,95 @@ func Scan(home string, ps []providers.Provider, cachePath string, opts ScanOptio
 	for _, entry := range entries {
 		sessions = append(sessions, entry.Session)
 	}
+	sessions = dedupeSessions(sessions)
 
 	return &Result{
 		Sessions:   sessions,
 		Workspaces: mergeGitWorkspaces(GroupSessions(sessions), opts),
 		Failed:     failed,
 	}, nil
+}
+
+// dedupeSessions 按 (工具, 会话 ID) 去重。codex 每次 resume/compact 都会新开一个 rollout
+// 文件（新文件名、内容继承原会话），但 session_meta 里的 session_id 不变——不去重的
+// 话同一个逻辑会话在列表里出现 N 次。合并规则：
+//   - 代表文件取 UpdatedAt 最新的（resume <id> 时 codex 自己也会挑最新一份续写）；
+//   - 标题优先取创建最早的非空标题（原始文件的首条真实用户消息最完整）；
+//   - 时间取并集（最早创建 / 最近更新），消息数取最大值。
+func dedupeSessions(sessions []providers.Session) []providers.Session {
+	type group struct {
+		best     int
+		earliest int
+		maxMsgs  int
+	}
+	groups := map[string]*group{}
+	order := make([]providers.Session, 0, len(sessions))
+	ids := make([]string, 0, len(sessions))
+
+	for i, s := range sessions {
+		if s.ID == "" {
+			order = append(order, s)
+			ids = append(ids, "")
+			continue
+		}
+		key := s.ToolID + "\x00" + s.ID
+		g, ok := groups[key]
+		if !ok {
+			groups[key] = &group{best: i, earliest: i, maxMsgs: s.Messages}
+			order = append(order, s)
+			ids = append(ids, key)
+			continue
+		}
+		if s.UpdatedAt.After(sessions[g.best].UpdatedAt) ||
+			(s.UpdatedAt.Equal(sessions[g.best].UpdatedAt) && s.Messages > sessions[g.best].Messages) {
+			g.best = i
+		}
+		if s.CreatedAt.Before(sessions[g.earliest].CreatedAt) ||
+			(s.CreatedAt.Equal(sessions[g.earliest].CreatedAt) && s.Title != "" && sessions[g.earliest].Title == "") {
+			g.earliest = i
+		}
+		if s.Messages > g.maxMsgs {
+			g.maxMsgs = s.Messages
+		}
+	}
+
+	merged := make([]providers.Session, 0, len(order))
+	done := map[string]bool{}
+	for i, s := range order {
+		key := ids[i]
+		if key == "" {
+			merged = append(merged, s)
+			continue
+		}
+		if done[key] {
+			continue
+		}
+		done[key] = true
+		g := groups[key]
+		if g.best == g.earliest {
+			merged = append(merged, s)
+			continue
+		}
+		base := sessions[g.best]
+		first := sessions[g.earliest]
+		title := first.Title
+		if title == "" {
+			title = base.Title
+		}
+		created, updated := base.CreatedAt, base.UpdatedAt
+		if first.CreatedAt.Before(created) {
+			created = first.CreatedAt
+		}
+		if first.UpdatedAt.After(updated) {
+			updated = first.UpdatedAt
+		}
+		merged = append(merged, providers.Session{
+			ID: base.ID, ToolID: base.ToolID, Workspace: base.Workspace,
+			Title: title, CreatedAt: created, UpdatedAt: updated,
+			Messages: g.maxMsgs, Path: base.Path,
+		})
+	}
+	return merged
 }
 
 // mergeGitWorkspaces 把 git 扫描发现的工作区追加在会话工作区之后（同名目录不重复出现）。

@@ -172,3 +172,21 @@ func TestClaudeDetectSpecAndRoots(t *testing.T) {
 		t.Fatalf("roots = %v, want [%s]", roots, want)
 	}
 }
+
+func TestClaudeMatchSessionRelExcludesSubagents(t *testing.T) {
+	cases := []struct {
+		rel  string
+		want bool
+	}{
+		{"D--ws-demo/42a6304b-1fd3.jsonl", true},                        // 标准会话：<slug>/<id>.jsonl
+		{"D--ws-demo/42a6304b-1fd3/subagents/agent-a090.jsonl", false},  // 子代理记录
+		{"D--ws-demo/42a6304b-1fd3/subagents/deep/nested.jsonl", false}, // 更深层
+		{"42a6304b.jsonl", false},                                       // 不在 slug 目录下
+		{"D--ws-demo/notes.md", false},                                  // 非会话文件
+	}
+	for _, c := range cases {
+		if got := (Claude{}).MatchSessionRel(c.rel); got != c.want {
+			t.Fatalf("MatchSessionRel(%q) = %v, want %v", c.rel, got, c.want)
+		}
+	}
+}

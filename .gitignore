@@ -10,3 +10,4 @@ node_modules/
 *.exe
 *.test
 *.tmp
+*.log

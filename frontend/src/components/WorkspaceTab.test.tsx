@@ -6,7 +6,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WorkspaceTabView from '../pages/WorkspaceTab';
 import { useAppStore } from '../state/store';
-import type { TerminalInfo } from '../lib/api';
+import type { TerminalInfo, ToolInfo } from '../lib/api';
 
 const mocks = vi.hoisted(() => ({
   getSessions: vi.fn(),
@@ -42,6 +42,9 @@ vi.mock('./TerminalView', () => ({
   ),
 }));
 
+// scanDoneCb 记录被订阅的 scan:done 回调，供用例手动触发「扫描完成」。
+let scanDoneCb: ((payload?: unknown) => void) | null = null;
+
 const term: TerminalInfo = {
   ID: 't1',
   Kind: 'session',
@@ -55,11 +58,34 @@ const term: TerminalInfo = {
   Rows: 24,
 };
 
+// 工具列表（父级已按「已安装且有可执行文件」过滤）
+const toolClaude: ToolInfo = {
+  ID: 'claude',
+  Name: 'Claude Code',
+  BinPath: 'C:\\bin\\claude.cmd',
+  Version: '1.0.0',
+  Installed: true,
+  Source: 'path',
+};
+
+const toolCodex: ToolInfo = {
+  ID: 'codex',
+  Name: 'Codex',
+  BinPath: 'C:\\bin\\codex.exe',
+  Version: '2.0.0',
+  Installed: true,
+  Source: 'path',
+};
+
 afterEach(cleanup);
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.onScanDone.mockReturnValue(() => {});
+  scanDoneCb = null;
+  mocks.onScanDone.mockImplementation((cb: (payload?: unknown) => void) => {
+    scanDoneCb = cb;
+    return () => {};
+  });
   mocks.onWindowClosed.mockReturnValue(() => {});
   mocks.getSessions.mockResolvedValue([]);
   mocks.listFiles.mockResolvedValue([]);
@@ -73,30 +99,69 @@ beforeEach(() => {
     scanState: 'done',
     terminals: [],
     toasts: [],
+    newSessionTool: '',
     layout: { left: 288, right: 300 },
   });
 });
 
 describe('WorkspaceTab', () => {
-  it('「新建会话」开中心区内嵌终端并激活其页签', async () => {
+  it('「新建会话」先弹 agent 选择，选中后开中心区内嵌终端并激活其页签', async () => {
+    mocks.getTools.mockResolvedValue([toolClaude]);
     mocks.openWorkspaceTerminal.mockResolvedValue(term);
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
+    // 等工具列表就绪（扫描是异步的）再点新建会话
+    await screen.findByRole('button', { name: /工具：自动/ });
     fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
+    fireEvent.click(await screen.findByRole('option', { name: /Claude Code/ }));
 
     await waitFor(() => {
-      // 空工具 id = 交给 Go 侧挑该工作区最常用的工具；0,0 = 尺寸交给首次 fit 纠正
-      expect(mocks.openWorkspaceTerminal).toHaveBeenCalledWith('D:\\proj-a', '', 0, 0);
+      // 选中的 agent 原样传给 Go 侧；0,0 = 尺寸交给首次 fit 纠正
+      expect(mocks.openWorkspaceTerminal).toHaveBeenCalledWith('D:\\proj-a', 'claude', 0, 0);
     });
     expect(await screen.findByTestId('terminal-t1')).toBeInTheDocument();
     expect(screen.getByTestId('terminal-t1')).toHaveAttribute('data-active', 'true');
   });
 
+  it('「自动」选项也能新建（空工具 id 交给 Go 侧挑该工作区最常用的工具）', async () => {
+    mocks.getTools.mockResolvedValue([toolClaude]);
+    mocks.openWorkspaceTerminal.mockResolvedValue(term);
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+
+    await screen.findByRole('button', { name: /工具：自动/ });
+    fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
+    fireEvent.click(await screen.findByRole('option', { name: /自动/ }));
+
+    await waitFor(() => {
+      expect(mocks.openWorkspaceTerminal).toHaveBeenCalledWith('D:\\proj-a', '', 0, 0);
+    });
+  });
+
+  it('未检测到 agent 时点「新建会话」给出提示且不启动终端', async () => {
+    mocks.getTools.mockResolvedValue([]);
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+
+    await screen.findByRole('button', { name: '无可用工具' });
+    fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
+
+    await waitFor(() => {
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((t) => t.tone === 'error' && t.title.includes('未检测到')),
+      ).toBe(true);
+    });
+    expect(mocks.openWorkspaceTerminal).not.toHaveBeenCalled();
+  });
+
   it('新建会话失败时以 error 语气轻量提示（toast）', async () => {
+    mocks.getTools.mockResolvedValue([toolClaude]);
     mocks.openWorkspaceTerminal.mockRejectedValueOnce(new Error('工作区不存在'));
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
+    await screen.findByRole('button', { name: /工具：自动/ });
     fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
+    fireEvent.click(await screen.findByRole('option', { name: /Claude Code/ }));
 
     await waitFor(() => {
       expect(
@@ -107,21 +172,36 @@ describe('WorkspaceTab', () => {
     });
   });
 
-  it('工具选择生效：选中工具后新建会话带上该工具 id', async () => {
-    mocks.getTools.mockResolvedValue([
-      { ID: 'claude', Name: 'Claude Code', BinPath: 'claude.cmd', Version: '1.0', Installed: true, Source: 'path' },
-      { ID: 'codex', Name: 'Codex', BinPath: 'codex.cmd', Version: '2.0', Installed: true, Source: 'path' },
-    ]);
+  it('选择列表里挑哪个 agent，就按哪个 agent 新建', async () => {
+    mocks.getTools.mockResolvedValue([toolClaude, toolCodex]);
     mocks.openWorkspaceTerminal.mockResolvedValue(term);
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /自动/ }));
-    fireEvent.click(await screen.findByRole('option', { name: /Codex/ }));
+    await screen.findByRole('button', { name: /工具：自动/ });
     fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
+    fireEvent.click(await screen.findByRole('option', { name: /Codex/ }));
 
     await waitFor(() => {
       expect(mocks.openWorkspaceTerminal).toHaveBeenCalledWith('D:\\proj-a', 'codex', 0, 0);
     });
+  });
+
+  it('扫描完成后重取工具列表（首扫未完成时挂载会拿到空列表，否则下拉一直是「无可用工具」）', async () => {
+    mocks.getTools.mockResolvedValue([]); // 挂载时后台扫描还没跑完
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+
+    await waitFor(() => expect(mocks.getTools).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole('button', { name: /无可用工具/ })).toBeDisabled();
+
+    // 扫描完成事件到达时工具才被探测出来
+    mocks.getTools.mockResolvedValue([
+      { ID: 'claude', Name: 'Claude Code', BinPath: 'claude.cmd', Version: '1.0', Installed: true, Source: 'path' },
+    ]);
+    expect(scanDoneCb).toBeTypeOf('function');
+    scanDoneCb!();
+
+    await waitFor(() => expect(mocks.getTools).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole('button', { name: /工具：自动/ })).toBeEnabled();
   });
 
   it('会话列表「恢复」开中心区内嵌终端（onOpenTerminal 已接线）', async () => {

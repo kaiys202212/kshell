@@ -17,7 +17,14 @@ type Tool struct {
 }
 
 // DetectAll 汇总所有 provider 的安装状态，已安装的排在前面（UI 顶栏按此顺序展示）。
+// 每次都实探版本（详见 DetectAllCached：桌面端启动走缓存版）。
 func DetectAll(home string, ps []providers.Provider) []Tool {
+	return detectAll(home, ps, providers.ProbeVersion)
+}
+
+// detectAll 是 DetectAll 的主体，probe 抽象「取某个可执行文件的版本」，
+// 便于在 DetectAllCached 里换成带缓存的实现。
+func detectAll(home string, ps []providers.Provider, probe func(bin string) string) []Tool {
 	tools := make([]Tool, 0, len(ps))
 	for _, p := range ps {
 		d := providers.Detect(p.DetectSpec(home), home)
@@ -31,7 +38,7 @@ func DetectAll(home string, ps []providers.Provider) []Tool {
 			Source:    d.Source,
 		}
 		if d.Installed && d.BinPath != "" {
-			t.Version = providers.ProbeVersion(d.BinPath)
+			t.Version = probe(d.BinPath)
 		}
 		tools = append(tools, t)
 	}

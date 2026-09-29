@@ -97,6 +97,29 @@ func TestCodexTitleFromItemShape(t *testing.T) {
 	}
 }
 
+func TestCodexResumeWrapperNotATitle(t *testing.T) {
+	// resume 续写文件：首条 user 消息是机器引导语 "The following is the Codex agent history..."，
+	// 不能当标题，应退回下一条真实内容
+	dir := t.TempDir()
+	path := filepath.Join(dir, "resume-fork.jsonl")
+	content := `{"timestamp":"2026-09-10T09:04:18.933Z","type":"session_meta","payload":{"session_id":"cx-3","cwd":"d:\\ws"}}` + "\n" +
+		`{"timestamp":"2026-09-10T09:04:19.000Z","type":"event_msg","payload":{"type":"user_message","message":"The following is the Codex agent history whose request action you are assessing."}}` + "\n" +
+		`{"timestamp":"2026-09-10T09:05:00.000Z","type":"event_msg","payload":{"type":"agent_message","message":"这是助手回复兜底"}}` + "\n"
+	writeFile(t, path, content)
+
+	head, err := ReadHead(path, 64*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := (Codex{}).ParseSession(path, head)
+	if err != nil {
+		t.Fatalf("ParseSession error: %v", err)
+	}
+	if got.Title != "这是助手回复兜底" {
+		t.Fatalf("title = %q, want assistant fallback", got.Title)
+	}
+}
+
 func TestCodexTitleFallsBackToAgentMessage(t *testing.T) {
 	// agent 自主执行的导入会话：用户消息全是 <external_links> 等包装文本
 	dir := t.TempDir()

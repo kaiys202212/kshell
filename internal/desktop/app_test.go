@@ -114,6 +114,43 @@ func TestGetSessions(t *testing.T) {
 	}
 }
 
+// TestWorkspaceByIDNormalizesPath 验证页签 id 与扫描 Path 形态不同（盘符大小写、
+// 分隔符）时仍能匹配：持久化页签在两次扫描之间形态漂移（Workspace.Path 取自
+// 第一个出现的会话 cwd），不再误报「工作区不存在」。
+func TestWorkspaceByIDNormalizesPath(t *testing.T) {
+	app, _, _ := newTestApp(t)
+	app.runScan()
+
+	ws, _, ok := app.workspaceByID(`d:/ws-a`)
+	if !ok {
+		t.Fatal("归一化后应能匹配盘符大小写/分隔符不同的同一工作区")
+	}
+	if ws.Path != `D:\ws-a` {
+		t.Fatalf("返回的应是扫描结果原形态, got %q", ws.Path)
+	}
+}
+
+// TestOpenWorkspaceTerminalWaitsForFirstScan 验证「应用刚启动、首轮扫描未完成」时
+// 新建会话的查找阶段会等待扫描结果落位再判定，而不是立即误报「工作区不存在」。
+// 只测查找兜底：launch 阶段的工具表由 runScan 重新探测刷新（真实环境能探到），
+// 测试桩探测不到，全链路留给 TestOpenWorkspaceTerminal* 覆盖。
+func TestOpenWorkspaceTerminalWaitsForFirstScan(t *testing.T) {
+	env := newTerminalTestApp(t)
+
+	// 模拟刚启动：结果未就绪（后台扫描尚未落位）
+	env.app.mu.Lock()
+	env.app.result = nil
+	env.app.mu.Unlock()
+
+	ws, _, ok := env.app.workspaceByIDReady(`D:\ws-a`)
+	if !ok {
+		t.Fatal("首扫未就绪时应等待扫描落位并重查成功")
+	}
+	if ws.Path != `D:\ws-a` {
+		t.Fatalf("ws.Path = %q", ws.Path)
+	}
+}
+
 func TestScanSessionsTriggersBackgroundScan(t *testing.T) {
 	app, _, _ := newTestApp(t)
 
