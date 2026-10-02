@@ -134,14 +134,14 @@ function RefreshIcon() {
   );
 }
 
-// git 状态小色标（VS Code 风格配色）
+// git 状态小色标（S1：改用语义状态色，label/title 与既有测试一致）
 const GIT_BADGES: Record<string, { label: string; cls: string; title: string }> = {
-  modified: { label: 'M', cls: 'text-orange-500', title: '已修改' },
-  added: { label: 'A', cls: 'text-green-600', title: '新增（已暂存）' },
-  deleted: { label: 'D', cls: 'text-red-500', title: '已删除' },
-  renamed: { label: 'R', cls: 'text-sky-500', title: '重命名' },
-  untracked: { label: 'U', cls: 'text-green-500', title: '未跟踪' },
-  conflicted: { label: '!', cls: 'text-red-600', title: '合并冲突' },
+  modified: { label: 'M', cls: 'text-warning', title: '已修改' },
+  added: { label: 'A', cls: 'text-success', title: '新增（已暂存）' },
+  deleted: { label: 'D', cls: 'text-danger', title: '已删除' },
+  renamed: { label: 'R', cls: 'text-info', title: '重命名' },
+  untracked: { label: 'U', cls: 'text-success', title: '未跟踪' },
+  conflicted: { label: '!', cls: 'text-danger', title: '合并冲突' },
 };
 
 function GitBadge({ code }: { code: string }) {
@@ -149,7 +149,7 @@ function GitBadge({ code }: { code: string }) {
   if (!b) return null;
   return (
     <span
-      className={cn('shrink-0 text-xs font-bold', b.cls)}
+      className={cn('shrink-0 font-mono text-[11px] font-bold', b.cls)}
       title={`git：${b.title}`}
       aria-label={`git ${b.title}`}
     >
@@ -233,13 +233,13 @@ function TreeRow({
       aria-expanded={node.IsDir ? item.expanded : undefined}
     >
       <div
-        className="group flex h-7 items-center gap-0.5 rounded pr-1 transition-colors hover:bg-muted"
+        className="group flex h-6 items-center gap-0.5 rounded pr-1 transition-colors hover:bg-muted"
         style={{ paddingLeft: depth * 14 }}
       >
         {renaming ? (
           <input
             autoFocus
-            className="min-w-0 flex-1 rounded border border-primary bg-background px-1 py-0.5 text-sm outline-none"
+            className="min-w-0 flex-1 rounded border border-primary bg-background px-1 py-0.5 font-mono text-xs outline-none"
             value={draft}
             aria-label={`重命名 ${node.Name}`}
             onChange={(e) => setDraft(e.target.value)}
@@ -274,7 +274,7 @@ function TreeRow({
               {node.IsDir ? <FolderIcon open={item.expanded} /> : <FileIcon />}
               <span
                 className={cn(
-                  'min-w-0 truncate text-sm',
+                  'min-w-0 truncate font-mono text-xs',
                   node.IsDir ? 'font-medium' : 'text-foreground/90',
                 )}
               >
@@ -495,7 +495,7 @@ export default function FileTree({
         {[0, 1, 2, 3, 4].map((i) => (
           <Skeleton
             key={i}
-            className="h-7"
+            className="h-6"
             style={{ marginLeft: i * 14, width: `${72 - i * 8}%` }}
           />
         ))}
@@ -515,7 +515,7 @@ export default function FileTree({
       {/* 搜索框 + git 刷新 */}
       <div className="mb-1.5 flex items-center gap-1">
         <input
-          className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-sm outline-none placeholder:text-muted-foreground focus:border-primary"
+          className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-xs outline-none placeholder:text-muted-foreground focus:border-primary"
           placeholder="搜索文件…"
           value={query}
           aria-label="搜索文件"
@@ -536,7 +536,7 @@ export default function FileTree({
           <p className="mb-1 px-1 text-xs text-muted-foreground" aria-live="polite">
             {searching ? '搜索中…' : `共 ${hits.length} 项`}
           </p>
-          <ul role="listbox" aria-label="搜索结果" className="m-0 list-none p-0 text-sm">
+          <ul role="listbox" aria-label="搜索结果" className="m-0 list-none p-0 font-mono text-xs">
             {hits.length === 0 ? (
               <EmptyState title={`没有匹配「${q}」的文件`} />
             ) : (

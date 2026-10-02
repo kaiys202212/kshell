@@ -51,10 +51,17 @@ if ($Clean -and (Test-Path dist)) {
 # Stop-RunningKshellDesktop 请求运行中的 kshell 桌面版优雅退出并等待：
 # 写 ~/.kshell/exit.signal（应用轮询到即走与托盘退出相同的收尾链路），
 # 最多等 15s。只匹配桌面版进程（TUI 不监听信号文件，避免无谓等待）。
-function Stop-RunningKshellDesktop {
-    $desktopProcs = @(Get-Process -Name kshell -ErrorAction SilentlyContinue | Where-Object {
+function Get-KshellDesktopProcess {
+    # 进程名取自 exe 文件名：dist 版是 kshell-desktop，build\bin 版是 kshell，
+    # 因此必须用 'kshell*' 通配粗筛（只写 kshell 会漏掉 dist 版，占用拷贝目标却不被发现），
+    # 再用 Path 排除 TUI（kshell.exe / kshell-tui.exe 不监听退出信号）。
+    return @(Get-Process -Name 'kshell*' -ErrorAction SilentlyContinue | Where-Object {
             $_.Path -like '*\kshell-desktop.exe' -or $_.Path -like '*\build\bin\kshell.exe'
         })
+}
+
+function Stop-RunningKshellDesktop {
+    $desktopProcs = Get-KshellDesktopProcess
     if ($desktopProcs.Count -eq 0) { return }
     Write-Host '==> 检测到 kshell 桌面版正在运行，发送退出信号并等待…' -ForegroundColor Cyan
     $signal = Join-Path $env:USERPROFILE '.kshell\exit.signal'
@@ -62,8 +69,7 @@ function Stop-RunningKshellDesktop {
     Set-Content -Path $signal -Value ('exit ' + (Get-Date -Format o)) -Encoding UTF8
     $deadline = (Get-Date).AddSeconds(15)
     while ((Get-Date) -lt $deadline) {
-        if (-not (Get-Process -Name kshell -ErrorAction SilentlyContinue |
-                Where-Object { $_.Path -like '*\kshell-desktop.exe' -or $_.Path -like '*\build\bin\kshell.exe' })) {
+        if ((Get-KshellDesktopProcess).Count -eq 0) {
             Write-Host '==> 旧实例已退出' -ForegroundColor Green
             Remove-Item $signal -Force -ErrorAction SilentlyContinue
             return

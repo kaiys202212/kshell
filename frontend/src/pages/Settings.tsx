@@ -76,7 +76,7 @@ export default function Settings() {
       <div className="max-w-2xl">
         <h1 className="mb-4 text-lg font-semibold">设置</h1>
 
-        <section className="mb-6 rounded-lg border border-border bg-card p-4">
+        <section className="mb-5 rounded border border-border bg-card p-3.5">
           <h2 className="mb-3 text-sm font-medium">工具检测</h2>
           {toolsError && <p className="text-sm text-destructive">{toolsError}</p>}
           {tools === null && !toolsError && (
@@ -86,12 +86,12 @@ export default function Settings() {
             <p className="text-sm text-muted-foreground">未检测到任何工具</p>
           )}
           {tools !== null && tools.length > 0 && (
-            <ul className="divide-y divide-border rounded-md border border-border">
+            <ul className="divide-y divide-border rounded border border-border">
               {tools.map((t) => (
                 <li
                   key={t.ID}
                   className={cn(
-                    'flex items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-muted',
+                    'flex items-center gap-2 px-2.5 py-1.5 text-xs transition-colors hover:bg-muted',
                     !t.Installed && 'opacity-50',
                   )}
                   title={
@@ -102,12 +102,7 @@ export default function Settings() {
                 >
                   <span className="font-medium">{t.Name}</span>
                   {t.Source === 'config-dir' && (
-                    <Badge
-                      variant="outline"
-                      className="border-amber-500/50 text-amber-600 dark:text-amber-400"
-                    >
-                      未验证
-                    </Badge>
+                    <Badge variant="warning">未验证</Badge>
                   )}
                   {t.Installed ? (
                     t.Version && <span className="text-xs text-muted-foreground">{t.Version}</span>
@@ -120,13 +115,13 @@ export default function Settings() {
           )}
         </section>
 
-        <section className="rounded-lg border border-border bg-card p-4">
+        <section className="rounded border border-border bg-card p-3.5">
           <h2 className="mb-3 text-sm font-medium">自定义工具（providers.yaml）</h2>
           {yamlError && <p className="text-sm text-destructive">{yamlError}</p>}
           {yaml !== null && (
             <>
               <textarea
-                className="min-h-[280px] w-full resize-y rounded-md border border-input bg-card p-3 font-mono text-xs leading-relaxed text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="min-h-[280px] w-full resize-y rounded border border-input bg-card p-2.5 font-mono text-xs leading-[1.55] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 aria-label="providers.yaml 编辑器"
                 value={yaml}
                 spellCheck={false}

@@ -7,10 +7,21 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/yangk/kshell/internal/executil"
 )
 
 // gitStatusTimeout 单次 git status 的上限：仓库很大时 porcelain 也要秒级，超过即放弃。
 const gitStatusTimeout = 10 * time.Second
+
+// gitCmd 构造 git 子进程命令：统一在这里隐藏控制台窗口。
+// 桌面版（windowsgui 子系统）自己没有控制台，进入项目页签时前端会立刻拉取
+// git 状态（FileTree 挂载即刷新），裸露执行 git.exe 会闪过一个黑窗。
+func gitCmd(ctx context.Context, root string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+	executil.HideWindow(cmd)
+	return cmd
+}
 
 // GitStatus 执行 `git status --porcelain=v1 -z --untracked-files=all`，
 // 返回 relPath（'/' 分隔，相对 root）→ 状态码。
@@ -22,16 +33,14 @@ func GitStatus(root string) (status map[string]string, isRepo bool, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
 	defer cancel()
 
-	topOut, execErr := exec.CommandContext(ctx, "git", "-C", root,
-		"rev-parse", "--show-toplevel").Output()
+	topOut, execErr := gitCmd(ctx, root, "rev-parse", "--show-toplevel").Output()
 	if execErr != nil {
 		// 退出码 128（非仓库）、git 未安装等：一律按「非仓库」处理
 		return nil, false, nil
 	}
 	top := filepath.Clean(strings.TrimSpace(string(topOut)))
 
-	cmd := exec.CommandContext(ctx, "git", "-C", root,
-		"status", "--porcelain=v1", "-z", "--untracked-files=all")
+	cmd := gitCmd(ctx, root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if execErr := cmd.Run(); execErr != nil {

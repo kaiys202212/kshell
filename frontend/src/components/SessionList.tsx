@@ -10,12 +10,13 @@ import { formatRelativeTime } from '../lib/format';
 import { badgeFor } from '../lib/toolBadge';
 import { displayTitle } from '../lib/title';
 import { cn } from '../lib/cn';
+import { LIST_ROW, LIST_ROW_ACTIVE, MONO } from '../lib/ui';
 import { useAppStore } from '../state/store';
 import WorkspaceSearch from './WorkspaceSearch';
-import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { EmptyState } from './ui/empty-state';
 import { Skeleton } from './ui/skeleton';
+import { ToolDot } from './ui/tool-dot';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
 // 时间戳数值化：解析失败按 0 兜底，避免 NaN 让比较器失效导致排序错乱
@@ -153,10 +154,7 @@ export default function SessionList({ workspacePath, onOpenTerminal }: Props) {
             return (
               <li
                 key={s.ID}
-                className={cn(
-                  'rounded border border-border bg-card p-2.5 transition-colors',
-                  running && 'border-l-2 border-l-primary bg-primary/5',
-                )}
+                className={cn(LIST_ROW, 'p-2', running && LIST_ROW_ACTIVE)}
               >
                 <div className="flex min-w-0 flex-col gap-1.5">
                   {/* 第一行：标题（单行截断，悬停浮出完整标题卡片）+ 运行中标记 */}
@@ -164,6 +162,7 @@ export default function SessionList({ workspacePath, onOpenTerminal }: Props) {
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <span
+                          data-testid="session-title"
                           className={cn(
                             'min-w-0 cursor-default truncate text-sm font-medium',
                             !title && 'italic text-muted-foreground',
@@ -183,20 +182,16 @@ export default function SessionList({ workspacePath, onOpenTerminal }: Props) {
                       </TooltipContent>
                     </Tooltip>
                     {running && (
-                      <span className="shrink-0 text-xs text-primary" title="运行中">
+                      <span className="shrink-0 text-xs text-success" title="运行中">
                         ✓
                       </span>
                     )}
                   </div>
-                  {/* 第二行：工具徽标 + 相对时间 + 条数 + 右侧操作区 */}
+                  {/* 第二行：工具色点 + 相对时间 + 条数 + 右侧操作区 */}
                   <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                    <Badge
-                      variant={badge.className === 'tool-badge--other' ? 'muted' : 'default'}
-                    >
-                      {badge.label}
-                    </Badge>
-                    <span className="whitespace-nowrap">{formatRelativeTime(s.UpdatedAt)}</span>
-                    <span className="whitespace-nowrap">{s.Messages} 条</span>
+                    <ToolDot toolID={s.ToolID} className="shrink-0" />
+                    <span className={`whitespace-nowrap ${MONO}`}>{formatRelativeTime(s.UpdatedAt)}</span>
+                    <span className={`whitespace-nowrap ${MONO}`}>{s.Messages} 条</span>
                     <Button
                       size="sm"
                       variant={running ? 'default' : 'secondary'}

@@ -2,6 +2,7 @@
 // 移除走 Go 绑定并以返回值同步 store（见 store.syncBasket），保证与 Go 状态一致。
 // 新建会话时 Go 侧自动把篮子内容作为初始提示注入，前端无需再传文件列表。
 import { toggleBasket } from '../lib/api';
+import { PANE_HEADER } from '../lib/ui';
 import { useAppStore } from '../state/store';
 
 const maxBasket = 20; // 与 Go 侧 maxBasket 一致，仅用于展示计数
@@ -26,8 +27,8 @@ export default function BasketBar() {
   };
 
   return (
-    <div className="mx-3 mt-3 mb-2 flex flex-wrap items-center gap-2 rounded border border-border bg-card px-2.5 py-1.5">
-      <span className="whitespace-nowrap text-xs text-muted-foreground">
+    <div className="mx-2.5 mt-2 mb-1.5 flex flex-wrap items-center gap-1.5 rounded border border-border bg-card px-2 py-1">
+      <span className={`whitespace-nowrap ${PANE_HEADER}`}>
         上下文篮（{basket.length}/{maxBasket}）
       </span>
       {basket.length === 0 ? (

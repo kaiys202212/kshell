@@ -76,7 +76,7 @@ describe('SessionList', () => {
     await findRow('清理构建缓存');
     const titles = screen
       .getAllByRole('listitem')
-      .map((li) => li.querySelector('span.truncate')?.textContent);
+      .map((li) => li.querySelector('[data-testid="session-title"]')?.textContent);
     expect(titles).toEqual(['清理构建缓存', '修复上传白名单', '重构登录页']);
     expect(screen.queryByText('其他工作区会话')).not.toBeInTheDocument();
 
@@ -204,7 +204,7 @@ describe('SessionList', () => {
 
     const row = await findRow('帮我把登录页报错文案改一下');
     // 行内单行截断展示清洗后的标题
-    expect(row.querySelector('span.truncate')?.textContent).toBe('帮我把登录页报错文案改一下');
+    expect(row.querySelector('[data-testid="session-title"]')?.textContent).toBe('帮我把登录页报错文案改一下');
     expect(screen.queryByText(/local-command-caveat/)).not.toBeInTheDocument();
 
     const empty = await screen.findByText('(无标题)');

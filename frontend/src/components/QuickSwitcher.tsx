@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type { Workspace } from '../lib/api';
 import { cn } from '../lib/cn';
+import { PANE_HEADER } from '../lib/ui';
 import { useAppStore } from '../state/store';
 import type { WorkspaceTab } from '../state/store';
 import { EmptyState } from './ui/empty-state';
@@ -97,7 +98,7 @@ export default function QuickSwitcher({ open, onOpenChange }: Props) {
     <li key={item.key}>
       <button
         className={cn(
-          'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors',
+          'flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs transition-colors',
           index === clamped ? 'bg-muted' : 'hover:bg-muted/60',
         )}
         onClick={() => confirm(item)}
@@ -119,7 +120,7 @@ export default function QuickSwitcher({ open, onOpenChange }: Props) {
           <DialogPrimitive.Title className="sr-only">快速切换</DialogPrimitive.Title>
           <input
             autoFocus
-            className="h-9 w-full rounded-md border border-input bg-card px-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-8 w-full rounded border border-input bg-card px-2.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="搜索页签或工作区"
             placeholder="输入以过滤页签 / 工作区…"
             value={query}
@@ -142,7 +143,7 @@ export default function QuickSwitcher({ open, onOpenChange }: Props) {
             <div className="mt-2 max-h-80 overflow-y-auto">
               {tabs.length > 0 && (
                 <section className="mb-2">
-                  <p className="px-1 py-1 text-xs text-muted-foreground">已打开的页签</p>
+                  <p className={`px-1 py-1 ${PANE_HEADER}`}>已打开的页签</p>
                   <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
                     {tabs.map((t, i) => renderItem(entries[i], i))}
                   </ul>
@@ -150,7 +151,7 @@ export default function QuickSwitcher({ open, onOpenChange }: Props) {
               )}
               {spaces.length > 0 && (
                 <section>
-                  <p className="px-1 py-1 text-xs text-muted-foreground">工作区</p>
+                  <p className={`px-1 py-1 ${PANE_HEADER}`}>工作区</p>
                   <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
                     {spaces.map((w, i) => renderItem(entries[tabs.length + i], tabs.length + i))}
                   </ul>

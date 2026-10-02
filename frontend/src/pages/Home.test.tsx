@@ -50,7 +50,7 @@ let scanDoneCb: (payload: unknown) => void = () => {};
 const card = (path: string) => screen.getByTitle(path);
 // 卡片名称 span（truncate 单行截断）——用于断言排序
 const cardOrder = () =>
-  screen.getAllByRole('listitem').map((li) => li.querySelector('span.truncate')?.textContent ?? '');
+  screen.getAllByRole('listitem').map((li) => li.querySelector('[data-testid="ws-name"]')?.textContent ?? '');
 
 afterEach(cleanup);
 

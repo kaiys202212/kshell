@@ -133,7 +133,7 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
           title={path ?? ''}
         >
           {path ?? '未选择文件'}
-          {editing && dirty && <span className="ml-1 text-orange-500">●</span>}
+          {editing && dirty && <span className="ml-1 text-warning">●</span>}
         </span>
         {editing && (
           <>
@@ -183,7 +183,7 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
       {error && <p className="text-sm text-destructive">{error}</p>}
       {!loading && !error && editing && (
         <textarea
-          className="mt-2 min-h-[240px] w-full flex-1 resize-y overflow-auto rounded-md border border-border bg-card p-3 font-mono text-[13px] leading-relaxed outline-none focus:border-primary"
+          className="mt-2 min-h-[240px] w-full flex-1 resize-y overflow-auto rounded border border-border bg-card p-2.5 font-mono text-xs leading-[1.55] outline-none focus:border-primary"
           value={text}
           spellCheck={false}
           aria-label="编辑文件内容"
@@ -211,7 +211,7 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
               内容已截断：仅显示前 500 行
             </Badge>
           )}
-          <pre className="overflow-auto rounded-md border border-border bg-card p-3 font-mono text-[13px] leading-relaxed whitespace-pre">
+          <pre className="overflow-auto rounded border border-border bg-card p-2.5 font-mono text-xs leading-[1.55] whitespace-pre">
             {data.Lines.join('\n')}
           </pre>
         </>

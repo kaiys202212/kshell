@@ -142,9 +142,9 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
   if (conns === null) {
     return (
       <div className="flex flex-col gap-2" aria-label="SSH 连接列表加载中">
-        <Skeleton className="h-12 rounded-lg border border-border" />
-        <Skeleton className="h-12 rounded-lg border border-border" />
-        <Skeleton className="h-12 rounded-lg border border-border" />
+        <Skeleton className="h-12 rounded border border-border" />
+        <Skeleton className="h-12 rounded border border-border" />
+        <Skeleton className="h-12 rounded border border-border" />
       </div>
     );
   }
@@ -165,7 +165,7 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
               <li
                 key={c.ID}
                 className={cn(
-                  'rounded-lg border border-border bg-card px-2.5 py-2 transition-colors',
+                  'rounded border border-border bg-card px-2.5 py-1.5 transition-colors',
                   open
                     ? 'border-l-2 border-l-primary bg-primary/5'
                     : c.ID === selectedId && 'bg-muted/60',
@@ -192,12 +192,12 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
                 <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                   <span className="truncate">{display(c)}</span>
                   <span
-                    className="shrink-0 rounded-sm border border-border px-1.5 py-px"
+                    className="shrink-0 rounded-sm border border-border px-1.5 py-px font-mono text-[10px]"
                     title={c.SourceFile || undefined}
                   >
                     {sourceLabel(c.Source)}
                   </span>
-                  {c.Verified && <span className="shrink-0 text-emerald-500">✓</span>}
+                  {c.Verified && <span className="shrink-0 text-success">✓</span>}
                 </div>
               </li>
             );
@@ -209,7 +209,7 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
         <div className="flex flex-col gap-2">
           <div className="flex gap-2">
             <input
-              className="h-8 min-w-0 flex-1 rounded-md border border-input bg-card px-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-7 min-w-0 flex-1 rounded border border-input bg-card px-2.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="执行命令"
               placeholder={`在 ${selected.Name} 上执行命令`}
               value={cmd}
@@ -266,14 +266,14 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
                 退出码 {result.ExitCode} · 耗时 {formatDuration(result.Duration)}
               </p>
               <pre
-                className="max-h-80 overflow-auto rounded-md bg-muted p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap"
+                className="max-h-80 overflow-auto rounded bg-muted p-2.5 font-mono text-xs leading-[1.5] whitespace-pre-wrap"
                 aria-label="命令输出"
               >
                 {stdoutTail || '（无输出）'}
               </pre>
               {stderrTail && (
                 <pre
-                  className="max-h-80 overflow-auto rounded-md bg-muted p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap text-destructive/90"
+                  className="max-h-80 overflow-auto rounded bg-muted p-2.5 font-mono text-xs leading-[1.5] whitespace-pre-wrap text-destructive/90"
                   aria-label="错误输出"
                 >
                   {stderrTail}

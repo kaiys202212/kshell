@@ -7,17 +7,18 @@ import { useEffect } from 'react';
 import { getWorkspaces, onScanDone, scanSessions } from '../lib/api';
 import type { Workspace } from '../lib/api';
 import { formatRelativeTime } from '../lib/format';
-import { badgeFor } from '../lib/toolBadge';
+import { MONO } from '../lib/ui';
 import { useAppStore } from '../state/store';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { EmptyState } from '../components/ui/empty-state';
 import { Skeleton } from '../components/ui/skeleton';
+import { ToolDot } from '../components/ui/tool-dot';
 
 // 卡片工具分布最多展示的徽标数，其余折叠成 "+N"
 const TOOL_BADGES_MAX = 3;
 // 网格列宽：窄窗口自动降列
-const GRID = 'grid gap-3 grid-cols-[repeat(auto-fill,minmax(240px,1fr))]';
+const GRID = 'grid gap-2.5 grid-cols-[repeat(auto-fill,minmax(220px,1fr))]';
 
 // 空态图标：手写内联 SVG（不引图标库）
 function FolderGlyph() {
@@ -147,19 +148,19 @@ export default function Home() {
             return (
               <li key={ws.Path} className="min-w-0">
                 <button
-                  className="flex h-full w-full min-w-0 flex-col gap-1.5 rounded border border-border bg-card px-3 py-2.5 text-left transition-colors hover:bg-muted"
+                  className="flex h-full w-full min-w-0 flex-col gap-1 rounded border border-border bg-card px-2.5 py-2 text-left transition-colors hover:bg-muted"
                   onClick={() => openTab(ws)}
                   title={ws.Path}
                 >
                   {/* 第一行：名称（单行截断）+ git 徽标 */}
                   <span className="flex min-w-0 items-center gap-1.5">
-                    <span className="min-w-0 truncate text-sm font-medium">{ws.Name}</span>
+                    <span data-testid="ws-name" className="min-w-0 truncate text-[12.5px] font-medium">{ws.Name}</span>
                     {ws.Source === 'git' && <Badge variant="outline">git</Badge>}
                   </span>
                   {/* 第二行：会话数 + 最后活动时间 */}
                   <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-                    <span className="whitespace-nowrap">{ws.SessionCount} 个会话</span>
-                    <span className="whitespace-nowrap">
+                    <span className={`whitespace-nowrap ${MONO}`}>{ws.SessionCount} 个会话</span>
+                    <span className={`whitespace-nowrap ${MONO}`}>
                       {lastUsed === null
                         ? '未使用过'
                         : `最后活动 ${formatRelativeTime(ws.LastUsed)}`}
@@ -169,9 +170,7 @@ export default function Home() {
                   {shown.length > 0 && (
                     <span className="flex min-w-0 flex-wrap items-center gap-1">
                       {shown.map(([toolID]) => (
-                        <Badge key={toolID} variant="muted">
-                          {badgeFor(toolID).label}
-                        </Badge>
+                        <ToolDot key={toolID} toolID={toolID} />
                       ))}
                       {rest > 0 && (
                         <span className="text-xs text-muted-foreground">+{rest}</span>

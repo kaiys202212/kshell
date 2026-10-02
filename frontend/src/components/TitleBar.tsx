@@ -11,16 +11,16 @@ import {
   WindowToggleMaximise,
 } from '../../wailsjs/runtime/runtime';
 import { cn } from '../lib/cn';
+import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
 import { SETTINGS_TAB_ID, type WorkspaceTab } from '../state/store';
 
 // 页签基础态：扁平下划线激活态，不做胶囊填充
-const tabBase =
-  'kshell-no-drag relative flex h-9 max-w-44 shrink-0 items-center gap-1 px-2.5 text-[13px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground';
-const tabActive = 'font-medium text-foreground';
+const tabBase = `kshell-no-drag ${TAB_BASE} h-7 max-w-44`;
+const tabActive = TAB_ACTIVE;
 
-// 窗口控件按钮：Windows 习惯的 46×36 热区，关闭键 hover 变危险色
+// 窗口控件按钮：Windows 习惯的热区，关闭键 hover 变危险色
 const controlBase =
-  'kshell-no-drag flex h-9 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground';
+  'kshell-no-drag flex h-8 w-10 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground';
 
 function MinGlyph() {
   return (
@@ -113,7 +113,7 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
 
   return (
     <header
-      className="kshell-drag flex h-9 shrink-0 items-stretch border-b border-border bg-card pl-2"
+      className="kshell-drag flex h-8 shrink-0 items-stretch border-b border-border bg-card pl-2"
       onDoubleClick={onDoubleClick}
     >
       <div className="flex shrink-0 items-center gap-1.5 pr-3">
@@ -130,7 +130,7 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
           onClick={() => onSelectTab(null)}
         >
           首页
-          {activeTabId === null && <span className="absolute inset-x-1.5 bottom-0 h-0.5 bg-primary" />}
+          {activeTabId === null && <span className={TAB_UNDERLINE} />}
         </button>
 
         {tabs.map((t) => {
@@ -147,7 +147,7 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
               }}
             >
               <button
-                className="kshell-no-drag min-w-0 truncate text-[13px]"
+                className="kshell-no-drag min-w-0 truncate"
                 title={t.id}
                 onClick={() => onSelectTab(t.id)}
               >
@@ -163,7 +163,7 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
               >
                 ×
               </button>
-              {active && <span className="absolute inset-x-1.5 bottom-0 h-0.5 bg-primary" />}
+              {active && <span className={TAB_UNDERLINE} />}
             </div>
           );
         })}
@@ -177,7 +177,7 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
       >
         设置
         {activeTabId === SETTINGS_TAB_ID && (
-          <span className="absolute inset-x-1.5 bottom-0 h-0.5 bg-primary" />
+          <span className={TAB_UNDERLINE} />
         )}
       </button>
 

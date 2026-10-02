@@ -16,6 +16,7 @@ import {
 import type { Session, TerminalInfo, ToolInfo } from '../lib/api';
 import { badgeFor } from '../lib/toolBadge';
 import { cn } from '../lib/cn';
+import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
 import BasketBar from '../components/BasketBar';
 import FileTree from '../components/FileTree';
 import Preview from '../components/Preview';
@@ -25,6 +26,7 @@ import SshPanel from '../components/SshPanel';
 import TerminalView from '../components/TerminalView';
 import ToolPicker from '../components/ToolPicker';
 import { Button } from '../components/ui/button';
+import { ToolDot } from '../components/ui/tool-dot';
 import { LAYOUT_DEFAULT, useAppStore } from '../state/store';
 import type { WorkspaceTab } from '../state/store';
 
@@ -34,14 +36,12 @@ type RightPane = 'files' | 'ssh';
 const PREVIEW_TAB = 'preview';
 
 // 右栏「文件 | SSH」子页签：扁平下划线式
-const paneTabBase =
-  'flex h-7 items-center px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground';
-const paneTabActive = 'font-medium text-foreground';
+const paneTabBase = `${TAB_BASE} h-7 text-xs`;
+const paneTabActive = TAB_ACTIVE;
 
 // 中心区页签：与标题栏同语言（下划线激活），终端页签带工具徽标与关闭键
-const centerTabBase =
-  'group relative flex h-8 max-w-56 shrink-0 items-center gap-1.5 px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground';
-const centerTabActive = 'font-medium text-foreground';
+const centerTabBase = `group ${TAB_BASE} h-7 max-w-56 text-xs`;
+const centerTabActive = TAB_ACTIVE;
 
 // 工作区路径归一化比较（会话记录里的 cwd 可能大小写/分隔符不一致）
 function sameWorkspace(a: string, b: string): boolean {
@@ -154,7 +154,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   return (
     <div className="flex min-h-0 flex-1">
       <aside
-        className="flex shrink-0 flex-col gap-2 overflow-y-auto border-r border-border bg-card p-3"
+        className="flex shrink-0 flex-col gap-2 overflow-y-auto border-r border-border bg-card p-2.5"
         style={{ width: layout.left }}
         aria-label="会话列表栏"
       >
@@ -198,7 +198,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           >
             预览
             {centerTab === PREVIEW_TAB && (
-              <span className="absolute inset-x-2 bottom-0 h-0.5 bg-primary" />
+              <span className={TAB_UNDERLINE} />
             )}
           </button>
           {terms.map((t) => {
@@ -227,9 +227,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                 >
                   {t.Title}
                 </button>
-                {t.ToolID && (
-                  <span className="shrink-0 text-[10px] text-muted-foreground">{badge.label}</span>
-                )}
+                {t.ToolID && <ToolDot toolID={t.ToolID} className="shrink-0" />}
                 <button
                   className={cn(
                     'ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-sm leading-none text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground',
@@ -240,7 +238,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                 >
                   ×
                 </button>
-                {active && <span className="absolute inset-x-2 bottom-0 h-0.5 bg-primary" />}
+                {active && <span className={TAB_UNDERLINE} />}
               </div>
             );
           })}
@@ -268,7 +266,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
       />
 
       <aside
-        className="flex shrink-0 flex-col overflow-y-auto border-l border-border bg-card p-3"
+        className="flex shrink-0 flex-col overflow-y-auto border-l border-border bg-card p-2.5"
         style={{ width: layout.right }}
         aria-label="文件与 SSH 面板"
       >
