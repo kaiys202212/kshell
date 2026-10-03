@@ -18,12 +18,18 @@ type SSHOptions struct {
 	CommandTimeoutSeconds int      `yaml:"command_timeout_seconds"`
 }
 
+// Appearance 是颜色模式配置：system 跟随操作系统，light/dark 强制覆盖。
+type Appearance struct {
+	Mode string `yaml:"mode"` // system | light | dark
+}
+
 type Config struct {
 	ScanRoots  []string        `yaml:"scan_roots"`
 	MaxDepth   int             `yaml:"max_depth"`
 	Exclude    []string        `yaml:"exclude"`
 	SSHOptions SSHOptions      `yaml:"ssh"`
 	Scanners   map[string]bool `yaml:"scanners"`
+	Appearance Appearance      `yaml:"appearance"`
 }
 
 func Default() Config {
@@ -43,6 +49,7 @@ func Default() Config {
 			"deploy":    true,
 			"docs":      true,
 		},
+		Appearance: Appearance{Mode: "system"},
 	}
 }
 
@@ -125,6 +132,12 @@ func (c Config) normalized() Config {
 			}
 			c.Scanners[k] = v
 		}
+	}
+	// 颜色模式：空值或非法值一律回落默认（system）。
+	switch c.Appearance.Mode {
+	case "system", "light", "dark":
+	default:
+		c.Appearance.Mode = d.Appearance.Mode
 	}
 	return c
 }
