@@ -32,7 +32,7 @@ func (ptyBackend) Start(spec Spec, cols, rows int) (Handle, error) {
 
 	cmd := p.Command(path, args...)
 	cmd.Dir = spec.Dir
-	cmd.Env = spec.Env // nil 表示继承当前进程环境
+	cmd.Env = mergedEnv(spec.Env) // nil 表示继承当前进程环境
 	if err := cmd.Start(); err != nil {
 		_ = p.Close()
 		return nil, fmt.Errorf("启动终端进程失败: %w", err)
@@ -110,6 +110,14 @@ func (h *ptyHandle) Wait() (int, error) {
 		}
 	})
 	return h.code, h.werr
+}
+
+// mergedEnv 把额外环境变量叠加到父进程环境之上；空表示完全继承（返回 nil）。
+func mergedEnv(extra []string) []string {
+	if len(extra) == 0 {
+		return nil
+	}
+	return append(os.Environ(), extra...)
 }
 
 // Close 结束子进程并关闭伪终端，幂等。

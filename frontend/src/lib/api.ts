@@ -6,6 +6,7 @@
 // App 定义在 internal/desktop 包，所以是 window.go.desktop.App（不是 main.App），
 // 见 wailsjs/go/desktop/App.js 的生成产物（window['go']['desktop']['App']）。
 import { EventsOn } from '../../wailsjs/runtime/runtime';
+import type { AppearanceInfo } from './appearance';
 
 // discovery.Workspace 的 JSON 形态（internal/discovery/workspaces.go）
 export interface Workspace {
@@ -123,6 +124,15 @@ export interface EditContent {
   Size: number;
 }
 
+// desktop.DeletedProjectView 的 JSON 形态（internal/desktop/projects.go）：
+// 回收站条目 = 逻辑删除的项目 + 删除时间 + 目录是否仍存在于磁盘。
+export interface DeletedProject {
+  path: string;
+  name: string;
+  at: string; // RFC3339，前端自行本地化展示
+  exists: boolean;
+}
+
 // desktop.GitStatusResult 的 JSON 形态（internal/desktop/files.go）：
 // Status 键为 git 原生输出的 '/' 分隔相对路径，值见 workspace.GitStatus 的状态码。
 export type GitStatusCode = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflicted';
@@ -144,8 +154,6 @@ interface AppBindings {
   ReadFileForEdit(wsPath: string, path: string): Promise<EditContent>;
   SaveFile(wsPath: string, path: string, text: string, eol: string): Promise<void>;
   GitStatus(wsPath: string): Promise<GitStatusResult>;
-  ToggleBasket(path: string): Promise<boolean>;
-  GetBasket(): Promise<string[]>;
   NewSession(wsPath: string): Promise<void>;
   ListConnections(wsID: string): Promise<SshConnection[]>;
   OpenSSH(connID: string): Promise<void>;
@@ -162,6 +170,12 @@ interface AppBindings {
   ListTerminals(): Promise<TerminalInfo[]>;
   ScrollbackTerminal(id: string): Promise<string>;
   NewSessionWithTool(wsPath: string, toolId: string): Promise<void>;
+  CreateProject(): Promise<string>;
+  HideProject(path: string): Promise<void>;
+  RestoreProject(path: string): Promise<void>;
+  GetDeletedProjects(): Promise<DeletedProject[]>;
+  GetAppearance(): Promise<AppearanceInfo>;
+  SetAppearanceMode(mode: string): Promise<void>;
 }
 
 declare global {
@@ -257,7 +271,7 @@ export async function searchFiles(wsPath: string, query: string): Promise<Search
 }
 
 // RenameEntry 重命名工作区内文件/目录（只允许改最后一段名字），返回新绝对路径。
-// Go 侧会同步篮子并作废树缓存；错误（目标已存在、越界等）向上抛。
+// Go 侧会作废树缓存；错误（目标已存在、越界等）向上抛。
 export async function renameEntry(wsPath: string, relPath: string, newName: string): Promise<string> {
   const a = app();
   if (!a) throw new Error('未检测到桌面端绑定');
@@ -286,23 +300,7 @@ export async function gitStatus(wsPath: string): Promise<GitStatusResult | null>
   return a.GitStatus(wsPath);
 }
 
-// ToggleBasket 把文件加入/移出上下文篮，返回操作后是否在篮中
-//（篮子已满时加入失败也返回 false）。错误向上抛。
-export async function toggleBasket(path: string): Promise<boolean> {
-  const a = app();
-  if (!a) return false;
-  return a.ToggleBasket(path);
-}
-
-// GetBasket 返回上下文篮内容（Go 侧副本）
-export async function getBasket(): Promise<string[]> {
-  const a = app();
-  if (!a) return [];
-  return a.GetBasket();
-}
-
-// NewSession 在工作区新建会话（Go 侧自动带上篮子内容作为初始提示）；
-// 错误向上抛，由调用方决定如何呈现
+// NewSession 在工作区新建会话；错误向上抛，由调用方决定如何呈现
 export async function newSession(wsPath: string): Promise<void> {
   const a = app();
   if (!a) return;
@@ -432,6 +430,45 @@ export async function newSessionWithTool(wsPath: string, toolId: string): Promis
   await a.NewSessionWithTool(wsPath, toolId);
 }
 
+// ---- 项目表（新建 / 逻辑删除 / 回收站）----
+
+// createProject 弹出原生目录选择器并登记为新项目（显示名取目录名）。
+// 用户取消返回空串（不算错误）；失败（目录不存在等）向上抛。
+export async function createProject(): Promise<string> {
+  const a = app();
+  if (!a) return '';
+  return a.CreateProject();
+}
+
+// hideProject 逻辑删除项目（只从列表隐藏并进回收站，磁盘内容不动）。错误向上抛。
+export async function hideProject(path: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.HideProject(path);
+}
+
+// restoreProject 从回收站还原项目。错误向上抛。
+export async function restoreProject(path: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.RestoreProject(path);
+}
+
+// getDeletedProjects 返回回收站列表（最近删除的在前）；绑定不可用时返回空数组。
+export async function getDeletedProjects(): Promise<DeletedProject[]> {
+  const a = app();
+  if (!a) return [];
+  return a.GetDeletedProjects();
+}
+
+// onProjectsChanged 订阅项目表变更（新建/删除/还原），payload 带最新工作区列表，
+// 返回取消订阅函数。调用方据此刷新列表或关闭已消失工作区的页签。
+export function onProjectsChanged(cb: (payload: { workspaces: Workspace[] }) => void): () => void {
+  return EventsOn('projects:changed', (p: { workspaces?: Workspace[] }) =>
+    cb({ workspaces: p?.workspaces ?? [] }),
+  );
+}
+
 // onTerminalData 订阅终端输出（data 为 base64），返回取消订阅函数
 export function onTerminalData(cb: (payload: { id: string; data: string }) => void): () => void {
   return EventsOn('terminal:data', (p: { id?: string; data?: string }) =>
@@ -443,5 +480,34 @@ export function onTerminalData(cb: (payload: { id: string; data: string }) => vo
 export function onTerminalExit(cb: (payload: { id: string; exitCode: number }) => void): () => void {
   return EventsOn('terminal:exit', (p: { id?: string; exitCode?: number }) =>
     cb({ id: p?.id ?? '', exitCode: p?.exitCode ?? 0 }),
+  );
+}
+
+// ---- 颜色模式 ----
+
+// getAppearance 返回当前模式与解析后的明暗；绑定不可用时返回跟随系统的兜底值。
+export async function getAppearance(): Promise<AppearanceInfo> {
+  const a = app();
+  if (!a) {
+    const dark =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return { mode: 'system', resolved: dark ? 'dark' : 'light' };
+  }
+  return a.GetAppearance();
+}
+
+// setAppearanceMode 设置颜色模式（写回 config.yaml），错误向上抛。
+export async function setAppearanceMode(mode: string): Promise<void> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  await a.SetAppearanceMode(mode);
+}
+
+// onAppearanceChanged 订阅颜色模式/系统明暗变化，返回取消订阅函数。
+export function onAppearanceChanged(cb: (info: AppearanceInfo) => void): () => void {
+  return EventsOn('appearance:changed', (p: AppearanceInfo) =>
+    cb({ mode: p?.mode ?? 'system', resolved: p?.resolved ?? 'dark' }),
   );
 }

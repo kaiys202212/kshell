@@ -22,6 +22,10 @@ type Layout struct {
 	// SignalExit 是退出信号文件：外部脚本（如 build.ps1）创建它即可请求
 	// 运行中的桌面版优雅退出，供无人值守构建/调试使用。
 	SignalExit string
+	// Projects 是项目表：手动添加的项目目录 + 逻辑删除（隐藏）的项目。
+	Projects string
+	// CacheAppearance 是颜色主题注入文件的落盘目录（agent 工具用）。
+	CacheAppearance string
 }
 
 func Paths() (Layout, error) {
@@ -33,15 +37,17 @@ func Paths() (Layout, error) {
 	cache := filepath.Join(root, "cache")
 
 	return Layout{
-		Root:          root,
-		Config:        filepath.Join(root, "config.yaml"),
-		Connections:   filepath.Join(root, "connections.yaml"),
-		Providers:     filepath.Join(root, "providers.yaml"),
-		Cache:         cache,
-		CacheIndex:    filepath.Join(cache, "index.json"),
-		CacheSnapshot: filepath.Join(cache, "snapshot.json"),
-		CacheTools:    filepath.Join(cache, "tools.json"),
-		SignalExit:    filepath.Join(root, "exit.signal"),
+		Root:            root,
+		Config:          filepath.Join(root, "config.yaml"),
+		Connections:     filepath.Join(root, "connections.yaml"),
+		Providers:       filepath.Join(root, "providers.yaml"),
+		Cache:           cache,
+		CacheIndex:      filepath.Join(cache, "index.json"),
+		CacheSnapshot:   filepath.Join(cache, "snapshot.json"),
+		CacheTools:      filepath.Join(cache, "tools.json"),
+		SignalExit:      filepath.Join(root, "exit.signal"),
+		Projects:        filepath.Join(root, "projects.yaml"),
+		CacheAppearance: filepath.Join(cache, "appearance"),
 	}, nil
 }
 

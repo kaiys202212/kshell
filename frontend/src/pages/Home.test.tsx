@@ -1,8 +1,9 @@
 // 首页工作区卡片测试：按最后活动时间倒序（零值排最后，再按名称）/ 卡片信息（会话数、
-// 相对时间、git 徽标、工具分布折叠）/ 点击整卡打开页签 / 重新扫描的扫描状态机。
+// 相对时间、git 徽标、工具分布折叠）/ 点击整卡打开页签 / 重新扫描的扫描状态机 /
+// 项目表操作（新建、删除、回收站还原、projects:changed 刷新）。
 // api 层整体打桩（vi.mock），与 App.test.tsx 同一套模式。
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Home from './Home';
 import type { Workspace } from '../lib/api';
@@ -12,6 +13,11 @@ const mocks = vi.hoisted(() => ({
   getWorkspaces: vi.fn(),
   scanSessions: vi.fn(),
   onScanDone: vi.fn(),
+  createProject: vi.fn(),
+  hideProject: vi.fn(),
+  restoreProject: vi.fn(),
+  getDeletedProjects: vi.fn(),
+  onProjectsChanged: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -62,12 +68,18 @@ beforeEach(() => {
   });
   mocks.getWorkspaces.mockResolvedValue(workspaces);
   mocks.scanSessions.mockResolvedValue(undefined);
+  mocks.onProjectsChanged.mockImplementation(() => () => {});
+  mocks.createProject.mockResolvedValue('');
+  mocks.hideProject.mockResolvedValue(undefined);
+  mocks.restoreProject.mockResolvedValue(undefined);
+  mocks.getDeletedProjects.mockResolvedValue([]);
   useAppStore.setState({
     workspaces: [],
     openTabs: [],
     activeTabId: null,
     scanState: 'idle',
     terminals: [],
+    toasts: [],
   });
 });
 
@@ -155,5 +167,89 @@ describe('Home', () => {
     });
     expect(await screen.findByText('未发现工作区')).toBeInTheDocument();
     expect(screen.getByText('0 个会话')).toBeInTheDocument();
+  });
+
+  it('新建项目：调绑定、提示并刷新列表', async () => {
+    mocks.createProject.mockResolvedValue('D:\\new-proj');
+    render(<Home />);
+    await screen.findByTitle('D:\\proj-new');
+    const before = mocks.getWorkspaces.mock.calls.length;
+
+    fireEvent.click(screen.getByRole('button', { name: '新建项目' }));
+
+    await waitFor(() => expect(mocks.createProject).toHaveBeenCalledTimes(1));
+    expect(
+      useAppStore.getState().toasts.some((t) => t.title === '已添加项目「new-proj」'),
+    ).toBe(true);
+    await waitFor(() => expect(mocks.getWorkspaces.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it('新建项目取消（返回空串）：不提示、不刷新', async () => {
+    mocks.createProject.mockResolvedValue('');
+    render(<Home />);
+    await screen.findByTitle('D:\\proj-new');
+    const before = mocks.getWorkspaces.mock.calls.length;
+
+    fireEvent.click(screen.getByRole('button', { name: '新建项目' }));
+
+    await waitFor(() => expect(mocks.createProject).toHaveBeenCalledTimes(1));
+    expect(useAppStore.getState().toasts).toHaveLength(0);
+    expect(mocks.getWorkspaces.mock.calls.length).toBe(before);
+  });
+
+  it('删除项目：卡片删除按钮调绑定并提示可从回收站还原', async () => {
+    render(<Home />);
+    await screen.findByTitle('D:\\proj-new');
+
+    fireEvent.click(screen.getByLabelText('删除项目 proj-new'));
+
+    await waitFor(() => expect(mocks.hideProject).toHaveBeenCalledWith('D:\\proj-new'));
+    expect(
+      useAppStore.getState().toasts.some((t) => t.title === '已删除「proj-new」，可在回收站还原'),
+    ).toBe(true);
+  });
+
+  it('回收站：列出已删除项目，点还原调绑定并提示', async () => {
+    mocks.getDeletedProjects.mockResolvedValue([
+      { path: 'D:\\gone', name: 'gone', at: minutesAgo(30), exists: true },
+      { path: 'D:\\lost', name: 'lost', at: minutesAgo(5), exists: false },
+    ]);
+    render(<Home />);
+    await screen.findByTitle('D:\\proj-new');
+
+    const binButton = await screen.findByRole('button', { name: /^回收站/ });
+    await waitFor(() => expect(binButton).toBeEnabled());
+    expect(binButton.textContent).toContain('(2)');
+
+    fireEvent.click(binButton);
+    expect(await screen.findByText('D:\\gone')).toBeInTheDocument();
+    expect(screen.getByText('目录已不存在')).toBeInTheDocument();
+
+    // 「还原」按钮每行一个：点第一条（gone）
+    fireEvent.click(screen.getAllByRole('button', { name: '还原' })[0]);
+
+    await waitFor(() => expect(mocks.restoreProject).toHaveBeenCalledWith('D:\\gone'));
+    expect(useAppStore.getState().toasts.some((t) => t.title === '已还原「gone」')).toBe(true);
+  });
+
+  it('projects:changed 事件：重拉工作区与回收站列表', async () => {
+    let projectsCb: (() => void) | undefined;
+    mocks.onProjectsChanged.mockImplementation((cb: () => void) => {
+      projectsCb = cb;
+      return () => {};
+    });
+    render(<Home />);
+    await screen.findByTitle('D:\\proj-new');
+    const wsCalls = mocks.getWorkspaces.mock.calls.length;
+    const delCalls = mocks.getDeletedProjects.mock.calls.length;
+
+    await act(async () => {
+      projectsCb?.();
+    });
+
+    await waitFor(() => {
+      expect(mocks.getWorkspaces.mock.calls.length).toBeGreaterThan(wsCalls);
+      expect(mocks.getDeletedProjects.mock.calls.length).toBeGreaterThan(delCalls);
+    });
   });
 });

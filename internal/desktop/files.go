@@ -10,8 +10,6 @@ import (
 	"github.com/yangk/kshell/internal/workspace"
 )
 
-const maxBasket = 20 // 与 TUI 一致：篮子条目上限
-
 var (
 	errPathOutsideWorkspace = errors.New("路径越出工作区范围")
 	errDirNotFound          = errors.New("目录不存在")
@@ -172,7 +170,7 @@ func (a *App) SearchFiles(wsPath, query string) ([]workspace.SearchHit, error) {
 
 // RenameEntry 重命名工作区内的文件/目录（只允许改最后一段名字）：
 // 目标已存在报错（Windows 下仅大小写变化视为合法改名）；
-// 成功后篮子里的旧路径原地换成新路径，并作废该工作区的树缓存（懒重建）。
+// 成功后作废该工作区的树缓存（懒重建）。
 func (a *App) RenameEntry(wsPath, relPath, newName string) (string, error) {
 	newName = strings.TrimSpace(newName)
 	if newName == "" || newName == "." || newName == ".." ||
@@ -207,19 +205,6 @@ func (a *App) RenameEntry(wsPath, relPath, newName string) (string, error) {
 	if err := os.Rename(oldAbs, newAbs); err != nil {
 		return "", err
 	}
-
-	a.mu.Lock()
-	for i, p := range a.basket {
-		// 精确命中或位于改名目录之下（目录改名时子路径跟着换前缀）
-		if samePath(p, oldAbs) {
-			a.basket[i] = newAbs
-		} else if underPath(oldAbs, p) {
-			if rel, err := filepath.Rel(oldAbs, p); err == nil {
-				a.basket[i] = filepath.Join(newAbs, rel)
-			}
-		}
-	}
-	a.mu.Unlock()
 
 	a.treeMu.Lock()
 	delete(a.trees, wsPath) // 子树缓存链路整体失效，最省事且正确
@@ -272,32 +257,6 @@ func samePath(a, b string) bool {
 		return strings.EqualFold(a, b)
 	}
 	return a == b
-}
-
-// ToggleBasket 把文件加入/移出上下文篮（去重、上限 maxBasket），
-// 返回操作后该文件是否在篮中。
-func (a *App) ToggleBasket(path string) bool {
-	if strings.TrimSpace(path) == "" {
-		return false
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	for i, p := range a.basket {
-		if p == path {
-			a.basket = append(a.basket[:i], a.basket[i+1:]...)
-			return false
-		}
-	}
-	if len(a.basket) >= maxBasket {
-		return false // 已满：保持原样，该文件不在篮中
-	}
-	a.basket = append(a.basket, path)
-	return true
-}
-
-// GetBasket 返回上下文篮内容（副本）。
-func (a *App) GetBasket() []string {
-	return a.basketSnapshot()
 }
 
 // underPath 判断 target 是否在 root 内（含相等）；两端先 Clean 归一。

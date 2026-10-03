@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/yangk/kshell/internal/appearance"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/workspace"
@@ -76,28 +77,6 @@ func TestFilesViewExpandsDirectory(t *testing.T) {
 	}
 }
 
-func TestSpaceTogglesContextBasket(t *testing.T) {
-	m, root := modelWithFiles(t)
-
-	idx := indexOfRow(m.fileRows(), "main.go")
-	if idx < 0 {
-		t.Fatal("main.go row missing")
-	}
-	m.fileCursor = idx
-
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
-	got := next.(Model)
-	if len(got.basket) != 1 || got.basket[0] != filepath.Join(root, "main.go") {
-		t.Fatalf("basket = %v", got.basket)
-	}
-
-	next, _ = got.Update(tea.KeyMsg{Type: tea.KeySpace})
-	got = next.(Model)
-	if len(got.basket) != 0 {
-		t.Fatalf("second press should remove it, basket = %v", got.basket)
-	}
-}
-
 func TestShowAllToggleRevealsIgnored(t *testing.T) {
 	m, _ := modelWithFiles(t)
 
@@ -146,16 +125,18 @@ func TestFilesPreviewIsAsync(t *testing.T) {
 	}
 }
 
-func TestNewSessionFromFilesViewInjectsBasket(t *testing.T) {
+func TestNewSessionFromFilesViewStartsInWorkspace(t *testing.T) {
 	m, root := modelWithFiles(t)
-	m.basket = []string{filepath.Join(root, "main.go")}
+	m.opts.Config.Appearance.Mode = string(appearance.Dark) // 钉死模式，避免跟随 OS 导致断言不稳
 
 	launch, err := m.newSessionLaunch()
 	if err != nil {
 		t.Fatalf("newSessionLaunch error: %v", err)
 	}
-	if len(launch.Args) != 1 || !strings.Contains(launch.Args[0], "main.go") {
-		t.Fatalf("args = %v", launch.Args)
+	// 只允许主题注入参数，不应混入任何文件参数。
+	want := []string{"--settings", `{"theme":"dark"}`}
+	if len(launch.Args) != len(want) || launch.Args[0] != want[0] || launch.Args[1] != want[1] {
+		t.Fatalf("新建会话只应带主题参数，实际: %v", launch.Args)
 	}
 	if launch.Dir != root {
 		t.Fatalf("dir = %q, want %q", launch.Dir, root)

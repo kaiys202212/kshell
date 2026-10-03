@@ -8,6 +8,7 @@ describe('badgeFor', () => {
     ['codex', 'Codex', 'tool-badge--codex', '#10a37f'],
     ['claude', 'Claude', 'tool-badge--claude', '#d97757'],
     ['gemini', 'Gemini', 'tool-badge--gemini', '#4285f4'],
+    ['opencode', 'OpenCode', 'tool-badge--opencode', '#14b8a6'],
   ])('已知工具 %s 映射展示名/配色/色相', (toolID, label, className, color) => {
     expect(badgeFor(toolID)).toEqual({ label, className, color });
   });

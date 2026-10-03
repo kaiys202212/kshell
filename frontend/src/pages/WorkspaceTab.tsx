@@ -1,10 +1,10 @@
 // 工作区页签：三栏布局（左右两栏宽度可拖动）。
-//   左栏：新建会话（含工具选择）+ 会话列表（「恢复」开中心区内嵌终端）
-//   中栏：上下文篮 + 中心区页签（预览 / 每个内嵌终端一个页签）
+//   左栏：「新建会话」下拉菜单（选 agent 即启动）+ 会话列表（「恢复」开中心区内嵌终端）
+//   中栏：中心区页签（预览 / 每个内嵌终端一个页签）
 //   右栏：文件 | SSH 子页签（点文件自动切到中栏的预览页签）
 // 终端页签一旦打开就常挂载（非激活用 hidden），xterm 缓冲与焦点不丢；
 // 工作区页签本身也由 App 常挂载，因此只有关闭页签才会真正结束终端进程。
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   closeTerminal,
   getTools,
@@ -12,20 +12,20 @@ import {
   onScanDone,
   openSessionTerminal,
   openWorkspaceTerminal,
+  scanSessions,
 } from '../lib/api';
 import type { Session, TerminalInfo, ToolInfo } from '../lib/api';
 import { badgeFor } from '../lib/toolBadge';
 import { cn } from '../lib/cn';
 import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
-import BasketBar from '../components/BasketBar';
+import { sameWorkspacePath } from '../lib/workspacePath';
 import FileTree from '../components/FileTree';
 import Preview from '../components/Preview';
 import ResizeHandle from '../components/ResizeHandle';
 import SessionList from '../components/SessionList';
 import SshPanel from '../components/SshPanel';
 import TerminalView from '../components/TerminalView';
-import ToolPicker from '../components/ToolPicker';
-import { Button } from '../components/ui/button';
+import NewSessionMenu from '../components/NewSessionMenu';
 import { ToolDot } from '../components/ui/tool-dot';
 import { LAYOUT_DEFAULT, useAppStore } from '../state/store';
 import type { WorkspaceTab } from '../state/store';
@@ -35,6 +35,11 @@ type RightPane = 'files' | 'ssh';
 // 中心区固定页签「预览」的保留 id（终端 id 形如 t1，不会冲突）
 const PREVIEW_TAB = 'preview';
 
+// 新建会话后隔多久触发一次后台重扫（毫秒）。
+// 工具自己的会话记录是它启动后才落盘的（opencode 先起 TUI 再写 SQLite），立刻重扫会查不到；
+// 3s 够这些 CLI 完成启动与建记录，重扫本身在后台异步执行、不阻塞交互。
+const NEW_SESSION_RESCAN_DELAY = 3000;
+
 // 右栏「文件 | SSH」子页签：扁平下划线式
 const paneTabBase = `${TAB_BASE} h-7 text-xs`;
 const paneTabActive = TAB_ACTIVE;
@@ -43,19 +48,14 @@ const paneTabActive = TAB_ACTIVE;
 const centerTabBase = `group ${TAB_BASE} h-7 max-w-56 text-xs`;
 const centerTabActive = TAB_ACTIVE;
 
-// 工作区路径归一化比较（会话记录里的 cwd 可能大小写/分隔符不一致）
-function sameWorkspace(a: string, b: string): boolean {
-  return a.replace(/\\/g, '/').toLowerCase() === b.replace(/\\/g, '/').toLowerCase();
-}
-
 export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; visible: boolean }) {
   const [rightPane, setRightPane] = useState<RightPane>('files');
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [centerTab, setCenterTab] = useState<string>(PREVIEW_TAB);
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [busy, setBusy] = useState(false);
-  // 「新建会话」先弹 agent 选择：展开态提升到父级，选中后由 startSession 直接启动
-  const [pickerOpen, setPickerOpen] = useState(false);
+  // 新建会话后的延迟重扫定时器（卸载/再次新建时清掉，避免重复触发）
+  const rescanTimer = useRef<number | null>(null);
 
   const layout = useAppStore((s) => s.layout);
   const setLayout = useAppStore((s) => s.setLayout);
@@ -68,7 +68,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
 
   // 本工作区的内嵌终端（按创建顺序）
   const terms = useMemo<TerminalInfo[]>(
-    () => terminals.filter((t) => sameWorkspace(t.Workspace, tab.id)),
+    () => terminals.filter((t) => sameWorkspacePath(t.Workspace, tab.id)),
     [terminals, tab.id],
   );
 
@@ -114,18 +114,14 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     [notify],
   );
 
-  // 新建会话：先让用户选 agent（含「自动」），选中后开中心区内嵌终端。
-  // 不再直接启动——避免用户想选 agent 时没有入口，也避免走到会弹系统黑窗的外部终端路径。
-  const handleNewSession = () => {
-    if (busy) return;
-    if (tools.length === 0) {
-      notify('未检测到可用的 agent：请先安装 Claude Code / Codex 等 CLI，或点顶栏「重扫」', 'error');
-      return;
-    }
-    setPickerOpen(true);
-  };
+  useEffect(
+    () => () => {
+      if (rescanTimer.current !== null) window.clearTimeout(rescanTimer.current);
+    },
+    [],
+  );
 
-  // 选中 agent 后启动内嵌终端（空 id = 交给 Go 侧按该工作区最常用的工具选）
+  // 菜单里选中 agent 后启动内嵌终端（空 id = 交给 Go 侧按该工作区最常用的工具选）
   const startSession = async (id: string) => {
     if (busy) return;
     setBusy(true);
@@ -133,6 +129,12 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
       const info = await openWorkspaceTerminal(tab.id, id, 0, 0);
       useAppStore.getState().upsertTerminal(info);
       setCenterTab(info.ID);
+      // 新会话要过一会儿才落进工具自己的会话存储，延迟重扫一次让会话列表把它带出来
+      if (rescanTimer.current !== null) window.clearTimeout(rescanTimer.current);
+      rescanTimer.current = window.setTimeout(() => {
+        rescanTimer.current = null;
+        void scanSessions();
+      }, NEW_SESSION_RESCAN_DELAY);
     } catch (e: unknown) {
       notify(`新建会话失败：${e instanceof Error ? e.message : String(e)}`, 'error');
     } finally {
@@ -158,19 +160,19 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         style={{ width: layout.left }}
         aria-label="会话列表栏"
       >
-        <div className="flex items-center gap-1">
-          <Button className="min-w-0 flex-1" disabled={busy} onClick={handleNewSession}>
-            {busy ? '启动中…' : '新建会话'}
-          </Button>
-          <ToolPicker
-            tools={tools}
-            value={toolId}
-            onChange={setToolId}
-            open={pickerOpen}
-            onOpenChange={setPickerOpen}
-            onSelect={(id) => void startSession(id)}
-          />
-        </div>
+        {/* 「新建会话」本身就是下拉菜单：点开列 agent，选中即启动（不再并排一个工具下拉框） */}
+        <NewSessionMenu
+          tools={tools}
+          value={toolId}
+          onChange={setToolId}
+          onSelect={(id) => void startSession(id)}
+          disabled={busy}
+        />
+        {tools.length === 0 && (
+          <p className="text-xs text-muted-foreground">
+            未检测到可用的 agent：请先安装 Claude Code / Codex / OpenCode 等 CLI，再点首页「重新扫描」。
+          </p>
+        )}
         <SessionList workspacePath={tab.id} onOpenTerminal={openTerminalForSession} />
       </aside>
 
@@ -183,7 +185,6 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <BasketBar />
         {/* 中心区页签条：预览固定，其后是本工作区的内嵌终端 */}
         <div
           className="flex shrink-0 items-stretch overflow-x-auto border-b border-border"
@@ -208,6 +209,8 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
               <div
                 key={t.ID}
                 className={cn(centerTabBase, active && centerTabActive)}
+                // 整条页签可点（标题右侧的工具徽标/留白此前点不动，只有标题按钮响应）
+                onClick={() => setCenterTab(t.ID)}
                 onAuxClick={(e) => {
                   if (e.button === 1) {
                     e.preventDefault();
@@ -223,18 +226,23 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                   aria-selected={active}
                   className="min-w-0 truncate text-xs"
                   title={`${t.Title}${t.ToolID ? `（${badge.label}）` : ''}`}
-                  onClick={() => setCenterTab(t.ID)}
                 >
                   {t.Title}
                 </button>
-                {t.ToolID && <ToolDot toolID={t.ToolID} className="shrink-0" />}
+                {/* 新建会话的标题已含「· 工具名」，徽标只留色点避免出现两个工具名 */}
+                {t.ToolID && (
+                  <ToolDot toolID={t.ToolID} className="shrink-0" showLabel={t.Kind !== 'new'} />
+                )}
                 <button
                   className={cn(
                     'ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-sm leading-none text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground',
                     active ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100',
                   )}
                   aria-label={`关闭终端 ${t.Title}`}
-                  onClick={() => handleCloseTerminal(t.ID)}
+                  onClick={(e) => {
+                    e.stopPropagation(); // 只关，不顺带切到/切走该页签
+                    handleCloseTerminal(t.ID);
+                  }}
                 >
                   ×
                 </button>

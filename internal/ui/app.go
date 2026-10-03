@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/yangk/kshell/internal/appearance"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/launch"
@@ -41,6 +42,11 @@ type Options struct {
 	CachePath string
 	Store     *remote.Store
 	Scanners  []remote.Scanner
+	// Projects 是项目表（手动添加 / 逻辑删除）：TUI 只读，用于剔除已隐藏与目录不存在的项。
+	// nil 时不做叠加（测试可省）。
+	Projects *discovery.ProjectStore
+	// ThemeCacheDir 是主题注入文件目录（~/.kshell/cache/appearance），供启动 agent 时使用。
+	ThemeCacheDir string
 }
 
 var (
@@ -95,7 +101,6 @@ type Model struct {
 	failed     int
 	loading    bool
 	showHelp   bool
-	basket     []string // 上下文篮：文件视图里勾选的文件，新建会话时注入
 
 	tree         *workspace.Tree
 	treeRootPath string
@@ -128,7 +133,7 @@ func NewModel() Model {
 
 func NewModelWith(o Options) Model {
 	if len(o.Providers) == 0 {
-		o.Providers = []providers.Provider{providers.Claude{}, providers.Codex{}, providers.Gemini{}}
+		o.Providers = providers.Builtins()
 	}
 	if o.Config.MaxDepth <= 0 {
 		o.Config = config.Default()
@@ -138,7 +143,7 @@ func NewModelWith(o Options) Model {
 		width:  120,
 		height: 40,
 		view:   ViewSessions,
-		theme:  NewTheme(),
+		theme:  NewTheme(appearance.ParseMode(o.Config.Appearance.Mode)),
 		opts:   o,
 		store:  o.Store,
 		focus:  focusWorkspaces,
@@ -173,7 +178,7 @@ func scanCmd(o Options) tea.Cmd {
 		}
 		return scanDoneMsg{
 			tools:      tools,
-			workspaces: res.Workspaces,
+			workspaces: discovery.ApplyProjects(res.Workspaces, o.Projects, nil),
 			sessions:   res.Sessions,
 			failed:     len(res.Failed),
 		}
@@ -409,12 +414,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case " ":
-		if m.view == ViewFiles {
-			if row, ok := m.selectedFile(); ok && !row.Node.IsDir {
-				m.toggleBasket(row.Node.Path)
-			}
-			return m, nil
-		}
 		if m.view == ViewRemote && m.importing {
 			m.toggleCandidate()
 			return m, nil
@@ -553,13 +552,21 @@ func splitLines(s string) []string {
 	return lines
 }
 
+// themeOptions 组装当前颜色模式与主题缓存目录，供 launch 注入。
+func (m Model) themeOptions() launch.ThemeOptions {
+	return launch.ThemeOptions{
+		Mode:     appearance.ParseMode(m.opts.Config.Appearance.Mode),
+		CacheDir: m.opts.ThemeCacheDir,
+	}
+}
+
 // resumeLaunch 给出恢复选中会话所需的启动描述；解析逻辑下沉在 launch 包，UI 与桌面版共用。
 func (m Model) resumeLaunch() (providers.Launch, error) {
 	s, ok := m.selectedSession()
 	if !ok {
 		return providers.Launch{}, errNoSessionSelected
 	}
-	return launch.ForSession(m.opts.Providers, m.tools, s)
+	return launch.ForSession(m.opts.Providers, m.tools, s, m.themeOptions())
 }
 
 func (m Model) newSessionLaunch() (providers.Launch, error) {
@@ -567,7 +574,7 @@ func (m Model) newSessionLaunch() (providers.Launch, error) {
 	if !ok {
 		return providers.Launch{}, errNoWorkspaceSelected
 	}
-	return launch.ForWorkspace(m.opts.Providers, m.tools, ws, m.basket)
+	return launch.ForWorkspace(m.opts.Providers, m.tools, ws, m.themeOptions())
 }
 
 func (m Model) launchSelectedCmd() tea.Cmd {
@@ -667,9 +674,6 @@ func (m Model) renderRight(height, width int) string {
 
 func (m Model) renderTopBar() string {
 	left := m.theme.Title.Render(" kshell ") + " " + m.renderTabs() + " " + m.renderToolChips()
-	if len(m.basket) > 0 {
-		left += " " + m.theme.TabActive.Render("篮 "+itoa(len(m.basket)))
-	}
 	right := m.theme.Muted.Render(m.workspaceHeader())
 	return joinHorizontalFit(m.width, left, right)
 }

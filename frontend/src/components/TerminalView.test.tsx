@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TerminalInfo } from '../lib/api';
 import { bytesToBase64, encodeTerminalInput } from '../lib/base64';
 import { clearTerminalRegistry, dispatchTerminalData } from '../lib/terminalRegistry';
+import { useAppStore } from '../state/store';
 import TerminalView from './TerminalView';
 
 // 桩实例的收集箱（vi.hoisted：mock 工厂先于 import 执行）
@@ -144,14 +145,6 @@ function fitAddon(index = 0): StubFitAddon {
   return mocks.addons[index] as StubFitAddon;
 }
 
-// jsdom 的 window.matchMedia 恒返回 matches:false；组件读的是 window 上的属性，
-// 所以这里直接改写 window（stubGlobal 只改 globalThis，不适合这种场景），
-// 才能分别验证深浅色与「matchMedia 缺失」的兜底
-const realMatchMedia = window.matchMedia;
-function setMatchMedia(value: unknown) {
-  Object.defineProperty(window, 'matchMedia', { value, configurable: true, writable: true });
-}
-
 beforeEach(() => {
   rafQueue = [];
   vi.clearAllMocks();
@@ -192,7 +185,6 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-  setMatchMedia(realMatchMedia);
   clearTerminalRegistry();
 });
 
@@ -269,6 +261,43 @@ describe('TerminalView', () => {
     expect(dispatchTerminalData(TERM.ID, bytesToBase64(new Uint8Array([65])))).toBe(true);
   });
 
+  it('非激活页签的尺寸变化不 fit（隐藏宿主会被 FitAddon 钳成退化尺寸）', () => {
+    const { rerender } = render(<TerminalView term={TERM} active={false} />);
+    flushRaf();
+    const addon = fitAddon();
+
+    // 隐藏态容器尺寸为 0，真实 FitAddon 会算出 cols=2/rows=1：这里正是必须跳过的时刻
+    addon.dims = { cols: 2, rows: 1 };
+    act(() => observer().cb([], observer() as unknown as ResizeObserver));
+    flushRaf();
+
+    expect(addon.fitCount).toBe(0);
+    expect(api.resizeTerminal).not.toHaveBeenCalled();
+
+    // 切回可见页签后照常 fit，并把真实尺寸同步给 Go
+    addon.dims = { cols: 120, rows: 40 };
+    rerender(<TerminalView term={TERM} active />);
+    flushRaf();
+
+    expect(addon.fitCount).toBe(1);
+    expect(api.resizeTerminal).toHaveBeenCalledWith(TERM.ID, 120, 40);
+  });
+
+  it('退化尺寸（行列过小）绝不推给 PTY，恢复有效尺寸后再同步', () => {
+    render(<TerminalView term={TERM} active />);
+    flushRaf();
+    const instance = term();
+
+    // 实测：把 2x1、6x3 这类尺寸推给伪终端会让 opencode 直接崩溃退出（退出码 3）
+    instance.resizeCb?.({ cols: 2, rows: 1 });
+    instance.resizeCb?.({ cols: 6, rows: 3 });
+    expect(api.resizeTerminal).not.toHaveBeenCalled();
+
+    instance.resizeCb?.({ cols: 80, rows: 24 });
+    expect(api.resizeTerminal).toHaveBeenCalledTimes(1);
+    expect(api.resizeTerminal).toHaveBeenCalledWith(TERM.ID, 80, 24);
+  });
+
   it('卸载会注销注册表、取消订阅并销毁终端；ResizeObserver 断开', () => {
     const { unmount } = render(<TerminalView term={TERM} active />);
     const instance = term();
@@ -300,20 +329,26 @@ describe('TerminalView', () => {
     expect(hintCount()).toBe(1);
   });
 
-  it('终端主题跟随系统深浅色；matchMedia 缺失时兜底浅色且不抛异常', () => {
-    setMatchMedia(() => ({ matches: true }));
+  it('终端主题跟随 store 的 resolved 明暗', () => {
+    useAppStore.getState().setAppearance({ mode: 'dark', resolved: 'dark' });
     const dark = render(<TerminalView term={TERM} active />);
     expect(term(0).options.theme).toEqual({ background: '#0d1117', foreground: '#e6edf3' });
     dark.unmount();
 
-    setMatchMedia(() => ({ matches: false }));
+    useAppStore.getState().setAppearance({ mode: 'light', resolved: 'light' });
     const light = render(<TerminalView term={TERM} active />);
     expect(term(1).options.theme).toEqual({ background: '#ffffff', foreground: '#1f2328' });
     light.unmount();
+  });
 
-    setMatchMedia(undefined);
-    const fallback = render(<TerminalView term={TERM} active />);
-    expect(term(2).options.theme).toEqual({ background: '#ffffff', foreground: '#1f2328' });
-    fallback.unmount();
+  it('明暗变化时热更新已挂载终端的配色', () => {
+    useAppStore.getState().setAppearance({ mode: 'dark', resolved: 'dark' });
+    render(<TerminalView term={TERM} active />);
+    expect(term(0).options.theme).toEqual({ background: '#0d1117', foreground: '#e6edf3' });
+
+    act(() => {
+      useAppStore.getState().setAppearance({ mode: 'light', resolved: 'light' });
+    });
+    expect(term(0).options.theme).toEqual({ background: '#ffffff', foreground: '#1f2328' });
   });
 });

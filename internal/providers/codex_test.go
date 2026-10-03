@@ -152,13 +152,16 @@ func TestCodexResumeCmd(t *testing.T) {
 	}
 }
 
-func TestCodexNewSessionCmdInjectsContext(t *testing.T) {
-	launch := (Codex{}).NewSessionCmd(`d:\data\workspace`, "codex", []string{"main.go"})
-	if len(launch.Args) != 1 {
-		t.Fatalf("args = %v, want one prompt", launch.Args)
+func TestCodexNewSessionCmd(t *testing.T) {
+	launch := (Codex{}).NewSessionCmd(`d:\data\workspace`, "codex")
+	if launch.Path != "codex" {
+		t.Fatalf("path = %q", launch.Path)
 	}
-	if !containsString(launch.Args[0], "main.go") {
-		t.Fatalf("prompt missing main.go: %q", launch.Args[0])
+	if launch.Dir != `d:\data\workspace` {
+		t.Fatalf("dir = %q", launch.Dir)
+	}
+	if len(launch.Args) != 0 {
+		t.Fatalf("args = %v, want none", launch.Args)
 	}
 }
 

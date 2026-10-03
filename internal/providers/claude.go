@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/yangk/kshell/internal/appearance"
 )
 
 const claudeID = "claude"
@@ -127,17 +129,22 @@ func (Claude) ParseSession(path string, head []byte) (*Session, error) {
 	}, nil
 }
 
-func (Claude) NewSessionCmd(ws string, bin string, ctx []string) Launch {
-	launch := Launch{Path: bin, Dir: ws}
-	if prompt := ContextPrompt(ctx); prompt != "" {
-		launch.Args = []string{prompt}
-	}
-	return launch
+func (Claude) NewSessionCmd(ws string, bin string) Launch {
+	return Launch{Path: bin, Dir: ws}
 }
 
 // ResumeCmd 使用实测确认过的 --resume <sessionId>，并在会话所属工作区启动。
 func (Claude) ResumeCmd(s Session, bin string) Launch {
 	return Launch{Path: bin, Args: []string{"--resume", s.ID}, Dir: s.Workspace}
+}
+
+// ThemeOverrides 用会话级 --settings 注入主题，不写用户的 settings.json。
+func (Claude) ThemeOverrides(theme appearance.Theme, _ string) ([]string, map[string]string) {
+	name := "light"
+	if theme == appearance.ThemeDark {
+		name = "dark"
+	}
+	return []string{"--settings", `{"theme":"` + name + `"}`}, nil
 }
 
 // WorkspaceToSlug 复刻 Claude 的规则：路径分隔符与盘符冒号都替换成 '-'（D:\data → D--data）。

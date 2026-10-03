@@ -85,6 +85,27 @@ describe('SessionList', () => {
     expect(screen.getByText('12 条')).toBeInTheDocument();
   });
 
+  it('opencode 的前斜杠 cwd（D:/proj-a）与反斜杠写法视为同一工作区，会话与 chip 都要出现', async () => {
+    mocks.getSessions.mockResolvedValue([
+      ...sessions,
+      {
+        ID: 's5',
+        ToolID: 'opencode',
+        Workspace: 'D:/proj-a', // opencode 的 SQLite 里存的就是这种写法
+        Title: 'opencode 会话',
+        CreatedAt: minutesAgo(1),
+        UpdatedAt: minutesAgo(1),
+        Messages: 0,
+        Path: 'db',
+      },
+    ]);
+    renderList();
+
+    expect(await findRow('opencode 会话')).toBeInTheDocument();
+    const chips = screen.getByLabelText('按工具筛选');
+    expect(within(chips).getByText('OpenCode')).toBeInTheDocument();
+  });
+
   it('工具 chip 行按当前工作区会话去重展示，其他工作区的工具不出现（扁平下划线式）', async () => {
     renderList();
     await findRow('清理构建缓存');

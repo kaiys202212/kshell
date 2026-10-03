@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
+	"github.com/yangk/kshell/internal/appearance"
 )
 
 func TestAppRendersThreeRegions(t *testing.T) {
@@ -38,7 +39,7 @@ func TestThemeDropsColorWhenNoColorSet(t *testing.T) {
 	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
 
 	t.Setenv("NO_COLOR", "1")
-	theme := NewTheme()
+	theme := NewTheme(appearance.Dark)
 
 	for name, style := range map[string]lipgloss.Style{
 		"Title":     theme.Title,
@@ -53,6 +54,19 @@ func TestThemeDropsColorWhenNoColorSet(t *testing.T) {
 		if got := style.Render("kshell"); strings.Contains(got, "\x1b[") {
 			t.Fatalf("%s 在 NO_COLOR 下仍输出 SGR: %q", name, got)
 		}
+	}
+}
+
+func TestNewThemeLightAndDarkDiffer(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+	t.Setenv("NO_COLOR", "")
+
+	dark := NewTheme(appearance.Dark).Body.Render("x")
+	light := NewTheme(appearance.Light).Body.Render("x")
+	if dark == light {
+		t.Fatalf("light 与 dark 正文渲染不应相同: %q", dark)
 	}
 }
 

@@ -1,4 +1,4 @@
-// App 主框架测试：挂载时调 GetBasket 重建篮子镜像、重建终端镜像、
+// App 主框架测试：挂载时调 ListTerminals 重建终端镜像、
 // 标题栏「首页/设置/工作区页签」切换与关闭（关闭工作区页签连带结束其内嵌终端）、
 // 终端事件总线（terminal:exit 更新镜像并提示）、
 // 全局快捷键 Ctrl+K 打开快速切换器 / Ctrl+F 派发聚焦搜索事件。
@@ -8,7 +8,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { SETTINGS_TAB_ID, useAppStore } from './state/store';
-import type { TerminalInfo } from './lib/api';
+import type { TerminalInfo, Workspace } from './lib/api';
 
 const mocks = vi.hoisted(() => ({
   getWorkspaces: vi.fn(),
@@ -16,8 +16,6 @@ const mocks = vi.hoisted(() => ({
   scanSessions: vi.fn(),
   onScanDone: vi.fn(),
   onWindowClosed: vi.fn(),
-  getBasket: vi.fn(),
-  toggleBasket: vi.fn(),
   listFiles: vi.fn(),
   previewFile: vi.fn(),
   listConnections: vi.fn(),
@@ -37,6 +35,13 @@ const mocks = vi.hoisted(() => ({
   newSessionWithTool: vi.fn(),
   onTerminalData: vi.fn(),
   onTerminalExit: vi.fn(),
+  createProject: vi.fn(),
+  hideProject: vi.fn(),
+  restoreProject: vi.fn(),
+  getDeletedProjects: vi.fn(),
+  onProjectsChanged: vi.fn(),
+  getAppearance: vi.fn(),
+  onAppearanceChanged: vi.fn(),
 }));
 vi.mock('./lib/api', () => mocks);
 
@@ -83,17 +88,22 @@ beforeEach(() => {
   mocks.onWindowClosed.mockImplementation(() => () => {});
   mocks.onTerminalData.mockImplementation(() => () => {});
   mocks.onTerminalExit.mockImplementation(() => () => {});
-  mocks.getBasket.mockResolvedValue(['D:\\proj-a\\README.md', 'D:\\proj-a\\src\\main.ts']);
   mocks.getTools.mockResolvedValue([]);
   mocks.loadProvidersYAML.mockResolvedValue('');
   mocks.listFiles.mockResolvedValue([]);
   mocks.listConnections.mockResolvedValue([]);
   mocks.listTerminals.mockResolvedValue([]);
   mocks.closeTerminal.mockResolvedValue(undefined);
+  mocks.getDeletedProjects.mockResolvedValue([]);
+  mocks.createProject.mockResolvedValue('');
+  mocks.hideProject.mockResolvedValue(undefined);
+  mocks.restoreProject.mockResolvedValue(undefined);
+  mocks.onProjectsChanged.mockImplementation(() => () => {});
+  mocks.getAppearance.mockResolvedValue({ mode: 'system', resolved: 'dark' });
+  mocks.onAppearanceChanged.mockReturnValue(() => {});
   useAppStore.setState({
     openTabs: [],
     activeTabId: null,
-    basket: [],
     toasts: [],
     windowStatus: {},
     scanState: 'idle',
@@ -103,18 +113,6 @@ beforeEach(() => {
 });
 
 describe('App', () => {
-  it('挂载时调 GetBasket 重建 store 篮子镜像（解决刷新后镜像漂移）', async () => {
-    render(<App />);
-
-    await waitFor(() => {
-      expect(useAppStore.getState().basket).toEqual([
-        'D:\\proj-a\\README.md',
-        'D:\\proj-a\\src\\main.ts',
-      ]);
-    });
-    expect(mocks.getBasket).toHaveBeenCalledTimes(1);
-  });
-
   it('挂载时调 ListTerminals 重建终端镜像（前端重载后 Go 侧终端仍在跑）', async () => {
     mocks.listTerminals.mockResolvedValue([term]);
     render(<App />);
@@ -242,5 +240,41 @@ describe('App', () => {
     const tab2 = screen.getByText('proj-a').closest('div.group')!;
     auxClick(tab2, 0);
     expect(useAppStore.getState().openTabs).toHaveLength(1);
+  });
+
+  it('projects:changed：同步最新工作区列表并关闭已消失项目的页签', async () => {
+    // App 与 Home 各订阅一份（Home 负责重拉列表，App 负责关页签）：全部触发
+    const cbs: Array<(p: { workspaces: Workspace[] }) => void> = [];
+    mocks.onProjectsChanged.mockImplementation((fn: (p: { workspaces: Workspace[] }) => void) => {
+      cbs.push(fn);
+      return () => {};
+    });
+
+    const wsB: Workspace = {
+      Path: 'D:\\proj-b',
+      Name: 'proj-b',
+      LastUsed: '',
+      SessionCount: 0,
+      ToolCounts: {},
+      Source: 'sessions',
+    };
+    mocks.getWorkspaces.mockResolvedValue([wsB]);
+    useAppStore.setState({
+      openTabs: [
+        { id: 'D:\\proj-a', name: 'proj-a' },
+        { id: 'D:\\proj-b', name: 'proj-b' },
+      ],
+      activeTabId: 'D:\\proj-a',
+    });
+    render(<App />);
+    await waitFor(() => expect(cbs.length).toBeGreaterThan(0));
+
+    act(() => {
+      for (const fn of cbs) fn({ workspaces: [wsB] });
+    });
+
+    // proj-a 已不在列表：页签被关闭；store 同步为最新列表
+    expect(useAppStore.getState().openTabs.map((t) => t.id)).toEqual(['D:\\proj-b']);
+    expect(useAppStore.getState().workspaces).toEqual([wsB]);
   });
 });

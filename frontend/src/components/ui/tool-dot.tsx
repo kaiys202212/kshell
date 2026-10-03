@@ -3,7 +3,16 @@
 import { badgeFor } from '../../lib/toolBadge';
 import { cn } from '../../lib/cn';
 
-export function ToolDot({ toolID, className }: { toolID: string; className?: string }) {
+export function ToolDot({
+  toolID,
+  className,
+  showLabel = true,
+}: {
+  toolID: string;
+  className?: string;
+  /** 是否显示工具名文字；false 时只留色点（用于标题已含工具名的场景，避免重复） */
+  showLabel?: boolean;
+}) {
   const badge = badgeFor(toolID);
   return (
     <span className={cn('inline-flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground', className)}>
@@ -12,7 +21,7 @@ export function ToolDot({ toolID, className }: { toolID: string; className?: str
         className="h-1.5 w-1.5 shrink-0 rounded-full"
         style={{ background: badge.color }}
       />
-      <span className="truncate">{badge.label}</span>
+      {showLabel && <span className="truncate">{badge.label}</span>}
     </span>
   );
 }

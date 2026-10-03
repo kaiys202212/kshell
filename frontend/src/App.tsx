@@ -5,9 +5,19 @@
 // terminal:exit → 更新镜像并提示；Go 侧每会话保留 256KiB 环形缓冲兜住未挂载期间的输出。
 // 全局快捷键：Ctrl+K 打开快速切换器，Ctrl+F 在工作区页签内派发 kshell:focus-search。
 import { useCallback, useEffect, useState } from 'react';
-import { closeTerminal, getBasket, listTerminals, onTerminalData, onTerminalExit } from './lib/api';
+import {
+  closeTerminal,
+  getAppearance,
+  listTerminals,
+  onAppearanceChanged,
+  onProjectsChanged,
+  onTerminalData,
+  onTerminalExit,
+} from './lib/api';
+import type { AppearanceInfo } from './lib/appearance';
 import { dispatchTerminalData } from './lib/terminalRegistry';
 import { cn } from './lib/cn';
+import { sameWorkspacePath } from './lib/workspacePath';
 import Home from './pages/Home';
 import Settings from './pages/Settings';
 import WorkspaceTabView from './pages/WorkspaceTab';
@@ -17,11 +27,6 @@ import { Toaster } from './components/ui/toaster';
 import { TooltipProvider } from './components/ui/tooltip';
 import { SETTINGS_TAB_ID, useAppStore } from './state/store';
 
-// 归一化工作区路径用于比较：会话记录里的 cwd 与工作区路径可能大小写/分隔符不一致
-function sameWorkspace(a: string, b: string): boolean {
-  return a.replace(/\\/g, '/').toLowerCase() === b.replace(/\\/g, '/').toLowerCase();
-}
-
 function App() {
   const openTabs = useAppStore((s) => s.openTabs);
   const activeTabId = useAppStore((s) => s.activeTabId);
@@ -30,17 +35,22 @@ function App() {
   const [switcherOpen, setSwitcherOpen] = useState(false);
 
   useEffect(() => {
-    // 只在挂载时重建一次篮子镜像；失败静默（未装配等场景篮子本就为空）
-    getBasket()
-      .then((paths) => useAppStore.getState().setBasket(paths))
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
     // 终端镜像重建：前端重载（开发态）或应用恢复时，Go 侧终端可能仍在跑
     listTerminals()
       .then((list) => useAppStore.getState().setTerminals(list))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    // 颜色模式：初始取一次（写 data-theme 并进 store），再订阅后续变化
+    const apply = (info: AppearanceInfo) => {
+      document.documentElement.dataset.theme = info.resolved;
+      try { localStorage.setItem('kshell-appearance', info.resolved); } catch { /* 忽略持久化失败 */ }
+      useAppStore.getState().setAppearance(info);
+    };
+    getAppearance().then(apply).catch(() => {});
+    const off = onAppearanceChanged(apply);
+    return off;
   }, []);
 
   useEffect(() => {
@@ -63,7 +73,7 @@ function App() {
   const handleCloseTab = useCallback(
     (id: string) => {
       const { terminals, removeTerminal } = useAppStore.getState();
-      const owned = terminals.filter((t) => sameWorkspace(t.Workspace, id));
+      const owned = terminals.filter((t) => sameWorkspacePath(t.Workspace, id));
       closeTab(id);
       for (const t of owned) {
         removeTerminal(t.ID);
@@ -72,6 +82,21 @@ function App() {
     },
     [closeTab],
   );
+
+  useEffect(() => {
+    // 项目表变更（新建/删除/还原）：payload 已带最新工作区列表——
+    // 同步 store 并关闭已消失工作区的页签（连带结束其内嵌终端），避免页签指向被隐藏的项目。
+    const off = onProjectsChanged(({ workspaces }) => {
+      useAppStore.getState().setWorkspaces(workspaces);
+      const { openTabs: tabs } = useAppStore.getState();
+      for (const t of tabs) {
+        if (!workspaces.some((w) => sameWorkspacePath(w.Path, t.id))) {
+          handleCloseTab(t.id);
+        }
+      }
+    });
+    return off;
+  }, [handleCloseTab]);
 
   useEffect(() => {
     // 单一全局 keydown：window 级监听不受输入框焦点影响（输入框聚焦时 Ctrl+K 仍触发），

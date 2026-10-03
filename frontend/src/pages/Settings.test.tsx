@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   loadProvidersYAML: vi.fn(),
   saveProvidersYAML: vi.fn(),
   restartApp: vi.fn(),
+  getAppearance: vi.fn(),
+  setAppearanceMode: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -51,6 +53,8 @@ beforeEach(() => {
   mocks.getTools.mockResolvedValue(tools);
   mocks.loadProvidersYAML.mockResolvedValue('providers: []\n');
   mocks.saveProvidersYAML.mockResolvedValue(undefined);
+  mocks.getAppearance.mockResolvedValue({ mode: 'system', resolved: 'dark' });
+  mocks.setAppearanceMode.mockResolvedValue(undefined);
 });
 
 describe('Settings', () => {
@@ -142,5 +146,14 @@ describe('Settings', () => {
     fireEvent.click(screen.getByRole('button', { name: '立即重启' }));
     expect(await screen.findByText('正在重启…')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '正在重启…' })).toBeDisabled();
+  });
+
+  it('外观选择调用 SetAppearanceMode', async () => {
+    render(<Settings />);
+    const darkBtn = await screen.findByRole('button', { name: '深色' });
+    await act(async () => {
+      fireEvent.click(darkBtn);
+    });
+    expect(mocks.setAppearanceMode).toHaveBeenCalledWith('dark');
   });
 });

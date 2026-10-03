@@ -3,11 +3,9 @@
 // Truncated 显示截断提示，Binary 只展示 Info 元信息。
 // 编辑模式：readFileForEdit 整读（上限 1MB、拒二进制），textarea 编辑 + Ctrl/Cmd+S
 // 或保存按钮落盘（Go 侧原子替换并按原行尾还原），保存后刷新 git 状态镜像。
-// 头部提供加入/移出篮子按钮（与 FileTree 共用 lib/basket 的 toggleAndSync 同步逻辑）。
 import { useEffect, useRef, useState } from 'react';
 import { previewFile, readFileForEdit, saveFile } from '../lib/api';
 import type { FilePreview } from '../lib/api';
-import { toggleAndSync } from '../lib/basket';
 import { refreshGitStatus } from '../lib/git';
 import { useAppStore } from '../state/store';
 import { Badge } from './ui/badge';
@@ -19,7 +17,6 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
   const [data, setData] = useState<FilePreview | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const basket = useAppStore((s) => s.basket);
 
   // 编辑态
   const [editing, setEditing] = useState(false);
@@ -118,11 +115,7 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
     setDirty(false);
   };
 
-  // 篮子按钮只在「文本内容加载完成」时显示（加载中/错误/二进制态不提供操作入口）；
-  // 编辑态下隐藏，避免误触
-  const inBasket = path !== null && basket.includes(path);
-  const showBasketButton =
-    path !== null && !loading && !error && data !== null && !data.Binary && !editing;
+  // 编辑按钮只在「文本内容加载完成」时显示（加载中/错误/二进制态不提供操作入口）
   const showEditButton = path !== null && !loading && !error && data !== null && !data.Binary;
 
   return (
@@ -159,16 +152,6 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
         {!editing && showEditButton && (
           <Button size="sm" variant="secondary" className="ml-auto shrink-0" onClick={enterEdit}>
             编辑
-          </Button>
-        )}
-        {showBasketButton && (
-          <Button
-            size="sm"
-            variant={inBasket ? 'secondary' : 'default'}
-            className={!editing && showEditButton ? 'ml-1.5 shrink-0' : 'ml-auto shrink-0'}
-            onClick={() => void toggleAndSync(path)}
-          >
-            {inBasket ? '移出篮子' : '加入篮子'}
           </Button>
         )}
       </div>

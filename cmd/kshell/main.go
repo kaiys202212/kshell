@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/yangk/kshell/internal/config"
+	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/remote"
 	"github.com/yangk/kshell/internal/remote/scanners"
@@ -40,19 +41,24 @@ func main() {
 	if err := providers.EnsureProvidersFile(paths.Providers); err != nil {
 		fmt.Fprintln(os.Stderr, "kshell: 无法写入 providers.yaml:", err)
 	}
-	providerList := []providers.Provider{providers.Claude{}, providers.Codex{}, providers.Gemini{}}
-	if specs, err := providers.LoadGenericSpecs(paths.Providers); err == nil {
-		for _, spec := range specs {
-			providerList = append(providerList, providers.Generic{Spec: spec, Home: home})
-		}
+	// 内置清单与 yaml 自定义定义合并（按 ID 去重、内置优先）。
+	specs, _ := providers.LoadGenericSpecs(paths.Providers)
+	providerList := providers.MergeProviders(providers.Builtins(), specs, home)
+
+	// 项目表（手动添加 / 逻辑删除）：TUI 只读叠加，剔除已隐藏与目录不存在的项。
+	projects := discovery.NewProjectStore(paths.Projects)
+	if err := projects.Load(); err != nil {
+		fmt.Fprintln(os.Stderr, "kshell: 读取项目表失败:", err)
 	}
 
 	model := ui.NewModelWith(ui.Options{
-		Home:      home,
-		Config:    cfg,
-		CachePath: paths.CacheIndex,
-		Providers: providerList,
-		Store:     store,
+		Home:          home,
+		Config:        cfg,
+		CachePath:     paths.CacheIndex,
+		Providers:     providerList,
+		Store:         store,
+		Projects:      projects,
+		ThemeCacheDir: paths.CacheAppearance,
 		Scanners: []remote.Scanner{
 			scanners.SSHConfigScanner{},
 			scanners.EnvScanner{},

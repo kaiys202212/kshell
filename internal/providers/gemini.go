@@ -5,6 +5,8 @@ import (
 	"errors"
 	"path/filepath"
 	"time"
+
+	"github.com/yangk/kshell/internal/appearance"
 )
 
 const geminiID = "gemini"
@@ -87,12 +89,8 @@ func (Gemini) ParseSession(path string, head []byte) (*Session, error) {
 	}, nil
 }
 
-func (Gemini) NewSessionCmd(ws string, bin string, ctx []string) Launch {
-	launch := Launch{Path: bin, Dir: ws}
-	if prompt := ContextPrompt(ctx); prompt != "" {
-		launch.Args = []string{prompt}
-	}
-	return launch
+func (Gemini) NewSessionCmd(ws string, bin string) Launch {
+	return Launch{Path: bin, Dir: ws}
 }
 
 // ResumeCmd 的 --resume 参数未经实测（本机未安装 Gemini CLI），需在有该工具的机器上校准。
@@ -101,3 +99,21 @@ func (Gemini) ResumeCmd(s Session, bin string) Launch {
 }
 
 func (Gemini) SessionFilePattern() string { return "*.json" }
+
+// ThemeOverrides 指向生成的系统级 settings（最高优先级层），并关闭自动主题轮询。
+func (Gemini) ThemeOverrides(theme appearance.Theme, cacheDir string) ([]string, map[string]string) {
+	if cacheDir == "" {
+		return nil, nil
+	}
+	name := "Default Light"
+	if theme == appearance.ThemeDark {
+		name = "Default"
+	}
+	path, err := writeThemeJSON(cacheDir, "gemini-"+string(theme)+".json", map[string]any{
+		"ui": map[string]any{"theme": name, "autoThemeSwitching": false},
+	})
+	if err != nil {
+		return nil, nil
+	}
+	return nil, map[string]string{"GEMINI_CLI_SYSTEM_SETTINGS_PATH": path}
+}
