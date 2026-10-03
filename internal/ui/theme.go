@@ -20,8 +20,8 @@ type Theme struct {
 	StatusBar lipgloss.Style
 }
 
-// NewTheme 按配置模式构建主题；system 模式跟随终端实际背景（比注册表更贴近 TUI 呈现环境）。
-// NO_COLOR 优先级最高，直接降级为无色。
+// NewTheme 按配置模式构建主题；system 跟随 appearance.Resolve（Windows 读注册表），
+// 与启动 agent 时注入的主题保持一致。NO_COLOR 优先级最高，直接降级为无色。
 func NewTheme(mode appearance.Mode) Theme {
 	if os.Getenv("NO_COLOR") != "" {
 		// 全局降级，保证 Theme 之外新建的样式（列表、帮助、bubbles 组件）也不输出颜色。
@@ -30,13 +30,6 @@ func NewTheme(mode appearance.Mode) Theme {
 	}
 
 	theme := appearance.Resolve(mode)
-	if mode == appearance.System {
-		if lipgloss.HasDarkBackground() {
-			theme = appearance.ThemeDark
-		} else {
-			theme = appearance.ThemeLight
-		}
-	}
 	if theme == appearance.ThemeLight {
 		return lightTheme()
 	}
