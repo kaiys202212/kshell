@@ -7,11 +7,13 @@
 import { useEffect, useState } from 'react';
 import {
   getAppearance,
+  getCloseBehavior,
   getTools,
   loadProvidersYAML,
   restartApp,
   saveProvidersYAML,
   setAppearanceMode,
+  setCloseBehavior,
 } from '../lib/api';
 import type { ToolInfo } from '../lib/api';
 import { cn } from '../lib/cn';
@@ -29,6 +31,7 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [appearance, setAppearanceLocal] = useState<string>('system');
+  const [closeBehavior, setCloseBehaviorLocal] = useState<string>('tray');
   const notify = useAppStore((s) => s.notify);
 
   useEffect(() => {
@@ -52,6 +55,11 @@ export default function Settings() {
         if (!cancelled) setAppearanceLocal(info.mode);
       })
       .catch(() => {});
+    getCloseBehavior()
+      .then((mode) => {
+        if (!cancelled) setCloseBehaviorLocal(mode);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -62,6 +70,16 @@ export default function Settings() {
     try {
       await setAppearanceMode(mode);
       setAppearanceLocal(mode);
+    } catch (e: unknown) {
+      notify(e instanceof Error ? e.message : String(e), 'error');
+    }
+  };
+
+  const handleCloseBehavior = async (mode: string) => {
+    if (mode === closeBehavior) return;
+    try {
+      await setCloseBehavior(mode);
+      setCloseBehaviorLocal(mode);
     } catch (e: unknown) {
       notify(e instanceof Error ? e.message : String(e), 'error');
     }
@@ -112,6 +130,25 @@ export default function Settings() {
                 variant={appearance === opt.value ? 'default' : 'secondary'}
                 aria-pressed={appearance === opt.value}
                 onClick={() => void handleAppearance(opt.value)}
+              >
+                {opt.label}
+              </Button>
+            ))}
+          </div>
+        </section>
+
+        <section className="mb-5 rounded border border-border bg-card p-3.5">
+          <h2 className="mb-3 text-sm font-medium">关闭行为</h2>
+          <div className="flex gap-2">
+            {[
+              { value: 'tray', label: '收进托盘' },
+              { value: 'exit', label: '直接退出' },
+            ].map((opt) => (
+              <Button
+                key={opt.value}
+                variant={closeBehavior === opt.value ? 'default' : 'secondary'}
+                aria-pressed={closeBehavior === opt.value}
+                onClick={() => void handleCloseBehavior(opt.value)}
               >
                 {opt.label}
               </Button>

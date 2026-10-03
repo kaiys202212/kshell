@@ -5,7 +5,7 @@
 // 用户用 Win+↑ 或贴边改变状态时只能靠尺寸变化间接发现。
 import { useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
-  WindowHide,
+  Quit,
   WindowIsMaximised,
   WindowMinimise,
   WindowToggleMaximise,
@@ -195,12 +195,12 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
         >
           {maximised ? <RestoreGlyph /> : <MaxGlyph />}
         </button>
-        {/* 「关闭」与原生 X 同语义：收进系统托盘（真正退出走托盘菜单，见 desktop.BeforeClose） */}
+        {/* 「关闭」经 Wails Quit 触发 BeforeClose，由配置的关闭行为（收进托盘 / 直接退出）决定 */}
         <button
           className={cn(controlBase, 'hover:bg-destructive hover:text-destructive-foreground')}
           aria-label="关闭"
-          title="关闭窗口（收进托盘）"
-          onClick={() => WindowHide()}
+          title="关闭窗口"
+          onClick={() => Quit()}
         >
           <CloseGlyph />
         </button>

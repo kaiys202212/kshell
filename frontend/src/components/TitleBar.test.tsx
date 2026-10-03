@@ -11,7 +11,7 @@ const runtime = vi.hoisted(() => ({
   WindowMinimise: vi.fn(),
   WindowToggleMaximise: vi.fn(),
   WindowIsMaximised: vi.fn(() => Promise.resolve(false)),
-  WindowHide: vi.fn(),
+  Quit: vi.fn(),
 }));
 vi.mock('../../wailsjs/runtime/runtime', () => runtime);
 
@@ -111,7 +111,7 @@ describe('TitleBar', () => {
     expect(onCloseTab).toHaveBeenCalledWith('D:\\proj-a');
   });
 
-  it('窗口控件调用 Wails runtime：最小化 / 最大化切换 / 关闭=收进托盘', () => {
+  it('窗口控件调用 Wails runtime：最小化 / 最大化切换 / 关闭=Quit（经 BeforeClose 分流）', () => {
     setup();
 
     fireEvent.click(screen.getByRole('button', { name: '最小化' }));
@@ -121,7 +121,7 @@ describe('TitleBar', () => {
     expect(runtime.WindowToggleMaximise).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole('button', { name: '关闭' }));
-    expect(runtime.WindowHide).toHaveBeenCalledTimes(1);
+    expect(runtime.Quit).toHaveBeenCalledTimes(1);
   });
 
   it('已最大化时按钮语义变为「还原」（WindowIsMaximised 查询结果驱动）', async () => {

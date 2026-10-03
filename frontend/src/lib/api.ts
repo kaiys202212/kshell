@@ -174,6 +174,8 @@ interface AppBindings {
   HideProject(path: string): Promise<void>;
   RestoreProject(path: string): Promise<void>;
   GetDeletedProjects(): Promise<DeletedProject[]>;
+  GetCloseBehavior(): Promise<string>;
+  SetCloseBehavior(mode: string): Promise<void>;
   GetAppearance(): Promise<AppearanceInfo>;
   SetAppearanceMode(mode: string): Promise<void>;
 }
@@ -510,4 +512,20 @@ export function onAppearanceChanged(cb: (info: AppearanceInfo) => void): () => v
   return EventsOn('appearance:changed', (p: AppearanceInfo) =>
     cb({ mode: p?.mode ?? 'system', resolved: p?.resolved ?? 'dark' }),
   );
+}
+
+// ---- 关闭行为 ----
+
+// getCloseBehavior 返回当前关闭行为（tray | exit）；绑定不可用时兜底 tray。
+export async function getCloseBehavior(): Promise<string> {
+  const a = app();
+  if (!a) return 'tray';
+  return a.GetCloseBehavior();
+}
+
+// setCloseBehavior 设置关闭行为（Go 侧校验并写回 config.yaml），错误向上抛。
+export async function setCloseBehavior(mode: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.SetCloseBehavior(mode);
 }

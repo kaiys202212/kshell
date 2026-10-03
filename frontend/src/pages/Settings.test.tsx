@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   restartApp: vi.fn(),
   getAppearance: vi.fn(),
   setAppearanceMode: vi.fn(),
+  getCloseBehavior: vi.fn(),
+  setCloseBehavior: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -55,6 +57,8 @@ beforeEach(() => {
   mocks.saveProvidersYAML.mockResolvedValue(undefined);
   mocks.getAppearance.mockResolvedValue({ mode: 'system', resolved: 'dark' });
   mocks.setAppearanceMode.mockResolvedValue(undefined);
+  mocks.getCloseBehavior.mockResolvedValue('tray');
+  mocks.setCloseBehavior.mockResolvedValue(undefined);
 });
 
 describe('Settings', () => {
@@ -155,5 +159,44 @@ describe('Settings', () => {
       fireEvent.click(darkBtn);
     });
     expect(mocks.setAppearanceMode).toHaveBeenCalledWith('dark');
+  });
+
+  it('关闭行为默认收进托盘，切换为直接退出调用 SetCloseBehavior', async () => {
+    useAppStore.setState({ toasts: [] });
+    render(<Settings />);
+
+    const trayBtn = await screen.findByRole('button', { name: '收进托盘' });
+    expect(trayBtn).toHaveAttribute('aria-pressed', 'true');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '直接退出' }));
+    });
+    expect(mocks.setCloseBehavior).toHaveBeenCalledWith('exit');
+    expect(screen.getByRole('button', { name: '直接退出' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('加载时回填关闭行为：返回 exit 时「直接退出」选中', async () => {
+    mocks.getCloseBehavior.mockResolvedValueOnce('exit');
+    render(<Settings />);
+
+    expect(await screen.findByRole('button', { name: '直接退出' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: '收进托盘' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('切换关闭行为失败时提示错误且保持原选中态', async () => {
+    useAppStore.setState({ toasts: [] });
+    mocks.setCloseBehavior.mockRejectedValueOnce(new Error('写盘失败'));
+    render(<Settings />);
+
+    await screen.findByRole('button', { name: '收进托盘' });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '直接退出' }));
+    });
+    await waitFor(() => {
+      expect(
+        useAppStore.getState().toasts.some((t) => t.tone === 'error' && t.title === '写盘失败'),
+      ).toBe(true);
+    });
+    expect(screen.getByRole('button', { name: '收进托盘' })).toHaveAttribute('aria-pressed', 'true');
   });
 });
