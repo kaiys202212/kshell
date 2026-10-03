@@ -26,6 +26,7 @@
   --color-danger: var(--destructive);
   --color-info: var(--primary);
   --color-ring: var(--ring);
+  --color-primary-hover: var(--primary-hover);
   --font-mono: var(--font-mono-stack);
   --radius: var(--radius-base);
   --radius-xs: 2px;
@@ -37,36 +38,62 @@
   --radius-3xl: 4px;
 }
 
-/* 浅色 token：延续 GitHub 蓝主色，中性灰底 + 白色面板（扁平：靠面区分，不靠边框加粗） */
+/* 浅色 token：青绿 Teal 主色 + 青调中性色（扁平：靠面区分，不靠边框加粗） */
 :root,
 [data-theme="light"] {
   color-scheme: light;
-  --background: #f4f6f8;  --foreground: #1f2328;
-  --card: #ffffff;        --card-foreground: #1f2328;
-  --muted: #eceff2;       --muted-foreground: #59636e;
-  --border: #d8dee4;      --input: #d8dee4;
-  --primary: #0969da;     --primary-foreground: #ffffff;
-  --secondary: #eceff2;   --secondary-foreground: #1f2328;
-  --accent: #ddf4ff;      --accent-foreground: #0969da;
+  --background: #f3f7f6;  --foreground: #1c2a27;
+  --card: #ffffff;        --card-foreground: #1c2a27;
+  --muted: #e6ecea;       --muted-foreground: #5a6b66;
+  --border: #d7e0dd;      --input: #c9d5d1;
+  --primary: #0d9488;     --primary-hover: #0f766e;  --primary-foreground: #ffffff;
+  --secondary: #e6ecea;   --secondary-foreground: #1c2a27;
+  --accent: #ccfbf1;      --accent-foreground: #0f766e;
   --destructive: #c93c37; --destructive-foreground: #ffffff;
   --success: #1a7f37;     --warning: #9a6700;
-  --ring: #0969da99;
+  --ring: #0d948866;
+  --overlay: rgba(23, 32, 30, 0.4);
+  --shadow-card: 0 1px 3px rgba(15, 35, 30, 0.08), 0 4px 12px rgba(15, 35, 30, 0.06);
   --radius-base: 3px;
   --font-mono-stack: Consolas, "Cascadia Mono", "SFMono-Regular", ui-monospace, monospace;
+  --tool-codebuddy: #6f42c1; --tool-codex: #0c8a6c; --tool-claude: #bc4c25;
+  --tool-gemini: #1a73e8;   --tool-opencode: #0d8f80;
 }
 
 [data-theme="dark"] {
   color-scheme: dark;
-  --background: #0d1117;  --foreground: #e6edf3;
-  --card: #151b23;        --card-foreground: #e6edf3;
-  --muted: #1f262e;       --muted-foreground: #8b949e;
-  --border: #2d333b;      --input: #2d333b;
-  --primary: #4493f8;     --primary-foreground: #0d1117;
-  --secondary: #1f262e;   --secondary-foreground: #e6edf3;
-  --accent: #101d2f;      --accent-foreground: #4493f8;
+  --background: #0c1310;  --foreground: #dce8e4;
+  --card: #131b18;        --card-foreground: #dce8e4;
+  --muted: #1c2622;       --muted-foreground: #8ba39c;
+  --border: #2a3733;      --input: #2a3733;
+  --primary: #2dd4bf;     --primary-hover: #5eead4;  --primary-foreground: #04201c;
+  --secondary: #1c2622;   --secondary-foreground: #dce8e4;
+  --accent: #0e2521;      --accent-foreground: #5eead4;
   --destructive: #e5534b; --destructive-foreground: #ffffff;
   --success: #3fb950;     --warning: #d29922;
-  --ring: #4493f899;
+  --ring: #2dd4bf99;
+  --overlay: rgba(2, 6, 5, 0.6);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.3);
+  --tool-codebuddy: #a371f7; --tool-codex: #26a583; --tool-claude: #e8875f;
+  --tool-gemini: #6ba4f7;   --tool-opencode: #2cc8b4;
+}
+
+/* 动效 token：统一过渡时长与缓动，组件侧引用保持一致 */
+:root {
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 系统开启"减少动态效果"时压缩动画/过渡，尊重无障碍偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 html,
@@ -79,8 +106,8 @@ body {
 body {
   font-family: system-ui, -apple-system, "Segoe UI", "Roboto", "PingFang SC",
     "Microsoft YaHei", sans-serif;
-  font-size: 12.5px;
-  line-height: 1.45;
+  font-size: 13px;
+  line-height: 1.5;
   color: var(--foreground);
   background: var(--background);
   user-select: none; /* 桌面应用语义：默认不可选中，正文区域自行放开 */
