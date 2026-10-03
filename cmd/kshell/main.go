@@ -52,12 +52,13 @@ func main() {
 	}
 
 	model := ui.NewModelWith(ui.Options{
-		Home:      home,
-		Config:    cfg,
-		CachePath: paths.CacheIndex,
-		Providers: providerList,
-		Store:     store,
-		Projects:  projects,
+		Home:          home,
+		Config:        cfg,
+		CachePath:     paths.CacheIndex,
+		Providers:     providerList,
+		Store:         store,
+		Projects:      projects,
+		ThemeCacheDir: paths.CacheAppearance,
 		Scanners: []remote.Scanner{
 			scanners.SSHConfigScanner{},
 			scanners.EnvScanner{},

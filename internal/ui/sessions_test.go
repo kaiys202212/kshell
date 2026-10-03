@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/yangk/kshell/internal/appearance"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
 )
@@ -119,6 +120,7 @@ func TestPreviewShowsSelectedSessionSummary(t *testing.T) {
 func TestResumeLaunchUsesRealBinary(t *testing.T) {
 	m := modelWithSessions()
 	m.focus = focusSessions
+	m.opts.Config.Appearance.Mode = string(appearance.Dark) // 钉死模式，避免跟随 OS 导致断言不稳
 
 	launch, err := m.resumeLaunch()
 	if err != nil {
@@ -127,8 +129,14 @@ func TestResumeLaunchUsesRealBinary(t *testing.T) {
 	if launch.Path != "claude" {
 		t.Fatalf("path = %q", launch.Path)
 	}
-	if len(launch.Args) != 2 || launch.Args[0] != "--resume" || launch.Args[1] != "s3" {
-		t.Fatalf("args = %v, want [--resume s3]", launch.Args)
+	want := []string{"--resume", "s3", "--settings", `{"theme":"dark"}`}
+	if len(launch.Args) != len(want) {
+		t.Fatalf("args = %v, want %v", launch.Args, want)
+	}
+	for i := range want {
+		if launch.Args[i] != want[i] {
+			t.Fatalf("args = %v, want %v", launch.Args, want)
+		}
 	}
 	if launch.Dir != "D:\\ws-b" {
 		t.Fatalf("dir = %q, want the session workspace", launch.Dir)
@@ -145,15 +153,17 @@ func TestResumeLaunchFailsWithoutRunnableTool(t *testing.T) {
 	}
 }
 
-func TestNewSessionLaunchHasNoExtraArgs(t *testing.T) {
+func TestNewSessionLaunchInjectsOnlyTheme(t *testing.T) {
 	m := modelWithSessions()
+	m.opts.Config.Appearance.Mode = string(appearance.Dark) // 钉死模式，避免跟随 OS 导致断言不稳
 
 	launch, err := m.newSessionLaunch()
 	if err != nil {
 		t.Fatalf("newSessionLaunch error: %v", err)
 	}
-	if len(launch.Args) != 0 {
-		t.Fatalf("args = %v, want no extra args", launch.Args)
+	want := []string{"--settings", `{"theme":"dark"}`}
+	if len(launch.Args) != len(want) || launch.Args[0] != want[0] || launch.Args[1] != want[1] {
+		t.Fatalf("args = %v, want %v", launch.Args, want)
 	}
 }
 

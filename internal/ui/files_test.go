@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/yangk/kshell/internal/appearance"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/workspace"
@@ -126,13 +127,16 @@ func TestFilesPreviewIsAsync(t *testing.T) {
 
 func TestNewSessionFromFilesViewStartsInWorkspace(t *testing.T) {
 	m, root := modelWithFiles(t)
+	m.opts.Config.Appearance.Mode = string(appearance.Dark) // 钉死模式，避免跟随 OS 导致断言不稳
 
 	launch, err := m.newSessionLaunch()
 	if err != nil {
 		t.Fatalf("newSessionLaunch error: %v", err)
 	}
-	if len(launch.Args) != 0 {
-		t.Fatalf("新建会话不应带任何文件参数: %v", launch.Args)
+	// 只允许主题注入参数，不应混入任何文件参数。
+	want := []string{"--settings", `{"theme":"dark"}`}
+	if len(launch.Args) != len(want) || launch.Args[0] != want[0] || launch.Args[1] != want[1] {
+		t.Fatalf("新建会话只应带主题参数，实际: %v", launch.Args)
 	}
 	if launch.Dir != root {
 		t.Fatalf("dir = %q, want %q", launch.Dir, root)

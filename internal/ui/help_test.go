@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/yangk/kshell/internal/appearance"
 )
 
 func TestHelpPanelToggles(t *testing.T) {
@@ -41,7 +42,7 @@ func TestHelpPanelToggles(t *testing.T) {
 }
 
 func TestHelpMentionsEveryRemoteKey(t *testing.T) {
-	out := renderHelp(40, 100, NewTheme())
+	out := renderHelp(40, 100, NewTheme(appearance.Dark))
 	for _, key := range []string{"i ", "x ", "s ", "t ", "b ", "d ", "space", "a "} {
 		if !strings.Contains(out, key) {
 			t.Fatalf("help should document %q", key)
