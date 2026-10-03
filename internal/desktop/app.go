@@ -495,16 +495,16 @@ func (a *App) runScan() {
 		res.Workspaces = discovery.ApplyProjects(raw, o.Projects, nil)
 	}
 
+	a.mu.Lock()
 	// 上轮扫描已存在的会话 ID：只有「本轮新发现」的会话才可能对应运行中的新建终端/聊天
 	// （新建动作发生在上轮扫描之后），否则工作区里任意旧会话都会被误绑。
+	// 在锁内读取 a.result：runScan 是唯一写者，但读也必须持锁避免与其它 goroutine 竞争。
 	prevIDs := make(map[string]bool)
 	if a.result != nil {
 		for _, s := range a.result.Sessions {
 			prevIDs[s.ID] = true
 		}
 	}
-
-	a.mu.Lock()
 	a.tools = tools
 	if err == nil {
 		a.result = res
