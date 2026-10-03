@@ -9,6 +9,7 @@ import {
   closeChat,
   closeTerminal,
   getTools,
+  listChats,
   listTerminals,
   onScanDone,
   openSession,
@@ -98,7 +99,20 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         .catch(() => {});
     };
     refresh();
-    return onScanDone(refresh);
+    // 扫描完成后重取终端/聊天镜像：Go 侧会把新发现的会话回填到新建终端/聊天
+    // （SessionID/真实标题），页签标题与「恢复/切换」判断都依赖这份镜像
+    const refreshMirrors = () => {
+      listTerminals()
+        .then((list) => useAppStore.getState().setTerminals(list))
+        .catch(() => {});
+      listChats()
+        .then((list) => useAppStore.getState().setChats(list))
+        .catch(() => {});
+    };
+    return onScanDone(() => {
+      refresh();
+      refreshMirrors();
+    });
   }, []);
 
   useEffect(() => {

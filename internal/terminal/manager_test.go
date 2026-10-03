@@ -650,3 +650,101 @@ func TestAppendCappedDropsOldest(t *testing.T) {
 		t.Fatalf("max<=0 应返回 nil, got %q", got)
 	}
 }
+
+// newKindNew 终端 Info：新建会话，尚未绑定磁盘会话（SessionID 空）。
+func newKindNewInfo(ws, toolID string) Info {
+	return Info{Kind: KindNew, Workspace: ws, Title: ws + " · 工具", ToolID: toolID}
+}
+
+func TestAttachSessionBindsRunningNewTerminal(t *testing.T) {
+	m, _, _ := newTestManager(t)
+
+	info, err := m.Open("new:1", newKindNewInfo(`D:\ws`, "codebuddy"), sampleSpec(), 80, 24)
+	if err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+
+	if !m.AttachSession("disk-1", `d:/WS/`, "codebuddy", "修复页签标题") {
+		t.Fatal("匹配的新建终端应绑定成功")
+	}
+	list := m.List()
+	if len(list) != 1 {
+		t.Fatalf("List = %+v", list)
+	}
+	got := list[0]
+	if got.ID != info.ID || got.SessionID != "disk-1" || got.Title != "修复页签标题" {
+		t.Fatalf("绑定后 Info 未回填: %+v", got)
+	}
+}
+
+func TestAttachSessionSkipsNonCandidates(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	if _, err := m.Open("new:1", newKindNewInfo(`D:\ws`, "codebuddy"), sampleSpec(), 80, 24); err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+
+	cases := []struct {
+		name      string
+		ws, tool  string
+	}{
+		{"工作区不匹配", `D:\other`, "codebuddy"},
+		{"工具不匹配", `D:\ws`, "claude"},
+	}
+	for _, c := range cases {
+		if m.AttachSession("disk-1", c.ws, c.tool, "标题") {
+			t.Fatalf("%s 不应绑定", c.name)
+		}
+	}
+	list := m.List()
+	if list[0].SessionID != "" || list[0].Title != `D:\ws · 工具` {
+		t.Fatalf("不匹配时 Info 不应被改写: %+v", list[0])
+	}
+}
+
+func TestAttachSessionSkipsSessionKindAndExited(t *testing.T) {
+	m, b, _ := newTestManager(t)
+
+	// 已有磁盘会话的恢复型终端不改写
+	if _, err := m.Open("session:s1", openInfo("s1"), sampleSpec(), 80, 24); err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+	if m.AttachSession("disk-1", "D:/ws", "claude", "标题") {
+		t.Fatal("KindSession 终端不应被 AttachSession 改写")
+	}
+	if got := m.List()[0]; got.SessionID != "s1" || got.Title != "修复登录" {
+		t.Fatalf("KindSession Info 被意外改写: %+v", got)
+	}
+
+	// 已退出的新建终端不绑定
+	if _, err := m.Open("new:1", newKindNewInfo(`D:\ws`, "codebuddy"), sampleSpec(), 80, 24); err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+	m.CloseAll()
+	waitFor(t, "全部退出", func() bool {
+		for _, it := range m.List() {
+			if it.Status == StatusRunning {
+				return false
+			}
+		}
+		return true
+	})
+	_ = b
+	if m.AttachSession("disk-1", `D:\ws`, "codebuddy", "标题") {
+		t.Fatal("已退出的终端不应绑定")
+	}
+}
+
+func TestAttachSessionFillsEmptyToolID(t *testing.T) {
+	m, _, _ := newTestManager(t)
+
+	// Info.ToolID 为空表示由 launch 选首选工具：该工作区任意工具的新会话都可绑定
+	if _, err := m.Open("new:1", newKindNewInfo(`D:\ws`, ""), sampleSpec(), 80, 24); err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+	if !m.AttachSession("disk-1", `D:\ws`, "codebuddy", "标题") {
+		t.Fatal("Info.ToolID 为空时应允许绑定该工作区会话")
+	}
+	if got := m.List()[0]; got.SessionID != "disk-1" {
+		t.Fatalf("绑定失败: %+v", got)
+	}
+}

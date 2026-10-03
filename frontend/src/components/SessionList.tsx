@@ -49,6 +49,7 @@ export default function SessionList({ workspacePath, onOpenTerminal }: Props) {
   const scanState = useAppStore((s) => s.scanState);
   const setScanState = useAppStore((s) => s.setScanState);
   const terminals = useAppStore((s) => s.terminals);
+  const chats = useAppStore((s) => s.chats);
 
   useEffect(() => {
     let cancelled = false;
@@ -148,8 +149,10 @@ export default function SessionList({ workspacePath, onOpenTerminal }: Props) {
         <ul className="flex flex-col gap-2">
           {visible.map((s) => {
             const badge = badgeFor(s.ToolID);
-            // 该会话是否已有运行中的内嵌终端（决定主按钮「恢复」还是「切换」，也决定行高亮）
-            const running = terminals.some((t) => t.SessionID === s.ID && t.Status === 'running');
+            // 该会话是否已在中心区打开且未退出（内嵌终端或 ACP 聊天都算）：
+            // 决定主按钮「恢复」还是「切换」，也决定行高亮
+            const running =
+              [...terminals, ...chats].some((t) => t.SessionID === s.ID && t.Status !== 'exited');
             // 渲染层兜底清洗：历史 / 未重扫的缓存里可能仍带着 XML 包装标签
             const title = displayTitle(s.Title);
             return (

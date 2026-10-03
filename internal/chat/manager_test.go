@@ -119,7 +119,8 @@ func TestManagerOpenNewAndPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if info.Status != StatusReady || info.SessionID != "sess-new" {
+	// Info.SessionID 只存磁盘会话 ID：新建聊天的 ACP 内部 ID（sess-new）不写入，留空等扫描回填
+	if info.Status != StatusReady || info.SessionID != "" {
 		t.Fatalf("info = %+v", info)
 	}
 	if err := m.Prompt(info.ID, "hi"); err != nil {
@@ -319,5 +320,78 @@ func TestManagerRejectsLoadWithoutCapability(t *testing.T) {
 	m := NewManager(b, nil, nil, nil)
 	if _, err := m.Open("session:s1", Info{Kind: KindSession, Workspace: "/w"}, Spec{Path: "x"}, "s1"); err == nil {
 		t.Fatal("want load-capability error")
+	}
+}
+
+// promptSessionID 记录最近一次 Prompt 收到的协议 sessionID（不受 Info 绑定影响）。
+func TestAttachSessionBindsNewChatInfo(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, Title: `D:\ws · CodeBuddy`}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	if !m.AttachSession("disk-1", `d:/WS/`, "codebuddy", "修复页签标题") {
+		t.Fatal("匹配的新建聊天应绑定成功")
+	}
+	got := m.List()[0]
+	if got.ID != info.ID || got.SessionID != "disk-1" || got.Title != "修复页签标题" {
+		t.Fatalf("绑定后 Info 未回填: %+v", got)
+	}
+
+	// 绑定只改 Info：协议层仍用 agent 返回的 sessionID（sess-new），Prompt 正常
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatalf("prompt after attach: %v", err)
+	}
+	if b.conn.newID != "sess-new" {
+		t.Fatalf("协议 sessionID 不应被绑定改写: %q", b.conn.newID)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		m.mu.Lock()
+		ready := m.byID[info.ID] != nil
+		m.mu.Unlock()
+		if ready {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestAttachSessionSkipsNonCandidates(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, ToolID: "codebuddy"}, Spec{Path: "x"}, ""); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	for _, c := range []struct{ ws, tool string }{{`D:\other`, "codebuddy"}, {`D:\ws`, "claude"}} {
+		if m.AttachSession("disk-1", c.ws, c.tool, "标题") {
+			t.Fatalf("ws=%q tool=%q 不应绑定", c.ws, c.tool)
+		}
+	}
+	// KindSession 不改写
+	if _, err := m.Open("session:s1", Info{Kind: KindSession, SessionID: "s1", Workspace: `D:\ws`}, Spec{Path: "x"}, "s1"); err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+	if m.AttachSession("disk-1", `D:\ws`, "claude", "标题") {
+		t.Fatal("KindSession 聊天不应被改写")
+	}
+	for _, it := range m.List() {
+		if it.Kind == KindSession && (it.SessionID != "s1" || it.SessionID == "disk-1") {
+			t.Fatalf("KindSession Info 被意外改写: %+v", it)
+		}
+	}
+}
+
+// 新建聊天的 Info.SessionID 不应被 agent 返回的 ACP 会话 ID 污染：
+// 那是协议内部 ID，与磁盘会话 ID 不是同一体系；Info.SessionID 留空等扫描回填。
+func TestManagerOpenNewKeepsInfoSessionIDEmpty(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w", Title: "新会话"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if info.SessionID != "" {
+		t.Fatalf("KindNew 的 Info.SessionID 应留空等回填, got %q", info.SessionID)
 	}
 }
