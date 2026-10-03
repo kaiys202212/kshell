@@ -25,25 +25,9 @@ func (a *App) GetAppearance() AppearanceInfo { return a.currentAppearance() }
 // 先落盘成功再更新内存：Save 失败时内存保持原值，避免界面与磁盘不一致。
 func (a *App) SetAppearanceMode(mode string) error {
 	m := appearance.ParseMode(mode)
-
-	a.mu.Lock()
-	if a.opts.Layout.Config == "" {
-		a.mu.Unlock()
-		return errNotReady
-	}
-	cfg := a.opts.Config
-	layout := a.opts.Layout
-	a.mu.Unlock()
-
-	cfg.Appearance.Mode = string(m)
-	if err := config.Save(layout, cfg); err != nil {
+	if err := a.saveConfig(func(cfg *config.Config) { cfg.Appearance.Mode = string(m) }); err != nil {
 		return err
 	}
-
-	a.mu.Lock()
-	a.opts.Config = cfg
-	a.mu.Unlock()
-
 	a.restartAppearanceWatcher()
 	a.emitAppearance()
 	return nil

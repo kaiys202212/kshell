@@ -3,6 +3,7 @@ package desktop
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -26,6 +27,10 @@ var (
 	errSessionNotFound   = errors.New("会话不存在或已被清理")
 	errWorkspaceNotFound = errors.New("工作区不存在")
 )
+
+// configWriteMu 串行化「读内存配置 → 变更 → 落盘 → 提交内存」全过程：
+// 多个 setter（关闭行为 / 颜色模式）并发调用时不会互相覆盖对方的字段。
+var configWriteMu sync.Mutex
 
 // scanFunc 是 discovery.Scan 的签名抽象，注入便于测试。
 type scanFunc func(home string, ps []providers.Provider, cachePath string, opts discovery.ScanOptions) (*discovery.Result, error)
@@ -53,7 +58,7 @@ type Options struct {
 	Projects *discovery.ProjectStore
 	// ProjectsPath 是 projects.yaml 完整路径；仅在未注入 Projects 时用于装配。
 	ProjectsPath string
-	// Layout 是 ~/.kshell 的路径布局，写回配置（颜色模式）时使用。
+	// Layout 是 ~/.kshell 的路径布局，写回配置（颜色模式 / 关闭行为）时使用。
 	Layout config.Layout
 	// ThemeCacheDir 是主题注入文件目录，供启动 agent 时使用。
 	ThemeCacheDir string
@@ -76,8 +81,9 @@ type App struct {
 	scanning      bool
 	// scanned 标记本进程是否完成过一轮真实扫描（快照恢复不算）：
 	// 绑定调用据此决定要不要等首扫，避免拿快照当真结果错过新工作区。
-	scanned  bool
-	quitting bool // 托盘「退出」已发起：BeforeClose 据此放行 Wails 的退出流程
+	scanned    bool
+	quitting   bool // 托盘「退出」已发起：BeforeClose 据此放行 Wails 的退出流程
+	trayActive bool // 系统托盘消息循环已启动：BeforeClose 据此判断能否收进托盘
 
 	trees   map[string]*workspace.Tree // 工作区路径 → 文件树（懒创建，节点级缓存）
 	treeMu  sync.Mutex                 // 树操作串行化（Expand 会写节点，不能只靠 mu 快照）
@@ -272,15 +278,24 @@ func (a *App) StartTray() {
 	a.mu.Lock()
 	icon := a.opts.TrayIcon
 	ctx := a.ctx
-	a.mu.Unlock()
 	if len(icon) == 0 || ctx == nil {
+		a.mu.Unlock()
 		return
 	}
-	go runTray(icon,
+	a.trayActive = true
+	a.mu.Unlock()
+
+	go runTrayFn(icon,
 		func() { runtime.WindowShow(ctx) },
 		func() { a.quitApp(ctx) },
 	)
 }
+
+// runTrayFn 是 runTray 的包级变量抽象：测试注入用，避免单测真启动托盘消息循环。
+var runTrayFn = runTray
+
+// windowHide 是 runtime.WindowHide 的包级变量抽象：测试注入用，对齐 quitRuntime。
+var windowHide = runtime.WindowHide
 
 // quitRuntime 是 runtime.Quit 的包级变量抽象：测试注入用。
 // Wails 的 runtime.Quit 在 ctx 不带 frontend 值时会 log.Fatalf 直接终止进程，
@@ -313,17 +328,71 @@ func (a *App) Shutdown(ctx context.Context) {
 	}
 }
 
-// BeforeClose 供 Wails OnBeforeClose 挂载：拦截窗口关闭改为隐藏到托盘（返回 true）；
-// 托盘「退出」期间放行（返回 false），让 runtime.Quit 真正退出进程。
+// BeforeClose 供 Wails OnBeforeClose 挂载：默认拦截窗口关闭改为隐藏到托盘（返回 true）。
+// 放行（返回 false）的三种情形：托盘「退出」/重启/信号退出期间（quitting）、
+// 关闭行为配置为 exit、或托盘未激活（避免窗口有去无回，直接退出）。
 func (a *App) BeforeClose(ctx context.Context) bool {
 	a.mu.Lock()
 	quitting := a.quitting
+	behavior := a.opts.Config.CloseBehavior
+	trayActive := a.trayActive
 	a.mu.Unlock()
+
 	if quitting {
 		return false
 	}
-	runtime.WindowHide(ctx)
+	if behavior == config.CloseBehaviorExit || !trayActive {
+		return false
+	}
+	windowHide(ctx)
 	return true
+}
+
+// GetCloseBehavior 返回归一化后的关闭行为：exit 原样返回，其余一律 tray（默认）。
+func (a *App) GetCloseBehavior() string {
+	a.mu.Lock()
+	behavior := a.opts.Config.CloseBehavior
+	a.mu.Unlock()
+	if behavior == config.CloseBehaviorExit {
+		return config.CloseBehaviorExit
+	}
+	return config.CloseBehaviorTray
+}
+
+// saveConfig 在 configWriteMu 保护下对内存配置做一次变更并落盘，成功后才提交回内存。
+// 统一收口「读 → 改 → Save → 提交」，避免多个 setter 并发时丢失对方字段；
+// 未装配 Layout 时返回 errNotReady。
+func (a *App) saveConfig(mutate func(*config.Config)) error {
+	configWriteMu.Lock()
+	defer configWriteMu.Unlock()
+
+	a.mu.Lock()
+	if a.opts.Layout.Config == "" {
+		a.mu.Unlock()
+		return errNotReady
+	}
+	layout := a.opts.Layout
+	cfg := a.opts.Config
+	a.mu.Unlock()
+
+	mutate(&cfg)
+	if err := config.Save(layout, cfg); err != nil {
+		return err
+	}
+
+	a.mu.Lock()
+	a.opts.Config = cfg
+	a.mu.Unlock()
+	return nil
+}
+
+// SetCloseBehavior 校验并持久化关闭行为，立即生效（无需重启）。
+// 先写盘成功再提交内存，避免写失败却留下不一致；非法值或未装配 Layout 直接报错且不改状态。
+func (a *App) SetCloseBehavior(mode string) error {
+	if mode != config.CloseBehaviorTray && mode != config.CloseBehaviorExit {
+		return fmt.Errorf("非法的关闭行为 %q（可选 tray / exit）", mode)
+	}
+	return a.saveConfig(func(cfg *config.Config) { cfg.CloseBehavior = mode })
 }
 
 // spawnSelf 启动应用自身新实例（包级变量便于测试注入）。

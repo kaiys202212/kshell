@@ -23,13 +23,20 @@ type Appearance struct {
 	Mode string `yaml:"mode"` // system | light | dark
 }
 
+// 关闭窗口的行为取值。
+const (
+	CloseBehaviorTray = "tray" // 收进系统托盘（默认）
+	CloseBehaviorExit = "exit" // 直接退出进程
+)
+
 type Config struct {
-	ScanRoots  []string        `yaml:"scan_roots"`
-	MaxDepth   int             `yaml:"max_depth"`
-	Exclude    []string        `yaml:"exclude"`
-	SSHOptions SSHOptions      `yaml:"ssh"`
-	Scanners   map[string]bool `yaml:"scanners"`
-	Appearance Appearance      `yaml:"appearance"`
+	ScanRoots     []string        `yaml:"scan_roots"`
+	MaxDepth      int             `yaml:"max_depth"`
+	Exclude       []string        `yaml:"exclude"`
+	SSHOptions    SSHOptions      `yaml:"ssh"`
+	Scanners      map[string]bool `yaml:"scanners"`
+	Appearance    Appearance      `yaml:"appearance"`
+	CloseBehavior string          `yaml:"close_behavior"` // tray | exit
 }
 
 func Default() Config {
@@ -49,7 +56,8 @@ func Default() Config {
 			"deploy":    true,
 			"docs":      true,
 		},
-		Appearance: Appearance{Mode: "system"},
+		Appearance:    Appearance{Mode: "system"},
+		CloseBehavior: CloseBehaviorTray,
 	}
 }
 
@@ -138,6 +146,10 @@ func (c Config) normalized() Config {
 	case "system", "light", "dark":
 	default:
 		c.Appearance.Mode = d.Appearance.Mode
+	}
+	// 关闭行为：空值或非 exit 一律回落默认（tray）。
+	if c.CloseBehavior != CloseBehaviorExit {
+		c.CloseBehavior = CloseBehaviorTray
 	}
 	return c
 }

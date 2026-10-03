@@ -17,6 +17,12 @@ func runTray(icon []byte, onShow, onQuit func()) {
 		// Windows 通知区只认 ICO 数据，其它平台用 PNG（图标选择见 main.go trayIcon）
 		systray.SetIcon(icon)
 		systray.SetTooltip("kshell")
+		// 左键单击图标恢复主窗口（WM_LBUTTONUP；缺此回调则左键无任何反应）
+		systray.SetOnClick(func(systray.IMenu) {
+			if onShow != nil {
+				onShow()
+			}
+		})
 		mShow := systray.AddMenuItem("显示主窗口", "显示 kshell 主窗口")
 		systray.AddSeparator()
 		mQuit := systray.AddMenuItem("退出", "退出 kshell")
