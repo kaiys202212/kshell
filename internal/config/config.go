@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -29,6 +30,14 @@ const (
 	CloseBehaviorExit = "exit" // 直接退出进程
 )
 
+// ModelConfig 是全局模型/端点配置 + 每 agent 模型名。
+type ModelConfig struct {
+	Enabled bool              `yaml:"enabled"`
+	BaseURL string            `yaml:"base_url"`
+	APIKey  string            `yaml:"api_key"`
+	Agents  map[string]string `yaml:"agents"` // toolID -> 模型名（空=不改）
+}
+
 type Config struct {
 	ScanRoots     []string        `yaml:"scan_roots"`
 	MaxDepth      int             `yaml:"max_depth"`
@@ -37,6 +46,7 @@ type Config struct {
 	Scanners      map[string]bool `yaml:"scanners"`
 	Appearance    Appearance      `yaml:"appearance"`
 	CloseBehavior string          `yaml:"close_behavior"` // tray | exit
+	Model         ModelConfig     `yaml:"model"`
 }
 
 func Default() Config {
@@ -58,6 +68,7 @@ func Default() Config {
 		},
 		Appearance:    Appearance{Mode: "system"},
 		CloseBehavior: CloseBehaviorTray,
+		Model:         ModelConfig{Agents: map[string]string{}},
 	}
 }
 
@@ -150,6 +161,19 @@ func (c Config) normalized() Config {
 	// 关闭行为：空值或非 exit 一律回落默认（tray）。
 	if c.CloseBehavior != CloseBehaviorExit {
 		c.CloseBehavior = CloseBehaviorTray
+	}
+	// 模型配置：Agents 补空 map 并 TrimSpace；BaseURL 非法前缀一律丢弃（不阻断加载）。
+	if c.Model.Agents == nil {
+		c.Model.Agents = map[string]string{}
+	}
+	for k, v := range c.Model.Agents {
+		c.Model.Agents[k] = strings.TrimSpace(v)
+	}
+	c.Model.BaseURL = strings.TrimSpace(c.Model.BaseURL)
+	if c.Model.BaseURL != "" &&
+		!strings.HasPrefix(c.Model.BaseURL, "http://") &&
+		!strings.HasPrefix(c.Model.BaseURL, "https://") {
+		c.Model.BaseURL = ""
 	}
 	return c
 }

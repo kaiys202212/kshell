@@ -148,6 +148,61 @@ func TestLoadKeepsParsedFieldsOnTypeMismatch(t *testing.T) {
 	}
 }
 
+func TestModelConfigDefaultsAndRoundTrip(t *testing.T) {
+	p := tempPaths(t)
+
+	got, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Model.Enabled || got.Model.BaseURL != "" || got.Model.APIKey != "" {
+		t.Fatalf("默认 model 应为空，got %+v", got.Model)
+	}
+	if got.Model.Agents == nil {
+		t.Fatal("默认 Agents 应为非 nil 空 map")
+	}
+
+	want := Default()
+	want.Model = ModelConfig{
+		Enabled: true,
+		BaseURL: "https://example.com/anthropic",
+		APIKey:  "tp-secret",
+		Agents:  map[string]string{"claude": "mimo-v2.5"},
+	}
+	if err := Save(p, want); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(loaded.Model, want.Model) {
+		t.Fatalf("model round trip:\ngot  %+v\nwant %+v", loaded.Model, want.Model)
+	}
+}
+
+func TestModelConfigNormalizes(t *testing.T) {
+	p := tempPaths(t)
+	if err := os.MkdirAll(p.Root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "model:\n  enabled: true\n  base_url: \"not-a-url\"\n  agents:\n    claude: \"  mimo-v2.5  \"\n"
+	if err := os.WriteFile(p.Config, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Model.BaseURL != "" {
+		t.Fatalf("非法 base_url 应被丢弃，got %q", got.Model.BaseURL)
+	}
+	if got.Model.Agents["claude"] != "mimo-v2.5" {
+		t.Fatalf("agents 值应 TrimSpace，got %q", got.Model.Agents["claude"])
+	}
+}
+
 func TestScannersPartiallySpecifiedKeepsDefaults(t *testing.T) {
 	p := tempPaths(t)
 	if err := os.MkdirAll(p.Root, 0o755); err != nil {
