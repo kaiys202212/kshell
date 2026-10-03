@@ -439,6 +439,17 @@ func (a *App) themeOptions() launch.ThemeOptions {
 	}
 }
 
+// modelOptions 组装模型注入 resolver：未启用时返回空（不注入）。
+func (a *App) modelOptions() launch.ModelOptions {
+	m := a.snapshot().Config.Model
+	if !m.Enabled {
+		return launch.ModelOptions{}
+	}
+	return launch.ModelOptions{Resolver: func(toolID string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{BaseURL: m.BaseURL, APIKey: m.APIKey, Model: m.Agents[toolID]}, true
+	}}
+}
+
 // ScanSessions 触发一次会话扫描（已在扫则不重复），立即返回最近一次结果；
 // 前端首次调用拿到 nil 属正常，等 "scan:done" 事件后再刷新。
 // 未就绪（装配未完成）时返回 errNotReady 且不触发扫描。
@@ -575,7 +586,7 @@ func (a *App) ResumeSession(id string) error {
 		return errSessionNotFound
 	}
 	o := a.snapshot()
-	l, err := launch.ForSession(o.Providers, tools, s, a.themeOptions())
+	l, err := launch.ForSession(o.Providers, tools, s, a.themeOptions(), a.modelOptions())
 	if err != nil {
 		return err
 	}

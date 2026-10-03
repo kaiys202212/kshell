@@ -2,9 +2,12 @@ package desktop
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
 )
@@ -79,4 +82,57 @@ func (a *App) LoadProvidersYAML() (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// ModelConfigView 是回传前端的模型配置视图：绝不包含密钥明文。
+type ModelConfigView struct {
+	Enabled   bool              `json:"Enabled"`
+	BaseURL   string            `json:"BaseURL"`
+	Agents    map[string]string `json:"Agents"`
+	APIKeySet bool              `json:"APIKeySet"`
+}
+
+// ModelConfigInput 是前端提交的模型配置：APIKey 空串=保持原值，ClearAPIKey 显式清除。
+type ModelConfigInput struct {
+	Enabled     bool              `json:"Enabled"`
+	BaseURL     string            `json:"BaseURL"`
+	APIKey      string            `json:"APIKey"`
+	ClearAPIKey bool              `json:"ClearAPIKey"`
+	Agents      map[string]string `json:"Agents"`
+}
+
+func (a *App) GetModelConfig() (ModelConfigView, error) {
+	m := a.snapshot().Config.Model
+	agents := m.Agents
+	if agents == nil {
+		agents = map[string]string{}
+	}
+	return ModelConfigView{
+		Enabled:   m.Enabled,
+		BaseURL:   m.BaseURL,
+		Agents:    agents,
+		APIKeySet: m.APIKey != "",
+	}, nil
+}
+
+func (a *App) SetModelConfig(in ModelConfigInput) error {
+	base := strings.TrimSpace(in.BaseURL)
+	if base != "" && !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
+		return fmt.Errorf("Base URL 必须以 http:// 或 https:// 开头")
+	}
+	agents := map[string]string{}
+	for k, v := range in.Agents {
+		agents[k] = strings.TrimSpace(v)
+	}
+	return a.saveConfig(func(c *config.Config) {
+		c.Model.Enabled = in.Enabled
+		c.Model.BaseURL = base
+		c.Model.Agents = agents
+		switch {
+		case in.ClearAPIKey:
+			c.Model.APIKey = ""
+		case in.APIKey != "":
+			c.Model.APIKey = in.APIKey
+		}
+	})
 }

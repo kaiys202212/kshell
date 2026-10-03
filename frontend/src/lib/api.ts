@@ -205,6 +205,24 @@ export interface OpenedSession {
   Fallback?: string;
 }
 
+// desktop.ModelConfigView 的 JSON 形态（internal/desktop/settings.go）：
+// 密钥不回传明文，只以 APIKeySet 表示是否已设置。
+export interface ModelConfigView {
+  Enabled: boolean;
+  BaseURL: string;
+  Agents: Record<string, string>;
+  APIKeySet: boolean;
+}
+
+// desktop.ModelConfigInput 的 JSON 形态：APIKey 留空表示不修改，ClearAPIKey 为真时清除。
+export interface ModelConfigInput {
+  Enabled: boolean;
+  BaseURL: string;
+  APIKey: string;
+  ClearAPIKey: boolean;
+  Agents: Record<string, string>;
+}
+
 interface AppBindings {
   ScanSessions(): Promise<unknown>;
   GetWorkspaces(): Promise<Workspace[]>;
@@ -242,6 +260,8 @@ interface AppBindings {
   SetCloseBehavior(mode: string): Promise<void>;
   GetAppearance(): Promise<AppearanceInfo>;
   SetAppearanceMode(mode: string): Promise<void>;
+  GetModelConfig(): Promise<ModelConfigView>;
+  SetModelConfig(input: ModelConfigInput): Promise<void>;
   OpenSession(sessionID: string): Promise<OpenedSession>;
   OpenWorkspace(wsID: string, toolID: string): Promise<OpenedSession>;
   SendChatPrompt(id: string, text: string): Promise<void>;
@@ -601,6 +621,22 @@ export async function setCloseBehavior(mode: string): Promise<void> {
   const a = app();
   if (!a) return;
   await a.SetCloseBehavior(mode);
+}
+
+// ---- 模型配置 ----
+
+// getModelConfig 返回模型注入配置（密钥只回传是否已设置的布尔）；绑定不可用时兜底空配置。
+export async function getModelConfig(): Promise<ModelConfigView> {
+  const a = app();
+  if (!a) return { Enabled: false, BaseURL: '', Agents: {}, APIKeySet: false };
+  return a.GetModelConfig();
+}
+
+// setModelConfig 保存模型注入配置（APIKey 留空不改、ClearAPIKey 为真清除），错误向上抛。
+export async function setModelConfig(input: ModelConfigInput): Promise<void> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  await a.SetModelConfig(input);
 }
 
 // ---- ACP 聊天 ----

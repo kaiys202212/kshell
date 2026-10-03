@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   setAppearanceMode: vi.fn(),
   getCloseBehavior: vi.fn(),
   setCloseBehavior: vi.fn(),
+  getModelConfig: vi.fn(),
+  setModelConfig: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -59,6 +61,8 @@ beforeEach(() => {
   mocks.setAppearanceMode.mockResolvedValue(undefined);
   mocks.getCloseBehavior.mockResolvedValue('tray');
   mocks.setCloseBehavior.mockResolvedValue(undefined);
+  mocks.getModelConfig.mockResolvedValue({ Enabled: false, BaseURL: '', Agents: {}, APIKeySet: false });
+  mocks.setModelConfig.mockResolvedValue(undefined);
 });
 
 describe('Settings', () => {
@@ -181,6 +185,49 @@ describe('Settings', () => {
 
     expect(await screen.findByRole('button', { name: '直接退出' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: '收进托盘' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('模型区回填配置、密钥只显示掩码、留空保存传空串', async () => {
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      BaseURL: 'https://h/',
+      Agents: { claude: 'mimo-v2.5' },
+      APIKeySet: true,
+    });
+    render(<Settings />);
+
+    const base = await screen.findByLabelText('模型 Base URL');
+    expect(base).toHaveValue('https://h/');
+    expect(screen.getByLabelText('模型 API Key')).toHaveValue('');
+    expect(screen.getByPlaceholderText(/已设置/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Claude Code 模型')).toHaveValue('mimo-v2.5');
+
+    fireEvent.click(screen.getByRole('button', { name: '保存模型配置' }));
+    await waitFor(() =>
+      expect(mocks.setModelConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Enabled: true,
+          BaseURL: 'https://h/',
+          APIKey: '',
+          ClearAPIKey: false,
+          Agents: { claude: 'mimo-v2.5' },
+        }),
+      ),
+    );
+    // 留空保存不动已设密钥：占位符仍显示「已设置（留空不修改）」
+    expect(
+      screen.getByPlaceholderText('已设置（留空不修改）'),
+    ).toBeInTheDocument();
+  });
+
+  it('勾选清除密钥时提交 ClearAPIKey', async () => {
+    mocks.getModelConfig.mockResolvedValue({ Enabled: false, BaseURL: '', Agents: {}, APIKeySet: true });
+    render(<Settings />);
+    fireEvent.click(await screen.findByLabelText('清除密钥'));
+    fireEvent.click(screen.getByRole('button', { name: '保存模型配置' }));
+    await waitFor(() =>
+      expect(mocks.setModelConfig).toHaveBeenCalledWith(expect.objectContaining({ ClearAPIKey: true })),
+    );
   });
 
   it('切换关闭行为失败时提示错误且保持原选中态', async () => {

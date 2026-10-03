@@ -48,7 +48,7 @@ func (a *App) OpenSession(sessionID string) (OpenedSession, error) {
 	}
 	o := a.snapshot()
 	if m := o.Chats; m != nil {
-		if l, err := launch.ForSessionACP(o.Providers, tools, s); err == nil {
+		if l, err := launch.ForSessionACP(o.Providers, tools, s, a.modelOptions()); err == nil {
 			info, err := openChat(m, "session:"+sessionID, chat.Info{
 				Kind:      chat.KindSession,
 				SessionID: s.ID,
@@ -73,7 +73,7 @@ func (a *App) OpenWorkspace(wsID, toolID string) (OpenedSession, error) {
 	}
 	o := a.snapshot()
 	if m := o.Chats; m != nil {
-		if l, err := launch.ForWorkspaceACP(o.Providers, tools, ws, toolID); err == nil {
+		if l, err := launch.ForWorkspaceACP(o.Providers, tools, ws, toolID, a.modelOptions()); err == nil {
 			info, err := openChat(m, "new:"+nextChatSeq(), chat.Info{
 				Kind:      chat.KindNew,
 				Workspace: ws.Path,

@@ -44,6 +44,8 @@ const mocks = vi.hoisted(() => ({
   onAppearanceChanged: vi.fn(),
   getCloseBehavior: vi.fn(),
   setCloseBehavior: vi.fn(),
+  getModelConfig: vi.fn(),
+  setModelConfig: vi.fn(),
   openSession: vi.fn(),
   openWorkspace: vi.fn(),
   closeChat: vi.fn(),
@@ -132,6 +134,8 @@ beforeEach(() => {
   mocks.onAppearanceChanged.mockReturnValue(() => {});
   mocks.getCloseBehavior.mockResolvedValue('tray');
   mocks.setCloseBehavior.mockResolvedValue(undefined);
+  mocks.getModelConfig.mockResolvedValue({ Enabled: false, BaseURL: '', Agents: {}, APIKeySet: false });
+  mocks.setModelConfig.mockResolvedValue(undefined);
   mocks.closeChat.mockResolvedValue(undefined);
   mocks.listChats.mockResolvedValue([]);
   mocks.chatHistory.mockResolvedValue([]);
