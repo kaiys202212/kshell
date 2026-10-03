@@ -16,10 +16,9 @@ describe('ToolDot', () => {
     expect(dotOf(container)).not.toBeNull();
   });
 
-  it('色点应用已知工具的固定色相', () => {
+  it('色点应用已知工具的品牌色 token', () => {
     const { container } = render(<ToolDot toolID="claude" />);
-    // jsdom 会把十六进制归一化为 rgb()
-    expect(dotOf(container).style.background).toBe('rgb(217, 119, 87)');
+    expect(dotOf(container).style.background).toBe('var(--tool-claude)');
   });
 
   it('未知工具回退展示原始 ToolID 与中性色相', () => {
