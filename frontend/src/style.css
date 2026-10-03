@@ -175,3 +175,8 @@ textarea,
 @keyframes kshell-pop-in {
   from { opacity: 0; transform: translateX(-50%) scale(0.98); }
 }
+
+/* 卡片入场：轻微上浮淡入（Home 卡片 stagger 用） */
+@keyframes kshell-rise-in {
+  from { opacity: 0; transform: translateY(4px); }
+}

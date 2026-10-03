@@ -19,6 +19,7 @@ import {
 } from '../lib/api';
 import type { DeletedProject, Workspace } from '../lib/api';
 import { formatRelativeTime } from '../lib/format';
+import { badgeFor } from '../lib/toolBadge';
 import { MONO } from '../lib/ui';
 import { useAppStore } from '../state/store';
 import { Badge } from '../components/ui/badge';
@@ -299,16 +300,30 @@ export default function Home() {
         )
       ) : (
         <ul className={GRID}>
-          {sorted.map((ws: Workspace) => {
+          {sorted.map((ws: Workspace, i: number) => {
             const lastUsed = lastUsedTime(ws);
             const { shown, rest } = toolDistribution(ws.ToolCounts);
+            // 左缘色条取占比最高的工具色；无工具上下文（如纯 git 扫描工作区）用主色
+            const barColor = shown[0] ? badgeFor(shown[0][0]).color : 'var(--primary)';
             return (
-              <li key={ws.Path} className="group relative min-w-0">
+              <li
+                key={ws.Path}
+                className="group relative min-w-0"
+                style={{
+                  animation: 'kshell-rise-in var(--duration-base) var(--ease-out) both',
+                  animationDelay: `${Math.min(i, 10) * 30}ms`,
+                }}
+              >
                 <button
-                  className="flex h-full w-full min-w-0 flex-col gap-1 rounded border border-border bg-card px-2.5 py-2 text-left transition-colors hover:bg-muted"
+                  className="relative flex h-full w-full min-w-0 flex-col gap-1 rounded border border-border bg-card px-2.5 py-2 text-left transition-all duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:-translate-y-px hover:border-primary/40 hover:bg-muted hover:shadow-[var(--shadow-card)]"
                   onClick={() => openTab(ws)}
                   title={ws.Path}
                 >
+                  <span
+                    aria-hidden="true"
+                    className="absolute bottom-3 left-0 top-3 w-[3px] rounded-full"
+                    style={{ background: barColor }}
+                  />
                   {/* 第一行：名称（单行截断）+ git 徽标 */}
                   <span className="flex min-w-0 items-center gap-1.5">
                     <span data-testid="ws-name" className="min-w-0 truncate text-[12.5px] font-medium">{ws.Name}</span>

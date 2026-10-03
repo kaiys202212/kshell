@@ -15,6 +15,7 @@ import { execRemote, listConnections, openSSH } from '../lib/api';
 import type { RemoteResult, SshConnection } from '../lib/api';
 import { formatDuration, tailLines } from '../lib/format';
 import { terminalTitle } from '../lib/title';
+import { LIST_ROW_ACTIVE } from '../lib/ui';
 import { cn } from '../lib/cn';
 import { useAppStore } from '../state/store';
 import { Button } from './ui/button';
@@ -167,9 +168,7 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
                 key={c.ID}
                 className={cn(
                   'rounded border border-border bg-card px-2.5 py-1.5 transition-colors',
-                  open
-                    ? 'border-l-2 border-l-primary bg-primary/5'
-                    : c.ID === selectedId && 'bg-muted/60',
+                  open ? LIST_ROW_ACTIVE : c.ID === selectedId && 'bg-muted/60',
                 )}
               >
                 <div className="flex min-w-0 items-center gap-1.5">

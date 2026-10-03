@@ -176,7 +176,7 @@ describe('SessionList', () => {
     fireEvent.click(within(row).getByRole('button', { name: '恢复' }));
 
     expect(onOpenTerminal).toHaveBeenCalledWith(expect.objectContaining({ ID: 's1' }));
-    expect(row).not.toHaveClass('bg-primary/5');
+    expect(row).not.toHaveClass('bg-primary/8');
   });
 
   it('该会话已有运行中的内嵌终端时文案变「切换」并走高亮样式，点击仍走 onOpenTerminal', async () => {
@@ -190,7 +190,7 @@ describe('SessionList', () => {
     expect(sw.className).toContain('from-primary');
     // 运行中标记 + 行高亮
     expect(within(row).getByText('✓')).toBeInTheDocument();
-    expect(row).toHaveClass('bg-primary/5');
+    expect(row).toHaveClass('bg-primary/8');
 
     fireEvent.click(sw);
     expect(onOpenTerminal).toHaveBeenCalledWith(expect.objectContaining({ ID: 's1' }));
