@@ -143,6 +143,28 @@ func TestManagerOpenNewAndPrompt(t *testing.T) {
 	t.Fatalf("no turn_done; updates=%+v", c.updates)
 }
 
+func TestManagerPromptEmitsUserMessage(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := m.Prompt(info.ID, "hello world"); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	// 实时轮次不回显用户消息，客户端必须自己补一条（否则响应期间界面全空）
+	got := m.History(info.ID)
+	found := false
+	for _, u := range got {
+		if u.Type == "user" && u.Text == "hello world" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("user message not appended; history=%+v", got)
+	}
+}
+
 func TestManagerLoadReplay(t *testing.T) {
 	m, b, _ := newTestManager(t)
 	info, err := m.Open("session:s1", Info{Kind: KindSession, SessionID: "s1", Workspace: "/w"}, Spec{Path: "x"}, "s1")

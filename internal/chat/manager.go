@@ -274,10 +274,22 @@ func (m *Manager) Prompt(id, text string) error {
 		return errRunning
 	}
 	s.info.Status = StatusRunning
+	// 客户端主动发出的用户消息要立刻进时间线：ACP 实时轮次不回显用户消息
+	//（只有 session/load 重放才发 user_message_chunk），不本地补一条界面会一直是空的。
+	s.seq++
+	userUpdate := Update{Seq: s.seq, Type: "user", MessageID: fmt.Sprintf("user:%d", s.seq), Text: text}
+	s.history = append(s.history, userUpdate)
+	if len(s.history) > maxHistory {
+		s.history = append([]Update(nil), s.history[len(s.history)-maxHistory:]...)
+	}
 	sid := s.sessionID
 	conn := s.conn
 	ctx := s.ctx
 	m.mu.Unlock()
+
+	if m.onUpdate != nil {
+		m.onUpdate(id, userUpdate)
+	}
 
 	go func() {
 		stop, err := conn.Prompt(ctx, sid, text)
