@@ -207,6 +207,31 @@ describe('SessionList', () => {
     expect(within(row).queryByText('✓')).toBeNull();
   });
 
+  it('该会话已有打开中的 ACP 聊天时也算激活：文案变「切换」并走高亮样式', async () => {
+    useAppStore.setState({
+      chats: [
+        {
+          ID: 'c1',
+          Kind: 'session',
+          SessionID: 's1',
+          Workspace: 'd:\\proj-a',
+          Title: '修复上传白名单',
+          ToolID: 'codebuddy',
+          Status: 'ready',
+          ExitCode: 0,
+          Error: '',
+        },
+      ],
+    });
+    renderList();
+    const row = await findRow('修复上传白名单');
+
+    expect(within(row).queryByRole('button', { name: '恢复' })).toBeNull();
+    expect(within(row).getByRole('button', { name: '切换' })).toBeInTheDocument();
+    expect(within(row).getByText('✓')).toBeInTheDocument();
+    expect(row).toHaveClass('bg-primary/8');
+  });
+
   it('不再提供「在外部终端打开」入口（该路径会弹系统控制台黑窗）', async () => {
     renderList();
     const row = await findRow('修复上传白名单');

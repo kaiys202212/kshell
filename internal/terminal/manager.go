@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/yangk/kshell/internal/discovery"
 )
 
 // 会话类型与状态取值：与前端约定，不要在绑定层另写字面量。
@@ -377,6 +379,36 @@ func (m *Manager) List() []Info {
 		out = append(out, s.info)
 	}
 	return out
+}
+
+// AttachSession 把扫描发现的磁盘会话绑定到匹配的新建终端上：
+// 新建（KindNew）终端在启动时磁盘上还没有会话记录，SessionID 为空、标题是占位文案；
+// 扫描发现新会话后由 desktop 层调用本方法回填，页签标题与前端「恢复/切换」判断都依赖它。
+// 只绑运行中、未绑定（SessionID 为空）的新建终端；工作区路径归一化后比较，
+// toolID 与终端 ToolID 不一致时不绑（终端 ToolID 为空表示由 launch 选首选，允许绑定）。
+// 返回是否发生了绑定，供调用方决定是否通知前端刷新。
+func (m *Manager) AttachSession(sessionID, workspace, toolID, title string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ws := discovery.NormalizePath(workspace)
+	for _, s := range m.order {
+		info := &s.info
+		if s.exited || info.Kind != KindNew || info.SessionID != "" {
+			continue
+		}
+		if discovery.NormalizePath(info.Workspace) != ws {
+			continue
+		}
+		if info.ToolID != "" && toolID != "" && info.ToolID != toolID {
+			continue
+		}
+		info.SessionID = sessionID
+		if title != "" {
+			info.Title = title
+		}
+		return true
+	}
+	return false
 }
 
 // Scrollback 返回会话最近输出（最多 defaultScrollback 字节）的副本；已退出的会话仍可读。

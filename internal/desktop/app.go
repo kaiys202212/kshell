@@ -495,6 +495,15 @@ func (a *App) runScan() {
 		res.Workspaces = discovery.ApplyProjects(raw, o.Projects, nil)
 	}
 
+	// 上轮扫描已存在的会话 ID：只有「本轮新发现」的会话才可能对应运行中的新建终端/聊天
+	// （新建动作发生在上轮扫描之后），否则工作区里任意旧会话都会被误绑。
+	prevIDs := make(map[string]bool)
+	if a.result != nil {
+		for _, s := range a.result.Sessions {
+			prevIDs[s.ID] = true
+		}
+	}
+
 	a.mu.Lock()
 	a.tools = tools
 	if err == nil {
@@ -510,6 +519,13 @@ func (a *App) runScan() {
 		a.saveSnapshot(res, raw, tools)
 	}
 
+	// 扫描发现的会话回填到运行中的新建终端/聊天：新建时磁盘上还没有会话记录，
+	// Info 只有占位标题、SessionID 为空；不回填则页签无法区分任务、「恢复/切换」判断失灵。
+	attached := 0
+	if err == nil && res != nil {
+		attached = a.attachDiscoveredSessions(res.Sessions, prevIDs)
+	}
+
 	ev := map[string]any{"failed": 0}
 	if err != nil {
 		ev["error"] = err.Error()
@@ -519,7 +535,30 @@ func (a *App) runScan() {
 		ev["workspaces"] = res.Workspaces
 		ev["failed"] = len(res.Failed)
 	}
+	if attached > 0 {
+		ev["attached"] = true // 前端据此重取终端/聊天镜像
+	}
 	a.Emit("scan:done", ev)
+}
+
+// attachDiscoveredSessions 把本轮扫描新发现的会话逐条尝试绑定到新建终端/聊天，
+// 返回成功绑定的条数。会话与终端按归一化工作区路径 + 工具匹配，同一条会话先到先得。
+// prevIDs 是上轮扫描已存在的会话 ID 集合，其中的会话一律跳过（见 runScan 内注释）。
+func (a *App) attachDiscoveredSessions(sessions []providers.Session, prevIDs map[string]bool) int {
+	o := a.snapshot()
+	attached := 0
+	for _, s := range sessions {
+		if prevIDs[s.ID] {
+			continue
+		}
+		if o.Terminals != nil && o.Terminals.AttachSession(s.ID, s.Workspace, s.ToolID, s.Title) {
+			attached++
+		}
+		if o.Chats != nil && o.Chats.AttachSession(s.ID, s.Workspace, s.ToolID, s.Title) {
+			attached++
+		}
+	}
+	return attached
 }
 
 // scanReadyTimeout 是「等首轮扫描结果」的上限。真实扫描通常几百毫秒，

@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/yangk/kshell/internal/acp"
+	"github.com/yangk/kshell/internal/discovery"
 )
 
 var (
@@ -175,7 +176,11 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 
 	m.mu.Lock()
 	s.sessionID = sessionID
-	s.info.SessionID = sessionID
+	// Info.SessionID 统一表示「绑定的磁盘会话 ID」：恢复型聊天传入的就是磁盘 ID，保持不变；
+	// 新建聊天协议层拿到的是 ACP 内部 ID（与磁盘会话 ID 不同体系），Info 留空等扫描回填。
+	if info.SessionID == "" && info.Kind == KindSession {
+		s.info.SessionID = sessionID
+	}
 	s.info.Status = StatusReady
 	out := s.info
 	m.mu.Unlock()
@@ -405,6 +410,37 @@ func (m *Manager) List() []Info {
 		out = append(out, s.info)
 	}
 	return out
+}
+
+// AttachSession 把扫描发现的磁盘会话绑定到匹配的新建聊天上：
+// 新建（KindNew）聊天启动时磁盘上还没有会话记录，Info.SessionID 为空、标题是占位文案；
+// 扫描发现新会话后由 desktop 层调用本方法回填，页签标题与前端「恢复/切换」判断都依赖它。
+// 只绑未退出、未绑定（Info.SessionID 为空）的新建聊天；工作区路径归一化后比较，
+// toolID 与聊天 ToolID 不一致时不绑（ToolID 为空表示由 launch 选首选，允许绑定）。
+// 只改 Info：协议层继续用 agent 返回的内部 sessionID，Prompt/Cancel 不受影响。
+// 返回是否发生了绑定，供调用方决定是否通知前端刷新。
+func (m *Manager) AttachSession(sessionID, workspace, toolID, title string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ws := discovery.NormalizePath(workspace)
+	for _, s := range m.order {
+		info := &s.info
+		if s.exited || info.Kind != KindNew || info.SessionID != "" {
+			continue
+		}
+		if discovery.NormalizePath(info.Workspace) != ws {
+			continue
+		}
+		if info.ToolID != "" && toolID != "" && info.ToolID != toolID {
+			continue
+		}
+		info.SessionID = sessionID
+		if title != "" {
+			info.Title = title
+		}
+		return true
+	}
+	return false
 }
 
 func (m *Manager) History(id string) []Update {
