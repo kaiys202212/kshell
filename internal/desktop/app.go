@@ -302,6 +302,12 @@ func (a *App) quitApp(ctx context.Context) {
 // 终端进程不跨进程存活，这里不需要（也无法）持久化。
 func (a *App) Shutdown(ctx context.Context) {
 	_ = ctx // 退出清理无取消语义：无论上下文如何都要把子进程收干净
+	a.mu.Lock()
+	if a.appearanceCancel != nil {
+		a.appearanceCancel()
+		a.appearanceCancel = nil
+	}
+	a.mu.Unlock()
 	if m := a.snapshot().Terminals; m != nil {
 		m.CloseAll()
 	}

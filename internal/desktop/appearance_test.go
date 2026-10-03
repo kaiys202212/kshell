@@ -19,6 +19,13 @@ func TestGetAppearanceDefaultsToSystem(t *testing.T) {
 	}
 }
 
+func TestSetAppearanceModeWithoutLayoutIsNotReady(t *testing.T) {
+	a := NewAppWith(Options{Config: config.Default()})
+	if err := a.SetAppearanceMode("dark"); err != errNotReady {
+		t.Fatalf("err = %v, want errNotReady", err)
+	}
+}
+
 func TestSetAppearanceModePersistsAndEmits(t *testing.T) {
 	dir := t.TempDir()
 	layout := config.Layout{

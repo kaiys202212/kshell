@@ -22,8 +22,10 @@ func NewWatcher(onChange func(Theme)) *Watcher {
 }
 
 // Run 阻塞轮询直到 ctx 取消。首次探测作为基线，不回调。
+// 变更需连续两次探测一致才回调：单次读数失败（注册表瞬时错误）会被下一次纠正，不误报。
 func (w *Watcher) Run(ctx context.Context) {
 	last := w.probe()
+	pending := false
 	t := time.NewTicker(w.interval)
 	defer t.Stop()
 	for {
@@ -31,11 +33,19 @@ func (w *Watcher) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if cur := w.probe(); cur != last {
-				last = cur
-				if w.onChange != nil {
-					w.onChange(cur)
-				}
+			cur := w.probe()
+			if cur == last {
+				pending = false
+				continue
+			}
+			if !pending {
+				pending = true
+				continue
+			}
+			last = cur
+			pending = false
+			if w.onChange != nil {
+				w.onChange(cur)
 			}
 		}
 	}

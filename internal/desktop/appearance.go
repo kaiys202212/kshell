@@ -22,6 +22,7 @@ func (a *App) currentAppearance() AppearanceInfo {
 func (a *App) GetAppearance() AppearanceInfo { return a.currentAppearance() }
 
 // SetAppearanceMode 更新颜色模式并持久化，随后广播事件并重启系统监听。
+// 先落盘成功再更新内存：Save 失败时内存保持原值，避免界面与磁盘不一致。
 func (a *App) SetAppearanceMode(mode string) error {
 	m := appearance.ParseMode(mode)
 
@@ -30,36 +31,41 @@ func (a *App) SetAppearanceMode(mode string) error {
 		a.mu.Unlock()
 		return errNotReady
 	}
-	a.opts.Config.Appearance.Mode = string(m)
 	cfg := a.opts.Config
 	layout := a.opts.Layout
 	a.mu.Unlock()
 
+	cfg.Appearance.Mode = string(m)
 	if err := config.Save(layout, cfg); err != nil {
 		return err
 	}
+
+	a.mu.Lock()
+	a.opts.Config = cfg
+	a.mu.Unlock()
+
 	a.restartAppearanceWatcher()
 	a.emitAppearance()
 	return nil
 }
 
 // restartAppearanceWatcher 仅在 system 模式下启动注册表轮询；其它模式停掉。
+// 取消旧监听、判断模式、装新 cancel 必须在同一把锁内完成，否则并发调用会
+// 在解锁窗口里交错，导致新监听被旧调用清掉或反之（竞态）。
 func (a *App) restartAppearanceWatcher() {
 	a.mu.Lock()
 	if a.appearanceCancel != nil {
 		a.appearanceCancel()
 		a.appearanceCancel = nil
 	}
-	mode := appearance.ParseMode(a.opts.Config.Appearance.Mode)
-	a.mu.Unlock()
-
-	if mode != appearance.System {
+	if appearance.ParseMode(a.opts.Config.Appearance.Mode) != appearance.System {
+		a.mu.Unlock()
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	a.mu.Lock()
 	a.appearanceCancel = cancel
 	a.mu.Unlock()
+
 	go appearance.NewWatcher(func(appearance.Theme) { a.emitAppearance() }).Run(ctx)
 }
 
