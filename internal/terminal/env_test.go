@@ -22,3 +22,19 @@ func TestMergedEnvIncludesParent(t *testing.T) {
 		t.Fatalf("missing parent env: %v", got)
 	}
 }
+
+// TestMergedEnvOverridesParent 验证同名额外变量排在父环境之后，从而覆盖父进程取值。
+func TestMergedEnvOverridesParent(t *testing.T) {
+	t.Setenv("KSHELL_OVERRIDE", "parent")
+	got := mergedEnv([]string{"KSHELL_OVERRIDE=child"})
+
+	env := make(map[string]string, len(got))
+	for _, kv := range got {
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			env[kv[:i]] = kv[i+1:]
+		}
+	}
+	if v := env["KSHELL_OVERRIDE"]; v != "child" {
+		t.Fatalf("KSHELL_OVERRIDE = %q, want %q（额外变量应覆盖父进程）", v, "child")
+	}
+}
