@@ -8,6 +8,7 @@ frontend/package.json.md5
 node_modules/
 .codebuddy/
 .superpowers/
+.worktrees/
 *.exe
 *.test
 *.tmp
