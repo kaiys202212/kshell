@@ -246,6 +246,9 @@ func TestResumeSessionLaunchesWindow(t *testing.T) {
 	if len(call.args) != 1 || !strings.Contains(call.args[0], "& 'claude' '--resume' 's1'") {
 		t.Fatalf("窗口内命令 = %v, 期望包含 & 'claude' '--resume' 's1'", call.args)
 	}
+	if !strings.Contains(call.args[0], "$env:COLORFGBG") {
+		t.Fatalf("窗口内命令未透传主题变量 $env:COLORFGBG: %v", call.args)
+	}
 	// 弹窗后应登记存活表，重复恢复转聚焦
 	if !app.opts.Windows.Alive(call.title) {
 		t.Fatal("弹窗后应登记存活表")

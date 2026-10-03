@@ -332,6 +332,9 @@ func TestOpenSessionTerminalOpensAndReuses(t *testing.T) {
 	if spec.Dir != `D:\ws-a` {
 		t.Fatalf("Spec.Dir = %q, 期望会话工作区", spec.Dir)
 	}
+	if joined := strings.Join(spec.Env, "\n"); !strings.Contains(joined, "COLORFGBG=") {
+		t.Fatalf("Spec.Env 未透传主题变量 COLORFGBG: %v", spec.Env)
+	}
 
 	again, err := env.app.OpenSessionTerminal("s1", 100, 30)
 	if err != nil {
@@ -397,6 +400,8 @@ func TestOpenWorkspaceTerminalSelectsTool(t *testing.T) {
 	}
 	if spec := env.backend.lastSpec(); spec.Path != "codex" || spec.Dir != `D:\ws-a` {
 		t.Fatalf("Spec 未用指定工具 = %+v", spec)
+	} else if joined := strings.Join(spec.Env, "\n"); !strings.Contains(joined, "COLORFGBG=") {
+		t.Fatalf("Spec.Env 未透传主题变量 COLORFGBG: %v", spec.Env)
 	}
 	if env.codex.bin() != "codex" {
 		t.Fatalf("toolID 未透传到 launch, bin = %q", env.codex.bin())
@@ -551,6 +556,9 @@ func TestNewSessionWithToolPassesToolToLaunch(t *testing.T) {
 	}
 	if len(call.args) != 1 || !strings.Contains(call.args[0], "& 'codex'") {
 		t.Fatalf("窗口内命令未用指定工具: %v", call.args)
+	}
+	if !strings.Contains(call.args[0], "$env:COLORFGBG") {
+		t.Fatalf("窗口内命令未透传主题变量 $env:COLORFGBG: %v", call.args)
 	}
 	if env.codex.bin() != "codex" {
 		t.Fatalf("toolID 未透传到 launch, bin = %q", env.codex.bin())
