@@ -41,7 +41,7 @@ func TestForSessionDelegatesToProvider(t *testing.T) {
 	want := providers.Launch{Path: "claude", Args: []string{"--resume", "s1"}}
 	p := fakeProvider{id: "claude", resume: want}
 
-	got, err := ForSession([]providers.Provider{p}, toolsRunnable, s, ThemeOptions{})
+	got, err := ForSession([]providers.Provider{p}, toolsRunnable, s, ThemeOptions{}, ModelOptions{})
 	if err != nil {
 		t.Fatalf("ForSession error: %v", err)
 	}
@@ -55,11 +55,11 @@ func TestForSessionFailsWithoutRunnableTool(t *testing.T) {
 	p := fakeProvider{id: "claude"}
 
 	// 工具只有配置目录、没有可执行文件
-	if _, err := ForSession([]providers.Provider{p}, []discovery.Tool{{ID: "claude", Installed: true, BinPath: ""}}, s, ThemeOptions{}); !errors.Is(err, ErrToolNotRunnable) {
+	if _, err := ForSession([]providers.Provider{p}, []discovery.Tool{{ID: "claude", Installed: true, BinPath: ""}}, s, ThemeOptions{}, ModelOptions{}); !errors.Is(err, ErrToolNotRunnable) {
 		t.Fatalf("无可执行文件应返回 ErrToolNotRunnable, got %v", err)
 	}
 	// 工具不在 provider 列表
-	if _, err := ForSession(nil, toolsRunnable, s, ThemeOptions{}); !errors.Is(err, ErrToolNotRunnable) {
+	if _, err := ForSession(nil, toolsRunnable, s, ThemeOptions{}, ModelOptions{}); !errors.Is(err, ErrToolNotRunnable) {
 		t.Fatalf("缺 provider 应返回 ErrToolNotRunnable, got %v", err)
 	}
 }
@@ -75,7 +75,7 @@ func TestForWorkspacePicksPreferredTool(t *testing.T) {
 		ToolCounts: map[string]int{"claude": 3, "codex": 1},
 	}
 
-	got, err := ForWorkspace(ps, tools, ws, ThemeOptions{})
+	got, err := ForWorkspace(ps, tools, ws, ThemeOptions{}, ModelOptions{})
 	if err != nil {
 		t.Fatalf("ForWorkspace error: %v", err)
 	}
@@ -94,7 +94,7 @@ func acpTools(det providers.ACPDetection) []discovery.Tool {
 func TestForWorkspaceACP_NpxFallback(t *testing.T) {
 	ps := []providers.Provider{providers.Claude{}}
 	tools := acpTools(providers.ACPDetection{Available: true, Source: "npx", Package: "@agentclientprotocol/claude-agent-acp"})
-	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude")
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{})
 	if err != nil {
 		t.Fatalf("for workspace acp: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestForWorkspaceACP_NpxFallback(t *testing.T) {
 func TestForWorkspaceACP_PathHit(t *testing.T) {
 	ps := []providers.Provider{providers.Claude{}}
 	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "/usr/bin/claude-agent-acp"})
-	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude")
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestForWorkspaceACP_PathHit(t *testing.T) {
 func TestForWorkspaceACP_Unavailable(t *testing.T) {
 	ps := []providers.Provider{providers.Claude{}}
 	tools := acpTools(providers.ACPDetection{Available: false})
-	if _, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude"); err != ErrACPUnavailable {
+	if _, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{}); err != ErrACPUnavailable {
 		t.Fatalf("want ErrACPUnavailable, got %v", err)
 	}
 }
@@ -130,7 +130,7 @@ func TestForWorkspaceACP_ExtraArgs(t *testing.T) {
 	ps := []providers.Provider{providers.Claude{}}
 
 	pathTools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "/usr/bin/claude-agent-acp", ExtraArgs: []string{"--foo"}})
-	l, err := ForWorkspaceACP(ps, pathTools, discovery.Workspace{Path: "/w"}, "claude")
+	l, err := ForWorkspaceACP(ps, pathTools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestForWorkspaceACP_ExtraArgs(t *testing.T) {
 	}
 
 	npxTools := acpTools(providers.ACPDetection{Available: true, Source: "npx", Package: "pkg", ExtraArgs: []string{"--foo"}})
-	l, err = ForWorkspaceACP(ps, npxTools, discovery.Workspace{Path: "/w"}, "claude")
+	l, err = ForWorkspaceACP(ps, npxTools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,11 +152,75 @@ func TestForSessionACP_UsesWorkspaceDir(t *testing.T) {
 	ps := []providers.Provider{providers.Claude{}}
 	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"})
 	s := providers.Session{ID: "s1", ToolID: "claude", Workspace: "/proj"}
-	l, err := ForSessionACP(ps, tools, s)
+	l, err := ForSessionACP(ps, tools, s, ModelOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if l.Dir != "/proj" {
 		t.Fatalf("dir = %q", l.Dir)
+	}
+}
+
+func TestApplyModelTerminalCodex(t *testing.T) {
+	ps := []providers.Provider{providers.Codex{}}
+	tools := []discovery.Tool{{ID: "codex", Name: "Codex CLI", Installed: true, BinPath: "codex"}}
+	s := providers.Session{ID: "s1", ToolID: "codex", Workspace: "/proj"}
+	mo := ModelOptions{Resolver: func(toolID string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{BaseURL: "https://h/", APIKey: "k", Model: "gpt-x"}, true
+	}}
+	l, err := ForSession(ps, tools, s, ThemeOptions{}, mo)
+	if err != nil {
+		t.Fatalf("ForSession: %v", err)
+	}
+	found := false
+	for i := 0; i+1 < len(l.Args); i++ {
+		if l.Args[i] == "-m" && l.Args[i+1] == "gpt-x" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("args 缺少 -m gpt-x：%v", l.Args)
+	}
+	if l.Env["OPENAI_BASE_URL"] != "https://h/" || l.Env["OPENAI_API_KEY"] != "k" {
+		t.Fatalf("env = %+v", l.Env)
+	}
+}
+
+func TestApplyModelACPClaude(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"})
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{BaseURL: "https://h/", APIKey: "k", Model: "mimo-v2.5"}, true
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", mo)
+	if err != nil {
+		t.Fatalf("ForWorkspaceACP: %v", err)
+	}
+	if l.Env["ANTHROPIC_MODEL"] != "mimo-v2.5" || l.Env["ANTHROPIC_BASE_URL"] != "https://h/" {
+		t.Fatalf("ACP env = %+v", l.Env)
+	}
+}
+
+func TestApplyModelPrecedesSubcommand(t *testing.T) {
+	ps := []providers.Provider{providers.Codex{}}
+	tools := []discovery.Tool{{ID: "codex", Installed: true, BinPath: "codex"}}
+	s := providers.Session{ID: "s1", ToolID: "codex", Workspace: "/p"}
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{Model: "gpt-x"}, true
+	}}
+	l, err := ForSession(ps, tools, s, ThemeOptions{}, mo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Args) < 3 || l.Args[0] != "-m" || l.Args[1] != "gpt-x" || l.Args[2] != "resume" {
+		t.Fatalf("模型参数应位于子命令之前，got %v", l.Args)
+	}
+}
+
+func TestApplyModelNilResolverNoInjection(t *testing.T) {
+	// 直接验证 applyModel：避免 applyTheme 追加的通用主题变量干扰断言。
+	l := applyModel(providers.Launch{}, providers.Codex{}, ModelOptions{})
+	if len(l.Env) != 0 || len(l.Args) != 0 {
+		t.Fatalf("无 resolver 不应注入：args=%v env=%+v", l.Args, l.Env)
 	}
 }
