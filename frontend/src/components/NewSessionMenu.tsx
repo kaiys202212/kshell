@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type { ToolInfo } from '../lib/api';
 import { cn } from '../lib/cn';
+import { Button } from './ui/button';
 
 interface Props {
   tools: ToolInfo[];
@@ -67,14 +68,11 @@ export default function NewSessionMenu({ tools, value, onChange, onSelect, disab
 
   return (
     <div ref={rootRef} className="relative" onKeyDown={handleKeyDown}>
-      <button
+      {/* 触发按钮统一走 Button（default variant）；补 w-full/text-xs 保持原占位与字号 */}
+      <Button
         ref={triggerRef}
         type="button"
-        className={cn(
-          'flex h-8 w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-xs text-primary-foreground transition-colors',
-          'hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-          'disabled:pointer-events-none disabled:opacity-50',
-        )}
+        className="w-full text-xs"
         title={selected ? `新建会话（上次用 ${selected.Name}）` : '新建会话'}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -95,7 +93,7 @@ export default function NewSessionMenu({ tools, value, onChange, onSelect, disab
             strokeLinejoin="round"
           />
         </svg>
-      </button>
+      </Button>
 
       {open && (
         <div

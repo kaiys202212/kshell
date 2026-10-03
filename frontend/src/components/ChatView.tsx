@@ -7,6 +7,7 @@ import { cancelChat, cancelChatPermission, respondChatPermission, sendChatPrompt
 import { useAppStore } from '../state/store';
 import type { TimelineItem } from '../state/chatUpdate';
 import { cn } from '../lib/cn';
+import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 
@@ -141,8 +142,8 @@ export default function ChatView({ chat, active }: Props) {
         />
         <div className="mt-1 flex justify-end gap-2">
           {running
-            ? <button className="rounded bg-muted px-3 py-1 text-xs" onClick={() => void cancelChat(id)}>停止</button>
-            : <button className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground" onClick={send}>发送</button>}
+            ? <Button variant="outline" size="sm" onClick={() => void cancelChat(id)}>停止</Button>
+            : <Button size="sm" onClick={send}>发送</Button>}
         </div>
       </div>
 

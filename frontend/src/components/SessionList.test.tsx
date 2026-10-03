@@ -186,7 +186,8 @@ describe('SessionList', () => {
 
     expect(within(row).queryByRole('button', { name: '恢复' })).toBeNull();
     const sw = within(row).getByRole('button', { name: '切换' });
-    expect(sw.className).toContain('bg-primary');
+    // 主按钮 default variant 已改为渐变，断言渐变起点仍是主色
+    expect(sw.className).toContain('from-primary');
     // 运行中标记 + 行高亮
     expect(within(row).getByText('✓')).toBeInTheDocument();
     expect(row).toHaveClass('bg-primary/5');
