@@ -145,16 +145,15 @@ func TestResumeLaunchFailsWithoutRunnableTool(t *testing.T) {
 	}
 }
 
-func TestNewSessionLaunchInjectsContextBasket(t *testing.T) {
+func TestNewSessionLaunchHasNoExtraArgs(t *testing.T) {
 	m := modelWithSessions()
-	m.basket = []string{"main.go"}
 
 	launch, err := m.newSessionLaunch()
 	if err != nil {
 		t.Fatalf("newSessionLaunch error: %v", err)
 	}
-	if len(launch.Args) != 1 || !strings.Contains(launch.Args[0], "main.go") {
-		t.Fatalf("args = %v, want the basket injected", launch.Args)
+	if len(launch.Args) != 0 {
+		t.Fatalf("args = %v, want no extra args", launch.Args)
 	}
 }
 

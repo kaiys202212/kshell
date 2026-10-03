@@ -27,10 +27,12 @@ func (f fakeProvider) SessionFilePattern() string             { return "*.jsonl"
 func (f fakeProvider) ParseSession(string, []byte) (*providers.Session, error) {
 	return nil, errors.New("not implemented")
 }
-func (f fakeProvider) NewSessionCmd(ws, bin string, ctx []string) providers.Launch {
+func (f fakeProvider) NewSessionCmd(ws, bin string) providers.Launch {
 	l := f.newSess
 	l.Dir = ws
-	l.Args = append([]string{}, ctx...) // 透传上下文篮，供断言注入链路
+	if bin != "" {
+		l.Path = bin
+	}
 	return l
 }
 func (f fakeProvider) ResumeCmd(s providers.Session, bin string) providers.Launch {
@@ -287,13 +289,10 @@ func TestResumeSessionToolNotRunnable(t *testing.T) {
 	}
 }
 
-func TestNewSessionLaunchesWindowWithBasket(t *testing.T) {
+func TestNewSessionLaunchesWindowAtWorkspace(t *testing.T) {
 	app, stub, _ := newTestApp(t)
 	app.runScan()
 	setTools(t, app, fakeTools)
-	app.mu.Lock()
-	app.basket = []string{"main.go", "internal/launch/launch.go"}
-	app.mu.Unlock()
 
 	if err := app.NewSession(`D:\ws-a`); err != nil {
 		t.Fatalf("NewSession error: %v", err)
@@ -306,11 +305,9 @@ func TestNewSessionLaunchesWindowWithBasket(t *testing.T) {
 	if call.title != "kshell · ws-a" {
 		t.Fatalf("窗口标题 = %q, 期望工作区名", call.title)
 	}
-	// 上下文篮应透传给 provider 并出现在窗口语句里
-	for _, f := range []string{"main.go", "internal/launch/launch.go"} {
-		if !strings.Contains(call.args[0], "'"+f+"'") {
-			t.Fatalf("窗口内命令缺少上下文篮文件 %q: %v", f, call.args)
-		}
+	// args 只含工具本身的启动命令：kshell 不再向新会话注入任何文件参数
+	if len(call.args) != 1 {
+		t.Fatalf("新建会话不应带额外参数: %v", call.args)
 	}
 }
 

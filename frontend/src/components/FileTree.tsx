@@ -2,14 +2,13 @@
 // Go 侧 ListFiles 只填充当前层子项（Children 字段无意义），
 // 展开目录时必须再次调 listFiles(wsPath, 子目录相对路径)。
 // relPath 统一用 / 拼接：Go 侧 filepath.Clean 会归一化为平台分隔符。
-// 交互：点目录展开/收起、点文件回调 onOpenFile、Space 键或 ○ 按钮加入/移出篮子、
-// 铅笔按钮行内重命名；顶部搜索框先过滤已加载节点，防抖后走 Go 递归搜索出平铺结果。
+// 交互：点目录展开/收起、点文件回调 onOpenFile、铅笔按钮行内重命名；
+// 顶部搜索框先过滤已加载节点，防抖后走 Go 递归搜索出平铺结果。
 // git 状态：文件名右侧小色标（数据来自 store.gitStatus[wsPath]，lib/git.ts 负责刷新）。
 import { useEffect, useState } from 'react';
 import { listFiles, renameEntry, searchFiles } from '../lib/api';
 import type { FileNode, SearchHit } from '../lib/api';
 import { cn } from '../lib/cn';
-import { toggleAndSync } from '../lib/basket';
 import { refreshGitStatus } from '../lib/git';
 import { useAppStore } from '../state/store';
 import { EmptyState } from './ui/empty-state';
@@ -26,7 +25,7 @@ interface TreeItem {
   error?: string;
 }
 
-// 手写内联 SVG（不引图标库）：chevron / folder / folder-open / file / 篮子圆点
+// 手写内联 SVG（不引图标库）：chevron / folder / folder-open / file / 铅笔 / 刷新
 function ChevronIcon({ open }: { open: boolean }) {
   return (
     <svg
@@ -84,18 +83,6 @@ function FileIcon() {
         strokeLinejoin="round"
         d="M4 2.5h5l3 3v8a.5.5 0 0 1-.5.5h-7a.5.5 0 0 1-.5-.5v-10.5a.5.5 0 0 1 .5-.5ZM9 2.5V6h3.5"
       />
-    </svg>
-  );
-}
-
-function BasketDotIcon({ filled }: { filled: boolean }) {
-  return (
-    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
-      {filled ? (
-        <circle cx="8" cy="8" r="4" fill="currentColor" />
-      ) : (
-        <circle cx="8" cy="8" r="3.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      )}
     </svg>
   );
 }
@@ -196,26 +183,14 @@ function filterItems(items: TreeItem[], q: string): TreeItem[] {
 interface RowProps {
   item: TreeItem;
   depth: number;
-  basket: string[];
   gitMap?: Record<string, string>; // git 状态映射（键为 '/' 分隔 relPath），行内按自身 relPath 查
   onDirToggle(item: TreeItem): void;
   onOpenFile(path: string): void;
-  onBasketToggle(path: string): void;
-  onRename(oldPath: string, relPath: string, newName: string): void;
+  onRename(relPath: string, newName: string): void;
 }
 
-function TreeRow({
-  item,
-  depth,
-  basket,
-  gitMap,
-  onDirToggle,
-  onOpenFile,
-  onBasketToggle,
-  onRename,
-}: RowProps) {
+function TreeRow({ item, depth, gitMap, onDirToggle, onOpenFile, onRename }: RowProps) {
   const { node } = item;
-  const inBasket = basket.includes(node.Path);
   const gitCode = node.IsDir ? undefined : gitMap?.[item.relPath];
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(node.Name);
@@ -224,7 +199,7 @@ function TreeRow({
     setRenaming(false);
     const name = draft.trim();
     if (!name || name === node.Name) return;
-    onRename(node.Path, item.relPath, name);
+    onRename(item.relPath, name);
   };
 
   return (
@@ -260,13 +235,6 @@ function TreeRow({
               className="flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-0.5 text-left"
               title={node.Path}
               onClick={() => (node.IsDir ? onDirToggle(item) : onOpenFile(node.Path))}
-              onKeyDown={(e) => {
-                // Space 加入/移出篮子；preventDefault 防止原生按钮把 Space 当点击（触发预览）
-                if (e.key === ' ') {
-                  e.preventDefault();
-                  onBasketToggle(node.Path);
-                }
-              }}
             >
               <span className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground">
                 {node.IsDir && <ChevronIcon open={item.expanded} />}
@@ -295,19 +263,6 @@ function TreeRow({
             </button>
           </>
         )}
-        <button
-          className={cn(
-            'shrink-0 rounded p-0.5 transition-opacity hover:text-primary',
-            inBasket
-              ? 'text-primary opacity-100'
-              : 'text-muted-foreground opacity-0 group-hover:opacity-100',
-          )}
-          aria-label={`${inBasket ? '移出' : '加入'}篮子 ${node.Name}`}
-          title={inBasket ? '移出上下文篮' : '加入上下文篮'}
-          onClick={() => onBasketToggle(node.Path)}
-        >
-          <BasketDotIcon filled={inBasket} />
-        </button>
       </div>
       {node.IsDir && item.expanded && item.error && (
         <div
@@ -331,11 +286,9 @@ function TreeRow({
               key={c.node.Path}
               item={c}
               depth={depth + 1}
-              basket={basket}
               gitMap={gitMap}
               onDirToggle={onDirToggle}
               onOpenFile={onOpenFile}
-              onBasketToggle={onBasketToggle}
               onRename={onRename}
             />
           ))}
@@ -357,7 +310,6 @@ export default function FileTree({
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [searching, setSearching] = useState(false);
-  const basket = useAppStore((s) => s.basket);
   const gitMap = useAppStore((s) => s.gitStatus[wsPath]);
 
   useEffect(() => {
@@ -464,14 +416,10 @@ export default function FileTree({
     setHits(null);
   };
 
-  // 加入/移出篮子：切换 + 同步 + 提示统一走 lib/basket 的共享实现（与 Preview 一致）
-  const handleBasketToggle = (path: string) => toggleAndSync(path);
-
-  // 重命名：Go 侧已同步篮子并作废树缓存，这里重建前端树镜像并刷新 git 状态
-  const handleRename = (oldPath: string, relPath: string, newName: string) => {
+  // 重命名：Go 侧已作废树缓存，这里重建前端树镜像并刷新 git 状态
+  const handleRename = (relPath: string, newName: string) => {
     renameEntry(wsPath, relPath, newName)
-      .then((newPath) => {
-        useAppStore.getState().renameBasketPath(oldPath, newPath);
+      .then(() => {
         useAppStore.getState().notify(`已重命名为 ${newName}`, 'success');
         listFiles(wsPath, '')
           .then((nodes) => setItems(toItems(nodes, '')))
@@ -575,11 +523,9 @@ export default function FileTree({
                     key={it.node.Path}
                     item={it}
                     depth={0}
-                    basket={basket}
                     gitMap={gitMap}
                     onDirToggle={handleDirToggle}
                     onOpenFile={onOpenFile}
-                    onBasketToggle={(p) => void handleBasketToggle(p)}
                     onRename={handleRename}
                   />
                 ))
@@ -597,11 +543,9 @@ export default function FileTree({
                 key={it.node.Path}
                 item={it}
                 depth={0}
-                basket={basket}
                 gitMap={gitMap}
                 onDirToggle={handleDirToggle}
                 onOpenFile={onOpenFile}
-                onBasketToggle={(p) => void handleBasketToggle(p)}
                 onRename={handleRename}
               />
             ))

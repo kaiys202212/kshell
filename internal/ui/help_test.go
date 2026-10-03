@@ -17,7 +17,7 @@ func TestHelpPanelToggles(t *testing.T) {
 	}
 
 	out := got.View()
-	for _, want := range []string{"键位", "Remote 视图", "上下文篮", "退出 kshell"} {
+	for _, want := range []string{"键位", "Remote 视图", "退出 kshell"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("help missing %q:\n%s", want, out)
 		}

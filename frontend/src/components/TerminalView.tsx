@@ -20,6 +20,12 @@ interface Props {
 // 退出提示：只在状态首次变为 exited 时写一次，避免 store 每次 upsert 都往终端里塞一行
 const EXITED_HINT = '\r\n\x1b[90m[会话已退出]\x1b[0m\r\n';
 
+// 最小可用行列：窄于此尺寸的 resize 一律不推给 PTY。
+// 根因（真机实测）：页签被 hidden 时宿主宽高为 0，FitAddon 会把 0 钳成 cols=2/rows=1，
+// 这个退化尺寸一旦推给伪终端，opencode 这类 TUI 会直接崩溃退出（实测退出码 3）。
+const MIN_COLS = 20;
+const MIN_ROWS = 5;
+
 // terminalTheme 跟随系统深浅色（本轮不引入手动主题开关）。
 // matchMedia 必须在函数里取（不能在模块顶层触碰 window），并对缺失环境兜底为浅色。
 function terminalTheme() {
@@ -38,6 +44,10 @@ export default function TerminalView({ term, active }: Props) {
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const exitedHintRef = useRef(false);
+  // 渲染期同步（不是 useEffect）：ResizeObserver 回调在 DOM 变更后的布局阶段触发，
+  // 必须保证「变隐藏」那一刻回调读到的已经是 false，否则仍会 fit 出退化尺寸。
+  const activeRef = useRef(active);
+  activeRef.current = active;
 
   // 依赖只取 termId：store 里 term 的其余字段（Status/ExitCode/Cols）变化不应重建终端实例
   useEffect(() => {
@@ -62,6 +72,8 @@ export default function TerminalView({ term, active }: Props) {
       void writeTerminal(termId, encodeTerminalInput(data));
     });
     const resizeSub = instance.onResize(({ cols, rows }) => {
+      // 退化尺寸守卫（见 MIN_COLS 说明）：隐藏态算出的 2x1 绝不能推给 PTY
+      if (cols < MIN_COLS || rows < MIN_ROWS) return;
       void resizeTerminal(termId, cols, rows);
     });
 
@@ -71,11 +83,15 @@ export default function TerminalView({ term, active }: Props) {
       fit: () => fitAddon.fit(),
     });
 
-    // 容器尺寸变化 → 下一帧再 fit：同一帧里可能还有布局变动（三栏拖动、页签切换）
+    // 容器尺寸变化 → 下一帧再 fit：同一帧里可能还有布局变动（三栏拖动、页签切换）。
+    // 非激活页签（被 hidden）时宿主尺寸为 0，此时 fit 会算出 2x1 的退化尺寸，直接跳过。
     const observer =
       typeof ResizeObserver === 'function'
         ? new ResizeObserver(() => {
-            requestAnimationFrame(() => fitAddon.fit());
+            requestAnimationFrame(() => {
+              if (!activeRef.current) return;
+              fitAddon.fit();
+            });
           })
         : null;
     observer?.observe(host);

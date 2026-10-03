@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -197,6 +198,7 @@ func Scan(home string, ps []providers.Provider, cachePath string, opts ScanOptio
 	for _, entry := range entries {
 		sessions = append(sessions, entry.Session)
 	}
+	sessions = append(sessions, enumerateSessions(home, ps, &failed)...)
 	sessions = dedupeSessions(sessions)
 
 	return &Result{
@@ -204,6 +206,30 @@ func Scan(home string, ps []providers.Provider, cachePath string, opts ScanOptio
 		Workspaces: mergeGitWorkspaces(GroupSessions(sessions), opts),
 		Failed:     failed,
 	}, nil
+}
+
+// enumerateSessions 处理「会话不在文件里」的工具（如 opencode 的 SQLite 库）：
+// 先解析出工具 CLI 的路径，再交给 provider 自己枚举；失败只记一笔，不影响整体扫描。
+func enumerateSessions(home string, ps []providers.Provider, failed *[]string) []providers.Session {
+	var sessions []providers.Session
+	for _, p := range ps {
+		en, ok := p.(providers.SessionEnumerator)
+		if !ok {
+			continue
+		}
+		// Detect 只做路径解析（不探版本），开销可忽略。
+		det := providers.Detect(p.DetectSpec(home), home)
+		if det.BinPath == "" {
+			continue // 只检测到配置目录、CLI 不在 PATH：没有可调的命令，静默跳过
+		}
+		got, err := en.EnumerateSessions(home, det.BinPath)
+		if err != nil {
+			*failed = append(*failed, fmt.Sprintf("%s 会话查询失败: %v", p.DisplayName(), err))
+			continue
+		}
+		sessions = append(sessions, got...)
+	}
+	return sessions
 }
 
 // dedupeSessions 按 (工具, 会话 ID) 去重。codex 每次 resume/compact 都会新开一个 rollout

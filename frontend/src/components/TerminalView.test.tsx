@@ -269,6 +269,43 @@ describe('TerminalView', () => {
     expect(dispatchTerminalData(TERM.ID, bytesToBase64(new Uint8Array([65])))).toBe(true);
   });
 
+  it('非激活页签的尺寸变化不 fit（隐藏宿主会被 FitAddon 钳成退化尺寸）', () => {
+    const { rerender } = render(<TerminalView term={TERM} active={false} />);
+    flushRaf();
+    const addon = fitAddon();
+
+    // 隐藏态容器尺寸为 0，真实 FitAddon 会算出 cols=2/rows=1：这里正是必须跳过的时刻
+    addon.dims = { cols: 2, rows: 1 };
+    act(() => observer().cb([], observer() as unknown as ResizeObserver));
+    flushRaf();
+
+    expect(addon.fitCount).toBe(0);
+    expect(api.resizeTerminal).not.toHaveBeenCalled();
+
+    // 切回可见页签后照常 fit，并把真实尺寸同步给 Go
+    addon.dims = { cols: 120, rows: 40 };
+    rerender(<TerminalView term={TERM} active />);
+    flushRaf();
+
+    expect(addon.fitCount).toBe(1);
+    expect(api.resizeTerminal).toHaveBeenCalledWith(TERM.ID, 120, 40);
+  });
+
+  it('退化尺寸（行列过小）绝不推给 PTY，恢复有效尺寸后再同步', () => {
+    render(<TerminalView term={TERM} active />);
+    flushRaf();
+    const instance = term();
+
+    // 实测：把 2x1、6x3 这类尺寸推给伪终端会让 opencode 直接崩溃退出（退出码 3）
+    instance.resizeCb?.({ cols: 2, rows: 1 });
+    instance.resizeCb?.({ cols: 6, rows: 3 });
+    expect(api.resizeTerminal).not.toHaveBeenCalled();
+
+    instance.resizeCb?.({ cols: 80, rows: 24 });
+    expect(api.resizeTerminal).toHaveBeenCalledTimes(1);
+    expect(api.resizeTerminal).toHaveBeenCalledWith(TERM.ID, 80, 24);
+  });
+
   it('卸载会注销注册表、取消订阅并销毁终端；ResizeObserver 断开', () => {
     const { unmount } = render(<TerminalView term={TERM} active />);
     const instance = term();

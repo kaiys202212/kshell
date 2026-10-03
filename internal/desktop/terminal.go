@@ -88,7 +88,7 @@ func (a *App) OpenWorkspaceTerminal(wsID string, toolID string, cols, rows int) 
 	}
 
 	o := a.snapshot()
-	l, err := launch.ForWorkspaceTool(o.Providers, tools, ws, a.basketSnapshot(), toolID)
+	l, err := launch.ForWorkspaceTool(o.Providers, tools, ws, toolID)
 	if err != nil {
 		return terminal.Info{}, err
 	}
@@ -167,7 +167,7 @@ func (a *App) NewSessionWithTool(wsID string, toolID string) error {
 		return errWorkspaceNotFound
 	}
 	o := a.snapshot()
-	l, err := launch.ForWorkspaceTool(o.Providers, tools, ws, a.basketSnapshot(), toolID)
+	l, err := launch.ForWorkspaceTool(o.Providers, tools, ws, toolID)
 	if err != nil {
 		return err
 	}

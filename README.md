@@ -50,9 +50,9 @@ kshell
 | `↑↓` / `j` `k` | 移动光标 |
 | `⏎` | 进入（工作区→会话；会话→恢复；目录→展开） |
 | `/` | 搜索过滤（作用在当前聚焦的列表上） |
-| `n` | 新建会话（Files 视图带上上下文篮） |
+| `n` | 新建会话（在选中工作区启动工具 CLI） |
 | `r` | 重新扫描 |
-| `space` | Files：加入上下文篮；Remote：勾选候选连接 |
+| `space` | Remote：勾选候选连接 |
 | `a` | Files：切换「显示全部」 |
 | `i` `x` `s` `t` `b` `d` | Remote：扫描导入 / 执行命令 / 交互式 shell / 连通性测试 / 绑定 / 删除 |
 | `?` | 帮助 |
@@ -65,7 +65,8 @@ kshell
 | Claude Code | `~/.claude/projects/*/*.jsonl` | 已验证（resume 参数实测） |
 | Codex CLI | `~/.codex/sessions/**/*.jsonl` | 已验证（resume 参数实测） |
 | Gemini CLI | `~/.gemini/tmp/` | 未实测（本机未安装，路径按已知默认值） |
-| CodeBuddy / OpenCode / Cline 等 | `~/.kshell/providers.yaml` 声明 | 预置猜测值，标注未验证 |
+| OpenCode | `~/.local/share/opencode/opencode.db` | 内置（会话在 SQLite，经 `opencode db ... --format json` 枚举） |
+| CodeBuddy / Cline 等 | `~/.kshell/providers.yaml` 声明 | 预置猜测值，标注未验证 |
 
 其他工具在 `~/.kshell/providers.yaml` 里加一段即可，无需改代码：
 

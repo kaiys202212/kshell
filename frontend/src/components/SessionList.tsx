@@ -9,6 +9,7 @@ import type { Session } from '../lib/api';
 import { formatRelativeTime } from '../lib/format';
 import { badgeFor } from '../lib/toolBadge';
 import { displayTitle } from '../lib/title';
+import { normalizeWorkspacePath } from '../lib/workspacePath';
 import { cn } from '../lib/cn';
 import { LIST_ROW, LIST_ROW_ACTIVE, MONO } from '../lib/ui';
 import { useAppStore } from '../state/store';
@@ -72,20 +73,20 @@ export default function SessionList({ workspacePath, onOpenTerminal }: Props) {
     };
   }, [setScanState]);
 
-  // 工作区过滤（路径大小写不敏感，对齐 Go 侧 NormalizePath）+ 关键词过滤 + 时间降序
-  const target = workspacePath.toLowerCase();
+  // 工作区过滤（分隔符/大小写不敏感，见 lib/workspacePath）+ 关键词过滤 + 时间降序
+  const target = normalizeWorkspacePath(workspacePath);
   // 工具 chip 选项：当前工作区会话按工具展示名去重（保持出现顺序）
   const toolOptions = useMemo(() => {
     const set = new Set<string>();
     for (const s of sessions) {
-      if (s.Workspace.toLowerCase() === target) set.add(badgeFor(s.ToolID).label);
+      if (normalizeWorkspacePath(s.Workspace) === target) set.add(badgeFor(s.ToolID).label);
     }
     return [...set];
   }, [sessions, target]);
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return sessions
-      .filter((s) => s.Workspace.toLowerCase() === target)
+      .filter((s) => normalizeWorkspacePath(s.Workspace) === target)
       .filter((s) => toolFilter === null || badgeFor(s.ToolID).label === toolFilter)
       .filter((s) => {
         if (!q) return true;

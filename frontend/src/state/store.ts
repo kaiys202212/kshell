@@ -1,4 +1,4 @@
-// 全局前端状态（Zustand）：工作区列表、打开的页签、上下文篮、弹窗窗口状态。
+// 全局前端状态（Zustand）：工作区列表、打开的页签、弹窗窗口状态。
 // 页签（openTabs/activeTabId）经 persist 中间件持久化到 localStorage（key kshell-tabs），
 // 重开应用后恢复上次的工作区页签；其余字段的数据来源都是 Go 绑定层，刷新即重取，不持久化。
 import { create } from 'zustand';
@@ -49,20 +49,12 @@ interface AppState {
   scanState: 'idle' | 'scanning' | 'done';
   setScanState(state: 'idle' | 'scanning' | 'done'): void;
 
-  basket: string[]; // 上下文篮：勾选的文件路径（Go 侧篮子的镜像）
-  // 以 Go ToggleBasket 的返回值为准同步（操作后是否在篮中），避免双份状态漂移
-  syncBasket(path: string, inBasket: boolean): void;
-  // 用 Go GetBasket 的返回值整体重建镜像（应用挂载时调用，防刷新漂移）
-  setBasket(paths: string[]): void;
-  // 文件重命名后原地更新镜像路径（Go 侧篮子已同步改名，这里只跟镜像）
-  renameBasketPath(oldPath: string, newPath: string): void;
-
   // git 状态镜像：wsPath → { relPath('/' 分隔) → 状态码 }；
   // 数据来自 Go GitStatus；非 git 仓库时映射为空（无键=未加载，空 map=非仓库）。
   gitStatus: Record<string, Record<string, string>>;
   setGitStatus(wsPath: string, status: Record<string, string>): void;
 
-  // 轻量全局提示（篮满、操作失败等）：toast 队列，notify 只负责追加，
+  // 轻量全局提示（操作失败等）：toast 队列，notify 只负责追加，
   // 自动关闭与移除由 Toaster 侧（Radix duration/onOpenChange）调 dismissToast 完成。
   toasts: Toast[];
   notify(title: string, tone?: Toast['tone']): void;
@@ -132,33 +124,6 @@ export const useAppStore = create<AppState>()(
 
       setScanState: (scanState) => set({ scanState }),
 
-      basket: [],
-      syncBasket: (path, inBasket) =>
-        set((s) => ({
-          basket: inBasket
-            ? s.basket.includes(path)
-              ? s.basket
-              : [...s.basket, path]
-            : s.basket.filter((p) => p !== path),
-        })),
-      setBasket: (paths) => set({ basket: paths }),
-      // 文件/目录重命名后同步镜像：精确命中换新路径；
-      // 位于改名目录之下的条目换前缀。与 Go 侧同口径用大小写不敏感比较（Windows）。
-      renameBasketPath: (oldPath, newPath) =>
-        set((s) => {
-          const lower = oldPath.toLowerCase();
-          const sep = lower.includes('/') ? '/' : '\\';
-          const prefix = lower.endsWith(sep) ? lower : lower + sep;
-          return {
-            basket: s.basket.map((p) => {
-              const lp = p.toLowerCase();
-              if (lp === lower) return newPath;
-              if (lp.startsWith(prefix)) return newPath + p.slice(oldPath.length);
-              return p;
-            }),
-          };
-        }),
-
       gitStatus: {},
       setGitStatus: (wsPath, status) =>
         set((s) => ({ gitStatus: { ...s.gitStatus, [wsPath]: status } })),
@@ -210,7 +175,7 @@ export const useAppStore = create<AppState>()(
     {
       name: 'kshell-tabs',
       // 只持久化页签、三栏宽度与新建会话的工具选择：
-      // 工作区/篮子/终端/提示要么来自 Go 侧、要么是易失的内存态
+      // 工作区/终端/提示要么来自 Go 侧、要么是易失的内存态
       partialize: (s) => ({
         openTabs: s.openTabs,
         activeTabId: s.activeTabId,

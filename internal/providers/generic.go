@@ -259,12 +259,8 @@ func isRecord(rec map[string]any, typ, role string) bool {
 	return typ != "" || role != ""
 }
 
-func (g Generic) NewSessionCmd(ws string, bin string, ctx []string) Launch {
-	launch := Launch{Path: bin, Dir: ws}
-	if prompt := ContextPrompt(ctx); prompt != "" {
-		launch.Args = []string{prompt}
-	}
-	return launch
+func (g Generic) NewSessionCmd(ws string, bin string) Launch {
+	return Launch{Path: bin, Dir: ws}
 }
 
 func (g Generic) ResumeCmd(s Session, bin string) Launch {
@@ -321,23 +317,8 @@ providers:
       args: ["--resume", "{id}"]
     verified: true
 
-  - id: opencode
-    name: OpenCode
-    detect:
-      command: opencode
-      dirs:
-        - ~/.local/share/opencode
-    sessions:
-      glob: ~/.local/share/opencode/storage/*/*.json
-      format: json
-    fields:
-      cwd: cwd
-      id: id
-      timestamp: time.updated
-      title: title
-    resume:
-      args: ["--session", "{id}"]
-    verified: false
+  # opencode 已是内置 provider（会话存放在 SQLite 库中，需要读库而不是读文件），
+  # 不在此处声明；老配置里残留的 opencode 段会被内置实现按 ID 覆盖。
 
   - id: cline
     name: Cline / Roo

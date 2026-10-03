@@ -47,7 +47,7 @@ type Provider interface {
 	SessionRoots(home string) []string
 	SessionFilePattern() string // 会话文件后缀：Claude/Codex 是 *.jsonl，Gemini 是 *.json
 	ParseSession(path string, head []byte) (*Session, error)
-	NewSessionCmd(ws string, bin string, ctx []string) Launch
+	NewSessionCmd(ws string, bin string) Launch
 	ResumeCmd(s Session, bin string) Launch
 }
 
@@ -55,6 +55,12 @@ type Provider interface {
 // 用于排除 glob 覆盖不到的深层文件（如 CodeBuddy 的 subagents/*.jsonl）。
 type PathMatcher interface {
 	MatchSessionRel(rel string) bool // rel 为相对会话根的斜杠分隔路径
+}
+
+// SessionEnumerator 可选接口：给「会话不在文件里」的工具用（如 opencode 把会话放进 SQLite 库），
+// 扫描器会解析出它的 CLI 路径后直接调用，绕过文件遍历与解析缓存。
+type SessionEnumerator interface {
+	EnumerateSessions(home string, bin string) ([]Session, error)
 }
 
 // ReadHead 只读文件头部。会话 JSONL 动辄几十 MB，解析元信息绝不能整文件读入。
@@ -113,19 +119,6 @@ func CountLines(path string) (int, error) {
 			return count, err
 		}
 	}
-}
-
-// ContextPrompt 把上下文篮里的文件拼成初始提示，新建会话时注入。
-func ContextPrompt(paths []string) string {
-	if len(paths) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString("请先阅读以下文件，再开始工作：")
-	for _, p := range paths {
-		b.WriteString("\n- " + p)
-	}
-	return b.String()
 }
 
 // messageText 兼容 content 为字符串或 [{type:"text",text:"..."}] 两种形态。

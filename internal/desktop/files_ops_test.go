@@ -38,11 +38,6 @@ func TestRenameEntry(t *testing.T) {
 	env := newFilesEnv(t)
 	app := env.app
 
-	// 文件先入篮
-	if !app.ToggleBasket(filepath.Join(env.root, "main.go")) {
-		t.Fatal("加入篮子失败")
-	}
-
 	newPath, err := app.RenameEntry(env.root, "main.go", "renamed.go")
 	if err != nil {
 		t.Fatalf("RenameEntry error: %v", err)
@@ -56,12 +51,6 @@ func TestRenameEntry(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(env.root, "main.go")); !os.IsNotExist(err) {
 		t.Fatal("旧文件应已消失")
-	}
-
-	// 篮子路径原地更新
-	basket := app.GetBasket()
-	if len(basket) != 1 || basket[0] != want {
-		t.Fatalf("篮子应更新为新路径: %v", basket)
 	}
 
 	// 树缓存已作废，ListFiles 反映新名字（且树自动重建）
@@ -130,11 +119,6 @@ func TestRenameEntryValidation(t *testing.T) {
 
 func TestRenameEntryEscapesBlocked(t *testing.T) {
 	env := newFilesEnv(t)
-
-	// 篮子注入一个越界路径，改名其它文件时不应被误改
-	env.app.mu.Lock()
-	env.app.basket = []string{filepath.Join(env.root, "..", "outside.txt")}
-	env.app.mu.Unlock()
 
 	if _, err := env.app.RenameEntry(env.root, "main.go", ".."); err == nil {
 		t.Fatal(".. 名字应被拒")

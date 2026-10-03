@@ -148,56 +148,6 @@ func TestPreviewFileReturnsContent(t *testing.T) {
 	}
 }
 
-func TestToggleBasketAndNewSessionInjection(t *testing.T) {
-	env := newFilesEnv(t)
-	mainGo := filepath.Join(env.root, "main.go")
-
-	if !env.app.ToggleBasket(mainGo) {
-		t.Fatal("首次加入应返回 true")
-	}
-	if env.app.ToggleBasket(mainGo) {
-		t.Fatal("重复加入前已存在？首次加入后再次 Toggle 应移除并返回 false")
-	}
-	// 再加回去，验证 GetBasket 与去重
-	env.app.ToggleBasket(mainGo)
-	if got := env.app.GetBasket(); len(got) != 1 || got[0] != mainGo {
-		t.Fatalf("GetBasket = %v", got)
-	}
-
-	// 空路径是空操作
-	if env.app.ToggleBasket("  ") {
-		t.Fatal("空路径不应入篮")
-	}
-}
-
-func TestToggleBasketLimit(t *testing.T) {
-	env := newFilesEnv(t)
-	for i := 0; i < maxBasket; i++ {
-		if !env.app.ToggleBasket(filepath.Join(env.root, string(rune('a'+i))+".go")) {
-			t.Fatalf("第 %d 项加入不应失败", i+1)
-		}
-	}
-	// 已满：加入被拒，返回 false（不在篮中），篮子保持上限
-	if env.app.ToggleBasket(filepath.Join(env.root, "overflow.go")) {
-		t.Fatal("超限加入应返回 false")
-	}
-	if got := env.app.GetBasket(); len(got) != maxBasket {
-		t.Fatalf("超限后篮子应保持 %d 项, got %d", maxBasket, len(got))
-	}
-}
-
-func TestGetBasketReturnsCopy(t *testing.T) {
-	env := newFilesEnv(t)
-	mainGo := filepath.Join(env.root, "main.go")
-	env.app.ToggleBasket(mainGo)
-
-	got := env.app.GetBasket()
-	got[0] = "篡改"
-	if again := env.app.GetBasket(); again[0] != mainGo {
-		t.Fatal("GetBasket 返回的应是与内部状态解耦的副本")
-	}
-}
-
 func TestListConnectionsScopesByWorkspace(t *testing.T) {
 	env := newFilesEnv(t)
 

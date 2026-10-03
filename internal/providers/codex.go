@@ -161,12 +161,8 @@ func isCodexResumeWrapper(raw string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimLeft(raw, " \t\r\n")), marker)
 }
 
-func (Codex) NewSessionCmd(ws string, bin string, ctx []string) Launch {
-	launch := Launch{Path: bin, Dir: ws}
-	if prompt := ContextPrompt(ctx); prompt != "" {
-		launch.Args = []string{prompt}
-	}
-	return launch
+func (Codex) NewSessionCmd(ws string, bin string) Launch {
+	return Launch{Path: bin, Dir: ws}
 }
 
 // ResumeCmd 使用实测确认过的 `codex resume <SESSION_ID>`，并在会话所属工作区启动。

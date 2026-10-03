@@ -125,25 +125,16 @@ func TestClaudeResumeCmd(t *testing.T) {
 	}
 }
 
-func TestClaudeNewSessionCmdInjectsContext(t *testing.T) {
-	launch := Claude{}.NewSessionCmd(`D:\data\workspace\demo`, "claude", []string{"a.go", "b.md"})
+func TestClaudeNewSessionCmd(t *testing.T) {
+	launch := Claude{}.NewSessionCmd(`D:\data\workspace\demo`, "claude")
+	if launch.Path != "claude" {
+		t.Fatalf("path = %q", launch.Path)
+	}
 	if launch.Dir != `D:\data\workspace\demo` {
 		t.Fatalf("dir = %q", launch.Dir)
 	}
-	if len(launch.Args) != 1 {
-		t.Fatalf("args = %v, want a single prompt argument", launch.Args)
-	}
-	for _, want := range []string{"a.go", "b.md"} {
-		if !strings.Contains(launch.Args[0], want) {
-			t.Fatalf("prompt missing %q: %q", want, launch.Args[0])
-		}
-	}
-}
-
-func TestClaudeNewSessionCmdWithoutContext(t *testing.T) {
-	launch := Claude{}.NewSessionCmd(`D:\data\workspace\demo`, "claude", nil)
 	if len(launch.Args) != 0 {
-		t.Fatalf("args = %v, want none when the context basket is empty", launch.Args)
+		t.Fatalf("args = %v, want none", launch.Args)
 	}
 }
 

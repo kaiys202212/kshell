@@ -22,7 +22,7 @@ func (s stubProvider) SessionFilePattern() string             { return "*.jsonl"
 func (s stubProvider) ParseSession(string, []byte) (*providers.Session, error) {
 	return nil, nil
 }
-func (s stubProvider) NewSessionCmd(string, string, []string) providers.Launch {
+func (s stubProvider) NewSessionCmd(string, string) providers.Launch {
 	return providers.Launch{}
 }
 func (s stubProvider) ResumeCmd(providers.Session, string) providers.Launch {

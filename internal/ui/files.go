@@ -7,8 +7,6 @@ import (
 	"github.com/yangk/kshell/internal/workspace"
 )
 
-const maxBasket = 20
-
 // ensureTree 为当前选中的工作区构建文件树；切换工作区或开关 showAll 时重建。
 func (m *Model) ensureTree() {
 	ws, ok := m.selectedWorkspace()
@@ -79,33 +77,6 @@ func loadPreviewCmd(path string) tea.Cmd {
 	}
 }
 
-// toggleBasket 把当前文件加入/移出上下文篮（去重、上限 maxBasket）。
-func (m *Model) toggleBasket(path string) {
-	if path == "" {
-		return
-	}
-	for i, p := range m.basket {
-		if p == path {
-			m.basket = append(m.basket[:i], m.basket[i+1:]...)
-			return
-		}
-	}
-	if len(m.basket) >= maxBasket {
-		m.status, m.statusWarn = "上下文篮已满（"+itoa(maxBasket)+" 个）", true
-		return
-	}
-	m.basket = append(m.basket, path)
-}
-
-func (m Model) inBasket(path string) bool {
-	for _, p := range m.basket {
-		if p == path {
-			return true
-		}
-	}
-	return false
-}
-
 func (m *Model) toggleShowAll() {
 	m.showAll = !m.showAll
 	m.tree = nil // 强制重建
@@ -150,9 +121,6 @@ func (m Model) renderFilesBody(height, width int) string {
 			name = prefix2(row.Node.Expanded) + name + "/"
 		} else {
 			name = "  " + name
-		}
-		if m.inBasket(row.Node.Path) {
-			name += " ✓"
 		}
 		lines = append(lines, m.renderRow(i == m.fileCursor, prefix+name))
 	}

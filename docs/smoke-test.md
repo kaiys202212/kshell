@@ -24,8 +24,6 @@ go build -o dist/kshell.exe ./cmd/kshell
 - [ ] 文件树只显示一层，`⏎` 展开目录
 - [ ] `.gitignore` 与 `node_modules/.git/vendor/dist` 默认不显示
 - [ ] `a` 切换「显示全部」后被忽略的文件出现
-- [ ] `space` 加入上下文篮，顶栏出现计数；再按一次移除
-- [ ] 篮里放文件后 `n` 新建会话，启动提示里带文件路径
 - [ ] 右栏预览：文本带行号；大文件截断有提示；二进制只显示元信息不输出乱码
 
 ## Remote 视图

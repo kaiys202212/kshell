@@ -87,12 +87,8 @@ func (Gemini) ParseSession(path string, head []byte) (*Session, error) {
 	}, nil
 }
 
-func (Gemini) NewSessionCmd(ws string, bin string, ctx []string) Launch {
-	launch := Launch{Path: bin, Dir: ws}
-	if prompt := ContextPrompt(ctx); prompt != "" {
-		launch.Args = []string{prompt}
-	}
-	return launch
+func (Gemini) NewSessionCmd(ws string, bin string) Launch {
+	return Launch{Path: bin, Dir: ws}
 }
 
 // ResumeCmd 的 --resume 参数未经实测（本机未安装 Gemini CLI），需在有该工具的机器上校准。

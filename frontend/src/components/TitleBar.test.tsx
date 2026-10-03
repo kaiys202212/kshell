@@ -84,6 +84,22 @@ describe('TitleBar', () => {
     expect(onSelectTab).toHaveBeenCalledTimes(3); // 关闭钮不触发选中
   });
 
+  it('点工作区页签的右侧/空白区域也能切换（此前只有名称按钮可点）', () => {
+    const { onSelectTab } = setup();
+    const wrapper = screen.getByRole('button', { name: 'proj-a' }).closest('div.group')!;
+
+    fireEvent.click(wrapper);
+    expect(onSelectTab).toHaveBeenCalledWith('D:\\proj-a');
+  });
+
+  it('点关闭钮只关闭、不顺带选中该页签', () => {
+    const { onSelectTab, onCloseTab } = setup();
+    fireEvent.click(screen.getByRole('button', { name: '关闭 proj-a' }));
+
+    expect(onCloseTab).toHaveBeenCalledWith('D:\\proj-a');
+    expect(onSelectTab).not.toHaveBeenCalled();
+  });
+
   it('工作区页签中键关闭，左键不关闭', () => {
     const { onCloseTab } = setup();
     const wrapper = screen.getByRole('button', { name: 'proj-a' }).closest('div.group')!;

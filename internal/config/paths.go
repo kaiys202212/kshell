@@ -22,6 +22,8 @@ type Layout struct {
 	// SignalExit 是退出信号文件：外部脚本（如 build.ps1）创建它即可请求
 	// 运行中的桌面版优雅退出，供无人值守构建/调试使用。
 	SignalExit string
+	// Projects 是项目表：手动添加的项目目录 + 逻辑删除（隐藏）的项目。
+	Projects string
 }
 
 func Paths() (Layout, error) {
@@ -42,6 +44,7 @@ func Paths() (Layout, error) {
 		CacheSnapshot: filepath.Join(cache, "snapshot.json"),
 		CacheTools:    filepath.Join(cache, "tools.json"),
 		SignalExit:    filepath.Join(root, "exit.signal"),
+		Projects:      filepath.Join(root, "projects.yaml"),
 	}, nil
 }
 

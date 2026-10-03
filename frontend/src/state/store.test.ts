@@ -1,4 +1,4 @@
-// store 增量测试：setBasket 重建篮子镜像、notify/dismissToast 轻量提示队列、
+// store 增量测试：notify/dismissToast 轻量提示队列、
 // openTabs/activeTabId 经 persist 中间件落 localStorage（kshell-tabs）。
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { TerminalInfo } from '../lib/api';
@@ -8,7 +8,6 @@ beforeEach(() => {
   // persist 会在每次 setState 后写 localStorage，用例间必须清干净避免互相污染
   localStorage.clear();
   useAppStore.setState({
-    basket: [],
     toasts: [],
     openTabs: [],
     activeTabId: null,
@@ -18,16 +17,6 @@ beforeEach(() => {
 });
 
 describe('store', () => {
-  it('setBasket 用 Go 侧返回的路径列表整体重建镜像', () => {
-    useAppStore.setState({ basket: ['D:\\old.md'] });
-    useAppStore.getState().setBasket(['D:\\a.md', 'D:\\b.md', 'D:\\c.md']);
-    expect(useAppStore.getState().basket).toEqual(['D:\\a.md', 'D:\\b.md', 'D:\\c.md']);
-
-    // 空列表也要能清空镜像（Go 侧篮子确实为空）
-    useAppStore.getState().setBasket([]);
-    expect(useAppStore.getState().basket).toEqual([]);
-  });
-
   it('notify 追加提示（不截断），语气默认 info，id 互不相同', () => {
     useAppStore.getState().notify('第一条');
     useAppStore.getState().notify('第二条');
@@ -79,9 +68,8 @@ describe('store', () => {
     expect(parsed.state.activeTabId).toBe('D:\\proj-a');
   });
 
-  it('partialize 只持久化页签字段，篮子/toast 等内存态不入 localStorage', () => {
+  it('partialize 只持久化页签字段，toast/终端等内存态不入 localStorage', () => {
     useAppStore.setState({
-      basket: ['D:\\a.md'],
       openTabs: [{ id: 'D:\\proj-a', name: 'proj-a' }],
       activeTabId: null,
     });
@@ -93,7 +81,6 @@ describe('store', () => {
     expect(Object.keys(parsed.state)).toEqual(
       expect.arrayContaining(['openTabs', 'activeTabId', 'layout']),
     );
-    expect(parsed.state).not.toHaveProperty('basket');
     expect(parsed.state).not.toHaveProperty('toasts');
     expect(parsed.state).not.toHaveProperty('terminals');
   });

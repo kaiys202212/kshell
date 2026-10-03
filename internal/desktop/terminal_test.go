@@ -227,7 +227,6 @@ type recordingProvider struct {
 
 	mu      sync.Mutex
 	lastBin string
-	lastCtx []string
 }
 
 func (p *recordingProvider) ID() string                             { return p.id }
@@ -239,21 +238,20 @@ func (p *recordingProvider) ParseSession(string, []byte) (*providers.Session, er
 	return nil, errors.New("not implemented")
 }
 
-func (p *recordingProvider) NewSessionCmd(ws, bin string, ctx []string) providers.Launch {
-	p.record(bin, ctx)
-	return providers.Launch{Path: bin, Dir: ws, Args: append([]string{}, ctx...)}
+func (p *recordingProvider) NewSessionCmd(ws, bin string) providers.Launch {
+	p.record(bin)
+	return providers.Launch{Path: bin, Dir: ws}
 }
 
 func (p *recordingProvider) ResumeCmd(s providers.Session, bin string) providers.Launch {
-	p.record(bin, nil)
+	p.record(bin)
 	return providers.Launch{Path: bin, Dir: s.Workspace, Args: []string{"--resume", s.ID}}
 }
 
-func (p *recordingProvider) record(bin string, ctx []string) {
+func (p *recordingProvider) record(bin string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.lastBin = bin
-	p.lastCtx = append([]string(nil), ctx...)
 }
 
 func (p *recordingProvider) bin() string {

@@ -23,7 +23,7 @@ func (f fakeProvider) SessionFilePattern() string              { return "*.jsonl
 func (f fakeProvider) ParseSession(string, []byte) (*providers.Session, error) {
 	return nil, errors.New("not implemented")
 }
-func (f fakeProvider) NewSessionCmd(ws, bin string, ctx []string) providers.Launch {
+func (f fakeProvider) NewSessionCmd(ws, bin string) providers.Launch {
 	l := f.newSess
 	l.Dir = ws
 	return l
@@ -64,7 +64,7 @@ func TestForSessionFailsWithoutRunnableTool(t *testing.T) {
 	}
 }
 
-func TestForWorkspacePicksPreferredToolAndInjectsContext(t *testing.T) {
+func TestForWorkspacePicksPreferredTool(t *testing.T) {
 	ps := []providers.Provider{
 		fakeProvider{id: "codex"},
 		fakeProvider{id: "claude", newSess: providers.Launch{Path: "claude"}},
@@ -75,7 +75,7 @@ func TestForWorkspacePicksPreferredToolAndInjectsContext(t *testing.T) {
 		ToolCounts: map[string]int{"claude": 3, "codex": 1},
 	}
 
-	got, err := ForWorkspace(ps, tools, ws, []string{"main.go"})
+	got, err := ForWorkspace(ps, tools, ws)
 	if err != nil {
 		t.Fatalf("ForWorkspace error: %v", err)
 	}
@@ -85,6 +85,4 @@ func TestForWorkspacePicksPreferredToolAndInjectsContext(t *testing.T) {
 	if got.Dir != ws.Path {
 		t.Fatalf("Dir = %q, 期望工作区路径", got.Dir)
 	}
-	// 上下文篮经 NewSessionCmd 透传给 provider：fakeProvider 未动 newSess.Args，
-	// 注入行为由各 provider 自己的测试保证，这里验证 Dir/工具选择即可。
 }

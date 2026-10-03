@@ -41,6 +41,9 @@ type Options struct {
 	CachePath string
 	Store     *remote.Store
 	Scanners  []remote.Scanner
+	// Projects 是项目表（手动添加 / 逻辑删除）：TUI 只读，用于剔除已隐藏与目录不存在的项。
+	// nil 时不做叠加（测试可省）。
+	Projects *discovery.ProjectStore
 }
 
 var (
@@ -95,7 +98,6 @@ type Model struct {
 	failed     int
 	loading    bool
 	showHelp   bool
-	basket     []string // 上下文篮：文件视图里勾选的文件，新建会话时注入
 
 	tree         *workspace.Tree
 	treeRootPath string
@@ -128,7 +130,7 @@ func NewModel() Model {
 
 func NewModelWith(o Options) Model {
 	if len(o.Providers) == 0 {
-		o.Providers = []providers.Provider{providers.Claude{}, providers.Codex{}, providers.Gemini{}}
+		o.Providers = providers.Builtins()
 	}
 	if o.Config.MaxDepth <= 0 {
 		o.Config = config.Default()
@@ -173,7 +175,7 @@ func scanCmd(o Options) tea.Cmd {
 		}
 		return scanDoneMsg{
 			tools:      tools,
-			workspaces: res.Workspaces,
+			workspaces: discovery.ApplyProjects(res.Workspaces, o.Projects, nil),
 			sessions:   res.Sessions,
 			failed:     len(res.Failed),
 		}
@@ -409,12 +411,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case " ":
-		if m.view == ViewFiles {
-			if row, ok := m.selectedFile(); ok && !row.Node.IsDir {
-				m.toggleBasket(row.Node.Path)
-			}
-			return m, nil
-		}
 		if m.view == ViewRemote && m.importing {
 			m.toggleCandidate()
 			return m, nil
@@ -567,7 +563,7 @@ func (m Model) newSessionLaunch() (providers.Launch, error) {
 	if !ok {
 		return providers.Launch{}, errNoWorkspaceSelected
 	}
-	return launch.ForWorkspace(m.opts.Providers, m.tools, ws, m.basket)
+	return launch.ForWorkspace(m.opts.Providers, m.tools, ws)
 }
 
 func (m Model) launchSelectedCmd() tea.Cmd {
@@ -667,9 +663,6 @@ func (m Model) renderRight(height, width int) string {
 
 func (m Model) renderTopBar() string {
 	left := m.theme.Title.Render(" kshell ") + " " + m.renderTabs() + " " + m.renderToolChips()
-	if len(m.basket) > 0 {
-		left += " " + m.theme.TabActive.Render("篮 "+itoa(len(m.basket)))
-	}
 	right := m.theme.Muted.Render(m.workspaceHeader())
 	return joinHorizontalFit(m.width, left, right)
 }

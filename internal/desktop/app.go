@@ -47,6 +47,10 @@ type Options struct {
 	SnapshotPath string
 	// ToolsCachePath 是工具版本探测缓存文件：CLI 未升级时跳过 `<bin> --version` 子进程。
 	ToolsCachePath string
+	// Projects 是项目表（手动添加 / 逻辑删除）；nil 时 Startup 按真实路径装配。
+	Projects *discovery.ProjectStore
+	// ProjectsPath 是 projects.yaml 完整路径；仅在未注入 Projects 时用于装配。
+	ProjectsPath string
 }
 
 // App 是暴露给前端的绑定对象：薄封装 discovery/providers/window 等核心包，
@@ -58,14 +62,16 @@ type App struct {
 	ctx  context.Context
 	opts Options
 
-	tools    []discovery.Tool
-	result   *discovery.Result
-	scanning bool
+	tools []discovery.Tool
+	// rawWorkspaces 是**未叠加项目表**的扫描结果：项目列表永远从它派生，
+	// 否则「删除后再还原」会因为列表已被过滤掉而回不来。
+	rawWorkspaces []discovery.Workspace
+	result        *discovery.Result
+	scanning      bool
 	// scanned 标记本进程是否完成过一轮真实扫描（快照恢复不算）：
 	// 绑定调用据此决定要不要等首扫，避免拿快照当真结果错过新工作区。
-	scanned bool
-	basket   []string // 上下文篮：文件视图勾选的文件，新建会话时注入初始提示
-	quitting bool     // 托盘「退出」已发起：BeforeClose 据此放行 Wails 的退出流程
+	scanned  bool
+	quitting bool // 托盘「退出」已发起：BeforeClose 据此放行 Wails 的退出流程
 
 	trees   map[string]*workspace.Tree // 工作区路径 → 文件树（懒创建，节点级缓存）
 	treeMu  sync.Mutex                 // 树操作串行化（Expand 会写节点，不能只靠 mu 快照）
@@ -122,12 +128,16 @@ func (a *App) loadSnapshot() {
 		return // 快照缺失/损坏/版本不符都无所谓：后台扫描会补上
 	}
 
+	raw := res.Workspaces
+	res.Workspaces = discovery.ApplyProjects(raw, o.Projects, nil)
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.result != nil {
 		return
 	}
 	a.result = res
+	a.rawWorkspaces = raw
 	if len(a.tools) == 0 && len(tools) > 0 {
 		a.tools = tools
 	}
@@ -150,12 +160,9 @@ func (a *App) initRealDeps() {
 	cfg, _ := config.Load(paths) // 读不到配置就用默认值，不阻断启动
 
 	_ = providers.EnsureProvidersFile(paths.Providers)
-	ps := []providers.Provider{providers.Claude{}, providers.Codex{}, providers.Gemini{}}
-	if specs, err := providers.LoadGenericSpecs(paths.Providers); err == nil {
-		for _, spec := range specs {
-			ps = append(ps, providers.Generic{Spec: spec, Home: home})
-		}
-	}
+	// 内置清单与 yaml 自定义定义合并（按 ID 去重、内置优先）。
+	specs, _ := providers.LoadGenericSpecs(paths.Providers)
+	ps := providers.MergeProviders(providers.Builtins(), specs, home)
 
 	var wm *WindowManager
 	if defaultLauncherFactory != nil {
@@ -201,6 +208,14 @@ func (a *App) initRealDeps() {
 	}
 	if a.opts.ToolsCachePath == "" {
 		a.opts.ToolsCachePath = paths.CacheTools
+	}
+	if a.opts.ProjectsPath == "" {
+		a.opts.ProjectsPath = paths.Projects
+	}
+	if a.opts.Projects == nil {
+		store := discovery.NewProjectStore(a.opts.ProjectsPath)
+		_ = store.Load() // 读不到/损坏只当空表，不阻断启动（与连接存储同口径）
+		a.opts.Projects = store
 	}
 }
 
@@ -352,10 +367,19 @@ func (a *App) runScan() {
 		Exclude:  o.Config.Exclude,
 	})
 
+	// 项目表要叠加在「原始扫描结果」上：先记原始，再算给前端看的列表。
+	// os.Stat 逐个判断目录存在性，放在锁外做。
+	var raw []discovery.Workspace
+	if err == nil && res != nil {
+		raw = res.Workspaces
+		res.Workspaces = discovery.ApplyProjects(raw, o.Projects, nil)
+	}
+
 	a.mu.Lock()
 	a.tools = tools
 	if err == nil {
 		a.result = res
+		a.rawWorkspaces = raw
 		a.scanned = true
 	}
 	a.scanning = false
@@ -363,7 +387,7 @@ func (a *App) runScan() {
 
 	// 落盘快照（锁外写文件）；失败只影响下次启动的秒开体验，不影响本次结果
 	if err == nil {
-		_ = discovery.SaveSnapshot(o.SnapshotPath, res, tools)
+		a.saveSnapshot(res, raw, tools)
 	}
 
 	ev := map[string]any{"failed": 0}
@@ -411,15 +435,14 @@ func (a *App) ensureScanReady() {
 	}
 }
 
-// GetWorkspaces 返回最近一次扫描的工作区列表（未扫完时为空切片）。
-// 返回值是共享切片：Result 整体替换、替换后只读，调用方不得原地修改。
+// GetWorkspaces 返回当前项目列表（未扫完时为空切片）。
+// 每次都从**原始扫描结果**叠加项目表算出，因此「添加/删除/还原」后不必等重扫即可生效；
+// 派生结果每次都是新切片，调用方可以放心改。
 func (a *App) GetWorkspaces() []discovery.Workspace {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.result == nil {
-		return []discovery.Workspace{}
-	}
-	return a.result.Workspaces
+	raw, st := a.rawWorkspaces, a.opts.Projects
+	a.mu.Unlock()
+	return discovery.ApplyProjects(raw, st, nil)
 }
 
 // GetSessions 返回最近一次扫描的会话列表（未扫完时为空切片）。
@@ -450,7 +473,7 @@ func (a *App) ResumeSession(id string) error {
 	return a.launchWindow(o.Windows, l, s.Title)
 }
 
-// NewSession 在指定工作区新建会话（wsID 为工作区路径），上下文篮文件作为初始提示注入。
+// NewSession 在指定工作区新建会话（wsID 为工作区路径）。
 // 工具交给 launch 选工作区首选（等价于 NewSessionWithTool 的 toolID 为空）。
 func (a *App) NewSession(wsID string) error {
 	return a.NewSessionWithTool(wsID, "")
@@ -538,15 +561,6 @@ func (a *App) sessionByIDReady(id string) (providers.Session, []discovery.Tool, 
 	}
 	a.ensureScanReady()
 	return a.sessionByID(id)
-}
-
-// basketSnapshot 返回上下文篮的副本，避免扫描/启动并发读写同一切片。
-func (a *App) basketSnapshot() []string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]string, len(a.basket))
-	copy(out, a.basket)
-	return out
 }
 
 // Emit 对外转发事件（窗口关闭回调等内部使用；未就绪时静默丢弃）。

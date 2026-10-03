@@ -139,6 +139,8 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
             <div
               key={t.id}
               className={cn('group', tabBase, active && tabActive)}
+              // 整条页签可点（名称右侧的关闭钮间隙/留白此前点不动）
+              onClick={() => onSelectTab(t.id)}
               onAuxClick={(e) => {
                 if (e.button === 1) {
                   e.preventDefault();
@@ -146,11 +148,7 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
                 }
               }}
             >
-              <button
-                className="kshell-no-drag min-w-0 truncate"
-                title={t.id}
-                onClick={() => onSelectTab(t.id)}
-              >
+              <button className="kshell-no-drag min-w-0 truncate" title={t.id}>
                 {t.name}
               </button>
               <button
@@ -159,7 +157,10 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
                   active ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100',
                 )}
                 aria-label={`关闭 ${t.name}`}
-                onClick={() => onCloseTab(t.id)}
+                onClick={(e) => {
+                  e.stopPropagation(); // 只关，不顺带切到该页签
+                  onCloseTab(t.id);
+                }}
               >
                 ×
               </button>
