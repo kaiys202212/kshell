@@ -332,23 +332,23 @@ describe('TerminalView', () => {
   it('终端主题跟随 store 的 resolved 明暗', () => {
     useAppStore.getState().setAppearance({ mode: 'dark', resolved: 'dark' });
     const dark = render(<TerminalView term={TERM} active />);
-    expect(term(0).options.theme).toEqual({ background: '#0d1117', foreground: '#e6edf3' });
+    expect(term(0).options.theme).toEqual({ background: '#131b18', foreground: '#dce8e4' });
     dark.unmount();
 
     useAppStore.getState().setAppearance({ mode: 'light', resolved: 'light' });
     const light = render(<TerminalView term={TERM} active />);
-    expect(term(1).options.theme).toEqual({ background: '#ffffff', foreground: '#1f2328' });
+    expect(term(1).options.theme).toEqual({ background: '#ffffff', foreground: '#1c2a27' });
     light.unmount();
   });
 
   it('明暗变化时热更新已挂载终端的配色', () => {
     useAppStore.getState().setAppearance({ mode: 'dark', resolved: 'dark' });
     render(<TerminalView term={TERM} active />);
-    expect(term(0).options.theme).toEqual({ background: '#0d1117', foreground: '#e6edf3' });
+    expect(term(0).options.theme).toEqual({ background: '#131b18', foreground: '#dce8e4' });
 
     act(() => {
       useAppStore.getState().setAppearance({ mode: 'light', resolved: 'light' });
     });
-    expect(term(0).options.theme).toEqual({ background: '#ffffff', foreground: '#1f2328' });
+    expect(term(0).options.theme).toEqual({ background: '#ffffff', foreground: '#1c2a27' });
   });
 });

@@ -11,11 +11,11 @@ import {
   WindowToggleMaximise,
 } from '../../wailsjs/runtime/runtime';
 import { cn } from '../lib/cn';
-import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
+import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE, TAB_UNDERLINE_PREVIEW } from '../lib/ui';
 import { SETTINGS_TAB_ID, type WorkspaceTab } from '../state/store';
 
-// 页签基础态：扁平下划线激活态，不做胶囊填充
-const tabBase = `kshell-no-drag ${TAB_BASE} h-7 max-w-44`;
+// 页签基础态：扁平下划线激活态，不做胶囊填充；group 供 hover 预览条显隐用
+const tabBase = `kshell-no-drag group ${TAB_BASE} h-7 max-w-44`;
 const tabActive = TAB_ACTIVE;
 
 // 窗口控件按钮：Windows 习惯的热区，关闭键 hover 变危险色
@@ -130,7 +130,11 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
           onClick={() => onSelectTab(null)}
         >
           首页
-          {activeTabId === null && <span className={TAB_UNDERLINE} />}
+          {activeTabId === null ? (
+            <span className={TAB_UNDERLINE} />
+          ) : (
+            <span className={TAB_UNDERLINE_PREVIEW} aria-hidden="true" />
+          )}
         </button>
 
         {tabs.map((t) => {
@@ -138,7 +142,7 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
           return (
             <div
               key={t.id}
-              className={cn('group', tabBase, active && tabActive)}
+              className={cn(tabBase, active && tabActive)}
               // 整条页签可点（名称右侧的关闭钮间隙/留白此前点不动）
               onClick={() => onSelectTab(t.id)}
               onAuxClick={(e) => {
@@ -164,7 +168,11 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
               >
                 ×
               </button>
-              {active && <span className={TAB_UNDERLINE} />}
+              {active ? (
+                <span className={TAB_UNDERLINE} />
+              ) : (
+                <span className={TAB_UNDERLINE_PREVIEW} aria-hidden="true" />
+              )}
             </div>
           );
         })}
@@ -177,8 +185,10 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
         onClick={() => onSelectTab(SETTINGS_TAB_ID)}
       >
         设置
-        {activeTabId === SETTINGS_TAB_ID && (
+        {activeTabId === SETTINGS_TAB_ID ? (
           <span className={TAB_UNDERLINE} />
+        ) : (
+          <span className={TAB_UNDERLINE_PREVIEW} aria-hidden="true" />
         )}
       </button>
 

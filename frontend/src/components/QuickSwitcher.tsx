@@ -11,6 +11,8 @@ import { PANE_HEADER } from '../lib/ui';
 import { useAppStore } from '../state/store';
 import type { WorkspaceTab } from '../state/store';
 import { EmptyState } from './ui/empty-state';
+import { Dialog } from './ui/dialog';
+import { Input } from './ui/input';
 
 // 扁平条目：两组列表共用一套 ↑↓/Enter 序号导航
 interface Entry {
@@ -110,57 +112,49 @@ export default function QuickSwitcher({ open, onOpenChange }: Props) {
   );
 
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
-      <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-foreground/25" />
-        <DialogPrimitive.Content
-          aria-describedby={undefined}
-          className="fixed left-1/2 top-20 z-50 w-[480px] max-w-[90vw] -translate-x-1/2 rounded border border-border bg-card p-3 outline-none"
-        >
-          <DialogPrimitive.Title className="sr-only">快速切换</DialogPrimitive.Title>
-          <input
-            autoFocus
-            className="h-8 w-full rounded border border-input bg-card px-2.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label="搜索页签或工作区"
-            placeholder="输入以过滤页签 / 工作区…"
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setHighlight(0);
-            }}
-            onKeyDown={onInputKeyDown}
-          />
-          {entries.length === 0 ? (
-            <EmptyState
-              className="py-6"
-              title={
-                openTabs.length === 0 && workspaces.length === 0
-                  ? '暂无工作区，请先在首页完成扫描'
-                  : '没有匹配项'
-              }
-            />
-          ) : (
-            <div className="mt-2 max-h-80 overflow-y-auto">
-              {tabs.length > 0 && (
-                <section className="mb-2">
-                  <p className={`px-1 py-1 ${PANE_HEADER}`}>已打开的页签</p>
-                  <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
-                    {tabs.map((t, i) => renderItem(entries[i], i))}
-                  </ul>
-                </section>
-              )}
-              {spaces.length > 0 && (
-                <section>
-                  <p className={`px-1 py-1 ${PANE_HEADER}`}>工作区</p>
-                  <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
-                    {spaces.map((w, i) => renderItem(entries[tabs.length + i], tabs.length + i))}
-                  </ul>
-                </section>
-              )}
-            </div>
+    <Dialog open={open} onOpenChange={onOpenChange} className="top-20 w-[480px] max-w-[90vw] p-3 outline-none">
+      <DialogPrimitive.Title className="sr-only">快速切换</DialogPrimitive.Title>
+      <Input
+        autoFocus
+        className="w-full"
+        aria-label="搜索页签或工作区"
+        placeholder="输入以过滤页签 / 工作区…"
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setHighlight(0);
+        }}
+        onKeyDown={onInputKeyDown}
+      />
+      {entries.length === 0 ? (
+        <EmptyState
+          className="py-6"
+          title={
+            openTabs.length === 0 && workspaces.length === 0
+              ? '暂无工作区，请先在首页完成扫描'
+              : '没有匹配项'
+          }
+        />
+      ) : (
+        <div className="mt-2 max-h-80 overflow-y-auto">
+          {tabs.length > 0 && (
+            <section className="mb-2">
+              <p className={`px-1 py-1 ${PANE_HEADER}`}>已打开的页签</p>
+              <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
+                {tabs.map((t, i) => renderItem(entries[i], i))}
+              </ul>
+            </section>
           )}
-        </DialogPrimitive.Content>
-      </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
+          {spaces.length > 0 && (
+            <section>
+              <p className={`px-1 py-1 ${PANE_HEADER}`}>工作区</p>
+              <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
+                {spaces.map((w, i) => renderItem(entries[tabs.length + i], tabs.length + i))}
+              </ul>
+            </section>
+          )}
+        </div>
+      )}
+    </Dialog>
   );
 }

@@ -15,10 +15,12 @@ import { execRemote, listConnections, openSSH } from '../lib/api';
 import type { RemoteResult, SshConnection } from '../lib/api';
 import { formatDuration, tailLines } from '../lib/format';
 import { terminalTitle } from '../lib/title';
+import { LIST_ROW_ACTIVE } from '../lib/ui';
 import { cn } from '../lib/cn';
 import { useAppStore } from '../state/store';
 import { Button } from './ui/button';
 import { EmptyState } from './ui/empty-state';
+import { Input } from './ui/input';
 import { Skeleton } from './ui/skeleton';
 
 // 输出尾部行数：取 50 行——约两屏终端的量，足够看到命令关键结果又不撑爆右栏。
@@ -166,9 +168,7 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
                 key={c.ID}
                 className={cn(
                   'rounded border border-border bg-card px-2.5 py-1.5 transition-colors',
-                  open
-                    ? 'border-l-2 border-l-primary bg-primary/5'
-                    : c.ID === selectedId && 'bg-muted/60',
+                  open ? LIST_ROW_ACTIVE : c.ID === selectedId && 'bg-muted/60',
                 )}
               >
                 <div className="flex min-w-0 items-center gap-1.5">
@@ -208,8 +208,9 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
       {selected && (
         <div className="flex flex-col gap-2">
           <div className="flex gap-2">
-            <input
-              className="h-7 min-w-0 flex-1 rounded border border-input bg-card px-2.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            <Input
+              size="sm"
+              className="min-w-0 flex-1"
               aria-label="执行命令"
               placeholder={`在 ${selected.Name} 上执行命令`}
               value={cmd}

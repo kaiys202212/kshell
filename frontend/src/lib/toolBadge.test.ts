@@ -4,11 +4,11 @@ import { badgeFor } from './toolBadge';
 
 describe('badgeFor', () => {
   it.each([
-    ['codebuddy', 'CodeBuddy', 'tool-badge--codebuddy', '#8957e5'],
-    ['codex', 'Codex', 'tool-badge--codex', '#10a37f'],
-    ['claude', 'Claude', 'tool-badge--claude', '#d97757'],
-    ['gemini', 'Gemini', 'tool-badge--gemini', '#4285f4'],
-    ['opencode', 'OpenCode', 'tool-badge--opencode', '#14b8a6'],
+    ['codebuddy', 'CodeBuddy', 'tool-badge--codebuddy', 'var(--tool-codebuddy)'],
+    ['codex', 'Codex', 'tool-badge--codex', 'var(--tool-codex)'],
+    ['claude', 'Claude', 'tool-badge--claude', 'var(--tool-claude)'],
+    ['gemini', 'Gemini', 'tool-badge--gemini', 'var(--tool-gemini)'],
+    ['opencode', 'OpenCode', 'tool-badge--opencode', 'var(--tool-opencode)'],
   ])('已知工具 %s 映射展示名/配色/色相', (toolID, label, className, color) => {
     expect(badgeFor(toolID)).toEqual({ label, className, color });
   });

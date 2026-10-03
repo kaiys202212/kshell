@@ -19,10 +19,12 @@ import {
 } from '../lib/api';
 import type { DeletedProject, Workspace } from '../lib/api';
 import { formatRelativeTime } from '../lib/format';
+import { badgeFor } from '../lib/toolBadge';
 import { MONO } from '../lib/ui';
 import { useAppStore } from '../state/store';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
+import { Dialog } from '../components/ui/dialog';
 import { EmptyState } from '../components/ui/empty-state';
 import { Skeleton } from '../components/ui/skeleton';
 import { ToolDot } from '../components/ui/tool-dot';
@@ -212,61 +214,57 @@ export default function Home() {
             {creating ? '添加中…' : '新建项目'}
           </Button>
           {/* 回收站：0 项时禁用（没有可还原的内容，点开只有空态） */}
-          <DialogPrimitive.Root open={binOpen} onOpenChange={setBinOpen}>
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={deleted.length === 0}
-              onClick={() => setBinOpen(true)}
-            >
-              回收站{deleted.length > 0 ? ` (${deleted.length})` : ''}
-            </Button>
-            <DialogPrimitive.Portal>
-              <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-foreground/25" />
-              <DialogPrimitive.Content
-                aria-describedby={undefined}
-                className="fixed left-1/2 top-20 z-50 w-[560px] max-w-[90vw] -translate-x-1/2 rounded border border-border bg-card p-3 outline-none"
-              >
-                <DialogPrimitive.Title className="mb-2 text-sm font-medium">
-                  回收站
-                </DialogPrimitive.Title>
-                {deleted.length === 0 ? (
-                  <EmptyState
-                    className="py-6"
-                    title="回收站是空的"
-                    hint="删除的项目会先放到这里，可随时还原"
-                  />
-                ) : (
-                  <ul className="m-0 flex max-h-80 list-none flex-col gap-1 overflow-y-auto p-0">
-                    {deleted.map((d) => (
-                      <li
-                        key={d.path}
-                        className="flex items-center gap-2 rounded border border-border px-2 py-1.5"
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-xs font-medium">{d.name}</span>
-                          <span className={`block truncate ${MONO}`} title={d.path}>
-                            {d.path}
-                          </span>
-                        </span>
-                        {!d.exists && <Badge variant="outline">目录已不存在</Badge>}
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          {formatRelativeTime(d.at)}
-                        </span>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => void handleRestore(d.path, d.name)}
-                        >
-                          还原
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </DialogPrimitive.Content>
-            </DialogPrimitive.Portal>
-          </DialogPrimitive.Root>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={deleted.length === 0}
+            onClick={() => setBinOpen(true)}
+          >
+            回收站{deleted.length > 0 ? ` (${deleted.length})` : ''}
+          </Button>
+          <Dialog
+            open={binOpen}
+            onOpenChange={setBinOpen}
+            className="top-20 w-[560px] max-w-[90vw] p-3 outline-none"
+          >
+            <DialogPrimitive.Title className="mb-2 text-sm font-medium">
+              回收站
+            </DialogPrimitive.Title>
+            {deleted.length === 0 ? (
+              <EmptyState
+                className="py-6"
+                title="回收站是空的"
+                hint="删除的项目会先放到这里，可随时还原"
+              />
+            ) : (
+              <ul className="m-0 flex max-h-80 list-none flex-col gap-1 overflow-y-auto p-0">
+                {deleted.map((d) => (
+                  <li
+                    key={d.path}
+                    className="flex items-center gap-2 rounded border border-border px-2 py-1.5"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-xs font-medium">{d.name}</span>
+                      <span className={`block truncate ${MONO}`} title={d.path}>
+                        {d.path}
+                      </span>
+                    </span>
+                    {!d.exists && <Badge variant="outline">目录已不存在</Badge>}
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {formatRelativeTime(d.at)}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => void handleRestore(d.path, d.name)}
+                    >
+                      还原
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Dialog>
           <Button
             size="sm"
             variant="secondary"
@@ -302,16 +300,30 @@ export default function Home() {
         )
       ) : (
         <ul className={GRID}>
-          {sorted.map((ws: Workspace) => {
+          {sorted.map((ws: Workspace, i: number) => {
             const lastUsed = lastUsedTime(ws);
             const { shown, rest } = toolDistribution(ws.ToolCounts);
+            // 左缘色条取占比最高的工具色；无工具上下文（如纯 git 扫描工作区）用主色
+            const barColor = shown[0] ? badgeFor(shown[0][0]).color : 'var(--primary)';
             return (
-              <li key={ws.Path} className="group relative min-w-0">
+              <li
+                key={ws.Path}
+                className="group relative min-w-0"
+                style={{
+                  animation: 'kshell-rise-in var(--duration-base) var(--ease-out) both',
+                  animationDelay: `${Math.min(i, 10) * 30}ms`,
+                }}
+              >
                 <button
-                  className="flex h-full w-full min-w-0 flex-col gap-1 rounded border border-border bg-card px-2.5 py-2 text-left transition-colors hover:bg-muted"
+                  className="relative flex h-full w-full min-w-0 flex-col gap-1 rounded border border-border bg-card px-2.5 py-2 text-left transition-[background-color,border-color,box-shadow,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:-translate-y-px hover:border-primary/40 hover:bg-muted hover:shadow-[var(--shadow-card)]"
                   onClick={() => openTab(ws)}
                   title={ws.Path}
                 >
+                  <span
+                    aria-hidden="true"
+                    className="absolute bottom-3 left-0 top-3 w-[3px] rounded-full"
+                    style={{ background: barColor }}
+                  />
                   {/* 第一行：名称（单行截断）+ git 徽标 */}
                   <span className="flex min-w-0 items-center gap-1.5">
                     <span data-testid="ws-name" className="min-w-0 truncate text-[12.5px] font-medium">{ws.Name}</span>

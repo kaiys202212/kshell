@@ -329,17 +329,30 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         </div>
 
         <div className="min-h-0 flex-1 overflow-hidden">
+          {/* 切页签时的淡入：动画挂在各内容包裹层上——hidden 切 display 会重放动画，
+              因此无需 key 重挂（重挂会丢 xterm 缓冲，违背「终端常挂载」约定） */}
           {/* 预览页签：外层负责滚动与内边距，终端页签各自撑满（xterm 自己管滚动） */}
-          <div className={cn('h-full overflow-y-auto p-3', centerTab !== PREVIEW_TAB && 'hidden')}>
+          <div
+            className={cn('h-full overflow-y-auto p-3', centerTab !== PREVIEW_TAB && 'hidden')}
+            style={{ animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' }}
+          >
             <Preview wsPath={tab.id} path={previewPath} />
           </div>
           {terms.map((t) => (
-            <div key={t.ID} className={cn('h-full', centerTab !== t.ID && 'hidden')}>
+            <div
+              key={t.ID}
+              className={cn('h-full', centerTab !== t.ID && 'hidden')}
+              style={{ animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' }}
+            >
               <TerminalView term={t} active={visible && centerTab === t.ID} />
             </div>
           ))}
           {chatsForWs.map((c) => (
-            <div key={c.ID} className={cn('h-full', centerTab !== c.ID && 'hidden')}>
+            <div
+              key={c.ID}
+              className={cn('h-full', centerTab !== c.ID && 'hidden')}
+              style={{ animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' }}
+            >
               <ChatView chat={c} active={visible && centerTab === c.ID} />
             </div>
           ))}

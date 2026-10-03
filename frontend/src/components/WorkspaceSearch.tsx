@@ -3,6 +3,7 @@
 // 监听全局 kshell:focus-search 事件（App 的 Ctrl+F 派发）：收到即聚焦输入框，
 // 不引 ref 链，卸载时移除监听。
 import { useEffect, useRef } from 'react';
+import { Input } from './ui/input';
 
 interface Props {
   value: string;
@@ -19,9 +20,8 @@ export default function WorkspaceSearch({ value, onChange }: Props) {
   }, []);
 
   return (
-    <input
+    <Input
       ref={inputRef}
-      className="h-8 rounded border border-input bg-card px-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-ring"
       type="search"
       aria-label="过滤会话"
       placeholder="过滤会话（标题 / 工具名）"
