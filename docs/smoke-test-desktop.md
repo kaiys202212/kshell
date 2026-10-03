@@ -207,3 +207,33 @@ Go 侧 `NewSessionWithTool` / `ResumeSession` / `FocusSession` 绑定与 `window
 - [ ] **新建会话后会话列表自动带出新会话**
   - 步骤：在某个目录用「新建会话 → opencode/claude」起一个新会话，随便说一句话，回到会话列表（等约 3 秒）
   - 预期：新会话自动出现在列表里（无需手动点「重新扫描」）
+
+## 2026-10-03 ACP 聊天（Claude Code 默认走 ACP）
+
+环境探测（本机，2026-10-03）：Node v22.21.1 / npm 10.9.4 / `claude.exe` / `claude-agent-acp`(+`.cmd`) / `npx` 均在 PATH，
+`DetectACP` 走 `path` 源（无需 npx 兜底）。设计见 `docs/plans/2026-10-03-acp-client-design.md`。
+
+- [ ] **新建会话默认进入 ACP 聊天页签**
+  - 前置：本机装有 Claude Code 与 `claude-agent-acp`（Node ≥ 22）；桌面端已重新构建
+  - 步骤：工作区页签点「新建会话」→ 选 Claude Code，发一句话
+  - 预期：中心区出现聊天页签（而非 xterm 终端）；assistant 流式输出按 Markdown 渲染
+- [ ] **恢复历史会话走 session/load 重放（验证设计风险 1）**
+  - 前置：`~/.claude/projects/<slug>/<uuid>.jsonl` 存在有效会话
+  - 步骤：对该会话点「恢复」
+  - 预期：聊天页签先重放历史消息再就绪。**重点确认 `session/load` 接受的 sessionId 是否等于 jsonl 文件名 UUID**；
+    若重放失败则自动回退终端并 toast「已回退到终端模式：…」（此时需回到设计 §9 另择恢复方案）
+- [ ] **工具调用与权限确认**
+  - 步骤：发一条会触发写文件/执行命令的消息
+  - 预期：出现工具调用卡片（标题/kind/状态）；需要权限时弹选项按钮，选择后继续；点「拒绝」按 cancelled 处理
+- [ ] **停止生成**
+  - 步骤：assistant 正在输出时点「停止」
+  - 预期：本轮停止（stopReason=cancelled），输入区恢复可发送
+- [ ] **适配器不可用时自动回退 TUI**
+  - 步骤：临时把 `claude-agent-acp` 从 PATH 移除后重试新建/恢复
+  - 预期：不报错，回退到内嵌终端（TUI）；恢复适配器后再次进入走 ACP
+- [ ] **关闭聊天页签结束进程**
+  - 步骤：关闭聊天页签后看任务管理器
+  - 预期：页签消失、退回预览；无残留 node / claude-agent-acp 子进程
+- [ ] **重载前端恢复时间线**
+  - 步骤：开启一个会话并产生若干条消息 → 开发态刷新前端
+  - 预期：聊天页签与完整时间线（含历史前缀，无丢失/重复）恢复
