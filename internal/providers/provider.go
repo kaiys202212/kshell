@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/yangk/kshell/internal/appearance"
 )
 
 // Detection 描述某个 agent 工具在本机的安装情况。
@@ -38,6 +40,8 @@ type Launch struct {
 	Path string
 	Args []string
 	Dir  string
+	// Env 是额外环境变量；nil 表示仅继承当前进程环境，非空时会叠加在父环境之上。
+	Env map[string]string
 }
 
 type Provider interface {
@@ -61,6 +65,13 @@ type PathMatcher interface {
 // 扫描器会解析出它的 CLI 路径后直接调用，绕过文件遍历与解析缓存。
 type SessionEnumerator interface {
 	EnumerateSessions(home string, bin string) ([]Session, error)
+}
+
+// Themer 可选接口：provider 声明如何让自身 TUI 跟随浅/深主题。
+// args 追加到启动参数；env 合并进子进程环境；cacheDir 供需要落临时配置的工具使用
+// （写入 kshell 自己的缓存目录，绝不修改工具自身的用户配置）。
+type Themer interface {
+	ThemeOverrides(theme appearance.Theme, cacheDir string) (args []string, env map[string]string)
 }
 
 // ReadHead 只读文件头部。会话 JSONL 动辄几十 MB，解析元信息绝不能整文件读入。

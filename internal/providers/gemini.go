@@ -5,6 +5,8 @@ import (
 	"errors"
 	"path/filepath"
 	"time"
+
+	"github.com/yangk/kshell/internal/appearance"
 )
 
 const geminiID = "gemini"
@@ -97,3 +99,21 @@ func (Gemini) ResumeCmd(s Session, bin string) Launch {
 }
 
 func (Gemini) SessionFilePattern() string { return "*.json" }
+
+// ThemeOverrides 指向生成的系统级 settings（最高优先级层），并关闭自动主题轮询。
+func (Gemini) ThemeOverrides(theme appearance.Theme, cacheDir string) ([]string, map[string]string) {
+	if cacheDir == "" {
+		return nil, nil
+	}
+	name := "Default Light"
+	if theme == appearance.ThemeDark {
+		name = "Default"
+	}
+	path, err := writeThemeJSON(cacheDir, "gemini-"+string(theme)+".json", map[string]any{
+		"ui": map[string]any{"theme": name, "autoThemeSwitching": false},
+	})
+	if err != nil {
+		return nil, nil
+	}
+	return nil, map[string]string{"GEMINI_CLI_SYSTEM_SETTINGS_PATH": path}
+}

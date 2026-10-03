@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yangk/kshell/internal/appearance"
 	"github.com/yangk/kshell/internal/executil"
 )
 
@@ -59,6 +60,18 @@ func (Opencode) NewSessionCmd(ws string, bin string) Launch {
 // ResumeCmd 用 `opencode --session <id>` 恢复（本机 opencode 1.18 实测可用）。
 func (Opencode) ResumeCmd(s Session, bin string) Launch {
 	return Launch{Path: bin, Args: []string{"--session", s.ID}, Dir: s.Workspace}
+}
+
+// ThemeOverrides 指向生成的 tui.json，使用 system 主题（按承载终端背景自适应）。
+func (Opencode) ThemeOverrides(theme appearance.Theme, cacheDir string) ([]string, map[string]string) {
+	if cacheDir == "" {
+		return nil, nil
+	}
+	path, err := writeThemeJSON(cacheDir, "opencode-"+string(theme)+".json", map[string]any{"theme": "system"})
+	if err != nil {
+		return nil, nil
+	}
+	return nil, map[string]string{"OPENCODE_TUI_CONFIG": path}
 }
 
 // EnumerateSessions 查询 opencode 的 SQLite 会话表。
