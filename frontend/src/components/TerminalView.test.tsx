@@ -340,4 +340,15 @@ describe('TerminalView', () => {
     expect(term(1).options.theme).toEqual({ background: '#ffffff', foreground: '#1f2328' });
     light.unmount();
   });
+
+  it('明暗变化时热更新已挂载终端的配色', () => {
+    useAppStore.getState().setAppearance({ mode: 'dark', resolved: 'dark' });
+    render(<TerminalView term={TERM} active />);
+    expect(term(0).options.theme).toEqual({ background: '#0d1117', foreground: '#e6edf3' });
+
+    act(() => {
+      useAppStore.getState().setAppearance({ mode: 'light', resolved: 'light' });
+    });
+    expect(term(0).options.theme).toEqual({ background: '#ffffff', foreground: '#1f2328' });
+  });
 });

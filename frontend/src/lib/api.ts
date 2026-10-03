@@ -488,7 +488,13 @@ export function onTerminalExit(cb: (payload: { id: string; exitCode: number }) =
 // getAppearance 返回当前模式与解析后的明暗；绑定不可用时返回跟随系统的兜底值。
 export async function getAppearance(): Promise<AppearanceInfo> {
   const a = app();
-  if (!a) return { mode: 'system', resolved: 'dark' };
+  if (!a) {
+    const dark =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return { mode: 'system', resolved: dark ? 'dark' : 'light' };
+  }
   return a.GetAppearance();
 }
 

@@ -6,7 +6,10 @@
   <script>
     (function () {
       try {
-        var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        var saved = null;
+        try { saved = localStorage.getItem('kshell-appearance'); } catch (e) {}
+        var dark = saved ? saved === 'dark'
+          : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
         document.documentElement.dataset.theme = dark ? 'dark' : 'light';
       } catch (e) {}
     })();

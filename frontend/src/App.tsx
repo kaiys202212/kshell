@@ -45,6 +45,7 @@ function App() {
     // 颜色模式：初始取一次（写 data-theme 并进 store），再订阅后续变化
     const apply = (info: AppearanceInfo) => {
       document.documentElement.dataset.theme = info.resolved;
+      try { localStorage.setItem('kshell-appearance', info.resolved); } catch { /* 忽略持久化失败 */ }
       useAppStore.getState().setAppearance(info);
     };
     getAppearance().then(apply).catch(() => {});

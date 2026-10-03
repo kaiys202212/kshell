@@ -58,6 +58,7 @@ export default function Settings() {
   }, []);
 
   const handleAppearance = async (mode: string) => {
+    if (mode === appearance) return;
     try {
       await setAppearanceMode(mode);
       setAppearanceLocal(mode);
@@ -109,6 +110,7 @@ export default function Settings() {
               <Button
                 key={opt.value}
                 variant={appearance === opt.value ? 'default' : 'secondary'}
+                aria-pressed={appearance === opt.value}
                 onClick={() => void handleAppearance(opt.value)}
               >
                 {opt.label}
