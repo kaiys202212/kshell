@@ -14,6 +14,8 @@ type Tool struct {
 	Version   string
 	Installed bool
 	Source    string
+	// ACP 为 nil 表示该 provider 不支持 ACP；非 nil 时其 Available 表示本机是否可用。
+	ACP *providers.ACPDetection
 }
 
 // DetectAll 汇总所有 provider 的安装状态，已安装的排在前面（UI 顶栏按此顺序展示）。
@@ -39,6 +41,11 @@ func detectAll(home string, ps []providers.Provider, probe func(bin string) stri
 		}
 		if d.Installed && d.BinPath != "" {
 			t.Version = probe(d.BinPath)
+		}
+		// 仅对声明支持 ACP 的 provider 探测，避免无谓开销。
+		if ap, ok := p.(providers.ACPProvider); ok {
+			det := providers.DetectACP(ap.ACPAdapter())
+			t.ACP = &det
 		}
 		tools = append(tools, t)
 	}

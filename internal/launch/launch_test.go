@@ -86,3 +86,77 @@ func TestForWorkspacePicksPreferredTool(t *testing.T) {
 		t.Fatalf("Dir = %q, 期望工作区路径", got.Dir)
 	}
 }
+
+func acpTools(det providers.ACPDetection) []discovery.Tool {
+	return []discovery.Tool{{ID: "claude", Name: "Claude Code", Installed: true, BinPath: "claude", ACP: &det}}
+}
+
+func TestForWorkspaceACP_NpxFallback(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := acpTools(providers.ACPDetection{Available: true, Source: "npx", Package: "@agentclientprotocol/claude-agent-acp"})
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude")
+	if err != nil {
+		t.Fatalf("for workspace acp: %v", err)
+	}
+	if l.Path != "npx" || len(l.Args) != 2 || l.Args[0] != "-y" {
+		t.Fatalf("launch = %+v", l)
+	}
+	if l.Dir != "/w" {
+		t.Fatalf("dir = %q", l.Dir)
+	}
+}
+
+func TestForWorkspaceACP_PathHit(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "/usr/bin/claude-agent-acp"})
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Path != "/usr/bin/claude-agent-acp" {
+		t.Fatalf("launch = %+v", l)
+	}
+}
+
+func TestForWorkspaceACP_Unavailable(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := acpTools(providers.ACPDetection{Available: false})
+	if _, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude"); err != ErrACPUnavailable {
+		t.Fatalf("want ErrACPUnavailable, got %v", err)
+	}
+}
+
+func TestForWorkspaceACP_ExtraArgs(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+
+	pathTools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "/usr/bin/claude-agent-acp", ExtraArgs: []string{"--foo"}})
+	l, err := ForWorkspaceACP(ps, pathTools, discovery.Workspace{Path: "/w"}, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Args) != 1 || l.Args[0] != "--foo" {
+		t.Fatalf("path args = %v", l.Args)
+	}
+
+	npxTools := acpTools(providers.ACPDetection{Available: true, Source: "npx", Package: "pkg", ExtraArgs: []string{"--foo"}})
+	l, err = ForWorkspaceACP(ps, npxTools, discovery.Workspace{Path: "/w"}, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Args) != 3 || l.Args[0] != "-y" || l.Args[1] != "pkg" || l.Args[2] != "--foo" {
+		t.Fatalf("npx args = %v", l.Args)
+	}
+}
+
+func TestForSessionACP_UsesWorkspaceDir(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"})
+	s := providers.Session{ID: "s1", ToolID: "claude", Workspace: "/proj"}
+	l, err := ForSessionACP(ps, tools, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Dir != "/proj" {
+		t.Fatalf("dir = %q", l.Dir)
+	}
+}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/yangk/kshell/internal/appearance"
+	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/executil"
@@ -46,6 +47,7 @@ type Options struct {
 	Scan          scanFunc
 	Windows       *WindowManager
 	Terminals     *terminal.Manager // 内嵌终端管理器；nil 时 Startup 装配真实后端（测试可注入桩）
+	Chats         *chat.Manager     // ACP 聊天管理器；nil 时 Startup 装配真实后端（测试可注入桩）
 	Emit          func(name string, data ...any)
 	TrayIcon      []byte // 托盘图标数据（Windows 用 ICO，其它平台用 PNG）；nil 表示不启用托盘
 	SignalPath    string // 退出信号文件路径；nil/空时 Startup 补齐真实路径（测试可不启用）
@@ -217,6 +219,9 @@ func (a *App) initRealDeps() {
 	if a.opts.Terminals == nil { // 幂等：已注入（测试）或已装配过就不重建，避免丢掉既有终端会话
 		a.opts.Terminals = newTerminalManager(a)
 	}
+	if a.opts.Chats == nil { // 幂等：已注入（测试）或已装配过就不重建
+		a.opts.Chats = newChatManager(a)
+	}
 	if a.opts.SignalPath == "" {
 		a.opts.SignalPath = paths.SignalExit
 	}
@@ -324,6 +329,9 @@ func (a *App) Shutdown(ctx context.Context) {
 	}
 	a.mu.Unlock()
 	if m := a.snapshot().Terminals; m != nil {
+		m.CloseAll()
+	}
+	if m := a.snapshot().Chats; m != nil {
 		m.CloseAll()
 	}
 }

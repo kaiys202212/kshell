@@ -39,6 +39,14 @@ func (Claude) SessionRoots(home string) []string {
 
 func (Claude) SessionFilePattern() string { return "*.jsonl" }
 
+// ACPAdapter 让 Claude 走 Zed 的 ACP 适配器；新名优先，旧名兼容探测。
+func (Claude) ACPAdapter() ACPAdapter {
+	return ACPAdapter{
+		BinNames:   []string{"claude-agent-acp", "claude-code-acp"},
+		NPMPackage: "@agentclientprotocol/claude-agent-acp",
+	}
+}
+
 // MatchSessionRel 按目录深度过滤：~/.claude/projects/<slug>/<sessionId>.jsonl 才是会话文件。
 // <sessionId>/subagents/agent-*.jsonl 是子代理的执行记录（不能拿去 resume），
 // 没有 PathMatcher 时会被整体当会话收录，列表里出现一大批同名条目。

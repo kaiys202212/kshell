@@ -109,3 +109,48 @@ func providerFor(ps []providers.Provider, id string) (providers.Provider, bool) 
 	}
 	return nil, false
 }
+
+// ErrACPUnavailable 表示目标工具没有可用的 ACP 适配器。
+var ErrACPUnavailable = errors.New("该工具没有可用的 ACP 适配器")
+
+// ForSessionACP 产出用 ACP 恢复历史会话的启动描述（命令来自适配器探测）。
+func ForSessionACP(ps []providers.Provider, tools []discovery.Tool, s providers.Session) (providers.Launch, error) {
+	tool, ok := toolFor(tools, s.ToolID)
+	if !ok {
+		return providers.Launch{}, ErrToolNotRunnable
+	}
+	return acpLaunch(tool, s.Workspace)
+}
+
+// ForWorkspaceACP 产出在工作区新建 ACP 会话的启动描述；toolID 为空时用首选工具。
+func ForWorkspaceACP(ps []providers.Provider, tools []discovery.Tool, ws discovery.Workspace, toolID string) (providers.Launch, error) {
+	var tool discovery.Tool
+	if toolID == "" {
+		_, t, ok := PreferredTool(ps, tools, ws)
+		if !ok {
+			return providers.Launch{}, ErrToolNotRunnable
+		}
+		tool = t
+	} else {
+		t, ok := toolFor(tools, toolID)
+		if !ok {
+			return providers.Launch{}, ErrToolNotRunnable
+		}
+		tool = t
+	}
+	return acpLaunch(tool, ws.Path)
+}
+
+func acpLaunch(tool discovery.Tool, dir string) (providers.Launch, error) {
+	if tool.ACP == nil || !tool.ACP.Available {
+		return providers.Launch{}, ErrACPUnavailable
+	}
+	if tool.ACP.Source == "npx" {
+		path := tool.ACP.BinPath
+		if path == "" {
+			path = "npx" // 兜底：探测结果缺 BinPath 时用 PATH 上的 npx
+		}
+		return providers.Launch{Path: path, Args: append([]string{"-y", tool.ACP.Package}, tool.ACP.ExtraArgs...), Dir: dir}, nil
+	}
+	return providers.Launch{Path: tool.ACP.BinPath, Args: append([]string(nil), tool.ACP.ExtraArgs...), Dir: dir}, nil
+}

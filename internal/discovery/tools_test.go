@@ -84,3 +84,13 @@ func TestDetectAllKeepsUninstalledTools(t *testing.T) {
 		t.Fatalf("version = %q, want unknown", tools[0].Version)
 	}
 }
+
+func TestDetectAll_FillsACP(t *testing.T) {
+	tools := DetectAll("", []providers.Provider{providers.Claude{}})
+	if len(tools) != 1 {
+		t.Fatalf("tools = %+v", tools)
+	}
+	if tools[0].ACP == nil {
+		t.Fatal("ACP detection not attached")
+	}
+}
