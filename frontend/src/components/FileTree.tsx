@@ -12,6 +12,7 @@ import { cn } from '../lib/cn';
 import { refreshGitStatus } from '../lib/git';
 import { useAppStore } from '../state/store';
 import { EmptyState } from './ui/empty-state';
+import { Input } from './ui/input';
 import { Skeleton } from './ui/skeleton';
 
 // 树条目：node 为 Go 返回的节点，relPath 是相对工作区的 / 分隔路径（ListFiles 用），
@@ -212,9 +213,9 @@ function TreeRow({ item, depth, gitMap, onDirToggle, onOpenFile, onRename }: Row
         style={{ paddingLeft: depth * 14 }}
       >
         {renaming ? (
-          <input
+          <Input
             autoFocus
-            className="min-w-0 flex-1 rounded border border-primary bg-background px-1 py-0.5 font-mono text-xs outline-none"
+            className="h-5 min-w-0 flex-1 px-1 py-0 font-mono"
             value={draft}
             aria-label={`重命名 ${node.Name}`}
             onChange={(e) => setDraft(e.target.value)}
@@ -462,8 +463,9 @@ export default function FileTree({
     <div className="flex min-h-0 flex-col">
       {/* 搜索框 + git 刷新 */}
       <div className="mb-1.5 flex items-center gap-1">
-        <input
-          className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-xs outline-none placeholder:text-muted-foreground focus:border-primary"
+        <Input
+          size="sm"
+          className="min-w-0 flex-1 bg-background"
           placeholder="搜索文件…"
           value={query}
           aria-label="搜索文件"

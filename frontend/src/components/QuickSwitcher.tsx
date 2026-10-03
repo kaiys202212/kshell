@@ -11,6 +11,7 @@ import { PANE_HEADER } from '../lib/ui';
 import { useAppStore } from '../state/store';
 import type { WorkspaceTab } from '../state/store';
 import { EmptyState } from './ui/empty-state';
+import { Input } from './ui/input';
 
 // 扁平条目：两组列表共用一套 ↑↓/Enter 序号导航
 interface Entry {
@@ -118,9 +119,9 @@ export default function QuickSwitcher({ open, onOpenChange }: Props) {
           className="fixed left-1/2 top-20 z-50 w-[480px] max-w-[90vw] -translate-x-1/2 rounded border border-border bg-card p-3 outline-none"
         >
           <DialogPrimitive.Title className="sr-only">快速切换</DialogPrimitive.Title>
-          <input
+          <Input
             autoFocus
-            className="h-8 w-full rounded border border-input bg-card px-2.5 text-xs text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-full"
             aria-label="搜索页签或工作区"
             placeholder="输入以过滤页签 / 工作区…"
             value={query}

@@ -166,7 +166,7 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
       {error && <p className="text-sm text-destructive">{error}</p>}
       {!loading && !error && editing && (
         <textarea
-          className="mt-2 min-h-[240px] w-full flex-1 resize-y overflow-auto rounded border border-border bg-card p-2.5 font-mono text-xs leading-[1.55] outline-none focus:border-primary"
+          className="mt-2 min-h-[240px] w-full flex-1 resize-y overflow-auto rounded-[3px] border border-input bg-card p-2.5 font-mono text-xs leading-[1.55] text-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
           value={text}
           spellCheck={false}
           aria-label="编辑文件内容"
