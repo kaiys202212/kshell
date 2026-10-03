@@ -315,7 +315,7 @@ export default function Home() {
                 }}
               >
                 <button
-                  className="relative flex h-full w-full min-w-0 flex-col gap-1 rounded border border-border bg-card px-2.5 py-2 text-left transition-all duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:-translate-y-px hover:border-primary/40 hover:bg-muted hover:shadow-[var(--shadow-card)]"
+                  className="relative flex h-full w-full min-w-0 flex-col gap-1 rounded border border-border bg-card px-2.5 py-2 text-left transition-[background-color,border-color,box-shadow,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:-translate-y-px hover:border-primary/40 hover:bg-muted hover:shadow-[var(--shadow-card)]"
                   onClick={() => openTab(ws)}
                   title={ws.Path}
                 >

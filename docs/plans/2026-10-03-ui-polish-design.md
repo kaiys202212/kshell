@@ -44,7 +44,7 @@ kshell 桌面端前端（React 19 + Vite + Tailwind v4）底子好：`@theme inl
 ### 2. 基础组件收敛（frontend/src/components/ui/）
 
 1. **`input.tsx`**（新增）：统一输入框，`h-8 rounded-[3px] border border-input bg-card`，focus 统一 `focus-visible:ring-2 ring-ring`；收编 QuickSwitcher / WorkspaceSearch / SshPanel / FileTree 四处。
-2. **`dialog.tsx`**（新增）：Radix Dialog 薄封装。统一遮罩 `bg-[--overlay] + backdrop-blur-[2px]`、容器 `rounded border border-border bg-card shadow-lg`、进出动画 scale 0.98→1 + fade 180ms。收编 Home 回收站、QuickSwitcher、ChatView 权限弹窗（纯 div 版补齐 Esc 关闭与焦点圈定）。
+2. **`dialog.tsx`**（新增）：Radix Dialog 薄封装。统一遮罩 `bg-[--overlay] + backdrop-blur-[2px]`、容器 `rounded border border-border bg-card shadow-lg`、进场动画 scale 0.98→1 + fade 180ms（退出动画因 Radix 关闭即卸载，需延迟卸载实现，本轮不做，留待后续）。收编 Home 回收站、QuickSwitcher、ChatView 权限弹窗（纯 div 版补齐 Esc 关闭与焦点圈定）。
 3. **按钮**：`button.tsx` default variant 改 Teal 渐变（`bg-gradient-to-b from-primary to-primary-hover`）；ChatView「停止/发送」改用 `<Button>`；NewSessionMenu 手抄样式删除。
 4. tooltip / badge 不动，tool-badge 颜色接新 token。
 
