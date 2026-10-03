@@ -41,7 +41,7 @@ func TestForSessionDelegatesToProvider(t *testing.T) {
 	want := providers.Launch{Path: "claude", Args: []string{"--resume", "s1"}}
 	p := fakeProvider{id: "claude", resume: want}
 
-	got, err := ForSession([]providers.Provider{p}, toolsRunnable, s)
+	got, err := ForSession([]providers.Provider{p}, toolsRunnable, s, ThemeOptions{})
 	if err != nil {
 		t.Fatalf("ForSession error: %v", err)
 	}
@@ -55,11 +55,11 @@ func TestForSessionFailsWithoutRunnableTool(t *testing.T) {
 	p := fakeProvider{id: "claude"}
 
 	// 工具只有配置目录、没有可执行文件
-	if _, err := ForSession([]providers.Provider{p}, []discovery.Tool{{ID: "claude", Installed: true, BinPath: ""}}, s); !errors.Is(err, ErrToolNotRunnable) {
+	if _, err := ForSession([]providers.Provider{p}, []discovery.Tool{{ID: "claude", Installed: true, BinPath: ""}}, s, ThemeOptions{}); !errors.Is(err, ErrToolNotRunnable) {
 		t.Fatalf("无可执行文件应返回 ErrToolNotRunnable, got %v", err)
 	}
 	// 工具不在 provider 列表
-	if _, err := ForSession(nil, toolsRunnable, s); !errors.Is(err, ErrToolNotRunnable) {
+	if _, err := ForSession(nil, toolsRunnable, s, ThemeOptions{}); !errors.Is(err, ErrToolNotRunnable) {
 		t.Fatalf("缺 provider 应返回 ErrToolNotRunnable, got %v", err)
 	}
 }
@@ -75,7 +75,7 @@ func TestForWorkspacePicksPreferredTool(t *testing.T) {
 		ToolCounts: map[string]int{"claude": 3, "codex": 1},
 	}
 
-	got, err := ForWorkspace(ps, tools, ws)
+	got, err := ForWorkspace(ps, tools, ws, ThemeOptions{})
 	if err != nil {
 		t.Fatalf("ForWorkspace error: %v", err)
 	}
