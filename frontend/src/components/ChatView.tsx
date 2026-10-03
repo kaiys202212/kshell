@@ -7,6 +7,8 @@ import { cancelChat, cancelChatPermission, respondChatPermission, sendChatPrompt
 import { useAppStore } from '../state/store';
 import type { TimelineItem } from '../state/chatUpdate';
 import { cn } from '../lib/cn';
+import { Dialog } from './ui/dialog';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 
 interface Props {
   chat: ChatInfo;
@@ -145,29 +147,36 @@ export default function ChatView({ chat, active }: Props) {
       </div>
 
       {permission && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-          <div className="w-96 rounded-md bg-card p-4 shadow-lg">
-            <p className="mb-1 text-sm font-medium">请求权限</p>
-            <p className="mb-3 text-xs text-muted-foreground">{permission.ToolCall.Title || permission.ToolCall.Name || '工具调用'}</p>
-            <div className="flex flex-col gap-2">
-              {permission.Options.map((o) => (
-                <button key={o.OptionID} className="rounded border border-border px-3 py-1.5 text-sm"
-                  onClick={() => {
-                    // 先乐观清掉弹窗，避免 api 往返期间遮罩不消失
-                    useAppStore.getState().setChatPermission(id, null);
-                    void respondChatPermission(id, permission.RequestID, o.OptionID);
-                  }}>
-                  {o.Name}
-                </button>
-              ))}
-              <button className="rounded px-3 py-1.5 text-xs text-muted-foreground"
+        <Dialog
+          open
+          onOpenChange={(next) => {
+            if (next) return;
+            // Esc / 遮罩点击关闭等同「拒绝」：先乐观清掉弹窗，再通知后端取消该次请求
+            useAppStore.getState().setChatPermission(id, null);
+            void cancelChatPermission(id, permission.RequestID);
+          }}
+          className="w-96"
+        >
+          <DialogPrimitive.Title className="mb-1 text-sm font-medium">请求权限</DialogPrimitive.Title>
+          <p className="mb-3 text-xs text-muted-foreground">{permission.ToolCall.Title || permission.ToolCall.Name || '工具调用'}</p>
+          <div className="flex flex-col gap-2">
+            {permission.Options.map((o) => (
+              <button key={o.OptionID} className="rounded border border-border px-3 py-1.5 text-sm"
                 onClick={() => {
+                  // 先乐观清掉弹窗，避免 api 往返期间遮罩不消失
                   useAppStore.getState().setChatPermission(id, null);
-                  void cancelChatPermission(id, permission.RequestID);
-                }}>拒绝</button>
-            </div>
+                  void respondChatPermission(id, permission.RequestID, o.OptionID);
+                }}>
+                {o.Name}
+              </button>
+            ))}
+            <button className="rounded px-3 py-1.5 text-xs text-muted-foreground"
+              onClick={() => {
+                useAppStore.getState().setChatPermission(id, null);
+                void cancelChatPermission(id, permission.RequestID);
+              }}>拒绝</button>
           </div>
-        </div>
+        </Dialog>
       )}
     </div>
   );

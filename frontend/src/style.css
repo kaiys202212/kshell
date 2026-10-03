@@ -166,3 +166,12 @@ textarea,
 .xterm-host .xterm-viewport {
   background: transparent !important;
 }
+
+/* 弹层进出动画（配合 components/ui/dialog.tsx）：
+   pop-in 里的 translateX(-50%) 是维持 Content 水平居中位移，避免入场时横向跳动 */
+@keyframes kshell-fade-in {
+  from { opacity: 0; }
+}
+@keyframes kshell-pop-in {
+  from { opacity: 0; transform: translateX(-50%) scale(0.98); }
+}
