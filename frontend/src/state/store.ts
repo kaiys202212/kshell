@@ -3,11 +3,19 @@
 // 重开应用后恢复上次的工作区页签；其余字段的数据来源都是 Go 绑定层，刷新即重取，不持久化。
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { TerminalInfo, Workspace } from '../lib/api';
+import type { ChatInfo, ChatPermissionRequest, ChatUpdate, TerminalInfo, Workspace } from '../lib/api';
 import type { AppearanceInfo } from '../lib/appearance';
+import { applyChatUpdate, type TimelineItem } from './chatUpdate';
 
 // toast 的自增 id（模块级：store 单例，保证 id 唯一即可）
 let nextToastId = 1;
+
+// omitKey 返回去掉某个键的浅拷贝（不改原对象）。
+function omitKey<T>(rec: Record<string, T>, key: string): Record<string, T> {
+  const out: Record<string, T> = {};
+  for (const k of Object.keys(rec)) if (k !== key) out[k] = rec[k];
+  return out;
+}
 
 // 一个页签对应一个打开的工作区（按路径去重，可多开、可关闭）
 export interface WorkspaceTab {
@@ -75,6 +83,24 @@ interface AppState {
   markTerminalExited(id: string, exitCode: number): void;
   // 用 Go 侧 ListTerminals 的返回值整体重建镜像（前端重载后 Go 侧终端仍在运行）
   setTerminals(list: TerminalInfo[]): void;
+
+  // ACP 聊天会话镜像（来自 Go 侧 Open*/ListChats 与 chat:* 事件；不持久化，刷新即重取）
+  chats: ChatInfo[];
+  upsertChat(info: ChatInfo): void;
+  removeChat(id: string): void;
+  markChatExited(id: string, exitCode: number, error: string): void;
+  setChats(list: ChatInfo[]): void;
+
+  // 每个聊天的流式时间线与已消费的最大 Seq（去重/断线续传用）
+  chatItems: Record<string, TimelineItem[]>;
+  chatSeq: Record<string, number>;
+  applyChat(id: string, u: ChatUpdate): void;
+  setChatItems(id: string, items: TimelineItem[]): void;
+  removeChatState(id: string): void;
+
+  // 待用户回应的权限请求（同一时刻每条聊天最多一个）
+  chatPermissions: Record<string, ChatPermissionRequest | null>;
+  setChatPermission(id: string, req: ChatPermissionRequest | null): void;
 
   // 工作区页签三栏宽度（持久化，跨会话保留）
   layout: LayoutSizes;
@@ -164,6 +190,81 @@ export const useAppStore = create<AppState>()(
           ),
         })),
       setTerminals: (list) => set({ terminals: list }),
+
+      chats: [],
+      upsertChat: (info) =>
+        set((s) => {
+          const idx = s.chats.findIndex((c) => c.ID === info.ID);
+          if (idx < 0) return { chats: [...s.chats, info] };
+          const chats = s.chats.slice();
+          chats[idx] = info;
+          return { chats };
+        }),
+      removeChat: (id) =>
+        set((s) => ({
+          chats: s.chats.filter((c) => c.ID !== id),
+          chatItems: omitKey(s.chatItems, id),
+          chatSeq: omitKey(s.chatSeq, id),
+          chatPermissions: omitKey(s.chatPermissions, id),
+        })),
+      markChatExited: (id, exitCode, error) =>
+        set((s) => ({
+          chats: s.chats.map((c) =>
+            c.ID === id ? { ...c, Status: 'exited', ExitCode: exitCode, Error: error } : c,
+          ),
+        })),
+      setChats: (list) => set({ chats: list }),
+
+      chatItems: {},
+      chatSeq: {},
+      applyChat: (id, u) =>
+        set((s) => {
+          const last = s.chatSeq[id] ?? 0;
+          if (u.Seq <= last) return {};
+          const items = applyChatUpdate(s.chatItems[id] ?? [], u);
+          // 仅负责「一轮结束回到 ready」与错误记录；running 由发送侧乐观置位。
+          // 只有状态真的变化时才新建 chats，避免每个流式分片都触发列表重渲染。
+          let chats = s.chats;
+          if (u.Type === 'error' || u.Type === 'turn_done') {
+            chats = s.chats.map((c) => {
+              if (c.ID !== id) return c;
+              // 已退出是终态：迟到的 error/turn_done 不得把它复活成 ready
+              if (c.Status === 'exited') {
+                return u.Type === 'error' ? { ...c, Error: u.Text ?? c.Error } : c;
+              }
+              if (u.Type === 'error') return { ...c, Status: 'ready', Error: u.Text ?? c.Error };
+              return { ...c, Status: 'ready' };
+            });
+          }
+          return {
+            chatItems: { ...s.chatItems, [id]: items },
+            chatSeq: { ...s.chatSeq, [id]: u.Seq },
+            chats,
+          };
+        }),
+      setChatItems: (id, items) =>
+        set((s) => ({
+          chatItems: { ...s.chatItems, [id]: items },
+          chatSeq: {
+            ...s.chatSeq,
+            // 取真实最大值（upsert 可能把高 Seq 放到非末尾）；空数组重置为 0
+            [id]: items.length > 0 ? Math.max(...items.map((it) => it.seq)) : 0,
+          },
+        })),
+      removeChatState: (id) =>
+        set((s) => ({
+          chatItems: omitKey(s.chatItems, id),
+          chatSeq: omitKey(s.chatSeq, id),
+        })),
+
+      chatPermissions: {},
+      setChatPermission: (id, req) =>
+        set((s) => {
+          const next = { ...s.chatPermissions };
+          if (req) next[id] = req;
+          else delete next[id];
+          return { chatPermissions: next };
+        }),
 
       layout: LAYOUT_DEFAULT,
       setLayout: (patch) =>

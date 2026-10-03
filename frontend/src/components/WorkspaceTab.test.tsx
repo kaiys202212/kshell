@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WorkspaceTabView from '../pages/WorkspaceTab';
 import { useAppStore } from '../state/store';
-import type { TerminalInfo, ToolInfo } from '../lib/api';
+import type { ChatInfo, TerminalInfo, ToolInfo } from '../lib/api';
 
 const mocks = vi.hoisted(() => ({
   getSessions: vi.fn(),
@@ -24,12 +24,22 @@ const mocks = vi.hoisted(() => ({
   execRemote: vi.fn(),
   getTools: vi.fn(),
   listTerminals: vi.fn(),
-  openSessionTerminal: vi.fn(),
-  openWorkspaceTerminal: vi.fn(),
+  openSession: vi.fn(),
+  openWorkspace: vi.fn(),
   writeTerminal: vi.fn(),
   resizeTerminal: vi.fn(),
   closeTerminal: vi.fn(),
   scrollbackTerminal: vi.fn(),
+  sendChatPrompt: vi.fn(),
+  cancelChat: vi.fn(),
+  respondChatPermission: vi.fn(),
+  cancelChatPermission: vi.fn(),
+  closeChat: vi.fn(),
+  listChats: vi.fn(),
+  chatHistory: vi.fn(),
+  onChatUpdate: vi.fn(),
+  onChatPermission: vi.fn(),
+  onChatExit: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -94,10 +104,27 @@ beforeEach(() => {
   mocks.listTerminals.mockResolvedValue([]);
   mocks.closeTerminal.mockResolvedValue(undefined);
   mocks.scanSessions.mockResolvedValue(undefined);
+  // 统一入口：默认回退为终端（与 Go 侧降级行为一致），需要聊天的用例自行覆盖
+  mocks.openSession.mockResolvedValue({ Kind: 'terminal', Terminal: term });
+  mocks.openWorkspace.mockResolvedValue({ Kind: 'terminal', Terminal: term });
+  mocks.closeChat.mockResolvedValue(undefined);
+  mocks.listChats.mockResolvedValue([]);
+  mocks.chatHistory.mockResolvedValue([]);
+  mocks.onChatUpdate.mockReturnValue(() => {});
+  mocks.onChatPermission.mockReturnValue(() => {});
+  mocks.onChatExit.mockReturnValue(() => {});
+  mocks.sendChatPrompt.mockResolvedValue(undefined);
+  mocks.cancelChat.mockResolvedValue(undefined);
+  mocks.respondChatPermission.mockResolvedValue(undefined);
+  mocks.cancelChatPermission.mockResolvedValue(undefined);
   useAppStore.setState({
     windowStatus: {},
     scanState: 'done',
     terminals: [],
+    chats: [],
+    chatItems: {},
+    chatSeq: {},
+    chatPermissions: {},
     toasts: [],
     newSessionTool: '',
     layout: { left: 288, right: 300 },
@@ -107,7 +134,7 @@ beforeEach(() => {
 describe('WorkspaceTab', () => {
   it('「新建会话」下拉菜单选 agent 后开中心区内嵌终端并激活其页签', async () => {
     mocks.getTools.mockResolvedValue([toolClaude]);
-    mocks.openWorkspaceTerminal.mockResolvedValue(term);
+    mocks.openWorkspace.mockResolvedValue({ Kind: 'terminal', Terminal: term });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
     // 等工具列表就绪（扫描是异步的）再点新建会话
@@ -116,8 +143,8 @@ describe('WorkspaceTab', () => {
     fireEvent.click(await screen.findByRole('menuitemradio', { name: /Claude Code/ }));
 
     await waitFor(() => {
-      // 选中的 agent 原样传给 Go 侧；0,0 = 尺寸交给首次 fit 纠正
-      expect(mocks.openWorkspaceTerminal).toHaveBeenCalledWith('D:\\proj-a', 'claude', 0, 0);
+      // 选中的 agent 原样传给 Go 侧
+      expect(mocks.openWorkspace).toHaveBeenCalledWith('D:\\proj-a', 'claude');
     });
     expect(await screen.findByTestId('terminal-t1')).toBeInTheDocument();
     expect(screen.getByTestId('terminal-t1')).toHaveAttribute('data-active', 'true');
@@ -125,7 +152,7 @@ describe('WorkspaceTab', () => {
 
   it('「自动」选项也能新建（空工具 id 交给 Go 侧挑该工作区最常用的工具）', async () => {
     mocks.getTools.mockResolvedValue([toolClaude]);
-    mocks.openWorkspaceTerminal.mockResolvedValue(term);
+    mocks.openWorkspace.mockResolvedValue({ Kind: 'terminal', Terminal: term });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
     await screen.findByRole('button', { name: '新建会话' });
@@ -133,7 +160,7 @@ describe('WorkspaceTab', () => {
     fireEvent.click(await screen.findByRole('menuitemradio', { name: /自动/ }));
 
     await waitFor(() => {
-      expect(mocks.openWorkspaceTerminal).toHaveBeenCalledWith('D:\\proj-a', '', 0, 0);
+      expect(mocks.openWorkspace).toHaveBeenCalledWith('D:\\proj-a', '');
     });
   });
 
@@ -141,13 +168,13 @@ describe('WorkspaceTab', () => {
     vi.useFakeTimers();
     try {
       mocks.getTools.mockResolvedValue([toolClaude]);
-      mocks.openWorkspaceTerminal.mockResolvedValue(term);
+      mocks.openWorkspace.mockResolvedValue({ Kind: 'terminal', Terminal: term });
       render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
       await act(async () => {}); // 让挂载期的工具/终端列表请求落位
       fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
       fireEvent.click(screen.getByRole('menuitemradio', { name: /Claude Code/ }));
-      await act(async () => {}); // 等 openWorkspaceTerminal 落位并装上定时器
+      await act(async () => {}); // 等 openWorkspace 落位并装上定时器
 
       expect(mocks.scanSessions).not.toHaveBeenCalled(); // 不是立刻重扫
       await act(async () => {
@@ -168,12 +195,12 @@ describe('WorkspaceTab', () => {
     expect(screen.getByText(/未检测到可用的 agent/)).toBeInTheDocument();
 
     fireEvent.click(trigger);
-    expect(mocks.openWorkspaceTerminal).not.toHaveBeenCalled();
+    expect(mocks.openWorkspace).not.toHaveBeenCalled();
   });
 
   it('新建会话失败时以 error 语气轻量提示（toast）', async () => {
     mocks.getTools.mockResolvedValue([toolClaude]);
-    mocks.openWorkspaceTerminal.mockRejectedValueOnce(new Error('工作区不存在'));
+    mocks.openWorkspace.mockRejectedValueOnce(new Error('工作区不存在'));
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
     await screen.findByRole('button', { name: '新建会话' });
@@ -191,7 +218,7 @@ describe('WorkspaceTab', () => {
 
   it('菜单里挑哪个 agent，就按哪个 agent 新建', async () => {
     mocks.getTools.mockResolvedValue([toolClaude, toolCodex]);
-    mocks.openWorkspaceTerminal.mockResolvedValue(term);
+    mocks.openWorkspace.mockResolvedValue({ Kind: 'terminal', Terminal: term });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
     await screen.findByRole('button', { name: '新建会话' });
@@ -199,7 +226,7 @@ describe('WorkspaceTab', () => {
     fireEvent.click(await screen.findByRole('menuitemradio', { name: /Codex/ }));
 
     await waitFor(() => {
-      expect(mocks.openWorkspaceTerminal).toHaveBeenCalledWith('D:\\proj-a', 'codex', 0, 0);
+      expect(mocks.openWorkspace).toHaveBeenCalledWith('D:\\proj-a', 'codex');
     });
   });
 
@@ -221,7 +248,7 @@ describe('WorkspaceTab', () => {
     expect(await screen.findByRole('button', { name: '新建会话' })).toBeEnabled();
   });
 
-  it('会话列表「恢复」开中心区内嵌终端（onOpenTerminal 已接线）', async () => {
+  it('会话列表「恢复」走统一入口（openSession）开中心区内嵌终端', async () => {
     mocks.getSessions.mockResolvedValue([
       {
         ID: 's1',
@@ -234,13 +261,40 @@ describe('WorkspaceTab', () => {
         Path: 'D:\\proj-a\\s1.jsonl',
       },
     ]);
-    mocks.openSessionTerminal.mockResolvedValue(term);
+    mocks.openSession.mockResolvedValue({ Kind: 'terminal', Terminal: term });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
     fireEvent.click(await screen.findByRole('button', { name: '恢复' }));
 
-    await waitFor(() => expect(mocks.openSessionTerminal).toHaveBeenCalledWith('s1', 0, 0));
+    await waitFor(() => expect(mocks.openSession).toHaveBeenCalledWith('s1'));
     expect(await screen.findByTestId('terminal-t1')).toBeInTheDocument();
+  });
+
+  it('openWorkspace 返回 chat 时中心区出现聊天页签（不再走终端入口）', async () => {
+    mocks.getTools.mockResolvedValue([toolClaude]);
+    const chat: ChatInfo = {
+      ID: 'c1',
+      Kind: 'new',
+      SessionID: 's1',
+      Workspace: 'D:\\proj-a',
+      Title: '新会话 · Claude Code',
+      ToolID: 'claude',
+      Status: 'ready',
+      ExitCode: 0,
+      Error: '',
+    };
+    mocks.openWorkspace.mockResolvedValue({ Kind: 'chat', Chat: chat });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+
+    await screen.findByRole('button', { name: '新建会话' });
+    fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: /Claude Code/ }));
+
+    await waitFor(() => {
+      expect(mocks.openWorkspace).toHaveBeenCalledWith('D:\\proj-a', 'claude');
+    });
+    // 标题出现在中心区页签条里，且走的是聊天入口
+    expect(await screen.findByRole('tab', { name: /新会话 · Claude Code/ })).toBeInTheDocument();
   });
 
   it('关闭终端页签：结束进程、移出镜像并退回预览页签', async () => {

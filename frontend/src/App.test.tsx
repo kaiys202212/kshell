@@ -8,7 +8,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { SETTINGS_TAB_ID, useAppStore } from './state/store';
-import type { TerminalInfo, Workspace } from './lib/api';
+import type { ChatInfo, ChatPermissionRequest, TerminalInfo, Workspace } from './lib/api';
 
 const mocks = vi.hoisted(() => ({
   getWorkspaces: vi.fn(),
@@ -44,6 +44,14 @@ const mocks = vi.hoisted(() => ({
   onAppearanceChanged: vi.fn(),
   getCloseBehavior: vi.fn(),
   setCloseBehavior: vi.fn(),
+  openSession: vi.fn(),
+  openWorkspace: vi.fn(),
+  closeChat: vi.fn(),
+  listChats: vi.fn(),
+  chatHistory: vi.fn(),
+  onChatUpdate: vi.fn(),
+  onChatPermission: vi.fn(),
+  onChatExit: vi.fn(),
 }));
 vi.mock('./lib/api', () => mocks);
 
@@ -79,6 +87,25 @@ const term: TerminalInfo = {
   Rows: 24,
 };
 
+const chat: ChatInfo = {
+  ID: 'c1',
+  Kind: 'new',
+  SessionID: 's1',
+  Workspace: 'D:\\proj-a',
+  Title: '新会话',
+  ToolID: 'claude',
+  Status: 'ready',
+  ExitCode: 0,
+  Error: '',
+};
+
+const permission: ChatPermissionRequest = {
+  RequestID: 'r1',
+  SessionID: 's1',
+  ToolCall: { ToolCallID: 'tc1' },
+  Options: [],
+};
+
 afterEach(cleanup);
 
 beforeEach(() => {
@@ -105,6 +132,12 @@ beforeEach(() => {
   mocks.onAppearanceChanged.mockReturnValue(() => {});
   mocks.getCloseBehavior.mockResolvedValue('tray');
   mocks.setCloseBehavior.mockResolvedValue(undefined);
+  mocks.closeChat.mockResolvedValue(undefined);
+  mocks.listChats.mockResolvedValue([]);
+  mocks.chatHistory.mockResolvedValue([]);
+  mocks.onChatUpdate.mockImplementation(() => () => {});
+  mocks.onChatPermission.mockImplementation(() => () => {});
+  mocks.onChatExit.mockImplementation(() => () => {});
   useAppStore.setState({
     openTabs: [],
     activeTabId: null,
@@ -112,6 +145,10 @@ beforeEach(() => {
     windowStatus: {},
     scanState: 'idle',
     terminals: [],
+    chats: [],
+    chatItems: {},
+    chatSeq: {},
+    chatPermissions: {},
     layout: { left: 288, right: 300 },
   });
 });
@@ -280,5 +317,119 @@ describe('App', () => {
     // proj-a 已不在列表：页签被关闭；store 同步为最新列表
     expect(useAppStore.getState().openTabs.map((t) => t.id)).toEqual(['D:\\proj-b']);
     expect(useAppStore.getState().workspaces).toEqual([wsB]);
+  });
+
+  it('chat:update 事件写入时间线（历史已落位后直接 apply）', async () => {
+    let updateCb: ((p: { id: string; update: { Seq: number; Type: string; MessageID?: string; Text?: string } }) => void) | undefined;
+    mocks.onChatUpdate.mockImplementation((cb: typeof updateCb) => {
+      updateCb = cb;
+      return () => {};
+    });
+    mocks.listChats.mockResolvedValue([chat]);
+    render(<App />);
+
+    // chatHistory 默认返回 []：落位后 chatSeq.c1 === 0，说明已 seeded
+    await waitFor(() => expect(useAppStore.getState().chatSeq.c1).toBe(0));
+
+    act(() => {
+      updateCb?.({ id: 'c1', update: { Seq: 1, Type: 'assistant', MessageID: 'm1', Text: 'hi' } });
+    });
+    expect(useAppStore.getState().chatItems.c1?.some((it) => it.text === 'hi')).toBe(true);
+  });
+
+  it('chat:update 早于历史回放时先入缓冲，补放后历史前缀不丢', async () => {
+    let updateCb: ((p: { id: string; update: { Seq: number; Type: string; MessageID?: string; Text?: string } }) => void) | undefined;
+    let resolveHist: ((h: unknown[]) => void) | undefined;
+    mocks.onChatUpdate.mockImplementation((cb: typeof updateCb) => {
+      updateCb = cb;
+      return () => {};
+    });
+    mocks.chatHistory.mockImplementation(
+      () => new Promise<unknown[]>((res) => { resolveHist = res; }),
+    );
+    mocks.listChats.mockResolvedValue([chat]);
+    render(<App />);
+
+    await waitFor(() => expect(resolveHist).toBeTypeOf('function'));
+
+    // 历史尚未返回，实时高 Seq 更新先入缓冲、不得落位
+    act(() => {
+      updateCb?.({ id: 'c1', update: { Seq: 9, Type: 'assistant', MessageID: 'm9', Text: 'live' } });
+    });
+    expect(useAppStore.getState().chatItems.c1 ?? []).toHaveLength(0);
+
+    // 历史（Seq 1）返回后再补放缓冲的 Seq 9：前缀与实时更新都在，Seq 取最大
+    await act(async () => {
+      resolveHist?.([{ Seq: 1, Type: 'assistant', MessageID: 'm1', Text: 'old' }]);
+    });
+    expect((useAppStore.getState().chatItems.c1 ?? []).map((it) => it.text)).toEqual(['old', 'live']);
+    expect(useAppStore.getState().chatSeq.c1).toBe(9);
+  });
+
+  it('chat:permission 事件写入待回应权限', () => {
+    let permCb: ((p: { id: string; request: ChatPermissionRequest }) => void) | undefined;
+    mocks.onChatPermission.mockImplementation((cb: typeof permCb) => {
+      permCb = cb;
+      return () => {};
+    });
+    render(<App />);
+
+    act(() => {
+      permCb?.({ id: 'c1', request: permission });
+    });
+    expect(useAppStore.getState().chatPermissions.c1?.RequestID).toBe('r1');
+  });
+
+  it('chat:exit 事件标记聊天退出并清除权限', async () => {
+    let exitCb: ((p: { id: string; exitCode: number; error: string }) => void) | undefined;
+    mocks.onChatExit.mockImplementation((cb: typeof exitCb) => {
+      exitCb = cb;
+      return () => {};
+    });
+    mocks.listChats.mockResolvedValue([chat]);
+    render(<App />);
+    await waitFor(() => expect(useAppStore.getState().chats).toHaveLength(1));
+
+    act(() => {
+      useAppStore.getState().setChatPermission('c1', permission);
+    });
+    act(() => {
+      exitCb?.({ id: 'c1', exitCode: 3, error: '' });
+    });
+
+    const c = useAppStore.getState().chats.find((x) => x.ID === 'c1');
+    expect(c?.Status).toBe('exited');
+    expect(c?.ExitCode).toBe(3);
+    expect(useAppStore.getState().chatPermissions.c1).toBeUndefined();
+    expect(useAppStore.getState().toasts.some((t) => t.title.includes('退出码 3'))).toBe(true);
+  });
+
+  it('挂载时回放 chatHistory：时间线落位且 chatSeq 取历史最大 Seq', async () => {
+    mocks.listChats.mockResolvedValue([chat]);
+    mocks.chatHistory.mockResolvedValue([
+      { Seq: 1, Type: 'assistant', MessageID: 'm1', Text: 'old' },
+    ]);
+    render(<App />);
+
+    await waitFor(() => {
+      expect(useAppStore.getState().chatItems.c1?.[0]?.text).toBe('old');
+    });
+    expect(useAppStore.getState().chatSeq.c1).toBe(1);
+  });
+
+  it('挂载后新建的聊天（不在初始 listChats）的 chat:update 立即应用，不被永久缓冲', async () => {
+    let updateCb: ((p: { id: string; update: { Seq: number; Type: string; MessageID?: string; Text?: string } }) => void) | undefined;
+    mocks.onChatUpdate.mockImplementation((cb: typeof updateCb) => {
+      updateCb = cb;
+      return () => {};
+    });
+    mocks.listChats.mockResolvedValue([]); // 初始无聊天：'late' 只会通过 openSession/openWorkspace 出现
+    render(<App />);
+    await act(async () => {}); // 让 listChats 落位
+
+    act(() => {
+      updateCb?.({ id: 'late', update: { Seq: 1, Type: 'assistant', MessageID: 'm1', Text: 'late-hi' } });
+    });
+    expect(useAppStore.getState().chatItems.late?.some((it) => it.text === 'late-hi')).toBe(true);
   });
 });

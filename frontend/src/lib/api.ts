@@ -77,6 +77,7 @@ export interface ToolInfo {
   Version: string;
   Installed: boolean;
   Source: string;
+  ACP?: { Available: boolean; Source: string; BinPath?: string; Package?: string };
 }
 
 // terminal.Info 的 JSON 形态（internal/terminal/manager.go）。
@@ -141,6 +142,69 @@ export interface GitStatusResult {
   IsRepo: boolean;
 }
 
+// chat.Info 的 JSON 形态（internal/chat/types.go）
+export interface ChatInfo {
+  ID: string;
+  Kind: string; // session | new
+  SessionID: string;
+  Workspace: string;
+  Title: string;
+  ToolID: string;
+  Status: string; // starting | ready | running | exited
+  ExitCode: number;
+  Error: string;
+}
+
+export interface ChatToolCall {
+  ToolCallID: string;
+  Name?: string;
+  Title?: string;
+  Kind?: string;
+  Status?: string;
+  Content?: unknown[];
+  RawInput?: unknown;
+  RawOutput?: unknown;
+}
+
+export interface ChatPlanEntry {
+  Content: string;
+  Priority?: string;
+  Status?: string;
+}
+
+// chat.Update 的 JSON 形态
+export interface ChatUpdate {
+  Seq: number;
+  Type: string; // user | assistant | thought | tool | plan | turn_done | error
+  MessageID?: string;
+  Text?: string;
+  ToolCallID?: string;
+  Tool?: ChatToolCall;
+  Plan?: ChatPlanEntry[];
+  StopReason?: string;
+}
+
+export interface ChatPermissionOption {
+  OptionID: string;
+  Name: string;
+  Kind: string;
+}
+
+export interface ChatPermissionRequest {
+  RequestID: string;
+  SessionID: string;
+  ToolCall: ChatToolCall;
+  Options: ChatPermissionOption[];
+}
+
+// desktop.OpenedSession 的 JSON 形态
+export interface OpenedSession {
+  Kind: 'chat' | 'terminal';
+  Chat?: ChatInfo;
+  Terminal?: TerminalInfo;
+  Fallback?: string;
+}
+
 interface AppBindings {
   ScanSessions(): Promise<unknown>;
   GetWorkspaces(): Promise<Workspace[]>;
@@ -178,6 +242,15 @@ interface AppBindings {
   SetCloseBehavior(mode: string): Promise<void>;
   GetAppearance(): Promise<AppearanceInfo>;
   SetAppearanceMode(mode: string): Promise<void>;
+  OpenSession(sessionID: string): Promise<OpenedSession>;
+  OpenWorkspace(wsID: string, toolID: string): Promise<OpenedSession>;
+  SendChatPrompt(id: string, text: string): Promise<void>;
+  CancelChat(id: string): Promise<void>;
+  RespondChatPermission(id: string, requestID: string, optionID: string): Promise<void>;
+  CancelChatPermission(id: string, requestID: string): Promise<void>;
+  CloseChat(id: string): Promise<void>;
+  ListChats(): Promise<ChatInfo[]>;
+  ChatHistory(id: string): Promise<ChatUpdate[]>;
 }
 
 declare global {
@@ -528,4 +601,78 @@ export async function setCloseBehavior(mode: string): Promise<void> {
   const a = app();
   if (!a) return;
   await a.SetCloseBehavior(mode);
+}
+
+// ---- ACP 聊天 ----
+
+export async function openSession(sessionID: string): Promise<OpenedSession> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  return a.OpenSession(sessionID);
+}
+
+export async function openWorkspace(wsID: string, toolID: string): Promise<OpenedSession> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  return a.OpenWorkspace(wsID, toolID);
+}
+
+export async function sendChatPrompt(id: string, text: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.SendChatPrompt(id, text);
+}
+
+export async function cancelChat(id: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.CancelChat(id);
+}
+
+export async function respondChatPermission(id: string, requestID: string, optionID: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.RespondChatPermission(id, requestID, optionID);
+}
+
+export async function cancelChatPermission(id: string, requestID: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.CancelChatPermission(id, requestID);
+}
+
+export async function closeChat(id: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.CloseChat(id);
+}
+
+export async function listChats(): Promise<ChatInfo[]> {
+  const a = app();
+  if (!a) return [];
+  return a.ListChats();
+}
+
+export async function chatHistory(id: string): Promise<ChatUpdate[]> {
+  const a = app();
+  if (!a) return [];
+  return a.ChatHistory(id);
+}
+
+export function onChatUpdate(cb: (p: { id: string; update: ChatUpdate }) => void): () => void {
+  return EventsOn('chat:update', (p: { id?: string; update?: ChatUpdate }) =>
+    cb({ id: p?.id ?? '', update: p?.update as ChatUpdate }),
+  );
+}
+
+export function onChatPermission(cb: (p: { id: string; request: ChatPermissionRequest }) => void): () => void {
+  return EventsOn('chat:permission', (p: { id?: string; request?: ChatPermissionRequest }) =>
+    cb({ id: p?.id ?? '', request: p?.request as ChatPermissionRequest }),
+  );
+}
+
+export function onChatExit(cb: (p: { id: string; exitCode: number; error: string }) => void): () => void {
+  return EventsOn('chat:exit', (p: { id?: string; exitCode?: number; error?: string }) =>
+    cb({ id: p?.id ?? '', exitCode: p?.exitCode ?? 0, error: p?.error ?? '' }),
+  );
 }

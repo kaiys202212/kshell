@@ -6,15 +6,23 @@
 // 全局快捷键：Ctrl+K 打开快速切换器，Ctrl+F 在工作区页签内派发 kshell:focus-search。
 import { useCallback, useEffect, useState } from 'react';
 import {
+  chatHistory,
+  closeChat,
   closeTerminal,
   getAppearance,
+  listChats,
   listTerminals,
   onAppearanceChanged,
+  onChatExit,
+  onChatPermission,
+  onChatUpdate,
   onProjectsChanged,
   onTerminalData,
   onTerminalExit,
 } from './lib/api';
 import type { AppearanceInfo } from './lib/appearance';
+import type { ChatUpdate } from './lib/api';
+import { applyChatUpdate, type TimelineItem } from './state/chatUpdate';
 import { dispatchTerminalData } from './lib/terminalRegistry';
 import { cn } from './lib/cn';
 import { sameWorkspacePath } from './lib/workspacePath';
@@ -39,6 +47,54 @@ function App() {
     listTerminals()
       .then((list) => useAppStore.getState().setTerminals(list))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    // 聊天事件总线 + 镜像重建（整应用只订阅一次）。
+    // 仅在某 chat 的「历史回放窗口」内缓冲其实时更新：chat:update 可能先于 chatHistory 到达，
+    // 其高 Seq 会抢先抬高 chatSeq，导致随后回放的历史前缀被去重丢弃。
+    // 窗口外的更新立即应用——尤其挂载后才新建的聊天，绝不能因为没有初始 listChats 条目而被永久缓冲。
+    const pending = new Map<string, ChatUpdate[]>();
+    const offU = onChatUpdate(({ id, update }) => {
+      const buf = pending.get(id);
+      if (buf) {
+        buf.push(update);
+        return;
+      }
+      useAppStore.getState().applyChat(id, update);
+    });
+    const offP = onChatPermission(({ id, request }) =>
+      useAppStore.getState().setChatPermission(id, request),
+    );
+    const offX = onChatExit(({ id, exitCode, error }) => {
+      const { markChatExited, setChatPermission, notify } = useAppStore.getState();
+      markChatExited(id, exitCode, error);
+      setChatPermission(id, null);
+      notify(error || `会话已退出（退出码 ${exitCode}）`, error ? 'error' : 'info');
+    });
+
+    void listChats()
+      .then(async (list) => {
+        useAppStore.getState().setChats(list);
+        for (const c of list) {
+          const buf: ChatUpdate[] = [];
+          pending.set(c.ID, buf); // 进入种子窗口
+          const hist = await chatHistory(c.ID).catch(() => [] as ChatUpdate[]);
+          useAppStore.getState().setChatItems(
+            c.ID,
+            hist.reduce((acc, u) => applyChatUpdate(acc, u), [] as TimelineItem[]),
+          );
+          pending.delete(c.ID); // 退出种子窗口
+          for (const u of buf) useAppStore.getState().applyChat(c.ID, u);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      offU();
+      offP();
+      offX();
+    };
   }, []);
 
   useEffect(() => {
@@ -69,15 +125,20 @@ function App() {
     };
   }, []);
 
-  // 关闭工作区页签时连带结束该工作区的内嵌终端：进程不能留在后台又没有任何入口
+  // 关闭工作区页签时连带结束该工作区的内嵌终端与聊天：进程不能留在后台又没有任何入口
   const handleCloseTab = useCallback(
     (id: string) => {
-      const { terminals, removeTerminal } = useAppStore.getState();
-      const owned = terminals.filter((t) => sameWorkspacePath(t.Workspace, id));
+      const { terminals, removeTerminal, chats, removeChat } = useAppStore.getState();
+      const ownedTerms = terminals.filter((t) => sameWorkspacePath(t.Workspace, id));
+      const ownedChats = chats.filter((c) => sameWorkspacePath(c.Workspace, id));
       closeTab(id);
-      for (const t of owned) {
+      for (const t of ownedTerms) {
         removeTerminal(t.ID);
         closeTerminal(t.ID).catch(() => {});
+      }
+      for (const c of ownedChats) {
+        removeChat(c.ID);
+        closeChat(c.ID).catch(() => {});
       }
     },
     [closeTab],

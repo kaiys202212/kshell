@@ -1,7 +1,7 @@
 // store 增量测试：notify/dismissToast 轻量提示队列、
 // openTabs/activeTabId 经 persist 中间件落 localStorage（kshell-tabs）。
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { TerminalInfo } from '../lib/api';
+import type { ChatInfo, TerminalInfo } from '../lib/api';
 import { SETTINGS_TAB_ID, useAppStore } from './store';
 
 beforeEach(() => {
@@ -119,6 +119,20 @@ describe('store', () => {
     expect(useAppStore.getState().terminals.map((t) => t.ID)).toEqual(['t1', 't2']);
   });
 
+  it('setChatItems 用真实最大值更新 chatSeq，空数组重置为 0', () => {
+    useAppStore.setState({ chatItems: {}, chatSeq: {} });
+
+    // 非末尾项才是最大 Seq（upsert 可能造成），必须取 max 而非末项
+    useAppStore.getState().setChatItems('x', [
+      { key: 'a', type: 'assistant', seq: 5 },
+      { key: 'b', type: 'tool', seq: 2 },
+    ]);
+    expect(useAppStore.getState().chatSeq.x).toBe(5);
+
+    useAppStore.getState().setChatItems('x', []);
+    expect(useAppStore.getState().chatSeq.x).toBe(0);
+  });
+
   it('三栏宽度：setLayout 持久化且 clamp 到 [200,720]', () => {
     useAppStore.getState().setLayout({ left: 9999, right: 10 });
     expect(useAppStore.getState().layout).toEqual({ left: 720, right: 200 });
@@ -134,5 +148,26 @@ describe('store', () => {
       state: { layout: { left: number; right: number } };
     };
     expect(parsed.state.layout).toEqual({ left: 200, right: 200 });
+  });
+
+  it('applyChat：已退出的聊天收到 turn_done/error 不再复活为 ready', () => {
+    const exited: ChatInfo = {
+      ID: 'c1',
+      Kind: 'new',
+      SessionID: 's1',
+      Workspace: 'D:\\proj-a',
+      Title: 't',
+      ToolID: 'claude',
+      Status: 'exited',
+      ExitCode: 3,
+      Error: '',
+    };
+    useAppStore.setState({ chats: [exited], chatItems: {}, chatSeq: {} });
+
+    useAppStore.getState().applyChat('c1', { Seq: 1, Type: 'turn_done' });
+    expect(useAppStore.getState().chats[0].Status).toBe('exited');
+
+    useAppStore.getState().applyChat('c1', { Seq: 2, Type: 'error', Text: 'boom' });
+    expect(useAppStore.getState().chats[0].Status).toBe('exited');
   });
 });
