@@ -6,6 +6,7 @@
 // App 定义在 internal/desktop 包，所以是 window.go.desktop.App（不是 main.App），
 // 见 wailsjs/go/desktop/App.js 的生成产物（window['go']['desktop']['App']）。
 import { EventsOn } from '../../wailsjs/runtime/runtime';
+import type { AppearanceInfo } from './appearance';
 
 // discovery.Workspace 的 JSON 形态（internal/discovery/workspaces.go）
 export interface Workspace {
@@ -173,6 +174,8 @@ interface AppBindings {
   HideProject(path: string): Promise<void>;
   RestoreProject(path: string): Promise<void>;
   GetDeletedProjects(): Promise<DeletedProject[]>;
+  GetAppearance(): Promise<AppearanceInfo>;
+  SetAppearanceMode(mode: string): Promise<void>;
 }
 
 declare global {
@@ -477,5 +480,28 @@ export function onTerminalData(cb: (payload: { id: string; data: string }) => vo
 export function onTerminalExit(cb: (payload: { id: string; exitCode: number }) => void): () => void {
   return EventsOn('terminal:exit', (p: { id?: string; exitCode?: number }) =>
     cb({ id: p?.id ?? '', exitCode: p?.exitCode ?? 0 }),
+  );
+}
+
+// ---- 颜色模式 ----
+
+// getAppearance 返回当前模式与解析后的明暗；绑定不可用时返回跟随系统的兜底值。
+export async function getAppearance(): Promise<AppearanceInfo> {
+  const a = app();
+  if (!a) return { mode: 'system', resolved: 'dark' };
+  return a.GetAppearance();
+}
+
+// setAppearanceMode 设置颜色模式（写回 config.yaml），错误向上抛。
+export async function setAppearanceMode(mode: string): Promise<void> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  await a.SetAppearanceMode(mode);
+}
+
+// onAppearanceChanged 订阅颜色模式/系统明暗变化，返回取消订阅函数。
+export function onAppearanceChanged(cb: (info: AppearanceInfo) => void): () => void {
+  return EventsOn('appearance:changed', (p: AppearanceInfo) =>
+    cb({ mode: p?.mode ?? 'system', resolved: p?.resolved ?? 'dark' }),
   );
 }

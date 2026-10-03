@@ -7,11 +7,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   closeTerminal,
+  getAppearance,
   listTerminals,
+  onAppearanceChanged,
   onProjectsChanged,
   onTerminalData,
   onTerminalExit,
 } from './lib/api';
+import type { AppearanceInfo } from './lib/appearance';
 import { dispatchTerminalData } from './lib/terminalRegistry';
 import { cn } from './lib/cn';
 import { sameWorkspacePath } from './lib/workspacePath';
@@ -36,6 +39,17 @@ function App() {
     listTerminals()
       .then((list) => useAppStore.getState().setTerminals(list))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    // 颜色模式：初始取一次（写 data-theme 并进 store），再订阅后续变化
+    const apply = (info: AppearanceInfo) => {
+      document.documentElement.dataset.theme = info.resolved;
+      useAppStore.getState().setAppearance(info);
+    };
+    getAppearance().then(apply).catch(() => {});
+    const off = onAppearanceChanged(apply);
+    return off;
   }, []);
 
   useEffect(() => {

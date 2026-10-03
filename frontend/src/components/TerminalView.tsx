@@ -9,7 +9,9 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import type { TerminalInfo } from '../lib/api';
 import { resizeTerminal, writeTerminal } from '../lib/api';
+import { terminalTheme } from '../lib/appearance';
 import { encodeTerminalInput } from '../lib/base64';
+import { useAppStore } from '../state/store';
 import { registerTerminal, unregisterTerminal } from '../lib/terminalRegistry';
 
 interface Props {
@@ -26,20 +28,9 @@ const EXITED_HINT = '\r\n\x1b[90m[会话已退出]\x1b[0m\r\n';
 const MIN_COLS = 20;
 const MIN_ROWS = 5;
 
-// terminalTheme 跟随系统深浅色（本轮不引入手动主题开关）。
-// matchMedia 必须在函数里取（不能在模块顶层触碰 window），并对缺失环境兜底为浅色。
-function terminalTheme() {
-  const dark =
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-color-scheme: dark)').matches;
-  return dark
-    ? { background: '#0d1117', foreground: '#e6edf3' }
-    : { background: '#ffffff', foreground: '#1f2328' };
-}
-
 export default function TerminalView({ term, active }: Props) {
   const termId = term.ID;
+  const resolved = useAppStore((s) => s.appearance.resolved);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -60,7 +51,7 @@ export default function TerminalView({ term, active }: Props) {
       fontFamily: 'Consolas, "Cascadia Mono", monospace',
       fontSize: 13,
       scrollback: 5000,
-      theme: terminalTheme(),
+      theme: terminalTheme(resolved),
     });
     const fitAddon = new FitAddon();
     instance.loadAddon(fitAddon);
@@ -116,6 +107,13 @@ export default function TerminalView({ term, active }: Props) {
     });
     return () => cancelAnimationFrame(raf);
   }, [active]);
+
+  // 明暗变化时热更新已存在终端实例的配色
+  useEffect(() => {
+    if (termRef.current) {
+      termRef.current.options.theme = terminalTheme(resolved);
+    }
+  }, [resolved]);
 
   // 退出提示只写一次；Status 若从 exited 回到 running（重新打开）不重置，由上层重新挂载负责
   useEffect(() => {

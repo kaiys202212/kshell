@@ -4,6 +4,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { TerminalInfo, Workspace } from '../lib/api';
+import type { AppearanceInfo } from '../lib/appearance';
 
 // toast 的自增 id（模块级：store 单例，保证 id 唯一即可）
 let nextToastId = 1;
@@ -82,6 +83,10 @@ interface AppState {
   // 新建会话选用的工具（'' = 自动：该工作区最常用；持久化，记住用户的选择）
   newSessionTool: string;
   setNewSessionTool(id: string): void;
+
+  // 颜色模式（来自 Go 侧 GetAppearance / appearance:changed 事件；不持久化，刷新即重取）
+  appearance: AppearanceInfo;
+  setAppearance(info: AppearanceInfo): void;
 }
 
 // clampLayout 把任意输入收敛到合法范围（拖动、持久化恢复、测试都走这里）。
@@ -171,6 +176,9 @@ export const useAppStore = create<AppState>()(
 
       newSessionTool: '',
       setNewSessionTool: (newSessionTool) => set({ newSessionTool }),
+
+      appearance: { mode: 'system', resolved: 'dark' },
+      setAppearance: (appearance) => set({ appearance }),
     }),
     {
       name: 'kshell-tabs',

@@ -40,6 +40,8 @@ const mocks = vi.hoisted(() => ({
   restoreProject: vi.fn(),
   getDeletedProjects: vi.fn(),
   onProjectsChanged: vi.fn(),
+  getAppearance: vi.fn(),
+  onAppearanceChanged: vi.fn(),
 }));
 vi.mock('./lib/api', () => mocks);
 
@@ -97,6 +99,8 @@ beforeEach(() => {
   mocks.hideProject.mockResolvedValue(undefined);
   mocks.restoreProject.mockResolvedValue(undefined);
   mocks.onProjectsChanged.mockImplementation(() => () => {});
+  mocks.getAppearance.mockResolvedValue({ mode: 'system', resolved: 'dark' });
+  mocks.onAppearanceChanged.mockReturnValue(() => {});
   useAppStore.setState({
     openTabs: [],
     activeTabId: null,

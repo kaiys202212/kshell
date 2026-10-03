@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TerminalInfo } from '../lib/api';
 import { bytesToBase64, encodeTerminalInput } from '../lib/base64';
 import { clearTerminalRegistry, dispatchTerminalData } from '../lib/terminalRegistry';
+import { useAppStore } from '../state/store';
 import TerminalView from './TerminalView';
 
 // 桩实例的收集箱（vi.hoisted：mock 工厂先于 import 执行）
@@ -144,14 +145,6 @@ function fitAddon(index = 0): StubFitAddon {
   return mocks.addons[index] as StubFitAddon;
 }
 
-// jsdom 的 window.matchMedia 恒返回 matches:false；组件读的是 window 上的属性，
-// 所以这里直接改写 window（stubGlobal 只改 globalThis，不适合这种场景），
-// 才能分别验证深浅色与「matchMedia 缺失」的兜底
-const realMatchMedia = window.matchMedia;
-function setMatchMedia(value: unknown) {
-  Object.defineProperty(window, 'matchMedia', { value, configurable: true, writable: true });
-}
-
 beforeEach(() => {
   rafQueue = [];
   vi.clearAllMocks();
@@ -192,7 +185,6 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-  setMatchMedia(realMatchMedia);
   clearTerminalRegistry();
 });
 
@@ -337,20 +329,15 @@ describe('TerminalView', () => {
     expect(hintCount()).toBe(1);
   });
 
-  it('终端主题跟随系统深浅色；matchMedia 缺失时兜底浅色且不抛异常', () => {
-    setMatchMedia(() => ({ matches: true }));
+  it('终端主题跟随 store 的 resolved 明暗', () => {
+    useAppStore.getState().setAppearance({ mode: 'dark', resolved: 'dark' });
     const dark = render(<TerminalView term={TERM} active />);
     expect(term(0).options.theme).toEqual({ background: '#0d1117', foreground: '#e6edf3' });
     dark.unmount();
 
-    setMatchMedia(() => ({ matches: false }));
+    useAppStore.getState().setAppearance({ mode: 'light', resolved: 'light' });
     const light = render(<TerminalView term={TERM} active />);
     expect(term(1).options.theme).toEqual({ background: '#ffffff', foreground: '#1f2328' });
     light.unmount();
-
-    setMatchMedia(undefined);
-    const fallback = render(<TerminalView term={TERM} active />);
-    expect(term(2).options.theme).toEqual({ background: '#ffffff', foreground: '#1f2328' });
-    fallback.unmount();
   });
 });

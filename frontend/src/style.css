@@ -1,5 +1,5 @@
 /* 全局基线：Tailwind 4 + shadcn 风格设计 token（扁平化）。
-   深浅色跟随系统（prefers-color-scheme），组件样式全部走 Tailwind 工具类。 */
+   深浅色由 <html data-theme="light|dark"> 驱动（跟随系统或用户手动选择），组件样式全部走 Tailwind 工具类。 */
 @import "tailwindcss";
 
 /* 把 CSS 变量映射为 Tailwind 颜色/圆角 token（inline：工具类直接引用运行时变量，深浅色切换即时生效）。
@@ -38,7 +38,9 @@
 }
 
 /* 浅色 token：延续 GitHub 蓝主色，中性灰底 + 白色面板（扁平：靠面区分，不靠边框加粗） */
-:root {
+:root,
+[data-theme="light"] {
+  color-scheme: light;
   --background: #f4f6f8;  --foreground: #1f2328;
   --card: #ffffff;        --card-foreground: #1f2328;
   --muted: #eceff2;       --muted-foreground: #59636e;
@@ -53,19 +55,18 @@
   --font-mono-stack: Consolas, "Cascadia Mono", "SFMono-Regular", ui-monospace, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0d1117;  --foreground: #e6edf3;
-    --card: #151b23;        --card-foreground: #e6edf3;
-    --muted: #1f262e;       --muted-foreground: #8b949e;
-    --border: #2d333b;      --input: #2d333b;
-    --primary: #4493f8;     --primary-foreground: #0d1117;
-    --secondary: #1f262e;   --secondary-foreground: #e6edf3;
-    --accent: #101d2f;      --accent-foreground: #4493f8;
-    --destructive: #e5534b; --destructive-foreground: #ffffff;
-    --success: #3fb950;     --warning: #d29922;
-    --ring: #4493f899;
-  }
+[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #0d1117;  --foreground: #e6edf3;
+  --card: #151b23;        --card-foreground: #e6edf3;
+  --muted: #1f262e;       --muted-foreground: #8b949e;
+  --border: #2d333b;      --input: #2d333b;
+  --primary: #4493f8;     --primary-foreground: #0d1117;
+  --secondary: #1f262e;   --secondary-foreground: #e6edf3;
+  --accent: #101d2f;      --accent-foreground: #4493f8;
+  --destructive: #e5534b; --destructive-foreground: #ffffff;
+  --success: #3fb950;     --warning: #d29922;
+  --ring: #4493f899;
 }
 
 html,
@@ -83,10 +84,6 @@ body {
   color: var(--foreground);
   background: var(--background);
   user-select: none; /* 桌面应用语义：默认不可选中，正文区域自行放开 */
-}
-
-:root {
-  color-scheme: light dark;
 }
 
 #root {

@@ -5,7 +5,14 @@
 // 保存走 SaveProvidersYAML（Go 侧先校验 YAML 再原子写回）——
 // 保存成功不热生效，需重启应用后由重扫装配，UI 明确提示这一点。
 import { useEffect, useState } from 'react';
-import { getTools, loadProvidersYAML, restartApp, saveProvidersYAML } from '../lib/api';
+import {
+  getAppearance,
+  getTools,
+  loadProvidersYAML,
+  restartApp,
+  saveProvidersYAML,
+  setAppearanceMode,
+} from '../lib/api';
 import type { ToolInfo } from '../lib/api';
 import { cn } from '../lib/cn';
 import { useAppStore } from '../state/store';
@@ -21,6 +28,7 @@ export default function Settings() {
   const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [appearance, setAppearanceLocal] = useState<string>('system');
   const notify = useAppStore((s) => s.notify);
 
   useEffect(() => {
@@ -39,10 +47,24 @@ export default function Settings() {
       .catch((e: unknown) => {
         if (!cancelled) setYamlError(e instanceof Error ? e.message : String(e));
       });
+    getAppearance()
+      .then((info) => {
+        if (!cancelled) setAppearanceLocal(info.mode);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const handleAppearance = async (mode: string) => {
+    try {
+      await setAppearanceMode(mode);
+      setAppearanceLocal(mode);
+    } catch (e: unknown) {
+      notify(e instanceof Error ? e.message : String(e), 'error');
+    }
+  };
 
   const handleSave = async () => {
     if (yaml === null || saving) return;
@@ -75,6 +97,25 @@ export default function Settings() {
     <div className="flex-1 overflow-y-auto p-6">
       <div className="max-w-2xl">
         <h1 className="mb-4 text-lg font-semibold">设置</h1>
+
+        <section className="mb-5 rounded border border-border bg-card p-3.5">
+          <h2 className="mb-3 text-sm font-medium">外观</h2>
+          <div className="flex gap-2">
+            {[
+              { value: 'system', label: '跟随系统' },
+              { value: 'light', label: '浅色' },
+              { value: 'dark', label: '深色' },
+            ].map((opt) => (
+              <Button
+                key={opt.value}
+                variant={appearance === opt.value ? 'default' : 'secondary'}
+                onClick={() => void handleAppearance(opt.value)}
+              >
+                {opt.label}
+              </Button>
+            ))}
+          </div>
+        </section>
 
         <section className="mb-5 rounded border border-border bg-card p-3.5">
           <h2 className="mb-3 text-sm font-medium">工具检测</h2>
