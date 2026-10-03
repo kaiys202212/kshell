@@ -443,9 +443,17 @@ func TestReapOnceNilWindowsNoPanic(t *testing.T) {
 }
 
 func TestPsStatementQuotesArgs(t *testing.T) {
-	got := psStatement("claude", []string{"--resume", "it's s1"})
+	got := psStatement("claude", []string{"--resume", "it's s1"}, nil)
 	want := `& 'claude' '--resume' 'it''s s1'`
 	if got != want {
 		t.Fatalf("psStatement = %q, 期望 %q", got, want)
+	}
+}
+
+func TestPsStatementInjectsEnv(t *testing.T) {
+	got := psStatement("claude", nil, map[string]string{"COLORFGBG": "15;0"})
+	want := `$env:COLORFGBG = '15;0'; & 'claude'`
+	if got != want {
+		t.Fatalf("psStatement = %q, want %q", got, want)
 	}
 }

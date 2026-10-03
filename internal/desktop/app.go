@@ -5,10 +5,12 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/yangk/kshell/internal/appearance"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/executil"
@@ -51,6 +53,10 @@ type Options struct {
 	Projects *discovery.ProjectStore
 	// ProjectsPath 是 projects.yaml 完整路径；仅在未注入 Projects 时用于装配。
 	ProjectsPath string
+	// Layout 是 ~/.kshell 的路径布局，写回配置（颜色模式）时使用。
+	Layout config.Layout
+	// ThemeCacheDir 是主题注入文件目录，供启动 agent 时使用。
+	ThemeCacheDir string
 }
 
 // App 是暴露给前端的绑定对象：薄封装 discovery/providers/window 等核心包，
@@ -76,6 +82,8 @@ type App struct {
 	trees   map[string]*workspace.Tree // 工作区路径 → 文件树（懒创建，节点级缓存）
 	treeMu  sync.Mutex                 // 树操作串行化（Expand 会写节点，不能只靠 mu 快照）
 	treeGen uint64                     // 树缓存代数：rename 作废缓存时推进，防旧构建写回
+
+	appearanceCancel context.CancelFunc // system 模式下的明暗监听取消函数
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。
@@ -113,6 +121,9 @@ func (a *App) Startup(ctx context.Context) {
 	a.loadSnapshot() // 先端出上次结果（秒开），真实扫描随后覆盖
 	go a.runScan()
 	go a.reapLoop()
+
+	a.emitAppearance()
+	a.restartAppearanceWatcher()
 }
 
 // loadSnapshot 把上次扫描的落盘快照灌进内存，让前端首次 GetWorkspaces/GetSessions
@@ -216,6 +227,12 @@ func (a *App) initRealDeps() {
 		store := discovery.NewProjectStore(a.opts.ProjectsPath)
 		_ = store.Load() // 读不到/损坏只当空表，不阻断启动（与连接存储同口径）
 		a.opts.Projects = store
+	}
+	if a.opts.Layout.Config == "" {
+		a.opts.Layout = paths
+	}
+	if a.opts.ThemeCacheDir == "" {
+		a.opts.ThemeCacheDir = paths.CacheAppearance
 	}
 }
 
@@ -328,6 +345,15 @@ func (a *App) snapshot() Options {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.opts
+}
+
+// themeOptions 组装当前颜色模式与主题缓存目录，供 launch 注入。
+func (a *App) themeOptions() launch.ThemeOptions {
+	o := a.snapshot()
+	return launch.ThemeOptions{
+		Mode:     appearance.ParseMode(o.Config.Appearance.Mode),
+		CacheDir: o.ThemeCacheDir,
+	}
 }
 
 // ScanSessions 触发一次会话扫描（已在扫则不重复），立即返回最近一次结果；
@@ -466,7 +492,7 @@ func (a *App) ResumeSession(id string) error {
 		return errSessionNotFound
 	}
 	o := a.snapshot()
-	l, err := launch.ForSession(o.Providers, tools, s)
+	l, err := launch.ForSession(o.Providers, tools, s, a.themeOptions())
 	if err != nil {
 		return err
 	}
@@ -499,13 +525,18 @@ func (a *App) launchWindow(wm *WindowManager, l providers.Launch, titleText stri
 	if wm == nil {
 		return errNotReady
 	}
-	return wm.LaunchSession(l.Dir, titleText, psStatement(l.Path, l.Args))
+	return wm.LaunchSession(l.Dir, titleText, psStatement(l.Path, l.Args, l.Env))
 }
 
-// psStatement 生成在已打开的 PowerShell 窗口里执行 CLI 的语句：
-// & 'bin' 'arg1' 'arg2'（调用运算符 + 单引号字面量，内嵌单引号双写转义）。
-func psStatement(bin string, args []string) string {
-	s := "& " + psQuote(bin)
+// psStatement 生成在已打开的 PowerShell 窗口里执行 CLI 的语句：先设 $env: 变量，再
+// & 'bin' 'arg1'（调用运算符 + 单引号字面量，内嵌单引号双写转义）。
+func psStatement(bin string, args []string, env map[string]string) string {
+	s := ""
+	for _, kv := range providers.EnvList(env) {
+		i := strings.IndexByte(kv, '=')
+		s += "$env:" + kv[:i] + " = " + psQuote(kv[i+1:]) + "; "
+	}
+	s += "& " + psQuote(bin)
 	for _, arg := range args {
 		s += " " + psQuote(arg)
 	}

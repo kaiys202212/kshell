@@ -58,7 +58,7 @@ func (a *App) OpenSessionTerminal(sessionID string, cols, rows int) (terminal.In
 	}
 
 	o := a.snapshot()
-	l, err := launch.ForSession(o.Providers, tools, s)
+	l, err := launch.ForSession(o.Providers, tools, s, a.themeOptions())
 	if err != nil {
 		return terminal.Info{}, err
 	}
@@ -73,7 +73,7 @@ func (a *App) OpenSessionTerminal(sessionID string, cols, rows int) (terminal.In
 		Workspace: s.Workspace,
 		Title:     s.Title,
 		ToolID:    s.ToolID,
-	}, terminal.Spec{Path: spec.Path, Args: spec.Args, Dir: spec.Dir}, cols, rows)
+	}, terminal.Spec{Path: spec.Path, Args: spec.Args, Dir: spec.Dir, Env: spec.Env}, cols, rows)
 }
 
 // OpenWorkspaceTerminal 在中心区为工作区新开一个内嵌终端；toolID 为空时用工作区首选工具。
@@ -88,7 +88,7 @@ func (a *App) OpenWorkspaceTerminal(wsID string, toolID string, cols, rows int) 
 	}
 
 	o := a.snapshot()
-	l, err := launch.ForWorkspaceTool(o.Providers, tools, ws, toolID)
+	l, err := launch.ForWorkspaceTool(o.Providers, tools, ws, toolID, a.themeOptions())
 	if err != nil {
 		return terminal.Info{}, err
 	}
@@ -103,7 +103,7 @@ func (a *App) OpenWorkspaceTerminal(wsID string, toolID string, cols, rows int) 
 		Workspace: ws.Path,
 		Title:     workspaceTerminalTitle(o.Providers, tools, ws, toolID),
 		ToolID:    toolID, // 原样透传前端选中的工具（空表示由 launch 选首选），页签按此展示
-	}, terminal.Spec{Path: spec.Path, Args: spec.Args, Dir: spec.Dir}, cols, rows)
+	}, terminal.Spec{Path: spec.Path, Args: spec.Args, Dir: spec.Dir, Env: spec.Env}, cols, rows)
 }
 
 // WriteTerminal 把前端输入写进终端；data 是 base64（xterm 的 onData 可能含任意字节）。
@@ -167,7 +167,7 @@ func (a *App) NewSessionWithTool(wsID string, toolID string) error {
 		return errWorkspaceNotFound
 	}
 	o := a.snapshot()
-	l, err := launch.ForWorkspaceTool(o.Providers, tools, ws, toolID)
+	l, err := launch.ForWorkspaceTool(o.Providers, tools, ws, toolID, a.themeOptions())
 	if err != nil {
 		return err
 	}
