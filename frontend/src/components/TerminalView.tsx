@@ -175,6 +175,11 @@ export default function TerminalView({ term, active }: Props) {
       observedCompositionView = null;
     };
 
+    // 仅在值变化时写 style，避免自写入触发 MutationObserver 循环
+    const setStyleIfChanged = (el: HTMLElement, prop: 'left' | 'top' | 'maxWidth' | 'overflow', value: string) => {
+      if (el.style[prop] !== value) el.style[prop] = value;
+    };
+
     const applyImeClamp = () => {
       const screen = host.querySelector<HTMLElement>('.xterm-screen');
       const viewport = host.querySelector<HTMLElement>('.xterm-viewport');
@@ -201,13 +206,15 @@ export default function TerminalView({ term, active }: Props) {
 
       applyingImeClamp = true;
       try {
-        textarea.style.left = `${styles.left}px`;
-        textarea.style.top = `${styles.top}px`;
+        const left = `${styles.left}px`;
+        const top = `${styles.top}px`;
+        setStyleIfChanged(textarea, 'left', left);
+        setStyleIfChanged(textarea, 'top', top);
         if (compositionView) {
-          compositionView.style.left = `${styles.left}px`;
-          compositionView.style.top = `${styles.top}px`;
-          compositionView.style.maxWidth = `${styles.maxWidth}px`;
-          compositionView.style.overflow = 'hidden';
+          setStyleIfChanged(compositionView, 'left', left);
+          setStyleIfChanged(compositionView, 'top', top);
+          setStyleIfChanged(compositionView, 'maxWidth', `${styles.maxWidth}px`);
+          setStyleIfChanged(compositionView, 'overflow', 'hidden');
         }
         lockImeOverflow();
         if (viewport && shouldResetScrollLeft(viewport.scrollLeft)) {
@@ -215,22 +222,30 @@ export default function TerminalView({ term, active }: Props) {
         }
         observeImeStyleTargets(compositionView);
       } finally {
-        applyingImeClamp = false;
+        // MO 回调是微任务；同步清 flag 会让自写入再次 schedule → 循环。
+        // 延后到下一微任务，确保 MO 仍看到 applyingImeClamp=true。
+        queueMicrotask(() => {
+          applyingImeClamp = false;
+        });
       }
     };
     // 同帧内 xterm updateCompositionElements 可能后跑；再排一帧压过
-    const scheduleImeClamp = () => {
-      applyImeClamp();
+    const scheduleImeClampRaf = () => {
       if (imeRaf) cancelAnimationFrame(imeRaf);
       imeRaf = requestAnimationFrame(() => {
         imeRaf = 0;
         if (composing) applyImeClamp();
       });
     };
+    const scheduleImeClamp = () => {
+      applyImeClamp();
+      scheduleImeClampRaf();
+    };
     const startImeObserver = () => {
       stopImeObserver();
+      // 组合期 MO 只排 rAF，避免同步 apply → 写 style → MO 重入
       imeObserver = new MutationObserver(() => {
-        if (composing && !applyingImeClamp) scheduleImeClamp();
+        if (composing && !applyingImeClamp) scheduleImeClampRaf();
       });
       observeImeStyleTargets(host.querySelector<HTMLElement>('.composition-view'));
     };
