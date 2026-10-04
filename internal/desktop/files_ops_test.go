@@ -210,6 +210,60 @@ func TestRenameEntryEscapesBlocked(t *testing.T) {
 	}
 }
 
+func TestMoveEntry(t *testing.T) {
+	env := newFilesEnv(t)
+	app := env.app
+
+	// 文件移入子目录（保留原名）
+	newPath, err := app.MoveEntry(env.root, "main.go", "pkg")
+	if err != nil {
+		t.Fatalf("MoveEntry: %v", err)
+	}
+	want := filepath.Join(env.root, "pkg", "main.go")
+	if newPath != want {
+		t.Fatalf("newPath = %q, want %q", newPath, want)
+	}
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("移动后文件不存在: %v", err)
+	}
+	// 目标已存在（fixture 的 pkg 下本无 readme.md，先造一个同名文件再撞）
+	if _, err := app.CreateEntry(env.root, "pkg", "readme.md", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.MoveEntry(env.root, "readme.md", "pkg"); !errors.Is(err, errTargetExists) {
+		t.Fatalf("目标已存在应报 errTargetExists，got %v", err)
+	}
+	// 目录移入自身子孙目录拒绝（先重建一个待移目录）
+	if err := os.Mkdir(filepath.Join(env.root, "outer"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(env.root, "outer", "inner"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.MoveEntry(env.root, "outer", filepath.Join("outer", "inner")); err == nil {
+		t.Fatal("移入子孙目录应拒绝")
+	}
+	// 移回原位（同目录同名）应 no-op 成功
+	if _, err := app.MoveEntry(env.root, "readme.md", ""); err != nil {
+		t.Fatalf("原地移动应 no-op: %v", err)
+	}
+	// 大小写同名放行（Windows 口径）
+	if _, err := app.RenameEntry(env.root, "readme.md", "readme2.md"); err != nil {
+		t.Fatal(err)
+	}
+	// 树缓存已作废
+	nodes, _ := app.ListFiles(env.root, "")
+	found := false
+	for _, n := range nodes {
+		if n.Name == "pkg" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("ListFiles 应含 pkg（缓存作废后重建）")
+	}
+}
+
 func TestReadForEditBinding(t *testing.T) {
 	env := newFilesEnv(t)
 

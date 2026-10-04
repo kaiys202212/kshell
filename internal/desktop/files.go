@@ -299,6 +299,53 @@ func (a *App) DeleteEntry(wsPath, relPath string) error {
 	return nil
 }
 
+// MoveEntry 把工作区内 srcRel 移入 dstDirRel 目录（保留原名）。
+// 拒绝移入自身子孙目录；目标已存在报错；原地移动视为 no-op；
+// 成功后作废树缓存。
+func (a *App) MoveEntry(wsPath, srcRel, dstDirRel string) (string, error) {
+	tree, err := a.treeFor(wsPath)
+	if err != nil {
+		return "", err
+	}
+	src, err := a.nodeAt(tree, wsPath, srcRel)
+	if err != nil {
+		return "", err
+	}
+	dstDir, err := a.nodeAt(tree, wsPath, dstDirRel)
+	if err != nil {
+		return "", err
+	}
+	if !dstDir.IsDir {
+		return "", errNotDir
+	}
+
+	dstAbs := filepath.Join(dstDir.Path, src.Name)
+	if !underPath(wsPath, dstAbs) {
+		return "", errPathOutsideWorkspace
+	}
+	// 目录不能移进自己或自己的子孙（underPath 含相等，正好覆盖两种情况）
+	if underPath(src.Path, dstAbs) && !samePath(src.Path, dstAbs) {
+		return "", errors.New("不能把目录移入其自身内部")
+	}
+	if samePath(src.Path, dstAbs) {
+		return src.Path, nil // 原地 drop：no-op
+	}
+	if _, err := filepath.EvalSymlinks(dstDir.Path); err != nil {
+		return "", err // 目标目录是失效 junction：拒绝
+	}
+	if _, err := os.Lstat(dstAbs); err == nil {
+		return "", errTargetExists
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	if err := os.Rename(src.Path, dstAbs); err != nil {
+		return "", err
+	}
+
+	a.invalidateTree(wsPath)
+	return dstAbs, nil
+}
+
 // ReadFileForEdit 整读工作区内文本文件供编辑（上限 1MB、拒二进制）。
 func (a *App) ReadFileForEdit(wsPath, path string) (workspace.EditContent, error) {
 	resolved, err := a.resolveWorkspaceFile(wsPath, path)
