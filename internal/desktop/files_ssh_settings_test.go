@@ -1,12 +1,14 @@
 package desktop
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/remote"
 )
 
@@ -364,4 +366,48 @@ func TestConcurrentListFiles(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestSaveProvidersYAMLReloadsProviders(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "providers.yaml")
+	app := NewAppWith(Options{
+		Home:          t.TempDir(),
+		ProvidersPath: path,
+		Providers:     providers.Builtins(),
+	})
+	content := "providers:\n  - id: demo-agent\n    name: Demo Agent\n"
+	if err := app.SaveProvidersYAML(content); err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, p := range app.snapshot().Providers {
+		if p.ID() == "demo-agent" {
+			found = true
+			if _, ok := p.(providers.Generic); !ok {
+				t.Fatalf("demo-agent is %T", p)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("保存后应热装载 demo-agent")
+	}
+}
+
+func TestPickDirectoryAndFileCancel(t *testing.T) {
+	origDir, origFile := pickDirectory, pickFile
+	t.Cleanup(func() {
+		pickDirectory = origDir
+		pickFile = origFile
+	})
+	pickDirectory = func(context.Context, string) (string, error) { return "", nil }
+	pickFile = func(context.Context, string) (string, error) { return "", nil }
+	app := NewAppWith(Options{})
+	dir, err := app.PickDirectory("选目录")
+	if err != nil || dir != "" {
+		t.Fatalf("dir %q %v", dir, err)
+	}
+	file, err := app.PickFile("选文件")
+	if err != nil || file != "" {
+		t.Fatalf("file %q %v", file, err)
+	}
 }

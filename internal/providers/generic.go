@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -287,6 +288,23 @@ func ParseProvidersYAML(data []byte) ([]GenericSpec, error) {
 		return nil, err
 	}
 	return file.Providers, nil
+}
+
+// FormatProvidersYAML 把自定义 provider 列表编码成可回写的 yaml（不保留注释）。
+func FormatProvidersYAML(specs []GenericSpec) (string, error) {
+	if specs == nil {
+		specs = []GenericSpec{}
+	}
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(genericSpecFile{Providers: specs}); err != nil {
+		return "", err
+	}
+	if err := enc.Close(); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }
 
 // DefaultProvidersYAML 是随程序分发的默认模板：预置常见工具的猜测值，全部标 verified: false。

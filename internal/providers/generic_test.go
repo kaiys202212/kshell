@@ -314,3 +314,19 @@ func TestGenericDropsCommandOnlyStub(t *testing.T) {
 		t.Fatalf("err = %v, want errGenericEmpty", err)
 	}
 }
+
+func TestFormatProvidersYAMLRoundTrip(t *testing.T) {
+	in := []GenericSpec{{ID: "demo", Name: "Demo"}}
+	in[0].Detect.Command = "demo"
+	raw, err := FormatProvidersYAML(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseProvidersYAML([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "demo" || got[0].Name != "Demo" || got[0].Detect.Command != "demo" {
+		t.Fatalf("got %+v yaml=%s", got, raw)
+	}
+}
