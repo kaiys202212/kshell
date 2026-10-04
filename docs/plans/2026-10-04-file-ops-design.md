@@ -29,7 +29,7 @@ kshell 桌面端右栏文件区域（`frontend/src/components/FileTree.tsx`）�
 **共同安全约束**：
 
 - 路径必须解析后落在当前 workspace root 内（防 `..` 逃逸），与 `RenameEntry` 既有做法对齐
-- 删除/移动/新建成功后复用 `RenameEntry` 现有的缓存作废逻辑，并 emit 树刷新事件由前端局部刷新
+- 删除/移动/新建成功后复用 `RenameEntry` 现有的缓存作废逻辑；前端实现采用各调用方 `refreshRoot()` 重建树镜像（桌面端单窗口下等价，未引入刷新事件链路）
 - Windows 大小写不敏感：`src` 与 `dst` 大小写折叠后相同则直接跳过（no-op）
 
 **无需新后端的能力**：复制路径走前端 `navigator.clipboard.writeText`；插入终端走现有 `writeTerminal(id, base64)`（`frontend/src/lib/api.ts:487`，即键盘输入通道）。

@@ -173,7 +173,12 @@ function App() {
       const zone = el?.getAttribute('data-drop-zone') ?? '';
       const text = quotePathForShell(paths[0]);
       if (zone.startsWith('terminal:')) {
-        void writeTerminal(zone.slice('terminal:'.length), encodeTerminalInput(text));
+        const id = zone.slice('terminal:'.length);
+        // 与 TerminalView/页签落点同口径：已退出的终端不接受拖入
+        const term = useAppStore.getState().terminals.find((t) => t.ID === id);
+        if (term?.Status !== 'exited') {
+          void writeTerminal(id, encodeTerminalInput(text));
+        }
       } else if (zone.startsWith('chat:')) {
         appendChatInput(zone.slice('chat:'.length), text);
       }
