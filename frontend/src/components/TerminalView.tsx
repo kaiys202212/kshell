@@ -82,32 +82,48 @@ export default function TerminalView({ term, active }: Props) {
     });
     // WebView2 经常不给 xterm 隐藏 textarea 派发 paste，Ctrl+V 就被吃掉；
     // 拦截粘贴键改走原生剪贴板：文本直写 PTY，位图落盘后写路径（cursor-agent 认路径）。
-    let pasteAt = 0;
+    // xterm 自己也在 textarea / .xterm 上听 paste（先注册、冒泡阶段），若只在其后 preventDefault，
+    // 浏览器一旦真的派发 paste，就会「xterm 贴一次 + 我们再贴一次」。捕获阶段 stopImmediatePropagation。
+    // keydown 已注入时跳过同一次手势的 DOM paste 注入（不在完成后加固定冷却，以免吞掉连按）。
+    let alive = true;
+    let pasteInflight = false;
+    let skipDomPaste = false;
+    let skipDomPasteTimer = 0;
     const injectClipboard = async () => {
-      if (statusRef.current === 'exited') return;
-      const now = Date.now();
-      if (now - pasteAt < 80) return;
-      pasteAt = now;
+      if (!alive || statusRef.current === 'exited') return;
+      if (pasteInflight) return;
+      pasteInflight = true;
       try {
         const clip = await readClipboardPaste();
+        if (!alive) return;
         const text = composeTerminalPaste(clip);
         if (!text) return;
         instance.paste(text);
       } catch {
         // 剪贴板被占用时静默跳过，避免打断正在输入
+      } finally {
+        pasteInflight = false;
       }
     };
     instance.attachCustomKeyEventHandler((ev) => {
       if (!isPasteKey(ev)) return true;
-      if (ev.type === 'keydown') void injectClipboard();
+      if (ev.type === 'keydown') {
+        skipDomPaste = true;
+        window.clearTimeout(skipDomPasteTimer);
+        skipDomPasteTimer = window.setTimeout(() => {
+          skipDomPaste = false;
+        }, 80);
+        void injectClipboard();
+      }
       return false;
     });
     const onPaste = (e: ClipboardEvent) => {
       e.preventDefault();
-      e.stopPropagation();
+      e.stopImmediatePropagation();
+      if (skipDomPaste) return;
       void injectClipboard();
     };
-    instance.textarea?.addEventListener('paste', onPaste);
+    host.addEventListener('paste', onPaste, true);
     const resizeSub = instance.onResize(({ cols, rows }) => {
       // 退化尺寸守卫（见 MIN_COLS 说明）：隐藏态算出的 2x1 绝不能推给 PTY
       if (cols < MIN_COLS || rows < MIN_ROWS) return;
@@ -319,6 +335,8 @@ export default function TerminalView({ term, active }: Props) {
     observer?.observe(host);
 
     return () => {
+      alive = false;
+      window.clearTimeout(skipDomPasteTimer);
       observer?.disconnect();
       composing = false;
       if (imeRaf) cancelAnimationFrame(imeRaf);
@@ -328,7 +346,7 @@ export default function TerminalView({ term, active }: Props) {
       textarea?.removeEventListener('compositionstart', onCompositionStart);
       textarea?.removeEventListener('compositionupdate', onCompositionUpdate);
       textarea?.removeEventListener('compositionend', onCompositionEnd);
-      instance.textarea?.removeEventListener('paste', onPaste);
+      host.removeEventListener('paste', onPaste, true);
       renderSub.dispose();
       dataSub.dispose();
       resizeSub.dispose();

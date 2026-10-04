@@ -46,6 +46,19 @@ vi.mock('@xterm/xterm', () => {
     }
     open(host: HTMLElement) {
       this.host = host;
+      // 对齐 xterm：open 后在 textarea / 根节点上监听 paste，直接把 clipboardData 写入终端
+      const root = document.createElement('div');
+      root.className = 'xterm';
+      if (this.textarea) {
+        root.appendChild(this.textarea);
+        const xtermPaste = (event: ClipboardEvent) => {
+          const text = event.clipboardData?.getData('text/plain') ?? '';
+          if (text) this.paste(text);
+        };
+        this.textarea.addEventListener('paste', xtermPaste);
+        root.addEventListener('paste', xtermPaste);
+      }
+      host.appendChild(root);
     }
     attachCustomKeyEventHandler(fn: (ev: KeyboardEvent) => boolean) {
       this.customKey = fn;
@@ -418,6 +431,55 @@ describe('TerminalView', () => {
     drop(root, { mime: DRAG_MIME, path: 'D:\\a.go' });
 
     expect(api.writeTerminal).not.toHaveBeenCalled();
+  });
+
+  it('Ctrl+V 若浏览器同时派发 paste，只写入一次（不与 xterm 默认粘贴叠加）', async () => {
+    let release!: (value: { Text: string; Path: string }) => void;
+    api.readClipboardPaste.mockImplementation(
+      () => new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    render(<TerminalView term={TERM} active />);
+    const instance = term();
+    instance.customKey!(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true }));
+    fireEvent.paste(instance.textarea as HTMLTextAreaElement, {
+      clipboardData: { getData: () => 'hello paste' },
+    });
+
+    await act(async () => {
+      release({ Text: 'hello paste', Path: '' });
+    });
+    await waitFor(() => {
+      expect(instance.pasted).toEqual(['hello paste']);
+    });
+    expect(api.writeTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it('仅浏览器 paste（无 Ctrl+V）仍走原生剪贴板注入一次', async () => {
+    api.readClipboardPaste.mockResolvedValue({ Text: 'from menu', Path: '' });
+    render(<TerminalView term={TERM} active />);
+    fireEvent.paste(term().textarea as HTMLTextAreaElement, {
+      clipboardData: { getData: () => 'from menu' },
+    });
+    await waitFor(() => {
+      expect(term().pasted).toEqual(['from menu']);
+    });
+    expect(api.writeTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it('第一次粘贴完成后立刻再 Ctrl+V 仍会再贴一次', async () => {
+    api.readClipboardPaste.mockResolvedValue({ Text: 'hello paste', Path: '' });
+    render(<TerminalView term={TERM} active />);
+    const instance = term();
+    instance.customKey!(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }));
+    await waitFor(() => {
+      expect(instance.pasted).toEqual(['hello paste']);
+    });
+    instance.customKey!(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }));
+    await waitFor(() => {
+      expect(instance.pasted).toEqual(['hello paste', 'hello paste']);
+    });
   });
 
   it('Ctrl+V 读取原生剪贴板文本并经 paste/onData 写入终端', async () => {
