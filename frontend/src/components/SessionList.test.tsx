@@ -439,6 +439,39 @@ describe('SessionList agent 活动图标', () => {
     expect(screen.queryByText('修复上传白名单')).not.toBeInTheDocument();
   });
 
+  it('开发列表磁盘会话可行上点归档图标，不触发行点击', async () => {
+    const onArchive = vi.fn();
+    render(
+      <SessionList
+        workspacePath={'D:\\proj-a'}
+        onSelectRow={onSelectRow}
+        onActivate={onActivate}
+        onArchive={onArchive}
+      />,
+    );
+    const row = await findRow('修复上传白名单');
+    fireEvent.click(within(row).getByRole('button', { name: '归档' }));
+    expect(onArchive).toHaveBeenCalledWith(expect.objectContaining({ ID: 's1' }));
+    expect(onSelectRow).not.toHaveBeenCalled();
+  });
+
+  it('尚未落盘的 live 行没有归档按钮', async () => {
+    useAppStore.setState({
+      terminals: [terminal({
+        ID: 't9',
+        Kind: 'new',
+        SessionID: '',
+        Title: '修复登录空指针',
+        Prompted: true,
+        Workspace: 'D:\\proj-a',
+        ToolID: 'claude',
+      })],
+    });
+    renderList();
+    const row = await findRow('修复登录空指针');
+    expect(within(row).queryByRole('button', { name: '归档' })).not.toBeInTheDocument();
+  });
+
   it('勾选归档后只显示已归档会话，点击还原', async () => {
     const onRestore = vi.fn();
     useAppStore.setState({ archivedIDs: ['s2'] });
@@ -454,6 +487,7 @@ describe('SessionList agent 活动图标', () => {
     expect(screen.queryByText('修复上传白名单')).not.toBeInTheDocument();
     fireEvent.click(within(row).getByRole('button', { name: '还原' }));
     expect(onRestore).toHaveBeenCalledWith(expect.objectContaining({ ID: 's2' }));
+    expect(within(row).queryByRole('button', { name: '归档' })).not.toBeInTheDocument();
   });
 });
 

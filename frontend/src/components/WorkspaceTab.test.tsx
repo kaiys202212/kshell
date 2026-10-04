@@ -32,6 +32,8 @@ const mocks = vi.hoisted(() => ({
   openSession: vi.fn(),
   openWorkspace: vi.fn(),
   openWorkspaceACP: vi.fn(),
+  restoreSession: vi.fn().mockResolvedValue(undefined),
+  archiveSession: vi.fn().mockResolvedValue(undefined),
   writeTerminal: vi.fn(),
   resizeTerminal: vi.fn(),
   closeTerminal: vi.fn(),

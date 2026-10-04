@@ -153,4 +153,21 @@ describe('NewSessionMenu', () => {
     fireEvent.click(screen.getByRole('button', { expanded: false }));
     expect(screen.queryByRole('button', { name: '在外部终端打开' })).not.toBeInTheDocument();
   });
+
+  it('工具同时支持 ACP 时下拉仍只有工具名，点选走 onSelect 不强制 ACP', () => {
+    const acpTools: ToolInfo[] = [
+      {
+        ...tools[0],
+        ACP: { Available: true, Source: 'path', BinPath: 'claude-agent-acp' },
+      },
+    ];
+    const { onSelect } = setup({ tools: acpTools });
+
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+
+    expect(screen.queryByText('Claude Code（ACP）')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('menuitemradio')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /Claude Code/ }));
+    expect(onSelect).toHaveBeenCalledWith('claude');
+  });
 });

@@ -48,6 +48,7 @@ const mocks = vi.hoisted(() => ({
   onArchiveChanged: vi.fn(() => () => {}),
   archivedIDs: vi.fn().mockResolvedValue([]),
   confirmArchive: vi.fn().mockResolvedValue(undefined),
+  archiveSession: vi.fn().mockResolvedValue(undefined),
   restoreSession: vi.fn().mockResolvedValue(undefined),
   createProject: vi.fn(),
   hideProject: vi.fn(),

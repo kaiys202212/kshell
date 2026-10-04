@@ -96,6 +96,7 @@ interface Props {
   onSelectRow?(s: Session): void;
   onActivate?(s: Session): void;
   onRestore?(s: Session): void;
+  onArchive?(s: Session): void;
 }
 
 export default function SessionList({
@@ -105,6 +106,7 @@ export default function SessionList({
   onSelectRow,
   onActivate,
   onRestore,
+  onArchive,
 }: Props) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [query, setQuery] = useState('');
@@ -302,35 +304,58 @@ export default function SessionList({
                           />
                         </svg>
                       </button>
-                    ) : restored ? (
-                      <span
-                        className="ml-auto inline-flex h-5 w-5 shrink-0 items-center justify-center text-primary"
-                        role="img"
-                        aria-label="已恢复"
-                        title="已恢复"
-                      >
-                        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
-                          <path
-                            d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Zm3.1 4.4-3.7 4.3-1.8-1.7-.9.9 2.8 2.6 4.6-5.4-.9-.7Z"
-                            fill="currentColor"
-                          />
-                        </svg>
-                      </span>
                     ) : (
-                      <button
-                        type="button"
-                        className="ml-auto inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-primary"
-                        aria-label="激活"
-                        title="激活"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onActivate?.(s);
-                        }}
-                      >
-                        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
-                          <path d="M4.5 2.8v10.4L13.2 8 4.5 2.8Z" fill="currentColor" />
-                        </svg>
-                      </button>
+                      <div className="ml-auto flex shrink-0 items-center">
+                        {!liveID && (
+                          <button
+                            type="button"
+                            className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-primary"
+                            aria-label="归档"
+                            title="归档"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onArchive?.(s);
+                            }}
+                          >
+                            <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
+                              <path
+                                d="M2 3.2h12l-1 2.2H3L2 3.2Zm1.2 3h9.6V13H3.2V6.2Zm2.3 2.2v1.2h5V8.4h-5Z"
+                                fill="currentColor"
+                              />
+                            </svg>
+                          </button>
+                        )}
+                        {restored ? (
+                          <span
+                            className="inline-flex h-5 w-5 items-center justify-center text-primary"
+                            role="img"
+                            aria-label="已恢复"
+                            title="已恢复"
+                          >
+                            <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
+                              <path
+                                d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Zm3.1 4.4-3.7 4.3-1.8-1.7-.9.9 2.8 2.6 4.6-5.4-.9-.7Z"
+                                fill="currentColor"
+                              />
+                            </svg>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-primary"
+                            aria-label="激活"
+                            title="激活"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onActivate?.(s);
+                            }}
+                          >
+                            <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
+                              <path d="M4.5 2.8v10.4L13.2 8 4.5 2.8Z" fill="currentColor" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>

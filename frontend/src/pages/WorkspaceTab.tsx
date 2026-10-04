@@ -16,7 +16,7 @@ import {
   openShellTerminal,
   openSSHTerminal,
   openWorkspace,
-  openWorkspaceACP,
+  archiveSession,
   restoreSession,
   scanSessions,
   writeTerminal,
@@ -235,13 +235,11 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   );
 
   // 菜单里选中 agent 后启动会话（空 id = 交给 Go 侧按该工作区最常用的工具选）
-  const startSession = async (id: string, forceACP = false) => {
+  const startSession = async (id: string) => {
     if (busy) return;
     setBusy(true);
     try {
-      const res = forceACP
-        ? await openWorkspaceACP(tab.id, id)
-        : await openWorkspace(tab.id, id);
+      const res = await openWorkspace(tab.id, id);
       if (res.Kind === 'chat' && res.Chat) {
         useAppStore.getState().upsertChat(res.Chat);
         selectCenterTab(res.Chat.ID);
@@ -322,7 +320,6 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
               value={toolId}
               onChange={setToolId}
               onSelect={(id) => void startSession(id)}
-              onSelectACP={(id) => void startSession(id, true)}
               disabled={busy}
             />
           </div>
@@ -354,6 +351,13 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             handleSelectSessionRow(s);
           }}
           onActivate={openChatOrTerminal}
+          onArchive={(s) => {
+            void archiveSession(s.ID).then(() => {
+              const { archivedIDs, setArchivedIDs } = useAppStore.getState();
+              if (archivedIDs.includes(s.ID)) return;
+              setArchivedIDs([...archivedIDs, s.ID]);
+            });
+          }}
           onRestore={(s) => {
             void restoreSession(s.ID).then(() => {
               // 名单以 archive:changed 为准；这里先从本地名单拿掉，避免等事件期间还留在归档视图

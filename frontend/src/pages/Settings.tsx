@@ -474,7 +474,7 @@ export default function Settings() {
               <section className="mb-5 rounded border border-border bg-card p-3.5">
                 <h2 className="mb-3 text-sm font-medium">默认会话模式</h2>
                 <p className="mb-2 text-xs text-muted-foreground">
-                  影响新建/恢复的默认路径；仍可在菜单中手动以 ACP 打开（仅支持 ACP 的工具）。
+                  影响新建/恢复的默认路径。工具不支持 ACP 时即使选了 ACP 也会走终端。
                 </p>
                 <div className="flex gap-2">
                   {[

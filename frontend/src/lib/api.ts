@@ -363,6 +363,7 @@ interface AppBindings {
   ListChats(): Promise<ChatInfo[]>;
   ArchivedIDs(): Promise<string[]>;
   ConfirmArchive(ref: string): Promise<void>;
+  ArchiveSession(id: string): Promise<void>;
   RestoreSession(id: string): Promise<void>;
   ChatHistory(id: string): Promise<ChatUpdate[]>;
 }
@@ -1055,6 +1056,12 @@ export async function confirmArchive(ref: string): Promise<void> {
   const a = app();
   if (!a) return;
   await a.ConfirmArchive(ref);
+}
+
+export async function archiveSession(id: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.ArchiveSession(id);
 }
 
 export async function restoreSession(id: string): Promise<void> {
