@@ -30,7 +30,7 @@ func (a *App) GetTools() []discovery.Tool {
 
 // SaveProvidersYAML 保存自定义工具定义：先解析校验（合法但内容为空也允许），
 // 再临时文件原子替换写回，避免写一半崩溃损坏配置。
-// 注意：保存后不热生效——新自定义 provider 需重启应用后由重扫装配（后续任务接线）。
+// 写盘成功后热重载 provider 表并刷新工具检测，无需重启。
 func (a *App) SaveProvidersYAML(content string) error {
 	path := a.snapshot().ProvidersPath
 	if path == "" {
@@ -60,7 +60,39 @@ func (a *App) SaveProvidersYAML(content string) error {
 	if err := os.Chmod(tmpName, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	a.reloadProviders()
+	return nil
+}
+
+// reloadProviders 按磁盘 yaml 重新装配运行中的 provider 表并刷新工具检测。
+func (a *App) reloadProviders() {
+	o := a.snapshot()
+	if o.ProvidersPath == "" || o.Home == "" {
+		return
+	}
+	specs, err := providers.LoadGenericSpecs(o.ProvidersPath)
+	if err != nil {
+		specs = nil
+	}
+	ps := providers.MergeProviders(providers.Builtins(), specs, o.Home)
+	a.mu.Lock()
+	a.opts.Providers = ps
+	a.mu.Unlock()
+	a.publishDetectedTools(discovery.DetectAll(o.Home, ps))
+	_, _ = a.ScanSessions()
+}
+
+// ParseProvidersYAML 供设置页源码→表单。
+func (a *App) ParseProvidersYAML(content string) ([]providers.GenericSpec, error) {
+	return providers.ParseProvidersYAML([]byte(content))
+}
+
+// FormatProvidersYAML 供设置页表单→源码。
+func (a *App) FormatProvidersYAML(specs []providers.GenericSpec) (string, error) {
+	return providers.FormatProvidersYAML(specs)
 }
 
 // LoadProvidersYAML 读出当前自定义工具定义全文，供设置页回填编辑器。

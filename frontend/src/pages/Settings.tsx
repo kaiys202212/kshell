@@ -1,5 +1,5 @@
 // 设置页：左导航分区（通用 / 模型 / 工具）+ 右侧内容。
-// 通用含外观/关闭/会话模式/权限/关于（检查更新）；模型含预设与双协议 Base URL；工具含检测与 providers.yaml。
+// 通用含外观/关闭/会话模式/权限/关于（检查更新）；模型含预设与双协议 Base URL；工具含检测与自定义表单。
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useEffect, useState } from 'react';
 import {
@@ -13,7 +13,11 @@ import {
   getTools,
   installBuiltinTool,
   listModelPresets,
+  formatProvidersYAML,
   loadProvidersYAML,
+  parseProvidersYAML,
+  pickDirectory,
+  pickFile,
   onScanDone,
   onToolsUpdated,
   onToolInstallDone,
@@ -21,7 +25,6 @@ import {
   applyUpdate,
   checkForUpdate,
   getAppVersion,
-  restartApp,
   saveProvidersYAML,
   scanSessions,
   setAppearanceMode,
@@ -39,6 +42,8 @@ import { useAppStore } from '../state/store';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
+import { ProvidersEditor } from '../components/ProvidersEditor';
+import { normalizeSpec, withoutBuiltinSpecs, type CustomProviderSpec } from '../lib/providersForm';
 
 const MODEL_AGENTS = [
   { id: 'claude', label: 'Claude Code' },
@@ -64,7 +69,8 @@ export default function Settings() {
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [restarting, setRestarting] = useState(false);
+  const [editorMode, setEditorMode] = useState<'form' | 'source'>('form');
+  const [specs, setSpecs] = useState<CustomProviderSpec[]>([]);
   // 工具检测「重新扫描」进行中；tools:updated（DetectAll 完成才推）到达即恢复
   const [rescanning, setRescanning] = useState(false);
   const [appearance, setAppearanceLocal] = useState<string>('dark');
@@ -134,8 +140,15 @@ export default function Settings() {
       })
       .catch(() => {});
     loadProvidersYAML()
-      .then((content) => {
-        if (!cancelled) setYaml(content);
+      .then(async (content) => {
+        if (cancelled) return;
+        setYaml(content);
+        try {
+          const list = await parseProvidersYAML(content);
+          if (!cancelled) setSpecs(withoutBuiltinSpecs(list));
+        } catch (e: unknown) {
+          if (!cancelled) setYamlError(e instanceof Error ? e.message : String(e));
+        }
       })
       .catch((e: unknown) => {
         if (!cancelled) setYamlError(e instanceof Error ? e.message : String(e));
@@ -323,12 +336,34 @@ export default function Settings() {
     setSaveError('');
     setSaved(false);
     try {
-      await saveProvidersYAML(yaml);
+      let content = yaml;
+      if (editorMode === 'form') {
+        content = await formatProvidersYAML(specs);
+        setYaml(content);
+      }
+      await saveProvidersYAML(content);
       setSaved(true);
     } catch (e: unknown) {
       setSaveError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleEditorMode = async (m: 'form' | 'source') => {
+    if (m === editorMode) return;
+    try {
+      if (m === 'source') {
+        const content = await formatProvidersYAML(specs);
+        setYaml(content);
+      } else if (yaml !== null) {
+        const list = await parseProvidersYAML(yaml);
+        setSpecs(withoutBuiltinSpecs(list));
+      }
+      setEditorMode(m);
+      setYamlError('');
+    } catch (e: unknown) {
+      setYamlError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -355,17 +390,6 @@ export default function Settings() {
       notify(e instanceof Error ? e.message : String(e), 'error');
     } finally {
       setModelSaving(false);
-    }
-  };
-
-  const handleRestart = async () => {
-    if (restarting) return;
-    setRestarting(true);
-    try {
-      await restartApp();
-    } catch {
-      notify('重启失败', 'error');
-      setRestarting(false);
     }
   };
 
@@ -884,44 +908,29 @@ export default function Settings() {
                 )}
               </section>
 
-              <section className="rounded border border-border bg-card p-3.5">
-                <h2 className="mb-3 text-sm font-medium">自定义工具（providers.yaml）</h2>
-                {yamlError && <p className="text-sm text-destructive">{yamlError}</p>}
-                {yaml !== null && (
-                  <>
-                    <textarea
-                      className="min-h-[280px] w-full resize-y rounded border border-input bg-card p-2.5 font-mono text-xs leading-[1.55] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      aria-label="providers.yaml 编辑器"
-                      value={yaml}
-                      spellCheck={false}
-                      onChange={(e) => {
-                        setYaml(e.target.value);
-                        setSaved(false);
-                        setSaveError('');
-                      }}
-                    />
-                    <div className="mt-2 flex items-center gap-2.5">
-                      <Button onClick={() => void handleSave()} disabled={saving}>
-                        保存
-                      </Button>
-                      {saved && (
-                        <>
-                          <span className="text-sm text-muted-foreground">已保存，重启应用后生效</span>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            disabled={restarting}
-                            onClick={() => void handleRestart()}
-                          >
-                            {restarting ? '正在重启…' : '立即重启'}
-                          </Button>
-                        </>
-                      )}
-                      {saveError && <span className="text-sm text-destructive">{saveError}</span>}
-                    </div>
-                  </>
-                )}
-              </section>
+              <ProvidersEditor
+                yaml={yaml}
+                yamlError={yamlError}
+                saved={saved}
+                saveError={saveError}
+                saving={saving}
+                specs={specs}
+                mode={editorMode}
+                onMode={(m) => void handleEditorMode(m)}
+                onYamlChange={(v) => {
+                  setYaml(v);
+                  setSaved(false);
+                  setSaveError('');
+                }}
+                onSpecsChange={(next) => {
+                  setSpecs(next);
+                  setSaved(false);
+                  setSaveError('');
+                }}
+                onSave={() => void handleSave()}
+                onPickDir={pickDirectory}
+                onPickFile={pickFile}
+              />
             </>
           )}
         </div>

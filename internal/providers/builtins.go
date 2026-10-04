@@ -2,7 +2,7 @@ package providers
 
 // Builtins 返回内置工具清单，顺序即界面展示顺序。
 func Builtins() []Provider {
-	return []Provider{Claude{}, Codex{}, Cursor{}, Gemini{}, Opencode{}}
+	return []Provider{Claude{}, Codex{}, Cursor{}, CodeBuddy{}, Gemini{}, Opencode{}}
 }
 
 // MergeProviders 把内置清单与 ~/.kshell/providers.yaml 里的自定义定义合并，按 ID 去重且内置优先。

@@ -1,25 +1,11 @@
 package desktop
 
 import (
-	"context"
 	"errors"
 	"strings"
 
 	"github.com/yangk/kshell/internal/discovery"
-
-	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
-
-// pickDirectory 是原生目录选择器的注入点：测试替换掉它，避免真弹窗卡住用例。
-var pickDirectory = func(ctx context.Context, title string) (string, error) {
-	if ctx == nil {
-		return "", errNotReady
-	}
-	return wailsRuntime.OpenDirectoryDialog(ctx, wailsRuntime.OpenDialogOptions{
-		Title:                title,
-		CanCreateDirectories: true,
-	})
-}
 
 // CreateProject 弹出原生目录选择器，选中即登记为项目（显示名取目录名）。
 // 用户取消返回 ""（不算错误），前端据此不做任何提示。

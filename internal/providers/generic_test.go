@@ -149,7 +149,7 @@ func TestGenericResumeCmdSubstitutesID(t *testing.T) {
 
 func TestDefaultProvidersYAMLCoversPresetTools(t *testing.T) {
 	content := DefaultProvidersYAML()
-	for _, want := range []string{"codebuddy", "opencode", "cline", "verified: false"} {
+	for _, want := range []string{"opencode", "cline", "verified: false"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("default providers.yaml missing %q", want)
 		}
@@ -312,5 +312,21 @@ func TestGenericDropsCommandOnlyStub(t *testing.T) {
 		`{"type":"message","role":"user","content":[{"type":"input_text","text":"<local-command-stdout>change session x"}]}` + "\n"
 	if _, err := g.ParseSession("cb.jsonl", []byte(content)); err != errGenericEmpty {
 		t.Fatalf("err = %v, want errGenericEmpty", err)
+	}
+}
+
+func TestFormatProvidersYAMLRoundTrip(t *testing.T) {
+	in := []GenericSpec{{ID: "demo", Name: "Demo"}}
+	in[0].Detect.Command = "demo"
+	raw, err := FormatProvidersYAML(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseProvidersYAML([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "demo" || got[0].Name != "Demo" || got[0].Detect.Command != "demo" {
+		t.Fatalf("got %+v yaml=%s", got, raw)
 	}
 }
