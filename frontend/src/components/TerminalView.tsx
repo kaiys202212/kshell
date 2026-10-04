@@ -52,6 +52,12 @@ export default function TerminalView({ term, active }: Props) {
       fontFamily: 'Consolas, "Cascadia Mono", monospace',
       fontSize: 13,
       scrollback: 5000,
+      // agent TUI（claude code / codebuddy 等 ink 系 CLI）在主缓冲区用 ED2 全屏重绘。
+      // 默认语义下 ED2 只擦除视口，重绘与用户滚动交错会让视口与缓冲失位：
+      // 滚动条已到底但画面停在别处，TUI 的输入行「再也滚不回来」，改窗口大小才复位。
+      // 开启后 ED2 把旧屏内容滚入滚动缓冲（与 Windows Terminal 行为一致），
+      // live 区恒在缓冲底部，阅读位置稳定、滚到底必见输入行（xterm 6.0 新选项，实测有效）。
+      scrollOnEraseInDisplay: true,
       theme: terminalTheme(resolved),
     });
     const fitAddon = new FitAddon();
