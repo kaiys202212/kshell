@@ -138,7 +138,7 @@ jobs:
       - name: Sync GitCode release
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-          GITCODE_OWNER: kaiys202212
+          GITCODE_OWNER: abraveheart2023
           GITCODE_REPO: kshell
           TAG: ${{ github.ref_name }}
         run: go run ./cmd/syncgitcode -dir dist -tag "$TAG"

@@ -32,11 +32,11 @@ func TestSyncGitCodeCreatesReleaseAndUploads(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	mux.HandleFunc("/api/v5/repos/kaiys202212/kshell/releases/tags/v0.2.0", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v5/repos/"+GitCodeOwner+"/kshell/releases/tags/v0.2.0", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"message":"not found"}`))
 	})
-	mux.HandleFunc("/api/v5/repos/kaiys202212/kshell/releases", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v5/repos/"+GitCodeOwner+"/kshell/releases", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.NotFound(w, r)
 			return
@@ -45,7 +45,7 @@ func TestSyncGitCodeCreatesReleaseAndUploads(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"tag_name": "v0.2.0"})
 	})
-	mux.HandleFunc("/api/v5/repos/kaiys202212/kshell/releases/v0.2.0/upload_url", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v5/repos/"+GitCodeOwner+"/kshell/releases/v0.2.0/upload_url", func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("file_name")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"url": srv.URL + "/obs/" + name,
@@ -68,7 +68,7 @@ func TestSyncGitCodeCreatesReleaseAndUploads(t *testing.T) {
 	err := SyncGitCode(context.Background(), SyncOptions{
 		BaseURL: srv.URL + "/api/v5",
 		Token:   "tok",
-		Owner:   "kaiys202212",
+		Owner:   GitCodeOwner,
 		Repo:    "kshell",
 		Tag:     "v0.2.0",
 		Dir:     dir,

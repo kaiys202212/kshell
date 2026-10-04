@@ -16,7 +16,7 @@ import (
 const (
 	Owner         = "kaiys202212"
 	Repo          = "kshell"
-	GitCodeOwner  = Owner
+	GitCodeOwner  = "abraveheart2023"
 	GitCodeRepo   = Repo
 	ZipName       = "kshell-desktop-windows-amd64.zip"
 	SumsName      = "SHA256SUMS"
