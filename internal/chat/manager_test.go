@@ -379,7 +379,7 @@ func TestAttachSessionBindsNewChatInfo(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 
-	if !m.AttachSession("disk-1", `d:/WS/`, "codebuddy", "修复页签标题") {
+	if !m.AttachSession("disk-1", `d:/WS/`, "codebuddy", "修复页签标题", 1, time.Time{}) {
 		t.Fatal("匹配的新建聊天应绑定成功")
 	}
 	got := m.List()[0]
@@ -411,16 +411,16 @@ func TestUpdateSessionTitleSyncsBound(t *testing.T) {
 	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, ToolID: "codebuddy", Title: "占位"}, Spec{Path: "x"}, ""); err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if !m.AttachSession("disk-1", `D:\ws`, "codebuddy", "") {
+	if !m.AttachSession("disk-1", `D:\ws`, "codebuddy", "", 0, time.Time{}) {
 		t.Fatal("前置绑定失败")
 	}
-	if !m.UpdateSessionTitle("disk-1", "真实标题") {
+	if !m.UpdateSessionTitle("disk-1", "真实标题", 1) {
 		t.Fatal("已绑定会话应能更新标题")
 	}
 	if got := m.List()[0]; got.Title != "真实标题" {
 		t.Fatalf("Title = %q", got.Title)
 	}
-	if m.UpdateSessionTitle("disk-1", "真实标题") {
+	if m.UpdateSessionTitle("disk-1", "真实标题", 1) {
 		t.Fatal("标题未变时不应报告有更新")
 	}
 }
@@ -432,7 +432,7 @@ func TestAttachSessionSkipsNonCandidates(t *testing.T) {
 	}
 
 	for _, c := range []struct{ ws, tool string }{{`D:\other`, "codebuddy"}, {`D:\ws`, "claude"}} {
-		if m.AttachSession("disk-1", c.ws, c.tool, "标题") {
+		if m.AttachSession("disk-1", c.ws, c.tool, "标题", 1, time.Time{}) {
 			t.Fatalf("ws=%q tool=%q 不应绑定", c.ws, c.tool)
 		}
 	}
@@ -440,7 +440,7 @@ func TestAttachSessionSkipsNonCandidates(t *testing.T) {
 	if _, err := m.Open("session:s1", Info{Kind: KindSession, SessionID: "s1", Workspace: `D:\ws`}, Spec{Path: "x"}, "s1"); err != nil {
 		t.Fatalf("open session: %v", err)
 	}
-	if m.AttachSession("disk-1", `D:\ws`, "claude", "标题") {
+	if m.AttachSession("disk-1", `D:\ws`, "claude", "标题", 1, time.Time{}) {
 		t.Fatal("KindSession 聊天不应被改写")
 	}
 	for _, it := range m.List() {
@@ -460,5 +460,53 @@ func TestManagerOpenNewKeepsInfoSessionIDEmpty(t *testing.T) {
 	}
 	if info.SessionID != "" {
 		t.Fatalf("KindNew 的 Info.SessionID 应留空等回填, got %q", info.SessionID)
+	}
+}
+
+func TestAttachSessionSkipsKnownIDs(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, Title: "占位", ToolID: "claude"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	m.RememberKnownIDs(info.ID, []string{"s1"})
+	if m.AttachSession("s1", `D:\ws`, "claude", "左侧旧标题", 12, time.Time{}) {
+		t.Fatal("打开时已存在的会话不得绑到新建聊天")
+	}
+	if got := m.List()[0]; got.Title != "占位" || got.SessionID != "" {
+		t.Fatalf("Info 被误绑: %+v", got)
+	}
+}
+
+func TestAttachSessionSkipsOldCreatedAt(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, Title: "占位", ToolID: "claude"}, Spec{Path: "x"}, ""); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	old := time.Now().Add(-3 * time.Hour)
+	if m.AttachSession("s1", `D:\ws`, "claude", "左侧旧标题", 12, old) {
+		t.Fatal("CreatedAt 早于打开时刻的旧会话不得绑定")
+	}
+}
+
+func TestAttachSessionKeepsPlaceholderUntilMessages(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, Title: "占位", ToolID: "claude"}, Spec{Path: "x"}, ""); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if !m.AttachSession("disk-new", `D:\ws`, "claude", "", 0, time.Time{}) {
+		t.Fatal("无消息时仍应绑定 SessionID")
+	}
+	if got := m.List()[0]; got.SessionID != "disk-new" || got.Title != "占位" {
+		t.Fatalf("无消息不得改标题: %+v", got)
+	}
+	if m.UpdateSessionTitle("disk-new", "真实标题", 0) {
+		t.Fatal("messages=0 不得改标题")
+	}
+	if !m.UpdateSessionTitle("disk-new", "真实标题", 1) {
+		t.Fatal("有消息后应改标题")
+	}
+	if got := m.List()[0]; got.Title != "真实标题" {
+		t.Fatalf("Title = %q", got.Title)
 	}
 }

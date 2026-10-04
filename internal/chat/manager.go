@@ -7,10 +7,14 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/yangk/kshell/internal/acp"
 	"github.com/yangk/kshell/internal/discovery"
 )
+
+// attachCreatedGrace 打开新建聊天后，仍可能绑上稍早落盘的新会话（agent 写盘略早于 Open）。
+const attachCreatedGrace = 2 * time.Minute
 
 var (
 	errNoBackend = errors.New("chat: 后端未装配")
@@ -41,6 +45,9 @@ type session struct {
 
 	pending map[string]chan permissionResult
 	exited  bool
+
+	openedAt time.Time
+	knownIDs map[string]bool // 打开时扫描结果里已有的磁盘会话，禁止绑到本新建聊天
 }
 
 type permissionResult struct {
@@ -115,16 +122,25 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	m.mu.Lock()
 	m.nextSeq++
 	s := &session{
-		id:      fmt.Sprintf("c%d", m.nextSeq),
-		key:     key,
-		info:    info,
-		pending: make(map[string]chan permissionResult),
-		tools:   make(map[string]*ToolCall),
+		id:       fmt.Sprintf("c%d", m.nextSeq),
+		key:      key,
+		info:     info,
+		pending:  make(map[string]chan permissionResult),
+		tools:    make(map[string]*ToolCall),
+		openedAt: time.Now(),
+		knownIDs: map[string]bool{},
 	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.handler = &sessionHandler{m: m, id: s.id}
 	s.info.ID = s.id
 	s.info.Status = StatusStarting
+	s.knownIDs = map[string]bool{}
+	for _, sid := range info.KnownSessionIDs {
+		if sid != "" {
+			s.knownIDs[sid] = true
+		}
+	}
+	s.info.KnownSessionIDs = nil
 	m.byKey[key] = s
 	m.byID[s.id] = s
 	m.order = append(m.order, s)
@@ -428,20 +444,47 @@ func (m *Manager) List() []Info {
 	return out
 }
 
+// RememberKnownIDs 记下打开本聊天时已存在的磁盘会话 ID，扫描回填时不得把它们绑上来。
+func (m *Manager) RememberKnownIDs(id string, ids []string) {
+	if id == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.byID[id]
+	if s == nil {
+		return
+	}
+	known := make(map[string]bool, len(ids))
+	for _, sid := range ids {
+		if sid != "" {
+			known[sid] = true
+		}
+	}
+	s.knownIDs = known
+}
+
 // AttachSession 把扫描发现的磁盘会话绑定到匹配的新建聊天上：
 // 新建（KindNew）聊天启动时磁盘上还没有会话记录，Info.SessionID 为空、标题是占位文案；
 // 扫描发现新会话后由 desktop 层调用本方法回填，页签标题与前端「恢复/切换」判断都依赖它。
 // 只绑未退出、未绑定（Info.SessionID 为空）的新建聊天；工作区路径归一化后比较，
 // toolID 与聊天 ToolID 不一致时不绑（ToolID 为空表示由 launch 选首选，允许绑定）。
+// 打开时已知的会话 ID、以及 CreatedAt 明显早于打开时刻的旧对话一律跳过，避免页签套用左侧列表标题。
+// 绑定 SessionID 后，仅当 messages>0 且 title 非空才改页签标题（用户已发言）。
 // 只改 Info：协议层继续用 agent 返回的内部 sessionID，Prompt/Cancel 不受影响。
-// 返回是否发生了绑定，供调用方决定是否通知前端刷新。
-func (m *Manager) AttachSession(sessionID, workspace, toolID, title string) bool {
+func (m *Manager) AttachSession(sessionID, workspace, toolID, title string, messages int, createdAt time.Time) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ws := discovery.NormalizePath(workspace)
 	for _, s := range m.order {
 		info := &s.info
 		if s.exited || info.Kind != KindNew || info.SessionID != "" {
+			continue
+		}
+		if s.knownIDs[sessionID] {
+			continue
+		}
+		if !createdAt.IsZero() && createdAt.Before(s.openedAt.Add(-attachCreatedGrace)) {
 			continue
 		}
 		if discovery.NormalizePath(info.Workspace) != ws {
@@ -451,7 +494,7 @@ func (m *Manager) AttachSession(sessionID, workspace, toolID, title string) bool
 			continue
 		}
 		info.SessionID = sessionID
-		if title != "" {
+		if messages > 0 && title != "" {
 			info.Title = title
 		}
 		return true
@@ -460,9 +503,9 @@ func (m *Manager) AttachSession(sessionID, workspace, toolID, title string) bool
 }
 
 // UpdateSessionTitle 按磁盘会话 ID 更新已绑定聊天的标题。
-// 标题为空或未变化时返回 false；用于扫描后把「后来才落盘」的真实标题刷到页签。
-func (m *Manager) UpdateSessionTitle(sessionID, title string) bool {
-	if sessionID == "" || title == "" {
+// 必须已有用户消息（messages>0）且标题非空；用于扫描后把后来落盘的真实标题刷到页签。
+func (m *Manager) UpdateSessionTitle(sessionID, title string, messages int) bool {
+	if sessionID == "" || title == "" || messages <= 0 {
 		return false
 	}
 	m.mu.Lock()

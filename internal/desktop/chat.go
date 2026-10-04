@@ -120,10 +120,11 @@ func (a *App) openWorkspaceACP(wsID, toolID string, allowFallback bool) (OpenedS
 	if m := o.Chats; m != nil {
 		if l, err := launch.ForWorkspaceACP(o.Providers, tools, ws, toolID, a.modelOptions(), a.permissionOptions()); err == nil {
 			info, err := openChat(m, "new:"+nextChatSeq(), chat.Info{
-				Kind:      chat.KindNew,
-				Workspace: ws.Path,
-				Title:     workspaceTerminalTitle(o.Providers, tools, ws, toolID),
-				ToolID:    toolID,
+				Kind:            chat.KindNew,
+				Workspace:       ws.Path,
+				Title:           workspaceTerminalTitle(o.Providers, tools, ws, toolID),
+				ToolID:          toolID,
+				KnownSessionIDs: a.knownSessionIDs(),
 			}, l, "")
 			if err == nil {
 				return OpenedSession{Kind: "chat", Chat: &info}, nil

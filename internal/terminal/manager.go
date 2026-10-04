@@ -77,6 +77,8 @@ type Info struct {
 	ExitCode  int
 	Cols      int
 	Rows      int
+	// KnownSessionIDs 仅新建会话使用：打开瞬间已有的磁盘会话，不进 JSON。
+	KnownSessionIDs []string `json:"-"`
 }
 
 // Backend 负责真正把进程挂到伪终端上启动；可打桩替换，便于测试。
@@ -108,6 +110,9 @@ type session struct {
 	exited bool
 	buf    []byte // 最近 defaultScrollback 字节的输出（超出丢最旧）
 	read   int    // 累计读到的字节数，收尾宽限用它判断「还有没有新输出」
+
+	openedAt time.Time
+	knownIDs map[string]bool // 打开时已有的磁盘会话，禁止绑到本新建终端
 }
 
 // Manager 维护 key→会话 与 id→会话 两张表，并为每个会话跑一个读协程。
@@ -199,6 +204,16 @@ func (m *Manager) startLocked(s *session, info Info, spec Spec, cols, rows int) 
 	s.info.ExitCode = 0
 	s.info.Cols, s.info.Rows = cols, rows
 	s.exited = false
+	s.openedAt = time.Now()
+	if s.knownIDs == nil {
+		s.knownIDs = map[string]bool{}
+	}
+	for _, sid := range info.KnownSessionIDs {
+		if sid != "" {
+			s.knownIDs[sid] = true
+		}
+	}
+	s.info.KnownSessionIDs = nil
 	s.gen++
 	go m.run(s, h, s.gen)
 	return nil
@@ -404,19 +419,49 @@ func (m *Manager) List() []Info {
 	return out
 }
 
+// attachCreatedGrace 打开新建终端后，仍可能绑上稍早落盘的新会话。
+const attachCreatedGrace = 2 * time.Minute
+
+// RememberKnownIDs 记下打开本终端时已存在的磁盘会话 ID，扫描回填时不得把它们绑上来。
+func (m *Manager) RememberKnownIDs(id string, ids []string) {
+	if id == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.byID[id]
+	if s == nil {
+		return
+	}
+	known := make(map[string]bool, len(ids))
+	for _, sid := range ids {
+		if sid != "" {
+			known[sid] = true
+		}
+	}
+	s.knownIDs = known
+}
+
 // AttachSession 把扫描发现的磁盘会话绑定到匹配的新建终端上：
 // 新建（KindNew）终端在启动时磁盘上还没有会话记录，SessionID 为空、标题是占位文案；
 // 扫描发现新会话后由 desktop 层调用本方法回填，页签标题与前端「恢复/切换」判断都依赖它。
 // 只绑运行中、未绑定（SessionID 为空）的新建终端；工作区路径归一化后比较，
 // toolID 与终端 ToolID 不一致时不绑（终端 ToolID 为空表示由 launch 选首选，允许绑定）。
-// 返回是否发生了绑定，供调用方决定是否通知前端刷新。
-func (m *Manager) AttachSession(sessionID, workspace, toolID, title string) bool {
+// 打开时已知的会话 ID、以及 CreatedAt 明显早于打开时刻的旧对话一律跳过。
+// 绑定 SessionID 后，仅当 messages>0 且 title 非空才改页签标题。
+func (m *Manager) AttachSession(sessionID, workspace, toolID, title string, messages int, createdAt time.Time) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ws := discovery.NormalizePath(workspace)
 	for _, s := range m.order {
 		info := &s.info
 		if s.exited || info.Kind != KindNew || info.SessionID != "" {
+			continue
+		}
+		if s.knownIDs[sessionID] {
+			continue
+		}
+		if !createdAt.IsZero() && createdAt.Before(s.openedAt.Add(-attachCreatedGrace)) {
 			continue
 		}
 		if discovery.NormalizePath(info.Workspace) != ws {
@@ -426,7 +471,7 @@ func (m *Manager) AttachSession(sessionID, workspace, toolID, title string) bool
 			continue
 		}
 		info.SessionID = sessionID
-		if title != "" {
+		if messages > 0 && title != "" {
 			info.Title = title
 		}
 		return true
@@ -435,9 +480,9 @@ func (m *Manager) AttachSession(sessionID, workspace, toolID, title string) bool
 }
 
 // UpdateSessionTitle 按磁盘会话 ID 更新已绑定终端的标题。
-// 标题为空或未变化时返回 false；用于扫描后把「后来才落盘」的真实标题刷到页签。
-func (m *Manager) UpdateSessionTitle(sessionID, title string) bool {
-	if sessionID == "" || title == "" {
+// 必须已有用户消息（messages>0）且标题非空。
+func (m *Manager) UpdateSessionTitle(sessionID, title string, messages int) bool {
+	if sessionID == "" || title == "" || messages <= 0 {
 		return false
 	}
 	m.mu.Lock()

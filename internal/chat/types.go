@@ -36,6 +36,8 @@ type Info struct {
 	Status    string
 	ExitCode  int
 	Error     string
+	// KnownSessionIDs 仅新建会话使用：打开瞬间已有的磁盘会话，不进 JSON。
+	KnownSessionIDs []string `json:"-"`
 }
 
 // ToolCall 是发给前端的工具调用快照（字段按前端约定的 PascalCase 序列化）。

@@ -82,7 +82,7 @@ func TestRunScanAttachesTerminal(t *testing.T) {
 	// 重扫发现新会话 s2：应回填到运行中的新建终端
 	setSessions([]providers.Session{
 		providers.Session{ID: "s1", ToolID: "claude", Workspace: `D:\ws-a`, Title: "旧会话", UpdatedAt: time.Now().Add(-time.Hour)},
-		providers.Session{ID: "s2", ToolID: "claude", Workspace: `D:\ws-a`, Title: "新任务", UpdatedAt: time.Now()},
+		{ID: "s2", ToolID: "claude", Workspace: `D:\ws-a`, Title: "新任务", UpdatedAt: time.Now(), Messages: 1, CreatedAt: time.Now()},
 	})
 	app.runScan()
 
@@ -131,7 +131,7 @@ func TestRunScanAttachesChat(t *testing.T) {
 	// 重扫发现新会话 s2：应回填到聊天 Info（协议层 sessionID 不受影响）
 	setSessions([]providers.Session{
 		providers.Session{ID: "s1", ToolID: "claude", Workspace: `D:\ws-a`, Title: "旧会话", UpdatedAt: time.Now().Add(-time.Hour)},
-		providers.Session{ID: "s2", ToolID: "claude", Workspace: `D:\ws-a`, Title: "新任务", UpdatedAt: time.Now()},
+		{ID: "s2", ToolID: "claude", Workspace: `D:\ws-a`, Title: "新任务", UpdatedAt: time.Now(), Messages: 1, CreatedAt: time.Now()},
 	})
 	app.runScan()
 
@@ -201,7 +201,7 @@ func TestRunScanSyncsBoundSessionTitle(t *testing.T) {
 
 	setSessions([]providers.Session{
 		{ID: "s1", ToolID: "claude", Workspace: `D:\ws-a`, Title: "旧会话", UpdatedAt: time.Now().Add(-time.Hour)},
-		{ID: "s2", ToolID: "claude", Workspace: `D:\ws-a`, Title: "修复登录页", UpdatedAt: time.Now()},
+		{ID: "s2", ToolID: "claude", Workspace: `D:\ws-a`, Title: "修复登录页", UpdatedAt: time.Now(), Messages: 1},
 	})
 	app.runScan()
 
@@ -216,5 +216,38 @@ func TestRunScanSyncsBoundSessionTitle(t *testing.T) {
 	}
 	if lastScanDone(t, events)["attached"] != true {
 		t.Fatalf("标题同步时 scan:done 也应带 attached，便于前端重取镜像")
+	}
+}
+
+// 新建页签不得套用左侧列表里已经存在的会话标题（即使用户消息和标题都齐全）。
+func TestRunScanDoesNotAttachExistingListTitle(t *testing.T) {
+	app, _, setSessions := attachTestApp(t, nil)
+	old := time.Now().Add(-2 * time.Hour)
+	setSessions([]providers.Session{
+		{ID: "s1", ToolID: "claude", Workspace: `D:\ws-a`, Title: "左侧旧对话", UpdatedAt: old, CreatedAt: old, Messages: 20},
+	})
+	app.runScan()
+
+	term, err := app.OpenWorkspaceTerminal(`D:\ws-a`, "claude", 80, 24)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceTerminal error: %v", err)
+	}
+	placeholder := term.Title
+
+	setSessions([]providers.Session{
+		{ID: "s1", ToolID: "claude", Workspace: `D:\ws-a`, Title: "左侧旧对话", UpdatedAt: time.Now(), CreatedAt: old, Messages: 21},
+	})
+	app.runScan()
+
+	for _, it := range app.ListTerminals() {
+		if it.ID != term.ID {
+			continue
+		}
+		if it.SessionID == "s1" || it.Title == "左侧旧对话" {
+			t.Fatalf("新建终端套用了已有会话: %+v", it)
+		}
+		if it.Title != placeholder {
+			t.Fatalf("占位标题被改写: got %q want %q", it.Title, placeholder)
+		}
 	}
 }
