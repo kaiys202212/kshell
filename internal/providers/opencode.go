@@ -161,3 +161,9 @@ func canonicalCWD(cwd string) string {
 func opencodeDBPath(home string) string {
 	return filepath.Join(home, ".local", "share", "opencode", "opencode.db")
 }
+
+func (Opencode) InstallRecipe() InstallRecipe {
+	r := npmInstall("opencode-ai")
+	r.PurgeDirs = []string{"~/.config/opencode", "~/.local/share/opencode"}
+	return r
+}

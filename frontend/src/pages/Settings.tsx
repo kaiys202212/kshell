@@ -1,5 +1,6 @@
 // 设置页：左导航分区（通用 / 模型 / 工具）+ 右侧内容。
 // 通用含外观/关闭/会话模式/权限；模型含预设与双协议 Base URL；工具含检测与 providers.yaml。
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useEffect, useState } from 'react';
 import {
   getAppearance,
@@ -7,9 +8,15 @@ import {
   getModelConfig,
   getPermissionMode,
   getSessionMode,
+  getToolInstallJob,
+  getToolInstallRecipe,
   getTools,
+  installBuiltinTool,
   listModelPresets,
   loadProvidersYAML,
+  onScanDone,
+  onToolInstallDone,
+  onToolInstallLog,
   restartApp,
   saveProvidersYAML,
   setAppearanceMode,
@@ -17,12 +24,14 @@ import {
   setModelConfig,
   setPermissionMode,
   setSessionMode,
+  uninstallBuiltinTool,
 } from '../lib/api';
-import type { ModelPreset, ToolInfo } from '../lib/api';
+import type { InstallRecipeView, ModelPreset, ToolInfo, ToolInstallJobView } from '../lib/api';
 import { cn } from '../lib/cn';
 import { useAppStore } from '../state/store';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
+import { Dialog } from '../components/ui/dialog';
 
 const MODEL_AGENTS = [
   { id: 'claude', label: 'Claude Code' },
@@ -64,17 +73,52 @@ export default function Settings() {
   const [modelAgents, setModelAgents] = useState<Record<string, string>>({});
   const [modelDirtyHint, setModelDirtyHint] = useState(false);
   const [modelSaving, setModelSaving] = useState(false);
+  const [recipes, setRecipes] = useState<Record<string, InstallRecipeView>>({});
+  const [job, setJob] = useState<ToolInstallJobView | null>(null);
+  const [activeId, setActiveId] = useState('');
+  const [installLog, setInstallLog] = useState('');
+  const [pendingId, setPendingId] = useState('');
+  const [uninstallTarget, setUninstallTarget] = useState<ToolInfo | null>(null);
+  const [purgeConfig, setPurgeConfig] = useState(false);
   const notify = useAppStore((s) => s.notify);
+
+  const loadRecipes = async (list: ToolInfo[]) => {
+    const pairs = await Promise.all(
+      list.map((t) =>
+        getToolInstallRecipe(t.ID)
+          .then((r) => [t.ID, r] as const)
+          .catch(() => null),
+      ),
+    );
+    const rec: Record<string, InstallRecipeView> = {};
+    for (const p of pairs) {
+      if (p) rec[p[0]] = p[1];
+    }
+    return rec;
+  };
 
   useEffect(() => {
     let cancelled = false;
     getTools()
-      .then((list) => {
-        if (!cancelled) setTools(list);
+      .then(async (list) => {
+        if (cancelled) return;
+        setTools(list);
+        const rec = await loadRecipes(list);
+        if (!cancelled) setRecipes(rec);
       })
       .catch((e: unknown) => {
         if (!cancelled) setToolsError(e instanceof Error ? e.message : String(e));
       });
+    getToolInstallJob()
+      .then((j) => {
+        if (cancelled) return;
+        setJob(j);
+        if (j.Running) {
+          setActiveId(j.ToolID);
+          setInstallLog(j.Log);
+        }
+      })
+      .catch(() => {});
     loadProvidersYAML()
       .then((content) => {
         if (!cancelled) setYaml(content);
@@ -122,6 +166,47 @@ export default function Settings() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    // 进行中的扫描结束时会推 scan:done。安装刚写过的工具表若被旧快照盖掉，
+    // 这里再取一次，按钮才能跟上（与其它页面订阅扫描完成的方式一致）。
+    return onScanDone(() => {
+      getTools()
+        .then(async (list) => {
+          setTools(list);
+          setRecipes(await loadRecipes(list));
+        })
+        .catch((e: unknown) => {
+          setToolsError(e instanceof Error ? e.message : String(e));
+        });
+    });
+  }, []);
+
+  useEffect(() => {
+    const offLog = onToolInstallLog((p) => {
+      setActiveId(p.toolID);
+      setInstallLog((prev) => (prev ? `${prev}\n${p.text}` : p.text));
+    });
+    const offDone = onToolInstallDone((p) => {
+      setPendingId('');
+      setJob((prev) => (prev ? { ...prev, Running: false } : prev));
+      if (p.ok === false) {
+        notify(p.error || '操作失败', 'error');
+      }
+      getTools()
+        .then(async (list) => {
+          setTools(list);
+          setRecipes(await loadRecipes(list));
+        })
+        .catch((e: unknown) => {
+          setToolsError(e instanceof Error ? e.message : String(e));
+        });
+    });
+    return () => {
+      offLog();
+      offDone();
+    };
+  }, [notify]);
 
   const handleAppearance = async (mode: string) => {
     if (mode === appearance) return;
@@ -232,7 +317,51 @@ export default function Settings() {
     }
   };
 
+  const busyAny = !!pendingId || !!job?.Running;
+
+  const cmdPreview = (t: ToolInfo, recipe: InstallRecipeView) => {
+    if (!t.BinPath) return recipe.InstallCmd;
+    return recipe.UninstallCmd || (t.BinPath ? `删除 ${t.BinPath}` : '未找到 cursor-agent 可执行文件');
+  };
+
+  const handleInstall = async (id: string) => {
+    if (busyAny) return;
+    setPendingId(id);
+    setActiveId(id);
+    setInstallLog('');
+    try {
+      await installBuiltinTool(id);
+    } catch (e: unknown) {
+      setPendingId('');
+      notify(e instanceof Error ? e.message : String(e), 'error');
+    }
+  };
+
+  const openUninstall = (t: ToolInfo) => {
+    if (busyAny) return;
+    setPurgeConfig(false);
+    setUninstallTarget(t);
+  };
+
+  const handleConfirmUninstall = async () => {
+    if (!uninstallTarget) return;
+    const id = uninstallTarget.ID;
+    const purge = purgeConfig;
+    setUninstallTarget(null);
+    setPurgeConfig(false);
+    setPendingId(id);
+    setActiveId(id);
+    setInstallLog('');
+    try {
+      await uninstallBuiltinTool(id, purge);
+    } catch (e: unknown) {
+      setPendingId('');
+      notify(e instanceof Error ? e.message : String(e), 'error');
+    }
+  };
+
   const inputClass = 'rounded border border-input bg-card px-2 py-1 text-sm';
+  const uninstallRecipe = uninstallTarget ? recipes[uninstallTarget.ID] : undefined;
 
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -481,31 +610,126 @@ export default function Settings() {
                 )}
                 {tools !== null && tools.length > 0 && (
                   <ul className="divide-y divide-border rounded border border-border">
-                    {tools.map((t) => (
-                      <li
-                        key={t.ID}
-                        className={cn(
-                          'flex items-center gap-2 px-2.5 py-1.5 text-xs transition-colors hover:bg-muted',
-                          !t.Installed && 'opacity-50',
-                        )}
-                        title={
-                          t.Source === 'config-dir'
-                            ? '只检测到配置目录，没有可执行程序，可用性未验证'
-                            : t.BinPath
-                        }
-                      >
-                        <span className="font-medium">{t.Name}</span>
-                        {t.Source === 'config-dir' && <Badge variant="warning">未验证</Badge>}
-                        {t.Installed ? (
-                          t.Version && (
-                            <span className="text-xs text-muted-foreground">{t.Version}</span>
-                          )
-                        ) : (
-                          <span className="ml-auto text-xs text-muted-foreground">未安装</span>
-                        )}
-                      </li>
-                    ))}
+                    {tools.map((t) => {
+                      const recipe = recipes[t.ID];
+                      const rowBusy =
+                        pendingId === t.ID || (!!job?.Running && job.ToolID === t.ID);
+                      const hasBin = !!t.BinPath;
+                      return (
+                        <li
+                          key={t.ID}
+                          className={cn(
+                            'flex flex-col gap-1 px-2.5 py-1.5 text-xs transition-colors hover:bg-muted',
+                            !t.Installed && 'opacity-50',
+                          )}
+                          title={
+                            t.Source === 'config-dir'
+                              ? '只检测到配置目录，没有可执行程序，可用性未验证'
+                              : t.BinPath
+                          }
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span className="font-medium">{t.Name}</span>
+                              {t.Source === 'config-dir' && <Badge variant="warning">未验证</Badge>}
+                              {t.Installed ? (
+                                t.Version && (
+                                  <span className="text-xs text-muted-foreground">{t.Version}</span>
+                                )
+                              ) : (
+                                <span className="text-xs text-muted-foreground">未安装</span>
+                              )}
+                            </div>
+                            {recipe && (
+                              <Button
+                                size="sm"
+                                variant={hasBin ? 'secondary' : 'default'}
+                                disabled={busyAny}
+                                onClick={() =>
+                                  hasBin ? openUninstall(t) : void handleInstall(t.ID)
+                                }
+                              >
+                                {rowBusy
+                                  ? hasBin
+                                    ? '卸载中…'
+                                    : '安装中…'
+                                  : hasBin
+                                    ? '卸载'
+                                    : '安装'}
+                              </Button>
+                            )}
+                          </div>
+                          {recipe && (
+                            <p className="font-mono text-[11px] text-muted-foreground">
+                              {cmdPreview(t, recipe)}
+                            </p>
+                          )}
+                          {activeId === t.ID && installLog && (
+                            <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted/60 p-1.5 font-mono text-[11px]">
+                              {installLog}
+                            </pre>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
+                )}
+                {uninstallTarget && uninstallRecipe && (
+                  <Dialog
+                    open
+                    onOpenChange={(o) => {
+                      if (!o) {
+                        setUninstallTarget(null);
+                        setPurgeConfig(false);
+                      }
+                    }}
+                    className="w-80"
+                  >
+                    <DialogPrimitive.Title className="mb-2 text-sm font-medium">
+                      卸载 {uninstallTarget.Name}
+                    </DialogPrimitive.Title>
+                    <p className="mb-3 font-mono text-[11px] text-muted-foreground">
+                      {cmdPreview(uninstallTarget, uninstallRecipe)}
+                    </p>
+                    {uninstallRecipe.CanPurge && (
+                      <div className="mb-3">
+                        <label className="flex items-center gap-2 text-xs">
+                          <input
+                            type="checkbox"
+                            checked={purgeConfig}
+                            onChange={(e) => setPurgeConfig(e.target.checked)}
+                            aria-label="同时清除配置"
+                          />
+                          同时清除配置
+                        </label>
+                        {purgeConfig && (
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            <ul className="mb-1 list-disc pl-4">
+                              {uninstallRecipe.PurgeDirs.map((d) => (
+                                <li key={d}>{d}</li>
+                              ))}
+                            </ul>
+                            <p>将删除会话历史</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setUninstallTarget(null);
+                          setPurgeConfig(false);
+                        }}
+                      >
+                        取消
+                      </Button>
+                      <Button variant="destructive" size="sm" onClick={() => void handleConfirmUninstall()}>
+                        确认卸载
+                      </Button>
+                    </div>
+                  </Dialog>
                 )}
               </section>
 

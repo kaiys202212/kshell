@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -288,5 +289,32 @@ func TestCursorResumeCmd(t *testing.T) {
 	got = p.ResumeCmd(Session{ID: "uuid-9", ToolID: "cursor", Workspace: `d:\no\such\dir`}, "cursor-agent")
 	if got.Dir != "" {
 		t.Fatalf("dir = %q, want 空串（目录不存在时回退）", got.Dir)
+	}
+}
+
+func TestCursorDetectFindsInstallDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	spec := Cursor{}.DetectSpec(home)
+	if len(spec.InstallDirs) == 0 {
+		t.Fatal("cursor 必须声明 InstallDirs")
+	}
+
+	var dir string
+	if runtime.GOOS == "windows" {
+		local := t.TempDir()
+		t.Setenv("LOCALAPPDATA", local)
+		dir = filepath.Join(local, "cursor-agent")
+	} else {
+		dir = filepath.Join(home, ".local", "bin")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeBin(t, dir, "cursor-agent", "echo cursor-agent")
+
+	got := Detect(spec, home)
+	if !got.Installed || got.Source != "install-dir" {
+		t.Fatalf("got %+v, want install-dir", got)
 	}
 }

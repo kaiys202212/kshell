@@ -180,3 +180,9 @@ func (Codex) ThemeOverrides(theme appearance.Theme, _ string) ([]string, map[str
 	}
 	return []string{"-c", "tui.theme=" + name}, nil
 }
+
+func (Codex) InstallRecipe() InstallRecipe {
+	r := npmInstall("@openai/codex")
+	r.PurgeDirs = []string{"~/.codex"}
+	return r
+}

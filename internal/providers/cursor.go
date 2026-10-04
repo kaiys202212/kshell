@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -24,9 +25,15 @@ func (Cursor) ID() string          { return cursorID }
 func (Cursor) DisplayName() string { return "Cursor" }
 
 func (Cursor) DetectSpec(home string) DetectSpec {
+	// 官方安装脚本把二进制放在这些目录，且往往不写进当前进程的 PATH。
+	dirs := []string{"~/.local/bin"}
+	if runtime.GOOS == "windows" {
+		dirs = []string{`%LOCALAPPDATA%\cursor-agent`}
+	}
 	return DetectSpec{
-		BinName:    "cursor-agent",
-		ConfigDirs: []string{"~/.cursor"},
+		BinName:     "cursor-agent",
+		InstallDirs: dirs,
+		ConfigDirs:  []string{"~/.cursor"},
 	}
 }
 
@@ -144,4 +151,19 @@ func (Cursor) SlugToWorkspace(slug string) string {
 		return slug[0:1] + `:\` + strings.ReplaceAll(slug[2:], "-", `\`)
 	}
 	return strings.ReplaceAll(slug, "-", string(filepath.Separator))
+}
+
+func (Cursor) InstallRecipe() InstallRecipe {
+	if runtime.GOOS == "windows" {
+		return InstallRecipe{
+			// 官方文档：irm 'https://cursor.com/install?win32=true' | iex
+			// cursor.com/install.ps1 会 500，不能再用。
+			InstallCmd: `irm 'https://cursor.com/install?win32=true' | iex`,
+			Shell:      "powershell",
+		}
+	}
+	return InstallRecipe{
+		InstallCmd: "curl https://cursor.com/install -fsS | bash",
+		Shell:      "sh",
+	}
 }

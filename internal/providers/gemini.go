@@ -117,3 +117,9 @@ func (Gemini) ThemeOverrides(theme appearance.Theme, cacheDir string) ([]string,
 	}
 	return nil, map[string]string{"GEMINI_CLI_SYSTEM_SETTINGS_PATH": path}
 }
+
+func (Gemini) InstallRecipe() InstallRecipe {
+	r := npmInstall("@google/gemini-cli")
+	r.PurgeDirs = []string{"~/.gemini"}
+	return r
+}

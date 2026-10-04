@@ -62,6 +62,9 @@ func ProbeVersion(bin string) string {
 }
 
 func expandHome(path, home string) string {
+	// InstallDirs 里既有 ~/.local/bin，也有 %LOCALAPPDATA%\cursor-agent。
+	// os.ExpandEnv 只展开 $VAR；Windows 的 %VAR% 要单独处理。
+	path = expandEnv(path)
 	if path == "~" {
 		return home
 	}
@@ -69,6 +72,29 @@ func expandHome(path, home string) string {
 		return filepath.Join(home, path[2:])
 	}
 	return path
+}
+
+func expandEnv(path string) string {
+	path = os.ExpandEnv(path)
+	if runtime.GOOS != "windows" || !strings.Contains(path, "%") {
+		return path
+	}
+	var b strings.Builder
+	for i := 0; i < len(path); i++ {
+		if path[i] != '%' {
+			b.WriteByte(path[i])
+			continue
+		}
+		rel := strings.IndexByte(path[i+1:], '%')
+		if rel <= 0 {
+			b.WriteByte('%')
+			continue
+		}
+		name := path[i+1 : i+1+rel]
+		b.WriteString(os.Getenv(name))
+		i += rel + 1
+	}
+	return b.String()
 }
 
 // binCandidates 列出目录下可能的可执行文件名。Windows 上 npm 全局安装的 CLI 常是 .cmd/.ps1 包装脚本，
