@@ -5,7 +5,7 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SessionList from './SessionList';
-import type { Session, TerminalInfo } from '../lib/api';
+import type { ChatInfo, ChatPermissionRequest, Session, TerminalInfo } from '../lib/api';
 import { useAppStore } from '../state/store';
 
 const mocks = vi.hoisted(() => ({
@@ -38,7 +38,13 @@ beforeEach(() => {
     return () => {};
   });
   mocks.getSessions.mockResolvedValue(sessions);
-  useAppStore.setState({ windowStatus: {}, terminals: [] });
+  useAppStore.setState({
+    windowStatus: {},
+    terminals: [],
+    chats: [],
+    chatPermissions: {},
+    activityCompleted: {},
+  });
 });
 
 const renderList = () =>
@@ -68,6 +74,28 @@ function terminal(over: Partial<TerminalInfo> = {}): TerminalInfo {
     ...over,
   };
 }
+
+function chat(over: Partial<ChatInfo> = {}): ChatInfo {
+  return {
+    ID: 'c1',
+    Kind: 'session',
+    SessionID: 's1',
+    Workspace: 'd:\\proj-a',
+    Title: '修复上传白名单',
+    ToolID: 'codebuddy',
+    Status: 'running',
+    ExitCode: 0,
+    Error: '',
+    ...over,
+  };
+}
+
+const samplePermission: ChatPermissionRequest = {
+  RequestID: 'r1',
+  SessionID: 's1',
+  ToolCall: { ToolCallID: 'tc1' },
+  Options: [{ OptionID: 'allow', Name: '允许', Kind: 'allow_once' }],
+};
 
 describe('SessionList', () => {
   it('只显示当前工作区的会话（路径大小写不敏感），按 updatedAt 降序排列', async () => {
@@ -188,8 +216,9 @@ describe('SessionList', () => {
     const sw = within(row).getByRole('button', { name: '切换' });
     // 主按钮 default variant 已改为渐变，断言渐变起点仍是主色
     expect(sw.className).toContain('from-primary');
-    // 运行中标记 + 行高亮
-    expect(within(row).getByText('✓')).toBeInTheDocument();
+    // 活动图标「执行中」+ 行高亮（不再用 ✓）
+    expect(within(row).getByLabelText('执行中')).toBeInTheDocument();
+    expect(within(row).queryByText('✓')).toBeNull();
     expect(row).toHaveClass('bg-primary/8');
 
     fireEvent.click(sw);
@@ -205,30 +234,23 @@ describe('SessionList', () => {
 
     expect(within(row).getByRole('button', { name: '恢复' })).toBeInTheDocument();
     expect(within(row).queryByText('✓')).toBeNull();
+    expect(within(row).queryByLabelText('执行中')).toBeNull();
+    expect(within(row).queryByLabelText('运行完成')).toBeNull();
   });
 
   it('该会话已有打开中的 ACP 聊天时也算激活：文案变「切换」并走高亮样式', async () => {
     useAppStore.setState({
-      chats: [
-        {
-          ID: 'c1',
-          Kind: 'session',
-          SessionID: 's1',
-          Workspace: 'd:\\proj-a',
-          Title: '修复上传白名单',
-          ToolID: 'codebuddy',
-          Status: 'ready',
-          ExitCode: 0,
-          Error: '',
-        },
-      ],
+      chats: [chat({ Status: 'ready' })],
     });
     renderList();
     const row = await findRow('修复上传白名单');
 
     expect(within(row).queryByRole('button', { name: '恢复' })).toBeNull();
     expect(within(row).getByRole('button', { name: '切换' })).toBeInTheDocument();
-    expect(within(row).getByText('✓')).toBeInTheDocument();
+    // ready 且无 completed：按钮/高亮仍激活，但不显示 ✓ 或活动图标
+    expect(within(row).queryByText('✓')).toBeNull();
+    expect(within(row).queryByLabelText('执行中')).toBeNull();
+    expect(within(row).queryByLabelText('运行完成')).toBeNull();
     expect(row).toHaveClass('bg-primary/8');
   });
 
@@ -317,3 +339,57 @@ describe('SessionList', () => {
     expect(useAppStore.getState().scanState).toBe('done');
   });
 });
+
+describe('SessionList agent 活动图标', () => {
+  it('打开 chat running 时列表行有「执行中」', async () => {
+    useAppStore.setState({ chats: [chat({ Status: 'running' })] });
+    renderList();
+    const row = await findRow('修复上传白名单');
+    expect(within(row).getByLabelText('执行中')).toBeInTheDocument();
+    expect(within(row).queryByText('✓')).toBeNull();
+  });
+
+  it('有 permission 时列表行有「待用户确认」', async () => {
+    useAppStore.setState({
+      chats: [chat({ Status: 'running' })],
+      chatPermissions: { c1: samplePermission },
+    });
+    renderList();
+    const row = await findRow('修复上传白名单');
+    expect(within(row).getByLabelText('待用户确认')).toBeInTheDocument();
+    expect(within(row).queryByLabelText('执行中')).toBeNull();
+  });
+
+  it('ready + activityCompleted 时列表行有「运行完成」', async () => {
+    useAppStore.setState({
+      chats: [chat({ Status: 'ready' })],
+      activityCompleted: { c1: true },
+    });
+    renderList();
+    const row = await findRow('修复上传白名单');
+    expect(within(row).getByLabelText('运行完成')).toBeInTheDocument();
+  });
+
+  it('仅打开 ready、无 completed 时没有 ✓ 也没有活动图标', async () => {
+    useAppStore.setState({ chats: [chat({ Status: 'ready' })] });
+    renderList();
+    const row = await findRow('修复上传白名单');
+    expect(within(row).queryByText('✓')).toBeNull();
+    expect(within(row).queryByLabelText('执行中')).toBeNull();
+    expect(within(row).queryByLabelText('待用户确认')).toBeNull();
+    expect(within(row).queryByLabelText('运行完成')).toBeNull();
+  });
+
+  it('终端 exited + completed 时列表行有「运行完成」', async () => {
+    useAppStore.setState({
+      terminals: [terminal({ Status: 'exited', ExitCode: 0 })],
+      activityCompleted: { t1: true },
+    });
+    renderList();
+    const row = await findRow('修复上传白名单');
+    expect(within(row).getByLabelText('运行完成')).toBeInTheDocument();
+    // 按钮仍按非 exited 逻辑：exited →「恢复」
+    expect(within(row).getByRole('button', { name: '恢复' })).toBeInTheDocument();
+  });
+});
+

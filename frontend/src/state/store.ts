@@ -102,6 +102,11 @@ interface AppState {
   chatPermissions: Record<string, ChatPermissionRequest | null>;
   setChatPermission(id: string, req: ChatPermissionRequest | null): void;
 
+  // Agent 活动「本轮已结束」标记（不持久化；新 running/starting 或移除时清除）
+  activityCompleted: Record<string, true>;
+  markActivityCompleted(id: string): void;
+  clearActivityCompleted(id: string): void;
+
   // 工作区页签三栏宽度（持久化，跨会话保留）
   layout: LayoutSizes;
   setLayout(patch: Partial<LayoutSizes>): void;
@@ -176,18 +181,28 @@ export const useAppStore = create<AppState>()(
       upsertTerminal: (info) =>
         set((s) => {
           const idx = s.terminals.findIndex((t) => t.ID === info.ID);
-          if (idx < 0) return { terminals: [...s.terminals, info] };
+          const clearCompleted =
+            info.Status === 'running' || info.Status === 'starting'
+              ? omitKey(s.activityCompleted, info.ID)
+              : s.activityCompleted;
+          if (idx < 0) {
+            return { terminals: [...s.terminals, info], activityCompleted: clearCompleted };
+          }
           const terminals = s.terminals.slice();
           terminals[idx] = info;
-          return { terminals };
+          return { terminals, activityCompleted: clearCompleted };
         }),
       removeTerminal: (id) =>
-        set((s) => ({ terminals: s.terminals.filter((t) => t.ID !== id) })),
+        set((s) => ({
+          terminals: s.terminals.filter((t) => t.ID !== id),
+          activityCompleted: omitKey(s.activityCompleted, id),
+        })),
       markTerminalExited: (id, exitCode) =>
         set((s) => ({
           terminals: s.terminals.map((t) =>
             t.ID === id ? { ...t, Status: 'exited', ExitCode: exitCode } : t,
           ),
+          activityCompleted: { ...s.activityCompleted, [id]: true },
         })),
       setTerminals: (list) => set({ terminals: list }),
 
@@ -195,10 +210,16 @@ export const useAppStore = create<AppState>()(
       upsertChat: (info) =>
         set((s) => {
           const idx = s.chats.findIndex((c) => c.ID === info.ID);
-          if (idx < 0) return { chats: [...s.chats, info] };
+          const clearCompleted =
+            info.Status === 'running' || info.Status === 'starting'
+              ? omitKey(s.activityCompleted, info.ID)
+              : s.activityCompleted;
+          if (idx < 0) {
+            return { chats: [...s.chats, info], activityCompleted: clearCompleted };
+          }
           const chats = s.chats.slice();
           chats[idx] = info;
-          return { chats };
+          return { chats, activityCompleted: clearCompleted };
         }),
       removeChat: (id) =>
         set((s) => ({
@@ -206,6 +227,7 @@ export const useAppStore = create<AppState>()(
           chatItems: omitKey(s.chatItems, id),
           chatSeq: omitKey(s.chatSeq, id),
           chatPermissions: omitKey(s.chatPermissions, id),
+          activityCompleted: omitKey(s.activityCompleted, id),
         })),
       markChatExited: (id, exitCode, error) =>
         set((s) => ({
@@ -225,6 +247,7 @@ export const useAppStore = create<AppState>()(
           // 仅负责「一轮结束回到 ready」与错误记录；running 由发送侧乐观置位。
           // 只有状态真的变化时才新建 chats，避免每个流式分片都触发列表重渲染。
           let chats = s.chats;
+          let activityCompleted = s.activityCompleted;
           if (u.Type === 'error' || u.Type === 'turn_done') {
             chats = s.chats.map((c) => {
               if (c.ID !== id) return c;
@@ -235,11 +258,18 @@ export const useAppStore = create<AppState>()(
               if (u.Type === 'error') return { ...c, Status: 'ready', Error: u.Text ?? c.Error };
               return { ...c, Status: 'ready' };
             });
+            if (u.Type === 'turn_done') {
+              const chat = s.chats.find((c) => c.ID === id);
+              if (chat && chat.Status !== 'exited') {
+                activityCompleted = { ...s.activityCompleted, [id]: true };
+              }
+            }
           }
           return {
             chatItems: { ...s.chatItems, [id]: items },
             chatSeq: { ...s.chatSeq, [id]: u.Seq },
             chats,
+            activityCompleted,
           };
         }),
       setChatItems: (id, items) =>
@@ -264,6 +294,15 @@ export const useAppStore = create<AppState>()(
           if (req) next[id] = req;
           else delete next[id];
           return { chatPermissions: next };
+        }),
+
+      activityCompleted: {},
+      markActivityCompleted: (id) =>
+        set((s) => ({ activityCompleted: { ...s.activityCompleted, [id]: true } })),
+      clearActivityCompleted: (id) =>
+        set((s) => {
+          if (!(id in s.activityCompleted)) return {};
+          return { activityCompleted: omitKey(s.activityCompleted, id) };
         }),
 
       layout: LAYOUT_DEFAULT,

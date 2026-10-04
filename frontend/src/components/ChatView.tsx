@@ -70,6 +70,7 @@ export default function ChatView({ chat, active }: Props) {
     const text = draft.trim();
     if (!text || running) return;
     setDraft('');
+    useAppStore.getState().clearActivityCompleted(id);
     // 乐观置 running：turn_done/error 的 chat:update 会把它改回 ready
     useAppStore.getState().upsertChat({ ...chat, Status: 'running' });
     // 发送失败要回退状态并提示，否则 optimistic running 会一直卡住

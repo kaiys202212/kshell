@@ -32,9 +32,11 @@ import ResizeHandle from '../components/ResizeHandle';
 import SessionList from '../components/SessionList';
 import SshPanel from '../components/SshPanel';
 import TerminalView from '../components/TerminalView';
+import AgentActivityIcon from '../components/AgentActivityIcon';
 import ChatView from '../components/ChatView';
 import NewSessionMenu from '../components/NewSessionMenu';
 import { ToolDot } from '../components/ui/tool-dot';
+import { resolveAgentActivity } from '../state/agentActivity';
 import { LAYOUT_DEFAULT, useAppStore } from '../state/store';
 import type { WorkspaceTab } from '../state/store';
 
@@ -64,16 +66,30 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   const [busy, setBusy] = useState(false);
   // 新建会话后的延迟重扫定时器（卸载/再次新建时清掉，避免重复触发）
   const rescanTimer = useRef<number | null>(null);
+  // 供 selectCenterTab 读最新 centerTab，避免在 setState updater 里改 store（会触发 React 渲染期 setState 警告）
+  const centerTabRef = useRef(centerTab);
+  centerTabRef.current = centerTab;
 
   const layout = useAppStore((s) => s.layout);
   const setLayout = useAppStore((s) => s.setLayout);
   const terminals = useAppStore((s) => s.terminals);
   const chats = useAppStore((s) => s.chats);
+  const chatPermissions = useAppStore((s) => s.chatPermissions);
+  const activityCompleted = useAppStore((s) => s.activityCompleted);
   const notify = useAppStore((s) => s.notify);
   // 新建会话的工具选择：全局持久化（'' = 自动），跨页签/重启记住用户的选择
   const toolId = useAppStore((s) => s.newSessionTool);
   const setToolId = useAppStore((s) => s.setNewSessionTool);
 
+  // 切走聊天/终端页签时清掉上一页签的「运行完成」；预览页签不参与 completed
+  const selectCenterTab = useCallback((next: string) => {
+    const prev = centerTabRef.current;
+    if (prev !== next && prev !== PREVIEW_TAB) {
+      useAppStore.getState().clearActivityCompleted(prev);
+    }
+    centerTabRef.current = next;
+    setCenterTab(next);
+  }, []);
 
   // 本工作区的内嵌终端（按创建顺序）
   const terms = useMemo<TerminalInfo[]>(
@@ -127,9 +143,9 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
       !terms.some((t) => t.ID === centerTab) &&
       !chatsForWs.some((c) => c.ID === centerTab)
     ) {
-      setCenterTab(PREVIEW_TAB);
+      selectCenterTab(PREVIEW_TAB);
     }
-  }, [terms, chatsForWs, centerTab]);
+  }, [terms, chatsForWs, centerTab, selectCenterTab]);
 
   // 恢复历史会话：优先走 ACP 聊天，Go 侧按可用性决定聊天或回退终端
   const openChatOrTerminal = useCallback(
@@ -138,10 +154,10 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         .then((res) => {
           if (res.Kind === 'chat' && res.Chat) {
             useAppStore.getState().upsertChat(res.Chat);
-            setCenterTab(res.Chat.ID);
+            selectCenterTab(res.Chat.ID);
           } else if (res.Terminal) {
             useAppStore.getState().upsertTerminal(res.Terminal);
-            setCenterTab(res.Terminal.ID);
+            selectCenterTab(res.Terminal.ID);
           }
           if (res.Fallback) notify(`已回退到终端模式：${res.Fallback}`, 'info');
         })
@@ -149,7 +165,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           notify(`打开会话失败：${e instanceof Error ? e.message : String(e)}`, 'error');
         });
     },
-    [notify],
+    [notify, selectCenterTab],
   );
 
   useEffect(
@@ -167,10 +183,10 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
       const res = await openWorkspace(tab.id, id);
       if (res.Kind === 'chat' && res.Chat) {
         useAppStore.getState().upsertChat(res.Chat);
-        setCenterTab(res.Chat.ID);
+        selectCenterTab(res.Chat.ID);
       } else if (res.Terminal) {
         useAppStore.getState().upsertTerminal(res.Terminal);
-        setCenterTab(res.Terminal.ID);
+        selectCenterTab(res.Terminal.ID);
       }
       if (res.Fallback) notify(`已回退到终端模式：${res.Fallback}`, 'info');
       // 新会话要过一会儿才落进工具自己的会话存储，延迟重扫一次让会话列表把它带出来
@@ -189,18 +205,18 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   const handleCloseTerminal = (id: string) => {
     useAppStore.getState().removeTerminal(id);
     closeTerminal(id).catch(() => {});
-    if (centerTab === id) setCenterTab(PREVIEW_TAB);
+    if (centerTab === id) selectCenterTab(PREVIEW_TAB);
   };
 
   const handleCloseChat = (id: string) => {
     useAppStore.getState().removeChat(id);
     closeChat(id).catch(() => {});
-    if (centerTab === id) setCenterTab(PREVIEW_TAB);
+    if (centerTab === id) selectCenterTab(PREVIEW_TAB);
   };
 
   const openFile = (path: string) => {
     setPreviewPath(path);
-    setCenterTab(PREVIEW_TAB);
+    selectCenterTab(PREVIEW_TAB);
   };
 
   return (
@@ -245,7 +261,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             role="tab"
             aria-selected={centerTab === PREVIEW_TAB}
             className={cn(centerTabBase, centerTab === PREVIEW_TAB && centerTabActive)}
-            onClick={() => setCenterTab(PREVIEW_TAB)}
+            onClick={() => selectCenterTab(PREVIEW_TAB)}
           >
             预览
             {centerTab === PREVIEW_TAB && (
@@ -257,12 +273,17 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             const active = centerTab === t.ID;
             // 渲染层再洗一次：Cursor 等历史缓存标题可能仍带 <timestamp>Sunday...
             const label = displayTitle(t.Title) || t.Title;
+            const activity = resolveAgentActivity({
+              status: t.Status,
+              hasPermission: false,
+              completed: !!activityCompleted[t.ID],
+            });
             return (
               <div
                 key={t.ID}
                 className={cn(centerTabBase, active && centerTabActive)}
                 // 整条页签可点（标题右侧的工具徽标/留白此前点不动，只有标题按钮响应）
-                onClick={() => setCenterTab(t.ID)}
+                onClick={() => selectCenterTab(t.ID)}
                 onAuxClick={(e) => {
                   if (e.button === 1) {
                     e.preventDefault();
@@ -278,11 +299,12 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                   if (!p) return;
                   e.preventDefault();
                   e.stopPropagation();
-                  setCenterTab(t.ID); // 先切页签，插入后用户立即看到
+                  selectCenterTab(t.ID); // 先切页签，插入后用户立即看到
                   if (t.Status !== 'exited') void writeTerminal(t.ID, encodeTerminalInput(quotePathForShell(p)));
                 }}
               >
-                {t.Status === 'exited' && (
+                <AgentActivityIcon activity={activity} />
+                {activity === 'idle' && t.Status === 'exited' && (
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground" />
                 )}
                 <button
@@ -317,12 +339,17 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           {chatsForWs.map((c) => {
             const active = centerTab === c.ID;
             const label = displayTitle(c.Title) || c.Title;
+            const activity = resolveAgentActivity({
+              status: c.Status,
+              hasPermission: !!chatPermissions[c.ID],
+              completed: !!activityCompleted[c.ID],
+            });
             return (
               <div
                 key={c.ID}
                 className={cn(centerTabBase, active && centerTabActive)}
                 // 整条页签可点（标题右侧的徽标/留白也响应）
-                onClick={() => setCenterTab(c.ID)}
+                onClick={() => selectCenterTab(c.ID)}
                 onAuxClick={(e) => {
                   if (e.button === 1) {
                     e.preventDefault();
@@ -338,13 +365,11 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                   if (!p) return;
                   e.preventDefault();
                   e.stopPropagation();
-                  setCenterTab(c.ID);
+                  selectCenterTab(c.ID);
                   appendChatInput(c.ID, quotePathForShell(p));
                 }}
               >
-                {c.Status === 'running' && (
-                  <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-success" title="运行中" />
-                )}
+                <AgentActivityIcon activity={activity} />
                 <button
                   role="tab"
                   aria-selected={active}

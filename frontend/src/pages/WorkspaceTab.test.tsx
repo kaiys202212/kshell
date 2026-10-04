@@ -84,6 +84,8 @@ beforeEach(() => {
   useAppStore.setState({
     terminals: [term],
     chats: [chat],
+    chatPermissions: {},
+    activityCompleted: {},
     layout: { left: 288, right: 300 },
   });
 });
@@ -156,5 +158,73 @@ describe('WorkspaceTabView 页签拖入', () => {
     } finally {
       unregisterChatInput('c1');
     }
+  });
+});
+
+describe('WorkspaceTabView agent 活动图标', () => {
+  it('chat Status=running 时页签出现「执行中」', () => {
+    useAppStore.setState({ chats: [{ ...chat, Status: 'running' }], terminals: [] });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    expect(screen.getByLabelText('执行中')).toBeInTheDocument();
+  });
+
+  it('chatPermissions 存在时页签出现「待用户确认」', () => {
+    useAppStore.setState({
+      chats: [{ ...chat, Status: 'running' }],
+      terminals: [],
+      chatPermissions: {
+        c1: {
+          RequestID: 'r1',
+          SessionID: 's1',
+          ToolCall: { ToolCallID: 'tc1' },
+          Options: [{ OptionID: 'allow', Name: '允许', Kind: 'allow_once' }],
+        },
+      },
+    });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    expect(screen.getByLabelText('待用户确认')).toBeInTheDocument();
+    expect(screen.queryByLabelText('执行中')).not.toBeInTheDocument();
+  });
+
+  it('activityCompleted 且 ready 时页签出现「运行完成」', () => {
+    useAppStore.setState({
+      chats: [{ ...chat, Status: 'ready' }],
+      terminals: [],
+      activityCompleted: { c1: true },
+    });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    expect(screen.getByLabelText('运行完成')).toBeInTheDocument();
+  });
+
+  it('从聊天页签切到预览后清除该 id 的 activityCompleted', () => {
+    useAppStore.setState({
+      chats: [{ ...chat, Status: 'ready' }],
+      terminals: [],
+      activityCompleted: { c1: true },
+    });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+
+    // 先切到聊天（从 preview 切入不清除），再切回预览应清掉 completed
+    fireEvent.click(screen.getByRole('tab', { name: '新会话' }));
+    expect(useAppStore.getState().activityCompleted.c1).toBe(true);
+
+    fireEvent.click(screen.getByRole('tab', { name: '预览' }));
+    expect(useAppStore.getState().activityCompleted.c1).toBeUndefined();
+  });
+
+  it('连续切换聊天页签时立即更新 ref，离开上一页签会清 activityCompleted', () => {
+    const chat2: ChatInfo = { ...chat, ID: 'c2', Title: '会话二' };
+    useAppStore.setState({
+      chats: [{ ...chat, Status: 'ready' }, { ...chat2, Status: 'ready' }],
+      terminals: [],
+      activityCompleted: { c1: true, c2: true },
+    });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+
+    fireEvent.click(screen.getByRole('tab', { name: '新会话' }));
+    fireEvent.click(screen.getByRole('tab', { name: '会话二' }));
+
+    expect(useAppStore.getState().activityCompleted.c1).toBeUndefined();
+    expect(useAppStore.getState().activityCompleted.c2).toBe(true);
   });
 });

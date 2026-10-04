@@ -5,20 +5,39 @@
 // 不再回头调 ScanSessions（它每次都会触发新一轮后台扫描，会形成事件循环）。
 import { useEffect, useMemo, useState } from 'react';
 import { getSessions, onScanDone } from '../lib/api';
-import type { Session } from '../lib/api';
+import type { ChatInfo, Session, TerminalInfo } from '../lib/api';
 import { formatRelativeTime } from '../lib/format';
 import { badgeFor } from '../lib/toolBadge';
 import { displayTitle } from '../lib/title';
 import { normalizeWorkspacePath } from '../lib/workspacePath';
 import { cn } from '../lib/cn';
 import { LIST_ROW, LIST_ROW_ACTIVE, MONO } from '../lib/ui';
+import { resolveAgentActivity } from '../state/agentActivity';
 import { useAppStore } from '../state/store';
+import AgentActivityIcon from './AgentActivityIcon';
 import WorkspaceSearch from './WorkspaceSearch';
 import { Button } from './ui/button';
 import { EmptyState } from './ui/empty-state';
 import { Skeleton } from './ui/skeleton';
 import { ToolDot } from './ui/tool-dot';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
+
+// 找该会话已打开的 chat/terminal：优先非 exited，否则取第一条（含 exited，以便 completed 图标可见）
+function findOpenedForSession(
+  sessionID: string,
+  chats: ChatInfo[],
+  terminals: TerminalInfo[],
+): { ID: string; Status: string; kind: 'chat' | 'terminal' } | null {
+  const chatHit = chats.filter((c) => c.SessionID === sessionID);
+  const termHit = terminals.filter((t) => t.SessionID === sessionID);
+  const prefer = (list: { ID: string; Status: string }[]) =>
+    list.find((x) => x.Status !== 'exited') ?? list[0];
+  const c = prefer(chatHit);
+  if (c) return { ID: c.ID, Status: c.Status, kind: 'chat' };
+  const t = prefer(termHit);
+  if (t) return { ID: t.ID, Status: t.Status, kind: 'terminal' };
+  return null;
+}
 
 // 时间戳数值化：解析失败按 0 兜底，避免 NaN 让比较器失效导致排序错乱
 const tsOf = (v: string) => {
@@ -50,6 +69,8 @@ export default function SessionList({ workspacePath, onOpenTerminal }: Props) {
   const setScanState = useAppStore((s) => s.setScanState);
   const terminals = useAppStore((s) => s.terminals);
   const chats = useAppStore((s) => s.chats);
+  const chatPermissions = useAppStore((s) => s.chatPermissions);
+  const activityCompleted = useAppStore((s) => s.activityCompleted);
 
   useEffect(() => {
     let cancelled = false;
@@ -149,19 +170,20 @@ export default function SessionList({ workspacePath, onOpenTerminal }: Props) {
         <ul className="flex flex-col gap-2">
           {visible.map((s) => {
             const badge = badgeFor(s.ToolID);
-            // 该会话是否已在中心区打开且未退出（内嵌终端或 ACP 聊天都算）：
-            // 决定主按钮「恢复」还是「切换」，也决定行高亮
-            const running =
+            // 图标用：含 exited，以便 terminal completed 能显示
+            const opened = findOpenedForSession(s.ID, chats, terminals);
+            // 按钮/行高亮仍按「非 exited 已打开」
+            const active =
               [...terminals, ...chats].some((t) => t.SessionID === s.ID && t.Status !== 'exited');
             // 渲染层兜底清洗：历史 / 未重扫的缓存里可能仍带着 XML 包装标签
             const title = displayTitle(s.Title);
             return (
               <li
                 key={s.ID}
-                className={cn(LIST_ROW, 'p-2', running && LIST_ROW_ACTIVE)}
+                className={cn(LIST_ROW, 'p-2', active && LIST_ROW_ACTIVE)}
               >
                 <div className="flex min-w-0 flex-col gap-1.5">
-                  {/* 第一行：标题（单行截断，悬停浮出完整标题卡片）+ 运行中标记 */}
+                  {/* 第一行：标题（单行截断，悬停浮出完整标题卡片）+ agent 活动图标 */}
                   <div className="flex min-w-0 items-center gap-1.5">
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -185,10 +207,14 @@ export default function SessionList({ workspacePath, onOpenTerminal }: Props) {
                         </p>
                       </TooltipContent>
                     </Tooltip>
-                    {running && (
-                      <span className="shrink-0 text-xs text-success" title="运行中">
-                        ✓
-                      </span>
+                    {opened && (
+                      <AgentActivityIcon
+                        activity={resolveAgentActivity({
+                          status: opened.Status,
+                          hasPermission: opened.kind === 'chat' && !!chatPermissions[opened.ID],
+                          completed: !!activityCompleted[opened.ID],
+                        })}
+                      />
                     )}
                   </div>
                   {/* 第二行：工具色点 + 相对时间 + 条数 + 右侧操作区 */}
@@ -198,11 +224,11 @@ export default function SessionList({ workspacePath, onOpenTerminal }: Props) {
                     <span className={`whitespace-nowrap ${MONO}`}>{s.Messages} 条</span>
                     <Button
                       size="sm"
-                      variant={running ? 'default' : 'secondary'}
+                      variant={active ? 'default' : 'secondary'}
                       className="ml-auto shrink-0"
                       onClick={() => onOpenTerminal?.(s)}
                     >
-                      {running ? '切换' : '恢复'}
+                      {active ? '切换' : '恢复'}
                     </Button>
                   </div>
                 </div>
