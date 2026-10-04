@@ -57,6 +57,13 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('./lib/api', () => mocks);
 
+// wailsjs runtime：jsdom 下无 window.runtime，OnFileDrop 会直接抛 TypeError，必须打桩
+const runtimeMocks = vi.hoisted(() => ({
+  OnFileDrop: vi.fn(),
+  OnFileDropOff: vi.fn(),
+}));
+vi.mock('../wailsjs/runtime/runtime', () => runtimeMocks);
+
 // xterm 在 jsdom 下跑不了（无 matchMedia/布局）：这里只验证「页签常挂载 + 激活态」，
 // 终端本体的行为由 TerminalView.test 覆盖
 vi.mock('./components/TerminalView', () => ({
@@ -321,6 +328,18 @@ describe('App', () => {
     // proj-a 已不在列表：页签被关闭；store 同步为最新列表
     expect(useAppStore.getState().openTabs.map((t) => t.id)).toEqual(['D:\\proj-b']);
     expect(useAppStore.getState().workspaces).toEqual([wsB]);
+  });
+
+  it('外部文件拖入：挂载注册 OnFileDrop 回调（不带 Wails 遮罩），卸载时 OnFileDropOff 注销', () => {
+    const { unmount } = render(<App />);
+
+    expect(runtimeMocks.OnFileDrop).toHaveBeenCalledTimes(1);
+    const [cb, useDropTarget] = runtimeMocks.OnFileDrop.mock.calls[0];
+    expect(typeof cb).toBe('function');
+    expect(useDropTarget).toBe(false);
+
+    unmount();
+    expect(runtimeMocks.OnFileDropOff).toHaveBeenCalledTimes(1);
   });
 
   it('chat:update 事件写入时间线（历史已落位后直接 apply）', async () => {

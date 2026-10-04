@@ -14,8 +14,12 @@ import {
   openSession,
   openWorkspace,
   scanSessions,
+  writeTerminal,
 } from '../lib/api';
 import type { Session, TerminalInfo, ToolInfo } from '../lib/api';
+import { encodeTerminalInput } from '../lib/base64';
+import { appendChatInput } from '../lib/chatInputRegistry';
+import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { badgeFor } from '../lib/toolBadge';
 import { cn } from '../lib/cn';
 import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
@@ -248,6 +252,18 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                     handleCloseTerminal(t.ID);
                   }
                 }}
+                // 拖文件到未激活页签标题：先切页签再插入，落点反馈与结果一致
+                onDragOver={(e) => {
+                  if (e.dataTransfer.types.includes(DRAG_MIME)) e.preventDefault();
+                }}
+                onDrop={(e) => {
+                  const p = e.dataTransfer.getData(DRAG_MIME);
+                  if (!p) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setCenterTab(t.ID); // 先切页签，插入后用户立即看到
+                  if (t.Status !== 'exited') void writeTerminal(t.ID, encodeTerminalInput(quotePathForShell(p)));
+                }}
               >
                 {t.Status === 'exited' && (
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground" />
@@ -294,6 +310,18 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                     e.preventDefault();
                     handleCloseChat(c.ID);
                   }
+                }}
+                // 同终端页签：拖文件到聊天页签标题先切换，再投递到输入框草稿
+                onDragOver={(e) => {
+                  if (e.dataTransfer.types.includes(DRAG_MIME)) e.preventDefault();
+                }}
+                onDrop={(e) => {
+                  const p = e.dataTransfer.getData(DRAG_MIME);
+                  if (!p) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setCenterTab(c.ID);
+                  appendChatInput(c.ID, quotePathForShell(p));
                 }}
               >
                 {c.Status === 'running' && (
