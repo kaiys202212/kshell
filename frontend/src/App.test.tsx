@@ -13,6 +13,7 @@ import type { ChatInfo, ChatPermissionRequest, TerminalInfo, Workspace } from '.
 const mocks = vi.hoisted(() => ({
   getWorkspaces: vi.fn(),
   getSessions: vi.fn(),
+  getSessionPreview: vi.fn(),
   scanSessions: vi.fn(),
   onScanDone: vi.fn(),
   onWindowClosed: vi.fn(),
@@ -83,6 +84,9 @@ vi.mock('./components/TerminalView', () => ({
     <div data-testid={`terminal-${term.ID}`} data-active={String(active)} />
   ),
 }));
+vi.mock('./components/PdfPreview', () => ({
+  default: () => null,
+}));
 
 // 页签内容常挂载（非激活只是 hidden），断言可见性要看包裹层的 class。
 // 用属性值精确比较而不是 CSS 选择器：工作区 id 是 Windows 路径，反斜杠在
@@ -133,6 +137,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getWorkspaces.mockResolvedValue([]);
   mocks.getSessions.mockResolvedValue([]);
+  mocks.getSessionPreview.mockResolvedValue({ Markdown: '', Truncated: false });
   mocks.scanSessions.mockResolvedValue(undefined);
   mocks.onScanDone.mockImplementation(() => () => {});
   mocks.onWindowClosed.mockImplementation(() => () => {});

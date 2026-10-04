@@ -10,6 +10,7 @@ import type { ChatInfo, TerminalInfo, ToolInfo } from '../lib/api';
 
 const mocks = vi.hoisted(() => ({
   getSessions: vi.fn(),
+  getSessionPreview: vi.fn(),
   resumeSession: vi.fn(),
   focusSession: vi.fn(),
   onScanDone: vi.fn(),
@@ -61,6 +62,9 @@ vi.mock('./TerminalView', () => ({
     </div>
   ),
 }));
+vi.mock('./PdfPreview', () => ({
+  default: () => null,
+}));
 
 // scanDoneCb 记录被订阅的 scan:done 回调，供用例手动触发「扫描完成」。
 let scanDoneCb: ((payload?: unknown) => void) | null = null;
@@ -108,6 +112,7 @@ beforeEach(() => {
   });
   mocks.onWindowClosed.mockReturnValue(() => {});
   mocks.getSessions.mockResolvedValue([]);
+  mocks.getSessionPreview.mockResolvedValue({ Markdown: '## 用户\n\nhi', Truncated: false });
   mocks.listFiles.mockResolvedValue([]);
   mocks.listConnections.mockResolvedValue([]);
   mocks.getTools.mockResolvedValue([]);
@@ -280,7 +285,7 @@ describe('WorkspaceTab', () => {
     expect(await screen.findByRole('button', { name: '新建会话' })).toBeEnabled();
   });
 
-  it('会话列表「恢复」走统一入口（openSession）开中心区内嵌终端', async () => {
+  it('会话列表激活图标走统一入口（openSession）开中心区内嵌终端', async () => {
     mocks.getSessions.mockResolvedValue([
       {
         ID: 's1',
@@ -296,10 +301,30 @@ describe('WorkspaceTab', () => {
     mocks.openSession.mockResolvedValue({ Kind: 'terminal', Terminal: term });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
-    fireEvent.click(await screen.findByRole('button', { name: '恢复' }));
+    fireEvent.click(await screen.findByRole('button', { name: '激活' }));
 
     await waitFor(() => expect(mocks.openSession).toHaveBeenCalledWith('s1'));
     expect(await screen.findByTestId('terminal-t1')).toBeInTheDocument();
+  });
+
+  it('点未激活会话行打开会话预览子页签而不调用 openSession', async () => {
+    mocks.getSessions.mockResolvedValue([
+      {
+        ID: 's1',
+        ToolID: 'claude',
+        Workspace: 'D:\\proj-a',
+        Title: '修登录页',
+        CreatedAt: '2026-09-01T10:00:00Z',
+        UpdatedAt: '2026-09-02T10:00:00Z',
+        Messages: 12,
+        Path: 'D:\\proj-a\\s1.jsonl',
+      },
+    ]);
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    const title = await screen.findByTestId('session-title');
+    fireEvent.click(title.closest('li')!);
+    expect(await screen.findByRole('tab', { name: '会话预览' })).toBeInTheDocument();
+    expect(mocks.openSession).not.toHaveBeenCalled();
   });
 
   it('openWorkspace 返回 chat 时中心区出现聊天页签（不再走终端入口）', async () => {

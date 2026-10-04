@@ -93,8 +93,8 @@ type App struct {
 	treeMu  sync.Mutex                 // 树操作串行化（Expand 会写节点，不能只靠 mu 快照）
 	treeGen uint64                     // 树缓存代数：rename 作废缓存时推进，防旧构建写回
 
-	watchMu sync.Mutex                 // 文件监视表串行化
-	watches map[string]*fileWatcher    // cleaned 工作区根 → 监视器（引用计数）
+	watchMu sync.Mutex              // 文件监视表串行化
+	watches map[string]*fileWatcher // cleaned 工作区根 → 监视器（引用计数）
 
 	appearanceCancel context.CancelFunc // system 模式下的明暗监听取消函数
 }
@@ -674,6 +674,25 @@ func (a *App) GetSessions() []providers.Session {
 		return []providers.Session{}
 	}
 	return a.result.Sessions
+}
+
+// SessionPreview 是历史会话的只读 Markdown 正文。
+type SessionPreview struct {
+	Markdown  string
+	Truncated bool
+}
+
+// GetSessionPreview 按会话 ID 抽取对话 Markdown，供预览区只读展示。
+func (a *App) GetSessionPreview(id string) (SessionPreview, error) {
+	s, _, ok := a.sessionByIDReady(id)
+	if !ok {
+		return SessionPreview{}, errSessionNotFound
+	}
+	md, truncated, err := providers.FormatSessionMarkdown(s)
+	if err != nil {
+		return SessionPreview{}, err
+	}
+	return SessionPreview{Markdown: md, Truncated: truncated}, nil
 }
 
 // ResumeSession 恢复指定会话：弹出新终端窗口并在其中启动 agent CLI。

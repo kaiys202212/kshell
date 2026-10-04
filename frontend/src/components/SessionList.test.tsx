@@ -14,8 +14,8 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('../lib/api', () => mocks);
 
-// 中心区内嵌终端入口由 WorkspaceTab 注入，这里用桩校验回调
-const onOpenTerminal = vi.fn();
+const onSelectRow = vi.fn();
+const onActivate = vi.fn();
 
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
@@ -47,8 +47,15 @@ beforeEach(() => {
   });
 });
 
-const renderList = () =>
-  render(<SessionList workspacePath={'D:\\proj-a'} onOpenTerminal={onOpenTerminal} />);
+const renderList = (selectedSessionID: string | null = null) =>
+  render(
+    <SessionList
+      workspacePath={'D:\\proj-a'}
+      selectedSessionID={selectedSessionID}
+      onSelectRow={onSelectRow}
+      onActivate={onActivate}
+    />,
+  );
 
 // 按标题找会话行（li 元素）
 async function findRow(title: string): Promise<HTMLElement> {
@@ -197,32 +204,33 @@ describe('SessionList', () => {
     expect(screen.getByText('没有匹配的会话')).toBeInTheDocument();
   });
 
-  it('点击「恢复」把会话交给 onOpenTerminal（中心区内嵌终端）', async () => {
+  it('点击激活图标把会话交给 onActivate，点行交给 onSelectRow', async () => {
     renderList();
     const row = await findRow('修复上传白名单');
 
-    fireEvent.click(within(row).getByRole('button', { name: '恢复' }));
+    fireEvent.click(within(row).getByRole('button', { name: '激活' }));
+    expect(onActivate).toHaveBeenCalledWith(expect.objectContaining({ ID: 's1' }));
+    expect(onSelectRow).not.toHaveBeenCalled();
 
-    expect(onOpenTerminal).toHaveBeenCalledWith(expect.objectContaining({ ID: 's1' }));
+    fireEvent.click(row);
+    expect(onSelectRow).toHaveBeenCalledWith(expect.objectContaining({ ID: 's1' }));
     expect(row).not.toHaveClass('bg-primary/8');
   });
 
-  it('该会话已有运行中的内嵌终端时文案变「切换」并走高亮样式，点击仍走 onOpenTerminal', async () => {
-    // terminal running + busy →「执行中」；无 busy 时为「等待用户」
+  it('已恢复会话无激活按钮、有已恢复图标；仅 selectedSessionID 走高亮；点行走 onSelectRow', async () => {
     useAppStore.setState({ terminals: [terminal()], terminalBusy: { t1: true } });
-    renderList();
+    renderList('s1');
     const row = await findRow('修复上传白名单');
 
+    expect(within(row).queryByRole('button', { name: '激活' })).toBeNull();
     expect(within(row).queryByRole('button', { name: '恢复' })).toBeNull();
-    const sw = within(row).getByRole('button', { name: '切换' });
-    // 主按钮 default variant 已改为渐变，断言渐变起点仍是主色
-    expect(sw.className).toContain('from-primary');
+    expect(within(row).queryByRole('button', { name: '切换' })).toBeNull();
+    expect(within(row).getByLabelText('已恢复')).toBeInTheDocument();
     expect(within(row).getByLabelText('执行中')).toBeInTheDocument();
-    expect(within(row).queryByText('✓')).toBeNull();
     expect(row).toHaveClass('bg-primary/8');
 
-    fireEvent.click(sw);
-    expect(onOpenTerminal).toHaveBeenCalledWith(expect.objectContaining({ ID: 's1' }));
+    fireEvent.click(row);
+    expect(onSelectRow).toHaveBeenCalledWith(expect.objectContaining({ ID: 's1' }));
   });
 
   it('终端 running 且无 busy 时列表行为「等待用户」', async () => {
@@ -233,33 +241,31 @@ describe('SessionList', () => {
     expect(within(row).queryByLabelText('执行中')).toBeNull();
   });
 
-  it('内嵌终端已退出时不改文案（仍为「恢复」）', async () => {
+  it('内嵌终端已退出时视为未激活（激活图标，无已恢复）', async () => {
     useAppStore.setState({
       terminals: [terminal({ Status: 'exited', ExitCode: 0 })],
     });
     renderList();
     const row = await findRow('修复上传白名单');
 
-    expect(within(row).getByRole('button', { name: '恢复' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: '激活' })).toBeInTheDocument();
+    expect(within(row).queryByLabelText('已恢复')).toBeNull();
     expect(within(row).queryByText('✓')).toBeNull();
     expect(within(row).queryByLabelText('执行中')).toBeNull();
     expect(within(row).queryByLabelText('等待用户')).toBeNull();
   });
 
-  it('该会话已有打开中的 ACP 聊天时也算激活：文案变「切换」并走高亮样式', async () => {
+  it('该会话已有打开中的 ACP 聊天时标已恢复；未选中不高亮', async () => {
     useAppStore.setState({
       chats: [chat({ Status: 'ready' })],
     });
     renderList();
     const row = await findRow('修复上传白名单');
 
-    expect(within(row).queryByRole('button', { name: '恢复' })).toBeNull();
-    expect(within(row).getByRole('button', { name: '切换' })).toBeInTheDocument();
-    // ready →「等待用户」；按钮/高亮仍激活
-    expect(within(row).queryByText('✓')).toBeNull();
-    expect(within(row).queryByLabelText('执行中')).toBeNull();
+    expect(within(row).queryByRole('button', { name: '激活' })).toBeNull();
+    expect(within(row).getByLabelText('已恢复')).toBeInTheDocument();
     expect(within(row).getByLabelText('等待用户')).toBeInTheDocument();
-    expect(row).toHaveClass('bg-primary/8');
+    expect(row).not.toHaveClass('bg-primary/8');
   });
 
   it('不再提供「在外部终端打开」入口（该路径会弹系统控制台黑窗）', async () => {
@@ -267,8 +273,7 @@ describe('SessionList', () => {
     const row = await findRow('修复上传白名单');
 
     expect(within(row).queryByRole('button', { name: '在外部终端打开' })).toBeNull();
-    // 行内只剩「恢复」一个动作按钮
-    expect(within(row).getAllByRole('button')).toHaveLength(1);
+    expect(within(row).getByRole('button', { name: '激活' })).toBeInTheDocument();
   });
 
   it('标题剥掉 XML 包装标签后渲染；清洗后为空显示「(无标题)」（完整原文走悬停浮动卡片）', async () => {
@@ -393,8 +398,7 @@ describe('SessionList agent 活动图标', () => {
     const row = await findRow('修复上传白名单');
     expect(within(row).queryByLabelText('等待用户')).toBeNull();
     expect(within(row).queryByLabelText('执行中')).toBeNull();
-    // 按钮仍按非 exited 逻辑：exited →「恢复」
-    expect(within(row).getByRole('button', { name: '恢复' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: '激活' })).toBeInTheDocument();
   });
 });
 

@@ -7,6 +7,9 @@ import type { TerminalInfo } from '../lib/api';
 vi.mock('./Preview', () => ({
   default: ({ path }: { path: string | null }) => <div data-testid="preview">{path ?? 'empty'}</div>,
 }));
+vi.mock('./SessionTranscript', () => ({
+  default: ({ title }: { title: string }) => <div data-testid="session-transcript">{title}</div>,
+}));
 vi.mock('./TerminalView', () => ({
   default: ({ term, active }: { term: TerminalInfo; active: boolean }) => (
     <div data-testid={`terminal-${term.ID}`} data-active={String(active)} />
@@ -101,5 +104,30 @@ describe('PreviewToolPane', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: '关闭 终端' }));
     expect(onClose).toHaveBeenCalledWith('sh1');
+  });
+
+  it('有 sessionPreview 时出现可关闭的会话预览子页签，不挡住文件预览子页签', () => {
+    const onClosePreview = vi.fn();
+    const onActivate = vi.fn();
+    render(
+      <PreviewToolPane
+        wsPath="D:\\proj"
+        previewPath="D:\\proj\\a.ts"
+        terms={[]}
+        active
+        subTab="session-preview"
+        onSubTab={() => {}}
+        onCloseTerminal={() => {}}
+        onNewShell={() => {}}
+        sessionPreview={{ sessionID: 's1', title: '修登录' }}
+        onCloseSessionPreview={onClosePreview}
+        onActivateSessionPreview={onActivate}
+      />,
+    );
+    expect(screen.getByRole('tab', { name: '预览' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '会话预览' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('session-transcript')).toHaveTextContent('修登录');
+    fireEvent.click(screen.getByRole('button', { name: '关闭会话预览' }));
+    expect(onClosePreview).toHaveBeenCalled();
   });
 });

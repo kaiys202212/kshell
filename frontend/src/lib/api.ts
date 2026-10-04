@@ -31,6 +31,12 @@ export interface Session {
   Path: string;
 }
 
+/** GetSessionPreview 返回的只读对话 Markdown */
+export interface SessionPreview {
+  Markdown: string;
+  Truncated: boolean;
+}
+
 // "scan:done" 事件 payload（internal/desktop/app.go runScan）；
 // 失败时可能只有 error 字段，workspaces 等字段缺省。
 export interface ScanDonePayload {
@@ -261,6 +267,7 @@ interface AppBindings {
   ScanSessions(): Promise<unknown>;
   GetWorkspaces(): Promise<Workspace[]>;
   GetSessions(): Promise<Session[]>;
+  GetSessionPreview(id: string): Promise<SessionPreview>;
   ResumeSession(id: string): Promise<void>;
   FocusSession(id: string): Promise<boolean>;
   ListFiles(wsPath: string, relPath: string, showAll: boolean): Promise<FileNode[]>;
@@ -357,6 +364,12 @@ export async function getSessions(): Promise<Session[]> {
   const a = app();
   if (!a) return [];
   return a.GetSessions();
+}
+
+export async function getSessionPreview(id: string): Promise<SessionPreview> {
+  const a = app();
+  if (!a) return { Markdown: '', Truncated: false };
+  return a.GetSessionPreview(id);
 }
 
 // ScanSessions 触发后台扫描并立即返回缓存结果；首次可能为 null/未就绪错误，
