@@ -81,6 +81,17 @@ func finalize(l providers.Launch, p providers.Provider, mo ModelOptions, po Perm
 	return applyPermission(applyModel(l, p, mo), p, po)
 }
 
+// prependBinArgs 把入口前缀参数（node 入口形态下为主脚本名）放到 provider
+// 产出的参数之前，使命令成为 `node.exe index.js [provider 参数...]`。
+// 主题/模型/权限注入都发生在其后，天然落在主脚本参数之后，顺序正确。
+func prependBinArgs(l providers.Launch, tool discovery.Tool) providers.Launch {
+	if len(tool.BinArgs) == 0 {
+		return l
+	}
+	l.Args = append(append([]string(nil), tool.BinArgs...), l.Args...)
+	return l
+}
+
 // ForSession 根据会话找到对应 provider 与可执行文件，产出恢复会话的启动描述。
 // tools 为 discovery.DetectAll 的产物；会话所属工具不在表内或不可执行时报 ErrToolNotRunnable。
 func ForSession(ps []providers.Provider, tools []discovery.Tool, s providers.Session, to ThemeOptions, mo ModelOptions, po PermissionOptions) (providers.Launch, error) {
@@ -92,7 +103,7 @@ func ForSession(ps []providers.Provider, tools []discovery.Tool, s providers.Ses
 	if !ok {
 		return providers.Launch{}, ErrToolNotRunnable
 	}
-	return finalize(applyTheme(p.ResumeCmd(s, tool.BinPath), p, to), p, mo, po), nil
+	return finalize(applyTheme(prependBinArgs(p.ResumeCmd(s, tool.BinPath), tool), p, to), p, mo, po), nil
 }
 
 // ForWorkspace 为工作区挑选首选工具（优先该工作区会话数最多的），产出新建会话的启动描述。
@@ -109,7 +120,7 @@ func ForWorkspaceTool(ps []providers.Provider, tools []discovery.Tool, ws discov
 		if !ok {
 			return providers.Launch{}, ErrToolNotRunnable
 		}
-		return finalize(applyTheme(p.NewSessionCmd(ws.Path, tool.BinPath), p, to), p, mo, po), nil
+		return finalize(applyTheme(prependBinArgs(p.NewSessionCmd(ws.Path, tool.BinPath), tool), p, to), p, mo, po), nil
 	}
 
 	tool, ok := toolFor(tools, toolID)
@@ -120,7 +131,7 @@ func ForWorkspaceTool(ps []providers.Provider, tools []discovery.Tool, ws discov
 	if !ok {
 		return providers.Launch{}, ErrToolNotRunnable
 	}
-	return finalize(applyTheme(p.NewSessionCmd(ws.Path, tool.BinPath), p, to), p, mo, po), nil
+	return finalize(applyTheme(prependBinArgs(p.NewSessionCmd(ws.Path, tool.BinPath), tool), p, to), p, mo, po), nil
 }
 
 // PreferredTool 选一个该工作区里可用（已安装且有可执行文件）的工具；优先会话数最多的。

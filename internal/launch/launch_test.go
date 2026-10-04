@@ -243,3 +243,32 @@ func TestApplyPermissionBypassClaude(t *testing.T) {
 		t.Fatalf("应注入 bypass 参数，got %v", l.Args)
 	}
 }
+
+func TestForSessionPrependsBinArgs(t *testing.T) {
+	s := providers.Session{ID: "s1", ToolID: "cursor"}
+	p := fakeProvider{id: "cursor", resume: providers.Launch{Path: "node.exe", Args: []string{"--resume", "s1"}}}
+	tools := []discovery.Tool{{ID: "cursor", Installed: true, BinPath: "node.exe", BinArgs: []string{"index.js"}}}
+	got, err := ForSession([]providers.Provider{p}, tools, s, ThemeOptions{}, ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Args) != 3 || got.Args[0] != "index.js" || got.Args[1] != "--resume" {
+		t.Fatalf("BinArgs 应前置, got %v", got.Args)
+	}
+	if got.Path != "node.exe" {
+		t.Fatalf("Path = %q", got.Path)
+	}
+}
+
+func TestForWorkspaceToolPrependsBinArgs(t *testing.T) {
+	p := fakeProvider{id: "cursor", newSess: providers.Launch{Path: "node.exe"}}
+	tools := []discovery.Tool{{ID: "cursor", Installed: true, BinPath: "node.exe", BinArgs: []string{"index.js"}}}
+	ws := discovery.Workspace{Path: `D:\ws`}
+	got, err := ForWorkspaceTool([]providers.Provider{p}, tools, ws, "cursor", ThemeOptions{}, ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Args) != 1 || got.Args[0] != "index.js" {
+		t.Fatalf("新建会话也应前置 BinArgs, got %v", got.Args)
+	}
+}
