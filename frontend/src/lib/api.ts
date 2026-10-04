@@ -52,11 +52,20 @@ export interface FileNode {
 
 // workspace.Preview 的 JSON 形态（internal/workspace/preview.go）；
 // Lines 已带 "NNNN │ " 行号前缀，前端直接渲染、不要再加行号。
+// Text 为无行号原文（桌面端渲染用）；二进制时为空。
 export interface FilePreview {
   Lines: string[];
+  Text?: string;
   Truncated: boolean;
   Binary: boolean;
   Info: string;
+}
+
+// desktop.FileBytes 的 JSON 形态（internal/desktop/files_bytes.go）。
+export interface FileBytes {
+  Base64: string;
+  Mime: string;
+  Size: number;
 }
 
 // remote.Result 的 JSON 形态（internal/remote/exec.go）；
@@ -251,6 +260,7 @@ interface AppBindings {
   FocusSession(id: string): Promise<boolean>;
   ListFiles(wsPath: string, relPath: string, showAll: boolean): Promise<FileNode[]>;
   PreviewFile(wsPath: string, path: string): Promise<FilePreview>;
+  ReadFileBytes(wsPath: string, path: string): Promise<FileBytes>;
   SearchFiles(wsPath: string, query: string, showAll: boolean): Promise<SearchHit[]>;
   RefreshFiles(wsPath: string): Promise<void>;
   StartFileWatch(wsPath: string): Promise<void>;
@@ -389,6 +399,13 @@ export async function previewFile(wsPath: string, path: string): Promise<FilePre
   const a = app();
   if (!a) return null;
   return a.PreviewFile(wsPath, path);
+}
+
+// ReadFileBytes 读取工作区内文件字节（base64 + mime，上限 20MiB）；绑定不可用时返回 null
+export async function readFileBytes(wsPath: string, path: string): Promise<FileBytes | null> {
+  const a = app();
+  if (!a) return null;
+  return a.ReadFileBytes(wsPath, path);
 }
 
 // SearchFiles 递归搜索工作区内名字包含 query 的文件/目录（大小写不敏感，上限 2000）。

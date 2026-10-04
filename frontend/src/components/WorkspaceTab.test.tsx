@@ -392,6 +392,7 @@ describe('WorkspaceTab', () => {
     ]);
     mocks.previewFile.mockResolvedValue({
       Lines: ['   1 │ const a = 1;'],
+      Text: 'const a = 1;',
       Truncated: false,
       Binary: false,
       Info: '',
@@ -400,7 +401,8 @@ describe('WorkspaceTab', () => {
 
     fireEvent.click(await screen.findByText('main.ts'));
 
-    expect(await screen.findByText(/const a = 1;/)).toBeInTheDocument();
+    // 文本预览走 CodeEditor（CM6），不再用 <pre> 纯文本
+    expect(await screen.findByTestId('code-editor')).toBeInTheDocument();
     expect(mocks.previewFile).toHaveBeenCalledWith('D:\\proj-a', 'D:\\proj-a\\main.ts');
   });
 

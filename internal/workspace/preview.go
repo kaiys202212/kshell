@@ -12,6 +12,7 @@ import (
 // Preview 是右栏要展示的文件预览；二进制文件不输出内容，只给元信息。
 type Preview struct {
 	Lines     []string
+	Text      string // 无行号原文（\n 归一）；Binary 时为空，供桌面端渲染
 	Truncated bool
 	Binary    bool
 	Info      string
@@ -68,6 +69,8 @@ func PreviewFile(path string, maxBytes int, maxLines int) Preview {
 		lines = lines[:maxLines]
 		truncated = true
 	}
+	// Text 与 Lines 共用截断后的行，避免桌面端拿到超出 maxLines 的原文
+	text = strings.Join(lines, "\n")
 
 	out := make([]string, 0, len(lines))
 	for i, line := range lines {
@@ -76,6 +79,7 @@ func PreviewFile(path string, maxBytes int, maxLines int) Preview {
 
 	return Preview{
 		Lines:     out,
+		Text:      text,
 		Truncated: truncated,
 		Info:      fmt.Sprintf("%d 字节 · %s", info.Size(), info.ModTime().Format("2006-01-02 15:04")),
 	}

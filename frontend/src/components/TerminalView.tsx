@@ -14,7 +14,13 @@ import { encodeTerminalInput } from '../lib/base64';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { useAppStore } from '../state/store';
 import { registerTerminal, unregisterTerminal } from '../lib/terminalRegistry';
-import { computeImeClampStyles } from '../lib/imeAnchor';
+import {
+  computeImeClampStyles,
+  imeOverflowLockStyles,
+  pickVisualCaret,
+  shouldResetScrollLeft,
+  type CellHint,
+} from '../lib/imeAnchor';
 
 interface Props {
   term: TerminalInfo; // store 里的镜像（Status/ExitCode 决定退出提示）
@@ -83,47 +89,169 @@ export default function TerminalView({ term, active }: Props) {
       fit: () => fitAddon.fit(),
     });
 
-    // IME 组合全程钳制（对应 xtermjs#5734/#5759 + composition-view 右缘溢出）：
-    // xterm 的 CompositionHelper 在 compositionupdate/onRender 时会把 .composition-view
-    // 与 textarea 重钉到 buffer 光标；agent TUI 常 park 在行尾，拼音 nowrap 挤布局。
-    // 组合期间持续应用钳制（含 rAF 压过同帧 xterm 重定位），并限制预编辑 maxWidth。
+    // IME 组合全程钳制（第三轮：视觉 caret + 横向溢出锁）：
+    // xterm CompositionHelper 会把 .composition-view / textarea 重钉到 buffer 光标；
+    // agent TUI 常把硬件光标 park 行尾。优先扫视口反色单元作锚点，找不到再 60% 钳制；
+    // 组合期锁 overflow-x，并用 MutationObserver + rAF 对抗 xterm 同帧重定位。
     const textarea = instance.textarea;
     let composing = false;
     let imeRaf = 0;
+    let applyingImeClamp = false;
+    let imeObserver: MutationObserver | null = null;
+    let observedCompositionView: HTMLElement | null = null;
+
+    // xterm IBufferCell.isInverse() → number（0/非 0），语义等同 CSI 7 m 反色
+    const collectInverseHints = (): CellHint[] => {
+      const hints: CellHint[] = [];
+      const buf = instance.buffer.active;
+      for (let y = 0; y < instance.rows; y++) {
+        // getLine 用缓冲绝对行号；hints 的 y 保持视口相对，与 cursorY / pickVisualCaret 一致
+        const line = buf.getLine(buf.viewportY + y);
+        if (!line) continue;
+        for (let x = 0; x < instance.cols; x++) {
+          const cell = line.getCell(x);
+          if (cell && typeof cell.isInverse === 'function' && cell.isInverse()) {
+            hints.push({ x, y, inverse: true });
+          }
+        }
+      }
+      return hints;
+    };
+
+    const imeOverflowTargets = (): HTMLElement[] => {
+      const nodes = [
+        host.querySelector<HTMLElement>('.xterm'),
+        host.querySelector<HTMLElement>('.xterm-viewport'),
+        host.querySelector<HTMLElement>('.xterm-screen'),
+      ];
+      return nodes.filter((n): n is HTMLElement => !!n);
+    };
+
+    const lockImeOverflow = () => {
+      const { overflowX } = imeOverflowLockStyles();
+      for (const el of imeOverflowTargets()) {
+        if (el.dataset.kshellImePrevOverflowX === undefined) {
+          el.dataset.kshellImePrevOverflowX = el.style.overflowX;
+        }
+        el.style.overflowX = overflowX;
+      }
+    };
+
+    const restoreImeOverflow = () => {
+      for (const el of imeOverflowTargets()) {
+        if (el.dataset.kshellImePrevOverflowX === undefined) continue;
+        el.style.overflowX = el.dataset.kshellImePrevOverflowX;
+        delete el.dataset.kshellImePrevOverflowX;
+      }
+    };
+
+    const clearImeInlineClamp = (compositionView: HTMLElement | null) => {
+      if (textarea) {
+        textarea.style.left = '';
+        textarea.style.top = '';
+      }
+      if (compositionView) {
+        compositionView.style.left = '';
+        compositionView.style.top = '';
+        compositionView.style.maxWidth = '';
+        compositionView.style.overflow = '';
+      }
+    };
+
+    const observeImeStyleTargets = (compositionView: HTMLElement | null) => {
+      if (!imeObserver || !composing) return;
+      if (textarea) {
+        imeObserver.observe(textarea, { attributes: true, attributeFilter: ['style'] });
+      }
+      if (compositionView && compositionView !== observedCompositionView) {
+        imeObserver.observe(compositionView, { attributes: true, attributeFilter: ['style'] });
+        observedCompositionView = compositionView;
+      }
+    };
+
+    const stopImeObserver = () => {
+      imeObserver?.disconnect();
+      imeObserver = null;
+      observedCompositionView = null;
+    };
+
+    // 仅在值变化时写 style，避免自写入触发 MutationObserver 循环
+    const setStyleIfChanged = (el: HTMLElement, prop: 'left' | 'top' | 'maxWidth' | 'overflow', value: string) => {
+      if (el.style[prop] !== value) el.style[prop] = value;
+    };
+
     const applyImeClamp = () => {
       const screen = host.querySelector<HTMLElement>('.xterm-screen');
+      const viewport = host.querySelector<HTMLElement>('.xterm-viewport');
       const compositionView = host.querySelector<HTMLElement>('.composition-view');
       const buf = instance.buffer.active;
       if (!textarea || !screen) return;
+
+      const caret = pickVisualCaret(
+        collectInverseHints(),
+        buf.cursorX,
+        buf.cursorY,
+        instance.cols,
+        instance.rows,
+      );
       const styles = computeImeClampStyles({
         cols: instance.cols,
         rows: instance.rows,
-        cursorX: buf.cursorX,
-        cursorY: buf.cursorY,
+        cursorX: caret.cursorX,
+        cursorY: caret.cursorY,
         viewportWidth: screen.clientWidth,
         viewportHeight: screen.clientHeight,
       });
       if (!styles) return;
-      textarea.style.left = `${styles.left}px`;
-      textarea.style.top = `${styles.top}px`;
-      if (compositionView) {
-        compositionView.style.left = `${styles.left}px`;
-        compositionView.style.top = `${styles.top}px`;
-        compositionView.style.maxWidth = `${styles.maxWidth}px`;
-        compositionView.style.overflow = 'hidden';
+
+      applyingImeClamp = true;
+      try {
+        const left = `${styles.left}px`;
+        const top = `${styles.top}px`;
+        setStyleIfChanged(textarea, 'left', left);
+        setStyleIfChanged(textarea, 'top', top);
+        if (compositionView) {
+          setStyleIfChanged(compositionView, 'left', left);
+          setStyleIfChanged(compositionView, 'top', top);
+          setStyleIfChanged(compositionView, 'maxWidth', `${styles.maxWidth}px`);
+          setStyleIfChanged(compositionView, 'overflow', 'hidden');
+        }
+        lockImeOverflow();
+        if (viewport && shouldResetScrollLeft(viewport.scrollLeft)) {
+          viewport.scrollLeft = 0;
+        }
+        observeImeStyleTargets(compositionView);
+      } finally {
+        // MO 回调是微任务；同步清 flag 会让自写入再次 schedule → 循环。
+        // 延后到下一微任务，确保 MO 仍看到 applyingImeClamp=true。
+        queueMicrotask(() => {
+          applyingImeClamp = false;
+        });
       }
     };
     // 同帧内 xterm updateCompositionElements 可能后跑；再排一帧压过
-    const scheduleImeClamp = () => {
-      applyImeClamp();
+    const scheduleImeClampRaf = () => {
       if (imeRaf) cancelAnimationFrame(imeRaf);
       imeRaf = requestAnimationFrame(() => {
         imeRaf = 0;
         if (composing) applyImeClamp();
       });
     };
+    const scheduleImeClamp = () => {
+      applyImeClamp();
+      scheduleImeClampRaf();
+    };
+    const startImeObserver = () => {
+      stopImeObserver();
+      // 组合期 MO 只排 rAF，避免同步 apply → 写 style → MO 重入
+      imeObserver = new MutationObserver(() => {
+        if (composing && !applyingImeClamp) scheduleImeClampRaf();
+      });
+      observeImeStyleTargets(host.querySelector<HTMLElement>('.composition-view'));
+    };
     const onCompositionStart = () => {
       composing = true;
+      startImeObserver();
       scheduleImeClamp();
     };
     const onCompositionUpdate = () => {
@@ -135,6 +263,9 @@ export default function TerminalView({ term, active }: Props) {
         cancelAnimationFrame(imeRaf);
         imeRaf = 0;
       }
+      stopImeObserver();
+      restoreImeOverflow();
+      clearImeInlineClamp(host.querySelector<HTMLElement>('.composition-view'));
     };
     textarea?.addEventListener('compositionstart', onCompositionStart);
     textarea?.addEventListener('compositionupdate', onCompositionUpdate);
@@ -158,7 +289,11 @@ export default function TerminalView({ term, active }: Props) {
 
     return () => {
       observer?.disconnect();
+      composing = false;
       if (imeRaf) cancelAnimationFrame(imeRaf);
+      stopImeObserver();
+      restoreImeOverflow();
+      clearImeInlineClamp(host.querySelector<HTMLElement>('.composition-view'));
       textarea?.removeEventListener('compositionstart', onCompositionStart);
       textarea?.removeEventListener('compositionupdate', onCompositionUpdate);
       textarea?.removeEventListener('compositionend', onCompositionEnd);

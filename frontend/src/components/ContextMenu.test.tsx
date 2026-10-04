@@ -50,4 +50,13 @@ describe('ContextMenu', () => {
     expect(clamped.style.left).toBe('0px');
     expect(clamped.style.top).toBe('0px');
   });
+
+  it('使用不透明 bg-card 而非未定义的 bg-popover', () => {
+    const { container } = render(
+      <ContextMenu x={10} y={10} items={[{ label: 'x', onSelect: vi.fn() }]} onClose={vi.fn()} />,
+    );
+    const menu = container.ownerDocument.body.querySelector('[role="menu"]');
+    expect(menu?.className).toContain('bg-card');
+    expect(menu?.className).not.toContain('bg-popover');
+  });
 });

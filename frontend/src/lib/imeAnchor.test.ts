@@ -3,7 +3,14 @@
 // _syncTextArea 对齐：textarea 位置 = 光标单元格的像素坐标。
 // 注意 xterm API 语义：cursorY 是相对视口顶行的行号（0..rows-1），不含滚动偏移。
 import { describe, expect, it } from 'vitest';
-import { computeImeAnchor, computeImeClampStyles, IME_MAX_COL_RATIO } from './imeAnchor';
+import {
+  computeImeAnchor,
+  computeImeClampStyles,
+  IME_MAX_COL_RATIO,
+  pickVisualCaret,
+  imeOverflowLockStyles,
+  shouldResetScrollLeft,
+} from './imeAnchor';
 
 const base = {
   cols: 100,
@@ -54,5 +61,45 @@ describe('computeImeClampStyles', () => {
 
   it('退化输入返回 null', () => {
     expect(computeImeClampStyles({ ...base, cols: 0 })).toBeNull();
+  });
+});
+
+describe('pickVisualCaret', () => {
+  it('优先取最后一个反色单元作为实际输入位置', () => {
+    const got = pickVisualCaret(
+      [
+        { x: 5, y: 10, inverse: true },
+        { x: 12, y: 20, inverse: true },
+        { x: 90, y: 20, inverse: false },
+      ],
+      99,
+      20,
+      100,
+      30,
+    );
+    expect(got).toEqual({ cursorX: 12, cursorY: 20 });
+  });
+
+  it('无反色单元时回退 fallback', () => {
+    expect(pickVisualCaret([{ x: 1, y: 1, inverse: false }], 99, 20, 100, 30)).toEqual({
+      cursorX: 99,
+      cursorY: 20,
+    });
+  });
+
+  it('忽略越界反色单元', () => {
+    expect(
+      pickVisualCaret([{ x: 100, y: 0, inverse: true }], 3, 4, 100, 30),
+    ).toEqual({ cursorX: 3, cursorY: 4 });
+  });
+});
+
+describe('ime overflow helpers', () => {
+  it('组合期锁定 overflow-x', () => {
+    expect(imeOverflowLockStyles()).toEqual({ overflowX: 'hidden' });
+  });
+  it('scrollLeft>0 时应复位', () => {
+    expect(shouldResetScrollLeft(12)).toBe(true);
+    expect(shouldResetScrollLeft(0)).toBe(false);
   });
 });
