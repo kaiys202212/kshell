@@ -15,7 +15,7 @@ import (
 )
 
 // GenericSpec 是 ~/.kshell/providers.yaml 里的一项声明。
-// D 类工具（CodeBuddy、OpenCode、Cline 等）的会话目录与命令参数各家不同且可能变化，
+// D 类工具（Cline 等尚未内置的 CLI）的会话目录与命令参数各家不同且可能变化，
 // 与其硬编码猜测，不如让用户改一行 yaml 生效。
 type GenericSpec struct {
 	ID     string `yaml:"id"`
@@ -296,29 +296,8 @@ func DefaultProvidersYAML() string {
 # glob 支持 ~/ 前缀；fields 支持 a.b.c 形式的字段路径；resume 参数里的 {id} 会被替换成会话 ID。
 # verified: false 表示未经实测，kshell 会在界面上标注。
 providers:
-  - id: codebuddy
-    name: CodeBuddy
-    detect:
-      command: codebuddy
-      dirs:
-        - ~/.codebuddy
-    sessions:
-      # 只收一层：projects/<工作区>/<sessionId>.jsonl。
-      # 更深的 subagents/*.jsonl 是子代理记录，其 ID 无法 --resume。
-      glob: ~/.codebuddy/projects/*/*.jsonl
-      format: jsonl
-    fields:
-      cwd: cwd
-      id: sessionId
-      timestamp: timestamp            # 毫秒数字或 RFC3339 均可
-      title: summary                  # summary 记录（首条用户消息摘要）
-      titleFallbacks: ["aiTitle"]     # 其次 AI 生成的会话标题；都没有再用首条真实用户消息
-    resume:
-      args: ["--resume", "{id}"]
-    verified: true
-
-  # opencode 已是内置 provider（会话存放在 SQLite 库中，需要读库而不是读文件），
-  # 不在此处声明；老配置里残留的 opencode 段会被内置实现按 ID 覆盖。
+  # codebuddy / opencode 已是内置 provider，不在此处声明；
+  # 老配置里残留的同 ID 段会被内置实现覆盖。
 
   - id: cline
     name: Cline / Roo

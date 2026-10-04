@@ -149,7 +149,7 @@ func TestGenericResumeCmdSubstitutesID(t *testing.T) {
 
 func TestDefaultProvidersYAMLCoversPresetTools(t *testing.T) {
 	content := DefaultProvidersYAML()
-	for _, want := range []string{"codebuddy", "opencode", "cline", "verified: false"} {
+	for _, want := range []string{"opencode", "cline", "verified: false"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("default providers.yaml missing %q", want)
 		}

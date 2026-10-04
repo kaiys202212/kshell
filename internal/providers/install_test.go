@@ -18,7 +18,7 @@ func TestBuiltinsImplementInstaller(t *testing.T) {
 }
 
 func TestGenericHasNoInstaller(t *testing.T) {
-	g := Generic{Spec: GenericSpec{ID: "codebuddy", Name: "CodeBuddy"}}
+	g := Generic{Spec: GenericSpec{ID: "cline", Name: "Cline"}}
 	if _, ok := RecipeOf(g); ok {
 		t.Fatal("自定义工具不得实现 Installer")
 	}
