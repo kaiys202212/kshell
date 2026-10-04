@@ -25,7 +25,7 @@ import {
 import type { FileNode, SearchHit } from '../lib/api';
 import { cn } from '../lib/cn';
 import { DRAG_MIME, REL_MIME } from '../lib/dragPath';
-import { refreshGitStatus } from '../lib/git';
+import { refreshGitStatus, subtreeDirty } from '../lib/git';
 import { sameWorkspacePath } from '../lib/workspacePath';
 import { useAppStore } from '../state/store';
 import ContextMenu, { type MenuItem } from './ContextMenu';
@@ -176,6 +176,31 @@ function toItems(nodes: FileNode[], parentRel: string): TreeItem[] {
   }));
 }
 
+function wsBaseName(wsPath: string): string {
+  const n = wsPath.replace(/[\\/]+$/, '');
+  const i = Math.max(n.lastIndexOf('\\'), n.lastIndexOf('/'));
+  return i < 0 ? n : n.slice(i + 1) || n;
+}
+
+function wrapVirtualRoot(wsPath: string, children: TreeItem[], expanded: boolean): TreeItem {
+  return {
+    node: {
+      Name: wsBaseName(wsPath),
+      Path: wsPath,
+      IsDir: true,
+      Expanded: expanded,
+      Loaded: true,
+    },
+    relPath: '',
+    children,
+    expanded,
+  };
+}
+
+function asTree(wsPath: string, nodes: FileNode[], expanded = true): TreeItem[] {
+  return [wrapVirtualRoot(wsPath, toItems(nodes, ''), expanded)];
+}
+
 // 按 relPath 在嵌套结构中定位并更新（不可变更新，递归下钻）
 function updateItems(items: TreeItem[], relPath: string, fn: (t: TreeItem) => TreeItem): TreeItem[] {
   return items.map((it) => {
@@ -266,6 +291,8 @@ interface RowProps {
   item: TreeItem;
   depth: number;
   gitMap?: Record<string, string>; // git 状态映射（键为 '/' 分隔 relPath），行内按自身 relPath 查
+  rootBranch?: string;
+  dirBranches?: Record<string, string>;
   renamingPath: string | null; // 受控行内重命名：renamingPath === item.relPath 时该行进入编辑
   creating: { dirRel: string; isDir: boolean } | null; // 行内新建输入的渲染位置
   onRenameStart(relPath: string): void;
@@ -283,6 +310,8 @@ function TreeRow({
   item,
   depth,
   gitMap,
+  rootBranch,
+  dirBranches,
   renamingPath,
   creating,
   onRenameStart,
@@ -297,6 +326,9 @@ function TreeRow({
 }: RowProps) {
   const { node } = item;
   const gitCode = gitMap?.[item.relPath]; // 目录也查 gitMap（忽略/未跟踪目录需徽章）
+  const branch = node.IsDir ? (item.relPath === '' ? rootBranch : dirBranches?.[item.relPath]) : undefined;
+  const dirtyFolder = node.IsDir && !gitCode && subtreeDirty(gitMap, item.relPath);
+  const isVirtualRoot = item.relPath === '';
   const renaming = renamingPath === item.relPath;
   const [draft, setDraft] = useState(node.Name);
   const [dropActive, setDropActive] = useState(false);
@@ -348,7 +380,7 @@ function TreeRow({
         )}
         style={{ paddingLeft: depth * 14 }}
         onContextMenu={rowContextMenu}
-        draggable={!renaming} // 行内重命名编辑中不允许拖
+        draggable={!renaming && !isVirtualRoot} // 行内重命名编辑中不允许拖
         onDragStart={(e) => {
           e.dataTransfer.setData(DRAG_MIME, node.Path);
           e.dataTransfer.setData(REL_MIME, item.relPath);
@@ -396,8 +428,23 @@ function TreeRow({
               >
                 {node.Name}
               </span>
+              {branch ? (
+                <span className="shrink-0 truncate font-mono text-[11px] text-muted-foreground" title={`git 分支 ${branch}`}>
+                  ({branch})
+                </span>
+              ) : null}
               {gitCode && <GitBadge code={gitCode} />}
+              {dirtyFolder && (
+                <span
+                  className="shrink-0 text-warning"
+                  title="有未提交改动"
+                  aria-label="有未提交改动"
+                >
+                  •
+                </span>
+              )}
             </button>
+            {!isVirtualRoot && (
             <button
               className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-primary group-hover:opacity-100"
               aria-label={`重命名 ${node.Name}`}
@@ -406,6 +453,7 @@ function TreeRow({
             >
               <PencilIcon />
             </button>
+            )}
           </>
         )}
       </div>
@@ -440,6 +488,8 @@ function TreeRow({
               item={c}
               depth={depth + 1}
               gitMap={gitMap}
+              rootBranch={rootBranch}
+              dirBranches={dirBranches}
               renamingPath={renamingPath}
               creating={creating}
               onRenameStart={onRenameStart}
@@ -492,6 +542,8 @@ export default function FileTree({
   // 显示全部（含忽略文件）；不持久化，切换由下方 effect 走 reloadTree 重拉已展开路径
   const [showAll, setShowAll] = useState(false);
   const gitMap = useAppStore((s) => s.gitStatus[wsPath]);
+  const rootBranch = useAppStore((s) => s.gitBranch[wsPath]);
+  const dirBranches = useAppStore((s) => s.gitDirBranches[wsPath]);
 
   // 避免 reloadTree / files:changed 回调读到过期的 items / showAll
   const itemsRef = useRef(items);
@@ -518,8 +570,10 @@ export default function FileTree({
     if (gen !== reloadGenRef.current) return;
     try {
       const nodes = await listFiles(path, '', show);
-      let next = toItems(nodes, '');
+      const rootExpanded = itemsRef.current?.[0]?.relPath === '' ? itemsRef.current[0].expanded : true;
+      let next = asTree(path, nodes, rootExpanded);
       for (const rel of expanded) {
+        if (!rel) continue;
         if (gen !== reloadGenRef.current) return;
         try {
           const kids = await listFiles(path, rel, show);
@@ -575,7 +629,7 @@ export default function FileTree({
     setRenamingPath(null);
     listFiles(wsPath, '', showAllRef.current)
       .then((nodes) => {
-        if (!cancelled && gen === reloadGenRef.current) setItems(toItems(nodes, ''));
+        if (!cancelled && gen === reloadGenRef.current) setItems(asTree(wsPath, nodes, true));
       })
       .catch((e: unknown) => {
         if (!cancelled && gen === reloadGenRef.current) {
@@ -631,7 +685,7 @@ export default function FileTree({
   // 目录展开/收起：首次展开才调 ListFiles（懒加载），之后读本地缓存。
   // 加载失败只记到该目录行内（error 字段），不动整树；重试复用同一入口。
   const handleDirToggle = (item: TreeItem) => {
-    if (item.children) {
+    if (item.children || item.relPath === '') {
       setItems((cur) =>
         cur && updateItems(cur, item.relPath, (it) => ({ ...it, expanded: !it.expanded })),
       );
@@ -686,7 +740,9 @@ export default function FileTree({
   // 根层重建树镜像（Go 侧改动后已作废缓存）：rename/create/delete 共用
   const refreshRoot = () => {
     listFiles(wsPath, '', showAll)
-      .then((nodes) => setItems(toItems(nodes, '')))
+      .then((nodes) =>
+        setItems((cur) => asTree(wsPath, nodes, cur?.[0]?.relPath === '' ? cur[0].expanded : true)),
+      )
       .catch(() => {
         /* 根层刷新失败保持原树，下次展开会重新拉取 */
       });
@@ -823,6 +879,14 @@ export default function FileTree({
         { label: '新建文件夹', onSelect: () => startCreate('', true) },
       ];
     }
+    if (it.relPath === '') {
+      return [
+        { label: '新建文件', onSelect: () => startCreate('', false) },
+        { label: '新建文件夹', onSelect: () => startCreate('', true) },
+        { label: '复制路径', onSelect: () => copyPath(it) },
+        { label: '在资源管理器中打开', onSelect: () => reveal(it) },
+      ];
+    }
     if (it.node.IsDir) {
       return [
         { label: '新建文件', onSelect: () => startCreate(it.relPath, false) },
@@ -843,6 +907,8 @@ export default function FileTree({
 
   const rowProps = {
     gitMap,
+    rootBranch,
+    dirBranches,
     renamingPath,
     creating,
     onRenameStart: setRenamingPath,
@@ -941,19 +1007,7 @@ export default function FileTree({
         })()
       ) : (
         <ul role="tree" aria-label="工作区文件树" className="m-0 list-none p-0 text-sm">
-          {creating && creating.dirRel === '' && (
-            <CreateRow
-              depth={0}
-              isDir={creating.isDir}
-              onCommit={handleCreateCommit}
-              onCancel={() => setCreating(null)}
-            />
-          )}
-          {items.length === 0 ? (
-            <EmptyState title="没有可显示的文件" />
-          ) : (
-            items.map((it) => <TreeRow key={it.node.Path} item={it} depth={0} {...rowProps} />)
-          )}
+          {items.map((it) => <TreeRow key={it.node.Path} item={it} depth={0} {...rowProps} />)}
         </ul>
       )}
 

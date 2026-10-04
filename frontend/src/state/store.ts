@@ -61,7 +61,9 @@ interface AppState {
   // git 状态镜像：wsPath → { relPath('/' 分隔) → 状态码 }；
   // 数据来自 Go GitStatus；非 git 仓库时映射为空（无键=未加载，空 map=非仓库）。
   gitStatus: Record<string, Record<string, string>>;
-  setGitStatus(wsPath: string, status: Record<string, string>): void;
+  gitBranch: Record<string, string>; // wsPath → 虚拟根分支
+  gitDirBranches: Record<string, Record<string, string>>; // wsPath → relPath → 分支
+  setGitStatus(wsPath: string, status: Record<string, string>, branch?: string, dirs?: Record<string, string>): void;
 
   // 轻量全局提示（操作失败等）：toast 队列，notify 只负责追加，
   // 自动关闭与移除由 Toaster 侧（Radix duration/onOpenChange）调 dismissToast 完成。
@@ -160,8 +162,14 @@ export const useAppStore = create<AppState>()(
       setScanState: (scanState) => set({ scanState }),
 
       gitStatus: {},
-      setGitStatus: (wsPath, status) =>
-        set((s) => ({ gitStatus: { ...s.gitStatus, [wsPath]: status } })),
+      gitBranch: {},
+      gitDirBranches: {},
+      setGitStatus: (wsPath, status, branch = '', dirs = {}) =>
+        set((s) => ({
+          gitStatus: { ...s.gitStatus, [wsPath]: status },
+          gitBranch: { ...s.gitBranch, [wsPath]: branch },
+          gitDirBranches: { ...s.gitDirBranches, [wsPath]: dirs },
+        })),
 
       toasts: [],
       notify: (title, tone = 'info') =>

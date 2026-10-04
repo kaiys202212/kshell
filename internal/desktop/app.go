@@ -93,8 +93,8 @@ type App struct {
 	treeMu  sync.Mutex                 // 树操作串行化（Expand 会写节点，不能只靠 mu 快照）
 	treeGen uint64                     // 树缓存代数：rename 作废缓存时推进，防旧构建写回
 
-	watchMu sync.Mutex                 // 文件监视表串行化
-	watches map[string]*fileWatcher    // cleaned 工作区根 → 监视器（引用计数）
+	watchMu sync.Mutex              // 文件监视表串行化
+	watches map[string]*fileWatcher // cleaned 工作区根 → 监视器（引用计数）
 
 	appearanceCancel context.CancelFunc // system 模式下的明暗监听取消函数
 }
@@ -600,24 +600,37 @@ func (a *App) attachDiscoveredSessions(sessions []providers.Session, prevIDs map
 	changed := 0
 	for _, s := range sessions {
 		if !prevIDs[s.ID] {
-			if o.Terminals != nil && o.Terminals.AttachSession(s.ID, s.Workspace, s.ToolID, s.Title) {
+			if o.Terminals != nil && o.Terminals.AttachSession(s.ID, s.Workspace, s.ToolID, s.Title, s.Messages, s.CreatedAt) {
 				changed++
 			}
-			if o.Chats != nil && o.Chats.AttachSession(s.ID, s.Workspace, s.ToolID, s.Title) {
+			if o.Chats != nil && o.Chats.AttachSession(s.ID, s.Workspace, s.ToolID, s.Title, s.Messages, s.CreatedAt) {
 				changed++
 			}
 		}
-		if s.Title == "" {
-			continue
-		}
-		if o.Terminals != nil && o.Terminals.UpdateSessionTitle(s.ID, s.Title) {
+		if o.Terminals != nil && o.Terminals.UpdateSessionTitle(s.ID, s.Title, s.Messages) {
 			changed++
 		}
-		if o.Chats != nil && o.Chats.UpdateSessionTitle(s.ID, s.Title) {
+		if o.Chats != nil && o.Chats.UpdateSessionTitle(s.ID, s.Title, s.Messages) {
 			changed++
 		}
 	}
 	return changed
+}
+
+// knownSessionIDs 当前扫描结果里的磁盘会话 ID（打开新建页签时快照，防止把左侧已有会话绑上去）。
+func (a *App) knownSessionIDs() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.result == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(a.result.Sessions))
+	for _, s := range a.result.Sessions {
+		if s.ID != "" {
+			ids = append(ids, s.ID)
+		}
+	}
+	return ids
 }
 
 // scanReadyTimeout 是「等首轮扫描结果」的上限。真实扫描通常几百毫秒，

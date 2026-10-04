@@ -98,12 +98,17 @@ func (a *App) OpenWorkspaceTerminal(wsID string, toolID string, cols, rows int) 
 	}
 
 	key := fmt.Sprintf("new:%d", termKeySeq.Add(1))
-	return m.Open(key, terminal.Info{
-		Kind:      terminal.KindNew,
-		Workspace: ws.Path,
-		Title:     workspaceTerminalTitle(o.Providers, tools, ws, toolID),
-		ToolID:    toolID, // 原样透传前端选中的工具（空表示由 launch 选首选），页签按此展示
+	info, err := m.Open(key, terminal.Info{
+		Kind:            terminal.KindNew,
+		Workspace:       ws.Path,
+		Title:           workspaceTerminalTitle(o.Providers, tools, ws, toolID),
+		ToolID:          toolID, // 原样透传前端选中的工具（空表示由 launch 选首选），页签按此展示
+		KnownSessionIDs: a.knownSessionIDs(),
 	}, terminal.Spec{Path: spec.Path, Args: spec.Args, Dir: spec.Dir, Env: spec.Env}, cols, rows)
+	if err != nil {
+		return terminal.Info{}, err
+	}
+	return info, nil
 }
 
 // WriteTerminal 把前端输入写进终端；data 是 base64（xterm 的 onData 可能含任意字节）。

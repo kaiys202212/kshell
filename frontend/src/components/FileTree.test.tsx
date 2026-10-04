@@ -110,11 +110,12 @@ describe('FileTree', () => {
     expect(await screen.findByText(/路径越出工作区范围/)).toBeInTheDocument();
   });
 
-  it('工作区没有可显示的文件时给空态文案', async () => {
+  it('工作区没有可显示的文件时仍展示虚拟根目录', async () => {
     mocks.listFiles.mockResolvedValue([]);
     render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
 
-    expect(await screen.findByText('没有可显示的文件')).toBeInTheDocument();
+    expect(await screen.findByText('proj')).toBeInTheDocument();
+    expect(screen.queryByText('没有可显示的文件')).not.toBeInTheDocument();
   });
 
   it('子目录加载失败：只在目标目录行内提示 + 重试入口，不整树替换', async () => {
@@ -576,5 +577,39 @@ describe('FileTree 树内拖拽移动', () => {
     await act(async () => {});
 
     expect(mocks.moveEntry).not.toHaveBeenCalled();
+  });
+
+  it('默认展开虚拟根目录，名称取工作区文件夹名', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    expect(await screen.findByText('proj')).toBeInTheDocument();
+    expect(screen.getByText('README.md')).toBeInTheDocument();
+  });
+
+  it('git 仓库虚拟根与嵌套 git 根显示分支名', async () => {
+    mocks.gitStatus.mockResolvedValue({
+      Status: {},
+      IsRepo: true,
+      Branch: 'main',
+      DirBranches: { '': 'main', ext: 'dev' },
+    });
+    mocks.listFiles.mockResolvedValue([node('ext', true, 'ext'), node('README.md', false, 'README.md')]);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    expect(await screen.findByTitle('git 分支 main')).toBeInTheDocument();
+    expect(await screen.findByTitle('git 分支 dev')).toBeInTheDocument();
+  });
+
+  it('文件夹子树有改动时打统一圆点，文件仍用字母色标', async () => {
+    mocks.gitStatus.mockResolvedValue({
+      Status: { 'src/main.ts': 'modified' },
+      IsRepo: true,
+      Branch: 'main',
+      DirBranches: { '': 'main' },
+    });
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('src');
+    expect(screen.getAllByLabelText('有未提交改动').length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText('M')).not.toBeInTheDocument();
   });
 });

@@ -161,6 +161,8 @@ export type GitStatusCode =
 export interface GitStatusResult {
   Status: Record<string, string>;
   IsRepo: boolean;
+  Branch?: string;
+  DirBranches?: Record<string, string>;
 }
 
 // chat.Info 的 JSON 形态（internal/chat/types.go）

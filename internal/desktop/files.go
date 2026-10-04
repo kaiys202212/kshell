@@ -435,18 +435,20 @@ func (a *App) SaveFile(wsPath, path, text, eol string) error {
 // GitStatusResult 是 GitStatus 的返回形态；Wails 绑定不支持多返回值，
 // 故用结构体打包。Status 的键是 git 原生输出的 '/' 分隔相对路径。
 type GitStatusResult struct {
-	Status map[string]string `json:"Status"`
-	IsRepo bool              `json:"IsRepo"`
+	Status      map[string]string `json:"Status"`
+	IsRepo      bool              `json:"IsRepo"`
+	Branch      string            `json:"Branch"`
+	DirBranches map[string]string `json:"DirBranches"`
 }
 
 // GitStatus 返回工作区的 git 状态（relPath → 状态码）；
 // 非 git 仓库返回 IsRepo=false，前端据此隐藏标记。
 func (a *App) GitStatus(wsPath string) (GitStatusResult, error) {
-	status, isRepo, err := workspace.GitStatus(filepath.Clean(strings.TrimSpace(wsPath)))
+	rep, err := workspace.InspectGit(filepath.Clean(strings.TrimSpace(wsPath)))
 	if err != nil {
 		return GitStatusResult{}, err
 	}
-	return GitStatusResult{Status: status, IsRepo: isRepo}, nil
+	return GitStatusResult{Status: rep.Status, IsRepo: rep.IsRepo, Branch: rep.Branch, DirBranches: rep.DirBranches}, nil
 }
 
 // samePath 判断两路径是否同一文件：Windows 大小写不敏感，统一小写比较

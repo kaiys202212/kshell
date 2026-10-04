@@ -290,7 +290,7 @@ func TestOpenStartsAndReusesRunningSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("重复 Open error: %v", err)
 	}
-	if second != first {
+	if second.ID != first.ID || second.SessionID != first.SessionID || second.Title != first.Title {
 		t.Fatalf("运行中的同 key Open 应复用既有 Info: %+v vs %+v", second, first)
 	}
 	if b.starts() != 1 {
@@ -665,7 +665,7 @@ func TestAttachSessionBindsRunningNewTerminal(t *testing.T) {
 		t.Fatalf("Open error: %v", err)
 	}
 
-	if !m.AttachSession("disk-1", `d:/WS/`, "codebuddy", "修复页签标题") {
+	if !m.AttachSession("disk-1", `d:/WS/`, "codebuddy", "修复页签标题", 1, time.Time{}) {
 		t.Fatal("匹配的新建终端应绑定成功")
 	}
 	list := m.List()
@@ -692,7 +692,7 @@ func TestAttachSessionSkipsNonCandidates(t *testing.T) {
 		{"工具不匹配", `D:\ws`, "claude"},
 	}
 	for _, c := range cases {
-		if m.AttachSession("disk-1", c.ws, c.tool, "标题") {
+		if m.AttachSession("disk-1", c.ws, c.tool, "标题", 1, time.Time{}) {
 			t.Fatalf("%s 不应绑定", c.name)
 		}
 	}
@@ -709,7 +709,7 @@ func TestAttachSessionSkipsSessionKindAndExited(t *testing.T) {
 	if _, err := m.Open("session:s1", openInfo("s1"), sampleSpec(), 80, 24); err != nil {
 		t.Fatalf("Open error: %v", err)
 	}
-	if m.AttachSession("disk-1", "D:/ws", "claude", "标题") {
+	if m.AttachSession("disk-1", "D:/ws", "claude", "标题", 1, time.Time{}) {
 		t.Fatal("KindSession 终端不应被 AttachSession 改写")
 	}
 	if got := m.List()[0]; got.SessionID != "s1" || got.Title != "修复登录" {
@@ -730,7 +730,7 @@ func TestAttachSessionSkipsSessionKindAndExited(t *testing.T) {
 		return true
 	})
 	_ = b
-	if m.AttachSession("disk-1", `D:\ws`, "codebuddy", "标题") {
+	if m.AttachSession("disk-1", `D:\ws`, "codebuddy", "标题", 1, time.Time{}) {
 		t.Fatal("已退出的终端不应绑定")
 	}
 }
@@ -742,7 +742,7 @@ func TestAttachSessionFillsEmptyToolID(t *testing.T) {
 	if _, err := m.Open("new:1", newKindNewInfo(`D:\ws`, ""), sampleSpec(), 80, 24); err != nil {
 		t.Fatalf("Open error: %v", err)
 	}
-	if !m.AttachSession("disk-1", `D:\ws`, "codebuddy", "标题") {
+	if !m.AttachSession("disk-1", `D:\ws`, "codebuddy", "标题", 1, time.Time{}) {
 		t.Fatal("Info.ToolID 为空时应允许绑定该工作区会话")
 	}
 	if got := m.List()[0]; got.SessionID != "disk-1" {
@@ -755,19 +755,65 @@ func TestUpdateSessionTitleSyncsBound(t *testing.T) {
 	if _, err := m.Open("new:1", newKindNewInfo(`D:\ws`, "codebuddy"), sampleSpec(), 80, 24); err != nil {
 		t.Fatalf("Open error: %v", err)
 	}
-	if !m.AttachSession("disk-1", `D:\ws`, "codebuddy", "") {
+	if !m.AttachSession("disk-1", `D:\ws`, "codebuddy", "", 0, time.Time{}) {
 		t.Fatal("前置绑定失败")
 	}
-	if !m.UpdateSessionTitle("disk-1", "真实标题") {
+	if !m.UpdateSessionTitle("disk-1", "真实标题", 1) {
 		t.Fatal("已绑定会话应能更新标题")
 	}
 	if got := m.List()[0]; got.Title != "真实标题" {
 		t.Fatalf("Title = %q", got.Title)
 	}
-	if m.UpdateSessionTitle("disk-1", "真实标题") {
+	if m.UpdateSessionTitle("disk-1", "真实标题", 1) {
 		t.Fatal("标题未变时不应报告有更新")
 	}
-	if m.UpdateSessionTitle("missing", "x") {
+	if m.UpdateSessionTitle("missing", "x", 1) {
 		t.Fatal("未知会话不应更新")
+	}
+}
+
+func TestAttachSessionSkipsKnownIDs(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	info, err := m.Open("new:1", newKindNewInfo(`D:\ws`, "claude"), sampleSpec(), 80, 24)
+	if err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+	m.RememberKnownIDs(info.ID, []string{"s1"})
+	if m.AttachSession("s1", `D:\ws`, "claude", "左侧旧标题", 12, time.Time{}) {
+		t.Fatal("打开时已存在的会话不得绑到新建终端")
+	}
+	if got := m.List()[0]; got.Title != info.Title || got.SessionID != "" {
+		t.Fatalf("Info 被误绑: %+v", got)
+	}
+}
+
+func TestAttachSessionSkipsOldCreatedAt(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	if _, err := m.Open("new:1", newKindNewInfo(`D:\ws`, "claude"), sampleSpec(), 80, 24); err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+	old := time.Now().Add(-3 * time.Hour)
+	if m.AttachSession("s1", `D:\ws`, "claude", "左侧旧标题", 12, old) {
+		t.Fatal("CreatedAt 早于打开时刻的旧会话不得绑定")
+	}
+}
+
+func TestAttachSessionKeepsPlaceholderUntilMessages(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	info, err := m.Open("new:1", newKindNewInfo(`D:\ws`, "claude"), sampleSpec(), 80, 24)
+	if err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+	if !m.AttachSession("disk-new", `D:\ws`, "claude", "", 0, time.Time{}) {
+		t.Fatal("无消息时仍应绑定 SessionID")
+	}
+	if got := m.List()[0]; got.SessionID != "disk-new" || got.Title != info.Title {
+		t.Fatalf("无消息不得改标题: %+v", got)
+	}
+	if m.UpdateSessionTitle("disk-new", "真实标题", 0) {
+		t.Fatal("messages=0 不得改标题")
+	}
+	if !m.UpdateSessionTitle("disk-new", "真实标题", 1) {
+		t.Fatal("有消息后应改标题")
 	}
 }
