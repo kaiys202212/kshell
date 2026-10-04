@@ -50,3 +50,48 @@ export function computeImeClampStyles(input: ImeAnchorInput): ImeClampStyles | n
   const maxWidth = Math.max(input.viewportWidth - anchor.left, 1);
   return { left: anchor.left, top: anchor.top, maxWidth };
 }
+
+/** 终端单元格渲染提示：反色单元 ≈ TUI 可见 caret（相对视口行列）。 */
+export interface CellHint {
+  x: number;
+  y: number;
+  inverse: boolean;
+}
+
+/**
+ * 从渲染提示中选取 IME 锚点用的光标列/行。
+ * 优先视口内最后一个反色单元；若无则回退 buffer 光标（fallback，由调用方再钳制）。
+ */
+export function pickVisualCaret(
+  hints: CellHint[],
+  fallbackX: number,
+  fallbackY: number,
+  cols: number,
+  rows: number,
+): { cursorX: number; cursorY: number } {
+  let cursorX = fallbackX;
+  let cursorY = fallbackY;
+
+  for (const h of hints) {
+    if (!h.inverse) continue;
+    if (h.x < 0 || h.x >= cols || h.y < 0 || h.y >= rows) continue;
+    cursorX = h.x;
+    cursorY = h.y;
+  }
+
+  return { cursorX, cursorY };
+}
+
+/** 组合输入期间锁定横向滚动时的样式（便于单测与 TerminalView 对称接线）。 */
+export interface OverflowLockStyles {
+  overflowX: 'hidden';
+}
+
+export function imeOverflowLockStyles(): OverflowLockStyles {
+  return { overflowX: 'hidden' };
+}
+
+/** 视口 scrollLeft 非零时应在组合期复位，避免候选窗错位。 */
+export function shouldResetScrollLeft(scrollLeft: number): boolean {
+  return scrollLeft > 0;
+}
