@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -114,6 +115,26 @@ func TestGetSessions(t *testing.T) {
 	// 未装配的 App 也不应返回 nil，避免前端拿到 null
 	if got := (NewApp()).GetSessions(); got == nil || len(got) != 0 {
 		t.Fatalf("未装配时 GetSessions 应为空切片, got %+v", got)
+	}
+}
+
+func TestGetSessionPreview(t *testing.T) {
+	app, _, _ := newTestApp(t)
+	app.runScan()
+	app.mu.Lock()
+	app.result.Sessions[0].Path = filepath.Join("..", "providers", "testdata", "claude", "basic.jsonl")
+	app.mu.Unlock()
+
+	got, err := app.GetSessionPreview("s1")
+	if err != nil {
+		t.Fatalf("GetSessionPreview: %v", err)
+	}
+	if !strings.Contains(got.Markdown, "## 用户") || !strings.Contains(got.Markdown, "修复上传白名单校验") {
+		t.Fatalf("Markdown = %q", got.Markdown)
+	}
+
+	if _, err := app.GetSessionPreview("nope"); !errors.Is(err, errSessionNotFound) {
+		t.Fatalf("未知会话应返回 errSessionNotFound, got %v", err)
 	}
 }
 

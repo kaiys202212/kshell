@@ -42,6 +42,7 @@ vi.mock('../components/ChatView', () => ({
 vi.mock('../components/FileTree', () => ({ default: () => <div data-testid="file-tree" /> }));
 vi.mock('../components/PreviewToolPane', () => ({
   PREVIEW_SUB: 'preview',
+  SESSION_PREVIEW_SUB: 'session-preview',
   default: () => <div data-testid="preview-tool-pane" />,
 }));
 vi.mock('../components/SshPanel', () => ({ default: () => <div data-testid="ssh-panel" /> }));

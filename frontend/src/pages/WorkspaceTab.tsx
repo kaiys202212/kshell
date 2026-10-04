@@ -1,5 +1,5 @@
 // 工作区页签：三栏布局（左右两栏宽度可拖动）。
-//   左栏：「新建会话」下拉菜单（选 agent 即启动）+ 会话列表（「恢复」开中心区内嵌终端）
+//   左栏：「新建会话」下拉菜单 + 会话列表（点行联动页签/会话预览，图标激活）
 //   中栏：左侧 agent 页签；最右钉「预览」（预览区内再开「预览|终端」子页签）
 //   右栏：文件 | SSH 子页签（点文件自动切到中栏的预览页签）
 // 终端页签一旦打开就常挂载（非激活用 hidden），xterm 缓冲与焦点不丢；
@@ -30,7 +30,7 @@ import { displayTitle } from '../lib/title';
 import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
 import { sameWorkspacePath } from '../lib/workspacePath';
 import FileTree from '../components/FileTree';
-import PreviewToolPane, { PREVIEW_SUB } from '../components/PreviewToolPane';
+import PreviewToolPane, { PREVIEW_SUB, SESSION_PREVIEW_SUB } from '../components/PreviewToolPane';
 import ResizeHandle from '../components/ResizeHandle';
 import SessionList from '../components/SessionList';
 import SshPanel from '../components/SshPanel';
@@ -74,6 +74,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [centerTab, setCenterTab] = useState<string>(PREVIEW_TAB);
   const [toolSubTab, setToolSubTab] = useState<string>(PREVIEW_SUB);
+  const [previewSession, setPreviewSession] = useState<Session | null>(null);
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [busy, setBusy] = useState(false);
   // 新建会话后的延迟重扫定时器（卸载/再次新建时清掉，避免重复触发）
@@ -108,6 +109,18 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     () => chats.filter((c) => sameWorkspacePath(c.Workspace, tab.id)),
     [chats, tab.id],
   );
+
+  const selectedSessionID = useMemo(() => {
+    if (centerTab === PREVIEW_TAB) {
+      if (toolSubTab === SESSION_PREVIEW_SUB && previewSession) return previewSession.ID;
+      return null;
+    }
+    const t = terms.find((x) => x.ID === centerTab);
+    if (t?.SessionID) return t.SessionID;
+    const c = chatsForWs.find((x) => x.ID === centerTab);
+    if (c?.SessionID) return c.SessionID;
+    return null;
+  }, [centerTab, toolSubTab, previewSession, terms, chatsForWs]);
 
   useEffect(() => {
     // 挂载时补一次镜像：页签是常挂载的，但终端可能在别的工作区页签里被创建
@@ -155,16 +168,25 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
 
   useEffect(() => {
     // 预览区子页签指向的 shell/ssh 已关闭时退回「预览」
-    if (toolSubTab !== PREVIEW_SUB && !toolTerms.some((t) => t.ID === toolSubTab)) {
+    if (toolSubTab !== PREVIEW_SUB && toolSubTab !== SESSION_PREVIEW_SUB && !toolTerms.some((t) => t.ID === toolSubTab)) {
       setToolSubTab(PREVIEW_SUB);
     }
-  }, [toolTerms, toolSubTab]);
+    if (toolSubTab === SESSION_PREVIEW_SUB && !previewSession) {
+      setToolSubTab(PREVIEW_SUB);
+    }
+  }, [toolTerms, toolSubTab, previewSession]);
+
+  const closeSessionPreview = useCallback(() => {
+    setPreviewSession(null);
+    setToolSubTab((cur) => (cur === SESSION_PREVIEW_SUB ? PREVIEW_SUB : cur));
+  }, []);
 
   // 恢复历史会话：优先走 ACP 聊天，Go 侧按可用性决定聊天或回退终端
   const openChatOrTerminal = useCallback(
     (s: Session) => {
       void openSession(s.ID)
         .then((res) => {
+          closeSessionPreview();
           if (res.Kind === 'chat' && res.Chat) {
             useAppStore.getState().upsertChat(res.Chat);
             selectCenterTab(res.Chat.ID);
@@ -178,7 +200,26 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           notify(`打开会话失败：${e instanceof Error ? e.message : String(e)}`, 'error');
         });
     },
-    [notify, selectCenterTab],
+    [notify, selectCenterTab, closeSessionPreview],
+  );
+
+  const handleSelectSessionRow = useCallback(
+    (s: Session) => {
+      const chatHit = chatsForWs.filter((c) => c.SessionID === s.ID);
+      const termHit = terms.filter((t) => t.SessionID === s.ID);
+      const live =
+        chatHit.find((x) => x.Status !== 'exited') ??
+        termHit.find((x) => x.Status !== 'exited') ??
+        null;
+      if (live) {
+        selectCenterTab(live.ID);
+        return;
+      }
+      setPreviewSession(s);
+      selectCenterTab(PREVIEW_TAB);
+      setToolSubTab(SESSION_PREVIEW_SUB);
+    },
+    [chatsForWs, terms, selectCenterTab],
   );
 
   useEffect(
@@ -283,7 +324,12 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             未检测到可用的 agent：请先安装 Claude Code / Codex / OpenCode 等 CLI，再点首页「重新扫描」。
           </p>
         )}
-        <SessionList workspacePath={tab.id} onOpenTerminal={openChatOrTerminal} />
+        <SessionList
+          workspacePath={tab.id}
+          selectedSessionID={selectedSessionID}
+          onSelectRow={handleSelectSessionRow}
+          onActivate={openChatOrTerminal}
+        />
       </aside>
 
       <ResizeHandle
@@ -467,6 +513,15 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
               onSubTab={setToolSubTab}
               onCloseTerminal={handleCloseTerminal}
               onNewShell={handleNewShell}
+              sessionPreview={
+                previewSession
+                  ? { sessionID: previewSession.ID, title: displayTitle(previewSession.Title) || previewSession.Title }
+                  : null
+              }
+              onCloseSessionPreview={closeSessionPreview}
+              onActivateSessionPreview={() => {
+                if (previewSession) openChatOrTerminal(previewSession);
+              }}
             />
           </div>
           {terms.map((t) => (

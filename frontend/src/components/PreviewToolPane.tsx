@@ -4,9 +4,11 @@ import { cn } from '../lib/cn';
 import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
 import type { TerminalInfo } from '../lib/api';
 import Preview from './Preview';
+import SessionTranscript from './SessionTranscript';
 import TerminalView from './TerminalView';
 
 export const PREVIEW_SUB = 'preview';
+export const SESSION_PREVIEW_SUB = 'session-preview';
 
 const subTabBase = `group ${TAB_BASE} h-7 max-w-44 text-xs`;
 const subTabActive = TAB_ACTIVE;
@@ -28,6 +30,9 @@ export default function PreviewToolPane({
   onSubTab,
   onCloseTerminal,
   onNewShell,
+  sessionPreview = null,
+  onCloseSessionPreview,
+  onActivateSessionPreview,
 }: {
   wsPath: string;
   previewPath: string | null;
@@ -37,6 +42,9 @@ export default function PreviewToolPane({
   onSubTab: (id: string) => void;
   onCloseTerminal: (id: string) => void;
   onNewShell: () => void;
+  sessionPreview?: { sessionID: string; title: string } | null;
+  onCloseSessionPreview?: () => void;
+  onActivateSessionPreview?: () => void;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -54,6 +62,35 @@ export default function PreviewToolPane({
           预览
           {subTab === PREVIEW_SUB && <span className={TAB_UNDERLINE} />}
         </button>
+        {sessionPreview && (
+          <div
+            className={cn(subTabBase, subTab === SESSION_PREVIEW_SUB && subTabActive)}
+            onClick={() => onSubTab(SESSION_PREVIEW_SUB)}
+          >
+            <button
+              role="tab"
+              aria-selected={subTab === SESSION_PREVIEW_SUB}
+              className="min-w-0 truncate text-xs"
+              title={sessionPreview.title}
+            >
+              会话预览
+            </button>
+            <button
+              className={cn(
+                'ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-sm leading-none text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground',
+                subTab === SESSION_PREVIEW_SUB ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100',
+              )}
+              aria-label="关闭会话预览"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCloseSessionPreview?.();
+              }}
+            >
+              ×
+            </button>
+            {subTab === SESSION_PREVIEW_SUB && <span className={TAB_UNDERLINE} />}
+          </div>
+        )}
         {terms.map((t) => {
           const label = toolTermLabel(terms, t);
           const selected = subTab === t.ID;
@@ -110,6 +147,18 @@ export default function PreviewToolPane({
         >
           <Preview wsPath={wsPath} path={previewPath} />
         </div>
+        {sessionPreview && (
+          <div
+            className={cn('h-full', subTab !== SESSION_PREVIEW_SUB && 'hidden')}
+            style={{ animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' }}
+          >
+            <SessionTranscript
+              sessionID={sessionPreview.sessionID}
+              title={sessionPreview.title}
+              onActivate={() => onActivateSessionPreview?.()}
+            />
+          </div>
+        )}
         {terms.map((t) => (
           <div
             key={t.ID}
