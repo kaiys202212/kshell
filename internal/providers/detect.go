@@ -23,9 +23,11 @@ func Detect(spec DetectSpec, home string) Detection {
 
 	for _, dir := range spec.InstallDirs {
 		root := expandHome(dir, home)
-		for _, candidate := range binCandidates(root, spec.BinName) {
-			if isFile(candidate) {
-				return Detection{Installed: true, BinPath: candidate, Source: "install-dir"}
+		for _, name := range specBinNames(spec) {
+			for _, candidate := range binCandidates(root, name) {
+				if isFile(candidate) {
+					return Detection{Installed: true, BinPath: candidate, Source: "install-dir"}
+				}
 			}
 		}
 	}
@@ -60,11 +62,19 @@ func FindBins(spec DetectSpec, home string) []string {
 	}
 	for _, dir := range spec.InstallDirs {
 		root := expandHome(dir, home)
-		for _, candidate := range binCandidates(root, spec.BinName) {
-			add(candidate)
+		for _, name := range specBinNames(spec) {
+			for _, candidate := range binCandidates(root, name) {
+				add(candidate)
+			}
 		}
 	}
 	return out
+}
+
+// specBinNames 返回 InstallDirs 内要尝试的全部可执行名：BinName 永远在前优先命中。
+// PATH 探测不使用 AltBinNames（如 cursor 的 agent 名太通用），避免误命中无关二进制。
+func specBinNames(spec DetectSpec) []string {
+	return append([]string{spec.BinName}, spec.AltBinNames...)
 }
 
 // ProbeVersion 运行 <bin> --version 取首行；失败或超时一律返回 unknown，绝不阻塞扫描。

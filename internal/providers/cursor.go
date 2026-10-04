@@ -34,7 +34,10 @@ func (Cursor) DetectSpec(home string) DetectSpec {
 		dirs = append(dirs, cursorVersionInstallDirs(expandHome(root, home))...)
 	}
 	return DetectSpec{
-		BinName:     "cursor-agent",
+		BinName: "cursor-agent",
+		// 2026-10 起官方安装脚本把根目录 shim 改名为 agent.{cmd,ps1}，
+		// 根目录与 versions\ 下都不再有 cursor-agent.* 文件。
+		AltBinNames: []string{"agent"},
 		InstallDirs: dirs,
 		ConfigDirs:  []string{"~/.cursor"},
 	}

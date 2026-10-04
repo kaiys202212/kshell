@@ -20,6 +20,7 @@ type Detection struct {
 // DetectSpec 让各 provider 声明「怎么找到自己」，检测逻辑则由 providers.Detect 统一实现，避免每家重复写一遍。
 type DetectSpec struct {
 	BinName     string   // PATH 上查找的可执行名
+	AltBinNames []string // 备选可执行名：只在 InstallDirs 内匹配，不进 PATH 探测（防误命中同名无关文件）
 	InstallDirs []string // 常见安装目录（支持 ~ 前缀与环境变量）
 	ConfigDirs  []string // 存在即说明装过（支持 ~ 前缀）
 }

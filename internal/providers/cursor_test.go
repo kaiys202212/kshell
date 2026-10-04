@@ -319,6 +319,49 @@ func TestCursorDetectFindsInstallDir(t *testing.T) {
 	}
 }
 
+// 官方安装器 2026-10 起把根目录 shim 改名为 agent.{cmd,ps1}，不再有 cursor-agent.*。
+func TestCursorDetectFindsAgentShim(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	var dir string
+	if runtime.GOOS == "windows" {
+		local := t.TempDir()
+		t.Setenv("LOCALAPPDATA", local)
+		dir = filepath.Join(local, "cursor-agent")
+	} else {
+		dir = filepath.Join(home, ".local", "bin")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := writeFakeBin(t, dir, "agent", "echo agent")
+
+	got := Detect(Cursor{}.DetectSpec(home), home)
+	if !got.Installed || got.Source != "install-dir" {
+		t.Fatalf("got %+v, want install-dir via agent shim", got)
+	}
+	if filepath.Clean(got.BinPath) != filepath.Clean(bin) {
+		t.Fatalf("BinPath = %q, want %q", got.BinPath, bin)
+	}
+}
+
+// agent 名字太通用，只能出现在已知安装目录的探测里，不能进 PATH 探测。
+func TestAgentShimNotProbedOnPath(t *testing.T) {
+	home := t.TempDir()
+	pathDir := t.TempDir()
+	t.Setenv("PATH", pathDir)
+	if runtime.GOOS == "windows" {
+		// 隔离真实安装目录，PATH 探测必须独立于 InstallDirs 生效
+		t.Setenv("LOCALAPPDATA", t.TempDir())
+	}
+	writeFakeBin(t, pathDir, "agent", "echo agent")
+
+	got := Detect(Cursor{}.DetectSpec(home), home)
+	if got.Installed {
+		t.Fatalf("PATH 上的 agent 不应让 cursor 判定为已安装: %+v", got)
+	}
+}
+
 func TestCursorDetectFindsVersionedInstallDir(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("官方 Windows 安装才把 CLI 放在 versions\\<ver>\\")
