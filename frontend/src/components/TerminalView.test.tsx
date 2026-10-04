@@ -2,10 +2,11 @@
 // 桩把「写入口 / onData / onResize 回调 / fit 次数」暴露出来供断言；
 // rAF 也替换为可控队列，避免测试依赖真实帧时序。
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TerminalInfo } from '../lib/api';
 import { bytesToBase64, encodeTerminalInput } from '../lib/base64';
+import { DRAG_MIME } from '../lib/dragPath';
 import { clearTerminalRegistry, dispatchTerminalData } from '../lib/terminalRegistry';
 import { useAppStore } from '../state/store';
 import TerminalView from './TerminalView';
@@ -350,5 +351,45 @@ describe('TerminalView', () => {
       useAppStore.getState().setAppearance({ mode: 'light', resolved: 'light' });
     });
     expect(term(0).options.theme).toEqual({ background: '#ffffff', foreground: '#1c2a27' });
+  });
+
+  // jsdom 没有 DataTransfer：用合成对象模拟 dataTransfer，types/getData 按需给值
+  function drop(root: Element, opts: { mime?: string; path?: string }) {
+    const dataTransfer = {
+      types: opts.mime ? [opts.mime] : [],
+      getData: () => opts.path ?? '',
+    };
+    fireEvent.drop(root, { dataTransfer });
+  }
+
+  it('drop 携带 DRAG_MIME：路径含空格包引号后经 encodeTerminalInput 写终端并聚焦', () => {
+    const { container } = render(<TerminalView term={TERM} active />);
+    const root = container.firstElementChild as HTMLElement;
+    // Task 8 的外部拖入路由靠该属性定位落点
+    expect(root).toHaveAttribute('data-drop-zone', `terminal:${TERM.ID}`);
+
+    drop(root, { mime: DRAG_MIME, path: 'D:\\my file\\a.go' });
+
+    expect(api.writeTerminal).toHaveBeenCalledTimes(1);
+    expect(api.writeTerminal).toHaveBeenCalledWith(TERM.ID, encodeTerminalInput('"D:\\my file\\a.go"'));
+    expect(term().focusCount).toBe(1);
+  });
+
+  it('drop 不携带 DRAG_MIME：不写终端', () => {
+    const { container } = render(<TerminalView term={TERM} active />);
+    const root = container.firstElementChild as HTMLElement;
+
+    drop(root, { path: 'D:\\a.go' });
+
+    expect(api.writeTerminal).not.toHaveBeenCalled();
+  });
+
+  it('Status=exited 的终端不接受拖入：drop 不写终端', () => {
+    const { container } = render(<TerminalView term={{ ...TERM, Status: 'exited' }} active />);
+    const root = container.firstElementChild as HTMLElement;
+
+    drop(root, { mime: DRAG_MIME, path: 'D:\\a.go' });
+
+    expect(api.writeTerminal).not.toHaveBeenCalled();
   });
 });

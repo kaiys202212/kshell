@@ -4,6 +4,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ChatInfo, ChatToolCall } from '../lib/api';
 import { cancelChat, cancelChatPermission, respondChatPermission, sendChatPrompt } from '../lib/api';
+import { appendChatInput, registerChatInput, unregisterChatInput } from '../lib/chatInputRegistry';
+import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { useAppStore } from '../state/store';
 import type { TimelineItem } from '../state/chatUpdate';
 import { cn } from '../lib/cn';
@@ -39,10 +41,17 @@ export default function ChatView({ chat, active }: Props) {
   const items = useAppStore((s) => s.chatItems[id]) ?? EMPTY_ITEMS;
   const permission = useAppStore((s) => s.chatPermissions[id]) ?? null;
   const [draft, setDraft] = useState('');
+  const [dropHint, setDropHint] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // 用户是否停在底部（近底 40px 内）：仅在底部时才自动滚动，避免读历史时被新消息拽走
   const atBottom = useRef(true);
   const running = chat.Status === 'running';
+
+  // 拖入文件落点经注册表追加到草稿：依赖只取 id，chat 其余字段变化不重挂
+  useEffect(() => {
+    registerChatInput(id, { append: (text) => setDraft((d) => (d ? `${d} ${text}` : text)) });
+    return () => unregisterChatInput(id);
+  }, [id]);
 
   useEffect(() => {
     if (!active) return;
@@ -71,7 +80,26 @@ export default function ChatView({ chat, active }: Props) {
   };
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
+    <div
+      className="relative flex h-full min-h-0 flex-col"
+      data-drop-zone={`chat:${id}`}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
+        e.preventDefault();
+        setDropHint(true);
+      }}
+      onDragLeave={() => setDropHint(false)}
+      onDrop={(e) => {
+        setDropHint(false);
+        if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
+        e.preventDefault();
+        const p = e.dataTransfer.getData(DRAG_MIME);
+        if (!p) return;
+        if (!appendChatInput(id, quotePathForShell(p))) {
+          useAppStore.getState().notify('该会话不可接收文件', 'error');
+        }
+      }}
+    >
       {chat.Status === 'exited' && (
         <div className="shrink-0 bg-muted px-2 py-0.5 text-xs text-muted-foreground">
           会话已退出{chat.ExitCode ? `（退出码 ${chat.ExitCode}）` : ''}{chat.Error ? `：${chat.Error}` : ''}
@@ -146,6 +174,12 @@ export default function ChatView({ chat, active }: Props) {
             : <Button size="sm" onClick={send}>发送</Button>}
         </div>
       </div>
+
+      {dropHint && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded border-2 border-dashed border-primary bg-primary/10 text-sm">
+          松开插入文件路径
+        </div>
+      )}
 
       {permission && (
         <Dialog

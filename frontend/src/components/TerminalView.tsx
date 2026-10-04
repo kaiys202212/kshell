@@ -4,13 +4,14 @@
 //   本组件只在挂载时登记、卸载时注销。
 // - 组件常挂载、由父级用 hidden 切换可见性：非激活时不做任何销毁，xterm 缓冲与历史都保留。
 // - 键盘输入 → writeTerminal(base64)；FitAddon 改变行列 → resizeTerminal（否则 PTY 仍按旧尺寸折行）。
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import type { TerminalInfo } from '../lib/api';
 import { resizeTerminal, writeTerminal } from '../lib/api';
 import { terminalTheme } from '../lib/appearance';
 import { encodeTerminalInput } from '../lib/base64';
+import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { useAppStore } from '../state/store';
 import { registerTerminal, unregisterTerminal } from '../lib/terminalRegistry';
 
@@ -35,6 +36,7 @@ export default function TerminalView({ term, active }: Props) {
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const exitedHintRef = useRef(false);
+  const [dropHint, setDropHint] = useState(false);
   // 渲染期同步（不是 useEffect）：ResizeObserver 回调在 DOM 变更后的布局阶段触发，
   // 必须保证「变隐藏」那一刻回调读到的已经是 false，否则仍会 fit 出退化尺寸。
   const activeRef = useRef(active);
@@ -123,13 +125,36 @@ export default function TerminalView({ term, active }: Props) {
   }, [term.Status]);
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
+    <div
+      className="relative flex h-full min-h-0 flex-col"
+      data-drop-zone={`terminal:${termId}`}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes(DRAG_MIME) || term.Status === 'exited') return;
+        e.preventDefault();
+        setDropHint(true);
+      }}
+      onDragLeave={() => setDropHint(false)}
+      onDrop={(e) => {
+        setDropHint(false);
+        if (!e.dataTransfer.types.includes(DRAG_MIME) || term.Status === 'exited') return;
+        e.preventDefault();
+        const p = e.dataTransfer.getData(DRAG_MIME);
+        if (!p) return;
+        void writeTerminal(termId, encodeTerminalInput(quotePathForShell(p)));
+        termRef.current?.focus();
+      }}
+    >
       {term.Status === 'exited' && (
         <div className="shrink-0 bg-muted px-2 py-0.5 text-xs text-muted-foreground">
           会话已退出（退出码 {term.ExitCode}）
         </div>
       )}
       <div ref={hostRef} className="xterm-host h-full w-full overflow-hidden bg-card" />
+      {dropHint && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded border-2 border-dashed border-primary bg-primary/10 text-sm">
+          松开插入文件路径
+        </div>
+      )}
     </div>
   );
 }
