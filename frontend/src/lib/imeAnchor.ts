@@ -1,8 +1,8 @@
-// IME 候选窗锚点计算（应用层移植 xtermjs#5759 思路 + 边缘钳制）。
-// 背景：xterm 把隐藏 textarea 锚在 buffer 光标处，Windows IME 候选窗跟随其屏幕位置；
-// agent TUI 等待输入时常把光标 park 在行尾，候选窗贴屏幕右缘，触发原生层的窗口移动。
-// compositionstart 时按本函数结果重设 textarea 位置，把候选窗拉回视口内。
-// 坐标规则与 xterm 内部 _syncTextArea 对齐：textarea 位置 = 光标单元格的像素坐标。
+// IME 候选窗 / 拼音预编辑锚点计算（应用层移植 xtermjs#5759 思路 + 边缘钳制）。
+// 背景：xterm 把隐藏 textarea 与 .composition-view 锚在 buffer 光标处；
+// agent TUI 常把光标 park 在行尾，拼音 nowrap 贴右缘挤布局，候选窗也贴屏幕右缘。
+// 组合全程按本模块结果重设两者位置，并限制 composition-view 最大宽度。
+// 坐标规则与 xterm 内部 _syncTextArea 对齐：位置 = 光标单元格的像素坐标。
 
 /** 横向钳制阈值：光标列超过视口宽度该比例时候选窗贴右缘，钳到该列。 */
 export const IME_MAX_COL_RATIO = 0.6;
@@ -21,6 +21,13 @@ export interface ImeAnchor {
   top: number;
 }
 
+/** 应用到 .composition-view / textarea 的钳制样式。 */
+export interface ImeClampStyles {
+  left: number;
+  top: number;
+  maxWidth: number; // composition-view：视口剩余宽度，至少 1
+}
+
 export function computeImeAnchor(input: ImeAnchorInput): ImeAnchor | null {
   const { cols, rows, cursorX, cursorY, viewportWidth, viewportHeight } = input;
   if (cols <= 0 || rows <= 0 || viewportWidth <= 0 || viewportHeight <= 0) return null;
@@ -35,4 +42,11 @@ export function computeImeAnchor(input: ImeAnchorInput): ImeAnchor | null {
   const clampedX = Math.min(Math.max(cursorX, 0), maxCol);
 
   return { left: clampedX * cellW, top: row * cellH };
+}
+
+export function computeImeClampStyles(input: ImeAnchorInput): ImeClampStyles | null {
+  const anchor = computeImeAnchor(input);
+  if (!anchor) return null;
+  const maxWidth = Math.max(input.viewportWidth - anchor.left, 1);
+  return { left: anchor.left, top: anchor.top, maxWidth };
 }

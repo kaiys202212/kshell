@@ -14,7 +14,7 @@ import { encodeTerminalInput } from '../lib/base64';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { useAppStore } from '../state/store';
 import { registerTerminal, unregisterTerminal } from '../lib/terminalRegistry';
-import { computeImeAnchor } from '../lib/imeAnchor';
+import { computeImeClampStyles } from '../lib/imeAnchor';
 
 interface Props {
   term: TerminalInfo; // store 里的镜像（Status/ExitCode 决定退出提示）
@@ -83,16 +83,19 @@ export default function TerminalView({ term, active }: Props) {
       fit: () => fitAddon.fit(),
     });
 
-    // IME 锚点修复（对应 xtermjs#5734/#5759，上游修复要 7.0 才发布）：
-    // xterm 把隐藏 textarea 锚在 buffer 光标处，Windows IME 候选窗跟随其屏幕位置；
-    // agent TUI 等待输入时常把光标 park 在行尾，候选窗贴屏幕右缘，会把窗口挤动。
-    // compositionstart 时把 textarea 拉回视口内（横向钳制到 60% 宽度处）。
+    // IME 组合全程钳制（对应 xtermjs#5734/#5759 + composition-view 右缘溢出）：
+    // xterm 的 CompositionHelper 在 compositionupdate/onRender 时会把 .composition-view
+    // 与 textarea 重钉到 buffer 光标；agent TUI 常 park 在行尾，拼音 nowrap 挤布局。
+    // 组合期间持续应用钳制（含 rAF 压过同帧 xterm 重定位），并限制预编辑 maxWidth。
     const textarea = instance.textarea;
-    const onCompositionStart = () => {
+    let composing = false;
+    let imeRaf = 0;
+    const applyImeClamp = () => {
       const screen = host.querySelector<HTMLElement>('.xterm-screen');
+      const compositionView = host.querySelector<HTMLElement>('.composition-view');
       const buf = instance.buffer.active;
       if (!textarea || !screen) return;
-      const anchor = computeImeAnchor({
+      const styles = computeImeClampStyles({
         cols: instance.cols,
         rows: instance.rows,
         cursorX: buf.cursorX,
@@ -100,11 +103,45 @@ export default function TerminalView({ term, active }: Props) {
         viewportWidth: screen.clientWidth,
         viewportHeight: screen.clientHeight,
       });
-      if (!anchor) return;
-      textarea.style.left = `${anchor.left}px`;
-      textarea.style.top = `${anchor.top}px`;
+      if (!styles) return;
+      textarea.style.left = `${styles.left}px`;
+      textarea.style.top = `${styles.top}px`;
+      if (compositionView) {
+        compositionView.style.left = `${styles.left}px`;
+        compositionView.style.top = `${styles.top}px`;
+        compositionView.style.maxWidth = `${styles.maxWidth}px`;
+        compositionView.style.overflow = 'hidden';
+      }
+    };
+    // 同帧内 xterm updateCompositionElements 可能后跑；再排一帧压过
+    const scheduleImeClamp = () => {
+      applyImeClamp();
+      if (imeRaf) cancelAnimationFrame(imeRaf);
+      imeRaf = requestAnimationFrame(() => {
+        imeRaf = 0;
+        if (composing) applyImeClamp();
+      });
+    };
+    const onCompositionStart = () => {
+      composing = true;
+      scheduleImeClamp();
+    };
+    const onCompositionUpdate = () => {
+      scheduleImeClamp();
+    };
+    const onCompositionEnd = () => {
+      composing = false;
+      if (imeRaf) {
+        cancelAnimationFrame(imeRaf);
+        imeRaf = 0;
+      }
     };
     textarea?.addEventListener('compositionstart', onCompositionStart);
+    textarea?.addEventListener('compositionupdate', onCompositionUpdate);
+    textarea?.addEventListener('compositionend', onCompositionEnd);
+    const renderSub = instance.onRender(() => {
+      if (composing) scheduleImeClamp();
+    });
 
     // 容器尺寸变化 → 下一帧再 fit：同一帧里可能还有布局变动（三栏拖动、页签切换）。
     // 非激活页签（被 hidden）时宿主尺寸为 0，此时 fit 会算出 2x1 的退化尺寸，直接跳过。
@@ -121,7 +158,11 @@ export default function TerminalView({ term, active }: Props) {
 
     return () => {
       observer?.disconnect();
+      if (imeRaf) cancelAnimationFrame(imeRaf);
       textarea?.removeEventListener('compositionstart', onCompositionStart);
+      textarea?.removeEventListener('compositionupdate', onCompositionUpdate);
+      textarea?.removeEventListener('compositionend', onCompositionEnd);
+      renderSub.dispose();
       dataSub.dispose();
       resizeSub.dispose();
       unregisterTerminal(termId);

@@ -28,6 +28,7 @@ vi.mock('@xterm/xterm', () => {
     host: HTMLElement | null = null;
     dataCb: ((data: string) => void) | null = null;
     resizeCb: ((size: { cols: number; rows: number }) => void) | null = null;
+    renderCb: (() => void) | null = null;
     written: (string | Uint8Array)[] = [];
     disposed = false;
     focusCount = 0;
@@ -62,6 +63,14 @@ vi.mock('@xterm/xterm', () => {
       return {
         dispose: () => {
           this.resizeCb = null;
+        },
+      };
+    }
+    onRender(cb: () => void) {
+      this.renderCb = cb;
+      return {
+        dispose: () => {
+          this.renderCb = null;
         },
       };
     }

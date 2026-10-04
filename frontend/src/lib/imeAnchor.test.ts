@@ -3,7 +3,7 @@
 // _syncTextArea 对齐：textarea 位置 = 光标单元格的像素坐标。
 // 注意 xterm API 语义：cursorY 是相对视口顶行的行号（0..rows-1），不含滚动偏移。
 import { describe, expect, it } from 'vitest';
-import { computeImeAnchor, IME_MAX_COL_RATIO } from './imeAnchor';
+import { computeImeAnchor, computeImeClampStyles, IME_MAX_COL_RATIO } from './imeAnchor';
 
 const base = {
   cols: 100,
@@ -38,5 +38,21 @@ describe('computeImeAnchor', () => {
     expect(computeImeAnchor({ ...base, rows: 0 })).toBeNull();
     expect(computeImeAnchor({ ...base, viewportWidth: 0 })).toBeNull();
     expect(computeImeAnchor({ ...base, viewportHeight: 0 })).toBeNull();
+  });
+});
+
+describe('computeImeClampStyles', () => {
+  it('复用钳制后的 left/top，并给出剩余视口 maxWidth', () => {
+    const got = computeImeClampStyles({ ...base, cursorX: 90 });
+    expect(got).not.toBeNull();
+    const maxCol = Math.floor(base.cols * IME_MAX_COL_RATIO);
+    expect(got!.left).toBe(maxCol * (base.viewportWidth / base.cols));
+    expect(got!.top).toBe(base.cursorY * (base.viewportHeight / base.rows));
+    expect(got!.maxWidth).toBe(base.viewportWidth - got!.left);
+    expect(got!.maxWidth).toBeGreaterThan(0);
+  });
+
+  it('退化输入返回 null', () => {
+    expect(computeImeClampStyles({ ...base, cols: 0 })).toBeNull();
   });
 });
