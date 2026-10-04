@@ -1,4 +1,4 @@
-package launch
+﻿package launch
 
 import (
 	"reflect"
@@ -14,7 +14,7 @@ func TestForSessionInjectsGenericAndProviderTheme(t *testing.T) {
 	tools := []discovery.Tool{{ID: "claude", Installed: true, BinPath: "claude.exe"}}
 	s := providers.Session{ID: "s1", ToolID: "claude", Workspace: `D:\ws`}
 
-	l, err := ForSession(ps, tools, s, ThemeOptions{Mode: appearance.Light}, ModelOptions{})
+	l, err := ForSession(ps, tools, s, ThemeOptions{Mode: appearance.Light}, ModelOptions{}, PermissionOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestForWorkspaceToolGenericOnlyForNonThemer(t *testing.T) {
 	tools := []discovery.Tool{{ID: "gtool", Installed: true, BinPath: "gtool.exe"}}
 	ws := discovery.Workspace{Path: `D:\ws`}
 
-	l, err := ForWorkspaceTool(ps, tools, ws, "gtool", ThemeOptions{Mode: appearance.Dark}, ModelOptions{})
+	l, err := ForWorkspaceTool(ps, tools, ws, "gtool", ThemeOptions{Mode: appearance.Dark}, ModelOptions{}, PermissionOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestForSessionGeminiWritesFileEnv(t *testing.T) {
 	tools := []discovery.Tool{{ID: "gemini", Installed: true, BinPath: "gemini.exe"}}
 	s := providers.Session{ID: "g1", ToolID: "gemini", Workspace: `D:\ws`}
 
-	l, err := ForSession(ps, tools, s, ThemeOptions{Mode: appearance.Dark, CacheDir: dir}, ModelOptions{})
+	l, err := ForSession(ps, tools, s, ThemeOptions{Mode: appearance.Dark, CacheDir: dir}, ModelOptions{}, PermissionOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

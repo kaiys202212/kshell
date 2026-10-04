@@ -566,8 +566,17 @@ func (m Model) modelOptions() launch.ModelOptions {
 		return launch.ModelOptions{}
 	}
 	return launch.ModelOptions{Resolver: func(toolID string) (providers.ModelConfig, bool) {
-		return providers.ModelConfig{BaseURL: cfg.BaseURL, APIKey: cfg.APIKey, Model: cfg.Agents[toolID]}, true
+		return providers.ModelConfig{
+			OpenAIBaseURL:    cfg.OpenAIBaseURL,
+			AnthropicBaseURL: cfg.AnthropicBaseURL,
+			APIKey:           cfg.APIKey,
+			Model:            cfg.Agents[toolID],
+		}, true
 	}}
+}
+
+func (m Model) permissionOptions() launch.PermissionOptions {
+	return launch.PermissionOptions{Bypass: m.opts.Config.PermissionMode == config.PermissionModeBypass}
 }
 
 // resumeLaunch 给出恢复选中会话所需的启动描述；解析逻辑下沉在 launch 包，UI 与桌面版共用。
@@ -576,7 +585,7 @@ func (m Model) resumeLaunch() (providers.Launch, error) {
 	if !ok {
 		return providers.Launch{}, errNoSessionSelected
 	}
-	return launch.ForSession(m.opts.Providers, m.tools, s, m.themeOptions(), m.modelOptions())
+	return launch.ForSession(m.opts.Providers, m.tools, s, m.themeOptions(), m.modelOptions(), m.permissionOptions())
 }
 
 func (m Model) newSessionLaunch() (providers.Launch, error) {
@@ -584,7 +593,7 @@ func (m Model) newSessionLaunch() (providers.Launch, error) {
 	if !ok {
 		return providers.Launch{}, errNoWorkspaceSelected
 	}
-	return launch.ForWorkspace(m.opts.Providers, m.tools, ws, m.themeOptions(), m.modelOptions())
+	return launch.ForWorkspace(m.opts.Providers, m.tools, ws, m.themeOptions(), m.modelOptions(), m.permissionOptions())
 }
 
 func (m Model) launchSelectedCmd() tea.Cmd {

@@ -155,7 +155,7 @@ func TestModelConfigDefaultsAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got.Model.Enabled || got.Model.BaseURL != "" || got.Model.APIKey != "" {
+	if got.Model.Enabled || got.Model.OpenAIBaseURL != "" || got.Model.AnthropicBaseURL != "" || got.Model.APIKey != "" {
 		t.Fatalf("默认 model 应为空，got %+v", got.Model)
 	}
 	if got.Model.Agents == nil {
@@ -164,10 +164,11 @@ func TestModelConfigDefaultsAndRoundTrip(t *testing.T) {
 
 	want := Default()
 	want.Model = ModelConfig{
-		Enabled: true,
-		BaseURL: "https://example.com/anthropic",
-		APIKey:  "tp-secret",
-		Agents:  map[string]string{"claude": "mimo-v2.5"},
+		Enabled:          true,
+		OpenAIBaseURL:    "https://example.com/v1",
+		AnthropicBaseURL: "https://example.com/anthropic",
+		APIKey:           "tp-secret",
+		Agents:           map[string]string{"claude": "mimo-v2.5"},
 	}
 	if err := Save(p, want); err != nil {
 		t.Fatalf("Save: %v", err)

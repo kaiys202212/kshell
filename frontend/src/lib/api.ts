@@ -216,7 +216,9 @@ export interface OpenedSession {
 // 密钥不回传明文，只以 APIKeySet 表示是否已设置。
 export interface ModelConfigView {
   Enabled: boolean;
-  BaseURL: string;
+  Preset: string;
+  OpenAIBaseURL: string;
+  AnthropicBaseURL: string;
   Agents: Record<string, string>;
   APIKeySet: boolean;
 }
@@ -224,10 +226,21 @@ export interface ModelConfigView {
 // desktop.ModelConfigInput 的 JSON 形态：APIKey 留空表示不修改，ClearAPIKey 为真时清除。
 export interface ModelConfigInput {
   Enabled: boolean;
-  BaseURL: string;
+  Preset: string;
+  OpenAIBaseURL: string;
+  AnthropicBaseURL: string;
   APIKey: string;
   ClearAPIKey: boolean;
   Agents: Record<string, string>;
+}
+
+export interface ModelPreset {
+  ID: string;
+  Name: string;
+  OpenAIBaseURL: string;
+  AnthropicBaseURL: string;
+  RecommendedModel: string;
+  Note: string;
 }
 
 interface AppBindings {
@@ -276,8 +289,15 @@ interface AppBindings {
   SetAppearanceMode(mode: string): Promise<void>;
   GetModelConfig(): Promise<ModelConfigView>;
   SetModelConfig(input: ModelConfigInput): Promise<void>;
+  ListModelPresets(): Promise<ModelPreset[]>;
+  GetSessionMode(): Promise<string>;
+  SetSessionMode(mode: string): Promise<void>;
+  GetPermissionMode(): Promise<string>;
+  SetPermissionMode(mode: string): Promise<void>;
   OpenSession(sessionID: string): Promise<OpenedSession>;
+  OpenSessionACP(sessionID: string): Promise<OpenedSession>;
   OpenWorkspace(wsID: string, toolID: string): Promise<OpenedSession>;
+  OpenWorkspaceACP(wsID: string, toolID: string): Promise<OpenedSession>;
   SendChatPrompt(id: string, text: string): Promise<void>;
   CancelChat(id: string): Promise<void>;
   RespondChatPermission(id: string, requestID: string, optionID: string): Promise<void>;
@@ -701,7 +721,16 @@ export async function setCloseBehavior(mode: string): Promise<void> {
 // getModelConfig 返回模型注入配置（密钥只回传是否已设置的布尔）；绑定不可用时兜底空配置。
 export async function getModelConfig(): Promise<ModelConfigView> {
   const a = app();
-  if (!a) return { Enabled: false, BaseURL: '', Agents: {}, APIKeySet: false };
+  if (!a) {
+    return {
+      Enabled: false,
+      Preset: '',
+      OpenAIBaseURL: '',
+      AnthropicBaseURL: '',
+      Agents: {},
+      APIKeySet: false,
+    };
+  }
   return a.GetModelConfig();
 }
 
@@ -712,6 +741,36 @@ export async function setModelConfig(input: ModelConfigInput): Promise<void> {
   await a.SetModelConfig(input);
 }
 
+export async function listModelPresets(): Promise<ModelPreset[]> {
+  const a = app();
+  if (!a) return [];
+  return a.ListModelPresets();
+}
+
+export async function getSessionMode(): Promise<string> {
+  const a = app();
+  if (!a) return 'tui';
+  return a.GetSessionMode();
+}
+
+export async function setSessionMode(mode: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.SetSessionMode(mode);
+}
+
+export async function getPermissionMode(): Promise<string> {
+  const a = app();
+  if (!a) return 'default';
+  return a.GetPermissionMode();
+}
+
+export async function setPermissionMode(mode: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.SetPermissionMode(mode);
+}
+
 // ---- ACP 聊天 ----
 
 export async function openSession(sessionID: string): Promise<OpenedSession> {
@@ -720,10 +779,22 @@ export async function openSession(sessionID: string): Promise<OpenedSession> {
   return a.OpenSession(sessionID);
 }
 
+export async function openSessionACP(sessionID: string): Promise<OpenedSession> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  return a.OpenSessionACP(sessionID);
+}
+
 export async function openWorkspace(wsID: string, toolID: string): Promise<OpenedSession> {
   const a = app();
   if (!a) throw new Error('未检测到桌面端绑定');
   return a.OpenWorkspace(wsID, toolID);
+}
+
+export async function openWorkspaceACP(wsID: string, toolID: string): Promise<OpenedSession> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  return a.OpenWorkspaceACP(wsID, toolID);
 }
 
 export async function sendChatPrompt(id: string, text: string): Promise<void> {

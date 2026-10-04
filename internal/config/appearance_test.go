@@ -5,16 +5,16 @@ import (
 	"testing"
 )
 
-func TestAppearanceDefaultIsSystem(t *testing.T) {
-	if got := Default().Appearance.Mode; got != "system" {
-		t.Fatalf("default mode = %q, want system", got)
+func TestAppearanceDefaultIsDark(t *testing.T) {
+	if got := Default().Appearance.Mode; got != "dark" {
+		t.Fatalf("default mode = %q, want dark", got)
 	}
 }
 
-func TestAppearanceInvalidFallsBackToSystem(t *testing.T) {
+func TestAppearanceInvalidFallsBackToDark(t *testing.T) {
 	c := Config{MaxDepth: 1, Appearance: Appearance{Mode: "bogus"}}
-	if got := c.normalized().Appearance.Mode; got != "system" {
-		t.Fatalf("normalized mode = %q, want system", got)
+	if got := c.normalized().Appearance.Mode; got != "dark" {
+		t.Fatalf("normalized mode = %q, want dark", got)
 	}
 }
 

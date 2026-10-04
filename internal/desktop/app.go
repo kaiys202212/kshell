@@ -450,8 +450,18 @@ func (a *App) modelOptions() launch.ModelOptions {
 		return launch.ModelOptions{}
 	}
 	return launch.ModelOptions{Resolver: func(toolID string) (providers.ModelConfig, bool) {
-		return providers.ModelConfig{BaseURL: m.BaseURL, APIKey: m.APIKey, Model: m.Agents[toolID]}, true
+		return providers.ModelConfig{
+			OpenAIBaseURL:    m.OpenAIBaseURL,
+			AnthropicBaseURL: m.AnthropicBaseURL,
+			APIKey:           m.APIKey,
+			Model:            m.Agents[toolID],
+		}, true
 	}}
+}
+
+// permissionOptions 组装权限注入：bypass 时按工具追加跳过确认参数。
+func (a *App) permissionOptions() launch.PermissionOptions {
+	return launch.PermissionOptions{Bypass: a.snapshot().Config.PermissionMode == config.PermissionModeBypass}
 }
 
 // ScanSessions 触发一次会话扫描（已在扫则不重复），立即返回最近一次结果；
@@ -629,7 +639,7 @@ func (a *App) ResumeSession(id string) error {
 		return errSessionNotFound
 	}
 	o := a.snapshot()
-	l, err := launch.ForSession(o.Providers, tools, s, a.themeOptions(), a.modelOptions())
+	l, err := launch.ForSession(o.Providers, tools, s, a.themeOptions(), a.modelOptions(), a.permissionOptions())
 	if err != nil {
 		return err
 	}

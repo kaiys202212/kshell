@@ -8,13 +8,13 @@ import (
 	"github.com/yangk/kshell/internal/config"
 )
 
-func TestGetAppearanceDefaultsToSystem(t *testing.T) {
+func TestGetAppearanceDefaultsToDark(t *testing.T) {
 	a := NewAppWith(Options{Config: config.Default()})
 	got := a.GetAppearance()
-	if got.Mode != "system" {
-		t.Fatalf("mode = %q, want system", got.Mode)
+	if got.Mode != "dark" {
+		t.Fatalf("mode = %q, want dark", got.Mode)
 	}
-	if got.Resolved != string(appearance.Resolve(appearance.System)) {
+	if got.Resolved != string(appearance.Resolve(appearance.Dark)) {
 		t.Fatalf("resolved = %q", got.Resolved)
 	}
 }

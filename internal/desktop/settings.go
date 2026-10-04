@@ -86,19 +86,23 @@ func (a *App) LoadProvidersYAML() (string, error) {
 
 // ModelConfigView 是回传前端的模型配置视图：绝不包含密钥明文。
 type ModelConfigView struct {
-	Enabled   bool              `json:"Enabled"`
-	BaseURL   string            `json:"BaseURL"`
-	Agents    map[string]string `json:"Agents"`
-	APIKeySet bool              `json:"APIKeySet"`
+	Enabled          bool              `json:"Enabled"`
+	Preset           string            `json:"Preset"`
+	OpenAIBaseURL    string            `json:"OpenAIBaseURL"`
+	AnthropicBaseURL string            `json:"AnthropicBaseURL"`
+	Agents           map[string]string `json:"Agents"`
+	APIKeySet        bool              `json:"APIKeySet"`
 }
 
 // ModelConfigInput 是前端提交的模型配置：APIKey 空串=保持原值，ClearAPIKey 显式清除。
 type ModelConfigInput struct {
-	Enabled     bool              `json:"Enabled"`
-	BaseURL     string            `json:"BaseURL"`
-	APIKey      string            `json:"APIKey"`
-	ClearAPIKey bool              `json:"ClearAPIKey"`
-	Agents      map[string]string `json:"Agents"`
+	Enabled          bool              `json:"Enabled"`
+	Preset           string            `json:"Preset"`
+	OpenAIBaseURL    string            `json:"OpenAIBaseURL"`
+	AnthropicBaseURL string            `json:"AnthropicBaseURL"`
+	APIKey           string            `json:"APIKey"`
+	ClearAPIKey      bool              `json:"ClearAPIKey"`
+	Agents           map[string]string `json:"Agents"`
 }
 
 func (a *App) GetModelConfig() (ModelConfigView, error) {
@@ -108,17 +112,23 @@ func (a *App) GetModelConfig() (ModelConfigView, error) {
 		agents = map[string]string{}
 	}
 	return ModelConfigView{
-		Enabled:   m.Enabled,
-		BaseURL:   m.BaseURL,
-		Agents:    agents,
-		APIKeySet: m.APIKey != "",
+		Enabled:          m.Enabled,
+		Preset:           m.Preset,
+		OpenAIBaseURL:    m.OpenAIBaseURL,
+		AnthropicBaseURL: m.AnthropicBaseURL,
+		Agents:           agents,
+		APIKeySet:        m.APIKey != "",
 	}, nil
 }
 
 func (a *App) SetModelConfig(in ModelConfigInput) error {
-	base := strings.TrimSpace(in.BaseURL)
-	if base != "" && !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
-		return fmt.Errorf("Base URL 必须以 http:// 或 https:// 开头")
+	oai := strings.TrimSpace(in.OpenAIBaseURL)
+	ant := strings.TrimSpace(in.AnthropicBaseURL)
+	if err := validateHTTPURL(oai, "OpenAI Base URL"); err != nil {
+		return err
+	}
+	if err := validateHTTPURL(ant, "Anthropic Base URL"); err != nil {
+		return err
 	}
 	agents := map[string]string{}
 	for k, v := range in.Agents {
@@ -126,7 +136,10 @@ func (a *App) SetModelConfig(in ModelConfigInput) error {
 	}
 	return a.saveConfig(func(c *config.Config) {
 		c.Model.Enabled = in.Enabled
-		c.Model.BaseURL = base
+		c.Model.Preset = strings.TrimSpace(in.Preset)
+		c.Model.OpenAIBaseURL = oai
+		c.Model.AnthropicBaseURL = ant
+		c.Model.BaseURL = ""
 		c.Model.Agents = agents
 		switch {
 		case in.ClearAPIKey:
@@ -135,4 +148,49 @@ func (a *App) SetModelConfig(in ModelConfigInput) error {
 			c.Model.APIKey = in.APIKey
 		}
 	})
+}
+
+func validateHTTPURL(u, label string) error {
+	if u == "" {
+		return nil
+	}
+	if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+		return fmt.Errorf("%s 必须以 http:// 或 https:// 开头", label)
+	}
+	return nil
+}
+
+// ListModelPresets 返回内置模型提供商预设。
+func (a *App) ListModelPresets() []providers.ModelPreset {
+	return providers.ModelPresets()
+}
+
+// GetSessionMode 返回默认会话打开路径（tui | acp）。
+func (a *App) GetSessionMode() string {
+	return a.snapshot().Config.SessionMode
+}
+
+// SetSessionMode 保存会话模式偏好。
+func (a *App) SetSessionMode(mode string) error {
+	switch mode {
+	case config.SessionModeTUI, config.SessionModeACP:
+	default:
+		return fmt.Errorf("无效的会话模式：%s", mode)
+	}
+	return a.saveConfig(func(c *config.Config) { c.SessionMode = mode })
+}
+
+// GetPermissionMode 返回权限模式（default | bypass）。
+func (a *App) GetPermissionMode() string {
+	return a.snapshot().Config.PermissionMode
+}
+
+// SetPermissionMode 保存权限模式。
+func (a *App) SetPermissionMode(mode string) error {
+	switch mode {
+	case config.PermissionModeDefault, config.PermissionModeBypass:
+	default:
+		return fmt.Errorf("无效的权限模式：%s", mode)
+	}
+	return a.saveConfig(func(c *config.Config) { c.PermissionMode = mode })
 }

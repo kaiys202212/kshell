@@ -14,8 +14,10 @@ interface Props {
   value: string;
   /** 记住选择（全局持久化） */
   onChange(id: string): void;
-  /** 立即在该工作区新建会话 */
+  /** 立即在该工作区新建会话（走默认会话模式） */
   onSelect(id: string): void;
+  /** 显式以 ACP 新建（忽略会话模式偏好）；仅 ACP 可用工具展示 */
+  onSelectACP?(id: string): void;
   /** 启动中：临时禁用，避免连点起多个进程 */
   disabled?: boolean;
 }
@@ -27,7 +29,14 @@ const itemClass = (selected: boolean) =>
     selected ? 'bg-primary/10 text-primary' : 'hover:bg-muted',
   );
 
-export default function NewSessionMenu({ tools, value, onChange, onSelect, disabled }: Props) {
+export default function NewSessionMenu({
+  tools,
+  value,
+  onChange,
+  onSelect,
+  onSelectACP,
+  disabled,
+}: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -59,11 +68,12 @@ export default function NewSessionMenu({ tools, value, onChange, onSelect, disab
     triggerRef.current?.focus();
   };
 
-  // 选择一项：记住选择（onChange，持久化）并立即新建会话（onSelect）
-  const pick = (id: string) => {
+  // 选择一项：记住选择（onChange，持久化）并立即新建会话
+  const pick = (id: string, acp = false) => {
     setOpen(false);
     onChange(id);
-    onSelect(id);
+    if (acp && onSelectACP) onSelectACP(id);
+    else onSelect(id);
   };
 
   return (
@@ -114,23 +124,38 @@ export default function NewSessionMenu({ tools, value, onChange, onSelect, disab
           </button>
           {tools.map((t) => {
             const active = t.ID === value;
+            const acpOk = !!t.ACP?.Available && !!onSelectACP;
             return (
-              <button
-                key={t.ID}
-                type="button"
-                role="menuitemradio"
-                aria-checked={active}
-                className={itemClass(active)}
-                onClick={() => pick(t.ID)}
-              >
-                <CheckGlyph show={active} />
-                <span className="min-w-0 truncate">{t.Name}</span>
-                {t.Version && (
-                  <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
-                    {t.Version}
-                  </span>
+              <div key={t.ID}>
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={active}
+                  className={itemClass(active)}
+                  onClick={() => pick(t.ID)}
+                >
+                  <CheckGlyph show={active} />
+                  <span className="min-w-0 truncate">{t.Name}</span>
+                  {t.Version && (
+                    <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                      {t.Version}
+                    </span>
+                  )}
+                </button>
+                {acpOk && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={itemClass(false)}
+                    onClick={() => pick(t.ID, true)}
+                  >
+                    <CheckGlyph show={false} />
+                    <span className="min-w-0 truncate text-muted-foreground">
+                      {t.Name}（ACP）
+                    </span>
+                  </button>
                 )}
-              </button>
+              </div>
             );
           })}
         </div>

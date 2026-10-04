@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   listTerminals: vi.fn(),
   openSession: vi.fn(),
   openWorkspace: vi.fn(),
+  openWorkspaceACP: vi.fn(),
   writeTerminal: vi.fn(),
   resizeTerminal: vi.fn(),
   closeTerminal: vi.fn(),
