@@ -318,3 +318,26 @@ func TestCursorDetectFindsInstallDir(t *testing.T) {
 		t.Fatalf("got %+v, want install-dir", got)
 	}
 }
+
+func TestCursorDetectFindsVersionedInstallDir(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("官方 Windows 安装才把 CLI 放在 versions\\<ver>\\")
+	}
+	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	local := t.TempDir()
+	t.Setenv("LOCALAPPDATA", local)
+	verDir := filepath.Join(local, "cursor-agent", "versions", "2026.10.01-e373342")
+	if err := os.MkdirAll(verDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := writeFakeBin(t, verDir, "cursor-agent", "echo cursor-agent")
+
+	got := Detect(Cursor{}.DetectSpec(home), home)
+	if !got.Installed || got.Source != "install-dir" {
+		t.Fatalf("got %+v, want install-dir via versions", got)
+	}
+	if filepath.Clean(got.BinPath) != filepath.Clean(bin) {
+		t.Fatalf("BinPath = %q, want %q", got.BinPath, bin)
+	}
+}

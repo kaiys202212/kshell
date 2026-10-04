@@ -28,13 +28,37 @@ func (Cursor) DetectSpec(home string) DetectSpec {
 	// 官方安装脚本把二进制放在这些目录，且往往不写进当前进程的 PATH。
 	dirs := []string{"~/.local/bin"}
 	if runtime.GOOS == "windows" {
-		dirs = []string{`%LOCALAPPDATA%\cursor-agent`}
+		root := `%LOCALAPPDATA%\cursor-agent`
+		dirs = []string{root}
+		// 根目录 shim 被卸掉后，versions\<ver>\ 里往往还留着可执行文件。
+		dirs = append(dirs, cursorVersionInstallDirs(expandHome(root, home))...)
 	}
 	return DetectSpec{
 		BinName:     "cursor-agent",
 		InstallDirs: dirs,
 		ConfigDirs:  []string{"~/.cursor"},
 	}
+}
+
+// cursorVersionInstallDirs 列出官方安装根下 versions 子目录（YYYY.MM.DD-commit 形态）。
+func cursorVersionInstallDirs(root string) []string {
+	entries, err := os.ReadDir(filepath.Join(root, "versions"))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		// 兼容 YYYY.MM.DD-commit 与带时分秒的 YYYY.MM.DD-HH-MM-SS-commit。
+		if !strings.Contains(name, ".") || !strings.Contains(name, "-") {
+			continue
+		}
+		out = append(out, filepath.Join(root, "versions", name))
+	}
+	return out
 }
 
 func (Cursor) SessionRoots(home string) []string { return nil }
