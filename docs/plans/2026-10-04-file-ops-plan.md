@@ -846,7 +846,7 @@ useEffect(() => {
 ### Task 9: 全量验证 + 冒烟清单
 
 **Files:**
-- Modify: `docs/smoke-test*.md`（先 `ls docs/smoke-test*.md` 确认现有文件名，追加到对应桌面端清单）
+- Modify: `docs/smoke/feat-file-ops.md`（Desktop 分区追加本轮冒烟项）
 
 **Step 1: 全量验证（必须全绿）**
 
@@ -871,7 +871,7 @@ Expected: Go 无失败；vitest 全过；`tsc && vite build` 成功。
 **Step 3: 提交**
 
 ```bash
-git add docs/smoke-test*.md
+git add docs/smoke/feat-file-ops.md
 git commit -m "docs: 文件操作冒烟清单"
 ```
 

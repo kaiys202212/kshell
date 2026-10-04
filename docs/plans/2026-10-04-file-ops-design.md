@@ -82,7 +82,7 @@ kshell 桌面端右栏文件区域（`frontend/src/components/FileTree.tsx`）�
 
 - **Go**：`internal/desktop/files_test.go` 补 `CreateEntry` / `DeleteEntry` / `MoveEntry` 单测（含路径逃逸、目标已存在、大小写同名用例），临时目录构造 workspace
 - **前端**：ContextMenu 渲染与动作分发；树内 drop 的 `MoveEntry` 参数拼接；终端 drop 的编码与引号包裹逻辑（vitest，mock api）
-- **手工冒烟**：补 `docs/smoke-test*.md` 条目（右键菜单五项、树内移动、拖入终端/聊天、外部拖入）
+- **手工冒烟**：补 `docs/smoke/feat-file-ops.md` 条目（右键菜单五项、树内移动、拖入终端/聊天、外部拖入）
 
 ## 验证命令
 

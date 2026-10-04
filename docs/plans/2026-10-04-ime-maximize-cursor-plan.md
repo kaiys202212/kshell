@@ -35,5 +35,5 @@
 
 - [ ] `go build ./... ; go vet ./... ; go test ./... -count=1`
 - [ ] `cd frontend; npm test; npm run build`
-- [ ] 补 `docs/smoke-test-desktop.md`：默认最大化、cursor 会话恢复、终端打中文候选窗位置三项。
+- [ ] 补 `docs/smoke/feat-ime-maximize-cursor.md`（Desktop）：默认最大化、cursor 会话恢复、终端打中文候选窗位置三项。
 - [ ] 提交（中文 `type: 简述`），自查后合并回 master，构建 `.\build.ps1 -Desktop`（**构建前须征得用户同意**，会请求旧实例退出）。

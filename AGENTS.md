@@ -56,7 +56,7 @@ go build ./... ; go vet ./... ; go test ./... -count=1   # Go 侧
 ```
 
 - 改前端时另跑：`cd frontend; npm test; npm run build`。
-- 改 app 行为时补 `docs/smoke-test*.md` 条目。
+- 改 app 行为时在 `docs/smoke/<分支名转文件>.md` 追加增量条目（分支名 `/` → `-`；基线见 `docs/smoke/baseline-*.md`，勿往基线追加功能条目）。
 
 **实操命令**（PowerShell，`<branch>` 为分支名）：
 
@@ -129,7 +129,7 @@ internal/
   executil/         跨平台进程执行工具
 frontend/src/       React 前端（components/ pages/ state/ lib/）
 docs/plans/         设计与实现计划文档（改动前可参考/补充）
-docs/smoke-test*.md 冒烟清单
+docs/smoke/          冒烟清单（baseline-* 基线 + 按分支增量）
 ```
 
 ## 架构要点
