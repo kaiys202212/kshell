@@ -64,7 +64,7 @@
 - worktree 固定放仓库根 `.worktrees/`，该目录必须在 `.gitignore` 中（已忽略，勿把 worktree 内容入库）。
 - 分支命名：`feat/<topic>` / `fix/<topic>` / `docs/<topic>`，topic 用简短英文或拼音。
 - 规格/计划用 `docs/plans/` 命名，日期取当天（沿用项目既有惯例，而非 superpowers 默认目录）。
-- 只有在 worktree 内、且验证全绿后，才可声明完成并合并回 `master`；未验证不得声称完成，也不得合并。
+- 只有在 worktree 内、且验证全绿且自查通过后，才可声明完成并合并回 `master`；未验证或自查未过不得声称完成，也不得合并。
 - 合并回 `master` 后，在主干上构建出**可运行程序**：`.\build.ps1`（TUI，出 `dist\kshell.exe`）；改桌面端用 `.\build.ps1 -Desktop`（出 `dist\kshell-desktop.exe`）。确认成功产出可执行文件才算收尾完成，普通 `go build ./...` 不算。**仅文档/注释、不改变可运行程序时，跳过二进制构建。**
 - 构建**不退出已运行程序**：`.\build.ps1 -Desktop` 不会请求旧实例退出，用户构建期间可继续使用桌面端。若 dist 拷贝因 `kshell-desktop.exe` 被占用失败，脚本会提示从托盘退出后重试；agent 不得写 `~/.kshell/exit.signal` 或以其他方式终止运行中的实例。
 - 合并后清理：`git worktree remove` 删除工作区，`git branch -d` 删除已合并分支。
