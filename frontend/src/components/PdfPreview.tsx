@@ -26,6 +26,8 @@ function clampPage(page: number, numPages: number): number {
 export default function PdfPreview({ wsPath, path }: PdfPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const docRef = useRef<PDFDocumentProxy | null>(null);
+  const renderGenRef = useRef(0);
+  const pageRenderTaskRef = useRef<{ cancel: () => void } | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
@@ -70,24 +72,38 @@ export default function PdfPreview({ wsPath, path }: PdfPreviewProps) {
 
     return () => {
       cancelled = true;
+      renderGenRef.current += 1;
+      pageRenderTaskRef.current?.cancel();
+      pageRenderTaskRef.current = null;
       docRef.current = null;
       if (task) void task.destroy();
     };
   }, [wsPath, path]);
 
-  const renderPage = useCallback(async (pageNum: number) => {
+  const renderPage = useCallback(async (pageNum: number, gen: number) => {
     const doc = docRef.current;
     const canvas = canvasRef.current;
     if (!doc || !canvas) return;
 
     const pdfPage = await doc.getPage(pageNum);
+    if (gen !== renderGenRef.current) return;
+
     const viewport = pdfPage.getViewport({ scale: 1.25 });
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     canvas.height = viewport.height;
     canvas.width = viewport.width;
-    await pdfPage.render({ canvas, canvasContext: ctx, viewport }).promise;
+    const renderTask = pdfPage.render({ canvas, canvasContext: ctx, viewport });
+    pageRenderTaskRef.current = renderTask;
+    try {
+      await renderTask.promise;
+    } finally {
+      if (pageRenderTaskRef.current === renderTask) {
+        pageRenderTaskRef.current = null;
+      }
+      if (gen !== renderGenRef.current) return;
+    }
   }, []);
 
   useEffect(() => {
@@ -97,9 +113,17 @@ export default function PdfPreview({ wsPath, path }: PdfPreviewProps) {
       setPage(safe);
       return;
     }
-    void renderPage(safe).catch((e) => {
+    const gen = ++renderGenRef.current;
+    void renderPage(safe, gen).catch((e) => {
+      if (gen !== renderGenRef.current) return;
       setError(e instanceof Error ? e.message : String(e));
     });
+
+    return () => {
+      renderGenRef.current += 1;
+      pageRenderTaskRef.current?.cancel();
+      pageRenderTaskRef.current = null;
+    };
   }, [page, numPages, loading, error, renderPage]);
 
   if (error) {

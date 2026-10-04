@@ -56,6 +56,7 @@ export default function ImagePreview({ wsPath, path }: ImagePreviewProps) {
         src={src}
         alt={alt}
         className="max-h-full max-w-full object-contain"
+        onError={() => setError('无法显示图片')}
       />
     </div>
   );
