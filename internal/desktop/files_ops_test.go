@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/yangk/kshell/internal/workspace"
@@ -99,11 +100,11 @@ func TestDeleteEntry(t *testing.T) {
 		t.Fatal("目录应已删除")
 	}
 	// 工作区根不可删
-	if err := app.DeleteEntry(env.root, ""); err == nil {
-		t.Fatal("根目录不可删除")
+	if err := app.DeleteEntry(env.root, ""); !errors.Is(err, errRootUndeletable) {
+		t.Fatalf("根目录不可删除应报 errRootUndeletable，got %v", err)
 	}
-	if err := app.DeleteEntry(env.root, "."); err == nil {
-		t.Fatal("根目录不可删除")
+	if err := app.DeleteEntry(env.root, "."); !errors.Is(err, errRootUndeletable) {
+		t.Fatalf("根目录不可删除应报 errRootUndeletable，got %v", err)
 	}
 	// 逃逸拒绝
 	if err := app.DeleteEntry(env.root, "../outside"); !errors.Is(err, errPathOutsideWorkspace) {
@@ -214,6 +215,10 @@ func TestMoveEntry(t *testing.T) {
 	env := newFilesEnv(t)
 	app := env.app
 
+	// srcRel 逃逸拒绝
+	if _, err := app.MoveEntry(env.root, "../x", "pkg"); !errors.Is(err, errPathOutsideWorkspace) {
+		t.Fatalf("srcRel 逃逸应报 errPathOutsideWorkspace，got %v", err)
+	}
 	// 文件移入子目录（保留原名）
 	newPath, err := app.MoveEntry(env.root, "main.go", "pkg")
 	if err != nil {
@@ -240,16 +245,33 @@ func TestMoveEntry(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(env.root, "outer", "inner"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := app.MoveEntry(env.root, "outer", filepath.Join("outer", "inner")); err == nil {
-		t.Fatal("移入子孙目录应拒绝")
+	// os.Mkdir 绕过了绑定，手动作废缓存让树感知新建目录
+	env.app.invalidateTree(env.root)
+	if _, err := app.MoveEntry(env.root, "outer", filepath.Join("outer", "inner")); !errors.Is(err, errMoveIntoSelf) {
+		t.Fatalf("移入子孙目录应报 errMoveIntoSelf，got %v", err)
 	}
 	// 移回原位（同目录同名）应 no-op 成功
 	if _, err := app.MoveEntry(env.root, "readme.md", ""); err != nil {
 		t.Fatalf("原地移动应 no-op: %v", err)
 	}
-	// 大小写同名放行（Windows 口径）
-	if _, err := app.RenameEntry(env.root, "readme.md", "readme2.md"); err != nil {
-		t.Fatal(err)
+	// 大小写同名移动：Windows 大小写不敏感，视为原地 no-op；
+	// Linux 大小写敏感语义不同，不适用该口径
+	if runtime.GOOS == "windows" {
+		if err := os.Rename(filepath.Join(env.root, "readme.md"), filepath.Join(env.root, "README.MD")); err != nil {
+			t.Fatal(err)
+		}
+		// os.Rename 绕过了绑定，手动作废让树按盘上实际大小写重建
+		env.app.invalidateTree(env.root)
+		got, err := app.MoveEntry(env.root, "README.MD", "")
+		if err != nil {
+			t.Fatalf("大小写同名移动应 no-op: %v", err)
+		}
+		if want := filepath.Join(env.root, "README.MD"); got != want {
+			t.Fatalf("no-op 应返回原绝对路径: got %q, want %q", got, want)
+		}
+		if _, err := os.Stat(filepath.Join(env.root, "README.MD")); err != nil {
+			t.Fatalf("no-op 不应有副作用，README.MD 应仍在原位: %v", err)
+		}
 	}
 	// 树缓存已作废
 	nodes, _ := app.ListFiles(env.root, "")
@@ -261,6 +283,42 @@ func TestMoveEntry(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("ListFiles 应含 pkg（缓存作废后重建）")
+	}
+}
+
+func TestMoveEntryDirectory(t *testing.T) {
+	env := newFilesEnv(t)
+
+	// 建 outer/inner 结构（fixture 里本无该目录）
+	if err := os.Mkdir(filepath.Join(env.root, "outer"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(env.root, "outer", "inner"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := env.app.MoveEntry(env.root, "outer", "pkg"); err != nil {
+		t.Fatalf("移动目录失败: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.root, "pkg", "outer", "inner")); err != nil {
+		t.Fatalf("pkg/outer/inner 应存在: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.root, "outer")); !os.IsNotExist(err) {
+		t.Fatal("原位置应消失")
+	}
+	// 树缓存已作废：ListFiles 能看到新位置
+	nodes, err := env.app.ListFiles(env.root, "pkg")
+	if err != nil {
+		t.Fatalf("pkg 应可懒加载: %v", err)
+	}
+	found := false
+	for _, n := range nodes {
+		if n.Name == "outer" && n.IsDir {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("ListFiles 应含 pkg/outer: %+v", nodes)
 	}
 }
 

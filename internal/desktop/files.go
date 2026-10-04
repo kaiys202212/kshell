@@ -16,11 +16,13 @@ var (
 	errInvalidName          = errors.New("名称不能为空且不能包含路径分隔符")
 	errTargetExists         = errors.New("目标已存在")
 	errNotDir               = errors.New("目标不是目录")
+	errMoveIntoSelf         = errors.New("不能把目录移入其自身内部")
+	errRootUndeletable      = errors.New("工作区根目录不可删除")
 )
 
 // treeFor 返回工作区的文件树（懒创建，根层已展开）。
 // 树按工作区路径缓存：节点 Loaded 状态就是目录级缓存，重复 ListFiles 不再读盘。
-// 代数（treeGen）防竞态：RenameEntry 作废缓存后，rename 前就开始构建的树
+// 代数（treeGen）防竞态：文件操作作废缓存后，操作前就开始构建的树
 // 不得再写回缓存（否则基于旧目录快照的 Loaded 缓存会一直陈旧）；
 // 该情况下返回现建树但不缓存——数据仍正确，只是本次不享受缓存。
 func (a *App) treeFor(wsPath string) (*workspace.Tree, error) {
@@ -193,8 +195,12 @@ func (a *App) RenameEntry(wsPath, relPath, newName string) (string, error) {
 	if !underPath(wsPath, newAbs) {
 		return "", errPathOutsideWorkspace
 	}
-	if _, err := filepath.EvalSymlinks(filepath.Dir(oldAbs)); err != nil {
+	resolved, err := filepath.EvalSymlinks(filepath.Dir(oldAbs))
+	if err != nil {
 		return "", err // 父目录是失效 junction：拒绝改名
+	}
+	if !underPath(wsPath, resolved) {
+		return "", errPathOutsideWorkspace // 父目录 junction 指向工作区外：拒绝
 	}
 	if !samePath(oldAbs, newAbs) { // 同名仅大小写变化时 Lstat 拦不住，放行
 		if _, err := os.Lstat(newAbs); err == nil {
@@ -246,8 +252,12 @@ func (a *App) CreateEntry(wsPath, dirRel, name string, isDir bool) (string, erro
 	if !underPath(wsPath, abs) {
 		return "", errPathOutsideWorkspace
 	}
-	if _, err := filepath.EvalSymlinks(node.Path); err != nil {
+	resolved, err := filepath.EvalSymlinks(node.Path)
+	if err != nil {
 		return "", err // 父目录是失效 junction：拒绝新建
+	}
+	if !underPath(wsPath, resolved) {
+		return "", errPathOutsideWorkspace // 父目录 junction 指向工作区外：拒绝
 	}
 	if _, err := os.Lstat(abs); err == nil {
 		return "", errTargetExists
@@ -277,7 +287,7 @@ func (a *App) CreateEntry(wsPath, dirRel, name string, isDir bool) (string, erro
 func (a *App) DeleteEntry(wsPath, relPath string) error {
 	clean := filepath.Clean(strings.TrimSpace(relPath))
 	if clean == "." || clean == "" || clean == string(filepath.Separator) {
-		return errInvalidName // 根目录不可删
+		return errRootUndeletable
 	}
 
 	tree, err := a.treeFor(wsPath)
@@ -288,8 +298,12 @@ func (a *App) DeleteEntry(wsPath, relPath string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := filepath.EvalSymlinks(node.Path); err != nil {
+	resolved, err := filepath.EvalSymlinks(node.Path)
+	if err != nil {
 		return err // 目标是失效 junction：拒绝删除
+	}
+	if !underPath(wsPath, resolved) {
+		return errPathOutsideWorkspace // junction 解析后越出工作区：拒绝
 	}
 	if err := os.RemoveAll(node.Path); err != nil {
 		return err
@@ -325,13 +339,17 @@ func (a *App) MoveEntry(wsPath, srcRel, dstDirRel string) (string, error) {
 	}
 	// 目录不能移进自己或自己的子孙（underPath 含相等，正好覆盖两种情况）
 	if underPath(src.Path, dstAbs) && !samePath(src.Path, dstAbs) {
-		return "", errors.New("不能把目录移入其自身内部")
+		return "", errMoveIntoSelf
 	}
 	if samePath(src.Path, dstAbs) {
 		return src.Path, nil // 原地 drop：no-op
 	}
-	if _, err := filepath.EvalSymlinks(dstDir.Path); err != nil {
+	resolved, err := filepath.EvalSymlinks(dstDir.Path)
+	if err != nil {
 		return "", err // 目标目录是失效 junction：拒绝
+	}
+	if !underPath(wsPath, resolved) {
+		return "", errPathOutsideWorkspace // 目标目录 junction 指向工作区外：拒绝
 	}
 	if _, err := os.Lstat(dstAbs); err == nil {
 		return "", errTargetExists
