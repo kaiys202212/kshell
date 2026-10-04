@@ -55,14 +55,32 @@ func commandLine(spec Spec) (string, []string, error) {
 	if strings.TrimSpace(spec.Path) == "" {
 		return "", nil, errEmptyStart
 	}
-	if runtime.GOOS == "windows" && isBatchFile(spec.Path) {
+	path := spec.Path
+	// go-pty 在 Windows 上会把「无路径分隔符」的命令拼到 Spec.Dir 下再 LookPath，
+	// 预览区「+」开 powershell 时 Dir 是工作区，就会变成 <工作区>\powershell 找不到。
+	// 先在 PATH 上解析成绝对路径，CreateProcess 才不会跑偏。
+	if filepath.Base(path) == path {
+		lp, err := exec.LookPath(path)
+		if err != nil {
+			return "", nil, fmt.Errorf("找不到可执行文件 %q: %w", path, err)
+		}
+		path = lp
+	}
+	if runtime.GOOS == "windows" && isBatchFile(path) {
 		comspec := os.Getenv("COMSPEC")
 		if strings.TrimSpace(comspec) == "" {
 			comspec = "cmd.exe"
 		}
-		return comspec, append([]string{"/c", spec.Path}, spec.Args...), nil
+		if filepath.Base(comspec) == comspec {
+			lp, err := exec.LookPath(comspec)
+			if err != nil {
+				return "", nil, fmt.Errorf("找不到可执行文件 %q: %w", comspec, err)
+			}
+			comspec = lp
+		}
+		return comspec, append([]string{"/c", path}, spec.Args...), nil
 	}
-	return spec.Path, spec.Args, nil
+	return path, spec.Args, nil
 }
 
 // isBatchFile 报告路径是否是 Windows 批处理脚本。

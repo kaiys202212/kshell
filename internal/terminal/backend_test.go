@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -18,13 +19,59 @@ func TestCommandLineRejectsEmptyPath(t *testing.T) {
 	}
 }
 
-func TestCommandLinePassesThroughExecutable(t *testing.T) {
-	path, args, err := commandLine(Spec{Path: "claude", Args: []string{"--resume", "s1"}})
+func TestCommandLinePassesThroughAbsoluteExecutable(t *testing.T) {
+	abs := filepath.Join(t.TempDir(), "claude.exe")
+	path, args, err := commandLine(Spec{Path: abs, Args: []string{"--resume", "s1"}})
 	if err != nil {
 		t.Fatalf("commandLine error: %v", err)
 	}
-	if path != "claude" || len(args) != 2 || args[0] != "--resume" {
+	if path != abs || len(args) != 2 || args[0] != "--resume" {
 		t.Fatalf("commandLine = %q %v", path, args)
+	}
+}
+
+// TestCommandLineResolvesBareNameFromPATH 覆盖预览区「+」开本地 shell 的根因：
+// go-pty 在 Windows 上会把无目录的命令名拼到 Spec.Dir（工作区）下再查找，
+// 必须先在 PATH 上解析成绝对路径，否则会变成 <工作区>\powershell 找不到。
+func TestCommandLineResolvesBareNameFromPATH(t *testing.T) {
+	dir := t.TempDir()
+	bin := ptyScript(t, dir, 0, "x", false)
+	name := filepath.Base(bin)
+	t.Setenv("PATH", dir)
+
+	path, args, err := commandLine(Spec{Path: name, Args: []string{"--flag"}})
+	if err != nil {
+		t.Fatalf("commandLine error: %v", err)
+	}
+	if runtime.GOOS == "windows" {
+		comspec := os.Getenv("COMSPEC")
+		if comspec == "" {
+			comspec = "cmd.exe"
+		}
+		if path != comspec {
+			t.Fatalf("Windows 上 PATH 里的 .cmd 应经 %q 启动, got %q", comspec, path)
+		}
+		if len(args) != 3 || args[0] != "/c" || args[1] != bin || args[2] != "--flag" {
+			t.Fatalf("包装后的参数 = %v, 脚本应为绝对路径 %q", args, bin)
+		}
+		return
+	}
+	if path != bin {
+		t.Fatalf("应解析为 PATH 上的绝对路径, got %q want %q", path, bin)
+	}
+	if len(args) != 1 || args[0] != "--flag" {
+		t.Fatalf("args = %v", args)
+	}
+}
+
+func TestCommandLineBareNameNotOnPATH(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	_, _, err := commandLine(Spec{Path: "kshell-definitely-missing-bin"})
+	if err == nil {
+		t.Fatal("PATH 上不存在的裸命令名应失败")
+	}
+	if !strings.Contains(err.Error(), "kshell-definitely-missing-bin") {
+		t.Fatalf("错误应包含命令名, got %v", err)
 	}
 }
 
@@ -183,5 +230,45 @@ func TestPTYHandleWaitIsIdempotent(t *testing.T) {
 func TestPTYBackendStartFailsOnMissingBinary(t *testing.T) {
 	if _, err := NewPTYBackend().Start(Spec{Path: filepath.Join(t.TempDir(), "nope-cmd")}, 80, 24); err == nil {
 		t.Fatal("不存在的可执行文件应导致 Start 失败")
+	}
+}
+
+// TestPTYBackendStartsBarePATHNameFromOtherDir 模拟预览「+」：命令在 PATH 上、工作目录是仓库根。
+// 未先 LookPath 时 go-pty 会去 <Dir>\<name> 找，Start 直接失败。
+func TestPTYBackendStartsBarePATHNameFromOtherDir(t *testing.T) {
+	binDir := t.TempDir()
+	workDir := t.TempDir()
+	bin := ptyScript(t, binDir, 0, "ok", false)
+	t.Setenv("PATH", binDir)
+
+	h, err := NewPTYBackend().Start(Spec{Path: filepath.Base(bin), Dir: workDir}, 80, 24)
+	if err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+	defer func() { _ = h.Close() }()
+	if _, err := h.Wait(); err != nil {
+		t.Fatalf("Wait error: %v", err)
+	}
+}
+
+// TestPTYBackendStartsPowerShellBareNameFromOtherDir 对齐用户复现：预览「+」Path=powershell、Dir=工作区。
+func TestPTYBackendStartsPowerShellBareNameFromOtherDir(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("预览区本地 shell 在 Windows 上走 powershell")
+	}
+	if _, err := exec.LookPath("powershell"); err != nil {
+		t.Skip("本机 PATH 上没有 powershell")
+	}
+	h, err := NewPTYBackend().Start(Spec{
+		Path: "powershell",
+		Args: []string{"-NoProfile", "-NonInteractive", "-Command", "exit 0"},
+		Dir:  t.TempDir(),
+	}, 80, 24)
+	if err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+	defer func() { _ = h.Close() }()
+	if _, err := h.Wait(); err != nil {
+		t.Fatalf("Wait error: %v", err)
 	}
 }

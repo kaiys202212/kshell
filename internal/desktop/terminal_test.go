@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -450,6 +451,12 @@ func TestOpenShellTerminalOpensLocalShell(t *testing.T) {
 	}
 	if spec.Path == "" {
 		t.Fatal("应启动本地 shell 可执行文件")
+	}
+	if runtime.GOOS == "windows" {
+		joined := strings.Join(spec.Args, " ")
+		if !strings.Contains(joined, "Set-Location") || !strings.Contains(joined, `D:\ws-a`) {
+			t.Fatalf("Windows 本地 shell 应用 Set-Location 落到工作区, args=%v", spec.Args)
+		}
 	}
 
 	info2, err := env.app.OpenShellTerminal(`D:\ws-a`, 80, 24)

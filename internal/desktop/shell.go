@@ -19,7 +19,7 @@ func (a *App) OpenShellTerminal(wsID string, cols, rows int) (terminal.Info, err
 		return terminal.Info{}, errNotReady
 	}
 
-	path, args := localShellSpec()
+	path, args := localShellSpec(ws.Path)
 	key := fmt.Sprintf("shell:%d", termKeySeq.Add(1))
 	return m.Open(key, terminal.Info{
 		Kind:      terminal.KindShell,
@@ -29,9 +29,12 @@ func (a *App) OpenShellTerminal(wsID string, cols, rows int) (terminal.Info, err
 }
 
 // localShellSpec 返回本机交互式 shell 可执行文件与参数。
-func localShellSpec() (path string, args []string) {
+// dir 是启动目录：进程 cwd 设为它；Windows 上 PowerShell 配置文件常会再 cd，
+// 因此再用 -NoExit -Command Set-Location 钉回工作区。
+func localShellSpec(dir string) (path string, args []string) {
 	if runtime.GOOS == "windows" {
-		return "powershell", nil
+		script := "Set-Location -LiteralPath " + psQuote(dir)
+		return "powershell", []string{"-NoLogo", "-NoExit", "-Command", script}
 	}
 	if sh := os.Getenv("SHELL"); sh != "" {
 		return sh, nil
