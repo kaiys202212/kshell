@@ -98,6 +98,54 @@ func TestInstallSuccessRescansTools(t *testing.T) {
 	}
 }
 
+func TestUninstallClaudeRemovesLocalBinWhenNpmFails(t *testing.T) {
+	home := t.TempDir()
+	local := filepath.Join(home, ".claude", "local")
+	if err := os.MkdirAll(local, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var bin string
+	if runtime.GOOS == "windows" {
+		bin = filepath.Join(local, "claude.cmd")
+	} else {
+		bin = filepath.Join(local, "claude")
+	}
+	if err := os.WriteFile(bin, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+
+	app := NewAppWith(Options{
+		Providers: providers.Builtins(),
+		Home:      home,
+		Scan: func(string, []providers.Provider, string, discovery.ScanOptions) (*discovery.Result, error) {
+			return &discovery.Result{}, nil
+		},
+		Windows: NewWindowManager(&stubLauncher{}, nil),
+		InstallRunner: func(context.Context, string, string, func(string)) error {
+			return errors.New("npm fail")
+		},
+	})
+	if err := app.UninstallBuiltinTool("claude", false); err != nil {
+		t.Fatal(err)
+	}
+	waitJobIdle(t, app)
+	if job := app.GetToolInstallJob(); job.Error != "" {
+		t.Fatalf("删掉残留二进制后任务应成功, job=%+v", job)
+	}
+	if _, err := os.Stat(bin); !os.IsNotExist(err) {
+		t.Fatal("应删除 ~/.claude/local 下的 claude")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude")); err != nil {
+		t.Fatal("未勾选清除配置时不得删除 ~/.claude")
+	}
+	for _, tool := range app.GetTools() {
+		if tool.ID == "claude" && tool.BinPath != "" {
+			t.Fatalf("卸载后 BinPath 应为空, got %+v", tool)
+		}
+	}
+}
+
 func TestUninstallFailureDoesNotPurge(t *testing.T) {
 	home := t.TempDir()
 	cfg := filepath.Join(home, ".gemini")

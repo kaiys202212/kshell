@@ -189,16 +189,72 @@ func (a *App) execInstallCommand(id, action string, recipe providers.InstallReci
 	if action == "install" {
 		return a.runInstallCmd(a.runCtx(), recipe.Shell, recipe.InstallCmd, onLog)
 	}
+	var cmdErr error
 	if recipe.UninstallCmd != "" {
-		return a.runInstallCmd(a.runCtx(), recipe.Shell, recipe.UninstallCmd, onLog)
+		cmdErr = a.runInstallCmd(a.runCtx(), recipe.Shell, recipe.UninstallCmd, onLog)
+	} else if bin := a.toolByID(id).BinPath; bin != "" {
+		if err := os.Remove(bin); err != nil && !os.IsNotExist(err) {
+			cmdErr = err
+		}
+	} else {
+		cmdErr = errCursorNoBin
 	}
-	// Cursor 等未声明卸载命令的工具：直接删已探测到的二进制，避免误跑空 shell。
-	bin := a.toolByID(id).BinPath
-	if bin == "" {
-		onLog(errCursorNoBin.Error())
-		return errCursorNoBin
+
+	removed := a.removeLeftoverBins(id, onLog)
+	if left := a.leftoverBins(id); len(left) > 0 {
+		return fmt.Errorf("仍检测到可执行文件: %s", left[0])
 	}
-	return os.Remove(bin)
+	if cmdErr != nil && removed == 0 {
+		if recipe.UninstallCmd == "" && a.toolByID(id).BinPath == "" {
+			onLog(errCursorNoBin.Error())
+		}
+		return cmdErr
+	}
+	return nil
+}
+
+func (a *App) leftoverBins(id string) []string {
+	o := a.snapshot()
+	for _, p := range o.Providers {
+		if p.ID() == id {
+			return providers.FindBins(p.DetectSpec(o.Home), o.Home)
+		}
+	}
+	return nil
+}
+
+func (a *App) removeLeftoverBins(id string, onLog func(string)) int {
+	extra := a.toolByID(id).BinPath
+	bins := a.leftoverBins(id)
+	if extra != "" {
+		seen := false
+		for _, b := range bins {
+			if filepath.Clean(b) == filepath.Clean(extra) {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			bins = append(bins, extra)
+		}
+	}
+	n := 0
+	for _, bin := range bins {
+		if err := os.Remove(bin); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			if onLog != nil {
+				onLog("删除残留失败: " + bin + ": " + err.Error())
+			}
+			continue
+		}
+		if onLog != nil {
+			onLog("已删除残留: " + bin)
+		}
+		n++
+	}
+	return n
 }
 
 func (a *App) toolByID(id string) discovery.Tool {

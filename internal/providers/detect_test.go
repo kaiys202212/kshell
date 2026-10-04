@@ -89,6 +89,43 @@ func TestProbeVersion(t *testing.T) {
 	}
 }
 
+func TestFindBinsReturnsPathAndInstallDir(t *testing.T) {
+	home := t.TempDir()
+	pathDir := t.TempDir()
+	pathBin := writeFakeBin(t, pathDir, "claude", "echo path")
+	t.Setenv("PATH", pathDir)
+
+	installDir := filepath.Join(home, ".claude", "local")
+	if err := os.MkdirAll(installDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	installBin := writeFakeBin(t, installDir, "claude", "echo local")
+
+	got := FindBins(DetectSpec{BinName: "claude", InstallDirs: []string{"~/.claude/local"}}, home)
+	want := map[string]bool{filepath.Clean(pathBin): true, filepath.Clean(installBin): true}
+	if len(got) != 2 {
+		t.Fatalf("FindBins = %v, want 2 paths", got)
+	}
+	for _, p := range got {
+		if !want[filepath.Clean(p)] {
+			t.Fatalf("unexpected bin %q in %v", p, got)
+		}
+	}
+}
+
+func TestFindBinsIgnoresConfigDir(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+
+	got := FindBins(DetectSpec{BinName: "claude", ConfigDirs: []string{"~/.claude"}}, home)
+	if len(got) != 0 {
+		t.Fatalf("config-only must not list bins, got %v", got)
+	}
+}
+
 func TestProbeVersionUnknownWhenCommandFails(t *testing.T) {
 	dir := t.TempDir()
 	bin := writeFakeBin(t, dir, "broken", "exit 1")

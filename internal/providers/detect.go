@@ -39,6 +39,34 @@ func Detect(spec DetectSpec, home string) Detection {
 	return Detection{}
 }
 
+// FindBins 列出 PATH 与 InstallDirs 上所有已存在的可执行文件（去重），不含配置目录。
+// 卸载时要删掉每一份拷贝，不能只删 Detect 命中的第一份。
+func FindBins(spec DetectSpec, home string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	add := func(p string) {
+		if p == "" || !isFile(p) {
+			return
+		}
+		c := filepath.Clean(p)
+		if seen[c] {
+			return
+		}
+		seen[c] = true
+		out = append(out, p)
+	}
+	if bin, err := exec.LookPath(spec.BinName); err == nil {
+		add(bin)
+	}
+	for _, dir := range spec.InstallDirs {
+		root := expandHome(dir, home)
+		for _, candidate := range binCandidates(root, spec.BinName) {
+			add(candidate)
+		}
+	}
+	return out
+}
+
 // ProbeVersion 运行 <bin> --version 取首行；失败或超时一律返回 unknown，绝不阻塞扫描。
 func ProbeVersion(bin string) string {
 	if bin == "" {
