@@ -153,6 +153,7 @@ docs/smoke/          冒烟清单（baseline-* 基线 + 按分支增量）
 - 前端 TypeScript `strict`，测试同目录 `*.test.ts(x)`，从 `vitest` 显式导入 API（未开 globals）。
 - 新功能通常先落一份 `docs/plans/` 设计/计划文档，再实现。
 - 不要提交密钥内容；SSH 私钥只存路径引用。构建产物（`dist/`、`build/bin/`、`frontend/dist/`、`frontend/wailsjs/go/`）已 gitignore，勿入库。
+- Cursor 会话展示标题：kshell 优先用 transcript 首条用户消息；仓库 `.cursor/rules/session-naming-zh.mdc` 约束会话命名用中文（产品侧 `meta.title` 不保证遵守）。
 
 ## 提交
 

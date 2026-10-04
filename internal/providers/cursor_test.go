@@ -129,7 +129,7 @@ func TestCursorEnumerateFromChats(t *testing.T) {
 	slug := (Cursor{}).WorkspaceToSlug(ws)
 	trDir := filepath.Join(home, ".cursor", "projects", slug, "agent-transcripts", id)
 	os.MkdirAll(trDir, 0o755)
-	body := `{"role":"user","message":{"content":[{"type":"text","text":"<user_query>ignored</user_query>"}]}}` + "\n"
+	body := `{"role":"user","message":{"content":[{"type":"text","text":"<user_query>修复登录页空指针</user_query>"}]}}` + "\n"
 	os.WriteFile(filepath.Join(trDir, id+".jsonl"), []byte(body), 0o600)
 
 	got, err := (Cursor{}).EnumerateSessions(home, "")
@@ -139,11 +139,26 @@ func TestCursorEnumerateFromChats(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("len=%d", len(got))
 	}
-	if got[0].Title != "FromMeta" {
-		t.Fatalf("title=%q", got[0].Title)
+	if got[0].Title != "修复登录页空指针" {
+		t.Fatalf("title=%q, want transcript 优先于 meta", got[0].Title)
 	}
 	if got[0].Path == "" || got[0].Messages < 1 {
 		t.Fatalf("path/messages %+v", got[0])
+	}
+}
+
+func TestCursorEnumerateKeepsMetaWhenNoTranscript(t *testing.T) {
+	home := t.TempDir()
+	ws := filepath.Join(home, "ws")
+	os.MkdirAll(ws, 0o755)
+	id := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeffff0099"
+	writeMeta(t, filepath.Join(home, ".cursor", "chats", "h", id), true, "OnlyMeta", ws)
+	got, err := (Cursor{}).EnumerateSessions(home, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Title != "OnlyMeta" {
+		t.Fatalf("%+v", got)
 	}
 }
 

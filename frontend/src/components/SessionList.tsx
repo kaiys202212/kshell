@@ -70,7 +70,7 @@ export default function SessionList({ workspacePath, onOpenTerminal }: Props) {
   const terminals = useAppStore((s) => s.terminals);
   const chats = useAppStore((s) => s.chats);
   const chatPermissions = useAppStore((s) => s.chatPermissions);
-  const activityCompleted = useAppStore((s) => s.activityCompleted);
+  const terminalBusy = useAppStore((s) => s.terminalBusy);
 
   useEffect(() => {
     let cancelled = false;
@@ -170,7 +170,7 @@ export default function SessionList({ workspacePath, onOpenTerminal }: Props) {
         <ul className="flex flex-col gap-2">
           {visible.map((s) => {
             const badge = badgeFor(s.ToolID);
-            // 图标用：含 exited，以便 terminal completed 能显示
+            // 图标用：含 exited（idle 无图标）；chat ready → waiting
             const opened = findOpenedForSession(s.ID, chats, terminals);
             // 按钮/行高亮仍按「非 exited 已打开」
             const active =
@@ -212,7 +212,8 @@ export default function SessionList({ workspacePath, onOpenTerminal }: Props) {
                         activity={resolveAgentActivity({
                           status: opened.Status,
                           hasPermission: opened.kind === 'chat' && !!chatPermissions[opened.ID],
-                          completed: !!activityCompleted[opened.ID],
+                          kind: opened.kind,
+                          busy: opened.kind === 'terminal' ? !!terminalBusy[opened.ID] : undefined,
                         })}
                       />
                     )}

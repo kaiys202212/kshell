@@ -43,7 +43,7 @@ beforeEach(() => {
     terminals: [],
     chats: [],
     chatPermissions: {},
-    activityCompleted: {},
+    terminalBusy: {},
   });
 });
 
@@ -208,7 +208,8 @@ describe('SessionList', () => {
   });
 
   it('该会话已有运行中的内嵌终端时文案变「切换」并走高亮样式，点击仍走 onOpenTerminal', async () => {
-    useAppStore.setState({ terminals: [terminal()] });
+    // terminal running + busy →「执行中」；无 busy 时为「等待用户」
+    useAppStore.setState({ terminals: [terminal()], terminalBusy: { t1: true } });
     renderList();
     const row = await findRow('修复上传白名单');
 
@@ -216,13 +217,20 @@ describe('SessionList', () => {
     const sw = within(row).getByRole('button', { name: '切换' });
     // 主按钮 default variant 已改为渐变，断言渐变起点仍是主色
     expect(sw.className).toContain('from-primary');
-    // 活动图标「执行中」+ 行高亮（不再用 ✓）
     expect(within(row).getByLabelText('执行中')).toBeInTheDocument();
     expect(within(row).queryByText('✓')).toBeNull();
     expect(row).toHaveClass('bg-primary/8');
 
     fireEvent.click(sw);
     expect(onOpenTerminal).toHaveBeenCalledWith(expect.objectContaining({ ID: 's1' }));
+  });
+
+  it('终端 running 且无 busy 时列表行为「等待用户」', async () => {
+    useAppStore.setState({ terminals: [terminal()], terminalBusy: {} });
+    renderList();
+    const row = await findRow('修复上传白名单');
+    expect(within(row).getByLabelText('等待用户')).toBeInTheDocument();
+    expect(within(row).queryByLabelText('执行中')).toBeNull();
   });
 
   it('内嵌终端已退出时不改文案（仍为「恢复」）', async () => {
@@ -235,7 +243,7 @@ describe('SessionList', () => {
     expect(within(row).getByRole('button', { name: '恢复' })).toBeInTheDocument();
     expect(within(row).queryByText('✓')).toBeNull();
     expect(within(row).queryByLabelText('执行中')).toBeNull();
-    expect(within(row).queryByLabelText('运行完成')).toBeNull();
+    expect(within(row).queryByLabelText('等待用户')).toBeNull();
   });
 
   it('该会话已有打开中的 ACP 聊天时也算激活：文案变「切换」并走高亮样式', async () => {
@@ -247,10 +255,10 @@ describe('SessionList', () => {
 
     expect(within(row).queryByRole('button', { name: '恢复' })).toBeNull();
     expect(within(row).getByRole('button', { name: '切换' })).toBeInTheDocument();
-    // ready 且无 completed：按钮/高亮仍激活，但不显示 ✓ 或活动图标
+    // ready →「等待用户」；按钮/高亮仍激活
     expect(within(row).queryByText('✓')).toBeNull();
     expect(within(row).queryByLabelText('执行中')).toBeNull();
-    expect(within(row).queryByLabelText('运行完成')).toBeNull();
+    expect(within(row).getByLabelText('等待用户')).toBeInTheDocument();
     expect(row).toHaveClass('bg-primary/8');
   });
 
@@ -360,34 +368,31 @@ describe('SessionList agent 活动图标', () => {
     expect(within(row).queryByLabelText('执行中')).toBeNull();
   });
 
-  it('ready + activityCompleted 时列表行有「运行完成」', async () => {
+  it('ready chat 时列表行有「等待用户」', async () => {
     useAppStore.setState({
       chats: [chat({ Status: 'ready' })],
-      activityCompleted: { c1: true },
     });
     renderList();
     const row = await findRow('修复上传白名单');
-    expect(within(row).getByLabelText('运行完成')).toBeInTheDocument();
+    expect(within(row).getByLabelText('等待用户')).toBeInTheDocument();
   });
 
-  it('仅打开 ready、无 completed 时没有 ✓ 也没有活动图标', async () => {
-    useAppStore.setState({ chats: [chat({ Status: 'ready' })] });
+  it('running chat 时列表行有「执行中」', async () => {
+    useAppStore.setState({ chats: [chat({ Status: 'running' })] });
     renderList();
     const row = await findRow('修复上传白名单');
-    expect(within(row).queryByText('✓')).toBeNull();
-    expect(within(row).queryByLabelText('执行中')).toBeNull();
-    expect(within(row).queryByLabelText('待用户确认')).toBeNull();
-    expect(within(row).queryByLabelText('运行完成')).toBeNull();
+    expect(within(row).getByLabelText('执行中')).toBeInTheDocument();
+    expect(within(row).queryByLabelText('等待用户')).toBeNull();
   });
 
-  it('终端 exited + completed 时列表行有「运行完成」', async () => {
+  it('终端 exited 时列表行无活动图标', async () => {
     useAppStore.setState({
       terminals: [terminal({ Status: 'exited', ExitCode: 0 })],
-      activityCompleted: { t1: true },
     });
     renderList();
     const row = await findRow('修复上传白名单');
-    expect(within(row).getByLabelText('运行完成')).toBeInTheDocument();
+    expect(within(row).queryByLabelText('等待用户')).toBeNull();
+    expect(within(row).queryByLabelText('执行中')).toBeNull();
     // 按钮仍按非 exited 逻辑：exited →「恢复」
     expect(within(row).getByRole('button', { name: '恢复' })).toBeInTheDocument();
   });

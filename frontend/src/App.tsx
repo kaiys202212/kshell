@@ -38,6 +38,7 @@ import QuickSwitcher from './components/QuickSwitcher';
 import TitleBar from './components/TitleBar';
 import { Toaster } from './components/ui/toaster';
 import { TooltipProvider } from './components/ui/tooltip';
+import { bumpTerminalBusy, clearTerminalBusy } from './state/terminalBusy';
 import { SETTINGS_TAB_ID, useAppStore } from './state/store';
 
 function App() {
@@ -117,9 +118,11 @@ function App() {
   useEffect(() => {
     // 终端事件总线：整应用只订阅一次，避免每个终端组件各订阅一份
     const offData = onTerminalData(({ id, data }) => {
+      if (id) bumpTerminalBusy(id);
       dispatchTerminalData(id, data);
     });
     const offExit = onTerminalExit(({ id, exitCode }) => {
+      clearTerminalBusy(id);
       const { markTerminalExited: mark, notify } = useAppStore.getState();
       mark(id, exitCode);
       notify(exitCode === 0 ? '终端已退出' : `终端异常退出（退出码 ${exitCode}）`, exitCode === 0 ? 'info' : 'error');
