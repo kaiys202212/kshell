@@ -245,14 +245,14 @@ describe('App', () => {
   it('工作区页签常挂载：切到首页后会话列表仍在 DOM（hidden 而非卸载）', async () => {
     useAppStore.setState({ openTabs: [{ id: 'D:\\proj-a', name: 'proj-a' }], activeTabId: 'D:\\proj-a' });
     render(<App />);
-    // 工作区页签内的文件面板可见
-    expect(await screen.findByText('没有可显示的文件')).toBeInTheDocument();
+    // 工作区页签内的文件面板可见（空工作区仍有虚拟根，不再用整页空态文案）
+    expect(await screen.findByRole('tree', { name: '工作区文件树' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '首页' }));
     expect(pane('home').className).not.toContain('hidden');
     // 工作区页签内容没有卸载（只是 hidden），文件面板仍在 DOM 里
     expect(pane('D:\\proj-a').className).toContain('hidden');
-    expect(screen.getByText('没有可显示的文件')).toBeInTheDocument();
+    expect(screen.getByRole('tree', { name: '工作区文件树' })).toBeInTheDocument();
   });
 
   it('终端退出事件：更新镜像状态并给出提示', async () => {
