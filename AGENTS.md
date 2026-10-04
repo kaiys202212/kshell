@@ -45,6 +45,7 @@
 - 规格/计划用 `docs/plans/` 命名，日期取当天（沿用项目既有惯例，而非 superpowers 默认目录）。
 - 只有在 worktree 内、且验证全绿后，才可声明完成并合并回 `master`；未验证不得声称完成。
 - 合并回 `master` 后，在主干上构建出**可运行程序**：`.\build.ps1`（TUI，出 `dist\kshell.exe`）；改桌面端用 `.\build.ps1 -Desktop`（出 `dist\kshell-desktop.exe`）。确认成功产出可执行文件才算收尾完成，普通 `go build ./...` 不算。
+- 构建**不退出已运行程序**：`.\build.ps1 -Desktop` 不会请求旧实例退出，用户构建期间可继续使用桌面端。若 dist 拷贝因 `kshell-desktop.exe` 被占用失败，脚本会提示从托盘退出后重试；agent 不得写 `~/.kshell/exit.signal` 或以其他方式终止运行中的实例。
 - 合并后清理：`git worktree remove` 删除工作区，`git branch -d` 删除已合并分支。
 - 破坏性/一次性实验也不在 `master` 上做，先在 worktree 试。
 
@@ -93,7 +94,7 @@ go test ./internal/providers -run TestParseSession -count=1   # 跑单个测试
 
 Makefile 快捷方式：`make test` / `make vet` / `make lint`（= vet + test）/ `make build` / `make cross`。
 
-Windows 可用 `.\build.ps1`：默认 vet + 编译 TUI 到 `dist\kshell.exe`；`-Test` 先跑全量测试；`-Desktop` 走 `wails build` 出桌面版（自动构建前端，并会先请求运行中的旧实例退出）。
+Windows 可用 `.\build.ps1`：默认 vet + 编译 TUI 到 `dist\kshell.exe`；`-Test` 先跑全量测试；`-Desktop` 走 `wails build` 出桌面版（自动构建前端，不会退出运行中的旧实例）。
 
 前端（在 `frontend/` 目录）：
 
@@ -141,7 +142,7 @@ docs/smoke-test*.md 冒烟清单
 - **缓存**：`~/.kshell/cache/index.json` 按 mtime+size 门控重解析；`snapshot.json` 支撑秒开 + 后台刷新。
 - **SSH**：始终走系统 `ssh` 二进制 + `-o BatchMode=yes`，复用 `~/.ssh/config`，不传密码；`connections.yaml` 私钥只存路径。
 - **终端退出**：desktop 关闭终端用 drain 机制（80–500ms 延迟收取），立即关闭会丢约 40% 的 ConPTY 尾部输出。勿与 `exit.signal` 混淆（见下）。
-- **`~/.kshell/exit.signal`**：桌面版轮询该文件优雅退出（`internal/desktop/signalfile.go`），`build.ps1 -Desktop` 靠它实现无人值守重建。
+- **`~/.kshell/exit.signal`**：桌面版轮询该文件优雅退出（`internal/desktop/signalfile.go`）。构建脚本不使用它——构建不会退出运行中的实例。
 - **前端架构**：单一 Zustand store（`state/store.ts`，tab 持久化到 localStorage）；所有后端调用经 `lib/api.ts` → 生成的 `window.go.desktop.App`；后端推送经 `EventsOn`（`terminal:data` / `scan:done` / `chat:update`）。xterm 实例常驻挂载（`terminalRegistry`），切 tab 只隐藏不销毁。
 
 ## 代码约定

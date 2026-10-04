@@ -4,8 +4,8 @@
 #   .\build.ps1 -Test        # 先跑全量测试再编译
 #   .\build.ps1 -Clean       # 先清空 dist 再编译
 #   .\build.ps1 -Desktop     # wails build 桌面版（自动构建前端），产物拷到 dist\kshell-desktop.exe
-# 桌面版构建前会经 ~/.kshell/exit.signal 请求运行中的实例优雅退出并等待，
-# 因此调试迭代不再需要手动从托盘退出旧实例（旧版本实例不支持信号时会提示）。
+# 桌面版构建不会退出运行中的实例（用户构建期间常仍在使用桌面端）；
+# 若 dist\kshell-desktop.exe 被占用（旧实例从 dist 运行），最后的拷贝会失败并提示。
 param(
     [switch]$Test,
     [switch]$Clean,
@@ -48,35 +48,20 @@ if ($Clean -and (Test-Path dist)) {
     Remove-Item dist -Recurse -Force
 }
 
-# Stop-RunningKshellDesktop 请求运行中的 kshell 桌面版优雅退出并等待：
-# 写 ~/.kshell/exit.signal（应用轮询到即走与托盘退出相同的收尾链路），
-# 最多等 15s。只匹配桌面版进程（TUI 不监听信号文件，避免无谓等待）。
+# Get-KshellDesktopProcess 仅用于提示，不主动退出运行中的实例。
+# 进程名取自 exe 文件名：dist 版是 kshell-desktop，build\bin 版是 kshell，
+# 因此必须用 'kshell*' 通配粗筛（只写 kshell 会漏掉 dist 版），
+# 再用 Path 排除 TUI（kshell.exe / kshell-tui.exe）。
 function Get-KshellDesktopProcess {
-    # 进程名取自 exe 文件名：dist 版是 kshell-desktop，build\bin 版是 kshell，
-    # 因此必须用 'kshell*' 通配粗筛（只写 kshell 会漏掉 dist 版，占用拷贝目标却不被发现），
-    # 再用 Path 排除 TUI（kshell.exe / kshell-tui.exe 不监听退出信号）。
     return @(Get-Process -Name 'kshell*' -ErrorAction SilentlyContinue | Where-Object {
             $_.Path -like '*\kshell-desktop.exe' -or $_.Path -like '*\build\bin\kshell.exe'
         })
 }
 
-function Stop-RunningKshellDesktop {
+function Warn-RunningKshellDesktop {
     $desktopProcs = Get-KshellDesktopProcess
     if ($desktopProcs.Count -eq 0) { return }
-    Write-Host '==> 检测到 kshell 桌面版正在运行，发送退出信号并等待…' -ForegroundColor Cyan
-    $signal = Join-Path $env:USERPROFILE '.kshell\exit.signal'
-    New-Item -Path (Split-Path -Parent $signal) -ItemType Directory -Force | Out-Null
-    Set-Content -Path $signal -Value ('exit ' + (Get-Date -Format o)) -Encoding UTF8
-    $deadline = (Get-Date).AddSeconds(15)
-    while ((Get-Date) -lt $deadline) {
-        if ((Get-KshellDesktopProcess).Count -eq 0) {
-            Write-Host '==> 旧实例已退出' -ForegroundColor Green
-            Remove-Item $signal -Force -ErrorAction SilentlyContinue
-            return
-        }
-        Start-Sleep -Milliseconds 300
-    }
-    Write-Host '[警告] 旧实例 15 秒内未退出（旧版本不支持信号退出时请从托盘手动退出），继续构建' -ForegroundColor Yellow
+    Write-Host '[提示] 检测到 kshell 桌面版正在运行，构建不会退出它；若 dist\kshell-desktop.exe 被占用导致拷贝失败，请从托盘退出后重试' -ForegroundColor Yellow
 }
 
 Write-Host '==> go vet' -ForegroundColor Cyan
@@ -90,8 +75,8 @@ if ($Test) {
 }
 
 if ($Desktop) {
-    # 旧实例占用 dist\kshell-desktop.exe 会让最后的拷贝失败，先请求其退出
-    Stop-RunningKshellDesktop
+    # 构建期间不退出运行中的实例，只做提示；拷贝失败由下方 catch 兜底
+    Warn-RunningKshellDesktop
 
     # wails build 会按 wails.json 自动执行 frontend 的 npm install / build，再绑定打包。
     # 经 cmd /c 间接执行：wails 把进度日志（KnownStructs 等）写到 stderr，
