@@ -16,10 +16,13 @@ jobs:
         include:
           - os: windows-latest
             zip: kshell-desktop-windows-amd64.zip
+            artifact: win-amd64
           - os: ubuntu-latest
             zip: kshell-desktop-linux-amd64.zip
+            artifact: linux-amd64
           - os: macos-latest
             zip: kshell-desktop-darwin-arm64.zip
+            artifact: darwin-arm64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -95,7 +98,7 @@ jobs:
           printf '%s  %s\n' "$HASH" "${ZIP_NAME}" > dist/SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.zip }}
+          name: ${{ matrix.artifact }}
           path: |
             dist/${{ matrix.zip }}
             dist/SHA256SUMS
@@ -110,12 +113,17 @@ jobs:
       - name: Merge checksums and publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           mkdir -p dist
-          : > dist/SHA256SUMS
-          for d in artifacts/*; do
-            cp "$d"/*.zip dist/
-            cat "$d"/SHA256SUMS >> dist/SHA256SUMS
-          done
-          gh release create "${{ github.ref_name }}" --generate-notes dist/*.zip dist/SHA256SUMS
+          find artifacts -type f -name '*.zip' -exec cp -v {} dist/ \;
+          find artifacts -type f -name SHA256SUMS -exec cat {} \; > dist/SHA256SUMS
+          ls -la dist
+          test -s dist/SHA256SUMS
+          test "$(find dist -maxdepth 1 -name '*.zip' | wc -l)" -eq 3
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.zip dist/SHA256SUMS --clobber
+          else
+            gh release create "$TAG" --generate-notes dist/*.zip dist/SHA256SUMS
+          fi
