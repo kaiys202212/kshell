@@ -116,6 +116,20 @@ func TestCursorStoreHasSubagentInfo(t *testing.T) {
 		t.Fatalf("has=%v err=%v, want false", has, err)
 	}
 
+	nullDB := filepath.Join(dir, "null.db")
+	writeStoreMeta(t, nullDB, `{"agentId":"c","subagentInfo":null}`)
+	has, err = cursorStoreHasSubagentInfo(nullDB)
+	if err != nil || has {
+		t.Fatalf("null subagentInfo: has=%v err=%v, want false", has, err)
+	}
+
+	strDB := filepath.Join(dir, "str.db")
+	writeStoreMeta(t, strDB, `{"agentId":"d","subagentInfo":"not-an-object"}`)
+	has, err = cursorStoreHasSubagentInfo(strDB)
+	if err != nil || has {
+		t.Fatalf("string subagentInfo: has=%v err=%v, want false", has, err)
+	}
+
 	_, err = cursorStoreHasSubagentInfo(filepath.Join(dir, "missing.db"))
 	if err == nil {
 		t.Fatal("want error for missing db")

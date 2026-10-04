@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -36,6 +37,7 @@ func loadCursorChatMeta(path string) (cursorChatMeta, error) {
 	return m, nil
 }
 
+// cursorStoreHasSubagentInfo 读 meta key=0：value 先尝试 hex 解码再 JSON 解析；subagentInfo 为非空 JSON 对象时返回 true，缺库/SQL 错误返回 err。
 func cursorStoreHasSubagentInfo(storeDB string) (bool, error) {
 	db, err := sql.Open("sqlite", storeDB)
 	if err != nil {
@@ -55,8 +57,15 @@ func cursorStoreHasSubagentInfo(storeDB string) (bool, error) {
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return false, err
 	}
-	_, ok := obj["subagentInfo"]
-	return ok, nil
+	rawSub, ok := obj["subagentInfo"]
+	if !ok {
+		return false, nil
+	}
+	trimmed := strings.TrimSpace(string(rawSub))
+	if trimmed == "" || trimmed == "null" || !strings.HasPrefix(trimmed, "{") {
+		return false, nil
+	}
+	return true, nil
 }
 
 func listCursorChatSessions(home string) ([]Session, error) {
