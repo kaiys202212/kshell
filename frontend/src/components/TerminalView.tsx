@@ -40,6 +40,7 @@ const MIN_ROWS = 5;
 export default function TerminalView({ term, active }: Props) {
   const termId = term.ID;
   const resolved = useAppStore((s) => s.appearance.resolved);
+  const fontSize = useAppStore((s) => s.appearance.fontSize ?? 13);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -61,7 +62,7 @@ export default function TerminalView({ term, active }: Props) {
       convertEol: false,
       cursorBlink: true,
       fontFamily: 'Consolas, "Cascadia Mono", monospace',
-      fontSize: 13,
+      fontSize: useAppStore.getState().appearance.fontSize ?? 13,
       scrollback: 5000,
       // agent TUI（claude code / codebuddy 等 ink 系 CLI）在主缓冲区用 ED2 全屏重绘。
       // 默认语义下 ED2 只擦除视口，重绘与用户滚动交错会让视口与缓冲失位：
@@ -373,6 +374,17 @@ export default function TerminalView({ term, active }: Props) {
       termRef.current.options.theme = terminalTheme(resolved);
     }
   }, [resolved]);
+
+  // 全局字号变化时热更新 xterm；仅对可见页签 fit，避免 hidden 时退化行列。
+  useEffect(() => {
+    if (!termRef.current) return;
+    termRef.current.options.fontSize = fontSize;
+    if (!activeRef.current) return;
+    const raf = requestAnimationFrame(() => {
+      fitRef.current?.fit();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [fontSize]);
 
   // 退出提示只写一次；Status 若从 exited 回到 running（重新打开）不重置，由上层重新挂载负责
   useEffect(() => {

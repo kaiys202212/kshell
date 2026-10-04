@@ -301,7 +301,7 @@ export const useAppStore = create<AppState>()(
       newSessionTool: '',
       setNewSessionTool: (newSessionTool) => set({ newSessionTool }),
 
-      appearance: { mode: 'system', resolved: 'dark' },
+      appearance: { mode: 'system', resolved: 'dark', fontSize: 13 },
       setAppearance: (appearance) => set({ appearance }),
     }),
     {

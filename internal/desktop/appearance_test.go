@@ -17,6 +17,9 @@ func TestGetAppearanceDefaultsToDark(t *testing.T) {
 	if got.Resolved != string(appearance.Resolve(appearance.Dark)) {
 		t.Fatalf("resolved = %q", got.Resolved)
 	}
+	if got.FontSize != config.DefaultUIFontSize {
+		t.Fatalf("fontSize = %d, want %d", got.FontSize, config.DefaultUIFontSize)
+	}
 }
 
 func TestSetAppearanceModeWithoutLayoutIsNotReady(t *testing.T) {
@@ -63,5 +66,50 @@ func TestSetAppearanceModePersistsAndEmits(t *testing.T) {
 	}
 	if a.GetAppearance().Mode != "system" {
 		t.Fatalf("invalid mode should fall back to system, got %q", a.GetAppearance().Mode)
+	}
+}
+
+func TestSetAppearanceFontSizePersistsAndClamps(t *testing.T) {
+	dir := t.TempDir()
+	layout := config.Layout{
+		Root:   dir,
+		Config: filepath.Join(dir, "config.yaml"),
+		Cache:  filepath.Join(dir, "cache"),
+	}
+	var events []string
+	a := NewAppWith(Options{
+		Config: config.Default(),
+		Layout: layout,
+		Emit:   func(name string, _ ...any) { events = append(events, name) },
+	})
+
+	if err := a.SetAppearanceFontSize(16); err != nil {
+		t.Fatalf("SetAppearanceFontSize: %v", err)
+	}
+	if a.GetAppearance().FontSize != 16 {
+		t.Fatalf("fontSize = %d, want 16", a.GetAppearance().FontSize)
+	}
+	if len(events) == 0 || events[len(events)-1] != "appearance:changed" {
+		t.Fatalf("events = %v", events)
+	}
+	loaded, err := config.Load(layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Appearance.FontSize != 16 {
+		t.Fatalf("persisted = %d", loaded.Appearance.FontSize)
+	}
+
+	if err := a.SetAppearanceFontSize(3); err != nil {
+		t.Fatalf("SetAppearanceFontSize(3): %v", err)
+	}
+	if a.GetAppearance().FontSize != 10 {
+		t.Fatalf("clamped small = %d, want 10", a.GetAppearance().FontSize)
+	}
+	if err := a.SetAppearanceFontSize(99); err != nil {
+		t.Fatalf("SetAppearanceFontSize(99): %v", err)
+	}
+	if a.GetAppearance().FontSize != 20 {
+		t.Fatalf("clamped large = %d, want 20", a.GetAppearance().FontSize)
 	}
 }

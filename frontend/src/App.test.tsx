@@ -149,7 +149,7 @@ beforeEach(() => {
   mocks.hideProject.mockResolvedValue(undefined);
   mocks.restoreProject.mockResolvedValue(undefined);
   mocks.onProjectsChanged.mockImplementation(() => () => {});
-  mocks.getAppearance.mockResolvedValue({ mode: 'system', resolved: 'dark' });
+  mocks.getAppearance.mockResolvedValue({ mode: 'system', resolved: 'dark', fontSize: 13 });
   mocks.onAppearanceChanged.mockReturnValue(() => {});
   mocks.getCloseBehavior.mockResolvedValue('tray');
   mocks.setCloseBehavior.mockResolvedValue(undefined);

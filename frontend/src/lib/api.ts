@@ -307,6 +307,7 @@ interface AppBindings {
   SetCloseBehavior(mode: string): Promise<void>;
   GetAppearance(): Promise<AppearanceInfo>;
   SetAppearanceMode(mode: string): Promise<void>;
+  SetAppearanceFontSize(n: number): Promise<void>;
   GetModelConfig(): Promise<ModelConfigView>;
   SetModelConfig(input: ModelConfigInput): Promise<void>;
   ListModelPresets(): Promise<ModelPreset[]>;
@@ -768,7 +769,7 @@ export async function getAppearance(): Promise<AppearanceInfo> {
       typeof window !== 'undefined' &&
       typeof window.matchMedia === 'function' &&
       window.matchMedia('(prefers-color-scheme: dark)').matches;
-    return { mode: 'system', resolved: dark ? 'dark' : 'light' };
+    return { mode: 'system', resolved: dark ? 'dark' : 'light', fontSize: 13 };
   }
   return a.GetAppearance();
 }
@@ -780,10 +781,21 @@ export async function setAppearanceMode(mode: string): Promise<void> {
   await a.SetAppearanceMode(mode);
 }
 
+// setAppearanceFontSize 设置全局字号（写回 config.yaml），错误向上抛。
+export async function setAppearanceFontSize(n: number): Promise<void> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  await a.SetAppearanceFontSize(n);
+}
+
 // onAppearanceChanged 订阅颜色模式/系统明暗变化，返回取消订阅函数。
 export function onAppearanceChanged(cb: (info: AppearanceInfo) => void): () => void {
   return EventsOn('appearance:changed', (p: AppearanceInfo) =>
-    cb({ mode: p?.mode ?? 'system', resolved: p?.resolved ?? 'dark' }),
+    cb({
+      mode: p?.mode ?? 'system',
+      resolved: p?.resolved ?? 'dark',
+      fontSize: typeof p?.fontSize === 'number' ? p.fontSize : 13,
+    }),
   );
 }
 

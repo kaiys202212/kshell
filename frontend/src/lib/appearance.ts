@@ -5,6 +5,32 @@ export type ResolvedTheme = 'light' | 'dark';
 export interface AppearanceInfo {
   mode: AppearanceMode;
   resolved: ResolvedTheme;
+  fontSize: number;
+}
+
+export const DEFAULT_UI_FONT_SIZE = 13;
+export const MIN_UI_FONT_SIZE = 10;
+export const MAX_UI_FONT_SIZE = 20;
+
+export function clampUiFontSize(n: number): number {
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_UI_FONT_SIZE;
+  const rounded = Math.round(n);
+  if (rounded < MIN_UI_FONT_SIZE) return MIN_UI_FONT_SIZE;
+  if (rounded > MAX_UI_FONT_SIZE) return MAX_UI_FONT_SIZE;
+  return rounded;
+}
+
+// applyUiFontSize 写 CSS 变量与 html rem 基准，并记住本地值避免启动闪默认字号。
+export function applyUiFontSize(px: number): void {
+  const n = clampUiFontSize(px);
+  const root = document.documentElement;
+  root.style.setProperty('--app-font-size', `${n}px`);
+  root.style.fontSize = `${(16 * n) / DEFAULT_UI_FONT_SIZE}px`;
+  try {
+    localStorage.setItem('kshell-font-size', String(n));
+  } catch {
+    /* 忽略持久化失败 */
+  }
 }
 
 // 读取根元素上的 CSS 变量；非浏览器环境或读不到时返回 null。

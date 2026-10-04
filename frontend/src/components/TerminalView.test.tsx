@@ -195,6 +195,7 @@ beforeEach(() => {
   api.writeTerminal.mockResolvedValue(undefined);
   api.resizeTerminal.mockResolvedValue(undefined);
   api.readClipboardPaste.mockResolvedValue({ Text: '', Path: '' });
+  useAppStore.getState().setAppearance({ mode: 'system', resolved: 'dark', fontSize: 13 });
 
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
     rafQueue.push(cb);
@@ -249,6 +250,17 @@ describe('TerminalView', () => {
     expect(dispatchTerminalData(TERM.ID, bytesToBase64(bytes))).toBe(true);
     expect(instance.written).toHaveLength(1);
     expect(Array.from(instance.written[0] as Uint8Array)).toEqual(Array.from(bytes));
+  });
+
+  it('构造时使用 store 字号，变化后热更新 options.fontSize', () => {
+    useAppStore.getState().setAppearance({ mode: 'dark', resolved: 'dark', fontSize: 18 });
+    render(<TerminalView term={TERM} active />);
+    expect(term(0).options.fontSize).toBe(18);
+
+    act(() => {
+      useAppStore.getState().setAppearance({ mode: 'dark', resolved: 'dark', fontSize: 11 });
+    });
+    expect(term(0).options.fontSize).toBe(11);
   });
 
   it('键盘输入按 UTF-8 → base64 交给 writeTerminal（中文与转义序列各一条）', () => {
@@ -371,24 +383,24 @@ describe('TerminalView', () => {
   });
 
   it('终端主题跟随 store 的 resolved 明暗', () => {
-    useAppStore.getState().setAppearance({ mode: 'dark', resolved: 'dark' });
+    useAppStore.getState().setAppearance({ mode: 'dark', resolved: 'dark', fontSize: 13 });
     const dark = render(<TerminalView term={TERM} active />);
     expect(term(0).options.theme).toEqual({ background: '#131b18', foreground: '#dce8e4' });
     dark.unmount();
 
-    useAppStore.getState().setAppearance({ mode: 'light', resolved: 'light' });
+    useAppStore.getState().setAppearance({ mode: 'light', resolved: 'light', fontSize: 13 });
     const light = render(<TerminalView term={TERM} active />);
     expect(term(1).options.theme).toEqual({ background: '#ffffff', foreground: '#1c2a27' });
     light.unmount();
   });
 
   it('明暗变化时热更新已挂载终端的配色', () => {
-    useAppStore.getState().setAppearance({ mode: 'dark', resolved: 'dark' });
+    useAppStore.getState().setAppearance({ mode: 'dark', resolved: 'dark', fontSize: 13 });
     render(<TerminalView term={TERM} active />);
     expect(term(0).options.theme).toEqual({ background: '#131b18', foreground: '#dce8e4' });
 
     act(() => {
-      useAppStore.getState().setAppearance({ mode: 'light', resolved: 'light' });
+      useAppStore.getState().setAppearance({ mode: 'light', resolved: 'light', fontSize: 13 });
     });
     expect(term(0).options.theme).toEqual({ background: '#ffffff', foreground: '#1c2a27' });
   });
