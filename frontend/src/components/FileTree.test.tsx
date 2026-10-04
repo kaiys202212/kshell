@@ -13,9 +13,14 @@ const mocks = vi.hoisted(() => ({
   listFiles: vi.fn(),
   searchFiles: vi.fn(),
   renameEntry: vi.fn(),
+  createEntry: vi.fn(),
+  deleteEntry: vi.fn(),
   gitStatus: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
+
+// jsdom 没有 Clipboard：stub writeText 供「复制路径」断言
+const writeText = vi.fn().mockResolvedValue(undefined);
 
 const node = (name: string, isDir: boolean, rel: string): FileNode => ({
   Name: name,
@@ -37,6 +42,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   useAppStore.setState({ toasts: [], gitStatus: {} });
   mocks.gitStatus.mockResolvedValue({ Status: {}, IsRepo: false }); // 挂载时刷新静默通过
+  Object.defineProperty(navigator, 'clipboard', {
+    value: { writeText },
+    configurable: true,
+  });
+  writeText.mockClear();
 });
 
 describe('FileTree', () => {
@@ -213,5 +223,144 @@ describe('FileTree', () => {
 
     expect(useAppStore.getState().toasts.some((t) => t.title.includes('目标已存在'))).toBe(true);
     expect(screen.getByText('README.md')).toBeInTheDocument();
+  });
+});
+
+describe('FileTree 右键菜单', () => {
+  it('右键目录行弹出菜单（含新建文件夹/删除），右键文件行不含新建文件夹', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    fireEvent.contextMenu(await screen.findByText('src'));
+
+    const menu = screen.getByRole('menu');
+    expect(menu).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: '新建文件夹' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: '新建文件' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: '删除' })).toBeInTheDocument();
+
+    // 关闭后右键文件行：不含新建两项
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    fireEvent.contextMenu(screen.getByText('README.md'));
+    expect(screen.queryByRole('menuitem', { name: '新建文件夹' })).not.toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: '重命名' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: '复制路径' })).toBeInTheDocument();
+  });
+
+  it('Esc 关闭菜单', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    fireEvent.contextMenu(await screen.findByText('src'));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('复制路径：菜单项把绝对路径写入剪贴板并提示成功', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    fireEvent.contextMenu(await screen.findByText('README.md'));
+
+    await act(async () => {
+      fireEvent.pointerDown(screen.getByRole('menuitem', { name: '复制路径' }));
+    });
+    expect(writeText).toHaveBeenCalledWith('D:\\proj\\README.md');
+    expect(useAppStore.getState().toasts.some((t) => t.tone === 'success')).toBe(true);
+  });
+
+  it('删除：确认框出现，确认后以 (wsPath, relPath) 调 deleteEntry 并刷新树', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.deleteEntry.mockResolvedValue(undefined);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+    const callsBefore = mocks.listFiles.mock.calls.length;
+
+    fireEvent.contextMenu(screen.getByText('README.md'));
+    fireEvent.pointerDown(screen.getByRole('menuitem', { name: '删除' }));
+    expect(await screen.findByText('删除确认')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    });
+    expect(mocks.deleteEntry).toHaveBeenCalledWith('D:\\proj', 'README.md');
+    expect(useAppStore.getState().toasts.some((t) => t.title.includes('已删除'))).toBe(true);
+    // 树已重建（refreshRoot 多调一次 listFiles）
+    expect(mocks.listFiles.mock.calls.length).toBeGreaterThan(callsBefore);
+    expect(screen.queryByText('删除确认')).not.toBeInTheDocument();
+  });
+
+  it('删除确认框取消不调 deleteEntry', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    fireEvent.contextMenu(await screen.findByText('README.md'));
+    fireEvent.pointerDown(screen.getByRole('menuitem', { name: '删除' }));
+    expect(await screen.findByText('删除确认')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    expect(mocks.deleteEntry).not.toHaveBeenCalled();
+    expect(screen.queryByText('删除确认')).not.toBeInTheDocument();
+  });
+
+  it('右键空白新建文件：输入名称回车后以 (wsPath, "", name, false) 调 createEntry', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.createEntry.mockResolvedValue('D:\\proj\\new.go');
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    fireEvent.contextMenu(screen.getByRole('tree', { name: '工作区文件树' }));
+    fireEvent.pointerDown(screen.getByRole('menuitem', { name: '新建文件' }));
+    const input = screen.getByPlaceholderText('文件名');
+    fireEvent.change(input, { target: { value: 'new.go' } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+
+    expect(mocks.createEntry).toHaveBeenCalledWith('D:\\proj', '', 'new.go', false);
+    expect(useAppStore.getState().toasts.some((t) => t.tone === 'success')).toBe(true);
+  });
+
+  it('右键目录行新建文件夹：以该目录为 dirRel 调 createEntry', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.createEntry.mockResolvedValue('D:\\proj\\src\\sub');
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    fireEvent.contextMenu(await screen.findByText('src'));
+
+    fireEvent.pointerDown(screen.getByRole('menuitem', { name: '新建文件夹' }));
+    const input = screen.getByPlaceholderText('文件夹名');
+    fireEvent.change(input, { target: { value: 'sub' } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+
+    expect(mocks.createEntry).toHaveBeenCalledWith('D:\\proj', 'src', 'sub', true);
+  });
+
+  it('新建空名不提交，Esc 取消收起输入', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    // 右键树空白处 → 新建文件（根目录）
+    fireEvent.contextMenu(screen.getByRole('tree', { name: '工作区文件树' }));
+    fireEvent.pointerDown(screen.getByRole('menuitem', { name: '新建文件' }));
+    const input = screen.getByPlaceholderText('文件名');
+
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(mocks.createEntry).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText('文件名')).toBeInTheDocument();
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByPlaceholderText('文件名')).not.toBeInTheDocument();
+  });
+
+  it('菜单「重命名」触发行内重命名输入', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    fireEvent.contextMenu(await screen.findByText('README.md'));
+    fireEvent.pointerDown(screen.getByRole('menuitem', { name: '重命名' }));
+
+    const input = screen.getByRole('textbox', { name: '重命名 README.md' });
+    expect(input).toHaveValue('README.md');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 });

@@ -2,15 +2,20 @@
 // Go 侧 ListFiles 只填充当前层子项（Children 字段无意义），
 // 展开目录时必须再次调 listFiles(wsPath, 子目录相对路径)。
 // relPath 统一用 / 拼接：Go 侧 filepath.Clean 会归一化为平台分隔符。
-// 交互：点目录展开/收起、点文件回调 onOpenFile、铅笔按钮行内重命名；
+// 交互：点目录展开/收起、点文件回调 onOpenFile、铅笔按钮行内重命名、
+// 右键菜单（新建/删除/复制路径/触发重命名，删除带确认弹窗）；
 // 顶部搜索框先过滤已加载节点，防抖后走 Go 递归搜索出平铺结果。
 // git 状态：文件名右侧小色标（数据来自 store.gitStatus[wsPath]，lib/git.ts 负责刷新）。
-import { useEffect, useState } from 'react';
-import { listFiles, renameEntry, searchFiles } from '../lib/api';
+import { useEffect, useState, type MouseEvent } from 'react';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
+import { createEntry, deleteEntry, listFiles, renameEntry, searchFiles } from '../lib/api';
 import type { FileNode, SearchHit } from '../lib/api';
 import { cn } from '../lib/cn';
 import { refreshGitStatus } from '../lib/git';
 import { useAppStore } from '../state/store';
+import ContextMenu, { type MenuItem } from './ContextMenu';
+import { Button } from './ui/button';
+import { Dialog } from './ui/dialog';
 import { EmptyState } from './ui/empty-state';
 import { Input } from './ui/input';
 import { Skeleton } from './ui/skeleton';
@@ -181,26 +186,104 @@ function filterItems(items: TreeItem[], q: string): TreeItem[] {
   return out;
 }
 
+// 行内新建输入：渲染在目标目录子层首位（根目录在树列表顶部），
+// 目录未加载 children 时直接渲染在目录行下方。Enter 提交；Esc/失焦取消；空名不提交。
+function CreateRow({
+  depth,
+  isDir,
+  onCommit,
+  onCancel,
+}: {
+  depth: number;
+  isDir: boolean;
+  onCommit(name: string): void;
+  onCancel(): void;
+}) {
+  const [draft, setDraft] = useState('');
+  const commit = () => {
+    const name = draft.trim();
+    if (!name) return; // 空名不提交（失焦兜底取消）
+    onCommit(name);
+  };
+  return (
+    <li>
+      <div className="flex h-6 items-center" style={{ paddingLeft: depth * 14 }}>
+        <Input
+          autoFocus
+          className="h-5 min-w-0 flex-1 px-1 py-0 font-mono"
+          placeholder={isDir ? '文件夹名' : '文件名'}
+          aria-label={`新建${isDir ? '文件夹' : '文件'}`}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commit();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              onCancel();
+            }
+          }}
+          onBlur={onCancel}
+        />
+      </div>
+    </li>
+  );
+}
+
 interface RowProps {
   item: TreeItem;
   depth: number;
   gitMap?: Record<string, string>; // git 状态映射（键为 '/' 分隔 relPath），行内按自身 relPath 查
+  renamingPath: string | null; // 受控行内重命名：renamingPath === item.relPath 时该行进入编辑
+  creating: { dirRel: string; isDir: boolean } | null; // 行内新建输入的渲染位置
+  onRenameStart(relPath: string): void;
+  onRenameEnd(): void;
   onDirToggle(item: TreeItem): void;
   onOpenFile(path: string): void;
   onRename(relPath: string, newName: string): void;
+  onCreateCommit(name: string): void;
+  onCancelCreate(): void;
+  onRowContextMenu(e: MouseEvent, item: TreeItem): void;
 }
 
-function TreeRow({ item, depth, gitMap, onDirToggle, onOpenFile, onRename }: RowProps) {
+function TreeRow({
+  item,
+  depth,
+  gitMap,
+  renamingPath,
+  creating,
+  onRenameStart,
+  onRenameEnd,
+  onDirToggle,
+  onOpenFile,
+  onRename,
+  onCreateCommit,
+  onCancelCreate,
+  onRowContextMenu,
+}: RowProps) {
   const { node } = item;
   const gitCode = node.IsDir ? undefined : gitMap?.[item.relPath];
-  const [renaming, setRenaming] = useState(false);
+  const renaming = renamingPath === item.relPath;
   const [draft, setDraft] = useState(node.Name);
 
+  // 受控重命名：进入编辑态时重置草稿为当前名（状态在父层，草稿留本行）
+  useEffect(() => {
+    if (renaming) setDraft(node.Name);
+  }, [renaming, node.Name]);
+
   const commitRename = () => {
-    setRenaming(false);
     const name = draft.trim();
+    onRenameEnd();
     if (!name || name === node.Name) return;
     onRename(item.relPath, name);
+  };
+
+  const rowContextMenu = (e: MouseEvent) => {
+    // preventDefault 掉浏览器默认菜单；stopPropagation 防止空白处 handler 覆盖为 item=null
+    e.preventDefault();
+    e.stopPropagation();
+    onRowContextMenu(e, item);
   };
 
   return (
@@ -211,6 +294,7 @@ function TreeRow({ item, depth, gitMap, onDirToggle, onOpenFile, onRename }: Row
       <div
         className="group flex h-6 items-center gap-0.5 rounded pr-1 transition-colors hover:bg-muted"
         style={{ paddingLeft: depth * 14 }}
+        onContextMenu={rowContextMenu}
       >
         {renaming ? (
           <Input
@@ -225,7 +309,7 @@ function TreeRow({ item, depth, gitMap, onDirToggle, onOpenFile, onRename }: Row
                 commitRename();
               } else if (e.key === 'Escape') {
                 e.preventDefault();
-                setRenaming(false);
+                onRenameEnd();
               }
             }}
             onBlur={commitRename}
@@ -255,10 +339,7 @@ function TreeRow({ item, depth, gitMap, onDirToggle, onOpenFile, onRename }: Row
               className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-primary group-hover:opacity-100"
               aria-label={`重命名 ${node.Name}`}
               title="重命名"
-              onClick={() => {
-                setDraft(node.Name);
-                setRenaming(true);
-              }}
+              onClick={() => onRenameStart(item.relPath)}
             >
               <PencilIcon />
             </button>
@@ -282,18 +363,42 @@ function TreeRow({ item, depth, gitMap, onDirToggle, onOpenFile, onRename }: Row
       )}
       {node.IsDir && item.expanded && item.children && (
         <ul role="group" className="m-0 list-none p-0">
+          {creating && creating.dirRel === item.relPath && (
+            <CreateRow
+              depth={depth + 1}
+              isDir={creating.isDir}
+              onCommit={onCreateCommit}
+              onCancel={onCancelCreate}
+            />
+          )}
           {item.children.map((c) => (
             <TreeRow
               key={c.node.Path}
               item={c}
               depth={depth + 1}
               gitMap={gitMap}
+              renamingPath={renamingPath}
+              creating={creating}
+              onRenameStart={onRenameStart}
+              onRenameEnd={onRenameEnd}
               onDirToggle={onDirToggle}
               onOpenFile={onOpenFile}
               onRename={onRename}
+              onCreateCommit={onCreateCommit}
+              onCancelCreate={onCancelCreate}
+              onRowContextMenu={onRowContextMenu}
             />
           ))}
         </ul>
+      )}
+      {/* 目录未加载/未展开 children：新建输入直接渲染在目录行下方 */}
+      {node.IsDir && creating && creating.dirRel === item.relPath && !(item.expanded && item.children) && (
+        <CreateRow
+          depth={depth + 1}
+          isDir={creating.isDir}
+          onCommit={onCreateCommit}
+          onCancel={onCancelCreate}
+        />
       )}
     </li>
   );
@@ -311,6 +416,11 @@ export default function FileTree({
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [searching, setSearching] = useState(false);
+  // 右键菜单：item 为 null 表示空白处（根目录）
+  const [menu, setMenu] = useState<{ x: number; y: number; item: TreeItem | null } | null>(null);
+  const [creating, setCreating] = useState<{ dirRel: string; isDir: boolean } | null>(null);
+  const [deleting, setDeleting] = useState<TreeItem | null>(null);
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const gitMap = useAppStore((s) => s.gitStatus[wsPath]);
 
   useEffect(() => {
@@ -319,6 +429,10 @@ export default function FileTree({
     setError('');
     setQuery('');
     setHits(null);
+    setMenu(null);
+    setCreating(null);
+    setDeleting(null);
+    setRenamingPath(null);
     listFiles(wsPath, '')
       .then((nodes) => {
         if (!cancelled) setItems(toItems(nodes, ''));
@@ -417,21 +531,71 @@ export default function FileTree({
     setHits(null);
   };
 
+  // 根层重建树镜像（Go 侧改动后已作废缓存）：rename/create/delete 共用
+  const refreshRoot = () => {
+    listFiles(wsPath, '')
+      .then((nodes) => setItems(toItems(nodes, '')))
+      .catch(() => {
+        /* 根层刷新失败保持原树，下次展开会重新拉取 */
+      });
+  };
+
   // 重命名：Go 侧已作废树缓存，这里重建前端树镜像并刷新 git 状态
   const handleRename = (relPath: string, newName: string) => {
     renameEntry(wsPath, relPath, newName)
       .then(() => {
         useAppStore.getState().notify(`已重命名为 ${newName}`, 'success');
-        listFiles(wsPath, '')
-          .then((nodes) => setItems(toItems(nodes, '')))
-          .catch(() => {
-            /* 根层刷新失败保持原树，下次展开会重新拉取 */
-          });
+        refreshRoot();
         void refreshGitStatus(wsPath);
       })
       .catch((e: unknown) => {
         useAppStore.getState().notify(e instanceof Error ? e.message : String(e), 'error');
       });
+  };
+
+  // 新建：Go 侧已作废树缓存，成功后刷新树镜像 + git 状态
+  const handleCreateCommit = (name: string) => {
+    if (!creating) return;
+    const { dirRel, isDir } = creating;
+    createEntry(wsPath, dirRel, name, isDir)
+      .then(() => {
+        useAppStore.getState().notify(`已创建 ${name}`, 'success');
+        setCreating(null);
+        refreshRoot();
+        void refreshGitStatus(wsPath);
+      })
+      .catch((e: unknown) => {
+        useAppStore.getState().notify(e instanceof Error ? e.message : String(e), 'error');
+        setCreating(null);
+      });
+  };
+
+  // 删除确认后的执行：os.RemoveAll 永久删除，成功后刷新树镜像 + git 状态
+  const handleDeleteConfirm = () => {
+    if (!deleting) return;
+    const { relPath, node } = deleting;
+    deleteEntry(wsPath, relPath)
+      .then(() => {
+        useAppStore.getState().notify(`已删除 ${node.Name}`, 'success');
+        setDeleting(null);
+        refreshRoot();
+        void refreshGitStatus(wsPath);
+      })
+      .catch((e: unknown) => {
+        useAppStore.getState().notify(e instanceof Error ? e.message : String(e), 'error');
+        setDeleting(null);
+      });
+  };
+
+  const handleCopyPath = (item: TreeItem) => {
+    navigator.clipboard
+      .writeText(item.node.Path)
+      .then(() => useAppStore.getState().notify('已复制路径', 'success'))
+      .catch(() => useAppStore.getState().notify('复制失败', 'error'));
+  };
+
+  const handleRowContextMenu = (e: MouseEvent, item: TreeItem | null) => {
+    setMenu({ x: e.clientX, y: e.clientY, item });
   };
 
   if (error) {
@@ -457,6 +621,66 @@ export default function FileTree({
   const dirOf = (rel: string) => {
     const i = rel.lastIndexOf('/');
     return i < 0 ? '' : rel.slice(0, i);
+  };
+
+  // 右键菜单项：按目标（目录行/文件行/空白处）组装
+  const menuItems: MenuItem[] = (() => {
+    const startCreate = (dirRel: string, isDir: boolean) => {
+      setCreating({ dirRel, isDir });
+      setMenu(null);
+    };
+    const startRename = (it: TreeItem) => {
+      setRenamingPath(it.relPath);
+      setMenu(null);
+    };
+    const startDelete = (it: TreeItem) => {
+      setDeleting(it);
+      setMenu(null);
+    };
+    const copyPath = (it: TreeItem) => {
+      handleCopyPath(it);
+      setMenu(null);
+    };
+    const it = menu?.item;
+    if (!it) {
+      // 空白处：根目录新建
+      return [
+        { label: '新建文件', onSelect: () => startCreate('', false) },
+        { label: '新建文件夹', onSelect: () => startCreate('', true) },
+      ];
+    }
+    if (it.node.IsDir) {
+      return [
+        { label: '新建文件', onSelect: () => startCreate(it.relPath, false) },
+        { label: '新建文件夹', onSelect: () => startCreate(it.relPath, true) },
+        { label: '重命名', onSelect: () => startRename(it) },
+        { label: '删除', danger: true, onSelect: () => startDelete(it) },
+        { label: '复制路径', onSelect: () => copyPath(it) },
+      ];
+    }
+    return [
+      { label: '重命名', onSelect: () => startRename(it) },
+      { label: '删除', danger: true, onSelect: () => startDelete(it) },
+      { label: '复制路径', onSelect: () => copyPath(it) },
+    ];
+  })();
+
+  const rowProps = {
+    gitMap,
+    renamingPath,
+    creating,
+    onRenameStart: setRenamingPath,
+    onRenameEnd: () => setRenamingPath(null),
+    onDirToggle: handleDirToggle,
+    onOpenFile,
+    onRename: handleRename,
+    onCreateCommit: handleCreateCommit,
+    onCancelCreate: () => setCreating(null),
+    onRowContextMenu: handleRowContextMenu,
+  };
+  const blankContextMenu = (e: MouseEvent) => {
+    e.preventDefault();
+    setMenu({ x: e.clientX, y: e.clientY, item: null });
   };
 
   return (
@@ -521,38 +745,54 @@ export default function FileTree({
                 </p>
               ) : (
                 filtered.map((it) => (
-                  <TreeRow
-                    key={it.node.Path}
-                    item={it}
-                    depth={0}
-                    gitMap={gitMap}
-                    onDirToggle={handleDirToggle}
-                    onOpenFile={onOpenFile}
-                    onRename={handleRename}
-                  />
+                  <TreeRow key={it.node.Path} item={it} depth={0} {...rowProps} />
                 ))
               )}
             </ul>
           );
         })()
       ) : (
-        <ul role="tree" aria-label="工作区文件树" className="m-0 list-none p-0 text-sm">
+        <ul
+          role="tree"
+          aria-label="工作区文件树"
+          className="m-0 list-none p-0 text-sm"
+          onContextMenu={blankContextMenu}
+        >
+          {creating && creating.dirRel === '' && (
+            <CreateRow
+              depth={0}
+              isDir={creating.isDir}
+              onCommit={handleCreateCommit}
+              onCancel={() => setCreating(null)}
+            />
+          )}
           {items.length === 0 ? (
             <EmptyState title="没有可显示的文件" />
           ) : (
-            items.map((it) => (
-              <TreeRow
-                key={it.node.Path}
-                item={it}
-                depth={0}
-                gitMap={gitMap}
-                onDirToggle={handleDirToggle}
-                onOpenFile={onOpenFile}
-                onRename={handleRename}
-              />
-            ))
+            items.map((it) => <TreeRow key={it.node.Path} item={it} depth={0} {...rowProps} />)
           )}
         </ul>
+      )}
+
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />
+      )}
+
+      {deleting && (
+        <Dialog open onOpenChange={(o) => { if (!o) setDeleting(null); }} className="w-80">
+          <DialogPrimitive.Title className="mb-1 text-sm font-medium">删除确认</DialogPrimitive.Title>
+          <p className="mb-3 text-xs text-muted-foreground">
+            确定要删除「{deleting.node.Name}」吗？该操作不可恢复。
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setDeleting(null)}>
+              取消
+            </Button>
+            <Button variant="destructive" size="sm" onClick={handleDeleteConfirm}>
+              删除
+            </Button>
+          </div>
+        </Dialog>
       )}
     </div>
   );
