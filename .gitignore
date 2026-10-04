@@ -9,9 +9,14 @@ node_modules/
 .codebuddy/
 .superpowers/
 .worktrees/
-/docs/
+/docs/*
+!/docs/plans/
+!/docs/plans/**
+!/docs/smoke/
+!/docs/smoke/**
 .cursor/rules/
-.github/workflows/
+.github/workflows/*
+!.github/workflows/release.yml
 *.exe
 *.test
 *.tmp

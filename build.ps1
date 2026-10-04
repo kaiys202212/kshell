@@ -4,6 +4,13 @@
 #   .\build.ps1 -Test        # 先跑全量测试再编译
 #   .\build.ps1 -Clean       # 先清空 dist 再编译
 #   .\build.ps1 -Desktop     # wails build 桌面版（自动构建前端），产物拷到 dist\kshell-desktop.exe
+#   .\build.ps1 -Desktop -Version v0.2.0  # 注入版本号（GitHub Release 用）
+param(
+    [switch]$Test,
+    [switch]$Clean,
+    [switch]$Desktop,
+    [string]$Version = ''
+)
 # 桌面版构建不会退出运行中的实例（用户构建期间常仍在使用桌面端）；
 # 若 dist\kshell-desktop.exe 被占用（旧实例从 dist 运行），最后的拷贝会失败并提示。
 param(
@@ -82,6 +89,12 @@ if ($Desktop) {
     # 经 cmd /c 间接执行：wails 把进度日志（KnownStructs 等）写到 stderr，
     # PowerShell 5.1 在 $ErrorActionPreference='Stop' 下会把它们误判为 terminating error。
     Write-Host '==> wails build' -ForegroundColor Cyan
+    $wailsCmd = 'wails build'
+    if ($Version) {
+        $wailsCmd = "wails build -ldflags `"-X github.com/yangk/kshell/internal/version.Version=$Version`""
+        Write-Host "==> 版本 $Version" -ForegroundColor Cyan
+    }
+    cmd /c "$wailsCmd 2>&1"
     # 2>&1 在 cmd 层把 stderr 并入 stdout：PowerShell 5.1 在 EAP=Stop 下会把
     # 子进程 stderr 行升级成 NativeCommandError 终止脚本（wails 的 KnownStructs
     # 进度日志必走 stderr）；成功与否由 $LASTEXITCODE 判定。

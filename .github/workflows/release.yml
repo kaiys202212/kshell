@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
+      - name: Build desktop zip
+        shell: pwsh
+        run: |
+          $ver = $env:GITHUB_REF_NAME
+          .\build.ps1 -Desktop -Version $ver
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item dist\pkg -ItemType Directory -Force | Out-Null
+          Copy-Item dist\kshell-desktop.exe dist\pkg\kshell-desktop.exe
+          if (Test-Path dist\kshell-desktop-windows-amd64.zip) {
+            Remove-Item dist\kshell-desktop-windows-amd64.zip -Force
+          }
+          Compress-Archive -Path dist\pkg\kshell-desktop.exe -DestinationPath dist\kshell-desktop-windows-amd64.zip
+          $hash = (Get-FileHash dist\kshell-desktop-windows-amd64.zip -Algorithm SHA256).Hash.ToLower()
+          $line = "$hash  kshell-desktop-windows-amd64.zip`n"
+          [System.IO.File]::WriteAllText((Join-Path (Get-Location) 'dist\SHA256SUMS'), $line, [System.Text.UTF8Encoding]::new($false))
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${{ github.ref_name }}" --generate-notes dist/kshell-desktop-windows-amd64.zip dist/SHA256SUMS

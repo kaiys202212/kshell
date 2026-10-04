@@ -32,6 +32,9 @@ const mocks = vi.hoisted(() => ({
   loadProvidersYAML: vi.fn(),
   saveProvidersYAML: vi.fn(),
   restartApp: vi.fn(),
+  getAppVersion: vi.fn().mockResolvedValue('dev'),
+  checkForUpdate: vi.fn(),
+  applyUpdate: vi.fn(),
   openSessionTerminal: vi.fn(),
   openWorkspaceTerminal: vi.fn(),
   writeTerminal: vi.fn(),
@@ -57,6 +60,7 @@ const mocks = vi.hoisted(() => ({
   onProjectsChanged: vi.fn(),
   getAppearance: vi.fn(),
   onAppearanceChanged: vi.fn(),
+  onUpdateAvailable: vi.fn(() => () => {}),
   getCloseBehavior: vi.fn(),
   setCloseBehavior: vi.fn(),
   getModelConfig: vi.fn(),
@@ -185,6 +189,7 @@ beforeEach(() => {
   mocks.onProjectsChanged.mockImplementation(() => () => {});
   mocks.getAppearance.mockResolvedValue({ mode: 'system', resolved: 'dark', fontSize: 13 });
   mocks.onAppearanceChanged.mockReturnValue(() => {});
+  mocks.onUpdateAvailable.mockReturnValue(() => {});
   mocks.getCloseBehavior.mockResolvedValue('tray');
   mocks.setCloseBehavior.mockResolvedValue(undefined);
   mocks.getModelConfig.mockResolvedValue({
@@ -559,5 +564,21 @@ describe('App', () => {
       updateCb?.({ id: 'late', update: { Seq: 1, Type: 'assistant', MessageID: 'm1', Text: 'late-hi' } });
     });
     expect(useAppStore.getState().chatItems.late?.some((it) => it.text === 'late-hi')).toBe(true);
+  });
+
+  it('收到 update:available 时提示去设置升级', async () => {
+    useAppStore.setState({ toasts: [] });
+    let avail: ((info: { Latest: string; Available: boolean }) => void) | undefined;
+    mocks.onUpdateAvailable.mockImplementation((cb: typeof avail) => {
+      avail = cb;
+      return () => {};
+    });
+    render(<App />);
+    act(() => {
+      avail?.({ Latest: 'v0.2.0', Available: true });
+    });
+    expect(
+      useAppStore.getState().toasts.some((t) => t.title.includes('v0.2.0') && t.title.includes('设置')),
+    ).toBe(true);
   });
 });
