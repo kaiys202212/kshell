@@ -166,6 +166,93 @@ func TestCursorEnumerateHidesStoreOnlySubagent(t *testing.T) {
 	}
 }
 
+func TestCursorEnumerateFallbackFiltersSubagents(t *testing.T) {
+	home := t.TempDir()
+	slug := "d-ws"
+	mainID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeffff0101"
+	subID := "bbbbbbbb-cccc-4ddd-8eee-ffff00000202"
+	os.MkdirAll(filepath.Join(home, ".cursor", "chats", "h", subID), 0o755)
+
+	writeTranscript := func(id, title string) {
+		dir := filepath.Join(home, ".cursor", "projects", slug, "agent-transcripts", id)
+		os.MkdirAll(dir, 0o755)
+		line := `{"role":"user","message":{"content":[{"type":"text","text":"<user_query>` + title + `</user_query>"}]}}` + "\n"
+		os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(line), 0o600)
+	}
+	writeTranscript(mainID, "real user")
+	writeTranscript(subID, "You are implementing Task 1")
+	os.MkdirAll(filepath.Join(home, ".cursor", "projects", slug, "agent-transcripts", mainID, "subagents"), 0o755)
+	os.WriteFile(filepath.Join(home, ".cursor", "projects", slug, "agent-transcripts", mainID, "subagents", "agent-x.jsonl"),
+		[]byte(`{"role":"user","message":{"content":[{"type":"text","text":"x"}]}}`+"\n"), 0o600)
+
+	got, err := (Cursor{}).EnumerateSessions(home, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != mainID {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestCursorEnumerateFallbackKeepsWhenNoChatsEntry(t *testing.T) {
+	home := t.TempDir()
+	id := "cccccccc-dddd-4eee-8fff-000011112222"
+	slug := "d-ws"
+	dir := filepath.Join(home, ".cursor", "projects", slug, "agent-transcripts", id)
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, id+".jsonl"),
+		[]byte(`{"role":"user","message":{"content":[{"type":"text","text":"<user_query>keep me</user_query>"}]}}`+"\n"), 0o600)
+
+	got, err := (Cursor{}).EnumerateSessions(home, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != id {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestCursorEnumerateFallbackSkipsChatsDirWithoutMeta(t *testing.T) {
+	home := t.TempDir()
+	slug := "d-ws"
+	id := "dddddddd-eeee-4fff-8aaa-111122223333"
+	os.MkdirAll(filepath.Join(home, ".cursor", "chats", "h", id), 0o755)
+	os.WriteFile(filepath.Join(home, ".cursor", "chats", "h", id, "store.db"), []byte("not sqlite"), 0o600)
+	dir := filepath.Join(home, ".cursor", "projects", slug, "agent-transcripts", id)
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, id+".jsonl"),
+		[]byte(`{"role":"user","message":{"content":[{"type":"text","text":"<user_query>hidden</user_query>"}]}}`+"\n"), 0o600)
+
+	got, err := (Cursor{}).EnumerateSessions(home, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("want skip, got %+v", got)
+	}
+}
+
+func TestCursorEnumerateFallbackNoChatsDir(t *testing.T) {
+	home := t.TempDir()
+	slug := "d-ws"
+	id := "eeeeeeee-ffff-4aaa-8bbb-222233334444"
+	dir := filepath.Join(home, ".cursor", "projects", slug, "agent-transcripts", id)
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, id+".jsonl"),
+		[]byte(`{"role":"user","message":{"content":[{"type":"text","text":"<user_query>only transcript</user_query>"}]}}`+"\n"), 0o600)
+	os.MkdirAll(filepath.Join(home, ".cursor", "projects", slug, "agent-transcripts", id, "subagents"), 0o755)
+	os.WriteFile(filepath.Join(dir, "subagents", "agent-y.jsonl"),
+		[]byte(`{"role":"user","message":{"content":[{"type":"text","text":"sub"}]}}`+"\n"), 0o600)
+
+	got, err := (Cursor{}).EnumerateSessions(home, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != id {
+		t.Fatalf("%+v", got)
+	}
+}
+
 func TestCursorResumeCmd(t *testing.T) {
 	p := Cursor{}
 

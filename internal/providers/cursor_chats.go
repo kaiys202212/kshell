@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,7 +112,64 @@ func listCursorChatSessions(home string) ([]Session, error) {
 }
 
 func enumerateCursorTranscriptFallback(home string) ([]Session, error) {
-	return nil, nil
+	root := filepath.Join(home, ".cursor", "projects")
+	if _, err := os.Stat(root); err != nil {
+		return nil, nil
+	}
+	var out []Session
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, rerr := filepath.Rel(root, path)
+		if rerr != nil || !(Cursor{}).MatchSessionRel(filepath.ToSlash(rel)) {
+			return nil
+		}
+		id := filepath.Base(filepath.Dir(path))
+		if cursorShouldSkipTranscript(home, id) {
+			return nil
+		}
+		head, herr := ReadHead(path, 256*1024)
+		if herr != nil {
+			return nil
+		}
+		s, serr := (Cursor{}).ParseSession(path, head)
+		if serr != nil {
+			return nil
+		}
+		out = append(out, *s)
+		return nil
+	})
+	return out, nil
+}
+
+// cursorShouldSkipTranscript 在 transcript 兜底时过滤 chats 已索引的子代理/空壳目录。
+func cursorShouldSkipTranscript(home, agentID string) bool {
+	root := filepath.Join(home, ".cursor", "chats")
+	matches, _ := filepath.Glob(filepath.Join(root, "*", agentID))
+	if len(matches) == 0 {
+		return false
+	}
+	dir := matches[0]
+	metaPath := filepath.Join(dir, "meta.json")
+	if m, err := loadCursorChatMeta(metaPath); err == nil {
+		if !m.HasConversation {
+			return true
+		}
+		store := filepath.Join(dir, "store.db")
+		if has, err := cursorStoreHasSubagentInfo(store); err == nil && has {
+			return true
+		}
+		return false
+	}
+	store := filepath.Join(dir, "store.db")
+	if has, err := cursorStoreHasSubagentInfo(store); err == nil && has {
+		return true
+	}
+	if _, err := os.Stat(metaPath); err != nil {
+		return true
+	}
+	return false
 }
 
 func enrichCursorSession(home string, s *Session) {
