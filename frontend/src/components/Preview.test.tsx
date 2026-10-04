@@ -345,4 +345,21 @@ describe('Preview', () => {
     await screen.findByText('二进制');
     expect(screen.queryByRole('button', { name: '编辑' })).not.toBeInTheDocument();
   });
+
+  it('二进制 .md 不显示源码/预览切换与编辑按钮', async () => {
+    mocks.previewFile.mockResolvedValue({
+      Lines: [],
+      Text: '',
+      Truncated: false,
+      Binary: true,
+      Info: '二进制文件 · 64 字节',
+    });
+    render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\fake.md'} />);
+
+    expect(await screen.findByText('二进制文件 · 64 字节')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '源码' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '预览' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '编辑' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('markdown-preview')).not.toBeInTheDocument();
+  });
 });

@@ -237,7 +237,7 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
             </Button>
           </>
         )}
-        {!editing && kind === 'markdown' && path && !loading && !error && (
+        {!editing && kind === 'markdown' && path && !loading && !error && data !== null && !data.Binary && (
           <div className="ml-auto flex gap-1">
             <Button
               size="sm"

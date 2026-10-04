@@ -69,6 +69,8 @@ func PreviewFile(path string, maxBytes int, maxLines int) Preview {
 		lines = lines[:maxLines]
 		truncated = true
 	}
+	// Text 与 Lines 共用截断后的行，避免桌面端拿到超出 maxLines 的原文
+	text = strings.Join(lines, "\n")
 
 	out := make([]string, 0, len(lines))
 	for i, line := range lines {
