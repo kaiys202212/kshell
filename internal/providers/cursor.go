@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -43,13 +45,21 @@ func (Cursor) DetectSpec(home string) DetectSpec {
 	}
 }
 
-// cursorVersionInstallDirs 列出官方安装根下 versions 子目录（YYYY.MM.DD-commit 形态）。
+// cursorVersionInstallDirs 列出官方安装根下 versions 子目录，**最新版本在前**。
+// 目录名形如 YYYY.MM.DD-commit 或 YYYY.MM.DD-HH-MM-SS-commit；必须按数值解析后
+// 降序排列——月份不补零（2026.9 vs 2026.10）时字典序会跨月错序。
 func cursorVersionInstallDirs(root string) []string {
 	entries, err := os.ReadDir(filepath.Join(root, "versions"))
 	if err != nil {
 		return nil
 	}
-	var out []string
+	type versioned struct {
+		path string
+		ver  [6]int // year month day hour min sec，逐段数值比较即时间先后
+		name string
+	}
+	var valid []versioned
+	var invalid []string
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -59,9 +69,53 @@ func cursorVersionInstallDirs(root string) []string {
 		if !strings.Contains(name, ".") || !strings.Contains(name, "-") {
 			continue
 		}
-		out = append(out, filepath.Join(root, "versions", name))
+		ver, ok := parseCursorVersionDir(name)
+		if !ok {
+			invalid = append(invalid, name)
+			continue
+		}
+		valid = append(valid, versioned{path: filepath.Join(root, "versions", name), ver: ver, name: name})
 	}
-	return out
+	sort.SliceStable(valid, func(i, j int) bool {
+		for k := 0; k < 6; k++ {
+			if valid[i].ver[k] != valid[j].ver[k] {
+				return valid[i].ver[k] > valid[j].ver[k]
+			}
+		}
+		return valid[i].name > valid[j].name // 同版本号取名字大的（commit 哈希仅作稳定排序）
+	})
+	sort.Sort(sort.Reverse(sort.StringSlice(invalid)))
+	out := make([]string, 0, len(valid)+len(invalid))
+	for _, v := range valid {
+		out = append(out, v.path)
+	}
+	return append(out, invalid...)
+}
+
+// parseCursorVersionDir 解析 versions 目录名为 6 段数值版本号。
+// 缺时分秒时对应段补 0；任一段非数字视为非法。
+func parseCursorVersionDir(name string) ([6]int, bool) {
+	var ver [6]int
+	segs := strings.Split(name, "-")
+	if len(segs) < 2 || len(segs) > 4 {
+		return ver, false
+	}
+	date := strings.Split(segs[0], ".")
+	if len(date) != 3 {
+		return ver, false
+	}
+	nums := append([]string{}, date...)
+	if len(segs) == 4 {
+		nums = append(nums, segs[1], segs[2], segs[3])
+	}
+	for i, s := range nums {
+		n, err := strconv.Atoi(s)
+		if err != nil {
+			return ver, false
+		}
+		ver[i] = n
+	}
+	return ver, true
 }
 
 func (Cursor) SessionRoots(home string) []string { return nil }
