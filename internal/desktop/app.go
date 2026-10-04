@@ -5,17 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/yangk/kshell/internal/appearance"
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
-	"github.com/yangk/kshell/internal/executil"
 	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/remote"
@@ -308,6 +307,9 @@ var runTrayFn = runTray
 // windowHide 是 runtime.WindowHide 的包级变量抽象：测试注入用，对齐 quitRuntime。
 var windowHide = runtime.WindowHide
 
+// windowShow 是 runtime.WindowShow 的包级变量抽象：测试注入用，对齐 windowHide。
+var windowShow = runtime.WindowShow
+
 // quitRuntime 是 runtime.Quit 的包级变量抽象：测试注入用。
 // Wails 的 runtime.Quit 在 ctx 不带 frontend 值时会 log.Fatalf 直接终止进程，
 // 测试里必须替换掉才能安全验证「请求退出」这一步。
@@ -320,7 +322,6 @@ func (a *App) quitApp(ctx context.Context) {
 	a.mu.Lock()
 	a.quitting = true
 	a.mu.Unlock()
-	quitTrayLoop() // 先停托盘消息循环（通知区图标随之移除），再退进程
 	quitRuntime(ctx)
 }
 
@@ -328,6 +329,7 @@ func (a *App) quitApp(ctx context.Context) {
 // 终端进程不跨进程存活，这里不需要（也无法）持久化。
 func (a *App) Shutdown(ctx context.Context) {
 	_ = ctx // 退出清理无取消语义：无论上下文如何都要把子进程收干净
+	quitTrayLoop()
 	a.mu.Lock()
 	if a.appearanceCancel != nil {
 		a.appearanceCancel()
@@ -361,6 +363,17 @@ func (a *App) BeforeClose(ctx context.Context) bool {
 	}
 	windowHide(ctx)
 	return true
+}
+
+// OnSecondInstanceLaunch 供 Wails SingleInstanceLock 回调：二次启动时恢复主窗口。
+func (a *App) OnSecondInstanceLaunch(_ options.SecondInstanceData) {
+	a.mu.Lock()
+	ctx := a.ctx
+	a.mu.Unlock()
+	if ctx == nil {
+		return
+	}
+	windowShow(ctx)
 }
 
 // GetCloseBehavior 返回归一化后的关闭行为：exit 原样返回，其余一律 tray（默认）。
@@ -410,20 +423,15 @@ func (a *App) SetCloseBehavior(mode string) error {
 	return a.saveConfig(func(cfg *config.Config) { cfg.CloseBehavior = mode })
 }
 
-// spawnSelf 启动应用自身新实例（包级变量便于测试注入）。
-var spawnSelf = func(exe string) error {
-	cmd := exec.Command(exe)
-	executil.HideWindow(cmd) // 重启瞬间若父进程仍持有控制台句柄，避免新实例闪黑窗
-	return cmd.Start()
-}
+var spawnSelfDelayed = spawnSelfDelayedImpl
 
-// RestartApp 重启应用：启动新进程后走托盘退出路径（quitting 放行 BeforeClose）。
+// RestartApp 重启应用：安排延迟拉起新实例后走托盘退出路径（释放单实例锁后再启动）。
 func (a *App) RestartApp(ctx context.Context) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	if err := spawnSelf(exe); err != nil {
+	if err := spawnSelfDelayed(exe); err != nil {
 		return err
 	}
 	a.quitApp(ctx)

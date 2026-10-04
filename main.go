@@ -60,6 +60,10 @@ func RunDesktop(src fs.FS) error {
 		},
 		OnStartup:     desktopApp.Startup,
 		OnBeforeClose: desktopApp.BeforeClose,
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId:               "kshell-desktop",
+			OnSecondInstanceLaunch: desktopApp.OnSecondInstanceLaunch,
+		},
 		// 退出时收掉所有内嵌终端，避免 pty 里的 CLI 子进程残留
 		OnShutdown: desktopApp.Shutdown,
 		Bind: []interface{}{
