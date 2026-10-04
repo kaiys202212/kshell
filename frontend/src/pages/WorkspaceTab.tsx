@@ -1,6 +1,6 @@
 // 工作区页签：三栏布局（左右两栏宽度可拖动）。
 //   左栏：「新建会话」下拉菜单（选 agent 即启动）+ 会话列表（「恢复」开中心区内嵌终端）
-//   中栏：中心区页签（预览 / 每个内嵌终端一个页签）
+//   中栏：左侧 agent 页签；最右钉「预览」（预览区内再开「预览|终端」子页签）
 //   右栏：文件 | SSH 子页签（点文件自动切到中栏的预览页签）
 // 终端页签一旦打开就常挂载（非激活用 hidden），xterm 缓冲与焦点不丢；
 // 工作区页签本身也由 App 常挂载，因此只有关闭页签才会真正结束终端进程。
@@ -13,12 +13,14 @@ import {
   listTerminals,
   onScanDone,
   openSession,
+  openShellTerminal,
+  openSSHTerminal,
   openWorkspace,
   openWorkspaceACP,
   scanSessions,
   writeTerminal,
 } from '../lib/api';
-import type { Session, TerminalInfo, ToolInfo } from '../lib/api';
+import type { Session, SshConnection, TerminalInfo, ToolInfo } from '../lib/api';
 import { encodeTerminalInput } from '../lib/base64';
 import { appendChatInput } from '../lib/chatInputRegistry';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
@@ -28,7 +30,7 @@ import { displayTitle } from '../lib/title';
 import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
 import { sameWorkspacePath } from '../lib/workspacePath';
 import FileTree from '../components/FileTree';
-import Preview from '../components/Preview';
+import PreviewToolPane, { PREVIEW_SUB } from '../components/PreviewToolPane';
 import ResizeHandle from '../components/ResizeHandle';
 import SessionList from '../components/SessionList';
 import SshPanel from '../components/SshPanel';
@@ -40,6 +42,14 @@ import { ToolDot } from '../components/ui/tool-dot';
 import { resolveAgentActivity } from '../state/agentActivity';
 import { LAYOUT_DEFAULT, useAppStore } from '../state/store';
 import type { WorkspaceTab } from '../state/store';
+
+function isAgentTerm(t: TerminalInfo): boolean {
+  return t.Kind === 'session' || t.Kind === 'new';
+}
+
+function isToolTerm(t: TerminalInfo): boolean {
+  return t.Kind === 'shell' || t.Kind === 'ssh';
+}
 
 type RightPane = 'files' | 'ssh';
 
@@ -63,6 +73,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   const [rightPane, setRightPane] = useState<RightPane>('files');
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [centerTab, setCenterTab] = useState<string>(PREVIEW_TAB);
+  const [toolSubTab, setToolSubTab] = useState<string>(PREVIEW_SUB);
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [busy, setBusy] = useState(false);
   // 新建会话后的延迟重扫定时器（卸载/再次新建时清掉，避免重复触发）
@@ -92,11 +103,14 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     setCenterTab(next);
   }, []);
 
-  // 本工作区的内嵌终端（按创建顺序）
-  const terms = useMemo<TerminalInfo[]>(
+  // 本工作区全部内嵌终端（按创建顺序）
+  const allTerms = useMemo<TerminalInfo[]>(
     () => terminals.filter((t) => sameWorkspacePath(t.Workspace, tab.id)),
     [terminals, tab.id],
   );
+  // agent 终端进左侧中心区页签；shell/ssh 进预览区子页签
+  const terms = useMemo(() => allTerms.filter(isAgentTerm), [allTerms]);
+  const toolTerms = useMemo(() => allTerms.filter(isToolTerm), [allTerms]);
 
   // 本工作区的聊天会话（按创建顺序）
   const chatsForWs = useMemo(
@@ -147,6 +161,13 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
       selectCenterTab(PREVIEW_TAB);
     }
   }, [terms, chatsForWs, centerTab, selectCenterTab]);
+
+  useEffect(() => {
+    // 预览区子页签指向的 shell/ssh 已关闭时退回「预览」
+    if (toolSubTab !== PREVIEW_SUB && !toolTerms.some((t) => t.ID === toolSubTab)) {
+      setToolSubTab(PREVIEW_SUB);
+    }
+  }, [toolTerms, toolSubTab]);
 
   // 恢复历史会话：优先走 ACP 聊天，Go 侧按可用性决定聊天或回退终端
   const openChatOrTerminal = useCallback(
@@ -209,6 +230,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     useAppStore.getState().removeTerminal(id);
     closeTerminal(id).catch(() => {});
     if (centerTab === id) selectCenterTab(PREVIEW_TAB);
+    if (toolSubTab === id) setToolSubTab(PREVIEW_SUB);
   };
 
   const handleCloseChat = (id: string) => {
@@ -220,6 +242,31 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   const openFile = (path: string) => {
     setPreviewPath(path);
     selectCenterTab(PREVIEW_TAB);
+    setToolSubTab(PREVIEW_SUB);
+  };
+
+  const handleNewShell = () => {
+    void openShellTerminal(tab.id, 80, 24)
+      .then((info) => {
+        useAppStore.getState().upsertTerminal(info);
+        selectCenterTab(PREVIEW_TAB);
+        setToolSubTab(info.ID);
+      })
+      .catch((e: unknown) => {
+        notify(`打开终端失败：${e instanceof Error ? e.message : String(e)}`, 'error');
+      });
+  };
+
+  const handleOpenRemote = (c: SshConnection) => {
+    void openSSHTerminal(c.ID, 80, 24)
+      .then((info) => {
+        useAppStore.getState().upsertTerminal(info);
+        selectCenterTab(PREVIEW_TAB);
+        setToolSubTab(info.ID);
+      })
+      .catch((e: unknown) => {
+        notify(`打开 SSH 失败：${e instanceof Error ? e.message : String(e)}`, 'error');
+      });
   };
 
   return (
@@ -255,23 +302,13 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
-        {/* 中心区页签条：预览固定，其后是本工作区的内嵌终端 */}
+        {/* 中心区页签条：左侧 agent；最右钉「预览」（工具区入口，样式弱化区分） */}
         <div
-          className="flex shrink-0 items-stretch overflow-x-auto border-b border-border"
+          className="flex shrink-0 items-stretch border-b border-border"
           role="tablist"
           aria-label="中心区页签"
         >
-          <button
-            role="tab"
-            aria-selected={centerTab === PREVIEW_TAB}
-            className={cn(centerTabBase, centerTab === PREVIEW_TAB && centerTabActive)}
-            onClick={() => selectCenterTab(PREVIEW_TAB)}
-          >
-            预览
-            {centerTab === PREVIEW_TAB && (
-              <span className={TAB_UNDERLINE} />
-            )}
-          </button>
+          <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
           {terms.map((t) => {
             const badge = badgeFor(t.ToolID);
             const active = centerTab === t.ID;
@@ -401,17 +438,45 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
               </div>
             );
           })}
+          </div>
+          <button
+            role="tab"
+            aria-selected={centerTab === PREVIEW_TAB}
+            aria-label="预览与命令行"
+            className={cn(
+              centerTabBase,
+              'ml-auto shrink-0 border-l border-border bg-muted/40 text-muted-foreground',
+              centerTab === PREVIEW_TAB && cn(centerTabActive, 'bg-muted/70'),
+            )}
+            onClick={() => selectCenterTab(PREVIEW_TAB)}
+          >
+            预览
+            {toolTerms.length > 0 && (
+              <span className="rounded-sm bg-muted px-1 font-mono text-[10px] text-muted-foreground">
+                {toolTerms.length}
+              </span>
+            )}
+            {centerTab === PREVIEW_TAB && <span className={TAB_UNDERLINE} />}
+          </button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-hidden">
           {/* 切页签时的淡入：动画挂在各内容包裹层上——hidden 切 display 会重放动画，
               因此无需 key 重挂（重挂会丢 xterm 缓冲，违背「终端常挂载」约定） */}
-          {/* 预览页签：外层只给内边距与裁剪，滚动由 Preview 内容区负责（路径标题固定） */}
           <div
-            className={cn('h-full overflow-hidden p-3', centerTab !== PREVIEW_TAB && 'hidden')}
+            className={cn('h-full', centerTab !== PREVIEW_TAB && 'hidden')}
             style={{ animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' }}
           >
-            <Preview wsPath={tab.id} path={previewPath} />
+            <PreviewToolPane
+              wsPath={tab.id}
+              previewPath={previewPath}
+              terms={toolTerms}
+              active={visible && centerTab === PREVIEW_TAB}
+              subTab={toolSubTab}
+              onSubTab={setToolSubTab}
+              onCloseTerminal={handleCloseTerminal}
+              onNewShell={handleNewShell}
+            />
           </div>
           {terms.map((t) => (
             <div
@@ -469,7 +534,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           <FileTree wsPath={tab.id} onOpenFile={openFile} />
         </div>
         <div className={cn('min-h-0 flex-1', rightPane !== 'ssh' && 'hidden')}>
-          <SshPanel wsPath={tab.id} />
+          <SshPanel wsPath={tab.id} onOpenRemote={handleOpenRemote} />
         </div>
       </aside>
     </div>

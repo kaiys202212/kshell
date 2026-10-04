@@ -17,7 +17,9 @@ import (
 // 会话类型与状态取值：与前端约定，不要在绑定层另写字面量。
 const (
 	KindSession = "session" // 恢复某个历史会话
-	KindNew     = "new"     // 在工作区新建会话
+	KindNew     = "new"     // 在工作区新建会话（agent）
+	KindShell   = "shell"   // 预览区本地命令行
+	KindSSH     = "ssh"     // 预览区远程 SSH 命令行
 
 	StatusRunning = "running"
 	StatusExited  = "exited"
@@ -65,8 +67,9 @@ type Spec struct {
 // Info 是暴露给前端的终端快照。
 type Info struct {
 	ID        string
-	Kind      string // KindSession | KindNew
+	Kind      string // KindSession | KindNew | KindShell | KindSSH
 	SessionID string // Kind == KindSession 时关联的历史会话 ID
+	ConnID    string // Kind == KindSSH 时关联的连接 ID
 	Workspace string
 	Title     string
 	ToolID    string

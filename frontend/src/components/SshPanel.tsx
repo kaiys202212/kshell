@@ -1,75 +1,100 @@
-// SSH 面板（工作区页签右栏「SSH」页签）：连接列表 + 命令执行输出尾部展示。
-// 连接列表来自 ListConnections（当前工作区绑定连接 + 全局连接），每行标注来源
-// （中文标注，SourceFile 作 title 提示）与连通性验证状态（✓ = Verified）。
-// 「连接」弹 OpenSSH 终端窗口（BatchMode 恒定，绝不卡密码提示）：已打开的连接
-// 重复点击仍走 OpenSSH，Go 侧幂等转聚焦；前端按窗口标题（terminalTitle 形态）
-// 维护 open 状态，与 SessionList 同一套 windowStatus 机制。
-// 命令执行走 ExecRemote（非交互）：非 0 退出码不是异常，结果里带 ExitCode；
-// Go Result 已是完整输出，前端只展示尾部（stdout/stderr 各取 OUTPUT_TAIL_LINES 行）。
-// 已知限制：windowStatus 以 terminalTitle(连接名) 为键，与 SessionList 共用一张表，
-// 不同来源的同名连接（或同名会话）会命中同一键、状态互相污染；连接名与工作区/会话名
-// 冲突概率极低，暂不做键空间隔离。
+// SSH 面板（工作区页签右栏「SSH」页签）：连接列表 + 新建/编辑 + 命令执行。
+// 双击列表行 → 回调 onOpenRemote（父组件在预览区开内嵌 SSH 终端）。
+// 「编辑」打开表单；「新建」同表单空值。私钥只填路径。
+// 命令执行走 ExecRemote（非交互）：非 0 退出码不是异常，结果里带 ExitCode。
 import { useEffect, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import { execRemote, listConnections, openSSH } from '../lib/api';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
+import {
+  deleteConnection,
+  execRemote,
+  listConnections,
+  upsertConnection,
+} from '../lib/api';
 import type { RemoteResult, SshConnection } from '../lib/api';
 import { formatDuration, tailLines } from '../lib/format';
-import { terminalTitle } from '../lib/title';
 import { LIST_ROW_ACTIVE } from '../lib/ui';
 import { cn } from '../lib/cn';
 import { useAppStore } from '../state/store';
 import { Button } from './ui/button';
+import { Dialog } from './ui/dialog';
 import { EmptyState } from './ui/empty-state';
 import { Input } from './ui/input';
 import { Skeleton } from './ui/skeleton';
 
-// 输出尾部行数：取 50 行——约两屏终端的量，足够看到命令关键结果又不撑爆右栏。
-// Go 侧 Result 是完整输出，截多少只影响前端展示，与后端无耦合。
 const OUTPUT_TAIL_LINES = 50;
-
-// 命令历史上限：头部插入、去重后保留最近 20 条（纯前端记忆，不落盘）
 const HISTORY_LIMIT = 20;
-
-// 历史 chip 展示条数：右栏空间有限，只露出最近 5 条
 const HISTORY_CHIPS = 5;
 
-// 连接来源的中文标注（Source 取值见 internal/remote/scanners/*，Go 侧只产生
-// sshconfig / env / spring / deploy / docs 五种；未知值回退展示原始串）
 const SOURCE_LABELS: Record<string, string> = {
   sshconfig: 'ssh 配置',
   env: '环境变量',
   spring: 'Spring 配置',
   deploy: '部署脚本',
   docs: '文档',
+  manual: '手动',
 };
 
 function sourceLabel(source: string): string {
   return SOURCE_LABELS[source] ?? source;
 }
 
-// 目标串与 Go 侧 Connection.Display 对齐：user@host（端口非 22 才显示）
 function display(c: SshConnection): string {
   let target = c.User ? `${c.User}@${c.Host}` : c.Host;
   if (c.Port > 0 && c.Port !== 22) target += `:${c.Port}`;
   return target;
 }
 
-export default function SshPanel({ wsPath }: { wsPath: string }) {
-  // null 哨兵表示「列表尚未加载完」，与 FileTree 同款模式：避免加载瞬间闪错误/空态
+type FormState = {
+  ID: string;
+  Name: string;
+  Host: string;
+  User: string;
+  Port: string;
+  IdentityFile: string;
+};
+
+const emptyForm = (): FormState => ({
+  ID: '',
+  Name: '',
+  Host: '',
+  User: '',
+  Port: '22',
+  IdentityFile: '',
+});
+
+function formFromConn(c: SshConnection): FormState {
+  return {
+    ID: c.ID,
+    Name: c.Name,
+    Host: c.Host,
+    User: c.User,
+    Port: String(c.Port > 0 ? c.Port : 22),
+    IdentityFile: c.IdentityFile,
+  };
+}
+
+export default function SshPanel({
+  wsPath,
+  onOpenRemote,
+}: {
+  wsPath: string;
+  onOpenRemote?: (c: SshConnection) => void;
+}) {
   const [conns, setConns] = useState<SshConnection[] | null>(null);
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const [cmd, setCmd] = useState('');
-  // 命令历史（最近在前）：historyIdx 为历史浏览游标，-1 表示非浏览态；
-  // 进入浏览态时用 draft 记下当前草稿，ArrowDown 退到头时恢复
   const [history, setHistory] = useState<string[]>([]);
   const [historyIdx, setHistoryIdx] = useState(-1);
   const [draft, setDraft] = useState('');
   const [result, setResult] = useState<RemoteResult | null>(null);
   const [execError, setExecError] = useState('');
   const [running, setRunning] = useState(false);
-  const windowStatus = useAppStore((s) => s.windowStatus);
-  const setWindowStatus = useAppStore((s) => s.setWindowStatus);
+  const [formOpen, setFormOpen] = useState(false);
+  const [form, setForm] = useState<FormState>(emptyForm);
+  const [formError, setFormError] = useState('');
+  const [saving, setSaving] = useState(false);
   const notify = useAppStore((s) => s.notify);
 
   useEffect(() => {
@@ -78,7 +103,6 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
       .then((list) => {
         if (cancelled) return;
         setConns(list);
-        // 默认选中第一个连接，命令执行不需要再手动选择
         setSelectedId((cur) => cur || list[0]?.ID || '');
       })
       .catch((e: unknown) => {
@@ -89,20 +113,69 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
     };
   }, [wsPath]);
 
-  // 打开/聚焦连接：open 状态下复用 OpenSSH（Go 侧幂等转聚焦），失败不置 open。
-  // 操作失败走轻量提示（notify）而非 setError：面板级 error 只留给列表加载失败，
-  // 不让单次「连接」失败炸掉整个面板。
-  const handleOpen = async (c: SshConnection) => {
+  const openEdit = (c: SshConnection) => {
+    setForm(formFromConn(c));
+    setFormError('');
+    setFormOpen(true);
+  };
+
+  const openNew = () => {
+    setForm({ ...emptyForm(), Name: '' });
+    setFormError('');
+    setFormOpen(true);
+  };
+
+  const handleSaveOnce = async () => {
+    const host = form.Host.trim();
+    if (!host) {
+      setFormError('主机不能为空');
+      return;
+    }
+    const port = Number(form.Port) || 22;
+    setSaving(true);
+    setFormError('');
     try {
-      await openSSH(c.ID);
-      setWindowStatus(terminalTitle(c.Name), true);
+      const prev = form.ID ? conns?.find((c) => c.ID === form.ID) : undefined;
+      const saved = await upsertConnection({
+        ID: form.ID,
+        Name: form.Name.trim(),
+        Host: host,
+        User: form.User.trim(),
+        Port: port,
+        IdentityFile: form.IdentityFile.trim(),
+        Workspace: prev?.Workspace ?? wsPath,
+        Source: prev?.Source ?? '',
+        SourceFile: prev?.SourceFile ?? '',
+        Verified: prev?.Verified ?? false,
+      });
+      setFormOpen(false);
+      const list = await listConnections(wsPath);
+      setConns(list);
+      setSelectedId(saved.ID);
     } catch (e: unknown) {
-      notify(e instanceof Error ? e.message : String(e), 'error');
+      setFormError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
     }
   };
 
-  // 执行命令：非 0 退出码照常展示结果，只有调用本身失败才算错误。
-  // 真正发起执行后命令入历史（头部插入、去重、最多 HISTORY_LIMIT 条）。
+  const handleDelete = async () => {
+    if (!form.ID) return;
+    setSaving(true);
+    setFormError('');
+    try {
+      await deleteConnection(form.ID);
+      setFormOpen(false);
+      const list = await listConnections(wsPath);
+      setConns(list);
+      setSelectedId((cur) => (cur === form.ID ? list[0]?.ID || '' : cur));
+    } catch (e: unknown) {
+      setFormError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleExec = async () => {
     const command = cmd.trim();
     if (!command || !selectedId || running) return;
@@ -121,8 +194,6 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
     }
   };
 
-  // ↑/↓ 在历史中回填：↑ 取 min(idx+1, len-1)（到头停在最早一条），
-  // ↓ 逐条退回，减到 -1（非浏览态）时恢复进入浏览态前的草稿
   const handleHistoryKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowUp' && history.length > 0) {
       e.preventDefault();
@@ -157,51 +228,59 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
 
   return (
     <div className="flex flex-col gap-2.5 text-sm">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs text-muted-foreground">双击打开远程终端</span>
+        <Button size="sm" variant="secondary" onClick={openNew}>
+          新建
+        </Button>
+      </div>
+
       {conns.length === 0 ? (
         <EmptyState title="没有可用的 SSH 连接" />
       ) : (
         <ul aria-label="SSH 连接列表" className="m-0 flex list-none flex-col gap-1.5 p-0">
-          {conns.map((c) => {
-            const open = windowStatus[terminalTitle(c.Name)] === true;
-            return (
-              <li
-                key={c.ID}
-                className={cn(
-                  'rounded border border-border bg-card px-2.5 py-1.5 transition-colors',
-                  open ? LIST_ROW_ACTIVE : c.ID === selectedId && 'bg-muted/60',
-                )}
-              >
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <button
-                    className="min-w-0 truncate text-left text-sm font-medium"
-                    title={c.Host}
-                    onClick={() => setSelectedId(c.ID)}
-                  >
-                    {c.Name}
-                  </button>
-                  {open && <span className="shrink-0 text-xs text-primary">✓</span>}
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    className="ml-auto shrink-0"
-                    onClick={() => void handleOpen(c)}
-                  >
-                    连接
-                  </Button>
-                </div>
-                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                  <span className="truncate">{display(c)}</span>
-                  <span
-                    className="shrink-0 rounded-sm border border-border px-1.5 py-px font-mono text-[10px]"
-                    title={c.SourceFile || undefined}
-                  >
-                    {sourceLabel(c.Source)}
-                  </span>
-                  {c.Verified && <span className="shrink-0 text-success">✓</span>}
-                </div>
-              </li>
-            );
-          })}
+          {conns.map((c) => (
+            <li
+              key={c.ID}
+              className={cn(
+                'rounded border border-border bg-card px-2.5 py-1.5 transition-colors',
+                c.ID === selectedId && LIST_ROW_ACTIVE,
+              )}
+              onDoubleClick={() => {
+                setSelectedId(c.ID);
+                if (onOpenRemote) onOpenRemote(c);
+                else notify('未绑定远程终端打开回调', 'error');
+              }}
+            >
+              <div className="flex min-w-0 items-center gap-1.5">
+                <button
+                  className="min-w-0 truncate text-left text-sm font-medium"
+                  title={c.Host}
+                  onClick={() => setSelectedId(c.ID)}
+                >
+                  {c.Name}
+                </button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="ml-auto shrink-0"
+                  onClick={() => openEdit(c)}
+                >
+                  编辑
+                </Button>
+              </div>
+              <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="truncate">{display(c)}</span>
+                <span
+                  className="shrink-0 rounded-sm border border-border px-1.5 py-px font-mono text-[10px]"
+                  title={c.SourceFile || undefined}
+                >
+                  {sourceLabel(c.Source)}
+                </span>
+                {c.Verified && <span className="shrink-0 text-success">✓</span>}
+              </div>
+            </li>
+          ))}
         </ul>
       )}
 
@@ -232,7 +311,6 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
               执行
             </Button>
           </div>
-          {/* 最近命令 chip：点击回填到输入框，「清空」一键清空历史 */}
           {history.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5" aria-label="命令历史">
               {history.slice(0, HISTORY_CHIPS).map((c) => (
@@ -284,6 +362,63 @@ export default function SshPanel({ wsPath }: { wsPath: string }) {
           )}
         </div>
       )}
+
+      <Dialog open={formOpen} onOpenChange={setFormOpen} className="w-[min(92vw,22rem)]">
+        <DialogPrimitive.Title className="mb-2 text-sm font-medium">
+          {form.ID ? '编辑 SSH 连接' : '新建 SSH 连接'}
+        </DialogPrimitive.Title>
+        <div className="flex flex-col gap-2">
+          <Input
+            size="sm"
+            aria-label="连接名称"
+            placeholder="名称"
+            value={form.Name}
+            onChange={(e) => setForm((f) => ({ ...f, Name: e.target.value }))}
+          />
+          <Input
+            size="sm"
+            aria-label="主机"
+            placeholder="主机（必填）"
+            value={form.Host}
+            onChange={(e) => setForm((f) => ({ ...f, Host: e.target.value }))}
+          />
+          <Input
+            size="sm"
+            aria-label="用户名"
+            placeholder="用户名"
+            value={form.User}
+            onChange={(e) => setForm((f) => ({ ...f, User: e.target.value }))}
+          />
+          <Input
+            size="sm"
+            aria-label="端口"
+            placeholder="端口"
+            value={form.Port}
+            onChange={(e) => setForm((f) => ({ ...f, Port: e.target.value }))}
+          />
+          <Input
+            size="sm"
+            aria-label="私钥路径"
+            placeholder="私钥路径（如 C:\\Users\\me\\.ssh\\id_ed25519）"
+            value={form.IdentityFile}
+            onChange={(e) => setForm((f) => ({ ...f, IdentityFile: e.target.value }))}
+          />
+          {formError && <p className="text-xs text-destructive">{formError}</p>}
+          <div className="mt-1 flex justify-end gap-2">
+            {form.ID && (
+              <Button size="sm" variant="secondary" disabled={saving} onClick={() => void handleDelete()}>
+                删除
+              </Button>
+            )}
+            <Button size="sm" variant="secondary" onClick={() => setFormOpen(false)}>
+              取消
+            </Button>
+            <Button size="sm" disabled={saving} onClick={() => void handleSaveOnce()}>
+              保存
+            </Button>
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }

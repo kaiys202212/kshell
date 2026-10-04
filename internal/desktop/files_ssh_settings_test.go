@@ -226,6 +226,72 @@ func TestExecRemoteUnknownConn(t *testing.T) {
 	}
 }
 
+func TestUpsertConnectionAddAndUpdate(t *testing.T) {
+	env := newFilesEnv(t)
+
+	added, err := env.app.UpsertConnection(remote.Connection{
+		Name: "手动机", Host: "10.0.0.10", User: "dev", Port: 22,
+		IdentityFile: `C:\Users\dev\.ssh\id_ed25519`, Workspace: env.root,
+	})
+	if err != nil {
+		t.Fatalf("UpsertConnection(Add) error: %v", err)
+	}
+	if added.ID == "" || added.Source != "manual" {
+		t.Fatalf("新建应分配 ID 且 Source=manual, got %+v", added)
+	}
+
+	list := env.app.ListConnections(env.root)
+	var found bool
+	for _, c := range list {
+		if c.ID == added.ID {
+			found = true
+			if c.User != "dev" || c.IdentityFile == "" {
+				t.Fatalf("列表未带回字段: %+v", c)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("新建连接应出现在列表")
+	}
+
+	added.User = "ops"
+	added.Port = 2222
+	updated, err := env.app.UpsertConnection(added)
+	if err != nil {
+		t.Fatalf("UpsertConnection(Update) error: %v", err)
+	}
+	if updated.User != "ops" || updated.Port != 2222 {
+		t.Fatalf("更新未生效: %+v", updated)
+	}
+	if updated.Source != "manual" {
+		t.Fatalf("更新不应改掉 Source, got %q", updated.Source)
+	}
+}
+
+func TestUpsertConnectionRejectsKeyMaterial(t *testing.T) {
+	env := newFilesEnv(t)
+	if _, err := env.app.UpsertConnection(remote.Connection{
+		Host: "10.0.0.11", IdentityFile: "-----BEGIN PRIVATE KEY-----\nabc",
+	}); err == nil {
+		t.Fatal("密钥正文应被拒绝")
+	}
+}
+
+func TestDeleteConnection(t *testing.T) {
+	env := newFilesEnv(t)
+	if err := env.app.DeleteConnection("c1"); err != nil {
+		t.Fatalf("DeleteConnection error: %v", err)
+	}
+	for _, c := range env.app.ListConnections("") {
+		if c.ID == "c1" {
+			t.Fatal("删除后不应再出现")
+		}
+	}
+	if err := env.app.DeleteConnection("c1"); err == nil {
+		t.Fatal("重复删除应报错")
+	}
+}
+
 func TestGetToolsReturnsSnapshot(t *testing.T) {
 	app, _, _ := newTestApp(t)
 	setTools(t, app, fakeTools)

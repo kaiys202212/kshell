@@ -3,10 +3,13 @@ package desktop
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"strings"
 
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/remote"
+	"github.com/yangk/kshell/internal/terminal"
 )
 
 var errConnNotFound = errors.New("连接不存在")
@@ -50,6 +53,7 @@ func (a *App) ListConnections(wsID string) []remote.Connection {
 
 // OpenSSH 为指定连接弹出交互式 SSH 终端窗口（ssh -t，BatchMode 恒定，绝不卡密码提示）。
 // 窗口标题 "kshell · <连接名>"，同一连接重复调用复用聚焦。
+// 兼容保留：前端主路径改为 OpenSSHTerminal（预览区内嵌）。
 func (a *App) OpenSSH(connID string) error {
 	c, ok := a.connByID(connID)
 	if !ok {
@@ -63,6 +67,83 @@ func (a *App) OpenSSH(connID string) error {
 		providers.Launch{Path: bin, Args: remote.ShellArgs(c, a.sshOptions()), Dir: a.sshDir(c)},
 		c.Name,
 	)
+}
+
+// OpenSSHTerminal 在预览区为连接新开一个内嵌 SSH 终端（每次双击独立进程）。
+func (a *App) OpenSSHTerminal(connID string, cols, rows int) (terminal.Info, error) {
+	c, ok := a.connByID(connID)
+	if !ok {
+		return terminal.Info{}, errConnNotFound
+	}
+	m := a.terminals()
+	if m == nil {
+		return terminal.Info{}, errNotReady
+	}
+	bin, err := remote.FindSSH()
+	if err != nil {
+		return terminal.Info{}, err
+	}
+	ws := c.Workspace
+	if ws == "" {
+		ws = a.sshDir(c)
+	}
+	key := fmt.Sprintf("ssh:%s:%d", c.ID, termKeySeq.Add(1))
+	title := c.Name
+	if title == "" {
+		title = c.Target()
+	}
+	return m.Open(key, terminal.Info{
+		Kind:      terminal.KindSSH,
+		ConnID:    c.ID,
+		Workspace: ws,
+		Title:     title,
+	}, terminal.Spec{Path: bin, Args: remote.ShellArgs(c, a.sshOptions()), Dir: a.sshDir(c)}, cols, rows)
+}
+
+// UpsertConnection 新建或更新 SSH 连接。ID 空则 Add（Source=manual）；有 ID 则 Update。
+// 私钥只接受路径；密钥正文会被 store 拒绝。
+func (a *App) UpsertConnection(c remote.Connection) (remote.Connection, error) {
+	store := a.snapshot().Store
+	if store == nil {
+		return remote.Connection{}, errNotReady
+	}
+	if strings.TrimSpace(c.ID) == "" {
+		c.Source = "manual"
+		return store.Add(c)
+	}
+	existing, ok := a.connByID(c.ID)
+	if !ok {
+		return remote.Connection{}, errConnNotFound
+	}
+	// 保留扫描来源元数据；手动新建的保持 manual
+	if c.Source == "" {
+		c.Source = existing.Source
+	}
+	if c.SourceFile == "" {
+		c.SourceFile = existing.SourceFile
+	}
+	// 前端表单不编辑 Verified；沿用原值
+	c.Verified = existing.Verified
+	c.LastUsed = existing.LastUsed
+	if err := store.Update(c); err != nil {
+		return remote.Connection{}, err
+	}
+	return c, nil
+}
+
+// DeleteConnection 删除指定连接。
+func (a *App) DeleteConnection(id string) error {
+	store := a.snapshot().Store
+	if store == nil {
+		return errNotReady
+	}
+	if err := store.Delete(id); err != nil {
+		if errors.Is(err, remote.ErrUnknownConnection) {
+			return errConnNotFound
+		}
+		return err
+	}
+	return nil
 }
 
 // sshDir 返回 SSH 窗口的起始目录：绑定工作区优先，否则用户主目录。

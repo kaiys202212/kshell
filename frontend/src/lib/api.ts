@@ -90,12 +90,14 @@ export interface ToolInfo {
 }
 
 // terminal.Info 的 JSON 形态（internal/terminal/manager.go）。
-// Kind: session（恢复历史会话，同一会话幂等复用）/ new（工作区新开，每次都起新进程）
+// Kind: session（恢复历史会话）/ new（工作区新开 agent）/
+//       shell（预览区本地命令行）/ ssh（预览区远程 SSH）
 // Status: running | exited
 export interface TerminalInfo {
   ID: string;
   Kind: string;
   SessionID: string;
+  ConnID?: string;
   Workspace: string;
   Title: string;
   ToolID: string;
@@ -106,7 +108,7 @@ export interface TerminalInfo {
 }
 
 // remote.Connection 的 JSON 形态（internal/remote/store.go）。
-// Source: sshconfig / env / spring / deploy / docs（Go 侧扫描器值集，无 manual）
+// Source: sshconfig / env / spring / deploy / docs / manual
 export interface SshConnection {
   ID: string;
   Name: string;
@@ -276,6 +278,9 @@ interface AppBindings {
   NewSession(wsPath: string): Promise<void>;
   ListConnections(wsID: string): Promise<SshConnection[]>;
   OpenSSH(connID: string): Promise<void>;
+  OpenSSHTerminal(connID: string, cols: number, rows: number): Promise<TerminalInfo>;
+  UpsertConnection(conn: SshConnection): Promise<SshConnection>;
+  DeleteConnection(id: string): Promise<void>;
   ExecRemote(connID: string, cmd: string): Promise<RemoteResult>;
   GetTools(): Promise<ToolInfo[]>;
   LoadProvidersYAML(): Promise<string>;
@@ -283,6 +288,7 @@ interface AppBindings {
   RestartApp(): Promise<void>;
   OpenSessionTerminal(sessionId: string, cols: number, rows: number): Promise<TerminalInfo>;
   OpenWorkspaceTerminal(wsPath: string, toolId: string, cols: number, rows: number): Promise<TerminalInfo>;
+  OpenShellTerminal(wsPath: string, cols: number, rows: number): Promise<TerminalInfo>;
   WriteTerminal(id: string, data: string): Promise<void>;
   ResizeTerminal(id: string, cols: number, rows: number): Promise<void>;
   CloseTerminal(id: string): Promise<void>;
@@ -520,12 +526,47 @@ export async function listConnections(wsID: string): Promise<SshConnection[]> {
   return a.ListConnections(wsID);
 }
 
-// OpenSSH 弹出该连接的交互式 SSH 终端窗口（BatchMode 恒定，绝不卡密码提示）。
-// 同一连接重复调用 Go 侧幂等转聚焦。错误向上抛，由调用方呈现。
+// OpenSSH 弹出该连接的交互式 SSH 终端窗口（兼容保留；前端主路径改用 openSSHTerminal）。
 export async function openSSH(connID: string): Promise<void> {
   const a = app();
   if (!a) return;
   await a.OpenSSH(connID);
+}
+
+// openSSHTerminal 在预览区内嵌打开 SSH 终端（每次新开）。错误向上抛。
+export async function openSSHTerminal(
+  connID: string,
+  cols: number,
+  rows: number,
+): Promise<TerminalInfo> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  return a.OpenSSHTerminal(connID, cols, rows);
+}
+
+// upsertConnection 新建（ID 空）或更新 SSH 连接。错误向上抛。
+export async function upsertConnection(conn: Partial<SshConnection> & { Host: string }): Promise<SshConnection> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  return a.UpsertConnection({
+    ID: conn.ID ?? '',
+    Name: conn.Name ?? '',
+    Host: conn.Host,
+    User: conn.User ?? '',
+    Port: conn.Port ?? 22,
+    IdentityFile: conn.IdentityFile ?? '',
+    Workspace: conn.Workspace ?? '',
+    Source: conn.Source ?? '',
+    SourceFile: conn.SourceFile ?? '',
+    Verified: conn.Verified ?? false,
+  });
+}
+
+// deleteConnection 删除指定连接。错误向上抛。
+export async function deleteConnection(id: string): Promise<void> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  await a.DeleteConnection(id);
 }
 
 // ExecRemote 在指定连接上非交互执行命令。非 0 退出码不是异常，结果里带 ExitCode。
@@ -591,6 +632,17 @@ export async function openWorkspaceTerminal(
   const a = app();
   if (!a) throw new Error('未检测到桌面端绑定');
   return a.OpenWorkspaceTerminal(wsPath, toolId, cols, rows);
+}
+
+// openShellTerminal 在预览区新开一个本地 shell 终端。错误向上抛。
+export async function openShellTerminal(
+  wsPath: string,
+  cols: number,
+  rows: number,
+): Promise<TerminalInfo> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  return a.OpenShellTerminal(wsPath, cols, rows);
 }
 
 // writeTerminal 把键盘输入写进终端（data 为 base64 编码的 UTF-8 字节）。

@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   listTerminals: vi.fn(),
   onScanDone: vi.fn(),
   openSession: vi.fn(),
+  openShellTerminal: vi.fn(),
+  openSSHTerminal: vi.fn(),
   openWorkspace: vi.fn(),
   openWorkspaceACP: vi.fn(),
   scanSessions: vi.fn(),
@@ -38,7 +40,10 @@ vi.mock('../components/ChatView', () => ({
   ),
 }));
 vi.mock('../components/FileTree', () => ({ default: () => <div data-testid="file-tree" /> }));
-vi.mock('../components/Preview', () => ({ default: () => <div data-testid="preview" /> }));
+vi.mock('../components/PreviewToolPane', () => ({
+  PREVIEW_SUB: 'preview',
+  default: () => <div data-testid="preview-tool-pane" />,
+}));
 vi.mock('../components/SshPanel', () => ({ default: () => <div data-testid="ssh-panel" /> }));
 vi.mock('../components/SessionList', () => ({ default: () => <div /> }));
 vi.mock('../components/NewSessionMenu', () => ({ default: () => <div /> }));
@@ -209,8 +214,32 @@ describe('WorkspaceTabView agent 活动图标', () => {
     fireEvent.click(screen.getByRole('tab', { name: '新会话' }));
     expect(useAppStore.getState().activityCompleted.c1).toBe(true);
 
-    fireEvent.click(screen.getByRole('tab', { name: '预览' }));
+    fireEvent.click(screen.getByRole('tab', { name: '预览与命令行' }));
     expect(useAppStore.getState().activityCompleted.c1).toBeUndefined();
+  });
+
+  it('预览页签钉在中心区最右，shell/ssh 不进左侧 agent 页签', () => {
+    useAppStore.setState({
+      terminals: [
+        term,
+        {
+          ...term,
+          ID: 'sh1',
+          Kind: 'shell',
+          Title: '终端',
+          ToolID: '',
+          SessionID: '',
+        },
+      ],
+      chats: [],
+    });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    const tablist = screen.getByRole('tablist', { name: '中心区页签' });
+    const tabs = tablist.querySelectorAll('[role="tab"]');
+    const labels = [...tabs].map((t) => t.getAttribute('aria-label') || t.textContent);
+    expect(labels.at(-1)).toMatch(/预览/);
+    expect(screen.queryByRole('tab', { name: '终端' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('preview-tool-pane')).toBeInTheDocument();
   });
 
   it('连续切换聊天页签时立即更新 ref，离开上一页签会清 activityCompleted', () => {

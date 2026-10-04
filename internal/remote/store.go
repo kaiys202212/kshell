@@ -13,9 +13,10 @@ import (
 )
 
 var (
-	errMissingHost       = errors.New("连接缺少 host")
-	errKeyMaterial       = errors.New("identity_file 只能是密钥路径，不能放密钥内容")
-	errUnknownConnection = errors.New("未找到该连接")
+	errMissingHost = errors.New("连接缺少 host")
+	errKeyMaterial = errors.New("identity_file 只能是密钥路径，不能放密钥内容")
+	// ErrUnknownConnection 表示按 ID 找不到连接（Update/Delete）。
+	ErrUnknownConnection = errors.New("未找到该连接")
 )
 
 const defaultPort = 22
@@ -142,7 +143,7 @@ func (s *Store) Update(c Connection) error {
 			return s.saveLocked()
 		}
 	}
-	return errUnknownConnection
+	return ErrUnknownConnection
 }
 
 func (s *Store) Delete(id string) error {
@@ -154,7 +155,7 @@ func (s *Store) Delete(id string) error {
 			return s.saveLocked()
 		}
 	}
-	return errUnknownConnection
+	return ErrUnknownConnection
 }
 
 // All 返回全部连接的副本。

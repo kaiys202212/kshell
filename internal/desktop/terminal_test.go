@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/providers"
+	"github.com/yangk/kshell/internal/remote"
 	"github.com/yangk/kshell/internal/terminal"
 )
 
@@ -423,6 +425,101 @@ func TestOpenWorkspaceTerminalSelectsTool(t *testing.T) {
 	}
 	if env.backend.starts() != 2 {
 		t.Fatalf("应起 2 个进程, got %d", env.backend.starts())
+	}
+}
+
+func TestOpenShellTerminalOpensLocalShell(t *testing.T) {
+	env := newTerminalTestApp(t)
+
+	info, err := env.app.OpenShellTerminal(`D:\ws-a`, 80, 24)
+	if err != nil {
+		t.Fatalf("OpenShellTerminal error: %v", err)
+	}
+	if info.Kind != terminal.KindShell {
+		t.Fatalf("Kind = %q, want %q", info.Kind, terminal.KindShell)
+	}
+	if info.Workspace != `D:\ws-a` || info.Title == "" {
+		t.Fatalf("Info 上下文 = %+v", info)
+	}
+	if info.ToolID != "" {
+		t.Fatalf("本地 shell 不应带 ToolID, got %q", info.ToolID)
+	}
+	spec := env.backend.lastSpec()
+	if spec.Dir != `D:\ws-a` {
+		t.Fatalf("Spec.Dir = %q", spec.Dir)
+	}
+	if spec.Path == "" {
+		t.Fatal("应启动本地 shell 可执行文件")
+	}
+
+	info2, err := env.app.OpenShellTerminal(`D:\ws-a`, 80, 24)
+	if err != nil {
+		t.Fatalf("第二次 OpenShellTerminal error: %v", err)
+	}
+	if info2.ID == info.ID {
+		t.Fatal("每次新建 shell 都应是独立进程")
+	}
+	if env.backend.starts() != 2 {
+		t.Fatalf("应起 2 个进程, got %d", env.backend.starts())
+	}
+}
+
+func TestOpenShellTerminalUnknownWorkspace(t *testing.T) {
+	env := newTerminalTestApp(t)
+	if _, err := env.app.OpenShellTerminal(`D:\nope`, 80, 24); !errors.Is(err, errWorkspaceNotFound) {
+		t.Fatalf("未知工作区应返回 errWorkspaceNotFound, got %v", err)
+	}
+}
+
+func TestOpenSSHTerminalOpensEmbedded(t *testing.T) {
+	env := newTerminalTestApp(t)
+	store := remote.NewStore(filepath.Join(t.TempDir(), "connections.yaml"))
+	if _, err := store.Add(remote.Connection{
+		ID: "c1", Name: "测试机", Host: "10.0.0.8", User: "root", Port: 22, Workspace: `D:\ws-a`,
+	}); err != nil {
+		t.Fatalf("添加连接失败: %v", err)
+	}
+	env.app.mu.Lock()
+	env.app.opts.Store = store
+	env.app.mu.Unlock()
+
+	info, err := env.app.OpenSSHTerminal("c1", 100, 30)
+	if err != nil {
+		t.Fatalf("OpenSSHTerminal error: %v", err)
+	}
+	if info.Kind != terminal.KindSSH {
+		t.Fatalf("Kind = %q, want %q", info.Kind, terminal.KindSSH)
+	}
+	if info.ConnID != "c1" || info.Title != "测试机" {
+		t.Fatalf("SSH Info = %+v", info)
+	}
+	if info.Workspace != `D:\ws-a` {
+		t.Fatalf("Workspace = %q, 期望连接绑定工作区", info.Workspace)
+	}
+	spec := env.backend.lastSpec()
+	if !strings.Contains(strings.ToLower(spec.Path), "ssh") {
+		t.Fatalf("应启动 ssh, Path=%q", spec.Path)
+	}
+	joined := strings.Join(spec.Args, " ")
+	for _, want := range []string{"BatchMode=yes", "-t", "root@10.0.0.8"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("SSH args 缺少 %s: %v", want, spec.Args)
+		}
+	}
+
+	info2, err := env.app.OpenSSHTerminal("c1", 100, 30)
+	if err != nil {
+		t.Fatalf("第二次 OpenSSHTerminal error: %v", err)
+	}
+	if info2.ID == info.ID {
+		t.Fatal("每次双击应新开独立 SSH 终端")
+	}
+}
+
+func TestOpenSSHTerminalUnknownConn(t *testing.T) {
+	env := newTerminalTestApp(t)
+	if _, err := env.app.OpenSSHTerminal("nope", 80, 24); err == nil {
+		t.Fatal("未知连接应报错")
 	}
 }
 
