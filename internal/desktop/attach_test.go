@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
 )
@@ -37,7 +38,7 @@ func attachTestApp(t *testing.T, acpDet *providers.ACPDetection) (*App, *eventLo
 		CachePath: "D:/home/.kshell/cache/index.json",
 		Providers: []providers.Provider{providers.Claude{}},
 		Terminals: newTerminalManagerWith(events.emit, &stubTermBackend{}),
-		Chats:     newChatManagerWith(events.emit, fakeChatBackend{}),
+		Chats:     newChatManagerWith(events.emit, fakeChatBackend{}, nil),
 		Windows:   NewWindowManager(&stubLauncher{}, nil),
 		Emit:      events.emit,
 		Scan:      scan,
@@ -107,6 +108,9 @@ func TestRunScanAttachesChat(t *testing.T) {
 	app, events, setSessions := attachTestApp(t, &providers.ACPDetection{
 		Available: true, Source: "path", BinPath: "claude-agent-acp",
 	})
+	app.mu.Lock()
+	app.opts.Config.SessionMode = config.SessionModeACP
+	app.mu.Unlock()
 	setSessions([]providers.Session{
 		{ID: "s1", ToolID: "claude", Workspace: `D:\ws-a`, Title: "旧会话", UpdatedAt: time.Now().Add(-time.Hour)},
 	})

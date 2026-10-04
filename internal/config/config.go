@@ -30,23 +30,38 @@ const (
 	CloseBehaviorExit = "exit" // 直接退出进程
 )
 
+// 会话默认打开路径 / 权限模式取值。
+const (
+	SessionModeTUI = "tui"
+	SessionModeACP = "acp"
+
+	PermissionModeDefault = "default"
+	PermissionModeBypass  = "bypass"
+)
+
 // ModelConfig 是全局模型/端点配置 + 每 agent 模型名。
+// BaseURL 为旧字段：仅读取迁移用，保存时 omitempty 且迁移后清空。
 type ModelConfig struct {
-	Enabled bool              `yaml:"enabled"`
-	BaseURL string            `yaml:"base_url"`
-	APIKey  string            `yaml:"api_key"`
-	Agents  map[string]string `yaml:"agents"` // toolID -> 模型名（空=不改）
+	Enabled          bool              `yaml:"enabled"`
+	Preset           string            `yaml:"preset"`
+	OpenAIBaseURL    string            `yaml:"openai_base_url"`
+	AnthropicBaseURL string            `yaml:"anthropic_base_url"`
+	BaseURL          string            `yaml:"base_url,omitempty"` // legacy
+	APIKey           string            `yaml:"api_key"`
+	Agents           map[string]string `yaml:"agents"` // toolID -> 模型名（空=不改）
 }
 
 type Config struct {
-	ScanRoots     []string        `yaml:"scan_roots"`
-	MaxDepth      int             `yaml:"max_depth"`
-	Exclude       []string        `yaml:"exclude"`
-	SSHOptions    SSHOptions      `yaml:"ssh"`
-	Scanners      map[string]bool `yaml:"scanners"`
-	Appearance    Appearance      `yaml:"appearance"`
-	CloseBehavior string          `yaml:"close_behavior"` // tray | exit
-	Model         ModelConfig     `yaml:"model"`
+	ScanRoots       []string        `yaml:"scan_roots"`
+	MaxDepth        int             `yaml:"max_depth"`
+	Exclude         []string        `yaml:"exclude"`
+	SSHOptions      SSHOptions      `yaml:"ssh"`
+	Scanners        map[string]bool `yaml:"scanners"`
+	Appearance      Appearance      `yaml:"appearance"`
+	CloseBehavior   string          `yaml:"close_behavior"` // tray | exit
+	SessionMode     string          `yaml:"session_mode"`   // tui | acp
+	PermissionMode  string          `yaml:"permission_mode"` // default | bypass
+	Model           ModelConfig     `yaml:"model"`
 }
 
 func Default() Config {
@@ -66,9 +81,11 @@ func Default() Config {
 			"deploy":    true,
 			"docs":      true,
 		},
-		Appearance:    Appearance{Mode: "system"},
-		CloseBehavior: CloseBehaviorTray,
-		Model:         ModelConfig{Agents: map[string]string{}},
+		Appearance:     Appearance{Mode: "dark"},
+		CloseBehavior:  CloseBehaviorTray,
+		SessionMode:    SessionModeTUI,
+		PermissionMode: PermissionModeDefault,
+		Model:          ModelConfig{Agents: map[string]string{}},
 	}
 }
 
@@ -152,7 +169,7 @@ func (c Config) normalized() Config {
 			c.Scanners[k] = v
 		}
 	}
-	// 颜色模式：空值或非法值一律回落默认（system）。
+	// 颜色模式：空值或非法值一律回落默认（dark）。
 	switch c.Appearance.Mode {
 	case "system", "light", "dark":
 	default:
@@ -162,18 +179,46 @@ func (c Config) normalized() Config {
 	if c.CloseBehavior != CloseBehaviorExit {
 		c.CloseBehavior = CloseBehaviorTray
 	}
-	// 模型配置：Agents 补空 map 并 TrimSpace；BaseURL 非法前缀一律丢弃（不阻断加载）。
+	switch c.SessionMode {
+	case SessionModeTUI, SessionModeACP:
+	default:
+		c.SessionMode = d.SessionMode
+	}
+	switch c.PermissionMode {
+	case PermissionModeDefault, PermissionModeBypass:
+	default:
+		c.PermissionMode = d.PermissionMode
+	}
+	// 模型配置：Agents 补空 map；旧 base_url 迁移到双协议字段后清空。
 	if c.Model.Agents == nil {
 		c.Model.Agents = map[string]string{}
 	}
 	for k, v := range c.Model.Agents {
 		c.Model.Agents[k] = strings.TrimSpace(v)
 	}
-	c.Model.BaseURL = strings.TrimSpace(c.Model.BaseURL)
-	if c.Model.BaseURL != "" &&
-		!strings.HasPrefix(c.Model.BaseURL, "http://") &&
-		!strings.HasPrefix(c.Model.BaseURL, "https://") {
-		c.Model.BaseURL = ""
+	c.Model.Preset = strings.TrimSpace(c.Model.Preset)
+	c.Model.OpenAIBaseURL = sanitizeHTTPURL(c.Model.OpenAIBaseURL)
+	c.Model.AnthropicBaseURL = sanitizeHTTPURL(c.Model.AnthropicBaseURL)
+	legacy := sanitizeHTTPURL(c.Model.BaseURL)
+	if legacy != "" {
+		if c.Model.OpenAIBaseURL == "" {
+			c.Model.OpenAIBaseURL = legacy
+		}
+		if c.Model.AnthropicBaseURL == "" {
+			c.Model.AnthropicBaseURL = legacy
+		}
 	}
+	c.Model.BaseURL = ""
 	return c
+}
+
+func sanitizeHTTPURL(u string) string {
+	u = strings.TrimSpace(u)
+	if u == "" {
+		return ""
+	}
+	if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+		return ""
+	}
+	return u
 }

@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 
 	"github.com/yangk/kshell/internal/chat"
+	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/launcher"
 	"github.com/yangk/kshell/internal/providers"
@@ -13,12 +14,15 @@ import (
 
 // newChatManager 用真实后端装配聊天管理器（initRealDeps 用）。
 func newChatManager(a *App) *chat.Manager {
-	return newChatManagerWith(a.Emit, chat.RealBackend{})
+	return newChatManagerWith(a.Emit, chat.RealBackend{}, func() bool {
+		return a.snapshot().Config.PermissionMode == config.PermissionModeBypass
+	})
 }
 
-// newChatManagerWith 装配聊天管理器：时间线/权限/退出经 emit 转发给前端。
-func newChatManagerWith(emit func(name string, data ...any), b chat.Backend) *chat.Manager {
-	return chat.NewManager(b,
+// newChatManagerWith 装配聊天管理器：时间线/权限/退出经 emit 转发给前端；
+// autoAllow 非 nil 且返回真时，权限请求自动放行（不弹窗）。
+func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, autoAllow func() bool) *chat.Manager {
+	m := chat.NewManager(b,
 		func(id string, u chat.Update) {
 			emit("chat:update", map[string]any{"id": id, "update": u})
 		},
@@ -28,6 +32,8 @@ func newChatManagerWith(emit func(name string, data ...any), b chat.Backend) *ch
 		func(id string, code int, errMsg string) {
 			emit("chat:exit", map[string]any{"id": id, "exitCode": code, "error": errMsg})
 		})
+	m.SetAutoAllowPermission(autoAllow)
+	return m
 }
 
 func (a *App) chats() *chat.Manager { return a.snapshot().Chats }
@@ -40,15 +46,32 @@ type OpenedSession struct {
 	Fallback string         `json:"Fallback,omitempty"`
 }
 
-// OpenSession 恢复历史会话：ACP 可用走聊天，否则回退终端。
+// preferACP 是否按配置偏好走 ACP 路径（仅 session_mode=acp）。
+func (a *App) preferACP() bool {
+	return a.snapshot().Config.SessionMode == config.SessionModeACP
+}
+
+// OpenSession 恢复历史会话：偏好 ACP 且可用时走聊天，否则终端。
 func (a *App) OpenSession(sessionID string) (OpenedSession, error) {
+	if !a.preferACP() {
+		return a.fallbackTerminalSession(sessionID, "")
+	}
+	return a.openSessionACP(sessionID, true)
+}
+
+// OpenSessionACP 显式以 ACP 打开历史会话（忽略会话模式偏好）。
+func (a *App) OpenSessionACP(sessionID string) (OpenedSession, error) {
+	return a.openSessionACP(sessionID, false)
+}
+
+func (a *App) openSessionACP(sessionID string, allowFallback bool) (OpenedSession, error) {
 	s, tools, ok := a.sessionByIDReady(sessionID)
 	if !ok {
 		return OpenedSession{}, errSessionNotFound
 	}
 	o := a.snapshot()
 	if m := o.Chats; m != nil {
-		if l, err := launch.ForSessionACP(o.Providers, tools, s, a.modelOptions()); err == nil {
+		if l, err := launch.ForSessionACP(o.Providers, tools, s, a.modelOptions(), a.permissionOptions()); err == nil {
 			info, err := openChat(m, "session:"+sessionID, chat.Info{
 				Kind:      chat.KindSession,
 				SessionID: s.ID,
@@ -59,21 +82,43 @@ func (a *App) OpenSession(sessionID string) (OpenedSession, error) {
 			if err == nil {
 				return OpenedSession{Kind: "chat", Chat: &info}, nil
 			}
-			return a.fallbackTerminalSession(sessionID, err.Error())
+			if allowFallback {
+				return a.fallbackTerminalSession(sessionID, err.Error())
+			}
+			return OpenedSession{}, err
+		} else if !allowFallback {
+			return OpenedSession{}, err
 		}
+	} else if !allowFallback {
+		return OpenedSession{}, errNotReady
 	}
-	return a.fallbackTerminalSession(sessionID, "")
+	if allowFallback {
+		return a.fallbackTerminalSession(sessionID, "")
+	}
+	return OpenedSession{}, errNotReady
 }
 
-// OpenWorkspace 在工作区新建会话：ACP 可用走聊天，否则回退终端。
+// OpenWorkspace 在工作区新建会话：偏好 ACP 且可用时走聊天，否则终端。
 func (a *App) OpenWorkspace(wsID, toolID string) (OpenedSession, error) {
+	if !a.preferACP() {
+		return a.fallbackTerminalWorkspace(wsID, toolID, "")
+	}
+	return a.openWorkspaceACP(wsID, toolID, true)
+}
+
+// OpenWorkspaceACP 显式以 ACP 新建会话（忽略会话模式偏好）。
+func (a *App) OpenWorkspaceACP(wsID, toolID string) (OpenedSession, error) {
+	return a.openWorkspaceACP(wsID, toolID, false)
+}
+
+func (a *App) openWorkspaceACP(wsID, toolID string, allowFallback bool) (OpenedSession, error) {
 	ws, tools, ok := a.workspaceByIDReady(wsID)
 	if !ok {
 		return OpenedSession{}, errWorkspaceNotFound
 	}
 	o := a.snapshot()
 	if m := o.Chats; m != nil {
-		if l, err := launch.ForWorkspaceACP(o.Providers, tools, ws, toolID, a.modelOptions()); err == nil {
+		if l, err := launch.ForWorkspaceACP(o.Providers, tools, ws, toolID, a.modelOptions(), a.permissionOptions()); err == nil {
 			info, err := openChat(m, "new:"+nextChatSeq(), chat.Info{
 				Kind:      chat.KindNew,
 				Workspace: ws.Path,
@@ -83,10 +128,20 @@ func (a *App) OpenWorkspace(wsID, toolID string) (OpenedSession, error) {
 			if err == nil {
 				return OpenedSession{Kind: "chat", Chat: &info}, nil
 			}
-			return a.fallbackTerminalWorkspace(wsID, toolID, err.Error())
+			if allowFallback {
+				return a.fallbackTerminalWorkspace(wsID, toolID, err.Error())
+			}
+			return OpenedSession{}, err
+		} else if !allowFallback {
+			return OpenedSession{}, err
 		}
+	} else if !allowFallback {
+		return OpenedSession{}, errNotReady
 	}
-	return a.fallbackTerminalWorkspace(wsID, toolID, "")
+	if allowFallback {
+		return a.fallbackTerminalWorkspace(wsID, toolID, "")
+	}
+	return OpenedSession{}, errNotReady
 }
 
 func openChat(m *chat.Manager, key string, info chat.Info, l providers.Launch, sessionID string) (chat.Info, error) {

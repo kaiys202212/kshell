@@ -9,6 +9,7 @@ import (
 
 	"github.com/yangk/kshell/internal/acp"
 	"github.com/yangk/kshell/internal/chat"
+	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
 )
@@ -56,7 +57,7 @@ func TestChatManagerEmitsUpdate(t *testing.T) {
 		events[name]++
 		mu.Unlock()
 	}
-	m := newChatManagerWith(emit, fakeChatBackend{})
+	m := newChatManagerWith(emit, fakeChatBackend{}, nil)
 	t.Cleanup(m.CloseAll) // 关掉 watchExit goroutine，避免测试泄漏
 	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "/w"}, chat.Spec{Path: "x"}, "")
 	if err != nil {
@@ -112,7 +113,9 @@ func newChatTestApp(t *testing.T, acpDet *providers.ACPDetection, backend chat.B
 		ID: "claude", Name: "Claude Code", BinPath: "claude", Installed: true, ACP: acpDet,
 	}}
 	if backend != nil {
-		app.opts.Chats = newChatManagerWith(events.emit, backend)
+		app.opts.Chats = newChatManagerWith(events.emit, backend, func() bool {
+			return app.snapshot().Config.PermissionMode == config.PermissionModeBypass
+		})
 	}
 	app.mu.Unlock()
 
@@ -121,11 +124,14 @@ func newChatTestApp(t *testing.T, acpDet *providers.ACPDetection, backend chat.B
 	return &chatTestEnv{app: app, term: term, events: events}
 }
 
-// TestOpenSessionACP 验证 ACP 可用时会话走聊天路径。
+// TestOpenSessionACP 验证偏好 ACP 且可用时会话走聊天路径。
 func TestOpenSessionACP(t *testing.T) {
 	env := newChatTestApp(t, &providers.ACPDetection{
 		Available: true, Source: "path", BinPath: "claude-agent-acp",
 	}, fakeChatBackend{})
+	env.app.mu.Lock()
+	env.app.opts.Config.SessionMode = config.SessionModeACP
+	env.app.mu.Unlock()
 
 	got, err := env.app.OpenSession("s1")
 	if err != nil {
@@ -142,6 +148,36 @@ func TestOpenSessionACP(t *testing.T) {
 	}
 	if env.term.starts() != 0 {
 		t.Fatalf("聊天路径不应起终端进程, got %d", env.term.starts())
+	}
+}
+
+// TestOpenSessionDefaultTUI 验证默认 tui 偏好下即使 ACP 可用也走终端。
+func TestOpenSessionDefaultTUI(t *testing.T) {
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "claude-agent-acp",
+	}, fakeChatBackend{})
+
+	got, err := env.app.OpenSession("s1")
+	if err != nil {
+		t.Fatalf("OpenSession error: %v", err)
+	}
+	if got.Kind != "terminal" || got.Terminal == nil {
+		t.Fatalf("默认 tui 应走终端: %+v", got)
+	}
+}
+
+// TestOpenSessionACPExplicit 验证显式 ACP 入口忽略 tui 偏好。
+func TestOpenSessionACPExplicit(t *testing.T) {
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "claude-agent-acp",
+	}, fakeChatBackend{})
+
+	got, err := env.app.OpenSessionACP("s1")
+	if err != nil {
+		t.Fatalf("OpenSessionACP error: %v", err)
+	}
+	if got.Kind != "chat" || got.Chat == nil {
+		t.Fatalf("显式 ACP 应走聊天: %+v", got)
 	}
 }
 
@@ -191,6 +227,9 @@ func TestOpenSessionACPFailureFallsBack(t *testing.T) {
 	env := newChatTestApp(t, &providers.ACPDetection{
 		Available: true, Source: "path", BinPath: "claude-agent-acp",
 	}, fakeChatBackendErr{})
+	env.app.mu.Lock()
+	env.app.opts.Config.SessionMode = config.SessionModeACP
+	env.app.mu.Unlock()
 
 	got, err := env.app.OpenSession("s1")
 	if err != nil {

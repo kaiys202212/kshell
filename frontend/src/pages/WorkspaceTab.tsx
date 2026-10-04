@@ -14,6 +14,7 @@ import {
   onScanDone,
   openSession,
   openWorkspace,
+  openWorkspaceACP,
   scanSessions,
   writeTerminal,
 } from '../lib/api';
@@ -176,11 +177,13 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   );
 
   // 菜单里选中 agent 后启动会话（空 id = 交给 Go 侧按该工作区最常用的工具选）
-  const startSession = async (id: string) => {
+  const startSession = async (id: string, forceACP = false) => {
     if (busy) return;
     setBusy(true);
     try {
-      const res = await openWorkspace(tab.id, id);
+      const res = forceACP
+        ? await openWorkspaceACP(tab.id, id)
+        : await openWorkspace(tab.id, id);
       if (res.Kind === 'chat' && res.Chat) {
         useAppStore.getState().upsertChat(res.Chat);
         selectCenterTab(res.Chat.ID);
@@ -232,6 +235,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           value={toolId}
           onChange={setToolId}
           onSelect={(id) => void startSession(id)}
+          onSelectACP={(id) => void startSession(id, true)}
           disabled={busy}
         />
         {tools.length === 0 && (

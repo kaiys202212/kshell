@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   onScanDone: vi.fn(),
   openSession: vi.fn(),
   openWorkspace: vi.fn(),
+  openWorkspaceACP: vi.fn(),
   scanSessions: vi.fn(),
   writeTerminal: vi.fn(),
 }));

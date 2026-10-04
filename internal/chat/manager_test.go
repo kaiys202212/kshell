@@ -210,6 +210,34 @@ func TestManagerPermissionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestManagerAutoAllowPermission(t *testing.T) {
+	m, b, c := newTestManager(t)
+	c.permCh = make(chan string, 1)
+	m.SetAutoAllowPermission(func() bool { return true })
+	_, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan acp.PermissionOutcome, 1)
+	go func() {
+		out, _ := b.last.RequestPermission(context.Background(), "sess-new", "auto", acp.RequestPermissionParams{
+			SessionID: "sess-new",
+			Options:   []acp.PermissionOption{{OptionID: "allow", Name: "Allow", Kind: "allow_once"}},
+		})
+		done <- out
+	}()
+	select {
+	case <-c.permCh:
+		t.Fatal("auto-allow 不应发 chat:permission")
+	case out := <-done:
+		if out.Outcome != "selected" || out.OptionID != "allow" {
+			t.Fatalf("outcome %+v", out)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("auto-allow 未完成")
+	}
+}
+
 func TestManagerCloseCancelsPendingPermission(t *testing.T) {
 	m, b, c := newTestManager(t)
 	c.permCh = make(chan string, 1)

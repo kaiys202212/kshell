@@ -46,8 +46,15 @@ const mocks = vi.hoisted(() => ({
   setCloseBehavior: vi.fn(),
   getModelConfig: vi.fn(),
   setModelConfig: vi.fn(),
+  listModelPresets: vi.fn(),
+  getSessionMode: vi.fn(),
+  setSessionMode: vi.fn(),
+  getPermissionMode: vi.fn(),
+  setPermissionMode: vi.fn(),
   openSession: vi.fn(),
+  openSessionACP: vi.fn(),
   openWorkspace: vi.fn(),
+  openWorkspaceACP: vi.fn(),
   closeChat: vi.fn(),
   listChats: vi.fn(),
   chatHistory: vi.fn(),
@@ -146,8 +153,20 @@ beforeEach(() => {
   mocks.onAppearanceChanged.mockReturnValue(() => {});
   mocks.getCloseBehavior.mockResolvedValue('tray');
   mocks.setCloseBehavior.mockResolvedValue(undefined);
-  mocks.getModelConfig.mockResolvedValue({ Enabled: false, BaseURL: '', Agents: {}, APIKeySet: false });
+  mocks.getModelConfig.mockResolvedValue({
+    Enabled: false,
+    Preset: '',
+    OpenAIBaseURL: '',
+    AnthropicBaseURL: '',
+    Agents: {},
+    APIKeySet: false,
+  });
   mocks.setModelConfig.mockResolvedValue(undefined);
+  mocks.listModelPresets.mockResolvedValue([]);
+  mocks.getSessionMode.mockResolvedValue('tui');
+  mocks.setSessionMode.mockResolvedValue(undefined);
+  mocks.getPermissionMode.mockResolvedValue('default');
+  mocks.setPermissionMode.mockResolvedValue(undefined);
   mocks.closeChat.mockResolvedValue(undefined);
   mocks.listChats.mockResolvedValue([]);
   mocks.chatHistory.mockResolvedValue([]);
@@ -191,9 +210,11 @@ describe('App', () => {
     await waitFor(() => {
       expect(useAppStore.getState().activeTabId).toBe(SETTINGS_TAB_ID);
     });
-    expect(await screen.findByText('工具检测')).toBeInTheDocument();
     expect(pane('settings').className).not.toContain('hidden');
     expect(pane('home').className).toContain('hidden');
+    // 设置页左导航分区（通用为默认选中）
+    expect(pane('settings').querySelector('[aria-label="设置分区"]')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '通用' })).toHaveAttribute('aria-current', 'page');
 
     fireEvent.click(screen.getByRole('button', { name: '首页' }));
     expect(useAppStore.getState().activeTabId).toBeNull();

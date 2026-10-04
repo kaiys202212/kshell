@@ -1,4 +1,4 @@
-package launch
+﻿package launch
 
 import (
 	"errors"
@@ -41,7 +41,7 @@ func TestForSessionDelegatesToProvider(t *testing.T) {
 	want := providers.Launch{Path: "claude", Args: []string{"--resume", "s1"}}
 	p := fakeProvider{id: "claude", resume: want}
 
-	got, err := ForSession([]providers.Provider{p}, toolsRunnable, s, ThemeOptions{}, ModelOptions{})
+	got, err := ForSession([]providers.Provider{p}, toolsRunnable, s, ThemeOptions{}, ModelOptions{}, PermissionOptions{})
 	if err != nil {
 		t.Fatalf("ForSession error: %v", err)
 	}
@@ -55,11 +55,11 @@ func TestForSessionFailsWithoutRunnableTool(t *testing.T) {
 	p := fakeProvider{id: "claude"}
 
 	// 工具只有配置目录、没有可执行文件
-	if _, err := ForSession([]providers.Provider{p}, []discovery.Tool{{ID: "claude", Installed: true, BinPath: ""}}, s, ThemeOptions{}, ModelOptions{}); !errors.Is(err, ErrToolNotRunnable) {
+	if _, err := ForSession([]providers.Provider{p}, []discovery.Tool{{ID: "claude", Installed: true, BinPath: ""}}, s, ThemeOptions{}, ModelOptions{}, PermissionOptions{}); !errors.Is(err, ErrToolNotRunnable) {
 		t.Fatalf("无可执行文件应返回 ErrToolNotRunnable, got %v", err)
 	}
 	// 工具不在 provider 列表
-	if _, err := ForSession(nil, toolsRunnable, s, ThemeOptions{}, ModelOptions{}); !errors.Is(err, ErrToolNotRunnable) {
+	if _, err := ForSession(nil, toolsRunnable, s, ThemeOptions{}, ModelOptions{}, PermissionOptions{}); !errors.Is(err, ErrToolNotRunnable) {
 		t.Fatalf("缺 provider 应返回 ErrToolNotRunnable, got %v", err)
 	}
 }
@@ -75,7 +75,7 @@ func TestForWorkspacePicksPreferredTool(t *testing.T) {
 		ToolCounts: map[string]int{"claude": 3, "codex": 1},
 	}
 
-	got, err := ForWorkspace(ps, tools, ws, ThemeOptions{}, ModelOptions{})
+	got, err := ForWorkspace(ps, tools, ws, ThemeOptions{}, ModelOptions{}, PermissionOptions{})
 	if err != nil {
 		t.Fatalf("ForWorkspace error: %v", err)
 	}
@@ -94,7 +94,7 @@ func acpTools(det providers.ACPDetection) []discovery.Tool {
 func TestForWorkspaceACP_NpxFallback(t *testing.T) {
 	ps := []providers.Provider{providers.Claude{}}
 	tools := acpTools(providers.ACPDetection{Available: true, Source: "npx", Package: "@agentclientprotocol/claude-agent-acp"})
-	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{})
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{}, PermissionOptions{})
 	if err != nil {
 		t.Fatalf("for workspace acp: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestForWorkspaceACP_NpxFallback(t *testing.T) {
 func TestForWorkspaceACP_PathHit(t *testing.T) {
 	ps := []providers.Provider{providers.Claude{}}
 	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "/usr/bin/claude-agent-acp"})
-	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{})
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{}, PermissionOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestForWorkspaceACP_PathHit(t *testing.T) {
 func TestForWorkspaceACP_Unavailable(t *testing.T) {
 	ps := []providers.Provider{providers.Claude{}}
 	tools := acpTools(providers.ACPDetection{Available: false})
-	if _, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{}); err != ErrACPUnavailable {
+	if _, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{}, PermissionOptions{}); err != ErrACPUnavailable {
 		t.Fatalf("want ErrACPUnavailable, got %v", err)
 	}
 }
@@ -130,7 +130,7 @@ func TestForWorkspaceACP_ExtraArgs(t *testing.T) {
 	ps := []providers.Provider{providers.Claude{}}
 
 	pathTools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "/usr/bin/claude-agent-acp", ExtraArgs: []string{"--foo"}})
-	l, err := ForWorkspaceACP(ps, pathTools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{})
+	l, err := ForWorkspaceACP(ps, pathTools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{}, PermissionOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestForWorkspaceACP_ExtraArgs(t *testing.T) {
 	}
 
 	npxTools := acpTools(providers.ACPDetection{Available: true, Source: "npx", Package: "pkg", ExtraArgs: []string{"--foo"}})
-	l, err = ForWorkspaceACP(ps, npxTools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{})
+	l, err = ForWorkspaceACP(ps, npxTools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{}, PermissionOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestForSessionACP_UsesWorkspaceDir(t *testing.T) {
 	ps := []providers.Provider{providers.Claude{}}
 	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"})
 	s := providers.Session{ID: "s1", ToolID: "claude", Workspace: "/proj"}
-	l, err := ForSessionACP(ps, tools, s, ModelOptions{})
+	l, err := ForSessionACP(ps, tools, s, ModelOptions{}, PermissionOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,9 +166,9 @@ func TestApplyModelTerminalCodex(t *testing.T) {
 	tools := []discovery.Tool{{ID: "codex", Name: "Codex CLI", Installed: true, BinPath: "codex"}}
 	s := providers.Session{ID: "s1", ToolID: "codex", Workspace: "/proj"}
 	mo := ModelOptions{Resolver: func(toolID string) (providers.ModelConfig, bool) {
-		return providers.ModelConfig{BaseURL: "https://h/", APIKey: "k", Model: "gpt-x"}, true
+		return providers.ModelConfig{OpenAIBaseURL: "https://h/", AnthropicBaseURL: "https://h/", APIKey: "k", Model: "gpt-x"}, true
 	}}
-	l, err := ForSession(ps, tools, s, ThemeOptions{}, mo)
+	l, err := ForSession(ps, tools, s, ThemeOptions{}, mo, PermissionOptions{})
 	if err != nil {
 		t.Fatalf("ForSession: %v", err)
 	}
@@ -190,9 +190,9 @@ func TestApplyModelACPClaude(t *testing.T) {
 	ps := []providers.Provider{providers.Claude{}}
 	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"})
 	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
-		return providers.ModelConfig{BaseURL: "https://h/", APIKey: "k", Model: "mimo-v2.5"}, true
+		return providers.ModelConfig{OpenAIBaseURL: "https://h/", AnthropicBaseURL: "https://h/", APIKey: "k", Model: "mimo-v2.5"}, true
 	}}
-	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", mo)
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", mo, PermissionOptions{})
 	if err != nil {
 		t.Fatalf("ForWorkspaceACP: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestApplyModelPrecedesSubcommand(t *testing.T) {
 	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
 		return providers.ModelConfig{Model: "gpt-x"}, true
 	}}
-	l, err := ForSession(ps, tools, s, ThemeOptions{}, mo)
+	l, err := ForSession(ps, tools, s, ThemeOptions{}, mo, PermissionOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,5 +222,24 @@ func TestApplyModelNilResolverNoInjection(t *testing.T) {
 	l := applyModel(providers.Launch{}, providers.Codex{}, ModelOptions{})
 	if len(l.Env) != 0 || len(l.Args) != 0 {
 		t.Fatalf("无 resolver 不应注入：args=%v env=%+v", l.Args, l.Env)
+	}
+}
+
+func TestApplyPermissionBypassClaude(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := []discovery.Tool{{ID: "claude", Installed: true, BinPath: "claude"}}
+	s := providers.Session{ID: "s1", ToolID: "claude", Workspace: "/p"}
+	l, err := ForSession(ps, tools, s, ThemeOptions{}, ModelOptions{}, PermissionOptions{Bypass: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, a := range l.Args {
+		if a == "--dangerously-skip-permissions" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("应注入 bypass 参数，got %v", l.Args)
 	}
 }

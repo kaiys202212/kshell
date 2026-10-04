@@ -1,29 +1,29 @@
-// 设置页（顶部固定页签）：工具检测状态 + providers.yaml 自定义工具编辑保存。
-// 工具状态来自 GetTools（最近一次扫描，含未安装项）：未安装灰显，
-// Source=config-dir 表示「只检测到配置目录没有可执行程序」，视为未验证，显示徽标。
-// providers.yaml 来自 LoadProvidersYAML（文件缺失时 Go 侧回填模板），
-// 保存走 SaveProvidersYAML（Go 侧先校验 YAML 再原子写回）——
-// 保存成功不热生效，需重启应用后由重扫装配，UI 明确提示这一点。
+// 设置页：左导航分区（通用 / 模型 / 工具）+ 右侧内容。
+// 通用含外观/关闭/会话模式/权限；模型含预设与双协议 Base URL；工具含检测与 providers.yaml。
 import { useEffect, useState } from 'react';
 import {
   getAppearance,
   getCloseBehavior,
   getModelConfig,
+  getPermissionMode,
+  getSessionMode,
   getTools,
+  listModelPresets,
   loadProvidersYAML,
   restartApp,
   saveProvidersYAML,
   setAppearanceMode,
   setCloseBehavior,
   setModelConfig,
+  setPermissionMode,
+  setSessionMode,
 } from '../lib/api';
-import type { ToolInfo } from '../lib/api';
+import type { ModelPreset, ToolInfo } from '../lib/api';
 import { cn } from '../lib/cn';
 import { useAppStore } from '../state/store';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 
-// 模型注入区域覆盖的内置 agent：与 Go 侧 model config 的 Agents 键保持一致
 const MODEL_AGENTS = [
   { id: 'claude', label: 'Claude Code' },
   { id: 'codex', label: 'Codex CLI' },
@@ -31,7 +31,16 @@ const MODEL_AGENTS = [
   { id: 'opencode', label: 'OpenCode' },
 ];
 
+type Section = 'general' | 'model' | 'tools';
+
+const SECTIONS: { id: Section; label: string }[] = [
+  { id: 'general', label: '通用' },
+  { id: 'model', label: '模型' },
+  { id: 'tools', label: '工具' },
+];
+
 export default function Settings() {
+  const [section, setSection] = useState<Section>('general');
   const [tools, setTools] = useState<ToolInfo[] | null>(null);
   const [toolsError, setToolsError] = useState('');
   const [yaml, setYaml] = useState<string | null>(null);
@@ -40,14 +49,20 @@ export default function Settings() {
   const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
   const [restarting, setRestarting] = useState(false);
-  const [appearance, setAppearanceLocal] = useState<string>('system');
+  const [appearance, setAppearanceLocal] = useState<string>('dark');
   const [closeBehavior, setCloseBehaviorLocal] = useState<string>('tray');
+  const [sessionMode, setSessionModeLocal] = useState('tui');
+  const [permissionMode, setPermissionModeLocal] = useState('default');
+  const [presets, setPresets] = useState<ModelPreset[]>([]);
   const [modelEnabled, setModelEnabled] = useState(false);
-  const [modelBaseURL, setModelBaseURL] = useState('');
+  const [modelPreset, setModelPreset] = useState('custom');
+  const [modelOpenAIURL, setModelOpenAIURL] = useState('');
+  const [modelAnthropicURL, setModelAnthropicURL] = useState('');
   const [modelApiKey, setModelApiKey] = useState('');
   const [modelApiKeySet, setModelApiKeySet] = useState(false);
   const [modelClearKey, setModelClearKey] = useState(false);
   const [modelAgents, setModelAgents] = useState<Record<string, string>>({});
+  const [modelDirtyHint, setModelDirtyHint] = useState(false);
   const [modelSaving, setModelSaving] = useState(false);
   const notify = useAppStore((s) => s.notify);
 
@@ -77,11 +92,28 @@ export default function Settings() {
         if (!cancelled) setCloseBehaviorLocal(mode);
       })
       .catch(() => {});
+    getSessionMode()
+      .then((mode) => {
+        if (!cancelled) setSessionModeLocal(mode);
+      })
+      .catch(() => {});
+    getPermissionMode()
+      .then((mode) => {
+        if (!cancelled) setPermissionModeLocal(mode);
+      })
+      .catch(() => {});
+    listModelPresets()
+      .then((list) => {
+        if (!cancelled) setPresets(list);
+      })
+      .catch(() => {});
     getModelConfig()
       .then((v) => {
         if (cancelled) return;
         setModelEnabled(v.Enabled);
-        setModelBaseURL(v.BaseURL);
+        setModelPreset(v.Preset || 'custom');
+        setModelOpenAIURL(v.OpenAIBaseURL);
+        setModelAnthropicURL(v.AnthropicBaseURL);
         setModelApiKeySet(v.APIKeySet);
         setModelAgents(v.Agents ?? {});
       })
@@ -111,6 +143,43 @@ export default function Settings() {
     }
   };
 
+  const handleSessionMode = async (mode: string) => {
+    if (mode === sessionMode) return;
+    try {
+      await setSessionMode(mode);
+      setSessionModeLocal(mode);
+    } catch (e: unknown) {
+      notify(e instanceof Error ? e.message : String(e), 'error');
+    }
+  };
+
+  const handlePermissionMode = async (mode: string) => {
+    if (mode === permissionMode) return;
+    try {
+      await setPermissionMode(mode);
+      setPermissionModeLocal(mode);
+    } catch (e: unknown) {
+      notify(e instanceof Error ? e.message : String(e), 'error');
+    }
+  };
+
+  const applyPreset = (id: string, forceModels: boolean) => {
+    setModelPreset(id);
+    setModelDirtyHint(false);
+    if (id === 'custom') return;
+    const p = presets.find((x) => x.ID === id);
+    if (!p) return;
+    setModelOpenAIURL(p.OpenAIBaseURL);
+    setModelAnthropicURL(p.AnthropicBaseURL);
+    setModelAgents((prev) => {
+      const next = { ...prev };
+      for (const a of MODEL_AGENTS) {
+        if (forceModels || !next[a.id]) next[a.id] = p.RecommendedModel;
+      }
+      return next;
+    });
+  };
+
   const handleSave = async () => {
     if (yaml === null || saving) return;
     setSaving(true);
@@ -132,7 +201,9 @@ export default function Settings() {
     try {
       await setModelConfig({
         Enabled: modelEnabled,
-        BaseURL: modelBaseURL.trim(),
+        Preset: modelPreset,
+        OpenAIBaseURL: modelOpenAIURL.trim(),
+        AnthropicBaseURL: modelAnthropicURL.trim(),
         APIKey: modelApiKey,
         ClearAPIKey: modelClearKey,
         Agents: modelAgents,
@@ -141,6 +212,7 @@ export default function Settings() {
       if (modelClearKey) setModelApiKeySet(false);
       setModelApiKey('');
       setModelClearKey(false);
+      setModelDirtyHint(false);
       notify('已保存，对新启动的会话生效', 'info');
     } catch (e: unknown) {
       notify(e instanceof Error ? e.message : String(e), 'error');
@@ -149,7 +221,6 @@ export default function Settings() {
     }
   };
 
-  // 立即重启：成功后进程退出（按钮保持禁用直到窗口消失）；失败恢复按钮并轻量提示
   const handleRestart = async () => {
     if (restarting) return;
     setRestarting(true);
@@ -161,178 +232,324 @@ export default function Settings() {
     }
   };
 
+  const inputClass = 'rounded border border-input bg-card px-2 py-1 text-sm';
+
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      <div className="max-w-2xl">
-        <h1 className="mb-4 text-lg font-semibold">设置</h1>
+    <div className="flex min-h-0 flex-1 overflow-hidden">
+      <nav
+        className="flex w-36 shrink-0 flex-col gap-0.5 border-r border-border bg-card p-2"
+        aria-label="设置分区"
+      >
+        {SECTIONS.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            className={cn(
+              'rounded px-2.5 py-1.5 text-left text-sm transition-colors',
+              section === s.id ? 'bg-primary/10 font-medium text-primary' : 'hover:bg-muted',
+            )}
+            aria-current={section === s.id ? 'page' : undefined}
+            onClick={() => setSection(s.id)}
+          >
+            {s.label}
+          </button>
+        ))}
+      </nav>
 
-        <section className="mb-5 rounded border border-border bg-card p-3.5">
-          <h2 className="mb-3 text-sm font-medium">外观</h2>
-          <div className="flex gap-2">
-            {[
-              { value: 'system', label: '跟随系统' },
-              { value: 'light', label: '浅色' },
-              { value: 'dark', label: '深色' },
-            ].map((opt) => (
-              <Button
-                key={opt.value}
-                variant={appearance === opt.value ? 'default' : 'secondary'}
-                aria-pressed={appearance === opt.value}
-                onClick={() => void handleAppearance(opt.value)}
-              >
-                {opt.label}
-              </Button>
-            ))}
-          </div>
-        </section>
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="max-w-2xl">
+          <h1 className="mb-4 text-lg font-semibold">设置</h1>
 
-        <section className="mb-5 rounded border border-border bg-card p-3.5">
-          <h2 className="mb-3 text-sm font-medium">关闭行为</h2>
-          <div className="flex gap-2">
-            {[
-              { value: 'tray', label: '收进托盘' },
-              { value: 'exit', label: '直接退出' },
-            ].map((opt) => (
-              <Button
-                key={opt.value}
-                variant={closeBehavior === opt.value ? 'default' : 'secondary'}
-                aria-pressed={closeBehavior === opt.value}
-                onClick={() => void handleCloseBehavior(opt.value)}
-              >
-                {opt.label}
-              </Button>
-            ))}
-          </div>
-        </section>
-
-        <section className="mb-5 rounded border border-border bg-card p-3.5">
-          <h2 className="mb-3 text-sm font-medium">模型（对所有 agent 启动时注入）</h2>
-          <label className="mb-2 flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={modelEnabled} onChange={(e) => setModelEnabled(e.target.checked)} />
-            启用模型配置
-          </label>
-          <div className="grid gap-2">
-            <label className="text-xs text-muted-foreground" htmlFor="model-base-url">模型 Base URL</label>
-            <input
-              id="model-base-url"
-              aria-label="模型 Base URL"
-              className="rounded border border-input bg-card px-2 py-1 text-sm"
-              placeholder="https://..."
-              value={modelBaseURL}
-              onChange={(e) => setModelBaseURL(e.target.value)}
-            />
-            <label className="text-xs text-muted-foreground" htmlFor="model-api-key">模型 API Key</label>
-            <input
-              id="model-api-key"
-              aria-label="模型 API Key"
-              type="password"
-              className="rounded border border-input bg-card px-2 py-1 text-sm"
-              placeholder={modelApiKeySet ? '已设置（留空不修改）' : '未设置'}
-              value={modelApiKey}
-              onChange={(e) => setModelApiKey(e.target.value)}
-            />
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              <input type="checkbox" checked={modelClearKey} onChange={(e) => setModelClearKey(e.target.checked)} />
-              清除密钥
-            </label>
-            {MODEL_AGENTS.map((a) => (
-              <div key={a.id} className="grid gap-1">
-                <label className="text-xs text-muted-foreground" htmlFor={`model-${a.id}`}>{a.label} 模型</label>
-                <input
-                  id={`model-${a.id}`}
-                  aria-label={`${a.label} 模型`}
-                  className="rounded border border-input bg-card px-2 py-1 text-sm"
-                  value={modelAgents[a.id] ?? ''}
-                  onChange={(e) => setModelAgents((prev) => ({ ...prev, [a.id]: e.target.value }))}
-                />
-              </div>
-            ))}
-            <div>
-              <Button onClick={() => void handleSaveModel()} disabled={modelSaving}>保存模型配置</Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              启动时注入，不改各工具自身配置文件。Claude 受 ~/.claude/settings.json 的 env 影响，若不生效需先清掉该段。
-            </p>
-          </div>
-        </section>
-
-        <section className="mb-5 rounded border border-border bg-card p-3.5">
-          <h2 className="mb-3 text-sm font-medium">工具检测</h2>
-          {toolsError && <p className="text-sm text-destructive">{toolsError}</p>}
-          {tools === null && !toolsError && (
-            <p className="text-sm text-muted-foreground">加载中……</p>
-          )}
-          {tools !== null && tools.length === 0 && (
-            <p className="text-sm text-muted-foreground">未检测到任何工具</p>
-          )}
-          {tools !== null && tools.length > 0 && (
-            <ul className="divide-y divide-border rounded border border-border">
-              {tools.map((t) => (
-                <li
-                  key={t.ID}
-                  className={cn(
-                    'flex items-center gap-2 px-2.5 py-1.5 text-xs transition-colors hover:bg-muted',
-                    !t.Installed && 'opacity-50',
-                  )}
-                  title={
-                    t.Source === 'config-dir'
-                      ? '只检测到配置目录，没有可执行程序，可用性未验证'
-                      : t.BinPath
-                  }
-                >
-                  <span className="font-medium">{t.Name}</span>
-                  {t.Source === 'config-dir' && (
-                    <Badge variant="warning">未验证</Badge>
-                  )}
-                  {t.Installed ? (
-                    t.Version && <span className="text-xs text-muted-foreground">{t.Version}</span>
-                  ) : (
-                    <span className="ml-auto text-xs text-muted-foreground">未安装</span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="rounded border border-border bg-card p-3.5">
-          <h2 className="mb-3 text-sm font-medium">自定义工具（providers.yaml）</h2>
-          {yamlError && <p className="text-sm text-destructive">{yamlError}</p>}
-          {yaml !== null && (
+          {section === 'general' && (
             <>
-              <textarea
-                className="min-h-[280px] w-full resize-y rounded border border-input bg-card p-2.5 font-mono text-xs leading-[1.55] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                aria-label="providers.yaml 编辑器"
-                value={yaml}
-                spellCheck={false}
-                onChange={(e) => {
-                  setYaml(e.target.value);
-                  setSaved(false);
-                  setSaveError('');
-                }}
-              />
-              <div className="mt-2 flex items-center gap-2.5">
-                <Button onClick={() => void handleSave()} disabled={saving}>
-                  保存
-                </Button>
-                {saved && (
-                  <>
-                    <span className="text-sm text-muted-foreground">已保存，重启应用后生效</span>
+              <section className="mb-5 rounded border border-border bg-card p-3.5">
+                <h2 className="mb-3 text-sm font-medium">外观</h2>
+                <div className="flex gap-2">
+                  {[
+                    { value: 'system', label: '跟随系统' },
+                    { value: 'light', label: '浅色' },
+                    { value: 'dark', label: '深色' },
+                  ].map((opt) => (
                     <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={restarting}
-                      onClick={() => void handleRestart()}
+                      key={opt.value}
+                      variant={appearance === opt.value ? 'default' : 'secondary'}
+                      aria-pressed={appearance === opt.value}
+                      onClick={() => void handleAppearance(opt.value)}
                     >
-                      {restarting ? '正在重启…' : '立即重启'}
+                      {opt.label}
                     </Button>
-                  </>
+                  ))}
+                </div>
+              </section>
+
+              <section className="mb-5 rounded border border-border bg-card p-3.5">
+                <h2 className="mb-3 text-sm font-medium">关闭行为</h2>
+                <div className="flex gap-2">
+                  {[
+                    { value: 'tray', label: '收进托盘' },
+                    { value: 'exit', label: '直接退出' },
+                  ].map((opt) => (
+                    <Button
+                      key={opt.value}
+                      variant={closeBehavior === opt.value ? 'default' : 'secondary'}
+                      aria-pressed={closeBehavior === opt.value}
+                      onClick={() => void handleCloseBehavior(opt.value)}
+                    >
+                      {opt.label}
+                    </Button>
+                  ))}
+                </div>
+              </section>
+
+              <section className="mb-5 rounded border border-border bg-card p-3.5">
+                <h2 className="mb-3 text-sm font-medium">默认会话模式</h2>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  影响新建/恢复的默认路径；仍可在菜单中手动以 ACP 打开（仅支持 ACP 的工具）。
+                </p>
+                <div className="flex gap-2">
+                  {[
+                    { value: 'tui', label: 'TUI（终端）' },
+                    { value: 'acp', label: 'ACP（聊天）' },
+                  ].map((opt) => (
+                    <Button
+                      key={opt.value}
+                      variant={sessionMode === opt.value ? 'default' : 'secondary'}
+                      aria-pressed={sessionMode === opt.value}
+                      onClick={() => void handleSessionMode(opt.value)}
+                    >
+                      {opt.label}
+                    </Button>
+                  ))}
+                </div>
+              </section>
+
+              <section className="mb-5 rounded border border-border bg-card p-3.5">
+                <h2 className="mb-3 text-sm font-medium">权限模式</h2>
+                <div className="flex gap-2">
+                  {[
+                    { value: 'default', label: '默认（需确认）' },
+                    { value: 'bypass', label: 'Bypass（跳过确认）' },
+                  ].map((opt) => (
+                    <Button
+                      key={opt.value}
+                      variant={permissionMode === opt.value ? 'default' : 'secondary'}
+                      aria-pressed={permissionMode === opt.value}
+                      onClick={() => void handlePermissionMode(opt.value)}
+                    >
+                      {opt.label}
+                    </Button>
+                  ))}
+                </div>
+                {permissionMode === 'bypass' && (
+                  <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                    将跳过 CLI 权限确认，并自动放行 ACP 权限弹窗。仅建议在可信环境使用。Gemini / OpenCode
+                    暂无稳定跳过参数。
+                  </p>
                 )}
-                {saveError && <span className="text-sm text-destructive">{saveError}</span>}
-              </div>
+              </section>
             </>
           )}
-        </section>
+
+          {section === 'model' && (
+            <section className="mb-5 rounded border border-border bg-card p-3.5">
+              <h2 className="mb-3 text-sm font-medium">模型（对所有 agent 启动时注入）</h2>
+              <label className="mb-2 flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={modelEnabled}
+                  onChange={(e) => setModelEnabled(e.target.checked)}
+                />
+                启用模型配置
+              </label>
+              <div className="grid gap-2">
+                <label className="text-xs text-muted-foreground" htmlFor="model-preset">
+                  提供商预设
+                </label>
+                <select
+                  id="model-preset"
+                  aria-label="提供商预设"
+                  className={inputClass}
+                  value={modelPreset}
+                  onChange={(e) => applyPreset(e.target.value, false)}
+                >
+                  {presets.map((p) => (
+                    <option key={p.ID} value={p.ID}>
+                      {p.Name}
+                      {p.Note ? ` — ${p.Note}` : ''}
+                    </option>
+                  ))}
+                </select>
+                {modelDirtyHint && (
+                  <p className="text-xs text-muted-foreground">字段已改（预设仍保留）</p>
+                )}
+                <label className="text-xs text-muted-foreground" htmlFor="model-openai-url">
+                  OpenAI Base URL
+                </label>
+                <input
+                  id="model-openai-url"
+                  aria-label="OpenAI Base URL"
+                  className={inputClass}
+                  placeholder="https://..."
+                  value={modelOpenAIURL}
+                  onChange={(e) => {
+                    setModelOpenAIURL(e.target.value);
+                    setModelDirtyHint(true);
+                  }}
+                />
+                <label className="text-xs text-muted-foreground" htmlFor="model-anthropic-url">
+                  Anthropic Base URL
+                </label>
+                <input
+                  id="model-anthropic-url"
+                  aria-label="Anthropic Base URL"
+                  className={inputClass}
+                  placeholder="https://..."
+                  value={modelAnthropicURL}
+                  onChange={(e) => {
+                    setModelAnthropicURL(e.target.value);
+                    setModelDirtyHint(true);
+                  }}
+                />
+                <label className="text-xs text-muted-foreground" htmlFor="model-api-key">
+                  模型 API Key
+                </label>
+                <input
+                  id="model-api-key"
+                  aria-label="模型 API Key"
+                  type="password"
+                  className={inputClass}
+                  placeholder={modelApiKeySet ? '已设置（留空不修改）' : '未设置'}
+                  value={modelApiKey}
+                  onChange={(e) => setModelApiKey(e.target.value)}
+                />
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={modelClearKey}
+                    onChange={(e) => setModelClearKey(e.target.checked)}
+                    aria-label="清除密钥"
+                  />
+                  清除密钥
+                </label>
+                {MODEL_AGENTS.map((a) => (
+                  <div key={a.id} className="grid gap-1">
+                    <label className="text-xs text-muted-foreground" htmlFor={`model-${a.id}`}>
+                      {a.label} 模型
+                    </label>
+                    <input
+                      id={`model-${a.id}`}
+                      aria-label={`${a.label} 模型`}
+                      className={inputClass}
+                      value={modelAgents[a.id] ?? ''}
+                      onChange={(e) => {
+                        setModelAgents((prev) => ({ ...prev, [a.id]: e.target.value }));
+                        setModelDirtyHint(true);
+                      }}
+                    />
+                  </div>
+                ))}
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={() => void handleSaveModel()} disabled={modelSaving}>
+                    保存模型配置
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    disabled={modelPreset === 'custom'}
+                    onClick={() => applyPreset(modelPreset, true)}
+                  >
+                    应用推荐模型
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  启动时按 agent 类型注入对应协议端点（Claude→Anthropic，Codex→OpenAI）。不改各工具自身配置文件。
+                </p>
+              </div>
+            </section>
+          )}
+
+          {section === 'tools' && (
+            <>
+              <section className="mb-5 rounded border border-border bg-card p-3.5">
+                <h2 className="mb-3 text-sm font-medium">工具检测</h2>
+                {toolsError && <p className="text-sm text-destructive">{toolsError}</p>}
+                {tools === null && !toolsError && (
+                  <p className="text-sm text-muted-foreground">加载中……</p>
+                )}
+                {tools !== null && tools.length === 0 && (
+                  <p className="text-sm text-muted-foreground">未检测到任何工具</p>
+                )}
+                {tools !== null && tools.length > 0 && (
+                  <ul className="divide-y divide-border rounded border border-border">
+                    {tools.map((t) => (
+                      <li
+                        key={t.ID}
+                        className={cn(
+                          'flex items-center gap-2 px-2.5 py-1.5 text-xs transition-colors hover:bg-muted',
+                          !t.Installed && 'opacity-50',
+                        )}
+                        title={
+                          t.Source === 'config-dir'
+                            ? '只检测到配置目录，没有可执行程序，可用性未验证'
+                            : t.BinPath
+                        }
+                      >
+                        <span className="font-medium">{t.Name}</span>
+                        {t.Source === 'config-dir' && <Badge variant="warning">未验证</Badge>}
+                        {t.Installed ? (
+                          t.Version && (
+                            <span className="text-xs text-muted-foreground">{t.Version}</span>
+                          )
+                        ) : (
+                          <span className="ml-auto text-xs text-muted-foreground">未安装</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <section className="rounded border border-border bg-card p-3.5">
+                <h2 className="mb-3 text-sm font-medium">自定义工具（providers.yaml）</h2>
+                {yamlError && <p className="text-sm text-destructive">{yamlError}</p>}
+                {yaml !== null && (
+                  <>
+                    <textarea
+                      className="min-h-[280px] w-full resize-y rounded border border-input bg-card p-2.5 font-mono text-xs leading-[1.55] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      aria-label="providers.yaml 编辑器"
+                      value={yaml}
+                      spellCheck={false}
+                      onChange={(e) => {
+                        setYaml(e.target.value);
+                        setSaved(false);
+                        setSaveError('');
+                      }}
+                    />
+                    <div className="mt-2 flex items-center gap-2.5">
+                      <Button onClick={() => void handleSave()} disabled={saving}>
+                        保存
+                      </Button>
+                      {saved && (
+                        <>
+                          <span className="text-sm text-muted-foreground">已保存，重启应用后生效</span>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={restarting}
+                            onClick={() => void handleRestart()}
+                          >
+                            {restarting ? '正在重启…' : '立即重启'}
+                          </Button>
+                        </>
+                      )}
+                      {saveError && <span className="text-sm text-destructive">{saveError}</span>}
+                    </div>
+                  </>
+                )}
+              </section>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

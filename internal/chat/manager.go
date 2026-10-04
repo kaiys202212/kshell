@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/yangk/kshell/internal/acp"
@@ -57,6 +58,7 @@ type Manager struct {
 	onUpdate     func(id string, u Update)
 	onPermission func(id string, r PermissionRequest)
 	onExit       func(id string, code int, errMsg string)
+	autoAllow    func() bool // bypass：自动选 allow 类 option，不弹窗
 
 	mu      sync.Mutex
 	byKey   map[string]*session
@@ -73,6 +75,13 @@ func NewManager(b Backend,
 		backend: b, onUpdate: onUpdate, onPermission: onPermission, onExit: onExit,
 		byKey: make(map[string]*session), byID: make(map[string]*session),
 	}
+}
+
+// SetAutoAllowPermission 设置权限自动放行回调（nil=不自动放行）。
+func (m *Manager) SetAutoAllowPermission(fn func() bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.autoAllow = fn
 }
 
 // Open 起进程并完成 initialize + session/new|load；sessionID 非空则 load。
@@ -623,6 +632,15 @@ func mergeToolCall(prev, next *ToolCall) *ToolCall {
 }
 
 func (m *Manager) awaitPermission(ctx context.Context, id, sessionID, requestID string, p acp.RequestPermissionParams) (acp.PermissionOutcome, error) {
+	if optID, ok := pickAllowOption(p.Options); ok {
+		m.mu.Lock()
+		fn := m.autoAllow
+		m.mu.Unlock()
+		if fn != nil && fn() {
+			return acp.PermissionOutcome{Outcome: "selected", OptionID: optID}, nil
+		}
+	}
+
 	ch := make(chan permissionResult, 1)
 	m.mu.Lock()
 	s := m.byID[id]
@@ -650,6 +668,25 @@ func (m *Manager) awaitPermission(ctx context.Context, id, sessionID, requestID 
 	case <-ctx.Done():
 		return acp.PermissionOutcome{Outcome: "cancelled"}, nil
 	}
+}
+
+// pickAllowOption 按 kind 优先选 allow_once → allow_always → allow（含子串匹配）。
+func pickAllowOption(opts []acp.PermissionOption) (string, bool) {
+	priority := []string{"allow_once", "allow_always", "allow"}
+	for _, kind := range priority {
+		for _, o := range opts {
+			if o.Kind == kind || o.OptionID == kind {
+				return o.OptionID, true
+			}
+		}
+	}
+	for _, o := range opts {
+		k := strings.ToLower(o.Kind + " " + o.OptionID)
+		if strings.Contains(k, "allow") && !strings.Contains(k, "deny") {
+			return o.OptionID, true
+		}
+	}
+	return "", false
 }
 
 func toToolCall(t acp.ToolCall) ToolCall {
