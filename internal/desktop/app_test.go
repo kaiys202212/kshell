@@ -2,7 +2,9 @@ package desktop
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,6 +53,7 @@ func setTools(t *testing.T, app *App, tools []discovery.Tool) {
 	t.Helper()
 	app.mu.Lock()
 	app.tools = tools
+	app.toolsReady = true
 	app.mu.Unlock()
 }
 
@@ -92,7 +95,7 @@ func TestScanSessionsDelegatesToDiscovery(t *testing.T) {
 	if len(app.result.Sessions) != 1 || len(app.result.Workspaces) != 1 {
 		t.Fatalf("扫描后 result 未落位: %+v", app.result)
 	}
-	if len(*events) != 1 || (*events)[0] != "scan:done" {
+	if len(*events) < 1 || (*events)[len(*events)-1] != "scan:done" {
 		t.Fatalf("扫描完成应推送 scan:done, got %v", *events)
 	}
 	if got := app.GetWorkspaces(); len(got) != 1 || got[0].Path != `D:\ws-a` {
@@ -447,7 +450,7 @@ func TestScanFailureStillEmits(t *testing.T) {
 	app.mu.Unlock()
 	app.runScan()
 
-	if len(*events) != 2 || (*events)[0] != "scan:done" || (*events)[1] != "scan:done" {
+	if countNamed(*events, "scan:done") != 2 {
 		t.Fatalf("每次扫描结束都要推送 scan:done 让前端复位, got %v", *events)
 	}
 	if app.result == nil || len(app.result.Sessions) != 1 {
@@ -511,13 +514,13 @@ func TestReapOnceEmitsWindowClosed(t *testing.T) {
 	if err := app.ResumeSession("s1"); err != nil {
 		t.Fatalf("ResumeSession error: %v", err)
 	}
-	if n := len(*events); n != 1 || (*events)[0] != "scan:done" {
-		t.Fatalf("前置：仅应有 scan:done 事件, got %v", *events)
+	if lastNamed(*events) != "scan:done" {
+		t.Fatalf("前置：Resume 前最后事件应是 scan:done, got %v", *events)
 	}
 
 	app.reapOnce()
 
-	if n := len(*events); n != 2 || (*events)[1] != "window:closed" {
+	if lastNamed(*events) != "window:closed" {
 		t.Fatalf("Reap 发现死亡窗口后应推送 window:closed, got %v", *events)
 	}
 	if wm.Alive("kshell · 修复上传白名单") {
@@ -529,6 +532,23 @@ func TestReapOnceEmitsWindowClosed(t *testing.T) {
 func TestReapOnceNilWindowsNoPanic(t *testing.T) {
 	app := NewApp()
 	app.reapOnce() // 不应 panic
+}
+
+func lastNamed(events []string) string {
+	if len(events) == 0 {
+		return ""
+	}
+	return events[len(events)-1]
+}
+
+func countNamed(events []string, name string) int {
+	n := 0
+	for _, e := range events {
+		if e == name {
+			n++
+		}
+	}
+	return n
 }
 
 func TestPsStatementQuotesArgs(t *testing.T) {
@@ -545,4 +565,90 @@ func TestPsStatementInjectsEnv(t *testing.T) {
 	if got != want {
 		t.Fatalf("psStatement = %q, want %q", got, want)
 	}
+}
+
+type probeProvider struct{ binName string }
+
+func (p probeProvider) ID() string          { return "probe" }
+func (p probeProvider) DisplayName() string { return "Probe" }
+func (p probeProvider) DetectSpec(string) providers.DetectSpec {
+	return providers.DetectSpec{BinName: p.binName}
+}
+func (probeProvider) SessionRoots(string) []string { return nil }
+func (probeProvider) SessionFilePattern() string   { return "*.jsonl" }
+func (probeProvider) ParseSession(string, []byte) (*providers.Session, error) {
+	return nil, errors.New("not implemented")
+}
+func (probeProvider) NewSessionCmd(string, string) providers.Launch { return providers.Launch{} }
+func (probeProvider) ResumeCmd(providers.Session, string) providers.Launch {
+	return providers.Launch{}
+}
+
+func TestGetToolsPublishedBeforeScanFinishes(t *testing.T) {
+	dir := t.TempDir()
+	name := "kshell-probe-cli"
+	if runtime.GOOS == "windows" {
+		if err := os.WriteFile(filepath.Join(dir, name+".cmd"), []byte("@echo off\r\necho probe 1\r\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\necho probe 1\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+
+	started := make(chan struct{})
+	block := make(chan struct{})
+	var startOnce sync.Once
+	var mu sync.Mutex
+	var events []string
+	app := NewAppWith(Options{
+		Home:      t.TempDir(),
+		CachePath: filepath.Join(t.TempDir(), "index.json"),
+		Providers: []providers.Provider{probeProvider{binName: name}},
+		Scan: func(string, []providers.Provider, string, discovery.ScanOptions) (*discovery.Result, error) {
+			startOnce.Do(func() { close(started) })
+			<-block
+			return &discovery.Result{}, nil
+		},
+		Windows: NewWindowManager(&stubLauncher{}, nil),
+		Emit: func(name string, _ ...any) {
+			mu.Lock()
+			events = append(events, name)
+			mu.Unlock()
+		},
+	})
+
+	go app.runScan()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Scan 未开始")
+	}
+
+	got := app.GetTools()
+	found := false
+	for _, tool := range got {
+		if tool.ID == "probe" && tool.Installed && tool.BinPath != "" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("会话扫描未结束时就应能读到已探测的 CLI, got %+v", got)
+	}
+	mu.Lock()
+	sawTools := false
+	for _, e := range events {
+		if e == "tools:updated" {
+			sawTools = true
+			break
+		}
+	}
+	mu.Unlock()
+	if !sawTools {
+		t.Fatalf("DetectAll 结束后应推 tools:updated, got %v", events)
+	}
+	close(block)
 }

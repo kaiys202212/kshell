@@ -18,12 +18,7 @@ var errNoProvidersPath = errors.New("providers.yaml 路径不可用（未初始�
 // 首轮扫描尚未完成时等一轮（上限 scanReadyTimeout）：前端工作区页签只在挂载时取一次
 // 工具，若此刻返回空列表，「选择 agent」下拉会一直禁用（表现为“没有可选项”）。
 func (a *App) GetTools() []discovery.Tool {
-	a.mu.Lock()
-	empty := len(a.tools) == 0
-	a.mu.Unlock()
-	if empty {
-		a.ensureScanReady()
-	}
+	a.ensureToolsReady()
 
 	a.mu.Lock()
 	defer a.mu.Unlock()

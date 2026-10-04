@@ -53,6 +53,13 @@ func attachTestApp(t *testing.T, acpDet *providers.ACPDetection) (*App, *eventLo
 	return app, events, setSessions
 }
 
+func pinClaudeBin(t *testing.T, app *App, acpDet *providers.ACPDetection) {
+	t.Helper()
+	setTools(t, app, []discovery.Tool{{
+		ID: "claude", Name: "Claude Code", BinPath: "claude", Installed: true, ACP: acpDet,
+	}})
+}
+
 // lastScanDone 取最后一条 scan:done 的负载。
 func lastScanDone(t *testing.T, events *eventLog) map[string]any {
 	t.Helper()
@@ -71,6 +78,7 @@ func TestRunScanAttachesTerminal(t *testing.T) {
 		{ID: "s1", ToolID: "claude", Workspace: `D:\ws-a`, Title: "旧会话", UpdatedAt: time.Now().Add(-time.Hour)},
 	})
 	app.runScan()
+	pinClaudeBin(t, app, nil)
 
 	// 新建终端：KindNew、SessionID 空、占位标题
 	term, err := app.OpenWorkspaceTerminal(`D:\ws-a`, "claude", 80, 24)
@@ -179,6 +187,7 @@ func TestRunScanSyncsBoundSessionTitle(t *testing.T) {
 		{ID: "s1", ToolID: "claude", Workspace: `D:\ws-a`, Title: "旧会话", UpdatedAt: time.Now().Add(-time.Hour)},
 	})
 	app.runScan()
+	pinClaudeBin(t, app, nil)
 
 	term, err := app.OpenWorkspaceTerminal(`D:\ws-a`, "claude", 80, 24)
 	if err != nil {
@@ -229,6 +238,7 @@ func TestRunScanDoesNotAttachExistingListTitle(t *testing.T) {
 		{ID: "s1", ToolID: "claude", Workspace: `D:\ws-a`, Title: "左侧旧对话", UpdatedAt: old, CreatedAt: old, Messages: 20},
 	})
 	app.runScan()
+	pinClaudeBin(t, app, nil)
 
 	term, err := app.OpenWorkspaceTerminal(`D:\ws-a`, "claude", 80, 24)
 	if err != nil {
@@ -261,6 +271,7 @@ func TestWriteEnterUpdatesTitleImmediately(t *testing.T) {
 		UpdatedAt: time.Now().Add(-time.Hour),
 	}})
 	app.runScan()
+	pinClaudeBin(t, app, nil)
 	term, err := app.OpenWorkspaceTerminal(`D:\ws-a`, "claude", 80, 24)
 	if err != nil {
 		t.Fatal(err)

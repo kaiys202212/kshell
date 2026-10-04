@@ -113,6 +113,9 @@ type App struct {
 	// keepInstallTools：安装/卸载刚用 DetectAll 写过 a.tools。进行中的 runScan
 	// 开头拿到的是旧快照，结束时不得覆盖这份更新结果。
 	keepInstallTools bool
+	// toolsReady：本进程已完成过一次 DetectAll（快照灌入不算）。GetTools 据此
+	// 等待，避免会话扫描尚未结束时一直拿着「BinPath 为空」的旧快照。
+	toolsReady bool
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。
@@ -544,6 +547,7 @@ func (a *App) runScan() {
 		return
 	}
 	tools := discovery.DetectAllCached(o.Home, o.Providers, o.ToolsCachePath)
+	a.publishDetectedTools(tools)
 	res, err := o.Scan(o.Home, o.Providers, o.CachePath, discovery.ScanOptions{
 		Roots:    o.Config.ScanRoots,
 		MaxDepth: o.Config.MaxDepth,
@@ -572,8 +576,6 @@ func (a *App) runScan() {
 		// 安装/卸载在本轮扫描开始之后写过 DetectAll 结果。开头的 DetectAllCached
 		// 是旧快照，覆盖回去会让设置页在 scan:done 后仍看到安装前的按钮。
 		a.keepInstallTools = false
-	} else {
-		a.tools = tools
 	}
 	if err == nil {
 		a.result = res
@@ -615,6 +617,18 @@ func (a *App) runScan() {
 	if followUp {
 		go a.runScan()
 	}
+}
+
+// publishDetectedTools 在会话扫描之前把 DetectAll 结果交给 GetTools。
+// keepInstallTools 时保留安装/卸载刚写的表，只标记本轮探测已完成。
+func (a *App) publishDetectedTools(tools []discovery.Tool) {
+	a.mu.Lock()
+	if !a.keepInstallTools {
+		a.tools = tools
+	}
+	a.toolsReady = true
+	a.mu.Unlock()
+	a.Emit("tools:updated")
 }
 
 // finishScan 结束本轮扫描标志。keepBusyOnPending 为 true 且有排队请求时保持 scanning，
@@ -689,6 +703,32 @@ func (a *App) ensureScanReady() {
 	for {
 		a.mu.Lock()
 		if (a.result != nil && a.scanned) || !a.opts.ready() {
+			a.mu.Unlock()
+			return
+		}
+		started := false
+		if !a.scanning {
+			a.scanning = true
+			started = true
+		}
+		a.mu.Unlock()
+		if started {
+			go a.runScan()
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// ensureToolsReady 等待本进程完成过一次 DetectAll。会话扫描可能仍在跑：
+// 工具表与会话列表解耦，避免新建会话下拉被长扫描挡住。
+func (a *App) ensureToolsReady() {
+	deadline := time.Now().Add(scanReadyTimeout)
+	for {
+		a.mu.Lock()
+		if a.toolsReady || !a.opts.ready() {
 			a.mu.Unlock()
 			return
 		}
