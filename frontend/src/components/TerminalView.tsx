@@ -13,6 +13,7 @@ import { terminalTheme } from '../lib/appearance';
 import { encodeTerminalInput } from '../lib/base64';
 import { useAppStore } from '../state/store';
 import { registerTerminal, unregisterTerminal } from '../lib/terminalRegistry';
+import { computeImeAnchor } from '../lib/imeAnchor';
 
 interface Props {
   term: TerminalInfo; // store 里的镜像（Status/ExitCode 决定退出提示）
@@ -74,6 +75,29 @@ export default function TerminalView({ term, active }: Props) {
       fit: () => fitAddon.fit(),
     });
 
+    // IME 锚点修复（对应 xtermjs#5734/#5759，上游修复要 7.0 才发布）：
+    // xterm 把隐藏 textarea 锚在 buffer 光标处，Windows IME 候选窗跟随其屏幕位置；
+    // agent TUI 等待输入时常把光标 park 在行尾，候选窗贴屏幕右缘，会把窗口挤动。
+    // compositionstart 时把 textarea 拉回视口内（横向钳制到 60% 宽度处）。
+    const textarea = instance.textarea;
+    const onCompositionStart = () => {
+      const screen = host.querySelector<HTMLElement>('.xterm-screen');
+      const buf = instance.buffer.active;
+      if (!textarea || !screen) return;
+      const anchor = computeImeAnchor({
+        cols: instance.cols,
+        rows: instance.rows,
+        cursorX: buf.cursorX,
+        cursorY: buf.cursorY,
+        viewportWidth: screen.clientWidth,
+        viewportHeight: screen.clientHeight,
+      });
+      if (!anchor) return;
+      textarea.style.left = `${anchor.left}px`;
+      textarea.style.top = `${anchor.top}px`;
+    };
+    textarea?.addEventListener('compositionstart', onCompositionStart);
+
     // 容器尺寸变化 → 下一帧再 fit：同一帧里可能还有布局变动（三栏拖动、页签切换）。
     // 非激活页签（被 hidden）时宿主尺寸为 0，此时 fit 会算出 2x1 的退化尺寸，直接跳过。
     const observer =
@@ -89,6 +113,7 @@ export default function TerminalView({ term, active }: Props) {
 
     return () => {
       observer?.disconnect();
+      textarea?.removeEventListener('compositionstart', onCompositionStart);
       dataSub.dispose();
       resizeSub.dispose();
       unregisterTerminal(termId);

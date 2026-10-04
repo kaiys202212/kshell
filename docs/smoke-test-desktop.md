@@ -279,7 +279,6 @@ Go 侧 `NewSessionWithTool` / `ResumeSession` / `FocusSession` 绑定与 `window
   - 步骤：开内嵌终端，切换深浅色主题
   - 预期：终端背景/前景与界面卡片/正文一致（深色下是青黑底，不再是旧的 #0d1117）
 ## 2026-10-04 新建会话回填（页签标题 + 恢复/切换）设计见 `docs/plans/2026-10-04-session-attach-design.md`
-
 - [ ] **新建会话后页签标题更新为真实会话名**
   - 步骤：选 codebuddy（或任一终端回退工具）在工作区新建会话 → 发一轮消息让它生成会话 → 等 3s 重扫完成
   - 预期：中心区页签从占位「工作区 · 工具名」变为真实会话标题；左侧列表同会话行按钮变「切换」并高亮
@@ -292,3 +291,14 @@ Go 侧 `NewSessionWithTool` / `ResumeSession` / `FocusSession` 绑定与 `window
 - [ ] **已退出的终端不干扰判断**
   - 步骤：关闭运行中的终端页签 → 看左侧列表
   - 预期：该会话行按钮回到「恢复」，高亮消失
+
+## 2026-10-04 优化轮：默认最大化 / IME 锚定 / Cursor provider（设计见 `docs/plans/2026-10-04-ime-maximize-cursor-design.md`）
+- [ ] **默认最大化启动**
+  - 步骤：关闭 kshell 桌面版后重新启动
+  - 预期：窗口直接以最大化状态打开；还原后可正常拖动、再次最大化
+- [ ] **终端打中文候选窗不再贴屏幕右缘**
+  - 步骤：内嵌终端跑 agent TUI（如 claude code），等光标 park 在行尾后用中文输入法打字
+  - 预期：候选浮窗出现在终端视口内（约 60% 宽度处），不再贴屏幕右缘、不再把窗口挤动
+- [ ] **Cursor 会话发现与恢复**
+  - 步骤：装过 cursor-agent 的机器上打开 kshell → 首页应出现 Cursor 卡片 → 进入有 cursor 会话的工作区看会话列表 → 点「恢复」
+  - 预期：会话标题为首条用户消息（无 <user_query> 包装）；恢复启动 cursor-agent 并带回该会话；时间显示为会话文件 mtime

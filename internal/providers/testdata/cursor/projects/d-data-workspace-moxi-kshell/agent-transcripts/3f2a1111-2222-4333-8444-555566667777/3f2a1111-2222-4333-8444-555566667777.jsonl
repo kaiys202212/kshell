@@ -1,0 +1,4 @@
+{"role":"user","message":{"content":[{"type":"text","text":"<user_query>\n修复登录页的空指针异常\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"我先看一下相关代码。"},{"type":"tool_use","name":"Read","input":{"path":"main.go"}}]}}
+{"role":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"path":"main.go","old_string":"a","new_string":"b"}}]}}
+{"role":"user","message":{"content":[{"type":"text","text":"<user_query>\n继续\n</user_query>"}]}}
