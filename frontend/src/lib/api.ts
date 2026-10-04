@@ -334,6 +334,10 @@ interface AppBindings {
   GetToolInstallJob(): Promise<ToolInstallJobView>;
   LoadProvidersYAML(): Promise<string>;
   SaveProvidersYAML(content: string): Promise<void>;
+  ParseProvidersYAML(content: string): Promise<import('./providersForm').CustomProviderSpec[]>;
+  FormatProvidersYAML(specs: import('./providersForm').CustomProviderSpec[]): Promise<string>;
+  PickDirectory(title: string): Promise<string>;
+  PickFile(title: string): Promise<string>;
   RestartApp(): Promise<void>;
   GetAppVersion(): Promise<string>;
   CheckForUpdate(): Promise<UpdateInfo>;
@@ -701,12 +705,40 @@ export async function loadProvidersYAML(): Promise<string> {
   return a.LoadProvidersYAML();
 }
 
-// SaveProvidersYAML 保存自定义工具定义（Go 侧先校验 YAML 再原子写回）。
-// 注意：保存后不热生效，需重启应用。错误（含 YAML 解析失败）向上抛。
+// SaveProvidersYAML 保存自定义工具定义（Go 侧先校验 YAML 再原子写回并热重载）。
 export async function saveProvidersYAML(content: string): Promise<void> {
   const a = app();
   if (!a) return;
   await a.SaveProvidersYAML(content);
+}
+
+export async function parseProvidersYAML(
+  content: string,
+): Promise<import('./providersForm').CustomProviderSpec[]> {
+  const a = app();
+  if (!a) return [];
+  const list = await a.ParseProvidersYAML(content);
+  return list ?? [];
+}
+
+export async function formatProvidersYAML(
+  specs: import('./providersForm').CustomProviderSpec[],
+): Promise<string> {
+  const a = app();
+  if (!a) return 'providers: []\n';
+  return a.FormatProvidersYAML(specs);
+}
+
+export async function pickDirectory(title: string): Promise<string> {
+  const a = app();
+  if (!a) return '';
+  return a.PickDirectory(title);
+}
+
+export async function pickFile(title: string): Promise<string> {
+  const a = app();
+  if (!a) return '';
+  return a.PickFile(title);
 }
 
 // RestartApp 重启应用（Go 侧先启动新实例再走托盘退出路径）。错误向上抛。

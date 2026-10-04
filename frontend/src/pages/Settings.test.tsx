@@ -10,6 +10,10 @@ const mocks = vi.hoisted(() => ({
   getTools: vi.fn(),
   loadProvidersYAML: vi.fn(),
   saveProvidersYAML: vi.fn(),
+  parseProvidersYAML: vi.fn(),
+  formatProvidersYAML: vi.fn(),
+  pickDirectory: vi.fn(),
+  pickFile: vi.fn(),
   restartApp: vi.fn(),
   getAppearance: vi.fn(),
   setAppearanceMode: vi.fn(),
@@ -84,6 +88,14 @@ const recipes: Record<
     CanPurge: boolean;
   }
 > = {
+  codebuddy: {
+    ToolID: 'codebuddy',
+    Name: 'CodeBuddy',
+    InstallCmd: 'npm install -g @tencent-ai/codebuddy-code',
+    UninstallCmd: 'npm uninstall -g @tencent-ai/codebuddy-code',
+    PurgeDirs: ['~/.codebuddy'],
+    CanPurge: true,
+  },
   gemini: {
     ToolID: 'gemini',
     Name: 'Gemini',
@@ -129,6 +141,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getTools.mockResolvedValue(tools);
   mocks.loadProvidersYAML.mockResolvedValue('providers: []\n');
+  mocks.parseProvidersYAML.mockResolvedValue([]);
+  mocks.formatProvidersYAML.mockImplementation(async (specs: { ID?: string; Name?: string }[]) => {
+    if (!specs?.length) return 'providers: []\n';
+    return (
+      'providers:\n' + specs.map((s) => `  - id: ${s.ID ?? ''}\n    name: ${s.Name ?? ''}\n`).join('')
+    );
+  });
+  mocks.pickDirectory.mockResolvedValue('');
+  mocks.pickFile.mockResolvedValue('');
   mocks.saveProvidersYAML.mockResolvedValue(undefined);
   mocks.getAppearance.mockResolvedValue({ mode: 'dark', resolved: 'dark', fontSize: 13 });
   mocks.setAppearanceMode.mockResolvedValue(undefined);
@@ -268,10 +289,11 @@ describe('Settings', () => {
     });
   });
 
-  it('providers.yaml 回填编辑器，编辑后保存调用 SaveProvidersYAML 并提示重启生效', async () => {
+  it('providers.yaml 源码编辑器可保存，提示已重新加载', async () => {
     render(<Settings />);
     goTools();
 
+    fireEvent.click(await screen.findByRole('button', { name: '源码' }));
     const editor = await screen.findByLabelText('providers.yaml 编辑器');
     expect(editor).toHaveValue('providers: []\n');
 
@@ -281,7 +303,8 @@ describe('Settings', () => {
     });
 
     expect(mocks.saveProvidersYAML).toHaveBeenCalledWith('providers:\n  - name: foo\n');
-    expect(await screen.findByText(/已保存.*重启/)).toBeInTheDocument();
+    expect(await screen.findByText(/已保存.*重新加载/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '立即重启' })).not.toBeInTheDocument();
   });
 
   it('保存失败（YAML 解析失败等）时显示错误，不显示成功提示', async () => {
@@ -289,6 +312,7 @@ describe('Settings', () => {
     render(<Settings />);
     goTools();
 
+    fireEvent.click(await screen.findByRole('button', { name: '源码' }));
     const editor = await screen.findByLabelText('providers.yaml 编辑器');
     fireEvent.change(editor, { target: { value: 'bad: [' } });
     await act(async () => {
@@ -309,34 +333,25 @@ describe('Settings', () => {
     expect(await screen.findByText(/读取失败/)).toBeInTheDocument();
   });
 
-  it('保存成功后可「立即重启」：调用 RestartApp；失败恢复按钮并以 error 语气提示', async () => {
-    useAppStore.setState({ toasts: [] });
-    mocks.restartApp.mockRejectedValueOnce(new Error('启动失败'));
+  it('表单添加工具后保存走 format，选择文件写入 command', async () => {
+    mocks.pickFile.mockResolvedValueOnce('C:\\bin\\foo.exe');
     render(<Settings />);
     goTools();
 
-    const editor = await screen.findByLabelText('providers.yaml 编辑器');
-    fireEvent.change(editor, { target: { value: 'providers: []\n' } });
+    fireEvent.click(await screen.findByRole('button', { name: '添加工具' }));
+    fireEvent.change(await screen.findByLabelText('工具 ID'), { target: { value: 'foo' } });
+    fireEvent.change(screen.getByLabelText('工具显示名'), { target: { value: 'Foo' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '选择文件' }));
+    });
+    expect(await screen.findByLabelText('检测命令')).toHaveValue('C:\\bin\\foo.exe');
+
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '保存' }));
     });
-    expect(await screen.findByText('立即重启')).toBeInTheDocument();
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '立即重启' }));
-    });
-    expect(mocks.restartApp).toHaveBeenCalledTimes(1);
-    await waitFor(() => {
-      expect(
-        useAppStore.getState().toasts.some((t) => t.tone === 'error' && t.title === '重启失败'),
-      ).toBe(true);
-    });
-    expect(screen.getByRole('button', { name: '立即重启' })).toBeEnabled();
-
-    mocks.restartApp.mockResolvedValueOnce(undefined);
-    fireEvent.click(screen.getByRole('button', { name: '立即重启' }));
-    expect(await screen.findByText('正在重启…')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '正在重启…' })).toBeDisabled();
+    expect(mocks.formatProvidersYAML).toHaveBeenCalled();
+    expect(mocks.saveProvidersYAML).toHaveBeenCalled();
+    expect(await screen.findByText(/已保存.*重新加载/)).toBeInTheDocument();
   });
 
   it('外观选择调用 SetAppearanceMode', async () => {
@@ -501,8 +516,7 @@ describe('Settings', () => {
     expect(within(gemini).getByRole('button', { name: '安装' })).toBeInTheDocument();
 
     const codebuddy = screen.getByText('CodeBuddy').closest('li')!;
-    expect(within(codebuddy).queryByRole('button', { name: '安装' })).not.toBeInTheDocument();
-    expect(within(codebuddy).queryByRole('button', { name: '卸载' })).not.toBeInTheDocument();
+    expect(within(codebuddy).getByRole('button', { name: '卸载' })).toBeInTheDocument();
 
     const mytool = screen.getByText('MyTool').closest('li')!;
     expect(within(mytool).queryByRole('button', { name: '安装' })).not.toBeInTheDocument();
