@@ -114,14 +114,48 @@ func TestCheckPrefersFirstSuccessfulProxy(t *testing.T) {
 		t.Fatalf("Latest = %q", got.Latest)
 	}
 	if got.Source != DefaultSources()[1].Name {
-		t.Fatalf("Source = %q, want 第二个代理", got.Source)
+		t.Fatalf("Source = %q, want GitCode 失败后的下一源", got.Source)
 	}
 	if got.ZipURL == "" {
 		t.Fatal("ZipURL 为空")
 	}
-	wantFirst := DefaultSources()[0].Wrap(LatestAPIURL)
-	if seen[0] != wantFirst {
-		t.Fatalf("优先请求 = %q, want %q", seen[0], wantFirst)
+	if seen[0] != GitCodeLatestURL() {
+		t.Fatalf("优先请求 = %q, want GitCode latest %q", seen[0], GitCodeLatestURL())
+	}
+}
+
+func TestCheckUsesGitCodeAttachWhenZipAssetMissing(t *testing.T) {
+	pinCheckWindowsPackage(t)
+	body := `{
+  "tag_name": "v0.2.0",
+  "body": "国内",
+  "assets": [
+    {"name": "kshell-v0.2.0.zip", "browser_download_url": "https://gitcode.com/x/-/archive/v0.2.0/x.zip"}
+  ]
+}`
+	c := Client{
+		Current: "v0.1.0",
+		Sources: DefaultSources(),
+		Get: func(_ context.Context, url string) ([]byte, error) {
+			if url != GitCodeLatestURL() {
+				t.Fatalf("应先打 GitCode，got %s", url)
+			}
+			return []byte(body), nil
+		},
+	}
+	got, err := c.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantZip := GitCodeAttachURL("v0.2.0", ZipName)
+	if got.ZipURL != wantZip {
+		t.Fatalf("ZipURL = %q, want attach %q", got.ZipURL, wantZip)
+	}
+	if got.SumsURL != GitCodeAttachURL("v0.2.0", SumsName) {
+		t.Fatalf("SumsURL = %q", got.SumsURL)
+	}
+	if got.Source != "gitcode" {
+		t.Fatalf("Source = %q", got.Source)
 	}
 }
 

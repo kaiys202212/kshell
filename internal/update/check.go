@@ -14,13 +14,29 @@ import (
 )
 
 const (
-	Owner        = "kaiys202212"
-	Repo         = "kshell"
-	ZipName      = "kshell-desktop-windows-amd64.zip"
-	SumsName     = "SHA256SUMS"
-	LatestAPIURL = "https://api.github.com/repos/" + Owner + "/" + Repo + "/releases/latest"
-	userAgent    = "kshell"
+	Owner         = "kaiys202212"
+	Repo          = "kshell"
+	GitCodeOwner  = Owner
+	GitCodeRepo   = Repo
+	ZipName       = "kshell-desktop-windows-amd64.zip"
+	SumsName      = "SHA256SUMS"
+	LatestAPIURL  = "https://api.github.com/repos/" + Owner + "/" + Repo + "/releases/latest"
+	userAgent     = "kshell"
+	maxGetBytes   = 64 << 20
+	checkTimeout  = 12 * time.Second
+	applyTimeout  = 3 * time.Minute
 )
+
+// GitCodeLatestURL 是国内主源的 latest API。
+func GitCodeLatestURL() string {
+	return "https://api.gitcode.com/api/v5/repos/" + GitCodeOwner + "/" + GitCodeRepo + "/releases/latest"
+}
+
+// GitCodeAttachURL 公开附件下载（无需登录的公开仓库）。
+func GitCodeAttachURL(tag, fileName string) string {
+	return "https://api.gitcode.com/api/v5/repos/" + GitCodeOwner + "/" + GitCodeRepo +
+		"/releases/" + tag + "/attach_files/" + fileName + "/download"
+}
 
 // 测试可改 GOOS/GOARCH，生产用 runtime。
 var (
@@ -50,10 +66,12 @@ func currentBinaryName() string {
 	return PackageBinaryName(currentGOOS)
 }
 
-// Source 是 GitHub 访问入口：Prefix 拼在原始 URL 前面；空前缀即官方源。
+// Source 是更新入口。LatestURL 非空则检查走该 API；Attach 表示 zip 缺失时填 GitCode 附件链。
 type Source struct {
-	Name   string
-	Prefix string
+	Name      string
+	Prefix    string
+	LatestURL string
+	Attach    bool
 }
 
 // Wrap 把官方 URL 转成经该源访问的地址。
@@ -65,9 +83,17 @@ func (s Source) Wrap(rawURL string) string {
 	return p + "/" + rawURL
 }
 
-// DefaultSources 国内代理优先，官方兜底。
+func (s Source) checkURL() string {
+	if s.LatestURL != "" {
+		return s.LatestURL
+	}
+	return s.Wrap(LatestAPIURL)
+}
+
+// DefaultSources GitCode 国内主源，其后公共加速，官方最后。
 func DefaultSources() []Source {
 	return []Source{
+		{Name: "gitcode", LatestURL: GitCodeLatestURL(), Attach: true},
 		{Name: "ghfast", Prefix: "https://ghfast.top/"},
 		{Name: "gh-proxy", Prefix: "https://gh-proxy.com/"},
 		{Name: "ghproxy.net", Prefix: "https://ghproxy.net/"},
@@ -158,7 +184,7 @@ func (c Client) Check(ctx context.Context) (CheckResult, error) {
 	}
 	var last error
 	for _, s := range src {
-		u := s.Wrap(LatestAPIURL)
+		u := s.checkURL()
 		raw, err := get(ctx, u)
 		if err != nil {
 			last = err
@@ -179,6 +205,12 @@ func (c Client) Check(ctx context.Context) (CheckResult, error) {
 				out.ZipURL = a.BrowserDownloadURL
 			case SumsName:
 				out.SumsURL = a.BrowserDownloadURL
+			}
+		}
+		if out.ZipURL == "" && s.Attach && rel.TagName != "" {
+			out.ZipURL = GitCodeAttachURL(rel.TagName, wantZip)
+			if out.SumsURL == "" {
+				out.SumsURL = GitCodeAttachURL(rel.TagName, SumsName)
 			}
 		}
 		if out.ZipURL == "" {
@@ -207,8 +239,8 @@ func (c Client) getThroughSources(ctx context.Context, official string) ([]byte,
 		get = c.httpGet
 	}
 	var last error
-	for _, s := range src {
-		b, err := get(ctx, s.Wrap(official))
+	for _, u := range downloadCandidates(official, src) {
+		b, err := get(ctx, u)
 		if err != nil {
 			last = err
 			continue
@@ -221,23 +253,47 @@ func (c Client) getThroughSources(ctx context.Context, official string) ([]byte,
 	return nil, last
 }
 
+func downloadCandidates(official string, src []Source) []string {
+	if !strings.Contains(official, "github.com") {
+		return []string{official}
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(u string) {
+		if u == "" || seen[u] {
+			return
+		}
+		seen[u] = true
+		out = append(out, u)
+	}
+	for _, s := range src {
+		if s.Prefix != "" {
+			add(s.Wrap(official))
+		}
+	}
+	add(official)
+	return out
+}
+
 func (c Client) httpGet(ctx context.Context, url string) ([]byte, error) {
 	cli := c.HTTP
 	if cli == nil {
-		cli = &http.Client{Timeout: 8 * time.Second}
+		cli = &http.Client{Timeout: checkTimeout}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "application/vnd.github+json")
+	if strings.Contains(url, "api.github.com") {
+		req.Header.Set("Accept", "application/vnd.github+json")
+	}
 	resp, err := cli.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxGetBytes))
 	if err != nil {
 		return nil, err
 	}

@@ -141,6 +141,42 @@ func TestApplyDownloadFallsBackToLaterProxy(t *testing.T) {
 	}
 }
 
+func TestApplyDownloadsGitCodeURLDirectly(t *testing.T) {
+	pinWindowsPackage(t)
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "kshell-desktop.exe")
+	if err := os.WriteFile(dest, []byte("OLD"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	zipBytes := mustZip(t, map[string][]byte{"kshell-desktop.exe": []byte("NEWBIN")})
+	sum := sha256.Sum256(zipBytes)
+	hexSum := hex.EncodeToString(sum[:])
+	sums := []byte(hexSum + "  " + ZipName + "\n")
+	gcZip := GitCodeAttachURL("v0.2.0", ZipName)
+	gcSums := GitCodeAttachURL("v0.2.0", SumsName)
+	err := Apply(context.Background(), ApplyOptions{
+		ZipURL:  gcZip,
+		SumsURL: gcSums,
+		DestExe: dest,
+		Get: func(_ context.Context, url string) ([]byte, error) {
+			if strings.Contains(url, "ghfast") || strings.Contains(url, "github.com") {
+				t.Fatalf("GitCode 直链不应再套代理: %s", url)
+			}
+			if url == gcSums {
+				return sums, nil
+			}
+			if url == gcZip {
+				return zipBytes, nil
+			}
+			return nil, errors.New(url)
+		},
+		SpawnReplace: func(string, string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestApplyRejectsBadHash(t *testing.T) {
 	pinWindowsPackage(t)
 	dir := t.TempDir()

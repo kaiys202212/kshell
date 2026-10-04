@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +29,7 @@ func Apply(ctx context.Context, opts ApplyOptions) error {
 	}
 	zipName := CurrentPackageZip()
 	binName := currentBinaryName()
-	cli := Client{Get: opts.Get}
+	cli := Client{Get: opts.Get, HTTP: &http.Client{Timeout: applyTimeout}}
 	sumsBody, err := cli.getThroughSources(ctx, opts.SumsURL)
 	if err != nil {
 		return fmt.Errorf("下载校验文件: %w", err)
