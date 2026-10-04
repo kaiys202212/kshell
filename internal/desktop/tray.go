@@ -10,6 +10,15 @@ import (
 	"github.com/energye/systray"
 )
 
+// trayDispatch 把托盘 UI 回调丢到新 goroutine，避免在 systray wndProc /
+// TrackPopupMenu 嵌套泵里同步调用 Wails/Quit 导致消息循环僵死。
+var trayDispatch = func(fn func()) {
+	if fn == nil {
+		return
+	}
+	go fn()
+}
+
 // runTray 启动托盘消息循环（阻塞，调用方需放 goroutine）：
 // 菜单「显示主窗口」触发 onShow，「退出」触发 onQuit。
 func runTray(icon []byte, onShow, onQuit func()) {
@@ -19,27 +28,18 @@ func runTray(icon []byte, onShow, onQuit func()) {
 		systray.SetTooltip("kshell")
 		// 左键单击图标恢复主窗口（WM_LBUTTONUP；缺此回调则左键无任何反应）
 		systray.SetOnClick(func(systray.IMenu) {
-			if onShow != nil {
-				onShow()
-			}
+			trayDispatch(onShow)
 		})
 		mShow := systray.AddMenuItem("显示主窗口", "显示 kshell 主窗口")
 		systray.AddSeparator()
 		mQuit := systray.AddMenuItem("退出", "退出 kshell")
-		mShow.Click(func() {
-			if onShow != nil {
-				onShow()
-			}
-		})
-		mQuit.Click(func() {
-			if onQuit != nil {
-				onQuit()
-			}
-		})
+		mShow.Click(func() { trayDispatch(onShow) })
+		mQuit.Click(func() { trayDispatch(onQuit) })
 	}, nil)
 }
 
 // quitTrayLoop 请求托盘消息循环退出（通知区图标随循环停止被移除）。
-func quitTrayLoop() {
+// 包级变量便于测试注入；systray.Quit 内部 sync.Once，重复调用安全。
+var quitTrayLoop = func() {
 	systray.Quit()
 }
