@@ -12,6 +12,7 @@ import {
   listChats,
   listTerminals,
   onScanDone,
+  onToolsUpdated,
   openSession,
   openShellTerminal,
   openSSHTerminal,
@@ -153,10 +154,17 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         .then((list) => useAppStore.getState().setChats(list))
         .catch(() => {});
     };
-    return onScanDone(() => {
+    const offScan = onScanDone(() => {
       refresh();
       refreshMirrors();
     });
+    const offTools = onToolsUpdated(() => {
+      refresh();
+    });
+    return () => {
+      offScan();
+      offTools();
+    };
   }, []);
 
   useEffect(() => {

@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   restoreSession: vi.fn(),
   archiveSession: vi.fn(),
   onScanDone: vi.fn(),
+  onToolsUpdated: vi.fn(),
   openSession: vi.fn(),
   openShellTerminal: vi.fn(),
   openSSHTerminal: vi.fn(),
@@ -92,6 +93,7 @@ beforeEach(() => {
   mocks.restoreSession.mockResolvedValue(undefined);
   mocks.archiveSession.mockResolvedValue(undefined);
   mocks.onScanDone.mockImplementation(() => () => {});
+  mocks.onToolsUpdated.mockImplementation(() => () => {});
   mocks.scanSessions.mockResolvedValue(undefined);
   mocks.openSession.mockResolvedValue({});
   mocks.openWorkspace.mockResolvedValue({});

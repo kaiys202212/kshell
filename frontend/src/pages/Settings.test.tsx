@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   onToolInstallLog: vi.fn(),
   onToolInstallDone: vi.fn(),
   onScanDone: vi.fn(),
+  onToolsUpdated: vi.fn(),
   getAppVersion: vi.fn(),
   checkForUpdate: vi.fn(),
   applyUpdate: vi.fn(),
@@ -111,6 +112,7 @@ const recipes: Record<
 let logCb: ((p: { toolID: string; text: string }) => void) | undefined;
 let doneCb: ((p: { toolID: string; action: string; ok: boolean; error?: string }) => void) | undefined;
 let scanDoneCb: ((payload?: unknown) => void) | undefined;
+let toolsUpdatedCb: (() => void) | undefined;
 
 function goTools() {
   fireEvent.click(screen.getByRole('button', { name: '工具' }));
@@ -184,10 +186,17 @@ beforeEach(() => {
   logCb = undefined;
   doneCb = undefined;
   scanDoneCb = undefined;
+  toolsUpdatedCb = undefined;
   mocks.onScanDone.mockImplementation((cb: NonNullable<typeof scanDoneCb>) => {
     scanDoneCb = cb;
     return () => {
       scanDoneCb = undefined;
+    };
+  });
+  mocks.onToolsUpdated.mockImplementation((cb: NonNullable<typeof toolsUpdatedCb>) => {
+    toolsUpdatedCb = cb;
+    return () => {
+      toolsUpdatedCb = undefined;
     };
   });
   mocks.onToolInstallLog.mockImplementation((cb: NonNullable<typeof logCb>) => {
@@ -347,7 +356,10 @@ describe('Settings', () => {
     mocks.getCloseBehavior.mockResolvedValueOnce('exit');
     render(<Settings />);
 
-    expect(await screen.findByRole('button', { name: '直接退出' })).toHaveAttribute('aria-pressed', 'true');
+    const exitBtn = await screen.findByRole('button', { name: '直接退出' });
+    await waitFor(() => {
+      expect(exitBtn).toHaveAttribute('aria-pressed', 'true');
+    });
     expect(screen.getByRole('button', { name: '收进托盘' })).toHaveAttribute('aria-pressed', 'false');
   });
 
@@ -545,6 +557,20 @@ describe('Settings', () => {
     expect(await screen.findByText(/npm installing gemini-cli/)).toBeInTheDocument();
     await act(async () => {
       doneCb?.({ toolID: 'gemini', action: 'install', ok: true });
+    });
+    await waitFor(() => {
+      expect(mocks.getTools.mock.calls.length).toBeGreaterThan(before);
+    });
+  });
+
+  it('收到 tools:updated 后重刷工具列表', async () => {
+    render(<Settings />);
+    goTools();
+    await screen.findByText('Gemini');
+    const before = mocks.getTools.mock.calls.length;
+    expect(toolsUpdatedCb).toBeTypeOf('function');
+    await act(async () => {
+      toolsUpdatedCb?.();
     });
     await waitFor(() => {
       expect(mocks.getTools.mock.calls.length).toBeGreaterThan(before);

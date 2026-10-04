@@ -450,6 +450,11 @@ export function onScanDone(cb: (payload: ScanDonePayload) => void): () => void {
   return EventsOn('scan:done', (payload: ScanDonePayload) => cb(payload ?? {}));
 }
 
+// onToolsUpdated 订阅工具探测完成（早于会话扫描结束），返回取消订阅函数。
+export function onToolsUpdated(cb: () => void): () => void {
+  return EventsOn('tools:updated', () => cb());
+}
+
 // onWindowClosed 订阅终端窗口关闭事件，payload 为完整窗口标题（terminalTitle 形态）
 export function onWindowClosed(cb: (title: string) => void): () => void {
   return EventsOn('window:closed', (title: string) => cb(title ?? ''));

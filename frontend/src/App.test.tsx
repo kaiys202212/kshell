@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   getSessionPreview: vi.fn(),
   scanSessions: vi.fn(),
   onScanDone: vi.fn(),
+  onToolsUpdated: vi.fn(),
   onWindowClosed: vi.fn(),
   listFiles: vi.fn(),
   previewFile: vi.fn(),
@@ -158,6 +159,7 @@ beforeEach(() => {
   mocks.getSessionPreview.mockResolvedValue({ Markdown: '', Truncated: false });
   mocks.scanSessions.mockResolvedValue(undefined);
   mocks.onScanDone.mockImplementation(() => () => {});
+  mocks.onToolsUpdated.mockImplementation(() => () => {});
   mocks.onWindowClosed.mockImplementation(() => () => {});
   mocks.onTerminalData.mockImplementation(() => () => {});
   mocks.onTerminalExit.mockImplementation(() => () => {});

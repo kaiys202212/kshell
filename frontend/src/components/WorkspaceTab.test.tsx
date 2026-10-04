@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   resumeSession: vi.fn(),
   focusSession: vi.fn(),
   onScanDone: vi.fn(),
+  onToolsUpdated: vi.fn(),
   onWindowClosed: vi.fn(),
   listFiles: vi.fn(),
   previewFile: vi.fn(),
@@ -112,6 +113,7 @@ beforeEach(() => {
     scanDoneCb = cb;
     return () => {};
   });
+  mocks.onToolsUpdated.mockImplementation(() => () => {});
   mocks.onWindowClosed.mockReturnValue(() => {});
   mocks.getSessions.mockResolvedValue([]);
   mocks.getSessionPreview.mockResolvedValue({ Markdown: '## 用户\n\nhi', Truncated: false });

@@ -15,6 +15,7 @@ import {
   listModelPresets,
   loadProvidersYAML,
   onScanDone,
+  onToolsUpdated,
   onToolInstallDone,
   onToolInstallLog,
   applyUpdate,
@@ -204,9 +205,8 @@ export default function Settings() {
   };
 
   useEffect(() => {
-    // 进行中的扫描结束时会推 scan:done。安装刚写过的工具表若被旧快照盖掉，
-    // 这里再取一次，按钮才能跟上（与其它页面订阅扫描完成的方式一致）。
-    return onScanDone(() => {
+    // DetectAll 结束会推 tools:updated（早于会话扫描）；scan:done 再补一次。
+    const refresh = () => {
       getTools()
         .then(async (list) => {
           setTools(list);
@@ -215,7 +215,17 @@ export default function Settings() {
         .catch((e: unknown) => {
           setToolsError(e instanceof Error ? e.message : String(e));
         });
+    };
+    const offScan = onScanDone(() => {
+      refresh();
     });
+    const offTools = onToolsUpdated(() => {
+      refresh();
+    });
+    return () => {
+      offScan();
+      offTools();
+    };
   }, []);
 
   useEffect(() => {
