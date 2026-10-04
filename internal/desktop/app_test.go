@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -221,6 +222,70 @@ func TestScanSessionsWhileScanningDoesNotStack(t *testing.T) {
 	defer app.mu.Unlock()
 	if app.scanning {
 		t.Fatal("扫描未结束")
+	}
+}
+
+// 扫描进行中再次 ScanSessions 不得静默丢弃：当前轮结束后应自动再扫一轮。
+// 否则「新建会话后的延迟重扫」若撞上首页首扫，会话永远进不了列表，直到用户再点一次新建。
+func TestScanSessionsWhileScanningQueuesFollowUp(t *testing.T) {
+	block := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(block) }) }
+	defer release()
+
+	var calls atomic.Int32
+	app, _, events := newTestApp(t)
+	app.mu.Lock()
+	app.opts.Scan = func(string, []providers.Provider, string, discovery.ScanOptions) (*discovery.Result, error) {
+		n := calls.Add(1)
+		if n == 1 {
+			<-block // 第一轮挡住，给第二次 ScanSessions 留窗口
+		}
+		return &discovery.Result{Sessions: []providers.Session{
+			{ID: "s1", ToolID: "claude", Workspace: `D:\ws-a`, Title: "t", UpdatedAt: time.Now()},
+		}}, nil
+	}
+	app.mu.Unlock()
+
+	if _, err := app.ScanSessions(); err != nil {
+		t.Fatalf("ScanSessions #1 error: %v", err)
+	}
+	// 等第一轮真正进入 Scan（挡住后 calls==1），再请求第二次
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && calls.Load() < 1 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if calls.Load() < 1 {
+		t.Fatal("第一轮扫描未启动")
+	}
+	if _, err := app.ScanSessions(); err != nil {
+		t.Fatalf("ScanSessions #2 error: %v", err)
+	}
+	release()
+
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if calls.Load() >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := calls.Load(); got < 2 {
+		t.Fatalf("忙碌时的 ScanSessions 应排队复扫, Scan 调用次数=%d", got)
+	}
+	// 两轮都要推 scan:done，前端才能拿到最终列表
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		app.mu.Lock()
+		busy := app.scanning
+		app.mu.Unlock()
+		if !busy && len(*events) >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(*events) < 2 {
+		t.Fatalf("两轮扫描都应推送 scan:done, got %v", *events)
 	}
 }
 

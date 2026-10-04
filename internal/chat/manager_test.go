@@ -406,6 +406,25 @@ func TestAttachSessionBindsNewChatInfo(t *testing.T) {
 	}
 }
 
+func TestUpdateSessionTitleSyncsBound(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, ToolID: "codebuddy", Title: "占位"}, Spec{Path: "x"}, ""); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if !m.AttachSession("disk-1", `D:\ws`, "codebuddy", "") {
+		t.Fatal("前置绑定失败")
+	}
+	if !m.UpdateSessionTitle("disk-1", "真实标题") {
+		t.Fatal("已绑定会话应能更新标题")
+	}
+	if got := m.List()[0]; got.Title != "真实标题" {
+		t.Fatalf("Title = %q", got.Title)
+	}
+	if m.UpdateSessionTitle("disk-1", "真实标题") {
+		t.Fatal("标题未变时不应报告有更新")
+	}
+}
+
 func TestAttachSessionSkipsNonCandidates(t *testing.T) {
 	m, _, _ := newTestManager(t)
 	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, ToolID: "codebuddy"}, Spec{Path: "x"}, ""); err != nil {

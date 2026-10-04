@@ -167,3 +167,54 @@ func TestRunScanNoAttachNoFlag(t *testing.T) {
 		t.Fatalf("没有绑定不应带 attached, got %+v", lastScanDone(t, events))
 	}
 }
+
+// 已绑定会话的标题随后续扫描更新：首轮可能只有空/占位标题，用户发消息后标题才落盘；
+// 若只绑一次、不再同步，页签会一直停在「工作区 · 工具名」。
+func TestRunScanSyncsBoundSessionTitle(t *testing.T) {
+	app, events, setSessions := attachTestApp(t, nil)
+	// 先扫一轮把工作区落进 result，OpenWorkspaceTerminal 才认得出路径
+	setSessions([]providers.Session{
+		{ID: "s1", ToolID: "claude", Workspace: `D:\ws-a`, Title: "旧会话", UpdatedAt: time.Now().Add(-time.Hour)},
+	})
+	app.runScan()
+
+	term, err := app.OpenWorkspaceTerminal(`D:\ws-a`, "claude", 80, 24)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceTerminal error: %v", err)
+	}
+
+	setSessions([]providers.Session{
+		{ID: "s1", ToolID: "claude", Workspace: `D:\ws-a`, Title: "旧会话", UpdatedAt: time.Now().Add(-time.Hour)},
+		{ID: "s2", ToolID: "claude", Workspace: `D:\ws-a`, Title: "", UpdatedAt: time.Now()},
+	})
+	app.runScan()
+	list := app.ListTerminals()
+	var bound bool
+	for _, it := range list {
+		if it.ID == term.ID && it.SessionID == "s2" {
+			bound = true
+		}
+	}
+	if !bound {
+		t.Fatalf("前置：应先绑上 s2, list=%+v", list)
+	}
+
+	setSessions([]providers.Session{
+		{ID: "s1", ToolID: "claude", Workspace: `D:\ws-a`, Title: "旧会话", UpdatedAt: time.Now().Add(-time.Hour)},
+		{ID: "s2", ToolID: "claude", Workspace: `D:\ws-a`, Title: "修复登录页", UpdatedAt: time.Now()},
+	})
+	app.runScan()
+
+	var title string
+	for _, it := range app.ListTerminals() {
+		if it.ID == term.ID {
+			title = it.Title
+		}
+	}
+	if title != "修复登录页" {
+		t.Fatalf("已绑定会话标题应随扫描同步, got %q", title)
+	}
+	if lastScanDone(t, events)["attached"] != true {
+		t.Fatalf("标题同步时 scan:done 也应带 attached，便于前端重取镜像")
+	}
+}

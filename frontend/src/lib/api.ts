@@ -37,6 +37,8 @@ export interface ScanDonePayload {
   workspaces?: Workspace[];
   failed?: number;
   error?: string;
+  /** Go 侧绑定/同步了终端或聊天标题时为 true，前端据此重取镜像 */
+  attached?: boolean;
 }
 
 // workspace.Node 的 JSON 形态（internal/workspace/tree.go）。

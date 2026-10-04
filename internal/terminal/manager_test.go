@@ -749,3 +749,25 @@ func TestAttachSessionFillsEmptyToolID(t *testing.T) {
 		t.Fatalf("绑定失败: %+v", got)
 	}
 }
+
+func TestUpdateSessionTitleSyncsBound(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	if _, err := m.Open("new:1", newKindNewInfo(`D:\ws`, "codebuddy"), sampleSpec(), 80, 24); err != nil {
+		t.Fatalf("Open error: %v", err)
+	}
+	if !m.AttachSession("disk-1", `D:\ws`, "codebuddy", "") {
+		t.Fatal("前置绑定失败")
+	}
+	if !m.UpdateSessionTitle("disk-1", "真实标题") {
+		t.Fatal("已绑定会话应能更新标题")
+	}
+	if got := m.List()[0]; got.Title != "真实标题" {
+		t.Fatalf("Title = %q", got.Title)
+	}
+	if m.UpdateSessionTitle("disk-1", "真实标题") {
+		t.Fatal("标题未变时不应报告有更新")
+	}
+	if m.UpdateSessionTitle("missing", "x") {
+		t.Fatal("未知会话不应更新")
+	}
+}

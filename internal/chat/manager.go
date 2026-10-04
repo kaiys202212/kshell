@@ -459,6 +459,24 @@ func (m *Manager) AttachSession(sessionID, workspace, toolID, title string) bool
 	return false
 }
 
+// UpdateSessionTitle 按磁盘会话 ID 更新已绑定聊天的标题。
+// 标题为空或未变化时返回 false；用于扫描后把「后来才落盘」的真实标题刷到页签。
+func (m *Manager) UpdateSessionTitle(sessionID, title string) bool {
+	if sessionID == "" || title == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, s := range m.order {
+		if s.info.SessionID != sessionID || s.info.Title == title {
+			continue
+		}
+		s.info.Title = title
+		return true
+	}
+	return false
+}
+
 func (m *Manager) History(id string) []Update {
 	m.mu.Lock()
 	defer m.mu.Unlock()

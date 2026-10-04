@@ -188,7 +188,7 @@ describe('WorkspaceTab', () => {
     });
   });
 
-  it('新建会话后延迟触发一次后台重扫（工具落盘会话记录较晚，列表靠它刷新）', async () => {
+  it('新建会话后按退避多次触发后台重扫（工具落盘较晚；单次 3s 常查不到）', async () => {
     vi.useFakeTimers();
     try {
       mocks.getTools.mockResolvedValue([toolClaude]);
@@ -205,6 +205,14 @@ describe('WorkspaceTab', () => {
         vi.advanceTimersByTime(3000);
       });
       expect(mocks.scanSessions).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        vi.advanceTimersByTime(5000); // 3s + 5s = 8s 第二档
+      });
+      expect(mocks.scanSessions).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        vi.advanceTimersByTime(7000); // 再 +7s = 15s 第三档
+      });
+      expect(mocks.scanSessions).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();
     }

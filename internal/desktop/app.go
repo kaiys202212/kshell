@@ -81,6 +81,9 @@ type App struct {
 	rawWorkspaces []discovery.Workspace
 	result        *discovery.Result
 	scanning      bool
+	// pendingScan：扫描进行中又收到 ScanSessions 时置位，本轮结束后自动再扫一轮。
+	// 否则「新建会话后的延迟重扫」撞上首页首扫会被静默丢掉，最新会话进不了列表。
+	pendingScan bool
 	// scanned 标记本进程是否完成过一轮真实扫描（快照恢复不算）：
 	// 绑定调用据此决定要不要等首扫，避免拿快照当真结果错过新工作区。
 	scanned    bool
@@ -464,14 +467,20 @@ func (a *App) permissionOptions() launch.PermissionOptions {
 	return launch.PermissionOptions{Bypass: a.snapshot().Config.PermissionMode == config.PermissionModeBypass}
 }
 
-// ScanSessions 触发一次会话扫描（已在扫则不重复），立即返回最近一次结果；
+// ScanSessions 触发一次会话扫描（已在扫则排队复扫），立即返回最近一次结果；
 // 前端首次调用拿到 nil 属正常，等 "scan:done" 事件后再刷新。
 // 未就绪（装配未完成）时返回 errNotReady 且不触发扫描。
 func (a *App) ScanSessions() (*discovery.Result, error) {
 	a.mu.Lock()
 	res := a.result
 	started := false
-	if !a.scanning && a.opts.ready() {
+	if !a.opts.ready() {
+		a.mu.Unlock()
+		return res, errNotReady
+	}
+	if a.scanning {
+		a.pendingScan = true // 本轮结束后自动再扫，避免新建会话的延迟重扫被丢掉
+	} else {
 		a.scanning = true
 		started = true
 	}
@@ -480,17 +489,16 @@ func (a *App) ScanSessions() (*discovery.Result, error) {
 	if started {
 		go a.runScan()
 	}
-	if !a.snapshot().ready() {
-		return res, errNotReady
-	}
 	return res, nil
 }
 
 // runScan 执行一次扫描并推送 "scan:done" 事件（无论成败，前端据此刷新）。
 // 失败时保留上一次成功结果，避免一次瞬时失败让已知会话/工作区全面失联。
+// 若扫描期间又有 ScanSessions 请求（pendingScan），本轮结束后立即再扫一轮。
 func (a *App) runScan() {
 	o := a.snapshot()
 	if !o.ready() {
+		a.finishScan(false)
 		a.Emit("scan:done", map[string]any{"failed": 0, "error": errNotReady.Error()})
 		return
 	}
@@ -525,7 +533,6 @@ func (a *App) runScan() {
 		a.rawWorkspaces = raw
 		a.scanned = true
 	}
-	a.scanning = false
 	a.mu.Unlock()
 
 	// 落盘快照（锁外写文件）；失败只影响下次启动的秒开体验，不影响本次结果
@@ -535,6 +542,7 @@ func (a *App) runScan() {
 
 	// 扫描发现的会话回填到运行中的新建终端/聊天：新建时磁盘上还没有会话记录，
 	// Info 只有占位标题、SessionID 为空；不回填则页签无法区分任务、「恢复/切换」判断失灵。
+	// 已绑定的会话还会同步标题（首轮常为空，用户发消息后才有真实标题）。
 	attached := 0
 	if err == nil && res != nil {
 		attached = a.attachDiscoveredSessions(res.Sessions, prevIDs)
@@ -552,27 +560,56 @@ func (a *App) runScan() {
 	if attached > 0 {
 		ev["attached"] = true // 前端据此重取终端/聊天镜像
 	}
+	// 先推事件再决定是否复扫：前端能立刻吃到本轮结果；复扫在独立 goroutine，不挡事件。
+	followUp := a.finishScan(true)
 	a.Emit("scan:done", ev)
+	if followUp {
+		go a.runScan()
+	}
+}
+
+// finishScan 结束本轮扫描标志。keepBusyOnPending 为 true 且有排队请求时保持 scanning，
+// 由调用方立刻再启一轮；返回是否需要复扫。
+func (a *App) finishScan(keepBusyOnPending bool) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	followUp := a.pendingScan
+	a.pendingScan = false
+	if followUp && keepBusyOnPending {
+		// scanning 保持 true，避免间隙里第三方再开并行扫描
+		return true
+	}
+	a.scanning = false
+	return followUp
 }
 
 // attachDiscoveredSessions 把本轮扫描新发现的会话逐条尝试绑定到新建终端/聊天，
-// 返回成功绑定的条数。会话与终端按归一化工作区路径 + 工具匹配，同一条会话先到先得。
-// prevIDs 是上轮扫描已存在的会话 ID 集合，其中的会话一律跳过（见 runScan 内注释）。
+// 并对已绑定会话同步标题。返回发生绑定或标题更新的次数。
+// prevIDs 是上轮扫描已存在的会话 ID 集合：其中的会话不再做首次绑定（见 runScan 内注释），
+// 但仍走标题同步——首轮绑定时标题常为空，后续落盘后要能刷新页签。
 func (a *App) attachDiscoveredSessions(sessions []providers.Session, prevIDs map[string]bool) int {
 	o := a.snapshot()
-	attached := 0
+	changed := 0
 	for _, s := range sessions {
-		if prevIDs[s.ID] {
+		if !prevIDs[s.ID] {
+			if o.Terminals != nil && o.Terminals.AttachSession(s.ID, s.Workspace, s.ToolID, s.Title) {
+				changed++
+			}
+			if o.Chats != nil && o.Chats.AttachSession(s.ID, s.Workspace, s.ToolID, s.Title) {
+				changed++
+			}
+		}
+		if s.Title == "" {
 			continue
 		}
-		if o.Terminals != nil && o.Terminals.AttachSession(s.ID, s.Workspace, s.ToolID, s.Title) {
-			attached++
+		if o.Terminals != nil && o.Terminals.UpdateSessionTitle(s.ID, s.Title) {
+			changed++
 		}
-		if o.Chats != nil && o.Chats.AttachSession(s.ID, s.Workspace, s.ToolID, s.Title) {
-			attached++
+		if o.Chats != nil && o.Chats.UpdateSessionTitle(s.ID, s.Title) {
+			changed++
 		}
 	}
-	return attached
+	return changed
 }
 
 // scanReadyTimeout 是「等首轮扫描结果」的上限。真实扫描通常几百毫秒，

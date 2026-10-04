@@ -56,10 +56,10 @@ type RightPane = 'files' | 'ssh';
 // 中心区固定页签「预览」的保留 id（终端 id 形如 t1，不会冲突）
 const PREVIEW_TAB = 'preview';
 
-// 新建会话后隔多久触发一次后台重扫（毫秒）。
-// 工具自己的会话记录是它启动后才落盘的（opencode 先起 TUI 再写 SQLite），立刻重扫会查不到；
-// 3s 够这些 CLI 完成启动与建记录，重扫本身在后台异步执行、不阻塞交互。
-const NEW_SESSION_RESCAN_DELAY = 3000;
+// 新建会话后触发后台重扫的延迟序列（毫秒，相对新建时刻）。
+// 工具自己的会话记录是它启动后才落盘的（opencode 先起 TUI 再写 SQLite；Claude 常要等首条消息），
+// 单次 3s 经常查不到，会表现为「再新建下一个时上一个才进列表」。多档退避覆盖落盘窗口。
+const NEW_SESSION_RESCAN_DELAYS_MS = [3000, 8000, 15000];
 
 // 右栏「文件 | SSH」子页签：扁平下划线式
 const paneTabBase = `${TAB_BASE} h-7 text-xs`;
@@ -77,7 +77,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [busy, setBusy] = useState(false);
   // 新建会话后的延迟重扫定时器（卸载/再次新建时清掉，避免重复触发）
-  const rescanTimer = useRef<number | null>(null);
+  const rescanTimers = useRef<number[]>([]);
   // 供 selectCenterTab 读最新 centerTab，避免在 setState updater 里改 store（会触发 React 渲染期 setState 警告）
   const centerTabRef = useRef(centerTab);
   centerTabRef.current = centerTab;
@@ -192,7 +192,8 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
 
   useEffect(
     () => () => {
-      if (rescanTimer.current !== null) window.clearTimeout(rescanTimer.current);
+      for (const id of rescanTimers.current) window.clearTimeout(id);
+      rescanTimers.current = [];
     },
     [],
   );
@@ -213,12 +214,13 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         selectCenterTab(res.Terminal.ID);
       }
       if (res.Fallback) notify(`已回退到终端模式：${res.Fallback}`, 'info');
-      // 新会话要过一会儿才落进工具自己的会话存储，延迟重扫一次让会话列表把它带出来
-      if (rescanTimer.current !== null) window.clearTimeout(rescanTimer.current);
-      rescanTimer.current = window.setTimeout(() => {
-        rescanTimer.current = null;
-        void scanSessions();
-      }, NEW_SESSION_RESCAN_DELAY);
+      // 新会话要过一会儿才落进工具自己的会话存储；按退避多扫几次，避免单次过早/撞车
+      for (const tid of rescanTimers.current) window.clearTimeout(tid);
+      rescanTimers.current = NEW_SESSION_RESCAN_DELAYS_MS.map((delay) =>
+        window.setTimeout(() => {
+          void scanSessions();
+        }, delay),
+      );
     } catch (e: unknown) {
       notify(`新建会话失败：${e instanceof Error ? e.message : String(e)}`, 'error');
     } finally {

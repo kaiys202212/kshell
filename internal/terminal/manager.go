@@ -434,6 +434,24 @@ func (m *Manager) AttachSession(sessionID, workspace, toolID, title string) bool
 	return false
 }
 
+// UpdateSessionTitle 按磁盘会话 ID 更新已绑定终端的标题。
+// 标题为空或未变化时返回 false；用于扫描后把「后来才落盘」的真实标题刷到页签。
+func (m *Manager) UpdateSessionTitle(sessionID, title string) bool {
+	if sessionID == "" || title == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, s := range m.order {
+		if s.info.SessionID != sessionID || s.info.Title == title {
+			continue
+		}
+		s.info.Title = title
+		return true
+	}
+	return false
+}
+
 // Scrollback 返回会话最近输出（最多 defaultScrollback 字节）的副本；已退出的会话仍可读。
 func (m *Manager) Scrollback(id string) ([]byte, error) {
 	m.mu.Lock()
