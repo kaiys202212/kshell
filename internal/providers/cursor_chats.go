@@ -1,10 +1,14 @@
 package providers
 
 import (
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 type cursorChatMeta struct {
@@ -30,6 +34,29 @@ func loadCursorChatMeta(path string) (cursorChatMeta, error) {
 		return cursorChatMeta{}, err
 	}
 	return m, nil
+}
+
+func cursorStoreHasSubagentInfo(storeDB string) (bool, error) {
+	db, err := sql.Open("sqlite", storeDB)
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+	var val string
+	err = db.QueryRow(`SELECT value FROM meta WHERE key = '0' LIMIT 1`).Scan(&val)
+	if err != nil {
+		return false, err
+	}
+	raw := []byte(val)
+	if decoded, derr := hex.DecodeString(val); derr == nil {
+		raw = decoded
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return false, err
+	}
+	_, ok := obj["subagentInfo"]
+	return ok, nil
 }
 
 func listCursorChatSessions(home string) ([]Session, error) {

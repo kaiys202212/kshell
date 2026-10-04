@@ -1,11 +1,15 @@
 package providers
 
 import (
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func writeMeta(t *testing.T, dir string, hasConversation bool, title, cwd string) {
@@ -77,5 +81,43 @@ func TestListCursorChatSessionsSkipsSubagentsAndEmpty(t *testing.T) {
 	}
 	if got[0].ToolID != cursorID {
 		t.Fatalf("tool %q", got[0].ToolID)
+	}
+}
+
+func writeStoreMeta(t *testing.T, dbPath, jsonBody string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE meta (key TEXT, value TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	hexVal := hex.EncodeToString([]byte(jsonBody))
+	if _, err := db.Exec(`INSERT INTO meta (key, value) VALUES ('0', ?)`, hexVal); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCursorStoreHasSubagentInfo(t *testing.T) {
+	dir := t.TempDir()
+	subDB := filepath.Join(dir, "sub.db")
+	writeStoreMeta(t, subDB, `{"agentId":"a","name":"New Agent","subagentInfo":{"parentAgentId":"p","typeName":"generalPurpose"}}`)
+	has, err := cursorStoreHasSubagentInfo(subDB)
+	if err != nil || !has {
+		t.Fatalf("has=%v err=%v, want true", has, err)
+	}
+
+	mainDB := filepath.Join(dir, "main.db")
+	writeStoreMeta(t, mainDB, `{"agentId":"b","name":"Main Chat"}`)
+	has, err = cursorStoreHasSubagentInfo(mainDB)
+	if err != nil || has {
+		t.Fatalf("has=%v err=%v, want false", has, err)
+	}
+
+	_, err = cursorStoreHasSubagentInfo(filepath.Join(dir, "missing.db"))
+	if err == nil {
+		t.Fatal("want error for missing db")
 	}
 }
