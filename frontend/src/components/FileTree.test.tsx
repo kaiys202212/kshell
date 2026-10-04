@@ -237,6 +237,8 @@ describe('FileTree 右键菜单', () => {
     expect(screen.getByRole('menuitem', { name: '新建文件夹' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: '新建文件' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: '删除' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: '重命名' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: '复制路径' })).toBeInTheDocument();
 
     // 关闭后右键文件行：不含新建两项
     fireEvent.pointerDown(document.body);
@@ -351,6 +353,37 @@ describe('FileTree 右键菜单', () => {
 
     fireEvent.keyDown(input, { key: 'Escape' });
     expect(screen.queryByPlaceholderText('文件名')).not.toBeInTheDocument();
+  });
+
+  it('右键根容器空白（列表下方区域）弹出新建菜单', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    const { container } = render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    // 空白右键 handler 挂在根 div 上（覆盖列表下方空白）；
+    // 行内 handler 已 stopPropagation，这里直接对根 div 派发验证兜底菜单
+    fireEvent.contextMenu(container.firstElementChild as HTMLElement);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: '新建文件' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: '新建文件夹' })).toBeInTheDocument();
+  });
+
+  it('新建失败（如名称非法）提示错误且保留输入行可重试', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.createEntry.mockRejectedValue(new Error('名称不合法'));
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    fireEvent.contextMenu(screen.getByRole('tree', { name: '工作区文件树' }));
+    fireEvent.pointerDown(screen.getByRole('menuitem', { name: '新建文件' }));
+    const input = screen.getByPlaceholderText('文件名');
+    fireEvent.change(input, { target: { value: 'a/b' } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+
+    expect(useAppStore.getState().toasts.some((t) => t.title.includes('名称不合法'))).toBe(true);
+    expect(screen.getByPlaceholderText('文件名')).toBeInTheDocument();
   });
 
   it('菜单「重命名」触发行内重命名输入', async () => {

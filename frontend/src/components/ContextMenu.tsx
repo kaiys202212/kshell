@@ -24,9 +24,10 @@ export default function ContextMenu({
   items: MenuItem[];
   onClose(): void;
 }) {
-  // 贴边收敛，避免菜单溢出窗口（min-w-36=144px + 内边距余量）
-  const left = Math.min(x, window.innerWidth - 160);
-  const top = Math.min(y, window.innerHeight - items.length * 30 - 8);
+  // 贴边收敛，避免菜单溢出窗口（min-w-36=144px + 内边距余量）；
+  // Math.max(0, ...) 兜底负坐标/极端小窗口，保证不出左、上边界
+  const left = Math.max(0, Math.min(x, window.innerWidth - 160));
+  const top = Math.max(0, Math.min(y, window.innerHeight - items.length * 30 - 8));
 
   useEffect(() => {
     const close = () => onClose();

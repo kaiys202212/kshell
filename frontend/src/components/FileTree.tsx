@@ -391,14 +391,18 @@ function TreeRow({
           ))}
         </ul>
       )}
-      {/* 目录未加载/未展开 children：新建输入直接渲染在目录行下方 */}
+      {/* 目录未加载/未展开 children：新建输入直接渲染在目录行下方。
+          取舍：未实现「先展开目录再显示输入」，避免展开动作与新建意图耦合；
+          外包 <ul role="group"> 保证 <li> 只出现在 <ul> 内（消除 React 嵌套告警） */}
       {node.IsDir && creating && creating.dirRel === item.relPath && !(item.expanded && item.children) && (
-        <CreateRow
-          depth={depth + 1}
-          isDir={creating.isDir}
-          onCommit={onCreateCommit}
-          onCancel={onCancelCreate}
-        />
+        <ul role="group" className="m-0 list-none p-0">
+          <CreateRow
+            depth={depth + 1}
+            isDir={creating.isDir}
+            onCommit={onCreateCommit}
+            onCancel={onCancelCreate}
+          />
+        </ul>
       )}
     </li>
   );
@@ -565,8 +569,8 @@ export default function FileTree({
         void refreshGitStatus(wsPath);
       })
       .catch((e: unknown) => {
+        // 失败保留输入行：用户可改名重试（Esc/失焦仍可取消），不强行收起
         useAppStore.getState().notify(e instanceof Error ? e.message : String(e), 'error');
-        setCreating(null);
       });
   };
 
@@ -684,7 +688,9 @@ export default function FileTree({
   };
 
   return (
-    <div className="flex min-h-0 flex-col">
+    // h-full 配合父级 min-h-0 flex-1 撑满右栏：空白右键 handler 挂在根 div，
+    // 才能覆盖到列表下方空白（行内 handler 已 stopPropagation，不会冲突）
+    <div className="flex h-full min-h-0 flex-col" onContextMenu={blankContextMenu}>
       {/* 搜索框 + git 刷新 */}
       <div className="mb-1.5 flex items-center gap-1">
         <Input
@@ -752,12 +758,7 @@ export default function FileTree({
           );
         })()
       ) : (
-        <ul
-          role="tree"
-          aria-label="工作区文件树"
-          className="m-0 list-none p-0 text-sm"
-          onContextMenu={blankContextMenu}
-        >
+        <ul role="tree" aria-label="工作区文件树" className="m-0 list-none p-0 text-sm">
           {creating && creating.dirRel === '' && (
             <CreateRow
               depth={0}

@@ -38,9 +38,16 @@ describe('ContextMenu', () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
-  it('坐标贴边收敛不溢出窗口', () => {
+  it('坐标贴边收敛不溢出窗口（含下限兜底）', () => {
     render(<ContextMenu x={window.innerWidth + 100} y={50} items={items} onClose={() => {}} />);
     const menu = screen.getByRole('menu');
     expect((menu as HTMLElement).style.left).toBe(`${window.innerWidth - 160}px`);
+
+    // 负坐标/极端小窗口：Math.max(0, ...) 保证不出左、上边界
+    cleanup();
+    render(<ContextMenu x={-100} y={-100} items={items} onClose={() => {}} />);
+    const clamped = screen.getByRole('menu') as HTMLElement;
+    expect(clamped.style.left).toBe('0px');
+    expect(clamped.style.top).toBe('0px');
   });
 });
