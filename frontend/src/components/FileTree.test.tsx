@@ -7,6 +7,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import FileTree from './FileTree';
 import type { FileNode } from '../lib/api';
+import { DRAG_MIME, REL_MIME } from '../lib/dragPath';
 import { useAppStore } from '../state/store';
 
 const mocks = vi.hoisted(() => ({
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   renameEntry: vi.fn(),
   createEntry: vi.fn(),
   deleteEntry: vi.fn(),
+  moveEntry: vi.fn(),
   gitStatus: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
@@ -395,5 +397,57 @@ describe('FileTree 右键菜单', () => {
     const input = screen.getByRole('textbox', { name: '重命名 README.md' });
     expect(input).toHaveValue('README.md');
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+});
+
+describe('FileTree 树内拖拽移动', () => {
+  const moveRoot: FileNode[] = [node('main.go', false, 'main.go'), node('pkg', true, 'pkg')];
+
+  // jsdom 不实现 DataTransfer：合成事件对象代替（含 types/getData/preventDefault 等）
+  const makeDataTransfer = (rel: string) =>
+    ({
+      types: [DRAG_MIME, REL_MIME],
+      getData: (t: string) => (t === REL_MIME ? rel : `D:\\proj\\${rel.replace(/\//g, '\\')}`),
+      setData: vi.fn(),
+      effectAllowed: 'move',
+      dropEffect: 'move',
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    }) as unknown as DataTransfer;
+
+  it('文件拖到目录行松手：以 (wsPath, srcRel, dstDirRel) 调 moveEntry 并提示成功', async () => {
+    mocks.listFiles.mockResolvedValue(moveRoot);
+    mocks.moveEntry.mockResolvedValue('D:\\proj\\pkg\\main.go');
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+
+    fireEvent.drop(await screen.findByText('pkg'), { dataTransfer: makeDataTransfer('main.go') });
+    await act(async () => {}); // flush promise
+
+    expect(mocks.moveEntry).toHaveBeenCalledWith('D:\\proj', 'main.go', 'pkg');
+    expect(useAppStore.getState().toasts.some((t) => t.tone === 'success')).toBe(true);
+  });
+
+  it('拖到自身子孙目录行：moveEntry 不被调用', async () => {
+    mocks.listFiles
+      .mockResolvedValueOnce(moveRoot)
+      .mockResolvedValueOnce([node('sub', true, 'pkg/sub')]);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+
+    fireEvent.click(await screen.findByText('pkg'));
+    fireEvent.drop(await screen.findByText('sub'), { dataTransfer: makeDataTransfer('pkg') });
+    await act(async () => {});
+
+    expect(mocks.moveEntry).not.toHaveBeenCalled();
+    expect(useAppStore.getState().toasts.some((t) => t.tone === 'success')).toBe(false);
+  });
+
+  it('拖到自身目录行：moveEntry 不被调用', async () => {
+    mocks.listFiles.mockResolvedValue(moveRoot);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+
+    fireEvent.drop(await screen.findByText('pkg'), { dataTransfer: makeDataTransfer('pkg') });
+    await act(async () => {});
+
+    expect(mocks.moveEntry).not.toHaveBeenCalled();
   });
 });

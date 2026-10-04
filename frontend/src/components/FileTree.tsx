@@ -4,13 +4,15 @@
 // relPath 统一用 / 拼接：Go 侧 filepath.Clean 会归一化为平台分隔符。
 // 交互：点目录展开/收起、点文件回调 onOpenFile、铅笔按钮行内重命名、
 // 右键菜单（新建/删除/复制路径/触发重命名，删除带确认弹窗）；
+// 树内拖拽：行可拖起（携带绝对/相对路径 MIME），目录行作 drop 目标移入；
 // 顶部搜索框先过滤已加载节点，防抖后走 Go 递归搜索出平铺结果。
 // git 状态：文件名右侧小色标（数据来自 store.gitStatus[wsPath]，lib/git.ts 负责刷新）。
-import { useEffect, useState, type MouseEvent } from 'react';
+import { useEffect, useState, type DragEvent, type MouseEvent } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { createEntry, deleteEntry, listFiles, renameEntry, searchFiles } from '../lib/api';
+import { createEntry, deleteEntry, listFiles, moveEntry, renameEntry, searchFiles } from '../lib/api';
 import type { FileNode, SearchHit } from '../lib/api';
 import { cn } from '../lib/cn';
+import { DRAG_MIME, REL_MIME } from '../lib/dragPath';
 import { refreshGitStatus } from '../lib/git';
 import { useAppStore } from '../state/store';
 import ContextMenu, { type MenuItem } from './ContextMenu';
@@ -245,6 +247,7 @@ interface RowProps {
   onCreateCommit(name: string): void;
   onCancelCreate(): void;
   onRowContextMenu(e: MouseEvent, item: TreeItem): void;
+  onMoveInto(srcRel: string, dstDirRel: string): void;
 }
 
 function TreeRow({
@@ -261,11 +264,13 @@ function TreeRow({
   onCreateCommit,
   onCancelCreate,
   onRowContextMenu,
+  onMoveInto,
 }: RowProps) {
   const { node } = item;
   const gitCode = node.IsDir ? undefined : gitMap?.[item.relPath];
   const renaming = renamingPath === item.relPath;
   const [draft, setDraft] = useState(node.Name);
+  const [dropActive, setDropActive] = useState(false);
 
   // 受控重命名：进入编辑态时重置草稿为当前名（状态在父层，草稿留本行）
   useEffect(() => {
@@ -286,15 +291,43 @@ function TreeRow({
     onRowContextMenu(e, item);
   };
 
+  // 目录行拖放接收：types 含 DRAG_MIME 才视为本应用的拖拽（外部文件拖入走 Wails 全窗口回调）
+  const rowDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDropActive(true);
+  };
+  const rowDrop = (e: DragEvent<HTMLDivElement>) => {
+    setDropActive(false);
+    if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
+    e.preventDefault();
+    e.stopPropagation(); // 防冒泡到空白右键等容器 handler
+    const srcRel = e.dataTransfer.getData(REL_MIME);
+    if (srcRel) onMoveInto(srcRel, item.relPath);
+  };
+
   return (
     <li
       role="treeitem"
       aria-expanded={node.IsDir ? item.expanded : undefined}
     >
       <div
-        className="group flex h-6 items-center gap-0.5 rounded pr-1 transition-colors hover:bg-muted"
+        className={cn(
+          'group flex h-6 items-center gap-0.5 rounded pr-1 transition-colors hover:bg-muted',
+          dropActive && 'ring-1 ring-primary',
+        )}
         style={{ paddingLeft: depth * 14 }}
         onContextMenu={rowContextMenu}
+        draggable={!renaming} // 行内重命名编辑中不允许拖
+        onDragStart={(e) => {
+          e.dataTransfer.setData(DRAG_MIME, node.Path);
+          e.dataTransfer.setData(REL_MIME, item.relPath);
+          e.dataTransfer.effectAllowed = 'move';
+        }}
+        onDragOver={node.IsDir ? rowDragOver : undefined}
+        onDragLeave={node.IsDir ? () => setDropActive(false) : undefined}
+        onDrop={node.IsDir ? rowDrop : undefined}
       >
         {renaming ? (
           <Input
@@ -387,6 +420,7 @@ function TreeRow({
               onCreateCommit={onCreateCommit}
               onCancelCreate={onCancelCreate}
               onRowContextMenu={onRowContextMenu}
+              onMoveInto={onMoveInto}
             />
           ))}
         </ul>
@@ -598,6 +632,20 @@ export default function FileTree({
       .catch(() => useAppStore.getState().notify('复制失败', 'error'));
   };
 
+  // 树内拖拽移动：移入自身/子孙目录直接忽略（后端 MoveEntry 也会再校验）
+  const handleMoveInto = (srcRel: string, dstDirRel: string) => {
+    if (srcRel === dstDirRel || dstDirRel.startsWith(`${srcRel}/`)) return;
+    moveEntry(wsPath, srcRel, dstDirRel)
+      .then(() => {
+        useAppStore.getState().notify(`已移动到 ${dstDirRel || '根目录'}`, 'success');
+        refreshRoot();
+        void refreshGitStatus(wsPath);
+      })
+      .catch((e: unknown) => {
+        useAppStore.getState().notify(e instanceof Error ? e.message : String(e), 'error');
+      });
+  };
+
   const handleRowContextMenu = (e: MouseEvent, item: TreeItem | null) => {
     setMenu({ x: e.clientX, y: e.clientY, item });
   };
@@ -681,6 +729,7 @@ export default function FileTree({
     onCreateCommit: handleCreateCommit,
     onCancelCreate: () => setCreating(null),
     onRowContextMenu: handleRowContextMenu,
+    onMoveInto: handleMoveInto,
   };
   const blankContextMenu = (e: MouseEvent) => {
     e.preventDefault();
