@@ -60,7 +60,7 @@ const mocks = vi.hoisted(() => ({
   onProjectsChanged: vi.fn(),
   getAppearance: vi.fn(),
   onAppearanceChanged: vi.fn(),
-  onUpdateAvailable: vi.fn(() => () => {}),
+  onUpdateAvailable: vi.fn((_cb: unknown) => () => {}),
   getCloseBehavior: vi.fn(),
   setCloseBehavior: vi.fn(),
   getModelConfig: vi.fn(),
@@ -569,8 +569,8 @@ describe('App', () => {
   it('收到 update:available 时提示去设置升级', async () => {
     useAppStore.setState({ toasts: [] });
     let avail: ((info: { Latest: string; Available: boolean }) => void) | undefined;
-    mocks.onUpdateAvailable.mockImplementation((cb: typeof avail) => {
-      avail = cb;
+    mocks.onUpdateAvailable.mockImplementation((cb: unknown) => {
+      avail = cb as (info: { Latest: string; Available: boolean }) => void;
       return () => {};
     });
     render(<App />);
