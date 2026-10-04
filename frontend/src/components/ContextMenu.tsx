@@ -45,7 +45,7 @@ export default function ContextMenu({
   return createPortal(
     <div
       role="menu"
-      className="fixed z-50 min-w-36 rounded-md border border-border bg-popover p-1 shadow-md"
+      className="fixed z-50 min-w-36 rounded-md border border-border bg-card p-1 shadow-md"
       style={{ left, top }}
     >
       {items.map((it) => (
