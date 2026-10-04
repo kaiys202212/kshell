@@ -40,6 +40,11 @@ export function sessionGlobFromDir(dir: string): string {
   return `${n}/*/*.jsonl`;
 }
 
+export function withoutBuiltinSpecs(list: CustomProviderSpec[] | null | undefined): CustomProviderSpec[] {
+  const skip = new Set(['claude', 'codex', 'cursor', 'codebuddy', 'gemini', 'opencode']);
+  return (list ?? []).filter((s) => !s.ID || !skip.has(s.ID)).map((s) => normalizeSpec(s));
+}
+
 export function normalizeSpec(raw: Partial<CustomProviderSpec> | undefined | null): CustomProviderSpec {
   const e = emptyCustomProvider();
   if (!raw) return e;

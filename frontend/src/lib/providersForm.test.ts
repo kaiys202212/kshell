@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { emptyCustomProvider, sessionGlobFromDir } from './providersForm';
+import { emptyCustomProvider, sessionGlobFromDir, withoutBuiltinSpecs } from './providersForm';
 
 describe('sessionGlobFromDir', () => {
   it('把 Windows 会话目录收成 jsonl glob', () => {
@@ -14,6 +14,16 @@ describe('sessionGlobFromDir', () => {
 
   it('空目录得到空串', () => {
     expect(sessionGlobFromDir('')).toBe('');
+  });
+});
+
+describe('withoutBuiltinSpecs', () => {
+  it('丢掉与内置同 ID 的 yaml 段', () => {
+    const keep = emptyCustomProvider();
+    keep.ID = 'cline';
+    const drop = emptyCustomProvider();
+    drop.ID = 'codebuddy';
+    expect(withoutBuiltinSpecs([drop, keep]).map((s) => s.ID)).toEqual(['cline']);
   });
 });
 

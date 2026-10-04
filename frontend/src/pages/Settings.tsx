@@ -43,7 +43,7 @@ import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
 import { ProvidersEditor } from '../components/ProvidersEditor';
-import { normalizeSpec, type CustomProviderSpec } from '../lib/providersForm';
+import { normalizeSpec, withoutBuiltinSpecs, type CustomProviderSpec } from '../lib/providersForm';
 
 const MODEL_AGENTS = [
   { id: 'claude', label: 'Claude Code' },
@@ -145,7 +145,7 @@ export default function Settings() {
         setYaml(content);
         try {
           const list = await parseProvidersYAML(content);
-          if (!cancelled) setSpecs((list ?? []).map((s) => normalizeSpec(s)));
+          if (!cancelled) setSpecs(withoutBuiltinSpecs(list));
         } catch (e: unknown) {
           if (!cancelled) setYamlError(e instanceof Error ? e.message : String(e));
         }
@@ -358,7 +358,7 @@ export default function Settings() {
         setYaml(content);
       } else if (yaml !== null) {
         const list = await parseProvidersYAML(yaml);
-        setSpecs((list ?? []).map((s) => normalizeSpec(s)));
+        setSpecs(withoutBuiltinSpecs(list));
       }
       setEditorMode(m);
       setYamlError('');
