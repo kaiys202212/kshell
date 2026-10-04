@@ -65,6 +65,25 @@ func TestCursorParseSessionRejectsEmpty(t *testing.T) {
 	}
 }
 
+// Cursor 用户消息常带 <timestamp>Sunday, ...</timestamp> 前缀；标题必须取
+// <user_query> 正文，不能把星期几当页签名。
+func TestCursorParseSessionStripsTimestampPrefix(t *testing.T) {
+	p := Cursor{}
+	const uuid = "4a5b6666-7777-4888-8999-aaaabbbbcccc"
+	path := cursorPath("d-data-workspace-moxi-kshell", uuid)
+
+	got, err := p.ParseSession(path, cursorFixture(t, "d-data-workspace-moxi-kshell", uuid))
+	if err != nil {
+		t.Fatalf("ParseSession error: %v", err)
+	}
+	if got.Title != "几个 bug 需要修复下" {
+		t.Fatalf("title = %q, want 剥掉 timestamp 后的 user_query 正文", got.Title)
+	}
+	if strings.Contains(strings.ToLower(got.Title), "sunday") {
+		t.Fatalf("title 不应残留星期：%q", got.Title)
+	}
+}
+
 func TestCursorMatchSessionRel(t *testing.T) {
 	p := Cursor{}
 	cases := []struct {

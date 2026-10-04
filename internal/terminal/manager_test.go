@@ -470,11 +470,12 @@ func TestCloseIsIdempotentAndSilencesExit(t *testing.T) {
 	if got := r.exitCodes(); len(got) != 0 {
 		t.Fatalf("关闭后不应触发 onExit, got %v", got)
 	}
-	if got := m.List()[0]; got.Status != StatusExited {
-		t.Fatalf("关闭后状态应为 exited: %+v", got)
+	// 主动关闭应从 List 摘除：否则前端 scan:done 整表刷新会把已关页签「复活」
+	if got := m.List(); len(got) != 0 {
+		t.Fatalf("Close 后 List 应为空, got %+v", got)
 	}
-	if err := m.Write(info.ID, []byte("x")); !errors.Is(err, errExited) {
-		t.Fatalf("关闭后 Write 应报 errExited: %v", err)
+	if err := m.Write(info.ID, []byte("x")); !errors.Is(err, errNotFound) {
+		t.Fatalf("关闭后 Write 应报 errNotFound: %v", err)
 	}
 }
 

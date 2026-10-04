@@ -98,6 +98,24 @@ function dropFile(el: Element, path: string) {
   });
 }
 
+describe('WorkspaceTabView 页签标题', () => {
+  it('中心区页签标题剥掉 Cursor 的 <timestamp>Sunday… 包装，只留正文', () => {
+    useAppStore.setState({
+      terminals: [
+        {
+          ...term,
+          Title:
+            '<timestamp>Sunday, Oct 4, 2026, 11:44 AM (UTC+8)</timestamp>\n<user_query>\n几个 bug 需要修复下\n</user_query>',
+        },
+      ],
+      chats: [],
+    });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    expect(screen.getByRole('tab', { name: '几个 bug 需要修复下' })).toBeInTheDocument();
+    expect(screen.queryByText(/Sunday/i)).not.toBeInTheDocument();
+  });
+});
+
 describe('WorkspaceTabView 页签拖入', () => {
   it('拖文件到终端页签标题：先切页签，再把带引号路径写入终端', () => {
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);

@@ -45,18 +45,6 @@ func (Cursor) MatchSessionRel(rel string) bool {
 	return len(parts) == 4 && parts[1] == "agent-transcripts" && strings.HasSuffix(rel, ".jsonl")
 }
 
-// stripUserQuery 剥掉 Cursor 首条用户消息的 <user_query>…</user_query> 包装。
-// 头部只读有限字节，标签不闭合是常态，按前缀存在与否尽力剥。
-func stripUserQuery(s string) string {
-	s = strings.TrimSpace(s)
-	if !strings.HasPrefix(s, "<user_query>") {
-		return s
-	}
-	s = strings.TrimPrefix(s, "<user_query>")
-	s = strings.TrimSuffix(strings.TrimSpace(s), "</user_query>")
-	return strings.TrimSpace(s)
-}
-
 func (Cursor) ParseSession(path string, head []byte) (*Session, error) {
 	// 记录里没有 sessionId，uuid 只能从 <uuid>/<uuid>.jsonl 的目录段取
 	id := filepath.Base(filepath.Dir(path))
@@ -71,7 +59,10 @@ func (Cursor) ParseSession(path string, head []byte) (*Session, error) {
 			continue // 坏行跳过
 		}
 		if role, _ := rec["role"].(string); role == "user" {
-			if text := stripUserQuery(messageText(rec["message"])); text != "" {
+			// 与 Claude/Codex 一样走 cleanTitle：Cursor 用户消息常带
+			// <timestamp>Sunday, ...</timestamp> 与 <user_query> 包装，
+			// 只剥 user_query 前缀会把星期几当成页签标题。
+			if text := cleanTitle(messageText(rec["message"])); text != "" {
 				title = oneLine(text, 80)
 				break
 			}

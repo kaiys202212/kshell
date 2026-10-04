@@ -368,6 +368,10 @@ func (m *Manager) resolvePermission(id, requestID string, r permissionResult) er
 	return nil
 }
 
+// Close 结束聊天并从 List 摘除。幂等。
+// 必须摘除：前端关闭页签后会在 scan:done 时用 ListChats 整表重建镜像，
+// 若只标 exited 仍留在 List，已关页签会被「复活」。自然退出仍保留在 List
+//（供前端显示退出态），直到用户点关闭才走本方法。
 func (m *Manager) Close(id string) error {
 	m.mu.Lock()
 	s := m.byID[id]
@@ -386,10 +390,13 @@ func (m *Manager) Close(id string) error {
 	m.mu.Unlock()
 
 	cancelPending(pending)
+	// 先关连接再摘除：watchExit 看到 exited 后直接返回，不会误推 onExit
+	var closeErr error
 	if conn != nil {
-		return conn.Close()
+		closeErr = conn.Close()
 	}
-	return nil
+	m.remove(s)
+	return closeErr
 }
 
 func (m *Manager) CloseAll() {

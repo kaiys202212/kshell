@@ -23,6 +23,7 @@ import { appendChatInput } from '../lib/chatInputRegistry';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { badgeFor } from '../lib/toolBadge';
 import { cn } from '../lib/cn';
+import { displayTitle } from '../lib/title';
 import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
 import { sameWorkspacePath } from '../lib/workspacePath';
 import FileTree from '../components/FileTree';
@@ -254,6 +255,8 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           {terms.map((t) => {
             const badge = badgeFor(t.ToolID);
             const active = centerTab === t.ID;
+            // 渲染层再洗一次：Cursor 等历史缓存标题可能仍带 <timestamp>Sunday...
+            const label = displayTitle(t.Title) || t.Title;
             return (
               <div
                 key={t.ID}
@@ -286,9 +289,9 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                   role="tab"
                   aria-selected={active}
                   className="min-w-0 truncate text-xs"
-                  title={`${t.Title}${t.ToolID ? `（${badge.label}）` : ''}`}
+                  title={`${label}${t.ToolID ? `（${badge.label}）` : ''}`}
                 >
-                  {t.Title}
+                  {label}
                 </button>
                 {/* 新建会话的标题已含「· 工具名」，徽标只留色点避免出现两个工具名 */}
                 {t.ToolID && (
@@ -299,7 +302,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                     'ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-sm leading-none text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground',
                     active ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100',
                   )}
-                  aria-label={`关闭终端 ${t.Title}`}
+                  aria-label={`关闭终端 ${label}`}
                   onClick={(e) => {
                     e.stopPropagation(); // 只关，不顺带切到/切走该页签
                     handleCloseTerminal(t.ID);
@@ -313,6 +316,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           })}
           {chatsForWs.map((c) => {
             const active = centerTab === c.ID;
+            const label = displayTitle(c.Title) || c.Title;
             return (
               <div
                 key={c.ID}
@@ -345,9 +349,9 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                   role="tab"
                   aria-selected={active}
                   className="min-w-0 truncate text-xs"
-                  title={c.Title}
+                  title={label}
                 >
-                  {c.Title}
+                  {label}
                 </button>
                 {/* 聊天标题通常已含工具名，徽标只留色点避免重复 */}
                 {c.ToolID && <ToolDot toolID={c.ToolID} className="shrink-0" showLabel={false} />}
@@ -356,7 +360,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                     'ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-sm leading-none text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground',
                     active ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100',
                   )}
-                  aria-label={`关闭会话 ${c.Title}`}
+                  aria-label={`关闭会话 ${label}`}
                   onClick={(e) => {
                     e.stopPropagation(); // 只关，不顺带切到/切走该页签
                     handleCloseChat(c.ID);

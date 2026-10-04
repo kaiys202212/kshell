@@ -233,6 +233,26 @@ func TestManagerCloseCancelsPendingPermission(t *testing.T) {
 	}
 }
 
+// TestManagerCloseRemovesFromList：主动关闭应从 List 摘除。
+// 前端关闭页签后会在 scan:done 时用 ListChats 整表重建镜像；若 Close 只标 exited
+// 仍留在 List 里，已关的聊天页签会被「复活」。
+func TestManagerCloseRemovesFromList(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := m.Close(info.ID); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := m.Close(info.ID); err != nil {
+		t.Fatalf("重复 Close 应幂等: %v", err)
+	}
+	if got := m.List(); len(got) != 0 {
+		t.Fatalf("Close 后 List 应为空, got %+v", got)
+	}
+}
+
 func TestManagerOpenBackendError(t *testing.T) {
 	b := &fakeBackend{conn: &fakeConn{waitCh: make(chan struct{})}, err: errors.New("boom")}
 	m := NewManager(b, nil, nil, nil)

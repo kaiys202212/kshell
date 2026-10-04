@@ -97,6 +97,7 @@ type Handle interface {
 // gen 是「第几次启动」的代号：旧读协程用捕获的 gen 判断自己是否已被重开，避免越权改动状态。
 type session struct {
 	id   string
+	key  string // Open 时的幂等键，Close 摘除 byKey 用
 	info Info
 	gen  int
 
@@ -134,7 +135,8 @@ func NewManager(b Backend, onData func(id string, chunk []byte), onExit func(id 
 
 // Open 打开（或复用）一个终端会话。
 // key 是幂等键：同 key 且运行中直接返回既有 Info（不重启进程）；
-// 同 key 但已退出（含被 Close）则关闭旧句柄后原地重启，沿用同一个 ID 与 key，并重置回放缓冲。
+// 同 key 但已退出（进程自然退出、仍留在 List 里）则关闭旧句柄后原地重启，
+// 沿用同一个 ID 与 key，并重置回放缓冲。主动 Close 会从 List 摘除，再次 Open 走新建路径。
 // 启动失败时返回错误且不留下半启动的会话（已有会话会被归位到「已退出」）。
 func (m *Manager) Open(key string, info Info, spec Spec, cols, rows int) (Info, error) {
 	if m.backend == nil {
@@ -163,7 +165,7 @@ func (m *Manager) Open(key string, info Info, spec Spec, cols, rows int) (Info, 
 		return s.info, nil
 	}
 
-	s := &session{id: m.newIDLocked()}
+	s := &session{id: m.newIDLocked(), key: key}
 	if err := m.startLocked(s, info, spec, cols, rows); err != nil {
 		return Info{}, err
 	}
@@ -349,8 +351,11 @@ func (m *Manager) Resize(id string, cols, rows int) error {
 	return nil
 }
 
-// Close 结束终端：终止进程并关闭句柄。幂等（重复调用与未知 ID 都返回 nil），
+// Close 结束终端并从 List 摘除。幂等（重复调用与未知 ID 都返回 nil），
 // 且关闭后不会再触发 onExit（前端已主动关闭，不需要「已退出」事件）。
+// 必须摘除：前端关闭页签后会在 scan:done 时用 ListTerminals 整表重建镜像，
+// 若只标 exited 仍留在 List，已关页签会被「复活」。自然退出仍保留在 List
+//（供前端显示退出态），直到用户点关闭才走本方法。
 func (m *Manager) Close(id string) error {
 	m.mu.Lock()
 	s := m.byID[id]
@@ -362,6 +367,7 @@ func (m *Manager) Close(id string) error {
 	s.handle = nil
 	s.exited = true
 	s.info.Status = StatusExited
+	m.removeLocked(s)
 	m.mu.Unlock()
 
 	if h == nil {
@@ -370,7 +376,21 @@ func (m *Manager) Close(id string) error {
 	return h.Close()
 }
 
-// List 返回全部会话的快照（按创建时间升序，含已退出的会话，供前端还原页签）。
+// removeLocked 从 byKey/byID/order 摘除会话（调用方持锁）。
+func (m *Manager) removeLocked(s *session) {
+	if s.key != "" {
+		delete(m.byKey, s.key)
+	}
+	delete(m.byID, s.id)
+	for i, cur := range m.order {
+		if cur == s {
+			m.order = append(m.order[:i], m.order[i+1:]...)
+			break
+		}
+	}
+}
+
+// List 返回全部会话的快照（按创建时间升序，含已退出但未主动关闭的会话，供前端还原页签）。
 func (m *Manager) List() []Info {
 	m.mu.Lock()
 	defer m.mu.Unlock()
