@@ -15,6 +15,7 @@ var (
 	errDirNotFound          = errors.New("目录不存在")
 	errInvalidName          = errors.New("名称不能为空且不能包含路径分隔符")
 	errTargetExists         = errors.New("目标已存在")
+	errNotDir               = errors.New("目标不是目录")
 )
 
 // treeFor 返回工作区的文件树（懒创建，根层已展开）。
@@ -206,13 +207,69 @@ func (a *App) RenameEntry(wsPath, relPath, newName string) (string, error) {
 		return "", err
 	}
 
+	a.invalidateTree(wsPath)
+
+	return newAbs, nil
+}
+
+// invalidateTree 作废工作区的文件树缓存并推进树代数
+// （见 treeFor 注释：防旧快照树写回缓存）。所有改动文件树的绑定共用。
+func (a *App) invalidateTree(wsPath string) {
 	a.treeMu.Lock()
 	delete(a.trees, wsPath) // 子树缓存链路整体失效，最省事且正确
 	a.treeMu.Unlock()
-	// 推进树代数：treeFor 里正在构建的旧快照树不得再入缓存
 	atomic.AddUint64(&a.treeGen, 1)
+}
 
-	return newAbs, nil
+// CreateEntry 在工作区 dirRel 目录下新建文件/目录（isDir 区分）。
+// name 只允许最后一段名字；目标已存在报错；成功后作废树缓存。
+func (a *App) CreateEntry(wsPath, dirRel, name string, isDir bool) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == ".." ||
+		strings.ContainsAny(name, `/\`) {
+		return "", errInvalidName
+	}
+
+	tree, err := a.treeFor(wsPath)
+	if err != nil {
+		return "", err
+	}
+	node, err := a.nodeAt(tree, wsPath, dirRel)
+	if err != nil {
+		return "", err
+	}
+	if !node.IsDir {
+		return "", errNotDir
+	}
+
+	abs := filepath.Join(node.Path, name)
+	if !underPath(wsPath, abs) {
+		return "", errPathOutsideWorkspace
+	}
+	if _, err := filepath.EvalSymlinks(node.Path); err != nil {
+		return "", err // 父目录是失效 junction：拒绝新建
+	}
+	if _, err := os.Lstat(abs); err == nil {
+		return "", errTargetExists
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	if isDir {
+		if err := os.Mkdir(abs, 0o755); err != nil {
+			return "", err
+		}
+	} else {
+		f, err := os.OpenFile(abs, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o666)
+		if err != nil {
+			return "", err
+		}
+		if err := f.Close(); err != nil {
+			return "", err
+		}
+	}
+
+	a.invalidateTree(wsPath)
+	return abs, nil
 }
 
 // ReadFileForEdit 整读工作区内文本文件供编辑（上限 1MB、拒二进制）。

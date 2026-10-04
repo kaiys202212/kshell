@@ -34,6 +34,52 @@ func TestSearchFilesBinding(t *testing.T) {
 	}
 }
 
+func TestCreateEntry(t *testing.T) {
+	env := newFilesEnv(t)
+	app := env.app
+
+	// 根层新建文件
+	if _, err := app.CreateEntry(env.root, "", "new.go", false); err != nil {
+		t.Fatalf("CreateEntry file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.root, "new.go")); err != nil {
+		t.Fatalf("新文件不存在: %v", err)
+	}
+	// 子目录新建目录
+	if _, err := app.CreateEntry(env.root, "pkg", "sub", true); err != nil {
+		t.Fatalf("CreateEntry dir: %v", err)
+	}
+	if fi, err := os.Stat(filepath.Join(env.root, "pkg", "sub")); err != nil || !fi.IsDir() {
+		t.Fatalf("新目录不存在或类型不对: %v", err)
+	}
+	// 目标已存在
+	if _, err := app.CreateEntry(env.root, "", "main.go", false); !errors.Is(err, errTargetExists) {
+		t.Fatalf("重名应报 errTargetExists，got %v", err)
+	}
+	// 名称非法（含分隔符）
+	if _, err := app.CreateEntry(env.root, "", "a/b", false); !errors.Is(err, errInvalidName) {
+		t.Fatalf("含分隔符应报 errInvalidName，got %v", err)
+	}
+	// dirRel 逃逸
+	if _, err := app.CreateEntry(env.root, "../esc", "x.go", false); !errors.Is(err, errPathOutsideWorkspace) {
+		t.Fatalf("目录逃逸应报 errPathOutsideWorkspace，got %v", err)
+	}
+	// 树缓存已作废：ListFiles 能看到新文件
+	nodes, err := app.ListFiles(env.root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, n := range nodes {
+		if n.Name == "new.go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("ListFiles 未反映新建文件（缓存未作废？）")
+	}
+}
+
 func TestRenameEntry(t *testing.T) {
 	env := newFilesEnv(t)
 	app := env.app
