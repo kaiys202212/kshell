@@ -248,6 +248,21 @@ export function ProvidersEditor(props: {
                   />
                 </div>
               </Field>
+              <Field label="title 回退字段（空格分隔）">
+                <input
+                  className="w-full rounded border border-input bg-card px-2 py-1 font-mono"
+                  aria-label="title 回退字段"
+                  value={(spec.Fields.TitleFallbacks ?? []).join(' ')}
+                  onChange={(e) =>
+                    patch({
+                      Fields: {
+                        ...spec.Fields,
+                        TitleFallbacks: e.target.value.split(/\s+/).filter(Boolean),
+                      },
+                    })
+                  }
+                />
+              </Field>
               <Field label="resume 参数（空格分隔）">
                 <input
                   className="w-full rounded border border-input bg-card px-2 py-1 font-mono"
