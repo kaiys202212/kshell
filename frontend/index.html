@@ -11,6 +11,14 @@
         var dark = saved ? saved === 'dark'
           : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
         document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        var fsRaw = null;
+        try { fsRaw = localStorage.getItem('kshell-font-size'); } catch (e) {}
+        var n = fsRaw ? parseInt(fsRaw, 10) : 13;
+        if (!n || n !== n || n <= 0) n = 13;
+        else if (n < 10) n = 10;
+        else if (n > 20) n = 20;
+        document.documentElement.style.setProperty('--app-font-size', n + 'px');
+        document.documentElement.style.fontSize = (16 * n / 13) + 'px';
       } catch (e) {}
     })();
   </script>

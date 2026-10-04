@@ -13,6 +13,7 @@ import {
   restartApp,
   saveProvidersYAML,
   setAppearanceMode,
+  setAppearanceFontSize,
   setCloseBehavior,
   setModelConfig,
   setPermissionMode,
@@ -20,6 +21,7 @@ import {
 } from '../lib/api';
 import type { ModelPreset, ToolInfo } from '../lib/api';
 import { cn } from '../lib/cn';
+import { applyUiFontSize, clampUiFontSize } from '../lib/appearance';
 import { useAppStore } from '../state/store';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
@@ -50,6 +52,7 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [appearance, setAppearanceLocal] = useState<string>('dark');
+  const [fontSize, setFontSizeLocal] = useState(13);
   const [closeBehavior, setCloseBehaviorLocal] = useState<string>('tray');
   const [sessionMode, setSessionModeLocal] = useState('tui');
   const [permissionMode, setPermissionModeLocal] = useState('default');
@@ -84,7 +87,10 @@ export default function Settings() {
       });
     getAppearance()
       .then((info) => {
-        if (!cancelled) setAppearanceLocal(info.mode);
+        if (!cancelled) {
+          setAppearanceLocal(info.mode);
+          setFontSizeLocal(clampUiFontSize(info.fontSize));
+        }
       })
       .catch(() => {});
     getCloseBehavior()
@@ -122,6 +128,24 @@ export default function Settings() {
       cancelled = true;
     };
   }, []);
+
+  const previewFontSize = (n: number) => {
+    const px = clampUiFontSize(n);
+    setFontSizeLocal(px);
+    applyUiFontSize(px);
+    const cur = useAppStore.getState().appearance;
+    useAppStore.getState().setAppearance({ ...cur, fontSize: px });
+  };
+
+  const handleFontSizeCommit = async (n: number) => {
+    const px = clampUiFontSize(n);
+    previewFontSize(px);
+    try {
+      await setAppearanceFontSize(px);
+    } catch (e: unknown) {
+      notify(e instanceof Error ? e.message : String(e), 'error');
+    }
+  };
 
   const handleAppearance = async (mode: string) => {
     if (mode === appearance) return;
@@ -280,6 +304,22 @@ export default function Settings() {
                     </Button>
                   ))}
                 </div>
+                <label className="mt-3 flex items-center gap-3 text-sm">
+                  <span className="shrink-0">界面字号</span>
+                  <input
+                    type="range"
+                    min={10}
+                    max={20}
+                    step={1}
+                    value={fontSize}
+                    aria-label="界面字号"
+                    className="min-w-0 flex-1 accent-primary"
+                    onChange={(e) => previewFontSize(Number(e.currentTarget.value))}
+                    onPointerUp={(e) => void handleFontSizeCommit(Number(e.currentTarget.value))}
+                    onKeyUp={(e) => void handleFontSizeCommit(Number(e.currentTarget.value))}
+                  />
+                  <span className="w-10 shrink-0 tabular-nums text-muted-foreground">{fontSize}px</span>
+                </label>
               </section>
 
               <section className="mb-5 rounded border border-border bg-card p-3.5">

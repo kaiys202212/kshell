@@ -11,11 +11,17 @@ import (
 type AppearanceInfo struct {
 	Mode     string `json:"mode"`
 	Resolved string `json:"resolved"`
+	FontSize int    `json:"fontSize"`
 }
 
 func (a *App) currentAppearance() AppearanceInfo {
-	mode := appearance.ParseMode(a.snapshot().Config.Appearance.Mode)
-	return AppearanceInfo{Mode: string(mode), Resolved: string(appearance.Resolve(mode))}
+	cfg := a.snapshot().Config.Appearance
+	mode := appearance.ParseMode(cfg.Mode)
+	return AppearanceInfo{
+		Mode:     string(mode),
+		Resolved: string(appearance.Resolve(mode)),
+		FontSize: config.ClampUIFontSize(cfg.FontSize),
+	}
 }
 
 // GetAppearance 返回当前模式与解析后的明暗（light/dark）。
@@ -29,6 +35,18 @@ func (a *App) SetAppearanceMode(mode string) error {
 		return err
 	}
 	a.restartAppearanceWatcher()
+	a.emitAppearance()
+	return nil
+}
+
+// SetAppearanceFontSize 更新全局 UI 字号并持久化，随后广播 appearance:changed。
+func (a *App) SetAppearanceFontSize(n int) error {
+	n = config.ClampUIFontSize(n)
+	if err := a.saveConfig(func(cfg *config.Config) {
+		cfg.Appearance.FontSize = n
+	}); err != nil {
+		return err
+	}
 	a.emitAppearance()
 	return nil
 }

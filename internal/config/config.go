@@ -19,9 +19,31 @@ type SSHOptions struct {
 	CommandTimeoutSeconds int      `yaml:"command_timeout_seconds"`
 }
 
+// 桌面 UI 字号（px）：body / Agent 聊天 / 内嵌终端共用。
+const (
+	DefaultUIFontSize = 13
+	MinUIFontSize     = 10
+	MaxUIFontSize     = 20
+)
+
+// ClampUIFontSize 把配置值收进合法区间：未写或 ≤0 用默认 13，其余钳到 10–20。
+func ClampUIFontSize(n int) int {
+	if n <= 0 {
+		return DefaultUIFontSize
+	}
+	if n < MinUIFontSize {
+		return MinUIFontSize
+	}
+	if n > MaxUIFontSize {
+		return MaxUIFontSize
+	}
+	return n
+}
+
 // Appearance 是颜色模式配置：system 跟随操作系统，light/dark 强制覆盖。
 type Appearance struct {
-	Mode string `yaml:"mode"` // system | light | dark
+	Mode     string `yaml:"mode"`      // system | light | dark
+	FontSize int    `yaml:"font_size"` // 10–20，缺省 13
 }
 
 // 关闭窗口的行为取值。
@@ -81,7 +103,7 @@ func Default() Config {
 			"deploy":    true,
 			"docs":      true,
 		},
-		Appearance:     Appearance{Mode: "dark"},
+		Appearance:     Appearance{Mode: "dark", FontSize: DefaultUIFontSize},
 		CloseBehavior:  CloseBehaviorTray,
 		SessionMode:    SessionModeTUI,
 		PermissionMode: PermissionModeDefault,
@@ -175,6 +197,7 @@ func (c Config) normalized() Config {
 	default:
 		c.Appearance.Mode = d.Appearance.Mode
 	}
+	c.Appearance.FontSize = ClampUIFontSize(c.Appearance.FontSize)
 	// 关闭行为：空值或非 exit 一律回落默认（tray）。
 	if c.CloseBehavior != CloseBehaviorExit {
 		c.CloseBehavior = CloseBehaviorTray

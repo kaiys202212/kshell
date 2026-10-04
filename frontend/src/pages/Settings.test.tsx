@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   restartApp: vi.fn(),
   getAppearance: vi.fn(),
   setAppearanceMode: vi.fn(),
+  setAppearanceFontSize: vi.fn(),
   getCloseBehavior: vi.fn(),
   setCloseBehavior: vi.fn(),
   getModelConfig: vi.fn(),
@@ -67,8 +68,9 @@ beforeEach(() => {
   mocks.getTools.mockResolvedValue(tools);
   mocks.loadProvidersYAML.mockResolvedValue('providers: []\n');
   mocks.saveProvidersYAML.mockResolvedValue(undefined);
-  mocks.getAppearance.mockResolvedValue({ mode: 'dark', resolved: 'dark' });
+  mocks.getAppearance.mockResolvedValue({ mode: 'dark', resolved: 'dark', fontSize: 13 });
   mocks.setAppearanceMode.mockResolvedValue(undefined);
+  mocks.setAppearanceFontSize.mockResolvedValue(undefined);
   mocks.getCloseBehavior.mockResolvedValue('tray');
   mocks.setCloseBehavior.mockResolvedValue(undefined);
   mocks.getSessionMode.mockResolvedValue('tui');
@@ -204,6 +206,22 @@ describe('Settings', () => {
       fireEvent.click(darkBtn);
     });
     expect(mocks.setAppearanceMode).toHaveBeenCalledWith('dark');
+  });
+
+  it('字号滑条拖动预览不落盘，松手后调用 SetAppearanceFontSize', async () => {
+    render(<Settings />);
+    const slider = await screen.findByLabelText('界面字号');
+    expect(slider).toHaveValue('13');
+    expect(screen.getByText('13px')).toBeInTheDocument();
+
+    fireEvent.change(slider, { target: { value: '16' } });
+    expect(screen.getByText('16px')).toBeInTheDocument();
+    expect(mocks.setAppearanceFontSize).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.pointerUp(slider);
+    });
+    expect(mocks.setAppearanceFontSize).toHaveBeenCalledWith(16);
   });
 
   it('关闭行为默认收进托盘，切换为直接退出调用 SetCloseBehavior', async () => {

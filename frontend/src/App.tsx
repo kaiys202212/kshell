@@ -22,6 +22,7 @@ import {
   writeTerminal,
 } from './lib/api';
 import type { AppearanceInfo } from './lib/appearance';
+import { applyUiFontSize, clampUiFontSize } from './lib/appearance';
 import type { ChatUpdate } from './lib/api';
 import { encodeTerminalInput } from './lib/base64';
 import { appendChatInput } from './lib/chatInputRegistry';
@@ -108,7 +109,11 @@ function App() {
     const apply = (info: AppearanceInfo) => {
       document.documentElement.dataset.theme = info.resolved;
       try { localStorage.setItem('kshell-appearance', info.resolved); } catch { /* 忽略持久化失败 */ }
-      useAppStore.getState().setAppearance(info);
+      applyUiFontSize(info.fontSize);
+      useAppStore.getState().setAppearance({
+        ...info,
+        fontSize: clampUiFontSize(info.fontSize),
+      });
     };
     getAppearance().then(apply).catch(() => {});
     const off = onAppearanceChanged(apply);
