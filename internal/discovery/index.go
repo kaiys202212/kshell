@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	indexVersion     = 5 // 解析逻辑变更时递增，让旧缓存整体失效（v5：codex resume 续写文件按会话 ID 去重）
+	indexVersion     = 6 // 解析逻辑变更时递增，让旧缓存整体失效（v6：Cursor 改 chats 枚举，废弃 transcript 全量缓存中的子代理）
 	defaultMaxFiles  = 20000
 	defaultHeadLimit = 256 * 1024 // codex 导入会话首条真实用户消息可能在 100KB+ 之后
 	// 单文件 JSON（Gemini）必须整文件成文才解析得出来，头读太小会整条判失败。
@@ -208,8 +208,8 @@ func Scan(home string, ps []providers.Provider, cachePath string, opts ScanOptio
 	}, nil
 }
 
-// enumerateSessions 处理「会话不在文件里」的工具（如 opencode 的 SQLite 库）：
-// 先解析出工具 CLI 的路径，再交给 provider 自己枚举；失败只记一笔，不影响整体扫描。
+// enumerateSessions 处理「会话不在文件里」的工具（如 Cursor chats、opencode SQLite）：
+// 解析 CLI 路径（可为空）后交给 provider 枚举；失败只记一笔，不影响整体扫描。
 func enumerateSessions(home string, ps []providers.Provider, failed *[]string) []providers.Session {
 	var sessions []providers.Session
 	for _, p := range ps {
@@ -219,10 +219,7 @@ func enumerateSessions(home string, ps []providers.Provider, failed *[]string) [
 		}
 		// Detect 只做路径解析（不探版本），开销可忽略。
 		det := providers.Detect(p.DetectSpec(home), home)
-		if det.BinPath == "" {
-			continue // 只检测到配置目录、CLI 不在 PATH：没有可调的命令，静默跳过
-		}
-		got, err := en.EnumerateSessions(home, det.BinPath)
+		got, err := en.EnumerateSessions(home, det.BinPath) // BinPath 可为空（如 Cursor 只读 chats）
 		if err != nil {
 			*failed = append(*failed, fmt.Sprintf("%s 会话查询失败: %v", p.DisplayName(), err))
 			continue

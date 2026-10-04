@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -253,6 +254,86 @@ func TestScanDedupesCodexResumeForks(t *testing.T) {
 	}
 	if len(res.Workspaces) != 1 {
 		t.Fatalf("workspaces = %d, want 1", len(res.Workspaces))
+	}
+}
+
+func writeCursorMainChat(t *testing.T, home, id, title, ws string) {
+	t.Helper()
+	dir := filepath.Join(home, ".cursor", "chats", "deadbeef", id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"schemaVersion":   1,
+		"createdAtMs":     1000,
+		"updatedAtMs":     2000,
+		"hasConversation": true,
+		"title":           title,
+		"cwd":             ws,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnumerateSessionsCallsEvenWithoutBin(t *testing.T) {
+	home := t.TempDir()
+	id := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeffff0303"
+	writeCursorMainChat(t, home, id, "T", filepath.Join(home, "w"))
+	t.Setenv("PATH", t.TempDir())
+	cachePath := filepath.Join(home, "cache", "index.json")
+	res, err := Scan(home, []providers.Provider{providers.Cursor{}}, cachePath, ScanOptions{Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	for _, s := range res.Sessions {
+		if s.ToolID == "cursor" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("cursor sessions=%d, want 1（无 bin 也应枚举 chats）", n)
+	}
+}
+
+func TestEnumerateSessionsOpencodeStillSkipsEmptyBin(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	cachePath := filepath.Join(home, "cache", "index.json")
+	res, err := Scan(home, []providers.Provider{providers.Opencode{}}, cachePath, ScanOptions{Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range res.Sessions {
+		if s.ToolID == "opencode" {
+			t.Fatalf("unexpected opencode session %+v", s)
+		}
+	}
+}
+
+func TestScanRewritesStaleIndexVersion(t *testing.T) {
+	home := t.TempDir()
+	cachePath := filepath.Join(home, "cache", "index.json")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := json.Marshal(Index{Version: 5, Entries: map[string]Entry{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, stale, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Scan(home, []providers.Provider{providers.Claude{}}, cachePath, ScanOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	idx := LoadIndex(cachePath)
+	if idx.Version != 6 {
+		t.Fatalf("index version = %d, want 6", idx.Version)
 	}
 }
 

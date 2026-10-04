@@ -112,17 +112,27 @@ func TestScanRecordsEnumeratorFailure(t *testing.T) {
 	}
 }
 
-func TestScanSkipsEnumeratorWithoutBin(t *testing.T) {
+func TestScanEnumeratesWithoutBin(t *testing.T) {
 	home := t.TempDir()
-	// root 指向空目录：Detect 解析不出 CLI 路径，应静默跳过而不是记失败。
-	fake := &fakeEnumerator{root: t.TempDir(), session: providers.Session{ID: "ses_x", ToolID: "fake"}}
+	ws := filepath.Join(home, "proj")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// root 指向空目录：Detect 解析不出 CLI，仍应调用 EnumerateSessions（如 Cursor 只读 chats）。
+	fake := &fakeEnumerator{
+		root:    t.TempDir(),
+		session: providers.Session{ID: "ses_x", ToolID: "fake", Workspace: ws, Title: "无 bin"},
+	}
 
 	res, err := Scan(home, []providers.Provider{fake}, filepath.Join(home, "cache", "index.json"), ScanOptions{})
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	if fake.calls != 0 {
-		t.Fatalf("calls = %d, want 0", fake.calls)
+	if fake.calls != 1 {
+		t.Fatalf("calls = %d, want 1", fake.calls)
+	}
+	if len(res.Sessions) != 1 || res.Sessions[0].ID != "ses_x" {
+		t.Fatalf("sessions = %+v", res.Sessions)
 	}
 	if len(res.Failed) != 0 {
 		t.Fatalf("failed = %v, want empty", res.Failed)
