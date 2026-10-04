@@ -29,11 +29,13 @@ type toolCacheFile struct {
 // 都为每个 CLI 拉一个 `<bin> --version` 子进程（启动耗时大头，也是多余的进程创建来源）。
 // cachePath 为空时退化为 DetectAll（每次实探）。
 func DetectAllCached(home string, ps []providers.Provider, cachePath string) []Tool {
-	return detectAllCached(home, ps, cachePath, providers.ProbeVersion)
+	return detectAllCached(home, ps, cachePath, func(bin string, args []string) string {
+		return providers.ProbeVersion(bin, args...)
+	})
 }
 
 // detectAllCached 是 DetectAllCached 的主体，probeVersion 可注入以便测试。
-func detectAllCached(home string, ps []providers.Provider, cachePath string, probeVersion func(bin string) string) []Tool {
+func detectAllCached(home string, ps []providers.Provider, cachePath string, probeVersion func(bin string, args []string) string) []Tool {
 	if cachePath == "" {
 		return detectAll(home, ps, probeVersion)
 	}
@@ -41,12 +43,13 @@ func detectAllCached(home string, ps []providers.Provider, cachePath string, pro
 	prev := loadToolCache(cachePath)
 	next := make(map[string]toolCacheEntry, len(prev))
 
-	probe := func(bin string) string {
+	// 缓存按可执行文件路径为键：node 入口形态下 BinPath 含版本目录，升级即换路径自动失效。
+	probe := func(bin string, args []string) string {
 		if e, ok := prev[bin]; ok && fingerprintMatches(bin, e) {
 			next[bin] = e // 文件未变：复用并保留条目
 			return e.Version
 		}
-		v := probeVersion(bin)
+		v := probeVersion(bin, args)
 		if v == "" || v == "unknown" {
 			return v // 探测失败不落缓存，下次启动再试（避免把一次性失败固化）
 		}

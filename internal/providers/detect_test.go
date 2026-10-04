@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"strings"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -212,5 +213,24 @@ func TestProbeVersionUnknownWhenCommandFails(t *testing.T) {
 
 	if got := ProbeVersion(bin); got != "unknown" {
 		t.Fatalf("version = %q, want unknown", got)
+	}
+}
+
+func TestProbeVersionAppendsVersionFlagAfterArgs(t *testing.T) {
+	dir := t.TempDir()
+	var script string
+	if runtime.GOOS == "windows" {
+		script = filepath.Join(dir, "probe.cmd")
+		if err := os.WriteFile(script, []byte("@echo off\r\necho out %*\r\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		script = filepath.Join(dir, "probe")
+		if err := os.WriteFile(script, []byte("#!/bin/sh\necho out \"$@\"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := ProbeVersion(script, "index.js"); !strings.HasPrefix(got, "out index.js --version") {
+		t.Fatalf("参数应在 --version 之前透传, got %q", got)
 	}
 }

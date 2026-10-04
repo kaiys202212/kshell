@@ -94,8 +94,10 @@ func specBinNames(spec DetectSpec) []string {
 	return append([]string{spec.BinName}, spec.AltBinNames...)
 }
 
-// ProbeVersion 运行 <bin> --version 取首行；失败或超时一律返回 unknown，绝不阻塞扫描。
-func ProbeVersion(bin string) string {
+// ProbeVersion 运行 <bin> [args...] --version 取首行；args 为入口前缀参数
+// （node 入口形态下须先拼主脚本，否则探到的是 node 自身版本）。
+// 失败或超时一律返回 unknown，绝不阻塞扫描。
+func ProbeVersion(bin string, args ...string) string {
 	if bin == "" {
 		return "unknown"
 	}
@@ -103,7 +105,8 @@ func ProbeVersion(bin string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), versionProbeTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, bin, "--version")
+	full := append(append([]string(nil), args...), "--version")
+	cmd := exec.CommandContext(ctx, bin, full...)
 	executil.HideWindow(cmd) // 桌面端扫描时避免黑窗闪烁
 	out, err := cmd.Output()
 	if err != nil {

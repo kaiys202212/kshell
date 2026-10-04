@@ -27,7 +27,7 @@ func TestDetectAllCachedSkipsProbeWhenBinUnchanged(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "tools.json")
 
 	calls := 0
-	probe := func(string) string { calls++; return "claude 1.2.3" }
+	probe := func(string, []string) string { calls++; return "claude 1.2.3" }
 
 	first := detectAllCached(t.TempDir(), ps, cachePath, probe)
 	if calls != 1 {
@@ -58,7 +58,7 @@ func TestDetectAllCachedReprobesWhenBinChanged(t *testing.T) {
 	ps := []providers.Provider{stubProvider{id: "claude", spec: providers.DetectSpec{BinName: "claude"}}}
 	cachePath := filepath.Join(t.TempDir(), "tools.json")
 
-	if got := detectAllCached(t.TempDir(), ps, cachePath, func(string) string { return "v1" }); got[0].Version != "v1" {
+	if got := detectAllCached(t.TempDir(), ps, cachePath, func(string, []string) string { return "v1" }); got[0].Version != "v1" {
 		t.Fatalf("首次版本 = %q", got[0].Version)
 	}
 
@@ -73,7 +73,7 @@ func TestDetectAllCachedReprobesWhenBinChanged(t *testing.T) {
 	}
 
 	calls := 0
-	got := detectAllCached(t.TempDir(), ps, cachePath, func(string) string { calls++; return "v2" })
+	got := detectAllCached(t.TempDir(), ps, cachePath, func(string, []string) string { calls++; return "v2" })
 	if calls != 1 || got[0].Version != "v2" {
 		t.Fatalf("文件指纹变化后应重新探测: calls=%d version=%q", calls, got[0].Version)
 	}
@@ -89,7 +89,7 @@ func TestDetectAllCachedDoesNotCacheUnknown(t *testing.T) {
 
 	// 探测失败（unknown）：不落缓存，下次启动重试
 	calls := 0
-	probe := func(string) string { calls++; return "unknown" }
+	probe := func(string, []string) string { calls++; return "unknown" }
 	detectAllCached(t.TempDir(), ps, cachePath, probe)
 	detectAllCached(t.TempDir(), ps, cachePath, probe)
 	if calls != 2 {
@@ -104,7 +104,7 @@ func TestDetectAllCachedWithoutCachePath(t *testing.T) {
 
 	ps := []providers.Provider{stubProvider{id: "claude", spec: providers.DetectSpec{BinName: "claude"}}}
 	calls := 0
-	got := detectAllCached(t.TempDir(), ps, "", func(string) string { calls++; return "v1" })
+	got := detectAllCached(t.TempDir(), ps, "", func(string, []string) string { calls++; return "v1" })
 	if calls != 1 || got[0].Version != "v1" {
 		t.Fatalf("cachePath 为空应退化为实探: calls=%d got=%+v", calls, got)
 	}

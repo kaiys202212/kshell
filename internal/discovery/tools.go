@@ -11,6 +11,7 @@ type Tool struct {
 	ID        string
 	Name      string
 	BinPath   string
+	BinArgs   []string // 入口前缀参数：node 入口形态下为 [主脚本名]，启动与版本探测都须先拼上
 	Version   string
 	Installed bool
 	Source    string
@@ -21,12 +22,14 @@ type Tool struct {
 // DetectAll 汇总所有 provider 的安装状态，已安装的排在前面（UI 顶栏按此顺序展示）。
 // 每次都实探版本（详见 DetectAllCached：桌面端启动走缓存版）。
 func DetectAll(home string, ps []providers.Provider) []Tool {
-	return detectAll(home, ps, providers.ProbeVersion)
+	return detectAll(home, ps, func(bin string, args []string) string {
+		return providers.ProbeVersion(bin, args...)
+	})
 }
 
 // detectAll 是 DetectAll 的主体，probe 抽象「取某个可执行文件的版本」，
 // 便于在 DetectAllCached 里换成带缓存的实现。
-func detectAll(home string, ps []providers.Provider, probe func(bin string) string) []Tool {
+func detectAll(home string, ps []providers.Provider, probe func(bin string, args []string) string) []Tool {
 	tools := make([]Tool, 0, len(ps))
 	for _, p := range ps {
 		d := providers.Detect(p.DetectSpec(home), home)
@@ -35,12 +38,13 @@ func detectAll(home string, ps []providers.Provider, probe func(bin string) stri
 			ID:        p.ID(),
 			Name:      p.DisplayName(),
 			BinPath:   d.BinPath,
+			BinArgs:   d.BinArgs,
 			Version:   "unknown",
 			Installed: d.Installed,
 			Source:    d.Source,
 		}
 		if d.Installed && d.BinPath != "" {
-			t.Version = probe(d.BinPath)
+			t.Version = probe(d.BinPath, d.BinArgs)
 		}
 		// 仅对声明支持 ACP 的 provider 探测，避免无谓开销。
 		if ap, ok := p.(providers.ACPProvider); ok {

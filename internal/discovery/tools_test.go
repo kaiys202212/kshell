@@ -94,3 +94,39 @@ func TestDetectAll_FillsACP(t *testing.T) {
 		t.Fatal("ACP detection not attached")
 	}
 }
+
+func TestDetectAllCarriesBinArgs(t *testing.T) {
+	home := t.TempDir()
+	vdir := filepath.Join(home, "va")
+	if err := os.MkdirAll(vdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 精确命名的 node 入口文件（writeFakeBin 会改后缀，不能用）
+	if err := os.WriteFile(filepath.Join(vdir, "node.exe"), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(vdir, "index.js"), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := stubProvider{id: "cursor", spec: providers.DetectSpec{
+		BinName:         "cursor-agent",
+		InstallDirs:     []string{vdir},
+		NodeEntryScript: "index.js",
+	}}
+	probe := func(bin string, args []string) string {
+		if len(args) != 1 || args[0] != "index.js" {
+			t.Fatalf("probe 应收到 BinArgs, got %v", args)
+		}
+		return "2026.10.01"
+	}
+	tools := detectAll(home, []providers.Provider{p}, probe)
+	if !tools[0].Installed || tools[0].BinPath == "" {
+		t.Fatalf("应检出 node 入口, got %+v", tools[0])
+	}
+	if len(tools[0].BinArgs) != 1 || tools[0].BinArgs[0] != "index.js" {
+		t.Fatalf("Tool 应携带 BinArgs, got %+v", tools[0])
+	}
+	if tools[0].Version != "2026.10.01" {
+		t.Fatalf("version = %q", tools[0].Version)
+	}
+}
