@@ -190,6 +190,8 @@ func (a *App) execInstallCommand(id, action string, recipe providers.InstallReci
 		return a.runInstallCmd(a.runCtx(), recipe.Shell, recipe.InstallCmd, onLog)
 	}
 	var cmdErr error
+	// 先补常见安装目录进 PATH，否则 FindBins/Detect 看不到 %APPDATA%\npm 里的残留。
+	ensureToolBinsOnPATH()
 	if recipe.UninstallCmd != "" {
 		cmdErr = a.runInstallCmd(a.runCtx(), recipe.Shell, recipe.UninstallCmd, onLog)
 	} else if bin := a.toolByID(id).BinPath; bin != "" {
@@ -209,6 +211,9 @@ func (a *App) execInstallCommand(id, action string, recipe providers.InstallReci
 			onLog(errCursorNoBin.Error())
 		}
 		return cmdErr
+	}
+	if cmdErr != nil {
+		onLog("卸载命令失败但仍已删除残留二进制: " + cmdErr.Error())
 	}
 	return nil
 }

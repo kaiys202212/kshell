@@ -39,7 +39,7 @@ func Detect(spec DetectSpec, home string) Detection {
 	return Detection{}
 }
 
-// FindBins 列出 PATH 与 InstallDirs 上所有已存在的可执行文件（去重），不含配置目录。
+// FindBins 列出 LookPath 命中的那一份，以及 InstallDirs 里存在的候选文件（去重），不含配置目录。
 // 卸载时要删掉每一份拷贝，不能只删 Detect 命中的第一份。
 func FindBins(spec DetectSpec, home string) []string {
 	seen := make(map[string]bool)

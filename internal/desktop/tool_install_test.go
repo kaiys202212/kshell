@@ -27,6 +27,12 @@ func waitJobIdle(t *testing.T, app *App) {
 	t.Fatal("install job timeout")
 }
 
+// isolatePATH 避免卸载走 LookPath 时删掉本机真实 CLI。
+func isolatePATH(t *testing.T) {
+	t.Helper()
+	t.Setenv("PATH", t.TempDir())
+}
+
 func TestGetToolInstallRecipeClaude(t *testing.T) {
 	app := NewAppWith(Options{Providers: providers.Builtins(), Home: t.TempDir()})
 	v, err := app.GetToolInstallRecipe("claude")
@@ -99,6 +105,7 @@ func TestInstallSuccessRescansTools(t *testing.T) {
 }
 
 func TestUninstallClaudeRemovesLocalBinWhenNpmFails(t *testing.T) {
+	isolatePATH(t)
 	home := t.TempDir()
 	local := filepath.Join(home, ".claude", "local")
 	if err := os.MkdirAll(local, 0o755); err != nil {
@@ -113,7 +120,6 @@ func TestUninstallClaudeRemovesLocalBinWhenNpmFails(t *testing.T) {
 	if err := os.WriteFile(bin, []byte("x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", t.TempDir())
 
 	app := NewAppWith(Options{
 		Providers: providers.Builtins(),
@@ -133,6 +139,9 @@ func TestUninstallClaudeRemovesLocalBinWhenNpmFails(t *testing.T) {
 	if job := app.GetToolInstallJob(); job.Error != "" {
 		t.Fatalf("删掉残留二进制后任务应成功, job=%+v", job)
 	}
+	if job := app.GetToolInstallJob(); !strings.Contains(job.Log, "npm fail") {
+		t.Fatalf("应保留命令失败原因, log=%q", app.GetToolInstallJob().Log)
+	}
 	if _, err := os.Stat(bin); !os.IsNotExist(err) {
 		t.Fatal("应删除 ~/.claude/local 下的 claude")
 	}
@@ -146,7 +155,47 @@ func TestUninstallClaudeRemovesLocalBinWhenNpmFails(t *testing.T) {
 	}
 }
 
+func TestUninstallClaudeRemovesNpmGlobalOffPATH(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows 才会把 %APPDATA%\\npm 补进 PATH")
+	}
+	isolatePATH(t)
+	home := t.TempDir()
+	appdata := t.TempDir()
+	t.Setenv("APPDATA", appdata)
+	npmDir := filepath.Join(appdata, "npm")
+	if err := os.MkdirAll(npmDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(npmDir, "claude.cmd")
+	if err := os.WriteFile(bin, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	app := NewAppWith(Options{
+		Providers: providers.Builtins(),
+		Home:      home,
+		Scan: func(string, []providers.Provider, string, discovery.ScanOptions) (*discovery.Result, error) {
+			return &discovery.Result{}, nil
+		},
+		Windows: NewWindowManager(&stubLauncher{}, nil),
+		InstallRunner: func(context.Context, string, string, func(string)) error {
+			return errors.New("npm fail")
+		},
+	})
+	if err := app.UninstallBuiltinTool("claude", false); err != nil {
+		t.Fatal(err)
+	}
+	waitJobIdle(t, app)
+	if job := app.GetToolInstallJob(); job.Error != "" {
+		t.Fatalf("应删掉 npm 全局残留, job=%+v", job)
+	}
+	if _, err := os.Stat(bin); !os.IsNotExist(err) {
+		t.Fatal("应删除 %APPDATA%\\npm\\claude.cmd")
+	}
+}
+
 func TestUninstallFailureDoesNotPurge(t *testing.T) {
+	isolatePATH(t)
 	home := t.TempDir()
 	cfg := filepath.Join(home, ".gemini")
 	if err := os.MkdirAll(cfg, 0o755); err != nil {
@@ -167,6 +216,7 @@ func TestUninstallFailureDoesNotPurge(t *testing.T) {
 }
 
 func TestUninstallPurgeRemovesDeclaredDirs(t *testing.T) {
+	isolatePATH(t)
 	home := t.TempDir()
 	cfg := filepath.Join(home, ".gemini")
 	other := filepath.Join(home, ".keep")
@@ -201,6 +251,7 @@ func TestInstallUnknownTool(t *testing.T) {
 }
 
 func TestUninstallCursorDeletesBin(t *testing.T) {
+	isolatePATH(t)
 	home := t.TempDir()
 	bin := filepath.Join(home, "cursor-agent.exe")
 	if err := os.WriteFile(bin, []byte("x"), 0o755); err != nil {
@@ -308,6 +359,7 @@ func TestInstallEnsuresToolBinsOnPATH(t *testing.T) {
 }
 
 func TestPurgeErrorFailsJob(t *testing.T) {
+	isolatePATH(t)
 	var mu sync.Mutex
 	var okVal any
 	app := NewAppWith(Options{
