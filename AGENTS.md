@@ -70,6 +70,7 @@
 - 合并后清理：`git worktree remove` 删除工作区，`git branch -d` 删除已合并分支。
 - 破坏性/一次性实验也不在 `master` 上做，先在 worktree 试。
 - 本流程内 agent **必须**在功能分支自行提交（含子代理任务提交）；验证与自查均通过后 **必须**本地合并 `master`。默认 **禁止** `git push` 与 `gh pr create`。
+- **例外：用户说「发布 / 发版 / 打版本 / release」时，必须按 `docs/release.md` 执行**（版本号从已有 `v*` tag 自动累加，默认补丁 +1）。该口令视为授权 push GitHub 的 `master` 与 `v*` tag，以及按文档用本机 SSH 推 GitCode。仍禁止 force push、改 git config、跳过 hook、读取或泄露私钥。
 
 **验证命令**（按改动范围全跑，全绿才算通过）：
 
@@ -151,8 +152,9 @@ internal/
   appearance/       主题（亮/暗色，注入终端环境变量）
   executil/         跨平台进程执行工具
 frontend/src/       React 前端（components/ pages/ state/ lib/）
-docs/plans/         设计与实现计划文档（改动前可参考/补充）
-docs/smoke/          冒烟清单（baseline-* 基线 + 按分支增量）
+docs/plans/         设计与实现计划（仅本地，git 忽略）
+docs/smoke/          冒烟清单（仅本地，git 忽略）
+docs/release.md      发版手册（仅本地，git 忽略；用户说「发布」时执行）
 ```
 
 ## 架构要点
@@ -174,13 +176,14 @@ docs/smoke/          冒烟清单（baseline-* 基线 + 按分支增量）
 - 平台相关代码用构建约束拆分，例如 `window_win.go`、`hide_windows.go` / `hide_other.go`、`shim_windows.go` / `shim_other.go`。
 - 测试与被测文件同目录，命名 `<name>_test.go`；测试数据放 `testdata/`（如 `internal/providers/testdata/`）。
 - 前端 TypeScript `strict`，测试同目录 `*.test.ts(x)`，从 `vitest` 显式导入 API（未开 globals）。
-- 新功能通常先落一份 `docs/plans/` 设计/计划文档，再实现。
+- 新功能通常先落一份 `docs/plans/` 设计/计划文档，再实现（**只写磁盘，不入库**）。
+- **`docs/` 全部不跟踪 git**：`.gitignore` 已有 `/docs/`。禁止 `git add docs`、禁止把说明/规格/冒烟清单提交进仓库；发现仍被跟踪时 `git rm --cached` 对应路径并保留工作区文件。
 - 不要提交密钥内容；SSH 私钥只存路径引用。构建产物（`dist/`、`build/bin/`、`frontend/dist/`、`frontend/wailsjs/go/`）已 gitignore，勿入库。
 - Cursor 会话展示标题：kshell 优先用 transcript 首条用户消息；仓库 `.cursor/rules/session-naming-zh.mdc` 约束会话命名用中文（产品侧 `meta.title` 不保证遵守）。
 
 ## 提交
 
-- **开发流程内**（功能分支上的规格、计划、实现）：agent 自行 `git add` / `git commit`，不必等用户再说一次「提交」。
+- **开发流程内**（功能分支上的实现）：agent 自行 `git add` / `git commit`，不必等用户再说一次「提交」。**不要 `git add docs/`。**
 - 提交信息用中文，采用 `type: 简述` 前缀风格（如 `feat:`、`fix:`、`docs:`），参考 `git log`。
 - 验证与自查通过后，将功能分支**本地合并**进 `master`（优先 `git merge --ff-only`；不能快进时用一次 merge commit），然后清理 worktree 与已合并分支。
 - **默认不 push 远程、不开 PR。** 只有用户在本会话明确要求时才 `git push` 或 `gh pr create`。
