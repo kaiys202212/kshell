@@ -144,7 +144,7 @@ describe('Preview', () => {
     expect(mocks.previewFile).not.toHaveBeenCalled();
   });
 
-  it('Truncated 时显示截断提示', async () => {
+  it('Truncated 时显示截断提示（默认上限 10000 行）', async () => {
     mocks.previewFile.mockResolvedValue({
       Lines: ['   1 │ x'],
       Text: 'x',
@@ -154,7 +154,34 @@ describe('Preview', () => {
     });
     render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\big.log'} />);
 
-    expect(await screen.findByText(/内容已截断/)).toBeInTheDocument();
+    expect(await screen.findByText('内容已截断：仅显示前 10000 行')).toBeInTheDocument();
+  });
+
+  it('路径标题栏固定、内容区可滚动（避免滚动时内容盖住标题）', async () => {
+    mocks.previewFile.mockResolvedValue({
+      Lines: ['   1 │ hello'],
+      Text: 'hello',
+      Truncated: false,
+      Binary: false,
+      Info: '',
+    });
+    const { container } = render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);
+    await screen.findByTestId('code-editor');
+
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toMatch(/h-full/);
+    expect(root.className).toMatch(/overflow-hidden/);
+
+    const header = root.querySelector('[data-testid="preview-path-header"]') as HTMLElement;
+    expect(header).toBeTruthy();
+    expect(header.className).toMatch(/shrink-0/);
+    expect(header.className).not.toMatch(/sticky/);
+
+    const body = root.querySelector('[data-testid="preview-body"]') as HTMLElement;
+    expect(body).toBeTruthy();
+    expect(body.className).toMatch(/min-h-0/);
+    expect(body.className).toMatch(/flex-1/);
+    expect(body.className).toMatch(/overflow-hidden/);
   });
 
   it('二进制文件（非图/PDF）只展示 Info 元信息，不渲染内容', async () => {

@@ -73,7 +73,7 @@ func (m *Model) ensurePreview() tea.Cmd {
 
 func loadPreviewCmd(path string) tea.Cmd {
 	return func() tea.Msg {
-		return previewMsg{key: path, preview: workspace.PreviewFile(path, 0, 500)}
+		return previewMsg{key: path, preview: workspace.PreviewFile(path, 0, workspace.DefaultPreviewMaxLines)}
 	}
 }
 

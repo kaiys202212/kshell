@@ -129,7 +129,7 @@ func (a *App) nodeAt(tree *workspace.Tree, wsPath, relPath string) (*workspace.N
 	return node, nil
 }
 
-// PreviewFile 读取文件预览（头部 512KB、最多 500 行，二进制只给元信息）。
+// PreviewFile 读取文件预览（头部 512KB、最多 DefaultPreviewMaxLines 行，二进制只给元信息）。
 // 绑定调用本身已在独立 goroutine 执行，无需 TUI 那样的异步命令包装；
 // 每次现读保证拿到最新 mtime 内容，头部读取开销可忽略。
 func (a *App) PreviewFile(wsPath, path string) (workspace.Preview, error) {
@@ -137,7 +137,7 @@ func (a *App) PreviewFile(wsPath, path string) (workspace.Preview, error) {
 	if err != nil {
 		return workspace.Preview{}, err
 	}
-	p := workspace.PreviewFile(resolved, 0, 500)
+	p := workspace.PreviewFile(resolved, 0, workspace.DefaultPreviewMaxLines)
 	if p.Err != nil {
 		return workspace.Preview{}, p.Err
 	}

@@ -171,10 +171,18 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
   const bodyContent = () => {
     if (!path) return null;
     if (kind === 'image') {
-      return <ImagePreview wsPath={wsPath} path={path} />;
+      return (
+        <div className="min-h-0 flex-1 overflow-auto">
+          <ImagePreview wsPath={wsPath} path={path} />
+        </div>
+      );
     }
     if (kind === 'pdf') {
-      return <PdfPreview wsPath={wsPath} path={path} />;
+      return (
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <PdfPreview wsPath={wsPath} path={path} />
+        </div>
+      );
     }
     if (!data) return null;
 
@@ -186,19 +194,19 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
     const content = previewText(data);
     return (
       <>
-        {data.Info && <p className="mb-2 text-xs text-muted-foreground">{data.Info}</p>}
-        {/* 截断行数 500 与 Go 侧 internal/workspace/preview.go 的预览行数上限耦合，改一处需同步 */}
+        {data.Info && <p className="shrink-0 mb-2 text-xs text-muted-foreground">{data.Info}</p>}
+        {/* 截断行数与 Go 侧 workspace.DefaultPreviewMaxLines 耦合，改一处需同步 */}
         {data.Truncated && (
-          <Badge variant="outline" className="mb-2 w-fit">
-            内容已截断：仅显示前 500 行
+          <Badge variant="outline" className="mb-2 w-fit shrink-0">
+            内容已截断：仅显示前 10000 行
           </Badge>
         )}
         {kind === 'markdown' && mdMode === 'preview' ? (
-          <div className="min-h-0 flex-1">
+          <div className="min-h-0 flex-1 overflow-hidden">
             <MarkdownPreview markdown={content} />
           </div>
         ) : (
-          <div className="mt-2 min-h-[240px] min-h-0 flex-1">
+          <div className="min-h-0 flex-1 overflow-hidden">
             <CodeEditor value={content} readOnly path={path} theme={cmTheme} />
           </div>
         )}
@@ -207,8 +215,11 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
   };
 
   return (
-    <div className="flex min-h-0 flex-col text-sm">
-      <div className="sticky top-0 z-10 flex items-center border-b border-border bg-card py-2">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden text-sm">
+      <div
+        data-testid="preview-path-header"
+        className="flex shrink-0 items-center border-b border-border bg-card py-2"
+      >
         <span
           className="truncate font-mono text-xs text-muted-foreground"
           title={path ?? ''}
@@ -266,30 +277,35 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
           </Button>
         )}
       </div>
-      {!path && <EmptyState title="从右侧文件树选择文件查看预览" />}
-      {loading && (
-        <div className="mt-3 flex flex-col gap-2">
-          {[0, 1, 2, 3, 4, 5].map((i) => (
-            <Skeleton key={i} className="h-4" style={{ width: `${88 - (i % 3) * 18}%` }} />
-          ))}
-        </div>
-      )}
-      {error && <p className="text-sm text-destructive">{error}</p>}
-      {!loading && !error && editing && path && (
-        <div className="mt-2 min-h-[240px] min-h-0 flex-1" onKeyDown={onEditorKeyDown}>
-          <CodeEditor
-            value={text}
-            readOnly={false}
-            path={path}
-            theme={cmTheme}
-            onChange={(v) => {
-              setText(v);
-              setDirty(true);
-            }}
-          />
-        </div>
-      )}
-      {!loading && !error && !editing && bodyContent()}
+      <div
+        data-testid="preview-body"
+        className="mt-2 flex min-h-0 flex-1 flex-col overflow-hidden"
+      >
+        {!path && <EmptyState title="从右侧文件树选择文件查看预览" />}
+        {loading && (
+          <div className="flex flex-col gap-2">
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <Skeleton key={i} className="h-4" style={{ width: `${88 - (i % 3) * 18}%` }} />
+            ))}
+          </div>
+        )}
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {!loading && !error && editing && path && (
+          <div className="min-h-0 flex-1 overflow-hidden" onKeyDown={onEditorKeyDown}>
+            <CodeEditor
+              value={text}
+              readOnly={false}
+              path={path}
+              theme={cmTheme}
+              onChange={(v) => {
+                setText(v);
+                setDirty(true);
+              }}
+            />
+          </div>
+        )}
+        {!loading && !error && !editing && bodyContent()}
+      </div>
     </div>
   );
 }

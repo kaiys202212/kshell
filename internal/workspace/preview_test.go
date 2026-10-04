@@ -81,6 +81,30 @@ func TestPreviewTextRespectsMaxLines(t *testing.T) {
 	}
 }
 
+func TestPreviewFileDefaultMaxLines(t *testing.T) {
+	if DefaultPreviewMaxLines != 10000 {
+		t.Fatalf("DefaultPreviewMaxLines = %d, want 10000", DefaultPreviewMaxLines)
+	}
+
+	root := t.TempDir()
+	path := filepath.Join(root, "many.txt")
+	var b strings.Builder
+	const total = DefaultPreviewMaxLines + 3
+	for i := 0; i < total; i++ {
+		fmt.Fprintf(&b, "line-%d\n", i)
+	}
+	write(t, path, b.String())
+
+	// maxLines<=0 走默认上限
+	got := PreviewFile(path, 8*1024*1024, 0)
+	if !got.Truncated {
+		t.Fatal("expected line truncation at default max")
+	}
+	if len(got.Lines) != DefaultPreviewMaxLines {
+		t.Fatalf("Lines = %d, want %d", len(got.Lines), DefaultPreviewMaxLines)
+	}
+}
+
 func TestPreviewDetectsBinary(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "logo.png")

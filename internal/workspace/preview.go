@@ -21,13 +21,16 @@ type Preview struct {
 
 const previewHeadBytes = 512 * 1024
 
+// DefaultPreviewMaxLines 是预览默认截断行数（桌面端/TUI 未显式传入时共用）。
+const DefaultPreviewMaxLines = 10000
+
 // PreviewFile 只读前 maxBytes 字节，避免把大文件整读进内存。
 func PreviewFile(path string, maxBytes int, maxLines int) Preview {
 	if maxBytes <= 0 {
 		maxBytes = previewHeadBytes
 	}
 	if maxLines <= 0 {
-		maxLines = 500
+		maxLines = DefaultPreviewMaxLines
 	}
 
 	info, err := os.Stat(path)
