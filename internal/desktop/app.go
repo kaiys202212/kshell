@@ -16,8 +16,10 @@ import (
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/launch"
+	"github.com/yangk/kshell/internal/mcparchive"
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/remote"
+	"github.com/yangk/kshell/internal/sessionarchive"
 	"github.com/yangk/kshell/internal/terminal"
 	"github.com/yangk/kshell/internal/workspace"
 )
@@ -103,6 +105,11 @@ type App struct {
 	appearanceCancel context.CancelFunc // system 模式下的明暗监听取消函数
 
 	installJob installJob // 当前一键安装/卸载任务；绑定并发，由 mu 保护
+	// 归档名单、本机 MCP 回调，以及「会话还没落盘就点了归档」的待绑定 ref。
+	archiveStore   *sessionarchive.Store
+	archiveHub     *mcparchive.Hub
+	pendingArchive map[string]bool
+	hooksOnce      sync.Once
 	// keepInstallTools：安装/卸载刚用 DetectAll 写过 a.tools。进行中的 runScan
 	// 开头拿到的是旧快照，结束时不得覆盖这份更新结果。
 	keepInstallTools bool
@@ -351,6 +358,13 @@ func (a *App) Shutdown(ctx context.Context) {
 	}
 	if m := a.snapshot().Chats; m != nil {
 		m.CloseAll()
+	}
+	a.mu.Lock()
+	hub := a.archiveHub
+	a.archiveHub = nil
+	a.mu.Unlock()
+	if hub != nil {
+		hub.Close()
 	}
 }
 
@@ -631,6 +645,7 @@ func (a *App) attachDiscoveredSessions(sessions []providers.Session, prevIDs map
 			changed++
 		}
 	}
+	a.flushPendingArchive()
 	return changed
 }
 

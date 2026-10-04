@@ -66,6 +66,8 @@ type Agent struct {
 	writeErrMu   sync.Mutex
 	lastWriteErr error
 
+	mcp []McpServerStdio
+
 	readDone  chan struct{} // 读循环结束
 	done      chan struct{} // 连接关闭（读循环结束或 Close）
 	waitDone  chan struct{} // 子进程退出
@@ -240,15 +242,42 @@ func (a *Agent) Initialize(ctx context.Context) (InitializeResult, error) {
 	return res, err
 }
 
+// SetMCP 设置随后 session/new 与 session/load 要带上的 MCP 服务器。
+func (a *Agent) SetMCP(servers []McpServerStdio) {
+	a.mu.Lock()
+	a.mcp = append([]McpServerStdio(nil), servers...)
+	a.mu.Unlock()
+}
+
+func (a *Agent) mcpParams() []any {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.mcp) == 0 {
+		return []any{}
+	}
+	out := make([]any, len(a.mcp))
+	for i := range a.mcp {
+		s := a.mcp[i]
+		if s.Args == nil {
+			s.Args = []string{}
+		}
+		if s.Env == nil {
+			s.Env = []EnvVariable{}
+		}
+		out[i] = s
+	}
+	return out
+}
+
 func (a *Agent) NewSession(ctx context.Context, cwd string) (string, error) {
 	var res NewSessionResult
-	err := a.call(ctx, "session/new", NewSessionParams{Cwd: cwd, McpServers: []any{}}, &res)
+	err := a.call(ctx, "session/new", NewSessionParams{Cwd: cwd, McpServers: a.mcpParams()}, &res)
 	return res.SessionID, err
 }
 
 func (a *Agent) LoadSession(ctx context.Context, sessionID, cwd string) error {
 	var res NewSessionResult
-	return a.call(ctx, "session/load", LoadSessionParams{SessionID: sessionID, Cwd: cwd, McpServers: []any{}}, &res)
+	return a.call(ctx, "session/load", LoadSessionParams{SessionID: sessionID, Cwd: cwd, McpServers: a.mcpParams()}, &res)
 }
 
 func (a *Agent) Prompt(ctx context.Context, sessionID, text string) (string, error) {

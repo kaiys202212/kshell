@@ -39,6 +39,42 @@ function isRestored(sessionID: string, chats: ChatInfo[], terminals: TerminalInf
   return [...chats, ...terminals].some((t) => t.SessionID === sessionID && t.Status !== 'exited');
 }
 
+// 用户已经发送、但磁盘扫描还没收录的会话。Path 用 live:<终端或聊天 id>，点行直接切到已打开的页签。
+function liveSessions(
+  workspacePath: string,
+  diskIDs: Set<string>,
+  chats: ChatInfo[],
+  terminals: TerminalInfo[],
+): Session[] {
+  const target = normalizeWorkspacePath(workspacePath);
+  const now = new Date().toISOString();
+  const out: Session[] = [];
+  const push = (id: string, sessionID: string, toolID: string, workspace: string, title: string) => {
+    if (sessionID && diskIDs.has(sessionID)) return;
+    out.push({
+      ID: sessionID || `live:${id}`,
+      ToolID: toolID,
+      Workspace: workspace,
+      Title: title,
+      CreatedAt: now,
+      UpdatedAt: now,
+      Messages: 1,
+      Path: `live:${id}`,
+    });
+  };
+  for (const t of terminals) {
+    if (!t.Prompted || (t.Kind !== 'new' && t.Kind !== 'session')) continue;
+    if (normalizeWorkspacePath(t.Workspace) !== target) continue;
+    push(t.ID, t.SessionID, t.ToolID, t.Workspace, t.Title);
+  }
+  for (const c of chats) {
+    if (!c.Prompted || (c.Kind !== 'new' && c.Kind !== 'session')) continue;
+    if (normalizeWorkspacePath(c.Workspace) !== target) continue;
+    push(c.ID, c.SessionID, c.ToolID, c.Workspace, c.Title);
+  }
+  return out;
+}
+
 const tsOf = (v: string) => {
   const n = Date.parse(v);
   return Number.isFinite(n) ? n : 0;
@@ -55,15 +91,20 @@ const chipClass = (active: boolean) =>
 interface Props {
   workspacePath: string;
   selectedSessionID?: string | null;
+  /** 勾选后只看已归档会话 */
+  showArchived?: boolean;
   onSelectRow?(s: Session): void;
   onActivate?(s: Session): void;
+  onRestore?(s: Session): void;
 }
 
 export default function SessionList({
   workspacePath,
   selectedSessionID = null,
+  showArchived = false,
   onSelectRow,
   onActivate,
+  onRestore,
 }: Props) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [query, setQuery] = useState('');
@@ -74,6 +115,8 @@ export default function SessionList({
   const chats = useAppStore((s) => s.chats);
   const chatPermissions = useAppStore((s) => s.chatPermissions);
   const terminalBusy = useAppStore((s) => s.terminalBusy);
+  const archivedIDs = useAppStore((s) => s.archivedIDs);
+  const archivedSet = useMemo(() => new Set(archivedIDs), [archivedIDs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -95,17 +138,24 @@ export default function SessionList({
   }, [setScanState]);
 
   const target = normalizeWorkspacePath(workspacePath);
+  const pooled = useMemo(() => {
+    const diskIDs = new Set(sessions.map((s) => s.ID));
+    const live = showArchived ? [] : liveSessions(workspacePath, diskIDs, chats, terminals);
+    return [...live, ...sessions].filter((s) => {
+      if (normalizeWorkspacePath(s.Workspace) !== target) return false;
+      const archived = archivedSet.has(s.ID);
+      if (showArchived) return archived && !s.Path.startsWith('live:');
+      return !archived;
+    });
+  }, [sessions, showArchived, workspacePath, chats, terminals, target, archivedSet]);
   const toolOptions = useMemo(() => {
     const set = new Set<string>();
-    for (const s of sessions) {
-      if (normalizeWorkspacePath(s.Workspace) === target) set.add(badgeFor(s.ToolID).label);
-    }
+    for (const s of pooled) set.add(badgeFor(s.ToolID).label);
     return [...set];
-  }, [sessions, target]);
+  }, [pooled]);
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return sessions
-      .filter((s) => normalizeWorkspacePath(s.Workspace) === target)
+    return pooled
       .filter((s) => toolFilter === null || badgeFor(s.ToolID).label === toolFilter)
       .filter((s) => {
         if (!q) return true;
@@ -121,7 +171,7 @@ export default function SessionList({
           tsOf(b.CreatedAt) - tsOf(a.CreatedAt) ||
           a.Path.localeCompare(b.Path),
       );
-  }, [sessions, query, toolFilter, target]);
+  }, [pooled, query, toolFilter]);
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -163,8 +213,15 @@ export default function SessionList({
         <ul className="flex flex-col gap-2">
           {visible.map((s) => {
             const badge = badgeFor(s.ToolID);
-            const opened = findOpenedForSession(s.ID, chats, terminals);
-            const restored = isRestored(s.ID, chats, terminals);
+            const liveID = s.Path.startsWith('live:') ? s.Path.slice('live:'.length) : '';
+            const liveChat = liveID ? chats.find((c) => c.ID === liveID) : undefined;
+            const liveTerm = liveID ? terminals.find((t) => t.ID === liveID) : undefined;
+            const opened = liveChat
+              ? { ID: liveChat.ID, Status: liveChat.Status, kind: 'chat' as const }
+              : liveTerm
+                ? { ID: liveTerm.ID, Status: liveTerm.Status, kind: 'terminal' as const }
+                : findOpenedForSession(s.ID, chats, terminals);
+            const restored = !!liveID || isRestored(s.ID, chats, terminals);
             const selected = selectedSessionID === s.ID;
             const title = displayTitle(s.Title);
             return (
@@ -175,13 +232,29 @@ export default function SessionList({
               >
                 <div className="flex min-w-0 flex-col gap-1.5">
                   <div className="flex min-w-0 items-center gap-1.5">
+                    {showArchived && (
+                      <span
+                        className="inline-flex h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                        role="img"
+                        aria-label="已归档"
+                        title="已归档"
+                      >
+                        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
+                          <path
+                            d="M2 3.2h12l-1 2.2H3L2 3.2Zm1.2 3h9.6V13H3.2V6.2Zm2.3 2.2v1.2h5V8.4h-5Z"
+                            fill="currentColor"
+                          />
+                        </svg>
+                      </span>
+                    )}
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <span
                           data-testid="session-title"
                           className={cn(
                             'min-w-0 truncate text-sm font-medium',
-                            !title && 'italic text-muted-foreground',
+                            (!title || showArchived) && 'text-muted-foreground',
+                            !title && 'italic',
                           )}
                         >
                           {title || '(无标题)'}
@@ -211,7 +284,25 @@ export default function SessionList({
                     <ToolDot toolID={s.ToolID} className="shrink-0" />
                     <span className={`whitespace-nowrap ${MONO}`}>{formatRelativeTime(s.UpdatedAt)}</span>
                     <span className={`whitespace-nowrap ${MONO}`}>{s.Messages} 条</span>
-                    {restored ? (
+                    {showArchived ? (
+                      <button
+                        type="button"
+                        className="ml-auto inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-primary"
+                        aria-label="还原"
+                        title="还原到开发列表"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRestore?.(s);
+                        }}
+                      >
+                        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
+                          <path
+                            d="M8 2.2a5.8 5.8 0 1 0 4.9 8.8l-1.1-.7A4.4 4.4 0 1 1 8 3.6V2.2Zm4.2.4v3.2H9l1.1-1.1A5.7 5.7 0 0 0 8 3.6"
+                            fill="currentColor"
+                          />
+                        </svg>
+                      </button>
+                    ) : restored ? (
                       <span
                         className="ml-auto inline-flex h-5 w-5 shrink-0 items-center justify-center text-primary"
                         role="img"

@@ -24,6 +24,8 @@ type Layout struct {
 	SignalExit string
 	// Projects 是项目表：手动添加的项目目录 + 逻辑删除（隐藏）的项目。
 	Projects string
+	// Archived 是已归档会话 ID 名单。
+	Archived string
 	// CacheAppearance 是颜色主题注入文件的落盘目录（agent 工具用）。
 	CacheAppearance string
 }
@@ -47,6 +49,7 @@ func Paths() (Layout, error) {
 		CacheTools:      filepath.Join(cache, "tools.json"),
 		SignalExit:      filepath.Join(root, "exit.signal"),
 		Projects:        filepath.Join(root, "projects.yaml"),
+		Archived:        filepath.Join(root, "archived.json"),
 		CacheAppearance: filepath.Join(cache, "appearance"),
 	}, nil
 }

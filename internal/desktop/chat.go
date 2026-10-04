@@ -65,6 +65,7 @@ func (a *App) OpenSessionACP(sessionID string) (OpenedSession, error) {
 }
 
 func (a *App) openSessionACP(sessionID string, allowFallback bool) (OpenedSession, error) {
+	a.ensureSessionHooks()
 	s, tools, ok := a.sessionByIDReady(sessionID)
 	if !ok {
 		return OpenedSession{}, errSessionNotFound
@@ -112,6 +113,7 @@ func (a *App) OpenWorkspaceACP(wsID, toolID string) (OpenedSession, error) {
 }
 
 func (a *App) openWorkspaceACP(wsID, toolID string, allowFallback bool) (OpenedSession, error) {
+	a.ensureSessionHooks()
 	ws, tools, ok := a.workspaceByIDReady(wsID)
 	if !ok {
 		return OpenedSession{}, errWorkspaceNotFound
@@ -171,6 +173,7 @@ func (a *App) fallbackTerminalWorkspace(wsID, toolID, reason string) (OpenedSess
 
 // SendChatPrompt 向指定聊天会话发起一轮用户输入。
 func (a *App) SendChatPrompt(id, text string) error {
+	a.ensureSessionHooks()
 	m := a.chats()
 	if m == nil {
 		return errNotReady

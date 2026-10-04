@@ -1,5 +1,32 @@
+import { useEffect, useState } from 'react';
 import { cn } from '../lib/cn';
 import type { AgentActivity } from '../state/agentActivity';
+
+// 用定时器改 transform，而不是 CSS animation。
+// 全局样式在 prefers-reduced-motion 下把所有 animation-duration 压成 0.01ms，
+// Windows「动画效果」关闭时 WebView2 会命中这条规则，CSS 转圈会停在第一帧。
+function SpinningArc() {
+  const [deg, setDeg] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setDeg((d) => (d + 45) % 360);
+    }, 80);
+    return () => window.clearInterval(id);
+  }, []);
+  return (
+    <span data-spin="" className="inline-flex h-3.5 w-3.5" style={{ transform: `rotate(${deg}deg)` }}>
+      <svg viewBox="0 0 14 14" className="h-3.5 w-3.5" aria-hidden="true">
+        <path
+          d="M12 7a5 5 0 1 1-3.5-4.77"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+        />
+      </svg>
+    </span>
+  );
+}
 
 interface Props {
   activity: AgentActivity;
@@ -16,15 +43,7 @@ export default function AgentActivityIcon({ activity, className }: Props) {
         aria-label="执行中"
         title="执行中"
       >
-        <svg viewBox="0 0 14 14" className="h-3.5 w-3.5 kshell-spin" aria-hidden="true">
-          <path
-            d="M12 7a5 5 0 1 1-3.5-4.77"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-          />
-        </svg>
+        <SpinningArc />
       </span>
     );
   }

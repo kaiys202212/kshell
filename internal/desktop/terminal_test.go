@@ -329,7 +329,9 @@ func TestOpenSessionTerminalOpensAndReuses(t *testing.T) {
 	}
 
 	spec := env.backend.lastSpec()
-	if spec.Path != "claude" || len(spec.Args) != 2 || spec.Args[0] != "--resume" || spec.Args[1] != "s1" {
+	// 恢复命令仍在参数末尾；前面可以有会话级 MCP 注入（--mcp-config）。
+	args := spec.Args
+	if spec.Path != "claude" || len(args) < 2 || args[len(args)-2] != "--resume" || args[len(args)-1] != "s1" {
 		t.Fatalf("Spec 未按会话恢复命令组装 = %+v", spec)
 	}
 	if spec.Dir != `D:\ws-a` {

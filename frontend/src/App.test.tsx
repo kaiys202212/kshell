@@ -42,6 +42,13 @@ const mocks = vi.hoisted(() => ({
   newSessionWithTool: vi.fn(),
   onTerminalData: vi.fn(),
   onTerminalExit: vi.fn(),
+  onTerminalMeta: vi.fn((_cb: (info: TerminalInfo) => void) => () => {}),
+  onChatMeta: vi.fn(() => () => {}),
+  onArchiveSuggest: vi.fn(() => () => {}),
+  onArchiveChanged: vi.fn(() => () => {}),
+  archivedIDs: vi.fn().mockResolvedValue([]),
+  confirmArchive: vi.fn().mockResolvedValue(undefined),
+  restoreSession: vi.fn().mockResolvedValue(undefined),
   createProject: vi.fn(),
   hideProject: vi.fn(),
   restoreProject: vi.fn(),
@@ -149,6 +156,11 @@ beforeEach(() => {
   mocks.onWindowClosed.mockImplementation(() => () => {});
   mocks.onTerminalData.mockImplementation(() => () => {});
   mocks.onTerminalExit.mockImplementation(() => () => {});
+  mocks.onTerminalMeta.mockImplementation(() => () => {});
+  mocks.onChatMeta.mockImplementation(() => () => {});
+  mocks.onArchiveSuggest.mockImplementation(() => () => {});
+  mocks.onArchiveChanged.mockImplementation(() => () => {});
+  mocks.archivedIDs.mockResolvedValue([]);
   mocks.getTools.mockResolvedValue([]);
   mocks.getToolInstallRecipe.mockRejectedValue(new Error('该工具不支持一键安装'));
   mocks.getToolInstallJob.mockResolvedValue({
@@ -202,6 +214,8 @@ beforeEach(() => {
     scanState: 'idle',
     terminals: [],
     chats: [],
+    archivedIDs: [],
+    archivePrompt: null,
     chatItems: {},
     chatSeq: {},
     chatPermissions: {},
@@ -210,6 +224,24 @@ beforeEach(() => {
 });
 
 describe('App', () => {
+  it('terminal:meta 立刻更新页签标题', async () => {
+    let meta: (info: TerminalInfo) => void = () => {};
+    mocks.onTerminalMeta.mockImplementation((cb: (info: TerminalInfo) => void) => {
+      meta = cb;
+      return () => {};
+    });
+    mocks.listTerminals.mockResolvedValue([{ ...term, Kind: 'new', SessionID: '', Title: '占位' }]);
+    render(<App />);
+    await waitFor(() => {
+      expect(useAppStore.getState().terminals[0]?.Title).toBe('占位');
+    });
+    act(() => {
+      meta({ ...term, Kind: 'new', SessionID: '', Title: '修复登录空指针', Prompted: true });
+    });
+    expect(useAppStore.getState().terminals[0]?.Title).toBe('修复登录空指针');
+    expect(useAppStore.getState().terminals[0]?.Prompted).toBe(true);
+  });
+
   it('挂载时调 ListTerminals 重建终端镜像（前端重载后 Go 侧终端仍在跑）', async () => {
     mocks.listTerminals.mockResolvedValue([term]);
     render(<App />);

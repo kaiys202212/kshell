@@ -6,6 +6,7 @@ import { persist } from 'zustand/middleware';
 import type { ChatInfo, ChatPermissionRequest, ChatUpdate, TerminalInfo, Workspace } from '../lib/api';
 import type { AppearanceInfo } from '../lib/appearance';
 import { applyChatUpdate, type TimelineItem } from './chatUpdate';
+import { mergeMirrorList } from './mirrorMerge';
 
 // toast 的自增 id（模块级：store 单例，保证 id 唯一即可）
 let nextToastId = 1;
@@ -108,6 +109,13 @@ interface AppState {
   terminalBusy: Record<string, true>;
   setTerminalBusy(id: string, busy: boolean): void;
 
+  // 已归档的磁盘会话 ID（来自 Go，不持久化）
+  archivedIDs: string[];
+  setArchivedIDs(ids: string[]): void;
+  // agent 调用 suggest_archive 后弹出的确认
+  archivePrompt: { ref: string; summary: string } | null;
+  setArchivePrompt(prompt: { ref: string; summary: string } | null): void;
+
   // 工作区页签三栏宽度（持久化，跨会话保留）
   layout: LayoutSizes;
   setLayout(patch: Partial<LayoutSizes>): void;
@@ -207,7 +215,7 @@ export const useAppStore = create<AppState>()(
           ),
           terminalBusy: omitKey(s.terminalBusy, id),
         })),
-      setTerminals: (list) => set({ terminals: list }),
+      setTerminals: (list) => set((s) => ({ terminals: mergeMirrorList(s.terminals, list) })),
 
       chats: [],
       upsertChat: (info) =>
@@ -233,7 +241,7 @@ export const useAppStore = create<AppState>()(
             c.ID === id ? { ...c, Status: 'exited', ExitCode: exitCode, Error: error } : c,
           ),
         })),
-      setChats: (list) => set({ chats: list }),
+      setChats: (list) => set((s) => ({ chats: mergeMirrorList(s.chats, list) })),
 
       chatItems: {},
       chatSeq: {},
@@ -296,6 +304,11 @@ export const useAppStore = create<AppState>()(
           if (!(id in s.terminalBusy)) return {};
           return { terminalBusy: omitKey(s.terminalBusy, id) };
         }),
+
+      archivedIDs: [],
+      setArchivedIDs: (archivedIDs) => set({ archivedIDs }),
+      archivePrompt: null,
+      setArchivePrompt: (archivePrompt) => set({ archivePrompt }),
 
       layout: LAYOUT_DEFAULT,
       setLayout: (patch) =>

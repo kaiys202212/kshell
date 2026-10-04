@@ -6,19 +6,25 @@
 // 全局快捷键：Ctrl+K 打开快速切换器，Ctrl+F 在工作区页签内派发 kshell:focus-search。
 import { useCallback, useEffect, useState } from 'react';
 import {
+  archivedIDs,
   chatHistory,
   closeChat,
   closeTerminal,
+  confirmArchive,
   getAppearance,
   listChats,
   listTerminals,
   onAppearanceChanged,
+  onArchiveChanged,
+  onArchiveSuggest,
   onChatExit,
+  onChatMeta,
   onChatPermission,
   onChatUpdate,
   onProjectsChanged,
   onTerminalData,
   onTerminalExit,
+  onTerminalMeta,
   writeTerminal,
 } from './lib/api';
 import type { AppearanceInfo } from './lib/appearance';
@@ -35,6 +41,7 @@ import { sameWorkspacePath } from './lib/workspacePath';
 import Home from './pages/Home';
 import Settings from './pages/Settings';
 import WorkspaceTabView from './pages/WorkspaceTab';
+import ArchiveSuggest from './components/ArchiveSuggest';
 import QuickSwitcher from './components/QuickSwitcher';
 import TitleBar from './components/TitleBar';
 import { Toaster } from './components/ui/toaster';
@@ -48,6 +55,7 @@ function App() {
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const closeTab = useAppStore((s) => s.closeTab);
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const archivePrompt = useAppStore((s) => s.archivePrompt);
 
   useEffect(() => {
     // 终端镜像重建：前端重载（开发态）或应用恢复时，Go 侧终端可能仍在跑
@@ -118,6 +126,26 @@ function App() {
     getAppearance().then(apply).catch(() => {});
     const off = onAppearanceChanged(apply);
     return off;
+  }, []);
+
+  useEffect(() => {
+    // 用户一提交，Go 就改标题并打上 Prompted；这里立刻写进镜像，不必等下一轮扫描。
+    const offTerm = onTerminalMeta((info) => useAppStore.getState().upsertTerminal(info));
+    const offChat = onChatMeta((info) => useAppStore.getState().upsertChat(info));
+    const offSuggest = onArchiveSuggest((p) => useAppStore.getState().setArchivePrompt(p));
+    const refreshArchived = () => {
+      void archivedIDs()
+        .then((ids) => useAppStore.getState().setArchivedIDs(ids))
+        .catch(() => {});
+    };
+    const offArch = onArchiveChanged(refreshArchived);
+    refreshArchived();
+    return () => {
+      offTerm();
+      offChat();
+      offSuggest();
+      offArch();
+    };
   }, []);
 
   useEffect(() => {
@@ -249,6 +277,16 @@ function App() {
         </div>
       </div>
       <QuickSwitcher open={switcherOpen} onOpenChange={setSwitcherOpen} />
+      <ArchiveSuggest
+        open={!!archivePrompt}
+        summary={archivePrompt?.summary ?? ''}
+        onClose={() => useAppStore.getState().setArchivePrompt(null)}
+        onConfirm={() => {
+          const ref = useAppStore.getState().archivePrompt?.ref;
+          useAppStore.getState().setArchivePrompt(null);
+          if (ref) void confirmArchive(ref);
+        }}
+      />
       <Toaster />
     </TooltipProvider>
   );

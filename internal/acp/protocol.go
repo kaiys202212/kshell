@@ -53,6 +53,21 @@ type ContentBlock struct {
 	Text string `json:"text,omitempty"`
 }
 
+// EnvVariable 是 MCP stdio 服务器的环境变量项（ACP 要求 name/value，不能用 map）。
+type EnvVariable struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// McpServerStdio 是 session/new 注入的 stdio MCP 服务器。
+type McpServerStdio struct {
+	Type    string        `json:"type"`
+	Name    string        `json:"name"`
+	Command string        `json:"command"`
+	Args    []string      `json:"args"`
+	Env     []EnvVariable `json:"env"`
+}
+
 type NewSessionParams struct {
 	Cwd        string `json:"cwd"`
 	McpServers []any  `json:"mcpServers"`

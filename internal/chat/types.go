@@ -36,6 +36,8 @@ type Info struct {
 	Status    string
 	ExitCode  int
 	Error     string
+	// Prompted 表示用户已发送过一条消息（新建会话据此立刻进列表、改标题）。
+	Prompted bool
 	// KnownSessionIDs 仅新建会话使用：打开瞬间已有的磁盘会话，不进 JSON。
 	KnownSessionIDs []string `json:"-"`
 }

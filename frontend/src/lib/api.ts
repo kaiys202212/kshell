@@ -114,6 +114,8 @@ export interface TerminalInfo {
   ExitCode: number;
   Cols: number;
   Rows: number;
+  /** 用户已提交过输入；新建会话据此立刻出现在列表里 */
+  Prompted?: boolean;
 }
 
 // remote.Connection 的 JSON 形态（internal/remote/store.go）。
@@ -182,6 +184,8 @@ export interface ChatInfo {
   Status: string; // starting | ready | running | exited
   ExitCode: number;
   Error: string;
+  /** 用户已发送过消息；新建会话据此立刻出现在列表里 */
+  Prompted?: boolean;
 }
 
 export interface ChatToolCall {
@@ -357,6 +361,9 @@ interface AppBindings {
   CancelChatPermission(id: string, requestID: string): Promise<void>;
   CloseChat(id: string): Promise<void>;
   ListChats(): Promise<ChatInfo[]>;
+  ArchivedIDs(): Promise<string[]>;
+  ConfirmArchive(ref: string): Promise<void>;
+  RestoreSession(id: string): Promise<void>;
   ChatHistory(id: string): Promise<ChatUpdate[]>;
 }
 
@@ -1014,6 +1021,46 @@ export async function chatHistory(id: string): Promise<ChatUpdate[]> {
   const a = app();
   if (!a) return [];
   return a.ChatHistory(id);
+}
+
+export function onTerminalMeta(cb: (info: TerminalInfo) => void): () => void {
+  return EventsOn('terminal:meta', (p: TerminalInfo) => {
+    if (p?.ID) cb(p);
+  });
+}
+
+export function onChatMeta(cb: (info: ChatInfo) => void): () => void {
+  return EventsOn('chat:meta', (p: ChatInfo) => {
+    if (p?.ID) cb(p);
+  });
+}
+
+export function onArchiveSuggest(cb: (p: { ref: string; summary: string }) => void): () => void {
+  return EventsOn('archive:suggest', (p: { ref?: string; summary?: string }) => {
+    if (p?.ref) cb({ ref: p.ref, summary: p.summary ?? '' });
+  });
+}
+
+export function onArchiveChanged(cb: () => void): () => void {
+  return EventsOn('archive:changed', () => cb());
+}
+
+export async function archivedIDs(): Promise<string[]> {
+  const a = app();
+  if (!a) return [];
+  return (await a.ArchivedIDs()) ?? [];
+}
+
+export async function confirmArchive(ref: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.ConfirmArchive(ref);
+}
+
+export async function restoreSession(id: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.RestoreSession(id);
 }
 
 export function onChatUpdate(cb: (p: { id: string; update: ChatUpdate }) => void): () => void {

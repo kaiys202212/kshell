@@ -48,6 +48,7 @@ func (a *App) terminals() *terminal.Manager {
 // OpenSessionTerminal 在中心区打开（已打开则复用）某历史会话的内嵌终端。
 // key 与会话 ID 绑定，因此重复恢复同一会话不会起第二个进程。
 func (a *App) OpenSessionTerminal(sessionID string, cols, rows int) (terminal.Info, error) {
+	a.ensureSessionHooks()
 	s, tools, ok := a.sessionByIDReady(sessionID)
 	if !ok {
 		return terminal.Info{}, errSessionNotFound
@@ -78,6 +79,7 @@ func (a *App) OpenSessionTerminal(sessionID string, cols, rows int) (terminal.In
 
 // OpenWorkspaceTerminal 在中心区为工作区新开一个内嵌终端；toolID 为空时用工作区首选工具。
 func (a *App) OpenWorkspaceTerminal(wsID string, toolID string, cols, rows int) (terminal.Info, error) {
+	a.ensureSessionHooks()
 	ws, tools, ok := a.workspaceByIDReady(wsID)
 	if !ok {
 		return terminal.Info{}, errWorkspaceNotFound
@@ -113,6 +115,7 @@ func (a *App) OpenWorkspaceTerminal(wsID string, toolID string, cols, rows int) 
 
 // WriteTerminal 把前端输入写进终端；data 是 base64（xterm 的 onData 可能含任意字节）。
 func (a *App) WriteTerminal(id string, data string) error {
+	a.ensureSessionHooks()
 	m := a.terminals()
 	if m == nil {
 		return errNotReady

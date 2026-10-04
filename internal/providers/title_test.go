@@ -1,6 +1,9 @@
 package providers
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCleanTitleRemovesWrapperBlocks(t *testing.T) {
 	cases := []struct {
@@ -85,5 +88,17 @@ func TestCleanTitleKeepsUnknownAngleBrackets(t *testing.T) {
 	in := "把 <Foo> 组件改成 <Bar>"
 	if got := cleanTitle(in); got != in {
 		t.Fatalf("cleanTitle(%q) = %q, want unchanged", in, got)
+	}
+}
+
+func TestClipPromptTitleUsesFirstLine(t *testing.T) {
+	if got := ClipPromptTitle("  修复登录空指针\n第二行别进来"); got != "修复登录空指针" {
+		t.Fatalf("ClipPromptTitle = %q", got)
+	}
+	long := strings.Repeat("中", 60)
+	got := ClipPromptTitle(long)
+	runes := []rune(got)
+	if len(runes) != 48 || runes[len(runes)-1] != '…' {
+		t.Fatalf("len=%d title=%q", len(runes), got)
 	}
 }

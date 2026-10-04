@@ -55,6 +55,24 @@ func buildTagOnlyRe() *regexp.Regexp {
 	return regexp.MustCompile(`(?is)</?(?:` + strings.Join(names, "|") + `)\b[^>]*/?>`)
 }
 
+// ClipPromptTitle 把用户刚提交的内容收成页签标题：只取第一行，清洗包装标签，最长 48 个字。
+func ClipPromptTitle(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if i := strings.IndexAny(raw, "\r\n"); i >= 0 {
+		raw = strings.TrimSpace(raw[:i])
+	}
+	s := cleanTitle(raw)
+	r := []rune(s)
+	const max = 48
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max-1]) + "…"
+}
+
 // cleanTitle 清洗会话标题候选文本：
 //  1. 去掉被截断的开头包装块（会话文件只读头部，长块没有闭合标签是常态）；
 //  2. 删掉 dropBlockTags 的整个块（含内容）；

@@ -8,10 +8,12 @@ package terminal
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/yangk/kshell/internal/discovery"
+	"github.com/yangk/kshell/internal/providers"
 )
 
 // 会话类型与状态取值：与前端约定，不要在绑定层另写字面量。
@@ -77,6 +79,8 @@ type Info struct {
 	ExitCode  int
 	Cols      int
 	Rows      int
+	// Prompted 表示用户已提交过一行输入（新建会话据此立刻进列表、改标题）。
+	Prompted bool
 	// KnownSessionIDs 仅新建会话使用：打开瞬间已有的磁盘会话，不进 JSON。
 	KnownSessionIDs []string `json:"-"`
 }
@@ -113,6 +117,10 @@ type session struct {
 
 	openedAt time.Time
 	knownIDs map[string]bool // 打开时已有的磁盘会话，禁止绑到本新建终端
+
+	line           []byte // 尚未回车的用户输入（仅新建 agent 会话用来取标题）
+	esc            int    // 0 普通，1 刚看到 ESC，2 在 CSI 里
+	promptTitleSet bool
 }
 
 // Manager 维护 key→会话 与 id→会话 两张表，并为每个会话跑一个读协程。
@@ -120,8 +128,11 @@ type Manager struct {
 	backend Backend
 	onData  func(id string, chunk []byte) // 锁外调用，chunk 是独立副本
 	onExit  func(id string, exitCode int) // 锁外调用，仅在运行→退出的状态跃迁时触发一次
-	maxBuf  int
-	nextSeq int
+	onInfo  func(Info)                    // 锁外调用；用户提交首行后标题变化
+	// prepareSpec 在真正启动前改启动参数（注入 MCP）。调用时持有管理器锁，禁止再回调本管理器。
+	prepareSpec func(id string, info Info, spec Spec) Spec
+	maxBuf      int
+	nextSeq     int
 
 	mu    sync.Mutex
 	byKey map[string]*session
@@ -183,9 +194,26 @@ func (m *Manager) Open(key string, info Info, spec Spec, cols, rows int) (Info, 
 	return s.info, nil
 }
 
+// SetOnInfo 注册标题变化回调（锁外执行）。
+func (m *Manager) SetOnInfo(fn func(Info)) {
+	m.mu.Lock()
+	m.onInfo = fn
+	m.mu.Unlock()
+}
+
+// SetPrepareSpec 注册启动前改写参数的回调。回调在管理器锁内执行，不能再进本管理器。
+func (m *Manager) SetPrepareSpec(fn func(id string, info Info, spec Spec) Spec) {
+	m.mu.Lock()
+	m.prepareSpec = fn
+	m.mu.Unlock()
+}
+
 // startLocked 启动进程并落位会话状态（调用方持锁）。
 // 失败时把会话归位到「已退出」，让调用方拿到错误、后续 Open 能重试。
 func (m *Manager) startLocked(s *session, info Info, spec Spec, cols, rows int) error {
+	if m.prepareSpec != nil && info.Kind != KindShell && info.Kind != KindSSH {
+		spec = m.prepareSpec(s.id, info, spec)
+	}
 	h, err := m.backend.Start(spec, cols, rows)
 	if err != nil {
 		s.handle = nil
@@ -204,6 +232,9 @@ func (m *Manager) startLocked(s *session, info Info, spec Spec, cols, rows int) 
 	s.info.ExitCode = 0
 	s.info.Cols, s.info.Rows = cols, rows
 	s.exited = false
+	s.line = nil
+	s.esc = 0
+	s.promptTitleSet = false
 	s.openedAt = time.Now()
 	if s.knownIDs == nil {
 		s.knownIDs = map[string]bool{}
@@ -333,10 +364,74 @@ func (m *Manager) Write(id string, data []byte) error {
 		return errExited
 	}
 	h := s.handle
+	info, changed := s.feedPrompt(data)
+	onInfo := m.onInfo
 	m.mu.Unlock()
 
+	if changed && onInfo != nil {
+		onInfo(info)
+	}
 	_, err := h.Write(data) // 锁外写：写管道可能阻塞，不能占着管理器锁
 	return err
+}
+
+// feedPrompt 从用户键入里收出第一行非空输入，当作新建会话的页签标题。
+// 只处理 KindNew：shell/ssh 和已有标题的恢复会话不动。调用方持锁。
+func (s *session) feedPrompt(data []byte) (Info, bool) {
+	if s.promptTitleSet || s.info.Kind != KindNew {
+		return Info{}, false
+	}
+	for _, b := range data {
+		if s.esc == 1 {
+			// ESC [ 进入 CSI；其它转义吞掉下一字节
+			if b == '[' {
+				s.esc = 2
+			} else {
+				s.esc = 0
+			}
+			continue
+		}
+		if s.esc == 2 {
+			if b >= 0x40 && b <= 0x7e {
+				s.esc = 0
+			}
+			continue
+		}
+		switch b {
+		case 0x1b:
+			s.esc = 1
+		case '\r', '\n':
+			line := strings.TrimSpace(string(s.line))
+			s.line = s.line[:0]
+			if line == "" {
+				continue
+			}
+			s.promptTitleSet = true
+			s.info.Prompted = true
+			if title := providers.ClipPromptTitle(line); title != "" {
+				s.info.Title = title
+			}
+			return s.info, true
+		case 0x7f, '\b':
+			s.line = popRune(s.line)
+		default:
+			if b >= 0x20 && len(s.line) < 4096 {
+				s.line = append(s.line, b)
+			}
+		}
+	}
+	return Info{}, false
+}
+
+func popRune(buf []byte) []byte {
+	if len(buf) == 0 {
+		return buf
+	}
+	r := []rune(string(buf))
+	if len(r) == 0 {
+		return buf[:0]
+	}
+	return []byte(string(r[:len(r)-1]))
 }
 
 // Resize 调整终端尺寸，成功后同步到 Info。
@@ -373,7 +468,7 @@ func (m *Manager) Resize(id string, cols, rows int) error {
 // 且关闭后不会再触发 onExit（前端已主动关闭，不需要「已退出」事件）。
 // 必须摘除：前端关闭页签后会在 scan:done 时用 ListTerminals 整表重建镜像，
 // 若只标 exited 仍留在 List，已关页签会被「复活」。自然退出仍保留在 List
-//（供前端显示退出态），直到用户点关闭才走本方法。
+// （供前端显示退出态），直到用户点关闭才走本方法。
 func (m *Manager) Close(id string) error {
 	m.mu.Lock()
 	s := m.byID[id]

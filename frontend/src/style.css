@@ -168,17 +168,6 @@ textarea,
   background: transparent !important;
 }
 
-@keyframes kshell-spin {
-  to { transform: rotate(360deg); }
-}
-.kshell-spin {
-  animation: kshell-spin 0.75s linear infinite;
-  transform-origin: center;
-}
-@media (prefers-reduced-motion: reduce) {
-  .kshell-spin { animation: none; }
-}
-
 /* 弹层进出动画（配合 components/ui/dialog.tsx）：
    pop-in 里的 translateX(-50%) 是维持 Content 水平居中位移，避免入场时横向跳动 */
 @keyframes kshell-fade-in {

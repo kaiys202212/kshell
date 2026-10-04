@@ -17,6 +17,7 @@ import {
   openSSHTerminal,
   openWorkspace,
   openWorkspaceACP,
+  restoreSession,
   scanSessions,
   writeTerminal,
 } from '../lib/api';
@@ -77,6 +78,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   const [previewSession, setPreviewSession] = useState<Session | null>(null);
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [busy, setBusy] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   // 新建会话后的延迟重扫定时器（卸载/再次新建时清掉，避免重复触发）
   const rescanTimers = useRef<number[]>([]);
 
@@ -117,8 +119,10 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     }
     const t = terms.find((x) => x.ID === centerTab);
     if (t?.SessionID) return t.SessionID;
+    if (t?.Prompted) return `live:${t.ID}`;
     const c = chatsForWs.find((x) => x.ID === centerTab);
     if (c?.SessionID) return c.SessionID;
+    if (c?.Prompted) return `live:${c.ID}`;
     return null;
   }, [centerTab, toolSubTab, previewSession, terms, chatsForWs]);
 
@@ -311,14 +315,28 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         aria-label="会话列表栏"
       >
         {/* 「新建会话」本身就是下拉菜单：点开列 agent，选中即启动（不再并排一个工具下拉框） */}
-        <NewSessionMenu
-          tools={tools}
-          value={toolId}
-          onChange={setToolId}
-          onSelect={(id) => void startSession(id)}
-          onSelectACP={(id) => void startSession(id, true)}
-          disabled={busy}
-        />
+        <div className="flex items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <NewSessionMenu
+              tools={tools}
+              value={toolId}
+              onChange={setToolId}
+              onSelect={(id) => void startSession(id)}
+              onSelectACP={(id) => void startSession(id, true)}
+              disabled={busy}
+            />
+          </div>
+          <label className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              className="accent-primary"
+              checked={showArchived}
+              aria-label="显示归档会话"
+              onChange={(e) => setShowArchived(e.target.checked)}
+            />
+            归档
+          </label>
+        </div>
         {tools.length === 0 && (
           <p className="text-xs text-muted-foreground">
             未检测到可用的 agent：请先安装 Claude Code / Codex / OpenCode 等 CLI，再点首页「重新扫描」。
@@ -327,8 +345,22 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         <SessionList
           workspacePath={tab.id}
           selectedSessionID={selectedSessionID}
-          onSelectRow={handleSelectSessionRow}
+          showArchived={showArchived}
+          onSelectRow={(s) => {
+            if (s.Path.startsWith('live:')) {
+              selectCenterTab(s.Path.slice('live:'.length));
+              return;
+            }
+            handleSelectSessionRow(s);
+          }}
           onActivate={openChatOrTerminal}
+          onRestore={(s) => {
+            void restoreSession(s.ID).then(() => {
+              // 名单以 archive:changed 为准；这里先从本地名单拿掉，避免等事件期间还留在归档视图
+              const { archivedIDs, setArchivedIDs } = useAppStore.getState();
+              setArchivedIDs(archivedIDs.filter((id) => id !== s.ID));
+            });
+          }}
         />
       </aside>
 

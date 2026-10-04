@@ -11,6 +11,7 @@ import (
 
 	"github.com/yangk/kshell/internal/acp"
 	"github.com/yangk/kshell/internal/discovery"
+	"github.com/yangk/kshell/internal/providers"
 )
 
 // attachCreatedGrace 打开新建聊天后，仍可能绑上稍早落盘的新会话（agent 写盘略早于 Open）。
@@ -46,8 +47,9 @@ type session struct {
 	pending map[string]chan permissionResult
 	exited  bool
 
-	openedAt time.Time
-	knownIDs map[string]bool // 打开时扫描结果里已有的磁盘会话，禁止绑到本新建聊天
+	openedAt       time.Time
+	knownIDs       map[string]bool // 打开时扫描结果里已有的磁盘会话，禁止绑到本新建聊天
+	promptTitleSet bool
 }
 
 type permissionResult struct {
@@ -65,7 +67,9 @@ type Manager struct {
 	onUpdate     func(id string, u Update)
 	onPermission func(id string, r PermissionRequest)
 	onExit       func(id string, code int, errMsg string)
+	onInfo       func(Info)  // 锁外；首条用户消息改写标题时
 	autoAllow    func() bool // bypass：自动选 allow 类 option，不弹窗
+	mcpFor       func(chatID string) []acp.McpServerStdio
 
 	mu      sync.Mutex
 	byKey   map[string]*session
@@ -89,6 +93,47 @@ func (m *Manager) SetAutoAllowPermission(fn func() bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.autoAllow = fn
+}
+
+// SetOnInfo 注册标题变化回调（锁外执行）。
+func (m *Manager) SetOnInfo(fn func(Info)) {
+	m.mu.Lock()
+	m.onInfo = fn
+	m.mu.Unlock()
+}
+
+// SetMCPFactory 在 session/new 与 session/load 前把 MCP 服务器交给连接。
+func (m *Manager) SetMCPFactory(fn func(chatID string) []acp.McpServerStdio) {
+	m.mu.Lock()
+	m.mcpFor = fn
+	m.mu.Unlock()
+}
+
+func (m *Manager) applyMCP(conn Conn, id string) {
+	m.mu.Lock()
+	factory := m.mcpFor
+	m.mu.Unlock()
+	if factory == nil {
+		return
+	}
+	setter, ok := conn.(interface{ SetMCP([]acp.McpServerStdio) })
+	if !ok {
+		return
+	}
+	setter.SetMCP(factory(id))
+}
+
+// notePromptTitle 用新建会话的第一条用户消息替换占位标题。调用方持锁。
+func (s *session) notePromptTitle(text string) (Info, bool) {
+	if s.promptTitleSet || s.info.Kind != KindNew {
+		return Info{}, false
+	}
+	s.promptTitleSet = true
+	s.info.Prompted = true
+	if title := providers.ClipPromptTitle(text); title != "" {
+		s.info.Title = title
+	}
+	return s.info, true
 }
 
 // Open 起进程并完成 initialize + session/new|load；sessionID 非空则 load。
@@ -175,6 +220,7 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 		m.fail(s.id, 0, msg)
 		return Info{}, errors.New(msg)
 	}
+	m.applyMCP(conn, s.id)
 
 	if sessionID != "" {
 		// load 前先确认对方声明了该能力，否则会拿到无意义的 RPC 错误。
@@ -304,6 +350,7 @@ func (m *Manager) Prompt(id, text string) error {
 		return errRunning
 	}
 	s.info.Status = StatusRunning
+	infoSnap, titleChanged := s.notePromptTitle(text)
 	// 客户端主动发出的用户消息要立刻进时间线：ACP 实时轮次不回显用户消息
 	//（只有 session/load 重放才发 user_message_chunk），不本地补一条界面会一直是空的。
 	s.seq++
@@ -315,8 +362,12 @@ func (m *Manager) Prompt(id, text string) error {
 	sid := s.sessionID
 	conn := s.conn
 	ctx := s.ctx
+	onInfo := m.onInfo
 	m.mu.Unlock()
 
+	if titleChanged && onInfo != nil {
+		onInfo(infoSnap)
+	}
 	if m.onUpdate != nil {
 		m.onUpdate(id, userUpdate)
 	}
@@ -396,7 +447,7 @@ func (m *Manager) resolvePermission(id, requestID string, r permissionResult) er
 // Close 结束聊天并从 List 摘除。幂等。
 // 必须摘除：前端关闭页签后会在 scan:done 时用 ListChats 整表重建镜像，
 // 若只标 exited 仍留在 List，已关页签会被「复活」。自然退出仍保留在 List
-//（供前端显示退出态），直到用户点关闭才走本方法。
+// （供前端显示退出态），直到用户点关闭才走本方法。
 func (m *Manager) Close(id string) error {
 	m.mu.Lock()
 	s := m.byID[id]

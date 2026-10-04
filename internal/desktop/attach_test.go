@@ -6,6 +6,8 @@ package desktop
 
 import (
 	"context"
+	"encoding/base64"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -249,5 +251,38 @@ func TestRunScanDoesNotAttachExistingListTitle(t *testing.T) {
 		if it.Title != placeholder {
 			t.Fatalf("占位标题被改写: got %q want %q", it.Title, placeholder)
 		}
+	}
+}
+
+func TestWriteEnterUpdatesTitleImmediately(t *testing.T) {
+	app, events, setSessions := attachTestApp(t, nil)
+	setSessions([]providers.Session{{
+		ID: "old", ToolID: "claude", Workspace: `D:\ws-a`, Title: "旧会话",
+		UpdatedAt: time.Now().Add(-time.Hour),
+	}})
+	app.runScan()
+	term, err := app.OpenWorkspaceTerminal(`D:\ws-a`, "claude", 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := base64.StdEncoding.EncodeToString([]byte("修复登录空指针\r"))
+	if err := app.WriteTerminal(term.ID, raw); err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, it := range app.ListTerminals() {
+		if it.ID != term.ID {
+			continue
+		}
+		found = true
+		if it.Title != "修复登录空指针" || !it.Prompted {
+			t.Fatalf("title/prompted = %+v", it)
+		}
+	}
+	if !found {
+		t.Fatal("terminal missing")
+	}
+	if !slices.Contains(events.names(), "terminal:meta") {
+		t.Fatalf("events = %v", events.names())
 	}
 }

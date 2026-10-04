@@ -44,6 +44,7 @@ beforeEach(() => {
     chats: [],
     chatPermissions: {},
     terminalBusy: {},
+    archivedIDs: [],
   });
 });
 
@@ -399,6 +400,60 @@ describe('SessionList agent 活动图标', () => {
     expect(within(row).queryByLabelText('等待用户')).toBeNull();
     expect(within(row).queryByLabelText('执行中')).toBeNull();
     expect(within(row).getByRole('button', { name: '激活' })).toBeInTheDocument();
+  });
+
+  it('用户已发送且磁盘还没有时，列表立刻出现该会话', async () => {
+    useAppStore.setState({
+      terminals: [terminal({
+        ID: 't9',
+        Kind: 'new',
+        SessionID: '',
+        Title: '修复登录空指针',
+        Prompted: true,
+        Workspace: 'D:\\proj-a',
+        ToolID: 'claude',
+      })],
+    });
+    renderList();
+    const row = await findRow('修复登录空指针');
+    fireEvent.click(row);
+    expect(onSelectRow).toHaveBeenCalledWith(expect.objectContaining({
+      Title: '修复登录空指针',
+      Path: 'live:t9',
+    }));
+  });
+
+  it('已绑定到磁盘会话的不再重复插入', async () => {
+    useAppStore.setState({
+      terminals: [terminal({ SessionID: 's1', Prompted: true, Title: '不应重复' })],
+    });
+    renderList();
+    expect(await screen.findByText('修复上传白名单')).toBeInTheDocument();
+    expect(screen.queryByText('不应重复')).not.toBeInTheDocument();
+  });
+
+  it('未勾选归档时隐藏已归档会话', async () => {
+    useAppStore.setState({ archivedIDs: ['s1'] });
+    renderList();
+    expect(await screen.findByText('重构登录页')).toBeInTheDocument();
+    expect(screen.queryByText('修复上传白名单')).not.toBeInTheDocument();
+  });
+
+  it('勾选归档后只显示已归档会话，点击还原', async () => {
+    const onRestore = vi.fn();
+    useAppStore.setState({ archivedIDs: ['s2'] });
+    render(
+      <SessionList
+        workspacePath={'D:\\proj-a'}
+        showArchived
+        onRestore={onRestore}
+      />,
+    );
+    const row = await findRow('重构登录页');
+    expect(within(row).getByRole('img', { name: '已归档' })).toBeInTheDocument();
+    expect(screen.queryByText('修复上传白名单')).not.toBeInTheDocument();
+    fireEvent.click(within(row).getByRole('button', { name: '还原' }));
+    expect(onRestore).toHaveBeenCalledWith(expect.objectContaining({ ID: 's2' }));
   });
 });
 

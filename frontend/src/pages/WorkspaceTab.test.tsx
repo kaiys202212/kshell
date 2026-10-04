@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   closeTerminal: vi.fn(),
   getTools: vi.fn(),
   listTerminals: vi.fn(),
+  listChats: vi.fn(),
+  restoreSession: vi.fn(),
   onScanDone: vi.fn(),
   openSession: vi.fn(),
   openShellTerminal: vi.fn(),
@@ -46,7 +48,11 @@ vi.mock('../components/PreviewToolPane', () => ({
   default: () => <div data-testid="preview-tool-pane" />,
 }));
 vi.mock('../components/SshPanel', () => ({ default: () => <div data-testid="ssh-panel" /> }));
-vi.mock('../components/SessionList', () => ({ default: () => <div /> }));
+vi.mock('../components/SessionList', () => ({
+  default: (p: { showArchived?: boolean }) => (
+    <div data-testid="session-list" data-show-archived={String(!!p.showArchived)} />
+  ),
+}));
 vi.mock('../components/NewSessionMenu', () => ({ default: () => <div /> }));
 vi.mock('../components/ResizeHandle', () => ({ default: () => <div /> }));
 
@@ -81,6 +87,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getTools.mockResolvedValue([]);
   mocks.listTerminals.mockResolvedValue([]);
+  mocks.listChats.mockResolvedValue([]);
+  mocks.restoreSession.mockResolvedValue(undefined);
   mocks.onScanDone.mockImplementation(() => () => {});
   mocks.scanSessions.mockResolvedValue(undefined);
   mocks.openSession.mockResolvedValue({});
@@ -108,6 +116,14 @@ function dropFile(el: Element, path: string) {
 }
 
 describe('WorkspaceTabView 页签标题', () => {
+  it('新建会话按钮后的归档勾选切换列表', () => {
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    const box = screen.getByRole('checkbox', { name: '显示归档会话' });
+    expect(screen.getByTestId('session-list')).toHaveAttribute('data-show-archived', 'false');
+    fireEvent.click(box);
+    expect(screen.getByTestId('session-list')).toHaveAttribute('data-show-archived', 'true');
+  });
+
   it('中心区页签标题剥掉 Cursor 的 <timestamp>Sunday… 包装，只留正文', () => {
     useAppStore.setState({
       terminals: [
