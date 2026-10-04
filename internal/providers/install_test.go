@@ -1,10 +1,13 @@
 package providers
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
+
 
 func TestBuiltinsImplementInstaller(t *testing.T) {
 	for _, p := range Builtins() {
@@ -84,6 +87,33 @@ func TestNpmToolsRecipes(t *testing.T) {
 			if r.PurgeDirs[i] != d {
 				t.Fatalf("%s purge[%d]=%s", c.p.ID(), i, r.PurgeDirs[i])
 			}
+		}
+	}
+}
+
+// 卸载要删掉每一份拷贝：根目录同时有旧名与新名 shim 时，FindBins 都要列出来。
+func TestFindBinsCoversAltNames(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows 才有多后缀候选")
+	}
+	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	local := t.TempDir()
+	t.Setenv("LOCALAPPDATA", local)
+	dir := filepath.Join(local, "cursor-agent")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldBin := writeFakeBin(t, dir, "cursor-agent", "echo cursor-agent")
+	newBin := writeFakeBin(t, dir, "agent", "echo agent")
+
+	got := FindBins(Cursor{}.DetectSpec(home), home)
+	if len(got) != 2 {
+		t.Fatalf("FindBins = %v, want 旧名与新名两份", got)
+	}
+	for _, p := range got {
+		if filepath.Clean(p) != filepath.Clean(oldBin) && filepath.Clean(p) != filepath.Clean(newBin) {
+			t.Fatalf("意外路径 %q", p)
 		}
 	}
 }
