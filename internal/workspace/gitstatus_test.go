@@ -80,6 +80,24 @@ func TestParsePorcelainZ_状态码归约(t *testing.T) {
 	}
 }
 
+func TestStatusFromXYIgnored(t *testing.T) {
+	if got := statusFromXY('!', '!'); got != "ignored" {
+		t.Fatalf("!! → ignored, got %q", got)
+	}
+}
+
+func TestParsePorcelainZIgnored(t *testing.T) {
+	// !! path\0
+	data := []byte("!! skip.log\x00?? new.go\x00")
+	got := parsePorcelainZ(data, `/ws`, `/ws`)
+	if got["skip.log"] != "ignored" {
+		t.Fatalf("skip.log: %v", got)
+	}
+	if got["new.go"] != "untracked" {
+		t.Fatalf("new.go: %v", got)
+	}
+}
+
 func TestGitStatus_非仓库(t *testing.T) {
 	// t.TempDir 不是 git 仓库：isRepo=false 且无错误
 	_, isRepo, err := GitStatus(t.TempDir())

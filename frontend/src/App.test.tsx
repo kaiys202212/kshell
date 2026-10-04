@@ -54,6 +54,11 @@ const mocks = vi.hoisted(() => ({
   onChatUpdate: vi.fn(),
   onChatPermission: vi.fn(),
   onChatExit: vi.fn(),
+  refreshFiles: vi.fn().mockResolvedValue(undefined),
+  startFileWatch: vi.fn().mockResolvedValue(undefined),
+  stopFileWatch: vi.fn(),
+  onFilesChanged: vi.fn(() => () => {}),
+  revealInExplorer: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('./lib/api', () => mocks);
 

@@ -13,7 +13,7 @@ import (
 func TestSearchFilesBinding(t *testing.T) {
 	env := newFilesEnv(t)
 
-	hits, err := env.app.SearchFiles(env.root, "main")
+	hits, err := env.app.SearchFiles(env.root, "main", false)
 	if err != nil {
 		t.Fatalf("SearchFiles error: %v", err)
 	}
@@ -24,13 +24,13 @@ func TestSearchFilesBinding(t *testing.T) {
 		t.Fatalf("RelPath = %q", hits[0].RelPath)
 	}
 	// node_modules 内的文件被内置排除
-	if hits2, _ := env.app.SearchFiles(env.root, "junk"); len(hits2) != 0 {
+	if hits2, _ := env.app.SearchFiles(env.root, "junk", false); len(hits2) != 0 {
 		t.Fatalf("内置排除目录不应命中: %+v", hits2)
 	}
-	if hits3, _ := env.app.SearchFiles(env.root, "  "); len(hits3) != 0 {
+	if hits3, _ := env.app.SearchFiles(env.root, "  ", false); len(hits3) != 0 {
 		t.Fatal("空查询应返回空")
 	}
-	if hits4, _ := env.app.SearchFiles(env.root, "PKG"); len(hits4) != 1 || !hits4[0].IsDir {
+	if hits4, _ := env.app.SearchFiles(env.root, "PKG", false); len(hits4) != 1 || !hits4[0].IsDir {
 		t.Fatalf("目录应大小写不敏感命中: %+v", hits4)
 	}
 }
@@ -66,7 +66,7 @@ func TestCreateEntry(t *testing.T) {
 		t.Fatalf("目录逃逸应报 errPathOutsideWorkspace，got %v", err)
 	}
 	// 树缓存已作废：ListFiles 能看到新文件
-	nodes, err := app.ListFiles(env.root, "")
+	nodes, err := app.ListFiles(env.root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestDeleteEntry(t *testing.T) {
 		t.Fatalf("逃逸应报 errPathOutsideWorkspace，got %v", err)
 	}
 	// ListFiles 反映删除
-	nodes, _ := app.ListFiles(env.root, "")
+	nodes, _ := app.ListFiles(env.root, "", false)
 	for _, n := range nodes {
 		if n.Name == "readme.md" {
 			return
@@ -140,7 +140,7 @@ func TestRenameEntry(t *testing.T) {
 	}
 
 	// 树缓存已作废，ListFiles 反映新名字（且树自动重建）
-	nodes, err := app.ListFiles(env.root, "")
+	nodes, err := app.ListFiles(env.root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestRenameEntryDirectory(t *testing.T) {
 	if _, err := env.app.RenameEntry(env.root, "pkg", "lib"); err != nil {
 		t.Fatalf("重命名目录失败: %v", err)
 	}
-	nodes, err := env.app.ListFiles(env.root, "lib")
+	nodes, err := env.app.ListFiles(env.root, "lib", false)
 	if err != nil {
 		t.Fatalf("新目录应可懒加载: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestMoveEntry(t *testing.T) {
 		}
 	}
 	// 树缓存已作废
-	nodes, _ := app.ListFiles(env.root, "")
+	nodes, _ := app.ListFiles(env.root, "", false)
 	found := false
 	for _, n := range nodes {
 		if n.Name == "pkg" {
@@ -307,7 +307,7 @@ func TestMoveEntryDirectory(t *testing.T) {
 		t.Fatal("原位置应消失")
 	}
 	// 树缓存已作废：ListFiles 能看到新位置
-	nodes, err := env.app.ListFiles(env.root, "pkg")
+	nodes, err := env.app.ListFiles(env.root, "pkg", false)
 	if err != nil {
 		t.Fatalf("pkg 应可懒加载: %v", err)
 	}
@@ -396,5 +396,48 @@ func TestGitStatusBinding(t *testing.T) {
 	}
 	if res.IsRepo || len(res.Status) != 0 {
 		t.Fatalf("临时目录非 git 仓库: isRepo=%v status=%v", res.IsRepo, res.Status)
+	}
+}
+
+// TestMutateOpsReachShowAllIgnored：过滤树看不到的忽略项，变更操作仍应通过 showAll 超集树定位。
+func TestMutateOpsReachShowAllIgnored(t *testing.T) {
+	env := newFilesEnv(t)
+	writeFile(t, env.root, ".gitignore", "*.tmp\n")
+	writeFile(t, env.root, "gone.tmp", "x")
+	writeFile(t, env.root, "keep.tmp", "y")
+	if err := os.Mkdir(filepath.Join(env.root, "ign_dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 内置排除 node_modules 已在 newFilesEnv；再预热过滤树
+	if _, err := env.app.ListFiles(env.root, "", false); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := env.app.DeleteEntry(env.root, "gone.tmp"); err != nil {
+		t.Fatalf("删除忽略文件: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.root, "gone.tmp")); !os.IsNotExist(err) {
+		t.Fatal("gone.tmp 应已删除")
+	}
+
+	if _, err := env.app.RenameEntry(env.root, "keep.tmp", "kept.tmp"); err != nil {
+		t.Fatalf("重命名忽略文件: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.root, "kept.tmp")); err != nil {
+		t.Fatal("kept.tmp 应存在")
+	}
+
+	if _, err := env.app.CreateEntry(env.root, "node_modules", "new.js", false); err != nil {
+		t.Fatalf("在忽略目录下新建: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.root, "node_modules", "new.js")); err != nil {
+		t.Fatal("node_modules/new.js 应存在")
+	}
+
+	if _, err := env.app.MoveEntry(env.root, "kept.tmp", "ign_dir"); err != nil {
+		t.Fatalf("移动忽略文件: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.root, "ign_dir", "kept.tmp")); err != nil {
+		t.Fatal("ign_dir/kept.tmp 应存在")
 	}
 }

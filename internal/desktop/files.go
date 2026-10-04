@@ -20,14 +20,24 @@ var (
 	errRootUndeletable      = errors.New("工作区根目录不可删除")
 )
 
+// treeCacheKey 区分 showAll=false / true 两棵缓存树，避免过滤语义互相污染。
+func treeCacheKey(wsPath string, showAll bool) string {
+	if showAll {
+		return wsPath + "\x00all"
+	}
+	return wsPath
+}
+
 // treeFor 返回工作区的文件树（懒创建，根层已展开）。
-// 树按工作区路径缓存：节点 Loaded 状态就是目录级缓存，重复 ListFiles 不再读盘。
+// 树按 treeCacheKey(wsPath, showAll) 缓存：节点 Loaded 状态就是目录级缓存，重复 ListFiles 不再读盘。
 // 代数（treeGen）防竞态：文件操作作废缓存后，操作前就开始构建的树
 // 不得再写回缓存（否则基于旧目录快照的 Loaded 缓存会一直陈旧）；
 // 该情况下返回现建树但不缓存——数据仍正确，只是本次不享受缓存。
-func (a *App) treeFor(wsPath string) (*workspace.Tree, error) {
+func (a *App) treeFor(wsPath string, showAll bool) (*workspace.Tree, error) {
+	wsPath = filepath.Clean(strings.TrimSpace(wsPath))
+	key := treeCacheKey(wsPath, showAll)
 	a.treeMu.Lock()
-	t, ok := a.trees[wsPath]
+	t, ok := a.trees[key]
 	a.treeMu.Unlock()
 	if ok {
 		return t, nil
@@ -35,7 +45,7 @@ func (a *App) treeFor(wsPath string) (*workspace.Tree, error) {
 
 	gen := atomic.LoadUint64(&a.treeGen)
 	exclude := a.snapshot().Config.Exclude
-	tree := workspace.NewTree(wsPath, workspace.NewMatcher(wsPath, exclude, false))
+	tree := workspace.NewTree(wsPath, workspace.NewMatcher(wsPath, exclude, showAll))
 	if err := tree.Expand(tree.Root); err != nil {
 		return nil, err
 	}
@@ -45,20 +55,22 @@ func (a *App) treeFor(wsPath string) (*workspace.Tree, error) {
 	if atomic.LoadUint64(&a.treeGen) != gen {
 		return tree, nil // 期间发生过 rename：旧快照树只当一次性结果
 	}
-	if t, ok := a.trees[wsPath]; ok {
+	if t, ok := a.trees[key]; ok {
 		return t, nil // 并发双创建时复用先到者，孤儿树直接丢弃
 	}
 	if a.trees == nil {
 		a.trees = make(map[string]*workspace.Tree)
 	}
-	a.trees[wsPath] = tree
+	a.trees[key] = tree
 	return tree, nil
 }
 
 // ListFiles 列出工作区内 relPath 目录的子项（懒加载：首次经过才读盘）。
+// showAll=true 时展示被 ignore/内置排除的条目（.git 仍永不出现）。
 // relPath 为空或 "." 时返回根层；目录项已按「目录优先、名称排序」由 Tree 保证。
-func (a *App) ListFiles(wsPath, relPath string) ([]workspace.Node, error) {
-	tree, err := a.treeFor(wsPath)
+func (a *App) ListFiles(wsPath, relPath string, showAll bool) ([]workspace.Node, error) {
+	wsPath = filepath.Clean(strings.TrimSpace(wsPath))
+	tree, err := a.treeFor(wsPath, showAll)
 	if err != nil {
 		return nil, err
 	}
@@ -132,15 +144,33 @@ func (a *App) PreviewFile(wsPath, path string) (workspace.Preview, error) {
 	return p, nil
 }
 
+// resolveRealPath 解析 path 的真实落点。
+// 先 EvalSymlinks；Windows 目录 junction 常不被其跟随，再以 Readlink 补检。
+func resolveRealPath(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	if samePath(resolved, path) {
+		if target, rerr := os.Readlink(path); rerr == nil {
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(filepath.Dir(path), target)
+			}
+			resolved = filepath.Clean(target)
+		}
+	}
+	return resolved, nil
+}
+
 // resolveWorkspaceFile 把工作区内相对/绝对路径解析为可安全读取的真实路径：
-// 先词法校验（Clean + 前缀包含），再 EvalSymlinks 解析真实落点复检——
+// 先词法校验（Clean + 前缀包含），再 resolveRealPath 复检——
 // Windows 上目录 junction 无需管理员权限即可创建，仅词法校验拦不住它。
 func (a *App) resolveWorkspaceFile(wsPath, path string) (string, error) {
 	cleaned := filepath.Clean(path)
 	if !underPath(wsPath, cleaned) {
 		return "", errPathOutsideWorkspace
 	}
-	resolved, err := filepath.EvalSymlinks(cleaned)
+	resolved, err := resolveRealPath(cleaned)
 	if err != nil {
 		return "", err
 	}
@@ -151,8 +181,8 @@ func (a *App) resolveWorkspaceFile(wsPath, path string) (string, error) {
 }
 
 // SearchFiles 递归搜索工作区内名字包含 query 的文件/目录（大小写不敏感），
-// 上限 2000 条；忽略规则与文件树一致（.gitignore + 内置排除）。
-func (a *App) SearchFiles(wsPath, query string) ([]workspace.SearchHit, error) {
+// 上限 2000 条；忽略规则与文件树一致（.gitignore + 内置排除；showAll 同 ListFiles）。
+func (a *App) SearchFiles(wsPath, query string, showAll bool) ([]workspace.SearchHit, error) {
 	if strings.TrimSpace(query) == "" {
 		return []workspace.SearchHit{}, nil
 	}
@@ -160,7 +190,7 @@ func (a *App) SearchFiles(wsPath, query string) ([]workspace.SearchHit, error) {
 	if cleaned == "." || cleaned == "" {
 		return nil, errWorkspaceNotFound
 	}
-	m := workspace.NewMatcher(cleaned, a.snapshot().Config.Exclude, false)
+	m := workspace.NewMatcher(cleaned, a.snapshot().Config.Exclude, showAll)
 	hits, err := workspace.SearchFiles(cleaned, query, m, 2000)
 	if err != nil {
 		return nil, err // root 不存在/读不了要浮出，不能让前端当成「无结果」
@@ -181,7 +211,9 @@ func (a *App) RenameEntry(wsPath, relPath, newName string) (string, error) {
 		return "", errInvalidName
 	}
 
-	tree, err := a.treeFor(wsPath)
+	wsPath = filepath.Clean(strings.TrimSpace(wsPath))
+	// showAll=true：超集树，showAll 可见的忽略项也可改名
+	tree, err := a.treeFor(wsPath, true)
 	if err != nil {
 		return "", err
 	}
@@ -218,13 +250,25 @@ func (a *App) RenameEntry(wsPath, relPath, newName string) (string, error) {
 	return newAbs, nil
 }
 
-// invalidateTree 作废工作区的文件树缓存并推进树代数
+// invalidateTree 作废工作区的文件树缓存（默认与 showAll 双键）并推进树代数
 // （见 treeFor 注释：防旧快照树写回缓存）。所有改动文件树的绑定共用。
 func (a *App) invalidateTree(wsPath string) {
+	wsPath = filepath.Clean(strings.TrimSpace(wsPath))
 	a.treeMu.Lock()
-	delete(a.trees, wsPath) // 子树缓存链路整体失效，最省事且正确
+	delete(a.trees, treeCacheKey(wsPath, false))
+	delete(a.trees, treeCacheKey(wsPath, true))
 	a.treeMu.Unlock()
 	atomic.AddUint64(&a.treeGen, 1)
+}
+
+// RefreshFiles 手动作废工作区树缓存，下次 ListFiles 将重新读盘。
+func (a *App) RefreshFiles(wsPath string) error {
+	cleaned := filepath.Clean(strings.TrimSpace(wsPath))
+	if cleaned == "." || cleaned == "" {
+		return errWorkspaceNotFound
+	}
+	a.invalidateTree(cleaned)
+	return nil
 }
 
 // CreateEntry 在工作区 dirRel 目录下新建文件/目录（isDir 区分）。
@@ -236,7 +280,9 @@ func (a *App) CreateEntry(wsPath, dirRel, name string, isDir bool) (string, erro
 		return "", errInvalidName
 	}
 
-	tree, err := a.treeFor(wsPath)
+	wsPath = filepath.Clean(strings.TrimSpace(wsPath))
+	// showAll=true：可在忽略目录下新建（超集树含 showAll 可见项）
+	tree, err := a.treeFor(wsPath, true)
 	if err != nil {
 		return "", err
 	}
@@ -290,7 +336,9 @@ func (a *App) DeleteEntry(wsPath, relPath string) error {
 		return errRootUndeletable
 	}
 
-	tree, err := a.treeFor(wsPath)
+	wsPath = filepath.Clean(strings.TrimSpace(wsPath))
+	// showAll=true：超集树，可删除 showAll 可见的忽略项
+	tree, err := a.treeFor(wsPath, true)
 	if err != nil {
 		return err
 	}
@@ -317,7 +365,9 @@ func (a *App) DeleteEntry(wsPath, relPath string) error {
 // 拒绝移入自身子孙目录；目标已存在报错；原地移动视为 no-op；
 // 成功后作废树缓存。
 func (a *App) MoveEntry(wsPath, srcRel, dstDirRel string) (string, error) {
-	tree, err := a.treeFor(wsPath)
+	wsPath = filepath.Clean(strings.TrimSpace(wsPath))
+	// showAll=true：超集树，可移动 showAll 可见的忽略项
+	tree, err := a.treeFor(wsPath, true)
 	if err != nil {
 		return "", err
 	}

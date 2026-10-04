@@ -3,7 +3,7 @@
 // 搜索（防抖后走后端递归搜索出平铺结果）、行内重命名（树重建）、git 状态标记。
 // api 层整体打桩（vi.mock），与 SessionList.test 同一套模式。
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import FileTree from './FileTree';
 import type { FileNode } from '../lib/api';
@@ -18,6 +18,11 @@ const mocks = vi.hoisted(() => ({
   deleteEntry: vi.fn(),
   moveEntry: vi.fn(),
   gitStatus: vi.fn(),
+  refreshFiles: vi.fn().mockResolvedValue(undefined),
+  startFileWatch: vi.fn().mockResolvedValue(undefined),
+  stopFileWatch: vi.fn(),
+  onFilesChanged: vi.fn<(cb: (path: string) => void) => () => void>(() => () => {}),
+  revealInExplorer: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -58,7 +63,7 @@ describe('FileTree', () => {
 
     expect(await screen.findByText('README.md')).toBeInTheDocument();
     expect(mocks.listFiles).toHaveBeenCalledTimes(1);
-    expect(mocks.listFiles).toHaveBeenCalledWith('D:\\proj', '');
+    expect(mocks.listFiles).toHaveBeenCalledWith('D:\\proj', '', false);
     expect(screen.queryByText('main.ts')).not.toBeInTheDocument();
   });
 
@@ -68,12 +73,12 @@ describe('FileTree', () => {
 
     fireEvent.click(await screen.findByText('src'));
     expect(await screen.findByText('main.ts')).toBeInTheDocument();
-    expect(mocks.listFiles).toHaveBeenLastCalledWith('D:\\proj', 'src');
+    expect(mocks.listFiles).toHaveBeenLastCalledWith('D:\\proj', 'src', false);
 
     mocks.listFiles.mockResolvedValueOnce([node('tree.go', false, 'src/lib/tree.go')]);
     fireEvent.click(screen.getByText('lib'));
     expect(await screen.findByText('tree.go')).toBeInTheDocument();
-    expect(mocks.listFiles).toHaveBeenLastCalledWith('D:\\proj', 'src/lib');
+    expect(mocks.listFiles).toHaveBeenLastCalledWith('D:\\proj', 'src/lib', false);
   });
 
   it('收起再展开已加载的目录不重复请求（子层缓存）', async () => {
@@ -146,10 +151,42 @@ describe('FileTree', () => {
     expect(await screen.findByText('M')).toBeInTheDocument();
     expect(screen.getByTitle('git：已修改')).toBeInTheDocument();
     // 未加载的子层不渲染（懒加载）
-    expect(screen.queryByText('U')).not.toBeInTheDocument();
+    expect(screen.queryByText('N')).not.toBeInTheDocument();
     // 展开子目录后，嵌套文件按自身 relPath 渲染色标
     fireEvent.click(screen.getByText('src'));
-    expect(await screen.findByText('U')).toBeInTheDocument();
+    expect(await screen.findByText('N')).toBeInTheDocument();
+  });
+
+  it('显示全部：切换后根层与已展开目录均带 showAll=true', async () => {
+    mocks.listFiles.mockResolvedValueOnce(root).mockResolvedValueOnce(srcChildren);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+    fireEvent.click(screen.getByText('src'));
+    await screen.findByText('main.ts');
+    mocks.listFiles.mockClear();
+    mocks.listFiles.mockImplementation(async (_ws, rel) => (rel === 'src' ? srcChildren : root));
+    fireEvent.click(screen.getByRole('checkbox', { name: '显示全部' }));
+    await waitFor(() => {
+      expect(mocks.listFiles).toHaveBeenCalledWith('D:\\proj', '', true);
+      expect(mocks.listFiles).toHaveBeenCalledWith('D:\\proj', 'src', true);
+    });
+  });
+
+  it('git 标记：未跟踪为 N，忽略为 I 且行淡化', async () => {
+    mocks.gitStatus.mockResolvedValue({
+      Status: { 'README.md': 'untracked', 'skip.log': 'ignored' },
+      IsRepo: true,
+    });
+    mocks.listFiles.mockResolvedValue([
+      node('README.md', false, 'README.md'),
+      node('skip.log', false, 'skip.log'),
+    ]);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    expect(await screen.findByText('N')).toBeInTheDocument();
+    expect(screen.getByTitle('git：未跟踪')).toBeInTheDocument();
+    expect(screen.getByText('I')).toBeInTheDocument();
+    expect(screen.getByTitle('git：已忽略')).toBeInTheDocument();
+    expect(screen.getByText('skip.log').className).toMatch(/opacity|muted/);
   });
 
   it('搜索：输入防抖后调 searchFiles，结果平铺展示（文件名 + 所在目录），点文件回调', async () => {
@@ -167,10 +204,80 @@ describe('FileTree', () => {
     // 防抖 200ms + 渲染，findBy 默认 1s 超时足够
     expect(await screen.findByText('main.go')).toBeInTheDocument();
     expect(screen.getByText('src')).toBeInTheDocument(); // 所在目录后缀
-    expect(mocks.searchFiles).toHaveBeenCalledWith('D:\\proj', 'main');
+    expect(mocks.searchFiles).toHaveBeenCalledWith('D:\\proj', 'main', false);
 
     fireEvent.click(screen.getByText('main.go'));
     expect(onOpen).toHaveBeenCalledWith('D:\\proj\\src\\main.go');
+  });
+
+  it('刷新按钮：作废缓存并重建树（恢复展开）', async () => {
+    mocks.listFiles
+      .mockResolvedValueOnce(root)
+      .mockResolvedValueOnce(srcChildren)
+      .mockResolvedValueOnce(root)
+      .mockResolvedValueOnce(srcChildren);
+    mocks.refreshFiles.mockResolvedValue(undefined);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+    fireEvent.click(screen.getByText('src'));
+    await screen.findByText('main.ts');
+
+    fireEvent.click(screen.getByRole('button', { name: '刷新文件树' }));
+    await waitFor(() => {
+      expect(mocks.refreshFiles).toHaveBeenCalledWith('D:\\proj');
+    });
+    await waitFor(() => {
+      expect(mocks.listFiles).toHaveBeenCalledWith('D:\\proj', '', false);
+      expect(mocks.listFiles).toHaveBeenCalledWith('D:\\proj', 'src', false);
+    });
+    expect(await screen.findByText('main.ts')).toBeInTheDocument();
+  });
+
+  it('files:changed 匹配 wsPath 时触发重载', async () => {
+    let changedCb: ((p: string) => void) | null = null;
+    mocks.onFilesChanged.mockImplementation((cb) => {
+      changedCb = cb;
+      return () => {
+        changedCb = null;
+      };
+    });
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.refreshFiles.mockResolvedValue(undefined);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+    const calls = mocks.listFiles.mock.calls.length;
+    await act(async () => {
+      // 分隔符/大小写不同也应匹配（sameWorkspacePath）
+      changedCb?.('D:/proj');
+    });
+    await waitFor(() => {
+      expect(mocks.refreshFiles).toHaveBeenCalled();
+      expect(mocks.listFiles.mock.calls.length).toBeGreaterThan(calls);
+    });
+  });
+
+  it('挂载调 startFileWatch，卸载调 stopFileWatch', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    const { unmount } = render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+    await waitFor(() => {
+      expect(mocks.startFileWatch).toHaveBeenCalledWith('D:\\proj');
+    });
+    expect(mocks.onFilesChanged).toHaveBeenCalled();
+    unmount();
+    expect(mocks.stopFileWatch).toHaveBeenCalledWith('D:\\proj');
+  });
+
+  it('StartFileWatch 失败时弹出 error toast', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.startFileWatch.mockRejectedValueOnce(new Error('监视不可用'));
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+    await waitFor(() => {
+      expect(useAppStore.getState().toasts.some((t) => t.tone === 'error' && t.title.includes('监视不可用'))).toBe(
+        true,
+      );
+    });
   });
 
   it('搜索空结果给空态文案，清空搜索恢复树', async () => {
@@ -258,6 +365,26 @@ describe('FileTree 右键菜单', () => {
     expect(screen.getByRole('menu')).toBeInTheDocument();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('右键菜单含在资源管理器中打开并调用 revealInExplorer', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+    fireEvent.contextMenu(screen.getByText('README.md'));
+    const item = await screen.findByRole('menuitem', { name: '在资源管理器中打开' });
+    await act(async () => {
+      fireEvent.pointerDown(item);
+    });
+    expect(mocks.revealInExplorer).toHaveBeenCalledWith('D:\\proj', expect.stringContaining('README.md'));
+  });
+
+  it('空白处右键菜单不含在资源管理器中打开', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+    fireEvent.contextMenu(screen.getByRole('tree', { name: '工作区文件树' }));
+    expect(screen.queryByRole('menuitem', { name: '在资源管理器中打开' })).not.toBeInTheDocument();
   });
 
   it('复制路径：菜单项把绝对路径写入剪贴板并提示成功', async () => {

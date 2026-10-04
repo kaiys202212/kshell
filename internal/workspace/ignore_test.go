@@ -55,6 +55,9 @@ func TestShowAllDisablesFiltering(t *testing.T) {
 	if m.Skip(filepath.Join(root, "node_modules"), true) {
 		t.Fatal("showAll should reveal ignored entries")
 	}
+	if !m.Skip(filepath.Join(root, ".git"), true) {
+		t.Fatal(".git must stay excluded even with showAll")
+	}
 }
 
 func TestNestedGitignoreAppliesToItsDirectory(t *testing.T) {

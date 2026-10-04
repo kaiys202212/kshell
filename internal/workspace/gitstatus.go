@@ -23,7 +23,7 @@ func gitCmd(ctx context.Context, root string, args ...string) *exec.Cmd {
 	return cmd
 }
 
-// GitStatus 执行 `git status --porcelain=v1 -z --untracked-files=all`，
+// GitStatus 执行 `git status --porcelain=v1 -z --untracked-files=all --ignored=matching`，
 // 返回 relPath（'/' 分隔，相对 root）→ 状态码。
 // porcelain 的路径相对「仓库根」输出，而工作区可能是仓库的子目录
 // （discovery 按 cwd 聚合），所以先取 toplevel 把键归一到 root 相对路径。
@@ -40,7 +40,7 @@ func GitStatus(root string) (status map[string]string, isRepo bool, err error) {
 	}
 	top := filepath.Clean(strings.TrimSpace(string(topOut)))
 
-	cmd := gitCmd(ctx, root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	cmd := gitCmd(ctx, root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if execErr := cmd.Run(); execErr != nil {
@@ -99,8 +99,11 @@ func relKey(wsRoot, top, path string) string {
 	return filepath.ToSlash(rel)
 }
 
-// statusFromXY 把 porcelain 的 XY 双字符码归约为前端要展示的五类。
+// statusFromXY 把 porcelain 的 XY 双字符码归约为前端要展示的六类。
 func statusFromXY(x, y byte) string {
+	if x == '!' && y == '!' {
+		return "ignored"
+	}
 	if x == '?' && y == '?' {
 		return "untracked"
 	}

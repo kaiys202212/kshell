@@ -7,13 +7,26 @@
 // 树内拖拽：行可拖起（携带绝对/相对路径 MIME），目录行作 drop 目标移入；
 // 顶部搜索框先过滤已加载节点，防抖后走 Go 递归搜索出平铺结果。
 // git 状态：文件名右侧小色标（数据来自 store.gitStatus[wsPath]，lib/git.ts 负责刷新）。
-import { useEffect, useState, type DragEvent, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { createEntry, deleteEntry, listFiles, moveEntry, renameEntry, searchFiles } from '../lib/api';
+import {
+  createEntry,
+  deleteEntry,
+  listFiles,
+  moveEntry,
+  onFilesChanged,
+  refreshFiles,
+  renameEntry,
+  revealInExplorer,
+  searchFiles,
+  startFileWatch,
+  stopFileWatch,
+} from '../lib/api';
 import type { FileNode, SearchHit } from '../lib/api';
 import { cn } from '../lib/cn';
 import { DRAG_MIME, REL_MIME } from '../lib/dragPath';
 import { refreshGitStatus } from '../lib/git';
+import { sameWorkspacePath } from '../lib/workspacePath';
 import { useAppStore } from '../state/store';
 import ContextMenu, { type MenuItem } from './ContextMenu';
 import { Button } from './ui/button';
@@ -135,7 +148,8 @@ const GIT_BADGES: Record<string, { label: string; cls: string; title: string }> 
   added: { label: 'A', cls: 'text-success', title: '新增（已暂存）' },
   deleted: { label: 'D', cls: 'text-danger', title: '已删除' },
   renamed: { label: 'R', cls: 'text-info', title: '重命名' },
-  untracked: { label: 'U', cls: 'text-success', title: '未跟踪' },
+  untracked: { label: 'N', cls: 'text-success', title: '未跟踪' },
+  ignored: { label: 'I', cls: 'text-muted-foreground', title: '已忽略' },
   conflicted: { label: '!', cls: 'text-danger', title: '合并冲突' },
 };
 
@@ -168,6 +182,21 @@ function updateItems(items: TreeItem[], relPath: string, fn: (t: TreeItem) => Tr
     if (it.relPath === relPath) return fn(it);
     return it.children ? { ...it, children: updateItems(it.children, relPath, fn) } : it;
   });
+}
+
+// 收集已展开目录的 relPath（深度优先），供 reloadTree 重建后恢复展开
+function collectExpanded(items: TreeItem[]): string[] {
+  const out: string[] = [];
+  const walk = (list: TreeItem[]) => {
+    for (const it of list) {
+      if (it.expanded && it.node.IsDir) {
+        out.push(it.relPath);
+        if (it.children) walk(it.children);
+      }
+    }
+  };
+  walk(items);
+  return out;
 }
 
 // 按名字子串过滤已加载的树（搜索防抖期间的即时反馈；未加载子层搜不到，
@@ -267,7 +296,7 @@ function TreeRow({
   onMoveInto,
 }: RowProps) {
   const { node } = item;
-  const gitCode = node.IsDir ? undefined : gitMap?.[item.relPath];
+  const gitCode = gitMap?.[item.relPath]; // 目录也查 gitMap（忽略/未跟踪目录需徽章）
   const renaming = renamingPath === item.relPath;
   const [draft, setDraft] = useState(node.Name);
   const [dropActive, setDropActive] = useState(false);
@@ -362,11 +391,12 @@ function TreeRow({
                 className={cn(
                   'min-w-0 truncate font-mono text-xs',
                   node.IsDir ? 'font-medium' : 'text-foreground/90',
+                  gitCode === 'ignored' && 'opacity-60 text-muted-foreground',
                 )}
               >
                 {node.Name}
               </span>
-              {!node.IsDir && gitCode && <GitBadge code={gitCode} />}
+              {gitCode && <GitBadge code={gitCode} />}
             </button>
             <button
               className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-primary group-hover:opacity-100"
@@ -459,9 +489,81 @@ export default function FileTree({
   const [creating, setCreating] = useState<{ dirRel: string; isDir: boolean } | null>(null);
   const [deleting, setDeleting] = useState<TreeItem | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  // 显示全部（含忽略文件）；不持久化，切换由下方 effect 走 reloadTree 重拉已展开路径
+  const [showAll, setShowAll] = useState(false);
   const gitMap = useAppStore((s) => s.gitStatus[wsPath]);
 
+  // 避免 reloadTree / files:changed 回调读到过期的 items / showAll
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const showAllRef = useRef(showAll);
+  showAllRef.current = showAll;
+  // wsPath 变更 / 卸载时递增，进行中的 reloadTree 不得再 setItems
+  const reloadGenRef = useRef(0);
+  const prevShowAllRef = useRef(showAll);
+
+  // 作废 Go 缓存 → 重拉根层 → 按原展开路径逐层恢复 → 刷 git
+  const reloadTree = async () => {
+    const gen = reloadGenRef.current;
+    const path = wsPath;
+    const expanded = itemsRef.current ? collectExpanded(itemsRef.current) : [];
+    const show = showAllRef.current;
+    try {
+      await refreshFiles(path);
+    } catch {
+      if (gen !== reloadGenRef.current) return;
+      /* refresh 失败保持原树，与根层 list 失败一致 */
+      return;
+    }
+    if (gen !== reloadGenRef.current) return;
+    try {
+      const nodes = await listFiles(path, '', show);
+      let next = toItems(nodes, '');
+      for (const rel of expanded) {
+        if (gen !== reloadGenRef.current) return;
+        try {
+          const kids = await listFiles(path, rel, show);
+          next = updateItems(next, rel, (it) => ({
+            ...it,
+            children: toItems(kids, rel),
+            expanded: true,
+            error: undefined,
+          }));
+        } catch {
+          /* 单层失败忽略，其它层继续恢复 */
+        }
+      }
+      if (gen !== reloadGenRef.current) return;
+      setItems(next);
+    } catch {
+      /* 根层失败保持原树 */
+    }
+    if (gen !== reloadGenRef.current) return;
+    void refreshGitStatus(path);
+  };
+  const reloadTreeRef = useRef(reloadTree);
+  reloadTreeRef.current = reloadTree;
+
+  // 监视生命周期仅随 wsPath；showAll 切换不重载 watch（单独 effect 走 reloadTree）
   useEffect(() => {
+    void startFileWatch(wsPath).catch((e: unknown) => {
+      useAppStore
+        .getState()
+        .notify(e instanceof Error ? e.message : '文件监视启动失败', 'error');
+    });
+    const unsub = onFilesChanged((path) => {
+      if (sameWorkspacePath(path, wsPath)) void reloadTreeRef.current();
+    });
+    return () => {
+      reloadGenRef.current += 1;
+      unsub();
+      stopFileWatch(wsPath);
+    };
+  }, [wsPath]);
+
+  useEffect(() => {
+    reloadGenRef.current += 1;
+    const gen = reloadGenRef.current;
     let cancelled = false;
     setItems(null);
     setError('');
@@ -471,19 +573,31 @@ export default function FileTree({
     setCreating(null);
     setDeleting(null);
     setRenamingPath(null);
-    listFiles(wsPath, '')
+    listFiles(wsPath, '', showAllRef.current)
       .then((nodes) => {
-        if (!cancelled) setItems(toItems(nodes, ''));
+        if (!cancelled && gen === reloadGenRef.current) setItems(toItems(nodes, ''));
       })
       .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        if (!cancelled && gen === reloadGenRef.current) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
       });
-    // git 状态随树一起加载；失败静默（lib/git.ts 处理）
     void refreshGitStatus(wsPath);
     return () => {
       cancelled = true;
+      reloadGenRef.current += 1;
     };
   }, [wsPath]);
+
+  useEffect(() => {
+    if (prevShowAllRef.current === showAll) return;
+    prevShowAllRef.current = showAll;
+    reloadGenRef.current += 1;
+    void reloadTreeRef.current();
+    return () => {
+      reloadGenRef.current += 1;
+    };
+  }, [showAll, wsPath]);
 
   // 搜索防抖：停顿 200ms 后走 Go 递归搜索（未加载的深层目录也能命中）。
   // 换查询即丢弃旧结果，防抖期间显示本地过滤视图，避免「旧结果 + 搜索中」并存。
@@ -497,7 +611,7 @@ export default function FileTree({
     let cancelled = false;
     setSearching(true);
     const timer = setTimeout(() => {
-      searchFiles(wsPath, q)
+      searchFiles(wsPath, q, showAll)
         .then((r) => {
           if (!cancelled) setHits(r ?? []);
         })
@@ -512,7 +626,7 @@ export default function FileTree({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, wsPath]);
+  }, [query, wsPath, showAll]);
 
   // 目录展开/收起：首次展开才调 ListFiles（懒加载），之后读本地缓存。
   // 加载失败只记到该目录行内（error 字段），不动整树；重试复用同一入口。
@@ -523,7 +637,7 @@ export default function FileTree({
       );
       return;
     }
-    listFiles(wsPath, item.relPath)
+    listFiles(wsPath, item.relPath, showAll)
       .then((nodes) => {
         setItems((cur) =>
           cur &&
@@ -549,7 +663,7 @@ export default function FileTree({
     for (const seg of relPath.split('/')) {
       const r = parent ? `${parent}/${seg}` : seg;
       try {
-        const nodes = await listFiles(wsPath, r);
+        const nodes = await listFiles(wsPath, r, showAll);
         setItems(
           (cur) =>
             cur &&
@@ -571,7 +685,7 @@ export default function FileTree({
 
   // 根层重建树镜像（Go 侧改动后已作废缓存）：rename/create/delete 共用
   const refreshRoot = () => {
-    listFiles(wsPath, '')
+    listFiles(wsPath, '', showAll)
       .then((nodes) => setItems(toItems(nodes, '')))
       .catch(() => {
         /* 根层刷新失败保持原树，下次展开会重新拉取 */
@@ -693,6 +807,14 @@ export default function FileTree({
       handleCopyPath(it);
       setMenu(null);
     };
+    const reveal = (it: TreeItem) => {
+      revealInExplorer(wsPath, it.node.Path)
+        .then(() => setMenu(null))
+        .catch((e: unknown) => {
+          useAppStore.getState().notify(e instanceof Error ? e.message : String(e), 'error');
+          setMenu(null);
+        });
+    };
     const it = menu?.item;
     if (!it) {
       // 空白处：根目录新建
@@ -708,12 +830,14 @@ export default function FileTree({
         { label: '重命名', onSelect: () => startRename(it) },
         { label: '删除', danger: true, onSelect: () => startDelete(it) },
         { label: '复制路径', onSelect: () => copyPath(it) },
+        { label: '在资源管理器中打开', onSelect: () => reveal(it) },
       ];
     }
     return [
       { label: '重命名', onSelect: () => startRename(it) },
       { label: '删除', danger: true, onSelect: () => startDelete(it) },
       { label: '复制路径', onSelect: () => copyPath(it) },
+      { label: '在资源管理器中打开', onSelect: () => reveal(it) },
     ];
   })();
 
@@ -740,7 +864,7 @@ export default function FileTree({
     // h-full 配合父级 min-h-0 flex-1 撑满右栏：空白右键 handler 挂在根 div，
     // 才能覆盖到列表下方空白（行内 handler 已 stopPropagation，不会冲突）
     <div className="flex h-full min-h-0 flex-col" onContextMenu={blankContextMenu}>
-      {/* 搜索框 + git 刷新 */}
+      {/* 搜索框 + 显示全部 + 刷新 */}
       <div className="mb-1.5 flex items-center gap-1">
         <Input
           size="sm"
@@ -750,11 +874,20 @@ export default function FileTree({
           aria-label="搜索文件"
           onChange={(e) => setQuery(e.target.value)}
         />
+        <label className="flex shrink-0 cursor-pointer items-center gap-1 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            aria-label="显示全部"
+            checked={showAll}
+            onChange={(e) => setShowAll(e.target.checked)}
+          />
+          全部
+        </label>
         <button
           className="shrink-0 rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          aria-label="刷新 git 状态"
-          title="刷新 git 状态"
-          onClick={() => void refreshGitStatus(wsPath)}
+          aria-label="刷新文件树"
+          title="刷新文件树"
+          onClick={() => void reloadTree()}
         >
           <RefreshIcon />
         </button>

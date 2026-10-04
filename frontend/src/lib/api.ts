@@ -136,7 +136,14 @@ export interface DeletedProject {
 
 // desktop.GitStatusResult 的 JSON 形态（internal/desktop/files.go）：
 // Status 键为 git 原生输出的 '/' 分隔相对路径，值见 workspace.GitStatus 的状态码。
-export type GitStatusCode = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflicted';
+export type GitStatusCode =
+  | 'modified'
+  | 'added'
+  | 'deleted'
+  | 'renamed'
+  | 'untracked'
+  | 'conflicted'
+  | 'ignored';
 export interface GitStatusResult {
   Status: Record<string, string>;
   IsRepo: boolean;
@@ -229,9 +236,13 @@ interface AppBindings {
   GetSessions(): Promise<Session[]>;
   ResumeSession(id: string): Promise<void>;
   FocusSession(id: string): Promise<boolean>;
-  ListFiles(wsPath: string, relPath: string): Promise<FileNode[]>;
+  ListFiles(wsPath: string, relPath: string, showAll: boolean): Promise<FileNode[]>;
   PreviewFile(wsPath: string, path: string): Promise<FilePreview>;
-  SearchFiles(wsPath: string, query: string): Promise<SearchHit[]>;
+  SearchFiles(wsPath: string, query: string, showAll: boolean): Promise<SearchHit[]>;
+  RefreshFiles(wsPath: string): Promise<void>;
+  StartFileWatch(wsPath: string): Promise<void>;
+  StopFileWatch(wsPath: string): void;
+  RevealInExplorer(wsPath: string, path: string): Promise<void>;
   RenameEntry(wsPath: string, relPath: string, newName: string): Promise<string>;
   CreateEntry(wsPath: string, dirRelPath: string, name: string, isDir: boolean): Promise<string>;
   DeleteEntry(wsPath: string, relPath: string): Promise<void>;
@@ -347,10 +358,10 @@ export function onWindowClosed(cb: (title: string) => void): () => void {
 // ListFiles 列出工作区内 relPath 目录的子项（懒加载；relPath 空串/"." 为根层）。
 // relPath 统一用 / 拼接：Go 侧 filepath.Clean 会归一化为平台分隔符。
 // 错误（路径越界等）向上抛，由调用方呈现。
-export async function listFiles(wsPath: string, relPath: string): Promise<FileNode[]> {
+export async function listFiles(wsPath: string, relPath: string, showAll = false): Promise<FileNode[]> {
   const a = app();
   if (!a) return [];
-  return a.ListFiles(wsPath, relPath);
+  return a.ListFiles(wsPath, relPath, showAll);
 }
 
 // PreviewFile 读取文件预览（Lines 已含行号前缀）；绑定不可用时返回 null
@@ -362,10 +373,45 @@ export async function previewFile(wsPath: string, path: string): Promise<FilePre
 
 // SearchFiles 递归搜索工作区内名字包含 query 的文件/目录（大小写不敏感，上限 2000）。
 // 忽略规则与文件树一致；错误向上抛。
-export async function searchFiles(wsPath: string, query: string): Promise<SearchHit[]> {
+export async function searchFiles(wsPath: string, query: string, showAll = false): Promise<SearchHit[]> {
   const a = app();
   if (!a) return [];
-  return a.SearchFiles(wsPath, query);
+  return a.SearchFiles(wsPath, query, showAll);
+}
+
+// RefreshFiles 作废工作区文件树缓存并触发后台重扫；无绑定时静默返回。
+export async function refreshFiles(wsPath: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.RefreshFiles(wsPath);
+}
+
+// StartFileWatch 订阅工作区目录变更（fsnotify）；无绑定时静默返回。
+export async function startFileWatch(wsPath: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.StartFileWatch(wsPath);
+}
+
+// StopFileWatch 取消工作区目录监听；无绑定时静默返回。
+export function stopFileWatch(wsPath: string): void {
+  const a = app();
+  if (!a) return;
+  a.StopFileWatch(wsPath);
+}
+
+// RevealInExplorer 在系统文件管理器中定位并选中 path（绝对或相对工作区）；无绑定抛错。
+export async function revealInExplorer(wsPath: string, path: string): Promise<void> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  await a.RevealInExplorer(wsPath, path);
+}
+
+// onFilesChanged 订阅工作区文件树变更（Go 侧 watch/刷新后推送），返回取消订阅函数。
+export function onFilesChanged(cb: (path: string) => void): () => void {
+  return EventsOn('files:changed', (p: { path?: string }) => {
+    if (p?.path) cb(p.path);
+  });
 }
 
 // RenameEntry 重命名工作区内文件/目录（只允许改最后一段名字），返回新绝对路径。

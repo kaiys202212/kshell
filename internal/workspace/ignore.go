@@ -41,10 +41,18 @@ func (m *Matcher) SetShowAll(showAll bool) {
 }
 
 func (m *Matcher) Skip(path string, isDir bool) bool {
-	if m.showAll || path == m.root {
+	if path == m.root {
 		return false
 	}
-	if m.builtin[filepath.Base(path)] {
+	base := filepath.Base(path)
+	// .git 即使 showAll 也永不进文件树
+	if base == ".git" {
+		return true
+	}
+	if m.showAll {
+		return false
+	}
+	if m.builtin[base] {
 		return true
 	}
 

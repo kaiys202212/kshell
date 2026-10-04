@@ -68,7 +68,7 @@ func writeFile(t *testing.T, root, rel, content string) {
 func TestListFilesListsRootExcludingIgnored(t *testing.T) {
 	env := newFilesEnv(t)
 
-	nodes, err := env.app.ListFiles(env.root, "")
+	nodes, err := env.app.ListFiles(env.root, "", false)
 	if err != nil {
 		t.Fatalf("ListFiles error: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestListFilesListsRootExcludingIgnored(t *testing.T) {
 func TestListFilesLazyLoadsSubdir(t *testing.T) {
 	env := newFilesEnv(t)
 
-	nodes, err := env.app.ListFiles(env.root, "pkg")
+	nodes, err := env.app.ListFiles(env.root, "pkg", false)
 	if err != nil {
 		t.Fatalf("ListFiles(pkg) error: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestListFilesLazyLoadsSubdir(t *testing.T) {
 	}
 
 	// 二次访问同一目录应命中节点缓存（不再读盘）——通过节点 Loaded 断言
-	tree, err := env.app.treeFor(env.root)
+	tree, err := env.app.treeFor(env.root, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,17 +118,17 @@ func TestListFilesRejectsTraversal(t *testing.T) {
 	env := newFilesEnv(t)
 
 	// 词法穿越：.. 与正斜杠写法（前端可能传 / 分隔）都应被拒
-	if _, err := env.app.ListFiles(env.root, ".."); err == nil {
+	if _, err := env.app.ListFiles(env.root, "..", false); err == nil {
 		t.Fatal("relPath 越出工作区应报错")
 	}
-	if _, err := env.app.ListFiles(env.root, "../sibling"); err == nil {
+	if _, err := env.app.ListFiles(env.root, "../sibling", false); err == nil {
 		t.Fatal("正斜杠穿越应报错")
 	}
 	if _, err := env.app.PreviewFile(env.root, filepath.Join(env.root, "..", "main.go")); err == nil {
 		t.Fatal("预览路径越出工作区应报错")
 	}
 	// 绝对路径输入：Join 后段匹配失败（errDirNotFound），不得越界成功
-	if _, err := env.app.ListFiles(env.root, `C:\Windows`); err == nil {
+	if _, err := env.app.ListFiles(env.root, `C:\Windows`, false); err == nil {
 		t.Fatal("绝对路径 relPath 不应返回成功")
 	}
 }
@@ -289,10 +289,10 @@ func TestConcurrentListFiles(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := env.app.ListFiles(env.root, ""); err != nil {
+			if _, err := env.app.ListFiles(env.root, "", false); err != nil {
 				t.Errorf("并发 ListFiles 错误: %v", err)
 			}
-			if _, err := env.app.ListFiles(env.root, "pkg"); err != nil {
+			if _, err := env.app.ListFiles(env.root, "pkg", false); err != nil {
 				t.Errorf("并发 ListFiles(pkg) 错误: %v", err)
 			}
 		}()

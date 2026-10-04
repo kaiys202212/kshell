@@ -91,6 +91,9 @@ type App struct {
 	treeMu  sync.Mutex                 // 树操作串行化（Expand 会写节点，不能只靠 mu 快照）
 	treeGen uint64                     // 树缓存代数：rename 作废缓存时推进，防旧构建写回
 
+	watchMu sync.Mutex                 // 文件监视表串行化
+	watches map[string]*fileWatcher    // cleaned 工作区根 → 监视器（引用计数）
+
 	appearanceCancel context.CancelFunc // system 模式下的明暗监听取消函数
 }
 
@@ -328,6 +331,7 @@ func (a *App) Shutdown(ctx context.Context) {
 		a.appearanceCancel = nil
 	}
 	a.mu.Unlock()
+	a.stopAllFileWatches()
 	if m := a.snapshot().Terminals; m != nil {
 		m.CloseAll()
 	}
