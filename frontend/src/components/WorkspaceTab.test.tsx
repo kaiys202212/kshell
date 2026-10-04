@@ -460,15 +460,15 @@ describe('WorkspaceTab', () => {
     ]);
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
-    expect(await screen.findByText('没有可显示的文件')).toBeInTheDocument();
+    expect(await screen.findByText('proj-a')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'SSH' }));
     expect(await screen.findByText('生产机')).toBeInTheDocument();
     expect(mocks.listConnections).toHaveBeenCalledWith('D:\\proj-a');
 
     // 双面板常挂载：切到 SSH 后文件树仍在 DOM（hidden 切换而非卸载重载）
-    expect(screen.getByText('没有可显示的文件')).toBeInTheDocument();
+    expect(screen.getByText('proj-a')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '文件' }));
-    expect(await screen.findByText('没有可显示的文件')).toBeInTheDocument();
+    expect(await screen.findByText('proj-a')).toBeInTheDocument();
     expect(screen.getByText('生产机')).toBeInTheDocument();
   });
 

@@ -1,6 +1,6 @@
 // 工作区页签：三栏布局（左右两栏宽度可拖动）。
 //   左栏：「新建会话」下拉菜单 + 会话列表（点行联动页签/会话预览，图标激活）
-//   中栏：左侧 agent 页签；最右钉「预览」（预览区内再开「预览|终端」子页签）
+//   中栏：左侧 agent 页签；最右钉「预览」（预览区内再开「文件预览|终端」子页签）
 //   右栏：文件 | SSH 子页签（点文件自动切到中栏的预览页签）
 // 终端页签一旦打开就常挂载（非激活用 hidden），xterm 缓冲与焦点不丢；
 // 工作区页签本身也由 App 常挂载，因此只有关闭页签才会真正结束终端进程。
@@ -167,7 +167,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   }, [terms, chatsForWs, centerTab, selectCenterTab]);
 
   useEffect(() => {
-    // 预览区子页签指向的 shell/ssh 已关闭时退回「预览」
+    // 预览区子页签指向的 shell/ssh 已关闭时退回「文件预览」
     if (toolSubTab !== PREVIEW_SUB && toolSubTab !== SESSION_PREVIEW_SUB && !toolTerms.some((t) => t.ID === toolSubTab)) {
       setToolSubTab(PREVIEW_SUB);
     }

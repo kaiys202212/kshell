@@ -1,4 +1,4 @@
-// 预览内容区：子页签「预览 | 终端… | +」。
+// 预览内容区：子页签「文件预览 | 会话预览 | 终端… | +」。
 // shell/ssh 终端常挂载（hidden 切换），与中心区 agent 终端同一套 TerminalView。
 import { cn } from '../lib/cn';
 import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
@@ -59,7 +59,7 @@ export default function PreviewToolPane({
           className={cn(subTabBase, subTab === PREVIEW_SUB && subTabActive)}
           onClick={() => onSubTab(PREVIEW_SUB)}
         >
-          预览
+          文件预览
           {subTab === PREVIEW_SUB && <span className={TAB_UNDERLINE} />}
         </button>
         {sessionPreview && (

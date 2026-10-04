@@ -62,7 +62,7 @@ describe('PreviewToolPane', () => {
         onNewShell={onNewShell}
       />,
     );
-    expect(screen.getByRole('tab', { name: '预览' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: '文件预览' })).toHaveAttribute('aria-selected', 'true');
     fireEvent.click(screen.getByRole('button', { name: '新建终端' }));
     expect(onNewShell).toHaveBeenCalled();
   });
@@ -83,7 +83,7 @@ describe('PreviewToolPane', () => {
       />,
     );
     expect(screen.getByTestId('terminal-sh1')).toHaveAttribute('data-active', 'true');
-    fireEvent.click(screen.getByRole('tab', { name: '预览' }));
+    fireEvent.click(screen.getByRole('tab', { name: '文件预览' }));
     expect(onSubTab).toHaveBeenCalledWith(PREVIEW_SUB);
   });
 
@@ -124,7 +124,7 @@ describe('PreviewToolPane', () => {
         onActivateSessionPreview={onActivate}
       />,
     );
-    expect(screen.getByRole('tab', { name: '预览' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '文件预览' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '会话预览' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('session-transcript')).toHaveTextContent('修登录');
     fireEvent.click(screen.getByRole('button', { name: '关闭会话预览' }));
