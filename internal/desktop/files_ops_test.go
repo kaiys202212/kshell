@@ -80,6 +80,45 @@ func TestCreateEntry(t *testing.T) {
 	}
 }
 
+func TestDeleteEntry(t *testing.T) {
+	env := newFilesEnv(t)
+	app := env.app
+
+	// 删文件
+	if err := app.DeleteEntry(env.root, "main.go"); err != nil {
+		t.Fatalf("DeleteEntry file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.root, "main.go")); !os.IsNotExist(err) {
+		t.Fatal("文件应已删除")
+	}
+	// 删目录（含子项）
+	if err := app.DeleteEntry(env.root, "pkg"); err != nil {
+		t.Fatalf("DeleteEntry dir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.root, "pkg")); !os.IsNotExist(err) {
+		t.Fatal("目录应已删除")
+	}
+	// 工作区根不可删
+	if err := app.DeleteEntry(env.root, ""); err == nil {
+		t.Fatal("根目录不可删除")
+	}
+	if err := app.DeleteEntry(env.root, "."); err == nil {
+		t.Fatal("根目录不可删除")
+	}
+	// 逃逸拒绝
+	if err := app.DeleteEntry(env.root, "../outside"); !errors.Is(err, errPathOutsideWorkspace) {
+		t.Fatalf("逃逸应报 errPathOutsideWorkspace，got %v", err)
+	}
+	// ListFiles 反映删除
+	nodes, _ := app.ListFiles(env.root, "")
+	for _, n := range nodes {
+		if n.Name == "readme.md" {
+			return
+		}
+	}
+	t.Fatal("readme.md 应仍在树中（未删错）")
+}
+
 func TestRenameEntry(t *testing.T) {
 	env := newFilesEnv(t)
 	app := env.app

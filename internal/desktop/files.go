@@ -272,6 +272,33 @@ func (a *App) CreateEntry(wsPath, dirRel, name string, isDir bool) (string, erro
 	return abs, nil
 }
 
+// DeleteEntry 永久删除工作区内的文件/目录（os.RemoveAll，不进回收站）。
+// 工作区根不可删；成功后作废树缓存。
+func (a *App) DeleteEntry(wsPath, relPath string) error {
+	clean := filepath.Clean(strings.TrimSpace(relPath))
+	if clean == "." || clean == "" || clean == string(filepath.Separator) {
+		return errInvalidName // 根目录不可删
+	}
+
+	tree, err := a.treeFor(wsPath)
+	if err != nil {
+		return err
+	}
+	node, err := a.nodeAt(tree, wsPath, relPath)
+	if err != nil {
+		return err
+	}
+	if _, err := filepath.EvalSymlinks(node.Path); err != nil {
+		return err // 目标是失效 junction：拒绝删除
+	}
+	if err := os.RemoveAll(node.Path); err != nil {
+		return err
+	}
+
+	a.invalidateTree(wsPath)
+	return nil
+}
+
 // ReadFileForEdit 整读工作区内文本文件供编辑（上限 1MB、拒二进制）。
 func (a *App) ReadFileForEdit(wsPath, path string) (workspace.EditContent, error) {
 	resolved, err := a.resolveWorkspaceFile(wsPath, path)
