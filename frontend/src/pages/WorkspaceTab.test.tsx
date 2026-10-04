@@ -91,7 +91,7 @@ beforeEach(() => {
     terminals: [term],
     chats: [chat],
     chatPermissions: {},
-    activityCompleted: {},
+    terminalBusy: {},
     layout: { left: 288, right: 300 },
   });
 });
@@ -192,30 +192,25 @@ describe('WorkspaceTabView agent 活动图标', () => {
     expect(screen.queryByLabelText('执行中')).not.toBeInTheDocument();
   });
 
-  it('activityCompleted 且 ready 时页签出现「运行完成」', () => {
+  it('chat Status=ready 时页签出现「等待用户」', () => {
     useAppStore.setState({
       chats: [{ ...chat, Status: 'ready' }],
       terminals: [],
-      activityCompleted: { c1: true },
     });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
-    expect(screen.getByLabelText('运行完成')).toBeInTheDocument();
+    expect(screen.getByLabelText('等待用户')).toBeInTheDocument();
   });
 
-  it('从聊天页签切到预览后清除该 id 的 activityCompleted', () => {
+  it('从聊天页签切到预览后不改 Status', () => {
     useAppStore.setState({
       chats: [{ ...chat, Status: 'ready' }],
       terminals: [],
-      activityCompleted: { c1: true },
     });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
-    // 先切到聊天（从 preview 切入不清除），再切回预览应清掉 completed
     fireEvent.click(screen.getByRole('tab', { name: '新会话' }));
-    expect(useAppStore.getState().activityCompleted.c1).toBe(true);
-
     fireEvent.click(screen.getByRole('tab', { name: '预览与命令行' }));
-    expect(useAppStore.getState().activityCompleted.c1).toBeUndefined();
+    expect(useAppStore.getState().chats.find((c) => c.ID === 'c1')?.Status).toBe('ready');
   });
 
   it('预览页签钉在中心区最右，shell/ssh 不进左侧 agent 页签', () => {
@@ -242,19 +237,19 @@ describe('WorkspaceTabView agent 活动图标', () => {
     expect(screen.getByTestId('preview-tool-pane')).toBeInTheDocument();
   });
 
-  it('连续切换聊天页签时立即更新 ref，离开上一页签会清 activityCompleted', () => {
+  it('连续切换聊天页签时 Status 保持不变', () => {
     const chat2: ChatInfo = { ...chat, ID: 'c2', Title: '会话二' };
     useAppStore.setState({
       chats: [{ ...chat, Status: 'ready' }, { ...chat2, Status: 'ready' }],
       terminals: [],
-      activityCompleted: { c1: true, c2: true },
     });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
     fireEvent.click(screen.getByRole('tab', { name: '新会话' }));
     fireEvent.click(screen.getByRole('tab', { name: '会话二' }));
 
-    expect(useAppStore.getState().activityCompleted.c1).toBeUndefined();
-    expect(useAppStore.getState().activityCompleted.c2).toBe(true);
+    const statuses = useAppStore.getState().chats.map((c) => c.Status);
+    expect(statuses).toEqual(['ready', 'ready']);
+    expect(screen.getAllByLabelText('等待用户')).toHaveLength(2);
   });
 });

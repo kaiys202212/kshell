@@ -6,6 +6,7 @@
 // App 定义在 internal/desktop 包，所以是 window.go.desktop.App（不是 main.App），
 // 见 wailsjs/go/desktop/App.js 的生成产物（window['go']['desktop']['App']）。
 import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { bumpTerminalBusy } from '../state/terminalBusy';
 import type { AppearanceInfo } from './appearance';
 
 // discovery.Workspace 的 JSON 形态（internal/discovery/workspaces.go）
@@ -650,6 +651,7 @@ export async function writeTerminal(id: string, data: string): Promise<void> {
   const a = app();
   if (!a) return;
   await a.WriteTerminal(id, data);
+  bumpTerminalBusy(id);
 }
 
 // resizeTerminal 同步终端尺寸（FitAddon 变化时调用）。

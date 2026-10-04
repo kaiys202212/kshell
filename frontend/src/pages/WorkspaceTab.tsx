@@ -78,28 +78,19 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   const [busy, setBusy] = useState(false);
   // 新建会话后的延迟重扫定时器（卸载/再次新建时清掉，避免重复触发）
   const rescanTimer = useRef<number | null>(null);
-  // 供 selectCenterTab 读最新 centerTab，避免在 setState updater 里改 store（会触发 React 渲染期 setState 警告）
-  const centerTabRef = useRef(centerTab);
-  centerTabRef.current = centerTab;
 
   const layout = useAppStore((s) => s.layout);
   const setLayout = useAppStore((s) => s.setLayout);
   const terminals = useAppStore((s) => s.terminals);
   const chats = useAppStore((s) => s.chats);
   const chatPermissions = useAppStore((s) => s.chatPermissions);
-  const activityCompleted = useAppStore((s) => s.activityCompleted);
+  const terminalBusy = useAppStore((s) => s.terminalBusy);
   const notify = useAppStore((s) => s.notify);
   // 新建会话的工具选择：全局持久化（'' = 自动），跨页签/重启记住用户的选择
   const toolId = useAppStore((s) => s.newSessionTool);
   const setToolId = useAppStore((s) => s.setNewSessionTool);
 
-  // 切走聊天/终端页签时清掉上一页签的「运行完成」；预览页签不参与 completed
   const selectCenterTab = useCallback((next: string) => {
-    const prev = centerTabRef.current;
-    if (prev !== next && prev !== PREVIEW_TAB) {
-      useAppStore.getState().clearActivityCompleted(prev);
-    }
-    centerTabRef.current = next;
     setCenterTab(next);
   }, []);
 
@@ -317,7 +308,8 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             const activity = resolveAgentActivity({
               status: t.Status,
               hasPermission: false,
-              completed: !!activityCompleted[t.ID],
+              kind: 'terminal',
+              busy: !!terminalBusy[t.ID],
             });
             return (
               <div
@@ -345,9 +337,6 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                 }}
               >
                 <AgentActivityIcon activity={activity} />
-                {activity === 'idle' && t.Status === 'exited' && (
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground" />
-                )}
                 <button
                   role="tab"
                   aria-selected={active}
@@ -383,7 +372,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             const activity = resolveAgentActivity({
               status: c.Status,
               hasPermission: !!chatPermissions[c.ID],
-              completed: !!activityCompleted[c.ID],
+              kind: 'chat',
             });
             return (
               <div

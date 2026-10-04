@@ -253,6 +253,31 @@ describe('App', () => {
     expect(useAppStore.getState().toasts.some((t) => t.title.includes('退出码 3'))).toBe(true);
   });
 
+  it('终端 data 事件 bump terminalBusy；exit 清除', async () => {
+    let dataCb: ((p: { id: string; data: string }) => void) | undefined;
+    let exitCb: ((p: { id: string; exitCode: number }) => void) | undefined;
+    mocks.onTerminalData.mockImplementation((cb: (p: { id: string; data: string }) => void) => {
+      dataCb = cb;
+      return () => {};
+    });
+    mocks.onTerminalExit.mockImplementation((cb: (p: { id: string; exitCode: number }) => void) => {
+      exitCb = cb;
+      return () => {};
+    });
+    useAppStore.setState({ terminalBusy: {} });
+    render(<App />);
+
+    act(() => {
+      dataCb?.({ id: 't1', data: 'QQ==' });
+    });
+    expect(useAppStore.getState().terminalBusy.t1).toBe(true);
+
+    act(() => {
+      exitCb?.({ id: 't1', exitCode: 0 });
+    });
+    expect(useAppStore.getState().terminalBusy.t1).toBeUndefined();
+  });
+
   it('关闭工作区页签会连带关闭该工作区的内嵌终端（进程不留后台）', async () => {
     // 挂载时会用 ListTerminals 重建镜像：这里让它返回同一份，避免把预置状态冲掉
     mocks.listTerminals.mockResolvedValue([term]);

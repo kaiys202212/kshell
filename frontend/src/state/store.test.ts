@@ -1,7 +1,7 @@
 // store 增量测试：notify/dismissToast 轻量提示队列、
 // openTabs/activeTabId 经 persist 中间件落 localStorage（kshell-tabs）。
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { ChatInfo, ChatUpdate, TerminalInfo } from '../lib/api';
+import type { ChatInfo, TerminalInfo } from '../lib/api';
 import { SETTINGS_TAB_ID, useAppStore } from './store';
 
 beforeEach(() => {
@@ -13,7 +13,7 @@ beforeEach(() => {
     activeTabId: null,
     terminals: [],
     layout: { left: 288, right: 300 },
-    activityCompleted: {},
+    terminalBusy: {},
   });
 });
 
@@ -85,6 +85,7 @@ describe('store', () => {
     expect(parsed.state).not.toHaveProperty('toasts');
     expect(parsed.state).not.toHaveProperty('terminals');
     expect(parsed.state).not.toHaveProperty('activityCompleted');
+    expect(parsed.state).not.toHaveProperty('terminalBusy');
   });
 
   it('终端镜像：upsert 新增/覆盖、markTerminalExited 改状态、remove/setTerminals 重建', () => {
@@ -173,97 +174,35 @@ describe('store', () => {
     expect(useAppStore.getState().chats[0].Status).toBe('exited');
   });
 
-  it('turn_done 标记 activityCompleted；error 不标记', () => {
-    const chat: ChatInfo = {
+  it('setTerminalBusy 置位与清除；removeTerminal 去掉键', () => {
+    useAppStore.getState().setTerminalBusy('t1', true);
+    expect(useAppStore.getState().terminalBusy.t1).toBe(true);
+    useAppStore.getState().setTerminalBusy('t1', false);
+    expect(useAppStore.getState().terminalBusy.t1).toBeUndefined();
+    useAppStore.getState().setTerminalBusy('t1', true);
+    useAppStore.getState().removeTerminal('t1');
+    expect(useAppStore.getState().terminalBusy.t1).toBeUndefined();
+  });
+
+  it('turn_done 将 Status 置 ready（不再写 activityCompleted）', () => {
+    const chat = {
       ID: 'c1',
-      Kind: 'session',
-      SessionID: 's1',
-      Workspace: 'D:\\p',
+      Kind: 'new',
+      SessionID: '',
+      Workspace: 'D:\\w',
       Title: 't',
       ToolID: 'claude',
       Status: 'running',
       ExitCode: 0,
       Error: '',
     };
-    useAppStore.setState({ chats: [chat], chatSeq: {}, chatItems: {}, activityCompleted: {} });
+    useAppStore.setState({ chats: [chat], chatSeq: {}, chatItems: {} });
     useAppStore.getState().applyChat('c1', {
       Seq: 1,
       Type: 'turn_done',
-    } as ChatUpdate);
-    expect(useAppStore.getState().activityCompleted.c1).toBe(true);
+      StopReason: 'end_turn',
+    });
     expect(useAppStore.getState().chats[0].Status).toBe('ready');
-
-    useAppStore.setState({
-      chats: [{ ...chat, Status: 'running' }],
-      chatSeq: { c1: 1 },
-      activityCompleted: {},
-    });
-    useAppStore.getState().applyChat('c1', {
-      Seq: 2,
-      Type: 'error',
-      Text: 'boom',
-    } as ChatUpdate);
-    expect(useAppStore.getState().activityCompleted.c1).toBeUndefined();
-  });
-
-  it('markTerminalExited 标记 completed；upsert running 清除', () => {
-    const term: TerminalInfo = {
-      ID: 't1',
-      Kind: 'session',
-      SessionID: 's1',
-      Workspace: 'D:\\p',
-      Title: 'x',
-      ToolID: 'claude',
-      Status: 'running',
-      ExitCode: 0,
-      Cols: 80,
-      Rows: 24,
-    };
-    useAppStore.setState({ terminals: [term], activityCompleted: {} });
-    useAppStore.getState().markTerminalExited('t1', 0);
-    expect(useAppStore.getState().activityCompleted.t1).toBe(true);
-
-    useAppStore.getState().upsertTerminal({ ...term, Status: 'running' });
-    expect(useAppStore.getState().activityCompleted.t1).toBeUndefined();
-  });
-
-  it('removeChat 去掉 completed 键；clearActivityCompleted 可手动清', () => {
-    useAppStore.setState({
-      chats: [
-        {
-          ID: 'c1',
-          Kind: 'new',
-          SessionID: '',
-          Workspace: 'D:\\p',
-          Title: 't',
-          ToolID: 'claude',
-          Status: 'ready',
-          ExitCode: 0,
-          Error: '',
-        },
-      ],
-      activityCompleted: { c1: true },
-    });
-    useAppStore.getState().clearActivityCompleted('c1');
-    expect(useAppStore.getState().activityCompleted.c1).toBeUndefined();
-
-    useAppStore.setState({
-      chats: [
-        {
-          ID: 'c1',
-          Kind: 'new',
-          SessionID: '',
-          Workspace: 'D:\\p',
-          Title: 't',
-          ToolID: 'claude',
-          Status: 'ready',
-          ExitCode: 0,
-          Error: '',
-        },
-      ],
-      activityCompleted: { c1: true },
-    });
-    useAppStore.getState().removeChat('c1');
-    expect(useAppStore.getState().activityCompleted.c1).toBeUndefined();
+    expect(useAppStore.getState()).not.toHaveProperty('activityCompleted');
   });
 });

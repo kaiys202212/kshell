@@ -11,13 +11,13 @@ export default function AgentActivityIcon({ activity, className }: Props) {
   if (activity === 'running') {
     return (
       <span
-        className={cn('inline-flex h-3 w-3 shrink-0 text-success', className)}
+        className={cn('inline-flex h-3.5 w-3.5 shrink-0 text-success', className)}
         role="img"
         aria-label="执行中"
         title="执行中"
       >
-        <svg viewBox="0 0 12 12" className="h-3 w-3 animate-spin" aria-hidden="true">
-          <circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="18 8" />
+        <svg viewBox="0 0 14 14" className="h-3.5 w-3.5 animate-spin" aria-hidden="true">
+          <circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="22 10" />
         </svg>
       </span>
     );
@@ -34,23 +34,19 @@ export default function AgentActivityIcon({ activity, className }: Props) {
       </span>
     );
   }
-  return (
-    <span
-      className={cn('inline-flex h-3 w-3 shrink-0 text-muted-foreground', className)}
-      role="img"
-      aria-label="运行完成"
-      title="运行完成"
-    >
-      <svg viewBox="0 0 12 12" className="h-3 w-3" aria-hidden="true">
-        <path
-          d="M2.5 6.5 L5 9 L9.5 3.5"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    </span>
-  );
+  if (activity === 'waiting') {
+    return (
+      <span
+        className={cn('inline-flex h-3 w-3 shrink-0 text-muted-foreground', className)}
+        role="img"
+        aria-label="等待用户"
+        title="等待用户"
+      >
+        <svg viewBox="0 0 12 12" className="h-3 w-3" aria-hidden="true">
+          <circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        </svg>
+      </span>
+    );
+  }
+  return null;
 }

@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	indexVersion     = 6 // 解析逻辑变更时递增，让旧缓存整体失效（v6：Cursor 改 chats 枚举，废弃 transcript 全量缓存中的子代理）
+	indexVersion     = 7 // 解析逻辑变更时递增，让旧缓存整体失效（v7：Cursor 会话标题优先 transcript 用户消息）
 	defaultMaxFiles  = 20000
 	defaultHeadLimit = 256 * 1024 // codex 导入会话首条真实用户消息可能在 100KB+ 之后
 	// 单文件 JSON（Gemini）必须整文件成文才解析得出来，头读太小会整条判失败。

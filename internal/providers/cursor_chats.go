@@ -181,11 +181,10 @@ func enrichCursorSession(home string, s *Session) {
 	if n, err := CountLines(path); err == nil {
 		s.Messages = n
 	}
-	if s.Title == "" {
-		if head, err := ReadHead(path, 256*1024); err == nil {
-			if parsed, err := (Cursor{}).ParseSession(path, head); err == nil && parsed.Title != "" {
-				s.Title = parsed.Title
-			}
+	// transcript 首条用户消息优先于 Cursor 自动英文 meta.title
+	if head, err := ReadHead(path, 256*1024); err == nil {
+		if parsed, err := (Cursor{}).ParseSession(path, head); err == nil && parsed.Title != "" {
+			s.Title = parsed.Title
 		}
 	}
 }

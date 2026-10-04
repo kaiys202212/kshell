@@ -332,8 +332,8 @@ func TestScanRewritesStaleIndexVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	idx := LoadIndex(cachePath)
-	if idx.Version != 6 {
-		t.Fatalf("index version = %d, want 6", idx.Version)
+	if idx.Version != 7 {
+		t.Fatalf("index version = %d, want 7", idx.Version)
 	}
 }
 

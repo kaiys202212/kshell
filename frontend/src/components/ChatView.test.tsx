@@ -38,16 +38,13 @@ describe('ChatView', () => {
     expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', 'hello');
   });
 
-  it('发送前清除 activityCompleted', () => {
-    const clearSpy = vi.spyOn(useAppStore.getState(), 'clearActivityCompleted');
-    useAppStore.setState({ activityCompleted: { c1: true }, chats: [CHAT] });
+  it('发送后乐观置 running', () => {
+    useAppStore.setState({ chats: [CHAT] });
     render(<ChatView chat={CHAT} active />);
     const box = screen.getByPlaceholderText(/输入/);
     fireEvent.change(box, { target: { value: 'hello' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(clearSpy).toHaveBeenCalledWith('c1');
-    expect(useAppStore.getState().activityCompleted.c1).toBeUndefined();
-    clearSpy.mockRestore();
+    expect(useAppStore.getState().chats.find((c) => c.ID === 'c1')?.Status).toBe('running');
   });
 
   it('发送失败：回退 ready 并提示错误', async () => {
