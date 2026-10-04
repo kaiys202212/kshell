@@ -233,6 +233,9 @@ interface AppBindings {
   PreviewFile(wsPath: string, path: string): Promise<FilePreview>;
   SearchFiles(wsPath: string, query: string): Promise<SearchHit[]>;
   RenameEntry(wsPath: string, relPath: string, newName: string): Promise<string>;
+  CreateEntry(wsPath: string, dirRelPath: string, name: string, isDir: boolean): Promise<string>;
+  DeleteEntry(wsPath: string, relPath: string): Promise<void>;
+  MoveEntry(wsPath: string, srcRelPath: string, dstDirRelPath: string): Promise<string>;
   ReadFileForEdit(wsPath: string, path: string): Promise<EditContent>;
   SaveFile(wsPath: string, path: string, text: string, eol: string): Promise<void>;
   GitStatus(wsPath: string): Promise<GitStatusResult>;
@@ -371,6 +374,30 @@ export async function renameEntry(wsPath: string, relPath: string, newName: stri
   const a = app();
   if (!a) throw new Error('未检测到桌面端绑定');
   return a.RenameEntry(wsPath, relPath, newName);
+}
+
+// createEntry 在工作区 dirRelPath 目录下新建文件/目录，返回绝对路径。
+// Go 侧会作废树缓存；错误（目标已存在、名字非法等）向上抛。
+export async function createEntry(wsPath: string, dirRelPath: string, name: string, isDir: boolean): Promise<string> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  return a.CreateEntry(wsPath, dirRelPath, name, isDir);
+}
+
+// deleteEntry 永久删除工作区内文件/目录（确认框逻辑在前端完成）。
+// Go 侧会作废树缓存；错误向上抛。
+export async function deleteEntry(wsPath: string, relPath: string): Promise<void> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  return a.DeleteEntry(wsPath, relPath);
+}
+
+// moveEntry 把 srcRelPath 移入 dstDirRelPath 目录（保留原名），返回新绝对路径。
+// Go 侧会作废树缓存；错误（目标已存在、移入子孙目录等）向上抛。
+export async function moveEntry(wsPath: string, srcRelPath: string, dstDirRelPath: string): Promise<string> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  return a.MoveEntry(wsPath, srcRelPath, dstDirRelPath);
 }
 
 // ReadFileForEdit 整读文本文件供编辑（上限 1MB、拒二进制）；绑定不可用时返回 null

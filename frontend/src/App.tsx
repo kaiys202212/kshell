@@ -19,9 +19,14 @@ import {
   onProjectsChanged,
   onTerminalData,
   onTerminalExit,
+  writeTerminal,
 } from './lib/api';
 import type { AppearanceInfo } from './lib/appearance';
 import type { ChatUpdate } from './lib/api';
+import { encodeTerminalInput } from './lib/base64';
+import { appendChatInput } from './lib/chatInputRegistry';
+import { quotePathForShell } from './lib/dragPath';
+import { OnFileDrop, OnFileDropOff } from '../wailsjs/runtime/runtime';
 import { applyChatUpdate, type TimelineItem } from './state/chatUpdate';
 import { dispatchTerminalData } from './lib/terminalRegistry';
 import { cn } from './lib/cn';
@@ -158,6 +163,28 @@ function App() {
     });
     return off;
   }, [handleCloseTab]);
+
+  useEffect(() => {
+    // 外部文件拖入（资源管理器）：Wails 全窗口回调，按落点 data-drop-zone 路由到终端/聊天页签。
+    // useDropTarget=false 关闭 Wails 自带遮罩；内部 HTML5 拖拽（无真实文件）不走这里。
+    OnFileDrop((x, y, paths) => {
+      if (!paths || paths.length === 0) return;
+      const el = document.elementFromPoint(x, y)?.closest('[data-drop-zone]');
+      const zone = el?.getAttribute('data-drop-zone') ?? '';
+      const text = quotePathForShell(paths[0]);
+      if (zone.startsWith('terminal:')) {
+        const id = zone.slice('terminal:'.length);
+        // 与 TerminalView/页签落点同口径：已退出的终端不接受拖入
+        const term = useAppStore.getState().terminals.find((t) => t.ID === id);
+        if (term?.Status !== 'exited') {
+          void writeTerminal(id, encodeTerminalInput(text));
+        }
+      } else if (zone.startsWith('chat:')) {
+        appendChatInput(zone.slice('chat:'.length), text);
+      }
+    }, false);
+    return () => OnFileDropOff();
+  }, []);
 
   useEffect(() => {
     // 单一全局 keydown：window 级监听不受输入框焦点影响（输入框聚焦时 Ctrl+K 仍触发），

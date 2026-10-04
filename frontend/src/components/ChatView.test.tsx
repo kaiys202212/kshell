@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatInfo } from '../lib/api';
+import { DRAG_MIME } from '../lib/dragPath';
 import { useAppStore } from '../state/store';
 import ChatView from './ChatView';
 
@@ -128,5 +129,18 @@ describe('ChatView', () => {
 
     expect(screen.getByText('思考')).toBeInTheDocument();
     expect(screen.getByText('內部推理')).toBeInTheDocument();
+  });
+
+  it('drop 携带 DRAG_MIME：路径包引号后追加进输入草稿', () => {
+    render(<ChatView chat={CHAT} active />);
+    const root = document.querySelector('[data-drop-zone="chat:c1"]') as HTMLElement;
+    expect(root).not.toBeNull();
+
+    fireEvent.drop(root, {
+      dataTransfer: { types: [DRAG_MIME], getData: () => 'D:\\my file\\a.go' },
+    });
+
+    const box = screen.getByPlaceholderText(/输入/) as HTMLTextAreaElement;
+    expect(box.value).toBe('"D:\\my file\\a.go"');
   });
 });

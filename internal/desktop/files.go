@@ -15,11 +15,14 @@ var (
 	errDirNotFound          = errors.New("目录不存在")
 	errInvalidName          = errors.New("名称不能为空且不能包含路径分隔符")
 	errTargetExists         = errors.New("目标已存在")
+	errNotDir               = errors.New("目标不是目录")
+	errMoveIntoSelf         = errors.New("不能把目录移入其自身内部")
+	errRootUndeletable      = errors.New("工作区根目录不可删除")
 )
 
 // treeFor 返回工作区的文件树（懒创建，根层已展开）。
 // 树按工作区路径缓存：节点 Loaded 状态就是目录级缓存，重复 ListFiles 不再读盘。
-// 代数（treeGen）防竞态：RenameEntry 作废缓存后，rename 前就开始构建的树
+// 代数（treeGen）防竞态：文件操作作废缓存后，操作前就开始构建的树
 // 不得再写回缓存（否则基于旧目录快照的 Loaded 缓存会一直陈旧）；
 // 该情况下返回现建树但不缓存——数据仍正确，只是本次不享受缓存。
 func (a *App) treeFor(wsPath string) (*workspace.Tree, error) {
@@ -192,8 +195,12 @@ func (a *App) RenameEntry(wsPath, relPath, newName string) (string, error) {
 	if !underPath(wsPath, newAbs) {
 		return "", errPathOutsideWorkspace
 	}
-	if _, err := filepath.EvalSymlinks(filepath.Dir(oldAbs)); err != nil {
+	resolved, err := filepath.EvalSymlinks(filepath.Dir(oldAbs))
+	if err != nil {
 		return "", err // 父目录是失效 junction：拒绝改名
+	}
+	if !underPath(wsPath, resolved) {
+		return "", errPathOutsideWorkspace // 父目录 junction 指向工作区外：拒绝
 	}
 	if !samePath(oldAbs, newAbs) { // 同名仅大小写变化时 Lstat 拦不住，放行
 		if _, err := os.Lstat(newAbs); err == nil {
@@ -206,13 +213,155 @@ func (a *App) RenameEntry(wsPath, relPath, newName string) (string, error) {
 		return "", err
 	}
 
+	a.invalidateTree(wsPath)
+
+	return newAbs, nil
+}
+
+// invalidateTree 作废工作区的文件树缓存并推进树代数
+// （见 treeFor 注释：防旧快照树写回缓存）。所有改动文件树的绑定共用。
+func (a *App) invalidateTree(wsPath string) {
 	a.treeMu.Lock()
 	delete(a.trees, wsPath) // 子树缓存链路整体失效，最省事且正确
 	a.treeMu.Unlock()
-	// 推进树代数：treeFor 里正在构建的旧快照树不得再入缓存
 	atomic.AddUint64(&a.treeGen, 1)
+}
 
-	return newAbs, nil
+// CreateEntry 在工作区 dirRel 目录下新建文件/目录（isDir 区分）。
+// name 只允许最后一段名字；目标已存在报错；成功后作废树缓存。
+func (a *App) CreateEntry(wsPath, dirRel, name string, isDir bool) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == ".." ||
+		strings.ContainsAny(name, `/\`) {
+		return "", errInvalidName
+	}
+
+	tree, err := a.treeFor(wsPath)
+	if err != nil {
+		return "", err
+	}
+	node, err := a.nodeAt(tree, wsPath, dirRel)
+	if err != nil {
+		return "", err
+	}
+	if !node.IsDir {
+		return "", errNotDir
+	}
+
+	abs := filepath.Join(node.Path, name)
+	if !underPath(wsPath, abs) {
+		return "", errPathOutsideWorkspace
+	}
+	resolved, err := filepath.EvalSymlinks(node.Path)
+	if err != nil {
+		return "", err // 父目录是失效 junction：拒绝新建
+	}
+	if !underPath(wsPath, resolved) {
+		return "", errPathOutsideWorkspace // 父目录 junction 指向工作区外：拒绝
+	}
+	if _, err := os.Lstat(abs); err == nil {
+		return "", errTargetExists
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	if isDir {
+		if err := os.Mkdir(abs, 0o755); err != nil {
+			return "", err
+		}
+	} else {
+		f, err := os.OpenFile(abs, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o666)
+		if err != nil {
+			return "", err
+		}
+		if err := f.Close(); err != nil {
+			return "", err
+		}
+	}
+
+	a.invalidateTree(wsPath)
+	return abs, nil
+}
+
+// DeleteEntry 永久删除工作区内的文件/目录（os.RemoveAll，不进回收站）。
+// 工作区根不可删；成功后作废树缓存。
+func (a *App) DeleteEntry(wsPath, relPath string) error {
+	clean := filepath.Clean(strings.TrimSpace(relPath))
+	if clean == "." || clean == "" || clean == string(filepath.Separator) {
+		return errRootUndeletable
+	}
+
+	tree, err := a.treeFor(wsPath)
+	if err != nil {
+		return err
+	}
+	node, err := a.nodeAt(tree, wsPath, relPath)
+	if err != nil {
+		return err
+	}
+	resolved, err := filepath.EvalSymlinks(node.Path)
+	if err != nil {
+		return err // 目标是失效 junction：拒绝删除
+	}
+	if !underPath(wsPath, resolved) {
+		return errPathOutsideWorkspace // junction 解析后越出工作区：拒绝
+	}
+	if err := os.RemoveAll(node.Path); err != nil {
+		return err
+	}
+
+	a.invalidateTree(wsPath)
+	return nil
+}
+
+// MoveEntry 把工作区内 srcRel 移入 dstDirRel 目录（保留原名）。
+// 拒绝移入自身子孙目录；目标已存在报错；原地移动视为 no-op；
+// 成功后作废树缓存。
+func (a *App) MoveEntry(wsPath, srcRel, dstDirRel string) (string, error) {
+	tree, err := a.treeFor(wsPath)
+	if err != nil {
+		return "", err
+	}
+	src, err := a.nodeAt(tree, wsPath, srcRel)
+	if err != nil {
+		return "", err
+	}
+	dstDir, err := a.nodeAt(tree, wsPath, dstDirRel)
+	if err != nil {
+		return "", err
+	}
+	if !dstDir.IsDir {
+		return "", errNotDir
+	}
+
+	dstAbs := filepath.Join(dstDir.Path, src.Name)
+	if !underPath(wsPath, dstAbs) {
+		return "", errPathOutsideWorkspace
+	}
+	// 目录不能移进自己或自己的子孙（underPath 含相等，正好覆盖两种情况）
+	if underPath(src.Path, dstAbs) && !samePath(src.Path, dstAbs) {
+		return "", errMoveIntoSelf
+	}
+	if samePath(src.Path, dstAbs) {
+		return src.Path, nil // 原地 drop：no-op
+	}
+	resolved, err := filepath.EvalSymlinks(dstDir.Path)
+	if err != nil {
+		return "", err // 目标目录是失效 junction：拒绝
+	}
+	if !underPath(wsPath, resolved) {
+		return "", errPathOutsideWorkspace // 目标目录 junction 指向工作区外：拒绝
+	}
+	if _, err := os.Lstat(dstAbs); err == nil {
+		return "", errTargetExists
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	if err := os.Rename(src.Path, dstAbs); err != nil {
+		return "", err
+	}
+
+	a.invalidateTree(wsPath)
+	return dstAbs, nil
 }
 
 // ReadFileForEdit 整读工作区内文本文件供编辑（上限 1MB、拒二进制）。
