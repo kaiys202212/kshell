@@ -150,9 +150,19 @@ func (a *App) Startup(ctx context.Context) {
 	a.loadSnapshot() // 先端出上次结果（秒开），真实扫描随后覆盖
 	go a.runScan()
 	go a.reapLoop()
+	go a.scheduleUpdateCheck()
 
 	a.emitAppearance()
 	a.restartAppearanceWatcher()
+}
+
+var updateCheckDelay = 3 * time.Second
+
+func (a *App) scheduleUpdateCheck() {
+	if updateCheckDelay > 0 {
+		time.Sleep(updateCheckDelay)
+	}
+	_, _ = a.CheckForUpdate()
 }
 
 // loadSnapshot 把上次扫描的落盘快照灌进内存，让前端首次 GetWorkspaces/GetSessions

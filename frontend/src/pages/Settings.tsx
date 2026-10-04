@@ -1,5 +1,5 @@
 // 设置页：左导航分区（通用 / 模型 / 工具）+ 右侧内容。
-// 通用含外观/关闭/会话模式/权限；模型含预设与双协议 Base URL；工具含检测与 providers.yaml。
+// 通用含外观/关闭/会话模式/权限/关于（检查更新）；模型含预设与双协议 Base URL；工具含检测与 providers.yaml。
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useEffect, useState } from 'react';
 import {
@@ -17,6 +17,9 @@ import {
   onScanDone,
   onToolInstallDone,
   onToolInstallLog,
+  applyUpdate,
+  checkForUpdate,
+  getAppVersion,
   restartApp,
   saveProvidersYAML,
   setAppearanceMode,
@@ -27,7 +30,7 @@ import {
   setSessionMode,
   uninstallBuiltinTool,
 } from '../lib/api';
-import type { InstallRecipeView, ModelPreset, ToolInfo, ToolInstallJobView } from '../lib/api';
+import type { InstallRecipeView, ModelPreset, ToolInfo, ToolInstallJobView, UpdateInfo } from '../lib/api';
 import { cn } from '../lib/cn';
 import { applyUiFontSize, clampUiFontSize } from '../lib/appearance';
 import { useAppStore } from '../state/store';
@@ -83,6 +86,10 @@ export default function Settings() {
   const [pendingId, setPendingId] = useState('');
   const [uninstallTarget, setUninstallTarget] = useState<ToolInfo | null>(null);
   const [purgeConfig, setPurgeConfig] = useState(false);
+  const [appVersion, setAppVersion] = useState('');
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateError, setUpdateError] = useState('');
   const notify = useAppStore((s) => s.notify);
 
   const loadRecipes = async (list: ToolInfo[]) => {
@@ -135,6 +142,11 @@ export default function Settings() {
           setAppearanceLocal(info.mode);
           setFontSizeLocal(clampUiFontSize(info.fontSize));
         }
+      })
+      .catch(() => {});
+    getAppVersion()
+      .then((v) => {
+        if (!cancelled) setAppVersion(v);
       })
       .catch(() => {});
     getCloseBehavior()
@@ -515,6 +527,75 @@ export default function Settings() {
                     将跳过 CLI 权限确认，并自动放行 ACP 权限弹窗。仅建议在可信环境使用。Gemini / OpenCode
                     暂无稳定跳过参数。
                   </p>
+                )}
+              </section>
+
+              <section className="mb-5 rounded border border-border bg-card p-3.5">
+                <h2 className="mb-3 text-sm font-medium">关于</h2>
+                <p className="mb-2 text-sm">
+                  当前版本{' '}
+                  <span className="tabular-nums text-muted-foreground">{appVersion || '…'}</span>
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="secondary"
+                    disabled={updateBusy}
+                    onClick={() => {
+                      void (async () => {
+                        setUpdateBusy(true);
+                        setUpdateError('');
+                        try {
+                          const info = await checkForUpdate();
+                          setUpdateInfo(info);
+                        } catch (e: unknown) {
+                          setUpdateError(e instanceof Error ? e.message : String(e));
+                        } finally {
+                          setUpdateBusy(false);
+                        }
+                      })();
+                    }}
+                  >
+                    {updateBusy ? '检查中…' : '检查更新'}
+                  </Button>
+                  {updateInfo?.Available && (
+                    <Button
+                      disabled={updateBusy}
+                      onClick={() => {
+                        void (async () => {
+                          setUpdateBusy(true);
+                          setUpdateError('');
+                          try {
+                            await applyUpdate();
+                          } catch (e: unknown) {
+                            setUpdateError(e instanceof Error ? e.message : String(e));
+                            setUpdateBusy(false);
+                          }
+                        })();
+                      }}
+                    >
+                      立即升级
+                    </Button>
+                  )}
+                </div>
+                {updateError && <p className="mt-2 text-xs text-destructive">{updateError}</p>}
+                {updateInfo?.Skipped && (
+                  <p className="mt-2 text-xs text-muted-foreground">{updateInfo.Reason}</p>
+                )}
+                {updateInfo && !updateInfo.Available && !updateInfo.Skipped && (
+                  <p className="mt-2 text-xs text-muted-foreground">{updateInfo.Reason || '已是最新'}</p>
+                )}
+                {updateInfo?.Available && (
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    <p>
+                      新版本 {updateInfo.Latest}
+                      {updateInfo.Source ? `（来源：${updateInfo.Source}）` : ''}
+                    </p>
+                    {updateInfo.Notes && (
+                      <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted p-2">
+                        {updateInfo.Notes}
+                      </pre>
+                    )}
+                  </div>
                 )}
               </section>
             </>

@@ -288,6 +288,16 @@ export interface ToolInstallJobView {
   Error: string;
 }
 
+export interface UpdateInfo {
+  Current: string;
+  Latest: string;
+  Notes: string;
+  Source: string;
+  Available: boolean;
+  Skipped: boolean;
+  Reason: string;
+}
+
 interface AppBindings {
   ScanSessions(): Promise<unknown>;
   GetWorkspaces(): Promise<Workspace[]>;
@@ -325,6 +335,9 @@ interface AppBindings {
   LoadProvidersYAML(): Promise<string>;
   SaveProvidersYAML(content: string): Promise<void>;
   RestartApp(): Promise<void>;
+  GetAppVersion(): Promise<string>;
+  CheckForUpdate(): Promise<UpdateInfo>;
+  ApplyUpdate(): Promise<void>;
   OpenSessionTerminal(sessionId: string, cols: number, rows: number): Promise<TerminalInfo>;
   OpenWorkspaceTerminal(wsPath: string, toolId: string, cols: number, rows: number): Promise<TerminalInfo>;
   OpenShellTerminal(wsPath: string, cols: number, rows: number): Promise<TerminalInfo>;
@@ -695,6 +708,40 @@ export async function restartApp(): Promise<void> {
   const a = app();
   if (!a) return;
   await a.RestartApp();
+}
+
+export async function getAppVersion(): Promise<string> {
+  const a = app();
+  if (!a) return '';
+  return a.GetAppVersion();
+}
+
+export async function checkForUpdate(): Promise<UpdateInfo> {
+  const a = app();
+  if (!a) {
+    return {
+      Current: '',
+      Latest: '',
+      Notes: '',
+      Source: '',
+      Available: false,
+      Skipped: true,
+      Reason: '未检测到桌面端绑定',
+    };
+  }
+  return a.CheckForUpdate();
+}
+
+export async function applyUpdate(): Promise<void> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  await a.ApplyUpdate();
+}
+
+export function onUpdateAvailable(cb: (info: UpdateInfo) => void): () => void {
+  return EventsOn('update:available', (p: UpdateInfo) => {
+    if (p?.Available) cb(p);
+  });
 }
 
 // ---- 内嵌终端（中心区命令行）----

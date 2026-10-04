@@ -1,0 +1,218 @@
+package update
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"golang.org/x/mod/semver"
+)
+
+const (
+	Owner        = "kaiys202212"
+	Repo         = "kshell"
+	ZipName      = "kshell-desktop-windows-amd64.zip"
+	SumsName     = "SHA256SUMS"
+	LatestAPIURL = "https://api.github.com/repos/" + Owner + "/" + Repo + "/releases/latest"
+	userAgent    = "kshell"
+)
+
+// Source 是 GitHub 访问入口：Prefix 拼在原始 URL 前面；空前缀即官方源。
+type Source struct {
+	Name   string
+	Prefix string
+}
+
+// Wrap 把官方 URL 转成经该源访问的地址。
+func (s Source) Wrap(rawURL string) string {
+	p := strings.TrimRight(s.Prefix, "/")
+	if p == "" {
+		return rawURL
+	}
+	return p + "/" + rawURL
+}
+
+// DefaultSources 国内代理优先，官方兜底。
+func DefaultSources() []Source {
+	return []Source{
+		{Name: "ghfast", Prefix: "https://ghfast.top/"},
+		{Name: "gh-proxy", Prefix: "https://gh-proxy.com/"},
+		{Name: "ghproxy.net", Prefix: "https://ghproxy.net/"},
+		{Name: "mirror.ghproxy", Prefix: "https://mirror.ghproxy.com/"},
+		{Name: "github", Prefix: ""},
+	}
+}
+
+// GetFunc 拉取 URL 正文；测试注入，生产用 HTTP。
+type GetFunc func(ctx context.Context, url string) ([]byte, error)
+
+// Client 按源顺序检查 GitHub latest release。
+type Client struct {
+	Current string
+	Sources []Source
+	Get     GetFunc
+	HTTP    *http.Client
+}
+
+// CheckResult 是一次检查的结果。
+type CheckResult struct {
+	Current   string
+	Latest    string
+	Notes     string
+	ZipURL    string
+	SumsURL   string
+	Available bool
+	Skipped   bool
+	Reason    string
+	Source    string
+}
+
+type releaseJSON struct {
+	TagName string `json:"tag_name"`
+	Body    string `json:"body"`
+	Assets  []struct {
+		Name               string `json:"name"`
+		BrowserDownloadURL string `json:"browser_download_url"`
+	} `json:"assets"`
+}
+
+// ShouldSkip 开发/未知版本不查网。
+func ShouldSkip(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "dev", "unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func canon(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	if !strings.HasPrefix(v, "v") {
+		v = "v" + v
+	}
+	return v
+}
+
+// Newer 报告 latest 是否严格新于 current。
+func Newer(current, latest string) bool {
+	a, b := canon(current), canon(latest)
+	if !semver.IsValid(a) || !semver.IsValid(b) {
+		return false
+	}
+	return semver.Compare(a, b) < 0
+}
+
+// Check 依次尝试各源，直到 latest release JSON 成功。
+func (c Client) Check(ctx context.Context) (CheckResult, error) {
+	cur := strings.TrimSpace(c.Current)
+	out := CheckResult{Current: cur}
+	if ShouldSkip(cur) {
+		out.Skipped = true
+		out.Reason = "开发构建不检查更新"
+		return out, nil
+	}
+	src := c.Sources
+	if len(src) == 0 {
+		src = DefaultSources()
+	}
+	get := c.Get
+	if get == nil {
+		get = c.httpGet
+	}
+	var last error
+	for _, s := range src {
+		u := s.Wrap(LatestAPIURL)
+		raw, err := get(ctx, u)
+		if err != nil {
+			last = err
+			continue
+		}
+		var rel releaseJSON
+		if err := json.Unmarshal(raw, &rel); err != nil {
+			last = err
+			continue
+		}
+		out.Latest = rel.TagName
+		out.Notes = rel.Body
+		out.Source = s.Name
+		for _, a := range rel.Assets {
+			switch a.Name {
+			case ZipName:
+				out.ZipURL = a.BrowserDownloadURL
+			case SumsName:
+				out.SumsURL = a.BrowserDownloadURL
+			}
+		}
+		if out.ZipURL == "" {
+			last = fmt.Errorf("release %s 缺少 %s", rel.TagName, ZipName)
+			continue
+		}
+		out.Available = Newer(cur, rel.TagName)
+		if !out.Available {
+			out.Reason = "已是最新"
+		}
+		return out, nil
+	}
+	if last == nil {
+		last = fmt.Errorf("无可用更新源")
+	}
+	return out, fmt.Errorf("检查更新失败: %w", last)
+}
+
+func (c Client) getThroughSources(ctx context.Context, official string) ([]byte, error) {
+	src := c.Sources
+	if len(src) == 0 {
+		src = DefaultSources()
+	}
+	get := c.Get
+	if get == nil {
+		get = c.httpGet
+	}
+	var last error
+	for _, s := range src {
+		b, err := get(ctx, s.Wrap(official))
+		if err != nil {
+			last = err
+			continue
+		}
+		return b, nil
+	}
+	if last == nil {
+		last = fmt.Errorf("无可用下载源")
+	}
+	return nil, last
+}
+
+func (c Client) httpGet(ctx context.Context, url string) ([]byte, error) {
+	cli := c.HTTP
+	if cli == nil {
+		cli = &http.Client{Timeout: 8 * time.Second}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := cli.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("%s: HTTP %d", url, resp.StatusCode)
+	}
+	return b, nil
+}

@@ -30,6 +30,9 @@ const mocks = vi.hoisted(() => ({
   onToolInstallLog: vi.fn(),
   onToolInstallDone: vi.fn(),
   onScanDone: vi.fn(),
+  getAppVersion: vi.fn(),
+  checkForUpdate: vi.fn(),
+  applyUpdate: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -127,6 +130,17 @@ beforeEach(() => {
   mocks.getAppearance.mockResolvedValue({ mode: 'dark', resolved: 'dark', fontSize: 13 });
   mocks.setAppearanceMode.mockResolvedValue(undefined);
   mocks.setAppearanceFontSize.mockResolvedValue(undefined);
+  mocks.getAppVersion.mockResolvedValue('dev');
+  mocks.checkForUpdate.mockResolvedValue({
+    Current: 'dev',
+    Latest: '',
+    Notes: '',
+    Source: '',
+    Available: false,
+    Skipped: true,
+    Reason: '开发构建不检查更新',
+  });
+  mocks.applyUpdate.mockResolvedValue(undefined);
   mocks.getCloseBehavior.mockResolvedValue('tray');
   mocks.setCloseBehavior.mockResolvedValue(undefined);
   mocks.getSessionMode.mockResolvedValue('tui');
@@ -549,5 +563,37 @@ describe('Settings', () => {
     await waitFor(() => {
       expect(mocks.getTools.mock.calls.length).toBeGreaterThan(before);
     });
+  });
+
+  it('通用分区显示关于与当前版本', async () => {
+    mocks.getAppVersion.mockResolvedValue('v0.1.0');
+    render(<Settings />);
+    expect(await screen.findByRole('heading', { name: '关于' })).toBeInTheDocument();
+    expect(await screen.findByText(/v0\.1\.0/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '检查更新' })).toBeInTheDocument();
+  });
+
+  it('检查更新后展示新版本并可立即升级', async () => {
+    mocks.getAppVersion.mockResolvedValue('v0.1.0');
+    mocks.checkForUpdate.mockResolvedValue({
+      Current: 'v0.1.0',
+      Latest: 'v0.2.0',
+      Notes: '修复升级',
+      Source: 'ghfast',
+      Available: true,
+      Skipped: false,
+      Reason: '',
+    });
+    render(<Settings />);
+    await screen.findByRole('heading', { name: '关于' });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '检查更新' }));
+    });
+    expect(await screen.findByText(/v0\.2\.0/)).toBeInTheDocument();
+    expect(screen.getByText(/来源：ghfast/)).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '立即升级' }));
+    });
+    expect(mocks.applyUpdate).toHaveBeenCalledTimes(1);
   });
 });

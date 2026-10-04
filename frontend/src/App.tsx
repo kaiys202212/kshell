@@ -25,6 +25,7 @@ import {
   onTerminalData,
   onTerminalExit,
   onTerminalMeta,
+  onUpdateAvailable,
   writeTerminal,
 } from './lib/api';
 import type { AppearanceInfo } from './lib/appearance';
@@ -58,10 +59,15 @@ function App() {
   const archivePrompt = useAppStore((s) => s.archivePrompt);
 
   useEffect(() => {
-    // 终端镜像重建：前端重载（开发态）或应用恢复时，Go 侧终端可能仍在跑
     listTerminals()
       .then((list) => useAppStore.getState().setTerminals(list))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    return onUpdateAvailable((info) => {
+      useAppStore.getState().notify(`发现新版本 ${info.Latest}，可在设置中升级`, 'info');
+    });
   }, []);
 
   useEffect(() => {
