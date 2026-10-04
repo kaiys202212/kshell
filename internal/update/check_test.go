@@ -6,6 +6,62 @@ import (
 	"testing"
 )
 
+func pinCheckWindowsPackage(t *testing.T) {
+	t.Helper()
+	prevOS, prevArch := currentGOOS, currentGOARCH
+	currentGOOS, currentGOARCH = "windows", "amd64"
+	t.Cleanup(func() { currentGOOS, currentGOARCH = prevOS, prevArch })
+}
+
+func TestPackageZipAndBinaryName(t *testing.T) {
+	if got := PackageZipName("linux", "amd64"); got != "kshell-desktop-linux-amd64.zip" {
+		t.Fatalf("linux zip = %q", got)
+	}
+	if got := PackageZipName("darwin", "arm64"); got != "kshell-desktop-darwin-arm64.zip" {
+		t.Fatalf("darwin zip = %q", got)
+	}
+	if got := PackageZipName("windows", "amd64"); got != ZipName {
+		t.Fatalf("windows zip = %q, want 与 ZipName 一致", got)
+	}
+	if PackageBinaryName("windows") != "kshell-desktop.exe" {
+		t.Fatal("windows 二进制应带 .exe")
+	}
+	if PackageBinaryName("linux") != "kshell-desktop" {
+		t.Fatal("unix 二进制不应带后缀")
+	}
+}
+
+func TestCheckSelectsCurrentPlatformZip(t *testing.T) {
+	prevOS, prevArch := currentGOOS, currentGOARCH
+	currentGOOS, currentGOARCH = "linux", "amd64"
+	t.Cleanup(func() { currentGOOS, currentGOARCH = prevOS, prevArch })
+
+	winURL := "https://github.com/kaiys202212/kshell/releases/download/v0.2.0/" + ZipName
+	linZip := PackageZipName("linux", "amd64")
+	linURL := "https://github.com/kaiys202212/kshell/releases/download/v0.2.0/" + linZip
+	body := `{
+  "tag_name": "v0.2.0",
+  "body": "多平台",
+  "assets": [
+    {"name": "` + ZipName + `", "browser_download_url": "` + winURL + `"},
+    {"name": "` + linZip + `", "browser_download_url": "` + linURL + `"},
+    {"name": "` + SumsName + `", "browser_download_url": "https://github.com/kaiys202212/kshell/releases/download/v0.2.0/` + SumsName + `"}
+  ]
+}`
+	c := Client{
+		Current: "v0.1.0",
+		Sources: []Source{{Name: "github", Prefix: ""}},
+		Get:     func(context.Context, string) ([]byte, error) { return []byte(body), nil },
+	}
+	got, err := c.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ZipURL != linURL {
+		t.Fatalf("ZipURL = %q, want linux 包 %q", got.ZipURL, linURL)
+	}
+}
+
 func TestShouldSkip(t *testing.T) {
 	for _, v := range []string{"", "dev", "DEV", "unknown"} {
 		if !ShouldSkip(v) {
@@ -33,6 +89,7 @@ func TestNewer(t *testing.T) {
 }
 
 func TestCheckPrefersFirstSuccessfulProxy(t *testing.T) {
+	pinCheckWindowsPackage(t)
 	body := githubLatestJSON("v0.2.0", "https://github.com/kaiys202212/kshell/releases/download/v0.2.0/"+ZipName)
 	var seen []string
 	c := Client{

@@ -9,8 +9,18 @@ permissions:
   contents: write
 
 jobs:
-  windows-desktop:
-    runs-on: windows-latest
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            zip: kshell-desktop-windows-amd64.zip
+          - os: ubuntu-latest
+            zip: kshell-desktop-linux-amd64.zip
+          - os: macos-latest
+            zip: kshell-desktop-darwin-arm64.zip
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -21,24 +31,74 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Linux desktop deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc pkg-config libgtk-3-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev || sudo apt-get install -y libwebkit2gtk-4.0-dev
       - name: Install wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
-      - name: Build desktop zip
+      - name: Build and pack
         shell: pwsh
+        env:
+          ZIP_NAME: ${{ matrix.zip }}
+          VERSION: ${{ github.ref_name }}
         run: |
-          $ver = $env:GITHUB_REF_NAME
-          .\build.ps1 -Desktop -Version $ver
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          New-Item dist\pkg -ItemType Directory -Force | Out-Null
-          Copy-Item dist\kshell-desktop.exe dist\pkg\kshell-desktop.exe
-          if (Test-Path dist\kshell-desktop-windows-amd64.zip) {
-            Remove-Item dist\kshell-desktop-windows-amd64.zip -Force
+          $ver = $env:VERSION
+          $zipName = $env:ZIP_NAME
+          if ($IsWindows) {
+            .\build.ps1 -Desktop -Version $ver
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $bin = "dist\kshell-desktop.exe"
+            $inner = "kshell-desktop.exe"
+          } else {
+            $env:CGO_ENABLED = "1"
+            wails build -ldflags "-X github.com/yangk/kshell/internal/version.Version=$ver"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            New-Item dist -ItemType Directory -Force | Out-Null
+            if (Test-Path "build/bin/kshell.app/Contents/MacOS/kshell") {
+              Copy-Item "build/bin/kshell.app/Contents/MacOS/kshell" "dist/kshell-desktop"
+            } elseif (Test-Path "build/bin/kshell") {
+              Copy-Item "build/bin/kshell" "dist/kshell-desktop"
+            } else {
+              Get-ChildItem -Recurse build/bin -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+              throw "找不到 Wails 产物"
+            }
+            $bin = "dist/kshell-desktop"
+            $inner = "kshell-desktop"
           }
-          Compress-Archive -Path dist\pkg\kshell-desktop.exe -DestinationPath dist\kshell-desktop-windows-amd64.zip
-          $hash = (Get-FileHash dist\kshell-desktop-windows-amd64.zip -Algorithm SHA256).Hash.ToLower()
-          $line = "$hash  kshell-desktop-windows-amd64.zip`n"
-          [System.IO.File]::WriteAllText((Join-Path (Get-Location) 'dist\SHA256SUMS'), $line, [System.Text.UTF8Encoding]::new($false))
-      - name: Publish GitHub Release
+          New-Item dist/pkg -ItemType Directory -Force | Out-Null
+          Copy-Item $bin "dist/pkg/$inner"
+          $zipPath = Join-Path dist $zipName
+          if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+          Compress-Archive -Path (Join-Path dist/pkg $inner) -DestinationPath $zipPath
+          $hash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
+          $line = "$hash  $zipName`n"
+          [System.IO.File]::WriteAllText((Join-Path (Get-Location) 'dist/SHA256SUMS'), $line, [System.Text.UTF8Encoding]::new($false))
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.zip }}
+          path: |
+            dist/${{ matrix.zip }}
+            dist/SHA256SUMS
+
+  publish:
+    needs: desktop
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Merge checksums and publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "${{ github.ref_name }}" --generate-notes dist/kshell-desktop-windows-amd64.zip dist/SHA256SUMS
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          : > dist/SHA256SUMS
+          for d in artifacts/*; do
+            cp "$d"/*.zip dist/
+            cat "$d"/SHA256SUMS >> dist/SHA256SUMS
+          done
+          gh release create "${{ github.ref_name }}" --generate-notes dist/*.zip dist/SHA256SUMS

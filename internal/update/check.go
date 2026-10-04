@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime"
 	"strings"
 	"time"
 
@@ -20,6 +21,34 @@ const (
 	LatestAPIURL = "https://api.github.com/repos/" + Owner + "/" + Repo + "/releases/latest"
 	userAgent    = "kshell"
 )
+
+// 测试可改 GOOS/GOARCH，生产用 runtime。
+var (
+	currentGOOS   = runtime.GOOS
+	currentGOARCH = runtime.GOARCH
+)
+
+// PackageZipName 是桌面发布包文件名：kshell-desktop-{GOOS}-{GOARCH}.zip。
+func PackageZipName(goos, goarch string) string {
+	return "kshell-desktop-" + goos + "-" + goarch + ".zip"
+}
+
+// PackageBinaryName 是 zip 内可执行文件名。
+func PackageBinaryName(goos string) string {
+	if goos == "windows" {
+		return "kshell-desktop.exe"
+	}
+	return "kshell-desktop"
+}
+
+// CurrentPackageZip 返回当前运行平台应对应的 Release zip。
+func CurrentPackageZip() string {
+	return PackageZipName(currentGOOS, currentGOARCH)
+}
+
+func currentBinaryName() string {
+	return PackageBinaryName(currentGOOS)
+}
 
 // Source 是 GitHub 访问入口：Prefix 拼在原始 URL 前面；空前缀即官方源。
 type Source struct {
@@ -143,16 +172,17 @@ func (c Client) Check(ctx context.Context) (CheckResult, error) {
 		out.Latest = rel.TagName
 		out.Notes = rel.Body
 		out.Source = s.Name
+		wantZip := CurrentPackageZip()
 		for _, a := range rel.Assets {
 			switch a.Name {
-			case ZipName:
+			case wantZip:
 				out.ZipURL = a.BrowserDownloadURL
 			case SumsName:
 				out.SumsURL = a.BrowserDownloadURL
 			}
 		}
 		if out.ZipURL == "" {
-			last = fmt.Errorf("release %s 缺少 %s", rel.TagName, ZipName)
+			last = fmt.Errorf("release %s 缺少 %s", rel.TagName, wantZip)
 			continue
 		}
 		out.Available = Newer(cur, rel.TagName)

@@ -13,8 +13,6 @@ import (
 	"strings"
 )
 
-const desktopExeName = "kshell-desktop.exe"
-
 // ApplyOptions 控制下载、校验与替换调度。
 type ApplyOptions struct {
 	ZipURL, SumsURL string
@@ -23,17 +21,19 @@ type ApplyOptions struct {
 	SpawnReplace    func(currentExe, newExe string) error
 }
 
-// Apply 下载 zip、校验 SHA-256、解出桌面 exe 到 dest+".new"，再调度退出后替换。
+// Apply 下载 zip、校验 SHA-256、解出桌面二进制到 dest+".new"，再调度退出后替换。
 func Apply(ctx context.Context, opts ApplyOptions) error {
 	if opts.DestExe == "" {
 		return fmt.Errorf("目标可执行文件为空")
 	}
+	zipName := CurrentPackageZip()
+	binName := currentBinaryName()
 	cli := Client{Get: opts.Get}
 	sumsBody, err := cli.getThroughSources(ctx, opts.SumsURL)
 	if err != nil {
 		return fmt.Errorf("下载校验文件: %w", err)
 	}
-	want, err := ParseSHA256SUMS(sumsBody, ZipName)
+	want, err := ParseSHA256SUMS(sumsBody, zipName)
 	if err != nil {
 		return err
 	}
@@ -46,7 +46,7 @@ func Apply(ctx context.Context, opts ApplyOptions) error {
 	if got != want {
 		return fmt.Errorf("安装包校验失败")
 	}
-	exeBytes, err := extractNamed(zipBody, desktopExeName)
+	exeBytes, err := extractNamed(zipBody, binName)
 	if err != nil {
 		return err
 	}
