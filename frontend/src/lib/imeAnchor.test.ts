@@ -1,6 +1,7 @@
 // IME 锚点计算测试：对应 xtermjs#5734（agent TUI 把光标 park 在行尾时，
 // 候选窗贴屏幕右缘把窗口挤动）的应用层修复。坐标规则与 xterm 内部
 // _syncTextArea 对齐：textarea 位置 = 光标单元格的像素坐标。
+// 注意 xterm API 语义：cursorY 是相对视口顶行的行号（0..rows-1），不含滚动偏移。
 import { describe, expect, it } from 'vitest';
 import { computeImeAnchor, IME_MAX_COL_RATIO } from './imeAnchor';
 
@@ -9,13 +10,12 @@ const base = {
   rows: 30,
   cursorX: 10,
   cursorY: 20,
-  viewportY: 0,
   viewportWidth: 1000,
   viewportHeight: 300,
 };
 
 describe('computeImeAnchor', () => {
-  it('光标在行中时锚到光标单元格像素坐标', () => {
+  it('光标在视口内时锚到光标单元格像素坐标', () => {
     expect(computeImeAnchor(base)).toEqual({ left: 100, top: 200 });
   });
 
@@ -27,16 +27,10 @@ describe('computeImeAnchor', () => {
     expect(got!.left).toBeLessThan(base.viewportWidth * IME_MAX_COL_RATIO + 1);
   });
 
-  it('有滚动时按可视行计算 top', () => {
-    // cursorY=20、viewportY=5 → 可视第 15 行
-    expect(computeImeAnchor({ ...base, viewportY: 5 })).toEqual({ left: 100, top: 150 });
-  });
-
-  it('光标滚出视口上方时钳到第 0 行，下方钳到最后一行', () => {
-    // cursorY=20、viewportY=25 → 20-25=-5，钳到可视第 0 行
-    expect(computeImeAnchor({ ...base, viewportY: 25 })!.top).toBe(0);
-    // cursorY=35、viewportY=10 → 可视第 25 行超出 rows-1=29？25<29 不越界，用 45 制造越界
-    expect(computeImeAnchor({ ...base, cursorY: 45, viewportY: 10 })!.top).toBe(29 * 10);
+  it('光标坐标异常时钳制在视口内（防御值）', () => {
+    expect(computeImeAnchor({ ...base, cursorY: 50 })!.top).toBe(29 * 10);
+    expect(computeImeAnchor({ ...base, cursorY: -3 })!.top).toBe(0);
+    expect(computeImeAnchor({ ...base, cursorX: -1 })!.left).toBe(0);
   });
 
   it('退化输入（cols/rows/视口尺寸非正）返回 null', () => {

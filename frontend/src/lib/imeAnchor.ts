@@ -10,9 +10,8 @@ export const IME_MAX_COL_RATIO = 0.6;
 export interface ImeAnchorInput {
   cols: number;
   rows: number;
-  cursorX: number; // buffer 光标列
-  cursorY: number; // buffer 光标行（含滚动偏移）
-  viewportY: number; // 视口顶部对应的 buffer 行
+  cursorX: number; // 光标列（0..cols-1）
+  cursorY: number; // 光标行（xterm API 语义：相对视口顶行的 0..rows-1）
   viewportWidth: number;
   viewportHeight: number;
 }
@@ -23,17 +22,17 @@ export interface ImeAnchor {
 }
 
 export function computeImeAnchor(input: ImeAnchorInput): ImeAnchor | null {
-  const { cols, rows, cursorX, cursorY, viewportY, viewportWidth, viewportHeight } = input;
+  const { cols, rows, cursorX, cursorY, viewportWidth, viewportHeight } = input;
   if (cols <= 0 || rows <= 0 || viewportWidth <= 0 || viewportHeight <= 0) return null;
 
   const cellW = viewportWidth / cols;
   const cellH = viewportHeight / rows;
 
-  // 光标可视行越界（滚出视口）时钳回屏内，候选窗跟着可见区域走
-  const visibleRow = Math.min(Math.max(cursorY - viewportY, 0), rows - 1);
+  // cursorY 本身就是视口相对行（0..rows-1），无需再减滚动偏移；钳制防御异常值
+  const row = Math.min(Math.max(cursorY, 0), rows - 1);
   // 横向钳制：不让候选窗出现在视口右侧 40% 区域，避免贴屏幕右缘
   const maxCol = Math.floor(cols * IME_MAX_COL_RATIO);
   const clampedX = Math.min(Math.max(cursorX, 0), maxCol);
 
-  return { left: clampedX * cellW, top: visibleRow * cellH };
+  return { left: clampedX * cellW, top: row * cellH };
 }

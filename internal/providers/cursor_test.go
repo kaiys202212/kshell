@@ -102,16 +102,23 @@ func TestCursorSlugToWorkspace(t *testing.T) {
 
 func TestCursorResumeCmd(t *testing.T) {
 	p := Cursor{}
-	s := Session{ID: "uuid-9", ToolID: "cursor", Workspace: `d:\data\ws`}
-	got := p.ResumeCmd(s, "cursor-agent")
 
+	// 解码出的工作区真实存在 → 用作启动目录
+	realDir := t.TempDir()
+	got := p.ResumeCmd(Session{ID: "uuid-9", ToolID: "cursor", Workspace: realDir}, "cursor-agent")
 	if got.Path != "cursor-agent" {
 		t.Fatalf("path = %q", got.Path)
 	}
 	if strings.Join(got.Args, " ") != "--resume uuid-9" {
 		t.Fatalf("args = %v", got.Args)
 	}
-	if got.Dir != `d:\data\ws` {
-		t.Fatalf("dir = %q", got.Dir)
+	if got.Dir != realDir {
+		t.Fatalf("dir = %q, want %q", got.Dir, realDir)
+	}
+
+	// slug 有损逆解码可能解出不存在的目录 → 放弃 Dir，交给 launcher 回退
+	got = p.ResumeCmd(Session{ID: "uuid-9", ToolID: "cursor", Workspace: `d:\no\such\dir`}, "cursor-agent")
+	if got.Dir != "" {
+		t.Fatalf("dir = %q, want 空串（目录不存在时回退）", got.Dir)
 	}
 }

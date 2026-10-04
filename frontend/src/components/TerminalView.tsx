@@ -89,7 +89,6 @@ export default function TerminalView({ term, active }: Props) {
         rows: instance.rows,
         cursorX: buf.cursorX,
         cursorY: buf.cursorY,
-        viewportY: buf.viewportY,
         viewportWidth: screen.clientWidth,
         viewportHeight: screen.clientHeight,
       });

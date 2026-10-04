@@ -110,8 +110,16 @@ func (Cursor) NewSessionCmd(ws string, bin string) Launch {
 }
 
 // ResumeCmd 走实测确认过的 --resume <chatId>；启动目录取 slug 逆解码的工作区。
+// slug 逆解码是有损的（路径自带 '-' 会被拆错），解出不存在的目录时宁可放弃启动
+// 目录（launcher 会回退到当前目录），也不能让 exec 的 chdir 直接报错。
 func (Cursor) ResumeCmd(s Session, bin string) Launch {
-	return Launch{Path: bin, Args: []string{"--resume", s.ID}, Dir: s.Workspace}
+	dir := s.Workspace
+	if dir != "" {
+		if _, err := os.Stat(dir); err != nil {
+			dir = ""
+		}
+	}
+	return Launch{Path: bin, Args: []string{"--resume", s.ID}, Dir: dir}
 }
 
 // WorkspaceToSlug 复刻 Cursor CLI 的规则：盘符冒号直接删除，路径分隔符替换成 '-'
