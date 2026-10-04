@@ -23,6 +23,85 @@ func writeFakeBin(t *testing.T, dir, name, body string) string {
 	return path
 }
 
+// writeRawFile 原样写文件（不加 shim 包装、不改后缀），用于 node.exe / index.js 这类精确命名的入口。
+func writeRawFile(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("x"), 0o755); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func TestDetectNodeEntryFallback(t *testing.T) {
+	home := t.TempDir()
+	vdir := filepath.Join(home, "va")
+	if err := os.MkdirAll(vdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 同目录 node.exe 与 index.js 存活，但无任何 cursor-agent/agent shim
+	writeRawFile(t, filepath.Join(vdir, "node.exe"))
+	writeRawFile(t, filepath.Join(vdir, "index.js"))
+	t.Setenv("PATH", t.TempDir())
+	spec := DetectSpec{
+		BinName:         "cursor-agent",
+		InstallDirs:     []string{vdir},
+		ConfigDirs:      []string{filepath.Join(home, ".cursor")},
+		NodeEntryScript: "index.js",
+	}
+	got := Detect(spec, home)
+	if !got.Installed || got.Source != "node-entry" {
+		t.Fatalf("应命中 node-entry 兜底, got %+v", got)
+	}
+	if want := filepath.Join(vdir, "node.exe"); filepath.Clean(got.BinPath) != filepath.Clean(want) {
+		t.Fatalf("BinPath = %q, want %q", got.BinPath, want)
+	}
+	if len(got.BinArgs) != 1 || got.BinArgs[0] != "index.js" {
+		t.Fatalf("BinArgs = %v, want [index.js]", got.BinArgs)
+	}
+}
+
+func TestDetectPrefersShimOverNodeEntry(t *testing.T) {
+	home := t.TempDir()
+	vdir := filepath.Join(home, "va")
+	if err := os.MkdirAll(vdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeRawFile(t, filepath.Join(vdir, "node.exe"))
+	writeRawFile(t, filepath.Join(vdir, "index.js"))
+	writeFakeBin(t, vdir, "cursor-agent", "echo shim") // shim 仍在
+	t.Setenv("PATH", t.TempDir())
+	spec := DetectSpec{
+		BinName:         "cursor-agent",
+		InstallDirs:     []string{vdir},
+		NodeEntryScript: "index.js",
+	}
+	got := Detect(spec, home)
+	if !got.Installed {
+		t.Fatalf("应检测到已安装, got %+v", got)
+	}
+	if got.Source == "node-entry" {
+		t.Fatal("shim 存在时不得走 node-entry 兜底")
+	}
+}
+
+func TestDetectNodeEntryRequiresScript(t *testing.T) {
+	home := t.TempDir()
+	vdir := filepath.Join(home, "va")
+	if err := os.MkdirAll(vdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeRawFile(t, filepath.Join(vdir, "node.exe")) // 缺 index.js
+	t.Setenv("PATH", t.TempDir())
+	spec := DetectSpec{
+		BinName:         "cursor-agent",
+		InstallDirs:     []string{vdir},
+		NodeEntryScript: "index.js",
+	}
+	got := Detect(spec, home)
+	if got.Installed && got.Source == "node-entry" {
+		t.Fatal("缺主脚本时不得命中 node-entry 兜底")
+	}
+}
+
 func TestDetectFindsBinOnPath(t *testing.T) {
 	dir := t.TempDir()
 	bin := writeFakeBin(t, dir, "claude", "echo claude 2.1.81")

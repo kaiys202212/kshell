@@ -14,7 +14,10 @@ import (
 type Detection struct {
 	Installed bool
 	BinPath   string
-	Source    string // path | install-dir | config-dir
+	Source    string // path | install-dir | node-entry | config-dir
+	// BinArgs 是入口前缀参数：node 入口形态（BinPath 指向 node.exe）下为
+	// [主脚本名]，普通可执行文件为 nil。启动与版本探测都须先拼上这组参数。
+	BinArgs []string
 }
 
 // DetectSpec 让各 provider 声明「怎么找到自己」，检测逻辑则由 providers.Detect 统一实现，避免每家重复写一遍。
@@ -23,6 +26,11 @@ type DetectSpec struct {
 	AltBinNames []string // 备选可执行名：只在 InstallDirs 内匹配，不进 PATH 探测（防误命中同名无关文件）
 	InstallDirs []string // 常见安装目录（支持 ~ 前缀与环境变量）
 	ConfigDirs  []string // 存在即说明装过（支持 ~ 前缀）
+	// NodeEntryScript 是 node 入口兜底的主脚本名（如 index.js）；空表示无此兜底。
+	// 背景：Cursor 官方更新器会周期性删光安装目录里的入口 shim，只留
+	// node.exe + index.js 本体。shim 全部落空时，Detect 会在 InstallDirs
+	// 各目录里找 node.exe 与主脚本存活的组合作为最后兜底（Source=node-entry）。
+	NodeEntryScript string
 }
 
 type Session struct {

@@ -32,6 +32,23 @@ func Detect(spec DetectSpec, home string) Detection {
 		}
 	}
 
+	// node 入口兜底：shim 全被删光但 node.exe + 主脚本仍在（Cursor 更新器行为）。
+	// InstallDirs 的先后顺序由 provider 负责（versions 目录已按最新在前）。
+	if spec.NodeEntryScript != "" {
+		for _, dir := range spec.InstallDirs {
+			root := expandHome(dir, home)
+			nodeBin := filepath.Join(root, "node.exe")
+			if isFile(nodeBin) && isFile(filepath.Join(root, spec.NodeEntryScript)) {
+				return Detection{
+					Installed: true,
+					BinPath:   nodeBin,
+					BinArgs:   []string{spec.NodeEntryScript},
+					Source:    "node-entry",
+				}
+			}
+		}
+	}
+
 	for _, dir := range spec.ConfigDirs {
 		if isDir(expandHome(dir, home)) {
 			return Detection{Installed: true, Source: "config-dir"}
