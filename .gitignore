@@ -9,6 +9,7 @@ node_modules/
 .codebuddy/
 .superpowers/
 .worktrees/
+/docs/
 *.exe
 *.test
 *.tmp

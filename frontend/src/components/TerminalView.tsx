@@ -8,9 +8,10 @@ import { useEffect, useRef, useState } from 'react';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import type { TerminalInfo } from '../lib/api';
-import { resizeTerminal, writeTerminal } from '../lib/api';
+import { readClipboardPaste, resizeTerminal, writeTerminal } from '../lib/api';
 import { terminalTheme } from '../lib/appearance';
 import { encodeTerminalInput } from '../lib/base64';
+import { composeTerminalPaste, isPasteKey } from '../lib/clipboardPaste';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { useAppStore } from '../state/store';
 import { registerTerminal, unregisterTerminal } from '../lib/terminalRegistry';
@@ -48,6 +49,8 @@ export default function TerminalView({ term, active }: Props) {
   // 必须保证「变隐藏」那一刻回调读到的已经是 false，否则仍会 fit 出退化尺寸。
   const activeRef = useRef(active);
   activeRef.current = active;
+  const statusRef = useRef(term.Status);
+  statusRef.current = term.Status;
 
   // 依赖只取 termId：store 里 term 的其余字段（Status/ExitCode/Cols）变化不应重建终端实例
   useEffect(() => {
@@ -77,6 +80,34 @@ export default function TerminalView({ term, active }: Props) {
     const dataSub = instance.onData((data) => {
       void writeTerminal(termId, encodeTerminalInput(data));
     });
+    // WebView2 经常不给 xterm 隐藏 textarea 派发 paste，Ctrl+V 就被吃掉；
+    // 拦截粘贴键改走原生剪贴板：文本直写 PTY，位图落盘后写路径（cursor-agent 认路径）。
+    let pasteAt = 0;
+    const injectClipboard = async () => {
+      if (statusRef.current === 'exited') return;
+      const now = Date.now();
+      if (now - pasteAt < 80) return;
+      pasteAt = now;
+      try {
+        const clip = await readClipboardPaste();
+        const text = composeTerminalPaste(clip);
+        if (!text) return;
+        instance.paste(text);
+      } catch {
+        // 剪贴板被占用时静默跳过，避免打断正在输入
+      }
+    };
+    instance.attachCustomKeyEventHandler((ev) => {
+      if (!isPasteKey(ev)) return true;
+      if (ev.type === 'keydown') void injectClipboard();
+      return false;
+    });
+    const onPaste = (e: ClipboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void injectClipboard();
+    };
+    instance.textarea?.addEventListener('paste', onPaste);
     const resizeSub = instance.onResize(({ cols, rows }) => {
       // 退化尺寸守卫（见 MIN_COLS 说明）：隐藏态算出的 2x1 绝不能推给 PTY
       if (cols < MIN_COLS || rows < MIN_ROWS) return;
@@ -297,6 +328,7 @@ export default function TerminalView({ term, active }: Props) {
       textarea?.removeEventListener('compositionstart', onCompositionStart);
       textarea?.removeEventListener('compositionupdate', onCompositionUpdate);
       textarea?.removeEventListener('compositionend', onCompositionEnd);
+      instance.textarea?.removeEventListener('paste', onPaste);
       renderSub.dispose();
       dataSub.dispose();
       resizeSub.dispose();

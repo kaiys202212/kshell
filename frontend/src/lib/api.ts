@@ -293,6 +293,7 @@ interface AppBindings {
   OpenWorkspaceTerminal(wsPath: string, toolId: string, cols: number, rows: number): Promise<TerminalInfo>;
   OpenShellTerminal(wsPath: string, cols: number, rows: number): Promise<TerminalInfo>;
   WriteTerminal(id: string, data: string): Promise<void>;
+  ReadClipboardPaste(): Promise<ClipboardPaste>;
   ResizeTerminal(id: string, cols: number, rows: number): Promise<void>;
   CloseTerminal(id: string): Promise<void>;
   ListTerminals(): Promise<TerminalInfo[]>;
@@ -646,6 +647,19 @@ export async function openShellTerminal(
   const a = app();
   if (!a) throw new Error('未检测到桌面端绑定');
   return a.OpenShellTerminal(wsPath, cols, rows);
+}
+
+// ClipboardPaste 原生剪贴板快照（internal/desktop.ClipboardPaste）：路径优先于文本。
+export interface ClipboardPaste {
+  Text: string;
+  Path: string;
+}
+
+// readClipboardPaste 读系统剪贴板（文本 / 文件 / 位图落盘路径），供终端 Ctrl+V 注入。
+export async function readClipboardPaste(): Promise<ClipboardPaste> {
+  const a = app();
+  if (!a) return { Text: '', Path: '' };
+  return a.ReadClipboardPaste();
 }
 
 // writeTerminal 把键盘输入写进终端（data 为 base64 编码的 UTF-8 字节）。

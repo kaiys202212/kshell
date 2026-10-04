@@ -2,7 +2,7 @@
 // 桩把「写入口 / onData / onResize 回调 / fit 次数」暴露出来供断言；
 // rAF 也替换为可控队列，避免测试依赖真实帧时序。
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TerminalInfo } from '../lib/api';
 import { bytesToBase64, encodeTerminalInput } from '../lib/base64';
@@ -19,7 +19,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 // TerminalView 只用到 api 的这两个方法
-const api = vi.hoisted(() => ({ writeTerminal: vi.fn(), resizeTerminal: vi.fn() }));
+const api = vi.hoisted(() => ({
+  writeTerminal: vi.fn(),
+  resizeTerminal: vi.fn(),
+  readClipboardPaste: vi.fn(),
+}));
 vi.mock('../lib/api', () => api);
 
 vi.mock('@xterm/xterm', () => {
@@ -32,6 +36,9 @@ vi.mock('@xterm/xterm', () => {
     written: (string | Uint8Array)[] = [];
     disposed = false;
     focusCount = 0;
+    textarea: HTMLTextAreaElement | null = document.createElement('textarea');
+    customKey: ((ev: KeyboardEvent) => boolean) | null = null;
+    pasted: string[] = [];
 
     constructor(options?: any) {
       this.options = options;
@@ -39,6 +46,13 @@ vi.mock('@xterm/xterm', () => {
     }
     open(host: HTMLElement) {
       this.host = host;
+    }
+    attachCustomKeyEventHandler(fn: (ev: KeyboardEvent) => boolean) {
+      this.customKey = fn;
+    }
+    paste(text: string) {
+      this.pasted.push(text);
+      this.dataCb?.(text);
     }
     loadAddon(addon: any) {
       // 真实 xterm 的 loadAddon 会调 addon.activate(terminal)，桩里只回填宿主以便 fit 触发 onResize
@@ -140,6 +154,9 @@ interface StubTerminal {
   written: (string | Uint8Array)[];
   disposed: boolean;
   focusCount: number;
+  textarea: HTMLTextAreaElement | null;
+  customKey: ((ev: KeyboardEvent) => boolean) | null;
+  pasted: string[];
 }
 
 interface StubFitAddon {
@@ -164,6 +181,7 @@ beforeEach(() => {
   clearTerminalRegistry();
   api.writeTerminal.mockResolvedValue(undefined);
   api.resizeTerminal.mockResolvedValue(undefined);
+  api.readClipboardPaste.mockResolvedValue({ Text: '', Path: '' });
 
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
     rafQueue.push(cb);
@@ -400,5 +418,41 @@ describe('TerminalView', () => {
     drop(root, { mime: DRAG_MIME, path: 'D:\\a.go' });
 
     expect(api.writeTerminal).not.toHaveBeenCalled();
+  });
+
+  it('Ctrl+V 读取原生剪贴板文本并经 paste/onData 写入终端', async () => {
+    api.readClipboardPaste.mockResolvedValue({ Text: 'hello paste', Path: '' });
+    render(<TerminalView term={TERM} active />);
+    const instance = term();
+    expect(instance.customKey).toBeTypeOf('function');
+
+    const handled = instance.customKey!(
+      new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true }),
+    );
+    expect(handled).toBe(false); // 拦截，避免 WebView2 把 Ctrl+V 吞掉又不派发 paste
+
+    await waitFor(() => {
+      expect(instance.pasted).toEqual(['hello paste']);
+    });
+    expect(api.writeTerminal).toHaveBeenCalledWith(TERM.ID, encodeTerminalInput('hello paste'));
+  });
+
+  it('Ctrl+V 剪贴板是图片时写入文件路径', async () => {
+    api.readClipboardPaste.mockResolvedValue({ Text: '', Path: 'C:\\Temp\\kshell-paste.png' });
+    render(<TerminalView term={TERM} active />);
+    term().customKey!(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }));
+
+    await waitFor(() => {
+      expect(term().pasted).toEqual(['C:\\Temp\\kshell-paste.png']);
+    });
+  });
+
+  it('已退出终端不粘贴', async () => {
+    api.readClipboardPaste.mockResolvedValue({ Text: 'x', Path: '' });
+    render(<TerminalView term={{ ...TERM, Status: 'exited' }} active />);
+    term().customKey!(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }));
+    await Promise.resolve();
+    expect(api.readClipboardPaste).not.toHaveBeenCalled();
+    expect(term().pasted).toEqual([]);
   });
 });
