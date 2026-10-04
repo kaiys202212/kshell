@@ -19,35 +19,57 @@
 | 收到评审意见时 | `receiving-code-review` |
 | 2+ 个互不依赖的任务 | `dispatching-parallel-agents` |
 | 需要与当前工作区隔离 | `using-git-worktrees` |
-| 实现完成、决定如何集成 | `finishing-a-development-branch` |
+| 实现完成、本地合并主干 | `finishing-a-development-branch`（跳过选项菜单，固定本地合并 `master`） |
 
-流程类技能（brainstorming / debugging）优先于实现类技能。用户显式指令优先于技能。
+流程类技能（brainstorming / debugging）优先于实现类技能。**本文件的用户指令优先于技能默认停顿**（见下节「确认门禁」）。
 
 ## 开发流程：worktree 隔离规范
 
-**每个非平凡改动都在独立 worktree + 功能分支上完成，禁止直接在 `master` 上开发或提交。** 流程固定为：需求澄清 → 建 worktree → 写规格 → 写计划 → TDD 实现 → 验证 → 自查 → 合并收尾。
+**每个非平凡改动都在独立 worktree + 功能分支上完成，禁止直接在 `master` 上开发或提交。**
+
+### 确认门禁
+
+需求澄清完成后，agent **不得**再为规格、计划、是否开工、如何集成而询问用户。superpowers 技能文本里的设计审批、规格再审、计划写完后的执行方式选择题、`finishing-a-development-branch` 四选一菜单，在本仓库一律跳过。
+
+| 阶段 | 是否等待用户 |
+|---|---|
+| 1 需求澄清（目的 / 约束 / 成功标准） | 等待。一次一问，确认前不写规格、不写码。 |
+| 2 建 worktree、写规格、写计划 | 不等待。需求确认后立即执行。 |
+| 3 实施 | 不等待。计划一经写出即开始。 |
+| 4 验证与自查 | 不等待用户批准去跑；必须自己跑出全绿证据。 |
+| 5 提交与本地合并 `master` | 不等待。验证与自查通过后立即做。 |
+| 6 `git push` / 开 PR | 等待。默认禁止，除非用户本会话明确要求。 |
+
+仍必须停下的情况：需求未确认；实现出现无法消解的歧义或子代理 `BLOCKED`；验证未全绿；用户当场明确要求不要合并。
+
+### 阶段与技能
+
+流程固定为：需求澄清 → 建 worktree → 写规格 → 写计划 → TDD 实现 → 验证 → 自查 → 本地合并收尾。
 
 | 阶段 | 技能 | 动作 | 产物 |
 |---|---|---|---|
 | 1 需求澄清 | `brainstorming` | 一次一问，确认目的/约束/成功标准 | 设计要点（先不写码） |
 | 2 建隔离 | `using-git-worktrees` | 在 `.worktrees/<branch>` 建功能分支 | 干净测试基线 |
-| 3 写规格 | 接 brainstorming 收尾 | 规格落 `docs/plans/` | `docs/plans/YYYY-MM-DD-<topic>-design.md` |
-| 4 写计划 | `writing-plans` | 拆成可执行步骤 | `docs/plans/YYYY-MM-DD-<topic>-plan.md` |
-| 5 实现 | `test-driven-development` | 红 → 绿 → 重构 | 代码 + 测试 |
+| 3 写规格 | 接 brainstorming 收尾 | 规格落 `docs/plans/`；**写完不送用户再审** | `docs/plans/YYYY-MM-DD-<topic>-design.md` |
+| 4 写计划 | `writing-plans` | 拆成可执行步骤；**写完不问执行方式** | `docs/plans/YYYY-MM-DD-<topic>-plan.md` |
+| 5 实现 | `subagent-driven-development` + `test-driven-development` | 当前会话按任务派发子代理（任务评审 + 整分支评审）；红 → 绿 → 重构 | 代码 + 测试 + 功能分支提交 |
 | 6 验证 | `verification-before-completion` | 跑真实命令拿证据 | 全绿输出 |
 | 7 自查 | `requesting-code-review` | 合并前审阅改动 | 通过 |
-| 8 收尾 | `finishing-a-development-branch` | 合并回 `master` 后清理 | 合并提交 |
+| 8 收尾 | `finishing-a-development-branch` | **跳过菜单**，本地合并 `master`，构建可运行程序，清理 worktree | 合并提交 |
+
+实现回退：任务强耦合、无法按任务派发子代理时，用 `executing-plans` 在本会话连续执行，任务之间同样不问「要不要继续」。
 
 **硬性规则**：
 
 - worktree 固定放仓库根 `.worktrees/`，该目录必须在 `.gitignore` 中（已忽略，勿把 worktree 内容入库）。
 - 分支命名：`feat/<topic>` / `fix/<topic>` / `docs/<topic>`，topic 用简短英文或拼音。
 - 规格/计划用 `docs/plans/` 命名，日期取当天（沿用项目既有惯例，而非 superpowers 默认目录）。
-- 只有在 worktree 内、且验证全绿后，才可声明完成并合并回 `master`；未验证不得声称完成。
-- 合并回 `master` 后，在主干上构建出**可运行程序**：`.\build.ps1`（TUI，出 `dist\kshell.exe`）；改桌面端用 `.\build.ps1 -Desktop`（出 `dist\kshell-desktop.exe`）。确认成功产出可执行文件才算收尾完成，普通 `go build ./...` 不算。
+- 只有在 worktree 内、且验证全绿后，才可声明完成并合并回 `master`；未验证不得声称完成，也不得合并。
+- 合并回 `master` 后，在主干上构建出**可运行程序**：`.\build.ps1`（TUI，出 `dist\kshell.exe`）；改桌面端用 `.\build.ps1 -Desktop`（出 `dist\kshell-desktop.exe`）。确认成功产出可执行文件才算收尾完成，普通 `go build ./...` 不算。**仅文档/注释、不改变可运行程序时，跳过二进制构建。**
 - 构建**不退出已运行程序**：`.\build.ps1 -Desktop` 不会请求旧实例退出，用户构建期间可继续使用桌面端。若 dist 拷贝因 `kshell-desktop.exe` 被占用失败，脚本会提示从托盘退出后重试；agent 不得写 `~/.kshell/exit.signal` 或以其他方式终止运行中的实例。
 - 合并后清理：`git worktree remove` 删除工作区，`git branch -d` 删除已合并分支。
 - 破坏性/一次性实验也不在 `master` 上做，先在 worktree 试。
+- 本流程内 agent **必须**在功能分支自行提交（含子代理任务提交）；验证通过后 **必须**本地合并 `master`。默认 **禁止** `git push` 与 `gh pr create`。
 
 **验证命令**（按改动范围全跑，全绿才算通过）：
 
@@ -57,6 +79,7 @@ go build ./... ; go vet ./... ; go test ./... -count=1   # Go 侧
 
 - 改前端时另跑：`cd frontend; npm test; npm run build`。
 - 改 app 行为时在 `docs/smoke/<分支名转文件>.md` 追加增量条目（分支名 `/` → `-`；基线见 `docs/smoke/baseline-*.md`，勿往基线追加功能条目）。
+- 仅改 Markdown/流程文档时：确认目标文件无门禁自相矛盾即可，不必为文档改动跑 Go/前端测试套件。
 
 **实操命令**（PowerShell，`<branch>` 为分支名）：
 
@@ -69,7 +92,7 @@ git worktree remove .worktrees/<branch>            # 阶段 8：合并后清理
 git branch -d <branch>                             # 删除已合并分支
 ```
 
-提交信息用中文 `type: 简述`；**仅当用户明确要求时才提交**（见下节「提交」）。
+提交信息用中文 `type: 简述`。开发流程内的提交由 agent 自行完成，不必再等用户说「请提交」。
 
 ## 项目概述
 
@@ -157,5 +180,9 @@ docs/smoke/          冒烟清单（baseline-* 基线 + 按分支增量）
 
 ## 提交
 
-- 只在用户明确要求时才提交。
+- **开发流程内**（功能分支上的规格、计划、实现）：agent 自行 `git add` / `git commit`，不必等用户再说一次「提交」。
 - 提交信息用中文，采用 `type: 简述` 前缀风格（如 `feat:`、`fix:`、`docs:`），参考 `git log`。
+- 验证与自查通过后，将功能分支**本地合并**进 `master`（优先 `git merge --ff-only`；不能快进时用一次 merge commit），然后清理 worktree 与已合并分支。
+- **默认不 push 远程、不开 PR。** 只有用户在本会话明确要求时才 `git push` 或 `gh pr create`。
+- 禁止 force push、禁止改 git config、禁止跳过 hook（除非用户明确要求）。
+- 流程外的即兴改动若用户只问「怎么改」而未进入开发流程，仍不要擅自提交。
