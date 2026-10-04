@@ -63,6 +63,10 @@ type Options struct {
 	Layout config.Layout
 	// ThemeCacheDir 是主题注入文件目录，供启动 agent 时使用。
 	ThemeCacheDir string
+	// InstallRunner 注入安装/卸载命令执行器；nil 则走真实 runShellCommand（测试打桩用）。
+	InstallRunner installCmdRunner
+	// PurgeDirs 清除已展开的配置目录；nil 则 os.RemoveAll。目录不存在视为成功。
+	PurgeDirs func(dirs []string) error
 }
 
 // App 是暴露给前端的绑定对象：薄封装 discovery/providers/window 等核心包，
@@ -97,6 +101,11 @@ type App struct {
 	watches map[string]*fileWatcher // cleaned 工作区根 → 监视器（引用计数）
 
 	appearanceCancel context.CancelFunc // system 模式下的明暗监听取消函数
+
+	installJob installJob // 当前一键安装/卸载任务；绑定并发，由 mu 保护
+	// keepInstallTools：安装/卸载刚用 DetectAll 写过 a.tools。进行中的 runScan
+	// 开头拿到的是旧快照，结束时不得覆盖这份更新结果。
+	keepInstallTools bool
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。
@@ -535,17 +544,25 @@ func (a *App) runScan() {
 			prevIDs[s.ID] = true
 		}
 	}
-	a.tools = tools
+	if a.keepInstallTools {
+		// 安装/卸载在本轮扫描开始之后写过 DetectAll 结果。开头的 DetectAllCached
+		// 是旧快照，覆盖回去会让设置页在 scan:done 后仍看到安装前的按钮。
+		a.keepInstallTools = false
+	} else {
+		a.tools = tools
+	}
 	if err == nil {
 		a.result = res
 		a.rawWorkspaces = raw
 		a.scanned = true
 	}
+	savedTools := append([]discovery.Tool(nil), a.tools...)
 	a.mu.Unlock()
 
-	// 落盘快照（锁外写文件）；失败只影响下次启动的秒开体验，不影响本次结果
+	// 落盘快照（锁外写文件）；失败只影响下次启动的秒开体验，不影响本次结果。
+	// 工具表用锁内保留的那份，避免把已丢弃的旧探测结果写进快照。
 	if err == nil {
-		a.saveSnapshot(res, raw, tools)
+		a.saveSnapshot(res, raw, savedTools)
 	}
 
 	// 扫描发现的会话回填到运行中的新建终端/聊天：新建时磁盘上还没有会话记录，

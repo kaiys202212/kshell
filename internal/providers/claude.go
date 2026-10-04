@@ -170,3 +170,9 @@ func (Claude) SlugToWorkspace(slug string) string {
 	}
 	return strings.ReplaceAll(slug, "-", string(filepath.Separator))
 }
+
+func (Claude) InstallRecipe() InstallRecipe {
+	r := npmInstall("@anthropic-ai/claude-code")
+	r.PurgeDirs = []string{"~/.claude"}
+	return r
+}

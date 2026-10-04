@@ -265,6 +265,25 @@ export interface ModelPreset {
   Note: string;
 }
 
+// desktop.InstallRecipeView：内置工具安装配方预览（命令只读）。
+export interface InstallRecipeView {
+  ToolID: string;
+  Name: string;
+  InstallCmd: string;
+  UninstallCmd: string;
+  PurgeDirs: string[];
+  CanPurge: boolean;
+}
+
+// desktop.ToolInstallJobView：当前安装/卸载任务快照。
+export interface ToolInstallJobView {
+  ToolID: string;
+  Action: string;
+  Running: boolean;
+  Log: string;
+  Error: string;
+}
+
 interface AppBindings {
   ScanSessions(): Promise<unknown>;
   GetWorkspaces(): Promise<Workspace[]>;
@@ -295,6 +314,10 @@ interface AppBindings {
   DeleteConnection(id: string): Promise<void>;
   ExecRemote(connID: string, cmd: string): Promise<RemoteResult>;
   GetTools(): Promise<ToolInfo[]>;
+  GetToolInstallRecipe(id: string): Promise<InstallRecipeView>;
+  InstallBuiltinTool(id: string): Promise<void>;
+  UninstallBuiltinTool(id: string, purgeConfig: boolean): Promise<void>;
+  GetToolInstallJob(): Promise<ToolInstallJobView>;
   LoadProvidersYAML(): Promise<string>;
   SaveProvidersYAML(content: string): Promise<void>;
   RestartApp(): Promise<void>;
@@ -602,6 +625,46 @@ export async function getTools(): Promise<ToolInfo[]> {
   const a = app();
   if (!a) return [];
   return a.GetTools();
+}
+
+export async function getToolInstallRecipe(id: string): Promise<InstallRecipeView> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  return a.GetToolInstallRecipe(id);
+}
+
+export async function installBuiltinTool(id: string): Promise<void> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  await a.InstallBuiltinTool(id);
+}
+
+export async function uninstallBuiltinTool(id: string, purgeConfig: boolean): Promise<void> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  await a.UninstallBuiltinTool(id, purgeConfig);
+}
+
+export async function getToolInstallJob(): Promise<ToolInstallJobView> {
+  const a = app();
+  if (!a) {
+    return { ToolID: '', Action: '', Running: false, Log: '', Error: '' };
+  }
+  return a.GetToolInstallJob();
+}
+
+export function onToolInstallLog(cb: (p: { toolID: string; text: string }) => void): () => void {
+  return EventsOn('tool:install:log', (p: { toolID?: string; text?: string }) =>
+    cb({ toolID: p?.toolID ?? '', text: p?.text ?? '' }),
+  );
+}
+
+export function onToolInstallDone(
+  cb: (p: { toolID: string; action: string; ok: boolean; error?: string }) => void,
+): () => void {
+  return EventsOn('tool:install:done', (p: { toolID?: string; action?: string; ok?: boolean; error?: string }) =>
+    cb({ toolID: p?.toolID ?? '', action: p?.action ?? '', ok: Boolean(p?.ok), error: p?.error }),
+  );
 }
 
 // LoadProvidersYAML 读出当前自定义工具定义全文（文件缺失时 Go 侧回填模板）。

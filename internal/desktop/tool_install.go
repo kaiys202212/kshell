@@ -1,0 +1,349 @@
+package desktop
+
+import (
+	"bufio"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+
+	"github.com/yangk/kshell/internal/discovery"
+	"github.com/yangk/kshell/internal/executil"
+	"github.com/yangk/kshell/internal/providers"
+)
+
+var (
+	errUnknownTool  = errors.New("未知工具")
+	errNotInstaller = errors.New("该工具不支持一键安装")
+	errInstallBusy  = errors.New("已有安装任务进行中")
+	errCursorPurge  = errors.New("Cursor 不支持清除配置")
+	errCursorNoBin  = errors.New("未找到 cursor-agent 可执行文件")
+)
+
+// InstallRecipeView 是回传前端的安装配方预览：命令只读，CanPurge 由 PurgeDirs 是否为空决定。
+type InstallRecipeView struct {
+	ToolID       string
+	Name         string
+	InstallCmd   string
+	UninstallCmd string
+	PurgeDirs    []string
+	CanPurge     bool
+}
+
+// ToolInstallJobView 是当前安装/卸载任务快照，供前端轮询日志与忙状态。
+type ToolInstallJobView struct {
+	ToolID  string
+	Action  string
+	Log     string
+	Error   string
+	Running bool
+}
+
+// installCmdRunner 执行一条完整 shell 命令并把输出按行回调；测试注入，生产走 runShellCommand。
+type installCmdRunner func(ctx context.Context, shell, cmdline string, onLog func(string)) error
+
+type installJob struct {
+	toolID  string
+	action  string // install | uninstall
+	running bool
+	log     strings.Builder
+	errText string
+}
+
+// GetToolInstallRecipe 按工具 ID 查内置安装配方；未知 ID 或自定义 Generic 分别报错。
+func (a *App) GetToolInstallRecipe(id string) (InstallRecipeView, error) {
+	p, r, err := a.lookupRecipe(id)
+	if err != nil {
+		return InstallRecipeView{}, err
+	}
+	return InstallRecipeView{
+		ToolID:       p.ID(),
+		Name:         p.DisplayName(),
+		InstallCmd:   r.InstallCmd,
+		UninstallCmd: r.UninstallCmd,
+		PurgeDirs:    r.PurgeDirs,
+		CanPurge:     len(r.PurgeDirs) > 0,
+	}, nil
+}
+
+// InstallBuiltinTool 启动后台安装；启动失败（未知 ID 等）同步返回，执行失败走 done 事件。
+func (a *App) InstallBuiltinTool(id string) error {
+	_, r, err := a.lookupRecipe(id)
+	if err != nil {
+		return err
+	}
+	return a.startInstallJob(id, "install", r, false)
+}
+
+// UninstallBuiltinTool 启动后台卸载。purgeConfig 且配方未声明 PurgeDirs（含 Cursor）直接拒绝。
+func (a *App) UninstallBuiltinTool(id string, purgeConfig bool) error {
+	_, r, err := a.lookupRecipe(id)
+	if err != nil {
+		return err
+	}
+	if purgeConfig && len(r.PurgeDirs) == 0 {
+		return errCursorPurge
+	}
+	return a.startInstallJob(id, "uninstall", r, purgeConfig)
+}
+
+// GetToolInstallJob 拷贝当前任务视图（Log 为累积文本）。
+func (a *App) GetToolInstallJob() ToolInstallJobView {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return ToolInstallJobView{
+		ToolID:  a.installJob.toolID,
+		Action:  a.installJob.action,
+		Log:     a.installJob.log.String(),
+		Error:   a.installJob.errText,
+		Running: a.installJob.running,
+	}
+}
+
+func (a *App) lookupRecipe(id string) (providers.Provider, providers.InstallRecipe, error) {
+	for _, p := range a.snapshot().Providers {
+		if p.ID() != id {
+			continue
+		}
+		r, ok := providers.RecipeOf(p)
+		if !ok {
+			return p, providers.InstallRecipe{}, errNotInstaller
+		}
+		return p, r, nil
+	}
+	return nil, providers.InstallRecipe{}, errUnknownTool
+}
+
+func (a *App) startInstallJob(id, action string, recipe providers.InstallRecipe, purge bool) error {
+	a.mu.Lock()
+	if a.installJob.running {
+		a.mu.Unlock()
+		return errInstallBusy
+	}
+	a.installJob = installJob{toolID: id, action: action, running: true}
+	a.mu.Unlock()
+	go a.execInstallJob(id, action, recipe, purge)
+	return nil
+}
+
+func (a *App) execInstallJob(id, action string, recipe providers.InstallRecipe, purge bool) {
+	var runErr error
+	defer func() {
+		// 先清 running 再发 done：前端收到事件后立刻 GetToolInstallJob，应看到已结束。
+		a.mu.Lock()
+		a.installJob.running = false
+		errText := ""
+		if runErr != nil {
+			errText = runErr.Error()
+			a.installJob.errText = errText
+		}
+		a.mu.Unlock()
+		a.Emit("tool:install:done", map[string]any{
+			"toolID": id,
+			"action": action,
+			"ok":     runErr == nil,
+			"error":  errText,
+		})
+	}()
+
+	onLog := func(line string) {
+		a.mu.Lock()
+		a.installJob.log.WriteString(line)
+		a.installJob.log.WriteByte('\n')
+		a.mu.Unlock()
+		a.Emit("tool:install:log", map[string]any{"toolID": id, "text": line})
+	}
+
+	runErr = a.execInstallCommand(id, action, recipe, onLog)
+	if runErr != nil {
+		return
+	}
+
+	if action == "uninstall" && purge {
+		if err := a.purgeConfigDirs(recipe.PurgeDirs, a.snapshot().Home); err != nil {
+			onLog("清除配置失败: " + err.Error())
+			runErr = err
+			return
+		}
+	}
+
+	// 刚装上的 CLI 常不在当前进程 PATH：npm 全局目录，以及 Cursor 的安装目录。
+	ensureToolBinsOnPATH()
+
+	o := a.snapshot()
+	tools := discovery.DetectAll(o.Home, o.Providers)
+	a.mu.Lock()
+	a.tools = tools
+	a.keepInstallTools = true
+	a.mu.Unlock()
+
+	_, _ = a.ScanSessions()
+}
+
+func (a *App) execInstallCommand(id, action string, recipe providers.InstallRecipe, onLog func(string)) error {
+	if action == "install" {
+		return a.runInstallCmd(a.runCtx(), recipe.Shell, recipe.InstallCmd, onLog)
+	}
+	if recipe.UninstallCmd != "" {
+		return a.runInstallCmd(a.runCtx(), recipe.Shell, recipe.UninstallCmd, onLog)
+	}
+	// Cursor 等未声明卸载命令的工具：直接删已探测到的二进制，避免误跑空 shell。
+	bin := a.toolByID(id).BinPath
+	if bin == "" {
+		onLog(errCursorNoBin.Error())
+		return errCursorNoBin
+	}
+	return os.Remove(bin)
+}
+
+func (a *App) toolByID(id string) discovery.Tool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, t := range a.tools {
+		if t.ID == id {
+			return t
+		}
+	}
+	return discovery.Tool{}
+}
+
+// runInstallCmd 走注入的 InstallRunner；未注入则用真实 shell runner。
+func (a *App) runInstallCmd(ctx context.Context, shell, cmdline string, onLog func(string)) error {
+	r := a.snapshot().InstallRunner
+	if r == nil {
+		r = runShellCommand
+	}
+	return r(ctx, shell, cmdline, onLog)
+}
+
+func expandPurgeDir(dir, home string) string {
+	if strings.HasPrefix(dir, "~/") || strings.HasPrefix(dir, `~\`) {
+		return filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(dir, "~/"), `~\`))
+	}
+	return dir
+}
+
+// purgeConfigDirs 删除配方声明的配置目录。路径不存在视为成功；真正的删除失败向上返回。
+func (a *App) purgeConfigDirs(dirs []string, home string) error {
+	expanded := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		expanded = append(expanded, expandPurgeDir(dir, home))
+	}
+	fn := a.snapshot().PurgeDirs
+	if fn == nil {
+		fn = removeAllExisting
+	}
+	return fn(expanded)
+}
+
+func removeAllExisting(dirs []string) error {
+	var first error
+	for _, dir := range dirs {
+		err := os.RemoveAll(dir)
+		if err == nil || os.IsNotExist(err) {
+			continue
+		}
+		if first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+// ensureToolBinsOnPATH 把安装脚本常用、但当前进程 PATH 里没有的目录补上，
+// 否则紧接着的 DetectAll / LookPath 仍会把刚装好的 CLI 当成未安装。
+func ensureToolBinsOnPATH() {
+	for _, dir := range toolBinDirs() {
+		appendPATHIfMissing(dir)
+	}
+}
+
+func toolBinDirs() []string {
+	if runtime.GOOS == "windows" {
+		var dirs []string
+		if appdata := os.Getenv("APPDATA"); appdata != "" {
+			dirs = append(dirs, filepath.Join(appdata, "npm"))
+		}
+		if local := os.Getenv("LOCALAPPDATA"); local != "" {
+			dirs = append(dirs, filepath.Join(local, "cursor-agent"))
+		}
+		return dirs
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return nil
+	}
+	return []string{filepath.Join(home, ".local", "bin")}
+}
+
+func appendPATHIfMissing(dir string) {
+	if dir == "" {
+		return
+	}
+	pathEnv := os.Getenv("PATH")
+	for _, p := range filepath.SplitList(pathEnv) {
+		if samePath(filepath.Clean(p), filepath.Clean(dir)) {
+			return
+		}
+	}
+	if pathEnv == "" {
+		_ = os.Setenv("PATH", dir)
+		return
+	}
+	_ = os.Setenv("PATH", pathEnv+string(os.PathListSeparator)+dir)
+}
+
+func runShellCommand(ctx context.Context, shell, cmdline string, onLog func(string)) error {
+	// npm 全局命令依赖本机 Node；缺 npm 时给出明确提示，避免甩一条含糊的 LookPath 错误。
+	if strings.Contains(cmdline, "npm ") {
+		if _, err := exec.LookPath("npm"); err != nil {
+			if onLog != nil {
+				onLog("未找到 npm，请先安装 Node.js")
+			}
+			return err
+		}
+	}
+
+	var cmd *exec.Cmd
+	switch shell {
+	case "cmd":
+		cmd = exec.CommandContext(ctx, "cmd.exe", "/c", cmdline)
+	case "powershell":
+		cmd = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmdline)
+	case "sh":
+		cmd = exec.CommandContext(ctx, "sh", "-c", cmdline)
+	default:
+		return fmt.Errorf("未知 shell %q", shell)
+	}
+
+	pr, pw := io.Pipe()
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+	executil.HideWindow(cmd)
+
+	if err := cmd.Start(); err != nil {
+		_ = pw.Close()
+		return err
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sc := bufio.NewScanner(pr)
+		for sc.Scan() {
+			if onLog != nil {
+				onLog(sc.Text())
+			}
+		}
+	}()
+
+	err := cmd.Wait()
+	_ = pw.Close()
+	<-done
+	return err
+}

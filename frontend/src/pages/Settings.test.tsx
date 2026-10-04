@@ -1,6 +1,6 @@
 // Settings 页面测试：分区导航、工具检测、providers.yaml、外观/关闭/会话/权限、模型预设。
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Settings from './Settings';
 import { useAppStore } from '../state/store';
@@ -23,6 +23,13 @@ const mocks = vi.hoisted(() => ({
   setSessionMode: vi.fn(),
   getPermissionMode: vi.fn(),
   setPermissionMode: vi.fn(),
+  getToolInstallRecipe: vi.fn(),
+  installBuiltinTool: vi.fn(),
+  uninstallBuiltinTool: vi.fn(),
+  getToolInstallJob: vi.fn(),
+  onToolInstallLog: vi.fn(),
+  onToolInstallDone: vi.fn(),
+  onScanDone: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -51,7 +58,56 @@ const tools: ToolInfo[] = [
     Installed: false,
     Source: '',
   },
+  {
+    ID: 'claude',
+    Name: 'Claude Code',
+    BinPath: 'C:\\npm\\claude.cmd',
+    Version: '1.0.0',
+    Installed: true,
+    Source: 'path',
+  },
 ];
+
+const recipes: Record<
+  string,
+  {
+    ToolID: string;
+    Name: string;
+    InstallCmd: string;
+    UninstallCmd: string;
+    PurgeDirs: string[];
+    CanPurge: boolean;
+  }
+> = {
+  gemini: {
+    ToolID: 'gemini',
+    Name: 'Gemini',
+    InstallCmd: 'npm install -g @google/gemini-cli',
+    UninstallCmd: 'npm uninstall -g @google/gemini-cli',
+    PurgeDirs: ['~/.gemini'],
+    CanPurge: true,
+  },
+  claude: {
+    ToolID: 'claude',
+    Name: 'Claude Code',
+    InstallCmd: 'npm install -g @anthropic-ai/claude-code',
+    UninstallCmd: 'npm uninstall -g @anthropic-ai/claude-code',
+    PurgeDirs: ['~/.claude'],
+    CanPurge: true,
+  },
+  cursor: {
+    ToolID: 'cursor',
+    Name: 'Cursor',
+    InstallCmd: "irm 'https://cursor.com/install?win32=true' | iex",
+    UninstallCmd: '',
+    PurgeDirs: [],
+    CanPurge: false,
+  },
+};
+
+let logCb: ((p: { toolID: string; text: string }) => void) | undefined;
+let doneCb: ((p: { toolID: string; action: string; ok: boolean; error?: string }) => void) | undefined;
+let scanDoneCb: ((payload?: unknown) => void) | undefined;
 
 function goTools() {
   fireEvent.click(screen.getByRole('button', { name: '工具' }));
@@ -97,6 +153,41 @@ beforeEach(() => {
     APIKeySet: false,
   });
   mocks.setModelConfig.mockResolvedValue(undefined);
+  mocks.getToolInstallJob.mockResolvedValue({
+    ToolID: '',
+    Action: '',
+    Running: false,
+    Log: '',
+    Error: '',
+  });
+  mocks.getToolInstallRecipe.mockImplementation(async (id: string) => {
+    const r = recipes[id];
+    if (!r) throw new Error('该工具不支持一键安装');
+    return r;
+  });
+  mocks.installBuiltinTool.mockResolvedValue(undefined);
+  mocks.uninstallBuiltinTool.mockResolvedValue(undefined);
+  logCb = undefined;
+  doneCb = undefined;
+  scanDoneCb = undefined;
+  mocks.onScanDone.mockImplementation((cb: NonNullable<typeof scanDoneCb>) => {
+    scanDoneCb = cb;
+    return () => {
+      scanDoneCb = undefined;
+    };
+  });
+  mocks.onToolInstallLog.mockImplementation((cb: NonNullable<typeof logCb>) => {
+    logCb = cb;
+    return () => {
+      logCb = undefined;
+    };
+  });
+  mocks.onToolInstallDone.mockImplementation((cb: NonNullable<typeof doneCb>) => {
+    doneCb = cb;
+    return () => {
+      doneCb = undefined;
+    };
+  });
 });
 
 describe('Settings', () => {
@@ -340,5 +431,123 @@ describe('Settings', () => {
       ).toBe(true);
     });
     expect(screen.getByRole('button', { name: '收进托盘' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('内置工具按 BinPath 显示安装/卸载，自定义工具无按钮', async () => {
+    render(<Settings />);
+    goTools();
+
+    const claude = (await screen.findByText('Claude Code')).closest('li')!;
+    expect(within(claude).getByRole('button', { name: '卸载' })).toBeInTheDocument();
+
+    const gemini = screen.getByText('Gemini').closest('li')!;
+    expect(within(gemini).getByRole('button', { name: '安装' })).toBeInTheDocument();
+
+    const codebuddy = screen.getByText('CodeBuddy').closest('li')!;
+    expect(within(codebuddy).queryByRole('button', { name: '安装' })).not.toBeInTheDocument();
+    expect(within(codebuddy).queryByRole('button', { name: '卸载' })).not.toBeInTheDocument();
+
+    const mytool = screen.getByText('MyTool').closest('li')!;
+    expect(within(mytool).queryByRole('button', { name: '安装' })).not.toBeInTheDocument();
+    expect(within(mytool).queryByRole('button', { name: '卸载' })).not.toBeInTheDocument();
+  });
+
+  it('点 Gemini 安装调用 installBuiltinTool 且按钮变为安装中…', async () => {
+    render(<Settings />);
+    goTools();
+    const gemini = (await screen.findByText('Gemini')).closest('li')!;
+    await act(async () => {
+      fireEvent.click(within(gemini).getByRole('button', { name: '安装' }));
+    });
+    expect(mocks.installBuiltinTool).toHaveBeenCalledWith('gemini');
+    expect(within(gemini).getByRole('button', { name: '安装中…' })).toBeInTheDocument();
+  });
+
+  it('点 Claude 卸载弹出确认，默认不清配置', async () => {
+    render(<Settings />);
+    goTools();
+    const claude = (await screen.findByText('Claude Code')).closest('li')!;
+    await act(async () => {
+      fireEvent.click(within(claude).getByRole('button', { name: '卸载' }));
+    });
+    expect(await screen.findByText('卸载 Claude Code')).toBeInTheDocument();
+    expect(screen.getByLabelText('同时清除配置')).not.toBeChecked();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '确认卸载' }));
+    });
+    expect(mocks.uninstallBuiltinTool).toHaveBeenCalledWith('claude', false);
+  });
+
+  it('勾选同时清除配置后确认并列出目录', async () => {
+    render(<Settings />);
+    goTools();
+    const claude = (await screen.findByText('Claude Code')).closest('li')!;
+    await act(async () => {
+      fireEvent.click(within(claude).getByRole('button', { name: '卸载' }));
+    });
+    await screen.findByText('卸载 Claude Code');
+    fireEvent.click(screen.getByLabelText('同时清除配置'));
+    expect(screen.getByText('~/.claude')).toBeInTheDocument();
+    expect(screen.getByText(/将删除会话历史/)).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '确认卸载' }));
+    });
+    expect(mocks.uninstallBuiltinTool).toHaveBeenCalledWith('claude', true);
+  });
+
+  it('cursor 卸载确认无同时清除配置', async () => {
+    mocks.getTools.mockResolvedValue([
+      ...tools,
+      {
+        ID: 'cursor',
+        Name: 'Cursor',
+        BinPath: 'C:\\cursor-agent.exe',
+        Version: '1.0.0',
+        Installed: true,
+        Source: 'path',
+      },
+    ]);
+    render(<Settings />);
+    goTools();
+    const cursor = (await screen.findByText('Cursor')).closest('li')!;
+    await act(async () => {
+      fireEvent.click(within(cursor).getByRole('button', { name: '卸载' }));
+    });
+    expect(await screen.findByText('卸载 Cursor')).toBeInTheDocument();
+    expect(screen.queryByLabelText('同时清除配置')).not.toBeInTheDocument();
+  });
+
+  it('安装日志出现且完成后重刷工具列表', async () => {
+    render(<Settings />);
+    goTools();
+    const gemini = (await screen.findByText('Gemini')).closest('li')!;
+    await act(async () => {
+      fireEvent.click(within(gemini).getByRole('button', { name: '安装' }));
+    });
+    const before = mocks.getTools.mock.calls.length;
+    await act(async () => {
+      logCb?.({ toolID: 'gemini', text: 'npm installing gemini-cli' });
+    });
+    expect(await screen.findByText(/npm installing gemini-cli/)).toBeInTheDocument();
+    await act(async () => {
+      doneCb?.({ toolID: 'gemini', action: 'install', ok: true });
+    });
+    await waitFor(() => {
+      expect(mocks.getTools.mock.calls.length).toBeGreaterThan(before);
+    });
+  });
+
+  it('收到 scan:done 后重刷工具列表', async () => {
+    render(<Settings />);
+    goTools();
+    await screen.findByText('Gemini');
+    const before = mocks.getTools.mock.calls.length;
+    expect(scanDoneCb).toBeTypeOf('function');
+    await act(async () => {
+      scanDoneCb?.({});
+    });
+    await waitFor(() => {
+      expect(mocks.getTools.mock.calls.length).toBeGreaterThan(before);
+    });
   });
 });

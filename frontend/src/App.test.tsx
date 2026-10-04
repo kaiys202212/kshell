@@ -23,6 +23,12 @@ const mocks = vi.hoisted(() => ({
   openSSH: vi.fn(),
   execRemote: vi.fn(),
   getTools: vi.fn(),
+  getToolInstallRecipe: vi.fn(),
+  installBuiltinTool: vi.fn(),
+  uninstallBuiltinTool: vi.fn(),
+  getToolInstallJob: vi.fn(),
+  onToolInstallLog: vi.fn(() => () => {}),
+  onToolInstallDone: vi.fn(() => () => {}),
   loadProvidersYAML: vi.fn(),
   saveProvidersYAML: vi.fn(),
   restartApp: vi.fn(),
@@ -144,6 +150,16 @@ beforeEach(() => {
   mocks.onTerminalData.mockImplementation(() => () => {});
   mocks.onTerminalExit.mockImplementation(() => () => {});
   mocks.getTools.mockResolvedValue([]);
+  mocks.getToolInstallRecipe.mockRejectedValue(new Error('该工具不支持一键安装'));
+  mocks.getToolInstallJob.mockResolvedValue({
+    ToolID: '',
+    Action: '',
+    Running: false,
+    Log: '',
+    Error: '',
+  });
+  mocks.onToolInstallLog.mockImplementation(() => () => {});
+  mocks.onToolInstallDone.mockImplementation(() => () => {});
   mocks.loadProvidersYAML.mockResolvedValue('');
   mocks.listFiles.mockResolvedValue([]);
   mocks.listConnections.mockResolvedValue([]);
