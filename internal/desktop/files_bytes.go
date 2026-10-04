@@ -1,0 +1,73 @@
+package desktop
+
+import (
+	"encoding/base64"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// 图片/PDF 预览读取上限（20MiB）。
+const maxPreviewBytes = 20 << 20
+
+// FileBytes 是桌面端二进制预览载荷（base64 + mime）。
+type FileBytes struct {
+	Base64 string `json:"Base64"`
+	Mime   string `json:"Mime"`
+	Size   int64  `json:"Size"`
+}
+
+// ReadFileBytes 读取工作区内文件字节供图片/PDF 预览；走路径穿越校验，超限报错。
+func (a *App) ReadFileBytes(wsPath, path string) (FileBytes, error) {
+	resolved, err := a.resolveWorkspaceFile(wsPath, path)
+	if err != nil {
+		return FileBytes{}, err
+	}
+	return readFileBytesLimited(resolved, maxPreviewBytes)
+}
+
+func readFileBytesLimited(abs string, max int64) (FileBytes, error) {
+	info, err := os.Stat(abs)
+	if err != nil {
+		return FileBytes{}, err
+	}
+	if info.IsDir() {
+		return FileBytes{}, fmt.Errorf("不能预览目录")
+	}
+	if info.Size() > max {
+		return FileBytes{}, fmt.Errorf("文件大小 %d 字节超过预览上限 %d 字节", info.Size(), max)
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return FileBytes{}, err
+	}
+	return FileBytes{
+		Base64: base64.StdEncoding.EncodeToString(data),
+		Mime:   mimeByExt(abs),
+		Size:   info.Size(),
+	}, nil
+}
+
+func mimeByExt(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".svg":
+		return "image/svg+xml"
+	case ".bmp":
+		return "image/bmp"
+	case ".ico":
+		return "image/x-icon"
+	case ".pdf":
+		return "application/pdf"
+	default:
+		return "application/octet-stream"
+	}
+}

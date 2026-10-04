@@ -25,6 +25,16 @@ func TestPreviewTextFile(t *testing.T) {
 	if !strings.Contains(got.Lines[0], "package main") {
 		t.Fatalf("line = %q", got.Lines[0])
 	}
+	// Text 为无行号原文；Lines 仍带行号前缀供 TUI
+	if strings.Contains(got.Text, "│") {
+		t.Fatalf("Text 不应含行号前缀 │，got %q", got.Text)
+	}
+	if !strings.Contains(got.Text, "package main") {
+		t.Fatalf("Text = %q", got.Text)
+	}
+	if !strings.Contains(got.Lines[0], "│") {
+		t.Fatalf("Lines[0] 应保留行号前缀，got %q", got.Lines[0])
+	}
 }
 
 func TestPreviewTruncatesLargeFile(t *testing.T) {
@@ -58,6 +68,9 @@ func TestPreviewDetectsBinary(t *testing.T) {
 	}
 	if len(got.Lines) != 0 {
 		t.Fatalf("binary must not emit content lines, got %v", got.Lines)
+	}
+	if got.Text != "" {
+		t.Fatalf("binary Text 应为空，got %q", got.Text)
 	}
 }
 
