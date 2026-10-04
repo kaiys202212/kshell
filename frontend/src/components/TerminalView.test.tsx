@@ -468,6 +468,20 @@ describe('TerminalView', () => {
     expect(api.writeTerminal).toHaveBeenCalledTimes(1);
   });
 
+  it('第一次粘贴完成后立刻再 Ctrl+V 仍会再贴一次', async () => {
+    api.readClipboardPaste.mockResolvedValue({ Text: 'hello paste', Path: '' });
+    render(<TerminalView term={TERM} active />);
+    const instance = term();
+    instance.customKey!(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }));
+    await waitFor(() => {
+      expect(instance.pasted).toEqual(['hello paste']);
+    });
+    instance.customKey!(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }));
+    await waitFor(() => {
+      expect(instance.pasted).toEqual(['hello paste', 'hello paste']);
+    });
+  });
+
   it('Ctrl+V 读取原生剪贴板文本并经 paste/onData 写入终端', async () => {
     api.readClipboardPaste.mockResolvedValue({ Text: 'hello paste', Path: '' });
     render(<TerminalView term={TERM} active />);

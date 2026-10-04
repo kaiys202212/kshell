@@ -84,32 +84,43 @@ export default function TerminalView({ term, active }: Props) {
     // 拦截粘贴键改走原生剪贴板：文本直写 PTY，位图落盘后写路径（cursor-agent 认路径）。
     // xterm 自己也在 textarea / .xterm 上听 paste（先注册、冒泡阶段），若只在其后 preventDefault，
     // 浏览器一旦真的派发 paste，就会「xterm 贴一次 + 我们再贴一次」。捕获阶段 stopImmediatePropagation。
-    let pasteLock = false;
+    // keydown 已注入时跳过同一次手势的 DOM paste 注入（不在完成后加固定冷却，以免吞掉连按）。
+    let alive = true;
+    let pasteInflight = false;
+    let skipDomPaste = false;
+    let skipDomPasteTimer = 0;
     const injectClipboard = async () => {
-      if (statusRef.current === 'exited') return;
-      if (pasteLock) return;
-      pasteLock = true;
+      if (!alive || statusRef.current === 'exited') return;
+      if (pasteInflight) return;
+      pasteInflight = true;
       try {
         const clip = await readClipboardPaste();
+        if (!alive) return;
         const text = composeTerminalPaste(clip);
         if (!text) return;
         instance.paste(text);
       } catch {
         // 剪贴板被占用时静默跳过，避免打断正在输入
       } finally {
-        window.setTimeout(() => {
-          pasteLock = false;
-        }, 200);
+        pasteInflight = false;
       }
     };
     instance.attachCustomKeyEventHandler((ev) => {
       if (!isPasteKey(ev)) return true;
-      if (ev.type === 'keydown') void injectClipboard();
+      if (ev.type === 'keydown') {
+        skipDomPaste = true;
+        window.clearTimeout(skipDomPasteTimer);
+        skipDomPasteTimer = window.setTimeout(() => {
+          skipDomPaste = false;
+        }, 80);
+        void injectClipboard();
+      }
       return false;
     });
     const onPaste = (e: ClipboardEvent) => {
       e.preventDefault();
       e.stopImmediatePropagation();
+      if (skipDomPaste) return;
       void injectClipboard();
     };
     host.addEventListener('paste', onPaste, true);
@@ -324,6 +335,8 @@ export default function TerminalView({ term, active }: Props) {
     observer?.observe(host);
 
     return () => {
+      alive = false;
+      window.clearTimeout(skipDomPasteTimer);
       observer?.disconnect();
       composing = false;
       if (imeRaf) cancelAnimationFrame(imeRaf);
