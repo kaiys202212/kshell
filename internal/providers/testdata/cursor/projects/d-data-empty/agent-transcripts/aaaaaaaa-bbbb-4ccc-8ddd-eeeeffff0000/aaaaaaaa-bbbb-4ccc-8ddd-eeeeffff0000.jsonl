@@ -1,0 +1,2 @@
+{"role":"assistant","message":{"content":[{"type":"text","text":"只有助手旁白的空壳会话"}]}}
+{"role":"assistant","message":{"content":[{"type":"tool_use","name":"Glob","input":{"glob_pattern":"**/*"}}]}}

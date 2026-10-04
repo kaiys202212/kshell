@@ -53,6 +53,8 @@ func RunDesktop(src fs.FS) error {
 		MinWidth:  960,
 		MinHeight: 640,
 		Frameless: true,
+		// 默认最大化启动（2026-10-04 优化轮）
+		WindowStartState: options.Maximised,
 		AssetServer: &assetserver.Options{
 			Assets: src,
 		},
