@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   onToolInstallDone: vi.fn(),
   onScanDone: vi.fn(),
   onToolsUpdated: vi.fn(),
+  scanSessions: vi.fn(),
   getAppVersion: vi.fn(),
   checkForUpdate: vi.fn(),
   applyUpdate: vi.fn(),
@@ -183,6 +184,7 @@ beforeEach(() => {
   });
   mocks.installBuiltinTool.mockResolvedValue(undefined);
   mocks.uninstallBuiltinTool.mockResolvedValue(undefined);
+  mocks.scanSessions.mockResolvedValue(undefined);
   logCb = undefined;
   doneCb = undefined;
   scanDoneCb = undefined;
@@ -235,6 +237,35 @@ describe('Settings', () => {
     const mytool = await screen.findByText('MyTool');
     expect(mytool.closest('li')).toHaveTextContent('未验证');
     expect(mytool.closest('li')).toHaveAttribute('title', expect.stringContaining('只检测到配置目录'));
+  });
+
+  it('工具检测页「重新扫描」按钮触发扫描，tools:updated 后恢复可点', async () => {
+    render(<Settings />);
+    goTools();
+    await screen.findByText('CodeBuddy');
+
+    fireEvent.click(screen.getByRole('button', { name: '重新扫描' }));
+    expect(mocks.scanSessions).toHaveBeenCalledTimes(1);
+    // 扫描中禁用防连点
+    expect(screen.getByRole('button', { name: '扫描中…' })).toBeDisabled();
+    // DetectAll 完成推 tools:updated → 恢复
+    await act(async () => {
+      toolsUpdatedCb?.();
+    });
+    expect(await screen.findByRole('button', { name: '重新扫描' })).toBeEnabled();
+  });
+
+  it('「重新扫描」进行中点击不重复触发', async () => {
+    render(<Settings />);
+    goTools();
+    await screen.findByText('CodeBuddy');
+
+    fireEvent.click(screen.getByRole('button', { name: '重新扫描' }));
+    fireEvent.click(screen.getByRole('button', { name: '扫描中…' }));
+    expect(mocks.scanSessions).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      toolsUpdatedCb?.();
+    });
   });
 
   it('providers.yaml 回填编辑器，编辑后保存调用 SaveProvidersYAML 并提示重启生效', async () => {

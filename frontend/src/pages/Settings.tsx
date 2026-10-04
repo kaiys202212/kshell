@@ -23,6 +23,7 @@ import {
   getAppVersion,
   restartApp,
   saveProvidersYAML,
+  scanSessions,
   setAppearanceMode,
   setAppearanceFontSize,
   setCloseBehavior,
@@ -64,6 +65,8 @@ export default function Settings() {
   const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  // 工具检测「重新扫描」进行中；tools:updated（DetectAll 完成才推）到达即恢复
+  const [rescanning, setRescanning] = useState(false);
   const [appearance, setAppearanceLocal] = useState<string>('dark');
   const [fontSize, setFontSizeLocal] = useState(13);
   const [closeBehavior, setCloseBehaviorLocal] = useState<string>('tray');
@@ -217,9 +220,11 @@ export default function Settings() {
         });
     };
     const offScan = onScanDone(() => {
+      setRescanning(false);
       refresh();
     });
     const offTools = onToolsUpdated(() => {
+      setRescanning(false);
       refresh();
     });
     return () => {
@@ -732,7 +737,21 @@ export default function Settings() {
           {section === 'tools' && (
             <>
               <section className="mb-5 rounded border border-border bg-card p-3.5">
-                <h2 className="mb-3 text-sm font-medium">工具检测</h2>
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <h2 className="text-sm font-medium">工具检测</h2>
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    disabled={rescanning}
+                    onClick={() => {
+                      if (rescanning) return;
+                      setRescanning(true);
+                      void scanSessions();
+                    }}
+                  >
+                    {rescanning ? '扫描中…' : '重新扫描'}
+                  </Button>
+                </div>
                 {toolsError && <p className="text-sm text-destructive">{toolsError}</p>}
                 {tools === null && !toolsError && (
                   <p className="text-sm text-muted-foreground">加载中……</p>
