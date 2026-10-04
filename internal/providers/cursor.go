@@ -30,8 +30,20 @@ func (Cursor) DetectSpec(home string) DetectSpec {
 	}
 }
 
-func (Cursor) SessionRoots(home string) []string {
-	return []string{filepath.Join(home, ".cursor", "projects")}
+func (Cursor) SessionRoots(home string) []string { return nil }
+
+func (Cursor) EnumerateSessions(home, _ string) ([]Session, error) {
+	sessions, err := listCursorChatSessions(home)
+	if err != nil {
+		return nil, err
+	}
+	if len(sessions) > 0 {
+		for i := range sessions {
+			enrichCursorSession(home, &sessions[i])
+		}
+		return sessions, nil
+	}
+	return enumerateCursorTranscriptFallback(home)
 }
 
 func (Cursor) SessionFilePattern() string { return "*.jsonl" }

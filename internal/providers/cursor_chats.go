@@ -109,3 +109,39 @@ func listCursorChatSessions(home string) ([]Session, error) {
 	}
 	return out, nil
 }
+
+func enumerateCursorTranscriptFallback(home string) ([]Session, error) {
+	return nil, nil
+}
+
+func enrichCursorSession(home string, s *Session) {
+	path := resolveCursorTranscript(home, s.Workspace, s.ID)
+	if path == "" {
+		return
+	}
+	s.Path = path
+	if n, err := CountLines(path); err == nil {
+		s.Messages = n
+	}
+	if s.Title == "" {
+		if head, err := ReadHead(path, 256*1024); err == nil {
+			if parsed, err := (Cursor{}).ParseSession(path, head); err == nil && parsed.Title != "" {
+				s.Title = parsed.Title
+			}
+		}
+	}
+}
+
+func resolveCursorTranscript(home, cwd, id string) string {
+	slug := (Cursor{}).WorkspaceToSlug(cwd)
+	p := filepath.Join(home, ".cursor", "projects", slug, "agent-transcripts", id, id+".jsonl")
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	root := filepath.Join(home, ".cursor", "projects")
+	matches, _ := filepath.Glob(filepath.Join(root, "*", "agent-transcripts", id, id+".jsonl"))
+	if len(matches) == 1 {
+		return matches[0]
+	}
+	return ""
+}

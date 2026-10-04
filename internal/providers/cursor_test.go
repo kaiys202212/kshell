@@ -119,6 +119,53 @@ func TestCursorSlugToWorkspace(t *testing.T) {
 	}
 }
 
+func TestCursorEnumerateFromChats(t *testing.T) {
+	home := t.TempDir()
+	ws := filepath.Join(home, "ws")
+	os.MkdirAll(ws, 0o755)
+	id := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeffff0001"
+	hash := "deadbeef"
+	writeMeta(t, filepath.Join(home, ".cursor", "chats", hash, id), true, "FromMeta", ws)
+	slug := (Cursor{}).WorkspaceToSlug(ws)
+	trDir := filepath.Join(home, ".cursor", "projects", slug, "agent-transcripts", id)
+	os.MkdirAll(trDir, 0o755)
+	body := `{"role":"user","message":{"content":[{"type":"text","text":"<user_query>ignored</user_query>"}]}}` + "\n"
+	os.WriteFile(filepath.Join(trDir, id+".jsonl"), []byte(body), 0o600)
+
+	got, err := (Cursor{}).EnumerateSessions(home, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len=%d", len(got))
+	}
+	if got[0].Title != "FromMeta" {
+		t.Fatalf("title=%q", got[0].Title)
+	}
+	if got[0].Path == "" || got[0].Messages < 1 {
+		t.Fatalf("path/messages %+v", got[0])
+	}
+}
+
+func TestCursorEnumerateHidesStoreOnlySubagent(t *testing.T) {
+	home := t.TempDir()
+	hash := "h1"
+	mainID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeffff0002"
+	subID := "bbbbbbbb-cccc-4ddd-8eee-ffff00001111"
+	writeMeta(t, filepath.Join(home, ".cursor", "chats", hash, mainID), true, "M", `D:\w`)
+	subDir := filepath.Join(home, ".cursor", "chats", hash, subID)
+	os.MkdirAll(subDir, 0o755)
+	writeStoreMeta(t, filepath.Join(subDir, "store.db"), `{"subagentInfo":{"parentAgentId":"x"}}`)
+
+	got, err := (Cursor{}).EnumerateSessions(home, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != mainID {
+		t.Fatalf("%+v", got)
+	}
+}
+
 func TestCursorResumeCmd(t *testing.T) {
 	p := Cursor{}
 
