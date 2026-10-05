@@ -161,6 +161,40 @@ func TestForSessionACP_UsesWorkspaceDir(t *testing.T) {
 	}
 }
 
+// cursor 直执行形态：kshell 探测到的 CLI 不在 PATH 上时，适配器自己找不到
+// cursor-agent，必须经 CURSOR_AGENT_EXECUTABLE 把路径传过去。
+func TestForWorkspaceACP_CursorInjectsAgentExecutable(t *testing.T) {
+	ps := []providers.Provider{providers.Cursor{}}
+	tools := []discovery.Tool{{
+		ID: "cursor", Installed: true, BinPath: `%LOCALAPPDATA%\cursor-agent\cursor-agent.exe`,
+		ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "cursor-acp"},
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Env["CURSOR_AGENT_EXECUTABLE"] != `%LOCALAPPDATA%\cursor-agent\cursor-agent.exe` {
+		t.Fatalf("env = %v", l.Env)
+	}
+}
+
+// node 入口形态（官方更新器删光 shim 后的兜底）无法表达为单个可执行文件，
+// 不注入，交由适配器走 PATH。
+func TestForWorkspaceACP_CursorNodeEntryNoInject(t *testing.T) {
+	ps := []providers.Provider{providers.Cursor{}}
+	tools := []discovery.Tool{{
+		ID: "cursor", Installed: true, BinPath: "node.exe", BinArgs: []string{"index.js"},
+		ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "cursor-acp"},
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := l.Env["CURSOR_AGENT_EXECUTABLE"]; ok {
+		t.Fatalf("node 入口形态不应注入, env = %v", l.Env)
+	}
+}
+
 func TestApplyModelTerminalCodex(t *testing.T) {
 	ps := []providers.Provider{providers.Codex{}}
 	tools := []discovery.Tool{{ID: "codex", Name: "Codex CLI", Installed: true, BinPath: "codex"}}

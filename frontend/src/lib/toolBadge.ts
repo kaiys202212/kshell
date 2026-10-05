@@ -14,6 +14,7 @@ const TOOL_BADGES: Record<string, ToolBadge> = {
   claude: { label: 'Claude', className: 'tool-badge--claude', color: 'var(--tool-claude)' },
   gemini: { label: 'Gemini', className: 'tool-badge--gemini', color: 'var(--tool-gemini)' },
   opencode: { label: 'OpenCode', className: 'tool-badge--opencode', color: 'var(--tool-opencode)' },
+  cursor: { label: 'Cursor', className: 'tool-badge--cursor', color: 'var(--tool-cursor)' },
 };
 
 export function badgeFor(toolID: string): ToolBadge {

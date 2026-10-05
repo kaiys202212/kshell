@@ -66,3 +66,28 @@ func TestClaudeACPAdapter(t *testing.T) {
 		t.Fatalf("adapter = %+v", a)
 	}
 }
+
+func TestCodeBuddyACPAdapter(t *testing.T) {
+	// CodeBuddy CLI 自带 --acp（stdio），适配器与 CLI 同二进制，无 npx 兜底。
+	a := CodeBuddy{}.ACPAdapter()
+	if len(a.BinNames) != 2 || a.BinNames[0] != "codebuddy" || a.BinNames[1] != "cbc" {
+		t.Fatalf("bin names = %v", a.BinNames)
+	}
+	if len(a.ExtraArgs) != 1 || a.ExtraArgs[0] != "--acp" {
+		t.Fatalf("extra args = %v", a.ExtraArgs)
+	}
+	if a.NPMPackage != "" {
+		t.Fatalf("want no npm package, got %q", a.NPMPackage)
+	}
+}
+
+func TestCursorACPAdapter(t *testing.T) {
+	// Cursor CLI 无内置 ACP，走第三方适配器 cursor-acp；PATH 未装时 npx 兜底。
+	a := Cursor{}.ACPAdapter()
+	if len(a.BinNames) != 1 || a.BinNames[0] != "cursor-acp" {
+		t.Fatalf("bin names = %v", a.BinNames)
+	}
+	if a.NPMPackage != "cursor-acp" {
+		t.Fatalf("npm package = %q", a.NPMPackage)
+	}
+}

@@ -63,6 +63,15 @@ func (c CodeBuddy) ResumeCmd(s Session, bin string) Launch {
 	return c.wrap("").ResumeCmd(s, bin)
 }
 
+// ACPAdapter 声明 CodeBuddy 的 ACP 入口：CLI 自带 --acp（stdio ndJsonStream），
+// 适配器与 CLI 同二进制，故无 npx 兜底。
+func (CodeBuddy) ACPAdapter() ACPAdapter {
+	return ACPAdapter{
+		BinNames:  []string{"codebuddy", "cbc"},
+		ExtraArgs: []string{"--acp"},
+	}
+}
+
 func (CodeBuddy) InstallRecipe() InstallRecipe {
 	r := npmInstall("@tencent-ai/codebuddy-code")
 	r.PurgeDirs = []string{"~/.codebuddy"}

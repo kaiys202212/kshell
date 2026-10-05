@@ -57,7 +57,7 @@
   --radius-base: 3px;
   --font-mono-stack: Consolas, "Cascadia Mono", "SFMono-Regular", ui-monospace, monospace;
   --tool-codebuddy: #6f42c1; --tool-codex: #0c8a6c; --tool-claude: #bc4c25;
-  --tool-gemini: #1a73e8;   --tool-opencode: #0d8f80;
+  --tool-gemini: #1a73e8;   --tool-opencode: #0d8f80; --tool-cursor: #4b5563;
 }
 
 [data-theme="dark"] {
@@ -75,7 +75,7 @@
   --overlay: rgba(2, 6, 5, 0.6);
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.3);
   --tool-codebuddy: #a371f7; --tool-codex: #26a583; --tool-claude: #e8875f;
-  --tool-gemini: #6ba4f7;   --tool-opencode: #2cc8b4;
+  --tool-gemini: #6ba4f7;   --tool-opencode: #2cc8b4; --tool-cursor: #9ca3af;
 }
 
 /* 动效 token：统一过渡时长与缓动，组件侧引用保持一致 */
