@@ -96,6 +96,8 @@ func TestDetectAll_FillsACP(t *testing.T) {
 }
 
 func TestDetectAllCarriesBinArgs(t *testing.T) {
+	// 隔离 PATH：本机若有真实/自建 cursor-agent shim，LookPath 会抢先命中导致探测走偏
+	t.Setenv("PATH", t.TempDir())
 	home := t.TempDir()
 	vdir := filepath.Join(home, "va")
 	if err := os.MkdirAll(vdir, 0o755); err != nil {
