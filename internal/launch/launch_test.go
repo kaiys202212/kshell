@@ -195,6 +195,38 @@ func TestForWorkspaceACP_CursorNodeEntryNoInject(t *testing.T) {
 	}
 }
 
+// 非 cursor 工具不得注入任何环境变量，防止回归为全量注入。
+func TestForWorkspaceACP_OtherToolNoEnv(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"})
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Env) != 0 {
+		t.Fatalf("非 cursor 工具 env 应为空, got %v", l.Env)
+	}
+}
+
+// npx 兜底形态下注入依然生效（本体路径与适配器来源无关）。
+func TestForWorkspaceACP_CursorNpxStillInjects(t *testing.T) {
+	ps := []providers.Provider{providers.Cursor{}}
+	tools := []discovery.Tool{{
+		ID: "cursor", Installed: true, BinPath: `%LOCALAPPDATA%\cursor-agent\cursor-agent.exe`,
+		ACP: &providers.ACPDetection{Available: true, Source: "npx", Package: "cursor-acp"},
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Args[0] != "-y" || l.Args[1] != "cursor-acp" {
+		t.Fatalf("args = %v", l.Args)
+	}
+	if l.Env["CURSOR_AGENT_EXECUTABLE"] != `%LOCALAPPDATA%\cursor-agent\cursor-agent.exe` {
+		t.Fatalf("env = %v", l.Env)
+	}
+}
+
 func TestApplyModelTerminalCodex(t *testing.T) {
 	ps := []providers.Provider{providers.Codex{}}
 	tools := []discovery.Tool{{ID: "codex", Name: "Codex CLI", Installed: true, BinPath: "codex"}}
