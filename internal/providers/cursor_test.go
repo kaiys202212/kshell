@@ -394,7 +394,8 @@ func TestCursorVersionInstallDirsLatestFirst(t *testing.T) {
 		"2026.06.12-19-59-36-f6aba9a", // 旧（带时分秒）
 		"2026.10.01-e373342",          // 新（跨月且月份不补零场景由 10 vs 9 覆盖）
 		"2026.9.30-abc123",            // 字典序会排在 2026.10 之前的旧月份
-		"junk-dir",                    // 不合法名称：排最后
+		"junk-dir",                    // 不合法名称：被形状门过滤
+		"bad.10.01-xyz",               // 形状门通过但日期段非数字：解析失败排最后
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(filepath.Join(root, "versions", d), 0o755); err != nil {
@@ -402,8 +403,8 @@ func TestCursorVersionInstallDirsLatestFirst(t *testing.T) {
 		}
 	}
 	got := cursorVersionInstallDirs(root)
-	if len(got) != 3 {
-		t.Fatalf("应只列出版本目录, got %v", got)
+	if len(got) != 4 {
+		t.Fatalf("应列出 3 个合法版本目录 + 1 个解析失败目录, got %v", got)
 	}
 	if !strings.Contains(got[0], "2026.10.01-e373342") {
 		t.Fatalf("最新版本应排第一, got %v", got)
@@ -411,8 +412,11 @@ func TestCursorVersionInstallDirsLatestFirst(t *testing.T) {
 	if !strings.Contains(got[1], "2026.9.30-abc123") {
 		t.Fatalf("次新版本应排第二, got %v", got)
 	}
-	if !strings.Contains(got[len(got)-1], "2026.06.12") {
-		t.Fatalf("最旧版本应排最后, got %v", got)
+	if !strings.Contains(got[2], "2026.06.12") {
+		t.Fatalf("最旧版本应排第三, got %v", got)
+	}
+	if !strings.Contains(got[len(got)-1], "bad.10.01-xyz") {
+		t.Fatalf("解析失败目录应排最后, got %v", got)
 	}
 }
 

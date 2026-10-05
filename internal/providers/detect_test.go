@@ -1,10 +1,10 @@
 package providers
 
 import (
-	"strings"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 

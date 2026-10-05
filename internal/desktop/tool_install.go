@@ -195,8 +195,13 @@ func (a *App) execInstallCommand(id, action string, recipe providers.InstallReci
 	ensureToolBinsOnPATH()
 	if recipe.UninstallCmd != "" {
 		cmdErr = a.runInstallCmd(a.runCtx(), recipe.Shell, recipe.UninstallCmd, onLog)
-	} else if bin := a.toolByID(id).BinPath; bin != "" {
-		if err := os.Remove(bin); err != nil && !os.IsNotExist(err) {
+	} else if tool := a.toolByID(id); tool.BinPath != "" {
+		// node 入口形态（BinArgs 非空）：BinPath 是版本目录里的 node.exe，
+		// 单删它目录与 index.js 还在，DetectAll 重扫后工具依然「已安装」，
+		// 必须整个版本目录一起删。
+		if len(tool.BinArgs) > 0 {
+			cmdErr = os.RemoveAll(filepath.Dir(tool.BinPath))
+		} else if err := os.Remove(tool.BinPath); err != nil && !os.IsNotExist(err) {
 			cmdErr = err
 		}
 	} else {
@@ -223,7 +228,15 @@ func (a *App) leftoverBins(id string) []string {
 	o := a.snapshot()
 	for _, p := range o.Providers {
 		if p.ID() == id {
-			return providers.FindBins(p.DetectSpec(o.Home), o.Home)
+			spec := p.DetectSpec(o.Home)
+			out := providers.FindBins(spec, o.Home)
+			// node 入口形态的残留：FindBins 只认 shim 名，扫不到
+			// versions\<ver>\node.exe + index.js，这里用 Detect 补上，
+			// 否则其他版本目录仍完整可用时卸载会「假成功」。
+			if det := providers.Detect(spec, o.Home); det.Source == "node-entry" && det.BinPath != "" {
+				out = append(out, det.BinPath)
+			}
+			return out
 		}
 	}
 	return nil

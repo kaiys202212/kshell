@@ -36,6 +36,8 @@ func Detect(spec DetectSpec, home string) Detection {
 	// InstallDirs 的先后顺序由 provider 负责（versions 目录已按最新在前）。
 	// BinArgs 必须用主脚本的**绝对路径**：启动会话时子进程 cwd 是工作区，
 	// 相对路径会被 node 解析到工作区下而找不到脚本。
+	// node.exe 名限定 Windows 官方布局；非 Windows 的 Cursor 是原生二进制安装，
+	// 天然无此兜底分支。
 	if spec.NodeEntryScript != "" {
 		for _, dir := range spec.InstallDirs {
 			root := expandHome(dir, home)

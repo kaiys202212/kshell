@@ -460,3 +460,96 @@ func countPATH(path, dir string) int {
 	}
 	return n
 }
+
+// node 入口形态（BinArgs 非空）：卸载应删除 node.exe 所在的整个版本目录，
+// 只删 node.exe 会留下 index.js 与目录，DetectAll 重扫后工具依然「已安装」。
+func TestUninstallCursorNodeEntryRemovesVersionDir(t *testing.T) {
+	isolatePATH(t)
+	appdata := t.TempDir()
+	t.Setenv("LOCALAPPDATA", appdata)
+	vdir := filepath.Join(appdata, "cursor-agent", "versions", "2026.10.01-test")
+	if err := os.MkdirAll(vdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"node.exe", "index.js"} {
+		if err := os.WriteFile(filepath.Join(vdir, f), []byte("x"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := NewAppWith(Options{
+		Providers: providers.Builtins(),
+		Home:      t.TempDir(),
+		Scan: func(string, []providers.Provider, string, discovery.ScanOptions) (*discovery.Result, error) {
+			return &discovery.Result{}, nil
+		},
+		Windows: NewWindowManager(&stubLauncher{}, nil),
+		InstallRunner: func(context.Context, string, string, func(string)) error {
+			return nil
+		},
+	})
+	setTools(t, app, []discovery.Tool{{
+		ID: "cursor", Installed: true,
+		BinPath: filepath.Join(vdir, "node.exe"),
+		BinArgs: []string{filepath.Join(vdir, "index.js")},
+	}})
+	if err := app.UninstallBuiltinTool("cursor", false); err != nil {
+		t.Fatal(err)
+	}
+	waitJobIdle(t, app)
+	if job := app.GetToolInstallJob(); job.Error != "" {
+		t.Fatalf("卸载应成功, job=%+v", job)
+	}
+	if _, err := os.Stat(vdir); !os.IsNotExist(err) {
+		t.Fatal("node 入口形态应删除整个版本目录")
+	}
+}
+
+// 其他版本目录仍完整可用时，卸载必须把它们一并清掉，不能假成功。
+func TestUninstallCursorNodeEntryRemovesLeftoverVersions(t *testing.T) {
+	isolatePATH(t)
+	appdata := t.TempDir()
+	t.Setenv("LOCALAPPDATA", appdata)
+	root := filepath.Join(appdata, "cursor-agent", "versions")
+	mkVersion := func(name string) string {
+		v := filepath.Join(root, name)
+		if err := os.MkdirAll(v, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range []string{"node.exe", "index.js"} {
+			if err := os.WriteFile(filepath.Join(v, f), []byte("x"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return v
+	}
+	target := mkVersion("2026.10.01-a")
+	mkVersion("2026.10.02-b")
+	app := NewAppWith(Options{
+		Providers: providers.Builtins(),
+		Home:      t.TempDir(),
+		Scan: func(string, []providers.Provider, string, discovery.ScanOptions) (*discovery.Result, error) {
+			return &discovery.Result{}, nil
+		},
+		Windows: NewWindowManager(&stubLauncher{}, nil),
+		InstallRunner: func(context.Context, string, string, func(string)) error {
+			return nil
+		},
+	})
+	setTools(t, app, []discovery.Tool{{
+		ID: "cursor", Installed: true,
+		BinPath: filepath.Join(target, "node.exe"),
+		BinArgs: []string{filepath.Join(target, "index.js")},
+	}})
+	if err := app.UninstallBuiltinTool("cursor", false); err != nil {
+		t.Fatal(err)
+	}
+	waitJobIdle(t, app)
+	if job := app.GetToolInstallJob(); job.Error != "" {
+		t.Fatalf("残留版本目录应被一并清除, job=%+v", job)
+	}
+	for _, name := range []string{"2026.10.01-a", "2026.10.02-b"} {
+		if _, err := os.Stat(filepath.Join(root, name, "node.exe")); !os.IsNotExist(err) {
+			t.Fatalf("版本目录 %s 的 node.exe 应被删除", name)
+		}
+	}
+}

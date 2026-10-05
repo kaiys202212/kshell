@@ -74,7 +74,7 @@ func cursorVersionInstallDirs(root string) []string {
 		}
 		ver, ok := parseCursorVersionDir(name)
 		if !ok {
-			invalid = append(invalid, name)
+			invalid = append(invalid, filepath.Join(root, "versions", name))
 			continue
 		}
 		valid = append(valid, versioned{path: filepath.Join(root, "versions", name), ver: ver, name: name})
@@ -96,11 +96,15 @@ func cursorVersionInstallDirs(root string) []string {
 }
 
 // parseCursorVersionDir 解析 versions 目录名为 6 段数值版本号。
-// 缺时分秒时对应段补 0；任一段非数字视为非法。
+// 两种合法形态：YYYY.MM.DD-commit（2 段）与 YYYY.MM.DD-HH-MM-SS-commit（5 段，
+// 注意连同 commit 在内共 5 个 '-' 分隔段）；缺时分秒时对应段补 0，
+// 任一段非数字视为非法。
 func parseCursorVersionDir(name string) ([6]int, bool) {
 	var ver [6]int
 	segs := strings.Split(name, "-")
-	if len(segs) < 2 || len(segs) > 4 {
+	// 只认 2 段与 5 段两种形态，其他（如 2026.10.01-12-abc）不是合法版本目录，
+	// 避免静默误排序。
+	if len(segs) != 2 && len(segs) != 5 {
 		return ver, false
 	}
 	date := strings.Split(segs[0], ".")
@@ -108,7 +112,7 @@ func parseCursorVersionDir(name string) ([6]int, bool) {
 		return ver, false
 	}
 	nums := append([]string{}, date...)
-	if len(segs) == 4 {
+	if len(segs) == 5 {
 		nums = append(nums, segs[1], segs[2], segs[3])
 	}
 	for i, s := range nums {
