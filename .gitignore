@@ -9,8 +9,10 @@ node_modules/
 .codebuddy/
 .superpowers/
 .worktrees/
+.playwright-cli/
+.workbuddy/
 /docs/
-.cursor/rules/
+.cursor/*
 .github/workflows/*
 !.github/workflows/release.yml
 !.github/workflows/ci.yml
@@ -18,3 +20,4 @@ node_modules/
 *.test
 *.tmp
 *.log
+AGENTS.md
