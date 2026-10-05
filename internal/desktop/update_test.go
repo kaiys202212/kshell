@@ -3,11 +3,26 @@ package desktop
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/yangk/kshell/internal/update"
 	"github.com/yangk/kshell/internal/version"
 )
+
+// TestApplyUpdateBindingSignature 锁定前端契约：api.ts 以 0 参调用 ApplyUpdate。
+// Wails v2 绑定不会注入 context.Context，签名里带 ctx 会被计成一个入参，
+// 运行时报 "received 0 arguments, expected 1"。
+func TestApplyUpdateBindingSignature(t *testing.T) {
+	m, ok := reflect.TypeOf(&App{}).MethodByName("ApplyUpdate")
+	if !ok {
+		t.Fatal("缺少 ApplyUpdate 绑定方法")
+	}
+	// reflect.Type.Method 的类型把 receiver 计作第一个入参，故为 1（仅 receiver）。
+	if got := m.Type.NumIn(); got != 1 {
+		t.Fatalf("ApplyUpdate 绑定入参（含 receiver）= %d，前端以 0 参调用", got)
+	}
+}
 
 func TestGetAppVersion(t *testing.T) {
 	app, _, _ := newTestApp(t)
@@ -76,7 +91,7 @@ func TestApplyUpdateRequiresAvailable(t *testing.T) {
 	}
 	t.Cleanup(func() { checkUpdateFn = orig })
 
-	if err := app.ApplyUpdate(context.Background()); err == nil {
+	if err := app.ApplyUpdate(); err == nil {
 		t.Fatal("无更新应失败")
 	}
 }
@@ -98,7 +113,7 @@ func TestApplyUpdateQuitsAfterSpawn(t *testing.T) {
 	quitRuntime = func(context.Context) { quitCalled++ }
 	t.Cleanup(func() { quitRuntime = origQ })
 
-	if err := app.ApplyUpdate(context.Background()); err != nil {
+	if err := app.ApplyUpdate(); err != nil {
 		t.Fatal(err)
 	}
 	if quitCalled != 1 {
@@ -120,7 +135,7 @@ func TestApplyUpdatePropagatesError(t *testing.T) {
 	quitRuntime = func(context.Context) { t.Fatal("失败不应退出") }
 	t.Cleanup(func() { quitRuntime = origQ })
 
-	if err := app.ApplyUpdate(context.Background()); err == nil {
+	if err := app.ApplyUpdate(); err == nil {
 		t.Fatal("期望错误")
 	}
 }

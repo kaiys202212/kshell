@@ -63,7 +63,9 @@ func (a *App) CheckForUpdate() (UpdateInfo, error) {
 }
 
 // ApplyUpdate 再次确认有更新后下载替换，成功则退出当前进程。
-func (a *App) ApplyUpdate(ctx context.Context) error {
+// 签名不带 context.Context：Wails v2 绑定会把 ctx 计成一个入参，
+// 而前端以 0 参调用，导致 "received 0 arguments, expected 1"。
+func (a *App) ApplyUpdate() error {
 	r, err := checkUpdateFn()
 	if err != nil {
 		return err
@@ -75,9 +77,9 @@ func (a *App) ApplyUpdate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := applyUpdateFn(ctx, exe, r); err != nil {
+	if err := applyUpdateFn(a.ctx, exe, r); err != nil {
 		return err
 	}
-	a.quitApp(ctx)
+	a.quitApp(a.ctx)
 	return nil
 }
