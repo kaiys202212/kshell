@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ChatInfo, ChatToolCall } from '../lib/api';
-import { cancelChat, cancelChatPermission, respondChatPermission, sendChatPrompt } from '../lib/api';
+import { cancelChat, cancelChatPermission, listChats, respondChatPermission, sendChatPrompt } from '../lib/api';
 import { appendChatInput, registerChatInput, unregisterChatInput } from '../lib/chatInputRegistry';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { useAppStore } from '../state/store';
@@ -52,6 +52,23 @@ export default function ChatView({ chat, active }: Props) {
     registerChatInput(id, { append: (text) => setDraft((d) => (d ? `${d} ${text}` : text)) });
     return () => unregisterChatInput(id);
   }, [id]);
+
+  // 点开页签时对账后端：turn_done 若丢失，前端会停在乐观 running，未发新任务却转圈。
+  // 只在变为激活时对账，不能把 Status 放进依赖——发送后的乐观 running 会立刻被 ListChats 冲掉。
+  useEffect(() => {
+    if (!active || chat.Status !== 'running') return;
+    let cancelled = false;
+    void listChats()
+      .then((list) => {
+        if (!cancelled) useAppStore.getState().setChats(list);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // chat.Status 有意不进依赖，见上。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, id]);
 
   useEffect(() => {
     if (!active) return;

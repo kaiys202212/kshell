@@ -19,13 +19,13 @@ describe('resolveAgentActivity', () => {
     ).toBe('awaiting');
   });
 
-  it('聊天 running/starting → running；ready → waiting', () => {
+  it('聊天 running → running；starting/ready → waiting（未提交任务不转圈）', () => {
     expect(
       resolveAgentActivity({ status: 'running', hasPermission: false, kind: 'chat' }),
     ).toBe('running');
     expect(
       resolveAgentActivity({ status: 'starting', hasPermission: false, kind: 'chat' }),
-    ).toBe('running');
+    ).toBe('waiting');
     expect(
       resolveAgentActivity({ status: 'ready', hasPermission: false, kind: 'chat' }),
     ).toBe('waiting');

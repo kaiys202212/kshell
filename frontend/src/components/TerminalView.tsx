@@ -14,6 +14,7 @@ import { encodeTerminalInput } from '../lib/base64';
 import { composeTerminalPaste, isPasteKey } from '../lib/clipboardPaste';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { useAppStore } from '../state/store';
+import { suppressTerminalBusy } from '../state/terminalBusy';
 import { registerTerminal, unregisterTerminal } from '../lib/terminalRegistry';
 import {
   computeImeClampStyles,
@@ -361,12 +362,14 @@ export default function TerminalView({ term, active }: Props) {
   // 变为可见页签时才适配尺寸并取焦点（放进 rAF：等父级 hidden→visible 的布局完成）
   useEffect(() => {
     if (!active) return;
+    // 激活会 fit/resize，TUI 常整屏重绘；那段输出不能当成「又开始执行」。
+    suppressTerminalBusy(termId);
     const raf = requestAnimationFrame(() => {
       fitRef.current?.fit();
       termRef.current?.focus();
     });
     return () => cancelAnimationFrame(raf);
-  }, [active]);
+  }, [active, termId]);
 
   // 明暗变化时热更新已存在终端实例的配色
   useEffect(() => {

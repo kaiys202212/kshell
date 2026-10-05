@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   cancelChat: vi.fn(),
   respondChatPermission: vi.fn(),
   cancelChatPermission: vi.fn(),
+  listChats: vi.fn(),
 }));
 vi.mock('../lib/api', () => api);
 
@@ -25,6 +26,7 @@ beforeEach(() => {
   api.cancelChat.mockResolvedValue(undefined);
   api.respondChatPermission.mockResolvedValue(undefined);
   api.cancelChatPermission.mockResolvedValue(undefined);
+  api.listChats.mockResolvedValue([]);
   useAppStore.setState({ chatItems: {}, chatSeq: {}, chatPermissions: {}, chats: [CHAT] });
 });
 afterEach(cleanup);
@@ -45,6 +47,7 @@ describe('ChatView', () => {
     fireEvent.change(box, { target: { value: 'hello' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(useAppStore.getState().chats.find((c) => c.ID === 'c1')?.Status).toBe('running');
+    expect(api.listChats).not.toHaveBeenCalled();
   });
 
   it('发送失败：回退 ready 并提示错误', async () => {
@@ -138,6 +141,26 @@ describe('ChatView', () => {
 
     expect(screen.getByText('思考')).toBeInTheDocument();
     expect(screen.getByText('內部推理')).toBeInTheDocument();
+  });
+
+  it('点开页签时若前端仍 running、后端已 ready，对账后不再转圈', async () => {
+    const running = { ...CHAT, Status: 'running', Prompted: true };
+    api.listChats.mockResolvedValue([{ ...CHAT, Status: 'ready', Prompted: true }]);
+    useAppStore.setState({ chats: [running] });
+    render(<ChatView chat={running} active />);
+    await waitFor(() => {
+      expect(useAppStore.getState().chats.find((c) => c.ID === 'c1')?.Status).toBe('ready');
+    });
+  });
+
+  it('未激活或并非 running 时不对账 ListChats', () => {
+    render(<ChatView chat={CHAT} active />);
+    expect(api.listChats).not.toHaveBeenCalled();
+    cleanup();
+    const running = { ...CHAT, Status: 'running' };
+    useAppStore.setState({ chats: [running] });
+    render(<ChatView chat={running} active={false} />);
+    expect(api.listChats).not.toHaveBeenCalled();
   });
 
   it('drop 携带 DRAG_MIME：路径包引号后追加进输入草稿', () => {

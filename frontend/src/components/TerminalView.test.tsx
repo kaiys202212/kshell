@@ -9,6 +9,7 @@ import { bytesToBase64, encodeTerminalInput } from '../lib/base64';
 import { DRAG_MIME } from '../lib/dragPath';
 import { clearTerminalRegistry, dispatchTerminalData } from '../lib/terminalRegistry';
 import { useAppStore } from '../state/store';
+import { bumpTerminalBusy } from '../state/terminalBusy';
 import TerminalView from './TerminalView';
 
 // 桩实例的收集箱（vi.hoisted：mock 工厂先于 import 执行）
@@ -312,6 +313,16 @@ describe('TerminalView', () => {
     flushRaf();
     expect(instance.disposed).toBe(false);
     expect(dispatchTerminalData(TERM.ID, bytesToBase64(new Uint8Array([65])))).toBe(true);
+  });
+
+  it('切到可见页签后，重绘输出不把空闲终端标成执行中', () => {
+    useAppStore.setState({ terminalBusy: {} });
+    const { rerender } = render(<TerminalView term={TERM} active={false} />);
+    flushRaf();
+    rerender(<TerminalView term={TERM} active />);
+    flushRaf();
+    bumpTerminalBusy(TERM.ID);
+    expect(useAppStore.getState().terminalBusy[TERM.ID]).toBeUndefined();
   });
 
   it('非激活页签的尺寸变化不 fit（隐藏宿主会被 FitAddon 钳成退化尺寸）', () => {
