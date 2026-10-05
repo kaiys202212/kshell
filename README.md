@@ -1,34 +1,78 @@
 # kshell
 
-轻量级 shell 管理工具：在终端里集成各类 agent 编程工具，自动发现本机已安装的工具、它们的工作区与会话，一键恢复或新建会话；附带工作区文件树预览与远程 SSH 管理。全屏 TUI，单二进制，Windows / macOS / Linux。
+轻量级 agent 工作台：发现本机已安装的编程 agent（Claude Code / Codex / Cursor / Gemini 等）及其工作区与会话，一键恢复或新建。附带文件树预览/编辑、git 状态、内嵌终端、远程 SSH，以及可选的 ACP 聊天。
+
+两个独立入口，没有模式开关：
+
+| 入口 | 说明 | 产物 |
+|---|---|---|
+| 桌面端 | Wails 窗口（React），日常主界面 | `kshell-desktop` |
+| TUI | Bubbletea 全屏终端 | `kshell` |
+
+Windows / macOS / Linux。
 
 ## 核心理念
 
-kshell 只做三件事：**发现 → 选择 → 交付**。
+kshell 做 **发现 → 选择 → 交付**：
 
-- 对话能力一律由 agent 工具自己的 CLI 提供（`claude --resume`、`codex resume`…），kshell 不重复实现，也就不存在协议适配腐烂的问题；
-- 选中会话后 kshell 把终端交给原生 CLI，退出后自动回到 kshell。
+- 会话记录由各工具自己落盘，kshell 只扫描与展示，不复制一套对话协议；
+- **终端路径**：把 ConPTY/PTY 交给原生 CLI（`claude --resume`、`codex resume`…），退出后回到 kshell；
+- **聊天路径（ACP）**：对已接入的工具走 Agent Client Protocol，在窗口内对话（需对应 ACP 适配器）。工具不支持 ACP 时仍走终端。
 
 ## 安装
 
+### 预编译桌面版
+
+从 [GitHub Releases](https://github.com/kaiys202212/kshell/releases) 或 [GitCode Releases](https://gitcode.com/abraveheart2023/kshell/releases) 下载当前平台的 `kshell-desktop-<os>-<arch>.zip`，解压后运行。
+
+桌面端可在 **设置 → 通用 → 关于** 检查更新；升级优先走 GitCode 国内源，GitHub 为后备。
+
+### 从源码构建
+
+需要 **Go 1.23+**。桌面端另需 **Node.js** 与 [Wails CLI](https://wails.io)：
+
 ```powershell
-# 需 Go 1.23+
-go install github.com/yangk/kshell/cmd/kshell@latest
+go install github.com/wailsapp/wails/v2/cmd/wails@latest
 ```
 
-或从源码构建：
-
 ```powershell
-git clone <repo> && cd kshell
-go build -o kshell.exe ./cmd/kshell
+git clone https://github.com/kaiys202212/kshell.git
+cd kshell
+
+# TUI → dist\kshell.exe
+.\build.ps1
+
+# 桌面端 → dist\kshell-desktop.exe（会构建 frontend）
+.\build.ps1 -Desktop
 ```
 
-## 使用
+Unix 上 TUI 也可用 `make build` / `make cross`。Go module 路径仍是 `github.com/yangk/kshell`，请以本仓库源码或 Release 包安装，不要依赖过时的 `go install …@latest` 地址。
 
-直接运行：
+## 桌面端
+
+启动后是项目网格（会话数、工具分布、最后活动时间）。点卡片打开工作区页签。
+
+工作区三栏：
+
+- **左**：会话列表、新建会话（终端或 ACP，视工具与设置而定）
+- **中**：agent 聊天/终端页签 + 文件/会话预览
+- **右**：文件树（搜索、重命名、删除、保存编辑、git 脏标记）与 SSH 面板
+
+其它能力：
+
+- 标题栏页签常挂载，切走不拆 xterm / 聊天状态；`Ctrl+K` 快速切换，`Ctrl+F` 聚焦搜索
+- 本地 shell 与 SSH 交互终端挂在预览区
+- 项目可手动添加；卡片删除是逻辑删除，可从回收站还原
+- 会话可归档（不改工具自己的会话文件，名单在 `~/.kshell/archived.json`）；Claude Code 可通过内置 MCP 工具建议归档
+- 关闭窗口默认收入系统托盘（可改为直接退出）；单实例，再次启动会唤起已有窗口
+- 设置里可安装/卸载内置工具、编辑自定义 `providers.yaml`、注入模型/端点、切换外观字号
+
+## TUI
 
 ```powershell
 kshell
+# 或
+.\dist\kshell.exe
 ```
 
 ```
@@ -46,29 +90,32 @@ kshell
 
 | 键 | 作用 |
 |---|---|
-| `Tab` / `1` `2` `3` | 切换 Sessions / Files / Remote 视图 |
+| `Tab` / `1` `2` `3` | 切换 Sessions / Files / Remote |
 | `↑↓` / `j` `k` | 移动光标 |
 | `⏎` | 进入（工作区→会话；会话→恢复；目录→展开） |
-| `/` | 搜索过滤（作用在当前聚焦的列表上） |
-| `n` | 新建会话（在选中工作区启动工具 CLI） |
+| `Esc` | 返回上一层 / 取消 |
+| `/` | 搜索过滤（当前聚焦列表） |
+| `n` | 新建会话 |
 | `r` | 重新扫描 |
-| `space` | Remote：勾选候选连接 |
-| `a` | Files：切换「显示全部」 |
-| `i` `x` `s` `t` `b` `d` | Remote：扫描导入 / 执行命令 / 交互式 shell / 连通性测试 / 绑定 / 删除 |
+| `a` | Files：显示全部（忽略 `.gitignore`） |
+| `i` | Remote：扫描导入候选 |
+| `space` | Remote：勾选候选 |
+| `x` `s` `t` `b` `d` | Remote：执行命令 / 交互 shell / 连通性测试 / 绑定 / 删除 |
 | `?` | 帮助 |
 | `q` | 退出 |
 
 ## 支持的工具
 
-| 工具 | 会话存储 | 状态 |
-|---|---|---|
-| Claude Code | `~/.claude/projects/*/*.jsonl` | 已验证（resume 参数实测） |
-| Codex CLI | `~/.codex/sessions/**/*.jsonl` | 已验证（resume 参数实测） |
-| Gemini CLI | `~/.gemini/tmp/` | 未实测（本机未安装，路径按已知默认值） |
-| OpenCode | `~/.local/share/opencode/opencode.db` | 内置（会话在 SQLite，经 `opencode db ... --format json` 枚举） |
-| CodeBuddy / Cline 等 | `~/.kshell/providers.yaml` 声明 | 预置猜测值，标注未验证 |
+| 工具 | 会话存储 | 终端 resume | ACP 聊天 |
+|---|---|---|---|
+| Claude Code | `~/.claude/projects/<slug>/*.jsonl` | 已验证 | `claude-agent-acp` / `claude-code-acp` |
+| Codex CLI | `~/.codex/sessions/**/*.jsonl` | 已验证 | 无（走终端） |
+| Cursor | `~/.cursor/projects/*/agent-transcripts/`（`cursor-agent` / `agent`） | 内置 | `cursor-acp` |
+| CodeBuddy | `~/.codebuddy/projects/*/*.jsonl` | 已验证 | CLI `--acp` |
+| Gemini CLI | `~/.gemini/tmp/` | 按公开默认值推断，未实测 | 无 |
+| OpenCode | SQLite（`opencode db … --format json`） | 内置（`--session`） | 无 |
 
-其他工具在 `~/.kshell/providers.yaml` 里加一段即可，无需改代码：
+其它 CLI 在 `~/.kshell/providers.yaml` 声明即可，无需改代码（与内置同 ID 时以内置为准）：
 
 ```yaml
 providers:
@@ -92,17 +139,17 @@ providers:
 
 ## 远程 SSH
 
-- 连接基于系统 `ssh` 二进制，自动复用 `~/.ssh/config`、ssh-agent、ProxyJump 与 known_hosts（kshell 不绕过主机密钥校验，也永远不传密码）；
-- `i` 会扫描工作区里的连接候选：`~/.ssh/config`（高置信）、`.env*`（中）、Spring `application*`（中）、`docker-compose` / `Makefile` / `deploy*.sh` / ansible inventory（低）、README / CLAUDE.md（低）；
-- 候选一律**勾选确认后才入库**，低置信度默认不勾选；
-- 连接配置在 `~/.kshell/connections.yaml`，每条带工作区绑定；私钥只存路径引用，结构上杜绝密钥内容落盘。
+- 始终走系统 `ssh`，加 `-o BatchMode=yes`，复用 `~/.ssh/config`、ssh-agent、ProxyJump、known_hosts；不传密码，不绕过主机密钥校验
+- 可从工作区扫描候选：`~/.ssh/config`（高置信）、`.env*` / Spring `application*`（中）、`docker-compose` / `Makefile` / `deploy*.sh` / ansible（低）、README 等文档（低）
+- 候选勾选确认后才写入 `~/.kshell/connections.yaml`；低置信度默认不勾选
+- 私钥只存路径，不把密钥内容落盘
 
 ## 配置
 
-`~/.kshell/config.yaml`：
+`~/.kshell/config.yaml`（缺失则用默认值；语法损坏会先备份 `.bak` 再重建）：
 
 ```yaml
-scan_roots:            # git 工作区补充扫描的根目录
+scan_roots:            # git 工作区补充扫描根
   - ~
 max_depth: 4
 exclude: [".git", "node_modules", "vendor", "dist"]
@@ -110,25 +157,45 @@ ssh:
   connect_timeout: 5
   command_timeout_seconds: 60
   extra_args: []
-scanners:              # 各连接扫描器的开关
+scanners:
   sshconfig: true
   env: true
   spring: true
   deploy: true
   docs: true
+appearance:
+  mode: dark           # system | light | dark
+  font_size: 13        # 10–20
+close_behavior: tray   # tray | exit
+session_mode: tui      # tui | acp
+permission_mode: default  # default | bypass（仅建议可信环境）
+model:
+  enabled: false
+  preset: ""
+  openai_base_url: ""
+  anthropic_base_url: ""
+  api_key: ""
+  agents: {}           # toolID -> 模型名
 ```
+
+其它本机文件：`connections.yaml`、`providers.yaml`、`projects.yaml`、`archived.json`、`cache/`（扫描快照与工具探测缓存）。
 
 ## 开发
 
 ```powershell
-make test    # go test ./...
-make vet
-make build
-make cross   # 交叉编译三大平台
+go build ./...
+go vet ./...
+go test ./... -count=1
+
+cd frontend
+npm test
+npm run build
 ```
 
-实现计划与设计文档见 `docs/plans/`。
+Windows：`.\build.ps1`（可加 `-Test`、`-Desktop`）。桌面调试：`wails dev`。
 
-## 明确不做（一期）
+目录要点：`cmd/kshell` 为 TUI；仓库根 `main.go` 为桌面入口（**不要加构建约束**，否则 Wails 绑定生成会跳过）；`internal/providers` 适配各工具；`internal/desktop` 为 Wails 绑定；`frontend/` 为 React 界面。
 
-内嵌对话（ACP）、文件编辑、SFTP、端口转发、云同步、GUI。
+## 明确不做
+
+SFTP、端口转发、云同步、把各家对话协议再实现一遍。
