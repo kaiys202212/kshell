@@ -223,12 +223,27 @@ func acpLaunch(tool discovery.Tool, dir string) (providers.Launch, error) {
 	if tool.ACP == nil || !tool.ACP.Available {
 		return providers.Launch{}, ErrACPUnavailable
 	}
+	l := providers.Launch{Dir: dir}
 	if tool.ACP.Source == "npx" {
 		path := tool.ACP.BinPath
 		if path == "" {
 			path = "npx" // 兜底：探测结果缺 BinPath 时用 PATH 上的 npx
 		}
-		return providers.Launch{Path: path, Args: append([]string{"-y", tool.ACP.Package}, tool.ACP.ExtraArgs...), Dir: dir}, nil
+		l.Path, l.Args = path, append([]string{"-y", tool.ACP.Package}, tool.ACP.ExtraArgs...)
+	} else {
+		l.Path, l.Args = tool.ACP.BinPath, append([]string(nil), tool.ACP.ExtraArgs...)
 	}
-	return providers.Launch{Path: tool.ACP.BinPath, Args: append([]string(nil), tool.ACP.ExtraArgs...), Dir: dir}, nil
+	l.Env = acpAdapterEnv(tool)
+	return l, nil
+}
+
+// acpAdapterEnv 为依赖本体 CLI 的适配器补充环境变量。目前只有 cursor-acp：
+// cursor-agent 常不在 PATH 上（Windows 装在 %LOCALAPPDATA%\cursor-agent），
+// 适配器默认只按 PATH 查找，须显式传 CURSOR_AGENT_EXECUTABLE。node 入口
+// 形态（BinArgs 非空）无法表达为单个可执行文件，跳过注入。
+func acpAdapterEnv(tool discovery.Tool) map[string]string {
+	if tool.ID != "cursor" || tool.BinPath == "" || len(tool.BinArgs) != 0 {
+		return nil
+	}
+	return map[string]string{"CURSOR_AGENT_EXECUTABLE": tool.BinPath}
 }

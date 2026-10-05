@@ -48,6 +48,15 @@ func (Cursor) DetectSpec(home string) DetectSpec {
 	}
 }
 
+// ACPAdapter 声明 Cursor 的 ACP 适配器：官方 CLI 无内置 ACP，走第三方
+// cursor-acp（npm）桥接 cursor-agent；本体路径由 launch 层经环境变量注入。
+func (Cursor) ACPAdapter() ACPAdapter {
+	return ACPAdapter{
+		BinNames:   []string{"cursor-acp"},
+		NPMPackage: "cursor-acp",
+	}
+}
+
 // cursorVersionInstallDirs 列出官方安装根下 versions 子目录，**最新版本在前**。
 // 目录名形如 YYYY.MM.DD-commit 或 YYYY.MM.DD-HH-MM-SS-commit；必须按数值解析后
 // 降序排列——月份不补零（2026.9 vs 2026.10）时字典序会跨月错序。
