@@ -199,3 +199,9 @@ Windows：`.\build.ps1`（可加 `-Test`、`-Desktop`）。桌面调试：`wails
 ## 明确不做
 
 SFTP、端口转发、云同步、把各家对话协议再实现一遍。
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)。
+
+Copyright (c) 2026 kaiys202212
