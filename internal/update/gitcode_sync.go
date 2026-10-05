@@ -41,7 +41,8 @@ func SyncGitCode(ctx context.Context, opts SyncOptions) error {
 	base := strings.TrimRight(orDefault(opts.BaseURL, "https://api.gitcode.com/api/v5"), "/")
 	cli := opts.HTTP
 	if cli == nil {
-		cli = &http.Client{Timeout: 5 * time.Minute}
+		// 单个 zip ~8MB，GitCode 对象存储偶发超过 5 分钟
+		cli = &http.Client{Timeout: 15 * time.Minute}
 	}
 
 	files, err := listReleaseFiles(opts.Dir)
@@ -148,6 +149,25 @@ func (a gitcodeAPI) createRelease(ctx context.Context, tag string) error {
 }
 
 func (a gitcodeAPI) upload(ctx context.Context, tag, fileName string, body []byte) error {
+	const attempts = 3
+	var last error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(i) * 2 * time.Second):
+			}
+		}
+		last = a.uploadOnce(ctx, tag, fileName, body)
+		if last == nil {
+			return nil
+		}
+	}
+	return last
+}
+
+func (a gitcodeAPI) uploadOnce(ctx context.Context, tag, fileName string, body []byte) error {
 	q := url.Values{"file_name": {fileName}}
 	req, err := a.newReq(ctx, http.MethodGet, "/repos/"+a.owner+"/"+a.repo+"/releases/"+tag+"/upload_url?"+q.Encode(), nil)
 	if err != nil {

@@ -94,3 +94,54 @@ func TestSyncGitCodeSkipsWithoutToken(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSyncGitCodeRetriesUpload(t *testing.T) {
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, ZipName)
+	if err := os.WriteFile(zipPath, []byte("ZIPDATA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	puts := 0
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	mux.HandleFunc("/api/v5/repos/"+GitCodeOwner+"/kshell/releases/tags/v0.2.0", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"tag_name": "v0.2.0"})
+	})
+	mux.HandleFunc("/api/v5/repos/"+GitCodeOwner+"/kshell/releases/v0.2.0/upload_url", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("file_name")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"url": srv.URL + "/obs/" + name,
+			"headers": map[string]string{
+				"Content-Type": "application/octet-stream",
+			},
+		})
+	})
+	mux.HandleFunc("/obs/", func(w http.ResponseWriter, r *http.Request) {
+		puts++
+		if puts == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	err := SyncGitCode(context.Background(), SyncOptions{
+		BaseURL: srv.URL + "/api/v5",
+		Token:   "tok",
+		Owner:   GitCodeOwner,
+		Repo:    "kshell",
+		Tag:     "v0.2.0",
+		Dir:     dir,
+		HTTP:    srv.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if puts < 2 {
+		t.Fatalf("PUT 次数 = %d, want ≥2（先失败再成功）", puts)
+	}
+}

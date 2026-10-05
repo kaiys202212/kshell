@@ -129,11 +129,11 @@ jobs:
           cat dist/SHA256SUMS
           test -s dist/SHA256SUMS
           test "$(find dist -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 3
-          # GH_REPO 保证 gh 不依赖 git remote
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          # 重打同名 tag 时旧 Release 常已随 tag 删除；create 失败再 upload。
+          # --latest 让升级检查打到本 tag（即使仓库里还有更高号的旧 tag）。
+          if ! gh release create "$TAG" --latest --title "$TAG" --notes "kshell $TAG" dist/*.zip dist/SHA256SUMS; then
             gh release upload "$TAG" dist/*.zip dist/SHA256SUMS --clobber
-          else
-            gh release create "$TAG" --title "$TAG" --notes "kshell $TAG" dist/*.zip dist/SHA256SUMS
+            gh release edit "$TAG" --latest
           fi
       - name: Sync GitCode release
         env:
