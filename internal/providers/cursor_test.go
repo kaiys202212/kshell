@@ -415,3 +415,10 @@ func TestCursorVersionInstallDirsLatestFirst(t *testing.T) {
 		t.Fatalf("最旧版本应排最后, got %v", got)
 	}
 }
+
+func TestCursorDetectSpecDeclaresNodeEntry(t *testing.T) {
+	spec := (Cursor{}).DetectSpec(t.TempDir())
+	if spec.NodeEntryScript != "index.js" {
+		t.Fatalf("NodeEntryScript = %q, want index.js", spec.NodeEntryScript)
+	}
+}

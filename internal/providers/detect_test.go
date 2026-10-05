@@ -55,8 +55,9 @@ func TestDetectNodeEntryFallback(t *testing.T) {
 	if want := filepath.Join(vdir, "node.exe"); filepath.Clean(got.BinPath) != filepath.Clean(want) {
 		t.Fatalf("BinPath = %q, want %q", got.BinPath, want)
 	}
-	if len(got.BinArgs) != 1 || got.BinArgs[0] != "index.js" {
-		t.Fatalf("BinArgs = %v, want [index.js]", got.BinArgs)
+	// 主脚本必须是绝对路径：启动会话时子进程 cwd 是工作区，相对路径会解析错
+	if len(got.BinArgs) != 1 || filepath.Clean(got.BinArgs[0]) != filepath.Clean(filepath.Join(vdir, "index.js")) {
+		t.Fatalf("BinArgs = %v, want [%s]", got.BinArgs, filepath.Join(vdir, "index.js"))
 	}
 }
 

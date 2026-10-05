@@ -114,8 +114,8 @@ func TestDetectAllCarriesBinArgs(t *testing.T) {
 		NodeEntryScript: "index.js",
 	}}
 	probe := func(bin string, args []string) string {
-		if len(args) != 1 || args[0] != "index.js" {
-			t.Fatalf("probe 应收到 BinArgs, got %v", args)
+		if len(args) != 1 || filepath.Base(args[0]) != "index.js" || !filepath.IsAbs(args[0]) {
+			t.Fatalf("probe 应收到绝对路径 BinArgs, got %v", args)
 		}
 		return "2026.10.01"
 	}
@@ -123,8 +123,8 @@ func TestDetectAllCarriesBinArgs(t *testing.T) {
 	if !tools[0].Installed || tools[0].BinPath == "" {
 		t.Fatalf("应检出 node 入口, got %+v", tools[0])
 	}
-	if len(tools[0].BinArgs) != 1 || tools[0].BinArgs[0] != "index.js" {
-		t.Fatalf("Tool 应携带 BinArgs, got %+v", tools[0])
+	if len(tools[0].BinArgs) != 1 || filepath.Base(tools[0].BinArgs[0]) != "index.js" || !filepath.IsAbs(tools[0].BinArgs[0]) {
+		t.Fatalf("Tool 应携带绝对路径 BinArgs, got %+v", tools[0])
 	}
 	if tools[0].Version != "2026.10.01" {
 		t.Fatalf("version = %q", tools[0].Version)
