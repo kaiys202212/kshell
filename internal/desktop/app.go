@@ -11,6 +11,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/yangk/kshell/internal/agenthook"
 	"github.com/yangk/kshell/internal/appearance"
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
@@ -116,6 +117,9 @@ type App struct {
 	// toolsReady：本进程已完成过一次 DetectAll（快照灌入不算）。GetTools 据此
 	// 等待，避免会话扫描尚未结束时一直拿着「BinPath 为空」的旧快照。
 	toolsReady bool
+	// windowHidden 跟踪主窗口是否已收进托盘（wails v2.16 无 WindowIsVisible 可查）：
+	// 通知 dispatcher 据此决定要不要补弹系统 toast。
+	windowHidden bool
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。
@@ -155,6 +159,12 @@ func (a *App) Startup(ctx context.Context) {
 	go a.reapLoop()
 	go a.scheduleUpdateCheck()
 	go a.ensureDesktopShortcutOnStartup()
+
+	// agent 通知：先清掉超龄残留（收件箱文件 + opencode 插件临时目录），再起收件箱
+	// 轮询（随进程存活，无需取消）
+	agenthook.CleanupInbox(notifyInboxMaxAge)
+	cleanupOpenCodeTempDirs()
+	go a.dispatchNotifyLoop()
 
 	a.emitAppearance()
 	a.restartAppearanceWatcher()
@@ -346,7 +356,10 @@ func (a *App) StartTray() {
 	a.mu.Unlock()
 
 	go runTrayFn(icon,
-		func() { runtime.WindowShow(ctx) },
+		func() {
+			a.setWindowHidden(false)
+			runtime.WindowShow(ctx)
+		},
 		func() { a.quitApp(ctx) },
 	)
 }
@@ -419,6 +432,7 @@ func (a *App) BeforeClose(ctx context.Context) bool {
 		return false
 	}
 	windowHide(ctx)
+	a.setWindowHidden(true)
 	return true
 }
 
@@ -430,6 +444,7 @@ func (a *App) OnSecondInstanceLaunch(_ options.SecondInstanceData) {
 	if ctx == nil {
 		return
 	}
+	a.setWindowHidden(false)
 	windowShow(ctx)
 }
 
@@ -823,7 +838,7 @@ func (a *App) ResumeSession(id string) error {
 	if err != nil {
 		return err
 	}
-	return a.launchWindow(o.Windows, l, s.Title)
+	return a.launchWindow(o.Windows, l, s.ToolID, s.Title)
 }
 
 // NewSession 在指定工作区新建会话（wsID 为工作区路径）。
@@ -848,10 +863,12 @@ func (a *App) FocusSession(id string) bool {
 // launchWindow 把启动描述转成窗口内的 PowerShell 语句并弹窗。
 // 注意不走 launcher.Build 的 shim 解析：弹出的窗口本身就是 PowerShell，
 // .ps1 CLI 用 & 调用运算符即可原生执行，无需转 .cmd。
-func (a *App) launchWindow(wm *WindowManager, l providers.Launch, titleText string) error {
+// termKey 用 window:<标题> 前缀：外部窗口没有终端页签，前端按此前缀自行决定去向。
+func (a *App) launchWindow(wm *WindowManager, l providers.Launch, toolID, titleText string) error {
 	if wm == nil {
 		return errNotReady
 	}
+	applyNotifyLaunch(&l, toolID, "window:"+titleText, l.Dir)
 	return wm.LaunchSession(l.Dir, titleText, psStatement(l.Path, l.Args, l.Env))
 }
 

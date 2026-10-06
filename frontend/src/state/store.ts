@@ -4,12 +4,23 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { ChatInfo, ChatPermissionRequest, ChatUpdate, TerminalInfo, Workspace } from '../lib/api';
+import type { AgentNotice } from '../lib/agentNotify';
 import type { AppearanceInfo } from '../lib/appearance';
 import { applyChatUpdate, type TimelineItem } from './chatUpdate';
 import { mergeMirrorList } from './mirrorMerge';
 
 // toast 的自增 id（模块级：store 单例，保证 id 唯一即可）
 let nextToastId = 1;
+
+// agent 通知的自增 id（同上）
+let nextNoticeId = 1;
+
+// 通知气泡点击跳转的自增序号：同一 termKey 连续点击也要能再次触发页签切换
+let nextFocusSeq = 1;
+
+// agent 通知队列上限：窗口隐藏期间 hook 照常上报，超过上限丢最旧的
+//（气泡一次最多展示 3 条 + 计数，8 条缓冲足够覆盖正常节奏）。
+const AGENT_NOTICE_CAP = 8;
 
 // omitKey 返回去掉某个键的浅拷贝（不改原对象）。
 function omitKey<T>(rec: Record<string, T>, key: string): Record<string, T> {
@@ -127,6 +138,19 @@ interface AppState {
   // 颜色模式（来自 Go 侧 GetAppearance / appearance:changed 事件；不持久化，刷新即重取）
   appearance: AppearanceInfo;
   setAppearance(info: AppearanceInfo): void;
+
+  // agent 通知气泡队列（notify:agent 事件；不持久化，6s 自动消失由气泡组件驱动）
+  agentNotices: AgentNotice[];
+  pushAgentNotice(p: Omit<AgentNotice, 'id'>): void;
+  dismissAgentNotice(id: number): void;
+  clearAgentNotices(): void;
+
+  // 通知气泡点击后的「切到对应页签」请求（termKey = 终端/聊天 manager 的 key）。
+  // 中心区页签选中态在各 WorkspaceTabView 的本地 state 里，只能经这里中转：
+  // 每个视图监听该字段，发现自己持有该 key 的页签就选中并按 seq 清除。
+  focusTermKey: { termKey: string; seq: number } | null;
+  requestFocusTerm(termKey: string): void;
+  clearFocusTerm(seq: number): void;
 }
 
 // clampLayout 把任意输入收敛到合法范围（拖动、持久化恢复、测试都走这里）。
@@ -324,6 +348,23 @@ export const useAppStore = create<AppState>()(
 
       appearance: { mode: 'system', resolved: 'dark', fontSize: 13 },
       setAppearance: (appearance) => set({ appearance }),
+
+      agentNotices: [],
+      pushAgentNotice: (p) =>
+        set((s) => {
+          const notices = [...s.agentNotices, { ...p, id: nextNoticeId++ }];
+          return {
+            agentNotices: notices.length > AGENT_NOTICE_CAP ? notices.slice(notices.length - AGENT_NOTICE_CAP) : notices,
+          };
+        }),
+      dismissAgentNotice: (id) =>
+        set((s) => ({ agentNotices: s.agentNotices.filter((n) => n.id !== id) })),
+      clearAgentNotices: () => set({ agentNotices: [] }),
+
+      focusTermKey: null,
+      requestFocusTerm: (termKey) => set({ focusTermKey: { termKey, seq: nextFocusSeq++ } }),
+      clearFocusTerm: (seq) =>
+        set((s) => (s.focusTermKey?.seq === seq ? { focusTermKey: null } : {})),
     }),
     {
       name: 'kshell-tabs',

@@ -178,6 +178,7 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.handler = &sessionHandler{m: m, id: s.id}
 	s.info.ID = s.id
+	s.info.Key = key
 	s.info.Status = StatusStarting
 	s.knownIDs = map[string]bool{}
 	for _, sid := range info.KnownSessionIDs {
@@ -493,6 +494,17 @@ func (m *Manager) List() []Info {
 		out = append(out, s.info)
 	}
 	return out
+}
+
+// Get 返回指定聊天的 Info 快照（含打开 Key）；不存在时 ok=false。
+// 供 desktop 层在 update 回调里反查 payload 归因字段（Key/ToolID/Workspace）。
+func (m *Manager) Get(id string) (Info, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s := m.byID[id]; s != nil {
+		return s.info, true
+	}
+	return Info{}, false
 }
 
 // RememberKnownIDs 记下打开本聊天时已存在的磁盘会话 ID，扫描回填时不得把它们绑上来。

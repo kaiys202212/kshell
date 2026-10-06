@@ -102,8 +102,10 @@ export interface ToolInfo {
 // Kind: session（恢复历史会话）/ new（工作区新开 agent）/
 //       shell（预览区本地命令行）/ ssh（预览区远程 SSH）
 // Status: running | exited
+// Key: 终端 manager 的 key（session:<id> / new:<n>），通知气泡按 termKey 定位页签用。
 export interface TerminalInfo {
   ID: string;
+  Key?: string;
   Kind: string;
   SessionID: string;
   ConnID?: string;
@@ -217,6 +219,8 @@ export interface GitDiffResult {
 // chat.Info 的 JSON 形态（internal/chat/types.go）
 export interface ChatInfo {
   ID: string;
+  /** 聊天 manager 的 key（session:<id> / new:<n>），通知气泡按 termKey 定位页签用 */
+  Key?: string;
   Kind: string; // session | new
   SessionID: string;
   Workspace: string;
@@ -1078,6 +1082,34 @@ export async function getDeletedProjects(): Promise<DeletedProject[]> {
 export function onProjectsChanged(cb: (payload: { workspaces: Workspace[] }) => void): () => void {
   return EventsOn('projects:changed', (p: { workspaces?: Workspace[] }) =>
     cb({ workspaces: p?.workspaces ?? [] }),
+  );
+}
+
+// "notify:agent" 事件 payload（internal/agenthook.Payload 的 JSON 形态）；
+// event 取值见 lib/agentNotify 的语义归纳（完成 / 等待确认）。
+export interface AgentNotifyPayload {
+  tool: string;
+  event: string;
+  /** 终端/聊天 manager 的 key，前端据此切到对应页签；外部窗口为 window:<标题>（无页签可切） */
+  termKey: string;
+  workspace: string;
+  summary: string;
+  raw: string;
+  ts: number;
+}
+
+// onNotifyAgent 订阅 agent 通知事件（hook/OSC/ACP 聊天共用一条通道），返回取消订阅函数
+export function onNotifyAgent(cb: (payload: AgentNotifyPayload) => void): () => void {
+  return EventsOn('notify:agent', (p: Partial<AgentNotifyPayload>) =>
+    cb({
+      tool: p?.tool ?? '',
+      event: p?.event ?? '',
+      termKey: p?.termKey ?? '',
+      workspace: p?.workspace ?? '',
+      summary: p?.summary ?? '',
+      raw: p?.raw ?? '',
+      ts: p?.ts ?? 0,
+    }),
   );
 }
 

@@ -22,7 +22,11 @@ var termKeySeq atomic.Int64
 
 // newTerminalManager 用真实后端装配终端管理器（initRealDeps 用）。
 func newTerminalManager(a *App) *terminal.Manager {
-	return newTerminalManagerWith(a.Emit, terminal.NewPTYBackend())
+	m := newTerminalManagerWith(a.Emit, terminal.NewPTYBackend())
+	// Gemini 无 hooks：终端 OSC 9 / 777;notify 命中直接复用 handleAgentNotify
+	//（emit notify:agent + 窗口隐藏时补 toast），与 hooks 通道同一条分发路径。
+	m.SetOnNotify(a.handleAgentNotify)
+	return m
 }
 
 // newTerminalManagerWith 装配终端管理器：输出/退出经 emit 转发给前端。
@@ -67,6 +71,8 @@ func (a *App) OpenSessionTerminal(sessionID string, cols, rows int) (terminal.In
 	if err != nil {
 		return terminal.Info{}, err
 	}
+	// 注入 agent 通知归因与 hook 参数；失败静默跳过，不影响会话启动
+	applyNotifyInject(&spec, s.ToolID, "session:"+sessionID, s.Workspace)
 
 	return m.Open("session:"+sessionID, terminal.Info{
 		Kind:      terminal.KindSession,
@@ -100,11 +106,20 @@ func (a *App) OpenWorkspaceTerminal(wsID string, toolID string, cols, rows int) 
 	}
 
 	key := fmt.Sprintf("new:%d", termKeySeq.Add(1))
+	// toolID 为空时 launch 选了首选工具：还原出真实工具 ID 才能按工具注入 hook
+	injectToolID := toolID
+	if injectToolID == "" {
+		if p, _, ok := launch.PreferredTool(o.Providers, tools, ws); ok {
+			injectToolID = p.ID()
+		}
+	}
+	applyNotifyInject(&spec, injectToolID, key, ws.Path)
+
 	info, err := m.Open(key, terminal.Info{
 		Kind:            terminal.KindNew,
 		Workspace:       ws.Path,
 		Title:           workspaceTerminalTitle(o.Providers, tools, ws, toolID),
-		ToolID:          toolID, // 原样透传前端选中的工具（空表示由 launch 选首选），页签按此展示
+		ToolID:          injectToolID, // 还原后的真实工具 ID，页签展示与通知注入同源
 		KnownSessionIDs: a.knownSessionIDs(),
 	}, terminal.Spec{Path: spec.Path, Args: spec.Args, Dir: spec.Dir, Env: spec.Env}, cols, rows)
 	if err != nil {
@@ -179,7 +194,7 @@ func (a *App) NewSessionWithTool(wsID string, toolID string) error {
 	if err != nil {
 		return err
 	}
-	return a.launchWindow(o.Windows, l, ws.Name)
+	return a.launchWindow(o.Windows, l, toolID, ws.Name)
 }
 
 // workspaceTerminalTitle 生成内嵌终端页签标题：工作区名 + 工具展示名。

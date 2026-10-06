@@ -14,6 +14,8 @@ beforeEach(() => {
     terminals: [],
     layout: { left: 288, right: 300 },
     terminalBusy: {},
+    agentNotices: [],
+    focusTermKey: null,
   });
 });
 
@@ -204,5 +206,64 @@ describe('store', () => {
     });
     expect(useAppStore.getState().chats[0].Status).toBe('ready');
     expect(useAppStore.getState()).not.toHaveProperty('activityCompleted');
+  });
+
+  it('agent 通知：入队追加、dismiss 移除、clear 清空', () => {
+    useAppStore.getState().pushAgentNotice({
+      tool: 'claude', event: 'Stop', termKey: 'session:s1', workspace: 'D:\\w', summary: '完成',
+    });
+    useAppStore.getState().pushAgentNotice({
+      tool: 'codex', event: 'Notification', termKey: 'new:1', workspace: 'D:\\w', summary: '等确认',
+    });
+
+    const notices = useAppStore.getState().agentNotices;
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toMatchObject({ tool: 'claude', event: 'Stop', termKey: 'session:s1' });
+    expect(new Set(notices.map((n) => n.id)).size).toBe(2);
+
+    useAppStore.getState().dismissAgentNotice(notices[0].id);
+    expect(useAppStore.getState().agentNotices.map((n) => n.tool)).toEqual(['codex']);
+
+    useAppStore.getState().clearAgentNotices();
+    expect(useAppStore.getState().agentNotices).toHaveLength(0);
+  });
+
+  it('agent 通知队列有上限保护（窗口隐藏期间不无限堆积）', () => {
+    for (let i = 0; i < 12; i++) {
+      useAppStore.getState().pushAgentNotice({
+        tool: 'claude', event: 'Stop', termKey: 'k' + i, workspace: 'D:\\w', summary: String(i),
+      });
+    }
+    const notices = useAppStore.getState().agentNotices;
+    expect(notices.length).toBeLessThanOrEqual(8);
+    // 保留最新的一条
+    expect(notices[notices.length - 1].termKey).toBe('k11');
+  });
+
+  it('agent 通知不入 localStorage（与页签持久化分离）', () => {
+    useAppStore.setState({ openTabs: [{ id: 'D:\\proj-a', name: 'proj-a' }] });
+    useAppStore.getState().pushAgentNotice({
+      tool: 'claude', event: 'Stop', termKey: 'k', workspace: 'D:\\w', summary: '完成',
+    });
+
+    const parsed = JSON.parse(localStorage.getItem('kshell-tabs')!) as {
+      state: Record<string, unknown>;
+    };
+    expect(parsed.state).not.toHaveProperty('agentNotices');
+    expect(parsed.state).not.toHaveProperty('focusTermKey');
+  });
+
+  it('focusTermKey：请求带自增 seq，clear 只清掉对应那次请求', () => {
+    useAppStore.getState().requestFocusTerm('session:s1');
+    const first = useAppStore.getState().focusTermKey;
+    expect(first).toEqual({ termKey: 'session:s1', seq: 1 });
+
+    // 消费期间来了新的请求：旧 seq 的 clear 不得误删新请求
+    useAppStore.getState().requestFocusTerm('new:2');
+    useAppStore.getState().clearFocusTerm(first!.seq);
+    expect(useAppStore.getState().focusTermKey).toEqual({ termKey: 'new:2', seq: 2 });
+
+    useAppStore.getState().clearFocusTerm(2);
+    expect(useAppStore.getState().focusTermKey).toBeNull();
   });
 });
