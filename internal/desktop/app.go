@@ -11,6 +11,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/yangk/kshell/internal/agenthook"
 	"github.com/yangk/kshell/internal/appearance"
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
@@ -116,6 +117,9 @@ type App struct {
 	// toolsReady：本进程已完成过一次 DetectAll（快照灌入不算）。GetTools 据此
 	// 等待，避免会话扫描尚未结束时一直拿着「BinPath 为空」的旧快照。
 	toolsReady bool
+	// windowHidden 跟踪主窗口是否已收进托盘（wails v2.16 无 WindowIsVisible 可查）：
+	// 通知 dispatcher 据此决定要不要补弹系统 toast。
+	windowHidden bool
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。
@@ -154,6 +158,10 @@ func (a *App) Startup(ctx context.Context) {
 	go a.runScan()
 	go a.reapLoop()
 	go a.scheduleUpdateCheck()
+
+	// agent 通知：先清掉超龄残留，再起收件箱轮询（随进程存活，无需取消）
+	agenthook.CleanupInbox(notifyInboxMaxAge)
+	go a.dispatchNotifyLoop()
 
 	a.emitAppearance()
 	a.restartAppearanceWatcher()
@@ -325,7 +333,10 @@ func (a *App) StartTray() {
 	a.mu.Unlock()
 
 	go runTrayFn(icon,
-		func() { runtime.WindowShow(ctx) },
+		func() {
+			a.setWindowHidden(false)
+			runtime.WindowShow(ctx)
+		},
 		func() { a.quitApp(ctx) },
 	)
 }
@@ -398,6 +409,7 @@ func (a *App) BeforeClose(ctx context.Context) bool {
 		return false
 	}
 	windowHide(ctx)
+	a.setWindowHidden(true)
 	return true
 }
 
@@ -409,6 +421,7 @@ func (a *App) OnSecondInstanceLaunch(_ options.SecondInstanceData) {
 	if ctx == nil {
 		return
 	}
+	a.setWindowHidden(false)
 	windowShow(ctx)
 }
 
