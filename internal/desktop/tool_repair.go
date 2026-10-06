@@ -106,8 +106,13 @@ func (a *App) procScanUnderDir(dir string) bool {
 // maybeAutoRepair 对残缺安装执行自动修复门控（详见设计文档）：
 // 残缺 + 无 kshell 卸载标记 + 有使用残留 + 无进程占用 + 无进行中任务 + 重试未到上限，
 // 全部满足才复用 startInstallJob 跑官方安装配方。进程占用只跳过本轮（扫描周期即退避），
-// 不计重试；其余不满足直接跳过该工具。布局零值（测试）下全部静默跳过。
+// 不计重试；其余不满足直接跳过该工具。
+// Layout.State 未装配（测试的零值 Layout）视为自动修复未启用：标记与计数本来就
+// 无处可落，放任启动只会让既有用例被后台安装任务抢跑。
 func (a *App) maybeAutoRepair(tools []discovery.Tool) {
+	if a.opts.Layout.State == "" {
+		return
+	}
 	for _, t := range tools {
 		if !t.Installed || !t.Broken {
 			continue
