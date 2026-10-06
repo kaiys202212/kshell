@@ -88,3 +88,11 @@ func decodeAttempts(path string) int {
 	}
 	return rec.Attempts
 }
+
+// procScanUnderDir 解析进程占用检查器：注入优先，否则走平台默认实现。
+func (a *App) procScanUnderDir(dir string) bool {
+	if fn := a.snapshot().ProcScan; fn != nil {
+		return fn(dir)
+	}
+	return runningProcessUnderDir(dir)
+}

@@ -70,6 +70,10 @@ type Options struct {
 	InstallRunner installCmdRunner
 	// PurgeDirs 清除已展开的配置目录；nil 则 os.RemoveAll。目录不存在视为成功。
 	PurgeDirs func(dirs []string) error
+	// ProcScan 查「dir 下是否有正在运行的进程可执行文件」；nil 走平台默认实现
+	// （Windows PowerShell 枚举，其它平台恒 false）。修复前检查工具进程占用，
+	// 避免重演 updater 边跑边装的事故。测试注入桩。
+	ProcScan func(dir string) bool
 }
 
 // App 是暴露给前端的绑定对象：薄封装 discovery/providers/window 等核心包，
