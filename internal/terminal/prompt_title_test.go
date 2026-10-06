@@ -32,6 +32,41 @@ func TestWriteEnterSetsPromptTitleOnce(t *testing.T) {
 	}
 }
 
+func TestWriteIgnoresOSCColorReplyForPromptTitle(t *testing.T) {
+	b := &stubBackend{}
+	m := NewManager(b, nil, nil)
+	info, err := m.Open("new:1", Info{
+		Kind: KindNew, Workspace: `D:\ws`, Title: "占位", ToolID: "opencode",
+	}, Spec{Path: "opencode"}, 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// xterm 对 OSC 4 查色的应答会走 onData→Write；不得当成首行标题，也不应标 Prompted
+	oscBEL := "\x1b]4;0;rgb:2e2e/3434/3636\x07"
+	if err := m.Write(info.ID, []byte(oscBEL+"\r")); err != nil {
+		t.Fatal(err)
+	}
+	got := m.List()[0]
+	if got.Title != "占位" || got.Prompted {
+		t.Fatalf("after OSC BEL: %+v", got)
+	}
+	oscST := "\x1b]4;0;rgb:aaaa/bbbb/cccc\x1b\\"
+	if err := m.Write(info.ID, []byte(oscST+"\r")); err != nil {
+		t.Fatal(err)
+	}
+	got = m.List()[0]
+	if got.Title != "占位" || got.Prompted {
+		t.Fatalf("after OSC ST: %+v", got)
+	}
+	if err := m.Write(info.ID, []byte("修复登录空指针\r")); err != nil {
+		t.Fatal(err)
+	}
+	got = m.List()[0]
+	if got.Title != "修复登录空指针" || !got.Prompted {
+		t.Fatalf("real prompt: %+v", got)
+	}
+}
+
 func TestWriteEnterIgnoresShellAndEscape(t *testing.T) {
 	b := &stubBackend{}
 	m := NewManager(b, nil, nil)

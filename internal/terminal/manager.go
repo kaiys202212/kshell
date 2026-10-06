@@ -128,9 +128,18 @@ type session struct {
 	knownIDs map[string]bool // 打开时已有的磁盘会话，禁止绑到本新建终端
 
 	line           []byte // 尚未回车的用户输入（仅新建 agent 会话用来取标题）
-	esc            int    // 0 普通，1 刚看到 ESC，2 在 CSI 里
+	esc            int    // feedPrompt 转义状态，见 escGround 等常量
 	promptTitleSet bool
 }
+
+// feedPrompt 输入扫描的转义状态（只用于标题提取，不消费写入 PTY 的字节）。
+const (
+	escGround = 0 // 普通字节
+	escSawESC = 1 // 刚看到 ESC
+	escInCSI  = 2 // ESC [ … 终字节
+	escInOSC  = 3 // ESC ] … BEL/ST（颜色查询应答等）
+	escOSCEsc = 4 // OSC 体内刚看到 ESC，等 \ 结算 ST
+)
 
 // Manager 维护 key→会话 与 id→会话 两张表，并为每个会话跑一个读协程。
 type Manager struct {
@@ -428,29 +437,55 @@ func (m *Manager) Write(id string, data []byte) error {
 
 // feedPrompt 从用户键入里收出第一行非空输入，当作新建会话的页签标题。
 // 只处理 KindNew：shell/ssh 和已有标题的恢复会话不动。调用方持锁。
+//
+// 必须跳过 OSC（ESC ] … BEL/ST）：xterm 对颜色查询的应答走 onData→Write，
+// 若只剥 CSI，会把 "4;0;rgb:…" 收成标题（OpenCode system 主题曾触发此路径）。
 func (s *session) feedPrompt(data []byte) (Info, bool) {
 	if s.promptTitleSet || s.info.Kind != KindNew {
 		return Info{}, false
 	}
 	for _, b := range data {
-		if s.esc == 1 {
-			// ESC [ 进入 CSI；其它转义吞掉下一字节
-			if b == '[' {
-				s.esc = 2
-			} else {
-				s.esc = 0
+		switch s.esc {
+		case escSawESC:
+			switch b {
+			case '[':
+				s.esc = escInCSI
+			case ']':
+				s.esc = escInOSC
+			default:
+				s.esc = escGround // 其它两字节转义：吞掉本字节
 			}
 			continue
-		}
-		if s.esc == 2 {
+		case escInCSI:
 			if b >= 0x40 && b <= 0x7e {
-				s.esc = 0
+				s.esc = escGround
+			}
+			continue
+		case escInOSC:
+			switch b {
+			case 0x07: // BEL 终止
+				s.esc = escGround
+			case 0x1b:
+				s.esc = escOSCEsc
+			}
+			continue
+		case escOSCEsc:
+			if b == '\\' { // ST = ESC \
+				s.esc = escGround
+			} else {
+				// 不是 ST：仍视为 OSC 体（罕见），ESC 已消耗
+				s.esc = escInOSC
+				if b == 0x07 {
+					s.esc = escGround
+				} else if b == 0x1b {
+					s.esc = escOSCEsc
+				}
 			}
 			continue
 		}
 		switch b {
 		case 0x1b:
-			s.esc = 1
+			s.esc = escSawESC
 		case '\r', '\n':
 			line := strings.TrimSpace(string(s.line))
 			s.line = s.line[:0]
