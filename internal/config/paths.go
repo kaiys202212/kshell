@@ -26,6 +26,9 @@ type Layout struct {
 	Projects string
 	// Archived 是已归档会话 ID 名单。
 	Archived string
+	// State 是自动修复/卸载标记的落盘目录（~/.kshell/state）：卸载标记阻止
+	// 残缺自动修复把刚卸的装回来，repair 计数限制自动修复重试次数。
+	State string
 	// CacheAppearance 是颜色主题注入文件的落盘目录（agent 工具用）。
 	CacheAppearance string
 }
@@ -50,6 +53,7 @@ func Paths() (Layout, error) {
 		SignalExit:      filepath.Join(root, "exit.signal"),
 		Projects:        filepath.Join(root, "projects.yaml"),
 		Archived:        filepath.Join(root, "archived.json"),
+		State:           filepath.Join(root, "state"),
 		CacheAppearance: filepath.Join(cache, "appearance"),
 	}, nil
 }
