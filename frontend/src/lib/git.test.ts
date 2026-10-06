@@ -35,6 +35,15 @@ describe('resolveGitCode', () => {
     expect(resolveGitCode(map, '.cursor', true)).toBe('ignored');
   });
 
+  it('父目录仅被推断为 ignored 时，未入 map 的子项也继承', () => {
+    const map = {
+      '.cursor': 'untracked',
+      '.cursor/rules.md': 'ignored',
+    };
+    expect(resolveGitCode(map, '.cursor/extra', false)).toBe('ignored');
+    expect(resolveGitCode(map, '.cursor/nested', true)).toBe('ignored');
+  });
+
   it('目录下有非 ignored 子条目时不推断 ignored', () => {
     const map = {
       src: 'untracked',

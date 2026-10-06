@@ -18,16 +18,6 @@ export function subtreeDirty(gitMap: Record<string, string> | undefined, relPath
   return false;
 }
 
-function ancestorIgnored(gitMap: Record<string, string>, relPath: string): boolean {
-  if (!relPath) return false;
-  const parts = relPath.split('/');
-  for (let i = 1; i < parts.length; i++) {
-    const anc = parts.slice(0, i).join('/');
-    if (gitMap[anc] === 'ignored') return true;
-  }
-  return false;
-}
-
 function childrenAllIgnored(gitMap: Record<string, string>, relPath: string): boolean {
   const prefix = `${relPath}/`;
   let any = false;
@@ -37,6 +27,23 @@ function childrenAllIgnored(gitMap: Record<string, string>, relPath: string): bo
     if (code !== 'ignored') return false;
   }
   return any;
+}
+
+// 目录在 map 中为 ignored，或可被推断为 ignored（无码/untracked 且子全 ignored）。
+function dirEffectivelyIgnored(gitMap: Record<string, string>, relPath: string): boolean {
+  const own = gitMap[relPath];
+  if (own === 'ignored') return true;
+  if (own && EXPLICIT.has(own)) return false;
+  return childrenAllIgnored(gitMap, relPath) && (!own || own === 'untracked');
+}
+
+function ancestorIgnored(gitMap: Record<string, string>, relPath: string): boolean {
+  if (!relPath) return false;
+  const parts = relPath.split('/');
+  for (let i = 1; i < parts.length; i++) {
+    if (dirEffectivelyIgnored(gitMap, parts.slice(0, i).join('/'))) return true;
+  }
+  return false;
 }
 
 // 解析文件树行应展示的 git 码：祖先继承 ignored；目录可在子全 ignored 时推断（含覆盖 untracked）。
@@ -49,9 +56,7 @@ export function resolveGitCode(
   if (ancestorIgnored(gitMap, relPath)) return 'ignored';
   const own = gitMap[relPath];
   if (own && EXPLICIT.has(own)) return own;
-  if (isDir && childrenAllIgnored(gitMap, relPath) && (!own || own === 'untracked' || own === 'ignored')) {
-    return 'ignored';
-  }
+  if (isDir && dirEffectivelyIgnored(gitMap, relPath)) return 'ignored';
   return own;
 }
 
