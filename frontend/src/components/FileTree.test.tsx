@@ -625,7 +625,7 @@ describe('FileTree 树内拖拽移动', () => {
     expect(screen.getAllByTitle('git：已忽略').length).toBeGreaterThanOrEqual(2);
   });
 
-  it('目录 untracked 且子全 ignored 时目录呈 ignored（非 N）', async () => {
+  it('目录 untracked 且含子 ignored 时目录仍呈未跟踪', async () => {
     mocks.gitStatus.mockResolvedValue({
       Status: { '.cursor': 'untracked', '.cursor/rules.md': 'ignored' },
       IsRepo: true,
@@ -633,9 +633,8 @@ describe('FileTree 树内拖拽移动', () => {
     mocks.listFiles.mockResolvedValue([node('.cursor', true, '.cursor')]);
     render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
     expect(await screen.findByText('.cursor')).toBeInTheDocument();
-    expect(screen.getByText('.cursor').className).toMatch(/opacity|muted/);
-    expect(screen.getByTitle('git：已忽略')).toBeInTheDocument();
-    expect(screen.queryByTitle('git：未跟踪')).not.toBeInTheDocument();
+    expect(screen.getByTitle('git：未跟踪')).toBeInTheDocument();
+    expect(screen.queryByTitle('git：已忽略')).not.toBeInTheDocument();
   });
 
   it('含嵌套 git 的中间层显示 ⊞，嵌套根仅分支', async () => {

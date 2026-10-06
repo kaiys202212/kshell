@@ -4,7 +4,6 @@ import { gitStatus } from './api';
 import { useAppStore } from '../state/store';
 
 const DIRTY = new Set(['modified', 'added', 'deleted', 'renamed', 'untracked', 'conflicted']);
-const EXPLICIT = new Set(['modified', 'added', 'deleted', 'renamed', 'conflicted']);
 
 // 子树是否有未提交改动（忽略 ignored）。relPath 为空表示工作区虚拟根。
 export function subtreeDirty(gitMap: Record<string, string> | undefined, relPath: string): boolean {
@@ -18,46 +17,26 @@ export function subtreeDirty(gitMap: Record<string, string> | undefined, relPath
   return false;
 }
 
-function childrenAllIgnored(gitMap: Record<string, string>, relPath: string): boolean {
-  const prefix = `${relPath}/`;
-  let any = false;
-  for (const [p, code] of Object.entries(gitMap)) {
-    if (p === relPath || !p.startsWith(prefix)) continue;
-    any = true;
-    if (code !== 'ignored') return false;
-  }
-  return any;
-}
-
-// 目录在 map 中为 ignored，或可被推断为 ignored（无码/untracked 且子全 ignored）。
-function dirEffectivelyIgnored(gitMap: Record<string, string>, relPath: string): boolean {
-  const own = gitMap[relPath];
-  if (own === 'ignored') return true;
-  if (own && EXPLICIT.has(own)) return false;
-  return childrenAllIgnored(gitMap, relPath) && (!own || own === 'untracked');
-}
-
+// 仅当祖先在 porcelain 中显式为 ignored（!!）时才继承；不因「子项全是 ignored」推断父目录。
+// git status 不含干净已跟踪文件，那种推断会把 website 这类目录误标成 I。
 function ancestorIgnored(gitMap: Record<string, string>, relPath: string): boolean {
   if (!relPath) return false;
   const parts = relPath.split('/');
   for (let i = 1; i < parts.length; i++) {
-    if (dirEffectivelyIgnored(gitMap, parts.slice(0, i).join('/'))) return true;
+    if (gitMap[parts.slice(0, i).join('/')] === 'ignored') return true;
   }
   return false;
 }
 
-// 解析文件树行应展示的 git 码：祖先继承 ignored；目录可在子全 ignored 时推断（含覆盖 untracked）。
+// 解析文件树行应展示的 git 码：与 porcelain 对齐，祖先仅在显式 ignored 时继承。
 export function resolveGitCode(
   gitMap: Record<string, string> | undefined,
   relPath: string,
-  isDir: boolean,
+  _isDir: boolean,
 ): string | undefined {
   if (!gitMap || relPath === '') return undefined;
   if (ancestorIgnored(gitMap, relPath)) return 'ignored';
-  const own = gitMap[relPath];
-  if (own && EXPLICIT.has(own)) return own;
-  if (isDir && dirEffectivelyIgnored(gitMap, relPath)) return 'ignored';
-  return own;
+  return gitMap[relPath];
 }
 
 // 目录是否为「嵌套 git 根」的严格路径前缀（中间层）；嵌套根本身与虚拟根不算。

@@ -22,29 +22,28 @@ describe('resolveGitCode', () => {
     expect(resolveGitCode(map, 'vendor/pkg', true)).toBe('ignored');
   });
 
-  it('目录子条目全为 ignored 时目录推断为 ignored', () => {
-    const map = { '.cursor/rules.md': 'ignored', '.cursor/foo': 'ignored' };
-    expect(resolveGitCode(map, '.cursor', true)).toBe('ignored');
+  it('仅部分子项 ignored 时父目录不推断为 ignored（porcelain 不含干净跟踪文件）', () => {
+    const map = {
+      'website/node_modules': 'ignored',
+      'website/dist': 'ignored',
+    };
+    expect(resolveGitCode(map, 'website', true)).toBeUndefined();
+    expect(resolveGitCode(map, 'website/src', true)).toBeUndefined();
+    expect(resolveGitCode(map, 'website/package.json', false)).toBeUndefined();
+    expect(resolveGitCode(map, 'website/node_modules', true)).toBe('ignored');
   });
 
-  it('目录自身 untracked 且子全 ignored 时覆盖为 ignored', () => {
+  it('目录自身 untracked 时不因 ignored 子项覆盖为 ignored', () => {
     const map = {
       '.cursor': 'untracked',
       '.cursor/rules.md': 'ignored',
     };
-    expect(resolveGitCode(map, '.cursor', true)).toBe('ignored');
+    expect(resolveGitCode(map, '.cursor', true)).toBe('untracked');
+    expect(resolveGitCode(map, '.cursor/rules.md', false)).toBe('ignored');
+    expect(resolveGitCode(map, '.cursor/extra', false)).toBeUndefined();
   });
 
-  it('父目录仅被推断为 ignored 时，未入 map 的子项也继承', () => {
-    const map = {
-      '.cursor': 'untracked',
-      '.cursor/rules.md': 'ignored',
-    };
-    expect(resolveGitCode(map, '.cursor/extra', false)).toBe('ignored');
-    expect(resolveGitCode(map, '.cursor/nested', true)).toBe('ignored');
-  });
-
-  it('目录下有非 ignored 子条目时不推断 ignored', () => {
+  it('目录下有非 ignored 子条目时保持自身码', () => {
     const map = {
       src: 'untracked',
       'src/a.ts': 'ignored',
@@ -53,7 +52,7 @@ describe('resolveGitCode', () => {
     expect(resolveGitCode(map, 'src', true)).toBe('untracked');
   });
 
-  it('自身明确改动态优先于推断', () => {
+  it('自身明确改动态不被子路径 ignored 覆盖', () => {
     const map = { src: 'modified', 'src/a.ts': 'ignored' };
     expect(resolveGitCode(map, 'src', true)).toBe('modified');
   });
