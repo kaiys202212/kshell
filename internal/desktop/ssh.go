@@ -65,6 +65,7 @@ func (a *App) OpenSSH(connID string) error {
 	}
 	return a.launchWindow(a.snapshot().Windows,
 		providers.Launch{Path: bin, Args: remote.ShellArgs(c, a.sshOptions()), Dir: a.sshDir(c)},
+		"", // SSH shell 没有 agent 工具，不做通知注入
 		c.Name,
 	)
 }

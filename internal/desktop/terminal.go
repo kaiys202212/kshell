@@ -67,6 +67,8 @@ func (a *App) OpenSessionTerminal(sessionID string, cols, rows int) (terminal.In
 	if err != nil {
 		return terminal.Info{}, err
 	}
+	// 注入 agent 通知归因与 hook 参数；失败静默跳过，不影响会话启动
+	applyNotifyInject(&spec, s.ToolID, "session:"+sessionID, s.Workspace)
 
 	return m.Open("session:"+sessionID, terminal.Info{
 		Kind:      terminal.KindSession,
@@ -100,6 +102,15 @@ func (a *App) OpenWorkspaceTerminal(wsID string, toolID string, cols, rows int) 
 	}
 
 	key := fmt.Sprintf("new:%d", termKeySeq.Add(1))
+	// toolID 为空时 launch 选了首选工具：还原出真实工具 ID 才能按工具注入 hook
+	injectToolID := toolID
+	if injectToolID == "" {
+		if p, _, ok := launch.PreferredTool(o.Providers, tools, ws); ok {
+			injectToolID = p.ID()
+		}
+	}
+	applyNotifyInject(&spec, injectToolID, key, ws.Path)
+
 	info, err := m.Open(key, terminal.Info{
 		Kind:            terminal.KindNew,
 		Workspace:       ws.Path,
@@ -179,7 +190,7 @@ func (a *App) NewSessionWithTool(wsID string, toolID string) error {
 	if err != nil {
 		return err
 	}
-	return a.launchWindow(o.Windows, l, ws.Name)
+	return a.launchWindow(o.Windows, l, toolID, ws.Name)
 }
 
 // workspaceTerminalTitle 生成内嵌终端页签标题：工作区名 + 工具展示名。

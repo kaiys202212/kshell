@@ -20,8 +20,9 @@ type Payload struct {
 	Ts        int64  `json:"ts"`
 }
 
-// inboxDir 返回通知收件箱目录：~/.kshell/notify/inbox。
-func inboxDir() (string, error) {
+// InboxDir 返回通知收件箱目录：~/.kshell/notify/inbox。
+// 桌面端 dispatcher 与写入方（writeInbox）共用同一路径约定。
+func InboxDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -33,7 +34,7 @@ func inboxDir() (string, error) {
 // 避免桌面端读到半截 JSON。ts 用写入时刻的 UnixNano，同时充当文件名前缀
 // （<unixnano>-<pid>.json）保证唯一与天然按时间排序。
 func writeInbox(p Payload) error {
-	dir, err := inboxDir()
+	dir, err := InboxDir()
 	if err != nil {
 		return err
 	}
@@ -56,7 +57,7 @@ func writeInbox(p Payload) error {
 // CleanupInbox 删除收件箱中修改时间早于 maxAge 的 *.json 与 *.tmp；目录不存在时静默返回。
 // 桌面端启动时调用，防止长期使用下收件箱无限堆积；*.tmp 是原子写崩溃残留的孤儿临时文件，一并回收。
 func CleanupInbox(maxAge time.Duration) {
-	dir, err := inboxDir()
+	dir, err := InboxDir()
 	if err != nil {
 		return
 	}

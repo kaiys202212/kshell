@@ -329,9 +329,16 @@ func TestOpenSessionTerminalOpensAndReuses(t *testing.T) {
 	}
 
 	spec := env.backend.lastSpec()
-	// 恢复命令仍在参数末尾；前面可以有会话级 MCP 注入（--mcp-config）。
+	// 恢复命令仍在参数中；其后可能有通知注入追加的 --settings（claude hook）等。
 	args := spec.Args
-	if spec.Path != "claude" || len(args) < 2 || args[len(args)-2] != "--resume" || args[len(args)-1] != "s1" {
+	resumeFound := false
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--resume" && args[i+1] == "s1" {
+			resumeFound = true
+			break
+		}
+	}
+	if spec.Path != "claude" || !resumeFound {
 		t.Fatalf("Spec 未按会话恢复命令组装 = %+v", spec)
 	}
 	if spec.Dir != `D:\ws-a` {

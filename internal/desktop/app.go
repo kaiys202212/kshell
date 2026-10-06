@@ -802,7 +802,7 @@ func (a *App) ResumeSession(id string) error {
 	if err != nil {
 		return err
 	}
-	return a.launchWindow(o.Windows, l, s.Title)
+	return a.launchWindow(o.Windows, l, s.ToolID, s.Title)
 }
 
 // NewSession 在指定工作区新建会话（wsID 为工作区路径）。
@@ -827,10 +827,12 @@ func (a *App) FocusSession(id string) bool {
 // launchWindow 把启动描述转成窗口内的 PowerShell 语句并弹窗。
 // 注意不走 launcher.Build 的 shim 解析：弹出的窗口本身就是 PowerShell，
 // .ps1 CLI 用 & 调用运算符即可原生执行，无需转 .cmd。
-func (a *App) launchWindow(wm *WindowManager, l providers.Launch, titleText string) error {
+// termKey 用 window:<标题> 前缀：外部窗口没有终端页签，前端按此前缀自行决定去向。
+func (a *App) launchWindow(wm *WindowManager, l providers.Launch, toolID, titleText string) error {
 	if wm == nil {
 		return errNotReady
 	}
+	applyNotifyLaunch(&l, toolID, "window:"+titleText, l.Dir)
 	return wm.LaunchSession(l.Dir, titleText, psStatement(l.Path, l.Args, l.Env))
 }
 
