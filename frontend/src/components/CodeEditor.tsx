@@ -7,6 +7,9 @@ import { html } from '@codemirror/lang-html';
 import { javascript } from '@codemirror/lang-javascript';
 import { json } from '@codemirror/lang-json';
 import { markdown } from '@codemirror/lang-markdown';
+import { StreamLanguage } from '@codemirror/language';
+import { powerShell } from '@codemirror/legacy-modes/mode/powershell';
+import { shell } from '@codemirror/legacy-modes/mode/shell';
 import { python } from '@codemirror/lang-python';
 import { EditorState, type Extension } from '@codemirror/state';
 import { oneDark } from '@codemirror/theme-one-dark';
@@ -41,6 +44,10 @@ function languageExtensions(path: string): Extension[] {
       return [python()];
     case 'go':
       return [go()];
+    case 'shell':
+      return [StreamLanguage.define(shell)];
+    case 'powershell':
+      return [StreamLanguage.define(powerShell)];
     default:
       return [];
   }

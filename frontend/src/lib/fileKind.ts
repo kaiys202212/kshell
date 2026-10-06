@@ -33,7 +33,11 @@ const TEXT_EXT = new Set([
   'sh',
   'bash',
   'zsh',
+  'ksh',
+  'fish',
   'ps1',
+  'psm1',
+  'psd1',
   'bat',
   'cmd',
   'sql',
@@ -48,7 +52,8 @@ const TEXT_EXT = new Set([
 
 const SPECIAL_TEXT_BASENAMES = new Set(['dockerfile', 'makefile', 'cmakelists.txt']);
 
-const SHELL_EXT = new Set(['sh', 'bash', 'zsh', 'ps1', 'bat', 'cmd']);
+const SHELL_EXT = new Set(['sh', 'bash', 'zsh', 'ksh', 'fish', 'bat', 'cmd']);
+const POWERSHELL_EXT = new Set(['ps1', 'psm1', 'psd1']);
 
 function pathBasename(path: string): string {
   const normalized = path.replace(/\\/g, '/');
@@ -113,6 +118,7 @@ export function codeLanguage(path: string): string {
 
   const ext = fileExtension(path);
   if (LANG_BY_EXT[ext]) return LANG_BY_EXT[ext];
+  if (POWERSHELL_EXT.has(ext)) return 'powershell';
   if (SHELL_EXT.has(ext)) return 'shell';
   if (MARKDOWN_EXT.has(ext)) return 'markdown';
   return 'plaintext';
