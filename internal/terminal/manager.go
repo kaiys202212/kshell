@@ -12,9 +12,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yangk/kshell/internal/agenthook"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
 )
+
+// geminiToolID 是唯一启用 OSC 通知扫描的工具：Gemini CLI 没有 hooks 机制，
+// 任务完成 / 等待确认靠 OSC 9 / OSC 777;notify 序列报告（见 osc.go）。
+// 其它工具的通知走 agenthook hooks 通道，不走终端字节流。
+const geminiToolID = "gemini"
 
 // 会话类型与状态取值：与前端约定，不要在绑定层另写字面量。
 const (
@@ -125,10 +131,11 @@ type session struct {
 
 // Manager 维护 key→会话 与 id→会话 两张表，并为每个会话跑一个读协程。
 type Manager struct {
-	backend Backend
-	onData  func(id string, chunk []byte) // 锁外调用，chunk 是独立副本
-	onExit  func(id string, exitCode int) // 锁外调用，仅在运行→退出的状态跃迁时触发一次
-	onInfo  func(Info)                    // 锁外调用；用户提交首行后标题变化
+	backend   Backend
+	onData    func(id string, chunk []byte) // 锁外调用，chunk 是独立副本
+	onExit    func(id string, exitCode int) // 锁外调用，仅在运行→退出的状态跃迁时触发一次
+	onInfo    func(Info)                    // 锁外调用；用户提交首行后标题变化
+	onNotify  func(agenthook.Payload)       // 锁外调用；gemini 会话输出命中 OSC 通知时触发
 	// prepareSpec 在真正启动前改启动参数（注入 MCP）。调用时持有管理器锁，禁止再回调本管理器。
 	prepareSpec func(id string, info Info, spec Spec) Spec
 	maxBuf      int
@@ -201,6 +208,15 @@ func (m *Manager) SetOnInfo(fn func(Info)) {
 	m.mu.Unlock()
 }
 
+// SetOnNotify 注册 OSC 通知回调（锁外执行）。
+// 仅 gemini 会话（toolID == gemini）的 OSC 9 / 777;notify 命中会触发，
+// payload 结构与 agenthook 通道一致，desktop 装配处复用同一分发逻辑。
+func (m *Manager) SetOnNotify(fn func(agenthook.Payload)) {
+	m.mu.Lock()
+	m.onNotify = fn
+	m.mu.Unlock()
+}
+
 // SetPrepareSpec 注册启动前改写参数的回调。回调在管理器锁内执行，不能再进本管理器。
 func (m *Manager) SetPrepareSpec(fn func(id string, info Info, spec Spec) Spec) {
 	m.mu.Lock()
@@ -269,6 +285,7 @@ func (m *Manager) run(s *session, h Handle, gen int) {
 	go func() {
 		defer close(readDone)
 		buf := make([]byte, readChunk)
+		scanner := newOSCScanner() // 读协程私有：重启自然重置，无需加锁
 		for {
 			n, err := h.Read(buf)
 			if n > 0 {
@@ -277,6 +294,10 @@ func (m *Manager) run(s *session, h Handle, gen int) {
 				m.record(s, gen, chunk)
 				if m.onData != nil {
 					m.onData(id, chunk)
+				}
+				// OSC 通知只观察不消费：chunk 原样走完上面的搬运，命中另行回调
+				if hits := scanner.Feed(chunk); len(hits) > 0 {
+					m.emitOSCHits(s, gen, hits)
 				}
 			}
 			if err != nil {
@@ -349,6 +370,32 @@ func (m *Manager) markExited(id string, gen int, code int) bool {
 	s.info.Status = StatusExited
 	s.info.ExitCode = code
 	return true
+}
+
+// emitOSCHits 把 OSC 扫描命中转成通知回调（锁外调用）。
+// 仅 gemini 会话启用：Gemini CLI 无 hooks，靠 OSC 9 / 777;notify 报告等待与完成。
+// gen 校验拦掉已被重开/关闭的旧读协程，避免陈旧命中错误归因。
+func (m *Manager) emitOSCHits(s *session, gen int, hits []oscHit) {
+	m.mu.Lock()
+	if s.gen != gen || s.exited || s.info.ToolID != geminiToolID || m.onNotify == nil {
+		m.mu.Unlock()
+		return
+	}
+	onNotify := m.onNotify
+	base := agenthook.Payload{
+		Tool:      s.info.ToolID,
+		Event:     "attention",
+		TermKey:   s.key,
+		Workspace: s.info.Workspace,
+	}
+	m.mu.Unlock()
+	for _, h := range hits {
+		p := base
+		p.Summary = h.Summary
+		p.Raw = h.Raw
+		p.Ts = time.Now().UnixNano()
+		onNotify(p)
+	}
 }
 
 // Write 把输入写入终端。

@@ -22,7 +22,11 @@ var termKeySeq atomic.Int64
 
 // newTerminalManager 用真实后端装配终端管理器（initRealDeps 用）。
 func newTerminalManager(a *App) *terminal.Manager {
-	return newTerminalManagerWith(a.Emit, terminal.NewPTYBackend())
+	m := newTerminalManagerWith(a.Emit, terminal.NewPTYBackend())
+	// Gemini 无 hooks：终端 OSC 9 / 777;notify 命中直接复用 handleAgentNotify
+	//（emit notify:agent + 窗口隐藏时补 toast），与 hooks 通道同一条分发路径。
+	m.SetOnNotify(a.handleAgentNotify)
+	return m
 }
 
 // newTerminalManagerWith 装配终端管理器：输出/退出经 emit 转发给前端。
