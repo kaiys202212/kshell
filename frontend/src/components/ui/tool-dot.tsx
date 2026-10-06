@@ -1,7 +1,7 @@
-// 工具色点徽标（S1）：固定色相小圆点 + 工具名。
-// 替代会话行/首页卡片/终端页签里的纯色 Badge，让多工具一眼可辨。
+// 工具徽标：官方风格图标 + 可选工具名。
 import { badgeFor } from '../../lib/toolBadge';
 import { cn } from '../../lib/cn';
+import { ToolIcon } from './tool-icons';
 
 export function ToolDot({
   toolID,
@@ -10,17 +10,13 @@ export function ToolDot({
 }: {
   toolID: string;
   className?: string;
-  /** 是否显示工具名文字；false 时只留色点（用于标题已含工具名的场景，避免重复） */
+  /** 是否显示工具名文字；false 时只留图标（标题已含工具名时避免重复） */
   showLabel?: boolean;
 }) {
   const badge = badgeFor(toolID);
   return (
     <span className={cn('inline-flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground', className)}>
-      <span
-        aria-hidden="true"
-        className="h-1.5 w-1.5 shrink-0 rounded-full"
-        style={{ background: badge.color }}
-      />
+      <ToolIcon toolID={toolID} label={badge.label} />
       {showLabel && <span className="truncate">{badge.label}</span>}
     </span>
   );

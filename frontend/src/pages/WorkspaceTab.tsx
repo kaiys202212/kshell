@@ -486,7 +486,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                 >
                   {label}
                 </button>
-                {/* 新建会话的标题已含「· 工具名」，徽标只留色点避免出现两个工具名 */}
+                {/* 新建会话的标题已含「· 工具名」，徽标只留图标避免出现两个工具名 */}
                 {t.ToolID && (
                   <ToolDot toolID={t.ToolID} className="shrink-0" showLabel={t.Kind !== 'new'} />
                 )}
@@ -549,7 +549,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                 >
                   {label}
                 </button>
-                {/* 聊天标题通常已含工具名，徽标只留色点避免重复 */}
+                {/* 聊天标题通常已含工具名，徽标只留图标避免重复 */}
                 {c.ToolID && <ToolDot toolID={c.ToolID} className="shrink-0" showLabel={false} />}
                 <button
                   className={cn(

@@ -395,7 +395,7 @@ describe('WorkspaceTab', () => {
     expect(screen.getByTestId('terminal-t2')).toHaveAttribute('data-active', 'true');
   });
 
-  it('新建会话页签标题已含工具名时，徽标只留色点不重复显示工具名', async () => {
+  it('新建会话页签标题已含工具名时，徽标只留图标不重复显示工具名', async () => {
     const tNew: TerminalInfo = { ...term, ID: 't1', Kind: 'new', Title: 'kshell · opencode', ToolID: 'opencode' };
     mocks.listTerminals.mockResolvedValue([tNew]);
     useAppStore.setState({ terminals: [tNew] });
