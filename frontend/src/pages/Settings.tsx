@@ -1,5 +1,5 @@
 // 设置页：左导航分区（通用 / 模型 / 工具）+ 右侧内容。
-// 通用含外观/关闭/会话模式/权限/关于（检查更新）；模型含预设与双协议 Base URL；工具含检测与自定义表单。
+// 通用含外观/关闭/会话模式/权限/关于（检查更新、反馈问题）；模型含预设与双协议 Base URL；工具含检测与自定义表单。
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useEffect, useState } from 'react';
 import {
@@ -38,6 +38,8 @@ import {
 import type { InstallRecipeView, ModelPreset, ToolInfo, ToolInstallJobView, UpdateInfo } from '../lib/api';
 import { cn } from '../lib/cn';
 import { applyUiFontSize, clampUiFontSize } from '../lib/appearance';
+import { openExternal } from '../lib/openHref';
+import { GITHUB_ISSUES_NEW_URL } from '../lib/projectLinks';
 import { useAppStore } from '../state/store';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
@@ -595,6 +597,9 @@ export default function Settings() {
                     }}
                   >
                     {updateBusy ? '检查中…' : '检查更新'}
+                  </Button>
+                  <Button variant="secondary" onClick={() => openExternal(GITHUB_ISSUES_NEW_URL)}>
+                    反馈问题
                   </Button>
                   {updateInfo?.Available && (
                     <Button

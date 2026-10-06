@@ -642,6 +642,18 @@ describe('Settings', () => {
     expect(await screen.findByRole('heading', { name: '关于' })).toBeInTheDocument();
     expect(await screen.findByText(/v0\.1\.0/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '检查更新' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '反馈问题' })).toBeInTheDocument();
+  });
+
+  it('点击反馈问题打开 GitHub Issues 新建页', async () => {
+    const open = vi.fn();
+    vi.stubGlobal('runtime', { BrowserOpenURL: open });
+    mocks.getAppVersion.mockResolvedValue('v0.1.0');
+    render(<Settings />);
+    await screen.findByRole('heading', { name: '关于' });
+    fireEvent.click(screen.getByRole('button', { name: '反馈问题' }));
+    expect(open).toHaveBeenCalledWith('https://github.com/kaiys202212/kshell/issues/new');
+    vi.unstubAllGlobals();
   });
 
   it('检查更新后展示新版本并可立即升级', async () => {
