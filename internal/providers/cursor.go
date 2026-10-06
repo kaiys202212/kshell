@@ -42,6 +42,9 @@ func (Cursor) DetectSpec(home string) DetectSpec {
 		AltBinNames: []string{"agent"},
 		InstallDirs: dirs,
 		ConfigDirs:  []string{"~/.cursor"},
+		// 自动修复的残留信号：会话数据。官方卸载器不删 ~/.cursor，但会话子树
+		// 被清掉即视为用户已不再使用，不再自动重装。
+		ResidueDirs: []string{"~/.cursor/projects", "~/.cursor/chats"},
 		// 官方更新器会周期性删光全部入口 shim（甚至更新中断时连 index.js
 		// 都删），只留 versions\<ver>\node.exe + index.js 本体：兜底走 node 入口。
 		NodeEntryScript: "index.js",
