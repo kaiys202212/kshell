@@ -12,6 +12,7 @@ node_modules/
 .playwright-cli/
 .workbuddy/
 /docs/
+/out/
 .cursor/*
 .github/workflows/*
 !.github/workflows/release.yml
