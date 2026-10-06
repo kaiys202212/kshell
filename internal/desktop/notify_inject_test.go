@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yangk/kshell/internal/launcher"
 	"github.com/yangk/kshell/internal/providers"
@@ -283,6 +284,44 @@ func cleanupOpenCodeEnv(t *testing.T, env []string) {
 	if dir := envValue(env, "OPENCODE_CONFIG_DIR"); dir != "" {
 		t.Cleanup(func() { os.RemoveAll(dir) })
 	}
+}
+
+// cleanupOpenCodeTempDirsIn 只删超龄的 kshell-opencode-* 目录：
+// 新鲜目录、非匹配条目（目录名不符 / 同名文件）都保留。
+func TestCleanupOpenCodeTempDirs(t *testing.T) {
+	root := t.TempDir()
+	aged := filepath.Join(root, "kshell-opencode-old")
+	fresh := filepath.Join(root, "kshell-opencode-new")
+	other := filepath.Join(root, "other-dir")
+	notDir := filepath.Join(root, "kshell-opencode-file")
+	for _, d := range []string{aged, fresh, other} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(notDir, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-25 * time.Hour)
+	if err := os.Chtimes(aged, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	cleanupOpenCodeTempDirsIn(root)
+
+	if _, err := os.Stat(aged); !os.IsNotExist(err) {
+		t.Fatalf("超龄目录应被删除")
+	}
+	for _, keep := range []string{fresh, other, notDir} {
+		if _, err := os.Stat(keep); err != nil {
+			t.Fatalf("%s 应保留: %v", keep, err)
+		}
+	}
+}
+
+// 扫描根不存在时静默返回：清理是锦上添花，绝不能影响启动。
+func TestCleanupOpenCodeTempDirsRootMissing(t *testing.T) {
+	cleanupOpenCodeTempDirsIn(filepath.Join(t.TempDir(), "not-exist")) // 不 panic 即通过
 }
 
 func endsWithAgentHook(cmd, tool string) bool {

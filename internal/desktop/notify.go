@@ -127,6 +127,9 @@ func notifyToastText(p agenthook.Payload) (string, string) {
 	}
 	event := "任务完成"
 	switch p.Event {
+	case "error":
+		// chat 错误事件：与前端气泡的「任务出错」映射保持一致，两通道不能矛盾
+		event = "任务出错"
 	case "Notification", "attention":
 		// claude hooks 的 Notification 与 OSC 扫描发出的 attention 都表示
 		// agent 在等待用户确认，与「任务完成」语义必须区分

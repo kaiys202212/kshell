@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/yangk/kshell/internal/launcher"
 	"github.com/yangk/kshell/internal/providers"
@@ -83,31 +84,67 @@ func notifyArgs(args []string, toolID, exePath string) []string {
 	}
 }
 
+// openCodeTempDirPrefix 是 opencode 插件临时目录的名称前缀（与 MkdirTemp 的 pattern 一致）。
+const openCodeTempDirPrefix = "kshell-opencode-"
+
+// openCodeTempDirMaxAge 是插件临时目录的保留时长：超过说明对应会话早已结束
+//（每次会话启动都新建目录），属于无主残留，桌面端启动时统一清理。
+const openCodeTempDirMaxAge = 24 * time.Hour
+
+// cleanupOpenCodeTempDirs 清理系统 %TEMP% 下历史遗留的 opencode 插件临时目录。
+func cleanupOpenCodeTempDirs() {
+	cleanupOpenCodeTempDirsIn(os.TempDir())
+}
+
+// cleanupOpenCodeTempDirsIn 扫描 root 下 openCodeTempDirPrefix 前缀的目录，
+// 删除修改时间早于 openCodeTempDirMaxAge 的；任何错误静默——清理是锦上添花。
+// root 参数化是为了测试注入，避免测试真删系统 TEMP。
+func cleanupOpenCodeTempDirsIn(root string) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), openCodeTempDirPrefix) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || time.Since(info.ModTime()) <= openCodeTempDirMaxAge {
+			continue
+		}
+		os.RemoveAll(filepath.Join(root, e.Name()))
+	}
+}
+
 // openCodePluginDir 生成 opencode 通知插件临时目录并返回其路径；失败或无需注入返回空串。
 // 机制：OPENCODE_CONFIG_DIR 指向临时目录后，opencode 会搜索其中的 plugin/ 子目录加载插件，
 // 且与用户全局配置（~/.config/opencode）合并而非替换——用户自己的模型/MCP 配置不受影响。
 // 已有 OPENCODE_CONFIG_DIR（显式 env 或进程环境）时返回空串跳过，避免覆盖用户自定义配置目录。
-// 临时目录留在系统 %TEMP% 下，会话结束后由操作系统清理。
+// 临时目录留在系统 %TEMP% 下，桌面端启动时由 cleanupOpenCodeTempDirs 清理超龄残留。
 func openCodePluginDir(exePath, existing string) string {
 	if existing != "" || os.Getenv(envOpenCodeConfigDir) != "" {
 		return ""
 	}
-	dir, err := os.MkdirTemp("", "kshell-opencode-")
+	dir, err := os.MkdirTemp("", openCodeTempDirPrefix)
 	if err != nil {
 		return ""
 	}
+	// 后续任一步失败都回收已建目录，避免 %TEMP% 无界累积
 	pluginDir := filepath.Join(dir, "plugin")
 	if err := os.MkdirAll(pluginDir, 0o700); err != nil {
+		os.RemoveAll(dir)
 		return ""
 	}
 	// exe 路径用 JSON 编码成 JS 字符串字面量；插件跑在 Bun 里，其 child_process.spawn
 	// 会把 Windows 反斜杠当转义符吞掉，必须先转成正斜杠。
 	exe, err := json.Marshal(filepath.ToSlash(exePath))
 	if err != nil {
+		os.RemoveAll(dir)
 		return ""
 	}
 	content := fmt.Sprintf(openCodePluginTpl, exe)
 	if err := os.WriteFile(filepath.Join(pluginDir, "kshell-notify.js"), []byte(content), 0o600); err != nil {
+		os.RemoveAll(dir)
 		return ""
 	}
 	return dir

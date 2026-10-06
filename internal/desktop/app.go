@@ -159,8 +159,10 @@ func (a *App) Startup(ctx context.Context) {
 	go a.reapLoop()
 	go a.scheduleUpdateCheck()
 
-	// agent 通知：先清掉超龄残留，再起收件箱轮询（随进程存活，无需取消）
+	// agent 通知：先清掉超龄残留（收件箱文件 + opencode 插件临时目录），再起收件箱
+	// 轮询（随进程存活，无需取消）
 	agenthook.CleanupInbox(notifyInboxMaxAge)
+	cleanupOpenCodeTempDirs()
 	go a.dispatchNotifyLoop()
 
 	a.emitAppearance()
