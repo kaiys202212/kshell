@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import GitPanel from './GitPanel';
 import type { GitSCMSnapshot } from '../lib/api';
@@ -200,5 +200,90 @@ describe('GitPanel', () => {
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
     await screen.findByText('dirty.go');
     expect(screen.queryByLabelText('同步源')).not.toBeInTheDocument();
+  });
+
+  it('Git 操作菜单的拉取/推送按生效同步源调用', async () => {
+    const ws = 'D:\\proj';
+    mocks.gitSCM.mockResolvedValue(snap({ SyncRemote: 'gitcode' }));
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    await screen.findByText('dirty.go');
+
+    // Radix 菜单由 pointerdown 展开；子菜单项文本带 ▸ 后缀，用正则匹配
+    const trigger = screen.getByRole('button', { name: 'Git 操作' });
+    fireEvent.pointerDown(trigger, { button: 0 });
+    fireEvent.click(trigger);
+    const sub = await screen.findByRole('menuitem', { name: /拉取/ });
+    fireEvent.click(sub);
+    fireEvent.pointerMove(sub);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pull' }));
+    await waitFor(() => {
+      expect(mocks.gitPull).toHaveBeenCalledWith(ws, '', 'gitcode');
+    });
+    // 等 run() 收尾解除 busy，否则禁用态触发器展不开菜单
+    await waitFor(() => expect(trigger).toBeEnabled());
+
+    fireEvent.pointerDown(trigger, { button: 0 });
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Push' }));
+    await waitFor(() => {
+      expect(mocks.gitPush).toHaveBeenCalledWith(ws, '', 'gitcode');
+    });
+  });
+  it('底部 Fetch 按生效同步源调用', async () => {
+    const ws = 'D:\\proj';
+    mocks.gitSCM.mockResolvedValue(snap({ SyncRemote: 'gitcode' }));
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    await screen.findByText('init');
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch' }));
+    await waitFor(() => {
+      expect(mocks.gitFetch).toHaveBeenCalledWith(ws, '', 'gitcode');
+    });
+  });
+
+  it('提交并推送按生效同步源推送', async () => {
+    const ws = 'D:\\proj';
+    mocks.gitSCM.mockResolvedValue(snap({ SyncRemote: 'gitcode' }));
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    fireEvent.change(await screen.findByLabelText('提交说明'), { target: { value: 'msg' } });
+    const more = screen.getByRole('button', { name: '更多提交操作' });
+    fireEvent.pointerDown(more, { button: 0 });
+    fireEvent.click(more);
+    fireEvent.click(await screen.findByRole('menuitem', { name: '提交并推送' }));
+    await waitFor(() => {
+      expect(mocks.gitCommit).toHaveBeenCalledWith(ws, '', 'msg');
+      expect(mocks.gitPush).toHaveBeenCalledWith(ws, '', 'gitcode');
+    });
+  });
+
+  it('快速连续切换同步源时丢弃过期响应，显示与记忆保持一致', async () => {
+    const ws = 'D:\\proj';
+    const key = `kshell-git-sync-remote:${ws}\0`;
+    mocks.gitSCM.mockResolvedValue(snap({ SyncRemote: 'origin' }));
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    const sel = await screen.findByLabelText('同步源');
+    expect(sel).toHaveValue('origin');
+
+    // 挂起后续两次请求，人工控制返回顺序以复现竞态
+    const pending: Array<(v: GitSCMSnapshot) => void> = [];
+    mocks.gitSCM.mockImplementation(() => new Promise((res) => pending.push(res)));
+    fireEvent.change(sel, { target: { value: 'gitcode' } });
+    fireEvent.change(sel, { target: { value: 'origin' } });
+    await waitFor(() => {
+      expect(mocks.gitSCM).toHaveBeenCalledWith(ws, '', 'gitcode');
+      expect(mocks.gitSCM).toHaveBeenCalledWith(ws, '', 'origin');
+    });
+    expect(pending).toHaveLength(2);
+    expect(localStorage.getItem(key)).toBe('origin');
+
+    // 后发的 origin 响应先回，先发的 gitcode 响应后到（过期）
+    await act(async () => {
+      pending[1](snap({ SyncRemote: 'origin' }));
+    });
+    await act(async () => {
+      pending[0](snap({ SyncRemote: 'gitcode' }));
+    });
+
+    expect(await screen.findByLabelText('同步源')).toHaveValue('origin');
+    expect(localStorage.getItem(key)).toBe('origin');
   });
 });

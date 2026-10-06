@@ -98,18 +98,24 @@ export default function GitPanel({
   const [split, setSplit] = useState(0.55);
   const splitRef = useRef<HTMLDivElement>(null);
   const logReq = useRef(0);
+  const loadReq = useRef(0);
 
   const { mode: logMode, ref: logRef } = resolveLogFilter(logSel);
 
   const load = useCallback(async () => {
+    // 快速连续切换同步源会并发多次 gitSCM，seq 用来丢弃过期响应，
+    // 否则晚到的旧快照会把 SyncRemote 滚回旧源，与 localStorage 记忆打架。
+    const seq = ++loadReq.current;
     try {
       const s = await gitSCM(wsPath, repoRel, loadSyncRemote(wsPath, repoRel));
+      if (seq !== loadReq.current) return;
       setSnap(s);
       if (!repoRel && s.Repos && s.Repos.length > 0 && !s.IsRepo) {
         const first = s.Repos[0];
         if (first.Rel) setRepoRel(first.Rel);
       }
     } catch (e) {
+      if (seq !== loadReq.current) return;
       notify(`读取 git 失败：${e instanceof Error ? e.message : String(e)}`, 'error');
     }
   }, [wsPath, repoRel, notify]);
@@ -260,7 +266,7 @@ export default function GitPanel({
           )}
           {(snap?.Remotes ?? []).length > 0 && (
             <select
-              className="h-6 max-w-28 shrink-0 rounded-md border border-border bg-card px-1 text-muted-foreground"
+              className={cn(selectEllipsis, 'h-7 max-w-28 shrink-0 text-muted-foreground')}
               aria-label="同步源"
               title="同步源：↑↓ 差异与拉取/推送的目标 remote"
               value={snap?.SyncRemote ?? ''}
