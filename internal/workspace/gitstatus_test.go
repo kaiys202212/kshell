@@ -234,3 +234,56 @@ func TestInspectGit_分支与嵌套仓库(t *testing.T) {
 	}
 }
 
+func TestInspectGit_忽略目录内嵌套仓库用自身状态(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git 不可用，跳过")
+	}
+	root := t.TempDir()
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v 失败：%v\n%s", args, err, out)
+		}
+	}
+	run(root, "init", "-b", "main")
+	run(root, "config", "user.email", "t@t")
+	run(root, "config", "user.name", "t")
+	writeFile(t, filepath.Join(root, ".gitignore"), "wt/\n")
+	writeFile(t, filepath.Join(root, "a.txt"), "a\n")
+	run(root, "add", ".")
+	run(root, "commit", "-m", "init")
+
+	nested := filepath.Join(root, "wt", "app")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run(nested, "init", "-b", "feat/x")
+	run(nested, "config", "user.email", "t@t")
+	run(nested, "config", "user.name", "t")
+	writeFile(t, filepath.Join(nested, "ok.txt"), "ok\n")
+	run(nested, "add", "ok.txt")
+	run(nested, "commit", "-m", "ok")
+	writeFile(t, filepath.Join(nested, "dirty.txt"), "x\n")
+
+	rep, err := InspectGit(root)
+	if err != nil || !rep.IsRepo {
+		t.Fatalf("InspectGit: isRepo=%v err=%v", rep.IsRepo, err)
+	}
+	if rep.DirBranches["wt/app"] != "feat/x" {
+		t.Fatalf("嵌套分支: %v", rep.DirBranches)
+	}
+	if rep.Status["wt"] != "ignored" {
+		t.Fatalf("中间忽略目录应仍为 ignored：%v", rep.Status)
+	}
+	if rep.Status["wt/app"] == "ignored" {
+		t.Fatalf("嵌套 git 根不应沿用外层 ignored：%v", rep.Status)
+	}
+	if rep.Status["wt/app/ok.txt"] == "ignored" {
+		t.Fatalf("嵌套已跟踪文件不应被外层标 ignored：%v", rep.Status)
+	}
+	if rep.Status["wt/app/dirty.txt"] != "untracked" {
+		t.Fatalf("嵌套未跟踪未合并：%v", rep.Status)
+	}
+}
+

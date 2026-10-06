@@ -74,6 +74,13 @@ func InspectGit(root string) (GitReport, error) {
 		if rep.Status == nil {
 			rep.Status = map[string]string{}
 		}
+		// 外层 ignore 可能给嵌套根及其子孙打 !!；嵌套仓库要用自己的 porcelain。
+		prefix := relKey + "/"
+		for k := range rep.Status {
+			if k == relKey || strings.HasPrefix(k, prefix) {
+				delete(rep.Status, k)
+			}
+		}
 		for k, v := range st {
 			rep.Status[relKey+"/"+strings.TrimPrefix(k, "./")] = v
 		}

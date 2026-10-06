@@ -625,6 +625,35 @@ describe('FileTree 树内拖拽移动', () => {
     expect(screen.getAllByTitle('git：已忽略').length).toBeGreaterThanOrEqual(2);
   });
 
+  it('忽略目录下的嵌套 git 根不继承 I，内部按自身状态', async () => {
+    mocks.gitStatus.mockResolvedValue({
+      Status: {
+        feat: 'ignored',
+        'feat/app': 'ignored',
+        'feat/app/node_modules': 'ignored',
+      },
+      IsRepo: true,
+      Branch: 'main',
+      DirBranches: { '': 'main', 'feat/app': 'feat/x' },
+    });
+    mocks.listFiles
+      .mockResolvedValueOnce([node('feat', true, 'feat')])
+      .mockResolvedValueOnce([node('app', true, 'feat/app')])
+      .mockResolvedValueOnce([
+        node('README.md', false, 'feat/app/README.md'),
+        node('node_modules', true, 'feat/app/node_modules'),
+      ]);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    fireEvent.click(await screen.findByText('feat'));
+    fireEvent.click(await screen.findByText('app'));
+    expect(await screen.findByText('README.md')).toBeInTheDocument();
+    expect(screen.getByTitle('git 分支 feat/x')).toBeInTheDocument();
+    expect(screen.getByText('feat').closest('button')).toHaveTextContent('I');
+    expect(screen.getByText('app').closest('button')?.textContent).not.toMatch(/\bI\b/);
+    expect(screen.getAllByTitle('git：已忽略')).toHaveLength(2);
+    expect(screen.getByText('README.md').className).not.toMatch(/opacity/);
+  });
+
   it('目录 untracked 且含子 ignored 时目录仍呈未跟踪', async () => {
     mocks.gitStatus.mockResolvedValue({
       Status: { '.cursor': 'untracked', '.cursor/rules.md': 'ignored' },

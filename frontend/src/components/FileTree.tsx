@@ -327,7 +327,7 @@ function TreeRow({
   onMoveInto,
 }: RowProps) {
   const { node } = item;
-  const gitCode = resolveGitCode(gitMap, item.relPath, node.IsDir);
+  const gitCode = resolveGitCode(gitMap, item.relPath, node.IsDir, dirBranches);
   const nestedParent = node.IsDir && isNestedGitParent(dirBranches, item.relPath);
   const branch = node.IsDir ? (item.relPath === '' ? rootBranch : dirBranches?.[item.relPath]) : undefined;
   // 中间层用 ⊞ 表达特殊未跟踪容器，不再叠 N

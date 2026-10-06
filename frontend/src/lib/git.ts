@@ -17,25 +17,52 @@ export function subtreeDirty(gitMap: Record<string, string> | undefined, relPath
   return false;
 }
 
+// 覆盖 relPath 的最长嵌套 git 根（DirBranches 非空键）；虚拟根 '' 不计。
+function nestedGitRootOf(
+  dirBranches: Record<string, string> | undefined,
+  relPath: string,
+): string | undefined {
+  if (!dirBranches || !relPath) return undefined;
+  let best: string | undefined;
+  for (const key of Object.keys(dirBranches)) {
+    if (!key) continue;
+    if (relPath === key || relPath.startsWith(`${key}/`)) {
+      if (!best || key.length > best.length) best = key;
+    }
+  }
+  return best;
+}
+
 // 仅当祖先在 porcelain 中显式为 ignored（!!）时才继承；不因「子项全是 ignored」推断父目录。
 // git status 不含干净已跟踪文件，那种推断会把 website 这类目录误标成 I。
-function ancestorIgnored(gitMap: Record<string, string>, relPath: string): boolean {
+// fromExclusive 为嵌套 git 根时，不把该根及其更外层的 ignored 算作祖先。
+function ancestorIgnored(
+  gitMap: Record<string, string>,
+  relPath: string,
+  fromExclusive?: string,
+): boolean {
   if (!relPath) return false;
   const parts = relPath.split('/');
+  const minLen = fromExclusive ? fromExclusive.split('/').length : 0;
   for (let i = 1; i < parts.length; i++) {
+    if (i <= minLen) continue;
     if (gitMap[parts.slice(0, i).join('/')] === 'ignored') return true;
   }
   return false;
 }
 
 // 解析文件树行应展示的 git 码：与 porcelain 对齐，祖先仅在显式 ignored 时继承。
+// 嵌套 git 根及其内部不受外层忽略目录影响。
 export function resolveGitCode(
   gitMap: Record<string, string> | undefined,
   relPath: string,
   _isDir: boolean,
+  dirBranches?: Record<string, string>,
 ): string | undefined {
   if (!gitMap || relPath === '') return undefined;
-  if (ancestorIgnored(gitMap, relPath)) return 'ignored';
+  const nestedRoot = nestedGitRootOf(dirBranches, relPath);
+  if (nestedRoot && relPath === nestedRoot) return undefined;
+  if (ancestorIgnored(gitMap, relPath, nestedRoot)) return 'ignored';
   return gitMap[relPath];
 }
 

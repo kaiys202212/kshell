@@ -62,6 +62,19 @@ describe('resolveGitCode', () => {
     expect(resolveGitCode(map, 'skip.log', false)).toBe('ignored');
     expect(resolveGitCode({ 'a/b': 'ignored' }, 'a', false)).toBeUndefined();
   });
+
+  it('忽略继承不跨越嵌套 git 根', () => {
+    const map = {
+      feat: 'ignored',
+      'feat/app': 'ignored',
+      'feat/app/node_modules': 'ignored',
+    };
+    const dirs = { '': 'main', 'feat/app': 'feat/x' };
+    expect(resolveGitCode(map, 'feat', true, dirs)).toBe('ignored');
+    expect(resolveGitCode(map, 'feat/app', true, dirs)).toBeUndefined();
+    expect(resolveGitCode(map, 'feat/app/README.md', false, dirs)).toBeUndefined();
+    expect(resolveGitCode(map, 'feat/app/node_modules', true, dirs)).toBe('ignored');
+  });
 });
 
 describe('isNestedGitParent', () => {
