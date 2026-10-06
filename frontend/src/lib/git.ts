@@ -6,11 +6,19 @@ import { useAppStore } from '../state/store';
 const DIRTY = new Set(['modified', 'added', 'deleted', 'renamed', 'untracked', 'conflicted']);
 
 // 子树是否有未提交改动（忽略 ignored）。relPath 为空表示工作区虚拟根。
-export function subtreeDirty(gitMap: Record<string, string> | undefined, relPath: string): boolean {
+// 嵌套 git 仓库的改动只算在该仓库根及其内部，不冒泡到外层虚拟根。
+export function subtreeDirty(
+  gitMap: Record<string, string> | undefined,
+  relPath: string,
+  dirBranches?: Record<string, string>,
+): boolean {
   if (!gitMap) return false;
   const prefix = relPath === '' ? '' : `${relPath}/`;
+  const queryRoot = nestedGitRootOf(dirBranches, relPath);
   for (const [p, code] of Object.entries(gitMap)) {
     if (!DIRTY.has(code)) continue;
+    const owner = nestedGitRootOf(dirBranches, p);
+    if (owner && owner !== queryRoot) continue;
     if (relPath === '') return true;
     if (p === relPath || p.startsWith(prefix)) return true;
   }

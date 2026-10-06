@@ -654,6 +654,25 @@ describe('FileTree 树内拖拽移动', () => {
     expect(screen.getByText('README.md').className).not.toMatch(/opacity/);
   });
 
+  it('外层虚拟根不因嵌套仓库改动打脏点', async () => {
+    mocks.gitStatus.mockResolvedValue({
+      Status: { 'feat/app/dirty.txt': 'untracked' },
+      IsRepo: true,
+      Branch: 'main',
+      DirBranches: { '': 'main', 'feat/app': 'feat/x' },
+    });
+    mocks.listFiles
+      .mockResolvedValueOnce([node('feat', true, 'feat')])
+      .mockResolvedValueOnce([node('app', true, 'feat/app')]);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    fireEvent.click(await screen.findByText('feat'));
+    expect(await screen.findByTitle('git 分支 feat/x')).toBeInTheDocument();
+    const dots = screen.getAllByLabelText('有未提交改动');
+    expect(dots).toHaveLength(1);
+    expect(screen.getByText('app').closest('button')).toContainElement(dots[0]);
+    expect(screen.getByText('proj').closest('button')).not.toContainElement(dots[0]);
+  });
+
   it('目录 untracked 且含子 ignored 时目录仍呈未跟踪', async () => {
     mocks.gitStatus.mockResolvedValue({
       Status: { '.cursor': 'untracked', '.cursor/rules.md': 'ignored' },

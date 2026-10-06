@@ -332,7 +332,7 @@ function TreeRow({
   const branch = node.IsDir ? (item.relPath === '' ? rootBranch : dirBranches?.[item.relPath]) : undefined;
   // 中间层用 ⊞ 表达特殊未跟踪容器，不再叠 N
   const showGitBadge = !!gitCode && !(nestedParent && gitCode === 'untracked');
-  const dirtyFolder = node.IsDir && !gitCode && subtreeDirty(gitMap, item.relPath);
+  const dirtyFolder = node.IsDir && !gitCode && subtreeDirty(gitMap, item.relPath, dirBranches);
   const isVirtualRoot = item.relPath === '';
   const renaming = renamingPath === item.relPath;
   const [draft, setDraft] = useState(node.Name);

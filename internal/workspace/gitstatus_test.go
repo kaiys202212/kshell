@@ -279,8 +279,8 @@ func TestInspectGit_忽略目录内嵌套仓库用自身状态(t *testing.T) {
 	if rep.Status["wt/app"] == "ignored" {
 		t.Fatalf("嵌套 git 根不应沿用外层 ignored：%v", rep.Status)
 	}
-	if rep.Status["wt/app/ok.txt"] == "ignored" {
-		t.Fatalf("嵌套已跟踪文件不应被外层标 ignored：%v", rep.Status)
+	if _, ok := rep.Status["wt/app/ok.txt"]; ok {
+		t.Fatalf("嵌套已跟踪干净文件不应出现在 Status：%v", rep.Status)
 	}
 	if rep.Status["wt/app/dirty.txt"] != "untracked" {
 		t.Fatalf("嵌套未跟踪未合并：%v", rep.Status)

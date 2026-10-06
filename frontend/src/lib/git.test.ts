@@ -13,6 +13,17 @@ describe('subtreeDirty', () => {
     expect(subtreeDirty({ 'src/a.ts': 'untracked' }, 'lib')).toBe(false);
     expect(subtreeDirty({ src: 'modified' }, 'src')).toBe(true);
   });
+
+  it('虚拟根不把嵌套仓库改动算作外层脏', () => {
+    const map = { 'wt/app/dirty.txt': 'untracked' };
+    const dirs = { '': 'main', 'wt/app': 'feat/x' };
+    expect(subtreeDirty(map, '', dirs)).toBe(false);
+    expect(subtreeDirty(map, 'wt', dirs)).toBe(false);
+    expect(subtreeDirty(map, 'wt/app', dirs)).toBe(true);
+    expect(
+      subtreeDirty({ 'a.ts': 'modified', 'wt/app/x.txt': 'untracked' }, '', dirs),
+    ).toBe(true);
+  });
 });
 
 describe('resolveGitCode', () => {
