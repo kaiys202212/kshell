@@ -661,14 +661,17 @@ func (a *App) runScan() {
 
 // publishDetectedTools 在会话扫描之前把 DetectAll 结果交给 GetTools。
 // keepInstallTools 时保留安装/卸载刚写的表，只标记本轮探测已完成。
+// 发布后对残缺安装尝试自动修复（门控与防重入全在 maybeAutoRepair 内）。
 func (a *App) publishDetectedTools(tools []discovery.Tool) {
 	a.mu.Lock()
 	if !a.keepInstallTools {
 		a.tools = tools
 	}
+	current := a.tools
 	a.toolsReady = true
 	a.mu.Unlock()
 	a.Emit("tools:updated")
+	a.maybeAutoRepair(current)
 }
 
 // finishScan 结束本轮扫描标志。keepBusyOnPending 为 true 且有排队请求时保持 scanning，

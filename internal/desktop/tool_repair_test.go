@@ -238,3 +238,26 @@ func TestMaybeAutoRepairIgnoresHealthyTool(t *testing.T) {
 		t.Fatalf("健康工具不应启动，calls=%v", *calls)
 	}
 }
+
+// 扫描链路挂载：publishDetectedTools 发布残缺工具表后自动触发修复。
+func TestPublishDetectedToolsTriggersAutoRepair(t *testing.T) {
+	block := make(chan struct{})
+	var calls *[]string
+	a, calls := brokenRepairApp(t, func(o *Options) {
+		o.ProcScan = func(string) bool { return false }
+		o.InstallRunner = func(ctx context.Context, shell, cmdline string, onLog func(string)) error {
+			*calls = append(*calls, cmdline)
+			<-block
+			return nil
+		}
+	})
+	a.publishDetectedTools(brokenTools())
+	if job := a.GetToolInstallJob(); job.Trigger != "auto" || !job.Running {
+		t.Fatalf("job=%+v, want running auto repair", job)
+	}
+	close(block)
+	waitJobIdle(t, a)
+	if len(*calls) != 1 {
+		t.Fatalf("calls=%v, want 1 auto repair", *calls)
+	}
+}
