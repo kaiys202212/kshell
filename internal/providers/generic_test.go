@@ -3,6 +3,7 @@ package providers
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -328,5 +329,54 @@ func TestFormatProvidersYAMLRoundTrip(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ID != "demo" || got[0].Name != "Demo" || got[0].Detect.Command != "demo" {
 		t.Fatalf("got %+v yaml=%s", got, raw)
+	}
+}
+
+func TestGenericBypassArgs(t *testing.T) {
+	specs, err := ParseProvidersYAML([]byte(`providers:
+  - id: mytool
+    name: MyTool
+    permission:
+      bypassArgs: ["--trust-all"]
+`))
+	if err != nil || len(specs) != 1 {
+		t.Fatalf("parse: %v %v", specs, err)
+	}
+	g := Generic{Spec: specs[0]}
+	args, env := g.InjectPermission(true)
+	if !reflect.DeepEqual(args, []string{"--trust-all"}) || len(env) != 0 {
+		t.Fatalf("generic bypass = %v %v", args, env)
+	}
+	// 未声明时保持 no-op
+	if a, e := (Generic{}).InjectPermission(true); len(a) != 0 || len(e) != 0 {
+		t.Fatalf("未声明应 no-op，got %v %v", a, e)
+	}
+	// 默认（非 bypass）模式不注入
+	if a, e := g.InjectPermission(false); len(a) != 0 || len(e) != 0 {
+		t.Fatalf("default 不应注入，got %v %v", a, e)
+	}
+}
+
+func TestGenericBypassArgsFormatRoundtrip(t *testing.T) {
+	// 未声明 permission 的项不应输出空占位块
+	plain, err := FormatProvidersYAML([]GenericSpec{{ID: "x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain, "permission") {
+		t.Fatalf("空 permission 不应输出：\n%s", plain)
+	}
+	specs := []GenericSpec{{ID: "mytool"}}
+	specs[0].Permission.BypassArgs = []string{"--trust-all"}
+	out, err := FormatProvidersYAML(specs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "permission:") && strings.Contains(out, "bypassArgs: []") {
+		t.Fatalf("空 permission 不应输出占位：\n%s", out)
+	}
+	back, err := ParseProvidersYAML([]byte(out))
+	if err != nil || len(back) != 1 || !reflect.DeepEqual(back[0].Permission.BypassArgs, []string{"--trust-all"}) {
+		t.Fatalf("roundtrip = %+v %v yaml=%s", back, err, out)
 	}
 }

@@ -39,6 +39,9 @@ type GenericSpec struct {
 	Resume struct {
 		Args []string `yaml:"args"`
 	} `yaml:"resume"`
+	Permission struct {
+		BypassArgs []string `yaml:"bypassArgs"` // 权限模式为 Bypass 时追加的启动参数
+	} `yaml:"permission,omitempty"`
 	Verified bool `yaml:"verified"` // false 表示路径/参数未实测，UI 会标注
 }
 
@@ -272,6 +275,14 @@ func (g Generic) ResumeCmd(s Session, bin string) Launch {
 	return Launch{Path: bin, Args: args, Dir: s.Workspace}
 }
 
+// InjectPermission 按 yaml 声明的 permission.bypassArgs 注入（未声明则 no-op）。
+func (g Generic) InjectPermission(bypass bool) ([]string, map[string]string) {
+	if !bypass || len(g.Spec.Permission.BypassArgs) == 0 {
+		return nil, nil
+	}
+	return append([]string(nil), g.Spec.Permission.BypassArgs...), nil
+}
+
 // LoadGenericSpecs 从 yaml 读取自定义 provider 定义。
 func LoadGenericSpecs(path string) ([]GenericSpec, error) {
 	data, err := os.ReadFile(path)
@@ -312,6 +323,7 @@ func DefaultProvidersYAML() string {
 	return `# kshell 自定义工具定义
 # 用法：把下面某项的路径/参数改成你机器上的实际值即可，无需改代码。
 # glob 支持 ~/ 前缀；fields 支持 a.b.c 形式的字段路径；resume 参数里的 {id} 会被替换成会话 ID。
+# permission.bypassArgs：权限模式为 Bypass 时追加给该工具的启动参数（如 permission: {bypassArgs: ["--force"]}）。
 # verified: false 表示未经实测，kshell 会在界面上标注。
 providers:
   # codebuddy / opencode 已是内置 provider，不在此处声明；

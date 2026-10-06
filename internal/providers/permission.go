@@ -47,9 +47,6 @@ func (CodeBuddy) InjectPermission(bypass bool) ([]string, map[string]string) {
 	return []string{"--permission-mode", "bypassPermissions"}, nil
 }
 
-// Generic：跳过参数由 yaml 的 permission.bypassArgs 声明，未声明时 no-op。
-func (Generic) InjectPermission(bool) ([]string, map[string]string) { return nil, nil }
-
 // Opencode：bypass 时注入 --auto（自动放行未显式 deny 的权限，opencode 1.x 根级 flag）。
 func (Opencode) InjectPermission(bypass bool) ([]string, map[string]string) {
 	if !bypass {
