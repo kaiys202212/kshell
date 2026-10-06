@@ -337,6 +337,28 @@ func TestApplyPermissionBypassOpencode(t *testing.T) {
 	}
 }
 
+// TestApplyPermissionBypassNodeEntry 断言 node 入口形态下权限参数必须落在脚本名之后：
+// `node --force index.js` 会被 node 直接拒绝（bad option），`node index.js --force` 才正确。
+func TestApplyPermissionBypassNodeEntry(t *testing.T) {
+	ps := []providers.Provider{providers.Cursor{}}
+	tools := []discovery.Tool{{ID: "cursor", Installed: true, BinPath: "node.exe",
+		BinArgs: []string{`C:\agent\index.js`}}}
+	s := providers.Session{ID: "s1", ToolID: "cursor", Workspace: "/p"}
+	l, err := ForSession(ps, tools, s, ThemeOptions{}, ModelOptions{}, PermissionOptions{Bypass: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{`C:\agent\index.js`, "--force", "--resume", "s1"}
+	if len(l.Args) != len(want) {
+		t.Fatalf("命令形状 = %v, want %v", l.Args, want)
+	}
+	for i := range want {
+		if l.Args[i] != want[i] {
+			t.Fatalf("命令形状 = %v, want %v", l.Args, want)
+		}
+	}
+}
+
 func TestForSessionPrependsBinArgs(t *testing.T) {
 	s := providers.Session{ID: "s1", ToolID: "cursor"}
 	p := fakeProvider{id: "cursor", resume: providers.Launch{Path: "node.exe", Args: []string{"--resume", "s1"}}}

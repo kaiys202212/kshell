@@ -83,15 +83,21 @@ func finalize(l providers.Launch, p providers.Provider, mo ModelOptions, po Perm
 	return applyPermission(applyModel(l, p, mo), p, po)
 }
 
-// prependBinArgs 把入口前缀参数（node 入口形态下为主脚本名）放到 provider
-// 产出的参数之前，使命令成为 `node.exe index.js [provider 参数...]`。
-// 主题/模型/权限注入都发生在其后，天然落在主脚本参数之后，顺序正确。
+// prependBinArgs 把入口前缀参数（node 入口形态下为主脚本名）放到最前，使命令成为
+// `node.exe index.js [注入参数 + provider 参数...]`。必须最后执行：注入参数若落在
+// 脚本名之前，node 会把它当自身选项直接拒绝（`node --force` → bad option）。
 func prependBinArgs(l providers.Launch, tool discovery.Tool) providers.Launch {
 	if len(tool.BinArgs) == 0 {
 		return l
 	}
 	l.Args = append(append([]string(nil), tool.BinArgs...), l.Args...)
 	return l
+}
+
+// compose 组装启动描述：主题 → 模型/权限注入（前置到 provider 参数）→ 最后入口前缀。
+// 无 BinArgs 的工具（非 node 入口）行为等价于直接 finalize。
+func compose(l providers.Launch, p providers.Provider, tool discovery.Tool, to ThemeOptions, mo ModelOptions, po PermissionOptions) providers.Launch {
+	return prependBinArgs(finalize(applyTheme(l, p, to), p, mo, po), tool)
 }
 
 // ForSession 根据会话找到对应 provider 与可执行文件，产出恢复会话的启动描述。
@@ -105,7 +111,7 @@ func ForSession(ps []providers.Provider, tools []discovery.Tool, s providers.Ses
 	if !ok {
 		return providers.Launch{}, ErrToolNotRunnable
 	}
-	return finalize(applyTheme(prependBinArgs(p.ResumeCmd(s, tool.BinPath), tool), p, to), p, mo, po), nil
+	return compose(p.ResumeCmd(s, tool.BinPath), p, tool, to, mo, po), nil
 }
 
 // ForWorkspace 为工作区挑选首选工具（优先该工作区会话数最多的），产出新建会话的启动描述。
@@ -122,7 +128,7 @@ func ForWorkspaceTool(ps []providers.Provider, tools []discovery.Tool, ws discov
 		if !ok {
 			return providers.Launch{}, ErrToolNotRunnable
 		}
-		return finalize(applyTheme(prependBinArgs(p.NewSessionCmd(ws.Path, tool.BinPath), tool), p, to), p, mo, po), nil
+		return compose(p.NewSessionCmd(ws.Path, tool.BinPath), p, tool, to, mo, po), nil
 	}
 
 	tool, ok := toolFor(tools, toolID)
@@ -133,7 +139,7 @@ func ForWorkspaceTool(ps []providers.Provider, tools []discovery.Tool, ws discov
 	if !ok {
 		return providers.Launch{}, ErrToolNotRunnable
 	}
-	return finalize(applyTheme(prependBinArgs(p.NewSessionCmd(ws.Path, tool.BinPath), tool), p, to), p, mo, po), nil
+	return compose(p.NewSessionCmd(ws.Path, tool.BinPath), p, tool, to, mo, po), nil
 }
 
 // PreferredTool 选一个该工作区里可用（已安装且有可执行文件）的工具；优先会话数最多的。
