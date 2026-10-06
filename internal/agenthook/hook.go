@@ -71,7 +71,8 @@ func readEventJSON(args []string, stdin io.Reader) (string, string) {
 	if len(rest) > 0 {
 		tool = rest[0]
 	}
-	b, err := io.ReadAll(stdin)
+	// 限制读取量约 1MB：防止异常管道灌入超大输入拖垮进程；正常 hook 事件远小于该值
+	b, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
 	if err != nil {
 		return tool, ""
 	}
@@ -91,6 +92,10 @@ func looksLikeJSON(s string) bool {
 func extractFields(raw string) (event, summary string, ok bool) {
 	var m map[string]any
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return "", "", false
+	}
+	// JSON null 也 unmarshal 成功但得 nil map：落盘会是全空 payload，视为解析失败丢弃
+	if m == nil {
 		return "", "", false
 	}
 	if v, ok := m["hook_event_name"].(string); ok {

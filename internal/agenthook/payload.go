@@ -53,8 +53,8 @@ func writeInbox(p Payload) error {
 	return os.Rename(tmp, final)
 }
 
-// CleanupInbox 删除收件箱中修改时间早于 maxAge 的 *.json；目录不存在时静默返回。
-// 桌面端启动时调用，防止长期使用下收件箱无限堆积。
+// CleanupInbox 删除收件箱中修改时间早于 maxAge 的 *.json 与 *.tmp；目录不存在时静默返回。
+// 桌面端启动时调用，防止长期使用下收件箱无限堆积；*.tmp 是原子写崩溃残留的孤儿临时文件，一并回收。
 func CleanupInbox(maxAge time.Duration) {
 	dir, err := inboxDir()
 	if err != nil {
@@ -66,7 +66,11 @@ func CleanupInbox(maxAge time.Duration) {
 	}
 	cutoff := time.Now().Add(-maxAge)
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".json") && !strings.HasSuffix(name, ".tmp") {
 			continue
 		}
 		info, err := e.Info()

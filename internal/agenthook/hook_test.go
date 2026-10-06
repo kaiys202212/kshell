@@ -191,6 +191,35 @@ func TestHandleEmptyStdinSilent(t *testing.T) {
 	}
 }
 
+func TestHandleNullJSONSilent(t *testing.T) {
+	home := fakeHome(t)
+	t.Setenv("KSHELL_TERM_KEY", "term-5")
+
+	// JSON null 能 unmarshal 成功但得 nil map：落盘会是全空 payload，应视为解析失败丢弃
+	code := handle([]string{"agent-hook", "claude"}, strings.NewReader(`null`))
+	if code != 0 {
+		t.Fatalf("null 输入也必须返回 0, 实际 %d", code)
+	}
+	if files := readInboxFiles(t, home); len(files) != 0 {
+		t.Fatalf("null 不应落盘，实际 %d 个文件", len(files))
+	}
+}
+
+func TestHandleStdinOverLimitDropped(t *testing.T) {
+	home := fakeHome(t)
+	t.Setenv("KSHELL_TERM_KEY", "term-6")
+
+	// 超过 1MB 读取上限被截断，截断后的 JSON 不完整 → 静默丢弃，不落盘
+	big := `{"hook_event_name":"Stop","pad":"` + strings.Repeat("x", 2<<20) + `"}`
+	code := handle([]string{"agent-hook", "claude"}, strings.NewReader(big))
+	if code != 0 {
+		t.Fatalf("超限输入也必须返回 0, 实际 %d", code)
+	}
+	if files := readInboxFiles(t, home); len(files) != 0 {
+		t.Fatalf("超限截断后不应落盘，实际 %d 个文件", len(files))
+	}
+}
+
 func TestHandleMissingEventFields(t *testing.T) {
 	home := fakeHome(t)
 	t.Setenv("KSHELL_TERM_KEY", "term-4")
@@ -232,6 +261,18 @@ func TestCleanupInboxRemovesOldKeepsNew(t *testing.T) {
 	if err := os.WriteFile(newFile, []byte("{}"), 0o600); err != nil {
 		t.Fatalf("写新文件失败: %v", err)
 	}
+	// 孤儿 .tmp（原子写崩溃残留）：超龄的一并清理，新鲜的保留
+	oldTmp := filepath.Join(dir, "101-old.json.tmp")
+	if err := os.WriteFile(oldTmp, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("写旧 tmp 失败: %v", err)
+	}
+	if err := os.Chtimes(oldTmp, past, past); err != nil {
+		t.Fatalf("改 mtime 失败: %v", err)
+	}
+	newTmp := filepath.Join(dir, "201-new.json.tmp")
+	if err := os.WriteFile(newTmp, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("写新 tmp 失败: %v", err)
+	}
 	// 非 .json 后缀不清理
 	keepTxt := filepath.Join(dir, "keep.txt")
 	if err := os.WriteFile(keepTxt, []byte("x"), 0o600); err != nil {
@@ -248,6 +289,12 @@ func TestCleanupInboxRemovesOldKeepsNew(t *testing.T) {
 	}
 	if _, err := os.Stat(newFile); err != nil {
 		t.Errorf("新鲜 json 应保留, stat err = %v", err)
+	}
+	if _, err := os.Stat(oldTmp); !os.IsNotExist(err) {
+		t.Errorf("超龄 .tmp 应被删除, stat err = %v", err)
+	}
+	if _, err := os.Stat(newTmp); err != nil {
+		t.Errorf("新鲜 .tmp 应保留, stat err = %v", err)
 	}
 	if _, err := os.Stat(keepTxt); err != nil {
 		t.Errorf("非 json 文件不应被清理, stat err = %v", err)
