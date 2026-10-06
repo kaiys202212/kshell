@@ -4,6 +4,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/yangk/kshell/internal/discovery"
+	"github.com/yangk/kshell/internal/providers"
 )
 
 // maxAutoRepairAttempts 是残缺安装的自动修复重试上限：连续失败到顶后
@@ -12,8 +16,10 @@ const maxAutoRepairAttempts = 3
 
 // repairStatePath 返回状态文件完整路径；Layout.State 未装配时返回空串，
 // 调用方据空串静默跳过（测试的零值 Layout 与无状态目录场景）。
+// 直接读 a.opts（装配后只读，app.go 注释约定），不走 snapshot：本函数会被
+// execInstallJob 持锁路径调用，再拿 mu 会死锁。
 func (a *App) repairStatePath(name string) string {
-	root := a.snapshot().Layout.State
+	root := a.opts.Layout.State
 	if root == "" {
 		return ""
 	}
@@ -95,4 +101,83 @@ func (a *App) procScanUnderDir(dir string) bool {
 		return fn(dir)
 	}
 	return runningProcessUnderDir(dir)
+}
+
+// maybeAutoRepair 对残缺安装执行自动修复门控（详见设计文档）：
+// 残缺 + 无 kshell 卸载标记 + 有使用残留 + 无进程占用 + 无进行中任务 + 重试未到上限，
+// 全部满足才复用 startInstallJob 跑官方安装配方。进程占用只跳过本轮（扫描周期即退避），
+// 不计重试；其余不满足直接跳过该工具。布局零值（测试）下全部静默跳过。
+func (a *App) maybeAutoRepair(tools []discovery.Tool) {
+	for _, t := range tools {
+		if !t.Installed || !t.Broken {
+			continue
+		}
+		if a.uninstalledByUser(t.ID) {
+			continue
+		}
+		o := a.snapshot()
+		var spec providers.DetectSpec
+		for _, p := range o.Providers {
+			if p.ID() == t.ID {
+				spec = p.DetectSpec(o.Home)
+				break
+			}
+		}
+		if spec.BinName == "" || !providers.HasResidue(spec, o.Home) {
+			continue
+		}
+		a.mu.Lock()
+		busy := a.installJob.running
+		a.mu.Unlock()
+		if busy {
+			return // 已有任务在跑，本轮对所有工具都先不动
+		}
+		if a.readRepairAttempts(t.ID) >= maxAutoRepairAttempts {
+			continue
+		}
+		if a.installDirBusy(spec, o.Home) {
+			continue
+		}
+		_, r, err := a.lookupRecipe(t.ID)
+		if err != nil {
+			continue // 无安装配方（自定义 provider）无法自动修
+		}
+		if err := a.startInstallJob(t.ID, "install", r, false, "auto"); err != nil {
+			continue
+		}
+		a.bumpRepairAttempts(t.ID)
+		a.Emit("tool:install:log", map[string]any{
+			"toolID": t.ID,
+			"text":   "检测到安装损坏，正在自动修复…",
+		})
+		return // 一个任务独占，启动成功后本轮结束
+	}
+}
+
+// installDirBusy 检查工具安装目录下是否有运行中进程：取 InstallDirs 中首个存在的
+// 目录（cursor 即安装根，覆盖 versions\ 子树）。全部不存在时视为不忙。
+func (a *App) installDirBusy(spec providers.DetectSpec, home string) bool {
+	for _, dir := range spec.InstallDirs {
+		expanded := expandHomeForRepair(dir, home)
+		if isDirExists(expanded) {
+			return a.procScanUnderDir(expanded)
+		}
+	}
+	return false
+}
+
+// expandHomeForRepair 展开 ~ 前缀；%VAR% 走 os.ExpandEnv。
+func expandHomeForRepair(path, home string) string {
+	if path == "~" {
+		return home
+	}
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		return filepath.Join(home, path[2:])
+	}
+	return os.ExpandEnv(path)
+}
+
+func isDirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
