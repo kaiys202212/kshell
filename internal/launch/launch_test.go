@@ -323,6 +323,20 @@ func TestApplyPermissionBypassClaude(t *testing.T) {
 	}
 }
 
+// TestApplyPermissionBypassOpencode 断言端到端命令形状：--auto 必须在 --session 之前。
+func TestApplyPermissionBypassOpencode(t *testing.T) {
+	ps := []providers.Provider{providers.Opencode{}}
+	tools := []discovery.Tool{{ID: "opencode", Installed: true, BinPath: "opencode"}}
+	s := providers.Session{ID: "s1", ToolID: "opencode", Workspace: "/p"}
+	l, err := ForSession(ps, tools, s, ThemeOptions{}, ModelOptions{}, PermissionOptions{Bypass: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Args) != 3 || l.Args[0] != "--auto" || l.Args[1] != "--session" || l.Args[2] != "s1" {
+		t.Fatalf("bypass 命令形状应为 [--auto --session s1]，got %v", l.Args)
+	}
+}
+
 func TestForSessionPrependsBinArgs(t *testing.T) {
 	s := providers.Session{ID: "s1", ToolID: "cursor"}
 	p := fakeProvider{id: "cursor", resume: providers.Launch{Path: "node.exe", Args: []string{"--resume", "s1"}}}
