@@ -4,6 +4,7 @@ import { gitStatus } from './api';
 import { useAppStore } from '../state/store';
 
 const DIRTY = new Set(['modified', 'added', 'deleted', 'renamed', 'untracked', 'conflicted']);
+const EXPLICIT = new Set(['modified', 'added', 'deleted', 'renamed', 'conflicted']);
 
 // 子树是否有未提交改动（忽略 ignored）。relPath 为空表示工作区虚拟根。
 export function subtreeDirty(gitMap: Record<string, string> | undefined, relPath: string): boolean {
@@ -13,6 +14,60 @@ export function subtreeDirty(gitMap: Record<string, string> | undefined, relPath
     if (!DIRTY.has(code)) continue;
     if (relPath === '') return true;
     if (p === relPath || p.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
+function ancestorIgnored(gitMap: Record<string, string>, relPath: string): boolean {
+  if (!relPath) return false;
+  const parts = relPath.split('/');
+  for (let i = 1; i < parts.length; i++) {
+    const anc = parts.slice(0, i).join('/');
+    if (gitMap[anc] === 'ignored') return true;
+  }
+  return false;
+}
+
+function childrenAllIgnored(gitMap: Record<string, string>, relPath: string): boolean {
+  const prefix = `${relPath}/`;
+  let any = false;
+  for (const [p, code] of Object.entries(gitMap)) {
+    if (p === relPath || !p.startsWith(prefix)) continue;
+    any = true;
+    if (code !== 'ignored') return false;
+  }
+  return any;
+}
+
+// 解析文件树行应展示的 git 码：祖先继承 ignored；目录可在子全 ignored 时推断（含覆盖 untracked）。
+export function resolveGitCode(
+  gitMap: Record<string, string> | undefined,
+  relPath: string,
+  isDir: boolean,
+): string | undefined {
+  if (!gitMap || relPath === '') return undefined;
+  if (ancestorIgnored(gitMap, relPath)) return 'ignored';
+  const own = gitMap[relPath];
+  if (own && EXPLICIT.has(own)) return own;
+  if (isDir && childrenAllIgnored(gitMap, relPath) && (!own || own === 'untracked' || own === 'ignored')) {
+    return 'ignored';
+  }
+  return own;
+}
+
+// 目录是否为「嵌套 git 根」的严格路径前缀（中间层）；嵌套根本身与虚拟根不算。
+export function isNestedGitParent(
+  dirBranches: Record<string, string> | undefined,
+  relPath: string,
+): boolean {
+  if (!dirBranches || !relPath) return false;
+  if (Object.prototype.hasOwnProperty.call(dirBranches, relPath) && relPath !== '') {
+    return false; // 自身是嵌套根
+  }
+  const needle = `${relPath}/`;
+  for (const key of Object.keys(dirBranches)) {
+    if (!key) continue;
+    if (key.startsWith(needle)) return true;
   }
   return false;
 }
