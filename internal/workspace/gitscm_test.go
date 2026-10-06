@@ -1,9 +1,11 @@
 package workspace
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -432,6 +434,134 @@ func TestFetchPullPush_按同步源(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 不存在的 remote 报错
+	if err := Push(clone, "", "nope"); err == nil {
+		t.Fatal("不存在的 remote push 应失败")
+	}
+}
+
+// gitRev 取某仓某表达式的输出（测试用，取 tip/ref 值）。
+func gitRev(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// 异名跟踪：本地 fix 跟踪 origin/bugfix，pull/push/差异都必须落到 bugfix。
+func TestPullPush_异名远端分支(t *testing.T) {
+	skipIfNoGit(t)
+	upstream := t.TempDir()
+	initRepo(t, upstream)
+	// 夹具允许推入上游已检出分支（真实远端为裸仓，此处仅为省一个裸仓）
+	gitRun(t, upstream, "config", "receive.denyCurrentBranch", "ignore")
+
+	writeFile(t, filepath.Join(upstream, "a.txt"), "a\n")
+	gitRun(t, upstream, "add", "a.txt")
+	gitRun(t, upstream, "commit", "-m", "c1")
+	gitRun(t, upstream, "branch", "bugfix")
+	gitRun(t, upstream, "switch", "bugfix")
+	writeFile(t, filepath.Join(upstream, "b.txt"), "b\n")
+	gitRun(t, upstream, "add", "b.txt")
+	gitRun(t, upstream, "commit", "-m", "c2")
+	gitRun(t, upstream, "switch", "main")
+
+	clone := t.TempDir()
+	gitRun(t, clone, "clone", upstream, ".")
+	gitRun(t, clone, "config", "core.autocrlf", "false")
+	gitRun(t, clone, "checkout", "--", ".")
+	gitRun(t, clone, "checkout", "-b", "fix", "origin/bugfix")
+
+	// 上游 bugfix 再前进一格，fetch 后差异应按 origin/bugfix 算（origin/fix 不存在）
+	gitRun(t, upstream, "switch", "bugfix")
+	writeFile(t, filepath.Join(upstream, "b.txt"), "b2\n")
+	gitRun(t, upstream, "add", "b.txt")
+	gitRun(t, upstream, "commit", "-m", "c3")
+	if err := Fetch(clone, "", "origin"); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := SCMStatus(clone, "", "origin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.SyncRemote != "origin" || !snap.HasUpstream || snap.Ahead != 0 || snap.Behind != 1 {
+		t.Fatalf("异名跟踪差异应按 origin/bugfix: sync=%q has=%v ahead=%d behind=%d",
+			snap.SyncRemote, snap.HasUpstream, snap.Ahead, snap.Behind)
+	}
+
+	// pull 按 upstream 真名拉 bugfix（同名假设会报 couldn't find remote ref）
+	if err := Pull(clone, "", "origin"); err != nil {
+		t.Fatalf("pull 异名远端分支应成功: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(clone, "b.txt"))
+	if err != nil || string(got) != "b2\n" {
+		t.Fatalf("pull 后 b.txt %q err=%v", got, err)
+	}
+
+	// push 必须更新远端 bugfix，而不是静默新建 fix 分支
+	writeFile(t, filepath.Join(clone, "c.txt"), "c\n")
+	gitRun(t, clone, "add", "c.txt")
+	gitRun(t, clone, "commit", "-m", "c4")
+	if err := Push(clone, "", "origin"); err != nil {
+		t.Fatalf("push 异名远端分支应成功: %v", err)
+	}
+	localTip := gitRev(t, clone, "rev-parse", "HEAD")
+	if got := gitRev(t, upstream, "rev-parse", "bugfix"); got != localTip {
+		t.Fatalf("远端 bugfix 应等于本地 tip: %s != %s", got, localTip)
+	}
+	if err := exec.Command("git", "-C", upstream, "show-ref", "--verify", "--quiet", "refs/heads/fix").Run(); err == nil {
+		t.Fatal("不应在远端新建 fix 分支")
+	}
+
+	// push 后仍按 origin/bugfix 解析：同名假设下 origin/fix 不存在会全 false。
+	// push 会同步刷新远端跟踪引用，故此刻 ahead/behind 归零属正常。
+	snap, err = SCMStatus(clone, "", "origin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.SyncRemote != "origin" || !snap.HasUpstream {
+		t.Fatalf("push 后应按 origin/bugfix 算差异: sync=%q has=%v ahead=%d behind=%d",
+			snap.SyncRemote, snap.HasUpstream, snap.Ahead, snap.Behind)
+	}
+}
+
+// detached 与显式无效源：三操作口径一致。
+func TestPullPush_detached与无效源(t *testing.T) {
+	skipIfNoGit(t)
+	upstream := t.TempDir()
+	initRepo(t, upstream)
+	writeFile(t, filepath.Join(upstream, "a.txt"), "a\n")
+	gitRun(t, upstream, "add", "a.txt")
+	gitRun(t, upstream, "commit", "-m", "c1")
+
+	clone := t.TempDir()
+	gitRun(t, clone, "clone", upstream, ".")
+	gitRun(t, clone, "config", "core.autocrlf", "false")
+	gitRun(t, clone, "checkout", "--", ".")
+	gitRun(t, clone, "checkout", "--detach", "HEAD")
+
+	if err := Pull(clone, "", "origin"); !errors.Is(err, errNoBranch) {
+		t.Fatalf("detached pull 应返回 errNoBranch, got %v", err)
+	}
+	if err := Push(clone, "", "origin"); !errors.Is(err, errNoBranch) {
+		t.Fatalf("detached push 应返回 errNoBranch, got %v", err)
+	}
+	snap, err := SCMStatus(clone, "", "origin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.HasUpstream {
+		t.Fatalf("detached 不应有同步引用: has=%v", snap.HasUpstream)
+	}
+
+	// 显式无效源：fetch/pull/push 口径一致
+	if err := Fetch(clone, "", "nope"); err == nil {
+		t.Fatal("不存在的 remote fetch 应失败")
+	}
+	if err := Pull(clone, "", "nope"); err == nil {
+		t.Fatal("不存在的 remote pull 应失败")
+	}
 	if err := Push(clone, "", "nope"); err == nil {
 		t.Fatal("不存在的 remote push 应失败")
 	}
