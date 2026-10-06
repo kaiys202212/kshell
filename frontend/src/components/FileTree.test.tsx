@@ -599,6 +599,53 @@ describe('FileTree 树内拖拽移动', () => {
     expect(await screen.findByTitle('git 分支 dev')).toBeInTheDocument();
   });
 
+  it('ignored 目录下展开的子项继承淡化与 I', async () => {
+    mocks.gitStatus.mockResolvedValue({
+      Status: { vendor: 'ignored' },
+      IsRepo: true,
+    });
+    mocks.listFiles
+      .mockResolvedValueOnce([node('vendor', true, 'vendor')])
+      .mockResolvedValueOnce([node('pkg', true, 'vendor/pkg')]);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('vendor');
+    fireEvent.click(screen.getByText('vendor'));
+    expect(await screen.findByText('pkg')).toBeInTheDocument();
+    expect(screen.getByText('pkg').className).toMatch(/opacity|muted/);
+    expect(screen.getAllByTitle('git：已忽略').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('目录 untracked 且子全 ignored 时目录呈 ignored（非 N）', async () => {
+    mocks.gitStatus.mockResolvedValue({
+      Status: { '.cursor': 'untracked', '.cursor/rules.md': 'ignored' },
+      IsRepo: true,
+    });
+    mocks.listFiles.mockResolvedValue([node('.cursor', true, '.cursor')]);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    expect(await screen.findByText('.cursor')).toBeInTheDocument();
+    expect(screen.getByText('.cursor').className).toMatch(/opacity|muted/);
+    expect(screen.getByTitle('git：已忽略')).toBeInTheDocument();
+    expect(screen.queryByTitle('git：未跟踪')).not.toBeInTheDocument();
+  });
+
+  it('含嵌套 git 的中间层显示 ⊞，嵌套根仅分支', async () => {
+    mocks.gitStatus.mockResolvedValue({
+      Status: {},
+      IsRepo: true,
+      Branch: 'main',
+      DirBranches: { '': 'main', 'ext/lib': 'dev' },
+    });
+    mocks.listFiles
+      .mockResolvedValueOnce([node('ext', true, 'ext')])
+      .mockResolvedValueOnce([node('lib', true, 'ext/lib')]);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('ext');
+    expect(screen.getByTitle('含嵌套 git')).toHaveTextContent('⊞');
+    fireEvent.click(screen.getByText('ext'));
+    expect(await screen.findByTitle('git 分支 dev')).toBeInTheDocument();
+    expect(screen.getByText('lib').closest('button')?.textContent).not.toMatch(/⊞/);
+  });
+
   it('文件夹子树有改动时打统一圆点，文件仍用字母色标', async () => {
     mocks.gitStatus.mockResolvedValue({
       Status: { 'src/main.ts': 'modified' },

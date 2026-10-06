@@ -25,7 +25,7 @@ import {
 import type { FileNode, SearchHit } from '../lib/api';
 import { cn } from '../lib/cn';
 import { DRAG_MIME, REL_MIME } from '../lib/dragPath';
-import { refreshGitStatus, subtreeDirty } from '../lib/git';
+import { isNestedGitParent, refreshGitStatus, resolveGitCode, subtreeDirty } from '../lib/git';
 import { sameWorkspacePath } from '../lib/workspacePath';
 import { useAppStore } from '../state/store';
 import ContextMenu, { type MenuItem } from './ContextMenu';
@@ -325,8 +325,11 @@ function TreeRow({
   onMoveInto,
 }: RowProps) {
   const { node } = item;
-  const gitCode = gitMap?.[item.relPath]; // 目录也查 gitMap（忽略/未跟踪目录需徽章）
+  const gitCode = resolveGitCode(gitMap, item.relPath, node.IsDir);
+  const nestedParent = node.IsDir && isNestedGitParent(dirBranches, item.relPath);
   const branch = node.IsDir ? (item.relPath === '' ? rootBranch : dirBranches?.[item.relPath]) : undefined;
+  // 中间层用 ⊞ 表达特殊未跟踪容器，不再叠 N
+  const showGitBadge = !!gitCode && !(nestedParent && gitCode === 'untracked');
   const dirtyFolder = node.IsDir && !gitCode && subtreeDirty(gitMap, item.relPath);
   const isVirtualRoot = item.relPath === '';
   const renaming = renamingPath === item.relPath;
@@ -433,7 +436,16 @@ function TreeRow({
                   ({branch})
                 </span>
               ) : null}
-              {gitCode && <GitBadge code={gitCode} />}
+              {nestedParent ? (
+                <span
+                  className="shrink-0 font-mono text-[11px] text-muted-foreground"
+                  title="含嵌套 git"
+                  aria-label="含嵌套 git"
+                >
+                  ⊞
+                </span>
+              ) : null}
+              {showGitBadge && <GitBadge code={gitCode!} />}
               {dirtyFolder && (
                 <span
                   className="shrink-0 text-warning"
