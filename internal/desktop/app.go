@@ -161,12 +161,32 @@ func (a *App) Startup(ctx context.Context) {
 }
 
 var updateCheckDelay = 3 * time.Second
+var updateCheckInterval = 2 * time.Hour
 
 func (a *App) scheduleUpdateCheck() {
 	if updateCheckDelay > 0 {
 		time.Sleep(updateCheckDelay)
 	}
 	_, _ = a.CheckForUpdate()
+	if updateCheckInterval <= 0 {
+		return
+	}
+	a.mu.Lock()
+	ctx := a.ctx
+	a.mu.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	tick := time.NewTicker(updateCheckInterval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			_, _ = a.CheckForUpdate()
+		}
+	}
 }
 
 // loadSnapshot 把上次扫描的落盘快照灌进内存，让前端首次 GetWorkspaces/GetSessions

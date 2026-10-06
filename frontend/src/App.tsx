@@ -4,8 +4,9 @@
 // 终端事件总线在这里建立一次：terminal:data → 注册表分发到已挂载的 xterm，
 // terminal:exit → 更新镜像并提示；Go 侧每会话保留 256KiB 环形缓冲兜住未挂载期间的输出。
 // 全局快捷键：Ctrl+K 打开快速切换器，Ctrl+F 在工作区页签内派发 kshell:focus-search。
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  applyUpdate,
   archivedIDs,
   chatHistory,
   closeChat,
@@ -30,7 +31,7 @@ import {
 } from './lib/api';
 import type { AppearanceInfo } from './lib/appearance';
 import { applyUiFontSize, clampUiFontSize } from './lib/appearance';
-import type { ChatUpdate } from './lib/api';
+import type { ChatUpdate, UpdateInfo } from './lib/api';
 import { encodeTerminalInput } from './lib/base64';
 import { appendChatInput } from './lib/chatInputRegistry';
 import { quotePathForShell } from './lib/dragPath';
@@ -44,6 +45,7 @@ import Home from './pages/Home';
 import Settings from './pages/Settings';
 import WorkspaceTabView from './pages/WorkspaceTab';
 import ArchiveSuggest from './components/ArchiveSuggest';
+import UpdatePrompt from './components/UpdatePrompt';
 import QuickSwitcher from './components/QuickSwitcher';
 import TitleBar from './components/TitleBar';
 import { Toaster } from './components/ui/toaster';
@@ -58,6 +60,10 @@ function App() {
   const closeTab = useAppStore((s) => s.closeTab);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const archivePrompt = useAppStore((s) => s.archivePrompt);
+  const [updatePrompt, setUpdatePrompt] = useState<UpdateInfo | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateError, setUpdateError] = useState('');
+  const updateDismissedRef = useRef(false);
 
   useEffect(() => {
     listTerminals()
@@ -67,7 +73,8 @@ function App() {
 
   useEffect(() => {
     return onUpdateAvailable((info) => {
-      useAppStore.getState().notify(`发现新版本 ${info.Latest}，可在设置中升级`, 'info');
+      if (updateDismissedRef.current) return;
+      setUpdatePrompt(info);
     });
   }, []);
 
@@ -303,6 +310,31 @@ function App() {
           if (ref) void confirmArchive(ref);
         }}
       />
+      {updatePrompt ? (
+        <UpdatePrompt
+          info={updatePrompt}
+          busy={updateBusy}
+          error={updateError}
+          onLater={() => {
+            updateDismissedRef.current = true;
+            setUpdatePrompt(null);
+            setUpdateError('');
+            setUpdateBusy(false);
+          }}
+          onUpgrade={() => {
+            void (async () => {
+              setUpdateBusy(true);
+              setUpdateError('');
+              try {
+                await applyUpdate();
+              } catch (e: unknown) {
+                setUpdateError(e instanceof Error ? e.message : String(e));
+                setUpdateBusy(false);
+              }
+            })();
+          }}
+        />
+      ) : null}
       <Toaster />
     </TooltipProvider>
   );

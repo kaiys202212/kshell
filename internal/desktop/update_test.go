@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/yangk/kshell/internal/update"
 	"github.com/yangk/kshell/internal/version"
@@ -137,5 +139,49 @@ func TestApplyUpdatePropagatesError(t *testing.T) {
 
 	if err := app.ApplyUpdate(); err == nil {
 		t.Fatal("期望错误")
+	}
+}
+
+func TestScheduleUpdateCheckRepeatsUntilCancel(t *testing.T) {
+	app, _, _ := newTestApp(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	app.mu.Lock()
+	app.ctx = ctx
+	app.mu.Unlock()
+
+	origD, origI := updateCheckDelay, updateCheckInterval
+	updateCheckDelay = 0
+	updateCheckInterval = 15 * time.Millisecond
+	t.Cleanup(func() {
+		updateCheckDelay, updateCheckInterval = origD, origI
+	})
+
+	var n atomic.Int32
+	origC := checkUpdateFn
+	checkUpdateFn = func() (update.CheckResult, error) {
+		n.Add(1)
+		return update.CheckResult{Skipped: true}, nil
+	}
+	t.Cleanup(func() { checkUpdateFn = origC })
+
+	done := make(chan struct{})
+	go func() {
+		app.scheduleUpdateCheck()
+		close(done)
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for n.Load() < 3 {
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("检查次数 = %d，期望至少 3 次", n.Load())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ctx 取消后 scheduleUpdateCheck 未返回")
 	}
 }
