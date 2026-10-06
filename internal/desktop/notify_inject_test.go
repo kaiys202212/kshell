@@ -215,7 +215,10 @@ func TestApplyNotifyLaunch(t *testing.T) {
 }
 
 // opencode：生成临时插件目录并注入 OPENCODE_CONFIG_DIR；args 不变。
+// 先清空继承的进程环境：kshell 启动的 opencode 会话自带该变量，
+// 不隔离会让 openCodePluginDir 按设计跳过注入，测试在真实会话里误报。
 func TestApplyNotifyInjectOpenCode(t *testing.T) {
+	t.Setenv(envOpenCodeConfigDir, "")
 	spec := &launcher.Spec{Env: []string{"A=1"}, Args: []string{"--foo"}}
 	applyNotifyInject(spec, "opencode", "session:s1", `D:\ws`)
 	cleanupOpenCodeEnv(t, spec.Env)
@@ -249,7 +252,9 @@ func TestApplyNotifyInjectOpenCode(t *testing.T) {
 }
 
 // opencode 外部窗口路径：env map 注入 OPENCODE_CONFIG_DIR，插件文件同样生成。
+// 同 TestApplyNotifyInjectOpenCode：先隔离继承的进程环境。
 func TestApplyNotifyLaunchOpenCode(t *testing.T) {
+	t.Setenv(envOpenCodeConfigDir, "")
 	l := providers.Launch{Env: map[string]string{}, Args: []string{}}
 	applyNotifyLaunch(&l, "opencode", "window:t", `D:\ws`)
 	dir := l.Env["OPENCODE_CONFIG_DIR"]
