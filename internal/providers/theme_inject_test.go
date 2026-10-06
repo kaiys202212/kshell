@@ -69,8 +69,17 @@ func TestOpencodeWritesTUIConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != `{"theme":"system"}` {
-		t.Fatalf("data = %s", data)
+	// 不用 system：system 会 OSC 查色，应答经 xterm onData 回写后污染首条消息/标题
+	if string(data) != `{"theme":"opencode"}` {
+		t.Fatalf("dark data = %s", data)
+	}
+	_, env = Opencode{}.ThemeOverrides(appearance.ThemeLight, dir)
+	data, err = os.ReadFile(env["OPENCODE_TUI_CONFIG"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != `{"theme":"catppuccin-latte"}` {
+		t.Fatalf("light data = %s", data)
 	}
 }
 

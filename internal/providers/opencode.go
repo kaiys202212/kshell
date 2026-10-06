@@ -62,12 +62,18 @@ func (Opencode) ResumeCmd(s Session, bin string) Launch {
 	return Launch{Path: bin, Args: []string{"--session", s.ID}, Dir: s.Workspace}
 }
 
-// ThemeOverrides 指向生成的 tui.json，使用 system 主题（按承载终端背景自适应）。
+// ThemeOverrides 指向生成的 tui.json，注入与 kshell 明暗一致的固定主题。
+// 不用 system：system 会向终端 OSC 查色，应答经 xterm onData 回写后会被当成首条用户消息，
+// 会话标题变成 "4;0;rgb:…" 一类残片（Gemini 同理关掉了 autoThemeSwitching）。
 func (Opencode) ThemeOverrides(theme appearance.Theme, cacheDir string) ([]string, map[string]string) {
 	if cacheDir == "" {
 		return nil, nil
 	}
-	path, err := writeThemeJSON(cacheDir, "opencode-"+string(theme)+".json", map[string]any{"theme": "system"})
+	name := "opencode"
+	if theme == appearance.ThemeLight {
+		name = "catppuccin-latte"
+	}
+	path, err := writeThemeJSON(cacheDir, "opencode-"+string(theme)+".json", map[string]any{"theme": name})
 	if err != nil {
 		return nil, nil
 	}
