@@ -18,20 +18,24 @@ func TestInjectPermissionBypass(t *testing.T) {
 	if !reflect.DeepEqual(args, []string{"--auto"}) || len(env) != 0 {
 		t.Fatalf("opencode bypass = %v %v", args, env)
 	}
-	for _, p := range []interface {
-		InjectPermission(bool) ([]string, map[string]string)
-	}{Gemini{}} {
-		args, env = p.InjectPermission(true)
-		if len(args) != 0 || len(env) != 0 {
-			t.Fatalf("%T 应 no-op，got %v %v", p, args, env)
-		}
+	args, env = Gemini{}.InjectPermission(true)
+	if !reflect.DeepEqual(args, []string{"--approval-mode", "yolo"}) || len(env) != 0 {
+		t.Fatalf("gemini bypass = %v %v", args, env)
+	}
+	args, env = Cursor{}.InjectPermission(true)
+	if !reflect.DeepEqual(args, []string{"--force"}) || len(env) != 0 {
+		t.Fatalf("cursor bypass = %v %v", args, env)
+	}
+	args, env = CodeBuddy{}.InjectPermission(true)
+	if !reflect.DeepEqual(args, []string{"--permission-mode", "bypassPermissions"}) || len(env) != 0 {
+		t.Fatalf("codebuddy bypass = %v %v", args, env)
 	}
 }
 
 func TestInjectPermissionDefaultNoop(t *testing.T) {
 	for _, p := range []interface {
 		InjectPermission(bool) ([]string, map[string]string)
-	}{Claude{}, Codex{}, Gemini{}, Opencode{}} {
+	}{Claude{}, Codex{}, Gemini{}, Opencode{}, Cursor{}, CodeBuddy{}, Generic{}} {
 		args, env := p.InjectPermission(false)
 		if len(args) != 0 || len(env) != 0 {
 			t.Fatalf("%T default 不应注入：%v %v", p, args, env)
