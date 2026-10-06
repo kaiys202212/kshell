@@ -82,3 +82,15 @@ func (a *App) GitStashApply(wsPath, repoRel string, index int) error {
 func (a *App) GitStashDrop(wsPath, repoRel string, index int) error {
 	return workspace.StashDrop(filepath.Clean(strings.TrimSpace(wsPath)), repoRel, index)
 }
+
+func (a *App) GitLog(wsPath, repoRel, mode, ref string, limit int) ([]workspace.LogCommit, error) {
+	return workspace.Log(filepath.Clean(strings.TrimSpace(wsPath)), repoRel, mode, ref, limit)
+}
+
+func (a *App) GitRefs(wsPath, repoRel string) ([]workspace.GitRef, error) {
+	return workspace.Refs(filepath.Clean(strings.TrimSpace(wsPath)), repoRel)
+}
+
+func (a *App) GitFetchAll(wsPath, repoRel string) error {
+	return workspace.FetchAll(filepath.Clean(strings.TrimSpace(wsPath)), repoRel)
+}

@@ -216,6 +216,23 @@ export interface GitDiffResult {
   Untracked: boolean;
 }
 
+export interface GitLogCommit {
+  Hash: string;
+  Parents: string[] | null;
+  Author: string;
+  Email: string;
+  Date: string;
+  Subject: string;
+  Decorations: string[] | null;
+}
+
+export interface GitRef {
+  Name: string;
+  Short: string;
+  Kind: string;
+  Current: boolean;
+}
+
 // chat.Info 的 JSON 形态（internal/chat/types.go）
 export interface ChatInfo {
   ID: string;
@@ -384,6 +401,9 @@ interface AppBindings {
   GitStashPop(wsPath: string, repoRel: string, index: number): Promise<void>;
   GitStashApply(wsPath: string, repoRel: string, index: number): Promise<void>;
   GitStashDrop(wsPath: string, repoRel: string, index: number): Promise<void>;
+  GitLog(wsPath: string, repoRel: string, mode: string, ref: string, limit: number): Promise<GitLogCommit[]>;
+  GitRefs(wsPath: string, repoRel: string): Promise<GitRef[]>;
+  GitFetchAll(wsPath: string, repoRel: string): Promise<void>;
   NewSession(wsPath: string): Promise<void>;
   ListConnections(wsID: string): Promise<SshConnection[]>;
   OpenSSH(connID: string): Promise<void>;
@@ -751,6 +771,24 @@ export async function gitStashApply(wsPath: string, repoRel: string, index: numb
 
 export async function gitStashDrop(wsPath: string, repoRel: string, index: number): Promise<void> {
   await requireApp().GitStashDrop(wsPath, repoRel, index);
+}
+
+export async function gitLog(
+  wsPath: string,
+  repoRel: string,
+  mode: string,
+  ref: string,
+  limit = 200,
+): Promise<GitLogCommit[]> {
+  return requireApp().GitLog(wsPath, repoRel, mode, ref, limit);
+}
+
+export async function gitRefs(wsPath: string, repoRel: string): Promise<GitRef[]> {
+  return requireApp().GitRefs(wsPath, repoRel);
+}
+
+export async function gitFetchAll(wsPath: string, repoRel: string): Promise<void> {
+  await requireApp().GitFetchAll(wsPath, repoRel);
 }
 
 // NewSession 在工作区新建会话；错误向上抛，由调用方决定如何呈现
