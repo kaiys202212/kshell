@@ -84,7 +84,7 @@ func mergeSettingsHooks(args []string, command string) []string {
 		if err := json.Unmarshal([]byte(v), &m); err != nil || m == nil {
 			return args
 		}
-		m["hooks"] = notifyHooks(command)
+		m["hooks"] = mergeHooks(m["hooks"], notifyHooks(command))
 		b, err := json.Marshal(m)
 		if err != nil {
 			return args
@@ -111,6 +111,24 @@ func notifyHooks(command string) map[string]any {
 		"Stop":         wrap(),
 		"Notification": wrap(),
 	}
+}
+
+// mergeHooks 把 kshell 注入的事件合并进既有 hooks 对象，保留用户已有的事件键；
+// 同名事件键（如 Stop）以 kshell 注入为准——kshell 启动的会话需要保证通知可达。
+// 既有值不是对象（形态异常）时整体以注入为准，不报错。
+func mergeHooks(existing, inject any) any {
+	em, ok := existing.(map[string]any)
+	if !ok {
+		return inject
+	}
+	merged := make(map[string]any, len(em)+2)
+	for k, v := range em {
+		merged[k] = v
+	}
+	for k, v := range inject.(map[string]any) {
+		merged[k] = v
+	}
+	return merged
 }
 
 // tomlQuote 把字符串编码为 TOML 基本字符串；Windows 路径只需处理反斜杠与引号。

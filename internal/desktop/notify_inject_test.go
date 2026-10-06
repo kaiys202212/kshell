@@ -83,6 +83,39 @@ func TestNotifyArgsClaudeMergesExistingSettings(t *testing.T) {
 	}
 }
 
+// 既有 --settings JSON 已带 hooks（含 kshell 不注入的事件如 PreToolUse）：
+// 合并后其他事件保留，kshell 需要的 Stop/Notification 注入进去。
+func TestNotifyArgsMergesExistingHooks(t *testing.T) {
+	args := notifyArgs(
+		[]string{"--settings", `{"hooks":{"PreToolUse":[{"matcher":"Bash"}]}}`},
+		"claude", `C:\tools\kshell.exe`)
+	m := settingsValue(t, args)
+	hooks, ok := m["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("hooks 应为对象: %v", m["hooks"])
+	}
+	if _, ok := hooks["PreToolUse"]; !ok {
+		t.Fatalf("既有 PreToolUse 事件应保留，得到 %v", hooks)
+	}
+	if got := hookCommand(t, m, "Stop"); got != `"C:\tools\kshell.exe" agent-hook claude` {
+		t.Fatalf("Stop hook 命令不符: %q", got)
+	}
+	if got := hookCommand(t, m, "Notification"); got != `"C:\tools\kshell.exe" agent-hook claude` {
+		t.Fatalf("Notification hook 命令不符: %q", got)
+	}
+}
+
+// 既有 hooks 已有同名事件（Stop）：以 kshell 注入为准，整体替换该事件键。
+func TestNotifyArgsExistingStopOverridden(t *testing.T) {
+	args := notifyArgs(
+		[]string{"--settings", `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo old"}]}]}}`},
+		"claude", `C:\tools\kshell.exe`)
+	m := settingsValue(t, args)
+	if got := hookCommand(t, m, "Stop"); got != `"C:\tools\kshell.exe" agent-hook claude` {
+		t.Fatalf("同名事件应以 kshell 注入为准: %q", got)
+	}
+}
+
 // codebuddy 的 hook 强制走 Git Bash 执行：命令路径必须用正斜杠。
 func TestNotifyArgsCodeBuddyForwardSlash(t *testing.T) {
 	args := notifyArgs(nil, "codebuddy", `C:\tools\kshell.exe`)
