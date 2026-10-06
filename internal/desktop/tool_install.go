@@ -147,13 +147,14 @@ func (a *App) execInstallJob(id, action string, recipe providers.InstallRecipe, 
 			a.installJob.errText = errText
 		}
 		// 成功后的修复态维护：卸载写标记（阻止自动修复把刚卸的装回来），
-		// 安装清标记与重试计数（工具恢复健康重新累计）。
+		// 安装清标记。重试计数**不在这里清**——安装退出 0 不代表工具真恢复
+		// （假成功会把计数清回 0 形成连环重装），计数只由扫描发现工具不再
+		// Broken 时在 maybeAutoRepair 里清零（设计 §3 的另一半）。
 		if runErr == nil {
 			if action == "uninstall" {
 				a.setUninstalledMarker(id)
 			} else {
 				a.clearUninstalledMarker(id)
-				a.clearRepairState(id)
 			}
 		}
 		a.mu.Unlock()

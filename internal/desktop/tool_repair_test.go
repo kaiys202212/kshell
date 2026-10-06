@@ -108,6 +108,15 @@ func (repairFakeProvider) InstallRecipe() providers.InstallRecipe {
 	return providers.InstallRecipe{InstallCmd: "fake-install", Shell: "cmd"}
 }
 
+// repairNoResidueProvider：模拟 gemini 类工具——有配置目录但未声明会话残留。
+type repairNoResidueProvider struct{ repairFakeProvider }
+
+func (repairNoResidueProvider) DetectSpec(home string) providers.DetectSpec {
+	spec := repairFakeProvider{}.DetectSpec(home)
+	spec.ResidueDirs = nil
+	return spec
+}
+
 // brokenRepairApp 装配「残缺 + 有残留」场景的 App，并记录安装命令调用。
 // 安装目录真实存在（对应 updater 只删入口、目录还在的残缺形态），进程占用检查才会走到。
 func brokenRepairApp(t *testing.T, opts ...func(*Options)) (*App, *[]string) {
@@ -142,7 +151,7 @@ func brokenTools() []discovery.Tool {
 }
 
 // 全条件满足：启动修复任务，Trigger=auto，attempts 记为 1。
-// runner 阻塞到断言完成：安装成功会清零重试计数（execInstallJob），不阻塞会有竞态。
+// runner 阻塞到断言完成：保证断言时 job 仍 Running、日志事件可观测。
 func TestMaybeAutoRepairStartsJob(t *testing.T) {
 	block := make(chan struct{})
 	var calls *[]string
@@ -166,9 +175,50 @@ func TestMaybeAutoRepairStartsJob(t *testing.T) {
 	if len(*calls) != 1 || (*calls)[0] != "fake-install" {
 		t.Fatalf("calls=%v, want [fake-install]", *calls)
 	}
-	// 安装成功后重试计数清零
+	// 安装退出 0 不清计数：假成功（装完仍探不到）时计数必须累计到上限才停，
+	// 计数只由下轮扫描发现不再 Broken 时清零。
+	if n := a.readRepairAttempts("cursor"); n != 1 {
+		t.Fatalf("安装成功不应清计数, attempts=%d, want 1", n)
+	}
+}
+
+// 扫描发现工具不再 Broken（或未安装）→ 计数清零，为下次故障恢复额度。
+func TestMaybeAutoRepairClearsAttemptsWhenHealthy(t *testing.T) {
+	a, _ := brokenRepairApp(t)
+	a.bumpRepairAttempts("cursor")
+	a.bumpRepairAttempts("cursor")
+	a.maybeAutoRepair([]discovery.Tool{{ID: "cursor", Installed: true, Broken: false}})
 	if n := a.readRepairAttempts("cursor"); n != 0 {
-		t.Fatalf("安装成功后 attempts=%d, want 0", n)
+		t.Fatalf("恢复健康后 attempts=%d, want 0", n)
+	}
+}
+
+// opt-in：未声明 ResidueDirs 的工具（其 fallback 残留“配置非空”几乎恒真）
+// 不允许自动修复——防止对 npx 一次性使用的工具后台静默全局安装。
+func TestMaybeAutoRepairRequiresResidueDirsOptIn(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	a := NewAppWith(Options{
+		Home:     home,
+		Layout:   config.Layout{Root: filepath.Join(root, ".kshell"), State: filepath.Join(root, ".kshell", "state")},
+		Providers: []providers.Provider{repairNoResidueProvider{}},
+		InstallRunner: func(ctx context.Context, shell, cmdline string, onLog func(string)) error {
+			calls = append(calls, cmdline)
+			return nil
+		},
+		ProcScan: func(string) bool { return false },
+		Emit:     func(string, ...any) {},
+	})
+	a.maybeAutoRepair([]discovery.Tool{{ID: "cursor", Installed: true, Broken: true}})
+	if len(calls) != 0 {
+		t.Fatalf("未声明 ResidueDirs 不应自动修复, calls=%v", calls)
 	}
 }
 
@@ -258,6 +308,44 @@ func TestPublishDetectedToolsTriggersAutoRepair(t *testing.T) {
 	close(block)
 	waitJobIdle(t, a)
 	if len(*calls) != 1 {
-		t.Fatalf("calls=%v, want 1 auto repair", *calls)
+		t.Fatalf("calls=%v, want 1 auto repair", calls)
+	}
+}
+
+// %VAR% 展开：Windows 的 InstallDirs 写作 %LOCALAPPDATA%\cursor-agent，
+// 展不开会让进程检查永远落空（os.ExpandEnv 只认 $VAR）。
+func TestExpandHomeForRepairPercentEnv(t *testing.T) {
+	t.Setenv("KSHELL_TEST_LOCAL", `C:\Users\x\AppData\Local`)
+	got := expandHomeForRepair(`%KSHELL_TEST_LOCAL%\cursor-agent`, `C:\h`)
+	want := `C:\Users\x\AppData\Local\cursor-agent`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	// 未知变量保持字面量，不吞
+	if got := expandHomeForRepair(`%NO_SUCH_VAR_XYZ%`, `C:\h`); got != `%NO_SUCH_VAR_XYZ%` {
+		t.Fatalf("未知变量被改写: %q", got)
+	}
+	// ~ 前缀仍优先
+	if got := expandHomeForRepair(`~/.cursor`, `C:\h`); got != filepath.Join(`C:\h`, ".cursor") {
+		t.Fatalf("~ 展开错误: %q", got)
+	}
+}
+
+// 多安装目录：逐个 OR，不取首个存在的目录短路（首目录不忙、次目录忙也算忙）。
+func TestInstallDirBusyChecksAllDirs(t *testing.T) {
+	root := t.TempDir()
+	dirA := filepath.Join(root, "a")
+	dirB := filepath.Join(root, "b")
+	for _, d := range []string{dirA, dirB} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := NewAppWith(Options{
+		ProcScan: func(dir string) bool { return filepath.Base(dir) == "b" },
+	})
+	spec := providers.DetectSpec{InstallDirs: []string{dirA, dirB}}
+	if !a.installDirBusy(spec, root) {
+		t.Fatal("次目录有进程也应视为忙（不短路）")
 	}
 }

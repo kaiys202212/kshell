@@ -252,10 +252,20 @@ export default function Settings() {
     const offLog = onToolInstallLog((p) => {
       setActiveId(p.toolID);
       setInstallLog((prev) => (prev ? `${prev}\n${p.text}` : p.text));
+      // 自动修复是后端后台启动的，设置页收不到单独的启动事件；
+      // 若不刷新 job，Running/Trigger 仍是挂载时的旧值，
+      // 「正在自动修复…」提示与行按钮忙态永远不会出现。
+      getToolInstallJob()
+        .then((j) => setJob(j))
+        .catch(() => {});
     });
     const offDone = onToolInstallDone((p) => {
       setPendingId('');
       setJob((prev) => (prev ? { ...prev, Running: false } : prev));
+      // 拉取最终 job（errText/trigger），与本地乐观更新互补
+      getToolInstallJob()
+        .then((j) => setJob(j))
+        .catch(() => {});
       if (p.ok === false) {
         notify(p.error || '操作失败', 'error');
       }

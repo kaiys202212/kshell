@@ -114,7 +114,12 @@ func (a *App) maybeAutoRepair(tools []discovery.Tool) {
 		return
 	}
 	for _, t := range tools {
+		// 恢复健康或真未安装：重试计数清零（防安装“假成功”后计数被卸载/安装
+		// 路径提前归零形成连环重装，计数只由扫描按“确实不再 Broken”收敛）。
 		if !t.Installed || !t.Broken {
+			if a.readRepairAttempts(t.ID) > 0 {
+				a.clearRepairState(t.ID)
+			}
 			continue
 		}
 		if a.uninstalledByUser(t.ID) {
@@ -128,7 +133,11 @@ func (a *App) maybeAutoRepair(tools []discovery.Tool) {
 				break
 			}
 		}
-		if spec.BinName == "" || !providers.HasResidue(spec, o.Home) {
+		// 自动修复 opt-in：仅声明 ResidueDirs（真实会话残留信号）的工具允许
+		// 自动重装。其余工具 Broken 徽标照常显示，但不后台静默装全局包——
+		// 它们的 fallback 残留（配置非空）几乎恒真，双信号会退化成单信号。
+		if spec.BinName == "" || len(spec.ResidueDirs) == 0 ||
+			!providers.HasResidue(spec, o.Home) {
 			continue
 		}
 		a.mu.Lock()
@@ -148,7 +157,7 @@ func (a *App) maybeAutoRepair(tools []discovery.Tool) {
 			continue // 无安装配方（自定义 provider）无法自动修
 		}
 		if err := a.startInstallJob(t.ID, "install", r, false, "auto"); err != nil {
-			continue
+			continue // 启动失败（如并发抢占）不计入重试
 		}
 		a.bumpRepairAttempts(t.ID)
 		a.Emit("tool:install:log", map[string]any{
@@ -159,19 +168,26 @@ func (a *App) maybeAutoRepair(tools []discovery.Tool) {
 	}
 }
 
-// installDirBusy 检查工具安装目录下是否有运行中进程：取 InstallDirs 中首个存在的
-// 目录（cursor 即安装根，覆盖 versions\ 子树）。全部不存在时视为不忙。
+// installDirBusy 检查工具安装目录下是否有运行中进程：对 InstallDirs 中每个存在的
+// 目录（cursor 即安装根 + versions 子树等）逐一 OR——任一目录有进程即视为忙，
+// 不取首个存在的目录短路。全部不存在时视为不忙。
 func (a *App) installDirBusy(spec providers.DetectSpec, home string) bool {
+	busy := false
 	for _, dir := range spec.InstallDirs {
 		expanded := expandHomeForRepair(dir, home)
-		if isDirExists(expanded) {
-			return a.procScanUnderDir(expanded)
+		if !isDirExists(expanded) {
+			continue
+		}
+		if a.procScanUnderDir(expanded) {
+			busy = true
 		}
 	}
-	return false
+	return busy
 }
 
-// expandHomeForRepair 展开 ~ 前缀；%VAR% 走 os.ExpandEnv。
+// expandHomeForRepair 展开 ~ 前缀与环境变量。Windows 的 DetectSpec.InstallDirs
+// 写作 %LOCALAPPDATA%\…（detect.go 侧用 %VAR% 展开），os.ExpandEnv 只认 $VAR，
+// 故这里必须同样支持 %VAR%，否则 cursor 安装根永远展开失败、进程检查静默失效。
 func expandHomeForRepair(path, home string) string {
 	if path == "~" {
 		return home
@@ -179,7 +195,32 @@ func expandHomeForRepair(path, home string) string {
 	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
 		return filepath.Join(home, path[2:])
 	}
-	return os.ExpandEnv(path)
+	return os.ExpandEnv(expandPercentEnv(path))
+}
+
+// expandPercentEnv 展开 Windows 风格 %VAR%。未知变量保持原样（不吞字面量）；
+// 求值前先用哨兵占位，防止变量值里恰含 % 时被下一趟误展开。
+func expandPercentEnv(s string) string {
+	const sent = "\x00\x00"
+	for i := 0; i < 8; i++ {
+		start := strings.IndexByte(s, '%')
+		if start < 0 {
+			break
+		}
+		end := strings.IndexByte(s[start+1:], '%')
+		if end < 0 {
+			break
+		}
+		end += start + 1
+		key := s[start+1 : end]
+		val, ok := os.LookupEnv(key)
+		if !ok || key == "" {
+			s = s[:start] + sent + s[start+1:end] + sent + s[end+1:]
+			continue
+		}
+		s = s[:start] + val + s[end+1:]
+	}
+	return strings.ReplaceAll(s, sent, "%")
 }
 
 func isDirExists(path string) bool {
