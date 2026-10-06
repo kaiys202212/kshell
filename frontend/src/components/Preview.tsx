@@ -9,7 +9,6 @@ import { useAppStore } from '../state/store';
 import CodeEditor from './CodeEditor';
 import ImagePreview from './ImagePreview';
 import PdfPreview from './PdfPreview';
-import { Button } from './ui/button';
 import { EmptyState } from './ui/empty-state';
 import { Skeleton } from './ui/skeleton';
 
@@ -52,6 +51,7 @@ export default function Preview({
   const [saving, setSaving] = useState(false);
   const [editable, setEditable] = useState(false);
   const activePathRef = useRef<string | null>(path);
+  const baselineRef = useRef('');
 
   const resolvedTheme = useAppStore((s) => s.appearance.resolved);
   const kind: PreviewKind | null = path ? previewKind(path) : null;
@@ -61,6 +61,7 @@ export default function Preview({
   useEffect(() => {
     activePathRef.current = path;
     setDirty(false);
+    baselineRef.current = '';
     onDirtyChange?.(false);
     setEditable(false);
     if (!path) {
@@ -109,6 +110,7 @@ export default function Preview({
             return;
           }
           setText(ec.Text);
+          baselineRef.current = ec.Text;
           setEol(ec.EOL === 'crlf' ? 'crlf' : 'lf');
           setEditable(true);
         })
@@ -134,6 +136,7 @@ export default function Preview({
       .then(() => {
         if (activePathRef.current !== reqPath) return;
         notify('已保存', 'success');
+        baselineRef.current = text;
         setDirty(false);
         onDirtyChange?.(false);
         void refreshGitStatus(wsPath);
@@ -189,27 +192,8 @@ export default function Preview({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden text-sm">
       <div
-        data-testid="preview-path-header"
-        className="flex shrink-0 items-center border-b border-border bg-card py-2"
-      >
-        <span className="truncate font-mono text-xs text-muted-foreground" title={path ?? ''}>
-          {path ?? '未选择文件'}
-          {dirty && <span className="ml-1 text-warning">●</span>}
-        </span>
-        {editable && (
-          <Button
-            size="sm"
-            className="ml-auto shrink-0"
-            disabled={!dirty || saving}
-            onClick={() => void handleSave()}
-          >
-            {saving ? '保存中…' : '保存'}
-          </Button>
-        )}
-      </div>
-      <div
         data-testid="preview-body"
-        className="mt-2 flex min-h-0 flex-1 flex-col overflow-hidden"
+        className="flex min-h-0 flex-1 flex-col overflow-hidden"
       >
         {!path && <EmptyState title="从右侧文件树选择文件查看预览" />}
         {loading && (
@@ -228,12 +212,11 @@ export default function Preview({
               path={path}
               theme={cmTheme}
               onChange={(v) => {
+                const nextDirty = v !== baselineRef.current;
                 setText(v);
-                if (!dirty) {
-                  setDirty(true);
-                  onDirtyChange?.(true);
-                  onEdited?.();
-                }
+                setDirty(nextDirty);
+                if (nextDirty !== dirty) onDirtyChange?.(nextDirty);
+                if (nextDirty && !dirty) onEdited?.();
               }}
             />
           </div>

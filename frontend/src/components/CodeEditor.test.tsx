@@ -40,4 +40,14 @@ describe('CodeEditor', () => {
     }).not.toThrow();
     expect(screen.getByTestId('code-editor')).toBeInTheDocument();
   });
+
+  it('挂载 .ps1 与 .sh 不抛错', () => {
+    expect(() => {
+      const { unmount } = render(
+        <CodeEditor value="$x = 1" path="D:\\proj\\build.ps1" readOnly theme="dark" />,
+      );
+      unmount();
+      render(<CodeEditor value="echo hi" path="D:\\proj\\run.sh" readOnly theme="light" />);
+    }).not.toThrow();
+  });
 });

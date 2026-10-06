@@ -39,4 +39,20 @@ describe('codeLanguage', () => {
   it('未知扩展名默认为 plaintext', () => {
     expect(codeLanguage('foo.unknown')).toBe('plaintext');
   });
+
+  it.each([
+    ['build.ps1', 'powershell'],
+    ['Mod.psm1', 'powershell'],
+    ['Data.psd1', 'powershell'],
+    ['setup.sh', 'shell'],
+    ['run.bash', 'shell'],
+    ['rc.zsh', 'shell'],
+    ['x.ksh', 'shell'],
+    ['conf.fish', 'shell'],
+    ['run.bat', 'shell'],
+    ['run.cmd', 'shell'],
+    ['Makefile', 'shell'],
+  ])('%s → %s', (path, lang) => {
+    expect(codeLanguage(path)).toBe(lang);
+  });
 });

@@ -97,7 +97,7 @@ describe('Preview', () => {
     expect(mocks.readFileForEdit).not.toHaveBeenCalled();
   });
 
-  it('路径标题栏固定、内容区可滚动', async () => {
+  it('无路径栏与保存按钮，内容区可占满', async () => {
     mocks.readFileForEdit.mockResolvedValue({ Text: 'hello', EOL: 'lf', Size: 5 });
     const { container } = render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);
     await screen.findByTestId('code-editor');
@@ -105,9 +105,8 @@ describe('Preview', () => {
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toMatch(/h-full/);
     expect(root.className).toMatch(/overflow-hidden/);
-
-    const header = root.querySelector('[data-testid="preview-path-header"]') as HTMLElement;
-    expect(header.className).toMatch(/shrink-0/);
+    expect(root.querySelector('[data-testid="preview-path-header"]')).toBeNull();
+    expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument();
     const body = root.querySelector('[data-testid="preview-body"]') as HTMLElement;
     expect(body.className).toMatch(/min-h-0/);
     expect(body.className).toMatch(/flex-1/);
@@ -156,15 +155,13 @@ describe('Preview', () => {
       <Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} onDirtyChange={onDirty} onEdited={onEdited} />,
     );
     const area = (await screen.findByRole('textbox', { name: '编辑文件内容' })) as HTMLTextAreaElement;
-    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument();
 
     await act(async () => {
       fireEvent.change(area, { target: { value: 'ab' } });
     });
-    expect(screen.getByText('●')).toBeInTheDocument();
     expect(onDirty).toHaveBeenCalledWith(true);
     expect(onEdited).toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: '保存' })).toBeEnabled();
 
     await act(async () => {
       fireEvent.keyDown(screen.getByRole('textbox', { name: '编辑文件内容' }), {
@@ -177,7 +174,7 @@ describe('Preview', () => {
     expect(useAppStore.getState().toasts.some((t) => t.title === '已保存')).toBe(true);
   });
 
-  it('保存按钮也能保存（crlf），失败提示且留在编辑态', async () => {
+  it('Ctrl+S 保存失败（crlf）提示且留在编辑态', async () => {
     mocks.readFileForEdit.mockResolvedValue({ Text: 'x', EOL: 'crlf', Size: 2 });
     mocks.saveFile.mockRejectedValueOnce(new Error('磁盘已满'));
     render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);
@@ -186,12 +183,29 @@ describe('Preview', () => {
       fireEvent.change(area, { target: { value: 'y' } });
     });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '保存' }));
+      fireEvent.keyDown(area, { key: 's', ctrlKey: true });
     });
 
     expect(mocks.saveFile).toHaveBeenCalledWith('D:\\proj', 'D:\\proj\\a.ts', 'y', 'crlf');
     expect(useAppStore.getState().toasts.some((t) => t.title.includes('磁盘已满'))).toBe(true);
     expect(screen.getByRole('textbox', { name: '编辑文件内容' })).toHaveValue('y');
+  });
+
+  it('改后还原为原文则取消脏标记', async () => {
+    mocks.readFileForEdit.mockResolvedValue({ Text: 'hello', EOL: 'lf', Size: 5 });
+    const onDirty = vi.fn();
+    render(
+      <Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} onDirtyChange={onDirty} />,
+    );
+    const area = await screen.findByRole('textbox', { name: '编辑文件内容' });
+    await act(async () => {
+      fireEvent.change(area, { target: { value: 'hello!' } });
+    });
+    expect(onDirty).toHaveBeenLastCalledWith(true);
+    await act(async () => {
+      fireEvent.change(area, { target: { value: 'hello' } });
+    });
+    expect(onDirty).toHaveBeenLastCalledWith(false);
   });
 
   it('整读在途切换文件时丢弃旧结果', async () => {
