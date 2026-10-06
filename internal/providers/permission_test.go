@@ -14,9 +14,13 @@ func TestInjectPermissionBypass(t *testing.T) {
 	if !reflect.DeepEqual(args, []string{"--ask-for-approval", "never"}) || len(env) != 0 {
 		t.Fatalf("codex bypass = %v %v", args, env)
 	}
+	args, env = Opencode{}.InjectPermission(true)
+	if !reflect.DeepEqual(args, []string{"--auto"}) || len(env) != 0 {
+		t.Fatalf("opencode bypass = %v %v", args, env)
+	}
 	for _, p := range []interface {
 		InjectPermission(bool) ([]string, map[string]string)
-	}{Gemini{}, Opencode{}} {
+	}{Gemini{}} {
 		args, env = p.InjectPermission(true)
 		if len(args) != 0 || len(env) != 0 {
 			t.Fatalf("%T 应 no-op，got %v %v", p, args, env)

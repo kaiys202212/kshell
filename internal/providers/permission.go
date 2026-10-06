@@ -24,5 +24,10 @@ func (Codex) InjectPermission(bypass bool) ([]string, map[string]string) {
 // Gemini：无稳定 skip 权限 flag，v1 no-op。
 func (Gemini) InjectPermission(bool) ([]string, map[string]string) { return nil, nil }
 
-// Opencode：无稳定 skip 权限 flag，v1 no-op。
-func (Opencode) InjectPermission(bool) ([]string, map[string]string) { return nil, nil }
+// Opencode：bypass 时注入 --auto（自动放行未显式 deny 的权限，opencode 1.x 根级 flag）。
+func (Opencode) InjectPermission(bypass bool) ([]string, map[string]string) {
+	if !bypass {
+		return nil, nil
+	}
+	return []string{"--auto"}, nil
+}
