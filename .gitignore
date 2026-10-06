@@ -13,7 +13,7 @@ node_modules/
 .workbuddy/
 /docs/
 /out/
-.cursor/*
+.cursor/
 .github/workflows/*
 !.github/workflows/release.yml
 !.github/workflows/ci.yml
