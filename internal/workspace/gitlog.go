@@ -66,7 +66,8 @@ func Log(wsRoot, repoRel, mode, ref string, limit int) ([]LogCommit, error) {
 		if err := validRef(ref); err != nil {
 			return nil, err
 		}
-		args = append(args, ref)
+		// 修订放在选项后：只走该 tip 可达历史（不含 --all 的其它分支 tip）
+		args = append(args, ref, "--")
 	default:
 		return nil, fmt.Errorf("未知 log 模式 %q", mode)
 	}

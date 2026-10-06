@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   ]),
   gitRefs: vi.fn().mockResolvedValue([
     { Name: 'main', Short: 'main', Kind: 'local', Current: true },
+    { Name: 'topic', Short: 'topic', Kind: 'local', Current: false },
     { Name: 'origin/main', Short: 'origin/main', Kind: 'remote', Current: false },
   ]),
   gitFetchAll: vi.fn().mockResolvedValue(undefined),
@@ -63,18 +64,22 @@ afterEach(cleanup);
 beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
+  localStorage.clear();
   useAppStore.setState({ toasts: [] });
   mocks.gitSCM.mockResolvedValue(snap());
 });
 
 describe('GitPanel', () => {
-  it('可见时加载变更分组', async () => {
+  it('可见时加载变更分组，提交说明为单行', async () => {
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
     expect(await screen.findByText('staged.go')).toBeInTheDocument();
     expect(screen.getByText('dirty.go')).toBeInTheDocument();
+    const msg = screen.getByLabelText('提交说明');
+    expect(msg.tagName).toBe('INPUT');
     expect(screen.getByRole('button', { name: '主 Git 操作' })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText('提交说明'), { target: { value: 'msg' } });
+    fireEvent.change(msg, { target: { value: 'msg' } });
     expect(screen.getByRole('button', { name: '主 Git 操作' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: '同步到远程' })).not.toBeInTheDocument();
   });
 
   it('无 staged 时提交禁用', async () => {
@@ -109,17 +114,6 @@ describe('GitPanel', () => {
     expect(mocks.gitDiscard).not.toHaveBeenCalled();
   });
 
-  it('ahead 时可同步', async () => {
-    render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
-    expect(await screen.findByRole('button', { name: '同步到远程' })).toBeEnabled();
-  });
-
-  it('无上游时同步禁用', async () => {
-    mocks.gitSCM.mockResolvedValue(snap({ HasUpstream: false, Ahead: 0, Behind: 0 }));
-    render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
-    expect(await screen.findByRole('button', { name: '同步到远程' })).toBeDisabled();
-  });
-
   it('有未提交时主按钮为提交，干净时为同步', async () => {
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
     expect(await screen.findByRole('button', { name: '主 Git 操作' })).toHaveTextContent('提交');
@@ -128,6 +122,39 @@ describe('GitPanel', () => {
     mocks.gitSCM.mockResolvedValue(snap({ Entries: [], Ahead: 1, Behind: 0, HasUpstream: true }));
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
     expect(await screen.findByRole('button', { name: '主 Git 操作' })).toHaveTextContent('同步');
+  });
+
+  it('切换分支筛选会按 ref/all 重新拉取日志并记住选择', async () => {
+    const ws = 'D:/proj';
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    await screen.findByText('init');
+    expect(mocks.gitLog).toHaveBeenCalledWith(ws, '', 'current', '', 200);
+
+    fireEvent.change(screen.getByLabelText('提交图分支筛选'), { target: { value: 'topic' } });
+    await waitFor(() => {
+      expect(mocks.gitLog).toHaveBeenCalledWith(ws, '', 'ref', 'topic', 200);
+    });
+    expect(localStorage.getItem(`kshell-git-log-sel:${ws}\0`)).toBe('topic');
+
+    fireEvent.change(screen.getByLabelText('提交图分支筛选'), { target: { value: 'all' } });
+    await waitFor(() => {
+      expect(mocks.gitLog).toHaveBeenCalledWith(ws, '', 'all', '', 200);
+    });
+  });
+
+  it('多仓库时选择器有满宽类', async () => {
+    mocks.gitSCM.mockResolvedValue(
+      snap({
+        Repos: [
+          { Rel: '', Path: 'D:/proj', Branch: 'main' },
+          { Rel: 'nested/very/long/path/name', Path: 'D:/proj/nested', Branch: 'dev' },
+        ],
+      }),
+    );
+    render(<GitPanel wsPath="D:/proj" visible onOpenDiff={() => {}} />);
+    const sel = await screen.findByLabelText('选择仓库');
+    expect(sel.className).toMatch(/w-full/);
+    expect(sel.className).toMatch(/min-w-0/);
   });
 
   it('提交图显示日志并提供 Fetch all', async () => {

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   formatAbsoluteTime,
   formatStat,
@@ -33,8 +34,10 @@ export function GitLogGraph({
   const rows = layoutGitGraph(commits);
   const laneCount = Math.max(1, ...rows.map((r) => r.laneCount));
   const svgW = laneCount * COL_W + 8;
-  const [hover, setHover] = useState<string>('');
+  const [hover, setHover] = useState('');
+  const [tipPos, setTipPos] = useState<{ top: number; left: number } | null>(null);
   const [stat, setStat] = useState<CommitStatView | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!hover || !loadStat) {
@@ -52,9 +55,23 @@ export function GitLogGraph({
 
   const hovered = rows.find((r) => r.commit.hash === hover)?.commit;
 
+  const showTip = (hash: string, el: HTMLElement) => {
+    setHover(hash);
+    const row = el.getBoundingClientRect();
+    const root = rootRef.current?.getBoundingClientRect();
+    // 详情贴在整块列表最左侧外侧，垂直对齐该行
+    const left = root?.left ?? row.left;
+    setTipPos({ top: row.top + row.height / 2, left });
+  };
+
+  const hideTip = () => {
+    setHover('');
+    setTipPos(null);
+  };
+
   return (
-    <div className="relative flex min-h-0 flex-1 overflow-auto">
-      <svg width={svgW} height={rows.length * ROW_H + 6} className="sticky left-0 shrink-0">
+    <div ref={rootRef} className="relative flex min-h-0 flex-1 overflow-auto">
+      <svg width={svgW} height={Math.max(rows.length * ROW_H, ROW_H)} className="sticky left-0 shrink-0">
         {rows.map((row, i) => {
           const y1 = i * ROW_H + ROW_H / 2;
           const y2 = y1 + ROW_H;
@@ -83,47 +100,60 @@ export function GitLogGraph({
         })}
       </svg>
       <div className="min-w-0 flex-1">
-        {rows.map((row) => (
-          <button
-            key={row.commit.hash}
-            type="button"
-            style={{ height: ROW_H }}
-            className={cn(
-              'flex w-full min-w-0 items-center gap-1 overflow-hidden px-1 text-left text-[11px] leading-[22px]',
-              selected === row.commit.hash ? 'bg-primary/10' : 'hover:bg-muted/50',
-            )}
-            onClick={() => onSelect(row.commit.hash)}
-            onMouseEnter={() => setHover(row.commit.hash)}
-            onMouseLeave={() => setHover('')}
-          >
-            <span className="min-w-0 flex-1 truncate">{row.commit.subject || shortHash(row.commit.hash)}</span>
-            {row.commit.decorations.slice(0, 2).map((d) => (
-              <span key={d} className="max-w-20 shrink-0 truncate rounded bg-primary/15 px-1 text-[10px] text-primary">
-                {d}
-              </span>
-            ))}
-          </button>
-        ))}
+        {rows.map((row) => {
+          const isSel = selected === row.commit.hash;
+          const isHover = hover === row.commit.hash;
+          return (
+            <button
+              key={row.commit.hash}
+              type="button"
+              style={{ height: ROW_H }}
+              className={cn(
+                'flex w-full min-w-0 items-center gap-1 overflow-hidden border-l-2 px-1 text-left text-[11px] leading-[22px]',
+                isSel
+                  ? 'border-l-primary bg-primary/15 text-foreground'
+                  : 'border-l-transparent',
+                isHover && !isSel && 'bg-muted',
+                isHover && isSel && 'bg-primary/25',
+                !isHover && !isSel && 'hover:bg-muted/60',
+              )}
+              onClick={() => onSelect(row.commit.hash)}
+              onMouseEnter={(e) => showTip(row.commit.hash, e.currentTarget)}
+              onMouseLeave={hideTip}
+            >
+              <span className="min-w-0 flex-1 truncate">{row.commit.subject || shortHash(row.commit.hash)}</span>
+              {row.commit.decorations.slice(0, 2).map((d) => (
+                <span key={d} className="max-w-20 shrink-0 truncate rounded bg-primary/15 px-1 text-[10px] text-primary">
+                  {d}
+                </span>
+              ))}
+            </button>
+          );
+        })}
       </div>
-      {hovered && (
-        <div
-          role="tooltip"
-          className="pointer-events-none absolute right-1 top-1 z-20 w-[min(100%-8px,20rem)] rounded-md border border-border bg-card p-2 text-[11px] shadow-lg"
-        >
-          <div className="text-muted-foreground">
-            {hovered.author}
-            {' · '}
-            {relativeTime(hovered.date)}（{formatAbsoluteTime(hovered.date)}）
-          </div>
-          <div className="mt-1 font-medium break-words">{hovered.subject}</div>
-          {stat && formatStat({ files: stat.Files, insertions: stat.Insertions, deletions: stat.Deletions }) && (
-            <div className="mt-1 text-muted-foreground">
-              {formatStat({ files: stat.Files, insertions: stat.Insertions, deletions: stat.Deletions })}
+      {hovered &&
+        tipPos &&
+        createPortal(
+          <div
+            role="tooltip"
+            className="pointer-events-none z-[200] w-64 max-w-[min(20rem,40vw)] -translate-x-full -translate-y-1/2 rounded-md border border-border bg-card p-2 text-[11px] shadow-lg"
+            style={{ position: 'fixed', top: tipPos.top, left: tipPos.left - 8 }}
+          >
+            <div className="text-muted-foreground">
+              {hovered.author}
+              {' · '}
+              {relativeTime(hovered.date)}（{formatAbsoluteTime(hovered.date)}）
             </div>
-          )}
-          <div className="mt-1 font-mono text-muted-foreground">{shortHash(hovered.hash)}</div>
-        </div>
-      )}
+            <div className="mt-1 font-medium break-words">{hovered.subject}</div>
+            {stat && formatStat({ files: stat.Files, insertions: stat.Insertions, deletions: stat.Deletions }) && (
+              <div className="mt-1 text-muted-foreground">
+                {formatStat({ files: stat.Files, insertions: stat.Insertions, deletions: stat.Deletions })}
+              </div>
+            )}
+            <div className="mt-1 font-mono text-muted-foreground">{shortHash(hovered.hash)}</div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

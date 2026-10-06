@@ -15,17 +15,30 @@ const commit = {
 };
 
 describe('GitLogGraph', () => {
-  it('行内展示提交说明，悬停显示作者时间与统计', async () => {
+  it('行内展示提交说明，悬停与选中样式区分且详情在左侧', async () => {
     const loadStat = vi.fn().mockResolvedValue({ Files: 19, Insertions: 1867, Deletions: 202 });
-    render(<GitLogGraph commits={[commit]} selected="" onSelect={() => {}} loadStat={loadStat} />);
+    const onSelect = vi.fn();
+    render(
+      <GitLogGraph commits={[commit]} selected="abcdef123456" onSelect={onSelect} loadStat={loadStat} />,
+    );
     const row = screen.getByRole('button', { name: /hello graph/ });
-    expect(row).toBeInTheDocument();
-    expect(screen.queryByText('abcdef1')).not.toBeInTheDocument();
+    expect(row.className).toMatch(/border-l-primary/);
     fireEvent.mouseEnter(row);
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('hello graph');
-    expect(screen.getByRole('tooltip')).toHaveTextContent('ann');
+    expect(row.className).toMatch(/bg-primary\/25/);
+    const tip = await screen.findByRole('tooltip');
+    expect(tip).toHaveTextContent('hello graph');
+    expect(tip).toHaveTextContent('ann');
+    expect(tip.className).toMatch(/-translate-x-full/);
     await waitFor(() => {
-      expect(screen.getByRole('tooltip')).toHaveTextContent('已更改 19 个文件');
+      expect(tip).toHaveTextContent('已更改 19 个文件');
     });
+  });
+
+  it('未选中行悬停用 muted 背景', () => {
+    render(<GitLogGraph commits={[commit]} selected="" onSelect={() => {}} />);
+    const row = screen.getByRole('button', { name: /hello graph/ });
+    fireEvent.mouseEnter(row);
+    expect(row.className).toMatch(/bg-muted/);
+    expect(row.className).not.toMatch(/border-l-primary/);
   });
 });
