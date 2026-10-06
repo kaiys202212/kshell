@@ -14,6 +14,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/yangk/kshell/internal/agenthook"
 	"github.com/yangk/kshell/internal/cursoragent"
 	"github.com/yangk/kshell/internal/desktop"
 	"github.com/yangk/kshell/internal/mcparchive"
@@ -75,6 +76,12 @@ func RunDesktop(src fs.FS) error {
 }
 
 func main() {
+	// agent-hook 隐藏子命令：agent CLI 的 hook/notify 会拉起本进程投递事件。
+	// 必须放在一切初始化之前直接返回，绝不初始化 Wails / 拉起第二个窗口；
+	// Handle 恒返回 0，hook 非零退出会向 agent 报错、打扰对话。
+	if len(os.Args) >= 2 && os.Args[1] == "agent-hook" {
+		os.Exit(agenthook.Handle(os.Args[1:]))
+	}
 	// 必须在 Wails 单实例锁之前返回，否则作为 MCP / cursor-agent 代理启动会变成第二次拉起桌面窗口。
 	if cursoragent.ShouldProxy() {
 		os.Exit(cursoragent.Main())
