@@ -103,6 +103,16 @@ describe('FileTree', () => {
     expect(onOpen).toHaveBeenCalledWith('D:\\proj\\README.md');
   });
 
+  it('双击文件回调 onEditFile', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    const onOpen = vi.fn();
+    const onEdit = vi.fn();
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={onOpen} onEditFile={onEdit} />);
+
+    fireEvent.doubleClick(await screen.findByText('README.md'));
+    expect(onEdit).toHaveBeenCalledWith('D:\\proj\\README.md');
+  });
+
   it('ListFiles 失败时显示错误提示', async () => {
     mocks.listFiles.mockRejectedValue(new Error('路径越出工作区范围'));
     render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);

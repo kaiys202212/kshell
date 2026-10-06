@@ -1,7 +1,7 @@
 // 工作区页签：三栏布局（左右两栏宽度可拖动）。
-//   左栏：「新建会话」下拉菜单 + 会话列表（点行联动页签/会话预览，图标激活）
-//   中栏：左侧 agent 页签；最右钉「预览」（预览区内再开「文件预览|终端」子页签）
-//   右栏：文件 | SSH 子页签（点文件自动切到中栏的预览页签）
+//   左栏：会话列表
+//   中栏：左钉「会话预览」+ 可关 agent/chat；右钉「文件」「终端」
+//   右栏：文件树 | SSH
 // 终端页签一旦打开就常挂载（非激活用 hidden），xterm 缓冲与焦点不丢；
 // 工作区页签本身也由 App 常挂载，因此只有关闭页签才会真正结束终端进程。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -32,18 +32,22 @@ import { displayTitle } from '../lib/title';
 import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
 import { sameWorkspacePath } from '../lib/workspacePath';
 import FileTree from '../components/FileTree';
-import PreviewToolPane, { PREVIEW_SUB, SESSION_PREVIEW_SUB } from '../components/PreviewToolPane';
+import FileTabsPane from '../components/FileTabsPane';
+import PreviewToolPane from '../components/PreviewToolPane';
 import ResizeHandle from '../components/ResizeHandle';
 import SessionList from '../components/SessionList';
+import SessionTranscript from '../components/SessionTranscript';
 import SshPanel from '../components/SshPanel';
 import TerminalView from '../components/TerminalView';
 import AgentActivityIcon from '../components/AgentActivityIcon';
 import ChatView from '../components/ChatView';
 import NewSessionMenu from '../components/NewSessionMenu';
+import { EmptyState } from '../components/ui/empty-state';
 import { ToolDot } from '../components/ui/tool-dot';
 import { resolveAgentActivity } from '../state/agentActivity';
 import { LAYOUT_DEFAULT, useAppStore } from '../state/store';
 import type { WorkspaceTab } from '../state/store';
+import { emptyFileTabs, openPinned, openPreview } from '../lib/fileTabs';
 
 function isAgentTerm(t: TerminalInfo): boolean {
   return t.Kind === 'session' || t.Kind === 'new';
@@ -55,8 +59,11 @@ function isToolTerm(t: TerminalInfo): boolean {
 
 type RightPane = 'files' | 'ssh';
 
-// 中心区固定页签「预览」的保留 id（终端 id 形如 t1，不会冲突）
-const PREVIEW_TAB = 'preview';
+// 中心区钉住页签（与终端 id 如 t1 不冲突）
+const SESSION_TAB = 'session-preview';
+const FILES_TAB = 'files';
+const TERMINALS_TAB = 'terminals';
+const PINNED_CENTER = new Set([SESSION_TAB, FILES_TAB, TERMINALS_TAB]);
 
 // 新建会话后触发后台重扫的延迟序列（毫秒，相对新建时刻）。
 // 工具自己的会话记录是它启动后才落盘的（opencode 先起 TUI 再写 SQLite；Claude 常要等首条消息），
@@ -73,10 +80,11 @@ const centerTabActive = TAB_ACTIVE;
 
 export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; visible: boolean }) {
   const [rightPane, setRightPane] = useState<RightPane>('files');
-  const [previewPath, setPreviewPath] = useState<string | null>(null);
-  const [centerTab, setCenterTab] = useState<string>(PREVIEW_TAB);
-  const [toolSubTab, setToolSubTab] = useState<string>(PREVIEW_SUB);
+  const [centerTab, setCenterTab] = useState<string>(SESSION_TAB);
+  const [toolSubTab, setToolSubTab] = useState('');
   const [previewSession, setPreviewSession] = useState<Session | null>(null);
+  const [fileTabs, setFileTabs] = useState(emptyFileTabs);
+  const [fileDirty, setFileDirty] = useState<Record<string, boolean>>({});
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [busy, setBusy] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -114,9 +122,8 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   );
 
   const selectedSessionID = useMemo(() => {
-    if (centerTab === PREVIEW_TAB) {
-      if (toolSubTab === SESSION_PREVIEW_SUB && previewSession) return previewSession.ID;
-      return null;
+    if (centerTab === SESSION_TAB) {
+      return previewSession?.ID ?? null;
     }
     const t = terms.find((x) => x.ID === centerTab);
     if (t?.SessionID) return t.SessionID;
@@ -125,7 +132,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     if (c?.SessionID) return c.SessionID;
     if (c?.Prompted) return `live:${c.ID}`;
     return null;
-  }, [centerTab, toolSubTab, previewSession, terms, chatsForWs]);
+  }, [centerTab, previewSession, terms, chatsForWs]);
 
   useEffect(() => {
     // 挂载时补一次镜像：页签是常挂载的，但终端可能在别的工作区页签里被创建
@@ -168,29 +175,24 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   }, []);
 
   useEffect(() => {
-    // 当前中心区页签指向的终端/聊天已不存在（被关闭/退出后清理）时退回预览
+    // 当前中心区页签指向的终端/聊天已不存在时退回会话预览
     if (
-      centerTab !== PREVIEW_TAB &&
+      !PINNED_CENTER.has(centerTab) &&
       !terms.some((t) => t.ID === centerTab) &&
       !chatsForWs.some((c) => c.ID === centerTab)
     ) {
-      selectCenterTab(PREVIEW_TAB);
+      selectCenterTab(SESSION_TAB);
     }
   }, [terms, chatsForWs, centerTab, selectCenterTab]);
 
   useEffect(() => {
-    // 预览区子页签指向的 shell/ssh 已关闭时退回「文件预览」
-    if (toolSubTab !== PREVIEW_SUB && toolSubTab !== SESSION_PREVIEW_SUB && !toolTerms.some((t) => t.ID === toolSubTab)) {
-      setToolSubTab(PREVIEW_SUB);
+    if (toolSubTab && !toolTerms.some((t) => t.ID === toolSubTab)) {
+      setToolSubTab(toolTerms[0]?.ID ?? '');
     }
-    if (toolSubTab === SESSION_PREVIEW_SUB && !previewSession) {
-      setToolSubTab(PREVIEW_SUB);
-    }
-  }, [toolTerms, toolSubTab, previewSession]);
+  }, [toolTerms, toolSubTab]);
 
   const closeSessionPreview = useCallback(() => {
     setPreviewSession(null);
-    setToolSubTab((cur) => (cur === SESSION_PREVIEW_SUB ? PREVIEW_SUB : cur));
   }, []);
 
   // 恢复历史会话：优先走 ACP 聊天，Go 侧按可用性决定聊天或回退终端
@@ -228,8 +230,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         return;
       }
       setPreviewSession(s);
-      selectCenterTab(PREVIEW_TAB);
-      setToolSubTab(SESSION_PREVIEW_SUB);
+      selectCenterTab(SESSION_TAB);
     },
     [chatsForWs, terms, selectCenterTab],
   );
@@ -273,27 +274,31 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   const handleCloseTerminal = (id: string) => {
     useAppStore.getState().removeTerminal(id);
     closeTerminal(id).catch(() => {});
-    if (centerTab === id) selectCenterTab(PREVIEW_TAB);
-    if (toolSubTab === id) setToolSubTab(PREVIEW_SUB);
+    if (centerTab === id) selectCenterTab(SESSION_TAB);
+    if (toolSubTab === id) setToolSubTab(toolTerms.find((t) => t.ID !== id)?.ID ?? '');
   };
 
   const handleCloseChat = (id: string) => {
     useAppStore.getState().removeChat(id);
     closeChat(id).catch(() => {});
-    if (centerTab === id) selectCenterTab(PREVIEW_TAB);
+    if (centerTab === id) selectCenterTab(SESSION_TAB);
   };
 
   const openFile = (path: string) => {
-    setPreviewPath(path);
-    selectCenterTab(PREVIEW_TAB);
-    setToolSubTab(PREVIEW_SUB);
+    setFileTabs((s) => openPreview(s, path));
+    selectCenterTab(FILES_TAB);
+  };
+
+  const editFile = (path: string) => {
+    setFileTabs((s) => openPinned(s, path));
+    selectCenterTab(FILES_TAB);
   };
 
   const handleNewShell = () => {
     void openShellTerminal(tab.id, 80, 24)
       .then((info) => {
         useAppStore.getState().upsertTerminal(info);
-        selectCenterTab(PREVIEW_TAB);
+        selectCenterTab(TERMINALS_TAB);
         setToolSubTab(info.ID);
       })
       .catch((e: unknown) => {
@@ -305,7 +310,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     void openSSHTerminal(c.ID, 80, 24)
       .then((info) => {
         useAppStore.getState().upsertTerminal(info);
-        selectCenterTab(PREVIEW_TAB);
+        selectCenterTab(TERMINALS_TAB);
         setToolSubTab(info.ID);
       })
       .catch((e: unknown) => {
@@ -385,13 +390,22 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
-        {/* 中心区页签条：左侧 agent；最右钉「预览」（工具区入口，样式弱化区分） */}
+        {/* 中心区页签条：左钉会话预览 + 可关会话；右钉文件 | 终端 */}
         <div
           className="flex shrink-0 items-stretch border-b border-border"
           role="tablist"
           aria-label="中心区页签"
         >
           <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
+          <button
+            role="tab"
+            aria-selected={centerTab === SESSION_TAB}
+            className={cn(centerTabBase, centerTab === SESSION_TAB && centerTabActive)}
+            onClick={() => selectCenterTab(SESSION_TAB)}
+          >
+            会话预览
+            {centerTab === SESSION_TAB && <span className={TAB_UNDERLINE} />}
+          </button>
           {terms.map((t) => {
             const badge = badgeFor(t.ToolID);
             const active = centerTab === t.ID;
@@ -522,22 +536,35 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           </div>
           <button
             role="tab"
-            aria-selected={centerTab === PREVIEW_TAB}
-            aria-label="预览与命令行"
+            aria-selected={centerTab === FILES_TAB}
             className={cn(
               centerTabBase,
               'ml-auto shrink-0 border-l border-border bg-muted/40 text-muted-foreground',
-              centerTab === PREVIEW_TAB && cn(centerTabActive, 'bg-muted/70'),
+              centerTab === FILES_TAB && cn(centerTabActive, 'bg-muted/70'),
             )}
-            onClick={() => selectCenterTab(PREVIEW_TAB)}
+            onClick={() => selectCenterTab(FILES_TAB)}
           >
-            预览
+            文件
+            {centerTab === FILES_TAB && <span className={TAB_UNDERLINE} />}
+          </button>
+          <button
+            role="tab"
+            aria-selected={centerTab === TERMINALS_TAB}
+            aria-label="终端"
+            className={cn(
+              centerTabBase,
+              'shrink-0 border-l border-border bg-muted/40 text-muted-foreground',
+              centerTab === TERMINALS_TAB && cn(centerTabActive, 'bg-muted/70'),
+            )}
+            onClick={() => selectCenterTab(TERMINALS_TAB)}
+          >
+            终端
             {toolTerms.length > 0 && (
               <span className="rounded-sm bg-muted px-1 font-mono text-[10px] text-muted-foreground">
                 {toolTerms.length}
               </span>
             )}
-            {centerTab === PREVIEW_TAB && <span className={TAB_UNDERLINE} />}
+            {centerTab === TERMINALS_TAB && <span className={TAB_UNDERLINE} />}
           </button>
         </div>
 
@@ -545,27 +572,42 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           {/* 切页签时的淡入：动画挂在各内容包裹层上——hidden 切 display 会重放动画，
               因此无需 key 重挂（重挂会丢 xterm 缓冲，违背「终端常挂载」约定） */}
           <div
-            className={cn('h-full', centerTab !== PREVIEW_TAB && 'hidden')}
+            className={cn('h-full', centerTab !== SESSION_TAB && 'hidden')}
+            style={{ animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' }}
+          >
+            {previewSession ? (
+              <SessionTranscript
+                sessionID={previewSession.ID}
+                title={displayTitle(previewSession.Title) || previewSession.Title}
+                onActivate={() => openChatOrTerminal(previewSession)}
+              />
+            ) : (
+              <EmptyState title="从左侧会话列表选择会话查看预览" />
+            )}
+          </div>
+          <div
+            className={cn('h-full', centerTab !== FILES_TAB && 'hidden')}
+            style={{ animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' }}
+          >
+            <FileTabsPane
+              wsPath={tab.id}
+              state={fileTabs}
+              dirty={fileDirty}
+              onChange={setFileTabs}
+              onDirty={(path, d) => setFileDirty((prev) => ({ ...prev, [path]: d }))}
+            />
+          </div>
+          <div
+            className={cn('h-full', centerTab !== TERMINALS_TAB && 'hidden')}
             style={{ animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' }}
           >
             <PreviewToolPane
-              wsPath={tab.id}
-              previewPath={previewPath}
               terms={toolTerms}
-              active={visible && centerTab === PREVIEW_TAB}
+              active={visible && centerTab === TERMINALS_TAB}
               subTab={toolSubTab}
               onSubTab={setToolSubTab}
               onCloseTerminal={handleCloseTerminal}
               onNewShell={handleNewShell}
-              sessionPreview={
-                previewSession
-                  ? { sessionID: previewSession.ID, title: displayTitle(previewSession.Title) || previewSession.Title }
-                  : null
-              }
-              onCloseSessionPreview={closeSessionPreview}
-              onActivateSessionPreview={() => {
-                if (previewSession) openChatOrTerminal(previewSession);
-              }}
             />
           </div>
           {terms.map((t) => (
@@ -621,7 +663,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         {/* 双面板常挂载，仅用 hidden 切换显示：切「文件|SSH」页签不再卸载重载，
             文件树展开态与 SSH 连接列表/命令历史得以保留 */}
         <div className={cn('min-h-0 flex-1', rightPane !== 'files' && 'hidden')}>
-          <FileTree wsPath={tab.id} onOpenFile={openFile} />
+          <FileTree wsPath={tab.id} onOpenFile={openFile} onEditFile={editFile} />
         </div>
         <div className={cn('min-h-0 flex-1', rightPane !== 'ssh' && 'hidden')}>
           <SshPanel wsPath={tab.id} onOpenRemote={handleOpenRemote} />

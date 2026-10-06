@@ -44,9 +44,8 @@ vi.mock('../components/ChatView', () => ({
   ),
 }));
 vi.mock('../components/FileTree', () => ({ default: () => <div data-testid="file-tree" /> }));
+vi.mock('../components/FileTabsPane', () => ({ default: () => <div data-testid="file-tabs-pane" /> }));
 vi.mock('../components/PreviewToolPane', () => ({
-  PREVIEW_SUB: 'preview',
-  SESSION_PREVIEW_SUB: 'session-preview',
   default: () => <div data-testid="preview-tool-pane" />,
 }));
 vi.mock('../components/SshPanel', () => ({ default: () => <div data-testid="ssh-panel" /> }));
@@ -222,7 +221,7 @@ describe('WorkspaceTabView agent 活动图标', () => {
     expect(screen.getByLabelText('等待用户')).toBeInTheDocument();
   });
 
-  it('从聊天页签切到预览后不改 Status', () => {
+  it('从聊天页签切到文件后不改 Status', () => {
     useAppStore.setState({
       chats: [{ ...chat, Status: 'ready' }],
       terminals: [],
@@ -230,11 +229,11 @@ describe('WorkspaceTabView agent 活动图标', () => {
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
     fireEvent.click(screen.getByRole('tab', { name: '新会话' }));
-    fireEvent.click(screen.getByRole('tab', { name: '预览与命令行' }));
+    fireEvent.click(screen.getByRole('tab', { name: '文件' }));
     expect(useAppStore.getState().chats.find((c) => c.ID === 'c1')?.Status).toBe('ready');
   });
 
-  it('预览页签钉在中心区最右，shell/ssh 不进左侧 agent 页签', () => {
+  it('会话预览钉在最左，文件与终端钉在最右；shell/ssh 不进左侧 agent 页签', () => {
     useAppStore.setState({
       terminals: [
         term,
@@ -253,9 +252,11 @@ describe('WorkspaceTabView agent 活动图标', () => {
     const tablist = screen.getByRole('tablist', { name: '中心区页签' });
     const tabs = tablist.querySelectorAll('[role="tab"]');
     const labels = [...tabs].map((t) => t.getAttribute('aria-label') || t.textContent);
-    expect(labels.at(-1)).toMatch(/预览/);
-    expect(screen.queryByRole('tab', { name: '终端' })).not.toBeInTheDocument();
+    expect(labels[0]).toMatch(/会话预览/);
+    expect(labels.at(-2)).toMatch(/文件/);
+    expect(labels.at(-1)).toMatch(/终端/);
     expect(screen.getByTestId('preview-tool-pane')).toBeInTheDocument();
+    expect(screen.getByTestId('file-tabs-pane')).toBeInTheDocument();
   });
 
   it('连续切换聊天页签时 Status 保持不变', () => {

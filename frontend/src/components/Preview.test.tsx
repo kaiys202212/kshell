@@ -1,6 +1,4 @@
-// Preview 组件测试：按 previewKind 调度 CodeEditor / Markdown / 图 / PDF，
-// 截断提示、二进制元信息、错误与空态、
-// 编辑模式（整读 → CodeEditor → Ctrl+S/保存 → 刷新预览与 git 状态）。
+// Preview 组件测试：可编辑文件整读进可写 CodeEditor；图/PDF/二进制只读；Ctrl+S 保存。
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -38,12 +36,6 @@ vi.mock('./CodeEditor', () => ({
   },
 }));
 
-vi.mock('./MarkdownPreview', () => ({
-  default: function MockMarkdownPreview({ markdown }: { markdown: string }) {
-    return <div data-testid="markdown-preview">{markdown}</div>;
-  },
-}));
-
 vi.mock('./ImagePreview', () => ({
   default: function MockImagePreview({ path }: { path: string }) {
     return <div data-testid="image-preview">{path}</div>;
@@ -68,103 +60,45 @@ describe('Preview', () => {
   it('未选择文件时显示占位文案，不发起请求', () => {
     render(<Preview wsPath="D:\\proj" path={null} />);
     expect(screen.getByText('从右侧文件树选择文件查看预览')).toBeInTheDocument();
+    expect(mocks.readFileForEdit).not.toHaveBeenCalled();
     expect(mocks.previewFile).not.toHaveBeenCalled();
   });
 
-  it('.ts 挂载 CodeEditor，优先用 Text，无行号前缀', async () => {
-    mocks.previewFile.mockResolvedValue({
-      Lines: ['   1 │ package main', '   2 │ ', '   3 │ func main() {}'],
-      Text: 'package main\n\nfunc main() {}',
-      Truncated: false,
-      Binary: false,
-      Info: 'text/plain · 3 行',
-    });
+  it('.ts 整读进可写 CodeEditor', async () => {
+    mocks.readFileForEdit.mockResolvedValue({ Text: 'package main\n', EOL: 'lf', Size: 13 });
     render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\main.ts'} />);
 
-    await screen.findByText(/text\/plain/);
-    const editor = await screen.findByTestId('code-editor');
-    expect(editor).toHaveValue('package main\n\nfunc main() {}');
-    expect(mocks.previewFile).toHaveBeenCalledWith('D:\\proj', 'D:\\proj\\main.ts');
+    const editor = await screen.findByRole('textbox', { name: '编辑文件内容' });
+    expect(editor).toHaveValue('package main\n');
+    expect(mocks.readFileForEdit).toHaveBeenCalledWith('D:\\proj', 'D:\\proj\\main.ts');
+    expect(mocks.previewFile).not.toHaveBeenCalled();
   });
 
-  it('无 Text 时用 stripLinePrefix(Lines) 作为 CodeEditor 内容', async () => {
-    mocks.previewFile.mockResolvedValue({
-      Lines: ['   1 │ hello', '   2 │ world'],
-      Truncated: false,
-      Binary: false,
-      Info: '',
-    });
-    render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);
-
-    const editor = await screen.findByTestId('code-editor');
-    expect(editor).toHaveValue('hello\nworld');
-  });
-
-  it('.md 默认预览模式：出现「预览」按钮并渲染 markdown', async () => {
-    mocks.previewFile.mockResolvedValue({
-      Lines: ['   1 │ # Hi'],
-      Text: '# Hi',
-      Truncated: false,
-      Binary: false,
-      Info: '',
-    });
+  it('.md 也直接可编辑，不渲染 markdown 预览切换', async () => {
+    mocks.readFileForEdit.mockResolvedValue({ Text: '# Hi', EOL: 'lf', Size: 4 });
     render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\readme.md'} />);
 
-    expect(await screen.findByRole('button', { name: '预览' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '源码' })).toBeInTheDocument();
-    expect(await screen.findByTestId('markdown-preview')).toHaveTextContent('# Hi');
-    expect(screen.queryByTestId('code-editor')).not.toBeInTheDocument();
+    expect(await screen.findByRole('textbox', { name: '编辑文件内容' })).toHaveValue('# Hi');
+    expect(screen.queryByRole('button', { name: '预览' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '源码' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '编辑' })).not.toBeInTheDocument();
   });
 
-  it('.md 切换源码显示 CodeEditor', async () => {
-    mocks.previewFile.mockResolvedValue({
-      Lines: [],
-      Text: '# Hi',
-      Truncated: false,
-      Binary: false,
-      Info: '',
-    });
-    render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\readme.md'} />);
-    await screen.findByTestId('markdown-preview');
-
-    fireEvent.click(screen.getByRole('button', { name: '源码' }));
-    expect(await screen.findByTestId('code-editor')).toHaveValue('# Hi');
-    expect(screen.queryByTestId('markdown-preview')).not.toBeInTheDocument();
-  });
-
-  it('图片路径直接挂载 ImagePreview，不调 previewFile', async () => {
+  it('图片路径直接挂载 ImagePreview，不调 readFileForEdit', async () => {
     render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\pic.png'} />);
     expect(await screen.findByTestId('image-preview')).toHaveTextContent('D:\\proj\\pic.png');
+    expect(mocks.readFileForEdit).not.toHaveBeenCalled();
     expect(mocks.previewFile).not.toHaveBeenCalled();
   });
 
-  it('PDF 路径挂载 PdfPreview，不调 previewFile', async () => {
+  it('PDF 路径挂载 PdfPreview', async () => {
     render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\doc.pdf'} />);
     expect(await screen.findByTestId('pdf-preview')).toHaveTextContent('D:\\proj\\doc.pdf');
-    expect(mocks.previewFile).not.toHaveBeenCalled();
+    expect(mocks.readFileForEdit).not.toHaveBeenCalled();
   });
 
-  it('Truncated 时显示截断提示（默认上限 10000 行）', async () => {
-    mocks.previewFile.mockResolvedValue({
-      Lines: ['   1 │ x'],
-      Text: 'x',
-      Truncated: true,
-      Binary: false,
-      Info: '',
-    });
-    render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\big.log'} />);
-
-    expect(await screen.findByText('内容已截断：仅显示前 10000 行')).toBeInTheDocument();
-  });
-
-  it('路径标题栏固定、内容区可滚动（避免滚动时内容盖住标题）', async () => {
-    mocks.previewFile.mockResolvedValue({
-      Lines: ['   1 │ hello'],
-      Text: 'hello',
-      Truncated: false,
-      Binary: false,
-      Info: '',
-    });
+  it('路径标题栏固定、内容区可滚动', async () => {
+    mocks.readFileForEdit.mockResolvedValue({ Text: 'hello', EOL: 'lf', Size: 5 });
     const { container } = render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);
     await screen.findByTestId('code-editor');
 
@@ -173,94 +107,63 @@ describe('Preview', () => {
     expect(root.className).toMatch(/overflow-hidden/);
 
     const header = root.querySelector('[data-testid="preview-path-header"]') as HTMLElement;
-    expect(header).toBeTruthy();
     expect(header.className).toMatch(/shrink-0/);
-    expect(header.className).not.toMatch(/sticky/);
-
     const body = root.querySelector('[data-testid="preview-body"]') as HTMLElement;
-    expect(body).toBeTruthy();
     expect(body.className).toMatch(/min-h-0/);
     expect(body.className).toMatch(/flex-1/);
-    expect(body.className).toMatch(/overflow-hidden/);
   });
 
-  it('二进制文件（非图/PDF）只展示 Info 元信息，不渲染内容', async () => {
+  it('整读失败后回退 previewFile：二进制只展示 Info', async () => {
+    mocks.readFileForEdit.mockRejectedValue(new Error('二进制文件'));
     mocks.previewFile.mockResolvedValue({
       Lines: [],
       Truncated: false,
       Binary: true,
       Info: '二进制文件 · 1.2 MB',
     });
-    const { container } = render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\blob.bin'} />);
+    render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\blob.bin'} />);
 
     expect(await screen.findByText('二进制文件 · 1.2 MB')).toBeInTheDocument();
     expect(screen.queryByTestId('code-editor')).toBeNull();
-    expect(container.querySelector('pre')).toBeNull();
   });
 
-  it('PreviewFile 失败时显示错误信息', async () => {
+  it('readFileForEdit 与 previewFile 都失败时显示错误信息', async () => {
+    mocks.readFileForEdit.mockRejectedValue(new Error('路径越出工作区范围'));
     mocks.previewFile.mockRejectedValue(new Error('路径越出工作区范围'));
     render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\secret.ts'} />);
 
     expect(await screen.findByText(/路径越出工作区范围/)).toBeInTheDocument();
   });
 
-  it('切换文件路径时重新加载', async () => {
-    mocks.previewFile
-      .mockResolvedValueOnce({
-        Lines: ['   1 │ a'],
-        Text: 'a',
-        Truncated: false,
-        Binary: false,
-        Info: '',
-      })
-      .mockResolvedValueOnce({
-        Lines: ['   1 │ b'],
-        Text: 'b',
-        Truncated: false,
-        Binary: false,
-        Info: '',
-      });
+  it('切换文件路径时重新整读', async () => {
+    mocks.readFileForEdit
+      .mockResolvedValueOnce({ Text: 'a', EOL: 'lf', Size: 1 })
+      .mockResolvedValueOnce({ Text: 'b', EOL: 'lf', Size: 1 });
     const { rerender } = render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);
     expect(await screen.findByTestId('code-editor')).toHaveValue('a');
 
     rerender(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\b.ts'} />);
     expect(await screen.findByTestId('code-editor')).toHaveValue('b');
-    expect(mocks.previewFile).toHaveBeenCalledTimes(2);
-    expect(mocks.previewFile).toHaveBeenLastCalledWith('D:\\proj', 'D:\\proj\\b.ts');
+    expect(mocks.readFileForEdit).toHaveBeenCalledTimes(2);
   });
 
-  it('编辑：整读进 CodeEditor，修改出现未保存点，Ctrl+S 保存后刷新预览与 git 状态', async () => {
-    mocks.previewFile
-      .mockResolvedValueOnce({
-        Lines: ['   1 │ a'],
-        Text: 'a',
-        Truncated: false,
-        Binary: false,
-        Info: '',
-      })
-      .mockResolvedValueOnce({
-        Lines: ['   1 │ ab'],
-        Text: 'ab',
-        Truncated: false,
-        Binary: false,
-        Info: '',
-      });
+  it('修改出现未保存点，Ctrl+S 保存后仍可编辑', async () => {
     mocks.readFileForEdit.mockResolvedValue({ Text: 'a', EOL: 'lf', Size: 1 });
     mocks.saveFile.mockResolvedValue(undefined);
-    render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);
-    expect(await screen.findByTestId('code-editor')).toHaveValue('a');
-
-    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+    const onDirty = vi.fn();
+    const onEdited = vi.fn();
+    render(
+      <Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} onDirtyChange={onDirty} onEdited={onEdited} />,
+    );
     const area = (await screen.findByRole('textbox', { name: '编辑文件内容' })) as HTMLTextAreaElement;
-    expect(area.value).toBe('a');
-
     expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
 
     await act(async () => {
       fireEvent.change(area, { target: { value: 'ab' } });
     });
     expect(screen.getByText('●')).toBeInTheDocument();
+    expect(onDirty).toHaveBeenCalledWith(true);
+    expect(onEdited).toHaveBeenCalled();
     expect(screen.getByRole('button', { name: '保存' })).toBeEnabled();
 
     await act(async () => {
@@ -270,25 +173,14 @@ describe('Preview', () => {
       });
     });
     expect(mocks.saveFile).toHaveBeenCalledWith('D:\\proj', 'D:\\proj\\a.ts', 'ab', 'lf');
-    expect(await screen.findByTestId('code-editor')).toHaveValue('ab');
+    expect(await screen.findByRole('textbox', { name: '编辑文件内容' })).toHaveValue('ab');
     expect(useAppStore.getState().toasts.some((t) => t.title === '已保存')).toBe(true);
-    expect(screen.queryByRole('textbox', { name: '编辑文件内容' })).not.toBeInTheDocument();
   });
 
-  it('保存按钮也能保存（crlf 按 EOL 还原），保存失败提示错误且留在编辑态', async () => {
-    mocks.previewFile.mockResolvedValue({
-      Lines: ['   1 │ x'],
-      Text: 'x',
-      Truncated: false,
-      Binary: false,
-      Info: '',
-    });
+  it('保存按钮也能保存（crlf），失败提示且留在编辑态', async () => {
     mocks.readFileForEdit.mockResolvedValue({ Text: 'x', EOL: 'crlf', Size: 2 });
     mocks.saveFile.mockRejectedValueOnce(new Error('磁盘已满'));
     render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);
-    await screen.findByTestId('code-editor');
-
-    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
     const area = await screen.findByRole('textbox', { name: '编辑文件内容' });
     await act(async () => {
       fireEvent.change(area, { target: { value: 'y' } });
@@ -302,91 +194,23 @@ describe('Preview', () => {
     expect(screen.getByRole('textbox', { name: '编辑文件内容' })).toHaveValue('y');
   });
 
-  it('取消：有修改时经确认放弃，无修改直接退出', async () => {
-    mocks.previewFile.mockResolvedValue({
-      Lines: ['   1 │ x'],
-      Text: 'x',
-      Truncated: false,
-      Binary: false,
-      Info: '',
-    });
-    mocks.readFileForEdit.mockResolvedValue({ Text: 'x', EOL: 'lf', Size: 1 });
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);
-    await screen.findByTestId('code-editor');
-
-    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
-    const area = await screen.findByRole('textbox', { name: '编辑文件内容' });
-    await act(async () => {
-      fireEvent.change(area, { target: { value: 'xy' } });
-    });
-    fireEvent.click(screen.getByRole('button', { name: '取消' }));
-    expect(confirmSpy).toHaveBeenCalled();
-    expect(screen.queryByRole('textbox', { name: '编辑文件内容' })).not.toBeInTheDocument();
-    confirmSpy.mockRestore();
-  });
-
-  it('编辑在途切换文件时丢弃结果，不会把旧内容带进新文件的编辑态', async () => {
-    mocks.previewFile
-      .mockResolvedValueOnce({
-        Lines: ['   1 │ a'],
-        Text: 'a',
-        Truncated: false,
-        Binary: false,
-        Info: '',
-      })
-      .mockResolvedValue({
-        Lines: ['   1 │ b'],
-        Text: 'b',
-        Truncated: false,
-        Binary: false,
-        Info: '',
-      });
+  it('整读在途切换文件时丢弃旧结果', async () => {
     let resolveEdit!: (v: { Text: string; EOL: string; Size: number }) => void;
-    mocks.readFileForEdit.mockReturnValue(
-      new Promise((res) => {
-        resolveEdit = res;
-      }),
-    );
+    mocks.readFileForEdit.mockImplementation((_ws: string, p: string) => {
+      if (p.endsWith('a.ts')) {
+        return new Promise((res) => {
+          resolveEdit = res;
+        });
+      }
+      return Promise.resolve({ Text: 'b', EOL: 'lf', Size: 1 });
+    });
     const { rerender } = render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);
-    await screen.findByTestId('code-editor');
-
-    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
     rerender(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\b.ts'} />);
+    expect(await screen.findByRole('textbox', { name: '编辑文件内容' })).toHaveValue('b');
     await act(async () => {
       resolveEdit({ Text: 'A-CONTENT', EOL: 'lf', Size: 9 });
     });
-
-    expect(screen.queryByRole('textbox', { name: '编辑文件内容' })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '编辑文件内容' })).toHaveValue('b');
     expect(mocks.saveFile).not.toHaveBeenCalled();
-  });
-
-  it('二进制与加载失败不显示编辑按钮', async () => {
-    mocks.previewFile.mockResolvedValue({
-      Lines: [],
-      Truncated: false,
-      Binary: true,
-      Info: '二进制',
-    });
-    render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\blob.bin'} />);
-    await screen.findByText('二进制');
-    expect(screen.queryByRole('button', { name: '编辑' })).not.toBeInTheDocument();
-  });
-
-  it('二进制 .md 不显示源码/预览切换与编辑按钮', async () => {
-    mocks.previewFile.mockResolvedValue({
-      Lines: [],
-      Text: '',
-      Truncated: false,
-      Binary: true,
-      Info: '二进制文件 · 64 字节',
-    });
-    render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\fake.md'} />);
-
-    expect(await screen.findByText('二进制文件 · 64 字节')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '源码' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '预览' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '编辑' })).not.toBeInTheDocument();
-    expect(screen.queryByTestId('markdown-preview')).not.toBeInTheDocument();
   });
 });

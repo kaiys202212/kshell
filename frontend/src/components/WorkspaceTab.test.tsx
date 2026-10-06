@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   onWindowClosed: vi.fn(),
   listFiles: vi.fn(),
   previewFile: vi.fn(),
+  readFileForEdit: vi.fn(),
+  saveFile: vi.fn(),
   newSession: vi.fn(),
   newSessionWithTool: vi.fn(),
   scanSessions: vi.fn(),
@@ -118,6 +120,7 @@ beforeEach(() => {
   mocks.getSessions.mockResolvedValue([]);
   mocks.getSessionPreview.mockResolvedValue({ Markdown: '## 用户\n\nhi', Truncated: false });
   mocks.listFiles.mockResolvedValue([]);
+  mocks.readFileForEdit.mockResolvedValue({ Text: '', EOL: 'lf', Size: 0 });
   mocks.listConnections.mockResolvedValue([]);
   mocks.getTools.mockResolvedValue([]);
   mocks.listTerminals.mockResolvedValue([]);
@@ -431,20 +434,18 @@ describe('WorkspaceTab', () => {
         Loaded: false,
       },
     ]);
-    mocks.previewFile.mockResolvedValue({
-      Lines: ['   1 │ const a = 1;'],
+    mocks.readFileForEdit.mockResolvedValue({
       Text: 'const a = 1;',
-      Truncated: false,
-      Binary: false,
-      Info: '',
+      EOL: 'lf',
+      Size: 12,
     });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
     fireEvent.click(await screen.findByText('main.ts'));
 
-    // 文本预览走 CodeEditor（CM6），不再用 <pre> 纯文本
+    expect(await screen.findByRole('tab', { name: '文件' })).toHaveAttribute('aria-selected', 'true');
     expect(await screen.findByTestId('code-editor')).toBeInTheDocument();
-    expect(mocks.previewFile).toHaveBeenCalledWith('D:\\proj-a', 'D:\\proj-a\\main.ts');
+    expect(mocks.readFileForEdit).toHaveBeenCalledWith('D:\\proj-a', 'D:\\proj-a\\main.ts');
   });
 
   it('SSH 页签渲染连接列表，文件页签渲染文件树；切页签双面板常挂载不卸载', async () => {

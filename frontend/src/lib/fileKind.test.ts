@@ -1,6 +1,6 @@
 // 文件预览类型与 CM6 语言映射测试。
 import { describe, expect, it } from 'vitest';
-import { codeLanguage, previewKind } from './fileKind';
+import { codeLanguage, isEditableKind, previewKind } from './fileKind';
 
 describe('previewKind', () => {
   it.each([
@@ -14,6 +14,16 @@ describe('previewKind', () => {
     ['CMakeLists.txt', 'text'],
   ])('%s → %s', (path, kind) => {
     expect(previewKind(path)).toBe(kind);
+  });
+});
+
+describe('isEditableKind', () => {
+  it('文本与 Markdown 可编辑，图/PDF 不可', () => {
+    expect(isEditableKind('text')).toBe(true);
+    expect(isEditableKind('markdown')).toBe(true);
+    expect(isEditableKind('image')).toBe(false);
+    expect(isEditableKind('pdf')).toBe(false);
+    expect(isEditableKind('binary')).toBe(false);
   });
 });
 

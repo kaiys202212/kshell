@@ -1,19 +1,14 @@
-// 文件预览（工作区页签中间栏）：按 previewKind 调度 CM6 / Markdown / 图 / PDF。
-// 文本优先用 FilePreview.Text；无 Text 时 stripLinePrefix(Lines) 去掉 "NNNN │ " 前缀。
-// Truncated 显示截断提示；Binary 且非图/PDF 只展示 Info 元信息。
-// 编辑模式：readFileForEdit 整读（上限 1MB、拒二进制），CodeEditor 编辑 + Ctrl/Cmd+S
-// 或保存按钮落盘（Go 侧原子替换并按原行尾还原），保存后刷新 git 状态镜像。
+// 文件预览/编辑：可编辑文件打开即可写 CodeEditor（无编辑/预览切换）；
+// 图/PDF/二进制只读。Ctrl/Cmd+S 保存后仍留在编辑器。草稿随本实例，父级常挂载页签。
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { previewFile, readFileForEdit, saveFile } from '../lib/api';
 import type { FilePreview } from '../lib/api';
-import { previewKind, type PreviewKind } from '../lib/fileKind';
+import { isEditableKind, previewKind, type PreviewKind } from '../lib/fileKind';
 import { refreshGitStatus } from '../lib/git';
 import { useAppStore } from '../state/store';
 import CodeEditor from './CodeEditor';
 import ImagePreview from './ImagePreview';
-import MarkdownPreview from './MarkdownPreview';
 import PdfPreview from './PdfPreview';
-import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { EmptyState } from './ui/empty-state';
 import { Skeleton } from './ui/skeleton';
@@ -37,44 +32,45 @@ function resolveEditorTheme(resolved: 'light' | 'dark'): 'light' | 'dark' {
   return 'light';
 }
 
-export default function Preview({ wsPath, path }: { wsPath: string; path: string | null }) {
+export default function Preview({
+  wsPath,
+  path,
+  onDirtyChange,
+  onEdited,
+}: {
+  wsPath: string;
+  path: string | null;
+  onDirtyChange?: (dirty: boolean) => void;
+  onEdited?: () => void;
+}) {
   const [data, setData] = useState<FilePreview | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-
-  // 编辑态
-  const [editing, setEditing] = useState(false);
   const [text, setText] = useState('');
   const [eol, setEol] = useState('lf');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  // Markdown 源码 | 预览；切文件时重置为 preview
-  const [mdMode, setMdMode] = useState<'source' | 'preview'>('preview');
-  // 保存成功后重新预览：主 effect 依赖 reload，bump 即触发
-  const [reload, setReload] = useState(0);
-  // 当前「生效」的文件路径：异步回调（整读/保存在途）用它判断自己是否还有效，
-  // 防止用户在请求途中切换文件后，旧文件的回调把内容写进新文件（数据覆盖）
+  const [editable, setEditable] = useState(false);
   const activePathRef = useRef<string | null>(path);
 
   const resolvedTheme = useAppStore((s) => s.appearance.resolved);
   const kind: PreviewKind | null = path ? previewKind(path) : null;
   const isMedia = kind === 'image' || kind === 'pdf';
+  const wantEdit = !!path && !!kind && isEditableKind(kind) && !isMedia;
 
   useEffect(() => {
-    // 切换文件即放弃未保存的编辑（简化口径：编辑内容不跟随文件保存草稿，误切会丢改动）
     activePathRef.current = path;
-    setEditing(false);
     setDirty(false);
-    setMdMode('preview');
+    onDirtyChange?.(false);
+    setEditable(false);
     if (!path) {
       setData(null);
       setError('');
       setLoading(false);
+      setText('');
       return;
     }
-    // 图/PDF 由专用组件读字节，无需文本 previewFile
-    const pk = previewKind(path);
-    if (pk === 'image' || pk === 'pdf') {
+    if (isMedia) {
       setData(null);
       setError('');
       setLoading(false);
@@ -84,63 +80,63 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
     setLoading(true);
     setError('');
     setData(null);
-    previewFile(wsPath, path)
-      .then((p) => {
-        if (cancelled) return;
-        if (!p) {
-          setError('未检测到 kshell 桌面端绑定，请在桌面端运行');
-          return;
-        }
-        setData(p);
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    const reqPath = path;
+    const loadPreviewOnly = () =>
+      previewFile(wsPath, reqPath)
+        .then((p) => {
+          if (cancelled || activePathRef.current !== reqPath) return;
+          if (!p) {
+            setError('未检测到 kshell 桌面端绑定，请在桌面端运行');
+            return;
+          }
+          setData(p);
+        })
+        .catch((e: unknown) => {
+          if (cancelled || activePathRef.current !== reqPath) return;
+          setError(e instanceof Error ? e.message : String(e));
+        });
+
+    const done = () => {
+      if (!cancelled) setLoading(false);
+    };
+
+    if (wantEdit) {
+      readFileForEdit(wsPath, reqPath)
+        .then((ec) => {
+          if (cancelled || activePathRef.current !== reqPath) return;
+          if (!ec) {
+            setError('未检测到 kshell 桌面端绑定，请在桌面端运行');
+            return;
+          }
+          setText(ec.Text);
+          setEol(ec.EOL === 'crlf' ? 'crlf' : 'lf');
+          setEditable(true);
+        })
+        .catch(() => loadPreviewOnly())
+        .finally(done);
+    } else {
+      loadPreviewOnly().finally(done);
+    }
     return () => {
       cancelled = true;
     };
-  }, [wsPath, path, reload]);
+    // onDirtyChange 仅在切路径时清脏，不列入依赖以免父级重渲染反复加载
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsPath, path, wantEdit, isMedia]);
 
   const notify = useAppStore.getState().notify;
 
-  const enterEdit = () => {
-    if (!path) return;
-    const reqPath = path;
-    readFileForEdit(wsPath, reqPath)
-      .then((ec) => {
-        // 在途时用户已切到别的文件：结果作废，绝不把旧内容带进新文件的编辑态
-        if (activePathRef.current !== reqPath) return;
-        if (!ec) {
-          notify('未检测到 kshell 桌面端绑定，请在桌面端运行', 'error');
-          return;
-        }
-        setText(ec.Text);
-        setEol(ec.EOL === 'crlf' ? 'crlf' : 'lf');
-        setDirty(false);
-        setEditing(true);
-        setMdMode('source');
-      })
-      .catch((e: unknown) => {
-        if (activePathRef.current !== reqPath) return;
-        notify(e instanceof Error ? e.message : String(e), 'error');
-      });
-  };
-
   const handleSave = () => {
-    if (!path || saving) return;
+    if (!path || saving || !editable) return;
     const reqPath = path;
     setSaving(true);
     saveFile(wsPath, reqPath, text, eol)
       .then(() => {
-        if (activePathRef.current !== reqPath) return; // 保存途中已切走：落盘仍生效，界面不回写
+        if (activePathRef.current !== reqPath) return;
         notify('已保存', 'success');
-        setEditing(false);
         setDirty(false);
+        onDirtyChange?.(false);
         void refreshGitStatus(wsPath);
-        setReload((k) => k + 1); // 重新预览拿最新内容
       })
       .catch((e: unknown) => {
         if (activePathRef.current !== reqPath) return;
@@ -149,22 +145,12 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
       .finally(() => setSaving(false));
   };
 
-  const cancelEdit = () => {
-    if (dirty && !window.confirm('有未保存的修改，确定放弃吗？')) return;
-    setEditing(false);
-    setDirty(false);
-  };
-
   const onEditorKeyDown = (e: KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
       e.preventDefault();
       if (dirty) void handleSave();
     }
   };
-
-  // 编辑按钮只在「文本内容加载完成」时显示（加载中/错误/二进制/媒体态不提供操作入口）
-  const showEditButton =
-    path !== null && !loading && !error && data !== null && !data.Binary && !isMedia;
 
   const cmTheme = resolveEditorTheme(resolvedTheme);
 
@@ -184,32 +170,18 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
         </div>
       );
     }
+    if (editable) return null;
     if (!data) return null;
-
-    // 后端 Binary 且非图/PDF：防扩展名伪装，只显示元信息
     if (data.Binary) {
       return <p className="text-sm text-muted-foreground">{data.Info || '二进制文件，无法预览'}</p>;
     }
-
     const content = previewText(data);
     return (
       <>
         {data.Info && <p className="shrink-0 mb-2 text-xs text-muted-foreground">{data.Info}</p>}
-        {/* 截断行数与 Go 侧 workspace.DefaultPreviewMaxLines 耦合，改一处需同步 */}
-        {data.Truncated && (
-          <Badge variant="outline" className="mb-2 w-fit shrink-0">
-            内容已截断：仅显示前 10000 行
-          </Badge>
-        )}
-        {kind === 'markdown' && mdMode === 'preview' ? (
-          <div className="min-h-0 flex-1 overflow-hidden">
-            <MarkdownPreview markdown={content} />
-          </div>
-        ) : (
-          <div className="min-h-0 flex-1 overflow-hidden">
-            <CodeEditor value={content} readOnly path={path} theme={cmTheme} />
-          </div>
-        )}
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <CodeEditor value={content} readOnly path={path} theme={cmTheme} />
+        </div>
       </>
     );
   };
@@ -220,60 +192,18 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
         data-testid="preview-path-header"
         className="flex shrink-0 items-center border-b border-border bg-card py-2"
       >
-        <span
-          className="truncate font-mono text-xs text-muted-foreground"
-          title={path ?? ''}
-        >
+        <span className="truncate font-mono text-xs text-muted-foreground" title={path ?? ''}>
           {path ?? '未选择文件'}
-          {editing && dirty && <span className="ml-1 text-warning">●</span>}
+          {dirty && <span className="ml-1 text-warning">●</span>}
         </span>
-        {editing && (
-          <>
-            <Button
-              size="sm"
-              className="ml-auto shrink-0"
-              disabled={!dirty || saving}
-              onClick={() => void handleSave()}
-            >
-              {saving ? '保存中…' : '保存'}
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              className="ml-1.5 shrink-0"
-              disabled={saving}
-              onClick={cancelEdit}
-            >
-              取消
-            </Button>
-          </>
-        )}
-        {!editing && kind === 'markdown' && path && !loading && !error && data !== null && !data.Binary && (
-          <div className="ml-auto flex gap-1">
-            <Button
-              size="sm"
-              variant={mdMode === 'source' ? 'default' : 'secondary'}
-              onClick={() => setMdMode('source')}
-            >
-              源码
-            </Button>
-            <Button
-              size="sm"
-              variant={mdMode === 'preview' ? 'default' : 'secondary'}
-              onClick={() => setMdMode('preview')}
-            >
-              预览
-            </Button>
-            {showEditButton && (
-              <Button size="sm" variant="secondary" onClick={enterEdit}>
-                编辑
-              </Button>
-            )}
-          </div>
-        )}
-        {!editing && kind !== 'markdown' && showEditButton && (
-          <Button size="sm" variant="secondary" className="ml-auto shrink-0" onClick={enterEdit}>
-            编辑
+        {editable && (
+          <Button
+            size="sm"
+            className="ml-auto shrink-0"
+            disabled={!dirty || saving}
+            onClick={() => void handleSave()}
+          >
+            {saving ? '保存中…' : '保存'}
           </Button>
         )}
       </div>
@@ -290,7 +220,7 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
           </div>
         )}
         {error && <p className="text-sm text-destructive">{error}</p>}
-        {!loading && !error && editing && path && (
+        {!loading && !error && editable && path && (
           <div className="min-h-0 flex-1 overflow-hidden" onKeyDown={onEditorKeyDown}>
             <CodeEditor
               value={text}
@@ -299,12 +229,16 @@ export default function Preview({ wsPath, path }: { wsPath: string; path: string
               theme={cmTheme}
               onChange={(v) => {
                 setText(v);
-                setDirty(true);
+                if (!dirty) {
+                  setDirty(true);
+                  onDirtyChange?.(true);
+                  onEdited?.();
+                }
               }}
             />
           </div>
         )}
-        {!loading && !error && !editing && bodyContent()}
+        {!loading && !error && !editable && bodyContent()}
       </div>
     </div>
   );
