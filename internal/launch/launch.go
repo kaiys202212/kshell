@@ -253,6 +253,7 @@ func acpAdapterEnv(tool discovery.Tool) map[string]string {
 	}
 	exe, err := os.Executable()
 	if err != nil || exe == "" {
+		// 解析不到自身路径时无法提供可 spawn 的 PE，退回不注入（cursor-acp 仍会 ENOENT）。
 		return nil
 	}
 	return map[string]string{

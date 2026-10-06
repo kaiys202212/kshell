@@ -22,7 +22,7 @@ func TestProxyMainForwardsArgsAndExitCode(t *testing.T) {
 	}
 	dir := t.TempDir()
 	script := filepath.Join(dir, "index.js")
-	body := "console.log(process.argv.slice(2).join('|')); process.exit(0);\n"
+	body := "const e=process.env; console.log(process.argv.slice(2).join('|')+'|as='+String(e.KSHELL_AS_CURSOR_AGENT||'')+'|exe='+String(e.CURSOR_AGENT_EXECUTABLE||'')); process.exit(0);\n"
 	if err := os.WriteFile(script, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -32,14 +32,29 @@ func TestProxyMainForwardsArgsAndExitCode(t *testing.T) {
 		EnvAsProxy+"=1",
 		EnvNode+"="+node,
 		EnvScript+"="+script,
+		"CURSOR_AGENT_EXECUTABLE=C:\\should\\not\\leak.exe",
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("proxy: %v\n%s", err, out)
 	}
 	got := strings.TrimSpace(string(out))
-	if got != "--print|hello" {
-		t.Fatalf("argv = %q", got)
+	if got != "--print|hello|as=|exe=" {
+		t.Fatalf("argv/env = %q", got)
+	}
+}
+
+func TestShouldProxyRequiresAllEnv(t *testing.T) {
+	t.Setenv(EnvAsProxy, "1")
+	t.Setenv(EnvNode, "")
+	t.Setenv(EnvScript, "")
+	if ShouldProxy() {
+		t.Fatal("仅 AsProxy 不应进入代理，避免桌面闪退")
+	}
+	t.Setenv(EnvNode, "node")
+	t.Setenv(EnvScript, "index.js")
+	if !ShouldProxy() {
+		t.Fatal("三变量齐全时应代理")
 	}
 }
 
