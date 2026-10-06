@@ -21,6 +21,22 @@ const mocks = vi.hoisted(() => ({
   gitStashPop: vi.fn().mockResolvedValue(undefined),
   gitStashApply: vi.fn().mockResolvedValue(undefined),
   gitStashDrop: vi.fn().mockResolvedValue(undefined),
+  gitLog: vi.fn().mockResolvedValue([
+    {
+      Hash: 'abc1234deadbeef',
+      Parents: [],
+      Author: 't',
+      Email: 't@t',
+      Date: '2026-01-01T00:00:00Z',
+      Subject: 'init',
+      Decorations: ['main'],
+    },
+  ]),
+  gitRefs: vi.fn().mockResolvedValue([
+    { Name: 'main', Short: 'main', Kind: 'local', Current: true },
+    { Name: 'origin/main', Short: 'origin/main', Kind: 'remote', Current: false },
+  ]),
+  gitFetchAll: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../lib/api', () => mocks);
 vi.mock('../lib/git', () => ({ refreshGitStatus: vi.fn().mockResolvedValue(undefined) }));
@@ -44,6 +60,7 @@ const snap = (over: Partial<GitSCMSnapshot> = {}): GitSCMSnapshot => ({
 afterEach(cleanup);
 
 beforeEach(() => {
+  cleanup();
   vi.clearAllMocks();
   useAppStore.setState({ toasts: [] });
   mocks.gitSCM.mockResolvedValue(snap());
@@ -89,5 +106,23 @@ describe('GitPanel', () => {
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
     fireEvent.click(await screen.findByRole('button', { name: '丢弃 dirty.go' }));
     expect(mocks.gitDiscard).not.toHaveBeenCalled();
+  });
+
+  it('ahead 时可同步', async () => {
+    render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
+    expect(await screen.findByRole('button', { name: '同步' })).toBeEnabled();
+  });
+
+  it('无上游时同步禁用', async () => {
+    mocks.gitSCM.mockResolvedValue(snap({ HasUpstream: false, Ahead: 0, Behind: 0 }));
+    render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
+    expect(await screen.findByRole('button', { name: '同步' })).toBeDisabled();
+  });
+
+  it('提交图显示日志并提供 Fetch all', async () => {
+    render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
+    expect(await screen.findByText('init')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Fetch all' })).toBeInTheDocument();
+    expect(screen.getByLabelText('提交图分支筛选')).toBeInTheDocument();
   });
 });

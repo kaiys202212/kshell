@@ -347,8 +347,9 @@ func Branches(wsRoot, repoRel string) ([]string, error) {
 	return names, nil
 }
 
-// Checkout 切换已有本地分支。
+// Checkout 切换分支：本地短名走 switch；远端 origin/foo 建跟踪或切到已有本地 foo。
 func Checkout(wsRoot, repoRel, name string) error {
+	name = strings.TrimSpace(name)
 	if err := validRef(name); err != nil {
 		return err
 	}
@@ -356,7 +357,33 @@ func Checkout(wsRoot, repoRel, name string) error {
 	if err != nil {
 		return err
 	}
+	if local, ok := trackingLocalName(abs, name); ok {
+		if gitRunAt(abs, gitStatusTimeout, "show-ref", "--verify", "--quiet", "refs/heads/"+local) == nil {
+			return gitRunAt(abs, gitStatusTimeout, "switch", "--", local)
+		}
+		return gitRunAt(abs, gitStatusTimeout, "switch", "--track", "--", name)
+	}
 	return gitRunAt(abs, gitStatusTimeout, "switch", "--", name)
+}
+
+func trackingLocalName(abs, name string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
+	defer cancel()
+	out, err := gitCmd(ctx, abs, "remote").Output()
+	if err != nil {
+		return "", false
+	}
+	for _, remote := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		remote = strings.TrimSpace(remote)
+		if remote == "" {
+			continue
+		}
+		prefix := remote + "/"
+		if strings.HasPrefix(name, prefix) && len(name) > len(prefix) {
+			return strings.TrimPrefix(name, prefix), true
+		}
+	}
+	return "", false
 }
 
 // CreateBranch 新建并切换到该分支。

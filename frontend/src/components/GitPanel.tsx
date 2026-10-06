@@ -1,14 +1,23 @@
-// 右栏 Git SCM 面板（参考 VS Code Source Control）。
-import { useCallback, useEffect, useMemo, useState } from 'react';
+// 右栏 Git SCM 面板（对齐 VS Code Source Control + Graph）。
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import {
-  gitBranches,
+  ArrowDownUp,
+  CloudDownload,
+  Download,
+  Ellipsis,
+} from 'lucide-react';
+import {
   gitCheckout,
   gitCommit,
   gitCreateBranch,
   gitDiscard,
   gitFetch,
+  gitFetchAll,
+  gitLog,
   gitPull,
   gitPush,
+  gitRefs,
   gitSCM,
   gitStage,
   gitStashApply,
@@ -17,14 +26,28 @@ import {
   gitStashPush,
   gitUnstage,
 } from '../lib/api';
-import type { GitDiffSide, GitSCMEntry, GitSCMSnapshot } from '../lib/api';
+import type { GitDiffSide, GitLogCommit, GitRef, GitSCMEntry, GitSCMSnapshot } from '../lib/api';
 import { refreshGitStatus } from '../lib/git';
+import type { GraphCommit } from '../lib/gitGraph';
 import { cn } from '../lib/cn';
 import { PANE_HEADER } from '../lib/ui';
 import { useAppStore } from '../state/store';
 import { Button } from './ui/button';
 import { EmptyState } from './ui/empty-state';
-import { Input } from './ui/input';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
+import { GitChangeTree } from './GitChangeTree';
+import { GitLogGraph } from './GitLogGraph';
 
 export type GitDiffSpec = {
   repoRel: string;
@@ -32,6 +55,17 @@ export type GitDiffSpec = {
   side: GitDiffSide;
   preview: boolean;
 };
+
+function toGraph(commits: GitLogCommit[]): GraphCommit[] {
+  return commits.map((c) => ({
+    hash: c.Hash,
+    parents: c.Parents ?? [],
+    subject: c.Subject,
+    author: c.Author,
+    date: c.Date,
+    decorations: c.Decorations ?? [],
+  }));
+}
 
 export default function GitPanel({
   wsPath,
@@ -47,9 +81,15 @@ export default function GitPanel({
   const [repoRel, setRepoRel] = useState('');
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
-  const [branchOpen, setBranchOpen] = useState(false);
-  const [branches, setBranches] = useState<string[]>([]);
-  const [newBranch, setNewBranch] = useState('');
+  const [refs, setRefs] = useState<GitRef[]>([]);
+  const [commits, setCommits] = useState<GitLogCommit[]>([]);
+  const [logSel, setLogSel] = useState('current');
+  const [picked, setPicked] = useState('');
+  const [split, setSplit] = useState(0.55);
+  const splitRef = useRef<HTMLDivElement>(null);
+
+  const logMode = logSel === 'all' ? 'all' : logSel === 'current' ? 'current' : 'ref';
+  const logRef = logMode === 'ref' ? logSel : '';
 
   const load = useCallback(async () => {
     try {
@@ -64,9 +104,26 @@ export default function GitPanel({
     }
   }, [wsPath, repoRel, notify]);
 
+  const loadLog = useCallback(async () => {
+    try {
+      const [r, logs] = await Promise.all([
+        gitRefs(wsPath, repoRel),
+        gitLog(wsPath, repoRel, logMode, logRef, 200),
+      ]);
+      setRefs(r ?? []);
+      setCommits(logs ?? []);
+    } catch {
+      setCommits([]);
+    }
+  }, [wsPath, repoRel, logMode, logRef]);
+
   useEffect(() => {
     if (visible) void load();
   }, [visible, load]);
+
+  useEffect(() => {
+    if (visible) void loadLog();
+  }, [visible, loadLog]);
 
   const run = async (fn: () => Promise<void>, ok?: string) => {
     setBusy(true);
@@ -75,6 +132,7 @@ export default function GitPanel({
       if (ok) notify(ok, 'success');
       await refreshGitStatus(wsPath);
       await load();
+      await loadLog();
     } catch (e) {
       notify(e instanceof Error ? e.message : String(e), 'error');
     } finally {
@@ -83,16 +141,39 @@ export default function GitPanel({
   };
 
   const staged = useMemo(() => (snap?.Entries ?? []).filter((e) => e.Staged), [snap]);
-  const changes = useMemo(
-    () => (snap?.Entries ?? []).filter((e) => e.Unstaged && !e.Untracked),
+  const working = useMemo(
+    () => (snap?.Entries ?? []).filter((e) => e.Unstaged || e.Untracked),
     [snap],
   );
-  const untracked = useMemo(() => (snap?.Entries ?? []).filter((e) => e.Untracked), [snap]);
   const repos = snap?.Repos ?? [];
+  const canSync = Boolean(snap?.HasUpstream && ((snap.Ahead ?? 0) > 0 || (snap.Behind ?? 0) > 0));
 
   const openEntry = (e: GitSCMEntry, side: GitDiffSide, preview: boolean) => {
     onOpenDiff({ repoRel, path: e.Path, side, preview });
   };
+
+  const onSplitPointer = (ev: ReactPointerEvent<HTMLDivElement>) => {
+    const el = splitRef.current;
+    if (!el) return;
+    ev.preventDefault();
+    const move = (e: PointerEvent) => {
+      const rect = el.getBoundingClientRect();
+      const y = (e.clientY - rect.top) / rect.height;
+      setSplit(Math.min(0.8, Math.max(0.22, y)));
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
+  const sync = () =>
+    run(async () => {
+      if ((snap?.Behind ?? 0) > 0) await gitPull(wsPath, repoRel);
+      if ((snap?.Ahead ?? 0) > 0) await gitPush(wsPath, repoRel);
+    }, '已同步');
 
   if (!visible && !snap) {
     return <div className="hidden" />;
@@ -102,11 +183,15 @@ export default function GitPanel({
     return <EmptyState title="不是 git 仓库" />;
   }
 
+  const localRefs = refs.filter((r) => r.Kind === 'local');
+  const remoteRefs = refs.filter((r) => r.Kind === 'remote');
+
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2 text-xs">
+    <TooltipProvider delayDuration={300}>
+    <div ref={splitRef} className="flex h-full min-h-0 flex-col text-xs">
       {repos.length > 1 && (
         <select
-          className="h-7 rounded-md border border-border bg-card px-1"
+          className="mb-1 h-7 rounded-md border border-border bg-card px-1"
           aria-label="选择仓库"
           value={repoRel}
           onChange={(e) => setRepoRel(e.target.value)}
@@ -119,209 +204,243 @@ export default function GitPanel({
         </select>
       )}
 
-      <div className="flex flex-wrap items-center gap-1">
-        <button
-          type="button"
-          className="rounded-md px-1.5 py-0.5 hover:bg-muted"
-          onClick={() => {
-            setBranchOpen((v) => !v);
-            void gitBranches(wsPath, repoRel).then(setBranches).catch(() => setBranches([]));
-          }}
-        >
+      <div className="flex shrink-0 items-center gap-1 px-0.5 pb-1">
+        <span className="min-w-0 truncate font-medium" title={snap?.Branch}>
           {snap?.Branch || '—'}
-        </button>
+        </span>
         {snap?.HasUpstream && (
           <span className="text-muted-foreground">
             ↑{snap.Ahead} ↓{snap.Behind}
           </span>
         )}
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run(() => gitFetch(wsPath, repoRel))}>
-          Fetch
-        </Button>
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run(() => gitPull(wsPath, repoRel))}>
-          Pull
-        </Button>
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run(() => gitPush(wsPath, repoRel))}>
-          Push
-        </Button>
+        <div className="ml-auto flex items-center gap-0.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="icon"
+                variant={canSync ? 'default' : 'ghost'}
+                disabled={busy || !canSync}
+                aria-label="同步"
+                onClick={() => void sync()}
+              >
+                <ArrowDownUp className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{canSync ? '同步' : '无需同步（无上游或已对齐）'}</TooltipContent>
+          </Tooltip>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="icon" variant="ghost" aria-label="Git 操作" disabled={busy}>
+                <Ellipsis className="h-3.5 w-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>拉取</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuItem onSelect={() => void run(() => gitPull(wsPath, repoRel), '已拉取')}>
+                    Pull
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void run(() => gitFetch(wsPath, repoRel), '已 Fetch')}>
+                    Fetch
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void run(() => gitFetchAll(wsPath, repoRel), '已 Fetch all')}>
+                    Fetch all
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuItem onSelect={() => void run(() => gitPush(wsPath, repoRel), '已推送')}>Push</DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!msg.trim() || staged.length === 0}
+                onSelect={() => {
+                  const m = msg.trim();
+                  setMsg('');
+                  void run(() => gitCommit(wsPath, repoRel, m), '已提交');
+                }}
+              >
+                提交
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>检出分支</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="max-h-64">
+                  <DropdownMenuLabel>本地</DropdownMenuLabel>
+                  {localRefs.map((r) => (
+                    <DropdownMenuItem key={r.Name} onSelect={() => void run(() => gitCheckout(wsPath, repoRel, r.Name))}>
+                      {r.Name}
+                      {r.Current ? ' ·' : ''}
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuLabel>远端</DropdownMenuLabel>
+                  {remoteRefs.map((r) => (
+                    <DropdownMenuItem key={r.Name} onSelect={() => void run(() => gitCheckout(wsPath, repoRel, r.Name))}>
+                      {r.Name}
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      const name = window.prompt('新分支名');
+                      if (!name?.trim()) return;
+                      void run(() => gitCreateBranch(wsPath, repoRel, name.trim()));
+                    }}
+                  >
+                    新建分支…
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>Stash</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuItem onSelect={() => void run(() => gitStashPush(wsPath, repoRel, ''))}>Stash All</DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={(snap?.Stashes ?? []).length === 0}
+                    onSelect={() => void run(() => gitStashPop(wsPath, repoRel, 0))}
+                  >
+                    Pop 最新
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
-      {branchOpen && (
-        <div className="space-y-1 rounded-md border border-border p-1.5">
-          {branches.map((b) => (
-            <button
-              key={b}
-              type="button"
-              className={cn('block w-full rounded px-1 py-0.5 text-left hover:bg-muted', b === snap?.Branch && 'bg-muted')}
-              onClick={() => {
-                setBranchOpen(false);
-                void run(() => gitCheckout(wsPath, repoRel, b));
-              }}
-            >
-              {b}
-            </button>
-          ))}
-          <div className="flex gap-1">
-            <Input
-              value={newBranch}
-              onChange={(e) => setNewBranch(e.target.value)}
-              placeholder="新分支名"
-              className="h-7 text-xs"
-            />
-            <Button
-              size="sm"
-              disabled={!newBranch.trim() || busy}
-              onClick={() => {
-                const name = newBranch.trim();
-                setNewBranch('');
-                setBranchOpen(false);
-                void run(() => gitCreateBranch(wsPath, repoRel, name));
-              }}
-            >
-              新建
-            </Button>
-          </div>
-        </div>
-      )}
-
-      <textarea
-        className="min-h-16 resize-y rounded-md border border-border bg-card p-1.5"
-        placeholder="提交说明"
-        value={msg}
-        onChange={(e) => setMsg(e.target.value)}
-        aria-label="提交说明"
-      />
-      <Button
-        size="sm"
-        disabled={busy || !msg.trim() || staged.length === 0}
-        onClick={() => {
-          const m = msg.trim();
-          setMsg('');
-          void run(() => gitCommit(wsPath, repoRel, m), '已提交');
-        }}
-      >
-        提交
-      </Button>
-
-      <Section
-        title={`已暂存 (${staged.length})`}
-        entries={staged}
-        side="staged"
-        onOpen={openEntry}
-        onStage={null}
-        onUnstage={(e) => void run(() => gitUnstage(wsPath, repoRel, [e.Path]))}
-        onDiscard={null}
-      />
-      <Section
-        title={`更改 (${changes.length})`}
-        entries={changes}
-        side="working"
-        onOpen={openEntry}
-        onStage={(e) => void run(() => gitStage(wsPath, repoRel, [e.Path]))}
-        onUnstage={null}
-        onDiscard={(e) => {
-          if (!window.confirm(`丢弃 ${e.Path} 的工作区改动？`)) return;
-          void run(() => gitDiscard(wsPath, repoRel, [e.Path]));
-        }}
-      />
-      <Section
-        title={`未跟踪 (${untracked.length})`}
-        entries={untracked}
-        side="working"
-        onOpen={openEntry}
-        onStage={(e) => void run(() => gitStage(wsPath, repoRel, [e.Path]))}
-        onUnstage={null}
-        onDiscard={(e) => {
-          if (!window.confirm(`删除未跟踪文件 ${e.Path}？`)) return;
-          void run(() => gitDiscard(wsPath, repoRel, [e.Path]));
-        }}
-      />
-
-      <div>
-        <div className={cn(PANE_HEADER, 'mb-1 flex items-center justify-between')}>
-          <span>Stash ({(snap?.Stashes ?? []).length})</span>
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run(() => gitStashPush(wsPath, repoRel, ''))}>
-            Stash
-          </Button>
-        </div>
-        {(snap?.Stashes ?? []).map((st) => (
-          <div key={st.Index} className="flex items-center gap-1 py-0.5">
-            <span className="min-w-0 flex-1 truncate" title={st.Message}>
-              {st.Message}
-            </span>
-            <Button size="sm" variant="ghost" onClick={() => void run(() => gitStashPop(wsPath, repoRel, st.Index))}>
-              Pop
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => void run(() => gitStashApply(wsPath, repoRel, st.Index))}>
-              Apply
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                if (!window.confirm(`删除 stash：${st.Message}？`)) return;
-                void run(() => gitStashDrop(wsPath, repoRel, st.Index));
-              }}
-            >
-              Drop
-            </Button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function Section({
-  title,
-  entries,
-  side,
-  onOpen,
-  onStage,
-  onUnstage,
-  onDiscard,
-}: {
-  title: string;
-  entries: GitSCMEntry[];
-  side: GitDiffSide;
-  onOpen: (e: GitSCMEntry, side: GitDiffSide, preview: boolean) => void;
-  onStage: ((e: GitSCMEntry) => void) | null;
-  onUnstage: ((e: GitSCMEntry) => void) | null;
-  onDiscard: ((e: GitSCMEntry) => void) | null;
-}) {
-  return (
-    <div className="min-h-0">
-      <div className={PANE_HEADER}>{title}</div>
-      {entries.map((e) => (
-        <div
-          key={`${side}:${e.Path}`}
-          className="group flex items-center gap-1 rounded py-0.5 hover:bg-muted/50"
+      <div className="flex min-h-0 flex-col" style={{ height: `${split * 100}%` }}>
+        <textarea
+          className="mb-1 min-h-14 shrink-0 resize-y rounded-md border border-border bg-card p-1.5"
+          placeholder="提交说明"
+          value={msg}
+          onChange={(e) => setMsg(e.target.value)}
+          aria-label="提交说明"
+        />
+        <Button
+          size="sm"
+          className="mb-1 shrink-0 self-start"
+          disabled={busy || !msg.trim() || staged.length === 0}
+          onClick={() => {
+            const m = msg.trim();
+            setMsg('');
+            void run(() => gitCommit(wsPath, repoRel, m), '已提交');
+          }}
         >
-          <button
-            type="button"
-            className="min-w-0 flex-1 truncate text-left"
-            onClick={() => onOpen(e, side, true)}
-            onDoubleClick={() => onOpen(e, side, false)}
-          >
-            {e.Path}
-          </button>
-          {onStage && (
-            <Button size="sm" variant="ghost" aria-label={`暂存 ${e.Path}`} onClick={() => onStage(e)}>
-              +
-            </Button>
-          )}
-          {onUnstage && (
-            <Button size="sm" variant="ghost" aria-label={`取消暂存 ${e.Path}`} onClick={() => onUnstage(e)}>
-              −
-            </Button>
-          )}
-          {onDiscard && (
-            <Button size="sm" variant="ghost" aria-label={`丢弃 ${e.Path}`} onClick={() => onDiscard(e)}>
-              丢弃
-            </Button>
-          )}
+          提交
+        </Button>
+        <div className="min-h-0 flex-1 overflow-auto">
+          <GitChangeTree
+            title="已暂存"
+            entries={staged}
+            side="staged"
+            onOpen={openEntry}
+            onStage={null}
+            onUnstage={(paths) => void run(() => gitUnstage(wsPath, repoRel, paths))}
+            onDiscard={null}
+          />
+          <GitChangeTree
+            title="更改"
+            entries={working}
+            side="working"
+            onOpen={openEntry}
+            onStage={(paths) => void run(() => gitStage(wsPath, repoRel, paths))}
+            onUnstage={null}
+            onDiscard={(paths, label) => {
+              if (!window.confirm(`丢弃 ${label} 的改动？`)) return;
+              void run(() => gitDiscard(wsPath, repoRel, paths));
+            }}
+          />
+          <div className="mt-1">
+            <div className={cn(PANE_HEADER, 'mb-1 flex items-center justify-between')}>
+              <span>Stash ({(snap?.Stashes ?? []).length})</span>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run(() => gitStashPush(wsPath, repoRel, ''))}>
+                Stash
+              </Button>
+            </div>
+            {(snap?.Stashes ?? []).map((st) => (
+              <div key={st.Index} className="flex items-center gap-1 py-0.5">
+                <span className="min-w-0 flex-1 truncate" title={st.Message}>
+                  {st.Message}
+                </span>
+                <Button size="sm" variant="ghost" onClick={() => void run(() => gitStashPop(wsPath, repoRel, st.Index))}>
+                  Pop
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => void run(() => gitStashApply(wsPath, repoRel, st.Index))}>
+                  Apply
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    if (!window.confirm(`删除 stash：${st.Message}？`)) return;
+                    void run(() => gitStashDrop(wsPath, repoRel, st.Index));
+                  }}
+                >
+                  Drop
+                </Button>
+              </div>
+            ))}
+          </div>
         </div>
-      ))}
+      </div>
+
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="调整 Git 上下分栏"
+        className="h-1.5 shrink-0 cursor-ns-resize bg-border/80 hover:bg-primary/40"
+        onPointerDown={onSplitPointer}
+      />
+
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex shrink-0 items-center gap-1 py-1">
+          <select
+            className="h-7 min-w-0 flex-1 rounded-md border border-border bg-card px-1"
+            aria-label="提交图分支筛选"
+            value={logSel}
+            onChange={(e) => setLogSel(e.target.value)}
+          >
+            <option value="current">当前分支</option>
+            <option value="all">全部</option>
+            <optgroup label="本地">
+              {localRefs.map((r) => (
+                <option key={`l:${r.Name}`} value={r.Name}>
+                  {r.Name}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="远端">
+              {remoteRefs.map((r) => (
+                <option key={`r:${r.Name}`} value={r.Name}>
+                  {r.Name}
+                </option>
+              ))}
+            </optgroup>
+          </select>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button size="icon" variant="ghost" disabled={busy} aria-label="Fetch" onClick={() => void run(() => gitFetch(wsPath, repoRel))}>
+                <Download className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Fetch</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                disabled={busy}
+                aria-label="Fetch all"
+                onClick={() => void run(() => gitFetchAll(wsPath, repoRel))}
+              >
+                <CloudDownload className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Fetch all</TooltipContent>
+          </Tooltip>
+        </div>
+        <GitLogGraph commits={toGraph(commits)} selected={picked} onSelect={setPicked} />
+      </div>
     </div>
+    </TooltipProvider>
   );
 }
