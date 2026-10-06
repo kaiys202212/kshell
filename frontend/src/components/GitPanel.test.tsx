@@ -47,7 +47,7 @@ const snap = (over: Partial<GitSCMSnapshot> = {}): GitSCMSnapshot => ({
   IsRepo: true,
   RepoRel: '',
   Branch: 'main',
-  Remotes: ['origin'],
+  Remotes: ['origin', 'gitcode'],
   SyncRemote: 'origin',
   HasUpstream: true,
   Ahead: 1,

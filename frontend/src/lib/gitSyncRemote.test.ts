@@ -3,7 +3,10 @@ import { loadSyncRemote, saveSyncRemote, syncRemoteKey } from './gitSyncRemote';
 
 describe('gitSyncRemote', () => {
   beforeEach(() => localStorage.clear());
-  afterEach(() => localStorage.clear());
+  afterEach(() => {
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
 
   it('无记忆时返回空串（跟随默认解析）', () => {
     expect(loadSyncRemote('D:\\p', '')).toBe('');
@@ -22,11 +25,24 @@ describe('gitSyncRemote', () => {
     expect(syncRemoteKey('D:\\p', '')).toContain('kshell-git-sync-remote:');
   });
 
-  it('localStorage 抛错时降级为空串/静默', () => {
+  it('空/空白值存取后回空串（视为跟随默认解析）', () => {
+    saveSyncRemote('D:\\p', '', '  ');
+    expect(loadSyncRemote('D:\\p', '')).toBe('');
+    saveSyncRemote('D:\\p', '', '');
+    expect(loadSyncRemote('D:\\p', '')).toBe('');
+  });
+
+  it('localStorage 读抛错时降级为空串', () => {
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
       throw new Error('quota');
     });
     expect(loadSyncRemote('D:\\p', '')).toBe('');
-    vi.restoreAllMocks();
+  });
+
+  it('setItem 抛错（配额满）时 saveSyncRemote 静默不抛', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota');
+    });
+    expect(() => saveSyncRemote('D:\\p', '', 'gitcode')).not.toThrow();
   });
 });
