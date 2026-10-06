@@ -260,6 +260,45 @@ describe('Settings', () => {
     expect(mytool.closest('li')).toHaveAttribute('title', expect.stringContaining('只检测到配置目录'));
   });
 
+  it('残缺安装显示「已损坏」徽标与「修复」按钮', async () => {
+    mocks.getTools.mockResolvedValue([
+      {
+        ID: 'cursor',
+        Name: 'Cursor',
+        BinPath: '',
+        Version: '',
+        Installed: true,
+        Broken: true,
+        Source: 'config-dir',
+      },
+    ]);
+    render(<Settings />);
+    goTools();
+
+    const cursor = await screen.findByText('Cursor');
+    const row = cursor.closest('li')!;
+    expect(row).toHaveTextContent('已损坏');
+    expect(row).not.toHaveTextContent('未验证');
+    expect(row).toHaveTextContent('缺少可执行文件');
+    expect(within(row).getByRole('button', { name: '修复' })).toBeInTheDocument();
+    expect(row).toHaveAttribute('title', expect.stringContaining('安装已损坏'));
+  });
+
+  it('自动修复任务运行时显示自动修复文案', async () => {
+    mocks.getToolInstallJob.mockResolvedValue({
+      ToolID: 'cursor',
+      Action: 'install',
+      Running: true,
+      Log: '',
+      Error: '',
+      Trigger: 'auto',
+    });
+    render(<Settings />);
+    goTools();
+
+    expect(await screen.findByText(/正在自动修复/)).toBeInTheDocument();
+  });
+
   it('工具检测页「重新扫描」按钮触发扫描，tools:updated 后恢复可点', async () => {
     render(<Settings />);
     goTools();
