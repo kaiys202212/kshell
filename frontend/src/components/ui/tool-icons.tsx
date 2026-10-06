@@ -1,0 +1,179 @@
+// 各 agent 工具公开品牌标（图形经 lobehub/icons 整理，仅用于识别对应 CLI）。
+// 渐变 id 用 useId，避免同页多个图标互相串色。
+import { useId, type ReactNode } from 'react';
+import { cn } from '../../lib/cn';
+
+const box = 'inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center [&>svg]:h-full [&>svg]:w-full';
+
+function Frame({
+  tool,
+  children,
+  className,
+}: {
+  tool: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <span data-testid="tool-icon" data-tool={tool} aria-hidden="true" className={cn(box, className)}>
+      {children}
+    </span>
+  );
+}
+
+function uidToken(id: string): string {
+  return id.replace(/:/g, '');
+}
+
+function ClaudeMark() {
+  return (
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path
+        fill="#D97757"
+        fillRule="nonzero"
+        d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z"
+      />
+    </svg>
+  );
+}
+
+function CodexMark() {
+  const g = `codex-${uidToken(useId())}`;
+  return (
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path
+        fill="#fff"
+        d="M19.503 0H4.496A4.496 4.496 0 000 4.496v15.007A4.496 4.496 0 004.496 24h15.007A4.496 4.496 0 0024 19.503V4.496A4.496 4.496 0 0019.503 0z"
+      />
+      <path
+        fill={`url(#${g})`}
+        d="M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 2.673 1.275.01.01.024.017.037.021a.09.09 0 00.043 0 4.55 4.55 0 013.046.275l.047.022.116.057a4.581 4.581 0 012.188 2.399c.209.51.313 1.041.315 1.595a4.24 4.24 0 01-.134 1.223.123.123 0 00.03.115c.594.607.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854l-.136.166a4.548 4.548 0 01-2.201 1.388.123.123 0 00-.081.076c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.157-1.302a.107.107 0 00-.105-.024c-.388.125-.78.143-1.204.138a4.441 4.441 0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.014-2.298.124.124 0 00.006-.056.085.085 0 00-.027-.048 4.467 4.467 0 01-1.034-1.651 3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.646-.227a.098.098 0 00.065-.066 4.51 4.51 0 01.829-1.615 4.535 4.535 0 011.837-1.388zm3.482 10.565a.637.637 0 000 1.272h3.636a.637.637 0 100-1.272h-3.636zM8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64L8.462 9.23z"
+      />
+      <defs>
+        <linearGradient id={g} x1="12" x2="12" y1="3" y2="21" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#B1A7FF" />
+          <stop offset=".5" stopColor="#7A9DFF" />
+          <stop offset="1" stopColor="#3941FF" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+}
+
+function GeminiMark() {
+  const id = uidToken(useId());
+  const spark =
+    'M20.616 10.835a14.147 14.147 0 01-4.45-3.001 14.111 14.111 0 01-3.678-6.452.503.503 0 00-.975 0 14.134 14.134 0 01-3.679 6.452 14.155 14.155 0 01-4.45 3.001c-.65.28-1.318.505-2.002.678a.502.502 0 000 .975c.684.172 1.35.397 2.002.677a14.147 14.147 0 014.45 3.001 14.112 14.112 0 013.679 6.453.502.502 0 00.975 0c.172-.685.397-1.351.677-2.003a14.145 14.145 0 013.001-4.45 14.113 14.113 0 016.453-3.678.503.503 0 000-.975 13.245 13.245 0 01-2.003-.678z';
+  return (
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path d={spark} fill="#3186FF" />
+      <path d={spark} fill={`url(#g0-${id})`} />
+      <path d={spark} fill={`url(#g1-${id})`} />
+      <path d={spark} fill={`url(#g2-${id})`} />
+      <defs>
+        <linearGradient id={`g0-${id}`} x1="7" x2="11" y1="15.5" y2="12" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#08B962" />
+          <stop offset="1" stopColor="#08B962" stopOpacity="0" />
+        </linearGradient>
+        <linearGradient id={`g1-${id}`} x1="8" x2="11.5" y1="5.5" y2="11" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#F94543" />
+          <stop offset="1" stopColor="#F94543" stopOpacity="0" />
+        </linearGradient>
+        <linearGradient id={`g2-${id}`} x1="3.5" x2="17.5" y1="13.5" y2="12" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#FABC12" />
+          <stop offset=".46" stopColor="#FABC12" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+}
+
+function CodeBuddyMark() {
+  const g = `cb-${uidToken(useId())}`;
+  return (
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path
+        fill={`url(#${g})`}
+        d="M18.821 0H5.18A5.179 5.179 0 000 5.179V18.82A5.179 5.179 0 005.179 24H18.82A5.179 5.179 0 0024 18.821V5.18A5.179 5.179 0 0018.821 0z"
+      />
+      <path
+        fill="#fff"
+        d="M18.777 1.647c.28-.02.536.114.972.51 1.018.926 2.437 2.828 3.318 4.452l.34.631.482.24.11.06v3.638a5.206 5.206 0 00-5.32-1.23c-.491.166-1.021.471-2.08 1.082l-6.09 3.516c-1.057.61-1.586.916-1.975 1.259a5.208 5.208 0 00-1.493 5.572c.165.49.471 1.02 1.082 2.08l.315.543h-3.26c-.685 0-1.34-.135-1.939-.377-.169-.956-.009-1.789.469-2.335.158-.18.164-.189.13-.493a11.846 11.846 0 01-.057-1.711l.02-.444-.667-1.18C2.1 15.622 1.445 14.078 1.192 12.9c-.133-.647-.125-.934.04-1.146.1-.128.427-.261.822-.334.994-.175 3.162-.017 5.575.41l.25.043.551-.487c.915-.81 1.522-1.264 2.641-1.962 1.167-.73 2.484-1.331 3.967-1.807l.476-.152.261-.688c.937-2.471 1.896-4.293 2.58-4.9.235-.21.25-.22.422-.23z"
+      />
+      <path
+        fill="#fff"
+        d="M12.139 18.2a1.203 1.203 0 011.642.44l1.296 2.243a1.204 1.204 0 01-2.083 1.203l-1.296-2.243a1.203 1.203 0 01.44-1.644zM18.629 14.452a1.203 1.203 0 011.642.44l1.295 2.244a1.203 1.203 0 11-2.083 1.203l-1.295-2.243a1.203 1.203 0 01.44-1.644z"
+      />
+      <defs>
+        <radialGradient
+          id={g}
+          cx="0"
+          cy="0"
+          r="1"
+          gradientUnits="userSpaceOnUse"
+          gradientTransform="matrix(-9.00009 -16 16 -9.00009 21 24.5)"
+        >
+          <stop stopColor="#2EA99D" />
+          <stop offset="1" stopColor="#6C4DFF" />
+        </radialGradient>
+      </defs>
+    </svg>
+  );
+}
+
+function CursorMark() {
+  return (
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="currentColor" fillRule="evenodd">
+      <path d="M22.106 5.68L12.5.135a.998.998 0 00-.998 0L1.893 5.68a.84.84 0 00-.419.726v11.186c0 .3.16.577.42.727l9.607 5.547a.999.999 0 00.998 0l9.608-5.547a.84.84 0 00.42-.727V6.407a.84.84 0 00-.42-.726zm-.603 1.176L12.228 22.92c-.063.108-.228.064-.228-.061V12.34a.59.59 0 00-.295-.51l-9.11-5.26c-.107-.062-.063-.228.062-.228h18.55c.264 0 .428.286.296.514z" />
+    </svg>
+  );
+}
+
+function OpenCodeMark() {
+  return (
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="currentColor" fillRule="evenodd">
+      <path d="M16 6H8v12h8V6zm4 16H4V2h16v20z" />
+    </svg>
+  );
+}
+
+function OtherMark({ letter }: { letter: string }) {
+  return (
+    <span
+      data-testid="tool-icon"
+      data-tool="other"
+      aria-hidden="true"
+      className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] bg-muted text-[9px] font-medium leading-none"
+    >
+      {letter}
+    </span>
+  );
+}
+
+const MARKS: Record<string, () => ReactNode> = {
+  claude: () => <ClaudeMark />,
+  codex: () => <CodexMark />,
+  gemini: () => <GeminiMark />,
+  codebuddy: () => <CodeBuddyMark />,
+  cursor: () => <CursorMark />,
+  opencode: () => <OpenCodeMark />,
+};
+
+const TILE_TOOLS = new Set(['codex', 'codebuddy']);
+
+export function ToolIcon({ toolID, label }: { toolID: string; label: string }) {
+  const id = toolID.toLowerCase();
+  const Mark = MARKS[id];
+  if (!Mark) {
+    const letter = (label.trim()[0] || '?').toUpperCase();
+    return <OtherMark letter={letter} />;
+  }
+  return (
+    <Frame
+      tool={id}
+      className={TILE_TOOLS.has(id) ? 'overflow-hidden rounded-[3px] ring-1 ring-black/15 dark:ring-white/20' : undefined}
+    >
+      {Mark()}
+    </Frame>
+  );
+}

@@ -1,4 +1,4 @@
-// 工具徽标映射：ToolID → 展示名、旧配色类（兼容调用点）与固定色相（C 视觉用色点）。
+// 工具徽标映射：ToolID → 展示名、旧配色类（兼容调用点）与品牌色 token。
 export interface ToolBadge {
   label: string;
   className: string;
