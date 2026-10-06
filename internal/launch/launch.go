@@ -4,8 +4,10 @@ package launch
 
 import (
 	"errors"
+	"os"
 
 	"github.com/yangk/kshell/internal/appearance"
+	"github.com/yangk/kshell/internal/cursoragent"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
 )
@@ -239,11 +241,24 @@ func acpLaunch(tool discovery.Tool, dir string) (providers.Launch, error) {
 
 // acpAdapterEnv 为依赖本体 CLI 的适配器补充环境变量。目前只有 cursor-acp：
 // cursor-agent 常不在 PATH 上（Windows 装在 %LOCALAPPDATA%\cursor-agent），
-// 适配器默认只按 PATH 查找，须显式传 CURSOR_AGENT_EXECUTABLE。node 入口
-// 形态（BinArgs 非空）无法表达为单个可执行文件，跳过注入。
+// 适配器默认只按 PATH 查找，须显式传 CURSOR_AGENT_EXECUTABLE。
+// node 入口形态无法被 Node spawn 成单一文件（.cmd 会 EINVAL），改把当前 kshell
+// 可执行文件当代理，由代理再 exec node + index.js。
 func acpAdapterEnv(tool discovery.Tool) map[string]string {
-	if tool.ID != "cursor" || tool.BinPath == "" || len(tool.BinArgs) != 0 {
+	if tool.ID != "cursor" || tool.BinPath == "" {
 		return nil
 	}
-	return map[string]string{"CURSOR_AGENT_EXECUTABLE": tool.BinPath}
+	if len(tool.BinArgs) == 0 {
+		return map[string]string{"CURSOR_AGENT_EXECUTABLE": tool.BinPath}
+	}
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		return nil
+	}
+	return map[string]string{
+		"CURSOR_AGENT_EXECUTABLE": exe,
+		cursoragent.EnvAsProxy:    "1",
+		cursoragent.EnvNode:       tool.BinPath,
+		cursoragent.EnvScript:     tool.BinArgs[0],
+	}
 }

@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/yangk/kshell/internal/config"
+	"github.com/yangk/kshell/internal/cursoragent"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/remote"
@@ -14,6 +15,9 @@ import (
 )
 
 func main() {
+	if cursoragent.ShouldProxy() {
+		os.Exit(cursoragent.Main())
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "kshell: 无法确定用户主目录:", err)

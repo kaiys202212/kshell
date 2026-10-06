@@ -14,6 +14,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/yangk/kshell/internal/cursoragent"
 	"github.com/yangk/kshell/internal/desktop"
 	"github.com/yangk/kshell/internal/mcparchive"
 )
@@ -74,7 +75,10 @@ func RunDesktop(src fs.FS) error {
 }
 
 func main() {
-	// 必须在 Wails 单实例锁之前返回，否则作为 MCP 子进程启动会变成第二次拉起桌面窗口。
+	// 必须在 Wails 单实例锁之前返回，否则作为 MCP / cursor-agent 代理启动会变成第二次拉起桌面窗口。
+	if cursoragent.ShouldProxy() {
+		os.Exit(cursoragent.Main())
+	}
 	if len(os.Args) > 1 && os.Args[1] == "mcp-archive" {
 		if err := mcparchive.Main(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)

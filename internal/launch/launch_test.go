@@ -1,7 +1,8 @@
-﻿package launch
+package launch
 
 import (
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/yangk/kshell/internal/discovery"
@@ -15,11 +16,11 @@ type fakeProvider struct {
 	newSess providers.Launch
 }
 
-func (f fakeProvider) ID() string                              { return f.id }
-func (f fakeProvider) DisplayName() string                     { return f.id }
-func (f fakeProvider) DetectSpec(string) providers.DetectSpec  { return providers.DetectSpec{} }
-func (f fakeProvider) SessionRoots(string) []string            { return nil }
-func (f fakeProvider) SessionFilePattern() string              { return "*.jsonl" }
+func (f fakeProvider) ID() string                             { return f.id }
+func (f fakeProvider) DisplayName() string                    { return f.id }
+func (f fakeProvider) DetectSpec(string) providers.DetectSpec { return providers.DetectSpec{} }
+func (f fakeProvider) SessionRoots(string) []string           { return nil }
+func (f fakeProvider) SessionFilePattern() string             { return "*.jsonl" }
 func (f fakeProvider) ParseSession(string, []byte) (*providers.Session, error) {
 	return nil, errors.New("not implemented")
 }
@@ -178,20 +179,32 @@ func TestForWorkspaceACP_CursorInjectsAgentExecutable(t *testing.T) {
 	}
 }
 
-// node 入口形态（官方更新器删光 shim 后的兜底）无法表达为单个可执行文件，
-// 不注入，交由适配器走 PATH。
-func TestForWorkspaceACP_CursorNodeEntryNoInject(t *testing.T) {
+// node 入口形态无法直接当 spawn 目标：注入当前可执行文件作代理，并带上 node/脚本路径。
+func TestForWorkspaceACP_CursorNodeEntryInjectsProxy(t *testing.T) {
 	ps := []providers.Provider{providers.Cursor{}}
 	tools := []discovery.Tool{{
-		ID: "cursor", Installed: true, BinPath: "node.exe", BinArgs: []string{"index.js"},
-		ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "cursor-acp"},
+		ID: "cursor", Installed: true, BinPath: `C:\agent\node.exe`, BinArgs: []string{`C:\agent\index.js`},
+		ACP: &providers.ACPDetection{Available: true, Source: "npx", Package: "cursor-acp"},
 	}}
 	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", ModelOptions{}, PermissionOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := l.Env["CURSOR_AGENT_EXECUTABLE"]; ok {
-		t.Fatalf("node 入口形态不应注入, env = %v", l.Env)
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Env["CURSOR_AGENT_EXECUTABLE"] != exe {
+		t.Fatalf("CURSOR_AGENT_EXECUTABLE = %q, 期望当前可执行文件 %q", l.Env["CURSOR_AGENT_EXECUTABLE"], exe)
+	}
+	if l.Env["KSHELL_AS_CURSOR_AGENT"] != "1" {
+		t.Fatalf("KSHELL_AS_CURSOR_AGENT = %q", l.Env["KSHELL_AS_CURSOR_AGENT"])
+	}
+	if l.Env["KSHELL_CURSOR_AGENT_NODE"] != `C:\agent\node.exe` {
+		t.Fatalf("NODE = %q", l.Env["KSHELL_CURSOR_AGENT_NODE"])
+	}
+	if l.Env["KSHELL_CURSOR_AGENT_SCRIPT"] != `C:\agent\index.js` {
+		t.Fatalf("SCRIPT = %q", l.Env["KSHELL_CURSOR_AGENT_SCRIPT"])
 	}
 }
 
