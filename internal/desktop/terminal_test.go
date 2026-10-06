@@ -424,7 +424,7 @@ func TestOpenWorkspaceTerminalSelectsTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenWorkspaceTerminal(空 toolID) error: %v", err)
 	}
-	if info2.ToolID != "" || info2.Title != "ws-a · Claude Code" {
+	if info2.ToolID != "claude" || info2.Title != "ws-a · Claude Code" {
 		t.Fatalf("空 toolID 的 Info = %+v", info2)
 	}
 	if spec := env.backend.lastSpec(); spec.Path != "claude" {

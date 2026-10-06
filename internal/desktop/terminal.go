@@ -119,7 +119,7 @@ func (a *App) OpenWorkspaceTerminal(wsID string, toolID string, cols, rows int) 
 		Kind:            terminal.KindNew,
 		Workspace:       ws.Path,
 		Title:           workspaceTerminalTitle(o.Providers, tools, ws, toolID),
-		ToolID:          toolID, // 原样透传前端选中的工具（空表示由 launch 选首选），页签按此展示
+		ToolID:          injectToolID, // 还原后的真实工具 ID，页签展示与通知注入同源
 		KnownSessionIDs: a.knownSessionIDs(),
 	}, terminal.Spec{Path: spec.Path, Args: spec.Args, Dir: spec.Dir, Env: spec.Env}, cols, rows)
 	if err != nil {

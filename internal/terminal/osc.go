@@ -124,13 +124,13 @@ func settleOSC(buf []byte, termLen int) (oscHit, bool) {
 		}
 		return oscHit{Summary: text, Raw: string(buf)}, true
 	case strings.HasPrefix(body, "777;notify;"):
-		// 777;notify;<title>;<body>：正文里可能还有分号，title 取第 3 段
+		// 777;notify;<title>;<body>：正文里可能还有分号，title 取第 3 段。
+		// 满 4 段才校验通过，先判长度再取下标，不依赖前缀保证的隐式不变量
 		parts := strings.SplitN(body, ";", 4)
-		title := parts[2]
-		if len(parts) < 4 || title == "" {
+		if len(parts) < 4 || parts[2] == "" {
 			return oscHit{}, false
 		}
-		return oscHit{Summary: title, Raw: string(buf)}, true
+		return oscHit{Summary: parts[2], Raw: string(buf)}, true
 	default:
 		return oscHit{}, false
 	}

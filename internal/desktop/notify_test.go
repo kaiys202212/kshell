@@ -163,6 +163,7 @@ func TestNotifyToastText(t *testing.T) {
 	}{
 		{"codebuddy 完成", agenthook.Payload{Tool: "codebuddy", Event: "Stop", Summary: "done"}, "CodeBuddy 任务完成", "done"},
 		{"claude 等确认", agenthook.Payload{Tool: "claude", Event: "Notification", Summary: "需要权限"}, "Claude Code 等待确认", "需要权限"},
+		{"gemini 等确认(attention)", agenthook.Payload{Tool: "gemini", Event: "attention", Summary: "等待输入"}, "Gemini 等待确认", "等待输入"},
 		{"codex 回合完成", agenthook.Payload{Tool: "codex", Event: "agent-turn-complete"}, "Codex 任务完成", ""},
 		{"未知工具回退", agenthook.Payload{Tool: "mystery", Event: "Stop", Workspace: "d:/ws"}, "mystery 任务完成", "d:/ws"},
 		{"summary 优先于工作区", agenthook.Payload{Tool: "gemini", Workspace: "d:/ws", Summary: "ok"}, "Gemini 任务完成", "ok"},

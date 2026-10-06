@@ -126,7 +126,10 @@ func notifyToastText(p agenthook.Payload) (string, string) {
 		name = "Agent"
 	}
 	event := "任务完成"
-	if p.Event == "Notification" {
+	switch p.Event {
+	case "Notification", "attention":
+		// claude hooks 的 Notification 与 OSC 扫描发出的 attention 都表示
+		// agent 在等待用户确认，与「任务完成」语义必须区分
 		event = "等待确认"
 	}
 	body := p.Summary

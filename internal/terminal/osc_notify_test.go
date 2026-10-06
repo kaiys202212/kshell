@@ -13,9 +13,8 @@ func timeSleepShort() { time.Sleep(50 * time.Millisecond) }
 
 // collectNotify 是线程安全的 onNotify 命中收集器。
 type collectNotify struct {
-	mu   sync.Mutex
-	got  []agenthook.Payload
-	fail bool // 置 true 表示未注册回调也应无 panic（用 nil fn 模拟）
+	mu  sync.Mutex
+	got []agenthook.Payload
 }
 
 func (c *collectNotify) add(p agenthook.Payload) {
