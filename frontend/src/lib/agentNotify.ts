@@ -28,8 +28,10 @@ export function toolDisplayName(tool: string): string {
 
 // eventLabel 把事件归纳成语义文案：
 // 完成 = Stop / agent-turn-complete / done；等待确认 = Notification / attention；
+// 出错 = error（chat 后端 emit，summary 为错误文本）；
 // 未知事件按「任务完成」处理（宁可误报完成，不打扰成待确认）。
 export function eventLabel(event: string): string {
   if (event === 'Notification' || event === 'attention') return '等待确认';
+  if (event === 'error') return '任务出错';
   return '任务完成';
 }

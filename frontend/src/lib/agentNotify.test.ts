@@ -26,6 +26,10 @@ describe('eventLabel', () => {
     expect(eventLabel('whatever')).toBe('任务完成');
   });
 
+  it('出错语义：error 不落入完成文案', () => {
+    expect(eventLabel('error')).toBe('任务出错');
+  });
+
   it('等待确认语义：Notification / attention', () => {
     expect(eventLabel('Notification')).toBe('等待确认');
     expect(eventLabel('attention')).toBe('等待确认');

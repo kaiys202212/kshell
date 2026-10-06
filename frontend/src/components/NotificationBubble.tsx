@@ -84,7 +84,10 @@ function NoticeCard({ notice }: { notice: AgentNotice }) {
 export default function NotificationBubble() {
   const notices = useAppStore((s) => s.agentNotices);
   if (notices.length === 0) return null;
-  const visible = notices.slice(0, MAX_VISIBLE);
+  // store 队列按入队顺序追加（旧→新），取末尾即最新 3 条；渲染时倒序，
+  // 最新事件在最上（贴近阅读起点）。过期 / hover 倒计时 / 点击均按 notice.id 独立运作，
+  // 与渲染顺序解耦，倒序不影响这些行为。
+  const visible = notices.slice(-MAX_VISIBLE).reverse();
   const overflow = notices.length - visible.length;
   return (
     <div

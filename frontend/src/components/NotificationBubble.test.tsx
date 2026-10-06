@@ -70,11 +70,28 @@ describe('NotificationBubble', () => {
     expect(screen.getByText('登录页修复完成')).toBeInTheDocument();
   });
 
-  it('最多同时展示 3 条，超出折叠为 +N', () => {
+  it('error 事件标题为「任务出错」，不落入完成文案', () => {
+    push({ event: 'error', summary: '后端进程崩溃' });
+    render(<NotificationBubble />);
+    expect(screen.getByRole('button', { name: /Claude Code 任务出错/ })).toBeInTheDocument();
+    expect(screen.getByText('后端进程崩溃')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /任务完成/ })).not.toBeInTheDocument();
+  });
+
+  it('最多同时展示 3 条（最新 3 条），超出折叠为 +N，最新在最上', () => {
     for (let i = 0; i < 5; i++) push({ summary: `第 ${i} 条` });
     render(<NotificationBubble />);
-    expect(screen.getAllByRole('button').length).toBe(3);
+    const buttons = screen.getAllByRole('button');
+    expect(buttons).toHaveLength(3);
     expect(screen.getByText('+2')).toBeInTheDocument();
+    // 最旧两条被折叠，可见的是最新 3 条
+    expect(screen.queryByText('第 0 条')).not.toBeInTheDocument();
+    expect(screen.queryByText('第 1 条')).not.toBeInTheDocument();
+    // DOM 顺序自上而下：最新的在最上面
+    const summaries = buttons.map((b) => b.textContent ?? '');
+    expect(summaries[0]).toContain('第 4 条');
+    expect(summaries[1]).toContain('第 3 条');
+    expect(summaries[2]).toContain('第 2 条');
   });
 
   it('6s 自动消失', () => {
