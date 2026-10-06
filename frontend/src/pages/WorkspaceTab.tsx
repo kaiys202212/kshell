@@ -50,6 +50,7 @@ import { resolveAgentActivity } from '../state/agentActivity';
 import { LAYOUT_DEFAULT, useAppStore } from '../state/store';
 import type { WorkspaceTab } from '../state/store';
 import { emptyFileTabs, openPinned, openPreview, diffTabPath } from '../lib/fileTabs';
+import { OPEN_FILE_EVENT } from '../lib/openHref';
 
 function isAgentTerm(t: TerminalInfo): boolean {
   return t.Kind === 'session' || t.Kind === 'new';
@@ -290,6 +291,17 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     setFileTabs((s) => openPreview(s, path));
     selectCenterTab(FILES_TAB);
   };
+
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const d = (e as CustomEvent<{ workspace?: string; path?: string }>).detail;
+      if (!d?.path || !d.workspace) return;
+      if (!sameWorkspacePath(d.workspace, tab.id)) return;
+      openFile(d.path);
+    };
+    window.addEventListener(OPEN_FILE_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_FILE_EVENT, onOpen);
+  }, [tab.id]);
 
   const editFile = (path: string) => {
     setFileTabs((s) => openPinned(s, path));
@@ -586,6 +598,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             {previewSession ? (
               <SessionTranscript
                 sessionID={previewSession.ID}
+                workspaceRoot={previewSession.Workspace}
                 title={displayTitle(previewSession.Title) || previewSession.Title}
                 onActivate={() => openChatOrTerminal(previewSession)}
               />

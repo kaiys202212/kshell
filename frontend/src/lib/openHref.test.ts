@@ -82,6 +82,13 @@ describe('classifyHref', () => {
       path: 'D:\\proj\\a.md',
     });
   });
+
+  it('盘符路径里多余反斜杠仍视为工作区内', () => {
+    expect(classifyHref('./a.md', { workspaceRoot: 'D:\\\\proj' })).toEqual({
+      kind: 'workspace',
+      path: 'D:\\proj\\a.md',
+    });
+  });
 });
 
 describe('handleHref / 点击', () => {
@@ -106,6 +113,15 @@ describe('handleHref / 点击', () => {
     handleHref('./README.md', { workspaceRoot: 'D:\\proj' });
     window.removeEventListener(OPEN_FILE_EVENT, onOpen);
     expect(seen).toEqual([{ workspace: 'D:\\proj', path: 'D:\\proj\\README.md' }]);
+  });
+
+  it('多余反斜杠的工作区根在事件里归一化', () => {
+    const seen: unknown[] = [];
+    const onOpen = (e: Event) => seen.push((e as CustomEvent).detail);
+    window.addEventListener(OPEN_FILE_EVENT, onOpen);
+    handleHref('./a.md', { workspaceRoot: 'D:\\\\proj' });
+    window.removeEventListener(OPEN_FILE_EVENT, onOpen);
+    expect(seen).toEqual([{ workspace: 'D:\\proj', path: 'D:\\proj\\a.md' }]);
   });
 
   it('requestOpenWorkspaceFile 派发事件', () => {

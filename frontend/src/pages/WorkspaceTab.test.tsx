@@ -9,6 +9,7 @@ import WorkspaceTabView from './WorkspaceTab';
 import { encodeTerminalInput } from '../lib/base64';
 import { registerChatInput, unregisterChatInput } from '../lib/chatInputRegistry';
 import { DRAG_MIME } from '../lib/dragPath';
+import { OPEN_FILE_EVENT } from '../lib/openHref';
 import { useAppStore } from '../state/store';
 import type { ChatInfo, TerminalInfo } from '../lib/api';
 
@@ -44,7 +45,11 @@ vi.mock('../components/ChatView', () => ({
   ),
 }));
 vi.mock('../components/FileTree', () => ({ default: () => <div data-testid="file-tree" /> }));
-vi.mock('../components/FileTabsPane', () => ({ default: () => <div data-testid="file-tabs-pane" /> }));
+vi.mock('../components/FileTabsPane', () => ({
+  default: ({ state }: { state: { activePath: string | null } }) => (
+    <div data-testid="file-tabs-pane" data-active={state.activePath ?? ''} />
+  ),
+}));
 vi.mock('../components/PreviewToolPane', () => ({
   default: () => <div data-testid="preview-tool-pane" />,
 }));
@@ -280,5 +285,30 @@ describe('WorkspaceTabView agent 活动图标', () => {
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
     fireEvent.click(screen.getByRole('button', { name: 'Git' }));
     expect(screen.getByTestId('git-panel')).toBeInTheDocument();
+  });
+
+  it('kshell:open-file 打开本工作区文件预览', () => {
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    fireEvent(
+      window,
+      new CustomEvent(OPEN_FILE_EVENT, {
+        detail: { workspace: 'D:\\proj-a', path: 'D:\\proj-a\\README.md' },
+      }),
+    );
+    expect(screen.getByTestId('file-tabs-pane')).toHaveAttribute(
+      'data-active',
+      'D:\\proj-a\\README.md',
+    );
+  });
+
+  it('其他工作区的 kshell:open-file 忽略', () => {
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    fireEvent(
+      window,
+      new CustomEvent(OPEN_FILE_EVENT, {
+        detail: { workspace: 'D:\\other', path: 'D:\\other\\a.md' },
+      }),
+    );
+    expect(screen.getByTestId('file-tabs-pane')).toHaveAttribute('data-active', '');
   });
 });

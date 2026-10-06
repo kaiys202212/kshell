@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   terminals: [] as any[],
   addons: [] as any[],
   observers: [] as any[],
+  webLinks: [] as any[],
 }));
 
 // TerminalView 只用到 api 的这两个方法
@@ -128,6 +129,18 @@ vi.mock('@xterm/addon-fit', () => {
   return { FitAddon: MockFitAddon };
 });
 
+vi.mock('@xterm/addon-web-links', () => {
+  class MockWebLinksAddon {
+    handler: ((ev: MouseEvent, uri: string) => void) | undefined;
+    constructor(handler?: (ev: MouseEvent, uri: string) => void) {
+      this.handler = handler;
+      mocks.webLinks.push(this);
+    }
+    dispose() {}
+  }
+  return { WebLinksAddon: MockWebLinksAddon };
+});
+
 const TERM: TerminalInfo = {
   ID: 'term-1',
   Kind: 'session',
@@ -192,6 +205,7 @@ beforeEach(() => {
   mocks.terminals.length = 0;
   mocks.addons.length = 0;
   mocks.observers.length = 0;
+  mocks.webLinks.length = 0;
   clearTerminalRegistry();
   api.writeTerminal.mockResolvedValue(undefined);
   api.resizeTerminal.mockResolvedValue(undefined);
@@ -539,5 +553,17 @@ describe('TerminalView', () => {
     await Promise.resolve();
     expect(api.readClipboardPaste).not.toHaveBeenCalled();
     expect(term().pasted).toEqual([]);
+  });
+
+  it('加载 web-links，点击 http 走系统打开', () => {
+    const open = vi.fn();
+    vi.stubGlobal('runtime', { BrowserOpenURL: open });
+    render(<TerminalView term={TERM} active />);
+    expect(mocks.webLinks).toHaveLength(1);
+    const ev = new MouseEvent('click', { cancelable: true });
+    mocks.webLinks[0].handler?.(ev, 'https://example.com/t');
+    expect(ev.defaultPrevented).toBe(true);
+    expect(open).toHaveBeenCalledWith('https://example.com/t');
+    vi.unstubAllGlobals();
   });
 });

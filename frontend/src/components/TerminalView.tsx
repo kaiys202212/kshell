@@ -6,6 +6,7 @@
 // - 键盘输入 → writeTerminal(base64)；FitAddon 改变行列 → resizeTerminal（否则 PTY 仍按旧尺寸折行）。
 import { useEffect, useRef, useState } from 'react';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
 import type { TerminalInfo } from '../lib/api';
 import { readClipboardPaste, resizeTerminal, writeTerminal } from '../lib/api';
@@ -13,6 +14,7 @@ import { terminalTheme } from '../lib/appearance';
 import { encodeTerminalInput } from '../lib/base64';
 import { composeTerminalPaste, isPasteKey } from '../lib/clipboardPaste';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
+import { handleHref } from '../lib/openHref';
 import { useAppStore } from '../state/store';
 import { suppressTerminalBusy } from '../state/terminalBusy';
 import { registerTerminal, unregisterTerminal } from '../lib/terminalRegistry';
@@ -75,6 +77,12 @@ export default function TerminalView({ term, active }: Props) {
     });
     const fitAddon = new FitAddon();
     instance.loadAddon(fitAddon);
+    instance.loadAddon(
+      new WebLinksAddon((ev, uri) => {
+        ev.preventDefault();
+        handleHref(uri);
+      }),
+    );
     instance.open(host);
     termRef.current = instance;
     fitRef.current = fitAddon;

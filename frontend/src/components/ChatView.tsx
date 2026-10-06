@@ -9,6 +9,7 @@ import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { useAppStore } from '../state/store';
 import type { TimelineItem } from '../state/chatUpdate';
 import { cn } from '../lib/cn';
+import { handleAnchorClick } from '../lib/openHref';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
@@ -100,6 +101,10 @@ export default function ChatView({ chat, active }: Props) {
     <div
       className="relative flex h-full min-h-0 flex-col"
       data-drop-zone={`chat:${id}`}
+      data-kshell-workspace={chat.Workspace}
+      onClickCapture={(e) => {
+        handleAnchorClick(e.nativeEvent, { workspaceRoot: chat.Workspace });
+      }}
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
         e.preventDefault();

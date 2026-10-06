@@ -583,4 +583,18 @@ describe('App', () => {
       useAppStore.getState().toasts.some((t) => t.title.includes('v0.2.0') && t.title.includes('设置')),
     ).toBe(true);
   });
+
+  it('捕获页面内 a 点击并交给系统打开', () => {
+    const open = vi.fn();
+    vi.stubGlobal('runtime', { BrowserOpenURL: open });
+    render(<App />);
+    const a = document.createElement('a');
+    a.setAttribute('href', 'https://example.com/app');
+    a.textContent = 'ext';
+    document.body.appendChild(a);
+    fireEvent.click(a);
+    expect(open).toHaveBeenCalledWith('https://example.com/app');
+    a.remove();
+    vi.unstubAllGlobals();
+  });
 });

@@ -35,6 +35,7 @@ import { encodeTerminalInput } from './lib/base64';
 import { appendChatInput } from './lib/chatInputRegistry';
 import { quotePathForShell } from './lib/dragPath';
 import { OnFileDrop, OnFileDropOff } from '../wailsjs/runtime/runtime';
+import { handleAnchorClick } from './lib/openHref';
 import { applyChatUpdate, type TimelineItem } from './state/chatUpdate';
 import { dispatchTerminalData } from './lib/terminalRegistry';
 import { cn } from './lib/cn';
@@ -246,6 +247,15 @@ function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  useEffect(() => {
+    // 捕获阶段拦截 <a>：阻止 WebView 整页导航，改走系统打开或工作区文件。
+    const onClick = (e: MouseEvent) => {
+      handleAnchorClick(e);
+    };
+    document.addEventListener('click', onClick, true);
+    return () => document.removeEventListener('click', onClick, true);
   }, []);
 
   const isHome = activeTabId === null;

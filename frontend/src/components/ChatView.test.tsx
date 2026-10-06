@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatInfo } from '../lib/api';
 import { DRAG_MIME } from '../lib/dragPath';
+import { OPEN_FILE_EVENT } from '../lib/openHref';
 import { useAppStore } from '../state/store';
 import ChatView from './ChatView';
 
@@ -174,5 +175,30 @@ describe('ChatView', () => {
 
     const box = screen.getByPlaceholderText(/输入/) as HTMLTextAreaElement;
     expect(box.value).toBe('"D:\\my file\\a.go"');
+  });
+
+  it('助手 Markdown 的 http 链接走系统打开', () => {
+    const open = vi.fn();
+    vi.stubGlobal('runtime', { BrowserOpenURL: open });
+    useAppStore.setState({
+      chatItems: { c1: [{ key: 'm2', type: 'assistant', text: '[x](https://ex.com)', seq: 2 }] },
+    });
+    render(<ChatView chat={CHAT} active />);
+    fireEvent.click(screen.getByRole('link', { name: 'x' }));
+    expect(open).toHaveBeenCalledWith('https://ex.com');
+    vi.unstubAllGlobals();
+  });
+
+  it('助手 Markdown 相对路径打开工作区文件', () => {
+    const seen: unknown[] = [];
+    const onOpen = (e: Event) => seen.push((e as CustomEvent).detail);
+    window.addEventListener(OPEN_FILE_EVENT, onOpen);
+    useAppStore.setState({
+      chatItems: { c1: [{ key: 'm2', type: 'assistant', text: '[r](./README.md)', seq: 2 }] },
+    });
+    render(<ChatView chat={CHAT} active />);
+    fireEvent.click(screen.getByRole('link', { name: 'r' }));
+    window.removeEventListener(OPEN_FILE_EVENT, onOpen);
+    expect(seen).toEqual([{ workspace: 'D:\\p', path: 'D:\\p\\README.md' }]);
   });
 });

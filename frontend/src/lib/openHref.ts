@@ -16,7 +16,9 @@ export const OPEN_FILE_EVENT = 'kshell:open-file';
 const DANGEROUS_SCHEMES = new Set(['javascript', 'data', 'vbscript', 'blob']);
 
 function posixNorm(p: string): string {
-  return p.replace(/\\/g, '/');
+  // 反斜杠统一成斜杠后，把盘符后的多余斜杠压成一个，避免 HTML 属性/拼接产生 D://proj
+  const slashed = p.replace(/\\/g, '/');
+  return slashed.replace(/^([a-zA-Z]:)\/+/, '$1/').replace(/\/{2,}/g, '/');
 }
 
 function toNative(posixPath: string, workspaceRoot: string): string {
@@ -124,26 +126,42 @@ export function handleHref(href: string, opts?: ClassifyOpts): void {
     return;
   }
   if (action.kind === 'workspace' && opts?.workspaceRoot) {
-    requestOpenWorkspaceFile(opts.workspaceRoot, action.path);
+    const root = toNative(posixNorm(opts.workspaceRoot).replace(/\/+$/, ''), opts.workspaceRoot);
+    requestOpenWorkspaceFile(root, action.path);
   }
 }
 
+function eventElement(target: EventTarget | null): Element | null {
+  if (target instanceof Element) return target;
+  if (typeof Node !== 'undefined' && target instanceof Node) return target.parentElement;
+  return null;
+}
+
+const HANDLED = '_kshellHrefHandled';
+
+type HandledEvent = { [HANDLED]?: boolean };
+
+export function consumeHrefEvent(ev: HandledEvent & { preventDefault?: () => void }): boolean {
+  if (ev[HANDLED]) return false;
+  ev[HANDLED] = true;
+  ev.preventDefault?.();
+  return true;
+}
+
 export function handleAnchorClick(ev: MouseEvent, opts?: ClassifyOpts): boolean {
-  const target = ev.target;
-  if (!(target instanceof Element)) return false;
-  const a = target.closest('a');
+  const el = eventElement(ev.target);
+  if (!el) return false;
+  const a = el.closest('a');
   if (!a) return false;
   const href = a.getAttribute('href');
   if (href == null) return false;
+  if (!consumeHrefEvent(ev)) return false;
 
   const wrap = a.closest('[data-kshell-workspace]');
   const workspaceRoot =
     opts?.workspaceRoot ?? wrap?.getAttribute('data-kshell-workspace') ?? undefined;
   const sourceFile =
     opts?.sourceFile ?? wrap?.getAttribute('data-kshell-source-file') ?? undefined;
-  const merged: ClassifyOpts = { workspaceRoot, sourceFile };
-
-  ev.preventDefault();
-  handleHref(href, merged);
+  handleHref(href, { workspaceRoot, sourceFile });
   return true;
 }

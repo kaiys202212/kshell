@@ -9,10 +9,12 @@ import { Skeleton } from './ui/skeleton';
 export default function SessionTranscript({
   sessionID,
   title,
+  workspaceRoot,
   onActivate,
 }: {
   sessionID: string;
   title: string;
+  workspaceRoot?: string;
   onActivate: () => void;
 }) {
   const [markdown, setMarkdown] = useState('');
@@ -64,7 +66,7 @@ export default function SessionTranscript({
             {truncated && (
               <p className="border-b border-border px-3 py-1 text-xs text-muted-foreground">内容已截断</p>
             )}
-            <MarkdownPreview markdown={markdown} />
+            <MarkdownPreview markdown={markdown} workspaceRoot={workspaceRoot} />
           </>
         )}
       </div>

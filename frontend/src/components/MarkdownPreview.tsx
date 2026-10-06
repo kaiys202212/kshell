@@ -1,14 +1,26 @@
 // Markdown 预览：react-markdown + remark-gfm，样式跟随主题文本色。
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { handleAnchorClick } from '../lib/openHref';
 
 export interface MarkdownPreviewProps {
   markdown: string;
+  workspaceRoot?: string;
+  sourceFile?: string;
 }
 
-export default function MarkdownPreview({ markdown }: MarkdownPreviewProps) {
+export default function MarkdownPreview({
+  markdown,
+  workspaceRoot,
+  sourceFile,
+}: MarkdownPreviewProps) {
   return (
     <div
+      data-kshell-workspace={workspaceRoot}
+      data-kshell-source-file={sourceFile}
+      onClickCapture={(e) => {
+        handleAnchorClick(e.nativeEvent, { workspaceRoot, sourceFile });
+      }}
       className={[
         'h-full overflow-auto p-3 text-sm text-foreground select-text',
         '[&_h1]:mb-2 [&_h1]:text-xl [&_h1]:font-semibold',
