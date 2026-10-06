@@ -69,6 +69,11 @@ function isSpecialTextBasename(path: string): boolean {
   return SPECIAL_TEXT_BASENAMES.has(pathBasename(path).toLowerCase());
 }
 
+/** 文本/Markdown 默认可编辑；图、PDF、二进制仅预览。 */
+export function isEditableKind(kind: PreviewKind): boolean {
+  return kind === 'text' || kind === 'markdown';
+}
+
 export function previewKind(path: string): PreviewKind {
   if (isSpecialTextBasename(path)) return 'text';
 

@@ -1,15 +1,9 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import PreviewToolPane, { PREVIEW_SUB, toolTermLabel } from './PreviewToolPane';
+import PreviewToolPane, { toolTermLabel } from './PreviewToolPane';
 import type { TerminalInfo } from '../lib/api';
 
-vi.mock('./Preview', () => ({
-  default: ({ path }: { path: string | null }) => <div data-testid="preview">{path ?? 'empty'}</div>,
-}));
-vi.mock('./SessionTranscript', () => ({
-  default: ({ title }: { title: string }) => <div data-testid="session-transcript">{title}</div>,
-}));
 vi.mock('./TerminalView', () => ({
   default: ({ term, active }: { term: TerminalInfo; active: boolean }) => (
     <div data-testid={`terminal-${term.ID}`} data-active={String(active)} />
@@ -48,32 +42,27 @@ describe('toolTermLabel', () => {
 });
 
 describe('PreviewToolPane', () => {
-  it('渲染预览子页签与 +，点 + 触发 onNewShell', () => {
+  it('渲染 +，点 + 触发 onNewShell', () => {
     const onNewShell = vi.fn();
     render(
       <PreviewToolPane
-        wsPath="D:\\proj"
-        previewPath={null}
         terms={[]}
         active
-        subTab={PREVIEW_SUB}
+        subTab=""
         onSubTab={() => {}}
         onCloseTerminal={() => {}}
         onNewShell={onNewShell}
       />,
     );
-    expect(screen.getByRole('tab', { name: '文件预览' })).toHaveAttribute('aria-selected', 'true');
     fireEvent.click(screen.getByRole('button', { name: '新建终端' }));
     expect(onNewShell).toHaveBeenCalled();
   });
 
-  it('切换到终端子页签并显示 TerminalView', () => {
+  it('切换终端子页签并显示 TerminalView', () => {
     const onSubTab = vi.fn();
     const t = term({ ID: 'sh1' });
     render(
       <PreviewToolPane
-        wsPath="D:\\proj"
-        previewPath="D:\\proj\\a.ts"
         terms={[t]}
         active
         subTab="sh1"
@@ -83,8 +72,8 @@ describe('PreviewToolPane', () => {
       />,
     );
     expect(screen.getByTestId('terminal-sh1')).toHaveAttribute('data-active', 'true');
-    fireEvent.click(screen.getByRole('tab', { name: '文件预览' }));
-    expect(onSubTab).toHaveBeenCalledWith(PREVIEW_SUB);
+    fireEvent.click(screen.getByRole('tab', { name: '终端' }));
+    expect(onSubTab).toHaveBeenCalledWith('sh1');
   });
 
   it('关闭按钮调用 onCloseTerminal', () => {
@@ -92,8 +81,6 @@ describe('PreviewToolPane', () => {
     const t = term({ ID: 'sh1' });
     render(
       <PreviewToolPane
-        wsPath="D:\\proj"
-        previewPath={null}
         terms={[t]}
         active
         subTab="sh1"
@@ -104,30 +91,5 @@ describe('PreviewToolPane', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: '关闭 终端' }));
     expect(onClose).toHaveBeenCalledWith('sh1');
-  });
-
-  it('有 sessionPreview 时出现可关闭的会话预览子页签，不挡住文件预览子页签', () => {
-    const onClosePreview = vi.fn();
-    const onActivate = vi.fn();
-    render(
-      <PreviewToolPane
-        wsPath="D:\\proj"
-        previewPath="D:\\proj\\a.ts"
-        terms={[]}
-        active
-        subTab="session-preview"
-        onSubTab={() => {}}
-        onCloseTerminal={() => {}}
-        onNewShell={() => {}}
-        sessionPreview={{ sessionID: 's1', title: '修登录' }}
-        onCloseSessionPreview={onClosePreview}
-        onActivateSessionPreview={onActivate}
-      />,
-    );
-    expect(screen.getByRole('tab', { name: '文件预览' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '会话预览' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByTestId('session-transcript')).toHaveTextContent('修登录');
-    fireEvent.click(screen.getByRole('button', { name: '关闭会话预览' }));
-    expect(onClosePreview).toHaveBeenCalled();
   });
 });

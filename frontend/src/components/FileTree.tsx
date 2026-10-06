@@ -2,7 +2,7 @@
 // Go 侧 ListFiles 只填充当前层子项（Children 字段无意义），
 // 展开目录时必须再次调 listFiles(wsPath, 子目录相对路径)。
 // relPath 统一用 / 拼接：Go 侧 filepath.Clean 会归一化为平台分隔符。
-// 交互：点目录展开/收起、点文件回调 onOpenFile、铅笔按钮行内重命名、
+// 交互：点目录展开/收起、单击文件 onOpenFile（预览）、双击 onEditFile（固定编辑页签）、铅笔按钮行内重命名、
 // 右键菜单（新建/删除/复制路径/触发重命名，删除带确认弹窗）；
 // 树内拖拽：行可拖起（携带绝对/相对路径 MIME），目录行作 drop 目标移入；
 // 顶部搜索框先过滤已加载节点，防抖后走 Go 递归搜索出平铺结果。
@@ -299,6 +299,7 @@ interface RowProps {
   onRenameEnd(): void;
   onDirToggle(item: TreeItem): void;
   onOpenFile(path: string): void;
+  onEditFile(path: string): void;
   onRename(relPath: string, newName: string): void;
   onCreateCommit(name: string): void;
   onCancelCreate(): void;
@@ -318,6 +319,7 @@ function TreeRow({
   onRenameEnd,
   onDirToggle,
   onOpenFile,
+  onEditFile,
   onRename,
   onCreateCommit,
   onCancelCreate,
@@ -417,6 +419,11 @@ function TreeRow({
               className="flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-0.5 text-left"
               title={node.Path}
               onClick={() => (node.IsDir ? onDirToggle(item) : onOpenFile(node.Path))}
+              onDoubleClick={(e) => {
+                if (node.IsDir) return;
+                e.preventDefault();
+                onEditFile(node.Path);
+              }}
             >
               <span className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground">
                 {node.IsDir && <ChevronIcon open={item.expanded} />}
@@ -508,6 +515,7 @@ function TreeRow({
               onRenameEnd={onRenameEnd}
               onDirToggle={onDirToggle}
               onOpenFile={onOpenFile}
+              onEditFile={onEditFile}
               onRename={onRename}
               onCreateCommit={onCreateCommit}
               onCancelCreate={onCancelCreate}
@@ -537,10 +545,13 @@ function TreeRow({
 export default function FileTree({
   wsPath,
   onOpenFile,
+  onEditFile,
 }: {
   wsPath: string;
   onOpenFile(path: string): void;
+  onEditFile?(path: string): void;
 }) {
+  const editFile = onEditFile ?? onOpenFile;
   const [items, setItems] = useState<TreeItem[] | null>(null);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
@@ -927,6 +938,7 @@ export default function FileTree({
     onRenameEnd: () => setRenamingPath(null),
     onDirToggle: handleDirToggle,
     onOpenFile,
+    onEditFile: editFile,
     onRename: handleRename,
     onCreateCommit: handleCreateCommit,
     onCancelCreate: () => setCreating(null),
@@ -985,6 +997,11 @@ export default function FileTree({
                   <button
                     className="flex w-full items-baseline gap-2 rounded px-1 py-1 text-left transition-colors hover:bg-muted"
                     onClick={() => (h.IsDir ? void openDirFromSearch(h.RelPath) : onOpenFile(h.Path))}
+                    onDoubleClick={(e) => {
+                      if (h.IsDir) return;
+                      e.preventDefault();
+                      editFile(h.Path);
+                    }}
                     title={h.Path}
                   >
                     <span className="shrink-0 truncate text-foreground/90">{h.Name}</span>
