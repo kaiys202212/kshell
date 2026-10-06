@@ -1,12 +1,21 @@
 // 各 agent 工具公开品牌标（图形经 lobehub/icons 整理，仅用于识别对应 CLI）。
 // 渐变 id 用 useId，避免同页多个图标互相串色。
 import { useId, type ReactNode } from 'react';
+import { cn } from '../../lib/cn';
 
 const box = 'inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center [&>svg]:h-full [&>svg]:w-full';
 
-function Frame({ tool, children }: { tool: string; children: ReactNode }) {
+function Frame({
+  tool,
+  children,
+  className,
+}: {
+  tool: string;
+  children: ReactNode;
+  className?: string;
+}) {
   return (
-    <span data-testid="tool-icon" data-tool={tool} aria-hidden="true" className={box}>
+    <span data-testid="tool-icon" data-tool={tool} aria-hidden="true" className={cn(box, className)}>
       {children}
     </span>
   );
@@ -150,6 +159,8 @@ const MARKS: Record<string, () => ReactNode> = {
   opencode: () => <OpenCodeMark />,
 };
 
+const TILE_TOOLS = new Set(['codex', 'codebuddy']);
+
 export function ToolIcon({ toolID, label }: { toolID: string; label: string }) {
   const id = toolID.toLowerCase();
   const Mark = MARKS[id];
@@ -157,5 +168,12 @@ export function ToolIcon({ toolID, label }: { toolID: string; label: string }) {
     const letter = (label.trim()[0] || '?').toUpperCase();
     return <OtherMark letter={letter} />;
   }
-  return <Frame tool={id}>{Mark()}</Frame>;
+  return (
+    <Frame
+      tool={id}
+      className={TILE_TOOLS.has(id) ? 'overflow-hidden rounded-[3px] ring-1 ring-black/15 dark:ring-white/20' : undefined}
+    >
+      {Mark()}
+    </Frame>
+  );
 }
