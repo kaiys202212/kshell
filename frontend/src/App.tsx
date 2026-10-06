@@ -45,6 +45,7 @@ import { sameWorkspacePath } from './lib/workspacePath';
 import Home from './pages/Home';
 import Settings from './pages/Settings';
 import WorkspaceTabView from './pages/WorkspaceTab';
+import AgentSetupDialog from './components/AgentSetupDialog';
 import ArchiveSuggest from './components/ArchiveSuggest';
 import UpdatePrompt from './components/UpdatePrompt';
 import NotificationBubble from './components/NotificationBubble';
@@ -306,6 +307,7 @@ function App() {
           ))}
         </div>
       </div>
+      <AgentSetupDialog />
       <QuickSwitcher open={switcherOpen} onOpenChange={setSwitcherOpen} />
       <ArchiveSuggest
         open={!!archivePrompt}

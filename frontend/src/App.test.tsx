@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   openSSH: vi.fn(),
   execRemote: vi.fn(),
   getTools: vi.fn(),
+  needsAgentSetup: vi.fn(),
+  dismissAgentSetup: vi.fn(),
   getToolInstallRecipe: vi.fn(),
   installBuiltinTool: vi.fn(),
   uninstallBuiltinTool: vi.fn(),
@@ -170,6 +172,8 @@ beforeEach(() => {
   mocks.onArchiveChanged.mockImplementation(() => () => {});
   mocks.archivedIDs.mockResolvedValue([]);
   mocks.getTools.mockResolvedValue([]);
+  mocks.needsAgentSetup.mockResolvedValue(false);
+  mocks.dismissAgentSetup.mockResolvedValue(undefined);
   mocks.getToolInstallRecipe.mockRejectedValue(new Error('该工具不支持一键安装'));
   mocks.getToolInstallJob.mockResolvedValue({
     ToolID: '',
@@ -233,6 +237,30 @@ beforeEach(() => {
 });
 
 describe('App', () => {
+  it('NeedsAgentSetup 为 true 时弹出首次工具向导', async () => {
+    mocks.needsAgentSetup.mockResolvedValue(true);
+    mocks.getTools.mockResolvedValue([
+      {
+        ID: 'gemini',
+        Name: 'Gemini CLI',
+        BinPath: '',
+        Version: '',
+        Installed: false,
+        Source: '',
+      },
+    ]);
+    mocks.getToolInstallRecipe.mockResolvedValue({
+      ToolID: 'gemini',
+      Name: 'Gemini CLI',
+      InstallCmd: 'npm i -g @google/gemini-cli',
+      UninstallCmd: '',
+      PurgeDirs: [],
+      CanPurge: false,
+    });
+    render(<App />);
+    expect(await screen.findByRole('dialog')).toHaveTextContent('检测本机 Agent 工具');
+  });
+
   it('terminal:meta 立刻更新页签标题', async () => {
     let meta: (info: TerminalInfo) => void = () => {};
     mocks.onTerminalMeta.mockImplementation((cb: (info: TerminalInfo) => void) => {

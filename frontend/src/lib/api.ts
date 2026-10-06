@@ -419,6 +419,8 @@ interface AppBindings {
   DeleteConnection(id: string): Promise<void>;
   ExecRemote(connID: string, cmd: string): Promise<RemoteResult>;
   GetTools(): Promise<ToolInfo[]>;
+  NeedsAgentSetup(): Promise<boolean>;
+  DismissAgentSetup(): Promise<void>;
   GetToolInstallRecipe(id: string): Promise<InstallRecipeView>;
   InstallBuiltinTool(id: string): Promise<void>;
   UninstallBuiltinTool(id: string, purgeConfig: boolean): Promise<void>;
@@ -873,6 +875,18 @@ export async function getTools(): Promise<ToolInfo[]> {
   const a = app();
   if (!a) return [];
   return a.GetTools();
+}
+
+export async function needsAgentSetup(): Promise<boolean> {
+  const a = app();
+  if (!a) return false;
+  return a.NeedsAgentSetup();
+}
+
+export async function dismissAgentSetup(): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.DismissAgentSetup();
 }
 
 export async function getToolInstallRecipe(id: string): Promise<InstallRecipeView> {
