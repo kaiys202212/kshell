@@ -147,7 +147,7 @@ func parseOpencodeSessions(raw []byte, dbPath string) ([]Session, error) {
 			ID:        r.ID,
 			ToolID:    opencodeID,
 			Workspace: canonicalCWD(r.CWD),
-			Title:     oneLine(r.Title, 80),
+			Title:     oneLine(cleanTitle(r.Title), 80), // 丢弃 OSC 查色残片等不适合展示的标题
 			CreatedAt: created,
 			UpdatedAt: updated,
 			Path:      dbPath,

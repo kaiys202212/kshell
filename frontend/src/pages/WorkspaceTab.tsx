@@ -444,8 +444,8 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           {terms.map((t) => {
             const badge = badgeFor(t.ToolID);
             const active = centerTab === t.ID;
-            // 渲染层再洗一次：Cursor 等历史缓存标题可能仍带 <timestamp>Sunday...
-            const label = displayTitle(t.Title) || t.Title;
+            // 渲染层再洗一次：Cursor 包装标签 / OSC 查色残片等；洗净后为空则用占位，勿回退原文
+            const label = displayTitle(t.Title) || '新会话';
             const activity = resolveAgentActivity({
               status: t.Status,
               hasPermission: false,
@@ -509,7 +509,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           })}
           {chatsForWs.map((c) => {
             const active = centerTab === c.ID;
-            const label = displayTitle(c.Title) || c.Title;
+            const label = displayTitle(c.Title) || '新会话';
             const activity = resolveAgentActivity({
               status: c.Status,
               hasPermission: !!chatPermissions[c.ID],
@@ -614,7 +614,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
               <SessionTranscript
                 sessionID={previewSession.ID}
                 workspaceRoot={previewSession.Workspace}
-                title={displayTitle(previewSession.Title) || previewSession.Title}
+                title={displayTitle(previewSession.Title) || '新会话'}
                 onActivate={() => openChatOrTerminal(previewSession)}
               />
             ) : (

@@ -61,6 +61,19 @@ func TestOpencodeParseSessions(t *testing.T) {
 	}
 }
 
+func TestOpencodeParseDropsOSCColorReplyTitle(t *testing.T) {
+	raw := []byte(`[
+		{"id":"ses_rgb","cwd":"D:/ws","title":"4;0;rgb:2e2e/3434/3636","created":1,"updated":2}
+	]`)
+	sessions, err := parseOpencodeSessions(raw, "db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].Title != "" {
+		t.Fatalf("title = %q, want empty after cleanTitle", sessions[0].Title)
+	}
+}
+
 func TestOpencodeParseSkipsRowsWithoutWorkspace(t *testing.T) {
 	raw := []byte(`[
 		{"id":"","cwd":"D:/x","title":"无 id"},
