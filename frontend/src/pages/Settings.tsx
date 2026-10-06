@@ -565,7 +565,7 @@ export default function Settings() {
                 </div>
                 {permissionMode === 'bypass' && (
                   <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-                    将跳过 CLI 权限确认，并自动放行 ACP 权限弹窗。仅建议在可信环境使用。Gemini / OpenCode
+                    将跳过 CLI 权限确认，并自动放行 ACP 权限弹窗。仅建议在可信环境使用。Gemini
                     暂无稳定跳过参数。
                   </p>
                 )}
