@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { emptyCustomProvider, sessionGlobFromDir, withoutBuiltinSpecs } from './providersForm';
+import {
+  emptyCustomProvider,
+  normalizeSpec,
+  sessionGlobFromDir,
+  withoutBuiltinSpecs,
+} from './providersForm';
 
 describe('sessionGlobFromDir', () => {
   it('把 Windows 会话目录收成 jsonl glob', () => {
@@ -33,5 +38,19 @@ describe('emptyCustomProvider', () => {
     expect(s.Sessions.Format).toBe('jsonl');
     expect(s.Resume.Args).toEqual(['--resume', '{id}']);
     expect(s.Verified).toBe(false);
+  });
+
+  it('默认 Permission.bypassArgs 为空数组', () => {
+    expect(emptyCustomProvider().Permission.BypassArgs).toEqual([]);
+  });
+});
+
+describe('normalizeSpec', () => {
+  it('透传 permission.bypassArgs，表单保存不丢字段', () => {
+    const spec = normalizeSpec({
+      ID: 'mytool',
+      Permission: { BypassArgs: ['--trust-all'] },
+    } as never);
+    expect(spec.Permission.BypassArgs).toEqual(['--trust-all']);
   });
 });

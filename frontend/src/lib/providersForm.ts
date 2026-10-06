@@ -13,6 +13,7 @@ export type CustomProviderSpec = {
     TitleFallbacks: string[];
   };
   Resume: { Args: string[] };
+  Permission: { BypassArgs: string[] };
   Verified: boolean;
 };
 
@@ -30,6 +31,7 @@ export function emptyCustomProvider(): CustomProviderSpec {
       TitleFallbacks: [],
     },
     Resume: { Args: ['--resume', '{id}'] },
+    Permission: { BypassArgs: [] },
     Verified: false,
   };
 }
@@ -64,6 +66,7 @@ export function normalizeSpec(raw: Partial<CustomProviderSpec> | undefined | nul
       TitleFallbacks: raw.Fields?.TitleFallbacks ?? [],
     },
     Resume: { Args: raw.Resume?.Args ?? e.Resume.Args },
+    Permission: { BypassArgs: raw.Permission?.BypassArgs ?? [] },
     Verified: Boolean(raw.Verified),
   };
 }
