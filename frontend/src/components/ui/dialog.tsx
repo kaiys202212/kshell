@@ -11,9 +11,14 @@ export interface DialogProps {
   onOpenChange: (open: boolean) => void;
   children: ReactNode;
   className?: string;
+  // false 时拦截 Esc / 点遮罩，只允许调用方主动把 open 设为 false（如向导的「跳过」）。
+  dismissible?: boolean;
 }
 
-export function Dialog({ open, onOpenChange, children, className }: DialogProps) {
+export function Dialog({ open, onOpenChange, children, className, dismissible = true }: DialogProps) {
+  const lock = (e: Event) => {
+    if (!dismissible) e.preventDefault();
+  };
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
@@ -28,6 +33,9 @@ export function Dialog({ open, onOpenChange, children, className }: DialogProps)
             className,
           )}
           style={{ animation: 'kshell-pop-in var(--duration-base) var(--ease-out)' }}
+          onEscapeKeyDown={lock}
+          onPointerDownOutside={lock}
+          onInteractOutside={lock}
         >
           {children}
         </DialogPrimitive.Content>

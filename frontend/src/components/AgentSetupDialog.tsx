@@ -1,6 +1,6 @@
 // 桌面端首次启动：扫描内置 Agent 并支持勾选后串行一键安装。可跳过，只自动弹一次。
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   dismissAgentSetup,
   getToolInstallRecipe,
@@ -24,6 +24,7 @@ export default function AgentSetupDialog() {
   const [installing, setInstalling] = useState(false);
   const [activeId, setActiveId] = useState('');
   const [log, setLog] = useState('');
+  const installingRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -63,8 +64,10 @@ export default function AgentSetupDialog() {
     [tools, recipes],
   );
   const selectedIds = installable.filter((t) => selected[t.ID]).map((t) => t.ID);
+  const activeName = tools.find((t) => t.ID === activeId)?.Name ?? activeId;
 
   const closeAfterDismiss = async () => {
+    if (installingRef.current) return;
     try {
       await dismissAgentSetup();
     } catch (e: unknown) {
@@ -74,7 +77,8 @@ export default function AgentSetupDialog() {
   };
 
   const handleInstall = async () => {
-    if (installing || selectedIds.length === 0) return;
+    if (installingRef.current || selectedIds.length === 0) return;
+    installingRef.current = true;
     setInstalling(true);
     setLog('');
     const offLog = onToolInstallLog((p) => {
@@ -103,22 +107,17 @@ export default function AgentSetupDialog() {
           notify(e instanceof Error ? e.message : String(e), 'error');
         }
       }
-      await closeAfterDismiss();
     } finally {
       offLog();
+      installingRef.current = false;
       setInstalling(false);
       setActiveId('');
     }
+    await closeAfterDismiss();
   };
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(v) => {
-        if (!v && !installing) void closeAfterDismiss();
-      }}
-      className="w-[28rem] max-w-[90vw]"
-    >
+    <Dialog open={open} onOpenChange={() => {}} dismissible={false} className="w-[28rem] max-w-[90vw]">
       <DialogPrimitive.Title className="text-sm font-medium">
         检测本机 Agent 工具
       </DialogPrimitive.Title>
@@ -160,7 +159,7 @@ export default function AgentSetupDialog() {
       </ul>
       {installing && (
         <pre className="mt-2 max-h-28 overflow-auto rounded bg-muted p-2 font-mono text-[11px] text-muted-foreground">
-          {activeId ? `正在安装 ${activeId}…\n` : ''}
+          {activeName ? `正在安装 ${activeName}…\n` : ''}
           {log}
         </pre>
       )}

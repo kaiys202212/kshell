@@ -58,4 +58,16 @@ describe('Dialog', () => {
     expect(screen.queryByText('隐藏内容')).not.toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
+
+  it('dismissible=false 时 Escape 不触发 onOpenChange(false)', () => {
+    const onOpenChange = vi.fn();
+    render(
+      <Dialog open onOpenChange={onOpenChange} dismissible={false}>
+        <DialogPrimitive.Title className="sr-only">标题</DialogPrimitive.Title>
+        <p>锁定</p>
+      </Dialog>,
+    );
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
 });

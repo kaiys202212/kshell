@@ -133,24 +133,45 @@ describe('AgentSetupDialog', () => {
     });
   });
 
-  it('一键安装按勾选顺序串行调用 installBuiltinTool，结束后 dismiss', async () => {
+  it('Escape 不关闭向导、不 dismiss', async () => {
+    render(<AgentSetupDialog />);
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(mocks.dismissAgentSetup).not.toHaveBeenCalled();
+  });
+
+  it('一键安装等上一枚 done 后再装下一枚；失败后继续；全部结束后 dismiss', async () => {
     const order: string[] = [];
+    let releaseGemini: () => void = () => {};
+    const geminiHold = new Promise<void>((resolve) => {
+      releaseGemini = resolve;
+    });
     mocks.installBuiltinTool.mockImplementation(async (id: string) => {
-      order.push(id);
+      order.push(`start:${id}`);
+      if (id === 'gemini') await geminiHold;
       queueMicrotask(() => {
-        doneCb?.({ toolID: id, action: 'install', ok: true });
+        doneCb?.({
+          toolID: id,
+          action: 'install',
+          ok: id !== 'gemini',
+          error: id === 'gemini' ? 'npm missing' : undefined,
+        });
       });
     });
     render(<AgentSetupDialog />);
-    fireEvent.click(await screen.findByRole('checkbox', { name: /Gemini CLI/ }));
-    fireEvent.click(screen.getByRole('button', { name: '一键安装' }));
+    fireEvent.click(await screen.findByRole('button', { name: '一键安装' }));
     await waitFor(() => {
-      expect(order).toEqual(['opencode']);
+      expect(order).toEqual(['start:gemini']);
+    });
+    expect(mocks.installBuiltinTool).toHaveBeenCalledTimes(1);
+    releaseGemini();
+    await waitFor(() => {
+      expect(order).toEqual(['start:gemini', 'start:opencode']);
     });
     await waitFor(() => {
       expect(mocks.dismissAgentSetup).toHaveBeenCalled();
     });
-    expect(mocks.installBuiltinTool).not.toHaveBeenCalledWith('gemini');
     expect(mocks.installBuiltinTool).not.toHaveBeenCalledWith('claude');
   });
 });
