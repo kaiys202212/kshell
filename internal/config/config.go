@@ -86,6 +86,8 @@ type Config struct {
 	Model          ModelConfig     `yaml:"model"`
 	// DesktopShortcutEnsured 为 true 后不再自动创建桌面快捷方式（用户删除视为不想要）。
 	DesktopShortcutEnsured bool `yaml:"desktop_shortcut_ensured"`
+	// AgentSetupDismissed 为 true 后不再自动弹出首次 Agent 安装向导。
+	AgentSetupDismissed bool `yaml:"agent_setup_dismissed"`
 }
 
 func Default() Config {
