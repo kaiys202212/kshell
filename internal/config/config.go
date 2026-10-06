@@ -74,16 +74,18 @@ type ModelConfig struct {
 }
 
 type Config struct {
-	ScanRoots       []string        `yaml:"scan_roots"`
-	MaxDepth        int             `yaml:"max_depth"`
-	Exclude         []string        `yaml:"exclude"`
-	SSHOptions      SSHOptions      `yaml:"ssh"`
-	Scanners        map[string]bool `yaml:"scanners"`
-	Appearance      Appearance      `yaml:"appearance"`
-	CloseBehavior   string          `yaml:"close_behavior"` // tray | exit
-	SessionMode     string          `yaml:"session_mode"`   // tui | acp
-	PermissionMode  string          `yaml:"permission_mode"` // default | bypass
-	Model           ModelConfig     `yaml:"model"`
+	ScanRoots      []string        `yaml:"scan_roots"`
+	MaxDepth       int             `yaml:"max_depth"`
+	Exclude        []string        `yaml:"exclude"`
+	SSHOptions     SSHOptions      `yaml:"ssh"`
+	Scanners       map[string]bool `yaml:"scanners"`
+	Appearance     Appearance      `yaml:"appearance"`
+	CloseBehavior  string          `yaml:"close_behavior"`  // tray | exit
+	SessionMode    string          `yaml:"session_mode"`    // tui | acp
+	PermissionMode string          `yaml:"permission_mode"` // default | bypass
+	Model          ModelConfig     `yaml:"model"`
+	// DesktopShortcutEnsured 为 true 后不再自动创建桌面快捷方式（用户删除视为不想要）。
+	DesktopShortcutEnsured bool `yaml:"desktop_shortcut_ensured"`
 }
 
 func Default() Config {

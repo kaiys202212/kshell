@@ -154,6 +154,7 @@ func (a *App) Startup(ctx context.Context) {
 	go a.runScan()
 	go a.reapLoop()
 	go a.scheduleUpdateCheck()
+	go a.ensureDesktopShortcutOnStartup()
 
 	a.emitAppearance()
 	a.restartAppearanceWatcher()
