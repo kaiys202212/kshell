@@ -21,6 +21,7 @@ import {
   onChatMeta,
   onChatPermission,
   onChatUpdate,
+  onNotifyAgent,
   onProjectsChanged,
   onTerminalData,
   onTerminalExit,
@@ -44,6 +45,7 @@ import Home from './pages/Home';
 import Settings from './pages/Settings';
 import WorkspaceTabView from './pages/WorkspaceTab';
 import ArchiveSuggest from './components/ArchiveSuggest';
+import NotificationBubble from './components/NotificationBubble';
 import QuickSwitcher from './components/QuickSwitcher';
 import TitleBar from './components/TitleBar';
 import { Toaster } from './components/ui/toaster';
@@ -69,6 +71,11 @@ function App() {
     return onUpdateAvailable((info) => {
       useAppStore.getState().notify(`发现新版本 ${info.Latest}，可在设置中升级`, 'info');
     });
+  }, []);
+
+  useEffect(() => {
+    // agent 通知事件总线（hook / OSC / ACP 聊天共用）：入气泡队列，整应用只订阅一次
+    return onNotifyAgent((p) => useAppStore.getState().pushAgentNotice(p));
   }, []);
 
   useEffect(() => {
@@ -304,6 +311,7 @@ function App() {
         }}
       />
       <Toaster />
+      <NotificationBubble />
     </TooltipProvider>
   );
 }

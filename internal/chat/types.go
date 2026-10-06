@@ -27,7 +27,10 @@ type Spec struct {
 }
 
 type Info struct {
-	ID        string
+	ID string
+	// Key 是 manager 的打开 key（session:<id> / new:<n>）：通知气泡按 termKey
+	//（即本 key）定位前端页签，与内部自增 ID 是两回事。
+	Key       string
 	Kind      string
 	SessionID string
 	Workspace string

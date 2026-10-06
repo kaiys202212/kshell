@@ -101,6 +101,8 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   const chatPermissions = useAppStore((s) => s.chatPermissions);
   const terminalBusy = useAppStore((s) => s.terminalBusy);
   const notify = useAppStore((s) => s.notify);
+  // 通知气泡的「切到对应页签」请求（见 store.requestFocusTerm）
+  const focusTermKey = useAppStore((s) => s.focusTermKey);
   // 新建会话的工具选择：全局持久化（'' = 自动），跨页签/重启记住用户的选择
   const toolId = useAppStore((s) => s.newSessionTool);
   const setToolId = useAppStore((s) => s.setNewSessionTool);
@@ -187,6 +189,19 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
       selectCenterTab(SESSION_TAB);
     }
   }, [terms, chatsForWs, centerTab, selectCenterTab]);
+
+  useEffect(() => {
+    // 消费通知气泡的页签聚焦请求：本工作区持有该 termKey（终端/聊天 manager 的
+    // key，Info.Key）就选中对应中心区页签并按 seq 清除；其他工作区视图不消费。
+    // 挂载时也会执行一次，覆盖「点击时工作区页签尚未打开」的情况。
+    if (!focusTermKey) return;
+    const { termKey, seq } = focusTermKey;
+    const t = terms.find((x) => x.Key === termKey);
+    const c = t ? undefined : chatsForWs.find((x) => x.Key === termKey);
+    if (!t && !c) return;
+    selectCenterTab(t ? t.ID : c!.ID);
+    useAppStore.getState().clearFocusTerm(seq);
+  }, [focusTermKey, terms, chatsForWs, selectCenterTab]);
 
   useEffect(() => {
     if (toolSubTab && !toolTerms.some((t) => t.ID === toolSubTab)) {

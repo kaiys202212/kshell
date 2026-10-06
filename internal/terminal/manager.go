@@ -75,6 +75,9 @@ type Spec struct {
 // Info 是暴露给前端的终端快照。
 type Info struct {
 	ID        string
+	// Key 是 manager 的打开 key（session:<id> / new:<n> 等）：通知气泡按
+	// agenthook payload 的 termKey（即本 key）定位前端页签，与内部自增 ID 是两回事。
+	Key       string
 	Kind      string // KindSession | KindNew | KindShell | KindSSH
 	SessionID string // Kind == KindSession 时关联的历史会话 ID
 	ConnID    string // Kind == KindSSH 时关联的连接 ID
@@ -241,6 +244,7 @@ func (m *Manager) startLocked(s *session, info Info, spec Spec, cols, rows int) 
 	s.handle = h
 	s.info = info
 	s.info.ID = s.id
+	s.info.Key = s.key
 	if s.info.Kind == "" {
 		s.info.Kind = KindSession
 	}

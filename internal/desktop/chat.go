@@ -3,7 +3,9 @@ package desktop
 import (
 	"strconv"
 	"sync/atomic"
+	"time"
 
+	"github.com/yangk/kshell/internal/agenthook"
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/launch"
@@ -21,19 +23,50 @@ func newChatManager(a *App) *chat.Manager {
 
 // newChatManagerWith 装配聊天管理器：时间线/权限/退出经 emit 转发给前端；
 // autoAllow 非 nil 且返回真时，权限请求自动放行（不弹窗）。
+// ACP 聊天不经过 hook 通道，turn 结束/出错/等权限在进程内已知，这里顺带
+// 转成 notify:agent 通知（与 hook 通道同一 payload 结构、同一条气泡路径）。
 func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, autoAllow func() bool) *chat.Manager {
-	m := chat.NewManager(b,
+	var m *chat.Manager
+	m = chat.NewManager(b,
 		func(id string, u chat.Update) {
 			emit("chat:update", map[string]any{"id": id, "update": u})
+			switch u.Type {
+			case "turn_done":
+				emitChatNotify(emit, m, id, "done", "")
+			case "error":
+				emitChatNotify(emit, m, id, "error", u.Text)
+			}
 		},
 		func(id string, r chat.PermissionRequest) {
 			emit("chat:permission", map[string]any{"id": id, "request": r})
+			emitChatNotify(emit, m, id, "Notification", r.ToolCall.Title)
 		},
 		func(id string, code int, errMsg string) {
 			emit("chat:exit", map[string]any{"id": id, "exitCode": code, "error": errMsg})
 		})
 	m.SetAutoAllowPermission(autoAllow)
 	return m
+}
+
+// emitChatNotify 把一条聊天侧事件转成 agent 通知气泡 payload。
+// 归因字段（key/tool/workspace）从 manager 反查；会话已关闭时静默跳过。
+// 回调总在 Manager 锁外执行，Get 取锁安全。
+func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, event, summary string) {
+	if m == nil {
+		return
+	}
+	info, ok := m.Get(id)
+	if !ok || info.Key == "" {
+		return
+	}
+	emit("notify:agent", agenthook.Payload{
+		Tool:      info.ToolID,
+		Event:     event,
+		TermKey:   info.Key,
+		Workspace: info.Workspace,
+		Summary:   summary,
+		Ts:        time.Now().UnixNano(),
+	})
 }
 
 func (a *App) chats() *chat.Manager { return a.snapshot().Chats }
