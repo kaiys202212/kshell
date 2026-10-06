@@ -7,8 +7,8 @@ import (
 	"github.com/yangk/kshell/internal/workspace"
 )
 
-func (a *App) GitSCM(wsPath, repoRel string) (workspace.SCMSnapshot, error) {
-	return workspace.SCMStatus(filepath.Clean(strings.TrimSpace(wsPath)), repoRel)
+func (a *App) GitSCM(wsPath, repoRel, syncRemote string) (workspace.SCMSnapshot, error) {
+	return workspace.SCMStatus(filepath.Clean(strings.TrimSpace(wsPath)), repoRel, syncRemote)
 }
 
 func (a *App) GitDiff(wsPath, repoRel, path, side string) (workspace.DiffResult, error) {
@@ -55,16 +55,16 @@ func (a *App) GitCreateBranch(wsPath, repoRel, name string) error {
 	return workspace.CreateBranch(filepath.Clean(strings.TrimSpace(wsPath)), repoRel, name)
 }
 
-func (a *App) GitFetch(wsPath, repoRel string) error {
-	return workspace.Fetch(filepath.Clean(strings.TrimSpace(wsPath)), repoRel)
+func (a *App) GitFetch(wsPath, repoRel, remote string) error {
+	return workspace.Fetch(filepath.Clean(strings.TrimSpace(wsPath)), repoRel, remote)
 }
 
-func (a *App) GitPull(wsPath, repoRel string) error {
-	return workspace.Pull(filepath.Clean(strings.TrimSpace(wsPath)), repoRel)
+func (a *App) GitPull(wsPath, repoRel, remote string) error {
+	return workspace.Pull(filepath.Clean(strings.TrimSpace(wsPath)), repoRel, remote)
 }
 
-func (a *App) GitPush(wsPath, repoRel string) error {
-	return workspace.Push(filepath.Clean(strings.TrimSpace(wsPath)), repoRel)
+func (a *App) GitPush(wsPath, repoRel, remote string) error {
+	return workspace.Push(filepath.Clean(strings.TrimSpace(wsPath)), repoRel, remote)
 }
 
 func (a *App) GitStashPush(wsPath, repoRel, message string) error {
