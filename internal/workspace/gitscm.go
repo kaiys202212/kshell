@@ -13,10 +13,13 @@ import (
 )
 
 var (
-	errRepoOutside   = errors.New("仓库路径越出工作区范围")
-	errEmptyCommit   = errors.New("提交说明不能为空")
-	errEmptyPaths    = errors.New("未指定路径")
+	errRepoOutside = errors.New("仓库路径越出工作区范围")
+	errEmptyCommit = errors.New("提交说明不能为空")
+	errEmptyPaths  = errors.New("未指定路径")
+	errEmptyRef    = errors.New("分支名不能为空")
 )
+
+const gitRemoteTimeout = 60 * time.Second
 
 // SCMRepo 工作区内一个 git 根（工作区根或嵌套仓）。
 type SCMRepo struct {
@@ -309,4 +312,126 @@ func Commit(wsRoot, repoRel, message string) error {
 		return errEmptyCommit
 	}
 	return gitRunAt(abs, gitStatusTimeout, "commit", "-m", message)
+}
+
+func validRef(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errEmptyRef
+	}
+	if strings.Contains(name, "..") || strings.ContainsAny(name, " \t\\") {
+		return errEmptyRef
+	}
+	return nil
+}
+
+// Branches 列出本地分支短名。
+func Branches(wsRoot, repoRel string) ([]string, error) {
+	abs, err := ResolveRepo(wsRoot, repoRel)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
+	defer cancel()
+	out, err := gitCmd(ctx, abs, "branch", "--format=%(refname:short)").Output()
+	if err != nil {
+		return nil, gitErr(out, err)
+	}
+	var names []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			names = append(names, line)
+		}
+	}
+	return names, nil
+}
+
+// Checkout 切换已有本地分支。
+func Checkout(wsRoot, repoRel, name string) error {
+	if err := validRef(name); err != nil {
+		return err
+	}
+	abs, err := ResolveRepo(wsRoot, repoRel)
+	if err != nil {
+		return err
+	}
+	return gitRunAt(abs, gitStatusTimeout, "switch", "--", name)
+}
+
+// CreateBranch 新建并切换到该分支。
+func CreateBranch(wsRoot, repoRel, name string) error {
+	if err := validRef(name); err != nil {
+		return err
+	}
+	abs, err := ResolveRepo(wsRoot, repoRel)
+	if err != nil {
+		return err
+	}
+	return gitRunAt(abs, gitStatusTimeout, "switch", "-c", name)
+}
+
+// Fetch / Pull / Push 走系统 git，无 --force。
+func Fetch(wsRoot, repoRel string) error {
+	abs, err := ResolveRepo(wsRoot, repoRel)
+	if err != nil {
+		return err
+	}
+	return gitRunAt(abs, gitRemoteTimeout, "fetch")
+}
+
+func Pull(wsRoot, repoRel string) error {
+	abs, err := ResolveRepo(wsRoot, repoRel)
+	if err != nil {
+		return err
+	}
+	return gitRunAt(abs, gitRemoteTimeout, "pull")
+}
+
+func Push(wsRoot, repoRel string) error {
+	abs, err := ResolveRepo(wsRoot, repoRel)
+	if err != nil {
+		return err
+	}
+	return gitRunAt(abs, gitRemoteTimeout, "push")
+}
+
+func stashRef(index int) string {
+	return fmt.Sprintf("stash@{%d}", index)
+}
+
+func StashPush(wsRoot, repoRel, message string) error {
+	abs, err := ResolveRepo(wsRoot, repoRel)
+	if err != nil {
+		return err
+	}
+	args := []string{"stash", "push"}
+	if strings.TrimSpace(message) != "" {
+		args = append(args, "-m", message)
+	}
+	return gitRunAt(abs, gitStatusTimeout, args...)
+}
+
+func StashPop(wsRoot, repoRel string, index int) error {
+	abs, err := ResolveRepo(wsRoot, repoRel)
+	if err != nil {
+		return err
+	}
+	return gitRunAt(abs, gitStatusTimeout, "stash", "pop", stashRef(index))
+}
+
+func StashApply(wsRoot, repoRel string, index int) error {
+	abs, err := ResolveRepo(wsRoot, repoRel)
+	if err != nil {
+		return err
+	}
+	return gitRunAt(abs, gitStatusTimeout, "stash", "apply", stashRef(index))
+}
+
+func StashDrop(wsRoot, repoRel string, index int) error {
+	abs, err := ResolveRepo(wsRoot, repoRel)
+	if err != nil {
+		return err
+	}
+	return gitRunAt(abs, gitStatusTimeout, "stash", "drop", stashRef(index))
 }

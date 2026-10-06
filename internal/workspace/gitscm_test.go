@@ -208,3 +208,81 @@ func findEntry(snap SCMSnapshot, path string) *SCMEntry {
 	}
 	return nil
 }
+
+func TestCreateBranchCheckoutStash(t *testing.T) {
+	skipIfNoGit(t)
+	root := t.TempDir()
+	initRepo(t, root)
+	writeFile(t, filepath.Join(root, "a.txt"), "a\n")
+	gitRun(t, root, "add", "a.txt")
+	gitRun(t, root, "commit", "-m", "init")
+
+	if err := CreateBranch(root, "", "topic"); err != nil {
+		t.Fatal(err)
+	}
+	br, err := Branches(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, b := range br {
+		if b == "topic" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("缺 topic: %v", br)
+	}
+	if err := Checkout(root, "", "main"); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ := SCMStatus(root, "")
+	if snap.Branch != "main" {
+		t.Fatalf("checkout main, got %q", snap.Branch)
+	}
+	if err := Checkout(root, "", "topic"); err != nil {
+		t.Fatal(err)
+	}
+
+	writeFile(t, filepath.Join(root, "a.txt"), "dirty\n")
+	if err := StashPush(root, "", "wip"); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ = SCMStatus(root, "")
+	if findEntry(snap, "a.txt") != nil {
+		t.Fatalf("stash 后应干净: %+v", snap.Entries)
+	}
+	if len(snap.Stashes) != 1 {
+		t.Fatalf("stashes: %+v", snap.Stashes)
+	}
+	if err := StashApply(root, "", 0); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(filepath.Join(root, "a.txt"))
+	if string(got) != "dirty\n" {
+		t.Fatalf("apply 后内容 %q", got)
+	}
+	if err := StashDrop(root, "", 0); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ = SCMStatus(root, "")
+	if len(snap.Stashes) != 0 {
+		t.Fatalf("drop 后仍有 stash: %+v", snap.Stashes)
+	}
+}
+
+func TestFetchPullPush_无远程(t *testing.T) {
+	skipIfNoGit(t)
+	root := t.TempDir()
+	initRepo(t, root)
+	writeFile(t, filepath.Join(root, "a.txt"), "a\n")
+	gitRun(t, root, "add", "a.txt")
+	gitRun(t, root, "commit", "-m", "init")
+	if err := Pull(root, ""); err == nil {
+		t.Fatal("无 remote 的 pull 应失败")
+	}
+	if err := Push(root, ""); err == nil {
+		t.Fatal("无 remote 的 push 应失败")
+	}
+	_ = Fetch(root, "") // 部分 git 无 remote 时 fetch 仍成功（空操作）
+}
