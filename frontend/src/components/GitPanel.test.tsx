@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => ({
     { Name: 'origin/main', Short: 'origin/main', Kind: 'remote', Current: false },
   ]),
   gitFetchAll: vi.fn().mockResolvedValue(undefined),
+  gitCommitStat: vi.fn().mockResolvedValue({ Files: 19, Insertions: 1867, Deletions: 202 }),
 }));
 vi.mock('../lib/api', () => mocks);
 vi.mock('../lib/git', () => ({ refreshGitStatus: vi.fn().mockResolvedValue(undefined) }));
@@ -71,9 +72,9 @@ describe('GitPanel', () => {
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
     expect(await screen.findByText('staged.go')).toBeInTheDocument();
     expect(screen.getByText('dirty.go')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '提交' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '主 Git 操作' })).toBeDisabled();
     fireEvent.change(screen.getByLabelText('提交说明'), { target: { value: 'msg' } });
-    expect(screen.getByRole('button', { name: '提交' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '主 Git 操作' })).toBeEnabled();
   });
 
   it('无 staged 时提交禁用', async () => {
@@ -86,7 +87,7 @@ describe('GitPanel', () => {
     );
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
     expect(await screen.findByText('dirty.go')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '提交' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '主 Git 操作' })).toBeDisabled();
   });
 
   it('单击 Changes 行打开 working diff', async () => {
@@ -110,13 +111,23 @@ describe('GitPanel', () => {
 
   it('ahead 时可同步', async () => {
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
-    expect(await screen.findByRole('button', { name: '同步' })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: '同步到远程' })).toBeEnabled();
   });
 
   it('无上游时同步禁用', async () => {
     mocks.gitSCM.mockResolvedValue(snap({ HasUpstream: false, Ahead: 0, Behind: 0 }));
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
-    expect(await screen.findByRole('button', { name: '同步' })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: '同步到远程' })).toBeDisabled();
+  });
+
+  it('有未提交时主按钮为提交，干净时为同步', async () => {
+    render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
+    expect(await screen.findByRole('button', { name: '主 Git 操作' })).toHaveTextContent('提交');
+    expect(screen.getByRole('button', { name: '更多提交操作' })).toBeInTheDocument();
+    cleanup();
+    mocks.gitSCM.mockResolvedValue(snap({ Entries: [], Ahead: 1, Behind: 0, HasUpstream: true }));
+    render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
+    expect(await screen.findByRole('button', { name: '主 Git 操作' })).toHaveTextContent('同步');
   });
 
   it('提交图显示日志并提供 Fetch all', async () => {

@@ -30,6 +30,13 @@ type GitRef struct {
 	Current bool
 }
 
+// CommitStat 单次提交的 shortstat。
+type CommitStat struct {
+	Files      int
+	Insertions int
+	Deletions  int
+}
+
 // Log 读取提交历史。mode: current | all | ref（此时 ref 为分支/远端名）。
 func Log(wsRoot, repoRel, mode, ref string, limit int) ([]LogCommit, error) {
 	abs, err := ResolveRepo(wsRoot, repoRel)
@@ -46,7 +53,7 @@ func Log(wsRoot, repoRel, mode, ref string, limit int) ([]LogCommit, error) {
 	args := []string{
 		"log",
 		"-n", strconv.Itoa(limit),
-		"--date-order",
+		"--topo-order",
 		"--decorate=short",
 		"--pretty=format:%H%x00%P%x00%an%x00%ae%x00%aI%x00%s%x00%D",
 	}
@@ -167,4 +174,79 @@ func FetchAll(wsRoot, repoRel string) error {
 		return err
 	}
 	return gitRunAt(abs, gitRemoteTimeout, "fetch", "--all")
+}
+
+func validCommitHash(hash string) error {
+	hash = strings.TrimSpace(strings.ToLower(hash))
+	if len(hash) < 7 || len(hash) > 40 {
+		return errEmptyRef
+	}
+	for _, r := range hash {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return errEmptyRef
+		}
+	}
+	return nil
+}
+
+// CommitStatAt 读取一次提交的文件/增删行数。
+func CommitStatAt(wsRoot, repoRel, hash string) (CommitStat, error) {
+	if err := validCommitHash(hash); err != nil {
+		return CommitStat{}, err
+	}
+	abs, err := ResolveRepo(wsRoot, repoRel)
+	if err != nil {
+		return CommitStat{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
+	defer cancel()
+	out, err := gitCmd(ctx, abs, "show", "--format=", "--shortstat", hash).Output()
+	if err != nil {
+		return CommitStat{}, gitErr(out, err)
+	}
+	return parseShortstat(string(out)), nil
+}
+
+func parseShortstat(raw string) CommitStat {
+	var st CommitStat
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.Contains(line, "changed") {
+			continue
+		}
+		st.Files = leadingInt(line)
+		if i := strings.Index(line, "insertion"); i >= 0 {
+			st.Insertions = trailingIntBefore(line[:i])
+		}
+		if i := strings.Index(line, "deletion"); i >= 0 {
+			st.Deletions = trailingIntBefore(line[:i])
+		}
+	}
+	return st
+}
+
+func leadingInt(s string) int {
+	n := 0
+	seen := false
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			seen = true
+			n = n*10 + int(r-'0')
+			continue
+		}
+		if seen {
+			break
+		}
+	}
+	return n
+}
+
+func trailingIntBefore(s string) int {
+	s = strings.TrimRightFunc(s, func(r rune) bool { return r < '0' || r > '9' })
+	i := strings.LastIndexFunc(s, func(r rune) bool { return r < '0' || r > '9' })
+	if i >= 0 {
+		s = s[i+1:]
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(s))
+	return n
 }

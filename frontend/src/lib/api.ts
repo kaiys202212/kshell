@@ -233,6 +233,12 @@ export interface GitRef {
   Current: boolean;
 }
 
+export interface GitCommitStat {
+  Files: number;
+  Insertions: number;
+  Deletions: number;
+}
+
 // chat.Info 的 JSON 形态（internal/chat/types.go）
 export interface ChatInfo {
   ID: string;
@@ -404,6 +410,7 @@ interface AppBindings {
   GitLog(wsPath: string, repoRel: string, mode: string, ref: string, limit: number): Promise<GitLogCommit[]>;
   GitRefs(wsPath: string, repoRel: string): Promise<GitRef[]>;
   GitFetchAll(wsPath: string, repoRel: string): Promise<void>;
+  GitCommitStat(wsPath: string, repoRel: string, hash: string): Promise<GitCommitStat>;
   NewSession(wsPath: string): Promise<void>;
   ListConnections(wsID: string): Promise<SshConnection[]>;
   OpenSSH(connID: string): Promise<void>;
@@ -789,6 +796,10 @@ export async function gitRefs(wsPath: string, repoRel: string): Promise<GitRef[]
 
 export async function gitFetchAll(wsPath: string, repoRel: string): Promise<void> {
   await requireApp().GitFetchAll(wsPath, repoRel);
+}
+
+export async function gitCommitStat(wsPath: string, repoRel: string, hash: string): Promise<GitCommitStat> {
+  return requireApp().GitCommitStat(wsPath, repoRel, hash);
 }
 
 // NewSession 在工作区新建会话；错误向上抛，由调用方决定如何呈现

@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import {
   ArrowDownUp,
+  Check,
+  ChevronDown,
   CloudDownload,
   Download,
   Ellipsis,
@@ -10,6 +12,7 @@ import {
 import {
   gitCheckout,
   gitCommit,
+  gitCommitStat,
   gitCreateBranch,
   gitDiscard,
   gitFetch,
@@ -147,6 +150,19 @@ export default function GitPanel({
   );
   const repos = snap?.Repos ?? [];
   const canSync = Boolean(snap?.HasUpstream && ((snap.Ahead ?? 0) > 0 || (snap.Behind ?? 0) > 0));
+  const dirty = staged.length + working.length > 0;
+  const canCommit = Boolean(msg.trim() && staged.length > 0);
+  const loadStat = useCallback(
+    (hash: string) => gitCommitStat(wsPath, repoRel, hash),
+    [wsPath, repoRel],
+  );
+
+  const doCommit = () => {
+    const m = msg.trim();
+    if (!m || staged.length === 0) return;
+    setMsg('');
+    void run(() => gitCommit(wsPath, repoRel, m), '已提交');
+  };
 
   const openEntry = (e: GitSCMEntry, side: GitDiffSide, preview: boolean) => {
     onOpenDiff({ repoRel, path: e.Path, side, preview });
@@ -220,7 +236,7 @@ export default function GitPanel({
                 size="icon"
                 variant={canSync ? 'default' : 'ghost'}
                 disabled={busy || !canSync}
-                aria-label="同步"
+                aria-label="同步到远程"
                 onClick={() => void sync()}
               >
                 <ArrowDownUp className="h-3.5 w-3.5" />
@@ -314,18 +330,64 @@ export default function GitPanel({
           onChange={(e) => setMsg(e.target.value)}
           aria-label="提交说明"
         />
-        <Button
-          size="sm"
-          className="mb-1 shrink-0 self-start"
-          disabled={busy || !msg.trim() || staged.length === 0}
-          onClick={() => {
-            const m = msg.trim();
-            setMsg('');
-            void run(() => gitCommit(wsPath, repoRel, m), '已提交');
-          }}
-        >
-          提交
-        </Button>
+        <div className="mb-1 flex w-full shrink-0">
+          <Button
+            size="sm"
+            className="h-8 min-w-0 flex-1 rounded-r-none"
+            disabled={busy || (dirty ? !canCommit : !canSync)}
+            aria-label="主 Git 操作"
+            onClick={() => {
+              if (dirty) doCommit();
+              else void sync();
+            }}
+          >
+            {dirty ? (
+              <>
+                <Check className="h-3.5 w-3.5" />
+                提交
+              </>
+            ) : (
+              <>
+                <ArrowDownUp className="h-3.5 w-3.5" />
+                同步
+              </>
+            )}
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                className="h-8 w-8 shrink-0 rounded-l-none border-l border-primary-foreground/25 px-0"
+                disabled={busy}
+                aria-label="更多提交操作"
+              >
+                <ChevronDown className="h-3.5 w-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem disabled={!canCommit} onSelect={() => doCommit()}>
+                提交
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!canCommit}
+                onSelect={() => {
+                  const m = msg.trim();
+                  if (!m) return;
+                  setMsg('');
+                  void run(async () => {
+                    await gitCommit(wsPath, repoRel, m);
+                    await gitPush(wsPath, repoRel);
+                  }, '已提交并推送');
+                }}
+              >
+                提交并推送
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={!canSync} onSelect={() => void sync()}>
+                同步
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
         <div className="min-h-0 flex-1 overflow-auto">
           <GitChangeTree
             title="已暂存"
@@ -438,7 +500,7 @@ export default function GitPanel({
             <TooltipContent>Fetch all</TooltipContent>
           </Tooltip>
         </div>
-        <GitLogGraph commits={toGraph(commits)} selected={picked} onSelect={setPicked} />
+        <GitLogGraph commits={toGraph(commits)} selected={picked} onSelect={setPicked} loadStat={loadStat} />
       </div>
     </div>
     </TooltipProvider>

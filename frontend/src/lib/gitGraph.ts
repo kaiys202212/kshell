@@ -38,22 +38,18 @@ export function layoutGitGraph(commits: GraphCommit[]): GraphRow[] {
     }
 
     const parents = c.parents ?? [];
-    const next = [...lanes];
-    if (parents.length === 0) {
-      next[col] = null;
-    } else {
+    const next = lanes.map((h) => (h === c.hash ? null : h));
+    if (parents.length > 0 && next.indexOf(parents[0]) < 0) {
       next[col] = parents[0];
-      for (let p = 1; p < parents.length; p++) {
-        let pc = next.indexOf(parents[p]);
-        if (pc < 0) {
-          pc = firstNull(next);
-          if (pc < 0) {
-            pc = next.length;
-            next.push(parents[p]);
-          } else {
-            next[pc] = parents[p];
-          }
-        }
+    }
+    for (let p = 1; p < parents.length; p++) {
+      if (next.indexOf(parents[p]) >= 0) continue;
+      let pc = firstNull(next);
+      if (pc < 0) {
+        pc = next.length;
+        next.push(parents[p]);
+      } else {
+        next[pc] = parents[p];
       }
     }
 
@@ -85,6 +81,18 @@ function firstNull(lanes: (string | null)[]): number {
 
 export function shortHash(hash: string): string {
   return hash.slice(0, 7);
+}
+
+export function formatStat(st: { files: number; insertions: number; deletions: number }): string {
+  if (st.files <= 0 && st.insertions <= 0 && st.deletions <= 0) return '';
+  return `已更改 ${st.files} 个文件, ${st.insertions} 行插入(+), ${st.deletions} 行删除(-)`;
+}
+
+export function formatAbsoluteTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 export function relativeTime(iso: string, now = Date.now()): string {

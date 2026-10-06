@@ -6,6 +6,40 @@ import (
 	"testing"
 )
 
+func TestParseShortstat(t *testing.T) {
+	st := parseShortstat(" 19 files changed, 1867 insertions(+), 202 deletions(-)\n")
+	if st.Files != 19 || st.Insertions != 1867 || st.Deletions != 202 {
+		t.Fatalf("%+v", st)
+	}
+	st = parseShortstat(" 1 file changed, 3 insertions(+)\n")
+	if st.Files != 1 || st.Insertions != 3 || st.Deletions != 0 {
+		t.Fatalf("%+v", st)
+	}
+}
+
+func TestCommitStatAt_真实提交(t *testing.T) {
+	skipIfNoGit(t)
+	root := t.TempDir()
+	initRepo(t, root)
+	writeFile(t, filepath.Join(root, "a.txt"), "a\n")
+	gitRun(t, root, "add", "a.txt")
+	gitRun(t, root, "commit", "-m", "init")
+	logs, err := Log(root, "", "current", "", 1)
+	if err != nil || len(logs) != 1 {
+		t.Fatalf("log: %v %+v", err, logs)
+	}
+	st, err := CommitStatAt(root, "", logs[0].Hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Files < 1 {
+		t.Fatalf("stat %+v", st)
+	}
+	if _, err := CommitStatAt(root, "", ".."); err == nil {
+		t.Fatal("非法 hash 应失败")
+	}
+}
+
 func TestLog_越权(t *testing.T) {
 	skipIfNoGit(t)
 	_, err := Log(t.TempDir(), "..", "all", "", 10)

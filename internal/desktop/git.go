@@ -94,3 +94,7 @@ func (a *App) GitRefs(wsPath, repoRel string) ([]workspace.GitRef, error) {
 func (a *App) GitFetchAll(wsPath, repoRel string) error {
 	return workspace.FetchAll(filepath.Clean(strings.TrimSpace(wsPath)), repoRel)
 }
+
+func (a *App) GitCommitStat(wsPath, repoRel, hash string) (workspace.CommitStat, error) {
+	return workspace.CommitStatAt(filepath.Clean(strings.TrimSpace(wsPath)), repoRel, hash)
+}
