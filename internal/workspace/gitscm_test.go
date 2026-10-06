@@ -27,6 +27,7 @@ func initRepo(t *testing.T, root string) {
 	gitRun(t, root, "init", "-b", "main")
 	gitRun(t, root, "config", "user.email", "t@t")
 	gitRun(t, root, "config", "user.name", "t")
+	gitRun(t, root, "config", "core.autocrlf", "false")
 }
 
 func TestSCMStatus_分组(t *testing.T) {
@@ -142,4 +143,68 @@ func TestSCMStatus_嵌套仓(t *testing.T) {
 	if !found {
 		t.Fatalf("嵌套变更: %+v", snap.Entries)
 	}
+}
+
+func TestStageUnstageCommitDiscard(t *testing.T) {
+	skipIfNoGit(t)
+	root := t.TempDir()
+	initRepo(t, root)
+	writeFile(t, filepath.Join(root, "tracked.txt"), "v1\n")
+	gitRun(t, root, "add", "tracked.txt")
+	gitRun(t, root, "commit", "-m", "init")
+
+	writeFile(t, filepath.Join(root, "staged.txt"), "s\n")
+	if err := Stage(root, "", []string{"staged.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ := SCMStatus(root, "")
+	if e := findEntry(snap, "staged.txt"); e == nil || !e.Staged {
+		t.Fatalf("Stage 后应 staged: %+v", snap.Entries)
+	}
+	if err := Unstage(root, "", []string{"staged.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ = SCMStatus(root, "")
+	if e := findEntry(snap, "staged.txt"); e == nil || !e.Untracked || e.Staged {
+		t.Fatalf("Unstage 后应 untracked: %+v", e)
+	}
+	if err := Stage(root, "", []string{"staged.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Commit(root, "", ""); err == nil {
+		t.Fatal("空 message 应失败")
+	}
+	if err := Commit(root, "", "add staged"); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ = SCMStatus(root, "")
+	if findEntry(snap, "staged.txt") != nil {
+		t.Fatalf("commit 后不应再出现 staged.txt: %+v", snap.Entries)
+	}
+
+	writeFile(t, filepath.Join(root, "tracked.txt"), "v2\n")
+	if err := Discard(root, "", []string{"tracked.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "tracked.txt"))
+	if err != nil || string(got) != "v1\n" {
+		t.Fatalf("Discard 已跟踪: %q err=%v", got, err)
+	}
+
+	writeFile(t, filepath.Join(root, "gone.txt"), "g\n")
+	if err := Discard(root, "", []string{"gone.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "gone.txt")); !os.IsNotExist(err) {
+		t.Fatal("Discard 未跟踪应删除文件")
+	}
+}
+
+func findEntry(snap SCMSnapshot, path string) *SCMEntry {
+	for i := range snap.Entries {
+		if snap.Entries[i].Path == path {
+			return &snap.Entries[i]
+		}
+	}
+	return nil
 }
