@@ -39,6 +39,10 @@ var unwrapTags = []string{
 var blockRes = buildBlockRes()
 var tagOnlyRe = buildTagOnlyRe()
 
+// oscColorReplyRe 匹配终端 OSC 4/10/11 查色应答正文（ESC ] 已被剥掉后的残片）。
+// 例：4;0;rgb:2e2e/3434/3636、11;rgb:aaaa/bbbb/cccc
+var oscColorReplyRe = regexp.MustCompile(`(?i)^\d+(?:;\d+)*;rgb:[0-9a-f./]+$`)
+
 func buildBlockRes() []*regexp.Regexp {
 	out := make([]*regexp.Regexp, 0, len(dropBlockTags))
 	for _, tag := range dropBlockTags {
@@ -97,7 +101,11 @@ func cleanTitle(raw string) string {
 		}
 		s = next
 	}
-	return strings.Join(strings.Fields(s), " ")
+	out := strings.Join(strings.Fields(s), " ")
+	if oscColorReplyRe.MatchString(out) {
+		return ""
+	}
+	return out
 }
 
 // dropTruncatedLeadingBlock 处理「正文以已知包装标签开头、但没有对应的闭合标签」的情况：

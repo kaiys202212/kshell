@@ -105,6 +105,11 @@ describe('displayTitle', () => {
     expect(displayTitle('  修复   上传白名单\n校验 ')).toBe('修复 上传白名单 校验');
   });
 
+  it('OSC 调色板/背景色应答残片整段丢弃', () => {
+    expect(displayTitle('4;0;rgb:2e2e/3434/3636')).toBe('');
+    expect(displayTitle('11;rgb:2e2e/3434/3636')).toBe('');
+  });
+
   it('空输入 / 纯空白返回空串（调用方据此显示「无标题」）', () => {
     expect(displayTitle('')).toBe('');
     expect(displayTitle(' \n\t ')).toBe('');

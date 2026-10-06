@@ -52,6 +52,9 @@ const TAG_ONLY_RE = new RegExp(
   'gis',
 );
 
+// 终端 OSC 4/10/11 查色应答正文（ESC ] 剥掉后的残片），与 Go 侧 oscColorReplyRe 同源
+const OSC_COLOR_REPLY_RE = /^\d+(?:;\d+)*;rgb:[0-9a-f./]+$/i;
+
 // dropTruncatedLeadingBlock 处理「正文以已知包装标签开头、但没有对应的闭合标签」的情况：
 // 这几乎只发生在读取头部被截断时（长包装块被截掉尾巴），此时整段都不是用户正文，返回空串。
 // 只认开头位置：正文中间出现的未闭合标签不吞后续内容。
@@ -87,5 +90,7 @@ export function displayTitle(raw: string): string {
     if (next === s) break;
     s = next;
   }
-  return s.split(/\s+/).join(' ').trim();
+  const out = s.split(/\s+/).join(' ').trim();
+  if (OSC_COLOR_REPLY_RE.test(out)) return '';
+  return out;
 }

@@ -68,6 +68,17 @@ func TestCleanTitleRemovesWrapperBlocks(t *testing.T) {
 			want: "修复 上传白名单 校验",
 		},
 		{
+			// 终端 OSC 4/10/11 查色应答被当成标题时的残片（历史脏数据展示兜底）
+			name: "OSC 调色板应答残片整段丢弃",
+			in:   "4;0;rgb:2e2e/3434/3636",
+			want: "",
+		},
+		{
+			name: "OSC 背景色应答残片整段丢弃",
+			in:   "11;rgb:2e2e/3434/3636",
+			want: "",
+		},
+		{
 			name: "空输入",
 			in:   "",
 			want: "",
