@@ -160,6 +160,56 @@ func TestDetectMissingTool(t *testing.T) {
 	}
 }
 
+// 仅 config-dir 命中：配置在、可执行入口全无 → 残缺（Broken）。
+func TestDetectConfigDirOnlyMarksBroken(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".cursor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	spec := DetectSpec{
+		BinName:     "cursor-agent",
+		InstallDirs: []string{filepath.Join(home, "no-such-dir")},
+		ConfigDirs:  []string{"~/.cursor"},
+	}
+	got := Detect(spec, home)
+	if !got.Installed || got.Source != "config-dir" {
+		t.Fatalf("got %+v, want installed via config-dir", got)
+	}
+	if !got.Broken {
+		t.Fatal("仅 config-dir 命中应 Broken=true（配置在、入口全无）")
+	}
+}
+
+// 有可执行入口（install-dir 命中）→ 健康，Broken 必须为 false。
+func TestDetectHealthyNotBroken(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeBin(t, dir, "cursor-agent", "echo ok")
+	t.Setenv("PATH", t.TempDir())
+	spec := DetectSpec{
+		BinName:     "cursor-agent",
+		InstallDirs: []string{"~/.local/bin"},
+		ConfigDirs:  []string{"~/.cursor"},
+	}
+	got := Detect(spec, home)
+	if got.Source != "install-dir" || got.Broken {
+		t.Fatalf("got %+v, want install-dir/healthy", got)
+	}
+}
+
+// 全不中：未安装，也不算残缺。
+func TestDetectAbsentNotBroken(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	got := Detect(DetectSpec{BinName: "no-such-tool"}, t.TempDir())
+	if got.Installed || got.Broken {
+		t.Fatalf("got %+v, want absent/healthy", got)
+	}
+}
+
 func TestProbeVersion(t *testing.T) {
 	dir := t.TempDir()
 	bin := writeFakeBin(t, dir, "claude", "echo claude 2.1.81")
