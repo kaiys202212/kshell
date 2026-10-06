@@ -2,10 +2,13 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import FileTabsPane from './FileTabsPane';
-import { emptyFileTabs, openPreview } from '../lib/fileTabs';
+import { emptyFileTabs, openPreview, diffTabPath } from '../lib/fileTabs';
 
 vi.mock('./Preview', () => ({
   default: ({ path }: { path: string | null }) => <div data-testid="preview">{path ?? 'empty'}</div>,
+}));
+vi.mock('./GitDiffView', () => ({
+  default: ({ path }: { path: string }) => <div data-testid="git-diff">{path}</div>,
 }));
 
 afterEach(cleanup);
@@ -54,5 +57,14 @@ describe('FileTabsPane', () => {
     expect(confirmSpy).toHaveBeenCalled();
     expect(onChange).not.toHaveBeenCalled();
     confirmSpy.mockRestore();
+  });
+
+  it('diff 页签渲染 GitDiffView', () => {
+    const state = openPreview(emptyFileTabs(), diffTabPath('working', '', 'a.ts'), 'diff');
+    render(
+      <FileTabsPane wsPath="D:\\proj" state={state} dirty={{}} onChange={() => {}} onDirty={() => {}} />,
+    );
+    expect(screen.getByTestId('git-diff')).toHaveTextContent('a.ts');
+    expect(screen.queryByTestId('preview')).not.toBeInTheDocument();
   });
 });

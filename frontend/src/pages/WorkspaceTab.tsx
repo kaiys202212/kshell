@@ -1,7 +1,7 @@
 // 工作区页签：三栏布局（左右两栏宽度可拖动）。
 //   左栏：会话列表
 //   中栏：左钉「会话预览」+ 可关 agent/chat；右钉「文件」「终端」
-//   右栏：文件树 | SSH
+//   右栏：文件树 | Git | SSH
 // 终端页签一旦打开就常挂载（非激活用 hidden），xterm 缓冲与焦点不丢；
 // 工作区页签本身也由 App 常挂载，因此只有关闭页签才会真正结束终端进程。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -33,6 +33,8 @@ import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
 import { sameWorkspacePath } from '../lib/workspacePath';
 import FileTree from '../components/FileTree';
 import FileTabsPane from '../components/FileTabsPane';
+import GitPanel from '../components/GitPanel';
+import type { GitDiffSpec } from '../components/GitPanel';
 import PreviewToolPane from '../components/PreviewToolPane';
 import ResizeHandle from '../components/ResizeHandle';
 import SessionList from '../components/SessionList';
@@ -47,7 +49,7 @@ import { ToolDot } from '../components/ui/tool-dot';
 import { resolveAgentActivity } from '../state/agentActivity';
 import { LAYOUT_DEFAULT, useAppStore } from '../state/store';
 import type { WorkspaceTab } from '../state/store';
-import { emptyFileTabs, openPinned, openPreview } from '../lib/fileTabs';
+import { emptyFileTabs, openPinned, openPreview, diffTabPath } from '../lib/fileTabs';
 
 function isAgentTerm(t: TerminalInfo): boolean {
   return t.Kind === 'session' || t.Kind === 'new';
@@ -57,7 +59,7 @@ function isToolTerm(t: TerminalInfo): boolean {
   return t.Kind === 'shell' || t.Kind === 'ssh';
 }
 
-type RightPane = 'files' | 'ssh';
+type RightPane = 'files' | 'git' | 'ssh';
 
 // 中心区钉住页签（与终端 id 如 t1 不冲突）
 const SESSION_TAB = 'session-preview';
@@ -291,6 +293,12 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
 
   const editFile = (path: string) => {
     setFileTabs((s) => openPinned(s, path));
+    selectCenterTab(FILES_TAB);
+  };
+
+  const openGitDiff = (spec: GitDiffSpec) => {
+    const key = diffTabPath(spec.side, spec.repoRel, spec.path);
+    setFileTabs((s) => (spec.preview ? openPreview(s, key, 'diff') : openPinned(s, key, 'diff')));
     selectCenterTab(FILES_TAB);
   };
 
@@ -642,7 +650,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
       <aside
         className="flex shrink-0 flex-col overflow-y-auto border-l border-border bg-card p-2.5"
         style={{ width: layout.right }}
-        aria-label="文件与 SSH 面板"
+        aria-label="文件 Git 与 SSH 面板"
       >
         <div className="mb-2 flex gap-0.5 border-b border-border">
           <button
@@ -653,6 +661,13 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             文件
           </button>
           <button
+            className={cn(paneTabBase, rightPane === 'git' && paneTabActive)}
+            aria-pressed={rightPane === 'git'}
+            onClick={() => setRightPane('git')}
+          >
+            Git
+          </button>
+          <button
             className={cn(paneTabBase, rightPane === 'ssh' && paneTabActive)}
             aria-pressed={rightPane === 'ssh'}
             onClick={() => setRightPane('ssh')}
@@ -660,10 +675,12 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             SSH
           </button>
         </div>
-        {/* 双面板常挂载，仅用 hidden 切换显示：切「文件|SSH」页签不再卸载重载，
-            文件树展开态与 SSH 连接列表/命令历史得以保留 */}
+        {/* 三面板常挂载，仅用 hidden 切换显示 */}
         <div className={cn('min-h-0 flex-1', rightPane !== 'files' && 'hidden')}>
           <FileTree wsPath={tab.id} onOpenFile={openFile} onEditFile={editFile} />
+        </div>
+        <div className={cn('min-h-0 flex-1 overflow-y-auto', rightPane !== 'git' && 'hidden')}>
+          <GitPanel wsPath={tab.id} visible={visible && rightPane === 'git'} onOpenDiff={openGitDiff} />
         </div>
         <div className={cn('min-h-0 flex-1', rightPane !== 'ssh' && 'hidden')}>
           <SshPanel wsPath={tab.id} onOpenRemote={handleOpenRemote} />

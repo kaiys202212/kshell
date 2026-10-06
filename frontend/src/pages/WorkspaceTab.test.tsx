@@ -49,6 +49,7 @@ vi.mock('../components/PreviewToolPane', () => ({
   default: () => <div data-testid="preview-tool-pane" />,
 }));
 vi.mock('../components/SshPanel', () => ({ default: () => <div data-testid="ssh-panel" /> }));
+vi.mock('../components/GitPanel', () => ({ default: () => <div data-testid="git-panel" /> }));
 vi.mock('../components/SessionList', () => ({
   default: (p: { showArchived?: boolean }) => (
     <div data-testid="session-list" data-show-archived={String(!!p.showArchived)} />
@@ -273,5 +274,11 @@ describe('WorkspaceTabView agent 活动图标', () => {
     const statuses = useAppStore.getState().chats.map((c) => c.Status);
     expect(statuses).toEqual(['ready', 'ready']);
     expect(screen.getAllByLabelText('等待用户')).toHaveLength(2);
+  });
+
+  it('右栏有 Git 页签', () => {
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    fireEvent.click(screen.getByRole('button', { name: 'Git' }));
+    expect(screen.getByTestId('git-panel')).toBeInTheDocument();
   });
 });

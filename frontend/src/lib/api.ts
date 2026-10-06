@@ -173,6 +173,47 @@ export interface GitStatusResult {
   DirBranches?: Record<string, string>;
 }
 
+export type GitDiffSide = 'working' | 'staged';
+
+export interface GitSCMRepo {
+  Rel: string;
+  Path: string;
+  Branch: string;
+}
+
+export interface GitSCMEntry {
+  Path: string;
+  X: string;
+  Y: string;
+  Staged: boolean;
+  Unstaged: boolean;
+  Untracked: boolean;
+  Conflicted: boolean;
+}
+
+export interface GitSCMStash {
+  Index: number;
+  Message: string;
+}
+
+export interface GitSCMSnapshot {
+  IsRepo: boolean;
+  RepoRel: string;
+  Branch: string;
+  HasUpstream: boolean;
+  Ahead: number;
+  Behind: number;
+  Repos: GitSCMRepo[] | null;
+  Entries: GitSCMEntry[] | null;
+  Stashes: GitSCMStash[] | null;
+}
+
+export interface GitDiffResult {
+  Text: string;
+  Binary: boolean;
+  Untracked: boolean;
+}
+
 // chat.Info 的 JSON 形态（internal/chat/types.go）
 export interface ChatInfo {
   ID: string;
@@ -320,6 +361,25 @@ interface AppBindings {
   ReadFileForEdit(wsPath: string, path: string): Promise<EditContent>;
   SaveFile(wsPath: string, path: string, text: string, eol: string): Promise<void>;
   GitStatus(wsPath: string): Promise<GitStatusResult>;
+  GitSCM(wsPath: string, repoRel: string): Promise<GitSCMSnapshot>;
+  GitDiff(wsPath: string, repoRel: string, path: string, side: GitDiffSide): Promise<GitDiffResult>;
+  GitStage(wsPath: string, repoRel: string, paths: string[]): Promise<void>;
+  GitUnstage(wsPath: string, repoRel: string, paths: string[]): Promise<void>;
+  GitDiscard(wsPath: string, repoRel: string, paths: string[]): Promise<void>;
+  GitCommit(wsPath: string, repoRel: string, message: string): Promise<void>;
+  GitStageHunk(wsPath: string, repoRel: string, path: string, side: GitDiffSide, patch: string): Promise<void>;
+  GitUnstageHunk(wsPath: string, repoRel: string, path: string, side: GitDiffSide, patch: string): Promise<void>;
+  GitDiscardHunk(wsPath: string, repoRel: string, path: string, side: GitDiffSide, patch: string): Promise<void>;
+  GitBranches(wsPath: string, repoRel: string): Promise<string[]>;
+  GitCheckout(wsPath: string, repoRel: string, name: string): Promise<void>;
+  GitCreateBranch(wsPath: string, repoRel: string, name: string): Promise<void>;
+  GitFetch(wsPath: string, repoRel: string): Promise<void>;
+  GitPull(wsPath: string, repoRel: string): Promise<void>;
+  GitPush(wsPath: string, repoRel: string): Promise<void>;
+  GitStashPush(wsPath: string, repoRel: string, message: string): Promise<void>;
+  GitStashPop(wsPath: string, repoRel: string, index: number): Promise<void>;
+  GitStashApply(wsPath: string, repoRel: string, index: number): Promise<void>;
+  GitStashDrop(wsPath: string, repoRel: string, index: number): Promise<void>;
   NewSession(wsPath: string): Promise<void>;
   ListConnections(wsID: string): Promise<SshConnection[]>;
   OpenSSH(connID: string): Promise<void>;
@@ -582,6 +642,111 @@ export async function gitStatus(wsPath: string): Promise<GitStatusResult | null>
   const a = app();
   if (!a) return null;
   return a.GitStatus(wsPath);
+}
+
+function requireApp(): AppBindings {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  return a;
+}
+
+export async function gitSCM(wsPath: string, repoRel: string): Promise<GitSCMSnapshot> {
+  return requireApp().GitSCM(wsPath, repoRel);
+}
+
+export async function gitDiff(
+  wsPath: string,
+  repoRel: string,
+  path: string,
+  side: GitDiffSide,
+): Promise<GitDiffResult> {
+  return requireApp().GitDiff(wsPath, repoRel, path, side);
+}
+
+export async function gitStage(wsPath: string, repoRel: string, paths: string[]): Promise<void> {
+  await requireApp().GitStage(wsPath, repoRel, paths);
+}
+
+export async function gitUnstage(wsPath: string, repoRel: string, paths: string[]): Promise<void> {
+  await requireApp().GitUnstage(wsPath, repoRel, paths);
+}
+
+export async function gitDiscard(wsPath: string, repoRel: string, paths: string[]): Promise<void> {
+  await requireApp().GitDiscard(wsPath, repoRel, paths);
+}
+
+export async function gitCommit(wsPath: string, repoRel: string, message: string): Promise<void> {
+  await requireApp().GitCommit(wsPath, repoRel, message);
+}
+
+export async function gitStageHunk(
+  wsPath: string,
+  repoRel: string,
+  path: string,
+  side: GitDiffSide,
+  patch: string,
+): Promise<void> {
+  await requireApp().GitStageHunk(wsPath, repoRel, path, side, patch);
+}
+
+export async function gitUnstageHunk(
+  wsPath: string,
+  repoRel: string,
+  path: string,
+  side: GitDiffSide,
+  patch: string,
+): Promise<void> {
+  await requireApp().GitUnstageHunk(wsPath, repoRel, path, side, patch);
+}
+
+export async function gitDiscardHunk(
+  wsPath: string,
+  repoRel: string,
+  path: string,
+  side: GitDiffSide,
+  patch: string,
+): Promise<void> {
+  await requireApp().GitDiscardHunk(wsPath, repoRel, path, side, patch);
+}
+
+export async function gitBranches(wsPath: string, repoRel: string): Promise<string[]> {
+  return requireApp().GitBranches(wsPath, repoRel);
+}
+
+export async function gitCheckout(wsPath: string, repoRel: string, name: string): Promise<void> {
+  await requireApp().GitCheckout(wsPath, repoRel, name);
+}
+
+export async function gitCreateBranch(wsPath: string, repoRel: string, name: string): Promise<void> {
+  await requireApp().GitCreateBranch(wsPath, repoRel, name);
+}
+
+export async function gitFetch(wsPath: string, repoRel: string): Promise<void> {
+  await requireApp().GitFetch(wsPath, repoRel);
+}
+
+export async function gitPull(wsPath: string, repoRel: string): Promise<void> {
+  await requireApp().GitPull(wsPath, repoRel);
+}
+
+export async function gitPush(wsPath: string, repoRel: string): Promise<void> {
+  await requireApp().GitPush(wsPath, repoRel);
+}
+
+export async function gitStashPush(wsPath: string, repoRel: string, message: string): Promise<void> {
+  await requireApp().GitStashPush(wsPath, repoRel, message);
+}
+
+export async function gitStashPop(wsPath: string, repoRel: string, index: number): Promise<void> {
+  await requireApp().GitStashPop(wsPath, repoRel, index);
+}
+
+export async function gitStashApply(wsPath: string, repoRel: string, index: number): Promise<void> {
+  await requireApp().GitStashApply(wsPath, repoRel, index);
+}
+
+export async function gitStashDrop(wsPath: string, repoRel: string, index: number): Promise<void> {
+  await requireApp().GitStashDrop(wsPath, repoRel, index);
 }
 
 // NewSession 在工作区新建会话；错误向上抛，由调用方决定如何呈现

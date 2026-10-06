@@ -1,7 +1,8 @@
 // 文件区：VS Code 式预览页签 + 常挂载 Preview 实例。
 import { cn } from '../lib/cn';
-import { closeTab, fileTabLabel, pinTab, type FileTabsState } from '../lib/fileTabs';
+import { closeTab, fileTabLabel, parseDiffTabPath, pinTab, type FileTabsState } from '../lib/fileTabs';
 import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
+import GitDiffView from './GitDiffView';
 import Preview from './Preview';
 
 const subTabBase = `group ${TAB_BASE} h-7 max-w-44 text-xs`;
@@ -81,22 +82,29 @@ export default function FileTabsPane({
         {state.tabs.length === 0 && (
           <Preview wsPath={wsPath} path={null} />
         )}
-        {state.tabs.map((t) => (
+        {state.tabs.map((t) => {
+          const diff = parseDiffTabPath(t.path);
+          return (
           <div
             key={t.path}
             className={cn('h-full', state.activePath !== t.path && 'hidden')}
             style={{ animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' }}
           >
-            <Preview
-              wsPath={wsPath}
-              path={t.path}
-              onDirtyChange={(d) => onDirty(t.path, d)}
-              onEdited={() => {
-                if (t.preview) onChange(pinTab(state, t.path));
-              }}
-            />
+            {diff ? (
+              <GitDiffView wsPath={wsPath} repoRel={diff.repoRel} path={diff.path} side={diff.side} />
+            ) : (
+              <Preview
+                wsPath={wsPath}
+                path={t.path}
+                onDirtyChange={(d) => onDirty(t.path, d)}
+                onEdited={() => {
+                  if (t.preview) onChange(pinTab(state, t.path));
+                }}
+              />
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
