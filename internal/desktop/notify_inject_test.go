@@ -2,6 +2,9 @@ package desktop
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yangk/kshell/internal/launcher"
@@ -144,7 +147,7 @@ func TestNotifyArgsCodexTomlArray(t *testing.T) {
 	}
 }
 
-// 无 hook 机制的工具原样返回，不添加任何参数。
+// 无 hook 参数机制的工具原样返回，不添加任何参数（opencode 的注入走 env，不改 args）。
 func TestNotifyArgsSkippedTools(t *testing.T) {
 	for _, toolID := range []string{"gemini", "opencode", "cursor", "generic", ""} {
 		args := notifyArgs([]string{"--foo"}, toolID, `C:\tools\kshell.exe`)
@@ -207,6 +210,78 @@ func TestApplyNotifyLaunch(t *testing.T) {
 	}
 	if len(l.Args) != 4 || l.Args[2] != "-c" {
 		t.Fatalf("codex 参数注入不符: %v", l.Args)
+	}
+}
+
+// opencode：生成临时插件目录并注入 OPENCODE_CONFIG_DIR；args 不变。
+func TestApplyNotifyInjectOpenCode(t *testing.T) {
+	spec := &launcher.Spec{Env: []string{"A=1"}, Args: []string{"--foo"}}
+	applyNotifyInject(spec, "opencode", "session:s1", `D:\ws`)
+	cleanupOpenCodeEnv(t, spec.Env)
+
+	env := map[string]string{}
+	for _, kv := range spec.Env {
+		i := strings.Index(kv, "=")
+		env[kv[:i]] = kv[i+1:]
+	}
+	dir := env["OPENCODE_CONFIG_DIR"]
+	if dir == "" {
+		t.Fatalf("OPENCODE_CONFIG_DIR 未注入: %v", spec.Env)
+	}
+	if env["A"] != "1" || env["KSHELL_TERM_KEY"] != "session:s1" {
+		t.Fatalf("既有 env 不符: %v", env)
+	}
+	if len(spec.Args) != 1 || spec.Args[0] != "--foo" {
+		t.Fatalf("opencode 不应改动 args: %v", spec.Args)
+	}
+	content, err := os.ReadFile(filepath.Join(dir, "plugin", "kshell-notify.js"))
+	if err != nil {
+		t.Fatalf("插件文件缺失: %v", err)
+	}
+	s := string(content)
+	if !strings.Contains(s, `"agent-hook"`) || !strings.Contains(s, `"opencode"`) {
+		t.Fatalf("插件应调用 agent-hook opencode: %s", s)
+	}
+	if !strings.Contains(s, "session.idle") {
+		t.Fatalf("插件应监听 session.idle: %s", s)
+	}
+}
+
+// opencode 外部窗口路径：env map 注入 OPENCODE_CONFIG_DIR，插件文件同样生成。
+func TestApplyNotifyLaunchOpenCode(t *testing.T) {
+	l := providers.Launch{Env: map[string]string{}, Args: []string{}}
+	applyNotifyLaunch(&l, "opencode", "window:t", `D:\ws`)
+	dir := l.Env["OPENCODE_CONFIG_DIR"]
+	if dir == "" {
+		t.Fatalf("OPENCODE_CONFIG_DIR 未注入: %v", l.Env)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	if _, err := os.Stat(filepath.Join(dir, "plugin", "kshell-notify.js")); err != nil {
+		t.Fatalf("插件文件缺失: %v", err)
+	}
+}
+
+// 用户已有 OPENCODE_CONFIG_DIR（显式 env 或进程环境）时跳过注入，避免覆盖用户自定义配置目录。
+func TestOpenCodePluginSkippedWhenEnvExists(t *testing.T) {
+	spec := &launcher.Spec{Env: []string{"OPENCODE_CONFIG_DIR=C:\\my\\cfg"}}
+	applyNotifyInject(spec, "opencode", "k", `D:\ws`)
+	if got := envValue(spec.Env, "OPENCODE_CONFIG_DIR"); got != `C:\my\cfg` {
+		t.Fatalf("用户配置目录应保留: %v", spec.Env)
+	}
+	// 进程环境里已有该变量也应跳过
+	t.Setenv("OPENCODE_CONFIG_DIR", `C:\my\cfg`)
+	spec2 := &launcher.Spec{}
+	applyNotifyInject(spec2, "opencode", "k", `D:\ws`)
+	if envValue(spec2.Env, "OPENCODE_CONFIG_DIR") != "" {
+		t.Fatalf("进程环境已有该变量时不应注入: %v", spec2.Env)
+	}
+}
+
+// cleanupOpenCodeEnv 删除测试生成的插件临时目录。
+func cleanupOpenCodeEnv(t *testing.T, env []string) {
+	t.Helper()
+	if dir := envValue(env, "OPENCODE_CONFIG_DIR"); dir != "" {
+		t.Cleanup(func() { os.RemoveAll(dir) })
 	}
 }
 

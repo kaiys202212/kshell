@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,11 +15,14 @@ import (
 const (
 	envTermKey   = "KSHELL_TERM_KEY"
 	envWorkspace = "KSHELL_WORKSPACE"
+	// opencode 插件注入：指向临时配置目录（与用户全局配置合并而非替换，
+	// 官方文档 https://opencode.ai/docs/config 确认）。用户已有该变量时跳过注入。
+	envOpenCodeConfigDir = "OPENCODE_CONFIG_DIR"
 )
 
 // applyNotifyInject 把「agent 完成通知」所需注入加到内嵌终端启动规格上：
-// 归因环境变量（所有工具）+ 按工具的 hook 参数（仅 claude/codebuddy/codex）。
-// 注入失败静默跳过：通知是锦上添花，绝不能影响会话启动。
+// 归因环境变量（所有工具）+ 按工具的 hook 参数（claude/codebuddy/codex）
+// 或临时插件配置目录（opencode）。注入失败静默跳过：通知是锦上添花，绝不能影响会话启动。
 func applyNotifyInject(spec *launcher.Spec, toolID, termKey, workspace string) {
 	if spec == nil {
 		return
@@ -29,6 +33,11 @@ func applyNotifyInject(spec *launcher.Spec, toolID, termKey, workspace string) {
 		return
 	}
 	spec.Args = notifyArgs(spec.Args, toolID, exe)
+	if toolID == "opencode" {
+		if dir := openCodePluginDir(exe, envValue(spec.Env, envOpenCodeConfigDir)); dir != "" {
+			spec.Env = append(spec.Env, envOpenCodeConfigDir+"="+dir)
+		}
+	}
 }
 
 // applyNotifyLaunch 与 applyNotifyInject 同口径，作用于外部 PowerShell 窗口的启动描述
@@ -46,6 +55,11 @@ func applyNotifyLaunch(l *providers.Launch, toolID, termKey, workspace string) {
 		return
 	}
 	l.Args = notifyArgs(l.Args, toolID, exe)
+	if toolID == "opencode" {
+		if dir := openCodePluginDir(exe, l.Env[envOpenCodeConfigDir]); dir != "" {
+			l.Env[envOpenCodeConfigDir] = dir
+		}
+	}
 }
 
 // notifyArgs 按工具追加通知 hook 参数；无机制的工具原样返回。
@@ -63,9 +77,75 @@ func notifyArgs(args []string, toolID, exePath string) []string {
 		// 会覆盖用户自己的 notify 配置，但仅限 kshell 启动的会话进程，可接受。
 		return append(args, "-c", "notify=["+tomlQuote(exePath)+`,"agent-hook","codex"]`)
 	default:
-		// gemini/opencode/cursor/generic 无会话级 hook 机制：跳过
+		// gemini/cursor/generic 无会话级 hook 机制：跳过
+		// （opencode 不在此注入参数，走 openCodePluginDir 写临时插件 + env）
 		return args
 	}
+}
+
+// openCodePluginDir 生成 opencode 通知插件临时目录并返回其路径；失败或无需注入返回空串。
+// 机制：OPENCODE_CONFIG_DIR 指向临时目录后，opencode 会搜索其中的 plugin/ 子目录加载插件，
+// 且与用户全局配置（~/.config/opencode）合并而非替换——用户自己的模型/MCP 配置不受影响。
+// 已有 OPENCODE_CONFIG_DIR（显式 env 或进程环境）时返回空串跳过，避免覆盖用户自定义配置目录。
+// 临时目录留在系统 %TEMP% 下，会话结束后由操作系统清理。
+func openCodePluginDir(exePath, existing string) string {
+	if existing != "" || os.Getenv(envOpenCodeConfigDir) != "" {
+		return ""
+	}
+	dir, err := os.MkdirTemp("", "kshell-opencode-")
+	if err != nil {
+		return ""
+	}
+	pluginDir := filepath.Join(dir, "plugin")
+	if err := os.MkdirAll(pluginDir, 0o700); err != nil {
+		return ""
+	}
+	// exe 路径用 JSON 编码成 JS 字符串字面量；插件跑在 Bun 里，其 child_process.spawn
+	// 会把 Windows 反斜杠当转义符吞掉，必须先转成正斜杠。
+	exe, err := json.Marshal(filepath.ToSlash(exePath))
+	if err != nil {
+		return ""
+	}
+	content := fmt.Sprintf(openCodePluginTpl, exe)
+	if err := os.WriteFile(filepath.Join(pluginDir, "kshell-notify.js"), []byte(content), 0o600); err != nil {
+		return ""
+	}
+	return dir
+}
+
+// openCodePluginTpl 是生成的 opencode 插件：session.idle（一轮回复结束）时以
+// 末位 argv JSON 形态唤起 kshell agent-hook（internal/agenthook 约定）。
+// await 子进程退出：agent-hook 毫秒级返回，等待无代价，且避免 detached 子进程
+// 随 opencode 退出被连带终止（实测踩坑）；任何失败静默吞掉，通知绝不打扰 agent。
+// 唯一 %s 是 kshell 自身 exe 路径（JSON 字符串字面量，正斜杠）。
+const openCodePluginTpl = `// kshell 生成的 opencode 通知插件（临时目录，勿手改）。
+export const KshellNotify = async () => ({
+  event: async ({ event }) => {
+    if (!event || event.type !== "session.idle") return
+    try {
+      const { spawn } = await import("node:child_process")
+      await new Promise((resolve) => {
+        const child = spawn(%s, ["agent-hook", "opencode", JSON.stringify(event)], {
+          stdio: "ignore",
+          windowsHide: true,
+        })
+        child.on("error", () => resolve())
+        child.on("exit", () => resolve())
+      })
+    } catch {}
+  },
+})
+`
+
+// envValue 从 KEY=VALUE 形式的环境变量列表里取指定键的值。
+func envValue(env []string, key string) string {
+	prefix := key + "="
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			return kv[len(prefix):]
+		}
+	}
+	return ""
 }
 
 // mergeSettingsHooks 把 hooks 配置合并进 args 里已有的 --settings JSON
