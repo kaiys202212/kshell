@@ -56,7 +56,9 @@ func Detect(spec DetectSpec, home string) Detection {
 
 	for _, dir := range spec.ConfigDirs {
 		if isDir(expandHome(dir, home)) {
-			return Detection{Installed: true, Source: "config-dir"}
+			// 配置目录是用户数据（updater 清入口不碰它），存在只证明「用过」，
+			// 不证明「能跑」——走到这说明所有可执行入口都已失效，标记残缺。
+			return Detection{Installed: true, Source: "config-dir", Broken: true}
 		}
 	}
 

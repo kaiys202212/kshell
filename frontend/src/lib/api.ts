@@ -95,6 +95,8 @@ export interface ToolInfo {
   Version: string;
   Installed: boolean;
   Source: string;
+  // Broken：Installed 但没有任何可执行入口（config-dir 兜底），安装残缺。
+  Broken?: boolean;
   ACP?: { Available: boolean; Source: string; BinPath?: string; Package?: string };
 }
 
@@ -354,6 +356,8 @@ export interface ToolInstallJobView {
   Running: boolean;
   Log: string;
   Error: string;
+  // Trigger 为 "auto" 表示残缺自动修复任务，显示「正在自动修复」文案。
+  Trigger?: string;
 }
 
 export interface UpdateInfo {

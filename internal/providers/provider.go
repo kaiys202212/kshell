@@ -15,6 +15,10 @@ type Detection struct {
 	Installed bool
 	BinPath   string
 	Source    string // path | install-dir | node-entry | config-dir
+	// Broken 为 true 表示「有使用痕迹但没有任何启动入口」（Source=config-dir 兜底）：
+	// 官方 updater 清 shim/node.exe、或被半卸载后留下的残缺安装。UI 据此显示
+	// 「已损坏」，桌面端据此触发自动修复。健康分支与未安装一律 false。
+	Broken bool
 	// BinArgs 是入口前缀参数：node 入口形态（BinPath 指向 node.exe）下为
 	// [主脚本名]，普通可执行文件为 nil。启动与版本探测都须先拼上这组参数。
 	BinArgs []string
@@ -26,6 +30,10 @@ type DetectSpec struct {
 	AltBinNames []string // 备选可执行名：只在 InstallDirs 内匹配，不进 PATH 探测（防误命中同名无关文件）
 	InstallDirs []string // 常见安装目录（支持 ~ 前缀与环境变量）
 	ConfigDirs  []string // 存在即说明装过（支持 ~ 前缀）
+	// ResidueDirs 是「用户还在用这个工具」的残留信号（会话数据/登录态，支持 ~ 与 %VAR%）。
+	// 自动修复残缺安装前必须命中其一，避免把用户刚卸载的又装回来。
+	// 为空时退化为「ConfigDirs 任一存在且非空目录」。
+	ResidueDirs []string
 	// NodeEntryScript 是 node 入口兜底的主脚本名（如 index.js）；空表示无此兜底。
 	// 背景：Cursor 官方更新器会周期性删光安装目录里的入口 shim，只留
 	// node.exe + index.js 本体。shim 全部落空时，Detect 会在 InstallDirs

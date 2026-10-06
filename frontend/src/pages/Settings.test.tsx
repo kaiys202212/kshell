@@ -260,6 +260,91 @@ describe('Settings', () => {
     expect(mytool.closest('li')).toHaveAttribute('title', expect.stringContaining('只检测到配置目录'));
   });
 
+  it('残缺安装显示「已损坏」徽标与「修复」按钮', async () => {
+    mocks.getTools.mockResolvedValue([
+      {
+        ID: 'cursor',
+        Name: 'Cursor',
+        BinPath: '',
+        Version: '',
+        Installed: true,
+        Broken: true,
+        Source: 'config-dir',
+      },
+    ]);
+    render(<Settings />);
+    goTools();
+
+    const cursor = await screen.findByText('Cursor');
+    const row = cursor.closest('li')!;
+    expect(row).toHaveTextContent('已损坏');
+    expect(row).not.toHaveTextContent('未验证');
+    expect(row).toHaveTextContent('缺少可执行文件');
+    expect(within(row).getByRole('button', { name: '修复' })).toBeInTheDocument();
+    expect(row).toHaveAttribute('title', expect.stringContaining('安装已损坏'));
+  });
+
+  it('自动修复任务运行时显示自动修复文案', async () => {
+    mocks.getToolInstallJob.mockResolvedValue({
+      ToolID: 'cursor',
+      Action: 'install',
+      Running: true,
+      Log: '',
+      Error: '',
+      Trigger: 'auto',
+    });
+    render(<Settings />);
+    goTools();
+
+    expect(await screen.findByText(/正在自动修复/)).toBeInTheDocument();
+  });
+
+  it('挂载后后台启动的自动修复：log 事件刷新 job，文案与忙态才出现', async () => {
+    // 挂载时 job 还是空闲；自动修复由后端扫描后台启动，前端只收到 log 事件
+    mocks.getToolInstallJob.mockResolvedValueOnce({
+      ToolID: '',
+      Action: '',
+      Running: false,
+      Log: '',
+      Error: '',
+    });
+    mocks.getToolInstallJob.mockResolvedValueOnce({
+      ToolID: 'cursor',
+      Action: 'install',
+      Running: true,
+      Log: '',
+      Error: '',
+      Trigger: 'auto',
+    });
+    mocks.getTools.mockResolvedValue([
+      {
+        ID: 'cursor',
+        Name: 'Cursor',
+        BinPath: '',
+        Version: '',
+        Installed: true,
+        Broken: true,
+        Source: 'config-dir',
+      },
+    ]);
+    render(<Settings />);
+    goTools();
+    const cursor = await screen.findByText('Cursor');
+    // 刷新前：无自动修复文案、行按钮仍可点
+    expect(screen.queryByText(/正在自动修复/)).toBeNull();
+    expect(within(cursor.closest('li')!).getByRole('button', { name: '修复' })).toBeInTheDocument();
+
+    await act(async () => {
+      logCb?.({ toolID: 'cursor', text: '检测到安装损坏，正在自动修复…' });
+    });
+
+    // 提示行（含工具 ID 的特有文案）与行按钮忙态都依赖 job 刷新
+    expect(await screen.findByText(/检测到 cursor 安装损坏/)).toBeInTheDocument();
+    expect(
+      within((await screen.findByText('Cursor')).closest('li')!).queryByRole('button', { name: '修复' }),
+    ).toBeNull();
+  });
+
   it('工具检测页「重新扫描」按钮触发扫描，tools:updated 后恢复可点', async () => {
     render(<Settings />);
     goTools();

@@ -42,6 +42,8 @@ type ToolInstallJobView struct {
 	Log     string
 	Error   string
 	Running bool
+	// Trigger 为 "auto" 表示这是残缺自动修复任务，前端显示「检测到损坏，正在自动修复」。
+	Trigger string
 }
 
 // installCmdRunner 执行一条完整 shell 命令并把输出按行回调；测试注入，生产走 runShellCommand。
@@ -51,6 +53,7 @@ type installJob struct {
 	toolID  string
 	action  string // install | uninstall
 	running bool
+	trigger string // manual | auto：auto 表示残缺自动修复
 	log     strings.Builder
 	errText string
 }
@@ -77,7 +80,7 @@ func (a *App) InstallBuiltinTool(id string) error {
 	if err != nil {
 		return err
 	}
-	return a.startInstallJob(id, "install", r, false)
+	return a.startInstallJob(id, "install", r, false, "manual")
 }
 
 // UninstallBuiltinTool 启动后台卸载。purgeConfig 且配方未声明 PurgeDirs（含 Cursor）直接拒绝。
@@ -89,7 +92,7 @@ func (a *App) UninstallBuiltinTool(id string, purgeConfig bool) error {
 	if purgeConfig && len(r.PurgeDirs) == 0 {
 		return errCursorPurge
 	}
-	return a.startInstallJob(id, "uninstall", r, purgeConfig)
+	return a.startInstallJob(id, "uninstall", r, purgeConfig, "manual")
 }
 
 // GetToolInstallJob 拷贝当前任务视图（Log 为累积文本）。
@@ -102,6 +105,7 @@ func (a *App) GetToolInstallJob() ToolInstallJobView {
 		Log:     a.installJob.log.String(),
 		Error:   a.installJob.errText,
 		Running: a.installJob.running,
+		Trigger: a.installJob.trigger,
 	}
 }
 
@@ -119,13 +123,13 @@ func (a *App) lookupRecipe(id string) (providers.Provider, providers.InstallReci
 	return nil, providers.InstallRecipe{}, errUnknownTool
 }
 
-func (a *App) startInstallJob(id, action string, recipe providers.InstallRecipe, purge bool) error {
+func (a *App) startInstallJob(id, action string, recipe providers.InstallRecipe, purge bool, trigger string) error {
 	a.mu.Lock()
 	if a.installJob.running {
 		a.mu.Unlock()
 		return errInstallBusy
 	}
-	a.installJob = installJob{toolID: id, action: action, running: true}
+	a.installJob = installJob{toolID: id, action: action, running: true, trigger: trigger}
 	a.mu.Unlock()
 	go a.execInstallJob(id, action, recipe, purge)
 	return nil
@@ -141,6 +145,17 @@ func (a *App) execInstallJob(id, action string, recipe providers.InstallRecipe, 
 		if runErr != nil {
 			errText = runErr.Error()
 			a.installJob.errText = errText
+		}
+		// 成功后的修复态维护：卸载写标记（阻止自动修复把刚卸的装回来），
+		// 安装清标记。重试计数**不在这里清**——安装退出 0 不代表工具真恢复
+		// （假成功会把计数清回 0 形成连环重装），计数只由扫描发现工具不再
+		// Broken 时在 maybeAutoRepair 里清零（设计 §3 的另一半）。
+		if runErr == nil {
+			if action == "uninstall" {
+				a.setUninstalledMarker(id)
+			} else {
+				a.clearUninstalledMarker(id)
+			}
 		}
 		a.mu.Unlock()
 		a.Emit("tool:install:done", map[string]any{

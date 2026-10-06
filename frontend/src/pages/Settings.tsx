@@ -252,10 +252,20 @@ export default function Settings() {
     const offLog = onToolInstallLog((p) => {
       setActiveId(p.toolID);
       setInstallLog((prev) => (prev ? `${prev}\n${p.text}` : p.text));
+      // 自动修复是后端后台启动的，设置页收不到单独的启动事件；
+      // 若不刷新 job，Running/Trigger 仍是挂载时的旧值，
+      // 「正在自动修复…」提示与行按钮忙态永远不会出现。
+      getToolInstallJob()
+        .then((j) => setJob(j))
+        .catch(() => {});
     });
     const offDone = onToolInstallDone((p) => {
       setPendingId('');
       setJob((prev) => (prev ? { ...prev, Running: false } : prev));
+      // 拉取最终 job（errText/trigger），与本地乐观更新互补
+      getToolInstallJob()
+        .then((j) => setJob(j))
+        .catch(() => {});
       if (p.ok === false) {
         notify(p.error || '操作失败', 'error');
       }
@@ -782,6 +792,11 @@ export default function Settings() {
                   </Button>
                 </div>
                 {toolsError && <p className="text-sm text-destructive">{toolsError}</p>}
+                {job?.Running && job.Trigger === 'auto' && (
+                  <p className="text-xs text-warning">
+                    检测到 {job.ToolID} 安装损坏，正在自动修复…
+                  </p>
+                )}
                 {tools === null && !toolsError && (
                   <p className="text-sm text-muted-foreground">加载中……</p>
                 )}
@@ -795,6 +810,7 @@ export default function Settings() {
                       const rowBusy =
                         pendingId === t.ID || (!!job?.Running && job.ToolID === t.ID);
                       const hasBin = !!t.BinPath;
+                      const isBroken = !!t.Broken && !hasBin;
                       return (
                         <li
                           key={t.ID}
@@ -803,21 +819,29 @@ export default function Settings() {
                             !t.Installed && 'opacity-50',
                           )}
                           title={
-                            t.Source === 'config-dir'
-                              ? '只检测到配置目录，没有可执行程序，可用性未验证'
-                              : t.BinPath
+                            isBroken
+                              ? '检测到使用残留但没有任何可执行文件，安装已损坏'
+                              : t.Source === 'config-dir'
+                                ? '只检测到配置目录，没有可执行程序，可用性未验证'
+                                : t.BinPath
                           }
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex min-w-0 items-center gap-2">
                               <span className="font-medium">{t.Name}</span>
-                              {t.Source === 'config-dir' && <Badge variant="warning">未验证</Badge>}
-                              {t.Installed ? (
+                              {isBroken ? (
+                                <Badge variant="destructive">已损坏</Badge>
+                              ) : (
+                                t.Source === 'config-dir' && <Badge variant="warning">未验证</Badge>
+                              )}
+                              {t.Installed && !isBroken ? (
                                 t.Version && (
                                   <span className="text-xs text-muted-foreground">{t.Version}</span>
                                 )
                               ) : (
-                                <span className="text-xs text-muted-foreground">未安装</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {isBroken ? '缺少可执行文件' : '未安装'}
+                                </span>
                               )}
                             </div>
                             {recipe && (
@@ -832,10 +856,14 @@ export default function Settings() {
                                 {rowBusy
                                   ? hasBin
                                     ? '卸载中…'
-                                    : '安装中…'
+                                    : isBroken
+                                      ? '修复中…'
+                                      : '安装中…'
                                   : hasBin
                                     ? '卸载'
-                                    : '安装'}
+                                    : isBroken
+                                      ? '修复'
+                                      : '安装'}
                               </Button>
                             )}
                           </div>

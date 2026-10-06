@@ -70,6 +70,10 @@ type Options struct {
 	InstallRunner installCmdRunner
 	// PurgeDirs 清除已展开的配置目录；nil 则 os.RemoveAll。目录不存在视为成功。
 	PurgeDirs func(dirs []string) error
+	// ProcScan 查「dir 下是否有正在运行的进程可执行文件」；nil 走平台默认实现
+	// （Windows PowerShell 枚举，其它平台恒 false）。修复前检查工具进程占用，
+	// 避免重演 updater 边跑边装的事故。测试注入桩。
+	ProcScan func(dir string) bool
 }
 
 // App 是暴露给前端的绑定对象：薄封装 discovery/providers/window 等核心包，
@@ -657,14 +661,17 @@ func (a *App) runScan() {
 
 // publishDetectedTools 在会话扫描之前把 DetectAll 结果交给 GetTools。
 // keepInstallTools 时保留安装/卸载刚写的表，只标记本轮探测已完成。
+// 发布后对残缺安装尝试自动修复（门控与防重入全在 maybeAutoRepair 内）。
 func (a *App) publishDetectedTools(tools []discovery.Tool) {
 	a.mu.Lock()
 	if !a.keepInstallTools {
 		a.tools = tools
 	}
+	current := a.tools
 	a.toolsReady = true
 	a.mu.Unlock()
 	a.Emit("tools:updated")
+	a.maybeAutoRepair(current)
 }
 
 // finishScan 结束本轮扫描标志。keepBusyOnPending 为 true 且有排队请求时保持 scanning，
