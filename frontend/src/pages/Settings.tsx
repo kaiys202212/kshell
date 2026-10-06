@@ -565,8 +565,8 @@ export default function Settings() {
                 </div>
                 {permissionMode === 'bypass' && (
                   <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-                    将跳过 CLI 权限确认，并自动放行 ACP 权限弹窗。仅建议在可信环境使用。自定义工具需在
-                    providers.yaml 的 permission.bypassArgs 中声明跳过参数才会生效。
+                    将跳过 CLI 权限确认（内置工具全部支持），并自动放行 ACP 权限弹窗。仅建议在可信环境使用。
+                    自定义工具需在 providers.yaml 的 permission.bypassArgs 中声明跳过参数才会生效。
                   </p>
                 )}
               </section>

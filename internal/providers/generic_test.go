@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -358,13 +359,18 @@ func TestGenericBypassArgs(t *testing.T) {
 }
 
 func TestGenericBypassArgsFormatRoundtrip(t *testing.T) {
-	// 未声明 permission 的项不应输出空占位块
-	plain, err := FormatProvidersYAML([]GenericSpec{{ID: "x"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(plain, "permission") {
-		t.Fatalf("空 permission 不应输出：\n%s", plain)
+	// 未声明 / 显式空 permission（前端表单会发送空非 nil 切片）都不应输出占位块
+	var emptySlice GenericSpec
+	emptySlice.ID = "x"
+	emptySlice.Permission.BypassArgs = []string{}
+	for _, spec := range []GenericSpec{{ID: "x"}, emptySlice} {
+		out, err := FormatProvidersYAML([]GenericSpec{spec})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out, "permission") {
+			t.Fatalf("空 permission 不应输出：\n%s", out)
+		}
 	}
 	specs := []GenericSpec{{ID: "mytool"}}
 	specs[0].Permission.BypassArgs = []string{"--trust-all"}
@@ -372,11 +378,30 @@ func TestGenericBypassArgsFormatRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out, "permission:") && strings.Contains(out, "bypassArgs: []") {
-		t.Fatalf("空 permission 不应输出占位：\n%s", out)
-	}
 	back, err := ParseProvidersYAML([]byte(out))
 	if err != nil || len(back) != 1 || !reflect.DeepEqual(back[0].Permission.BypassArgs, []string{"--trust-all"}) {
 		t.Fatalf("roundtrip = %+v %v yaml=%s", back, err, out)
+	}
+}
+
+// TestGenericSpecJSONContract 锁定 Go↔前端的 JSON 键名契约：前端 CustomProviderSpec
+// 依赖 `Permission.BypassArgs`（Go 无 json tag、字段名即契约）；改字段名或加 json tag
+// 会让表单模式保存静默剥掉 bypassArgs，此测试必须先红。
+func TestGenericSpecJSONContract(t *testing.T) {
+	specs := []GenericSpec{{ID: "mytool"}}
+	specs[0].Permission.BypassArgs = []string{"--trust-all"}
+	raw, err := json.Marshal(specs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"Permission":{"BypassArgs":["--trust-all"]}`) {
+		t.Fatalf("JSON 键名契约变了（前端依赖）：%s", raw)
+	}
+	var back []GenericSpec
+	if err := json.Unmarshal([]byte(`[{"ID":"t","Permission":{"BypassArgs":["--x"]}}]`), &back); err != nil {
+		t.Fatal(err)
+	}
+	if len(back) != 1 || !reflect.DeepEqual(back[0].Permission.BypassArgs, []string{"--x"}) {
+		t.Fatalf("前端形态 JSON 回读失败：%+v", back)
 	}
 }

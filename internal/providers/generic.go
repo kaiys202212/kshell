@@ -40,7 +40,7 @@ type GenericSpec struct {
 		Args []string `yaml:"args"`
 	} `yaml:"resume"`
 	Permission struct {
-		BypassArgs []string `yaml:"bypassArgs"` // 权限模式为 Bypass 时追加的启动参数
+		BypassArgs []string `yaml:"bypassArgs"` // Bypass 模式注入的参数（置于 provider 参数之前，全局 flag 形态）
 	} `yaml:"permission,omitempty"`
 	Verified bool `yaml:"verified"` // false 表示路径/参数未实测，UI 会标注
 }
@@ -323,7 +323,7 @@ func DefaultProvidersYAML() string {
 	return `# kshell 自定义工具定义
 # 用法：把下面某项的路径/参数改成你机器上的实际值即可，无需改代码。
 # glob 支持 ~/ 前缀；fields 支持 a.b.c 形式的字段路径；resume 参数里的 {id} 会被替换成会话 ID。
-# permission.bypassArgs：权限模式为 Bypass 时追加给该工具的启动参数（如 permission: {bypassArgs: ["--force"]}）。
+# permission.bypassArgs：权限模式为 Bypass 时注入的启动参数，位于 provider 参数之前（如 permission: {bypassArgs: ["--trust-all"]}）。
 # verified: false 表示未经实测，kshell 会在界面上标注。
 providers:
   # codebuddy / opencode 已是内置 provider，不在此处声明；
