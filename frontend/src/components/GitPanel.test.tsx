@@ -165,4 +165,40 @@ describe('GitPanel', () => {
     expect(screen.getByRole('button', { name: 'Fetch all' })).toBeInTheDocument();
     expect(screen.getByLabelText('提交图分支筛选')).toBeInTheDocument();
   });
+
+  it('同步源选择器：显示生效源，切换后按新源重新加载并记忆', async () => {
+    const ws = 'D:\\proj';
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    const sel = await screen.findByLabelText('同步源');
+    expect(sel).toHaveValue('origin');
+    expect(mocks.gitSCM).toHaveBeenCalledWith(ws, '', '');
+
+    mocks.gitSCM.mockResolvedValue(snap({ Remotes: ['origin', 'gitcode'], SyncRemote: 'gitcode' }));
+    fireEvent.change(sel, { target: { value: 'gitcode' } });
+    await waitFor(() => {
+      expect(mocks.gitSCM).toHaveBeenCalledWith(ws, '', 'gitcode');
+    });
+    expect(localStorage.getItem(`kshell-git-sync-remote:${ws}\0`)).toBe('gitcode');
+    expect(await screen.findByLabelText('同步源')).toHaveValue('gitcode');
+  });
+
+  it('同步按钮按生效同步源拉取推送', async () => {
+    const ws = 'D:\\proj';
+    mocks.gitSCM.mockResolvedValue(
+      snap({ Entries: [], Ahead: 1, Behind: 1, HasUpstream: true, SyncRemote: 'gitcode' }),
+    );
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: '主 Git 操作' }));
+    await waitFor(() => {
+      expect(mocks.gitPull).toHaveBeenCalledWith(ws, '', 'gitcode');
+      expect(mocks.gitPush).toHaveBeenCalledWith(ws, '', 'gitcode');
+    });
+  });
+
+  it('无 remote 时不渲染同步源选择器', async () => {
+    mocks.gitSCM.mockResolvedValue(snap({ Remotes: null, SyncRemote: '' }));
+    render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
+    await screen.findByText('dirty.go');
+    expect(screen.queryByLabelText('同步源')).not.toBeInTheDocument();
+  });
 });

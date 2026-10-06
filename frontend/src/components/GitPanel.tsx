@@ -32,6 +32,7 @@ import {
 import type { GitDiffSide, GitLogCommit, GitRef, GitSCMEntry, GitSCMSnapshot } from '../lib/api';
 import { refreshGitStatus } from '../lib/git';
 import { loadLogSel, resolveLogFilter, saveLogSel } from '../lib/gitLogSel';
+import { loadSyncRemote, saveSyncRemote } from '../lib/gitSyncRemote';
 import type { GraphCommit } from '../lib/gitGraph';
 import { cn } from '../lib/cn';
 import { PANE_HEADER } from '../lib/ui';
@@ -102,7 +103,7 @@ export default function GitPanel({
 
   const load = useCallback(async () => {
     try {
-      const s = await gitSCM(wsPath, repoRel);
+      const s = await gitSCM(wsPath, repoRel, loadSyncRemote(wsPath, repoRel));
       setSnap(s);
       if (!repoRel && s.Repos && s.Repos.length > 0 && !s.IsRepo) {
         const first = s.Repos[0];
@@ -205,8 +206,9 @@ export default function GitPanel({
 
   const sync = () =>
     run(async () => {
-      if ((snap?.Behind ?? 0) > 0) await gitPull(wsPath, repoRel);
-      if ((snap?.Ahead ?? 0) > 0) await gitPush(wsPath, repoRel);
+      const remote = snap?.SyncRemote ?? '';
+      if ((snap?.Behind ?? 0) > 0) await gitPull(wsPath, repoRel, remote);
+      if ((snap?.Ahead ?? 0) > 0) await gitPush(wsPath, repoRel, remote);
     }, '已同步');
 
   const onMsgKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -256,6 +258,24 @@ export default function GitPanel({
               ↑{snap.Ahead} ↓{snap.Behind}
             </span>
           )}
+          {(snap?.Remotes ?? []).length > 0 && (
+            <select
+              className="h-6 max-w-28 shrink-0 rounded-md border border-border bg-card px-1 text-muted-foreground"
+              aria-label="同步源"
+              title="同步源：↑↓ 差异与拉取/推送的目标 remote"
+              value={snap?.SyncRemote ?? ''}
+              onChange={(e) => {
+                saveSyncRemote(wsPath, repoRel, e.target.value);
+                void load();
+              }}
+            >
+              {(snap?.Remotes ?? []).map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          )}
           <div className="ml-auto flex items-center gap-0.5">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -267,10 +287,14 @@ export default function GitPanel({
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger>拉取</DropdownMenuSubTrigger>
                   <DropdownMenuSubContent>
-                    <DropdownMenuItem onSelect={() => void run(() => gitPull(wsPath, repoRel), '已拉取')}>
+                    <DropdownMenuItem
+                      onSelect={() => void run(() => gitPull(wsPath, repoRel, snap?.SyncRemote ?? ''), '已拉取')}
+                    >
                       Pull
                     </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => void run(() => gitFetch(wsPath, repoRel), '已 Fetch')}>
+                    <DropdownMenuItem
+                      onSelect={() => void run(() => gitFetch(wsPath, repoRel, snap?.SyncRemote ?? ''), '已 Fetch')}
+                    >
                       Fetch
                     </DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => void run(() => gitFetchAll(wsPath, repoRel), '已 Fetch all')}>
@@ -278,7 +302,11 @@ export default function GitPanel({
                     </DropdownMenuItem>
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
-                <DropdownMenuItem onSelect={() => void run(() => gitPush(wsPath, repoRel), '已推送')}>Push</DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => void run(() => gitPush(wsPath, repoRel, snap?.SyncRemote ?? ''), '已推送')}
+                >
+                  Push
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={!msg.trim() || staged.length === 0}
                   onSelect={() => {
@@ -391,7 +419,7 @@ export default function GitPanel({
                     setMsg('');
                     void run(async () => {
                       await gitCommit(wsPath, repoRel, m);
-                      await gitPush(wsPath, repoRel);
+                      await gitPush(wsPath, repoRel, snap?.SyncRemote ?? '');
                     }, '已提交并推送');
                   }}
                 >
@@ -494,7 +522,13 @@ export default function GitPanel({
             </select>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="icon" variant="ghost" disabled={busy} aria-label="Fetch" onClick={() => void run(() => gitFetch(wsPath, repoRel))}>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  disabled={busy}
+                  aria-label="Fetch"
+                  onClick={() => void run(() => gitFetch(wsPath, repoRel, snap?.SyncRemote ?? ''))}
+                >
                   <Download className="h-3.5 w-3.5" />
                 </Button>
               </TooltipTrigger>
