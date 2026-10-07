@@ -7,6 +7,7 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
+import { playNotifySound } from './lib/notifySound';
 import { SETTINGS_TAB_ID, useAppStore } from './state/store';
 import type { ChatInfo, ChatPermissionRequest, TerminalInfo, Workspace } from './lib/api';
 
@@ -49,7 +50,7 @@ const mocks = vi.hoisted(() => ({
   onTerminalData: vi.fn(),
   onTerminalExit: vi.fn(),
   onTerminalMeta: vi.fn((_cb: (info: TerminalInfo) => void) => () => {}),
-  onNotifyAgent: vi.fn(() => () => {}),
+  onNotifyAgent: vi.fn((_cb: (p: Record<string, string>) => void) => () => {}),
   onChatMeta: vi.fn(() => () => {}),
   onArchiveSuggest: vi.fn(() => () => {}),
   onArchiveChanged: vi.fn(() => () => {}),
@@ -91,6 +92,9 @@ const mocks = vi.hoisted(() => ({
   revealInExplorer: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('./lib/api', () => mocks);
+
+// 提示音整体打桩：jsdom 无 AudioContext，本文件只关心「何时以哪个音色触发」
+vi.mock('./lib/notifySound', () => ({ playNotifySound: vi.fn() }));
 
 // wailsjs runtime：jsdom 下无 window.runtime，OnFileDrop 会直接抛 TypeError，必须打桩
 const runtimeMocks = vi.hoisted(() => ({
@@ -229,6 +233,7 @@ beforeEach(() => {
     chats: [],
     archivedIDs: [],
     archivePrompt: null,
+    agentNotices: [],
     chatItems: {},
     chatSeq: {},
     chatPermissions: {},
@@ -646,5 +651,50 @@ describe('App', () => {
     expect(open).toHaveBeenCalledWith('https://example.com/app');
     a.remove();
     vi.unstubAllGlobals();
+  });
+
+  it('agent 通知：入队并按事件语义响提示音（完成轻音 / 等待确认与出错重音）', () => {
+    let notifyCb: ((p: Record<string, string>) => void) | null = null;
+    mocks.onNotifyAgent.mockImplementation((cb: (p: Record<string, string>) => void) => {
+      notifyCb = cb;
+      return () => {};
+    });
+    render(<App />);
+    vi.mocked(playNotifySound).mockClear();
+
+    act(() => {
+      notifyCb!({
+        tool: 'claude',
+        event: 'Stop',
+        termKey: 'session:s1',
+        workspace: 'D:\\proj-a',
+        summary: '完成',
+      });
+    });
+    expect(useAppStore.getState().agentNotices).toHaveLength(1);
+    expect(playNotifySound).toHaveBeenCalledWith('light');
+
+    act(() => {
+      notifyCb!({
+        tool: 'claude',
+        event: 'Notification',
+        termKey: 'session:s1',
+        workspace: 'D:\\proj-a',
+        summary: '待确认',
+      });
+    });
+    expect(playNotifySound).toHaveBeenLastCalledWith('attention');
+
+    act(() => {
+      notifyCb!({
+        tool: 'claude',
+        event: 'error',
+        termKey: 'session:s1',
+        workspace: 'D:\\proj-a',
+        summary: '崩溃',
+      });
+    });
+    expect(playNotifySound).toHaveBeenLastCalledWith('attention');
+    expect(useAppStore.getState().agentNotices).toHaveLength(3);
   });
 });

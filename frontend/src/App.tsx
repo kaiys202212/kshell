@@ -38,6 +38,8 @@ import { appendChatInput } from './lib/chatInputRegistry';
 import { quotePathForShell } from './lib/dragPath';
 import { OnFileDrop, OnFileDropOff } from '../wailsjs/runtime/runtime';
 import { handleAnchorClick } from './lib/openHref';
+import { eventLabel } from './lib/agentNotify';
+import { playNotifySound } from './lib/notifySound';
 import { applyChatUpdate, type TimelineItem } from './state/chatUpdate';
 import { dispatchTerminalData } from './lib/terminalRegistry';
 import { cn } from './lib/cn';
@@ -82,8 +84,12 @@ function App() {
   }, []);
 
   useEffect(() => {
-    // agent 通知事件总线（hook / OSC / ACP 聊天共用）：入气泡队列，整应用只订阅一次
-    return onNotifyAgent((p) => useAppStore.getState().pushAgentNotice(p));
+    // agent 通知事件总线（hook / OSC / ACP 聊天共用）：入气泡队列并按语义响提示音，
+    // 整应用只订阅一次。出错同属需介入，与「等待确认」共用重音。
+    return onNotifyAgent((p) => {
+      useAppStore.getState().pushAgentNotice(p);
+      playNotifySound(eventLabel(p.event) === '任务完成' ? 'light' : 'attention');
+    });
   }, []);
 
   useEffect(() => {
