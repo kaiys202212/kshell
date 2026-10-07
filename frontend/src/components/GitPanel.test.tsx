@@ -70,6 +70,8 @@ beforeEach(() => {
   localStorage.clear();
   useAppStore.setState({ toasts: [] });
   mocks.gitSCM.mockResolvedValue(snap());
+  mocks.gitPull.mockResolvedValue(undefined);
+  mocks.gitPush.mockResolvedValue(undefined);
 });
 
 describe('GitPanel', () => {
@@ -192,6 +194,32 @@ describe('GitPanel', () => {
     await waitFor(() => {
       expect(mocks.gitPull).toHaveBeenCalledWith(ws, '', 'gitcode');
       expect(mocks.gitPush).toHaveBeenCalledWith(ws, '', 'gitcode');
+    });
+  });
+
+  it('同步进行中主按钮显示转圈图标', async () => {
+    const ws = 'D:\\proj';
+    let resolvePush!: () => void;
+    mocks.gitSCM.mockResolvedValue(
+      snap({ Entries: [], Ahead: 1, Behind: 0, HasUpstream: true, SyncRemote: 'origin' }),
+    );
+    mocks.gitPush.mockImplementation(
+      () =>
+        new Promise<void>((r) => {
+          resolvePush = r;
+        }),
+    );
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    const btn = await screen.findByRole('button', { name: tt('ui.git.primary_action_aria') });
+    fireEvent.click(btn);
+    await waitFor(() => {
+      expect(btn.querySelector('.animate-spin')).toBeTruthy();
+    });
+    await act(async () => {
+      resolvePush();
+    });
+    await waitFor(() => {
+      expect(btn.querySelector('.animate-spin')).toBeNull();
     });
   });
 

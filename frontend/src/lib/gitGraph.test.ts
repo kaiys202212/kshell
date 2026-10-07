@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { tt } from '../test/i18n';
-import { formatAbsoluteTime, formatStat, layoutGitGraph, type GraphCommit } from './gitGraph';
+import {
+  formatAbsoluteTime,
+  formatStat,
+  layoutGitGraph,
+  primaryBranchLabel,
+  type GraphCommit,
+} from './gitGraph';
 
 const c = (hash: string, parents: string[], subject = hash): GraphCommit => ({
   hash,
@@ -11,10 +17,27 @@ const c = (hash: string, parents: string[], subject = hash): GraphCommit => ({
   decorations: [],
 });
 
+describe('primaryBranchLabel', () => {
+  it('优先本地分支，剥离 HEAD -> 与 tag', () => {
+    expect(primaryBranchLabel(['HEAD -> main', 'origin/main'])).toBe('main');
+    expect(primaryBranchLabel(['tag: v1', 'feature/x'])).toBe('feature/x');
+    expect(primaryBranchLabel([])).toBe('');
+  });
+});
+
 describe('layoutGitGraph', () => {
   it('直线历史都在第 0 列', () => {
     const rows = layoutGitGraph([c('a', ['b']), c('b', ['c']), c('c', [])]);
     expect(rows.map((r) => r.column)).toEqual([0, 0, 0]);
+  });
+
+  it('有 decorations 的 lane 连线带分支 label', () => {
+    const tip: GraphCommit = {
+      ...c('a', ['b'], 'tip'),
+      decorations: ['HEAD -> topic', 'origin/topic'],
+    };
+    const rows = layoutGitGraph([tip, c('b', [])]);
+    expect(rows[0].edges.some((e) => e.label === 'topic')).toBe(true);
   });
 
   it('合并提交从一列连到两个亲本列', () => {

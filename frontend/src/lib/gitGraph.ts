@@ -14,6 +14,8 @@ export type GraphEdge = {
   from: number;
   to: number;
   merge: boolean;
+  /** 该连线所属 lane 的分支名（来自 decorations，沿 lane 传递） */
+  label?: string;
 };
 
 export type GraphRow = {
@@ -23,10 +25,20 @@ export type GraphRow = {
   edges: GraphEdge[];
 };
 
+/** 从 decorations 挑一个适合展示的分支名（跳过 HEAD / tag: 前缀）。 */
+export function primaryBranchLabel(decorations: string[]): string {
+  const cleaned = decorations
+    .map((d) => d.replace(/^HEAD\s*->\s*/i, '').trim())
+    .filter((d) => d && !/^tag:/i.test(d) && d.toUpperCase() !== 'HEAD');
+  const local = cleaned.find((d) => !d.includes('/'));
+  return local || cleaned[0] || '';
+}
+
 /** git log 新→旧，分配 VS Code Graph 风格的 lane。 */
 export function layoutGitGraph(commits: GraphCommit[]): GraphRow[] {
   const rows: GraphRow[] = [];
   let lanes: (string | null)[] = [];
+  let laneLabels: string[] = [];
 
   for (const c of commits) {
     let col = lanes.indexOf(c.hash);
@@ -35,15 +47,22 @@ export function layoutGitGraph(commits: GraphCommit[]): GraphRow[] {
       if (col < 0) {
         col = lanes.length;
         lanes.push(c.hash);
+        laneLabels.push('');
       } else {
         lanes[col] = c.hash;
       }
     }
 
+    const tip = primaryBranchLabel(c.decorations ?? []);
+    if (tip) laneLabels[col] = tip;
+
     const parents = c.parents ?? [];
     const next = lanes.map((h) => (h === c.hash ? null : h));
+    const nextLabels = laneLabels.slice();
+    while (nextLabels.length < next.length) nextLabels.push('');
     if (parents.length > 0 && next.indexOf(parents[0]) < 0) {
       next[col] = parents[0];
+      nextLabels[col] = laneLabels[col] || '';
     }
     for (let p = 1; p < parents.length; p++) {
       if (next.indexOf(parents[p]) >= 0) continue;
@@ -51,20 +70,22 @@ export function layoutGitGraph(commits: GraphCommit[]): GraphRow[] {
       if (pc < 0) {
         pc = next.length;
         next.push(parents[p]);
+        nextLabels.push(laneLabels[col] || '');
       } else {
         next[pc] = parents[p];
+        nextLabels[pc] = laneLabels[col] || '';
       }
     }
 
     const edges: GraphEdge[] = [];
     parents.forEach((p, i) => {
       const to = next.indexOf(p);
-      if (to >= 0) edges.push({ from: col, to, merge: i > 0 });
+      if (to >= 0) edges.push({ from: col, to, merge: i > 0, label: laneLabels[col] || undefined });
     });
     lanes.forEach((h, L) => {
       if (L === col || !h) return;
       const to = next.indexOf(h);
-      if (to >= 0) edges.push({ from: L, to, merge: false });
+      if (to >= 0) edges.push({ from: L, to, merge: false, label: laneLabels[L] || undefined });
     });
 
     rows.push({
@@ -74,6 +95,7 @@ export function layoutGitGraph(commits: GraphCommit[]): GraphRow[] {
       edges,
     });
     lanes = next;
+    laneLabels = nextLabels;
   }
   return rows;
 }

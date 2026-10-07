@@ -35,6 +35,7 @@ export function GitLogGraph({
   const laneCount = Math.max(1, ...rows.map((r) => r.laneCount));
   const svgW = laneCount * COL_W + 8;
   const [hover, setHover] = useState('');
+  const [edgeTip, setEdgeTip] = useState<{ label: string; top: number; left: number } | null>(null);
   const [tipPos, setTipPos] = useState<{ top: number; left: number } | null>(null);
   const [stat, setStat] = useState<CommitStatView | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -71,7 +72,7 @@ export function GitLogGraph({
 
   return (
     <div ref={rootRef} className="relative flex min-h-0 flex-1 overflow-auto">
-      <svg width={svgW} height={Math.max(rows.length * ROW_H, ROW_H)} className="sticky left-0 shrink-0">
+      <svg width={svgW} height={Math.max(rows.length * ROW_H, ROW_H)} className="sticky left-0 shrink-0 overflow-visible">
         {rows.map((row, i) => {
           const y1 = i * ROW_H + ROW_H / 2;
           const y2 = y1 + ROW_H;
@@ -85,7 +86,34 @@ export function GitLogGraph({
                   x1 === x2
                     ? `M ${x1} ${y1} L ${x2} ${y2}`
                     : `M ${x1} ${y1} C ${x1} ${y1 + 10}, ${x2} ${y2 - 10}, ${x2} ${y2}`;
-                return <path key={k} d={d} fill="none" stroke={color} strokeWidth={e.merge ? 1.6 : 1.2} />;
+                return (
+                  <g key={k}>
+                    {/* 透明加宽命中区，细线本身难悬停 */}
+                    <path
+                      d={d}
+                      fill="none"
+                      stroke="transparent"
+                      strokeWidth={10}
+                      className={e.label ? 'cursor-default' : undefined}
+                      onMouseEnter={(ev) => {
+                        if (!e.label) return;
+                        setEdgeTip({ label: e.label, top: ev.clientY, left: ev.clientX });
+                      }}
+                      onMouseMove={(ev) => {
+                        if (!e.label) return;
+                        setEdgeTip({ label: e.label, top: ev.clientY, left: ev.clientX });
+                      }}
+                      onMouseLeave={() => setEdgeTip(null)}
+                    />
+                    <path
+                      d={d}
+                      fill="none"
+                      stroke={color}
+                      strokeWidth={e.merge ? 1.6 : 1.2}
+                      className="pointer-events-none"
+                    />
+                  </g>
+                );
               })}
               <circle
                 cx={8 + row.column * COL_W}
@@ -151,6 +179,17 @@ export function GitLogGraph({
               </div>
             )}
             <div className="mt-1 font-mono text-muted-foreground">{shortHash(hovered.hash)}</div>
+          </div>,
+          document.body,
+        )}
+      {edgeTip &&
+        createPortal(
+          <div
+            role="tooltip"
+            className="pointer-events-none z-[201] -translate-y-full rounded-md border border-border bg-card px-2 py-1 text-[11px] shadow-lg"
+            style={{ position: 'fixed', top: edgeTip.top - 8, left: edgeTip.left + 12 }}
+          >
+            {edgeTip.label}
           </div>,
           document.body,
         )}

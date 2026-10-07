@@ -56,6 +56,8 @@ const MODEL_AGENTS = [
   { id: 'codex', label: 'Codex CLI' },
   { id: 'gemini', label: 'Gemini CLI' },
   { id: 'opencode', label: 'OpenCode' },
+  { id: 'cursor', label: 'Cursor' },
+  { id: 'codebuddy', label: 'CodeBuddy' },
 ];
 
 // 语言行内置三选项；system（跟随系统）不是语言码，不在 getLanguageOptions 里

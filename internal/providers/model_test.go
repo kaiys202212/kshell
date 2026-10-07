@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -45,12 +46,59 @@ func TestInjectModelMappings(t *testing.T) {
 		t.Fatalf("gemini env = %+v", env)
 	}
 
-	args, env = Opencode{}.InjectModel(cfg)
+	args, env = Cursor{}.InjectModel(cfg)
 	if !reflect.DeepEqual(args, []string{"--model", "m"}) {
+		t.Fatalf("cursor args = %v", args)
+	}
+	if env["CURSOR_API_KEY"] != "k" {
+		t.Fatalf("cursor env = %+v", env)
+	}
+
+	args, env = CodeBuddy{}.InjectModel(cfg)
+	if !reflect.DeepEqual(args, []string{"--model", "m"}) {
+		t.Fatalf("codebuddy args = %v", args)
+	}
+	if env["CODEBUDDY_MODEL"] != "m" {
+		t.Fatalf("codebuddy env = %+v", env)
+	}
+
+	args, env = Opencode{}.InjectModel(cfg)
+	if !reflect.DeepEqual(args, []string{"--model", "kshell/m"}) {
 		t.Fatalf("opencode args = %v", args)
 	}
+	raw := env["OPENCODE_CONFIG_CONTENT"]
+	if raw == "" {
+		t.Fatal("opencode 应注入 OPENCODE_CONFIG_CONTENT")
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatalf("CONFIG_CONTENT JSON: %v", err)
+	}
+	if doc["model"] != "kshell/m" {
+		t.Fatalf("config model = %v", doc["model"])
+	}
+	prov, _ := doc["provider"].(map[string]any)
+	kshell, _ := prov["kshell"].(map[string]any)
+	opts, _ := kshell["options"].(map[string]any)
+	if opts["baseURL"] != "https://oai.example/" || opts["apiKey"] != "k" {
+		t.Fatalf("kshell options = %+v", opts)
+	}
+}
+
+func TestInjectModelOpencodeProviderSlash(t *testing.T) {
+	args, env := Opencode{}.InjectModel(ModelConfig{Model: "openai/gpt-4o"})
+	if !reflect.DeepEqual(args, []string{"--model", "openai/gpt-4o"}) {
+		t.Fatalf("args = %v", args)
+	}
 	if len(env) != 0 {
-		t.Fatalf("opencode 不应注入 env，got %+v", env)
+		t.Fatalf("已带 provider/ 时不应写 CONFIG_CONTENT，got %+v", env)
+	}
+}
+
+func TestInjectModelOpencodeBareWithoutBaseURL(t *testing.T) {
+	args, env := Opencode{}.InjectModel(ModelConfig{Model: "glm-5.3-flash"})
+	if len(args) != 0 || len(env) != 0 {
+		t.Fatalf("裸名无端点不应注入：args=%v env=%+v", args, env)
 	}
 }
 
@@ -64,7 +112,7 @@ func TestInjectModelClaudeIgnoresOpenAIURL(t *testing.T) {
 func TestInjectModelEmptyInjectsNothing(t *testing.T) {
 	for _, p := range []interface {
 		InjectModel(ModelConfig) ([]string, map[string]string)
-	}{Claude{}, Codex{}, Gemini{}, Opencode{}} {
+	}{Claude{}, Codex{}, Gemini{}, Opencode{}, Cursor{}, CodeBuddy{}} {
 		args, env := p.InjectModel(ModelConfig{})
 		if len(args) != 0 || len(env) != 0 {
 			t.Fatalf("%T 空配置不应注入：args=%v env=%+v", p, args, env)

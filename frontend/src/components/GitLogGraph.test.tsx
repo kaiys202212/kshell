@@ -44,4 +44,32 @@ describe('GitLogGraph', () => {
     expect(row.className).toMatch(/bg-muted/);
     expect(row.className).not.toMatch(/border-l-primary/);
   });
+
+  it('悬停带分支 label 的连线时提示分支名', async () => {
+    const commits = [
+      {
+        hash: 'aaaaaaa1',
+        parents: ['bbbbbbb2'],
+        subject: 'tip',
+        author: 'a',
+        date: '2026-01-02T00:00:00Z',
+        decorations: ['HEAD -> topic'],
+      },
+      {
+        hash: 'bbbbbbb2',
+        parents: [] as string[],
+        subject: 'base',
+        author: 'a',
+        date: '2026-01-01T00:00:00Z',
+        decorations: [] as string[],
+      },
+    ];
+    const { container } = render(
+      <GitLogGraph commits={commits} selected="" onSelect={() => {}} />,
+    );
+    const path = container.querySelector('svg path');
+    expect(path).toBeTruthy();
+    fireEvent.mouseEnter(path!);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('topic');
+  });
 });

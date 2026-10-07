@@ -253,13 +253,12 @@ func TestForWorkspaceACP_CursorNpxStillInjects(t *testing.T) {
 func TestApplyModelTerminalCodex(t *testing.T) {
 	ps := []providers.Provider{providers.Codex{}}
 	tools := []discovery.Tool{{ID: "codex", Name: "Codex CLI", Installed: true, BinPath: "codex"}}
-	s := providers.Session{ID: "s1", ToolID: "codex", Workspace: "/proj"}
 	mo := ModelOptions{Resolver: func(toolID string) (providers.ModelConfig, bool) {
 		return providers.ModelConfig{OpenAIBaseURL: "https://h/", AnthropicBaseURL: "https://h/", APIKey: "k", Model: "gpt-x"}, true
 	}}
-	l, err := ForSession(ps, tools, s, ThemeOptions{}, mo, PermissionOptions{})
+	l, err := ForWorkspaceTool(ps, tools, discovery.Workspace{Path: "/proj"}, "codex", ThemeOptions{}, mo, PermissionOptions{})
 	if err != nil {
-		t.Fatalf("ForSession: %v", err)
+		t.Fatalf("ForWorkspaceTool: %v", err)
 	}
 	found := false
 	for i := 0; i+1 < len(l.Args); i++ {
@@ -272,6 +271,31 @@ func TestApplyModelTerminalCodex(t *testing.T) {
 	}
 	if l.Env["OPENAI_BASE_URL"] != "https://h/" || l.Env["OPENAI_API_KEY"] != "k" {
 		t.Fatalf("env = %+v", l.Env)
+	}
+}
+
+// TestForSessionSkipsModel 恢复会话不得注入模型（沿用会话原模型；避免 OpenCode 等因 --model 破坏续聊）。
+func TestForSessionSkipsModel(t *testing.T) {
+	ps := []providers.Provider{providers.Opencode{}}
+	tools := []discovery.Tool{{ID: "opencode", Installed: true, BinPath: "opencode"}}
+	s := providers.Session{ID: "ses_x", ToolID: "opencode", Workspace: "/p"}
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{Model: "kshell/glm", OpenAIBaseURL: "https://h/", APIKey: "k"}, true
+	}}
+	l, err := ForSession(ps, tools, s, ThemeOptions{}, mo, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, a := range l.Args {
+		if a == "--model" || a == "-m" {
+			t.Fatalf("恢复不应含模型参数，got %v (at %d)", l.Args, i)
+		}
+	}
+	if l.Env["OPENCODE_CONFIG_CONTENT"] != "" {
+		t.Fatalf("恢复不应注入 OPENCODE_CONFIG_CONTENT，got %q", l.Env["OPENCODE_CONFIG_CONTENT"])
+	}
+	if len(l.Args) < 2 || l.Args[0] != "--session" || l.Args[1] != "ses_x" {
+		t.Fatalf("应保留 --session，got %v", l.Args)
 	}
 }
 
@@ -291,16 +315,12 @@ func TestApplyModelACPClaude(t *testing.T) {
 }
 
 func TestApplyModelPrecedesSubcommand(t *testing.T) {
-	ps := []providers.Provider{providers.Codex{}}
-	tools := []discovery.Tool{{ID: "codex", Installed: true, BinPath: "codex"}}
-	s := providers.Session{ID: "s1", ToolID: "codex", Workspace: "/p"}
-	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
-		return providers.ModelConfig{Model: "gpt-x"}, true
-	}}
-	l, err := ForSession(ps, tools, s, ThemeOptions{}, mo, PermissionOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// 直接组合：模型参数必须前置到 provider 子命令之前（如 codex resume）。
+	l := applyModel(providers.Launch{Args: []string{"resume", "s1"}}, providers.Codex{}, ModelOptions{
+		Resolver: func(string) (providers.ModelConfig, bool) {
+			return providers.ModelConfig{Model: "gpt-x"}, true
+		},
+	})
 	if len(l.Args) < 3 || l.Args[0] != "-m" || l.Args[1] != "gpt-x" || l.Args[2] != "resume" {
 		t.Fatalf("模型参数应位于子命令之前，got %v", l.Args)
 	}

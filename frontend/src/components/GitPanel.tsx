@@ -9,6 +9,7 @@ import {
   CloudDownload,
   Download,
   Ellipsis,
+  Loader2,
 } from 'lucide-react';
 import {
   gitCheckout,
@@ -400,7 +401,11 @@ export default function GitPanel({
                 </>
               ) : (
                 <>
-                  <ArrowDownUp className="h-3.5 w-3.5" />
+                  {busy ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  ) : (
+                    <ArrowDownUp className="h-3.5 w-3.5" />
+                  )}
                   {t('ui.git.sync')}
                 </>
               )}

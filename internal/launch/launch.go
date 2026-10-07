@@ -100,9 +100,16 @@ func compose(l providers.Launch, p providers.Provider, tool discovery.Tool, to T
 	return prependBinArgs(finalize(applyTheme(l, p, to), p, mo, po), tool)
 }
 
+// composeResume 恢复会话：主题 + 权限，**不**注入模型（沿用该会话原模型）。
+func composeResume(l providers.Launch, p providers.Provider, tool discovery.Tool, to ThemeOptions, po PermissionOptions) providers.Launch {
+	return prependBinArgs(applyPermission(applyTheme(l, p, to), p, po), tool)
+}
+
 // ForSession 根据会话找到对应 provider 与可执行文件，产出恢复会话的启动描述。
 // tools 为 discovery.DetectAll 的产物；会话所属工具不在表内或不可执行时报 ErrToolNotRunnable。
+// mo 保留签名兼容调用方，恢复路径故意忽略（见 composeResume）。
 func ForSession(ps []providers.Provider, tools []discovery.Tool, s providers.Session, to ThemeOptions, mo ModelOptions, po PermissionOptions) (providers.Launch, error) {
+	_ = mo
 	tool, ok := toolFor(tools, s.ToolID)
 	if !ok || !tool.Installed || tool.BinPath == "" {
 		return providers.Launch{}, ErrToolNotRunnable
@@ -111,7 +118,7 @@ func ForSession(ps []providers.Provider, tools []discovery.Tool, s providers.Ses
 	if !ok {
 		return providers.Launch{}, ErrToolNotRunnable
 	}
-	return compose(p.ResumeCmd(s, tool.BinPath), p, tool, to, mo, po), nil
+	return composeResume(p.ResumeCmd(s, tool.BinPath), p, tool, to, po), nil
 }
 
 // ForWorkspace 为工作区挑选首选工具（优先该工作区会话数最多的），产出新建会话的启动描述。
@@ -183,7 +190,9 @@ func providerFor(ps []providers.Provider, id string) (providers.Provider, bool) 
 var ErrACPUnavailable = errors.New("err.launch.no_acp_adapter")
 
 // ForSessionACP 产出用 ACP 恢复历史会话的启动描述（命令来自适配器探测）。
+// mo 保留签名兼容调用方，恢复路径故意不注入模型。
 func ForSessionACP(ps []providers.Provider, tools []discovery.Tool, s providers.Session, mo ModelOptions, po PermissionOptions) (providers.Launch, error) {
+	_ = mo
 	tool, ok := toolFor(tools, s.ToolID)
 	if !ok {
 		return providers.Launch{}, ErrToolNotRunnable
@@ -196,7 +205,7 @@ func ForSessionACP(ps []providers.Provider, tools []discovery.Tool, s providers.
 	if err != nil {
 		return providers.Launch{}, err
 	}
-	return finalize(l, p, mo, po), nil
+	return applyPermission(l, p, po), nil
 }
 
 // ForWorkspaceACP 产出在工作区新建 ACP 会话的启动描述；toolID 为空时用首选工具。
