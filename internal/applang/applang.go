@@ -31,6 +31,7 @@ func T(key string) string {
 	mu.RLock()
 	lang := current
 	mu.RUnlock()
+	// 两张 catalog map 初始化后只读，故解锁后查询无竞态
 	if lang == "zh-CN" {
 		if v, ok := zhCN[key]; ok {
 			return v
@@ -43,7 +44,8 @@ func T(key string) string {
 }
 
 // Resolve 把配置语言解析为实际语言：非 system 原样返回；
-// system 按 Windows 用户区域/POSIX LANG 判定，解析不出回落 en。
+// system 按 Windows 首选 UI 语言 / POSIX LC_ALL、LANG 判定（POSIX 分支仅在
+// Windows API 返回空时走到），解析不出回落 en。
 func Resolve(configured string) string {
 	if configured != "system" {
 		return configured

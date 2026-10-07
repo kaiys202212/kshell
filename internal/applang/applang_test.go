@@ -32,3 +32,31 @@ func TestResolveNonSystemPassthrough(t *testing.T) {
 		t.Fatalf("Resolve(zh-CN) = %q", got)
 	}
 }
+
+func TestCatalogKeySetsMatch(t *testing.T) {
+	for k := range en {
+		if _, ok := zhCN[k]; !ok {
+			t.Errorf("zhCN 缺少 key %q（中文用户会看到英文混排）", k)
+		}
+	}
+	for k := range zhCN {
+		if _, ok := en[k]; !ok {
+			t.Errorf("en 缺少 key %q", k)
+		}
+	}
+}
+
+func TestSetInvalidFallsBackToEnglish(t *testing.T) {
+	Set("bogus")
+	defer Set("en") // 还原，避免测试间串扰
+	if got := T("tray.exit"); got != "Quit" {
+		t.Fatalf("Set(bogus) 后 tray.exit = %q, want Quit", got)
+	}
+}
+
+func TestResolveSystemValueDomain(t *testing.T) {
+	got := Resolve("system")
+	if got != "en" && got != "zh-CN" {
+		t.Fatalf("Resolve(system) = %q, want en 或 zh-CN", got)
+	}
+}
