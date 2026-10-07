@@ -126,7 +126,8 @@ body {
 /* 正文/终端等需要可选中复制的地方显式放开 */
 input,
 textarea,
-.xterm {
+.xterm,
+.selectable {
   user-select: text;
 }
 

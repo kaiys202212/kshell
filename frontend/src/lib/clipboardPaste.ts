@@ -20,3 +20,11 @@ export function isPasteKey(ev: { key: string; ctrlKey: boolean; metaKey: boolean
   if (ev.shiftKey && !ev.ctrlKey && !ev.metaKey && ev.key === 'Insert') return true;
   return false;
 }
+
+// Ctrl/Cmd+C 或 Ctrl+Insert：有终端选区时由 TerminalView 写入剪贴板
+export function isCopyKey(ev: { key: string; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; altKey: boolean }): boolean {
+  if (ev.altKey || ev.shiftKey) return false;
+  if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'c' || ev.key === 'C')) return true;
+  if (ev.ctrlKey && !ev.metaKey && ev.key === 'Insert') return true;
+  return false;
+}

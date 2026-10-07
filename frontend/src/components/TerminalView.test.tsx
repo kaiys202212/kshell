@@ -46,10 +46,14 @@ vi.mock('@xterm/xterm', () => {
     textarea: HTMLTextAreaElement | null = document.createElement('textarea');
     customKey: ((ev: KeyboardEvent) => boolean) | null = null;
     pasted: string[] = [];
+    selection = '';
 
     constructor(options?: any) {
       this.options = options;
       mocks.terminals.push(this);
+    }
+    getSelection() {
+      return this.selection;
     }
     open(host: HTMLElement) {
       this.host = host;
@@ -189,6 +193,8 @@ interface StubTerminal {
   textarea: HTMLTextAreaElement | null;
   customKey: ((ev: KeyboardEvent) => boolean) | null;
   pasted: string[];
+  selection: string;
+  getSelection: () => string;
 }
 
 interface StubFitAddon {
@@ -570,5 +576,50 @@ describe('TerminalView', () => {
     expect(ev.defaultPrevented).toBe(true);
     expect(open).toHaveBeenCalledWith('https://example.com/t');
     vi.unstubAllGlobals();
+  });
+
+  it('有选区时 Ctrl+C 写入剪贴板并拦截默认行为', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    render(<TerminalView term={TERM} active />);
+    const instance = term();
+    instance.selection = 'copied text';
+
+    const handled = instance.customKey!(
+      new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true }),
+    );
+    expect(handled).toBe(false);
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith('copied text');
+    });
+  });
+
+  it('有选区时 Ctrl+Insert 同样写入剪贴板', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    render(<TerminalView term={TERM} active />);
+    const instance = term();
+    instance.selection = 'ins';
+
+    expect(
+      instance.customKey!(new KeyboardEvent('keydown', { key: 'Insert', ctrlKey: true })),
+    ).toBe(false);
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith('ins');
+    });
+  });
+
+  it('无选区时 Ctrl+C 不拦截、不写剪贴板', () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    render(<TerminalView term={TERM} active />);
+    const instance = term();
+    instance.selection = '';
+
+    const handled = instance.customKey!(
+      new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true }),
+    );
+    expect(handled).toBe(true);
+    expect(writeText).not.toHaveBeenCalled();
   });
 });

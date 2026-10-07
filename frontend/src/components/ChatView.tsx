@@ -137,7 +137,7 @@ export default function ChatView({ chat, active }: Props) {
           if (it.type === 'user' || it.type === 'assistant') {
             return (
               <div key={it.key} className={cn('mb-3', it.type === 'user' ? 'text-right' : '')}>
-                <div className={cn('inline-block max-w-[85%] rounded-md px-3 py-1.5 text-sm',
+                <div className={cn('selectable inline-block max-w-[85%] rounded-md px-3 py-1.5 text-sm',
                   it.type === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
                   {it.type === 'assistant'
                     ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{it.text ?? ''}</ReactMarkdown>
@@ -150,7 +150,7 @@ export default function ChatView({ chat, active }: Props) {
             return (
               <details key={it.key} className="mb-3 text-xs text-muted-foreground">
                 <summary className="cursor-pointer select-none italic">{t('ui.chat.thought')}</summary>
-                <div className="mt-1 whitespace-pre-wrap rounded border border-border px-2 py-1 italic">
+                <div className="selectable mt-1 whitespace-pre-wrap rounded border border-border px-2 py-1 italic">
                   {it.text}
                 </div>
               </details>
@@ -163,7 +163,7 @@ export default function ChatView({ chat, active }: Props) {
                 <span className="font-medium">{it.tool.Title || it.tool.Name || t('ui.chat.tool_fallback')}</span>
                 <span className="ml-2 text-muted-foreground">{it.tool.Kind}{it.tool.Status ? ` · ${it.tool.Status}` : ''}</span>
                 {content && (
-                  <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-muted-foreground">
+                  <pre className="selectable mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-muted-foreground">
                     {content}
                   </pre>
                 )}
@@ -172,14 +172,14 @@ export default function ChatView({ chat, active }: Props) {
           }
           if (it.type === 'plan') {
             return (
-              <ul key={it.key} className="mb-2 list-disc pl-5 text-xs text-muted-foreground">
+              <ul key={it.key} className="selectable mb-2 list-disc pl-5 text-xs text-muted-foreground">
                 {(it.plan ?? []).map((e, i) => <li key={i}>{e.Content}</li>)}
               </ul>
             );
           }
           if (it.type === 'error') {
             return (
-              <div key={it.key} className="mb-2 text-xs text-destructive">
+              <div key={it.key} className="selectable mb-2 text-xs text-destructive">
                 {t('ui.chat.error_prefix', { text: translateBackend(it.text ?? '') })}
               </div>
             );

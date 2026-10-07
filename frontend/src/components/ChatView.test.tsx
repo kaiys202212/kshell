@@ -212,4 +212,38 @@ describe('ChatView', () => {
     window.removeEventListener(OPEN_FILE_EVENT, onOpen);
     expect(seen).toEqual([{ workspace: 'D:\\p', path: 'D:\\p\\README.md' }]);
   });
+
+  // body 默认 user-select:none；可读正文容器须带 selectable，侧栏根节点不加
+  it('消息正文、思考与工具输出容器带 selectable，侧栏根节点不带', () => {
+    useAppStore.setState({
+      chatItems: {
+        c1: [
+          { key: 'm1', type: 'user', text: '用户句', seq: 1 },
+          { key: 'm2', type: 'assistant', text: '助手句', seq: 2 },
+          { key: 'th1', type: 'thought', text: '思考句', seq: 3 },
+          {
+            key: 't1',
+            type: 'tool',
+            seq: 4,
+            tool: {
+              ToolCallID: 'tc1',
+              Title: '读',
+              Kind: 'read',
+              Status: 'completed',
+              Content: [{ type: 'content', content: { type: 'text', text: '工具输出' } }],
+            },
+          },
+        ],
+      },
+    });
+    const { container } = render(<ChatView chat={CHAT} active />);
+    const root = container.querySelector('[data-drop-zone="chat:c1"]');
+    expect(root).not.toBeNull();
+    expect(root).not.toHaveClass('selectable');
+
+    expect(screen.getByText('用户句').closest('.selectable')).not.toBeNull();
+    expect(screen.getByText('助手句').closest('.selectable')).not.toBeNull();
+    expect(screen.getByText('思考句').closest('.selectable')).not.toBeNull();
+    expect(screen.getByText(/工具输出/).closest('.selectable')).not.toBeNull();
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { composeTerminalPaste, isPasteKey } from './clipboardPaste';
+import { composeTerminalPaste, isCopyKey, isPasteKey } from './clipboardPaste';
 
 describe('composeTerminalPaste', () => {
   it('有路径时插入路径（含空格包引号）', () => {
@@ -27,5 +27,20 @@ describe('isPasteKey', () => {
   it('不把 Ctrl+C 或 Alt+V 当粘贴', () => {
     expect(isPasteKey({ ...base, key: 'c', ctrlKey: true })).toBe(false);
     expect(isPasteKey({ ...base, ctrlKey: true, altKey: true })).toBe(false);
+  });
+});
+
+describe('isCopyKey', () => {
+  const base = { key: 'c', ctrlKey: false, metaKey: false, shiftKey: false, altKey: false };
+
+  it('识别 Ctrl+C / Ctrl+Insert', () => {
+    expect(isCopyKey({ ...base, ctrlKey: true })).toBe(true);
+    expect(isCopyKey({ ...base, key: 'Insert', ctrlKey: true })).toBe(true);
+  });
+
+  it('不把 Ctrl+V 或带 Shift/Alt 当复制', () => {
+    expect(isCopyKey({ ...base, key: 'v', ctrlKey: true })).toBe(false);
+    expect(isCopyKey({ ...base, ctrlKey: true, shiftKey: true })).toBe(false);
+    expect(isCopyKey({ ...base, ctrlKey: true, altKey: true })).toBe(false);
   });
 });

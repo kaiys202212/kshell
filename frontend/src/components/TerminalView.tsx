@@ -13,7 +13,7 @@ import type { TerminalInfo } from '../lib/api';
 import { readClipboardPaste, resizeTerminal, writeTerminal } from '../lib/api';
 import { terminalTheme } from '../lib/appearance';
 import { encodeTerminalInput } from '../lib/base64';
-import { composeTerminalPaste, isPasteKey } from '../lib/clipboardPaste';
+import { composeTerminalPaste, isCopyKey, isPasteKey } from '../lib/clipboardPaste';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { handleHref } from '../lib/openHref';
 import { useAppStore } from '../state/store';
@@ -118,16 +118,27 @@ export default function TerminalView({ term, active }: Props) {
       }
     };
     instance.attachCustomKeyEventHandler((ev) => {
-      if (!isPasteKey(ev)) return true;
-      if (ev.type === 'keydown') {
-        skipDomPaste = true;
-        window.clearTimeout(skipDomPasteTimer);
-        skipDomPasteTimer = window.setTimeout(() => {
-          skipDomPaste = false;
-        }, 80);
-        void injectClipboard();
+      if (isPasteKey(ev)) {
+        if (ev.type === 'keydown') {
+          skipDomPaste = true;
+          window.clearTimeout(skipDomPasteTimer);
+          skipDomPasteTimer = window.setTimeout(() => {
+            skipDomPaste = false;
+          }, 80);
+          void injectClipboard();
+        }
+        return false;
       }
-      return false;
+      // WebView2 常不把选区复制进系统剪贴板；有选区时手动写入，无选区放行（勿误拦中断信号）
+      if (isCopyKey(ev)) {
+        const sel = instance.getSelection();
+        if (!sel) return true;
+        if (ev.type === 'keydown') {
+          void navigator.clipboard?.writeText(sel).catch(() => {});
+        }
+        return false;
+      }
+      return true;
     });
     const onPaste = (e: ClipboardEvent) => {
       e.preventDefault();
