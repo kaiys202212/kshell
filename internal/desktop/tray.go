@@ -21,7 +21,9 @@ var (
 	trayQuitItem *systray.MenuItem // 「退出」菜单项
 )
 
-// refreshTrayText 按当前 applang 语言就地刷新菜单文案（SetTitle 可跨 goroutine 调用）。
+// refreshTrayText 按当前 applang 语言就地刷新菜单标题与 tooltip
+// （SetTitle/SetTooltip 均可跨 goroutine 调用，SetTooltip 走同一 update 通道，
+// 运行时刷新受支持）。
 // 托盘未启动时句柄为空，无操作；循环退出后句柄被清空，避免操作已销毁的菜单。
 func refreshTrayText() {
 	trayMenuMu.Lock()
@@ -29,9 +31,11 @@ func refreshTrayText() {
 	trayMenuMu.Unlock()
 	if show != nil {
 		show.SetTitle(applang.T("tray.show_main"))
+		show.SetTooltip(applang.T("tray.show_main_tip"))
 	}
 	if quit != nil {
 		quit.SetTitle(applang.T("tray.exit"))
+		quit.SetTooltip(applang.T("tray.exit_tip"))
 	}
 }
 
@@ -66,9 +70,9 @@ func runTray(icon []byte, onShow, onQuit func()) {
 		systray.SetOnClick(func(systray.IMenu) {
 			trayDispatch(onShow)
 		})
-		mShow := systray.AddMenuItem(applang.T("tray.show_main"), "显示 kshell 主窗口")
+		mShow := systray.AddMenuItem(applang.T("tray.show_main"), applang.T("tray.show_main_tip"))
 		systray.AddSeparator()
-		mQuit := systray.AddMenuItem(applang.T("tray.exit"), "退出 kshell")
+		mQuit := systray.AddMenuItem(applang.T("tray.exit"), applang.T("tray.exit_tip"))
 		mShow.Click(func() { trayDispatch(onShow) })
 		mQuit.Click(func() { trayDispatch(onQuit) })
 		trayMenuMu.Lock()

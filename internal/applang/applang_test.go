@@ -17,6 +17,27 @@ func TestTChinese(t *testing.T) {
 	}
 }
 
+func TestTooltipDefaultsToEnglish(t *testing.T) {
+	Set("en")
+	if got := T("tray.show_main_tip"); got != "Show kshell main window" {
+		t.Fatalf("en tray.show_main_tip = %q", got)
+	}
+	if got := T("tray.exit_tip"); got != "Quit kshell" {
+		t.Fatalf("en tray.exit_tip = %q", got)
+	}
+}
+
+func TestTooltipChinese(t *testing.T) {
+	Set("zh-CN")
+	defer Set("en") // 还原，避免测试间串扰
+	if got := T("tray.show_main_tip"); got != "显示 kshell 主窗口" {
+		t.Fatalf("zh tray.show_main_tip = %q", got)
+	}
+	if got := T("tray.exit_tip"); got != "退出 kshell" {
+		t.Fatalf("zh tray.exit_tip = %q", got)
+	}
+}
+
 func TestUnknownKeyReturnsKey(t *testing.T) {
 	Set("en")
 	if got := T("no.such.key"); got != "no.such.key" {
