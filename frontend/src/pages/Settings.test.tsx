@@ -764,4 +764,15 @@ describe('Settings', () => {
     });
     expect(mocks.applyUpdate).toHaveBeenCalledTimes(1);
   });
+
+  it('气泡提示音开关：默认勾选，切换写入 store', () => {
+    useAppStore.setState({ notifySound: true });
+    render(<Settings />);
+    const box = screen.getByRole('checkbox', { name: '气泡提示音' });
+    expect(box).toBeChecked();
+    fireEvent.click(box);
+    expect(useAppStore.getState().notifySound).toBe(false);
+    fireEvent.click(box);
+    expect(useAppStore.getState().notifySound).toBe(true);
+  });
 });

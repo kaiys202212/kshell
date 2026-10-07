@@ -103,6 +103,8 @@ export default function Settings() {
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateError, setUpdateError] = useState('');
   const notify = useAppStore((s) => s.notify);
+  const notifySound = useAppStore((s) => s.notifySound);
+  const setNotifySound = useAppStore((s) => s.setNotifySound);
 
   const loadRecipes = async (list: ToolInfo[]) => {
     const pairs = await Promise.all(
@@ -532,6 +534,22 @@ export default function Settings() {
                     </Button>
                   ))}
                 </div>
+              </section>
+
+              <section className="mb-5 rounded border border-border bg-card p-3.5">
+                <h2 className="mb-3 text-sm font-medium">通知</h2>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={notifySound}
+                    onChange={(e) => setNotifySound(e.currentTarget.checked)}
+                    aria-label="气泡提示音"
+                  />
+                  气泡提示音
+                </label>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  agent 通知气泡弹出时播放提示音（完成轻音、等待确认与出错重音）
+                </p>
               </section>
 
               <section className="mb-5 rounded border border-border bg-card p-3.5">
