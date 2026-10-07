@@ -16,6 +16,7 @@ beforeEach(() => {
     terminalBusy: {},
     agentNotices: [],
     focusTermKey: null,
+    notifySound: true,
   });
 });
 
@@ -82,7 +83,7 @@ describe('store', () => {
       state: Record<string, unknown>;
     };
     expect(Object.keys(parsed.state)).toEqual(
-      expect.arrayContaining(['openTabs', 'activeTabId', 'layout']),
+      expect.arrayContaining(['openTabs', 'activeTabId', 'layout', 'notifySound']),
     );
     expect(parsed.state).not.toHaveProperty('toasts');
     expect(parsed.state).not.toHaveProperty('terminals');
@@ -238,6 +239,16 @@ describe('store', () => {
     expect(notices.length).toBeLessThanOrEqual(8);
     // 保留最新的一条
     expect(notices[notices.length - 1].termKey).toBe('k11');
+  });
+
+  it('notifySound 默认开启，setNotifySound 切换并持久化到 kshell-tabs', () => {
+    expect(useAppStore.getState().notifySound).toBe(true);
+    useAppStore.getState().setNotifySound(false);
+    expect(useAppStore.getState().notifySound).toBe(false);
+    const parsed = JSON.parse(localStorage.getItem('kshell-tabs')!) as {
+      state: Record<string, unknown>;
+    };
+    expect(parsed.state.notifySound).toBe(false);
   });
 
   it('agent 通知不入 localStorage（与页签持久化分离）', () => {

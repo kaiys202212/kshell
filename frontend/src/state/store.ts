@@ -139,7 +139,7 @@ interface AppState {
   appearance: AppearanceInfo;
   setAppearance(info: AppearanceInfo): void;
 
-  // agent 通知气泡队列（notify:agent 事件；不持久化，6s 自动消失由气泡组件驱动）
+  // agent 通知气泡队列（notify:agent 事件；不持久化，10s 自动消失由气泡组件驱动）
   agentNotices: AgentNotice[];
   pushAgentNotice(p: Omit<AgentNotice, 'id'>): void;
   dismissAgentNotice(id: number): void;
@@ -151,6 +151,10 @@ interface AppState {
   focusTermKey: { termKey: string; seq: number } | null;
   requestFocusTerm(termKey: string): void;
   clearFocusTerm(seq: number): void;
+
+  // 气泡提示音开关（默认开）；随 kshell-tabs 持久化，播放时读当前值
+  notifySound: boolean;
+  setNotifySound(v: boolean): void;
 }
 
 // clampLayout 把任意输入收敛到合法范围（拖动、持久化恢复、测试都走这里）。
@@ -361,6 +365,9 @@ export const useAppStore = create<AppState>()(
         set((s) => ({ agentNotices: s.agentNotices.filter((n) => n.id !== id) })),
       clearAgentNotices: () => set({ agentNotices: [] }),
 
+      notifySound: true,
+      setNotifySound: (notifySound) => set({ notifySound }),
+
       focusTermKey: null,
       requestFocusTerm: (termKey) => set({ focusTermKey: { termKey, seq: nextFocusSeq++ } }),
       clearFocusTerm: (seq) =>
@@ -375,6 +382,7 @@ export const useAppStore = create<AppState>()(
         activeTabId: s.activeTabId,
         layout: s.layout,
         newSessionTool: s.newSessionTool,
+        notifySound: s.notifySound,
       }),
     },
   ),
