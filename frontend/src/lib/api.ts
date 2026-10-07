@@ -379,6 +379,49 @@ export interface UpdateInfo {
   Reason: string;
 }
 
+export interface SkillSummary {
+  ID: string;
+  SkillID: string;
+  Name: string;
+  Source: string;
+  Installs: number;
+}
+
+export interface SkillDetail {
+  ID: string;
+  Name: string;
+  Description: string;
+  Source: string;
+  BodyPreview: string;
+}
+
+export interface SkillTargetInfo {
+  ToolID: string;
+  Root: string;
+  DefaultChecked: boolean;
+}
+
+export interface SkillTargetRecord {
+  Mode: string;
+  Path: string;
+}
+
+export interface InstalledSkillInfo {
+  ID: string;
+  Name: string;
+  Source: string;
+  InstalledAt: string;
+  EntityPath: string;
+  Targets: Record<string, SkillTargetRecord> | null;
+}
+
+export interface InstallSkillResult {
+  ID: string;
+  Name: string;
+  Targets: Record<string, SkillTargetRecord> | null;
+  Errors?: Record<string, string> | null;
+}
+
 interface AppBindings {
   ScanSessions(): Promise<unknown>;
   GetWorkspaces(): Promise<Workspace[]>;
@@ -433,6 +476,12 @@ interface AppBindings {
   DeleteConnection(id: string): Promise<void>;
   ExecRemote(connID: string, cmd: string): Promise<RemoteResult>;
   GetTools(): Promise<ToolInfo[]>;
+  SearchSkills(query: string, limit: number): Promise<SkillSummary[]>;
+  GetSkillDetail(id: string): Promise<SkillDetail>;
+  ListSkillTargets(): Promise<SkillTargetInfo[]>;
+  InstallSkill(id: string, toolIDs: string[]): Promise<InstallSkillResult>;
+  ListInstalledSkills(): Promise<InstalledSkillInfo[]>;
+  UninstallSkill(id: string, removeEntity: boolean): Promise<void>;
   NeedsAgentSetup(): Promise<boolean>;
   DismissAgentSetup(): Promise<void>;
   GetToolInstallRecipe(id: string): Promise<InstallRecipeView>;
@@ -902,6 +951,42 @@ export async function getTools(): Promise<ToolInfo[]> {
   const a = app();
   if (!a) return [];
   return a.GetTools();
+}
+
+export async function searchSkills(query: string, limit = 20): Promise<SkillSummary[]> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  return a.SearchSkills(query, limit);
+}
+
+export async function getSkillDetail(id: string): Promise<SkillDetail> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  return a.GetSkillDetail(id);
+}
+
+export async function listSkillTargets(): Promise<SkillTargetInfo[]> {
+  const a = app();
+  if (!a) return [];
+  return a.ListSkillTargets();
+}
+
+export async function installSkill(id: string, toolIDs: string[]): Promise<InstallSkillResult> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  return a.InstallSkill(id, toolIDs);
+}
+
+export async function listInstalledSkills(): Promise<InstalledSkillInfo[]> {
+  const a = app();
+  if (!a) return [];
+  return a.ListInstalledSkills();
+}
+
+export async function uninstallSkill(id: string, removeEntity: boolean): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.UninstallSkill(id, removeEntity);
 }
 
 export async function needsAgentSetup(): Promise<boolean> {

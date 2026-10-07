@@ -68,15 +68,24 @@ func (c *Client) Search(ctx context.Context, q string, limit int) ([]Summary, er
 		return nil, fmt.Errorf("%w|http %d", errSearchFailed, res.StatusCode)
 	}
 	var parsed struct {
-		Skills []Summary `json:"skills"`
+		Skills []struct {
+			ID       string `json:"id"`
+			SkillID  string `json:"skillId"`
+			Name     string `json:"name"`
+			Source   string `json:"source"`
+			Installs int64  `json:"installs"`
+		} `json:"skills"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return nil, fmt.Errorf("%w|%v", errSearchFailed, err)
 	}
-	if parsed.Skills == nil {
-		return []Summary{}, nil
+	out := make([]Summary, 0, len(parsed.Skills))
+	for _, s := range parsed.Skills {
+		out = append(out, Summary{
+			ID: s.ID, SkillID: s.SkillID, Name: s.Name, Source: s.Source, Installs: s.Installs,
+		})
 	}
-	return parsed.Skills, nil
+	return out, nil
 }
 
 // Download 按 id（owner/repo/skillId）下载 skill 文件集合。

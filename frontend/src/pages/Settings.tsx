@@ -50,6 +50,7 @@ import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
 import { ProvidersEditor } from '../components/ProvidersEditor';
+import { SkillPlaza } from '../components/SkillPlaza';
 import { normalizeSpec, withoutBuiltinSpecs, type CustomProviderSpec } from '../lib/providersForm';
 
 const MODEL_AGENTS = [
@@ -68,12 +69,13 @@ const BUILTIN_LANGUAGE_CODES = ['en', 'zh-CN', 'system'];
 // translateBackend 会把首行后的内容当参数吞掉，导致漏译）
 const translateLog = (text: string): string => text.split('\n').map(translateBackend).join('\n');
 
-type Section = 'general' | 'model' | 'tools';
+type Section = 'general' | 'model' | 'tools' | 'skills';
 
 const SECTIONS: { id: Section; labelKey: string }[] = [
   { id: 'general', labelKey: 'ui.settings.nav.general' },
   { id: 'model', labelKey: 'ui.settings.nav.model' },
   { id: 'tools', labelKey: 'ui.settings.nav.tools' },
+  { id: 'skills', labelKey: 'ui.settings.nav.skills' },
 ];
 
 export default function Settings() {
@@ -1087,6 +1089,8 @@ export default function Settings() {
               />
             </>
           )}
+
+          {section === 'skills' && <SkillPlaza />}
         </div>
       </div>
     </div>

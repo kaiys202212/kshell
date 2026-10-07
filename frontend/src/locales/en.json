@@ -26,6 +26,16 @@
     "language": {
       "locales_not_dir": "Locales path is not a directory: {{0}}"
     },
+    "skills": {
+      "query_too_short": "Search query must be at least 2 characters",
+      "rate_limited": "skills.sh rate limited; try again later",
+      "search_failed": "Skill search failed: {{0}}",
+      "download_failed": "Skill download failed: {{0}}",
+      "invalid_skill": "Invalid skill (missing or incomplete SKILL.md)",
+      "invalid_id": "Invalid skill id",
+      "target_conflict": "Target path already exists and is not this skill",
+      "no_targets": "No install targets succeeded"
+    },
     "clipboard": {
       "save_image_failed": "Failed to save clipboard image: {{0}}",
       "dib_too_short": "DIB too short",
@@ -201,7 +211,33 @@
         "aria": "Settings sections",
         "general": "General",
         "model": "Model",
-        "tools": "Tools"
+        "tools": "Tools",
+        "skills": "Skill Plaza"
+      },
+      "skills": {
+        "plaza_title": "Browse skills",
+        "plaza_desc": "Search the skills.sh registry and install Agent Skills into ~/.kshell/skills, then link them into each detected agent.",
+        "search_placeholder": "Search skills (min 2 characters)",
+        "recommend": "Showing recommended results. Type to search.",
+        "searching": "Searching…",
+        "empty": "No skills found",
+        "install": "Install",
+        "confirm_install": "Install",
+        "installing": "Installing…",
+        "cancel": "Cancel",
+        "targets": "Install for agents",
+        "no_targets": "No supported agents detected. Install an agent in Tools first.",
+        "need_target": "Select at least one agent",
+        "trust_hint": "Skills may include scripts. Install only from sources you trust.",
+        "no_preview": "(no preview)",
+        "installed_ok": "Installed",
+        "installed_copy": "Installed (copy mode on some agents; symlink unavailable)",
+        "partial_fail": "Installed with some agent targets failed",
+        "installed_title": "Installed skills",
+        "installed_empty": "No skills installed yet",
+        "copy_mode": "copy",
+        "uninstall": "Uninstall",
+        "uninstalled": "Uninstalled"
       },
       "appearance": {
         "title": "Appearance",

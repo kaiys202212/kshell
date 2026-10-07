@@ -26,6 +26,16 @@
     "language": {
       "locales_not_dir": "locales 路径不是目录: {{0}}"
     },
+    "skills": {
+      "query_too_short": "搜索词至少 2 个字符",
+      "rate_limited": "skills.sh 限流，请稍后再试",
+      "search_failed": "搜索失败: {{0}}",
+      "download_failed": "下载失败: {{0}}",
+      "invalid_skill": "无效 skill（缺少或不完整的 SKILL.md）",
+      "invalid_id": "无效的 skill id",
+      "target_conflict": "目标路径已存在且不是本 skill",
+      "no_targets": "没有成功安装到任何目标"
+    },
     "clipboard": {
       "save_image_failed": "保存剪贴板图片失败: {{0}}",
       "dib_too_short": "DIB 过短",
@@ -201,7 +211,33 @@
         "aria": "设置分区",
         "general": "通用",
         "model": "模型",
-        "tools": "工具"
+        "tools": "工具",
+        "skills": "Skill 广场"
+      },
+      "skills": {
+        "plaza_title": "浏览 Skill",
+        "plaza_desc": "搜索 skills.sh 注册表，将 Agent Skill 安装到 ~/.kshell/skills，再链接到本机已检测的各 agent。",
+        "search_placeholder": "搜索 skill（至少 2 个字符）",
+        "recommend": "当前为推荐结果，输入关键词可搜索。",
+        "searching": "搜索中…",
+        "empty": "未找到 skill",
+        "install": "安装",
+        "confirm_install": "确认安装",
+        "installing": "安装中…",
+        "cancel": "取消",
+        "targets": "安装到 agent",
+        "no_targets": "未检测到支持的 agent，请先在「工具」中安装。",
+        "need_target": "请至少选择一个 agent",
+        "trust_hint": "Skill 可能包含脚本，请仅安装可信来源。",
+        "no_preview": "（无预览）",
+        "installed_ok": "安装完成",
+        "installed_copy": "安装完成（部分目标为副本模式，无法创建链接）",
+        "partial_fail": "已安装，但部分 agent 目标失败",
+        "installed_title": "已安装",
+        "installed_empty": "尚未安装任何 skill",
+        "copy_mode": "副本",
+        "uninstall": "卸载",
+        "uninstalled": "已卸载"
       },
       "appearance": {
         "title": "外观",
