@@ -6,6 +6,7 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { Button } from './ui/button';
 import { readFileBytes } from '../lib/api';
+import { backendError } from '../lib/errors';
 
 export interface PdfPreviewProps {
   wsPath: string;
@@ -67,7 +68,7 @@ export default function PdfPreview({ wsPath, path }: PdfPreviewProps) {
         setLoading(false);
       } catch (e) {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : String(e));
+        setError(backendError(e));
         setLoading(false);
       }
     })();
@@ -80,7 +81,10 @@ export default function PdfPreview({ wsPath, path }: PdfPreviewProps) {
       docRef.current = null;
       if (task) void task.destroy();
     };
-  }, [wsPath, path, t]);
+    // t 不列入依赖：切语言不应重跑 PDF 加载；错误串在设置时经 backendError 翻译固化，
+    // 切语言不回溯重译属可接受的瞬时状态
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsPath, path]);
 
   const renderPage = useCallback(async (pageNum: number, gen: number) => {
     const doc = docRef.current;

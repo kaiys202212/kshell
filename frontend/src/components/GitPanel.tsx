@@ -114,6 +114,8 @@ export default function GitPanel({
     } catch (e) {
       notify(t('ui.git.read_failed', { err: backendError(e) }), 'error');
     }
+    // t 保留在依赖：load 仅重取 git 状态（setSnap），不触碰用户输入/选择（msg/repoRel），
+    // 切语言重跑无副作用，保留可让错误 toast 用当前语言；故与文件加载 effect 的取舍不同。
   }, [wsPath, repoRel, notify, t]);
 
   const loadLog = useCallback(async () => {

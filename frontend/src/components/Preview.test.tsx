@@ -2,6 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import i18next from 'i18next';
 import Preview from './Preview';
 import { useAppStore } from '../state/store';
 import { tt } from '../test/i18n';
@@ -138,8 +139,32 @@ describe('Preview', () => {
     expect(await screen.findByText(tt('err.files.out_of_workspace'))).toBeInTheDocument();
   });
 
-  it('切换文件路径时重新整读', async () => {
-    mocks.readFileForEdit
+  it('切换语言不重跑整读加载（未保存草稿不被丢弃）', async () => {
+    mocks.readFileForEdit.mockResolvedValue({ Text: 'draft', EOL: 'lf', Size: 5 });
+    render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);
+    const area = (await screen.findByRole('textbox', { name: '编辑文件内容' })) as HTMLTextAreaElement;
+    await act(async () => {
+      fireEvent.change(area, { target: { value: 'draft-edited' } });
+    });
+    const before = mocks.readFileForEdit.mock.calls.length;
+    expect(before).toBe(1);
+    expect(screen.getByRole('textbox', { name: '编辑文件内容' })).toHaveValue('draft-edited');
+
+    try {
+      await act(async () => {
+        await i18next.changeLanguage('zh-CN');
+      });
+      // 加载 effect 未因 t 变化重跑：调用次数不变、草稿仍在
+      expect(mocks.readFileForEdit.mock.calls.length).toBe(before);
+      expect(screen.getByRole('textbox', { name: '编辑文件内容' })).toHaveValue('draft-edited');
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage('en');
+      });
+    }
+  });
+
+  it('切换文件路径时重新整读', async () => {    mocks.readFileForEdit
       .mockResolvedValueOnce({ Text: 'a', EOL: 'lf', Size: 1 })
       .mockResolvedValueOnce({ Text: 'b', EOL: 'lf', Size: 1 });
     const { rerender } = render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);

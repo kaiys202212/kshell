@@ -125,9 +125,11 @@ export default function Preview({
     return () => {
       cancelled = true;
     };
-    // onDirtyChange 仅在切路径时清脏，不列入依赖以免父级重渲染反复加载
+    // onDirtyChange 仅在切路径时清脏，不列入依赖以免父级重渲染反复加载；
+    // t 也不列入依赖：本 effect 会重置 dirty/baseline，若切语言重跑会丢弃未保存草稿。
+    // 错误串在设置时即经 backendError 翻译固化，切语言不回溯重译属可接受的瞬时状态。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsPath, path, wantEdit, isMedia, t]);
+  }, [wsPath, path, wantEdit, isMedia]);
 
   const notify = useAppStore.getState().notify;
 
