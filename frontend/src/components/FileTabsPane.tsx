@@ -1,4 +1,5 @@
 // 文件区：VS Code 式预览页签 + 常挂载 Preview 实例。
+import { useTranslation } from 'react-i18next';
 import { cn } from '../lib/cn';
 import { closeTab, fileTabLabel, parseDiffTabPath, pinTab, type FileTabsState } from '../lib/fileTabs';
 import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
@@ -20,8 +21,9 @@ export default function FileTabsPane({
   onChange: (next: FileTabsState) => void;
   onDirty: (path: string, isDirty: boolean) => void;
 }) {
+  const { t: tr } = useTranslation();
   const closeOne = (path: string) => {
-    if (dirty[path] && !window.confirm('有未保存的修改，关闭将丢弃。确定关闭？')) return;
+    if (dirty[path] && !window.confirm(tr('ui.files.close_dirty_confirm'))) return;
     onDirty(path, false);
     onChange(closeTab(state, path));
   };
@@ -31,7 +33,7 @@ export default function FileTabsPane({
       <div
         className="flex shrink-0 items-stretch overflow-x-auto border-b border-border bg-muted/30"
         role="tablist"
-        aria-label="文件页签"
+        aria-label={tr('ui.files.tabs_aria')}
       >
         {state.tabs.map((t) => {
           const selected = state.activePath === t.path;
@@ -65,7 +67,7 @@ export default function FileTabsPane({
                   'ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-sm leading-none text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground',
                   selected ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100',
                 )}
-                aria-label={`关闭 ${label}`}
+                aria-label={tr('ui.files.close_tab', { label })}
                 onClick={(e) => {
                   e.stopPropagation();
                   closeOne(t.path);

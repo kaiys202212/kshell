@@ -1,6 +1,7 @@
 // PDF 预览：动态加载 pdfjs-dist@6，worker 经 Vite `?url` 打包。
 // workerSrc 对应 pdfjs-dist/build/pdf.worker.min.mjs（与主包大版本锁定）。
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { Button } from './ui/button';
@@ -24,6 +25,7 @@ function clampPage(page: number, numPages: number): number {
 }
 
 export default function PdfPreview({ wsPath, path }: PdfPreviewProps) {
+  const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const docRef = useRef<PDFDocumentProxy | null>(null);
   const renderGenRef = useRef(0);
@@ -50,7 +52,7 @@ export default function PdfPreview({ wsPath, path }: PdfPreviewProps) {
         const bytes = await readFileBytes(wsPath, path);
         if (cancelled) return;
         if (!bytes) {
-          setError('无法读取 PDF');
+          setError(t('ui.files.pdf_read_failed'));
           setLoading(false);
           return;
         }
@@ -130,7 +132,7 @@ export default function PdfPreview({ wsPath, path }: PdfPreviewProps) {
     return <p className="p-3 text-sm text-destructive">{error}</p>;
   }
   if (loading) {
-    return <p className="p-3 text-sm text-muted-foreground">加载中…</p>;
+    return <p className="p-3 text-sm text-muted-foreground">{t('ui.files.loading')}</p>;
   }
 
   const atFirst = page <= 1;
@@ -146,7 +148,7 @@ export default function PdfPreview({ wsPath, path }: PdfPreviewProps) {
           disabled={atFirst}
           onClick={() => setPage((p) => clampPage(p - 1, numPages))}
         >
-          上一页
+          {t('ui.files.prev_page')}
         </Button>
         <Button
           type="button"
@@ -155,7 +157,7 @@ export default function PdfPreview({ wsPath, path }: PdfPreviewProps) {
           disabled={atLast}
           onClick={() => setPage((p) => clampPage(p + 1, numPages))}
         >
-          下一页
+          {t('ui.files.next_page')}
         </Button>
         <span className="text-xs text-muted-foreground">
           {page} / {numPages}

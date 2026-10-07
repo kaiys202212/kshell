@@ -1,8 +1,10 @@
 // 文件预览/编辑：可编辑文件打开即可写 CodeEditor（无编辑/预览切换）；
 // 图/PDF/二进制只读。Ctrl/Cmd+S 保存后仍留在编辑器。草稿随本实例，父级常挂载页签。
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 import { previewFile, readFileForEdit, saveFile } from '../lib/api';
 import type { FilePreview } from '../lib/api';
+import { backendError, translateBackend } from '../lib/errors';
 import { isEditableKind, previewKind, type PreviewKind } from '../lib/fileKind';
 import { refreshGitStatus } from '../lib/git';
 import { useAppStore } from '../state/store';
@@ -42,6 +44,7 @@ export default function Preview({
   onDirtyChange?: (dirty: boolean) => void;
   onEdited?: () => void;
 }) {
+  const { t } = useTranslation();
   const [data, setData] = useState<FilePreview | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -87,14 +90,14 @@ export default function Preview({
         .then((p) => {
           if (cancelled || activePathRef.current !== reqPath) return;
           if (!p) {
-            setError('未检测到 kshell 桌面端绑定，请在桌面端运行');
+            setError(t('ui.files.binding_missing'));
             return;
           }
           setData(p);
         })
         .catch((e: unknown) => {
           if (cancelled || activePathRef.current !== reqPath) return;
-          setError(e instanceof Error ? e.message : String(e));
+          setError(backendError(e));
         });
 
     const done = () => {
@@ -106,7 +109,7 @@ export default function Preview({
         .then((ec) => {
           if (cancelled || activePathRef.current !== reqPath) return;
           if (!ec) {
-            setError('未检测到 kshell 桌面端绑定，请在桌面端运行');
+            setError(t('ui.files.binding_missing'));
             return;
           }
           setText(ec.Text);
@@ -135,7 +138,7 @@ export default function Preview({
     saveFile(wsPath, reqPath, text, eol)
       .then(() => {
         if (activePathRef.current !== reqPath) return;
-        notify('已保存', 'success');
+        notify(t('ui.files.saved'), 'success');
         baselineRef.current = text;
         setDirty(false);
         onDirtyChange?.(false);
@@ -143,7 +146,7 @@ export default function Preview({
       })
       .catch((e: unknown) => {
         if (activePathRef.current !== reqPath) return;
-        notify(e instanceof Error ? e.message : String(e), 'error');
+        notify(backendError(e), 'error');
       })
       .finally(() => setSaving(false));
   };
@@ -176,12 +179,18 @@ export default function Preview({
     if (editable) return null;
     if (!data) return null;
     if (data.Binary) {
-      return <p className="text-sm text-muted-foreground">{data.Info || '二进制文件，无法预览'}</p>;
+      return (
+        <p className="text-sm text-muted-foreground">
+          {translateBackend(data.Info) || t('ui.files.binary_preview_unavailable')}
+        </p>
+      );
     }
     const content = previewText(data);
     return (
       <>
-        {data.Info && <p className="shrink-0 mb-2 text-xs text-muted-foreground">{data.Info}</p>}
+        {data.Info && (
+          <p className="shrink-0 mb-2 text-xs text-muted-foreground">{translateBackend(data.Info)}</p>
+        )}
         <div className="min-h-0 flex-1 overflow-hidden">
           <CodeEditor value={content} readOnly path={path} theme={cmTheme} />
         </div>
@@ -195,7 +204,7 @@ export default function Preview({
         data-testid="preview-body"
         className="flex min-h-0 flex-1 flex-col overflow-hidden"
       >
-        {!path && <EmptyState title="从右侧文件树选择文件查看预览" />}
+        {!path && <EmptyState title={t('ui.files.pick_from_tree')} />}
         {loading && (
           <div className="flex flex-col gap-2">
             {[0, 1, 2, 3, 4, 5].map((i) => (

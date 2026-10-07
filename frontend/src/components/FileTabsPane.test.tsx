@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import FileTabsPane from './FileTabsPane';
 import { emptyFileTabs, openPreview, diffTabPath } from '../lib/fileTabs';
+import { tt } from '../test/i18n';
 
 vi.mock('./Preview', () => ({
   default: ({ path }: { path: string | null }) => <div data-testid="preview">{path ?? 'empty'}</div>,
@@ -24,7 +25,7 @@ describe('FileTabsPane', () => {
         onDirty={() => {}}
       />,
     );
-    expect(screen.queryByRole('tablist', { name: '文件页签' })?.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    expect(screen.queryByRole('tablist', { name: tt('ui.files.tabs_aria') })?.querySelectorAll('[role="tab"]')).toHaveLength(0);
     expect(screen.getByTestId('preview')).toHaveTextContent('empty');
   });
 
@@ -36,7 +37,7 @@ describe('FileTabsPane', () => {
     );
     const tab = screen.getByRole('tab', { name: 'a.ts' });
     expect(tab.closest('[data-preview="true"]')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '关闭 a.ts' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.files.close_tab').replace('{{label}}', 'a.ts') }));
     expect(onChange).toHaveBeenCalled();
   });
 
@@ -53,7 +54,7 @@ describe('FileTabsPane', () => {
         onDirty={() => {}}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: '关闭 a.ts' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.files.close_tab').replace('{{label}}', 'a.ts') }));
     expect(confirmSpy).toHaveBeenCalled();
     expect(onChange).not.toHaveBeenCalled();
     confirmSpy.mockRestore();

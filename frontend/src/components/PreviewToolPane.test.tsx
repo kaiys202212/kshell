@@ -1,8 +1,10 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import i18next from 'i18next';
 import PreviewToolPane, { toolTermLabel } from './PreviewToolPane';
 import type { TerminalInfo } from '../lib/api';
+import { tt } from '../test/i18n';
 
 vi.mock('./TerminalView', () => ({
   default: ({ term, active }: { term: TerminalInfo; active: boolean }) => (
@@ -35,9 +37,11 @@ describe('toolTermLabel', () => {
       term({ ID: 'b', Kind: 'shell' }),
       term({ ID: 'c', Kind: 'ssh', Title: '生产机' }),
     ];
-    expect(toolTermLabel(list, list[0])).toBe('终端');
-    expect(toolTermLabel(list, list[1])).toBe('终端 2');
-    expect(toolTermLabel(list, list[2])).toBe('生产机');
+    expect(toolTermLabel(list, list[0], i18next.t)).toBe(tt('ui.terminal.label'));
+    expect(toolTermLabel(list, list[1], i18next.t)).toBe(
+      tt('ui.terminal.label_n').replace('{{n}}', '2'),
+    );
+    expect(toolTermLabel(list, list[2], i18next.t)).toBe('生产机');
   });
 });
 
@@ -54,7 +58,7 @@ describe('PreviewToolPane', () => {
         onNewShell={onNewShell}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: '新建终端' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.terminal.new') }));
     expect(onNewShell).toHaveBeenCalled();
   });
 
@@ -72,7 +76,7 @@ describe('PreviewToolPane', () => {
       />,
     );
     expect(screen.getByTestId('terminal-sh1')).toHaveAttribute('data-active', 'true');
-    fireEvent.click(screen.getByRole('tab', { name: '终端' }));
+    fireEvent.click(screen.getByRole('tab', { name: tt('ui.terminal.label') }));
     expect(onSubTab).toHaveBeenCalledWith('sh1');
   });
 
@@ -89,7 +93,11 @@ describe('PreviewToolPane', () => {
         onNewShell={() => {}}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: '关闭 终端' }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: tt('ui.terminal.close_tab').replace('{{label}}', tt('ui.terminal.label')),
+      }),
+    );
     expect(onClose).toHaveBeenCalledWith('sh1');
   });
 });

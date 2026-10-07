@@ -1,4 +1,6 @@
 // 中心「终端」页签内容：shell/ssh 多页签 + +。常挂载 TerminalView。
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { cn } from '../lib/cn';
 import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
 import type { TerminalInfo } from '../lib/api';
@@ -9,11 +11,11 @@ const subTabBase = `group ${TAB_BASE} h-7 max-w-44 text-xs`;
 const subTabActive = TAB_ACTIVE;
 
 /** 本地 shell 按出现顺序编号；SSH 用连接名。 */
-export function toolTermLabel(terms: TerminalInfo[], t: TerminalInfo): string {
-  if (t.Kind === 'ssh') return t.Title || 'SSH';
+export function toolTermLabel(terms: TerminalInfo[], target: TerminalInfo, t: TFunction): string {
+  if (target.Kind === 'ssh') return target.Title || 'SSH';
   const shells = terms.filter((x) => x.Kind === 'shell');
-  const idx = shells.findIndex((x) => x.ID === t.ID);
-  return idx <= 0 ? '终端' : `终端 ${idx + 1}`;
+  const idx = shells.findIndex((x) => x.ID === target.ID);
+  return idx <= 0 ? t('ui.terminal.label') : t('ui.terminal.label_n', { n: idx + 1 });
 }
 
 export default function PreviewToolPane({
@@ -31,29 +33,30 @@ export default function PreviewToolPane({
   onCloseTerminal: (id: string) => void;
   onNewShell: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div
         className="flex shrink-0 items-stretch overflow-x-auto border-b border-border bg-muted/30"
         role="tablist"
-        aria-label="终端子页签"
+        aria-label={t('ui.terminal.tabs_aria')}
       >
-        {terms.map((t) => {
-          const label = toolTermLabel(terms, t);
-          const selected = subTab === t.ID;
+        {terms.map((term) => {
+          const label = toolTermLabel(terms, term, t);
+          const selected = subTab === term.ID;
           return (
             <div
-              key={t.ID}
+              key={term.ID}
               className={cn(subTabBase, selected && subTabActive)}
-              onClick={() => onSubTab(t.ID)}
+              onClick={() => onSubTab(term.ID)}
               onAuxClick={(e) => {
                 if (e.button === 1) {
                   e.preventDefault();
-                  onCloseTerminal(t.ID);
+                  onCloseTerminal(term.ID);
                 }
               }}
             >
-              {t.Status === 'exited' && (
+              {term.Status === 'exited' && (
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground" />
               )}
               <button role="tab" aria-selected={selected} className="min-w-0 truncate text-xs" title={label}>
@@ -64,10 +67,10 @@ export default function PreviewToolPane({
                   'ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-sm leading-none text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground',
                   selected ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100',
                 )}
-                aria-label={`关闭 ${label}`}
+                aria-label={t('ui.terminal.close_tab', { label })}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onCloseTerminal(t.ID);
+                  onCloseTerminal(term.ID);
                 }}
               >
                 ×
@@ -79,8 +82,8 @@ export default function PreviewToolPane({
         <button
           type="button"
           className={cn(subTabBase, 'px-2 text-muted-foreground')}
-          aria-label="新建终端"
-          title="新建本地终端"
+          aria-label={t('ui.terminal.new')}
+          title={t('ui.terminal.new_local')}
           onClick={onNewShell}
         >
           +
@@ -88,14 +91,14 @@ export default function PreviewToolPane({
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
-        {terms.length === 0 && <EmptyState title="点 + 新建本地终端，或从右侧 SSH 打开远程会话" />}
-        {terms.map((t) => (
+        {terms.length === 0 && <EmptyState title={t('ui.terminal.empty_hint')} />}
+        {terms.map((term) => (
           <div
-            key={t.ID}
-            className={cn('h-full', subTab !== t.ID && 'hidden')}
+            key={term.ID}
+            className={cn('h-full', subTab !== term.ID && 'hidden')}
             style={{ animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' }}
           >
-            <TerminalView term={t} active={active && subTab === t.ID} />
+            <TerminalView term={term} active={active && subTab === term.ID} />
           </div>
         ))}
       </div>

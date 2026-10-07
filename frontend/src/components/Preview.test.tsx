@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Preview from './Preview';
 import { useAppStore } from '../state/store';
+import { tt } from '../test/i18n';
 
 const mocks = vi.hoisted(() => ({
   previewFile: vi.fn(),
@@ -59,7 +60,7 @@ beforeEach(() => {
 describe('Preview', () => {
   it('未选择文件时显示占位文案，不发起请求', () => {
     render(<Preview wsPath="D:\\proj" path={null} />);
-    expect(screen.getByText('从右侧文件树选择文件查看预览')).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.files.pick_from_tree'))).toBeInTheDocument();
     expect(mocks.readFileForEdit).not.toHaveBeenCalled();
     expect(mocks.previewFile).not.toHaveBeenCalled();
   });
@@ -112,26 +113,29 @@ describe('Preview', () => {
     expect(body.className).toMatch(/flex-1/);
   });
 
-  it('整读失败后回退 previewFile：二进制只展示 Info', async () => {
+  it('整读失败后回退 previewFile：二进制只展示 Info（wire key 经 translateBackend）', async () => {
     mocks.readFileForEdit.mockRejectedValue(new Error('二进制文件'));
     mocks.previewFile.mockResolvedValue({
       Lines: [],
       Truncated: false,
       Binary: true,
-      Info: '二进制文件 · 1.2 MB',
+      Info: 'preview.binary_file|1234567|2026-10-07 10:00',
     });
     render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\blob.bin'} />);
 
-    expect(await screen.findByText('二进制文件 · 1.2 MB')).toBeInTheDocument();
+    const info = tt('preview.binary_file')
+      .replace('{{0}}', '1234567')
+      .replace('{{1}}', '2026-10-07 10:00');
+    expect(await screen.findByText(info)).toBeInTheDocument();
     expect(screen.queryByTestId('code-editor')).toBeNull();
   });
 
-  it('readFileForEdit 与 previewFile 都失败时显示错误信息', async () => {
-    mocks.readFileForEdit.mockRejectedValue(new Error('路径越出工作区范围'));
-    mocks.previewFile.mockRejectedValue(new Error('路径越出工作区范围'));
+  it('readFileForEdit 与 previewFile 都失败时显示错误信息（wire key 经 backendError）', async () => {
+    mocks.readFileForEdit.mockRejectedValue(new Error('err.files.out_of_workspace'));
+    mocks.previewFile.mockRejectedValue(new Error('err.files.out_of_workspace'));
     render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\secret.ts'} />);
 
-    expect(await screen.findByText(/路径越出工作区范围/)).toBeInTheDocument();
+    expect(await screen.findByText(tt('err.files.out_of_workspace'))).toBeInTheDocument();
   });
 
   it('切换文件路径时重新整读', async () => {
@@ -171,7 +175,7 @@ describe('Preview', () => {
     });
     expect(mocks.saveFile).toHaveBeenCalledWith('D:\\proj', 'D:\\proj\\a.ts', 'ab', 'lf');
     expect(await screen.findByRole('textbox', { name: '编辑文件内容' })).toHaveValue('ab');
-    expect(useAppStore.getState().toasts.some((t) => t.title === '已保存')).toBe(true);
+    expect(useAppStore.getState().toasts.some((t) => t.title === tt('ui.files.saved'))).toBe(true);
   });
 
   it('Ctrl+S 保存失败（crlf）提示且留在编辑态', async () => {

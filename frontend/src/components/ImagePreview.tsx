@@ -1,5 +1,6 @@
 // 图片预览：readFileBytes → data URL → <img>。
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { readFileBytes } from '../lib/api';
 
 export interface ImagePreviewProps {
@@ -14,6 +15,7 @@ function pathBasename(path: string): string {
 }
 
 export default function ImagePreview({ wsPath, path }: ImagePreviewProps) {
+  const { t } = useTranslation();
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const alt = pathBasename(path);
@@ -28,7 +30,7 @@ export default function ImagePreview({ wsPath, path }: ImagePreviewProps) {
         const bytes = await readFileBytes(wsPath, path);
         if (cancelled) return;
         if (!bytes) {
-          setError('无法读取图片');
+          setError(t('ui.files.image_read_failed'));
           return;
         }
         setSrc(`data:${bytes.Mime};base64,${bytes.Base64}`);
@@ -47,7 +49,7 @@ export default function ImagePreview({ wsPath, path }: ImagePreviewProps) {
     return <p className="p-3 text-sm text-destructive">{error}</p>;
   }
   if (!src) {
-    return <p className="p-3 text-sm text-muted-foreground">加载中…</p>;
+    return <p className="p-3 text-sm text-muted-foreground">{t('ui.files.loading')}</p>;
   }
 
   return (
@@ -56,7 +58,7 @@ export default function ImagePreview({ wsPath, path }: ImagePreviewProps) {
         src={src}
         alt={alt}
         className="max-h-full max-w-full object-contain"
-        onError={() => setError('无法显示图片')}
+        onError={() => setError(t('ui.files.image_display_failed'))}
       />
     </div>
   );

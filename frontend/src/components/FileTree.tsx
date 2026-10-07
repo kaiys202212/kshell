@@ -8,6 +8,7 @@
 // 顶部搜索框先过滤已加载节点，防抖后走 Go 递归搜索出平铺结果。
 // git 状态：文件名右侧小色标（数据来自 store.gitStatus[wsPath]，lib/git.ts 负责刷新）。
 import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import {
   createEntry,
@@ -25,6 +26,7 @@ import {
 import type { FileNode, SearchHit } from '../lib/api';
 import { cn } from '../lib/cn';
 import { DRAG_MIME, REL_MIME } from '../lib/dragPath';
+import { backendError } from '../lib/errors';
 import { isNestedGitParent, refreshGitStatus, resolveGitCode, subtreeDirty } from '../lib/git';
 import { sameWorkspacePath } from '../lib/workspacePath';
 import { useAppStore } from '../state/store';
@@ -142,25 +144,27 @@ function RefreshIcon() {
   );
 }
 
-// git 状态小色标（S1：改用语义状态色，label/title 与既有测试一致）
-const GIT_BADGES: Record<string, { label: string; cls: string; title: string }> = {
-  modified: { label: 'M', cls: 'text-warning', title: '已修改' },
-  added: { label: 'A', cls: 'text-success', title: '新增（已暂存）' },
-  deleted: { label: 'D', cls: 'text-danger', title: '已删除' },
-  renamed: { label: 'R', cls: 'text-info', title: '重命名' },
-  untracked: { label: 'N', cls: 'text-success', title: '未跟踪' },
-  ignored: { label: 'I', cls: 'text-muted-foreground', title: '已忽略' },
-  conflicted: { label: '!', cls: 'text-danger', title: '合并冲突' },
+// git 状态小色标（S1：改用语义状态色；label 静态，title 走 ui.files.git_status.*）
+const GIT_BADGES: Record<string, { label: string; cls: string }> = {
+  modified: { label: 'M', cls: 'text-warning' },
+  added: { label: 'A', cls: 'text-success' },
+  deleted: { label: 'D', cls: 'text-danger' },
+  renamed: { label: 'R', cls: 'text-info' },
+  untracked: { label: 'N', cls: 'text-success' },
+  ignored: { label: 'I', cls: 'text-muted-foreground' },
+  conflicted: { label: '!', cls: 'text-danger' },
 };
 
 function GitBadge({ code }: { code: string }) {
+  const { t } = useTranslation();
   const b = GIT_BADGES[code];
   if (!b) return null;
+  const title = t(`ui.files.git_status.${code}`);
   return (
     <span
       className={cn('shrink-0 font-mono text-[11px] font-bold', b.cls)}
-      title={`git：${b.title}`}
-      aria-label={`git ${b.title}`}
+      title={t('ui.files.git_badge_title', { title })}
+      aria-label={t('ui.files.git_badge_aria', { title })}
     >
       {b.label}
     </span>
@@ -255,6 +259,7 @@ function CreateRow({
   onCommit(name: string): void;
   onCancel(): void;
 }) {
+  const { t } = useTranslation();
   const [draft, setDraft] = useState('');
   const commit = () => {
     const name = draft.trim();
@@ -267,8 +272,8 @@ function CreateRow({
         <Input
           autoFocus
           className="h-5 min-w-0 flex-1 px-1 py-0 font-mono"
-          placeholder={isDir ? '文件夹名' : '文件名'}
-          aria-label={`新建${isDir ? '文件夹' : '文件'}`}
+          placeholder={isDir ? t('ui.files.folder_name_placeholder') : t('ui.files.file_name_placeholder')}
+          aria-label={isDir ? t('ui.files.new_folder_aria') : t('ui.files.new_file_aria')}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
@@ -326,6 +331,7 @@ function TreeRow({
   onRowContextMenu,
   onMoveInto,
 }: RowProps) {
+  const { t } = useTranslation();
   const { node } = item;
   const gitCode = resolveGitCode(gitMap, item.relPath, node.IsDir, dirBranches);
   const nestedParent = node.IsDir && isNestedGitParent(dirBranches, item.relPath);
@@ -400,7 +406,7 @@ function TreeRow({
             autoFocus
             className="h-5 min-w-0 flex-1 px-1 py-0 font-mono"
             value={draft}
-            aria-label={`重命名 ${node.Name}`}
+            aria-label={t('ui.files.rename_aria', { name: node.Name })}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
@@ -439,15 +445,15 @@ function TreeRow({
                 {node.Name}
               </span>
               {branch ? (
-                <span className="shrink-0 truncate font-mono text-[11px] text-muted-foreground" title={`git 分支 ${branch}`}>
+                <span className="shrink-0 truncate font-mono text-[11px] text-muted-foreground" title={t('ui.files.git_branch_title', { branch })}>
                   ({branch})
                 </span>
               ) : null}
               {nestedParent ? (
                 <span
                   className="shrink-0 font-mono text-[11px] text-muted-foreground"
-                  title="含嵌套 git"
-                  aria-label="含嵌套 git"
+                  title={t('ui.files.nested_git')}
+                  aria-label={t('ui.files.nested_git')}
                 >
                   ⊞
                 </span>
@@ -456,8 +462,8 @@ function TreeRow({
               {dirtyFolder && (
                 <span
                   className="shrink-0 text-warning"
-                  title="有未提交改动"
-                  aria-label="有未提交改动"
+                  title={t('ui.files.uncommitted_change')}
+                  aria-label={t('ui.files.uncommitted_change')}
                 >
                   •
                 </span>
@@ -466,8 +472,8 @@ function TreeRow({
             {!isVirtualRoot && (
             <button
               className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-primary group-hover:opacity-100"
-              aria-label={`重命名 ${node.Name}`}
-              title="重命名"
+              aria-label={t('ui.files.rename_aria', { name: node.Name })}
+              title={t('ui.files.rename')}
               onClick={() => onRenameStart(item.relPath)}
             >
               <PencilIcon />
@@ -484,10 +490,10 @@ function TreeRow({
           <span className="truncate text-destructive">{item.error}</span>
           <button
             className="shrink-0 rounded border border-border px-1.5 py-0.5 text-xs transition-colors hover:bg-muted"
-            aria-label={`重试加载 ${node.Name}`}
+            aria-label={t('ui.files.retry_load_aria', { name: node.Name })}
             onClick={() => onDirToggle(item)}
           >
-            重试
+            {t('ui.files.retry')}
           </button>
         </div>
       )}
@@ -551,6 +557,7 @@ export default function FileTree({
   onOpenFile(path: string): void;
   onEditFile?(path: string): void;
 }) {
+  const { t } = useTranslation();
   const editFile = onEditFile ?? onOpenFile;
   const [items, setItems] = useState<TreeItem[] | null>(null);
   const [error, setError] = useState('');
@@ -626,7 +633,7 @@ export default function FileTree({
     void startFileWatch(wsPath).catch((e: unknown) => {
       useAppStore
         .getState()
-        .notify(e instanceof Error ? e.message : '文件监视启动失败', 'error');
+        .notify(e instanceof Error ? backendError(e) : t('ui.files.watch_failed'), 'error');
     });
     const unsub = onFilesChanged((path) => {
       if (sameWorkspacePath(path, wsPath)) void reloadTreeRef.current();
@@ -656,7 +663,7 @@ export default function FileTree({
       })
       .catch((e: unknown) => {
         if (!cancelled && gen === reloadGenRef.current) {
-          setError(e instanceof Error ? e.message : String(e));
+          setError(backendError(e));
         }
       });
     void refreshGitStatus(wsPath);
@@ -727,7 +734,7 @@ export default function FileTree({
         );
       })
       .catch((e: unknown) => {
-        const msg = e instanceof Error ? e.message : String(e);
+        const msg = backendError(e);
         setItems((cur) =>
           cur && updateItems(cur, item.relPath, (it) => ({ ...it, error: msg, expanded: true })),
         );
@@ -775,12 +782,12 @@ export default function FileTree({
   const handleRename = (relPath: string, newName: string) => {
     renameEntry(wsPath, relPath, newName)
       .then(() => {
-        useAppStore.getState().notify(`已重命名为 ${newName}`, 'success');
+        useAppStore.getState().notify(t('ui.files.renamed', { name: newName }), 'success');
         refreshRoot();
         void refreshGitStatus(wsPath);
       })
       .catch((e: unknown) => {
-        useAppStore.getState().notify(e instanceof Error ? e.message : String(e), 'error');
+        useAppStore.getState().notify(backendError(e), 'error');
       });
   };
 
@@ -790,14 +797,14 @@ export default function FileTree({
     const { dirRel, isDir } = creating;
     createEntry(wsPath, dirRel, name, isDir)
       .then(() => {
-        useAppStore.getState().notify(`已创建 ${name}`, 'success');
+        useAppStore.getState().notify(t('ui.files.created', { name }), 'success');
         setCreating(null);
         refreshRoot();
         void refreshGitStatus(wsPath);
       })
       .catch((e: unknown) => {
         // 失败保留输入行：用户可改名重试（Esc/失焦仍可取消），不强行收起
-        useAppStore.getState().notify(e instanceof Error ? e.message : String(e), 'error');
+        useAppStore.getState().notify(backendError(e), 'error');
       });
   };
 
@@ -807,13 +814,13 @@ export default function FileTree({
     const { relPath, node } = deleting;
     deleteEntry(wsPath, relPath)
       .then(() => {
-        useAppStore.getState().notify(`已删除 ${node.Name}`, 'success');
+        useAppStore.getState().notify(t('ui.files.deleted', { name: node.Name }), 'success');
         setDeleting(null);
         refreshRoot();
         void refreshGitStatus(wsPath);
       })
       .catch((e: unknown) => {
-        useAppStore.getState().notify(e instanceof Error ? e.message : String(e), 'error');
+        useAppStore.getState().notify(backendError(e), 'error');
         setDeleting(null);
       });
   };
@@ -821,8 +828,8 @@ export default function FileTree({
   const handleCopyPath = (item: TreeItem) => {
     navigator.clipboard
       .writeText(item.node.Path)
-      .then(() => useAppStore.getState().notify('已复制路径', 'success'))
-      .catch(() => useAppStore.getState().notify('复制失败', 'error'));
+      .then(() => useAppStore.getState().notify(t('ui.files.path_copied'), 'success'))
+      .catch(() => useAppStore.getState().notify(t('ui.files.copy_failed'), 'error'));
   };
 
   // 树内拖拽移动：移入自身/子孙目录直接忽略（后端 MoveEntry 也会再校验）
@@ -830,12 +837,12 @@ export default function FileTree({
     if (srcRel === dstDirRel || dstDirRel.startsWith(`${srcRel}/`)) return;
     moveEntry(wsPath, srcRel, dstDirRel)
       .then(() => {
-        useAppStore.getState().notify(`已移动到 ${dstDirRel || '根目录'}`, 'success');
+        useAppStore.getState().notify(t('ui.files.moved', { dst: dstDirRel || t('ui.files.root_dir') }), 'success');
         refreshRoot();
         void refreshGitStatus(wsPath);
       })
       .catch((e: unknown) => {
-        useAppStore.getState().notify(e instanceof Error ? e.message : String(e), 'error');
+        useAppStore.getState().notify(backendError(e), 'error');
       });
   };
 
@@ -849,7 +856,7 @@ export default function FileTree({
   if (items === null) {
     // 骨架屏：5 行占位，带递进缩进模拟树形结构
     return (
-      <div className="flex flex-col gap-1.5" aria-label="工作区文件树加载中">
+      <div className="flex flex-col gap-1.5" aria-label={t('ui.files.tree_loading_aria')}>
         {[0, 1, 2, 3, 4].map((i) => (
           <Skeleton
             key={i}
@@ -890,7 +897,7 @@ export default function FileTree({
       revealInExplorer(wsPath, it.node.Path)
         .then(() => setMenu(null))
         .catch((e: unknown) => {
-          useAppStore.getState().notify(e instanceof Error ? e.message : String(e), 'error');
+          useAppStore.getState().notify(backendError(e), 'error');
           setMenu(null);
         });
     };
@@ -898,33 +905,33 @@ export default function FileTree({
     if (!it) {
       // 空白处：根目录新建
       return [
-        { label: '新建文件', onSelect: () => startCreate('', false) },
-        { label: '新建文件夹', onSelect: () => startCreate('', true) },
+        { label: t('ui.files.menu_new_file'), onSelect: () => startCreate('', false) },
+        { label: t('ui.files.menu_new_folder'), onSelect: () => startCreate('', true) },
       ];
     }
     if (it.relPath === '') {
       return [
-        { label: '新建文件', onSelect: () => startCreate('', false) },
-        { label: '新建文件夹', onSelect: () => startCreate('', true) },
-        { label: '复制路径', onSelect: () => copyPath(it) },
-        { label: '在资源管理器中打开', onSelect: () => reveal(it) },
+        { label: t('ui.files.menu_new_file'), onSelect: () => startCreate('', false) },
+        { label: t('ui.files.menu_new_folder'), onSelect: () => startCreate('', true) },
+        { label: t('ui.files.copy_path'), onSelect: () => copyPath(it) },
+        { label: t('ui.files.reveal'), onSelect: () => reveal(it) },
       ];
     }
     if (it.node.IsDir) {
       return [
-        { label: '新建文件', onSelect: () => startCreate(it.relPath, false) },
-        { label: '新建文件夹', onSelect: () => startCreate(it.relPath, true) },
-        { label: '重命名', onSelect: () => startRename(it) },
-        { label: '删除', danger: true, onSelect: () => startDelete(it) },
-        { label: '复制路径', onSelect: () => copyPath(it) },
-        { label: '在资源管理器中打开', onSelect: () => reveal(it) },
+        { label: t('ui.files.menu_new_file'), onSelect: () => startCreate(it.relPath, false) },
+        { label: t('ui.files.menu_new_folder'), onSelect: () => startCreate(it.relPath, true) },
+        { label: t('ui.files.rename'), onSelect: () => startRename(it) },
+        { label: t('ui.files.delete'), danger: true, onSelect: () => startDelete(it) },
+        { label: t('ui.files.copy_path'), onSelect: () => copyPath(it) },
+        { label: t('ui.files.reveal'), onSelect: () => reveal(it) },
       ];
     }
     return [
-      { label: '重命名', onSelect: () => startRename(it) },
-      { label: '删除', danger: true, onSelect: () => startDelete(it) },
-      { label: '复制路径', onSelect: () => copyPath(it) },
-      { label: '在资源管理器中打开', onSelect: () => reveal(it) },
+      { label: t('ui.files.rename'), onSelect: () => startRename(it) },
+      { label: t('ui.files.delete'), danger: true, onSelect: () => startDelete(it) },
+      { label: t('ui.files.copy_path'), onSelect: () => copyPath(it) },
+      { label: t('ui.files.reveal'), onSelect: () => reveal(it) },
     ];
   })();
 
@@ -959,24 +966,24 @@ export default function FileTree({
         <Input
           size="sm"
           className="min-w-0 flex-1 bg-background"
-          placeholder="搜索文件…"
+          placeholder={t('ui.files.search_placeholder')}
           value={query}
-          aria-label="搜索文件"
+          aria-label={t('ui.files.search_aria')}
           onChange={(e) => setQuery(e.target.value)}
         />
         <label className="flex shrink-0 cursor-pointer items-center gap-1 text-xs text-muted-foreground">
           <input
             type="checkbox"
-            aria-label="显示全部"
+            aria-label={t('ui.files.show_all_aria')}
             checked={showAll}
             onChange={(e) => setShowAll(e.target.checked)}
           />
-          全部
+          {t('ui.files.show_all')}
         </label>
         <button
           className="shrink-0 rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          aria-label="刷新文件树"
-          title="刷新文件树"
+          aria-label={t('ui.files.refresh')}
+          title={t('ui.files.refresh')}
           onClick={() => void reloadTree()}
         >
           <RefreshIcon />
@@ -986,11 +993,11 @@ export default function FileTree({
       {showResults ? (
         <div className="min-h-0 flex-1 overflow-auto">
           <p className="mb-1 px-1 text-xs text-muted-foreground" aria-live="polite">
-            {searching ? '搜索中…' : `共 ${hits.length} 项`}
+            {searching ? t('ui.files.searching') : t('ui.files.search_count', { n: hits.length })}
           </p>
-          <ul role="listbox" aria-label="搜索结果" className="m-0 list-none p-0 font-mono text-xs">
+          <ul role="listbox" aria-label={t('ui.files.search_results_aria')} className="m-0 list-none p-0 font-mono text-xs">
             {hits.length === 0 ? (
-              <EmptyState title={`没有匹配「${q}」的文件`} />
+              <EmptyState title={t('ui.files.search_empty', { q })} />
             ) : (
               hits.map((h) => (
                 <li key={h.Path}>
@@ -1021,10 +1028,10 @@ export default function FileTree({
         (() => {
           const filtered = filterItems(items, q.toLowerCase());
           return (
-            <ul role="tree" aria-label="工作区文件树（过滤中）" className="m-0 list-none p-0 text-sm">
+            <ul role="tree" aria-label={t('ui.files.tree_filtering_aria')} className="m-0 list-none p-0 text-sm">
               {filtered.length === 0 ? (
                 <p className="px-1 text-xs text-muted-foreground">
-                  已加载节点中没有匹配，正在全量搜索…
+                  {t('ui.files.filter_no_match')}
                 </p>
               ) : (
                 filtered.map((it) => (
@@ -1035,7 +1042,7 @@ export default function FileTree({
           );
         })()
       ) : (
-        <ul role="tree" aria-label="工作区文件树" className="m-0 list-none p-0 text-sm">
+        <ul role="tree" aria-label={t('ui.files.tree_aria')} className="m-0 list-none p-0 text-sm">
           {items.map((it) => <TreeRow key={it.node.Path} item={it} depth={0} {...rowProps} />)}
         </ul>
       )}
@@ -1046,16 +1053,16 @@ export default function FileTree({
 
       {deleting && (
         <Dialog open onOpenChange={(o) => { if (!o) setDeleting(null); }} className="w-80">
-          <DialogPrimitive.Title className="mb-1 text-sm font-medium">删除确认</DialogPrimitive.Title>
+          <DialogPrimitive.Title className="mb-1 text-sm font-medium">{t('ui.files.delete_confirm_title')}</DialogPrimitive.Title>
           <p className="mb-3 text-xs text-muted-foreground">
-            确定要删除「{deleting.node.Name}」吗？该操作不可恢复。
+            {t('ui.files.delete_confirm_body', { name: deleting.node.Name })}
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => setDeleting(null)}>
-              取消
+              {t('ui.files.cancel')}
             </Button>
             <Button variant="destructive" size="sm" onClick={handleDeleteConfirm}>
-              删除
+              {t('ui.files.delete')}
             </Button>
           </div>
         </Dialog>
