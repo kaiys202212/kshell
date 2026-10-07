@@ -787,6 +787,46 @@ describe('Settings', () => {
     });
   });
 
+  it('安装日志事件文本为 wire key 时逐条翻译渲染', async () => {
+    render(<Settings />);
+    goTools();
+    await screen.findByText('Gemini');
+    await act(async () => {
+      logCb?.({ toolID: 'gemini', text: 'tool.log.auto_repairing' });
+    });
+    expect(await screen.findByText(tt('tool.log.auto_repairing'))).toBeInTheDocument();
+  });
+
+  it('挂载时未完成任务的 job.Log 逐行翻译后渲染', async () => {
+    mocks.getTools.mockResolvedValue([
+      {
+        ID: 'cursor',
+        Name: 'Cursor',
+        BinPath: '',
+        Version: '',
+        Installed: true,
+        Broken: true,
+        Source: 'config-dir',
+      },
+    ]);
+    mocks.getToolInstallJob.mockResolvedValue({
+      ToolID: 'cursor',
+      Action: 'install',
+      Running: true,
+      Log: 'tool.log.auto_repairing\ntool.log.residual_removed|~/.cursor',
+      Error: '',
+    });
+    render(<Settings />);
+    goTools();
+
+    const pre = (await screen.findByText('Cursor')).closest('li')!.querySelector('pre');
+    expect(pre).not.toBeNull();
+    expect(pre!).toHaveTextContent(tt('tool.log.auto_repairing'));
+    expect(pre!).toHaveTextContent(
+      tt('tool.log.residual_removed').replace('{{0}}', '~/.cursor'),
+    );
+  });
+
   it('收到 tools:updated 后重刷工具列表', async () => {
     render(<Settings />);
     goTools();

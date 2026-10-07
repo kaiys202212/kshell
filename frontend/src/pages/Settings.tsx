@@ -39,7 +39,7 @@ import {
 } from '../lib/api';
 import type { InstallRecipeView, ModelPreset, ToolInfo, ToolInstallJobView, UpdateInfo } from '../lib/api';
 import { cn } from '../lib/cn';
-import { translateBackend } from '../lib/errors';
+import { backendError, translateBackend } from '../lib/errors';
 import { applyUiFontSize, clampUiFontSize } from '../lib/appearance';
 import { getLanguageOptions } from '../i18n';
 import { openExternal } from '../lib/openHref';
@@ -61,8 +61,9 @@ const MODEL_AGENTS = [
 // 语言行内置三选项；system（跟随系统）不是语言码，不在 getLanguageOptions 里
 const BUILTIN_LANGUAGE_CODES = ['en', 'zh-CN', 'system'];
 
-// 后端错误串统一过 translateBackend：注册 key 翻成文案，非注册串原样返回
-const backendError = (e: unknown) => translateBackend(e instanceof Error ? e.message : String(e));
+// 安装日志：事件文本是逐行的 wire key，须逐行翻译后再拼接（整块多行串喂
+// translateBackend 会把首行后的内容当参数吞掉，导致漏译）
+const translateLog = (text: string): string => text.split('\n').map(translateBackend).join('\n');
 
 type Section = 'general' | 'model' | 'tools';
 
@@ -159,7 +160,8 @@ export default function Settings() {
         setJob(j);
         if (j.Running) {
           setActiveId(j.ToolID);
-          setInstallLog(j.Log);
+          // 挂载时后端已有未完成任务的日志（多行 wire key），逐行翻译
+          setInstallLog(translateLog(j.Log));
         }
       })
       .catch(() => {});
@@ -273,7 +275,7 @@ export default function Settings() {
   useEffect(() => {
     const offLog = onToolInstallLog((p) => {
       setActiveId(p.toolID);
-      setInstallLog((prev) => (prev ? `${prev}\n${p.text}` : p.text));
+      setInstallLog((prev) => (prev ? `${prev}\n${translateBackend(p.text)}` : translateBackend(p.text)));
       // 自动修复是后端后台启动的，设置页收不到单独的启动事件；
       // 若不刷新 job，Running/Trigger 仍是挂载时的旧值，
       // 「正在自动修复…」提示与行按钮忙态永远不会出现。

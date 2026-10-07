@@ -1,6 +1,7 @@
 // translateBackend：wire 格式解析、未知 key 原样返回、参数插值
+// backendError：unknown 取串后走 translateBackend
 import { describe, it, expect } from 'vitest';
-import { translateBackend } from './errors';
+import { backendError, translateBackend } from './errors';
 import en from '../locales/en.json';
 
 describe('translateBackend', () => {
@@ -19,5 +20,20 @@ describe('translateBackend', () => {
   });
   it('空串原样返回', () => {
     expect(translateBackend('')).toBe('');
+  });
+});
+
+describe('backendError', () => {
+  it('Error 取 message 并翻译注册 key', () => {
+    expect(backendError(new Error('err.session_not_found'))).toBe(
+      en.err.session_not_found as string,
+    );
+  });
+  it('字符串原样（非 key）返回', () => {
+    expect(backendError('plain failure')).toBe('plain failure');
+  });
+  it('空串两种来源均返回空串', () => {
+    expect(backendError('')).toBe('');
+    expect(backendError(new Error(''))).toBe('');
   });
 });

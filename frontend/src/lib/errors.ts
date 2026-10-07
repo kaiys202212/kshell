@@ -14,3 +14,8 @@ export function translateBackend(raw: string): string {
   const args = raw.slice(idx + 1).split('|');
   return tPos(key, args);
 }
+
+// 把 catch 到的 unknown 统一取串再过 translateBackend：Error 取 message，其余 String()，
+// 空串原样返回。各页面错误/toast 展示点复用，避免重复三元。
+export const backendError = (e: unknown): string =>
+  translateBackend(e instanceof Error ? e.message : String(e));
