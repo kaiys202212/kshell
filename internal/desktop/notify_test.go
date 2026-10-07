@@ -96,8 +96,8 @@ func TestDispatchNotifyOnceDropsEmptyTermKey(t *testing.T) {
 	}
 }
 
-// 窗口隐藏（收进托盘）：额外弹 toast，标题/正文按映射生成。
-func TestDispatchNotifyOnceHiddenShowsToast(t *testing.T) {
+// 窗口隐藏（收进托盘）：弹独立气泡，不走系统 toast；标题/正文按映射生成。
+func TestDispatchNotifyOnceHiddenShowsBubble(t *testing.T) {
 	dir := t.TempDir()
 	writeInboxFile(t, dir, "1.json", agenthook.Payload{
 		Tool: "codebuddy", Event: "Stop", TermKey: "new:3", Workspace: `D:\ws`, Summary: "任务收尾完成",
@@ -106,13 +106,21 @@ func TestDispatchNotifyOnceHiddenShowsToast(t *testing.T) {
 	a.setWindowHidden(true)
 	t.Cleanup(func() { a.setWindowHidden(false) })
 
+	origBubble := notifyBubble
 	origToast := notifyToast
-	t.Cleanup(func() { notifyToast = origToast })
-	var toastTitle, toastBody string
-	toastCalls := 0
+	t.Cleanup(func() {
+		notifyBubble = origBubble
+		notifyToast = origToast
+	})
+	var bubbleTitle, bubbleBody, bubbleTermKey string
+	bubbleCalls, toastCalls := 0, 0
+	notifyBubble = func(title, body, termKey string) error {
+		bubbleCalls++
+		bubbleTitle, bubbleBody, bubbleTermKey = title, body, termKey
+		return nil
+	}
 	notifyToast = func(title, body string) error {
 		toastCalls++
-		toastTitle, toastBody = title, body
 		return nil
 	}
 
@@ -121,24 +129,35 @@ func TestDispatchNotifyOnceHiddenShowsToast(t *testing.T) {
 	if len(*names) != 1 {
 		t.Fatalf("隐藏时也应 emit: %v", *names)
 	}
-	if toastCalls != 1 {
-		t.Fatalf("隐藏时应弹一次 toast，得到 %d", toastCalls)
+	if bubbleCalls != 1 {
+		t.Fatalf("隐藏时应弹一次 bubble，得到 %d", bubbleCalls)
 	}
-	if toastTitle != "CodeBuddy "+applang.T("toast.task_done") || toastBody != "任务收尾完成" {
-		t.Fatalf("toast 文案不符: %q / %q", toastTitle, toastBody)
+	if toastCalls != 0 {
+		t.Fatalf("隐藏时不应再弹系统 toast，得到 %d", toastCalls)
+	}
+	if bubbleTitle != "CodeBuddy "+applang.T("toast.task_done") || bubbleBody != "任务收尾完成" || bubbleTermKey != "new:3" {
+		t.Fatalf("bubble 参数不符: %q / %q / %q", bubbleTitle, bubbleBody, bubbleTermKey)
 	}
 }
 
-// 窗口可见：只 emit，不弹 toast。
-func TestDispatchNotifyOnceVisibleNoToast(t *testing.T) {
+// 窗口可见：只 emit，不弹 bubble / toast。
+func TestDispatchNotifyOnceVisibleNoBubbleOrToast(t *testing.T) {
 	dir := t.TempDir()
 	writeInboxFile(t, dir, "1.json", agenthook.Payload{Tool: "codex", Event: "agent-turn-complete", TermKey: "new:1"})
 	a, names, _ := newNotifyTestApp(t)
 	a.setWindowHidden(false)
 
+	origBubble := notifyBubble
 	origToast := notifyToast
-	t.Cleanup(func() { notifyToast = origToast })
-	toastCalls := 0
+	t.Cleanup(func() {
+		notifyBubble = origBubble
+		notifyToast = origToast
+	})
+	bubbleCalls, toastCalls := 0, 0
+	notifyBubble = func(title, body, termKey string) error {
+		bubbleCalls++
+		return nil
+	}
 	notifyToast = func(title, body string) error {
 		toastCalls++
 		return nil
@@ -148,6 +167,9 @@ func TestDispatchNotifyOnceVisibleNoToast(t *testing.T) {
 
 	if len(*names) != 1 {
 		t.Fatalf("可见时仍应 emit: %v", *names)
+	}
+	if bubbleCalls != 0 {
+		t.Fatalf("可见时不应弹 bubble，得到 %d", bubbleCalls)
 	}
 	if toastCalls != 0 {
 		t.Fatalf("可见时不应弹 toast，得到 %d", toastCalls)

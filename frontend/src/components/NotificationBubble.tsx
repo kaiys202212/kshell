@@ -1,9 +1,11 @@
 // agent 通知气泡：右下角堆叠展示 agent 完成与等待确认事件。
 // 最多同时 3 条，超出折叠为「+N」计数条；每条 10s 自动消失，hover 暂停倒计时；
 // 点击按 termKey 切到对应页签并关闭该气泡。
+// 主窗不可见（document.hidden）时不渲染卡片，避免与 Go 侧原生气泡重复；
+// 队列仍由 notify:agent 入队，供原生气泡点击后的 notify:focus 复用。
 // 主题跟随 appearance 机制：样式全部用语义 token（bg-card / text-foreground 等），
 // data-theme 切换时自动适配亮/暗色。
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../lib/cn';
 import { eventLabel, toolDisplayName, type AgentNotice } from '../lib/agentNotify';
@@ -16,7 +18,7 @@ const AUTO_DISMISS_MS = 10000;
 // focusNoticeTarget 把 termKey 归因到内嵌终端/聊天，激活其所在工作区页签并
 // 发起中心区页签切换请求。归因失败（外部窗口 window:<标题> 等）不动页签，
 // 由调用方只关闭气泡。
-function focusNoticeTarget(termKey: string) {
+export function focusNoticeTarget(termKey: string) {
   const { terminals, chats } = useAppStore.getState();
   const target = terminals.find((t) => t.Key === termKey) ?? chats.find((c) => c.Key === termKey);
   if (!target) return;
@@ -30,6 +32,16 @@ function focusNoticeTarget(termKey: string) {
     if (w) openTab(w);
   }
   requestFocusTerm(termKey);
+}
+
+// handleNotifyFocus 响应 Go 原生气泡点击发出的 notify:focus：聚焦 + dismiss 同 termKey。
+export function handleNotifyFocus(termKey: string) {
+  if (!termKey) return;
+  focusNoticeTarget(termKey);
+  const { agentNotices, dismissAgentNotice } = useAppStore.getState();
+  for (const n of agentNotices) {
+    if (n.termKey === termKey) dismissAgentNotice(n.id);
+  }
 }
 
 function NoticeCard({ notice }: { notice: AgentNotice }) {
@@ -86,7 +98,17 @@ function NoticeCard({ notice }: { notice: AgentNotice }) {
 export default function NotificationBubble() {
   const { t } = useTranslation();
   const notices = useAppStore((s) => s.agentNotices);
-  if (notices.length === 0) return null;
+  const [docHidden, setDocHidden] = useState(() => typeof document !== 'undefined' && document.hidden);
+
+  useEffect(() => {
+    const onVis = () => setDocHidden(document.hidden);
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
+  // 主窗不可见时由 Go 原生气泡承接展示，此处不渲染避免恢复瞬间双份刷屏
+  if (docHidden || notices.length === 0) return null;
+
   // store 队列按入队顺序追加（旧→新），取末尾即最新 3 条；渲染时倒序，
   // 最新事件在最上（贴近阅读起点）。过期 / hover 倒计时 / 点击均按 notice.id 独立运作，
   // 与渲染顺序解耦，倒序不影响这些行为。

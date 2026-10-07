@@ -24,6 +24,7 @@ import {
   onChatPermission,
   onChatUpdate,
   onNotifyAgent,
+  onNotifyFocus,
   onProjectsChanged,
   onTerminalData,
   onTerminalExit,
@@ -52,7 +53,7 @@ import WorkspaceTabView from './pages/WorkspaceTab';
 import AgentSetupDialog from './components/AgentSetupDialog';
 import ArchiveSuggest from './components/ArchiveSuggest';
 import UpdatePrompt from './components/UpdatePrompt';
-import NotificationBubble from './components/NotificationBubble';
+import NotificationBubble, { handleNotifyFocus } from './components/NotificationBubble';
 import QuickSwitcher from './components/QuickSwitcher';
 import TitleBar from './components/TitleBar';
 import { Toaster } from './components/ui/toaster';
@@ -92,6 +93,11 @@ function App() {
       useAppStore.getState().pushAgentNotice(p);
       playNotifySound(eventLabel(p.event) === 'task_done' ? 'light' : 'attention');
     });
+  }, []);
+
+  useEffect(() => {
+    // 原生气泡点击 → Go Emit notify:focus → 与窗内气泡点击同一套聚焦/dismiss。
+    return onNotifyFocus((termKey) => handleNotifyFocus(termKey));
   }, []);
 
   useEffect(() => {

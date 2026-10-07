@@ -5,7 +5,7 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TerminalInfo } from '../lib/api';
-import NotificationBubble from './NotificationBubble';
+import NotificationBubble, { handleNotifyFocus } from './NotificationBubble';
 import { useAppStore } from '../state/store';
 import { tt } from '../test/i18n';
 
@@ -151,5 +151,30 @@ describe('NotificationBubble', () => {
     fireEvent.click(screen.getByRole('button'));
     expect(useAppStore.getState().focusTermKey).toBeNull();
     expect(useAppStore.getState().agentNotices).toHaveLength(0);
+  });
+
+  it('document.hidden 时不渲染卡片（避免与原生气泡重复）', () => {
+    const desc = Object.getOwnPropertyDescriptor(Document.prototype, 'hidden');
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    try {
+      push();
+      const { container } = render(<NotificationBubble />);
+      expect(container).toBeEmptyDOMElement();
+      // 队列仍保留，供 notify:focus 复用
+      expect(useAppStore.getState().agentNotices).toHaveLength(1);
+    } finally {
+      if (desc) Object.defineProperty(Document.prototype, 'hidden', desc);
+      else Reflect.deleteProperty(document, 'hidden');
+    }
+  });
+
+  it('handleNotifyFocus：聚焦对应页签并 dismiss 该 termKey 气泡', () => {
+    useAppStore.setState({ terminals: [term], openTabs: [{ id: 'D:\\proj-a', name: 'proj-a' }] });
+    push();
+    push({ termKey: 'session:other', summary: '另一条' });
+    handleNotifyFocus('session:s1');
+    expect(useAppStore.getState().focusTermKey?.termKey).toBe('session:s1');
+    expect(useAppStore.getState().agentNotices).toHaveLength(1);
+    expect(useAppStore.getState().agentNotices[0].termKey).toBe('session:other');
   });
 });

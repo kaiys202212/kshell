@@ -1203,6 +1203,13 @@ export function onNotifyAgent(cb: (payload: AgentNotifyPayload) => void): () => 
   );
 }
 
+// onNotifyFocus 订阅原生气泡点击后的聚焦请求（Go Emit notify:focus），返回取消订阅函数。
+export function onNotifyFocus(cb: (termKey: string) => void): () => void {
+  return EventsOn('notify:focus', (p: { termKey?: string } | undefined) =>
+    cb(p?.termKey ?? ''),
+  );
+}
+
 // onTerminalData 订阅终端输出（data 为 base64），返回取消订阅函数
 export function onTerminalData(cb: (payload: { id: string; data: string }) => void): () => void {
   return EventsOn('terminal:data', (p: { id?: string; data?: string }) =>

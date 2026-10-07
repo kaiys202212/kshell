@@ -24,8 +24,17 @@ const notifyInboxMaxAge = 24 * time.Hour
 //（对齐 windowHide / windowShow 的做法）。
 var windowIsMinimised = runtime.WindowIsMinimised
 
-// notifyToast 是 showAgentToast 的包级变量抽象：测试注入用。
+// windowUnminimise 是 runtime.WindowUnminimise 的包级变量抽象：气泡点击恢复主窗用。
+var windowUnminimise = runtime.WindowUnminimise
+
+// notifyToast 是 showAgentToast 的包级变量抽象：测试注入用（已停用系统 toast 路径，保留便于断言未调用）。
 var notifyToast = showAgentToast
+
+// notifyBubble 是 showAgentBubble 的包级变量抽象：测试注入用。
+var notifyBubble = showAgentBubble
+
+// bubbleActivate 是原生气泡被点击时的回调；Startup 绑到 App.activateFromBubble。
+var bubbleActivate = func(termKey string) {}
 
 // dispatchNotifyLoop 轮询通知收件箱并分发事件，随进程存活（与 reapLoop 同生命周期）。
 func (a *App) dispatchNotifyLoop() {
@@ -70,16 +79,29 @@ func (a *App) dispatchNotifyOnce(dir string) {
 	}
 }
 
-// handleAgentNotify 分发一条 agent 通知：始终推给前端（隐藏期间前端照常入队，
-// 窗口重现后可见）；窗口不可见时额外补一条系统 toast。
+// handleAgentNotify 分发一条 agent 通知：始终推给前端（隐藏期间前端照常入队）；
+// 主窗不可见时弹独立置顶气泡（非系统 toast）；可见时只靠前端 NotificationBubble。
 func (a *App) handleAgentNotify(p agenthook.Payload) {
 	a.Emit("notify:agent", p)
 	if a.windowVisible() {
 		return
 	}
 	title, body := notifyToastText(p)
-	// toast 失败静默降级为仅 emit：没有系统通知不影响应用内气泡
-	_ = notifyToast(title, body)
+	// bubble 失败静默降级为仅 emit：没有独立气泡不影响应用内队列
+	_ = notifyBubble(title, body, p.TermKey)
+}
+
+// activateFromBubble 是原生气泡点击回调：恢复主窗并通知前端聚焦对应页签。
+func (a *App) activateFromBubble(termKey string) {
+	a.setWindowHidden(false)
+	a.mu.Lock()
+	ctx := a.ctx
+	a.mu.Unlock()
+	if ctx != nil {
+		windowShow(ctx)
+		windowUnminimise(ctx)
+	}
+	a.Emit("notify:focus", map[string]string{"termKey": termKey})
 }
 
 // windowVisible 报告主窗口当前是否对用户可见。

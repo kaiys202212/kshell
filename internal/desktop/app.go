@@ -141,7 +141,7 @@ type App struct {
 	// 等待，避免会话扫描尚未结束时一直拿着「BinPath 为空」的旧快照。
 	toolsReady bool
 	// windowHidden 跟踪主窗口是否已收进托盘（wails v2.16 无 WindowIsVisible 可查）：
-	// 通知 dispatcher 据此决定要不要补弹系统 toast。
+	// 通知 dispatcher 据此决定要不要弹独立置顶气泡。
 	windowHidden bool
 }
 
@@ -168,6 +168,8 @@ func (a *App) Startup(ctx context.Context) {
 	a.mu.Unlock()
 
 	a.initRealDeps()
+	// 原生气泡点击 → 恢复主窗 + 前端聚焦；必须在通知轮询启动前绑好。
+	bubbleActivate = a.activateFromBubble
 	// 语言运行态：按配置初始化直显文案（托盘等），必须在启动托盘前设置，
 	// 否则首屏菜单会先用默认语言渲染（与 appearance 初始化不同，这里不可后补）。
 	applang.Set(applang.Resolve(normalizeLanguage(a.snapshot().Config.Language)))
