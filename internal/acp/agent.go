@@ -77,7 +77,7 @@ type Agent struct {
 // NewAgent 启动子进程并返回连接；调用方负责 Close。
 func NewAgent(ctx context.Context, spec Spec, h Handler) (*Agent, error) {
 	if spec.Path == "" {
-		return nil, errors.New("acp: 未指定 agent 可执行文件")
+		return nil, errors.New("err.acp.no_agent")
 	}
 	cmd := exec.CommandContext(ctx, spec.Path, spec.Args...)
 	executil.HideWindow(cmd)
@@ -96,7 +96,7 @@ func NewAgent(ctx context.Context, spec Spec, h Handler) (*Agent, error) {
 	sb := &syncBuffer{}
 	cmd.Stderr = sb
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("启动 ACP agent 失败: %w", err)
+		return nil, fmt.Errorf("err.acp.start_failed|%w", err)
 	}
 	baseCtx, baseCancel := context.WithCancel(context.Background())
 	a := &Agent{
@@ -191,7 +191,7 @@ func (a *Agent) call(ctx context.Context, method string, params, out any) error 
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
-		return errors.New("acp: 连接已关闭")
+		return errors.New("err.acp.closed")
 	}
 	a.nextID++
 	id := strconv.FormatInt(a.nextID, 10)

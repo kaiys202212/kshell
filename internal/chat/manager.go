@@ -18,9 +18,9 @@ import (
 const attachCreatedGrace = 2 * time.Minute
 
 var (
-	errNoBackend = errors.New("chat: 后端未装配")
-	errNotFound  = errors.New("chat: 会话不存在或已关闭")
-	errRunning   = errors.New("chat: 上一轮尚未结束")
+	errNoBackend = errors.New("err.chat.not_ready")
+	errNotFound  = errors.New("err.chat.gone")
+	errRunning   = errors.New("err.chat.busy")
 )
 
 // maxHistory 限制每会话保留的时间线事件数，防止长会话内存无限增长。
@@ -142,7 +142,7 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 		return Info{}, errNoBackend
 	}
 	if key == "" {
-		return Info{}, errors.New("chat: key 不能为空")
+		return Info{}, errors.New("err.chat.empty_key")
 	}
 
 	// 已退出的旧会话：先整体摘除再重建，避免 byID/order 泄漏。
@@ -216,7 +216,7 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	}
 	// 协议版本不符时拒绝继续，避免按错误语义解读消息。
 	if init.ProtocolVersion != 1 {
-		msg := fmt.Sprintf("acp: 不支持的协议版本 %d", init.ProtocolVersion)
+		msg := fmt.Sprintf("err.chat.unsupported_protocol|%d", init.ProtocolVersion)
 		_ = conn.Close()
 		m.fail(s.id, 0, msg)
 		return Info{}, errors.New(msg)
@@ -226,7 +226,7 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	if sessionID != "" {
 		// load 前先确认对方声明了该能力，否则会拿到无意义的 RPC 错误。
 		if !init.AgentCapabilities.LoadSession {
-			msg := "acp: 该 agent 不支持 session/load"
+			msg := "err.chat.no_session_load"
 			_ = conn.Close()
 			m.fail(s.id, 0, msg)
 			return Info{}, errors.New(msg)

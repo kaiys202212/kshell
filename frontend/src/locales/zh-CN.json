@@ -7,6 +7,19 @@
       "workspace_gone": "工作区不存在",
       "invalid_close_behavior": "非法的关闭行为 {{0}}（可选 tray / exit）"
     },
+    "acp": {
+      "no_agent": "未指定 agent 可执行文件",
+      "start_failed": "启动 ACP agent 失败: {{0}}",
+      "closed": "连接已关闭"
+    },
+    "chat": {
+      "not_ready": "后端未装配",
+      "gone": "会话不存在或已关闭",
+      "busy": "上一轮尚未结束",
+      "empty_key": "key 不能为空",
+      "unsupported_protocol": "不支持的协议版本 {{0}}",
+      "no_session_load": "该 agent 不支持 session/load"
+    },
     "language": {
       "locales_not_dir": "locales 路径不是目录: {{0}}"
     },

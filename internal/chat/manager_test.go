@@ -351,8 +351,8 @@ func TestManagerSynthesizesMessageIDForChunks(t *testing.T) {
 func TestManagerRejectsUnsupportedProtocol(t *testing.T) {
 	b := &fakeBackend{conn: &fakeConn{waitCh: make(chan struct{}), initSet: true, initResult: acp.InitializeResult{ProtocolVersion: 2}}}
 	m := NewManager(b, nil, nil, nil)
-	if _, err := m.Open("new:1", Info{}, Spec{Path: "x"}, ""); err == nil {
-		t.Fatal("want protocol version error")
+	if _, err := m.Open("new:1", Info{}, Spec{Path: "x"}, ""); err == nil || err.Error() != "err.chat.unsupported_protocol|2" {
+		t.Fatalf("want protocol version wire key, got %v", err)
 	}
 	if got := m.List(); len(got) != 0 {
 		t.Fatalf("failed open left ghost sessions: %+v", got)
@@ -366,8 +366,32 @@ func TestManagerRejectsLoadWithoutCapability(t *testing.T) {
 		initResult: acp.InitializeResult{ProtocolVersion: 1, AgentCapabilities: acp.AgentCapabilities{LoadSession: false}},
 	}}
 	m := NewManager(b, nil, nil, nil)
-	if _, err := m.Open("session:s1", Info{Kind: KindSession, Workspace: "/w"}, Spec{Path: "x"}, "s1"); err == nil {
-		t.Fatal("want load-capability error")
+	if _, err := m.Open("session:s1", Info{Kind: KindSession, Workspace: "/w"}, Spec{Path: "x"}, "s1"); err == nil || err.Error() != "err.chat.no_session_load" {
+		t.Fatalf("want load-capability wire key, got %v", err)
+	}
+}
+
+// chat 面向用户的错误统一走 wire key，前端按 key 翻译。
+func TestChatErrorsWireKeys(t *testing.T) {
+	if _, err := NewManager(nil, nil, nil, nil).Open("k", Info{}, Spec{Path: "x"}, ""); err == nil || err.Error() != "err.chat.not_ready" {
+		t.Fatalf("not_ready = %v", err)
+	}
+	m, _, _ := newTestManager(t)
+	if _, err := m.Open("", Info{}, Spec{Path: "x"}, ""); err == nil || err.Error() != "err.chat.empty_key" {
+		t.Fatalf("empty_key = %v", err)
+	}
+	if err := m.Prompt("nope", "hi"); err == nil || err.Error() != "err.chat.gone" {
+		t.Fatalf("gone = %v", err)
+	}
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	m.mu.Lock()
+	m.byID[info.ID].info.Status = StatusRunning
+	m.mu.Unlock()
+	if err := m.Prompt(info.ID, "hi"); err == nil || err.Error() != "err.chat.busy" {
+		t.Fatalf("busy = %v", err)
 	}
 }
 

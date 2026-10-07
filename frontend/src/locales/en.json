@@ -7,6 +7,19 @@
       "workspace_gone": "Workspace not found",
       "invalid_close_behavior": "Invalid close behavior {{0}} (choose tray or exit)"
     },
+    "acp": {
+      "no_agent": "No agent executable specified",
+      "start_failed": "Failed to start ACP agent: {{0}}",
+      "closed": "ACP connection is closed"
+    },
+    "chat": {
+      "not_ready": "Chat backend is not initialized",
+      "gone": "Chat session not found or closed",
+      "busy": "Previous turn is still running",
+      "empty_key": "Chat key cannot be empty",
+      "unsupported_protocol": "Unsupported protocol version {{0}}",
+      "no_session_load": "This agent does not support session/load"
+    },
     "language": {
       "locales_not_dir": "Locales path is not a directory: {{0}}"
     },

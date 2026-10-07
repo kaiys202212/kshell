@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -109,6 +110,25 @@ func fakeAgentSpec(t *testing.T) Spec {
 		t.Fatal(err)
 	}
 	return Spec{Path: exe, Args: []string{"-test.run=TestMain"}, Env: []string{"ACP_FAKE_AGENT=1"}}
+}
+
+// ACP 错误一律以 wire key 暴露给前端翻译（参数以 | 分隔），不再是中文字面量。
+func TestAgentErrorsWireKeys(t *testing.T) {
+	if _, err := NewAgent(context.Background(), Spec{}, nil); err == nil || err.Error() != "err.acp.no_agent" {
+		t.Fatalf("no_agent = %v", err)
+	}
+	missing := filepath.Join(t.TempDir(), "nonexistent-acp-binary")
+	if _, err := NewAgent(context.Background(), Spec{Path: missing}, nil); err == nil || !strings.HasPrefix(err.Error(), "err.acp.start_failed|") {
+		t.Fatalf("start_failed = %v", err)
+	}
+	a, err := NewAgent(context.Background(), fakeAgentSpec(t), &captureHandler{})
+	if err != nil {
+		t.Fatalf("NewAgent: %v", err)
+	}
+	_ = a.Close()
+	if err := a.call(context.Background(), "ping", nil, nil); err == nil || err.Error() != "err.acp.closed" {
+		t.Fatalf("closed = %v", err)
+	}
 }
 
 func TestAgentHandshakeAndPrompt(t *testing.T) {
