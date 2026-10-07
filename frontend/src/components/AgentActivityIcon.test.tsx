@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import AgentActivityIcon from './AgentActivityIcon';
+import { tt } from '../test/i18n';
 
 describe('AgentActivityIcon', () => {
   it('idle 不渲染', () => {
@@ -12,8 +13,8 @@ describe('AgentActivityIcon', () => {
   it('running / awaiting / waiting 带对应 aria-label', () => {
     vi.useFakeTimers();
     const { rerender } = render(<AgentActivityIcon activity="running" />);
-    expect(screen.getByLabelText('执行中')).toBeInTheDocument();
-    const spin = screen.getByLabelText('执行中').querySelector('[data-spin]') as HTMLElement;
+    expect(screen.getByLabelText(tt('ui.agent_activity.running'))).toBeInTheDocument();
+    const spin = screen.getByLabelText(tt('ui.agent_activity.running')).querySelector('[data-spin]') as HTMLElement;
     expect(spin).toBeTruthy();
     expect(spin.style.transform).toBe('rotate(0deg)');
     act(() => {
@@ -21,10 +22,10 @@ describe('AgentActivityIcon', () => {
     });
     expect(spin.style.transform).toBe('rotate(45deg)');
     rerender(<AgentActivityIcon activity="awaiting" />);
-    expect(screen.getByLabelText('待用户确认')).toBeInTheDocument();
+    expect(screen.getByLabelText(tt('ui.agent_activity.awaiting'))).toBeInTheDocument();
     rerender(<AgentActivityIcon activity="waiting" />);
-    expect(screen.getByLabelText('等待用户')).toBeInTheDocument();
-    expect(screen.getByLabelText('等待用户').querySelector('[data-spin]')).toBeNull();
+    expect(screen.getByLabelText(tt('ui.agent_activity.waiting'))).toBeInTheDocument();
+    expect(screen.getByLabelText(tt('ui.agent_activity.waiting')).querySelector('[data-spin]')).toBeNull();
     vi.useRealTimers();
   });
 });

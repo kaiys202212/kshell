@@ -11,6 +11,7 @@ import { registerChatInput, unregisterChatInput } from '../lib/chatInputRegistry
 import { DRAG_MIME } from '../lib/dragPath';
 import { OPEN_FILE_EVENT } from '../lib/openHref';
 import { useAppStore } from '../state/store';
+import { tt } from '../test/i18n';
 import type { ChatInfo, TerminalInfo } from '../lib/api';
 
 const mocks = vi.hoisted(() => ({
@@ -197,7 +198,7 @@ describe('WorkspaceTabView agent 活动图标', () => {
   it('chat Status=running 时页签出现「执行中」', () => {
     useAppStore.setState({ chats: [{ ...chat, Status: 'running' }], terminals: [] });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
-    expect(screen.getByLabelText('执行中')).toBeInTheDocument();
+    expect(screen.getByLabelText(tt('ui.agent_activity.running'))).toBeInTheDocument();
   });
 
   it('chatPermissions 存在时页签出现「待用户确认」', () => {
@@ -214,8 +215,8 @@ describe('WorkspaceTabView agent 活动图标', () => {
       },
     });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
-    expect(screen.getByLabelText('待用户确认')).toBeInTheDocument();
-    expect(screen.queryByLabelText('执行中')).not.toBeInTheDocument();
+    expect(screen.getByLabelText(tt('ui.agent_activity.awaiting'))).toBeInTheDocument();
+    expect(screen.queryByLabelText(tt('ui.agent_activity.running'))).not.toBeInTheDocument();
   });
 
   it('chat Status=ready 时页签出现「等待用户」', () => {
@@ -224,7 +225,7 @@ describe('WorkspaceTabView agent 活动图标', () => {
       terminals: [],
     });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
-    expect(screen.getByLabelText('等待用户')).toBeInTheDocument();
+    expect(screen.getByLabelText(tt('ui.agent_activity.waiting'))).toBeInTheDocument();
   });
 
   it('从聊天页签切到文件后不改 Status', () => {
@@ -278,7 +279,7 @@ describe('WorkspaceTabView agent 活动图标', () => {
 
     const statuses = useAppStore.getState().chats.map((c) => c.Status);
     expect(statuses).toEqual(['ready', 'ready']);
-    expect(screen.getAllByLabelText('等待用户')).toHaveLength(2);
+    expect(screen.getAllByLabelText(tt('ui.agent_activity.waiting'))).toHaveLength(2);
   });
 
   it('右栏有 Git 页签', () => {

@@ -7,6 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SessionList from './SessionList';
 import type { ChatInfo, ChatPermissionRequest, Session, TerminalInfo } from '../lib/api';
 import { useAppStore } from '../state/store';
+import { tt } from '../test/i18n';
+
+// 会话消息数走复数 key：按 en 复数规则取 one/other 再填 {{count}}
+const msgs = (n: number) =>
+  tt(`ui.session_list.messages_${n === 1 ? 'one' : 'other'}`).replace('{{count}}', String(n));
 
 const mocks = vi.hoisted(() => ({
   getSessions: vi.fn(),
@@ -118,7 +123,7 @@ describe('SessionList', () => {
 
     // 工具徽标与消息数（chip 行与会话行都有 CodeBuddy 徽标，断言放宽为「至少出现」）
     expect(screen.getAllByText('CodeBuddy').length).toBeGreaterThan(0);
-    expect(screen.getByText('12 条')).toBeInTheDocument();
+    expect(screen.getByText(msgs(12))).toBeInTheDocument();
   });
 
   it('opencode 的前斜杠 cwd（D:/proj-a）与反斜杠写法视为同一工作区，会话与 chip 都要出现', async () => {
@@ -138,7 +143,7 @@ describe('SessionList', () => {
     renderList();
 
     expect(await findRow('opencode 会话')).toBeInTheDocument();
-    const chips = screen.getByLabelText('按工具筛选');
+    const chips = screen.getByLabelText(tt('ui.session_list.filter_aria'));
     expect(within(chips).getByText('OpenCode')).toBeInTheDocument();
   });
 
@@ -146,14 +151,14 @@ describe('SessionList', () => {
     renderList();
     await findRow('清理构建缓存');
 
-    const chips = screen.getByLabelText('按工具筛选');
+    const chips = screen.getByLabelText(tt('ui.session_list.filter_aria'));
     expect(within(chips).getByText('CodeBuddy')).toBeInTheDocument();
     expect(within(chips).getByText('Claude')).toBeInTheDocument();
     expect(within(chips).getByText('Codex')).toBeInTheDocument();
     expect(within(chips).queryByText('Gemini')).not.toBeInTheDocument(); // 属于其他工作区
 
     // 扁平化：统一 rounded-sm，不用圆角胶囊；选中态用主色底 + 主色文字
-    const all = within(chips).getByRole('button', { name: '全部' });
+    const all = within(chips).getByRole('button', { name: tt('ui.session_list.all') });
     expect(all).toHaveClass('rounded-sm');
     expect(all).toHaveClass('bg-primary/10');
     expect(all).toHaveClass('text-primary');
@@ -173,10 +178,10 @@ describe('SessionList', () => {
 
     // AND 叠加：Codex + 关键词「白名单」→ 无匹配（关键词命中的是 CodeBuddy 会话）
     fireEvent.change(screen.getByLabelText('过滤会话'), { target: { value: '白名单' } });
-    expect(screen.getByText('没有匹配的会话')).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.session_list.no_match'))).toBeInTheDocument();
 
     // 点「全部」并清空关键词恢复
-    fireEvent.click(screen.getByRole('button', { name: '全部' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.session_list.all') }));
     fireEvent.change(screen.getByLabelText('过滤会话'), { target: { value: '' } });
     expect(screen.getByText('修复上传白名单')).toBeInTheDocument();
     expect(screen.getByText('清理构建缓存')).toBeInTheDocument();
@@ -202,14 +207,14 @@ describe('SessionList', () => {
 
     // 无匹配时显示空态
     fireEvent.change(input, { target: { value: '不存在' } });
-    expect(screen.getByText('没有匹配的会话')).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.session_list.no_match'))).toBeInTheDocument();
   });
 
   it('点击激活图标把会话交给 onActivate，点行交给 onSelectRow', async () => {
     renderList();
     const row = await findRow('修复上传白名单');
 
-    fireEvent.click(within(row).getByRole('button', { name: '激活' }));
+    fireEvent.click(within(row).getByRole('button', { name: tt('ui.session_list.activate') }));
     expect(onActivate).toHaveBeenCalledWith(expect.objectContaining({ ID: 's1' }));
     expect(onSelectRow).not.toHaveBeenCalled();
 
@@ -223,11 +228,11 @@ describe('SessionList', () => {
     renderList('s1');
     const row = await findRow('修复上传白名单');
 
-    expect(within(row).queryByRole('button', { name: '激活' })).toBeNull();
+    expect(within(row).queryByRole('button', { name: tt('ui.session_list.activate') })).toBeNull();
     expect(within(row).queryByRole('button', { name: '恢复' })).toBeNull();
     expect(within(row).queryByRole('button', { name: '切换' })).toBeNull();
-    expect(within(row).getByLabelText('已恢复')).toBeInTheDocument();
-    expect(within(row).getByLabelText('执行中')).toBeInTheDocument();
+    expect(within(row).getByLabelText(tt('ui.session_list.restored'))).toBeInTheDocument();
+    expect(within(row).getByLabelText(tt('ui.agent_activity.running'))).toBeInTheDocument();
     expect(row).toHaveClass('bg-primary/8');
 
     fireEvent.click(row);
@@ -238,8 +243,8 @@ describe('SessionList', () => {
     useAppStore.setState({ terminals: [terminal()], terminalBusy: {} });
     renderList();
     const row = await findRow('修复上传白名单');
-    expect(within(row).getByLabelText('等待用户')).toBeInTheDocument();
-    expect(within(row).queryByLabelText('执行中')).toBeNull();
+    expect(within(row).getByLabelText(tt('ui.agent_activity.waiting'))).toBeInTheDocument();
+    expect(within(row).queryByLabelText(tt('ui.agent_activity.running'))).toBeNull();
   });
 
   it('内嵌终端已退出时视为未激活（激活图标，无已恢复）', async () => {
@@ -249,11 +254,11 @@ describe('SessionList', () => {
     renderList();
     const row = await findRow('修复上传白名单');
 
-    expect(within(row).getByRole('button', { name: '激活' })).toBeInTheDocument();
-    expect(within(row).queryByLabelText('已恢复')).toBeNull();
+    expect(within(row).getByRole('button', { name: tt('ui.session_list.activate') })).toBeInTheDocument();
+    expect(within(row).queryByLabelText(tt('ui.session_list.restored'))).toBeNull();
     expect(within(row).queryByText('✓')).toBeNull();
-    expect(within(row).queryByLabelText('执行中')).toBeNull();
-    expect(within(row).queryByLabelText('等待用户')).toBeNull();
+    expect(within(row).queryByLabelText(tt('ui.agent_activity.running'))).toBeNull();
+    expect(within(row).queryByLabelText(tt('ui.agent_activity.waiting'))).toBeNull();
   });
 
   it('该会话已有打开中的 ACP 聊天时标已恢复；未选中不高亮', async () => {
@@ -263,9 +268,9 @@ describe('SessionList', () => {
     renderList();
     const row = await findRow('修复上传白名单');
 
-    expect(within(row).queryByRole('button', { name: '激活' })).toBeNull();
-    expect(within(row).getByLabelText('已恢复')).toBeInTheDocument();
-    expect(within(row).getByLabelText('等待用户')).toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: tt('ui.session_list.activate') })).toBeNull();
+    expect(within(row).getByLabelText(tt('ui.session_list.restored'))).toBeInTheDocument();
+    expect(within(row).getByLabelText(tt('ui.agent_activity.waiting'))).toBeInTheDocument();
     expect(row).not.toHaveClass('bg-primary/8');
   });
 
@@ -274,7 +279,7 @@ describe('SessionList', () => {
     const row = await findRow('修复上传白名单');
 
     expect(within(row).queryByRole('button', { name: '在外部终端打开' })).toBeNull();
-    expect(within(row).getByRole('button', { name: '激活' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: tt('ui.session_list.activate') })).toBeInTheDocument();
   });
 
   it('标题剥掉 XML 包装标签后渲染；清洗后为空显示「(无标题)」（完整原文走悬停浮动卡片）', async () => {
@@ -290,7 +295,7 @@ describe('SessionList', () => {
     expect(row.querySelector('[data-testid="session-title"]')?.textContent).toBe('帮我把登录页报错文案改一下');
     expect(screen.queryByText(/local-command-caveat/)).not.toBeInTheDocument();
 
-    const empty = await screen.findByText('(无标题)');
+    const empty = await screen.findByText(tt('ui.session_list.untitled'));
     expect(empty).toHaveClass('italic');
     expect(empty.closest('li')).toBeInTheDocument();
   });
@@ -327,13 +332,13 @@ describe('SessionList', () => {
     useAppStore.setState({ scanState: 'scanning' });
     const { unmount, container } = renderList();
     expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0);
-    expect(screen.queryByText('该工作区暂无会话')).not.toBeInTheDocument();
+    expect(screen.queryByText(tt('ui.session_list.empty'))).not.toBeInTheDocument();
     unmount();
 
     // 扫描已完成、该工作区确实没有会话
     useAppStore.setState({ scanState: 'done' });
     renderList();
-    expect(await screen.findByText('该工作区暂无会话')).toBeInTheDocument();
+    expect(await screen.findByText(tt('ui.session_list.empty'))).toBeInTheDocument();
   });
 
   it('onScanDone 回调把 scanState 置 done（幂等，消除死角）', async () => {
@@ -359,7 +364,7 @@ describe('SessionList agent 活动图标', () => {
     useAppStore.setState({ chats: [chat({ Status: 'running' })] });
     renderList();
     const row = await findRow('修复上传白名单');
-    expect(within(row).getByLabelText('执行中')).toBeInTheDocument();
+    expect(within(row).getByLabelText(tt('ui.agent_activity.running'))).toBeInTheDocument();
     expect(within(row).queryByText('✓')).toBeNull();
   });
 
@@ -370,8 +375,8 @@ describe('SessionList agent 活动图标', () => {
     });
     renderList();
     const row = await findRow('修复上传白名单');
-    expect(within(row).getByLabelText('待用户确认')).toBeInTheDocument();
-    expect(within(row).queryByLabelText('执行中')).toBeNull();
+    expect(within(row).getByLabelText(tt('ui.agent_activity.awaiting'))).toBeInTheDocument();
+    expect(within(row).queryByLabelText(tt('ui.agent_activity.running'))).toBeNull();
   });
 
   it('ready chat 时列表行有「等待用户」', async () => {
@@ -380,15 +385,15 @@ describe('SessionList agent 活动图标', () => {
     });
     renderList();
     const row = await findRow('修复上传白名单');
-    expect(within(row).getByLabelText('等待用户')).toBeInTheDocument();
+    expect(within(row).getByLabelText(tt('ui.agent_activity.waiting'))).toBeInTheDocument();
   });
 
   it('running chat 时列表行有「执行中」', async () => {
     useAppStore.setState({ chats: [chat({ Status: 'running' })] });
     renderList();
     const row = await findRow('修复上传白名单');
-    expect(within(row).getByLabelText('执行中')).toBeInTheDocument();
-    expect(within(row).queryByLabelText('等待用户')).toBeNull();
+    expect(within(row).getByLabelText(tt('ui.agent_activity.running'))).toBeInTheDocument();
+    expect(within(row).queryByLabelText(tt('ui.agent_activity.waiting'))).toBeNull();
   });
 
   it('终端 exited 时列表行无活动图标', async () => {
@@ -397,9 +402,9 @@ describe('SessionList agent 活动图标', () => {
     });
     renderList();
     const row = await findRow('修复上传白名单');
-    expect(within(row).queryByLabelText('等待用户')).toBeNull();
-    expect(within(row).queryByLabelText('执行中')).toBeNull();
-    expect(within(row).getByRole('button', { name: '激活' })).toBeInTheDocument();
+    expect(within(row).queryByLabelText(tt('ui.agent_activity.waiting'))).toBeNull();
+    expect(within(row).queryByLabelText(tt('ui.agent_activity.running'))).toBeNull();
+    expect(within(row).getByRole('button', { name: tt('ui.session_list.activate') })).toBeInTheDocument();
   });
 
   it('用户已发送且磁盘还没有时，列表立刻出现该会话', async () => {
@@ -450,7 +455,7 @@ describe('SessionList agent 活动图标', () => {
       />,
     );
     const row = await findRow('修复上传白名单');
-    fireEvent.click(within(row).getByRole('button', { name: '归档' }));
+    fireEvent.click(within(row).getByRole('button', { name: tt('ui.session_list.archive') }));
     expect(onArchive).toHaveBeenCalledWith(expect.objectContaining({ ID: 's1' }));
     expect(onSelectRow).not.toHaveBeenCalled();
   });
@@ -469,7 +474,7 @@ describe('SessionList agent 活动图标', () => {
     });
     renderList();
     const row = await findRow('修复登录空指针');
-    expect(within(row).queryByRole('button', { name: '归档' })).not.toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: tt('ui.session_list.archive') })).not.toBeInTheDocument();
   });
 
   it('勾选归档后只显示已归档会话，点击还原', async () => {
@@ -483,11 +488,11 @@ describe('SessionList agent 活动图标', () => {
       />,
     );
     const row = await findRow('重构登录页');
-    expect(within(row).getByRole('img', { name: '已归档' })).toBeInTheDocument();
+    expect(within(row).getByRole('img', { name: tt('ui.session_list.archived') })).toBeInTheDocument();
     expect(screen.queryByText('修复上传白名单')).not.toBeInTheDocument();
-    fireEvent.click(within(row).getByRole('button', { name: '还原' }));
+    fireEvent.click(within(row).getByRole('button', { name: tt('ui.session_list.restore') }));
     expect(onRestore).toHaveBeenCalledWith(expect.objectContaining({ ID: 's2' }));
-    expect(within(row).queryByRole('button', { name: '归档' })).not.toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: tt('ui.session_list.archive') })).not.toBeInTheDocument();
   });
 });
 

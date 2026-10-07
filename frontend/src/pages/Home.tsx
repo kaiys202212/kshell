@@ -7,6 +7,7 @@
 // GetWorkspaces 刷新（统一走一条取数路径，事件 payload 只当触发信号用）。
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   createProject,
   getDeletedProjects,
@@ -18,6 +19,7 @@ import {
   scanSessions,
 } from '../lib/api';
 import type { DeletedProject, Workspace } from '../lib/api';
+import { backendError } from '../lib/errors';
 import { formatRelativeTime } from '../lib/format';
 import { badgeFor } from '../lib/toolBadge';
 import { MONO } from '../lib/ui';
@@ -79,11 +81,8 @@ function baseName(p: string): string {
   return parts[parts.length - 1] || p;
 }
 
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
 export default function Home() {
+  const { t } = useTranslation();
   const workspaces = useAppStore((s) => s.workspaces);
   const setWorkspaces = useAppStore((s) => s.setWorkspaces);
   const scanState = useAppStore((s) => s.scanState);
@@ -168,11 +167,11 @@ export default function Home() {
     try {
       const dir = await createProject();
       if (!dir) return; // 用户取消：静默
-      notify(`已添加项目「${baseName(dir)}」`, 'success');
+      notify(t('ui.home.added', { name: baseName(dir) }), 'success');
       refresh();
       refreshDeleted();
     } catch (err) {
-      notify(`新建项目失败：${errorText(err)}`, 'error');
+      notify(t('ui.home.create_failed', { err: backendError(err) }), 'error');
     } finally {
       setCreating(false);
     }
@@ -181,22 +180,22 @@ export default function Home() {
   const handleDelete = async (ws: Workspace) => {
     try {
       await hideProject(ws.Path);
-      notify(`已删除「${ws.Name}」，可在回收站还原`);
+      notify(t('ui.home.deleted', { name: ws.Name }));
       refresh();
       refreshDeleted();
     } catch (err) {
-      notify(`删除项目失败：${errorText(err)}`, 'error');
+      notify(t('ui.home.delete_failed', { err: backendError(err) }), 'error');
     }
   };
 
   const handleRestore = async (path: string, name: string) => {
     try {
       await restoreProject(path);
-      notify(`已还原「${name}」`, 'success');
+      notify(t('ui.home.restored', { name }), 'success');
       refresh();
       refreshDeleted();
     } catch (err) {
-      notify(`还原项目失败：${errorText(err)}`, 'error');
+      notify(t('ui.home.restore_failed', { err: backendError(err) }), 'error');
     }
   };
 
@@ -204,14 +203,14 @@ export default function Home() {
     <div className="flex-1 overflow-y-auto p-6">
       <div className="mb-3 flex items-center justify-between gap-2">
         <h1 className="text-lg font-semibold">
-          工作区
+          {t('ui.home.title')}
           <span className="ml-2 text-xs font-normal text-muted-foreground">
-            {totalSessions} 个会话
+            {t('ui.home.session_count', { count: totalSessions })}
           </span>
         </h1>
         <div className="flex items-center gap-2">
           <Button size="sm" disabled={creating} onClick={() => void handleCreate()}>
-            {creating ? '添加中…' : '新建项目'}
+            {creating ? t('ui.home.creating') : t('ui.home.create_project')}
           </Button>
           {/* 回收站：0 项时禁用（没有可还原的内容，点开只有空态） */}
           <Button
@@ -220,7 +219,7 @@ export default function Home() {
             disabled={deleted.length === 0}
             onClick={() => setBinOpen(true)}
           >
-            回收站{deleted.length > 0 ? ` (${deleted.length})` : ''}
+            {t('ui.home.recycle_bin')}{deleted.length > 0 ? ` (${deleted.length})` : ''}
           </Button>
           <Dialog
             open={binOpen}
@@ -228,13 +227,13 @@ export default function Home() {
             className="top-20 w-[560px] max-w-[90vw] p-3 outline-none"
           >
             <DialogPrimitive.Title className="mb-2 text-sm font-medium">
-              回收站
+              {t('ui.home.recycle_bin')}
             </DialogPrimitive.Title>
             {deleted.length === 0 ? (
               <EmptyState
                 className="py-6"
-                title="回收站是空的"
-                hint="删除的项目会先放到这里，可随时还原"
+                title={t('ui.home.bin_empty_title')}
+                hint={t('ui.home.bin_empty_hint')}
               />
             ) : (
               <ul className="m-0 flex max-h-80 list-none flex-col gap-1 overflow-y-auto p-0">
@@ -249,7 +248,7 @@ export default function Home() {
                         {d.path}
                       </span>
                     </span>
-                    {!d.exists && <Badge variant="outline">目录已不存在</Badge>}
+                    {!d.exists && <Badge variant="outline">{t('ui.home.dir_missing')}</Badge>}
                     <span className="shrink-0 text-xs text-muted-foreground">
                       {formatRelativeTime(d.at)}
                     </span>
@@ -258,7 +257,7 @@ export default function Home() {
                       variant="secondary"
                       onClick={() => void handleRestore(d.path, d.name)}
                     >
-                      还原
+                      {t('ui.home.restore')}
                     </Button>
                   </li>
                 ))}
@@ -271,7 +270,7 @@ export default function Home() {
             disabled={scanState === 'scanning'}
             onClick={handleRescan}
           >
-            {scanState === 'scanning' ? '扫描中…' : '重新扫描'}
+            {scanState === 'scanning' ? t('ui.home.scanning') : t('ui.home.rescan')}
           </Button>
         </div>
       </div>
@@ -280,11 +279,11 @@ export default function Home() {
         <kbd className="rounded-sm border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-secondary-foreground">
           Ctrl K
         </kbd>
-        切换
+        {t('ui.home.shortcut_switch')}
         <kbd className="rounded-sm border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-secondary-foreground">
           Ctrl F
         </kbd>
-        搜索
+        {t('ui.home.shortcut_search')}
       </p>
       {sorted.length === 0 ? (
         // 空态按 scanState 收敛：扫描未完成（idle/scanning）用骨架屏占位，
@@ -296,7 +295,7 @@ export default function Home() {
             ))}
           </div>
         ) : (
-          <EmptyState icon={<FolderGlyph />} title="未发现工作区" />
+          <EmptyState icon={<FolderGlyph />} title={t('ui.home.empty')} />
         )
       ) : (
         <ul className={GRID}>
@@ -328,15 +327,15 @@ export default function Home() {
                   <span className="flex min-w-0 items-center gap-1.5">
                     <span data-testid="ws-name" className="min-w-0 truncate text-[12.5px] font-medium">{ws.Name}</span>
                     {ws.Source === 'git' && <Badge variant="outline">git</Badge>}
-                    {ws.Source === 'manual' && <Badge variant="outline">项目</Badge>}
+                    {ws.Source === 'manual' && <Badge variant="outline">{t('ui.home.source_manual')}</Badge>}
                   </span>
                   {/* 第二行：会话数 + 最后活动时间 */}
                   <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-                    <span className={`whitespace-nowrap ${MONO}`}>{ws.SessionCount} 个会话</span>
+                    <span className={`whitespace-nowrap ${MONO}`}>{t('ui.home.session_count', { count: ws.SessionCount })}</span>
                     <span className={`whitespace-nowrap ${MONO}`}>
                       {lastUsed === null
-                        ? '未使用过'
-                        : `最后活动 ${formatRelativeTime(ws.LastUsed)}`}
+                        ? t('ui.home.never_used')
+                        : t('ui.home.last_active', { rel: formatRelativeTime(ws.LastUsed) })}
                     </span>
                   </span>
                   {/* 第三行：工具分布（最多 3 个 + "+N"） */}
@@ -354,8 +353,8 @@ export default function Home() {
                 {/* 删除按钮：绝对定位的兄弟节点（卡片本身是 button，不能嵌套），hover 显现 */}
                 <button
                   type="button"
-                  aria-label={`删除项目 ${ws.Name}`}
-                  title="删除项目（可在回收站还原）"
+                  aria-label={t('ui.home.delete_project', { name: ws.Name })}
+                  title={t('ui.home.delete_project_title')}
                   className="absolute right-1 top-1 hidden rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-destructive group-hover:block"
                   onClick={() => void handleDelete(ws)}
                 >

@@ -127,6 +127,12 @@
       "no_update": "没有可用更新"
     }
   },
+  "time": {
+    "just_now": "刚刚",
+    "minutes_ago": "{{n}} 分钟前",
+    "hours_ago": "{{n}} 小时前",
+    "days_ago": "{{n}} 天前"
+  },
   "tool": {
     "log": {
       "auto_repairing": "检测到安装损坏，正在自动修复…",
@@ -239,6 +245,61 @@
         "confirm_uninstall": "确认卸载",
         "action_failed": "操作失败"
       }
+    },
+    "home": {
+      "title": "工作区",
+      "session_count_one": "{{count}} 个会话",
+      "session_count_other": "{{count}} 个会话",
+      "create_project": "新建项目",
+      "creating": "添加中…",
+      "recycle_bin": "回收站",
+      "bin_empty_title": "回收站是空的",
+      "bin_empty_hint": "删除的项目会先放到这里，可随时还原",
+      "dir_missing": "目录已不存在",
+      "restore": "还原",
+      "restored": "已还原「{{name}}」",
+      "restore_failed": "还原项目失败：{{err}}",
+      "delete_project": "删除项目 {{name}}",
+      "delete_project_title": "删除项目（可在回收站还原）",
+      "deleted": "已删除「{{name}}」，可在回收站还原",
+      "delete_failed": "删除项目失败：{{err}}",
+      "added": "已添加项目「{{name}}」",
+      "create_failed": "新建项目失败：{{err}}",
+      "rescan": "重新扫描",
+      "scanning": "扫描中…",
+      "shortcut_switch": "切换",
+      "shortcut_search": "搜索",
+      "source_manual": "项目",
+      "never_used": "未使用过",
+      "last_active": "最后活动 {{rel}}",
+      "empty": "未发现工作区"
+    },
+    "session_list": {
+      "filter_aria": "按工具筛选",
+      "all": "全部",
+      "no_match": "没有匹配的会话",
+      "empty": "该工作区暂无会话",
+      "archived": "已归档",
+      "untitled": "(无标题)",
+      "messages_one": "{{count}} 条",
+      "messages_other": "{{count}} 条",
+      "restore": "还原",
+      "restore_title": "还原到开发列表",
+      "archive": "归档",
+      "restored": "已恢复",
+      "activate": "激活"
+    },
+    "archive_suggest": {
+      "title": "归档这个会话？",
+      "default_summary": "当前任务看起来已经完成。",
+      "hint": "归档后可在会话列表勾选「归档」查看，并随时还原。",
+      "continue": "继续",
+      "archive": "归档"
+    },
+    "agent_activity": {
+      "running": "执行中",
+      "awaiting": "待用户确认",
+      "waiting": "等待用户"
     }
   }
 }

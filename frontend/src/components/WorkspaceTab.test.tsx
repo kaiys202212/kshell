@@ -6,6 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WorkspaceTabView from '../pages/WorkspaceTab';
 import { useAppStore } from '../state/store';
+import { tt } from '../test/i18n';
 import type { ChatInfo, TerminalInfo, ToolInfo } from '../lib/api';
 
 const mocks = vi.hoisted(() => ({
@@ -308,7 +309,7 @@ describe('WorkspaceTab', () => {
     mocks.openSession.mockResolvedValue({ Kind: 'terminal', Terminal: term });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
-    fireEvent.click(await screen.findByRole('button', { name: '激活' }));
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.session_list.activate') }));
 
     await waitFor(() => expect(mocks.openSession).toHaveBeenCalledWith('s1'));
     expect(await screen.findByTestId('terminal-t1')).toBeInTheDocument();

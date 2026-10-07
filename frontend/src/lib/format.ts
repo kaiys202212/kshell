@@ -1,14 +1,17 @@
 // 相对时间格式化：刚刚 / N 分钟前 / N 小时前 / N 天前，更久直接给本地日期。
+// 非组件 lib 直接用 i18next 单例（不能走 useTranslation），文案在 time.* 下。
+import i18next from 'i18next';
+
 export function formatRelativeTime(iso: string): string {
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return '';
   const min = Math.floor((Date.now() - t) / 60_000);
-  if (min < 1) return '刚刚';
-  if (min < 60) return `${min} 分钟前`;
+  if (min < 1) return i18next.t('time.just_now') as string;
+  if (min < 60) return i18next.t('time.minutes_ago', { n: min }) as string;
   const hours = Math.floor(min / 60);
-  if (hours < 24) return `${hours} 小时前`;
+  if (hours < 24) return i18next.t('time.hours_ago', { n: hours }) as string;
   const days = Math.floor(hours / 24);
-  if (days < 30) return `${days} 天前`;
+  if (days < 30) return i18next.t('time.days_ago', { n: days }) as string;
   return new Date(t).toLocaleDateString();
 }
 

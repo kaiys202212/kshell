@@ -127,6 +127,12 @@
       "no_update": "No update available"
     }
   },
+  "time": {
+    "just_now": "Just now",
+    "minutes_ago": "{{n}} minutes ago",
+    "hours_ago": "{{n}} hours ago",
+    "days_ago": "{{n}} days ago"
+  },
   "tool": {
     "log": {
       "auto_repairing": "Broken installation detected, auto-repairing...",
@@ -239,6 +245,61 @@
         "confirm_uninstall": "Confirm uninstall",
         "action_failed": "Operation failed"
       }
+    },
+    "home": {
+      "title": "Workspaces",
+      "session_count_one": "{{count}} session",
+      "session_count_other": "{{count}} sessions",
+      "create_project": "New project",
+      "creating": "Adding…",
+      "recycle_bin": "Recycle bin",
+      "bin_empty_title": "Recycle bin is empty",
+      "bin_empty_hint": "Deleted projects are moved here and can be restored anytime",
+      "dir_missing": "Directory no longer exists",
+      "restore": "Restore",
+      "restored": "Restored \"{{name}}\"",
+      "restore_failed": "Failed to restore project: {{err}}",
+      "delete_project": "Delete project {{name}}",
+      "delete_project_title": "Delete project (restorable from the recycle bin)",
+      "deleted": "Deleted \"{{name}}\"; restore it from the recycle bin",
+      "delete_failed": "Failed to delete project: {{err}}",
+      "added": "Added project \"{{name}}\"",
+      "create_failed": "Failed to create project: {{err}}",
+      "rescan": "Rescan",
+      "scanning": "Scanning…",
+      "shortcut_switch": "Switch",
+      "shortcut_search": "Search",
+      "source_manual": "Project",
+      "never_used": "Never used",
+      "last_active": "Last active {{rel}}",
+      "empty": "No workspaces found"
+    },
+    "session_list": {
+      "filter_aria": "Filter by tool",
+      "all": "All",
+      "no_match": "No matching sessions",
+      "empty": "No sessions in this workspace",
+      "archived": "Archived",
+      "untitled": "(Untitled)",
+      "messages_one": "{{count}} message",
+      "messages_other": "{{count}} messages",
+      "restore": "Restore",
+      "restore_title": "Restore to development list",
+      "archive": "Archive",
+      "restored": "Restored",
+      "activate": "Activate"
+    },
+    "archive_suggest": {
+      "title": "Archive this session?",
+      "default_summary": "The current task looks complete.",
+      "hint": "Once archived, view it in the session list under \"Archived\" and restore it anytime.",
+      "continue": "Continue",
+      "archive": "Archive"
+    },
+    "agent_activity": {
+      "running": "Running",
+      "awaiting": "Awaiting confirmation",
+      "waiting": "Waiting for user"
     }
   }
 }

@@ -8,6 +8,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Home from './Home';
 import type { Workspace } from '../lib/api';
 import { useAppStore } from '../state/store';
+import { tt } from '../test/i18n';
+
+// 会话数走复数 key（en 规则 one/other），相对时间走 time.* 命名插值
+const count = (n: number) =>
+  tt(`ui.home.session_count_${n === 1 ? 'one' : 'other'}`).replace('{{count}}', String(n));
+const lastActive = (rel: string) => tt('ui.home.last_active').replace('{{rel}}', rel);
+const minutesAgoText = (n: number) => tt('time.minutes_ago').replace('{{n}}', String(n));
 
 const mocks = vi.hoisted(() => ({
   getWorkspaces: vi.fn(),
@@ -96,15 +103,16 @@ describe('Home', () => {
     render(<Home />);
     const fresh = await screen.findByTitle('D:\\proj-new');
 
-    expect(within(fresh).getByText('4 个会话')).toBeInTheDocument();
-    expect(within(fresh).getByText('最后活动 5 分钟前')).toBeInTheDocument();
+    expect(within(fresh).getByText(count(4))).toBeInTheDocument();
+    expect(within(fresh).getByText(lastActive(minutesAgoText(5)))).toBeInTheDocument();
     expect(within(fresh).queryByText('git')).toBeNull();
 
     const gitOnly = card('D:\\git-only');
     expect(within(gitOnly).getByText('git')).toBeInTheDocument();
-    expect(within(gitOnly).getByText('0 个会话')).toBeInTheDocument();
-    expect(within(gitOnly).getByText('未使用过')).toBeInTheDocument();
-    expect(within(gitOnly).queryByText(/最后活动/)).toBeNull();
+    expect(within(gitOnly).getByText(count(0))).toBeInTheDocument();
+    expect(within(gitOnly).getByText(tt('ui.home.never_used'))).toBeInTheDocument();
+    const lastActivePrefix = tt('ui.home.last_active').split('{{')[0];
+    expect(within(gitOnly).queryByText((c) => c.includes(lastActivePrefix))).toBeNull();
   });
 
   it('点击整卡打开工作区页签（键盘可达：整卡是 button）', async () => {
@@ -124,16 +132,16 @@ describe('Home', () => {
 
     expect(mocks.scanSessions).toHaveBeenCalledTimes(1);
     expect(useAppStore.getState().scanState).toBe('scanning');
-    expect(screen.getByRole('button', { name: '扫描中…' })).toBeDisabled();
-    expect(screen.queryByRole('button', { name: '重新扫描' })).toBeNull();
+    expect(screen.getByRole('button', { name: tt('ui.home.scanning') })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: tt('ui.home.rescan') })).toBeNull();
 
     await act(async () => {
       scanDoneCb({});
     });
     expect(useAppStore.getState().scanState).toBe('done');
-    expect(screen.queryByRole('button', { name: '扫描中…' })).toBeNull();
+    expect(screen.queryByRole('button', { name: tt('ui.home.scanning') })).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: '重新扫描' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.home.rescan') }));
     expect(mocks.scanSessions).toHaveBeenCalledTimes(2);
     expect(useAppStore.getState().scanState).toBe('scanning');
   });
@@ -160,13 +168,13 @@ describe('Home', () => {
     const { container } = render(<Home />);
 
     expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0);
-    expect(screen.queryByText('未发现工作区')).toBeNull();
+    expect(screen.queryByText(tt('ui.home.empty'))).toBeNull();
 
     await act(async () => {
       scanDoneCb({});
     });
-    expect(await screen.findByText('未发现工作区')).toBeInTheDocument();
-    expect(screen.getByText('0 个会话')).toBeInTheDocument();
+    expect(await screen.findByText(tt('ui.home.empty'))).toBeInTheDocument();
+    expect(screen.getByText(count(0))).toBeInTheDocument();
   });
 
   it('新建项目：调绑定、提示并刷新列表', async () => {
@@ -175,11 +183,11 @@ describe('Home', () => {
     await screen.findByTitle('D:\\proj-new');
     const before = mocks.getWorkspaces.mock.calls.length;
 
-    fireEvent.click(screen.getByRole('button', { name: '新建项目' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.home.create_project') }));
 
     await waitFor(() => expect(mocks.createProject).toHaveBeenCalledTimes(1));
     expect(
-      useAppStore.getState().toasts.some((t) => t.title === '已添加项目「new-proj」'),
+      useAppStore.getState().toasts.some((t) => t.title === tt('ui.home.added').replace('{{name}}', 'new-proj')),
     ).toBe(true);
     await waitFor(() => expect(mocks.getWorkspaces.mock.calls.length).toBeGreaterThan(before));
   });
@@ -190,7 +198,7 @@ describe('Home', () => {
     await screen.findByTitle('D:\\proj-new');
     const before = mocks.getWorkspaces.mock.calls.length;
 
-    fireEvent.click(screen.getByRole('button', { name: '新建项目' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.home.create_project') }));
 
     await waitFor(() => expect(mocks.createProject).toHaveBeenCalledTimes(1));
     expect(useAppStore.getState().toasts).toHaveLength(0);
@@ -201,11 +209,11 @@ describe('Home', () => {
     render(<Home />);
     await screen.findByTitle('D:\\proj-new');
 
-    fireEvent.click(screen.getByLabelText('删除项目 proj-new'));
+    fireEvent.click(screen.getByLabelText(tt('ui.home.delete_project').replace('{{name}}', 'proj-new')));
 
     await waitFor(() => expect(mocks.hideProject).toHaveBeenCalledWith('D:\\proj-new'));
     expect(
-      useAppStore.getState().toasts.some((t) => t.title === '已删除「proj-new」，可在回收站还原'),
+      useAppStore.getState().toasts.some((t) => t.title === tt('ui.home.deleted').replace('{{name}}', 'proj-new')),
     ).toBe(true);
   });
 
@@ -217,19 +225,21 @@ describe('Home', () => {
     render(<Home />);
     await screen.findByTitle('D:\\proj-new');
 
-    const binButton = await screen.findByRole('button', { name: /^回收站/ });
+    const binButton = await screen.findByRole('button', {
+      name: (n) => n.startsWith(tt('ui.home.recycle_bin')),
+    });
     await waitFor(() => expect(binButton).toBeEnabled());
     expect(binButton.textContent).toContain('(2)');
 
     fireEvent.click(binButton);
     expect(await screen.findByText('D:\\gone')).toBeInTheDocument();
-    expect(screen.getByText('目录已不存在')).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.home.dir_missing'))).toBeInTheDocument();
 
     // 「还原」按钮每行一个：点第一条（gone）
-    fireEvent.click(screen.getAllByRole('button', { name: '还原' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: tt('ui.home.restore') })[0]);
 
     await waitFor(() => expect(mocks.restoreProject).toHaveBeenCalledWith('D:\\gone'));
-    expect(useAppStore.getState().toasts.some((t) => t.title === '已还原「gone」')).toBe(true);
+    expect(useAppStore.getState().toasts.some((t) => t.title === tt('ui.home.restored').replace('{{name}}', 'gone'))).toBe(true);
   });
 
   it('projects:changed 事件：重拉工作区与回收站列表', async () => {

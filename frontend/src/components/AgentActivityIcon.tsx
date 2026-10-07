@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { cn } from '../lib/cn';
 import type { AgentActivity } from '../state/agentActivity';
 
@@ -34,14 +35,15 @@ interface Props {
 }
 
 export default function AgentActivityIcon({ activity, className }: Props) {
+  const { t } = useTranslation();
   if (activity === 'idle') return null;
   if (activity === 'running') {
     return (
       <span
         className={cn('inline-flex h-3.5 w-3.5 shrink-0 text-success', className)}
         role="img"
-        aria-label="执行中"
-        title="执行中"
+        aria-label={t('ui.agent_activity.running')}
+        title={t('ui.agent_activity.running')}
       >
         <SpinningArc />
       </span>
@@ -52,8 +54,8 @@ export default function AgentActivityIcon({ activity, className }: Props) {
       <span
         className={cn('inline-flex h-3 w-3 shrink-0 items-center justify-center text-warning', className)}
         role="img"
-        aria-label="待用户确认"
-        title="待用户确认"
+        aria-label={t('ui.agent_activity.awaiting')}
+        title={t('ui.agent_activity.awaiting')}
       >
         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-warning" aria-hidden="true" />
       </span>
@@ -64,8 +66,8 @@ export default function AgentActivityIcon({ activity, className }: Props) {
       <span
         className={cn('inline-flex h-3 w-3 shrink-0 text-muted-foreground', className)}
         role="img"
-        aria-label="等待用户"
-        title="等待用户"
+        aria-label={t('ui.agent_activity.waiting')}
+        title={t('ui.agent_activity.waiting')}
       >
         <svg viewBox="0 0 12 12" className="h-3 w-3" aria-hidden="true">
           <circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />

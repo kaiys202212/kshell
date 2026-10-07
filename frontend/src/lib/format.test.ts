@@ -1,6 +1,10 @@
 // 相对时间 / 输出尾部 / 时长格式化测试。
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { formatDuration, formatRelativeTime, tailLines } from './format';
+import { tt } from '../test/i18n';
+
+// time.* 用命名插值 {{n}}，断言按 en 资源拼出期望串，与具体语言解耦
+const rel = (key: string, n: number) => tt(key).replace('{{n}}', String(n));
 
 afterEach(() => {
   vi.useRealTimers();
@@ -9,22 +13,22 @@ afterEach(() => {
 describe('formatRelativeTime', () => {
   it('1 分钟内显示「刚刚」', () => {
     vi.setSystemTime(new Date('2026-01-01T12:00:00Z'));
-    expect(formatRelativeTime('2026-01-01T11:59:30Z')).toBe('刚刚');
+    expect(formatRelativeTime('2026-01-01T11:59:30Z')).toBe(tt('time.just_now'));
   });
 
   it('1 小时内显示「N 分钟前」', () => {
     vi.setSystemTime(new Date('2026-01-01T12:00:00Z'));
-    expect(formatRelativeTime('2026-01-01T11:30:00Z')).toBe('30 分钟前');
+    expect(formatRelativeTime('2026-01-01T11:30:00Z')).toBe(rel('time.minutes_ago', 30));
   });
 
   it('1 天内显示「N 小时前」', () => {
     vi.setSystemTime(new Date('2026-01-01T12:00:00Z'));
-    expect(formatRelativeTime('2026-01-01T05:00:00Z')).toBe('7 小时前');
+    expect(formatRelativeTime('2026-01-01T05:00:00Z')).toBe(rel('time.hours_ago', 7));
   });
 
   it('30 天内显示「N 天前」', () => {
     vi.setSystemTime(new Date('2026-01-15T12:00:00Z'));
-    expect(formatRelativeTime('2026-01-10T12:00:00Z')).toBe('5 天前');
+    expect(formatRelativeTime('2026-01-10T12:00:00Z')).toBe(rel('time.days_ago', 5));
   });
 
   it('更久直接给本地日期', () => {

@@ -2,6 +2,7 @@
 // 行点击与中心区页签/会话预览联动；未激活用小图标激活，已恢复只标状态。
 // 数据流与首页一致：先渲染缓存（GetSessions），收到 "scan:done" 后重调刷新。
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { getSessions, onScanDone } from '../lib/api';
 import type { ChatInfo, Session, TerminalInfo } from '../lib/api';
 import { formatRelativeTime } from '../lib/format';
@@ -108,6 +109,7 @@ export default function SessionList({
   onRestore,
   onArchive,
 }: Props) {
+  const { t } = useTranslation();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [query, setQuery] = useState('');
   const [toolFilter, setToolFilter] = useState<string | null>(null);
@@ -179,13 +181,13 @@ export default function SessionList({
     <TooltipProvider delayDuration={300}>
       <div className="flex flex-col gap-2">
       <WorkspaceSearch value={query} onChange={setQuery} />
-      <div className="flex flex-wrap items-center gap-1" aria-label="按工具筛选">
+      <div className="flex flex-wrap items-center gap-1" aria-label={t('ui.session_list.filter_aria')}>
         <button
           className={chipClass(toolFilter === null)}
           aria-pressed={toolFilter === null}
           onClick={() => setToolFilter(null)}
         >
-          全部
+          {t('ui.session_list.all')}
         </button>
         {toolOptions.map((label) => (
           <button
@@ -200,7 +202,7 @@ export default function SessionList({
       </div>
       {visible.length === 0 ? (
         query.trim() ? (
-          <EmptyState title="没有匹配的会话" />
+          <EmptyState title={t('ui.session_list.no_match')} />
         ) : scanState !== 'done' ? (
           <div className="flex flex-col gap-2">
             <Skeleton className="h-16 rounded border border-border" />
@@ -209,7 +211,7 @@ export default function SessionList({
             <Skeleton className="h-16 rounded border border-border" />
           </div>
         ) : (
-          <EmptyState title="该工作区暂无会话" />
+          <EmptyState title={t('ui.session_list.empty')} />
         )
       ) : (
         <ul className="flex flex-col gap-2">
@@ -217,7 +219,7 @@ export default function SessionList({
             const badge = badgeFor(s.ToolID);
             const liveID = s.Path.startsWith('live:') ? s.Path.slice('live:'.length) : '';
             const liveChat = liveID ? chats.find((c) => c.ID === liveID) : undefined;
-            const liveTerm = liveID ? terminals.find((t) => t.ID === liveID) : undefined;
+            const liveTerm = liveID ? terminals.find((term) => term.ID === liveID) : undefined;
             const opened = liveChat
               ? { ID: liveChat.ID, Status: liveChat.Status, kind: 'chat' as const }
               : liveTerm
@@ -238,8 +240,8 @@ export default function SessionList({
                       <span
                         className="inline-flex h-3.5 w-3.5 shrink-0 text-muted-foreground"
                         role="img"
-                        aria-label="已归档"
-                        title="已归档"
+                        aria-label={t('ui.session_list.archived')}
+                        title={t('ui.session_list.archived')}
                       >
                         <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
                           <path
@@ -259,15 +261,15 @@ export default function SessionList({
                             !title && 'italic',
                           )}
                         >
-                          {title || '(无标题)'}
+                          {title || t('ui.session_list.untitled')}
                         </span>
                       </TooltipTrigger>
                       <TooltipContent className="max-w-xs sm:max-w-sm" side="bottom" align="start">
                         <p className="whitespace-pre-wrap break-words text-xs leading-5">
-                          {title || '(无标题)'}
+                          {title || t('ui.session_list.untitled')}
                         </p>
                         <p className="mt-1 text-[10px] opacity-70">
-                          {badge.label} · {formatRelativeTime(s.UpdatedAt)} · {s.Messages} 条
+                          {badge.label} · {formatRelativeTime(s.UpdatedAt)} · {t('ui.session_list.messages', { count: s.Messages })}
                         </p>
                       </TooltipContent>
                     </Tooltip>
@@ -285,13 +287,13 @@ export default function SessionList({
                   <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                     <ToolDot toolID={s.ToolID} className="shrink-0" />
                     <span className={`whitespace-nowrap ${MONO}`}>{formatRelativeTime(s.UpdatedAt)}</span>
-                    <span className={`whitespace-nowrap ${MONO}`}>{s.Messages} 条</span>
+                    <span className={`whitespace-nowrap ${MONO}`}>{t('ui.session_list.messages', { count: s.Messages })}</span>
                     {showArchived ? (
                       <button
                         type="button"
                         className="ml-auto inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-primary"
-                        aria-label="还原"
-                        title="还原到开发列表"
+                        aria-label={t('ui.session_list.restore')}
+                        title={t('ui.session_list.restore_title')}
                         onClick={(e) => {
                           e.stopPropagation();
                           onRestore?.(s);
@@ -310,8 +312,8 @@ export default function SessionList({
                           <button
                             type="button"
                             className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-primary"
-                            aria-label="归档"
-                            title="归档"
+                            aria-label={t('ui.session_list.archive')}
+                            title={t('ui.session_list.archive')}
                             onClick={(e) => {
                               e.stopPropagation();
                               onArchive?.(s);
@@ -329,8 +331,8 @@ export default function SessionList({
                           <span
                             className="inline-flex h-5 w-5 items-center justify-center text-primary"
                             role="img"
-                            aria-label="已恢复"
-                            title="已恢复"
+                            aria-label={t('ui.session_list.restored')}
+                            title={t('ui.session_list.restored')}
                           >
                             <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
                               <path
@@ -343,8 +345,8 @@ export default function SessionList({
                           <button
                             type="button"
                             className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-primary"
-                            aria-label="激活"
-                            title="激活"
+                            aria-label={t('ui.session_list.activate')}
+                            title={t('ui.session_list.activate')}
                             onClick={(e) => {
                               e.stopPropagation();
                               onActivate?.(s);
