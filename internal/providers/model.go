@@ -73,17 +73,13 @@ func (Gemini) InjectModel(cfg ModelConfig) ([]string, map[string]string) {
 	return args, env
 }
 
-// Cursor：官方 CLI `--model`；可选 CURSOR_API_KEY（无独立端点映射）。
+// Cursor：仅 `--model`。不注入 CURSOR_API_KEY——设置页共享密钥是代理端点用的，
+// 不是 Cursor 账号 key；注入后 CLI 会报 invalid API key 并立刻退出。
 func (Cursor) InjectModel(cfg ModelConfig) ([]string, map[string]string) {
-	var args []string
-	env := map[string]string{}
-	if cfg.Model != "" {
-		args = append(args, "--model", cfg.Model)
+	if cfg.Model == "" {
+		return nil, nil
 	}
-	if cfg.APIKey != "" {
-		env["CURSOR_API_KEY"] = cfg.APIKey
-	}
-	return args, env
+	return []string{"--model", cfg.Model}, nil
 }
 
 // CodeBuddy：`--model` + CODEBUDDY_MODEL（文档约定 env 覆盖默认模型）。

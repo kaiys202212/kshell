@@ -36,6 +36,13 @@ export function primaryBranchLabel(decorations: string[]): string {
 
 /** git log 新→旧，分配 VS Code Graph 风格的 lane。 */
 export function layoutGitGraph(commits: GraphCommit[]): GraphRow[] {
+  // 先收集每个 tip 提交上的分支名，合并侧道用亲本 tip 的名字，勿继承主线。
+  const hashLabels = new Map<string, string>();
+  for (const c of commits) {
+    const tip = primaryBranchLabel(c.decorations ?? []);
+    if (tip) hashLabels.set(c.hash, tip);
+  }
+
   const rows: GraphRow[] = [];
   let lanes: (string | null)[] = [];
   let laneLabels: string[] = [];
@@ -53,7 +60,7 @@ export function layoutGitGraph(commits: GraphCommit[]): GraphRow[] {
       }
     }
 
-    const tip = primaryBranchLabel(c.decorations ?? []);
+    const tip = hashLabels.get(c.hash) || '';
     if (tip) laneLabels[col] = tip;
 
     const parents = c.parents ?? [];
@@ -66,21 +73,26 @@ export function layoutGitGraph(commits: GraphCommit[]): GraphRow[] {
     }
     for (let p = 1; p < parents.length; p++) {
       if (next.indexOf(parents[p]) >= 0) continue;
+      // 合并侧亲本：用该 tip 自身的 decorations，绝不抄主线名。
+      const sideLabel = hashLabels.get(parents[p]) || '';
       let pc = firstNull(next);
       if (pc < 0) {
         pc = next.length;
         next.push(parents[p]);
-        nextLabels.push(laneLabels[col] || '');
+        nextLabels.push(sideLabel);
       } else {
         next[pc] = parents[p];
-        nextLabels[pc] = laneLabels[col] || '';
+        nextLabels[pc] = sideLabel;
       }
     }
 
     const edges: GraphEdge[] = [];
     parents.forEach((p, i) => {
       const to = next.indexOf(p);
-      if (to >= 0) edges.push({ from: col, to, merge: i > 0, label: laneLabels[col] || undefined });
+      if (to < 0) return;
+      // 首亲本沿主线；合并边用目标 lane 的侧支名。
+      const label = (i > 0 ? nextLabels[to] : laneLabels[col]) || undefined;
+      edges.push({ from: col, to, merge: i > 0, label });
     });
     lanes.forEach((h, L) => {
       if (L === col || !h) return;

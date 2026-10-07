@@ -50,8 +50,8 @@ func TestInjectModelMappings(t *testing.T) {
 	if !reflect.DeepEqual(args, []string{"--model", "m"}) {
 		t.Fatalf("cursor args = %v", args)
 	}
-	if env["CURSOR_API_KEY"] != "k" {
-		t.Fatalf("cursor env = %+v", env)
+	if len(env) != 0 {
+		t.Fatalf("cursor 不应注入共享 API Key，got %+v", env)
 	}
 
 	args, env = CodeBuddy{}.InjectModel(cfg)

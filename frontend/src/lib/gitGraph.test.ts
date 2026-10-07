@@ -40,6 +40,23 @@ describe('layoutGitGraph', () => {
     expect(rows[0].edges.some((e) => e.label === 'topic')).toBe(true);
   });
 
+  it('合并侧道用侧支 tip 名，不继承主线 origin/master', () => {
+    const rows = layoutGitGraph([
+      { ...c('M', ['C', 'T'], 'merge'), decorations: ['HEAD -> master', 'origin/master'] },
+      { ...c('T', ['R'], 'topic'), decorations: ['topic'] },
+      { ...c('C', ['R'], 'mainline'), decorations: [] },
+      c('R', []),
+    ]);
+    const mergeEdges = rows[0].edges.filter((e) => e.from === 0);
+    const first = mergeEdges.find((e) => !e.merge);
+    const side = mergeEdges.find((e) => e.merge);
+    expect(first?.label).toBe('master');
+    expect(side?.label).toBe('topic');
+    // 侧支后续贯穿线仍是 topic
+    const topicRow = rows.find((r) => r.commit.hash === 'T');
+    expect(topicRow?.edges.some((e) => e.label === 'topic')).toBe(true);
+  });
+
   it('合并提交从一列连到两个亲本列', () => {
     const rows = layoutGitGraph([
       c('M', ['C', 'T'], 'merge'),

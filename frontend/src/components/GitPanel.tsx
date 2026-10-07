@@ -36,6 +36,7 @@ import { backendError } from '../lib/errors';
 import { refreshGitStatus } from '../lib/git';
 import { loadLogSel, resolveLogFilter, saveLogSel } from '../lib/gitLogSel';
 import { loadSyncRemote, saveSyncRemote } from '../lib/gitSyncRemote';
+import { clampSplit, loadSplit, saveSplit } from '../lib/gitSplit';
 import type { GraphCommit } from '../lib/gitGraph';
 import { cn } from '../lib/cn';
 import { PANE_HEADER } from '../lib/ui';
@@ -99,8 +100,9 @@ export default function GitPanel({
   const [commits, setCommits] = useState<GitLogCommit[]>([]);
   const [logSel, setLogSel] = useState(() => loadLogSel(wsPath, ''));
   const [picked, setPicked] = useState('');
-  const [split, setSplit] = useState(0.55);
+  const [split, setSplit] = useState(() => loadSplit(wsPath, ''));
   const splitRef = useRef<HTMLDivElement>(null);
+  const splitDrag = useRef<{ startY: number; startSplit: number } | null>(null);
   const logReq = useRef(0);
   const loadReq = useRef(0);
 
@@ -144,6 +146,7 @@ export default function GitPanel({
 
   useEffect(() => {
     setLogSel(loadLogSel(wsPath, repoRel));
+    setSplit(loadSplit(wsPath, repoRel));
   }, [wsPath, repoRel]);
 
   useEffect(() => {
@@ -203,14 +206,29 @@ export default function GitPanel({
     const el = splitRef.current;
     if (!el) return;
     ev.preventDefault();
+    // 增量拖动：相对按下点移动，避免绝对坐标把分割线“吸”到指针造成跳动/偏移。
+    splitDrag.current = { startY: ev.clientY, startSplit: split };
+    try {
+      ev.currentTarget.setPointerCapture(ev.pointerId);
+    } catch {
+      /* 部分环境无 capture，仍靠 window 监听 */
+    }
     const move = (e: PointerEvent) => {
+      const drag = splitDrag.current;
+      if (!drag) return;
       const rect = el.getBoundingClientRect();
-      const y = (e.clientY - rect.top) / rect.height;
-      setSplit(Math.min(0.8, Math.max(0.22, y)));
+      if (rect.height <= 0) return;
+      const next = clampSplit(drag.startSplit + (e.clientY - drag.startY) / rect.height);
+      setSplit(next);
     };
     const up = () => {
+      splitDrag.current = null;
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      setSplit((cur) => {
+        saveSplit(wsPath, repoRel, cur);
+        return cur;
+      });
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
