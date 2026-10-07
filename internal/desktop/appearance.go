@@ -9,18 +9,20 @@ import (
 
 // AppearanceInfo 是暴露给前端的颜色模式快照。
 type AppearanceInfo struct {
-	Mode     string `json:"mode"`
-	Resolved string `json:"resolved"`
-	FontSize int    `json:"fontSize"`
+	Mode           string `json:"mode"`
+	Resolved       string `json:"resolved"`
+	FontSize       int    `json:"fontSize"`
+	ShowWhitespace bool   `json:"showWhitespace"`
 }
 
 func (a *App) currentAppearance() AppearanceInfo {
 	cfg := a.snapshot().Config.Appearance
 	mode := appearance.ParseMode(cfg.Mode)
 	return AppearanceInfo{
-		Mode:     string(mode),
-		Resolved: string(appearance.Resolve(mode)),
-		FontSize: config.ClampUIFontSize(cfg.FontSize),
+		Mode:           string(mode),
+		Resolved:       string(appearance.Resolve(mode)),
+		FontSize:       config.ClampUIFontSize(cfg.FontSize),
+		ShowWhitespace: cfg.ShowWhitespace,
 	}
 }
 
@@ -44,6 +46,17 @@ func (a *App) SetAppearanceFontSize(n int) error {
 	n = config.ClampUIFontSize(n)
 	if err := a.saveConfig(func(cfg *config.Config) {
 		cfg.Appearance.FontSize = n
+	}); err != nil {
+		return err
+	}
+	a.emitAppearance()
+	return nil
+}
+
+// SetAppearanceShowWhitespace 更新编辑器空白字符显示并持久化，随后广播 appearance:changed。
+func (a *App) SetAppearanceShowWhitespace(show bool) error {
+	if err := a.saveConfig(func(cfg *config.Config) {
+		cfg.Appearance.ShowWhitespace = show
 	}); err != nil {
 		return err
 	}

@@ -57,6 +57,7 @@ export default function Preview({
   const baselineRef = useRef('');
 
   const resolvedTheme = useAppStore((s) => s.appearance.resolved);
+  const showWhitespace = useAppStore((s) => !!s.appearance.showWhitespace);
   const kind: PreviewKind | null = path ? previewKind(path) : null;
   const isMedia = kind === 'image' || kind === 'pdf';
   const wantEdit = !!path && !!kind && isEditableKind(kind) && !isMedia;
@@ -194,7 +195,13 @@ export default function Preview({
           <p className="shrink-0 mb-2 text-xs text-muted-foreground">{translateBackend(data.Info)}</p>
         )}
         <div className="min-h-0 flex-1 overflow-hidden">
-          <CodeEditor value={content} readOnly path={path} theme={cmTheme} />
+          <CodeEditor
+            value={content}
+            readOnly
+            path={path}
+            theme={cmTheme}
+            showWhitespace={showWhitespace}
+          />
         </div>
       </>
     );
@@ -222,6 +229,7 @@ export default function Preview({
               readOnly={false}
               path={path}
               theme={cmTheme}
+              showWhitespace={showWhitespace}
               onChange={(v) => {
                 const nextDirty = v !== baselineRef.current;
                 setText(v);

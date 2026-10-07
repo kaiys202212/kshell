@@ -20,6 +20,9 @@ func TestGetAppearanceDefaultsToDark(t *testing.T) {
 	if got.FontSize != config.DefaultUIFontSize {
 		t.Fatalf("fontSize = %d, want %d", got.FontSize, config.DefaultUIFontSize)
 	}
+	if got.ShowWhitespace {
+		t.Fatal("ShowWhitespace default should be false")
+	}
 }
 
 func TestSetAppearanceModeWithoutLayoutIsNotReady(t *testing.T) {
@@ -111,5 +114,47 @@ func TestSetAppearanceFontSizePersistsAndClamps(t *testing.T) {
 	}
 	if a.GetAppearance().FontSize != 20 {
 		t.Fatalf("clamped large = %d, want 20", a.GetAppearance().FontSize)
+	}
+}
+
+func TestSetAppearanceShowWhitespacePersistsAndEmits(t *testing.T) {
+	dir := t.TempDir()
+	layout := config.Layout{
+		Root:   dir,
+		Config: filepath.Join(dir, "config.yaml"),
+		Cache:  filepath.Join(dir, "cache"),
+	}
+	var events []string
+	a := NewAppWith(Options{
+		Config: config.Default(),
+		Layout: layout,
+		Emit:   func(name string, _ ...any) { events = append(events, name) },
+	})
+
+	if a.GetAppearance().ShowWhitespace {
+		t.Fatal("default ShowWhitespace should be false")
+	}
+	if err := a.SetAppearanceShowWhitespace(true); err != nil {
+		t.Fatalf("SetAppearanceShowWhitespace: %v", err)
+	}
+	if !a.GetAppearance().ShowWhitespace {
+		t.Fatal("ShowWhitespace = false, want true")
+	}
+	if len(events) == 0 || events[len(events)-1] != "appearance:changed" {
+		t.Fatalf("events = %v", events)
+	}
+	loaded, err := config.Load(layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.Appearance.ShowWhitespace {
+		t.Fatal("persisted show_whitespace = false, want true")
+	}
+
+	if err := a.SetAppearanceShowWhitespace(false); err != nil {
+		t.Fatalf("SetAppearanceShowWhitespace(false): %v", err)
+	}
+	if a.GetAppearance().ShowWhitespace {
+		t.Fatal("ShowWhitespace should be false after toggle off")
 	}
 }

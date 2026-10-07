@@ -209,6 +209,7 @@
         "dark": "深色",
         "font_size": "界面字号"
       },
+      "show_whitespace": "编辑器显示空白字符",
       "language": {
         "title": "语言",
         "en": "English",

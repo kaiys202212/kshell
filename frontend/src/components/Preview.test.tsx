@@ -24,15 +24,18 @@ vi.mock('./CodeEditor', () => ({
     value,
     onChange,
     readOnly,
+    showWhitespace,
   }: {
     value: string;
     onChange?: (v: string) => void;
     readOnly?: boolean;
+    showWhitespace?: boolean;
   }) {
     return (
       <textarea
         data-testid="code-editor"
         aria-label={EDITOR_LABEL}
+        data-show-whitespace={showWhitespace ? '1' : '0'}
         readOnly={!!readOnly}
         value={value}
         onChange={(e) => onChange?.(e.target.value)}
@@ -77,6 +80,16 @@ describe('Preview', () => {
     expect(editor).toHaveValue('package main\n');
     expect(mocks.readFileForEdit).toHaveBeenCalledWith('D:\\proj', 'D:\\proj\\main.ts');
     expect(mocks.previewFile).not.toHaveBeenCalled();
+  });
+
+  it('从 appearance 传入 showWhitespace', async () => {
+    useAppStore.setState({
+      appearance: { mode: 'dark', resolved: 'dark', fontSize: 13, showWhitespace: true },
+    });
+    mocks.readFileForEdit.mockResolvedValue({ Text: 'x', EOL: 'lf', Size: 1 });
+    render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);
+    const editor = await screen.findByTestId('code-editor');
+    expect(editor).toHaveAttribute('data-show-whitespace', '1');
   });
 
   it('.md 也直接可编辑，不渲染 markdown 预览切换', async () => {

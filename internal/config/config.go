@@ -59,8 +59,9 @@ func ClampUIFontSize(n int) int {
 
 // Appearance 是颜色模式配置：system 跟随操作系统，light/dark 强制覆盖。
 type Appearance struct {
-	Mode     string `yaml:"mode"`      // system | light | dark
-	FontSize int    `yaml:"font_size"` // 10–20，缺省 13
+	Mode           string `yaml:"mode"`            // system | light | dark
+	FontSize       int    `yaml:"font_size"`       // 10–20，缺省 13
+	ShowWhitespace bool   `yaml:"show_whitespace"` // 编辑器显示空白字符，默认 false
 }
 
 // 关闭窗口的行为取值。

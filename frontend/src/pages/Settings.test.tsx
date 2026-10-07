@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   getAppearance: vi.fn(),
   setAppearanceMode: vi.fn(),
   setAppearanceFontSize: vi.fn(),
+  setAppearanceShowWhitespace: vi.fn(),
   // 语言接线（getLanguage / onLanguageChanged）在 main.tsx bootstrap，不在此文件测
   setLanguage: vi.fn(),
   getCloseBehavior: vi.fn(),
@@ -161,9 +162,15 @@ beforeEach(() => {
   mocks.pickDirectory.mockResolvedValue('');
   mocks.pickFile.mockResolvedValue('');
   mocks.saveProvidersYAML.mockResolvedValue(undefined);
-  mocks.getAppearance.mockResolvedValue({ mode: 'dark', resolved: 'dark', fontSize: 13 });
+  mocks.getAppearance.mockResolvedValue({
+    mode: 'dark',
+    resolved: 'dark',
+    fontSize: 13,
+    showWhitespace: false,
+  });
   mocks.setAppearanceMode.mockResolvedValue(undefined);
   mocks.setAppearanceFontSize.mockResolvedValue(undefined);
+  mocks.setAppearanceShowWhitespace.mockResolvedValue(undefined);
   mocks.setLanguage.mockResolvedValue(undefined);
   useAppStore.setState({ language: { configured: 'en', resolved: 'en' } });
   mocks.getAppVersion.mockResolvedValue('dev');
@@ -487,6 +494,16 @@ describe('Settings', () => {
       fireEvent.pointerUp(slider);
     });
     expect(mocks.setAppearanceFontSize).toHaveBeenCalledWith(16);
+  });
+
+  it('空白字符开关调用 SetAppearanceShowWhitespace', async () => {
+    render(<Settings />);
+    const cb = await screen.findByLabelText(tt('ui.settings.show_whitespace'));
+    expect(cb).not.toBeChecked();
+    await act(async () => {
+      fireEvent.click(cb);
+    });
+    expect(mocks.setAppearanceShowWhitespace).toHaveBeenCalledWith(true);
   });
 
   it('语言行渲染三个内置选项，默认选中配置语言', async () => {

@@ -355,7 +355,7 @@ export const useAppStore = create<AppState>()(
       newSessionTool: '',
       setNewSessionTool: (newSessionTool) => set({ newSessionTool }),
 
-      appearance: { mode: 'system', resolved: 'dark', fontSize: 13 },
+      appearance: { mode: 'system', resolved: 'dark', fontSize: 13, showWhitespace: false },
       setAppearance: (appearance) => set({ appearance }),
 
       language: { configured: 'en', resolved: 'en' },

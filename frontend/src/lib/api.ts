@@ -467,6 +467,7 @@ interface AppBindings {
   GetAppearance(): Promise<AppearanceInfo>;
   SetAppearanceMode(mode: string): Promise<void>;
   SetAppearanceFontSize(n: number): Promise<void>;
+  SetAppearanceShowWhitespace(show: boolean): Promise<void>;
   GetLanguage(): Promise<LanguageInfo>;
   SetLanguage(lang: string): Promise<void>;
   LoadExternalLocales(): Promise<Record<string, string>>;
@@ -1217,7 +1218,7 @@ export async function getAppearance(): Promise<AppearanceInfo> {
       typeof window !== 'undefined' &&
       typeof window.matchMedia === 'function' &&
       window.matchMedia('(prefers-color-scheme: dark)').matches;
-    return { mode: 'system', resolved: dark ? 'dark' : 'light', fontSize: 13 };
+    return { mode: 'system', resolved: dark ? 'dark' : 'light', fontSize: 13, showWhitespace: false };
   }
   return a.GetAppearance();
 }
@@ -1236,6 +1237,13 @@ export async function setAppearanceFontSize(n: number): Promise<void> {
   await a.SetAppearanceFontSize(n);
 }
 
+// setAppearanceShowWhitespace 设置编辑器空白字符显示（写回 config.yaml），错误向上抛。
+export async function setAppearanceShowWhitespace(show: boolean): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.SetAppearanceShowWhitespace(show);
+}
+
 // onAppearanceChanged 订阅颜色模式/系统明暗变化，返回取消订阅函数。
 export function onAppearanceChanged(cb: (info: AppearanceInfo) => void): () => void {
   return EventsOn('appearance:changed', (p: AppearanceInfo) =>
@@ -1243,6 +1251,7 @@ export function onAppearanceChanged(cb: (info: AppearanceInfo) => void): () => v
       mode: p?.mode ?? 'system',
       resolved: p?.resolved ?? 'dark',
       fontSize: typeof p?.fontSize === 'number' ? p.fontSize : 13,
+      showWhitespace: !!p?.showWhitespace,
     }),
   );
 }

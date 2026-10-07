@@ -30,6 +30,7 @@ import {
   scanSessions,
   setAppearanceMode,
   setAppearanceFontSize,
+  setAppearanceShowWhitespace,
   setCloseBehavior,
   setLanguage,
   setModelConfig,
@@ -90,6 +91,7 @@ export default function Settings() {
   const [rescanning, setRescanning] = useState(false);
   const [appearance, setAppearanceLocal] = useState<string>('dark');
   const [fontSize, setFontSizeLocal] = useState(13);
+  const [showWhitespace, setShowWhitespaceLocal] = useState(false);
   const [closeBehavior, setCloseBehaviorLocal] = useState<string>('tray');
   const [sessionMode, setSessionModeLocal] = useState('tui');
   const [permissionMode, setPermissionModeLocal] = useState('default');
@@ -186,6 +188,7 @@ export default function Settings() {
         if (!cancelled) {
           setAppearanceLocal(info.mode);
           setFontSizeLocal(clampUiFontSize(info.fontSize));
+          setShowWhitespaceLocal(!!info.showWhitespace);
         }
       })
       .catch(() => {});
@@ -243,6 +246,17 @@ export default function Settings() {
     previewFontSize(px);
     try {
       await setAppearanceFontSize(px);
+    } catch (e: unknown) {
+      notify(backendError(e), 'error');
+    }
+  };
+
+  const handleShowWhitespace = async (show: boolean) => {
+    setShowWhitespaceLocal(show);
+    const cur = useAppStore.getState().appearance;
+    useAppStore.getState().setAppearance({ ...cur, showWhitespace: show });
+    try {
+      await setAppearanceShowWhitespace(show);
     } catch (e: unknown) {
       notify(backendError(e), 'error');
     }
@@ -565,6 +579,15 @@ export default function Settings() {
                     onKeyUp={(e) => void handleFontSizeCommit(Number(e.currentTarget.value))}
                   />
                   <span className="w-10 shrink-0 tabular-nums text-muted-foreground">{fontSize}px</span>
+                </label>
+                <label className="mt-3 flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={showWhitespace}
+                    onChange={(e) => void handleShowWhitespace(e.currentTarget.checked)}
+                    aria-label={t('ui.settings.show_whitespace')}
+                  />
+                  {t('ui.settings.show_whitespace')}
                 </label>
               </section>
 

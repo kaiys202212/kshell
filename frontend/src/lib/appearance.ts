@@ -6,6 +6,7 @@ export interface AppearanceInfo {
   mode: AppearanceMode;
   resolved: ResolvedTheme;
   fontSize: number;
+  showWhitespace?: boolean;
 }
 
 export const DEFAULT_UI_FONT_SIZE = 13;

@@ -209,6 +209,7 @@
         "dark": "Dark",
         "font_size": "UI font size"
       },
+      "show_whitespace": "Show whitespace in editor",
       "language": {
         "title": "Language",
         "en": "English",

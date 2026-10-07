@@ -154,6 +154,7 @@ function App() {
       useAppStore.getState().setAppearance({
         ...info,
         fontSize: clampUiFontSize(info.fontSize),
+        showWhitespace: !!info.showWhitespace,
       });
     };
     getAppearance().then(apply).catch(() => {});
