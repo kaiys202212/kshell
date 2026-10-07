@@ -566,3 +566,98 @@ func TestPullPush_detached与无效源(t *testing.T) {
 		t.Fatal("不存在的 remote push 应失败")
 	}
 }
+
+// 所选源没有该分支的远端引用时必须报错，而不是让 git 静默新建分支。
+func TestPush_源无远端分支时拒绝(t *testing.T) {
+	skipIfNoGit(t)
+	originDir := t.TempDir()
+	gitRun(t, originDir, "init", "--bare", "-b", "main")
+
+	seed := t.TempDir()
+	initRepo(t, seed)
+	writeFile(t, filepath.Join(seed, "a.txt"), "a\n")
+	gitRun(t, seed, "add", "a.txt")
+	gitRun(t, seed, "commit", "-m", "c1")
+	gitRun(t, seed, "remote", "add", "origin", originDir)
+	gitRun(t, seed, "push", "origin", "main")
+
+	clone := t.TempDir()
+	gitRun(t, clone, "clone", originDir, ".")
+	gitRun(t, clone, "config", "core.autocrlf", "false")
+	gitRun(t, clone, "checkout", "--", ".")
+
+	// 本地新分支，远端 origin 上没有同名 feature
+	gitRun(t, clone, "checkout", "-b", "feature", "main")
+	err := Push(clone, "", "origin")
+	if err == nil {
+		t.Fatal("远端无同名分支时 push 应报错")
+	}
+	if !strings.Contains(err.Error(), "feature") {
+		t.Fatalf("错误信息应点名分支: %v", err)
+	}
+	if err := exec.Command("git", "-C", originDir, "show-ref", "--verify", "--quiet", "refs/heads/feature").Run(); err == nil {
+		t.Fatal("远端不应被新建 feature 分支")
+	}
+}
+
+// 用户原始 bug 场景：upstream 手工指向 gitcode，默认 pull/push 仍应落 origin。
+func TestPullPush_默认解析操作侧端到端(t *testing.T) {
+	skipIfNoGit(t)
+	originDir := t.TempDir()
+	gitRun(t, originDir, "init", "--bare", "-b", "main")
+	gitcodeDir := t.TempDir()
+	gitRun(t, gitcodeDir, "init", "--bare", "-b", "main")
+
+	seed := t.TempDir()
+	initRepo(t, seed)
+	writeFile(t, filepath.Join(seed, "a.txt"), "a\n")
+	gitRun(t, seed, "add", "a.txt")
+	gitRun(t, seed, "commit", "-m", "c1")
+	gitRun(t, seed, "remote", "add", "origin", originDir)
+	gitRun(t, seed, "remote", "add", "gitcode", gitcodeDir)
+	gitRun(t, seed, "push", "origin", "main")
+	gitRun(t, seed, "push", "gitcode", "main")
+	c1 := gitRev(t, gitcodeDir, "rev-parse", "main")
+
+	clone := t.TempDir()
+	gitRun(t, clone, "clone", originDir, ".")
+	gitRun(t, clone, "config", "core.autocrlf", "false")
+	gitRun(t, clone, "checkout", "--", ".")
+	gitRun(t, clone, "remote", "add", "gitcode", gitcodeDir)
+	// 夹具内手工把 upstream 指到 gitcode（造数据，非产品代码改 config）
+	gitRun(t, clone, "config", "branch.main.remote", "gitcode")
+
+	// origin 前进一步，gitcode 停在 c1
+	writeFile(t, filepath.Join(seed, "a.txt"), "a2\n")
+	gitRun(t, seed, "add", "a.txt")
+	gitRun(t, seed, "commit", "-m", "c2")
+	gitRun(t, seed, "push", "origin", "main")
+	originC2 := gitRev(t, originDir, "rev-parse", "main")
+
+	// 默认 pull 落 origin（upstream 指向 gitcode 也不能拉错源）
+	if err := Pull(clone, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitRev(t, clone, "rev-parse", "HEAD"); got != originC2 {
+		t.Fatalf("默认 pull 应拉 origin: HEAD=%s origin=%s", got, originC2)
+	}
+	got, err := os.ReadFile(filepath.Join(clone, "a.txt"))
+	if err != nil || string(got) != "a2\n" {
+		t.Fatalf("pull 后 a.txt %q err=%v", got, err)
+	}
+
+	// 默认 push 落 origin，gitcode 原地不动
+	writeFile(t, filepath.Join(clone, "b.txt"), "b\n")
+	gitRun(t, clone, "add", "b.txt")
+	gitRun(t, clone, "commit", "-m", "c3")
+	if err := Push(clone, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	cloneTip := gitRev(t, clone, "rev-parse", "HEAD")
+	if got := gitRev(t, originDir, "rev-parse", "main"); got != cloneTip {
+		t.Fatalf("默认 push 应更新 origin/main: origin=%s clone=%s", got, cloneTip)
+	}
+	if got := gitRev(t, gitcodeDir, "rev-parse", "main"); got != c1 {
+		t.Fatalf("gitcode/main 不应被改动: %s != %s", got, c1)
+	}
+}
