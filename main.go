@@ -18,6 +18,7 @@ import (
 	"github.com/yangk/kshell/internal/cursoragent"
 	"github.com/yangk/kshell/internal/desktop"
 	"github.com/yangk/kshell/internal/mcparchive"
+	"github.com/yangk/kshell/internal/remote"
 )
 
 //go:embed all:frontend/dist
@@ -76,6 +77,10 @@ func RunDesktop(src fs.FS) error {
 }
 
 func main() {
+	// SSH ASKPASS：OpenSSH 会再拉起本进程回填密码；必须在一切初始化之前退出。
+	if remote.TryAskPassMain(os.Args) {
+		return
+	}
 	// agent-hook 隐藏子命令：agent CLI 的 hook/notify 会拉起本进程投递事件。
 	// 必须放在一切初始化之前直接返回，绝不初始化 Wails / 拉起第二个窗口；
 	// Handle 恒返回 0，hook 非零退出会向 agent 报错、打扰对话。

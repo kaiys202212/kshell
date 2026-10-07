@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -14,7 +15,8 @@ import (
 
 var errSSHNotFound = errors.New("err.ssh.no_ssh_binary")
 
-// SSHOptions 影响参数拼装；BatchMode 不开放配置——kshell 永远不允许卡在密码提示上。
+// SSHOptions 影响参数拼装。无密码时固定 BatchMode，避免卡在交互提示；
+// 有密码时省略 BatchMode，改走 SSH_ASKPASS 非交互回填。
 type SSHOptions struct {
 	ConnectTimeout        int
 	ExtraArgs             []string
@@ -36,14 +38,18 @@ func FindSSH() (string, error) {
 	return bin, nil
 }
 
-// BuildArgs 拼装 ssh 参数：BatchMode + 连接超时保证不会挂起等待输入。
+// BuildArgs 拼装 ssh 参数。无密码时含 BatchMode=yes；有密码时省略，密码不进 argv。
 func BuildArgs(c Connection, cmd string, opts SSHOptions) []string {
 	timeout := opts.ConnectTimeout
 	if timeout <= 0 {
 		timeout = 5
 	}
 
-	args := []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=" + strconv.Itoa(timeout)}
+	var args []string
+	if strings.TrimSpace(c.Password) == "" {
+		args = append(args, "-o", "BatchMode=yes")
+	}
+	args = append(args, "-o", "ConnectTimeout="+strconv.Itoa(timeout))
 	args = append(args, opts.ExtraArgs...)
 
 	if c.Port > 0 && c.Port != 22 {
@@ -66,13 +72,48 @@ func BuildArgs(c Connection, cmd string, opts SSHOptions) []string {
 }
 
 // ShellArgs 供交互式登录使用（-t 强制分配伪终端）。
-// 契约：BuildArgs 的前 4 个参数恒为 -o BatchMode=yes -o ConnectTimeout=N 两对
-// （不受 opts/连接影响），此处按下标在其后插入 -t；改动 BuildArgs 前段时必须同步这里。
+// 在全部选项（含 -o/-p/-i 及 ExtraArgs）之后、目标主机之前插入 -t。
 func ShellArgs(c Connection, opts SSHOptions) []string {
 	base := BuildArgs(c, "", opts)
-	args := []string{base[0], base[1], base[2], base[3], "-t"}
-	args = append(args, base[4:]...)
-	return args
+	optEnd := sshOptionsEnd(base)
+	out := make([]string, 0, len(base)+1)
+	out = append(out, base[:optEnd]...)
+	out = append(out, "-t")
+	out = append(out, base[optEnd:]...)
+	return out
+}
+
+// sshOptionsEnd 返回第一个非选项参数（主机或 --）的下标。
+func sshOptionsEnd(args []string) int {
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		if a == "--" || !strings.HasPrefix(a, "-") {
+			return i
+		}
+		if sshOptTakesValue(a) {
+			if i+1 >= len(args) {
+				return len(args)
+			}
+			i += 2
+			continue
+		}
+		i++
+	}
+	return i
+}
+
+func sshOptTakesValue(flag string) bool {
+	switch flag {
+	case "-o", "-p", "-i", "-l", "-F", "-c", "-D", "-L", "-R", "-W", "-w", "-b", "-e", "-m", "-S", "-E", "-J":
+		return true
+	default:
+		// -oBatchMode=yes 这类连写不占下一参数
+		if strings.HasPrefix(flag, "-o") && len(flag) > 2 {
+			return false
+		}
+		return false
+	}
 }
 
 func Run(ctx context.Context, c Connection, cmd string, opts SSHOptions) (Result, error) {
@@ -90,6 +131,11 @@ func Run(ctx context.Context, c Connection, cmd string, opts SSHOptions) (Result
 	var stdout, stderr strings.Builder
 	cmdExec := exec.CommandContext(ctx, bin, BuildArgs(c, cmd, opts)...)
 	executil.HideWindow(cmdExec) // GUI 壳下 ssh 调用不闪黑窗
+	if env, err := AskPassEnvSlice(c.Password); err != nil {
+		return Result{}, err
+	} else if len(env) > 0 {
+		cmdExec.Env = append(os.Environ(), env...)
+	}
 	cmdExec.Stdout = &stdout
 	cmdExec.Stderr = &stderr
 	cmdExec.WaitDelay = 2 * time.Second

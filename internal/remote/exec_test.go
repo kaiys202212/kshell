@@ -80,15 +80,65 @@ func TestBuildArgsSkipsDefaults(t *testing.T) {
 	}
 }
 
+func TestBuildArgsKeepsBatchModeWithoutPassword(t *testing.T) {
+	args := BuildArgs(Connection{Host: "h"}, "true", SSHOptions{})
+	if !strings.Contains(strings.Join(args, " "), "BatchMode=yes") {
+		t.Fatal(args)
+	}
+}
+
+func TestBuildArgsOmitsBatchModeWhenPasswordSet(t *testing.T) {
+	args := BuildArgs(Connection{Host: "h", Password: "x"}, "true", SSHOptions{})
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "BatchMode=yes") {
+		t.Fatalf("BatchMode must be omitted: %s", joined)
+	}
+}
+
+// 无密码时仍走 BatchMode；有密码时不把密码放进 argv（经 ASKPASS env）。
 func TestBuildArgsNeverCarriesPasswords(t *testing.T) {
-	c := Connection{Host: "h", User: "u"}
-	got := strings.Join(BuildArgs(c, "ls", SSHOptions{}), " ")
-	if !strings.Contains(got, "BatchMode=yes") {
-		t.Fatalf("BatchMode is what prevents password prompts: %s", got)
+	noPass := strings.Join(BuildArgs(Connection{Host: "h", User: "u"}, "ls", SSHOptions{}), " ")
+	if !strings.Contains(noPass, "BatchMode=yes") {
+		t.Fatalf("无密码时应有 BatchMode: %s", noPass)
+	}
+	withPass := BuildArgs(Connection{Host: "h", User: "u", Password: "s3cret"}, "ls", SSHOptions{})
+	joined := strings.Join(withPass, " ")
+	if strings.Contains(joined, "BatchMode=yes") {
+		t.Fatalf("有密码时不得 BatchMode: %s", joined)
+	}
+	if strings.Contains(joined, "s3cret") {
+		t.Fatalf("密码不得出现在 argv: %s", joined)
 	}
 	for _, forbidden := range []string{"PasswordAuthentication", "sshpass", "-o StrictHostKeyChecking=no"} {
-		if strings.Contains(got, forbidden) {
-			t.Fatalf("unsafe option %q must never be added: %s", forbidden, got)
+		if strings.Contains(joined, forbidden) || strings.Contains(noPass, forbidden) {
+			t.Fatalf("unsafe option %q must never be added", forbidden)
+		}
+	}
+}
+
+func indexOfArg(args []string, want string) int {
+	for i, a := range args {
+		if a == want {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestShellArgsInsertsTAfterOptions(t *testing.T) {
+	args := ShellArgs(Connection{Host: "h", Password: "x", Port: 2222}, SSHOptions{ConnectTimeout: 3})
+	ti := indexOfArg(args, "-t")
+	hi := indexOfArg(args, "h")
+	if ti < 0 || hi < 0 || ti > hi {
+		t.Fatalf("args=%v", args)
+	}
+	// -t 必须在全部 -o 选项之后
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-o" {
+			if i > ti {
+				t.Fatalf("-o after -t: %v", args)
+			}
+			i++ // skip value
 		}
 	}
 }

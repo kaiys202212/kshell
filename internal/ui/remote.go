@@ -278,7 +278,11 @@ func (m Model) shellCmd() tea.Cmd {
 	if !ok {
 		return statusCmd("没有选中的连接", true)
 	}
-	spec := launcher.Spec{Path: bin, Args: remote.ShellArgs(c, m.sshOptions())}
+	env, err := remote.AskPassEnvSlice(c.Password)
+	if err != nil {
+		return statusCmd(err.Error(), true)
+	}
+	spec := launcher.Spec{Path: bin, Args: remote.ShellArgs(c, m.sshOptions()), Env: env}
 	return tea.ExecProcess(spec.Cmd(context.Background()), func(err error) tea.Msg {
 		if err != nil {
 			return statusMsg{text: "ssh 退出异常：" + err.Error(), warn: true}

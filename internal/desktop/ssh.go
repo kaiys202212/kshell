@@ -51,7 +51,7 @@ func (a *App) ListConnections(wsID string) []remote.Connection {
 	return store.List(wsID)
 }
 
-// OpenSSH 为指定连接弹出交互式 SSH 终端窗口（ssh -t，BatchMode 恒定，绝不卡密码提示）。
+// OpenSSH 为指定连接弹出交互式 SSH 终端窗口（ssh -t；无密码时 BatchMode，有密码时 ASKPASS）。
 // 窗口标题 "kshell · <连接名>"，同一连接重复调用复用聚焦。
 // 兼容保留：前端主路径改为 OpenSSHTerminal（预览区内嵌）。
 func (a *App) OpenSSH(connID string) error {
@@ -63,8 +63,12 @@ func (a *App) OpenSSH(connID string) error {
 	if err != nil {
 		return err
 	}
+	env, err := remote.AskPassEnvMap(c.Password)
+	if err != nil {
+		return err
+	}
 	return a.launchWindow(a.snapshot().Windows,
-		providers.Launch{Path: bin, Args: remote.ShellArgs(c, a.sshOptions()), Dir: a.sshDir(c)},
+		providers.Launch{Path: bin, Args: remote.ShellArgs(c, a.sshOptions()), Dir: a.sshDir(c), Env: env},
 		"", // SSH shell 没有 agent 工具，不做通知注入
 		c.Name,
 	)
@@ -93,12 +97,16 @@ func (a *App) OpenSSHTerminal(connID string, cols, rows int) (terminal.Info, err
 	if title == "" {
 		title = c.Target()
 	}
+	env, err := remote.AskPassEnvSlice(c.Password)
+	if err != nil {
+		return terminal.Info{}, err
+	}
 	return m.Open(key, terminal.Info{
 		Kind:      terminal.KindSSH,
 		ConnID:    c.ID,
 		Workspace: ws,
 		Title:     title,
-	}, terminal.Spec{Path: bin, Args: remote.ShellArgs(c, a.sshOptions()), Dir: a.sshDir(c)}, cols, rows)
+	}, terminal.Spec{Path: bin, Args: remote.ShellArgs(c, a.sshOptions()), Dir: a.sshDir(c), Env: env}, cols, rows)
 }
 
 // UpsertConnection 新建或更新 SSH 连接。ID 空则 Add（Source=manual）；有 ID 则 Update。

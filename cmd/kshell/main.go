@@ -15,6 +15,10 @@ import (
 )
 
 func main() {
+	// SSH ASKPASS：OpenSSH 再拉起本进程回填密码；必须在一切初始化之前退出。
+	if remote.TryAskPassMain(os.Args) {
+		return
+	}
 	if cursoragent.ShouldProxy() {
 		os.Exit(cursoragent.Main())
 	}
