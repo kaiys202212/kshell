@@ -171,7 +171,7 @@ func (c Client) Check(ctx context.Context) (CheckResult, error) {
 	out := CheckResult{Current: cur}
 	if ShouldSkip(cur) {
 		out.Skipped = true
-		out.Reason = "开发构建不检查更新"
+		out.Reason = "update.reason.dev_build"
 		return out, nil
 	}
 	src := c.Sources
@@ -214,19 +214,19 @@ func (c Client) Check(ctx context.Context) (CheckResult, error) {
 			}
 		}
 		if out.ZipURL == "" {
-			last = fmt.Errorf("release %s 缺少 %s", rel.TagName, wantZip)
+			last = fmt.Errorf("err.update.release_missing_asset|%s|%s", rel.TagName, wantZip)
 			continue
 		}
 		out.Available = Newer(cur, rel.TagName)
 		if !out.Available {
-			out.Reason = "已是最新"
+			out.Reason = "update.reason.up_to_date"
 		}
 		return out, nil
 	}
 	if last == nil {
-		last = fmt.Errorf("无可用更新源")
+		last = fmt.Errorf("err.update.no_source")
 	}
-	return out, fmt.Errorf("检查更新失败: %w", last)
+	return out, last
 }
 
 func (c Client) getThroughSources(ctx context.Context, official string) ([]byte, error) {
@@ -248,7 +248,7 @@ func (c Client) getThroughSources(ctx context.Context, official string) ([]byte,
 		return b, nil
 	}
 	if last == nil {
-		last = fmt.Errorf("无可用下载源")
+		last = fmt.Errorf("no available download source")
 	}
 	return nil, last
 }

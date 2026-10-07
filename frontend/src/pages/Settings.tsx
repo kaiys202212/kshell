@@ -769,8 +769,8 @@ export default function Settings() {
                 >
                   {presets.map((p) => (
                     <option key={p.ID} value={p.ID}>
-                      {p.Name}
-                      {p.Note ? ` — ${p.Note}` : ''}
+                      {translateBackend(p.Name)}
+                      {p.Note ? ` — ${translateBackend(p.Note)}` : ''}
                     </option>
                   ))}
                 </select>

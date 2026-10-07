@@ -15,7 +15,11 @@ func TestParseSHA256SUMS(t *testing.T) {
 }
 
 func TestParseSHA256SUMSMissing(t *testing.T) {
-	if _, err := ParseSHA256SUMS([]byte("deadbeef  other.zip\n"), ZipName); err == nil {
+	_, err := ParseSHA256SUMS([]byte("deadbeef  other.zip\n"), ZipName)
+	if err == nil {
 		t.Fatal("缺目标文件应失败")
+	}
+	if want := "err.update.sums_missing_file|" + ZipName; err.Error() != want {
+		t.Fatalf("err = %q, want %q", err.Error(), want)
 	}
 }

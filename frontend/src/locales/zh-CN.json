@@ -127,7 +127,26 @@
       "unknown_shell": "未知 shell: {{0}}"
     },
     "update": {
-      "no_update": "没有可用更新"
+      "no_update": "没有可用更新",
+      "no_source": "无可用更新源",
+      "release_missing_asset": "发布 {{0}} 缺少 {{1}}",
+      "dest_exe_empty": "目标可执行文件为空",
+      "download_sums": "下载校验文件失败: {{0}}",
+      "download_package": "下载安装包失败: {{0}}",
+      "checksum_mismatch": "安装包校验失败",
+      "write_new_version": "写出新版本失败: {{0}}",
+      "schedule_replace": "调度替换失败: {{0}}",
+      "unzip_failed": "解压安装包失败: {{0}}",
+      "asset_empty": "{{0}} 为空",
+      "asset_missing": "安装包中没有 {{0}}",
+      "sums_length_invalid": "SHA256 长度异常: {{0}}",
+      "sums_missing_file": "SHA256SUMS 中没有 {{0}}"
+    }
+  },
+  "update": {
+    "reason": {
+      "dev_build": "开发构建不检查更新",
+      "up_to_date": "已是最新"
     }
   },
   "time": {
@@ -153,6 +172,21 @@
     "dir_n_items": "目录 · {{0}} 项",
     "binary_file": "二进制文件 · {{0}} 字节 · {{1}}",
     "file_info": "{{0}} 字节 · {{1}}"
+  },
+  "preset": {
+    "custom": { "name": "自定义", "note": "不覆盖当前已填 URL" },
+    "openai": { "name": "OpenAI", "note": "仅 OpenAI 协议" },
+    "deepseek": { "name": "DeepSeek" },
+    "minimax": { "name": "MiniMax 官方" },
+    "minimax-token-plan": { "name": "MiniMax Token Plan", "note": "订阅 Key" },
+    "qwen": { "name": "Qwen DashScope 官方", "note": "仅 OpenAI 兼容" },
+    "qwen-coding-cn": { "name": "Qwen Coding Plan（国内）" },
+    "qwen-coding-intl": { "name": "Qwen Coding Plan（国际）" },
+    "kimi-coding": { "name": "Kimi Coding" },
+    "moonshot": { "name": "Moonshot（Kimi 平台）", "note": "仅 OpenAI 协议" },
+    "glm-coding": { "name": "智谱 GLM Coding Plan" },
+    "mimo-token-plan": { "name": "小米 MiMo Token Plan" },
+    "openrouter": { "name": "OpenRouter", "note": "仅 OpenAI 协议" }
   },
   "ui": {
     "settings": {

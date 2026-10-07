@@ -37,7 +37,7 @@ func TestCheckForUpdateSkipsDev(t *testing.T) {
 	app, _, events := newTestApp(t)
 	orig := checkUpdateFn
 	checkUpdateFn = func() (update.CheckResult, error) {
-		return update.CheckResult{Current: "dev", Skipped: true, Reason: "开发构建不检查更新"}, nil
+		return update.CheckResult{Current: "dev", Skipped: true, Reason: "update.reason.dev_build"}, nil
 	}
 	t.Cleanup(func() { checkUpdateFn = orig })
 

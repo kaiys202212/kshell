@@ -73,6 +73,43 @@ func TestShouldSkip(t *testing.T) {
 	}
 }
 
+func TestCheckReportsUpToDateReason(t *testing.T) {
+	pinCheckWindowsPackage(t)
+	body := githubLatestJSON("v0.1.0", "https://github.com/kaiys202212/kshell/releases/download/v0.1.0/"+ZipName)
+	c := Client{
+		Current: "v0.1.0",
+		Sources: []Source{{Name: "github", Prefix: ""}},
+		Get:     func(context.Context, string) ([]byte, error) { return []byte(body), nil },
+	}
+	got, err := c.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Available {
+		t.Fatalf("同版本不应有更新: %+v", got)
+	}
+	if got.Reason != "update.reason.up_to_date" {
+		t.Fatalf("Reason = %q, want update.reason.up_to_date", got.Reason)
+	}
+}
+
+func TestCheckMissingAssetReturnsKey(t *testing.T) {
+	pinCheckWindowsPackage(t)
+	body := `{"tag_name":"v0.2.0","body":"","assets":[]}`
+	c := Client{
+		Current: "v0.1.0",
+		Sources: []Source{{Name: "github", Prefix: ""}},
+		Get:     func(context.Context, string) ([]byte, error) { return []byte(body), nil },
+	}
+	_, err := c.Check(context.Background())
+	if err == nil {
+		t.Fatal("缺资产应报错")
+	}
+	if want := "err.update.release_missing_asset|v0.2.0|" + ZipName; err.Error() != want {
+		t.Fatalf("err = %q, want %q", err.Error(), want)
+	}
+}
+
 func TestNewer(t *testing.T) {
 	if !Newer("v0.1.0", "v0.2.0") {
 		t.Fatal("0.2.0 应新于 0.1.0")
@@ -170,6 +207,9 @@ func TestCheckSkipsDev(t *testing.T) {
 	}
 	if !got.Skipped || got.Available {
 		t.Fatalf("%+v", got)
+	}
+	if got.Reason != "update.reason.dev_build" {
+		t.Fatalf("Reason = %q, want update.reason.dev_build", got.Reason)
 	}
 }
 

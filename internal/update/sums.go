@@ -23,9 +23,9 @@ func ParseSHA256SUMS(data []byte, filename string) (string, error) {
 		}
 		sum := strings.ToLower(fields[0])
 		if len(sum) != 64 {
-			return "", fmt.Errorf("SHA256 长度异常: %s", filename)
+			return "", fmt.Errorf("err.update.sums_length_invalid|%s", filename)
 		}
 		return sum, nil
 	}
-	return "", fmt.Errorf("SHA256SUMS 中没有 %s", filename)
+	return "", fmt.Errorf("err.update.sums_missing_file|%s", filename)
 }

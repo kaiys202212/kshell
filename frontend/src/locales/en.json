@@ -127,7 +127,26 @@
       "unknown_shell": "Unknown shell: {{0}}"
     },
     "update": {
-      "no_update": "No update available"
+      "no_update": "No update available",
+      "no_source": "No available update source",
+      "release_missing_asset": "Release {{0}} does not provide {{1}}",
+      "dest_exe_empty": "Target executable path is empty",
+      "download_sums": "Failed to download the checksum file: {{0}}",
+      "download_package": "Failed to download the installer package: {{0}}",
+      "checksum_mismatch": "Installer package checksum mismatch",
+      "write_new_version": "Failed to write the new version: {{0}}",
+      "schedule_replace": "Failed to schedule replacement: {{0}}",
+      "unzip_failed": "Failed to extract the installer package: {{0}}",
+      "asset_empty": "{{0}} is empty",
+      "asset_missing": "The installer package does not contain {{0}}",
+      "sums_length_invalid": "Invalid SHA256 length: {{0}}",
+      "sums_missing_file": "{{0}} is not present in SHA256SUMS"
+    }
+  },
+  "update": {
+    "reason": {
+      "dev_build": "Development build; update check skipped",
+      "up_to_date": "Up to date"
     }
   },
   "time": {
@@ -153,6 +172,21 @@
     "dir_n_items": "Directory · {{0}} items",
     "binary_file": "Binary file · {{0}} bytes · {{1}}",
     "file_info": "{{0}} bytes · {{1}}"
+  },
+  "preset": {
+    "custom": { "name": "Custom", "note": "Does not overwrite the URLs you have entered" },
+    "openai": { "name": "OpenAI", "note": "OpenAI protocol only" },
+    "deepseek": { "name": "DeepSeek" },
+    "minimax": { "name": "MiniMax Official" },
+    "minimax-token-plan": { "name": "MiniMax Token Plan", "note": "Subscription key" },
+    "qwen": { "name": "Qwen DashScope Official", "note": "OpenAI-compatible only" },
+    "qwen-coding-cn": { "name": "Qwen Coding Plan (China)" },
+    "qwen-coding-intl": { "name": "Qwen Coding Plan (International)" },
+    "kimi-coding": { "name": "Kimi Coding" },
+    "moonshot": { "name": "Moonshot (Kimi Platform)", "note": "OpenAI protocol only" },
+    "glm-coding": { "name": "Zhipu GLM Coding Plan" },
+    "mimo-token-plan": { "name": "Xiaomi MiMo Token Plan" },
+    "openrouter": { "name": "OpenRouter", "note": "OpenAI protocol only" }
   },
   "ui": {
     "settings": {

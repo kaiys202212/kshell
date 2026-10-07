@@ -21,6 +21,12 @@ describe('translateBackend', () => {
   it('空串原样返回', () => {
     expect(translateBackend('')).toBe('');
   });
+  it('预设/更新等带连字符的 key 也能翻译', () => {
+    expect(translateBackend('preset.minimax-token-plan.name')).toBe(
+      en.preset['minimax-token-plan'].name,
+    );
+    expect(translateBackend('update.reason.up_to_date')).toBe(en.update.reason.up_to_date);
+  });
 });
 
 describe('backendError', () => {

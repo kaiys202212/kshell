@@ -174,7 +174,7 @@ beforeEach(() => {
     Source: '',
     Available: false,
     Skipped: true,
-    Reason: '开发构建不检查更新',
+    Reason: 'update.reason.dev_build',
   });
   mocks.applyUpdate.mockResolvedValue(undefined);
   mocks.getCloseBehavior.mockResolvedValue('tray');
@@ -184,10 +184,10 @@ beforeEach(() => {
   mocks.getPermissionMode.mockResolvedValue('default');
   mocks.setPermissionMode.mockResolvedValue(undefined);
   mocks.listModelPresets.mockResolvedValue([
-    { ID: 'custom', Name: '自定义', OpenAIBaseURL: '', AnthropicBaseURL: '', RecommendedModel: '', Note: '' },
+    { ID: 'custom', Name: 'preset.custom.name', OpenAIBaseURL: '', AnthropicBaseURL: '', RecommendedModel: '', Note: '' },
     {
       ID: 'deepseek',
-      Name: 'DeepSeek',
+      Name: 'preset.deepseek.name',
       OpenAIBaseURL: 'https://api.deepseek.com',
       AnthropicBaseURL: 'https://api.deepseek.com/anthropic',
       RecommendedModel: 'deepseek-chat',
@@ -632,6 +632,8 @@ describe('Settings', () => {
     render(<Settings />);
     goModel();
     const sel = await screen.findByLabelText(tt('ui.settings.model.preset'));
+    // 预设 Name 为 wire key，经 translateBackend 翻成当前语言文案
+    expect(screen.getByRole('option', { name: tt('preset.deepseek.name') })).toBeInTheDocument();
     await act(async () => {
       fireEvent.change(sel, { target: { value: 'deepseek' } });
     });
@@ -872,6 +874,15 @@ describe('Settings', () => {
     fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.about.feedback') }));
     expect(open).toHaveBeenCalledWith('https://github.com/kaiys202212/kshell/issues/new');
     vi.unstubAllGlobals();
+  });
+
+  it('开发构建检查更新：跳过原因 wire key 经 translateBackend 翻译展示', async () => {
+    render(<Settings />);
+    await screen.findByRole('heading', { name: tt('ui.settings.about.title') });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.about.check_update') }));
+    });
+    expect(await screen.findByText(tt('update.reason.dev_build'))).toBeInTheDocument();
   });
 
   it('检查更新后展示新版本并可立即升级', async () => {

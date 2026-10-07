@@ -11,79 +11,81 @@ type ModelPreset struct {
 }
 
 // ModelPresets 内置常见提供商/Coding Plan 端点（数据来自各厂商公开文档，可手改）。
+// Name/Note 为 wire key（`preset.<id>.name` / `preset.<id>.note`），由前端 translateBackend 翻；
+// 逻辑（选择/匹配）一律按稳定的 ID，勿依赖展示文案。
 func ModelPresets() []ModelPreset {
 	return []ModelPreset{
-		{ID: "custom", Name: "自定义", Note: "不覆盖当前已填 URL"},
+		{ID: "custom", Name: "preset.custom.name", Note: "preset.custom.note"},
 		{
-			ID: "openai", Name: "OpenAI",
+			ID: "openai", Name: "preset.openai.name",
 			OpenAIBaseURL: "https://api.openai.com/v1",
 			RecommendedModel: "gpt-5",
-			Note:             "仅 OpenAI 协议",
+			Note:             "preset.openai.note",
 		},
 		{
-			ID: "deepseek", Name: "DeepSeek",
+			ID: "deepseek", Name: "preset.deepseek.name",
 			OpenAIBaseURL:    "https://api.deepseek.com",
 			AnthropicBaseURL: "https://api.deepseek.com/anthropic",
 			RecommendedModel: "deepseek-chat",
 		},
 		{
-			ID: "minimax", Name: "MiniMax 官方",
+			ID: "minimax", Name: "preset.minimax.name",
 			OpenAIBaseURL:    "https://api.minimax.io/v1",
 			AnthropicBaseURL: "https://api.minimax.io/anthropic",
 			RecommendedModel: "MiniMax-M3",
 		},
 		{
-			ID: "minimax-token-plan", Name: "MiniMax Token Plan",
+			ID: "minimax-token-plan", Name: "preset.minimax-token-plan.name",
 			OpenAIBaseURL:    "https://api.minimax.io/v1",
 			AnthropicBaseURL: "https://api.minimax.io/anthropic",
 			RecommendedModel: "MiniMax-M3",
-			Note:             "订阅 Key",
+			Note:             "preset.minimax-token-plan.note",
 		},
 		{
-			ID: "qwen", Name: "Qwen DashScope 官方",
+			ID: "qwen", Name: "preset.qwen.name",
 			OpenAIBaseURL:    "https://dashscope.aliyuncs.com/compatible-mode/v1",
 			RecommendedModel: "qwen3-coder-plus",
-			Note:             "仅 OpenAI 兼容",
+			Note:             "preset.qwen.note",
 		},
 		{
-			ID: "qwen-coding-cn", Name: "Qwen Coding Plan（国内）",
+			ID: "qwen-coding-cn", Name: "preset.qwen-coding-cn.name",
 			OpenAIBaseURL:    "https://coding.dashscope.aliyuncs.com/v1",
 			RecommendedModel: "qwen3-coder-plus",
 		},
 		{
-			ID: "qwen-coding-intl", Name: "Qwen Coding Plan（国际）",
+			ID: "qwen-coding-intl", Name: "preset.qwen-coding-intl.name",
 			OpenAIBaseURL:    "https://coding-intl.dashscope.aliyuncs.com/v1",
 			RecommendedModel: "qwen3-coder-plus",
 		},
 		{
-			ID: "kimi-coding", Name: "Kimi Coding",
+			ID: "kimi-coding", Name: "preset.kimi-coding.name",
 			OpenAIBaseURL:    "https://api.kimi.com/coding/v1",
 			AnthropicBaseURL: "https://api.kimi.com/coding/",
 			RecommendedModel: "kimi-for-coding",
 		},
 		{
-			ID: "moonshot", Name: "Moonshot（Kimi 平台）",
+			ID: "moonshot", Name: "preset.moonshot.name",
 			OpenAIBaseURL:    "https://api.moonshot.cn/v1",
 			RecommendedModel: "kimi-k2.5",
-			Note:             "仅 OpenAI 协议",
+			Note:             "preset.moonshot.note",
 		},
 		{
-			ID: "glm-coding", Name: "智谱 GLM Coding Plan",
+			ID: "glm-coding", Name: "preset.glm-coding.name",
 			OpenAIBaseURL:    "https://open.bigmodel.cn/api/coding/paas/v4",
 			AnthropicBaseURL: "https://open.bigmodel.cn/api/anthropic",
 			RecommendedModel: "glm-4.7",
 		},
 		{
-			ID: "mimo-token-plan", Name: "小米 MiMo Token Plan",
+			ID: "mimo-token-plan", Name: "preset.mimo-token-plan.name",
 			OpenAIBaseURL:    "https://token-plan-cn.xiaomimimo.com/v1",
 			AnthropicBaseURL: "https://token-plan-cn.xiaomimimo.com/anthropic",
 			RecommendedModel: "mimo-v2.5",
 		},
 		{
-			ID: "openrouter", Name: "OpenRouter",
+			ID: "openrouter", Name: "preset.openrouter.name",
 			OpenAIBaseURL:    "https://openrouter.ai/api/v1",
 			RecommendedModel: "anthropic/claude-sonnet-4",
-			Note:             "仅 OpenAI 协议",
+			Note:             "preset.openrouter.note",
 		},
 	}
 }
