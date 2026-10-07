@@ -74,6 +74,38 @@ func TestCatalogEveryKeyTranslates(t *testing.T) {
 	}
 }
 
+// TestCallerReferencedKeysExist 锁定调用方实际引用的 key（grep `applang.T(` 全仓确认：
+// notify.go / projects.go / shell.go / tray.go），逐个断言已注册——缺 key 时 T 原样
+// 返回 key，这里即判红。与 TestCatalogEveryKeyTranslates 互补：后者只遍历 catalog 自
+// 身，从两张表同时删掉某个被调用的 key 时它发现不了，本测试能发现。
+//
+// 注：设计 §4 计划的 providers/transcript.go `role.user`/`role.assistant` 尚未接线
+// （该文件仍硬编码「用户/助手」、未调用 applang），故不在「调用方引用」清单内。
+func TestCallerReferencedKeysExist(t *testing.T) {
+	keys := []string{
+		"toast.task_done",
+		"toast.task_error",
+		"toast.waiting_confirm",
+		"dialog.pick_project_dir",
+		"terminal.title",
+		"tray.show_main",
+		"tray.exit",
+		"tray.show_main_tip",
+		"tray.exit_tip",
+	}
+	for _, lang := range []string{"en", "zh-CN"} {
+		t.Run(lang, func(t *testing.T) {
+			Set(lang)
+			t.Cleanup(func() { Set("en") })
+			for _, k := range keys {
+				if got := T(k); got == "" || got == k {
+					t.Errorf("[%s] 调用方引用的 key %q 未注册（返回 %q）", lang, k, got)
+				}
+			}
+		})
+	}
+}
+
 func TestCatalogKeySetsMatch(t *testing.T) {
 	for k := range en {
 		if _, ok := zhCN[k]; !ok {
