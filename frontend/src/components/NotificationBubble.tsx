@@ -33,6 +33,7 @@ function focusNoticeTarget(termKey: string) {
 }
 
 function NoticeCard({ notice }: { notice: AgentNotice }) {
+  const { t } = useTranslation();
   const dismiss = useAppStore((s) => s.dismissAgentNotice);
   // hover 暂停倒计时：挂起时记录剩余时长，移开后按剩余时间继续
   const remainingRef = useRef(AUTO_DISMISS_MS);
@@ -58,7 +59,7 @@ function NoticeCard({ notice }: { notice: AgentNotice }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const attention = eventLabel(notice.event) === '等待确认';
+  const attention = eventLabel(notice.event) === 'waiting_confirm';
   const body = notice.summary || notice.workspace;
   return (
     <button
@@ -75,7 +76,7 @@ function NoticeCard({ notice }: { notice: AgentNotice }) {
       }}
     >
       <span className="block truncate text-xs font-medium text-foreground">
-        {toolDisplayName(notice.tool)} {eventLabel(notice.event)}
+        {toolDisplayName(notice.tool)} {t(`ui.notify.${eventLabel(notice.event)}`)}
       </span>
       {body && <span className="mt-0.5 line-clamp-2 block text-xs text-muted-foreground">{body}</span>}
     </button>

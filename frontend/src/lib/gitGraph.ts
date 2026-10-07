@@ -1,3 +1,6 @@
+// 非组件 lib 直接用 i18next 单例（不能走 useTranslation），文案在 ui.git.* / ui.* 下。
+import i18next from 'i18next';
+
 export type GraphCommit = {
   hash: string;
   parents: string[];
@@ -85,23 +88,21 @@ export function shortHash(hash: string): string {
 
 export function formatStat(st: { files: number; insertions: number; deletions: number }): string {
   if (st.files <= 0 && st.insertions <= 0 && st.deletions <= 0) return '';
-  return `已更改 ${st.files} 个文件, ${st.insertions} 行插入(+), ${st.deletions} 行删除(-)`;
+  return i18next.t('ui.git.status_summary', {
+    0: st.files,
+    1: st.insertions,
+    2: st.deletions,
+  }) as string;
 }
 
 export function formatAbsoluteTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
-export function relativeTime(iso: string, now = Date.now()): string {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return iso;
-  const sec = Math.round((now - t) / 1000);
-  if (sec < 60) return '刚刚';
-  if (sec < 3600) return `${Math.floor(sec / 60)} 分钟前`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)} 小时前`;
-  if (sec < 86400 * 30) return `${Math.floor(sec / 86400)} 天前`;
-  return iso.slice(0, 10);
+  return new Intl.DateTimeFormat(i18next.language || undefined, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(d);
 }

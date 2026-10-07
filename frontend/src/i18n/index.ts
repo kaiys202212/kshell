@@ -89,7 +89,7 @@ export async function initI18n(configured: string, external: Record<string, stri
   for (const [file, content] of Object.entries(external)) {
     const raw = file.replace(/\.json$/i, '');
     if (!raw) {
-      console.warn('[i18n] 跳过非法语言码: ', file);
+      console.warn('[i18n] skip invalid language code: ', file);
       continue;
     }
     // 大小写归并与值域校验：与既有选项（含内置 en/zh-CN）按小写比对归并到规范写法，
@@ -97,18 +97,18 @@ export async function initI18n(configured: string, external: Record<string, stri
     const existing = options.find((o) => o.code.toLowerCase() === raw.toLowerCase());
     const code = existing ? existing.code : normalizeCode(raw);
     if (!existing && !languagePattern.test(code)) {
-      console.warn('[i18n] 跳过非法语言码: ', file);
+      console.warn('[i18n] skip invalid language code: ', file);
       continue;
     }
     let bundle: Bundle;
     try {
       bundle = JSON.parse(content) as Bundle;
     } catch {
-      console.warn('[i18n] 跳过非法 JSON 语言包: ', file);
+      console.warn('[i18n] skip invalid JSON language pack: ', file);
       continue;
     }
     if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle)) {
-      console.warn('[i18n] 跳过非对象语言包: ', file);
+      console.warn('[i18n] skip non-object language pack: ', file);
       continue;
     }
     const { $name, ...strings } = bundle as Bundle & { $name?: string };

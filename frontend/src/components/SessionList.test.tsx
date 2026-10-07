@@ -238,8 +238,8 @@ describe('SessionList', () => {
     const row = await findRow('修复上传白名单');
 
     expect(within(row).queryByRole('button', { name: tt('ui.session_list.activate') })).toBeNull();
-    expect(within(row).queryByRole('button', { name: '恢复' })).toBeNull();
-    expect(within(row).queryByRole('button', { name: '切换' })).toBeNull();
+    expect(within(row).queryByRole('button', { name: tt('ui.session_list.restore') })).toBeNull();
+    expect(within(row).queryByRole('button', { name: 'Switch' })).toBeNull();
     expect(within(row).getByLabelText(tt('ui.session_list.restored'))).toBeInTheDocument();
     expect(within(row).getByLabelText(tt('ui.agent_activity.running'))).toBeInTheDocument();
     expect(row).toHaveClass('bg-primary/8');
@@ -287,7 +287,7 @@ describe('SessionList', () => {
     renderList();
     const row = await findRow('修复上传白名单');
 
-    expect(within(row).queryByRole('button', { name: '在外部终端打开' })).toBeNull();
+    expect(within(row).queryByRole('button', { name: 'Open in external terminal' })).toBeNull();
     expect(within(row).getByRole('button', { name: tt('ui.session_list.activate') })).toBeInTheDocument();
   });
 

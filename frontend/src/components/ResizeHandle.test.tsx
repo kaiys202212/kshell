@@ -7,8 +7,11 @@ import type { ComponentProps } from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import ResizeHandle from './ResizeHandle';
+import { tt } from '../test/i18n';
 
 afterEach(cleanup);
+
+const LABEL = tt('ui.workspace.resize_sessions');
 
 // 渲染受控手柄并取回 spy；父级负责 clamp，本组件只上报原始目标宽度
 function setup(overrides: Partial<ComponentProps<typeof ResizeHandle>> = {}) {
@@ -18,11 +21,11 @@ function setup(overrides: Partial<ComponentProps<typeof ResizeHandle>> = {}) {
       width={300}
       onResize={onResize}
       side="left"
-      label="调整会话列表宽度"
+      label={LABEL}
       {...overrides}
     />,
   );
-  return { onResize, handle: screen.getByRole('separator', { name: '调整会话列表宽度' }) };
+  return { onResize, handle: screen.getByRole('separator', { name: LABEL }) };
 }
 
 describe('ResizeHandle', () => {

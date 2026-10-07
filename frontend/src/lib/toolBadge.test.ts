@@ -1,5 +1,6 @@
 // 工具徽标映射测试。
 import { describe, expect, it } from 'vitest';
+import { tt } from '../test/i18n';
 import { badgeFor } from './toolBadge';
 
 describe('badgeFor', () => {
@@ -26,6 +27,6 @@ describe('badgeFor', () => {
   });
 
   it('空 ToolID 显示「未知」', () => {
-    expect(badgeFor('').label).toBe('未知');
+    expect(badgeFor('').label).toBe(tt('ui.tool.unknown'));
   });
 });

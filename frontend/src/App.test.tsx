@@ -122,7 +122,7 @@ function pane(name: string): HTMLElement {
   const el = Array.from(document.querySelectorAll('[data-pane]')).find(
     (node) => node.getAttribute('data-pane') === name,
   );
-  if (!el) throw new Error(`未找到页签容器：${name}`);
+  if (!el) throw new Error(`pane not found: ${name}`);
   return el as HTMLElement;
 }
 
@@ -179,7 +179,7 @@ beforeEach(() => {
   mocks.getTools.mockResolvedValue([]);
   mocks.needsAgentSetup.mockResolvedValue(false);
   mocks.dismissAgentSetup.mockResolvedValue(undefined);
-  mocks.getToolInstallRecipe.mockRejectedValue(new Error('该工具不支持一键安装'));
+  mocks.getToolInstallRecipe.mockRejectedValue(new Error('install not supported'));
   mocks.getToolInstallJob.mockResolvedValue({
     ToolID: '',
     Action: '',
@@ -351,7 +351,11 @@ describe('App', () => {
 
     expect(useAppStore.getState().terminals[0].Status).toBe('exited');
     expect(useAppStore.getState().terminals[0].ExitCode).toBe(3);
-    expect(useAppStore.getState().toasts.some((t) => t.title.includes('退出码 3'))).toBe(true);
+    expect(
+      useAppStore
+        .getState()
+        .toasts.some((t) => t.title.includes(tt('ui.notify.terminal_exited_code').replace('{{0}}', '3'))),
+    ).toBe(true);
   });
 
   it('终端 data 事件 bump terminalBusy；exit 清除', async () => {
@@ -578,7 +582,11 @@ describe('App', () => {
     expect(c?.Status).toBe('exited');
     expect(c?.ExitCode).toBe(3);
     expect(useAppStore.getState().chatPermissions.c1).toBeUndefined();
-    expect(useAppStore.getState().toasts.some((t) => t.title.includes('退出码 3'))).toBe(true);
+    expect(
+      useAppStore
+        .getState()
+        .toasts.some((t) => t.title.includes(tt('ui.notify.session_exited').replace('{{0}}', '3'))),
+    ).toBe(true);
   });
 
   it('挂载时回放 chatHistory：时间线落位且 chatSeq 取历史最大 Seq', async () => {
@@ -627,7 +635,9 @@ describe('App', () => {
         name: tt('ui.update_prompt.title').replace('{{version}}', 'v0.2.0'),
       }),
     ).toBeInTheDocument();
-    expect(useAppStore.getState().toasts.some((t) => t.title.includes('设置'))).toBe(false);
+    expect(useAppStore.getState().toasts.some((t) => t.title.includes(tt('ui.titlebar.settings')))).toBe(
+      false,
+    );
     fireEvent.click(screen.getByRole('button', { name: tt('ui.update_prompt.later') }));
     const updateHeading = (n: string) => n.startsWith(tt('ui.update_prompt.title').split('{{')[0]);
     expect(screen.queryByRole('heading', { name: updateHeading })).not.toBeInTheDocument();

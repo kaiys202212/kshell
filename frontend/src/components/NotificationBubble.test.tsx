@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TerminalInfo } from '../lib/api';
 import NotificationBubble from './NotificationBubble';
 import { useAppStore } from '../state/store';
+import { tt } from '../test/i18n';
 
 const term: TerminalInfo = {
   ID: 't1',
@@ -66,16 +67,22 @@ describe('NotificationBubble', () => {
   it('标题 = 工具展示名 + 事件语义，正文 = summary', () => {
     push();
     render(<NotificationBubble />);
-    expect(screen.getByRole('button', { name: /Claude Code 任务完成/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: new RegExp(`Claude Code ${tt('ui.notify.task_done')}`) }),
+    ).toBeInTheDocument();
     expect(screen.getByText('登录页修复完成')).toBeInTheDocument();
   });
 
   it('error 事件标题为「任务出错」，不落入完成文案', () => {
     push({ event: 'error', summary: '后端进程崩溃' });
     render(<NotificationBubble />);
-    expect(screen.getByRole('button', { name: /Claude Code 任务出错/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: new RegExp(`Claude Code ${tt('ui.notify.task_error')}`) }),
+    ).toBeInTheDocument();
     expect(screen.getByText('后端进程崩溃')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /任务完成/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: new RegExp(tt('ui.notify.task_done')) }),
+    ).not.toBeInTheDocument();
   });
 
   it('最多同时展示 3 条（最新 3 条），超出折叠为 +N，最新在最上', () => {

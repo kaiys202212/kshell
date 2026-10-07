@@ -9,6 +9,9 @@ import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { bumpTerminalBusy, suppressTerminalBusy } from '../state/terminalBusy';
 import type { AppearanceInfo } from './appearance';
 
+// 绑定不可用的统一错误 key：Error.message 经 backendError/translateBackend 翻译后展示。
+const ERR_NO_BINDING = 'err.backend.binding_missing';
+
 // discovery.Workspace 的 JSON 形态（internal/discovery/workspaces.go）
 export interface Workspace {
   Path: string;
@@ -498,7 +501,7 @@ function app(): AppBindings | null {
   const a = window.go?.desktop?.App ?? null;
   if (!a && !warnedNoBinding) {
     warnedNoBinding = true;
-    console.warn('未检测到 kshell 桌面端绑定，请在桌面端运行');
+    console.warn('kshell desktop bindings not detected; run in the desktop app');
   }
   return a;
 }
@@ -619,7 +622,7 @@ export function stopFileWatch(wsPath: string): void {
 // RevealInExplorer 在系统文件管理器中定位并选中 path（绝对或相对工作区）；无绑定抛错。
 export async function revealInExplorer(wsPath: string, path: string): Promise<void> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   await a.RevealInExplorer(wsPath, path);
 }
 
@@ -634,7 +637,7 @@ export function onFilesChanged(cb: (path: string) => void): () => void {
 // Go 侧会作废树缓存；错误（目标已存在、越界等）向上抛。
 export async function renameEntry(wsPath: string, relPath: string, newName: string): Promise<string> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   return a.RenameEntry(wsPath, relPath, newName);
 }
 
@@ -642,7 +645,7 @@ export async function renameEntry(wsPath: string, relPath: string, newName: stri
 // Go 侧会作废树缓存；错误（目标已存在、名字非法等）向上抛。
 export async function createEntry(wsPath: string, dirRelPath: string, name: string, isDir: boolean): Promise<string> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   return a.CreateEntry(wsPath, dirRelPath, name, isDir);
 }
 
@@ -650,7 +653,7 @@ export async function createEntry(wsPath: string, dirRelPath: string, name: stri
 // Go 侧会作废树缓存；错误向上抛。
 export async function deleteEntry(wsPath: string, relPath: string): Promise<void> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   return a.DeleteEntry(wsPath, relPath);
 }
 
@@ -658,7 +661,7 @@ export async function deleteEntry(wsPath: string, relPath: string): Promise<void
 // Go 侧会作废树缓存；错误（目标已存在、移入子孙目录等）向上抛。
 export async function moveEntry(wsPath: string, srcRelPath: string, dstDirRelPath: string): Promise<string> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   return a.MoveEntry(wsPath, srcRelPath, dstDirRelPath);
 }
 
@@ -673,7 +676,7 @@ export async function readFileForEdit(wsPath: string, path: string): Promise<Edi
 // 无绑定时抛错（与 renameEntry 同口径）：静默成功会让调用方误报「已保存」。错误向上抛。
 export async function saveFile(wsPath: string, path: string, text: string, eol: string): Promise<void> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   await a.SaveFile(wsPath, path, text, eol);
 }
 
@@ -686,7 +689,7 @@ export async function gitStatus(wsPath: string): Promise<GitStatusResult | null>
 
 function requireApp(): AppBindings {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   return a;
 }
 
@@ -840,14 +843,14 @@ export async function openSSHTerminal(
   rows: number,
 ): Promise<TerminalInfo> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   return a.OpenSSHTerminal(connID, cols, rows);
 }
 
 // upsertConnection 新建（ID 空）或更新 SSH 连接。错误向上抛。
 export async function upsertConnection(conn: Partial<SshConnection> & { Host: string }): Promise<SshConnection> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   return a.UpsertConnection({
     ID: conn.ID ?? '',
     Name: conn.Name ?? '',
@@ -865,7 +868,7 @@ export async function upsertConnection(conn: Partial<SshConnection> & { Host: st
 // deleteConnection 删除指定连接。错误向上抛。
 export async function deleteConnection(id: string): Promise<void> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   await a.DeleteConnection(id);
 }
 
@@ -898,19 +901,19 @@ export async function dismissAgentSetup(): Promise<void> {
 
 export async function getToolInstallRecipe(id: string): Promise<InstallRecipeView> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   return a.GetToolInstallRecipe(id);
 }
 
 export async function installBuiltinTool(id: string): Promise<void> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   await a.InstallBuiltinTool(id);
 }
 
 export async function uninstallBuiltinTool(id: string, purgeConfig: boolean): Promise<void> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   await a.UninstallBuiltinTool(id, purgeConfig);
 }
 
@@ -1003,7 +1006,7 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
       Source: '',
       Available: false,
       Skipped: true,
-      Reason: '未检测到桌面端绑定',
+      Reason: ERR_NO_BINDING,
     };
   }
   return a.CheckForUpdate();
@@ -1011,7 +1014,7 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
 
 export async function applyUpdate(): Promise<void> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   await a.ApplyUpdate();
 }
 
@@ -1032,7 +1035,7 @@ export async function openSessionTerminal(
   rows: number,
 ): Promise<TerminalInfo> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   return a.OpenSessionTerminal(sessionId, cols, rows);
 }
 
@@ -1044,7 +1047,7 @@ export async function openWorkspaceTerminal(
   rows: number,
 ): Promise<TerminalInfo> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   return a.OpenWorkspaceTerminal(wsPath, toolId, cols, rows);
 }
 
@@ -1055,7 +1058,7 @@ export async function openShellTerminal(
   rows: number,
 ): Promise<TerminalInfo> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   return a.OpenShellTerminal(wsPath, cols, rows);
 }
 
@@ -1215,14 +1218,14 @@ export async function getAppearance(): Promise<AppearanceInfo> {
 // setAppearanceMode 设置颜色模式（写回 config.yaml），错误向上抛。
 export async function setAppearanceMode(mode: string): Promise<void> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   await a.SetAppearanceMode(mode);
 }
 
 // setAppearanceFontSize 设置全局字号（写回 config.yaml），错误向上抛。
 export async function setAppearanceFontSize(n: number): Promise<void> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   await a.SetAppearanceFontSize(n);
 }
 
@@ -1255,7 +1258,7 @@ export async function getLanguage(): Promise<LanguageInfo> {
 // setLanguage 设置语言（Go 侧校验 + 持久化 + 广播 language:changed），错误向上抛。
 export async function setLanguage(lang: string): Promise<void> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   await a.SetLanguage(lang);
 }
 
@@ -1310,7 +1313,7 @@ export async function getModelConfig(): Promise<ModelConfigView> {
 // setModelConfig 保存模型注入配置（APIKey 留空不改、ClearAPIKey 为真清除），错误向上抛。
 export async function setModelConfig(input: ModelConfigInput): Promise<void> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   await a.SetModelConfig(input);
 }
 
@@ -1348,25 +1351,25 @@ export async function setPermissionMode(mode: string): Promise<void> {
 
 export async function openSession(sessionID: string): Promise<OpenedSession> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   return a.OpenSession(sessionID);
 }
 
 export async function openSessionACP(sessionID: string): Promise<OpenedSession> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   return a.OpenSessionACP(sessionID);
 }
 
 export async function openWorkspace(wsID: string, toolID: string): Promise<OpenedSession> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   return a.OpenWorkspace(wsID, toolID);
 }
 
 export async function openWorkspaceACP(wsID: string, toolID: string): Promise<OpenedSession> {
   const a = app();
-  if (!a) throw new Error('未检测到桌面端绑定');
+  if (!a) throw new Error(ERR_NO_BINDING);
   return a.OpenWorkspaceACP(wsID, toolID);
 }
 

@@ -1,4 +1,7 @@
 // 工具徽标映射：ToolID → 展示名、旧配色类（兼容调用点）与品牌色 token。
+// 未知工具文案走 i18n（非组件 lib 直接用 i18next 单例）。
+import i18next from 'i18next';
+
 export interface ToolBadge {
   label: string;
   className: string;
@@ -20,7 +23,7 @@ const TOOL_BADGES: Record<string, ToolBadge> = {
 export function badgeFor(toolID: string): ToolBadge {
   return (
     TOOL_BADGES[toolID.toLowerCase()] ?? {
-      label: toolID || '未知',
+      label: toolID || (i18next.t('ui.tool.unknown') as string),
       className: 'tool-badge--other',
       color: OTHER_COLOR,
     }

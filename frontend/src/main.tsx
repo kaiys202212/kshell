@@ -26,7 +26,7 @@ async function bootstrap() {
     } catch (e) {
         // 失败不阻塞启动：initI18nBuiltin 兜底，只保证内置资源可用、应用可启动
         //（不承诺 initI18n 中途失败的完美恢复）
-        console.warn('[i18n] 启动语言接线失败，使用内置默认语言', e)
+        console.warn('[i18n] bootstrap language wiring failed, using builtin default', e)
         initI18nBuiltin()
     }
     // 事件订阅单独守卫：window.runtime 缺失时 EventsOn 抛 TypeError，
@@ -37,7 +37,7 @@ async function bootstrap() {
             void i18next.changeLanguage(info.resolved)
         })
     } catch (e) {
-        console.warn('[i18n] language:changed 订阅失败，启动不阻塞', e)
+        console.warn('[i18n] language:changed subscribe failed, startup not blocked', e)
     }
 
     root.render(

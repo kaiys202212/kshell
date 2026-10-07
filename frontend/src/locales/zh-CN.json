@@ -1,6 +1,9 @@
 {
   "err": {
     "session_not_found": "会话不存在或已被清理",
+    "backend": {
+      "binding_missing": "未检测到后端绑定"
+    },
     "desktop": {
       "not_ready": "桌面版尚未初始化完成",
       "session_gone": "会话不存在或已被清理",
@@ -306,6 +309,9 @@
       "awaiting": "待用户确认",
       "waiting": "等待用户"
     },
+    "tool": {
+      "unknown": "未知"
+    },
     "files": {
       "tabs_aria": "文件页签",
       "close_tab": "关闭 {{label}}",
@@ -313,6 +319,7 @@
       "pick_from_tree": "从右侧文件树选择文件查看预览",
       "binding_missing": "未检测到 kshell 桌面端绑定，请在桌面端运行",
       "saved": "已保存",
+      "staged_suffix": "(已暂存)",
       "binary_preview_unavailable": "二进制文件，无法预览",
       "loading": "加载中…",
       "pdf_read_failed": "无法读取 PDF",
@@ -433,7 +440,8 @@
       "stage_hunk": "暂存此块",
       "unstage_hunk": "取消暂存此块",
       "discard_hunk": "丢弃此块",
-      "discard_hunk_confirm": "丢弃此 hunk？"
+      "discard_hunk_confirm": "丢弃此 hunk？",
+      "status_summary": "已更改 {{0}} 个文件, {{1}} 行插入(+), {{2}} 行删除(-)"
     },
     "ssh": {
       "source_sshconfig": "ssh 配置",
@@ -550,7 +558,13 @@
       "truncated": "内容已截断"
     },
     "notify": {
-      "aria": "Agent 通知"
+      "aria": "Agent 通知",
+      "task_done": "任务完成",
+      "task_error": "任务出错",
+      "waiting_confirm": "等待确认",
+      "session_exited": "会话已退出（退出码 {{0}}）",
+      "terminal_exited": "终端已退出",
+      "terminal_exited_code": "终端异常退出（退出码 {{0}}）"
     },
     "toast": {
       "close_aria": "关闭提示"

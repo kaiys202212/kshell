@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { tt } from '../test/i18n';
 import {
   activateTab,
   closeTab,
@@ -18,7 +19,9 @@ describe('fileTabLabel', () => {
 
   it('diff 页签显示文件名，暂存侧带后缀', () => {
     expect(fileTabLabel(diffTabPath('working', '', 'src/a.ts'))).toBe('a.ts');
-    expect(fileTabLabel(diffTabPath('staged', 'ext/lib', 'a.ts'))).toBe('a.ts (已暂存)');
+    expect(fileTabLabel(diffTabPath('staged', 'ext/lib', 'a.ts'))).toBe(
+      `a.ts ${tt('ui.files.staged_suffix')}`,
+    );
   });
 });
 

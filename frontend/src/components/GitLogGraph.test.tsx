@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GitLogGraph } from './GitLogGraph';
+import { tt } from '../test/i18n';
 
 afterEach(cleanup);
 
@@ -30,7 +31,9 @@ describe('GitLogGraph', () => {
     expect(tip).toHaveTextContent('ann');
     expect(tip.className).toMatch(/-translate-x-full/);
     await waitFor(() => {
-      expect(tip).toHaveTextContent('已更改 19 个文件');
+      expect(tip).toHaveTextContent(
+        tt('ui.git.status_summary').replace('{{0}}', '19').replace('{{1}}', '1867').replace('{{2}}', '202'),
+      );
     });
   });
 

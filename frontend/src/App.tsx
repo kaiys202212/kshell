@@ -5,6 +5,7 @@
 // terminal:exit → 更新镜像并提示；Go 侧每会话保留 256KiB 环形缓冲兜住未挂载期间的输出。
 // 全局快捷键：Ctrl+K 打开快速切换器，Ctrl+F 在工作区页签内派发 kshell:focus-search。
 import { useCallback, useEffect, useRef, useState } from 'react';
+import i18n from 'i18next';
 import {
   applyUpdate,
   archivedIDs,
@@ -40,6 +41,7 @@ import { OnFileDrop, OnFileDropOff } from '../wailsjs/runtime/runtime';
 import { handleAnchorClick } from './lib/openHref';
 import { eventLabel } from './lib/agentNotify';
 import { playNotifySound } from './lib/notifySound';
+import { backendError, translateBackend } from './lib/errors';
 import { applyChatUpdate, type TimelineItem } from './state/chatUpdate';
 import { dispatchTerminalData } from './lib/terminalRegistry';
 import { cn } from './lib/cn';
@@ -88,7 +90,7 @@ function App() {
     // 整应用只订阅一次。出错同属需介入，与「等待确认」共用重音。
     return onNotifyAgent((p) => {
       useAppStore.getState().pushAgentNotice(p);
-      playNotifySound(eventLabel(p.event) === '任务完成' ? 'light' : 'attention');
+      playNotifySound(eventLabel(p.event) === 'task_done' ? 'light' : 'attention');
     });
   }, []);
 
@@ -113,7 +115,10 @@ function App() {
       const { markChatExited, setChatPermission, notify } = useAppStore.getState();
       markChatExited(id, exitCode, error);
       setChatPermission(id, null);
-      notify(error || `会话已退出（退出码 ${exitCode}）`, error ? 'error' : 'info');
+      const reason = error
+        ? translateBackend(error)
+        : (i18n.t('ui.notify.session_exited', { 0: exitCode }) as string);
+      notify(reason, error ? 'error' : 'info');
     });
 
     void listChats()
@@ -186,7 +191,12 @@ function App() {
       clearTerminalBusy(id);
       const { markTerminalExited: mark, notify } = useAppStore.getState();
       mark(id, exitCode);
-      notify(exitCode === 0 ? '终端已退出' : `终端异常退出（退出码 ${exitCode}）`, exitCode === 0 ? 'info' : 'error');
+      notify(
+        exitCode === 0
+          ? (i18n.t('ui.notify.terminal_exited') as string)
+          : (i18n.t('ui.notify.terminal_exited_code', { 0: exitCode }) as string),
+        exitCode === 0 ? 'info' : 'error',
+      );
     });
     return () => {
       offData();
@@ -343,7 +353,7 @@ function App() {
               try {
                 await applyUpdate();
               } catch (e: unknown) {
-                setUpdateError(e instanceof Error ? e.message : String(e));
+                setUpdateError(backendError(e));
                 setUpdateBusy(false);
               }
             })();

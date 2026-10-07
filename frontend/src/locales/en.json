@@ -1,6 +1,9 @@
 {
   "err": {
     "session_not_found": "Session not found or has been cleaned up",
+    "backend": {
+      "binding_missing": "kshell backend binding not available"
+    },
     "desktop": {
       "not_ready": "Desktop is not initialized yet",
       "session_gone": "Session not found or has been cleaned up",
@@ -306,6 +309,9 @@
       "awaiting": "Awaiting confirmation",
       "waiting": "Waiting for user"
     },
+    "tool": {
+      "unknown": "Unknown"
+    },
     "files": {
       "tabs_aria": "File tabs",
       "close_tab": "Close {{label}}",
@@ -313,6 +319,7 @@
       "pick_from_tree": "Select a file from the file tree on the right to preview",
       "binding_missing": "kshell desktop bindings not detected; run in the desktop app",
       "saved": "Saved",
+      "staged_suffix": "(staged)",
       "binary_preview_unavailable": "Binary file; cannot preview",
       "loading": "Loading…",
       "pdf_read_failed": "Failed to read PDF",
@@ -433,7 +440,8 @@
       "stage_hunk": "Stage hunk",
       "unstage_hunk": "Unstage hunk",
       "discard_hunk": "Discard hunk",
-      "discard_hunk_confirm": "Discard this hunk?"
+      "discard_hunk_confirm": "Discard this hunk?",
+      "status_summary": "{{0}} files changed, {{1}} insertions(+), {{2}} deletions(-)"
     },
     "ssh": {
       "source_sshconfig": "ssh config",
@@ -550,7 +558,13 @@
       "truncated": "Content truncated"
     },
     "notify": {
-      "aria": "Agent notifications"
+      "aria": "Agent notifications",
+      "task_done": "Task complete",
+      "task_error": "Task failed",
+      "waiting_confirm": "Waiting for confirmation",
+      "session_exited": "Session exited (code {{0}})",
+      "terminal_exited": "Terminal exited",
+      "terminal_exited_code": "Terminal exited abnormally (code {{0}})"
     },
     "toast": {
       "close_aria": "Dismiss notification"

@@ -4,10 +4,10 @@ import {
   formatAbsoluteTime,
   formatStat,
   layoutGitGraph,
-  relativeTime,
   shortHash,
   type GraphCommit,
 } from '../lib/gitGraph';
+import { formatRelativeTime } from '../lib/format';
 import { cn } from '../lib/cn';
 
 const ROW_H = 22;
@@ -142,7 +142,7 @@ export function GitLogGraph({
             <div className="text-muted-foreground">
               {hovered.author}
               {' · '}
-              {relativeTime(hovered.date)}（{formatAbsoluteTime(hovered.date)}）
+              {formatRelativeTime(hovered.date)} ({formatAbsoluteTime(hovered.date)})
             </div>
             <div className="mt-1 font-medium break-words">{hovered.subject}</div>
             {stat && formatStat({ files: stat.Files, insertions: stat.Insertions, deletions: stat.Deletions }) && (

@@ -26,12 +26,12 @@ export function toolDisplayName(tool: string): string {
   return names[tool.toLowerCase()] ?? tool;
 }
 
-// eventLabel 把事件归纳成语义文案：
+// eventLabel 把事件归纳成稳定语义 id（调用方拼 `ui.notify.` 取文案）：
 // 完成 = Stop / agent-turn-complete / done；等待确认 = Notification / attention；
 // 出错 = error（chat 后端 emit，summary 为错误文本）；
 // 未知事件按「任务完成」处理（宁可误报完成，不打扰成待确认）。
-export function eventLabel(event: string): string {
-  if (event === 'Notification' || event === 'attention') return '等待确认';
-  if (event === 'error') return '任务出错';
-  return '任务完成';
+export function eventLabel(event: string): 'task_done' | 'task_error' | 'waiting_confirm' {
+  if (event === 'Notification' || event === 'attention') return 'waiting_confirm';
+  if (event === 'error') return 'task_error';
+  return 'task_done';
 }

@@ -20,18 +20,18 @@ describe('toolDisplayName', () => {
 
 describe('eventLabel', () => {
   it('完成语义：Stop / done / agent-turn-complete / 未知事件都算任务完成', () => {
-    expect(eventLabel('Stop')).toBe('任务完成');
-    expect(eventLabel('done')).toBe('任务完成');
-    expect(eventLabel('agent-turn-complete')).toBe('任务完成');
-    expect(eventLabel('whatever')).toBe('任务完成');
+    expect(eventLabel('Stop')).toBe('task_done');
+    expect(eventLabel('done')).toBe('task_done');
+    expect(eventLabel('agent-turn-complete')).toBe('task_done');
+    expect(eventLabel('whatever')).toBe('task_done');
   });
 
   it('出错语义：error 不落入完成文案', () => {
-    expect(eventLabel('error')).toBe('任务出错');
+    expect(eventLabel('error')).toBe('task_error');
   });
 
   it('等待确认语义：Notification / attention', () => {
-    expect(eventLabel('Notification')).toBe('等待确认');
-    expect(eventLabel('attention')).toBe('等待确认');
+    expect(eventLabel('Notification')).toBe('waiting_confirm');
+    expect(eventLabel('attention')).toBe('waiting_confirm');
   });
 });

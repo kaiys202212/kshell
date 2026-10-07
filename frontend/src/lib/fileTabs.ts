@@ -1,4 +1,5 @@
 // 文件区页签状态：至多一个可替换的「预览」页签；双击或开始编辑后固定。
+import i18next from 'i18next';
 
 export type FileTabKind = 'file' | 'diff';
 
@@ -46,7 +47,7 @@ export function fileTabLabel(path: string): string {
   const diff = parseDiffTabPath(path);
   if (diff) {
     const name = baseName(diff.path);
-    return diff.side === 'staged' ? `${name} (已暂存)` : name;
+    return diff.side === 'staged' ? `${name} ${i18next.t('ui.files.staged_suffix')}` : name;
   }
   return baseName(path);
 }

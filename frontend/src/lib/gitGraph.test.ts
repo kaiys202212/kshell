@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { tt } from '../test/i18n';
 import { formatStat, layoutGitGraph, type GraphCommit } from './gitGraph';
 
 const c = (hash: string, parents: string[], subject = hash): GraphCommit => ({
@@ -50,8 +51,10 @@ describe('layoutGitGraph', () => {
 
 describe('formatStat', () => {
   it('拼出 VS Code 风格摘要', () => {
-    expect(formatStat({ files: 19, insertions: 1867, deletions: 202 })).toBe(
-      '已更改 19 个文件, 1867 行插入(+), 202 行删除(-)',
-    );
+    const expected = tt('ui.git.status_summary')
+      .replace('{{0}}', '19')
+      .replace('{{1}}', '1867')
+      .replace('{{2}}', '202');
+    expect(formatStat({ files: 19, insertions: 1867, deletions: 202 })).toBe(expected);
   });
 });

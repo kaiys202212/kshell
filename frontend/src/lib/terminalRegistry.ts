@@ -19,11 +19,11 @@ const handles = new Map<string, TerminalHandle>();
 // 覆盖必须告警，否则 StrictMode 双挂载、页签重建这类问题会被静默吞掉。
 export function registerTerminal(id: string, h: TerminalHandle): void {
   if (!id) {
-    console.warn('终端注册失败：终端 id 为空');
+    console.warn('terminal register failed: empty terminal id');
     return;
   }
   if (handles.has(id)) {
-    console.warn(`终端重复注册，旧实例已被覆盖：${id}`);
+    console.warn(`terminal re-registered; previous instance overwritten: ${id}`);
   }
   handles.set(id, h);
 }
@@ -43,7 +43,7 @@ export function dispatchTerminalData(id: string, data: string): boolean {
   try {
     bytes = base64ToBytes(data);
   } catch {
-    console.warn(`终端输出解码失败，已丢弃：${id}`);
+    console.warn(`terminal output decode failed; dropped: ${id}`);
     return false;
   }
   h.write(bytes);

@@ -152,7 +152,7 @@ describe('NewSessionMenu', () => {
     setup();
 
     fireEvent.click(screen.getByRole('button', { expanded: false }));
-    expect(screen.queryByRole('button', { name: '在外部终端打开' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open in external terminal' })).not.toBeInTheDocument();
   });
 
   it('工具同时支持 ACP 时下拉仍只有工具名，点选走 onSelect 不强制 ACP', () => {

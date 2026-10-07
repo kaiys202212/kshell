@@ -80,7 +80,7 @@ describe('GitPanel', () => {
     expect(screen.getByRole('button', { name: tt('ui.git.primary_action_aria') })).toBeDisabled();
     fireEvent.change(msg, { target: { value: 'msg' } });
     expect(screen.getByRole('button', { name: tt('ui.git.primary_action_aria') })).toBeEnabled();
-    expect(screen.queryByRole('button', { name: '同步到远程' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sync to remote' })).not.toBeInTheDocument();
   });
 
   it('无 staged 时提交禁用', async () => {
