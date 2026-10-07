@@ -144,11 +144,100 @@
   },
   "ui": {
     "settings": {
+      "title": "设置",
+      "nav": {
+        "aria": "设置分区",
+        "general": "通用",
+        "model": "模型",
+        "tools": "工具"
+      },
+      "appearance": {
+        "title": "外观",
+        "system": "跟随系统",
+        "light": "浅色",
+        "dark": "深色",
+        "font_size": "界面字号"
+      },
       "language": {
         "title": "语言",
         "en": "English",
         "zh_cn": "简体中文",
         "system": "跟随系统"
+      },
+      "close_behavior": {
+        "title": "关闭行为",
+        "tray": "收进托盘",
+        "exit": "直接退出"
+      },
+      "notify": {
+        "title": "通知",
+        "sound": "气泡提示音",
+        "sound_desc": "agent 通知气泡弹出时播放提示音（完成轻音、等待确认与出错重音）"
+      },
+      "session_mode": {
+        "title": "默认会话模式",
+        "desc": "影响新建/恢复的默认路径。工具不支持 ACP 时即使选了 ACP 也会走终端。",
+        "tui": "TUI（终端）",
+        "acp": "ACP（聊天）"
+      },
+      "permission_mode": {
+        "title": "权限模式",
+        "default": "默认（需确认）",
+        "bypass": "Bypass（跳过确认）",
+        "bypass_warning": "将跳过 CLI 权限确认（内置工具全部支持），并自动放行 ACP 权限弹窗。仅建议在可信环境使用。自定义工具需在 providers.yaml 的 permission.bypassArgs 中声明跳过参数才会生效。"
+      },
+      "about": {
+        "title": "关于",
+        "current_version": "当前版本",
+        "checking": "检查中…",
+        "check_update": "检查更新",
+        "feedback": "反馈问题",
+        "upgrade_now": "立即升级",
+        "up_to_date": "已是最新",
+        "new_version": "新版本 {{0}}",
+        "source": "（来源：{{0}}）"
+      },
+      "model": {
+        "title": "模型（对所有 agent 启动时注入）",
+        "enable": "启用模型配置",
+        "preset": "提供商预设",
+        "dirty": "字段已改（预设仍保留）",
+        "api_key": "模型 API Key",
+        "api_key_set": "已设置（留空不修改）",
+        "api_key_unset": "未设置",
+        "clear_key": "清除密钥",
+        "agent_model": "{{0}} 模型",
+        "save": "保存模型配置",
+        "apply_recommended": "应用推荐模型",
+        "desc": "启动时按 agent 类型注入对应协议端点（Claude→Anthropic，Codex→OpenAI）。不改各工具自身配置文件。",
+        "saved": "已保存，对新启动的会话生效"
+      },
+      "tools": {
+        "title": "工具检测",
+        "rescan": "重新扫描",
+        "rescanning": "扫描中…",
+        "auto_repairing": "检测到 {{0}} 安装损坏，正在自动修复…",
+        "loading": "加载中……",
+        "empty": "未检测到任何工具",
+        "broken": "已损坏",
+        "unverified": "未验证",
+        "missing_bin": "缺少可执行文件",
+        "not_installed": "未安装",
+        "title_broken": "检测到使用残留但没有任何可执行文件，安装已损坏",
+        "title_config_only": "只检测到配置目录，没有可执行程序，可用性未验证",
+        "install": "安装",
+        "uninstall": "卸载",
+        "repair": "修复",
+        "installing": "安装中…",
+        "uninstalling": "卸载中…",
+        "repairing": "修复中…",
+        "cmd_delete": "删除 {{0}}",
+        "uninstall_title": "卸载 {{0}}",
+        "purge_config": "同时清除配置",
+        "purge_note": "将删除会话历史",
+        "cancel": "取消",
+        "confirm_uninstall": "确认卸载",
+        "action_failed": "操作失败"
       }
     }
   }

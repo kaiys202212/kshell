@@ -39,6 +39,7 @@ import {
 } from '../lib/api';
 import type { InstallRecipeView, ModelPreset, ToolInfo, ToolInstallJobView, UpdateInfo } from '../lib/api';
 import { cn } from '../lib/cn';
+import { translateBackend } from '../lib/errors';
 import { applyUiFontSize, clampUiFontSize } from '../lib/appearance';
 import { getLanguageOptions } from '../i18n';
 import { openExternal } from '../lib/openHref';
@@ -60,12 +61,15 @@ const MODEL_AGENTS = [
 // 语言行内置三选项；system（跟随系统）不是语言码，不在 getLanguageOptions 里
 const BUILTIN_LANGUAGE_CODES = ['en', 'zh-CN', 'system'];
 
+// 后端错误串统一过 translateBackend：注册 key 翻成文案，非注册串原样返回
+const backendError = (e: unknown) => translateBackend(e instanceof Error ? e.message : String(e));
+
 type Section = 'general' | 'model' | 'tools';
 
-const SECTIONS: { id: Section; label: string }[] = [
-  { id: 'general', label: '通用' },
-  { id: 'model', label: '模型' },
-  { id: 'tools', label: '工具' },
+const SECTIONS: { id: Section; labelKey: string }[] = [
+  { id: 'general', labelKey: 'ui.settings.nav.general' },
+  { id: 'model', labelKey: 'ui.settings.nav.model' },
+  { id: 'tools', labelKey: 'ui.settings.nav.tools' },
 ];
 
 export default function Settings() {
@@ -124,9 +128,9 @@ export default function Settings() {
 
   const loadRecipes = async (list: ToolInfo[]) => {
     const pairs = await Promise.all(
-      list.map((t) =>
-        getToolInstallRecipe(t.ID)
-          .then((r) => [t.ID, r] as const)
+      list.map((tool) =>
+        getToolInstallRecipe(tool.ID)
+          .then((r) => [tool.ID, r] as const)
           .catch(() => null),
       ),
     );
@@ -147,7 +151,7 @@ export default function Settings() {
         if (!cancelled) setRecipes(rec);
       })
       .catch((e: unknown) => {
-        if (!cancelled) setToolsError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) setToolsError(backendError(e));
       });
     getToolInstallJob()
       .then((j) => {
@@ -167,11 +171,11 @@ export default function Settings() {
           const list = await parseProvidersYAML(content);
           if (!cancelled) setSpecs(withoutBuiltinSpecs(list));
         } catch (e: unknown) {
-          if (!cancelled) setYamlError(e instanceof Error ? e.message : String(e));
+          if (!cancelled) setYamlError(backendError(e));
         }
       })
       .catch((e: unknown) => {
-        if (!cancelled) setYamlError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) setYamlError(backendError(e));
       });
     getAppearance()
       .then((info) => {
@@ -236,7 +240,7 @@ export default function Settings() {
     try {
       await setAppearanceFontSize(px);
     } catch (e: unknown) {
-      notify(e instanceof Error ? e.message : String(e), 'error');
+      notify(backendError(e), 'error');
     }
   };
 
@@ -249,7 +253,7 @@ export default function Settings() {
           setRecipes(await loadRecipes(list));
         })
         .catch((e: unknown) => {
-          setToolsError(e instanceof Error ? e.message : String(e));
+          setToolsError(backendError(e));
         });
     };
     const offScan = onScanDone(() => {
@@ -285,7 +289,7 @@ export default function Settings() {
         .then((j) => setJob(j))
         .catch(() => {});
       if (p.ok === false) {
-        notify(p.error || '操作失败', 'error');
+        notify(p.error ? translateBackend(p.error) : t('ui.settings.tools.action_failed'), 'error');
       }
       getTools()
         .then(async (list) => {
@@ -293,14 +297,14 @@ export default function Settings() {
           setRecipes(await loadRecipes(list));
         })
         .catch((e: unknown) => {
-          setToolsError(e instanceof Error ? e.message : String(e));
+          setToolsError(backendError(e));
         });
     });
     return () => {
       offLog();
       offDone();
     };
-  }, [notify]);
+  }, [notify, t]);
 
 
   const handleAppearance = async (mode: string) => {
@@ -309,7 +313,7 @@ export default function Settings() {
       await setAppearanceMode(mode);
       setAppearanceLocal(mode);
     } catch (e: unknown) {
-      notify(e instanceof Error ? e.message : String(e), 'error');
+      notify(backendError(e), 'error');
     }
   };
 
@@ -322,7 +326,7 @@ export default function Settings() {
       await setLanguage(code);
     } catch (e: unknown) {
       setLanguageLocal(useAppStore.getState().language.configured);
-      notify(e instanceof Error ? e.message : String(e), 'error');
+      notify(backendError(e), 'error');
     }
   };
 
@@ -332,7 +336,7 @@ export default function Settings() {
       await setCloseBehavior(mode);
       setCloseBehaviorLocal(mode);
     } catch (e: unknown) {
-      notify(e instanceof Error ? e.message : String(e), 'error');
+      notify(backendError(e), 'error');
     }
   };
 
@@ -342,7 +346,7 @@ export default function Settings() {
       await setSessionMode(mode);
       setSessionModeLocal(mode);
     } catch (e: unknown) {
-      notify(e instanceof Error ? e.message : String(e), 'error');
+      notify(backendError(e), 'error');
     }
   };
 
@@ -352,7 +356,7 @@ export default function Settings() {
       await setPermissionMode(mode);
       setPermissionModeLocal(mode);
     } catch (e: unknown) {
-      notify(e instanceof Error ? e.message : String(e), 'error');
+      notify(backendError(e), 'error');
     }
   };
 
@@ -387,7 +391,7 @@ export default function Settings() {
       await saveProvidersYAML(content);
       setSaved(true);
     } catch (e: unknown) {
-      setSaveError(e instanceof Error ? e.message : String(e));
+      setSaveError(backendError(e));
     } finally {
       setSaving(false);
     }
@@ -406,7 +410,7 @@ export default function Settings() {
       setEditorMode(m);
       setYamlError('');
     } catch (e: unknown) {
-      setYamlError(e instanceof Error ? e.message : String(e));
+      setYamlError(backendError(e));
     }
   };
 
@@ -428,9 +432,9 @@ export default function Settings() {
       setModelApiKey('');
       setModelClearKey(false);
       setModelDirtyHint(false);
-      notify('已保存，对新启动的会话生效', 'info');
+      notify(t('ui.settings.model.saved'), 'info');
     } catch (e: unknown) {
-      notify(e instanceof Error ? e.message : String(e), 'error');
+      notify(backendError(e), 'error');
     } finally {
       setModelSaving(false);
     }
@@ -438,9 +442,9 @@ export default function Settings() {
 
   const busyAny = !!pendingId || !!job?.Running;
 
-  const cmdPreview = (t: ToolInfo, recipe: InstallRecipeView) => {
-    if (!t.BinPath) return recipe.InstallCmd;
-    return recipe.UninstallCmd || (t.BinPath ? `删除 ${t.BinPath}` : '未找到 cursor-agent 可执行文件');
+  const cmdPreview = (tool: ToolInfo, recipe: InstallRecipeView) => {
+    if (!tool.BinPath) return recipe.InstallCmd;
+    return recipe.UninstallCmd || t('ui.settings.tools.cmd_delete', { 0: tool.BinPath });
   };
 
   const handleInstall = async (id: string) => {
@@ -452,14 +456,14 @@ export default function Settings() {
       await installBuiltinTool(id);
     } catch (e: unknown) {
       setPendingId('');
-      notify(e instanceof Error ? e.message : String(e), 'error');
+      notify(backendError(e), 'error');
     }
   };
 
-  const openUninstall = (t: ToolInfo) => {
+  const openUninstall = (tool: ToolInfo) => {
     if (busyAny) return;
     setPurgeConfig(false);
-    setUninstallTarget(t);
+    setUninstallTarget(tool);
   };
 
   const handleConfirmUninstall = async () => {
@@ -475,7 +479,7 @@ export default function Settings() {
       await uninstallBuiltinTool(id, purge);
     } catch (e: unknown) {
       setPendingId('');
-      notify(e instanceof Error ? e.message : String(e), 'error');
+      notify(backendError(e), 'error');
     }
   };
 
@@ -500,7 +504,7 @@ export default function Settings() {
     <div className="flex min-h-0 flex-1 overflow-hidden">
       <nav
         className="flex w-36 shrink-0 flex-col gap-0.5 border-r border-border bg-card p-2"
-        aria-label="设置分区"
+        aria-label={t('ui.settings.nav.aria')}
       >
         {SECTIONS.map((s) => (
           <button
@@ -513,24 +517,24 @@ export default function Settings() {
             aria-current={section === s.id ? 'page' : undefined}
             onClick={() => setSection(s.id)}
           >
-            {s.label}
+            {t(s.labelKey)}
           </button>
         ))}
       </nav>
 
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-2xl">
-          <h1 className="mb-4 text-lg font-semibold">设置</h1>
+          <h1 className="mb-4 text-lg font-semibold">{t('ui.settings.title')}</h1>
 
           {section === 'general' && (
             <>
               <section className="mb-5 rounded border border-border bg-card p-3.5">
-                <h2 className="mb-3 text-sm font-medium">外观</h2>
+                <h2 className="mb-3 text-sm font-medium">{t('ui.settings.appearance.title')}</h2>
                 <div className="flex gap-2">
                   {[
-                    { value: 'system', label: '跟随系统' },
-                    { value: 'light', label: '浅色' },
-                    { value: 'dark', label: '深色' },
+                    { value: 'system', labelKey: 'ui.settings.appearance.system' },
+                    { value: 'light', labelKey: 'ui.settings.appearance.light' },
+                    { value: 'dark', labelKey: 'ui.settings.appearance.dark' },
                   ].map((opt) => (
                     <Button
                       key={opt.value}
@@ -538,19 +542,19 @@ export default function Settings() {
                       aria-pressed={appearance === opt.value}
                       onClick={() => void handleAppearance(opt.value)}
                     >
-                      {opt.label}
+                      {t(opt.labelKey)}
                     </Button>
                   ))}
                 </div>
                 <label className="mt-3 flex items-center gap-3 text-sm">
-                  <span className="shrink-0">界面字号</span>
+                  <span className="shrink-0">{t('ui.settings.appearance.font_size')}</span>
                   <input
                     type="range"
                     min={10}
                     max={20}
                     step={1}
                     value={fontSize}
-                    aria-label="界面字号"
+                    aria-label={t('ui.settings.appearance.font_size')}
                     className="min-w-0 flex-1 accent-primary"
                     onChange={(e) => previewFontSize(Number(e.currentTarget.value))}
                     onPointerUp={(e) => void handleFontSizeCommit(Number(e.currentTarget.value))}
@@ -577,11 +581,11 @@ export default function Settings() {
               </section>
 
               <section className="mb-5 rounded border border-border bg-card p-3.5">
-                <h2 className="mb-3 text-sm font-medium">关闭行为</h2>
+                <h2 className="mb-3 text-sm font-medium">{t('ui.settings.close_behavior.title')}</h2>
                 <div className="flex gap-2">
                   {[
-                    { value: 'tray', label: '收进托盘' },
-                    { value: 'exit', label: '直接退出' },
+                    { value: 'tray', labelKey: 'ui.settings.close_behavior.tray' },
+                    { value: 'exit', labelKey: 'ui.settings.close_behavior.exit' },
                   ].map((opt) => (
                     <Button
                       key={opt.value}
@@ -589,37 +593,37 @@ export default function Settings() {
                       aria-pressed={closeBehavior === opt.value}
                       onClick={() => void handleCloseBehavior(opt.value)}
                     >
-                      {opt.label}
+                      {t(opt.labelKey)}
                     </Button>
                   ))}
                 </div>
               </section>
 
               <section className="mb-5 rounded border border-border bg-card p-3.5">
-                <h2 className="mb-3 text-sm font-medium">通知</h2>
+                <h2 className="mb-3 text-sm font-medium">{t('ui.settings.notify.title')}</h2>
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
                     checked={notifySound}
                     onChange={(e) => setNotifySound(e.currentTarget.checked)}
-                    aria-label="气泡提示音"
+                    aria-label={t('ui.settings.notify.sound')}
                   />
-                  气泡提示音
+                  {t('ui.settings.notify.sound')}
                 </label>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  agent 通知气泡弹出时播放提示音（完成轻音、等待确认与出错重音）
+                  {t('ui.settings.notify.sound_desc')}
                 </p>
               </section>
 
               <section className="mb-5 rounded border border-border bg-card p-3.5">
-                <h2 className="mb-3 text-sm font-medium">默认会话模式</h2>
+                <h2 className="mb-3 text-sm font-medium">{t('ui.settings.session_mode.title')}</h2>
                 <p className="mb-2 text-xs text-muted-foreground">
-                  影响新建/恢复的默认路径。工具不支持 ACP 时即使选了 ACP 也会走终端。
+                  {t('ui.settings.session_mode.desc')}
                 </p>
                 <div className="flex gap-2">
                   {[
-                    { value: 'tui', label: 'TUI（终端）' },
-                    { value: 'acp', label: 'ACP（聊天）' },
+                    { value: 'tui', labelKey: 'ui.settings.session_mode.tui' },
+                    { value: 'acp', labelKey: 'ui.settings.session_mode.acp' },
                   ].map((opt) => (
                     <Button
                       key={opt.value}
@@ -627,18 +631,18 @@ export default function Settings() {
                       aria-pressed={sessionMode === opt.value}
                       onClick={() => void handleSessionMode(opt.value)}
                     >
-                      {opt.label}
+                      {t(opt.labelKey)}
                     </Button>
                   ))}
                 </div>
               </section>
 
               <section className="mb-5 rounded border border-border bg-card p-3.5">
-                <h2 className="mb-3 text-sm font-medium">权限模式</h2>
+                <h2 className="mb-3 text-sm font-medium">{t('ui.settings.permission_mode.title')}</h2>
                 <div className="flex gap-2">
                   {[
-                    { value: 'default', label: '默认（需确认）' },
-                    { value: 'bypass', label: 'Bypass（跳过确认）' },
+                    { value: 'default', labelKey: 'ui.settings.permission_mode.default' },
+                    { value: 'bypass', labelKey: 'ui.settings.permission_mode.bypass' },
                   ].map((opt) => (
                     <Button
                       key={opt.value}
@@ -646,22 +650,21 @@ export default function Settings() {
                       aria-pressed={permissionMode === opt.value}
                       onClick={() => void handlePermissionMode(opt.value)}
                     >
-                      {opt.label}
+                      {t(opt.labelKey)}
                     </Button>
                   ))}
                 </div>
                 {permissionMode === 'bypass' && (
                   <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-                    将跳过 CLI 权限确认（内置工具全部支持），并自动放行 ACP 权限弹窗。仅建议在可信环境使用。
-                    自定义工具需在 providers.yaml 的 permission.bypassArgs 中声明跳过参数才会生效。
+                    {t('ui.settings.permission_mode.bypass_warning')}
                   </p>
                 )}
               </section>
 
               <section className="mb-5 rounded border border-border bg-card p-3.5">
-                <h2 className="mb-3 text-sm font-medium">关于</h2>
+                <h2 className="mb-3 text-sm font-medium">{t('ui.settings.about.title')}</h2>
                 <p className="mb-2 text-sm">
-                  当前版本{' '}
+                  {t('ui.settings.about.current_version')}{' '}
                   <span className="tabular-nums text-muted-foreground">{appVersion || '…'}</span>
                 </p>
                 <div className="flex flex-wrap gap-2">
@@ -676,17 +679,17 @@ export default function Settings() {
                           const info = await checkForUpdate();
                           setUpdateInfo(info);
                         } catch (e: unknown) {
-                          setUpdateError(e instanceof Error ? e.message : String(e));
+                          setUpdateError(backendError(e));
                         } finally {
                           setUpdateBusy(false);
                         }
                       })();
                     }}
                   >
-                    {updateBusy ? '检查中…' : '检查更新'}
+                    {updateBusy ? t('ui.settings.about.checking') : t('ui.settings.about.check_update')}
                   </Button>
                   <Button variant="secondary" onClick={() => openExternal(GITHUB_ISSUES_NEW_URL)}>
-                    反馈问题
+                    {t('ui.settings.about.feedback')}
                   </Button>
                   {updateInfo?.Available && (
                     <Button
@@ -698,28 +701,36 @@ export default function Settings() {
                           try {
                             await applyUpdate();
                           } catch (e: unknown) {
-                            setUpdateError(e instanceof Error ? e.message : String(e));
+                            setUpdateError(backendError(e));
                             setUpdateBusy(false);
                           }
                         })();
                       }}
                     >
-                      立即升级
+                      {t('ui.settings.about.upgrade_now')}
                     </Button>
                   )}
                 </div>
                 {updateError && <p className="mt-2 text-xs text-destructive">{updateError}</p>}
                 {updateInfo?.Skipped && (
-                  <p className="mt-2 text-xs text-muted-foreground">{updateInfo.Reason}</p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {translateBackend(updateInfo.Reason)}
+                  </p>
                 )}
                 {updateInfo && !updateInfo.Available && !updateInfo.Skipped && (
-                  <p className="mt-2 text-xs text-muted-foreground">{updateInfo.Reason || '已是最新'}</p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {updateInfo.Reason
+                      ? translateBackend(updateInfo.Reason)
+                      : t('ui.settings.about.up_to_date')}
+                  </p>
                 )}
                 {updateInfo?.Available && (
                   <div className="mt-2 text-xs text-muted-foreground">
                     <p>
-                      新版本 {updateInfo.Latest}
-                      {updateInfo.Source ? `（来源：${updateInfo.Source}）` : ''}
+                      {t('ui.settings.about.new_version', { 0: updateInfo.Latest })}
+                      {updateInfo.Source
+                        ? t('ui.settings.about.source', { 0: updateInfo.Source })
+                        : ''}
                     </p>
                     {updateInfo.Notes && (
                       <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted p-2">
@@ -734,22 +745,22 @@ export default function Settings() {
 
           {section === 'model' && (
             <section className="mb-5 rounded border border-border bg-card p-3.5">
-              <h2 className="mb-3 text-sm font-medium">模型（对所有 agent 启动时注入）</h2>
+              <h2 className="mb-3 text-sm font-medium">{t('ui.settings.model.title')}</h2>
               <label className="mb-2 flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
                   checked={modelEnabled}
                   onChange={(e) => setModelEnabled(e.target.checked)}
                 />
-                启用模型配置
+                {t('ui.settings.model.enable')}
               </label>
               <div className="grid gap-2">
                 <label className="text-xs text-muted-foreground" htmlFor="model-preset">
-                  提供商预设
+                  {t('ui.settings.model.preset')}
                 </label>
                 <select
                   id="model-preset"
-                  aria-label="提供商预设"
+                  aria-label={t('ui.settings.model.preset')}
                   className={inputClass}
                   value={modelPreset}
                   onChange={(e) => applyPreset(e.target.value, false)}
@@ -762,7 +773,7 @@ export default function Settings() {
                   ))}
                 </select>
                 {modelDirtyHint && (
-                  <p className="text-xs text-muted-foreground">字段已改（预设仍保留）</p>
+                  <p className="text-xs text-muted-foreground">{t('ui.settings.model.dirty')}</p>
                 )}
                 <label className="text-xs text-muted-foreground" htmlFor="model-openai-url">
                   OpenAI Base URL
@@ -793,14 +804,18 @@ export default function Settings() {
                   }}
                 />
                 <label className="text-xs text-muted-foreground" htmlFor="model-api-key">
-                  模型 API Key
+                  {t('ui.settings.model.api_key')}
                 </label>
                 <input
                   id="model-api-key"
-                  aria-label="模型 API Key"
+                  aria-label={t('ui.settings.model.api_key')}
                   type="password"
                   className={inputClass}
-                  placeholder={modelApiKeySet ? '已设置（留空不修改）' : '未设置'}
+                  placeholder={
+                    modelApiKeySet
+                      ? t('ui.settings.model.api_key_set')
+                      : t('ui.settings.model.api_key_unset')
+                  }
                   value={modelApiKey}
                   onChange={(e) => setModelApiKey(e.target.value)}
                 />
@@ -809,18 +824,18 @@ export default function Settings() {
                     type="checkbox"
                     checked={modelClearKey}
                     onChange={(e) => setModelClearKey(e.target.checked)}
-                    aria-label="清除密钥"
+                    aria-label={t('ui.settings.model.clear_key')}
                   />
-                  清除密钥
+                  {t('ui.settings.model.clear_key')}
                 </label>
                 {MODEL_AGENTS.map((a) => (
                   <div key={a.id} className="grid gap-1">
                     <label className="text-xs text-muted-foreground" htmlFor={`model-${a.id}`}>
-                      {a.label} 模型
+                      {t('ui.settings.model.agent_model', { 0: a.label })}
                     </label>
                     <input
                       id={`model-${a.id}`}
-                      aria-label={`${a.label} 模型`}
+                      aria-label={t('ui.settings.model.agent_model', { 0: a.label })}
                       className={inputClass}
                       value={modelAgents[a.id] ?? ''}
                       onChange={(e) => {
@@ -832,7 +847,7 @@ export default function Settings() {
                 ))}
                 <div className="flex flex-wrap gap-2">
                   <Button onClick={() => void handleSaveModel()} disabled={modelSaving}>
-                    保存模型配置
+                    {t('ui.settings.model.save')}
                   </Button>
                   <Button
                     variant="secondary"
@@ -840,12 +855,10 @@ export default function Settings() {
                     disabled={modelPreset === 'custom'}
                     onClick={() => applyPreset(modelPreset, true)}
                   >
-                    应用推荐模型
+                    {t('ui.settings.model.apply_recommended')}
                   </Button>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  启动时按 agent 类型注入对应协议端点（Claude→Anthropic，Codex→OpenAI）。不改各工具自身配置文件。
-                </p>
+                <p className="text-xs text-muted-foreground">{t('ui.settings.model.desc')}</p>
               </div>
             </section>
           )}
@@ -854,7 +867,7 @@ export default function Settings() {
             <>
               <section className="mb-5 rounded border border-border bg-card p-3.5">
                 <div className="mb-3 flex items-center justify-between gap-2">
-                  <h2 className="text-sm font-medium">工具检测</h2>
+                  <h2 className="text-sm font-medium">{t('ui.settings.tools.title')}</h2>
                   <Button
                     variant="secondary"
                     type="button"
@@ -865,59 +878,63 @@ export default function Settings() {
                       void scanSessions();
                     }}
                   >
-                    {rescanning ? '扫描中…' : '重新扫描'}
+                    {rescanning ? t('ui.settings.tools.rescanning') : t('ui.settings.tools.rescan')}
                   </Button>
                 </div>
                 {toolsError && <p className="text-sm text-destructive">{toolsError}</p>}
                 {job?.Running && job.Trigger === 'auto' && (
                   <p className="text-xs text-warning">
-                    检测到 {job.ToolID} 安装损坏，正在自动修复…
+                    {t('ui.settings.tools.auto_repairing', { 0: job.ToolID })}
                   </p>
                 )}
                 {tools === null && !toolsError && (
-                  <p className="text-sm text-muted-foreground">加载中……</p>
+                  <p className="text-sm text-muted-foreground">{t('ui.settings.tools.loading')}</p>
                 )}
                 {tools !== null && tools.length === 0 && (
-                  <p className="text-sm text-muted-foreground">未检测到任何工具</p>
+                  <p className="text-sm text-muted-foreground">{t('ui.settings.tools.empty')}</p>
                 )}
                 {tools !== null && tools.length > 0 && (
                   <ul className="divide-y divide-border rounded border border-border">
-                    {tools.map((t) => {
-                      const recipe = recipes[t.ID];
+                    {tools.map((tool) => {
+                      const recipe = recipes[tool.ID];
                       const rowBusy =
-                        pendingId === t.ID || (!!job?.Running && job.ToolID === t.ID);
-                      const hasBin = !!t.BinPath;
-                      const isBroken = !!t.Broken && !hasBin;
+                        pendingId === tool.ID || (!!job?.Running && job.ToolID === tool.ID);
+                      const hasBin = !!tool.BinPath;
+                      const isBroken = !!tool.Broken && !hasBin;
                       return (
                         <li
-                          key={t.ID}
+                          key={tool.ID}
                           className={cn(
                             'flex flex-col gap-1 px-2.5 py-1.5 text-xs transition-colors hover:bg-muted',
-                            !t.Installed && 'opacity-50',
+                            !tool.Installed && 'opacity-50',
                           )}
                           title={
                             isBroken
-                              ? '检测到使用残留但没有任何可执行文件，安装已损坏'
-                              : t.Source === 'config-dir'
-                                ? '只检测到配置目录，没有可执行程序，可用性未验证'
-                                : t.BinPath
+                              ? t('ui.settings.tools.title_broken')
+                              : tool.Source === 'config-dir'
+                                ? t('ui.settings.tools.title_config_only')
+                                : tool.BinPath
                           }
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex min-w-0 items-center gap-2">
-                              <span className="font-medium">{t.Name}</span>
+                              <span className="font-medium">{tool.Name}</span>
                               {isBroken ? (
-                                <Badge variant="destructive">已损坏</Badge>
+                                <Badge variant="destructive">{t('ui.settings.tools.broken')}</Badge>
                               ) : (
-                                t.Source === 'config-dir' && <Badge variant="warning">未验证</Badge>
+                                tool.Source === 'config-dir' && (
+                                  <Badge variant="warning">{t('ui.settings.tools.unverified')}</Badge>
+                                )
                               )}
-                              {t.Installed && !isBroken ? (
-                                t.Version && (
-                                  <span className="text-xs text-muted-foreground">{t.Version}</span>
+                              {tool.Installed && !isBroken ? (
+                                tool.Version && (
+                                  <span className="text-xs text-muted-foreground">{tool.Version}</span>
                                 )
                               ) : (
                                 <span className="text-xs text-muted-foreground">
-                                  {isBroken ? '缺少可执行文件' : '未安装'}
+                                  {isBroken
+                                    ? t('ui.settings.tools.missing_bin')
+                                    : t('ui.settings.tools.not_installed')}
                                 </span>
                               )}
                             </div>
@@ -927,29 +944,29 @@ export default function Settings() {
                                 variant={hasBin ? 'secondary' : 'default'}
                                 disabled={busyAny}
                                 onClick={() =>
-                                  hasBin ? openUninstall(t) : void handleInstall(t.ID)
+                                  hasBin ? openUninstall(tool) : void handleInstall(tool.ID)
                                 }
                               >
                                 {rowBusy
                                   ? hasBin
-                                    ? '卸载中…'
+                                    ? t('ui.settings.tools.uninstalling')
                                     : isBroken
-                                      ? '修复中…'
-                                      : '安装中…'
+                                      ? t('ui.settings.tools.repairing')
+                                      : t('ui.settings.tools.installing')
                                   : hasBin
-                                    ? '卸载'
+                                    ? t('ui.settings.tools.uninstall')
                                     : isBroken
-                                      ? '修复'
-                                      : '安装'}
+                                      ? t('ui.settings.tools.repair')
+                                      : t('ui.settings.tools.install')}
                               </Button>
                             )}
                           </div>
                           {recipe && (
                             <p className="font-mono text-[11px] text-muted-foreground">
-                              {cmdPreview(t, recipe)}
+                              {cmdPreview(tool, recipe)}
                             </p>
                           )}
-                          {activeId === t.ID && installLog && (
+                          {activeId === tool.ID && installLog && (
                             <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted/60 p-1.5 font-mono text-[11px]">
                               {installLog}
                             </pre>
@@ -971,7 +988,7 @@ export default function Settings() {
                     className="w-80"
                   >
                     <DialogPrimitive.Title className="mb-2 text-sm font-medium">
-                      卸载 {uninstallTarget.Name}
+                      {t('ui.settings.tools.uninstall_title', { 0: uninstallTarget.Name })}
                     </DialogPrimitive.Title>
                     <p className="mb-3 font-mono text-[11px] text-muted-foreground">
                       {cmdPreview(uninstallTarget, uninstallRecipe)}
@@ -983,9 +1000,9 @@ export default function Settings() {
                             type="checkbox"
                             checked={purgeConfig}
                             onChange={(e) => setPurgeConfig(e.target.checked)}
-                            aria-label="同时清除配置"
+                            aria-label={t('ui.settings.tools.purge_config')}
                           />
-                          同时清除配置
+                          {t('ui.settings.tools.purge_config')}
                         </label>
                         {purgeConfig && (
                           <div className="mt-2 text-xs text-muted-foreground">
@@ -994,7 +1011,7 @@ export default function Settings() {
                                 <li key={d}>{d}</li>
                               ))}
                             </ul>
-                            <p>将删除会话历史</p>
+                            <p>{t('ui.settings.tools.purge_note')}</p>
                           </div>
                         )}
                       </div>
@@ -1008,10 +1025,10 @@ export default function Settings() {
                           setPurgeConfig(false);
                         }}
                       >
-                        取消
+                        {t('ui.settings.tools.cancel')}
                       </Button>
                       <Button variant="destructive" size="sm" onClick={() => void handleConfirmUninstall()}>
-                        确认卸载
+                        {t('ui.settings.tools.confirm_uninstall')}
                       </Button>
                     </div>
                   </Dialog>

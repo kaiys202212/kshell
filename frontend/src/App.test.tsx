@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { playNotifySound } from './lib/notifySound';
 import { SETTINGS_TAB_ID, useAppStore } from './state/store';
+import { tt } from './test/i18n';
 import type { ChatInfo, ChatPermissionRequest, TerminalInfo, Workspace } from './lib/api';
 
 const mocks = vi.hoisted(() => ({
@@ -308,8 +309,13 @@ describe('App', () => {
     expect(pane('settings').className).not.toContain('hidden');
     expect(pane('home').className).toContain('hidden');
     // 设置页左导航分区（通用为默认选中）
-    expect(pane('settings').querySelector('[aria-label="设置分区"]')).toBeTruthy();
-    expect(screen.getByRole('button', { name: '通用' })).toHaveAttribute('aria-current', 'page');
+    expect(
+      pane('settings').querySelector(`[aria-label="${tt('ui.settings.nav.aria')}"]`),
+    ).toBeTruthy();
+    expect(screen.getByRole('button', { name: tt('ui.settings.nav.general') })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
 
     fireEvent.click(screen.getByRole('button', { name: '首页' }));
     expect(useAppStore.getState().activeTabId).toBeNull();

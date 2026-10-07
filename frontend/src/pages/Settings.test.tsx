@@ -132,11 +132,11 @@ let scanDoneCb: ((payload?: unknown) => void) | undefined;
 let toolsUpdatedCb: (() => void) | undefined;
 
 function goTools() {
-  fireEvent.click(screen.getByRole('button', { name: '工具' }));
+  fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.nav.tools') }));
 }
 
 function goModel() {
-  fireEvent.click(screen.getByRole('button', { name: '模型' }));
+  fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.nav.model') }));
 }
 
 afterEach(cleanup);
@@ -255,11 +255,11 @@ describe('Settings', () => {
 
     const codebuddy = await screen.findByText('CodeBuddy');
     expect(codebuddy.closest('li')).toHaveTextContent('2.0.0');
-    expect(codebuddy.closest('li')).not.toHaveTextContent('未验证');
-    expect(codebuddy.closest('li')).not.toHaveTextContent('未安装');
+    expect(codebuddy.closest('li')).not.toHaveTextContent(tt('ui.settings.tools.unverified'));
+    expect(codebuddy.closest('li')).not.toHaveTextContent(tt('ui.settings.tools.not_installed'));
 
     const gemini = screen.getByText('Gemini');
-    expect(gemini.closest('li')).toHaveTextContent('未安装');
+    expect(gemini.closest('li')).toHaveTextContent(tt('ui.settings.tools.not_installed'));
     expect(gemini.closest('li')).toHaveClass('opacity-50');
   });
 
@@ -268,8 +268,11 @@ describe('Settings', () => {
     goTools();
 
     const mytool = await screen.findByText('MyTool');
-    expect(mytool.closest('li')).toHaveTextContent('未验证');
-    expect(mytool.closest('li')).toHaveAttribute('title', expect.stringContaining('只检测到配置目录'));
+    expect(mytool.closest('li')).toHaveTextContent(tt('ui.settings.tools.unverified'));
+    expect(mytool.closest('li')).toHaveAttribute(
+      'title',
+      expect.stringContaining(tt('ui.settings.tools.title_config_only')),
+    );
   });
 
   it('残缺安装显示「已损坏」徽标与「修复」按钮', async () => {
@@ -289,11 +292,11 @@ describe('Settings', () => {
 
     const cursor = await screen.findByText('Cursor');
     const row = cursor.closest('li')!;
-    expect(row).toHaveTextContent('已损坏');
-    expect(row).not.toHaveTextContent('未验证');
-    expect(row).toHaveTextContent('缺少可执行文件');
-    expect(within(row).getByRole('button', { name: '修复' })).toBeInTheDocument();
-    expect(row).toHaveAttribute('title', expect.stringContaining('安装已损坏'));
+    expect(row).toHaveTextContent(tt('ui.settings.tools.broken'));
+    expect(row).not.toHaveTextContent(tt('ui.settings.tools.unverified'));
+    expect(row).toHaveTextContent(tt('ui.settings.tools.missing_bin'));
+    expect(within(row).getByRole('button', { name: tt('ui.settings.tools.repair') })).toBeInTheDocument();
+    expect(row).toHaveAttribute('title', expect.stringContaining(tt('ui.settings.tools.title_broken')));
   });
 
   it('自动修复任务运行时显示自动修复文案', async () => {
@@ -308,7 +311,9 @@ describe('Settings', () => {
     render(<Settings />);
     goTools();
 
-    expect(await screen.findByText(/正在自动修复/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(tt('ui.settings.tools.auto_repairing').replace('{{0}}', 'cursor')),
+    ).toBeInTheDocument();
   });
 
   it('挂载后后台启动的自动修复：log 事件刷新 job，文案与忙态才出现', async () => {
@@ -343,17 +348,21 @@ describe('Settings', () => {
     goTools();
     const cursor = await screen.findByText('Cursor');
     // 刷新前：无自动修复文案、行按钮仍可点
-    expect(screen.queryByText(/正在自动修复/)).toBeNull();
-    expect(within(cursor.closest('li')!).getByRole('button', { name: '修复' })).toBeInTheDocument();
+    expect(screen.queryByText(tt('ui.settings.tools.auto_repairing').replace('{{0}}', 'cursor'))).toBeNull();
+    expect(within(cursor.closest('li')!).getByRole('button', { name: tt('ui.settings.tools.repair') })).toBeInTheDocument();
 
     await act(async () => {
       logCb?.({ toolID: 'cursor', text: '检测到安装损坏，正在自动修复…' });
     });
 
     // 提示行（含工具 ID 的特有文案）与行按钮忙态都依赖 job 刷新
-    expect(await screen.findByText(/检测到 cursor 安装损坏/)).toBeInTheDocument();
     expect(
-      within((await screen.findByText('Cursor')).closest('li')!).queryByRole('button', { name: '修复' }),
+      await screen.findByText(tt('ui.settings.tools.auto_repairing').replace('{{0}}', 'cursor')),
+    ).toBeInTheDocument();
+    expect(
+      within((await screen.findByText('Cursor')).closest('li')!).queryByRole('button', {
+        name: tt('ui.settings.tools.repair'),
+      }),
     ).toBeNull();
   });
 
@@ -362,15 +371,15 @@ describe('Settings', () => {
     goTools();
     await screen.findByText('CodeBuddy');
 
-    fireEvent.click(screen.getByRole('button', { name: '重新扫描' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.tools.rescan') }));
     expect(mocks.scanSessions).toHaveBeenCalledTimes(1);
     // 扫描中禁用防连点
-    expect(screen.getByRole('button', { name: '扫描中…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: tt('ui.settings.tools.rescanning') })).toBeDisabled();
     // DetectAll 完成推 tools:updated → 恢复
     await act(async () => {
       toolsUpdatedCb?.();
     });
-    expect(await screen.findByRole('button', { name: '重新扫描' })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: tt('ui.settings.tools.rescan') })).toBeEnabled();
   });
 
   it('「重新扫描」进行中点击不重复触发', async () => {
@@ -378,8 +387,8 @@ describe('Settings', () => {
     goTools();
     await screen.findByText('CodeBuddy');
 
-    fireEvent.click(screen.getByRole('button', { name: '重新扫描' }));
-    fireEvent.click(screen.getByRole('button', { name: '扫描中…' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.tools.rescan') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.tools.rescanning') }));
     expect(mocks.scanSessions).toHaveBeenCalledTimes(1);
     await act(async () => {
       toolsUpdatedCb?.();
@@ -453,10 +462,10 @@ describe('Settings', () => {
 
   it('外观选择调用 SetAppearanceMode', async () => {
     render(<Settings />);
-    const darkBtn = await screen.findByRole('button', { name: '深色' });
+    const darkBtn = await screen.findByRole('button', { name: tt('ui.settings.appearance.dark') });
     // 默认已是深色，切到浅色再切回
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '浅色' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.appearance.light') }));
     });
     expect(mocks.setAppearanceMode).toHaveBeenCalledWith('light');
     await act(async () => {
@@ -467,7 +476,7 @@ describe('Settings', () => {
 
   it('字号滑条拖动预览不落盘，松手后调用 SetAppearanceFontSize', async () => {
     render(<Settings />);
-    const slider = await screen.findByLabelText('界面字号');
+    const slider = await screen.findByLabelText(tt('ui.settings.appearance.font_size'));
     expect(slider).toHaveValue('13');
     expect(screen.getByText('13px')).toBeInTheDocument();
 
@@ -550,39 +559,39 @@ describe('Settings', () => {
     useAppStore.setState({ toasts: [] });
     render(<Settings />);
 
-    const trayBtn = await screen.findByRole('button', { name: '收进托盘' });
+    const trayBtn = await screen.findByRole('button', { name: tt('ui.settings.close_behavior.tray') });
     expect(trayBtn).toHaveAttribute('aria-pressed', 'true');
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '直接退出' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.close_behavior.exit') }));
     });
     expect(mocks.setCloseBehavior).toHaveBeenCalledWith('exit');
-    expect(screen.getByRole('button', { name: '直接退出' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: tt('ui.settings.close_behavior.exit') })).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('加载时回填关闭行为：返回 exit 时「直接退出」选中', async () => {
     mocks.getCloseBehavior.mockResolvedValueOnce('exit');
     render(<Settings />);
 
-    const exitBtn = await screen.findByRole('button', { name: '直接退出' });
+    const exitBtn = await screen.findByRole('button', { name: tt('ui.settings.close_behavior.exit') });
     await waitFor(() => {
       expect(exitBtn).toHaveAttribute('aria-pressed', 'true');
     });
-    expect(screen.getByRole('button', { name: '收进托盘' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: tt('ui.settings.close_behavior.tray') })).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('会话模式与权限模式可切换', async () => {
     render(<Settings />);
-    await screen.findByRole('button', { name: 'TUI（终端）' });
+    await screen.findByRole('button', { name: tt('ui.settings.session_mode.tui') });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'ACP（聊天）' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.session_mode.acp') }));
     });
     expect(mocks.setSessionMode).toHaveBeenCalledWith('acp');
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Bypass（跳过确认）' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.permission_mode.bypass') }));
     });
     expect(mocks.setPermissionMode).toHaveBeenCalledWith('bypass');
-    expect(await screen.findByText(/仅建议在可信环境/)).toBeInTheDocument();
+    expect(await screen.findByText(tt('ui.settings.permission_mode.bypass_warning'))).toBeInTheDocument();
   });
 
   it('模型区回填双 URL、密钥掩码、留空保存', async () => {
@@ -599,11 +608,13 @@ describe('Settings', () => {
 
     expect(await screen.findByLabelText('OpenAI Base URL')).toHaveValue('https://oai/');
     expect(screen.getByLabelText('Anthropic Base URL')).toHaveValue('https://ant/');
-    expect(screen.getByLabelText('模型 API Key')).toHaveValue('');
-    expect(screen.getByPlaceholderText(/已设置/)).toBeInTheDocument();
-    expect(screen.getByLabelText('Claude Code 模型')).toHaveValue('mimo-v2.5');
+    expect(screen.getByLabelText(tt('ui.settings.model.api_key'))).toHaveValue('');
+    expect(screen.getByPlaceholderText(tt('ui.settings.model.api_key_set'))).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(tt('ui.settings.model.agent_model').replace('{{0}}', 'Claude Code')),
+    ).toHaveValue('mimo-v2.5');
 
-    fireEvent.click(screen.getByRole('button', { name: '保存模型配置' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
     await waitFor(() =>
       expect(mocks.setModelConfig).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -621,7 +632,7 @@ describe('Settings', () => {
   it('选择预设填入双 URL 与空的模型槽', async () => {
     render(<Settings />);
     goModel();
-    const sel = await screen.findByLabelText('提供商预设');
+    const sel = await screen.findByLabelText(tt('ui.settings.model.preset'));
     await act(async () => {
       fireEvent.change(sel, { target: { value: 'deepseek' } });
     });
@@ -629,7 +640,9 @@ describe('Settings', () => {
     expect(screen.getByLabelText('Anthropic Base URL')).toHaveValue(
       'https://api.deepseek.com/anthropic',
     );
-    expect(screen.getByLabelText('Claude Code 模型')).toHaveValue('deepseek-chat');
+    expect(
+      screen.getByLabelText(tt('ui.settings.model.agent_model').replace('{{0}}', 'Claude Code')),
+    ).toHaveValue('deepseek-chat');
   });
 
   it('勾选清除密钥时提交 ClearAPIKey', async () => {
@@ -643,8 +656,8 @@ describe('Settings', () => {
     });
     render(<Settings />);
     goModel();
-    fireEvent.click(await screen.findByLabelText('清除密钥'));
-    fireEvent.click(screen.getByRole('button', { name: '保存模型配置' }));
+    fireEvent.click(await screen.findByLabelText(tt('ui.settings.model.clear_key')));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
     await waitFor(() =>
       expect(mocks.setModelConfig).toHaveBeenCalledWith(expect.objectContaining({ ClearAPIKey: true })),
     );
@@ -655,16 +668,16 @@ describe('Settings', () => {
     mocks.setCloseBehavior.mockRejectedValueOnce(new Error('写盘失败'));
     render(<Settings />);
 
-    await screen.findByRole('button', { name: '收进托盘' });
+    await screen.findByRole('button', { name: tt('ui.settings.close_behavior.tray') });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '直接退出' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.close_behavior.exit') }));
     });
     await waitFor(() => {
       expect(
         useAppStore.getState().toasts.some((t) => t.tone === 'error' && t.title === '写盘失败'),
       ).toBe(true);
     });
-    expect(screen.getByRole('button', { name: '收进托盘' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: tt('ui.settings.close_behavior.tray') })).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('内置工具按 BinPath 显示安装/卸载，自定义工具无按钮', async () => {
@@ -672,17 +685,17 @@ describe('Settings', () => {
     goTools();
 
     const claude = (await screen.findByText('Claude Code')).closest('li')!;
-    expect(within(claude).getByRole('button', { name: '卸载' })).toBeInTheDocument();
+    expect(within(claude).getByRole('button', { name: tt('ui.settings.tools.uninstall') })).toBeInTheDocument();
 
     const gemini = screen.getByText('Gemini').closest('li')!;
-    expect(within(gemini).getByRole('button', { name: '安装' })).toBeInTheDocument();
+    expect(within(gemini).getByRole('button', { name: tt('ui.settings.tools.install') })).toBeInTheDocument();
 
     const codebuddy = screen.getByText('CodeBuddy').closest('li')!;
-    expect(within(codebuddy).getByRole('button', { name: '卸载' })).toBeInTheDocument();
+    expect(within(codebuddy).getByRole('button', { name: tt('ui.settings.tools.uninstall') })).toBeInTheDocument();
 
     const mytool = screen.getByText('MyTool').closest('li')!;
-    expect(within(mytool).queryByRole('button', { name: '安装' })).not.toBeInTheDocument();
-    expect(within(mytool).queryByRole('button', { name: '卸载' })).not.toBeInTheDocument();
+    expect(within(mytool).queryByRole('button', { name: tt('ui.settings.tools.install') })).not.toBeInTheDocument();
+    expect(within(mytool).queryByRole('button', { name: tt('ui.settings.tools.uninstall') })).not.toBeInTheDocument();
   });
 
   it('点 Gemini 安装调用 installBuiltinTool 且按钮变为安装中…', async () => {
@@ -690,10 +703,10 @@ describe('Settings', () => {
     goTools();
     const gemini = (await screen.findByText('Gemini')).closest('li')!;
     await act(async () => {
-      fireEvent.click(within(gemini).getByRole('button', { name: '安装' }));
+      fireEvent.click(within(gemini).getByRole('button', { name: tt('ui.settings.tools.install') }));
     });
     expect(mocks.installBuiltinTool).toHaveBeenCalledWith('gemini');
-    expect(within(gemini).getByRole('button', { name: '安装中…' })).toBeInTheDocument();
+    expect(within(gemini).getByRole('button', { name: tt('ui.settings.tools.installing') })).toBeInTheDocument();
   });
 
   it('点 Claude 卸载弹出确认，默认不清配置', async () => {
@@ -701,12 +714,14 @@ describe('Settings', () => {
     goTools();
     const claude = (await screen.findByText('Claude Code')).closest('li')!;
     await act(async () => {
-      fireEvent.click(within(claude).getByRole('button', { name: '卸载' }));
+      fireEvent.click(within(claude).getByRole('button', { name: tt('ui.settings.tools.uninstall') }));
     });
-    expect(await screen.findByText('卸载 Claude Code')).toBeInTheDocument();
-    expect(screen.getByLabelText('同时清除配置')).not.toBeChecked();
+    expect(
+      await screen.findByText(tt('ui.settings.tools.uninstall_title').replace('{{0}}', 'Claude Code')),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(tt('ui.settings.tools.purge_config'))).not.toBeChecked();
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '确认卸载' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.tools.confirm_uninstall') }));
     });
     expect(mocks.uninstallBuiltinTool).toHaveBeenCalledWith('claude', false);
   });
@@ -716,14 +731,14 @@ describe('Settings', () => {
     goTools();
     const claude = (await screen.findByText('Claude Code')).closest('li')!;
     await act(async () => {
-      fireEvent.click(within(claude).getByRole('button', { name: '卸载' }));
+      fireEvent.click(within(claude).getByRole('button', { name: tt('ui.settings.tools.uninstall') }));
     });
-    await screen.findByText('卸载 Claude Code');
-    fireEvent.click(screen.getByLabelText('同时清除配置'));
+    await screen.findByText(tt('ui.settings.tools.uninstall_title').replace('{{0}}', 'Claude Code'));
+    fireEvent.click(screen.getByLabelText(tt('ui.settings.tools.purge_config')));
     expect(screen.getByText('~/.claude')).toBeInTheDocument();
-    expect(screen.getByText(/将删除会话历史/)).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.settings.tools.purge_note'))).toBeInTheDocument();
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '确认卸载' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.tools.confirm_uninstall') }));
     });
     expect(mocks.uninstallBuiltinTool).toHaveBeenCalledWith('claude', true);
   });
@@ -744,10 +759,12 @@ describe('Settings', () => {
     goTools();
     const cursor = (await screen.findByText('Cursor')).closest('li')!;
     await act(async () => {
-      fireEvent.click(within(cursor).getByRole('button', { name: '卸载' }));
+      fireEvent.click(within(cursor).getByRole('button', { name: tt('ui.settings.tools.uninstall') }));
     });
-    expect(await screen.findByText('卸载 Cursor')).toBeInTheDocument();
-    expect(screen.queryByLabelText('同时清除配置')).not.toBeInTheDocument();
+    expect(
+      await screen.findByText(tt('ui.settings.tools.uninstall_title').replace('{{0}}', 'Cursor')),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(tt('ui.settings.tools.purge_config'))).not.toBeInTheDocument();
   });
 
   it('安装日志出现且完成后重刷工具列表', async () => {
@@ -755,7 +772,7 @@ describe('Settings', () => {
     goTools();
     const gemini = (await screen.findByText('Gemini')).closest('li')!;
     await act(async () => {
-      fireEvent.click(within(gemini).getByRole('button', { name: '安装' }));
+      fireEvent.click(within(gemini).getByRole('button', { name: tt('ui.settings.tools.install') }));
     });
     const before = mocks.getTools.mock.calls.length;
     await act(async () => {
@@ -801,10 +818,10 @@ describe('Settings', () => {
   it('通用分区显示关于与当前版本', async () => {
     mocks.getAppVersion.mockResolvedValue('v0.1.0');
     render(<Settings />);
-    expect(await screen.findByRole('heading', { name: '关于' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: tt('ui.settings.about.title') })).toBeInTheDocument();
     expect(await screen.findByText(/v0\.1\.0/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '检查更新' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '反馈问题' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: tt('ui.settings.about.check_update') })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: tt('ui.settings.about.feedback') })).toBeInTheDocument();
   });
 
   it('点击反馈问题打开 GitHub Issues 新建页', async () => {
@@ -812,8 +829,8 @@ describe('Settings', () => {
     vi.stubGlobal('runtime', { BrowserOpenURL: open });
     mocks.getAppVersion.mockResolvedValue('v0.1.0');
     render(<Settings />);
-    await screen.findByRole('heading', { name: '关于' });
-    fireEvent.click(screen.getByRole('button', { name: '反馈问题' }));
+    await screen.findByRole('heading', { name: tt('ui.settings.about.title') });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.about.feedback') }));
     expect(open).toHaveBeenCalledWith('https://github.com/kaiys202212/kshell/issues/new');
     vi.unstubAllGlobals();
   });
@@ -830,14 +847,16 @@ describe('Settings', () => {
       Reason: '',
     });
     render(<Settings />);
-    await screen.findByRole('heading', { name: '关于' });
+    await screen.findByRole('heading', { name: tt('ui.settings.about.title') });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '检查更新' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.about.check_update') }));
     });
     expect(await screen.findByText(/v0\.2\.0/)).toBeInTheDocument();
-    expect(screen.getByText(/来源：ghfast/)).toBeInTheDocument();
+    expect(
+      screen.getByText(tt('ui.settings.about.source').replace('{{0}}', 'ghfast'), { exact: false }),
+    ).toBeInTheDocument();
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '立即升级' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.about.upgrade_now') }));
     });
     expect(mocks.applyUpdate).toHaveBeenCalledTimes(1);
   });
@@ -845,7 +864,7 @@ describe('Settings', () => {
   it('气泡提示音开关：勾选态绑定 store，切换写入', () => {
     useAppStore.setState({ notifySound: true });
     render(<Settings />);
-    const box = screen.getByRole('checkbox', { name: '气泡提示音' });
+    const box = screen.getByRole('checkbox', { name: tt('ui.settings.notify.sound') });
     expect(box).toBeChecked();
     fireEvent.click(box);
     expect(useAppStore.getState().notifySound).toBe(false);

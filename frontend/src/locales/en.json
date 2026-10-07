@@ -144,11 +144,100 @@
   },
   "ui": {
     "settings": {
+      "title": "Settings",
+      "nav": {
+        "aria": "Settings sections",
+        "general": "General",
+        "model": "Model",
+        "tools": "Tools"
+      },
+      "appearance": {
+        "title": "Appearance",
+        "system": "Follow system",
+        "light": "Light",
+        "dark": "Dark",
+        "font_size": "UI font size"
+      },
       "language": {
         "title": "Language",
         "en": "English",
         "zh_cn": "简体中文",
         "system": "System"
+      },
+      "close_behavior": {
+        "title": "Close behavior",
+        "tray": "Minimize to tray",
+        "exit": "Quit"
+      },
+      "notify": {
+        "title": "Notifications",
+        "sound": "Notification sound",
+        "sound_desc": "Play a sound when an agent notification bubble appears (soft tone on completion, prominent tone on confirmation and error)."
+      },
+      "session_mode": {
+        "title": "Default session mode",
+        "desc": "Controls the default path for new and resumed sessions. When a tool does not support ACP, it falls back to the terminal even if ACP is selected.",
+        "tui": "TUI (terminal)",
+        "acp": "ACP (chat)"
+      },
+      "permission_mode": {
+        "title": "Permission mode",
+        "default": "Default (confirm required)",
+        "bypass": "Bypass (skip confirmation)",
+        "bypass_warning": "Skips CLI permission confirmation (all built-in tools are supported) and automatically allows ACP permission prompts. Only recommended in trusted environments. Custom tools take effect only if bypass parameters are declared in permission.bypassArgs in providers.yaml."
+      },
+      "about": {
+        "title": "About",
+        "current_version": "Current version",
+        "checking": "Checking...",
+        "check_update": "Check for updates",
+        "feedback": "Report an issue",
+        "upgrade_now": "Upgrade now",
+        "up_to_date": "Up to date",
+        "new_version": "New version {{0}}",
+        "source": "(source: {{0}})"
+      },
+      "model": {
+        "title": "Model (injected into every agent on launch)",
+        "enable": "Enable model configuration",
+        "preset": "Provider preset",
+        "dirty": "Fields changed (preset kept)",
+        "api_key": "Model API Key",
+        "api_key_set": "Set (leave blank to keep)",
+        "api_key_unset": "Not set",
+        "clear_key": "Clear key",
+        "agent_model": "{{0}} model",
+        "save": "Save model configuration",
+        "apply_recommended": "Apply recommended models",
+        "desc": "On launch, injects the matching protocol endpoint by agent type (Claude→Anthropic, Codex→OpenAI). Does not modify each tool's own config files.",
+        "saved": "Saved; takes effect for sessions started afterward"
+      },
+      "tools": {
+        "title": "Tool detection",
+        "rescan": "Rescan",
+        "rescanning": "Scanning...",
+        "auto_repairing": "Detected a broken {{0}} installation, auto-repairing...",
+        "loading": "Loading...",
+        "empty": "No tools detected",
+        "broken": "Broken",
+        "unverified": "Unverified",
+        "missing_bin": "Missing executable",
+        "not_installed": "Not installed",
+        "title_broken": "Usage traces detected but no executable found; the installation is broken",
+        "title_config_only": "Only a config directory was detected; no executable, so availability is unverified",
+        "install": "Install",
+        "uninstall": "Uninstall",
+        "repair": "Repair",
+        "installing": "Installing...",
+        "uninstalling": "Uninstalling...",
+        "repairing": "Repairing...",
+        "cmd_delete": "Delete {{0}}",
+        "uninstall_title": "Uninstall {{0}}",
+        "purge_config": "Also clear configuration",
+        "purge_note": "Session history will be deleted",
+        "cancel": "Cancel",
+        "confirm_uninstall": "Confirm uninstall",
+        "action_failed": "Operation failed"
       }
     }
   }
