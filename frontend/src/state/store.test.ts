@@ -1,6 +1,6 @@
 // store 增量测试：notify/dismissToast 轻量提示队列、
 // openTabs/activeTabId 经 persist 中间件落 localStorage（kshell-tabs）。
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatInfo, TerminalInfo } from '../lib/api';
 import { SETTINGS_TAB_ID, useAppStore } from './store';
 
@@ -72,7 +72,7 @@ describe('store', () => {
     expect(parsed.state.activeTabId).toBe('D:\\proj-a');
   });
 
-  it('partialize 只持久化页签字段，toast/终端等内存态不入 localStorage', () => {
+  it('partialize 只持久化页签与提示音开关，toast/终端等内存态不入 localStorage', () => {
     useAppStore.setState({
       openTabs: [{ id: 'D:\\proj-a', name: 'proj-a' }],
       activeTabId: null,
@@ -241,8 +241,15 @@ describe('store', () => {
     expect(notices[notices.length - 1].termKey).toBe('k11');
   });
 
-  it('notifySound 默认开启，setNotifySound 切换并持久化到 kshell-tabs', () => {
-    expect(useAppStore.getState().notifySound).toBe(true);
+  it('notifySound 初始默认值为开（不依赖 beforeEach 预置）', async () => {
+    // beforeEach 已把 notifySound 置 true，只有重置模块图才能看到 store.ts 的原始默认值
+    localStorage.clear();
+    vi.resetModules();
+    const freshStore = await import('./store');
+    expect(freshStore.useAppStore.getState().notifySound).toBe(true);
+  });
+
+  it('setNotifySound 切换并持久化到 kshell-tabs', () => {
     useAppStore.getState().setNotifySound(false);
     expect(useAppStore.getState().notifySound).toBe(false);
     const parsed = JSON.parse(localStorage.getItem('kshell-tabs')!) as {

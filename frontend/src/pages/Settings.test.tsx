@@ -765,7 +765,7 @@ describe('Settings', () => {
     expect(mocks.applyUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it('气泡提示音开关：默认勾选，切换写入 store', () => {
+  it('气泡提示音开关：勾选态绑定 store，切换写入', () => {
     useAppStore.setState({ notifySound: true });
     render(<Settings />);
     const box = screen.getByRole('checkbox', { name: '气泡提示音' });

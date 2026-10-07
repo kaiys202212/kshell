@@ -375,7 +375,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'kshell-tabs',
-      // 只持久化页签、三栏宽度与新建会话的工具选择：
+      // 只持久化页签、三栏宽度、新建会话的工具选择与通知提示音开关：
       // 工作区/终端/提示要么来自 Go 侧、要么是易失的内存态
       partialize: (s) => ({
         openTabs: s.openTabs,

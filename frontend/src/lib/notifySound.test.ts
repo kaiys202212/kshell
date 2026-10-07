@@ -19,10 +19,10 @@ async function fresh() {
   return { playNotifySound: sound.playNotifySound, useAppStore };
 }
 
-function stubAudio(opts: { throwOnConstruct?: boolean } = {}) {
-  const created: { oscillators: FakeOsc[] }[] = [];
+function stubAudio(opts: { throwOnConstruct?: boolean; suspended?: boolean } = {}) {
+  const created: { oscillators: FakeOsc[]; resume: () => Promise<void> }[] = [];
   class FakeAudioContext {
-    state = 'running';
+    state = opts.suspended ? 'suspended' : 'running';
     currentTime = 0;
     destination = {};
     oscillators: FakeOsc[] = [];
@@ -70,6 +70,24 @@ describe('playNotifySound', () => {
     expect(created).toHaveLength(1);
     expect(created[0].oscillators).toHaveLength(1);
     expect(created[0].oscillators[0].frequency.value).toBe(880);
+  });
+
+  it('播放会真正启动并停止振荡器（防泄漏：start/stop 成对调用）', async () => {
+    const created = stubAudio();
+    const { playNotifySound, useAppStore } = await fresh();
+    useAppStore.setState({ notifySound: true });
+    playNotifySound('light');
+    const osc = created[0].oscillators[0];
+    expect(osc.start).toHaveBeenCalled();
+    expect(osc.stop).toHaveBeenCalled();
+  });
+
+  it('suspended 状态：播放时尝试 resume 恢复音频', async () => {
+    const created = stubAudio({ suspended: true });
+    const { playNotifySound, useAppStore } = await fresh();
+    useAppStore.setState({ notifySound: true });
+    playNotifySound('light');
+    expect(created[0].resume).toHaveBeenCalled();
   });
 
   it('重音：两连音 660Hz → 440Hz', async () => {

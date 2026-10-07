@@ -41,8 +41,8 @@ function blip(c: AudioContext, freq: number, durMs: number, peak: number, at: nu
 }
 
 export function playNotifySound(tone: NotifyTone): void {
-  if (!useAppStore.getState().notifySound) return;
   try {
+    if (!useAppStore.getState().notifySound) return;
     const c = context();
     if (!c) return;
     // 浏览器自动播放策略：首帧 suspended 时尝试恢复，失败忽略
