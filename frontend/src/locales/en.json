@@ -363,6 +363,8 @@
       "staged_suffix": "(staged)",
       "commit_diff_tab": "{{hash}}",
       "binary_preview_unavailable": "Binary file; cannot preview",
+      "md_preview": "Preview",
+      "md_source": "Source",
       "loading": "Loading…",
       "pdf_read_failed": "Failed to read PDF",
       "image_read_failed": "Failed to read image",

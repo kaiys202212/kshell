@@ -56,6 +56,12 @@ vi.mock('./PdfPreview', () => ({
   },
 }));
 
+vi.mock('./MarkdownPreview', () => ({
+  default: function MockMarkdownPreview({ markdown }: { markdown: string }) {
+    return <div data-testid="markdown-preview">{markdown}</div>;
+  },
+}));
+
 afterEach(cleanup);
 
 beforeEach(() => {
@@ -92,11 +98,54 @@ describe('Preview', () => {
     expect(editor).toHaveAttribute('data-show-whitespace', '1');
   });
 
-  it('.md 也直接可编辑，不渲染 markdown 预览切换', async () => {
-    mocks.readFileForEdit.mockResolvedValue({ Text: '# Hi', EOL: 'lf', Size: 4 });
+  it('.md 默认预览模式：可见切换与 MarkdownPreview，不整读', async () => {
+    mocks.previewFile.mockResolvedValue({
+      Text: '# Hi',
+      Lines: ['# Hi'],
+      Truncated: false,
+      Binary: false,
+      Info: '',
+    });
     render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\readme.md'} />);
 
-    expect(await screen.findByRole('textbox', { name: EDITOR_LABEL })).toHaveValue('# Hi');
+    expect(await screen.findByTestId('markdown-preview')).toHaveTextContent('# Hi');
+    expect(screen.getByRole('button', { name: tt('ui.files.md_preview') })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: tt('ui.files.md_source') })).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: EDITOR_LABEL })).toBeNull();
+    expect(mocks.previewFile).toHaveBeenCalledWith('D:\\proj', 'D:\\proj\\readme.md');
+    expect(mocks.readFileForEdit).not.toHaveBeenCalled();
+  });
+
+  it('.md 点源码后显示可写 CodeEditor 并整读', async () => {
+    mocks.previewFile.mockResolvedValue({
+      Text: '# Hi',
+      Lines: ['# Hi'],
+      Truncated: false,
+      Binary: false,
+      Info: '',
+    });
+    mocks.readFileForEdit.mockResolvedValue({ Text: '# Hi full', EOL: 'lf', Size: 9 });
+    render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\readme.md'} />);
+    await screen.findByTestId('markdown-preview');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.files.md_source') }));
+    });
+
+    const editor = await screen.findByRole('textbox', { name: EDITOR_LABEL });
+    expect(editor).toHaveValue('# Hi full');
+    expect(editor).not.toHaveAttribute('readonly');
+    expect(mocks.readFileForEdit).toHaveBeenCalledWith('D:\\proj', 'D:\\proj\\readme.md');
+    expect(screen.queryByTestId('markdown-preview')).toBeNull();
+  });
+
+  it('.go 无预览/源码切换', async () => {
+    mocks.readFileForEdit.mockResolvedValue({ Text: 'package main\n', EOL: 'lf', Size: 13 });
+    render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\main.go'} />);
+
+    expect(await screen.findByRole('textbox', { name: EDITOR_LABEL })).toHaveValue('package main\n');
+    expect(screen.queryByRole('button', { name: tt('ui.files.md_preview') })).toBeNull();
+    expect(screen.queryByRole('button', { name: tt('ui.files.md_source') })).toBeNull();
   });
 
   it('图片路径直接挂载 ImagePreview，不调 readFileForEdit', async () => {
