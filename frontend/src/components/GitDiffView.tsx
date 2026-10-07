@@ -1,5 +1,6 @@
 // 中栏文件页签内的 git diff（按 hunk 暂存/丢弃）。
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   gitDiff,
   gitDiscard,
@@ -10,6 +11,7 @@ import {
   gitUnstageHunk,
 } from '../lib/api';
 import type { GitDiffSide } from '../lib/api';
+import { backendError } from '../lib/errors';
 import { hunkPatch, parseDiffHunks } from '../lib/gitDiff';
 import { refreshGitStatus } from '../lib/git';
 import { cn } from '../lib/cn';
@@ -27,6 +29,7 @@ export default function GitDiffView({
   path: string;
   side: GitDiffSide;
 }) {
+  const { t } = useTranslation();
   const notify = useAppStore((s) => s.notify);
   const [text, setText] = useState('');
   const [binary, setBinary] = useState(false);
@@ -39,7 +42,7 @@ export default function GitDiffView({
       setText(d.Text ?? '');
       setErr('');
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr(backendError(e));
     }
   }, [wsPath, repoRel, path, side]);
 
@@ -53,7 +56,7 @@ export default function GitDiffView({
       await refreshGitStatus(wsPath);
       await load();
     } catch (e) {
-      notify(e instanceof Error ? e.message : String(e), 'error');
+      notify(backendError(e), 'error');
     }
   };
 
@@ -65,12 +68,12 @@ export default function GitDiffView({
         <span className="mr-auto truncate font-mono text-xs">{path}</span>
         {side === 'working' && (
           <Button size="sm" onClick={() => void run(() => gitStage(wsPath, repoRel, [path]))}>
-            暂存文件
+            {t('ui.git.stage_file')}
           </Button>
         )}
         {side === 'staged' && (
           <Button size="sm" variant="secondary" onClick={() => void run(() => gitUnstage(wsPath, repoRel, [path]))}>
-            取消暂存
+            {t('ui.git.unstage_file')}
           </Button>
         )}
         {side === 'working' && (
@@ -78,16 +81,16 @@ export default function GitDiffView({
             size="sm"
             variant="destructive"
             onClick={() => {
-              if (!window.confirm(`丢弃 ${path} 的工作区改动？`)) return;
+              if (!window.confirm(t('ui.git.discard_confirm', { label: path }))) return;
               void run(() => gitDiscard(wsPath, repoRel, [path]));
             }}
           >
-            丢弃文件
+            {t('ui.git.discard_file')}
           </Button>
         )}
       </div>
       {err && <p className="p-2 text-sm text-destructive">{err}</p>}
-      {binary && <p className="p-2 text-sm text-muted-foreground">二进制文件无法预览 diff</p>}
+      {binary && <p className="p-2 text-sm text-muted-foreground">{t('ui.git.binary_no_diff')}</p>}
       <div className="min-h-0 flex-1 overflow-auto font-mono text-[11px] leading-5">
         {hunks.map((h, i) => (
           <div key={i} className="mb-3 border-b border-border pb-2">
@@ -98,7 +101,7 @@ export default function GitDiffView({
                   variant="ghost"
                   onClick={() => void run(() => gitStageHunk(wsPath, repoRel, path, side, hunkPatch(h)))}
                 >
-                  暂存此块
+                  {t('ui.git.stage_hunk')}
                 </Button>
               )}
               {side === 'staged' && (
@@ -107,7 +110,7 @@ export default function GitDiffView({
                   variant="ghost"
                   onClick={() => void run(() => gitUnstageHunk(wsPath, repoRel, path, side, hunkPatch(h)))}
                 >
-                  取消暂存此块
+                  {t('ui.git.unstage_hunk')}
                 </Button>
               )}
               {side === 'working' && (
@@ -115,11 +118,11 @@ export default function GitDiffView({
                   size="sm"
                   variant="ghost"
                   onClick={() => {
-                    if (!window.confirm('丢弃此 hunk？')) return;
+                    if (!window.confirm(t('ui.git.discard_hunk_confirm'))) return;
                     void run(() => gitDiscardHunk(wsPath, repoRel, path, side, hunkPatch(h)));
                   }}
                 >
-                  丢弃此块
+                  {t('ui.git.discard_hunk')}
                 </Button>
               )}
             </div>

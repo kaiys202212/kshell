@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import GitDiffView from './GitDiffView';
+import { tt } from '../test/i18n';
 
 const mocks = vi.hoisted(() => ({
   gitDiff: vi.fn(),
@@ -36,8 +37,8 @@ describe('GitDiffView', () => {
     render(
       <GitDiffView wsPath="D:\\proj" repoRel="" path="a.ts" side="working" />,
     );
-    expect(await screen.findByText('暂存此块')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '暂存此块' }));
+    expect(await screen.findByText(tt('ui.git.stage_hunk'))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.git.stage_hunk') }));
     await waitFor(() => expect(mocks.gitStageHunk).toHaveBeenCalled());
   });
 
@@ -46,7 +47,7 @@ describe('GitDiffView', () => {
     render(
       <GitDiffView wsPath="D:\\proj" repoRel="" path="a.ts" side="working" />,
     );
-    fireEvent.click(await screen.findByRole('button', { name: '丢弃此块' }));
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.git.discard_hunk') }));
     expect(mocks.gitDiscardHunk).not.toHaveBeenCalled();
   });
 });

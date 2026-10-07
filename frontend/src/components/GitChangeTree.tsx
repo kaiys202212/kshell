@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { GitDiffSide, GitSCMEntry } from '../lib/api';
 import { buildChangeTree, collectPaths, type ChangeNode } from '../lib/gitChangeTree';
 import { cn } from '../lib/cn';
@@ -22,6 +23,7 @@ export function GitChangeTree({
   onUnstage: ((paths: string[]) => void) | null;
   onDiscard: ((paths: string[], label: string) => void) | null;
 }) {
+  const { t } = useTranslation();
   const tree = useMemo(() => buildChangeTree(entries), [entries]);
   return (
     <div className="min-h-0">
@@ -32,12 +34,12 @@ export function GitChangeTree({
         {entries.length > 0 && (
           <div className="flex">
             {onStage && (
-              <Button size="sm" variant="ghost" aria-label={`${title}全部暂存`} onClick={() => onStage(collectPaths(tree))}>
+              <Button size="sm" variant="ghost" aria-label={t('ui.git.stage_all_aria', { title })} onClick={() => onStage(collectPaths(tree))}>
                 +
               </Button>
             )}
             {onUnstage && (
-              <Button size="sm" variant="ghost" aria-label={`${title}全部取消暂存`} onClick={() => onUnstage(collectPaths(tree))}>
+              <Button size="sm" variant="ghost" aria-label={t('ui.git.unstage_all_aria', { title })} onClick={() => onUnstage(collectPaths(tree))}>
                 −
               </Button>
             )}
@@ -77,6 +79,7 @@ function TreeRow({
   onUnstage: ((paths: string[]) => void) | null;
   onDiscard: ((paths: string[], label: string) => void) | null;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(true);
   const paths = collectPaths(node);
   const glyph = statusGlyph(node.entry, side);
@@ -87,7 +90,7 @@ function TreeRow({
         style={{ paddingLeft: 4 + depth * 12 }}
       >
         {node.dir ? (
-          <button type="button" className="w-4 shrink-0 text-muted-foreground" aria-label={`展开 ${node.path}`} onClick={() => setOpen((v) => !v)}>
+          <button type="button" className="w-4 shrink-0 text-muted-foreground" aria-label={t('ui.git.expand_aria', { path: node.path })} onClick={() => setOpen((v) => !v)}>
             {open ? '▾' : '▸'}
           </button>
         ) : (
@@ -107,12 +110,12 @@ function TreeRow({
         )}
         {glyph && <span className="w-3 shrink-0 text-[10px] text-muted-foreground">{glyph}</span>}
         {onStage && (
-          <Button size="sm" variant="ghost" className="opacity-0 group-hover:opacity-100" aria-label={`暂存 ${node.path}`} onClick={() => onStage(paths)}>
+          <Button size="sm" variant="ghost" className="opacity-0 group-hover:opacity-100" aria-label={t('ui.git.stage_aria', { path: node.path })} onClick={() => onStage(paths)}>
             +
           </Button>
         )}
         {onUnstage && (
-          <Button size="sm" variant="ghost" className="opacity-0 group-hover:opacity-100" aria-label={`取消暂存 ${node.path}`} onClick={() => onUnstage(paths)}>
+          <Button size="sm" variant="ghost" className="opacity-0 group-hover:opacity-100" aria-label={t('ui.git.unstage_aria', { path: node.path })} onClick={() => onUnstage(paths)}>
             −
           </Button>
         )}
@@ -121,10 +124,10 @@ function TreeRow({
             size="sm"
             variant="ghost"
             className="opacity-0 group-hover:opacity-100"
-            aria-label={`丢弃 ${node.path}`}
+            aria-label={t('ui.git.discard_aria', { path: node.path })}
             onClick={() => onDiscard(paths, node.path)}
           >
-            丢弃
+            {t('ui.git.discard')}
           </Button>
         )}
       </div>

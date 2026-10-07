@@ -1,5 +1,6 @@
 // 右栏 Git SCM 面板（对齐 VS Code Source Control + Graph）。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import {
   ArrowDownUp,
@@ -30,6 +31,7 @@ import {
   gitUnstage,
 } from '../lib/api';
 import type { GitDiffSide, GitLogCommit, GitRef, GitSCMEntry, GitSCMSnapshot } from '../lib/api';
+import { backendError } from '../lib/errors';
 import { refreshGitStatus } from '../lib/git';
 import { loadLogSel, resolveLogFilter, saveLogSel } from '../lib/gitLogSel';
 import type { GraphCommit } from '../lib/gitGraph';
@@ -85,6 +87,7 @@ export default function GitPanel({
   visible: boolean;
   onOpenDiff: (spec: GitDiffSpec) => void;
 }) {
+  const { t } = useTranslation();
   const notify = useAppStore((s) => s.notify);
   const [snap, setSnap] = useState<GitSCMSnapshot | null>(null);
   const [repoRel, setRepoRel] = useState('');
@@ -109,7 +112,7 @@ export default function GitPanel({
         if (first.Rel) setRepoRel(first.Rel);
       }
     } catch (e) {
-      notify(`读取 git 失败：${e instanceof Error ? e.message : String(e)}`, 'error');
+      notify(t('ui.git.read_failed', { err: backendError(e) }), 'error');
     }
   }, [wsPath, repoRel, notify]);
 
@@ -155,7 +158,7 @@ export default function GitPanel({
       await load();
       await loadLog();
     } catch (e) {
-      notify(e instanceof Error ? e.message : String(e), 'error');
+      notify(backendError(e), 'error');
     } finally {
       setBusy(false);
     }
@@ -179,7 +182,7 @@ export default function GitPanel({
     const m = msg.trim();
     if (!m || staged.length === 0) return;
     setMsg('');
-    void run(() => gitCommit(wsPath, repoRel, m), '已提交');
+    void run(() => gitCommit(wsPath, repoRel, m), t('ui.git.committed'));
   };
 
   const openEntry = (e: GitSCMEntry, side: GitDiffSide, preview: boolean) => {
@@ -207,7 +210,7 @@ export default function GitPanel({
     run(async () => {
       if ((snap?.Behind ?? 0) > 0) await gitPull(wsPath, repoRel);
       if ((snap?.Ahead ?? 0) > 0) await gitPush(wsPath, repoRel);
-    }, '已同步');
+    }, t('ui.git.synced'));
 
   const onMsgKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -221,7 +224,7 @@ export default function GitPanel({
   }
 
   if (snap && !snap.IsRepo && repos.length === 0) {
-    return <EmptyState title="不是 git 仓库" />;
+    return <EmptyState title={t('ui.git.not_a_repo')} />;
   }
 
   const localRefs = refs.filter((r) => r.Kind === 'local');
@@ -234,14 +237,14 @@ export default function GitPanel({
         {repos.length > 1 && (
           <select
             className={cn(selectEllipsis, 'mb-1 h-7 shrink-0')}
-            aria-label="选择仓库"
-            title={repoRel ? repoRel : '工作区根'}
+            aria-label={t('ui.git.select_repo')}
+            title={repoRel ? repoRel : t('ui.git.workspace_root')}
             value={repoRel}
             onChange={(e) => setRepoRel(e.target.value)}
           >
             {repos.map((r) => (
               <option key={r.Rel || '__root'} value={r.Rel}>
-                {r.Rel ? r.Rel : '工作区根'} ({r.Branch || '?'})
+                {r.Rel ? r.Rel : t('ui.git.workspace_root')} ({r.Branch || '?'})
               </option>
             ))}
           </select>
@@ -259,48 +262,48 @@ export default function GitPanel({
           <div className="ml-auto flex items-center gap-0.5">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button size="icon" variant="ghost" aria-label="Git 操作" disabled={busy}>
+                <Button size="icon" variant="ghost" aria-label={t('ui.git.actions_aria')} disabled={busy}>
                   <Ellipsis className="h-3.5 w-3.5" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>拉取</DropdownMenuSubTrigger>
+                  <DropdownMenuSubTrigger>{t('ui.git.pull')}</DropdownMenuSubTrigger>
                   <DropdownMenuSubContent>
-                    <DropdownMenuItem onSelect={() => void run(() => gitPull(wsPath, repoRel), '已拉取')}>
+                    <DropdownMenuItem onSelect={() => void run(() => gitPull(wsPath, repoRel), t('ui.git.pulled'))}>
                       Pull
                     </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => void run(() => gitFetch(wsPath, repoRel), '已 Fetch')}>
+                    <DropdownMenuItem onSelect={() => void run(() => gitFetch(wsPath, repoRel), t('ui.git.fetched'))}>
                       Fetch
                     </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => void run(() => gitFetchAll(wsPath, repoRel), '已 Fetch all')}>
+                    <DropdownMenuItem onSelect={() => void run(() => gitFetchAll(wsPath, repoRel), t('ui.git.fetched_all'))}>
                       Fetch all
                     </DropdownMenuItem>
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
-                <DropdownMenuItem onSelect={() => void run(() => gitPush(wsPath, repoRel), '已推送')}>Push</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => void run(() => gitPush(wsPath, repoRel), t('ui.git.pushed'))}>Push</DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={!msg.trim() || staged.length === 0}
                   onSelect={() => {
                     const m = msg.trim();
                     setMsg('');
-                    void run(() => gitCommit(wsPath, repoRel, m), '已提交');
+                    void run(() => gitCommit(wsPath, repoRel, m), t('ui.git.committed'));
                   }}
                 >
-                  提交
+                  {t('ui.git.commit')}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>检出分支</DropdownMenuSubTrigger>
+                  <DropdownMenuSubTrigger>{t('ui.git.checkout_branch')}</DropdownMenuSubTrigger>
                   <DropdownMenuSubContent className="max-h-64">
-                    <DropdownMenuLabel>本地</DropdownMenuLabel>
+                    <DropdownMenuLabel>{t('ui.git.local')}</DropdownMenuLabel>
                     {localRefs.map((r) => (
                       <DropdownMenuItem key={r.Name} onSelect={() => void run(() => gitCheckout(wsPath, repoRel, r.Name))}>
                         {r.Name}
                         {r.Current ? ' ·' : ''}
                       </DropdownMenuItem>
                     ))}
-                    <DropdownMenuLabel>远端</DropdownMenuLabel>
+                    <DropdownMenuLabel>{t('ui.git.remote')}</DropdownMenuLabel>
                     {remoteRefs.map((r) => (
                       <DropdownMenuItem key={r.Name} onSelect={() => void run(() => gitCheckout(wsPath, repoRel, r.Name))}>
                         {r.Name}
@@ -309,12 +312,12 @@ export default function GitPanel({
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onSelect={() => {
-                        const name = window.prompt('新分支名');
+                        const name = window.prompt(t('ui.git.new_branch_prompt'));
                         if (!name?.trim()) return;
                         void run(() => gitCreateBranch(wsPath, repoRel, name.trim()));
                       }}
                     >
-                      新建分支…
+                      {t('ui.git.new_branch')}
                     </DropdownMenuItem>
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
@@ -326,7 +329,7 @@ export default function GitPanel({
                       disabled={(snap?.Stashes ?? []).length === 0}
                       onSelect={() => void run(() => gitStashPop(wsPath, repoRel, 0))}
                     >
-                      Pop 最新
+                      {t('ui.git.pop_latest')}
                     </DropdownMenuItem>
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
@@ -339,18 +342,18 @@ export default function GitPanel({
           <Input
             size="sm"
             className="mb-1 w-full shrink-0"
-            placeholder={`消息 (Ctrl+Enter 在 '${branchLabel}' 提交)`}
+            placeholder={t('ui.git.commit_placeholder', { branch: branchLabel })}
             value={msg}
             onChange={(e) => setMsg(e.target.value)}
             onKeyDown={onMsgKey}
-            aria-label="提交说明"
+            aria-label={t('ui.git.commit_message_aria')}
           />
           <div className="mb-1 flex w-full shrink-0">
             <Button
               size="sm"
               className="h-8 min-w-0 flex-1 rounded-r-none"
               disabled={busy || (dirty ? !canCommit : !canSync)}
-              aria-label="主 Git 操作"
+              aria-label={t('ui.git.primary_action_aria')}
               onClick={() => {
                 if (dirty) doCommit();
                 else void sync();
@@ -359,12 +362,12 @@ export default function GitPanel({
               {dirty ? (
                 <>
                   <Check className="h-3.5 w-3.5" />
-                  提交
+                  {t('ui.git.commit')}
                 </>
               ) : (
                 <>
                   <ArrowDownUp className="h-3.5 w-3.5" />
-                  同步
+                  {t('ui.git.sync')}
                 </>
               )}
             </Button>
@@ -374,14 +377,14 @@ export default function GitPanel({
                   size="sm"
                   className="h-8 w-8 shrink-0 rounded-l-none border-l border-primary-foreground/25 px-0"
                   disabled={busy}
-                  aria-label="更多提交操作"
+                  aria-label={t('ui.git.more_commit_aria')}
                 >
                   <ChevronDown className="h-3.5 w-3.5" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem disabled={!canCommit} onSelect={() => doCommit()}>
-                  提交
+                  {t('ui.git.commit')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={!canCommit}
@@ -392,20 +395,20 @@ export default function GitPanel({
                     void run(async () => {
                       await gitCommit(wsPath, repoRel, m);
                       await gitPush(wsPath, repoRel);
-                    }, '已提交并推送');
+                    }, t('ui.git.commit_and_push'));
                   }}
                 >
-                  提交并推送
+                  {t('ui.git.commit_and_push')}
                 </DropdownMenuItem>
                 <DropdownMenuItem disabled={!canSync} onSelect={() => void sync()}>
-                  同步
+                  {t('ui.git.sync')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
           <div className="min-h-0 flex-1 overflow-auto">
             <GitChangeTree
-              title="已暂存"
+              title={t('ui.git.staged')}
               entries={staged}
               side="staged"
               onOpen={openEntry}
@@ -414,14 +417,14 @@ export default function GitPanel({
               onDiscard={null}
             />
             <GitChangeTree
-              title="更改"
+              title={t('ui.git.changes')}
               entries={working}
               side="working"
               onOpen={openEntry}
               onStage={(paths) => void run(() => gitStage(wsPath, repoRel, paths))}
               onUnstage={null}
               onDiscard={(paths, label) => {
-                if (!window.confirm(`丢弃 ${label} 的改动？`)) return;
+                if (!window.confirm(t('ui.git.discard_confirm', { label }))) return;
                 void run(() => gitDiscard(wsPath, repoRel, paths));
               }}
             />
@@ -447,7 +450,7 @@ export default function GitPanel({
                     size="sm"
                     variant="ghost"
                     onClick={() => {
-                      if (!window.confirm(`删除 stash：${st.Message}？`)) return;
+                      if (!window.confirm(t('ui.git.stash_drop_confirm', { message: st.Message }))) return;
                       void run(() => gitStashDrop(wsPath, repoRel, st.Index));
                     }}
                   >
@@ -462,7 +465,7 @@ export default function GitPanel({
         <div
           role="separator"
           aria-orientation="horizontal"
-          aria-label="调整 Git 上下分栏"
+          aria-label={t('ui.git.split_aria')}
           className="h-1.5 shrink-0 cursor-ns-resize bg-border/80 hover:bg-primary/40"
           onPointerDown={onSplitPointer}
         />
@@ -471,20 +474,20 @@ export default function GitPanel({
           <div className="flex shrink-0 items-center gap-1 py-1">
             <select
               className={cn(selectEllipsis, 'h-7 flex-1')}
-              aria-label="提交图分支筛选"
+              aria-label={t('ui.git.log_filter_aria')}
               value={logSel}
               onChange={(e) => setLogSelPersist(e.target.value)}
             >
-              <option value="current">当前分支</option>
-              <option value="all">全部</option>
-              <optgroup label="本地">
+              <option value="current">{t('ui.git.current_branch')}</option>
+              <option value="all">{t('ui.git.all')}</option>
+              <optgroup label={t('ui.git.local')}>
                 {localRefs.map((r) => (
                   <option key={`l:${r.Name}`} value={r.Name}>
                     {r.Name}
                   </option>
                 ))}
               </optgroup>
-              <optgroup label="远端">
+              <optgroup label={t('ui.git.remote')}>
                 {remoteRefs.map((r) => (
                   <option key={`r:${r.Name}`} value={r.Name}>
                     {r.Name}

@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GitChangeTree } from './GitChangeTree';
 import type { GitSCMEntry } from '../lib/api';
+import { tt } from '../test/i18n';
 
 afterEach(cleanup);
 
@@ -30,7 +31,9 @@ describe('GitChangeTree', () => {
         onDiscard={null}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: '暂存 pkg' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: tt('ui.git.stage_aria').replace('{{path}}', 'pkg') }),
+    );
     expect(onStage).toHaveBeenCalledWith(['pkg/a.go', 'pkg/b.go']);
   });
 });

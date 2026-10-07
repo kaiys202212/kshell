@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import GitPanel from './GitPanel';
 import type { GitSCMSnapshot } from '../lib/api';
 import { useAppStore } from '../state/store';
+import { tt } from '../test/i18n';
 
 const mocks = vi.hoisted(() => ({
   gitSCM: vi.fn(),
@@ -74,11 +75,11 @@ describe('GitPanel', () => {
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
     expect(await screen.findByText('staged.go')).toBeInTheDocument();
     expect(screen.getByText('dirty.go')).toBeInTheDocument();
-    const msg = screen.getByLabelText('提交说明');
+    const msg = screen.getByLabelText(tt('ui.git.commit_message_aria'));
     expect(msg.tagName).toBe('INPUT');
-    expect(screen.getByRole('button', { name: '主 Git 操作' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: tt('ui.git.primary_action_aria') })).toBeDisabled();
     fireEvent.change(msg, { target: { value: 'msg' } });
-    expect(screen.getByRole('button', { name: '主 Git 操作' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: tt('ui.git.primary_action_aria') })).toBeEnabled();
     expect(screen.queryByRole('button', { name: '同步到远程' })).not.toBeInTheDocument();
   });
 
@@ -92,7 +93,7 @@ describe('GitPanel', () => {
     );
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
     expect(await screen.findByText('dirty.go')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '主 Git 操作' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: tt('ui.git.primary_action_aria') })).toBeDisabled();
   });
 
   it('单击 Changes 行打开 working diff', async () => {
@@ -110,18 +111,18 @@ describe('GitPanel', () => {
   it('丢弃取消时不调 API', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
-    fireEvent.click(await screen.findByRole('button', { name: '丢弃 dirty.go' }));
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.git.discard_aria').replace('{{path}}', 'dirty.go') }));
     expect(mocks.gitDiscard).not.toHaveBeenCalled();
   });
 
   it('有未提交时主按钮为提交，干净时为同步', async () => {
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
-    expect(await screen.findByRole('button', { name: '主 Git 操作' })).toHaveTextContent('提交');
-    expect(screen.getByRole('button', { name: '更多提交操作' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: tt('ui.git.primary_action_aria') })).toHaveTextContent(tt('ui.git.commit'));
+    expect(screen.getByRole('button', { name: tt('ui.git.more_commit_aria') })).toBeInTheDocument();
     cleanup();
     mocks.gitSCM.mockResolvedValue(snap({ Entries: [], Ahead: 1, Behind: 0, HasUpstream: true }));
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
-    expect(await screen.findByRole('button', { name: '主 Git 操作' })).toHaveTextContent('同步');
+    expect(await screen.findByRole('button', { name: tt('ui.git.primary_action_aria') })).toHaveTextContent(tt('ui.git.sync'));
   });
 
   it('切换分支筛选会按 ref/all 重新拉取日志并记住选择', async () => {
@@ -130,13 +131,13 @@ describe('GitPanel', () => {
     await screen.findByText('init');
     expect(mocks.gitLog).toHaveBeenCalledWith(ws, '', 'current', '', 200);
 
-    fireEvent.change(screen.getByLabelText('提交图分支筛选'), { target: { value: 'topic' } });
+    fireEvent.change(screen.getByLabelText(tt('ui.git.log_filter_aria')), { target: { value: 'topic' } });
     await waitFor(() => {
       expect(mocks.gitLog).toHaveBeenCalledWith(ws, '', 'ref', 'topic', 200);
     });
     expect(localStorage.getItem(`kshell-git-log-sel:${ws}\0`)).toBe('topic');
 
-    fireEvent.change(screen.getByLabelText('提交图分支筛选'), { target: { value: 'all' } });
+    fireEvent.change(screen.getByLabelText(tt('ui.git.log_filter_aria')), { target: { value: 'all' } });
     await waitFor(() => {
       expect(mocks.gitLog).toHaveBeenCalledWith(ws, '', 'all', '', 200);
     });
@@ -152,7 +153,7 @@ describe('GitPanel', () => {
       }),
     );
     render(<GitPanel wsPath="D:/proj" visible onOpenDiff={() => {}} />);
-    const sel = await screen.findByLabelText('选择仓库');
+    const sel = await screen.findByLabelText(tt('ui.git.select_repo'));
     expect(sel.className).toMatch(/w-full/);
     expect(sel.className).toMatch(/min-w-0/);
   });
@@ -161,6 +162,6 @@ describe('GitPanel', () => {
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
     expect(await screen.findByText('init')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Fetch all' })).toBeInTheDocument();
-    expect(screen.getByLabelText('提交图分支筛选')).toBeInTheDocument();
+    expect(screen.getByLabelText(tt('ui.git.log_filter_aria'))).toBeInTheDocument();
   });
 });
