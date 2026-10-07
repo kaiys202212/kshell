@@ -16,6 +16,8 @@ var (
 	errMissingHost = errors.New("err.ssh.missing_host")
 	errKeyMaterial = errors.New("err.ssh.identity_file_path_only")
 	// ErrUnknownConnection 表示按 ID 找不到连接（Update/Delete）。
+	// 桌面端由 desktop 层映射为 err.ssh.connection_not_found，store 层哨兵
+	// 主要用于 TUI/自包含调用场景。
 	ErrUnknownConnection = errors.New("err.ssh.not_in_store")
 )
 

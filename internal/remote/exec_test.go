@@ -121,7 +121,7 @@ func TestRunTimeout(t *testing.T) {
 	} else {
 		writeFakeSSH(t, dir, "sleep 10")
 	}
-	t.Setenv("PATH", dir)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	start := time.Now()
 	res, err := Run(context.Background(), Connection{Host: "h"}, "cmd", SSHOptions{CommandTimeoutSeconds: 1})
@@ -131,6 +131,35 @@ func TestRunTimeout(t *testing.T) {
 	// 超时的进程要么报错，要么给出非 0 退出码，绝不能看起来像执行成功。
 	if err == nil && res.ExitCode == 0 {
 		t.Fatal("a cancelled run must not look like a successful one")
+	}
+	// 超时错误必须是 wire key，前端才能按 key 翻译
+	if err == nil || !strings.HasPrefix(err.Error(), "err.ssh.exec_timeout|") {
+		t.Fatalf("err = %q, want err.ssh.exec_timeout 前缀", err)
+	}
+}
+
+// 非 *exec.ExitError 的启动/执行失败走 exec_failed wire key。
+func TestRunExecFailureWireKey(t *testing.T) {
+	dir := t.TempDir()
+	var path string
+	if runtime.GOOS == "windows" {
+		// 非法 PE 的 ssh.exe：LookPath 命中但 CreateProcess 失败，非 ExitError
+		path = filepath.Join(dir, "ssh.exe")
+	} else {
+		// 无 shebang/可执行格式：execve 报 ENOEXEC，非 ExitError
+		path = filepath.Join(dir, "ssh")
+	}
+	if err := os.WriteFile(path, []byte("not an executable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	res, err := Run(context.Background(), Connection{Host: "h"}, "cmd", SSHOptions{})
+	if err == nil {
+		t.Fatalf("非法可执行文件应报执行失败，res=%+v", res)
+	}
+	if !strings.HasPrefix(err.Error(), "err.ssh.exec_failed|") {
+		t.Fatalf("err = %q, want err.ssh.exec_failed 前缀", err.Error())
 	}
 }
 
