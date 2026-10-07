@@ -127,7 +127,7 @@ export default function Preview({
     };
     // onDirtyChange 仅在切路径时清脏，不列入依赖以免父级重渲染反复加载
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsPath, path, wantEdit, isMedia]);
+  }, [wsPath, path, wantEdit, isMedia, t]);
 
   const notify = useAppStore.getState().notify;
 

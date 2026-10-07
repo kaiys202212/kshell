@@ -263,6 +263,45 @@ describe('WorkspaceTab', () => {
     });
   });
 
+  it('新建会话回退终端时，回退原因（wire key）经 translateBackend 翻译后展示', async () => {
+    mocks.getTools.mockResolvedValue([toolClaude]);
+    mocks.openWorkspace.mockResolvedValue({ Kind: 'terminal', Terminal: term, Fallback: 'err.launcher.no_exec' });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+
+    await screen.findByRole('button', { name: tt('ui.new_session.title') });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.new_session.title') }));
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: /Claude Code/ }));
+
+    const expected = tt('ui.workspace.fallback').replace('{{reason}}', tt('err.launcher.no_exec'));
+    await waitFor(() => {
+      expect(useAppStore.getState().toasts.some((t) => t.tone === 'info' && t.title === expected)).toBe(true);
+    });
+  });
+
+  it('恢复会话回退终端时，回退原因（wire key）经 translateBackend 翻译后展示', async () => {
+    mocks.getSessions.mockResolvedValue([
+      {
+        ID: 's1',
+        ToolID: 'claude',
+        Workspace: 'D:\\proj-a',
+        Title: '修登录页',
+        CreatedAt: '2026-09-01T10:00:00Z',
+        UpdatedAt: '2026-09-02T10:00:00Z',
+        Messages: 12,
+        Path: 'D:\\proj-a\\s1.jsonl',
+      },
+    ]);
+    mocks.openSession.mockResolvedValue({ Kind: 'terminal', Terminal: term, Fallback: 'err.launcher.no_exec' });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.session_list.activate') }));
+
+    const expected = tt('ui.workspace.fallback').replace('{{reason}}', tt('err.launcher.no_exec'));
+    await waitFor(() => {
+      expect(useAppStore.getState().toasts.some((t) => t.tone === 'info' && t.title === expected)).toBe(true);
+    });
+  });
+
   it('菜单里挑哪个 agent，就按哪个 agent 新建', async () => {
     mocks.getTools.mockResolvedValue([toolClaude, toolCodex]);
     mocks.openWorkspace.mockResolvedValue({ Kind: 'terminal', Terminal: term });

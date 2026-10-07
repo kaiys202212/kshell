@@ -12,7 +12,7 @@ const subTabActive = TAB_ACTIVE;
 
 /** 本地 shell 按出现顺序编号；SSH 用连接名。 */
 export function toolTermLabel(terms: TerminalInfo[], target: TerminalInfo, t: TFunction): string {
-  if (target.Kind === 'ssh') return target.Title || 'SSH';
+  if (target.Kind === 'ssh') return target.Title || t('ui.terminal.ssh_label');
   const shells = terms.filter((x) => x.Kind === 'shell');
   const idx = shells.findIndex((x) => x.ID === target.ID);
   return idx <= 0 ? t('ui.terminal.label') : t('ui.terminal.label_n', { n: idx + 1 });

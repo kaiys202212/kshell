@@ -80,7 +80,7 @@ export default function PdfPreview({ wsPath, path }: PdfPreviewProps) {
       docRef.current = null;
       if (task) void task.destroy();
     };
-  }, [wsPath, path]);
+  }, [wsPath, path, t]);
 
   const renderPage = useCallback(async (pageNum: number, gen: number) => {
     const doc = docRef.current;

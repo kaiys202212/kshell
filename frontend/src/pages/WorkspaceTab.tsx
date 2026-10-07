@@ -27,7 +27,7 @@ import type { Session, SshConnection, TerminalInfo, ToolInfo } from '../lib/api'
 import { encodeTerminalInput } from '../lib/base64';
 import { appendChatInput } from '../lib/chatInputRegistry';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
-import { backendError } from '../lib/errors';
+import { backendError, translateBackend } from '../lib/errors';
 import { badgeFor } from '../lib/toolBadge';
 import { cn } from '../lib/cn';
 import { displayTitle } from '../lib/title';
@@ -229,7 +229,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             useAppStore.getState().upsertTerminal(res.Terminal);
             selectCenterTab(res.Terminal.ID);
           }
-          if (res.Fallback) notify(tr('ui.workspace.fallback', { reason: res.Fallback }), 'info');
+          if (res.Fallback) notify(tr('ui.workspace.fallback', { reason: translateBackend(res.Fallback) }), 'info');
         })
         .catch((e: unknown) => {
           notify(tr('ui.workspace.open_session_failed', { err: backendError(e) }), 'error');
@@ -277,7 +277,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         useAppStore.getState().upsertTerminal(res.Terminal);
         selectCenterTab(res.Terminal.ID);
       }
-      if (res.Fallback) notify(tr('ui.workspace.fallback', { reason: res.Fallback }), 'info');
+      if (res.Fallback) notify(tr('ui.workspace.fallback', { reason: translateBackend(res.Fallback) }), 'info');
       // 新会话要过一会儿才落进工具自己的会话存储；按退避多扫几次，避免单次过早/撞车
       for (const tid of rescanTimers.current) window.clearTimeout(tid);
       rescanTimers.current = NEW_SESSION_RESCAN_DELAYS_MS.map((delay) =>

@@ -382,7 +382,8 @@
       "label_n": "终端 {{n}}",
       "exited_hint": "会话已退出",
       "exited_code": "会话已退出（退出码 {{code}}）",
-      "drop_hint": "松开插入文件路径"
+      "drop_hint": "松开插入文件路径",
+      "ssh_label": "SSH"
     },
     "git": {
       "read_failed": "读取 git 失败：{{err}}",

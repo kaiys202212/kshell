@@ -114,7 +114,7 @@ export default function GitPanel({
     } catch (e) {
       notify(t('ui.git.read_failed', { err: backendError(e) }), 'error');
     }
-  }, [wsPath, repoRel, notify]);
+  }, [wsPath, repoRel, notify, t]);
 
   const loadLog = useCallback(async () => {
     const seq = ++logReq.current;

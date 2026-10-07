@@ -382,7 +382,8 @@
       "label_n": "Terminal {{n}}",
       "exited_hint": "Session exited",
       "exited_code": "Session exited (code {{code}})",
-      "drop_hint": "Release to insert the file path"
+      "drop_hint": "Release to insert the file path",
+      "ssh_label": "SSH"
     },
     "git": {
       "read_failed": "Failed to read git: {{err}}",

@@ -43,7 +43,7 @@ export default function ImagePreview({ wsPath, path }: ImagePreviewProps) {
     return () => {
       cancelled = true;
     };
-  }, [wsPath, path]);
+  }, [wsPath, path, t]);
 
   if (error) {
     return <p className="p-3 text-sm text-destructive">{error}</p>;
