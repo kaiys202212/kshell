@@ -264,7 +264,7 @@ describe('App', () => {
       CanPurge: false,
     });
     render(<App />);
-    expect(await screen.findByRole('dialog')).toHaveTextContent('检测本机 Agent 工具');
+    expect(await screen.findByRole('dialog')).toHaveTextContent(tt('ui.agent_setup.title'));
   });
 
   it('terminal:meta 立刻更新页签标题', async () => {
@@ -302,7 +302,7 @@ describe('App', () => {
     expect(pane('home').className).not.toContain('hidden');
     expect(pane('settings').className).toContain('hidden');
 
-    fireEvent.click(screen.getByRole('button', { name: '设置' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.titlebar.settings') }));
     await waitFor(() => {
       expect(useAppStore.getState().activeTabId).toBe(SETTINGS_TAB_ID);
     });
@@ -317,7 +317,7 @@ describe('App', () => {
       'page',
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '首页' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.titlebar.home') }));
     expect(useAppStore.getState().activeTabId).toBeNull();
     expect(pane('home').className).not.toContain('hidden');
   });
@@ -328,7 +328,7 @@ describe('App', () => {
     // 工作区页签内的文件面板可见（空工作区仍有虚拟根，不再用整页空态文案）
     expect(await screen.findByRole('tree', { name: tt('ui.files.tree_aria') })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '首页' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.titlebar.home') }));
     expect(pane('home').className).not.toContain('hidden');
     // 工作区页签内容没有卸载（只是 hidden），文件面板仍在 DOM 里
     expect(pane('D:\\proj-a').className).toContain('hidden');
@@ -389,7 +389,9 @@ describe('App', () => {
     });
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: '关闭 proj-a' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: tt('ui.titlebar.close_tab').replace('{{name}}', 'proj-a') }),
+    );
 
     expect(useAppStore.getState().openTabs).toHaveLength(0);
     expect(useAppStore.getState().terminals).toHaveLength(0);
@@ -401,8 +403,8 @@ describe('App', () => {
     render(<App />);
 
     fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
-    expect(screen.getByLabelText('搜索页签或工作区')).toBeInTheDocument();
-    expect(screen.getByText('暂无工作区，请先在首页完成扫描')).toBeInTheDocument();
+    expect(screen.getByLabelText(tt('ui.switcher.search_aria'))).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.switcher.empty_all'))).toBeInTheDocument();
   });
 
   it('Ctrl+F 仅在工作区页签内派发 kshell:focus-search（首页/设置页不派发）', () => {
@@ -620,14 +622,19 @@ describe('App', () => {
     act(() => {
       avail?.({ Latest: 'v0.2.0', Available: true, Current: 'v0.1.0', Notes: '' });
     });
-    expect(screen.getByRole('heading', { name: /发现新版本 v0\.2\.0/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', {
+        name: tt('ui.update_prompt.title').replace('{{version}}', 'v0.2.0'),
+      }),
+    ).toBeInTheDocument();
     expect(useAppStore.getState().toasts.some((t) => t.title.includes('设置'))).toBe(false);
-    fireEvent.click(screen.getByRole('button', { name: '稍后' }));
-    expect(screen.queryByRole('heading', { name: /发现新版本/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.update_prompt.later') }));
+    const updateHeading = (n: string) => n.startsWith(tt('ui.update_prompt.title').split('{{')[0]);
+    expect(screen.queryByRole('heading', { name: updateHeading })).not.toBeInTheDocument();
     act(() => {
       avail?.({ Latest: 'v0.2.0', Available: true, Current: 'v0.1.0', Notes: '' });
     });
-    expect(screen.queryByRole('heading', { name: /发现新版本/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: updateHeading })).not.toBeInTheDocument();
   });
 
   it('升级弹窗立即升级调用 applyUpdate', async () => {
@@ -641,7 +648,7 @@ describe('App', () => {
     act(() => {
       avail?.({ Latest: 'v0.2.0', Available: true });
     });
-    fireEvent.click(screen.getByRole('button', { name: '立即升级' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.update_prompt.upgrade') }));
     await waitFor(() => expect(mocks.applyUpdate).toHaveBeenCalledTimes(1));
   });
 

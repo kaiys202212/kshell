@@ -186,12 +186,12 @@ describe('SessionList', () => {
     expect(screen.queryByText('重构登录页')).not.toBeInTheDocument();
 
     // AND 叠加：Codex + 关键词「白名单」→ 无匹配（关键词命中的是 CodeBuddy 会话）
-    fireEvent.change(screen.getByLabelText('过滤会话'), { target: { value: '白名单' } });
+    fireEvent.change(screen.getByLabelText(tt('ui.session_list.search_aria')), { target: { value: '白名单' } });
     expect(screen.getByText(tt('ui.session_list.no_match'))).toBeInTheDocument();
 
     // 点「全部」并清空关键词恢复
     fireEvent.click(screen.getByRole('button', { name: tt('ui.session_list.all') }));
-    fireEvent.change(screen.getByLabelText('过滤会话'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText(tt('ui.session_list.search_aria')), { target: { value: '' } });
     expect(screen.getByText('修复上传白名单')).toBeInTheDocument();
     expect(screen.getByText('清理构建缓存')).toBeInTheDocument();
   });
@@ -200,7 +200,7 @@ describe('SessionList', () => {
     renderList();
     await findRow('清理构建缓存');
 
-    const input = screen.getByLabelText('过滤会话');
+    const input = screen.getByLabelText(tt('ui.session_list.search_aria'));
 
     // 按标题过滤
     fireEvent.change(input, { target: { value: '白名单' } });

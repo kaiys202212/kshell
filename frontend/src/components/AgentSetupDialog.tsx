@@ -1,6 +1,7 @@
 // 桌面端首次启动：扫描内置 Agent 并支持勾选后串行一键安装。可跳过，只自动弹一次。
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   dismissAgentSetup,
   getToolInstallRecipe,
@@ -11,11 +12,13 @@ import {
   onToolInstallLog,
 } from '../lib/api';
 import type { InstallRecipeView, ToolInfo } from '../lib/api';
+import { backendError, translateBackend } from '../lib/errors';
 import { useAppStore } from '../state/store';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 
 export default function AgentSetupDialog() {
+  const { t } = useTranslation();
   const notify = useAppStore((s) => s.notify);
   const [open, setOpen] = useState(false);
   const [tools, setTools] = useState<ToolInfo[]>([]);
@@ -71,7 +74,7 @@ export default function AgentSetupDialog() {
     try {
       await dismissAgentSetup();
     } catch (e: unknown) {
-      notify(e instanceof Error ? e.message : String(e), 'error');
+      notify(backendError(e), 'error');
     }
     setOpen(false);
   };
@@ -83,7 +86,8 @@ export default function AgentSetupDialog() {
     setLog('');
     const offLog = onToolInstallLog((p) => {
       setActiveId(p.toolID);
-      setLog((prev) => (prev ? `${prev}\n${p.text}` : p.text));
+      const text = translateBackend(p.text);
+      setLog((prev) => (prev ? `${prev}\n${text}` : text));
     });
     try {
       for (const id of selectedIds) {
@@ -100,11 +104,16 @@ export default function AgentSetupDialog() {
           await installBuiltinTool(id);
           const result = await done;
           if (!result.ok) {
-            notify(result.error || `${id} 安装失败`, 'error');
+            notify(
+              result.error
+                ? translateBackend(result.error)
+                : t('ui.agent_setup.tool_install_failed', { id }),
+              'error',
+            );
           }
         } catch (e: unknown) {
           offDone();
-          notify(e instanceof Error ? e.message : String(e), 'error');
+          notify(backendError(e), 'error');
         }
       }
     } finally {
@@ -119,37 +128,37 @@ export default function AgentSetupDialog() {
   return (
     <Dialog open={open} onOpenChange={() => {}} dismissible={false} className="w-[28rem] max-w-[90vw]">
       <DialogPrimitive.Title className="text-sm font-medium">
-        检测本机 Agent 工具
+        {t('ui.agent_setup.title')}
       </DialogPrimitive.Title>
       <p className="mt-1 text-xs text-muted-foreground">
-        勾选未安装的工具后可一键安装。也可跳过，之后在设置中安装。
+        {t('ui.agent_setup.hint')}
       </p>
       <ul className="mt-3 max-h-64 divide-y divide-border overflow-auto rounded border border-border">
-        {tools.map((t) => {
-          const canInstall = !t.BinPath && !!recipes[t.ID];
+        {tools.map((tool) => {
+          const canInstall = !tool.BinPath && !!recipes[tool.ID];
           return (
-            <li key={t.ID} className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs">
+            <li key={tool.ID} className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs">
               {canInstall ? (
                 <label className="flex min-w-0 items-center gap-2">
                   <input
                     type="checkbox"
-                    checked={!!selected[t.ID]}
+                    checked={!!selected[tool.ID]}
                     disabled={installing}
-                    aria-label={t.Name}
+                    aria-label={tool.Name}
                     onChange={(e) =>
-                      setSelected((prev) => ({ ...prev, [t.ID]: e.target.checked }))
+                      setSelected((prev) => ({ ...prev, [tool.ID]: e.target.checked }))
                     }
                   />
-                  <span className="font-medium">{t.Name}</span>
-                  <span className="text-muted-foreground">未安装</span>
+                  <span className="font-medium">{tool.Name}</span>
+                  <span className="text-muted-foreground">{t('ui.agent_setup.not_installed')}</span>
                 </label>
               ) : (
                 <div className="flex min-w-0 items-center gap-2">
-                  <span className="font-medium">{t.Name}</span>
-                  {t.BinPath ? (
-                    <span className="text-muted-foreground">已安装</span>
+                  <span className="font-medium">{tool.Name}</span>
+                  {tool.BinPath ? (
+                    <span className="text-muted-foreground">{t('ui.agent_setup.installed')}</span>
                   ) : (
-                    <span className="text-muted-foreground">未安装（需手动）</span>
+                    <span className="text-muted-foreground">{t('ui.agent_setup.not_installed_manual')}</span>
                   )}
                 </div>
               )}
@@ -159,20 +168,20 @@ export default function AgentSetupDialog() {
       </ul>
       {installing && (
         <pre className="mt-2 max-h-28 overflow-auto rounded bg-muted p-2 font-mono text-[11px] text-muted-foreground">
-          {activeName ? `正在安装 ${activeName}…\n` : ''}
+          {activeName ? t('ui.agent_setup.installing_n', { name: activeName }) : ''}
           {log}
         </pre>
       )}
       <div className="mt-3 flex justify-end gap-2">
         <Button type="button" variant="secondary" disabled={installing} onClick={() => void closeAfterDismiss()}>
-          跳过
+          {t('ui.agent_setup.skip')}
         </Button>
         <Button
           type="button"
           disabled={installing || selectedIds.length === 0}
           onClick={() => void handleInstall()}
         >
-          {installing ? '安装中…' : '一键安装'}
+          {installing ? t('ui.agent_setup.installing') : t('ui.agent_setup.install_all')}
         </Button>
       </div>
     </Dialog>

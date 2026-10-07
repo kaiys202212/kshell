@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AgentSetupDialog from './AgentSetupDialog';
 import type { InstallRecipeView, ToolInfo } from '../lib/api';
+import { tt } from '../test/i18n';
 
 const mocks = vi.hoisted(() => ({
   needsAgentSetup: vi.fn(),
@@ -114,7 +115,7 @@ describe('AgentSetupDialog', () => {
     render(<AgentSetupDialog />);
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText('Claude Code')).toBeInTheDocument();
-    expect(screen.getByText('已安装')).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.agent_setup.installed'))).toBeInTheDocument();
     const gemini = screen.getByRole('checkbox', { name: /Gemini CLI/ });
     const opencode = screen.getByRole('checkbox', { name: /OpenCode/ });
     expect(gemini).toBeChecked();
@@ -124,7 +125,7 @@ describe('AgentSetupDialog', () => {
 
   it('点跳过调用 DismissAgentSetup 并关闭', async () => {
     render(<AgentSetupDialog />);
-    fireEvent.click(await screen.findByRole('button', { name: '跳过' }));
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.agent_setup.skip') }));
     await waitFor(() => {
       expect(mocks.dismissAgentSetup).toHaveBeenCalled();
     });
@@ -160,7 +161,7 @@ describe('AgentSetupDialog', () => {
       });
     });
     render(<AgentSetupDialog />);
-    fireEvent.click(await screen.findByRole('button', { name: '一键安装' }));
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.agent_setup.install_all') }));
     await waitFor(() => {
       expect(order).toEqual(['start:gemini']);
     });

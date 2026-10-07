@@ -4,6 +4,8 @@
 // 命令执行走 ExecRemote（非交互）：非 0 退出码不是异常，结果里带 ExitCode。
 import { useEffect, useState } from 'react';
 import type { KeyboardEvent } from 'react';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import {
   deleteConnection,
@@ -12,6 +14,7 @@ import {
   upsertConnection,
 } from '../lib/api';
 import type { RemoteResult, SshConnection } from '../lib/api';
+import { backendError } from '../lib/errors';
 import { formatDuration, tailLines } from '../lib/format';
 import { LIST_ROW_ACTIVE } from '../lib/ui';
 import { cn } from '../lib/cn';
@@ -26,17 +29,10 @@ const OUTPUT_TAIL_LINES = 50;
 const HISTORY_LIMIT = 20;
 const HISTORY_CHIPS = 5;
 
-const SOURCE_LABELS: Record<string, string> = {
-  sshconfig: 'ssh 配置',
-  env: '环境变量',
-  spring: 'Spring 配置',
-  deploy: '部署脚本',
-  docs: '文档',
-  manual: '手动',
-};
+const SOURCE_KEYS = ['sshconfig', 'env', 'spring', 'deploy', 'docs', 'manual'];
 
-function sourceLabel(source: string): string {
-  return SOURCE_LABELS[source] ?? source;
+function sourceLabel(source: string, t: TFunction): string {
+  return SOURCE_KEYS.includes(source) ? t(`ui.ssh.source_${source}`) : source;
 }
 
 function display(c: SshConnection): string {
@@ -81,6 +77,7 @@ export default function SshPanel({
   wsPath: string;
   onOpenRemote?: (c: SshConnection) => void;
 }) {
+  const { t } = useTranslation();
   const [conns, setConns] = useState<SshConnection[] | null>(null);
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState('');
@@ -106,7 +103,7 @@ export default function SshPanel({
         setSelectedId((cur) => cur || list[0]?.ID || '');
       })
       .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) setError(backendError(e));
       });
     return () => {
       cancelled = true;
@@ -128,7 +125,7 @@ export default function SshPanel({
   const handleSaveOnce = async () => {
     const host = form.Host.trim();
     if (!host) {
-      setFormError('主机不能为空');
+      setFormError(t('ui.ssh.host_required'));
       return;
     }
     const port = Number(form.Port) || 22;
@@ -153,7 +150,7 @@ export default function SshPanel({
       setConns(list);
       setSelectedId(saved.ID);
     } catch (e: unknown) {
-      setFormError(e instanceof Error ? e.message : String(e));
+      setFormError(backendError(e));
     } finally {
       setSaving(false);
     }
@@ -170,7 +167,7 @@ export default function SshPanel({
       setConns(list);
       setSelectedId((cur) => (cur === form.ID ? list[0]?.ID || '' : cur));
     } catch (e: unknown) {
-      setFormError(e instanceof Error ? e.message : String(e));
+      setFormError(backendError(e));
     } finally {
       setSaving(false);
     }
@@ -188,7 +185,7 @@ export default function SshPanel({
       const res = await execRemote(selectedId, command);
       setResult(res);
     } catch (e: unknown) {
-      setExecError(e instanceof Error ? e.message : String(e));
+      setExecError(backendError(e));
     } finally {
       setRunning(false);
     }
@@ -214,7 +211,7 @@ export default function SshPanel({
   }
   if (conns === null) {
     return (
-      <div className="flex flex-col gap-2" aria-label="SSH 连接列表加载中">
+      <div className="flex flex-col gap-2" aria-label={t('ui.ssh.loading_aria')}>
         <Skeleton className="h-12 rounded border border-border" />
         <Skeleton className="h-12 rounded border border-border" />
         <Skeleton className="h-12 rounded border border-border" />
@@ -229,16 +226,16 @@ export default function SshPanel({
   return (
     <div className="flex flex-col gap-2.5 text-sm">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-muted-foreground">双击打开远程终端</span>
+        <span className="text-xs text-muted-foreground">{t('ui.ssh.double_click_hint')}</span>
         <Button size="sm" variant="secondary" onClick={openNew}>
-          新建
+          {t('ui.ssh.new')}
         </Button>
       </div>
 
       {conns.length === 0 ? (
-        <EmptyState title="没有可用的 SSH 连接" />
+        <EmptyState title={t('ui.ssh.empty')} />
       ) : (
-        <ul aria-label="SSH 连接列表" className="m-0 flex list-none flex-col gap-1.5 p-0">
+        <ul aria-label={t('ui.ssh.list_aria')} className="m-0 flex list-none flex-col gap-1.5 p-0">
           {conns.map((c) => (
             <li
               key={c.ID}
@@ -249,7 +246,7 @@ export default function SshPanel({
               onDoubleClick={() => {
                 setSelectedId(c.ID);
                 if (onOpenRemote) onOpenRemote(c);
-                else notify('未绑定远程终端打开回调', 'error');
+                else notify(t('ui.ssh.no_open_callback'), 'error');
               }}
             >
               <div className="flex min-w-0 items-center gap-1.5">
@@ -266,7 +263,7 @@ export default function SshPanel({
                   className="ml-auto shrink-0"
                   onClick={() => openEdit(c)}
                 >
-                  编辑
+                  {t('ui.ssh.edit')}
                 </Button>
               </div>
               <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
@@ -275,7 +272,7 @@ export default function SshPanel({
                   className="shrink-0 rounded-sm border border-border px-1.5 py-px font-mono text-[10px]"
                   title={c.SourceFile || undefined}
                 >
-                  {sourceLabel(c.Source)}
+                  {sourceLabel(c.Source, t)}
                 </span>
                 {c.Verified && <span className="shrink-0 text-success">✓</span>}
               </div>
@@ -290,8 +287,8 @@ export default function SshPanel({
             <Input
               size="sm"
               className="min-w-0 flex-1"
-              aria-label="执行命令"
-              placeholder={`在 ${selected.Name} 上执行命令`}
+              aria-label={t('ui.ssh.exec_aria')}
+              placeholder={t('ui.ssh.exec_placeholder', { name: selected.Name })}
               value={cmd}
               onChange={(e) => setCmd(e.target.value)}
               onKeyDown={(e) => {
@@ -308,11 +305,11 @@ export default function SshPanel({
               onClick={() => void handleExec()}
               disabled={running || !cmd.trim()}
             >
-              执行
+              {t('ui.ssh.exec')}
             </Button>
           </div>
           {history.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5" aria-label="命令历史">
+            <div className="flex flex-wrap items-center gap-1.5" aria-label={t('ui.ssh.history_aria')}>
               {history.slice(0, HISTORY_CHIPS).map((c) => (
                 <button
                   key={c}
@@ -328,13 +325,13 @@ export default function SshPanel({
               ))}
               <button
                 className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-                aria-label="清空命令历史"
+                aria-label={t('ui.ssh.clear_history_aria')}
                 onClick={() => {
                   setHistory([]);
                   setHistoryIdx(-1);
                 }}
               >
-                清空
+                {t('ui.ssh.clear')}
               </button>
             </div>
           )}
@@ -342,18 +339,21 @@ export default function SshPanel({
           {result && (
             <>
               <p className="text-xs text-muted-foreground">
-                退出码 {result.ExitCode} · 耗时 {formatDuration(result.Duration)}
+                {t('ui.ssh.exit_summary', {
+                  code: result.ExitCode,
+                  duration: formatDuration(result.Duration),
+                })}
               </p>
               <pre
                 className="max-h-80 overflow-auto rounded bg-muted p-2.5 font-mono text-xs leading-[1.5] whitespace-pre-wrap"
-                aria-label="命令输出"
+                aria-label={t('ui.ssh.stdout_aria')}
               >
-                {stdoutTail || '（无输出）'}
+                {stdoutTail || t('ui.ssh.no_output')}
               </pre>
               {stderrTail && (
                 <pre
                   className="max-h-80 overflow-auto rounded bg-muted p-2.5 font-mono text-xs leading-[1.5] whitespace-pre-wrap text-destructive/90"
-                  aria-label="错误输出"
+                  aria-label={t('ui.ssh.stderr_aria')}
                 >
                   {stderrTail}
                 </pre>
@@ -365,41 +365,41 @@ export default function SshPanel({
 
       <Dialog open={formOpen} onOpenChange={setFormOpen} className="w-[min(92vw,22rem)]">
         <DialogPrimitive.Title className="mb-2 text-sm font-medium">
-          {form.ID ? '编辑 SSH 连接' : '新建 SSH 连接'}
+          {form.ID ? t('ui.ssh.edit_title') : t('ui.ssh.new_title')}
         </DialogPrimitive.Title>
         <div className="flex flex-col gap-2">
           <Input
             size="sm"
-            aria-label="连接名称"
-            placeholder="名称"
+            aria-label={t('ui.ssh.name_aria')}
+            placeholder={t('ui.ssh.name_placeholder')}
             value={form.Name}
             onChange={(e) => setForm((f) => ({ ...f, Name: e.target.value }))}
           />
           <Input
             size="sm"
-            aria-label="主机"
-            placeholder="主机（必填）"
+            aria-label={t('ui.ssh.host_aria')}
+            placeholder={t('ui.ssh.host_placeholder')}
             value={form.Host}
             onChange={(e) => setForm((f) => ({ ...f, Host: e.target.value }))}
           />
           <Input
             size="sm"
-            aria-label="用户名"
-            placeholder="用户名"
+            aria-label={t('ui.ssh.user_aria')}
+            placeholder={t('ui.ssh.user_placeholder')}
             value={form.User}
             onChange={(e) => setForm((f) => ({ ...f, User: e.target.value }))}
           />
           <Input
             size="sm"
-            aria-label="端口"
-            placeholder="端口"
+            aria-label={t('ui.ssh.port_aria')}
+            placeholder={t('ui.ssh.port_placeholder')}
             value={form.Port}
             onChange={(e) => setForm((f) => ({ ...f, Port: e.target.value }))}
           />
           <Input
             size="sm"
-            aria-label="私钥路径"
-            placeholder="私钥路径（如 C:\\Users\\me\\.ssh\\id_ed25519）"
+            aria-label={t('ui.ssh.key_aria')}
+            placeholder={t('ui.ssh.key_placeholder')}
             value={form.IdentityFile}
             onChange={(e) => setForm((f) => ({ ...f, IdentityFile: e.target.value }))}
           />
@@ -407,14 +407,14 @@ export default function SshPanel({
           <div className="mt-1 flex justify-end gap-2">
             {form.ID && (
               <Button size="sm" variant="secondary" disabled={saving} onClick={() => void handleDelete()}>
-                删除
+                {t('ui.ssh.delete')}
               </Button>
             )}
             <Button size="sm" variant="secondary" onClick={() => setFormOpen(false)}>
-              取消
+              {t('ui.ssh.cancel')}
             </Button>
             <Button size="sm" disabled={saving} onClick={() => void handleSaveOnce()}>
-              保存
+              {t('ui.ssh.save')}
             </Button>
           </div>
         </div>

@@ -1,4 +1,5 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog';
+import { useTranslation } from 'react-i18next';
 import type { UpdateInfo } from '../lib/api';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
@@ -12,11 +13,14 @@ interface Props {
 }
 
 export default function UpdatePrompt({ info, busy, error, onLater, onUpgrade }: Props) {
+  const { t } = useTranslation();
   return (
     <Dialog open onOpenChange={(next) => { if (!next && !busy) onLater(); }} className="w-[min(92vw,24rem)]">
-      <DialogPrimitive.Title className="mb-1 text-sm font-medium">发现新版本 {info.Latest}</DialogPrimitive.Title>
+      <DialogPrimitive.Title className="mb-1 text-sm font-medium">
+        {t('ui.update_prompt.title', { version: info.Latest })}
+      </DialogPrimitive.Title>
       <p className="mb-3 text-xs leading-5 text-muted-foreground">
-        当前 {info.Current || '未知'}。稍后则本会话不再提醒，下次启动仍会检查。
+        {t('ui.update_prompt.body', { current: info.Current || t('ui.update_prompt.unknown') })}
       </p>
       {info.Notes ? (
         <pre className="mb-3 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-xs">
@@ -26,10 +30,10 @@ export default function UpdatePrompt({ info, busy, error, onLater, onUpgrade }: 
       {error ? <p className="mb-3 text-xs text-destructive">{error}</p> : null}
       <div className="flex justify-end gap-2">
         <Button variant="ghost" size="sm" disabled={busy} onClick={onLater}>
-          稍后
+          {t('ui.update_prompt.later')}
         </Button>
         <Button size="sm" disabled={busy} onClick={onUpgrade}>
-          {busy ? '升级中…' : '立即升级'}
+          {busy ? t('ui.update_prompt.upgrading') : t('ui.update_prompt.upgrade')}
         </Button>
       </div>
     </Dialog>

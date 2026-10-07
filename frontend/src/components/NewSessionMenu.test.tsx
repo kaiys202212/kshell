@@ -7,6 +7,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolInfo } from '../lib/api';
 import NewSessionMenu from './NewSessionMenu';
+import { tt } from '../test/i18n';
 
 afterEach(cleanup);
 
@@ -45,7 +46,7 @@ function setup(overrides: Partial<ComponentProps<typeof NewSessionMenu>> = {}) {
 describe('NewSessionMenu', () => {
   it('触发器就是「新建会话」按钮（下拉箭头 + aria-haspopup=menu），默认收起', () => {
     const { trigger } = setup();
-    expect(trigger).toHaveTextContent('新建会话');
+    expect(trigger).toHaveTextContent(tt('ui.new_session.title'));
     expect(trigger).toHaveAttribute('aria-haspopup', 'menu');
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
@@ -55,12 +56,12 @@ describe('NewSessionMenu', () => {
     setup({ value: 'claude' });
     expect(screen.getByRole('button', { expanded: false })).toHaveAttribute(
       'title',
-      '新建会话（上次用 Claude Code）',
+      tt('ui.new_session.title_with_last').replace('{{name}}', 'Claude Code'),
     );
 
     cleanup();
     setup({ value: '' });
-    expect(screen.getByRole('button', { expanded: false })).toHaveAttribute('title', '新建会话');
+    expect(screen.getByRole('button', { expanded: false })).toHaveAttribute('title', tt('ui.new_session.title'));
   });
 
   it('展开后列出「自动」与全部工具，上次使用项 aria-checked=true 并带版本小字', () => {
@@ -71,7 +72,7 @@ describe('NewSessionMenu', () => {
     const items = screen.getAllByRole('menuitemradio');
     // 首项固定是「自动（该工作区最常用）」，其后是全部可用工具
     expect(items).toHaveLength(3);
-    expect(items[0]).toHaveTextContent('自动');
+    expect(items[0]).toHaveTextContent(tt('ui.new_session.auto'));
     expect(screen.getByRole('menuitemradio', { name: /Claude Code/ })).toHaveAttribute(
       'aria-checked',
       'true',
@@ -100,7 +101,7 @@ describe('NewSessionMenu', () => {
     const { onChange, onSelect } = setup({ value: 'claude' });
 
     fireEvent.click(screen.getByRole('button', { expanded: false }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: /自动/ }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: tt('ui.new_session.auto') }));
 
     expect(onChange).toHaveBeenCalledWith('');
     expect(onSelect).toHaveBeenCalledWith('');
@@ -133,7 +134,7 @@ describe('NewSessionMenu', () => {
     const { trigger } = setup({ disabled: true });
 
     expect(trigger).toBeDisabled();
-    expect(trigger).toHaveTextContent('启动中…');
+    expect(trigger).toHaveTextContent(tt('ui.new_session.starting'));
     fireEvent.click(trigger);
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
@@ -141,7 +142,7 @@ describe('NewSessionMenu', () => {
   it('tools 为空时显示「无可用工具」并禁用，不崩', () => {
     setup({ tools: [] });
 
-    const trigger = screen.getByRole('button', { name: /无可用工具/ });
+    const trigger = screen.getByRole('button', { name: tt('ui.new_session.no_tools') });
     expect(trigger).toBeDisabled();
     fireEvent.click(trigger);
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();

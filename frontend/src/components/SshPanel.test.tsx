@@ -4,7 +4,14 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SshPanel from './SshPanel';
 import type { RemoteResult, SshConnection } from '../lib/api';
+import { formatDuration } from '../lib/format';
 import { useAppStore } from '../state/store';
+import { tt } from '../test/i18n';
+
+const exitSummary = (code: number, ns: number) =>
+  tt('ui.ssh.exit_summary')
+    .replace('{{code}}', String(code))
+    .replace('{{duration}}', formatDuration(ns));
 
 const mocks = vi.hoisted(() => ({
   listConnections: vi.fn(),
@@ -73,19 +80,19 @@ describe('SshPanel', () => {
 
     const row1 = await findRow('生产机');
     expect(within(row1).getByText('root@10.0.0.1')).toBeInTheDocument();
-    const src1 = within(row1).getByText('ssh 配置');
+    const src1 = within(row1).getByText(tt('ui.ssh.source_sshconfig'));
     expect(src1).toHaveAttribute('title', 'C:\\Users\\me\\.ssh\\config');
     expect(within(row1).getByText('✓')).toBeInTheDocument();
 
     const row2 = await findRow('跳板机');
     expect(within(row2).getByText('jump.example.com:2222')).toBeInTheDocument();
-    expect(within(row2).getByText('部署脚本')).toBeInTheDocument();
+    expect(within(row2).getByText(tt('ui.ssh.source_deploy'))).toBeInTheDocument();
   });
 
   it('没有连接时给空态文案', async () => {
     mocks.listConnections.mockResolvedValue([]);
     render(<SshPanel wsPath="D:\\proj-a" />);
-    expect(await screen.findByText('没有可用的 SSH 连接')).toBeInTheDocument();
+    expect(await screen.findByText(tt('ui.ssh.empty'))).toBeInTheDocument();
   });
 
   it('列表加载中显示骨架屏', () => {
@@ -111,11 +118,11 @@ describe('SshPanel', () => {
   it('点「编辑」打开表单并可保存', async () => {
     render(<SshPanel wsPath="D:\\proj-a" />);
     const row = await findRow('生产机');
-    fireEvent.click(within(row).getByRole('button', { name: '编辑' }));
-    expect(await screen.findByText('编辑 SSH 连接')).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'ops' } });
+    fireEvent.click(within(row).getByRole('button', { name: tt('ui.ssh.edit') }));
+    expect(await screen.findByText(tt('ui.ssh.edit_title'))).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(tt('ui.ssh.user_aria')), { target: { value: 'ops' } });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '保存' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.ssh.save') }));
     });
     expect(mocks.upsertConnection).toHaveBeenCalledWith(
       expect.objectContaining({ ID: 'c1', User: 'ops', Host: '10.0.0.1' }),
@@ -125,12 +132,12 @@ describe('SshPanel', () => {
   it('点「新建」保存时 Source 走手动且绑定工作区', async () => {
     render(<SshPanel wsPath="D:\\proj-a" />);
     await findRow('生产机');
-    fireEvent.click(screen.getByRole('button', { name: '新建' }));
-    expect(await screen.findByText('新建 SSH 连接')).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('主机'), { target: { value: '10.0.0.9' } });
-    fireEvent.change(screen.getByLabelText('连接名称'), { target: { value: '手动机' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.ssh.new') }));
+    expect(await screen.findByText(tt('ui.ssh.new_title'))).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(tt('ui.ssh.host_aria')), { target: { value: '10.0.0.9' } });
+    fireEvent.change(screen.getByLabelText(tt('ui.ssh.name_aria')), { target: { value: '手动机' } });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '保存' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.ssh.save') }));
     });
     expect(mocks.upsertConnection).toHaveBeenCalled();
     const arg = mocks.upsertConnection.mock.calls[0][0] as SshConnection;
@@ -148,17 +155,17 @@ describe('SshPanel', () => {
     render(<SshPanel wsPath="D:\\proj-a" />);
     await findRow('生产机');
 
-    fireEvent.change(screen.getByLabelText('执行命令'), {
+    fireEvent.change(screen.getByLabelText(tt('ui.ssh.exec_aria')), {
       target: { value: 'uname -a' },
     });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '执行' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.ssh.exec') }));
     });
 
     expect(mocks.execRemote).toHaveBeenCalledWith('c1', 'uname -a');
-    const out = screen.getByLabelText('命令输出');
+    const out = screen.getByLabelText(tt('ui.ssh.stdout_aria'));
     expect(out.textContent).toContain('line-11');
-    expect(screen.getByText(/退出码 0/)).toBeInTheDocument();
+    expect(screen.getByText(exitSummary(0, 1_500_000_000))).toBeInTheDocument();
   });
 
   it('非 0 退出码展示 Stderr 尾部', async () => {
@@ -169,13 +176,13 @@ describe('SshPanel', () => {
     render(<SshPanel wsPath="D:\\proj-a" />);
     await findRow('生产机');
 
-    fireEvent.change(screen.getByLabelText('执行命令'), { target: { value: 'ls /nope' } });
+    fireEvent.change(screen.getByLabelText(tt('ui.ssh.exec_aria')), { target: { value: 'ls /nope' } });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '执行' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.ssh.exec') }));
     });
 
-    expect(screen.getByLabelText('错误输出').textContent).toContain('err-6');
-    expect(screen.getByText(/退出码 1/)).toBeInTheDocument();
+    expect(screen.getByLabelText(tt('ui.ssh.stderr_aria')).textContent).toContain('err-6');
+    expect(screen.getByText(exitSummary(1, 20_000_000))).toBeInTheDocument();
   });
 
   it('ExecRemote 调用失败时显示错误提示', async () => {
@@ -183,9 +190,9 @@ describe('SshPanel', () => {
     render(<SshPanel wsPath="D:\\proj-a" />);
     await findRow('生产机');
 
-    fireEvent.change(screen.getByLabelText('执行命令'), { target: { value: 'echo hi' } });
+    fireEvent.change(screen.getByLabelText(tt('ui.ssh.exec_aria')), { target: { value: 'echo hi' } });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '执行' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.ssh.exec') }));
     });
 
     expect(await screen.findByText(/连接超时/)).toBeInTheDocument();
@@ -194,15 +201,15 @@ describe('SshPanel', () => {
   it('命令历史：↑↓ 回填与 chip 清空', async () => {
     render(<SshPanel wsPath="D:\\proj-a" />);
     await findRow('生产机');
-    const input = screen.getByLabelText('执行命令') as HTMLInputElement;
+    const input = screen.getByLabelText(tt('ui.ssh.exec_aria')) as HTMLInputElement;
 
     fireEvent.change(input, { target: { value: 'uname -a' } });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '执行' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.ssh.exec') }));
     });
     fireEvent.change(input, { target: { value: 'uptime' } });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '执行' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.ssh.exec') }));
     });
 
     fireEvent.change(input, { target: { value: '' } });
@@ -211,8 +218,8 @@ describe('SshPanel', () => {
     fireEvent.keyDown(input, { key: 'ArrowUp' });
     expect(input.value).toBe('uname -a');
 
-    const hist = screen.getByLabelText('命令历史');
-    fireEvent.click(within(hist).getByRole('button', { name: '清空命令历史' }));
-    expect(screen.queryByLabelText('命令历史')).not.toBeInTheDocument();
+    const hist = screen.getByLabelText(tt('ui.ssh.history_aria'));
+    fireEvent.click(within(hist).getByRole('button', { name: tt('ui.ssh.clear_history_aria') }));
+    expect(screen.queryByLabelText(tt('ui.ssh.history_aria'))).not.toBeInTheDocument();
   });
 });

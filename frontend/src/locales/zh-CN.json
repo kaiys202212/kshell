@@ -279,6 +279,8 @@
     },
     "session_list": {
       "filter_aria": "按工具筛选",
+      "search_aria": "过滤会话",
+      "search_placeholder": "过滤会话（标题 / 工具名）",
       "all": "全部",
       "no_match": "没有匹配的会话",
       "empty": "该工作区暂无会话",
@@ -377,7 +379,10 @@
       "new_local": "新建本地终端",
       "empty_hint": "点 + 新建本地终端，或从右侧 SSH 打开远程会话",
       "label": "终端",
-      "label_n": "终端 {{n}}"
+      "label_n": "终端 {{n}}",
+      "exited_hint": "会话已退出",
+      "exited_code": "会话已退出（退出码 {{code}}）",
+      "drop_hint": "松开插入文件路径"
     },
     "git": {
       "read_failed": "读取 git 失败：{{err}}",
@@ -428,6 +433,97 @@
       "unstage_hunk": "取消暂存此块",
       "discard_hunk": "丢弃此块",
       "discard_hunk_confirm": "丢弃此 hunk？"
+    },
+    "ssh": {
+      "source_sshconfig": "ssh 配置",
+      "source_env": "环境变量",
+      "source_spring": "Spring 配置",
+      "source_deploy": "部署脚本",
+      "source_docs": "文档",
+      "source_manual": "手动",
+      "host_required": "主机不能为空",
+      "loading_aria": "SSH 连接列表加载中",
+      "double_click_hint": "双击打开远程终端",
+      "new": "新建",
+      "empty": "没有可用的 SSH 连接",
+      "list_aria": "SSH 连接列表",
+      "no_open_callback": "未绑定远程终端打开回调",
+      "edit": "编辑",
+      "exec_aria": "执行命令",
+      "exec_placeholder": "在 {{name}} 上执行命令",
+      "exec": "执行",
+      "history_aria": "命令历史",
+      "clear": "清空",
+      "clear_history_aria": "清空命令历史",
+      "exit_summary": "退出码 {{code}} · 耗时 {{duration}}",
+      "stdout_aria": "命令输出",
+      "no_output": "（无输出）",
+      "stderr_aria": "错误输出",
+      "edit_title": "编辑 SSH 连接",
+      "new_title": "新建 SSH 连接",
+      "name_aria": "连接名称",
+      "name_placeholder": "名称",
+      "host_aria": "主机",
+      "host_placeholder": "主机（必填）",
+      "user_aria": "用户名",
+      "user_placeholder": "用户名",
+      "port_aria": "端口",
+      "port_placeholder": "端口",
+      "key_aria": "私钥路径",
+      "key_placeholder": "私钥路径（如 C:\\Users\\me\\.ssh\\id_ed25519）",
+      "delete": "删除",
+      "cancel": "取消",
+      "save": "保存"
+    },
+    "switcher": {
+      "hint_tab": "页签",
+      "hint_workspace": "工作区",
+      "title": "快速切换",
+      "search_aria": "搜索页签或工作区",
+      "search_placeholder": "输入以过滤页签 / 工作区…",
+      "empty_all": "暂无工作区，请先在首页完成扫描",
+      "empty_no_match": "没有匹配项",
+      "section_tabs": "已打开的页签",
+      "section_workspaces": "工作区"
+    },
+    "titlebar": {
+      "tabs_aria": "页签",
+      "home": "首页",
+      "close_tab": "关闭 {{name}}",
+      "settings": "设置",
+      "minimize": "最小化",
+      "restore": "还原",
+      "maximize": "最大化",
+      "close": "关闭",
+      "close_window": "关闭窗口"
+    },
+    "agent_setup": {
+      "title": "检测本机 Agent 工具",
+      "hint": "勾选未安装的工具后可一键安装。也可跳过，之后在设置中安装。",
+      "not_installed": "未安装",
+      "installed": "已安装",
+      "not_installed_manual": "未安装（需手动）",
+      "installing_n": "正在安装 {{name}}…\n",
+      "skip": "跳过",
+      "installing": "安装中…",
+      "install_all": "一键安装",
+      "tool_install_failed": "{{id}} 安装失败"
+    },
+    "new_session": {
+      "title": "新建会话",
+      "title_with_last": "新建会话（上次用 {{name}}）",
+      "no_tools": "无可用工具",
+      "starting": "启动中…",
+      "menu_aria": "选择 agent 新建会话",
+      "auto": "自动（该工作区最常用）"
+    },
+    "update_prompt": {
+      "title": "发现新版本 {{version}}",
+      "body": "当前 {{current}}。稍后则本会话不再提醒，下次启动仍会检查。",
+      "unknown": "未知",
+      "later": "稍后",
+      "upgrading": "升级中…",
+      "upgrade": "立即升级"
     }
   }
 }

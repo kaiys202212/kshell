@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import QuickSwitcher from './QuickSwitcher';
 import type { Workspace } from '../lib/api';
 import { useAppStore } from '../state/store';
+import { tt } from '../test/i18n';
 
 const workspaces: Workspace[] = [
   {
@@ -40,13 +41,13 @@ describe('QuickSwitcher', () => {
   it('列出「已打开的页签」与「工作区」两组条目，输入按名称/路径过滤（大小写不敏感）', () => {
     render(<QuickSwitcher open onOpenChange={() => {}} />);
 
-    expect(screen.getByText('已打开的页签')).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.switcher.section_tabs'))).toBeInTheDocument();
     // 组标题是 <p>，列表项右侧的「工作区」标注是 <span>，用 selector 区分
-    expect(screen.getByText('工作区', { selector: 'p' })).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.switcher.section_workspaces'), { selector: 'p' })).toBeInTheDocument();
     expect(screen.getAllByText('proj-a').length).toBe(2); // 页签组 + 工作区组各一条
     expect(screen.getByText('lib-x')).toBeInTheDocument();
 
-    const input = screen.getByLabelText('搜索页签或工作区');
+    const input = screen.getByLabelText(tt('ui.switcher.search_aria'));
     fireEvent.change(input, { target: { value: 'LIB' } });
     expect(screen.queryByText('proj-a')).not.toBeInTheDocument();
     expect(screen.getByText('lib-x')).toBeInTheDocument();
@@ -55,7 +56,7 @@ describe('QuickSwitcher', () => {
   it('↑↓ 移动高亮，Enter 确认：工作区条目 openTab，页签条目仅 setActiveTab', async () => {
     const onOpenChange = vi.fn();
     render(<QuickSwitcher open onOpenChange={onOpenChange} />);
-    const input = screen.getByLabelText('搜索页签或工作区');
+    const input = screen.getByLabelText(tt('ui.switcher.search_aria'));
 
     // 初始高亮第 1 条（已开页签 proj-a）：Enter 只激活，不新增页签
     fireEvent.keyDown(input, { key: 'Enter' });
@@ -79,7 +80,7 @@ describe('QuickSwitcher', () => {
     useAppStore.setState({ openTabs: [], workspaces: [] });
     render(<QuickSwitcher open onOpenChange={() => {}} />);
 
-    expect(screen.getByText('暂无工作区，请先在首页完成扫描')).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.switcher.empty_all'))).toBeInTheDocument();
   });
 
   it('点击列表项直接确认并关闭面板', async () => {

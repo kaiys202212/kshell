@@ -4,6 +4,7 @@
 // ↑↓ 移动高亮、Enter 确认，数据全空时给「先去首页扫描」的引导空态。
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { KeyboardEvent } from 'react';
 import type { Workspace } from '../lib/api';
 import { cn } from '../lib/cn';
@@ -28,6 +29,7 @@ interface Props {
 }
 
 export default function QuickSwitcher({ open, onOpenChange }: Props) {
+  const { t: tr } = useTranslation();
   const openTabs = useAppStore((s) => s.openTabs);
   const workspaces = useAppStore((s) => s.workspaces);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
@@ -64,13 +66,13 @@ export default function QuickSwitcher({ open, onOpenChange }: Props) {
     ...tabs.map((t) => ({
       key: `tab:${t.id}`,
       label: t.name,
-      hint: '页签',
+      hint: tr('ui.switcher.hint_tab'),
       activate: () => setActiveTab(t.id),
     })),
     ...spaces.map((w) => ({
       key: `ws:${w.Path}`,
       label: w.Name,
-      hint: '工作区',
+      hint: tr('ui.switcher.hint_workspace'),
       activate: () => openTab(w),
     })),
   ];
@@ -113,12 +115,12 @@ export default function QuickSwitcher({ open, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange} className="top-20 w-[480px] max-w-[90vw] p-3 outline-none">
-      <DialogPrimitive.Title className="sr-only">快速切换</DialogPrimitive.Title>
+      <DialogPrimitive.Title className="sr-only">{tr('ui.switcher.title')}</DialogPrimitive.Title>
       <Input
         autoFocus
         className="w-full"
-        aria-label="搜索页签或工作区"
-        placeholder="输入以过滤页签 / 工作区…"
+        aria-label={tr('ui.switcher.search_aria')}
+        placeholder={tr('ui.switcher.search_placeholder')}
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);
@@ -131,15 +133,15 @@ export default function QuickSwitcher({ open, onOpenChange }: Props) {
           className="py-6"
           title={
             openTabs.length === 0 && workspaces.length === 0
-              ? '暂无工作区，请先在首页完成扫描'
-              : '没有匹配项'
+              ? tr('ui.switcher.empty_all')
+              : tr('ui.switcher.empty_no_match')
           }
         />
       ) : (
         <div className="mt-2 max-h-80 overflow-y-auto">
           {tabs.length > 0 && (
             <section className="mb-2">
-              <p className={`px-1 py-1 ${PANE_HEADER}`}>已打开的页签</p>
+              <p className={`px-1 py-1 ${PANE_HEADER}`}>{tr('ui.switcher.section_tabs')}</p>
               <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
                 {tabs.map((t, i) => renderItem(entries[i], i))}
               </ul>
@@ -147,7 +149,7 @@ export default function QuickSwitcher({ open, onOpenChange }: Props) {
           )}
           {spaces.length > 0 && (
             <section>
-              <p className={`px-1 py-1 ${PANE_HEADER}`}>工作区</p>
+              <p className={`px-1 py-1 ${PANE_HEADER}`}>{tr('ui.switcher.section_workspaces')}</p>
               <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
                 {spaces.map((w, i) => renderItem(entries[tabs.length + i], tabs.length + i))}
               </ul>

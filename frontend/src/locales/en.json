@@ -279,6 +279,8 @@
     },
     "session_list": {
       "filter_aria": "Filter by tool",
+      "search_aria": "Filter sessions",
+      "search_placeholder": "Filter sessions (title / tool)",
       "all": "All",
       "no_match": "No matching sessions",
       "empty": "No sessions in this workspace",
@@ -377,7 +379,10 @@
       "new_local": "New local terminal",
       "empty_hint": "Click + to open a local terminal, or open a remote session from SSH on the right",
       "label": "Terminal",
-      "label_n": "Terminal {{n}}"
+      "label_n": "Terminal {{n}}",
+      "exited_hint": "Session exited",
+      "exited_code": "Session exited (code {{code}})",
+      "drop_hint": "Release to insert the file path"
     },
     "git": {
       "read_failed": "Failed to read git: {{err}}",
@@ -428,6 +433,97 @@
       "unstage_hunk": "Unstage hunk",
       "discard_hunk": "Discard hunk",
       "discard_hunk_confirm": "Discard this hunk?"
+    },
+    "ssh": {
+      "source_sshconfig": "ssh config",
+      "source_env": "environment variable",
+      "source_spring": "Spring config",
+      "source_deploy": "deploy script",
+      "source_docs": "docs",
+      "source_manual": "manual",
+      "host_required": "Host cannot be empty",
+      "loading_aria": "Loading SSH connections",
+      "double_click_hint": "Double-click to open a remote terminal",
+      "new": "New",
+      "empty": "No SSH connections available",
+      "list_aria": "SSH connections",
+      "no_open_callback": "Remote terminal open callback is not bound",
+      "edit": "Edit",
+      "exec_aria": "Run command",
+      "exec_placeholder": "Run a command on {{name}}",
+      "exec": "Run",
+      "history_aria": "Command history",
+      "clear": "Clear",
+      "clear_history_aria": "Clear command history",
+      "exit_summary": "Exit code {{code}} · took {{duration}}",
+      "stdout_aria": "Command output",
+      "no_output": "(no output)",
+      "stderr_aria": "Error output",
+      "edit_title": "Edit SSH connection",
+      "new_title": "New SSH connection",
+      "name_aria": "Connection name",
+      "name_placeholder": "Name",
+      "host_aria": "Host",
+      "host_placeholder": "Host (required)",
+      "user_aria": "User",
+      "user_placeholder": "User",
+      "port_aria": "Port",
+      "port_placeholder": "Port",
+      "key_aria": "Private key path",
+      "key_placeholder": "Private key path (e.g. C:\\Users\\me\\.ssh\\id_ed25519)",
+      "delete": "Delete",
+      "cancel": "Cancel",
+      "save": "Save"
+    },
+    "switcher": {
+      "hint_tab": "Tab",
+      "hint_workspace": "Workspace",
+      "title": "Quick switch",
+      "search_aria": "Search tabs or workspaces",
+      "search_placeholder": "Type to filter tabs / workspaces…",
+      "empty_all": "No workspaces yet; run a scan on the home page first",
+      "empty_no_match": "No matches",
+      "section_tabs": "Open tabs",
+      "section_workspaces": "Workspaces"
+    },
+    "titlebar": {
+      "tabs_aria": "Tabs",
+      "home": "Home",
+      "close_tab": "Close {{name}}",
+      "settings": "Settings",
+      "minimize": "Minimize",
+      "restore": "Restore",
+      "maximize": "Maximize",
+      "close": "Close",
+      "close_window": "Close window"
+    },
+    "agent_setup": {
+      "title": "Detected agents on this machine",
+      "hint": "Check the tools you want to install with one click. You can also skip and install later in Settings.",
+      "not_installed": "Not installed",
+      "installed": "Installed",
+      "not_installed_manual": "Not installed (manual)",
+      "installing_n": "Installing {{name}}…\n",
+      "skip": "Skip",
+      "installing": "Installing…",
+      "install_all": "One-click install",
+      "tool_install_failed": "Failed to install {{id}}"
+    },
+    "new_session": {
+      "title": "New session",
+      "title_with_last": "New session (last used {{name}})",
+      "no_tools": "No tools available",
+      "starting": "Starting…",
+      "menu_aria": "Choose an agent to start a new session",
+      "auto": "Auto (most used in this workspace)"
+    },
+    "update_prompt": {
+      "title": "New version {{version}} found",
+      "body": "Current {{current}}. If you postpone, this session will not remind you again; it will check again next launch.",
+      "unknown": "unknown",
+      "later": "Later",
+      "upgrading": "Upgrading…",
+      "upgrade": "Upgrade now"
     }
   }
 }

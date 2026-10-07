@@ -175,8 +175,8 @@ describe('WorkspaceTab', () => {
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
     // 等工具列表就绪（扫描是异步的）再点新建会话
-    await screen.findByRole('button', { name: '新建会话' });
-    fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
+    await screen.findByRole('button', { name: tt('ui.new_session.title') });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.new_session.title') }));
     fireEvent.click(await screen.findByRole('menuitemradio', { name: /Claude Code/ }));
 
     await waitFor(() => {
@@ -192,9 +192,9 @@ describe('WorkspaceTab', () => {
     mocks.openWorkspace.mockResolvedValue({ Kind: 'terminal', Terminal: term });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
-    await screen.findByRole('button', { name: '新建会话' });
-    fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
-    fireEvent.click(await screen.findByRole('menuitemradio', { name: /自动/ }));
+    await screen.findByRole('button', { name: tt('ui.new_session.title') });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.new_session.title') }));
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: tt('ui.new_session.auto') }));
 
     await waitFor(() => {
       expect(mocks.openWorkspace).toHaveBeenCalledWith('D:\\proj-a', '');
@@ -209,7 +209,7 @@ describe('WorkspaceTab', () => {
       render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
       await act(async () => {}); // 让挂载期的工具/终端列表请求落位
-      fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.new_session.title') }));
       fireEvent.click(screen.getByRole('menuitemradio', { name: /Claude Code/ }));
       await act(async () => {}); // 等 openWorkspace 落位并装上定时器
 
@@ -235,7 +235,7 @@ describe('WorkspaceTab', () => {
     mocks.getTools.mockResolvedValue([]);
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
-    const trigger = await screen.findByRole('button', { name: '无可用工具' });
+    const trigger = await screen.findByRole('button', { name: tt('ui.new_session.no_tools') });
     expect(trigger).toBeDisabled();
     expect(screen.getByText(/未检测到可用的 agent/)).toBeInTheDocument();
 
@@ -248,8 +248,8 @@ describe('WorkspaceTab', () => {
     mocks.openWorkspace.mockRejectedValueOnce(new Error('工作区不存在'));
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
-    await screen.findByRole('button', { name: '新建会话' });
-    fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
+    await screen.findByRole('button', { name: tt('ui.new_session.title') });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.new_session.title') }));
     fireEvent.click(await screen.findByRole('menuitemradio', { name: /Claude Code/ }));
 
     await waitFor(() => {
@@ -266,8 +266,8 @@ describe('WorkspaceTab', () => {
     mocks.openWorkspace.mockResolvedValue({ Kind: 'terminal', Terminal: term });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
-    await screen.findByRole('button', { name: '新建会话' });
-    fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
+    await screen.findByRole('button', { name: tt('ui.new_session.title') });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.new_session.title') }));
     fireEvent.click(await screen.findByRole('menuitemradio', { name: /Codex/ }));
 
     await waitFor(() => {
@@ -280,7 +280,7 @@ describe('WorkspaceTab', () => {
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
     await waitFor(() => expect(mocks.getTools).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole('button', { name: '无可用工具' })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: tt('ui.new_session.no_tools') })).toBeDisabled();
 
     // 扫描完成事件到达时工具才被探测出来
     mocks.getTools.mockResolvedValue([
@@ -290,7 +290,7 @@ describe('WorkspaceTab', () => {
     scanDoneCb!();
 
     await waitFor(() => expect(mocks.getTools).toHaveBeenCalledTimes(2));
-    expect(await screen.findByRole('button', { name: '新建会话' })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: tt('ui.new_session.title') })).toBeEnabled();
   });
 
   it('会话列表激活图标走统一入口（openSession）开中心区内嵌终端', async () => {
@@ -351,8 +351,8 @@ describe('WorkspaceTab', () => {
     mocks.openWorkspace.mockResolvedValue({ Kind: 'chat', Chat: chat });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
-    await screen.findByRole('button', { name: '新建会话' });
-    fireEvent.click(screen.getByRole('button', { name: '新建会话' }));
+    await screen.findByRole('button', { name: tt('ui.new_session.title') });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.new_session.title') }));
     fireEvent.click(await screen.findByRole('menuitemradio', { name: /Claude Code/ }));
 
     await waitFor(() => {

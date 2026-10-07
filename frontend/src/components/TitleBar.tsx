@@ -4,6 +4,7 @@
 // WindowIsMaximised + resize 事件（防抖）校正——Wails v2 不推窗口状态事件，
 // 用户用 Win+↑ 或贴边改变状态时只能靠尺寸变化间接发现。
 import { useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Quit,
   WindowIsMaximised,
@@ -64,6 +65,7 @@ interface Props {
 }
 
 export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
+  const { t: tr } = useTranslation();
   const [maximised, setMaximised] = useState(false);
 
   // 查询最大化状态；绑定在纯浏览器/测试环境不存在时不抛错
@@ -123,13 +125,13 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
       </div>
 
       {/* 页签区：首页 + 工作区页签（可关、中键关闭）；溢出横向滚动 */}
-      <nav className="flex min-w-0 flex-1 items-stretch overflow-x-auto" aria-label="页签">
+      <nav className="flex min-w-0 flex-1 items-stretch overflow-x-auto" aria-label={tr('ui.titlebar.tabs_aria')}>
         <button
           className={cn(tabBase, activeTabId === null && tabActive)}
           aria-current={activeTabId === null}
           onClick={() => onSelectTab(null)}
         >
-          首页
+          {tr('ui.titlebar.home')}
           {activeTabId === null ? (
             <span className={TAB_UNDERLINE} />
           ) : (
@@ -160,7 +162,7 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
                   'kshell-no-drag ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-sm leading-none text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground',
                   active ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100',
                 )}
-                aria-label={`关闭 ${t.name}`}
+                aria-label={tr('ui.titlebar.close_tab', { name: t.name })}
                 onClick={(e) => {
                   e.stopPropagation(); // 只关，不顺带切到该页签
                   onCloseTab(t.id);
@@ -184,7 +186,7 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
         aria-current={activeTabId === SETTINGS_TAB_ID}
         onClick={() => onSelectTab(SETTINGS_TAB_ID)}
       >
-        设置
+        {tr('ui.titlebar.settings')}
         {activeTabId === SETTINGS_TAB_ID ? (
           <span className={TAB_UNDERLINE} />
         ) : (
@@ -195,12 +197,12 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
       <div className="mx-1 w-px shrink-0 self-center bg-border" aria-hidden="true" />
 
       <div className="flex shrink-0 items-stretch">
-        <button className={controlBase} aria-label="最小化" onClick={() => WindowMinimise()}>
+        <button className={controlBase} aria-label={tr('ui.titlebar.minimize')} onClick={() => WindowMinimise()}>
           <MinGlyph />
         </button>
         <button
           className={controlBase}
-          aria-label={maximised ? '还原' : '最大化'}
+          aria-label={maximised ? tr('ui.titlebar.restore') : tr('ui.titlebar.maximize')}
           onClick={toggleMaximise}
         >
           {maximised ? <RestoreGlyph /> : <MaxGlyph />}
@@ -208,8 +210,8 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
         {/* 「关闭」经 Wails Quit 触发 BeforeClose，由配置的关闭行为（收进托盘 / 直接退出）决定 */}
         <button
           className={cn(controlBase, 'hover:bg-destructive hover:text-destructive-foreground')}
-          aria-label="关闭"
-          title="关闭窗口"
+          aria-label={tr('ui.titlebar.close')}
+          title={tr('ui.titlebar.close_window')}
           onClick={() => Quit()}
         >
           <CloseGlyph />

@@ -6,6 +6,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import TitleBar from './TitleBar';
 import { SETTINGS_TAB_ID } from '../state/store';
+import { tt } from '../test/i18n';
 
 const runtime = vi.hoisted(() => ({
   WindowMinimise: vi.fn(),
@@ -46,21 +47,21 @@ describe('TitleBar', () => {
   it('渲染首页 / 工作区页签 / 设置 / 三个窗口控件', () => {
     setup();
 
-    expect(screen.getByRole('button', { name: '首页' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: tt('ui.titlebar.home') })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'proj-a' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'proj-b' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '设置' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '最小化' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '最大化' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '关闭' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: tt('ui.titlebar.settings') })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: tt('ui.titlebar.minimize') })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: tt('ui.titlebar.maximize') })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: tt('ui.titlebar.close') })).toBeInTheDocument();
   });
 
   it('设置按钮排在页签之后、窗口控件之前（贴最右语义）', () => {
     setup();
 
-    const settings = screen.getByRole('button', { name: '设置' });
+    const settings = screen.getByRole('button', { name: tt('ui.titlebar.settings') });
     const lastTab = screen.getByRole('button', { name: 'proj-b' });
-    const minimise = screen.getByRole('button', { name: '最小化' });
+    const minimise = screen.getByRole('button', { name: tt('ui.titlebar.minimize') });
 
     // compareDocumentPosition：settings 在 lastTab 之后（DOCUMENT_POSITION_PRECEDING 位）
     expect(lastTab.compareDocumentPosition(settings) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -73,13 +74,13 @@ describe('TitleBar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'proj-a' }));
     expect(onSelectTab).toHaveBeenCalledWith('D:\\proj-a');
 
-    fireEvent.click(screen.getByRole('button', { name: '首页' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.titlebar.home') }));
     expect(onSelectTab).toHaveBeenCalledWith(null);
 
-    fireEvent.click(screen.getByRole('button', { name: '设置' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.titlebar.settings') }));
     expect(onSelectTab).toHaveBeenCalledWith(SETTINGS_TAB_ID);
 
-    fireEvent.click(screen.getByRole('button', { name: '关闭 proj-a' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.titlebar.close_tab').replace('{{name}}', 'proj-a') }));
     expect(onCloseTab).toHaveBeenCalledWith('D:\\proj-a');
     expect(onSelectTab).toHaveBeenCalledTimes(3); // 关闭钮不触发选中
   });
@@ -94,7 +95,7 @@ describe('TitleBar', () => {
 
   it('点关闭钮只关闭、不顺带选中该页签', () => {
     const { onSelectTab, onCloseTab } = setup();
-    fireEvent.click(screen.getByRole('button', { name: '关闭 proj-a' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.titlebar.close_tab').replace('{{name}}', 'proj-a') }));
 
     expect(onCloseTab).toHaveBeenCalledWith('D:\\proj-a');
     expect(onSelectTab).not.toHaveBeenCalled();
@@ -114,13 +115,13 @@ describe('TitleBar', () => {
   it('窗口控件调用 Wails runtime：最小化 / 最大化切换 / 关闭=Quit（经 BeforeClose 分流）', () => {
     setup();
 
-    fireEvent.click(screen.getByRole('button', { name: '最小化' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.titlebar.minimize') }));
     expect(runtime.WindowMinimise).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole('button', { name: '最大化' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.titlebar.maximize') }));
     expect(runtime.WindowToggleMaximise).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.titlebar.close') }));
     expect(runtime.Quit).toHaveBeenCalledTimes(1);
   });
 
@@ -128,17 +129,17 @@ describe('TitleBar', () => {
     runtime.WindowIsMaximised.mockResolvedValue(true);
     setup();
 
-    expect(await screen.findByRole('button', { name: '还原' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: tt('ui.titlebar.restore') })).toBeInTheDocument();
   });
 
   it('双击标题栏空白处最大化；双击页签不触发', () => {
     setup();
 
-    fireEvent.doubleClick(screen.getByRole('button', { name: '首页' }));
+    fireEvent.doubleClick(screen.getByRole('button', { name: tt('ui.titlebar.home') }));
     expect(runtime.WindowToggleMaximise).not.toHaveBeenCalled();
 
     // 双击拖拽区（nav 容器本身，非按钮）
-    const nav = screen.getByLabelText('页签');
+    const nav = screen.getByLabelText(tt('ui.titlebar.tabs_aria'));
     fireEvent.doubleClick(nav);
     expect(runtime.WindowToggleMaximise).toHaveBeenCalledTimes(1);
   });
@@ -147,6 +148,6 @@ describe('TitleBar', () => {
     runtime.WindowIsMaximised.mockReturnValue(undefined as never);
     setup();
 
-    await waitFor(() => expect(screen.getByRole('button', { name: '最大化' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: tt('ui.titlebar.maximize') })).toBeInTheDocument());
   });
 });

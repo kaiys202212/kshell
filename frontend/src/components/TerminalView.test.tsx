@@ -11,6 +11,11 @@ import { clearTerminalRegistry, dispatchTerminalData } from '../lib/terminalRegi
 import { useAppStore } from '../state/store';
 import { bumpTerminalBusy } from '../state/terminalBusy';
 import TerminalView from './TerminalView';
+import { tt } from '../test/i18n';
+
+// 退出条与写入终端的退出提示文案都来自 ui.terminal.*（退出条带 {{code}}）
+const exitedCode = (code: number) => tt('ui.terminal.exited_code').replace('{{code}}', String(code));
+const exitedPrefix = tt('ui.terminal.exited_code').split('{{')[0];
 
 // 桩实例的收集箱（vi.hoisted：mock 工厂先于 import 执行）
 const mocks = vi.hoisted(() => ({
@@ -393,12 +398,12 @@ describe('TerminalView', () => {
   it('Status=exited 时渲染退出条，并只往终端里写一次退出提示', () => {
     const { rerender } = render(<TerminalView term={TERM} active />);
     const instance = term();
-    expect(screen.queryByText(/会话已退出/)).toBeNull();
+    expect(screen.queryByText((c) => c.includes(exitedPrefix))).toBeNull();
 
     rerender(<TerminalView term={{ ...TERM, Status: 'exited', ExitCode: 3 }} active />);
-    expect(screen.getByText('会话已退出（退出码 3）')).toBeInTheDocument();
+    expect(screen.getByText(exitedCode(3))).toBeInTheDocument();
     const hintCount = () =>
-      instance.written.filter((w) => typeof w === 'string' && w.includes('会话已退出')).length;
+      instance.written.filter((w) => typeof w === 'string' && w.includes(tt('ui.terminal.exited_hint'))).length;
     expect(hintCount()).toBe(1);
     expect(String(instance.written.find((w) => typeof w === 'string'))).toContain('\x1b[90m'); // 灰色提示
 

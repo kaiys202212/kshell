@@ -5,6 +5,7 @@
 // - 组件常挂载、由父级用 hidden 切换可见性：非激活时不做任何销毁，xterm 缓冲与历史都保留。
 // - 键盘输入 → writeTerminal(base64)；FitAddon 改变行列 → resizeTerminal（否则 PTY 仍按旧尺寸折行）。
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
@@ -32,7 +33,7 @@ interface Props {
 }
 
 // 退出提示：只在状态首次变为 exited 时写一次，避免 store 每次 upsert 都往终端里塞一行
-const EXITED_HINT = '\r\n\x1b[90m[会话已退出]\x1b[0m\r\n';
+// （文案经 t('ui.terminal.exited_hint') 在写入时构造，见下方退出 effect）
 
 // 最小可用行列：窄于此尺寸的 resize 一律不推给 PTY。
 // 根因（真机实测）：页签被 hidden 时宿主宽高为 0，FitAddon 会把 0 钳成 cols=2/rows=1，
@@ -41,6 +42,7 @@ const MIN_COLS = 20;
 const MIN_ROWS = 5;
 
 export default function TerminalView({ term, active }: Props) {
+  const { t } = useTranslation();
   const termId = term.ID;
   const resolved = useAppStore((s) => s.appearance.resolved);
   const fontSize = useAppStore((s) => s.appearance.fontSize ?? 13);
@@ -401,8 +403,8 @@ export default function TerminalView({ term, active }: Props) {
   useEffect(() => {
     if (term.Status !== 'exited' || exitedHintRef.current) return;
     exitedHintRef.current = true;
-    termRef.current?.write(EXITED_HINT);
-  }, [term.Status]);
+    termRef.current?.write(`\r\n\x1b[90m[${t('ui.terminal.exited_hint')}]\x1b[0m\r\n`);
+  }, [term.Status, t]);
 
   return (
     <div
@@ -426,13 +428,13 @@ export default function TerminalView({ term, active }: Props) {
     >
       {term.Status === 'exited' && (
         <div className="shrink-0 bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-          会话已退出（退出码 {term.ExitCode}）
+          {t('ui.terminal.exited_code', { code: term.ExitCode })}
         </div>
       )}
       <div ref={hostRef} className="xterm-host h-full w-full overflow-hidden bg-card" />
       {dropHint && (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded border-2 border-dashed border-primary bg-primary/10 text-sm">
-          松开插入文件路径
+          {t('ui.terminal.drop_hint')}
         </div>
       )}
     </div>

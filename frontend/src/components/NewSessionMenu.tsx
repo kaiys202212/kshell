@@ -4,6 +4,7 @@
 // value 是上次使用的工具（'' = 自动），用于在菜单里打勾；工具列表变化后找不到对应项也不报错。
 // 菜单里选中的动作语义是「开始一个新会话」，因此用 menuitemradio 标记当前项。
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { KeyboardEvent } from 'react';
 import type { ToolInfo } from '../lib/api';
 import { cn } from '../lib/cn';
@@ -34,6 +35,7 @@ export default function NewSessionMenu({
   onSelect,
   disabled,
 }: Props) {
+  const { t: tr } = useTranslation();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -79,14 +81,14 @@ export default function NewSessionMenu({
         ref={triggerRef}
         type="button"
         className="w-full text-xs"
-        title={selected ? `新建会话（上次用 ${selected.Name}）` : '新建会话'}
+        title={selected ? tr('ui.new_session.title_with_last', { name: selected.Name }) : tr('ui.new_session.title')}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={isDisabled}
         onClick={() => setOpen((v) => !v)}
       >
         <span className="min-w-0 truncate">
-          {empty ? '无可用工具' : disabled ? '启动中…' : '新建会话'}
+          {empty ? tr('ui.new_session.no_tools') : disabled ? tr('ui.new_session.starting') : tr('ui.new_session.title')}
         </span>
         {/* 下箭头：扁平单色细线，跟随文字颜色 */}
         <svg viewBox="0 0 12 12" aria-hidden="true" className="h-3 w-3 shrink-0 opacity-80">
@@ -104,7 +106,7 @@ export default function NewSessionMenu({
       {open && (
         <div
           role="menu"
-          aria-label="选择 agent 新建会话"
+          aria-label={tr('ui.new_session.menu_aria')}
           className="absolute left-0 top-full z-20 mt-1 w-full min-w-40 rounded border border-border bg-card py-0.5 shadow-sm"
         >
           {/* 「自动」= 交给 Go 侧按该工作区最常用的工具挑（value 为空串） */}
@@ -116,7 +118,7 @@ export default function NewSessionMenu({
             onClick={() => pick('')}
           >
             <CheckGlyph show={value === ''} />
-            <span className="min-w-0 truncate">自动（该工作区最常用）</span>
+            <span className="min-w-0 truncate">{tr('ui.new_session.auto')}</span>
           </button>
           {tools.map((t) => {
             const active = t.ID === value;
