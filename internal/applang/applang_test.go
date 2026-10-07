@@ -75,12 +75,9 @@ func TestCatalogEveryKeyTranslates(t *testing.T) {
 }
 
 // TestCallerReferencedKeysExist 锁定调用方实际引用的 key（grep `applang.T(` 全仓确认：
-// notify.go / projects.go / shell.go / tray.go），逐个断言已注册——缺 key 时 T 原样
-// 返回 key，这里即判红。与 TestCatalogEveryKeyTranslates 互补：后者只遍历 catalog 自
-// 身，从两张表同时删掉某个被调用的 key 时它发现不了，本测试能发现。
-//
-// 注：设计 §4 计划的 providers/transcript.go `role.user`/`role.assistant` 尚未接线
-// （该文件仍硬编码「用户/助手」、未调用 applang），故不在「调用方引用」清单内。
+// notify.go / projects.go / shell.go / tray.go / providers/transcript.go），逐个断言已注册
+// ——缺 key 时 T 原样返回 key，这里即判红。与 TestCatalogEveryKeyTranslates 互补：后者只
+// 遍历 catalog 自身，从两张表同时删掉某个被调用的 key 时它发现不了，本测试能发现。
 func TestCallerReferencedKeysExist(t *testing.T) {
 	keys := []string{
 		"toast.task_done",
@@ -88,6 +85,8 @@ func TestCallerReferencedKeysExist(t *testing.T) {
 		"toast.waiting_confirm",
 		"dialog.pick_project_dir",
 		"terminal.title",
+		"role.user",
+		"role.assistant",
 		"tray.show_main",
 		"tray.exit",
 		"tray.show_main_tip",

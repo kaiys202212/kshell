@@ -3,9 +3,14 @@ package providers
 import (
 	"strings"
 	"testing"
+
+	"github.com/yangk/kshell/internal/applang"
 )
 
 func TestFormatSessionMarkdownClaudeJSONL(t *testing.T) {
+	// role 标题经 applang 直显：固定 en，避免全局语言态串扰。
+	applang.Set("en")
+	t.Cleanup(func() { applang.Set("en") })
 	s := Session{
 		ID:     "42a6304b-1fd3-45aa-b620-10aa37988f2a",
 		ToolID: "claude",
@@ -19,8 +24,8 @@ func TestFormatSessionMarkdownClaudeJSONL(t *testing.T) {
 	if truncated {
 		t.Fatal("小 fixture 不应截断")
 	}
-	if !strings.Contains(md, "## 用户") || !strings.Contains(md, "## 助手") {
-		t.Fatalf("应含用户/助手标题, got:\n%s", md)
+	if !strings.Contains(md, "## User") || !strings.Contains(md, "## Assistant") {
+		t.Fatalf("应含 User/Assistant 标题, got:\n%s", md)
 	}
 	if !strings.Contains(md, "修复上传白名单校验") {
 		t.Fatalf("应含用户原文, got:\n%s", md)

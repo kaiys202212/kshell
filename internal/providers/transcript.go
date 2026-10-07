@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/yangk/kshell/internal/applang"
 )
 
 const transcriptReadLimit = 512 * 1024
@@ -74,7 +76,7 @@ func readLimited(path string, limit int) ([]byte, bool, error) {
 }
 
 type previewTurn struct {
-	Role string // 用户 | 助手
+	Role string // user | assistant
 	Text string
 }
 
@@ -90,7 +92,7 @@ func renderTurns(title string, turns []previewTurn) string {
 			b.WriteString("\n")
 		}
 		b.WriteString("## ")
-		b.WriteString(t.Role)
+		b.WriteString(applang.T("role." + t.Role))
 		b.WriteString("\n\n")
 		b.WriteString(t.Text)
 		b.WriteString("\n")
@@ -180,9 +182,9 @@ func turnFromCodexPayload(rec map[string]any) (role, text string) {
 	it, _ := item["type"].(string)
 	switch it {
 	case "UserMessage":
-		role = "用户"
+		role = "user"
 	case "AgentMessage", "AssistantMessage":
-		role = "助手"
+		role = "assistant"
 	default:
 		return "", ""
 	}
@@ -194,15 +196,15 @@ func previewRole(typ, role string) string {
 	r := strings.ToLower(strings.TrimSpace(role))
 	switch t {
 	case "user", "human":
-		return "用户"
+		return "user"
 	case "assistant", "gemini", "ai", "model":
-		return "助手"
+		return "assistant"
 	}
 	switch r {
 	case "user", "human":
-		return "用户"
+		return "user"
 	case "assistant", "model", "ai":
-		return "助手"
+		return "assistant"
 	}
 	return ""
 }

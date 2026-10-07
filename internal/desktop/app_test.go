@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yangk/kshell/internal/applang"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/providers"
@@ -122,6 +123,8 @@ func TestGetSessions(t *testing.T) {
 }
 
 func TestGetSessionPreview(t *testing.T) {
+	applang.Set("en")
+	t.Cleanup(func() { applang.Set("en") })
 	app, _, _ := newTestApp(t)
 	app.runScan()
 	app.mu.Lock()
@@ -132,7 +135,7 @@ func TestGetSessionPreview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSessionPreview: %v", err)
 	}
-	if !strings.Contains(got.Markdown, "## 用户") || !strings.Contains(got.Markdown, "修复上传白名单校验") {
+	if !strings.Contains(got.Markdown, "## User") || !strings.Contains(got.Markdown, "修复上传白名单校验") {
 		t.Fatalf("Markdown = %q", got.Markdown)
 	}
 

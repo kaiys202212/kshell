@@ -422,8 +422,8 @@ func TestWriteAndResize(t *testing.T) {
 func TestWriteResizeOnUnknownOrExited(t *testing.T) {
 	m, b, r := newTestManager(t)
 
-	if err := m.Write("nope", []byte("x")); err == nil || !strings.Contains(err.Error(), "终端不存在") {
-		t.Fatalf("未知会话 Write 应报错: %v", err)
+	if err := m.Write("nope", []byte("x")); err == nil || err.Error() != "err.terminal.gone" {
+		t.Fatalf("未知会话 Write 应报 err.terminal.gone: %v", err)
 	}
 	if err := m.Resize("nope", 80, 24); !errors.Is(err, errNotFound) {
 		t.Fatalf("未知会话 Resize 应报 errNotFound: %v", err)
@@ -444,6 +444,26 @@ func TestWriteResizeOnUnknownOrExited(t *testing.T) {
 	}
 	if err := m.Resize(info.ID, 80, 24); !errors.Is(err, errExited) {
 		t.Fatalf("已退出会话 Resize 应报 errExited: %v", err)
+	}
+}
+
+// 终端哨兵错误对外是 wire key（前端按 key 翻译），不保留中文。
+func TestSentinelErrorsAreKeys(t *testing.T) {
+	cases := []struct {
+		err error
+		key string
+	}{
+		{errNoBackend, "err.terminal.not_ready"},
+		{errNotFound, "err.terminal.gone"},
+		{errExited, "err.terminal.exited"},
+		{errBadSize, "err.terminal.invalid_size"},
+		{errEmptyKey, "err.terminal.empty_key"},
+		{errEmptyStart, "err.terminal.no_exec"},
+	}
+	for _, c := range cases {
+		if got := c.err.Error(); got != c.key {
+			t.Errorf("哨兵错误 = %q, want %q", got, c.key)
+		}
 	}
 }
 

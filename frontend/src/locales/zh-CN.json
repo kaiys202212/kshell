@@ -57,11 +57,29 @@
     },
     "terminal": {
       "popup_windows_only": "桌面版终端弹窗目前仅支持 Windows",
-      "invalid_base64": "终端输入不是合法的 base64 数据"
+      "invalid_base64": "终端输入不是合法的 base64 数据",
+      "not_ready": "终端后端未装配",
+      "gone": "终端不存在或已关闭",
+      "exited": "终端已退出",
+      "invalid_size": "终端尺寸必须为正数",
+      "empty_key": "终端 key 不能为空",
+      "no_exec": "终端启动失败：未指定可执行文件",
+      "pty_create_failed": "创建伪终端失败: {{0}}",
+      "spawn_failed": "启动终端进程失败: {{0}}",
+      "exec_not_found": "找不到可执行文件: {{0}}"
+    },
+    "launch": {
+      "no_binary": "该工具没有可执行程序，无法启动会话",
+      "no_acp_adapter": "该工具没有可用的 ACP 适配器"
+    },
+    "launcher": {
+      "no_exec": "launcher: 未指定可执行文件（工具只检测到配置目录，没有可执行程序）"
     },
     "projects": {
       "not_ready": "项目表未装配",
-      "dir_missing": "目录不存在：{{0}}"
+      "dir_missing": "目录不存在：{{0}}",
+      "empty_file": "项目文件路径为空",
+      "empty_path": "项目路径不能为空"
     },
     "settings": {
       "providers_path_unavailable": "providers.yaml 路径不可用（未初始化完成）",

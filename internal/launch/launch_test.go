@@ -65,6 +65,16 @@ func TestForSessionFailsWithoutRunnableTool(t *testing.T) {
 	}
 }
 
+// 对外错误是 wire key，供前端 translateBackend 翻译。
+func TestLaunchErrorKeys(t *testing.T) {
+	if got := ErrToolNotRunnable.Error(); got != "err.launch.no_binary" {
+		t.Fatalf("ErrToolNotRunnable = %q, want err.launch.no_binary", got)
+	}
+	if got := ErrACPUnavailable.Error(); got != "err.launch.no_acp_adapter" {
+		t.Fatalf("ErrACPUnavailable = %q, want err.launch.no_acp_adapter", got)
+	}
+}
+
 func TestForWorkspacePicksPreferredTool(t *testing.T) {
 	ps := []providers.Provider{
 		fakeProvider{id: "codex"},

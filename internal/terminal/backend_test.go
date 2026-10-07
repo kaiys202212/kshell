@@ -16,6 +16,8 @@ import (
 func TestCommandLineRejectsEmptyPath(t *testing.T) {
 	if _, _, err := commandLine(Spec{Args: []string{"x"}}); !errors.Is(err, errEmptyStart) {
 		t.Fatalf("空路径应报 errEmptyStart: %v", err)
+	} else if err.Error() != "err.terminal.no_exec" {
+		t.Fatalf("空路径错误应为 wire key, got %q", err.Error())
 	}
 }
 
@@ -69,6 +71,9 @@ func TestCommandLineBareNameNotOnPATH(t *testing.T) {
 	_, _, err := commandLine(Spec{Path: "kshell-definitely-missing-bin"})
 	if err == nil {
 		t.Fatal("PATH 上不存在的裸命令名应失败")
+	}
+	if !strings.HasPrefix(err.Error(), "err.terminal.exec_not_found|") {
+		t.Fatalf("错误应为 err.terminal.exec_not_found wire 串, got %v", err)
 	}
 	if !strings.Contains(err.Error(), "kshell-definitely-missing-bin") {
 		t.Fatalf("错误应包含命令名, got %v", err)

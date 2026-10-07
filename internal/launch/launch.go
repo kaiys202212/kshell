@@ -13,7 +13,7 @@ import (
 )
 
 // ErrToolNotRunnable 表示目标工具未安装或没有可执行文件。
-var ErrToolNotRunnable = errors.New("该工具没有可执行程序，无法启动会话")
+var ErrToolNotRunnable = errors.New("err.launch.no_binary")
 
 // ThemeOptions 描述主题注入所需信息：模式 + 生成文件落盘目录（空则跳过文件类注入）。
 type ThemeOptions struct {
@@ -180,7 +180,7 @@ func providerFor(ps []providers.Provider, id string) (providers.Provider, bool) 
 }
 
 // ErrACPUnavailable 表示目标工具没有可用的 ACP 适配器。
-var ErrACPUnavailable = errors.New("该工具没有可用的 ACP 适配器")
+var ErrACPUnavailable = errors.New("err.launch.no_acp_adapter")
 
 // ForSessionACP 产出用 ACP 恢复历史会话的启动描述（命令来自适配器探测）。
 func ForSessionACP(ps []providers.Provider, tools []discovery.Tool, s providers.Session, mo ModelOptions, po PermissionOptions) (providers.Launch, error) {

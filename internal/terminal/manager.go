@@ -34,12 +34,12 @@ const (
 )
 
 var (
-	errNoBackend  = errors.New("终端后端未装配")
-	errNotFound   = errors.New("终端不存在或已关闭")
-	errExited     = errors.New("终端已退出")
-	errBadSize    = errors.New("终端尺寸必须为正数")
-	errEmptyKey   = errors.New("终端 key 不能为空")
-	errEmptyStart = errors.New("终端启动失败：未指定可执行文件")
+	errNoBackend  = errors.New("err.terminal.not_ready")
+	errNotFound   = errors.New("err.terminal.gone")
+	errExited     = errors.New("err.terminal.exited")
+	errBadSize    = errors.New("err.terminal.invalid_size")
+	errEmptyKey   = errors.New("err.terminal.empty_key")
+	errEmptyStart = errors.New("err.terminal.no_exec")
 )
 
 // defaultScrollback 是每个会话保留的回放缓冲上限（256 KiB），超出丢最旧字节。

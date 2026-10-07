@@ -12,7 +12,7 @@ import (
 	"github.com/yangk/kshell/internal/providers"
 )
 
-var errEmptyPath = errors.New("launcher: 未指定可执行文件（工具只检测到配置目录，没有可执行程序）")
+var errEmptyPath = errors.New("err.launcher.no_exec")
 
 // Spec 是一次可直接交给 exec 的启动描述（已完成 shim 解析）。
 type Spec struct {

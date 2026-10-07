@@ -27,7 +27,7 @@ func (ptyBackend) Start(spec Spec, cols, rows int) (Handle, error) {
 
 	p, err := pty.New()
 	if err != nil {
-		return nil, fmt.Errorf("创建伪终端失败: %w", err)
+		return nil, fmt.Errorf("err.terminal.pty_create_failed|%w", err)
 	}
 
 	cmd := p.Command(path, args...)
@@ -35,7 +35,7 @@ func (ptyBackend) Start(spec Spec, cols, rows int) (Handle, error) {
 	cmd.Env = mergedEnv(spec.Env) // nil 表示继承当前进程环境
 	if err := cmd.Start(); err != nil {
 		_ = p.Close()
-		return nil, fmt.Errorf("启动终端进程失败: %w", err)
+		return nil, fmt.Errorf("err.terminal.spawn_failed|%w", err)
 	}
 
 	h := &ptyHandle{p: p, cmd: cmd}
@@ -62,7 +62,7 @@ func commandLine(spec Spec) (string, []string, error) {
 	if filepath.Base(path) == path {
 		lp, err := exec.LookPath(path)
 		if err != nil {
-			return "", nil, fmt.Errorf("找不到可执行文件 %q: %w", path, err)
+			return "", nil, fmt.Errorf("err.terminal.exec_not_found|%s|%w", path, err)
 		}
 		path = lp
 	}
@@ -74,7 +74,7 @@ func commandLine(spec Spec) (string, []string, error) {
 		if filepath.Base(comspec) == comspec {
 			lp, err := exec.LookPath(comspec)
 			if err != nil {
-				return "", nil, fmt.Errorf("找不到可执行文件 %q: %w", comspec, err)
+				return "", nil, fmt.Errorf("err.terminal.exec_not_found|%s|%w", comspec, err)
 			}
 			comspec = lp
 		}

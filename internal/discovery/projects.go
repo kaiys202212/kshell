@@ -12,7 +12,7 @@ import (
 )
 
 // errEmptyProjectPath 项目文件路径未配置（测试或极简装配场景）。
-var errEmptyProjectPath = errors.New("项目文件路径为空")
+var errEmptyProjectPath = errors.New("err.projects.empty_file")
 
 // DeletedProject 是一条被逻辑删除（从列表隐藏）的项目记录。
 // 保留删除时间，供回收站展示。
@@ -109,7 +109,7 @@ func (s *ProjectStore) IsDeleted(p string) bool {
 func (s *ProjectStore) Add(p string) error {
 	p = strings.TrimSpace(p)
 	if p == "" {
-		return errors.New("项目路径不能为空")
+		return errors.New("err.projects.empty_path")
 	}
 	p = filepath.Clean(p)
 	key := NormalizePath(p)
@@ -130,7 +130,7 @@ func (s *ProjectStore) Add(p string) error {
 func (s *ProjectStore) Hide(p string) error {
 	p = strings.TrimSpace(p)
 	if p == "" {
-		return errors.New("项目路径不能为空")
+		return errors.New("err.projects.empty_path")
 	}
 	p = filepath.Clean(p)
 	key := NormalizePath(p)
@@ -150,7 +150,7 @@ func (s *ProjectStore) Hide(p string) error {
 func (s *ProjectStore) Restore(p string) error {
 	key := NormalizePath(strings.TrimSpace(p))
 	if key == "" {
-		return errors.New("项目路径不能为空")
+		return errors.New("err.projects.empty_path")
 	}
 
 	s.mu.Lock()

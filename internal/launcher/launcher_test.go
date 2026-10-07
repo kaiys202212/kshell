@@ -63,6 +63,8 @@ func TestBuildPassesThroughExecutable(t *testing.T) {
 func TestBuildRejectsEmptyPath(t *testing.T) {
 	if _, err := Build(providers.Launch{Args: []string{"x"}}); err == nil {
 		t.Fatal("empty binary path must be rejected")
+	} else if err.Error() != "err.launcher.no_exec" {
+		t.Fatalf("error = %q, want err.launcher.no_exec", err.Error())
 	}
 }
 

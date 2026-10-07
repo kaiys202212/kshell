@@ -57,11 +57,29 @@
     },
     "terminal": {
       "popup_windows_only": "Desktop terminal popups are only supported on Windows",
-      "invalid_base64": "Terminal input is not valid base64 data"
+      "invalid_base64": "Terminal input is not valid base64 data",
+      "not_ready": "Terminal backend is not initialized",
+      "gone": "Terminal not found or already closed",
+      "exited": "Terminal has exited",
+      "invalid_size": "Terminal size must be positive",
+      "empty_key": "Terminal key cannot be empty",
+      "no_exec": "Terminal failed to start: no executable specified",
+      "pty_create_failed": "Failed to create pseudo-terminal: {{0}}",
+      "spawn_failed": "Failed to start terminal process: {{0}}",
+      "exec_not_found": "Executable not found: {{0}}"
+    },
+    "launch": {
+      "no_binary": "This tool has no executable, cannot start a session",
+      "no_acp_adapter": "This tool has no available ACP adapter"
+    },
+    "launcher": {
+      "no_exec": "No executable specified (the tool only has a config directory)"
     },
     "projects": {
       "not_ready": "Projects are not initialized yet",
-      "dir_missing": "Directory not found: {{0}}"
+      "dir_missing": "Directory not found: {{0}}",
+      "empty_file": "Project file path is empty",
+      "empty_path": "Project path cannot be empty"
     },
     "settings": {
       "providers_path_unavailable": "providers.yaml path is unavailable (not initialized yet)",

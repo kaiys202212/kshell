@@ -273,6 +273,23 @@ func TestDirExists(t *testing.T) {
 	}
 }
 
+// 项目存储对外错误是 wire key，供前端翻译。
+func TestProjectStoreErrorKeys(t *testing.T) {
+	st, _ := newProjectStore(t)
+	if err := st.Add("  "); err == nil || err.Error() != "err.projects.empty_path" {
+		t.Fatalf("空路径 Add 错误 = %v, want err.projects.empty_path", err)
+	}
+	if err := st.Hide(""); err == nil || err.Error() != "err.projects.empty_path" {
+		t.Fatalf("空路径 Hide 错误 = %v, want err.projects.empty_path", err)
+	}
+	if err := st.Restore(""); err == nil || err.Error() != "err.projects.empty_path" {
+		t.Fatalf("空路径 Restore 错误 = %v, want err.projects.empty_path", err)
+	}
+	if err := NewProjectStore("").Save(); err == nil || err.Error() != "err.projects.empty_file" {
+		t.Fatalf("空文件路径 Save 错误 = %v, want err.projects.empty_file", err)
+	}
+}
+
 func TestProjectStoreDeletedNewestFirst(t *testing.T) {
 	st, _ := newProjectStore(t)
 	first := filepath.Join(t.TempDir(), "first")
