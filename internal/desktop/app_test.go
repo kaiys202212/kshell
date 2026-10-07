@@ -123,8 +123,7 @@ func TestGetSessions(t *testing.T) {
 }
 
 func TestGetSessionPreview(t *testing.T) {
-	applang.Set("en")
-	t.Cleanup(func() { applang.Set("en") })
+	applang.SetForTest(t, "en")
 	app, _, _ := newTestApp(t)
 	app.runScan()
 	app.mu.Lock()

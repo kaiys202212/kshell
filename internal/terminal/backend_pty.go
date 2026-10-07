@@ -62,6 +62,7 @@ func commandLine(spec Spec) (string, []string, error) {
 	if filepath.Base(path) == path {
 		lp, err := exec.LookPath(path)
 		if err != nil {
+			// %w 仅为 errors.Is 保留；{{1}} 的明细与 {{0}} 重复，当前不在 UI 展示。
 			return "", nil, fmt.Errorf("err.terminal.exec_not_found|%s|%w", path, err)
 		}
 		path = lp
@@ -74,6 +75,7 @@ func commandLine(spec Spec) (string, []string, error) {
 		if filepath.Base(comspec) == comspec {
 			lp, err := exec.LookPath(comspec)
 			if err != nil {
+				// %w 仅为 errors.Is 保留；{{1}} 的明细与 {{0}} 重复，当前不在 UI 展示。
 				return "", nil, fmt.Errorf("err.terminal.exec_not_found|%s|%w", comspec, err)
 			}
 			comspec = lp

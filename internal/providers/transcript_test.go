@@ -12,8 +12,7 @@ import (
 
 func TestFormatSessionMarkdownClaudeJSONL(t *testing.T) {
 	// role 标题经 applang 直显：固定 en，避免全局语言态串扰。
-	applang.Set("en")
-	t.Cleanup(func() { applang.Set("en") })
+	applang.SetForTest(t, "en")
 	s := Session{
 		ID:     "42a6304b-1fd3-45aa-b620-10aa37988f2a",
 		ToolID: "claude",
@@ -51,8 +50,7 @@ func TestFormatSessionMarkdownGeminiJSON(t *testing.T) {
 
 func TestFormatSessionMarkdownOpencodeDB(t *testing.T) {
 	// 正文经 applang 直显：固定 en，避免全局语言态串扰。
-	applang.Set("en")
-	t.Cleanup(func() { applang.Set("en") })
+	applang.SetForTest(t, "en")
 	s := Session{ID: "oc1", ToolID: "opencode", Title: "重构登录页", Path: `D:\fake\opencode.db`}
 	md, _, err := FormatSessionMarkdown(s)
 	if err != nil {
@@ -76,8 +74,7 @@ func TestFormatSessionMarkdownNoPath(t *testing.T) {
 
 // 无法解析出轮次时走 fallback 正文（applang 直显，固定 en 断言）。
 func TestFormatSessionMarkdownFallbackEmpty(t *testing.T) {
-	applang.Set("en")
-	t.Cleanup(func() { applang.Set("en") })
+	applang.SetForTest(t, "en")
 	path := filepath.Join(t.TempDir(), "s.jsonl")
 	if err := os.WriteFile(path, []byte(`{"type":"progress"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
