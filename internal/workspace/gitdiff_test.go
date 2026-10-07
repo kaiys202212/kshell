@@ -90,7 +90,7 @@ func TestApplyHunk_stage(t *testing.T) {
 	if err := ApplyHunk(root, "", "tracked.txt", "working", d.Text, "stage"); err != nil {
 		t.Fatal(err)
 	}
-	snap, err := SCMStatus(root, "")
+	snap, err := SCMStatus(root, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

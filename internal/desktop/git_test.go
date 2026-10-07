@@ -33,7 +33,7 @@ func TestGitSCMBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	snap, err := env.app.GitSCM(root, "")
+	snap, err := env.app.GitSCM(root, "", "")
 	if err != nil || !snap.IsRepo {
 		t.Fatalf("GitSCM: %+v err=%v", snap, err)
 	}
@@ -43,7 +43,7 @@ func TestGitSCMBinding(t *testing.T) {
 	if err := env.app.GitCommit(root, "", "add b"); err != nil {
 		t.Fatal(err)
 	}
-	snap, err = env.app.GitSCM(root, "")
+	snap, err = env.app.GitSCM(root, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestGitSCMBinding(t *testing.T) {
 		}
 	}
 
-	if _, err := env.app.GitSCM(root, ".."); err == nil {
+	if _, err := env.app.GitSCM(root, "..", ""); err == nil {
 		t.Fatal("越权 repoRel 应失败")
 	}
 

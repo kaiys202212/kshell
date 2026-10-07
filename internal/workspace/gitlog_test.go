@@ -185,7 +185,7 @@ func TestCheckout_跟踪远端分支(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := string(br); got != "ref: refs/heads/feat\n" && got != "ref: refs/heads/feat\r\n" {
-		snap, _ := SCMStatus(clone, "")
+		snap, _ := SCMStatus(clone, "", "")
 		if snap.Branch != "feat" {
 			t.Fatalf("应检出本地 feat，HEAD=%q branch=%q", got, snap.Branch)
 		}

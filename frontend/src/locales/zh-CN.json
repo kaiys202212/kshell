@@ -69,7 +69,11 @@
       "out_of_workspace": "仓库路径越出工作区范围",
       "empty_commit_msg": "提交说明不能为空",
       "no_paths": "未指定路径",
-      "empty_branch_name": "分支名不能为空"
+      "empty_branch_name": "分支名不能为空",
+      "no_sync_source": "无可用同步源",
+      "no_branch": "不在本地分支上",
+      "sync_remote_missing": "同步源 \"{{0}}\" 不存在",
+      "sync_remote_branch_missing": "同步源 \"{{0}}\" 上没有分支 \"{{1}}\"，已取消推送"
     },
     "terminal": {
       "popup_windows_only": "桌面版终端弹窗目前仅支持 Windows",
@@ -434,6 +438,8 @@
       "not_a_repo": "不是 git 仓库",
       "select_repo": "选择仓库",
       "workspace_root": "工作区根",
+      "sync_source_aria": "同步源",
+      "sync_source_title": "同步源：↑↓ 差异与拉取/推送的目标 remote",
       "actions_aria": "Git 操作",
       "pull": "拉取",
       "pulled": "已拉取",

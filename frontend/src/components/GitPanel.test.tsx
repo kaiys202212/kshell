@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import GitPanel from './GitPanel';
 import type { GitSCMSnapshot } from '../lib/api';
@@ -48,6 +48,8 @@ const snap = (over: Partial<GitSCMSnapshot> = {}): GitSCMSnapshot => ({
   IsRepo: true,
   RepoRel: '',
   Branch: 'main',
+  Remotes: ['origin', 'gitcode'],
+  SyncRemote: 'origin',
   HasUpstream: true,
   Ahead: 1,
   Behind: 0,
@@ -162,5 +164,139 @@ describe('GitPanel', () => {
     expect(await screen.findByText('init')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Fetch all' })).toBeInTheDocument();
     expect(screen.getByLabelText(tt('ui.git.log_filter_aria'))).toBeInTheDocument();
+  });
+
+  it('同步源选择器：显示生效源，切换后按新源重新加载并记忆', async () => {
+    const ws = 'D:\\proj';
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    const sel = await screen.findByLabelText(tt('ui.git.sync_source_aria'));
+    expect(sel).toHaveValue('origin');
+    expect(mocks.gitSCM).toHaveBeenCalledWith(ws, '', '');
+
+    mocks.gitSCM.mockResolvedValue(snap({ Remotes: ['origin', 'gitcode'], SyncRemote: 'gitcode' }));
+    fireEvent.change(sel, { target: { value: 'gitcode' } });
+    await waitFor(() => {
+      expect(mocks.gitSCM).toHaveBeenCalledWith(ws, '', 'gitcode');
+    });
+    expect(localStorage.getItem(`kshell-git-sync-remote:${ws}\0`)).toBe('gitcode');
+    expect(await screen.findByLabelText(tt('ui.git.sync_source_aria'))).toHaveValue('gitcode');
+  });
+
+  it('同步按钮按生效同步源拉取推送', async () => {
+    const ws = 'D:\\proj';
+    mocks.gitSCM.mockResolvedValue(
+      snap({ Entries: [], Ahead: 1, Behind: 1, HasUpstream: true, SyncRemote: 'gitcode' }),
+    );
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.git.primary_action_aria') }));
+    await waitFor(() => {
+      expect(mocks.gitPull).toHaveBeenCalledWith(ws, '', 'gitcode');
+      expect(mocks.gitPush).toHaveBeenCalledWith(ws, '', 'gitcode');
+    });
+  });
+
+  it('无 remote 时不渲染同步源选择器', async () => {
+    mocks.gitSCM.mockResolvedValue(snap({ Remotes: null, SyncRemote: '' }));
+    render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
+    await screen.findByText('dirty.go');
+    expect(screen.queryByLabelText(tt('ui.git.sync_source_aria'))).not.toBeInTheDocument();
+  });
+
+  it('Git 操作菜单的拉取/推送按生效同步源调用', async () => {
+    const ws = 'D:\\proj';
+    mocks.gitSCM.mockResolvedValue(snap({ SyncRemote: 'gitcode' }));
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    await screen.findByText('dirty.go');
+
+    // Radix 菜单由 pointerdown 展开；子菜单项文本带 ▸ 后缀，用正则匹配
+    const trigger = screen.getByRole('button', { name: tt('ui.git.actions_aria') });
+    fireEvent.pointerDown(trigger, { button: 0 });
+    fireEvent.click(trigger);
+    const sub = await screen.findByRole('menuitem', { name: new RegExp(tt('ui.git.pull')) });
+    fireEvent.click(sub);
+    fireEvent.pointerMove(sub);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pull' }));
+    await waitFor(() => {
+      expect(mocks.gitPull).toHaveBeenCalledWith(ws, '', 'gitcode');
+    });
+    // 等 run() 收尾解除 busy，否则禁用态触发器展不开菜单
+    await waitFor(() => expect(trigger).toBeEnabled());
+
+    // 菜单内 Fetch 是独立调用点，单独断言（与底部工具栏 Fetch 各改各的）
+    fireEvent.pointerDown(trigger, { button: 0 });
+    fireEvent.click(trigger);
+    const subF = await screen.findByRole('menuitem', { name: new RegExp(tt('ui.git.pull')) });
+    fireEvent.click(subF);
+    fireEvent.pointerMove(subF);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Fetch' }));
+    await waitFor(() => {
+      expect(mocks.gitFetch).toHaveBeenCalledWith(ws, '', 'gitcode');
+    });
+    await waitFor(() => expect(trigger).toBeEnabled());
+
+    fireEvent.pointerDown(trigger, { button: 0 });
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Push' }));
+    await waitFor(() => {
+      expect(mocks.gitPush).toHaveBeenCalledWith(ws, '', 'gitcode');
+    });
+  });
+
+  it('底部 Fetch 按生效同步源调用', async () => {
+    const ws = 'D:\\proj';
+    mocks.gitSCM.mockResolvedValue(snap({ SyncRemote: 'gitcode' }));
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    await screen.findByText('init');
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch' }));
+    await waitFor(() => {
+      expect(mocks.gitFetch).toHaveBeenCalledWith(ws, '', 'gitcode');
+    });
+  });
+
+  it('提交并推送按生效同步源推送', async () => {
+    const ws = 'D:\\proj';
+    mocks.gitSCM.mockResolvedValue(snap({ SyncRemote: 'gitcode' }));
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    fireEvent.change(await screen.findByLabelText(tt('ui.git.commit_message_aria')), { target: { value: 'msg' } });
+    const more = screen.getByRole('button', { name: tt('ui.git.more_commit_aria') });
+    fireEvent.pointerDown(more, { button: 0 });
+    fireEvent.click(more);
+    fireEvent.click(await screen.findByRole('menuitem', { name: tt('ui.git.commit_and_push') }));
+    await waitFor(() => {
+      expect(mocks.gitCommit).toHaveBeenCalledWith(ws, '', 'msg');
+      expect(mocks.gitPush).toHaveBeenCalledWith(ws, '', 'gitcode');
+    });
+  });
+
+  it('快速连续切换同步源时丢弃过期响应，显示与记忆保持一致', async () => {
+    const ws = 'D:\\proj';
+    const key = `kshell-git-sync-remote:${ws}\0`;
+    mocks.gitSCM.mockResolvedValue(snap({ SyncRemote: 'origin' }));
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    const sel = await screen.findByLabelText(tt('ui.git.sync_source_aria'));
+    expect(sel).toHaveValue('origin');
+
+    // 挂起后续两次请求，人工控制返回顺序以复现竞态
+    const pending: Array<(v: GitSCMSnapshot) => void> = [];
+    mocks.gitSCM.mockImplementation(() => new Promise((res) => pending.push(res)));
+    fireEvent.change(sel, { target: { value: 'gitcode' } });
+    fireEvent.change(sel, { target: { value: 'origin' } });
+    await waitFor(() => {
+      expect(mocks.gitSCM).toHaveBeenCalledWith(ws, '', 'gitcode');
+      expect(mocks.gitSCM).toHaveBeenCalledWith(ws, '', 'origin');
+    });
+    expect(pending).toHaveLength(2);
+    expect(localStorage.getItem(key)).toBe('origin');
+
+    // 后发的 origin 响应先回，先发的 gitcode 响应后到（过期）
+    await act(async () => {
+      pending[1](snap({ SyncRemote: 'origin' }));
+    });
+    await act(async () => {
+      pending[0](snap({ SyncRemote: 'gitcode' }));
+    });
+
+    expect(await screen.findByLabelText(tt('ui.git.sync_source_aria'))).toHaveValue('origin');
+    expect(localStorage.getItem(key)).toBe('origin');
   });
 });

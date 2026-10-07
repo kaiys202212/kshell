@@ -34,6 +34,7 @@ import type { GitDiffSide, GitLogCommit, GitRef, GitSCMEntry, GitSCMSnapshot } f
 import { backendError } from '../lib/errors';
 import { refreshGitStatus } from '../lib/git';
 import { loadLogSel, resolveLogFilter, saveLogSel } from '../lib/gitLogSel';
+import { loadSyncRemote, saveSyncRemote } from '../lib/gitSyncRemote';
 import type { GraphCommit } from '../lib/gitGraph';
 import { cn } from '../lib/cn';
 import { PANE_HEADER } from '../lib/ui';
@@ -100,18 +101,24 @@ export default function GitPanel({
   const [split, setSplit] = useState(0.55);
   const splitRef = useRef<HTMLDivElement>(null);
   const logReq = useRef(0);
+  const loadReq = useRef(0);
 
   const { mode: logMode, ref: logRef } = resolveLogFilter(logSel);
 
   const load = useCallback(async () => {
+    // 快速连续切换同步源会并发多次 gitSCM，seq 用来丢弃过期响应，
+    // 否则晚到的旧快照会把 SyncRemote 滚回旧源，与 localStorage 记忆打架。
+    const seq = ++loadReq.current;
     try {
-      const s = await gitSCM(wsPath, repoRel);
+      const s = await gitSCM(wsPath, repoRel, loadSyncRemote(wsPath, repoRel));
+      if (seq !== loadReq.current) return;
       setSnap(s);
       if (!repoRel && s.Repos && s.Repos.length > 0 && !s.IsRepo) {
         const first = s.Repos[0];
         if (first.Rel) setRepoRel(first.Rel);
       }
     } catch (e) {
+      if (seq !== loadReq.current) return;
       notify(t('ui.git.read_failed', { err: backendError(e) }), 'error');
     }
     // t 保留在依赖：load 仅重取 git 状态（setSnap），不触碰用户输入/选择（msg/repoRel），
@@ -210,8 +217,9 @@ export default function GitPanel({
 
   const sync = () =>
     run(async () => {
-      if ((snap?.Behind ?? 0) > 0) await gitPull(wsPath, repoRel);
-      if ((snap?.Ahead ?? 0) > 0) await gitPush(wsPath, repoRel);
+      const remote = snap?.SyncRemote ?? '';
+      if ((snap?.Behind ?? 0) > 0) await gitPull(wsPath, repoRel, remote);
+      if ((snap?.Ahead ?? 0) > 0) await gitPush(wsPath, repoRel, remote);
     }, t('ui.git.synced'));
 
   const onMsgKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -261,6 +269,24 @@ export default function GitPanel({
               ↑{snap.Ahead} ↓{snap.Behind}
             </span>
           )}
+          {(snap?.Remotes ?? []).length > 0 && (
+            <select
+              className={cn(selectEllipsis, 'h-7 max-w-28 shrink-0 text-muted-foreground')}
+              aria-label={t('ui.git.sync_source_aria')}
+              title={t('ui.git.sync_source_title')}
+              value={snap?.SyncRemote ?? ''}
+              onChange={(e) => {
+                saveSyncRemote(wsPath, repoRel, e.target.value);
+                void load();
+              }}
+            >
+              {(snap?.Remotes ?? []).map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          )}
           <div className="ml-auto flex items-center gap-0.5">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -272,10 +298,14 @@ export default function GitPanel({
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger>{t('ui.git.pull')}</DropdownMenuSubTrigger>
                   <DropdownMenuSubContent>
-                    <DropdownMenuItem onSelect={() => void run(() => gitPull(wsPath, repoRel), t('ui.git.pulled'))}>
+                    <DropdownMenuItem
+                      onSelect={() => void run(() => gitPull(wsPath, repoRel, snap?.SyncRemote ?? ''), t('ui.git.pulled'))}
+                    >
                       Pull
                     </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => void run(() => gitFetch(wsPath, repoRel), t('ui.git.fetched'))}>
+                    <DropdownMenuItem
+                      onSelect={() => void run(() => gitFetch(wsPath, repoRel, snap?.SyncRemote ?? ''), t('ui.git.fetched'))}
+                    >
                       Fetch
                     </DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => void run(() => gitFetchAll(wsPath, repoRel), t('ui.git.fetched_all'))}>
@@ -283,7 +313,9 @@ export default function GitPanel({
                     </DropdownMenuItem>
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
-                <DropdownMenuItem onSelect={() => void run(() => gitPush(wsPath, repoRel), t('ui.git.pushed'))}>Push</DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => void run(() => gitPush(wsPath, repoRel, snap?.SyncRemote ?? ''), t('ui.git.pushed'))}
+                >Push</DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={!msg.trim() || staged.length === 0}
                   onSelect={() => {
@@ -396,7 +428,7 @@ export default function GitPanel({
                     setMsg('');
                     void run(async () => {
                       await gitCommit(wsPath, repoRel, m);
-                      await gitPush(wsPath, repoRel);
+                      await gitPush(wsPath, repoRel, snap?.SyncRemote ?? '');
                     }, t('ui.git.commit_and_push'));
                   }}
                 >
@@ -499,7 +531,13 @@ export default function GitPanel({
             </select>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="icon" variant="ghost" disabled={busy} aria-label="Fetch" onClick={() => void run(() => gitFetch(wsPath, repoRel))}>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  disabled={busy}
+                  aria-label="Fetch"
+                  onClick={() => void run(() => gitFetch(wsPath, repoRel, snap?.SyncRemote ?? ''))}
+                >
                   <Download className="h-3.5 w-3.5" />
                 </Button>
               </TooltipTrigger>

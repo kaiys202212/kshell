@@ -207,6 +207,10 @@ export interface GitSCMSnapshot {
   IsRepo: boolean;
   RepoRel: string;
   Branch: string;
+  /** 仓库全部 remote；null 表示无 remote */
+  Remotes: string[] | null;
+  /** 生效同步源（后端按 origin→upstream→第一个解析后回传） */
+  SyncRemote: string;
   HasUpstream: boolean;
   Ahead: number;
   Behind: number;
@@ -395,7 +399,7 @@ interface AppBindings {
   ReadFileForEdit(wsPath: string, path: string): Promise<EditContent>;
   SaveFile(wsPath: string, path: string, text: string, eol: string): Promise<void>;
   GitStatus(wsPath: string): Promise<GitStatusResult>;
-  GitSCM(wsPath: string, repoRel: string): Promise<GitSCMSnapshot>;
+  GitSCM(wsPath: string, repoRel: string, syncRemote: string): Promise<GitSCMSnapshot>;
   GitDiff(wsPath: string, repoRel: string, path: string, side: GitDiffSide): Promise<GitDiffResult>;
   GitStage(wsPath: string, repoRel: string, paths: string[]): Promise<void>;
   GitUnstage(wsPath: string, repoRel: string, paths: string[]): Promise<void>;
@@ -407,9 +411,9 @@ interface AppBindings {
   GitBranches(wsPath: string, repoRel: string): Promise<string[]>;
   GitCheckout(wsPath: string, repoRel: string, name: string): Promise<void>;
   GitCreateBranch(wsPath: string, repoRel: string, name: string): Promise<void>;
-  GitFetch(wsPath: string, repoRel: string): Promise<void>;
-  GitPull(wsPath: string, repoRel: string): Promise<void>;
-  GitPush(wsPath: string, repoRel: string): Promise<void>;
+  GitFetch(wsPath: string, repoRel: string, remote: string): Promise<void>;
+  GitPull(wsPath: string, repoRel: string, remote: string): Promise<void>;
+  GitPush(wsPath: string, repoRel: string, remote: string): Promise<void>;
   GitStashPush(wsPath: string, repoRel: string, message: string): Promise<void>;
   GitStashPop(wsPath: string, repoRel: string, index: number): Promise<void>;
   GitStashApply(wsPath: string, repoRel: string, index: number): Promise<void>;
@@ -693,8 +697,8 @@ function requireApp(): AppBindings {
   return a;
 }
 
-export async function gitSCM(wsPath: string, repoRel: string): Promise<GitSCMSnapshot> {
-  return requireApp().GitSCM(wsPath, repoRel);
+export async function gitSCM(wsPath: string, repoRel: string, syncRemote = ''): Promise<GitSCMSnapshot> {
+  return requireApp().GitSCM(wsPath, repoRel, syncRemote);
 }
 
 export async function gitDiff(
@@ -764,16 +768,16 @@ export async function gitCreateBranch(wsPath: string, repoRel: string, name: str
   await requireApp().GitCreateBranch(wsPath, repoRel, name);
 }
 
-export async function gitFetch(wsPath: string, repoRel: string): Promise<void> {
-  await requireApp().GitFetch(wsPath, repoRel);
+export async function gitFetch(wsPath: string, repoRel: string, remote = ''): Promise<void> {
+  await requireApp().GitFetch(wsPath, repoRel, remote);
 }
 
-export async function gitPull(wsPath: string, repoRel: string): Promise<void> {
-  await requireApp().GitPull(wsPath, repoRel);
+export async function gitPull(wsPath: string, repoRel: string, remote = ''): Promise<void> {
+  await requireApp().GitPull(wsPath, repoRel, remote);
 }
 
-export async function gitPush(wsPath: string, repoRel: string): Promise<void> {
-  await requireApp().GitPush(wsPath, repoRel);
+export async function gitPush(wsPath: string, repoRel: string, remote = ''): Promise<void> {
+  await requireApp().GitPush(wsPath, repoRel, remote);
 }
 
 export async function gitStashPush(wsPath: string, repoRel: string, message: string): Promise<void> {

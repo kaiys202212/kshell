@@ -69,7 +69,11 @@
       "out_of_workspace": "Repository path is outside the workspace",
       "empty_commit_msg": "Commit message cannot be empty",
       "no_paths": "No paths specified",
-      "empty_branch_name": "Branch name cannot be empty"
+      "empty_branch_name": "Branch name cannot be empty",
+      "no_sync_source": "No sync source available",
+      "no_branch": "Not on a local branch",
+      "sync_remote_missing": "Sync source \"{{0}}\" does not exist",
+      "sync_remote_branch_missing": "Branch \"{{1}}\" does not exist on sync source \"{{0}}\"; push cancelled"
     },
     "terminal": {
       "popup_windows_only": "Desktop terminal popups are only supported on Windows",
@@ -434,6 +438,8 @@
       "not_a_repo": "Not a git repository",
       "select_repo": "Select repository",
       "workspace_root": "Workspace root",
+      "sync_source_aria": "Sync source",
+      "sync_source_title": "Sync source: target remote for ↑↓ diff and pull/push",
       "actions_aria": "Git actions",
       "pull": "Pull",
       "pulled": "Pulled",
