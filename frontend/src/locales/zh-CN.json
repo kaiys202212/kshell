@@ -360,6 +360,7 @@
       "binding_missing": "未检测到 kshell 桌面端绑定，请在桌面端运行",
       "saved": "已保存",
       "staged_suffix": "(已暂存)",
+      "commit_diff_tab": "{{hash}}",
       "binary_preview_unavailable": "二进制文件，无法预览",
       "loading": "加载中…",
       "pdf_read_failed": "无法读取 PDF",

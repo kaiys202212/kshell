@@ -59,12 +59,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/t
 import { GitChangeTree } from './GitChangeTree';
 import { GitLogGraph } from './GitLogGraph';
 
-export type GitDiffSpec = {
-  repoRel: string;
-  path: string;
-  side: GitDiffSide;
-  preview: boolean;
-};
+export type GitDiffSpec =
+  | { kind?: 'file'; repoRel: string; path: string; side: GitDiffSide; preview: boolean }
+  | { kind: 'commit'; repoRel: string; hash: string; preview: boolean };
 
 function toGraph(commits: GitLogCommit[]): GraphCommit[] {
   return commits.map((c) => ({
@@ -200,6 +197,10 @@ export default function GitPanel({
 
   const openEntry = (e: GitSCMEntry, side: GitDiffSide, preview: boolean) => {
     onOpenDiff({ repoRel, path: e.Path, side, preview });
+  };
+
+  const openCommit = (hash: string, preview: boolean) => {
+    onOpenDiff({ kind: 'commit', repoRel, hash, preview });
   };
 
   const onSplitPointer = (ev: ReactPointerEvent<HTMLDivElement>) => {
@@ -581,7 +582,13 @@ export default function GitPanel({
               <TooltipContent>Fetch all</TooltipContent>
             </Tooltip>
           </div>
-          <GitLogGraph commits={toGraph(commits)} selected={picked} onSelect={setPicked} loadStat={loadStat} />
+          <GitLogGraph
+            commits={toGraph(commits)}
+            selected={picked}
+            onSelect={setPicked}
+            onOpenCommit={openCommit}
+            loadStat={loadStat}
+          />
         </div>
       </div>
     </TooltipProvider>

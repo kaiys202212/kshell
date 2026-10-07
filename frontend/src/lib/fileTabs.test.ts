@@ -3,11 +3,14 @@ import { tt } from '../test/i18n';
 import {
   activateTab,
   closeTab,
+  commitDiffTabPath,
   diffTabPath,
   emptyFileTabs,
   fileTabLabel,
   openPinned,
   openPreview,
+  parseCommitDiffTabPath,
+  parseDiffTabPath,
   pinTab,
 } from './fileTabs';
 
@@ -22,6 +25,21 @@ describe('fileTabLabel', () => {
     expect(fileTabLabel(diffTabPath('staged', 'ext/lib', 'a.ts'))).toBe(
       `a.ts ${tt('ui.files.staged_suffix')}`,
     );
+  });
+
+  it('commit diff 页签显示短 hash', () => {
+    const key = commitDiffTabPath('ext/lib', 'abcdef1234567890');
+    expect(fileTabLabel(key)).toBe(tt('ui.files.commit_diff_tab').replace('{{hash}}', 'abcdef1'));
+  });
+});
+
+describe('commitDiffTabPath / parseCommitDiffTabPath', () => {
+  it('编码 repo 与 hash，且与 working/staged 解析互不干扰', () => {
+    const key = commitDiffTabPath('a/b', 'deadbeefcafebabe');
+    expect(key).toBe('diff:commit:a%2Fb:deadbeefcafebabe');
+    expect(parseCommitDiffTabPath(key)).toEqual({ repoRel: 'a/b', hash: 'deadbeefcafebabe' });
+    expect(parseDiffTabPath(key)).toBeNull();
+    expect(parseCommitDiffTabPath(diffTabPath('working', '', 'x.ts'))).toBeNull();
   });
 });
 

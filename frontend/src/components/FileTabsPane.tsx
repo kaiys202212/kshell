@@ -1,8 +1,16 @@
 // 文件区：VS Code 式预览页签 + 常挂载 Preview 实例。
 import { useTranslation } from 'react-i18next';
 import { cn } from '../lib/cn';
-import { closeTab, fileTabLabel, parseDiffTabPath, pinTab, type FileTabsState } from '../lib/fileTabs';
+import {
+  closeTab,
+  fileTabLabel,
+  parseCommitDiffTabPath,
+  parseDiffTabPath,
+  pinTab,
+  type FileTabsState,
+} from '../lib/fileTabs';
 import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
+import GitCommitDiffView from './GitCommitDiffView';
 import GitDiffView from './GitDiffView';
 import Preview from './Preview';
 
@@ -86,13 +94,20 @@ export default function FileTabsPane({
         )}
         {state.tabs.map((t) => {
           const diff = parseDiffTabPath(t.path);
+          const commitDiff = parseCommitDiffTabPath(t.path);
           return (
           <div
             key={t.path}
             className={cn('h-full', state.activePath !== t.path && 'hidden')}
             style={{ animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' }}
           >
-            {diff ? (
+            {commitDiff ? (
+              <GitCommitDiffView
+                wsPath={wsPath}
+                repoRel={commitDiff.repoRel}
+                hash={commitDiff.hash}
+              />
+            ) : diff ? (
               <GitDiffView wsPath={wsPath} repoRel={diff.repoRel} path={diff.path} side={diff.side} />
             ) : (
               <Preview

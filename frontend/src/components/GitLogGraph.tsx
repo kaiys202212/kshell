@@ -24,11 +24,14 @@ export function GitLogGraph({
   commits,
   selected,
   onSelect,
+  onOpenCommit,
   loadStat,
 }: {
   commits: GraphCommit[];
   selected: string;
   onSelect: (hash: string) => void;
+  /** 单击预览 / 双击固定：打开该提交的完整 diff 页签 */
+  onOpenCommit?: (hash: string, preview: boolean) => void;
   loadStat?: (hash: string) => Promise<CommitStatView>;
 }) {
   const rows = layoutGitGraph(commits);
@@ -145,7 +148,11 @@ export function GitLogGraph({
                 isHover && isSel && 'bg-primary/25',
                 !isHover && !isSel && 'hover:bg-muted/60',
               )}
-              onClick={() => onSelect(row.commit.hash)}
+              onClick={() => {
+                onSelect(row.commit.hash);
+                onOpenCommit?.(row.commit.hash, true);
+              }}
+              onDoubleClick={() => onOpenCommit?.(row.commit.hash, false)}
               onMouseEnter={(e) => showTip(row.commit.hash, e.currentTarget)}
               onMouseLeave={hideTip}
             >

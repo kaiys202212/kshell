@@ -98,3 +98,7 @@ func (a *App) GitFetchAll(wsPath, repoRel string) error {
 func (a *App) GitCommitStat(wsPath, repoRel, hash string) (workspace.CommitStat, error) {
 	return workspace.CommitStatAt(filepath.Clean(strings.TrimSpace(wsPath)), repoRel, hash)
 }
+
+func (a *App) GitCommitDiff(wsPath, repoRel, hash string) (workspace.DiffResult, error) {
+	return workspace.CommitDiff(filepath.Clean(strings.TrimSpace(wsPath)), repoRel, hash)
+}

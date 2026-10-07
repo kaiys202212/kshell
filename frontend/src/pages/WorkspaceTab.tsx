@@ -51,7 +51,13 @@ import { ToolDot } from '../components/ui/tool-dot';
 import { resolveAgentActivity } from '../state/agentActivity';
 import { LAYOUT_DEFAULT, useAppStore } from '../state/store';
 import type { WorkspaceTab } from '../state/store';
-import { emptyFileTabs, openPinned, openPreview, diffTabPath } from '../lib/fileTabs';
+import {
+  emptyFileTabs,
+  openPinned,
+  openPreview,
+  commitDiffTabPath,
+  diffTabPath,
+} from '../lib/fileTabs';
 import { OPEN_FILE_EVENT } from '../lib/openHref';
 
 function isAgentTerm(t: TerminalInfo): boolean {
@@ -327,7 +333,10 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   };
 
   const openGitDiff = (spec: GitDiffSpec) => {
-    const key = diffTabPath(spec.side, spec.repoRel, spec.path);
+    const key =
+      spec.kind === 'commit'
+        ? commitDiffTabPath(spec.repoRel, spec.hash)
+        : diffTabPath(spec.side, spec.repoRel, spec.path);
     setFileTabs((s) => (spec.preview ? openPreview(s, key, 'diff') : openPinned(s, key, 'diff')));
     selectCenterTab(FILES_TAB);
   };

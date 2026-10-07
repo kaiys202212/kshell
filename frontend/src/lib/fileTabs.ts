@@ -36,14 +36,35 @@ export function parseDiffTabPath(
   };
 }
 
+export function commitDiffTabPath(repoRel: string, hash: string): string {
+  return `diff:commit:${encodeURIComponent(repoRel)}:${encodeURIComponent(hash)}`;
+}
+
+export function parseCommitDiffTabPath(
+  key: string,
+): { repoRel: string; hash: string } | null {
+  if (!key.startsWith('diff:commit:')) return null;
+  const parts = key.split(':');
+  if (parts.length !== 4 || parts[1] !== 'commit') return null;
+  return {
+    repoRel: decodeURIComponent(parts[2]),
+    hash: decodeURIComponent(parts[3]),
+  };
+}
+
 function baseName(p: string): string {
   const n = p.replace(/\\/g, '/');
   const i = n.lastIndexOf('/');
   return i >= 0 ? n.slice(i + 1) : n || p;
 }
 
-/** 页签标题用路径最后一段；diff 页签带「已暂存」后缀。 */
+/** 页签标题用路径最后一段；diff 页签带「已暂存」后缀；commit diff 用短 hash。 */
 export function fileTabLabel(path: string): string {
+  const commit = parseCommitDiffTabPath(path);
+  if (commit) {
+    const short = commit.hash.slice(0, 7);
+    return i18next.t('ui.files.commit_diff_tab', { hash: short });
+  }
   const diff = parseDiffTabPath(path);
   if (diff) {
     const name = baseName(diff.path);

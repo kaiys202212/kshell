@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import FileTabsPane from './FileTabsPane';
-import { emptyFileTabs, openPreview, diffTabPath } from '../lib/fileTabs';
+import { emptyFileTabs, openPreview, diffTabPath, commitDiffTabPath } from '../lib/fileTabs';
 import { tt } from '../test/i18n';
 
 vi.mock('./Preview', () => ({
@@ -10,6 +10,9 @@ vi.mock('./Preview', () => ({
 }));
 vi.mock('./GitDiffView', () => ({
   default: ({ path }: { path: string }) => <div data-testid="git-diff">{path}</div>,
+}));
+vi.mock('./GitCommitDiffView', () => ({
+  default: ({ hash }: { hash: string }) => <div data-testid="git-commit-diff">{hash}</div>,
 }));
 
 afterEach(cleanup);
@@ -67,5 +70,14 @@ describe('FileTabsPane', () => {
     );
     expect(screen.getByTestId('git-diff')).toHaveTextContent('a.ts');
     expect(screen.queryByTestId('preview')).not.toBeInTheDocument();
+  });
+
+  it('commit diff 页签渲染 GitCommitDiffView', () => {
+    const state = openPreview(emptyFileTabs(), commitDiffTabPath('', 'abcdef123456'), 'diff');
+    render(
+      <FileTabsPane wsPath="D:\\proj" state={state} dirty={{}} onChange={() => {}} onDirty={() => {}} />,
+    );
+    expect(screen.getByTestId('git-commit-diff')).toHaveTextContent('abcdef123456');
+    expect(screen.queryByTestId('git-diff')).not.toBeInTheDocument();
   });
 });

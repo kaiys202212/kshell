@@ -111,6 +111,18 @@ describe('GitPanel', () => {
     });
   });
 
+  it('单击 commit message 打开 commit diff 预览', async () => {
+    const onOpenDiff = vi.fn();
+    render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={onOpenDiff} />);
+    fireEvent.click(await screen.findByRole('button', { name: /init/ }));
+    expect(onOpenDiff).toHaveBeenCalledWith({
+      kind: 'commit',
+      repoRel: '',
+      hash: 'abc1234deadbeef',
+      preview: true,
+    });
+  });
+
   it('丢弃取消时不调 API', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);

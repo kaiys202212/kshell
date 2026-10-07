@@ -360,6 +360,7 @@
       "binding_missing": "kshell desktop bindings not detected; run in the desktop app",
       "saved": "Saved",
       "staged_suffix": "(staged)",
+      "commit_diff_tab": "{{hash}}",
       "binary_preview_unavailable": "Binary file; cannot preview",
       "loading": "Loading…",
       "pdf_read_failed": "Failed to read PDF",

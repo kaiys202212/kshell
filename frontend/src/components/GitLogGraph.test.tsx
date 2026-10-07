@@ -45,6 +45,25 @@ describe('GitLogGraph', () => {
     expect(row.className).not.toMatch(/border-l-primary/);
   });
 
+  it('单击 message 打开预览 commit diff，双击固定', () => {
+    const onSelect = vi.fn();
+    const onOpenCommit = vi.fn();
+    render(
+      <GitLogGraph
+        commits={[commit]}
+        selected=""
+        onSelect={onSelect}
+        onOpenCommit={onOpenCommit}
+      />,
+    );
+    const row = screen.getByRole('button', { name: /hello graph/ });
+    fireEvent.click(row);
+    expect(onSelect).toHaveBeenCalledWith('abcdef123456');
+    expect(onOpenCommit).toHaveBeenCalledWith('abcdef123456', true);
+    fireEvent.doubleClick(row);
+    expect(onOpenCommit).toHaveBeenCalledWith('abcdef123456', false);
+  });
+
   it('悬停带分支 label 的连线时提示分支名', async () => {
     const commits = [
       {

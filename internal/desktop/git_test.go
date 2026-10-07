@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -64,5 +65,13 @@ func TestGitSCMBinding(t *testing.T) {
 	refs, err := env.app.GitRefs(root, "")
 	if err != nil || len(refs) < 1 {
 		t.Fatalf("GitRefs: %+v err=%v", refs, err)
+	}
+
+	diff, err := env.app.GitCommitDiff(root, "", logs[0].Hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diff.Text, "+b") {
+		t.Fatalf("GitCommitDiff 应含第二提交内容: %q", diff.Text)
 	}
 }
