@@ -4,6 +4,7 @@ package desktop
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"syscall"
 	"time"
@@ -64,9 +65,9 @@ func openClipboardRetry() error {
 		time.Sleep(8 * time.Millisecond)
 	}
 	if last == nil {
-		last = fmt.Errorf("OpenClipboard 失败")
+		last = fmt.Errorf("err.clipboard.open_failed_win32")
 	}
-	return fmt.Errorf("打开剪贴板失败: %w", last)
+	return fmt.Errorf("err.clipboard.open_failed|%w", last)
 }
 
 func formatAvailable(format uint32) bool {
@@ -76,7 +77,7 @@ func formatAvailable(format uint32) bool {
 
 func clipboardUnicodeText() (string, error) {
 	if !formatAvailable(cfUnicodeText) {
-		return "", fmt.Errorf("无文本")
+		return "", fmt.Errorf("err.clipboard.no_text")
 	}
 	data, err := clipboardBytes(cfUnicodeText)
 	if err != nil {
@@ -88,15 +89,15 @@ func clipboardUnicodeText() (string, error) {
 
 func clipboardFiles() ([]string, error) {
 	if !formatAvailable(cfHDROP) {
-		return nil, fmt.Errorf("无文件")
+		return nil, fmt.Errorf("err.clipboard.no_files")
 	}
-	h, _, _ := procGetClipboardData.Call(cfHDROP)
+	h, _, err := procGetClipboardData.Call(cfHDROP)
 	if h == 0 {
-		return nil, fmt.Errorf("读取文件列表失败")
+		return nil, fmt.Errorf("err.clipboard.read_file_list_failed|%w", callErr(err))
 	}
 	n, _, _ := procDragQueryFileW.Call(h, uintptr(^uint32(0)), 0, 0)
 	if n == 0 {
-		return nil, fmt.Errorf("文件列表为空")
+		return nil, fmt.Errorf("err.clipboard.file_list_empty")
 	}
 	files := make([]string, 0, n)
 	for i := uintptr(0); i < n; i++ {
@@ -122,7 +123,7 @@ func clipboardPNG() ([]byte, error) {
 		}
 	}
 	if !formatAvailable(cfDIB) {
-		return nil, fmt.Errorf("无图片")
+		return nil, fmt.Errorf("err.clipboard.no_image")
 	}
 	dib, err := clipboardBytes(cfDIB)
 	if err != nil {
@@ -132,20 +133,29 @@ func clipboardPNG() ([]byte, error) {
 }
 
 func clipboardBytes(format uint32) ([]byte, error) {
-	h, _, _ := procGetClipboardData.Call(uintptr(format))
+	h, _, err := procGetClipboardData.Call(uintptr(format))
 	if h == 0 {
-		return nil, fmt.Errorf("GetClipboardData 失败")
+		return nil, fmt.Errorf("err.clipboard.get_data_failed|%w", callErr(err))
 	}
-	ptr, _, _ := procGlobalLock.Call(h)
+	ptr, _, err := procGlobalLock.Call(h)
 	if ptr == 0 {
-		return nil, fmt.Errorf("GlobalLock 失败")
+		return nil, fmt.Errorf("err.clipboard.global_lock_failed|%w", callErr(err))
 	}
 	defer procGlobalUnlock.Call(h)
 	size, _, _ := procGlobalSize.Call(h)
 	if size == 0 {
-		return nil, fmt.Errorf("剪贴板数据为空")
+		return nil, fmt.Errorf("err.clipboard.data_empty")
 	}
 	return copyLocked(ptr, int(size)), nil
+}
+
+// callErr 规整 LazyProc.Call 的错误：失败但 last error 为 0（errnoErr→nil）时用固定
+// 英文串兜底，保证 %w 总能带上非 nil 参数；该值只作诊断参数，不直接面向界面。
+func callErr(err error) error {
+	if err == nil {
+		return errors.New("Win32 call failed")
+	}
+	return err
 }
 
 // copyLocked 从 GlobalLock 得到的 uintptr 拷出一份，避免 uintptr→unsafe.Pointer 触发 vet。

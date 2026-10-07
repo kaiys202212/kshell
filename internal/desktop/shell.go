@@ -5,6 +5,7 @@ import (
 	"os"
 	"runtime"
 
+	"github.com/yangk/kshell/internal/applang"
 	"github.com/yangk/kshell/internal/terminal"
 )
 
@@ -24,7 +25,7 @@ func (a *App) OpenShellTerminal(wsID string, cols, rows int) (terminal.Info, err
 	return m.Open(key, terminal.Info{
 		Kind:      terminal.KindShell,
 		Workspace: ws.Path,
-		Title:     "终端",
+		Title:     applang.T("terminal.title"),
 	}, terminal.Spec{Path: path, Args: args, Dir: ws.Path}, cols, rows)
 }
 

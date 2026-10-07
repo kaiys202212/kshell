@@ -1,8 +1,82 @@
 {
   "err": {
     "session_not_found": "会话不存在或已被清理",
+    "desktop": {
+      "not_ready": "桌面版尚未初始化完成",
+      "session_gone": "会话不存在或已被清理",
+      "workspace_gone": "工作区不存在",
+      "invalid_close_behavior": "非法的关闭行为 {{0}}（可选 tray / exit）"
+    },
+    "clipboard": {
+      "save_image_failed": "保存剪贴板图片失败: {{0}}",
+      "dib_too_short": "DIB 过短",
+      "dib_header_invalid": "DIB 头长度无效",
+      "dib_size_invalid": "DIB 尺寸无效",
+      "dib_bit_depth": "不支持的 DIB 位深 {{0}}",
+      "dib_compression": "不支持的 DIB 压缩 {{0}}",
+      "dib_pixel_offset_invalid": "DIB 像素偏移无效",
+      "dib_insufficient_pixels": "DIB 像素不足",
+      "open_failed_win32": "OpenClipboard 失败",
+      "open_failed": "打开剪贴板失败: {{0}}",
+      "no_text": "无文本",
+      "no_files": "无文件",
+      "read_file_list_failed": "读取文件列表失败: {{0}}",
+      "file_list_empty": "文件列表为空",
+      "no_image": "无图片",
+      "get_data_failed": "GetClipboardData 失败: {{0}}",
+      "global_lock_failed": "GlobalLock 失败: {{0}}",
+      "data_empty": "剪贴板数据为空"
+    },
     "files": {
+      "out_of_workspace": "路径越出工作区范围",
+      "dir_not_found": "目录不存在",
+      "name_invalid": "名称不能为空且不能包含路径分隔符",
+      "target_exists": "目标已存在",
+      "target_not_dir": "目标不是目录",
+      "move_into_self": "不能把目录移入其自身内部",
+      "root_not_deletable": "工作区根目录不可删除",
+      "dir_not_previewable": "不能预览目录",
       "too_big_preview": "文件大小 {{0}} 字节超过预览上限 {{1}} 字节"
+    },
+    "terminal": {
+      "popup_windows_only": "桌面版终端弹窗目前仅支持 Windows",
+      "invalid_base64": "终端输入不是合法的 base64 数据"
+    },
+    "projects": {
+      "not_ready": "项目表未装配",
+      "dir_missing": "目录不存在：{{0}}"
+    },
+    "settings": {
+      "providers_path_unavailable": "providers.yaml 路径不可用（未初始化完成）",
+      "yaml_parse_failed": "YAML 解析失败：{{0}}",
+      "http_url_required": "{{0}} 必须以 http:// 或 https:// 开头",
+      "invalid_session_mode": "无效的会话模式：{{0}}",
+      "invalid_permission_mode": "无效的权限模式：{{0}}"
+    },
+    "ssh": {
+      "connection_not_found": "连接不存在"
+    },
+    "tool": {
+      "unknown": "未知工具",
+      "no_install_recipe": "该工具不支持一键安装",
+      "install_in_progress": "已有安装任务进行中",
+      "cursor_no_clear": "Cursor 不支持清除配置",
+      "cursor_agent_not_found": "未找到 cursor-agent 可执行文件",
+      "still_detected": "仍检测到可执行文件: {{0}}",
+      "unknown_shell": "未知 shell: {{0}}"
+    },
+    "update": {
+      "no_update": "没有可用更新"
+    }
+  },
+  "tool": {
+    "log": {
+      "auto_repairing": "检测到安装损坏，正在自动修复…",
+      "clear_config_failed": "清除配置失败: {{0}}",
+      "uninstall_cmd_failed_removed": "卸载命令失败但仍已删除残留二进制: {{0}}",
+      "remove_residual_failed": "删除残留失败: {{0}}: {{1}}",
+      "residual_removed": "已删除残留: {{0}}",
+      "npm_missing": "未找到 npm，请先安装 Node.js"
     }
   },
   "ui": {

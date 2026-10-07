@@ -85,13 +85,13 @@ func TestReadFileBytesExceedsLimit(t *testing.T) {
 	if err := os.WriteFile(path, big[:64], 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// 用极小上限验证超限错误文案
+	// 用极小上限验证超限错误是 wire key（前端按 key 翻译）
 	_, err := readFileBytesLimited(path, 16)
 	if err == nil {
 		t.Fatal("超限应返回错误")
 	}
-	if !strings.Contains(err.Error(), "超过") && !strings.Contains(err.Error(), "上限") {
-		t.Fatalf("超限错误应明确说明，got %v", err)
+	if !strings.HasPrefix(err.Error(), "err.files.too_big_preview|") {
+		t.Fatalf("超限错误应为 wire key，got %v", err)
 	}
 }
 

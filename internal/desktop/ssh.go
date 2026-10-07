@@ -12,7 +12,7 @@ import (
 	"github.com/yangk/kshell/internal/terminal"
 )
 
-var errConnNotFound = errors.New("连接不存在")
+var errConnNotFound = errors.New("err.ssh.connection_not_found")
 
 // sshOptions 把配置里的 ssh 段转成 remote 执行参数（与 TUI 同口径）。
 func (a *App) sshOptions() remote.SSHOptions {

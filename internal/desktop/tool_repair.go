@@ -162,7 +162,7 @@ func (a *App) maybeAutoRepair(tools []discovery.Tool) {
 		a.bumpRepairAttempts(t.ID)
 		a.Emit("tool:install:log", map[string]any{
 			"toolID": t.ID,
-			"text":   "检测到安装损坏，正在自动修复…",
+			"text":   "tool.log.auto_repairing",
 		})
 		return // 一个任务独占，启动成功后本轮结束
 	}

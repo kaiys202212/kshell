@@ -27,9 +27,9 @@ import (
 )
 
 var (
-	errNotReady          = errors.New("桌面版尚未初始化完成")
-	errSessionNotFound   = errors.New("会话不存在或已被清理")
-	errWorkspaceNotFound = errors.New("工作区不存在")
+	errNotReady          = errors.New("err.desktop.not_ready")
+	errSessionNotFound   = errors.New("err.desktop.session_gone")
+	errWorkspaceNotFound = errors.New("err.desktop.workspace_gone")
 )
 
 // configWriteMu 串行化「读内存配置 → 变更 → 落盘 → 提交内存」全过程：
@@ -498,7 +498,7 @@ func (a *App) saveConfig(mutate func(*config.Config)) error {
 // 先写盘成功再提交内存，避免写失败却留下不一致；非法值或未装配 Layout 直接报错且不改状态。
 func (a *App) SetCloseBehavior(mode string) error {
 	if mode != config.CloseBehaviorTray && mode != config.CloseBehaviorExit {
-		return fmt.Errorf("非法的关闭行为 %q（可选 tray / exit）", mode)
+		return fmt.Errorf("err.desktop.invalid_close_behavior|%s", mode)
 	}
 	return a.saveConfig(func(cfg *config.Config) { cfg.CloseBehavior = mode })
 }

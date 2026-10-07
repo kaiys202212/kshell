@@ -14,7 +14,7 @@ import (
 )
 
 // 终端相关错误：绑定层只做参数组装与错误转发，业务错误由 terminal/launch 包给出。
-var errBadTerminalData = errors.New("终端输入不是合法的 base64 数据")
+var errBadTerminalData = errors.New("err.terminal.invalid_base64")
 
 // termKeySeq 给「工作区新建终端」生成唯一 key（每次新建都要起新进程，不能复用）。
 // 全局自增即可：key 只在同一个 Manager 内需要唯一。

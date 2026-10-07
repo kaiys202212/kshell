@@ -12,7 +12,7 @@ import (
 	"github.com/yangk/kshell/internal/providers"
 )
 
-var errNoProvidersPath = errors.New("providers.yaml 路径不可用（未初始化完成）")
+var errNoProvidersPath = errors.New("err.settings.providers_path_unavailable")
 
 // GetTools 返回最近一次扫描的工具安装状态（含未安装项，前端灰显）。
 // 首轮扫描尚未完成时等一轮（上限 scanReadyTimeout）：前端工作区页签只在挂载时取一次
@@ -37,7 +37,7 @@ func (a *App) SaveProvidersYAML(content string) error {
 		return errNoProvidersPath
 	}
 	if _, err := providers.ParseProvidersYAML([]byte(content)); err != nil {
-		return errors.New("YAML 解析失败：" + err.Error())
+		return fmt.Errorf("err.settings.yaml_parse_failed|%w", err)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -182,7 +182,7 @@ func validateHTTPURL(u, label string) error {
 		return nil
 	}
 	if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
-		return fmt.Errorf("%s 必须以 http:// 或 https:// 开头", label)
+		return fmt.Errorf("err.settings.http_url_required|%s", label)
 	}
 	return nil
 }
@@ -202,7 +202,7 @@ func (a *App) SetSessionMode(mode string) error {
 	switch mode {
 	case config.SessionModeTUI, config.SessionModeACP:
 	default:
-		return fmt.Errorf("无效的会话模式：%s", mode)
+		return fmt.Errorf("err.settings.invalid_session_mode|%s", mode)
 	}
 	return a.saveConfig(func(c *config.Config) { c.SessionMode = mode })
 }
@@ -217,7 +217,7 @@ func (a *App) SetPermissionMode(mode string) error {
 	switch mode {
 	case config.PermissionModeDefault, config.PermissionModeBypass:
 	default:
-		return fmt.Errorf("无效的权限模式：%s", mode)
+		return fmt.Errorf("err.settings.invalid_permission_mode|%s", mode)
 	}
 	return a.saveConfig(func(c *config.Config) { c.PermissionMode = mode })
 }

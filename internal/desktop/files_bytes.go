@@ -33,10 +33,10 @@ func readFileBytesLimited(abs string, max int64) (FileBytes, error) {
 		return FileBytes{}, err
 	}
 	if info.IsDir() {
-		return FileBytes{}, fmt.Errorf("不能预览目录")
+		return FileBytes{}, fmt.Errorf("err.files.dir_not_previewable")
 	}
 	if info.Size() > max {
-		return FileBytes{}, fmt.Errorf("文件大小 %d 字节超过预览上限 %d 字节", info.Size(), max)
+		return FileBytes{}, fmt.Errorf("err.files.too_big_preview|%d|%d", info.Size(), max)
 	}
 	data, err := os.ReadFile(abs)
 	if err != nil {

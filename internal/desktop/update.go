@@ -71,7 +71,7 @@ func (a *App) ApplyUpdate() error {
 		return err
 	}
 	if !r.Available {
-		return fmt.Errorf("没有可用更新")
+		return fmt.Errorf("err.update.no_update")
 	}
 	exe, err := executablePath()
 	if err != nil {

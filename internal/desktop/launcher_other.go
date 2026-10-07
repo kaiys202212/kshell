@@ -9,7 +9,7 @@ import "errors"
 type otherLauncher struct{}
 
 func (otherLauncher) Launch(dir, title string, args []string) error {
-	return errors.New("桌面版终端弹窗目前仅支持 Windows")
+	return errors.New("err.terminal.popup_windows_only")
 }
 
 func (otherLauncher) Focus(title string) bool { return false }

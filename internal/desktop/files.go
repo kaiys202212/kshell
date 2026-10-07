@@ -11,13 +11,13 @@ import (
 )
 
 var (
-	errPathOutsideWorkspace = errors.New("路径越出工作区范围")
-	errDirNotFound          = errors.New("目录不存在")
-	errInvalidName          = errors.New("名称不能为空且不能包含路径分隔符")
-	errTargetExists         = errors.New("目标已存在")
-	errNotDir               = errors.New("目标不是目录")
-	errMoveIntoSelf         = errors.New("不能把目录移入其自身内部")
-	errRootUndeletable      = errors.New("工作区根目录不可删除")
+	errPathOutsideWorkspace = errors.New("err.files.out_of_workspace")
+	errDirNotFound          = errors.New("err.files.dir_not_found")
+	errInvalidName          = errors.New("err.files.name_invalid")
+	errTargetExists         = errors.New("err.files.target_exists")
+	errNotDir               = errors.New("err.files.target_not_dir")
+	errMoveIntoSelf         = errors.New("err.files.move_into_self")
+	errRootUndeletable      = errors.New("err.files.root_not_deletable")
 )
 
 // treeCacheKey 区分 showAll=false / true 两棵缓存树，避免过滤语义互相污染。

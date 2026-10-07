@@ -56,12 +56,12 @@ func (a *App) ReadClipboardPaste() (ClipboardPaste, error) {
 func writePastePNG(pngBytes []byte) (string, error) {
 	f, err := os.CreateTemp("", "kshell-paste-*.png")
 	if err != nil {
-		return "", fmt.Errorf("保存剪贴板图片失败: %w", err)
+		return "", fmt.Errorf("err.clipboard.save_image_failed|%w", err)
 	}
 	defer f.Close()
 	if _, err := f.Write(pngBytes); err != nil {
 		_ = os.Remove(f.Name())
-		return "", fmt.Errorf("保存剪贴板图片失败: %w", err)
+		return "", fmt.Errorf("err.clipboard.save_image_failed|%w", err)
 	}
 	return f.Name(), nil
 }

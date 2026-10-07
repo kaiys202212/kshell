@@ -1,8 +1,82 @@
 {
   "err": {
     "session_not_found": "Session not found or has been cleaned up",
+    "desktop": {
+      "not_ready": "Desktop is not initialized yet",
+      "session_gone": "Session not found or has been cleaned up",
+      "workspace_gone": "Workspace not found",
+      "invalid_close_behavior": "Invalid close behavior {{0}} (choose tray or exit)"
+    },
+    "clipboard": {
+      "save_image_failed": "Failed to save clipboard image: {{0}}",
+      "dib_too_short": "DIB too short",
+      "dib_header_invalid": "Invalid DIB header length",
+      "dib_size_invalid": "Invalid DIB dimensions",
+      "dib_bit_depth": "Unsupported DIB bit depth {{0}}",
+      "dib_compression": "Unsupported DIB compression {{0}}",
+      "dib_pixel_offset_invalid": "Invalid DIB pixel offset",
+      "dib_insufficient_pixels": "Not enough DIB pixel data",
+      "open_failed_win32": "OpenClipboard failed",
+      "open_failed": "Failed to open clipboard: {{0}}",
+      "no_text": "No text in the clipboard",
+      "no_files": "No files in the clipboard",
+      "read_file_list_failed": "Failed to read clipboard file list: {{0}}",
+      "file_list_empty": "Clipboard file list is empty",
+      "no_image": "No image in the clipboard",
+      "get_data_failed": "GetClipboardData failed: {{0}}",
+      "global_lock_failed": "GlobalLock failed: {{0}}",
+      "data_empty": "Clipboard data is empty"
+    },
     "files": {
+      "out_of_workspace": "Path is outside the workspace",
+      "dir_not_found": "Directory not found",
+      "name_invalid": "Name must be non-empty and must not contain path separators",
+      "target_exists": "Target already exists",
+      "target_not_dir": "Target is not a directory",
+      "move_into_self": "Cannot move a directory into itself",
+      "root_not_deletable": "The workspace root cannot be deleted",
+      "dir_not_previewable": "Cannot preview a directory",
       "too_big_preview": "File size {{0}} bytes exceeds preview limit {{1}} bytes"
+    },
+    "terminal": {
+      "popup_windows_only": "Desktop terminal popups are only supported on Windows",
+      "invalid_base64": "Terminal input is not valid base64 data"
+    },
+    "projects": {
+      "not_ready": "Projects are not initialized yet",
+      "dir_missing": "Directory not found: {{0}}"
+    },
+    "settings": {
+      "providers_path_unavailable": "providers.yaml path is unavailable (not initialized yet)",
+      "yaml_parse_failed": "YAML parse failed: {{0}}",
+      "http_url_required": "{{0}} must start with http:// or https://",
+      "invalid_session_mode": "Invalid session mode: {{0}}",
+      "invalid_permission_mode": "Invalid permission mode: {{0}}"
+    },
+    "ssh": {
+      "connection_not_found": "Connection not found"
+    },
+    "tool": {
+      "unknown": "Unknown tool",
+      "no_install_recipe": "This tool does not support one-click install",
+      "install_in_progress": "Another install task is already running",
+      "cursor_no_clear": "Cursor does not support clearing its configuration",
+      "cursor_agent_not_found": "cursor-agent executable not found",
+      "still_detected": "Executable still detected: {{0}}",
+      "unknown_shell": "Unknown shell: {{0}}"
+    },
+    "update": {
+      "no_update": "No update available"
+    }
+  },
+  "tool": {
+    "log": {
+      "auto_repairing": "Broken installation detected, auto-repairing...",
+      "clear_config_failed": "Failed to clear configuration: {{0}}",
+      "uninstall_cmd_failed_removed": "Uninstall command failed, but residual binaries were removed: {{0}}",
+      "remove_residual_failed": "Failed to remove residual file {{0}}: {{1}}",
+      "residual_removed": "Removed residual file {{0}}",
+      "npm_missing": "npm not found; install Node.js first"
     }
   },
   "ui": {

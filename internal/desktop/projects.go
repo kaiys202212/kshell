@@ -2,8 +2,10 @@ package desktop
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
+	"github.com/yangk/kshell/internal/applang"
 	"github.com/yangk/kshell/internal/discovery"
 )
 
@@ -14,10 +16,10 @@ func (a *App) CreateProject() (string, error) {
 	ctx, st := a.ctx, a.opts.Projects
 	a.mu.Unlock()
 	if st == nil {
-		return "", errors.New("项目表未装配")
+		return "", errors.New("err.projects.not_ready")
 	}
 
-	dir, err := pickDirectory(ctx, "选择项目目录")
+	dir, err := pickDirectory(ctx, applang.T("dialog.pick_project_dir"))
 	if err != nil {
 		return "", err
 	}
@@ -26,7 +28,7 @@ func (a *App) CreateProject() (string, error) {
 		return "", nil // 用户取消
 	}
 	if !discovery.DirExists(dir) {
-		return "", errors.New("目录不存在：" + dir)
+		return "", fmt.Errorf("err.projects.dir_missing|%s", dir)
 	}
 	if err := st.Add(dir); err != nil {
 		return "", err
@@ -41,7 +43,7 @@ func (a *App) HideProject(path string) error {
 	st := a.opts.Projects
 	a.mu.Unlock()
 	if st == nil {
-		return errors.New("项目表未装配")
+		return errors.New("err.projects.not_ready")
 	}
 	if err := st.Hide(path); err != nil {
 		return err
@@ -56,7 +58,7 @@ func (a *App) RestoreProject(path string) error {
 	st := a.opts.Projects
 	a.mu.Unlock()
 	if st == nil {
-		return errors.New("项目表未装配")
+		return errors.New("err.projects.not_ready")
 	}
 	if err := st.Restore(path); err != nil {
 		return err

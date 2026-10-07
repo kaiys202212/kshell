@@ -18,11 +18,11 @@ import (
 )
 
 var (
-	errUnknownTool  = errors.New("未知工具")
-	errNotInstaller = errors.New("该工具不支持一键安装")
-	errInstallBusy  = errors.New("已有安装任务进行中")
-	errCursorPurge  = errors.New("Cursor 不支持清除配置")
-	errCursorNoBin  = errors.New("未找到 cursor-agent 可执行文件")
+	errUnknownTool  = errors.New("err.tool.unknown")
+	errNotInstaller = errors.New("err.tool.no_install_recipe")
+	errInstallBusy  = errors.New("err.tool.install_in_progress")
+	errCursorPurge  = errors.New("err.tool.cursor_no_clear")
+	errCursorNoBin  = errors.New("err.tool.cursor_agent_not_found")
 )
 
 // InstallRecipeView 是回传前端的安装配方预览：命令只读，CanPurge 由 PurgeDirs 是否为空决定。
@@ -181,7 +181,7 @@ func (a *App) execInstallJob(id, action string, recipe providers.InstallRecipe, 
 
 	if action == "uninstall" && purge {
 		if err := a.purgeConfigDirs(recipe.PurgeDirs, a.snapshot().Home); err != nil {
-			onLog("清除配置失败: " + err.Error())
+			onLog("tool.log.clear_config_failed|" + err.Error())
 			runErr = err
 			return
 		}
@@ -225,7 +225,7 @@ func (a *App) execInstallCommand(id, action string, recipe providers.InstallReci
 
 	removed := a.removeLeftoverBins(id, onLog)
 	if left := a.leftoverBins(id); len(left) > 0 {
-		return fmt.Errorf("仍检测到可执行文件: %s", left[0])
+		return fmt.Errorf("err.tool.still_detected|%s", left[0])
 	}
 	if cmdErr != nil && removed == 0 {
 		if recipe.UninstallCmd == "" && a.toolByID(id).BinPath == "" {
@@ -234,7 +234,7 @@ func (a *App) execInstallCommand(id, action string, recipe providers.InstallReci
 		return cmdErr
 	}
 	if cmdErr != nil {
-		onLog("卸载命令失败但仍已删除残留二进制: " + cmdErr.Error())
+		onLog("tool.log.uninstall_cmd_failed_removed|" + cmdErr.Error())
 	}
 	return nil
 }
@@ -279,12 +279,12 @@ func (a *App) removeLeftoverBins(id string, onLog func(string)) int {
 				continue
 			}
 			if onLog != nil {
-				onLog("删除残留失败: " + bin + ": " + err.Error())
+				onLog("tool.log.remove_residual_failed|" + bin + "|" + err.Error())
 			}
 			continue
 		}
 		if onLog != nil {
-			onLog("已删除残留: " + bin)
+			onLog("tool.log.residual_removed|" + bin)
 		}
 		n++
 	}
@@ -393,7 +393,7 @@ func runShellCommand(ctx context.Context, shell, cmdline string, onLog func(stri
 	if strings.Contains(cmdline, "npm ") {
 		if _, err := exec.LookPath("npm"); err != nil {
 			if onLog != nil {
-				onLog("未找到 npm，请先安装 Node.js")
+				onLog("tool.log.npm_missing")
 			}
 			return err
 		}
@@ -408,7 +408,7 @@ func runShellCommand(ctx context.Context, shell, cmdline string, onLog func(stri
 	case "sh":
 		cmd = exec.CommandContext(ctx, "sh", "-c", cmdline)
 	default:
-		return fmt.Errorf("未知 shell %q", shell)
+		return fmt.Errorf("err.tool.unknown_shell|%s", shell)
 	}
 
 	pr, pw := io.Pipe()
