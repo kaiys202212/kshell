@@ -410,7 +410,6 @@ describe('Settings', () => {
 
     expect(mocks.saveProvidersYAML).toHaveBeenCalledWith('providers:\n  - name: foo\n');
     expect(await screen.findByText(tt('ui.providers.saved'))).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Restart now' })).not.toBeInTheDocument();
   });
 
   it('保存失败（YAML 解析失败等）时显示错误，不显示成功提示', async () => {

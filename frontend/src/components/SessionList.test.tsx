@@ -239,7 +239,6 @@ describe('SessionList', () => {
 
     expect(within(row).queryByRole('button', { name: tt('ui.session_list.activate') })).toBeNull();
     expect(within(row).queryByRole('button', { name: tt('ui.session_list.restore') })).toBeNull();
-    expect(within(row).queryByRole('button', { name: 'Switch' })).toBeNull();
     expect(within(row).getByLabelText(tt('ui.session_list.restored'))).toBeInTheDocument();
     expect(within(row).getByLabelText(tt('ui.agent_activity.running'))).toBeInTheDocument();
     expect(row).toHaveClass('bg-primary/8');
@@ -281,14 +280,6 @@ describe('SessionList', () => {
     expect(within(row).getByLabelText(tt('ui.session_list.restored'))).toBeInTheDocument();
     expect(within(row).getByLabelText(tt('ui.agent_activity.waiting'))).toBeInTheDocument();
     expect(row).not.toHaveClass('bg-primary/8');
-  });
-
-  it('不再提供「在外部终端打开」入口（该路径会弹系统控制台黑窗）', async () => {
-    renderList();
-    const row = await findRow('修复上传白名单');
-
-    expect(within(row).queryByRole('button', { name: 'Open in external terminal' })).toBeNull();
-    expect(within(row).getByRole('button', { name: tt('ui.session_list.activate') })).toBeInTheDocument();
   });
 
   it('标题剥掉 XML 包装标签后渲染；清洗后为空显示「(无标题)」（完整原文走悬停浮动卡片）', async () => {

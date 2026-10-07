@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { tt } from '../test/i18n';
-import { formatStat, layoutGitGraph, type GraphCommit } from './gitGraph';
+import { formatAbsoluteTime, formatStat, layoutGitGraph, type GraphCommit } from './gitGraph';
 
 const c = (hash: string, parents: string[], subject = hash): GraphCommit => ({
   hash,
@@ -56,5 +56,22 @@ describe('formatStat', () => {
       .replace('{{1}}', '1867')
       .replace('{{2}}', '202');
     expect(formatStat({ files: 19, insertions: 1867, deletions: 202 })).toBe(expected);
+  });
+});
+
+describe('formatAbsoluteTime', () => {
+  const iso = '2026-01-01T00:00:00Z';
+
+  it('正常 locale（zh-CN/en）输出可读日期：不抛错且含年份', () => {
+    for (const loc of ['zh-CN', 'en']) {
+      const out = formatAbsoluteTime(iso, loc);
+      expect(out).toContain('2026');
+      expect(out).not.toBe(iso);
+    }
+  });
+
+  it('非法 locale（3 字母区域 en-ABC）不抛错，回退稳定格式', () => {
+    expect(() => formatAbsoluteTime(iso, 'en-ABC')).not.toThrow();
+    expect(formatAbsoluteTime(iso, 'en-ABC')).toBe('2026-01-01 00:00');
   });
 });

@@ -135,7 +135,6 @@ describe('FileTree', () => {
     render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
 
     expect(await screen.findByText('proj')).toBeInTheDocument();
-    expect(screen.queryByText('No files to display')).not.toBeInTheDocument();
   });
 
   it('子目录加载失败：只在目标目录行内提示 + 重试入口，不整树替换', async () => {

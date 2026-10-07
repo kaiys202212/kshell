@@ -95,14 +95,20 @@ export function formatStat(st: { files: number; insertions: number; deletions: n
   }) as string;
 }
 
-export function formatAbsoluteTime(iso: string): string {
+export function formatAbsoluteTime(iso: string, locale: string = i18next.language): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return new Intl.DateTimeFormat(i18next.language || undefined, {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(d);
+  try {
+    return new Intl.DateTimeFormat(locale || undefined, {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(d);
+  } catch {
+    // 非法 locale（外部语言码值域允许 3 字母区域，如 en-ABC）会让 Intl 抛 RangeError；
+    // 该函数在 render 期被 GitLogGraph 调用且无 ErrorBoundary，必须回退到稳定格式避免白屏。
+    return d.toISOString().slice(0, 16).replace('T', ' ');
+  }
 }

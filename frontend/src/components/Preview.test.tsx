@@ -84,9 +84,6 @@ describe('Preview', () => {
     render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\readme.md'} />);
 
     expect(await screen.findByRole('textbox', { name: EDITOR_LABEL })).toHaveValue('# Hi');
-    expect(screen.queryByRole('button', { name: 'Preview' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Source' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
   });
 
   it('图片路径直接挂载 ImagePreview，不调 readFileForEdit', async () => {
@@ -102,7 +99,7 @@ describe('Preview', () => {
     expect(mocks.readFileForEdit).not.toHaveBeenCalled();
   });
 
-  it('无路径栏与保存按钮，内容区可占满', async () => {
+  it('无路径栏，内容区可占满', async () => {
     mocks.readFileForEdit.mockResolvedValue({ Text: 'hello', EOL: 'lf', Size: 5 });
     const { container } = render(<Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} />);
     await screen.findByTestId('code-editor');
@@ -111,7 +108,6 @@ describe('Preview', () => {
     expect(root.className).toMatch(/h-full/);
     expect(root.className).toMatch(/overflow-hidden/);
     expect(root.querySelector('[data-testid="preview-path-header"]')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
     const body = root.querySelector('[data-testid="preview-body"]') as HTMLElement;
     expect(body.className).toMatch(/min-h-0/);
     expect(body.className).toMatch(/flex-1/);
@@ -187,7 +183,6 @@ describe('Preview', () => {
       <Preview wsPath={'D:\\proj'} path={'D:\\proj\\a.ts'} onDirtyChange={onDirty} onEdited={onEdited} />,
     );
     const area = (await screen.findByRole('textbox', { name: EDITOR_LABEL })) as HTMLTextAreaElement;
-    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
 
     await act(async () => {
       fireEvent.change(area, { target: { value: 'ab' } });

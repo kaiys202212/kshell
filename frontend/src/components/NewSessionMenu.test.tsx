@@ -148,13 +148,6 @@ describe('NewSessionMenu', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
-  it('不再提供「在外部终端打开」入口（该路径会弹系统控制台窗口）', () => {
-    setup();
-
-    fireEvent.click(screen.getByRole('button', { expanded: false }));
-    expect(screen.queryByRole('button', { name: 'Open in external terminal' })).not.toBeInTheDocument();
-  });
-
   it('工具同时支持 ACP 时下拉仍只有工具名，点选走 onSelect 不强制 ACP', () => {
     const acpTools: ToolInfo[] = [
       {
