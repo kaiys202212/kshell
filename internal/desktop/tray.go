@@ -78,6 +78,9 @@ func runTray(icon []byte, onShow, onQuit func()) {
 		trayMenuMu.Lock()
 		trayShowItem, trayQuitItem = mShow, mQuit
 		trayMenuMu.Unlock()
+		// 句柄赋值后补刷一次：闭合「菜单创建/赋值期间 SetLanguage 抢先」的窗口
+		// （那次刷新会因句柄为空而落空，此处按最新语言兜底）。
+		refreshTrayText()
 	}, clearTrayMenuItems)
 }
 

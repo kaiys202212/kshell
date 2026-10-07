@@ -5,11 +5,28 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+// languagePattern 是允许的 locale 码模式：2-3 字母主语言段 + 可选 2-4 字母区域段。
+// 外部语言包可引入任意语言（如 ja、pt-BR），故值域放宽到码模式而非白名单；
+// 原样保留不做大小写折叠，与既有精确匹配惯例一致。
+var languagePattern = regexp.MustCompile(`^[A-Za-z]{2,3}(-[A-Za-z]{2,4})?$`)
+
+// ValidLanguage 报告语言值是否可持久化：en/zh-CN/system 三个内建值，
+// 或匹配 languagePattern 的任意 locale 码；其余（空串、含非法字符）为非法。
+// desktop 侧 normalizeLanguage 复用此判定，避免两侧值域漂移。
+func ValidLanguage(s string) bool {
+	switch s {
+	case "en", "zh-CN", "system":
+		return true
+	}
+	return languagePattern.MatchString(s)
+}
 
 // SSHOptions 影响 remote 包拼装 ssh 参数的方式，集中配置便于按环境调整。
 // BatchMode 不作为配置项：kshell 永远传 -o BatchMode=yes，避免卡在密码/密钥交互提示上。
@@ -205,13 +222,8 @@ func (c Config) normalized() Config {
 		c.Appearance.Mode = d.Appearance.Mode
 	}
 	c.Appearance.FontSize = ClampUIFontSize(c.Appearance.FontSize)
-	// 界面语言：空值或非法值一律回落默认（en）。
-	if c.Language == "" {
-		c.Language = d.Language
-	}
-	switch c.Language {
-	case "en", "zh-CN", "system":
-	default:
+	// 界面语言：空值或非法值（不匹配 locale 码模式）回落默认（en）。
+	if !ValidLanguage(c.Language) {
 		c.Language = d.Language
 	}
 	// 关闭行为：空值或非 exit 一律回落默认（tray）。

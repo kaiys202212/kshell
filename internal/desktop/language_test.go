@@ -71,6 +71,64 @@ func TestSetLanguagePersistsAndEmits(t *testing.T) {
 	}
 }
 
+// TestSetLanguageNotReadyDoesNotPollute 仿 TestSetAppearanceModeWithoutLayoutIsNotReady：
+// 无 Layout 时 saveConfig 返回 errNotReady，失败路径不得污染 applang 运行态、
+// 不得触碰托盘刷新、不得改内存配置。
+func TestSetLanguageNotReadyDoesNotPollute(t *testing.T) {
+	a := NewAppWith(Options{Config: config.Default()}) // 无 Layout → errNotReady
+	orig := refreshTrayTextFn
+	calls := 0
+	refreshTrayTextFn = func() { calls++ }
+	t.Cleanup(func() {
+		refreshTrayTextFn = orig
+		applang.Set("en")
+	})
+	applang.Set("en") // 显式归零，防其它测试串扰
+
+	if err := a.SetLanguage("zh-CN"); err != errNotReady {
+		t.Fatalf("err = %v, want errNotReady", err)
+	}
+	if got := applang.T("tray.exit"); got != "Quit" {
+		t.Fatalf("运行态被污染：tray.exit = %q, want Quit", got)
+	}
+	if calls != 0 {
+		t.Fatalf("refresh 次数 = %d, want 0", calls)
+	}
+	if got := a.GetLanguage(); got.Configured != "en" || got.Resolved != "en" {
+		t.Fatalf("内存配置被污染：language = %+v, want en", got)
+	}
+}
+
+func TestSetLanguageKeepsExternalLocaleCode(t *testing.T) {
+	layout := langLayout(t)
+	a := NewAppWith(Options{
+		Config: config.Default(),
+		Layout: layout,
+		Emit:   func(string, ...any) {},
+	})
+	t.Cleanup(func() { applang.Set("en") })
+
+	// 外部语言包引入的语言（如 ja）可被选择并持久化，Resolved 原样直通
+	if err := a.SetLanguage("ja"); err != nil {
+		t.Fatalf("SetLanguage(ja): %v", err)
+	}
+	got := a.GetLanguage()
+	if got.Configured != "ja" || got.Resolved != "ja" {
+		t.Fatalf("language = %+v, want configured/resolved ja", got)
+	}
+	loaded, err := config.Load(layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Language != "ja" {
+		t.Fatalf("persisted = %q, want ja", loaded.Language)
+	}
+	// Go 直显文案对非 zh-CN 语言回落英文（applang.Set 语义）
+	if applang.T("tray.exit") != "Quit" {
+		t.Fatalf("直显文案 = %q, want Quit（英文回落）", applang.T("tray.exit"))
+	}
+}
+
 func TestSetLanguageInvalidFallsBackToEn(t *testing.T) {
 	layout := langLayout(t)
 	a := NewAppWith(Options{
@@ -92,6 +150,21 @@ func TestSetLanguageInvalidFallsBackToEn(t *testing.T) {
 	}
 	if loaded.Language != "en" {
 		t.Fatalf("persisted = %q, want en", loaded.Language)
+	}
+
+	// 含非法字符的值不匹配 locale 码模式，同样回落 en
+	if err := a.SetLanguage("bogus!"); err != nil {
+		t.Fatalf("SetLanguage(bogus!): %v", err)
+	}
+	if got := a.GetLanguage(); got.Configured != "en" || got.Resolved != "en" {
+		t.Fatalf("bogus! 后 language = %+v, want en", got)
+	}
+	loaded, err = config.Load(layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Language != "en" {
+		t.Fatalf("bogus! persisted = %q, want en", loaded.Language)
 	}
 }
 
@@ -116,7 +189,7 @@ func TestSetLanguageSystemResolves(t *testing.T) {
 	}
 }
 
-func TestSetLanguageRebuildsTrayOnlyWhenActive(t *testing.T) {
+func TestSetLanguageRefreshesTrayOnlyWhenActive(t *testing.T) {
 	layout := langLayout(t)
 	a := NewAppWith(Options{
 		Config: config.Default(),
@@ -199,5 +272,24 @@ func TestLoadExternalLocalesReadsValidAndSkipsOthers(t *testing.T) {
 	}
 	if got["xx.json"] != valid {
 		t.Fatalf("xx.json = %q, want %q", got["xx.json"], valid)
+	}
+}
+
+func TestLoadExternalLocalesReadErrorReturnsNil(t *testing.T) {
+	layout := langLayout(t)
+	// locales 指向普通文件（非目录）→ ReadDir 失败且非「目录不存在」
+	file := filepath.Join(t.TempDir(), "afile")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	layout.Locales = file
+
+	a := NewAppWith(Options{Config: config.Default(), Layout: layout})
+	got, err := a.LoadExternalLocales()
+	if err == nil {
+		t.Fatal("ReadDir 失败应返回错误")
+	}
+	if got != nil {
+		t.Fatalf("出错时应返回 nil map, got %#v", got)
 	}
 }

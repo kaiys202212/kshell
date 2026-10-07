@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,18 +12,18 @@ import (
 )
 
 // LanguageInfo 是语言设置的绑定形态：Configured 为配置原值
-// （en/zh-CN/system），Resolved 为解析后的实际语言（en/zh-CN）。
+// （en/zh-CN/system 或外部语言包引入的 locale 码），Resolved 为解析后的
+// 实际语言（system → en/zh-CN，其余原样直通）。
 type LanguageInfo struct {
 	Configured string `json:"configured"`
 	Resolved   string `json:"resolved"`
 }
 
-// normalizeLanguage 把任意值收敛到 en/zh-CN/system 之一，口径与
-// config.normalized 一致：非法值（含空串）一律回落 en。
-// Get/Set 两侧同用，保证「读到什么就能写回什么」。
+// normalizeLanguage 把任意值收敛到合法语言：复用 config.ValidLanguage 判定
+// （内建 en/zh-CN/system + locale 码模式，外部语言包新增语言可持久化），
+// 非法值（含空串）一律回落 en。Get/Set 两侧同用，保证「读到什么就能写回什么」。
 func normalizeLanguage(lang string) string {
-	switch lang {
-	case "en", "zh-CN", "system":
+	if config.ValidLanguage(lang) {
 		return lang
 	}
 	return "en"
@@ -44,7 +45,7 @@ func (a *App) SetLanguage(lang string) error {
 	}
 	applang.Set(applang.Resolve(lang))
 	a.emitLanguage()
-	a.rebuildTray()
+	a.refreshTrayLanguage()
 	return nil
 }
 
@@ -53,11 +54,12 @@ func (a *App) emitLanguage() {
 	a.Emit("language:changed", a.GetLanguage())
 }
 
-// rebuildTray 刷新托盘菜单文案（语言切换后调用）。
-// 就地 SetTitle 而非销毁重建：systray.Quit 走 sync.Once，托盘消息循环退出后
-// 无法再起，销毁重建会永久失去「退出」能力；菜单项句柄由库保证可跨 goroutine 调用。
-// 托盘未启动（句柄为空）时无操作。
-func (a *App) rebuildTray() {
+// refreshTrayLanguage 刷新托盘菜单语言（语言切换后调用）——就地刷新文案，
+// 不销毁重建（命名如实反映这一点）。
+// 就地 SetTitle/SetTooltip 而非销毁重建：systray.Quit 走 sync.Once，托盘消息
+// 循环退出后无法再起，销毁重建会永久失去「退出」能力；菜单项句柄由库保证
+// 可跨 goroutine 调用。托盘未启动（句柄为空）时无操作。
+func (a *App) refreshTrayLanguage() {
 	a.mu.Lock()
 	active := a.trayActive
 	a.mu.Unlock()
@@ -79,12 +81,18 @@ func (a *App) LoadExternalLocales() (map[string]string, error) {
 	if dir == "" {
 		return out, nil
 	}
+	// 路径被普通文件占用时 ReadDir 在 Windows 会给出「找不到路径」的误导错误
+	// （IsNotExist 为真），先 Stat 区分：存在但非目录 → 显式报错；
+	// 确实不存在 → 按「无外部语言包」返回空 map。
+	if fi, serr := os.Stat(dir); serr == nil && !fi.IsDir() {
+		return nil, fmt.Errorf("locales 路径不是目录: %s", dir)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return out, nil
 		}
-		return out, err
+		return nil, err
 	}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".json") {
