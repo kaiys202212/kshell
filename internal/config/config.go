@@ -74,16 +74,18 @@ type ModelConfig struct {
 }
 
 type Config struct {
-	ScanRoots      []string        `yaml:"scan_roots"`
-	MaxDepth       int             `yaml:"max_depth"`
-	Exclude        []string        `yaml:"exclude"`
-	SSHOptions     SSHOptions      `yaml:"ssh"`
-	Scanners       map[string]bool `yaml:"scanners"`
-	Appearance     Appearance      `yaml:"appearance"`
-	CloseBehavior  string          `yaml:"close_behavior"`  // tray | exit
-	SessionMode    string          `yaml:"session_mode"`    // tui | acp
-	PermissionMode string          `yaml:"permission_mode"` // default | bypass
-	Model          ModelConfig     `yaml:"model"`
+	ScanRoots  []string        `yaml:"scan_roots"`
+	MaxDepth   int             `yaml:"max_depth"`
+	Exclude    []string        `yaml:"exclude"`
+	SSHOptions SSHOptions      `yaml:"ssh"`
+	Scanners   map[string]bool `yaml:"scanners"`
+	Appearance Appearance      `yaml:"appearance"`
+	// Language 界面语言：en / zh-CN 显式指定，system 跟随系统，空串归一为 en。
+	Language       string      `yaml:"language"`
+	CloseBehavior  string      `yaml:"close_behavior"`  // tray | exit
+	SessionMode    string      `yaml:"session_mode"`    // tui | acp
+	PermissionMode string      `yaml:"permission_mode"` // default | bypass
+	Model          ModelConfig `yaml:"model"`
 	// DesktopShortcutEnsured 为 true 后不再自动创建桌面快捷方式（用户删除视为不想要）。
 	DesktopShortcutEnsured bool `yaml:"desktop_shortcut_ensured"`
 	// AgentSetupDismissed 为 true 后不再自动弹出首次 Agent 安装向导。
@@ -108,6 +110,7 @@ func Default() Config {
 			"docs":      true,
 		},
 		Appearance:     Appearance{Mode: "dark", FontSize: DefaultUIFontSize},
+		Language:       "en",
 		CloseBehavior:  CloseBehaviorTray,
 		SessionMode:    SessionModeTUI,
 		PermissionMode: PermissionModeDefault,
@@ -202,6 +205,15 @@ func (c Config) normalized() Config {
 		c.Appearance.Mode = d.Appearance.Mode
 	}
 	c.Appearance.FontSize = ClampUIFontSize(c.Appearance.FontSize)
+	// 界面语言：空值或非法值一律回落默认（en）。
+	if c.Language == "" {
+		c.Language = d.Language
+	}
+	switch c.Language {
+	case "en", "zh-CN", "system":
+	default:
+		c.Language = d.Language
+	}
 	// 关闭行为：空值或非 exit 一律回落默认（tray）。
 	if c.CloseBehavior != CloseBehaviorExit {
 		c.CloseBehavior = CloseBehaviorTray
