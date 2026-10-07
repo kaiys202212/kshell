@@ -2,6 +2,7 @@
 // toasts/dismissToast。自动关闭（duration）触发 onOpenChange(false) 时回写 store。
 // info/success 用卡片底色+左侧色条区分，error 用 destructive 反色强调。
 import * as ToastPrimitive from '@radix-ui/react-toast';
+import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../../state/store';
 import type { Toast } from '../../state/store';
 import { cn } from '../../lib/cn';
@@ -16,6 +17,7 @@ const toneClass: Record<Toast['tone'], { root: string; bar: string }> = {
 };
 
 export function Toaster() {
+  const { t: tr } = useTranslation();
   const toasts = useAppStore((s) => s.toasts);
   const dismissToast = useAppStore((s) => s.dismissToast);
 
@@ -38,7 +40,7 @@ export function Toaster() {
             {t.title}
           </ToastPrimitive.Title>
           <ToastPrimitive.Close
-            aria-label="关闭提示"
+            aria-label={tr('ui.toast.close_aria')}
             className="shrink-0 self-center opacity-60 transition-opacity hover:opacity-100"
           >
             ×

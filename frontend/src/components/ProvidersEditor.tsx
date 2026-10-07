@@ -1,5 +1,6 @@
 // 自定义工具：表单为主，可切到整份 YAML 源码；目录/可执行文件走系统选择器。
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Button } from './ui/button';
 import {
   emptyCustomProvider,
@@ -24,6 +25,7 @@ export function ProvidersEditor(props: {
   onPickDir: (title: string) => Promise<string>;
   onPickFile: (title: string) => Promise<string>;
 }) {
+  const { t } = useTranslation();
   const [sel, setSel] = useState(0);
   const spec = props.specs[Math.min(sel, Math.max(0, props.specs.length - 1))];
 
@@ -48,7 +50,7 @@ export function ProvidersEditor(props: {
   return (
     <section className="rounded border border-border bg-card p-3.5">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-sm font-medium">自定义工具</h2>
+        <h2 className="text-sm font-medium">{t('ui.providers.title')}</h2>
         <div className="flex gap-1">
           <Button
             size="sm"
@@ -56,7 +58,7 @@ export function ProvidersEditor(props: {
             aria-pressed={props.mode === 'form'}
             onClick={() => props.onMode('form')}
           >
-            表单
+            {t('ui.providers.mode_form')}
           </Button>
           <Button
             size="sm"
@@ -64,7 +66,7 @@ export function ProvidersEditor(props: {
             aria-pressed={props.mode === 'source'}
             onClick={() => props.onMode('source')}
           >
-            源码
+            {t('ui.providers.mode_source')}
           </Button>
         </div>
       </div>
@@ -72,7 +74,7 @@ export function ProvidersEditor(props: {
       {props.mode === 'source' && props.yaml !== null && (
         <textarea
           className="min-h-[280px] w-full resize-y rounded border border-input bg-card p-2.5 font-mono text-xs leading-[1.55] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label="providers.yaml 编辑器"
+          aria-label={t('ui.providers.yaml_aria')}
           value={props.yaml}
           spellCheck={false}
           onChange={(e) => props.onYamlChange(e.target.value)}
@@ -82,28 +84,28 @@ export function ProvidersEditor(props: {
         <div className="space-y-3">
           <div className="flex flex-wrap gap-2">
             <Button size="sm" type="button" onClick={add}>
-              添加工具
+              {t('ui.providers.add')}
             </Button>
             {spec && (
               <Button size="sm" variant="secondary" type="button" onClick={remove}>
-                删除当前
+                {t('ui.providers.remove_current')}
               </Button>
             )}
           </div>
           {props.specs.length === 0 && (
-            <p className="text-xs text-muted-foreground">还没有自定义工具，点击「添加工具」开始。</p>
+            <p className="text-xs text-muted-foreground">{t('ui.providers.empty')}</p>
           )}
           {props.specs.length > 0 && (
             <div className="flex gap-2">
               <select
                 className="rounded border border-input bg-card px-2 py-1 text-xs"
-                aria-label="当前自定义工具"
+                aria-label={t('ui.providers.current_aria')}
                 value={String(sel)}
                 onChange={(e) => setSel(Number(e.target.value))}
               >
                 {props.specs.map((s, i) => (
                   <option key={i} value={i}>
-                    {s.ID || s.Name || `未命名 ${i + 1}`}
+                    {s.ID || s.Name || t('ui.providers.unnamed', { n: i + 1 })}
                   </option>
                 ))}
               </select>
@@ -114,24 +116,24 @@ export function ProvidersEditor(props: {
               <Field label="ID">
                 <input
                   className="w-full rounded border border-input bg-card px-2 py-1"
-                  aria-label="工具 ID"
+                  aria-label={t('ui.providers.id_aria')}
                   value={spec.ID}
                   onChange={(e) => patch({ ID: e.target.value })}
                 />
               </Field>
-              <Field label="显示名">
+              <Field label={t('ui.providers.field_name')}>
                 <input
                   className="w-full rounded border border-input bg-card px-2 py-1"
-                  aria-label="工具显示名"
+                  aria-label={t('ui.providers.name_aria')}
                   value={spec.Name}
                   onChange={(e) => patch({ Name: e.target.value })}
                 />
               </Field>
-              <Field label="可执行文件">
+              <Field label={t('ui.providers.field_exec')}>
                 <div className="flex gap-1">
                   <input
                     className="min-w-0 flex-1 rounded border border-input bg-card px-2 py-1 font-mono"
-                    aria-label="检测命令"
+                    aria-label={t('ui.providers.detect_cmd_aria')}
                     value={spec.Detect.Command}
                     onChange={(e) => patch({ Detect: { ...spec.Detect, Command: e.target.value } })}
                   />
@@ -140,22 +142,22 @@ export function ProvidersEditor(props: {
                     variant="secondary"
                     type="button"
                     onClick={() => {
-                      void props.onPickFile('选择可执行文件').then((p) => {
+                      void props.onPickFile(t('ui.providers.pick_exec_title')).then((p) => {
                         if (p) patch({ Detect: { ...spec.Detect, Command: p } });
                       });
                     }}
                   >
-                    选择文件
+                    {t('ui.providers.pick_file')}
                   </Button>
                 </div>
               </Field>
-              <Field label="检测目录">
+              <Field label={t('ui.providers.field_detect_dirs')}>
                 <div className="space-y-1">
                   {(spec.Detect.Dirs ?? []).map((d, i) => (
                     <input
                       key={i}
                       className="w-full rounded border border-input bg-card px-2 py-1 font-mono"
-                      aria-label={`检测目录 ${i + 1}`}
+                      aria-label={t('ui.providers.detect_dir_aria', { n: i + 1 })}
                       value={d}
                       onChange={(e) => {
                         const dirs = [...spec.Detect.Dirs];
@@ -169,20 +171,20 @@ export function ProvidersEditor(props: {
                     variant="secondary"
                     type="button"
                     onClick={() => {
-                      void props.onPickDir('选择检测目录').then((p) => {
+                      void props.onPickDir(t('ui.providers.pick_detect_dir_title')).then((p) => {
                         if (p) patch({ Detect: { ...spec.Detect, Dirs: [...spec.Detect.Dirs, p] } });
                       });
                     }}
                   >
-                    选择文件夹
+                    {t('ui.providers.pick_folder')}
                   </Button>
                 </div>
               </Field>
-              <Field label="会话 glob">
+              <Field label={t('ui.providers.field_session_glob')}>
                 <div className="flex gap-1">
                   <input
                     className="min-w-0 flex-1 rounded border border-input bg-card px-2 py-1 font-mono"
-                    aria-label="会话 glob"
+                    aria-label={t('ui.providers.session_glob_aria')}
                     value={spec.Sessions.Glob}
                     onChange={(e) =>
                       patch({ Sessions: { ...spec.Sessions, Glob: e.target.value } })
@@ -193,7 +195,7 @@ export function ProvidersEditor(props: {
                     variant="secondary"
                     type="button"
                     onClick={() => {
-                      void props.onPickDir('选择会话目录').then((p) => {
+                      void props.onPickDir(t('ui.providers.pick_session_dir_title')).then((p) => {
                         if (p)
                           patch({
                             Sessions: { ...spec.Sessions, Glob: sessionGlobFromDir(p) },
@@ -201,14 +203,14 @@ export function ProvidersEditor(props: {
                       });
                     }}
                   >
-                    选择会话目录
+                    {t('ui.providers.pick_session_dir')}
                   </Button>
                 </div>
               </Field>
-              <Field label="格式">
+              <Field label={t('ui.providers.field_format')}>
                 <select
                   className="rounded border border-input bg-card px-2 py-1"
-                  aria-label="会话格式"
+                  aria-label={t('ui.providers.session_format_aria')}
                   value={spec.Sessions.Format}
                   onChange={(e) =>
                     patch({ Sessions: { ...spec.Sessions, Format: e.target.value } })
@@ -218,22 +220,22 @@ export function ProvidersEditor(props: {
                   <option value="json">json</option>
                 </select>
               </Field>
-              <Field label="字段 cwd / id / timestamp / title">
+              <Field label={t('ui.providers.field_fields')}>
                 <div className="grid grid-cols-2 gap-1">
                   <input
-                    aria-label="字段 cwd"
+                    aria-label={t('ui.providers.field_cwd_aria')}
                     className="rounded border border-input px-2 py-1 font-mono"
                     value={spec.Fields.CWD}
                     onChange={(e) => patch({ Fields: { ...spec.Fields, CWD: e.target.value } })}
                   />
                   <input
-                    aria-label="字段 id"
+                    aria-label={t('ui.providers.field_id_aria')}
                     className="rounded border border-input px-2 py-1 font-mono"
                     value={spec.Fields.ID}
                     onChange={(e) => patch({ Fields: { ...spec.Fields, ID: e.target.value } })}
                   />
                   <input
-                    aria-label="字段 timestamp"
+                    aria-label={t('ui.providers.field_timestamp_aria')}
                     className="rounded border border-input px-2 py-1 font-mono"
                     value={spec.Fields.Timestamp}
                     onChange={(e) =>
@@ -241,17 +243,17 @@ export function ProvidersEditor(props: {
                     }
                   />
                   <input
-                    aria-label="字段 title"
+                    aria-label={t('ui.providers.field_title_aria')}
                     className="rounded border border-input px-2 py-1 font-mono"
                     value={spec.Fields.Title}
                     onChange={(e) => patch({ Fields: { ...spec.Fields, Title: e.target.value } })}
                   />
                 </div>
               </Field>
-              <Field label="title 回退字段（空格分隔）">
+              <Field label={t('ui.providers.field_title_fallbacks')}>
                 <input
                   className="w-full rounded border border-input bg-card px-2 py-1 font-mono"
-                  aria-label="title 回退字段"
+                  aria-label={t('ui.providers.title_fallbacks_aria')}
                   value={(spec.Fields.TitleFallbacks ?? []).join(' ')}
                   onChange={(e) =>
                     patch({
@@ -263,10 +265,10 @@ export function ProvidersEditor(props: {
                   }
                 />
               </Field>
-              <Field label="resume 参数（空格分隔）">
+              <Field label={t('ui.providers.field_resume')}>
                 <input
                   className="w-full rounded border border-input bg-card px-2 py-1 font-mono"
-                  aria-label="resume 参数"
+                  aria-label={t('ui.providers.resume_aria')}
                   value={spec.Resume.Args.join(' ')}
                   onChange={(e) =>
                     patch({
@@ -281,7 +283,7 @@ export function ProvidersEditor(props: {
                   checked={spec.Verified}
                   onChange={(e) => patch({ Verified: e.target.checked })}
                 />
-                已实测
+                {t('ui.providers.verified')}
               </label>
             </div>
           )}
@@ -290,10 +292,10 @@ export function ProvidersEditor(props: {
       {props.yaml !== null && (
         <div className="mt-2 flex items-center gap-2.5">
           <Button onClick={() => props.onSave()} disabled={props.saving}>
-            保存
+            {t('ui.providers.save')}
           </Button>
           {props.saved && (
-            <span className="text-sm text-muted-foreground">已保存，已重新加载</span>
+            <span className="text-sm text-muted-foreground">{t('ui.providers.saved')}</span>
           )}
           {props.saveError && <span className="text-sm text-destructive">{props.saveError}</span>}
         </div>

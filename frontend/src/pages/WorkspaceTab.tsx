@@ -5,6 +5,7 @@
 // 终端页签一旦打开就常挂载（非激活用 hidden），xterm 缓冲与焦点不丢；
 // 工作区页签本身也由 App 常挂载，因此只有关闭页签才会真正结束终端进程。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   closeChat,
   closeTerminal,
@@ -26,6 +27,7 @@ import type { Session, SshConnection, TerminalInfo, ToolInfo } from '../lib/api'
 import { encodeTerminalInput } from '../lib/base64';
 import { appendChatInput } from '../lib/chatInputRegistry';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
+import { backendError } from '../lib/errors';
 import { badgeFor } from '../lib/toolBadge';
 import { cn } from '../lib/cn';
 import { displayTitle } from '../lib/title';
@@ -82,6 +84,7 @@ const centerTabBase = `group ${TAB_BASE} h-7 max-w-56 text-xs`;
 const centerTabActive = TAB_ACTIVE;
 
 export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; visible: boolean }) {
+  const { t: tr } = useTranslation();
   const [rightPane, setRightPane] = useState<RightPane>('files');
   const [centerTab, setCenterTab] = useState<string>(SESSION_TAB);
   const [toolSubTab, setToolSubTab] = useState('');
@@ -226,13 +229,13 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             useAppStore.getState().upsertTerminal(res.Terminal);
             selectCenterTab(res.Terminal.ID);
           }
-          if (res.Fallback) notify(`已回退到终端模式：${res.Fallback}`, 'info');
+          if (res.Fallback) notify(tr('ui.workspace.fallback', { reason: res.Fallback }), 'info');
         })
         .catch((e: unknown) => {
-          notify(`打开会话失败：${e instanceof Error ? e.message : String(e)}`, 'error');
+          notify(tr('ui.workspace.open_session_failed', { err: backendError(e) }), 'error');
         });
     },
-    [notify, selectCenterTab, closeSessionPreview],
+    [notify, selectCenterTab, closeSessionPreview, tr],
   );
 
   const handleSelectSessionRow = useCallback(
@@ -274,7 +277,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         useAppStore.getState().upsertTerminal(res.Terminal);
         selectCenterTab(res.Terminal.ID);
       }
-      if (res.Fallback) notify(`已回退到终端模式：${res.Fallback}`, 'info');
+      if (res.Fallback) notify(tr('ui.workspace.fallback', { reason: res.Fallback }), 'info');
       // 新会话要过一会儿才落进工具自己的会话存储；按退避多扫几次，避免单次过早/撞车
       for (const tid of rescanTimers.current) window.clearTimeout(tid);
       rescanTimers.current = NEW_SESSION_RESCAN_DELAYS_MS.map((delay) =>
@@ -283,7 +286,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         }, delay),
       );
     } catch (e: unknown) {
-      notify(`新建会话失败：${e instanceof Error ? e.message : String(e)}`, 'error');
+      notify(tr('ui.workspace.new_session_failed', { err: backendError(e) }), 'error');
     } finally {
       setBusy(false);
     }
@@ -337,7 +340,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         setToolSubTab(info.ID);
       })
       .catch((e: unknown) => {
-        notify(`打开终端失败：${e instanceof Error ? e.message : String(e)}`, 'error');
+        notify(tr('ui.workspace.open_terminal_failed', { err: backendError(e) }), 'error');
       });
   };
 
@@ -349,7 +352,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         setToolSubTab(info.ID);
       })
       .catch((e: unknown) => {
-        notify(`打开 SSH 失败：${e instanceof Error ? e.message : String(e)}`, 'error');
+        notify(tr('ui.workspace.open_ssh_failed', { err: backendError(e) }), 'error');
       });
   };
 
@@ -358,7 +361,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
       <aside
         className="flex shrink-0 flex-col gap-2 overflow-y-auto border-r border-border bg-card p-2.5"
         style={{ width: layout.left }}
-        aria-label="会话列表栏"
+        aria-label={tr('ui.workspace.session_sidebar_aria')}
       >
         {/* 「新建会话」本身就是下拉菜单：点开列 agent，选中即启动（不再并排一个工具下拉框） */}
         <div className="flex items-center gap-2">
@@ -376,15 +379,15 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
               type="checkbox"
               className="accent-primary"
               checked={showArchived}
-              aria-label="显示归档会话"
+              aria-label={tr('ui.workspace.show_archived_aria')}
               onChange={(e) => setShowArchived(e.target.checked)}
             />
-            归档
+            {tr('ui.workspace.archived')}
           </label>
         </div>
         {tools.length === 0 && (
           <p className="text-xs text-muted-foreground">
-            未检测到可用的 agent：请先安装 Claude Code / Codex / OpenCode 等 CLI，再点首页「重新扫描」。
+            {tr('ui.workspace.no_agent_hint')}
           </p>
         )}
         <SessionList
@@ -421,7 +424,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         width={layout.left}
         onResize={(w) => setLayout({ left: w })}
         defaultWidth={LAYOUT_DEFAULT.left}
-        label="调整会话列表宽度"
+        label={tr('ui.workspace.resize_sessions')}
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
@@ -429,7 +432,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         <div
           className="flex shrink-0 items-stretch border-b border-border"
           role="tablist"
-          aria-label="中心区页签"
+          aria-label={tr('ui.workspace.center_tabs_aria')}
         >
           <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
           <button
@@ -438,14 +441,14 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             className={cn(centerTabBase, centerTab === SESSION_TAB && centerTabActive)}
             onClick={() => selectCenterTab(SESSION_TAB)}
           >
-            会话预览
+            {tr('ui.workspace.session_preview')}
             {centerTab === SESSION_TAB && <span className={TAB_UNDERLINE} />}
           </button>
           {terms.map((t) => {
             const badge = badgeFor(t.ToolID);
             const active = centerTab === t.ID;
             // 渲染层再洗一次：Cursor 包装标签 / OSC 查色残片等；洗净后为空则用占位，勿回退原文
-            const label = displayTitle(t.Title) || '新会话';
+            const label = displayTitle(t.Title) || tr('ui.workspace.new_session');
             const activity = resolveAgentActivity({
               status: t.Status,
               hasPermission: false,
@@ -482,7 +485,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                   role="tab"
                   aria-selected={active}
                   className="min-w-0 truncate text-xs"
-                  title={`${label}${t.ToolID ? `（${badge.label}）` : ''}`}
+                  title={t.ToolID ? tr('ui.workspace.tab_title_tool', { label, tool: badge.label }) : label}
                 >
                   {label}
                 </button>
@@ -495,7 +498,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                     'ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-sm leading-none text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground',
                     active ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100',
                   )}
-                  aria-label={`关闭终端 ${label}`}
+                  aria-label={tr('ui.workspace.close_terminal', { label })}
                   onClick={(e) => {
                     e.stopPropagation(); // 只关，不顺带切到/切走该页签
                     handleCloseTerminal(t.ID);
@@ -509,7 +512,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           })}
           {chatsForWs.map((c) => {
             const active = centerTab === c.ID;
-            const label = displayTitle(c.Title) || '新会话';
+            const label = displayTitle(c.Title) || tr('ui.workspace.new_session');
             const activity = resolveAgentActivity({
               status: c.Status,
               hasPermission: !!chatPermissions[c.ID],
@@ -556,7 +559,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                     'ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-sm leading-none text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground',
                     active ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100',
                   )}
-                  aria-label={`关闭会话 ${label}`}
+                  aria-label={tr('ui.workspace.close_chat', { label })}
                   onClick={(e) => {
                     e.stopPropagation(); // 只关，不顺带切到/切走该页签
                     handleCloseChat(c.ID);
@@ -579,13 +582,13 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             )}
             onClick={() => selectCenterTab(FILES_TAB)}
           >
-            文件
+            {tr('ui.workspace.files_tab')}
             {centerTab === FILES_TAB && <span className={TAB_UNDERLINE} />}
           </button>
           <button
             role="tab"
             aria-selected={centerTab === TERMINALS_TAB}
-            aria-label="终端"
+            aria-label={tr('ui.workspace.terminals_aria')}
             className={cn(
               centerTabBase,
               'shrink-0 border-l border-border bg-muted/40 text-muted-foreground',
@@ -593,7 +596,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             )}
             onClick={() => selectCenterTab(TERMINALS_TAB)}
           >
-            终端
+            {tr('ui.workspace.terminals_tab')}
             {toolTerms.length > 0 && (
               <span className="rounded-sm bg-muted px-1 font-mono text-[10px] text-muted-foreground">
                 {toolTerms.length}
@@ -614,11 +617,11 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
               <SessionTranscript
                 sessionID={previewSession.ID}
                 workspaceRoot={previewSession.Workspace}
-                title={displayTitle(previewSession.Title) || '新会话'}
+                title={displayTitle(previewSession.Title) || tr('ui.workspace.new_session')}
                 onActivate={() => openChatOrTerminal(previewSession)}
               />
             ) : (
-              <EmptyState title="从左侧会话列表选择会话查看预览" />
+              <EmptyState title={tr('ui.workspace.pick_session')} />
             )}
           </div>
           <div
@@ -672,13 +675,13 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         width={layout.right}
         onResize={(w) => setLayout({ right: w })}
         defaultWidth={LAYOUT_DEFAULT.right}
-        label="调整文件面板宽度"
+        label={tr('ui.workspace.resize_files')}
       />
 
       <aside
         className="flex shrink-0 flex-col overflow-y-auto border-l border-border bg-card p-2.5"
         style={{ width: layout.right }}
-        aria-label="文件 Git 与 SSH 面板"
+        aria-label={tr('ui.workspace.right_panel_aria')}
       >
         <div className="mb-2 flex gap-0.5 border-b border-border">
           <button
@@ -686,7 +689,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             aria-pressed={rightPane === 'files'}
             onClick={() => setRightPane('files')}
           >
-            文件
+            {tr('ui.workspace.files_tab')}
           </button>
           <button
             className={cn(paneTabBase, rightPane === 'git' && paneTabActive)}

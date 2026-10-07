@@ -399,17 +399,17 @@ describe('Settings', () => {
     render(<Settings />);
     goTools();
 
-    fireEvent.click(await screen.findByRole('button', { name: '源码' }));
-    const editor = await screen.findByLabelText('providers.yaml 编辑器');
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.providers.mode_source') }));
+    const editor = await screen.findByLabelText(tt('ui.providers.yaml_aria'));
     expect(editor).toHaveValue('providers: []\n');
 
     fireEvent.change(editor, { target: { value: 'providers:\n  - name: foo\n' } });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '保存' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.providers.save') }));
     });
 
     expect(mocks.saveProvidersYAML).toHaveBeenCalledWith('providers:\n  - name: foo\n');
-    expect(await screen.findByText(/已保存.*重新加载/)).toBeInTheDocument();
+    expect(await screen.findByText(tt('ui.providers.saved'))).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '立即重启' })).not.toBeInTheDocument();
   });
 
@@ -418,15 +418,15 @@ describe('Settings', () => {
     render(<Settings />);
     goTools();
 
-    fireEvent.click(await screen.findByRole('button', { name: '源码' }));
-    const editor = await screen.findByLabelText('providers.yaml 编辑器');
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.providers.mode_source') }));
+    const editor = await screen.findByLabelText(tt('ui.providers.yaml_aria'));
     fireEvent.change(editor, { target: { value: 'bad: [' } });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '保存' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.providers.save') }));
     });
 
     expect(await screen.findByText(/YAML 解析失败：line 1: bad indent/)).toBeInTheDocument();
-    expect(screen.queryByText(/已保存/)).not.toBeInTheDocument();
+    expect(screen.queryByText(tt('ui.providers.saved'))).not.toBeInTheDocument();
   });
 
   it('GetTools / LoadProvidersYAML 失败时分别显示错误，不崩溃', async () => {
@@ -444,20 +444,20 @@ describe('Settings', () => {
     render(<Settings />);
     goTools();
 
-    fireEvent.click(await screen.findByRole('button', { name: '添加工具' }));
-    fireEvent.change(await screen.findByLabelText('工具 ID'), { target: { value: 'foo' } });
-    fireEvent.change(screen.getByLabelText('工具显示名'), { target: { value: 'Foo' } });
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.providers.add') }));
+    fireEvent.change(await screen.findByLabelText(tt('ui.providers.id_aria')), { target: { value: 'foo' } });
+    fireEvent.change(screen.getByLabelText(tt('ui.providers.name_aria')), { target: { value: 'Foo' } });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '选择文件' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.providers.pick_file') }));
     });
-    expect(await screen.findByLabelText('检测命令')).toHaveValue('C:\\bin\\foo.exe');
+    expect(await screen.findByLabelText(tt('ui.providers.detect_cmd_aria'))).toHaveValue('C:\\bin\\foo.exe');
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '保存' }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.providers.save') }));
     });
     expect(mocks.formatProvidersYAML).toHaveBeenCalled();
     expect(mocks.saveProvidersYAML).toHaveBeenCalled();
-    expect(await screen.findByText(/已保存.*重新加载/)).toBeInTheDocument();
+    expect(await screen.findByText(tt('ui.providers.saved'))).toBeInTheDocument();
   });
 
   it('外观选择调用 SetAppearanceMode', async () => {

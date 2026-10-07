@@ -237,7 +237,7 @@ describe('WorkspaceTab', () => {
 
     const trigger = await screen.findByRole('button', { name: tt('ui.new_session.no_tools') });
     expect(trigger).toBeDisabled();
-    expect(screen.getByText(/未检测到可用的 agent/)).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.workspace.no_agent_hint'))).toBeInTheDocument();
 
     fireEvent.click(trigger);
     expect(mocks.openWorkspace).not.toHaveBeenCalled();
@@ -256,7 +256,9 @@ describe('WorkspaceTab', () => {
       expect(
         useAppStore
           .getState()
-          .toasts.some((t) => t.tone === 'error' && t.title.includes('新建会话失败')),
+          .toasts.some(
+            (t) => t.tone === 'error' && t.title.includes(tt('ui.workspace.new_session_failed').split('{{')[0]),
+          ),
       ).toBe(true);
     });
   });
@@ -331,7 +333,7 @@ describe('WorkspaceTab', () => {
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
     const title = await screen.findByTestId('session-title');
     fireEvent.click(title.closest('li')!);
-    expect(await screen.findByRole('tab', { name: '会话预览' })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: tt('ui.workspace.session_preview') })).toBeInTheDocument();
     expect(mocks.openSession).not.toHaveBeenCalled();
   });
 
@@ -372,7 +374,11 @@ describe('WorkspaceTab', () => {
     fireEvent.click(await screen.findByRole('tab', { name: /修登录页/ }));
     expect(screen.getByTestId('terminal-t1')).toHaveAttribute('data-active', 'true');
 
-    fireEvent.click(screen.getByRole('button', { name: '关闭终端 修登录页' }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: tt('ui.workspace.close_terminal').replace('{{label}}', '修登录页'),
+      }),
+    );
 
     await waitFor(() => expect(mocks.closeTerminal).toHaveBeenCalledWith('t1'));
     expect(useAppStore.getState().terminals).toHaveLength(0);
@@ -444,7 +450,7 @@ describe('WorkspaceTab', () => {
 
     fireEvent.click(await screen.findByText('main.ts'));
 
-    expect(await screen.findByRole('tab', { name: '文件' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByRole('tab', { name: tt('ui.workspace.files_tab') })).toHaveAttribute('aria-selected', 'true');
     expect(await screen.findByTestId('code-editor')).toBeInTheDocument();
     expect(mocks.readFileForEdit).toHaveBeenCalledWith('D:\\proj-a', 'D:\\proj-a\\main.ts');
   });
@@ -473,7 +479,7 @@ describe('WorkspaceTab', () => {
 
     // 双面板常挂载：切到 SSH 后文件树仍在 DOM（hidden 切换而非卸载重载）
     expect(screen.getByText('proj-a')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '文件' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.workspace.files_tab') }));
     expect(await screen.findByText('proj-a')).toBeInTheDocument();
     expect(screen.getByText('生产机')).toBeInTheDocument();
   });
@@ -481,7 +487,7 @@ describe('WorkspaceTab', () => {
   it('三栏各有一个可拖动分隔条（左右两栏宽度可调）', () => {
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
-    expect(screen.getByRole('separator', { name: '调整会话列表宽度' })).toBeInTheDocument();
-    expect(screen.getByRole('separator', { name: '调整文件面板宽度' })).toBeInTheDocument();
+    expect(screen.getByRole('separator', { name: tt('ui.workspace.resize_sessions') })).toBeInTheDocument();
+    expect(screen.getByRole('separator', { name: tt('ui.workspace.resize_files') })).toBeInTheDocument();
   });
 });

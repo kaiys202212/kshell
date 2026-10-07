@@ -6,6 +6,7 @@ import { DRAG_MIME } from '../lib/dragPath';
 import { OPEN_FILE_EVENT } from '../lib/openHref';
 import { useAppStore } from '../state/store';
 import ChatView from './ChatView';
+import { tt } from '../test/i18n';
 
 const api = vi.hoisted(() => ({
   sendChatPrompt: vi.fn(),
@@ -35,7 +36,7 @@ afterEach(cleanup);
 describe('ChatView', () => {
   it('输入并发送调用 sendChatPrompt', () => {
     render(<ChatView chat={CHAT} active />);
-    const box = screen.getByPlaceholderText(/输入/);
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder'));
     fireEvent.change(box, { target: { value: 'hello' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', 'hello');
@@ -44,7 +45,7 @@ describe('ChatView', () => {
   it('发送后乐观置 running', () => {
     useAppStore.setState({ chats: [CHAT] });
     render(<ChatView chat={CHAT} active />);
-    const box = screen.getByPlaceholderText(/输入/);
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder'));
     fireEvent.change(box, { target: { value: 'hello' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(useAppStore.getState().chats.find((c) => c.ID === 'c1')?.Status).toBe('running');
@@ -54,18 +55,20 @@ describe('ChatView', () => {
   it('发送失败：回退 ready 并提示错误', async () => {
     api.sendChatPrompt.mockRejectedValueOnce(new Error('boom'));
     render(<ChatView chat={CHAT} active />);
-    const box = screen.getByPlaceholderText(/输入/);
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder'));
     fireEvent.change(box, { target: { value: 'hello' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => {
       expect(useAppStore.getState().chats.find((c) => c.ID === 'c1')?.Status).toBe('ready');
     });
-    expect(useAppStore.getState().toasts.some((t) => t.title.includes('发送失败'))).toBe(true);
+    expect(
+      useAppStore.getState().toasts.some((t) => t.title.includes(tt('ui.chat.send_failed').split('{{')[0])),
+    ).toBe(true);
   });
 
   it('running 时显示停止并调用 cancelChat', () => {
     render(<ChatView chat={{ ...CHAT, Status: 'running' }} active />);
-    fireEvent.click(screen.getByRole('button', { name: /停止/ }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.chat.stop') }));
     expect(api.cancelChat).toHaveBeenCalledWith('c1');
   });
 
@@ -104,7 +107,7 @@ describe('ChatView', () => {
     });
     render(<ChatView chat={CHAT} active />);
 
-    fireEvent.click(screen.getByRole('button', { name: '拒绝' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.chat.reject') }));
 
     expect(api.cancelChatPermission).toHaveBeenCalledWith('c1', 'r1');
     expect(useAppStore.getState().chatPermissions.c1 ?? null).toBeNull();
@@ -140,7 +143,7 @@ describe('ChatView', () => {
     });
     render(<ChatView chat={CHAT} active />);
 
-    expect(screen.getByText('思考')).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.chat.thought'))).toBeInTheDocument();
     expect(screen.getByText('內部推理')).toBeInTheDocument();
   });
 
@@ -173,7 +176,7 @@ describe('ChatView', () => {
       dataTransfer: { types: [DRAG_MIME], getData: () => 'D:\\my file\\a.go' },
     });
 
-    const box = screen.getByPlaceholderText(/输入/) as HTMLTextAreaElement;
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder')) as HTMLTextAreaElement;
     expect(box.value).toBe('"D:\\my file\\a.go"');
   });
 

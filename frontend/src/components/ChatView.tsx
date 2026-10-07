@@ -1,11 +1,13 @@
 // 中心区 ACP 聊天页签：时间线 + 输入区 + 权限弹窗。常挂载、由父级 hidden 切换。
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ChatInfo, ChatToolCall } from '../lib/api';
 import { cancelChat, cancelChatPermission, listChats, respondChatPermission, sendChatPrompt } from '../lib/api';
 import { appendChatInput, registerChatInput, unregisterChatInput } from '../lib/chatInputRegistry';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
+import { backendError, translateBackend } from '../lib/errors';
 import { useAppStore } from '../state/store';
 import type { TimelineItem } from '../state/chatUpdate';
 import { cn } from '../lib/cn';
@@ -38,6 +40,7 @@ function toolContentText(t?: ChatToolCall): string {
 }
 
 export default function ChatView({ chat, active }: Props) {
+  const { t } = useTranslation();
   const id = chat.ID;
   const items = useAppStore((s) => s.chatItems[id]) ?? EMPTY_ITEMS;
   const permission = useAppStore((s) => s.chatPermissions[id]) ?? null;
@@ -93,7 +96,7 @@ export default function ChatView({ chat, active }: Props) {
     // 发送失败要回退状态并提示，否则 optimistic running 会一直卡住
     sendChatPrompt(id, text).catch((e: unknown) => {
       useAppStore.getState().upsertChat({ ...chat, Status: 'ready' });
-      useAppStore.getState().notify(`发送失败：${e instanceof Error ? e.message : String(e)}`, 'error');
+      useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
     });
   };
 
@@ -118,13 +121,15 @@ export default function ChatView({ chat, active }: Props) {
         const p = e.dataTransfer.getData(DRAG_MIME);
         if (!p) return;
         if (!appendChatInput(id, quotePathForShell(p))) {
-          useAppStore.getState().notify('该会话不可接收文件', 'error');
+          useAppStore.getState().notify(t('ui.chat.drop_unsupported'), 'error');
         }
       }}
     >
       {chat.Status === 'exited' && (
         <div className="shrink-0 bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-          会话已退出{chat.ExitCode ? `（退出码 ${chat.ExitCode}）` : ''}{chat.Error ? `：${chat.Error}` : ''}
+          {t('ui.chat.exited')}
+          {chat.ExitCode ? t('ui.chat.exited_code', { code: chat.ExitCode }) : ''}
+          {chat.Error ? t('ui.chat.error_suffix', { error: translateBackend(chat.Error) }) : ''}
         </div>
       )}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-3 py-2">
@@ -144,7 +149,7 @@ export default function ChatView({ chat, active }: Props) {
           if (it.type === 'thought') {
             return (
               <details key={it.key} className="mb-3 text-xs text-muted-foreground">
-                <summary className="cursor-pointer select-none italic">思考</summary>
+                <summary className="cursor-pointer select-none italic">{t('ui.chat.thought')}</summary>
                 <div className="mt-1 whitespace-pre-wrap rounded border border-border px-2 py-1 italic">
                   {it.text}
                 </div>
@@ -155,7 +160,7 @@ export default function ChatView({ chat, active }: Props) {
             const content = toolContentText(it.tool);
             return (
               <div key={it.key} className="mb-2 rounded border border-border px-2 py-1 text-xs">
-                <span className="font-medium">{it.tool.Title || it.tool.Name || '工具'}</span>
+                <span className="font-medium">{it.tool.Title || it.tool.Name || t('ui.chat.tool_fallback')}</span>
                 <span className="ml-2 text-muted-foreground">{it.tool.Kind}{it.tool.Status ? ` · ${it.tool.Status}` : ''}</span>
                 {content && (
                   <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-muted-foreground">
@@ -173,7 +178,11 @@ export default function ChatView({ chat, active }: Props) {
             );
           }
           if (it.type === 'error') {
-            return <div key={it.key} className="mb-2 text-xs text-destructive">错误：{it.text}</div>;
+            return (
+              <div key={it.key} className="mb-2 text-xs text-destructive">
+                {t('ui.chat.error_prefix', { text: translateBackend(it.text ?? '') })}
+              </div>
+            );
           }
           return null;
         })}
@@ -182,7 +191,7 @@ export default function ChatView({ chat, active }: Props) {
       <div className="shrink-0 border-t border-border p-2">
         <textarea
           className="min-h-16 w-full resize-none rounded border border-border bg-card p-2 text-sm"
-          placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+          placeholder={t('ui.chat.input_placeholder')}
           value={draft}
           disabled={chat.Status !== 'ready' && chat.Status !== 'running'}
           onChange={(e) => setDraft(e.target.value)}
@@ -192,14 +201,14 @@ export default function ChatView({ chat, active }: Props) {
         />
         <div className="mt-1 flex justify-end gap-2">
           {running
-            ? <Button variant="outline" size="sm" onClick={() => void cancelChat(id)}>停止</Button>
-            : <Button size="sm" onClick={send}>发送</Button>}
+            ? <Button variant="outline" size="sm" onClick={() => void cancelChat(id)}>{t('ui.chat.stop')}</Button>
+            : <Button size="sm" onClick={send}>{t('ui.chat.send')}</Button>}
         </div>
       </div>
 
       {dropHint && (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded border-2 border-dashed border-primary bg-primary/10 text-sm">
-          松开插入文件路径
+          {t('ui.chat.drop_hint')}
         </div>
       )}
 
@@ -214,8 +223,8 @@ export default function ChatView({ chat, active }: Props) {
           }}
           className="w-96"
         >
-          <DialogPrimitive.Title className="mb-1 text-sm font-medium">请求权限</DialogPrimitive.Title>
-          <p className="mb-3 text-xs text-muted-foreground">{permission.ToolCall.Title || permission.ToolCall.Name || '工具调用'}</p>
+          <DialogPrimitive.Title className="mb-1 text-sm font-medium">{t('ui.chat.permission_title')}</DialogPrimitive.Title>
+          <p className="mb-3 text-xs text-muted-foreground">{permission.ToolCall.Title || permission.ToolCall.Name || t('ui.chat.tool_call_fallback')}</p>
           <div className="flex flex-col gap-2">
             {permission.Options.map((o) => (
               <button key={o.OptionID} className="rounded border border-border px-3 py-1.5 text-sm"
@@ -231,7 +240,7 @@ export default function ChatView({ chat, active }: Props) {
               onClick={() => {
                 useAppStore.getState().setChatPermission(id, null);
                 void cancelChatPermission(id, permission.RequestID);
-              }}>拒绝</button>
+              }}>{t('ui.chat.reject')}</button>
           </div>
         </Dialog>
       )}

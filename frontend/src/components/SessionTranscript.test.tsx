@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SessionTranscript from './SessionTranscript';
+import { tt } from '../test/i18n';
 
 const mocks = vi.hoisted(() => ({
   getSessionPreview: vi.fn(),
@@ -23,7 +24,7 @@ describe('SessionTranscript', () => {
     const onActivate = vi.fn();
     render(<SessionTranscript sessionID="s1" title="修登录" onActivate={onActivate} />);
     expect(await screen.findByTestId('md')).toHaveTextContent('## 用户');
-    fireEvent.click(screen.getByRole('button', { name: '激活' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.transcript.activate') }));
     expect(onActivate).toHaveBeenCalled();
   });
 
@@ -31,14 +32,14 @@ describe('SessionTranscript', () => {
     mocks.getSessionPreview.mockRejectedValueOnce(new Error('读失败'));
     const onActivate = vi.fn();
     render(<SessionTranscript sessionID="s1" title="修登录" onActivate={onActivate} />);
-    expect(await screen.findByText('无法加载会话')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '激活' }));
+    expect(await screen.findByText(tt('ui.transcript.load_failed'))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.transcript.activate') }));
     expect(onActivate).toHaveBeenCalled();
   });
 
   it('截断提示', async () => {
     mocks.getSessionPreview.mockResolvedValueOnce({ Markdown: 'x', Truncated: true });
     render(<SessionTranscript sessionID="s1" title="t" onActivate={() => {}} />);
-    await waitFor(() => expect(screen.getByText('内容已截断')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(tt('ui.transcript.truncated'))).toBeInTheDocument());
   });
 });

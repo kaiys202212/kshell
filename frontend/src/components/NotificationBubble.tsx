@@ -4,6 +4,7 @@
 // 主题跟随 appearance 机制：样式全部用语义 token（bg-card / text-foreground 等），
 // data-theme 切换时自动适配亮/暗色。
 import { useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { cn } from '../lib/cn';
 import { eventLabel, toolDisplayName, type AgentNotice } from '../lib/agentNotify';
 import { sameWorkspacePath } from '../lib/workspacePath';
@@ -82,6 +83,7 @@ function NoticeCard({ notice }: { notice: AgentNotice }) {
 }
 
 export default function NotificationBubble() {
+  const { t } = useTranslation();
   const notices = useAppStore((s) => s.agentNotices);
   if (notices.length === 0) return null;
   // store 队列按入队顺序追加（旧→新），取末尾即最新 3 条；渲染时倒序，
@@ -92,7 +94,7 @@ export default function NotificationBubble() {
   return (
     <div
       className="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col items-end gap-2"
-      aria-label="Agent 通知"
+      aria-label={t('ui.notify.aria')}
     >
       {visible.map((n) => (
         <NoticeCard key={n.id} notice={n} />

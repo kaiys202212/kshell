@@ -128,7 +128,7 @@ function dropFile(el: Element, path: string) {
 describe('WorkspaceTabView 页签标题', () => {
   it('新建会话按钮后的归档勾选切换列表', () => {
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
-    const box = screen.getByRole('checkbox', { name: '显示归档会话' });
+    const box = screen.getByRole('checkbox', { name: tt('ui.workspace.show_archived_aria') });
     expect(screen.getByTestId('session-list')).toHaveAttribute('data-show-archived', 'false');
     fireEvent.click(box);
     expect(screen.getByTestId('session-list')).toHaveAttribute('data-show-archived', 'true');
@@ -236,7 +236,7 @@ describe('WorkspaceTabView agent 活动图标', () => {
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
     fireEvent.click(screen.getByRole('tab', { name: '新会话' }));
-    fireEvent.click(screen.getByRole('tab', { name: '文件' }));
+    fireEvent.click(screen.getByRole('tab', { name: tt('ui.workspace.files_tab') }));
     expect(useAppStore.getState().chats.find((c) => c.ID === 'c1')?.Status).toBe('ready');
   });
 
@@ -256,12 +256,12 @@ describe('WorkspaceTabView agent 活动图标', () => {
       chats: [],
     });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
-    const tablist = screen.getByRole('tablist', { name: '中心区页签' });
+    const tablist = screen.getByRole('tablist', { name: tt('ui.workspace.center_tabs_aria') });
     const tabs = tablist.querySelectorAll('[role="tab"]');
     const labels = [...tabs].map((t) => t.getAttribute('aria-label') || t.textContent);
-    expect(labels[0]).toMatch(/会话预览/);
-    expect(labels.at(-2)).toMatch(/文件/);
-    expect(labels.at(-1)).toMatch(/终端/);
+    expect(labels[0]).toMatch(tt('ui.workspace.session_preview'));
+    expect(labels.at(-2)).toMatch(tt('ui.workspace.files_tab'));
+    expect(labels.at(-1)).toMatch(tt('ui.workspace.terminals_tab'));
     expect(screen.getByTestId('preview-tool-pane')).toBeInTheDocument();
     expect(screen.getByTestId('file-tabs-pane')).toBeInTheDocument();
   });

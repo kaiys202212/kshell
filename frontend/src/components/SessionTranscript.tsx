@@ -1,6 +1,8 @@
 // 未激活会话的只读 Markdown 预览：顶部激活按钮 + MarkdownPreview。
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { getSessionPreview } from '../lib/api';
+import { backendError } from '../lib/errors';
 import MarkdownPreview from './MarkdownPreview';
 import { Button } from './ui/button';
 import { EmptyState } from './ui/empty-state';
@@ -17,6 +19,7 @@ export default function SessionTranscript({
   workspaceRoot?: string;
   onActivate: () => void;
 }) {
+  const { t } = useTranslation();
   const [markdown, setMarkdown] = useState('');
   const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState('');
@@ -35,7 +38,7 @@ export default function SessionTranscript({
       })
       .catch((e: unknown) => {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : String(e));
+        setError(backendError(e));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -48,9 +51,9 @@ export default function SessionTranscript({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-        <p className="min-w-0 flex-1 truncate text-sm font-medium">{title || '会话预览'}</p>
+        <p className="min-w-0 flex-1 truncate text-sm font-medium">{title || t('ui.transcript.preview_title')}</p>
         <Button size="sm" onClick={onActivate}>
-          激活
+          {t('ui.transcript.activate')}
         </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
@@ -60,11 +63,11 @@ export default function SessionTranscript({
             <Skeleton className="h-24 w-full" />
           </div>
         ) : error ? (
-          <EmptyState title="无法加载会话" hint={error} />
+          <EmptyState title={t('ui.transcript.load_failed')} hint={error} />
         ) : (
           <>
             {truncated && (
-              <p className="border-b border-border px-3 py-1 text-xs text-muted-foreground">内容已截断</p>
+              <p className="border-b border-border px-3 py-1 text-xs text-muted-foreground">{t('ui.transcript.truncated')}</p>
             )}
             <MarkdownPreview markdown={markdown} workspaceRoot={workspaceRoot} />
           </>
