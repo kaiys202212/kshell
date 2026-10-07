@@ -67,7 +67,11 @@ function normalizeCode(code: string): string {
   return region ? `${lang.toLowerCase()}-${region.toUpperCase()}` : lang.toLowerCase();
 }
 
-/** 完整初始化：内置 + 外部语言包 + 配置语言。main.tsx render 前调用。 */
+/**
+ * 完整初始化：内置 + 外部语言包 + 配置语言。main.tsx render 前调用。
+ * configured 传配置原值或 Go 侧 resolved 均可（仅 'system' 走 navigator 解析）；
+ * main.tsx 侧统一传 Go 的 resolved，避免 navigator 与 OS 首选语言双解析分歧。
+ */
 export async function initI18n(configured: string, external: Record<string, string>): Promise<void> {
   initI18nBuiltin();
   // 重复调用时先清干净上一轮：移除外部新增语言的 bundle、内置语言整体还原，

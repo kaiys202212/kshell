@@ -113,13 +113,14 @@ export default function Settings() {
   const setNotifySound = useAppStore((s) => s.setNotifySound);
   const { t } = useTranslation();
   // 语言选中态：store 为准（main.tsx 启动接线 + language:changed 事件写入），
-  // 本地 state 只做点击后的即时反馈，事件回推 store 再同步回来。
+  // 本地 state 只做点击后的即时反馈。依赖整个对象：事件携带新对象身份，
+  // 即使 configured 同值确认也能回同步一次。
   const languageInfo = useAppStore((s) => s.language);
   const [languageLocal, setLanguageLocal] = useState(languageInfo.configured);
 
   useEffect(() => {
     setLanguageLocal(languageInfo.configured);
-  }, [languageInfo.configured]);
+  }, [languageInfo]);
 
   const loadRecipes = async (list: ToolInfo[]) => {
     const pairs = await Promise.all(
@@ -315,12 +316,12 @@ export default function Settings() {
   const handleLanguage = async (code: string) => {
     if (code === languageLocal) return;
     // 即时反馈选中态；持久化成功后 Go 广播 language:changed 由 main.tsx 同步 store，
-    // 这里不直接写 store（避免双写）。失败回滚到 store 值。
+    // 这里不直接写 store（避免双写）。失败回滚：读 getState() 的新鲜值，避免 render 闭包过期。
     setLanguageLocal(code);
     try {
       await setLanguage(code);
     } catch (e: unknown) {
-      setLanguageLocal(languageInfo.configured);
+      setLanguageLocal(useAppStore.getState().language.configured);
       notify(e instanceof Error ? e.message : String(e), 'error');
     }
   };

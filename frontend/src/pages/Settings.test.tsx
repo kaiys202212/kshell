@@ -20,9 +20,8 @@ const mocks = vi.hoisted(() => ({
   getAppearance: vi.fn(),
   setAppearanceMode: vi.fn(),
   setAppearanceFontSize: vi.fn(),
-  getLanguage: vi.fn(),
+  // 语言接线（getLanguage / onLanguageChanged）在 main.tsx bootstrap，不在此文件测
   setLanguage: vi.fn(),
-  onLanguageChanged: vi.fn(),
   getCloseBehavior: vi.fn(),
   setCloseBehavior: vi.fn(),
   getModelConfig: vi.fn(),
@@ -165,9 +164,7 @@ beforeEach(() => {
   mocks.getAppearance.mockResolvedValue({ mode: 'dark', resolved: 'dark', fontSize: 13 });
   mocks.setAppearanceMode.mockResolvedValue(undefined);
   mocks.setAppearanceFontSize.mockResolvedValue(undefined);
-  mocks.getLanguage.mockResolvedValue({ configured: 'en', resolved: 'en' });
   mocks.setLanguage.mockResolvedValue(undefined);
-  mocks.onLanguageChanged.mockImplementation(() => () => {});
   useAppStore.setState({ language: { configured: 'en', resolved: 'en' } });
   mocks.getAppVersion.mockResolvedValue('dev');
   mocks.checkForUpdate.mockResolvedValue({

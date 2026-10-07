@@ -89,6 +89,8 @@ describe('store', () => {
     expect(parsed.state).not.toHaveProperty('terminals');
     expect(parsed.state).not.toHaveProperty('activityCompleted');
     expect(parsed.state).not.toHaveProperty('terminalBusy');
+    // 语言配置来自 Go 绑定层，刷新即重取，不入 localStorage
+    expect(parsed.state).not.toHaveProperty('language');
   });
 
   it('终端镜像：upsert 新增/覆盖、markTerminalExited 改状态、remove/setTerminals 重建', () => {
