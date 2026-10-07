@@ -86,7 +86,7 @@ function TreeRow({
   return (
     <div>
       <div
-        className="group flex items-center gap-0.5 rounded py-0.5 hover:bg-muted/50"
+        className="group flex h-5 items-center gap-0.5 rounded py-0 leading-5 hover:bg-muted/50"
         style={{ paddingLeft: 4 + depth * 12 }}
       >
         {node.dir ? (
@@ -110,12 +110,12 @@ function TreeRow({
         )}
         {glyph && <span className="w-3 shrink-0 text-[10px] text-muted-foreground">{glyph}</span>}
         {onStage && (
-          <Button size="sm" variant="ghost" className="opacity-0 group-hover:opacity-100" aria-label={t('ui.git.stage_aria', { path: node.path })} onClick={() => onStage(paths)}>
+          <Button size="sm" variant="ghost" className="h-5 min-h-0 px-1 opacity-0 group-hover:opacity-100" aria-label={t('ui.git.stage_aria', { path: node.path })} onClick={() => onStage(paths)}>
             +
           </Button>
         )}
         {onUnstage && (
-          <Button size="sm" variant="ghost" className="opacity-0 group-hover:opacity-100" aria-label={t('ui.git.unstage_aria', { path: node.path })} onClick={() => onUnstage(paths)}>
+          <Button size="sm" variant="ghost" className="h-5 min-h-0 px-1 opacity-0 group-hover:opacity-100" aria-label={t('ui.git.unstage_aria', { path: node.path })} onClick={() => onUnstage(paths)}>
             −
           </Button>
         )}
@@ -123,7 +123,7 @@ function TreeRow({
           <Button
             size="sm"
             variant="ghost"
-            className="opacity-0 group-hover:opacity-100"
+            className="h-5 min-h-0 px-1 opacity-0 group-hover:opacity-100"
             aria-label={t('ui.git.discard_aria', { path: node.path })}
             onClick={() => onDiscard(paths, node.path)}
           >
