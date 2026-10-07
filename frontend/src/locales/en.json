@@ -7,6 +7,9 @@
       "workspace_gone": "Workspace not found",
       "invalid_close_behavior": "Invalid close behavior {{0}} (choose tray or exit)"
     },
+    "language": {
+      "locales_not_dir": "Locales path is not a directory: {{0}}"
+    },
     "clipboard": {
       "save_image_failed": "Failed to save clipboard image: {{0}}",
       "dib_too_short": "DIB too short",
@@ -16,7 +19,6 @@
       "dib_compression": "Unsupported DIB compression {{0}}",
       "dib_pixel_offset_invalid": "Invalid DIB pixel offset",
       "dib_insufficient_pixels": "Not enough DIB pixel data",
-      "open_failed_win32": "OpenClipboard failed",
       "open_failed": "Failed to open clipboard: {{0}}",
       "no_text": "No text in the clipboard",
       "no_files": "No files in the clipboard",

@@ -65,7 +65,9 @@ func openClipboardRetry() error {
 		time.Sleep(8 * time.Millisecond)
 	}
 	if last == nil {
-		last = fmt.Errorf("err.clipboard.open_failed_win32")
+		// 普通英文诊断串而非 key：本值只会作为 %w 参数塞进外层 key 的 {{0}}，
+		// 前端不翻译参数，若用 key 会在界面上露出裸 key。
+		last = errors.New("OpenClipboard failed")
 	}
 	return fmt.Errorf("err.clipboard.open_failed|%w", last)
 }

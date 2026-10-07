@@ -85,7 +85,7 @@ func (a *App) LoadExternalLocales() (map[string]string, error) {
 	// （IsNotExist 为真），先 Stat 区分：存在但非目录 → 显式报错；
 	// 确实不存在 → 按「无外部语言包」返回空 map。
 	if fi, serr := os.Stat(dir); serr == nil && !fi.IsDir() {
-		return nil, fmt.Errorf("locales 路径不是目录: %s", dir)
+		return nil, fmt.Errorf("err.language.locales_not_dir|%s", dir)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {

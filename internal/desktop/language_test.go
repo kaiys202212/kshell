@@ -3,6 +3,7 @@ package desktop
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yangk/kshell/internal/applang"
@@ -277,7 +278,7 @@ func TestLoadExternalLocalesReadsValidAndSkipsOthers(t *testing.T) {
 
 func TestLoadExternalLocalesReadErrorReturnsNil(t *testing.T) {
 	layout := langLayout(t)
-	// locales 指向普通文件（非目录）→ ReadDir 失败且非「目录不存在」
+	// locales 指向普通文件（非目录）→ Stat 分支显式报错，不落 ReadDir
 	file := filepath.Join(t.TempDir(), "afile")
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -287,9 +288,13 @@ func TestLoadExternalLocalesReadErrorReturnsNil(t *testing.T) {
 	a := NewAppWith(Options{Config: config.Default(), Layout: layout})
 	got, err := a.LoadExternalLocales()
 	if err == nil {
-		t.Fatal("ReadDir 失败应返回错误")
+		t.Fatal("非目录路径应返回错误")
 	}
 	if got != nil {
 		t.Fatalf("出错时应返回 nil map, got %#v", got)
+	}
+	// 错误文案走 wire key（前端翻译），断言 key 前缀而非中英文字面量
+	if !strings.HasPrefix(err.Error(), "err.language.locales_not_dir|") {
+		t.Fatalf("err = %q, want err.language.locales_not_dir 前缀", err.Error())
 	}
 }

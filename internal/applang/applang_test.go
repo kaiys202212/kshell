@@ -54,6 +54,26 @@ func TestResolveNonSystemPassthrough(t *testing.T) {
 	}
 }
 
+// TestCatalogEveryKeyTranslates 遍历两张 catalog 的每条 key，断言在 en 与 zh-CN
+// 运行态下 T 都不返回空串、也不原样返回 key——防止「缺 key 时调用方拿 key 自拼
+// 期望值」的假阳性（如 notify 测试用 applang.T(...) 构造期望）。覆盖 tray/dialog/
+// toast/terminal/role 全部命名空间。
+func TestCatalogEveryKeyTranslates(t *testing.T) {
+	for _, lang := range []string{"en", "zh-CN"} {
+		t.Run(lang, func(t *testing.T) {
+			Set(lang)
+			t.Cleanup(func() { Set("en") })
+			for _, catalog := range []map[string]string{en, zhCN} {
+				for k := range catalog {
+					if got := T(k); got == "" || got == k {
+						t.Errorf("[%s] key %q 未翻译（返回 %q）", lang, k, got)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestCatalogKeySetsMatch(t *testing.T) {
 	for k := range en {
 		if _, ok := zhCN[k]; !ok {

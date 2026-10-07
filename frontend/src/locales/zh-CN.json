@@ -7,6 +7,9 @@
       "workspace_gone": "工作区不存在",
       "invalid_close_behavior": "非法的关闭行为 {{0}}（可选 tray / exit）"
     },
+    "language": {
+      "locales_not_dir": "locales 路径不是目录: {{0}}"
+    },
     "clipboard": {
       "save_image_failed": "保存剪贴板图片失败: {{0}}",
       "dib_too_short": "DIB 过短",
@@ -16,7 +19,6 @@
       "dib_compression": "不支持的 DIB 压缩 {{0}}",
       "dib_pixel_offset_invalid": "DIB 像素偏移无效",
       "dib_insufficient_pixels": "DIB 像素不足",
-      "open_failed_win32": "OpenClipboard 失败",
       "open_failed": "打开剪贴板失败: {{0}}",
       "no_text": "无文本",
       "no_files": "无文件",
