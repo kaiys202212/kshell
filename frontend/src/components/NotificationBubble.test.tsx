@@ -1,5 +1,5 @@
 // NotificationBubble：右下角 agent 通知气泡。
-// 覆盖入队渲染、3 条上限折叠、6s 自动消失（fake timers）、hover 暂停、
+// 覆盖入队渲染、3 条上限折叠、10s 自动消失（fake timers）、hover 暂停、
 // 点击按 termKey 发起页签聚焦并关闭气泡。
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
@@ -94,12 +94,12 @@ describe('NotificationBubble', () => {
     expect(summaries[2]).toContain('第 2 条');
   });
 
-  it('6s 自动消失', () => {
+  it('10s 自动消失', () => {
     vi.useFakeTimers();
     push();
     render(<NotificationBubble />);
     act(() => {
-      vi.advanceTimersByTime(6000);
+      vi.advanceTimersByTime(10000);
     });
     expect(useAppStore.getState().agentNotices).toHaveLength(0);
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
@@ -111,16 +111,16 @@ describe('NotificationBubble', () => {
     render(<NotificationBubble />);
     const card = screen.getByRole('button');
     act(() => {
-      vi.advanceTimersByTime(5000); // 剩 1s
+      vi.advanceTimersByTime(5000); // 剩 5s
     });
     fireEvent.mouseEnter(card);
     act(() => {
-      vi.advanceTimersByTime(6000); // 暂停期间不消失
+      vi.advanceTimersByTime(12000); // 暂停期间不消失
     });
     expect(screen.getByRole('button')).toBeInTheDocument();
     fireEvent.mouseLeave(card);
     act(() => {
-      vi.advanceTimersByTime(999); // 剩余时间未到
+      vi.advanceTimersByTime(4999); // 剩余时间未到
     });
     expect(screen.getByRole('button')).toBeInTheDocument();
     act(() => {

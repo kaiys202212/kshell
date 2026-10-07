@@ -1,5 +1,5 @@
 // agent 通知气泡：右下角堆叠展示 agent 完成与等待确认事件。
-// 最多同时 3 条，超出折叠为「+N」计数条；每条 6s 自动消失，hover 暂停倒计时；
+// 最多同时 3 条，超出折叠为「+N」计数条；每条 10s 自动消失，hover 暂停倒计时；
 // 点击按 termKey 切到对应页签并关闭该气泡。
 // 主题跟随 appearance 机制：样式全部用语义 token（bg-card / text-foreground 等），
 // data-theme 切换时自动适配亮/暗色。
@@ -10,7 +10,7 @@ import { sameWorkspacePath } from '../lib/workspacePath';
 import { useAppStore } from '../state/store';
 
 const MAX_VISIBLE = 3;
-const AUTO_DISMISS_MS = 6000;
+const AUTO_DISMISS_MS = 10000;
 
 // focusNoticeTarget 把 termKey 归因到内嵌终端/聊天，激活其所在工作区页签并
 // 发起中心区页签切换请求。归因失败（外部窗口 window:<标题> 等）不动页签，
