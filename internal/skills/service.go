@@ -87,6 +87,14 @@ func (s *Service) Install(ctx context.Context, id string, toolIDs []string) (Ins
 	if err != nil {
 		return InstallResult{}, err
 	}
+	// 重装前清掉旧目标，避免副本模式下路径冲突。
+	if m, err := s.Store.ReadManifest(); err == nil {
+		if old, ok := m.Skills[id]; ok {
+			for _, t := range old.Targets {
+				_ = RemoveTarget(t.Path)
+			}
+		}
+	}
 	entityDir, name, err := s.Store.WriteEntity(id, files)
 	if err != nil {
 		return InstallResult{}, err
