@@ -119,7 +119,8 @@
       "missing_host": "连接缺少 host",
       "identity_file_path_only": "identity_file 只能是密钥路径，不能放密钥内容",
       "not_in_store": "未找到该连接",
-      "parse_file_failed": "解析连接文件失败: {{0}}"
+      "parse_file_failed": "解析连接文件失败: {{0}}",
+      "askpass_unavailable": "无法准备 SSH 密码助手: {{0}}"
     },
     "tool": {
       "unknown": "未知工具",

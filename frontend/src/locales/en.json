@@ -119,7 +119,8 @@
       "missing_host": "Connection is missing host",
       "identity_file_path_only": "identity_file must be a key path, not key content",
       "not_in_store": "Connection not found",
-      "parse_file_failed": "Failed to parse the connections file: {{0}}"
+      "parse_file_failed": "Failed to parse the connections file: {{0}}",
+      "askpass_unavailable": "Unable to prepare SSH password helper: {{0}}"
     },
     "tool": {
       "unknown": "Unknown tool",

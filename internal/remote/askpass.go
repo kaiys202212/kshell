@@ -18,6 +18,7 @@ func AskPassEnviron(password string) ([]string, error) {
 	return []string{
 		"SSH_ASKPASS=" + exe,
 		"SSH_ASKPASS_REQUIRE=force",
+		"KSHELL_SSH_ASKPASS=1", // 哨兵：仅我们注入时才认作 askpass 启动
 		"KSHELL_SSH_PASSWORD=" + password,
 		// OpenSSH 在无 DISPLAY 时可能跳过 ASKPASS；占位即可触发。
 		"DISPLAY=:0",
@@ -54,7 +55,10 @@ func isAskPassInvocation(args []string) bool {
 		return true
 	}
 	// Windows OpenSSH 常直接执行 SSH_ASKPASS 路径，argv[1] 为提示文案。
-	// 仅当父 ssh 已注入密码 env 时才认作 askpass，避免误伤正常启动。
+	// 必须同时有我们注入的哨兵，避免用户环境误带密码相关变量时正常启动被劫持。
+	if os.Getenv("KSHELL_SSH_ASKPASS") != "1" {
+		return false
+	}
 	if strings.TrimSpace(os.Getenv("KSHELL_SSH_PASSWORD")) == "" {
 		return false
 	}

@@ -23,6 +23,9 @@ func TestAskPassEnvironSetsRequiredVars(t *testing.T) {
 	if m["KSHELL_SSH_PASSWORD"] != "s3cret" {
 		t.Fatalf("KSHELL_SSH_PASSWORD=%q", m["KSHELL_SSH_PASSWORD"])
 	}
+	if m["KSHELL_SSH_ASKPASS"] != "1" {
+		t.Fatalf("KSHELL_SSH_ASKPASS=%q", m["KSHELL_SSH_ASKPASS"])
+	}
 	if m["DISPLAY"] == "" {
 		t.Fatalf("DISPLAY placeholder missing: %v", env)
 	}
@@ -63,8 +66,38 @@ func TestTryAskPassMainPrintsAndSignalsHandled(t *testing.T) {
 
 func TestTryAskPassMainIgnoresNormalArgs(t *testing.T) {
 	t.Setenv("KSHELL_SSH_PASSWORD", "")
+	t.Setenv("KSHELL_SSH_ASKPASS", "")
 	if tryAskPassMainNoExit([]string{"kshell", "mcp-archive"}) {
 		t.Fatal("normal args must not be treated as askpass")
+	}
+}
+
+func TestTryAskPassMainRequiresSentinelWithoutFlag(t *testing.T) {
+	t.Setenv("KSHELL_SSH_PASSWORD", "pw")
+	t.Setenv("SSH_ASKPASS_REQUIRE", "force")
+	t.Setenv("KSHELL_SSH_ASKPASS", "")
+	if tryAskPassMainNoExit([]string{"kshell", "Enter passphrase for key"}) {
+		t.Fatal("without KSHELL_SSH_ASKPASS=1 must not treat as askpass")
+	}
+	t.Setenv("KSHELL_SSH_ASKPASS", "1")
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	handled := tryAskPassMainNoExit([]string{"kshell", "Enter passphrase for key"})
+	_ = w.Close()
+	os.Stdout = old
+	if !handled {
+		t.Fatal("expected handled with sentinel")
+	}
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+	if buf.String() != "pw" {
+		t.Fatalf("stdout = %q", buf.String())
 	}
 }
 
