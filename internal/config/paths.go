@@ -31,6 +31,9 @@ type Layout struct {
 	State string
 	// CacheAppearance 是颜色主题注入文件的落盘目录（agent 工具用）。
 	CacheAppearance string
+	// Locales 是外部语言包目录（~/.kshell/locales）：*.json 由用户投放，
+	// LoadExternalLocales 读取；目录不存在视为无外部语言包，不自动创建。
+	Locales string
 }
 
 func Paths() (Layout, error) {
@@ -55,6 +58,7 @@ func Paths() (Layout, error) {
 		Archived:        filepath.Join(root, "archived.json"),
 		State:           filepath.Join(root, "state"),
 		CacheAppearance: filepath.Join(cache, "appearance"),
+		Locales:         filepath.Join(root, "locales"),
 	}, nil
 }
 

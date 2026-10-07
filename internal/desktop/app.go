@@ -13,6 +13,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/yangk/kshell/internal/agenthook"
 	"github.com/yangk/kshell/internal/appearance"
+	"github.com/yangk/kshell/internal/applang"
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
@@ -149,6 +150,9 @@ func (a *App) Startup(ctx context.Context) {
 	a.mu.Unlock()
 
 	a.initRealDeps()
+	// 语言运行态：按配置初始化直显文案（托盘等），必须在启动托盘前设置，
+	// 否则首屏菜单会先用默认语言渲染（与 appearance 初始化不同，这里不可后补）。
+	applang.Set(applang.Resolve(normalizeLanguage(a.snapshot().Config.Language)))
 	a.StartTray()
 
 	// 退出信号文件：启动时先消费一次残留（旧版本写入但没人监听、或应用
