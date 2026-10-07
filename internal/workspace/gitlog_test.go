@@ -6,6 +6,17 @@ import (
 	"testing"
 )
 
+// 未知 log 模式以 wire key + 参数返回，供前端翻译。
+func TestLogUnknownModeWireKey(t *testing.T) {
+	_, err := Log(t.TempDir(), "", "bogus", "", 1)
+	if err == nil {
+		t.Fatal("未知 log 模式应失败")
+	}
+	if err.Error() != "err.git.unknown_log_mode|bogus" {
+		t.Fatalf("err = %q", err.Error())
+	}
+}
+
 func TestParseShortstat(t *testing.T) {
 	st := parseShortstat(" 19 files changed, 1867 insertions(+), 202 deletions(-)\n")
 	if st.Files != 19 || st.Insertions != 1867 || st.Deletions != 202 {

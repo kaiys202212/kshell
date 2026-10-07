@@ -13,10 +13,10 @@ import (
 )
 
 var (
-	errRepoOutside = errors.New("仓库路径越出工作区范围")
-	errEmptyCommit = errors.New("提交说明不能为空")
-	errEmptyPaths  = errors.New("未指定路径")
-	errEmptyRef    = errors.New("分支名不能为空")
+	errRepoOutside = errors.New("err.git.out_of_workspace")
+	errEmptyCommit = errors.New("err.git.empty_commit_msg")
+	errEmptyPaths  = errors.New("err.git.no_paths")
+	errEmptyRef    = errors.New("err.git.empty_branch_name")
 )
 
 const gitRemoteTimeout = 60 * time.Second

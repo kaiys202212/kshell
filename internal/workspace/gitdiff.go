@@ -11,9 +11,9 @@ import (
 )
 
 var (
-	errBadPatch  = errors.New("hunk 缺少 diff --git 头")
-	errBadDiffOp = errors.New("无效 hunk 操作")
-	errBadSide   = errors.New("无效 diff 侧")
+	errBadPatch  = errors.New("err.git.hunk_missing_header")
+	errBadDiffOp = errors.New("err.git.invalid_hunk_op")
+	errBadSide   = errors.New("err.git.invalid_diff_side")
 )
 
 // DiffResult 某文件相对所选仓库的 unified diff。

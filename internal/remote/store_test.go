@@ -12,6 +12,34 @@ func tempStore(t *testing.T) *Store {
 	return NewStore(filepath.Join(t.TempDir(), "connections.yaml"))
 }
 
+// store 相关错误一律以 wire key 暴露给前端翻译。
+func TestStoreErrorsWireKeys(t *testing.T) {
+	if errMissingHost.Error() != "err.ssh.missing_host" {
+		t.Fatalf("host key = %q", errMissingHost.Error())
+	}
+	if errKeyMaterial.Error() != "err.ssh.identity_file_path_only" {
+		t.Fatalf("key key = %q", errKeyMaterial.Error())
+	}
+	if ErrUnknownConnection.Error() != "err.ssh.not_in_store" {
+		t.Fatalf("store key = %q", ErrUnknownConnection.Error())
+	}
+}
+
+// 连接文件解析失败也走 wire key。
+func TestLoadParseFailureWireKey(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "connections.yaml")
+	if err := os.WriteFile(p, []byte("{invalid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := NewStore(p).Load()
+	if err == nil {
+		t.Fatal("非法 YAML 应报错")
+	}
+	if !strings.HasPrefix(err.Error(), "err.ssh.parse_file_failed|") {
+		t.Fatalf("err = %q", err.Error())
+	}
+}
+
 func TestAddAndRoundTrip(t *testing.T) {
 	store := tempStore(t)
 	added, err := store.Add(Connection{Name: "prod", Host: "10.0.0.1", User: "root", Port: 2222, Workspace: "D:\\ws-a"})

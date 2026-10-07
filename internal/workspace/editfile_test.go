@@ -35,6 +35,19 @@ func TestReadForEdit_EOL探测(t *testing.T) {
 	}
 }
 
+// Edit 相关错误一律以 wire key 暴露给前端翻译，不再是中文字面量。
+func TestEditErrorsWireKeys(t *testing.T) {
+	if ErrBinaryFile.Error() != "err.workspace.binary_not_editable" {
+		t.Fatalf("二进制 key = %q", ErrBinaryFile.Error())
+	}
+	if ErrIsDirectory.Error() != "err.workspace.dir_not_editable" {
+		t.Fatalf("目录 key = %q", ErrIsDirectory.Error())
+	}
+	if !strings.HasPrefix(ErrFileTooLarge.Error(), "err.workspace.file_too_big|") {
+		t.Fatalf("超限 key = %q", ErrFileTooLarge.Error())
+	}
+}
+
 func TestReadForEdit_拒绝二进制(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "bin.dat")
 	if err := os.WriteFile(p, []byte{'a', 0, 'b'}, 0o644); err != nil {

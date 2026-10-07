@@ -3,6 +3,7 @@ package workspace
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,12 +13,12 @@ import (
 const maxEditBytes = 1024 * 1024
 
 var (
-	// ErrFileTooLarge 文件超过编辑大小上限。
-	ErrFileTooLarge = errors.New("文件超过 1MB，不支持编辑")
+	// ErrFileTooLarge 文件超过编辑大小上限；wire 串携带上限字节数供前端翻译。
+	ErrFileTooLarge = fmt.Errorf("err.workspace.file_too_big|%d", maxEditBytes)
 	// ErrBinaryFile 二进制文件不支持编辑。
-	ErrBinaryFile = errors.New("二进制文件不支持编辑")
+	ErrBinaryFile = errors.New("err.workspace.binary_not_editable")
 	// ErrIsDirectory 目录不支持编辑。
-	ErrIsDirectory = errors.New("目录不支持编辑")
+	ErrIsDirectory = errors.New("err.workspace.dir_not_editable")
 )
 
 // EditContent 是编辑态需要的整文件内容：Text 一律以 \n 归一，

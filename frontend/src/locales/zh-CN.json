@@ -40,6 +40,21 @@
       "dir_not_previewable": "不能预览目录",
       "too_big_preview": "文件大小 {{0}} 字节超过预览上限 {{1}} 字节"
     },
+    "workspace": {
+      "file_too_big": "文件超过 {{0}} 字节，不支持编辑",
+      "binary_not_editable": "二进制文件不支持编辑",
+      "dir_not_editable": "目录不支持编辑"
+    },
+    "git": {
+      "hunk_missing_header": "hunk 缺少 diff --git 头",
+      "invalid_hunk_op": "无效 hunk 操作",
+      "invalid_diff_side": "无效 diff 侧",
+      "unknown_log_mode": "未知 log 模式 {{0}}",
+      "out_of_workspace": "仓库路径越出工作区范围",
+      "empty_commit_msg": "提交说明不能为空",
+      "no_paths": "未指定路径",
+      "empty_branch_name": "分支名不能为空"
+    },
     "terminal": {
       "popup_windows_only": "桌面版终端弹窗目前仅支持 Windows",
       "invalid_base64": "终端输入不是合法的 base64 数据"
@@ -56,7 +71,14 @@
       "invalid_permission_mode": "无效的权限模式：{{0}}"
     },
     "ssh": {
-      "connection_not_found": "连接不存在"
+      "connection_not_found": "连接不存在",
+      "no_ssh_binary": "未找到 ssh 可执行文件（Windows 请在「可选功能」里启用 OpenSSH 客户端）",
+      "exec_timeout": "执行超时或被取消: {{0}}",
+      "exec_failed": "执行 ssh 失败: {{0}}",
+      "missing_host": "连接缺少 host",
+      "identity_file_path_only": "identity_file 只能是密钥路径，不能放密钥内容",
+      "not_in_store": "未找到该连接",
+      "parse_file_failed": "解析连接文件失败: {{0}}"
     },
     "tool": {
       "unknown": "未知工具",
@@ -80,6 +102,11 @@
       "residual_removed": "已删除残留: {{0}}",
       "npm_missing": "未找到 npm，请先安装 Node.js"
     }
+  },
+  "preview": {
+    "dir_n_items": "目录 · {{0}} 项",
+    "binary_file": "二进制文件 · {{0}} 字节 · {{1}}",
+    "file_info": "{{0}} 字节 · {{1}}"
   },
   "ui": {
     "settings": {

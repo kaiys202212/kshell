@@ -40,6 +40,21 @@
       "dir_not_previewable": "Cannot preview a directory",
       "too_big_preview": "File size {{0}} bytes exceeds preview limit {{1}} bytes"
     },
+    "workspace": {
+      "file_too_big": "File exceeds the {{0}}-byte edit limit",
+      "binary_not_editable": "Binary files cannot be edited",
+      "dir_not_editable": "Directories cannot be edited"
+    },
+    "git": {
+      "hunk_missing_header": "Hunk is missing the diff --git header",
+      "invalid_hunk_op": "Invalid hunk operation",
+      "invalid_diff_side": "Invalid diff side",
+      "unknown_log_mode": "Unknown log mode {{0}}",
+      "out_of_workspace": "Repository path is outside the workspace",
+      "empty_commit_msg": "Commit message cannot be empty",
+      "no_paths": "No paths specified",
+      "empty_branch_name": "Branch name cannot be empty"
+    },
     "terminal": {
       "popup_windows_only": "Desktop terminal popups are only supported on Windows",
       "invalid_base64": "Terminal input is not valid base64 data"
@@ -56,7 +71,14 @@
       "invalid_permission_mode": "Invalid permission mode: {{0}}"
     },
     "ssh": {
-      "connection_not_found": "Connection not found"
+      "connection_not_found": "Connection not found",
+      "no_ssh_binary": "ssh executable not found (on Windows, enable the OpenSSH Client optional feature)",
+      "exec_timeout": "Execution timed out or was cancelled: {{0}}",
+      "exec_failed": "Failed to run ssh: {{0}}",
+      "missing_host": "Connection is missing host",
+      "identity_file_path_only": "identity_file must be a key path, not key content",
+      "not_in_store": "Connection not found",
+      "parse_file_failed": "Failed to parse the connections file: {{0}}"
     },
     "tool": {
       "unknown": "Unknown tool",
@@ -80,6 +102,11 @@
       "residual_removed": "Removed residual file {{0}}",
       "npm_missing": "npm not found; install Node.js first"
     }
+  },
+  "preview": {
+    "dir_n_items": "Directory · {{0}} items",
+    "binary_file": "Binary file · {{0}} bytes · {{1}}",
+    "file_info": "{{0}} bytes · {{1}}"
   },
   "ui": {
     "settings": {

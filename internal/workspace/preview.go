@@ -38,7 +38,7 @@ func PreviewFile(path string, maxBytes int, maxLines int) Preview {
 		return Preview{Err: err}
 	}
 	if info.IsDir() {
-		return Preview{Info: fmt.Sprintf("目录 · %d 项", dirEntries(path))}
+		return Preview{Info: fmt.Sprintf("preview.dir_n_items|%d", dirEntries(path))}
 	}
 
 	f, err := os.Open(path)
@@ -55,7 +55,7 @@ func PreviewFile(path string, maxBytes int, maxLines int) Preview {
 	if isBinary(buf) {
 		return Preview{
 			Binary: true,
-			Info:   fmt.Sprintf("二进制文件 · %d 字节 · %s", info.Size(), info.ModTime().Format("2006-01-02 15:04")),
+			Info:   fmt.Sprintf("preview.binary_file|%d|%s", info.Size(), info.ModTime().Format("2006-01-02 15:04")),
 		}
 	}
 
@@ -84,7 +84,7 @@ func PreviewFile(path string, maxBytes int, maxLines int) Preview {
 		Lines:     out,
 		Text:      text,
 		Truncated: truncated,
-		Info:      fmt.Sprintf("%d 字节 · %s", info.Size(), info.ModTime().Format("2006-01-02 15:04")),
+		Info:      fmt.Sprintf("preview.file_info|%d|%s", info.Size(), info.ModTime().Format("2006-01-02 15:04")),
 	}
 }
 

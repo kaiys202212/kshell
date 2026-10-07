@@ -13,10 +13,10 @@ import (
 )
 
 var (
-	errMissingHost = errors.New("连接缺少 host")
-	errKeyMaterial = errors.New("identity_file 只能是密钥路径，不能放密钥内容")
+	errMissingHost = errors.New("err.ssh.missing_host")
+	errKeyMaterial = errors.New("err.ssh.identity_file_path_only")
 	// ErrUnknownConnection 表示按 ID 找不到连接（Update/Delete）。
-	ErrUnknownConnection = errors.New("未找到该连接")
+	ErrUnknownConnection = errors.New("err.ssh.not_in_store")
 )
 
 const defaultPort = 22
@@ -73,7 +73,7 @@ func (s *Store) Load() error {
 
 	var conns []Connection
 	if err := yaml.Unmarshal(data, &conns); err != nil {
-		return fmt.Errorf("解析连接文件失败: %w", err)
+		return fmt.Errorf("err.ssh.parse_file_failed|%w", err)
 	}
 	s.mu.Lock()
 	s.conns = conns

@@ -7,6 +7,18 @@ import (
 	"testing"
 )
 
+func TestGitDiffErrorsWireKeys(t *testing.T) {
+	if errBadPatch.Error() != "err.git.hunk_missing_header" {
+		t.Fatalf("patch key = %q", errBadPatch.Error())
+	}
+	if errBadDiffOp.Error() != "err.git.invalid_hunk_op" {
+		t.Fatalf("op key = %q", errBadDiffOp.Error())
+	}
+	if errBadSide.Error() != "err.git.invalid_diff_side" {
+		t.Fatalf("side key = %q", errBadSide.Error())
+	}
+}
+
 func TestFileDiff_workingAndStaged(t *testing.T) {
 	skipIfNoGit(t)
 	root := t.TempDir()

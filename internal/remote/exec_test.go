@@ -43,8 +43,8 @@ func TestFindSSHMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("missing ssh must return an error")
 	}
-	if !strings.Contains(err.Error(), "ssh") {
-		t.Fatalf("error should mention ssh, got %v", err)
+	if err.Error() != "err.ssh.no_ssh_binary" {
+		t.Fatalf("error = %q, want err.ssh.no_ssh_binary", err.Error())
 	}
 }
 

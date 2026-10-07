@@ -12,7 +12,7 @@ import (
 	"github.com/yangk/kshell/internal/executil"
 )
 
-var errSSHNotFound = errors.New("未找到 ssh 可执行文件（Windows 请在「可选功能」里启用 OpenSSH 客户端）")
+var errSSHNotFound = errors.New("err.ssh.no_ssh_binary")
 
 // SSHOptions 影响参数拼装；BatchMode 不开放配置——kshell 永远不允许卡在密码提示上。
 type SSHOptions struct {
@@ -104,7 +104,7 @@ func Run(ctx context.Context, c Connection, cmd string, opts SSHOptions) (Result
 
 	if ctx.Err() != nil {
 		// 被取消/超时：进程是被我们杀掉的，不是命令自己失败，必须让调用方知道。
-		return res, fmt.Errorf("执行超时或被取消: %w", ctx.Err())
+		return res, fmt.Errorf("err.ssh.exec_timeout|%w", ctx.Err())
 	}
 
 	if runErr != nil {
@@ -113,7 +113,7 @@ func Run(ctx context.Context, c Connection, cmd string, opts SSHOptions) (Result
 			res.ExitCode = exitErr.ExitCode()
 			return res, nil
 		}
-		return res, fmt.Errorf("执行 ssh 失败: %w", runErr)
+		return res, fmt.Errorf("err.ssh.exec_failed|%w", runErr)
 	}
 	return res, nil
 }

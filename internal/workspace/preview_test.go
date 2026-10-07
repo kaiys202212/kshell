@@ -8,6 +8,33 @@ import (
 	"testing"
 )
 
+// Preview.Info 是 wire 串（key|参数…），供前端按 key 翻译。
+func TestPreviewInfoWireKeys(t *testing.T) {
+	root := t.TempDir()
+
+	dir := filepath.Join(root, "sub")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := PreviewFile(dir, 0, 0); !strings.HasPrefix(got.Info, "preview.dir_n_items|") {
+		t.Fatalf("目录 Info = %q", got.Info)
+	}
+
+	bin := filepath.Join(root, "b.bin")
+	if err := os.WriteFile(bin, []byte{'a', 0, 'b'}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := PreviewFile(bin, 0, 0); !strings.HasPrefix(got.Info, "preview.binary_file|") {
+		t.Fatalf("二进制 Info = %q", got.Info)
+	}
+
+	txt := filepath.Join(root, "t.txt")
+	write(t, txt, "hello\n")
+	if got := PreviewFile(txt, 0, 0); !strings.HasPrefix(got.Info, "preview.file_info|") {
+		t.Fatalf("文本 Info = %q", got.Info)
+	}
+}
+
 func TestPreviewTextFile(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "main.go")

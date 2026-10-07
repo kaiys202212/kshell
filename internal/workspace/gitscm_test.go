@@ -30,6 +30,21 @@ func initRepo(t *testing.T, root string) {
 	gitRun(t, root, "config", "core.autocrlf", "false")
 }
 
+func TestGitSCMErrorsWireKeys(t *testing.T) {
+	if errRepoOutside.Error() != "err.git.out_of_workspace" {
+		t.Fatalf("outside key = %q", errRepoOutside.Error())
+	}
+	if errEmptyCommit.Error() != "err.git.empty_commit_msg" {
+		t.Fatalf("commit key = %q", errEmptyCommit.Error())
+	}
+	if errEmptyPaths.Error() != "err.git.no_paths" {
+		t.Fatalf("paths key = %q", errEmptyPaths.Error())
+	}
+	if errEmptyRef.Error() != "err.git.empty_branch_name" {
+		t.Fatalf("ref key = %q", errEmptyRef.Error())
+	}
+}
+
 func TestSCMStatus_分组(t *testing.T) {
 	skipIfNoGit(t)
 	root := t.TempDir()
