@@ -141,4 +141,23 @@ describe('initI18n', () => {
     await initI18n('en', {});
     expect(i18next.getResourceBundle('de', 'translation')).toBeUndefined();
   });
+
+  // 整码校验回归：旧实现只取前两段，会把三段码静默改写成合法两段码而放行
+  it('超值域的三段码 zh-hans-CN.json 被跳过，不静默改写成 zh-HANS', async () => {
+    await initI18n('en', { 'zh-hans-CN.json': JSON.stringify({ err: { session_not_found: 'BAD' } }) });
+    const codes = getLanguageOptions().map((o) => o.code);
+    expect(codes).not.toContain('zh-HANS');
+    expect(codes).not.toContain('zh-HANS-CN');
+    expect(i18next.getResourceBundle('zh-HANS', 'translation')).toBeUndefined();
+    await initI18n('en', {});
+  });
+
+  it('正常外部码 de.json 仍注册并可用', async () => {
+    await initI18n('en', { 'de.json': JSON.stringify({ err: { session_not_found: 'Sitzung fehlt' } }) });
+    expect(getLanguageOptions().map((o) => o.code)).toContain('de');
+    await i18next.changeLanguage('de');
+    expect(i18next.t('err.session_not_found')).toBe('Sitzung fehlt');
+    await initI18n('en', {});
+    expect(i18next.getResourceBundle('de', 'translation')).toBeUndefined();
+  });
 });

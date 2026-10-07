@@ -61,10 +61,16 @@ export function initI18nBuiltin(lng = 'en'): void {
   });
 }
 
-/** 规范化新语言码写法：主语言段小写、区域段大写（BCP 47 惯例），保证按码查找可命中。 */
+/**
+ * 规范化新语言码写法：逐段处理（主语言段小写、其后各段大写，BCP 47 惯例）。
+ * 必须拼接全部段后再由调用方做整码 languagePattern 校验——只取前两段会把
+ * `zh-hans-CN` 静默改写成 `zh-HANS`、`de-` 改写成 `de`，掩盖非法码而非跳过。
+ */
 function normalizeCode(code: string): string {
-  const [lang, region] = code.split('-');
-  return region ? `${lang.toLowerCase()}-${region.toUpperCase()}` : lang.toLowerCase();
+  return code
+    .split('-')
+    .map((seg, i) => (i === 0 ? seg.toLowerCase() : seg.toUpperCase()))
+    .join('-');
 }
 
 /**

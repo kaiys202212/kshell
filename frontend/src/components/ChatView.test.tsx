@@ -192,6 +192,14 @@ describe('ChatView', () => {
     vi.unstubAllGlobals();
   });
 
+  it('exited 后端错误为已注册 wire key 时渲染翻译文案而非裸 key', () => {
+    const { container } = render(
+      <ChatView chat={{ ...CHAT, Status: 'exited', ExitCode: 1, Error: 'err.chat.gone' }} active />,
+    );
+    expect(container.textContent).toContain(tt('err.chat.gone'));
+    expect(container.textContent).not.toContain('err.chat.gone');
+  });
+
   it('助手 Markdown 相对路径打开工作区文件', () => {
     const seen: unknown[] = [];
     const onOpen = (e: Event) => seen.push((e as CustomEvent).detail);
