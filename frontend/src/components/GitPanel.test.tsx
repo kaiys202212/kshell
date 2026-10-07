@@ -222,6 +222,18 @@ describe('GitPanel', () => {
     // 等 run() 收尾解除 busy，否则禁用态触发器展不开菜单
     await waitFor(() => expect(trigger).toBeEnabled());
 
+    // 菜单内 Fetch 是独立调用点，单独断言（与底部工具栏 Fetch 各改各的）
+    fireEvent.pointerDown(trigger, { button: 0 });
+    fireEvent.click(trigger);
+    const subF = await screen.findByRole('menuitem', { name: /拉取/ });
+    fireEvent.click(subF);
+    fireEvent.pointerMove(subF);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Fetch' }));
+    await waitFor(() => {
+      expect(mocks.gitFetch).toHaveBeenCalledWith(ws, '', 'gitcode');
+    });
+    await waitFor(() => expect(trigger).toBeEnabled());
+
     fireEvent.pointerDown(trigger, { button: 0 });
     fireEvent.click(trigger);
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Push' }));
@@ -229,6 +241,7 @@ describe('GitPanel', () => {
       expect(mocks.gitPush).toHaveBeenCalledWith(ws, '', 'gitcode');
     });
   });
+
   it('底部 Fetch 按生效同步源调用', async () => {
     const ws = 'D:\\proj';
     mocks.gitSCM.mockResolvedValue(snap({ SyncRemote: 'gitcode' }));
