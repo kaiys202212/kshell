@@ -79,7 +79,8 @@ func (s *Service) ListTargets(detected []string) []TargetInfo {
 }
 
 // Install 下载、写实体、安装到各 tool 目标。
-func (s *Service) Install(ctx context.Context, id string, toolIDs []string) (InstallResult, error) {
+// force 为 true 时覆盖各 agent 下已存在的同名非本实体目录。
+func (s *Service) Install(ctx context.Context, id string, toolIDs []string, force bool) (InstallResult, error) {
 	if len(toolIDs) == 0 {
 		return InstallResult{}, errNoTargets
 	}
@@ -113,7 +114,7 @@ func (s *Service) Install(ctx context.Context, id string, toolIDs []string) (Ins
 			continue
 		}
 		target := filepath.Join(root, name)
-		mode, err := InstallTarget(entityDir, target)
+		mode, err := InstallTarget(entityDir, target, force)
 		if err != nil {
 			res.Errors[toolID] = err.Error()
 			continue

@@ -19,7 +19,11 @@ vi.mock('../lib/api', () => ({
     Source: 'a/b',
     BodyPreview: 'body',
   })),
-  installSkill: vi.fn(async () => ({ ID: 'a/b/c', Name: 'demo-skill', Targets: { claude: { Mode: 'link', Path: 'x' } } })),
+  installSkill: vi.fn(async () => ({
+    ID: 'a/b/c',
+    Name: 'demo-skill',
+    Targets: { claude: { Mode: 'link', Path: 'x' } },
+  })),
   uninstallSkill: vi.fn(async () => {}),
 }));
 

@@ -25,7 +25,7 @@ func TestServiceInstallUninstall(t *testing.T) {
 		t.Fatalf("%+v", targets)
 	}
 
-	res, err := svc.Install(context.Background(), "acme/repo/demo", []string{"claude"})
+	res, err := svc.Install(context.Background(), "acme/repo/demo", []string{"claude"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

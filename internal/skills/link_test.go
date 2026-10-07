@@ -16,7 +16,7 @@ func TestInstallTargetLinkOrCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	target := filepath.Join(base, "agents", "skills", "demo")
-	mode, err := InstallTarget(entity, target)
+	mode, err := InstallTarget(entity, target, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestInstallTargetLinkOrCopy(t *testing.T) {
 	}
 	// 链接模式下再次安装应 no-op；副本模式目标已存在会冲突，先清再装。
 	if mode == modeLink {
-		mode2, err := InstallTarget(entity, target)
+		mode2, err := InstallTarget(entity, target, false)
 		if err != nil || mode2 != modeLink {
 			t.Fatalf("relink: mode=%q err=%v", mode2, err)
 		}
@@ -48,8 +48,15 @@ func TestInstallTargetConflict(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(target, "SKILL.md"), []byte("foreign"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := InstallTarget(entity, target); err != errTargetConf {
+	if _, err := InstallTarget(entity, target, false); err != errTargetConf {
 		t.Fatalf("got %v", err)
+	}
+	mode, err := InstallTarget(entity, target, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != modeLink && mode != modeCopy {
+		t.Fatalf("force mode %q", mode)
 	}
 }
 
@@ -60,7 +67,7 @@ func TestRemoveTarget(t *testing.T) {
 	if err := os.MkdirAll(entity, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := InstallTarget(entity, target); err != nil {
+	if _, err := InstallTarget(entity, target, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := RemoveTarget(target); err != nil {

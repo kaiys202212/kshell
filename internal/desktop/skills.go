@@ -59,11 +59,11 @@ func (a *App) ListSkillTargets() []SkillTargetView {
 	return a.skillsService().ListTargets(ids)
 }
 
-// InstallSkill 安装到指定 tool 目标。
-func (a *App) InstallSkill(id string, toolIDs []string) (InstallSkillView, error) {
+// InstallSkill 安装到指定 tool 目标；force 为 true 时覆盖已存在的同名目录。
+func (a *App) InstallSkill(id string, toolIDs []string, force bool) (InstallSkillView, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	return a.skillsService().Install(ctx, id, toolIDs)
+	return a.skillsService().Install(ctx, id, toolIDs, force)
 }
 
 // ListInstalledSkills 列出本地已安装 skill。

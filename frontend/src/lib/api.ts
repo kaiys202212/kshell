@@ -479,7 +479,7 @@ interface AppBindings {
   SearchSkills(query: string, limit: number): Promise<SkillSummary[]>;
   GetSkillDetail(id: string): Promise<SkillDetail>;
   ListSkillTargets(): Promise<SkillTargetInfo[]>;
-  InstallSkill(id: string, toolIDs: string[]): Promise<InstallSkillResult>;
+  InstallSkill(id: string, toolIDs: string[], force: boolean): Promise<InstallSkillResult>;
   ListInstalledSkills(): Promise<InstalledSkillInfo[]>;
   UninstallSkill(id: string, removeEntity: boolean): Promise<void>;
   NeedsAgentSetup(): Promise<boolean>;
@@ -971,10 +971,14 @@ export async function listSkillTargets(): Promise<SkillTargetInfo[]> {
   return a.ListSkillTargets();
 }
 
-export async function installSkill(id: string, toolIDs: string[]): Promise<InstallSkillResult> {
+export async function installSkill(
+  id: string,
+  toolIDs: string[],
+  force = false,
+): Promise<InstallSkillResult> {
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
-  return a.InstallSkill(id, toolIDs);
+  return a.InstallSkill(id, toolIDs, force);
 }
 
 export async function listInstalledSkills(): Promise<InstalledSkillInfo[]> {

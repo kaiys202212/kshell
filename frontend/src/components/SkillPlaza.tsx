@@ -14,13 +14,19 @@ import {
   type SkillSummary,
   type SkillTargetInfo,
 } from '../lib/api';
-import { backendError } from '../lib/errors';
+import { backendError, translateBackend } from '../lib/errors';
 import { useAppStore } from '../state/store';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 
 const RECOMMEND_QUERY = 'agent';
+
+function formatInstallErrors(errors: Record<string, string>): string {
+  return Object.entries(errors)
+    .map(([tool, msg]) => `${tool}: ${translateBackend(msg)}`)
+    .join('; ');
+}
 
 export function SkillPlaza() {
   const { t } = useTranslation();
@@ -36,6 +42,7 @@ export function SkillPlaza() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [targets, setTargets] = useState<SkillTargetInfo[]>([]);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const [forceOverwrite, setForceOverwrite] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [pendingID, setPendingID] = useState('');
 
@@ -88,8 +95,9 @@ export function SkillPlaza() {
       setDetail(d);
       setTargets(ts);
       const next: Record<string, boolean> = {};
-      for (const t of ts) next[t.ToolID] = t.DefaultChecked;
+      for (const tg of ts) next[tg.ToolID] = tg.DefaultChecked;
       setChecked(next);
+      setForceOverwrite(false);
     } catch (e: unknown) {
       notify(backendError(e), 'error');
       setDetail(null);
@@ -111,14 +119,26 @@ export function SkillPlaza() {
     }
     setInstalling(true);
     try {
-      const res = await installSkill(detail.ID, selectedToolIDs);
+      const res = await installSkill(detail.ID, selectedToolIDs, forceOverwrite);
+      const okCount = Object.keys(res.Targets || {}).length;
+      const errEntries = res.Errors && typeof res.Errors === 'object' ? res.Errors : {};
+      const errCount = Object.keys(errEntries).length;
       const copyCount = Object.values(res.Targets || {}).filter((x) => x.Mode === 'copy').length;
-      if (res.Errors && Object.keys(res.Errors).length > 0) {
-        notify(t('ui.settings.skills.partial_fail'), 'error');
+      if (errCount > 0 && okCount > 0) {
+        // 部分成功：实体已安装，勿用 error 语气造成「整单失败」误解
+        notify(
+          t('ui.settings.skills.partial_ok', { 0: formatInstallErrors(errEntries) }),
+          'info',
+        );
+      } else if (errCount > 0) {
+        notify(
+          t('ui.settings.skills.all_fail', { 0: formatInstallErrors(errEntries) }),
+          'error',
+        );
       } else if (copyCount > 0) {
-        notify(t('ui.settings.skills.installed_copy'), 'info');
+        notify(t('ui.settings.skills.installed_copy'), 'success');
       } else {
-        notify(t('ui.settings.skills.installed_ok'), 'info');
+        notify(t('ui.settings.skills.installed_ok'), 'success');
       }
       setDetail(null);
       await refreshInstalled();
@@ -252,6 +272,20 @@ export function SkillPlaza() {
                 </ul>
               )}
             </div>
+            <label className="flex items-start gap-2 text-xs">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={forceOverwrite}
+                onChange={(e) => setForceOverwrite(e.currentTarget.checked)}
+              />
+              <span>
+                <span className="font-medium">{t('ui.settings.skills.force_overwrite')}</span>
+                <span className="mt-0.5 block text-muted-foreground">
+                  {t('ui.settings.skills.force_overwrite_hint')}
+                </span>
+              </span>
+            </label>
             <p className="text-xs text-muted-foreground">{t('ui.settings.skills.trust_hint')}</p>
             <div className="flex justify-end gap-2">
               <Button variant="secondary" onClick={() => setDetail(null)}>

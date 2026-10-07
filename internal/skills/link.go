@@ -15,7 +15,8 @@ const (
 
 // InstallTarget 将 entityDir 安装到 targetDir（链接优先，失败则复制）。
 // targetDir 是完整的 skill 目录路径（.../skills/<name>）。
-func InstallTarget(entityDir, targetDir string) (mode string, err error) {
+// force 为 true 时，若目标已存在且不是本实体，先删除再装。
+func InstallTarget(entityDir, targetDir string, force bool) (mode string, err error) {
 	entityDir = filepath.Clean(entityDir)
 	targetDir = filepath.Clean(targetDir)
 	if entityDir == "" || targetDir == "" {
@@ -25,7 +26,12 @@ func InstallTarget(entityDir, targetDir string) (mode string, err error) {
 		if sameTarget(entityDir, targetDir, st) {
 			return modeLink, nil
 		}
-		return "", errTargetConf
+		if !force {
+			return "", errTargetConf
+		}
+		if err := RemoveTarget(targetDir); err != nil {
+			return "", err
+		}
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
