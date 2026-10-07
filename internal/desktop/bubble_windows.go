@@ -55,9 +55,6 @@ const (
 	bubbleTimerID = 1
 )
 
-// gwlpUserdata 是 GWLP_USERDATA（-21）；用补码避免常量溢出 uintptr。
-var gwlpUserdata = ^uintptr(20)
-
 var (
 	procCreateWindowExW  = user32.NewProc("CreateWindowExW")
 	procDestroyWindow    = user32.NewProc("DestroyWindow")
@@ -76,9 +73,7 @@ var (
 	procGetClientRect    = user32.NewProc("GetClientRect")
 	procSetTimer         = user32.NewProc("SetTimer")
 	procKillTimer        = user32.NewProc("KillTimer")
-	procLoadCursorW      = user32.NewProc("LoadCursorW")
-	procGetWindowLongPtrW = user32.NewProc("GetWindowLongPtrW")
-	procSetWindowLongPtrW = user32.NewProc("SetWindowLongPtrW")
+	procLoadCursorW        = user32.NewProc("LoadCursorW")
 	procPostThreadMessageW = user32.NewProc("PostThreadMessageW")
 
 	gdi32              = windows.NewLazySystemDLL("gdi32.dll")
@@ -249,8 +244,6 @@ func createBubbleWindow(title, body, termKey string) {
 		return
 	}
 	b.hwnd = windows.HWND(hwnd)
-	// 把 bubble 指针存进 USERDATA；生命周期与 HWND 绑定，Destroy 前保持可达。
-	procSetWindowLongPtrW.Call(hwnd, uintptr(gwlpUserdata), uintptr(unsafe.Pointer(b)))
 	procSetTimer.Call(hwnd, bubbleTimerID, uintptr(bubbleAutoClose/time.Millisecond), 0)
 
 	bubbleMu.Lock()
@@ -289,12 +282,16 @@ func removeBubble(hwnd windows.HWND) {
 	}
 }
 
+// bubbleFromHWND 在 bubbleList 里按 HWND 查找（避免 GWLP_USERDATA + unsafe 指针）。
 func bubbleFromHWND(hwnd windows.HWND) *agentBubble {
-	v, _, _ := procGetWindowLongPtrW.Call(uintptr(hwnd), uintptr(gwlpUserdata))
-	if v == 0 {
-		return nil
+	bubbleMu.Lock()
+	defer bubbleMu.Unlock()
+	for _, b := range bubbleList {
+		if b.hwnd == hwnd {
+			return b
+		}
 	}
-	return (*agentBubble)(unsafe.Pointer(v))
+	return nil
 }
 
 func bubbleWndProc(hwnd windows.HWND, msg uint32, wParam, lParam uintptr) uintptr {
