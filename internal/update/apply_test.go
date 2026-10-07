@@ -205,6 +205,13 @@ func TestApplyRejectsBadHash(t *testing.T) {
 	}
 }
 
+func TestNoDownloadSourceIsWireKey(t *testing.T) {
+	// apply.go 依赖该哨兵是单层 wire key 并原样返回，嵌套会被 translateBackend 拆坏
+	if got := errNoDownloadSource.Error(); got != "err.update.download_source_unavailable" {
+		t.Fatalf("errNoDownloadSource = %q", got)
+	}
+}
+
 func mustZip(t *testing.T, files map[string][]byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer

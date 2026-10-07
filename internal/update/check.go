@@ -3,6 +3,7 @@ package update
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -229,6 +230,10 @@ func (c Client) Check(ctx context.Context) (CheckResult, error) {
 	return out, last
 }
 
+// errNoDownloadSource 是下载无候选源时的兜底（wire key，前端直译）。
+// 调用方（apply.go）需原样返回，不可再包 `err.update.*|%w`，否则嵌套 wire key 无法翻译。
+var errNoDownloadSource = errors.New("err.update.download_source_unavailable")
+
 func (c Client) getThroughSources(ctx context.Context, official string) ([]byte, error) {
 	src := c.Sources
 	if len(src) == 0 {
@@ -248,7 +253,7 @@ func (c Client) getThroughSources(ctx context.Context, official string) ([]byte,
 		return b, nil
 	}
 	if last == nil {
-		last = fmt.Errorf("no available download source")
+		last = errNoDownloadSource
 	}
 	return nil, last
 }

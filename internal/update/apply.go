@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,6 +33,9 @@ func Apply(ctx context.Context, opts ApplyOptions) error {
 	cli := Client{Get: opts.Get, HTTP: &http.Client{Timeout: applyTimeout}}
 	sumsBody, err := cli.getThroughSources(ctx, opts.SumsURL)
 	if err != nil {
+		if errors.Is(err, errNoDownloadSource) {
+			return err
+		}
 		return fmt.Errorf("err.update.download_sums|%w", err)
 	}
 	want, err := ParseSHA256SUMS(sumsBody, zipName)
@@ -40,6 +44,9 @@ func Apply(ctx context.Context, opts ApplyOptions) error {
 	}
 	zipBody, err := cli.getThroughSources(ctx, opts.ZipURL)
 	if err != nil {
+		if errors.Is(err, errNoDownloadSource) {
+			return err
+		}
 		return fmt.Errorf("err.update.download_package|%w", err)
 	}
 	sum := sha256.Sum256(zipBody)

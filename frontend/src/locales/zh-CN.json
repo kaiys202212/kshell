@@ -133,6 +133,7 @@
       "dest_exe_empty": "目标可执行文件为空",
       "download_sums": "下载校验文件失败: {{0}}",
       "download_package": "下载安装包失败: {{0}}",
+      "download_source_unavailable": "无可用下载源",
       "checksum_mismatch": "安装包校验失败",
       "write_new_version": "写出新版本失败: {{0}}",
       "schedule_replace": "调度替换失败: {{0}}",

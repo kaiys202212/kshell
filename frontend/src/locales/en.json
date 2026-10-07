@@ -133,6 +133,7 @@
       "dest_exe_empty": "Target executable path is empty",
       "download_sums": "Failed to download the checksum file: {{0}}",
       "download_package": "Failed to download the installer package: {{0}}",
+      "download_source_unavailable": "No available download source",
       "checksum_mismatch": "Installer package checksum mismatch",
       "write_new_version": "Failed to write the new version: {{0}}",
       "schedule_replace": "Failed to schedule replacement: {{0}}",
