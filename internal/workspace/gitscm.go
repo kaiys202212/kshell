@@ -13,10 +13,12 @@ import (
 )
 
 var (
-	errRepoOutside = errors.New("仓库路径越出工作区范围")
-	errEmptyCommit = errors.New("提交说明不能为空")
-	errEmptyPaths  = errors.New("未指定路径")
-	errEmptyRef    = errors.New("分支名不能为空")
+	errRepoOutside  = errors.New("仓库路径越出工作区范围")
+	errEmptyCommit  = errors.New("提交说明不能为空")
+	errEmptyPaths   = errors.New("未指定路径")
+	errEmptyRef     = errors.New("分支名不能为空")
+	errNoSyncRemote = errors.New("无可用同步源")
+	errNoBranch     = errors.New("不在本地分支上")
 )
 
 const gitRemoteTimeout = 60 * time.Second
@@ -46,9 +48,15 @@ type SCMStash struct {
 
 // SCMSnapshot 当前选中仓库的 SCM 视图。
 type SCMSnapshot struct {
-	IsRepo      bool
-	RepoRel     string
-	Branch      string
+	IsRepo  bool
+	RepoRel string
+	Branch  string
+	Remotes []string // 仓库全部 remote（git remote 输出；无 remote 为 nil）
+	// SyncRemote 生效同步源：入参有效则用之，否则 origin → upstream 所属 remote → 第一个；
+	// 无 remote 为空串。差异计算与 fetch/pull/push 均以它为准。
+	SyncRemote string
+	// HasUpstream 所选同步源上存在同名远端分支引用（refs/remotes/<源>/<分支>），
+	// 决定 ↑↓ 徽标与「同步」按钮是否可用（字段名沿用，语义已从 @{upstream} 收窄）。
 	HasUpstream bool
 	Ahead       int
 	Behind      int
@@ -96,8 +104,8 @@ func ListGitRepos(wsRoot string) []SCMRepo {
 	return out
 }
 
-// SCMStatus 读取所选仓库的分组状态、分支、stash、ahead/behind。
-func SCMStatus(wsRoot, repoRel string) (SCMSnapshot, error) {
+// SCMStatus 读取所选仓库的分组状态、分支、stash、按同步源的 ahead/behind。
+func SCMStatus(wsRoot, repoRel, syncRemote string) (SCMSnapshot, error) {
 	abs, err := ResolveRepo(wsRoot, repoRel)
 	if err != nil {
 		return SCMSnapshot{}, err
@@ -116,7 +124,9 @@ func SCMStatus(wsRoot, repoRel string) (SCMSnapshot, error) {
 	}
 	snap.Branch = gitBranch(abs)
 	snap.Entries = entries
-	snap.HasUpstream, snap.Ahead, snap.Behind = scmAheadBehind(abs)
+	snap.Remotes = listRemotes(abs)
+	snap.SyncRemote = resolveSyncRemote(abs, snap.Branch, syncRemote, snap.Remotes)
+	snap.HasUpstream, snap.Ahead, snap.Behind = scmSyncDiff(abs, snap.SyncRemote, snap.Branch)
 	snap.Stashes = scmStashes(abs)
 	return snap, nil
 }
@@ -178,13 +188,126 @@ func parseSCMPorcelainZ(data []byte, wsRoot, top string) []SCMEntry {
 	return entries
 }
 
-func scmAheadBehind(root string) (has bool, ahead, behind int) {
+// listRemotes 列出仓库 remote 名；非仓库/无 remote 返回 nil。
+func listRemotes(root string) []string {
 	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
 	defer cancel()
-	if _, err := gitCmd(ctx, root, "rev-parse", "--abbrev-ref", "@{upstream}").Output(); err != nil {
+	out, err := gitCmd(ctx, root, "remote").Output()
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			names = append(names, line)
+		}
+	}
+	return names
+}
+
+// hasRemote 判断 remote 名是否存在于列表中。
+func hasRemote(remotes []string, name string) bool {
+	for _, r := range remotes {
+		if r == name {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveSyncRemote 解析生效同步源：显式指定且存在则用之；
+// 否则 origin → 分支 upstream 所属 remote → 第一个 remote；无 remote 返回空串。
+// want 失效（remote 已删）时回退默认，保证前端记忆过期不会算错差异。
+// branch 为调用方已知的当前分支（SCMStatus 已读过），避免重复起进程。
+func resolveSyncRemote(root, branch, want string, remotes []string) string {
+	if len(remotes) == 0 {
+		return ""
+	}
+	if want = strings.TrimSpace(want); want != "" && hasRemote(remotes, want) {
+		return want
+	}
+	if hasRemote(remotes, "origin") {
+		return "origin"
+	}
+	// 无 origin：跟随分支 upstream 所属 remote（值 "." 表示本仓，跳过）
+	if branch == "" {
+		branch = gitBranch(root)
+	}
+	if branch != "" && branch != "HEAD" {
+		if up := gitConfigVal(root, "branch."+branch+".remote"); up != "" && up != "." && hasRemote(remotes, up) {
+			return up
+		}
+	}
+	return remotes[0]
+}
+
+// gitConfigVal 读单个 git config 值；读不到返回空串。
+func gitConfigVal(root, key string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
+	defer cancel()
+	out, err := gitCmd(ctx, root, "config", "--get", key).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// syncBranchName 解析同步用的远端分支名：分支 upstream 与所选源同源时用
+// branch.<b>.merge 去掉 refs/heads/ 前缀的真名（支持 `checkout -b x origin/y`
+// 这类重命名跟踪），否则按同名回退。
+func syncBranchName(root, branch, remote string) string {
+	if gitConfigVal(root, "branch."+branch+".remote") == remote {
+		if merge := strings.TrimPrefix(gitConfigVal(root, "branch."+branch+".merge"), "refs/heads/"); merge != "" {
+			return merge
+		}
+	}
+	return branch
+}
+
+// remoteRefExists 校验所选源的远端分支跟踪引用是否已存在：与 scmSyncDiff/HasUpstream
+// 同口径（本地校验零网络开销），读不到引用即视为「该源没有这个分支」。
+func remoteRefExists(root, remote, branch string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
+	defer cancel()
+	_, err := gitCmd(ctx, root, "rev-parse", "--verify", "--quiet", "refs/remotes/"+remote+"/"+branch).Output()
+	return err == nil
+}
+
+// syncTarget 解析所选源的同步目标：remote 口径同 pickSyncRemote（空串默认解析、
+// 显式无效报错），远端分支名在 upstream 同源时用真名，否则按同名回退，
+// 并一并返回本地分支名（避免调用方再读一次、两次读之间分支变化造成 refspec 错配）。
+// 任一错误统一返回 ("", "", "", err)，调用方无需区分错误来源。
+func syncTarget(root, want string) (local, remote, remoteBranch string, err error) {
+	// 先解析 remote（显式无效源的报错比「不在分支上」更贴用户意图），branch 顺带算出
+	local = gitBranch(root)
+	remote, err = pickSyncRemote(root, local, want)
+	if err != nil {
+		return "", "", "", err
+	}
+	if remote == "" {
+		return "", "", "", errNoSyncRemote
+	}
+	if local == "" || local == "HEAD" {
+		return "", "", "", errNoBranch
+	}
+	return local, remote, syncBranchName(root, local, remote), nil
+}
+
+// scmSyncDiff 计算 HEAD 与所选同步源远端分支的 ahead/behind。
+// 远端分支名按 upstream 真名解析（异名跟踪），读不到配置时按同名回退；
+// 引用不存在（或不在分支上）时 has=false，面板据此禁用同步。
+func scmSyncDiff(root, remote, branch string) (has bool, ahead, behind int) {
+	if remote == "" || branch == "" || branch == "HEAD" {
 		return false, 0, 0
 	}
-	out, err := gitCmd(ctx, root, "rev-list", "--left-right", "--count", "@{upstream}...HEAD").Output()
+	remoteBranch := syncBranchName(root, branch, remote)
+	if !remoteRefExists(root, remote, remoteBranch) {
+		return false, 0, 0
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
+	defer cancel()
+	ref := "refs/remotes/" + remote + "/" + remoteBranch
+	out, err := gitCmd(ctx, root, "rev-list", "--left-right", "--count", ref+"...HEAD").Output()
 	if err != nil {
 		return true, 0, 0
 	}
@@ -398,29 +521,67 @@ func CreateBranch(wsRoot, repoRel, name string) error {
 	return gitRunAt(abs, gitStatusTimeout, "switch", "-c", name)
 }
 
-// Fetch / Pull / Push 走系统 git，无 --force。
-func Fetch(wsRoot, repoRel string) error {
-	abs, err := ResolveRepo(wsRoot, repoRel)
-	if err != nil {
-		return err
+// pickSyncRemote 为 fetch/pull/push 选出生效 remote：显式指定必须存在，
+// 否则宁可报错也不静默改推别的源；空则按默认规则解析（无 remote 返回空串）。
+// branch 为调用方已知的当前分支，仅无 origin 默认解析时用到。
+func pickSyncRemote(root, branch, want string) (string, error) {
+	remotes := listRemotes(root)
+	if w := strings.TrimSpace(want); w != "" {
+		if !hasRemote(remotes, w) {
+			return "", fmt.Errorf("同步源 %q 不存在", w)
+		}
+		return w, nil
 	}
-	return gitRunAt(abs, gitRemoteTimeout, "fetch")
+	return resolveSyncRemote(root, branch, "", remotes), nil
 }
 
-func Pull(wsRoot, repoRel string) error {
+// Fetch 拉取所选同步源（空则按默认解析）；无 remote 时保持裸 fetch 的空操作口径。
+// 不带 --force、不带 -u（不改 git config）。
+func Fetch(wsRoot, repoRel, remote string) error {
 	abs, err := ResolveRepo(wsRoot, repoRel)
 	if err != nil {
 		return err
 	}
-	return gitRunAt(abs, gitRemoteTimeout, "pull")
+	r, err := pickSyncRemote(abs, gitBranch(abs), remote)
+	if err != nil {
+		return err
+	}
+	if r == "" {
+		return gitRunAt(abs, gitRemoteTimeout, "fetch")
+	}
+	return gitRunAt(abs, gitRemoteTimeout, "fetch", r)
 }
 
-func Push(wsRoot, repoRel string) error {
+// Pull 拉取所选源的同步目标分支；远端分支名按 upstream 真名解析，
+// 不再依赖「同名」假设（否则异名跟踪会报 couldn't find remote ref）。
+func Pull(wsRoot, repoRel, remote string) error {
 	abs, err := ResolveRepo(wsRoot, repoRel)
 	if err != nil {
 		return err
 	}
-	return gitRunAt(abs, gitRemoteTimeout, "push")
+	_, r, rb, err := syncTarget(abs, remote)
+	if err != nil {
+		return err
+	}
+	return gitRunAt(abs, gitRemoteTimeout, "pull", r, rb)
+}
+
+// Push 推送当前分支到所选源的同步目标分支；显式写出 本地:远端，
+// 异名跟踪时更新远端真名。推送前校验该源已有目标分支引用：
+// 不存在则报错取消（旧行为是 git fatal；静默新建远端分支是未记录的写副作用）。
+func Push(wsRoot, repoRel, remote string) error {
+	abs, err := ResolveRepo(wsRoot, repoRel)
+	if err != nil {
+		return err
+	}
+	local, r, rb, err := syncTarget(abs, remote)
+	if err != nil {
+		return err
+	}
+	if !remoteRefExists(abs, r, rb) {
+		return fmt.Errorf("同步源 %s 上没有分支 %s，已取消推送", r, rb)
+	}
+	return gitRunAt(abs, gitRemoteTimeout, "push", r, local+":"+rb)
 }
 
 func stashRef(index int) string {
