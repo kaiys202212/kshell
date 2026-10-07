@@ -12,6 +12,11 @@ export interface LanguageOption {
 
 type Bundle = Record<string, unknown>;
 
+// 外部语言码值域：与 Go 侧 config.ValidLanguage 的 languagePattern 同一模式
+// （2-3 字母主语言段 + 可选 2-4 字母区域段），防止两侧值域漂移。
+// 含点等非法字符的码会被 i18next 当路径分隔符，写坏资源库并让下一轮移除抛错。
+const languagePattern = /^[A-Za-z]{2,3}(-[A-Za-z]{2,4})?$/;
+
 const options: LanguageOption[] = [
   { code: 'en', name: 'English' },
   { code: 'zh-CN', name: '简体中文' },
@@ -40,7 +45,11 @@ export function resolveLanguage(configured: string): string {
   return nav.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
 }
 
-/** 同步初始化（测试 setup 与 initI18n 复用）：只注册内置资源，语言 en。 */
+/**
+ * 同步初始化（测试 setup 与 initI18n 复用）：只注册内置资源，语言 en。
+ * 调 init 后立即可用的前提是不 use backend / languageDetector——一旦挂了异步
+ * 加载器，资源就绪会变成异步，setup 里的同步假设不再成立。
+ */
 export function initI18nBuiltin(lng = 'en'): void {
   if (i18next.isInitialized) return;
   void i18next.use(initReactI18next).init({
@@ -52,11 +61,19 @@ export function initI18nBuiltin(lng = 'en'): void {
   });
 }
 
+/** 规范化新语言码写法：主语言段小写、区域段大写（BCP 47 惯例），保证按码查找可命中。 */
+function normalizeCode(code: string): string {
+  const [lang, region] = code.split('-');
+  return region ? `${lang.toLowerCase()}-${region.toUpperCase()}` : lang.toLowerCase();
+}
+
 /** 完整初始化：内置 + 外部语言包 + 配置语言。main.tsx render 前调用。 */
 export async function initI18n(configured: string, external: Record<string, string>): Promise<void> {
   initI18nBuiltin();
   // 重复调用时先清干净上一轮：移除外部新增语言的 bundle、内置语言整体还原，
-  // 否则外部覆盖/新增 key 会跨调用粘连（深合并删不掉内置资源里没有的 key）
+  // 否则外部覆盖/新增 key 会跨调用粘连（深合并删不掉内置资源里没有的 key）。
+  // 注意：下方 removes 与 adds 必须成对出现、其间不可插入提前返回，
+  // 否则 i18next 的 options.ns 会被瞬时清空（removeNamespaces 副作用）导致后续翻译失效。
   for (const code of externalCodes) i18next.removeResourceBundle(code, 'translation');
   externalCodes = [];
   i18next.removeResourceBundle('en', 'translation');
@@ -66,15 +83,30 @@ export async function initI18n(configured: string, external: Record<string, stri
   options.length = 0;
   options.push({ code: 'en', name: 'English' }, { code: 'zh-CN', name: '简体中文' });
   for (const [file, content] of Object.entries(external)) {
-    const code = file.replace(/\.json$/i, '');
-    if (!code) continue;
+    const raw = file.replace(/\.json$/i, '');
+    if (!raw) {
+      console.warn('[i18n] 跳过非法语言码: ', file);
+      continue;
+    }
+    // 大小写归并与值域校验：与既有选项（含内置 en/zh-CN）按小写比对归并到规范写法，
+    // 全新码先规范化再过值域正则
+    const existing = options.find((o) => o.code.toLowerCase() === raw.toLowerCase());
+    const code = existing ? existing.code : normalizeCode(raw);
+    if (!existing && !languagePattern.test(code)) {
+      console.warn('[i18n] 跳过非法语言码: ', file);
+      continue;
+    }
     let bundle: Bundle;
     try {
       bundle = JSON.parse(content) as Bundle;
     } catch {
-      continue; // 非法 JSON 跳过
+      console.warn('[i18n] 跳过非法 JSON 语言包: ', file);
+      continue;
     }
-    if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle)) continue; // 非对象包跳过
+    if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle)) {
+      console.warn('[i18n] 跳过非对象语言包: ', file);
+      continue;
+    }
     const { $name, ...strings } = bundle as Bundle & { $name?: string };
     const base = (i18next.getResourceBundle(code, 'translation') as Bundle | undefined) ?? {};
     i18next.addResourceBundle(code, 'translation', mergeExternalBundle(strings, base), true, true);
@@ -87,5 +119,5 @@ export async function initI18n(configured: string, external: Record<string, stri
 }
 
 export function getLanguageOptions(): LanguageOption[] {
-  return options;
+  return [...options];
 }

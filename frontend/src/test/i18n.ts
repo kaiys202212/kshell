@@ -8,5 +8,7 @@ export function tt(key: string): string {
       (o, k) => (o && typeof o === 'object' ? (o as Record<string, unknown>)[k] : undefined),
       en,
     );
-  return typeof v === 'string' ? v : key;
+  // 缺 key 直接抛错：原样返回会让断言退化成「期望值 == key 本身」的假阳性
+  if (typeof v !== 'string') throw new Error(`tt: 缺少 key ${key}`);
+  return v;
 }
