@@ -13,6 +13,8 @@ var en = map[string]string{
 	"terminal.title":          "Terminal",
 	"role.user":               "User",
 	"role.assistant":          "Assistant",
+	"transcript.sqlite_body":  `This session is stored in a database; the full conversation cannot be expanded as a file. Click "Activate" to resume, then view it.`,
+	"transcript.empty_body":   "No conversation content could be parsed. Click \"Activate\" to resume.",
 }
 
 var zhCN = map[string]string{
@@ -27,4 +29,6 @@ var zhCN = map[string]string{
 	"terminal.title":          "终端",
 	"role.user":               "用户",
 	"role.assistant":          "助手",
+	"transcript.sqlite_body":  "该会话保存在数据库中，无法以文件形式展开完整对话。请点击「激活」恢复后再查看。",
+	"transcript.empty_body":   "未解析到对话正文。请点击「激活」恢复后查看。",
 }

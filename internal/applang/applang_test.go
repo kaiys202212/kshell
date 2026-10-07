@@ -87,6 +87,8 @@ func TestCallerReferencedKeysExist(t *testing.T) {
 		"terminal.title",
 		"role.user",
 		"role.assistant",
+		"transcript.sqlite_body",
+		"transcript.empty_body",
 		"tray.show_main",
 		"tray.exit",
 		"tray.show_main_tip",

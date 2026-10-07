@@ -68,6 +68,9 @@
       "spawn_failed": "启动终端进程失败: {{0}}",
       "exec_not_found": "找不到可执行文件: {{0}}"
     },
+    "transcript": {
+      "no_path": "会话无本地文件"
+    },
     "launch": {
       "no_binary": "该工具没有可执行程序，无法启动会话",
       "no_acp_adapter": "该工具没有可用的 ACP 适配器"

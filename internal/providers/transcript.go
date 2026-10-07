@@ -15,7 +15,7 @@ import (
 
 const transcriptReadLimit = 512 * 1024
 
-var errTranscriptNoPath = errors.New("会话无本地文件")
+var errTranscriptNoPath = errors.New("err.transcript.no_path")
 
 // FormatSessionMarkdown 把历史会话抽成只读 Markdown（用户/助手轮次）。
 // SQLite（OpenCode）无法按文件展开，返回说明文案；读取超过 transcriptReadLimit 时 truncated=true。
@@ -47,7 +47,7 @@ func sqliteSessionMarkdown(s Session) string {
 	if title == "" {
 		title = s.ID
 	}
-	return fmt.Sprintf("# %s\n\n该会话保存在数据库中，无法以文件形式展开完整对话。请点击「激活」恢复后再查看。\n", title)
+	return fmt.Sprintf("# %s\n\n%s\n", title, applang.T("transcript.sqlite_body"))
 }
 
 func fallbackEmptyMarkdown(s Session) string {
@@ -55,7 +55,7 @@ func fallbackEmptyMarkdown(s Session) string {
 	if title == "" {
 		title = s.ID
 	}
-	return fmt.Sprintf("# %s\n\n未解析到对话正文。请点击「激活」恢复后查看。\n", title)
+	return fmt.Sprintf("# %s\n\n%s\n", title, applang.T("transcript.empty_body"))
 }
 
 func readLimited(path string, limit int) ([]byte, bool, error) {

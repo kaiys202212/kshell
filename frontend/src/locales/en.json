@@ -68,6 +68,9 @@
       "spawn_failed": "Failed to start terminal process: {{0}}",
       "exec_not_found": "Executable not found: {{0}}"
     },
+    "transcript": {
+      "no_path": "Session has no local file"
+    },
     "launch": {
       "no_binary": "This tool has no executable, cannot start a session",
       "no_acp_adapter": "This tool has no available ACP adapter"

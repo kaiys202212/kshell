@@ -1,6 +1,9 @@
 package providers
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -47,13 +50,44 @@ func TestFormatSessionMarkdownGeminiJSON(t *testing.T) {
 }
 
 func TestFormatSessionMarkdownOpencodeDB(t *testing.T) {
+	// 正文经 applang 直显：固定 en，避免全局语言态串扰。
+	applang.Set("en")
+	t.Cleanup(func() { applang.Set("en") })
 	s := Session{ID: "oc1", ToolID: "opencode", Title: "重构登录页", Path: `D:\fake\opencode.db`}
 	md, _, err := FormatSessionMarkdown(s)
 	if err != nil {
 		t.Fatalf("sqlite 应返回说明文案而非读库错误: %v", err)
 	}
-	if !strings.Contains(md, "重构登录页") || !strings.Contains(md, "数据库") {
+	if !strings.Contains(md, "重构登录页") || !strings.Contains(md, "stored in a database") {
 		t.Fatalf("应说明无法展开 sqlite 会话, got:\n%s", md)
+	}
+}
+
+// 空 Path 是绑定错误（前端 toast），对外为 wire key。
+func TestFormatSessionMarkdownNoPath(t *testing.T) {
+	_, _, err := FormatSessionMarkdown(Session{ID: "x", ToolID: "claude"})
+	if !errors.Is(err, errTranscriptNoPath) {
+		t.Fatalf("空路径应报 errTranscriptNoPath: %v", err)
+	}
+	if err.Error() != "err.transcript.no_path" {
+		t.Fatalf("空路径错误应为 wire key, got %q", err.Error())
+	}
+}
+
+// 无法解析出轮次时走 fallback 正文（applang 直显，固定 en 断言）。
+func TestFormatSessionMarkdownFallbackEmpty(t *testing.T) {
+	applang.Set("en")
+	t.Cleanup(func() { applang.Set("en") })
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"progress"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	md, _, err := FormatSessionMarkdown(Session{ID: "x", ToolID: "claude", Path: path})
+	if err != nil {
+		t.Fatalf("FormatSessionMarkdown: %v", err)
+	}
+	if !strings.Contains(md, "No conversation content could be parsed") {
+		t.Fatalf("fallback 正文未本地化, got:\n%s", md)
 	}
 }
 
