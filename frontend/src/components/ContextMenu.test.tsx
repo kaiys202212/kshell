@@ -59,4 +59,16 @@ describe('ContextMenu', () => {
     expect(menu?.className).toContain('bg-card');
     expect(menu?.className).not.toContain('bg-popover');
   });
+
+  it('菜单项 pointerdown 调用 preventDefault（避免抢焦点导致后续行内 input 立刻 blur）', () => {
+    const onSelect = vi.fn();
+    render(
+      <ContextMenu x={10} y={20} items={[{ label: '防焦点', onSelect }]} onClose={vi.fn()} />,
+    );
+    const item = screen.getByRole('menuitem', { name: '防焦点' });
+    const ev = new MouseEvent('pointerdown', { bubbles: true, cancelable: true });
+    item.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
 });

@@ -248,6 +248,9 @@ function filterItems(items: TreeItem[], q: string): TreeItem[] {
 
 // 行内新建输入：渲染在目标目录子层首位（根目录在树列表顶部），
 // 目录未加载 children 时直接渲染在目录行下方。Enter 提交；Esc/失焦取消；空名不提交。
+// 右键菜单 pointerdown 后挂载输入时，同次点击的后续阶段会立刻 blur；短时忽略以免闪没。
+const BLUR_GUARD_MS = 150;
+
 function CreateRow({
   depth,
   isDir,
@@ -261,6 +264,14 @@ function CreateRow({
 }) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState('');
+  const ignoreBlurRef = useRef(true);
+  useEffect(() => {
+    ignoreBlurRef.current = true;
+    const tmr = window.setTimeout(() => {
+      ignoreBlurRef.current = false;
+    }, BLUR_GUARD_MS);
+    return () => window.clearTimeout(tmr);
+  }, []);
   const commit = () => {
     const name = draft.trim();
     if (!name) return; // 空名不提交（失焦兜底取消）
@@ -285,7 +296,10 @@ function CreateRow({
               onCancel();
             }
           }}
-          onBlur={onCancel}
+          onBlur={() => {
+            if (ignoreBlurRef.current) return;
+            onCancel();
+          }}
         />
       </div>
     </li>
@@ -343,10 +357,18 @@ function TreeRow({
   const renaming = renamingPath === item.relPath;
   const [draft, setDraft] = useState(node.Name);
   const [dropActive, setDropActive] = useState(false);
+  const ignoreRenameBlurRef = useRef(false);
 
-  // 受控重命名：进入编辑态时重置草稿为当前名（状态在父层，草稿留本行）
+  // 受控重命名：进入编辑态时重置草稿为当前名（状态在父层，草稿留本行）；
+  // 挂载后短时忽略 blur，避免右键菜单 pointerdown 同次点击立刻提交/收起。
   useEffect(() => {
-    if (renaming) setDraft(node.Name);
+    if (!renaming) return;
+    setDraft(node.Name);
+    ignoreRenameBlurRef.current = true;
+    const tmr = window.setTimeout(() => {
+      ignoreRenameBlurRef.current = false;
+    }, BLUR_GUARD_MS);
+    return () => window.clearTimeout(tmr);
   }, [renaming, node.Name]);
 
   const commitRename = () => {
@@ -417,7 +439,10 @@ function TreeRow({
                 onRenameEnd();
               }
             }}
-            onBlur={commitRename}
+            onBlur={() => {
+              if (ignoreRenameBlurRef.current) return;
+              commitRename();
+            }}
           />
         ) : (
           <>

@@ -549,6 +549,48 @@ describe('FileTree 右键菜单', () => {
     expect(input).toHaveValue('README.md');
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
+
+  // 回归：菜单 pointerdown → 挂载 autoFocus input → 同次点击后续 blur 不应立刻取消
+  it('右键新建：菜单 pointerDown 后立刻 blur 不取消输入，之后可 Enter 提交', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.createEntry.mockResolvedValue('D:\\proj\\new.go');
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    fireEvent.contextMenu(screen.getByRole('tree', { name: tt('ui.files.tree_aria') }));
+    fireEvent.pointerDown(screen.getByRole('menuitem', { name: tt('ui.files.menu_new_file') }));
+    const input = screen.getByPlaceholderText(tt('ui.files.file_name_placeholder'));
+    fireEvent.blur(input);
+    expect(screen.getByPlaceholderText(tt('ui.files.file_name_placeholder'))).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: 'new.go' } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+    expect(mocks.createEntry).toHaveBeenCalledWith('D:\\proj', '', 'new.go', false);
+  });
+
+  it('右键重命名：菜单 pointerDown 后立刻 blur 不提交/收起，之后可 Enter 提交', async () => {
+    mocks.listFiles
+      .mockResolvedValueOnce(root)
+      .mockResolvedValueOnce([node('RENAMED.md', false, 'RENAMED.md')]);
+    mocks.renameEntry.mockResolvedValue('D:\\proj\\RENAMED.md');
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    fireEvent.contextMenu(await screen.findByText('README.md'));
+    fireEvent.pointerDown(screen.getByRole('menuitem', { name: tt('ui.files.rename') }));
+
+    const input = screen.getByRole('textbox', { name: renameAria('README.md') });
+    fireEvent.change(input, { target: { value: 'RENAMED.md' } });
+    fireEvent.blur(input);
+    // 忽略期内 blur 不应结束重命名（input 仍在且草稿保留）
+    expect(screen.getByRole('textbox', { name: renameAria('README.md') })).toBeInTheDocument();
+    expect(mocks.renameEntry).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+    expect(mocks.renameEntry).toHaveBeenCalledWith('D:\\proj', 'README.md', 'RENAMED.md');
+  });
 });
 
 describe('FileTree 树内拖拽移动', () => {

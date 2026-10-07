@@ -2,6 +2,7 @@
 // 点击外部（window pointerdown）/ Esc 关闭。
 // 菜单项必须用 onPointerDown 而非 onClick 执行：window 的 pointerdown 关闭监听
 // 先于 click 触发，菜单项需 stopPropagation 后立即执行，否则菜单先被关掉。
+// 同时 preventDefault，避免菜单抢焦点导致随后挂载的行内输入立刻 blur。
 // 菜单项由调用方传入（label + onSelect），danger 项用红色文字。
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
@@ -57,6 +58,8 @@ export default function ContextMenu({
             it.danger && 'text-destructive',
           )}
           onPointerDown={(e) => {
+            // preventDefault：避免菜单项抢焦点，否则随后挂载的 autoFocus 输入会立刻 blur 取消
+            e.preventDefault();
             e.stopPropagation();
             it.onSelect();
           }}
