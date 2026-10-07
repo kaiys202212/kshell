@@ -4,6 +4,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Settings from './Settings';
 import { useAppStore } from '../state/store';
+import { initI18n } from '../i18n';
+import { tt } from '../test/i18n';
 import type { ToolInfo } from '../lib/api';
 
 const mocks = vi.hoisted(() => ({
@@ -18,6 +20,9 @@ const mocks = vi.hoisted(() => ({
   getAppearance: vi.fn(),
   setAppearanceMode: vi.fn(),
   setAppearanceFontSize: vi.fn(),
+  getLanguage: vi.fn(),
+  setLanguage: vi.fn(),
+  onLanguageChanged: vi.fn(),
   getCloseBehavior: vi.fn(),
   setCloseBehavior: vi.fn(),
   getModelConfig: vi.fn(),
@@ -137,6 +142,12 @@ function goModel() {
 
 afterEach(cleanup);
 
+// 外部语言用例会经 initI18n 注册临时语言（如 ja），跑完还原为仅内置，
+// 避免污染同文件后续用例的 getLanguageOptions / 资源库
+afterEach(async () => {
+  await initI18n('en', {});
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getTools.mockResolvedValue(tools);
@@ -154,6 +165,10 @@ beforeEach(() => {
   mocks.getAppearance.mockResolvedValue({ mode: 'dark', resolved: 'dark', fontSize: 13 });
   mocks.setAppearanceMode.mockResolvedValue(undefined);
   mocks.setAppearanceFontSize.mockResolvedValue(undefined);
+  mocks.getLanguage.mockResolvedValue({ configured: 'en', resolved: 'en' });
+  mocks.setLanguage.mockResolvedValue(undefined);
+  mocks.onLanguageChanged.mockImplementation(() => () => {});
+  useAppStore.setState({ language: { configured: 'en', resolved: 'en' } });
   mocks.getAppVersion.mockResolvedValue('dev');
   mocks.checkForUpdate.mockResolvedValue({
     Current: 'dev',
@@ -467,6 +482,71 @@ describe('Settings', () => {
       fireEvent.pointerUp(slider);
     });
     expect(mocks.setAppearanceFontSize).toHaveBeenCalledWith(16);
+  });
+
+  it('语言行渲染三个内置选项，默认选中配置语言', async () => {
+    render(<Settings />);
+    const enBtn = await screen.findByRole('button', { name: tt('ui.settings.language.en') });
+    expect(enBtn).toHaveAttribute('aria-pressed', 'true');
+    const zhBtn = screen.getByRole('button', { name: tt('ui.settings.language.zh_cn') });
+    expect(zhBtn).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: tt('ui.settings.language.system') })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: tt('ui.settings.language.title') })).toBeInTheDocument();
+  });
+
+  it('切换语言调用 SetLanguage 并即时更新选中态', async () => {
+    render(<Settings />);
+    await screen.findByRole('button', { name: tt('ui.settings.language.en') });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.language.zh_cn') }));
+    });
+    expect(mocks.setLanguage).toHaveBeenCalledWith('zh-CN');
+    expect(screen.getByRole('button', { name: tt('ui.settings.language.zh_cn') })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.language.system') }));
+    });
+    expect(mocks.setLanguage).toHaveBeenCalledWith('system');
+    expect(screen.getByRole('button', { name: tt('ui.settings.language.system') })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('切换语言失败时提示错误并保持原选中态', async () => {
+    useAppStore.setState({ toasts: [] });
+    mocks.setLanguage.mockRejectedValueOnce(new Error('写盘失败'));
+    render(<Settings />);
+    await screen.findByRole('button', { name: tt('ui.settings.language.en') });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.language.zh_cn') }));
+    });
+    await waitFor(() => {
+      expect(
+        useAppStore.getState().toasts.some((t) => t.tone === 'error' && t.title === '写盘失败'),
+      ).toBe(true);
+    });
+    expect(screen.getByRole('button', { name: tt('ui.settings.language.en') })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('外部语言包选项追加按钮，配置值不在任何选项时兜底渲染该 code', async () => {
+    await initI18n('en', { 'ja.json': JSON.stringify({ $name: '日本語' }) });
+    useAppStore.setState({ language: { configured: 'de', resolved: 'de' } });
+    render(<Settings />);
+    // 配置值 de 的包已不在选项里：兜底按钮保证选中态可见（评审补记 #7）
+    const deBtn = await screen.findByRole('button', { name: 'de' });
+    expect(deBtn).toHaveAttribute('aria-pressed', 'true');
+    // 外部语言按 $name 追加按钮
+    const jaBtn = screen.getByRole('button', { name: '日本語' });
+    await act(async () => {
+      fireEvent.click(jaBtn);
+    });
+    expect(mocks.setLanguage).toHaveBeenCalledWith('ja');
   });
 
   it('关闭行为默认收进托盘，切换为直接退出调用 SetCloseBehavior', async () => {

@@ -3,7 +3,7 @@
 // 重开应用后恢复上次的工作区页签；其余字段的数据来源都是 Go 绑定层，刷新即重取，不持久化。
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { ChatInfo, ChatPermissionRequest, ChatUpdate, TerminalInfo, Workspace } from '../lib/api';
+import type { ChatInfo, ChatPermissionRequest, ChatUpdate, LanguageInfo, TerminalInfo, Workspace } from '../lib/api';
 import type { AgentNotice } from '../lib/agentNotify';
 import type { AppearanceInfo } from '../lib/appearance';
 import { applyChatUpdate, type TimelineItem } from './chatUpdate';
@@ -138,6 +138,11 @@ interface AppState {
   // 颜色模式（来自 Go 侧 GetAppearance / appearance:changed 事件；不持久化，刷新即重取）
   appearance: AppearanceInfo;
   setAppearance(info: AppearanceInfo): void;
+
+  // 语言配置（来自 Go 侧 GetLanguage / language:changed 事件；不持久化。
+  // 两处写入都收敛在 main.tsx（启动接线 + 事件订阅），组件只读，避免双写）
+  language: LanguageInfo;
+  setLanguage(info: LanguageInfo): void;
 
   // agent 通知气泡队列（notify:agent 事件；不持久化，10s 自动消失由气泡组件驱动）
   agentNotices: AgentNotice[];
@@ -352,6 +357,9 @@ export const useAppStore = create<AppState>()(
 
       appearance: { mode: 'system', resolved: 'dark', fontSize: 13 },
       setAppearance: (appearance) => set({ appearance }),
+
+      language: { configured: 'en', resolved: 'en' },
+      setLanguage: (language) => set({ language }),
 
       agentNotices: [],
       pushAgentNotice: (p) =>

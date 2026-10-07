@@ -4,5 +4,15 @@
     "files": {
       "too_big_preview": "文件大小 {{0}} 字节超过预览上限 {{1}} 字节"
     }
+  },
+  "ui": {
+    "settings": {
+      "language": {
+        "title": "语言",
+        "en": "English",
+        "zh_cn": "简体中文",
+        "system": "跟随系统"
+      }
+    }
   }
 }

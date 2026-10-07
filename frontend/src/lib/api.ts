@@ -458,6 +458,9 @@ interface AppBindings {
   GetAppearance(): Promise<AppearanceInfo>;
   SetAppearanceMode(mode: string): Promise<void>;
   SetAppearanceFontSize(n: number): Promise<void>;
+  GetLanguage(): Promise<LanguageInfo>;
+  SetLanguage(lang: string): Promise<void>;
+  LoadExternalLocales(): Promise<Record<string, string>>;
   GetModelConfig(): Promise<ModelConfigView>;
   SetModelConfig(input: ModelConfigInput): Promise<void>;
   ListModelPresets(): Promise<ModelPreset[]>;
@@ -1231,6 +1234,42 @@ export function onAppearanceChanged(cb: (info: AppearanceInfo) => void): () => v
       resolved: p?.resolved ?? 'dark',
       fontSize: typeof p?.fontSize === 'number' ? p.fontSize : 13,
     }),
+  );
+}
+
+// ---- 语言 ----
+
+// LanguageInfo 是语言设置的 JSON 形态（internal/desktop/language.go）。
+export interface LanguageInfo {
+  configured: string; // en | zh-CN | system | 外部 locale 码
+  resolved: string; // 解析后的实际语言码（en | zh-CN | 外部码）
+}
+
+// getLanguage 返回当前语言配置与解析结果；绑定不可用时兜底内置默认（en）。
+export async function getLanguage(): Promise<LanguageInfo> {
+  const a = app();
+  if (!a) return { configured: 'en', resolved: 'en' };
+  return a.GetLanguage();
+}
+
+// setLanguage 设置语言（Go 侧校验 + 持久化 + 广播 language:changed），错误向上抛。
+export async function setLanguage(lang: string): Promise<void> {
+  const a = app();
+  if (!a) throw new Error('未检测到桌面端绑定');
+  await a.SetLanguage(lang);
+}
+
+// loadExternalLocales 读取外部语言包（文件名如 ja.json → 文件内容）；无绑定返回空表。
+export async function loadExternalLocales(): Promise<Record<string, string>> {
+  const a = app();
+  if (!a) return {};
+  return (await a.LoadExternalLocales()) ?? {};
+}
+
+// onLanguageChanged 订阅语言变更（Go 侧 SetLanguage 后广播），返回取消订阅函数。
+export function onLanguageChanged(cb: (info: LanguageInfo) => void): () => void {
+  return EventsOn('language:changed', (p: LanguageInfo) =>
+    cb({ configured: p?.configured ?? 'en', resolved: p?.resolved ?? 'en' }),
   );
 }
 

@@ -4,5 +4,15 @@
     "files": {
       "too_big_preview": "File size {{0}} bytes exceeds preview limit {{1}} bytes"
     }
+  },
+  "ui": {
+    "settings": {
+      "language": {
+        "title": "Language",
+        "en": "English",
+        "zh_cn": "简体中文",
+        "system": "System"
+      }
+    }
   }
 }

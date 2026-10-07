@@ -1,7 +1,8 @@
 // 设置页：左导航分区（通用 / 模型 / 工具）+ 右侧内容。
-// 通用含外观/关闭/会话模式/权限/关于（检查更新、反馈问题）；模型含预设与双协议 Base URL；工具含检测与自定义表单。
+// 通用含外观/语言/关闭/会话模式/权限/关于（检查更新、反馈问题）；模型含预设与双协议 Base URL；工具含检测与自定义表单。
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   getAppearance,
   getCloseBehavior,
@@ -30,6 +31,7 @@ import {
   setAppearanceMode,
   setAppearanceFontSize,
   setCloseBehavior,
+  setLanguage,
   setModelConfig,
   setPermissionMode,
   setSessionMode,
@@ -38,6 +40,7 @@ import {
 import type { InstallRecipeView, ModelPreset, ToolInfo, ToolInstallJobView, UpdateInfo } from '../lib/api';
 import { cn } from '../lib/cn';
 import { applyUiFontSize, clampUiFontSize } from '../lib/appearance';
+import { getLanguageOptions } from '../i18n';
 import { openExternal } from '../lib/openHref';
 import { GITHUB_ISSUES_NEW_URL } from '../lib/projectLinks';
 import { useAppStore } from '../state/store';
@@ -53,6 +56,9 @@ const MODEL_AGENTS = [
   { id: 'gemini', label: 'Gemini CLI' },
   { id: 'opencode', label: 'OpenCode' },
 ];
+
+// 语言行内置三选项；system（跟随系统）不是语言码，不在 getLanguageOptions 里
+const BUILTIN_LANGUAGE_CODES = ['en', 'zh-CN', 'system'];
 
 type Section = 'general' | 'model' | 'tools';
 
@@ -105,6 +111,15 @@ export default function Settings() {
   const notify = useAppStore((s) => s.notify);
   const notifySound = useAppStore((s) => s.notifySound);
   const setNotifySound = useAppStore((s) => s.setNotifySound);
+  const { t } = useTranslation();
+  // 语言选中态：store 为准（main.tsx 启动接线 + language:changed 事件写入），
+  // 本地 state 只做点击后的即时反馈，事件回推 store 再同步回来。
+  const languageInfo = useAppStore((s) => s.language);
+  const [languageLocal, setLanguageLocal] = useState(languageInfo.configured);
+
+  useEffect(() => {
+    setLanguageLocal(languageInfo.configured);
+  }, [languageInfo.configured]);
 
   const loadRecipes = async (list: ToolInfo[]) => {
     const pairs = await Promise.all(
@@ -297,6 +312,19 @@ export default function Settings() {
     }
   };
 
+  const handleLanguage = async (code: string) => {
+    if (code === languageLocal) return;
+    // 即时反馈选中态；持久化成功后 Go 广播 language:changed 由 main.tsx 同步 store，
+    // 这里不直接写 store（避免双写）。失败回滚到 store 值。
+    setLanguageLocal(code);
+    try {
+      await setLanguage(code);
+    } catch (e: unknown) {
+      setLanguageLocal(languageInfo.configured);
+      notify(e instanceof Error ? e.message : String(e), 'error');
+    }
+  };
+
   const handleCloseBehavior = async (mode: string) => {
     if (mode === closeBehavior) return;
     try {
@@ -453,6 +481,20 @@ export default function Settings() {
   const inputClass = 'rounded border border-input bg-card px-2 py-1 text-sm';
   const uninstallRecipe = uninstallTarget ? recipes[uninstallTarget.ID] : undefined;
 
+  // 语言选项：内置三项 + 外部语言包（label 用包内 $name，缺省回退语言码）；
+  // 配置值不在任何选项里（如外部包被删）时兜底追加该 code，保证选中态可见。
+  const languageOptions: { code: string; label: string }[] = [
+    { code: 'en', label: t('ui.settings.language.en') },
+    { code: 'zh-CN', label: t('ui.settings.language.zh_cn') },
+    { code: 'system', label: t('ui.settings.language.system') },
+    ...getLanguageOptions()
+      .filter((o) => !BUILTIN_LANGUAGE_CODES.includes(o.code))
+      .map((o) => ({ code: o.code, label: o.name ?? o.code })),
+  ];
+  if (!languageOptions.some((o) => o.code === languageLocal)) {
+    languageOptions.push({ code: languageLocal, label: languageLocal });
+  }
+
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
       <nav
@@ -515,6 +557,22 @@ export default function Settings() {
                   />
                   <span className="w-10 shrink-0 tabular-nums text-muted-foreground">{fontSize}px</span>
                 </label>
+              </section>
+
+              <section className="mb-5 rounded border border-border bg-card p-3.5">
+                <h2 className="mb-3 text-sm font-medium">{t('ui.settings.language.title')}</h2>
+                <div className="flex gap-2">
+                  {languageOptions.map((opt) => (
+                    <Button
+                      key={opt.code}
+                      variant={languageLocal === opt.code ? 'default' : 'secondary'}
+                      aria-pressed={languageLocal === opt.code}
+                      onClick={() => void handleLanguage(opt.code)}
+                    >
+                      {opt.label}
+                    </Button>
+                  ))}
+                </div>
               </section>
 
               <section className="mb-5 rounded border border-border bg-card p-3.5">
