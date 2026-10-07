@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   upsertConnection: vi.fn(),
   deleteConnection: vi.fn(),
   execRemote: vi.fn(),
+  pickFile: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -29,6 +30,7 @@ const conns: SshConnection[] = [
     User: 'root',
     Port: 22,
     IdentityFile: '',
+    Password: '',
     Workspace: '',
     Source: 'sshconfig',
     SourceFile: 'C:\\Users\\me\\.ssh\\config',
@@ -41,6 +43,7 @@ const conns: SshConnection[] = [
     User: '',
     Port: 2222,
     IdentityFile: '',
+    Password: '',
     Workspace: '',
     Source: 'deploy',
     SourceFile: '',
@@ -64,6 +67,7 @@ beforeEach(() => {
   }));
   mocks.deleteConnection.mockResolvedValue(undefined);
   mocks.execRemote.mockResolvedValue(result({ Stdout: 'ok' }));
+  mocks.pickFile.mockResolvedValue('');
   useAppStore.setState({ windowStatus: {}, toasts: [] });
 });
 
@@ -221,5 +225,51 @@ describe('SshPanel', () => {
     const hist = screen.getByLabelText(tt('ui.ssh.history_aria'));
     fireEvent.click(within(hist).getByRole('button', { name: tt('ui.ssh.clear_history_aria') }));
     expect(screen.queryByLabelText(tt('ui.ssh.history_aria'))).not.toBeInTheDocument();
+  });
+
+  it('编辑表单含密码字段（type=password）与明文保存提示', async () => {
+    render(<SshPanel wsPath="D:\\proj-a" />);
+    const row = await findRow('生产机');
+    fireEvent.click(within(row).getByRole('button', { name: tt('ui.ssh.edit') }));
+    expect(await screen.findByText(tt('ui.ssh.edit_title'))).toBeInTheDocument();
+
+    const pwd = screen.getByLabelText(tt('ui.ssh.password_aria')) as HTMLInputElement;
+    expect(pwd).toHaveAttribute('type', 'password');
+    expect(screen.getByText(tt('ui.ssh.password_plaintext_hint'))).toBeInTheDocument();
+  });
+
+  it('保存时把 Password 传给 upsertConnection', async () => {
+    render(<SshPanel wsPath="D:\\proj-a" />);
+    const row = await findRow('生产机');
+    fireEvent.click(within(row).getByRole('button', { name: tt('ui.ssh.edit') }));
+    await screen.findByText(tt('ui.ssh.edit_title'));
+
+    fireEvent.change(screen.getByLabelText(tt('ui.ssh.password_aria')), {
+      target: { value: 's3cret' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.ssh.save') }));
+    });
+
+    expect(mocks.upsertConnection).toHaveBeenCalledWith(
+      expect.objectContaining({ ID: 'c1', Password: 's3cret' }),
+    );
+  });
+
+  it('点浏览私钥按钮调用 PickFile 并回填路径', async () => {
+    mocks.pickFile.mockResolvedValueOnce('C:\\Users\\me\\.ssh\\id_ed25519');
+    render(<SshPanel wsPath="D:\\proj-a" />);
+    const row = await findRow('生产机');
+    fireEvent.click(within(row).getByRole('button', { name: tt('ui.ssh.edit') }));
+    await screen.findByText(tt('ui.ssh.edit_title'));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.ssh.browse_key') }));
+    });
+
+    expect(mocks.pickFile).toHaveBeenCalledWith(tt('ui.ssh.pick_key_title'));
+    expect(screen.getByLabelText(tt('ui.ssh.key_aria'))).toHaveValue(
+      'C:\\Users\\me\\.ssh\\id_ed25519',
+    );
   });
 });

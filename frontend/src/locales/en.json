@@ -521,6 +521,11 @@
       "port_placeholder": "Port",
       "key_aria": "Private key path",
       "key_placeholder": "Private key path (e.g. C:\\Users\\me\\.ssh\\id_ed25519)",
+      "browse_key": "Browse",
+      "pick_key_title": "Choose private key file",
+      "password_aria": "Password",
+      "password_placeholder": "Password (optional)",
+      "password_plaintext_hint": "Password is stored in plaintext in connections.yaml",
       "delete": "Delete",
       "cancel": "Cancel",
       "save": "Save"

@@ -503,6 +503,7 @@ describe('WorkspaceTab', () => {
         User: 'root',
         Port: 22,
         IdentityFile: '',
+        Password: '',
         Workspace: '',
         Source: 'sshconfig',
         SourceFile: '',

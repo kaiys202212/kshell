@@ -11,6 +11,7 @@ import {
   deleteConnection,
   execRemote,
   listConnections,
+  pickFile,
   upsertConnection,
 } from '../lib/api';
 import type { RemoteResult, SshConnection } from '../lib/api';
@@ -48,6 +49,7 @@ type FormState = {
   User: string;
   Port: string;
   IdentityFile: string;
+  Password: string;
 };
 
 const emptyForm = (): FormState => ({
@@ -57,6 +59,7 @@ const emptyForm = (): FormState => ({
   User: '',
   Port: '22',
   IdentityFile: '',
+  Password: '',
 });
 
 function formFromConn(c: SshConnection): FormState {
@@ -67,6 +70,7 @@ function formFromConn(c: SshConnection): FormState {
     User: c.User,
     Port: String(c.Port > 0 ? c.Port : 22),
     IdentityFile: c.IdentityFile,
+    Password: c.Password ?? '',
   };
 }
 
@@ -140,6 +144,7 @@ export default function SshPanel({
         User: form.User.trim(),
         Port: port,
         IdentityFile: form.IdentityFile.trim(),
+        Password: form.Password,
         Workspace: prev?.Workspace ?? wsPath,
         Source: prev?.Source ?? '',
         SourceFile: prev?.SourceFile ?? '',
@@ -396,13 +401,39 @@ export default function SshPanel({
             value={form.Port}
             onChange={(e) => setForm((f) => ({ ...f, Port: e.target.value }))}
           />
+          <div className="flex gap-1">
+            <Input
+              size="sm"
+              className="min-w-0 flex-1"
+              aria-label={t('ui.ssh.key_aria')}
+              placeholder={t('ui.ssh.key_placeholder')}
+              value={form.IdentityFile}
+              onChange={(e) => setForm((f) => ({ ...f, IdentityFile: e.target.value }))}
+            />
+            <Button
+              size="sm"
+              variant="secondary"
+              type="button"
+              className="shrink-0 self-center"
+              onClick={() => {
+                void pickFile(t('ui.ssh.pick_key_title')).then((p) => {
+                  if (p) setForm((f) => ({ ...f, IdentityFile: p }));
+                });
+              }}
+            >
+              {t('ui.ssh.browse_key')}
+            </Button>
+          </div>
           <Input
             size="sm"
-            aria-label={t('ui.ssh.key_aria')}
-            placeholder={t('ui.ssh.key_placeholder')}
-            value={form.IdentityFile}
-            onChange={(e) => setForm((f) => ({ ...f, IdentityFile: e.target.value }))}
+            type="password"
+            aria-label={t('ui.ssh.password_aria')}
+            placeholder={t('ui.ssh.password_placeholder')}
+            value={form.Password}
+            onChange={(e) => setForm((f) => ({ ...f, Password: e.target.value }))}
+            autoComplete="new-password"
           />
+          <p className="text-xs text-muted-foreground">{t('ui.ssh.password_plaintext_hint')}</p>
           {formError && <p className="text-xs text-destructive">{formError}</p>}
           <div className="mt-1 flex justify-end gap-2">
             {form.ID && (

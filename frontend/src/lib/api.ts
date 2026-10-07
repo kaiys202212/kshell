@@ -134,6 +134,8 @@ export interface SshConnection {
   User: string;
   Port: number;
   IdentityFile: string;
+  /** 明文密码；落盘 connections.yaml（用户知情选择） */
+  Password: string;
   Workspace: string;
   Source: string;
   SourceFile: string;
@@ -862,6 +864,7 @@ export async function upsertConnection(conn: Partial<SshConnection> & { Host: st
     User: conn.User ?? '',
     Port: conn.Port ?? 22,
     IdentityFile: conn.IdentityFile ?? '',
+    Password: conn.Password ?? '',
     Workspace: conn.Workspace ?? '',
     Source: conn.Source ?? '',
     SourceFile: conn.SourceFile ?? '',

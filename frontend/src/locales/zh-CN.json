@@ -521,6 +521,11 @@
       "port_placeholder": "端口",
       "key_aria": "私钥路径",
       "key_placeholder": "私钥路径（如 C:\\Users\\me\\.ssh\\id_ed25519）",
+      "browse_key": "浏览",
+      "pick_key_title": "选择私钥文件",
+      "password_aria": "密码",
+      "password_placeholder": "密码（可选）",
+      "password_plaintext_hint": "密码将明文保存在 connections.yaml",
       "delete": "删除",
       "cancel": "取消",
       "save": "保存"
