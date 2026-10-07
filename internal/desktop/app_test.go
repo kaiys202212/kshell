@@ -62,6 +62,11 @@ func setTools(t *testing.T, app *App, tools []discovery.Tool) {
 func newTestApp(t *testing.T) (*App, *stubLauncher, *[]string) {
 	t.Helper()
 
+	// 测试里 quitApp 不应真调度 os.Exit；需要断言调度的用例自行注入 spy。
+	origForce := scheduleForceExit
+	scheduleForceExit = func(time.Duration) {}
+	t.Cleanup(func() { scheduleForceExit = origForce })
+
 	sessions := []providers.Session{
 		{ID: "s1", ToolID: "claude", Workspace: `D:\ws-a`, Title: "修复上传白名单", UpdatedAt: time.Now()},
 	}

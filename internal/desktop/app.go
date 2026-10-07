@@ -32,6 +32,24 @@ var (
 	errWorkspaceNotFound = errors.New("err.desktop.workspace_gone")
 )
 
+// shutdownCleanupTimeout：OnShutdown 里关终端/聊天/监视若卡住，超时后仍返回，
+// 让 wails.Run 结束；否则托盘图标已消（quitTrayLoop 已跑）但进程残留。
+var shutdownCleanupTimeout = 2 * time.Second
+
+// forceExitDelay：quitApp 后若 Shutdown 仍卡住，定时强制退出的等待时长。
+var forceExitDelay = 3 * time.Second
+
+// forceExit 默认 os.Exit(0)；测试注入避免真退出。
+var forceExit = func() { os.Exit(0) }
+
+// scheduleForceExit 在 delay 后调用 forceExit；包级变量便于测试断言/禁用。
+var scheduleForceExit = func(delay time.Duration) {
+	go func() {
+		time.Sleep(delay)
+		forceExit()
+	}()
+}
+
 // configWriteMu 串行化「读内存配置 → 变更 → 落盘 → 提交内存」全过程：
 // 多个 setter（关闭行为 / 颜色模式）并发调用时不会互相覆盖对方的字段。
 var configWriteMu sync.Mutex
@@ -389,18 +407,34 @@ var quitRuntime = runtime.Quit
 // quitApp 托盘「退出」入口：置退出标记并请求 Wails 退出进程。
 // 注意 runtime.Quit 内部会再走一次 BeforeClose（见 wails windows frontend.Quit），
 // quitting 标记保证那次调用放行，否则「退出」会被拦截成隐藏窗口、进程永远退不出去。
+// scheduleForceExit 兜底：OnShutdown 若卡在关 ConPTY/聊天，托盘图标已消但进程不退。
 func (a *App) quitApp(ctx context.Context) {
 	a.mu.Lock()
 	a.quitting = true
 	a.mu.Unlock()
 	quitRuntime(ctx)
+	scheduleForceExit(forceExitDelay)
 }
 
-// Shutdown 供 Wails OnShutdown 挂载：退出前关掉所有内嵌终端，避免残留子进程。
-// 终端进程不跨进程存活，这里不需要（也无法）持久化。
+// Shutdown 供 Wails OnShutdown 挂载：先撤托盘，再限时清理子资源。
+// 清理超时也返回——避免关终端卡住时进程永远留在任务管理器。
 func (a *App) Shutdown(ctx context.Context) {
-	_ = ctx // 退出清理无取消语义：无论上下文如何都要把子进程收干净
+	_ = ctx // 退出清理无取消语义：尽量收干净，但不能无限阻塞进程退出
 	quitTrayLoop()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runShutdownCleanup(a)
+	}()
+	select {
+	case <-done:
+	case <-time.After(shutdownCleanupTimeout):
+	}
+}
+
+// runShutdownCleanup 关闭外观监听、文件监视、终端、聊天与 archive hub。
+// 包级变量便于测试注入「永挂」场景验证超时。
+var runShutdownCleanup = func(a *App) {
 	a.mu.Lock()
 	if a.appearanceCancel != nil {
 		a.appearanceCancel()
