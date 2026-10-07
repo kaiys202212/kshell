@@ -14,7 +14,8 @@ import { tt } from '../test/i18n';
 const count = (n: number) =>
   tt(`ui.home.session_count_${n === 1 ? 'one' : 'other'}`).replace('{{count}}', String(n));
 const lastActive = (rel: string) => tt('ui.home.last_active').replace('{{rel}}', rel);
-const minutesAgoText = (n: number) => tt('time.minutes_ago').replace('{{n}}', String(n));
+const minutesAgoText = (n: number) =>
+  tt(`time.minutes_ago_${n === 1 ? 'one' : 'other'}`).replace('{{count}}', String(n));
 
 const mocks = vi.hoisted(() => ({
   getWorkspaces: vi.fn(),
@@ -113,6 +114,15 @@ describe('Home', () => {
     expect(within(gitOnly).getByText(tt('ui.home.never_used'))).toBeInTheDocument();
     const lastActivePrefix = tt('ui.home.last_active').split('{{')[0];
     expect(within(gitOnly).queryByText((c) => c.includes(lastActivePrefix))).toBeNull();
+  });
+
+  it('会话数单数 n=1 走复数 _one 分支（"1 session"）', async () => {
+    mocks.getWorkspaces.mockResolvedValue([
+      ws({ Path: 'D:\\one', Name: 'one', LastUsed: minutesAgo(5), SessionCount: 1, ToolCounts: { claude: 1 } }),
+    ]);
+    render(<Home />);
+    const one = await screen.findByTitle('D:\\one');
+    expect(within(one).getByText(count(1))).toBeInTheDocument();
   });
 
   it('点击整卡打开工作区页签（键盘可达：整卡是 button）', async () => {

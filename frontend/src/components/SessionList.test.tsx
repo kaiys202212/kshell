@@ -126,6 +126,15 @@ describe('SessionList', () => {
     expect(screen.getByText(msgs(12))).toBeInTheDocument();
   });
 
+  it('消息数单数 n=1 走复数 _one 分支（"1 message"）', async () => {
+    mocks.getSessions.mockResolvedValue([
+      { ID: 's1', ToolID: 'claude', Workspace: 'D:\\proj-a', Title: '只有一条消息', CreatedAt: minutesAgo(5), UpdatedAt: minutesAgo(2), Messages: 1, Path: 'p1' },
+    ]);
+    renderList();
+    const row = await findRow('只有一条消息');
+    expect(within(row).getByText(msgs(1))).toBeInTheDocument();
+  });
+
   it('opencode 的前斜杠 cwd（D:/proj-a）与反斜杠写法视为同一工作区，会话与 chip 都要出现', async () => {
     mocks.getSessions.mockResolvedValue([
       ...sessions,
