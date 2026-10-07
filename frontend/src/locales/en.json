@@ -1,0 +1,8 @@
+{
+  "err": {
+    "session_not_found": "Session not found or has been cleaned up",
+    "files": {
+      "too_big_preview": "File size {{0}} bytes exceeds preview limit {{1}} bytes"
+    }
+  }
+}

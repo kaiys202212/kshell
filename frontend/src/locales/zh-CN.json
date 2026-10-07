@@ -1,0 +1,8 @@
+{
+  "err": {
+    "session_not_found": "会话不存在或已被清理",
+    "files": {
+      "too_big_preview": "文件大小 {{0}} 字节超过预览上限 {{1}} 字节"
+    }
+  }
+}
