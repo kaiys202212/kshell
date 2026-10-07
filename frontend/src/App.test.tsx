@@ -52,6 +52,7 @@ const mocks = vi.hoisted(() => ({
   onTerminalExit: vi.fn(),
   onTerminalMeta: vi.fn((_cb: (info: TerminalInfo) => void) => () => {}),
   onNotifyAgent: vi.fn((_cb: (p: Record<string, string>) => void) => () => {}),
+  onNotifyFocus: vi.fn((_cb: (termKey: string) => void) => () => {}),
   onChatMeta: vi.fn(() => () => {}),
   onArchiveSuggest: vi.fn(() => () => {}),
   onArchiveChanged: vi.fn(() => () => {}),
