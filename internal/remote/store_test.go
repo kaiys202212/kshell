@@ -116,6 +116,21 @@ func TestDelete(t *testing.T) {
 	}
 }
 
+func TestConnectionPasswordRoundTrip(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "connections.yaml"))
+	_, err := store.Add(Connection{Name: "p", Host: "h", Password: "s3cret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	all := store.All()
+	if len(all) != 1 || all[0].Password != "s3cret" {
+		t.Fatalf("got %+v", all)
+	}
+}
+
 func TestNoSecretContentPersisted(t *testing.T) {
 	store := tempStore(t)
 	_, err := store.Add(Connection{
@@ -135,10 +150,9 @@ func TestNoSecretContentPersisted(t *testing.T) {
 	if !strings.Contains(content, "id_ed25519") {
 		t.Fatal("identity path should be stored")
 	}
-	for _, forbidden := range []string{"PRIVATE KEY", "password", "Password"} {
-		if strings.Contains(content, forbidden) {
-			t.Fatalf("secrets must never be persisted, found %q", forbidden)
-		}
+	// 私钥材料仍禁止落盘；明文密码由 TestConnectionPasswordRoundTrip 覆盖。
+	if strings.Contains(content, "PRIVATE KEY") {
+		t.Fatalf("secrets must never be persisted, found %q", "PRIVATE KEY")
 	}
 }
 

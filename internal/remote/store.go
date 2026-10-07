@@ -24,7 +24,8 @@ var (
 const defaultPort = 22
 
 // Connection 是一条远程连接。
-// 结构体里**没有**密码字段：私钥只存路径引用，密码只在运行时询问，从结构上杜绝私密信息落盘。
+// 私钥只存路径引用（IdentityFile 禁止密钥材料）；密码可明文落盘（Password），
+// 供有密码时经 ASKPASS 非交互认证（见后续 BuildArgs/AskPass 路径）。
 type Connection struct {
 	ID           string    `yaml:"id"`
 	Name         string    `yaml:"name"`
@@ -32,6 +33,7 @@ type Connection struct {
 	User         string    `yaml:"user,omitempty"`
 	Port         int       `yaml:"port,omitempty"`
 	IdentityFile string    `yaml:"identity_file,omitempty"`
+	Password     string    `yaml:"password,omitempty"`
 	Workspace    string    `yaml:"workspace,omitempty"`
 	Source       string    `yaml:"source,omitempty"`
 	SourceFile   string    `yaml:"source_file,omitempty"`
