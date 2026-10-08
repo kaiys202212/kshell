@@ -95,15 +95,25 @@ export default function GitPanel({
   const [busy, setBusy] = useState(false);
   const [refs, setRefs] = useState<GitRef[]>([]);
   const [commits, setCommits] = useState<GitLogCommit[]>([]);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [logSel, setLogSel] = useState(() => loadLogSel(wsPath, ''));
   const [picked, setPicked] = useState('');
   const [split, setSplit] = useState(() => loadSplit(wsPath, ''));
   const splitRef = useRef<HTMLDivElement>(null);
   const splitDrag = useRef<{ startY: number; startSplit: number } | null>(null);
   const logReq = useRef(0);
+  const loadMoreReq = useRef(0);
   const loadReq = useRef(0);
+  const commitsRef = useRef(commits);
+  commitsRef.current = commits;
+  const hasMoreRef = useRef(hasMore);
+  hasMoreRef.current = hasMore;
+  const loadingMoreRef = useRef(loadingMore);
+  loadingMoreRef.current = loadingMore;
 
   const { mode: logMode, ref: logRef } = resolveLogFilter(logSel);
+  const LOG_PAGE = 100;
 
   const load = useCallback(async () => {
     // 快速连续切换同步源会并发多次 gitSCM，seq 用来丢弃过期响应，
@@ -127,17 +137,45 @@ export default function GitPanel({
 
   const loadLog = useCallback(async () => {
     const seq = ++logReq.current;
+    loadMoreReq.current += 1; // 作废进行中的触底加载
+    setLoadingMore(false);
     try {
       const [r, logs] = await Promise.all([
         gitRefs(wsPath, repoRel),
-        gitLog(wsPath, repoRel, logMode, logRef, 200),
+        gitLog(wsPath, repoRel, logMode, logRef, LOG_PAGE, 0),
       ]);
       if (seq !== logReq.current) return;
       setRefs(r ?? []);
-      setCommits(logs ?? []);
+      const list = logs ?? [];
+      setCommits(list);
+      setHasMore(list.length === LOG_PAGE);
     } catch {
       if (seq !== logReq.current) return;
       setCommits([]);
+      setHasMore(false);
+    }
+  }, [wsPath, repoRel, logMode, logRef]);
+
+  const loadMoreLog = useCallback(async () => {
+    if (!hasMoreRef.current || loadingMoreRef.current) return;
+    const skip = commitsRef.current.length;
+    const seq = ++loadMoreReq.current;
+    setLoadingMore(true);
+    try {
+      const logs = await gitLog(wsPath, repoRel, logMode, logRef, LOG_PAGE, skip);
+      if (seq !== loadMoreReq.current) return;
+      const page = logs ?? [];
+      setCommits((prev) => {
+        const seen = new Set(prev.map((c) => c.Hash));
+        const extra = page.filter((c) => !seen.has(c.Hash));
+        return extra.length ? [...prev, ...extra] : prev;
+      });
+      setHasMore(page.length === LOG_PAGE);
+    } catch {
+      if (seq !== loadMoreReq.current) return;
+      // 保留已有列表与 hasMore，便于再次触底重试
+    } finally {
+      if (seq === loadMoreReq.current) setLoadingMore(false);
     }
   }, [wsPath, repoRel, logMode, logRef]);
 
@@ -588,6 +626,7 @@ export default function GitPanel({
             onSelect={setPicked}
             onOpenCommit={openCommit}
             loadStat={loadStat}
+            onNearEnd={loadMoreLog}
           />
         </div>
       </div>

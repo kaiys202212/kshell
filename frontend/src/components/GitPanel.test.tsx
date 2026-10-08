@@ -2,9 +2,31 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import GitPanel from './GitPanel';
-import type { GitSCMSnapshot } from '../lib/api';
+import type { GitLogCommit, GitSCMSnapshot } from '../lib/api';
 import { useAppStore } from '../state/store';
 import { tt } from '../test/i18n';
+
+type IOCallback = IntersectionObserverCallback;
+let ioCallback: IOCallback | null = null;
+
+function triggerNearEnd() {
+  expect(ioCallback).toBeTruthy();
+  const entry = { isIntersecting: true } as IntersectionObserverEntry;
+  ioCallback!([entry], {} as IntersectionObserver);
+}
+
+function fakeCommit(i: number): GitLogCommit {
+  const hash = i.toString(16).padStart(40, '0');
+  return {
+    Hash: hash,
+    Parents: [],
+    Author: 't',
+    Email: 't@t',
+    Date: '2026-01-01T00:00:00Z',
+    Subject: `c${i}`,
+    Decorations: [],
+  };
+}
 
 const mocks = vi.hoisted(() => ({
   gitSCM: vi.fn(),
@@ -62,7 +84,10 @@ const snap = (over: Partial<GitSCMSnapshot> = {}): GitSCMSnapshot => ({
   ...over,
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 beforeEach(() => {
   cleanup();
@@ -72,6 +97,24 @@ beforeEach(() => {
   mocks.gitSCM.mockResolvedValue(snap());
   mocks.gitPull.mockResolvedValue(undefined);
   mocks.gitPush.mockResolvedValue(undefined);
+  ioCallback = null;
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class {
+      constructor(cb: IOCallback) {
+        ioCallback = cb;
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+      takeRecords() {
+        return [];
+      }
+      root = null;
+      rootMargin = '';
+      thresholds = [];
+    },
+  );
 });
 
 describe('GitPanel', () => {
@@ -144,18 +187,43 @@ describe('GitPanel', () => {
     const ws = 'D:/proj';
     render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
     await screen.findByText('init');
-    expect(mocks.gitLog).toHaveBeenCalledWith(ws, '', 'current', '', 200);
+    expect(mocks.gitLog).toHaveBeenCalledWith(ws, '', 'current', '', 100, 0);
 
     fireEvent.change(screen.getByLabelText(tt('ui.git.log_filter_aria')), { target: { value: 'topic' } });
     await waitFor(() => {
-      expect(mocks.gitLog).toHaveBeenCalledWith(ws, '', 'ref', 'topic', 200);
+      expect(mocks.gitLog).toHaveBeenCalledWith(ws, '', 'ref', 'topic', 100, 0);
     });
     expect(localStorage.getItem(`kshell-git-log-sel:${ws}\0`)).toBe('topic');
 
     fireEvent.change(screen.getByLabelText(tt('ui.git.log_filter_aria')), { target: { value: 'all' } });
     await waitFor(() => {
-      expect(mocks.gitLog).toHaveBeenCalledWith(ws, '', 'all', '', 200);
+      expect(mocks.gitLog).toHaveBeenCalledWith(ws, '', 'all', '', 100, 0);
     });
+  });
+
+  it('触底加载下一页，不足一页后不再请求', async () => {
+    const ws = 'D:/proj';
+    const page1 = Array.from({ length: 100 }, (_, i) => fakeCommit(i));
+    const page2 = [fakeCommit(100), fakeCommit(101)];
+    mocks.gitLog.mockResolvedValueOnce(page1).mockResolvedValueOnce(page2);
+
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    await screen.findByText('c0');
+    expect(mocks.gitLog).toHaveBeenCalledWith(ws, '', 'current', '', 100, 0);
+
+    await act(async () => {
+      triggerNearEnd();
+    });
+    await waitFor(() => {
+      expect(mocks.gitLog).toHaveBeenCalledWith(ws, '', 'current', '', 100, 100);
+    });
+    expect(await screen.findByText('c100')).toBeInTheDocument();
+
+    const callsAfterPage2 = mocks.gitLog.mock.calls.length;
+    await act(async () => {
+      triggerNearEnd();
+    });
+    expect(mocks.gitLog.mock.calls.length).toBe(callsAfterPage2);
   });
 
   it('多仓库时选择器有满宽类', async () => {
