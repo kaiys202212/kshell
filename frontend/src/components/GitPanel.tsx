@@ -138,6 +138,7 @@ export default function GitPanel({
   const loadLog = useCallback(async () => {
     const seq = ++logReq.current;
     loadMoreReq.current += 1; // 作废进行中的触底加载
+    loadingMoreRef.current = false;
     setLoadingMore(false);
     try {
       const [r, logs] = await Promise.all([
@@ -148,10 +149,13 @@ export default function GitPanel({
       setRefs(r ?? []);
       const list = logs ?? [];
       setCommits(list);
-      setHasMore(list.length === LOG_PAGE);
+      const more = list.length === LOG_PAGE;
+      hasMoreRef.current = more;
+      setHasMore(more);
     } catch {
       if (seq !== logReq.current) return;
       setCommits([]);
+      hasMoreRef.current = false;
       setHasMore(false);
     }
   }, [wsPath, repoRel, logMode, logRef]);
@@ -160,22 +164,29 @@ export default function GitPanel({
     if (!hasMoreRef.current || loadingMoreRef.current) return;
     const skip = commitsRef.current.length;
     const seq = ++loadMoreReq.current;
+    loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
       const logs = await gitLog(wsPath, repoRel, logMode, logRef, LOG_PAGE, skip);
       if (seq !== loadMoreReq.current) return;
       const page = logs ?? [];
-      setCommits((prev) => {
-        const seen = new Set(prev.map((c) => c.Hash));
-        const extra = page.filter((c) => !seen.has(c.Hash));
-        return extra.length ? [...prev, ...extra] : prev;
-      });
-      setHasMore(page.length === LOG_PAGE);
+      const seen = new Set(commitsRef.current.map((c) => c.Hash));
+      const extra = page.filter((c) => !seen.has(c.Hash));
+      if (extra.length) {
+        setCommits([...commitsRef.current, ...extra]);
+      }
+      // 不足一页，或满页但无新增（重叠/历史变动）时静默停止
+      const more = page.length === LOG_PAGE && extra.length > 0;
+      hasMoreRef.current = more;
+      setHasMore(more);
     } catch {
       if (seq !== loadMoreReq.current) return;
       // 保留已有列表与 hasMore，便于再次触底重试
     } finally {
-      if (seq === loadMoreReq.current) setLoadingMore(false);
+      if (seq === loadMoreReq.current) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
     }
   }, [wsPath, repoRel, logMode, logRef]);
 
