@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/aymanbagabas/go-pty"
+	"github.com/yangk/kshell/internal/executil"
 )
 
 // NewPTYBackend 返回真实终端后端：Windows 走 ConPTY，其它平台走 creack/pty（由 go-pty 分平台实现）。
@@ -20,7 +21,7 @@ func NewPTYBackend() Backend { return ptyBackend{} }
 type ptyBackend struct{}
 
 func (ptyBackend) Start(spec Spec, cols, rows int) (Handle, error) {
-	path, args, err := commandLine(spec)
+	path, args, cmdline, err := commandLine(spec)
 	if err != nil {
 		return nil, err
 	}
@@ -33,6 +34,7 @@ func (ptyBackend) Start(spec Spec, cols, rows int) (Handle, error) {
 	cmd := p.Command(path, args...)
 	cmd.Dir = spec.Dir
 	cmd.Env = mergedEnv(spec.Env) // nil 表示继承当前进程环境
+	applyCmdLine(cmd, cmdline)    // Windows 批处理：手写 CmdLine，避免 /c 截断含空格路径
 	if err := cmd.Start(); err != nil {
 		_ = p.Close()
 		return nil, fmt.Errorf("err.terminal.spawn_failed|%w", err)
@@ -48,14 +50,16 @@ func (ptyBackend) Start(spec Spec, cols, rows int) (Handle, error) {
 
 // commandLine 决定实际启动的命令。
 // Windows 上 .cmd/.bat 是批处理脚本，CreateProcess 不能直接执行，
-// 必须经 %COMSPEC% /c 交给命令解释器（npm 全局 CLI 的 .cmd 兄弟文件走的就是这条路）；
+// 必须经 %COMSPEC% 交给命令解释器（npm 全局 CLI 的 .cmd 兄弟文件走的就是这条路）；
 // go-pty 在 Windows 直接用 CreateProcess，不像 exec.Cmd 会自动包壳。
+// 批处理返回非空 cmdline（/S /C 手写命令行），由 applyCmdLine 写入 SysProcAttr，
+// 避免 ComposeCommandLine + cmd /c 在「路径含空格 + 参数需引号」时截成 C:\Program。
 // .ps1 已在 launcher.Resolve 里转成 .cmd 兄弟文件或 powershell -Command，这里无需特判。
-func commandLine(spec Spec) (string, []string, error) {
+func commandLine(spec Spec) (path string, args []string, cmdline string, err error) {
 	if strings.TrimSpace(spec.Path) == "" {
-		return "", nil, errEmptyStart
+		return "", nil, "", errEmptyStart
 	}
-	path := spec.Path
+	path = spec.Path
 	// go-pty 在 Windows 上会把「无路径分隔符」的命令拼到 Spec.Dir 下再 LookPath，
 	// 预览区「+」开 powershell 时 Dir 是工作区，就会变成 <工作区>\powershell 找不到。
 	// 先在 PATH 上解析成绝对路径，CreateProcess 才不会跑偏。
@@ -63,7 +67,7 @@ func commandLine(spec Spec) (string, []string, error) {
 		lp, err := exec.LookPath(path)
 		if err != nil {
 			// %w 仅为 errors.Is 保留；{{1}} 的明细与 {{0}} 重复，当前不在 UI 展示。
-			return "", nil, fmt.Errorf("err.terminal.exec_not_found|%s|%w", path, err)
+			return "", nil, "", fmt.Errorf("err.terminal.exec_not_found|%s|%w", path, err)
 		}
 		path = lp
 	}
@@ -76,13 +80,14 @@ func commandLine(spec Spec) (string, []string, error) {
 			lp, err := exec.LookPath(comspec)
 			if err != nil {
 				// %w 仅为 errors.Is 保留；{{1}} 的明细与 {{0}} 重复，当前不在 UI 展示。
-				return "", nil, fmt.Errorf("err.terminal.exec_not_found|%s|%w", comspec, err)
+				return "", nil, "", fmt.Errorf("err.terminal.exec_not_found|%s|%w", comspec, err)
 			}
 			comspec = lp
 		}
-		return comspec, append([]string{"/c", path}, spec.Args...), nil
+		// Args 留空：真实命令行走 cmdline，避免 go-pty 再用 ComposeCommandLine 二次转义。
+		return comspec, nil, executil.BatchCommandLine(comspec, path, spec.Args), nil
 	}
-	return path, spec.Args, nil
+	return path, spec.Args, "", nil
 }
 
 // isBatchFile 报告路径是否是 Windows 批处理脚本。

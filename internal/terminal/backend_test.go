@@ -14,7 +14,7 @@ import (
 )
 
 func TestCommandLineRejectsEmptyPath(t *testing.T) {
-	if _, _, err := commandLine(Spec{Args: []string{"x"}}); !errors.Is(err, errEmptyStart) {
+	if _, _, _, err := commandLine(Spec{Args: []string{"x"}}); !errors.Is(err, errEmptyStart) {
 		t.Fatalf("空路径应报 errEmptyStart: %v", err)
 	} else if err.Error() != "err.terminal.no_exec" {
 		t.Fatalf("空路径错误应为 wire key, got %q", err.Error())
@@ -23,12 +23,12 @@ func TestCommandLineRejectsEmptyPath(t *testing.T) {
 
 func TestCommandLinePassesThroughAbsoluteExecutable(t *testing.T) {
 	abs := filepath.Join(t.TempDir(), "claude.exe")
-	path, args, err := commandLine(Spec{Path: abs, Args: []string{"--resume", "s1"}})
+	path, args, cmdline, err := commandLine(Spec{Path: abs, Args: []string{"--resume", "s1"}})
 	if err != nil {
 		t.Fatalf("commandLine error: %v", err)
 	}
-	if path != abs || len(args) != 2 || args[0] != "--resume" {
-		t.Fatalf("commandLine = %q %v", path, args)
+	if path != abs || len(args) != 2 || args[0] != "--resume" || cmdline != "" {
+		t.Fatalf("commandLine = %q %v cmdline=%q", path, args, cmdline)
 	}
 }
 
@@ -41,7 +41,7 @@ func TestCommandLineResolvesBareNameFromPATH(t *testing.T) {
 	name := filepath.Base(bin)
 	t.Setenv("PATH", dir)
 
-	path, args, err := commandLine(Spec{Path: name, Args: []string{"--flag"}})
+	path, args, cmdline, err := commandLine(Spec{Path: name, Args: []string{"--flag"}})
 	if err != nil {
 		t.Fatalf("commandLine error: %v", err)
 	}
@@ -53,22 +53,25 @@ func TestCommandLineResolvesBareNameFromPATH(t *testing.T) {
 		if path != comspec {
 			t.Fatalf("Windows 上 PATH 里的 .cmd 应经 %q 启动, got %q", comspec, path)
 		}
-		if len(args) != 3 || args[0] != "/c" || args[1] != bin || args[2] != "--flag" {
-			t.Fatalf("包装后的参数 = %v, 脚本应为绝对路径 %q", args, bin)
+		if len(args) != 0 {
+			t.Fatalf("批处理 Args 应为空（走 CmdLine）, got %v", args)
+		}
+		if !strings.Contains(cmdline, "/S /C ") || !strings.Contains(cmdline, bin) {
+			t.Fatalf("cmdline 应含 /S /C 与脚本绝对路径, got %q want bin %q", cmdline, bin)
 		}
 		return
 	}
 	if path != bin {
 		t.Fatalf("应解析为 PATH 上的绝对路径, got %q want %q", path, bin)
 	}
-	if len(args) != 1 || args[0] != "--flag" {
-		t.Fatalf("args = %v", args)
+	if len(args) != 1 || args[0] != "--flag" || cmdline != "" {
+		t.Fatalf("args = %v cmdline=%q", args, cmdline)
 	}
 }
 
 func TestCommandLineBareNameNotOnPATH(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	_, _, err := commandLine(Spec{Path: "kshell-definitely-missing-bin"})
+	_, _, _, err := commandLine(Spec{Path: "kshell-definitely-missing-bin"})
 	if err == nil {
 		t.Fatal("PATH 上不存在的裸命令名应失败")
 	}
@@ -82,7 +85,7 @@ func TestCommandLineBareNameNotOnPATH(t *testing.T) {
 
 // TestCommandLineBatchWrappingIsWindowsOnly 保证非 Windows 构建不会去构造 %COMSPEC%。
 func TestCommandLineBatchWrappingIsWindowsOnly(t *testing.T) {
-	path, args, err := commandLine(Spec{Path: `D:\bin\tool.cmd`, Args: []string{"--resume", "s1"}})
+	path, args, cmdline, err := commandLine(Spec{Path: `D:\bin\tool.cmd`, Args: []string{"--resume", "s1"}})
 	if err != nil {
 		t.Fatalf("commandLine error: %v", err)
 	}
@@ -91,8 +94,8 @@ func TestCommandLineBatchWrappingIsWindowsOnly(t *testing.T) {
 		if path != `D:\bin\tool.cmd` {
 			t.Fatalf("非 Windows 平台应原样透传, got %q", path)
 		}
-		if len(args) != 2 {
-			t.Fatalf("非 Windows 平台不应追加参数, got %v", args)
+		if len(args) != 2 || cmdline != "" {
+			t.Fatalf("非 Windows 平台不应追加参数或 CmdLine, got args=%v cmdline=%q", args, cmdline)
 		}
 		return
 	}
@@ -104,8 +107,35 @@ func TestCommandLineBatchWrappingIsWindowsOnly(t *testing.T) {
 	if path != want {
 		t.Fatalf("Windows 上 .cmd 应经 %q 启动, got %q", want, path)
 	}
-	if len(args) != 4 || args[0] != "/c" || args[1] != `D:\bin\tool.cmd` || args[2] != "--resume" {
-		t.Fatalf("包装后的参数 = %v", args)
+	if len(args) != 0 {
+		t.Fatalf("批处理 Args 应为空（走 CmdLine）, got %v", args)
+	}
+	if !strings.Contains(cmdline, "/S /C ") || !strings.Contains(cmdline, `D:\bin\tool.cmd`) || !strings.Contains(cmdline, "--resume") {
+		t.Fatalf("cmdline = %q", cmdline)
+	}
+}
+
+// TestCommandLineSpacedBatWithSettingsUsesCmdLine 覆盖 Program Files 下 .cmd + --settings JSON
+// 被 cmd /c 截成 C:\Program 的根因：必须产出 /S /C 手写 CmdLine。
+func TestCommandLineSpacedBatWithSettingsUsesCmdLine(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("批处理包装仅 Windows")
+	}
+	bat := `C:\Program Files\nodejs\claude.cmd`
+	settings := `{"a":1}`
+	path, args, cmdline, err := commandLine(Spec{Path: bat, Args: []string{"--settings", settings}})
+	if err != nil {
+		t.Fatalf("commandLine error: %v", err)
+	}
+	comspec := os.Getenv("COMSPEC")
+	if comspec == "" {
+		comspec = "cmd.exe"
+	}
+	if path != comspec || len(args) != 0 {
+		t.Fatalf("path=%q args=%v", path, args)
+	}
+	if !strings.Contains(cmdline, `/S /C "`) || !strings.Contains(cmdline, `"C:\Program Files\nodejs\claude.cmd"`) {
+		t.Fatalf("cmdline 形态不对: %q", cmdline)
 	}
 }
 
@@ -192,6 +222,70 @@ func TestPTYBackendRunsRealProcess(t *testing.T) {
 	}
 	if got := out.String(); !strings.Contains(got, "boom-inherited") {
 		t.Fatalf("输出 = %q, 期望包含 boom-inherited（Env 为空应继承当前环境）", got)
+	}
+}
+
+// TestPTYBackendRunsSpacedBatWithSettings 真机复现 Program Files 路径 + --settings JSON：
+// 旧实现会立刻打出「'C:\Program' 不是内部或外部命令」并退出。
+func TestPTYBackendRunsSpacedBatWithSettings(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("批处理空格路径仅 Windows")
+	}
+	dir := filepath.Join(t.TempDir(), "Program Files Fake")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "tool.cmd")
+	body := "@echo off\r\necho MARKER_OK\r\nping -n 2 127.0.0.1 >nul\r\nexit /b 0\r\n"
+	if err := os.WriteFile(bin, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	h, err := NewPTYBackend().Start(Spec{
+		Path: bin,
+		Args: []string{"--settings", `{"a":1}`},
+		Dir:  t.TempDir(),
+	}, 80, 24)
+	if err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+	defer func() { _ = h.Close() }()
+
+	var out bytes.Buffer
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		buf := make([]byte, 4096)
+		for {
+			n, err := h.Read(buf)
+			if n > 0 {
+				out.Write(buf[:n])
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	code, err := h.Wait()
+	if err != nil {
+		t.Fatalf("Wait error: %v", err)
+	}
+	_ = h.Close()
+	select {
+	case <-readDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close 后读协程仍在阻塞")
+	}
+	got := out.String()
+	if code != 0 {
+		t.Fatalf("退出码 = %d, 输出 = %q", code, got)
+	}
+	if strings.Contains(got, "不是内部或外部命令") {
+		t.Fatalf("仍截断路径: %q", got)
+	}
+	if !strings.Contains(got, "MARKER_OK") {
+		t.Fatalf("未看到脚本输出, got %q", got)
 	}
 }
 
