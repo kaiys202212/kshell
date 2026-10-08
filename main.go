@@ -98,6 +98,8 @@ func main() {
 		}
 		return
 	}
+	// 升级拉起时在单实例锁之前清场（兼容旧版替换脚本只 Start-Process 的路径）。
+	_ = desktop.PrepareLaunch(os.Args)
 	if err := RunDesktop(assets); err != nil {
 		fmt.Fprintln(os.Stderr, "kshell 桌面版启动失败:", err)
 		os.Exit(1)

@@ -14,7 +14,7 @@ import (
 func restartWaitStartPowerShell(pid int, exe string) string {
 	lit := strings.ReplaceAll(exe, "'", "''")
 	return fmt.Sprintf(
-		"Wait-Process -Id %d -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1; Start-Process -LiteralPath '%s' -WindowStyle Normal",
+		"Wait-Process -Id %d -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1; Start-Process -LiteralPath '%s' -ArgumentList '--after-update' -WindowStyle Normal",
 		pid, lit,
 	)
 }

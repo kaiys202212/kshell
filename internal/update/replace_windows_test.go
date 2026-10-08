@@ -18,6 +18,7 @@ func TestReplaceWaitStartPowerShell(t *testing.T) {
 		"Move-Item -LiteralPath",
 		cur + ".new",
 		"Start-Process -LiteralPath",
+		"-ArgumentList '--after-update'",
 		"-WindowStyle Normal",
 		"Start-Sleep",
 	} {

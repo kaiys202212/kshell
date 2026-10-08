@@ -25,6 +25,9 @@ func TestRestartWaitStartPowerShell(t *testing.T) {
 	if !strings.Contains(ps, "-WindowStyle Normal") {
 		t.Fatalf("新实例窗口应 Normal: %q", ps)
 	}
+	if !strings.Contains(ps, "-ArgumentList '--after-update'") {
+		t.Fatalf("应带升级/重启标记: %q", ps)
+	}
 
 	pid = os.Getpid()
 	ps = restartWaitStartPowerShell(pid, exe)
