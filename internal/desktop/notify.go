@@ -24,6 +24,10 @@ const notifyInboxMaxAge = 24 * time.Hour
 //（对齐 windowHide / windowShow 的做法）。
 var windowIsMinimised = runtime.WindowIsMinimised
 
+// windowIsForeground 报告本进程是否拥有前台窗口；测试注入用。
+// 默认实现见 window_foreground_*.go。
+var windowIsForeground = defaultWindowIsForeground
+
 // windowUnminimise 是 runtime.WindowUnminimise 的包级变量抽象：气泡点击恢复主窗用。
 var windowUnminimise = runtime.WindowUnminimise
 
@@ -79,8 +83,8 @@ func (a *App) dispatchNotifyOnce(dir string) {
 	}
 }
 
-// handleAgentNotify 分发一条 agent 通知：始终推给前端（隐藏期间前端照常入队）；
-// 主窗不可见时弹独立置顶气泡（非系统 toast）；可见时只靠前端 NotificationBubble。
+// handleAgentNotify 分发一条 agent 通知：始终推给前端（非前台期间前端照常入队）；
+// 主窗非前台/不可见时弹独立置顶气泡（非系统 toast）；前台时只靠前端 NotificationBubble。
 func (a *App) handleAgentNotify(p agenthook.Payload) {
 	a.Emit("notify:agent", p)
 	if a.windowVisible() {
@@ -104,9 +108,10 @@ func (a *App) activateFromBubble(termKey string) {
 	a.Emit("notify:focus", map[string]string{"termKey": termKey})
 }
 
-// windowVisible 报告主窗口当前是否对用户可见。
-// wails v2.16 没有 WindowIsVisible：托盘隐藏是我们自己的 BeforeClose 干的，
-// 用 hidden 标记跟踪；普通最小化用 runtime 查询。查询不可用（ctx 未就绪）按可见处理。
+// windowVisible 报告主窗口是否适合用应用内气泡（用户能立刻看到）。
+// 托盘隐藏 / 最小化 / 非前台 → false，改走独立气泡。
+// wails v2.16 没有 WindowIsVisible：托盘用 hidden 标记；最小化用 runtime；
+// 前台用 windowIsForeground。ctx 未就绪按可见处理（启动前安全默认）。
 func (a *App) windowVisible() bool {
 	a.mu.Lock()
 	hidden, ctx := a.windowHidden, a.ctx
@@ -117,7 +122,10 @@ func (a *App) windowVisible() bool {
 	if ctx == nil {
 		return true
 	}
-	return !windowIsMinimised(ctx)
+	if windowIsMinimised(ctx) {
+		return false
+	}
+	return windowIsForeground()
 }
 
 // setWindowHidden 维护主窗口「收进托盘」状态，供 BeforeClose / 托盘与二次启动的

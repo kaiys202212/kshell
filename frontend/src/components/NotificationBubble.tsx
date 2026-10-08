@@ -1,7 +1,7 @@
 // agent 通知气泡：右下角堆叠展示 agent 完成与等待确认事件。
 // 最多同时 3 条，超出折叠为「+N」计数条；每条 10s 自动消失，hover 暂停倒计时；
 // 点击按 termKey 切到对应页签并关闭该气泡。
-// 主窗不可见（document.hidden）时不渲染卡片，避免与 Go 侧原生气泡重复；
+// 主窗不可见（document.hidden）或失焦时不渲染卡片，避免与 Go 侧原生气泡重复；
 // 队列仍由 notify:agent 入队，供原生气泡点击后的 notify:focus 复用。
 // 主题跟随 appearance 机制：样式全部用语义 token（bg-card / text-foreground 等），
 // data-theme 切换时自动适配亮/暗色。
@@ -99,15 +99,26 @@ export default function NotificationBubble() {
   const { t } = useTranslation();
   const notices = useAppStore((s) => s.agentNotices);
   const [docHidden, setDocHidden] = useState(() => typeof document !== 'undefined' && document.hidden);
+  const [focused, setFocused] = useState(
+    () => typeof document !== 'undefined' && typeof document.hasFocus === 'function' && document.hasFocus(),
+  );
 
   useEffect(() => {
     const onVis = () => setDocHidden(document.hidden);
+    const onFocus = () => setFocused(true);
+    const onBlur = () => setFocused(false);
     document.addEventListener('visibilitychange', onVis);
-    return () => document.removeEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('blur', onBlur);
+    };
   }, []);
 
-  // 主窗不可见时由 Go 原生气泡承接展示，此处不渲染避免恢复瞬间双份刷屏
-  if (docHidden || notices.length === 0) return null;
+  // 主窗不可见/失焦时由 Go 原生气泡承接展示，此处不渲染避免双份刷屏
+  if (docHidden || !focused || notices.length === 0) return null;
 
   // store 队列按入队顺序追加（旧→新），取末尾即最新 3 条；渲染时倒序，
   // 最新事件在最上（贴近阅读起点）。过期 / hover 倒计时 / 点击均按 notice.id 独立运作，

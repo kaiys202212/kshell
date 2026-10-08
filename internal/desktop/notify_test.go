@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -173,6 +174,87 @@ func TestDispatchNotifyOnceVisibleNoBubbleOrToast(t *testing.T) {
 	}
 	if toastCalls != 0 {
 		t.Fatalf("可见时不应弹 toast，得到 %d", toastCalls)
+	}
+}
+
+// stubNotifyWindowState 注入已启动主窗的最小化/前台状态（ctx 非空才会走到这两项检查）。
+func stubNotifyWindowState(t *testing.T, a *App, minimised, foreground bool) {
+	t.Helper()
+	a.mu.Lock()
+	a.ctx = context.Background()
+	a.mu.Unlock()
+	origMin := windowIsMinimised
+	origFg := windowIsForeground
+	windowIsMinimised = func(context.Context) bool { return minimised }
+	windowIsForeground = func() bool { return foreground }
+	t.Cleanup(func() {
+		windowIsMinimised = origMin
+		windowIsForeground = origFg
+	})
+}
+
+// 主窗未最小化但非前台（任务栏被挡住）：应弹独立气泡。
+func TestDispatchNotifyOnceUnfocusedShowsBubble(t *testing.T) {
+	dir := t.TempDir()
+	writeInboxFile(t, dir, "1.json", agenthook.Payload{
+		Tool: "codex", Event: "agent-turn-complete", TermKey: "new:2", Summary: "后台完成",
+	})
+	a, names, _ := newNotifyTestApp(t)
+	a.setWindowHidden(false)
+	stubNotifyWindowState(t, a, false, false)
+
+	origBubble := notifyBubble
+	origToast := notifyToast
+	t.Cleanup(func() {
+		notifyBubble = origBubble
+		notifyToast = origToast
+	})
+	bubbleCalls, toastCalls := 0, 0
+	notifyBubble = func(title, body, termKey string) error {
+		bubbleCalls++
+		return nil
+	}
+	notifyToast = func(title, body string) error {
+		toastCalls++
+		return nil
+	}
+
+	a.dispatchNotifyOnce(dir)
+
+	if len(*names) != 1 {
+		t.Fatalf("非前台也应 emit: %v", *names)
+	}
+	if bubbleCalls != 1 {
+		t.Fatalf("非前台应弹一次 bubble，得到 %d", bubbleCalls)
+	}
+	if toastCalls != 0 {
+		t.Fatalf("非前台不应弹系统 toast，得到 %d", toastCalls)
+	}
+}
+
+// 主窗前台：只 emit，不弹独立气泡。
+func TestDispatchNotifyOnceFocusedNoBubble(t *testing.T) {
+	dir := t.TempDir()
+	writeInboxFile(t, dir, "1.json", agenthook.Payload{Tool: "codex", Event: "agent-turn-complete", TermKey: "new:1"})
+	a, names, _ := newNotifyTestApp(t)
+	a.setWindowHidden(false)
+	stubNotifyWindowState(t, a, false, true)
+
+	origBubble := notifyBubble
+	t.Cleanup(func() { notifyBubble = origBubble })
+	bubbleCalls := 0
+	notifyBubble = func(title, body, termKey string) error {
+		bubbleCalls++
+		return nil
+	}
+
+	a.dispatchNotifyOnce(dir)
+
+	if len(*names) != 1 {
+		t.Fatalf("前台仍应 emit: %v", *names)
+	}
+	if bubbleCalls != 0 {
+		t.Fatalf("前台不应弹 bubble，得到 %d", bubbleCalls)
 	}
 }
 

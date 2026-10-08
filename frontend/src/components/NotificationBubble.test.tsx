@@ -51,11 +51,14 @@ beforeEach(() => {
     terminals: [],
     workspaces: [],
   });
+  // jsdom 默认 hasFocus()===false；前台用例统一视为已聚焦
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true);
 });
 
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe('NotificationBubble', () => {
@@ -166,6 +169,14 @@ describe('NotificationBubble', () => {
       if (desc) Object.defineProperty(Document.prototype, 'hidden', desc);
       else Reflect.deleteProperty(document, 'hidden');
     }
+  });
+
+  it('窗口失焦时不渲染卡片（被其它窗口挡住时走原生气泡）', () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    push();
+    const { container } = render(<NotificationBubble />);
+    expect(container).toBeEmptyDOMElement();
+    expect(useAppStore.getState().agentNotices).toHaveLength(1);
   });
 
   it('handleNotifyFocus：聚焦对应页签并 dismiss 该 termKey 气泡', () => {
