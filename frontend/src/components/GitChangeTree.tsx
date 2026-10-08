@@ -104,7 +104,7 @@ function TreeRow({
         )}
         {node.dir ? <FolderIcon open={open} /> : <FileIcon />}
         {node.dir || !node.entry ? (
-          <span className="min-w-0 flex-1 truncate font-mono text-xs">{node.name}</span>
+          <span className={cn('min-w-0 flex-1 truncate font-mono text-xs', node.dir && 'font-medium')}>{node.name}</span>
         ) : (
           <button
             type="button"
