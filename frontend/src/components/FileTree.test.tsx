@@ -276,6 +276,52 @@ describe('FileTree', () => {
     });
   });
 
+  // 慢 reload 若后完成且带旧数据，不得盖住随后触发的新结果（串行 + 尾随）
+  it('并发 files:changed 时旧 reload 不得覆盖新结果', async () => {
+    let changedCb: ((p: string) => void) | null = null;
+    mocks.onFilesChanged.mockImplementation((cb) => {
+      changedCb = cb;
+      return () => {
+        changedCb = null;
+      };
+    });
+
+    const tokens: string[] = [];
+    let releaseSlow!: () => void;
+    const slowGate = new Promise<void>((r) => {
+      releaseSlow = r;
+    });
+    let refreshN = 0;
+    mocks.refreshFiles.mockImplementation(async () => {
+      const idx = refreshN++;
+      if (idx === 0) await slowGate;
+      tokens.push(`r${idx}`);
+    });
+    mocks.listFiles.mockImplementation(async (_ws: string, rel: string) => {
+      if (rel !== '') return [];
+      if (tokens.length === 0) return [node('init.md', false, 'init.md')];
+      const last = tokens[tokens.length - 1];
+      if (last === 'r0') return [node('stale.md', false, 'stale.md')];
+      return [node('new.md', false, 'new.md')];
+    });
+
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('init.md');
+
+    await act(async () => {
+      changedCb?.('D:\\proj');
+      changedCb?.('D:\\proj');
+    });
+    await act(async () => {
+      releaseSlow();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('new.md')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('stale.md')).not.toBeInTheDocument();
+  });
+
   it('挂载调 startFileWatch，卸载调 stopFileWatch', async () => {
     mocks.listFiles.mockResolvedValue(root);
     const { unmount } = render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);

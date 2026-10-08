@@ -36,4 +36,21 @@ describe('GitChangeTree', () => {
     );
     expect(onStage).toHaveBeenCalledWith(['pkg/a.go', 'pkg/b.go']);
   });
+
+  it('目录行用文件夹图标、文件行用文件图标', () => {
+    const { container } = render(
+      <GitChangeTree
+        title="更改"
+        entries={[e('pkg/a.go')]}
+        side="working"
+        onOpen={() => {}}
+        onStage={null}
+        onUnstage={null}
+        onDiscard={null}
+      />,
+    );
+    expect(container.querySelector('[data-icon="folder-open"], [data-icon="folder"]')).toBeTruthy();
+    expect(container.querySelector('[data-icon="file"]')).toBeTruthy();
+    expect(container.querySelector('[data-icon="chevron"]')).toBeTruthy();
+  });
 });

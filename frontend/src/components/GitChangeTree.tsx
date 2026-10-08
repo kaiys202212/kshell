@@ -4,6 +4,7 @@ import type { GitDiffSide, GitSCMEntry } from '../lib/api';
 import { buildChangeTree, collectPaths, type ChangeNode } from '../lib/gitChangeTree';
 import { cn } from '../lib/cn';
 import { Button } from './ui/button';
+import { ChevronIcon, FileIcon, FolderIcon } from './treeIcons';
 import { PANE_HEADER } from '../lib/ui';
 
 export function GitChangeTree({
@@ -90,18 +91,24 @@ function TreeRow({
         style={{ paddingLeft: 4 + depth * 12 }}
       >
         {node.dir ? (
-          <button type="button" className="w-4 shrink-0 text-muted-foreground" aria-label={t('ui.git.expand_aria', { path: node.path })} onClick={() => setOpen((v) => !v)}>
-            {open ? '▾' : '▸'}
+          <button
+            type="button"
+            className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground"
+            aria-label={t('ui.git.expand_aria', { path: node.path })}
+            onClick={() => setOpen((v) => !v)}
+          >
+            <ChevronIcon open={open} />
           </button>
         ) : (
-          <span className="w-4 shrink-0" />
+          <span className="h-4 w-4 shrink-0" />
         )}
+        {node.dir ? <FolderIcon open={open} /> : <FileIcon />}
         {node.dir || !node.entry ? (
-          <span className="min-w-0 flex-1 truncate">{node.name}</span>
+          <span className="min-w-0 flex-1 truncate font-mono text-xs">{node.name}</span>
         ) : (
           <button
             type="button"
-            className="min-w-0 flex-1 truncate text-left"
+            className="min-w-0 flex-1 truncate text-left font-mono text-xs"
             onClick={() => onOpen(node.entry!, side, true)}
             onDoubleClick={() => onOpen(node.entry!, side, false)}
           >

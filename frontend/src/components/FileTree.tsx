@@ -31,6 +31,7 @@ import { isNestedGitParent, refreshGitStatus, resolveGitCode, subtreeDirty } fro
 import { sameWorkspacePath } from '../lib/workspacePath';
 import { useAppStore } from '../state/store';
 import ContextMenu, { type MenuItem } from './ContextMenu';
+import { ChevronIcon, FileIcon, FolderIcon } from './treeIcons';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 import { EmptyState } from './ui/empty-state';
@@ -46,68 +47,6 @@ interface TreeItem {
   children: TreeItem[] | null;
   expanded: boolean;
   error?: string;
-}
-
-// 手写内联 SVG（不引图标库）：chevron / folder / folder-open / file / 铅笔 / 刷新
-function ChevronIcon({ open }: { open: boolean }) {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-90')}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      aria-hidden="true"
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" d="M6 4l4 4-4 4" />
-    </svg>
-  );
-}
-
-function FolderIcon({ open }: { open: boolean }) {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      className="h-3.5 w-3.5 shrink-0 text-primary/70"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.2"
-      aria-hidden="true"
-    >
-      {open ? (
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M1.5 5.5A1 1 0 0 1 2.5 4.5h3l1.2 1.2h5.8a1 1 0 0 1 1 1V7H5.2a1 1 0 0 0-.97.757L3 12.5H2.5a1 1 0 0 1-1-1v-6Zm2.3 7 1.1-4.1a.5.5 0 0 1 .48-.4h8.4a.5.5 0 0 1 .48.65L13.3 12a1 1 0 0 1-.96.72H3.8Z"
-        />
-      ) : (
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M1.5 4.5a1 1 0 0 1 1-1h3l1.4 1.4h5.6a1 1 0 0 1 1 1v6.1a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-7.5Z"
-        />
-      )}
-    </svg>
-  );
-}
-
-function FileIcon() {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.2"
-      aria-hidden="true"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M4 2.5h5l3 3v8a.5.5 0 0 1-.5.5h-7a.5.5 0 0 1-.5-.5v-10.5a.5.5 0 0 1 .5-.5ZM9 2.5V6h3.5"
-      />
-    </svg>
-  );
 }
 
 function PencilIcon() {
@@ -213,7 +152,7 @@ function updateItems(items: TreeItem[], relPath: string, fn: (t: TreeItem) => Tr
   });
 }
 
-// 收集已展开目录的 relPath（深度优先），供 reloadTree 重建后恢复展开
+// 收集已展开目录的 relPath（深度优先），供重载后恢复展开
 function collectExpanded(items: TreeItem[]): string[] {
   const out: string[] = [];
   const walk = (list: TreeItem[]) => {
@@ -594,24 +533,25 @@ export default function FileTree({
   const [creating, setCreating] = useState<{ dirRel: string; isDir: boolean } | null>(null);
   const [deleting, setDeleting] = useState<TreeItem | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
-  // 显示全部（含忽略文件）；不持久化，切换由下方 effect 走 reloadTree 重拉已展开路径
+  // 显示全部（含忽略文件）；不持久化，切换由下方 effect 走 requestReload 重拉已展开路径
   const [showAll, setShowAll] = useState(false);
   const gitMap = useAppStore((s) => s.gitStatus[wsPath]);
   const rootBranch = useAppStore((s) => s.gitBranch[wsPath]);
   const dirBranches = useAppStore((s) => s.gitDirBranches[wsPath]);
 
-  // 避免 reloadTree / files:changed 回调读到过期的 items / showAll
+  // 避免 requestReload / files:changed 回调读到过期的 items / showAll
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const showAllRef = useRef(showAll);
   showAllRef.current = showAll;
-  // wsPath 变更 / 卸载时递增，进行中的 reloadTree 不得再 setItems
+  // wsPath 变更 / 卸载时递增，进行中的 reload 不得再 setItems
   const reloadGenRef = useRef(0);
+  const reloadInFlightRef = useRef(false);
+  const reloadPendingRef = useRef(false);
   const prevShowAllRef = useRef(showAll);
 
-  // 作废 Go 缓存 → 重拉根层 → 按原展开路径逐层恢复 → 刷 git
-  const reloadTree = async () => {
-    const gen = reloadGenRef.current;
+  // 单轮：作废 Go 缓存 → 重拉根层 → 按原展开路径逐层恢复 → 刷 git
+  const runReload = async (gen: number) => {
     const path = wsPath;
     const expanded = itemsRef.current ? collectExpanded(itemsRef.current) : [];
     const show = showAllRef.current;
@@ -650,10 +590,32 @@ export default function FileTree({
     if (gen !== reloadGenRef.current) return;
     void refreshGitStatus(path);
   };
-  const reloadTreeRef = useRef(reloadTree);
-  reloadTreeRef.current = reloadTree;
 
-  // 监视生命周期仅随 wsPath；showAll 切换不重载 watch（单独 effect 走 reloadTree）
+  // 串行 + 尾随：进行中只记 pending，避免旧异步结果覆盖新树
+  const requestReload = () => {
+    if (reloadInFlightRef.current) {
+      reloadPendingRef.current = true;
+      return;
+    }
+    reloadInFlightRef.current = true;
+    void (async () => {
+      try {
+        do {
+          reloadPendingRef.current = false;
+          reloadGenRef.current += 1;
+          const gen = reloadGenRef.current;
+          await runReload(gen);
+        } while (reloadPendingRef.current);
+      } finally {
+        reloadInFlightRef.current = false;
+        if (reloadPendingRef.current) requestReload();
+      }
+    })();
+  };
+  const requestReloadRef = useRef(requestReload);
+  requestReloadRef.current = requestReload;
+
+  // 监视生命周期仅随 wsPath；showAll 切换不重载 watch（单独 effect 走 requestReload）
   useEffect(() => {
     void startFileWatch(wsPath).catch((e: unknown) => {
       useAppStore
@@ -661,10 +623,12 @@ export default function FileTree({
         .notify(e instanceof Error ? backendError(e) : t('ui.files.watch_failed'), 'error');
     });
     const unsub = onFilesChanged((path) => {
-      if (sameWorkspacePath(path, wsPath)) void reloadTreeRef.current();
+      if (sameWorkspacePath(path, wsPath)) requestReloadRef.current();
     });
     return () => {
       reloadGenRef.current += 1;
+      reloadInFlightRef.current = false;
+      reloadPendingRef.current = false;
       unsub();
       stopFileWatch(wsPath);
     };
@@ -674,6 +638,8 @@ export default function FileTree({
     reloadGenRef.current += 1;
     const gen = reloadGenRef.current;
     let cancelled = false;
+    reloadInFlightRef.current = false;
+    reloadPendingRef.current = false;
     setItems(null);
     setError('');
     setQuery('');
@@ -695,17 +661,15 @@ export default function FileTree({
     return () => {
       cancelled = true;
       reloadGenRef.current += 1;
+      reloadInFlightRef.current = false;
+      reloadPendingRef.current = false;
     };
   }, [wsPath]);
 
   useEffect(() => {
     if (prevShowAllRef.current === showAll) return;
     prevShowAllRef.current = showAll;
-    reloadGenRef.current += 1;
-    void reloadTreeRef.current();
-    return () => {
-      reloadGenRef.current += 1;
-    };
+    requestReloadRef.current();
   }, [showAll, wsPath]);
 
   // 搜索防抖：停顿 200ms 后走 Go 递归搜索（未加载的深层目录也能命中）。
@@ -1009,7 +973,7 @@ export default function FileTree({
           className="shrink-0 rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           aria-label={t('ui.files.refresh')}
           title={t('ui.files.refresh')}
-          onClick={() => void reloadTree()}
+          onClick={() => requestReload()}
         >
           <RefreshIcon />
         </button>
