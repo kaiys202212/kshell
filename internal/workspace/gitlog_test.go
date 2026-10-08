@@ -3,12 +3,13 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
 // 未知 log 模式以 wire key + 参数返回，供前端翻译。
 func TestLogUnknownModeWireKey(t *testing.T) {
-	_, err := Log(t.TempDir(), "", "bogus", "", 1)
+	_, err := Log(t.TempDir(), "", "bogus", "", 1, 0)
 	if err == nil {
 		t.Fatal("未知 log 模式应失败")
 	}
@@ -35,7 +36,7 @@ func TestCommitStatAt_真实提交(t *testing.T) {
 	writeFile(t, filepath.Join(root, "a.txt"), "a\n")
 	gitRun(t, root, "add", "a.txt")
 	gitRun(t, root, "commit", "-m", "init")
-	logs, err := Log(root, "", "current", "", 1)
+	logs, err := Log(root, "", "current", "", 1, 0)
 	if err != nil || len(logs) != 1 {
 		t.Fatalf("log: %v %+v", err, logs)
 	}
@@ -53,9 +54,39 @@ func TestCommitStatAt_真实提交(t *testing.T) {
 
 func TestLog_越权(t *testing.T) {
 	skipIfNoGit(t)
-	_, err := Log(t.TempDir(), "..", "all", "", 10)
+	_, err := Log(t.TempDir(), "..", "all", "", 10, 0)
 	if err == nil {
 		t.Fatal("越权 repoRel 应失败")
+	}
+}
+
+func TestLog_Skip分页(t *testing.T) {
+	skipIfNoGit(t)
+	root := t.TempDir()
+	initRepo(t, root)
+	for i := 0; i < 5; i++ {
+		name := filepath.Join(root, "f"+strconv.Itoa(i)+".txt")
+		writeFile(t, name, strconv.Itoa(i)+"\n")
+		gitRun(t, root, "add", filepath.Base(name))
+		gitRun(t, root, "commit", "-m", "c"+strconv.Itoa(i))
+	}
+	page1, err := Log(root, "", "current", "", 2, 0)
+	if err != nil || len(page1) != 2 {
+		t.Fatalf("page1: %v %+v", err, page1)
+	}
+	page2, err := Log(root, "", "current", "", 2, 2)
+	if err != nil || len(page2) != 2 {
+		t.Fatalf("page2: %v %+v", err, page2)
+	}
+	if page1[0].Hash == page2[0].Hash || page1[1].Hash == page2[0].Hash {
+		t.Fatalf("分页应不重叠: p1=%+v p2=%+v", page1, page2)
+	}
+	all, err := Log(root, "", "current", "", 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page1[0].Hash != all[0].Hash || page2[0].Hash != all[2].Hash {
+		t.Fatalf("skip 应对齐全量顺序")
 	}
 }
 
@@ -76,7 +107,7 @@ func TestLog_合并提交含双亲(t *testing.T) {
 	gitRun(t, root, "commit", "-m", "mainline")
 	gitRun(t, root, "merge", "topic", "-m", "merge topic")
 
-	all, err := Log(root, "", "all", "", 20)
+	all, err := Log(root, "", "all", "", 20, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +125,7 @@ func TestLog_合并提交含双亲(t *testing.T) {
 		t.Fatalf("合并提交: %+v", merge)
 	}
 
-	cur, err := Log(root, "", "current", "", 20)
+	cur, err := Log(root, "", "current", "", 20, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +133,7 @@ func TestLog_合并提交含双亲(t *testing.T) {
 		t.Fatalf("当前在 merge 后应看到全部可达提交: current=%d all=%d", len(cur), len(all))
 	}
 
-	topicOnly, err := Log(root, "", "ref", "topic", 20)
+	topicOnly, err := Log(root, "", "ref", "topic", 20, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

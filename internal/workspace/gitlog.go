@@ -38,7 +38,8 @@ type CommitStat struct {
 }
 
 // Log 读取提交历史。mode: current | all | ref（此时 ref 为分支/远端名）。
-func Log(wsRoot, repoRel, mode, ref string, limit int) ([]LogCommit, error) {
+// skip 为跳过的条数（git log --skip），用于触底分页；<0 视为 0。
+func Log(wsRoot, repoRel, mode, ref string, limit, skip int) ([]LogCommit, error) {
 	abs, err := ResolveRepo(wsRoot, repoRel)
 	if err != nil {
 		return nil, err
@@ -49,10 +50,14 @@ func Log(wsRoot, repoRel, mode, ref string, limit int) ([]LogCommit, error) {
 	if limit > gitLogMaxLimit {
 		limit = gitLogMaxLimit
 	}
+	if skip < 0 {
+		skip = 0
+	}
 	mode = strings.TrimSpace(strings.ToLower(mode))
 	args := []string{
 		"log",
 		"-n", strconv.Itoa(limit),
+		"--skip", strconv.Itoa(skip),
 		"--topo-order",
 		"--decorate=short",
 		"--pretty=format:%H%x00%P%x00%an%x00%ae%x00%aI%x00%s%x00%D",

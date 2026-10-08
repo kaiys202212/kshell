@@ -19,7 +19,7 @@ func TestCommitDiff_第二提交含新增内容(t *testing.T) {
 	gitRun(t, root, "add", "a.txt")
 	gitRun(t, root, "commit", "-m", "second")
 
-	logs, err := Log(root, "", "current", "", 5)
+	logs, err := Log(root, "", "current", "", 5, 0)
 	if err != nil || len(logs) < 2 {
 		t.Fatalf("Log: n=%d err=%v", len(logs), err)
 	}

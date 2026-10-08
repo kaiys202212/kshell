@@ -58,7 +58,7 @@ func TestGitSCMBinding(t *testing.T) {
 		t.Fatal("越权 repoRel 应失败")
 	}
 
-	logs, err := env.app.GitLog(root, "", "current", "", 10)
+	logs, err := env.app.GitLog(root, "", "current", "", 10, 0)
 	if err != nil || len(logs) < 2 {
 		t.Fatalf("GitLog: n=%d err=%v", len(logs), err)
 	}
