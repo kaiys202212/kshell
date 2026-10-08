@@ -33,7 +33,7 @@ func applyNotifyInject(spec *launcher.Spec, toolID, termKey, workspace string) {
 	if err != nil {
 		return
 	}
-	spec.Args = notifyArgs(spec.Args, toolID, exe)
+	spec.Args = materializeInlineSettings(notifyArgs(spec.Args, toolID, exe))
 	if toolID == "opencode" {
 		if dir := openCodePluginDir(exe, envValue(spec.Env, envOpenCodeConfigDir)); dir != "" {
 			spec.Env = append(spec.Env, envOpenCodeConfigDir+"="+dir)
@@ -55,7 +55,7 @@ func applyNotifyLaunch(l *providers.Launch, toolID, termKey, workspace string) {
 	if err != nil {
 		return
 	}
-	l.Args = notifyArgs(l.Args, toolID, exe)
+	l.Args = materializeInlineSettings(notifyArgs(l.Args, toolID, exe))
 	if toolID == "opencode" {
 		if dir := openCodePluginDir(exe, l.Env[envOpenCodeConfigDir]); dir != "" {
 			l.Env[envOpenCodeConfigDir] = dir
@@ -84,6 +84,44 @@ func notifyArgs(args []string, toolID, exePath string) []string {
 	}
 }
 
+// settingsTempPrefix 是 claude/codebuddy --settings 临时 JSON 的文件名前缀。
+// 内联 JSON 含 \"路径\" 时经 Windows cmd /S /C 会被拆坏（Invalid JSON），必须落盘传路径。
+const settingsTempPrefix = "kshell-settings-"
+
+// materializeInlineSettings 把 args 里内联的 --settings JSON 对象写到临时文件，
+// 并把参数值换成绝对路径；已是文件路径或非法 JSON 时原样返回。失败静默（保留内联）。
+func materializeInlineSettings(args []string) []string {
+	for i := len(args) - 2; i >= 0; i-- {
+		if args[i] != "--settings" {
+			continue
+		}
+		v := strings.TrimSpace(args[i+1])
+		if !strings.HasPrefix(v, "{") {
+			return args
+		}
+		if !json.Valid([]byte(v)) {
+			return args
+		}
+		f, err := os.CreateTemp("", settingsTempPrefix+"*.json")
+		if err != nil {
+			return args
+		}
+		path := f.Name()
+		if _, err := f.WriteString(v); err != nil {
+			f.Close()
+			os.Remove(path)
+			return args
+		}
+		if err := f.Close(); err != nil {
+			os.Remove(path)
+			return args
+		}
+		args[i+1] = path
+		return args
+	}
+	return args
+}
+
 // openCodeTempDirPrefix 是 opencode 插件临时目录的名称前缀（与 MkdirTemp 的 pattern 一致）。
 const openCodeTempDirPrefix = "kshell-opencode-"
 
@@ -94,6 +132,25 @@ const openCodeTempDirMaxAge = 24 * time.Hour
 // cleanupOpenCodeTempDirs 清理系统 %TEMP% 下历史遗留的 opencode 插件临时目录。
 func cleanupOpenCodeTempDirs() {
 	cleanupOpenCodeTempDirsIn(os.TempDir())
+	cleanupSettingsTempFilesIn(os.TempDir())
+}
+
+// cleanupSettingsTempFilesIn 删除 root 下超龄的 kshell-settings-*.json。
+func cleanupSettingsTempFilesIn(root string) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), settingsTempPrefix) || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || time.Since(info.ModTime()) <= openCodeTempDirMaxAge {
+			continue
+		}
+		os.Remove(filepath.Join(root, e.Name()))
+	}
 }
 
 // cleanupOpenCodeTempDirsIn 扫描 root 下 openCodeTempDirPrefix 前缀的目录，

@@ -12,18 +12,27 @@ import (
 	"github.com/yangk/kshell/internal/providers"
 )
 
-// settingsValue 取 args 中最后一组 --settings 的 JSON 值并解析成对象；
-// 找不到或不是 JSON 时直接 Fatal（测试辅助，不处理业务分支）。
+// settingsValue 取 args 中最后一组 --settings 并解析成对象；
+// 值可以是内联 JSON，也可以是落盘后的文件路径。
 func settingsValue(t *testing.T, args []string) map[string]any {
 	t.Helper()
 	for i := len(args) - 2; i >= 0; i-- {
-		if args[i] == "--settings" {
-			var m map[string]any
-			if err := json.Unmarshal([]byte(args[i+1]), &m); err != nil {
-				t.Fatalf("--settings 值不是合法 JSON: %v（%q）", err, args[i+1])
-			}
-			return m
+		if args[i] != "--settings" {
+			continue
 		}
+		raw := args[i+1]
+		if !strings.HasPrefix(strings.TrimSpace(raw), "{") {
+			b, err := os.ReadFile(raw)
+			if err != nil {
+				t.Fatalf("读取 --settings 文件失败: %v（%q）", err, raw)
+			}
+			raw = string(b)
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			t.Fatalf("--settings 值不是合法 JSON: %v（%q）", err, raw)
+		}
+		return m
 	}
 	t.Fatalf("args 中没有 --settings: %v", args)
 	return nil
@@ -197,6 +206,46 @@ func TestApplyNotifyInjectClaude(t *testing.T) {
 	if cmd == "" || !endsWithAgentHook(cmd, "claude") {
 		t.Fatalf("hook 命令应以 agent-hook claude 结尾: %q", cmd)
 	}
+}
+
+// TestApplyNotifyInjectClaudeMaterializesSettingsFile 覆盖 v0.1.8 回归：
+// 含 \"路径\" 的 hooks JSON 经 cmd /S /C 会变成 Invalid JSON；必须落盘后传文件路径。
+func TestApplyNotifyInjectClaudeMaterializesSettingsFile(t *testing.T) {
+	spec := &launcher.Spec{Args: []string{"--settings", `{"theme":"dark"}`}}
+	applyNotifyInject(spec, "claude", "new:1", `D:\ws`)
+	path := settingsPath(t, spec.Args)
+	if strings.HasPrefix(strings.TrimSpace(path), "{") {
+		t.Fatalf("--settings 应已落盘为文件路径，仍是内联 JSON: %q", path)
+	}
+	if !strings.Contains(filepath.Base(path), settingsTempPrefix) {
+		t.Fatalf("临时文件名应含前缀 %q, got %q", settingsTempPrefix, path)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读临时 settings 失败: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("临时文件不是合法 JSON: %v\n%s", err, b)
+	}
+	if m["theme"] != "dark" {
+		t.Fatalf("主题应保留在文件中: %v", m)
+	}
+	if got := hookCommand(t, m, "Stop"); !endsWithAgentHook(got, "claude") {
+		t.Fatalf("Stop hook 不符: %q", got)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+}
+
+func settingsPath(t *testing.T, args []string) string {
+	t.Helper()
+	for i := len(args) - 2; i >= 0; i-- {
+		if args[i] == "--settings" {
+			return args[i+1]
+		}
+	}
+	t.Fatalf("args 中没有 --settings: %v", args)
+	return ""
 }
 
 // applyNotifyLaunch 给外部窗口的启动描述注入 env 与 hook 参数（codex 形态）。
