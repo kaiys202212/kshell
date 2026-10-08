@@ -303,6 +303,61 @@ describe('GitPanel', () => {
     });
   });
 
+  it('提交进行中主按钮显示转圈图标', async () => {
+    const ws = 'D:\\proj';
+    let resolveCommit!: () => void;
+    mocks.gitCommit.mockImplementation(
+      () =>
+        new Promise<void>((r) => {
+          resolveCommit = r;
+        }),
+    );
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    const msg = await screen.findByLabelText(tt('ui.git.commit_message_aria'));
+    fireEvent.change(msg, { target: { value: 'msg' } });
+    const btn = screen.getByRole('button', { name: tt('ui.git.primary_action_aria') });
+    fireEvent.click(btn);
+    await waitFor(() => {
+      expect(btn.querySelector('.animate-spin')).toBeTruthy();
+    });
+    await act(async () => {
+      resolveCommit();
+    });
+    await waitFor(() => {
+      expect(btn.querySelector('.animate-spin')).toBeNull();
+    });
+  });
+
+  it('提交并推送进行中主按钮显示转圈图标', async () => {
+    const ws = 'D:\\proj';
+    let resolvePush!: () => void;
+    mocks.gitCommit.mockResolvedValue(undefined);
+    mocks.gitPush.mockImplementation(
+      () =>
+        new Promise<void>((r) => {
+          resolvePush = r;
+        }),
+    );
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    fireEvent.change(await screen.findByLabelText(tt('ui.git.commit_message_aria')), {
+      target: { value: 'msg' },
+    });
+    const btn = screen.getByRole('button', { name: tt('ui.git.primary_action_aria') });
+    const more = screen.getByRole('button', { name: tt('ui.git.more_commit_aria') });
+    fireEvent.pointerDown(more, { button: 0 });
+    fireEvent.click(more);
+    fireEvent.click(await screen.findByRole('menuitem', { name: tt('ui.git.commit_and_push') }));
+    await waitFor(() => {
+      expect(btn.querySelector('.animate-spin')).toBeTruthy();
+    });
+    await act(async () => {
+      resolvePush();
+    });
+    await waitFor(() => {
+      expect(btn.querySelector('.animate-spin')).toBeNull();
+    });
+  });
+
   it('无 remote 时不渲染同步源选择器', async () => {
     mocks.gitSCM.mockResolvedValue(snap({ Remotes: null, SyncRemote: '' }));
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);

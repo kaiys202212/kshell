@@ -462,21 +462,14 @@ export default function GitPanel({
                 else void sync();
               }}
             >
-              {dirty ? (
-                <>
-                  <Check className="h-3.5 w-3.5" />
-                  {t('ui.git.commit')}
-                </>
+              {busy ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : dirty ? (
+                <Check className="h-3.5 w-3.5" />
               ) : (
-                <>
-                  {busy ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                  ) : (
-                    <ArrowDownUp className="h-3.5 w-3.5" />
-                  )}
-                  {t('ui.git.sync')}
-                </>
+                <ArrowDownUp className="h-3.5 w-3.5" />
               )}
+              {dirty ? t('ui.git.commit') : t('ui.git.sync')}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
