@@ -179,7 +179,7 @@ func ptyScript(t *testing.T, dir string, code int, msg string, settle bool) stri
 }
 
 // TestPTYBackendRunsRealProcess 真机验证后端：能读到输出、拿到退出码、Close 能唤醒读协程。
-// 这条用例在 Windows 上同时覆盖了 .cmd 的 %COMSPEC% /c 包装。
+// 这条用例在 Windows 上同时覆盖了 .cmd 的 %COMSPEC% /S /C + CmdLine 包装。
 func TestPTYBackendRunsRealProcess(t *testing.T) {
 	t.Setenv("KPTY_TEST_ENV", "inherited")
 	bin := ptyScript(t, t.TempDir(), 5, "boom", true)
@@ -281,7 +281,7 @@ func TestPTYBackendRunsSpacedBatWithSettings(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("退出码 = %d, 输出 = %q", code, got)
 	}
-	if strings.Contains(got, "不是内部或外部命令") {
+	if strings.Contains(got, "不是内部或外部命令") || strings.Contains(got, "is not recognized") {
 		t.Fatalf("仍截断路径: %q", got)
 	}
 	if !strings.Contains(got, "MARKER_OK") {

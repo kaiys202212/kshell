@@ -75,7 +75,10 @@ func TestBatchCommandLineRunsSpacedBatWithJSON(t *testing.T) {
 	if !strings.Contains(out, "ARGS:[--settings") {
 		t.Fatalf("脚本未收到 --settings, out=%q stderr=%q", out, stderr.String())
 	}
-	if strings.Contains(stderr.String(), `'C:\`) && strings.Contains(stderr.String(), "不是内部或外部命令") {
+	if !strings.Contains(out, "agent-hook claude") {
+		t.Fatalf("settings JSON 未完整透传, out=%q", out)
+	}
+	if strings.Contains(stderr.String(), "is not recognized") || strings.Contains(stderr.String(), "不是内部或外部命令") {
 		t.Fatalf("仍触发路径截断: stderr=%q", stderr.String())
 	}
 }
