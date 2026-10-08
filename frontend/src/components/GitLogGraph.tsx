@@ -26,6 +26,7 @@ export function GitLogGraph({
   onSelect,
   onOpenCommit,
   loadStat,
+  onNearEnd,
 }: {
   commits: GraphCommit[];
   selected: string;
@@ -33,6 +34,8 @@ export function GitLogGraph({
   /** 单击预览 / 双击固定：打开该提交的完整 diff 页签 */
   onOpenCommit?: (hash: string, preview: boolean) => void;
   loadStat?: (hash: string) => Promise<CommitStatView>;
+  /** 滚近列表底部时回调，用于加载下一页 */
+  onNearEnd?: () => void;
 }) {
   const rows = layoutGitGraph(commits);
   const laneCount = Math.max(1, ...rows.map((r) => r.laneCount));
@@ -42,6 +45,7 @@ export function GitLogGraph({
   const [tipPos, setTipPos] = useState<{ top: number; left: number } | null>(null);
   const [stat, setStat] = useState<CommitStatView | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!hover || !loadStat) {
@@ -56,6 +60,20 @@ export function GitLogGraph({
       cancelled = true;
     };
   }, [hover, loadStat]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    const sentinel = sentinelRef.current;
+    if (!root || !sentinel) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) onNearEnd?.();
+      },
+      { root, rootMargin: '40px' },
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [onNearEnd, commits.length]);
 
   const hovered = rows.find((r) => r.commit.hash === hover)?.commit;
 
@@ -165,6 +183,7 @@ export function GitLogGraph({
             </button>
           );
         })}
+        <div ref={sentinelRef} data-testid="git-log-sentinel" className="h-1 w-full shrink-0" aria-hidden />
       </div>
       {hovered &&
         tipPos &&

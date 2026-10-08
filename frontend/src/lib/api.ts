@@ -463,7 +463,7 @@ interface AppBindings {
   GitStashPop(wsPath: string, repoRel: string, index: number): Promise<void>;
   GitStashApply(wsPath: string, repoRel: string, index: number): Promise<void>;
   GitStashDrop(wsPath: string, repoRel: string, index: number): Promise<void>;
-  GitLog(wsPath: string, repoRel: string, mode: string, ref: string, limit: number): Promise<GitLogCommit[]>;
+  GitLog(wsPath: string, repoRel: string, mode: string, ref: string, limit: number, skip: number): Promise<GitLogCommit[]>;
   GitRefs(wsPath: string, repoRel: string): Promise<GitRef[]>;
   GitFetchAll(wsPath: string, repoRel: string): Promise<void>;
   GitCommitStat(wsPath: string, repoRel: string, hash: string): Promise<GitCommitStat>;
@@ -854,9 +854,10 @@ export async function gitLog(
   repoRel: string,
   mode: string,
   ref: string,
-  limit = 200,
+  limit = 100,
+  skip = 0,
 ): Promise<GitLogCommit[]> {
-  return requireApp().GitLog(wsPath, repoRel, mode, ref, limit);
+  return requireApp().GitLog(wsPath, repoRel, mode, ref, limit, skip);
 }
 
 export async function gitRefs(wsPath: string, repoRel: string): Promise<GitRef[]> {

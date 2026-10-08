@@ -1,10 +1,38 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GitLogGraph } from './GitLogGraph';
 import { tt } from '../test/i18n';
 
 afterEach(cleanup);
+
+type IOCallback = IntersectionObserverCallback;
+let ioCallback: IOCallback | null = null;
+
+beforeEach(() => {
+  ioCallback = null;
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class {
+      constructor(cb: IOCallback) {
+        ioCallback = cb;
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+      takeRecords() {
+        return [];
+      }
+      root = null;
+      rootMargin = '';
+      thresholds = [];
+    },
+  );
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const commit = {
   hash: 'abcdef123456',
@@ -62,6 +90,25 @@ describe('GitLogGraph', () => {
     expect(onOpenCommit).toHaveBeenCalledWith('abcdef123456', true);
     fireEvent.doubleClick(row);
     expect(onOpenCommit).toHaveBeenCalledWith('abcdef123456', false);
+  });
+
+  it('sentinel 进入可视区时调用 onNearEnd', () => {
+    const onNearEnd = vi.fn();
+    render(
+      <GitLogGraph commits={[commit]} selected="" onSelect={() => {}} onNearEnd={onNearEnd} />,
+    );
+    expect(screen.getByTestId('git-log-sentinel')).toBeInTheDocument();
+    expect(ioCallback).toBeTruthy();
+    const entry = { isIntersecting: true } as IntersectionObserverEntry;
+    ioCallback!([entry], {} as IntersectionObserver);
+    expect(onNearEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('未传 onNearEnd 时仍渲染 sentinel 且不抛错', () => {
+    render(<GitLogGraph commits={[commit]} selected="" onSelect={() => {}} />);
+    expect(screen.getByTestId('git-log-sentinel')).toBeInTheDocument();
+    const entry = { isIntersecting: true } as IntersectionObserverEntry;
+    expect(() => ioCallback!([entry], {} as IntersectionObserver)).not.toThrow();
   });
 
   it('悬停带分支 label 的连线时提示分支名', async () => {
