@@ -566,6 +566,15 @@ func TestPsStatementQuotesArgs(t *testing.T) {
 	}
 }
 
+func TestPsStatementQuotesProgramFilesPath(t *testing.T) {
+	bin := `C:\Program Files\nodejs\claude.cmd`
+	got := psStatement(bin, []string{"--settings", `{"a":1}`}, nil)
+	want := `& 'C:\Program Files\nodejs\claude.cmd' '--settings' '{"a":1}'`
+	if got != want {
+		t.Fatalf("psStatement = %q, 期望 %q", got, want)
+	}
+}
+
 func TestPsStatementInjectsEnv(t *testing.T) {
 	got := psStatement("claude", nil, map[string]string{"COLORFGBG": "15;0"})
 	want := `$env:COLORFGBG = '15;0'; & 'claude'`

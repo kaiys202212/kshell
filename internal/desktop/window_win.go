@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"unicode/utf16"
 	"unsafe"
 
@@ -70,7 +71,7 @@ func findWt() string {
 // Launch 弹出新终端窗口。
 //
 // Windows Terminal 存在时走 wt 分支：`wt -w new nt --title <title> -d <dir> powershell ...`；
-// 否则用 `cmd /c start "<title>" powershell ...`（start 的首个带引号参数即窗口标题，
+// 否则用 `cmd /S /C "start "<title>" powershell ..."`（start 的首个带引号参数即窗口标题，
 // 比依赖 $host.UI.RawUI.WindowTitle 更稳，后者在输出被重定向的场景会抛异常）。
 //
 // 命令一律经 -EncodedCommand 传递而非 -Command：Windows Terminal 会把命令行里的
@@ -93,23 +94,46 @@ func (l *windowsLauncher) Launch(dir, title string, args []string) error {
 	encoded := psEncode(script)
 
 	var cmd *exec.Cmd
+	var cmdLine string
 	if wtPath := findWt(); wtPath != "" {
 		cmd = exec.Command(wtPath, "-w", "new", "nt", "--title", title, "-d", dir,
 			"powershell", "-NoExit", "-EncodedCommand", encoded)
 	} else {
-		cmd = exec.Command(os.Getenv("COMSPEC"), "/c", "start", title,
-			"powershell", "-NoExit", "-EncodedCommand", psEncode(script))
+		// 无 wt 时用 cmd start：必须 /S /C + 手写 CmdLine。
+		// 标题含空格时旧写法 `cmd /c start <title> ...` 经 ComposeCommandLine
+		// 会与其它引号参数互相踩踏（同类根因见 executil.BatchCommandLine）。
+		comspec := os.Getenv("COMSPEC")
+		if strings.TrimSpace(comspec) == "" {
+			comspec = "cmd.exe"
+		}
+		cmd = exec.Command(comspec)
+		cmdLine = startPowershellCmdLine(comspec, title, encoded)
 	}
 	cmd.Dir = dir
-	// cmd /c start 回退分支里 cmd.exe 自身会闪一个黑窗（GUI 壳无控制台可继承）；
+	// cmd start 回退分支里 cmd.exe 自身会闪一个黑窗（GUI 壳无控制台可继承）；
 	// CREATE_NO_WINDOW 只隐藏 cmd 自己，start 创建的 powershell 新窗口不受影响。
 	// wt 分支 wt.exe 是 GUI 程序，设置与否无区别，统一走辅助函数。
 	executil.HideWindow(cmd)
+	if cmdLine != "" {
+		// HideWindow 会重建 SysProcAttr，须在其后写回 CmdLine。
+		if cmd.SysProcAttr == nil {
+			cmd.SysProcAttr = &syscall.SysProcAttr{}
+		}
+		cmd.SysProcAttr.CmdLine = cmdLine
+	}
 	if err := cmd.Start(); err != nil {
 		return err
 	}
 	// fire-and-forget：不等待退出，立即释放进程句柄避免长驻泄漏
 	return cmd.Process.Release()
+}
+
+// startPowershellCmdLine 构造无 wt 时的 cmd start 命令行（配合 SysProcAttr.CmdLine）。
+// start 的窗口标题必须始终带引号（即使无空格），否则首个 token 可能被当成要运行的命令。
+func startPowershellCmdLine(comspec, title, encoded string) string {
+	titled := `"` + strings.ReplaceAll(title, `"`, `""`) + `"`
+	inner := "start " + titled + " powershell -NoExit -EncodedCommand " + encoded
+	return comspec + ` /S /C "` + inner + `"`
 }
 
 // psEncode 生成 PowerShell -EncodedCommand 所需的 UTF-16LE Base64 文本。

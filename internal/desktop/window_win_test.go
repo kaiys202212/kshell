@@ -34,6 +34,20 @@ func TestPsQuoteEscapes(t *testing.T) {
 	}
 }
 
+func TestStartPowershellCmdLineQuotesSpacedTitle(t *testing.T) {
+	got := startPowershellCmdLine(`C:\Windows\System32\cmd.exe`, `kshell · my session`, "ENCODED")
+	want := `C:\Windows\System32\cmd.exe /S /C "start "kshell · my session" powershell -NoExit -EncodedCommand ENCODED"`
+	if got != want {
+		t.Fatalf("startPowershellCmdLine =\n %q\nwant\n %q", got, want)
+	}
+	// 无空格标题也必须带引号，避免 start 把标题当成命令。
+	got2 := startPowershellCmdLine(`C:\Windows\System32\cmd.exe`, `kshell`, "E")
+	want2 := `C:\Windows\System32\cmd.exe /S /C "start "kshell" powershell -NoExit -EncodedCommand E"`
+	if got2 != want2 {
+		t.Fatalf("plain title =\n %q\nwant\n %q", got2, want2)
+	}
+}
+
 func TestWindowsLauncherFocusUnknownTitle(t *testing.T) {
 	l := &windowsLauncher{}
 	never := "kshell · 绝无此窗口__" + strings.Repeat("x", 40)
