@@ -443,6 +443,8 @@ interface AppBindings {
   ScanSessions(): Promise<unknown>;
   GetWorkspaces(): Promise<Workspace[]>;
   GetSessions(): Promise<Session[]>;
+  ScanRemoteSessions(wsRef: string): Promise<Session[]>;
+  GetRemoteSessions(wsRef: string): Promise<Session[]>;
   GetSessionPreview(id: string): Promise<SessionPreview>;
   ResumeSession(id: string): Promise<void>;
   FocusSession(id: string): Promise<boolean>;
@@ -594,6 +596,25 @@ export async function getSessions(): Promise<Session[]> {
   const a = app();
   if (!a) return [];
   return a.GetSessions();
+}
+
+/** 是否为 ssh:// 工作区 Ref */
+export function isSSHWorkspaceRef(wsPath: string): boolean {
+  return typeof wsPath === 'string' && wsPath.startsWith('ssh://');
+}
+
+// ScanRemoteSessions 扫描远端会话（ssh 工作区）；Workspace 已是 ssh Ref。
+export async function scanRemoteSessions(wsRef: string): Promise<Session[]> {
+  const a = app();
+  if (!a?.ScanRemoteSessions) return [];
+  return a.ScanRemoteSessions(wsRef);
+}
+
+// GetRemoteSessions 读远端会话扫描缓存（不触发扫描）
+export async function getRemoteSessions(wsRef: string): Promise<Session[]> {
+  const a = app();
+  if (!a?.GetRemoteSessions) return [];
+  return a.GetRemoteSessions(wsRef);
 }
 
 export async function getSessionPreview(id: string): Promise<SessionPreview> {

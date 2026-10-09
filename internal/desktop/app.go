@@ -146,6 +146,9 @@ type App struct {
 	// windowHidden 跟踪主窗口是否已收进托盘（wails v2.16 无 WindowIsVisible 可查）：
 	// 通知 dispatcher 据此决定要不要弹独立置顶气泡。
 	windowHidden bool
+
+	// remoteSessions 按 ssh 工作区 Ref 缓存远端会话扫描结果（与本地 index 隔离）。
+	remoteSessions remoteSessionsCache
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。

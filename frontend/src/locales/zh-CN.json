@@ -115,7 +115,13 @@
       "empty_path": "项目路径不能为空"
     },
     "remote": {
-      "git_unavailable": "远端未安装 git 或不可用"
+      "git_unavailable": "远端未安装 git 或不可用",
+      "sessions_not_ssh": "远端会话扫描仅适用于 ssh:// 工作区",
+      "sessions_scan_failed": "远端会话扫描失败：{{0}}",
+      "fs_no_runner": "远端文件系统执行器未配置",
+      "fs_empty_path": "远端路径为空",
+      "fs_parse": "解析远端命令输出失败：{{0}}",
+      "path_escape": "路径越出远端工作区根目录"
     },
     "settings": {
       "providers_path_unavailable": "providers.yaml 路径不可用（未初始化完成）",

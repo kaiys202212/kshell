@@ -15,6 +15,9 @@ import type { ChatInfo, ChatPermissionRequest, TerminalInfo, Workspace } from '.
 const mocks = vi.hoisted(() => ({
   getWorkspaces: vi.fn(),
   getSessions: vi.fn(),
+  getRemoteSessions: vi.fn().mockResolvedValue([]),
+  scanRemoteSessions: vi.fn().mockResolvedValue([]),
+  isSSHWorkspaceRef: (p: string) => typeof p === 'string' && p.startsWith('ssh://'),
   getSessionPreview: vi.fn(),
   scanSessions: vi.fn(),
   onScanDone: vi.fn(),

@@ -80,6 +80,14 @@ func (Opencode) ThemeOverrides(theme appearance.Theme, cacheDir string) ([]strin
 	return nil, map[string]string{"OPENCODE_TUI_CONFIG": path}
 }
 
+// OpencodeSessionsSQL 返回枚举根会话的单行 SQL（本地/远端共用，勿拆行）。
+func OpencodeSessionsSQL() string { return opencodeSessionsSQL }
+
+// ParseOpencodeSessionsJSON 解析 `opencode db … --format json` 的 stdout。
+func ParseOpencodeSessionsJSON(raw []byte, dbPath string) ([]Session, error) {
+	return parseOpencodeSessions(raw, dbPath)
+}
+
 // EnumerateSessions 查询 opencode 的 SQLite 会话表。
 // bin 为空（只检测到配置目录、CLI 不在 PATH）时静默跳过：这不算扫描失败。
 func (Opencode) EnumerateSessions(home, bin string) ([]Session, error) {

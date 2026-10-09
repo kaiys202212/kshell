@@ -15,6 +15,9 @@ const msgs = (n: number) =>
 
 const mocks = vi.hoisted(() => ({
   getSessions: vi.fn(),
+  getRemoteSessions: vi.fn(),
+  scanRemoteSessions: vi.fn(),
+  isSSHWorkspaceRef: (p: string) => typeof p === 'string' && p.startsWith('ssh://'),
   onScanDone: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
@@ -43,6 +46,8 @@ beforeEach(() => {
     return () => {};
   });
   mocks.getSessions.mockResolvedValue(sessions);
+  mocks.getRemoteSessions.mockResolvedValue([]);
+  mocks.scanRemoteSessions.mockResolvedValue([]);
   useAppStore.setState({
     windowStatus: {},
     terminals: [],
@@ -493,6 +498,29 @@ describe('SessionList agent 活动图标', () => {
     fireEvent.click(within(row).getByRole('button', { name: tt('ui.session_list.restore') }));
     expect(onRestore).toHaveBeenCalledWith(expect.objectContaining({ ID: 's2' }));
     expect(within(row).queryByRole('button', { name: tt('ui.session_list.archive') })).not.toBeInTheDocument();
+  });
+
+  it('ssh 工作区走 ScanRemoteSessions，不调本地 GetSessions', async () => {
+    const ref = 'ssh://c1/home/u/proj';
+    const remote: Session[] = [
+      {
+        ID: 'r1',
+        ToolID: 'claude',
+        Workspace: ref,
+        Title: '远端会话',
+        CreatedAt: minutesAgo(3),
+        UpdatedAt: minutesAgo(1),
+        Messages: 2,
+        Path: '/home/u/.claude/projects/x/r1.jsonl',
+      },
+    ];
+    mocks.scanRemoteSessions.mockResolvedValue(remote);
+    render(
+      <SessionList workspacePath={ref} onSelectRow={onSelectRow} onActivate={onActivate} />,
+    );
+    expect(await screen.findByText('远端会话')).toBeInTheDocument();
+    expect(mocks.scanRemoteSessions).toHaveBeenCalledWith(ref);
+    expect(mocks.getSessions).not.toHaveBeenCalled();
   });
 });
 

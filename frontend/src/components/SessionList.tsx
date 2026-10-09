@@ -3,7 +3,13 @@
 // 数据流与首页一致：先渲染缓存（GetSessions），收到 "scan:done" 后重调刷新。
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { getSessions, onScanDone } from '../lib/api';
+import {
+  getRemoteSessions,
+  getSessions,
+  isSSHWorkspaceRef,
+  onScanDone,
+  scanRemoteSessions,
+} from '../lib/api';
 import type { ChatInfo, Session, TerminalInfo } from '../lib/api';
 import { formatRelativeTime } from '../lib/format';
 import { badgeFor } from '../lib/toolBadge';
@@ -111,10 +117,13 @@ export default function SessionList({
 }: Props) {
   const { t } = useTranslation();
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [remoteReady, setRemoteReady] = useState(false);
   const [query, setQuery] = useState('');
   const [toolFilter, setToolFilter] = useState<string | null>(null);
   const scanState = useAppStore((s) => s.scanState);
   const setScanState = useAppStore((s) => s.setScanState);
+  const ssh = isSSHWorkspaceRef(workspacePath);
+  const listReady = ssh ? remoteReady : scanState === 'done';
   const terminals = useAppStore((s) => s.terminals);
   const chats = useAppStore((s) => s.chats);
   const chatPermissions = useAppStore((s) => s.chatPermissions);
@@ -124,22 +133,47 @@ export default function SessionList({
 
   useEffect(() => {
     let cancelled = false;
-    const refresh = () =>
-      getSessions()
+    if (ssh) setRemoteReady(false);
+    const refresh = () => {
+      if (ssh) {
+        // 打开/切换到 ssh 工作区时走远端扫描；失败则回退读缓存。
+        return scanRemoteSessions(workspacePath)
+          .then((list) => {
+            if (!cancelled) {
+              setSessions(list);
+              setRemoteReady(true);
+            }
+          })
+          .catch(() =>
+            getRemoteSessions(workspacePath)
+              .then((list) => {
+                if (!cancelled) {
+                  setSessions(list);
+                  setRemoteReady(true);
+                }
+              })
+              .catch(() => {
+                if (!cancelled) setRemoteReady(true);
+              }),
+          );
+      }
+      return getSessions()
         .then((list) => {
           if (!cancelled) setSessions(list);
         })
         .catch(() => {});
-    refresh();
+    };
+    void refresh();
     const offScan = onScanDone(() => {
       setScanState('done');
-      void refresh();
+      // 本地 scan:done 只刷新本地会话列表；远端列表由本 effect 的 workspacePath 驱动。
+      if (!ssh) void refresh();
     });
     return () => {
       cancelled = true;
       offScan();
     };
-  }, [setScanState]);
+  }, [workspacePath, ssh, setScanState]);
 
   const target = normalizeWorkspacePath(workspacePath);
   const pooled = useMemo(() => {
@@ -203,7 +237,7 @@ export default function SessionList({
       {visible.length === 0 ? (
         query.trim() ? (
           <EmptyState title={t('ui.session_list.no_match')} />
-        ) : scanState !== 'done' ? (
+        ) : !listReady ? (
           <div className="flex flex-col gap-2">
             <Skeleton className="h-16 rounded border border-border" />
             <Skeleton className="h-16 rounded border border-border" />
