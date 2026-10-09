@@ -307,3 +307,111 @@ func TestProjectStoreDeletedNewestFirst(t *testing.T) {
 		t.Fatalf("最近删除的应排最前: %+v", got)
 	}
 }
+
+func TestProjectStoreSSHRoundTrip(t *testing.T) {
+	st, path := newProjectStore(t)
+	if err := st.AddEntry(ProjectEntry{Kind: KindSSH, ConnID: "c1", Path: "/home/u/p"}); err != nil {
+		t.Fatal(err)
+	}
+	other := NewProjectStore(path)
+	if err := other.Load(); err != nil {
+		t.Fatal(err)
+	}
+	entries := other.ManualEntries()
+	if len(entries) != 1 || entries[0].Kind != KindSSH || entries[0].ConnID != "c1" || entries[0].Path != "/home/u/p" {
+		t.Fatalf("%+v", entries)
+	}
+}
+
+func TestApplyProjectsAppendsSSHWithoutExists(t *testing.T) {
+	st, _ := newProjectStore(t)
+	if err := st.AddEntry(ProjectEntry{Kind: KindSSH, ConnID: "c1", Path: "/r"}); err != nil {
+		t.Fatal(err)
+	}
+	out := ApplyProjects(nil, st, func(string) bool { return false })
+	if len(out) != 1 || out[0].Kind != KindSSH || out[0].Path != "/r" || out[0].ConnID != "c1" || out[0].Source != "manual" {
+		t.Fatalf("%+v", out)
+	}
+}
+
+func TestProjectStoreLoadsLegacyManualStrings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "projects.yaml")
+	legacy := "manual:\n  - D:\\foo\n  - D:\\bar\n"
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := NewProjectStore(path)
+	if err := st.Load(); err != nil {
+		t.Fatal(err)
+	}
+	entries := st.ManualEntries()
+	if len(entries) != 2 {
+		t.Fatalf("应读入两条本地项: %+v", entries)
+	}
+	for _, e := range entries {
+		if e.Kind != KindLocal && e.Kind != "" {
+			t.Fatalf("旧字符串项应为 local: %+v", e)
+		}
+		if e.Path == "" {
+			t.Fatalf("path 为空: %+v", e)
+		}
+	}
+	if got := st.Manual(); len(got) != 2 {
+		t.Fatalf("Manual 兼容: %v", got)
+	}
+}
+
+func TestProjectStoreSSHHideRestoreByKey(t *testing.T) {
+	st, path := newProjectStore(t)
+	e := ProjectEntry{Kind: KindSSH, ConnID: "c1", Path: "/home/u/../u/proj//"}
+	if err := st.AddEntry(e); err != nil {
+		t.Fatal(err)
+	}
+	ref := FormatSSHRef("c1", "/home/u/proj")
+	if err := st.Hide(ref); err != nil {
+		t.Fatal(err)
+	}
+	if !st.IsDeleted(ref) {
+		t.Fatal("ssh Hide 后应按归一化 key 判定已删除")
+	}
+	// 不同写法同一远端路径
+	if !st.IsDeleted(FormatSSHRef("c1", "/home/u/proj/")) {
+		t.Fatal("远端路径归一化后应匹配")
+	}
+	if st.IsDeleted(FormatSSHRef("c2", "/home/u/proj")) {
+		t.Fatal("不同 conn 不应匹配")
+	}
+
+	other := NewProjectStore(path)
+	if err := other.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if !other.IsDeleted(ref) {
+		t.Fatal("deleted ssh 条目应可从 YAML 重载")
+	}
+	if err := other.Restore(ref); err != nil {
+		t.Fatal(err)
+	}
+	if other.IsDeleted(ref) {
+		t.Fatal("Restore 后应不在回收站")
+	}
+	out := ApplyProjects(nil, other, func(string) bool { return false })
+	if len(out) != 1 || out[0].Kind != KindSSH || out[0].Path != "/home/u/proj" {
+		t.Fatalf("还原后 ssh 项应回到列表: %+v", out)
+	}
+}
+
+func TestProjectStoreLoadsLegacyDeleted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "projects.yaml")
+	legacy := "deleted:\n  - path: D:\\old\n    at: 2026-01-01T00:00:00Z\n"
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := NewProjectStore(path)
+	if err := st.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if !st.IsDeleted(`D:\old`) {
+		t.Fatal("旧 deleted 字符串 path 应可识别")
+	}
+}
