@@ -91,10 +91,12 @@ export interface FilePreview {
 }
 
 // desktop.FileBytes 的 JSON 形态（internal/desktop/files_bytes.go）。
+// AbsPath 仅本地工作区有值（SSH 远程为空），供 HTML 浏览页签算 <base> 地址。
 export interface FileBytes {
   Base64: string;
   Mime: string;
   Size: number;
+  AbsPath: string;
 }
 
 // remote.Result 的 JSON 形态（internal/remote/exec.go）；

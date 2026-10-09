@@ -1,7 +1,7 @@
 // 文件区页签状态：至多一个可替换的「预览」页签；双击或开始编辑后固定。
 import i18next from 'i18next';
 
-export type FileTabKind = 'file' | 'diff';
+export type FileTabKind = 'file' | 'diff' | 'browser';
 
 export type FileTab = {
   path: string;
@@ -40,6 +40,16 @@ export function commitDiffTabPath(repoRel: string, hash: string): string {
   return `diff:commit:${encodeURIComponent(repoRel)}:${encodeURIComponent(hash)}`;
 }
 
+// 浏览器页签：path 键用 html: 前缀避免与真实文件页签冲突
+export function browserTabPath(relPath: string): string {
+  return `html:${encodeURIComponent(relPath)}`;
+}
+
+export function parseBrowserTabPath(key: string): string | null {
+  if (!key.startsWith('html:')) return null;
+  return decodeURIComponent(key.slice('html:'.length));
+}
+
 export function parseCommitDiffTabPath(
   key: string,
 ): { repoRel: string; hash: string } | null {
@@ -65,6 +75,8 @@ export function fileTabLabel(path: string): string {
     const short = commit.hash.slice(0, 7);
     return i18next.t('ui.files.commit_diff_tab', { hash: short });
   }
+  const browserRel = parseBrowserTabPath(path);
+  if (browserRel !== null) return baseName(browserRel);
   const diff = parseDiffTabPath(path);
   if (diff) {
     const name = baseName(diff.path);

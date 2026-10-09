@@ -57,6 +57,7 @@ import {
   emptyFileTabs,
   openPinned,
   openPreview,
+  browserTabPath,
   commitDiffTabPath,
   diffTabPath,
 } from '../lib/fileTabs';
@@ -350,6 +351,12 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         ? commitDiffTabPath(spec.repoRel, spec.hash)
         : diffTabPath(spec.side, spec.repoRel, spec.path);
     setFileTabs((s) => (spec.preview ? openPreview(s, key, 'diff') : openPinned(s, key, 'diff')));
+    selectCenterTab(FILES_TAB);
+  };
+
+  // html 文件的浏览器页签（沙箱 iframe 渲染，固定不挤占预览位）
+  const openBrowserTab = (path: string) => {
+    setFileTabs((s) => openPinned(s, browserTabPath(path), 'browser'));
     selectCenterTab(FILES_TAB);
   };
 
@@ -675,6 +682,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
               dirty={fileDirty}
               onChange={setFileTabs}
               onDirty={(path, d) => setFileDirty((prev) => ({ ...prev, [path]: d }))}
+              onOpenBrowser={openBrowserTab}
             />
           </div>
           <div

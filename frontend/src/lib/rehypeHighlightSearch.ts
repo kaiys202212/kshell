@@ -1,7 +1,7 @@
 // Markdown 渲染检索：rehype 插件把命中文本包成 <mark data-md-hit="n">。
 // 只在单个文本节点内匹配（跨内联标签的长词不命中），命中序号跨节点连续递增；
 // 超出 MD_SEARCH_LIMIT 后剩余命中保留原文不再标记，计数经 totalRef 交还调用方。
-import type { Nodes, Parent, Text } from 'hast';
+import type { Element, Nodes, Root, Text } from 'hast';
 
 export const MD_SEARCH_LIMIT = 500;
 
@@ -15,7 +15,7 @@ export function rehypeHighlightSearch(
     if (!kw) return;
     let hits = 0;
 
-    const visit = (parent: Parent): void => {
+    const visit = (parent: Element | Root): void => {
       const next: Nodes[] = [];
       for (const child of parent.children) {
         if (child.type === 'text') {
@@ -49,10 +49,10 @@ export function rehypeHighlightSearch(
           next.push(child);
           continue;
         }
-        if (child.type === 'element' || child.type === 'root') visit(child as Parent);
+        if (child.type === 'element') visit(child);
         next.push(child);
       }
-      parent.children = next;
+      parent.children = next as typeof parent.children;
     };
 
     if (tree.type === 'root') visit(tree);

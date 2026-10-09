@@ -446,6 +446,8 @@
       "md_search_prev": "上一个命中",
       "md_search_next": "下一个命中",
       "md_search_clear": "清除检索",
+      "open_browser_tab": "浏览器预览",
+      "html_preview_reload": "重新加载",
       "loading": "加载中…",
       "pdf_read_failed": "无法读取 PDF",
       "image_read_failed": "无法读取图片",

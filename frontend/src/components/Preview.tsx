@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { previewFile, readFileForEdit, saveFile } from '../lib/api';
 import type { FilePreview } from '../lib/api';
 import { backendError, translateBackend } from '../lib/errors';
-import { isEditableKind, previewKind, type PreviewKind } from '../lib/fileKind';
+import { isEditableKind, isHtmlPath, previewKind, type PreviewKind } from '../lib/fileKind';
 import { refreshGitStatus } from '../lib/git';
 import { useAppStore } from '../state/store';
 import CodeEditor from './CodeEditor';
@@ -42,11 +42,14 @@ export default function Preview({
   path,
   onDirtyChange,
   onEdited,
+  onOpenBrowser,
 }: {
   wsPath: string;
   path: string | null;
   onDirtyChange?: (dirty: boolean) => void;
   onEdited?: () => void;
+  /** html/htm 源码预览顶部「浏览器预览」按钮回调（打开浏览器页签）。 */
+  onOpenBrowser?: (path: string) => void;
 }) {
   const { t } = useTranslation();
   const [data, setData] = useState<FilePreview | null>(null);
@@ -207,6 +210,20 @@ export default function Preview({
   const showMdToggle = isMarkdown && !!path && !loading && !error;
   const showWritableEditor =
     editable && path && (!isMarkdown || mdViewMode === 'source') && !mdSourceLoading;
+  // html/htm：源码可编辑，另提供浏览器页签渲染入口
+  const showBrowserButton = !!path && isHtmlPath(path) && !loading && !error;
+
+  const browserBar = showBrowserButton && path && onOpenBrowser && (
+    <div className="flex shrink-0 items-center border-b border-border px-2 py-1">
+      <Button
+        size="sm"
+        variant="secondary"
+        onClick={() => onOpenBrowser(path)}
+      >
+        {t('ui.files.open_browser_tab')}
+      </Button>
+    </div>
+  );
 
   const bodyContent = () => {
     if (!path) return null;
@@ -275,6 +292,7 @@ export default function Preview({
         className="flex min-h-0 flex-1 flex-col overflow-hidden"
       >
         {!path && <EmptyState title={t('ui.files.pick_from_tree')} />}
+        {browserBar}
         {loading && (
           <div className="flex flex-col gap-2">
             {[0, 1, 2, 3, 4, 5].map((i) => (

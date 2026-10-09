@@ -61,6 +61,9 @@ func RunDesktop(src fs.FS) error {
 		WindowStartState: options.Maximised,
 		AssetServer: &assetserver.Options{
 			Assets: src,
+			// HTML 浏览器页签的子资源通道：Wails 仅在内嵌资产未命中时回调此 Handler，
+			// 内部有工作区根限定 + 扩展名白名单（见 internal/desktop/files_asset.go）。
+			Handler: desktopApp.WorkspaceFileHandler(),
 		},
 		OnStartup:     desktopApp.Startup,
 		OnBeforeClose: desktopApp.BeforeClose,

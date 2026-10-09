@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { tt } from '../test/i18n';
 import {
   activateTab,
+  browserTabPath,
   closeTab,
   commitDiffTabPath,
   diffTabPath,
@@ -9,6 +10,7 @@ import {
   fileTabLabel,
   openPinned,
   openPreview,
+  parseBrowserTabPath,
   parseCommitDiffTabPath,
   parseDiffTabPath,
   pinTab,
@@ -110,5 +112,18 @@ describe('closeTab / activateTab', () => {
     const s = openPreview(file, diffTabPath('working', '', 'a.ts'), 'diff');
     expect(s.tabs).toHaveLength(2);
     expect(s.tabs[1].kind).toBe('diff');
+  });
+
+  it('browser 页签：path 键带 html: 前缀，标签取文件名，与文件页签互不挤掉', () => {
+    const key = browserTabPath('report/index.html');
+    expect(key).toBe('html:' + encodeURIComponent('report/index.html'));
+    expect(parseBrowserTabPath(key)).toBe('report/index.html');
+    expect(parseBrowserTabPath('plain.ts')).toBeNull();
+    expect(fileTabLabel(key)).toBe('index.html');
+
+    const file = openPinned(emptyFileTabs(), 'D:/ws/other.ts');
+    const s = openPreview(file, key, 'browser');
+    expect(s.tabs).toHaveLength(2);
+    expect(s.tabs[1].kind).toBe('browser');
   });
 });

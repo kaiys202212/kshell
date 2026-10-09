@@ -4,6 +4,7 @@ export type PreviewKind = 'text' | 'markdown' | 'image' | 'pdf' | 'binary';
 
 const MARKDOWN_EXT = new Set(['md', 'markdown', 'mdx']);
 const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico']);
+const HTML_EXT = new Set(['html', 'htm']);
 const TEXT_EXT = new Set([
   'ts',
   'tsx',
@@ -77,6 +78,11 @@ function isSpecialTextBasename(path: string): boolean {
 /** 文本/Markdown 默认可编辑；图、PDF、二进制仅预览。 */
 export function isEditableKind(kind: PreviewKind): boolean {
   return kind === 'text' || kind === 'markdown';
+}
+
+/** html/htm：源码可编辑，另可开浏览器页签渲染预览。 */
+export function isHtmlPath(path: string): boolean {
+  return HTML_EXT.has(fileExtension(path));
 }
 
 export function previewKind(path: string): PreviewKind {

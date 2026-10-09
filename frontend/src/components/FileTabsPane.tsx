@@ -4,6 +4,7 @@ import { cn } from '../lib/cn';
 import {
   closeTab,
   fileTabLabel,
+  parseBrowserTabPath,
   parseCommitDiffTabPath,
   parseDiffTabPath,
   pinTab,
@@ -12,6 +13,7 @@ import {
 import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
 import GitCommitDiffView from './GitCommitDiffView';
 import GitDiffView from './GitDiffView';
+import HtmlBrowserPreview from './HtmlBrowserPreview';
 import Preview from './Preview';
 
 const subTabBase = `group ${TAB_BASE} h-7 max-w-44 text-xs`;
@@ -22,12 +24,14 @@ export default function FileTabsPane({
   dirty,
   onChange,
   onDirty,
+  onOpenBrowser,
 }: {
   wsPath: string;
   state: FileTabsState;
   dirty: Record<string, boolean>;
   onChange: (next: FileTabsState) => void;
   onDirty: (path: string, isDirty: boolean) => void;
+  onOpenBrowser?: (path: string) => void;
 }) {
   const { t: tr } = useTranslation();
   const closeOne = (path: string) => {
@@ -95,13 +99,16 @@ export default function FileTabsPane({
         {state.tabs.map((t) => {
           const diff = parseDiffTabPath(t.path);
           const commitDiff = parseCommitDiffTabPath(t.path);
+          const browserRel = parseBrowserTabPath(t.path);
           return (
           <div
             key={t.path}
             className={cn('h-full', state.activePath !== t.path && 'hidden')}
             style={{ animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' }}
           >
-            {commitDiff ? (
+            {browserRel !== null ? (
+              <HtmlBrowserPreview wsPath={wsPath} path={browserRel} />
+            ) : commitDiff ? (
               <GitCommitDiffView
                 wsPath={wsPath}
                 repoRel={commitDiff.repoRel}
@@ -117,6 +124,7 @@ export default function FileTabsPane({
                 onEdited={() => {
                   if (t.preview) onChange(pinTab(state, t.path));
                 }}
+                onOpenBrowser={onOpenBrowser}
               />
             )}
           </div>

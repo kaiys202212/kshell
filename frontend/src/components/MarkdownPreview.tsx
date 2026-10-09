@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import type { Pluggable } from 'unified';
 import { MD_SEARCH_LIMIT, rehypeHighlightSearch } from '../lib/rehypeHighlightSearch';
 import { handleAnchorClick } from '../lib/openHref';
 
@@ -35,8 +36,8 @@ export default function MarkdownPreview({
 
   // 注意元组形式：react-markdown 会把 rehypePlugins 里的函数当插件再以参数调用，
   // 必须传 [工厂, query, totalRef]，工厂内部才返回真正的 transformer
-  const rehypePlugins = useMemo(
-    () => (query ? [[rehypeHighlightSearch, query, totalRef]] : []),
+  const rehypePlugins = useMemo<Pluggable[]>(
+    () => (query ? [[rehypeHighlightSearch, query, totalRef] as Pluggable] : []),
     [query],
   );
 
