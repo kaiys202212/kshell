@@ -157,17 +157,25 @@ export default function SessionList({
           .catch((scanErr: unknown) =>
             getRemoteSessions(workspacePath)
               .then((list) => {
-                if (!cancelled) {
-                  setSessions(list);
+                if (cancelled) return;
+                setSessions(list);
+                setRemoteReady(true);
+                // Go 侧 getRemoteSessions 通常不 reject：空数组视为不可达，勿依赖 catch。
+                if (list.length > 0) {
+                  // 有缓存：展示列表并 toast；不 clearUnreachable（扫描未成功）
                   setRemoteFailed(false);
-                  setRemoteReady(true);
-                  clearUnreachable(workspacePath);
-                  // 扫描失败但有缓存：仍 toast，不标不可达（列表可用）
                   notify(
                     t('ui.session_list.remote_scan_failed', { err: backendError(scanErr) }),
                     'error',
                   );
+                  return;
                 }
+                setRemoteFailed(true);
+                markUnreachable(workspacePath);
+                notify(
+                  t('ui.session_list.remote_scan_failed', { err: backendError(scanErr) }),
+                  'error',
+                );
               })
               .catch((cacheErr: unknown) => {
                 if (!cancelled) {

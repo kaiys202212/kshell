@@ -541,5 +541,50 @@ describe('SessionList agent 活动图标', () => {
       ),
     ).toBe(true);
   });
+
+  it('ssh 扫描失败且 getRemoteSessions 返回空数组时仍标不可达', async () => {
+    const ref = 'ssh://c1/home/u/empty-cache';
+    mocks.scanRemoteSessions.mockRejectedValueOnce(new Error('err.ssh.exec_failed|timeout'));
+    mocks.getRemoteSessions.mockResolvedValueOnce([]);
+    render(
+      <SessionList workspacePath={ref} onSelectRow={onSelectRow} onActivate={onActivate} />,
+    );
+    expect(await screen.findByText(tt('ui.session_list.remote_unreachable'))).toBeInTheDocument();
+    expect(useAppStore.getState().unreachableWorkspaces[ref]).toBe(true);
+    expect(
+      useAppStore.getState().toasts.some(
+        (t) => t.tone === 'error' && t.title.includes(tt('ui.session_list.remote_scan_failed').split('{{')[0]),
+      ),
+    ).toBe(true);
+  });
+
+  it('ssh 扫描失败但有缓存时展示列表、toast，且不 clearUnreachable', async () => {
+    const ref = 'ssh://c1/home/u/cached';
+    const remote: Session[] = [
+      {
+        ID: 'r-cache',
+        ToolID: 'claude',
+        Workspace: ref,
+        Title: '缓存会话',
+        CreatedAt: minutesAgo(3),
+        UpdatedAt: minutesAgo(1),
+        Messages: 2,
+        Path: '/home/u/.claude/projects/x/r-cache.jsonl',
+      },
+    ];
+    useAppStore.setState({ unreachableWorkspaces: { [ref]: true } });
+    mocks.scanRemoteSessions.mockRejectedValueOnce(new Error('err.ssh.exec_failed|timeout'));
+    mocks.getRemoteSessions.mockResolvedValueOnce(remote);
+    render(
+      <SessionList workspacePath={ref} onSelectRow={onSelectRow} onActivate={onActivate} />,
+    );
+    expect(await screen.findByText('缓存会话')).toBeInTheDocument();
+    expect(useAppStore.getState().unreachableWorkspaces[ref]).toBe(true);
+    expect(
+      useAppStore.getState().toasts.some(
+        (t) => t.tone === 'error' && t.title.includes(tt('ui.session_list.remote_scan_failed').split('{{')[0]),
+      ),
+    ).toBe(true);
+  });
 });
 
