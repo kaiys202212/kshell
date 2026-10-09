@@ -119,6 +119,43 @@ describe('SshPanel', () => {
     expect(onOpenRemote).toHaveBeenCalledWith(expect.objectContaining({ ID: 'c1', Name: '生产机' }));
   });
 
+  it('查看全部用空 wsID 拉全局连接，切回当前项目再带工作区路径', async () => {
+    const ws = 'D:\\proj-a';
+    const globalConns: SshConnection[] = [
+      ...conns,
+      {
+        ID: 'c3',
+        Name: '其他项目机',
+        Host: '10.0.0.9',
+        User: 'ops',
+        Port: 22,
+        IdentityFile: '',
+        Password: '',
+        Workspace: 'D:\\proj-b',
+        Source: 'manual',
+        SourceFile: '',
+        Verified: false,
+      },
+    ];
+    mocks.listConnections.mockImplementation(async (wsID: string) => (wsID === '' ? globalConns : conns));
+    render(<SshPanel wsPath={ws} />);
+    await findRow('生产机');
+    expect(mocks.listConnections.mock.calls[0][0]).toBe(ws);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.ssh.view_all') }));
+    });
+    expect(mocks.listConnections).toHaveBeenCalledWith('');
+    expect(await screen.findByText('其他项目机')).toBeInTheDocument();
+    expect(screen.getByText('proj-b')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.ssh.view_current') }));
+    });
+    expect(mocks.listConnections.mock.calls.at(-1)?.[0]).toBe(ws);
+    expect(screen.queryByText('其他项目机')).not.toBeInTheDocument();
+  });
+
   it('点「编辑」打开表单并可保存', async () => {
     render(<SshPanel wsPath="D:\\proj-a" />);
     const row = await findRow('生产机');
