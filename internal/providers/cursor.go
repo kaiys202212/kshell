@@ -239,9 +239,9 @@ func (Cursor) ResumeCmd(s Session, bin string) Launch {
 //	cursor --folder-uri "vscode-remote://ssh-remote+user@host/abs/path"
 //	或 cursor --remote ssh-remote+user@host /abs/path
 //
-// kshell Detect 的 bin 通常是 cursor-agent（CLI agent），对本 flag 的支持未完全确认；
-// 若本机 bin 实为 Cursor IDE / `cursor` 启动器则可用。协议路径失败时由上层
-// 在无本地 bin 时降级 RemoteSSHRunner（远端 cursor-agent）。
+// kshell Detect 的 bin 通常是 cursor-agent（CLI agent），不支持本 flag；
+// 桌面层 tryRemoteLaunch 会跳过 agent bin，仅当本机 bin 像 IDE/`cursor` 时走此路径。
+// 否则降级 RemoteSSHRunner（远端 cursor-agent）。
 func (Cursor) NewRemoteSessionCmd(hostTarget, remotePath, bin string) (Launch, error) {
 	uri := SSHRemoteFolderURI(hostTarget, remotePath)
 	return Launch{Path: bin, Args: []string{"--folder-uri", uri}}, nil

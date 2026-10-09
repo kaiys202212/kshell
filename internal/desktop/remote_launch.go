@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -12,6 +13,12 @@ import (
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/remote"
 )
+
+// isCursorAgentBin 判断本机 bin 是否为 cursor-agent（CLI），而非 IDE/`cursor` 启动器。
+func isCursorAgentBin(bin string) bool {
+	base := strings.ToLower(filepath.Base(strings.TrimSpace(bin)))
+	return strings.Contains(base, "cursor-agent")
+}
 
 func (a *App) findSSH() (string, error) {
 	if fn := a.snapshot().FindSSH; fn != nil {
@@ -152,13 +159,15 @@ func (a *App) tryRemoteLaunch(
 	remotePath string,
 	s *providers.Session,
 ) (providers.Launch, error) {
-	// 官方协议：本机 bin 可用
+	// 官方协议：本机 bin 可用。Cursor 的 cursor-agent 不支持 --folder-uri，跳过走 ssh。
 	if rl, ok := p.(providers.RemoteLauncher); ok && tool.Installed && strings.TrimSpace(tool.BinPath) != "" {
 		bin := tool.BinPath
-		if s == nil {
-			return rl.NewRemoteSessionCmd(conn.Target(), remotePath, bin)
+		if !(p.ID() == "cursor" && isCursorAgentBin(bin)) {
+			if s == nil {
+				return rl.NewRemoteSessionCmd(conn.Target(), remotePath, bin)
+			}
+			return rl.ResumeRemoteCmd(conn.Target(), remotePath, *s, bin)
 		}
-		return rl.ResumeRemoteCmd(conn.Target(), remotePath, *s, bin)
 	}
 
 	runner, ok := p.(providers.RemoteSSHRunner)

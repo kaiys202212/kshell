@@ -69,6 +69,10 @@ func TestWorkspaceByIDFindsSSHRef(t *testing.T) {
 
 func TestRemoteNewSessionCursorUsesFolderURI(t *testing.T) {
 	app, _, launch, ref := newRemoteLaunchEnv(t, nil, []providers.Provider{providers.Cursor{}, providers.Claude{}})
+	// IDE / cursor 启动器才走 folder-uri；默认桩是 cursor-agent，需改成 cursor。
+	setTools(t, app, []discovery.Tool{
+		{ID: "cursor", Name: "Cursor", BinPath: `C:\Program Files\Cursor\cursor.exe`, Installed: true},
+	})
 
 	if err := app.NewSessionWithTool(ref, "cursor"); err != nil {
 		t.Fatalf("NewSessionWithTool: %v", err)
@@ -83,6 +87,38 @@ func TestRemoteNewSessionCursorUsesFolderURI(t *testing.T) {
 	}
 	if !strings.Contains(stmt, "vscode-remote://ssh-remote+root@10.0.0.8/home/u/proj") {
 		t.Fatalf("URI 拼装不符: %q", stmt)
+	}
+}
+
+func TestRemoteNewSessionCursorAgentSkipsFolderURI(t *testing.T) {
+	run := remotefs.Runner(func(_ context.Context, _ remote.Connection, cmd string, _ []byte) ([]byte, []byte, error) {
+		if strings.Contains(cmd, "command -v") && strings.Contains(cmd, "cursor-agent") {
+			return []byte("/usr/bin/cursor-agent\n"), nil, nil
+		}
+		return nil, nil, errors.New("unexpected: " + cmd)
+	})
+	app, backend, launch, ref := newRemoteLaunchEnv(t, run, []providers.Provider{providers.Cursor{}, providers.Claude{}})
+	// 默认工具桩 BinPath=cursor-agent：应跳过 RemoteLauncher，走 ssh 远端 CLI。
+	info, err := app.OpenWorkspaceTerminal(ref, "cursor", 80, 24)
+	if err != nil {
+		t.Fatalf("OpenWorkspaceTerminal: %v", err)
+	}
+	if info.Kind != terminal.KindNew || info.Workspace != ref {
+		t.Fatalf("info=%+v", info)
+	}
+	if len(launch.launches) != 0 {
+		t.Fatalf("cursor-agent 不应弹窗 folder-uri, launches=%v", launch.launches)
+	}
+	spec := backend.lastSpec()
+	if spec.Path != "ssh-bin" {
+		t.Fatalf("Path=%q, want ssh-bin", spec.Path)
+	}
+	joined := strings.Join(spec.Args, " ")
+	if !strings.Contains(joined, "cd '/home/u/proj'") || !strings.Contains(joined, "'/usr/bin/cursor-agent'") {
+		t.Fatalf("远端命令不符: %v", spec.Args)
+	}
+	if strings.Contains(joined, "--folder-uri") {
+		t.Fatalf("cursor-agent 路径不应含 folder-uri: %v", spec.Args)
 	}
 }
 
