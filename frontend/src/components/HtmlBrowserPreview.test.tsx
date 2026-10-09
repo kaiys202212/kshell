@@ -4,10 +4,11 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tt } from '../test/i18n';
-import HtmlBrowserPreview, { base64UrlUtf8, dirName, fileUrl, injectBase } from './HtmlBrowserPreview';
+import HtmlBrowserPreview, { base64UrlUtf8, dirName, injectBase } from './HtmlBrowserPreview';
 
 const mocks = vi.hoisted(() => ({
   readFileBytes: vi.fn(),
+  openInDefaultApp: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -56,34 +57,34 @@ describe('HtmlBrowserPreview', () => {
     await waitFor(() => expect(mocks.readFileBytes).toHaveBeenCalledTimes(2));
   });
 
-  it('「浏览器打开」按钮调系统默认浏览器打开 file:// URL', async () => {
-    const open = vi.fn();
-    vi.stubGlobal('runtime', { BrowserOpenURL: open });
+  it('「浏览器打开」按钮经 Go 绑定用默认应用打开本地文件（不走 file:// BrowserOpenURL）', async () => {
     mocks.readFileBytes.mockResolvedValue({
       Base64: b64('<p>x</p>'),
       Mime: '',
       Size: 3,
       AbsPath: 'D:\\proj\\a b.html',
     });
-    render(<HtmlBrowserPreview wsPath="D:\\proj" path="a b.html" />);
+    const ws = String.raw`D:\proj`;
+    render(<HtmlBrowserPreview wsPath={ws} path="a b.html" />);
     await screen.findByTestId('html-browser-frame');
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.files.html_preview_open_browser') }));
-    expect(open).toHaveBeenCalledWith('file:///D:/proj/a%20b.html');
+    const btn = screen.getByRole('button', { name: tt('ui.files.html_preview_open_browser') });
+    expect(btn).not.toBeDisabled();
+    fireEvent.click(btn);
+    expect(mocks.openInDefaultApp).toHaveBeenCalledWith(ws, 'a b.html');
   });
 
-  it('iframe postMessage open-external → 系统浏览器打开本页', async () => {
-    const open = vi.fn();
-    vi.stubGlobal('runtime', { BrowserOpenURL: open });
+  it('iframe postMessage open-external → OpenInDefaultApp', async () => {
     mocks.readFileBytes.mockResolvedValue({
       Base64: b64('<p>x</p>'),
       Mime: '',
       Size: 3,
       AbsPath: 'D:\\proj\\page.html',
     });
-    render(<HtmlBrowserPreview wsPath="D:\\proj" path="page.html" />);
+    const ws = String.raw`D:\proj`;
+    render(<HtmlBrowserPreview wsPath={ws} path="page.html" />);
     await screen.findByTestId('html-browser-frame');
     window.dispatchEvent(new MessageEvent('message', { data: { kshell: 'open-external' } }));
-    expect(open).toHaveBeenCalledWith('file:///D:/proj/page.html');
+    expect(mocks.openInDefaultApp).toHaveBeenCalledWith(ws, 'page.html');
   });
 
   it('base64UrlUtf8 与 Go RawURLEncoding 对齐（-/_、无填充、UTF-8）', () => {
@@ -95,11 +96,6 @@ describe('HtmlBrowserPreview', () => {
   it('dirName 兼容两种分隔符', () => {
     expect(dirName('D:\\ws\\a\\page.html')).toBe('D:\\ws\\a');
     expect(dirName('/home/u/a/page.html')).toBe('/home/u/a');
-  });
-
-  it('fileUrl 转换：盘符保留、逐段编码', () => {
-    expect(fileUrl('D:\\ws\\a b\\页.html')).toBe('file:///D:/ws/a%20b/%E9%A1%B5.html');
-    expect(fileUrl('/home/u/a.html')).toBe('file:///home/u/a.html');
   });
 
   it('injectBase：head 最前注入导航拦截脚本与 <base>；无 head 时插到 doctype 后', () => {

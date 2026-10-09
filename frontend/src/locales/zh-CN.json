@@ -64,6 +64,7 @@
       "move_into_self": "不能把目录移入其自身内部",
       "root_not_deletable": "工作区根目录不可删除",
       "dir_not_previewable": "不能预览目录",
+      "dir_not_openable": "不能用默认应用打开目录",
       "too_big_preview": "文件大小 {{0}} 字节超过预览上限 {{1}} 字节"
     },
     "workspace": {

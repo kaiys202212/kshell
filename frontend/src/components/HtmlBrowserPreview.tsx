@@ -1,12 +1,11 @@
 // HTML 浏览器页签：顶层文档以 blob URL 装进 sandbox iframe（不经过 Wails 资产
 // 服务器，无 runtime 注入、opaque origin），相对资源经 Go 侧受限通道
 // /__kshell-file/（工作区根限定 + 扩展名白名单）加载。
-// iframe 内点击链接/提交表单会被注入脚本拦截并通知父窗口，用系统默认浏览器
-// 打开本页（沙箱内导航会得到 403/空白，见设计文档已知取舍）。
+// iframe 内点击链接/提交表单会被注入脚本拦截并通知父窗口，用系统默认应用
+// 打开本页（不走 BrowserOpenURL(file://)——Wails 校验会拒绝 file scheme）。
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { readFileBytes } from '../lib/api';
-import { openExternal } from '../lib/openHref';
+import { openInDefaultApp, readFileBytes } from '../lib/api';
 import { backendError } from '../lib/errors';
 import { Button } from './ui/button';
 
@@ -22,15 +21,6 @@ export function base64UrlUtf8(s: string): string {
 export function dirName(abs: string): string {
   const i = Math.max(abs.lastIndexOf('\\'), abs.lastIndexOf('/'));
   return i > 0 ? abs.slice(0, i) : abs;
-}
-
-// 绝对路径 → file:// URL（逐段编码；盘符段保留冒号，浏览器要求 file:///D:/ 形态）
-export function fileUrl(abs: string): string {
-  const parts = abs.replace(/\\/g, '/').split('/').filter((s) => s !== '');
-  const hasDrive = /^[a-zA-Z]:$/.test(parts[0] ?? '');
-  const drive = hasDrive ? parts[0] : null;
-  const segs = (hasDrive ? parts.slice(1) : parts).map(encodeURIComponent);
-  return `file:///${drive ? `${drive}/` : ''}${segs.join('/')}`;
 }
 
 // 注入 head：storage polyfill（opaque origin 下访问 localStorage/cookie 会抛
@@ -87,19 +77,26 @@ export default function HtmlBrowserPreview({
   const [missingBinding, setMissingBinding] = useState(false);
   const [loading, setLoading] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
+  // 用 state 驱动「浏览器打开」可点态（ref 不触发重渲染，会导致按钮一直 disabled）
+  const [ready, setReady] = useState(false);
   const urlRef = useRef<string | null>(null);
-  const fileUrlRef = useRef<string | null>(null);
 
-  // iframe 内导航/表单被拦截后 postMessage 到此，改用系统默认浏览器打开本页
+  const openLocal = () => {
+    void openInDefaultApp(wsPath, path).catch(() => {
+      /* 打开失败时静默：系统侧偶发，避免打断预览 */
+    });
+  };
+
+  // iframe 内导航/表单被拦截后 postMessage 到此，改用系统默认应用打开本页
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
       if ((e.data as { kshell?: string } | null)?.kshell === 'open-external') {
-        if (fileUrlRef.current) openExternal(fileUrlRef.current);
+        void openInDefaultApp(wsPath, path).catch(() => {});
       }
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, []);
+  }, [wsPath, path]);
 
   useEffect(() => {
     let cancelled = false;
@@ -107,6 +104,7 @@ export default function HtmlBrowserPreview({
     setError('');
     setMissingBinding(false);
     setBlobUrl(null);
+    setReady(false);
     readFileBytes(wsPath, path)
       .then((data) => {
         if (cancelled) return;
@@ -114,7 +112,6 @@ export default function HtmlBrowserPreview({
           setMissingBinding(true);
           return;
         }
-        fileUrlRef.current = fileUrl(data.AbsPath);
         const dir = dirName(data.AbsPath);
         const baseHref = `${window.location.origin}/__kshell-file/${base64UrlUtf8(dir)}/`;
         const text = new TextDecoder().decode(
@@ -125,6 +122,7 @@ export default function HtmlBrowserPreview({
         if (urlRef.current) URL.revokeObjectURL(urlRef.current);
         urlRef.current = url;
         setBlobUrl(url);
+        setReady(true);
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(backendError(e));
@@ -150,8 +148,8 @@ export default function HtmlBrowserPreview({
         <Button
           size="sm"
           variant="secondary"
-          disabled={loading || !fileUrlRef.current}
-          onClick={() => fileUrlRef.current && openExternal(fileUrlRef.current)}
+          disabled={loading || !ready}
+          onClick={openLocal}
         >
           {t('ui.files.html_preview_open_browser')}
         </Button>

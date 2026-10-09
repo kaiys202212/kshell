@@ -64,6 +64,7 @@
       "move_into_self": "Cannot move a directory into itself",
       "root_not_deletable": "The workspace root cannot be deleted",
       "dir_not_previewable": "Cannot preview a directory",
+      "dir_not_openable": "Cannot open a directory with the default app",
       "too_big_preview": "File size {{0}} bytes exceeds preview limit {{1}} bytes"
     },
     "workspace": {

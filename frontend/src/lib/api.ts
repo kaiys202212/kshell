@@ -458,6 +458,7 @@ interface AppBindings {
   StartFileWatch(wsPath: string): Promise<void>;
   StopFileWatch(wsPath: string): void;
   RevealInExplorer(wsPath: string, path: string): Promise<void>;
+  OpenInDefaultApp(wsPath: string, path: string): Promise<void>;
   RenameEntry(wsPath: string, relPath: string, newName: string): Promise<string>;
   CreateEntry(wsPath: string, dirRelPath: string, name: string, isDir: boolean): Promise<string>;
   DeleteEntry(wsPath: string, relPath: string): Promise<void>;
@@ -723,6 +724,14 @@ export async function revealInExplorer(wsPath: string, path: string): Promise<vo
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
   await a.RevealInExplorer(wsPath, path);
+}
+
+// OpenInDefaultApp 用系统默认应用打开工作区内本地文件（HTML → 浏览器等）。
+// 不走 BrowserOpenURL(file://)：Wails 校验拒绝 file scheme。无绑定抛错。
+export async function openInDefaultApp(wsPath: string, path: string): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.OpenInDefaultApp(wsPath, path);
 }
 
 // onFilesChanged 订阅工作区文件树变更（Go 侧 watch/刷新后推送），返回取消订阅函数。
