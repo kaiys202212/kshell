@@ -732,7 +732,7 @@
       "active_terminals_kind_ssh": "SSH",
       "active_terminals_workspace": "{{name}}",
       "pick_session": "从左侧会话列表选择会话查看预览",
-      "right_panel_aria": "文件、Git、SSH 与 Terminal 面板",
+      "right_panel_aria": "文件、Git、SSH 与终端列表面板",
       "resize_files": "调整文件面板宽度"
     }
   }
