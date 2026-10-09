@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -156,11 +157,16 @@ func nestedGitRoots(wsRoot string) []string {
 	return roots
 }
 
-// parsePorcelainZ 解析 porcelain v1 -z 输出：条目以 NUL 分隔，
+// parsePorcelainZ 本地路径语义（filepath）的 porcelain 解析。
+func parsePorcelainZ(data []byte, wsRoot, top string) map[string]string {
+	return ParsePorcelainZ(data, wsRoot, top, false)
+}
+
+// ParsePorcelainZ 解析 porcelain v1 -z 输出：条目以 NUL 分隔，
 // rename/copy 条目为「XY new\0old」两段（old 段丢弃，只标新路径）。
 // porcelain 路径相对仓库根（top），键要归一到相对工作区根（wsRoot）的 '/' 分隔路径；
-// 工作区之外的条目换算出 ../ 前缀键，前端按 relPath 查不到即自然忽略。
-func parsePorcelainZ(data []byte, wsRoot, top string) map[string]string {
+// slash=true 时按 POSIX path 归算（远端 ssh 工作区）。
+func ParsePorcelainZ(data []byte, wsRoot, top string, slash bool) map[string]string {
 	status := map[string]string{}
 	rest := data
 	for len(rest) > 0 {
@@ -174,7 +180,7 @@ func parsePorcelainZ(data []byte, wsRoot, top string) map[string]string {
 		if len(entry) < 4 {
 			continue
 		}
-		x, y, path := entry[0], entry[1], string(entry[3:])
+		x, y, p := entry[0], entry[1], string(entry[3:])
 		if x == 'R' || x == 'C' {
 			// 源路径占下一个 NUL 段，跳过
 			if i := bytes.IndexByte(rest, 0); i >= 0 {
@@ -183,24 +189,79 @@ func parsePorcelainZ(data []byte, wsRoot, top string) map[string]string {
 				rest = nil
 			}
 		}
-		if path == "" {
+		if p == "" {
 			continue
 		}
 		if code := statusFromXY(x, y); code != "" {
-			status[relKey(wsRoot, top, path)] = code
+			status[RelKey(wsRoot, top, p, slash)] = code
 		}
 	}
 	return status
 }
 
-// relKey 把 porcelain 路径（'/' 分隔、相对仓库根）换算成相对工作区根的键：
-// 先 join 到仓库根得绝对路径，再对工作区根取 rel。换算失败时原样返回。
-func relKey(wsRoot, top, path string) string {
-	rel, err := filepath.Rel(wsRoot, filepath.Join(top, filepath.FromSlash(path)))
+// RelKey 把 porcelain 路径（'/' 分隔、相对仓库根）换算成相对工作区根的键。
+// slash=false 走 filepath；slash=true 走 POSIX path（远端）。
+func RelKey(wsRoot, top, file string, slash bool) string {
+	if slash {
+		abs := path.Join(posixClean(top), file)
+		rel, err := posixRel(posixClean(wsRoot), abs)
+		if err != nil {
+			return file
+		}
+		if rel == "." {
+			return file
+		}
+		return rel
+	}
+	rel, err := filepath.Rel(wsRoot, filepath.Join(top, filepath.FromSlash(file)))
 	if err != nil {
-		return path
+		return file
 	}
 	return filepath.ToSlash(rel)
+}
+
+func posixClean(p string) string {
+	if p == "" {
+		return "/"
+	}
+	c := path.Clean(p)
+	if c == "." {
+		return "/"
+	}
+	if !strings.HasPrefix(c, "/") {
+		c = "/" + c
+	}
+	return c
+}
+
+// posixRel 计算 target 相对 base 的 POSIX 相对路径（二者须为绝对路径）。
+func posixRel(base, target string) (string, error) {
+	base = posixClean(base)
+	target = posixClean(target)
+	if base == target {
+		return ".", nil
+	}
+	bParts := strings.Split(strings.Trim(base, "/"), "/")
+	tParts := strings.Split(strings.Trim(target, "/"), "/")
+	if base == "/" {
+		bParts = nil
+	}
+	if target == "/" {
+		tParts = nil
+	}
+	i := 0
+	for i < len(bParts) && i < len(tParts) && bParts[i] == tParts[i] {
+		i++
+	}
+	var out []string
+	for j := i; j < len(bParts); j++ {
+		out = append(out, "..")
+	}
+	out = append(out, tParts[i:]...)
+	if len(out) == 0 {
+		return ".", nil
+	}
+	return strings.Join(out, "/"), nil
 }
 
 // statusFromXY 把 porcelain 的 XY 双字符码归约为前端要展示的六类。

@@ -152,6 +152,11 @@ func scmPorcelain(root string) ([]SCMEntry, bool, error) {
 }
 
 func parseSCMPorcelainZ(data []byte, wsRoot, top string) []SCMEntry {
+	return ParseSCMPorcelainZ(data, wsRoot, top, false)
+}
+
+// ParseSCMPorcelainZ 解析 SCM 用 porcelain（不含 ignored）；slash=true 为远端 POSIX。
+func ParseSCMPorcelainZ(data []byte, wsRoot, top string, slash bool) []SCMEntry {
 	var entries []SCMEntry
 	rest := data
 	for len(rest) > 0 {
@@ -164,7 +169,7 @@ func parseSCMPorcelainZ(data []byte, wsRoot, top string) []SCMEntry {
 		if len(entry) < 4 {
 			continue
 		}
-		x, y, path := entry[0], entry[1], string(entry[3:])
+		x, y, p := entry[0], entry[1], string(entry[3:])
 		if x == 'R' || x == 'C' {
 			if i := bytes.IndexByte(rest, 0); i >= 0 {
 				rest = rest[i+1:]
@@ -172,10 +177,10 @@ func parseSCMPorcelainZ(data []byte, wsRoot, top string) []SCMEntry {
 				rest = nil
 			}
 		}
-		if path == "" || (x == '!' && y == '!') {
+		if p == "" || (x == '!' && y == '!') {
 			continue
 		}
-		key := relKey(wsRoot, top, path)
+		key := RelKey(wsRoot, top, p, slash)
 		e := SCMEntry{Path: key, X: string(x), Y: string(y)}
 		e.Conflicted = statusFromXY(x, y) == "conflicted"
 		e.Untracked = x == '?' && y == '?'

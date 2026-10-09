@@ -114,6 +114,9 @@
       "empty_file": "项目文件路径为空",
       "empty_path": "项目路径不能为空"
     },
+    "remote": {
+      "git_unavailable": "远端未安装 git 或不可用"
+    },
     "settings": {
       "providers_path_unavailable": "providers.yaml 路径不可用（未初始化完成）",
       "yaml_parse_failed": "YAML 解析失败：{{0}}",

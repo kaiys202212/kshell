@@ -82,7 +82,12 @@ func Log(wsRoot, repoRel, mode, ref string, limit, skip int) ([]LogCommit, error
 	if err != nil {
 		return nil, gitErr(out, err)
 	}
-	return parseLog(out), nil
+	return ParseLog(out), nil
+}
+
+// ParseLog 解析 git log 的 NUL 分隔 pretty 格式（远端复用）。
+func ParseLog(out []byte) []LogCommit {
+	return parseLog(out)
 }
 
 func parseLog(out []byte) []LogCommit {
@@ -210,7 +215,12 @@ func CommitStatAt(wsRoot, repoRel, hash string) (CommitStat, error) {
 	if err != nil {
 		return CommitStat{}, gitErr(out, err)
 	}
-	return parseShortstat(string(out)), nil
+	return ParseShortstat(string(out)), nil
+}
+
+// ParseShortstat 解析 git show --shortstat 输出（远端复用）。
+func ParseShortstat(raw string) CommitStat {
+	return parseShortstat(raw)
 }
 
 func parseShortstat(raw string) CommitStat {

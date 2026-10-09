@@ -114,6 +114,9 @@
       "empty_file": "Project file path is empty",
       "empty_path": "Project path cannot be empty"
     },
+    "remote": {
+      "git_unavailable": "Git is not available on the remote host"
+    },
     "settings": {
       "providers_path_unavailable": "providers.yaml path is unavailable (not initialized yet)",
       "yaml_parse_failed": "YAML parse failed: {{0}}",

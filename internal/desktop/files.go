@@ -513,14 +513,21 @@ type GitStatusResult struct {
 
 // GitStatus 返回工作区的 git 状态（relPath → 状态码）；
 // 非 git 仓库返回 IsRepo=false，前端据此隐藏标记。
+// 远端无 git 时返回 err.remote.git_unavailable。
 func (a *App) GitStatus(wsPath string) (GitStatusResult, error) {
-	kind, local, _, err := a.parseWSRef(wsPath)
+	kind, local, remote, err := a.parseWSRef(wsPath)
 	if err != nil {
 		return GitStatusResult{}, err
 	}
 	if kind == discovery.KindSSH {
-		// Task6 再接远端 git；此前前端按非仓库隐藏标记
-		return GitStatusResult{IsRepo: false, Status: map[string]string{}, DirBranches: map[string]string{}}, nil
+		g := a.remoteGit(remote)
+		ctx, cancel := g.withTimeout(remoteGitStatusTimeout)
+		defer cancel()
+		rep, err := g.inspect(ctx)
+		if err != nil {
+			return GitStatusResult{}, err
+		}
+		return GitStatusResult{Status: rep.Status, IsRepo: rep.IsRepo, Branch: rep.Branch, DirBranches: rep.DirBranches}, nil
 	}
 	rep, err := workspace.InspectGit(local)
 	if err != nil {
