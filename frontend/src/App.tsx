@@ -281,7 +281,8 @@ function App() {
         e.preventDefault();
         const { activeTabId: current } = useAppStore.getState();
         if (current !== null && current !== SETTINGS_TAB_ID) {
-          window.dispatchEvent(new CustomEvent('kshell:focus-search'));
+          // cancelable：Markdown 预览可见时优先消费（打开其检索工具条）
+          window.dispatchEvent(new CustomEvent('kshell:focus-search', { cancelable: true }));
         } else if (current === null) {
           // 首页：聚焦工作区过滤框
           window.dispatchEvent(new CustomEvent('kshell:focus-home-filter'));

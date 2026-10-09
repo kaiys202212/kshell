@@ -1,4 +1,5 @@
 // MarkdownPreview：GFM 渲染 heading 等基础元素 / 渲染结果检索（高亮、计数、跳转）。
+// 检索工具条默认隐藏：搜索按钮或 Ctrl+F 事件（预览可见时优先消费）呼出。
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -9,7 +10,22 @@ import MarkdownPreview from './MarkdownPreview';
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  delete (HTMLElement.prototype as { offsetParent?: unknown }).offsetParent;
 });
+
+// jsdom 无布局，offsetParent 恒 undefined（视为不可见）；测试可见态用它打开
+function makeVisible() {
+  Object.defineProperty(HTMLElement.prototype, 'offsetParent', {
+    get() {
+      return document.body;
+    },
+    configurable: true,
+  });
+}
+
+// 打开检索工具条（搜索按钮）
+const openBar = () =>
+  fireEvent.click(screen.getByRole('button', { name: tt('ui.files.md_search_toggle') }));
 
 describe('MarkdownPreview', () => {
   it('渲染 # Hi 为 heading「Hi」', () => {
@@ -38,8 +54,36 @@ describe('MarkdownPreview', () => {
     expect(seen).toEqual([{ workspace: 'D:\\proj', path: 'D:\\proj\\README.md' }]);
   });
 
+  it('检索工具条默认隐藏（只有搜索按钮），点按钮呼出输入框', () => {
+    render(<MarkdownPreview markdown="hello" />);
+    expect(screen.queryByPlaceholderText(tt('ui.files.md_search_placeholder'))).toBeNull();
+    openBar();
+    expect(screen.getByTestId('md-search-bar')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: tt('ui.files.md_search_close') })).toBeInTheDocument();
+  });
+
+  it('Ctrl+F：预览可见时消费事件并呼出工具条（preventDefault 阻断会话过滤框）', async () => {
+    makeVisible();
+    render(<MarkdownPreview markdown="hello" />);
+    const ev = new CustomEvent('kshell:focus-search', { cancelable: true });
+    window.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText(tt('ui.files.md_search_placeholder'))).toBeInTheDocument(),
+    );
+  });
+
+  it('Ctrl+F：预览不可见（jsdom 默认）时不消费，交给会话过滤框', () => {
+    render(<MarkdownPreview markdown="hello" />);
+    const ev = new CustomEvent('kshell:focus-search', { cancelable: true });
+    window.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(screen.queryByPlaceholderText(tt('ui.files.md_search_placeholder'))).toBeNull();
+  });
+
   it('渲染检索：输入关键词后高亮命中并计数，大小写不敏感', async () => {
     render(<MarkdownPreview markdown="# alpha Beta\n\nbeta again" />);
+    openBar();
     const input = screen.getByPlaceholderText(tt('ui.files.md_search_placeholder'));
     fireEvent.change(input, { target: { value: 'beta' } });
 
@@ -50,6 +94,7 @@ describe('MarkdownPreview', () => {
 
   it('渲染检索：清空关键词后移除全部高亮', async () => {
     render(<MarkdownPreview markdown="hello world hello" />);
+    openBar();
     const input = screen.getByPlaceholderText(tt('ui.files.md_search_placeholder'));
     fireEvent.change(input, { target: { value: 'hello' } });
     await waitFor(() => expect(document.querySelectorAll('mark[data-md-hit]').length).toBe(2));
@@ -59,8 +104,22 @@ describe('MarkdownPreview', () => {
     expect(screen.queryByTestId('md-search-count')).toBeNull();
   });
 
+  it('渲染检索：关闭工具条清空检索态', async () => {
+    render(<MarkdownPreview markdown="hello hello world" />);
+    openBar();
+    fireEvent.change(screen.getByPlaceholderText(tt('ui.files.md_search_placeholder')), {
+      target: { value: 'hello' },
+    });
+    await waitFor(() => expect(document.querySelectorAll('mark[data-md-hit]').length).toBe(2));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.files.md_search_close') }));
+    // 关闭后防抖把 query 清空，高亮随之移除
+    await waitFor(() => expect(document.querySelectorAll('mark[data-md-hit]').length).toBe(0));
+    expect(screen.queryByPlaceholderText(tt('ui.files.md_search_placeholder'))).toBeNull();
+  });
+
   it('渲染检索：命中超过上限 500 时计数显示 500+', async () => {
     render(<MarkdownPreview markdown={'word '.repeat(600)} />);
+    openBar();
     const input = screen.getByPlaceholderText(tt('ui.files.md_search_placeholder'));
     fireEvent.change(input, { target: { value: 'word' } });
     await waitFor(() => expect(screen.getByTestId('md-search-count')).toHaveTextContent('500+'));
@@ -70,6 +129,7 @@ describe('MarkdownPreview', () => {
 
   it('渲染检索：跨内联标签的长词不命中（单文本节点内匹配）', async () => {
     render(<MarkdownPreview markdown="**关键**词组" />);
+    openBar();
     const input = screen.getByPlaceholderText(tt('ui.files.md_search_placeholder'));
     fireEvent.change(input, { target: { value: '关键词' } });
     // 等防抖生效后仍无命中

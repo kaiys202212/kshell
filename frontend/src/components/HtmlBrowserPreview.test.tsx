@@ -1,10 +1,10 @@
-// HtmlBrowserPreview：blob iframe 沙箱渲染 + <base> 注入 + 重载。
-// api 层打桩；URL.createObjectURL 在 jsdom 缺失，打桩验证调用与 revoke。
+// HtmlBrowserPreview：blob iframe 沙箱渲染 + head 注入（polyfill/导航拦截/<base>）
+// + 系统浏览器打开 + 重载。api 层打桩；URL.createObjectURL 在 jsdom 缺失，打桩验证。
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tt } from '../test/i18n';
-import HtmlBrowserPreview, { base64UrlUtf8, dirName, injectBase } from './HtmlBrowserPreview';
+import HtmlBrowserPreview, { base64UrlUtf8, dirName, fileUrl, injectBase } from './HtmlBrowserPreview';
 
 const mocks = vi.hoisted(() => ({
   readFileBytes: vi.fn(),
@@ -23,7 +23,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('HtmlBrowserPreview', () => {
-  it('读取文件后渲染沙箱 iframe，src 为 blob，禁止同源', async () => {
+  it('读取文件后渲染沙箱 iframe：允许脚本与表单、禁止同源，src 为 blob', async () => {
     mocks.readFileBytes.mockResolvedValue({
       Base64: b64('<html><head></head><body>hi</body></html>'),
       Mime: 'application/octet-stream',
@@ -32,7 +32,7 @@ describe('HtmlBrowserPreview', () => {
     });
     render(<HtmlBrowserPreview wsPath="D:\\proj" path="page.html" />);
     const frame = await screen.findByTestId('html-browser-frame');
-    expect(frame).toHaveAttribute('sandbox', 'allow-scripts');
+    expect(frame).toHaveAttribute('sandbox', 'allow-scripts allow-forms');
     expect(frame).toHaveAttribute('src', 'blob:mock-url');
   });
 
@@ -56,6 +56,36 @@ describe('HtmlBrowserPreview', () => {
     await waitFor(() => expect(mocks.readFileBytes).toHaveBeenCalledTimes(2));
   });
 
+  it('「浏览器打开」按钮调系统默认浏览器打开 file:// URL', async () => {
+    const open = vi.fn();
+    vi.stubGlobal('runtime', { BrowserOpenURL: open });
+    mocks.readFileBytes.mockResolvedValue({
+      Base64: b64('<p>x</p>'),
+      Mime: '',
+      Size: 3,
+      AbsPath: 'D:\\proj\\a b.html',
+    });
+    render(<HtmlBrowserPreview wsPath="D:\\proj" path="a b.html" />);
+    await screen.findByTestId('html-browser-frame');
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.files.html_preview_open_browser') }));
+    expect(open).toHaveBeenCalledWith('file:///D:/proj/a%20b.html');
+  });
+
+  it('iframe postMessage open-external → 系统浏览器打开本页', async () => {
+    const open = vi.fn();
+    vi.stubGlobal('runtime', { BrowserOpenURL: open });
+    mocks.readFileBytes.mockResolvedValue({
+      Base64: b64('<p>x</p>'),
+      Mime: '',
+      Size: 3,
+      AbsPath: 'D:\\proj\\page.html',
+    });
+    render(<HtmlBrowserPreview wsPath="D:\\proj" path="page.html" />);
+    await screen.findByTestId('html-browser-frame');
+    window.dispatchEvent(new MessageEvent('message', { data: { kshell: 'open-external' } }));
+    expect(open).toHaveBeenCalledWith('file:///D:/proj/page.html');
+  });
+
   it('base64UrlUtf8 与 Go RawURLEncoding 对齐（-/_、无填充、UTF-8）', () => {
     expect(base64UrlUtf8('D:\\proj a')).toBe(btoa('D:\\proj a').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
     expect(base64UrlUtf8('中文路径')).toBe('5Lit5paH6Lev5b6E');
@@ -67,10 +97,24 @@ describe('HtmlBrowserPreview', () => {
     expect(dirName('/home/u/a/page.html')).toBe('/home/u/a');
   });
 
-  it('injectBase 插到 <head> 后，无 head 时前置', () => {
-    expect(injectBase('<html><head></head><body></body></html>', 'http://x/b/')).toBe(
-      '<html><head><base href="http://x/b/"></head><body></body></html>',
-    );
-    expect(injectBase('<html><body></body></html>', 'http://x/b/').startsWith('<base href=')).toBe(true);
+  it('fileUrl 转换：盘符保留、逐段编码', () => {
+    expect(fileUrl('D:\\ws\\a b\\页.html')).toBe('file:///D:/ws/a%20b/%E9%A1%B5.html');
+    expect(fileUrl('/home/u/a.html')).toBe('file:///home/u/a.html');
+  });
+
+  it('injectBase：head 最前注入导航拦截脚本与 <base>；无 head 时插到 doctype 后', () => {
+    const withHead = injectBase('<html><head><title>t</title></head><body></body></html>', 'http://x/b/');
+    expect(withHead.startsWith('<html><head><script>')).toBe(true);
+    expect(withHead).toContain("kshell: 'open-external'");
+    expect(withHead).toContain('localStorage');
+    expect(withHead).toContain('<base href="http://x/b/"><title>');
+
+    const noHead = injectBase('<!DOCTYPE html><html><body></body></html>', 'http://x/b/');
+    expect(noHead.startsWith('<!DOCTYPE html>')).toBe(true);
+    expect(noHead).toContain('<base href=');
+
+    const bare = injectBase('<p>hi</p>', 'http://x/b/');
+    expect(bare.startsWith('<script>')).toBe(true);
+    expect(bare).toContain('<base href=');
   });
 });

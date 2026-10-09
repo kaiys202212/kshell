@@ -16,7 +16,11 @@ export default function WorkspaceSearch({ value, onChange }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const focus = () => inputRef.current?.focus();
+    const focus = (e: Event) => {
+      // Markdown 预览等更高优先级的检索已消费该事件（preventDefault）时退让
+      if (e.defaultPrevented) return;
+      inputRef.current?.focus();
+    };
     window.addEventListener('kshell:focus-search', focus);
     return () => window.removeEventListener('kshell:focus-search', focus);
   }, []);

@@ -214,7 +214,7 @@ export default function Preview({
   const showBrowserButton = !!path && isHtmlPath(path) && !loading && !error;
 
   const browserBar = showBrowserButton && path && onOpenBrowser && (
-    <div className="flex shrink-0 items-center border-b border-border px-2 py-1">
+    <div className="flex shrink-0 items-center justify-end border-b border-border px-2 py-1">
       <Button
         size="sm"
         variant="secondary"
