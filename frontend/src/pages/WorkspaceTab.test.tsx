@@ -57,7 +57,49 @@ vi.mock('../components/PreviewToolPane', () => ({
     <div data-testid="preview-tool-pane" data-sub={subTab} />
   ),
 }));
-vi.mock('../components/SshPanel', () => ({ default: () => <div data-testid="ssh-panel" /> }));
+vi.mock('../components/SshPanel', () => ({
+  default: ({
+    onOpenRemote,
+  }: {
+    onOpenRemote?: (c: {
+      ID: string;
+      Name: string;
+      Host: string;
+      User: string;
+      Port: number;
+      IdentityFile: string;
+      Password: string;
+      Workspace: string;
+      Source: string;
+      SourceFile: string;
+      Verified: boolean;
+    }) => void;
+  }) => (
+    <div data-testid="ssh-panel">
+      <button
+        type="button"
+        data-testid="ssh-open-other-project"
+        onClick={() =>
+          onOpenRemote?.({
+            ID: 'c-other',
+            Name: '其他项目机',
+            Host: '10.0.0.9',
+            User: 'ops',
+            Port: 22,
+            IdentityFile: '',
+            Password: '',
+            Workspace: 'D:\\proj-b',
+            Source: 'manual',
+            SourceFile: '',
+            Verified: false,
+          })
+        }
+      >
+        open-other
+      </button>
+    </div>
+  ),
+}));
 vi.mock('../components/ActiveTerminalsPanel', () => ({
   default: () => <div data-testid="active-terminals-panel" />,
 }));
@@ -300,6 +342,60 @@ describe('WorkspaceTabView agent 活动图标', () => {
     fireEvent.click(screen.getByRole('button', { name: tt('ui.workspace.active_terminals_tab') }));
     expect(screen.getByTestId('active-terminals-panel')).toBeInTheDocument();
     expect(screen.getByTestId('ssh-panel')).toBeInTheDocument();
+  });
+
+  it('打开绑定其他未打开项目的 SSH：先开项目页签再聚焦远程终端', async () => {
+    const { act } = await import('@testing-library/react');
+    mocks.openSSHTerminal.mockResolvedValue({
+      ID: 'ssh-term-1',
+      Key: 'ssh:c-other:1',
+      Kind: 'ssh',
+      ConnID: 'c-other',
+      SessionID: '',
+      Workspace: 'D:\\proj-b',
+      Title: '其他项目机',
+      ToolID: '',
+      Status: 'running',
+      ExitCode: 0,
+      Cols: 80,
+      Rows: 24,
+    });
+    useAppStore.setState({
+      workspaces: [
+        {
+          Path: 'D:\\proj-a',
+          Name: 'proj-a',
+          LastUsed: '',
+          SessionCount: 0,
+          ToolCounts: {},
+          Source: 'manual',
+        },
+        {
+          Path: 'D:\\proj-b',
+          Name: 'proj-b',
+          LastUsed: '',
+          SessionCount: 0,
+          ToolCounts: {},
+          Source: 'manual',
+        },
+      ],
+      openTabs: [{ id: 'D:\\proj-a', name: 'proj-a' }],
+      activeTabId: 'D:\\proj-a',
+      focusTermKey: null,
+      terminals: [],
+      chats: [],
+    });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    fireEvent.click(screen.getByRole('button', { name: 'SSH' }));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('ssh-open-other-project'));
+    });
+    expect(mocks.openSSHTerminal).toHaveBeenCalledWith('c-other', 80, 24);
+    const st = useAppStore.getState();
+    expect(st.openTabs.some((t) => t.id === 'D:\\proj-b')).toBe(true);
+    expect(st.activeTabId).toBe('D:\\proj-b');
+    expect(st.terminals.some((t) => t.ID === 'ssh-term-1')).toBe(true);
+    expect(st.focusTermKey?.termKey).toBe('ssh:c-other:1');
   });
 
   it('focusTermKey 命中 shell 时切到中心区终端页签并选中子页签', () => {

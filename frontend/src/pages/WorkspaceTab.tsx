@@ -366,11 +366,33 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   };
 
   const handleOpenRemote = (c: SshConnection) => {
+    // 「查看全部」时连接可能绑定其他项目：终端 Info.Workspace 跟连接走，
+    // 当前页签按 Workspace 过滤，不先切项目就会「双击没反应」。
+    const bound = (c.Workspace || '').trim();
+    const targetWs = bound || tab.id;
+    const store = useAppStore.getState();
+    if (!sameWorkspacePath(targetWs, tab.id)) {
+      const known = store.workspaces.find((w) => sameWorkspacePath(w.Path, targetWs));
+      const name =
+        known?.Name ||
+        (() => {
+          const n = targetWs.replace(/[\\/]+$/, '');
+          const i = Math.max(n.lastIndexOf('/'), n.lastIndexOf('\\'));
+          return i >= 0 ? n.slice(i + 1) : n;
+        })();
+      store.openTab(known ?? { Path: targetWs, Name: name, LastUsed: '', SessionCount: 0, ToolCounts: {}, Source: 'manual' });
+    }
     void openSSHTerminal(c.ID, 80, 24)
       .then((info) => {
-        useAppStore.getState().upsertTerminal(info);
-        selectCenterTab(TERMINALS_TAB);
-        setToolSubTab(info.ID);
+        const st = useAppStore.getState();
+        st.upsertTerminal(info);
+        if (sameWorkspacePath(info.Workspace || targetWs, tab.id)) {
+          selectCenterTab(TERMINALS_TAB);
+          setToolSubTab(info.ID);
+        } else if (info.Key) {
+          // 目标工作区视图经 focusTermKey 切到预览区远程终端子页签
+          st.requestFocusTerm(info.Key);
+        }
       })
       .catch((e: unknown) => {
         notify(tr('ui.workspace.open_ssh_failed', { err: backendError(e) }), 'error');
