@@ -392,6 +392,8 @@
       "source_manual": "项目",
       "never_used": "未使用过",
       "last_active": "最后活动 {{rel}}",
+      "filter_placeholder": "按名称或路径筛选工作区",
+      "filter_empty": "没有匹配筛选条件的工作区",
       "empty": "未发现工作区"
     },
     "session_list": {

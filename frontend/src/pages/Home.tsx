@@ -6,7 +6,7 @@
 // 数据流：先渲染缓存（GetWorkspaces），再触发后台扫描，等 "scan:done" 后重调
 // GetWorkspaces 刷新（统一走一条取数路径，事件 payload 只当触发信号用）。
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import RemoteDirPicker from '../components/RemoteDirPicker';
 import {
@@ -119,6 +119,9 @@ export default function Home() {
   const [createKind, setCreateKind] = useState<'local' | 'remote'>('local');
   const [connections, setConnections] = useState<SshConnection[]>([]);
   const [selectedConnID, setSelectedConnID] = useState('');
+  // 首页检索：按工作区名称/路径过滤卡片（纯前端，Ctrl+F 聚焦）
+  const [filter, setFilter] = useState('');
+  const filterRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(() => {
     getWorkspaces()
@@ -168,6 +171,13 @@ export default function Home() {
     };
   }, [setWorkspaces, setScanState, refresh, refreshDeleted]);
 
+  // Ctrl+F（首页激活时）聚焦过滤框；事件由 App.tsx 全局快捷键派发
+  useEffect(() => {
+    const onFocus = () => filterRef.current?.focus();
+    window.addEventListener('kshell:focus-home-filter', onFocus);
+    return () => window.removeEventListener('kshell:focus-home-filter', onFocus);
+  }, []);
+
   // 最后活动时间倒序；未使用过（零值/空值）的排最后，再按名称
   const sorted = [...workspaces].sort((a, b) => {
     const ta = lastUsedTime(a);
@@ -177,6 +187,15 @@ export default function Home() {
     if (tb === null) return -1;
     return tb - ta || a.Name.localeCompare(b.Name);
   });
+
+  // 检索过滤：名称或路径大小写不敏感包含
+  const kw = filter.trim().toLowerCase();
+  const filtered = kw
+    ? sorted.filter(
+        (ws) =>
+          ws.Name.toLowerCase().includes(kw) || ws.Path.toLowerCase().includes(kw),
+      )
+    : sorted;
 
   const totalSessions = workspaces.reduce((n, ws) => n + ws.SessionCount, 0);
 
@@ -458,6 +477,18 @@ export default function Home() {
           </Button>
         </div>
       </div>
+      {/* 首页检索：按名称/路径过滤工作区卡片 */}
+      <div className="mb-3">
+        <input
+          ref={filterRef}
+          data-testid="home-filter"
+          type="text"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder={t('ui.home.filter_placeholder')}
+          className="h-8 w-full max-w-96 rounded-[3px] border border-input bg-card px-2 text-[13px] outline-none placeholder:text-muted-foreground focus:border-primary/60"
+        />
+      </div>
       {/* 快捷键提示：kbd 风格小块（全局 Ctrl+K / Ctrl+F，见 App.tsx） */}
       <p className="mb-4 flex items-center gap-1.5 text-xs text-muted-foreground">
         <kbd className="rounded-sm border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-secondary-foreground">
@@ -481,9 +512,12 @@ export default function Home() {
         ) : (
           <EmptyState icon={<FolderGlyph />} title={t('ui.home.empty')} />
         )
+      ) : filtered.length === 0 ? (
+        // 有工作区但检索无命中
+        <EmptyState title={t('ui.home.filter_empty')} />
       ) : (
         <ul className={GRID}>
-          {sorted.map((ws: Workspace, i: number) => {
+          {filtered.map((ws: Workspace, i: number) => {
             const lastUsed = lastUsedTime(ws);
             const { shown, rest } = toolDistribution(ws.ToolCounts);
             // 左缘色条取占比最高的工具色；无工具上下文（如纯 git 扫描工作区）用主色

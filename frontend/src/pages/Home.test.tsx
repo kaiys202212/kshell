@@ -363,8 +363,7 @@ describe('Home', () => {
     expect(useAppStore.getState().toasts.some((t) => t.title === tt('ui.home.restored').replace('{{name}}', 'gone'))).toBe(true);
   });
 
-  it('projects:changed 事件：重拉工作区与回收站列表', async () => {
-    let projectsCb: (() => void) | undefined;
+  it('projects:changed 事件：重拉工作区与回收站列表', async () => {    let projectsCb: (() => void) | undefined;
     mocks.onProjectsChanged.mockImplementation((cb: () => void) => {
       projectsCb = cb;
       return () => {};
@@ -382,5 +381,24 @@ describe('Home', () => {
       expect(mocks.getWorkspaces.mock.calls.length).toBeGreaterThan(wsCalls);
       expect(mocks.getDeletedProjects.mock.calls.length).toBeGreaterThan(delCalls);
     });
+  });
+
+  it('首页检索：按名称/路径大小写不敏感过滤，无命中显示空态，清空恢复', async () => {
+    render(<Home />);
+    await screen.findByTitle('D:\\proj-new');
+
+    const input = screen.getByTestId('home-filter');
+    // 按名称大小写不敏感命中
+    fireEvent.change(input, { target: { value: 'PROJ' } });
+    expect(cardOrder()).toEqual(['proj-new', 'proj-old']);
+    // 按路径命中
+    fireEvent.change(input, { target: { value: 'git-only' } });
+    expect(cardOrder()).toEqual(['git-only']);
+    // 无命中
+    fireEvent.change(input, { target: { value: '不存在的关键词' } });
+    expect(screen.getByText(tt('ui.home.filter_empty'))).toBeInTheDocument();
+    // 清空恢复全部
+    fireEvent.change(input, { target: { value: '' } });
+    expect(cardOrder()).toEqual(['proj-new', 'proj-old', 'aaa-zero', 'git-only']);
   });
 });

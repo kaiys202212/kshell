@@ -392,6 +392,8 @@
       "source_manual": "Project",
       "never_used": "Never used",
       "last_active": "Last active {{rel}}",
+      "filter_placeholder": "Filter workspaces by name or path",
+      "filter_empty": "No workspaces match the filter",
       "empty": "No workspaces found"
     },
     "session_list": {
