@@ -42,6 +42,12 @@ function display(c: SshConnection): string {
   return target;
 }
 
+function wsBaseName(ws: string): string {
+  const n = ws.replace(/[\\/]+$/, '');
+  const i = Math.max(n.lastIndexOf('/'), n.lastIndexOf('\\'));
+  return i >= 0 ? n.slice(i + 1) : n;
+}
+
 type FormState = {
   ID: string;
   Name: string;
@@ -96,15 +102,19 @@ export default function SshPanel({
   const [form, setForm] = useState<FormState>(emptyForm);
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const notify = useAppStore((s) => s.notify);
+  const listScope = showAll ? '' : wsPath;
 
   useEffect(() => {
     let cancelled = false;
-    listConnections(wsPath)
+    setConns(null);
+    setError('');
+    listConnections(listScope)
       .then((list) => {
         if (cancelled) return;
         setConns(list);
-        setSelectedId((cur) => cur || list[0]?.ID || '');
+        setSelectedId((cur) => (list.some((c) => c.ID === cur) ? cur : list[0]?.ID || ''));
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(backendError(e));
@@ -112,7 +122,7 @@ export default function SshPanel({
     return () => {
       cancelled = true;
     };
-  }, [wsPath]);
+  }, [listScope]);
 
   const openEdit = (c: SshConnection) => {
     setForm(formFromConn(c));
@@ -151,7 +161,7 @@ export default function SshPanel({
         Verified: prev?.Verified ?? false,
       });
       setFormOpen(false);
-      const list = await listConnections(wsPath);
+      const list = await listConnections(listScope);
       setConns(list);
       setSelectedId(saved.ID);
     } catch (e: unknown) {
@@ -168,7 +178,7 @@ export default function SshPanel({
     try {
       await deleteConnection(form.ID);
       setFormOpen(false);
-      const list = await listConnections(wsPath);
+      const list = await listConnections(listScope);
       setConns(list);
       setSelectedId((cur) => (cur === form.ID ? list[0]?.ID || '' : cur));
     } catch (e: unknown) {
@@ -232,9 +242,18 @@ export default function SshPanel({
     <div className="flex flex-col gap-2.5 text-sm">
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs text-muted-foreground">{t('ui.ssh.double_click_hint')}</span>
-        <Button size="sm" variant="secondary" onClick={openNew}>
-          {t('ui.ssh.new')}
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setShowAll((v) => !v)}
+          >
+            {showAll ? t('ui.ssh.view_current') : t('ui.ssh.view_all')}
+          </Button>
+          <Button size="sm" variant="secondary" onClick={openNew}>
+            {t('ui.ssh.new')}
+          </Button>
+        </div>
       </div>
 
       {conns.length === 0 ? (
@@ -273,6 +292,14 @@ export default function SshPanel({
               </div>
               <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                 <span className="truncate">{display(c)}</span>
+                {showAll && c.Workspace && (
+                  <span
+                    className="shrink-0 truncate font-mono text-[10px] text-muted-foreground"
+                    title={c.Workspace}
+                  >
+                    {t('ui.ssh.workspace_label', { name: wsBaseName(c.Workspace) })}
+                  </span>
+                )}
                 <span
                   className="shrink-0 rounded-sm border border-border px-1.5 py-px font-mono text-[10px]"
                   title={c.SourceFile || undefined}

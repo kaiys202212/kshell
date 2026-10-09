@@ -438,8 +438,8 @@ describe('WorkspaceTab', () => {
     fireEvent.click(await screen.findByRole('tab', { name: /kshell/ }));
     expect(screen.getByTestId('terminal-t1')).toHaveAttribute('data-active', 'true');
 
-    // 点第二个页签的工具徽标（标题右侧的 OpenCode）应切到 t2
-    const badges = await screen.findAllByText('OpenCode');
+    // 点第二个页签的工具图标（标题右侧）应切到 t2
+    const badges = await screen.findAllByTestId('tool-icon');
     fireEvent.click(badges[1]);
     expect(screen.getByTestId('terminal-t2')).toHaveAttribute('data-active', 'true');
   });
@@ -454,14 +454,15 @@ describe('WorkspaceTab', () => {
     expect(screen.queryByText('OpenCode')).not.toBeInTheDocument();
   });
 
-  it('恢复的会话页签标题不含工具名，徽标仍显示工具名', async () => {
+  it('恢复的会话页签徽标只留图标，不显示工具名文字', async () => {
     const tSess: TerminalInfo = { ...term, ID: 't1', Kind: 'session', Title: '修复登录页', ToolID: 'opencode' };
     mocks.listTerminals.mockResolvedValue([tSess]);
     useAppStore.setState({ terminals: [tSess] });
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
     expect(await screen.findByRole('tab', { name: /修复登录页/ })).toBeInTheDocument();
-    expect(screen.getByText('OpenCode')).toBeInTheDocument();
+    expect(screen.queryByText('OpenCode')).not.toBeInTheDocument();
+    expect(screen.getByTestId('tool-icon')).toHaveAttribute('data-tool', 'opencode');
   });
 
   it('工作区页签不可见时终端 active=false（避免隐藏态 fit 出 0 尺寸）', async () => {
@@ -516,6 +517,9 @@ describe('WorkspaceTab', () => {
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
     expect(await screen.findByText('proj-a')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: tt('ui.workspace.active_terminals_tab') }),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'SSH' }));
     expect(await screen.findByText('生产机')).toBeInTheDocument();
     expect(mocks.listConnections).toHaveBeenCalledWith('D:\\proj-a');
