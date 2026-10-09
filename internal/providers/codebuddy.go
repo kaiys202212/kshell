@@ -63,6 +63,12 @@ func (c CodeBuddy) ResumeCmd(s Session, bin string) Launch {
 	return c.wrap("").ResumeCmd(s, bin)
 }
 
+// RemoteNewArgs / RemoteResumeArgs：CodeBuddy 无官方远程协议，ssh 远端执行 CLI。
+func (CodeBuddy) RemoteNewArgs(string) []string { return nil }
+func (CodeBuddy) RemoteResumeArgs(s Session) []string {
+	return []string{"--resume", s.ID}
+}
+
 // ACPAdapter 声明 CodeBuddy 的 ACP 入口：CLI 自带 --acp（stdio ndJsonStream），
 // 适配器与 CLI 同二进制，故无 npx 兜底。
 func (CodeBuddy) ACPAdapter() ACPAdapter {

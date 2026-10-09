@@ -62,6 +62,12 @@ func (Opencode) ResumeCmd(s Session, bin string) Launch {
 	return Launch{Path: bin, Args: []string{"--session", s.ID}, Dir: s.Workspace}
 }
 
+// RemoteNewArgs / RemoteResumeArgs：OpenCode 无官方远程协议，ssh 远端执行 CLI。
+func (Opencode) RemoteNewArgs(string) []string { return nil }
+func (Opencode) RemoteResumeArgs(s Session) []string {
+	return []string{"--session", s.ID}
+}
+
 // ThemeOverrides 指向生成的 tui.json，注入与 kshell 明暗一致的固定主题。
 // 不用 system：system 会向终端 OSC 查色，应答经 xterm onData 回写后会被当成首条用户消息，
 // 会话标题变成 "4;0;rgb:…" 一类残片（Gemini 同理关掉了 autoThemeSwitching）。

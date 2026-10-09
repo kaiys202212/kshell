@@ -121,7 +121,8 @@
       "fs_no_runner": "Remote filesystem runner is not configured",
       "fs_empty_path": "Remote path is empty",
       "fs_parse": "Failed to parse remote command output: {{0}}",
-      "path_escape": "Path escapes the remote workspace root"
+      "path_escape": "Path escapes the remote workspace root",
+      "tool_not_found": "Tool {{0}} is not installed on the remote host"
     },
     "settings": {
       "providers_path_unavailable": "providers.yaml path is unavailable (not initialized yet)",

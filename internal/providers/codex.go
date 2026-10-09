@@ -172,6 +172,12 @@ func (Codex) ResumeCmd(s Session, bin string) Launch {
 	return Launch{Path: bin, Args: []string{"resume", s.ID}, Dir: s.Workspace}
 }
 
+// RemoteNewArgs / RemoteResumeArgs：Codex 无官方远程协议，ssh 远端执行 CLI。
+func (Codex) RemoteNewArgs(string) []string { return nil }
+func (Codex) RemoteResumeArgs(s Session) []string {
+	return []string{"resume", s.ID}
+}
+
 // ThemeOverrides 用 -c 覆盖 tui.theme（会话级，不写 config.toml）。
 func (Codex) ThemeOverrides(theme appearance.Theme, _ string) ([]string, map[string]string) {
 	name := "catppuccin-latte"

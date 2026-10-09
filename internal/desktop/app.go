@@ -96,6 +96,8 @@ type Options struct {
 	ProcScan func(dir string) bool
 	// RemoteRun 远端命令执行器；nil 时包一层 remote.Run（测试注入 fake）。
 	RemoteRun remotefs.Runner
+	// FindSSH 查找本机 ssh；nil 时用 remote.FindSSH（测试注入）。
+	FindSSH func() (string, error)
 }
 
 // App 是暴露给前端的绑定对象：薄封装 discovery/providers/window 等核心包，
@@ -887,11 +889,11 @@ func (a *App) ResumeSession(id string) error {
 		return errSessionNotFound
 	}
 	o := a.snapshot()
-	l, err := launch.ForSession(o.Providers, tools, s, a.themeOptions(), a.modelOptions(), a.permissionOptions())
+	l, toolID, err := a.launchForSession(s, tools)
 	if err != nil {
 		return err
 	}
-	return a.launchWindow(o.Windows, l, s.ToolID, s.Title)
+	return a.launchWindow(o.Windows, l, toolID, s.Title)
 }
 
 // NewSession 在指定工作区新建会话（wsID 为工作区路径）。
@@ -950,14 +952,65 @@ func (a *App) sessionByID(id string) (providers.Session, []discovery.Tool, bool)
 			}
 		}
 	}
+	// 远端扫描缓存（ScanRemoteSessions）不进本地 result.Sessions
+	for _, list := range a.remoteSessions.byRef {
+		for _, s := range list {
+			if s.ID == id {
+				return s, a.tools, true
+			}
+		}
+	}
 	return providers.Session{}, nil, false
 }
 
-// workspaceByID 按路径查工作区。匹配走 discovery.NormalizePath 归一化：
-// 前端页签 id 持久化的是上次扫描时 Workspace.Path 的原始形态，而每次扫描
-// Path 取自「第一个出现的会话 cwd」——盘符大小写/分隔符一变（D:\ 与 d:\、
-// \ 与 /），严格相等就会误报「工作区不存在」，必须与聚合 key 同口径比较。
+// workspaceByID 按路径查工作区。本地路径匹配走 discovery.NormalizePath；
+// ssh:// Ref 绝不能走 filepath.Clean（Windows 会把协议弄坏），按 Ref 精确比较。
 func (a *App) workspaceByID(id string) (discovery.Workspace, []discovery.Tool, bool) {
+	kind, connID, remotePath, err := discovery.ParseWorkspaceRef(id)
+	if err == nil && kind == discovery.KindSSH {
+		ref := discovery.FormatSSHRef(connID, remotePath)
+		a.mu.Lock()
+		tools := a.tools
+		var found discovery.Workspace
+		ok := false
+		if a.result != nil {
+			for _, ws := range a.result.Workspaces {
+				if ws.Path == ref {
+					found, ok = ws, true
+					break
+				}
+				if ws.Kind == discovery.KindSSH && ws.ConnID == connID {
+					rp := ws.RemotePath
+					if rp == "" {
+						rp = ws.Path
+					}
+					if discovery.NormalizeRemotePath(rp) == remotePath {
+						found = ws
+						found.Path = ref
+						found.RemotePath = remotePath
+						ok = true
+						break
+					}
+				}
+			}
+		}
+		st := a.opts.Projects
+		a.mu.Unlock()
+		if ok {
+			return found, tools, true
+		}
+		// 项目表已登记但尚未呈现时仍允许启动
+		if st != nil {
+			for _, e := range st.ManualEntries() {
+				if e.Kind == discovery.KindSSH && e.ConnID == connID &&
+					discovery.NormalizeRemotePath(e.Path) == remotePath {
+					return synthesizeSSHWorkspace(connID, remotePath), tools, true
+				}
+			}
+		}
+		return discovery.Workspace{}, nil, false
+	}
+
 	want := discovery.NormalizePath(id)
 	a.mu.Lock()
 	defer a.mu.Unlock()

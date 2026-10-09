@@ -98,6 +98,12 @@ func (Gemini) ResumeCmd(s Session, bin string) Launch {
 	return Launch{Path: bin, Args: []string{"--resume", s.ID}, Dir: s.Workspace}
 }
 
+// RemoteNewArgs / RemoteResumeArgs：Gemini 无官方远程协议，ssh 远端执行 CLI。
+func (Gemini) RemoteNewArgs(string) []string { return nil }
+func (Gemini) RemoteResumeArgs(s Session) []string {
+	return []string{"--resume", s.ID}
+}
+
 func (Gemini) SessionFilePattern() string { return "*.json" }
 
 // ThemeOverrides 指向生成的系统级 settings（最高优先级层），并关闭自动主题轮询。

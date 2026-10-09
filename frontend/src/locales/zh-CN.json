@@ -121,7 +121,8 @@
       "fs_no_runner": "远端文件系统执行器未配置",
       "fs_empty_path": "远端路径为空",
       "fs_parse": "解析远端命令输出失败：{{0}}",
-      "path_escape": "路径越出远端工作区根目录"
+      "path_escape": "路径越出远端工作区根目录",
+      "tool_not_found": "远端未安装工具 {{0}}"
     },
     "settings": {
       "providers_path_unavailable": "providers.yaml 路径不可用（未初始化完成）",

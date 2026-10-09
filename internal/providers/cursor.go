@@ -232,6 +232,33 @@ func (Cursor) ResumeCmd(s Session, bin string) Launch {
 	return Launch{Path: bin, Args: []string{"--resume", s.ID}, Dir: dir}
 }
 
+// NewRemoteSessionCmd 走 Cursor/VS Code Remote-SSH 官方 folder URI（本地 bin 拉起）。
+//
+// 实测/文档口径（Cursor IDE CLI，与 code 同构）：
+//
+//	cursor --folder-uri "vscode-remote://ssh-remote+user@host/abs/path"
+//	或 cursor --remote ssh-remote+user@host /abs/path
+//
+// kshell Detect 的 bin 通常是 cursor-agent（CLI agent），对本 flag 的支持未完全确认；
+// 若本机 bin 实为 Cursor IDE / `cursor` 启动器则可用。协议路径失败时由上层
+// 在无本地 bin 时降级 RemoteSSHRunner（远端 cursor-agent）。
+func (Cursor) NewRemoteSessionCmd(hostTarget, remotePath, bin string) (Launch, error) {
+	uri := SSHRemoteFolderURI(hostTarget, remotePath)
+	return Launch{Path: bin, Args: []string{"--folder-uri", uri}}, nil
+}
+
+// ResumeRemoteCmd 在远程 folder URI 上附加 --resume <chatId>（与本地 ResumeCmd 同 flag）。
+func (Cursor) ResumeRemoteCmd(hostTarget, remotePath string, s Session, bin string) (Launch, error) {
+	uri := SSHRemoteFolderURI(hostTarget, remotePath)
+	return Launch{Path: bin, Args: []string{"--folder-uri", uri, "--resume", s.ID}}, nil
+}
+
+// RemoteNewArgs / RemoteResumeArgs：无本地协议 bin 时 ssh 远端执行 cursor-agent。
+func (Cursor) RemoteNewArgs(string) []string { return nil }
+func (Cursor) RemoteResumeArgs(s Session) []string {
+	return []string{"--resume", s.ID}
+}
+
 // WorkspaceToSlug 复刻 Cursor CLI 的规则：盘符冒号直接删除，路径分隔符替换成 '-'
 // （d:\data\ws → d-data-ws；注意与 Claude 的 D--data-... 不同）。
 func (Cursor) WorkspaceToSlug(ws string) string {

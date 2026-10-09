@@ -62,8 +62,7 @@ func (a *App) OpenSessionTerminal(sessionID string, cols, rows int) (terminal.In
 		return terminal.Info{}, errNotReady
 	}
 
-	o := a.snapshot()
-	l, err := launch.ForSession(o.Providers, tools, s, a.themeOptions(), a.modelOptions(), a.permissionOptions())
+	l, toolID, err := a.launchForSession(s, tools)
 	if err != nil {
 		return terminal.Info{}, err
 	}
@@ -72,14 +71,14 @@ func (a *App) OpenSessionTerminal(sessionID string, cols, rows int) (terminal.In
 		return terminal.Info{}, err
 	}
 	// 注入 agent 通知归因与 hook 参数；失败静默跳过，不影响会话启动
-	applyNotifyInject(&spec, s.ToolID, "session:"+sessionID, s.Workspace)
+	applyNotifyInject(&spec, toolID, "session:"+sessionID, s.Workspace)
 
 	return m.Open("session:"+sessionID, terminal.Info{
 		Kind:      terminal.KindSession,
 		SessionID: s.ID,
 		Workspace: s.Workspace,
 		Title:     s.Title,
-		ToolID:    s.ToolID,
+		ToolID:    toolID,
 	}, terminal.Spec{Path: spec.Path, Args: spec.Args, Dir: spec.Dir, Env: spec.Env}, cols, rows)
 }
 
@@ -96,7 +95,7 @@ func (a *App) OpenWorkspaceTerminal(wsID string, toolID string, cols, rows int) 
 	}
 
 	o := a.snapshot()
-	l, err := launch.ForWorkspaceTool(o.Providers, tools, ws, toolID, a.themeOptions(), a.modelOptions(), a.permissionOptions())
+	l, injectToolID, err := a.launchForWorkspace(ws, toolID, tools)
 	if err != nil {
 		return terminal.Info{}, err
 	}
@@ -106,20 +105,13 @@ func (a *App) OpenWorkspaceTerminal(wsID string, toolID string, cols, rows int) 
 	}
 
 	key := fmt.Sprintf("new:%d", termKeySeq.Add(1))
-	// toolID 为空时 launch 选了首选工具：还原出真实工具 ID 才能按工具注入 hook
-	injectToolID := toolID
-	if injectToolID == "" {
-		if p, _, ok := launch.PreferredTool(o.Providers, tools, ws); ok {
-			injectToolID = p.ID()
-		}
-	}
 	applyNotifyInject(&spec, injectToolID, key, ws.Path)
 
 	info, err := m.Open(key, terminal.Info{
 		Kind:            terminal.KindNew,
 		Workspace:       ws.Path,
-		Title:           workspaceTerminalTitle(o.Providers, tools, ws, toolID),
-		ToolID:          injectToolID, // 还原后的真实工具 ID，页签展示与通知注入同源
+		Title:           workspaceTerminalTitle(o.Providers, tools, ws, injectToolID),
+		ToolID:          injectToolID,
 		KnownSessionIDs: a.knownSessionIDs(),
 	}, terminal.Spec{Path: spec.Path, Args: spec.Args, Dir: spec.Dir, Env: spec.Env}, cols, rows)
 	if err != nil {
@@ -190,11 +182,52 @@ func (a *App) NewSessionWithTool(wsID string, toolID string) error {
 		return errWorkspaceNotFound
 	}
 	o := a.snapshot()
-	l, err := launch.ForWorkspaceTool(o.Providers, tools, ws, toolID, a.themeOptions(), a.modelOptions(), a.permissionOptions())
+	l, injectToolID, err := a.launchForWorkspace(ws, toolID, tools)
 	if err != nil {
 		return err
 	}
-	return a.launchWindow(o.Windows, l, toolID, ws.Name)
+	return a.launchWindow(o.Windows, l, injectToolID, ws.Name)
+}
+
+// launchForWorkspace 本地走 launch 包；ssh Ref 走远程启动策略。
+func (a *App) launchForWorkspace(ws discovery.Workspace, toolID string, tools []discovery.Tool) (providers.Launch, string, error) {
+	conn, remotePath, isSSH, err := a.parseSSHWorkspace(ws.Path)
+	if err != nil {
+		return providers.Launch{}, "", err
+	}
+	if isSSH {
+		return a.resolveRemoteLaunch(conn, remotePath, toolID, nil, tools)
+	}
+	o := a.snapshot()
+	l, err := launch.ForWorkspaceTool(o.Providers, tools, ws, toolID, a.themeOptions(), a.modelOptions(), a.permissionOptions())
+	if err != nil {
+		return providers.Launch{}, "", err
+	}
+	inject := toolID
+	if inject == "" {
+		if p, _, ok := launch.PreferredTool(o.Providers, tools, ws); ok {
+			inject = p.ID()
+		}
+	}
+	return l, inject, nil
+}
+
+// launchForSession 本地走 launch 包；会话工作区为 ssh Ref 时走远程恢复策略。
+func (a *App) launchForSession(s providers.Session, tools []discovery.Tool) (providers.Launch, string, error) {
+	conn, remotePath, isSSH, err := a.parseSSHWorkspace(s.Workspace)
+	if err != nil {
+		return providers.Launch{}, "", err
+	}
+	if isSSH {
+		sess := s
+		return a.resolveRemoteLaunch(conn, remotePath, s.ToolID, &sess, tools)
+	}
+	o := a.snapshot()
+	l, err := launch.ForSession(o.Providers, tools, s, a.themeOptions(), a.modelOptions(), a.permissionOptions())
+	if err != nil {
+		return providers.Launch{}, "", err
+	}
+	return l, s.ToolID, nil
 }
 
 // workspaceTerminalTitle 生成内嵌终端页签标题：工作区名 + 工具展示名。

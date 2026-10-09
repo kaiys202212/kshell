@@ -146,6 +146,12 @@ func (Claude) ResumeCmd(s Session, bin string) Launch {
 	return Launch{Path: bin, Args: []string{"--resume", s.ID}, Dir: s.Workspace}
 }
 
+// RemoteNewArgs / RemoteResumeArgs：Claude 无官方远程协议，ssh 远端执行 CLI。
+func (Claude) RemoteNewArgs(string) []string { return nil }
+func (Claude) RemoteResumeArgs(s Session) []string {
+	return []string{"--resume", s.ID}
+}
+
 // ThemeOverrides 用会话级 --settings 注入主题，不写用户的 settings.json。
 func (Claude) ThemeOverrides(theme appearance.Theme, _ string) ([]string, map[string]string) {
 	name := "light"

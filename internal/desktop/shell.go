@@ -6,10 +6,13 @@ import (
 	"runtime"
 
 	"github.com/yangk/kshell/internal/applang"
+	"github.com/yangk/kshell/internal/discovery"
+	"github.com/yangk/kshell/internal/launcher"
 	"github.com/yangk/kshell/internal/terminal"
 )
 
-// OpenShellTerminal 在预览区为工作区新开一个本地 shell 终端（每次独立进程）。
+// OpenShellTerminal 在预览区为工作区新开一个 shell 终端（每次独立进程）。
+// 本地工作区起本机 shell；ssh Ref 则 OpenSSH 并 cd 到远端路径。
 func (a *App) OpenShellTerminal(wsID string, cols, rows int) (terminal.Info, error) {
 	ws, _, ok := a.workspaceByIDReady(wsID)
 	if !ok {
@@ -18,6 +21,36 @@ func (a *App) OpenShellTerminal(wsID string, cols, rows int) (terminal.Info, err
 	m := a.terminals()
 	if m == nil {
 		return terminal.Info{}, errNotReady
+	}
+
+	kind, connID, remotePath, err := discovery.ParseWorkspaceRef(ws.Path)
+	if err != nil {
+		return terminal.Info{}, err
+	}
+	if kind == discovery.KindSSH {
+		c, ok := a.connByID(connID)
+		if !ok {
+			return terminal.Info{}, errConnNotFound
+		}
+		l, err := a.buildSSHInteractiveLaunch(c, sshShellCdCommand(remotePath))
+		if err != nil {
+			return terminal.Info{}, err
+		}
+		spec, err := launcher.Build(l)
+		if err != nil {
+			return terminal.Info{}, err
+		}
+		key := fmt.Sprintf("ssh:%s:%d", c.ID, termKeySeq.Add(1))
+		title := c.Name
+		if title == "" {
+			title = c.Target()
+		}
+		return m.Open(key, terminal.Info{
+			Kind:      terminal.KindSSH,
+			ConnID:    c.ID,
+			Workspace: ws.Path,
+			Title:     title,
+		}, terminal.Spec{Path: spec.Path, Args: spec.Args, Dir: spec.Dir, Env: spec.Env}, cols, rows)
 	}
 
 	path, args := localShellSpec(ws.Path)
