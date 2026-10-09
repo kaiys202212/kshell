@@ -435,8 +435,8 @@ describe('WorkspaceTab', () => {
     fireEvent.click(await screen.findByRole('tab', { name: /kshell/ }));
     expect(screen.getByTestId('terminal-t1')).toHaveAttribute('data-active', 'true');
 
-    // 点第二个页签的工具徽标（标题右侧的 OpenCode）应切到 t2
-    const badges = await screen.findAllByText('OpenCode');
+    // 点第二个页签的工具图标（标题右侧）应切到 t2
+    const badges = await screen.findAllByTestId('tool-icon');
     fireEvent.click(badges[1]);
     expect(screen.getByTestId('terminal-t2')).toHaveAttribute('data-active', 'true');
   });
@@ -514,6 +514,9 @@ describe('WorkspaceTab', () => {
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
 
     expect(await screen.findByText('proj-a')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: tt('ui.workspace.active_terminals_tab') }),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'SSH' }));
     expect(await screen.findByText('生产机')).toBeInTheDocument();
     expect(mocks.listConnections).toHaveBeenCalledWith('D:\\proj-a');

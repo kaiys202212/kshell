@@ -723,8 +723,16 @@
       "files_tab": "文件",
       "terminals_aria": "终端",
       "terminals_tab": "终端",
+      "active_terminals_tab": "Terminal",
+      "active_terminals_empty": "没有运行中的本地或 SSH 终端",
+      "active_terminals_list_aria": "运行中的终端列表",
+      "active_terminals_view_all": "查看全部",
+      "active_terminals_view_current": "当前项目",
+      "active_terminals_kind_shell": "Shell",
+      "active_terminals_kind_ssh": "SSH",
+      "active_terminals_workspace": "{{name}}",
       "pick_session": "从左侧会话列表选择会话查看预览",
-      "right_panel_aria": "文件 Git 与 SSH 面板",
+      "right_panel_aria": "文件、Git、SSH 与 Terminal 面板",
       "resize_files": "调整文件面板宽度"
     }
   }

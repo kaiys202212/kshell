@@ -723,8 +723,16 @@
       "files_tab": "Files",
       "terminals_aria": "Terminal",
       "terminals_tab": "Terminal",
+      "active_terminals_tab": "Terminal",
+      "active_terminals_empty": "No running local or SSH terminals",
+      "active_terminals_list_aria": "Running terminals",
+      "active_terminals_view_all": "View all",
+      "active_terminals_view_current": "Current project",
+      "active_terminals_kind_shell": "Shell",
+      "active_terminals_kind_ssh": "SSH",
+      "active_terminals_workspace": "{{name}}",
       "pick_session": "Select a session from the list on the left to preview",
-      "right_panel_aria": "Files, Git and SSH panel",
+      "right_panel_aria": "Files, Git, SSH and Terminal panel",
       "resize_files": "Resize file panel"
     }
   }

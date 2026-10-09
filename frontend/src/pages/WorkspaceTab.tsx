@@ -1,7 +1,7 @@
 // 工作区页签：三栏布局（左右两栏宽度可拖动）。
 //   左栏：会话列表
 //   中栏：左钉「会话预览」+ 可关 agent/chat；右钉「文件」「终端」
-//   右栏：文件树 | Git | SSH
+//   右栏：文件树 | Git | SSH | Terminal（运行中的 shell/ssh）
 // 终端页签一旦打开就常挂载（非激活用 hidden），xterm 缓冲与焦点不丢；
 // 工作区页签本身也由 App 常挂载，因此只有关闭页签才会真正结束终端进程。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -41,6 +41,7 @@ import PreviewToolPane from '../components/PreviewToolPane';
 import ResizeHandle from '../components/ResizeHandle';
 import SessionList from '../components/SessionList';
 import SessionTranscript from '../components/SessionTranscript';
+import ActiveTerminalsPanel from '../components/ActiveTerminalsPanel';
 import SshPanel from '../components/SshPanel';
 import TerminalView from '../components/TerminalView';
 import AgentActivityIcon from '../components/AgentActivityIcon';
@@ -68,7 +69,7 @@ function isToolTerm(t: TerminalInfo): boolean {
   return t.Kind === 'shell' || t.Kind === 'ssh';
 }
 
-type RightPane = 'files' | 'git' | 'ssh';
+type RightPane = 'files' | 'git' | 'ssh' | 'terminal';
 
 // 中心区钉住页签（与终端 id 如 t1 不冲突）
 const SESSION_TAB = 'session-preview';
@@ -200,17 +201,23 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   }, [terms, chatsForWs, centerTab, selectCenterTab]);
 
   useEffect(() => {
-    // 消费通知气泡的页签聚焦请求：本工作区持有该 termKey（终端/聊天 manager 的
-    // key，Info.Key）就选中对应中心区页签并按 seq 清除；其他工作区视图不消费。
-    // 挂载时也会执行一次，覆盖「点击时工作区页签尚未打开」的情况。
+    // 消费通知气泡 / 右栏 Terminal 的页签聚焦请求：本工作区持有该 termKey
+    // （终端/聊天 manager 的 key，Info.Key）就选中对应页签并按 seq 清除；
+    // shell/ssh 落在预览区「终端」钉住页签的子页签。其他工作区视图不消费。
     if (!focusTermKey) return;
     const { termKey, seq } = focusTermKey;
     const t = terms.find((x) => x.Key === termKey);
     const c = t ? undefined : chatsForWs.find((x) => x.Key === termKey);
-    if (!t && !c) return;
-    selectCenterTab(t ? t.ID : c!.ID);
+    const tool = !t && !c ? toolTerms.find((x) => x.Key === termKey) : undefined;
+    if (!t && !c && !tool) return;
+    if (tool) {
+      selectCenterTab(TERMINALS_TAB);
+      setToolSubTab(tool.ID);
+    } else {
+      selectCenterTab(t ? t.ID : c!.ID);
+    }
     useAppStore.getState().clearFocusTerm(seq);
-  }, [focusTermKey, terms, chatsForWs, selectCenterTab]);
+  }, [focusTermKey, terms, chatsForWs, toolTerms, selectCenterTab]);
 
   useEffect(() => {
     if (toolSubTab && !toolTerms.some((t) => t.ID === toolSubTab)) {
@@ -712,8 +719,15 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           >
             SSH
           </button>
+          <button
+            className={cn(paneTabBase, rightPane === 'terminal' && paneTabActive)}
+            aria-pressed={rightPane === 'terminal'}
+            onClick={() => setRightPane('terminal')}
+          >
+            {tr('ui.workspace.active_terminals_tab')}
+          </button>
         </div>
-        {/* 三面板常挂载，仅用 hidden 切换显示 */}
+        {/* 四面板常挂载，仅用 hidden 切换显示 */}
         <div className={cn('min-h-0 flex-1', rightPane !== 'files' && 'hidden')}>
           <FileTree wsPath={tab.id} onOpenFile={openFile} onEditFile={editFile} />
         </div>
@@ -722,6 +736,9 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         </div>
         <div className={cn('min-h-0 flex-1', rightPane !== 'ssh' && 'hidden')}>
           <SshPanel wsPath={tab.id} onOpenRemote={handleOpenRemote} />
+        </div>
+        <div className={cn('min-h-0 flex-1 overflow-y-auto', rightPane !== 'terminal' && 'hidden')}>
+          <ActiveTerminalsPanel wsPath={tab.id} />
         </div>
       </aside>
     </div>

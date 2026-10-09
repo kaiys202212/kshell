@@ -52,9 +52,14 @@ vi.mock('../components/FileTabsPane', () => ({
   ),
 }));
 vi.mock('../components/PreviewToolPane', () => ({
-  default: () => <div data-testid="preview-tool-pane" />,
+  default: ({ subTab }: { subTab: string }) => (
+    <div data-testid="preview-tool-pane" data-sub={subTab} />
+  ),
 }));
 vi.mock('../components/SshPanel', () => ({ default: () => <div data-testid="ssh-panel" /> }));
+vi.mock('../components/ActiveTerminalsPanel', () => ({
+  default: () => <div data-testid="active-terminals-panel" />,
+}));
 vi.mock('../components/GitPanel', () => ({ default: () => <div data-testid="git-panel" /> }));
 vi.mock('../components/SessionList', () => ({
   default: (p: { showArchived?: boolean }) => (
@@ -286,6 +291,41 @@ describe('WorkspaceTabView agent 活动图标', () => {
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
     fireEvent.click(screen.getByRole('button', { name: 'Git' }));
     expect(screen.getByTestId('git-panel')).toBeInTheDocument();
+  });
+
+  it('右栏 SSH 后有 Terminal 页签', () => {
+    const ws = 'D:\\proj-a';
+    render(<WorkspaceTabView tab={{ id: ws, name: 'proj-a' }} visible />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.workspace.active_terminals_tab') }));
+    expect(screen.getByTestId('active-terminals-panel')).toBeInTheDocument();
+    expect(screen.getByTestId('ssh-panel')).toBeInTheDocument();
+  });
+
+  it('focusTermKey 命中 shell 时切到中心区终端页签并选中子页签', () => {
+    const ws = 'D:\\proj-a';
+    useAppStore.setState({
+      terminals: [
+        {
+          ...term,
+          ID: 'sh1',
+          Key: 'shell:1',
+          Kind: 'shell',
+          Title: '本地 shell',
+          ToolID: '',
+          SessionID: '',
+          Workspace: ws,
+        },
+      ],
+      chats: [],
+      focusTermKey: { termKey: 'shell:1', seq: 1 },
+    });
+    render(<WorkspaceTabView tab={{ id: ws, name: 'proj-a' }} visible />);
+    expect(screen.getByRole('tab', { name: tt('ui.workspace.terminals_aria') })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(screen.getByTestId('preview-tool-pane')).toHaveAttribute('data-sub', 'sh1');
+    expect(useAppStore.getState().focusTermKey).toBeNull();
   });
 
   it('kshell:open-file 打开本工作区文件预览', () => {
