@@ -107,71 +107,56 @@ export default function MarkdownPreview({
       }}
       className="flex h-full min-h-0 flex-col text-sm text-foreground"
     >
-      <div
-        data-testid="md-search-bar"
-        className="flex shrink-0 items-center justify-end gap-1 border-b border-border px-2 py-1"
-      >
-        {open ? (
-          <>
-            <input
-              ref={inputRef}
-              type="text"
-              aria-label={t('ui.files.md_search_placeholder')}
-              placeholder={t('ui.files.md_search_placeholder')}
-              value={raw}
-              onChange={(e) => setRaw(e.target.value)}
-              className="h-7 w-44 rounded-[3px] border border-input bg-card px-2 text-xs outline-none placeholder:text-muted-foreground focus:border-primary/60"
-            />
-            {query && (
-              <span className="text-xs text-muted-foreground" data-testid="md-search-count">
-                {hits > MD_SEARCH_LIMIT ? `${MD_SEARCH_LIMIT}+` : hits}
-              </span>
-            )}
-            <button
-              type="button"
-              aria-label={t('ui.files.md_search_prev')}
-              disabled={hits <= 0}
-              onClick={() => goto(-1)}
-              className="flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-            >
-              ↑
-            </button>
-            <button
-              type="button"
-              aria-label={t('ui.files.md_search_next')}
-              disabled={hits <= 0}
-              onClick={() => goto(1)}
-              className="flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-            >
-              ↓
-            </button>
-            <button
-              type="button"
-              aria-label={t('ui.files.md_search_close')}
-              onClick={() => {
-                setRaw('');
-                setOpen(false);
-              }}
-              className="flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              ×
-            </button>
-          </>
-        ) : (
+      {open && (
+        <div
+          data-testid="md-search-bar"
+          className="flex shrink-0 items-center justify-end gap-1 border-b border-border px-2 py-1"
+        >
+          <input
+            ref={inputRef}
+            type="text"
+            aria-label={t('ui.files.md_search_placeholder')}
+            placeholder={t('ui.files.md_search_placeholder')}
+            value={raw}
+            onChange={(e) => setRaw(e.target.value)}
+            className="h-7 w-44 rounded-[3px] border border-input bg-card px-2 text-xs outline-none placeholder:text-muted-foreground focus:border-primary/60"
+          />
+          {query && (
+            <span className="text-xs text-muted-foreground" data-testid="md-search-count">
+              {hits > MD_SEARCH_LIMIT ? `${MD_SEARCH_LIMIT}+` : hits}
+            </span>
+          )}
           <button
             type="button"
-            aria-label={t('ui.files.md_search_toggle')}
-            title={t('ui.files.md_search_toggle')}
-            onClick={() => setOpen(true)}
+            aria-label={t('ui.files.md_search_prev')}
+            disabled={hits <= 0}
+            onClick={() => goto(-1)}
+            className="flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            aria-label={t('ui.files.md_search_next')}
+            disabled={hits <= 0}
+            onClick={() => goto(1)}
+            className="flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+          >
+            ↓
+          </button>
+          <button
+            type="button"
+            aria-label={t('ui.files.md_search_close')}
+            onClick={() => {
+              setRaw('');
+              setOpen(false);
+            }}
             className="flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
           >
-            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="7" />
-              <path strokeLinecap="round" d="m20 20-3.5-3.5" />
-            </svg>
+            ×
           </button>
-        )}
-      </div>
+        </div>
+      )}
       <div ref={scrollRef} className={bodyClass}>
         <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypePlugins}>
           {markdown}

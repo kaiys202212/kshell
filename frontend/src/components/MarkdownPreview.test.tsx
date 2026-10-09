@@ -1,7 +1,7 @@
 // MarkdownPreview：GFM 渲染 heading 等基础元素 / 渲染结果检索（高亮、计数、跳转）。
 // 检索工具条默认隐藏：搜索按钮或 Ctrl+F 事件（预览可见时优先消费）呼出。
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OPEN_FILE_EVENT } from '../lib/openHref';
 import { tt } from '../test/i18n';
@@ -23,9 +23,13 @@ function makeVisible() {
   });
 }
 
-// 打开检索工具条（搜索按钮）
-const openBar = () =>
-  fireEvent.click(screen.getByRole('button', { name: tt('ui.files.md_search_toggle') }));
+// 呼出检索工具条：派发 Ctrl+F 事件（预览可见时消费）；act 保证状态同步落地
+async function openBar() {
+  makeVisible();
+  await act(async () => {
+    window.dispatchEvent(new CustomEvent('kshell:focus-search', { cancelable: true }));
+  });
+}
 
 describe('MarkdownPreview', () => {
   it('渲染 # Hi 为 heading「Hi」', () => {
@@ -54,12 +58,13 @@ describe('MarkdownPreview', () => {
     expect(seen).toEqual([{ workspace: 'D:\\proj', path: 'D:\\proj\\README.md' }]);
   });
 
-  it('检索工具条默认隐藏（只有搜索按钮），点按钮呼出输入框', () => {
+  it('检索工具条默认不渲染，Ctrl+F 呼出并聚焦', async () => {
     render(<MarkdownPreview markdown="hello" />);
-    expect(screen.queryByPlaceholderText(tt('ui.files.md_search_placeholder'))).toBeNull();
-    openBar();
-    expect(screen.getByTestId('md-search-bar')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: tt('ui.files.md_search_close') })).toBeInTheDocument();
+    expect(screen.queryByTestId('md-search-bar')).toBeNull();
+    await openBar();
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText(tt('ui.files.md_search_placeholder'))).toBeInTheDocument(),
+    );
   });
 
   it('Ctrl+F：预览可见时消费事件并呼出工具条（preventDefault 阻断会话过滤框）', async () => {
@@ -78,12 +83,12 @@ describe('MarkdownPreview', () => {
     const ev = new CustomEvent('kshell:focus-search', { cancelable: true });
     window.dispatchEvent(ev);
     expect(ev.defaultPrevented).toBe(false);
-    expect(screen.queryByPlaceholderText(tt('ui.files.md_search_placeholder'))).toBeNull();
+    expect(screen.queryByTestId('md-search-bar')).toBeNull();
   });
 
   it('渲染检索：输入关键词后高亮命中并计数，大小写不敏感', async () => {
     render(<MarkdownPreview markdown="# alpha Beta\n\nbeta again" />);
-    openBar();
+    await openBar();
     const input = screen.getByPlaceholderText(tt('ui.files.md_search_placeholder'));
     fireEvent.change(input, { target: { value: 'beta' } });
 
@@ -94,7 +99,7 @@ describe('MarkdownPreview', () => {
 
   it('渲染检索：清空关键词后移除全部高亮', async () => {
     render(<MarkdownPreview markdown="hello world hello" />);
-    openBar();
+    await openBar();
     const input = screen.getByPlaceholderText(tt('ui.files.md_search_placeholder'));
     fireEvent.change(input, { target: { value: 'hello' } });
     await waitFor(() => expect(document.querySelectorAll('mark[data-md-hit]').length).toBe(2));
@@ -106,7 +111,7 @@ describe('MarkdownPreview', () => {
 
   it('渲染检索：关闭工具条清空检索态', async () => {
     render(<MarkdownPreview markdown="hello hello world" />);
-    openBar();
+    await openBar();
     fireEvent.change(screen.getByPlaceholderText(tt('ui.files.md_search_placeholder')), {
       target: { value: 'hello' },
     });
@@ -119,7 +124,7 @@ describe('MarkdownPreview', () => {
 
   it('渲染检索：命中超过上限 500 时计数显示 500+', async () => {
     render(<MarkdownPreview markdown={'word '.repeat(600)} />);
-    openBar();
+    await openBar();
     const input = screen.getByPlaceholderText(tt('ui.files.md_search_placeholder'));
     fireEvent.change(input, { target: { value: 'word' } });
     await waitFor(() => expect(screen.getByTestId('md-search-count')).toHaveTextContent('500+'));
@@ -129,7 +134,7 @@ describe('MarkdownPreview', () => {
 
   it('渲染检索：跨内联标签的长词不命中（单文本节点内匹配）', async () => {
     render(<MarkdownPreview markdown="**关键**词组" />);
-    openBar();
+    await openBar();
     const input = screen.getByPlaceholderText(tt('ui.files.md_search_placeholder'));
     fireEvent.change(input, { target: { value: '关键词' } });
     // 等防抖生效后仍无命中
