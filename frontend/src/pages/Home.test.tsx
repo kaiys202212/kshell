@@ -363,7 +363,8 @@ describe('Home', () => {
     expect(useAppStore.getState().toasts.some((t) => t.title === tt('ui.home.restored').replace('{{name}}', 'gone'))).toBe(true);
   });
 
-  it('projects:changed 事件：重拉工作区与回收站列表', async () => {    let projectsCb: (() => void) | undefined;
+  it('projects:changed 事件：重拉工作区与回收站列表', async () => {
+    let projectsCb: (() => void) | undefined;
     mocks.onProjectsChanged.mockImplementation((cb: () => void) => {
       projectsCb = cb;
       return () => {};

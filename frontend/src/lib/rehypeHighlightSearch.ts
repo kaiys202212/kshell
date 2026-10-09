@@ -1,6 +1,7 @@
 // Markdown 渲染检索：rehype 插件把命中文本包成 <mark data-md-hit="n">。
 // 只在单个文本节点内匹配（跨内联标签的长词不命中），命中序号跨节点连续递增；
-// 超出 MD_SEARCH_LIMIT 后剩余命中保留原文不再标记，计数经 totalRef 交还调用方。
+// mark 标记数受 MD_SEARCH_LIMIT 限制，超出后剩余命中保留原文不再标记；
+// 命中总数（不受限，供「500+」展示）经 totalRef 交还调用方。
 import type { Element, Nodes, Root, Text } from 'hast';
 
 export const MD_SEARCH_LIMIT = 500;
@@ -13,7 +14,8 @@ export function rehypeHighlightSearch(
   return (tree: Nodes) => {
     totalRef.current = 0;
     if (!kw) return;
-    let hits = 0;
+    let marks = 0; // 已标记数（受 MD_SEARCH_LIMIT 限制）
+    let total = 0; // 实际命中总数（不受限，供「500+」展示）
 
     const visit = (parent: Element | Root): void => {
       const next: Nodes[] = [];
@@ -26,18 +28,19 @@ export function rehypeHighlightSearch(
           while (at >= 0) {
             if (from < at) next.push({ type: 'text', value: value.slice(from, at) });
             const hitValue = value.slice(at, at + kw.length);
-            if (hits < MD_SEARCH_LIMIT) {
+            if (marks < MD_SEARCH_LIMIT) {
               next.push({
                 type: 'element',
                 tagName: 'mark',
-                properties: { 'data-md-hit': hits },
+                properties: { 'data-md-hit': marks },
                 children: [{ type: 'text', value: hitValue }],
               });
-              hits++;
+              marks++;
             } else {
               // 超限：保留原文
               next.push({ type: 'text', value: hitValue });
             }
+            total++;
             from = at + kw.length;
             at = lower.indexOf(kw, from);
           }
@@ -56,6 +59,6 @@ export function rehypeHighlightSearch(
     };
 
     if (tree.type === 'root') visit(tree);
-    totalRef.current = hits;
+    totalRef.current = total;
   };
 }

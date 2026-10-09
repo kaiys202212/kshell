@@ -59,6 +59,15 @@ describe('MarkdownPreview', () => {
     expect(screen.queryByTestId('md-search-count')).toBeNull();
   });
 
+  it('渲染检索：命中超过上限 500 时计数显示 500+', async () => {
+    render(<MarkdownPreview markdown={'word '.repeat(600)} />);
+    const input = screen.getByPlaceholderText(tt('ui.files.md_search_placeholder'));
+    fireEvent.change(input, { target: { value: 'word' } });
+    await waitFor(() => expect(screen.getByTestId('md-search-count')).toHaveTextContent('500+'));
+    // 高亮标记数仍以上限为界
+    expect(document.querySelectorAll('mark[data-md-hit]').length).toBe(500);
+  });
+
   it('渲染检索：跨内联标签的长词不命中（单文本节点内匹配）', async () => {
     render(<MarkdownPreview markdown="**关键**词组" />);
     const input = screen.getByPlaceholderText(tt('ui.files.md_search_placeholder'));

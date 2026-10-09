@@ -354,8 +354,11 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     selectCenterTab(FILES_TAB);
   };
 
-  // html 文件的浏览器页签（沙箱 iframe 渲染，固定不挤占预览位）
-  const openBrowserTab = (path: string) => {
+  // html 文件的浏览器页签（沙箱 iframe 渲染，固定不挤占预览位）。
+  // 远程（SSH）工作区无本地路径，不提供浏览器预览入口。
+  const isRemoteWs =
+    useAppStore((s) => s.workspaces.find((w) => w.Path === tab.id)?.Kind) === 'ssh';
+  const openBrowserTab = isRemoteWs ? undefined : (path: string) => {
     setFileTabs((s) => openPinned(s, browserTabPath(path), 'browser'));
     selectCenterTab(FILES_TAB);
   };

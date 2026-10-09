@@ -21,10 +21,10 @@ export function dirName(abs: string): string {
   return i > 0 ? abs.slice(0, i) : abs;
 }
 
-// 注入 <base>：有 <head> 插其后，否则前置
+// 注入 <base>：有 <head> 插其后（前瞻防误配 <header>），否则前置
 export function injectBase(html: string, baseHref: string): string {
   const tag = `<base href="${baseHref}">`;
-  const m = html.match(/<head[^>]*>/i);
+  const m = html.match(/<head(?=[\s>])[^>]*>/i);
   if (m && m.index !== undefined) {
     const at = m.index + m[0].length;
     return html.slice(0, at) + tag + html.slice(at);
@@ -42,6 +42,8 @@ export default function HtmlBrowserPreview({
   const { t } = useTranslation();
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [error, setError] = useState('');
+  // 绑定缺失单独记 flag：文案在渲染时翻译，避免 t 进入 load 依赖、切语言重拉文件
+  const [missingBinding, setMissingBinding] = useState(false);
   const [loading, setLoading] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
   const urlRef = useRef<string | null>(null);
@@ -50,12 +52,13 @@ export default function HtmlBrowserPreview({
     let cancelled = false;
     setLoading(true);
     setError('');
+    setMissingBinding(false);
     setBlobUrl(null);
     readFileBytes(wsPath, path)
       .then((data) => {
         if (cancelled) return;
         if (!data || !data.AbsPath) {
-          setError(t('ui.files.binding_missing'));
+          setMissingBinding(true);
           return;
         }
         const dir = dirName(data.AbsPath);
@@ -82,7 +85,7 @@ export default function HtmlBrowserPreview({
         urlRef.current = null;
       }
     };
-  }, [wsPath, path, reloadTick, t]);
+  }, [wsPath, path, reloadTick]);
 
   return (
     <div className="flex h-full min-h-0 flex-col text-sm">
@@ -99,8 +102,9 @@ export default function HtmlBrowserPreview({
           {t('ui.files.html_preview_reload')}
         </Button>
       </div>
+      {missingBinding && <p className="p-2 text-sm text-destructive">{t('ui.files.binding_missing')}</p>}
       {error && <p className="p-2 text-sm text-destructive">{error}</p>}
-      {!error && (
+      {!error && !missingBinding && (
         <div className="min-h-0 flex-1">
           {blobUrl && (
             <iframe
