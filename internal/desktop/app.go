@@ -21,6 +21,7 @@ import (
 	"github.com/yangk/kshell/internal/mcparchive"
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/remote"
+	remotefs "github.com/yangk/kshell/internal/remote/fs"
 	"github.com/yangk/kshell/internal/sessionarchive"
 	"github.com/yangk/kshell/internal/terminal"
 	"github.com/yangk/kshell/internal/workspace"
@@ -93,6 +94,8 @@ type Options struct {
 	// （Windows PowerShell 枚举，其它平台恒 false）。修复前检查工具进程占用，
 	// 避免重演 updater 边跑边装的事故。测试注入桩。
 	ProcScan func(dir string) bool
+	// RemoteRun 远端命令执行器；nil 时包一层 remote.Run（测试注入 fake）。
+	RemoteRun remotefs.Runner
 }
 
 // App 是暴露给前端的绑定对象：薄封装 discovery/providers/window 等核心包，
@@ -241,7 +244,7 @@ func (a *App) loadSnapshot() {
 	}
 
 	raw := res.Workspaces
-	res.Workspaces = discovery.ApplyProjects(raw, o.Projects, nil)
+	res.Workspaces = a.presentWorkspaces(discovery.ApplyProjects(raw, o.Projects, nil))
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -639,7 +642,7 @@ func (a *App) runScan() {
 	var raw []discovery.Workspace
 	if err == nil && res != nil {
 		raw = res.Workspaces
-		res.Workspaces = discovery.ApplyProjects(raw, o.Projects, nil)
+		res.Workspaces = a.presentWorkspaces(discovery.ApplyProjects(raw, o.Projects, nil))
 	}
 
 	a.mu.Lock()
@@ -838,7 +841,7 @@ func (a *App) GetWorkspaces() []discovery.Workspace {
 	a.mu.Lock()
 	raw, st := a.rawWorkspaces, a.opts.Projects
 	a.mu.Unlock()
-	return discovery.ApplyProjects(raw, st, nil)
+	return a.presentWorkspaces(discovery.ApplyProjects(raw, st, nil))
 }
 
 // GetSessions 返回最近一次扫描的会话列表（未扫完时为空切片）。

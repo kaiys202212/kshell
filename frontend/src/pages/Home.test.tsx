@@ -22,6 +22,9 @@ const mocks = vi.hoisted(() => ({
   scanSessions: vi.fn(),
   onScanDone: vi.fn(),
   createProject: vi.fn(),
+  addSSHProject: vi.fn(),
+  listConnections: vi.fn(),
+  listRemoteDir: vi.fn(),
   hideProject: vi.fn(),
   restoreProject: vi.fn(),
   getDeletedProjects: vi.fn(),
@@ -78,6 +81,9 @@ beforeEach(() => {
   mocks.scanSessions.mockResolvedValue(undefined);
   mocks.onProjectsChanged.mockImplementation(() => () => {});
   mocks.createProject.mockResolvedValue('');
+  mocks.addSSHProject.mockResolvedValue('');
+  mocks.listConnections.mockResolvedValue([]);
+  mocks.listRemoteDir.mockResolvedValue({ dir: '/home/u', entries: [] });
   mocks.hideProject.mockResolvedValue(undefined);
   mocks.restoreProject.mockResolvedValue(undefined);
   mocks.getDeletedProjects.mockResolvedValue([]);
@@ -90,6 +96,13 @@ beforeEach(() => {
     toasts: [],
   });
 });
+
+async function continueLocalCreate() {
+  fireEvent.click(screen.getByRole('button', { name: tt('ui.home.create_project') }));
+  // 对话框标题与按钮文案同为「New project」，用位置选项确认弹层已开
+  expect(await screen.findByText(tt('ui.home.create_location'))).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: tt('ui.home.create_continue') }));
+}
 
 describe('Home', () => {
   it('按最后活动时间倒序渲染，零值/空值的时间排最后（再按名称）', async () => {
@@ -187,13 +200,13 @@ describe('Home', () => {
     expect(screen.getByText(count(0))).toBeInTheDocument();
   });
 
-  it('新建项目：调绑定、提示并刷新列表', async () => {
+  it('新建项目：先出对话框，本地继续后调绑定、提示并刷新列表', async () => {
     mocks.createProject.mockResolvedValue('D:\\new-proj');
     render(<Home />);
     await screen.findByTitle('D:\\proj-new');
     const before = mocks.getWorkspaces.mock.calls.length;
 
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.home.create_project') }));
+    await continueLocalCreate();
 
     await waitFor(() => expect(mocks.createProject).toHaveBeenCalledTimes(1));
     expect(
@@ -202,17 +215,87 @@ describe('Home', () => {
     await waitFor(() => expect(mocks.getWorkspaces.mock.calls.length).toBeGreaterThan(before));
   });
 
-  it('新建项目取消（返回空串）：不提示、不刷新', async () => {
+  it('新建项目取消目录选择（返回空串）：不提示、不刷新', async () => {
     mocks.createProject.mockResolvedValue('');
     render(<Home />);
     await screen.findByTitle('D:\\proj-new');
     const before = mocks.getWorkspaces.mock.calls.length;
 
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.home.create_project') }));
+    await continueLocalCreate();
 
     await waitFor(() => expect(mocks.createProject).toHaveBeenCalledTimes(1));
     expect(useAppStore.getState().toasts).toHaveLength(0);
     expect(mocks.getWorkspaces.mock.calls.length).toBe(before);
+  });
+
+  it('新建远程：无连接时引导去设置，不打开目录浏览', async () => {
+    mocks.listConnections.mockResolvedValue([]);
+    render(<Home />);
+    await screen.findByTitle('D:\\proj-new');
+
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.home.create_project') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.home.create_remote') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.home.create_continue') }));
+
+    expect(await screen.findByText(tt('ui.home.create_no_connections'))).toBeInTheDocument();
+    expect(mocks.listRemoteDir).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('remote-dir-picker')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.home.create_go_settings') }));
+    expect(useAppStore.getState().activeTabId).toBe('kshell:settings');
+  });
+
+  it('新建远程：选连接后浏览并登记', async () => {
+    mocks.listConnections.mockResolvedValue([
+      { ID: 'c1', Name: '测试机', Host: '10.0.0.8', User: 'root', Port: 22, IdentityFile: '', Password: '', Workspace: '', Source: 'manual', SourceFile: '', Verified: false },
+    ]);
+    mocks.listRemoteDir.mockResolvedValue({
+      dir: '/home/u/proj',
+      entries: [],
+    });
+    mocks.addSSHProject.mockResolvedValue('ssh://c1/home/u/proj');
+    render(<Home />);
+    await screen.findByTitle('D:\\proj-new');
+    const before = mocks.getWorkspaces.mock.calls.length;
+
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.home.create_project') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.home.create_remote') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.home.create_continue') }));
+
+    expect(await screen.findByText(tt('ui.home.create_pick_connection'))).toBeInTheDocument();
+    // 再点继续进入浏览（同文案的第二个 continue）
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.home.create_continue') }));
+
+    expect(await screen.findByTestId('remote-dir-picker')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.home.remote_use_dir') }));
+
+    await waitFor(() => expect(mocks.addSSHProject).toHaveBeenCalledWith('c1', '/home/u/proj'));
+    expect(
+      useAppStore.getState().toasts.some((t) => t.title === tt('ui.home.added').replace('{{name}}', 'proj')),
+    ).toBe(true);
+    await waitFor(() => expect(mocks.getWorkspaces.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it('ssh 工作区卡片显示远程徽章与连接名副标题', async () => {
+    mocks.getWorkspaces.mockResolvedValue([
+      ws({
+        Path: 'ssh://c1/home/u/proj',
+        Name: 'proj',
+        Kind: 'ssh',
+        ConnID: 'c1',
+        ConnName: '测试机',
+        RemotePath: '/home/u/proj',
+        Source: 'manual',
+        LastUsed: minutesAgo(5),
+        SessionCount: 0,
+      }),
+    ]);
+    render(<Home />);
+    const cardEl = await screen.findByTitle(
+      tt('ui.home.remote_subtitle').replace('{{conn}}', '测试机').replace('{{path}}', '/home/u/proj'),
+    );
+    expect(within(cardEl).getByText(tt('ui.home.remote_badge'))).toBeInTheDocument();
+    expect(within(cardEl).queryByText(tt('ui.home.source_manual'))).toBeNull();
   });
 
   it('删除项目：卡片删除按钮调绑定并提示可从回收站还原', async () => {

@@ -2,12 +2,16 @@ package desktop
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
+	"github.com/yangk/kshell/internal/remote"
+	remotefs "github.com/yangk/kshell/internal/remote/fs"
 )
 
 // newProjectsEnv 组装项目表测试环境：临时项目文件 + 固定扫描结果 + 事件收集。
@@ -178,5 +182,162 @@ func TestGetDeletedProjectsWithoutStore(t *testing.T) {
 	app := NewAppWith(Options{})
 	if got := app.GetDeletedProjects(); got == nil || len(got) != 0 {
 		t.Fatalf("未装配项目表应返回空切片, got %+v", got)
+	}
+}
+
+// newSSHProjectsEnv 在 newProjectsEnv 基础上挂上连接表与可注入的远端 Runner。
+func newSSHProjectsEnv(t *testing.T, run remotefs.Runner) (*App, *discovery.ProjectStore, *remote.Store, *[]string) {
+	t.Helper()
+	app, store, events := newProjectsEnv(t, nil)
+	connStore := remote.NewStore(filepath.Join(t.TempDir(), "connections.yaml"))
+	if _, err := connStore.Add(remote.Connection{
+		ID: "c1", Name: "测试机", Host: "10.0.0.8", User: "root", Port: 22,
+	}); err != nil {
+		t.Fatalf("添加连接: %v", err)
+	}
+	app.opts.Store = connStore
+	app.opts.RemoteRun = run
+	return app, store, connStore, events
+}
+
+func TestAddSSHProjectAddsEmitsAndPresentsRef(t *testing.T) {
+	run := func(_ context.Context, _ remote.Connection, cmd string) ([]byte, []byte, error) {
+		if strings.Contains(cmd, "test -d") {
+			return []byte("ok\n"), nil, nil
+		}
+		return nil, nil, fmt.Errorf("unexpected cmd: %s", cmd)
+	}
+	app, store, _, events := newSSHProjectsEnv(t, run)
+
+	ref, err := app.AddSSHProject("c1", "/home/u/proj")
+	if err != nil {
+		t.Fatalf("AddSSHProject: %v", err)
+	}
+	wantRef := discovery.FormatSSHRef("c1", "/home/u/proj")
+	if ref != wantRef {
+		t.Fatalf("ref = %q, want %q", ref, wantRef)
+	}
+	entries := store.ManualEntries()
+	if len(entries) != 1 || entries[0].Kind != discovery.KindSSH || entries[0].ConnID != "c1" || entries[0].Path != "/home/u/proj" {
+		t.Fatalf("项目表: %+v", entries)
+	}
+	if !containsEvent(*events, "projects:changed") {
+		t.Fatalf("应广播 projects:changed: %v", *events)
+	}
+	list := app.GetWorkspaces()
+	if len(list) != 1 {
+		t.Fatalf("工作区数: %+v", list)
+	}
+	w := list[0]
+	if w.Path != wantRef || w.RemotePath != "/home/u/proj" || w.Kind != discovery.KindSSH || w.ConnID != "c1" || w.ConnName != "测试机" {
+		t.Fatalf("呈现字段不符: %+v", w)
+	}
+}
+
+func TestAddSSHProjectRejectsUnknownConn(t *testing.T) {
+	app, store, _, _ := newSSHProjectsEnv(t, nil)
+	if _, err := app.AddSSHProject("missing", "/home/u"); err == nil {
+		t.Fatal("未知连接应报错")
+	}
+	if len(store.ManualEntries()) != 0 {
+		t.Fatalf("不应写盘: %+v", store.ManualEntries())
+	}
+}
+
+func TestAddSSHProjectRejectsEmptyPath(t *testing.T) {
+	app, store, _, _ := newSSHProjectsEnv(t, nil)
+	if _, err := app.AddSSHProject("c1", "  "); err == nil {
+		t.Fatal("空路径应报错")
+	}
+	if len(store.ManualEntries()) != 0 {
+		t.Fatalf("不应写盘: %+v", store.ManualEntries())
+	}
+}
+
+func TestAddSSHProjectRejectsNonDirectory(t *testing.T) {
+	run := func(_ context.Context, _ remote.Connection, cmd string) ([]byte, []byte, error) {
+		if strings.Contains(cmd, "test -d") {
+			return nil, []byte("not a directory"), fmt.Errorf("exit 1")
+		}
+		return nil, nil, fmt.Errorf("unexpected cmd: %s", cmd)
+	}
+	app, store, _, _ := newSSHProjectsEnv(t, run)
+	if _, err := app.AddSSHProject("c1", "/home/u/file.txt"); err == nil {
+		t.Fatal("非目录应报错")
+	}
+	if len(store.ManualEntries()) != 0 {
+		t.Fatalf("不应写盘: %+v", store.ManualEntries())
+	}
+}
+
+func TestListRemoteDirDefaultsToHome(t *testing.T) {
+	var cmds []string
+	run := func(_ context.Context, _ remote.Connection, cmd string) ([]byte, []byte, error) {
+		cmds = append(cmds, cmd)
+		if strings.Contains(cmd, "echo") || strings.Contains(cmd, "$HOME") {
+			return []byte("/home/u"), nil, nil
+		}
+		if strings.Contains(cmd, "find") {
+			return []byte("d\t0\t1700000000.0\tproj\n-\t12\t1700000001.0\treadme.md\n"), nil, nil
+		}
+		return nil, nil, fmt.Errorf("unexpected cmd: %s", cmd)
+	}
+	app, _, _, _ := newSSHProjectsEnv(t, run)
+
+	got, err := app.ListRemoteDir("c1", "")
+	if err != nil {
+		t.Fatalf("ListRemoteDir: %v", err)
+	}
+	if got.Dir != "/home/u" {
+		t.Fatalf("Dir=%q, want /home/u", got.Dir)
+	}
+	if len(got.Entries) != 2 {
+		t.Fatalf("entries=%+v", got.Entries)
+	}
+	if got.Entries[0].Name != "proj" || !got.Entries[0].IsDir {
+		t.Fatalf("首项应为目录 proj: %+v", got.Entries[0])
+	}
+	if got.Entries[1].Name != "readme.md" || got.Entries[1].IsDir {
+		t.Fatalf("次项应为文件: %+v", got.Entries[1])
+	}
+	if len(cmds) < 2 {
+		t.Fatalf("应先解析 HOME 再 ListDir, cmds=%v", cmds)
+	}
+}
+
+func TestListRemoteDirUnknownConn(t *testing.T) {
+	app, _, _, _ := newSSHProjectsEnv(t, nil)
+	if _, err := app.ListRemoteDir("nope", "/tmp"); err == nil {
+		t.Fatal("未知连接应报错")
+	}
+}
+
+func TestHideSSHProjectUsesRef(t *testing.T) {
+	run := func(_ context.Context, _ remote.Connection, cmd string) ([]byte, []byte, error) {
+		if strings.Contains(cmd, "test -d") {
+			return []byte("ok\n"), nil, nil
+		}
+		return nil, nil, fmt.Errorf("unexpected cmd: %s", cmd)
+	}
+	app, _, _, _ := newSSHProjectsEnv(t, run)
+	ref, err := app.AddSSHProject("c1", "/home/u/proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.HideProject(ref); err != nil {
+		t.Fatalf("HideProject: %v", err)
+	}
+	if len(app.GetWorkspaces()) != 0 {
+		t.Fatalf("隐藏后列表应空: %+v", app.GetWorkspaces())
+	}
+	deleted := app.GetDeletedProjects()
+	if len(deleted) != 1 || deleted[0].Path != ref || deleted[0].Name != "proj" || !deleted[0].Exists {
+		t.Fatalf("回收站: %+v", deleted)
+	}
+	if err := app.RestoreProject(ref); err != nil {
+		t.Fatalf("RestoreProject: %v", err)
+	}
+	if len(app.GetWorkspaces()) != 1 {
+		t.Fatalf("还原后应有一项: %+v", app.GetWorkspaces())
 	}
 }

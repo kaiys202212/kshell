@@ -1,29 +1,34 @@
 // 首页：工作区/项目卡片网格（名称、git 徽标、会话数、最后活动时间、工具分布），
 // 按最后活动时间倒序 —— 从未用过（Go 零值时间）的 git 扫描工作区排最后，再按名称。
 // 点击整卡打开工作区页签；键盘可达（整卡是 button）。
-// 项目表操作：顶部「新建项目」调原生目录选择器；卡片 hover 出删除按钮（逻辑删除）；
+// 项目表操作：顶部「新建项目」先出本地/远程对话框；卡片 hover 出删除按钮（逻辑删除）；
 // 「回收站」弹层列出已删除项目可逐项还原。删除/还原后工作区列表由事件驱动刷新。
 // 数据流：先渲染缓存（GetWorkspaces），再触发后台扫描，等 "scan:done" 后重调
 // GetWorkspaces 刷新（统一走一条取数路径，事件 payload 只当触发信号用）。
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import RemoteDirPicker from '../components/RemoteDirPicker';
 import {
+  addSSHProject,
   createProject,
   getDeletedProjects,
   getWorkspaces,
   hideProject,
+  listConnections,
   onProjectsChanged,
   onScanDone,
   restoreProject,
   scanSessions,
+  type DeletedProject,
+  type SshConnection,
+  type Workspace,
 } from '../lib/api';
-import type { DeletedProject, Workspace } from '../lib/api';
 import { backendError } from '../lib/errors';
 import { formatRelativeTime } from '../lib/format';
 import { badgeFor } from '../lib/toolBadge';
 import { MONO } from '../lib/ui';
-import { useAppStore } from '../state/store';
+import { SETTINGS_TAB_ID, useAppStore } from '../state/store';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
@@ -35,6 +40,8 @@ import { ToolDot } from '../components/ui/tool-dot';
 const TOOL_BADGES_MAX = 3;
 // 网格列宽：窄窗口自动降列
 const GRID = 'grid gap-2.5 grid-cols-[repeat(auto-fill,minmax(220px,1fr))]';
+
+type CreateStep = 'closed' | 'choose' | 'remote-conn' | 'remote-browse';
 
 // 空态图标：手写内联 SVG（不引图标库）
 function FolderGlyph() {
@@ -81,6 +88,19 @@ function baseName(p: string): string {
   return parts[parts.length - 1] || p;
 }
 
+function isSSH(ws: Workspace): boolean {
+  return ws.Kind === 'ssh';
+}
+
+function cardSubtitle(ws: Workspace, t: (key: string, opts?: Record<string, string>) => string): string {
+  if (isSSH(ws)) {
+    const conn = ws.ConnName || ws.ConnID || '';
+    const path = ws.RemotePath || ws.Path;
+    return t('ui.home.remote_subtitle', { conn, path });
+  }
+  return ws.Path;
+}
+
 export default function Home() {
   const { t } = useTranslation();
   const workspaces = useAppStore((s) => s.workspaces);
@@ -88,11 +108,16 @@ export default function Home() {
   const scanState = useAppStore((s) => s.scanState);
   const setScanState = useAppStore((s) => s.setScanState);
   const openTab = useAppStore((s) => s.openTab);
+  const setActiveTab = useAppStore((s) => s.setActiveTab);
   const notify = useAppStore((s) => s.notify);
 
   const [deleted, setDeleted] = useState<DeletedProject[]>([]);
   const [binOpen, setBinOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [createStep, setCreateStep] = useState<CreateStep>('closed');
+  const [createKind, setCreateKind] = useState<'local' | 'remote'>('local');
+  const [connections, setConnections] = useState<SshConnection[]>([]);
+  const [selectedConnID, setSelectedConnID] = useState('');
 
   const refresh = useCallback(() => {
     getWorkspaces()
@@ -161,13 +186,69 @@ export default function Home() {
     scanSessions();
   };
 
-  const handleCreate = async () => {
+  const closeCreate = () => {
+    setCreateStep('closed');
+    setCreateKind('local');
+    setSelectedConnID('');
+    setConnections([]);
+  };
+
+  const handleCreateLocal = async () => {
     if (creating) return;
     setCreating(true);
+    closeCreate();
     try {
       const dir = await createProject();
       if (!dir) return; // 用户取消：静默
       notify(t('ui.home.added', { name: baseName(dir) }), 'success');
+      refresh();
+      refreshDeleted();
+    } catch (err) {
+      notify(t('ui.home.create_failed', { err: backendError(err) }), 'error');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const openCreateDialog = () => {
+    if (creating) return;
+    setCreateKind('local');
+    setCreateStep('choose');
+  };
+
+  const handleCreateContinue = async () => {
+    if (createKind === 'local') {
+      await handleCreateLocal();
+      return;
+    }
+    try {
+      const list = await listConnections('');
+      setConnections(list);
+      if (list.length === 0) {
+        setCreateStep('remote-conn');
+        setSelectedConnID('');
+        return;
+      }
+      setSelectedConnID(list[0].ID);
+      setCreateStep('remote-conn');
+    } catch (err) {
+      notify(t('ui.home.create_failed', { err: backendError(err) }), 'error');
+      closeCreate();
+    }
+  };
+
+  const handleRemoteBrowse = () => {
+    if (!selectedConnID) return;
+    setCreateStep('remote-browse');
+  };
+
+  const handleRemoteConfirm = async (remotePath: string) => {
+    if (creating || !selectedConnID) return;
+    setCreating(true);
+    try {
+      await addSSHProject(selectedConnID, remotePath);
+      closeCreate();
+      notify(t('ui.home.added', { name: baseName(remotePath) }), 'success');
       refresh();
       refreshDeleted();
     } catch (err) {
@@ -199,6 +280,8 @@ export default function Home() {
     }
   };
 
+  const createOpen = createStep !== 'closed';
+
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="mb-3 flex items-center justify-between gap-2">
@@ -209,9 +292,109 @@ export default function Home() {
           </span>
         </h1>
         <div className="flex items-center gap-2">
-          <Button size="sm" disabled={creating} onClick={() => void handleCreate()}>
+          <Button size="sm" disabled={creating} onClick={openCreateDialog}>
             {creating ? t('ui.home.creating') : t('ui.home.create_project')}
           </Button>
+          <Dialog
+            open={createOpen}
+            onOpenChange={(open) => {
+              if (!open) closeCreate();
+            }}
+            className="w-[min(92vw,28rem)] p-3 outline-none"
+          >
+            <DialogPrimitive.Title className="mb-2 text-sm font-medium">
+              {createStep === 'remote-browse'
+                ? t('ui.home.remote_browse_title')
+                : t('ui.home.create_dialog_title')}
+            </DialogPrimitive.Title>
+            {createStep === 'choose' && (
+              <div className="flex flex-col gap-3">
+                <fieldset className="m-0 border-0 p-0">
+                  <legend className="mb-1.5 text-xs text-muted-foreground">{t('ui.home.create_location')}</legend>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant={createKind === 'local' ? 'default' : 'secondary'}
+                      onClick={() => setCreateKind('local')}
+                    >
+                      {t('ui.home.create_local')}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={createKind === 'remote' ? 'default' : 'secondary'}
+                      onClick={() => setCreateKind('remote')}
+                    >
+                      {t('ui.home.create_remote')}
+                    </Button>
+                  </div>
+                </fieldset>
+                <div className="flex justify-end gap-2">
+                  <Button size="sm" variant="secondary" onClick={closeCreate}>
+                    {t('ui.home.create_cancel')}
+                  </Button>
+                  <Button size="sm" onClick={() => void handleCreateContinue()}>
+                    {t('ui.home.create_continue')}
+                  </Button>
+                </div>
+              </div>
+            )}
+            {createStep === 'remote-conn' && connections.length === 0 && (
+              <div className="flex flex-col gap-3">
+                <EmptyState
+                  className="py-4"
+                  title={t('ui.home.create_no_connections')}
+                  hint={t('ui.home.create_no_connections_hint')}
+                />
+                <div className="flex justify-end gap-2">
+                  <Button size="sm" variant="secondary" onClick={closeCreate}>
+                    {t('ui.home.create_cancel')}
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      closeCreate();
+                      setActiveTab(SETTINGS_TAB_ID);
+                    }}
+                  >
+                    {t('ui.home.create_go_settings')}
+                  </Button>
+                </div>
+              </div>
+            )}
+            {createStep === 'remote-conn' && connections.length > 0 && (
+              <div className="flex flex-col gap-3">
+                <label className="flex flex-col gap-1 text-xs">
+                  <span className="text-muted-foreground">{t('ui.home.create_pick_connection')}</span>
+                  <select
+                    className="h-8 rounded-[3px] border border-input bg-card px-2 text-[13px]"
+                    value={selectedConnID}
+                    onChange={(e) => setSelectedConnID(e.target.value)}
+                  >
+                    {connections.map((c) => (
+                      <option key={c.ID} value={c.ID}>
+                        {c.Name || c.Host}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="flex justify-end gap-2">
+                  <Button size="sm" variant="secondary" onClick={closeCreate}>
+                    {t('ui.home.create_cancel')}
+                  </Button>
+                  <Button size="sm" disabled={!selectedConnID} onClick={handleRemoteBrowse}>
+                    {t('ui.home.create_continue')}
+                  </Button>
+                </div>
+              </div>
+            )}
+            {createStep === 'remote-browse' && selectedConnID && (
+              <RemoteDirPicker
+                connID={selectedConnID}
+                onCancel={closeCreate}
+                onConfirm={(path) => void handleRemoteConfirm(path)}
+              />
+            )}
+          </Dialog>
           {/* 回收站：0 项时禁用（没有可还原的内容，点开只有空态） */}
           <Button
             size="sm"
@@ -304,6 +487,7 @@ export default function Home() {
             const { shown, rest } = toolDistribution(ws.ToolCounts);
             // 左缘色条取占比最高的工具色；无工具上下文（如纯 git 扫描工作区）用主色
             const barColor = shown[0] ? badgeFor(shown[0][0]).color : 'var(--primary)';
+            const subtitle = cardSubtitle(ws, t);
             return (
               <li
                 key={ws.Path}
@@ -316,20 +500,27 @@ export default function Home() {
                 <button
                   className="relative flex h-full w-full min-w-0 flex-col gap-1 rounded border border-border bg-card px-2.5 py-2 text-left transition-[background-color,border-color,box-shadow,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:-translate-y-px hover:border-primary/40 hover:bg-muted hover:shadow-[var(--shadow-card)]"
                   onClick={() => openTab(ws)}
-                  title={ws.Path}
+                  title={subtitle}
                 >
                   <span
                     aria-hidden="true"
                     className="absolute bottom-3 left-0 top-3 w-[3px] rounded-full"
                     style={{ background: barColor }}
                   />
-                  {/* 第一行：名称（单行截断）+ git 徽标 */}
+                  {/* 第一行：名称（单行截断）+ git / 远程 / 手动徽标 */}
                   <span className="flex min-w-0 items-center gap-1.5">
                     <span data-testid="ws-name" className="min-w-0 truncate text-[12.5px] font-medium">{ws.Name}</span>
+                    {isSSH(ws) && <Badge variant="outline">{t('ui.home.remote_badge')}</Badge>}
                     {ws.Source === 'git' && <Badge variant="outline">git</Badge>}
-                    {ws.Source === 'manual' && <Badge variant="outline">{t('ui.home.source_manual')}</Badge>}
+                    {ws.Source === 'manual' && !isSSH(ws) && (
+                      <Badge variant="outline">{t('ui.home.source_manual')}</Badge>
+                    )}
                   </span>
-                  {/* 第二行：会话数 + 最后活动时间 */}
+                  {/* 副标题：本地完整路径 / 远程连接名+远端路径（完整路径见卡片 button title） */}
+                  <span className={`min-w-0 truncate text-[10px] text-muted-foreground ${MONO}`}>
+                    {subtitle}
+                  </span>
+                  {/* 会话数 + 最后活动时间 */}
                   <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                     <span className={`whitespace-nowrap ${MONO}`}>{t('ui.home.session_count', { count: ws.SessionCount })}</span>
                     <span className={`whitespace-nowrap ${MONO}`}>
@@ -338,7 +529,7 @@ export default function Home() {
                         : t('ui.home.last_active', { rel: formatRelativeTime(ws.LastUsed) })}
                     </span>
                   </span>
-                  {/* 第三行：工具分布（最多 3 个 + "+N"） */}
+                  {/* 工具分布（最多 3 个 + "+N"） */}
                   {shown.length > 0 && (
                     <span className="flex min-w-0 flex-wrap items-center gap-1">
                       {shown.map(([toolID]) => (

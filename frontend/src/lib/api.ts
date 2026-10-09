@@ -19,7 +19,24 @@ export interface Workspace {
   LastUsed: string; // JSON 序列化后的 RFC3339 时间
   SessionCount: number;
   ToolCounts: Record<string, number>;
-  Source: string; // sessions | git
+  Source: string; // sessions | git | manual
+  Kind?: string; // local | ssh；缺省视为 local
+  ConnID?: string;
+  ConnName?: string;
+  RemotePath?: string; // 仅 ssh：远端绝对路径；Path 对 ssh 为 FormatSSHRef
+}
+
+// desktop.RemoteDirEntryView / RemoteDirListView（internal/desktop/projects.go）
+export interface RemoteDirEntry {
+  name: string;
+  isDir: boolean;
+  size: number;
+  modTime: string; // RFC3339
+}
+
+export interface RemoteDirList {
+  dir: string;
+  entries: RemoteDirEntry[];
 }
 
 // providers.Session 的 JSON 形态（internal/providers/provider.go）
@@ -509,6 +526,8 @@ interface AppBindings {
   ScrollbackTerminal(id: string): Promise<string>;
   NewSessionWithTool(wsPath: string, toolId: string): Promise<void>;
   CreateProject(): Promise<string>;
+  AddSSHProject(connID: string, remotePath: string): Promise<string>;
+  ListRemoteDir(connID: string, absDir: string): Promise<RemoteDirList>;
   HideProject(path: string): Promise<void>;
   RestoreProject(path: string): Promise<void>;
   GetDeletedProjects(): Promise<DeletedProject[]>;
@@ -1234,6 +1253,20 @@ export async function createProject(): Promise<string> {
   const a = app();
   if (!a) return '';
   return a.CreateProject();
+}
+
+// addSSHProject 登记远端目录为 ssh 工作区，返回 FormatSSHRef。
+export async function addSSHProject(connID: string, remotePath: string): Promise<string> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  return a.AddSSHProject(connID, remotePath);
+}
+
+// listRemoteDir 列出远端目录一层；absDir 空则从远端 $HOME 起步。
+export async function listRemoteDir(connID: string, absDir: string): Promise<RemoteDirList> {
+  const a = app();
+  if (!a) return { dir: '', entries: [] };
+  return a.ListRemoteDir(connID, absDir);
 }
 
 // hideProject 逻辑删除项目（只从列表隐藏并进回收站，磁盘内容不动）。错误向上抛。

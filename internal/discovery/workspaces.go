@@ -20,9 +20,10 @@ type Workspace struct {
 	SessionCount int
 	ToolCounts   map[string]int
 	Source       string // sessions | git
-	Kind         string `json:"Kind"`     // local | ssh；空视为 local
-	ConnID       string `json:"ConnID"`   // 仅 ssh：连接 ID
-	ConnName     string `json:"ConnName"` // 展示用连接名，运行时填充
+	Kind         string `json:"Kind"`       // local | ssh；空视为 local
+	ConnID       string `json:"ConnID"`     // 仅 ssh：连接 ID
+	ConnName     string `json:"ConnName"`   // 展示用连接名，运行时填充
+	RemotePath   string `json:"RemotePath"` // 仅 ssh：远端绝对路径；Path 对 ssh 在桌面层填 Ref
 }
 
 // NormalizePath 统一路径写法：Windows 上大小写不敏感、分隔符可能是 '/' 或 '\'，
