@@ -12,6 +12,7 @@ import { StreamLanguage, foldGutter, foldKeymap } from '@codemirror/language';
 import { powerShell } from '@codemirror/legacy-modes/mode/powershell';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
 import { python } from '@codemirror/lang-python';
+import { search, searchKeymap } from '@codemirror/search';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView, highlightWhitespace, keymap, lineNumbers } from '@codemirror/view';
@@ -86,6 +87,10 @@ export default function CodeEditor({
     const extensions: Extension[] = [
       lineNumbers(),
       history(),
+      // 查找面板置顶；Ctrl+F/Enter/F3 等由 searchKeymap 接管（处理后会 preventDefault，
+      // App.tsx 全局 Ctrl+F 见 defaultPrevented 退让，不会误聚焦文件树搜索）
+      search({ top: true }),
+      keymap.of([...searchKeymap]),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       foldGutter(),
       keymap.of(foldKeymap),

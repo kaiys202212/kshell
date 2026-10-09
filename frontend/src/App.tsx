@@ -271,6 +271,8 @@ function App() {
     // 单一全局 keydown：window 级监听不受输入框焦点影响（输入框聚焦时 Ctrl+K 仍触发），
     // preventDefault 压掉浏览器/WebView 的默认快捷语义
     const onKey = (e: KeyboardEvent) => {
+      // CodeMirror 查找面板等组件已处理的按键（Ctrl+F 打开编辑器检索）在此退让
+      if (e.defaultPrevented) return;
       if (!e.ctrlKey) return;
       if (e.key === 'k' || e.key === 'K') {
         e.preventDefault();
@@ -280,6 +282,9 @@ function App() {
         const { activeTabId: current } = useAppStore.getState();
         if (current !== null && current !== SETTINGS_TAB_ID) {
           window.dispatchEvent(new CustomEvent('kshell:focus-search'));
+        } else if (current === null) {
+          // 首页：聚焦工作区过滤框
+          window.dispatchEvent(new CustomEvent('kshell:focus-home-filter'));
         }
       }
     };
