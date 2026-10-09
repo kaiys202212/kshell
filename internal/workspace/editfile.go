@@ -29,6 +29,9 @@ type EditContent struct {
 	Size int64
 }
 
+// MaxEditBytes 可编辑文本文件大小上限（供远端读等对齐本地）。
+const MaxEditBytes = maxEditBytes
+
 // ReadForEdit 整读一个文本文件供编辑：超限报 ErrFileTooLarge，
 // 二进制报 ErrBinaryFile；行尾按多数派探测（CRLF 占多按 crlf 处理）。
 func ReadForEdit(path string) (EditContent, error) {
@@ -46,6 +49,15 @@ func ReadForEdit(path string) (EditContent, error) {
 	if err != nil {
 		return EditContent{}, err
 	}
+	return EditContentFromBytes(data)
+}
+
+// EditContentFromBytes 从已读字节构造编辑内容（远端 ReadFile 后复用）。
+// 超限/二进制规则与 ReadForEdit 一致；Size 取 len(data)。
+func EditContentFromBytes(data []byte) (EditContent, error) {
+	if int64(len(data)) > maxEditBytes {
+		return EditContent{}, ErrFileTooLarge
+	}
 	if isBinary(data) {
 		return EditContent{}, ErrBinaryFile
 	}
@@ -59,7 +71,22 @@ func ReadForEdit(path string) (EditContent, error) {
 	text := strings.ReplaceAll(string(data), "\r\n", "\n")
 	text = strings.TrimSuffix(text, "\r") // 孤立的旧 Mac 风格 \r 兜底清掉
 
-	return EditContent{Text: text, EOL: eol, Size: info.Size()}, nil
+	return EditContent{Text: text, EOL: eol, Size: int64(len(data))}, nil
+}
+
+// EncodeEditText 按 eol 把编辑态文本还原为待写字节（与 SaveEdit 同一规则）。
+func EncodeEditText(text, eol string) ([]byte, error) {
+	if eol != "crlf" && eol != "lf" {
+		eol = "lf"
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	if eol == "crlf" {
+		text = strings.ReplaceAll(text, "\n", "\r\n")
+	}
+	if int64(len(text)) > maxEditBytes {
+		return nil, ErrFileTooLarge
+	}
+	return []byte(text), nil
 }
 
 // SaveEdit 把编辑后的文本写回 path：text 按 eol 还原行尾后经
@@ -68,16 +95,9 @@ func ReadForEdit(path string) (EditContent, error) {
 // ②Windows 上目标被其它进程占用（无 FILE_SHARE_DELETE）或带只读属性时
 // rename 会失败——错误原样浮出给前端提示，不做重试。
 func SaveEdit(path, text, eol string) error {
-	if eol != "crlf" && eol != "lf" {
-		eol = "lf"
-	}
-	// 先清 \r 再统一还原，防止往返累积
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	if eol == "crlf" {
-		text = strings.ReplaceAll(text, "\n", "\r\n")
-	}
-	if int64(len(text)) > maxEditBytes {
-		return ErrFileTooLarge
+	data, err := EncodeEditText(text, eol)
+	if err != nil {
+		return err
 	}
 
 	// 目标可能尚不存在（新建文件保存）：有旧文件则保留权限位，没有按 0644
@@ -99,7 +119,7 @@ func SaveEdit(path, text, eol string) error {
 	tmpName := tmp.Name()
 	cleanup := func() { _ = os.Remove(tmpName) }
 
-	if _, err := tmp.WriteString(text); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		cleanup()
 		return err

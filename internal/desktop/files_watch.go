@@ -4,11 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/yangk/kshell/internal/discovery"
 )
 
 // fileWatchDebounce 是文件变更事件合并窗口；测试可缩短以加速断言。
@@ -29,7 +29,14 @@ type fileWatcher struct {
 // StartFileWatch 为工作区启动递归文件监视（引用计数 +1）。
 // 同一路径多次 Start 共享一个 watcher；防抖后作废树缓存并 Emit files:changed。
 func (a *App) StartFileWatch(wsPath string) error {
-	cleaned := filepath.Clean(strings.TrimSpace(wsPath))
+	kind, local, _, err := a.parseWSRef(wsPath)
+	if err != nil {
+		return err
+	}
+	if kind == discovery.KindSSH {
+		return nil // 远端无本地 fsnotify
+	}
+	cleaned := local
 	if cleaned == "." || cleaned == "" {
 		return errWorkspaceNotFound
 	}
@@ -66,7 +73,11 @@ func (a *App) StartFileWatch(wsPath string) error {
 
 // StopFileWatch 减少工作区监视引用；归零时关闭 watcher 并从 map 删除。
 func (a *App) StopFileWatch(wsPath string) {
-	cleaned := filepath.Clean(strings.TrimSpace(wsPath))
+	kind, local, _, err := a.parseWSRef(wsPath)
+	if err != nil || kind == discovery.KindSSH {
+		return
+	}
+	cleaned := local
 	if cleaned == "." || cleaned == "" {
 		return
 	}

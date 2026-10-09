@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/yangk/kshell/internal/discovery"
 )
 
 // 图片/PDF 预览读取上限（20MiB）。
@@ -20,7 +22,14 @@ type FileBytes struct {
 
 // ReadFileBytes 读取工作区内文件字节供图片/PDF 预览；走路径穿越校验，超限报错。
 func (a *App) ReadFileBytes(wsPath, path string) (FileBytes, error) {
-	resolved, err := a.resolveWorkspaceFile(wsPath, path)
+	kind, local, remote, err := a.parseWSRef(wsPath)
+	if err != nil {
+		return FileBytes{}, err
+	}
+	if kind == discovery.KindSSH {
+		return a.readFileBytesRemote(remote, path)
+	}
+	resolved, err := a.resolveWorkspaceFile(local, path)
 	if err != nil {
 		return FileBytes{}, err
 	}

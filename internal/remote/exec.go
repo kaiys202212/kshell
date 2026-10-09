@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -117,6 +118,11 @@ func sshOptTakesValue(flag string) bool {
 }
 
 func Run(ctx context.Context, c Connection, cmd string, opts SSHOptions) (Result, error) {
+	return RunWithStdin(ctx, c, cmd, nil, opts)
+}
+
+// RunWithStdin 与 Run 相同，但把 stdin 字节流接到远端命令的标准输入（写文件用）。
+func RunWithStdin(ctx context.Context, c Connection, cmd string, stdin []byte, opts SSHOptions) (Result, error) {
 	bin, err := FindSSH()
 	if err != nil {
 		return Result{}, err
@@ -135,6 +141,9 @@ func Run(ctx context.Context, c Connection, cmd string, opts SSHOptions) (Result
 		return Result{}, err
 	} else if len(env) > 0 {
 		cmdExec.Env = append(os.Environ(), env...)
+	}
+	if len(stdin) > 0 {
+		cmdExec.Stdin = bytes.NewReader(stdin)
 	}
 	cmdExec.Stdout = &stdout
 	cmdExec.Stderr = &stderr

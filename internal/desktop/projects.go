@@ -295,8 +295,8 @@ func (a *App) remoteRunner() remotefs.Runner {
 		return run
 	}
 	opts := a.sshOptions()
-	return func(ctx context.Context, conn remote.Connection, cmd string) ([]byte, []byte, error) {
-		res, err := remote.Run(ctx, conn, cmd, opts)
+	return func(ctx context.Context, conn remote.Connection, cmd string, stdin []byte) ([]byte, []byte, error) {
+		res, err := remote.RunWithStdin(ctx, conn, cmd, stdin, opts)
 		out, errout := []byte(res.Stdout), []byte(res.Stderr)
 		if err != nil {
 			return out, errout, err
@@ -310,7 +310,7 @@ func (a *App) remoteRunner() remotefs.Runner {
 
 func (a *App) remoteHome(ctx context.Context, c remote.Connection) (string, error) {
 	run := a.remoteRunner()
-	stdout, stderr, err := run(ctx, c, `echo -n "$HOME"`)
+	stdout, stderr, err := run(ctx, c, `echo -n "$HOME"`, nil)
 	if err != nil {
 		if len(stderr) > 0 {
 			return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(stderr)))
@@ -319,7 +319,7 @@ func (a *App) remoteHome(ctx context.Context, c remote.Connection) (string, erro
 	}
 	home := strings.TrimSpace(string(stdout))
 	if home == "" {
-		stdout, stderr, err = run(ctx, c, "pwd")
+		stdout, stderr, err = run(ctx, c, "pwd", nil)
 		if err != nil {
 			if len(stderr) > 0 {
 				return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(stderr)))
@@ -337,7 +337,7 @@ func (a *App) remoteHome(ctx context.Context, c remote.Connection) (string, erro
 func (a *App) remoteEnsureDir(ctx context.Context, c remote.Connection, absDir string) error {
 	run := a.remoteRunner()
 	cmd := fmt.Sprintf("test -d %s && echo -n ok", shellSingleQuote(absDir))
-	stdout, stderr, err := run(ctx, c, cmd)
+	stdout, stderr, err := run(ctx, c, cmd, nil)
 	if err != nil {
 		if len(stderr) > 0 {
 			return fmt.Errorf("err.projects.dir_missing|%s: %s", absDir, strings.TrimSpace(string(stderr)))

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/workspace"
 )
 
@@ -68,8 +69,16 @@ func (a *App) treeFor(wsPath string, showAll bool) (*workspace.Tree, error) {
 // ListFiles 列出工作区内 relPath 目录的子项（懒加载：首次经过才读盘）。
 // showAll=true 时展示被 ignore/内置排除的条目（.git 仍永不出现）。
 // relPath 为空或 "." 时返回根层；目录项已按「目录优先、名称排序」由 Tree 保证。
+// wsPath 可为本地路径或 ssh:// Ref。
 func (a *App) ListFiles(wsPath, relPath string, showAll bool) ([]workspace.Node, error) {
-	wsPath = filepath.Clean(strings.TrimSpace(wsPath))
+	kind, local, remote, err := a.parseWSRef(wsPath)
+	if err != nil {
+		return nil, err
+	}
+	if kind == discovery.KindSSH {
+		return a.listFilesRemote(remote, relPath, showAll)
+	}
+	wsPath = local
 	tree, err := a.treeFor(wsPath, showAll)
 	if err != nil {
 		return nil, err
@@ -133,7 +142,14 @@ func (a *App) nodeAt(tree *workspace.Tree, wsPath, relPath string) (*workspace.N
 // 绑定调用本身已在独立 goroutine 执行，无需 TUI 那样的异步命令包装；
 // 每次现读保证拿到最新 mtime 内容，头部读取开销可忽略。
 func (a *App) PreviewFile(wsPath, path string) (workspace.Preview, error) {
-	resolved, err := a.resolveWorkspaceFile(wsPath, path)
+	kind, local, remote, err := a.parseWSRef(wsPath)
+	if err != nil {
+		return workspace.Preview{}, err
+	}
+	if kind == discovery.KindSSH {
+		return a.previewFileRemote(remote, path)
+	}
+	resolved, err := a.resolveWorkspaceFile(local, path)
 	if err != nil {
 		return workspace.Preview{}, err
 	}
@@ -186,7 +202,15 @@ func (a *App) SearchFiles(wsPath, query string, showAll bool) ([]workspace.Searc
 	if strings.TrimSpace(query) == "" {
 		return []workspace.SearchHit{}, nil
 	}
-	cleaned := filepath.Clean(strings.TrimSpace(wsPath))
+	kind, local, remote, err := a.parseWSRef(wsPath)
+	if err != nil {
+		return nil, err
+	}
+	if kind == discovery.KindSSH {
+		_ = showAll // 远端 Search 固定剪枝 .git/node_modules，与 FS.Search 对齐
+		return a.searchFilesRemote(remote, query)
+	}
+	cleaned := local
 	if cleaned == "." || cleaned == "" {
 		return nil, errWorkspaceNotFound
 	}
@@ -210,8 +234,14 @@ func (a *App) RenameEntry(wsPath, relPath, newName string) (string, error) {
 		strings.ContainsAny(newName, `/\`) {
 		return "", errInvalidName
 	}
-
-	wsPath = filepath.Clean(strings.TrimSpace(wsPath))
+	kind, local, _, err := a.parseWSRef(wsPath)
+	if err != nil {
+		return "", err
+	}
+	if kind == discovery.KindSSH {
+		return "", errRemoteFSOpUnsupported
+	}
+	wsPath = local
 	// showAll=true：超集树，showAll 可见的忽略项也可改名
 	tree, err := a.treeFor(wsPath, true)
 	if err != nil {
@@ -263,7 +293,14 @@ func (a *App) invalidateTree(wsPath string) {
 
 // RefreshFiles 手动作废工作区树缓存，下次 ListFiles 将重新读盘。
 func (a *App) RefreshFiles(wsPath string) error {
-	cleaned := filepath.Clean(strings.TrimSpace(wsPath))
+	kind, local, _, err := a.parseWSRef(wsPath)
+	if err != nil {
+		return err
+	}
+	if kind == discovery.KindSSH {
+		return nil // 远端无本地树缓存
+	}
+	cleaned := local
 	if cleaned == "." || cleaned == "" {
 		return errWorkspaceNotFound
 	}
@@ -279,8 +316,14 @@ func (a *App) CreateEntry(wsPath, dirRel, name string, isDir bool) (string, erro
 		strings.ContainsAny(name, `/\`) {
 		return "", errInvalidName
 	}
-
-	wsPath = filepath.Clean(strings.TrimSpace(wsPath))
+	kind, local, _, err := a.parseWSRef(wsPath)
+	if err != nil {
+		return "", err
+	}
+	if kind == discovery.KindSSH {
+		return "", errRemoteFSOpUnsupported
+	}
+	wsPath = local
 	// showAll=true：可在忽略目录下新建（超集树含 showAll 可见项）
 	tree, err := a.treeFor(wsPath, true)
 	if err != nil {
@@ -335,8 +378,14 @@ func (a *App) DeleteEntry(wsPath, relPath string) error {
 	if clean == "." || clean == "" || clean == string(filepath.Separator) {
 		return errRootUndeletable
 	}
-
-	wsPath = filepath.Clean(strings.TrimSpace(wsPath))
+	kind, local, _, err := a.parseWSRef(wsPath)
+	if err != nil {
+		return err
+	}
+	if kind == discovery.KindSSH {
+		return errRemoteFSOpUnsupported
+	}
+	wsPath = local
 	// showAll=true：超集树，可删除 showAll 可见的忽略项
 	tree, err := a.treeFor(wsPath, true)
 	if err != nil {
@@ -365,7 +414,14 @@ func (a *App) DeleteEntry(wsPath, relPath string) error {
 // 拒绝移入自身子孙目录；目标已存在报错；原地移动视为 no-op；
 // 成功后作废树缓存。
 func (a *App) MoveEntry(wsPath, srcRel, dstDirRel string) (string, error) {
-	wsPath = filepath.Clean(strings.TrimSpace(wsPath))
+	kind, local, _, err := a.parseWSRef(wsPath)
+	if err != nil {
+		return "", err
+	}
+	if kind == discovery.KindSSH {
+		return "", errRemoteFSOpUnsupported
+	}
+	wsPath = local
 	// showAll=true：超集树，可移动 showAll 可见的忽略项
 	tree, err := a.treeFor(wsPath, true)
 	if err != nil {
@@ -416,7 +472,14 @@ func (a *App) MoveEntry(wsPath, srcRel, dstDirRel string) (string, error) {
 
 // ReadFileForEdit 整读工作区内文本文件供编辑（上限 1MB、拒二进制）。
 func (a *App) ReadFileForEdit(wsPath, path string) (workspace.EditContent, error) {
-	resolved, err := a.resolveWorkspaceFile(wsPath, path)
+	kind, local, remote, err := a.parseWSRef(wsPath)
+	if err != nil {
+		return workspace.EditContent{}, err
+	}
+	if kind == discovery.KindSSH {
+		return a.readFileForEditRemote(remote, path)
+	}
+	resolved, err := a.resolveWorkspaceFile(local, path)
 	if err != nil {
 		return workspace.EditContent{}, err
 	}
@@ -425,7 +488,14 @@ func (a *App) ReadFileForEdit(wsPath, path string) (workspace.EditContent, error
 
 // SaveFile 把编辑后的文本写回工作区内文件（原子替换，按 eol 还原行尾）。
 func (a *App) SaveFile(wsPath, path, text, eol string) error {
-	resolved, err := a.resolveWorkspaceFile(wsPath, path)
+	kind, local, remote, err := a.parseWSRef(wsPath)
+	if err != nil {
+		return err
+	}
+	if kind == discovery.KindSSH {
+		return a.saveFileRemote(remote, path, text, eol)
+	}
+	resolved, err := a.resolveWorkspaceFile(local, path)
 	if err != nil {
 		return err
 	}
@@ -444,7 +514,15 @@ type GitStatusResult struct {
 // GitStatus 返回工作区的 git 状态（relPath → 状态码）；
 // 非 git 仓库返回 IsRepo=false，前端据此隐藏标记。
 func (a *App) GitStatus(wsPath string) (GitStatusResult, error) {
-	rep, err := workspace.InspectGit(filepath.Clean(strings.TrimSpace(wsPath)))
+	kind, local, _, err := a.parseWSRef(wsPath)
+	if err != nil {
+		return GitStatusResult{}, err
+	}
+	if kind == discovery.KindSSH {
+		// Task6 再接远端 git；此前前端按非仓库隐藏标记
+		return GitStatusResult{IsRepo: false, Status: map[string]string{}, DirBranches: map[string]string{}}, nil
+	}
+	rep, err := workspace.InspectGit(local)
 	if err != nil {
 		return GitStatusResult{}, err
 	}

@@ -201,7 +201,7 @@ func newSSHProjectsEnv(t *testing.T, run remotefs.Runner) (*App, *discovery.Proj
 }
 
 func TestAddSSHProjectAddsEmitsAndPresentsRef(t *testing.T) {
-	run := func(_ context.Context, _ remote.Connection, cmd string) ([]byte, []byte, error) {
+	run := func(_ context.Context, _ remote.Connection, cmd string, _ []byte) ([]byte, []byte, error) {
 		if strings.Contains(cmd, "test -d") {
 			return []byte("ok\n"), nil, nil
 		}
@@ -255,7 +255,7 @@ func TestAddSSHProjectRejectsEmptyPath(t *testing.T) {
 }
 
 func TestAddSSHProjectRejectsNonDirectory(t *testing.T) {
-	run := func(_ context.Context, _ remote.Connection, cmd string) ([]byte, []byte, error) {
+	run := func(_ context.Context, _ remote.Connection, cmd string, _ []byte) ([]byte, []byte, error) {
 		if strings.Contains(cmd, "test -d") {
 			return nil, []byte("not a directory"), fmt.Errorf("exit 1")
 		}
@@ -272,7 +272,7 @@ func TestAddSSHProjectRejectsNonDirectory(t *testing.T) {
 
 func TestListRemoteDirDefaultsToHome(t *testing.T) {
 	var cmds []string
-	run := func(_ context.Context, _ remote.Connection, cmd string) ([]byte, []byte, error) {
+	run := func(_ context.Context, _ remote.Connection, cmd string, _ []byte) ([]byte, []byte, error) {
 		cmds = append(cmds, cmd)
 		if strings.Contains(cmd, "echo") || strings.Contains(cmd, "$HOME") {
 			return []byte("/home/u"), nil, nil
@@ -313,7 +313,7 @@ func TestListRemoteDirUnknownConn(t *testing.T) {
 }
 
 func TestHideSSHProjectUsesRef(t *testing.T) {
-	run := func(_ context.Context, _ remote.Connection, cmd string) ([]byte, []byte, error) {
+	run := func(_ context.Context, _ remote.Connection, cmd string, _ []byte) ([]byte, []byte, error) {
 		if strings.Contains(cmd, "test -d") {
 			return []byte("ok\n"), nil, nil
 		}
