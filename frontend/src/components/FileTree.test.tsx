@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   stopFileWatch: vi.fn(),
   onFilesChanged: vi.fn<(cb: (path: string) => void) => () => void>(() => () => {}),
   revealInExplorer: vi.fn().mockResolvedValue(undefined),
+  isSSHWorkspaceRef: (p: string) => typeof p === 'string' && p.startsWith('ssh://'),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -128,6 +129,21 @@ describe('FileTree', () => {
     render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
 
     expect(await screen.findByText(tt('err.files.out_of_workspace'))).toBeInTheDocument();
+  });
+
+  it('ssh 工作区根层 ListFiles 失败时 toast 并标记不可达', async () => {
+    const ref = 'ssh://c1/home/u/proj';
+    useAppStore.setState({ toasts: [], unreachableWorkspaces: {} });
+    mocks.listFiles.mockRejectedValue(new Error('err.ssh.exec_failed|timeout'));
+    render(<FileTree wsPath={ref} onOpenFile={() => {}} />);
+
+    expect(await screen.findByText(tt('err.ssh.exec_failed').replace('{{0}}', 'timeout'))).toBeInTheDocument();
+    await waitFor(() => {
+      expect(useAppStore.getState().unreachableWorkspaces[ref]).toBe(true);
+      expect(
+        useAppStore.getState().toasts.some((t) => t.tone === 'error' && t.title.includes('timeout')),
+      ).toBe(true);
+    });
   });
 
   it('工作区没有可显示的文件时仍展示虚拟根目录', async () => {

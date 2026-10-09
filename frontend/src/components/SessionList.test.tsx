@@ -55,6 +55,8 @@ beforeEach(() => {
     chatPermissions: {},
     terminalBusy: {},
     archivedIDs: [],
+    toasts: [],
+    unreachableWorkspaces: {},
   });
 });
 
@@ -521,6 +523,23 @@ describe('SessionList agent 活动图标', () => {
     expect(await screen.findByText('远端会话')).toBeInTheDocument();
     expect(mocks.scanRemoteSessions).toHaveBeenCalledWith(ref);
     expect(mocks.getSessions).not.toHaveBeenCalled();
+    expect(useAppStore.getState().unreachableWorkspaces[ref]).toBeUndefined();
+  });
+
+  it('ssh 远端扫描与缓存均失败时 toast、标不可达并展示空态文案', async () => {
+    const ref = 'ssh://c1/home/u/down';
+    mocks.scanRemoteSessions.mockRejectedValueOnce(new Error('err.ssh.exec_failed|timeout'));
+    mocks.getRemoteSessions.mockRejectedValueOnce(new Error('err.ssh.exec_failed|timeout'));
+    render(
+      <SessionList workspacePath={ref} onSelectRow={onSelectRow} onActivate={onActivate} />,
+    );
+    expect(await screen.findByText(tt('ui.session_list.remote_unreachable'))).toBeInTheDocument();
+    expect(useAppStore.getState().unreachableWorkspaces[ref]).toBe(true);
+    expect(
+      useAppStore.getState().toasts.some(
+        (t) => t.tone === 'error' && t.title.includes(tt('ui.session_list.remote_scan_failed').split('{{')[0]),
+      ),
+    ).toBe(true);
   });
 });
 

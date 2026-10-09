@@ -83,6 +83,11 @@ interface AppState {
   notify(title: string, tone?: Toast['tone']): void;
   dismissToast(id: number): void;
 
+  // ssh 工作区打开/扫描失败后的不可达标记（不持久化；Home 卡片徽章用）
+  unreachableWorkspaces: Record<string, true>;
+  markUnreachable(wsPath: string): void;
+  clearUnreachable(wsPath: string): void;
+
   // 弹出的终端窗口状态（窗口标题 → 是否存活）：
   // SessionList 恢复成功把对应项置 true，"window:closed" 事件把对应项还原为 false。
   // 键与事件 payload 都是 lib/title.ts terminalTitle 的归一化形态，严格相等匹配。
@@ -220,6 +225,21 @@ export const useAppStore = create<AppState>()(
           return { toasts: toasts.length > 5 ? toasts.slice(toasts.length - 5) : toasts };
         }),
       dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+
+      unreachableWorkspaces: {},
+      markUnreachable: (wsPath) =>
+        set((s) =>
+          wsPath && !s.unreachableWorkspaces[wsPath]
+            ? { unreachableWorkspaces: { ...s.unreachableWorkspaces, [wsPath]: true } }
+            : {},
+        ),
+      clearUnreachable: (wsPath) =>
+        set((s) => {
+          if (!wsPath || !s.unreachableWorkspaces[wsPath]) return {};
+          const next = { ...s.unreachableWorkspaces };
+          delete next[wsPath];
+          return { unreachableWorkspaces: next };
+        }),
 
       windowStatus: {},
       setWindowStatus: (title, open) =>

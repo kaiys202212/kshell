@@ -13,6 +13,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import {
   createEntry,
   deleteEntry,
+  isSSHWorkspaceRef,
   listFiles,
   moveEntry,
   onFilesChanged,
@@ -650,11 +651,19 @@ export default function FileTree({
     setRenamingPath(null);
     listFiles(wsPath, '', showAllRef.current)
       .then((nodes) => {
-        if (!cancelled && gen === reloadGenRef.current) setItems(asTree(wsPath, nodes, true));
+        if (!cancelled && gen === reloadGenRef.current) {
+          setItems(asTree(wsPath, nodes, true));
+          if (isSSHWorkspaceRef(wsPath)) useAppStore.getState().clearUnreachable(wsPath);
+        }
       })
       .catch((e: unknown) => {
         if (!cancelled && gen === reloadGenRef.current) {
-          setError(backendError(e));
+          const msg = backendError(e);
+          setError(msg);
+          if (isSSHWorkspaceRef(wsPath)) {
+            useAppStore.getState().markUnreachable(wsPath);
+            useAppStore.getState().notify(msg, 'error');
+          }
         }
       });
     void refreshGitStatus(wsPath);

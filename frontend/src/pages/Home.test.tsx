@@ -94,6 +94,7 @@ beforeEach(() => {
     scanState: 'idle',
     terminals: [],
     toasts: [],
+    unreachableWorkspaces: {},
   });
 });
 
@@ -296,6 +297,33 @@ describe('Home', () => {
     );
     expect(within(cardEl).getByText(tt('ui.home.remote_badge'))).toBeInTheDocument();
     expect(within(cardEl).queryByText(tt('ui.home.source_manual'))).toBeNull();
+    expect(within(cardEl).queryByText(tt('ui.home.remote_unreachable'))).toBeNull();
+  });
+
+  it('ssh 工作区不可达时卡片显示不可达徽章，仍可点击打开', async () => {
+    const ref = 'ssh://c1/home/u/down';
+    mocks.getWorkspaces.mockResolvedValue([
+      ws({
+        Path: ref,
+        Name: 'down',
+        Kind: 'ssh',
+        ConnID: 'c1',
+        ConnName: '测试机',
+        RemotePath: '/home/u/down',
+        Source: 'manual',
+        LastUsed: minutesAgo(5),
+        SessionCount: 0,
+      }),
+    ]);
+    useAppStore.setState({ unreachableWorkspaces: { [ref]: true } });
+    render(<Home />);
+    const cardEl = await screen.findByTitle(
+      tt('ui.home.remote_subtitle').replace('{{conn}}', '测试机').replace('{{path}}', '/home/u/down'),
+    );
+    expect(within(cardEl).getByText(tt('ui.home.remote_badge'))).toBeInTheDocument();
+    expect(within(cardEl).getByText(tt('ui.home.remote_unreachable'))).toBeInTheDocument();
+    fireEvent.click(cardEl);
+    expect(useAppStore.getState().activeTabId).toBe(ref);
   });
 
   it('删除项目：卡片删除按钮调绑定并提示可从回收站还原', async () => {

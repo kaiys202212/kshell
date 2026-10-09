@@ -10,6 +10,7 @@ import {
   closeChat,
   closeTerminal,
   getTools,
+  isSSHWorkspaceRef,
   listChats,
   listTerminals,
   onScanDone,
@@ -236,12 +237,14 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             selectCenterTab(res.Terminal.ID);
           }
           if (res.Fallback) notify(tr('ui.workspace.fallback', { reason: translateBackend(res.Fallback) }), 'info');
+          if (isSSHWorkspaceRef(tab.id)) useAppStore.getState().clearUnreachable(tab.id);
         })
         .catch((e: unknown) => {
           notify(tr('ui.workspace.open_session_failed', { err: backendError(e) }), 'error');
+          if (isSSHWorkspaceRef(tab.id)) useAppStore.getState().markUnreachable(tab.id);
         });
     },
-    [notify, selectCenterTab, closeSessionPreview, tr],
+    [notify, selectCenterTab, closeSessionPreview, tr, tab.id],
   );
 
   const handleSelectSessionRow = useCallback(
@@ -284,6 +287,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         selectCenterTab(res.Terminal.ID);
       }
       if (res.Fallback) notify(tr('ui.workspace.fallback', { reason: translateBackend(res.Fallback) }), 'info');
+      if (isSSHWorkspaceRef(tab.id)) useAppStore.getState().clearUnreachable(tab.id);
       // 新会话要过一会儿才落进工具自己的会话存储；按退避多扫几次，避免单次过早/撞车
       for (const tid of rescanTimers.current) window.clearTimeout(tid);
       rescanTimers.current = NEW_SESSION_RESCAN_DELAYS_MS.map((delay) =>
@@ -293,6 +297,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
       );
     } catch (e: unknown) {
       notify(tr('ui.workspace.new_session_failed', { err: backendError(e) }), 'error');
+      if (isSSHWorkspaceRef(tab.id)) useAppStore.getState().markUnreachable(tab.id);
     } finally {
       setBusy(false);
     }

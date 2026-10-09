@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   closeChat: vi.fn(),
   closeTerminal: vi.fn(),
   getTools: vi.fn(),
+  isSSHWorkspaceRef: (p: string) => typeof p === 'string' && p.startsWith('ssh://'),
   listTerminals: vi.fn(),
   listChats: vi.fn(),
   restoreSession: vi.fn(),

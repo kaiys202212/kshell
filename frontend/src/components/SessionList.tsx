@@ -11,6 +11,7 @@ import {
   scanRemoteSessions,
 } from '../lib/api';
 import type { ChatInfo, Session, TerminalInfo } from '../lib/api';
+import { backendError } from '../lib/errors';
 import { formatRelativeTime } from '../lib/format';
 import { badgeFor } from '../lib/toolBadge';
 import { displayTitle } from '../lib/title';
@@ -118,10 +119,14 @@ export default function SessionList({
   const { t } = useTranslation();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [remoteReady, setRemoteReady] = useState(false);
+  const [remoteFailed, setRemoteFailed] = useState(false);
   const [query, setQuery] = useState('');
   const [toolFilter, setToolFilter] = useState<string | null>(null);
   const scanState = useAppStore((s) => s.scanState);
   const setScanState = useAppStore((s) => s.setScanState);
+  const notify = useAppStore((s) => s.notify);
+  const markUnreachable = useAppStore((s) => s.markUnreachable);
+  const clearUnreachable = useAppStore((s) => s.clearUnreachable);
   const ssh = isSSHWorkspaceRef(workspacePath);
   const listReady = ssh ? remoteReady : scanState === 'done';
   const terminals = useAppStore((s) => s.terminals);
@@ -133,7 +138,10 @@ export default function SessionList({
 
   useEffect(() => {
     let cancelled = false;
-    if (ssh) setRemoteReady(false);
+    if (ssh) {
+      setRemoteReady(false);
+      setRemoteFailed(false);
+    }
     const refresh = () => {
       if (ssh) {
         // 打开/切换到 ssh 工作区时走远端扫描；失败则回退读缓存。
@@ -141,19 +149,39 @@ export default function SessionList({
           .then((list) => {
             if (!cancelled) {
               setSessions(list);
+              setRemoteFailed(false);
               setRemoteReady(true);
+              clearUnreachable(workspacePath);
             }
           })
-          .catch(() =>
+          .catch((scanErr: unknown) =>
             getRemoteSessions(workspacePath)
               .then((list) => {
                 if (!cancelled) {
                   setSessions(list);
+                  setRemoteFailed(false);
                   setRemoteReady(true);
+                  clearUnreachable(workspacePath);
+                  // 扫描失败但有缓存：仍 toast，不标不可达（列表可用）
+                  notify(
+                    t('ui.session_list.remote_scan_failed', { err: backendError(scanErr) }),
+                    'error',
+                  );
                 }
               })
-              .catch(() => {
-                if (!cancelled) setRemoteReady(true);
+              .catch((cacheErr: unknown) => {
+                if (!cancelled) {
+                  setSessions([]);
+                  setRemoteFailed(true);
+                  setRemoteReady(true);
+                  markUnreachable(workspacePath);
+                  notify(
+                    t('ui.session_list.remote_scan_failed', {
+                      err: backendError(cacheErr ?? scanErr),
+                    }),
+                    'error',
+                  );
+                }
               }),
           );
       }
@@ -173,7 +201,7 @@ export default function SessionList({
       cancelled = true;
       offScan();
     };
-  }, [workspacePath, ssh, setScanState]);
+  }, [workspacePath, ssh, setScanState, notify, markUnreachable, clearUnreachable, t]);
 
   const target = normalizeWorkspacePath(workspacePath);
   const pooled = useMemo(() => {
@@ -244,6 +272,8 @@ export default function SessionList({
             <Skeleton className="h-16 rounded border border-border" />
             <Skeleton className="h-16 rounded border border-border" />
           </div>
+        ) : remoteFailed ? (
+          <EmptyState title={t('ui.session_list.remote_unreachable')} />
         ) : (
           <EmptyState title={t('ui.session_list.empty')} />
         )

@@ -17,6 +17,7 @@ beforeEach(() => {
     agentNotices: [],
     focusTermKey: null,
     notifySound: true,
+    unreachableWorkspaces: {},
   });
 });
 
@@ -57,6 +58,22 @@ describe('store', () => {
 
   it('SETTINGS_TAB_ID 是保留的页签标识，不与工作区路径冲突', () => {
     expect(SETTINGS_TAB_ID).toBe('kshell:settings');
+  });
+
+  it('markUnreachable / clearUnreachable 维护不可达工作区集合且不持久化', () => {
+    useAppStore.getState().markUnreachable('ssh://c1/a');
+    useAppStore.getState().markUnreachable('ssh://c1/b');
+    expect(useAppStore.getState().unreachableWorkspaces).toEqual({
+      'ssh://c1/a': true,
+      'ssh://c1/b': true,
+    });
+    useAppStore.getState().clearUnreachable('ssh://c1/a');
+    expect(useAppStore.getState().unreachableWorkspaces).toEqual({ 'ssh://c1/b': true });
+
+    const parsed = JSON.parse(localStorage.getItem('kshell-tabs')!) as {
+      state: Record<string, unknown>;
+    };
+    expect(parsed.state).not.toHaveProperty('unreachableWorkspaces');
   });
 
   it('页签状态持久化：setState 后写入 localStorage 的 kshell-tabs', () => {

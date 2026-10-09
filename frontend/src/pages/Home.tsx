@@ -110,6 +110,7 @@ export default function Home() {
   const openTab = useAppStore((s) => s.openTab);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const notify = useAppStore((s) => s.notify);
+  const unreachableWorkspaces = useAppStore((s) => s.unreachableWorkspaces);
 
   const [deleted, setDeleted] = useState<DeletedProject[]>([]);
   const [binOpen, setBinOpen] = useState(false);
@@ -511,6 +512,9 @@ export default function Home() {
                   <span className="flex min-w-0 items-center gap-1.5">
                     <span data-testid="ws-name" className="min-w-0 truncate text-[12.5px] font-medium">{ws.Name}</span>
                     {isSSH(ws) && <Badge variant="outline">{t('ui.home.remote_badge')}</Badge>}
+                    {isSSH(ws) && unreachableWorkspaces[ws.Path] && (
+                      <Badge variant="destructive">{t('ui.home.remote_unreachable')}</Badge>
+                    )}
                     {ws.Source === 'git' && <Badge variant="outline">git</Badge>}
                     {ws.Source === 'manual' && !isSSH(ws) && (
                       <Badge variant="outline">{t('ui.home.source_manual')}</Badge>
