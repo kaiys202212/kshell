@@ -498,10 +498,8 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
                 >
                   {label}
                 </button>
-                {/* 新建会话的标题已含「· 工具名」，徽标只留图标避免出现两个工具名 */}
-                {t.ToolID && (
-                  <ToolDot toolID={t.ToolID} className="shrink-0" showLabel={t.Kind !== 'new'} />
-                )}
+                {/* 中栏 agent 页签徽标只留图标，工具名见悬停 title */}
+                {t.ToolID && <ToolDot toolID={t.ToolID} className="shrink-0" showLabel={false} />}
                 <button
                   className={cn(
                     'ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-sm leading-none text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground',
