@@ -13,15 +13,13 @@
 // win32 proc 声明复用 window_win.go（同属 windows 构建约束文件）。
 package desktop
 
-import "unsafe"
-
 // ensureForegroundThen 做前台权限兜底后弹出菜单（showMenu 通常为 IMenu.ShowMenu，
 // 内部执行 SetForegroundWindow + TrackPopupMenu）。无前台窗口或已是本线程时直接透传。
 func ensureForegroundThen(showMenu func() error) error {
 	var detach func()
 	if fg, _, _ := procGetForegroundWindow.Call(); fg != 0 {
-		var pid uint32
-		fgThread, _, _ := procGetWindowThreadProcID.Call(fg, uintptr(unsafe.Pointer(&pid)))
+		// 第二参 PID 用不到，直接传 0（对齐 window_win.go Focus 的既有写法）
+		fgThread, _, _ := procGetWindowThreadProcID.Call(fg, 0)
 		thisThread, _, _ := kernel32GetCurrentThreadID.Call()
 		if fgThread != 0 && fgThread != thisThread {
 			// TRUE=1：本线程与前台线程挂接，共享输入态从而获得前台置权

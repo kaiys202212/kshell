@@ -7,6 +7,7 @@
 package desktop
 
 import (
+	"log"
 	"sync"
 
 	"github.com/energye/systray"
@@ -75,7 +76,10 @@ func runTray(icon []byte, onShow, onQuit func()) {
 		// 在托盘 wndProc 线程同步执行属库设计使然，TrackPopupMenu 自带模态循环；
 		// macOS 注册后行为与默认 show_menu 等价，Linux dbus 菜单原生弹出不受影响。
 		systray.SetOnRClick(func(m systray.IMenu) {
-			_ = ensureForegroundThen(m.ShowMenu)
+			// 弹出失败记日志便于诊断残余场景；库默认路径同样忽略该错误
+			if err := ensureForegroundThen(m.ShowMenu); err != nil {
+				log.Printf("systray: 托盘右键弹出菜单失败: %v", err)
+			}
 		})
 		mShow := systray.AddMenuItem(applang.T("tray.show_main"), applang.T("tray.show_main_tip"))
 		systray.AddSeparator()
