@@ -95,6 +95,60 @@ func TestSyncGitCodeSkipsWithoutToken(t *testing.T) {
 	}
 }
 
+// dist 里的 DMG 安装包也要同步到 GitCode Release（国内用户的下载入口）。
+func TestSyncGitCodeUploadsDmg(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ZipName), []byte("ZIPDATA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dmgName := "kshell-desktop-darwin-arm64.dmg"
+	if err := os.WriteFile(filepath.Join(dir, dmgName), []byte("DMGDATA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, SumsName), []byte("abc  "+ZipName+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var uploaded []string
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	mux.HandleFunc("/api/v5/repos/"+GitCodeOwner+"/kshell/releases/tags/v0.2.0", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"tag_name": "v0.2.0"})
+	})
+	mux.HandleFunc("/api/v5/repos/"+GitCodeOwner+"/kshell/releases/v0.2.0/upload_url", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("file_name")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"url":     srv.URL + "/obs/" + name,
+			"headers": map[string]string{"Content-Type": "application/octet-stream"},
+		})
+	})
+	mux.HandleFunc("/obs/", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		uploaded = append(uploaded, r.URL.Path+"|"+string(b))
+		w.WriteHeader(http.StatusOK)
+	})
+
+	err := SyncGitCode(context.Background(), SyncOptions{
+		BaseURL: srv.URL + "/api/v5",
+		Token:   "tok",
+		Owner:   GitCodeOwner,
+		Repo:    "kshell",
+		Tag:     "v0.2.0",
+		Dir:     dir,
+		HTTP:    srv.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(uploaded, "\n")
+	if !strings.Contains(joined, dmgName) || !strings.Contains(joined, "DMGDATA") {
+		t.Fatalf("DMG 未上传: %s", joined)
+	}
+}
+
 func TestSyncGitCodeRetriesUpload(t *testing.T) {
 	dir := t.TempDir()
 	zipPath := filepath.Join(dir, ZipName)

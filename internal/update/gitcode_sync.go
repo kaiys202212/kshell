@@ -85,8 +85,13 @@ func listReleaseFiles(dir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// DMG 安装包与 zip 一起作为发布附件同步（zip 供应用内自更新，DMG 供人工安装）
+	dmgs, err := filepath.Glob(filepath.Join(dir, "*.dmg"))
+	if err != nil {
+		return nil, err
+	}
 	sums := filepath.Join(dir, SumsName)
-	out := append([]string{}, zips...)
+	out := append(append([]string{}, zips...), dmgs...)
 	if _, err := os.Stat(sums); err == nil {
 		out = append(out, sums)
 	}
