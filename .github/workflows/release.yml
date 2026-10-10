@@ -78,18 +78,23 @@ jobs:
           # bash 不会把 wails 的 stderr 进度当成失败；pwsh 在 GHA 上会
           wails build ${WEBKIT_TAG:-} -ldflags "-X github.com/yangk/kshell/internal/version.Version=${VERSION}"
           mkdir -p dist/pkg
-          if [ -x build/bin/kshell.app/Contents/MacOS/kshell ]; then
-            cp build/bin/kshell.app/Contents/MacOS/kshell dist/kshell-desktop
+          # macOS：必须打整包 .app（energye/systray 依赖 AppKit/NSBundle）；裸 Mach-O 会 SIGTRAP。
+          # Linux：仍为顶层裸二进制 kshell-desktop。
+          if [ -d build/bin/kshell.app ]; then
+            rm -rf dist/pkg/kshell-desktop.app
+            cp -R build/bin/kshell.app dist/pkg/kshell-desktop.app
+            chmod +x dist/pkg/kshell-desktop.app/Contents/MacOS/kshell
+            (cd dist/pkg && zip -ry "../${ZIP_NAME}" kshell-desktop.app)
           elif [ -e build/bin/kshell ]; then
             cp build/bin/kshell dist/kshell-desktop
+            chmod +x dist/kshell-desktop
+            cp dist/kshell-desktop dist/pkg/kshell-desktop
+            (cd dist/pkg && zip -r "../${ZIP_NAME}" kshell-desktop)
           else
             find build/bin -type f -print || true
             echo "找不到 Wails 产物" >&2
             exit 1
           fi
-          chmod +x dist/kshell-desktop
-          cp dist/kshell-desktop dist/pkg/kshell-desktop
-          (cd dist/pkg && zip -r "../${ZIP_NAME}" kshell-desktop)
           if command -v sha256sum >/dev/null; then
             HASH=$(sha256sum "dist/${ZIP_NAME}" | awk '{print $1}')
           else

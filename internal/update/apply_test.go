@@ -53,6 +53,50 @@ func TestApplyExtractsUnixBinary(t *testing.T) {
 	}
 }
 
+func TestApplyExtractsDarwinAppBinary(t *testing.T) {
+	prevOS, prevArch := currentGOOS, currentGOARCH
+	currentGOOS, currentGOARCH = "darwin", "arm64"
+	t.Cleanup(func() { currentGOOS, currentGOARCH = prevOS, prevArch })
+
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "kshell")
+	if err := os.WriteFile(dest, []byte("OLD"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	zipName := PackageZipName("darwin", "arm64")
+	zipBytes := mustZip(t, map[string][]byte{
+		"kshell-desktop.app/Contents/Info.plist":          []byte("<plist/>"),
+		"kshell-desktop.app/Contents/MacOS/kshell":        []byte("NEWBIN"),
+		"kshell-desktop.app/Contents/Resources/icon.icns": []byte("ICNS"),
+	})
+	sum := sha256.Sum256(zipBytes)
+	hexSum := hex.EncodeToString(sum[:])
+	sums := []byte(hexSum + "  " + zipName + "\n")
+
+	err := Apply(context.Background(), ApplyOptions{
+		ZipURL:  "https://example/x/" + zipName,
+		SumsURL: "https://example/x/" + SumsName,
+		DestExe: dest,
+		Get: func(_ context.Context, url string) ([]byte, error) {
+			if strings.Contains(url, SumsName) {
+				return sums, nil
+			}
+			return zipBytes, nil
+		},
+		SpawnReplace: func(string, string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(dest + ".new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "NEWBIN" {
+		t.Fatalf("new exe = %q", got)
+	}
+}
+
 func pinWindowsPackage(t *testing.T) {
 	t.Helper()
 	prevOS, prevArch := currentGOOS, currentGOARCH
