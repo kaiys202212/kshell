@@ -70,6 +70,13 @@ func runTray(icon []byte, onShow, onQuit func()) {
 		systray.SetOnClick(func(systray.IMenu) {
 			trayDispatch(onShow)
 		})
+		// 右键接管：库默认在 wndProc 里直接 ShowMenu，遇前台锁（SetForegroundWindow
+		// 被拒）会弹不出菜单。这里先做前台权限兜底再弹（traymenu_windows.go）。
+		// 在托盘 wndProc 线程同步执行属库设计使然，TrackPopupMenu 自带模态循环；
+		// macOS 注册后行为与默认 show_menu 等价，Linux dbus 菜单原生弹出不受影响。
+		systray.SetOnRClick(func(m systray.IMenu) {
+			_ = ensureForegroundThen(m.ShowMenu)
+		})
 		mShow := systray.AddMenuItem(applang.T("tray.show_main"), applang.T("tray.show_main_tip"))
 		systray.AddSeparator()
 		mQuit := systray.AddMenuItem(applang.T("tray.exit"), applang.T("tray.exit_tip"))

@@ -2,9 +2,34 @@ package desktop
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
+
+// 托盘右键的前台权限兜底：ensureForegroundThen 必须调用 showMenu 并透传其结果。
+// Windows 上该函数内部还会做 AttachThreadInput（无前台窗口时跳过），对测试进程无副作用。
+func TestEnsureForegroundThenCallsShowMenu(t *testing.T) {
+	calls := 0
+	err := ensureForegroundThen(func() error {
+		calls++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("不应透传错误, got %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("showMenu 应被调用 1 次, got %d", calls)
+	}
+}
+
+func TestEnsureForegroundThenPropagatesError(t *testing.T) {
+	sentinel := errors.New("no menu")
+	err := ensureForegroundThen(func() error { return sentinel })
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("showMenu 错误应原样透传, got %v", err)
+	}
+}
 
 func TestQuitAppDoesNotCallQuitTrayLoop(t *testing.T) {
 	app, _, _ := newTestApp(t)
