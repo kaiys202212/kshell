@@ -96,7 +96,7 @@ func listReleaseFiles(dir string) ([]string, error) {
 		out = append(out, sums)
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("%s 没有 zip 或 SHA256SUMS", dir)
+		return nil, fmt.Errorf("%s 没有 zip/dmg 或 SHA256SUMS", dir)
 	}
 	return out, nil
 }

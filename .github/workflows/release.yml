@@ -152,6 +152,8 @@ jobs:
           cat dist/SHA256SUMS
           test -s dist/SHA256SUMS
           test "$(find dist -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 3
+          # DMG 存在性断言：matrix 未来调整（如加 macOS x64）时尽早暴露缺失
+          test -s dist/kshell-desktop-darwin-arm64.dmg
           # 重打同名 tag 时旧 Release 常已随 tag 删除；create 失败再 upload。
           # --latest 让升级检查打到本 tag（即使仓库里还有更高号的旧 tag）。
           if ! gh release create "$TAG" --latest --title "$TAG" --notes "kshell $TAG" dist/*.zip dist/*.dmg dist/SHA256SUMS; then
