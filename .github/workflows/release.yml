@@ -22,6 +22,7 @@ jobs:
             artifact: linux-amd64
           - os: macos-latest
             zip: kshell-desktop-darwin-arm64.zip
+            dmg: kshell-desktop-darwin-arm64.dmg
             artifact: darwin-arm64
     runs-on: ${{ matrix.os }}
     steps:
@@ -101,11 +102,27 @@ jobs:
             HASH=$(shasum -a 256 "dist/${ZIP_NAME}" | awk '{print $1}')
           fi
           printf '%s  %s\n' "$HASH" "${ZIP_NAME}" > dist/SHA256SUMS
+      - name: Build DMG (macOS)
+        if: runner.os == 'macOS'
+        env:
+          DMG_NAME: ${{ matrix.dmg }}
+        run: |
+          set -euo pipefail
+          # 拖拽安装窗口：.app + 指向 /Applications 的软链（Finder 拖拽引导）。
+          # hdiutil 系统自带零依赖；UDZO 为压缩镜像。zip 仍保留供应用内自更新。
+          rm -rf dist/dmg
+          mkdir -p dist/dmg
+          cp -R dist/pkg/kshell-desktop.app dist/dmg/kshell-desktop.app
+          ln -s /Applications dist/dmg/Applications
+          hdiutil create -volname kshell -srcfolder dist/dmg -format UDZO -ov "dist/${DMG_NAME}"
+          HASH=$(shasum -a 256 "dist/${DMG_NAME}" | awk '{print $1}')
+          printf '%s  %s\n' "$HASH" "${DMG_NAME}" >> dist/SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: |
             dist/${{ matrix.zip }}
+            dist/*.dmg
             dist/SHA256SUMS
 
   publish:
@@ -129,6 +146,7 @@ jobs:
           mkdir -p dist
           find artifacts -type f -print
           find artifacts -type f -name '*.zip' -exec cp -v {} dist/ \;
+          find artifacts -type f -name '*.dmg' -exec cp -v {} dist/ \;
           find artifacts -type f -name SHA256SUMS -exec cat {} \; > dist/SHA256SUMS
           ls -la dist
           cat dist/SHA256SUMS
@@ -136,8 +154,8 @@ jobs:
           test "$(find dist -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 3
           # 重打同名 tag 时旧 Release 常已随 tag 删除；create 失败再 upload。
           # --latest 让升级检查打到本 tag（即使仓库里还有更高号的旧 tag）。
-          if ! gh release create "$TAG" --latest --title "$TAG" --notes "kshell $TAG" dist/*.zip dist/SHA256SUMS; then
-            gh release upload "$TAG" dist/*.zip dist/SHA256SUMS --clobber
+          if ! gh release create "$TAG" --latest --title "$TAG" --notes "kshell $TAG" dist/*.zip dist/*.dmg dist/SHA256SUMS; then
+            gh release upload "$TAG" dist/*.zip dist/*.dmg dist/SHA256SUMS --clobber
             gh release edit "$TAG" --latest
           fi
       - name: Sync GitCode release
