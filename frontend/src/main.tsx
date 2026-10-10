@@ -5,6 +5,7 @@ import './style.css'
 import '@xterm/xterm/css/xterm.css'
 import i18next from 'i18next'
 import App from './App'
+import {ErrorBoundary} from './components/ui/error-boundary'
 import {getLanguage, loadExternalLocales, onLanguageChanged} from './lib/api'
 import {initI18n, initI18nBuiltin} from './i18n'
 import {useAppStore} from './state/store'
@@ -42,7 +43,9 @@ async function bootstrap() {
 
     root.render(
         <React.StrictMode>
-            <App/>
+            <ErrorBoundary>
+                <App/>
+            </ErrorBoundary>
         </React.StrictMode>
     )
 }

@@ -216,6 +216,11 @@
     "openrouter": { "name": "OpenRouter", "note": "仅 OpenAI 协议" }
   },
   "ui": {
+    "error_boundary": {
+      "title": "界面出现异常",
+      "detail": "页面渲染出错，点击重载即可恢复。下方原始错误信息可用于反馈问题。",
+      "reload": "重新加载"
+    },
     "settings": {
       "title": "设置",
       "nav": {

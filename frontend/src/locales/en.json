@@ -216,6 +216,11 @@
     "openrouter": { "name": "OpenRouter", "note": "OpenAI protocol only" }
   },
   "ui": {
+    "error_boundary": {
+      "title": "Something went wrong",
+      "detail": "The interface failed to render. Reload to recover. The raw error below helps reporting the issue.",
+      "reload": "Reload"
+    },
     "settings": {
       "title": "Settings",
       "nav": {

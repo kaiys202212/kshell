@@ -939,11 +939,12 @@ export async function newSession(wsPath: string): Promise<void> {
 }
 
 // ListConnections 返回连接列表：wsID 传工作区路径 = 该工作区绑定连接 + 全局连接，
-// 传空串返回全部。错误向上抛，由调用方呈现。
+// 传空串返回全部。错误向上抛，由调用方呈现。wire 边界兜底 null（后端 nil 切片
+// 序列化成 JSON null），保证调用方永远拿到数组。
 export async function listConnections(wsID: string): Promise<SshConnection[]> {
   const a = app();
   if (!a) return [];
-  return a.ListConnections(wsID);
+  return (await a.ListConnections(wsID)) ?? [];
 }
 
 // OpenSSH 弹出该连接的交互式 SSH 终端窗口（兼容保留；前端主路径改用 openSSHTerminal）。
