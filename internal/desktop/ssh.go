@@ -40,13 +40,19 @@ func (a *App) connByID(connID string) (remote.Connection, bool) {
 
 // ListConnections 返回连接列表：绑定到 wsID 工作区的 + 未绑定工作区的全局连接；
 // wsID 为空时返回全部。store 内部状态由调用方串行访问，这里直接透传。
+// wire 边界保证返回非 nil：Go nil 切片经 Wails 序列化成 JSON null，
+// 前端对 null 调数组方法会抛错（「查看全部」黑屏诱因）。
 func (a *App) ListConnections(wsID string) []remote.Connection {
 	store := a.snapshot().Store
 	if store == nil {
 		return []remote.Connection{}
 	}
+	all := store.All()
+	if all == nil {
+		all = []remote.Connection{}
+	}
 	if wsID == "" {
-		return store.All()
+		return all
 	}
 	return store.List(wsID)
 }

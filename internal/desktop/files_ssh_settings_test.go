@@ -411,3 +411,25 @@ func TestPickDirectoryAndFileCancel(t *testing.T) {
 		t.Fatalf("file %q %v", file, err)
 	}
 }
+
+// 空存储时 ListConnections 必须返回非 nil 空切片：Go nil 切片经 Wails
+// 序列化为 JSON null，前端对 null 调数组方法会抛错（「查看全部」黑屏诱因）。
+func TestListConnectionsEmptyStoreReturnsSlice(t *testing.T) {
+	app := NewAppWith(Options{
+		Home:          t.TempDir(),
+		ProvidersPath: filepath.Join(t.TempDir(), "providers.yaml"),
+		Store:         remote.NewStore(filepath.Join(t.TempDir(), "connections.yaml")),
+	})
+
+	all := app.ListConnections("")
+	if all == nil {
+		t.Fatal("空存储的 ListConnections 应返回空切片而非 nil（nil 经 Wails 变 JSON null）")
+	}
+	if len(all) != 0 {
+		t.Fatalf("空存储应返回 0 条连接, got %d", len(all))
+	}
+	scoped := app.ListConnections(t.TempDir())
+	if scoped == nil {
+		t.Fatal("带 wsID 的空结果同样应返回空切片而非 nil")
+	}
+}
