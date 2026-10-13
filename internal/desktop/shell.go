@@ -57,12 +57,12 @@ func (a *App) OpenShellTerminal(wsID string, cols, rows int) (terminal.Info, err
 
 	path, args := localShellSpec(ws.Path)
 	key := fmt.Sprintf("shell:%d", termKeySeq.Add(1))
+	// 纯 shell 终端也注入主题变量：在 tab 里手动敲 cursor-agent 等 CLI 时，
+	// 它们靠 COLORFGBG 判定明暗（ConPTY 不应答 OSC 11，env 是唯一通道）。
 	return m.Open(key, terminal.Info{
 		Kind:      terminal.KindShell,
 		Workspace: ws.Path,
 		Title:     applang.T("terminal.title"),
-		// 纯 shell 终端也注入主题变量：在 tab 里手动敲 cursor-agent 等 CLI 时，
-		// 它们靠 COLORFGBG 判定明暗（ConPTY 不应答 OSC 11，env 是唯一通道）。
 	}, terminal.Spec{Path: path, Args: args, Dir: ws.Path, Env: themeEnvList(a.themeOptions())}, cols, rows)
 }
 
