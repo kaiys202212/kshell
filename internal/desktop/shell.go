@@ -5,8 +5,10 @@ import (
 	"os"
 	"runtime"
 
+	"github.com/yangk/kshell/internal/appearance"
 	"github.com/yangk/kshell/internal/applang"
 	"github.com/yangk/kshell/internal/discovery"
+	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/launcher"
 	"github.com/yangk/kshell/internal/terminal"
 )
@@ -59,7 +61,20 @@ func (a *App) OpenShellTerminal(wsID string, cols, rows int) (terminal.Info, err
 		Kind:      terminal.KindShell,
 		Workspace: ws.Path,
 		Title:     applang.T("terminal.title"),
-	}, terminal.Spec{Path: path, Args: args, Dir: ws.Path}, cols, rows)
+		// 纯 shell 终端也注入主题变量：在 tab 里手动敲 cursor-agent 等 CLI 时，
+		// 它们靠 COLORFGBG 判定明暗（ConPTY 不应答 OSC 11，env 是唯一通道）。
+	}, terminal.Spec{Path: path, Args: args, Dir: ws.Path, Env: themeEnvList(a.themeOptions())}, cols, rows)
+}
+
+// themeEnvList 把当前颜色模式解析为通用颜色环境变量列表（KEY=VALUE），
+// 与 launch 包对会话路径的注入同源（appearance.GenericEnv）。
+func themeEnvList(o launch.ThemeOptions) []string {
+	env := appearance.GenericEnv(appearance.Resolve(o.Mode))
+	out := make([]string, 0, len(env))
+	for k, v := range env {
+		out = append(out, k+"="+v)
+	}
+	return out
 }
 
 // localShellSpec 返回本机交互式 shell 可执行文件与参数。
