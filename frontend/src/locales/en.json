@@ -335,6 +335,8 @@
         "fetch_hint": "Fetches from saved endpoints; save URL changes first",
         "fetching": "Fetching...",
         "fetch_empty": "The endpoints returned no models",
+        "fetch_filter_placeholder": "Filter models…",
+        "fetch_filter_empty": "No models match your filter",
         "set_active": "Set active",
         "remove": "Remove",
         "save": "Save model configuration",

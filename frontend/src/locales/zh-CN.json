@@ -335,6 +335,8 @@
         "fetch_hint": "从已保存的端点拉取，改完 URL 请先保存",
         "fetching": "拉取中…",
         "fetch_empty": "端点未返回任何模型",
+        "fetch_filter_placeholder": "检索模型…",
+        "fetch_filter_empty": "没有匹配的模型",
         "set_active": "设为当前",
         "remove": "删除",
         "save": "保存模型配置",

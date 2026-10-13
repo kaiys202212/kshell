@@ -101,6 +101,7 @@ export default function Settings() {
   const [modelActive, setModelActive] = useState('');
   const [modelNewModel, setModelNewModel] = useState('');
   const [modelFetched, setModelFetched] = useState<string[] | null>(null);
+  const [modelFetchedFilter, setModelFetchedFilter] = useState('');
   const [modelFetchErrors, setModelFetchErrors] = useState<string[]>([]);
   const [modelFetching, setModelFetching] = useState(false);
   const [modelDirtyHint, setModelDirtyHint] = useState(false);
@@ -473,6 +474,7 @@ export default function Settings() {
   const handleFetchModels = async () => {
     if (modelFetching) return;
     setModelFetching(true);
+    setModelFetchedFilter('');
     try {
       const v = await fetchAvailableModels();
       setModelFetched(v.Models);
@@ -484,6 +486,15 @@ export default function Settings() {
       setModelFetching(false);
     }
   };
+
+  // 拉取结果本地检索：大小写不敏感子串匹配；空过滤词时原样返回全部
+  const fetchedQuery = modelFetchedFilter.trim().toLowerCase();
+  const filteredFetched =
+    modelFetched === null
+      ? []
+      : fetchedQuery
+        ? modelFetched.filter((m) => m.toLowerCase().includes(fetchedQuery))
+        : modelFetched;
 
   const busyAny = !!pendingId || !!job?.Running;
 
@@ -959,21 +970,39 @@ export default function Settings() {
                   </ul>
                 )}
                 {modelFetched !== null && (
-                  <ul className="grid gap-1">
-                    {modelFetched.length === 0 && modelFetchErrors.length === 0 && (
-                      <li className="text-xs text-muted-foreground">{t('ui.settings.model.fetch_empty')}</li>
-                    )}
-                    {modelFetched.map((m) => (
-                      <li key={m} className="flex items-center gap-2 text-sm">
-                        <span className="flex-1 truncate" title={m}>{m}</span>
-                        {!modelModels.includes(m) && (
-                          <Button variant="secondary" type="button" onClick={() => addToModelList(m)}>
-                            {t('ui.settings.model.add')}
-                          </Button>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
+                  <>
+                    <input
+                      type="search"
+                      className={inputClass}
+                      placeholder={t('ui.settings.model.fetch_filter_placeholder')}
+                      aria-label={t('ui.settings.model.fetch_filter_placeholder')}
+                      value={modelFetchedFilter}
+                      onChange={(e) => setModelFetchedFilter(e.target.value)}
+                    />
+                    <ul
+                      data-testid="model-fetch-list"
+                      className="grid max-h-64 gap-1 overflow-y-auto rounded border border-border p-1"
+                    >
+                      {modelFetched.length === 0 && modelFetchErrors.length === 0 && (
+                        <li className="px-1 text-xs text-muted-foreground">{t('ui.settings.model.fetch_empty')}</li>
+                      )}
+                      {modelFetched.length > 0 && filteredFetched.length === 0 && (
+                        <li className="px-1 text-xs text-muted-foreground">
+                          {t('ui.settings.model.fetch_filter_empty')}
+                        </li>
+                      )}
+                      {filteredFetched.map((m) => (
+                        <li key={m} className="flex items-center gap-2 text-sm">
+                          <span className="flex-1 truncate" title={m}>{m}</span>
+                          {!modelModels.includes(m) && (
+                            <Button variant="secondary" type="button" onClick={() => addToModelList(m)}>
+                              {t('ui.settings.model.add')}
+                            </Button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
                 )}
                 <div className="flex flex-wrap gap-2">
                   <Button onClick={() => void handleSaveModel()} disabled={modelSaving}>

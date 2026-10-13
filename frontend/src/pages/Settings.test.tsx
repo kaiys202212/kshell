@@ -717,6 +717,102 @@ describe('Settings', () => {
     );
   });
 
+  it('拉取模型列表支持检索过滤', async () => {
+    mocks.fetchAvailableModels.mockResolvedValue({
+      Models: ['qwen-max', 'qwen-plus', 'gpt-4o'],
+      Errors: [],
+    });
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Preset: 'custom',
+      OpenAIBaseURL: 'https://oai/',
+      AnthropicBaseURL: 'https://ant/',
+      Models: [],
+      ActiveModel: '',
+      APIKeySet: true,
+    });
+    render(<Settings />);
+    goModel();
+
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.fetch_models') }));
+    const filter = await screen.findByPlaceholderText(tt('ui.settings.model.fetch_filter_placeholder'));
+
+    // 输入「QUEN」大小写不敏感命中 qwen 前缀，gpt 被过滤掉
+    fireEvent.change(filter, { target: { value: 'Qwen' } });
+    const rows = screen.getAllByRole('listitem');
+    expect(rows.some((r) => r.textContent?.includes('qwen-max'))).toBe(true);
+    expect(rows.some((r) => r.textContent?.includes('qwen-plus'))).toBe(true);
+    expect(rows.some((r) => r.textContent?.includes('gpt-4o'))).toBe(false);
+  });
+
+  it('拉取模型检索无匹配时显示专属空态', async () => {
+    mocks.fetchAvailableModels.mockResolvedValue({ Models: ['qwen-max'], Errors: [] });
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Preset: 'custom',
+      OpenAIBaseURL: 'https://oai/',
+      AnthropicBaseURL: 'https://ant/',
+      Models: [],
+      ActiveModel: '',
+      APIKeySet: true,
+    });
+    render(<Settings />);
+    goModel();
+
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.fetch_models') }));
+    const filter = await screen.findByPlaceholderText(tt('ui.settings.model.fetch_filter_placeholder'));
+    fireEvent.change(filter, { target: { value: 'zzz-nomatch' } });
+
+    expect(screen.getByText(tt('ui.settings.model.fetch_filter_empty'))).toBeInTheDocument();
+    // 原始 fetch_empty 文案不应出现（并非端点无返回）
+    expect(screen.queryByText(tt('ui.settings.model.fetch_empty'))).not.toBeInTheDocument();
+  });
+
+  it('再次拉取会清空上一轮检索词', async () => {
+    mocks.fetchAvailableModels.mockResolvedValue({ Models: ['qwen-max', 'gpt-4o'], Errors: [] });
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Preset: 'custom',
+      OpenAIBaseURL: 'https://oai/',
+      AnthropicBaseURL: 'https://ant/',
+      Models: [],
+      ActiveModel: '',
+      APIKeySet: true,
+    });
+    render(<Settings />);
+    goModel();
+
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.fetch_models') }));
+    const filter = await screen.findByPlaceholderText(tt('ui.settings.model.fetch_filter_placeholder'));
+    fireEvent.change(filter, { target: { value: 'qwen' } });
+    expect(screen.getByPlaceholderText(tt('ui.settings.model.fetch_filter_placeholder'))).toHaveValue('qwen');
+
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.fetch_models') }));
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText(tt('ui.settings.model.fetch_filter_placeholder'))).toHaveValue(''),
+    );
+  });
+
+  it('拉取结果列表容器带限高滚动', async () => {
+    mocks.fetchAvailableModels.mockResolvedValue({ Models: ['a', 'b'], Errors: [] });
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Preset: 'custom',
+      OpenAIBaseURL: 'https://oai/',
+      AnthropicBaseURL: 'https://ant/',
+      Models: [],
+      ActiveModel: '',
+      APIKeySet: true,
+    });
+    render(<Settings />);
+    goModel();
+
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.fetch_models') }));
+    const list = await screen.findByTestId('model-fetch-list');
+    expect(list.className).toContain('overflow-y-auto');
+    expect(list.className).toContain('max-h-');
+  });
+
   it('选择预设填入双 URL 与推荐模型', async () => {
     render(<Settings />);
     goModel();
