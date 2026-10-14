@@ -291,6 +291,18 @@ export default function ChatView({ chat, active }: Props) {
     }
   };
 
+  // resume 在 agent 提前停止后一键续做：向同一会话再发一轮「继续」。
+  // 会话上下文完整，agent 自然从断点接着做；时间线照常补录 user「继续」，透明可追溯。
+  const resume = () => {
+    if (running) return;
+    useAppStore.getState().upsertChat({ ...chat, Status: 'running' });
+    const fail = (e: unknown) => {
+      useAppStore.getState().upsertChat({ ...chat, Status: 'ready' });
+      useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
+    };
+    sendChatPrompt(id, t('ui.chat.resume_turn')).catch(fail);
+  };
+
   const switchModel = async (modelID: string) => {
     try {
       await setChatModel(id, modelID);
@@ -427,9 +439,16 @@ export default function ChatView({ chat, active }: Props) {
               <div
                 key={it.key}
                 data-testid="chat-turn-stopped"
-                className="selectable mb-2 break-words text-xs text-muted-foreground"
+                className="selectable mb-2 flex items-center gap-2 break-words text-xs text-muted-foreground"
               >
-                {t('ui.chat.turn_stopped', { reason: known ? t(known) : stop })}
+                <span className="min-w-0 flex-1">{t('ui.chat.turn_stopped', { reason: known ? t(known) : stop })}</span>
+                <button
+                  data-testid="chat-resume"
+                  className="shrink-0 rounded border border-border px-2 py-0.5 hover:bg-muted"
+                  onClick={resume}
+                >
+                  {t('ui.chat.resume_turn')}
+                </button>
               </div>
             );
           }

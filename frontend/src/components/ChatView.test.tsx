@@ -169,6 +169,26 @@ describe('ChatView', () => {
     expect(line.textContent).toContain(tt('ui.chat.stop_reason.max_turn_requests'));
   });
 
+  it('停止行点继续：发送 resume prompt 并乐观置 running', () => {
+    useAppStore.setState({
+      chatItems: { c1: [{ key: 'td1', type: 'turn_done', stopReason: 'max_turn_requests', seq: 1 }] },
+      chatSeq: { c1: 1 },
+    });
+    render(<ChatView chat={CHAT} active />);
+    fireEvent.click(screen.getByTestId('chat-resume'));
+    expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', tt('ui.chat.resume_turn'));
+    expect(useAppStore.getState().chats.find((c) => c.ID === 'c1')?.Status).toBe('running');
+  });
+
+  it('end_turn 行不渲染继续按钮', () => {
+    useAppStore.setState({
+      chatItems: { c1: [{ key: 'td1', type: 'turn_done', stopReason: 'end_turn', seq: 1 }] },
+      chatSeq: { c1: 1 },
+    });
+    render(<ChatView chat={CHAT} active />);
+    expect(screen.queryByTestId('chat-resume')).not.toBeInTheDocument();
+  });
+
   it('turn_done 未知 stopReason 显示原始值', () => {
     useAppStore.setState({
       chatItems: { c1: [{ key: 'td1', type: 'turn_done', stopReason: 'weird_reason', seq: 1 }] },

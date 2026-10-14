@@ -750,6 +750,7 @@
       "tool_fallback": "Tool",
       "error_prefix": "Error: {{text}}",
       "turn_stopped": "Turn stopped (reason: {{reason}})",
+      "resume_turn": "Continue",
       "stop_reason": {
         "max_tokens": "Output length limit reached",
         "max_turn_requests": "Turn request limit reached (agent-internal)",

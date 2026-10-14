@@ -750,6 +750,7 @@
       "tool_fallback": "工具",
       "error_prefix": "错误：{{text}}",
       "turn_stopped": "本轮已停止（原因：{{reason}}）",
+      "resume_turn": "继续",
       "stop_reason": {
         "max_tokens": "达到输出长度上限",
         "max_turn_requests": "达到本轮步数上限（agent 内部限制）",
