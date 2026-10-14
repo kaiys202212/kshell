@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -48,8 +49,39 @@ func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, aut
 	return m
 }
 
+// lastAssistantText 取会话时间线中最后一轮 assistant 回复的拼接文本。
+// 「最后一轮」= 最后一条 assistant 的 MessageID；同一 MessageID 的分片按序拼接。
+// 返回空串表示尚无回复；超长截断避免 payload 过大。
+func lastAssistantText(h []chat.Update) string {
+	const maxLen = 2000
+	lastID := ""
+	idx := -1
+	for i := len(h) - 1; i >= 0; i-- {
+		if h[i].Type == "assistant" {
+			lastID = h[i].MessageID
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, u := range h {
+		if u.Type == "assistant" && u.MessageID == lastID {
+			b.WriteString(u.Text)
+		}
+	}
+	s := strings.TrimSpace(b.String())
+	if len(s) > maxLen {
+		s = s[:maxLen]
+	}
+	return s
+}
+
 // emitChatNotify 把一条聊天侧事件转成 agent 通知气泡 payload。
 // 归因字段（key/tool/workspace）从 manager 反查；会话已关闭时静默跳过。
+// done 事件携带最后一轮 assistant 回复正文（放入 Summary），供汇总窗直接展示。
 // 回调总在 Manager 锁外执行，Get 取锁安全。
 func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, event, summary string) {
 	if m == nil {
@@ -58,6 +90,9 @@ func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, ev
 	info, ok := m.Get(id)
 	if !ok || info.Key == "" {
 		return
+	}
+	if event == "done" && summary == "" {
+		summary = lastAssistantText(m.History(id))
 	}
 	emit("notify:agent", agenthook.Payload{
 		Tool:      info.ToolID,

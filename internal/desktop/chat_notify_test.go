@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -112,6 +113,32 @@ func TestChatTurnDoneEmitsAgentNotify(t *testing.T) {
 	p := waitForNotify(t, rec, "done")
 	if p.Event != "done" || p.Tool != "claude" || p.TermKey != "session:s1" || p.Workspace != "D:/w" {
 		t.Fatalf("payload 不符: %+v", p)
+	}
+}
+
+// done 通知应带上最后一轮 assistant 回复正文，用户才能直接看到 agent 说了什么。
+func TestEmitChatNotifyCarriesAssistantReply(t *testing.T) {
+	rec := &notifyRecorder{}
+	b := &fakeChatCaptureBackend{}
+	m := newChatManagerWith(rec.emit, b, nil)
+	t.Cleanup(m.CloseAll)
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// 经捕获的 handler 推一条 assistant 分片进时间线（模拟 agent 回复）
+	raw := json.RawMessage(`{"sessionUpdate":"agent_message_chunk","messageId":"a1","content":{"type":"text","text":"回复内容占位"}}`)
+	b.lastHandler().SessionUpdate("s1", raw)
+
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	p := waitForNotify(t, rec, "done")
+	if !strings.Contains(p.Summary, "回复内容占位") {
+		t.Fatalf("done notify 未带 assistant 正文: %q", p.Summary)
 	}
 }
 
