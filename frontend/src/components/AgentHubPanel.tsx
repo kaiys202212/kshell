@@ -464,7 +464,8 @@ export default function AgentHubPanel() {
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto" role="log" aria-live="polite">
+      {/* 水平内边距避免气泡贴边/挤滚动条；gap-3 拉开卡片垂直间距 */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-2" role="log" aria-live="polite">
         {hubMessages.map((m) => {
           const attr = attrOf(m);
           return m.kind === 'user' ? (

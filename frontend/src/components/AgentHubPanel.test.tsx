@@ -219,6 +219,18 @@ describe('AgentHubPanel', () => {
     expect(card!.className).toContain('overflow-hidden');
   });
 
+  it('消息流容器：带水平内边距防气泡贴滚动条，垂直间距拉开', async () => {
+    useAppStore.setState({
+      hubMessages: [{ id: 1, kind: 'user', text: '你好', ts: 1 }],
+    });
+    render(<AgentHubPanel />);
+    const log = screen.getByRole('log');
+    expect(log.className).toContain('px-3');
+    expect(log.className).toContain('py-2');
+    expect(log.className).toContain('gap-3');
+    expect(log.className).not.toContain('gap-1');
+  });
+
   it('agent 回复不随通知气泡（agentNotices）消失而消失', async () => {
     useAppStore.setState({
       agentNotices: [{ id: 9, tool: 'codex', event: 'Stop', termKey: 'k', workspace: 'D:\\ws\\a', summary: '气泡正文' }],
