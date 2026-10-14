@@ -108,8 +108,9 @@ func (a *App) handleAgentNotify(p agenthook.Payload) {
 // 的 Notification、gemini 的 attention）若来自「新建会话且用户尚未发过首条输入」，
 // 属就绪期噪音——agent 刚就绪必然在等输入，此时弹气泡只会打扰。恢复会话与
 // 查不到的 key（外部窗口路径，输入不经 kshell 无从判断）一律放行，宁可多弹
-// 不可漏弹。只查终端管理器：ACP chat 通知不经本函数（emitChatNotify 直发），
-// 且 chat 与终端的 new:<n> key 是两套自增序列，查 chat 会撞 key 误杀。
+// 不可漏弹。只查终端管理器：ACP chat 通知不经本函数（emitChatNotify 自行
+// 接入去重器后直发），且 chat 与终端的 new:<n> key 是两套自增序列，查 chat
+// 会撞 key 误杀。
 func (a *App) dropUnpromptedWaiting(p agenthook.Payload) bool {
 	if p.Event != "Notification" && p.Event != "attention" {
 		return false

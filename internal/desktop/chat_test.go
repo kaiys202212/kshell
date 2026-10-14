@@ -57,7 +57,7 @@ func TestChatManagerEmitsUpdate(t *testing.T) {
 		events[name]++
 		mu.Unlock()
 	}
-	m := newChatManagerWith(emit, fakeChatBackend{}, nil)
+	m := newChatManagerWith(emit, fakeChatBackend{}, nil, nil)
 	t.Cleanup(m.CloseAll) // 关掉 watchExit goroutine，避免测试泄漏
 	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "/w"}, chat.Spec{Path: "x"}, "")
 	if err != nil {
@@ -115,7 +115,7 @@ func newChatTestApp(t *testing.T, acpDet *providers.ACPDetection, backend chat.B
 	if backend != nil {
 		app.opts.Chats = newChatManagerWith(events.emit, backend, func() bool {
 			return app.snapshot().Config.PermissionMode == config.PermissionModeBypass
-		})
+		}, nil)
 	}
 	app.mu.Unlock()
 

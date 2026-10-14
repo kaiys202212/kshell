@@ -11,7 +11,7 @@ import (
 // 窗口过期后重新放行。
 func TestNotifyDeduperSuppressesDuplicate(t *testing.T) {
 	now := time.Unix(1000, 0)
-	d := newNotifyDeduper(notifyDedupWindow)
+	d := newNotifyDeduper(notifyDedupWindow, notifyDedupWindow)
 	d.now = func() time.Time { return now }
 	p := agenthook.Payload{Tool: "claude", Event: "Notification", TermKey: "k1", Summary: "等待输入"}
 	if !d.allow(p) {
@@ -29,7 +29,7 @@ func TestNotifyDeduperSuppressesDuplicate(t *testing.T) {
 // TestNotifyDeduperKeyDistinction 验证不同摘要 / 事件 / 会话互不影响，不丢信息。
 func TestNotifyDeduperKeyDistinction(t *testing.T) {
 	now := time.Unix(1000, 0)
-	d := newNotifyDeduper(notifyDedupWindow)
+	d := newNotifyDeduper(notifyDedupWindow, notifyDedupWindow)
 	d.now = func() time.Time { return now }
 	base := agenthook.Payload{Tool: "claude", Event: "Notification", TermKey: "k1", Summary: "等待输入"}
 	if !d.allow(base) {
@@ -60,6 +60,76 @@ func TestNotifyDeduperKeyDistinction(t *testing.T) {
 	}
 }
 
+// TestNotifyDeduperWindowByEvent 验证按事件分窗：等待确认类（Notification/attention）
+// 用 30s 长窗拦住 claude 等待期间周期性重发的同一条通知；完成/出错类保持 2s 短窗，
+// 避免同一会话 30s 内连续两轮完成（空 summary 时 key 相同）吞掉合法的第二条完成通知。
+func TestNotifyDeduperWindowByEvent(t *testing.T) {
+	now := time.Unix(1000, 0)
+	d := newNotifyDeduper(notifyDedupWindow, notifyDedupWaitWindow)
+	d.now = func() time.Time { return now }
+
+	wait := agenthook.Payload{Tool: "claude", Event: "Notification", TermKey: "k1", Summary: "Claude is waiting for your input"}
+	if !d.allow(wait) {
+		t.Fatal("首条等待确认应放行")
+	}
+	now = now.Add(5 * time.Second) // 已超短窗、仍在长窗内：这正是此前穿透导致重复的间隔
+	if d.allow(wait) {
+		t.Fatal("等待确认类长窗内重复应被拦")
+	}
+
+	done := agenthook.Payload{Tool: "claude", Event: "Stop", TermKey: "k1"}
+	if !d.allow(done) {
+		t.Fatal("完成类首条应放行")
+	}
+	now = now.Add(3 * time.Second) // 超过 2s 短窗
+	if !d.allow(done) {
+		t.Fatal("完成类超短窗后应放行，不得被长窗吞掉")
+	}
+
+	now = now.Add(notifyDedupWaitWindow) // 长窗也过期
+	if !d.allow(wait) {
+		t.Fatal("等待确认类长窗过期后应重新放行")
+	}
+}
+
+// TestNotifyDeduperCleanupKeepsLongWindow 验证短窗事件的过期清理不得提前删掉长窗记录：
+// 多会话场景下，任一完成类事件放行时若用「now-短窗」做清理 cutoff，更早写入的
+// 等待类记录会被误删，长窗在多会话下形同虚设。seen 必须按各记录自己的过期时刻清理。
+func TestNotifyDeduperCleanupKeepsLongWindow(t *testing.T) {
+	now := time.Unix(1000, 0)
+	d := newNotifyDeduper(notifyDedupWindow, notifyDedupWaitWindow)
+	d.now = func() time.Time { return now }
+
+	wait := agenthook.Payload{Tool: "claude", Event: "Notification", TermKey: "k1", Summary: "waiting"}
+	other := agenthook.Payload{Tool: "claude", Event: "Stop", TermKey: "k2"} // 另一会话
+	if !d.allow(wait) {
+		t.Fatal("首条等待确认应放行")
+	}
+	now = now.Add(10 * time.Second)
+	if !d.allow(other) {
+		t.Fatal("另一会话完成类应放行")
+	}
+	now = now.Add(10 * time.Second) // t0+20s，仍在等待类长窗内
+	if d.allow(wait) {
+		t.Fatal("短窗事件的清理不得提前删掉长窗记录")
+	}
+}
+
+// TestNotifyDeduperAttentionUsesWaitWindow 验证 gemini 的 attention 事件同样走长窗。
+func TestNotifyDeduperAttentionUsesWaitWindow(t *testing.T) {
+	now := time.Unix(1000, 0)
+	d := newNotifyDeduper(notifyDedupWindow, notifyDedupWaitWindow)
+	d.now = func() time.Time { return now }
+	p := agenthook.Payload{Tool: "gemini", Event: "attention", TermKey: "k2", Summary: "等待输入"}
+	if !d.allow(p) {
+		t.Fatal("首条应放行")
+	}
+	now = now.Add(5 * time.Second)
+	if d.allow(p) {
+		t.Fatal("attention 长窗内重复应被拦")
+	}
+}
+
 // TestDispatchNotifyOnceDedupes 端到端：同一 payload 两次入箱，
 // 窗口内只 emit 一次、原生气泡也只弹一次。
 func TestDispatchNotifyOnceDedupes(t *testing.T) {
@@ -76,8 +146,9 @@ func TestDispatchNotifyOnceDedupes(t *testing.T) {
 		notifyBubble = origBubble
 		notifyToast = origToast
 	})
-	// 实例级去重器换可拨时钟的：既能隔离也能精确验证窗口行为
-	d := newNotifyDeduper(notifyDedupWindow)
+	// 实例级去重器换可拨时钟的：既能隔离也能精确验证窗口行为（等待确认类窗也压成短窗，
+	// 让本用例专注验证「窗口过期重新放行」这一行为本身）
+	d := newNotifyDeduper(notifyDedupWindow, notifyDedupWindow)
 	now := time.Unix(1000, 0)
 	d.now = func() time.Time { return now }
 	a.notifyDedup = d

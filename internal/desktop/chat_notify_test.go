@@ -94,7 +94,7 @@ func eventLabelForChat(e string) string {
 // chat turn 正常结束：额外 emit notify:agent（done 语义），payload 带 chat 的 key/tool/workspace。
 func TestChatTurnDoneEmitsAgentNotify(t *testing.T) {
 	rec := &notifyRecorder{}
-	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil)
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil)
 	t.Cleanup(m.CloseAll)
 
 	info, err := m.Open("session:s1", chat.Info{
@@ -121,7 +121,7 @@ func TestChatTurnDoneEmitsAgentNotify(t *testing.T) {
 func TestEmitChatNotifyCarriesAssistantReply(t *testing.T) {
 	rec := &notifyRecorder{}
 	b := &fakeChatCaptureBackend{}
-	m := newChatManagerWith(rec.emit, b, nil)
+	m := newChatManagerWith(rec.emit, b, nil, nil)
 	t.Cleanup(m.CloseAll)
 
 	info, err := m.Open("session:s1", chat.Info{
@@ -146,7 +146,7 @@ func TestEmitChatNotifyCarriesAssistantReply(t *testing.T) {
 // chat turn 出错：emit error 语义通知，summary 带错误文本。
 func TestChatPromptErrorEmitsAgentNotify(t *testing.T) {
 	rec := &notifyRecorder{}
-	m := newChatManagerWith(rec.emit, fakeChatBackendPromptErr{}, nil)
+	m := newChatManagerWith(rec.emit, fakeChatBackendPromptErr{}, nil, nil)
 	t.Cleanup(m.CloseAll)
 
 	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "D:/w", ToolID: "codex"},
@@ -168,7 +168,7 @@ func TestChatPromptErrorEmitsAgentNotify(t *testing.T) {
 func TestChatPermissionEmitsAgentNotify(t *testing.T) {
 	rec := &notifyRecorder{}
 	b := &fakeChatCaptureBackend{}
-	m := newChatManagerWith(rec.emit, b, nil)
+	m := newChatManagerWith(rec.emit, b, nil, nil)
 	t.Cleanup(m.CloseAll)
 
 	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "D:/w", ToolID: "claude"},
@@ -200,10 +200,10 @@ func TestChatPermissionEmitsAgentNotify(t *testing.T) {
 // chat 已关闭（id 查不到）时不再发通知：静默跳过。
 func TestChatNotifySkipsUnknownChat(t *testing.T) {
 	rec := &notifyRecorder{}
-	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil)
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil)
 	t.Cleanup(m.CloseAll)
 
-	emitChatNotify(rec.emit, m, "c-missing", "done", "")
+	emitChatNotify(rec.emit, m, "c-missing", "done", "", nil)
 	if n := rec.count("notify:agent"); n != 0 {
 		t.Fatalf("未知 chat 不应 emit，得到 %d 次", n)
 	}
@@ -250,6 +250,27 @@ func TestLastAssistantTextJoinsLastTurnChunks(t *testing.T) {
 	}
 	if got := lastAssistantText(h); got != "第一段第二段" {
 		t.Fatalf("got %q, 想要 第一段第二段", got)
+	}
+}
+
+// chat 通知经同一套去重器：同一 payload 窗口内重复到达只 emit 一次
+//（修复前 chat 路径直发绕过去重，属结构性旁路）。dedupe 为 nil 时不去重。
+func TestChatNotifyDedupes(t *testing.T) {
+	rec := &notifyRecorder{}
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil)
+	t.Cleanup(m.CloseAll)
+
+	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "D:/w", ToolID: "claude"},
+		chat.Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	d := newNotifyDeduper(notifyDedupWindow, notifyDedupWaitWindow)
+	emitChatNotify(rec.emit, m, info.ID, "Notification", "运行测试", d.allow)
+	emitChatNotify(rec.emit, m, info.ID, "Notification", "运行测试", d.allow)
+	if n := rec.count("notify:agent"); n != 1 {
+		t.Fatalf("窗口内重复 chat 通知应只 emit 一次，得到 %d 次", n)
 	}
 }
 

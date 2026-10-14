@@ -19,28 +19,30 @@ import (
 func newChatManager(a *App) *chat.Manager {
 	return newChatManagerWith(a.Emit, chat.RealBackend{}, func() bool {
 		return a.snapshot().Config.PermissionMode == config.PermissionModeBypass
-	})
+	}, a.notifyDedupAllow)
 }
 
 // newChatManagerWith 装配聊天管理器：时间线/权限/退出经 emit 转发给前端；
 // autoAllow 非 nil 且返回真时，权限请求自动放行（不弹窗）。
+// dedupe 为 chat 通知的放行判定（nil 表示不去重，测试用）：chat 通知不经
+// handleAgentNotify，这里显式接入同一套去重器，防止同一条通知重复弹出。
 // ACP 聊天不经过 hook 通道，turn 结束/出错/等权限在进程内已知，这里顺带
 // 转成 notify:agent 通知（与 hook 通道同一 payload 结构、同一条气泡路径）。
-func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, autoAllow func() bool) *chat.Manager {
+func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, autoAllow func() bool, dedupe func(agenthook.Payload) bool) *chat.Manager {
 	var m *chat.Manager
 	m = chat.NewManager(b,
 		func(id string, u chat.Update) {
 			emit("chat:update", map[string]any{"id": id, "update": u})
 			switch u.Type {
 			case "turn_done":
-				emitChatNotify(emit, m, id, "done", "")
+				emitChatNotify(emit, m, id, "done", "", dedupe)
 			case "error":
-				emitChatNotify(emit, m, id, "error", u.Text)
+				emitChatNotify(emit, m, id, "error", u.Text, dedupe)
 			}
 		},
 		func(id string, r chat.PermissionRequest) {
 			emit("chat:permission", map[string]any{"id": id, "request": r})
-			emitChatNotify(emit, m, id, "Notification", r.ToolCall.Title)
+			emitChatNotify(emit, m, id, "Notification", r.ToolCall.Title, dedupe)
 		},
 		func(id string, code int, errMsg string) {
 			emit("chat:exit", map[string]any{"id": id, "exitCode": code, "error": errMsg})
@@ -81,10 +83,12 @@ func lastAssistantText(h []chat.Update) string {
 }
 
 // emitChatNotify 把一条聊天侧事件转成 agent 通知气泡 payload。
-// 归因字段（key/tool/workspace）从 manager 反查；会话已关闭时静默跳过。
-// done 事件携带最后一轮 assistant 回复正文（放入 Summary），供汇总窗直接展示。
+// 归因字段（key/tool/workspace）从 manager 反查；会话已关闭时静默跳过；
+// done 事件携带最后一轮 assistant 回复正文（放入 Summary），供汇总窗直接展示；
+// allow 非 nil 且返回 false（窗口内重复）时同样跳过。注意被吞的只是通知气泡：
+// 权限请求本身仍经 chat:permission 推给前端弹窗，不影响交互。
 // 回调总在 Manager 锁外执行，Get 取锁安全。
-func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, event, summary string) {
+func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, event, summary string, allow func(agenthook.Payload) bool) {
 	if m == nil {
 		return
 	}
@@ -95,14 +99,18 @@ func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, ev
 	if event == "done" && summary == "" {
 		summary = lastAssistantText(m.History(id))
 	}
-	emit("notify:agent", agenthook.Payload{
+	p := agenthook.Payload{
 		Tool:      info.ToolID,
 		Event:     event,
 		TermKey:   info.Key,
 		Workspace: info.Workspace,
 		Summary:   summary,
 		Ts:        time.Now().UnixNano(),
-	})
+	}
+	if allow != nil && !allow(p) {
+		return
+	}
+	emit("notify:agent", p)
 }
 
 func (a *App) chats() *chat.Manager { return a.snapshot().Chats }
