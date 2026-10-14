@@ -200,6 +200,23 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c2', '继续'));
   });
 
+  it('hub 消息 workspace 与 chat.Workspace 经 sameWorkspacePath 归并后命中回落', async () => {
+    useAppStore.setState({
+      chats: [
+        chat({ ID: 'c1', ToolID: 'claude', Title: '甲' }),
+        chat({ ID: 'c2', ToolID: 'claude', Title: '乙', Workspace: 'D:\\ws\\b' }),
+      ],
+      // 消息 workspace 小写 + 正斜杠：与 chat 的 Windows 反斜杠路径归并为同一项目
+      hubMessages: [{ id: 1, kind: 'agent', tool: 'claude', event: 'Stop', workspace: 'd:/ws/b', text: '乙的回复', ts: 1 }],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '继续' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c2', '继续'));
+  });
+
   it('hub 消息匹配不到任何 agent 时回落 store.lastAgentId', async () => {
     useAppStore.setState({
       chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],

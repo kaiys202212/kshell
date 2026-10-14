@@ -87,10 +87,13 @@ function wsBaseName(ws: string): string {
 }
 
 // lastHubAgentId 从 hub 消息历史倒序找「最近一次交互」的目标 agent：
-// 消息经归因字段（chatId / termKey / workspace）反查 chat，再确认该 chat 仍是
-// 当前 mention 候选。匹配口径与 hubAttribution 一致——chatId 按会话 ID 精确匹配、
-// termKey 按会话 Key 匹配、workspace 用 sameWorkspacePath 归并；user 与 agent
-// 消息都参与匹配（user 消息也带目标 agent 的归因字段）。找不到返回 null。
+// 消息经归因字段反查 chat，再确认该 chat 仍是当前 mention 候选。
+// 字段匹配方式与 hubAttribution 相同（chatId 按会话 ID、termKey 按会话 Key、
+// workspace 用 sameWorkspacePath 归并），但优先级不同：精确匹配（chatId/termKey）
+// 先于模糊匹配（workspace）；user 与 agent 消息都参与匹配（user 消息也带目标
+// agent 的归因字段）。
+// 已知局限：同 workspace 多 chat 时 chats.find 取列表第一个，未必是最近交互
+// 的那个（降级行为，可接受）。找不到返回 null。
 function lastHubAgentId(messages: HubMessage[], options: MentionOption[], chats: ChatInfo[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
@@ -187,10 +190,16 @@ export default function AgentHubPanel() {
   // ---- 斜杠命令补全：draft 命中 /xxx 时激活 ----
   const slashQuery = /^\/([^\s]*)$/.exec(draft)?.[1] ?? null;
   const inSlashMode = slashQuery !== null;
-  // 目标解析：优先 @ 提及，其次 lastAgentId（与 send 一致）。
+  // 默认投递目标回落链：hub 最近一次交互的 agent 优先（比 lastAgentId 更能反映
+  // hub 视角的最新目标），再退 store.lastAgentId。斜杠命令目标解析与 send 共用。
+  const fallbackId = useMemo(
+    () => lastHubAgentId(hubMessages, options, chats) ?? lastAgentId,
+    [hubMessages, options, chats, lastAgentId],
+  );
+  // 目标解析：优先 @ 提及，其次回落链（与 send 一致）。
   const currentTargetId = useMemo(
-    () => resolveMentionTarget(draft, options, lastAgentId),
-    [draft, options, lastAgentId],
+    () => resolveMentionTarget(draft, options, fallbackId),
+    [draft, options, fallbackId],
   );
   // 命令模式打开且目标变化时拉取 agent 技能；失败静默。
   // 依赖用 inSlashMode 而非 slashQuery：避免每次按键都重拉。
@@ -315,9 +324,8 @@ export default function AgentHubPanel() {
   const send = () => {
     const text = draft.trim();
     if (!text) return;
-    // 回落顺序：hub 最近一次交互的 agent 优先（比 lastAgentId 更能反映 hub 视角
-    // 的最新目标），再退 store.lastAgentId。
-    const targetId = resolveMentionTarget(text, options, lastHubAgentId(hubMessages, options, chats) ?? lastAgentId);
+    // 回落链与 currentTargetId 共用 fallbackId（见上）。
+    const targetId = resolveMentionTarget(text, options, fallbackId);
     if (!targetId) {
       useAppStore.getState().notify(t('ui.hub.need_target'), 'error');
       return;
