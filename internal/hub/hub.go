@@ -70,7 +70,6 @@ type Store struct {
 	liveCap  int
 	live     []Message
 	nextID   int64
-	loaded   bool
 }
 
 // New 创建 store；cap<=0 时用默认上限。dir 由调用方给出（桌面端传 ~/.kshell/hub，
@@ -95,7 +94,6 @@ func (s *Store) Load() error {
 
 	s.live = nil
 	s.nextID = 0
-	s.loaded = true
 
 	if data, err := os.ReadFile(s.livePath); err == nil {
 		var f file
@@ -126,7 +124,9 @@ func (s *Store) List() []Message {
 }
 
 // Append 追加一条消息：分配 ID 与时间戳，超过 liveCap 时把最旧的溢出部分按月归档。
-// 归档先落盘成功再写 live，中途崩溃最坏是重复一条（可接受），不会丢。
+// 归档先落盘成功再写 live。注意失败语义：归档成功但 writeLive 失败时，磁盘上的
+// 旧 live.json 仍含已归档的溢出部分，下次进程重载后再溢出会重归档同一批——
+// archive 按 ID 去重（见下），保证这种场景下归档文件不出现重复条目。
 func (s *Store) Append(m Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -210,6 +210,8 @@ func (s *Store) LoadArchive(month string) ([]Message, error) {
 }
 
 // archive 把 overflow 按自然月追加到对应归档文件（调用方持锁）。
+// 按 ID 去重：writeLive 失败 + 重启重载的极端序列会把同一批消息再送进来，
+// 去重保证归档文件幂等，不产生重复条目。
 func (s *Store) archive(msgs []Message) error {
 	if len(msgs) == 0 {
 		return nil
@@ -234,9 +236,18 @@ func (s *Store) archive(msgs []Message) error {
 		if existing == nil {
 			existing = &file{Version: fileVersion, Month: month}
 		}
+		seen := make(map[int64]bool, len(existing.Messages))
+		for _, m := range existing.Messages {
+			seen[m.ID] = true
+		}
+		for _, m := range byMonth[month] {
+			if !seen[m.ID] {
+				existing.Messages = append(existing.Messages, m)
+				seen[m.ID] = true
+			}
+		}
 		existing.Version = fileVersion
 		existing.Month = month
-		existing.Messages = append(existing.Messages, byMonth[month]...)
 		if err := s.writeFile(s.archivePath(month), existing); err != nil {
 			return err
 		}

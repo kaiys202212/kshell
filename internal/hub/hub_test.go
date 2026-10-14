@@ -209,6 +209,36 @@ func TestNextIDWatermarkAcrossArchive(t *testing.T) {
 	}
 }
 
+// 归档幂等：同一批消息再次送入 archive 不产生重复条目
+// （writeLive 失败 + 重启重载的极端序列会重归档同一批）。
+func TestArchiveIdempotentByID(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir, 2)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 4; i++ {
+		if err := s.Append(Message{Kind: "user", Text: fmt.Sprintf("m%d", i), Ts: ts(2026, 10, 15)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 模拟重载后把已归档的同一批再送一次（直接调 archive 内部路径）
+	again := []Message{
+		{ID: 1, Kind: "user", Text: "m0", Ts: ts(2026, 10, 15)},
+		{ID: 2, Kind: "user", Text: "m1", Ts: ts(2026, 10, 15)},
+	}
+	if err := s.archive(again); err != nil {
+		t.Fatal(err)
+	}
+	arch, err := s.LoadArchive("2026-10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(arch) != 2 || arch[0].ID != 1 || arch[1].ID != 2 {
+		t.Fatalf("归档应保持 2 条不重复，得到 %+v", arch)
+	}
+}
+
 func TestLoadArchiveMissing(t *testing.T) {
 	s := newTestStore(t, 10)
 	got, err := s.LoadArchive("2026-01")
