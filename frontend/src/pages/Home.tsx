@@ -8,6 +8,7 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import AgentHubPanel from '../components/AgentHubPanel';
 import RemoteDirPicker from '../components/RemoteDirPicker';
 import {
   addSSHProject,
@@ -500,6 +501,10 @@ export default function Home() {
         </kbd>
         {t('ui.home.shortcut_search')}
       </p>
+      {/* 跨项目 agent 汇总聊天窗：置于工作区卡片网格上方 */}
+      <div className="mb-4">
+        <AgentHubPanel />
+      </div>
       {sorted.length === 0 ? (
         // 空态按 scanState 收敛：扫描未完成（idle/scanning）用骨架屏占位，
         // done 后仍未发现才是「确实没有」

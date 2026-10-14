@@ -2,11 +2,13 @@ package desktop
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/yangk/kshell/internal/acp"
 	"github.com/yangk/kshell/internal/agenthook"
@@ -115,6 +117,32 @@ func TestChatTurnDoneEmitsAgentNotify(t *testing.T) {
 	}
 }
 
+// done 通知应带上最后一轮 assistant 回复正文，用户才能直接看到 agent 说了什么。
+func TestEmitChatNotifyCarriesAssistantReply(t *testing.T) {
+	rec := &notifyRecorder{}
+	b := &fakeChatCaptureBackend{}
+	m := newChatManagerWith(rec.emit, b, nil)
+	t.Cleanup(m.CloseAll)
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// 经捕获的 handler 推一条 assistant 分片进时间线（模拟 agent 回复）
+	raw := json.RawMessage(`{"sessionUpdate":"agent_message_chunk","messageId":"a1","content":{"type":"text","text":"回复内容占位"}}`)
+	b.lastHandler().SessionUpdate("s1", raw)
+
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	p := waitForNotify(t, rec, "done")
+	if !strings.Contains(p.Summary, "回复内容占位") {
+		t.Fatalf("done notify 未带 assistant 正文: %q", p.Summary)
+	}
+}
+
 // chat turn 出错：emit error 语义通知，summary 带错误文本。
 func TestChatPromptErrorEmitsAgentNotify(t *testing.T) {
 	rec := &notifyRecorder{}
@@ -178,6 +206,50 @@ func TestChatNotifySkipsUnknownChat(t *testing.T) {
 	emitChatNotify(rec.emit, m, "c-missing", "done", "")
 	if n := rec.count("notify:agent"); n != 0 {
 		t.Fatalf("未知 chat 不应 emit，得到 %d 次", n)
+	}
+}
+
+// 超长中文回复按 rune 边界截断：按字节切会落在多字节字符中间，产出非法 UTF-8，
+// JSON 序列化后变 U+FFFD 乱码（本项目回复正文以中文为主，必然命中）。
+func TestLastAssistantTextTruncatesOnRuneBoundary(t *testing.T) {
+	const maxLen = 2000
+	// 每个汉字 3 字节，总长远超 maxLen，且 maxLen 处必落在字符中间
+	text := strings.Repeat("中文回复", 800) // 3200 个 rune
+	h := []chat.Update{{Type: "assistant", MessageID: "m1", Text: text}}
+
+	got := lastAssistantText(h)
+	if !utf8.ValidString(got) {
+		t.Fatalf("截断结果不是合法 UTF-8（出现乱码）: %q", got)
+	}
+	if n := utf8.RuneCountInString(got); n != maxLen {
+		t.Fatalf("截断长度 = %d 个 rune, 想要 %d", n, maxLen)
+	}
+}
+
+// 空历史 / 无 assistant 分片时返回空串且不 panic。
+func TestLastAssistantTextEmptyCases(t *testing.T) {
+	if got := lastAssistantText(nil); got != "" {
+		t.Fatalf("nil 历史应返回空串, got %q", got)
+	}
+	h := []chat.Update{
+		{Type: "user", MessageID: "u1", Text: "你好"},
+		{Type: "turn_done"},
+	}
+	if got := lastAssistantText(h); got != "" {
+		t.Fatalf("无 assistant 分片应返回空串, got %q", got)
+	}
+}
+
+// 未超长时不截断，且只取最后一轮（同 MessageID）分片拼接。
+func TestLastAssistantTextJoinsLastTurnChunks(t *testing.T) {
+	h := []chat.Update{
+		{Type: "assistant", MessageID: "old", Text: "旧回复"},
+		{Type: "user", MessageID: "u1", Text: "继续"},
+		{Type: "assistant", MessageID: "new", Text: "第一段"},
+		{Type: "assistant", MessageID: "new", Text: "第二段"},
+	}
+	if got := lastAssistantText(h); got != "第一段第二段" {
+		t.Fatalf("got %q, 想要 第一段第二段", got)
 	}
 }
 

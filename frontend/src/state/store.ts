@@ -163,6 +163,11 @@ interface AppState {
   requestFocusTerm(termKey: string): void;
   clearFocusTerm(seq: number): void;
 
+  // 汇总聊天窗「未 @ 时」的默认投递目标：最后一次交互（@发送/点击行）的 chat.ID。
+  // 不持久化：会话不跨重启存活，陈旧 ID 会误投。
+  lastAgentId: string | null;
+  setLastAgentId(id: string | null): void;
+
   // 气泡提示音开关（默认开）；随 kshell-tabs 持久化，播放时读当前值
   notifySound: boolean;
   setNotifySound(v: boolean): void;
@@ -424,6 +429,9 @@ export const useAppStore = create<AppState>()(
       requestFocusTerm: (termKey) => set({ focusTermKey: { termKey, seq: nextFocusSeq++ } }),
       clearFocusTerm: (seq) =>
         set((s) => (s.focusTermKey?.seq === seq ? { focusTermKey: null } : {})),
+
+      lastAgentId: null,
+      setLastAgentId: (lastAgentId) => set({ lastAgentId }),
     }),
     {
       name: 'kshell-tabs',

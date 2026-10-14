@@ -20,7 +20,6 @@ const attachCreatedGrace = 2 * time.Minute
 var (
 	errNoBackend = errors.New("err.chat.not_ready")
 	errNotFound  = errors.New("err.chat.gone")
-	errRunning   = errors.New("err.chat.busy")
 )
 
 // maxHistory 限制每会话保留的时间线事件数，防止长会话内存无限增长。
@@ -50,6 +49,8 @@ type session struct {
 	openedAt       time.Time
 	knownIDs       map[string]bool // 打开时扫描结果里已有的磁盘会话，禁止绑到本新建聊天
 	promptTitleSet bool
+
+	queue []string // 忙时排队的用户消息，turn_done 后按序投递
 }
 
 type permissionResult struct {
@@ -255,9 +256,21 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	}
 	s.info.Status = StatusReady
 	out := s.info
+	// starting 期间入队的消息没有 turn_done 可等，必须在此主动投递首条，
+	// 否则会静默永不投递（队列里已补过时间线，投递时不再补）。
+	var next string
+	hasNext := false
+	if len(s.queue) > 0 {
+		next = s.queue[0]
+		s.queue = s.queue[1:]
+		hasNext = true
+	}
 	m.mu.Unlock()
 
 	go m.watchExit(s)
+	if hasNext {
+		_ = m.deliverTurn(s.id, s, next, false)
+	}
 	return out, nil
 }
 
@@ -303,6 +316,7 @@ func (m *Manager) watchExit(s *session) {
 	s.exited = true
 	s.info.Status = StatusExited
 	s.info.ExitCode = code
+	s.queue = nil // 进程已退出，排队的消息不再有投递机会
 	pending := s.pending
 	s.pending = make(map[string]chan permissionResult)
 	m.mu.Unlock()
@@ -328,6 +342,7 @@ func (m *Manager) fail(id string, code int, msg string) {
 	s.info.Status = StatusExited
 	s.info.ExitCode = code
 	s.info.Error = msg
+	s.queue = nil // 失败会话不再投递排队消息
 	m.mu.Unlock()
 
 	// 握手/启动失败不留下幽灵会话。这里不回调 onExit：失败会话的 id 从未返回给
@@ -338,39 +353,78 @@ func (m *Manager) fail(id string, code int, msg string) {
 	}
 }
 
+// Prompt 向会话发起一轮用户输入；忙时入队，当前轮结束后自动投递。
 func (m *Manager) Prompt(id, text string) error {
 	m.mu.Lock()
 	s := m.byID[id]
-	// 仅握手完成的 ready 会话可发起新轮次，避免握手期调用 conn.Prompt("")。
 	if s == nil || s.exited {
 		m.mu.Unlock()
 		return errNotFound
 	}
+	// 忙时入队：消息不丢，且照常补进时间线，界面立刻可见。
 	if s.info.Status != StatusReady {
+		s.queue = append(s.queue, text)
+		userUpdate := s.appendUserLocked(text)
+		onUpdate := m.onUpdate
 		m.mu.Unlock()
-		return errRunning
+		if onUpdate != nil {
+			onUpdate(id, userUpdate)
+		}
+		return nil
+	}
+	m.mu.Unlock()
+	return m.startTurn(id, s, text)
+}
+
+// startTurn 发起一轮：置 running、补 user 时间线、emit、异步等 Prompt 返回。
+// 轮次收尾（含 error）若队列非空且会话仍存活，自动投递下一条。
+func (m *Manager) startTurn(id string, s *session, text string) error {
+	return m.deliverTurn(id, s, text, true)
+}
+
+// deliverTurn 发起一轮；record 为 true 时补 user 时间线并 emit。
+// 队列里的消息在入队时已补过时间线（见 Prompt 忙分支），投递时必须 record=false，
+// 否则同一条用户消息会在时间线里出现两次。
+func (m *Manager) deliverTurn(id string, s *session, text string, record bool) error {
+	m.mu.Lock()
+	if cur := m.byID[id]; cur != s || s.exited {
+		m.mu.Unlock()
+		return errNotFound
+	}
+	if s.info.Status != StatusReady {
+		// 竞态兜底：期间又有轮次启动，改入队；补时间线与 emit 与 Prompt 忙分支一致，
+		// 否则该消息要等下一轮收尾才可见。
+		s.queue = append(s.queue, text)
+		var userUpdate Update
+		onUpdate := m.onUpdate
+		if record {
+			userUpdate = s.appendUserLocked(text)
+		}
+		m.mu.Unlock()
+		if record && onUpdate != nil {
+			onUpdate(id, userUpdate)
+		}
+		return nil
 	}
 	s.info.Status = StatusRunning
+	// 标题改写与 record 无关：即使是队列投递（record=false），这也是该新建会话的第一条用户消息。
 	infoSnap, titleChanged := s.notePromptTitle(text)
-	// 客户端主动发出的用户消息要立刻进时间线：ACP 实时轮次不回显用户消息
-	//（只有 session/load 重放才发 user_message_chunk），不本地补一条界面会一直是空的。
-	s.seq++
-	userUpdate := Update{Seq: s.seq, Type: "user", MessageID: fmt.Sprintf("user:%d", s.seq), Text: text}
-	s.history = append(s.history, userUpdate)
-	if len(s.history) > maxHistory {
-		s.history = append([]Update(nil), s.history[len(s.history)-maxHistory:]...)
+	var userUpdate Update
+	if record {
+		userUpdate = s.appendUserLocked(text)
 	}
 	sid := s.sessionID
 	conn := s.conn
 	ctx := s.ctx
 	onInfo := m.onInfo
+	onUpdate := m.onUpdate
 	m.mu.Unlock()
 
 	if titleChanged && onInfo != nil {
 		onInfo(infoSnap)
 	}
-	if m.onUpdate != nil {
-		m.onUpdate(id, userUpdate)
+	if record && onUpdate != nil {
+		onUpdate(id, userUpdate)
 	}
 
 	go func() {
@@ -392,12 +446,35 @@ func (m *Manager) Prompt(id, text string) error {
 		if len(s.history) > maxHistory {
 			s.history = append([]Update(nil), s.history[len(s.history)-maxHistory:]...)
 		}
+		// 取出队列下一条（若有），在锁内决定，锁外发起；入队时已补时间线，投递不再补
+		var next string
+		hasNext := false
+		if !s.exited && len(s.queue) > 0 {
+			next = s.queue[0]
+			s.queue = s.queue[1:]
+			hasNext = true
+		}
 		m.mu.Unlock()
 		if m.onUpdate != nil {
 			m.onUpdate(id, u)
 		}
+		if hasNext {
+			_ = m.deliverTurn(id, s, next, false)
+		}
 	}()
 	return nil
+}
+
+// appendUserLocked 追加一条 user 消息进时间线并返回该事件（调用方持锁）。
+// 超过 maxHistory 时截断保留尾部，避免长会话内存无限增长。
+func (s *session) appendUserLocked(text string) Update {
+	s.seq++
+	u := Update{Seq: s.seq, Type: "user", MessageID: fmt.Sprintf("user:%d", s.seq), Text: text}
+	s.history = append(s.history, u)
+	if len(s.history) > maxHistory {
+		s.history = append([]Update(nil), s.history[len(s.history)-maxHistory:]...)
+	}
+	return u
 }
 
 func (m *Manager) Cancel(id string) error {
@@ -458,6 +535,7 @@ func (m *Manager) Close(id string) error {
 	}
 	s.exited = true
 	s.info.Status = StatusExited
+	s.queue = nil // 关闭后不再投递已排队的消息
 	if s.cancel != nil {
 		s.cancel()
 	}

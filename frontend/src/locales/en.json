@@ -757,6 +757,24 @@
       "tool_call_fallback": "Tool call",
       "reject": "Reject"
     },
+    "hub": {
+      "title": "Agent Hub",
+      "empty": "No agents running",
+      "new_agent": "New agent",
+      "new_agent_title": "New agent",
+      "need_target": "Mention an agent first, e.g. @Claude Code#1",
+      "mention_aria": "Mention suggestions",
+      "input_placeholder": "Message an agent; @ to target, Enter to send",
+      "send": "Send",
+      "status_running": "Running",
+      "status_ready": "Idle",
+      "status_exited": "Exited",
+      "field_project": "Project",
+      "field_tool": "Tool",
+      "no_tools": "No ACP-capable tool available",
+      "cancel": "Cancel",
+      "create": "Create"
+    },
     "transcript": {
       "preview_title": "Session preview",
       "activate": "Activate",
