@@ -26,11 +26,15 @@ type fakeConn struct {
 	promptGate chan struct{} // 非 nil 时 Prompt 阻塞等待，直到收到信号或 Close
 	prompts    []string      // 记录每次 Prompt 的文本（断言投递顺序）
 
+	initGate   chan struct{} // 非 nil 时 Initialize 阻塞等待，模拟握手耗时
 	initSet    bool
 	initResult acp.InitializeResult
 }
 
 func (c *fakeConn) Initialize(ctx context.Context) (acp.InitializeResult, error) {
+	if c.initGate != nil {
+		<-c.initGate
+	}
 	if c.initSet {
 		return c.initResult, nil
 	}
@@ -605,6 +609,81 @@ func TestManagerPromptDrainsQueueOnTurnDone(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("queue not drained; prompts=%d", b.conn.promptCount())
+}
+
+// starting 态（握手可能数秒）期间 Prompt 会入队；Open 就绪后必须 drain 队列投递，
+// 否则该消息永远等不到 turn_done 触发，静默卡死。
+func TestManagerPromptQueuesWhileStarting(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	b.conn.initGate = make(chan struct{}) // 卡住 Initialize，让会话停在 StatusStarting
+
+	// Open 内部同步等待 Initialize，必须后台跑，否则测试自身死锁。
+	opened := make(chan Info, 1)
+	go func() {
+		info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+		if err != nil {
+			opened <- Info{}
+			return
+		}
+		opened <- info
+	}()
+
+	// 会话在 Initialize 前已进 order/byID，状态为 StatusStarting；等它出现后取 id。
+	waitStatus(t, m, "c1", StatusStarting)
+	if err := m.Prompt("c1", "握手期消息"); err != nil {
+		t.Fatalf("starting 期间 prompt 应入队: %v", err)
+	}
+
+	// 放行握手 → Open 完成并把队列首条投递出去
+	close(b.conn.initGate)
+	select {
+	case <-opened:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Open 未完成")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		b.conn.mu.Lock()
+		delivered := false
+		for _, p := range b.conn.prompts {
+			if p == "握手期消息" {
+				delivered = true
+			}
+		}
+		b.conn.mu.Unlock()
+		if delivered {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("starting 入队消息未在就绪后投递; prompts=%v", b.conn.prompts)
+}
+
+// 排队消息在入队时已补过时间线，投递时不得再补一条，否则同一条用户消息出现两次。
+func TestManagerDrainedMessageNotDuplicated(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	b.conn.promptGate = make(chan struct{})
+	info, _ := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	_ = m.Prompt(info.ID, "first")
+	waitStatus(t, m, info.ID, StatusRunning)
+	_ = m.Prompt(info.ID, "second")
+
+	b.conn.mu.Lock()
+	gate := b.conn.promptGate
+	b.conn.mu.Unlock()
+	close(gate)
+	waitStatus(t, m, info.ID, StatusReady)
+
+	n := 0
+	for _, u := range m.History(info.ID) {
+		if u.Type == "user" && u.Text == "second" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("排队消息在时间线出现 %d 次, 想要 1", n)
+	}
 }
 
 // Close 必须清空队列：不应再投递已排队的消息。
