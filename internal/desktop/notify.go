@@ -12,6 +12,7 @@ import (
 	"github.com/yangk/kshell/internal/applang"
 	"github.com/yangk/kshell/internal/terminal"
 )
+
 // notifyPollInterval 是通知收件箱的轮询间隔。notifier 侧毫秒级落盘，
 // 500ms 足够「任务完成 → 气泡出现」的体感，空轮询成本只是扫一次目录。
 const notifyPollInterval = 500 * time.Millisecond
