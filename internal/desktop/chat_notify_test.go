@@ -364,6 +364,54 @@ func TestAwaitPermissionAutoAllowsOrdinaryToolUnderBypass(t *testing.T) {
 	}
 }
 
+// ExitPlanMode 同属交互类：计划要用户批准，bypass 不得静默代答（同 AskUserQuestion）。
+func TestAwaitPermissionAutoAllowSkipsExitPlanMode(t *testing.T) {
+	rec := &notifyRecorder{}
+	b := &fakeChatCaptureBackend{}
+	m := newChatManagerWith(rec.emit, b, func() bool { return true }, nil)
+	t.Cleanup(m.CloseAll)
+
+	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "D:/w", ToolID: "codebuddy"},
+		chat.Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	h := b.lastHandler()
+	h.SessionUpdate("sess-new", json.RawMessage(
+		`{"sessionUpdate":"tool_call","toolCallId":"t3","name":"ExitPlanMode","title":"计划待批准"}`))
+
+	done := make(chan acp.PermissionOutcome, 1)
+	go func() {
+		out, _ := h.RequestPermission(context.Background(), "sess-new", "r3", acp.RequestPermissionParams{
+			SessionID: "sess-new",
+			ToolCall:  acp.ToolCall{ToolCallID: "t3"},
+			Options:   []acp.PermissionOption{{OptionID: "allow", Name: "Allow", Kind: "allow_once"}},
+		})
+		done <- out
+	}()
+
+	select {
+	case out := <-done:
+		t.Fatalf("ExitPlanMode 不应被 bypass 自动放行，得到 %+v", out)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if n := rec.count("chat:permission"); n != 1 {
+		t.Fatalf("应发出 chat:permission 弹窗请求，得到 %d 次", n)
+	}
+
+	if err := m.RespondPermission(info.ID, "r3", "allow"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case out := <-done:
+		if out.OptionID != "allow" {
+			t.Fatalf("outcome %+v", out)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("应答后未返回")
+	}
+}
+
 // fakeChatConnPromptErr 模拟一轮 Prompt 失败。
 type fakeChatConnPromptErr struct {
 	fakeChatConn
