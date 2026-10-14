@@ -752,3 +752,110 @@ func historyHasText(h []Update, text string) bool {
 	}
 	return false
 }
+
+// 忙时 PromptHub 入队并返回 queued=true；撤回后队列条目不再投递。
+func TestPromptHubQueueAndRecall(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	b.conn.promptGate = make(chan struct{})
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "first"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, info.ID, StatusRunning)
+
+	queued, err := m.PromptHub(info.ID, "second", "h1")
+	if err != nil || !queued {
+		t.Fatalf("queued=%v err=%v", queued, err)
+	}
+	if removed := m.RecallQueued(info.ID, "h1"); !removed {
+		t.Fatal("RecallQueued 应移除队列条目")
+	}
+	if m.RecallQueued(info.ID, "h1") {
+		t.Fatal("重复撤回应返回 false")
+	}
+	close(b.conn.promptGate)
+	// 等 first 投递完成，确认 second 不再投递
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if b.conn.promptCount() >= 1 {
+			time.Sleep(100 * time.Millisecond) // 给潜在的误投递留窗口
+			b.conn.mu.Lock()
+			got := append([]string(nil), b.conn.prompts...)
+			b.conn.mu.Unlock()
+			for _, p := range got {
+				if p == "second" {
+					t.Fatalf("已撤回消息不得投递: %v", got)
+				}
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("first 未投递")
+}
+
+// 空闲时 PromptHub 返回 queued=false；投递时触发 onHubDelivered。
+func TestPromptHubImmediateDeliversWithCallback(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	delivered := make(chan string, 4)
+	m.SetOnHubCallbacks(func(hubID string) {}, func(hubID string) {
+		if hubID != "" {
+			delivered <- hubID
+		}
+	})
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, err := m.PromptHub(info.ID, "hi", "h9")
+	if err != nil || queued {
+		t.Fatalf("queued=%v err=%v", queued, err)
+	}
+	select {
+	case got := <-delivered:
+		if got != "h9" {
+			t.Fatalf("delivered hubID = %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("onHubDelivered 未触发")
+	}
+}
+
+// 竞态兜底：deliverTurn 期间会话转忙时改入队并触发 onHubQueued。
+func TestPromptHubRaceFallbackTriggersQueuedCallback(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	b.conn.promptGate = make(chan struct{})
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "first"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, info.ID, StatusRunning)
+
+	queuedC := make(chan string, 4)
+	m.SetOnHubCallbacks(func(hubID string) {
+		if hubID != "" {
+			queuedC <- hubID
+		}
+	}, func(hubID string) {})
+	// 模拟竞态：直接调内部 deliverTurn（会话忙，应兜底入队并触发回调）
+	qm := queuedMsg{blocks: []acp.ContentBlock{{Type: "text", Text: "raced"}}, hubMsgID: "h2"}
+	if err := m.deliverTurn(info.ID, m.byID[info.ID], qm, true); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-queuedC:
+		if got != "h2" {
+			t.Fatalf("queued hubID = %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("onHubQueued 未触发")
+	}
+	m.RecallQueued(info.ID, "h2")
+	close(b.conn.promptGate)
+}
