@@ -13,6 +13,10 @@ const api = vi.hoisted(() => ({
   openWorkspaceACP: vi.fn(),
   getTools: vi.fn(),
   readClipboardPaste: vi.fn(),
+  listChatCommands: vi.fn(),
+  listChatModels: vi.fn(),
+  setChatModel: vi.fn(),
+  cancelChat: vi.fn(),
 }));
 vi.mock('../lib/api', () => api);
 
@@ -39,6 +43,10 @@ beforeEach(() => {
   api.openWorkspaceACP.mockResolvedValue({ Kind: 'chat' });
   api.getTools.mockResolvedValue([]);
   api.readClipboardPaste.mockResolvedValue({ Text: '', Path: '' });
+  api.listChatCommands.mockResolvedValue([]);
+  api.listChatModels.mockResolvedValue({ Current: '', Models: [] });
+  api.setChatModel.mockResolvedValue(undefined);
+  api.cancelChat.mockResolvedValue(undefined);
   useAppStore.setState({
     chats: [],
     agentNotices: [],
@@ -185,5 +193,124 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'claude'));
     await waitFor(() => expect(useAppStore.getState().chats.some((c) => c.ID === 'n1')).toBe(true));
     expect(useAppStore.getState().lastAgentId).toBe('n1');
+  });
+
+  it('键入 / 展示客户端命令，并可按前缀过滤', async () => {
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '/' } });
+    const list = screen.getByRole('listbox', { name: tt('ui.hub.cmd_aria') });
+    expect(list).toHaveTextContent('/new');
+    expect(list).toHaveTextContent('/stop');
+    expect(list).toHaveTextContent('/model');
+    expect(list).toHaveTextContent('/clear');
+    fireEvent.change(box, { target: { value: '/cl' } });
+    const filtered = screen.getByRole('listbox', { name: tt('ui.hub.cmd_aria') });
+    expect(filtered).toHaveTextContent('/clear');
+    expect(filtered).not.toHaveTextContent('/new');
+  });
+
+  it('选中 /clear：清空消息流且不投递后端', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: 'hello' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalled());
+    fireEvent.change(box, { target: { value: '/clear' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(api.sendChatPrompt).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByText('hello')).toBeNull());
+  });
+
+  it('选中 /stop：对目标 agent 调 cancelChat', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '/stop' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.cancelChat).toHaveBeenCalledWith('c1'));
+  });
+
+  it('/stop 无目标时提示 need_target', () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '/stop' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(api.cancelChat).not.toHaveBeenCalled();
+    expect(useAppStore.getState().toasts.some((t) => t.title === tt('ui.hub.need_target'))).toBe(true);
+  });
+
+  it('agent 技能出现在命令列表，选中后切入草稿并可投递', async () => {
+    api.listChatCommands.mockResolvedValue([{ Name: 'commit', Description: 'Commit changes' }]);
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '/' } });
+    await waitFor(() =>
+      expect(screen.getByRole('listbox', { name: tt('ui.hub.cmd_aria') })).toHaveTextContent('/commit'),
+    );
+    // 过滤到 /c：客户端命令 clear 在前，agent 技能 commit 在后。
+    fireEvent.change(box, { target: { value: '/c' } });
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect((box as HTMLTextAreaElement).value).toBe('/commit ');
+    fireEvent.change(box, { target: { value: '/commit fix bug' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '/commit fix bug'));
+  });
+
+  it('新建 agent：agent 报告模型时展示第二步，确认后切换模型并登记', async () => {
+    api.getTools.mockResolvedValue([
+      { ID: 'claude', Name: 'Claude Code', BinPath: '', Version: '', Installed: true, Source: 'path', ACP: { Available: true, Source: 'builtin' } },
+    ]);
+    api.openWorkspaceACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'n1', Workspace: 'D:\\ws\\a', ToolID: 'claude' }),
+    });
+    api.listChatModels.mockResolvedValue({
+      Current: 'm1',
+      Models: [
+        { ID: 'm1', Name: 'Model One' },
+        { ID: 'm2', Name: 'Model Two' },
+      ],
+    });
+    useAppStore.setState({
+      workspaces: [{ Path: 'D:\\ws\\a', Name: 'a', LastUsed: '', SessionCount: 0, ToolCounts: {}, Source: 'manual' }],
+    });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
+    fireEvent.change(await screen.findByLabelText(tt('ui.hub.field_project')), { target: { value: 'D:\\ws\\a' } });
+    fireEvent.change(await screen.findByLabelText(tt('ui.hub.field_tool')), { target: { value: 'claude' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.create') }));
+    // 第二步：模型下拉出现，默认当前模型
+    const select = await screen.findByLabelText(tt('ui.hub.model_label'));
+    expect((select as HTMLSelectElement).value).toBe('m1');
+    fireEvent.change(select, { target: { value: 'm2' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.model_confirm') }));
+    await waitFor(() => expect(api.setChatModel).toHaveBeenCalledWith('n1', 'm2'));
+    expect(useAppStore.getState().chats.some((c) => c.ID === 'n1')).toBe(true);
+  });
+
+  it('新建 agent：agent 无模型报告时跳过第二步直接登记', async () => {
+    api.getTools.mockResolvedValue([
+      { ID: 'claude', Name: 'Claude Code', BinPath: '', Version: '', Installed: true, Source: 'path', ACP: { Available: true, Source: 'builtin' } },
+    ]);
+    api.openWorkspaceACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'n2', Workspace: 'D:\\ws\\a', ToolID: 'claude' }),
+    });
+    api.listChatModels.mockResolvedValue({ Current: '', Models: [] });
+    useAppStore.setState({
+      workspaces: [{ Path: 'D:\\ws\\a', Name: 'a', LastUsed: '', SessionCount: 0, ToolCounts: {}, Source: 'manual' }],
+    });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
+    fireEvent.change(await screen.findByLabelText(tt('ui.hub.field_project')), { target: { value: 'D:\\ws\\a' } });
+    fireEvent.change(await screen.findByLabelText(tt('ui.hub.field_tool')), { target: { value: 'claude' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.create') }));
+    await waitFor(() => expect(useAppStore.getState().chats.some((c) => c.ID === 'n2')).toBe(true));
+    expect(api.setChatModel).not.toHaveBeenCalled();
   });
 });
