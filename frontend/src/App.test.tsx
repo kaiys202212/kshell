@@ -60,6 +60,13 @@ const mocks = vi.hoisted(() => ({
   listHubArchive: vi.fn().mockResolvedValue([]),
   loadHubArchive: vi.fn().mockResolvedValue([]),
   clearHubMessages: vi.fn().mockResolvedValue(undefined),
+  // 首页左列 RequirementList 依赖的 api（App 渲染 Home）
+  listRequirements: vi.fn().mockResolvedValue([]),
+  addRequirement: vi.fn(),
+  updateRequirement: vi.fn(),
+  deleteRequirement: vi.fn(),
+  markRequirementDispatched: vi.fn(),
+  onRequirementsChanged: vi.fn(() => () => {}),
   onHubChanged: vi.fn(() => () => {}),
   onChatMeta: vi.fn(() => () => {}),
   onArchiveSuggest: vi.fn(() => () => {}),

@@ -26,6 +26,7 @@ import {
   type Workspace,
 } from '../lib/api';
 import { backendError } from '../lib/errors';
+import { dispatchRequirement } from '../lib/dispatchRequirement';
 import { formatRelativeTime } from '../lib/format';
 import { badgeFor } from '../lib/toolBadge';
 import { MONO } from '../lib/ui';
@@ -36,11 +37,16 @@ import { Dialog } from '../components/ui/dialog';
 import { EmptyState } from '../components/ui/empty-state';
 import { Skeleton } from '../components/ui/skeleton';
 import { ToolDot } from '../components/ui/tool-dot';
+import RequirementList, { REQUIREMENT_MIME } from '../components/RequirementList';
 
 // 卡片工具分布最多展示的徽标数，其余折叠成 "+N"
 const TOOL_BADGES_MAX = 3;
 // 网格列宽：窄窗口自动降列
 const GRID = 'grid gap-2.5 grid-cols-[repeat(auto-fill,minmax(220px,1fr))]';
+// 卡片分页大小：超过 9 张出分页栏，网格区固定高度不滚动
+const PAGE_SIZE = 9;
+// 需求拖拽 MIME（与 RequirementList.dragstart 写入的一致）
+const REQ_MIME = REQUIREMENT_MIME;
 
 type CreateStep = 'closed' | 'choose' | 'remote-conn' | 'remote-browse';
 
@@ -123,6 +129,10 @@ export default function Home() {
   // 首页检索：按工作区名称/路径过滤卡片（纯前端，Ctrl+F 聚焦）
   const [filter, setFilter] = useState('');
   const filterRef = useRef<HTMLInputElement>(null);
+  // 卡片分页：当前页（1 起）；检索词变化时回第 1 页
+  const [page, setPage] = useState(1);
+  // 需求拖拽悬停高亮的工作区路径（null 表示无悬停）
+  const [dragOverWs, setDragOverWs] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     getWorkspaces()
@@ -197,6 +207,14 @@ export default function Home() {
           ws.Name.toLowerCase().includes(kw) || ws.Path.toLowerCase().includes(kw),
       )
     : sorted;
+
+  // 分页：filtered 变化（含检索词变化）时回第 1 页；总页数下限 1 防止除零
+  useEffect(() => {
+    setPage(1);
+  }, [kw]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageItems = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   const totalSessions = workspaces.reduce((n, ws) => n + ws.SessionCount, 0);
 
@@ -298,6 +316,33 @@ export default function Home() {
       refreshDeleted();
     } catch (err) {
       notify(t('ui.home.restore_failed', { err: backendError(err) }), 'error');
+    }
+  };
+
+  // dropRequirement：接收需求条目拖放，解析自定义 MIME 后派发到该工作区。
+  // 无 MIME 数据（普通文件拖入）静默忽略；派发成功/失败都 notify。
+  const dropRequirement = async (wsPath: string, e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOverWs(null);
+    const raw = e.dataTransfer.getData(REQ_MIME);
+    if (!raw) return;
+    let payload: { id?: string; text?: string };
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!payload.id || !payload.text) return;
+    try {
+      await dispatchRequirement(payload.id, payload.text, wsPath);
+      notify(t('ui.requirements.dispatch_ok', { name: baseName(wsPath) }), 'success');
+    } catch (err) {
+      // no_acp_tool 是可预期的业务失败，用专门文案；其余走通用失败
+      if ((err as Error)?.message === 'no_acp_tool') {
+        notify(t('ui.requirements.no_acp_tool'), 'error');
+      } else {
+        notify(t('ui.requirements.dispatch_failed', { err: backendError(err) }), 'error');
+      }
     }
   };
 
@@ -506,8 +551,8 @@ export default function Home() {
             </kbd>
             {t('ui.home.shortcut_search')}
           </p>
-          {/* 项目列表：仅此列滚动，首页本身不出滚动条 */}
-          <div className="min-h-0 flex-1 overflow-y-auto pb-1">
+          {/* 项目卡片区：固定高度不滚动（>9 张时分页翻看），其下是需求列表（内部自滚） */}
+          <div className="shrink-0 overflow-hidden pb-1">
             {sorted.length === 0 ? (
               // 空态按 scanState 收敛：扫描未完成（idle/scanning）用骨架屏占位，
               // done 后仍未发现才是「确实没有」
@@ -525,7 +570,7 @@ export default function Home() {
               <EmptyState title={t('ui.home.filter_empty')} />
             ) : (
               <ul className={GRID}>
-                {filtered.map((ws: Workspace, i: number) => {
+                {pageItems.map((ws: Workspace, i: number) => {
                   const lastUsed = lastUsedTime(ws);
                   const { shown, rest } = toolDistribution(ws.ToolCounts);
                   // 左缘色条取占比最高的工具色；无工具上下文（如纯 git 扫描工作区）用主色
@@ -539,9 +584,22 @@ export default function Home() {
                         animation: 'kshell-rise-in var(--duration-base) var(--ease-out) both',
                         animationDelay: `${Math.min(i, 10) * 30}ms`,
                       }}
+                      // 需求拖放目标：dragover 高亮、drop 派发（preventDefault 才允许 drop）
+                      onDragOver={(e) => {
+                        // types 在部分环境（旧 jsdom、非拖拽合成事件）可能缺失，防御性兜底
+                        if (!e.dataTransfer.types?.includes(REQ_MIME)) return;
+                        e.preventDefault();
+                        setDragOverWs(ws.Path);
+                      }}
+                      onDragLeave={() => setDragOverWs((cur) => (cur === ws.Path ? null : cur))}
+                      onDrop={(e) => void dropRequirement(ws.Path, e)}
                     >
                       <button
-                        className="relative flex h-full w-full min-w-0 flex-col gap-1 rounded border border-border bg-card px-2.5 py-2 text-left transition-[background-color,border-color,box-shadow,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:-translate-y-px hover:border-primary/40 hover:bg-muted hover:shadow-[var(--shadow-card)]"
+                        className={`relative flex h-full w-full min-w-0 flex-col gap-1 rounded border bg-card px-2.5 py-2 text-left transition-[background-color,border-color,box-shadow,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:-translate-y-px hover:bg-muted hover:shadow-[var(--shadow-card)] ${
+                          dragOverWs === ws.Path
+                            ? 'border-primary ring-1 ring-primary/40'
+                            : 'border-border hover:border-primary/40'
+                        }`}
                         onClick={() => openTab(ws)}
                         title={subtitle}
                       >
@@ -603,6 +661,34 @@ export default function Home() {
               </ul>
             )}
           </div>
+          {/* 分页栏：仅 >9 张时出现；两页以上时两端按钮按边界禁用 */}
+          {sorted.length > 0 && filtered.length > PAGE_SIZE && (
+            <div className="flex shrink-0 items-center justify-center gap-2 py-1 text-xs text-muted-foreground">
+              <Button
+                size="sm"
+                variant="secondary"
+                aria-label={t('ui.home.page_prev')}
+                disabled={safePage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                ‹
+              </Button>
+              <span>
+                {t('ui.home.page_indicator', { page: safePage, total: totalPages })}
+              </span>
+              <Button
+                size="sm"
+                variant="secondary"
+                aria-label={t('ui.home.page_next')}
+                disabled={safePage >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                ›
+              </Button>
+            </div>
+          )}
+          {/* 需求列表：占卡片区之外的剩余高度，内部自滚 */}
+          <RequirementList className="min-h-0 flex-1" />
         </div>
         {/* 右列：AgentHub 对话卡，占 3/5 宽、撑满本行剩余高度，聊天内容内部滚动 */}
         <div className="flex w-3/5 min-w-0">

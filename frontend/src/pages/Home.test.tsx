@@ -33,8 +33,17 @@ const mocks = vi.hoisted(() => ({
   listHubArchive: vi.fn().mockResolvedValue([]),
   loadHubArchive: vi.fn().mockResolvedValue([]),
   clearHubMessages: vi.fn().mockResolvedValue(undefined),
+  // RequirementList 被 Home 渲染，api mock 需补齐其依赖
+  listRequirements: vi.fn().mockResolvedValue([]),
+  addRequirement: vi.fn(),
+  updateRequirement: vi.fn(),
+  deleteRequirement: vi.fn(),
+  markRequirementDispatched: vi.fn(),
+  onRequirementsChanged: vi.fn().mockImplementation(() => () => {}),
+  dispatchRequirement: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
+vi.mock('../lib/dispatchRequirement', () => mocks);
 
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
@@ -410,5 +419,108 @@ describe('Home', () => {
     // 清空恢复全部
     fireEvent.change(input, { target: { value: '' } });
     expect(cardOrder()).toEqual(['proj-new', 'proj-old', 'aaa-zero', 'git-only']);
+  });
+
+  // ---- 分页（PAGE_SIZE=9）----
+
+  // 生成 n 个工作区，名字 p01..pNN（字母序稳定），LastUsed 同时间避免排序干扰
+  function manyWorkspaces(n: number): Workspace[] {
+    return Array.from({ length: n }, (_, i) =>
+      ws({
+        Path: `D:\\p${String(i + 1).padStart(2, '0')}`,
+        Name: `p${String(i + 1).padStart(2, '0')}`,
+        LastUsed: minutesAgo(10),
+      }),
+    );
+  }
+
+  it('分页：>9 张只渲染 9 张并出现分页栏，点下一页出新卡片', async () => {
+    mocks.getWorkspaces.mockResolvedValue(manyWorkspaces(12));
+    render(<Home />);
+    await screen.findByTitle('D:\\p01');
+
+    expect(screen.getAllByTestId('ws-name')).toHaveLength(9);
+    expect(screen.getByText(tt('ui.home.page_indicator').replace('{{page}}', '1').replace('{{total}}', '2')));
+
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.home.page_next') }));
+
+    expect(screen.getByTitle('D:\\p10')).toBeInTheDocument();
+    expect(screen.queryByTitle('D:\\p01')).toBeNull();
+    expect(screen.getAllByTestId('ws-name')).toHaveLength(3); // 第 2 页只剩 3 张
+    expect(screen.getByText(tt('ui.home.page_indicator').replace('{{page}}', '2').replace('{{total}}', '2')));
+  });
+
+  it('分页：≤9 张不出现分页栏', async () => {
+    render(<Home />); // 默认 4 张
+    await screen.findByTitle('D:\\proj-new');
+    expect(screen.queryByRole('button', { name: tt('ui.home.page_next') })).toBeNull();
+    expect(screen.queryByRole('button', { name: tt('ui.home.page_prev') })).toBeNull();
+  });
+
+  it('分页：检索过滤后回到第 1 页', async () => {
+    mocks.getWorkspaces.mockResolvedValue(manyWorkspaces(12));
+    render(<Home />);
+    await screen.findByTitle('D:\\p01');
+
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.home.page_next') }));
+    expect(screen.getByTitle('D:\\p10')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId('home-filter'), { target: { value: 'p01' } });
+    expect(screen.getByTitle('D:\\p01')).toBeInTheDocument();
+    expect(screen.getAllByTestId('ws-name')).toHaveLength(1);
+  });
+
+  // ---- 拖拽派发 ----
+
+  it('drop 需求到项目卡片：解析 MIME JSON 后调 dispatchRequirement，成功提示', async () => {
+    mocks.dispatchRequirement.mockResolvedValue(undefined);
+    render(<Home />);
+    const cardEl = await screen.findByTitle('D:\\proj-new');
+
+    const dataTransfer = {
+      getData: vi.fn((type: string) =>
+        type === 'application/x-kshell-requirement'
+          ? JSON.stringify({ id: 'r1', text: '实现导出功能' })
+          : '',
+      ),
+    };
+    fireEvent.dragOver(cardEl, { dataTransfer });
+    fireEvent.drop(cardEl, { dataTransfer });
+
+    await waitFor(() =>
+      expect(mocks.dispatchRequirement).toHaveBeenCalledWith('r1', '实现导出功能', 'D:\\proj-new'),
+    );
+    expect(
+      useAppStore
+        .getState()
+        .toasts.some((x) => x.title === tt('ui.requirements.dispatch_ok').replace('{{name}}', 'proj-new')),
+    ).toBe(true);
+  });
+
+  it('drop 派发失败：提示 dispatch_failed，不含堆栈', async () => {
+    mocks.dispatchRequirement.mockRejectedValue(new Error('no_acp_tool'));
+    render(<Home />);
+    const cardEl = await screen.findByTitle('D:\\proj-new');
+
+    const dataTransfer = {
+      getData: vi.fn(() => JSON.stringify({ id: 'r1', text: '实现导出功能' })),
+    };
+    fireEvent.drop(cardEl, { dataTransfer });
+
+    await waitFor(() =>
+      expect(
+        useAppStore.getState().toasts.some((x) => x.tone === 'error'),
+      ).toBe(true),
+    );
+  });
+
+  it('drop 无自定义 MIME（普通文件拖入）：不触发派发', async () => {
+    render(<Home />);
+    const cardEl = await screen.findByTitle('D:\\proj-new');
+
+    const dataTransfer = { getData: vi.fn(() => '') };
+    fireEvent.drop(cardEl, { dataTransfer });
+
+    expect(mocks.dispatchRequirement).not.toHaveBeenCalled();
   });
 });

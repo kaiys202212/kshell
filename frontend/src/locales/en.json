@@ -423,7 +423,10 @@
       "last_active": "Last active {{rel}}",
       "filter_placeholder": "Filter workspaces by name or path",
       "filter_empty": "No workspaces match the filter",
-      "empty": "No workspaces found"
+      "empty": "No workspaces found",
+      "page_prev": "Previous page",
+      "page_next": "Next page",
+      "page_indicator": "{{page}} / {{total}}"
     },
     "session_list": {
       "filter_aria": "Filter by tool",
