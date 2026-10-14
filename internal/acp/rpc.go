@@ -73,8 +73,9 @@ func (c *codec) read() (message, error) {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return message{}, err
 	}
-	if m.ID != nil {
-		// 入站 id 的原始形态单独解出（数字保持数字），反向请求应答原样回传用
+	if m.ID != nil && m.Method != "" {
+		// 入站反向请求的 id 原始形态单独解出（数字保持数字），应答原样回传用；
+		// 响应/通知不需要，跳过二次解析省一整包开销
 		var ids struct {
 			ID json.RawMessage `json:"id"`
 		}

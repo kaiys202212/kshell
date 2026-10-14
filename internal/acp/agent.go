@@ -161,13 +161,14 @@ func (a *Agent) handleRequest(m message) {
 	if len(id) == 0 {
 		id, _ = json.Marshal(string(*m.ID))
 	}
+	normID := string(*m.ID)
 	if m.Method == "session/request_permission" && a.handler != nil {
 		p, err := decodeRequestPermissionParams(m.Params)
 		if err != nil {
 			a.writeResponse(id, nil, &RPCError{Code: -32602, Message: "invalid params"})
 			return
 		}
-		out, err := a.handler.RequestPermission(a.baseCtx, p.SessionID, string(*m.ID), p)
+		out, err := a.handler.RequestPermission(a.baseCtx, p.SessionID, normID, p)
 		if err != nil {
 			a.writeResponse(id, nil, &RPCError{Code: -32603, Message: err.Error()})
 			return
