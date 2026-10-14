@@ -833,8 +833,27 @@ func mergeToolCall(prev, next *ToolCall) *ToolCall {
 	return &out
 }
 
+// isAskUserTool 报告该权限请求对应的工具是否是向用户提问类工具（AskUserQuestion）。
+// bypass 自动放行只该作用于「执行许可」；提问被静默代答等于剥夺用户的决策权。
+// 工具名从已收到的 session/update tool_call（s.tools）反查：agent 实测先发
+// tool_call 更新再发 request_permission（同一 stdout 流内有序），正常时序下
+// 必有记录；极端乱序查不到时按普通工具处理（维持 bypass 语义，宁可漏判）。
+func (m *Manager) isAskUserTool(id, toolCallID string) bool {
+	if toolCallID == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.byID[id]
+	if s == nil {
+		return false
+	}
+	tc := s.tools[toolCallID]
+	return tc != nil && strings.EqualFold(tc.Name, "AskUserQuestion")
+}
+
 func (m *Manager) awaitPermission(ctx context.Context, id, sessionID, requestID string, p acp.RequestPermissionParams) (acp.PermissionOutcome, error) {
-	if optID, ok := pickAllowOption(p.Options); ok {
+	if optID, ok := pickAllowOption(p.Options); ok && !m.isAskUserTool(id, p.ToolCall.ToolCallID) {
 		m.mu.Lock()
 		fn := m.autoAllow
 		m.mu.Unlock()

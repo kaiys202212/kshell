@@ -105,3 +105,32 @@ func TestCodecNotificationAndErrorResponse(t *testing.T) {
 		t.Fatalf("unexpected error response: %+v", resp)
 	}
 }
+
+// 入站反向请求的 id 原始形态必须被保留：应答要用同值同类型回传（JSON-RPC 2.0）。
+// 数字 id 被字符串化后，严格路由的真实 agent（如 codebuddy）会丢弃应答。
+func TestCodecRawIDPreserved(t *testing.T) {
+	var buf bytes.Buffer
+	c := newCodec(strings.NewReader(`{"jsonrpc":"2.0","id":7,"method":"session/request_permission","params":{}}`+"\n"), &buf)
+	m, err := c.read()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if m.ID == nil || *m.ID != "7" {
+		t.Fatalf("normalized id: %+v", m.ID)
+	}
+	if len(m.RawID) == 0 || strings.TrimSpace(string(m.RawID)) != "7" {
+		t.Fatalf("raw id 未保留原始形态: %q", string(m.RawID))
+	}
+
+	env := responseEnvelope{JSONRPC: jsonrpcVersion, ID: m.RawID, Result: struct{}{}}
+	if err := c.write(env); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	out := strings.TrimSpace(buf.String())
+	if !strings.Contains(out, `"id":7`) {
+		t.Fatalf("应答应带数字 id（不含引号）: %s", out)
+	}
+	if strings.Contains(out, `"id":"7"`) {
+		t.Fatalf("应答 id 不得被字符串化: %s", out)
+	}
+}

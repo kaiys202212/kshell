@@ -154,14 +154,20 @@ func (a *Agent) dispatch(m message) {
 }
 
 func (a *Agent) handleRequest(m message) {
+	// 应答 id 原样回传：JSON-RPC 2.0 要求响应 id 与请求 id 值且类型一致，
+	// 数字 id 被字符串化后，严格路由的真实 agent（如 codebuddy）会丢弃应答，
+	// 反向请求永远等不到回复 → session/prompt 挂死。
+	id := m.RawID
+	if len(id) == 0 {
+		id, _ = json.Marshal(string(*m.ID))
+	}
 	if m.Method == "session/request_permission" && a.handler != nil {
-		id := string(*m.ID)
 		p, err := decodeRequestPermissionParams(m.Params)
 		if err != nil {
 			a.writeResponse(id, nil, &RPCError{Code: -32602, Message: "invalid params"})
 			return
 		}
-		out, err := a.handler.RequestPermission(a.baseCtx, p.SessionID, id, p)
+		out, err := a.handler.RequestPermission(a.baseCtx, p.SessionID, string(*m.ID), p)
 		if err != nil {
 			a.writeResponse(id, nil, &RPCError{Code: -32603, Message: err.Error()})
 			return
@@ -169,10 +175,10 @@ func (a *Agent) handleRequest(m message) {
 		a.writeResponse(id, RequestPermissionResult{Outcome: out}, nil)
 		return
 	}
-	a.writeResponse(string(*m.ID), nil, &RPCError{Code: -32601, Message: "method not found: " + m.Method})
+	a.writeResponse(id, nil, &RPCError{Code: -32601, Message: "method not found: " + m.Method})
 }
 
-func (a *Agent) writeResponse(id string, result any, rpcErr *RPCError) {
+func (a *Agent) writeResponse(id json.RawMessage, result any, rpcErr *RPCError) {
 	env := responseEnvelope{JSONRPC: jsonrpcVersion, ID: id, Result: result, Error: rpcErr}
 	if result == nil && rpcErr == nil {
 		env.Result = struct{}{}

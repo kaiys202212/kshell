@@ -43,7 +43,10 @@ func (s *idString) UnmarshalJSON(b []byte) error {
 // 判定：Method!="" && ID!=nil → 反向请求；Method!="" && ID==nil → 通知；Method=="" && ID!=nil → 响应。
 type message struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      *idString       `json:"id,omitempty"` // 保留原始字符串形态，比较无需关心数字/字符串
+	ID      *idString       `json:"id,omitempty"` // 归一字符串形态，自身请求的 pending 匹配用
+	RawID   json.RawMessage `json:"-"`            // 入站 id 的原始形态（数字/字符串），由 read() 单独解出：
+	// 反向请求的应答须原样回传该形态。不能与 ID 同 tag（vet 禁止重复 json tag），
+	// 且编码端从不 marshaling message，故无出站影响。
 	Method  string          `json:"method,omitempty"`
 	Params  json.RawMessage `json:"params,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
@@ -62,9 +65,22 @@ func newCodec(r io.Reader, w io.Writer) *codec {
 }
 
 func (c *codec) read() (message, error) {
-	var m message
-	if err := c.dec.Decode(&m); err != nil {
+	var raw json.RawMessage
+	if err := c.dec.Decode(&raw); err != nil {
 		return message{}, err
+	}
+	var m message
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return message{}, err
+	}
+	if m.ID != nil {
+		// 入站 id 的原始形态单独解出（数字保持数字），反向请求应答原样回传用
+		var ids struct {
+			ID json.RawMessage `json:"id"`
+		}
+		if err := json.Unmarshal(raw, &ids); err == nil {
+			m.RawID = ids.ID
+		}
 	}
 	return m, nil
 }
@@ -89,10 +105,10 @@ type requestEnvelope struct {
 }
 
 type responseEnvelope struct {
-	JSONRPC string    `json:"jsonrpc"`
-	ID      string    `json:"id"`
-	Result  any       `json:"result,omitempty"`
-	Error   *RPCError `json:"error,omitempty"`
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"` // 原样回传入站请求的 id 形态（JSON-RPC 2.0 要求值且类型一致）
+	Result  any             `json:"result,omitempty"`
+	Error   *RPCError       `json:"error,omitempty"`
 }
 
 type notificationEnvelope struct {

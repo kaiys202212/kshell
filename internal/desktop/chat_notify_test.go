@@ -274,6 +274,96 @@ func TestChatNotifyDedupes(t *testing.T) {
 	}
 }
 
+// bypass 自动放行不得吞掉 AskUserQuestion：提问被静默代答等于剥夺用户决策权，
+// 必须照常弹窗。工具名从 manager 已收到的 tool_call 更新（s.tools）反查——
+// codebuddy 实测先发 session/update 再发 request_permission，顺序有保证。
+func TestAwaitPermissionAutoAllowSkipsAskUserQuestion(t *testing.T) {
+	rec := &notifyRecorder{}
+	b := &fakeChatCaptureBackend{}
+	m := newChatManagerWith(rec.emit, b, func() bool { return true }, nil)
+	t.Cleanup(m.CloseAll)
+
+	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "D:/w", ToolID: "codebuddy"},
+		chat.Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	h := b.lastHandler()
+	// agent 侧先发 tool_call 更新，再发权限请求（实测时序）
+	h.SessionUpdate("sess-new", json.RawMessage(
+		`{"sessionUpdate":"tool_call","toolCallId":"t1","name":"AskUserQuestion","title":"是否继续？"}`))
+
+	done := make(chan acp.PermissionOutcome, 1)
+	go func() {
+		out, _ := h.RequestPermission(context.Background(), "sess-new", "r1", acp.RequestPermissionParams{
+			SessionID: "sess-new",
+			ToolCall:  acp.ToolCall{ToolCallID: "t1"},
+			Options:   []acp.PermissionOption{{OptionID: "allow", Name: "Allow", Kind: "allow_once"}},
+		})
+		done <- out
+	}()
+
+	// 短窗口内不得自动放行
+	select {
+	case out := <-done:
+		t.Fatalf("AskUserQuestion 不应被 bypass 自动放行，得到 %+v", out)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if n := rec.count("chat:permission"); n != 1 {
+		t.Fatalf("应发出 chat:permission 弹窗请求，得到 %d 次", n)
+	}
+
+	// 用户应答后正常返回
+	if err := m.RespondPermission(info.ID, "r1", "allow"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case out := <-done:
+		if out.OptionID != "allow" {
+			t.Fatalf("outcome %+v", out)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("应答后未返回")
+	}
+}
+
+// 回归保护：bypass 下普通工具（Bash）仍自动放行，不弹窗、不等待。
+func TestAwaitPermissionAutoAllowsOrdinaryToolUnderBypass(t *testing.T) {
+	rec := &notifyRecorder{}
+	b := &fakeChatCaptureBackend{}
+	m := newChatManagerWith(rec.emit, b, func() bool { return true }, nil)
+	t.Cleanup(m.CloseAll)
+
+	if _, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "D:/w", ToolID: "codebuddy"},
+		chat.Spec{Path: "x"}, ""); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	h := b.lastHandler()
+	h.SessionUpdate("sess-new", json.RawMessage(
+		`{"sessionUpdate":"tool_call","toolCallId":"t2","name":"Bash","title":"运行命令"}`))
+
+	done := make(chan acp.PermissionOutcome, 1)
+	go func() {
+		out, _ := h.RequestPermission(context.Background(), "sess-new", "r2", acp.RequestPermissionParams{
+			SessionID: "sess-new",
+			ToolCall:  acp.ToolCall{ToolCallID: "t2"},
+			Options:   []acp.PermissionOption{{OptionID: "allow", Name: "Allow", Kind: "allow_once"}},
+		})
+		done <- out
+	}()
+	select {
+	case out := <-done:
+		if out.Outcome != "selected" || out.OptionID != "allow" {
+			t.Fatalf("普通工具应自动放行，得到 %+v", out)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("普通工具在 bypass 下应立即自动放行")
+	}
+	if n := rec.count("chat:permission"); n != 0 {
+		t.Fatalf("自动放行不应弹窗，得到 %d 次", n)
+	}
+}
+
 // fakeChatConnPromptErr 模拟一轮 Prompt 失败。
 type fakeChatConnPromptErr struct {
 	fakeChatConn

@@ -48,17 +48,23 @@ func fakeAgentMain() {
 				"sessionId": "sess-new",
 				"update":    map[string]any{"sessionUpdate": "agent_message_chunk", "messageId": "m1", "content": map[string]any{"type": "text", "text": "working"}},
 			}})
+			// 反向请求用数字 id（对齐真实 agent，如 codebuddy 的 nextRequestId++）：
+			// JSON-RPC 2.0 要求响应 id 与请求 id 值且类型一致，客户端按原始形态路由。
 			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": 99, "method": "session/request_permission", "params": map[string]any{
 				"sessionId": "sess-new",
 				"toolCall":  map[string]any{"toolCallId": "c1", "title": "Write"},
 				"options":   []any{map[string]any{"optionId": "allow", "name": "Allow", "kind": "allow_once"}},
 			}})
 			for sc.Scan() {
-				var rm message
+				// 严格按原始形态匹配数字 id：字符串 "99" 与数字 99 是不同的 key，
+				// 应答若被字符串化，真实 agent 会静默丢弃 → session/prompt 永不返回。
+				var rm struct {
+					ID json.RawMessage `json:"id"`
+				}
 				if json.Unmarshal(sc.Bytes(), &rm) != nil {
 					continue
 				}
-				if rm.ID != nil && *rm.ID == "99" {
+				if strings.TrimSpace(string(rm.ID)) == "99" {
 					break
 				}
 			}
