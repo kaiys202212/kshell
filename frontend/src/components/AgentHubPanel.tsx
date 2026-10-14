@@ -21,7 +21,7 @@ import {
   sendChatPrompt,
   setChatModel,
 } from '../lib/api';
-import { buildMentionOptions, resolveMentionTarget, type MentionAgent } from '../lib/agentMentions';
+import { buildMentionOptions, resolveMentionTarget, type MentionAgent, type MentionOption } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
 import { quotePathForShell } from '../lib/dragPath';
 import { backendError } from '../lib/errors';
@@ -84,6 +84,23 @@ function statusDotClass(status: string): string {
 // wsBaseName 取路径最后一段，作为项目分组标题。
 function wsBaseName(ws: string): string {
   return baseName(ws);
+}
+
+// lastHubAgentId 从 hub 消息历史倒序找「最近一次交互」的目标 agent：
+// 消息经归因字段（chatId / termKey / workspace）反查 chat，再确认该 chat 仍是
+// 当前 mention 候选。匹配口径与 hubAttribution 一致——chatId 按会话 ID 精确匹配、
+// termKey 按会话 Key 匹配、workspace 用 sameWorkspacePath 归并；user 与 agent
+// 消息都参与匹配（user 消息也带目标 agent 的归因字段）。找不到返回 null。
+function lastHubAgentId(messages: HubMessage[], options: MentionOption[], chats: ChatInfo[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    const c =
+      chats.find((x) => x.ID === m.chatId) ??
+      chats.find((x) => m.termKey && x.Key === m.termKey) ??
+      chats.find((x) => m.workspace && sameWorkspacePath(x.Workspace, m.workspace));
+    if (c && options.some((o) => o.id === c.ID)) return c.ID;
+  }
+  return null;
 }
 
 export default function AgentHubPanel() {
@@ -298,7 +315,9 @@ export default function AgentHubPanel() {
   const send = () => {
     const text = draft.trim();
     if (!text) return;
-    const targetId = resolveMentionTarget(text, options, lastAgentId);
+    // 回落顺序：hub 最近一次交互的 agent 优先（比 lastAgentId 更能反映 hub 视角
+    // 的最新目标），再退 store.lastAgentId。
+    const targetId = resolveMentionTarget(text, options, lastHubAgentId(hubMessages, options, chats) ?? lastAgentId);
     if (!targetId) {
       useAppStore.getState().notify(t('ui.hub.need_target'), 'error');
       return;

@@ -16,7 +16,7 @@ import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE, TAB_UNDERLINE_PREVIEW } from '../l
 import { SETTINGS_TAB_ID, type WorkspaceTab } from '../state/store';
 
 // 页签基础态：扁平下划线激活态，不做胶囊填充；group 供 hover 预览条显隐用
-const tabBase = `kshell-no-drag group ${TAB_BASE} h-7 max-w-44`;
+const tabBase = `kshell-no-drag group ${TAB_BASE} h-7 max-w-28`;
 const tabActive = TAB_ACTIVE;
 
 // 窗口控件按钮：Windows 习惯的热区，关闭键 hover 变危险色

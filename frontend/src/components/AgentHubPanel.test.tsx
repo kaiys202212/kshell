@@ -146,6 +146,73 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c9', '继续'));
   });
 
+  it('未 @ 时回落到 hub 消息里最近一次 agent 回复的会话，而非 store.lastAgentId', async () => {
+    useAppStore.setState({
+      chats: [
+        chat({ ID: 'c1', ToolID: 'claude', Title: '甲' }),
+        chat({ ID: 'c2', ToolID: 'claude', Title: '乙', Workspace: 'D:\\ws\\b' }),
+      ],
+      hubMessages: [
+        { id: 1, kind: 'user', chatId: 'c1', workspace: 'D:\\ws\\a', text: '给甲的', ts: 1 },
+        { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', workspace: 'D:\\ws\\b', text: '乙的回复', ts: 2 },
+      ],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '继续' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c2', '继续'));
+  });
+
+  it('未 @ 时回落也匹配 hub 里的用户消息（最后一条是 user 也生效）', async () => {
+    useAppStore.setState({
+      chats: [
+        chat({ ID: 'c1', ToolID: 'claude', Title: '甲' }),
+        chat({ ID: 'c2', ToolID: 'cursor', Title: '乙', Workspace: 'D:\\ws\\b' }),
+      ],
+      hubMessages: [
+        { id: 1, kind: 'user', chatId: 'c1', workspace: 'D:\\ws\\a', text: '给甲的', ts: 1 },
+        { id: 2, kind: 'user', chatId: 'c2', workspace: 'D:\\ws\\b', text: '给乙的', ts: 2 },
+      ],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '继续' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c2', '继续'));
+  });
+
+  it('hub 消息经 termKey 反查 chat 后参与默认投递目标回落', async () => {
+    useAppStore.setState({
+      chats: [
+        chat({ ID: 'c1', ToolID: 'claude', Title: '甲' }),
+        chat({ ID: 'c2', ToolID: 'claude', Title: '乙', Key: 'new:2' }),
+      ],
+      hubMessages: [{ id: 1, kind: 'agent', tool: 'claude', event: 'Stop', termKey: 'new:2', text: '乙的回复', ts: 1 }],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '继续' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c2', '继续'));
+  });
+
+  it('hub 消息匹配不到任何 agent 时回落 store.lastAgentId', async () => {
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
+      hubMessages: [{ id: 1, kind: 'agent', tool: 'codex', event: 'Stop', workspace: 'D:\\ws\\gone', text: '旧回复', ts: 1 }],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '继续' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '继续'));
+  });
+
   it('渲染持久历史中的用户消息与 agent 回复', async () => {
     api.listHubMessages.mockResolvedValue([
       { id: 1, kind: 'user', chatId: 'c1', text: '帮我修复', ts: 1 },
