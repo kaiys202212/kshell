@@ -344,6 +344,29 @@ describe('ChatView', () => {
     expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '纯文本');
   });
 
+  it('Esc 关闭补全后继续输入可重新弹出', () => {
+    useAppStore.setState({ chatCommands: { c1: [{ Name: 'plan', Description: '写计划' }] } });
+    render(<ChatView chat={CHAT} active />);
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder')) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '/' } });
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    fireEvent.change(box, { target: { value: '/p' } });
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
+  });
+
+  it('粘贴超过上限的图片不产生 chip 并提示改用附件按钮', async () => {
+    render(<ChatView chat={CHAT} active />);
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder')) as HTMLTextAreaElement;
+    const file = new File(['tiny'], 'huge.png', { type: 'image/png' });
+    Object.defineProperty(file, 'size', { value: 9 * 1024 * 1024 });
+    fireEvent.paste(box, { clipboardData: { files: [file] } });
+    await waitFor(() => {
+      expect(useAppStore.getState().toasts.some((t) => t.tone === 'error')).toBe(true);
+    });
+    expect(screen.queryByText('huge.png')).not.toBeInTheDocument();
+  });
+
   it('时间线 user 消息渲染附件 chips', () => {
     useAppStore.setState({
       chatItems: {

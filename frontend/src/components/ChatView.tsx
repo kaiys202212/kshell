@@ -38,15 +38,13 @@ interface Props {
 const EMPTY_ITEMS: TimelineItem[] = [];
 const EMPTY_COMMANDS: { Name: string; Description?: string; InputHint?: string }[] = [];
 
-// 粘贴非图片文件的体积上限：超过则提示改用附件按钮（走路径引用，不占 payload）。
-const MAX_PASTE_BYTES = 8 * 1024 * 1024;
-
 // fileUriFromPath 把本机绝对路径转 file URI（Windows 反斜杠归一 + 空格等编码），
 // 供 resource_link 块引用；agent 与 kshell 同机，可直接按路径读取。
+// encodeURI 不转义 #/?，路径含这些字符时会生成破损 URI，需显式补转义。
 export function fileUriFromPath(path: string): string {
   const norm = path.replace(/\\/g, '/');
   const abs = norm.startsWith('/') ? norm : `/${norm}`;
-  return encodeURI(`file://${abs}`);
+  return encodeURI(`file://${abs}`).replace(/#/g, '%23').replace(/\?/g, '%3F');
 }
 
 function baseName(p: string): string {
@@ -66,6 +64,10 @@ interface ChatAttachment {
   block: ChatBlock;
   label: string;
 }
+
+// 粘贴附件的体积上限：超过则提示改用附件按钮（走路径引用，不占 payload）。
+// 对图片同样生效：超大截图 base64 后会数倍膨胀，直塞绑定层易卡死 UI。
+const MAX_PASTE_BYTES = 8 * 1024 * 1024;
 
 // readAsDataURLBase64 读文件为 base64 载荷（去掉 data URL 前缀）；失败返回 null。
 function readAsDataURLBase64(file: File): Promise<string | null> {
@@ -192,6 +194,11 @@ export default function ChatView({ chat, active }: Props) {
     return commands.filter((c) => c.Name.toLowerCase().startsWith(q));
   }, [commands, slashQuery]);
   const slashOpen = slashQuery !== null && !slashClosed && slashMatches.length > 0;
+  // draft 变化即重置补全状态：Esc 关闭后继续输入要能重新弹出
+  useEffect(() => {
+    setSlashClosed(false);
+    setSlashIndex(0);
+  }, [draft]);
   const applySlash = (name: string) => {
     setDraft(`/${name} `);
     setSlashClosed(false);
@@ -206,6 +213,10 @@ export default function ChatView({ chat, active }: Props) {
   const addFileAttachments = async (files: File[]) => {
     const next: ChatAttachment[] = [];
     for (const f of files) {
+      if (f.size > MAX_PASTE_BYTES) {
+        notifyPasteFailed();
+        continue;
+      }
       if (f.type.startsWith('image/')) {
         const data = await readAsDataURLBase64(f);
         if (data === null) {
@@ -218,14 +229,10 @@ export default function ChatView({ chat, active }: Props) {
         });
         continue;
       }
-      if (f.size > MAX_PASTE_BYTES) {
-        notifyPasteFailed();
-        continue;
-      }
       try {
         const buf = await f.arrayBuffer();
         next.push({
-          label: f.name || f.type || 'file',
+          label: f.name || f.type || t('ui.chat.attachment_file'),
           block: { Type: 'resource', MimeType: f.type || 'application/octet-stream', Data: arrayBufferToBase64(buf) },
         });
       } catch {

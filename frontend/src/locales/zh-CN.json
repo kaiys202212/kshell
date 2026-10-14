@@ -761,7 +761,8 @@
       "attach": "添加附件",
       "attach_paste_failed": "无法读取粘贴的文件，请改用附件按钮。",
       "remove_attachment": "移除附件",
-      "attachment_image": "图片"
+      "attachment_image": "图片",
+      "attachment_file": "文件"
     },
     "hub": {
       "title": "Agent 汇总",

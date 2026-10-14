@@ -761,7 +761,8 @@
       "attach": "Add attachment",
       "attach_paste_failed": "Cannot read the pasted file. Use the attachment button instead.",
       "remove_attachment": "Remove attachment",
-      "attachment_image": "Image"
+      "attachment_image": "Image",
+      "attachment_file": "File"
     },
     "hub": {
       "title": "Agent Hub",

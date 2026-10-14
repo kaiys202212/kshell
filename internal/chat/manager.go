@@ -774,6 +774,10 @@ func (m *Manager) SetModel(id, modelID string) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// RPC 期间会话可能已退出/重建：只更新仍在册的会话，避免写悬垂指针。
+	if cur := m.byID[id]; cur != s || s.exited {
+		return nil
+	}
 	if s.modelState != nil {
 		s.modelState.CurrentModelID = modelID
 	}
