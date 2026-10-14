@@ -640,6 +640,11 @@ interface AppBindings {
   ListHubArchive(): Promise<HubArchiveMonth[]>;
   LoadHubArchive(month: string): Promise<HubMessage[]>;
   ClearHubMessages(): Promise<void>;
+  ListRequirements(): Promise<Requirement[]>;
+  AddRequirement(text: string, priority: string, tags: string[]): Promise<Requirement>;
+  UpdateRequirement(id: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
+  DeleteRequirement(id: string): Promise<void>;
+  MarkRequirementDispatched(id: string, workspace: string): Promise<void>;
 }
 
 declare global {
@@ -1516,6 +1521,64 @@ export async function clearHubMessages(): Promise<void> {
 // onHubChanged 订阅 AgentHub 历史变更（Go 落盘后 Emit hub:changed），返回取消订阅函数。
 export function onHubChanged(cb: () => void): () => void {
   return EventsOn('hub:changed', () => cb());
+}
+
+// Requirement 是需求列表里的一条（internal/requirements.Item 的 JSON 形态）。
+// priority: high | medium | low（Go 侧非法值回退 medium）；
+// dispatchedTo 非空表示已派发到该工作区路径。
+export interface Requirement {
+  id: string;
+  text: string;
+  priority: 'high' | 'medium' | 'low';
+  tags: string[];
+  dispatchedTo?: string;
+  ts: number;
+}
+
+// listRequirements 拉取全部需求条目（最新在前）；绑定不可用时返回空数组。
+export async function listRequirements(): Promise<Requirement[]> {
+  const a = app();
+  if (!a) return [];
+  return (await a.ListRequirements()) ?? [];
+}
+
+// addRequirement 新增一条需求；错误向上抛，由调用方呈现。
+export async function addRequirement(text: string, priority: string, tags: string[]): Promise<Requirement> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  return a.AddRequirement(text, priority, tags);
+}
+
+// updateRequirement 修改需求（文本/优先级/标签整体替换）；错误向上抛。
+export async function updateRequirement(
+  id: string,
+  text: string,
+  priority: string,
+  tags: string[],
+): Promise<Requirement> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  return a.UpdateRequirement(id, text, priority, tags);
+}
+
+// deleteRequirement 删除需求（幂等）；错误向上抛。
+export async function deleteRequirement(id: string): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.DeleteRequirement(id);
+}
+
+// markRequirementDispatched 标记需求已派发到某工作区；错误向上抛。
+export async function markRequirementDispatched(id: string, workspace: string): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.MarkRequirementDispatched(id, workspace);
+}
+
+// onRequirementsChanged 订阅需求列表变更（写操作后 Go Emit requirements:changed），
+// 返回取消订阅函数。调用方据此重拉列表。
+export function onRequirementsChanged(cb: () => void): () => void {
+  return EventsOn('requirements:changed', () => cb());
 }
 
 // onTerminalData 订阅终端输出（data 为 base64），返回取消订阅函数
