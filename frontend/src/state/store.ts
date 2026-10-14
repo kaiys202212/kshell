@@ -3,7 +3,7 @@
 // 重开应用后恢复上次的工作区页签；其余字段的数据来源都是 Go 绑定层，刷新即重取，不持久化。
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { ChatCommand, ChatInfo, ChatModelsView, ChatPermissionRequest, ChatUpdate, LanguageInfo, TerminalInfo, Workspace } from '../lib/api';
+import type { ChatCommand, ChatInfo, ChatModelsView, ChatPermissionRequest, ChatUpdate, HubMessage, LanguageInfo, TerminalInfo, Workspace } from '../lib/api';
 import type { AgentNotice } from '../lib/agentNotify';
 import type { AppearanceInfo } from '../lib/appearance';
 import { applyChatUpdate, type TimelineItem } from './chatUpdate';
@@ -156,11 +156,17 @@ interface AppState {
   language: LanguageInfo;
   setLanguage(info: LanguageInfo): void;
 
-  // agent 通知气泡队列（notify:agent 事件；不持久化，10s 自动消失由气泡组件驱动）
+  // agent 通知气泡队列（notify:agent 事件；不持久化，10s 自动消失由气泡组件驱动）。
+  // 注意：这是**瞬态**气泡队列，不再驱动 AgentHub 面板——Hub 消息走 hubMessages。
   agentNotices: AgentNotice[];
   pushAgentNotice(p: Omit<AgentNotice, 'id'>): void;
   dismissAgentNotice(id: number): void;
   clearAgentNotices(): void;
+
+  // AgentHub 持久消息历史（来自 Go 侧 hub.Store；不持久化到 localStorage，源在磁盘）。
+  // 由 App 订阅 hub:changed 后重拉填充，跨重启保留。
+  hubMessages: HubMessage[];
+  setHubMessages(list: HubMessage[] | ((prev: HubMessage[]) => HubMessage[])): void;
 
   // 通知气泡点击后的「切到对应页签」请求（termKey = 终端/聊天 manager 的 key）。
   // 中心区页签选中态在各 WorkspaceTabView 的本地 state 里，只能经这里中转：
@@ -438,6 +444,10 @@ export const useAppStore = create<AppState>()(
       dismissAgentNotice: (id) =>
         set((s) => ({ agentNotices: s.agentNotices.filter((n) => n.id !== id) })),
       clearAgentNotices: () => set({ agentNotices: [] }),
+
+      hubMessages: [],
+      setHubMessages: (list) =>
+        set((s) => ({ hubMessages: typeof list === 'function' ? list(s.hubMessages) : list })),
 
       notifySound: true,
       setNotifySound: (notifySound) => set({ notifySound }),

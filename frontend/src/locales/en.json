@@ -793,7 +793,10 @@
       "model_switch_failed": "Failed to switch model: {{err}}",
       "stop_done": "Stop requested",
       "stop_failed": "Failed to stop: {{err}}",
-      "cleared": "Cleared"
+      "cleared": "Cleared",
+      "history": "History",
+      "archive_title": "Archived by month",
+      "archive_empty": "No archived messages"
     },
     "transcript": {
       "preview_title": "Session preview",

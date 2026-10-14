@@ -17,6 +17,10 @@ const api = vi.hoisted(() => ({
   listChatModels: vi.fn(),
   setChatModel: vi.fn(),
   cancelChat: vi.fn(),
+  listHubMessages: vi.fn(),
+  listHubArchive: vi.fn(),
+  loadHubArchive: vi.fn(),
+  clearHubMessages: vi.fn(),
 }));
 vi.mock('../lib/api', () => api);
 
@@ -47,9 +51,14 @@ beforeEach(() => {
   api.listChatModels.mockResolvedValue({ Current: '', Models: [] });
   api.setChatModel.mockResolvedValue(undefined);
   api.cancelChat.mockResolvedValue(undefined);
+  api.listHubMessages.mockResolvedValue([]);
+  api.listHubArchive.mockResolvedValue([]);
+  api.loadHubArchive.mockResolvedValue([]);
+  api.clearHubMessages.mockResolvedValue(undefined);
   useAppStore.setState({
     chats: [],
     agentNotices: [],
+    hubMessages: [],
     workspaces: [],
     openTabs: [],
     activeTabId: null,
@@ -137,15 +146,47 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c9', '继续'));
   });
 
-  it('渲染 agent 结束通知的回复正文', () => {
+  it('渲染持久历史中的用户消息与 agent 回复', async () => {
+    api.listHubMessages.mockResolvedValue([
+      { id: 1, kind: 'user', chatId: 'c1', text: '帮我修复', ts: 1 },
+      { id: 2, kind: 'agent', tool: 'codex', event: 'Stop', text: '已完成重构', ts: 2 },
+    ]);
+    render(<AgentHubPanel />);
+    expect(await screen.findByText('已完成重构')).toBeTruthy();
+    expect(screen.getByText(/Codex/)).toBeTruthy();
+    expect(screen.getByText('帮我修复')).toBeTruthy();
+  });
+
+  it('agent 回复不随通知气泡（agentNotices）消失而消失', async () => {
     useAppStore.setState({
-      agentNotices: [
-        { id: 1, tool: 'codex', event: 'Stop', termKey: 'k', workspace: 'D:\\ws\\a', summary: '已完成重构' },
-      ],
+      agentNotices: [{ id: 9, tool: 'codex', event: 'Stop', termKey: 'k', workspace: 'D:\\ws\\a', summary: '气泡正文' }],
+      hubMessages: [{ id: 2, kind: 'agent', tool: 'codex', event: 'Stop', text: '持久正文', ts: 2 }],
     });
     render(<AgentHubPanel />);
-    expect(screen.getByText('已完成重构')).toBeTruthy();
-    expect(screen.getByText(/Codex/)).toBeTruthy();
+    expect(screen.getByText('持久正文')).toBeTruthy();
+    // 气泡 10s 后被 dismiss（清空 agentNotices）——Hub 消息必须仍在
+    useAppStore.getState().clearAgentNotices();
+    expect(useAppStore.getState().agentNotices).toHaveLength(0);
+    expect(screen.getByText('持久正文')).toBeTruthy();
+  });
+
+  it('拉取失败不阻塞：空历史时展示空态控件', async () => {
+    api.listHubMessages.mockRejectedValue(new Error('boom'));
+    render(<AgentHubPanel />);
+    expect(screen.getByText(tt('ui.hub.empty'))).toBeTruthy();
+  });
+
+  it('历史入口：展开归档月份并加载旧消息', async () => {
+    api.listHubArchive.mockResolvedValue([{ month: '2026-09', count: 3 }]);
+    api.loadHubArchive.mockResolvedValue([
+      { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', text: '上月的旧消息', ts: 1 },
+    ]);
+    render(<AgentHubPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.history') }));
+    const monthBtn = await screen.findByRole('button', { name: /2026-09/ });
+    fireEvent.click(monthBtn);
+    await waitFor(() => expect(api.loadHubArchive).toHaveBeenCalledWith('2026-09'));
+    expect(await screen.findByText('上月的旧消息')).toBeTruthy();
   });
 
   it('粘贴图片路径追加进草稿（含空格加引号）', async () => {
@@ -210,22 +251,21 @@ describe('AgentHubPanel', () => {
     expect(filtered).not.toHaveTextContent('/new');
   });
 
-  it('选中 /clear：清空消息流与 agent 通知，且不投递后端', async () => {
+  it('选中 /clear：清空本地 Hub 消息流与 agent 通知，且不投递后端', async () => {
     useAppStore.setState({
       chats: [chat({ ID: 'c1' })],
       lastAgentId: 'c1',
       agentNotices: [{ id: 1, tool: 'codex', event: 'Stop', termKey: 'k', workspace: 'D:\\ws\\a', summary: '已完成' }],
+      hubMessages: [{ id: 1, kind: 'agent', tool: 'codex', event: 'Stop', text: '旧消息', ts: 1 }],
     });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: 'hello' } });
-    fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalled());
     fireEvent.change(box, { target: { value: '/clear' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(api.sendChatPrompt).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(screen.queryByText('hello')).toBeNull());
-    expect(screen.queryByText('已完成')).toBeNull();
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByText('旧消息')).toBeNull());
+    expect(useAppStore.getState().agentNotices).toHaveLength(0);
+    expect(useAppStore.getState().hubMessages).toHaveLength(0);
   });
 
   it('agent 技能与客户端命令同名时去重（客户端优先，大小写不敏感）', async () => {

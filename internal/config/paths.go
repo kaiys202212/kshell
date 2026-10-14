@@ -34,6 +34,9 @@ type Layout struct {
 	// Locales 是外部语言包目录（~/.kshell/locales）：*.json 由用户投放，
 	// LoadExternalLocales 读取；目录不存在视为无外部语言包，不自动创建。
 	Locales string
+	// Hub 是 AgentHub 消息历史目录（~/.kshell/hub）：live.json 存最近 N 条，
+	// archive/ 按月归档只增。
+	Hub string
 }
 
 func Paths() (Layout, error) {
@@ -59,6 +62,7 @@ func Paths() (Layout, error) {
 		State:           filepath.Join(root, "state"),
 		CacheAppearance: filepath.Join(cache, "appearance"),
 		Locales:         filepath.Join(root, "locales"),
+		Hub:             filepath.Join(root, "hub"),
 	}, nil
 }
 

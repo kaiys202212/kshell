@@ -19,6 +19,7 @@ import (
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
+	"github.com/yangk/kshell/internal/hub"
 	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/mcparchive"
 	"github.com/yangk/kshell/internal/providers"
@@ -100,6 +101,10 @@ type Options struct {
 	RemoteRun remotefs.Runner
 	// FindSSH 查找本机 ssh；nil 时用 remote.FindSSH（测试注入）。
 	FindSSH func() (string, error)
+	// HubStore 是 AgentHub 消息历史存储；nil 时 Startup 按 HubPath 装配（测试可注入）。
+	HubStore *hub.Store
+	// HubPath 是 AgentHub 历史目录（~/.kshell/hub）；仅在未注入 HubStore 时用于装配。
+	HubPath string
 }
 
 // App 是暴露给前端的绑定对象：薄封装 discovery/providers/window 等核心包，
@@ -352,6 +357,14 @@ func (a *App) initRealDeps() {
 		store := discovery.NewProjectStore(a.opts.ProjectsPath)
 		_ = store.Load() // 读不到/损坏只当空表，不阻断启动（与连接存储同口径）
 		a.opts.Projects = store
+	}
+	if a.opts.HubPath == "" {
+		a.opts.HubPath = paths.Hub
+	}
+	if a.opts.HubStore == nil { // 幂等：已注入（测试）或已装配过就不重建
+		store := hub.New(a.opts.HubPath, 0)
+		_ = store.Load() // 历史缺失/损坏不阻断启动（与项目表/连接存储同口径）
+		a.opts.HubStore = store
 	}
 	if a.opts.Layout.Config == "" {
 		a.opts.Layout = paths

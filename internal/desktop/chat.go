@@ -20,30 +20,31 @@ import (
 func newChatManager(a *App) *chat.Manager {
 	return newChatManagerWith(a.Emit, chat.RealBackend{}, func() bool {
 		return a.snapshot().Config.PermissionMode == config.PermissionModeBypass
-	}, a.notifyDedupAllow)
+	}, a.notifyDedupAllow, a.recordHubAgentMessage)
 }
 
 // newChatManagerWith 装配聊天管理器：时间线/权限/退出经 emit 转发给前端；
 // autoAllow 非 nil 且返回真时，权限请求自动放行（不弹窗）。
 // dedupe 为 chat 通知的放行判定（nil 表示不去重，测试用）：chat 通知不经
 // handleAgentNotify，这里显式接入同一套去重器，防止同一条通知重复弹出。
+// onAgent 非 nil 时在同一条通知放行后落 AgentHub 历史（nil 表示不记，测试用）。
 // ACP 聊天不经过 hook 通道，turn 结束/出错/等权限在进程内已知，这里顺带
 // 转成 notify:agent 通知（与 hook 通道同一 payload 结构、同一条气泡路径）。
-func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, autoAllow func() bool, dedupe func(agenthook.Payload) bool) *chat.Manager {
+func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, autoAllow func() bool, dedupe func(agenthook.Payload) bool, onAgent func(agenthook.Payload)) *chat.Manager {
 	var m *chat.Manager
 	m = chat.NewManager(b,
 		func(id string, u chat.Update) {
 			emit("chat:update", map[string]any{"id": id, "update": u})
 			switch u.Type {
 			case "turn_done":
-				emitChatNotify(emit, m, id, "done", "", dedupe)
+				emitChatNotify(emit, m, id, "done", "", dedupe, onAgent)
 			case "error":
-				emitChatNotify(emit, m, id, "error", u.Text, dedupe)
+				emitChatNotify(emit, m, id, "error", u.Text, dedupe, onAgent)
 			}
 		},
 		func(id string, r chat.PermissionRequest) {
 			emit("chat:permission", map[string]any{"id": id, "request": r})
-			emitChatNotify(emit, m, id, "Notification", r.ToolCall.Title, dedupe)
+			emitChatNotify(emit, m, id, "Notification", r.ToolCall.Title, dedupe, onAgent)
 		},
 		func(id string, code int, errMsg string) {
 			emit("chat:exit", map[string]any{"id": id, "exitCode": code, "error": errMsg})
@@ -92,8 +93,9 @@ func lastAssistantText(h []chat.Update) string {
 // done 事件携带最后一轮 assistant 回复正文（放入 Summary），供汇总窗直接展示；
 // allow 非 nil 且返回 false（窗口内重复）时同样跳过。注意被吞的只是通知气泡：
 // 权限请求本身仍经 chat:permission 推给前端弹窗，不影响交互。
+// onAgent 非 nil 时在放行后落 AgentHub 历史（与 hook 通道共用同一写入路径）。
 // 回调总在 Manager 锁外执行，Get 取锁安全。
-func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, event, summary string, allow func(agenthook.Payload) bool) {
+func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, event, summary string, allow func(agenthook.Payload) bool, onAgent func(agenthook.Payload)) {
 	if m == nil {
 		return
 	}
@@ -116,6 +118,9 @@ func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, ev
 		return
 	}
 	emit("notify:agent", p)
+	if onAgent != nil {
+		onAgent(p)
+	}
 }
 
 func (a *App) chats() *chat.Manager { return a.snapshot().Chats }
@@ -260,7 +265,11 @@ func (a *App) SendChatPrompt(id, text string) error {
 	if m == nil {
 		return errNotReady
 	}
-	return m.Prompt(id, text)
+	if err := m.Prompt(id, text); err != nil {
+		return err
+	}
+	a.recordHubUserMessage(id, text)
+	return nil
 }
 
 // ChatBlock 是前端发来的多形态内容块（扁平结构）：text 用 Text；
@@ -305,7 +314,25 @@ func (a *App) SendChatPromptBlocks(id string, blocks []ChatBlock) error {
 	if len(blocks) == 0 {
 		return nil
 	}
-	return m.PromptBlocks(id, chatBlocksToACP(blocks))
+	if err := m.PromptBlocks(id, chatBlocksToACP(blocks)); err != nil {
+		return err
+	}
+	a.recordHubUserMessage(id, hubTextFromBlocks(blocks))
+	return nil
+}
+
+// hubTextFromBlocks 拼接内容块里的文本作为 Hub 用户消息正文（附件只记文本部分）。
+func hubTextFromBlocks(blocks []ChatBlock) string {
+	var sb strings.Builder
+	for _, b := range blocks {
+		if b.Type == "text" && b.Text != "" {
+			if sb.Len() > 0 {
+				sb.WriteByte('\n')
+			}
+			sb.WriteString(b.Text)
+		}
+	}
+	return sb.String()
 }
 
 // ListChatModels 返回会话的可用模型视图；agent 未报告模型信息时返回 ok=false 形态（空视图）。

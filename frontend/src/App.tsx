@@ -15,6 +15,7 @@ import {
   confirmArchive,
   getAppearance,
   listChats,
+  listHubMessages,
   listTerminals,
   onAppearanceChanged,
   onArchiveChanged,
@@ -24,6 +25,7 @@ import {
   onChatMeta,
   onChatPermission,
   onChatUpdate,
+  onHubChanged,
   onNotifyAgent,
   onNotifyFocus,
   onProjectsChanged,
@@ -99,6 +101,16 @@ function App() {
   useEffect(() => {
     // 原生气泡点击 → Go Emit notify:focus → 与窗内气泡点击同一套聚焦/dismiss。
     return onNotifyFocus((termKey) => handleNotifyFocus(termKey));
+  }, []);
+
+  useEffect(() => {
+    // AgentHub 历史变更（Go 落盘后 Emit hub:changed）：重拉持久历史回填 store。
+    // Hub 面板只在首页可见，但订阅放这里保证切回首页时数据已是最新。
+    return onHubChanged(() => {
+      void listHubMessages()
+        .then((list) => useAppStore.getState().setHubMessages(list))
+        .catch(() => {});
+    });
   }, []);
 
   useEffect(() => {

@@ -291,6 +291,26 @@ describe('store', () => {
     expect(parsed.state).not.toHaveProperty('focusTermKey');
   });
 
+  it('hubMessages 入 store 且不入 localStorage（源在 Go 磁盘，不重复持久化）', () => {
+    useAppStore.setState({ openTabs: [{ id: 'D:\\proj-a', name: 'proj-a' }] });
+    useAppStore.getState().setHubMessages([
+      { id: 1, kind: 'user', text: 'hi', ts: 1 },
+      { id: 2, kind: 'agent', tool: 'claude', text: 'done', ts: 2 },
+    ]);
+    expect(useAppStore.getState().hubMessages).toHaveLength(2);
+
+    const parsed = JSON.parse(localStorage.getItem('kshell-tabs')!) as {
+      state: Record<string, unknown>;
+    };
+    expect(parsed.state).not.toHaveProperty('hubMessages');
+  });
+
+  it('setHubMessages 支持函数式更新（App 重拉时按 prev 合并）', () => {
+    useAppStore.setState({ hubMessages: [{ id: 1, kind: 'user', text: 'a', ts: 1 }] });
+    useAppStore.getState().setHubMessages((prev) => [...prev, { id: 2, kind: 'agent', text: 'b', ts: 2 }]);
+    expect(useAppStore.getState().hubMessages.map((m) => m.id)).toEqual([1, 2]);
+  });
+
   it('focusTermKey：请求带自增 seq，clear 只清掉对应那次请求', () => {
     useAppStore.getState().requestFocusTerm('session:s1');
     const first = useAppStore.getState().focusTermKey;

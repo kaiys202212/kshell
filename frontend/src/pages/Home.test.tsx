@@ -29,6 +29,10 @@ const mocks = vi.hoisted(() => ({
   restoreProject: vi.fn(),
   getDeletedProjects: vi.fn(),
   onProjectsChanged: vi.fn(),
+  listHubMessages: vi.fn().mockResolvedValue([]),
+  listHubArchive: vi.fn().mockResolvedValue([]),
+  loadHubArchive: vi.fn().mockResolvedValue([]),
+  clearHubMessages: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../lib/api', () => mocks);
 

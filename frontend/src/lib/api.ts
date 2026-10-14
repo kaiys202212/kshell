@@ -636,6 +636,10 @@ interface AppBindings {
   BatchArchiveSessions(ids: string[]): Promise<number>;
   BatchRestoreSessions(ids: string[]): Promise<number>;
   ChatHistory(id: string): Promise<ChatUpdate[]>;
+  ListHubMessages(): Promise<HubMessage[]>;
+  ListHubArchive(): Promise<HubArchiveMonth[]>;
+  LoadHubArchive(month: string): Promise<HubMessage[]>;
+  ClearHubMessages(): Promise<void>;
 }
 
 declare global {
@@ -1459,6 +1463,59 @@ export function onNotifyFocus(cb: (termKey: string) => void): () => void {
   return EventsOn('notify:focus', (p: { termKey?: string } | undefined) =>
     cb(p?.termKey ?? ''),
   );
+}
+
+// HubMessage 是 AgentHub 持久历史里的一条消息（internal/hub.Message 的 JSON 形态）。
+// kind 取值 "user"（用户发出，气泡在右）/ "agent"（agent 回复，气泡在左）。
+export interface HubMessage {
+  id: number;
+  kind: string;
+  tool?: string;
+  chatId?: string;
+  termKey?: string;
+  workspace?: string;
+  text: string;
+  event?: string;
+  ts: number;
+}
+
+// HubArchiveMonth 是一个归档月份及其条数（internal/hub.ArchiveMonth 的 JSON 形态）。
+export interface HubArchiveMonth {
+  month: string; // "YYYY-MM"
+  count: number;
+}
+
+// listHubMessages 拉取 AgentHub 最近的消息历史（live 部分，最多 500 条）。
+export async function listHubMessages(): Promise<HubMessage[]> {
+  const a = app();
+  if (!a) return [];
+  return a.ListHubMessages();
+}
+
+// listHubArchive 拉取归档月份列表（新在前），供 Hub 的「历史」入口展示。
+export async function listHubArchive(): Promise<HubArchiveMonth[]> {
+  const a = app();
+  if (!a) return [];
+  return a.ListHubArchive();
+}
+
+// loadHubArchive 读取某月归档全量消息。
+export async function loadHubArchive(month: string): Promise<HubMessage[]> {
+  const a = app();
+  if (!a) return [];
+  return a.LoadHubArchive(month);
+}
+
+// clearHubMessages 清空 AgentHub 的 live 消息（归档保留）；供 /clear 客户端命令。
+export async function clearHubMessages(): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.ClearHubMessages();
+}
+
+// onHubChanged 订阅 AgentHub 历史变更（Go 落盘后 Emit hub:changed），返回取消订阅函数。
+export function onHubChanged(cb: () => void): () => void {
+  return EventsOn('hub:changed', () => cb());
 }
 
 // onTerminalData 订阅终端输出（data 为 base64），返回取消订阅函数

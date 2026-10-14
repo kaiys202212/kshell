@@ -95,6 +95,9 @@ func (a *App) handleAgentNotify(p agenthook.Payload) {
 	if !a.notifyDedupFor().allow(p) {
 		return
 	}
+	// 落 AgentHub 历史：与 ACP 通道（emitChatNotify）共用同一条写入路径，
+	// 过滤/去重通过后才记，保证 Hub 只留用户真正会被通知的事件。
+	a.recordHubAgentMessage(p)
 	a.Emit("notify:agent", p)
 	if a.windowVisible() {
 		return

@@ -793,7 +793,10 @@
       "model_switch_failed": "切换模型失败：{{err}}",
       "stop_done": "已请求停止",
       "stop_failed": "停止失败：{{err}}",
-      "cleared": "已清空"
+      "cleared": "已清空",
+      "history": "历史",
+      "archive_title": "按月归档",
+      "archive_empty": "暂无归档消息"
     },
     "transcript": {
       "preview_title": "会话预览",

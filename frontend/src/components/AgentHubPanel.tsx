@@ -4,12 +4,16 @@
 // 用户发出的消息与 agent 结束通知（summary 为 agent 回复正文）。
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { ChatCommand, ChatInfo, ChatModelsView, ToolInfo } from '../lib/api';
+import type { ChatCommand, ChatInfo, ChatModelsView, HubArchiveMonth, HubMessage, ToolInfo } from '../lib/api';
 import {
   cancelChat,
+  clearHubMessages,
   getTools,
   listChatCommands,
   listChatModels,
+  listHubArchive,
+  listHubMessages,
+  loadHubArchive,
   openWorkspaceACP,
   readClipboardPaste,
   sendChatPrompt,
@@ -28,12 +32,8 @@ import { EmptyState } from './ui/empty-state';
 import { Dialog } from './ui/dialog';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 
-// 消息流里用户发出的一条（仅本地镜像；agent 回复走 store.agentNotices）。
-interface SentItem {
-  id: number;
-  targetLabel: string;
-  text: string;
-}
+// 消息流里渲染的一条：用户发出（右）或 agent 回复（左）。
+// 数据源是 Go 侧 hub.Store 的持久历史（store.hubMessages），不再依赖瞬态 agentNotices。
 
 // kshell 客户端命令：由本前端解析执行，不投递给 agent。name 不含前导斜杠。
 const HUB_COMMANDS: { name: string; descKey: string }[] = [
@@ -75,14 +75,32 @@ function wsBaseName(ws: string): string {
 export default function AgentHubPanel() {
   const { t } = useTranslation();
   const chats = useAppStore((s) => s.chats);
-  const agentNotices = useAppStore((s) => s.agentNotices);
+  const hubMessages = useAppStore((s) => s.hubMessages);
   const lastAgentId = useAppStore((s) => s.lastAgentId);
 
   const emptyTarget = t('ui.hub.new_agent');
   const [draft, setDraft] = useState('');
-  const [sent, setSent] = useState<SentItem[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const sentSeq = useRef(0);
+  // 归档入口：展开时列出月份，选中月份后加载该月旧消息内联展示。
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [archiveMonths, setArchiveMonths] = useState<HubArchiveMonth[]>([]);
+  const [archiveMessages, setArchiveMessages] = useState<HubMessage[]>([]);
+  const [activeMonth, setActiveMonth] = useState<string | null>(null);
+
+  // 挂载时拉取持久历史（Hub 消息源在 Go 侧磁盘；hub:changed 事件由 App 订阅后回填 store）。
+  useEffect(() => {
+    let cancelled = false;
+    void listHubMessages()
+      .then((list) => {
+        if (!cancelled) useAppStore.getState().setHubMessages(list);
+      })
+      .catch(() => {
+        // 拉取失败静默：Hub 是辅助视图，不打断首页
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 斜杠补全：draft 首词为 /xxx 时激活。
   const [slashClosed, setSlashClosed] = useState(false);
@@ -198,8 +216,10 @@ export default function AgentHubPanel() {
       return;
     }
     if (name === 'clear') {
-      setSent([]);
+      useAppStore.getState().setHubMessages([]);
       useAppStore.getState().clearAgentNotices();
+      // 清空落盘 live（归档保留）；失败不阻断，UI 已清
+      void clearHubMessages().catch(() => {});
       useAppStore.getState().notify(t('ui.hub.cleared'), 'info');
       return;
     }
@@ -267,19 +287,33 @@ export default function AgentHubPanel() {
       useAppStore.getState().notify(t('ui.hub.need_target'), 'error');
       return;
     }
-    const opt = options.find((o) => o.id === targetId);
-    // 乐观追加本地条目；发送失败再回退并提示
-    const item: SentItem = { id: ++sentSeq.current, targetLabel: opt?.label ?? toolDisplayName(''), text };
-    setSent((s) => [...s, item]);
     setDraft('');
+    // 用户消息由 Go 侧落盘并经 hub:changed 回流（单一数据源），失败只提示不回滚。
     void sendChatPrompt(targetId, text)
       .then(() => {
         useAppStore.getState().setLastAgentId(targetId);
       })
       .catch((e: unknown) => {
-        setSent((s) => s.filter((x) => x.id !== item.id));
         useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
       });
+  };
+
+  // openHistory 展开归档入口：拉月份列表。
+  const openHistory = () => {
+    const next = !historyOpen;
+    setHistoryOpen(next);
+    if (!next) return;
+    void listHubArchive()
+      .then(setArchiveMonths)
+      .catch(() => setArchiveMonths([]));
+  };
+
+  // selectArchiveMonth 加载某月归档消息内联展示（与 live 分开，避免重复与乱序）。
+  const selectArchiveMonth = (month: string) => {
+    setActiveMonth(month);
+    void loadHubArchive(month)
+      .then(setArchiveMessages)
+      .catch(() => setArchiveMessages([]));
   };
 
   // 粘贴：优先用剪贴板里的落盘路径（图片），其次文本；路径含空格加引号避免 shell 拆词
@@ -301,15 +335,60 @@ export default function AgentHubPanel() {
     >
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-sm font-medium">{t('ui.hub.title')}</h2>
-        <Button
-          size="sm"
-          variant="secondary"
-          aria-label={t('ui.hub.new_agent')}
-          onClick={() => setDialogOpen(true)}
-        >
-          + {t('ui.hub.new_agent')}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            aria-label={t('ui.hub.history')}
+            onClick={openHistory}
+          >
+            {t('ui.hub.history')}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            aria-label={t('ui.hub.new_agent')}
+            onClick={() => setDialogOpen(true)}
+          >
+            + {t('ui.hub.new_agent')}
+          </Button>
+        </div>
       </div>
+
+      {historyOpen && (
+        <div className="flex flex-col gap-1 rounded border border-border bg-card p-2 text-xs">
+          <span className="text-muted-foreground">{t('ui.hub.archive_title')}</span>
+          {archiveMonths.length === 0 ? (
+            <span className="text-muted-foreground">{t('ui.hub.archive_empty')}</span>
+          ) : (
+            <ul className="m-0 flex list-none flex-wrap gap-1 p-0">
+              {archiveMonths.map((m) => (
+                <li key={m.month}>
+                  <button
+                    type="button"
+                    className={cn(
+                      'rounded border border-border px-2 py-0.5 hover:bg-muted/50',
+                      activeMonth === m.month && 'bg-muted font-medium',
+                    )}
+                    onClick={() => selectArchiveMonth(m.month)}
+                  >
+                    {m.month} · {m.count}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {archiveMessages.length > 0 && (
+            <div className="mt-1 flex flex-col gap-1 border-t border-border pt-1">
+              {archiveMessages.map((m) => (
+                <div key={`a${m.id}`} className="text-muted-foreground">
+                  <span className="whitespace-pre-wrap">{m.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {chats.length === 0 ? (
         <EmptyState title={t('ui.hub.empty')} />
@@ -352,21 +431,22 @@ export default function AgentHubPanel() {
       )}
 
       <div className="flex flex-col gap-1 overflow-y-auto" role="log" aria-live="polite">
-        {sent.map((m) => (
-          <div key={`s${m.id}`} className="text-right">
-            <div className="selectable inline-block max-w-[85%] rounded-md bg-primary px-3 py-1.5 text-primary-foreground">
-              <span className="whitespace-pre-wrap">{m.text}</span>
+        {hubMessages.map((m) =>
+          m.kind === 'user' ? (
+            <div key={`h${m.id}`} className="text-right">
+              <div className="selectable inline-block max-w-[85%] rounded-md bg-primary px-3 py-1.5 text-primary-foreground">
+                <span className="whitespace-pre-wrap">{m.text}</span>
+              </div>
             </div>
-          </div>
-        ))}
-        {agentNotices.map((n) => (
-          <div key={`n${n.id}`} className="text-left">
-            <div className="selectable inline-block max-w-[85%] rounded-md bg-muted px-3 py-1.5">
-              <span className="mr-1.5 text-[11px] text-muted-foreground">{toolDisplayName(n.tool)}</span>
-              <span className="whitespace-pre-wrap">{n.summary}</span>
+          ) : (
+            <div key={`h${m.id}`} className="text-left">
+              <div className="selectable inline-block max-w-[85%] rounded-md bg-muted px-3 py-1.5">
+                <span className="mr-1.5 text-[11px] text-muted-foreground">{toolDisplayName(m.tool ?? '')}</span>
+                <span className="whitespace-pre-wrap">{m.text}</span>
+              </div>
             </div>
-          </div>
-        ))}
+          ),
+        )}
       </div>
 
       <div className="flex flex-col gap-1 border-t border-border pt-2">
