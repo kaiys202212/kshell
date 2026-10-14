@@ -360,3 +360,19 @@ describe('lastAgentId', () => {
     expect(useAppStore.getState().lastAgentId).toBe('c1');
   });
 });
+
+describe('chat 模型与技能命令状态', () => {
+  it('setChatModels / setChatCommands 按 id 存取', () => {
+    useAppStore.setState({ chatModels: {}, chatCommands: {} });
+    useAppStore.getState().setChatModels('c1', {
+      Current: 'm1',
+      Models: [{ ID: 'm1', Name: 'One' }, { ID: 'm2', Name: 'Two', Description: 'D' }],
+    });
+    expect(useAppStore.getState().chatModels.c1?.Current).toBe('m1');
+    expect(useAppStore.getState().chatModels.c1?.Models).toHaveLength(2);
+
+    useAppStore.getState().setChatCommands('c1', [{ Name: 'plan', Description: 'P', InputHint: '主题' }]);
+    expect(useAppStore.getState().chatCommands.c1?.[0]?.Name).toBe('plan');
+    expect(useAppStore.getState().chatCommands.c1?.[0]?.InputHint).toBe('主题');
+  });
+});

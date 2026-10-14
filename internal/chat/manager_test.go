@@ -14,7 +14,7 @@ import (
 // fakeConn 按脚本记录调用；Wait 阻塞到 Close（模拟真实进程生命周期）。
 type fakeConn struct {
 	mu        sync.Mutex
-	newID     string
+	newStart  acp.SessionStart
 	loadErr   error
 	promptErr error
 	stop      string
@@ -23,8 +23,11 @@ type fakeConn struct {
 	waitCh    chan struct{}
 	waitOnce  sync.Once
 
-	promptGate chan struct{} // 非 nil 时 Prompt 阻塞等待，直到收到信号或 Close
-	prompts    []string      // 记录每次 Prompt 的文本（断言投递顺序）
+	promptGate   chan struct{}        // 非 nil 时 Prompt 阻塞等待，直到收到信号或 Close
+	prompts      []string             // 记录每次 Prompt 的展开文本（断言投递顺序）
+	promptBlocks [][]acp.ContentBlock // 记录每次 Prompt 的原始 blocks（断言附件形态）
+	modelErr     error
+	modelCalls   []string
 
 	initGate   chan struct{} // 非 nil 时 Initialize 阻塞等待，模拟握手耗时
 	initSet    bool
@@ -40,16 +43,27 @@ func (c *fakeConn) Initialize(ctx context.Context) (acp.InitializeResult, error)
 	}
 	return acp.InitializeResult{ProtocolVersion: 1, AgentCapabilities: acp.AgentCapabilities{LoadSession: true}}, nil
 }
-func (c *fakeConn) NewSession(ctx context.Context, cwd string) (string, error) {
-	if c.newID == "" {
-		c.newID = "sess-new"
-	}
-	return c.newID, nil
-}
-func (c *fakeConn) LoadSession(ctx context.Context, sessionID, cwd string) error { return c.loadErr }
-func (c *fakeConn) Prompt(ctx context.Context, sessionID, text string) (string, error) {
+func (c *fakeConn) NewSession(ctx context.Context, cwd string) (acp.SessionStart, error) {
 	c.mu.Lock()
-	c.prompts = append(c.prompts, text)
+	defer c.mu.Unlock()
+	if c.newStart.SessionID == "" {
+		c.newStart.SessionID = "sess-new"
+	}
+	return c.newStart, nil
+}
+func (c *fakeConn) LoadSession(ctx context.Context, sessionID, cwd string) (acp.SessionStart, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	start := c.newStart
+	if start.SessionID == "" {
+		start.SessionID = sessionID
+	}
+	return start, c.loadErr
+}
+func (c *fakeConn) Prompt(ctx context.Context, sessionID string, blocks []acp.ContentBlock) (string, error) {
+	c.mu.Lock()
+	c.promptBlocks = append(c.promptBlocks, blocks)
+	c.prompts = append(c.prompts, flattenBlocks(blocks))
 	gate := c.promptGate
 	c.mu.Unlock()
 	if gate != nil {
@@ -66,6 +80,13 @@ func (c *fakeConn) promptCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.prompts)
+}
+func (c *fakeConn) SetModel(ctx context.Context, sessionID, modelID string) error {
+	c.mu.Lock()
+	c.modelCalls = append(c.modelCalls, modelID)
+	err := c.modelErr
+	c.mu.Unlock()
+	return err
 }
 func (c *fakeConn) Cancel(sessionID string) error {
 	c.mu.Lock()
@@ -437,8 +458,11 @@ func TestAttachSessionBindsNewChatInfo(t *testing.T) {
 	if err := m.Prompt(info.ID, "hi"); err != nil {
 		t.Fatalf("prompt after attach: %v", err)
 	}
-	if b.conn.newID != "sess-new" {
-		t.Fatalf("协议 sessionID 不应被绑定改写: %q", b.conn.newID)
+	b.conn.mu.Lock()
+	gotNew := b.conn.newStart.SessionID
+	b.conn.mu.Unlock()
+	if gotNew != "sess-new" {
+		t.Fatalf("协议 sessionID 不应被绑定改写: %q", gotNew)
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {

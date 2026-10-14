@@ -755,7 +755,13 @@
       "drop_hint": "Release to insert the file path",
       "permission_title": "Permission request",
       "tool_call_fallback": "Tool call",
-      "reject": "Reject"
+      "reject": "Reject",
+      "model_label": "Model",
+      "model_switch_failed": "Failed to switch model: {{err}}",
+      "attach": "Add attachment",
+      "attach_paste_failed": "Cannot read the pasted file. Use the attachment button instead.",
+      "remove_attachment": "Remove attachment",
+      "attachment_image": "Image"
     },
     "hub": {
       "title": "Agent Hub",

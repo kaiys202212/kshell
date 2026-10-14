@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,7 +37,35 @@ func fakeAgentMain() {
 				"agentInfo":         map[string]any{"name": "fake"},
 			})
 		case "session/new":
-			reply(map[string]any{"sessionId": "sess-new"})
+			res := map[string]any{"sessionId": "sess-new"}
+			if os.Getenv("ACP_FAKE_MODELS") == "1" {
+				res["models"] = map[string]any{
+					"availableModels": []any{
+						map[string]any{"modelId": "m1", "name": "Model One"},
+						map[string]any{"modelId": "m2", "name": "Two", "description": "d2"},
+					},
+					"currentModelId": "m1",
+				}
+			}
+			if os.Getenv("ACP_FAKE_CONFIGOPT") == "1" {
+				res["configOptions"] = []any{map[string]any{
+					"id": "model", "type": "select", "currentValue": "m1",
+					"options": []any{map[string]any{"value": "m1", "name": "Model One"}},
+				}}
+			}
+			reply(res)
+		case "session/set_model":
+			if os.Getenv("ACP_FAKE_NO_SETMODEL") == "1" {
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(*m.ID), "error": map[string]any{"code": -32601, "message": "method not found"}})
+			} else {
+				reply(map[string]any{})
+			}
+		case "session/set_config_option":
+			if os.Getenv("ACP_FAKE_NO_CONFIGOPT") == "1" {
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(*m.ID), "error": map[string]any{"code": -32601, "message": "method not found"}})
+			} else {
+				reply(map[string]any{})
+			}
 		case "session/load":
 			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
 				"sessionId": "sess-load",
@@ -44,6 +73,12 @@ func fakeAgentMain() {
 			}})
 			reply(map[string]any{})
 		case "session/prompt":
+			if os.Getenv("ACP_FAKE_ECHO_PROMPT") == "1" {
+				var p PromptParams
+				_ = json.Unmarshal(m.Params, &p)
+				reply(map[string]any{"stopReason": fmt.Sprintf("blocks:%d", len(p.Prompt))})
+				continue
+			}
 			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
 				"sessionId": "sess-new",
 				"update":    map[string]any{"sessionUpdate": "agent_message_chunk", "messageId": "m1", "content": map[string]any{"type": "text", "text": "working"}},
@@ -105,11 +140,18 @@ func (h *captureHandler) RequestPermission(ctx context.Context, sessionID, reque
 
 func fakeAgentSpec(t *testing.T) Spec {
 	t.Helper()
+	return fakeAgentSpecEnv(t)
+}
+
+// fakeAgentSpecEnv 在标准假 agent 之上注入额外脚本开关（ACP_FAKE_* 环境变量）。
+func fakeAgentSpecEnv(t *testing.T, extra ...string) Spec {
+	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Spec{Path: exe, Args: []string{"-test.run=TestMain"}, Env: []string{"ACP_FAKE_AGENT=1"}}
+	env := append([]string{"ACP_FAKE_AGENT=1"}, extra...)
+	return Spec{Path: exe, Args: []string{"-test.run=TestMain"}, Env: env}
 }
 
 // ACP 错误一律以 wire key 暴露给前端翻译（参数以 | 分隔），不再是中文字面量。
@@ -146,11 +188,11 @@ func TestAgentHandshakeAndPrompt(t *testing.T) {
 	if err != nil || !init.AgentCapabilities.LoadSession {
 		t.Fatalf("initialize: %v %+v", err, init)
 	}
-	sid, err := a.NewSession(ctx, "/tmp")
-	if err != nil || sid != "sess-new" {
-		t.Fatalf("new session: %v %q", err, sid)
+	ss, err := a.NewSession(ctx, "/tmp")
+	if err != nil || ss.SessionID != "sess-new" {
+		t.Fatalf("new session: %v %+v", err, ss)
 	}
-	stop, err := a.Prompt(ctx, sid, "do it")
+	stop, err := a.Prompt(ctx, ss.SessionID, []ContentBlock{{Type: "text", Text: "do it"}})
 	if err != nil || stop != "end_turn" {
 		t.Fatalf("prompt: %v %q", err, stop)
 	}
@@ -176,6 +218,130 @@ func containsUpdate(updates []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func newTestAgent(t *testing.T, spec Spec) *Agent {
+	t.Helper()
+	a, err := NewAgent(context.Background(), spec, &captureHandler{})
+	if err != nil {
+		t.Fatalf("NewAgent: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+	return a
+}
+
+func testCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 10*time.Second)
+}
+
+// session/new 响应里的 v1 models 字段必须解析到 SessionStart.Models。
+func TestAgentNewSessionReturnsModels(t *testing.T) {
+	a := newTestAgent(t, fakeAgentSpecEnv(t, "ACP_FAKE_MODELS=1"))
+	ctx, cancel := testCtx()
+	defer cancel()
+	if _, err := a.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ss, err := a.NewSession(ctx, "/tmp")
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	if ss.Models == nil || len(ss.Models.AvailableModels) != 2 || ss.Models.CurrentModelID != "m1" {
+		t.Fatalf("models = %+v", ss.Models)
+	}
+	if ss.Models.AvailableModels[1].ModelID != "m2" || ss.Models.AvailableModels[1].Description != "d2" {
+		t.Fatalf("model[1] = %+v", ss.Models.AvailableModels[1])
+	}
+}
+
+// configOptions 形态（id=model）必须识别为 ModelConfig。
+func TestAgentNewSessionConfigOption(t *testing.T) {
+	a := newTestAgent(t, fakeAgentSpecEnv(t, "ACP_FAKE_CONFIGOPT=1"))
+	ctx, cancel := testCtx()
+	defer cancel()
+	if _, err := a.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ss, err := a.NewSession(ctx, "/tmp")
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	if ss.ModelConfig == nil || ss.ModelConfig.ID != "model" || len(ss.ModelConfig.Options) != 1 {
+		t.Fatalf("ModelConfig = %+v", ss.ModelConfig)
+	}
+}
+
+// agent 同时支持 set_model 时走主路径。
+func TestAgentSetModelDirect(t *testing.T) {
+	a := newTestAgent(t, fakeAgentSpec(t))
+	ctx, cancel := testCtx()
+	defer cancel()
+	if _, err := a.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ss, err := a.NewSession(ctx, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetModel(ctx, ss.SessionID, "m2"); err != nil {
+		t.Fatalf("set model: %v", err)
+	}
+}
+
+// agent 不认识 set_model（-32601）时回退 session/set_config_option。
+func TestAgentSetModelFallback(t *testing.T) {
+	a := newTestAgent(t, fakeAgentSpecEnv(t, "ACP_FAKE_NO_SETMODEL=1"))
+	ctx, cancel := testCtx()
+	defer cancel()
+	if _, err := a.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ss, err := a.NewSession(ctx, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetModel(ctx, ss.SessionID, "m2"); err != nil {
+		t.Fatalf("set model fallback: %v", err)
+	}
+}
+
+// 两条路都不支持时错误上抛，由 UI 提示。
+func TestAgentSetModelUnsupported(t *testing.T) {
+	a := newTestAgent(t, fakeAgentSpecEnv(t, "ACP_FAKE_NO_SETMODEL=1", "ACP_FAKE_NO_CONFIGOPT=1"))
+	ctx, cancel := testCtx()
+	defer cancel()
+	if _, err := a.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ss, err := a.NewSession(ctx, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetModel(ctx, ss.SessionID, "m2"); err == nil {
+		t.Fatal("expected error when both set paths unsupported")
+	}
+}
+
+// Prompt 必须原样携带多形态 content blocks（用 echo 假 agent 回报块数验证）。
+func TestAgentPromptSendsBlocks(t *testing.T) {
+	a := newTestAgent(t, fakeAgentSpecEnv(t, "ACP_FAKE_ECHO_PROMPT=1"))
+	ctx, cancel := testCtx()
+	defer cancel()
+	if _, err := a.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ss, err := a.NewSession(ctx, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := []ContentBlock{
+		{Type: "text", Text: "看这个"},
+		{Type: "image", Data: "AAAA", MimeType: "image/png"},
+	}
+	stop, err := a.Prompt(ctx, ss.SessionID, blocks)
+	if err != nil || stop != "blocks:2" {
+		t.Fatalf("prompt: %v %q", err, stop)
+	}
 }
 
 func TestAgentProcessExitFailsPendingCall(t *testing.T) {
@@ -215,7 +381,7 @@ func TestAgentLoadSessionReplays(t *testing.T) {
 	if _, err := a.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.LoadSession(ctx, "sess-load", "/tmp"); err != nil {
+	if _, err := a.LoadSession(ctx, "sess-load", "/tmp"); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	// 通知在读循环内同步处理，LoadSession 返回时重放已就绪

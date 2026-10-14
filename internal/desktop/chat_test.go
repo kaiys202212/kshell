@@ -15,19 +15,33 @@ import (
 )
 
 type fakeChatConn struct {
-	waitCh chan struct{}
-	once   sync.Once
+	waitCh     chan struct{}
+	once       sync.Once
+	start      acp.SessionStart
+	modelErr   error
+	modelCalls []string
 }
 
 func (c *fakeChatConn) Initialize(ctx context.Context) (acp.InitializeResult, error) {
 	return acp.InitializeResult{ProtocolVersion: 1, AgentCapabilities: acp.AgentCapabilities{LoadSession: true}}, nil
 }
-func (c *fakeChatConn) NewSession(ctx context.Context, cwd string) (string, error) { return "s1", nil }
-func (c *fakeChatConn) LoadSession(ctx context.Context, sessionID, cwd string) error {
-	return nil
+func (c *fakeChatConn) NewSession(ctx context.Context, cwd string) (acp.SessionStart, error) {
+	c.start.SessionID = "s1"
+	return c.start, nil
 }
-func (c *fakeChatConn) Prompt(ctx context.Context, sessionID, text string) (string, error) {
+func (c *fakeChatConn) LoadSession(ctx context.Context, sessionID, cwd string) (acp.SessionStart, error) {
+	start := c.start
+	if start.SessionID == "" {
+		start.SessionID = sessionID
+	}
+	return start, nil
+}
+func (c *fakeChatConn) Prompt(ctx context.Context, sessionID string, blocks []acp.ContentBlock) (string, error) {
 	return "end_turn", nil
+}
+func (c *fakeChatConn) SetModel(ctx context.Context, sessionID, modelID string) error {
+	c.modelCalls = append(c.modelCalls, modelID)
+	return c.modelErr
 }
 func (c *fakeChatConn) Cancel(sessionID string) error { return nil }
 func (c *fakeChatConn) Wait() (int, error)            { <-c.waitCh; return 0, nil }

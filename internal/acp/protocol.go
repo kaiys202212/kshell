@@ -48,9 +48,54 @@ type InitializeResult struct {
 	AuthMethods       []AuthMethod      `json:"authMethods"`
 }
 
+// ContentBlock 是 session/prompt 的内容块。按 ACP 规范支持 text / image /
+// resource_link / resource 等形态：image 用 Data(base64)+MimeType，
+// resource_link 用 URI+Name，resource 用 Resource。字段全 omitempty，
+// 纯文本路径的序列化与旧版完全一致。
 type ContentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
+	Type     string            `json:"type"`
+	Text     string            `json:"text,omitempty"`
+	Data     string            `json:"data,omitempty"`
+	MimeType string            `json:"mimeType,omitempty"`
+	URI      string            `json:"uri,omitempty"`
+	Name     string            `json:"name,omitempty"`
+	Resource *ResourceContents `json:"resource,omitempty"`
+}
+
+// ResourceContents 是内嵌资源的内容体：文本用 Text，二进制用 Blob(base64)。
+type ResourceContents struct {
+	URI      string `json:"uri"`
+	MimeType string `json:"mimeType,omitempty"`
+	Text     string `json:"text,omitempty"`
+	Blob     string `json:"blob,omitempty"`
+}
+
+// ModelInfo / SessionModelState 是 session/new、session/load 响应里
+// v1 形态的可用模型列表（部分 agent 以 configOptions 形态报告，见下）。
+type ModelInfo struct {
+	ModelID     string `json:"modelId"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+type SessionModelState struct {
+	AvailableModels []ModelInfo `json:"availableModels"`
+	CurrentModelID  string      `json:"currentModelId"`
+}
+
+// ConfigOptionValue / SessionConfigOption 是新式会话配置选项的最小解析面：
+// 只关心 id=model 的 select 选项（模型切换的另一种 agent 实现路径）。
+type ConfigOptionValue struct {
+	Value       string `json:"value"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+type SessionConfigOption struct {
+	ID           string              `json:"id"`
+	Type         string              `json:"type,omitempty"`
+	CurrentValue json.RawMessage     `json:"currentValue,omitempty"`
+	Options      []ConfigOptionValue `json:"options,omitempty"`
 }
 
 // EnvVariable 是 MCP stdio 服务器的环境变量项（ACP 要求 name/value，不能用 map）。
@@ -74,7 +119,18 @@ type NewSessionParams struct {
 }
 
 type NewSessionResult struct {
-	SessionID string `json:"sessionId"`
+	SessionID     string                `json:"sessionId"`
+	Models        *SessionModelState    `json:"models,omitempty"`
+	ConfigOptions []SessionConfigOption `json:"configOptions,omitempty"`
+}
+
+// SessionStart 是 new/load 会话后调用方需要的会话信息快照。
+type SessionStart struct {
+	SessionID string
+	Models    *SessionModelState
+	// ModelConfig 非 nil 表示 agent 以 configOptions 形态报告了 id=model 的
+	// 选项（新式模型切换路径），选项值列表与当前值都在里面。
+	ModelConfig *SessionConfigOption
 }
 
 type LoadSessionParams struct {
@@ -90,6 +146,18 @@ type PromptParams struct {
 
 type PromptResult struct {
 	StopReason string `json:"stopReason"`
+}
+
+type SetModelParams struct {
+	SessionID string `json:"sessionId"`
+	ModelID   string `json:"modelId"`
+}
+
+// SetConfigOptionParams 的 Value 按 agent 声明可能是字符串或其他 JSON 值，保留原样序列化。
+type SetConfigOptionParams struct {
+	SessionID string          `json:"sessionId"`
+	OptionID  string          `json:"optionId"`
+	Value     json.RawMessage `json:"value"`
 }
 
 type CancelParams struct {

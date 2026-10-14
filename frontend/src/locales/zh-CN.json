@@ -755,7 +755,13 @@
       "drop_hint": "松开插入文件路径",
       "permission_title": "请求权限",
       "tool_call_fallback": "工具调用",
-      "reject": "拒绝"
+      "reject": "拒绝",
+      "model_label": "模型",
+      "model_switch_failed": "模型切换失败：{{err}}",
+      "attach": "添加附件",
+      "attach_paste_failed": "无法读取粘贴的文件，请改用附件按钮。",
+      "remove_attachment": "移除附件",
+      "attachment_image": "图片"
     },
     "hub": {
       "title": "Agent 汇总",

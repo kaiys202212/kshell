@@ -3,7 +3,7 @@
 // 重开应用后恢复上次的工作区页签；其余字段的数据来源都是 Go 绑定层，刷新即重取，不持久化。
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { ChatInfo, ChatPermissionRequest, ChatUpdate, LanguageInfo, TerminalInfo, Workspace } from '../lib/api';
+import type { ChatCommand, ChatInfo, ChatModelsView, ChatPermissionRequest, ChatUpdate, LanguageInfo, TerminalInfo, Workspace } from '../lib/api';
 import type { AgentNotice } from '../lib/agentNotify';
 import type { AppearanceInfo } from '../lib/appearance';
 import { applyChatUpdate, type TimelineItem } from './chatUpdate';
@@ -121,6 +121,12 @@ interface AppState {
   // 待用户回应的权限请求（同一时刻每条聊天最多一个）
   chatPermissions: Record<string, ChatPermissionRequest | null>;
   setChatPermission(id: string, req: ChatPermissionRequest | null): void;
+
+  // 每个聊天的可用模型（agent 会话建立时报告）与技能命令（available_commands_update 推送）
+  chatModels: Record<string, ChatModelsView | null>;
+  setChatModels(id: string, view: ChatModelsView | null): void;
+  chatCommands: Record<string, ChatCommand[]>;
+  setChatCommands(id: string, cmds: ChatCommand[]): void;
 
   // 终端静默启发 busy（不持久化；由 terminalBusy.ts 定时器驱动）
   terminalBusy: Record<string, true>;
@@ -316,6 +322,8 @@ export const useAppStore = create<AppState>()(
           chatItems: omitKey(s.chatItems, id),
           chatSeq: omitKey(s.chatSeq, id),
           chatPermissions: omitKey(s.chatPermissions, id),
+          chatModels: omitKey(s.chatModels, id),
+          chatCommands: omitKey(s.chatCommands, id),
         })),
       markChatExited: (id, exitCode, error) =>
         set((s) => ({
@@ -365,6 +373,8 @@ export const useAppStore = create<AppState>()(
         set((s) => ({
           chatItems: omitKey(s.chatItems, id),
           chatSeq: omitKey(s.chatSeq, id),
+          chatModels: omitKey(s.chatModels, id),
+          chatCommands: omitKey(s.chatCommands, id),
         })),
 
       chatPermissions: {},
@@ -375,6 +385,13 @@ export const useAppStore = create<AppState>()(
           else delete next[id];
           return { chatPermissions: next };
         }),
+
+      chatModels: {},
+      setChatModels: (id, view) =>
+        set((s) => ({ chatModels: { ...s.chatModels, [id]: view } })),
+      chatCommands: {},
+      setChatCommands: (id, cmds) =>
+        set((s) => ({ chatCommands: { ...s.chatCommands, [id]: cmds } })),
 
       terminalBusy: {},
       setTerminalBusy: (id, busy) =>

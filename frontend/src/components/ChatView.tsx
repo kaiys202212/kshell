@@ -1,10 +1,22 @@
 // 中心区 ACP 聊天页签：时间线 + 输入区 + 权限弹窗。常挂载、由父级 hidden 切换。
-import { useEffect, useRef, useState } from 'react';
+// 模型下拉 / 技能补全 / 附件（粘贴、拖拽、选择按钮）在本组件内实现。
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { ChatInfo, ChatToolCall } from '../lib/api';
-import { cancelChat, cancelChatPermission, listChats, respondChatPermission, sendChatPrompt } from '../lib/api';
+import type { ChatAttachmentMeta, ChatBlock, ChatInfo, ChatToolCall } from '../lib/api';
+import {
+  cancelChat,
+  cancelChatPermission,
+  listChatCommands,
+  listChatModels,
+  listChats,
+  pickFile,
+  respondChatPermission,
+  sendChatPrompt,
+  sendChatPromptBlocks,
+  setChatModel,
+} from '../lib/api';
 import { appendChatInput, registerChatInput, unregisterChatInput } from '../lib/chatInputRegistry';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
@@ -14,6 +26,7 @@ import { cn } from '../lib/cn';
 import { handleAnchorClick } from '../lib/openHref';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 
 interface Props {
@@ -23,6 +36,50 @@ interface Props {
 
 // 模块级稳定空数组：无消息时避免每次渲染返回新引用，防止自动滚动 effect 空转
 const EMPTY_ITEMS: TimelineItem[] = [];
+const EMPTY_COMMANDS: { Name: string; Description?: string; InputHint?: string }[] = [];
+
+// 粘贴非图片文件的体积上限：超过则提示改用附件按钮（走路径引用，不占 payload）。
+const MAX_PASTE_BYTES = 8 * 1024 * 1024;
+
+// fileUriFromPath 把本机绝对路径转 file URI（Windows 反斜杠归一 + 空格等编码），
+// 供 resource_link 块引用；agent 与 kshell 同机，可直接按路径读取。
+export function fileUriFromPath(path: string): string {
+  const norm = path.replace(/\\/g, '/');
+  const abs = norm.startsWith('/') ? norm : `/${norm}`;
+  return encodeURI(`file://${abs}`);
+}
+
+function baseName(p: string): string {
+  const norm = p.replace(/\\/g, '/');
+  return norm.slice(norm.lastIndexOf('/') + 1) || p;
+}
+
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+// 附件本地状态：block 是随消息发送的内容，label 是 chip 展示名。
+interface ChatAttachment {
+  block: ChatBlock;
+  label: string;
+}
+
+// readAsDataURLBase64 读文件为 base64 载荷（去掉 data URL 前缀）；失败返回 null。
+function readAsDataURLBase64(file: File): Promise<string | null> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      const idx = result.indexOf(',');
+      resolve(idx >= 0 ? result.slice(idx + 1) : null);
+    };
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
 
 // 工具调用结果的可读文本：文本内容直接拼接；diff 无高亮能力时降级为纯文本。
 function toolContentText(t?: ChatToolCall): string {
@@ -39,22 +96,60 @@ function toolContentText(t?: ChatToolCall): string {
   return parts.join('\n');
 }
 
+// 附件 meta 的展示名：有 Name 用 Name；图片类显示「图片」，其余退回 MimeType。
+function attachmentLabel(att: ChatAttachmentMeta, imageLabel: string): string {
+  if (att.Name) return att.Name;
+  if (att.MimeType?.startsWith('image/')) return imageLabel;
+  return att.MimeType ?? '';
+}
+
 export default function ChatView({ chat, active }: Props) {
   const { t } = useTranslation();
   const id = chat.ID;
   const items = useAppStore((s) => s.chatItems[id]) ?? EMPTY_ITEMS;
   const permission = useAppStore((s) => s.chatPermissions[id]) ?? null;
+  const models = useAppStore((s) => s.chatModels[id]) ?? null;
+  const commands = useAppStore((s) => s.chatCommands[id]) ?? EMPTY_COMMANDS;
   const [draft, setDraft] = useState('');
   const [dropHint, setDropHint] = useState(false);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // 用户是否停在底部（近底 40px 内）：仅在底部时才自动滚动，避免读历史时被新消息拽走
   const atBottom = useRef(true);
   const running = chat.Status === 'running';
 
-  // 拖入文件落点经注册表追加到草稿：依赖只取 id，chat 其余字段变化不重挂
+  // 拖入文件落点经注册表转为附件 chip：外部（文件树/全局拖放）与页签内 drop 共用此入口。
+  // 注册表约定传引号包裹的路径文本，这里剥引号后建 resource_link 块。
   useEffect(() => {
-    registerChatInput(id, { append: (text) => setDraft((d) => (d ? `${d} ${text}` : text)) });
+    registerChatInput(id, {
+      append: (text) => {
+        const p = text.trim().replace(/^"(.*)"$/, '$1');
+        if (!p) return;
+        setAttachments((a) => [
+          ...a,
+          { label: baseName(p), block: { Type: 'resource_link', URI: fileUriFromPath(p), Name: baseName(p) } },
+        ]);
+      },
+    });
     return () => unregisterChatInput(id);
+  }, [id]);
+
+  // 挂载即拉取模型与技能列表做兜底初始化；agent 推送（chat:commands）会随后覆盖。
+  useEffect(() => {
+    let cancelled = false;
+    void listChatModels(id)
+      .then((v) => {
+        if (!cancelled) useAppStore.getState().setChatModels(id, v);
+      })
+      .catch(() => {});
+    void listChatCommands(id)
+      .then((cmds) => {
+        if (!cancelled) useAppStore.getState().setChatCommands(id, cmds);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   // 点开页签时对账后端：turn_done 若丢失，前端会停在乐观 running，未发新任务却转圈。
@@ -87,18 +182,112 @@ export default function ChatView({ chat, active }: Props) {
     atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 40;
   };
 
+  // ---- 技能补全：draft 为首词 /xxx 时激活 ----
+  const slashQuery = /^\/([^\s]*)$/.exec(draft)?.[1] ?? null;
+  const [slashClosed, setSlashClosed] = useState(false);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const slashMatches = useMemo(() => {
+    if (slashQuery === null) return [];
+    const q = slashQuery.toLowerCase();
+    return commands.filter((c) => c.Name.toLowerCase().startsWith(q));
+  }, [commands, slashQuery]);
+  const slashOpen = slashQuery !== null && !slashClosed && slashMatches.length > 0;
+  const applySlash = (name: string) => {
+    setDraft(`/${name} `);
+    setSlashClosed(false);
+    setSlashIndex(0);
+  };
+
+  // ---- 附件 ----
+  const notifyPasteFailed = () => {
+    useAppStore.getState().notify(t('ui.chat.attach_paste_failed'), 'error');
+  };
+
+  const addFileAttachments = async (files: File[]) => {
+    const next: ChatAttachment[] = [];
+    for (const f of files) {
+      if (f.type.startsWith('image/')) {
+        const data = await readAsDataURLBase64(f);
+        if (data === null) {
+          notifyPasteFailed();
+          continue;
+        }
+        next.push({
+          label: f.name || t('ui.chat.attachment_image'),
+          block: { Type: 'image', Data: data, MimeType: f.type },
+        });
+        continue;
+      }
+      if (f.size > MAX_PASTE_BYTES) {
+        notifyPasteFailed();
+        continue;
+      }
+      try {
+        const buf = await f.arrayBuffer();
+        next.push({
+          label: f.name || f.type || 'file',
+          block: { Type: 'resource', MimeType: f.type || 'application/octet-stream', Data: arrayBufferToBase64(buf) },
+        });
+      } catch {
+        notifyPasteFailed();
+      }
+    }
+    if (next.length > 0) setAttachments((a) => [...a, ...next]);
+  };
+
+  const attachByPicker = async () => {
+    let path: string;
+    try {
+      path = await pickFile(t('ui.chat.attach'));
+    } catch (e) {
+      useAppStore.getState().notify(backendError(e), 'error');
+      return;
+    }
+    if (!path) return;
+    setAttachments((a) => [
+      ...a,
+      { label: baseName(path), block: { Type: 'resource_link', URI: fileUriFromPath(path), Name: baseName(path) } },
+    ]);
+  };
+
+  const removeAttachment = (index: number) => {
+    setAttachments((arr) => arr.filter((_, i) => i !== index));
+  };
+
   const send = () => {
     const text = draft.trim();
-    if (!text || running) return;
+    if ((!text && attachments.length === 0) || running) return;
     setDraft('');
+    setAttachments([]);
     // 乐观置 running：turn_done/error 的 chat:update 会把它改回 ready
     useAppStore.getState().upsertChat({ ...chat, Status: 'running' });
-    // 发送失败要回退状态并提示，否则 optimistic running 会一直卡住
-    sendChatPrompt(id, text).catch((e: unknown) => {
+    const fail = (e: unknown) => {
       useAppStore.getState().upsertChat({ ...chat, Status: 'ready' });
       useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
-    });
+    };
+    if (attachments.length > 0) {
+      // 文本块在前，附件块在后
+      const blocks: ChatBlock[] = [];
+      if (text) blocks.push({ Type: 'text', Text: text });
+      for (const a of attachments) blocks.push(a.block);
+      sendChatPromptBlocks(id, blocks).catch(fail);
+    } else {
+      sendChatPrompt(id, text).catch(fail);
+    }
   };
+
+  const switchModel = async (modelID: string) => {
+    try {
+      await setChatModel(id, modelID);
+      // 乐观更新当前模型，避免等 agent 二次推送
+      if (models) useAppStore.getState().setChatModels(id, { ...models, Current: modelID });
+    } catch (e) {
+      useAppStore.getState().notify(t('ui.chat.model_switch_failed', { err: backendError(e) }), 'error');
+    }
+  };
+
+  const currentModelName =
+    models?.Models.find((m) => m.ID === models.Current)?.Name ?? models?.Current ?? '';
 
   return (
     <div
@@ -132,6 +321,26 @@ export default function ChatView({ chat, active }: Props) {
           {chat.Error ? t('ui.chat.error_suffix', { error: translateBackend(chat.Error) }) : ''}
         </div>
       )}
+      {models && models.Models.length > 0 && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1 text-xs">
+          <span className="text-muted-foreground">{t('ui.chat.model_label')}</span>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="rounded border border-border px-2 py-0.5 hover:bg-muted">
+                {currentModelName} <span className="text-muted-foreground">▾</span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              {models.Models.map((m) => (
+                <DropdownMenuItem key={m.ID} onSelect={() => void switchModel(m.ID)}>
+                  <span className={cn(m.ID === models.Current && 'font-medium')}>{m.Name}</span>
+                  {m.Description && <span className="ml-2 text-muted-foreground">{m.Description}</span>}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-2">
         {items.map((it) => {
           if (it.type === 'user' || it.type === 'assistant') {
@@ -143,6 +352,15 @@ export default function ChatView({ chat, active }: Props) {
                     ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{it.text ?? ''}</ReactMarkdown>
                     : <span className="whitespace-pre-wrap">{it.text}</span>}
                 </div>
+                {it.type === 'user' && it.attachments && it.attachments.length > 0 && (
+                  <div className="mt-0.5 flex flex-wrap justify-end gap-1 text-xs text-muted-foreground">
+                    {it.attachments.map((att, i) => (
+                      <span key={i} className="rounded border border-border px-1 py-0.5">
+                        {attachmentLabel(att, t('ui.chat.attachment_image'))}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           }
@@ -189,17 +407,81 @@ export default function ChatView({ chat, active }: Props) {
       </div>
 
       <div className="shrink-0 border-t border-border p-2">
+        {attachments.length > 0 && (
+          <div className="mb-1 flex flex-wrap gap-1">
+            {attachments.map((a, i) => (
+              <span key={i} className="flex items-center gap-1 rounded border border-border bg-card px-1.5 py-0.5 text-xs">
+                {a.label}
+                <button
+                  aria-label={t('ui.chat.remove_attachment')}
+                  className="text-muted-foreground hover:text-destructive"
+                  onClick={() => removeAttachment(i)}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {slashOpen && (
+          <ul role="listbox" aria-label={t('ui.chat.input_placeholder')}
+            className="mb-1 max-h-48 overflow-y-auto rounded border border-border bg-card py-1 text-xs shadow-md">
+            {slashMatches.map((c, i) => (
+              <li key={c.Name} role="option" aria-selected={i === slashIndex}
+                className={cn('cursor-pointer px-2 py-1', i === slashIndex && 'bg-muted')}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  applySlash(c.Name);
+                }}>
+                <span className="font-medium">/{c.Name}</span>
+                {c.Description && <span className="ml-2 text-muted-foreground">{c.Description}</span>}
+                {c.InputHint && <span className="ml-1 text-muted-foreground">({c.InputHint})</span>}
+              </li>
+            ))}
+          </ul>
+        )}
         <textarea
           className="min-h-16 w-full resize-none rounded border border-border bg-card p-2 text-sm"
           placeholder={t('ui.chat.input_placeholder')}
           value={draft}
           disabled={chat.Status !== 'ready' && chat.Status !== 'running'}
           onChange={(e) => setDraft(e.target.value)}
+          onPaste={(e) => {
+            const files = e.clipboardData?.files;
+            if (!files || files.length === 0) return;
+            e.preventDefault();
+            void addFileAttachments(Array.from(files));
+          }}
           onKeyDown={(e) => {
+            if (slashOpen && slashMatches.length > 0) {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setSlashIndex((i) => Math.min(i + 1, slashMatches.length - 1));
+                return;
+              }
+              if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setSlashIndex((i) => Math.max(i - 1, 0));
+                return;
+              }
+              if (e.key === 'Enter' || e.key === 'Tab') {
+                e.preventDefault();
+                applySlash(slashMatches[Math.min(slashIndex, slashMatches.length - 1)].Name);
+                return;
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setSlashClosed(true);
+                return;
+              }
+            }
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
           }}
         />
-        <div className="mt-1 flex justify-end gap-2">
+        <div className="mt-1 flex items-center justify-end gap-2">
+          <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => void attachByPicker()}>
+            {t('ui.chat.attach')}
+          </Button>
           {running
             ? <Button variant="outline" size="sm" onClick={() => void cancelChat(id)}>{t('ui.chat.stop')}</Button>
             : <Button size="sm" onClick={send}>{t('ui.chat.send')}</Button>}

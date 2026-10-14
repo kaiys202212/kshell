@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yangk/kshell/internal/acp"
 	"github.com/yangk/kshell/internal/agenthook"
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
@@ -48,6 +49,10 @@ func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, aut
 			emit("chat:exit", map[string]any{"id": id, "exitCode": code, "error": errMsg})
 		})
 	m.SetAutoAllowPermission(autoAllow)
+	// 技能列表不走 chat:update 时间线：单独推 chat:commands，前端存 store 供输入框补全。
+	m.SetOnCommands(func(id string, cmds []chat.Command) {
+		emit("chat:commands", map[string]any{"id": id, "commands": cmds})
+	})
 	return m
 }
 
@@ -256,6 +261,86 @@ func (a *App) SendChatPrompt(id, text string) error {
 		return errNotReady
 	}
 	return m.Prompt(id, text)
+}
+
+// ChatBlock 是前端发来的多形态内容块（扁平结构）：text 用 Text；
+// image 用 Data(base64)+MimeType；resource_link 用 URI+Name；
+// resource（粘贴的小文件内容）用 URI+MimeType+Data。
+type ChatBlock struct {
+	Type     string `json:"Type"`
+	Text     string `json:"Text,omitempty"`
+	Data     string `json:"Data,omitempty"`
+	MimeType string `json:"MimeType,omitempty"`
+	URI      string `json:"URI,omitempty"`
+	Name     string `json:"Name,omitempty"`
+}
+
+// chatBlockToACP 转成协议层内容块；resource 形态组装内嵌资源体。
+func chatBlockToACP(b ChatBlock) acp.ContentBlock {
+	out := acp.ContentBlock{Type: b.Type, Text: b.Text, Data: b.Data, MimeType: b.MimeType, URI: b.URI, Name: b.Name}
+	if b.Type == "resource" {
+		out.Resource = &acp.ResourceContents{URI: b.URI, MimeType: b.MimeType, Blob: b.Data, Text: b.Text}
+		out.Data = "" // resource 的内容放 Resource 内，避免顶层重复序列化
+		out.URI = ""
+		out.Name = ""
+	}
+	return out
+}
+
+func chatBlocksToACP(blocks []ChatBlock) []acp.ContentBlock {
+	out := make([]acp.ContentBlock, 0, len(blocks))
+	for _, b := range blocks {
+		out = append(out, chatBlockToACP(b))
+	}
+	return out
+}
+
+// SendChatPromptBlocks 向指定聊天发起一轮多形态内容块输入（文本 + 附件）。
+func (a *App) SendChatPromptBlocks(id string, blocks []ChatBlock) error {
+	a.ensureSessionHooks()
+	m := a.chats()
+	if m == nil {
+		return errNotReady
+	}
+	if len(blocks) == 0 {
+		return nil
+	}
+	return m.PromptBlocks(id, chatBlocksToACP(blocks))
+}
+
+// ListChatModels 返回会话的可用模型视图；agent 未报告模型信息时返回 ok=false 形态（空视图）。
+func (a *App) ListChatModels(id string) (chat.ModelsView, error) {
+	m := a.chats()
+	if m == nil {
+		return chat.ModelsView{}, errNotReady
+	}
+	v, ok := m.Models(id)
+	if !ok {
+		return chat.ModelsView{}, nil
+	}
+	return v, nil
+}
+
+// SetChatModel 运行时切换会话模型。
+func (a *App) SetChatModel(id, modelID string) error {
+	m := a.chats()
+	if m == nil {
+		return errNotReady
+	}
+	return m.SetModel(id, modelID)
+}
+
+// ListChatCommands 返回会话最近的技能/命令列表（available_commands_update）。
+func (a *App) ListChatCommands(id string) []chat.Command {
+	m := a.chats()
+	if m == nil {
+		return []chat.Command{}
+	}
+	cmds := m.Commands(id)
+	if cmds == nil {
+		return []chat.Command{}
+	}
+	return cmds
 }
 
 // CancelChat 取消指定聊天会话中正在进行的轮次。

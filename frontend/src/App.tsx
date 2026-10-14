@@ -20,6 +20,7 @@ import {
   onArchiveChanged,
   onArchiveSuggest,
   onChatExit,
+  onChatCommands,
   onChatMeta,
   onChatPermission,
   onChatUpdate,
@@ -126,6 +127,10 @@ function App() {
         : (i18n.t('ui.notify.session_exited', { 0: exitCode }) as string);
       notify(reason, error ? 'error' : 'info');
     });
+    // 技能命令列表：agent 的 available_commands_update，存 store 供输入框补全
+    const offC = onChatCommands(({ id, commands }) => {
+      useAppStore.getState().setChatCommands(id, commands);
+    });
 
     void listChats()
       .then(async (list) => {
@@ -148,6 +153,7 @@ function App() {
       offU();
       offP();
       offX();
+      offC();
     };
   }, []);
 

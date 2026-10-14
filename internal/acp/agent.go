@@ -269,24 +269,59 @@ func (a *Agent) mcpParams() []any {
 	return out
 }
 
-func (a *Agent) NewSession(ctx context.Context, cwd string) (string, error) {
+// sessionStartFromResult 从 new/load 响应提取调用方需要的会话信息。
+func sessionStartFromResult(res NewSessionResult) SessionStart {
+	out := SessionStart{SessionID: res.SessionID, Models: res.Models}
+	for i := range res.ConfigOptions {
+		if res.ConfigOptions[i].ID == "model" {
+			opt := res.ConfigOptions[i]
+			out.ModelConfig = &opt
+			break
+		}
+	}
+	return out
+}
+
+func (a *Agent) NewSession(ctx context.Context, cwd string) (SessionStart, error) {
 	var res NewSessionResult
 	err := a.call(ctx, "session/new", NewSessionParams{Cwd: cwd, McpServers: a.mcpParams()}, &res)
-	return res.SessionID, err
+	if err != nil {
+		return SessionStart{}, err
+	}
+	return sessionStartFromResult(res), nil
 }
 
-func (a *Agent) LoadSession(ctx context.Context, sessionID, cwd string) error {
+func (a *Agent) LoadSession(ctx context.Context, sessionID, cwd string) (SessionStart, error) {
 	var res NewSessionResult
-	return a.call(ctx, "session/load", LoadSessionParams{SessionID: sessionID, Cwd: cwd, McpServers: a.mcpParams()}, &res)
+	if err := a.call(ctx, "session/load", LoadSessionParams{SessionID: sessionID, Cwd: cwd, McpServers: a.mcpParams()}, &res); err != nil {
+		return SessionStart{}, err
+	}
+	return sessionStartFromResult(res), nil
 }
 
-func (a *Agent) Prompt(ctx context.Context, sessionID, text string) (string, error) {
+func (a *Agent) Prompt(ctx context.Context, sessionID string, blocks []ContentBlock) (string, error) {
 	var res PromptResult
-	params := PromptParams{SessionID: sessionID, Prompt: []ContentBlock{{Type: "text", Text: text}}}
+	params := PromptParams{SessionID: sessionID, Prompt: blocks}
 	if err := a.call(ctx, "session/prompt", params, &res); err != nil {
 		return "", err
 	}
 	return res.StopReason, nil
+}
+
+// SetModel 运行时切换会话模型：优先 session/set_model（v1 形态）；
+// agent 返回 -32601（method not found）时回退新式的 session/set_config_option
+//（optionId 固定 "model"，当前官方适配器即此形态）。两条路都不通时错误上抛。
+func (a *Agent) SetModel(ctx context.Context, sessionID, modelID string) error {
+	err := a.call(ctx, "session/set_model", SetModelParams{SessionID: sessionID, ModelID: modelID}, nil)
+	var rpcErr *RPCError
+	if !errors.As(err, &rpcErr) || rpcErr.Code != -32601 {
+		return err
+	}
+	value, err := json.Marshal(modelID)
+	if err != nil {
+		return err
+	}
+	return a.call(ctx, "session/set_config_option", SetConfigOptionParams{SessionID: sessionID, OptionID: "model", Value: value}, nil)
 }
 
 func (a *Agent) Cancel(sessionID string) error {
