@@ -60,11 +60,13 @@ function RequirementDialog({
   const save = () => {
     const trimmed = text.trim();
     if (!trimmed || busy) return;
-    // 逗号分隔转数组：去空白、丢空段
-    const tags = tagsInput
-      .split(/[,,]/)
-      .map((s) => s.trim())
-      .filter(Boolean);
+    // 逗号分隔转数组：去空白、丢空段、去重（重复标签会让 Badge key 冲突）
+    const tags = [...new Set(
+      tagsInput
+        .split(/[,,]/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    )];
     setBusy(true);
     const call = editing
       ? updateRequirement(editing.id, trimmed, priority, tags)

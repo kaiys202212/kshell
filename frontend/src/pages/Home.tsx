@@ -45,8 +45,6 @@ const TOOL_BADGES_MAX = 3;
 const GRID = 'grid gap-2.5 grid-cols-[repeat(auto-fill,minmax(220px,1fr))]';
 // 卡片分页大小：超过 9 张出分页栏，网格区固定高度不滚动
 const PAGE_SIZE = 9;
-// 需求拖拽 MIME（与 RequirementList.dragstart 写入的一致）
-const REQ_MIME = REQUIREMENT_MIME;
 
 type CreateStep = 'closed' | 'choose' | 'remote-conn' | 'remote-browse';
 
@@ -324,7 +322,7 @@ export default function Home() {
   const dropRequirement = async (wsPath: string, e: React.DragEvent) => {
     e.preventDefault();
     setDragOverWs(null);
-    const raw = e.dataTransfer.getData(REQ_MIME);
+    const raw = e.dataTransfer.getData(REQUIREMENT_MIME);
     if (!raw) return;
     let payload: { id?: string; text?: string };
     try {
@@ -587,7 +585,7 @@ export default function Home() {
                       // 需求拖放目标：dragover 高亮、drop 派发（preventDefault 才允许 drop）
                       onDragOver={(e) => {
                         // types 在部分环境（旧 jsdom、非拖拽合成事件）可能缺失，防御性兜底
-                        if (!e.dataTransfer.types?.includes(REQ_MIME)) return;
+                        if (!e.dataTransfer.types?.includes(REQUIREMENT_MIME)) return;
                         e.preventDefault();
                         setDragOverWs(ws.Path);
                       }}
