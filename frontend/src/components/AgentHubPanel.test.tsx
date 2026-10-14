@@ -205,6 +205,20 @@ describe('AgentHubPanel', () => {
     expect(screen.getAllByRole('listitem').length).toBeGreaterThan(0);
   });
 
+  it('用户气泡：文字在卡片内居左，卡片整体仍靠右；长串可断行不溢出', async () => {
+    api.listHubMessages.mockResolvedValue([
+      { id: 1, kind: 'user', chatId: 'c1', text: '很长的一条无空格长路径D:\\a\\b\\c\\d\\e\\f\\g', ts: 1 },
+    ]);
+    render(<AgentHubPanel />);
+    const bubble = await screen.findByText(/很长的一条无空格长路径/);
+    // 卡片容器：inline-block 且靠右（外层 text-right），但卡内文字居左且可断行
+    const card = bubble.closest('div.selectable');
+    expect(card).not.toBeNull();
+    expect(card!.className).toContain('text-left');
+    expect(card!.className).toContain('break-words');
+    expect(card!.className).toContain('overflow-hidden');
+  });
+
   it('agent 回复不随通知气泡（agentNotices）消失而消失', async () => {
     useAppStore.setState({
       agentNotices: [{ id: 9, tool: 'codex', event: 'Stop', termKey: 'k', workspace: 'D:\\ws\\a', summary: '气泡正文' }],

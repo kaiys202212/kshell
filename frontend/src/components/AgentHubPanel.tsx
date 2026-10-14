@@ -470,7 +470,8 @@ export default function AgentHubPanel() {
           return m.kind === 'user' ? (
             <div key={`h${m.id}`} className="text-right">
               {attr && <div className="mb-0.5 text-[11px] text-muted-foreground">{attr}</div>}
-              <div className="selectable inline-block max-w-[85%] rounded-md bg-primary px-3 py-1.5 text-primary-foreground">
+              {/* 气泡内强制居左：外层 text-right 只负责把卡片推到行尾，避免长文贴右边缘 */}
+              <div className="selectable inline-block max-w-[85%] break-words overflow-hidden rounded-md bg-primary px-3 py-1.5 text-left text-primary-foreground">
                 <span className="whitespace-pre-wrap">{m.text}</span>
               </div>
             </div>
