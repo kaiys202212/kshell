@@ -239,6 +239,59 @@ func TestArchiveIdempotentByID(t *testing.T) {
 	}
 }
 
+func TestStatusRoundtrip(t *testing.T) {
+	s := newTestStore(t, 10)
+	if err := s.Append(Message{Kind: "user", Text: "m0", Status: StatusQueued}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.List()[0].Status; got != StatusQueued {
+		t.Fatalf("Status = %q", got)
+	}
+}
+
+func TestReserveIDAndAppendWithID(t *testing.T) {
+	s := newTestStore(t, 10)
+	id := s.ReserveID()
+	if err := s.AppendWithID(Message{ID: id, Kind: "user", Text: "预留"}); err != nil {
+		t.Fatal(err)
+	}
+	got := s.List()
+	if len(got) != 1 || got[0].ID != id {
+		t.Fatalf("应保留预留 ID: %+v", got)
+	}
+	// 预留后正常 Append 不撞车
+	if err := s.Append(Message{Kind: "user", Text: "next"}); err != nil {
+		t.Fatal(err)
+	}
+	if got[0].ID+1 != s.List()[1].ID {
+		t.Fatalf("ID 不连续: %+v", s.List())
+	}
+}
+
+func TestSetStatus(t *testing.T) {
+	s := newTestStore(t, 10)
+	if err := s.Append(Message{Kind: "user", Text: "m0", Status: StatusQueued}); err != nil {
+		t.Fatal(err)
+	}
+	id := s.List()[0].ID
+	if !s.SetStatus(id, StatusRecalled) {
+		t.Fatal("SetStatus 应命中")
+	}
+	if got := s.List()[0].Status; got != StatusRecalled {
+		t.Fatalf("Status = %q", got)
+	}
+	// 持久化验证
+	s2 := New(s.dir, 10)
+	_ = s2.Load()
+	if got := s2.List()[0].Status; got != StatusRecalled {
+		t.Fatalf("重载后 Status = %q", got)
+	}
+	// 未知 ID 返回 false
+	if s.SetStatus(999, StatusRecalled) {
+		t.Fatal("未知 ID 应返回 false")
+	}
+}
+
 func TestLoadArchiveMissing(t *testing.T) {
 	s := newTestStore(t, 10)
 	got, err := s.LoadArchive("2026-01")

@@ -26,6 +26,13 @@ const fileVersion = 1
 // defaultLiveCap 是 live 文件保留的消息条数上限（超出按月归档）。
 const defaultLiveCap = 500
 
+// 用户消息状态（Status 字段）：空串 = 已送达（旧数据兼容），queued = 排队中可撤回，
+// recalled = 已撤回（原消息保留只做标记）。
+const (
+	StatusQueued   = "queued"
+	StatusRecalled = "recalled"
+)
+
 // Message 是一条 AgentHub 消息，两类共用。
 type Message struct {
 	// ID 是全局自增序号：归档后仍单调，供前端稳定排序与去重。
@@ -44,6 +51,8 @@ type Message struct {
 	Text string `json:"text"`
 	// Event 是 agent 回复的事件语义（Stop/Notification/error...）；用户消息为空。
 	Event string `json:"event,omitempty"`
+	// Status 是用户消息的投递状态：空 = 已送达，queued = 排队中，recalled = 已撤回。
+	Status string `json:"status,omitempty"`
 	// Ts 是消息时刻的 UnixNano。
 	Ts int64 `json:"ts"`
 }
@@ -128,14 +137,32 @@ func (s *Store) List() []Message {
 // 旧 live.json 仍含已归档的溢出部分，下次进程重载后再溢出会重归档同一批——
 // archive 按 ID 去重（见下），保证这种场景下归档文件不出现重复条目。
 func (s *Store) Append(m Message) error {
+	m.ID = s.ReserveID()
+	return s.AppendWithID(m)
+}
+
+// ReserveID 预分配一个消息 ID 并推进水位：发送链路需要先拿到 ID 传给 chat 队列
+//（撤回靠它定位），落盘随后才发生；预留未落盘只留下空洞，ID 仍单调唯一。
+func (s *Store) ReserveID() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nextID++
+	return s.nextID
+}
+
+// AppendWithID 以调用方给定的 ID 追加消息（与 ReserveID 配对）；Ts 缺省时补当前时刻。
+// 溢出归档与失败语义同 Append。
+func (s *Store) AppendWithID(m Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	m.ID = s.nextID + 1
 	if m.Ts == 0 {
 		m.Ts = time.Now().UnixNano()
 	}
-	s.nextID = m.ID
+	// 水位按实际落盘值抬：防止调用方绕过 ReserveID 传入偏小 ID 后续撞车。
+	if m.ID > s.nextID {
+		s.nextID = m.ID
+	}
 	s.live = append(s.live, m)
 
 	if len(s.live) > s.liveCap {
@@ -149,6 +176,19 @@ func (s *Store) Append(m Message) error {
 		s.live = s.live[overflow:]
 	}
 	return s.writeLive()
+}
+
+// SetStatus 把 live 中指定 ID 的消息改为 status 并落盘；未命中（已归档/不存在）返回 false。
+func (s *Store) SetStatus(id int64, status string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.live {
+		if s.live[i].ID == id {
+			s.live[i].Status = status
+			return s.writeLive() == nil
+		}
+	}
+	return false
 }
 
 // Clear 清空 live 消息（归档保留，符合「只增不删」）。
