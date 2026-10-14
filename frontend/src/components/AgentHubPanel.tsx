@@ -399,15 +399,21 @@ export default function AgentHubPanel() {
             <div className="mt-1 flex flex-col gap-1 border-t border-border pt-1">
               {archiveMessages.map((m) => {
                 const attr = attrOf(m);
+                // 与 live 同口径：用户消息纯文本，agent 回复带归因 + markdown
                 return (
                   <div key={`a${m.id}`} className="text-muted-foreground">
-                    {/* 归档消息与 live 同口径：带归因行 + markdown 渲染 */}
                     <div className="text-[11px]">
-                      {[toolDisplayName(m.tool ?? ''), attr].filter(Boolean).join(' · ')}
+                      {[m.kind === 'user' ? '' : toolDisplayName(m.tool ?? ''), attr]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </div>
-                    <div className={markdownBubbleClass}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
-                    </div>
+                    {m.kind === 'user' ? (
+                      <span className="whitespace-pre-wrap">{m.text}</span>
+                    ) : (
+                      <div className={cn(markdownBubbleClass, '[&_pre]:whitespace-pre-wrap')}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -470,7 +476,7 @@ export default function AgentHubPanel() {
             </div>
           ) : (
             <div key={`h${m.id}`} className="text-left">
-              <div className="selectable inline-block max-w-[85%] rounded-md bg-muted px-3 py-1.5">
+              <div className="selectable inline-block max-w-[85%] break-words overflow-hidden rounded-md bg-muted px-3 py-1.5 [&_pre]:whitespace-pre-wrap">
                 {/* 归因行：工具 · 项目 · 会话；缺项跳过，全缺只剩工具名 */}
                 <div className="mb-0.5 text-[11px] text-muted-foreground">
                   {[toolDisplayName(m.tool ?? ''), attr].filter(Boolean).join(' · ')}
