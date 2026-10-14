@@ -272,6 +272,15 @@ describe('ChatView', () => {
     expect(screen.queryByText(tt('ui.chat.model_label'))).not.toBeInTheDocument();
   });
 
+  it('Models 为 null（Go nil slice 序列化）时渲染不崩溃', async () => {
+    // 模拟 Go 侧 ListChatModels !ok 返回 { Current: '', Models: null }（wailsjs 生成类型不可信）
+    api.listChatModels.mockResolvedValue({ Current: '', Models: null });
+    useAppStore.setState({ chatModels: { c1: { Current: '', Models: null as never } } });
+    render(<ChatView chat={CHAT} active />);
+    await waitFor(() => expect(api.listChatModels).toHaveBeenCalledWith('c1'));
+    expect(screen.queryByText(tt('ui.chat.model_label'))).not.toBeInTheDocument();
+  });
+
   it('模型切换失败提示错误且保留当前选项', async () => {
     api.listChatModels.mockResolvedValue({
       Current: 'm1',

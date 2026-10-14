@@ -235,7 +235,7 @@ export default function AgentHubPanel() {
     if (name === 'model') {
       void listChatModels(currentTargetId)
         .then((view) => {
-          if (!view || view.Models.length === 0) {
+          if (!view || !view.Models || view.Models.length === 0) {
             useAppStore.getState().notify(t('ui.hub.no_models'), 'error');
             return;
           }
@@ -658,7 +658,7 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
         registerChat(chat);
         return;
       }
-      if (view && view.Models.length > 0) {
+      if (view && view.Models && view.Models.length > 0) {
         createdRef.current = chat;
         setModels(view);
         setSelected(view.Current || view.Models[0].ID);
@@ -736,7 +736,7 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
             value={selected}
             onChange={(e) => setSelected(e.target.value)}
           >
-            {models?.Models.map((m) => (
+            {models?.Models?.map((m) => (
               <option key={m.ID} value={m.ID}>
                 {m.Name}
               </option>
