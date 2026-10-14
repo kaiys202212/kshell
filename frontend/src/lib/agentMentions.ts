@@ -11,25 +11,24 @@ export interface MentionAgent {
 
 export interface MentionOption {
   id: string;
-  label: string; // 唯一展示名，形如 Claude Code#1
+  label: string; // 唯一展示名，形如 Claude Code#c3
 }
 
-// buildMentionOptions 生成补全项：按工具展示名分组编号，保证同名唯一。
-// 编号按输入顺序（即 store.chats 顺序），稳定可预期。
+// buildMentionOptions 生成补全项：用工具展示名 + 会话 id（后端稳定自增 c1/c2）拼唯一展示名。
+// 必须顺序无关：早先按列表顺序编号（#1/#2）会在 scan:done 重建 chats 后漂移，
+// 同一条 @…#2 会投给不同会话。改用 id 后，label↔id 映射不随列表顺序变化。
 export function buildMentionOptions(agents: MentionAgent[]): MentionOption[] {
-  const counts = new Map<string, number>();
-  return agents.map((a) => {
-    const base = toolDisplayName(a.toolId);
-    const n = (counts.get(base) ?? 0) + 1;
-    counts.set(base, n);
-    return { id: a.id, label: `${base}#${n}` };
-  });
+  return agents.map((a) => ({
+    id: a.id,
+    label: `${toolDisplayName(a.toolId)}#${a.id}`,
+  }));
 }
 
 // resolveMentionTarget 解析投递目标：
 // - 输入里有命中补全项的 @ 时，取最后一个命中项（v1 简化：不做多目标广播）；
 // - 无 @ 时回落到 lastAgentId；
-// - @ 了不存在的名字视为无效，返回 null（宁可报错也不误投）。
+// - 词首的 @（前为行首或空白）其后非空白一段未命中任何候选 label 时，视为无效提及，
+//   返回 null（宁可报错也不误投）。
 export function resolveMentionTarget(
   text: string,
   options: MentionOption[],
@@ -48,7 +47,7 @@ export function resolveMentionTarget(
     }
   }
   if (found) return found;
-  // 有 @ 但无命中（乱写）→ 不投，避免误发
-  if (/@\S/.test(text)) return null;
+  // 仅把「词首 @」当作提及尝试：邮箱 a@b.com 的 @ 不在词首，不构成无效提及。
+  if (/(^|\s)@[^\s@]+/.test(text)) return null;
   return lastAgentId;
 }

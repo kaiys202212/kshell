@@ -102,9 +102,9 @@ describe('AgentHubPanel', () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '重构认证' })] });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '@Claude Code#1 帮我看下' } });
+    fireEvent.change(box, { target: { value: '@Claude Code#c1 帮我看下' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '@Claude Code#1 帮我看下'));
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '@Claude Code#c1 帮我看下'));
     expect(useAppStore.getState().lastAgentId).toBe('c1');
     expect((box as HTMLTextAreaElement).value).toBe('');
   });
@@ -159,9 +159,9 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '@Cur' } });
     const list = screen.getByRole('list', { name: tt('ui.hub.mention_aria') });
-    expect(list).toHaveTextContent('@Cursor#1');
-    fireEvent.click(screen.getByRole('button', { name: '@Cursor#1' }));
-    expect((box as HTMLTextAreaElement).value).toBe('@Cursor#1 ');
+    expect(list).toHaveTextContent('@Cursor#c2');
+    fireEvent.click(screen.getByRole('button', { name: '@Cursor#c2' }));
+    expect((box as HTMLTextAreaElement).value).toBe('@Cursor#c2 ');
   });
 
   it('新建 agent：选项目与 ACP 工具后调用 openWorkspaceACP 并登记新 chat', async () => {

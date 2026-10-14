@@ -8,22 +8,30 @@ const agents: MentionAgent[] = [
 ];
 
 describe('buildMentionOptions', () => {
-  it('展示名重复时追加序号保证唯一', () => {
+  it('标签附加稳定 id，同名不冲突', () => {
     const opts = buildMentionOptions(agents);
-    expect(opts.map((o) => o.label)).toEqual(['Claude Code#1', 'Claude Code#2', 'Cursor#1']);
+    expect(opts.map((o) => o.label)).toEqual(['Claude Code#c1', 'Claude Code#c2', 'Cursor#c3']);
     expect(opts.map((o) => o.id)).toEqual(['c1', 'c2', 'c3']);
+  });
+
+  it('标签与列表顺序无关（打乱输入后 id↔label 映射不变）', () => {
+    const shuffled = [agents[2], agents[0], agents[1]];
+    const map = (list: MentionAgent[]) =>
+      Object.fromEntries(buildMentionOptions(list).map((o) => [o.id, o.label]));
+
+    expect(map(shuffled)).toEqual(map(agents));
   });
 });
 
 describe('resolveMentionTarget', () => {
   it('命中唯一 @ 时路由到该 agent', () => {
     const opts = buildMentionOptions(agents);
-    expect(resolveMentionTarget('帮我看下 @Cursor#1', opts, 'c1')).toBe('c3');
+    expect(resolveMentionTarget('帮我看下 @Cursor#c3', opts, 'c1')).toBe('c3');
   });
 
   it('多个 @ 以最后一个为准', () => {
     const opts = buildMentionOptions(agents);
-    expect(resolveMentionTarget('@Cursor#1 然后 @Claude Code#2', opts, 'c1')).toBe('c2');
+    expect(resolveMentionTarget('@Cursor#c3 然后 @Claude Code#c2', opts, 'c1')).toBe('c2');
   });
 
   it('未 @ 时回落到最后交互的 agent', () => {
@@ -39,5 +47,20 @@ describe('resolveMentionTarget', () => {
   it('@ 的 agent 已不在列表时返回 null（不误投）', () => {
     const opts = buildMentionOptions(agents);
     expect(resolveMentionTarget('@不存在的东西', opts, 'c1')).toBeNull();
+  });
+
+  it('文本含邮箱（@ 不在词首）不算无效提及，回落 lastAgentId', () => {
+    const opts = buildMentionOptions(agents);
+    expect(resolveMentionTarget('a@b.com 帮我看看', opts, 'c1')).toBe('c1');
+  });
+
+  it('邮箱与真提及混排时仍以真提及为准', () => {
+    const opts = buildMentionOptions(agents);
+    expect(resolveMentionTarget('a@b.com 然后 @Cursor#c3', opts, 'c1')).toBe('c3');
+  });
+
+  it('无 lastAgentId 且仅邮箱时返回 null', () => {
+    const opts = buildMentionOptions(agents);
+    expect(resolveMentionTarget('a@b.com', opts, null)).toBeNull();
   });
 });

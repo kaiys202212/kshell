@@ -59,7 +59,7 @@ export default function AgentHubPanel() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const sentSeq = useRef(0);
 
-  // @ 补全项：按 store.chats 顺序生成稳定唯一展示名（Claude Code#1 ...）
+  // @ 补全项：展示名 + 会话 id，顺序无关（Claude Code#c1 ...）
   const options = useMemo(
     () =>
       buildMentionOptions(
