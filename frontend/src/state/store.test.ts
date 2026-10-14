@@ -18,6 +18,7 @@ beforeEach(() => {
     focusTermKey: null,
     notifySound: true,
     unreachableWorkspaces: {},
+    lastAgentId: null,
   });
 });
 
@@ -349,5 +350,13 @@ describe('store', () => {
     );
     expect(tabs.map((t) => t.id)).toEqual(['d:\\ws', 'D:\\other']);
     expect(activeTabId).toBeNull();
+  });
+});
+
+describe('lastAgentId', () => {
+  it('记录最后交互的 agent，未设时为 null', () => {
+    expect(useAppStore.getState().lastAgentId).toBeNull();
+    useAppStore.getState().setLastAgentId('c1');
+    expect(useAppStore.getState().lastAgentId).toBe('c1');
   });
 });
