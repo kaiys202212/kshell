@@ -757,6 +757,24 @@
       "tool_call_fallback": "工具调用",
       "reject": "拒绝"
     },
+    "hub": {
+      "title": "Agent 汇总",
+      "empty": "暂无运行中的 agent",
+      "new_agent": "新建 agent",
+      "new_agent_title": "新建 agent",
+      "need_target": "请先 @ 一个 agent，例如 @Claude Code#1",
+      "mention_aria": "提及候选",
+      "input_placeholder": "给 agent 发消息；@ 指定目标，Enter 发送",
+      "send": "发送",
+      "status_running": "运行中",
+      "status_ready": "空闲",
+      "status_exited": "已退出",
+      "field_project": "项目",
+      "field_tool": "工具",
+      "no_tools": "没有可用的 ACP 工具",
+      "cancel": "取消",
+      "create": "创建"
+    },
     "transcript": {
       "preview_title": "会话预览",
       "activate": "激活",
