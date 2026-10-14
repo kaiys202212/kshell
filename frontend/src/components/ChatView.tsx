@@ -313,8 +313,9 @@ export default function ChatView({ chat, active }: Props) {
     }
   };
 
+  // Models 用 ?. 兜底：Go 侧 nil slice 序列化成 null，wailsjs 生成类型不可信
   const currentModelName =
-    models?.Models.find((m) => m.ID === models.Current)?.Name ?? models?.Current ?? '';
+    models?.Models?.find((m) => m.ID === models.Current)?.Name ?? models?.Current ?? '';
 
   return (
     <div
@@ -348,7 +349,7 @@ export default function ChatView({ chat, active }: Props) {
           {chat.Error ? t('ui.chat.error_suffix', { error: translateBackend(chat.Error) }) : ''}
         </div>
       )}
-      {models && models.Models.length > 0 && (
+      {models && models.Models && models.Models.length > 0 && (
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1 text-xs">
           <span className="text-muted-foreground">{t('ui.chat.model_label')}</span>
           <DropdownMenu>
@@ -358,7 +359,7 @@ export default function ChatView({ chat, active }: Props) {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
-              {models.Models.map((m) => (
+              {models.Models?.map((m) => (
                 <DropdownMenuItem key={m.ID} onSelect={() => void switchModel(m.ID)}>
                   <span className={cn(m.ID === models.Current && 'font-medium')}>{m.Name}</span>
                   {m.Description && <span className="ml-2 text-muted-foreground">{m.Description}</span>}

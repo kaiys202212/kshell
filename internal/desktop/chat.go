@@ -358,7 +358,9 @@ func (a *App) ListChatModels(id string) (chat.ModelsView, error) {
 	}
 	v, ok := m.Models(id)
 	if !ok {
-		return chat.ModelsView{}, nil
+		// Models 必须回非 nil 空切片：nil slice 序列化成 JSON null，
+		// 前端 models.Models.find 会抛 TypeError 白屏
+		return chat.ModelsView{Models: []chat.ModelView{}}, nil
 	}
 	return v, nil
 }

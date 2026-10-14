@@ -100,6 +100,30 @@ func TestChatModelsAPI(t *testing.T) {
 	}
 }
 
+// TestChatModelsAPINilSlice 验证 agent 未报告模型时 Models 是非 nil 空切片：
+// nil slice 经 JSON 序列化成 null，前端 models.Models.find 会白屏（Cannot read properties of null）。
+func TestChatModelsAPINilSlice(t *testing.T) {
+	b := &fakeChatCaptureBackend{} // 无 models 的 SessionStart
+	rec := &notifyRecorder{}
+	m := newChatManagerWith(rec.emit, b, nil, nil, nil)
+	t.Cleanup(m.CloseAll)
+	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "/w"}, chat.Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := NewAppWith(Options{Chats: m})
+	view, err := app.ListChatModels(info.ID)
+	if err != nil {
+		t.Fatalf("ListChatModels: %v", err)
+	}
+	if view.Models == nil {
+		t.Fatal("Models 为 nil，JSON 序列化会是 null")
+	}
+	if len(view.Models) != 0 {
+		t.Fatalf("Models = %+v", view.Models)
+	}
+}
+
 // TestChatCommandsEmitted 验证 available_commands_update 经 chat:commands 推给前端。
 func TestChatCommandsEmitted(t *testing.T) {
 	b := &fakeChatCaptureBackend{}
