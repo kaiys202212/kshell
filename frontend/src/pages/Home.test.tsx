@@ -106,6 +106,11 @@ async function continueLocalCreate() {
 }
 
 describe('Home', () => {
+  it('首页渲染 Agent 汇总模块', () => {
+    render(<Home />);
+    expect(screen.getByText(tt('ui.hub.title'))).toBeTruthy();
+  });
+
   it('按最后活动时间倒序渲染，零值/空值的时间排最后（再按名称）', async () => {
     render(<Home />);
     await screen.findByTitle('D:\\proj-new');
