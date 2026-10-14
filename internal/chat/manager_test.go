@@ -23,6 +23,9 @@ type fakeConn struct {
 	waitCh    chan struct{}
 	waitOnce  sync.Once
 
+	promptGate chan struct{} // 非 nil 时 Prompt 阻塞等待，直到收到信号或 Close
+	prompts    []string      // 记录每次 Prompt 的文本（断言投递顺序）
+
 	initSet    bool
 	initResult acp.InitializeResult
 }
@@ -41,10 +44,24 @@ func (c *fakeConn) NewSession(ctx context.Context, cwd string) (string, error) {
 }
 func (c *fakeConn) LoadSession(ctx context.Context, sessionID, cwd string) error { return c.loadErr }
 func (c *fakeConn) Prompt(ctx context.Context, sessionID, text string) (string, error) {
+	c.mu.Lock()
+	c.prompts = append(c.prompts, text)
+	gate := c.promptGate
+	c.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
 	if c.stop == "" {
 		c.stop = "end_turn"
 	}
 	return c.stop, c.promptErr
+}
+
+// promptCount 取某连接的 Prompt 调用次数（断言投递顺序用）。
+func (c *fakeConn) promptCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.prompts)
 }
 func (c *fakeConn) Cancel(sessionID string) error {
 	c.mu.Lock()
@@ -390,8 +407,9 @@ func TestChatErrorsWireKeys(t *testing.T) {
 	m.mu.Lock()
 	m.byID[info.ID].info.Status = StatusRunning
 	m.mu.Unlock()
-	if err := m.Prompt(info.ID, "hi"); err == nil || err.Error() != "err.chat.busy" {
-		t.Fatalf("busy = %v", err)
+	// 忙时不再拒绝：Prompt 应入队并返回 nil（见 TestManagerPromptQueuesWhenRunning）。
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatalf("busy prompt 应入队而非报错: %v", err)
 	}
 }
 
@@ -533,4 +551,101 @@ func TestAttachSessionKeepsPlaceholderUntilMessages(t *testing.T) {
 	if got := m.List()[0]; got.Title != "真实标题" {
 		t.Fatalf("Title = %q", got.Title)
 	}
+}
+
+// 忙时排队：running 中再 Prompt 应入队并补时间线，不返回 errRunning。
+func TestManagerPromptQueuesWhenRunning(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	b.conn.promptGate = make(chan struct{}) // 让第一轮卡住，保持 running
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "first"); err != nil {
+		t.Fatalf("first prompt: %v", err)
+	}
+	waitStatus(t, m, info.ID, StatusRunning)
+
+	// 第二轮在忙时应被接受（入队），不得返回 errRunning
+	if err := m.Prompt(info.ID, "second"); err != nil {
+		t.Fatalf("queued prompt should be accepted, got %v", err)
+	}
+	// 排队消息也要立刻进时间线，界面才看得到
+	if !historyHasText(m.History(info.ID), "second") {
+		t.Fatalf("queued user message missing from history")
+	}
+}
+
+// turn_done 后自动投递队列下一条。
+func TestManagerPromptDrainsQueueOnTurnDone(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	b.conn.promptGate = make(chan struct{})
+	info, _ := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	_ = m.Prompt(info.ID, "first")
+	waitStatus(t, m, info.ID, StatusRunning)
+	_ = m.Prompt(info.ID, "second")
+
+	// 放行第一轮 → 收尾应自动发起第二轮（文本 "second"）
+	b.conn.mu.Lock()
+	gate := b.conn.promptGate
+	b.conn.mu.Unlock()
+	close(gate)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if b.conn.promptCount() >= 2 {
+			b.conn.mu.Lock()
+			got := b.conn.prompts
+			b.conn.mu.Unlock()
+			if got[1] != "second" {
+				t.Fatalf("second prompt = %q, want %q", got[1], "second")
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("queue not drained; prompts=%d", b.conn.promptCount())
+}
+
+// Close 必须清空队列：不应再投递已排队的消息。
+func TestManagerCloseClearsQueue(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	b.conn.promptGate = make(chan struct{})
+	info, _ := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	_ = m.Prompt(info.ID, "first")
+	waitStatus(t, m, info.ID, StatusRunning)
+	_ = m.Prompt(info.ID, "second")
+	_ = m.Close(info.ID)
+
+	b.conn.mu.Lock()
+	gate := b.conn.promptGate
+	b.conn.mu.Unlock()
+	close(gate)
+
+	time.Sleep(100 * time.Millisecond)
+	if n := b.conn.promptCount(); n != 1 {
+		t.Fatalf("closed session should not drain queue; prompts=%d want 1", n)
+	}
+}
+
+// 测试辅助：等待某会话到达指定状态。
+func waitStatus(t *testing.T, m *Manager, id, want string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if info, ok := m.Get(id); ok && info.Status == want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("session %s never reached %s", id, want)
+}
+
+func historyHasText(h []Update, text string) bool {
+	for _, u := range h {
+		if u.Type == "user" && u.Text == text {
+			return true
+		}
+	}
+	return false
 }
