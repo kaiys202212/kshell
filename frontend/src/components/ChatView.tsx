@@ -126,7 +126,7 @@ export default function ChatView({ chat, active }: Props) {
       }}
     >
       {chat.Status === 'exited' && (
-        <div className="shrink-0 bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+        <div className="shrink-0 break-words bg-muted px-2 py-0.5 text-xs text-muted-foreground">
           {t('ui.chat.exited')}
           {chat.ExitCode ? t('ui.chat.exited_code', { code: chat.ExitCode }) : ''}
           {chat.Error ? t('ui.chat.error_suffix', { error: translateBackend(chat.Error) }) : ''}
@@ -172,14 +172,14 @@ export default function ChatView({ chat, active }: Props) {
           }
           if (it.type === 'plan') {
             return (
-              <ul key={it.key} className="selectable mb-2 list-disc pl-5 text-xs text-muted-foreground">
+              <ul key={it.key} className="selectable mb-2 list-disc break-words pl-5 text-xs text-muted-foreground">
                 {(it.plan ?? []).map((e, i) => <li key={i}>{e.Content}</li>)}
               </ul>
             );
           }
           if (it.type === 'error') {
             return (
-              <div key={it.key} className="selectable mb-2 text-xs text-destructive">
+              <div key={it.key} className="selectable mb-2 break-words text-xs text-destructive">
                 {t('ui.chat.error_prefix', { text: translateBackend(it.text ?? '') })}
               </div>
             );
