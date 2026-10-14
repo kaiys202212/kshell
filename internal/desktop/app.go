@@ -25,6 +25,7 @@ import (
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/remote"
 	remotefs "github.com/yangk/kshell/internal/remote/fs"
+	"github.com/yangk/kshell/internal/requirements"
 	"github.com/yangk/kshell/internal/sessionarchive"
 	"github.com/yangk/kshell/internal/terminal"
 	"github.com/yangk/kshell/internal/workspace"
@@ -105,6 +106,10 @@ type Options struct {
 	HubStore *hub.Store
 	// HubPath 是 AgentHub 历史目录（~/.kshell/hub）；仅在未注入 HubStore 时用于装配。
 	HubPath string
+	// RequirementsStore 是首页需求列表存储；nil 时 Startup 按 RequirementsPath 装配（测试可注入）。
+	RequirementsStore *requirements.Store
+	// RequirementsPath 是需求列表落盘文件完整路径；仅在未注入 RequirementsStore 时用于装配。
+	RequirementsPath string
 }
 
 // App 是暴露给前端的绑定对象：薄封装 discovery/providers/window 等核心包，
@@ -365,6 +370,14 @@ func (a *App) initRealDeps() {
 		store := hub.New(a.opts.HubPath, 0)
 		_ = store.Load() // 历史缺失/损坏不阻断启动（与项目表/连接存储同口径）
 		a.opts.HubStore = store
+	}
+	if a.opts.RequirementsPath == "" {
+		a.opts.RequirementsPath = paths.Requirements
+	}
+	if a.opts.RequirementsStore == nil { // 幂等：已注入（测试）或已装配过就不重建
+		store := requirements.New(filepath.Dir(a.opts.RequirementsPath))
+		_ = store.Load() // 列表缺失/损坏不阻断启动（与 hub 同口径）
+		a.opts.RequirementsStore = store
 	}
 	if a.opts.Layout.Config == "" {
 		a.opts.Layout = paths
