@@ -90,6 +90,9 @@ const mocks = vi.hoisted(() => ({
   onChatUpdate: vi.fn(),
   onChatPermission: vi.fn(),
   onChatExit: vi.fn(),
+  onChatCommands: vi.fn(),
+  listChatModels: vi.fn().mockResolvedValue(null),
+  listChatCommands: vi.fn().mockResolvedValue([]),
   refreshFiles: vi.fn().mockResolvedValue(undefined),
   startFileWatch: vi.fn().mockResolvedValue(undefined),
   stopFileWatch: vi.fn(),
@@ -228,6 +231,7 @@ beforeEach(() => {
   mocks.onChatUpdate.mockImplementation(() => () => {});
   mocks.onChatPermission.mockImplementation(() => () => {});
   mocks.onChatExit.mockImplementation(() => () => {});
+  mocks.onChatCommands.mockImplementation(() => () => {});
   useAppStore.setState({
     openTabs: [],
     activeTabId: null,
@@ -242,6 +246,8 @@ beforeEach(() => {
     chatItems: {},
     chatSeq: {},
     chatPermissions: {},
+    chatModels: {},
+    chatCommands: {},
     layout: { left: 288, right: 300 },
   });
 });
@@ -520,6 +526,20 @@ describe('App', () => {
       updateCb?.({ id: 'c1', update: { Seq: 1, Type: 'assistant', MessageID: 'm1', Text: 'hi' } });
     });
     expect(useAppStore.getState().chatItems.c1?.some((it) => it.text === 'hi')).toBe(true);
+  });
+
+  it('chat:commands 事件写入 store', async () => {
+    let cmdCb: ((p: { id: string; commands: { Name: string; Description?: string }[] }) => void) | undefined;
+    mocks.onChatCommands.mockImplementation((cb: typeof cmdCb) => {
+      cmdCb = cb;
+      return () => {};
+    });
+    render(<App />);
+    act(() => {
+      cmdCb?.({ id: 'c1', commands: [{ Name: 'plan', Description: 'P' }] });
+    });
+    expect(useAppStore.getState().chatCommands.c1?.[0]?.Name).toBe('plan');
+    expect(useAppStore.getState().chatCommands.c1?.[0]?.Description).toBe('P');
   });
 
   it('chat:update 早于历史回放时先入缓冲，补放后历史前缀不丢', async () => {

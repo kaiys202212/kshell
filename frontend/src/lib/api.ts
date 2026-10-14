@@ -317,6 +317,11 @@ export interface ChatPlanEntry {
   Status?: string;
 }
 
+export interface ChatAttachmentMeta {
+  Name?: string;
+  MimeType?: string;
+}
+
 // chat.Update 的 JSON 形态
 export interface ChatUpdate {
   Seq: number;
@@ -327,6 +332,37 @@ export interface ChatUpdate {
   Tool?: ChatToolCall;
   Plan?: ChatPlanEntry[];
   StopReason?: string;
+  Attachments?: ChatAttachmentMeta[];
+}
+
+// chat.ModelsView / chat.Command 的 JSON 形态（internal/chat/types.go）
+export interface ChatModelInfo {
+  ID: string;
+  Name: string;
+  Description?: string;
+}
+
+export interface ChatModelsView {
+  Current: string;
+  Models: ChatModelInfo[];
+}
+
+export interface ChatCommand {
+  Name: string;
+  Description?: string;
+  InputHint?: string;
+}
+
+// desktop.ChatBlock 的 JSON 形态（internal/desktop/chat.go）：
+// text 用 Text；image 用 Data(base64)+MimeType；resource_link 用 URI+Name；
+// resource（粘贴的小文件内容）用 URI+MimeType+Data。
+export interface ChatBlock {
+  Type: string;
+  Text?: string;
+  Data?: string;
+  MimeType?: string;
+  URI?: string;
+  Name?: string;
 }
 
 export interface ChatPermissionOption {
@@ -584,6 +620,10 @@ interface AppBindings {
   OpenWorkspace(wsID: string, toolID: string): Promise<OpenedSession>;
   OpenWorkspaceACP(wsID: string, toolID: string): Promise<OpenedSession>;
   SendChatPrompt(id: string, text: string): Promise<void>;
+  SendChatPromptBlocks(id: string, blocks: ChatBlock[]): Promise<void>;
+  ListChatModels(id: string): Promise<ChatModelsView>;
+  SetChatModel(id: string, modelID: string): Promise<void>;
+  ListChatCommands(id: string): Promise<ChatCommand[]>;
   CancelChat(id: string): Promise<void>;
   RespondChatPermission(id: string, requestID: string, optionID: string): Promise<void>;
   CancelChatPermission(id: string, requestID: string): Promise<void>;
@@ -1629,6 +1669,30 @@ export async function sendChatPrompt(id: string, text: string): Promise<void> {
   await a.SendChatPrompt(id, text);
 }
 
+export async function sendChatPromptBlocks(id: string, blocks: ChatBlock[]): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.SendChatPromptBlocks(id, blocks);
+}
+
+export async function listChatModels(id: string): Promise<ChatModelsView | null> {
+  const a = app();
+  if (!a) return null;
+  return a.ListChatModels(id);
+}
+
+export async function setChatModel(id: string, modelID: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.SetChatModel(id, modelID);
+}
+
+export async function listChatCommands(id: string): Promise<ChatCommand[]> {
+  const a = app();
+  if (!a) return [];
+  return a.ListChatCommands(id);
+}
+
 export async function cancelChat(id: string): Promise<void> {
   const a = app();
   if (!a) return;
@@ -1739,5 +1803,11 @@ export function onChatPermission(cb: (p: { id: string; request: ChatPermissionRe
 export function onChatExit(cb: (p: { id: string; exitCode: number; error: string }) => void): () => void {
   return EventsOn('chat:exit', (p: { id?: string; exitCode?: number; error?: string }) =>
     cb({ id: p?.id ?? '', exitCode: p?.exitCode ?? 0, error: p?.error ?? '' }),
+  );
+}
+
+export function onChatCommands(cb: (p: { id: string; commands: ChatCommand[] }) => void): () => void {
+  return EventsOn('chat:commands', (p: { id?: string; commands?: ChatCommand[] }) =>
+    cb({ id: p?.id ?? '', commands: p?.commands ?? [] }),
   );
 }

@@ -10,6 +10,11 @@ import { tt } from '../test/i18n';
 
 const api = vi.hoisted(() => ({
   sendChatPrompt: vi.fn(),
+  sendChatPromptBlocks: vi.fn(),
+  listChatModels: vi.fn(),
+  setChatModel: vi.fn(),
+  listChatCommands: vi.fn(),
+  pickFile: vi.fn(),
   cancelChat: vi.fn(),
   respondChatPermission: vi.fn(),
   cancelChatPermission: vi.fn(),
@@ -25,11 +30,16 @@ const CHAT: ChatInfo = {
 beforeEach(() => {
   vi.clearAllMocks();
   api.sendChatPrompt.mockResolvedValue(undefined);
+  api.sendChatPromptBlocks.mockResolvedValue(undefined);
+  api.listChatModels.mockResolvedValue(null);
+  api.setChatModel.mockResolvedValue(undefined);
+  api.listChatCommands.mockResolvedValue([]);
+  api.pickFile.mockResolvedValue('');
   api.cancelChat.mockResolvedValue(undefined);
   api.respondChatPermission.mockResolvedValue(undefined);
   api.cancelChatPermission.mockResolvedValue(undefined);
   api.listChats.mockResolvedValue([]);
-  useAppStore.setState({ chatItems: {}, chatSeq: {}, chatPermissions: {}, chats: [CHAT] });
+  useAppStore.setState({ chatItems: {}, chatSeq: {}, chatPermissions: {}, chats: [CHAT], chatModels: {}, chatCommands: {} });
 });
 afterEach(cleanup);
 
@@ -167,7 +177,7 @@ describe('ChatView', () => {
     expect(api.listChats).not.toHaveBeenCalled();
   });
 
-  it('drop 携带 DRAG_MIME：路径包引号后追加进输入草稿', () => {
+  it('drop 携带 DRAG_MIME：作为附件 chip 展示，发送时带 resource_link 块', async () => {
     render(<ChatView chat={CHAT} active />);
     const root = document.querySelector('[data-drop-zone="chat:c1"]') as HTMLElement;
     expect(root).not.toBeNull();
@@ -176,8 +186,196 @@ describe('ChatView', () => {
       dataTransfer: { types: [DRAG_MIME], getData: () => 'D:\\my file\\a.go' },
     });
 
+    // 路径不再进草稿，而是作为附件 chip 展示
     const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder')) as HTMLTextAreaElement;
-    expect(box.value).toBe('"D:\\my file\\a.go"');
+    expect(box.value).toBe('');
+    expect(await screen.findByText('a.go')).toBeInTheDocument();
+
+    fireEvent.change(box, { target: { value: 'hi' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => {
+      expect(api.sendChatPromptBlocks).toHaveBeenCalledWith('c1', [
+        { Type: 'text', Text: 'hi' },
+        expect.objectContaining({ Type: 'resource_link', Name: 'a.go' }),
+      ]);
+    });
+  });
+
+  it('模型下拉：有可用模型时展示，选择后调用 setChatModel', async () => {
+    api.listChatModels.mockResolvedValue({
+      Current: 'm1',
+      Models: [{ ID: 'm1', Name: 'Sonnet' }, { ID: 'm2', Name: 'Opus' }],
+    });
+    render(<ChatView chat={CHAT} active />);
+    const trigger = await screen.findByRole('button', { name: /Sonnet/ });
+    // Radix 菜单在 trigger 的 pointerdown 打开；条目选中经 click（handleSelect 绑定在 onClick）
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    const item = await screen.findByRole('menuitem', { name: 'Opus' });
+    fireEvent.pointerDown(item);
+    fireEvent.click(item);
+    await waitFor(() => expect(api.setChatModel).toHaveBeenCalledWith('c1', 'm2'));
+  });
+
+  it('agent 未报告模型时不显示模型控件', async () => {
+    render(<ChatView chat={CHAT} active />);
+    await waitFor(() => expect(api.listChatModels).toHaveBeenCalledWith('c1'));
+    expect(screen.queryByText(tt('ui.chat.model_label'))).not.toBeInTheDocument();
+  });
+
+  it('模型切换失败提示错误且保留当前选项', async () => {
+    api.listChatModels.mockResolvedValue({
+      Current: 'm1',
+      Models: [{ ID: 'm1', Name: 'Sonnet' }, { ID: 'm2', Name: 'Opus' }],
+    });
+    api.setChatModel.mockRejectedValueOnce(new Error('unsupported'));
+    render(<ChatView chat={CHAT} active />);
+    const trigger = await screen.findByRole('button', { name: /Sonnet/ });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    const item = await screen.findByRole('menuitem', { name: 'Opus' });
+    fireEvent.pointerDown(item);
+    fireEvent.click(item);
+    await waitFor(() => {
+      expect(useAppStore.getState().toasts.some((t) => t.tone === 'error')).toBe(true);
+    });
+  });
+
+  it('输入 / 弹出技能补全，Enter 选中填入而不发送', () => {
+    useAppStore.setState({
+      chatCommands: { c1: [{ Name: 'plan', Description: '写计划', InputHint: '主题' }, { Name: 'review', Description: '审查' }] },
+    });
+    render(<ChatView chat={CHAT} active />);
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder')) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '/' } });
+    const list = screen.getByRole('listbox');
+    expect(list).toHaveTextContent('plan');
+    expect(list).toHaveTextContent('review');
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(box.value).toBe('/plan ');
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
+  it('补全按前缀过滤且上下键移动高亮', () => {
+    useAppStore.setState({
+      chatCommands: { c1: [{ Name: 'plan', Description: '写计划' }, { Name: 'review', Description: '审查' }] },
+    });
+    render(<ChatView chat={CHAT} active />);
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder')) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '/pl' } });
+    const list = screen.getByRole('listbox');
+    expect(list).toHaveTextContent('plan');
+    expect(list).not.toHaveTextContent('review');
+    // 默认第一项高亮；ArrowDown 移到下一项（此处只有一项，保持）
+    const options = screen.getAllByRole('option');
+    expect(options[0]).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('Esc 关闭补全后 Enter 正常发送', () => {
+    useAppStore.setState({ chatCommands: { c1: [{ Name: 'plan', Description: '写计划' }] } });
+    render(<ChatView chat={CHAT} active />);
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder')) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '/' } });
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    fireEvent.change(box, { target: { value: 'hello' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', 'hello');
+  });
+
+  it('粘贴图片作为附件 chip，发送时带 image 块', async () => {
+    render(<ChatView chat={CHAT} active />);
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder')) as HTMLTextAreaElement;
+    const file = new File(['fake-png'], 'shot.png', { type: 'image/png' });
+    fireEvent.paste(box, { clipboardData: { files: [file] } });
+    await screen.findByText('shot.png');
+
+    fireEvent.change(box, { target: { value: '看这个' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => {
+      expect(api.sendChatPromptBlocks).toHaveBeenCalledWith('c1', [
+        { Type: 'text', Text: '看这个' },
+        expect.objectContaining({ Type: 'image', MimeType: 'image/png' }),
+      ]);
+    });
+  });
+
+  it('粘贴小文本文件转 resource 块（base64 内容）', async () => {
+    render(<ChatView chat={CHAT} active />);
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder')) as HTMLTextAreaElement;
+    const file = new File(['hello'], 'note.txt', { type: 'text/plain' });
+    fireEvent.paste(box, { clipboardData: { files: [file] } });
+    await screen.findByText('note.txt');
+
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => {
+      expect(api.sendChatPromptBlocks).toHaveBeenCalledWith('c1', [
+        expect.objectContaining({ Type: 'resource', MimeType: 'text/plain' }),
+      ]);
+    });
+    const blocks = api.sendChatPromptBlocks.mock.calls[0][1] as { Type: string; Data?: string }[];
+    expect(blocks[0].Data).toBe(btoa('hello'));
+  });
+
+  it('附件按钮选文件后发送 resource_link 块', async () => {
+    api.pickFile.mockResolvedValue('D:\\docs\\a.txt');
+    render(<ChatView chat={CHAT} active />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.chat.attach') }));
+    await screen.findByText('a.txt');
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder')) as HTMLTextAreaElement;
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => {
+      expect(api.sendChatPromptBlocks).toHaveBeenCalledWith('c1', [
+        expect.objectContaining({ Type: 'resource_link', URI: 'file:///D:/docs/a.txt', Name: 'a.txt' }),
+      ]);
+    });
+  });
+
+  it('移除附件 chip 后纯文本走 sendChatPrompt', async () => {
+    render(<ChatView chat={CHAT} active />);
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder')) as HTMLTextAreaElement;
+    const file = new File(['x'], 'shot.png', { type: 'image/png' });
+    fireEvent.paste(box, { clipboardData: { files: [file] } });
+    await screen.findByText('shot.png');
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.chat.remove_attachment') }));
+    expect(screen.queryByText('shot.png')).not.toBeInTheDocument();
+
+    fireEvent.change(box, { target: { value: '纯文本' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '纯文本');
+  });
+
+  it('Esc 关闭补全后继续输入可重新弹出', () => {
+    useAppStore.setState({ chatCommands: { c1: [{ Name: 'plan', Description: '写计划' }] } });
+    render(<ChatView chat={CHAT} active />);
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder')) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '/' } });
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    fireEvent.change(box, { target: { value: '/p' } });
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
+  });
+
+  it('粘贴超过上限的图片不产生 chip 并提示改用附件按钮', async () => {
+    render(<ChatView chat={CHAT} active />);
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder')) as HTMLTextAreaElement;
+    const file = new File(['tiny'], 'huge.png', { type: 'image/png' });
+    Object.defineProperty(file, 'size', { value: 9 * 1024 * 1024 });
+    fireEvent.paste(box, { clipboardData: { files: [file] } });
+    await waitFor(() => {
+      expect(useAppStore.getState().toasts.some((t) => t.tone === 'error')).toBe(true);
+    });
+    expect(screen.queryByText('huge.png')).not.toBeInTheDocument();
+  });
+
+  it('时间线 user 消息渲染附件 chips', () => {
+    useAppStore.setState({
+      chatItems: {
+        c1: [{ key: 'u1', type: 'user', text: '看', seq: 1, attachments: [{ Name: 'a.txt' }, { MimeType: 'image/png' }] }],
+      },
+    });
+    render(<ChatView chat={CHAT} active />);
+    expect(screen.getByText('a.txt')).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.chat.attachment_image'))).toBeInTheDocument();
   });
 
   it('助手 Markdown 的 http 链接走系统打开', () => {

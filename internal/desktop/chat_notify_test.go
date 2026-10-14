@@ -15,16 +15,22 @@ import (
 	"github.com/yangk/kshell/internal/chat"
 )
 
-// fakeChatCaptureBackend 捕获 acp.Handler，供测试模拟 agent 侧发起权限请求。
+// fakeChatCaptureBackend 捕获 acp.Handler，供测试模拟 agent 侧发起权限请求；
+// conn 非 nil 时返回注入的连接（便于预置 SessionStart 等）。
 type fakeChatCaptureBackend struct {
 	mu   sync.Mutex
 	last acp.Handler
+	conn *fakeChatConn
 }
 
 func (b *fakeChatCaptureBackend) Start(spec chat.Spec, h acp.Handler) (chat.Conn, error) {
 	b.mu.Lock()
 	b.last = h
+	conn := b.conn
 	b.mu.Unlock()
+	if conn != nil {
+		return conn, nil
+	}
 	return &fakeChatConn{waitCh: make(chan struct{})}, nil
 }
 
@@ -417,7 +423,7 @@ type fakeChatConnPromptErr struct {
 	fakeChatConn
 }
 
-func (c *fakeChatConnPromptErr) Prompt(ctx context.Context, sessionID, text string) (string, error) {
+func (c *fakeChatConnPromptErr) Prompt(ctx context.Context, sessionID string, blocks []acp.ContentBlock) (string, error) {
 	return "", errors.New("轮次失败")
 }
 

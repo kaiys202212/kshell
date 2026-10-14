@@ -1,6 +1,6 @@
 // ACP 聊天时间线的纯归并逻辑：把 Go 侧推送的 ChatUpdate 流合并进时间线数组。
 // 独立成纯函数便于测试；按 Seq 去重可同时容忍 History 回放与实时事件的重叠。
-import type { ChatPlanEntry, ChatToolCall, ChatUpdate } from '../lib/api';
+import type { ChatAttachmentMeta, ChatPlanEntry, ChatToolCall, ChatUpdate } from '../lib/api';
 
 export interface TimelineItem {
   key: string;
@@ -8,6 +8,7 @@ export interface TimelineItem {
   text?: string;
   tool?: ChatToolCall;
   plan?: ChatPlanEntry[];
+  attachments?: ChatAttachmentMeta[];
   stopReason?: string;
   seq: number;
 }
@@ -30,7 +31,16 @@ export function applyChatUpdate(items: TimelineItem[], u: ChatUpdate): TimelineI
       next[idx] = { ...next[idx], text: (next[idx].text ?? '') + (u.Text ?? ''), seq: u.Seq };
       return next;
     }
-    return [...items, { key, type: u.Type as TimelineItem['type'], text: u.Text ?? '', seq: u.Seq }];
+    return [
+      ...items,
+      {
+        key,
+        type: u.Type as TimelineItem['type'],
+        text: u.Text ?? '',
+        attachments: u.Attachments,
+        seq: u.Seq,
+      },
+    ];
   }
 
   if (u.Type === 'tool' && u.Tool) {

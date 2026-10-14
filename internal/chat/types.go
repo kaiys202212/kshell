@@ -63,16 +63,44 @@ type PlanEntry struct {
 	Status   string `json:"Status,omitempty"`
 }
 
+// Command 是 agent 推送的可用技能/斜杠命令（available_commands_update）。
+type Command struct {
+	Name        string `json:"Name"`
+	Description string `json:"Description,omitempty"`
+	InputHint   string `json:"InputHint,omitempty"`
+}
+
+// AttachmentMeta 是用户消息里非文本附件的展示信息（发送的原始块由连接层持有）。
+type AttachmentMeta struct {
+	Name     string `json:"Name,omitempty"`
+	MimeType string `json:"MimeType,omitempty"`
+}
+
+// ModelView / ModelsView 是给前端的模型切换视图，统一 v1 models 与
+// configOptions 两种 agent 形态。
+type ModelView struct {
+	ID          string `json:"ID"`
+	Name        string `json:"Name"`
+	Description string `json:"Description,omitempty"`
+}
+
+type ModelsView struct {
+	Current string
+	Models  []ModelView
+}
+
 // Update 是归一化时间线事件，带单调 Seq 供前端去重。
 type Update struct {
-	Seq        int64       `json:"Seq"`
-	Type       string      `json:"Type"` // user | assistant | thought | tool | plan | turn_done | error
-	MessageID  string      `json:"MessageID,omitempty"`
-	Text       string      `json:"Text,omitempty"`
-	ToolCallID string      `json:"ToolCallID,omitempty"`
-	Tool       *ToolCall   `json:"Tool,omitempty"`
-	Plan       []PlanEntry `json:"Plan,omitempty"`
-	StopReason string      `json:"StopReason,omitempty"`
+	Seq         int64            `json:"Seq"`
+	Type        string           `json:"Type"` // user | assistant | thought | tool | plan | commands | turn_done | error
+	MessageID   string           `json:"MessageID,omitempty"`
+	Text        string           `json:"Text,omitempty"`
+	ToolCallID  string           `json:"ToolCallID,omitempty"`
+	Tool        *ToolCall        `json:"Tool,omitempty"`
+	Plan        []PlanEntry      `json:"Plan,omitempty"`
+	StopReason  string           `json:"StopReason,omitempty"`
+	Commands    []Command        `json:"Commands,omitempty"`
+	Attachments []AttachmentMeta `json:"Attachments,omitempty"`
 }
 
 type PermissionOption struct {
@@ -91,9 +119,10 @@ type PermissionRequest struct {
 // Conn 是 ACP 连接的高层封装；真实实现是 acp.Agent，测试注入假实现。
 type Conn interface {
 	Initialize(ctx context.Context) (acp.InitializeResult, error)
-	NewSession(ctx context.Context, cwd string) (string, error)
-	LoadSession(ctx context.Context, sessionID, cwd string) error
-	Prompt(ctx context.Context, sessionID, text string) (string, error)
+	NewSession(ctx context.Context, cwd string) (acp.SessionStart, error)
+	LoadSession(ctx context.Context, sessionID, cwd string) (acp.SessionStart, error)
+	Prompt(ctx context.Context, sessionID string, blocks []acp.ContentBlock) (string, error)
+	SetModel(ctx context.Context, sessionID, modelID string) error
 	Cancel(sessionID string) error
 	Wait() (int, error)
 	Close() error

@@ -61,4 +61,17 @@ describe('applyChatUpdate', () => {
     expect(items[0].type).toBe('error');
     expect(items[0].text).toBe('崩了');
   });
+
+  it('user 事件携带附件 meta 时保留到时间线项', () => {
+    const items = applyChatUpdate(emptyChatItems(), {
+      Seq: 1,
+      Type: 'user',
+      MessageID: 'u1',
+      Text: '看这个',
+      Attachments: [{ Name: 'a.txt' }, { MimeType: 'image/png' }],
+    });
+    expect(items[0].attachments).toHaveLength(2);
+    expect(items[0].attachments?.[0].Name).toBe('a.txt');
+    expect(items[0].attachments?.[1].MimeType).toBe('image/png');
+  });
 });

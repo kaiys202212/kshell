@@ -50,7 +50,11 @@ type session struct {
 	knownIDs       map[string]bool // 打开时扫描结果里已有的磁盘会话，禁止绑到本新建聊天
 	promptTitleSet bool
 
-	queue []string // 忙时排队的用户消息，turn_done 后按序投递
+	queue [][]acp.ContentBlock // 忙时排队的用户消息（按 blocks 整体投递），turn_done 后按序送出
+
+	modelState *acp.SessionModelState // agent 以 v1 models 形态报告的可用模型
+	modelConfig *acp.SessionConfigOption // agent 以 configOptions(id=model) 形态报告的模型选项
+	commands    []Command                // 最近一次 available_commands_update 的技能列表
 }
 
 type permissionResult struct {
@@ -69,6 +73,7 @@ type Manager struct {
 	onPermission func(id string, r PermissionRequest)
 	onExit       func(id string, code int, errMsg string)
 	onInfo       func(Info)  // 锁外；首条用户消息改写标题时
+	onCommands   func(id string, cmds []Command) // 锁外；技能列表推送
 	autoAllow    func() bool // bypass：自动选 allow 类 option，不弹窗
 	mcpFor       func(chatID string) []acp.McpServerStdio
 
@@ -100,6 +105,13 @@ func (m *Manager) SetAutoAllowPermission(fn func() bool) {
 func (m *Manager) SetOnInfo(fn func(Info)) {
 	m.mu.Lock()
 	m.onInfo = fn
+	m.mu.Unlock()
+}
+
+// SetOnCommands 注册技能列表推送回调（锁外执行）。
+func (m *Manager) SetOnCommands(fn func(id string, cmds []Command)) {
+	m.mu.Lock()
+	m.onCommands = fn
 	m.mu.Unlock()
 }
 
@@ -232,19 +244,24 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 			m.fail(s.id, 0, msg)
 			return Info{}, errors.New(msg)
 		}
-		if err := conn.LoadSession(s.ctx, sessionID, info.Workspace); err != nil {
-			_ = conn.Close()
-			m.fail(s.id, 0, err.Error())
-			return Info{}, err
-		}
-	} else {
-		sid, err := conn.NewSession(s.ctx, info.Workspace)
+		start, err := conn.LoadSession(s.ctx, sessionID, info.Workspace)
 		if err != nil {
 			_ = conn.Close()
 			m.fail(s.id, 0, err.Error())
 			return Info{}, err
 		}
-		sessionID = sid
+		s.modelState = start.Models
+		s.modelConfig = start.ModelConfig
+	} else {
+		start, err := conn.NewSession(s.ctx, info.Workspace)
+		if err != nil {
+			_ = conn.Close()
+			m.fail(s.id, 0, err.Error())
+			return Info{}, err
+		}
+		s.modelState = start.Models
+		s.modelConfig = start.ModelConfig
+		sessionID = start.SessionID
 	}
 
 	m.mu.Lock()
@@ -258,7 +275,7 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	out := s.info
 	// starting 期间入队的消息没有 turn_done 可等，必须在此主动投递首条，
 	// 否则会静默永不投递（队列里已补过时间线，投递时不再补）。
-	var next string
+	var next []acp.ContentBlock
 	hasNext := false
 	if len(s.queue) > 0 {
 		next = s.queue[0]
@@ -353,8 +370,43 @@ func (m *Manager) fail(id string, code int, msg string) {
 	}
 }
 
-// Prompt 向会话发起一轮用户输入；忙时入队，当前轮结束后自动投递。
+// flattenBlocks 把内容块展开成时间线用文本：text 块按序拼接，非文本块忽略
+//（附件另有 AttachmentMeta 展示）。
+func flattenBlocks(blocks []acp.ContentBlock) string {
+	parts := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		if b.Type == "text" && b.Text != "" {
+			parts = append(parts, b.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// attachmentMetas 提取非文本块的展示信息。
+func attachmentMetas(blocks []acp.ContentBlock) []AttachmentMeta {
+	var out []AttachmentMeta
+	for _, b := range blocks {
+		switch b.Type {
+		case "text":
+		case "image", "audio":
+			out = append(out, AttachmentMeta{MimeType: b.MimeType})
+		default:
+			out = append(out, AttachmentMeta{Name: b.Name, MimeType: b.MimeType})
+		}
+	}
+	return out
+}
+
+// Prompt 向会话发起一轮纯文本输入；忙时入队，当前轮结束后自动投递。
 func (m *Manager) Prompt(id, text string) error {
+	return m.PromptBlocks(id, []acp.ContentBlock{{Type: "text", Text: text}})
+}
+
+// PromptBlocks 向会话发起一轮多形态内容块输入（文本 + 附件）；忙时入队。
+func (m *Manager) PromptBlocks(id string, blocks []acp.ContentBlock) error {
+	if len(blocks) == 0 {
+		return nil
+	}
 	m.mu.Lock()
 	s := m.byID[id]
 	if s == nil || s.exited {
@@ -363,8 +415,8 @@ func (m *Manager) Prompt(id, text string) error {
 	}
 	// 忙时入队：消息不丢，且照常补进时间线，界面立刻可见。
 	if s.info.Status != StatusReady {
-		s.queue = append(s.queue, text)
-		userUpdate := s.appendUserLocked(text)
+		s.queue = append(s.queue, blocks)
+		userUpdate := s.appendUserBlocksLocked(blocks)
 		onUpdate := m.onUpdate
 		m.mu.Unlock()
 		if onUpdate != nil {
@@ -373,32 +425,26 @@ func (m *Manager) Prompt(id, text string) error {
 		return nil
 	}
 	m.mu.Unlock()
-	return m.startTurn(id, s, text)
-}
-
-// startTurn 发起一轮：置 running、补 user 时间线、emit、异步等 Prompt 返回。
-// 轮次收尾（含 error）若队列非空且会话仍存活，自动投递下一条。
-func (m *Manager) startTurn(id string, s *session, text string) error {
-	return m.deliverTurn(id, s, text, true)
+	return m.deliverTurn(id, s, blocks, true)
 }
 
 // deliverTurn 发起一轮；record 为 true 时补 user 时间线并 emit。
-// 队列里的消息在入队时已补过时间线（见 Prompt 忙分支），投递时必须 record=false，
+// 队列里的消息在入队时已补过时间线（见 PromptBlocks 忙分支），投递时必须 record=false，
 // 否则同一条用户消息会在时间线里出现两次。
-func (m *Manager) deliverTurn(id string, s *session, text string, record bool) error {
+func (m *Manager) deliverTurn(id string, s *session, blocks []acp.ContentBlock, record bool) error {
 	m.mu.Lock()
 	if cur := m.byID[id]; cur != s || s.exited {
 		m.mu.Unlock()
 		return errNotFound
 	}
 	if s.info.Status != StatusReady {
-		// 竞态兜底：期间又有轮次启动，改入队；补时间线与 emit 与 Prompt 忙分支一致，
+		// 竞态兜底：期间又有轮次启动，改入队；补时间线与 emit 与 PromptBlocks 忙分支一致，
 		// 否则该消息要等下一轮收尾才可见。
-		s.queue = append(s.queue, text)
+		s.queue = append(s.queue, blocks)
 		var userUpdate Update
 		onUpdate := m.onUpdate
 		if record {
-			userUpdate = s.appendUserLocked(text)
+			userUpdate = s.appendUserBlocksLocked(blocks)
 		}
 		m.mu.Unlock()
 		if record && onUpdate != nil {
@@ -408,10 +454,10 @@ func (m *Manager) deliverTurn(id string, s *session, text string, record bool) e
 	}
 	s.info.Status = StatusRunning
 	// 标题改写与 record 无关：即使是队列投递（record=false），这也是该新建会话的第一条用户消息。
-	infoSnap, titleChanged := s.notePromptTitle(text)
+	infoSnap, titleChanged := s.notePromptTitle(flattenBlocks(blocks))
 	var userUpdate Update
 	if record {
-		userUpdate = s.appendUserLocked(text)
+		userUpdate = s.appendUserBlocksLocked(blocks)
 	}
 	sid := s.sessionID
 	conn := s.conn
@@ -428,7 +474,7 @@ func (m *Manager) deliverTurn(id string, s *session, text string, record bool) e
 	}
 
 	go func() {
-		stop, err := conn.Prompt(ctx, sid, text)
+		stop, err := conn.Prompt(ctx, sid, blocks)
 		m.mu.Lock()
 		if cur := m.byID[id]; cur != s || s.exited {
 			m.mu.Unlock()
@@ -447,7 +493,7 @@ func (m *Manager) deliverTurn(id string, s *session, text string, record bool) e
 			s.history = append([]Update(nil), s.history[len(s.history)-maxHistory:]...)
 		}
 		// 取出队列下一条（若有），在锁内决定，锁外发起；入队时已补时间线，投递不再补
-		var next string
+		var next []acp.ContentBlock
 		hasNext := false
 		if !s.exited && len(s.queue) > 0 {
 			next = s.queue[0]
@@ -465,11 +511,18 @@ func (m *Manager) deliverTurn(id string, s *session, text string, record bool) e
 	return nil
 }
 
-// appendUserLocked 追加一条 user 消息进时间线并返回该事件（调用方持锁）。
+// appendUserBlocksLocked 追加一条 user 消息进时间线并返回该事件（调用方持锁）。
+// 文本取 text 块拼接；非文本块记入 Attachments 供前端渲染附件标识。
 // 超过 maxHistory 时截断保留尾部，避免长会话内存无限增长。
-func (s *session) appendUserLocked(text string) Update {
+func (s *session) appendUserBlocksLocked(blocks []acp.ContentBlock) Update {
 	s.seq++
-	u := Update{Seq: s.seq, Type: "user", MessageID: fmt.Sprintf("user:%d", s.seq), Text: text}
+	u := Update{
+		Seq:         s.seq,
+		Type:        "user",
+		MessageID:   fmt.Sprintf("user:%d", s.seq),
+		Text:        flattenBlocks(blocks),
+		Attachments: attachmentMetas(blocks),
+	}
 	s.history = append(s.history, u)
 	if len(s.history) > maxHistory {
 		s.history = append([]Update(nil), s.history[len(s.history)-maxHistory:]...)
@@ -673,6 +726,79 @@ func (m *Manager) History(id string) []Update {
 	return out
 }
 
+// Models 返回会话的模型切换视图；agent 未报告任何模型信息时 ok=false。
+func (m *Manager) Models(id string) (ModelsView, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.byID[id]
+	if s == nil {
+		return ModelsView{}, false
+	}
+	if ms := s.modelState; ms != nil {
+		out := ModelsView{Current: ms.CurrentModelID, Models: make([]ModelView, 0, len(ms.AvailableModels))}
+		for _, mo := range ms.AvailableModels {
+			out.Models = append(out.Models, ModelView{ID: mo.ModelID, Name: mo.Name, Description: mo.Description})
+		}
+		return out, true
+	}
+	if mc := s.modelConfig; mc != nil {
+		out := ModelsView{Models: make([]ModelView, 0, len(mc.Options))}
+		var current string
+		_ = json.Unmarshal(mc.CurrentValue, &current)
+		out.Current = current
+		for _, o := range mc.Options {
+			out.Models = append(out.Models, ModelView{ID: o.Value, Name: o.Name, Description: o.Description})
+		}
+		return out, true
+	}
+	return ModelsView{}, false
+}
+
+// SetModel 运行时切换会话模型；成功后乐观更新缓存视图供前端即时反映。
+func (m *Manager) SetModel(id, modelID string) error {
+	m.mu.Lock()
+	s := m.byID[id]
+	if s == nil || s.exited {
+		m.mu.Unlock()
+		return errNotFound
+	}
+	conn := s.conn
+	sid := s.sessionID
+	ctx := s.ctx
+	m.mu.Unlock()
+	if conn == nil || sid == "" {
+		return errNoBackend
+	}
+	if err := conn.SetModel(ctx, sid, modelID); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// RPC 期间会话可能已退出/重建：只更新仍在册的会话，避免写悬垂指针。
+	if cur := m.byID[id]; cur != s || s.exited {
+		return nil
+	}
+	if s.modelState != nil {
+		s.modelState.CurrentModelID = modelID
+	}
+	if s.modelConfig != nil {
+		v, _ := json.Marshal(modelID)
+		s.modelConfig.CurrentValue = v
+	}
+	return nil
+}
+
+// Commands 返回会话最近的技能/命令列表；未收到过推送时为空。
+func (m *Manager) Commands(id string) []Command {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.byID[id]
+	if s == nil {
+		return nil
+	}
+	return append([]Command(nil), s.commands...)
+}
+
 func (h *sessionHandler) SessionUpdate(sessionID string, raw json.RawMessage) {
 	h.m.onSessionUpdate(h.id, sessionID, raw)
 }
@@ -683,23 +809,32 @@ func (h *sessionHandler) RequestPermission(ctx context.Context, sessionID, reque
 
 // acpUpdate 按 ACP 规范的小写字段解码 session/update（前端模型是 PascalCase，故单独解码再转换）。
 type acpUpdate struct {
-	SessionUpdate string          `json:"sessionUpdate"`
-	MessageID     string          `json:"messageId"`
-	Content       json.RawMessage `json:"content"`
-	ToolCallID    string          `json:"toolCallId"`
-	Title         string          `json:"title"`
-	Name          string          `json:"name"`
-	Kind          string          `json:"kind"`
-	Status        string          `json:"status"`
-	RawInput      json.RawMessage `json:"rawInput"`
-	RawOutput     json.RawMessage `json:"rawOutput"`
-	Entries       []acpPlanEntry  `json:"entries"`
+	SessionUpdate     string          `json:"sessionUpdate"`
+	MessageID         string          `json:"messageId"`
+	Content           json.RawMessage `json:"content"`
+	ToolCallID        string          `json:"toolCallId"`
+	Title             string          `json:"title"`
+	Name              string          `json:"name"`
+	Kind              string          `json:"kind"`
+	Status            string          `json:"status"`
+	RawInput          json.RawMessage `json:"rawInput"`
+	RawOutput         json.RawMessage `json:"rawOutput"`
+	Entries           []acpPlanEntry  `json:"entries"`
+	AvailableCommands []acpCommand    `json:"availableCommands"`
 }
 
 type acpPlanEntry struct {
 	Content  string `json:"content"`
 	Priority string `json:"priority"`
 	Status   string `json:"status"`
+}
+
+type acpCommand struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Input       *struct {
+		Hint string `json:"hint"`
+	} `json:"input"`
 }
 
 // normalizeUpdate 把 ACP session/update 转成前端时间线事件；不支持的变体返回 ok=false。
@@ -738,6 +873,16 @@ func normalizeUpdate(raw json.RawMessage) (Update, bool) {
 			plan = append(plan, PlanEntry{Content: e.Content, Priority: e.Priority, Status: e.Status})
 		}
 		return Update{Type: "plan", Plan: plan}, true
+	case "available_commands_update":
+		cmds := make([]Command, 0, len(u.AvailableCommands))
+		for _, c := range u.AvailableCommands {
+			hint := ""
+			if c.Input != nil {
+				hint = c.Input.Hint
+			}
+			cmds = append(cmds, Command{Name: c.Name, Description: c.Description, InputHint: hint})
+		}
+		return Update{Type: "commands", Commands: cmds}, true
 	default:
 		return Update{}, false
 	}
@@ -764,6 +909,20 @@ func contentText(raw json.RawMessage) string {
 func (m *Manager) onSessionUpdate(id, sessionID string, raw json.RawMessage) {
 	u, ok := normalizeUpdate(raw)
 	if !ok {
+		return
+	}
+	// 技能列表是会话状态而非时间线事件：存会话、单独推送，不进历史。
+	if u.Type == "commands" {
+		m.mu.Lock()
+		s := m.byID[id]
+		if s != nil {
+			s.commands = u.Commands
+		}
+		cb := m.onCommands
+		m.mu.Unlock()
+		if cb != nil {
+			cb(id, u.Commands)
+		}
 		return
 	}
 	m.mu.Lock()
