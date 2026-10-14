@@ -432,3 +432,24 @@ type fakeChatBackendPromptErr struct{}
 func (fakeChatBackendPromptErr) Start(spec chat.Spec, h acp.Handler) (chat.Conn, error) {
 	return &fakeChatConnPromptErr{fakeChatConn{waitCh: make(chan struct{})}}, nil
 }
+
+// turnEvent 把 stopReason 归纳为通知事件：只有 end_turn/空 才算完成；
+// cancelled 是用户主动取消（中性）；其余（max_tokens/max_turn_requests/refusal/
+// 未知值）是 agent 提前停止——此前一律报「任务完成」，正是「任务没做完却停了」
+// 无任何提示的根因。
+func TestTurnEventMapping(t *testing.T) {
+	cases := map[string]string{
+		"":                   "done",
+		"end_turn":           "done",
+		"cancelled":          "cancelled",
+		"max_tokens":         "stopped",
+		"max_turn_requests":  "stopped",
+		"refusal":            "stopped",
+		"some_future_reason": "stopped",
+	}
+	for stop, want := range cases {
+		if got := turnEvent(stop); got != want {
+			t.Fatalf("turnEvent(%q) = %q, want %q", stop, got, want)
+		}
+	}
+}

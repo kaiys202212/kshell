@@ -73,6 +73,11 @@ func fakeAgentMain() {
 			}})
 			reply(map[string]any{})
 		case "session/prompt":
+			if os.Getenv("ACP_FAKE_STDERR_EXIT") == "1" {
+				// 模拟 agent 中途崩溃：先往 stderr 写原因再退出，退出码非 0。
+				fmt.Fprintln(os.Stderr, "boom-reason: max turn requests exhausted")
+				os.Exit(3)
+			}
 			if os.Getenv("ACP_FAKE_ECHO_PROMPT") == "1" {
 				var p PromptParams
 				_ = json.Unmarshal(m.Params, &p)
@@ -372,6 +377,48 @@ func TestAgentProcessExitFailsPendingCall(t *testing.T) {
 	case <-waitDone:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Wait hung after process exit")
+	}
+}
+
+// agent 进程退出时必须把退出码与 stderr 尾部落到 Logf（宿主注入 desktop.log），
+// 否则「agent 为什么停了」永远无据可查（Agent.Stderr() 此前无任何调用点）。
+func TestAgentLogsExitCodeAndStderrTail(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+	prev := Logf
+	Logf = func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, fmt.Sprintf(format, args...))
+	}
+	t.Cleanup(func() { Logf = prev })
+
+	a, err := NewAgent(context.Background(), fakeAgentSpecEnv(t, "ACP_FAKE_STDERR_EXIT=1"), &captureHandler{})
+	if err != nil {
+		t.Fatalf("NewAgent: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := a.Initialize(ctx); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	// 子进程写 stderr 后 exit 3：挂起的 Prompt 收到错误，Wait 返回退出码
+	//（非零退出时 err 为 "exit status 3"，属预期）。
+	if _, err := a.Prompt(ctx, "sess-new", []ContentBlock{{Type: "text", Text: "go"}}); err == nil {
+		t.Fatal("expected error from crashed agent")
+	}
+	if code, err := a.Wait(); code != 3 || err == nil {
+		t.Fatalf("Wait = (%d, %v), want (3, non-nil exit status)", code, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "code=3") {
+		t.Fatalf("日志缺退出码, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "boom-reason") {
+		t.Fatalf("日志缺 stderr 尾部, got:\n%s", joined)
 	}
 }
 

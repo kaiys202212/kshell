@@ -94,7 +94,9 @@ function App() {
     // 整应用只订阅一次。出错同属需介入，与「等待确认」共用重音。
     return onNotifyAgent((p) => {
       useAppStore.getState().pushAgentNotice(p);
-      playNotifySound(eventLabel(p.event) === 'task_done' ? 'light' : 'attention');
+      const label = eventLabel(p.event);
+      // 完成与用户主动取消都不必惊动：轻音；提前停止/出错/待确认才用重音。
+      playNotifySound(label === 'task_done' || label === 'task_cancelled' ? 'light' : 'attention');
     });
   }, []);
 

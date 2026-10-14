@@ -11,10 +11,33 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/yangk/kshell/internal/executil"
 )
+
+// Logf 是宿主注入的日志钩子（desktop 侧重定向到 ~/.kshell/logs/desktop.log）。
+// 协议层自身零依赖：nil（默认，含测试）时静默。
+var Logf func(format string, args ...any)
+
+func logf(format string, args ...any) {
+	if Logf != nil {
+		Logf(format, args...)
+	}
+}
+
+// stderrTail 取 stderr 缓冲的尾部 ≤limit 字节（从最近的行首起，避免半行）。
+func stderrTail(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	tail := s[len(s)-limit:]
+	if i := strings.IndexByte(tail, '\n'); i >= 0 && i < len(tail)-1 {
+		tail = tail[i+1:]
+	}
+	return tail
+}
 
 // Handler 接收 agent 主动发来的通知与反向请求。
 // SessionUpdate 在读循环内同步调用（保证与响应/重放的顺序）；
@@ -122,6 +145,9 @@ func (a *Agent) readLoop() {
 	for {
 		m, err := a.codec.read()
 		if err != nil {
+			if !errors.Is(err, io.EOF) { // 进程退出的正常 EOF 不打，避免与退出日志重复
+				logf("acp: 读循环异常结束 err=%v", err)
+			}
 			a.failPending(err)
 			return
 		}
@@ -346,7 +372,13 @@ func (a *Agent) waitLoop() {
 	if a.cmd.ProcessState != nil {
 		a.exitCode = a.cmd.ProcessState.ExitCode()
 	}
+	code := a.exitCode
 	a.mu.Unlock()
+	// agent 为什么停了，唯一线索就是退出码与 stderr：必须落盘（此前 Stderr() 无调用点）。
+	logf("acp: agent 退出 code=%d err=%v", code, err)
+	if tail := stderrTail(a.stderr.String(), 2048); strings.TrimSpace(tail) != "" {
+		logf("acp: agent stderr 尾部: %s", tail)
+	}
 	close(a.waitDone)
 	a.failPending(err) // 进程退出后读循环可能仍阻塞：主动收尾
 }

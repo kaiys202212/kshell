@@ -29,9 +29,14 @@ export function toolDisplayName(tool: string): string {
 // eventLabel 把事件归纳成稳定语义 id（调用方拼 `ui.notify.` 取文案）：
 // 完成 = Stop / agent-turn-complete / done；等待确认 = Notification / attention；
 // 出错 = error（chat 后端 emit，summary 为错误文本）；
-// 未知事件按「任务完成」处理（宁可误报完成，不打扰成待确认）。
-export function eventLabel(event: string): 'task_done' | 'task_error' | 'waiting_confirm' {
+// 提前停止 = stopped（chat 后端按 stopReason 归纳：max_tokens 等）；
+// 取消 = cancelled（用户点停止，中性）；未知事件按「任务完成」处理。
+export function eventLabel(
+  event: string,
+): 'task_done' | 'task_error' | 'task_stopped' | 'task_cancelled' | 'waiting_confirm' {
   if (event === 'Notification' || event === 'attention') return 'waiting_confirm';
   if (event === 'error') return 'task_error';
+  if (event === 'stopped') return 'task_stopped';
+  if (event === 'cancelled') return 'task_cancelled';
   return 'task_done';
 }

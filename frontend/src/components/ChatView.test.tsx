@@ -157,6 +157,36 @@ describe('ChatView', () => {
     expect(screen.getByText('內部推理')).toBeInTheDocument();
   });
 
+  // turn_done 此前前端完全不渲染：agent 因 max_turn_requests/max_tokens 等提前
+  // 停止时毫无提示，看起来像「任务没做完却静默停了」。
+  it('turn_done 带 stopReason 时渲染停止原因行', () => {
+    useAppStore.setState({
+      chatItems: { c1: [{ key: 'td1', type: 'turn_done', stopReason: 'max_turn_requests', seq: 1 }] },
+      chatSeq: { c1: 1 },
+    });
+    render(<ChatView chat={CHAT} active />);
+    const line = screen.getByTestId('chat-turn-stopped');
+    expect(line.textContent).toContain(tt('ui.chat.stop_reason.max_turn_requests'));
+  });
+
+  it('turn_done 未知 stopReason 显示原始值', () => {
+    useAppStore.setState({
+      chatItems: { c1: [{ key: 'td1', type: 'turn_done', stopReason: 'weird_reason', seq: 1 }] },
+      chatSeq: { c1: 1 },
+    });
+    render(<ChatView chat={CHAT} active />);
+    expect(screen.getByTestId('chat-turn-stopped').textContent).toContain('weird_reason');
+  });
+
+  it('turn_done end_turn 不渲染停止行（保持现状）', () => {
+    useAppStore.setState({
+      chatItems: { c1: [{ key: 'td1', type: 'turn_done', stopReason: 'end_turn', seq: 1 }] },
+      chatSeq: { c1: 1 },
+    });
+    render(<ChatView chat={CHAT} active />);
+    expect(screen.queryByTestId('chat-turn-stopped')).not.toBeInTheDocument();
+  });
+
   it('点开页签时若前端仍 running、后端已 ready，对账后不再转圈', async () => {
     const running = { ...CHAT, Status: 'running', Prompted: true };
     api.listChats.mockResolvedValue([{ ...CHAT, Status: 'ready', Prompted: true }]);

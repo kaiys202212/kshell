@@ -69,6 +69,14 @@ interface ChatAttachment {
 // 对图片同样生效：超大截图 base64 后会数倍膨胀，直塞绑定层易卡死 UI。
 const MAX_PASTE_BYTES = 8 * 1024 * 1024;
 
+// stopReason → i18n key（ACP 规范内的取值）；表外原因直接显示原始值。
+const STOP_REASON_KEYS: Record<string, string> = {
+  max_tokens: 'ui.chat.stop_reason.max_tokens',
+  max_turn_requests: 'ui.chat.stop_reason.max_turn_requests',
+  refusal: 'ui.chat.stop_reason.refusal',
+  cancelled: 'ui.chat.stop_reason.cancelled',
+};
+
 // readAsDataURLBase64 读文件为 base64 载荷（去掉 data URL 前缀）；失败返回 null。
 function readAsDataURLBase64(file: File): Promise<string | null> {
   return new Promise((resolve) => {
@@ -406,6 +414,22 @@ export default function ChatView({ chat, active }: Props) {
             return (
               <div key={it.key} className="selectable mb-2 break-words text-xs text-destructive">
                 {t('ui.chat.error_prefix', { text: translateBackend(it.text ?? '') })}
+              </div>
+            );
+          }
+          if (it.type === 'turn_done') {
+            // 此前 turn_done 完全不渲染：agent 因 max_turn_requests / max_tokens
+            // 等提前停止时毫无提示。正常结束（end_turn/空）维持不渲染。
+            const stop = it.stopReason ?? '';
+            if (stop === '' || stop === 'end_turn') return null;
+            const known = STOP_REASON_KEYS[stop];
+            return (
+              <div
+                key={it.key}
+                data-testid="chat-turn-stopped"
+                className="selectable mb-2 break-words text-xs text-muted-foreground"
+              >
+                {t('ui.chat.turn_stopped', { reason: known ? t(known) : stop })}
               </div>
             );
           }

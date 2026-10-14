@@ -37,7 +37,7 @@ func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, aut
 			emit("chat:update", map[string]any{"id": id, "update": u})
 			switch u.Type {
 			case "turn_done":
-				emitChatNotify(emit, m, id, "done", "", dedupe, onAgent)
+				emitChatNotify(emit, m, id, turnEvent(u.StopReason), "", dedupe, onAgent)
 			case "error":
 				emitChatNotify(emit, m, id, "error", u.Text, dedupe, onAgent)
 			}
@@ -55,6 +55,21 @@ func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, aut
 		emit("chat:commands", map[string]any{"id": id, "commands": cmds})
 	})
 	return m
+}
+
+// turnEvent 把 stopReason 归纳为通知事件 id：只有 end_turn/空 才算完成；
+// cancelled 是用户主动取消（中性，不报错也不报完成）；其余
+//（max_tokens / max_turn_requests / refusal / 未知值）是 agent 提前停止——
+// 此前一律报「任务完成」，正是「任务没做完却停了且毫无提示」的根因。
+func turnEvent(stop string) string {
+	switch stop {
+	case "", "end_turn":
+		return "done"
+	case "cancelled":
+		return "cancelled"
+	default:
+		return "stopped"
+	}
 }
 
 // lastAssistantText 取会话时间线中最后一轮 assistant 回复的拼接文本。
