@@ -42,7 +42,7 @@ const HUB_COMMANDS: { name: string; descKey: string }[] = [
   { name: 'model', descKey: 'ui.hub.cmd_model_desc' },
   { name: 'clear', descKey: 'ui.hub.cmd_clear_desc' },
 ];
-const HUB_COMMAND_NAMES = new Set(HUB_COMMANDS.map((c) => c.name));
+const HUB_COMMAND_NAMES = new Set(HUB_COMMANDS.map((c) => c.name.toLowerCase()));
 
 // 补全列表条目：客户端命令与 agent 技能混排，用 kind 区分选中后的行为。
 interface SlashItem {
@@ -171,7 +171,7 @@ export default function AgentHubPanel() {
       kind: 'client',
     }));
     const agent = agentCmds
-      .filter((c) => c.Name && !HUB_COMMAND_NAMES.has(c.Name) && c.Name.toLowerCase().startsWith(q))
+      .filter((c) => c.Name && !HUB_COMMAND_NAMES.has(c.Name.toLowerCase()) && c.Name.toLowerCase().startsWith(q))
       .map<SlashItem>((c) => ({ name: c.Name, desc: c.Description ?? '', kind: 'agent' }));
     return [...client, ...agent];
   }, [slashQuery, agentCmds, t]);
@@ -185,6 +185,11 @@ export default function AgentHubPanel() {
 
   // runClientCommand 执行 kshell 客户端命令，不投递给 agent。
   const runClientCommand = (name: string) => {
+    // stop / model 需要目标 agent：先校验，避免无目标时还把输入清掉
+    if ((name === 'stop' || name === 'model') && !currentTargetId) {
+      useAppStore.getState().notify(t('ui.hub.need_target'), 'error');
+      return;
+    }
     setDraft('');
     setSlashClosed(false);
     setSlashIndex(0);
@@ -194,14 +199,11 @@ export default function AgentHubPanel() {
     }
     if (name === 'clear') {
       setSent([]);
+      useAppStore.getState().clearAgentNotices();
       useAppStore.getState().notify(t('ui.hub.cleared'), 'info');
       return;
     }
-    // stop / model 需要目标 agent
-    if (!currentTargetId) {
-      useAppStore.getState().notify(t('ui.hub.need_target'), 'error');
-      return;
-    }
+    if (!currentTargetId) return; // 理论不可达；保底
     if (name === 'stop') {
       void cancelChat(currentTargetId)
         .then(() => useAppStore.getState().notify(t('ui.hub.stop_done'), 'info'))
@@ -387,26 +389,41 @@ export default function AgentHubPanel() {
           </ul>
         )}
         {modelMenu && (
-          <ul
-            aria-label={t('ui.hub.model_label')}
-            className="m-0 flex list-none flex-col gap-0.5 rounded border border-border bg-card p-1 text-xs"
-          >
-            {modelMenu.view.Models.map((m) => (
-              <li key={m.ID}>
-                <button
-                  type="button"
-                  className={cn(
-                    'w-full rounded px-2 py-1 text-left hover:bg-muted/50',
-                    m.ID === modelMenu.view.Current && 'font-medium',
-                  )}
-                  onClick={() => switchModel(m.ID)}
-                >
-                  {m.Name}
-                  {m.Description && <span className="ml-2 text-muted-foreground">{m.Description}</span>}
-                </button>
-              </li>
-            ))}
-          </ul>
+          <div className="rounded border border-border bg-card p-1 text-xs">
+            <div className="flex items-center justify-between px-2 py-0.5 text-muted-foreground">
+              <span className="truncate">
+                {t('ui.hub.model_label')}
+                {options.find((o) => o.id === modelMenu.targetId)?.label
+                  ? ` · ${options.find((o) => o.id === modelMenu.targetId)?.label}`
+                  : ''}
+              </span>
+              <button
+                type="button"
+                aria-label={t('ui.hub.cancel')}
+                className="text-muted-foreground hover:text-destructive"
+                onClick={() => setModelMenu(null)}
+              >
+                ×
+              </button>
+            </div>
+            <ul aria-label={t('ui.hub.model_label')} className="m-0 flex list-none flex-col gap-0.5 p-0">
+              {modelMenu.view.Models.map((m) => (
+                <li key={m.ID}>
+                  <button
+                    type="button"
+                    className={cn(
+                      'w-full rounded px-2 py-1 text-left hover:bg-muted/50',
+                      m.ID === modelMenu.view.Current && 'font-medium',
+                    )}
+                    onClick={() => switchModel(m.ID)}
+                  >
+                    {m.Name}
+                    {m.Description && <span className="ml-2 text-muted-foreground">{m.Description}</span>}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
         {slashOpen && (
           <ul
@@ -488,10 +505,19 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
   const [toolId, setToolId] = useState('');
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState<'pick' | 'model'>('pick');
-  // 第一步已建好的会话：第二步应用模型后登记（取消也登记，进程已起，不浪费）。
-  const [created, setCreated] = useState<ChatInfo | null>(null);
+  // 第一步已建好的会话：第二步应用模型后登记，取消也登记（进程已起，不浪费）。
+  // 用 ref 而非 state：关闭 effect 需读最新值，state 闭包可能滞后。
+  const createdRef = useRef<ChatInfo | null>(null);
   const [models, setModels] = useState<ChatModelsView | null>(null);
   const [selected, setSelected] = useState('');
+  // seq 使关闭后在途的 create 失效，避免其 setState 污染下次打开。
+  const seqRef = useRef(0);
+
+  // registerChat 把已建会话登记进 store（幂等：upsert 以 ID 去重）。
+  const registerChat = (chat: ChatInfo) => {
+    useAppStore.getState().upsertChat(chat);
+    useAppStore.getState().setLastAgentId(chat.ID);
+  };
 
   // 打开对话框时才拉工具列表（避免常驻首页也发请求）
   useEffect(() => {
@@ -519,24 +545,28 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
   // 关闭时重置内部状态；已建会话（第二步取消）仍登记，避免丢失。
   useEffect(() => {
     if (open) return;
-    if (created) {
-      useAppStore.getState().upsertChat(created);
-      useAppStore.getState().setLastAgentId(created.ID);
+    seqRef.current++; // 使关闭后在途的 create 失效
+    if (createdRef.current) {
+      registerChat(createdRef.current);
+      createdRef.current = null;
     }
     setStep('pick');
-    setCreated(null);
     setModels(null);
     setSelected('');
     setBusy(false);
-    // created 有意不进依赖：只在关闭瞬间读一次。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const create = async () => {
     if (!wsPath || !toolId || busy) return;
     setBusy(true);
+    const seq = seqRef.current;
     try {
       const result = await openWorkspaceACP(wsPath, toolId);
+      // 期间对话框被关闭/重开：丢弃本次结果，但仍登记会话避免后端进程悬空。
+      if (seq !== seqRef.current) {
+        if (result.Chat) registerChat(result.Chat);
+        return;
+      }
       if (!result.Chat) {
         onOpenChange(false);
         return;
@@ -544,30 +574,34 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
       const chat = result.Chat;
       // 拉模型列表：有模型进第二步选择，无模型直接完成。
       const view = await listChatModels(chat.ID).catch(() => null);
+      if (seq !== seqRef.current) {
+        registerChat(chat);
+        return;
+      }
       if (view && view.Models.length > 0) {
-        setCreated(chat);
+        createdRef.current = chat;
         setModels(view);
         setSelected(view.Current || view.Models[0].ID);
         setStep('model');
         return;
       }
-      useAppStore.getState().upsertChat(chat);
-      useAppStore.getState().setLastAgentId(chat.ID);
+      registerChat(chat);
       onOpenChange(false);
     } catch (e: unknown) {
-      useAppStore.getState().notify(backendError(e), 'error');
+      if (seq === seqRef.current) useAppStore.getState().notify(backendError(e), 'error');
     } finally {
-      setBusy(false);
+      if (seq === seqRef.current) setBusy(false);
     }
   };
 
   // confirmModel 应用所选模型；失败提示但会话已建，仍关闭（可在会话内再改）。
   const confirmModel = async () => {
-    if (!created || busy) return;
+    const chat = createdRef.current;
+    if (!chat || busy) return;
     setBusy(true);
     try {
       if (selected && selected !== models?.Current) {
-        await setChatModel(created.ID, selected);
+        await setChatModel(chat.ID, selected);
       }
     } catch (e: unknown) {
       useAppStore.getState().notify(t('ui.hub.model_switch_failed', { err: backendError(e) }), 'error');

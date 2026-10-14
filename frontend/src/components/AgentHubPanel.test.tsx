@@ -1,6 +1,6 @@
 // AgentHubPanel：跨项目汇总运行中的 ACP agent，@ 指定目标发消息、跳转定位、新建 agent、粘贴。
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatInfo, ToolInfo } from '../lib/api';
 import { useAppStore } from '../state/store';
@@ -210,8 +210,12 @@ describe('AgentHubPanel', () => {
     expect(filtered).not.toHaveTextContent('/new');
   });
 
-  it('选中 /clear：清空消息流且不投递后端', async () => {
-    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+  it('选中 /clear：清空消息流与 agent 通知，且不投递后端', async () => {
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1' })],
+      lastAgentId: 'c1',
+      agentNotices: [{ id: 1, tool: 'codex', event: 'Stop', termKey: 'k', workspace: 'D:\\ws\\a', summary: '已完成' }],
+    });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: 'hello' } });
@@ -221,6 +225,22 @@ describe('AgentHubPanel', () => {
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(api.sendChatPrompt).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(screen.queryByText('hello')).toBeNull());
+    expect(screen.queryByText('已完成')).toBeNull();
+  });
+
+  it('agent 技能与客户端命令同名时去重（客户端优先，大小写不敏感）', async () => {
+    api.listChatCommands.mockResolvedValue([{ Name: 'Clear', Description: 'agent clear' }]);
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '/' } });
+    await waitFor(() => expect(api.listChatCommands).toHaveBeenCalledWith('c1'));
+    // 等待拉取完成后列表仍只含一条 clear（客户端），不出现 agent 的 Clear 重复项
+    await waitFor(() => {
+      const list = screen.getByRole('listbox', { name: tt('ui.hub.cmd_aria') });
+      const clearRows = within(list).getAllByText(/^\/clear$/i);
+      expect(clearRows).toHaveLength(1);
+    });
   });
 
   it('选中 /stop：对目标 agent 调 cancelChat', async () => {
@@ -240,6 +260,8 @@ describe('AgentHubPanel', () => {
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(api.cancelChat).not.toHaveBeenCalled();
     expect(useAppStore.getState().toasts.some((t) => t.title === tt('ui.hub.need_target'))).toBe(true);
+    // 无目标时不消费输入，草稿保留
+    expect((box as HTMLTextAreaElement).value).toBe('/stop');
   });
 
   it('agent 技能出现在命令列表，选中后切入草稿并可投递', async () => {
@@ -312,5 +334,34 @@ describe('AgentHubPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.create') }));
     await waitFor(() => expect(useAppStore.getState().chats.some((c) => c.ID === 'n2')).toBe(true));
     expect(api.setChatModel).not.toHaveBeenCalled();
+  });
+
+  it('新建期间取消：会话仍登记，且不把下次打开带进模型步骤', async () => {
+    api.getTools.mockResolvedValue([
+      { ID: 'claude', Name: 'Claude Code', BinPath: '', Version: '', Installed: true, Source: 'path', ACP: { Available: true, Source: 'builtin' } },
+    ]);
+    // 让 openWorkspaceACP 挂起，模拟建会话期间的关闭
+    let resolveOpen: (v: unknown) => void = () => {};
+    api.openWorkspaceACP.mockReturnValue(
+      new Promise((res) => {
+        resolveOpen = res;
+      }),
+    );
+    api.listChatModels.mockResolvedValue({ Current: 'm1', Models: [{ ID: 'm1', Name: 'Model One' }] });
+    useAppStore.setState({
+      workspaces: [{ Path: 'D:\\ws\\a', Name: 'a', LastUsed: '', SessionCount: 0, ToolCounts: {}, Source: 'manual' }],
+    });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
+    fireEvent.change(await screen.findByLabelText(tt('ui.hub.field_project')), { target: { value: 'D:\\ws\\a' } });
+    fireEvent.change(await screen.findByLabelText(tt('ui.hub.field_tool')), { target: { value: 'claude' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.create') }));
+    // 关闭对话框（Cancel），随后在途的 openWorkspaceACP 才 resolve
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.cancel') }));
+    resolveOpen({ Kind: 'chat', Chat: chat({ ID: 'n3', Workspace: 'D:\\ws\\a', ToolID: 'claude' }) });
+    await waitFor(() => expect(useAppStore.getState().chats.some((c) => c.ID === 'n3')).toBe(true));
+    // 再次打开应回到第一步（不残留模型步骤）
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
+    expect(await screen.findByLabelText(tt('ui.hub.field_project'))).toBeTruthy();
   });
 });
