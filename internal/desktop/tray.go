@@ -8,6 +8,7 @@ package desktop
 
 import (
 	"log"
+	"runtime"
 	"sync"
 
 	"github.com/energye/systray"
@@ -63,6 +64,14 @@ var trayDispatch = func(fn func()) {
 // runTray 启动托盘消息循环（阻塞，调用方需放 goroutine）：
 // 菜单「显示主窗口」触发 onShow，「退出」触发 onQuit；文案取自 applang 当前语言。
 func runTray(icon []byte, onShow, onQuit func()) {
+	// 必须把本 goroutine 钉死在当前 OS 线程：托盘窗口由本 goroutine 创建，
+	// Windows 的 GetMessage 只泵「当前线程」的消息队列——若 Go 调度器在两次
+	// doNativeTick 之间把未锁线程的 goroutine 迁到别的线程，消息循环从此
+	// 泵错队列，托盘右键/左键/看门狗 WM_NULL 全部永远无响应
+	// （2026-10-14 黑匣子栈 dump 证实：单次 GetMessage 卡 342 分钟）。
+	// getlantern/energye systray 文档同样要求非主 goroutine 调用 Run 前锁线程；
+	// Run 阻塞至 Quit 返回、本 goroutine 随即结束，无需 Unlock。
+	runtime.LockOSThread()
 	systray.Run(func() {
 		// Windows 通知区只认 ICO 数据，其它平台用 PNG（图标选择见 main.go trayIcon）
 		systray.SetIcon(icon)
