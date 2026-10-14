@@ -92,6 +92,29 @@ func TestNotifyDeduperWindowByEvent(t *testing.T) {
 	}
 }
 
+// TestNotifyDeduperCleanupKeepsLongWindow 验证短窗事件的过期清理不得提前删掉长窗记录：
+// 多会话场景下，任一完成类事件放行时若用「now-短窗」做清理 cutoff，更早写入的
+// 等待类记录会被误删，长窗在多会话下形同虚设。seen 必须按各记录自己的过期时刻清理。
+func TestNotifyDeduperCleanupKeepsLongWindow(t *testing.T) {
+	now := time.Unix(1000, 0)
+	d := newNotifyDeduper(notifyDedupWindow, notifyDedupWaitWindow)
+	d.now = func() time.Time { return now }
+
+	wait := agenthook.Payload{Tool: "claude", Event: "Notification", TermKey: "k1", Summary: "waiting"}
+	other := agenthook.Payload{Tool: "claude", Event: "Stop", TermKey: "k2"} // 另一会话
+	if !d.allow(wait) {
+		t.Fatal("首条等待确认应放行")
+	}
+	now = now.Add(10 * time.Second)
+	if !d.allow(other) {
+		t.Fatal("另一会话完成类应放行")
+	}
+	now = now.Add(10 * time.Second) // t0+20s，仍在等待类长窗内
+	if d.allow(wait) {
+		t.Fatal("短窗事件的清理不得提前删掉长窗记录")
+	}
+}
+
 // TestNotifyDeduperAttentionUsesWaitWindow 验证 gemini 的 attention 事件同样走长窗。
 func TestNotifyDeduperAttentionUsesWaitWindow(t *testing.T) {
 	now := time.Unix(1000, 0)

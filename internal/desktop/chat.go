@@ -52,7 +52,8 @@ func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, aut
 
 // emitChatNotify 把一条聊天侧事件转成 agent 通知气泡 payload。
 // 归因字段（key/tool/workspace）从 manager 反查；会话已关闭时静默跳过；
-// allow 非 nil 且返回 false（窗口内重复）时同样跳过。
+// allow 非 nil 且返回 false（窗口内重复）时同样跳过。注意被吞的只是通知气泡：
+// 权限请求本身仍经 chat:permission 推给前端弹窗，不影响交互。
 // 回调总在 Manager 锁外执行，Get 取锁安全。
 func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, event, summary string, allow func(agenthook.Payload) bool) {
 	if m == nil {
