@@ -136,7 +136,7 @@ func TestDispatchNotifyOnceHiddenShowsBubble(t *testing.T) {
 	if toastCalls != 0 {
 		t.Fatalf("隐藏时不应再弹系统 toast，得到 %d", toastCalls)
 	}
-	if bubbleTitle != "CodeBuddy "+applang.T("toast.task_done") || bubbleBody != "任务收尾完成" || bubbleTermKey != "new:3" {
+	if bubbleTitle != "CodeBuddy "+applang.T("toast.task_done") || bubbleBody != "ws" || bubbleTermKey != "new:3" {
 		t.Fatalf("bubble 参数不符: %q / %q / %q", bubbleTitle, bubbleBody, bubbleTermKey)
 	}
 }
@@ -259,6 +259,8 @@ func TestDispatchNotifyOnceFocusedNoBubble(t *testing.T) {
 }
 
 // payload → toast 标题/正文映射。
+// 正文固定为项目名（workspace 最后一段）：回复全文已进 AgentHub，
+// 通知再重复铺开超长内容只会刷屏（2026-10-14 用户反馈）。
 func TestNotifyToastText(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -266,13 +268,12 @@ func TestNotifyToastText(t *testing.T) {
 		wantTitle string
 		wantBody  string
 	}{
-		{"codebuddy 完成", agenthook.Payload{Tool: "codebuddy", Event: "Stop", Summary: "done"}, "CodeBuddy " + applang.T("toast.task_done"), "done"},
-		{"claude 等确认", agenthook.Payload{Tool: "claude", Event: "Notification", Summary: "需要权限"}, "Claude Code " + applang.T("toast.waiting_confirm"), "需要权限"},
-		{"claude 出错", agenthook.Payload{Tool: "claude", Event: "error", Summary: "boom"}, "Claude Code " + applang.T("toast.task_error"), "boom"},
-		{"gemini 等确认(attention)", agenthook.Payload{Tool: "gemini", Event: "attention", Summary: "等待输入"}, "Gemini " + applang.T("toast.waiting_confirm"), "等待输入"},
-		{"codex 回合完成", agenthook.Payload{Tool: "codex", Event: "agent-turn-complete"}, "Codex " + applang.T("toast.task_done"), ""},
-		{"未知工具回退", agenthook.Payload{Tool: "mystery", Event: "Stop", Workspace: "d:/ws"}, "mystery " + applang.T("toast.task_done"), "d:/ws"},
-		{"summary 优先于工作区", agenthook.Payload{Tool: "gemini", Workspace: "d:/ws", Summary: "ok"}, "Gemini " + applang.T("toast.task_done"), "ok"},
+		{"codebuddy 完成", agenthook.Payload{Tool: "codebuddy", Event: "Stop", Workspace: `D:\a\proj`, Summary: "超长回复正文……"}, "CodeBuddy " + applang.T("toast.task_done"), "proj"},
+		{"claude 等确认", agenthook.Payload{Tool: "claude", Event: "Notification", Workspace: `/home/u/proj`, Summary: "需要权限"}, "Claude Code " + applang.T("toast.waiting_confirm"), "proj"},
+		{"claude 出错", agenthook.Payload{Tool: "claude", Event: "error", Workspace: `D:\ws`, Summary: "boom"}, "Claude Code " + applang.T("toast.task_error"), "ws"},
+		{"gemini 等确认(attention)", agenthook.Payload{Tool: "gemini", Event: "attention", Workspace: `d:/ws`, Summary: "等待输入"}, "Gemini " + applang.T("toast.waiting_confirm"), "ws"},
+		{"codex 无工作区正文为空", agenthook.Payload{Tool: "codex", Event: "agent-turn-complete", Summary: "x"}, "Codex " + applang.T("toast.task_done"), ""},
+		{"未知工具回退", agenthook.Payload{Tool: "mystery", Event: "Stop", Workspace: "d:/ws"}, "mystery " + applang.T("toast.task_done"), "ws"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

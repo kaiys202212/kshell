@@ -10,6 +10,7 @@ import { useTranslation } from 'react-i18next';
 import { cn } from '../lib/cn';
 import { eventLabel, toolDisplayName, type AgentNotice } from '../lib/agentNotify';
 import { sameWorkspacePath } from '../lib/workspacePath';
+import { workspaceName } from '../lib/workspaceName';
 import { useAppStore } from '../state/store';
 
 const MAX_VISIBLE = 3;
@@ -72,7 +73,8 @@ function NoticeCard({ notice }: { notice: AgentNotice }) {
   }, []);
 
   const attention = eventLabel(notice.event) === 'waiting_confirm';
-  const body = notice.summary || notice.workspace;
+  // 正文只展示项目名：回复全文已进 AgentHub 对话框，通知重复铺开超长内容只会刷屏
+  const body = workspaceName(notice.workspace);
   return (
     <button
       type="button"

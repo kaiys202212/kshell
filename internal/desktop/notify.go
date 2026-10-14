@@ -12,7 +12,6 @@ import (
 	"github.com/yangk/kshell/internal/applang"
 	"github.com/yangk/kshell/internal/terminal"
 )
-
 // notifyPollInterval 是通知收件箱的轮询间隔。notifier 侧毫秒级落盘，
 // 500ms 足够「任务完成 → 气泡出现」的体感，空轮询成本只是扫一次目录。
 const notifyPollInterval = 500 * time.Millisecond
@@ -189,7 +188,9 @@ var toolDisplayNames = map[string]string{
 }
 
 // notifyToastText 把 payload 映射成 toast 标题与正文。
-// 标题 = 工具名 + 事件描述；正文 = 摘要，缺摘要时退回工作区路径。
+// 标题 = 工具名 + 事件描述；正文 = 项目名（workspace 最后一段）。
+// 不展示 Summary：agent 回复全文已进 AgentHub 对话框，通知再重复铺开
+// 超长正文只会刷屏（2026-10-14 用户反馈）。
 func notifyToastText(p agenthook.Payload) (string, string) {
 	name := toolDisplayNames[p.Tool]
 	if name == "" {
@@ -208,9 +209,13 @@ func notifyToastText(p agenthook.Payload) (string, string) {
 		// agent 在等待用户确认，与「任务完成」语义必须区分
 		event = applang.T("toast.waiting_confirm")
 	}
-	body := p.Summary
-	if body == "" {
-		body = p.Workspace
+	body := ""
+	if ws := strings.TrimSpace(p.Workspace); ws != "" {
+		// filepath.Base("") 返回 "."，需先排除空工作区；base 与前端
+		// workspaceName（取最后一段、忽略末尾分隔符）语义一致
+		if base := filepath.Base(ws); base != "." && base != string(filepath.Separator) {
+			body = base
+		}
 	}
 	return name + " " + event, body
 }
