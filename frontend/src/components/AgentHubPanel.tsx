@@ -4,6 +4,8 @@
 // 用户发出的消息与 agent 结束通知（summary 为 agent 回复正文）。
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { ChatCommand, ChatInfo, ChatModelsView, HubArchiveMonth, HubMessage, ToolInfo } from '../lib/api';
 import {
   cancelChat,
@@ -23,6 +25,8 @@ import { buildMentionOptions, resolveMentionTarget, type MentionAgent } from '..
 import { toolDisplayName } from '../lib/agentNotify';
 import { quotePathForShell } from '../lib/dragPath';
 import { backendError } from '../lib/errors';
+import { attributionText, baseName, resolveAttribution } from '../lib/hubAttribution';
+import { markdownBubbleClass } from '../lib/markdownStyles';
 import { sameWorkspacePath } from '../lib/workspacePath';
 import { cn } from '../lib/cn';
 import { LIST_ROW, LIST_ROW_ACTIVE, MONO } from '../lib/ui';
@@ -43,6 +47,18 @@ const HUB_COMMANDS: { name: string; descKey: string }[] = [
   { name: 'clear', descKey: 'ui.hub.cmd_clear_desc' },
 ];
 const HUB_COMMAND_NAMES = new Set(HUB_COMMANDS.map((c) => c.name.toLowerCase()));
+
+// 消息流里 agent 气泡 / 用户气泡的归因行：项目 · 会话（chats/terminals 反查）。
+// 组件内共用 chats 与 terminals 镜像，抽成工厂避免两处重复传参。
+function useAttribution() {
+  const chats = useAppStore((s) => s.chats);
+  const terminals = useAppStore((s) => s.terminals);
+  return useMemo(
+    () => (m: Pick<HubMessage, 'workspace' | 'chatId' | 'termKey'>) =>
+      attributionText(resolveAttribution(m, chats, terminals)),
+    [chats, terminals],
+  );
+}
 
 // 补全列表条目：客户端命令与 agent 技能混排，用 kind 区分选中后的行为。
 interface SlashItem {
@@ -67,9 +83,7 @@ function statusDotClass(status: string): string {
 
 // wsBaseName 取路径最后一段，作为项目分组标题。
 function wsBaseName(ws: string): string {
-  const n = ws.replace(/[\\/]+$/, '');
-  const i = Math.max(n.lastIndexOf('/'), n.lastIndexOf('\\'));
-  return i >= 0 ? n.slice(i + 1) : n;
+  return baseName(ws);
 }
 
 export default function AgentHubPanel() {
@@ -77,6 +91,8 @@ export default function AgentHubPanel() {
   const chats = useAppStore((s) => s.chats);
   const hubMessages = useAppStore((s) => s.hubMessages);
   const lastAgentId = useAppStore((s) => s.lastAgentId);
+  // 消息归因：workspace/chatId/termKey → 「项目 · 会话」文本。
+  const attrOf = useAttribution();
 
   const emptyTarget = t('ui.hub.new_agent');
   const [draft, setDraft] = useState('');
@@ -331,7 +347,7 @@ export default function AgentHubPanel() {
   return (
     <section
       aria-label={t('ui.hub.title')}
-      className="flex flex-col gap-2.5 rounded border border-border bg-card p-3 text-sm"
+      className="flex min-h-0 flex-1 flex-col gap-2.5 rounded border border-border bg-card p-3 text-sm"
     >
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-sm font-medium">{t('ui.hub.title')}</h2>
@@ -356,7 +372,8 @@ export default function AgentHubPanel() {
       </div>
 
       {historyOpen && (
-        <div className="flex flex-col gap-1 rounded border border-border bg-card p-2 text-xs">
+        // 归档区限高自滚：不挤占消息流与输入区的固定布局
+        <div className="flex max-h-40 shrink-0 flex-col gap-1 overflow-y-auto rounded border border-border bg-card p-2 text-xs">
           <span className="text-muted-foreground">{t('ui.hub.archive_title')}</span>
           {archiveMonths.length === 0 ? (
             <span className="text-muted-foreground">{t('ui.hub.archive_empty')}</span>
@@ -380,11 +397,20 @@ export default function AgentHubPanel() {
           )}
           {archiveMessages.length > 0 && (
             <div className="mt-1 flex flex-col gap-1 border-t border-border pt-1">
-              {archiveMessages.map((m) => (
-                <div key={`a${m.id}`} className="text-muted-foreground">
-                  <span className="whitespace-pre-wrap">{m.text}</span>
-                </div>
-              ))}
+              {archiveMessages.map((m) => {
+                const attr = attrOf(m);
+                return (
+                  <div key={`a${m.id}`} className="text-muted-foreground">
+                    {/* 归档消息与 live 同口径：带归因行 + markdown 渲染 */}
+                    <div className="text-[11px]">
+                      {[toolDisplayName(m.tool ?? ''), attr].filter(Boolean).join(' · ')}
+                    </div>
+                    <div className={markdownBubbleClass}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -393,7 +419,8 @@ export default function AgentHubPanel() {
       {chats.length === 0 ? (
         <EmptyState title={t('ui.hub.empty')} />
       ) : (
-        <div className="flex flex-col gap-2">
+        // 会话列表限高自滚：agent 多时不无限撑高，把空间留给消息流
+        <div className="flex max-h-44 shrink-0 flex-col gap-2 overflow-y-auto">
           {groups.map((g) => (
             <div key={g.workspace} className="flex flex-col gap-1">
               <span className={cn(MONO, 'truncate')} title={g.workspace}>
@@ -416,7 +443,8 @@ export default function AgentHubPanel() {
                         className={cn('h-1.5 w-1.5 shrink-0 rounded-full', statusDotClass(c.Status))}
                       />
                       <span className="min-w-0 truncate font-medium">
-                        {c.Title || emptyTarget}
+                        {/* 无标题会话兜底显示项目基名，避免出现「新会话」同名列无法区分 */}
+                        {c.Title || wsBaseName(c.Workspace) || emptyTarget}
                       </span>
                       <span className="ml-auto shrink-0 truncate text-[11px] text-muted-foreground">
                         {toolDisplayName(c.ToolID)} · {t(statusKey(c.Status))}
@@ -430,10 +458,12 @@ export default function AgentHubPanel() {
         </div>
       )}
 
-      <div className="flex flex-col gap-1 overflow-y-auto" role="log" aria-live="polite">
-        {hubMessages.map((m) =>
-          m.kind === 'user' ? (
+      <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto" role="log" aria-live="polite">
+        {hubMessages.map((m) => {
+          const attr = attrOf(m);
+          return m.kind === 'user' ? (
             <div key={`h${m.id}`} className="text-right">
+              {attr && <div className="mb-0.5 text-[11px] text-muted-foreground">{attr}</div>}
               <div className="selectable inline-block max-w-[85%] rounded-md bg-primary px-3 py-1.5 text-primary-foreground">
                 <span className="whitespace-pre-wrap">{m.text}</span>
               </div>
@@ -441,12 +471,17 @@ export default function AgentHubPanel() {
           ) : (
             <div key={`h${m.id}`} className="text-left">
               <div className="selectable inline-block max-w-[85%] rounded-md bg-muted px-3 py-1.5">
-                <span className="mr-1.5 text-[11px] text-muted-foreground">{toolDisplayName(m.tool ?? '')}</span>
-                <span className="whitespace-pre-wrap">{m.text}</span>
+                {/* 归因行：工具 · 项目 · 会话；缺项跳过，全缺只剩工具名 */}
+                <div className="mb-0.5 text-[11px] text-muted-foreground">
+                  {[toolDisplayName(m.tool ?? ''), attr].filter(Boolean).join(' · ')}
+                </div>
+                <div className={markdownBubbleClass}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+                </div>
               </div>
             </div>
-          ),
-        )}
+          );
+        })}
       </div>
 
       <div className="flex flex-col gap-1 border-t border-border pt-2">
@@ -459,10 +494,12 @@ export default function AgentHubPanel() {
               <li key={o.id}>
                 <button
                   type="button"
-                  className="w-full rounded px-2 py-1 text-left font-mono hover:bg-muted/50"
+                  className="w-full rounded px-2 py-1 text-left hover:bg-muted/50"
                   onClick={() => applyMention(o.label)}
                 >
-                  @{o.label}
+                  <span className="block font-mono">@{o.label}</span>
+                  {/* 第二行：项目 · 会话标题（label 保持短标签，详情只做展示） */}
+                  {o.detail && <span className="block truncate text-muted-foreground">{o.detail}</span>}
                 </button>
               </li>
             ))}

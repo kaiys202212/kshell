@@ -21,6 +21,16 @@ describe('buildMentionOptions', () => {
 
     expect(map(shuffled)).toEqual(map(agents));
   });
+
+  it('detail 为「项目基名 · 会话标题」，workspace 缺失时只留标题', () => {
+    const opts = buildMentionOptions(agents);
+    expect(opts[0].detail).toBe('a · 重构认证');
+    expect(opts[2].detail).toBe('a · 调样式');
+    const noWs = buildMentionOptions([{ id: 'c9', toolId: 'codex', title: '只有标题', workspace: '' }]);
+    expect(noWs[0].detail).toBe('只有标题');
+    const neither = buildMentionOptions([{ id: 'c8', toolId: 'codex', title: '', workspace: '' }]);
+    expect(neither[0].detail).toBeUndefined();
+  });
 });
 
 describe('resolveMentionTarget', () => {

@@ -1,6 +1,7 @@
 // 汇总聊天窗的 @ 提及解析：把跨项目 agent 列表编译成唯一展示名，
 // 再从用户输入里解析出投递目标。纯函数，便于单测。
 import { toolDisplayName } from './agentNotify';
+import { baseName } from './hubAttribution';
 
 export interface MentionAgent {
   id: string;      // chat.ID
@@ -11,17 +12,24 @@ export interface MentionAgent {
 
 export interface MentionOption {
   id: string;
-  label: string; // 唯一展示名，形如 Claude Code#c3
+  label: string;  // 唯一展示名，形如 Claude Code#c3
+  detail?: string; // 第二行补充「项目名 · 会话标题」，仅展示，不参与匹配
 }
 
 // buildMentionOptions 生成补全项：用工具展示名 + 会话 id（后端稳定自增 c1/c2）拼唯一展示名。
 // 必须顺序无关：早先按列表顺序编号（#1/#2）会在 scan:done 重建 chats 后漂移，
 // 同一条 @…#2 会投给不同会话。改用 id 后，label↔id 映射不随列表顺序变化。
+// detail 供下拉列表第二行展示项目与会话标题（label 写入草稿，不宜过长）。
 export function buildMentionOptions(agents: MentionAgent[]): MentionOption[] {
-  return agents.map((a) => ({
-    id: a.id,
-    label: `${toolDisplayName(a.toolId)}#${a.id}`,
-  }));
+  return agents.map((a) => {
+    const project = a.workspace ? baseName(a.workspace) : '';
+    const parts = [project, a.title].filter(Boolean);
+    return {
+      id: a.id,
+      label: `${toolDisplayName(a.toolId)}#${a.id}`,
+      detail: parts.length > 0 ? parts.join(' · ') : undefined,
+    };
+  });
 }
 
 // resolveMentionTarget 解析投递目标：

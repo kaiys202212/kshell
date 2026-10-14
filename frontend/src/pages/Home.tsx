@@ -304,8 +304,10 @@ export default function Home() {
   const createOpen = createStep !== 'closed';
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      <div className="mb-3 flex items-center justify-between gap-2">
+    // 左右布局：左 2/5 项目列表（自身滚动），右 3/5 AgentHub 对话卡（全高）。
+    // 根容器不出滚动条：overflow-hidden + 两列各自 min-h-0 内部滚动。
+    <div className="flex flex-1 flex-col overflow-hidden p-6">
+      <div className="mb-3 flex shrink-0 items-center justify-between gap-2">
         <h1 className="text-lg font-semibold">
           {t('ui.home.title')}
           <span className="ml-2 text-xs font-normal text-muted-foreground">
@@ -478,127 +480,135 @@ export default function Home() {
           </Button>
         </div>
       </div>
-      {/* 首页检索：按名称/路径过滤工作区卡片 */}
-      <div className="mb-3">
-        <input
-          ref={filterRef}
-          data-testid="home-filter"
-          type="text"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder={t('ui.home.filter_placeholder')}
-          className="h-8 w-full max-w-96 rounded-[3px] border border-input bg-card px-2 text-[13px] outline-none placeholder:text-muted-foreground focus:border-primary/60"
-        />
-      </div>
-      {/* 快捷键提示：kbd 风格小块（全局 Ctrl+K / Ctrl+F，见 App.tsx） */}
-      <p className="mb-4 flex items-center gap-1.5 text-xs text-muted-foreground">
-        <kbd className="rounded-sm border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-secondary-foreground">
-          Ctrl K
-        </kbd>
-        {t('ui.home.shortcut_switch')}
-        <kbd className="rounded-sm border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-secondary-foreground">
-          Ctrl F
-        </kbd>
-        {t('ui.home.shortcut_search')}
-      </p>
-      {/* 跨项目 agent 汇总聊天窗：置于工作区卡片网格上方 */}
-      <div className="mb-4">
-        <AgentHubPanel />
-      </div>
-      {sorted.length === 0 ? (
-        // 空态按 scanState 收敛：扫描未完成（idle/scanning）用骨架屏占位，
-        // done 后仍未发现才是「确实没有」
-        scanState !== 'done' ? (
-          <div className={GRID}>
-            {[0, 1, 2].map((i) => (
-              <Skeleton key={i} className="h-24 rounded border border-border" />
-            ))}
+      {/* 左右分栏：左列项目（检索+网格，内部滚动），右列 AgentHub 对话卡（全高） */}
+      <div className="flex min-h-0 flex-1 gap-3">
+        <div className="flex w-2/5 min-w-0 flex-col">
+          {/* 首页检索：按名称/路径过滤工作区卡片 */}
+          <div className="mb-2 shrink-0">
+            <input
+              ref={filterRef}
+              data-testid="home-filter"
+              type="text"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder={t('ui.home.filter_placeholder')}
+              className="h-8 w-full rounded-[3px] border border-input bg-card px-2 text-[13px] outline-none placeholder:text-muted-foreground focus:border-primary/60"
+            />
           </div>
-        ) : (
-          <EmptyState icon={<FolderGlyph />} title={t('ui.home.empty')} />
-        )
-      ) : filtered.length === 0 ? (
-        // 有工作区但检索无命中
-        <EmptyState title={t('ui.home.filter_empty')} />
-      ) : (
-        <ul className={GRID}>
-          {filtered.map((ws: Workspace, i: number) => {
-            const lastUsed = lastUsedTime(ws);
-            const { shown, rest } = toolDistribution(ws.ToolCounts);
-            // 左缘色条取占比最高的工具色；无工具上下文（如纯 git 扫描工作区）用主色
-            const barColor = shown[0] ? badgeFor(shown[0][0]).color : 'var(--primary)';
-            const subtitle = cardSubtitle(ws, t);
-            return (
-              <li
-                key={ws.Path}
-                className="group relative min-w-0"
-                style={{
-                  animation: 'kshell-rise-in var(--duration-base) var(--ease-out) both',
-                  animationDelay: `${Math.min(i, 10) * 30}ms`,
-                }}
-              >
-                <button
-                  className="relative flex h-full w-full min-w-0 flex-col gap-1 rounded border border-border bg-card px-2.5 py-2 text-left transition-[background-color,border-color,box-shadow,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:-translate-y-px hover:border-primary/40 hover:bg-muted hover:shadow-[var(--shadow-card)]"
-                  onClick={() => openTab(ws)}
-                  title={subtitle}
-                >
-                  <span
-                    aria-hidden="true"
-                    className="absolute bottom-3 left-0 top-3 w-[3px] rounded-full"
-                    style={{ background: barColor }}
-                  />
-                  {/* 第一行：名称（单行截断）+ git / 远程 / 手动徽标 */}
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <span data-testid="ws-name" className="min-w-0 truncate text-[12.5px] font-medium">{ws.Name}</span>
-                    {isSSH(ws) && <Badge variant="outline">{t('ui.home.remote_badge')}</Badge>}
-                    {isSSH(ws) && unreachableWorkspaces[ws.Path] && (
-                      <Badge variant="destructive">{t('ui.home.remote_unreachable')}</Badge>
-                    )}
-                    {ws.Source === 'git' && <Badge variant="outline">git</Badge>}
-                    {ws.Source === 'manual' && !isSSH(ws) && (
-                      <Badge variant="outline">{t('ui.home.source_manual')}</Badge>
-                    )}
-                  </span>
-                  {/* 副标题：本地完整路径 / 远程连接名+远端路径（完整路径见卡片 button title） */}
-                  <span className={`min-w-0 truncate text-[10px] text-muted-foreground ${MONO}`}>
-                    {subtitle}
-                  </span>
-                  {/* 会话数 + 最后活动时间 */}
-                  <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-                    <span className={`whitespace-nowrap ${MONO}`}>{t('ui.home.session_count', { count: ws.SessionCount })}</span>
-                    <span className={`whitespace-nowrap ${MONO}`}>
-                      {lastUsed === null
-                        ? t('ui.home.never_used')
-                        : t('ui.home.last_active', { rel: formatRelativeTime(ws.LastUsed) })}
-                    </span>
-                  </span>
-                  {/* 工具分布（最多 3 个 + "+N"） */}
-                  {shown.length > 0 && (
-                    <span className="flex min-w-0 flex-wrap items-center gap-1">
-                      {shown.map(([toolID]) => (
-                        <ToolDot key={toolID} toolID={toolID} />
-                      ))}
-                      {rest > 0 && (
-                        <span className="text-xs text-muted-foreground">+{rest}</span>
-                      )}
-                    </span>
-                  )}
-                </button>
-                {/* 删除按钮：绝对定位的兄弟节点（卡片本身是 button，不能嵌套），hover 显现 */}
-                <button
-                  type="button"
-                  aria-label={t('ui.home.delete_project', { name: ws.Name })}
-                  title={t('ui.home.delete_project_title')}
-                  className="absolute right-1 top-1 hidden rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-destructive group-hover:block"
-                  onClick={() => void handleDelete(ws)}
-                >
-                  <TrashGlyph />
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+          {/* 快捷键提示：kbd 风格小块（全局 Ctrl+K / Ctrl+F，见 App.tsx） */}
+          <p className="mb-2 flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+            <kbd className="rounded-sm border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-secondary-foreground">
+              Ctrl K
+            </kbd>
+            {t('ui.home.shortcut_switch')}
+            <kbd className="rounded-sm border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-secondary-foreground">
+              Ctrl F
+            </kbd>
+            {t('ui.home.shortcut_search')}
+          </p>
+          {/* 项目列表：仅此列滚动，首页本身不出滚动条 */}
+          <div className="min-h-0 flex-1 overflow-y-auto pb-1">
+            {sorted.length === 0 ? (
+              // 空态按 scanState 收敛：扫描未完成（idle/scanning）用骨架屏占位，
+              // done 后仍未发现才是「确实没有」
+              scanState !== 'done' ? (
+                <div className={GRID}>
+                  {[0, 1, 2].map((i) => (
+                    <Skeleton key={i} className="h-24 rounded border border-border" />
+                  ))}
+                </div>
+              ) : (
+                <EmptyState icon={<FolderGlyph />} title={t('ui.home.empty')} />
+              )
+            ) : filtered.length === 0 ? (
+              // 有工作区但检索无命中
+              <EmptyState title={t('ui.home.filter_empty')} />
+            ) : (
+              <ul className={GRID}>
+                {filtered.map((ws: Workspace, i: number) => {
+                  const lastUsed = lastUsedTime(ws);
+                  const { shown, rest } = toolDistribution(ws.ToolCounts);
+                  // 左缘色条取占比最高的工具色；无工具上下文（如纯 git 扫描工作区）用主色
+                  const barColor = shown[0] ? badgeFor(shown[0][0]).color : 'var(--primary)';
+                  const subtitle = cardSubtitle(ws, t);
+                  return (
+                    <li
+                      key={ws.Path}
+                      className="group relative min-w-0"
+                      style={{
+                        animation: 'kshell-rise-in var(--duration-base) var(--ease-out) both',
+                        animationDelay: `${Math.min(i, 10) * 30}ms`,
+                      }}
+                    >
+                      <button
+                        className="relative flex h-full w-full min-w-0 flex-col gap-1 rounded border border-border bg-card px-2.5 py-2 text-left transition-[background-color,border-color,box-shadow,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:-translate-y-px hover:border-primary/40 hover:bg-muted hover:shadow-[var(--shadow-card)]"
+                        onClick={() => openTab(ws)}
+                        title={subtitle}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className="absolute bottom-3 left-0 top-3 w-[3px] rounded-full"
+                          style={{ background: barColor }}
+                        />
+                        {/* 第一行：名称（单行截断）+ git / 远程 / 手动徽标 */}
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span data-testid="ws-name" className="min-w-0 truncate text-[12.5px] font-medium">{ws.Name}</span>
+                          {isSSH(ws) && <Badge variant="outline">{t('ui.home.remote_badge')}</Badge>}
+                          {isSSH(ws) && unreachableWorkspaces[ws.Path] && (
+                            <Badge variant="destructive">{t('ui.home.remote_unreachable')}</Badge>
+                          )}
+                          {ws.Source === 'git' && <Badge variant="outline">git</Badge>}
+                          {ws.Source === 'manual' && !isSSH(ws) && (
+                            <Badge variant="outline">{t('ui.home.source_manual')}</Badge>
+                          )}
+                        </span>
+                        {/* 副标题：本地完整路径 / 远程连接名+远端路径（完整路径见卡片 button title） */}
+                        <span className={`min-w-0 truncate text-[10px] text-muted-foreground ${MONO}`}>
+                          {subtitle}
+                        </span>
+                        {/* 会话数 + 最后活动时间 */}
+                        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                          <span className={`whitespace-nowrap ${MONO}`}>{t('ui.home.session_count', { count: ws.SessionCount })}</span>
+                          <span className={`whitespace-nowrap ${MONO}`}>
+                            {lastUsed === null
+                              ? t('ui.home.never_used')
+                              : t('ui.home.last_active', { rel: formatRelativeTime(ws.LastUsed) })}
+                          </span>
+                        </span>
+                        {/* 工具分布（最多 3 个 + "+N"） */}
+                        {shown.length > 0 && (
+                          <span className="flex min-w-0 flex-wrap items-center gap-1">
+                            {shown.map(([toolID]) => (
+                              <ToolDot key={toolID} toolID={toolID} />
+                            ))}
+                            {rest > 0 && (
+                              <span className="text-xs text-muted-foreground">+{rest}</span>
+                            )}
+                          </span>
+                        )}
+                      </button>
+                      {/* 删除按钮：绝对定位的兄弟节点（卡片本身是 button，不能嵌套），hover 显现 */}
+                      <button
+                        type="button"
+                        aria-label={t('ui.home.delete_project', { name: ws.Name })}
+                        title={t('ui.home.delete_project_title')}
+                        className="absolute right-1 top-1 hidden rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-destructive group-hover:block"
+                        onClick={() => void handleDelete(ws)}
+                      >
+                        <TrashGlyph />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </div>
+        {/* 右列：AgentHub 对话卡，占 3/5 宽、撑满本行剩余高度，聊天内容内部滚动 */}
+        <div className="flex w-3/5 min-w-0">
+          <AgentHubPanel />
+        </div>
+      </div>
     </div>
   );
 }

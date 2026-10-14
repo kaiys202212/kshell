@@ -157,6 +157,54 @@ describe('AgentHubPanel', () => {
     expect(screen.getByText('帮我修复')).toBeTruthy();
   });
 
+  it('agent 回复正文按 markdown 渲染（加粗/列表），用户消息保持纯文本', async () => {
+    api.listHubMessages.mockResolvedValue([
+      { id: 1, kind: 'user', text: '**不是加粗**', ts: 1 },
+      { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', text: '**加粗** 与\n\n- 条目一\n- 条目二', ts: 2 },
+    ]);
+    render(<AgentHubPanel />);
+    // agent 正文渲染出 strong / li
+    expect(await screen.findByText('加粗').then((el) => el.closest('strong'))).toBeTruthy();
+    expect(screen.getAllByRole('listitem').length).toBe(2);
+    // 用户气泡不含 strong（markdown 未渲染）
+    const user = screen.getByText('**不是加粗**');
+    expect(user.closest('strong')).toBeNull();
+  });
+
+  it('agent 回复归因：气泡头部展示 工具 · 项目 · 会话标题', async () => {
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', Workspace: 'D:\\ws\\alpha', Title: '重构认证' })],
+    });
+    api.listHubMessages.mockResolvedValue([
+      { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', workspace: 'D:\\ws\\alpha', text: '完成', ts: 2 },
+    ]);
+    render(<AgentHubPanel />);
+    expect(await screen.findByText('Claude Code · alpha · 重构认证')).toBeTruthy();
+  });
+
+  it('旧消息缺 chats 反查：归因回退 #chatId；用户消息归因行在气泡上方', async () => {
+    api.listHubMessages.mockResolvedValue([
+      { id: 1, kind: 'user', chatId: 'cX', workspace: 'D:\\ws\\beta', text: '在吗', ts: 1 },
+      { id: 2, kind: 'agent', tool: 'codex', event: 'Stop', chatId: 'cX', workspace: 'D:\\ws\\beta', text: '在', ts: 2 },
+    ]);
+    render(<AgentHubPanel />);
+    expect(await screen.findByText('Codex · beta · #cX')).toBeTruthy();
+    expect(screen.getByText('beta · #cX')).toBeTruthy();
+  });
+
+  it('归档旧消息同样走归因与 markdown 渲染', async () => {
+    api.listHubArchive.mockResolvedValue([{ month: '2026-09', count: 1 }]);
+    api.loadHubArchive.mockResolvedValue([
+      { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', workspace: 'D:\\ws\\alpha', text: '- 旧消息', ts: 1 },
+    ]);
+    useAppStore.setState({ chats: [chat({ ID: 'c1', Workspace: 'D:\\ws\\alpha', Title: '重构认证' })] });
+    render(<AgentHubPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.history') }));
+    fireEvent.click(await screen.findByRole('button', { name: /2026-09/ }));
+    expect(await screen.findByText('Claude Code · alpha · 重构认证')).toBeTruthy();
+    expect(screen.getAllByRole('listitem').length).toBeGreaterThan(0);
+  });
+
   it('agent 回复不随通知气泡（agentNotices）消失而消失', async () => {
     useAppStore.setState({
       agentNotices: [{ id: 9, tool: 'codex', event: 'Stop', termKey: 'k', workspace: 'D:\\ws\\a', summary: '气泡正文' }],
@@ -209,8 +257,19 @@ describe('AgentHubPanel', () => {
     fireEvent.change(box, { target: { value: '@Cur' } });
     const list = screen.getByRole('list', { name: tt('ui.hub.mention_aria') });
     expect(list).toHaveTextContent('@Cursor#c2');
-    fireEvent.click(screen.getByRole('button', { name: '@Cursor#c2' }));
+    // 第二行展示项目 · 会话标题
+    expect(list).toHaveTextContent('a · 乙');
+    fireEvent.click(screen.getByRole('button', { name: /@Cursor#c2/ }));
     expect((box as HTMLTextAreaElement).value).toBe('@Cursor#c2 ');
+  });
+
+  it('无标题会话在列表兜底显示项目基名', () => {
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', Title: '', Workspace: 'D:\\ws\\gamma' })],
+    });
+    render(<AgentHubPanel />);
+    // 分组标题与会话兜底同名（同项目）：至少出现两次即证明兜底生效
+    expect(screen.getAllByText('gamma').length).toBeGreaterThanOrEqual(2);
   });
 
   it('新建 agent：选项目与 ACP 工具后调用 openWorkspaceACP 并登记新 chat', async () => {
