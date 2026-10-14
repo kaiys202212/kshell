@@ -132,12 +132,12 @@ export default function ChatView({ chat, active }: Props) {
           {chat.Error ? t('ui.chat.error_suffix', { error: translateBackend(chat.Error) }) : ''}
         </div>
       )}
-      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-3 py-2">
+      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-2">
         {items.map((it) => {
           if (it.type === 'user' || it.type === 'assistant') {
             return (
               <div key={it.key} className={cn('mb-3', it.type === 'user' ? 'text-right' : '')}>
-                <div className={cn('selectable inline-block max-w-[85%] rounded-md px-3 py-1.5 text-sm',
+                <div className={cn('selectable inline-block max-w-[85%] break-words overflow-hidden rounded-md px-3 py-1.5 text-sm [&_pre]:whitespace-pre-wrap',
                   it.type === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
                   {it.type === 'assistant'
                     ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{it.text ?? ''}</ReactMarkdown>
@@ -150,7 +150,7 @@ export default function ChatView({ chat, active }: Props) {
             return (
               <details key={it.key} className="mb-3 text-xs text-muted-foreground">
                 <summary className="cursor-pointer select-none italic">{t('ui.chat.thought')}</summary>
-                <div className="selectable mt-1 whitespace-pre-wrap rounded border border-border px-2 py-1 italic">
+                <div className="selectable mt-1 whitespace-pre-wrap break-words rounded border border-border px-2 py-1 italic">
                   {it.text}
                 </div>
               </details>
@@ -163,7 +163,7 @@ export default function ChatView({ chat, active }: Props) {
                 <span className="font-medium">{it.tool.Title || it.tool.Name || t('ui.chat.tool_fallback')}</span>
                 <span className="ml-2 text-muted-foreground">{it.tool.Kind}{it.tool.Status ? ` · ${it.tool.Status}` : ''}</span>
                 {content && (
-                  <pre className="selectable mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-muted-foreground">
+                  <pre className="selectable mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-muted-foreground">
                     {content}
                   </pre>
                 )}
