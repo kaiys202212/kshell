@@ -40,7 +40,7 @@ func attachTestApp(t *testing.T, acpDet *providers.ACPDetection) (*App, *eventLo
 		CachePath: "D:/home/.kshell/cache/index.json",
 		Providers: []providers.Provider{providers.Claude{}},
 		Terminals: newTerminalManagerWith(events.emit, &stubTermBackend{}),
-		Chats:     newChatManagerWith(events.emit, fakeChatBackend{}, nil),
+		Chats:     newChatManagerWith(events.emit, fakeChatBackend{}, nil, nil),
 		Windows:   NewWindowManager(&stubLauncher{}, nil),
 		Emit:      events.emit,
 		Scan:      scan,
