@@ -21,6 +21,7 @@ const api = vi.hoisted(() => ({
   listHubArchive: vi.fn(),
   loadHubArchive: vi.fn(),
   clearHubMessages: vi.fn(),
+  recallHubMessage: vi.fn(),
 }));
 vi.mock('../lib/api', () => api);
 
@@ -55,6 +56,7 @@ beforeEach(() => {
   api.listHubArchive.mockResolvedValue([]);
   api.loadHubArchive.mockResolvedValue([]);
   api.clearHubMessages.mockResolvedValue(undefined);
+  api.recallHubMessage.mockResolvedValue(undefined);
   useAppStore.setState({
     chats: [],
     agentNotices: [],
@@ -461,8 +463,7 @@ describe('AgentHubPanel', () => {
     expect(api.setChatModel).not.toHaveBeenCalled();
   });
 
-  it('新建期间取消：会话仍登记，且不把下次打开带进模型步骤', async () => {
-    api.getTools.mockResolvedValue([
+  it('新建期间取消：会话仍登记，且不把下次打开带进模型步骤', async () => {    api.getTools.mockResolvedValue([
       { ID: 'claude', Name: 'Claude Code', BinPath: '', Version: '', Installed: true, Source: 'path', ACP: { Available: true, Source: 'builtin' } },
     ]);
     // 让 openWorkspaceACP 挂起，模拟建会话期间的关闭
@@ -488,5 +489,68 @@ describe('AgentHubPanel', () => {
     // 再次打开应回到第一步（不残留模型步骤）
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
     expect(await screen.findByLabelText(tt('ui.hub.field_project'))).toBeTruthy();
+  });
+
+  it('agent 卡片 hover 显示快速回复按钮，点击直达该 agent', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1', Key: 'new:1', ToolID: 'claude' })] });
+    api.listHubMessages.mockResolvedValue([
+      { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', text: 'done', ts: 2 },
+    ]);
+    render(<AgentHubPanel />);
+    const btn = await screen.findByRole('button', { name: tt('ui.hub.quick_continue') });
+    fireEvent.click(btn);
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', tt('ui.hub.quick_continue')));
+    expect(useAppStore.getState().lastAgentId).toBe('c1');
+  });
+
+  it('agent 卡片缺 chatId 时按 termKey 反查 chat ID', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c2', Key: 'new:7', ToolID: 'cursor' })] });
+    api.listHubMessages.mockResolvedValue([
+      { id: 3, kind: 'agent', tool: 'cursor', event: 'Stop', termKey: 'new:7', text: 'ok', ts: 3 },
+    ]);
+    render(<AgentHubPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_ok') }));
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c2', tt('ui.hub.quick_ok')));
+  });
+
+  it('快速回复无目标 agent 时提示 need_target 且不发送', async () => {
+    api.listHubMessages.mockResolvedValue([
+      { id: 4, kind: 'agent', tool: 'codex', event: 'Stop', text: 'x', ts: 4 },
+    ]);
+    render(<AgentHubPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_rephrase') }));
+    await waitFor(() =>
+      expect(useAppStore.getState().toasts.some((t) => t.title === tt('ui.hub.need_target'))).toBe(true),
+    );
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
+  it('queued 用户消息 hover 显示撤回按钮，点击后乐观标记已撤回', async () => {
+    // 经 listHubMessages 回流（挂载 effect 会用拉取结果覆盖 store，直塞 state 会被清掉）
+    api.listHubMessages.mockResolvedValue([
+      { id: 7, kind: 'user', chatId: 'c1', text: '排队消息', status: 'queued', ts: 1 },
+    ]);
+    render(<AgentHubPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.recall') }));
+    await waitFor(() => expect(api.recallHubMessage).toHaveBeenCalledWith(7));
+    await waitFor(() => expect(useAppStore.getState().hubMessages[0].status).toBe('recalled'));
+    expect(screen.getByText(tt('ui.hub.recalled'))).toBeTruthy();
+  });
+
+  it('recalled 用户气泡灰显并带已撤回标签，原文保留', () => {
+    useAppStore.setState({
+      hubMessages: [{ id: 7, kind: 'user', chatId: 'c1', text: '旧消息', status: 'recalled', ts: 1 }],
+    });
+    render(<AgentHubPanel />);
+    expect(screen.getByText(tt('ui.hub.recalled'))).toBeTruthy();
+    expect(screen.getByText('旧消息')).toBeTruthy();
+  });
+
+  it('ack wire key 经 translateBackend 翻译展示', async () => {
+    api.listHubMessages.mockResolvedValue([
+      { id: 3, kind: 'agent', tool: 'claude', event: 'ui.hub.ack_queued', chatId: 'c1', text: 'ui.hub.ack_queued', ts: 3 },
+    ]);
+    render(<AgentHubPanel />);
+    expect(await screen.findByText(tt('ui.hub.ack_queued'))).toBeTruthy();
   });
 });

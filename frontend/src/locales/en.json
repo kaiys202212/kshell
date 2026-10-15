@@ -23,6 +23,10 @@
       "unsupported_protocol": "Unsupported protocol version {{0}}",
       "no_session_load": "This agent does not support session/load"
     },
+    "hub": {
+      "not_found": "Message not found or archived",
+      "not_queued": "Message already delivered; cannot recall"
+    },
     "language": {
       "locales_not_dir": "Locales path is not a directory: {{0}}"
     },
@@ -804,7 +808,16 @@
       "cleared": "Cleared",
       "history": "History",
       "archive_title": "Archived by month",
-      "archive_empty": "No archived messages"
+      "archive_empty": "No archived messages",
+      "quick_continue": "Continue",
+      "quick_ok": "Sounds good",
+      "quick_rephrase": "Explain differently",
+      "ack_delivered": "Delivered to the agent.",
+      "ack_queued": "Queued; will be delivered in order.",
+      "recalled": "Recalled",
+      "recall": "Recall",
+      "recall_done": "Message recalled",
+      "recall_failed": "Recall failed: {{err}}"
     },
     "transcript": {
       "preview_title": "Session preview",

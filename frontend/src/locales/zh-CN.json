@@ -23,6 +23,10 @@
       "unsupported_protocol": "不支持的协议版本 {{0}}",
       "no_session_load": "该 agent 不支持 session/load"
     },
+    "hub": {
+      "not_found": "消息不存在或已归档",
+      "not_queued": "消息已送达，无法撤回"
+    },
     "language": {
       "locales_not_dir": "locales 路径不是目录: {{0}}"
     },
@@ -804,7 +808,16 @@
       "cleared": "已清空",
       "history": "历史",
       "archive_title": "按月归档",
-      "archive_empty": "暂无归档消息"
+      "archive_empty": "暂无归档消息",
+      "quick_continue": "继续",
+      "quick_ok": "好的",
+      "quick_rephrase": "重新说明",
+      "ack_delivered": "已送达，等待回复。",
+      "ack_queued": "已加入队列，将按顺序送达。",
+      "recalled": "已撤回",
+      "recall": "撤回",
+      "recall_done": "已撤回一条消息",
+      "recall_failed": "撤回失败：{{err}}"
     },
     "transcript": {
       "preview_title": "会话预览",

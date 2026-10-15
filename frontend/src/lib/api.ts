@@ -640,6 +640,7 @@ interface AppBindings {
   ListHubArchive(): Promise<HubArchiveMonth[]>;
   LoadHubArchive(month: string): Promise<HubMessage[]>;
   ClearHubMessages(): Promise<void>;
+  RecallHubMessage(id: number): Promise<void>;
 }
 
 declare global {
@@ -1467,6 +1468,7 @@ export function onNotifyFocus(cb: (termKey: string) => void): () => void {
 
 // HubMessage 是 AgentHub 持久历史里的一条消息（internal/hub.Message 的 JSON 形态）。
 // kind 取值 "user"（用户发出，气泡在右）/ "agent"（agent 回复，气泡在左）。
+// status 仅用户消息使用："" = 已送达，"queued" = 排队中可撤回，"recalled" = 已撤回。
 export interface HubMessage {
   id: number;
   kind: string;
@@ -1476,6 +1478,7 @@ export interface HubMessage {
   workspace?: string;
   text: string;
   event?: string;
+  status?: string;
   ts: number;
 }
 
@@ -1511,6 +1514,13 @@ export async function clearHubMessages(): Promise<void> {
   const a = app();
   if (!a) return;
   await a.ClearHubMessages();
+}
+
+// recallHubMessage 撤回一条排队中的 Hub 用户消息（后端从队列真移除并标记已撤回）。
+export async function recallHubMessage(id: number): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.RecallHubMessage(id);
 }
 
 // onHubChanged 订阅 AgentHub 历史变更（Go 落盘后 Emit hub:changed），返回取消订阅函数。
