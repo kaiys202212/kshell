@@ -352,7 +352,7 @@ export default function AgentHubPanel() {
     }
     if (hashQuery !== null) {
       const q = hashQuery.toLowerCase();
-      return HUB_COMMANDS.filter((c) => c.name.startsWith(q)).map<SlashItem>((c) => ({
+      return HUB_COMMANDS.filter((c) => c.name.toLowerCase().startsWith(q)).map<SlashItem>((c) => ({
         name: c.name,
         desc: t(c.descKey),
         kind: 'client',
@@ -504,13 +504,20 @@ export default function AgentHubPanel() {
   const send = () => {
     const text = draft.trim();
     if (!text) return;
-    // # 开头视为 kshell 客户端命令意图：取首个以 # 开头的空白分词校验
-    // （@ 提及标签可含空格，按分词跳过比正则删提及更稳），未知命令提示并保留草稿。
-    if (text.startsWith('#') || /(^|\s)#[^\s]/.test(text)) {
-      const cmdToken = text.split(/\s+/).find((w) => w.startsWith('#')) ?? '';
+    // 仅当 trim 后以 # 开头才视为 kshell 客户端命令意图；行中 # 词
+    // （如颜色 #333、issue #123）原样透传给 agent。取首词校验，
+    // 未知命令提示并保留草稿。
+    if (text.startsWith('#')) {
+      const cmdToken = text.split(/\s+/)[0] ?? '';
       const name = cmdToken.slice(1).toLowerCase();
       if (!HUB_COMMAND_NAMES.has(name)) {
         useAppStore.getState().notify(t('ui.hub.unknown_cmd', { cmd: cmdToken }), 'error');
+        return;
+      }
+      // 整体就是单个已知命令 token（尾空格已被 trim 掉）：宽松执行而非投递，
+      // 避免 #stop 因补全未弹而裸发给 agent。
+      if (text === cmdToken) {
+        runClientCommand(name);
         return;
       }
     }

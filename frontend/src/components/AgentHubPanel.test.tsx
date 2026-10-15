@@ -740,18 +740,63 @@ describe('AgentHubPanel', () => {
     expect((box as HTMLTextAreaElement).value).toBe('#nope');
   });
 
-  it('发送带 @ 提及的 # 命令：提取首词校验，未知命令仍拦截', () => {
+  it('发送带 @ 提及及行中 # 词：整体透传给 agent（仅 trim 后 # 开头才视为命令）', () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '@Claude Code#c1 #nope rest' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '@Claude Code#c1 #nope rest');
     expect(
       useAppStore
         .getState()
         .toasts.some((t) => t.title === tt('ui.hub.unknown_cmd').replace('{{cmd}}', '#nope')),
-    ).toBe(true);
+    ).toBe(false);
+  });
+
+  it('行中 # 词（颜色值）不拦截：正常投递给 agent', () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '把按钮颜色改成 #333' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '把按钮颜色改成 #333');
+    expect(
+      useAppStore
+        .getState()
+        .toasts.some((t) => t.title === tt('ui.hub.unknown_cmd').replace('{{cmd}}', '#333')),
+    ).toBe(false);
+  });
+
+  it('发送 #stop（带尾空格）：单 token 已知命令直接执行 cancelChat，不投递', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#stop ' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.cancelChat).toHaveBeenCalledWith('c1'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
+  it('hash 补全大小写不敏感过滤（#ST 只匹配 stop）', () => {
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#ST' } });
+    const list = screen.getByRole('listbox', { name: tt('ui.hub.cmd_aria') });
+    expect(list).toHaveTextContent('#stop');
+    expect(list).not.toHaveTextContent('#new');
+  });
+
+  it('hash 补全键盘导航：# → ArrowDown×2 选中 stop，Enter 执行', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#' } });
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.cancelChat).toHaveBeenCalledWith('c1'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
   it('agent 技能出现在命令列表，选中后切入草稿并可投递', async () => {
