@@ -211,6 +211,9 @@
     "binary_file": "二进制文件 · {{0}} 字节 · {{1}}",
     "file_info": "{{0}} 字节 · {{1}}"
   },
+  "hub": {
+    "welcome": "你好！我是 {{0}}，会话已就绪——在下方输入任务，我马上开始。"
+  },
   "preset": {
     "custom": { "name": "自定义", "note": "不覆盖当前已填 URL" },
     "openai": { "name": "OpenAI", "note": "仅 OpenAI 协议" },

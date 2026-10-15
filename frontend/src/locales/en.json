@@ -211,6 +211,9 @@
     "binary_file": "Binary file · {{0}} bytes · {{1}}",
     "file_info": "{{0}} bytes · {{1}}"
   },
+  "hub": {
+    "welcome": "Hi! This is {{0}}. The session is ready — type any task below and I will start working on it."
+  },
   "preset": {
     "custom": { "name": "Custom", "note": "Does not overwrite the URLs you have entered" },
     "openai": { "name": "OpenAI", "note": "OpenAI protocol only" },

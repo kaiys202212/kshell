@@ -26,7 +26,7 @@ import { buildMentionOptions, resolveMentionTarget, type MentionAgent, type Ment
 import { toolDisplayName } from '../lib/agentNotify';
 import { loadLastCreate, loadToolModels, saveLastCreate, saveToolModels } from '../lib/agenthubDefaults';
 import { quotePathForShell } from '../lib/dragPath';
-import { backendError } from '../lib/errors';
+import { backendError, translateBackend } from '../lib/errors';
 import { attributionText, baseName, resolveAttribution } from '../lib/hubAttribution';
 import { markdownBubbleClass } from '../lib/markdownStyles';
 import { sameWorkspacePath } from '../lib/workspacePath';
@@ -143,6 +143,12 @@ function statusKey(status: string): string {
   if (status === 'running' || status === 'starting') return 'ui.hub.status_running';
   if (status === 'exited') return 'ui.hub.status_exited';
   return 'ui.hub.status_ready';
+}
+
+// agentText 渲染 agent 回复正文：后端 wire key（如 hub.welcome|Claude Code）翻译成
+// 自然语言；普通正文无竖线且非注册 key 时 translateBackend 原样返回，不影响展示。
+function agentText(text: string): string {
+  return translateBackend(text);
 }
 
 // statusDotClass 状态点配色：运行中用主色（Teal），退出用 muted，其余描边。
@@ -568,7 +574,7 @@ export default function AgentHubPanel() {
                       <span className="whitespace-pre-wrap">{m.text}</span>
                     ) : (
                       <div className={cn(markdownBubbleClass, '[&_pre]:whitespace-pre-wrap')}>
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{agentText(m.text)}</ReactMarkdown>
                       </div>
                     )}
                   </div>
@@ -639,7 +645,7 @@ export default function AgentHubPanel() {
                   {[toolDisplayName(m.tool ?? ''), attr].filter(Boolean).join(' · ')}
                 </div>
                 <div className={markdownBubbleClass}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{agentText(m.text)}</ReactMarkdown>
                 </div>
               </div>
             </div>

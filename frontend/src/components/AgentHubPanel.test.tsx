@@ -279,6 +279,20 @@ describe('AgentHubPanel', () => {
     expect(user.closest('strong')).toBeNull();
   });
 
+  it('后端欢迎词 wire key 经 translateBackend 渲染成自然语言，普通回复原样展示', async () => {
+    api.listHubMessages.mockResolvedValue([
+      { id: 1, kind: 'agent', tool: 'claude', event: 'done', chatId: 'n1', text: 'hub.welcome|Claude Code', ts: 1 },
+      { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', text: '普通回复正文', ts: 2 },
+    ]);
+    render(<AgentHubPanel />);
+    // wire key 被翻译：出现 en 资源里的欢迎词（带工具名插值，tt 不做插值故手动替换），
+    // 不再有 key 字面量
+    expect(await screen.findByText(tt('hub.welcome').replace('{{0}}', 'Claude Code'))).toBeTruthy();
+    expect(screen.queryByText('hub.welcome|Claude Code')).toBeNull();
+    // 未注册 key 的普通正文不被破坏
+    expect(screen.getByText('普通回复正文')).toBeTruthy();
+  });
+
   it('agent 回复归因：气泡头部展示 工具 · 项目 · 会话标题', async () => {
     useAppStore.setState({
       chats: [chat({ ID: 'c1', Workspace: 'D:\\ws\\alpha', Title: '重构认证' })],
