@@ -52,8 +52,10 @@ const HUB_COMMANDS: { name: string; descKey: string }[] = [
 const HUB_COMMAND_NAMES = new Set(HUB_COMMANDS.map((c) => c.name.toLowerCase()));
 
 // 创建互斥锁（session 级，防 /easynew 与对话框并发重复建会话）。
-// 进程级模块变量：对话框卸载后锁仍由创建 Promise 的 finally 释放。
-const createBusy: { running: boolean } = { running: false };
+// 持有 promise 引用而非布尔：只有创建 Promise 自己的 finally 才释放锁，
+// 避免「旧 finally 清掉新创建持有的锁」的竞态。常规释放路径是创建
+// Promise 的 finally；面板卸载 effect 只是兜底（覆盖创建长挂/测试隔离场景）。
+let createPromise: Promise<boolean> | null = null;
 
 // AgentCreateDeps：可复用创建流程的外部依赖（api/store 回调），对话框与 /easynew 共用。
 interface AgentCreateDeps {
@@ -72,38 +74,48 @@ export async function runAgentCreate(
   deps: AgentCreateDeps,
 ): Promise<boolean> {
   const { t, registerChat, onClose } = deps;
-  if (createBusy.running) return false;
-  createBusy.running = true;
-  try {
-    const result = await openWorkspaceACP(wsPath, toolId);
-    if (!result.Chat) {
-      onClose();
-      return true;
-    }
-    const chat = result.Chat;
-    registerChat(chat);
-    // 成功即记默认值：下次 /easynew 或打开对话框时预填
-    saveLastCreate({ wsPath, toolId, modelId });
-    // 拉模型列表缓存，供下次预填模型下拉；失败静默（默认值是辅助功能）
-    const view = await listChatModels(chat.ID).catch(() => null);
-    if (view && view.Models && view.Models.length > 0) {
-      saveToolModels(toolId, view.Models.map((m) => m.ID));
-    }
-    // 用户选了模型且与 agent 当前模型不同：建后再 SetModel
-    if (modelId && view && view.Current !== modelId) {
-      try {
-        await setChatModel(chat.ID, modelId);
-      } catch (e: unknown) {
-        // 会话已建成，切模型失败只提示，不回滚
-        useAppStore.getState().notify(t('ui.hub.model_switch_failed', { err: backendError(e) }), 'error');
-      }
-    }
-    return true;
-  } catch (e: unknown) {
-    useAppStore.getState().notify(backendError(e), 'error');
+  if (createPromise !== null) {
+    useAppStore.getState().notify(t('ui.hub.easynew_busy'), 'info');
     return false;
-  } finally {
-    createBusy.running = false;
+  }
+  const promise = doCreate();
+  createPromise = promise;
+  return promise;
+
+  // doCreate 真正的创建流程体：finally 里只清自己持有的锁，
+  // 避免旧创建的 finally 清掉期间新创建已持有的锁。
+  async function doCreate(): Promise<boolean> {
+    try {
+      const result = await openWorkspaceACP(wsPath, toolId);
+      if (!result.Chat) {
+        onClose();
+        return true;
+      }
+      const chat = result.Chat;
+      registerChat(chat);
+      // 成功即记默认值：下次 /easynew 或打开对话框时预填
+      saveLastCreate({ wsPath, toolId, modelId });
+      // 拉模型列表缓存，供下次预填模型下拉；失败静默（默认值是辅助功能）
+      const view = await listChatModels(chat.ID).catch(() => null);
+      if (view && view.Models && view.Models.length > 0) {
+        saveToolModels(toolId, view.Models.map((m) => m.ID));
+      }
+      // 用户选了模型且与 agent 当前模型不同：建后再 SetModel
+      if (modelId && view && view.Current !== modelId) {
+        try {
+          await setChatModel(chat.ID, modelId);
+        } catch (e: unknown) {
+          // 会话已建成，切模型失败只提示，不回滚
+          useAppStore.getState().notify(t('ui.hub.model_switch_failed', { err: backendError(e) }), 'error');
+        }
+      }
+      return true;
+    } catch (e: unknown) {
+      useAppStore.getState().notify(backendError(e), 'error');
+      return false;
+    } finally {
+      if (createPromise === promise) createPromise = null;
+    }
   }
 }
 
@@ -356,7 +368,7 @@ export default function AgentHubPanel() {
   // 失效或没有默认值则打开新建弹窗让用户补选（补选后同样落默认值）。
   // 创建互斥：runAgentCreate 内部持锁；这里对弹窗入口另查锁，避免创建中又打开对话框重复操作。
   const runEasyNew = () => {
-    if (createBusy.running) {
+    if (createPromise !== null) {
       useAppStore.getState().notify(t('ui.hub.easynew_busy'), 'info');
       return;
     }
@@ -374,7 +386,7 @@ export default function AgentHubPanel() {
       .then((list) => list.filter((x) => x.ACP?.Available === true))
       .then((acp) => {
         if (!last || !acp.some((x) => x.ID === last.toolId)) {
-          setDialogOpen(true);
+          openNewAgentDialog();
           return;
         }
         return runAgentCreate(last.wsPath, last.toolId, last.modelId, {
@@ -387,15 +399,16 @@ export default function AgentHubPanel() {
         });
       })
       .then((ok) => {
-        // 成功保留提示（会话已登记，欢迎词随后由后端写入）；失败或打开弹窗补选即清除
-        if (!ok) setEasynewRunning(false);
+        // 创建流程已结束（成功/失败或弹窗补选）即清提示：会话已登记，
+        // 欢迎词随后由后端写入 hub，spinner 使命到此为止，不做额外监听。
+        setEasynewRunning(false);
       })
       .catch(() => setEasynewRunning(false));
   };
 
   // openNewAgentDialog 打开新建弹窗；创建进行中拦截并提示，防并发重复建会话。
   const openNewAgentDialog = () => {
-    if (createBusy.running) {
+    if (createPromise !== null) {
       useAppStore.getState().notify(t('ui.hub.easynew_busy'), 'info');
       return;
     }
@@ -781,9 +794,9 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
   const [modelId, setModelId] = useState('');
   // seq 使关闭后在途的 create 失效，避免其 setState 污染下次打开。
   const seqRef = useRef(0);
-  // 模型缓存读取哨兵：缓存可能在对话框打开期间被写入（测试/他处），
-  // 用递增号强制下拉随 toolId/缓存变化重新读取，而非仅依赖 useMemo 的 toolId 依赖。
-  const [modelsTick, setModelsTick] = useState(0);
+  // 记录上次 open 值：预填只在 open 从 false→true 时执行，
+  // 对话框开着期间 workspaces 后台刷新不应把用户已选字段重置。
+  const prevOpenRef = useRef(false);
 
   // registerChat 把已建会话登记进 store（幂等：upsert 以 ID 去重）。
   const registerChat = (chat: ChatInfo) => {
@@ -793,13 +806,14 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
 
   // 打开对话框时才拉工具列表（避免常驻首页也发请求），并按 lastCreate 预填。
   // 预填校验：wsPath 仍在工作区列表、toolId 仍在可用工具列表，失效置空该字段（回落默认选中）。
+  // 仅在 open 从 false→true 时跑一次；开着期间 workspaces 刷新不重跑预填。
   useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
+    const opening = open && !prevOpenRef.current;
+    prevOpenRef.current = open;
+    if (!opening) return;
     const last = loadLastCreate();
     void getTools()
       .then((list) => {
-        if (cancelled) return;
         const acp = list.filter((x) => x.ACP?.Available === true);
         setTools(acp);
         setToolId((cur) => {
@@ -820,10 +834,6 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     } else {
       setModelId('');
     }
-    setModelsTick((n) => n + 1);
-    return () => {
-      cancelled = true;
-    };
   }, [open, workspaces]);
 
   // 关闭时重置内部状态；runAgentCreate 已把会话登记进 store，这里只做清场。
@@ -834,10 +844,10 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
   }, [open]);
 
   // 卸载兜底：面板被整个卸载（切页/测试清理）时释放模块级互斥锁，
-  // 否则挂起的 create 会让后续 /easynew、对话框一直被锁拦截。
+  // 覆盖创建长挂/测试隔离场景；常规释放路径是创建 Promise 自己的 finally。
   useEffect(() => {
     return () => {
-      createBusy.running = false;
+      createPromise = null;
     };
   }, []);
 
@@ -848,15 +858,13 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     const seq = seqRef.current;
     const ok = await runAgentCreate(wsPath, toolId, modelId || null, { t, registerChat, onClose: () => onOpenChange(false) });
     if (seq === seqRef.current) setBusy(false);
-    if (ok) onOpenChange(false);
+    // 关窗也带 seq 守卫：对话框被关闭重开后，在途的 create 不得关掉新窗体
+    if (ok && seq === seqRef.current) onOpenChange(false);
   };
 
-  // 模型下拉选项：当前工具的本地缓存；无缓存只显示「默认模型」空选项
-  const modelOptions = useMemo(
-    () => (toolId ? loadToolModels(toolId) : []),
-    // modelsTick 变化（工具切换/打开重读缓存）时强制重算
-    [toolId, modelsTick],
-  );
+  // 模型下拉选项：当前工具的本地缓存，渲染期直接同步读（localStorage 成本极低，
+  // toolId 变化或缓存被写入后下次渲染自然拿到最新列表）
+  const modelOptions = toolId ? loadToolModels(toolId) : [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange} className="w-80">
@@ -886,7 +894,6 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
               setToolId(e.target.value);
               // 工具切换即刷新模型下拉；原选中项在新工具缓存里不存在则回落默认
               setModelId((cur) => (cur && loadToolModels(e.target.value).includes(cur) ? cur : ''));
-              setModelsTick((n) => n + 1);
             }}
             disabled={busy}
           >

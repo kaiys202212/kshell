@@ -69,7 +69,11 @@ beforeEach(() => {
   });
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // 清掉用例写入的 lastCreate/模型缓存等 localStorage，消除用例间的默认值泄漏耦合
+  localStorage.clear();
+});
 
 const acpTool = (id = 'claude'): ToolInfo => ({
   ID: id,
@@ -423,13 +427,14 @@ describe('AgentHubPanel', () => {
     const modelSelect = screen.getByLabelText(tt('ui.hub.field_model')) as HTMLSelectElement;
     expect(modelSelect.value).toBe('');
     expect(modelSelect.options).toHaveLength(1);
-    fireEvent.change(modelSelect, { target: { value: '' } });
-    // 预先缓存了模型列表：工具加载后模型选项出现
+    // 缓存了模型列表后重开：模型下拉出现缓存选项（渲染期直接读缓存，重开即刷新）
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.cancel') }));
     saveToolModels('claude', ['m1', 'm2']);
-    fireEvent.change(await screen.findByLabelText(tt('ui.hub.field_project')), { target: { value: 'D:\\ws\\a' } });
-    fireEvent.change(screen.getByLabelText(tt('ui.hub.field_tool')), { target: { value: 'claude' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
     const refreshed = (await screen.findByLabelText(tt('ui.hub.field_model'))) as HTMLSelectElement;
     await waitFor(() => expect(refreshed.options).toHaveLength(2));
+    // 无 lastCreate.modelId 预选：modelId 状态仍为空串（建会话后不触发 SetModel）；
+    // 注意有缓存时下拉无空选项，浏览器显示值会回落到第一项，属既有展示行为
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.create') }));
     await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'claude'));
     await waitFor(() => expect(api.setChatModel).not.toHaveBeenCalled());
@@ -508,12 +513,15 @@ describe('AgentHubPanel', () => {
     expect(screen.queryByRole('button', { name: tt('ui.hub.create') })).toBeNull();
   });
 
-  it('/easynew：有有效默认值时不弹窗直接创建', async () => {
+  it('/easynew：有有效默认值时不弹窗直接创建，创建结束即清提示', async () => {
     api.getTools.mockResolvedValue([acpTool()]);
-    api.openWorkspaceACP.mockResolvedValue({
-      Kind: 'chat',
-      Chat: chat({ ID: 'n6', Workspace: 'D:\\ws\\a', ToolID: 'claude' }),
-    });
+    // 挂起建会话：观察提示出现 → 创建结束（resolve）→ 提示立即清除（不等问题欢迎词）
+    let resolveOpen: (v: unknown) => void = () => {};
+    api.openWorkspaceACP.mockReturnValue(
+      new Promise((res) => {
+        resolveOpen = res;
+      }),
+    );
     api.listChatModels.mockResolvedValue({ Current: '', Models: [] });
     saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: null });
     useAppStore.setState({ workspaces: [workspaceA] });
@@ -521,10 +529,12 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '/easynew' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    // 不弹窗，直接创建并提示进行中
-    await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'claude'));
+    // 不弹窗，创建进行中显示提示
     expect(screen.queryByLabelText(tt('ui.hub.field_project'))).toBeNull();
-    expect(screen.getByText(tt('ui.hub.easynew_running'))).toBeTruthy();
+    expect(await screen.findByText(tt('ui.hub.easynew_running'))).toBeTruthy();
+    resolveOpen({ Kind: 'chat', Chat: chat({ ID: 'n6', Workspace: 'D:\\ws\\a', ToolID: 'claude' }) });
+    // 创建结束提示立即清除（spinner 使命已结束，欢迎词随后由后端写入）
+    await waitFor(() => expect(screen.queryByText(tt('ui.hub.easynew_running'))).toBeNull());
     await waitFor(() => expect(useAppStore.getState().chats.some((c) => c.ID === 'n6')).toBe(true));
   });
 
