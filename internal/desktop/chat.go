@@ -23,7 +23,7 @@ func newChatManager(a *App) *chat.Manager {
 	m := newChatManagerWith(a.Emit, chat.RealBackend{}, func() bool {
 		return a.snapshot().Config.PermissionMode == config.PermissionModeBypass
 	}, a.notifyDedupAllow, a.recordHubAgentMessage)
-	m.SetOnHubCallbacks(nil, a.onHubDelivered)
+	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
 	return m
 }
 
@@ -336,8 +336,10 @@ func (a *App) SendChatPromptBlocks(id string, blocks []ChatBlock) error {
 	return a.sendAndRecord(id, acpBlocks, hubTextFromBlocks(blocks))
 }
 
-// sendAndRecord 统一发送与 Hub 落盘：预留消息 ID → 带 ID 投递（忙时入队）→
-// 落 user 消息（queued 状态）→ 入队时补 ack_queued 卡片。
+// sendAndRecord 统一发送与 Hub 落盘：预留消息 ID → 先落 user 消息（queued 状态，
+// 保证投递回调触发时消息已在 store，ack 归因能反查到）→ 再投递（忙时入队）。
+// 空闲投递 / 竞态入队两条路径的状态修正与 ack 卡片都由 onHubDelivered / onHubQueued
+// 回调统一处理，这里不再区分 queued 与否，避免回调先于落盘的竞态。
 // hubText 为空时（纯附件）不落 Hub 消息，也不预留 ID。
 func (a *App) sendAndRecord(chatID string, blocks []acp.ContentBlock, hubText string) error {
 	m := a.chats()
@@ -346,21 +348,17 @@ func (a *App) sendAndRecord(chatID string, blocks []acp.ContentBlock, hubText st
 	}
 	hubID := ""
 	if store := a.snapshot().HubStore; store != nil && hubText != "" {
-		hubID = itoaHubID(store.ReserveID())
+		hubID = strconv.FormatInt(store.ReserveID(), 10)
+		a.recordHubUserMessageStatus(chatID, hubText, hubID, hub.StatusQueued)
 	}
 	queued, err := m.PromptBlocksHub(chatID, blocks, hubID)
 	if err != nil {
 		return err
 	}
-	if hubText != "" {
-		status := ""
-		if queued {
-			status = hub.StatusQueued
-		}
-		a.recordHubUserMessageStatus(chatID, hubText, hubID, status)
-		if queued {
-			a.recordHubAck(hubID, "ui.hub.ack_queued")
-		}
+	if queued && hubID != "" {
+		// 忙分支入队不触发 onHubQueued 回调（回调只覆盖 deliverTurn 竞态兜底），
+		// 这里的 ack 由返回值直接落；竞态兜底路径的 ack 由回调补。
+		a.recordHubAck(hubID, "ui.hub.ack_queued")
 	}
 	return nil
 }

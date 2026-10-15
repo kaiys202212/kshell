@@ -197,13 +197,13 @@ func waitStatusDesktop(t *testing.T, m *chat.Manager, id string) {
 	t.Fatalf("session %s 未进入 running", id)
 }
 
-// SendChatPrompt 空闲投递：user 消息无 status，随后落一条 ack_delivered agent 卡片。
+// SendChatPrompt 空闲投递：user 消息先落 queued，投递回调随后清空并补 ack_delivered。
 func TestSendChatPromptImmediateAck(t *testing.T) {
 	a, store, rec := newHubTestApp(t)
 	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage)
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m
-	m.SetOnHubCallbacks(nil, a.onHubDelivered)
+	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
 
 	info, err := m.Open("session:s1", chat.Info{
 		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
@@ -215,13 +215,36 @@ func TestSendChatPromptImmediateAck(t *testing.T) {
 		t.Fatal(err)
 	}
 	u := waitHubKind(t, store, "user")
-	if u.Status != "" {
-		t.Fatalf("空闲投递 status 应为空: %+v", u)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		_, hasAck := findHubEvent(store, "ui.hub.ack_delivered")
+		if !hasAck {
+			time.Sleep(5 * time.Millisecond)
+			continue
+		}
+		ack, _ := findHubEvent(store, "ui.hub.ack_delivered")
+		if ack.Kind != "agent" || ack.ChatID != info.ID || ack.Tool != "claude" {
+			t.Fatalf("ack 卡片归因不符: %+v", ack)
+		}
+		// ack 出现说明投递回调已跑完：此时 user 消息状态必须已清空
+		for _, mm := range store.List() {
+			if mm.ID == u.ID && mm.Status != "" {
+				t.Fatalf("投递后 status 应清空: %+v", mm)
+			}
+		}
+		return
 	}
-	ack := waitHubEvent(t, store, "ui.hub.ack_delivered")
-	if ack.Kind != "agent" || ack.ChatID != info.ID || ack.Tool != "claude" {
-		t.Fatalf("ack 卡片归因不符: %+v", ack)
+	t.Fatal("空闲投递未补 ack_delivered")
+}
+
+// findHubEvent 查第一条带指定 Event 的消息（轮询辅助）。
+func findHubEvent(store *hub.Store, event string) (hub.Message, bool) {
+	for _, m := range store.List() {
+		if m.Event == event {
+			return m, true
+		}
 	}
+	return hub.Message{}, false
 }
 
 // 忙时发送：user 消息 status=queued 且落 ack_queued；撤回成功后状态变 recalled，
@@ -234,7 +257,7 @@ func TestSendChatPromptQueuedAndRecall(t *testing.T) {
 	m := newChatManagerWith(rec.emit, b, nil, nil, a.recordHubAgentMessage)
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m
-	m.SetOnHubCallbacks(nil, a.onHubDelivered)
+	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
 
 	info, err := m.Open("session:s1", chat.Info{
 		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
@@ -285,7 +308,7 @@ func TestRecallHubMessageNotQueued(t *testing.T) {
 	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage)
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m
-	m.SetOnHubCallbacks(nil, a.onHubDelivered)
+	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
 
 	info, err := m.Open("session:s1", chat.Info{
 		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
@@ -301,4 +324,56 @@ func TestRecallHubMessageNotQueued(t *testing.T) {
 	if err == nil || err.Error() != "err.hub.not_queued" {
 		t.Fatalf("已送达消息撤回应报 err.hub.not_queued, got %v", err)
 	}
+}
+
+// 端到端：忙时发送排队 → turn 结束自动投递 → 状态清空 + 补 ack_delivered（不撤回路径）。
+func TestSendChatPromptQueuedThenDelivered(t *testing.T) {
+	a, store, rec := newHubTestApp(t)
+	conn := &fakeChatConn{waitCh: make(chan struct{})}
+	conn.promptGate = make(chan struct{})
+	b := &queueGateBackend{conn: conn}
+	m := newChatManagerWith(rec.emit, b, nil, nil, a.recordHubAgentMessage)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := m.Prompt(info.ID, "first"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatusDesktop(t, m, info.ID)
+	if err := a.SendChatPrompt(info.ID, "second"); err != nil {
+		t.Fatal(err)
+	}
+	u := waitHubText(t, store, "second")
+	if u.Status != hub.StatusQueued {
+		t.Fatalf("应标记 queued: %+v", u)
+	}
+	waitHubEvent(t, store, "ui.hub.ack_queued")
+
+	// 放行第一轮 → 队列里的 second 自动投递 → 状态清空 + ack_delivered
+	close(conn.promptGate)
+	deadline := time.Now().Add(2 * time.Second)
+	lastCleared, lastAcked := false, false
+	for time.Now().Before(deadline) {
+		lastCleared, lastAcked = false, false
+		for _, mm := range store.List() {
+			if mm.ID == u.ID && mm.Status == "" {
+				lastCleared = true
+			}
+			if mm.Event == "ui.hub.ack_delivered" && mm.ChatID == info.ID {
+				lastAcked = true
+			}
+		}
+		if lastCleared && lastAcked {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("投递后未完成状态清空+ack: cleared=%v, acked=%v", lastCleared, lastAcked)
 }

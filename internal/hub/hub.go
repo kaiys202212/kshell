@@ -191,6 +191,42 @@ func (s *Store) SetStatus(id int64, status string) bool {
 	return false
 }
 
+// RecallStatus 把 queued 状态的消息改为 recalled（撤回的持久化终点）：
+// 仅允许 queued → recalled 单向迁移，并发的两次撤回里慢的那次不会把
+// 已撤回覆写回其他状态。未命中或状态不是 queued 返回 false。
+func (s *Store) RecallStatus(id int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.live {
+		if s.live[i].ID == id {
+			if s.live[i].Status != StatusQueued {
+				return false
+			}
+			s.live[i].Status = StatusRecalled
+			return s.writeLive() == nil
+		}
+	}
+	return false
+}
+
+// ClearQueuedStatus 把所有 queued 状态的消息归零为已送达（进程启动时调用）：
+// 队列在内存里，重启后 queued 消息要么已被投递要么已随进程消失，
+// 遗留的 queued 标记会让消息永远显示「排队中可撤回」却撤回无效。
+func (s *Store) ClearQueuedStatus() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := false
+	for i := range s.live {
+		if s.live[i].Status == StatusQueued {
+			s.live[i].Status = ""
+			changed = true
+		}
+	}
+	if changed {
+		_ = s.writeLive()
+	}
+}
+
 // Clear 清空 live 消息（归档保留，符合「只增不删」）。
 func (s *Store) Clear() error {
 	s.mu.Lock()

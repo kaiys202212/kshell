@@ -364,7 +364,12 @@ func (a *App) initRealDeps() {
 	if a.opts.HubStore == nil { // 幂等：已注入（测试）或已装配过就不重建
 		store := hub.New(a.opts.HubPath, 0)
 		_ = store.Load() // 历史缺失/损坏不阻断启动（与项目表/连接存储同口径）
+		store.ClearQueuedStatus()
 		a.opts.HubStore = store
+	} else {
+		// 注入的 store（测试/外部装配）同样清理：重启后内存队列已不存在，
+		// 遗留 queued 标记会让消息永远显示「排队中可撤回」却撤回无效。
+		a.opts.HubStore.ClearQueuedStatus()
 	}
 	if a.opts.Layout.Config == "" {
 		a.opts.Layout = paths

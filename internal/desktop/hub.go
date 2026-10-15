@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"errors"
+	"strconv"
 
 	"github.com/yangk/kshell/internal/agenthook"
 	"github.com/yangk/kshell/internal/hub"
@@ -56,7 +57,7 @@ func (a *App) recordHubMessageWithID(m hub.Message, hubID string) {
 		return
 	}
 	if hubID != "" {
-		if id, ok := parseHubID(hubID); ok {
+		if id, err := strconv.ParseInt(hubID, 10, 64); err == nil {
 			m.ID = id
 			_ = store.AppendWithID(m)
 			a.Emit("hub:changed")
@@ -74,11 +75,11 @@ func (a *App) recordHubAck(hubID, key string) {
 	if store == nil {
 		return
 	}
-	m := hub.Message{Kind: "agent", Event: key, Text: key}
-	id, ok := parseHubID(hubID)
-	if !ok {
+	id, err := strconv.ParseInt(hubID, 10, 64)
+	if err != nil {
 		return
 	}
+	m := hub.Message{Kind: "agent", Event: key, Text: key}
 	for _, u := range store.List() {
 		if u.ID == id {
 			m.ChatID = u.ChatID
@@ -91,6 +92,15 @@ func (a *App) recordHubAck(hubID, key string) {
 	a.Emit("hub:changed")
 }
 
+// onHubQueued 是 chat.Manager 的竞态兜底回调：deliverTurn 期间会话转忙改入队时触发。
+// 发送链路落盘时统一先写 queued 状态（保证 ack 归因可反查），这里只需补 ack 卡片。
+func (a *App) onHubQueued(hubID string) {
+	if hubID == "" {
+		return
+	}
+	a.recordHubAck(hubID, "ui.hub.ack_queued")
+}
+
 // onHubDelivered 是 chat.Manager 的投递回调：带 hubMsgID 的排队消息真正发起
 // conn.Prompt 前触发——清掉 queued 状态并补一条「已送达」ack。
 func (a *App) onHubDelivered(hubID string) {
@@ -98,7 +108,7 @@ func (a *App) onHubDelivered(hubID string) {
 		return
 	}
 	if store := a.snapshot().HubStore; store != nil {
-		if id, ok := parseHubID(hubID); ok {
+		if id, err := strconv.ParseInt(hubID, 10, 64); err == nil {
 			store.SetStatus(id, "")
 		}
 	}
@@ -112,15 +122,16 @@ func (a *App) RecallHubMessage(hubMsgID int64) error {
 	if store == nil {
 		return errNotReady
 	}
-	var target *hub.Message
-	live := store.List()
-	for i := range live {
-		if live[i].ID == hubMsgID {
-			target = &live[i]
+	var target hub.Message
+	found := false
+	for _, u := range store.List() {
+		if u.ID == hubMsgID {
+			target = u
+			found = true
 			break
 		}
 	}
-	if target == nil || target.Kind != "user" {
+	if !found || target.Kind != "user" {
 		return errHubNotFound
 	}
 	if target.Status != hub.StatusQueued {
@@ -131,46 +142,18 @@ func (a *App) RecallHubMessage(hubMsgID int64) error {
 	if m == nil {
 		return errNotReady
 	}
-	if !m.RecallQueued(target.ChatID, itoaHubID(hubMsgID)) {
+	if !m.RecallQueued(target.ChatID, strconv.FormatInt(hubMsgID, 10)) {
 		// 投递竞态：队列里已不在，修正状态为已送达后报错。
 		store.SetStatus(hubMsgID, "")
 		return errHubNotQueued
 	}
-	if !store.SetStatus(hubMsgID, hub.StatusRecalled) {
-		return errHubNotFound
+	// RecallStatus 只允许 queued → recalled 单向迁移：并发的两次撤回里，
+	// 慢的那次已越过上面检查后，不会把先到的 recalled 覆写回其他状态。
+	if !store.RecallStatus(hubMsgID) {
+		return errHubNotQueued
 	}
 	a.Emit("hub:changed")
 	return nil
-}
-
-// parseHubID 把字符串形式的 hub 消息 ID 解析回数值。
-func parseHubID(s string) (int64, bool) {
-	if s == "" {
-		return 0, false
-	}
-	n := int64(0)
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0, false
-		}
-		n = n*10 + int64(c-'0')
-	}
-	return n, true
-}
-
-// itoaHubID 数值转字符串（strconv 的别名，独立小函数便于测试桩内复用）。
-func itoaHubID(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
 }
 
 // recordHubAgentMessage 记录一条 agent 回复通知（hook/OSC 与 ACP 两条通道共用）。
