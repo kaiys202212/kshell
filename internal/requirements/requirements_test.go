@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newTestStore 在临时目录创建并加载一个 store。
@@ -159,14 +160,20 @@ func TestDeleteIdempotent(t *testing.T) {
 func TestMarkDispatched(t *testing.T) {
 	s, _ := newTestStore(t)
 	it, _ := s.Add("需求", "low", nil)
-	if err := s.MarkDispatched(it.ID, "D:/work/proj"); err != nil {
+	if err := s.MarkDispatched(it.ID, "D:/work/proj", "chat-9"); err != nil {
 		t.Fatalf("MarkDispatched: %v", err)
 	}
 	items := s.List()
 	if items[0].DispatchedTo != "D:/work/proj" {
 		t.Errorf("DispatchedTo = %q, want D:/work/proj", items[0].DispatchedTo)
 	}
-	if err := s.MarkDispatched("不存在", "x"); err == nil {
+	if items[0].ChatID != "chat-9" {
+		t.Errorf("ChatID = %q, want chat-9", items[0].ChatID)
+	}
+	if items[0].Status != "active" {
+		t.Errorf("派发后 Status = %q, want active", items[0].Status)
+	}
+	if err := s.MarkDispatched("不存在", "x", "c"); err == nil {
 		t.Error("MarkDispatched 不存在的 id 应报错")
 	}
 }
@@ -179,7 +186,7 @@ func TestPersistenceRoundTrip(t *testing.T) {
 	}
 	a, _ := s1.Add("需求一", "high", []string{"tag1"})
 	b, _ := s1.Add("需求二", "low", []string{"tag2", "tag3"})
-	_ = s1.MarkDispatched(b.ID, "/tmp/ws")
+	_ = s1.MarkDispatched(b.ID, "/tmp/ws", "chat-1")
 
 	// 重新创建 store 模拟进程重启
 	s2 := New(dir)
@@ -290,5 +297,170 @@ func TestFileWrittenAtomic(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"version":1`) {
 		t.Errorf("落盘文件应含 version=1: %s", data)
+	}
+}
+
+// TestStatusLifecycle 覆盖状态机主链路：pending → active → done → archived，
+// 以及各终态下对修改类操作的拒绝。
+func TestStatusLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	_ = s.Load()
+	it, err := s.Add("需求A", "high", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it.Status != "pending" {
+		t.Fatalf("新需求 status = %q, want pending", it.Status)
+	}
+
+	// 派发：记录 workspace + chatID，置 active
+	if err := s.MarkDispatched(it.ID, `D:\ws`, "chat-1"); err != nil {
+		t.Fatal(err)
+	}
+	got := s.List()[0]
+	if got.Status != "active" || got.ChatID != "chat-1" {
+		t.Fatalf("派发后条目 = %+v, want status=active chatID=chat-1", got)
+	}
+
+	// 完成与归档
+	if err := s.SetStatus(it.ID, "done"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Update(it.ID, "改文本", "low", nil); err == nil {
+		t.Fatal("done 状态不允许 Update")
+	}
+	if err := s.Archive(it.ID); err != nil {
+		t.Fatal(err)
+	}
+	got = s.List()[0]
+	if got.Status != "archived" || got.ArchivedAt == 0 {
+		t.Fatalf("归档后条目 = %+v, want status=archived 且 ArchivedAt 非零", got)
+	}
+	// 归档后不可再改
+	if err := s.SetStatus(it.ID, "active"); err == nil {
+		t.Fatal("archived 不可回退")
+	}
+}
+
+// TestListArchivedOrder 验证归档列表按 ArchivedAt 时间倒序（最新归档在前）。
+func TestListArchivedOrder(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	_ = s.Load()
+	a, _ := s.Add("旧需求", "low", []string{"x"})
+	b, _ := s.Add("新需求", "low", []string{"y"})
+	_ = s.MarkDispatched(a.ID, "/w1", "c1")
+	time.Sleep(2 * time.Millisecond)
+	_ = s.MarkDispatched(b.ID, "/w2", "c2")
+	_ = s.SetStatus(a.ID, "done")
+	_ = s.SetStatus(b.ID, "done")
+	_ = s.Archive(a.ID)
+	time.Sleep(2 * time.Millisecond)
+	_ = s.Archive(b.ID)
+	arch := s.ListArchived()
+	if len(arch) != 2 || arch[0].ID != b.ID || arch[1].ID != a.ID {
+		t.Fatalf("归档列表应时间倒序: %+v", arch)
+	}
+}
+
+// TestSetStatusTransitions 覆盖非法迁移与非法值的拒绝。
+func TestSetStatusTransitions(t *testing.T) {
+	s, _ := newTestStore(t)
+	it, _ := s.Add("需求", "low", nil)
+	// pending → done 不允许（必须先经过 active）
+	if err := s.SetStatus(it.ID, "done"); err == nil {
+		t.Error("pending → done 应被拒绝")
+	}
+	// 非法值
+	if err := s.SetStatus(it.ID, "bogus"); err == nil {
+		t.Error("非法 status 应被拒绝")
+	}
+	if err := s.SetStatus("不存在", "done"); err == nil {
+		t.Error("不存在的 id 应报错")
+	}
+	// 合法迁移 pending → active → done
+	if err := s.MarkDispatched(it.ID, "/w", "c"); err != nil {
+		t.Fatalf("MarkDispatched: %v", err)
+	}
+	if err := s.SetStatus(it.ID, "done"); err != nil {
+		t.Fatalf("active → done: %v", err)
+	}
+	// done 之后 SetStatus 到 active 等也应被拒绝
+	if err := s.SetStatus(it.ID, "active"); err == nil {
+		t.Error("done → active 应被拒绝")
+	}
+}
+
+// TestDeleteOnlyPending 验证仅 pending 状态可删除，active/done/archived 拒绝。
+func TestDeleteOnlyPending(t *testing.T) {
+	s, _ := newTestStore(t)
+	active, _ := s.Add("执行中", "low", nil)
+	_ = s.MarkDispatched(active.ID, "/w", "c")
+	if err := s.Delete(active.ID); err == nil {
+		t.Error("active 状态不允许删除")
+	}
+	done, _ := s.Add("已完成", "low", nil)
+	_ = s.MarkDispatched(done.ID, "/w", "c")
+	_ = s.SetStatus(done.ID, "done")
+	if err := s.Delete(done.ID); err == nil {
+		t.Error("done 状态不允许删除")
+	}
+	arch, _ := s.Add("已归档", "low", nil)
+	_ = s.MarkDispatched(arch.ID, "/w", "c")
+	_ = s.SetStatus(arch.ID, "done")
+	_ = s.Archive(arch.ID)
+	if err := s.Delete(arch.ID); err == nil {
+		t.Error("archived 状态不允许删除")
+	}
+	pending, _ := s.Add("未开始", "low", nil)
+	if err := s.Delete(pending.ID); err != nil {
+		t.Errorf("pending 状态应可删除: %v", err)
+	}
+}
+
+// TestUpdateOnlyPending 验证 Update 仅在 pending（或历史空状态）时允许。
+func TestUpdateOnlyPending(t *testing.T) {
+	s, _ := newTestStore(t)
+	it, _ := s.Add("原文", "low", nil)
+	if _, err := s.Update(it.ID, "新文本", "high", nil); err != nil {
+		t.Fatalf("pending 状态应可 Update: %v", err)
+	}
+	_ = s.MarkDispatched(it.ID, "/w", "c")
+	if _, err := s.Update(it.ID, "再改", "low", nil); err == nil {
+		t.Error("active 状态不允许 Update")
+	}
+}
+
+// TestArchiveOnlyDone 验证仅 done 状态可归档。
+func TestArchiveOnlyDone(t *testing.T) {
+	s, _ := newTestStore(t)
+	pending, _ := s.Add("未开始", "low", nil)
+	if err := s.Archive(pending.ID); err == nil {
+		t.Error("pending 状态不允许归档")
+	}
+	active, _ := s.Add("执行中", "low", nil)
+	_ = s.MarkDispatched(active.ID, "/w", "c")
+	if err := s.Archive(active.ID); err == nil {
+		t.Error("active 状态不允许归档")
+	}
+}
+
+// TestLoadNormalizesLegacyStatus 验证旧文件里空/非法 status 在 Load 后归一化为 pending。
+func TestLoadNormalizesLegacyStatus(t *testing.T) {
+	dir := t.TempDir()
+	// 模拟旧版本落盘：无 status 字段
+	legacy := `{"version":1,"items":[{"id":"abc","text":"旧需求","priority":"low","ts":123}]}`
+	if err := os.WriteFile(filepath.Join(dir, "requirements.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := New(dir)
+	_ = s.Load()
+	items := s.List()
+	if len(items) != 1 {
+		t.Fatalf("List 长度 = %d, want 1", len(items))
+	}
+	if items[0].Status != "pending" {
+		t.Errorf("旧数据 status 应回归 pending, got %q", items[0].Status)
 	}
 }
