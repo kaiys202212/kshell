@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/yangk/kshell/internal/appearance"
+	"github.com/yangk/kshell/internal/claudeenv"
 	"github.com/yangk/kshell/internal/cursoragent"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
@@ -218,7 +219,15 @@ func ForSessionACP(ps []providers.Provider, tools []discovery.Tool, s providers.
 	if err != nil {
 		return providers.Launch{}, err
 	}
-	return applyPermission(l, p, po), nil
+	return finalizeACP(l, p, tool, mo, po), nil
+}
+
+// finalizeACP 与 finalize 同构，但 ACP 适配器命令有 npx 形态：
+// 注入参数前置后需重排到 -y <package> 之后（否则 npm 把模型名当包名）。
+func finalizeACP(l providers.Launch, p providers.Provider, tool discovery.Tool, mo ModelOptions, po PermissionOptions) providers.Launch {
+	baseLen := len(l.Args)
+	out := finalize(l, p, mo, po)
+	return reorderACPArgs(out, tool, len(out.Args)-baseLen)
 }
 
 // ForWorkspaceACP 产出在工作区新建 ACP 会话的启动描述；toolID 为空时用首选工具。
@@ -249,9 +258,13 @@ func ForWorkspaceACP(ps []providers.Provider, tools []discovery.Tool, ws discove
 	if err != nil {
 		return providers.Launch{}, err
 	}
-	return finalize(l, p, mo, po), nil
+	return finalizeACP(l, p, tool, mo, po), nil
 }
 
+// gitBashEnvFn 抽象 claudeenv.GitBashEnv，测试可替换。
+var gitBashEnvFn = claudeenv.GitBashEnv
+
+// acpLaunch 按适配器探测结果组装 ACP 启动描述。
 func acpLaunch(tool discovery.Tool, dir string) (providers.Launch, error) {
 	if tool.ACP == nil || !tool.ACP.Available {
 		return providers.Launch{}, ErrACPUnavailable
@@ -267,7 +280,40 @@ func acpLaunch(tool discovery.Tool, dir string) (providers.Launch, error) {
 		l.Path, l.Args = tool.ACP.BinPath, append([]string(nil), tool.ACP.ExtraArgs...)
 	}
 	l.Env = acpAdapterEnv(tool)
+	if tool.ID == "claude" {
+		// claude CLI 在 Windows 强依赖 git-bash 且只探测标准安装路径；
+		// Git 装在非标准位置时给适配器子进程补 CLAUDE_CODE_GIT_BASH_PATH，
+		// 否则 session/new 阶段 CLI 启动即退出（Query closed before response received）。
+		if p, ok := gitBashEnvFn(); ok {
+			l.Env = providers.MergeEnv(l.Env, map[string]string{"CLAUDE_CODE_GIT_BASH_PATH": p})
+		}
+	}
 	return l, nil
+}
+
+// reorderACPArgs 把 finalize 前置进 Args 的注入参数挪到 npx 包名之后：
+// npx 命令行里包名必须紧跟 -y，注入参数（--model 等）若插在包名前会被
+// npm 当成待安装的包名（E404）。path 形态无包名问题，原样返回。
+func reorderACPArgs(l providers.Launch, tool discovery.Tool, injectLen int) providers.Launch {
+	if tool.ACP == nil || tool.ACP.Source != "npx" || injectLen <= 0 {
+		return l
+	}
+	if len(l.Args) < injectLen {
+		return l
+	}
+	injected := l.Args[:injectLen]
+	base := l.Args[injectLen:]
+	// base 形如 [-y, pkg, ...ExtraArgs]；插入点在 -y 与 pkg 之后
+	at := 2
+	if at > len(base) {
+		at = len(base)
+	}
+	out := make([]string, 0, len(l.Args))
+	out = append(out, base[:at]...)
+	out = append(out, injected...)
+	out = append(out, base[at:]...)
+	l.Args = out
+	return l
 }
 
 // acpAdapterEnv 为依赖本体 CLI 的适配器补充环境变量。目前只有 cursor-acp：

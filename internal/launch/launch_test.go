@@ -275,6 +275,152 @@ func TestForWorkspaceACP_CursorNpxStillInjects(t *testing.T) {
 	}
 }
 
+// npx 形态下注入参数必须落在 -y <package> 之后：
+// `npx --model X -y pkg` 时 npm 把模型名当待安装的包（E404），只有
+// `npx -y pkg --model X` 才把参数传给适配器进程。
+// 用 cursor 验证：其 InjectModel 产出 --model 参数（claude 走 env 注入无 args）。
+func TestForWorkspaceACP_NpxModelArgsAfterPackage(t *testing.T) {
+	ps := []providers.Provider{providers.Cursor{}}
+	tools := []discovery.Tool{{
+		ID: "cursor", Installed: true, BinPath: "cursor-agent",
+		ACP: &providers.ACPDetection{Available: true, Source: "npx", Package: "cursor-acp"},
+	}}
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{Model: "glm-5.3-flash"}, true
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", mo, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"-y", "cursor-acp", "--model", "glm-5.3-flash"}
+	if len(l.Args) != len(want) {
+		t.Fatalf("args = %v, want %v", l.Args, want)
+	}
+	for i := range want {
+		if l.Args[i] != want[i] {
+			t.Fatalf("args = %v, want %v", l.Args, want)
+		}
+	}
+}
+
+// npx 形态带 ExtraArgs 时注入参数在 -y <pkg> 之后、ExtraArgs 之前。
+func TestForWorkspaceACP_NpxModelArgsWithExtraArgs(t *testing.T) {
+	ps := []providers.Provider{providers.Cursor{}}
+	tools := []discovery.Tool{{
+		ID: "cursor", Installed: true, BinPath: "cursor-agent",
+		ACP: &providers.ACPDetection{Available: true, Source: "npx", Package: "pkg", ExtraArgs: []string{"--foo"}},
+	}}
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{Model: "m1"}, true
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", mo, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"-y", "pkg", "--model", "m1", "--foo"}
+	if len(l.Args) != len(want) {
+		t.Fatalf("args = %v, want %v", l.Args, want)
+	}
+	for i := range want {
+		if l.Args[i] != want[i] {
+			t.Fatalf("args = %v, want %v", l.Args, want)
+		}
+	}
+}
+
+// path 形态下模型参数仍应前置（无 -y 前缀问题）。
+func TestForWorkspaceACP_PathModelArgsPrepended(t *testing.T) {
+	ps := []providers.Provider{providers.Cursor{}}
+	tools := []discovery.Tool{{
+		ID: "cursor", Installed: true, BinPath: "cursor-agent",
+		ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "cursor-acp"},
+	}}
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{Model: "m1"}, true
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", mo, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Args) != 2 || l.Args[0] != "--model" || l.Args[1] != "m1" {
+		t.Fatalf("path args = %v", l.Args)
+	}
+}
+
+// npx 形态 + bypass 权限参数同样要落在包名之后。
+func TestForSessionACP_NpxBypassArgsAfterPackage(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := acpTools(providers.ACPDetection{Available: true, Source: "npx", Package: "pkg"})
+	s := providers.Session{ID: "s1", ToolID: "claude", Workspace: "/p"}
+	l, err := ForSessionACP(ps, tools, s, ModelOptions{}, PermissionOptions{Bypass: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"-y", "pkg", "--dangerously-skip-permissions"}
+	if len(l.Args) != len(want) {
+		t.Fatalf("args = %v, want %v", l.Args, want)
+	}
+	for i := range want {
+		if l.Args[i] != want[i] {
+			t.Fatalf("args = %v, want %v", l.Args, want)
+		}
+	}
+}
+
+// claude ACP 启动注入 git-bash 路径（非标准安装位置时 CLI 启动即退出的修复）。
+func TestForWorkspaceACP_ClaudeInjectsGitBash(t *testing.T) {
+	oldGitBash := gitBashEnvFn
+	t.Cleanup(func() { gitBashEnvFn = oldGitBash })
+	gitBashEnvFn = func() (string, bool) { return `D:\software\Git\bin\bash.exe`, true }
+
+	ps := []providers.Provider{providers.Claude{}}
+	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"})
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Env["CLAUDE_CODE_GIT_BASH_PATH"] != `D:\software\Git\bin\bash.exe` {
+		t.Fatalf("env = %v", l.Env)
+	}
+}
+
+// 非 claude 工具不注入 git-bash 变量。
+func TestForWorkspaceACP_NonClaudeNoGitBash(t *testing.T) {
+	oldGitBash := gitBashEnvFn
+	t.Cleanup(func() { gitBashEnvFn = oldGitBash })
+	gitBashEnvFn = func() (string, bool) { return `D:\software\Git\bin\bash.exe`, true }
+
+	ps := []providers.Provider{providers.Cursor{}}
+	tools := []discovery.Tool{{
+		ID: "cursor", Installed: true, BinPath: "cursor-agent",
+		ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "cursor-acp"},
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := l.Env["CLAUDE_CODE_GIT_BASH_PATH"]; ok {
+		t.Fatalf("非 claude 工具不应注入 git-bash, env = %v", l.Env)
+	}
+}
+
+// GitBashEnv 报不需要（如 PATH 上已有 bash）时不注入该变量。
+func TestForWorkspaceACP_GitBashUnavailableSkips(t *testing.T) {
+	oldGitBash := gitBashEnvFn
+	t.Cleanup(func() { gitBashEnvFn = oldGitBash })
+	gitBashEnvFn = func() (string, bool) { return "", false }
+
+	ps := []providers.Provider{providers.Claude{}}
+	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"})
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := l.Env["CLAUDE_CODE_GIT_BASH_PATH"]; ok {
+		t.Fatalf("不应注入 git-bash, env = %v", l.Env)
+	}
+}
+
 func TestApplyModelTerminalCodex(t *testing.T) {
 	ps := []providers.Provider{providers.Codex{}}
 	tools := []discovery.Tool{{ID: "codex", Name: "Codex CLI", Installed: true, BinPath: "codex"}}
