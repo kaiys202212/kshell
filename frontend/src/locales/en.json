@@ -820,7 +820,6 @@
       "archive_title": "Archived by month",
       "archive_empty": "No archived messages",
       "quick_continue": "Continue",
-      "quick_ok": "Sounds good",
       "quick_rephrase": "Explain differently",
       "ack_delivered": "Delivered to the agent.",
       "ack_queued": "Queued; will be delivered in order.",

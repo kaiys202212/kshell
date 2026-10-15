@@ -557,7 +557,7 @@ export default function AgentHubPanel() {
 
   // quickReply 处理快捷回复点击：
   // - send：把 quick_continue_text（实际文本，与按钮文案解耦）发给归因 agent；
-  // - rephrase：把 @目标 填入输入框（覆盖式，与 applyMention 一致），聚焦由用户补写后手动发送。
+  // - rephrase：保留式追加 @目标 到输入框（不清空用户正在输入的草稿），聚焦由用户补写后手动发送。
   const quickReply = (m: HubMessage, action: 'send' | 'rephrase') => {
     const targetId = quickTarget(m);
     if (!targetId) {
@@ -574,13 +574,14 @@ export default function AgentHubPanel() {
         });
       return;
     }
-    // rephrase：从 mention 候选反查目标 label；找不到兜底提示（不误填错误目标）
+    // rephrase：从 mention 候选反查目标 label；找不到兜底提示（不误填错误目标）。
+    // 兜底分支防御性保留（options 派生自同一 chats，正常不可达）
     const label = options.find((o) => o.id === targetId)?.label;
     if (!label) {
       useAppStore.getState().notify(t('ui.hub.need_target_drag'), 'error');
       return;
     }
-    setDraft(`@${label} `);
+    setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
     inputRef.current?.focus();
   };
 
@@ -769,7 +770,7 @@ export default function AgentHubPanel() {
             <div key={`h${m.id}`} className="text-right">
               {attr && <div className="mb-0.5 text-[11px] text-muted-foreground">{attr}</div>}
               {/* 气泡内强制居左：外层 text-right 只负责把卡片推到行尾，避免长文贴右边缘 */}
-              <div className="group relative inline-block max-w-[85%]">
+              <div className="group inline-block max-w-[85%]">
                 {m.status === 'recalled' ? (
                   // 已撤回：灰显卡片 + 标签，原文保留（在原消息上标记，不删除）
                   <div className="selectable inline-block break-words overflow-hidden rounded-md bg-muted px-3 py-1.5 text-left text-muted-foreground">
@@ -777,11 +778,9 @@ export default function AgentHubPanel() {
                     <span className="whitespace-pre-wrap opacity-70">{m.text}</span>
                   </div>
                 ) : (
-                  <>
-                    <div className="selectable inline-block break-words overflow-hidden rounded-md bg-primary px-3 py-1.5 text-left text-primary-foreground">
-                      <span className="whitespace-pre-wrap">{m.text}</span>
-                    </div>
-                  </>
+                  <div className="selectable inline-block break-words overflow-hidden rounded-md bg-primary px-3 py-1.5 text-left text-primary-foreground">
+                    <span className="whitespace-pre-wrap">{m.text}</span>
+                  </div>
                 )}
                 {/* queued 撤回按钮常显在气泡下方（文档流，右对齐容器内自然靠右） */}
                 {m.status === 'queued' && (

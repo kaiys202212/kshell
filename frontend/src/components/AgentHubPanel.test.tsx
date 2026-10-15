@@ -872,7 +872,8 @@ describe('AgentHubPanel', () => {
     render(<AgentHubPanel />);
     expect(await screen.findByRole('button', { name: tt('ui.hub.quick_continue') })).toBeTruthy();
     expect(screen.getByRole('button', { name: tt('ui.hub.quick_rephrase') })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: tt('ui.hub.quick_ok') })).toBeNull();
+    // quick_ok 死 key 已删，无法走 tt；按字面文案断言不存在「好的」按钮
+    expect(screen.queryByRole('button', { name: /^(好的|Sounds good)$/ })).toBeNull();
     // 容器常显：不再依赖 group-hover（hidden/absolute 移除）
     const rephraseBtn = screen.getByRole('button', { name: tt('ui.hub.quick_rephrase') });
     const container = rephraseBtn.parentElement as HTMLElement;
@@ -903,6 +904,22 @@ describe('AgentHubPanel', () => {
     fireEvent.click(btn);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c1 ');
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(box);
+  });
+
+  it('agent 卡片点「换个说法」：保留既有草稿，追加 @ 目标并聚焦', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '重构认证' })] });
+    api.listHubMessages.mockResolvedValue([
+      { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', text: 'done', ts: 2 },
+    ]);
+    render(<AgentHubPanel />);
+    const btn = await screen.findByRole('button', { name: tt('ui.hub.quick_rephrase') });
+    // 先在输入框写好草稿，再点「换个说法」：原有内容必须保留
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '帮我看看' } });
+    fireEvent.click(btn);
+    expect((box as HTMLTextAreaElement).value).toBe('帮我看看 @Claude Code#c1 ');
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(box);
   });
