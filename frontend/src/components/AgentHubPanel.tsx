@@ -234,11 +234,11 @@ export default function AgentHubPanel() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [hubMessages, autoScroll]);
 
+  // 切换自动滚动；落盘放在 updater 外（updater 应为纯函数，StrictMode 双调用不重复写盘）
   const toggleAutoScroll = () => {
-    setAutoScroll((v) => {
-      writeAutoScrollPref(!v);
-      return !v;
-    });
+    const next = !autoScroll;
+    writeAutoScrollPref(next);
+    setAutoScroll(next);
   };
 
   // 挂载时拉取持久历史（Hub 消息源在 Go 侧磁盘；hub:changed 事件由 App 订阅后回填 store）。
