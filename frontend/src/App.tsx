@@ -385,6 +385,9 @@ function App() {
               setUpdateError('');
               try {
                 await applyUpdate();
+                // 正常路径进程会退出重启；若重启被拦截（Promise 已 resolve 但进程还在），
+                // busy 必须复位，否则对话框永远 spinner、无法重试或点「稍后」。
+                setUpdateBusy(false);
               } catch (e: unknown) {
                 setUpdateError(backendError(e));
                 setUpdateBusy(false);

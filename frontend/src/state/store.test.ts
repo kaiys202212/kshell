@@ -229,6 +229,80 @@ describe('store', () => {
     expect(useAppStore.getState()).not.toHaveProperty('activityCompleted');
   });
 
+  it('迟到/重排的 turn_done（时间线已有更新的 user 消息）不得把 running 打回 ready', () => {
+    const chat = {
+      ID: 'c1',
+      Kind: 'new',
+      SessionID: '',
+      Workspace: 'D:\\w',
+      Title: 't',
+      ToolID: 'claude',
+      Status: 'running',
+      ExitCode: 0,
+      Error: '',
+    };
+    useAppStore.setState({ chats: [chat], chatSeq: {}, chatItems: {} });
+    // 第一轮收尾（此时用户已乐观发第二轮：新一轮 user 消息 Seq=4 比该 turn_done 的 Seq=3 新）
+    useAppStore.getState().applyChat('c1', { Seq: 1, Type: 'assistant', MessageID: 'm1', Text: 'a' });
+    useAppStore.getState().applyChat('c1', { Seq: 4, Type: 'user', MessageID: 'u2', Text: '第二轮' });
+    // 上一轮的迟到 turn_done 到达：时间线里已有更新的 user 消息，说明新一轮在跑，
+    // 这个 turn_done 属于上一轮，不得打断
+    useAppStore.getState().applyChat('c1', { Seq: 3, Type: 'turn_done' });
+    expect(useAppStore.getState().chats[0].Status).toBe('running');
+  });
+
+  it('当前轮的正常 turn_done（无更新的 user 消息）照常收尾为 ready', () => {
+    const chat = {
+      ID: 'c1',
+      Kind: 'new',
+      SessionID: '',
+      Workspace: 'D:\\w',
+      Title: 't',
+      ToolID: 'claude',
+      Status: 'running',
+      ExitCode: 0,
+      Error: '',
+    };
+    useAppStore.setState({ chats: [chat], chatSeq: {}, chatItems: {} });
+    useAppStore.getState().applyChat('c1', { Seq: 1, Type: 'assistant', MessageID: 'm1', Text: 'a' });
+    useAppStore.getState().applyChat('c1', { Seq: 2, Type: 'turn_done' });
+    expect(useAppStore.getState().chats[0].Status).toBe('ready');
+  });
+
+  it('setChatItems 落位时 chatSeq 只升不降：实时更新已抬高 Seq 的，历史回放不得重置回去', () => {
+    const chat = {
+      ID: 'c1',
+      Kind: 'new',
+      SessionID: '',
+      Workspace: 'D:\\w',
+      Title: 't',
+      ToolID: 'claude',
+      Status: 'running',
+      ExitCode: 0,
+      Error: '',
+    };
+    useAppStore.setState({ chats: [chat], chatSeq: {}, chatItems: {} });
+    // 历史回放窗口期间实时更新先到（Seq=9），已抬高 chatSeq
+    useAppStore.getState().applyChat('c1', { Seq: 9, Type: 'assistant', MessageID: 'm9', Text: 'live' });
+    expect(useAppStore.getState().chatSeq.c1).toBe(9);
+    // 随后历史（Seq=1）落位：chatSeq 不得被重置为 1，否则随后补放的旧轮
+    // turn_done（Seq=2/3）会越过门控把 running 打回 ready。
+    // items 本身是覆盖语义（调用方负责补放缓冲），这里只约束 Seq 单调。
+    useAppStore.getState().setChatItems('c1', [
+      { key: 'm1', type: 'assistant', text: 'old', seq: 1 },
+    ]);
+    expect(useAppStore.getState().chatSeq.c1).toBe(9);
+    // 旧轮迟到 turn_done 被门控正确丢弃，Status 保持 running
+    useAppStore.getState().applyChat('c1', { Seq: 3, Type: 'turn_done' });
+    expect(useAppStore.getState().chats[0].Status).toBe('running');
+  });
+
+  it('setChatItems 空数组重置为 0 的既有语义保持（无实时更新时）', () => {
+    useAppStore.setState({ chatSeq: { c1: 5 }, chatItems: { c1: [] } });
+    useAppStore.getState().setChatItems('c1', []);
+    expect(useAppStore.getState().chatSeq.c1).toBe(0);
+  });
+
   it('agent 通知：入队追加、dismiss 移除、clear 清空', () => {
     useAppStore.getState().pushAgentNotice({
       tool: 'claude', event: 'Stop', termKey: 'session:s1', workspace: 'D:\\w', summary: '完成',

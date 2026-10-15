@@ -3,6 +3,7 @@ package terminal
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -323,6 +324,42 @@ func TestPTYHandleWaitIsIdempotent(t *testing.T) {
 		if code != 2 {
 			t.Fatalf("第 %d 次 Wait 退出码 = %d, 期望 2", i, code)
 		}
+	}
+}
+
+// TestPTYWaitWithoutProcessStateReturnsSentinel 覆盖误报 exit 0：
+// ConPTY 被外部关闭等场景下 Wait 拿不到 ProcessState，此时退出码必须用
+// 非零哨兵（-1）表达「未知/异常」，否则前端把异常终止显示为「正常退出」。
+func TestPTYWaitWithoutProcessStateReturnsSentinel(t *testing.T) {
+	// Wait 返回普通错误且无 ProcessState：应报非零哨兵 + error
+	got, err := exitCodeFromWait(errors.New("wait failed"), nil)
+	if got != -1 || err == nil {
+		t.Fatalf("Wait 失败无状态时应返回 (-1, err), got (%d, %v)", got, err)
+	}
+	// Wait 成功但状态不可得（罕见异常路径）：同样哨兵
+	got, err = exitCodeFromWait(io.ErrUnexpectedEOF, nil)
+	if err == nil {
+		t.Fatalf("err 非 nil 且无状态时应返回 error, got (%d, %v)", got, err)
+	}
+	if got != -1 {
+		t.Fatalf("err 非 nil 且无状态时退出码应为哨兵 -1, got %d", got)
+	}
+}
+
+// TestPTYHandleWaitRealExitStillExact 保证真实退出路径不受哨兵影响。
+func TestPTYHandleWaitRealExitStillExact(t *testing.T) {
+	bin := ptyScript(t, t.TempDir(), 7, "code7", false)
+	h, err := NewPTYBackend().Start(Spec{Path: bin}, 80, 24)
+	if err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+	defer func() { _ = h.Close() }()
+	code, err := h.Wait()
+	if err != nil {
+		t.Fatalf("Wait error: %v", err)
+	}
+	if code != 7 {
+		t.Fatalf("退出码 = %d, 期望 7", code)
 	}
 }
 

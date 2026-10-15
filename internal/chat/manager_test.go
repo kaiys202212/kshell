@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -36,7 +37,12 @@ type fakeConn struct {
 
 func (c *fakeConn) Initialize(ctx context.Context) (acp.InitializeResult, error) {
 	if c.initGate != nil {
-		<-c.initGate
+		// 模拟真实 acp.Agent.call：ctx 取消时返回 DeadlineExceeded（握手挂死超时依赖此行为）
+		select {
+		case <-c.initGate:
+		case <-ctx.Done():
+			return acp.InitializeResult{}, ctx.Err()
+		}
 	}
 	if c.initSet {
 		return c.initResult, nil
@@ -320,6 +326,40 @@ func TestManagerCloseRemovesFromList(t *testing.T) {
 	}
 	if got := m.List(); len(got) != 0 {
 		t.Fatalf("Close 后 List 应为空, got %+v", got)
+	}
+}
+
+// 握手挂死保护：Initialize 永不应答（已知 codebuddy --acp session/new 死锁场景）时，
+// Open 必须在超时后返回错误，而不是永久挂起 Wails 绑定 goroutine。
+func TestManagerOpenHandshakeTimeout(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	b.conn.initGate = make(chan struct{}) // 卡死 Initialize，永不放行
+	defer close(b.conn.initGate)          // 测试结束后放行，避免 goroutine 泄漏
+
+	// 缩短握手超时，避免测试实等 30s
+	old := handshakeTimeout
+	handshakeTimeout = 500 * time.Millisecond
+	defer func() { handshakeTimeout = old }()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("握手挂死时 Open 应返回错误")
+		}
+		if !strings.Contains(err.Error(), "err.chat.handshake_timeout") {
+			t.Fatalf("应返回握手超时 wire key, got %v", err)
+		}
+		// 失败会话不得留幽灵
+		if got := m.List(); len(got) != 0 {
+			t.Fatalf("failed open left ghost sessions: %+v", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Open 在握手挂死时未超时返回（永久挂起）")
 	}
 }
 

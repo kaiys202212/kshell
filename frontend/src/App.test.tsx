@@ -699,6 +699,27 @@ describe('App', () => {
     await waitFor(() => expect(mocks.applyUpdate).toHaveBeenCalledTimes(1));
   });
 
+  it('applyUpdate 成功但进程未重启时 busy 复位、升级按钮恢复可点', async () => {
+    let avail: ((info: { Latest: string; Available: boolean }) => void) | undefined;
+    mocks.onUpdateAvailable.mockImplementation((cb: unknown) => {
+      avail = cb as typeof avail;
+      return () => {};
+    });
+    // 后端更新失败/重启被拦截：Promise 正常 resolve 而进程没退出
+    mocks.applyUpdate.mockResolvedValue(undefined);
+    render(<App />);
+    act(() => {
+      avail?.({ Latest: 'v0.2.0', Available: true });
+    });
+    const upgradeBtn = screen.getByRole('button', { name: tt('ui.update_prompt.upgrade') });
+    fireEvent.click(upgradeBtn);
+    await waitFor(() => expect(mocks.applyUpdate).toHaveBeenCalledTimes(1));
+    // resolve 后 busy 必须复位：按钮回到可点状态，用户可重试或点「稍后」
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: tt('ui.update_prompt.upgrade') })).toBeEnabled(),
+    );
+  });
+
   it('捕获页面内 a 点击并交给系统打开', () => {
     const open = vi.fn();
     vi.stubGlobal('runtime', { BrowserOpenURL: open });

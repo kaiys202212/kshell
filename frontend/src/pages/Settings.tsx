@@ -765,6 +765,8 @@ export default function Settings() {
                           setUpdateError('');
                           try {
                             await applyUpdate();
+                            // 重启被拦截时 busy 复位，避免按钮永久禁用（同 App.tsx）。
+                            setUpdateBusy(false);
                           } catch (e: unknown) {
                             setUpdateError(backendError(e));
                             setUpdateBusy(false);

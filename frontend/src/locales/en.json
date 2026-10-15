@@ -21,7 +21,8 @@
       "busy": "Previous turn is still running",
       "empty_key": "Chat key cannot be empty",
       "unsupported_protocol": "Unsupported protocol version {{0}}",
-      "no_session_load": "This agent does not support session/load"
+      "no_session_load": "This agent does not support session/load",
+      "handshake_timeout": "Agent did not finish handshake within 30s (agent may be hung); please retry or switch agent"
     },
     "hub": {
       "not_found": "Message not found or archived",

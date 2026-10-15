@@ -371,8 +371,13 @@ export const useAppStore = create<AppState>()(
           chatItems: { ...s.chatItems, [id]: items },
           chatSeq: {
             ...s.chatSeq,
-            // 取真实最大值（upsert 可能把高 Seq 放到非末尾）；空数组重置为 0
-            [id]: items.length > 0 ? Math.max(...items.map((it) => it.seq)) : 0,
+            // 取真实最大值（upsert 可能把高 Seq 放到非末尾）；空数组重置为 0。
+            // 非空落位只升不降：历史回放落位前若有实时更新抢先抬高过 Seq（种子窗口竞态），
+            // 回退会让随后补放的旧轮 turn_done 越过门控把 running 打回 ready。
+            [id]: Math.max(
+              items.length > 0 ? (s.chatSeq[id] ?? 0) : 0,
+              items.length > 0 ? Math.max(...items.map((it) => it.seq)) : 0,
+            ),
           },
         })),
       removeChatState: (id) =>

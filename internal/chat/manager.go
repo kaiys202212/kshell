@@ -170,6 +170,20 @@ func (s *session) notePromptTitle(text string) (Info, bool) {
 	return s.info, true
 }
 
+// handshakeTimeout 限制 initialize + session/new|load 的总耗时。
+// 已知 codebuddy --acp 的 session/new 可能死锁（kshell 侧无解），不设超时会让
+// Wails 绑定 goroutine 永久挂起、前端「打开会话」永远 pending。
+// var 仅为测试可缩短；生产代码不得修改。
+var handshakeTimeout = 30 * time.Second
+
+// wrapHandshakeErr 把握手超时映射成前端可翻译的 wire key；其他错误原样返回。
+func wrapHandshakeErr(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return errors.New("err.chat.handshake_timeout")
+	}
+	return err
+}
+
 // Open 起进程并完成 initialize + session/new|load；sessionID 非空则 load。
 func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info, error) {
 	if m.backend == nil {
@@ -242,9 +256,15 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	s.conn = conn
 	m.mu.Unlock()
 
-	init, err := conn.Initialize(s.ctx)
+	// 握手阶段（Initialize/session new/load）包独立超时：agent 挂死时 Open 能返回错误，
+	// Prompt 仍用长命 s.ctx（轮次可持续任意久）。
+	hsCtx, hsCancel := context.WithTimeout(s.ctx, handshakeTimeout)
+	defer hsCancel()
+
+	init, err := conn.Initialize(hsCtx)
 	if err != nil {
 		_ = conn.Close()
+		err = wrapHandshakeErr(err)
 		m.fail(s.id, 0, err.Error())
 		return Info{}, err
 	}
@@ -265,18 +285,20 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 			m.fail(s.id, 0, msg)
 			return Info{}, errors.New(msg)
 		}
-		start, err := conn.LoadSession(s.ctx, sessionID, info.Workspace)
+		start, err := conn.LoadSession(hsCtx, sessionID, info.Workspace)
 		if err != nil {
 			_ = conn.Close()
+			err = wrapHandshakeErr(err)
 			m.fail(s.id, 0, err.Error())
 			return Info{}, err
 		}
 		s.modelState = start.Models
 		s.modelConfig = start.ModelConfig
 	} else {
-		start, err := conn.NewSession(s.ctx, info.Workspace)
+		start, err := conn.NewSession(hsCtx, info.Workspace)
 		if err != nil {
 			_ = conn.Close()
+			err = wrapHandshakeErr(err)
 			m.fail(s.id, 0, err.Error())
 			return Info{}, err
 		}

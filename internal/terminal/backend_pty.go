@@ -121,18 +121,36 @@ func (h *ptyHandle) Resize(cols, rows int) error {
 	return h.p.Resize(cols, rows)
 }
 
+// exitCodeUnknown 是「拿不到进程状态」时的哨兵退出码：0 会把异常终止误显示为正常退出。
+const exitCodeUnknown = -1
+
+// exitCodeFromWait 把 cmd.Wait 的 (err, ProcessState) 归一成 (退出码, Wait 错误)：
+// 非 0 退出不算错误（退出码已在返回值里），只有「等不到进程状态」这类失败才返回
+// error，且此时退出码用非零哨兵，避免把异常终止伪装成 exit 0。
+func exitCodeFromWait(err error, st *os.ProcessState) (int, error) {
+	if st != nil {
+		return st.ExitCode(), nil
+	}
+	if err == nil {
+		// Wait 成功却拿不到状态：理论不可达，防御性按未知异常处理
+		return exitCodeUnknown, errNoProcessState
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ProcessState != nil {
+		return exitErr.ProcessState.ExitCode(), nil
+	}
+	return exitCodeUnknown, err
+}
+
+// errNoProcessState 表示 Wait 后进程状态不可得（如 ConPTY 被外部关闭）。
+var errNoProcessState = errors.New("err.terminal.no_process_state")
+
 // Wait 等进程退出并返回退出码：非 0 退出不算错误（退出码已在返回值里），
 // 只有「等不到进程状态」这类失败才返回 error。重复调用返回同一次结果。
 func (h *ptyHandle) Wait() (int, error) {
 	h.waitOnce.Do(func() {
 		err := h.cmd.Wait()
-		if st := h.cmd.ProcessState; st != nil {
-			h.code = st.ExitCode()
-		}
-		var exitErr *exec.ExitError
-		if err != nil && !errors.As(err, &exitErr) {
-			h.werr = err
-		}
+		h.code, h.werr = exitCodeFromWait(err, h.cmd.ProcessState)
 	})
 	return h.code, h.werr
 }
@@ -146,13 +164,13 @@ func mergedEnv(extra []string) []string {
 }
 
 // Close 结束子进程并关闭伪终端，幂等。
-// 先杀进程再关句柄：ConPTY 关掉句柄不会终止已挂上的子进程；反过来先关句柄会让读协程立刻拿到错误。
+// 先按进程树杀进程再关句柄：ConPTY 关掉句柄不会终止已挂上的子进程；反过来先关
+// 句柄会让读协程立刻拿到错误。杀树用 taskkill /T（Windows）/ kill(-pgid)（Unix），
+// 覆盖 shell 里 start 拉起的新控制台孙进程——它们不受 ConPTY CTRL_CLOSE 管。
 func (h *ptyHandle) Close() error {
 	var err error
 	h.closeOnce.Do(func() {
-		if h.cmd.Process != nil {
-			_ = h.cmd.Process.Kill()
-		}
+		killProcessTree(h.cmd)
 		err = h.p.Close()
 	})
 	return err
