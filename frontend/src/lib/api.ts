@@ -1540,7 +1540,7 @@ export function onHubChanged(cb: () => void): () => void {
 // dispatchedTo 非空表示已派发到该工作区路径；
 // status: pending | active | done | archived（Go 侧必出，但旧持久化数据可能缺，
 // 声明为可选、使用方兜底 'pending'）；chatId 非空表示已派发的会话 ID；
-// archivedAt 为归档时间戳（秒，0 表示未归档）。
+// archivedAt 为归档时间戳（纳秒，Go UnixNano，0 表示未归档）。
 export interface Requirement {
   id: string;
   text: string;

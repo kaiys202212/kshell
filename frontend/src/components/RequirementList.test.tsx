@@ -387,7 +387,8 @@ describe('RequirementList', () => {
   it('主列表不含 archived 条目', async () => {
     mocks.listRequirements.mockResolvedValue([
       req({ id: 'r1', text: '活跃需求', status: 'active' }),
-      req({ id: 'r2', text: '已归档需求', status: 'archived', archivedAt: 1700000000 }),
+      // 真实纳秒量级（Go UnixNano），不是秒
+      req({ id: 'r2', text: '已归档需求', status: 'archived', archivedAt: Date.now() * 1e6 }),
     ]);
     render(<RequirementList />);
     expect(await screen.findByText('活跃需求')).toBeInTheDocument();
@@ -397,12 +398,13 @@ describe('RequirementList', () => {
   // ---- 归档视图 ----
 
   async function openArchiveDialog() {
+    // archivedAt 用真实纳秒量级（Go UnixNano），防止假数据掩盖单位错配
     mocks.listRequirements.mockResolvedValue([
       req({
         id: 'a1',
         text: '归档条目甲',
         status: 'archived',
-        archivedAt: 1700000200,
+        archivedAt: Date.now() * 1e6 - 10_000_000_000,
         tags: ['前端'],
         dispatchedTo: 'D:\\ws\\proj-a',
       }),
@@ -410,7 +412,7 @@ describe('RequirementList', () => {
         id: 'a2',
         text: '归档条目乙',
         status: 'archived',
-        archivedAt: 1700000100,
+        archivedAt: Date.now() * 1e6 - 20_000_000_000,
         tags: ['后端'],
         dispatchedTo: 'D:\\ws\\proj-b',
       }),
@@ -459,9 +461,28 @@ describe('RequirementList', () => {
     expect(dlg.queryByText('归档条目乙')).not.toBeInTheDocument();
   });
 
+  it('归档视图：纳秒时间戳渲染不抛错且时间显示合理', async () => {
+    // 回归：Go 侧 ArchivedAt 是 UnixNano（~1.77e18），按秒解析会溢出 Date 抛 RangeError
+    const tenMinAgoNs = Date.now() * 1e6 - 10 * 60 * 1e9;
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'a1', text: '纳秒归档条目', status: 'archived', archivedAt: tenMinAgoNs }),
+    ]);
+    render(<RequirementList />);
+    await screen.findByText(tt('ui.requirements.empty'));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.requirements.archive_open') }));
+    // 不抛 RangeError 且条目可见；10 分钟前应显示「N minutes ago」类相对时间
+    expect(await screen.findByText('纳秒归档条目')).toBeInTheDocument();
+    // 相对时间渲染在叶子 span（父容器 textContent 也含文本，getAllByText + 叶子过滤）
+    const rels = screen.getAllByText((_, el) =>
+      el?.tagName === 'SPAN' && !el.querySelector('span')
+        && /\d+ (minutes?|minute) ago|分钟前|just now|刚刚/.test(el.textContent ?? ''),
+    );
+    expect(rels.length).toBeGreaterThan(0);
+  });
+
   it('归档视图：关键字过滤大小写不敏感', async () => {
     mocks.listRequirements.mockResolvedValue([
-      req({ id: 'a1', text: 'Implement Export Feature', status: 'archived', archivedAt: 1700000200 }),
+      req({ id: 'a1', text: 'Implement Export Feature', status: 'archived', archivedAt: Date.now() * 1e6 }),
     ]);
     render(<RequirementList />);
     // 全 archived 时主列表为空态，等渲染稳定后直接开归档视图

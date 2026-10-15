@@ -285,7 +285,7 @@ function ArchiveDialog({
                       <Badge key={tg} variant="outline">{tg}</Badge>
                     ))}
                     {r.dispatchedTo && <Badge variant="outline">{baseName(r.dispatchedTo)}</Badge>}
-                    <span>{r.archivedAt ? formatRelativeTime(new Date(r.archivedAt * 1000).toISOString()) : ''}</span>
+                    <span>{r.archivedAt ? formatRelativeTime(new Date(r.archivedAt / 1e6).toISOString()) : ''}</span>
                   </span>
                 </span>
               </li>
