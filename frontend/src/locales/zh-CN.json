@@ -215,6 +215,9 @@
     "binary_file": "二进制文件 · {{0}} 字节 · {{1}}",
     "file_info": "{{0}} 字节 · {{1}}"
   },
+  "hub": {
+    "welcome": "你好！我是 {{0}}，会话已就绪——在下方输入任务，我马上开始。"
+  },
   "preset": {
     "custom": { "name": "自定义", "note": "不覆盖当前已填 URL" },
     "openai": { "name": "OpenAI", "note": "仅 OpenAI 协议" },
@@ -793,17 +796,21 @@
       "status_exited": "已退出",
       "field_project": "项目",
       "field_tool": "工具",
+      "field_model": "模型",
+      "default_model": "默认模型",
+      "creating": "创建中…",
       "no_tools": "没有可用的 ACP 工具",
       "cancel": "取消",
       "create": "创建",
       "cmd_aria": "命令",
       "cmd_new_desc": "新建 agent",
+      "cmd_easynew_desc": "用上次的项目与工具快速创建",
       "cmd_stop_desc": "停止目标 agent",
       "cmd_model_desc": "切换模型",
       "cmd_clear_desc": "清空本视图",
-      "model_step_title": "选择模型",
+      "easynew_running": "正在创建 agent…",
+      "easynew_busy": "已有创建在进行中",
       "model_label": "模型",
-      "model_confirm": "确认",
       "no_models": "该 agent 未报告可用模型",
       "model_switch_failed": "切换模型失败：{{err}}",
       "stop_done": "已请求停止",

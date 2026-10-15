@@ -235,6 +235,7 @@ func (a *App) openWorkspaceACP(wsID, toolID string, allowFallback bool) (OpenedS
 				KnownSessionIDs: a.knownSessionIDs(),
 			}, l, "")
 			if err == nil {
+				a.recordHubWelcome(info)
 				return OpenedSession{Kind: "chat", Chat: &info}, nil
 			}
 			if allowFallback {

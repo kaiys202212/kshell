@@ -215,6 +215,9 @@
     "binary_file": "Binary file · {{0}} bytes · {{1}}",
     "file_info": "{{0}} bytes · {{1}}"
   },
+  "hub": {
+    "welcome": "Hi! This is {{0}}. The session is ready — type any task below and I will start working on it."
+  },
   "preset": {
     "custom": { "name": "Custom", "note": "Does not overwrite the URLs you have entered" },
     "openai": { "name": "OpenAI", "note": "OpenAI protocol only" },
@@ -793,17 +796,21 @@
       "status_exited": "Exited",
       "field_project": "Project",
       "field_tool": "Tool",
+      "field_model": "Model",
+      "default_model": "Default model",
+      "creating": "Creating…",
       "no_tools": "No ACP-capable tool available",
       "cancel": "Cancel",
       "create": "Create",
       "cmd_aria": "Commands",
       "cmd_new_desc": "New agent",
+      "cmd_easynew_desc": "Quick-create with last used project and tool",
       "cmd_stop_desc": "Stop the target agent",
       "cmd_model_desc": "Switch model",
       "cmd_clear_desc": "Clear this view",
-      "model_step_title": "Choose model",
+      "easynew_running": "Creating agent…",
+      "easynew_busy": "Another creation is already running",
       "model_label": "Model",
-      "model_confirm": "Confirm",
       "no_models": "This agent reports no models",
       "model_switch_failed": "Failed to switch model: {{err}}",
       "stop_done": "Stop requested",

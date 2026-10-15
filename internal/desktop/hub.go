@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/yangk/kshell/internal/agenthook"
+	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/hub"
 )
 
@@ -167,6 +168,40 @@ func (a *App) recordHubAgentMessage(p agenthook.Payload) {
 		Event:     p.Event,
 		Ts:        p.Ts,
 	})
+}
+
+// recordHubWelcome 在工作区新建 agent 会话成功后，模拟该 agent 向 hub 消息流发一条欢迎词：
+// 正文是稳定 wire key+工具名插值（hub.welcome|<工具名>），自然语言由前端 translateBackend 渲染。
+// 归因字段与该会话一致，前端 lastHubAgentId 回落即可命中本条、把后续消息投给该 agent。
+// 不真实跑一轮（不调 Prompt）。工具名取不到时缺省插值段，前端 key 文案兜底为通用欢迎词。
+func (a *App) recordHubWelcome(info chat.Info) {
+	text := "hub.welcome"
+	if name := a.toolDisplayName(info.ToolID); name != "" {
+		text += "|" + name
+	}
+	a.recordHubMessage(hub.Message{
+		Kind:      "agent",
+		ChatID:    info.ID,
+		Tool:      info.ToolID,
+		TermKey:   info.Key,
+		Workspace: info.Workspace,
+		Text:      text,
+	})
+}
+
+// toolDisplayName 按工具 ID 查扫描结果里的展示名；查不到返回空串。
+func (a *App) toolDisplayName(toolID string) string {
+	if toolID == "" {
+		return ""
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, t := range a.tools {
+		if t.ID == toolID {
+			return t.Name
+		}
+	}
+	return ""
 }
 
 // ListHubMessages 返回 AgentHub 最近的消息历史（live 部分，最多 500 条）。
