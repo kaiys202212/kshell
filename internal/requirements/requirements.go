@@ -128,8 +128,7 @@ func (s *Store) Add(text, priority string, tags []string) (Item, error) {
 }
 
 // Update 修改既有需求（文本/优先级/标签整体替换）；id 不存在返回错误。
-// 仅 pending（含旧数据归一化前的 ""）状态允许修改，防止执行中/已归档的
-// 需求被误改历史记录。
+// 仅 pending 状态允许修改，防止执行中/已完成/已归档的需求被误改历史记录。
 func (s *Store) Update(id, text, priority string, tags []string) (Item, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -142,8 +141,8 @@ func (s *Store) Update(id, text, priority string, tags []string) (Item, error) {
 		if s.items[i].ID != id {
 			continue
 		}
-		if st := s.items[i].Status; st != StatusPending && st != "" {
-			return Item{}, errors.New("执行中或已归档的需求不允许修改")
+		if s.items[i].Status != StatusPending {
+			return Item{}, errors.New("仅未开始的需求允许修改")
 		}
 		old := s.items[i]
 		s.items[i].Text = text
@@ -170,7 +169,7 @@ func (s *Store) Delete(id string) error {
 		}
 		switch s.items[i].Status {
 		case StatusActive, StatusDone, StatusArchived:
-			return errors.New("执行中或已归档的需求不允许删除")
+			return errors.New("仅未开始的需求允许删除")
 		}
 		old := append([]Item(nil), s.items...)
 		s.items = append(s.items[:i], s.items[i+1:]...)
@@ -184,7 +183,8 @@ func (s *Store) Delete(id string) error {
 }
 
 // MarkDispatched 标记需求已派发到某工作区并关联会话 ID；id 不存在返回错误。
-// 派发意味着需求进入执行阶段，状态置为 active。
+// 派发意味着需求进入执行阶段，状态置为 active。仅 pending/active 条目允许
+// 派发，done/archived 为终态，重新派发会把状态拉回 active，击穿归档不变量。
 func (s *Store) MarkDispatched(id, workspace, chatID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -192,6 +192,9 @@ func (s *Store) MarkDispatched(id, workspace, chatID string) error {
 	for i := range s.items {
 		if s.items[i].ID != id {
 			continue
+		}
+		if st := s.items[i].Status; st != StatusPending && st != StatusActive {
+			return errors.New("已完成或已归档的需求不可重新派发")
 		}
 		old := s.items[i]
 		s.items[i].DispatchedTo = workspace

@@ -303,9 +303,7 @@ func TestFileWrittenAtomic(t *testing.T) {
 // TestStatusLifecycle 覆盖状态机主链路：pending → active → done → archived，
 // 以及各终态下对修改类操作的拒绝。
 func TestStatusLifecycle(t *testing.T) {
-	dir := t.TempDir()
-	s := New(dir)
-	_ = s.Load()
+	s, _ := newTestStore(t)
 	it, err := s.Add("需求A", "high", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -343,11 +341,37 @@ func TestStatusLifecycle(t *testing.T) {
 	}
 }
 
+// TestMarkDispatchedTerminalRejected 验证 done/archived 为终态，
+// 不可重新派发（否则会把状态拉回 active，击穿归档不变量）。
+func TestMarkDispatchedTerminalRejected(t *testing.T) {
+	s, _ := newTestStore(t)
+	done, _ := s.Add("已完成", "low", nil)
+	_ = s.MarkDispatched(done.ID, "/w", "c")
+	_ = s.SetStatus(done.ID, "done")
+	if err := s.MarkDispatched(done.ID, "/w2", "c2"); err == nil {
+		t.Error("done 状态不允许重新派发")
+	}
+	arch, _ := s.Add("已归档", "low", nil)
+	_ = s.MarkDispatched(arch.ID, "/w", "c")
+	_ = s.SetStatus(arch.ID, "done")
+	_ = s.Archive(arch.ID)
+	if err := s.MarkDispatched(arch.ID, "/w3", "c3"); err == nil {
+		t.Error("archived 状态不允许重新派发")
+	}
+	// 状态与派发字段都不应被改动
+	for _, it := range s.List() {
+		if it.ID == done.ID && it.Status != "done" {
+			t.Errorf("done 条目状态被改动: %+v", it)
+		}
+		if it.ID == arch.ID && (it.Status != "archived" || it.DispatchedTo != "/w") {
+			t.Errorf("archived 条目被改动: %+v", it)
+		}
+	}
+}
+
 // TestListArchivedOrder 验证归档列表按 ArchivedAt 时间倒序（最新归档在前）。
 func TestListArchivedOrder(t *testing.T) {
-	dir := t.TempDir()
-	s := New(dir)
-	_ = s.Load()
+	s, _ := newTestStore(t)
 	a, _ := s.Add("旧需求", "low", []string{"x"})
 	b, _ := s.Add("新需求", "low", []string{"y"})
 	_ = s.MarkDispatched(a.ID, "/w1", "c1")

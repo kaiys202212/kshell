@@ -645,7 +645,7 @@ interface AppBindings {
   AddRequirement(text: string, priority: string, tags: string[]): Promise<Requirement>;
   UpdateRequirement(id: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
   DeleteRequirement(id: string): Promise<void>;
-  MarkRequirementDispatched(id: string, workspace: string): Promise<void>;
+  MarkRequirementDispatched(id: string, workspace: string, chatID: string): Promise<void>;
 }
 
 declare global {
@@ -1578,11 +1578,12 @@ export async function deleteRequirement(id: string): Promise<void> {
   await a.DeleteRequirement(id);
 }
 
-// markRequirementDispatched 标记需求已派发到某工作区；错误向上抛。
-export async function markRequirementDispatched(id: string, workspace: string): Promise<void> {
+// markRequirementDispatched 标记需求已派发到某工作区并关联会话 ID；错误向上抛。
+// chatID 暂由调用方传 '' 占位，后续任务接入真实会话 ID。
+export async function markRequirementDispatched(id: string, workspace: string, chatID: string): Promise<void> {
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
-  await a.MarkRequirementDispatched(id, workspace);
+  await a.MarkRequirementDispatched(id, workspace, chatID);
 }
 
 // onRequirementsChanged 订阅需求列表变更（写操作后 Go Emit requirements:changed），
