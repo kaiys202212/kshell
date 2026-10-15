@@ -19,6 +19,7 @@ type fakeConn struct {
 	loadErr   error
 	promptErr error
 	stop      string
+	stderr    string
 	cancelled []string
 	closed    bool
 	waitCh    chan struct{}
@@ -99,6 +100,11 @@ func (c *fakeConn) Cancel(sessionID string) error {
 	c.cancelled = append(c.cancelled, sessionID)
 	c.mu.Unlock()
 	return nil
+}
+func (c *fakeConn) Stderr() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stderr
 }
 func (c *fakeConn) Wait() (int, error) {
 	<-c.waitCh
@@ -185,6 +191,80 @@ func TestManagerOpenNewAndPrompt(t *testing.T) {
 		}
 		c.mu.Unlock()
 		if found {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("no turn_done; updates=%+v", c.updates)
+}
+
+// 异常 stopReason（refusal 等）时 turn_done 必须附带 agent stderr 尾部：
+// 上游 CLI 把 429 等 API 错误映射成 refusal，具体原因只在 stderr 里。
+func TestManagerTurnDoneAttachesStderrTail(t *testing.T) {
+	b := &fakeBackend{conn: &fakeConn{
+		waitCh: make(chan struct{}),
+		stop:   "refusal",
+		stderr: "2026-10-16 10:00:00 error: 429 Requests are too frequent. Please retry",
+	}}
+	c := &collector{}
+	m := NewManager(b, c.onUpdate, c.onPermission, c.onExit)
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		var done Update
+		found := false
+		for _, u := range c.updates {
+			if u.Type == "turn_done" {
+				done, found = u, true
+			}
+		}
+		c.mu.Unlock()
+		if found {
+			if done.StopReason != "refusal" {
+				t.Fatalf("StopReason = %q", done.StopReason)
+			}
+			if !strings.Contains(done.Text, "429") {
+				t.Fatalf("turn_done.Text 缺 stderr 内容：%q", done.Text)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("no turn_done; updates=%+v", c.updates)
+}
+
+// 正常结束（end_turn）不附 stderr：避免把调试日志噪声灌进时间线。
+func TestManagerTurnDoneEndTurnNoStderr(t *testing.T) {
+	m, _, c := newTestManager(t)
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		var done Update
+		found := false
+		for _, u := range c.updates {
+			if u.Type == "turn_done" {
+				done, found = u, true
+			}
+		}
+		c.mu.Unlock()
+		if found {
+			if done.Text != "" {
+				t.Fatalf("end_turn 不应附 stderr，Text=%q", done.Text)
+			}
 			return
 		}
 		time.Sleep(5 * time.Millisecond)

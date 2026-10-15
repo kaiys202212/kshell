@@ -52,6 +52,7 @@ func (c *fakeChatConn) SetModel(ctx context.Context, sessionID, modelID string) 
 	return c.modelErr
 }
 func (c *fakeChatConn) Cancel(sessionID string) error { return nil }
+func (c *fakeChatConn) Stderr() string                { return "" }
 func (c *fakeChatConn) Wait() (int, error)            { <-c.waitCh; return 0, nil }
 func (c *fakeChatConn) Close() error {
 	c.once.Do(func() { close(c.waitCh) })

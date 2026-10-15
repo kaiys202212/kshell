@@ -25,6 +25,10 @@ var (
 // maxHistory 限制每会话保留的时间线事件数，防止长会话内存无限增长。
 const maxHistory = 500
 
+// stderrTailLimit 限制异常停止时附加的 stderr 尾部字节数：足以容纳限流等
+// 错误文本，又不至于把长调试日志整段灌进时间线。
+const stderrTailLimit = 4096
+
 type session struct {
 	id        string
 	key       string
@@ -579,6 +583,10 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 			u.Type = "error"
 			u.Text = err.Error()
 			s.info.Error = err.Error()
+		} else if stop != "" && stop != "end_turn" && stop != "cancelled" {
+			// 异常提前停止（refusal/max_tokens 等）：上游 CLI 常把 429 等 API 错误
+			// 映射成 refusal，具体原因只在 stderr 里，附尾部供前端归因展示。
+			u.Text = strings.TrimSpace(acp.StderrTail(conn.Stderr(), stderrTailLimit))
 		}
 		s.history = append(s.history, u)
 		if len(s.history) > maxHistory {

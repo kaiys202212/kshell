@@ -440,16 +440,27 @@ export default function ChatView({ chat, active }: Props) {
               <div
                 key={it.key}
                 data-testid="chat-turn-stopped"
-                className="selectable mb-2 flex items-center gap-2 break-words text-xs text-muted-foreground"
+                className="selectable mb-2 break-words text-xs text-muted-foreground"
               >
-                <span className="min-w-0 flex-1">{t('ui.chat.turn_stopped', { reason: known ? t(known) : stop })}</span>
-                <button
-                  data-testid="chat-resume"
-                  className="shrink-0 rounded border border-border px-2 py-0.5 hover:bg-muted"
-                  onClick={resume}
-                >
-                  {t('ui.chat.resume_turn')}
-                </button>
+                <div className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1">{t('ui.chat.turn_stopped', { reason: known ? t(known) : stop })}</span>
+                  <button
+                    data-testid="chat-resume"
+                    className="shrink-0 rounded border border-border px-2 py-0.5 hover:bg-muted"
+                    onClick={resume}
+                  >
+                    {t('ui.chat.resume_turn')}
+                  </button>
+                </div>
+                {it.text && (
+                  // 后端在异常停止时附带 agent stderr 尾部（如 429 限流文本），折叠展示避免刷屏。
+                  <details data-testid="chat-stderr-detail" className="mt-1">
+                    <summary className="cursor-pointer select-none">{t('ui.chat.agent_stderr')}</summary>
+                    <pre className="selectable mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words">
+                      {it.text}
+                    </pre>
+                  </details>
+                )}
               </div>
             );
           }

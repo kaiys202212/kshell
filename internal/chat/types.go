@@ -124,6 +124,8 @@ type Conn interface {
 	Prompt(ctx context.Context, sessionID string, blocks []acp.ContentBlock) (string, error)
 	SetModel(ctx context.Context, sessionID, modelID string) error
 	Cancel(sessionID string) error
+	// Stderr 返回 agent 进程 stderr 缓冲（异常停止时辅助归因，如 429 限流文本）。
+	Stderr() string
 	Wait() (int, error)
 	Close() error
 }

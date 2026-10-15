@@ -169,6 +169,29 @@ describe('ChatView', () => {
     expect(line.textContent).toContain(tt('ui.chat.stop_reason.max_turn_requests'));
   });
 
+  // 异常停止时后端会把 agent stderr 尾部附在 turn_done.Text（如 429 限流文本），
+  // 前端以可折叠 details 展示，帮助用户归因。
+  it('turn_done 附带 stderr 详情时渲染可折叠的 agent 输出', () => {
+    useAppStore.setState({
+      chatItems: { c1: [{ key: 'td1', type: 'turn_done', stopReason: 'refusal', text: '429 Requests are too frequent', seq: 1 }] },
+      chatSeq: { c1: 1 },
+    });
+    render(<ChatView chat={CHAT} active />);
+    const details = screen.getByTestId('chat-stderr-detail');
+    expect(details.textContent).toContain(tt('ui.chat.agent_stderr'));
+    expect(details.textContent).toContain('429 Requests are too frequent');
+  });
+
+  it('turn_done 无 stderr 详情时不渲染 details', () => {
+    useAppStore.setState({
+      chatItems: { c1: [{ key: 'td1', type: 'turn_done', stopReason: 'refusal', seq: 1 }] },
+      chatSeq: { c1: 1 },
+    });
+    render(<ChatView chat={CHAT} active />);
+    expect(screen.getByTestId('chat-turn-stopped')).toBeInTheDocument();
+    expect(screen.queryByTestId('chat-stderr-detail')).not.toBeInTheDocument();
+  });
+
   it('停止行点继续：发送 resume prompt 并乐观置 running', () => {
     useAppStore.setState({
       chatItems: { c1: [{ key: 'td1', type: 'turn_done', stopReason: 'max_turn_requests', seq: 1 }] },

@@ -762,10 +762,11 @@
       "error_prefix": "错误：{{text}}",
       "turn_stopped": "本轮已停止（原因：{{reason}}）",
       "resume_turn": "继续",
+      "agent_stderr": "agent 输出（stderr）",
       "stop_reason": {
         "max_tokens": "达到输出长度上限",
         "max_turn_requests": "达到本轮步数上限（agent 内部限制）",
-        "refusal": "agent 拒绝继续",
+        "refusal": "agent 拒绝继续（也可能因 API 限流等错误）",
         "cancelled": "已取消"
       },
       "input_placeholder": "输入消息，Enter 发送，Shift+Enter 换行",

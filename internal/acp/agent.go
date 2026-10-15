@@ -27,8 +27,9 @@ func logf(format string, args ...any) {
 	}
 }
 
-// stderrTail 取 stderr 缓冲的尾部 ≤limit 字节（从最近的行首起，避免半行）。
-func stderrTail(s string, limit int) string {
+// StderrTail 取 stderr 缓冲的尾部 ≤limit 字节（从最近的行首起，避免半行）。
+// 导出供 chat 层在异常停止时归因使用（上游 CLI 把 API 错误细节只打到 stderr）。
+func StderrTail(s string, limit int) string {
 	if len(s) <= limit {
 		return s
 	}
@@ -376,7 +377,7 @@ func (a *Agent) waitLoop() {
 	a.mu.Unlock()
 	// agent 为什么停了，唯一线索就是退出码与 stderr：必须落盘（此前 Stderr() 无调用点）。
 	logf("acp: agent 退出 code=%d err=%v", code, err)
-	if tail := stderrTail(a.stderr.String(), 2048); strings.TrimSpace(tail) != "" {
+	if tail := StderrTail(a.stderr.String(), 2048); strings.TrimSpace(tail) != "" {
 		logf("acp: agent stderr 尾部: %s", tail)
 	}
 	close(a.waitDone)
