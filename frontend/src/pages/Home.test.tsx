@@ -1,6 +1,7 @@
 // 首页工作区卡片测试：按最后活动时间倒序（零值排最后，再按名称）/ 卡片信息（会话数、
 // 相对时间、git 徽标、工具分布折叠）/ 点击整卡打开页签 / 重新扫描的扫描状态机 /
 // 项目表操作（新建、删除、回收站还原、projects:changed 刷新）。
+// 「新建项目 / 回收站 / 重新扫描」按钮已内联到左列项目区顶部；分页栏有项目时常显。
 // api 层整体打桩（vi.mock），与 App.test.tsx 同一套模式。
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -450,11 +451,33 @@ describe('Home', () => {
     expect(screen.getByText(tt('ui.home.page_indicator').replace('{{page}}', '2').replace('{{total}}', '2')));
   });
 
-  it('分页：≤9 张不出现分页栏', async () => {
+  it('分页：≤9 张分页栏仍显示（1/1，按钮禁用）', async () => {
     render(<Home />); // 默认 4 张
     await screen.findByTitle('D:\\proj-new');
+    expect(screen.getByText(tt('ui.home.page_indicator').replace('{{page}}', '1').replace('{{total}}', '1')));
+    expect(screen.getByRole('button', { name: tt('ui.home.page_prev') })).toBeDisabled();
+    expect(screen.getByRole('button', { name: tt('ui.home.page_next') })).toBeDisabled();
+  });
+
+  it('分页：空态与检索无命中时不显示分页栏', async () => {
+    mocks.getWorkspaces.mockResolvedValue([]);
+    useAppStore.setState({ scanState: 'idle' });
+    const { unmount } = render(<Home />);
+    await act(async () => {
+      scanDoneCb({});
+    });
+    expect(await screen.findByText(tt('ui.home.empty'))).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: tt('ui.home.page_next') })).toBeNull();
-    expect(screen.queryByRole('button', { name: tt('ui.home.page_prev') })).toBeNull();
+    unmount();
+
+    // 有项目但检索无命中也不显示
+    mocks.getWorkspaces.mockResolvedValue(workspaces);
+    useAppStore.setState({ scanState: 'done', workspaces });
+    render(<Home />);
+    await screen.findByTitle('D:\\proj-new');
+    fireEvent.change(screen.getByTestId('home-filter'), { target: { value: '不存在的关键词' } });
+    expect(screen.getByText(tt('ui.home.filter_empty'))).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: tt('ui.home.page_next') })).toBeNull();
   });
 
   it('分页：检索过滤后回到第 1 页', async () => {

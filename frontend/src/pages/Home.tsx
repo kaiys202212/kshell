@@ -1,7 +1,8 @@
 // 首页：工作区/项目卡片网格（名称、git 徽标、会话数、最后活动时间、工具分布），
 // 按最后活动时间倒序 —— 从未用过（Go 零值时间）的 git 扫描工作区排最后，再按名称。
 // 点击整卡打开工作区页签；键盘可达（整卡是 button）。
-// 项目表操作：顶部「新建项目」先出本地/远程对话框；卡片 hover 出删除按钮（逻辑删除）；
+// 项目表操作：「新建项目 / 回收站 / 重新扫描」按钮内联在左列项目区顶部；
+// 卡片 hover 出删除按钮（逻辑删除）；
 // 「回收站」弹层列出已删除项目可逐项还原。删除/还原后工作区列表由事件驱动刷新。
 // 数据流：先渲染缓存（GetWorkspaces），再触发后台扫描，等 "scan:done" 后重调
 // GetWorkspaces 刷新（统一走一条取数路径，事件 payload 只当触发信号用）。
@@ -357,10 +358,34 @@ export default function Home() {
             {t('ui.home.session_count', { count: totalSessions })}
           </span>
         </h1>
-        <div className="flex items-center gap-2">
-          <Button size="sm" disabled={creating} onClick={openCreateDialog}>
-            {creating ? t('ui.home.creating') : t('ui.home.create_project')}
-          </Button>
+      </div>
+      {/* 左右分栏：左列项目（检索+网格，内部滚动），右列 AgentHub 对话卡（全高） */}
+      <div className="flex min-h-0 flex-1 gap-3">
+        <div className="flex w-2/5 min-w-0 flex-col">
+          {/* 项目操作行：与卡片放一起（新建项目 / 回收站 / 重新扫描） */}
+          <div className="mb-2 flex shrink-0 items-center gap-2">
+            <Button size="sm" disabled={creating} onClick={openCreateDialog}>
+              {creating ? t('ui.home.creating') : t('ui.home.create_project')}
+            </Button>
+            {/* 回收站：0 项时禁用（没有可还原的内容，点开只有空态） */}
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={deleted.length === 0}
+              onClick={() => setBinOpen(true)}
+            >
+              {t('ui.home.recycle_bin')}{deleted.length > 0 ? ` (${deleted.length})` : ''}
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={scanState === 'scanning'}
+              onClick={handleRescan}
+            >
+              {scanState === 'scanning' ? t('ui.home.scanning') : t('ui.home.rescan')}
+            </Button>
+          </div>
+          {/* 新建项目对话框：先选本地/远程，再选连接/目录 */}
           <Dialog
             open={createOpen}
             onOpenChange={(open) => {
@@ -461,15 +486,7 @@ export default function Home() {
               />
             )}
           </Dialog>
-          {/* 回收站：0 项时禁用（没有可还原的内容，点开只有空态） */}
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={deleted.length === 0}
-            onClick={() => setBinOpen(true)}
-          >
-            {t('ui.home.recycle_bin')}{deleted.length > 0 ? ` (${deleted.length})` : ''}
-          </Button>
+          {/* 回收站弹层：列出已删除项目可逐项还原 */}
           <Dialog
             open={binOpen}
             onOpenChange={setBinOpen}
@@ -513,19 +530,6 @@ export default function Home() {
               </ul>
             )}
           </Dialog>
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={scanState === 'scanning'}
-            onClick={handleRescan}
-          >
-            {scanState === 'scanning' ? t('ui.home.scanning') : t('ui.home.rescan')}
-          </Button>
-        </div>
-      </div>
-      {/* 左右分栏：左列项目（检索+网格，内部滚动），右列 AgentHub 对话卡（全高） */}
-      <div className="flex min-h-0 flex-1 gap-3">
-        <div className="flex w-2/5 min-w-0 flex-col">
           {/* 首页检索：按名称/路径过滤工作区卡片 */}
           <div className="mb-2 shrink-0">
             <input
@@ -659,8 +663,8 @@ export default function Home() {
               </ul>
             )}
           </div>
-          {/* 分页栏：仅 >9 张时出现；两页以上时两端按钮按边界禁用 */}
-          {sorted.length > 0 && filtered.length > PAGE_SIZE && (
+          {/* 分页栏：有项目时常显（单页按钮禁用、显示 1/1）；空态/检索无命中不出现 */}
+          {sorted.length > 0 && filtered.length > 0 && (
             <div className="flex shrink-0 items-center justify-center gap-2 py-1 text-xs text-muted-foreground">
               <Button
                 size="sm"
