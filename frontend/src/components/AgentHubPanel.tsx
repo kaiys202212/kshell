@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { Loader2 } from 'lucide-react';
 import type { ChatCommand, ChatInfo, ChatModelsView, HubArchiveMonth, HubMessage, ToolInfo } from '../lib/api';
 import {
   cancelChat,
@@ -23,6 +24,7 @@ import {
 } from '../lib/api';
 import { buildMentionOptions, resolveMentionTarget, type MentionAgent, type MentionOption } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
+import { loadLastCreate, loadToolModels, saveLastCreate, saveToolModels } from '../lib/agenthubDefaults';
 import { quotePathForShell } from '../lib/dragPath';
 import { backendError } from '../lib/errors';
 import { attributionText, baseName, resolveAttribution } from '../lib/hubAttribution';
@@ -42,11 +44,68 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 // kshell 客户端命令：由本前端解析执行，不投递给 agent。name 不含前导斜杠。
 const HUB_COMMANDS: { name: string; descKey: string }[] = [
   { name: 'new', descKey: 'ui.hub.cmd_new_desc' },
+  { name: 'easynew', descKey: 'ui.hub.cmd_easynew_desc' },
   { name: 'stop', descKey: 'ui.hub.cmd_stop_desc' },
   { name: 'model', descKey: 'ui.hub.cmd_model_desc' },
   { name: 'clear', descKey: 'ui.hub.cmd_clear_desc' },
 ];
 const HUB_COMMAND_NAMES = new Set(HUB_COMMANDS.map((c) => c.name.toLowerCase()));
+
+// 创建互斥锁（session 级，防 /easynew 与对话框并发重复建会话）。
+// 进程级模块变量：对话框卸载后锁仍由创建 Promise 的 finally 释放。
+const createBusy: { running: boolean } = { running: false };
+
+// AgentCreateDeps：可复用创建流程的外部依赖（api/store 回调），对话框与 /easynew 共用。
+interface AgentCreateDeps {
+  t: (key: string, opts?: Record<string, unknown>) => string;
+  registerChat: (chat: ChatInfo) => void;
+  onClose: () => void;
+}
+
+// runAgentCreate 一次点完创建全流程：建会话 → 记默认值 → 缓存模型列表 → 按需 SetModel。
+// 返回 true 表示走到「已建会话」分支（无论后续 SetModel 成败）；false 表示前置校验失败或建会话抛错。
+// 原两步逻辑的时序约束保留：session/new 不接受模型参数，只能建后再 SetModel，全部在一次调用内自动完成。
+export async function runAgentCreate(
+  wsPath: string,
+  toolId: string,
+  modelId: string | null,
+  deps: AgentCreateDeps,
+): Promise<boolean> {
+  const { t, registerChat, onClose } = deps;
+  if (createBusy.running) return false;
+  createBusy.running = true;
+  try {
+    const result = await openWorkspaceACP(wsPath, toolId);
+    if (!result.Chat) {
+      onClose();
+      return true;
+    }
+    const chat = result.Chat;
+    registerChat(chat);
+    // 成功即记默认值：下次 /easynew 或打开对话框时预填
+    saveLastCreate({ wsPath, toolId, modelId });
+    // 拉模型列表缓存，供下次预填模型下拉；失败静默（默认值是辅助功能）
+    const view = await listChatModels(chat.ID).catch(() => null);
+    if (view && view.Models && view.Models.length > 0) {
+      saveToolModels(toolId, view.Models.map((m) => m.ID));
+    }
+    // 用户选了模型且与 agent 当前模型不同：建后再 SetModel
+    if (modelId && view && view.Current !== modelId) {
+      try {
+        await setChatModel(chat.ID, modelId);
+      } catch (e: unknown) {
+        // 会话已建成，切模型失败只提示，不回滚
+        useAppStore.getState().notify(t('ui.hub.model_switch_failed', { err: backendError(e) }), 'error');
+      }
+    }
+    return true;
+  } catch (e: unknown) {
+    useAppStore.getState().notify(backendError(e), 'error');
+    return false;
+  } finally {
+    createBusy.running = false;
+  }
+}
 
 // 消息流里 agent 气泡 / 用户气泡的归因行：项目 · 会话（chats/terminals 反查）。
 // 组件内共用 chats 与 terminals 镜像，抽成工厂避免两处重复传参。
@@ -117,6 +176,8 @@ export default function AgentHubPanel() {
   const emptyTarget = t('ui.hub.new_agent');
   const [draft, setDraft] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
+  // /easynew 直建中的本地提示（不进 hub store，成功后由后端写欢迎词）
+  const [easynewRunning, setEasynewRunning] = useState(false);
   // 归档入口：展开时列出月份，选中月份后加载该月旧消息内联展示。
   const [historyOpen, setHistoryOpen] = useState(false);
   const [archiveMonths, setArchiveMonths] = useState<HubArchiveMonth[]>([]);
@@ -254,7 +315,11 @@ export default function AgentHubPanel() {
     setSlashClosed(false);
     setSlashIndex(0);
     if (name === 'new') {
-      setDialogOpen(true);
+      openNewAgentDialog();
+      return;
+    }
+    if (name === 'easynew') {
+      runEasyNew();
       return;
     }
     if (name === 'clear') {
@@ -285,6 +350,56 @@ export default function AgentHubPanel() {
         })
         .catch((e: unknown) => useAppStore.getState().notify(backendError(e), 'error'));
     }
+  };
+
+  // runEasyNew /easynew 快建：lastCreate 的项目/工具仍有效时直接走创建流程（不弹窗），
+  // 失效或没有默认值则打开新建弹窗让用户补选（补选后同样落默认值）。
+  // 创建互斥：runAgentCreate 内部持锁；这里对弹窗入口另查锁，避免创建中又打开对话框重复操作。
+  const runEasyNew = () => {
+    if (createBusy.running) {
+      useAppStore.getState().notify(t('ui.hub.easynew_busy'), 'info');
+      return;
+    }
+    const last = loadLastCreate();
+    const wsOk =
+      last &&
+      useAppStore.getState().workspaces.some((w) => sameWorkspacePath(w.Path, last.wsPath));
+    if (!last || !wsOk) {
+      openNewAgentDialog();
+      return;
+    }
+    setEasynewRunning(true);
+    // 工具有效性需异步拉工具列表校验（store 无镜像），确认有效才直建
+    void getTools()
+      .then((list) => list.filter((x) => x.ACP?.Available === true))
+      .then((acp) => {
+        if (!last || !acp.some((x) => x.ID === last.toolId)) {
+          setDialogOpen(true);
+          return;
+        }
+        return runAgentCreate(last.wsPath, last.toolId, last.modelId, {
+          t,
+          registerChat: (chat) => {
+            useAppStore.getState().upsertChat(chat);
+            useAppStore.getState().setLastAgentId(chat.ID);
+          },
+          onClose: () => {},
+        });
+      })
+      .then((ok) => {
+        // 成功保留提示（会话已登记，欢迎词随后由后端写入）；失败或打开弹窗补选即清除
+        if (!ok) setEasynewRunning(false);
+      })
+      .catch(() => setEasynewRunning(false));
+  };
+
+  // openNewAgentDialog 打开新建弹窗；创建进行中拦截并提示，防并发重复建会话。
+  const openNewAgentDialog = () => {
+    if (createBusy.running) {
+      useAppStore.getState().notify(t('ui.hub.easynew_busy'), 'info');
+      return;
+    }
+    setDialogOpen(true);
   };
 
   // applySlash：客户端命令直接执行，agent 技能切入 draft 后正常发送。
@@ -324,6 +439,8 @@ export default function AgentHubPanel() {
   const send = () => {
     const text = draft.trim();
     if (!text) return;
+    // 用户主动发消息即视为已接管，清掉 /easynew 的进行中提示
+    setEasynewRunning(false);
     // 回落链与 currentTargetId 共用 fallbackId（见上）。
     const targetId = resolveMentionTarget(text, options, fallbackId);
     if (!targetId) {
@@ -391,7 +508,7 @@ export default function AgentHubPanel() {
             size="sm"
             variant="secondary"
             aria-label={t('ui.hub.new_agent')}
-            onClick={() => setDialogOpen(true)}
+            onClick={openNewAgentDialog}
           >
             + {t('ui.hub.new_agent')}
           </Button>
@@ -518,6 +635,12 @@ export default function AgentHubPanel() {
       </div>
 
       <div className="flex flex-col gap-1 border-t border-border pt-2">
+        {easynewRunning && (
+          <div className="flex items-center gap-1.5 rounded border border-border bg-card px-2 py-1 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            <span>{t('ui.hub.easynew_running')}</span>
+          </div>
+        )}
         {mentionMatches.length > 0 && (
           <ul
             aria-label={t('ui.hub.mention_aria')}
@@ -645,8 +768,9 @@ export default function AgentHubPanel() {
   );
 }
 
-// NewAgentDialog：两步式新建。第一步选项目 + ACP 工具并建会话；若 agent 报告了模型列表，
-// 第二步让用户选模型（session/new 不接受模型参数，只能建后再 SetModel）。
+// NewAgentDialog：单窗体新建。项目/工具/模型三字段同屏，一次点击完成创建
+// （session/new 不接受模型参数，模型在 runAgentCreate 里建会话后再 SetModel）。
+// 打开时按 lastCreate 预填；模型下拉来自本地缓存（loadToolModels），空值即「默认模型」。
 function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const { t } = useTranslation();
   const workspaces = useAppStore((s) => s.workspaces);
@@ -654,14 +778,12 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
   const [wsPath, setWsPath] = useState('');
   const [toolId, setToolId] = useState('');
   const [busy, setBusy] = useState(false);
-  const [step, setStep] = useState<'pick' | 'model'>('pick');
-  // 第一步已建好的会话：第二步应用模型后登记，取消也登记（进程已起，不浪费）。
-  // 用 ref 而非 state：关闭 effect 需读最新值，state 闭包可能滞后。
-  const createdRef = useRef<ChatInfo | null>(null);
-  const [models, setModels] = useState<ChatModelsView | null>(null);
-  const [selected, setSelected] = useState('');
+  const [modelId, setModelId] = useState('');
   // seq 使关闭后在途的 create 失效，避免其 setState 污染下次打开。
   const seqRef = useRef(0);
+  // 模型缓存读取哨兵：缓存可能在对话框打开期间被写入（测试/他处），
+  // 用递增号强制下拉随 toolId/缓存变化重新读取，而非仅依赖 useMemo 的 toolId 依赖。
+  const [modelsTick, setModelsTick] = useState(0);
 
   // registerChat 把已建会话登记进 store（幂等：upsert 以 ID 去重）。
   const registerChat = (chat: ChatInfo) => {
@@ -669,164 +791,150 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     useAppStore.getState().setLastAgentId(chat.ID);
   };
 
-  // 打开对话框时才拉工具列表（避免常驻首页也发请求）
+  // 打开对话框时才拉工具列表（避免常驻首页也发请求），并按 lastCreate 预填。
+  // 预填校验：wsPath 仍在工作区列表、toolId 仍在可用工具列表，失效置空该字段（回落默认选中）。
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
+    const last = loadLastCreate();
     void getTools()
       .then((list) => {
         if (cancelled) return;
         const acp = list.filter((x) => x.ACP?.Available === true);
         setTools(acp);
-        setToolId((cur) => (cur && acp.some((x) => x.ID === cur) ? cur : (acp[0]?.ID ?? '')));
+        setToolId((cur) => {
+          if (cur && acp.some((x) => x.ID === cur)) return cur;
+          if (last && acp.some((x) => x.ID === last.toolId)) return last.toolId;
+          return acp[0]?.ID ?? '';
+        });
       })
       .catch(() => {});
+    setWsPath((cur) => {
+      if (cur && workspaces.some((w) => sameWorkspacePath(w.Path, cur))) return cur;
+      if (last && workspaces.some((w) => sameWorkspacePath(w.Path, last.wsPath))) return last.wsPath;
+      return workspaces[0]?.Path ?? '';
+    });
+    // 模型预选：lastCreate.modelId 在该工具的缓存模型列表里才预选，否则空（默认模型）
+    if (last?.modelId && loadToolModels(last.toolId).includes(last.modelId)) {
+      setModelId(last.modelId);
+    } else {
+      setModelId('');
+    }
+    setModelsTick((n) => n + 1);
     return () => {
       cancelled = true;
     };
-  }, [open]);
-
-  // 默认选中第一个项目
-  useEffect(() => {
-    if (!open) return;
-    setWsPath((cur) => (cur && workspaces.some((w) => w.Path === cur) ? cur : (workspaces[0]?.Path ?? '')));
   }, [open, workspaces]);
 
-  // 关闭时重置内部状态；已建会话（第二步取消）仍登记，避免丢失。
+  // 关闭时重置内部状态；runAgentCreate 已把会话登记进 store，这里只做清场。
   useEffect(() => {
     if (open) return;
     seqRef.current++; // 使关闭后在途的 create 失效
-    if (createdRef.current) {
-      registerChat(createdRef.current);
-      createdRef.current = null;
-    }
-    setStep('pick');
-    setModels(null);
-    setSelected('');
     setBusy(false);
   }, [open]);
 
+  // 卸载兜底：面板被整个卸载（切页/测试清理）时释放模块级互斥锁，
+  // 否则挂起的 create 会让后续 /easynew、对话框一直被锁拦截。
+  useEffect(() => {
+    return () => {
+      createBusy.running = false;
+    };
+  }, []);
+
+  // create 一次点完：busy → runAgentCreate（建会话+记默认值+缓存模型+按需 SetModel）→ 关窗。
   const create = async () => {
     if (!wsPath || !toolId || busy) return;
     setBusy(true);
     const seq = seqRef.current;
-    try {
-      const result = await openWorkspaceACP(wsPath, toolId);
-      // 期间对话框被关闭/重开：丢弃本次结果，但仍登记会话避免后端进程悬空。
-      if (seq !== seqRef.current) {
-        if (result.Chat) registerChat(result.Chat);
-        return;
-      }
-      if (!result.Chat) {
-        onOpenChange(false);
-        return;
-      }
-      const chat = result.Chat;
-      // 拉模型列表：有模型进第二步选择，无模型直接完成。
-      const view = await listChatModels(chat.ID).catch(() => null);
-      if (seq !== seqRef.current) {
-        registerChat(chat);
-        return;
-      }
-      if (view && view.Models && view.Models.length > 0) {
-        createdRef.current = chat;
-        setModels(view);
-        setSelected(view.Current || view.Models[0].ID);
-        setStep('model');
-        return;
-      }
-      registerChat(chat);
-      onOpenChange(false);
-    } catch (e: unknown) {
-      if (seq === seqRef.current) useAppStore.getState().notify(backendError(e), 'error');
-    } finally {
-      if (seq === seqRef.current) setBusy(false);
-    }
+    const ok = await runAgentCreate(wsPath, toolId, modelId || null, { t, registerChat, onClose: () => onOpenChange(false) });
+    if (seq === seqRef.current) setBusy(false);
+    if (ok) onOpenChange(false);
   };
 
-  // confirmModel 应用所选模型；失败提示但会话已建，仍关闭（可在会话内再改）。
-  const confirmModel = async () => {
-    const chat = createdRef.current;
-    if (!chat || busy) return;
-    setBusy(true);
-    try {
-      if (selected && selected !== models?.Current) {
-        await setChatModel(chat.ID, selected);
-      }
-    } catch (e: unknown) {
-      useAppStore.getState().notify(t('ui.hub.model_switch_failed', { err: backendError(e) }), 'error');
-    } finally {
-      setBusy(false);
-      onOpenChange(false);
-    }
-  };
+  // 模型下拉选项：当前工具的本地缓存；无缓存只显示「默认模型」空选项
+  const modelOptions = useMemo(
+    () => (toolId ? loadToolModels(toolId) : []),
+    // modelsTick 变化（工具切换/打开重读缓存）时强制重算
+    [toolId, modelsTick],
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange} className="w-80">
-      <DialogPrimitive.Title className="mb-3 text-sm font-medium">
-        {step === 'pick' ? t('ui.hub.new_agent_title') : t('ui.hub.model_step_title')}
-      </DialogPrimitive.Title>
-      {step === 'pick' ? (
-        <>
-          <label className="mb-2 flex flex-col gap-1 text-xs text-muted-foreground">
-            {t('ui.hub.field_project')}
-            <select
-              className="rounded border border-border bg-card px-2 py-1 text-sm text-foreground"
-              value={wsPath}
-              onChange={(e) => setWsPath(e.target.value)}
-            >
-              {workspaces.map((w) => (
-                <option key={w.Path} value={w.Path}>
-                  {w.Name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="mb-4 flex flex-col gap-1 text-xs text-muted-foreground">
-            {t('ui.hub.field_tool')}
-            <select
-              className="rounded border border-border bg-card px-2 py-1 text-sm text-foreground"
-              value={toolId}
-              onChange={(e) => setToolId(e.target.value)}
-            >
-              {tools.map((x) => (
-                <option key={x.ID} value={x.ID}>
-                  {toolDisplayName(x.ID)}
-                </option>
-              ))}
-            </select>
-          </label>
-          {tools.length === 0 && <p className="mb-3 text-xs text-muted-foreground">{t('ui.hub.no_tools')}</p>}
-        </>
-      ) : (
-        <label className="mb-4 flex flex-col gap-1 text-xs text-muted-foreground">
-          {t('ui.hub.model_label')}
+      <DialogPrimitive.Title className="mb-3 text-sm font-medium">{t('ui.hub.new_agent_title')}</DialogPrimitive.Title>
+      <div className={cn('relative', busy && 'pointer-events-none')}>
+        <label className="mb-2 flex flex-col gap-1 text-xs text-muted-foreground">
+          {t('ui.hub.field_project')}
           <select
             className="rounded border border-border bg-card px-2 py-1 text-sm text-foreground"
-            value={selected}
-            onChange={(e) => setSelected(e.target.value)}
+            value={wsPath}
+            onChange={(e) => setWsPath(e.target.value)}
+            disabled={busy}
           >
-            {models?.Models?.map((m) => (
-              <option key={m.ID} value={m.ID}>
-                {m.Name}
+            {workspaces.map((w) => (
+              <option key={w.Path} value={w.Path}>
+                {w.Name}
               </option>
             ))}
           </select>
         </label>
-      )}
+        <label className="mb-2 flex flex-col gap-1 text-xs text-muted-foreground">
+          {t('ui.hub.field_tool')}
+          <select
+            className="rounded border border-border bg-card px-2 py-1 text-sm text-foreground"
+            value={toolId}
+            onChange={(e) => {
+              setToolId(e.target.value);
+              // 工具切换即刷新模型下拉；原选中项在新工具缓存里不存在则回落默认
+              setModelId((cur) => (cur && loadToolModels(e.target.value).includes(cur) ? cur : ''));
+              setModelsTick((n) => n + 1);
+            }}
+            disabled={busy}
+          >
+            {tools.map((x) => (
+              <option key={x.ID} value={x.ID}>
+                {toolDisplayName(x.ID)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="mb-4 flex flex-col gap-1 text-xs text-muted-foreground">
+          {t('ui.hub.field_model')}
+          <select
+            className="rounded border border-border bg-card px-2 py-1 text-sm text-foreground"
+            value={modelId}
+            onChange={(e) => setModelId(e.target.value)}
+            disabled={busy}
+          >
+            {/* 无缓存只显示「默认模型」空选项；有缓存则直接列缓存模型 */}
+            {modelOptions.length === 0 ? (
+              <option value="">{t('ui.hub.default_model')}</option>
+            ) : (
+              modelOptions.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))
+            )}
+          </select>
+        </label>
+        {tools.length === 0 && <p className="mb-3 text-xs text-muted-foreground">{t('ui.hub.no_tools')}</p>}
+        {/* busy 时半透明 spinner 覆盖层：挡住表单交互；文案只在按钮上，避免同名节点歧义 */}
+        {busy && (
+          <div
+            className="absolute inset-0 flex items-center justify-center rounded bg-card/70 text-muted-foreground"
+            aria-label={t('ui.hub.creating')}
+          >
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+          </div>
+        )}
+      </div>
       <div className="flex justify-end gap-2">
-        <Button size="sm" variant="outline" onClick={() => onOpenChange(false)}>
+        <Button size="sm" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
           {t('ui.hub.cancel')}
         </Button>
-        {step === 'pick' ? (
-          <Button size="sm" disabled={!wsPath || !toolId || busy} onClick={() => void create()}>
-            {t('ui.hub.create')}
-          </Button>
-        ) : (
-          <Button size="sm" disabled={busy} onClick={() => void confirmModel()}>
-            {t('ui.hub.model_confirm')}
-          </Button>
-        )}
+        <Button size="sm" disabled={!wsPath || !toolId || busy} onClick={() => void create()}>
+          {busy ? t('ui.hub.creating') : t('ui.hub.create')}
+        </Button>
       </div>
     </Dialog>
   );
