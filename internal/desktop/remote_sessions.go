@@ -73,9 +73,10 @@ func (a *App) ScanRemoteSessions(wsRef string) ([]providers.Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	rawList := raw.Sessions
 
-	out := make([]providers.Session, len(raw))
-	for i, s := range raw {
+	out := make([]providers.Session, len(rawList))
+	for i, s := range rawList {
 		s.Workspace = ref
 		out[i] = s
 	}

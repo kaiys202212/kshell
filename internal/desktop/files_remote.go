@@ -29,6 +29,9 @@ type remoteWS struct {
 
 // parseWSRef 解析 wsPath：ssh Ref → remote；否则 localPath（已 Clean）。
 // 必须在 filepath.Clean 之前调用，否则 Windows 会把 ssh:// 弄坏。
+// 本地分支校验工作区归属白名单（与 resolveAssetFile 的 underLocalWorkspaceRoot
+// 同一防线）：绑定方法（DeleteEntry=RemoveAll、SaveFile 任意写、ReadFileBytes
+// 任意读）是前端被攻破后的最后防线，不得接受任意本地路径。
 func (a *App) parseWSRef(wsPath string) (kind, localPath string, remote *remoteWS, err error) {
 	wsPath = strings.TrimSpace(wsPath)
 	kind, connID, remotePath, err := discovery.ParseWorkspaceRef(wsPath)
@@ -36,7 +39,11 @@ func (a *App) parseWSRef(wsPath string) (kind, localPath string, remote *remoteW
 		return "", "", nil, err
 	}
 	if kind != discovery.KindSSH {
-		return discovery.KindLocal, filepath.Clean(wsPath), nil, nil
+		local := filepath.Clean(wsPath)
+		if !a.underLocalWorkspaceRoot(local) {
+			return "", "", nil, errPathOutsideWorkspace
+		}
+		return discovery.KindLocal, local, nil, nil
 	}
 	c, ok := a.connByID(connID)
 	if !ok {

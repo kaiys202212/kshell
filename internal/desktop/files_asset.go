@@ -136,7 +136,8 @@ func (a *App) resolveAssetFile(req *http.Request) (string, bool) {
 	return abs, true
 }
 
-// underLocalWorkspaceRoot 判断 abs 是否落在任一本地工作区根之内。
+// underLocalWorkspaceRoot 判断 abs 是否落在任一本地工作区根之内（根本身也算：
+// ListFiles/树构建以根路径为 wsPath 调用，必须放行）。
 func (a *App) underLocalWorkspaceRoot(abs string) bool {
 	norm := discovery.NormalizePath(abs)
 	for _, ws := range a.GetWorkspaces() {
@@ -144,7 +145,7 @@ func (a *App) underLocalWorkspaceRoot(abs string) bool {
 			continue
 		}
 		root := discovery.NormalizePath(ws.Path)
-		if root != "" && strings.HasPrefix(norm, root+string(filepath.Separator)) {
+		if root != "" && (norm == root || strings.HasPrefix(norm, root+string(filepath.Separator))) {
 			return true
 		}
 	}

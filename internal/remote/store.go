@@ -132,8 +132,16 @@ func (s *Store) Add(c Connection) (Connection, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.conns = append(s.conns, c)
-	return c, s.saveLocked()
+	// 先按「加入后」的快照落盘，成功后才改内存：落盘失败时内存不漂移，
+	// 否则下次 Load 用磁盘旧数据覆盖，用户刚确认的连接会「消失」。
+	saved := append(append([]Connection(nil), s.conns...), c)
+	backup := s.conns
+	s.conns = saved
+	if err := s.saveLocked(); err != nil {
+		s.conns = backup
+		return Connection{}, err
+	}
+	return c, nil
 }
 
 func (s *Store) Update(c Connection) error {
@@ -144,8 +152,13 @@ func (s *Store) Update(c Connection) error {
 			if strings.Contains(strings.ToUpper(c.IdentityFile), "PRIVATE KEY") {
 				return errKeyMaterial
 			}
+			old := s.conns[i]
 			s.conns[i] = c
-			return s.saveLocked()
+			if err := s.saveLocked(); err != nil {
+				s.conns[i] = old
+				return err
+			}
+			return nil
 		}
 	}
 	return ErrUnknownConnection
@@ -156,8 +169,13 @@ func (s *Store) Delete(id string) error {
 	defer s.mu.Unlock()
 	for i, c := range s.conns {
 		if c.ID == id {
-			s.conns = append(s.conns[:i], s.conns[i+1:]...)
-			return s.saveLocked()
+			backup := s.conns
+			s.conns = append(append([]Connection(nil), s.conns[:i]...), s.conns[i+1:]...)
+			if err := s.saveLocked(); err != nil {
+				s.conns = backup
+				return err
+			}
+			return nil
 		}
 	}
 	return ErrUnknownConnection
