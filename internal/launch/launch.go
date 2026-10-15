@@ -293,7 +293,9 @@ func acpLaunch(tool discovery.Tool, dir string) (providers.Launch, error) {
 
 // reorderACPArgs 把 finalize 前置进 Args 的注入参数挪到 npx 包名之后：
 // npx 命令行里包名必须紧跟 -y，注入参数（--model 等）若插在包名前会被
-// npm 当成待安装的包名（E404）。path 形态无包名问题，原样返回。
+// npm 当成待安装的包名（E404）。插入点固定在 -y 与包名之后（ExtraArgs 之前），
+// ExtraArgs 是适配器自身的旗子，注入参数与它谁先谁后无语义差别。
+// path 形态无包名问题，原样返回。
 func reorderACPArgs(l providers.Launch, tool discovery.Tool, injectLen int) providers.Launch {
 	if tool.ACP == nil || tool.ACP.Source != "npx" || injectLen <= 0 {
 		return l

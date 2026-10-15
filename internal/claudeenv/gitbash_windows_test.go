@@ -28,7 +28,7 @@ func TestGitBashEnvExplicitEnvWins(t *testing.T) {
 	withEnv(t, "CLAUDE_CODE_GIT_BASH_PATH", bash)
 	oldRegistry, oldLook := registryString, lookBash
 	t.Cleanup(func() { registryString, lookBash = oldRegistry, oldLook })
-	registryString = func(string) (string, bool) { t.Fatal("不应读注册表"); return "", false }
+	registryString = func() (string, bool) { t.Fatal("不应读注册表"); return "", false }
 	lookBash = func() (string, bool) { t.Fatal("不应查 PATH"); return "", false }
 
 	got, ok := GitBashEnv()
@@ -43,7 +43,7 @@ func TestGitBashEnvInvalidEnvFallsThrough(t *testing.T) {
 	oldRegistry, oldLook := registryString, lookBash
 	t.Cleanup(func() { registryString, lookBash = oldRegistry, oldLook })
 	lookBash = func() (string, bool) { return "", false }
-	registryString = func(string) (string, bool) { return "", false }
+	registryString = func() (string, bool) { return "", false }
 
 	if _, ok := GitBashEnv(); ok {
 		t.Fatal("无效 env 应回落且全缺时不注入")
@@ -56,7 +56,7 @@ func TestGitBashEnvPathBashSkips(t *testing.T) {
 	oldRegistry, oldLook := registryString, lookBash
 	t.Cleanup(func() { registryString, lookBash = oldRegistry, oldLook })
 	lookBash = func() (string, bool) { return `C:\Git\bin\bash.exe`, true }
-	registryString = func(string) (string, bool) { t.Fatal("PATH 命中后不应读注册表"); return "", false }
+	registryString = func() (string, bool) { t.Fatal("PATH 命中后不应读注册表"); return "", false }
 
 	if _, ok := GitBashEnv(); ok {
 		t.Fatal("PATH 有 bash 时不应注入")
@@ -78,7 +78,7 @@ func TestGitBashEnvRegistryHit(t *testing.T) {
 	oldRegistry, oldLook := registryString, lookBash
 	t.Cleanup(func() { registryString, lookBash = oldRegistry, oldLook })
 	lookBash = func() (string, bool) { return "", false }
-	registryString = func(string) (string, bool) { return root, true }
+	registryString = func() (string, bool) { return root, true }
 
 	got, ok := GitBashEnv()
 	if !ok || got != bash {
@@ -92,7 +92,7 @@ func TestGitBashEnvRegistryMissingBinary(t *testing.T) {
 	oldRegistry, oldLook := registryString, lookBash
 	t.Cleanup(func() { registryString, lookBash = oldRegistry, oldLook })
 	lookBash = func() (string, bool) { return "", false }
-	registryString = func(string) (string, bool) { return t.TempDir(), true }
+	registryString = func() (string, bool) { return t.TempDir(), true }
 
 	if _, ok := GitBashEnv(); ok {
 		t.Fatal("注册表命中但 bash.exe 缺失时不应注入")
