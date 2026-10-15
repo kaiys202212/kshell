@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yangk/kshell/internal/acp"
 	"github.com/yangk/kshell/internal/agenthook"
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/hub"
@@ -140,4 +141,164 @@ func waitHubKind(t *testing.T, store *hub.Store, kind string) hub.Message {
 	}
 	t.Fatalf("超时未等到 hub %s 消息", kind)
 	return hub.Message{}
+}
+
+// waitHubEvent 等到第一条带指定 Event 的消息（ack 卡片断言用）。
+func waitHubEvent(t *testing.T, store *hub.Store, event string) hub.Message {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, m := range store.List() {
+			if m.Event == event {
+				return m
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("超时未等到 hub event=%s 消息", event)
+	return hub.Message{}
+}
+
+// waitHubText 等到第一条正文为 text 的用户消息。
+func waitHubText(t *testing.T, store *hub.Store, text string) hub.Message {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, m := range store.List() {
+			if m.Kind == "user" && m.Text == text {
+				return m
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("超时未等到 hub 用户消息 %q", text)
+	return hub.Message{}
+}
+
+// queueGateBackend 返回预置的连接（供测试预挂 promptGate）。
+type queueGateBackend struct {
+	conn *fakeChatConn
+}
+
+func (b *queueGateBackend) Start(spec chat.Spec, h acp.Handler) (chat.Conn, error) {
+	return b.conn, nil
+}
+
+// waitStatusDesktop 等待会话到达 running（desktop 测试用，chat 包的 waitStatus 不跨包）。
+func waitStatusDesktop(t *testing.T, m *chat.Manager, id string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if info, ok := m.Get(id); ok && info.Status == "running" {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("session %s 未进入 running", id)
+}
+
+// SendChatPrompt 空闲投递：user 消息无 status，随后落一条 ack_delivered agent 卡片。
+func TestSendChatPromptImmediateAck(t *testing.T) {
+	a, store, rec := newHubTestApp(t)
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+	m.SetOnHubCallbacks(nil, a.onHubDelivered)
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := a.SendChatPrompt(info.ID, "帮我修复登录"); err != nil {
+		t.Fatal(err)
+	}
+	u := waitHubKind(t, store, "user")
+	if u.Status != "" {
+		t.Fatalf("空闲投递 status 应为空: %+v", u)
+	}
+	ack := waitHubEvent(t, store, "ui.hub.ack_delivered")
+	if ack.Kind != "agent" || ack.ChatID != info.ID || ack.Tool != "claude" {
+		t.Fatalf("ack 卡片归因不符: %+v", ack)
+	}
+}
+
+// 忙时发送：user 消息 status=queued 且落 ack_queued；撤回成功后状态变 recalled，
+// 且投递恢复后不补 ack_delivered（消息未投递给 agent）。
+func TestSendChatPromptQueuedAndRecall(t *testing.T) {
+	a, store, rec := newHubTestApp(t)
+	conn := &fakeChatConn{waitCh: make(chan struct{})}
+	conn.promptGate = make(chan struct{})
+	b := &queueGateBackend{conn: conn}
+	m := newChatManagerWith(rec.emit, b, nil, nil, a.recordHubAgentMessage)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+	m.SetOnHubCallbacks(nil, a.onHubDelivered)
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := m.Prompt(info.ID, "first"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatusDesktop(t, m, info.ID)
+	if err := a.SendChatPrompt(info.ID, "second"); err != nil {
+		t.Fatal(err)
+	}
+	u := waitHubText(t, store, "second")
+	if u.Status != hub.StatusQueued {
+		t.Fatalf("应标记 queued: %+v", u)
+	}
+	waitHubEvent(t, store, "ui.hub.ack_queued")
+
+	// 撤回成功：状态变 recalled 且队列移除
+	if err := a.RecallHubMessage(u.ID); err != nil {
+		t.Fatalf("撤回: %v", err)
+	}
+	close(conn.promptGate)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		found := false
+		for _, mm := range store.List() {
+			if mm.ID == u.ID && mm.Status == hub.StatusRecalled {
+				found = true
+			}
+			if mm.Event == "ui.hub.ack_delivered" && mm.ChatID == info.ID {
+				t.Fatalf("已撤回消息不得补 ack_delivered")
+			}
+		}
+		if found {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("撤回后状态未更新")
+}
+
+// 已送达的消息撤回报 err.hub.not_queued。
+func TestRecallHubMessageNotQueued(t *testing.T) {
+	a, store, rec := newHubTestApp(t)
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+	m.SetOnHubCallbacks(nil, a.onHubDelivered)
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SendChatPrompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	u := waitHubKind(t, store, "user")
+	err = a.RecallHubMessage(u.ID)
+	if err == nil || err.Error() != "err.hub.not_queued" {
+		t.Fatalf("已送达消息撤回应报 err.hub.not_queued, got %v", err)
+	}
 }

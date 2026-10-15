@@ -10,6 +10,7 @@ import (
 	"github.com/yangk/kshell/internal/agenthook"
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
+	"github.com/yangk/kshell/internal/hub"
 	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/launcher"
 	"github.com/yangk/kshell/internal/providers"
@@ -17,10 +18,13 @@ import (
 )
 
 // newChatManager 用真实后端装配聊天管理器（initRealDeps 用）。
+// Hub 投递回调在此接线：排队消息真正投递时改状态并补 ack 卡片。
 func newChatManager(a *App) *chat.Manager {
-	return newChatManagerWith(a.Emit, chat.RealBackend{}, func() bool {
+	m := newChatManagerWith(a.Emit, chat.RealBackend{}, func() bool {
 		return a.snapshot().Config.PermissionMode == config.PermissionModeBypass
 	}, a.notifyDedupAllow, a.recordHubAgentMessage)
+	m.SetOnHubCallbacks(nil, a.onHubDelivered)
+	return m
 }
 
 // newChatManagerWith 装配聊天管理器：时间线/权限/退出经 emit 转发给前端；
@@ -274,17 +278,16 @@ func (a *App) fallbackTerminalWorkspace(wsID, toolID, reason string) (OpenedSess
 }
 
 // SendChatPrompt 向指定聊天会话发起一轮用户输入。
+// 发送成功后落盘 Hub 用户消息（忙时标记 queued 可撤回），并落一条模拟 agent
+// 确认卡片（入队 → ack_queued；立即投递的「已送达」ack 由 onHubDelivered 补）。
 func (a *App) SendChatPrompt(id, text string) error {
 	a.ensureSessionHooks()
 	m := a.chats()
 	if m == nil {
 		return errNotReady
 	}
-	if err := m.Prompt(id, text); err != nil {
-		return err
-	}
-	a.recordHubUserMessage(id, text)
-	return nil
+	blocks := []acp.ContentBlock{{Type: "text", Text: text}}
+	return a.sendAndRecord(id, blocks, text)
 }
 
 // ChatBlock 是前端发来的多形态内容块（扁平结构）：text 用 Text；
@@ -329,10 +332,36 @@ func (a *App) SendChatPromptBlocks(id string, blocks []ChatBlock) error {
 	if len(blocks) == 0 {
 		return nil
 	}
-	if err := m.PromptBlocks(id, chatBlocksToACP(blocks)); err != nil {
+	acpBlocks := chatBlocksToACP(blocks)
+	return a.sendAndRecord(id, acpBlocks, hubTextFromBlocks(blocks))
+}
+
+// sendAndRecord 统一发送与 Hub 落盘：预留消息 ID → 带 ID 投递（忙时入队）→
+// 落 user 消息（queued 状态）→ 入队时补 ack_queued 卡片。
+// hubText 为空时（纯附件）不落 Hub 消息，也不预留 ID。
+func (a *App) sendAndRecord(chatID string, blocks []acp.ContentBlock, hubText string) error {
+	m := a.chats()
+	if m == nil {
+		return errNotReady
+	}
+	hubID := ""
+	if store := a.snapshot().HubStore; store != nil && hubText != "" {
+		hubID = itoaHubID(store.ReserveID())
+	}
+	queued, err := m.PromptBlocksHub(chatID, blocks, hubID)
+	if err != nil {
 		return err
 	}
-	a.recordHubUserMessage(id, hubTextFromBlocks(blocks))
+	if hubText != "" {
+		status := ""
+		if queued {
+			status = hub.StatusQueued
+		}
+		a.recordHubUserMessageStatus(chatID, hubText, hubID, status)
+		if queued {
+			a.recordHubAck(hubID, "ui.hub.ack_queued")
+		}
+	}
 	return nil
 }
 
