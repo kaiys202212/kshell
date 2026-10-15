@@ -135,21 +135,41 @@ func isGitDir(dir string) bool {
 	return err == nil
 }
 
+// nestedGitMaxDepth 限制嵌套仓库查找深度：与 discovery 扫描的默认 MaxDepth(4)
+// 同量级。无上限的全深度 WalkDir 在深层大仓库上会把每次进入项目页签的
+// InspectGit 拖到秒级以上。
+const nestedGitMaxDepth = 4
+
+// nestedGitDeadline 单次嵌套仓库查找的时限：超时后立即返回已收集结果，
+// 宁可漏掉个别深层嵌套仓库的分支标记，不让页签打开卡死。
+const nestedGitDeadline = 3 * time.Second
+
 func nestedGitRoots(wsRoot string) []string {
 	skip := map[string]bool{".git": true, "node_modules": true, "vendor": true, "dist": true, "build": true}
 	var roots []string
-	_ = filepath.WalkDir(wsRoot, func(path string, d os.DirEntry, err error) error {
+	deadline := time.Now().Add(nestedGitDeadline)
+	_ = filepath.WalkDir(wsRoot, func(p string, d os.DirEntry, err error) error {
 		if err != nil || !d.IsDir() {
 			return nil
+		}
+		if time.Now().After(deadline) {
+			return filepath.SkipAll
 		}
 		if skip[d.Name()] {
 			return filepath.SkipDir
 		}
-		if path == wsRoot {
+		if p == wsRoot {
 			return nil
 		}
-		if isGitDir(path) {
-			roots = append(roots, path)
+		rel, rerr := filepath.Rel(wsRoot, p)
+		if rerr != nil {
+			return nil
+		}
+		if strings.Count(rel, string(filepath.Separator)) >= nestedGitMaxDepth {
+			return filepath.SkipDir
+		}
+		if isGitDir(p) {
+			roots = append(roots, p)
 			return filepath.SkipDir
 		}
 		return nil

@@ -10,6 +10,12 @@ const askPassFlag = "--ssh-askpass"
 
 // AskPassEnviron 为带密码的 ssh 子进程拼装 ASKPASS 相关环境变量。
 // 密码只经 KSHELL_SSH_PASSWORD 传递，不进入 argv。
+//
+// 已知风险：ssh 无法用 exec.Cmd 做单进程 env 过滤（ssh 自己 fork），
+// KSHELL_SSH_PASSWORD 会被 ssh 的本地孙进程（ProxyCommand 指定的代理程序等）
+// 完整继承。缓解：AskPassEnviron 仅在连接保存了密码时注入；使用场景见
+// README「远程 SSH → 密码认证的注意事项」。替代方案（0600 临时 askpass
+// 脚本）会引入落盘窗口与清理时序问题，暂不采用。
 func AskPassEnviron(password string) ([]string, error) {
 	exe, err := os.Executable()
 	if err != nil {
