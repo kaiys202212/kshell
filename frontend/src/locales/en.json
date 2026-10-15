@@ -789,7 +789,7 @@
       "new_agent_title": "New agent",
       "need_target": "Mention an agent first, e.g. @Claude Code#1",
       "mention_aria": "Mention suggestions",
-      "input_placeholder": "Message an agent; @ to target, Enter to send",
+      "input_placeholder": "Message an agent; # for commands, @ to target",
       "send": "Send",
       "status_running": "Running",
       "status_ready": "Idle",
@@ -828,7 +828,14 @@
       "recall": "Recall",
       "recall_done": "Message recalled",
       "recall_failed": "Recall failed: {{err}}",
-      "auto_scroll": "Auto-scroll"
+      "auto_scroll": "Auto-scroll",
+      "quick_continue_text": "Continue with the current task.",
+      "unknown_cmd": "Unknown command {{cmd}}. Available: #new #easynew #stop #model #clear",
+      "need_target_drag": "Mention a session with @, or drag one from the session bar at the top right.",
+      "session_bar_aria": "Active sessions",
+      "session_panel_aria": "Session list",
+      "close_session": "Close session",
+      "close_session_failed": "Failed to close session: {{err}}"
     },
     "requirements": {
       "title": "Requirements",
@@ -851,7 +858,21 @@
       "save": "Save",
       "save_failed": "Failed to save: {{err}}",
       "cancel": "Cancel",
-      "delete_failed": "Failed to delete: {{err}}"
+      "delete_failed": "Failed to delete: {{err}}",
+      "status_pending": "Pending",
+      "status_active": "Active",
+      "status_done": "Done",
+      "status_archived": "Archived",
+      "mark_done": "Mark done",
+      "archive_btn": "Archive",
+      "archived_title": "Archived requirements",
+      "filter_project": "Project",
+      "filter_keyword": "Keyword",
+      "filter_all": "All",
+      "archived_released": "Archived. Idle session {{name}} has been closed.",
+      "archived_busy_kept": "Archived. Session {{name}} is still running and was kept.",
+      "archive_open": "Archived",
+      "update_failed": "Failed to update requirement: {{err}}"
     },
     "transcript": {
       "preview_title": "Session preview",
