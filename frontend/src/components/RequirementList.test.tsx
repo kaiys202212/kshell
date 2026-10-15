@@ -157,6 +157,34 @@ describe('RequirementList', () => {
     expect(dataTransfer.effectAllowed).toBe('copy');
   });
 
+  it('终态条目不可拖拽：done 条目 draggable 非 true，dragStart 不写 dataTransfer', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '已完成需求', status: 'done' }),
+    ]);
+    render(<RequirementList />);
+    const li = (await screen.findByText('已完成需求')).closest('li') as HTMLElement;
+    // React 对 draggable={false} 渲染 "false" 属性；语义断言只认 "true"
+    expect(li.getAttribute('draggable')).not.toBe('true');
+
+    const dataTransfer = { setData: vi.fn(), effectAllowed: 'all' };
+    await act(async () => {
+      fireEvent.dragStart(li, { dataTransfer });
+    });
+    expect(dataTransfer.setData).not.toHaveBeenCalled();
+  });
+
+  it('archived 条目不进主列表，active/pending 仍可拖拽', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '未开始需求' }),
+      req({ id: 'r2', text: '执行中需求', status: 'active' }),
+    ]);
+    render(<RequirementList />);
+    const li1 = (await screen.findByText('未开始需求')).closest('li') as HTMLElement;
+    const li2 = (await screen.findByText('执行中需求')).closest('li') as HTMLElement;
+    expect(li1).toHaveAttribute('draggable', 'true');
+    expect(li2).toHaveAttribute('draggable', 'true');
+  });
+
   it('requirements:changed 事件触发重拉列表', async () => {
     let changedCb: (() => void) | undefined;
     mocks.onRequirementsChanged.mockImplementation((cb: () => void) => {
@@ -266,7 +294,7 @@ describe('RequirementList', () => {
     await waitFor(() => expect(mocks.setRequirementStatus).toHaveBeenCalledWith('r1', 'done'));
   });
 
-  it('done 条目：徽章「已完成」，点击归档调 archiveRequirement；released=true 提示会话已关闭', async () => {
+  it('done 条目：徽章「已完成」，点击归档调 archiveRequirement；提示名优先 dispatchedTo 基名', async () => {
     mocks.listRequirements.mockResolvedValue([
       req({ id: 'r1', text: '已完成需求', status: 'done', chatId: 'chat-9', dispatchedTo: 'D:\\ws\\proj-a' }),
     ]);
@@ -283,7 +311,7 @@ describe('RequirementList', () => {
           .getState()
           .toasts.some((x) =>
             x.title.includes(
-              tt('ui.requirements.archived_released').replace('{{name}}', 'chat-9'),
+              tt('ui.requirements.archived_released').replace('{{name}}', 'proj-a'),
             ),
           ),
       ).toBe(true),
@@ -312,6 +340,24 @@ describe('RequirementList', () => {
               tt('ui.requirements.archived_busy_kept').replace('{{name}}', 'chat-9'),
             ),
           ),
+      ).toBe(true),
+    );
+  });
+
+  it('归档时无 chatId 也无 dispatchedTo：退化为不含 name 的通用成功提示', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '已完成需求', status: 'done' }),
+    ]);
+    mocks.archiveRequirement.mockResolvedValue({ released: true, chatId: '' });
+    render(<RequirementList />);
+    const li = (await screen.findByText('已完成需求')).closest('li') as HTMLElement;
+    fireEvent.click(within(li).getByRole('button', { name: tt('ui.requirements.archive_btn') }));
+
+    await waitFor(() =>
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((x) => x.title === tt('ui.requirements.archived_plain')),
       ).toBe(true),
     );
   });
@@ -411,6 +457,37 @@ describe('RequirementList', () => {
     });
     expect(dlg.getByText('归档条目甲')).toBeInTheDocument();
     expect(dlg.queryByText('归档条目乙')).not.toBeInTheDocument();
+  });
+
+  it('归档视图：关键字过滤大小写不敏感', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'a1', text: 'Implement Export Feature', status: 'archived', archivedAt: 1700000200 }),
+    ]);
+    render(<RequirementList />);
+    // 全 archived 时主列表为空态，等渲染稳定后直接开归档视图
+    await screen.findByText(tt('ui.requirements.empty'));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.requirements.archive_open') }));
+    await screen.findByText(tt('ui.requirements.archived_title'));
+    const dialogEl = screen.getByText(tt('ui.requirements.archived_title')).closest(
+      '[role="dialog"]',
+    ) as HTMLElement;
+    const dlg = within(dialogEl);
+
+    fireEvent.change(dlg.getByPlaceholderText(tt('ui.requirements.filter_keyword')), {
+      target: { value: 'export' },
+    });
+    expect(dlg.getByText('Implement Export Feature')).toBeInTheDocument();
+  });
+
+  it('归档视图空态：用独立文案 archived_empty', async () => {
+    render(<RequirementList />);
+    await screen.findByText(tt('ui.requirements.empty'));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.requirements.archive_open') }));
+    await screen.findByText(tt('ui.requirements.archived_title'));
+    const dialogEl = screen.getByText(tt('ui.requirements.archived_title')).closest(
+      '[role="dialog"]',
+    ) as HTMLElement;
+    expect(within(dialogEl).getByText(tt('ui.requirements.archived_empty'))).toBeInTheDocument();
   });
 
   it('归档视图：tag 点击过滤，再次点击取消', async () => {

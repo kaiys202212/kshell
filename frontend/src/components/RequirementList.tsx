@@ -47,10 +47,11 @@ function statusBadgeVariant(status: Requirement['status']): 'default' | 'muted' 
   return 'outline';
 }
 
-// 归档提示里的「会话名」：优先 chatId，否则用派发目标路径基名
+// 归档提示里的「会话名」：优先派发目标项目基名（chatId hex 无语义，仅兜底）；
+// 两者都无时返回空串，由调用方退化为不含 name 的通用提示
 function archiveSessionName(r: Requirement): string {
-  if (r.chatId) return r.chatId;
-  return r.dispatchedTo ? baseName(r.dispatchedTo) : '';
+  if (r.dispatchedTo) return baseName(r.dispatchedTo);
+  return r.chatId ?? '';
 }
 
 // 编辑/新增对话框：受控 open，editing 非 null 表示编辑该条目。
@@ -211,13 +212,17 @@ function ArchiveDialog({
   // tag chips：归档条目全部 tag 去重
   const tags = useMemo(() => [...new Set(archived.flatMap((r) => r.tags))], [archived]);
 
-  // 过滤 + archivedAt 降序（0 视为最旧沉底）
+  // 过滤 + archivedAt 降序（0 视为最旧沉底）；关键字匹配大小写不敏感
+  // （tag 过滤是点 chip 精确选中，与关键字独立，无需大小写处理）
   const shown = useMemo(
     () =>
       archived
-        .filter((r) => (!project || (r.dispatchedTo && baseName(r.dispatchedTo) === project))
-          && (!keyword || r.text.includes(keyword))
-          && (!tag || r.tags.includes(tag)))
+        .filter((r) => {
+          const kw = keyword.toLowerCase();
+          return (!project || (r.dispatchedTo && baseName(r.dispatchedTo) === project))
+            && (!kw || r.text.toLowerCase().includes(kw))
+            && (!tag || r.tags.includes(tag));
+        })
         .sort((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0)),
     [archived, project, keyword, tag],
   );
@@ -229,7 +234,7 @@ function ArchiveDialog({
       </DialogPrimitive.Title>
       {archived.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">
-          {t('ui.requirements.empty')}
+          {t('ui.requirements.archived_empty')}
         </p>
       ) : (
         <>
@@ -313,6 +318,11 @@ export default function RequirementList({ className }: { className?: string }) {
     return off;
   }, [refresh]);
 
+  // 打开归档视图时补一次拉取：归档入口可能错过 requirements:changed 事件（边缘丢事件场景）
+  useEffect(() => {
+    if (archiveOpen) refresh();
+  }, [archiveOpen, refresh]);
+
   const openAdd = () => {
     setEditing(null);
     setDialogOpen(true);
@@ -338,11 +348,14 @@ export default function RequirementList({ className }: { className?: string }) {
 
   // 归档：done → archived。released 表示关联会话是否空闲被自动关闭；
   // 失败（非 done 等）提示 update_failed，靠 changed 事件回流刷新。
+  // name 取不到（未派发过）时退化为不含会话名的通用成功提示。
   const archive = (r: Requirement) => {
     void archiveRequirement(r.id)
       .then(({ released }) => {
         const name = archiveSessionName(r);
-        if (released) {
+        if (!name) {
+          useAppStore.getState().notify(t('ui.requirements.archived_plain'), 'success');
+        } else if (released) {
           useAppStore.getState().notify(t('ui.requirements.archived_released', { name }), 'success');
         } else {
           useAppStore.getState().notify(t('ui.requirements.archived_busy_kept', { name }), 'info');
@@ -357,6 +370,9 @@ export default function RequirementList({ className }: { className?: string }) {
   const activeItems = useMemo(() => items.filter((r) => r.status !== 'archived'), [items]);
 
   const handleDragStart = (e: React.DragEvent<HTMLElement>, r: Requirement) => {
+    // 终态（done/archived）禁拖：派发守卫会拒绝 markRequirementDispatched，
+    // 但会话已建、prompt 已发，留下无主孤儿会话
+    if (r.status === 'done' || r.status === 'archived') return;
     e.dataTransfer.setData(REQUIREMENT_MIME, JSON.stringify({ id: r.id, text: r.text }));
     e.dataTransfer.setData('text/plain', r.text);
     e.dataTransfer.effectAllowed = 'copy';
@@ -384,10 +400,11 @@ export default function RequirementList({ className }: { className?: string }) {
         <ul className="m-0 flex min-h-0 flex-1 list-none flex-col gap-2 overflow-y-auto p-0">
           {activeItems.map((r) => {
             const status = r.status ?? 'pending';
+            const draggable = status !== 'done' && status !== 'archived';
             return (
               <li
                 key={r.id}
-                draggable
+                draggable={draggable}
                 onDragStart={(e) => handleDragStart(e, r)}
                 className="group relative flex min-h-14 min-w-0 items-start gap-2 rounded border border-border px-3 py-2.5"
               >

@@ -870,6 +870,8 @@
       "filter_all": "全部",
       "archived_released": "已归档，空闲会话 {{name}} 已关闭。",
       "archived_busy_kept": "已归档；会话 {{name}} 仍在执行中，未关闭。",
+      "archived_plain": "已归档。",
+      "archived_empty": "暂无归档需求。",
       "archive_open": "归档",
       "update_failed": "需求状态更新失败：{{err}}"
     },

@@ -870,6 +870,8 @@
       "filter_all": "All",
       "archived_released": "Archived. Idle session {{name}} has been closed.",
       "archived_busy_kept": "Archived. Session {{name}} is still running and was kept.",
+      "archived_plain": "Archived.",
+      "archived_empty": "No archived requirements.",
       "archive_open": "Archived",
       "update_failed": "Failed to update requirement: {{err}}"
     },
