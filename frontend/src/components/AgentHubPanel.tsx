@@ -54,8 +54,12 @@ const HUB_COMMANDS: { name: string; descKey: string }[] = [
 ];
 const HUB_COMMAND_NAMES = new Set(HUB_COMMANDS.map((c) => c.name.toLowerCase()));
 
-// 快速回复预设短语（钉钉式卡片快捷回复）：点击直接发给该卡片归因的 agent。
-const QUICK_REPLIES = ['ui.hub.quick_continue', 'ui.hub.quick_ok', 'ui.hub.quick_rephrase'] as const;
+// 快速回复预设按钮（常显）：send 点击即把 quick_continue_text 发给归因 agent；
+// rephrase 把 @ 目标填入输入框由用户补充后手动发送。按钮文案与发送文本解耦。
+const QUICK_REPLIES: { key: string; action: 'send' | 'rephrase' }[] = [
+  { key: 'ui.hub.quick_continue', action: 'send' },
+  { key: 'ui.hub.quick_rephrase', action: 'rephrase' },
+];
 
 // 创建互斥锁（session 级，防 /easynew 与对话框并发重复建会话）。
 // 持有 promise 引用而非布尔：只有创建 Promise 自己的 finally 才释放锁，
@@ -227,6 +231,7 @@ export default function AgentHubPanel() {
   // 自动滚动：开启时新消息把消息流滚到底；关闭后自由翻历史不被打断。
   const [autoScroll, setAutoScroll] = useState(readAutoScrollPref);
   const logRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // 消息或开关变化时按需滚底：重新勾选立即到底，取消后不再跟随。
   useEffect(() => {
@@ -550,21 +555,33 @@ export default function AgentHubPanel() {
     return null;
   };
 
-  // quickReply 直接以该卡片归因的 agent 为目标发送预设短语（免输 @）。
-  const quickReply = (m: HubMessage, key: string) => {
+  // quickReply 处理快捷回复点击：
+  // - send：把 quick_continue_text（实际文本，与按钮文案解耦）发给归因 agent；
+  // - rephrase：把 @目标 填入输入框（覆盖式，与 applyMention 一致），聚焦由用户补写后手动发送。
+  const quickReply = (m: HubMessage, action: 'send' | 'rephrase') => {
     const targetId = quickTarget(m);
     if (!targetId) {
       useAppStore.getState().notify(t('ui.hub.need_target'), 'error');
       return;
     }
-    const text = t(key);
-    void sendChatPrompt(targetId, text)
-      .then(() => {
-        useAppStore.getState().setLastAgentId(targetId);
-      })
-      .catch((e: unknown) => {
-        useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
-      });
+    if (action === 'send') {
+      void sendChatPrompt(targetId, t('ui.hub.quick_continue_text'))
+        .then(() => {
+          useAppStore.getState().setLastAgentId(targetId);
+        })
+        .catch((e: unknown) => {
+          useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
+        });
+      return;
+    }
+    // rephrase：从 mention 候选反查目标 label；找不到兜底提示（不误填错误目标）
+    const label = options.find((o) => o.id === targetId)?.label;
+    if (!label) {
+      useAppStore.getState().notify(t('ui.hub.need_target_drag'), 'error');
+      return;
+    }
+    setDraft(`@${label} `);
+    inputRef.current?.focus();
   };
 
   // recall 撤回排队中的用户消息：后端真移除 + 标记已撤回；乐观更新，hub:changed 回流兜底。
@@ -764,18 +781,19 @@ export default function AgentHubPanel() {
                     <div className="selectable inline-block break-words overflow-hidden rounded-md bg-primary px-3 py-1.5 text-left text-primary-foreground">
                       <span className="whitespace-pre-wrap">{m.text}</span>
                     </div>
-                    {m.status === 'queued' && (
-                      <div className="absolute right-1 bottom-full mb-1 hidden group-hover:flex">
-                        <button
-                          type="button"
-                          className="rounded border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground hover:text-destructive"
-                          onClick={() => recall(m)}
-                        >
-                          {t('ui.hub.recall')}
-                        </button>
-                      </div>
-                    )}
                   </>
+                )}
+                {/* queued 撤回按钮常显在气泡下方（文档流，右对齐容器内自然靠右） */}
+                {m.status === 'queued' && (
+                  <div className="mt-1">
+                    <button
+                      type="button"
+                      className="rounded border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground hover:text-destructive"
+                      onClick={() => recall(m)}
+                    >
+                      {t('ui.hub.recall')}
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
@@ -792,16 +810,16 @@ export default function AgentHubPanel() {
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{translateBackend(m.text)}</ReactMarkdown>
                   </div>
                 </div>
-                {/* 快速回复：hover 显示预设短语，点击直达该卡片归因的 agent */}
-                <div className="mt-1 hidden flex-wrap gap-1 group-hover:flex">
-                  {QUICK_REPLIES.map((key) => (
+                {/* 快速回复：常显预设按钮，点击直达该卡片归因的 agent（send/填入两种动作） */}
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {QUICK_REPLIES.map((q) => (
                     <button
-                      key={key}
+                      key={q.key}
                       type="button"
                       className="rounded border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                      onClick={() => quickReply(m, key)}
+                      onClick={() => quickReply(m, q.action)}
                     >
-                      {t(key)}
+                      {t(q.key)}
                     </button>
                   ))}
                 </div>
@@ -900,6 +918,7 @@ export default function AgentHubPanel() {
           </ul>
         )}
         <textarea
+          ref={inputRef}
           className="min-h-16 w-full resize-none rounded border border-border bg-card p-2 text-sm"
           placeholder={t('ui.hub.input_placeholder')}
           value={draft}

@@ -864,7 +864,23 @@ describe('AgentHubPanel', () => {
     expect(await screen.findByLabelText(tt('ui.hub.field_project'))).toBeTruthy();
   });
 
-  it('agent 卡片 hover 显示快速回复按钮，点击直达该 agent', async () => {
+  it('agent 卡片快捷回复常显：仅「继续」「换个说法」，无「好的」，且无需 hover', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1', Key: 'new:1', ToolID: 'claude' })] });
+    api.listHubMessages.mockResolvedValue([
+      { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', text: 'done', ts: 2 },
+    ]);
+    render(<AgentHubPanel />);
+    expect(await screen.findByRole('button', { name: tt('ui.hub.quick_continue') })).toBeTruthy();
+    expect(screen.getByRole('button', { name: tt('ui.hub.quick_rephrase') })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: tt('ui.hub.quick_ok') })).toBeNull();
+    // 容器常显：不再依赖 group-hover（hidden/absolute 移除）
+    const rephraseBtn = screen.getByRole('button', { name: tt('ui.hub.quick_rephrase') });
+    const container = rephraseBtn.parentElement as HTMLElement;
+    expect(container.className).toContain('flex');
+    expect(container.className).not.toContain('hidden');
+  });
+
+  it('agent 卡片点「继续」：直接发送 quick_continue_text 到归因 agent', async () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1', Key: 'new:1', ToolID: 'claude' })] });
     api.listHubMessages.mockResolvedValue([
       { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', text: 'done', ts: 2 },
@@ -872,8 +888,23 @@ describe('AgentHubPanel', () => {
     render(<AgentHubPanel />);
     const btn = await screen.findByRole('button', { name: tt('ui.hub.quick_continue') });
     fireEvent.click(btn);
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', tt('ui.hub.quick_continue')));
+    // 发送的是 quick_continue_text（给 agent 的实际文本），而非按钮显示文案 quick_continue
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', tt('ui.hub.quick_continue_text')));
     expect(useAppStore.getState().lastAgentId).toBe('c1');
+  });
+
+  it('agent 卡片点「换个说法」：@ 目标填入输入框并聚焦，不发送', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '重构认证' })] });
+    api.listHubMessages.mockResolvedValue([
+      { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', text: 'done', ts: 2 },
+    ]);
+    render(<AgentHubPanel />);
+    const btn = await screen.findByRole('button', { name: tt('ui.hub.quick_rephrase') });
+    fireEvent.click(btn);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c1 ');
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(box);
   });
 
   it('agent 卡片缺 chatId 时按 termKey 反查 chat ID', async () => {
@@ -882,8 +913,8 @@ describe('AgentHubPanel', () => {
       { id: 3, kind: 'agent', tool: 'cursor', event: 'Stop', termKey: 'new:7', text: 'ok', ts: 3 },
     ]);
     render(<AgentHubPanel />);
-    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_ok') }));
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c2', tt('ui.hub.quick_ok')));
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_continue') }));
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c2', tt('ui.hub.quick_continue_text')));
   });
 
   it('快速回复无目标 agent 时提示 need_target 且不发送', async () => {
@@ -898,7 +929,7 @@ describe('AgentHubPanel', () => {
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
-  it('queued 用户消息 hover 显示撤回按钮，点击后乐观标记已撤回', async () => {
+  it('queued 用户消息撤回按钮直接可见（无需 hover），点击后乐观标记已撤回', async () => {
     // 经 listHubMessages 回流（挂载 effect 会用拉取结果覆盖 store，直塞 state 会被清掉）
     api.listHubMessages.mockResolvedValue([
       { id: 7, kind: 'user', chatId: 'c1', text: '排队消息', status: 'queued', ts: 1 },
