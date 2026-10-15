@@ -646,6 +646,8 @@ interface AppBindings {
   UpdateRequirement(id: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
   DeleteRequirement(id: string): Promise<void>;
   MarkRequirementDispatched(id: string, workspace: string, chatID: string): Promise<void>;
+  ArchiveRequirement(id: string): Promise<{ released: boolean; chatId: string }>;
+  SetRequirementStatus(id: string, status: string): Promise<void>;
 }
 
 declare global {
@@ -1535,13 +1537,19 @@ export function onHubChanged(cb: () => void): () => void {
 
 // Requirement 是需求列表里的一条（internal/requirements.Item 的 JSON 形态）。
 // priority: high | medium | low（Go 侧非法值回退 medium）；
-// dispatchedTo 非空表示已派发到该工作区路径。
+// dispatchedTo 非空表示已派发到该工作区路径；
+// status: pending | active | done | archived（Go 侧必出，但旧持久化数据可能缺，
+// 声明为可选、使用方兜底 'pending'）；chatId 非空表示已派发的会话 ID；
+// archivedAt 为归档时间戳（秒，0 表示未归档）。
 export interface Requirement {
   id: string;
   text: string;
   priority: 'high' | 'medium' | 'low';
   tags: string[];
   dispatchedTo?: string;
+  status?: 'pending' | 'active' | 'done' | 'archived';
+  chatId?: string;
+  archivedAt?: number;
   ts: number;
 }
 
@@ -1584,6 +1592,22 @@ export async function markRequirementDispatched(id: string, workspace: string, c
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
   await a.MarkRequirementDispatched(id, workspace, chatID);
+}
+
+// archiveRequirement 归档需求；released 表示关联会话是否已关闭（空闲自动关闭），
+// chatId 为关联的会话 ID（无关联为空串）。错误向上抛。
+export async function archiveRequirement(id: string): Promise<{ released: boolean; chatId?: string }> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  const r = await a.ArchiveRequirement(id);
+  return { released: !!r?.released, chatId: r?.chatId || undefined };
+}
+
+// setRequirementStatus 设置需求状态（active | done）；错误向上抛。
+export async function setRequirementStatus(id: string, status: 'active' | 'done'): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.SetRequirementStatus(id, status);
 }
 
 // onRequirementsChanged 订阅需求列表变更（写操作后 Go Emit requirements:changed），
