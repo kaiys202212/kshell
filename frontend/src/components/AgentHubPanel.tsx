@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Loader2 } from 'lucide-react';
+import { ChevronDown, Loader2 } from 'lucide-react';
 import type { ChatCommand, ChatInfo, ChatModelsView, HubArchiveMonth, HubMessage, ToolInfo } from '../lib/api';
 import {
   cancelChat,
@@ -33,10 +33,9 @@ import { attributionText, baseName, resolveAttribution } from '../lib/hubAttribu
 import { markdownBubbleClass } from '../lib/markdownStyles';
 import { sameWorkspacePath } from '../lib/workspacePath';
 import { cn } from '../lib/cn';
-import { LIST_ROW, LIST_ROW_ACTIVE, MONO } from '../lib/ui';
+import { LIST_ROW, MONO } from '../lib/ui';
 import { useAppStore } from '../state/store';
 import { Button } from './ui/button';
-import { EmptyState } from './ui/empty-state';
 import { Dialog } from './ui/dialog';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 
@@ -230,6 +229,9 @@ export default function AgentHubPanel() {
   const [activeMonth, setActiveMonth] = useState<string | null>(null);
   // 自动滚动：开启时新消息把消息流滚到底；关闭后自由翻历史不被打断。
   const [autoScroll, setAutoScroll] = useState(readAutoScrollPref);
+  // 浮动会话胶囊：面板展开状态。
+  const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
+  const sessionBarRef = useRef<HTMLDivElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -261,6 +263,18 @@ export default function AgentHubPanel() {
       cancelled = true;
     };
   }, []);
+
+  // 面板展开时点击胶囊与面板之外收起（mousedown 在点击前触发，避免先跑外层 onClick）
+  useEffect(() => {
+    if (!sessionPanelOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (sessionBarRef.current && !sessionBarRef.current.contains(e.target as Node)) {
+        setSessionPanelOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [sessionPanelOpen]);
 
   // 斜杠补全：draft 首词为 /xxx 时激活。
   const [slashClosed, setSlashClosed] = useState(false);
@@ -497,13 +511,31 @@ export default function AgentHubPanel() {
       );
   };
 
-  // focusRow 跳转：照搬 ActiveTerminalsPanel.focusRow——切到该 workspace 页签并按 termKey 聚焦
-  const focusRow = (c: ChatInfo) => {
-    const { openTabs, setActiveTab, requestFocusTerm, setLastAgentId } = useAppStore.getState();
-    setLastAgentId(c.ID);
-    const tab = openTabs.find((x) => sameWorkspacePath(x.id, c.Workspace));
-    if (tab) setActiveTab(tab.id);
-    if (c.Key) requestFocusTerm(c.Key);
+  // pickSessionRow 把面板里的会话设为默认投递目标（「直接发送将投递到它」），并收起面板。
+  const pickSessionRow = (id: string) => {
+    useAppStore.getState().setLastAgentId(id);
+    setSessionPanelOpen(false);
+  };
+
+  // closeSession 关闭空闲会话：cancelChat 失败提示；成功后列表随 chats 状态自动收缩（面板保持开）。
+  const closeSession = (id: string) => {
+    void cancelChat(id).catch((e: unknown) =>
+      useAppStore.getState().notify(t('ui.hub.close_session_failed', { err: backendError(e) }), 'error'),
+    );
+  };
+
+  // sessionDragLabel 从 mention 候选反查拖拽用的 @ 标签；找不到兜底会话标题。
+  const sessionDragLabel = (c: ChatInfo): string => {
+    const opt = options.find((o) => o.id === c.ID);
+    return opt?.label ?? (c.Title || wsBaseName(c.Workspace) || emptyTarget);
+  };
+
+  // 输入框拖放：接收浮动面板拖出的 @ 目标，追加进草稿（已有内容时空格分隔）。
+  const handleDrop = (e: React.DragEvent<HTMLTextAreaElement>) => {
+    e.preventDefault();
+    const text = e.dataTransfer.getData('text/plain');
+    if (!text) return;
+    setDraft((d) => (d ? `${d.trimEnd()} ${text}` : text));
   };
 
   const send = () => {
@@ -632,7 +664,7 @@ export default function AgentHubPanel() {
   return (
     <section
       aria-label={t('ui.hub.title')}
-      className="flex min-h-0 flex-1 flex-col gap-2.5 rounded border border-border bg-card p-3 text-sm"
+      className="relative flex min-h-0 flex-1 flex-col gap-2.5 rounded border border-border bg-card p-3 text-sm"
     >
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-sm font-medium">{t('ui.hub.title')}</h2>
@@ -707,47 +739,93 @@ export default function AgentHubPanel() {
         </div>
       )}
 
-      {chats.length === 0 ? (
-        <EmptyState title={t('ui.hub.empty')} />
-      ) : (
-        // 会话列表限高自滚：agent 多时不无限撑高，把空间留给消息流
-        <div className="flex max-h-44 shrink-0 flex-col gap-2 overflow-y-auto">
-          {groups.map((g) => (
-            <div key={g.workspace} className="flex flex-col gap-1">
-              <span className={cn(MONO, 'truncate')} title={g.workspace}>
-                {wsBaseName(g.workspace)}
-              </span>
-              <ul aria-label={t('ui.hub.title')} className="m-0 flex list-none flex-col gap-1.5 p-0">
-                {g.rows.map((c) => (
-                  <li key={c.ID}>
-                    <button
-                      type="button"
-                      className={cn(
-                        LIST_ROW,
-                        'flex w-full min-w-0 items-center gap-1.5 px-2.5 py-1.5 text-left',
-                        lastAgentId === c.ID && LIST_ROW_ACTIVE,
-                      )}
-                      onClick={() => focusRow(c)}
-                    >
-                      <span
-                        aria-hidden
-                        className={cn('h-1.5 w-1.5 shrink-0 rounded-full', statusDotClass(c.Status))}
-                      />
-                      <span className="min-w-0 truncate font-medium">
-                        {/* 无标题会话兜底显示项目基名，避免出现「新会话」同名列无法区分 */}
-                        {c.Title || wsBaseName(c.Workspace) || emptyTarget}
-                      </span>
-                      <span className="ml-auto shrink-0 truncate text-[11px] text-muted-foreground">
-                        {toolDisplayName(c.ToolID)} · {t(statusKey(c.Status))}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* 浮动会话指示器：默认目标胶囊 + 可展开的全量会话面板（absolute，不占固定行高） */}
+      <div ref={sessionBarRef} className="absolute right-3 top-11 z-10">
+        <button
+          type="button"
+          aria-label={t('ui.hub.session_bar_aria')}
+          className="flex max-w-56 items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-xs shadow-sm hover:bg-muted/50"
+          onClick={() => setSessionPanelOpen((v) => !v)}
+        >
+          {(() => {
+            const target = fallbackId ? chats.find((c) => c.ID === fallbackId) : null;
+            if (!target) return <span className="truncate text-muted-foreground">{t('ui.hub.empty')}</span>;
+            return (
+              <>
+                <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', statusDotClass(target.Status))} />
+                <span className="min-w-0 truncate">
+                  {target.Title || wsBaseName(target.Workspace) || emptyTarget}
+                </span>
+              </>
+            );
+          })()}
+          <ChevronDown aria-hidden className={cn('h-3 w-3 shrink-0 text-muted-foreground transition-transform', sessionPanelOpen && 'rotate-180')} />
+        </button>
+        {sessionPanelOpen && (
+          <div className="mt-1 max-h-64 w-64 overflow-y-auto rounded border border-border bg-card p-1.5 text-xs shadow-md">
+            {groups.length === 0 ? (
+              <span className="text-muted-foreground">{t('ui.hub.empty')}</span>
+            ) : (
+              groups.map((g) => (
+                <div key={g.workspace} className="flex flex-col gap-1 py-1">
+                  <span className={cn(MONO, 'truncate')} title={g.workspace}>
+                    {wsBaseName(g.workspace)}
+                  </span>
+                  <ul aria-label={t('ui.hub.session_panel_aria')} className="m-0 flex list-none flex-col gap-1 p-0">
+                    {g.rows.map((c) => {
+                      const busy = c.Status === 'running' || c.Status === 'starting';
+                      return (
+                        <li key={c.ID}>
+                          <div
+                            className={cn(LIST_ROW, 'flex min-w-0 items-center gap-1.5 px-2.5 py-1.5')}
+                            draggable
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData('text/plain', `@${sessionDragLabel(c)}`);
+                              e.dataTransfer.effectAllowed = 'copy';
+                            }}
+                          >
+                            <button
+                              type="button"
+                              className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                              onClick={() => pickSessionRow(c.ID)}
+                            >
+                              <span
+                                aria-hidden
+                                className={cn('h-1.5 w-1.5 shrink-0 rounded-full', statusDotClass(c.Status))}
+                              />
+                              <span className="min-w-0 truncate font-medium">
+                                {/* 无标题会话兜底显示项目基名，避免出现「新会话」同名列无法区分 */}
+                                {c.Title || wsBaseName(c.Workspace) || emptyTarget}
+                              </span>
+                              <span className="shrink-0 truncate text-[11px] text-muted-foreground">
+                                {toolDisplayName(c.ToolID)} · {t(statusKey(c.Status))}
+                              </span>
+                            </button>
+                            {/* 空闲会话才可关闭（忙碌 agent 正在跑任务）；stopPropagation 避免触发行点击 */}
+                            {!busy && (
+                              <button
+                                type="button"
+                                aria-label={t('ui.hub.close_session')}
+                                className="shrink-0 text-muted-foreground hover:text-destructive"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  closeSession(c.ID);
+                                }}
+                              >
+                                ×
+                              </button>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
 
       {/* 自动滚动开关：关掉后翻历史不被新消息打断；勾选立即回到底部 */}
       <div className="flex shrink-0 justify-end">
@@ -923,6 +1001,8 @@ export default function AgentHubPanel() {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onPaste={() => void handlePaste()}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={handleDrop}
           onKeyDown={(e) => {
             if (cmdOpen && cmdMatches.length > 0) {
               if (e.key === 'ArrowDown') {

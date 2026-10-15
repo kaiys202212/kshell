@@ -107,13 +107,15 @@ const workspaceA = {
 };
 
 describe('AgentHubPanel', () => {
-  it('无 agent 时显示空态', () => {
+  it('无 agent 时胶囊显示空文案', () => {
     useAppStore.setState({ chats: [] });
     render(<AgentHubPanel />);
-    expect(screen.getByText(tt('ui.hub.empty'))).toBeTruthy();
+    expect(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') })).toHaveTextContent(
+      tt('ui.hub.empty'),
+    );
   });
 
-  it('列出运行中的 agent 及其工具名', () => {
+  it('有会话时渲染浮动胶囊（默认目标名），旧固定列表不再渲染', () => {
     useAppStore.setState({
       chats: [
         {
@@ -130,25 +132,148 @@ describe('AgentHubPanel', () => {
           Prompted: true,
         },
       ],
+      lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
-    expect(screen.getByText(/Claude Code/)).toBeTruthy();
-    expect(screen.getByText('重构认证')).toBeTruthy();
+    const pill = screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') });
+    expect(pill).toHaveTextContent('重构认证');
+    // 旧固定分组列表已删除：不再存在以 Hub 标题命名的列表
+    expect(screen.queryByRole('list', { name: tt('ui.hub.title') })).toBeNull();
+    // 面板未展开时不出现「工具 · 状态」行文案
+    expect(screen.queryByText(/Claude Code · /)).toBeNull();
   });
 
-  it('点击 agent 行：记录 lastAgentId 并跳转定位', () => {
+  it('点胶囊展开面板列出全部会话，再点收起', () => {
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1' }), chat({ ID: 'c2', Title: '乙', Workspace: 'D:\\ws\\b' })],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const pill = screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') });
+    // 两个 workspace 各一个分组 ul（同名 aria-label），按数量判断面板开关
+    expect(screen.queryAllByRole('list', { name: tt('ui.hub.session_panel_aria') })).toHaveLength(0);
+    fireEvent.click(pill);
+    const lists = screen.getAllByRole('list', { name: tt('ui.hub.session_panel_aria') });
+    const panel = pill.parentElement as HTMLElement;
+    expect(panel).toHaveTextContent('重构认证');
+    expect(panel).toHaveTextContent('乙');
+    expect(lists.length).toBeGreaterThanOrEqual(2);
+    fireEvent.click(pill);
+    expect(screen.queryAllByRole('list', { name: tt('ui.hub.session_panel_aria') })).toHaveLength(0);
+  });
+
+  it('点击面板会话行：记录 lastAgentId 并收起面板（不再跳工作区页签）', () => {
     const setLast = vi.spyOn(useAppStore.getState(), 'setLastAgentId');
     const setActive = vi.spyOn(useAppStore.getState(), 'setActiveTab');
     const focus = vi.spyOn(useAppStore.getState(), 'requestFocusTerm');
     useAppStore.setState({
       chats: [chat({ ID: 'c1', Key: 'new:1', Workspace: 'D:\\ws\\a' })],
       openTabs: [{ id: 'D:\\ws\\a', name: 'a' }],
+      lastAgentId: null,
     });
     render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
     fireEvent.click(screen.getByText('重构认证'));
     expect(setLast).toHaveBeenCalledWith('c1');
-    expect(setActive).toHaveBeenCalledWith('D:\\ws\\a');
-    expect(focus).toHaveBeenCalledWith('new:1');
+    expect(screen.queryByRole('list', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
+    expect(setActive).not.toHaveBeenCalled();
+    expect(focus).not.toHaveBeenCalled();
+  });
+
+  it('空闲会话行有关闭按钮，点击调 cancelChat 且面板保持展开；忙碌行无关闭按钮', async () => {
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1' }), chat({ ID: 'c2', Title: '乙', Status: 'running' })],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
+    // 仅空闲的 c1 有关闭按钮（c2 running 无）
+    const closes = screen.getAllByRole('button', { name: tt('ui.hub.close_session') });
+    expect(closes).toHaveLength(1);
+    fireEvent.click(closes[0]);
+    await waitFor(() => expect(api.cancelChat).toHaveBeenCalledWith('c1'));
+    // 成功后面板保持展开
+    expect(screen.getByRole('list', { name: tt('ui.hub.session_panel_aria') })).toBeTruthy();
+  });
+
+  it('关闭会话失败时提示 close_session_failed', async () => {
+    api.cancelChat.mockRejectedValue(new Error('boom'));
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.close_session') }));
+    await waitFor(() =>
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((t) => t.title === tt('ui.hub.close_session_failed').replace('{{err}}', 'boom')),
+      ).toBe(true),
+    );
+  });
+
+  it('会话行可拖拽：dragStart 写入 @ 标签到 dataTransfer', () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
+    const panel = screen.getByRole('list', { name: tt('ui.hub.session_panel_aria') });
+    const row = within(panel).getByText('重构认证').closest('div')!;
+    const dt = {
+      data: {} as Record<string, string>,
+      setData(k: string, v: string) {
+        this.data[k] = v;
+      },
+      getData(k: string) {
+        return this.data[k];
+      },
+      effectAllowed: '',
+    };
+    fireEvent.dragStart(row, { dataTransfer: dt });
+    expect(dt.getData('text/plain')).toBe('@Claude Code#c1');
+    expect(dt.effectAllowed).toBe('copy');
+  });
+
+  it('输入框接收拖放：已有草稿时 trimEnd 后追加 @ 目标', () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '帮我看看  ' } });
+    const dt = {
+      data: { 'text/plain': '@Claude Code#c1' } as Record<string, string>,
+      setData(k: string, v: string) {
+        this.data[k] = v;
+      },
+      getData(k: string) {
+        return this.data[k];
+      },
+    };
+    fireEvent.drop(box, { dataTransfer: dt });
+    expect((box as HTMLTextAreaElement).value).toBe('帮我看看 @Claude Code#c1');
+  });
+
+  it('输入框接收拖放：空草稿直接设为 @ 目标', () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    const dt = {
+      data: { 'text/plain': '@Claude Code#c1' } as Record<string, string>,
+      setData(k: string, v: string) {
+        this.data[k] = v;
+      },
+      getData(k: string) {
+        return this.data[k];
+      },
+    };
+    fireEvent.drop(box, { dataTransfer: dt });
+    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c1');
+  });
+
+  it('面板展开时点击胶囊之外的区域收起', () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
+    expect(screen.getByRole('list', { name: tt('ui.hub.session_panel_aria') })).toBeTruthy();
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole('list', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
   });
 
   it('@ 指定目标发送：投递到该 agent 并记录 lastAgentId', async () => {
@@ -378,10 +503,12 @@ describe('AgentHubPanel', () => {
     expect(screen.getByText('持久正文')).toBeTruthy();
   });
 
-  it('拉取失败不阻塞：空历史时展示空态控件', async () => {
+  it('拉取失败不阻塞：无会话时胶囊显示空文案', async () => {
     api.listHubMessages.mockRejectedValue(new Error('boom'));
     render(<AgentHubPanel />);
-    expect(screen.getByText(tt('ui.hub.empty'))).toBeTruthy();
+    expect(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') })).toHaveTextContent(
+      tt('ui.hub.empty'),
+    );
   });
 
   it('历史入口：展开归档月份并加载旧消息', async () => {
@@ -423,11 +550,13 @@ describe('AgentHubPanel', () => {
     expect((box as HTMLTextAreaElement).value).toBe('@Cursor#c2 ');
   });
 
-  it('无标题会话在列表兜底显示项目基名', () => {
+  it('无标题会话在面板兜底显示项目基名', () => {
     useAppStore.setState({
       chats: [chat({ ID: 'c1', Title: '', Workspace: 'D:\\ws\\gamma' })],
+      lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
     // 分组标题与会话兜底同名（同项目）：至少出现两次即证明兜底生效
     expect(screen.getAllByText('gamma').length).toBeGreaterThanOrEqual(2);
   });
