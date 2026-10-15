@@ -10,10 +10,12 @@ import {
   deleteRequirement,
   listRequirements,
   onRequirementsChanged,
+  readClipboardPaste,
   updateRequirement,
   type Requirement,
 } from '../lib/api';
 import { backendError } from '../lib/errors';
+import { quotePathForShell } from '../lib/dragPath';
 import { baseName } from '../lib/hubAttribution';
 import { cn } from '../lib/cn';
 import { useAppStore } from '../state/store';
@@ -80,6 +82,22 @@ function RequirementDialog({
       });
   };
 
+  // 粘贴附件：clipboardData 带文件（资源管理器复制 / 截图）时拦截默认粘贴，
+  // 经原生剪贴板拿落盘路径（图片已自动落盘）转成地址追加到需求文本；
+  // 纯文本走浏览器默认粘贴。读取失败静默（粘贴是辅助操作）。
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!e.clipboardData.types.includes('Files')) return;
+    e.preventDefault();
+    try {
+      const paste = await readClipboardPaste();
+      if (!paste.Path) return;
+      const add = quotePathForShell(paste.Path);
+      setText((cur) => (cur ? `${cur} ${add}` : add));
+    } catch {
+      // 静默
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange} className="w-96">
       <DialogPrimitive.Title className="mb-3 text-sm font-medium">
@@ -93,6 +111,7 @@ function RequirementDialog({
           placeholder={t('ui.requirements.text_placeholder')}
           value={text}
           onChange={(e) => setText(e.target.value)}
+          onPaste={(e) => void handlePaste(e)}
         />
       </label>
       <label className="mb-2 flex flex-col gap-1 text-xs text-muted-foreground">
@@ -187,22 +206,22 @@ export default function RequirementList({ className }: { className?: string }) {
       {items.length === 0 ? (
         <EmptyState className="min-h-0 flex-1 py-6" title={t('ui.requirements.empty')} />
       ) : (
-        <ul className="m-0 flex min-h-0 flex-1 list-none flex-col gap-1.5 overflow-y-auto p-0">
+        <ul className="m-0 flex min-h-0 flex-1 list-none flex-col gap-2 overflow-y-auto p-0">
           {items.map((r) => (
             <li
               key={r.id}
               draggable
               onDragStart={(e) => handleDragStart(e, r)}
-              className="group relative flex min-w-0 items-start gap-2 rounded border border-border px-2 py-1.5"
+              className="group relative flex min-h-14 min-w-0 items-start gap-2 rounded border border-border px-3 py-2.5"
             >
               <span
                 data-testid="req-dot"
                 aria-hidden="true"
-                className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', dotClass(r.priority))}
+                className={cn('mt-2 h-2 w-2 shrink-0 rounded-full', dotClass(r.priority))}
               />
               <span className="min-w-0 flex-1">
-                <span className="line-clamp-2 block break-words text-[12.5px]">{r.text}</span>
-                <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1">
+                <span className="line-clamp-3 block break-words text-[13.5px] leading-relaxed">{r.text}</span>
+                <span className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
                   {r.tags.map((tag) => (
                     <Badge key={tag} variant="outline">
                       {tag}
@@ -212,7 +231,7 @@ export default function RequirementList({ className }: { className?: string }) {
                 </span>
               </span>
               {/* 编辑/删除按钮：hover 显现（兄弟节点定位，避免嵌套进文本区） */}
-              <span className="absolute right-1 top-1 hidden gap-0.5 group-hover:flex">
+              <span className="absolute right-1.5 top-1.5 hidden gap-0.5 group-hover:flex">
                 <button
                   type="button"
                   aria-label={t('ui.requirements.edit')}

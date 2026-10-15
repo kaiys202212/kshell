@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   deleteRequirement: vi.fn(),
   markRequirementDispatched: vi.fn(),
   onRequirementsChanged: vi.fn(),
+  readClipboardPaste: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -166,5 +167,73 @@ describe('RequirementList', () => {
       changedCb?.();
     });
     await waitFor(() => expect(mocks.listRequirements.mock.calls.length).toBeGreaterThan(calls));
+  });
+
+  // 粘贴附件：clipboardData 含 Files 时拦截默认粘贴，readClipboardPaste 拿落盘
+  // 路径（自动转地址）追加到需求文本；路径含空格自动加引号。
+  function pasteEvent(files: boolean) {
+    return {
+      clipboardData: {
+        types: files ? ['Files'] : ['text/plain'],
+        getData: () => '',
+      },
+      preventDefault: vi.fn(),
+    };
+  }
+
+  async function openAddDialog() {
+    render(<RequirementList />);
+    await screen.findByText(tt('ui.requirements.empty'));
+    fireEvent.click(
+      screen.getByRole('button', { name: (n) => n.includes(tt('ui.requirements.add')) }),
+    );
+    await screen.findByTestId('req-text');
+  }
+
+  it('粘贴文件：读剪贴板路径并追加到需求文本（含空格路径加引号）', async () => {
+    mocks.readClipboardPaste.mockResolvedValue({ Path: 'D:\\my dir\\shot.png', Text: '' });
+    await openAddDialog();
+    const box = screen.getByTestId('req-text');
+
+    await act(async () => {
+      fireEvent.paste(box, pasteEvent(true));
+    });
+    expect((box as HTMLTextAreaElement).value).toBe('"D:\\my dir\\shot.png"');
+  });
+
+  it('粘贴文件叠加已有文本：空格分隔追加', async () => {
+    mocks.readClipboardPaste.mockResolvedValue({ Path: 'C:\\a.txt', Text: '' });
+    await openAddDialog();
+    const box = screen.getByTestId('req-text');
+    fireEvent.change(box, { target: { value: '实现导出' } });
+
+    await act(async () => {
+      fireEvent.paste(box, pasteEvent(true));
+    });
+    expect((box as HTMLTextAreaElement).value).toBe('实现导出 C:\\a.txt');
+  });
+
+  it('粘贴纯文本：不拦截走默认粘贴，不调 readClipboardPaste', async () => {
+    await openAddDialog();
+    const box = screen.getByTestId('req-text');
+    const ev = pasteEvent(false);
+
+    fireEvent.paste(box, ev);
+    expect(ev.preventDefault).not.toHaveBeenCalled();
+    expect(mocks.readClipboardPaste).not.toHaveBeenCalled();
+    // 默认粘贴由浏览器执行，jsdom 不模拟插入；文本保持不变即可
+    expect((box as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('读剪贴板失败：静默不崩，文本不变', async () => {
+    mocks.readClipboardPaste.mockRejectedValue(new Error('clip error'));
+    await openAddDialog();
+    const box = screen.getByTestId('req-text');
+    fireEvent.change(box, { target: { value: '保持原样' } });
+
+    await act(async () => {
+      fireEvent.paste(box, pasteEvent(true));
+    });
+    expect((box as HTMLTextAreaElement).value).toBe('保持原样');
   });
 });
