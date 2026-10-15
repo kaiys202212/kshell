@@ -99,6 +99,9 @@ func TestSendChatPromptRecordsHubUserMessage(t *testing.T) {
 		u.Tool != "claude" || u.Workspace != "D:/w" {
 		t.Fatalf("user 消息字段不符: %+v", u)
 	}
+	if u.SessionTitle != "t" {
+		t.Fatalf("user 消息应带 SessionTitle 快照: %+v", u)
+	}
 	if rec.count("hub:changed") == 0 {
 		t.Fatalf("应 emit hub:changed，得到 %v", rec.names)
 	}
@@ -106,12 +109,13 @@ func TestSendChatPromptRecordsHubUserMessage(t *testing.T) {
 	waitHubKind(t, store, "agent")
 }
 
-// emitChatNotify 通过 allow 后落 agent 消息（含 assistant 回复正文）。
+// emitChatNotify 通过 allow 后落 agent 消息（含 assistant 回复正文与会话标题快照）。
 func TestEmitChatNotifyRecordsHubMessage(t *testing.T) {
 	a, store, rec := newHubTestApp(t)
 	b := &fakeChatCaptureBackend{}
 	m := newChatManagerWith(rec.emit, b, nil, nil, a.recordHubAgentMessage)
 	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
 
 	info, err := m.Open("session:s1", chat.Info{
 		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
@@ -125,6 +129,10 @@ func TestEmitChatNotifyRecordsHubMessage(t *testing.T) {
 	agent := waitHubKind(t, store, "agent")
 	if agent.TermKey != "session:s1" || agent.Tool != "claude" || agent.Workspace != "D:/w" {
 		t.Fatalf("chat agent 消息字段不符: %+v", agent)
+	}
+	// 会话标题快照随消息落盘：会话关闭/重启后 chats 反查不到，气泡归因靠它
+	if agent.SessionTitle != "t" {
+		t.Fatalf("agent 消息应带 SessionTitle 快照: %+v", agent)
 	}
 }
 

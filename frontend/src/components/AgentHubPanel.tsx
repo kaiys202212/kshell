@@ -237,11 +237,37 @@ export default function AgentHubPanel() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // 消息或开关变化时按需滚底：重新勾选立即到底，取消后不再跟随。
+  // 依赖最后一条消息 id（而非数组引用）：引用必变但内容可能晚到，id 才代表「真有新消息」。
+  // 滚动放 double rAF：markdown 图片/代码高亮是异步布局，同步滚一次 height 还会涨，
+  // 两帧后再滚保证落在最终位置。另挂 ResizeObserver 兜底：自动滚动开启期间任何
+  // 内容高度增长（图片解码完成等）都重滚到底，覆盖 rAF 之后再变化的场景。
+  const lastMsgId = hubMessages.length > 0 ? hubMessages[hubMessages.length - 1].id : 0;
+  useEffect(() => {
+    if (!autoScroll) return;
+    let raf1 = 0;
+    let raf2 = 0;
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const el = logRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [lastMsgId, autoScroll]);
+
   useEffect(() => {
     if (!autoScroll) return;
     const el = logRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [hubMessages, autoScroll]);
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [autoScroll]);
 
   // 切换自动滚动；落盘放在 updater 外（updater 应为纯函数，StrictMode 双调用不重复写盘）
   const toggleAutoScroll = () => {
@@ -838,19 +864,6 @@ export default function AgentHubPanel() {
         )}
       </div>
 
-      {/* 自动滚动开关：关掉后翻历史不被新消息打断；勾选立即回到底部 */}
-      <div className="flex shrink-0 justify-end">
-        <label className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground">
-          <input
-            type="checkbox"
-            data-testid="hub-auto-scroll"
-            checked={autoScroll}
-            onChange={toggleAutoScroll}
-          />
-          {t('ui.hub.auto_scroll')}
-        </label>
-      </div>
-
       {/* 水平内边距避免气泡贴边/挤滚动条；gap-3 拉开卡片垂直间距 */}
       <div ref={logRef} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-2" role="log" aria-live="polite">
         {hubMessages.map((m) => {
@@ -1043,7 +1056,17 @@ export default function AgentHubPanel() {
             }
           }}
         />
-        <div className="flex justify-end">
+        {/* 发送行：自动滚动开关放发送按钮左侧（原来独立成行，与右上角浮动会话胶囊同位叠放） */}
+        <div className="flex items-center justify-end gap-2">
+          <label className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground">
+            <input
+              type="checkbox"
+              data-testid="hub-auto-scroll"
+              checked={autoScroll}
+              onChange={toggleAutoScroll}
+            />
+            {t('ui.hub.auto_scroll')}
+          </label>
           <Button size="sm" onClick={send}>
             {t('ui.hub.send')}
           </Button>

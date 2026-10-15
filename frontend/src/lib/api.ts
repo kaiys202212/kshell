@@ -1483,6 +1483,9 @@ export interface HubMessage {
   chatId?: string;
   termKey?: string;
   workspace?: string;
+  // sessionTitle 是落盘时的会话标题快照：会话关闭/重启后 chats 反查不到标题，
+  // 归因回退到该字段，避免气泡显示 #<id> 编码。
+  sessionTitle?: string;
   text: string;
   event?: string;
   status?: string;

@@ -149,6 +149,26 @@ func TestEmitChatNotifyCarriesAssistantReply(t *testing.T) {
 	}
 }
 
+// stopped 通知正文为空时回退停止原因 wire key：agent 因 refusal/max_tokens 等
+// 提前停止且无任何 assistant 分片时，此前 summary 为空，AgentHub 落一条空气泡
+//（2026-10-15 用户反馈：ChatView 显示 Turn stopped，Hub 只有空消息）。
+func TestChatStoppedEmptySummaryFallsBackToReason(t *testing.T) {
+	rec := &notifyRecorder{}
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil)
+	t.Cleanup(m.CloseAll)
+
+	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "D:/w", ToolID: "claude"},
+		chat.Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	emitChatNotify(rec.emit, m, info.ID, "stopped", "", nil, nil)
+	p := waitForNotify(t, rec, "stopped")
+	if p.Event != "stopped" || !strings.Contains(p.Summary, "ui.notify.turn_stopped_reason") {
+		t.Fatalf("stopped 空 summary 应回退原因 wire key: %+v", p)
+	}
+}
+
 // chat turn 出错：emit error 语义通知，summary 带错误文本。
 func TestChatPromptErrorEmitsAgentNotify(t *testing.T) {
 	rec := &notifyRecorder{}

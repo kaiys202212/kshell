@@ -41,7 +41,7 @@ func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, aut
 			emit("chat:update", map[string]any{"id": id, "update": u})
 			switch u.Type {
 			case "turn_done":
-				emitChatNotify(emit, m, id, turnEvent(u.StopReason), "", dedupe, onAgent)
+				emitChatNotify(emit, m, id, turnEvent(u.StopReason), stopFallback(u.StopReason), dedupe, onAgent)
 			case "error":
 				emitChatNotify(emit, m, id, "error", u.Text, dedupe, onAgent)
 			}
@@ -74,6 +74,16 @@ func turnEvent(stop string) string {
 	default:
 		return "stopped"
 	}
+}
+
+// stopFallback 把停止原因翻成前端 wire key（turn_stopped_reason|<原因>），
+// 作为 stopped 事件 assistant 正文为空时的兜底文案：气泡至少说明「为什么停」，
+// 而不是一条空卡片。done/cancelled 不需要兜底。
+func stopFallback(stop string) string {
+	if turnEvent(stop) != "stopped" || stop == "" {
+		return ""
+	}
+	return "ui.notify.turn_stopped_reason|" + stop
 }
 
 // lastAssistantText 取会话时间线中最后一轮 assistant 回复的拼接文本。
@@ -109,7 +119,10 @@ func lastAssistantText(h []chat.Update) string {
 
 // emitChatNotify 把一条聊天侧事件转成 agent 通知气泡 payload。
 // 归因字段（key/tool/workspace）从 manager 反查；会话已关闭时静默跳过；
-// done 事件携带最后一轮 assistant 回复正文（放入 Summary），供汇总窗直接展示；
+// done 与 stopped 事件携带最后一轮 assistant 回复正文（放入 Summary），供汇总窗
+// 直接展示——stopped（max_tokens/refusal 等提前停止）此前不回填，AgentHub 落
+// 空气泡（正文只有事件语义，用户看不到 agent 实际说了什么）；正文仍为空时
+// 回退停止原因 wire key，保证气泡至少说明「为什么停」。
 // allow 非 nil 且返回 false（窗口内重复）时同样跳过。注意被吞的只是通知气泡：
 // 权限请求本身仍经 chat:permission 推给前端弹窗，不影响交互。
 // onAgent 非 nil 时在放行后落 AgentHub 历史（与 hook 通道共用同一写入路径）。
@@ -122,8 +135,11 @@ func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, ev
 	if !ok || info.Key == "" {
 		return
 	}
-	if event == "done" && summary == "" {
+	if (event == "done" || event == "stopped") && summary == "" {
 		summary = lastAssistantText(m.History(id))
+	}
+	if summary == "" && event == "stopped" {
+		summary = "ui.notify.turn_stopped_reason"
 	}
 	p := agenthook.Payload{
 		Tool:      info.ToolID,
@@ -132,6 +148,7 @@ func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, ev
 		Workspace: info.Workspace,
 		Summary:   summary,
 		Ts:        time.Now().UnixNano(),
+		ChatID:    info.ID,
 	}
 	if allow != nil && !allow(p) {
 		return

@@ -890,7 +890,8 @@
       "waiting_confirm": "等待确认",
       "session_exited": "会话已退出（退出码 {{0}}）",
       "terminal_exited": "终端已退出",
-      "terminal_exited_code": "终端异常退出（退出码 {{0}}）"
+      "terminal_exited_code": "终端异常退出（退出码 {{0}}）",
+      "turn_stopped_reason": "Agent 提前停止（原因：{{0}}），没有可展示的回复内容。"
     },
     "toast": {
       "close_aria": "关闭提示"

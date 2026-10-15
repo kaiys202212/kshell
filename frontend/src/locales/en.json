@@ -890,7 +890,8 @@
       "waiting_confirm": "Waiting for confirmation",
       "session_exited": "Session exited (code {{0}})",
       "terminal_exited": "Terminal exited",
-      "terminal_exited_code": "Terminal exited abnormally (code {{0}})"
+      "terminal_exited_code": "Terminal exited abnormally (code {{0}})",
+      "turn_stopped_reason": "Agent stopped early (reason: {{0}}); no reply content to show."
     },
     "toast": {
       "close_aria": "Dismiss notification"

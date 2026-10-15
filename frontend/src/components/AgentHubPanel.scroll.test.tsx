@@ -96,12 +96,39 @@ function mockScrollGeometry(el: HTMLElement, height: number) {
   return state;
 }
 
+// 滚底走 double rAF（等 markdown 异步布局），jsdom 不驱动帧回调：flushRaf 执行两帧。
+// 组件另挂 ResizeObserver 兜底，本测试不模拟（jsdom 无布局，观察不到高度变化）。
+let rafQueue: FrameRequestCallback[] = [];
+function flushRaf() {
+  const q = rafQueue;
+  rafQueue = [];
+  q.forEach((cb) => cb(0));
+}
+
+beforeEach(() => {
+  rafQueue = [];
+  // cancel 真出队：否则关掉自动滚动前的旧 rAF 残留，flush 时误滚
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+    rafQueue.push(cb);
+    return rafQueue.length;
+  });
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+    delete rafQueue[id - 1];
+  });
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  rafQueue = [];
+});
+
 describe('AgentHubPanel 自动滚动', () => {
   beforeEach(() => {
     localStorage.removeItem('kshell.hub.autoScroll');
+    rafQueue = [];
   });
 
-  it('默认开启：hubMessages 变化时滚到底，且渲染自动滚动复选框', () => {
+  it('默认开启：hubMessages 变化时滚到底（double rAF 后），且渲染自动滚动复选框', () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })] });
     render(<AgentHubPanel />);
     const box = screen.getByTestId('hub-auto-scroll') as HTMLInputElement;
@@ -111,6 +138,8 @@ describe('AgentHubPanel 自动滚动', () => {
     act(() => {
       useAppStore.setState({ hubMessages: [{ id: 1, kind: 'agent', tool: 'claude', text: 'r', ts: 1 }] });
     });
+    flushRaf();
+    flushRaf();
     expect(state.top).toBe(900);
   });
 
@@ -125,6 +154,8 @@ describe('AgentHubPanel 自动滚动', () => {
     act(() => {
       useAppStore.setState({ hubMessages: [{ id: 1, kind: 'agent', tool: 'claude', text: 'r', ts: 1 }] });
     });
+    flushRaf();
+    flushRaf();
     expect(state.top).toBe(0);
     // 状态持久化
     expect(JSON.parse(localStorage.getItem('kshell.hub.autoScroll') ?? 'null')).toBe(false);
@@ -141,6 +172,8 @@ describe('AgentHubPanel 自动滚动', () => {
     act(() => {
       useAppStore.setState({ hubMessages: [{ id: 2, kind: 'agent', tool: 'claude', text: 'r', ts: 2 }] });
     });
+    flushRaf();
+    flushRaf();
     expect(state.top).toBe(500);
   });
 
@@ -155,6 +188,8 @@ describe('AgentHubPanel 自动滚动', () => {
     act(() => {
       useAppStore.setState({ hubMessages: [{ id: 1, kind: 'agent', tool: 'claude', text: 'r', ts: 1 }] });
     });
+    flushRaf();
+    flushRaf();
     expect(state.top).toBe(0);
   });
 });

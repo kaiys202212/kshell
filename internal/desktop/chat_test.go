@@ -21,6 +21,7 @@ type fakeChatConn struct {
 	modelErr   error
 	modelCalls []string
 	promptGate chan struct{} // 非 nil 时 Prompt 阻塞等待（desktop 测试模拟忙轮次）
+	stopReply  string        // 非 nil 时 Prompt 返回该 stopReason（模拟提前停止等）
 }
 
 func (c *fakeChatConn) Initialize(ctx context.Context) (acp.InitializeResult, error) {
@@ -40,6 +41,9 @@ func (c *fakeChatConn) LoadSession(ctx context.Context, sessionID, cwd string) (
 func (c *fakeChatConn) Prompt(ctx context.Context, sessionID string, blocks []acp.ContentBlock) (string, error) {
 	if c.promptGate != nil {
 		<-c.promptGate
+	}
+	if c.stopReply != "" {
+		return c.stopReply, nil
 	}
 	return "end_turn", nil
 }

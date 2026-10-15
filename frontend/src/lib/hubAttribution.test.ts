@@ -77,6 +77,20 @@ describe('resolveAttribution', () => {
     expect(a.session).toBe('#cX');
   });
 
+  it('chats 反查不到时用消息自带 sessionTitle 快照（会话关闭/重启场景）', () => {
+    const a = resolveAttribution({ chatId: 'c1', sessionTitle: '重构认证' }, [], []);
+    expect(a.session).toBe('重构认证');
+  });
+
+  it('chats 命中标题优先于 sessionTitle 快照（跟随最新标题）', () => {
+    const a = resolveAttribution(
+      { chatId: 'c1', sessionTitle: '旧标题' },
+      [chat({ Title: '新标题' })],
+      [],
+    );
+    expect(a.session).toBe('新标题');
+  });
+
   it('termKey 命中但标题为空：回退 #termKey', () => {
     const a = resolveAttribution(
       { termKey: 'session:s1' },

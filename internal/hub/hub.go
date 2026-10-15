@@ -21,7 +21,8 @@ import (
 )
 
 // fileVersion 是落盘文件结构版本，结构变更时递增，旧文件自然失效。
-const fileVersion = 1
+// v2：Message 增加 sessionTitle（会话标题快照，归因用）；旧 v1 文件按空处理。
+const fileVersion = 2
 
 // defaultLiveCap 是 live 文件保留的消息条数上限（超出按月归档）。
 const defaultLiveCap = 500
@@ -47,6 +48,9 @@ type Message struct {
 	TermKey string `json:"termKey,omitempty"`
 	// Workspace 是消息所属工作区路径。
 	Workspace string `json:"workspace,omitempty"`
+	// SessionTitle 是消息时刻的会话标题（冗余快照）：会话关闭或重启后 chats
+	// 里查不到标题，历史气泡归因只能落 #<id> 编码，落盘时带上可长期还原。
+	SessionTitle string `json:"sessionTitle,omitempty"`
 	// Text 是正文：用户输入，或 agent 回复的 summary。
 	Text string `json:"text"`
 	// Event 是 agent 回复的事件语义（Stop/Notification/error...）；用户消息为空。

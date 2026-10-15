@@ -45,6 +45,7 @@ func (a *App) recordHubUserMessageStatus(chatID, text, hubID, status string) {
 		if info, ok := mgr.Get(chatID); ok {
 			m.Tool = info.ToolID
 			m.Workspace = info.Workspace
+			m.SessionTitle = info.Title
 		}
 	}
 	a.recordHubMessageWithID(m, hubID)
@@ -86,6 +87,7 @@ func (a *App) recordHubAck(hubID, key string) {
 			m.ChatID = u.ChatID
 			m.Tool = u.Tool
 			m.Workspace = u.Workspace
+			m.SessionTitle = u.SessionTitle
 			break
 		}
 	}
@@ -158,8 +160,10 @@ func (a *App) RecallHubMessage(hubMsgID int64) error {
 }
 
 // recordHubAgentMessage 记录一条 agent 回复通知（hook/OSC 与 ACP 两条通道共用）。
+// 会话标题按 termKey/chatID 从 chat manager 反查后冗余落盘（SessionTitle）：
+// 会话关闭或重启后历史气泡仍能显示会话名而不是 #<id> 编码。
 func (a *App) recordHubAgentMessage(p agenthook.Payload) {
-	a.recordHubMessage(hub.Message{
+	m := hub.Message{
 		Kind:      "agent",
 		Tool:      p.Tool,
 		TermKey:   p.TermKey,
@@ -167,7 +171,27 @@ func (a *App) recordHubAgentMessage(p agenthook.Payload) {
 		Text:      p.Summary,
 		Event:     p.Event,
 		Ts:        p.Ts,
-	})
+	}
+	if mgr := a.chats(); mgr != nil {
+		if p.ChatID != "" {
+			if info, ok := mgr.Get(p.ChatID); ok {
+				m.ChatID = info.ID
+				m.SessionTitle = info.Title
+			}
+		}
+		if m.SessionTitle == "" && p.TermKey != "" {
+			for _, info := range mgr.List() {
+				if info.Key == p.TermKey {
+					m.SessionTitle = info.Title
+					if m.ChatID == "" {
+						m.ChatID = info.ID
+					}
+					break
+				}
+			}
+		}
+	}
+	a.recordHubMessage(m)
 }
 
 // recordHubWelcome 在工作区新建 agent 会话成功后，模拟该 agent 向 hub 消息流发一条欢迎词：
@@ -180,12 +204,13 @@ func (a *App) recordHubWelcome(info chat.Info) {
 		text += "|" + name
 	}
 	a.recordHubMessage(hub.Message{
-		Kind:      "agent",
-		ChatID:    info.ID,
-		Tool:      info.ToolID,
-		TermKey:   info.Key,
-		Workspace: info.Workspace,
-		Text:      text,
+		Kind:         "agent",
+		ChatID:       info.ID,
+		Tool:         info.ToolID,
+		TermKey:      info.Key,
+		Workspace:    info.Workspace,
+		SessionTitle: info.Title,
+		Text:         text,
 	})
 }
 

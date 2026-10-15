@@ -18,6 +18,9 @@ type Payload struct {
 	Summary   string `json:"summary"`
 	Raw       string `json:"raw"`
 	Ts        int64  `json:"ts"`
+	// ChatID 是 ACP chat 通道（emitChatNotify）回填的会话 ID；hook/OSC 通道
+	// 无此字段（终端路径只有 termKey），recordHubAgentMessage 按有无分别归因。
+	ChatID string `json:"chatId,omitempty"`
 }
 
 // InboxDir 返回通知收件箱目录：~/.kshell/notify/inbox。

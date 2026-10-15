@@ -52,10 +52,12 @@ function workspaceOf(
 
 // resolveAttribution 把一条 hub 消息解析成展示用归因。
 // - project：workspace 路径末段基名。
-// - session：优先 chatId 命中的会话标题，其次 termKey 命中，再退回 `#<id>` 原始标识。
+// - session：优先 chats/terminals 反查标题（会话改标题后跟随最新），
+//   其次消息自带的 sessionTitle 快照（会话关闭/重启后 chats 里已查不到），
+//   最后退回 `#<id>` 原始标识。
 // 全部未知时返回 {}，调用方不渲染归因行。
 export function resolveAttribution(
-  m: Pick<HubMessage, 'workspace' | 'chatId' | 'termKey'>,
+  m: Pick<HubMessage, 'workspace' | 'chatId' | 'termKey' | 'sessionTitle'>,
   chats: ChatInfo[],
   terminals: TerminalInfo[],
 ): HubAttribution {
@@ -63,7 +65,7 @@ export function resolveAttribution(
   const ws = workspaceOf(m, chats, terminals);
   if (ws) out.project = baseName(ws);
   const session =
-    titleByChatId(chats, m.chatId) ?? titleByTermKey(chats, terminals, m.termKey);
+    titleByChatId(chats, m.chatId) ?? titleByTermKey(chats, terminals, m.termKey) ?? m.sessionTitle;
   if (session) out.session = session;
   else if (m.chatId) out.session = `#${m.chatId}`;
   else if (m.termKey) out.session = `#${m.termKey}`;
