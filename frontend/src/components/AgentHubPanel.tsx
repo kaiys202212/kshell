@@ -43,7 +43,8 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 // 消息流里渲染的一条：用户发出（右）或 agent 回复（左）。
 // 数据源是 Go 侧 hub.Store 的持久历史（store.hubMessages），不再依赖瞬态 agentNotices。
 
-// kshell 客户端命令：由本前端解析执行，不投递给 agent。name 不含前导斜杠。
+// kshell 客户端命令：由本前端解析执行，不投递给 agent。name 不含前导 #。
+// / 前缀只留给 agent 技能（见 cmdMatches）；# 模式补全与执行走本列表。
 const HUB_COMMANDS: { name: string; descKey: string }[] = [
   { name: 'new', descKey: 'ui.hub.cmd_new_desc' },
   { name: 'easynew', descKey: 'ui.hub.cmd_easynew_desc' },
@@ -136,7 +137,7 @@ function useAttribution() {
   );
 }
 
-// 补全列表条目：客户端命令与 agent 技能混排，用 kind 区分选中后的行为。
+// 补全列表条目：hash 模式为客户端命令（直接执行），slash 模式为 agent 技能（切入 draft）。
 interface SlashItem {
   name: string;
   desc: string;
@@ -305,9 +306,11 @@ export default function AgentHubPanel() {
     setDraft((d) => d.replace(/@([^\s@]*)$/, `@${label} `));
   };
 
-  // ---- 斜杠命令补全：draft 命中 /xxx 时激活 ----
+  // ---- 命令补全：draft 为单个 /xxx（agent 技能）或 #xxx（客户端命令）时激活 ----
   const slashQuery = /^\/([^\s]*)$/.exec(draft)?.[1] ?? null;
+  const hashQuery = /^#([^\s]*)$/.exec(draft)?.[1] ?? null;
   const inSlashMode = slashQuery !== null;
+  const inHashMode = hashQuery !== null;
   // 默认投递目标回落链：hub 最近一次交互的 agent 优先（比 lastAgentId 更能反映
   // hub 视角的最新目标），再退 store.lastAgentId。斜杠命令目标解析与 send 共用。
   const fallbackId = useMemo(
@@ -339,21 +342,25 @@ export default function AgentHubPanel() {
     };
   }, [inSlashMode, currentTargetId]);
 
-  // 客户端命令在前，agent 技能去重（同名以客户端命令优先）在后。
-  const slashMatches = useMemo<SlashItem[]>(() => {
-    if (slashQuery === null) return [];
-    const q = slashQuery.toLowerCase();
-    const client = HUB_COMMANDS.filter((c) => c.name.startsWith(q)).map<SlashItem>((c) => ({
-      name: c.name,
-      desc: t(c.descKey),
-      kind: 'client',
-    }));
-    const agent = agentCmds
-      .filter((c) => c.Name && !HUB_COMMAND_NAMES.has(c.Name.toLowerCase()) && c.Name.toLowerCase().startsWith(q))
-      .map<SlashItem>((c) => ({ name: c.Name, desc: c.Description ?? '', kind: 'agent' }));
-    return [...client, ...agent];
-  }, [slashQuery, agentCmds, t]);
-  const slashOpen = slashQuery !== null && !slashClosed && slashMatches.length > 0;
+  // slash 模式只列 agent 技能；hash 模式只列客户端命令（# 前缀，两模式互不混排）。
+  const cmdMatches = useMemo<SlashItem[]>(() => {
+    if (slashQuery !== null) {
+      const q = slashQuery.toLowerCase();
+      return agentCmds
+        .filter((c) => c.Name && c.Name.toLowerCase().startsWith(q))
+        .map<SlashItem>((c) => ({ name: c.Name, desc: c.Description ?? '', kind: 'agent' }));
+    }
+    if (hashQuery !== null) {
+      const q = hashQuery.toLowerCase();
+      return HUB_COMMANDS.filter((c) => c.name.startsWith(q)).map<SlashItem>((c) => ({
+        name: c.name,
+        desc: t(c.descKey),
+        kind: 'client',
+      }));
+    }
+    return [];
+  }, [slashQuery, hashQuery, agentCmds, t]);
+  const cmdOpen = (slashQuery !== null || hashQuery !== null) && !slashClosed && cmdMatches.length > 0;
 
   // draft 变化即重置补全状态：Esc 关闭后继续输入要能重新弹出
   useEffect(() => {
@@ -361,11 +368,11 @@ export default function AgentHubPanel() {
     setSlashIndex(0);
   }, [draft]);
 
-  // runClientCommand 执行 kshell 客户端命令，不投递给 agent。
+  // runClientCommand 执行 kshell 客户端命令（# 前缀触发），不投递给 agent。
   const runClientCommand = (name: string) => {
     // stop / model 需要目标 agent：先校验，避免无目标时还把输入清掉
     if ((name === 'stop' || name === 'model') && !currentTargetId) {
-      useAppStore.getState().notify(t('ui.hub.need_target'), 'error');
+      useAppStore.getState().notify(t('ui.hub.need_target_drag'), 'error');
       return;
     }
     setDraft('');
@@ -497,12 +504,22 @@ export default function AgentHubPanel() {
   const send = () => {
     const text = draft.trim();
     if (!text) return;
+    // # 开头视为 kshell 客户端命令意图：取首个以 # 开头的空白分词校验
+    // （@ 提及标签可含空格，按分词跳过比正则删提及更稳），未知命令提示并保留草稿。
+    if (text.startsWith('#') || /(^|\s)#[^\s]/.test(text)) {
+      const cmdToken = text.split(/\s+/).find((w) => w.startsWith('#')) ?? '';
+      const name = cmdToken.slice(1).toLowerCase();
+      if (!HUB_COMMAND_NAMES.has(name)) {
+        useAppStore.getState().notify(t('ui.hub.unknown_cmd', { cmd: cmdToken }), 'error');
+        return;
+      }
+    }
     // 用户主动发消息即视为已接管，清掉 /easynew 的进行中提示
     setEasynewRunning(false);
     // 回落链与 currentTargetId 共用 fallbackId（见上）。
     const targetId = resolveMentionTarget(text, options, fallbackId);
     if (!targetId) {
-      useAppStore.getState().notify(t('ui.hub.need_target'), 'error');
+      useAppStore.getState().notify(t('ui.hub.need_target_drag'), 'error');
       return;
     }
     setDraft('');
@@ -851,13 +868,13 @@ export default function AgentHubPanel() {
             </ul>
           </div>
         )}
-        {slashOpen && (
+        {cmdOpen && (
           <ul
             role="listbox"
             aria-label={t('ui.hub.cmd_aria')}
             className="mb-1 max-h-48 overflow-y-auto rounded border border-border bg-card py-1 text-xs shadow-md"
           >
-            {slashMatches.map((c, i) => (
+            {cmdMatches.map((c, i) => (
               <li
                 key={`${c.kind}:${c.name}`}
                 role="option"
@@ -868,7 +885,8 @@ export default function AgentHubPanel() {
                   applySlash(c);
                 }}
               >
-                <span className="font-medium">/{c.name}</span>
+                {/* hash 模式列 # 命令，slash 模式列 / 技能（前缀随模式切换） */}
+                <span className="font-medium">{inHashMode ? '#' : '/'}{c.name}</span>
                 {c.desc && <span className="ml-2 text-muted-foreground">{c.desc}</span>}
               </li>
             ))}
@@ -881,10 +899,10 @@ export default function AgentHubPanel() {
           onChange={(e) => setDraft(e.target.value)}
           onPaste={() => void handlePaste()}
           onKeyDown={(e) => {
-            if (slashOpen && slashMatches.length > 0) {
+            if (cmdOpen && cmdMatches.length > 0) {
               if (e.key === 'ArrowDown') {
                 e.preventDefault();
-                setSlashIndex((i) => Math.min(i + 1, slashMatches.length - 1));
+                setSlashIndex((i) => Math.min(i + 1, cmdMatches.length - 1));
                 return;
               }
               if (e.key === 'ArrowUp') {
@@ -894,7 +912,7 @@ export default function AgentHubPanel() {
               }
               if (e.key === 'Enter' || e.key === 'Tab') {
                 e.preventDefault();
-                applySlash(slashMatches[Math.min(slashIndex, slashMatches.length - 1)]);
+                applySlash(cmdMatches[Math.min(slashIndex, cmdMatches.length - 1)]);
                 return;
               }
               if (e.key === 'Escape') {

@@ -162,14 +162,14 @@ describe('AgentHubPanel', () => {
     expect((box as HTMLTextAreaElement).value).toBe('');
   });
 
-  it('未 @ 且无最后交互：提示 need_target 且不发送', () => {
+  it('未 @ 且无最后交互：提示 need_target_drag 且不发送', () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '随便看看' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
-    expect(useAppStore.getState().toasts.some((t) => t.title === tt('ui.hub.need_target'))).toBe(true);
+    expect(useAppStore.getState().toasts.some((t) => t.title === tt('ui.hub.need_target_drag'))).toBe(true);
     expect((box as HTMLTextAreaElement).value).toBe('随便看看');
   });
 
@@ -609,7 +609,7 @@ describe('AgentHubPanel', () => {
     expect(screen.queryByRole('button', { name: tt('ui.hub.create') })).toBeNull();
   });
 
-  it('/easynew：有有效默认值时不弹窗直接创建，创建结束即清提示', async () => {
+  it('#easynew：有有效默认值时不弹窗直接创建，创建结束即清提示', async () => {
     api.getTools.mockResolvedValue([acpTool()]);
     // 挂起建会话：观察提示出现 → 创建结束（resolve）→ 提示立即清除（不等问题欢迎词）
     let resolveOpen: (v: unknown) => void = () => {};
@@ -623,7 +623,7 @@ describe('AgentHubPanel', () => {
     useAppStore.setState({ workspaces: [workspaceA] });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '/easynew' } });
+    fireEvent.change(box, { target: { value: '#easynew' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     // 不弹窗，创建进行中显示提示
     expect(screen.queryByLabelText(tt('ui.hub.field_project'))).toBeNull();
@@ -634,36 +634,46 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect(useAppStore.getState().chats.some((c) => c.ID === 'n6')).toBe(true));
   });
 
-  it('/easynew：默认值失效时打开新建弹窗让用户补选', async () => {
+  it('#easynew：默认值失效时打开新建弹窗让用户补选', async () => {
     api.getTools.mockResolvedValue([acpTool()]);
     saveLastCreate({ wsPath: 'D:\\ws\\gone', toolId: 'gone-tool', modelId: null });
     useAppStore.setState({ workspaces: [workspaceA] });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '/easynew' } });
+    fireEvent.change(box, { target: { value: '#easynew' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     // 弹窗打开，不直接创建
     expect(await screen.findByLabelText(tt('ui.hub.field_project'))).toBeTruthy();
     expect(api.openWorkspaceACP).not.toHaveBeenCalled();
   });
 
-  it('键入 / 展示客户端命令，并可按前缀过滤', async () => {
+  it('键入 # 展示客户端命令，并可按前缀过滤', () => {
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#' } });
+    const list = screen.getByRole('listbox', { name: tt('ui.hub.cmd_aria') });
+    expect(list).toHaveTextContent('#new');
+    expect(list).toHaveTextContent('#stop');
+    expect(list).toHaveTextContent('#model');
+    expect(list).toHaveTextContent('#clear');
+    expect(list).toHaveTextContent('#easynew');
+    fireEvent.change(box, { target: { value: '#cl' } });
+    const filtered = screen.getByRole('listbox', { name: tt('ui.hub.cmd_aria') });
+    expect(filtered).toHaveTextContent('#clear');
+    expect(filtered).not.toHaveTextContent('#new');
+  });
+
+  it('/ 补全不再混入客户端命令（/ 前缀只留给 agent 技能）', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '/' } });
-    const list = screen.getByRole('listbox', { name: tt('ui.hub.cmd_aria') });
-    expect(list).toHaveTextContent('/new');
-    expect(list).toHaveTextContent('/stop');
-    expect(list).toHaveTextContent('/model');
-    expect(list).toHaveTextContent('/clear');
-    expect(list).toHaveTextContent('/easynew');
-    fireEvent.change(box, { target: { value: '/cl' } });
-    const filtered = screen.getByRole('listbox', { name: tt('ui.hub.cmd_aria') });
-    expect(filtered).toHaveTextContent('/clear');
-    expect(filtered).not.toHaveTextContent('/new');
+    await waitFor(() => expect(api.listChatCommands).toHaveBeenCalledWith('c1'));
+    // 无 agent 技能时 slash 模式无候选，补全面板不出现（client 命令已迁到 # 模式）
+    expect(screen.queryByRole('listbox', { name: tt('ui.hub.cmd_aria') })).toBeNull();
   });
 
-  it('选中 /clear：清空本地 Hub 消息流与 agent 通知，且不投递后端', async () => {
+  it('选中 #clear：清空本地 Hub 消息流与 agent 通知，且不投递后端', async () => {
     useAppStore.setState({
       chats: [chat({ ID: 'c1' })],
       lastAgentId: 'c1',
@@ -672,7 +682,7 @@ describe('AgentHubPanel', () => {
     });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '/clear' } });
+    fireEvent.change(box, { target: { value: '#clear' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByText('旧消息')).toBeNull());
@@ -680,40 +690,68 @@ describe('AgentHubPanel', () => {
     expect(useAppStore.getState().hubMessages).toHaveLength(0);
   });
 
-  it('agent 技能与客户端命令同名时去重（客户端优先，大小写不敏感）', async () => {
+  it('agent 技能与客户端命令同名时不去重也不冲突（/ 只列 agent 技能）', async () => {
     api.listChatCommands.mockResolvedValue([{ Name: 'Clear', Description: 'agent clear' }]);
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '/' } });
     await waitFor(() => expect(api.listChatCommands).toHaveBeenCalledWith('c1'));
-    // 等待拉取完成后列表仍只含一条 clear（客户端），不出现 agent 的 Clear 重复项
+    // slash 模式只列 agent 技能：agent 的 Clear 原样出现（不再被客户端命令过滤）
     await waitFor(() => {
       const list = screen.getByRole('listbox', { name: tt('ui.hub.cmd_aria') });
-      const clearRows = within(list).getAllByText(/^\/clear$/i);
-      expect(clearRows).toHaveLength(1);
+      expect(within(list).getAllByText(/^\/clear$/i)).toHaveLength(1);
     });
   });
 
-  it('选中 /stop：对目标 agent 调 cancelChat', async () => {
+  it('选中 #stop：对目标 agent 调 cancelChat', async () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '/stop' } });
+    fireEvent.change(box, { target: { value: '#stop' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(api.cancelChat).toHaveBeenCalledWith('c1'));
   });
 
-  it('/stop 无目标时提示 need_target', () => {
+  it('#stop 无目标时提示 need_target_drag', () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '/stop' } });
+    fireEvent.change(box, { target: { value: '#stop' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(api.cancelChat).not.toHaveBeenCalled();
-    expect(useAppStore.getState().toasts.some((t) => t.title === tt('ui.hub.need_target'))).toBe(true);
+    expect(useAppStore.getState().toasts.some((t) => t.title === tt('ui.hub.need_target_drag'))).toBe(true);
     // 无目标时不消费输入，草稿保留
-    expect((box as HTMLTextAreaElement).value).toBe('/stop');
+    expect((box as HTMLTextAreaElement).value).toBe('#stop');
+  });
+
+  it('发送未知 # 命令：提示 unknown_cmd，保留草稿，不投递', () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#nope' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    expect(
+      useAppStore
+        .getState()
+        .toasts.some((t) => t.title === tt('ui.hub.unknown_cmd').replace('{{cmd}}', '#nope')),
+    ).toBe(true);
+    expect((box as HTMLTextAreaElement).value).toBe('#nope');
+  });
+
+  it('发送带 @ 提及的 # 命令：提取首词校验，未知命令仍拦截', () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '@Claude Code#c1 #nope rest' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    expect(
+      useAppStore
+        .getState()
+        .toasts.some((t) => t.title === tt('ui.hub.unknown_cmd').replace('{{cmd}}', '#nope')),
+    ).toBe(true);
   });
 
   it('agent 技能出现在命令列表，选中后切入草稿并可投递', async () => {
@@ -725,14 +763,21 @@ describe('AgentHubPanel', () => {
     await waitFor(() =>
       expect(screen.getByRole('listbox', { name: tt('ui.hub.cmd_aria') })).toHaveTextContent('/commit'),
     );
-    // 过滤到 /c：客户端命令 clear 在前，agent 技能 commit 在后。
-    fireEvent.change(box, { target: { value: '/c' } });
-    fireEvent.keyDown(box, { key: 'ArrowDown' });
     fireEvent.keyDown(box, { key: 'Enter' });
     expect((box as HTMLTextAreaElement).value).toBe('/commit ');
     fireEvent.change(box, { target: { value: '/commit fix bug' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '/commit fix bug'));
+  });
+
+  it('/ 开头但不匹配任何 agent 技能：不拦截，原样发送给 agent', async () => {
+    api.listChatCommands.mockResolvedValue([]);
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '/agent-only-cmd arg' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '/agent-only-cmd arg'));
   });
 
   it('新建 agent：agent 无模型报告时直接登记', async () => {
