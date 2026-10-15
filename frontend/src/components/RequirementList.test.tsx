@@ -7,12 +7,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import RequirementList from './RequirementList';
 import type { Requirement } from '../lib/api';
 import { tt } from '../test/i18n';
+import { useAppStore } from '../state/store';
 
 const mocks = vi.hoisted(() => ({
   listRequirements: vi.fn(),
   addRequirement: vi.fn(),
   updateRequirement: vi.fn(),
   deleteRequirement: vi.fn(),
+  setRequirementStatus: vi.fn(),
+  archiveRequirement: vi.fn(),
   markRequirementDispatched: vi.fn(),
   onRequirementsChanged: vi.fn(),
   readClipboardPaste: vi.fn(),
@@ -40,6 +43,8 @@ beforeEach(() => {
       Promise.resolve(req({ id, text, priority: p as Requirement['priority'], tags })),
   );
   mocks.deleteRequirement.mockResolvedValue(undefined);
+  mocks.setRequirementStatus.mockResolvedValue(undefined);
+  mocks.archiveRequirement.mockResolvedValue({ released: true, chatId: '' });
   mocks.markRequirementDispatched.mockResolvedValue(undefined);
   mocks.onRequirementsChanged.mockImplementation(() => () => {});
 });
@@ -235,5 +240,188 @@ describe('RequirementList', () => {
       fireEvent.paste(box, pasteEvent(true));
     });
     expect((box as HTMLTextAreaElement).value).toBe('保持原样');
+  });
+
+  // ---- 状态徽章与按状态操作 ----
+
+  it('pending 条目：状态徽章「未开始」，hover 操作为编辑+删除', async () => {
+    mocks.listRequirements.mockResolvedValue([req({ id: 'r1', text: '待派发需求' })]);
+    render(<RequirementList />);
+    const li = (await screen.findByText('待派发需求')).closest('li') as HTMLElement;
+    expect(within(li).getByText(tt('ui.requirements.status_pending'))).toBeInTheDocument();
+    expect(within(li).getByLabelText(tt('ui.requirements.edit'))).toBeInTheDocument();
+    expect(within(li).getByLabelText(tt('ui.requirements.delete'))).toBeInTheDocument();
+  });
+
+  it('active 条目：徽章「执行中」，有标记完成无编辑；点击调 setRequirementStatus(id, "done")', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '执行中需求', status: 'active' }),
+    ]);
+    render(<RequirementList />);
+    const li = (await screen.findByText('执行中需求')).closest('li') as HTMLElement;
+    expect(within(li).getByText(tt('ui.requirements.status_active'))).toBeInTheDocument();
+    expect(within(li).queryByLabelText(tt('ui.requirements.edit'))).not.toBeInTheDocument();
+    fireEvent.click(within(li).getByRole('button', { name: tt('ui.requirements.mark_done') }));
+
+    await waitFor(() => expect(mocks.setRequirementStatus).toHaveBeenCalledWith('r1', 'done'));
+  });
+
+  it('done 条目：徽章「已完成」，点击归档调 archiveRequirement；released=true 提示会话已关闭', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '已完成需求', status: 'done', chatId: 'chat-9', dispatchedTo: 'D:\\ws\\proj-a' }),
+    ]);
+    mocks.archiveRequirement.mockResolvedValue({ released: true, chatId: 'chat-9' });
+    render(<RequirementList />);
+    const li = (await screen.findByText('已完成需求')).closest('li') as HTMLElement;
+    expect(within(li).getByText(tt('ui.requirements.status_done'))).toBeInTheDocument();
+    fireEvent.click(within(li).getByRole('button', { name: tt('ui.requirements.archive_btn') }));
+
+    await waitFor(() => expect(mocks.archiveRequirement).toHaveBeenCalledWith('r1'));
+    await waitFor(() =>
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((x) =>
+            x.title.includes(
+              tt('ui.requirements.archived_released').replace('{{name}}', 'chat-9'),
+            ),
+          ),
+      ).toBe(true),
+    );
+  });
+
+  it('归档时 released=false：提示会话忙碌未关闭', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '已完成需求', status: 'done', chatId: 'chat-9' }),
+    ]);
+    mocks.archiveRequirement.mockResolvedValue({ released: false, chatId: 'chat-9' });
+    render(<RequirementList />);
+    fireEvent.click(
+      within(await screen.findByText('已完成需求').then((el) => el.closest('li') as HTMLElement)).getByRole(
+        'button',
+        { name: tt('ui.requirements.archive_btn') },
+      ),
+    );
+
+    await waitFor(() =>
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((x) =>
+            x.title.includes(
+              tt('ui.requirements.archived_busy_kept').replace('{{name}}', 'chat-9'),
+            ),
+          ),
+      ).toBe(true),
+    );
+  });
+
+  it('归档失败（非 done 等）：提示 update_failed', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '已完成需求', status: 'done' }),
+    ]);
+    mocks.archiveRequirement.mockRejectedValue(new Error('not done'));
+    render(<RequirementList />);
+    const li = (await screen.findByText('已完成需求')).closest('li') as HTMLElement;
+    fireEvent.click(within(li).getByRole('button', { name: tt('ui.requirements.archive_btn') }));
+
+    await waitFor(() =>
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((x) =>
+            x.title.includes(
+              tt('ui.requirements.update_failed').replace('{{err}}', 'not done'),
+            ),
+          ),
+      ).toBe(true),
+    );
+  });
+
+  it('主列表不含 archived 条目', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '活跃需求', status: 'active' }),
+      req({ id: 'r2', text: '已归档需求', status: 'archived', archivedAt: 1700000000 }),
+    ]);
+    render(<RequirementList />);
+    expect(await screen.findByText('活跃需求')).toBeInTheDocument();
+    expect(screen.queryByText('已归档需求')).not.toBeInTheDocument();
+  });
+
+  // ---- 归档视图 ----
+
+  async function openArchiveDialog() {
+    mocks.listRequirements.mockResolvedValue([
+      req({
+        id: 'a1',
+        text: '归档条目甲',
+        status: 'archived',
+        archivedAt: 1700000200,
+        tags: ['前端'],
+        dispatchedTo: 'D:\\ws\\proj-a',
+      }),
+      req({
+        id: 'a2',
+        text: '归档条目乙',
+        status: 'archived',
+        archivedAt: 1700000100,
+        tags: ['后端'],
+        dispatchedTo: 'D:\\ws\\proj-b',
+      }),
+      req({ id: 'live', text: '活跃需求', status: 'pending' }),
+    ]);
+    render(<RequirementList />);
+    await screen.findByText('活跃需求');
+    // 头部归档入口（archive_open），与「+ 新增」按钮并列
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.requirements.archive_open') }));
+    await screen.findByText(tt('ui.requirements.archived_title'));
+    // Radix Portal 渲染在组件树外，归档视图断言统一限定在该弹层内
+    const dialogEl = screen.getByText(tt('ui.requirements.archived_title')).closest(
+      '[role="dialog"]',
+    ) as HTMLElement;
+    return within(dialogEl);
+  }
+
+  it('归档视图：按 archivedAt 降序列出归档条目，含归档时间与项目名', async () => {
+    const dlg = await openArchiveDialog();
+    const items = dlg.getAllByText(/归档条目/);
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent('归档条目甲');
+    expect(items[1]).toHaveTextContent('归档条目乙');
+    // 项目基名展示
+    expect(dlg.getAllByText('proj-a').length).toBeGreaterThan(0);
+    // 活跃条目不进归档视图
+    expect(dlg.queryByText('活跃需求')).not.toBeInTheDocument();
+  });
+
+  it('归档视图：项目下拉过滤', async () => {
+    const dlg = await openArchiveDialog();
+    // 下拉选项为 dispatchedTo 基名去重
+    fireEvent.change(dlg.getByLabelText(tt('ui.requirements.filter_project')), {
+      target: { value: 'proj-b' },
+    });
+    expect(dlg.getByText('归档条目乙')).toBeInTheDocument();
+    expect(dlg.queryByText('归档条目甲')).not.toBeInTheDocument();
+  });
+
+  it('归档视图：关键字输入过滤（匹配 text 子串）', async () => {
+    const dlg = await openArchiveDialog();
+    fireEvent.change(dlg.getByPlaceholderText(tt('ui.requirements.filter_keyword')), {
+      target: { value: '甲' },
+    });
+    expect(dlg.getByText('归档条目甲')).toBeInTheDocument();
+    expect(dlg.queryByText('归档条目乙')).not.toBeInTheDocument();
+  });
+
+  it('归档视图：tag 点击过滤，再次点击取消', async () => {
+    const dlg = await openArchiveDialog();
+    fireEvent.click(dlg.getByRole('button', { name: '前端' }));
+    expect(dlg.getByText('归档条目甲')).toBeInTheDocument();
+    expect(dlg.queryByText('归档条目乙')).not.toBeInTheDocument();
+
+    // 再次点击取消选中，恢复全量
+    fireEvent.click(dlg.getByRole('button', { name: '前端' }));
+    expect(dlg.getByText('归档条目甲')).toBeInTheDocument();
+    expect(dlg.getByText('归档条目乙')).toBeInTheDocument();
   });
 });

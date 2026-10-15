@@ -1,22 +1,27 @@
 // RequirementList：首页左列的需求清单卡片。条目可新增/编辑/删除、可拖拽到项目卡片
 // 派发（dragstart 写入自定义 MIME + text/plain，项目卡片 onDrop 解析后建 ACP 会话）。
-// 数据流：挂载拉取 listRequirements，写操作后 Go 侧 emit "requirements:changed"，
-// 本组件订阅该事件重拉（单一数据源，不做本地乐观插入）。
-import { useCallback, useEffect, useState } from 'react';
+// 状态机：未开始(pending) → 派发后 active → 手动标记 done → 手动归档 archived；
+// active 显「标记完成」、done 显「归档」，archived 条目收进归档检索视图（只读）。
+// 数据流：挂载拉取 listRequirements（全量含 archived），写操作后 Go 侧 emit
+// "requirements:changed"，本组件订阅该事件重拉（单一数据源，不做本地乐观插入）。
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useTranslation } from 'react-i18next';
 import {
   addRequirement,
+  archiveRequirement,
   deleteRequirement,
   listRequirements,
   onRequirementsChanged,
   readClipboardPaste,
+  setRequirementStatus,
   updateRequirement,
   type Requirement,
 } from '../lib/api';
 import { backendError } from '../lib/errors';
 import { quotePathForShell } from '../lib/dragPath';
 import { baseName } from '../lib/hubAttribution';
+import { formatRelativeTime } from '../lib/format';
 import { cn } from '../lib/cn';
 import { useAppStore } from '../state/store';
 import { Badge } from './ui/badge';
@@ -32,6 +37,20 @@ function dotClass(priority: Requirement['priority']): string {
   if (priority === 'high') return 'bg-destructive';
   if (priority === 'low') return 'bg-muted-foreground';
   return 'bg-primary';
+}
+
+// 状态徽章配色（token 体系内取色）：pending 默认描边、active 主色、done 绿、archived 灰
+function statusBadgeVariant(status: Requirement['status']): 'default' | 'muted' | 'outline' {
+  if (status === 'active') return 'default';
+  if (status === 'done') return 'default';
+  if (status === 'archived') return 'muted';
+  return 'outline';
+}
+
+// 归档提示里的「会话名」：优先 chatId，否则用派发目标路径基名
+function archiveSessionName(r: Requirement): string {
+  if (r.chatId) return r.chatId;
+  return r.dispatchedTo ? baseName(r.dispatchedTo) : '';
 }
 
 // 编辑/新增对话框：受控 open，editing 非 null 表示编辑该条目。
@@ -99,7 +118,7 @@ function RequirementDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} className="w-96">
+    <Dialog open={open} onOpenChange={onOpenChange} className="w-[min(92vw,34rem)]">
       <DialogPrimitive.Title className="mb-3 text-sm font-medium">
         {editing ? t('ui.requirements.edit') : t('ui.requirements.add')}
       </DialogPrimitive.Title>
@@ -107,7 +126,7 @@ function RequirementDialog({
         {t('ui.requirements.text_label')}
         <textarea
           data-testid="req-text"
-          className="min-h-16 w-full resize-none rounded border border-border bg-card p-2 text-sm text-foreground"
+          className="min-h-32 w-full resize-none rounded border border-border bg-card p-2 text-sm text-foreground"
           placeholder={t('ui.requirements.text_placeholder')}
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -150,11 +169,135 @@ function RequirementDialog({
   );
 }
 
+// 归档检索视图：全量归档条目的只读列表，支持项目 / 关键字 / tag 过滤。
+// 数据由父组件传入（items 已是全量，这里只做过滤与排序，不重复请求）。
+function ArchiveDialog({
+  open,
+  onOpenChange,
+  items,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  items: Requirement[];
+}) {
+  const { t } = useTranslation();
+  const [project, setProject] = useState('');
+  const [keyword, setKeyword] = useState('');
+  const [tag, setTag] = useState('');
+
+  // 打开时重置过滤，避免上次的选择残留
+  useEffect(() => {
+    if (open) {
+      setProject('');
+      setKeyword('');
+      setTag('');
+    }
+  }, [open]);
+
+  const archived = useMemo(
+    () => items.filter((r) => r.status === 'archived'),
+    [items],
+  );
+  // 项目下拉选项：dispatchedTo 基名去重
+  const projects = useMemo(
+    () =>
+      [...new Set(
+        archived
+          .map((r) => (r.dispatchedTo ? baseName(r.dispatchedTo) : undefined))
+          .filter((p): p is string => !!p),
+      )],
+    [archived],
+  );
+  // tag chips：归档条目全部 tag 去重
+  const tags = useMemo(() => [...new Set(archived.flatMap((r) => r.tags))], [archived]);
+
+  // 过滤 + archivedAt 降序（0 视为最旧沉底）
+  const shown = useMemo(
+    () =>
+      archived
+        .filter((r) => (!project || (r.dispatchedTo && baseName(r.dispatchedTo) === project))
+          && (!keyword || r.text.includes(keyword))
+          && (!tag || r.tags.includes(tag)))
+        .sort((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0)),
+    [archived, project, keyword, tag],
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange} className="w-[min(92vw,42rem)]">
+      <DialogPrimitive.Title className="mb-3 text-sm font-medium">
+        {t('ui.requirements.archived_title')}
+      </DialogPrimitive.Title>
+      {archived.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">
+          {t('ui.requirements.empty')}
+        </p>
+      ) : (
+        <>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <select
+              aria-label={t('ui.requirements.filter_project')}
+              className="h-8 rounded border border-border bg-card px-2 text-sm text-foreground"
+              value={project}
+              onChange={(e) => setProject(e.target.value)}
+            >
+              <option value="">{t('ui.requirements.filter_all')}</option>
+              {projects.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+            <input
+              type="text"
+              aria-label={t('ui.requirements.filter_keyword')}
+              placeholder={t('ui.requirements.filter_keyword')}
+              className="h-8 w-40 rounded border border-border bg-card px-2 text-sm text-foreground"
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+            />
+            {tags.map((tg) => (
+              <button
+                key={tg}
+                type="button"
+                className={cn(
+                  'rounded-sm border px-1.5 py-0.5 text-xs',
+                  tag === tg
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-border text-muted-foreground hover:text-foreground',
+                )}
+                onClick={() => setTag((cur) => (cur === tg ? '' : tg))}
+              >
+                {tg}
+              </button>
+            ))}
+          </div>
+          <ul className="m-0 flex max-h-[60vh] list-none flex-col gap-2 overflow-y-auto p-0">
+            {shown.map((r) => (
+              <li key={r.id} className="flex min-w-0 items-start gap-2 rounded border border-border px-3 py-2">
+                <span className="min-w-0 flex-1">
+                  <span className="line-clamp-2 block break-words text-[13.5px] leading-relaxed">{r.text}</span>
+                  <span className="mt-1 flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                    <Badge variant="muted">{t('ui.requirements.status_archived')}</Badge>
+                    {r.tags.map((tg) => (
+                      <Badge key={tg} variant="outline">{tg}</Badge>
+                    ))}
+                    {r.dispatchedTo && <Badge variant="outline">{baseName(r.dispatchedTo)}</Badge>}
+                    <span>{r.archivedAt ? formatRelativeTime(new Date(r.archivedAt * 1000).toISOString()) : ''}</span>
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </Dialog>
+  );
+}
+
 export default function RequirementList({ className }: { className?: string }) {
   const { t } = useTranslation();
   const [items, setItems] = useState<Requirement[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Requirement | null>(null);
+  const [archiveOpen, setArchiveOpen] = useState(false);
 
   const refresh = useCallback(() => {
     listRequirements()
@@ -186,6 +329,33 @@ export default function RequirementList({ className }: { className?: string }) {
     });
   };
 
+  // 标记完成：active → done，成功靠 requirements:changed 回流刷新
+  const markDone = (r: Requirement) => {
+    void setRequirementStatus(r.id, 'done').catch((e: unknown) => {
+      useAppStore.getState().notify(t('ui.requirements.update_failed', { err: backendError(e) }), 'error');
+    });
+  };
+
+  // 归档：done → archived。released 表示关联会话是否空闲被自动关闭；
+  // 失败（非 done 等）提示 update_failed，靠 changed 事件回流刷新。
+  const archive = (r: Requirement) => {
+    void archiveRequirement(r.id)
+      .then(({ released }) => {
+        const name = archiveSessionName(r);
+        if (released) {
+          useAppStore.getState().notify(t('ui.requirements.archived_released', { name }), 'success');
+        } else {
+          useAppStore.getState().notify(t('ui.requirements.archived_busy_kept', { name }), 'info');
+        }
+      })
+      .catch((e: unknown) => {
+        useAppStore.getState().notify(t('ui.requirements.update_failed', { err: backendError(e) }), 'error');
+      });
+  };
+
+  // 活跃列表只显示非 archived 条目（listRequirements 全量返回）
+  const activeItems = useMemo(() => items.filter((r) => r.status !== 'archived'), [items]);
+
   const handleDragStart = (e: React.DragEvent<HTMLElement>, r: Requirement) => {
     e.dataTransfer.setData(REQUIREMENT_MIME, JSON.stringify({ id: r.id, text: r.text }));
     e.dataTransfer.setData('text/plain', r.text);
@@ -199,63 +369,105 @@ export default function RequirementList({ className }: { className?: string }) {
     >
       <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
         <h2 className="text-sm font-medium">{t('ui.requirements.title')}</h2>
-        <Button size="sm" variant="secondary" onClick={openAdd}>
-          + {t('ui.requirements.add')}
-        </Button>
+        <div className="flex items-center gap-1.5">
+          <Button size="sm" variant="secondary" onClick={() => setArchiveOpen(true)}>
+            {t('ui.requirements.archive_open')}
+          </Button>
+          <Button size="sm" variant="secondary" onClick={openAdd}>
+            + {t('ui.requirements.add')}
+          </Button>
+        </div>
       </div>
-      {items.length === 0 ? (
+      {activeItems.length === 0 ? (
         <EmptyState className="min-h-0 flex-1 py-6" title={t('ui.requirements.empty')} />
       ) : (
         <ul className="m-0 flex min-h-0 flex-1 list-none flex-col gap-2 overflow-y-auto p-0">
-          {items.map((r) => (
-            <li
-              key={r.id}
-              draggable
-              onDragStart={(e) => handleDragStart(e, r)}
-              className="group relative flex min-h-14 min-w-0 items-start gap-2 rounded border border-border px-3 py-2.5"
-            >
-              <span
-                data-testid="req-dot"
-                aria-hidden="true"
-                className={cn('mt-2 h-2 w-2 shrink-0 rounded-full', dotClass(r.priority))}
-              />
-              <span className="min-w-0 flex-1">
-                <span className="line-clamp-3 block break-words text-[13.5px] leading-relaxed">{r.text}</span>
-                <span className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
-                  {r.tags.map((tag) => (
-                    <Badge key={tag} variant="outline">
-                      {tag}
+          {activeItems.map((r) => {
+            const status = r.status ?? 'pending';
+            return (
+              <li
+                key={r.id}
+                draggable
+                onDragStart={(e) => handleDragStart(e, r)}
+                className="group relative flex min-h-14 min-w-0 items-start gap-2 rounded border border-border px-3 py-2.5"
+              >
+                <span
+                  data-testid="req-dot"
+                  aria-hidden="true"
+                  className={cn('mt-2 h-2 w-2 shrink-0 rounded-full', dotClass(r.priority))}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="line-clamp-3 block break-words text-[13.5px] leading-relaxed">{r.text}</span>
+                  <span className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
+                    <Badge
+                      variant={statusBadgeVariant(status)}
+                      className={cn(status === 'done' && 'bg-success/15 text-success')}
+                    >
+                      {t(`ui.requirements.status_${status}`)}
                     </Badge>
-                  ))}
-                  {r.dispatchedTo && <Badge variant="outline">{baseName(r.dispatchedTo)}</Badge>}
+                    {r.tags.map((tag) => (
+                      <Badge key={tag} variant="outline">
+                        {tag}
+                      </Badge>
+                    ))}
+                    {r.dispatchedTo && <Badge variant="outline">{baseName(r.dispatchedTo)}</Badge>}
+                  </span>
                 </span>
-              </span>
-              {/* 编辑/删除按钮：hover 显现（兄弟节点定位，避免嵌套进文本区） */}
-              <span className="absolute right-1.5 top-1.5 hidden gap-0.5 group-hover:flex">
-                <button
-                  type="button"
-                  aria-label={t('ui.requirements.edit')}
-                  title={t('ui.requirements.edit')}
-                  className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                  onClick={() => openEdit(r)}
-                >
-                  <PencilGlyph />
-                </button>
-                <button
-                  type="button"
-                  aria-label={t('ui.requirements.delete')}
-                  title={t('ui.requirements.delete')}
-                  className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
-                  onClick={() => remove(r)}
-                >
-                  <TrashGlyph />
-                </button>
-              </span>
-            </li>
-          ))}
+                {/* 操作按钮：hover 显现（兄弟节点定位，避免嵌套进文本区）。
+                    pending：编辑+删除；active：标记完成；done：归档；archived 不进活跃列表。 */}
+                <span className="absolute right-1.5 top-1.5 hidden gap-0.5 group-hover:flex">
+                  {status === 'pending' && (
+                    <>
+                      <button
+                        type="button"
+                        aria-label={t('ui.requirements.edit')}
+                        title={t('ui.requirements.edit')}
+                        className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        onClick={() => openEdit(r)}
+                      >
+                        <PencilGlyph />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={t('ui.requirements.delete')}
+                        title={t('ui.requirements.delete')}
+                        className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
+                        onClick={() => remove(r)}
+                      >
+                        <TrashGlyph />
+                      </button>
+                    </>
+                  )}
+                  {status === 'active' && (
+                    <button
+                      type="button"
+                      aria-label={t('ui.requirements.mark_done')}
+                      title={t('ui.requirements.mark_done')}
+                      className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      onClick={() => markDone(r)}
+                    >
+                      <CheckGlyph />
+                    </button>
+                  )}
+                  {status === 'done' && (
+                    <button
+                      type="button"
+                      aria-label={t('ui.requirements.archive_btn')}
+                      title={t('ui.requirements.archive_btn')}
+                      className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      onClick={() => archive(r)}
+                    >
+                      <ArchiveGlyph />
+                    </button>
+                  )}
+                </span>
+              </li>
+            );
+          })}
         </ul>
       )}
       <RequirementDialog open={dialogOpen} editing={editing} onOpenChange={setDialogOpen} />
+      <ArchiveDialog open={archiveOpen} onOpenChange={setArchiveOpen} items={items} />
     </section>
   );
 }
@@ -278,6 +490,24 @@ function TrashGlyph() {
   return (
     <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
       <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" />
+    </svg>
+  );
+}
+
+// 标记完成按钮图标（对勾）
+function CheckGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path strokeLinecap="round" strokeLinejoin="round" d="m5 13 4 4L19 7" />
+    </svg>
+  );
+}
+
+// 归档按钮图标（收纳盒）
+function ArchiveGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 8h16M5 8v11h14V8M9 12h6" />
     </svg>
   );
 }

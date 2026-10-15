@@ -28,7 +28,7 @@ export async function dispatchRequirement(id: string, text: string, wsPath: stri
   if (!result.Chat) throw new Error('no_chat');
   const chat = result.Chat;
   await sendChatPrompt(chat.ID, text);
-  // chatID 暂传 '' 占位，后续任务接入真实会话 ID
-  await markRequirementDispatched(id, wsPath, '');
+  // 落盘派发标记：关联真实会话 ID，归档时据此判断会话能否自动关闭
+  await markRequirementDispatched(id, wsPath, chat.ID);
   useAppStore.getState().setLastAgentId(chat.ID);
 }
