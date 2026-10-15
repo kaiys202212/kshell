@@ -50,7 +50,7 @@ type session struct {
 	knownIDs       map[string]bool // 打开时扫描结果里已有的磁盘会话，禁止绑到本新建聊天
 	promptTitleSet bool
 
-	queue [][]acp.ContentBlock // 忙时排队的用户消息（按 blocks 整体投递），turn_done 后按序送出
+	queue []queuedMsg // 忙时排队的用户消息（按 blocks 整体投递），turn_done 后按序送出
 
 	modelState *acp.SessionModelState // agent 以 v1 models 形态报告的可用模型
 	modelConfig *acp.SessionConfigOption // agent 以 configOptions(id=model) 形态报告的模型选项
@@ -60,6 +60,13 @@ type session struct {
 type permissionResult struct {
 	outcome string
 	option  string
+}
+
+// queuedMsg 是忙时排队的用户消息：blocks 为投递内容，hubMsgID 为关联的
+// AgentHub 消息 ID（供撤回定位与投递回调；普通 Prompt 为空串）。
+type queuedMsg struct {
+	blocks   []acp.ContentBlock
+	hubMsgID string
 }
 
 type sessionHandler struct {
@@ -76,6 +83,10 @@ type Manager struct {
 	onCommands   func(id string, cmds []Command) // 锁外；技能列表推送
 	autoAllow    func() bool // bypass：自动选 allow 类 option，不弹窗
 	mcpFor       func(chatID string) []acp.McpServerStdio
+	// Hub 状态回调（锁外执行）：onHubQueued 在投递竞态兜底改入队时触发，
+	// onHubDelivered 在带 hubMsgID 的条目真正发起 conn.Prompt 前触发。
+	onHubQueued    func(hubMsgID string)
+	onHubDelivered func(hubMsgID string)
 
 	mu      sync.Mutex
 	byKey   map[string]*session
@@ -112,6 +123,16 @@ func (m *Manager) SetOnInfo(fn func(Info)) {
 func (m *Manager) SetOnCommands(fn func(id string, cmds []Command)) {
 	m.mu.Lock()
 	m.onCommands = fn
+	m.mu.Unlock()
+}
+
+// SetOnHubCallbacks 注册 Hub 队列状态回调（锁外执行；任一可为 nil）。
+// queued：deliverTurn 竞态兜底入队时触发（PromptBlocksHub 的忙分支由返回值表达，不触发）；
+// delivered：带 hubMsgID 的条目真正发起 conn.Prompt 前触发。
+func (m *Manager) SetOnHubCallbacks(queued, delivered func(hubMsgID string)) {
+	m.mu.Lock()
+	m.onHubQueued = queued
+	m.onHubDelivered = delivered
 	m.mu.Unlock()
 }
 
@@ -275,7 +296,7 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	out := s.info
 	// starting 期间入队的消息没有 turn_done 可等，必须在此主动投递首条，
 	// 否则会静默永不投递（队列里已补过时间线，投递时不再补）。
-	var next []acp.ContentBlock
+	var next queuedMsg
 	hasNext := false
 	if len(s.queue) > 0 {
 		next = s.queue[0]
@@ -399,56 +420,96 @@ func attachmentMetas(blocks []acp.ContentBlock) []AttachmentMeta {
 
 // Prompt 向会话发起一轮纯文本输入；忙时入队，当前轮结束后自动投递。
 func (m *Manager) Prompt(id, text string) error {
-	return m.PromptBlocks(id, []acp.ContentBlock{{Type: "text", Text: text}})
+	_, err := m.PromptBlocksHub(id, []acp.ContentBlock{{Type: "text", Text: text}}, "")
+	return err
 }
 
 // PromptBlocks 向会话发起一轮多形态内容块输入（文本 + 附件）；忙时入队。
 func (m *Manager) PromptBlocks(id string, blocks []acp.ContentBlock) error {
+	_, err := m.PromptBlocksHub(id, blocks, "")
+	return err
+}
+
+// PromptHub 向会话发起一轮纯文本输入并携带 AgentHub 消息 ID：
+// 返回 queued=true 表示忙时已入队（false 为立即投递）。
+func (m *Manager) PromptHub(id, text, hubMsgID string) (bool, error) {
+	return m.PromptBlocksHub(id, []acp.ContentBlock{{Type: "text", Text: text}}, hubMsgID)
+}
+
+// PromptBlocksHub 同 PromptBlocks，但队列条目携带 hubMsgID；返回是否入队。
+func (m *Manager) PromptBlocksHub(id string, blocks []acp.ContentBlock, hubMsgID string) (bool, error) {
 	if len(blocks) == 0 {
-		return nil
+		return false, nil
 	}
+	qm := queuedMsg{blocks: blocks, hubMsgID: hubMsgID}
 	m.mu.Lock()
 	s := m.byID[id]
 	if s == nil || s.exited {
 		m.mu.Unlock()
-		return errNotFound
+		return false, errNotFound
 	}
 	// 忙时入队：消息不丢，且照常补进时间线，界面立刻可见。
 	if s.info.Status != StatusReady {
-		s.queue = append(s.queue, blocks)
+		s.queue = append(s.queue, qm)
 		userUpdate := s.appendUserBlocksLocked(blocks)
 		onUpdate := m.onUpdate
 		m.mu.Unlock()
 		if onUpdate != nil {
 			onUpdate(id, userUpdate)
 		}
-		return nil
+		return true, nil
 	}
 	m.mu.Unlock()
-	return m.deliverTurn(id, s, blocks, true)
+	return false, m.deliverTurn(id, s, qm, true)
+}
+
+// RecallQueued 从指定会话的队列中移除 hubMsgID 对应的条目（真移除，agent 收不到）；
+// 未找到（不存在或已投递）返回 false。
+func (m *Manager) RecallQueued(id, hubMsgID string) bool {
+	if hubMsgID == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.byID[id]
+	if s == nil {
+		return false
+	}
+	for i, q := range s.queue {
+		if q.hubMsgID == hubMsgID {
+			s.queue = append(s.queue[:i], s.queue[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
 
 // deliverTurn 发起一轮；record 为 true 时补 user 时间线并 emit。
-// 队列里的消息在入队时已补过时间线（见 PromptBlocks 忙分支），投递时必须 record=false，
+// 队列里的消息在入队时已补过时间线（见 PromptBlocksHub 忙分支），投递时必须 record=false，
 // 否则同一条用户消息会在时间线里出现两次。
-func (m *Manager) deliverTurn(id string, s *session, blocks []acp.ContentBlock, record bool) error {
+func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) error {
+	blocks := qm.blocks
 	m.mu.Lock()
 	if cur := m.byID[id]; cur != s || s.exited {
 		m.mu.Unlock()
 		return errNotFound
 	}
 	if s.info.Status != StatusReady {
-		// 竞态兜底：期间又有轮次启动，改入队；补时间线与 emit 与 PromptBlocks 忙分支一致，
+		// 竞态兜底：期间又有轮次启动，改入队；补时间线与 emit 与 PromptBlocksHub 忙分支一致，
 		// 否则该消息要等下一轮收尾才可见。
-		s.queue = append(s.queue, blocks)
+		s.queue = append(s.queue, qm)
 		var userUpdate Update
 		onUpdate := m.onUpdate
 		if record {
 			userUpdate = s.appendUserBlocksLocked(blocks)
 		}
+		onQueued := m.onHubQueued
 		m.mu.Unlock()
 		if record && onUpdate != nil {
 			onUpdate(id, userUpdate)
+		}
+		if qm.hubMsgID != "" && onQueued != nil {
+			onQueued(qm.hubMsgID)
 		}
 		return nil
 	}
@@ -474,6 +535,15 @@ func (m *Manager) deliverTurn(id string, s *session, blocks []acp.ContentBlock, 
 	}
 
 	go func() {
+		// 带 hubMsgID 的条目在此刻真正开始投递：先回调再发（回调做状态修正，锁外执行）。
+		if qm.hubMsgID != "" {
+			m.mu.Lock()
+			onDelivered := m.onHubDelivered
+			m.mu.Unlock()
+			if onDelivered != nil {
+				onDelivered(qm.hubMsgID)
+			}
+		}
 		stop, err := conn.Prompt(ctx, sid, blocks)
 		m.mu.Lock()
 		if cur := m.byID[id]; cur != s || s.exited {
@@ -493,7 +563,7 @@ func (m *Manager) deliverTurn(id string, s *session, blocks []acp.ContentBlock, 
 			s.history = append([]Update(nil), s.history[len(s.history)-maxHistory:]...)
 		}
 		// 取出队列下一条（若有），在锁内决定，锁外发起；入队时已补时间线，投递不再补
-		var next []acp.ContentBlock
+		var next queuedMsg
 		hasNext := false
 		if !s.exited && len(s.queue) > 0 {
 			next = s.queue[0]

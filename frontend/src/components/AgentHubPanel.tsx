@@ -18,13 +18,14 @@ import {
   loadHubArchive,
   openWorkspaceACP,
   readClipboardPaste,
+  recallHubMessage,
   sendChatPrompt,
   setChatModel,
 } from '../lib/api';
 import { buildMentionOptions, resolveMentionTarget, type MentionAgent } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
 import { quotePathForShell } from '../lib/dragPath';
-import { backendError } from '../lib/errors';
+import { backendError, translateBackend } from '../lib/errors';
 import { attributionText, baseName, resolveAttribution } from '../lib/hubAttribution';
 import { markdownBubbleClass } from '../lib/markdownStyles';
 import { sameWorkspacePath } from '../lib/workspacePath';
@@ -47,6 +48,9 @@ const HUB_COMMANDS: { name: string; descKey: string }[] = [
   { name: 'clear', descKey: 'ui.hub.cmd_clear_desc' },
 ];
 const HUB_COMMAND_NAMES = new Set(HUB_COMMANDS.map((c) => c.name.toLowerCase()));
+
+// 快速回复预设短语（钉钉式卡片快捷回复）：点击直接发给该卡片归因的 agent。
+const QUICK_REPLIES = ['ui.hub.quick_continue', 'ui.hub.quick_ok', 'ui.hub.quick_rephrase'] as const;
 
 // 消息流里 agent 气泡 / 用户气泡的归因行：项目 · 会话（chats/terminals 反查）。
 // 组件内共用 chats 与 terminals 镜像，抽成工厂避免两处重复传参。
@@ -314,6 +318,47 @@ export default function AgentHubPanel() {
       });
   };
 
+  // quickTarget 从 agent 卡片归因解析目标 chat ID：chatId 优先，termKey 反查兜底。
+  const quickTarget = (m: HubMessage): string | null => {
+    if (m.chatId && chats.some((c) => c.ID === m.chatId)) return m.chatId;
+    if (m.termKey) {
+      const c = chats.find((x) => x.Key === m.termKey);
+      if (c) return c.ID;
+    }
+    return null;
+  };
+
+  // quickReply 直接以该卡片归因的 agent 为目标发送预设短语（免输 @）。
+  const quickReply = (m: HubMessage, key: string) => {
+    const targetId = quickTarget(m);
+    if (!targetId) {
+      useAppStore.getState().notify(t('ui.hub.need_target'), 'error');
+      return;
+    }
+    const text = t(key);
+    void sendChatPrompt(targetId, text)
+      .then(() => {
+        useAppStore.getState().setLastAgentId(targetId);
+      })
+      .catch((e: unknown) => {
+        useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
+      });
+  };
+
+  // recall 撤回排队中的用户消息：后端真移除 + 标记已撤回；乐观更新，hub:changed 回流兜底。
+  const recall = (m: HubMessage) => {
+    void recallHubMessage(m.id)
+      .then(() => {
+        useAppStore
+          .getState()
+          .setHubMessages(useAppStore.getState().hubMessages.map((x) => (x.id === m.id ? { ...x, status: 'recalled' } : x)));
+        useAppStore.getState().notify(t('ui.hub.recall_done'), 'info');
+      })
+      .catch((e: unknown) => {
+        useAppStore.getState().notify(t('ui.hub.recall_failed', { err: backendError(e) }), 'error');
+      });
+  };
+
   // openHistory 展开归档入口：拉月份列表。
   const openHistory = () => {
     const next = !historyOpen;
@@ -472,19 +517,58 @@ export default function AgentHubPanel() {
             <div key={`h${m.id}`} className="text-right">
               {attr && <div className="mb-0.5 text-[11px] text-muted-foreground">{attr}</div>}
               {/* 气泡内强制居左：外层 text-right 只负责把卡片推到行尾，避免长文贴右边缘 */}
-              <div className="selectable inline-block max-w-[85%] break-words overflow-hidden rounded-md bg-primary px-3 py-1.5 text-left text-primary-foreground">
-                <span className="whitespace-pre-wrap">{m.text}</span>
+              <div className="group relative inline-block max-w-[85%]">
+                {m.status === 'recalled' ? (
+                  // 已撤回：灰显卡片 + 标签，原文保留（在原消息上标记，不删除）
+                  <div className="selectable inline-block break-words overflow-hidden rounded-md bg-muted px-3 py-1.5 text-left text-muted-foreground">
+                    <span className="mb-0.5 block text-[11px] opacity-80">{t('ui.hub.recalled')}</span>
+                    <span className="whitespace-pre-wrap opacity-70">{m.text}</span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="selectable inline-block break-words overflow-hidden rounded-md bg-primary px-3 py-1.5 text-left text-primary-foreground">
+                      <span className="whitespace-pre-wrap">{m.text}</span>
+                    </div>
+                    {m.status === 'queued' && (
+                      <div className="absolute right-1 bottom-full mb-1 hidden group-hover:flex">
+                        <button
+                          type="button"
+                          className="rounded border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground hover:text-destructive"
+                          onClick={() => recall(m)}
+                        >
+                          {t('ui.hub.recall')}
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </div>
           ) : (
             <div key={`h${m.id}`} className="text-left">
-              <div className="selectable inline-block max-w-[85%] break-words overflow-hidden rounded-md bg-muted px-3 py-1.5 [&_pre]:whitespace-pre-wrap">
-                {/* 归因行：工具 · 项目 · 会话；缺项跳过，全缺只剩工具名 */}
-                <div className="mb-0.5 text-[11px] text-muted-foreground">
-                  {[toolDisplayName(m.tool ?? ''), attr].filter(Boolean).join(' · ')}
+              <div className="group inline-block max-w-[85%]">
+                <div className="selectable break-words overflow-hidden rounded-md bg-muted px-3 py-1.5 [&_pre]:whitespace-pre-wrap">
+                  {/* 归因行：工具 · 项目 · 会话；缺项跳过，全缺只剩工具名 */}
+                  <div className="mb-0.5 text-[11px] text-muted-foreground">
+                    {[toolDisplayName(m.tool ?? ''), attr].filter(Boolean).join(' · ')}
+                  </div>
+                  {/* 正文过 translateBackend：ack 卡片的 wire key 翻译成当前语言，普通文本原样返回 */}
+                  <div className={markdownBubbleClass}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{translateBackend(m.text)}</ReactMarkdown>
+                  </div>
                 </div>
-                <div className={markdownBubbleClass}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+                {/* 快速回复：hover 显示预设短语，点击直达该卡片归因的 agent */}
+                <div className="mt-1 hidden flex-wrap gap-1 group-hover:flex">
+                  {QUICK_REPLIES.map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      className="rounded border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                      onClick={() => quickReply(m, key)}
+                    >
+                      {t(key)}
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
