@@ -20,6 +20,7 @@ const api = vi.hoisted(() => ({
   listChatModels: vi.fn(),
   setChatModel: vi.fn(),
   cancelChat: vi.fn(),
+  closeChat: vi.fn(),
   listHubMessages: vi.fn(),
   listHubArchive: vi.fn(),
   loadHubArchive: vi.fn(),

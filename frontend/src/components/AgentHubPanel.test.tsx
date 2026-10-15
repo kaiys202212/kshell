@@ -19,6 +19,7 @@ const api = vi.hoisted(() => ({
   listChatModels: vi.fn(),
   setChatModel: vi.fn(),
   cancelChat: vi.fn(),
+  closeChat: vi.fn(),
   listHubMessages: vi.fn(),
   listHubArchive: vi.fn(),
   loadHubArchive: vi.fn(),
@@ -63,6 +64,7 @@ beforeEach(() => {
   api.listChatModels.mockResolvedValue({ Current: '', Models: [] });
   api.setChatModel.mockResolvedValue(undefined);
   api.cancelChat.mockResolvedValue(undefined);
+  api.closeChat.mockResolvedValue(undefined);
   api.listHubMessages.mockResolvedValue([]);
   api.listHubArchive.mockResolvedValue([]);
   api.loadHubArchive.mockResolvedValue([]);
@@ -150,16 +152,17 @@ describe('AgentHubPanel', () => {
     });
     render(<AgentHubPanel />);
     const pill = screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') });
-    // 两个 workspace 各一个分组 ul（同名 aria-label），按数量判断面板开关
-    expect(screen.queryAllByRole('list', { name: tt('ui.hub.session_panel_aria') })).toHaveLength(0);
+    // 外层容器单个 region（session_panel_aria），内层 ul 不再带 aria-label
+    expect(screen.queryByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
     fireEvent.click(pill);
-    const lists = screen.getAllByRole('list', { name: tt('ui.hub.session_panel_aria') });
+    const region = screen.getByRole('region', { name: tt('ui.hub.session_panel_aria') });
     const panel = pill.parentElement as HTMLElement;
     expect(panel).toHaveTextContent('重构认证');
     expect(panel).toHaveTextContent('乙');
-    expect(lists.length).toBeGreaterThanOrEqual(2);
+    expect(region).toHaveTextContent('重构认证');
+    expect(region).toHaveTextContent('乙');
     fireEvent.click(pill);
-    expect(screen.queryAllByRole('list', { name: tt('ui.hub.session_panel_aria') })).toHaveLength(0);
+    expect(screen.queryByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
   });
 
   it('点击面板会话行：记录 lastAgentId 并收起面板（不再跳工作区页签）', () => {
@@ -175,12 +178,12 @@ describe('AgentHubPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
     fireEvent.click(screen.getByText('重构认证'));
     expect(setLast).toHaveBeenCalledWith('c1');
-    expect(screen.queryByRole('list', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
+    expect(screen.queryByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
     expect(setActive).not.toHaveBeenCalled();
     expect(focus).not.toHaveBeenCalled();
   });
 
-  it('空闲会话行有关闭按钮，点击调 cancelChat 且面板保持展开；忙碌行无关闭按钮', async () => {
+  it('点空闲会话的 ×：该会话行从面板消失（removeChat + closeChat），面板保持展开；忙碌行无 ×', async () => {
     useAppStore.setState({
       chats: [chat({ ID: 'c1' }), chat({ ID: 'c2', Title: '乙', Status: 'running' })],
       lastAgentId: 'c1',
@@ -191,13 +194,17 @@ describe('AgentHubPanel', () => {
     const closes = screen.getAllByRole('button', { name: tt('ui.hub.close_session') });
     expect(closes).toHaveLength(1);
     fireEvent.click(closes[0]);
-    await waitFor(() => expect(api.cancelChat).toHaveBeenCalledWith('c1'));
-    // 成功后面板保持展开
-    expect(screen.getByRole('list', { name: tt('ui.hub.session_panel_aria') })).toBeTruthy();
+    // 断言结果而非实现：c1 行从面板消失，c2 仍在，面板保持展开
+    await waitFor(() => expect(screen.queryByText('重构认证')).toBeNull());
+    expect(screen.getByText('乙')).toBeTruthy();
+    expect(screen.getByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeTruthy();
+    // 后端 Manager.Close 已被调用（幂等），不再调 cancelChat（那只会取消当前轮）
+    await waitFor(() => expect(api.closeChat).toHaveBeenCalledWith('c1'));
+    expect(api.cancelChat).not.toHaveBeenCalled();
   });
 
-  it('关闭会话失败时提示 close_session_failed', async () => {
-    api.cancelChat.mockRejectedValue(new Error('boom'));
+  it('关闭会话失败时提示 close_session_failed 且行不消失', async () => {
+    api.closeChat.mockRejectedValue(new Error('boom'));
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
@@ -209,13 +216,15 @@ describe('AgentHubPanel', () => {
           .toasts.some((t) => t.title === tt('ui.hub.close_session_failed').replace('{{err}}', 'boom')),
       ).toBe(true),
     );
+    // 失败不摘除：行仍在面板里，可重试（胶囊同文案，故在 region 内断言）
+    expect(screen.getByRole('region', { name: tt('ui.hub.session_panel_aria') })).toHaveTextContent('重构认证');
   });
 
   it('会话行可拖拽：dragStart 写入 @ 标签到 dataTransfer', () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
-    const panel = screen.getByRole('list', { name: tt('ui.hub.session_panel_aria') });
+    const panel = screen.getByRole('region', { name: tt('ui.hub.session_panel_aria') });
     const row = within(panel).getByText('重构认证').closest('div')!;
     const dt = {
       data: {} as Record<string, string>,
@@ -271,9 +280,20 @@ describe('AgentHubPanel', () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
-    expect(screen.getByRole('list', { name: tt('ui.hub.session_panel_aria') })).toBeTruthy();
+    expect(screen.getByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeTruthy();
     fireEvent.mouseDown(document.body);
-    expect(screen.queryByRole('list', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
+    expect(screen.queryByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
+  });
+
+  it('胶囊位置随归档展开下移避让，收起后回到标题行旁', () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const bar = screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }).parentElement as HTMLElement;
+    expect(bar.className).toContain('top-11');
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.history') }));
+    expect(bar.className).toContain('top-56');
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.history') }));
+    expect(bar.className).toContain('top-11');
   });
 
   it('@ 指定目标发送：投递到该 agent 并记录 lastAgentId', async () => {

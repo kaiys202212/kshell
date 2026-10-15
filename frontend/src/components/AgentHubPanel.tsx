@@ -11,6 +11,7 @@ import type { ChatCommand, ChatInfo, ChatModelsView, HubArchiveMonth, HubMessage
 import {
   cancelChat,
   clearHubMessages,
+  closeChat,
   getTools,
   getModelConfig,
   listChatCommands,
@@ -517,11 +518,15 @@ export default function AgentHubPanel() {
     setSessionPanelOpen(false);
   };
 
-  // closeSession 关闭空闲会话：cancelChat 失败提示；成功后列表随 chats 状态自动收缩（面板保持开）。
+  // closeSession 关闭空闲会话：走与 WorkspaceTab 一致的正确组合——后端 Manager.Close
+  // （closeChat，幂等，真摘除会话；cancelChat 只取消当前轮，对空闲会话是 no-op），
+  // 成功后才从 store 摘除（失败保留行，可重试），列表随 chats 状态自动收缩（面板保持开）。
   const closeSession = (id: string) => {
-    void cancelChat(id).catch((e: unknown) =>
-      useAppStore.getState().notify(t('ui.hub.close_session_failed', { err: backendError(e) }), 'error'),
-    );
+    void closeChat(id)
+      .then(() => useAppStore.getState().removeChat(id))
+      .catch((e: unknown) =>
+        useAppStore.getState().notify(t('ui.hub.close_session_failed', { err: backendError(e) }), 'error'),
+      );
   };
 
   // sessionDragLabel 从 mention 候选反查拖拽用的 @ 标签；找不到兜底会话标题。
@@ -739,8 +744,11 @@ export default function AgentHubPanel() {
         </div>
       )}
 
-      {/* 浮动会话指示器：默认目标胶囊 + 可展开的全量会话面板（absolute，不占固定行高） */}
-      <div ref={sessionBarRef} className="absolute right-3 top-11 z-10">
+      {/* 浮动会话指示器：默认目标胶囊 + 可展开的全量会话面板（absolute，不占固定行高）。
+          historyOpen 时归档块（max-h-40 + padding）渲染在标题行下方，胶囊下移避让遮挡；
+          取舍：固定下移量比测量归档块实际高度简单可靠（归档内容可变），代价是展开期间
+          胶囊位置略低于实际需要。 */}
+      <div ref={sessionBarRef} className={cn('absolute right-3 z-10', historyOpen ? 'top-56' : 'top-11')}>
         <button
           type="button"
           aria-label={t('ui.hub.session_bar_aria')}
@@ -762,7 +770,12 @@ export default function AgentHubPanel() {
           <ChevronDown aria-hidden className={cn('h-3 w-3 shrink-0 text-muted-foreground transition-transform', sessionPanelOpen && 'rotate-180')} />
         </button>
         {sessionPanelOpen && (
-          <div className="mt-1 max-h-64 w-64 overflow-y-auto rounded border border-border bg-card p-1.5 text-xs shadow-md">
+          // role=region 供测试/读屏定位整个面板；分组标题用 workspace 基名，内层 ul 不再加 label
+          <div
+            role="region"
+            aria-label={t('ui.hub.session_panel_aria')}
+            className="mt-1 max-h-64 w-64 overflow-y-auto rounded border border-border bg-card p-1.5 text-xs shadow-md"
+          >
             {groups.length === 0 ? (
               <span className="text-muted-foreground">{t('ui.hub.empty')}</span>
             ) : (
@@ -771,7 +784,7 @@ export default function AgentHubPanel() {
                   <span className={cn(MONO, 'truncate')} title={g.workspace}>
                     {wsBaseName(g.workspace)}
                   </span>
-                  <ul aria-label={t('ui.hub.session_panel_aria')} className="m-0 flex list-none flex-col gap-1 p-0">
+                  <ul className="m-0 flex list-none flex-col gap-1 p-0">
                     {g.rows.map((c) => {
                       const busy = c.Status === 'running' || c.Status === 'starting';
                       return (
@@ -801,16 +814,14 @@ export default function AgentHubPanel() {
                                 {toolDisplayName(c.ToolID)} · {t(statusKey(c.Status))}
                               </span>
                             </button>
-                            {/* 空闲会话才可关闭（忙碌 agent 正在跑任务）；stopPropagation 避免触发行点击 */}
+                            {/* 空闲会话才可关闭（忙碌 agent 正在跑任务）；行内容是独立 button，
+                                × 与行点击本就无冒泡联动，无需 stopPropagation */}
                             {!busy && (
                               <button
                                 type="button"
                                 aria-label={t('ui.hub.close_session')}
                                 className="shrink-0 text-muted-foreground hover:text-destructive"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  closeSession(c.ID);
-                                }}
+                                onClick={() => closeSession(c.ID)}
                               >
                                 ×
                               </button>
