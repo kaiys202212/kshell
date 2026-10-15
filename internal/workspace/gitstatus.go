@@ -14,7 +14,8 @@ import (
 )
 
 // gitStatusTimeout 单次 git status 的上限：仓库很大时 porcelain 也要秒级，超过即放弃。
-const gitStatusTimeout = 10 * time.Second
+// var 仅为测试可缩短；生产代码不得修改。
+var gitStatusTimeout = 10 * time.Second
 
 // gitCmd 构造 git 子进程命令：统一在这里隐藏控制台窗口。
 // 桌面版（windowsgui 子系统）自己没有控制台，进入项目页签时前端会立刻拉取
@@ -92,6 +93,13 @@ func InspectGit(root string) (GitReport, error) {
 	return rep, nil
 }
 
+// gitRunner 抽象 git 子进程执行（可注入测试：模拟挂起/超时）。
+type gitRunner func(ctx context.Context, root string, args ...string) ([]byte, error)
+
+func defaultGitRunner(ctx context.Context, root string, args ...string) ([]byte, error) {
+	return gitCmd(ctx, root, args...).Output()
+}
+
 // gitStatusAt 执行 `git status --porcelain=v1 -z --untracked-files=all --ignored=matching`，
 // 返回 relPath（'/' 分隔，相对 root）→ 状态码。
 // porcelain 的路径相对「仓库根」输出，而工作区可能是仓库的子目录
@@ -99,25 +107,35 @@ func InspectGit(root string) (GitReport, error) {
 // isRepo=false 表示不是 git 仓库或 git 不可用（二者对前端等价：不显示标记）；
 // 超时/其它执行异常以 error 返回。
 func gitStatusAt(root string) (status map[string]string, isRepo bool, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
-	defer cancel()
+	return gitStatusAtWith(context.Background(), root, nil)
+}
 
-	topOut, execErr := gitCmd(ctx, root, "rev-parse", "--show-toplevel").Output()
+func gitStatusAtWith(parent context.Context, root string, run gitRunner) (status map[string]string, isRepo bool, err error) {
+	ctx, cancel := context.WithTimeout(parent, gitStatusTimeout)
+	defer cancel()
+	if run == nil {
+		run = defaultGitRunner
+	}
+
+	topOut, execErr := run(ctx, root, "rev-parse", "--show-toplevel")
 	if execErr != nil {
+		// 非仓库（退出码非 0）不算错；超时/进程被杀要让上层看到——
+		// 静默判为「非仓库」会把网络盘卡死的仓库伪装成没有 git 标记。
+		if ctx.Err() != nil {
+			return nil, false, ctx.Err()
+		}
 		return nil, false, nil
 	}
 	top := filepath.Clean(strings.TrimSpace(string(topOut)))
 
-	cmd := gitCmd(ctx, root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	if execErr := cmd.Run(); execErr != nil {
+	out, execErr := run(ctx, root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching")
+	if execErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return nil, true, ctx.Err()
 		}
 		return nil, false, nil
 	}
-	return parsePorcelainZ(out.Bytes(), root, top), true, nil
+	return parsePorcelainZ(out, root, top), true, nil
 }
 
 func gitBranch(root string) string {

@@ -443,12 +443,18 @@ func (a *App) CancelChatPermission(id, requestID string) error {
 }
 
 // CloseChat 关闭聊天会话（幂等），前端关闭聊天页签时调用。
+// 关闭后队列清空、排队消息不再投递，Hub store 里该会话的 queued 状态
+// 必须同步失效，否则前端永远显示「排队中」而撤回必失败。
 func (a *App) CloseChat(id string) error {
 	m := a.chats()
 	if m == nil {
 		return errNotReady
 	}
-	return m.Close(id)
+	err := m.Close(id)
+	if store := a.snapshot().HubStore; store != nil {
+		store.ClearQueuedByChat(id)
+	}
+	return err
 }
 
 // ListChats 返回全部聊天会话快照，供前端还原页签。

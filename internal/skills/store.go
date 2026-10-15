@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/yangk/kshell/internal/atomfile"
 )
 
 // Store 管理 ~/.kshell/skills 实体与 manifest。
@@ -124,11 +126,7 @@ func (s *Store) SaveManifest(m Manifest) error {
 		return err
 	}
 	path := filepath.Join(s.Root, "manifest.json")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return atomfile.Write(path, b, 0o755)
 }
 
 // UpsertInstalled 合并一条已安装记录。

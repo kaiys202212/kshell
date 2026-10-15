@@ -302,6 +302,60 @@ func TestSendChatPromptQueuedAndRecall(t *testing.T) {
 	t.Fatal("撤回后状态未更新")
 }
 
+// CloseChat 后队列清空（Manager.Close），但 Hub store 里该会话的 queued 消息
+// 没有任何状态修正路径——前端永远显示「排队中可撤回」而撤回必失败。
+// 关闭会话必须把这些 queued 消息清为已失效（status 置空）。
+func TestCloseChatClearsHubQueuedStatus(t *testing.T) {
+	a, store, rec := newHubTestApp(t)
+	conn := &fakeChatConn{waitCh: make(chan struct{})}
+	conn.promptGate = make(chan struct{})
+	b := &queueGateBackend{conn: conn}
+	m := newChatManagerWith(rec.emit, b, nil, nil, a.recordHubAgentMessage)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := m.Prompt(info.ID, "first"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatusDesktop(t, m, info.ID)
+	if err := a.SendChatPrompt(info.ID, "second"); err != nil {
+		t.Fatal(err)
+	}
+	u := waitHubText(t, store, "second")
+	if u.Status != hub.StatusQueued {
+		t.Fatalf("前置：应标记 queued: %+v", u)
+	}
+
+	if err := a.CloseChat(info.ID); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	// 关闭后该会话的 queued 消息不得再显示排队中
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		found := false
+		for _, mm := range store.List() {
+			if mm.ID == u.ID {
+				if mm.Status == hub.StatusQueued {
+					t.Fatalf("关闭会话后 queued 消息应失效: %+v", mm)
+				}
+				found = true
+			}
+		}
+		if found {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("消息丢失")
+}
+
 // 已送达的消息撤回报 err.hub.not_queued。
 func TestRecallHubMessageNotQueued(t *testing.T) {
 	a, store, rec := newHubTestApp(t)

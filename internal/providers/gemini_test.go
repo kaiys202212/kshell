@@ -47,6 +47,30 @@ func TestGeminiParseSessionWithoutID(t *testing.T) {
 	}
 }
 
+// TestGeminiParseSessionTruncatedHead 覆盖 2MB 截断：单 JSON 会话超长时 head
+// 是残缺 JSON（截掉尾部），json.Unmarshal 会失败把好会话记成 failed。
+// 用流式 Decoder 只取首个 JSON 值，截断尾部不致命——sessionId/标题在头部就能解析。
+func TestGeminiParseSessionTruncatedHead(t *testing.T) {
+	path := filepath.Join("testdata", "gemini", "session.json")
+	head, err := ReadHead(path, 64*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 模拟截断：砍掉尾部 40% 字节（messages 数组必然被腰斩）
+	cut := head[:len(head)*6/10]
+
+	got, err := (Gemini{}).ParseSession(path, cut)
+	if err != nil {
+		t.Fatalf("截断 head 不应解析失败: %v", err)
+	}
+	if got.ID != "gemini-7f3c91" {
+		t.Fatalf("id = %q", got.ID)
+	}
+	if got.Workspace != `D:\data\workspace\demo` {
+		t.Fatalf("workspace = %q", got.Workspace)
+	}
+}
+
 func TestGeminiFilePatternIsJSON(t *testing.T) {
 	if got := (Gemini{}).SessionFilePattern(); got != "*.json" {
 		t.Fatalf("pattern = %q, want *.json", got)

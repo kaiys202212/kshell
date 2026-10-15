@@ -227,6 +227,27 @@ func (s *Store) ClearQueuedStatus() {
 	}
 }
 
+// ClearQueuedByChat 把指定会话的 queued 消息清为失效（会话关闭时调用）：
+// Manager.Close 已清空内存队列，消息不会再投递，但 store 状态没人修正，
+// 前端会永远显示「排队中」且撤回必失败。
+func (s *Store) ClearQueuedByChat(chatID string) {
+	if chatID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := false
+	for i := range s.live {
+		if s.live[i].ChatID == chatID && s.live[i].Status == StatusQueued {
+			s.live[i].Status = ""
+			changed = true
+		}
+	}
+	if changed {
+		_ = s.writeLive()
+	}
+}
+
 // Clear 清空 live 消息（归档保留，符合「只增不删」）。
 func (s *Store) Clear() error {
 	s.mu.Lock()

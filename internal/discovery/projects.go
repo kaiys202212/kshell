@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yangk/kshell/internal/atomfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -288,22 +289,11 @@ func (s *ProjectStore) saveLocked() error {
 	if s.path == "" {
 		return errEmptyProjectPath
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return err
-	}
 	data, err := yaml.Marshal(s.data)
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return atomfile.Write(s.path, data, 0o755)
 }
 
 // ApplyProjects 把项目表叠加到扫描结果上（每次调用都是纯函数，可反复调用）：

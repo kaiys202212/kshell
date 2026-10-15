@@ -375,7 +375,13 @@ func repoPathArgs(wsRoot, repoRel string, paths []string) (abs string, rels []st
 	}
 	for _, p := range paths {
 		p = strings.TrimSpace(strings.ReplaceAll(p, `\`, `/`))
-		if p == "" || strings.Contains(p, "..") {
+		if p == "" {
+			return "", nil, errRepoOutside
+		}
+		// 逐段判断：段恰为 ..（含 Clean 消解后的穿越）拒绝；文件名本身含 ..
+		//（如 v1..v2.md）是合法名字，不得被 Contains("..") 一刀切误伤。
+		cleaned := filepath.ToSlash(filepath.Clean(filepath.FromSlash(p)))
+		if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 			return "", nil, errRepoOutside
 		}
 		rels = append(rels, p)

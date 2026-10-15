@@ -112,6 +112,30 @@ func TestResolveRepo_拒绝逃逸(t *testing.T) {
 	}
 }
 
+// TestStageAllowsDotDotInFileName 覆盖 `..` 误伤：文件名本身含 `..`（如
+// v1..v2.md）是合法名字，不得被 Contains("..") 拒绝；真正的路径穿越
+//（段恰为 ..）仍必须拒绝。
+func TestStageAllowsDotDotInFileName(t *testing.T) {
+	skipIfNoGit(t)
+	root := t.TempDir()
+	initRepo(t, root)
+	writeFile(t, filepath.Join(root, "v1..v2.md"), "ok\n")
+	gitRun(t, root, "add", "v1..v2.md")
+	gitRun(t, root, "commit", "-m", "init")
+
+	// 合法文件名含 .. 可 stage
+	if err := Stage(root, "", []string{"v1..v2.md"}); err != nil {
+		t.Fatalf("文件名含 .. 不应被拒: %v", err)
+	}
+	// 段为 .. 的穿越仍拒绝
+	if err := Stage(root, "", []string{"../escape.txt"}); err == nil {
+		t.Fatal("路径穿越应被拒绝")
+	}
+	if err := Stage(root, "", []string{"a/../../escape.txt"}); err == nil {
+		t.Fatal("多级穿越应被拒绝")
+	}
+}
+
 func TestSCMStatus_嵌套仓(t *testing.T) {
 	skipIfNoGit(t)
 	root := t.TempDir()

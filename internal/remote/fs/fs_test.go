@@ -188,6 +188,27 @@ func TestWriteFileRoundTripViaFake(t *testing.T) {
 	}
 }
 
+// TestWriteFileCleansTempOnFailure 覆盖远端临时文件残留：cat/mv 中途失败时
+// .kshell-write.* 会留在远端目录。命令必须带失败清理分支（rm -f）且
+// 失败退出码不被 rm 吞掉（exit 1）。
+func TestWriteFileCleansTempOnFailure(t *testing.T) {
+	var gotCmd string
+	f := &FS{
+		Conn: remote.Connection{ID: "c1"},
+		Run: func(_ context.Context, _ remote.Connection, cmd string, _ []byte) ([]byte, []byte, error) {
+			gotCmd = cmd
+			return nil, nil, nil
+		},
+	}
+	_ = f.WriteFile(context.Background(), "/ws", "a.txt", []byte("x"))
+	if !strings.Contains(gotCmd, `rm -f "$tmp"`) {
+		t.Fatalf("写命令应带失败清理: %s", gotCmd)
+	}
+	if !strings.Contains(gotCmd, "exit 1") {
+		t.Fatalf("清理后失败退出码必须传播（exit 1）: %s", gotCmd)
+	}
+}
+
 func TestSearchParsesFindIname(t *testing.T) {
 	var gotCmd string
 	f := &FS{

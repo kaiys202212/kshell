@@ -80,6 +80,42 @@ func TestSaveIsAtomicAndRoundTrips(t *testing.T) {
 	}
 }
 
+// TestSaveConcurrentNoTempCollision 覆盖并发保存互踩：固定 config.yaml.tmp
+// 文件名下，两个并发 Save 在 Windows 上第二个 Rename 会因文件被占用而失败。
+// 改用 os.CreateTemp 唯一临时文件后并发保存必须全部成功、无 .tmp 残留。
+func TestSaveConcurrentNoTempCollision(t *testing.T) {
+	p := tempPaths(t)
+	if err := os.MkdirAll(p.Root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		go func(i int) {
+			c := Default()
+			c.MaxDepth = 3 + i
+			done <- Save(p, c)
+		}(i)
+	}
+	for i := 0; i < 8; i++ {
+		if err := <-done; err != nil {
+			t.Fatalf("并发 Save 不应失败: %v", err)
+		}
+	}
+	entries, err := os.ReadDir(p.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Fatalf("并发保存后残留临时文件: %s", e.Name())
+		}
+	}
+	// 最终文件必须可解析（任一次成功写的结果）
+	if _, err := Load(p); err != nil {
+		t.Fatalf("并发保存后配置应可加载: %v", err)
+	}
+}
+
 func TestLoadRecoversFromCorruptConfig(t *testing.T) {
 	p := tempPaths(t)
 	if err := os.MkdirAll(p.Root, 0o755); err != nil {

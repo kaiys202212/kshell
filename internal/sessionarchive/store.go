@@ -5,9 +5,10 @@ package sessionarchive
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
+
+	"github.com/yangk/kshell/internal/atomfile"
 )
 
 type file struct {
@@ -136,12 +137,5 @@ func (s *Store) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return err
-	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.path)
+	return atomfile.Write(s.path, append(b, '\n'), 0o755)
 }

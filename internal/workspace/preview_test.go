@@ -79,6 +79,23 @@ func TestPreviewTruncatesLargeFile(t *testing.T) {
 	}
 }
 
+// TestPreviewExactSizeNotTruncated 覆盖误报：文件大小恰好等于 maxBytes 时
+// 内容读完了，不得标记 truncated（旧逻辑 n == maxBytes && err == nil 会误判）。
+func TestPreviewExactSizeNotTruncated(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "exact.txt")
+	content := strings.Repeat("y", 100) // 恰好 100 字节
+	write(t, path, content)
+
+	got := PreviewFile(path, 100, 10)
+	if got.Truncated {
+		t.Fatalf("恰好等大的文件不应报 truncated")
+	}
+	if got.Text != content {
+		t.Fatalf("完整内容应可读, got %q", got.Text)
+	}
+}
+
 func TestPreviewTextRespectsMaxLines(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "many.txt")

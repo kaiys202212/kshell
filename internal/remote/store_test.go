@@ -116,6 +116,27 @@ func TestDelete(t *testing.T) {
 	}
 }
 
+// TestAddRapidSameTargetUniqueIDs 覆盖 newID 碰撞：同 target 连续快速 Add
+// （如批量导入候选）时 UnixNano()%100000 后缀可能重复，ID 冲突会让后续
+// Update/Delete 打到错误条目。ID 必须互不相同。
+func TestAddRapidSameTargetUniqueIDs(t *testing.T) {
+	store := tempStore(t)
+	seen := map[string]bool{}
+	for i := 0; i < 50; i++ {
+		added, err := store.Add(Connection{Name: "dup", Host: "10.0.0.1", User: "root"})
+		if err != nil {
+			t.Fatalf("Add #%d: %v", i, err)
+		}
+		if seen[added.ID] {
+			t.Fatalf("ID 碰撞: %s", added.ID)
+		}
+		seen[added.ID] = true
+	}
+	if len(store.All()) != 50 {
+		t.Fatalf("应有 50 条连接, got %d", len(store.All()))
+	}
+}
+
 func TestConnectionPasswordRoundTrip(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "connections.yaml"))
 	_, err := store.Add(Connection{Name: "p", Host: "h", Password: "s3cret"})
