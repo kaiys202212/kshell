@@ -182,6 +182,29 @@ function lastHubAgentId(messages: HubMessage[], options: MentionOption[], chats:
   return null;
 }
 
+// 自动滚动偏好的 localStorage key（JSON 布尔；缺省 true = 默认跟随最新消息）
+const AUTO_SCROLL_KEY = 'kshell.hub.autoScroll';
+
+// readAutoScrollPref 读自动滚动偏好；缺失/损坏一律回落 true（默认开启）。
+function readAutoScrollPref(): boolean {
+  try {
+    const raw = localStorage.getItem(AUTO_SCROLL_KEY);
+    if (raw === null) return true;
+    return JSON.parse(raw) === true;
+  } catch {
+    return true;
+  }
+}
+
+// writeAutoScrollPref 写偏好；写失败静默（辅助功能）。
+function writeAutoScrollPref(v: boolean): void {
+  try {
+    localStorage.setItem(AUTO_SCROLL_KEY, JSON.stringify(v));
+  } catch {
+    // 隐私模式/配额：静默
+  }
+}
+
 export default function AgentHubPanel() {
   const { t } = useTranslation();
   const chats = useAppStore((s) => s.chats);
@@ -200,6 +223,23 @@ export default function AgentHubPanel() {
   const [archiveMonths, setArchiveMonths] = useState<HubArchiveMonth[]>([]);
   const [archiveMessages, setArchiveMessages] = useState<HubMessage[]>([]);
   const [activeMonth, setActiveMonth] = useState<string | null>(null);
+  // 自动滚动：开启时新消息把消息流滚到底；关闭后自由翻历史不被打断。
+  const [autoScroll, setAutoScroll] = useState(readAutoScrollPref);
+  const logRef = useRef<HTMLDivElement>(null);
+
+  // 消息或开关变化时按需滚底：重新勾选立即到底，取消后不再跟随。
+  useEffect(() => {
+    if (!autoScroll) return;
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [hubMessages, autoScroll]);
+
+  const toggleAutoScroll = () => {
+    setAutoScroll((v) => {
+      writeAutoScrollPref(!v);
+      return !v;
+    });
+  };
 
   // 挂载时拉取持久历史（Hub 消息源在 Go 侧磁盘；hub:changed 事件由 App 订阅后回填 store）。
   useEffect(() => {
@@ -667,8 +707,21 @@ export default function AgentHubPanel() {
         </div>
       )}
 
+      {/* 自动滚动开关：关掉后翻历史不被新消息打断；勾选立即回到底部 */}
+      <div className="flex shrink-0 justify-end">
+        <label className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground">
+          <input
+            type="checkbox"
+            data-testid="hub-auto-scroll"
+            checked={autoScroll}
+            onChange={toggleAutoScroll}
+          />
+          {t('ui.hub.auto_scroll')}
+        </label>
+      </div>
+
       {/* 水平内边距避免气泡贴边/挤滚动条；gap-3 拉开卡片垂直间距 */}
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-2" role="log" aria-live="polite">
+      <div ref={logRef} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-2" role="log" aria-live="polite">
         {hubMessages.map((m) => {
           const attr = attrOf(m);
           return m.kind === 'user' ? (

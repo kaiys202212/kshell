@@ -827,7 +827,8 @@
       "recalled": "Recalled",
       "recall": "Recall",
       "recall_done": "Message recalled",
-      "recall_failed": "Recall failed: {{err}}"
+      "recall_failed": "Recall failed: {{err}}",
+      "auto_scroll": "Auto-scroll"
     },
     "requirements": {
       "title": "Requirements",
