@@ -13,6 +13,7 @@ const api = vi.hoisted(() => ({
   sendChatPrompt: vi.fn(),
   openWorkspaceACP: vi.fn(),
   getTools: vi.fn(),
+  getModelConfig: vi.fn(),
   readClipboardPaste: vi.fn(),
   listChatCommands: vi.fn(),
   listChatModels: vi.fn(),
@@ -48,6 +49,15 @@ beforeEach(() => {
   api.sendChatPrompt.mockResolvedValue(undefined);
   api.openWorkspaceACP.mockResolvedValue({ Kind: 'chat' });
   api.getTools.mockResolvedValue([]);
+  api.getModelConfig.mockResolvedValue({
+    Enabled: false,
+    Preset: '',
+    OpenAIBaseURL: '',
+    AnthropicBaseURL: '',
+    Models: [],
+    ActiveModel: '',
+    APIKeySet: false,
+  });
   api.readClipboardPaste.mockResolvedValue({ Text: '', Path: '' });
   api.listChatCommands.mockResolvedValue([]);
   api.listChatModels.mockResolvedValue({ Current: '', Models: [] });
@@ -443,6 +453,50 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'claude'));
     await waitFor(() => expect(useAppStore.getState().chats.some((c) => c.ID === 'n1')).toBe(true));
     expect(useAppStore.getState().lastAgentId).toBe('n1');
+  });
+
+  it('新建 agent：模型下拉合并 kshell 注入模型并去重', async () => {
+    api.getTools.mockResolvedValue([acpTool()]);
+    api.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Preset: 'openai',
+      OpenAIBaseURL: 'https://h/',
+      AnthropicBaseURL: 'https://h/',
+      Models: ['glm-5.3-flash', 'deepseek-v4.1-flash'],
+      ActiveModel: 'glm-5.3-flash',
+      APIKeySet: true,
+    });
+    useAppStore.setState({ workspaces: [workspaceA] });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
+    const select = (await screen.findByLabelText(tt('ui.hub.field_model'))) as HTMLSelectElement;
+    // 有模型时直接列模型（无空「默认」选项，既有行为）；无模型时才只剩「默认模型」
+    await waitFor(() => expect(select.options).toHaveLength(2));
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toContain('glm-5.3-flash');
+    expect(values).toContain('deepseek-v4.1-flash');
+    expect(values[0]).toBe('glm-5.3-flash'); // 注入模型在前
+    // 缓存模型与注入模型重复时去重：缓存 m1 与注入 glm 重名（用不同 key 模拟不重复）
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.cancel') }));
+    saveToolModels('claude', ['glm-5.3-flash', 'cache-only']);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
+    const refreshed = (await screen.findByLabelText(tt('ui.hub.field_model'))) as HTMLSelectElement;
+    await waitFor(() => expect(refreshed.options).toHaveLength(3)); // 2 注入 + cache-only，glm 去重
+    const merged = Array.from(refreshed.options).map((o) => o.value).filter(Boolean);
+    expect(new Set(merged).size).toBe(merged.length);
+    expect(merged[0]).toBe('glm-5.3-flash'); // 注入模型在前
+    expect(merged).toContain('cache-only');
+  });
+
+  it('新建 agent：getModelConfig 失败时静默回退仅默认选项', async () => {
+    api.getTools.mockResolvedValue([acpTool()]);
+    api.getModelConfig.mockRejectedValue(new Error('no binding'));
+    useAppStore.setState({ workspaces: [workspaceA] });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
+    const select = (await screen.findByLabelText(tt('ui.hub.field_model'))) as HTMLSelectElement;
+    await waitFor(() => expect(select.options).toHaveLength(1)); // 仅「默认模型」
+    expect(select.value).toBe('');
   });
 
   it('新建 agent：单窗体含项目/工具/模型三字段，选模型创建后自动切换', async () => {

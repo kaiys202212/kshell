@@ -12,6 +12,7 @@ import {
   cancelChat,
   clearHubMessages,
   getTools,
+  getModelConfig,
   listChatCommands,
   listChatModels,
   listHubArchive,
@@ -869,7 +870,8 @@ export default function AgentHubPanel() {
 
 // NewAgentDialog：单窗体新建。项目/工具/模型三字段同屏，一次点击完成创建
 // （session/new 不接受模型参数，模型在 runAgentCreate 里建会话后再 SetModel）。
-// 打开时按 lastCreate 预填；模型下拉来自本地缓存（loadToolModels），空值即「默认模型」。
+// 打开时按 lastCreate 预填；模型下拉合并 kshell 注入模型（设置页 model.models，
+// 打开时拉 getModelConfig）与本地缓存（loadToolModels），空值即「默认模型」。
 function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const { t } = useTranslation();
   const workspaces = useAppStore((s) => s.workspaces);
@@ -878,6 +880,8 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
   const [toolId, setToolId] = useState('');
   const [busy, setBusy] = useState(false);
   const [modelId, setModelId] = useState('');
+  // kshell 注入模型清单：打开时拉取，失败静默（下拉是辅助功能，回落纯缓存）
+  const [injectedModels, setInjectedModels] = useState<string[]>([]);
   // seq 使关闭后在途的 create 失效，避免其 setState 污染下次打开。
   const seqRef = useRef(0);
   // 记录上次 open 值：预填只在 open 从 false→true 时执行，
@@ -909,6 +913,10 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
         });
       })
       .catch(() => {});
+    // kshell 注入模型（设置页 model.models）：拉取失败静默，回落仅缓存
+    void getModelConfig()
+      .then((cfg) => setInjectedModels(cfg.Models ?? []))
+      .catch(() => setInjectedModels([]));
     setWsPath((cur) => {
       if (cur && workspaces.some((w) => sameWorkspacePath(w.Path, cur))) return cur;
       if (last && workspaces.some((w) => sameWorkspacePath(w.Path, last.wsPath))) return last.wsPath;
@@ -948,9 +956,10 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     if (ok && seq === seqRef.current) onOpenChange(false);
   };
 
-  // 模型下拉选项：当前工具的本地缓存，渲染期直接同步读（localStorage 成本极低，
-  // toolId 变化或缓存被写入后下次渲染自然拿到最新列表）
-  const modelOptions = toolId ? loadToolModels(toolId) : [];
+  // 模型下拉选项：kshell 注入模型在前、工具缓存模型在后，Set 去重。
+  // 渲染期直接同步读 localStorage（成本极低，toolId/缓存变化后下次渲染即刷新）
+  const cacheModels = toolId ? loadToolModels(toolId) : [];
+  const modelOptions = [...new Set([...injectedModels, ...cacheModels])];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange} className="w-80">
