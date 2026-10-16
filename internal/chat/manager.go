@@ -381,6 +381,9 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 		s.info.SessionID = sessionID
 	}
 	s.info.Status = StatusReady
+	// session/load 重放可能在握手期推来历史工具更新并登记进 inFlightTools；
+	// 重放的执行态在本进程并不真实在跑，清空防 turn_done 因「在途非空」永久保持 running
+	s.inFlightTools = make(map[string]bool)
 	out := s.info
 	// starting 期间入队的消息没有 turn_done 可等，必须在此主动投递首条，
 	// 否则会静默永不投递（队列里已补过时间线，投递时不再补）。
@@ -646,6 +649,10 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 			return
 		}
 		s.promptInFlight = false
+		if err != nil {
+			// 轮次异常结束：在途工具不会再有终态更新，清掉防状态永久卡 running
+			s.inFlightTools = make(map[string]bool)
+		}
 		// 提前返回 prompt 的 agent（codebuddy 等）可能仍有在途工具（子任务）：
 		// 保持 running，等工具终态后的静默回退收尾；否则照旧回 ready。
 		// turn_done 事件两种情况都照发，前端由后续活动更新拉回（5474856 规则）。

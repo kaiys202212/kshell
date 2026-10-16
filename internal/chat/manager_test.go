@@ -1182,8 +1182,7 @@ func TestManagerPromptDeliversWhileActivityRunning(t *testing.T) {
 }
 
 // Close 后静默回退定时器不得再触发（不推 meta、不复活状态）。
-func TestManagerCloseStopsIdleFallback(t *testing.T) {
-	m, b, _, infoCh := newIdleTestManager(t)
+func TestManagerCloseStopsIdleFallback(t *testing.T) {	m, b, _, infoCh := newIdleTestManager(t)
 	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1205,5 +1204,57 @@ func TestManagerCloseStopsIdleFallback(t *testing.T) {
 			t.Fatalf("Close 后不得再推送 meta: %+v", meta)
 		}
 	default:
+	}
+}
+
+// session/load 重放在握手期推来的历史工具更新不得登记为在途：
+// 重放的执行态在本进程并不真实在跑，若污染 inFlightTools，
+// turn_done 会因「在途非空」永久保持 running。
+func TestManagerLoadReplayDoesNotPolluteInFlightTools(t *testing.T) {
+	old := activityIdleFallback
+	activityIdleFallback = 60 * time.Millisecond
+	t.Cleanup(func() { activityIdleFallback = old })
+	m, b, _ := newTestManager(t)
+	b.conn.initGate = make(chan struct{})
+	opened := make(chan Info, 1)
+	go func() {
+		info, err := m.Open("session:s1", Info{Kind: KindSession, SessionID: "s1", Workspace: "/w"}, Spec{Path: "x"}, "s1")
+		if err != nil {
+			opened <- Info{}
+			return
+		}
+		opened <- info
+	}()
+	waitStatus(t, m, "c1", StatusStarting)
+	// 重放：历史里未终态的工具
+	b.last.SessionUpdate("s1", json.RawMessage(`{"sessionUpdate":"tool_call","toolCallId":"old1","title":"Task","status":"in_progress"}`))
+	close(b.conn.initGate)
+	info := <-opened
+	if info.ID == "" {
+		t.Fatal("open failed")
+	}
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, info.ID, StatusReady)
+	// 静默期后仍应 ready（无幽灵在途把状态钉在 running）
+	time.Sleep(150 * time.Millisecond)
+	if got, ok := m.Get(info.ID); !ok || got.Status != StatusReady {
+		t.Fatalf("重放污染在途工具导致状态异常: %+v", got)
+	}
+}
+
+// exited 是终态：进程退出后迟到的活动更新不得把状态复活成 running。
+func TestManagerActivityDoesNotResurrectExited(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.conn.crash()
+	waitStatus(t, m, info.ID, StatusExited)
+	b.last.SessionUpdate("sess-new", json.RawMessage(`{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"t"}}`))
+	if got, ok := m.Get(info.ID); !ok || got.Status != StatusExited {
+		t.Fatalf("exited 被活动更新复活: %+v", got)
 	}
 }
