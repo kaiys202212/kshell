@@ -571,7 +571,8 @@ export default function ChatView({ chat, active }: Props) {
           <DialogPrimitive.Title className="mb-1 text-sm font-medium">{t('ui.chat.permission_title')}</DialogPrimitive.Title>
           <p className="mb-3 text-xs text-muted-foreground">{permission.ToolCall.Title || permission.ToolCall.Name || t('ui.chat.tool_call_fallback')}</p>
           <div className="flex flex-col gap-2">
-            {permission.Options.map((o) => (
+            {/* Go 侧 nil slice 序列化为 null（agent 推送空 Options 时），必须兜底空数组 */}
+            {(permission.Options ?? []).map((o) => (
               <button key={o.OptionID} className="rounded border border-border px-3 py-1.5 text-sm"
                 onClick={() => {
                   // 先乐观清掉弹窗，避免 api 往返期间遮罩不消失

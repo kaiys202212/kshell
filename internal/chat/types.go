@@ -113,6 +113,8 @@ type PermissionRequest struct {
 	RequestID string             `json:"RequestID"`
 	SessionID string             `json:"SessionID"`
 	ToolCall  ToolCall           `json:"ToolCall"`
+	// Options 由 awaitPermission 逐项 append 构造；agent 推送空列表时保持 nil，
+	// 会被序列化成 null。前端用 ?? [] 兜底，这里仍初始化为空切片保证 JSON 恒为数组。
 	Options   []PermissionOption `json:"Options"`
 }
 

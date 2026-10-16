@@ -1143,7 +1143,9 @@ func (m *Manager) awaitPermission(ctx context.Context, id, sessionID, requestID 
 	s.pending[requestID] = ch
 	m.mu.Unlock()
 
-	req := PermissionRequest{RequestID: requestID, SessionID: sessionID, ToolCall: toToolCall(p.ToolCall)}
+	// Options 预置非 nil 空切片：agent 推送空选项列表时避免序列化成 null，
+	// 前端 permission.Options.map 不至于在 null 上崩溃（渲染层另有 ?? 兜底）。
+	req := PermissionRequest{RequestID: requestID, SessionID: sessionID, ToolCall: toToolCall(p.ToolCall), Options: []PermissionOption{}}
 	for _, o := range p.Options {
 		req.Options = append(req.Options, PermissionOption{OptionID: o.OptionID, Name: o.Name, Kind: o.Kind})
 	}
