@@ -16,7 +16,8 @@ export interface MentionOption {
   detail?: string; // 第二行补充「项目名 · 会话标题」，仅展示，不参与匹配
 }
 
-// buildMentionOptions 生成补全项：用工具展示名 + 会话 id（后端稳定自增 c1/c2）拼唯一展示名。
+// buildMentionOptions 生成补全项：用工具展示名 + 会话 id（后端进程内自增、
+// 带 bootID 前缀跨进程不重复）拼唯一展示名。
 // 必须顺序无关：早先按列表顺序编号（#1/#2）会在 scan:done 重建 chats 后漂移，
 // 同一条 @…#2 会投给不同会话。改用 id 后，label↔id 映射不随列表顺序变化。
 // detail 供下拉列表第二行展示项目与会话标题（label 写入草稿，不宜过长）。

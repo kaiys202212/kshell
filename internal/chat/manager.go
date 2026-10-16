@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -105,8 +106,8 @@ type Manager struct {
 
 	// bootID 是本 Manager 实例的唯一标识，参与会话 ID 生成。纯递增序列
 	// c1/c2/... 在进程重启后归零，落盘的 chatId（需求绑定、hub 归因）会撞上
-	// 新一轮同名 ID，造成假绑定。组成：纳秒时间戳 + 包级实例计数，后者兜底
-	// 同一计时器刻度内创建多个实例的场景（Windows 计时器精度粗）。
+	// 新一轮同名 ID，造成假绑定。组成：纳秒时间戳 + PID + 包级实例计数，
+	// 后两者兜底同刻度多实例（Windows 计时器精度粗）与多进程并发。
 	bootID string
 	mu      sync.Mutex
 	byKey   map[string]*session
@@ -122,7 +123,7 @@ func NewManager(b Backend,
 	return &Manager{
 		backend: b, onUpdate: onUpdate, onPermission: onPermission, onExit: onExit,
 		byKey: make(map[string]*session), byID: make(map[string]*session),
-		bootID: fmt.Sprintf("%s%x", strconv.FormatInt(time.Now().UnixNano(), 36), managerSeq.Add(1)),
+		bootID: fmt.Sprintf("%s%x_%x", strconv.FormatInt(time.Now().UnixNano(), 36), os.Getpid(), managerSeq.Add(1)),
 	}
 }
 

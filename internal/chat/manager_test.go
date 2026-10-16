@@ -855,6 +855,8 @@ func waitAnyStatus(t *testing.T, m *Manager, want string) string {
 	return ""
 }
 
+// TestManagerPromptQueuesWhileStarting 验证 starting 态 Prompt 入队、就绪后投递
+//（否则握手期消息会静默卡死）。
 func TestManagerPromptQueuesWhileStarting(t *testing.T) {
 	m, b, _ := newTestManager(t)
 	b.conn.initGate = make(chan struct{}) // 卡住 Initialize，让会话停在 StatusStarting
