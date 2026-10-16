@@ -3,6 +3,7 @@ package claudeenv
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -65,10 +66,12 @@ func TestGitBashEnvPathBashInjects(t *testing.T) {
 }
 
 // bashOnPath：SystemRoot 下的 bash.exe 是 WSL 存根，跳过后应命中 PATH 后段的 git-bash。
+// 同时覆盖大小写不敏感前缀排除（SystemRoot 故意传小写）与空 PATH 项跳过。
 func TestBashOnPathSkipsSystemRootStub(t *testing.T) {
 	sysRoot := t.TempDir() // SystemRoot 与 git 目录必须不同根，否则 git-bash 也被当存根跳过
 	stubDir := filepath.Join(sysRoot, "System32")
-	gitDir := filepath.Join(t.TempDir(), "git", "bin")
+	gitRoot := filepath.Join(t.TempDir(), "git")
+	gitDir := filepath.Join(gitRoot, "bin")
 	for _, dir := range []string{stubDir, gitDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
@@ -77,8 +80,41 @@ func TestBashOnPathSkipsSystemRootStub(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	withEnv(t, "SystemRoot", sysRoot)
-	withEnv(t, "PATH", stubDir+string(os.PathListSeparator)+gitDir)
+	// PATH 命中判定要求 git-bash（同目录须有 git.exe），纯 bash.exe 不算。
+	if err := os.WriteFile(filepath.Join(gitDir, "git.exe"), nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withEnv(t, "SystemRoot", strings.ToLower(sysRoot))
+	withEnv(t, "PATH", stubDir+string(os.PathListSeparator)+""+string(os.PathListSeparator)+gitDir)
+
+	got, ok := bashOnPath()
+	if !ok || got != filepath.Join(gitDir, "bash.exe") {
+		t.Fatalf("bashOnPath = (%q, %v), want (%q, true)", got, ok, filepath.Join(gitDir, "bash.exe"))
+	}
+}
+
+// bashOnPath：目录里有 bash.exe 但没有 git.exe（MSYS2/Cygwin 的 bash），
+// 不视为 git-bash，继续扫后续目录。
+func TestBashOnPathRequiresGitSibling(t *testing.T) {
+	plainDir := filepath.Join(t.TempDir(), "msys2", "usr", "bin")
+	gitRoot := filepath.Join(t.TempDir(), "git")
+	gitDir := filepath.Join(gitRoot, "bin")
+	for _, dir := range []string{plainDir, gitDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "bash.exe"), nil, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(gitRoot, "cmd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitRoot, "cmd", "git.exe"), nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withEnv(t, "SystemRoot", t.TempDir())
+	withEnv(t, "PATH", plainDir+string(os.PathListSeparator)+gitDir)
 
 	got, ok := bashOnPath()
 	if !ok || got != filepath.Join(gitDir, "bash.exe") {
