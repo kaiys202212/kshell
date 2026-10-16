@@ -244,7 +244,13 @@ func TestForWorkspaceACP_CursorNodeEntryInjectsProxy(t *testing.T) {
 }
 
 // 非 cursor 工具不得注入任何环境变量，防止回归为全量注入。
+// claude 是 git-bash 注入对象，这里 mock 探测未命中使 env 确定为空
+//（真实探测依赖本机 PATH/注册表，不能作为断言依据）。
 func TestForWorkspaceACP_OtherToolNoEnv(t *testing.T) {
+	oldGitBash := gitBashEnvFn
+	t.Cleanup(func() { gitBashEnvFn = oldGitBash })
+	gitBashEnvFn = func() (string, bool) { return "", false }
+
 	ps := []providers.Provider{providers.Claude{}}
 	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"})
 	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{}, PermissionOptions{})
@@ -404,7 +410,7 @@ func TestForWorkspaceACP_NonClaudeNoGitBash(t *testing.T) {
 	}
 }
 
-// GitBashEnv 报不需要（如 PATH 上已有 bash）时不注入该变量。
+// GitBashEnv 报不需要（如探测不到 git-bash）时不注入该变量。
 func TestForWorkspaceACP_GitBashUnavailableSkips(t *testing.T) {
 	oldGitBash := gitBashEnvFn
 	t.Cleanup(func() { gitBashEnvFn = oldGitBash })

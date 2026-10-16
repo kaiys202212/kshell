@@ -4,8 +4,8 @@ package claudeenv
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"golang.org/x/sys/windows/registry"
 )
@@ -29,12 +29,24 @@ var (
 		}
 		return "", false
 	}
-	lookBash = func() (string, bool) {
-		bin, err := exec.LookPath("bash")
-		if err != nil || bin == "" {
-			return "", false
+	// bashOnPath 按 PATH 顺序逐目录解析 bash.exe，跳过 SystemRoot 下的
+	// WSL bash 存根。不用 exec.LookPath：它只返回首个命中，System32 存根
+	// 排在前面时会把真正的 git-bash 挡住。
+	bashOnPath = func() (string, bool) {
+		sysRoot := strings.TrimSuffix(strings.ToLower(os.Getenv("SystemRoot")), string(os.PathSeparator))
+		for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+			if dir == "" {
+				continue
+			}
+			p := filepath.Join(dir, "bash.exe")
+			if sysRoot != "" && strings.HasPrefix(strings.ToLower(p), sysRoot+string(os.PathSeparator)) {
+				continue
+			}
+			if isFile(p) {
+				return p, true
+			}
 		}
-		return bin, true
+		return "", false
 	}
 	isFile = func(p string) bool {
 		st, err := os.Stat(p)
@@ -44,7 +56,9 @@ var (
 
 // gitBashEnvPlatform 按 claude CLI 同款语义解析 bash.exe：
 // 1) 用户已设置 CLAUDE_CODE_GIT_BASH_PATH 且指向真实文件 → 原样放行（CLI 直接用）；
-// 2) PATH 上有 bash → CLI 自己能找到，不注入；
+// 2) PATH 逐目录解析 bash.exe（跳过 WSL 存根）→ 注入解析出的路径。
+//    注意：CLI 自身不做 PATH 探测，只认本环境变量与标准安装路径，
+//    因此 PATH 命中也必须显式注入，不能假设「CLI 自己能找到」；
 // 3) 注册表 GitForWindows InstallPath 拼出 <p>\bin\bash.exe → 注入；
 // 4) 全缺 → 不注入。
 func gitBashEnvPlatform() (string, bool) {
@@ -52,8 +66,8 @@ func gitBashEnvPlatform() (string, bool) {
 	if v := os.Getenv(envKey); v != "" && isFile(v) {
 		return v, true
 	}
-	if _, ok := lookBash(); ok {
-		return "", false
+	if p, ok := bashOnPath(); ok {
+		return p, true
 	}
 	if root, ok := registryString(); ok {
 		p := filepath.Join(root, "bin", "bash.exe")
