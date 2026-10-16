@@ -84,6 +84,10 @@ func (s *Store) Load() error {
 			// 避免后续状态机判断遇到未知空值。
 			for i := range f.Items {
 				f.Items[i].Status = normalizeStatus(f.Items[i].Status)
+				// 存量数据 tags 可能为 null（旧版 copyTags 空入参返回 nil），归一化为空切片
+				if f.Items[i].Tags == nil {
+					f.Items[i].Tags = []string{}
+				}
 			}
 			s.items = f.Items
 		}
@@ -344,11 +348,9 @@ func normalizeStatus(st string) string {
 	}
 }
 
-// copyTags 拷贝标签切片，隔离调用方后续修改；空入参返回 nil 保持 JSON 干净。
+// copyTags 拷贝标签切片，隔离调用方后续修改；空入参返回空切片而非 nil——
+// Go nil slice 经 JSON 序列化是 null，前端对条目 tags 直接 .map 会崩溃（真实事故）。
 func copyTags(tags []string) []string {
-	if len(tags) == 0 {
-		return nil
-	}
 	out := make([]string, len(tags))
 	copy(out, tags)
 	return out

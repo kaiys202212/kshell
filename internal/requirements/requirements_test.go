@@ -488,3 +488,43 @@ func TestLoadNormalizesLegacyStatus(t *testing.T) {
 		t.Errorf("旧数据 status 应回归 pending, got %q", items[0].Status)
 	}
 }
+
+// TestAddEmptyTagsNotNil 验证空 tags 存为空切片而非 nil：
+// Go nil slice 经 JSON 序列化是 null，前端 r.tags.map 会在 null 上崩溃（真实事故）。
+func TestAddEmptyTagsNotNil(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	if _, err := s.Add("无标签需求", "low", nil); err != nil {
+		t.Fatal(err)
+	}
+	it := s.List()[0]
+	if it.Tags == nil {
+		t.Error("Add 空 tags 后 Tags 不应为 nil，应为空切片")
+	}
+	// 落盘 JSON 必须是 [] 而非 null
+	data, err := os.ReadFile(filepath.Join(dir, "requirements.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"tags":null`) {
+		t.Errorf("落盘 JSON tags 不应为 null: %s", data)
+	}
+}
+
+// TestLoadNormalizesLegacyNullTags 验证存量文件里 tags:null 在 Load 后归一化为空切片。
+func TestLoadNormalizesLegacyNullTags(t *testing.T) {
+	dir := t.TempDir()
+	legacy := `{"version":1,"items":[{"id":"abc","text":"旧需求","priority":"low","tags":null,"status":"pending","ts":123}]}`
+	if err := os.WriteFile(filepath.Join(dir, "requirements.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := New(dir)
+	_ = s.Load()
+	items := s.List()
+	if len(items) != 1 {
+		t.Fatalf("List 长度 = %d, want 1", len(items))
+	}
+	if items[0].Tags == nil {
+		t.Error("存量 tags:null 加载后应为空切片，不该继续外溢 nil")
+	}
+}
