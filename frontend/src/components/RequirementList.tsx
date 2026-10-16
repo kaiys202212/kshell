@@ -13,7 +13,6 @@ import {
   deleteRequirement,
   listRequirements,
   onRequirementsChanged,
-  openWorkspaceACP,
   readClipboardPaste,
   setRequirementStatus,
   updateRequirement,
@@ -524,9 +523,11 @@ export default function RequirementList({ className }: { className?: string }) {
                   {/* 会话行：已派发条目展示绑定会话的名称与运行状态，行尾为跳转/重开入口 */}
                   {(r.dispatchedTo || r.chatId) && (
                     <span className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                      {/* 状态点带 aria 文案：色点本身 aria-hidden，让读屏用户也能感知运行状态 */}
                       <span
                         data-testid="req-session-dot"
-                        aria-hidden="true"
+                        role="img"
+                        aria-label={t(chat ? 'ui.requirements.session_running_aria' : 'ui.requirements.session_ended')}
                         className={cn('h-1.5 w-1.5 shrink-0 rounded-full', sessionDotClass(chat?.Status))}
                       />
                       <span className="min-w-0 truncate">{sessionName}</span>
@@ -541,7 +542,8 @@ export default function RequirementList({ className }: { className?: string }) {
                           <JumpGlyph />
                         </button>
                       ) : chat ? null : (
-                        r.chatId && (
+                        // 重开仅限 pending/active：done 是终态，MarkDispatched 守卫会拒绝
+                        r.chatId && status !== 'done' && (
                           <button
                             type="button"
                             aria-label={t('ui.requirements.session_reopen')}

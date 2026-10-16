@@ -884,6 +884,7 @@
       "archive_open": "归档",
       "update_failed": "需求状态更新失败：{{err}}",
       "session_jump": "跳转到会话",
+      "session_running_aria": "会话运行中",
       "session_reopen": "重新打开会话",
       "session_ended": "会话已结束",
       "reopen_failed": "重新打开会话失败：{{err}}"

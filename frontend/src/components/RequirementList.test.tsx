@@ -236,6 +236,18 @@ describe('RequirementList', () => {
     expect(within(li).getByLabelText(tt('ui.requirements.session_reopen'))).toBeInTheDocument();
   });
 
+  it('done 条目会话已结束：不显示重开按钮（done 为终态，重开会被派发守卫拒绝）', async () => {
+    useAppStore.setState({ chats: [] });
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '已完成需求', status: 'done', chatId: 'c-dead', dispatchedTo: 'D:\\ws\\proj', sessionTitle: '旧会话名' }),
+    ]);
+    render(<RequirementList />);
+    const li = (await screen.findByText('已完成需求')).closest('li') as HTMLElement;
+    // 会话行仍显示名称与状态点，但无重开入口
+    expect(within(li).getByText('旧会话名')).toBeInTheDocument();
+    expect(within(li).queryByLabelText(tt('ui.requirements.session_reopen'))).not.toBeInTheDocument();
+  });
+
   it('会话不存在且无快照：回退显示 chatId', async () => {
     useAppStore.setState({ chats: [] });
     mocks.listRequirements.mockResolvedValue([
