@@ -3,6 +3,7 @@ package desktop
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -115,6 +116,9 @@ type chatTestEnv struct {
 func newChatTestApp(t *testing.T, acpDet *providers.ACPDetection, backend chat.Backend) *chatTestEnv {
 	t.Helper()
 
+	// Home 用临时目录：mcpConfigDir 会真实写 MCP 配置文件，不能落在磁盘 D:\home
+	home := t.TempDir()
+
 	sessions := []providers.Session{
 		{ID: "s1", ToolID: "claude", Workspace: `D:\w`, Title: "t"},
 	}
@@ -123,8 +127,8 @@ func newChatTestApp(t *testing.T, acpDet *providers.ACPDetection, backend chat.B
 	events := newEventLog()
 	term := &stubTermBackend{}
 	app := NewAppWith(Options{
-		Home:      "D:/home",
-		CachePath: "D:/home/.kshell/cache/index.json",
+		Home:      home,
+		CachePath: filepath.Join(home, ".kshell", "cache", "index.json"),
 		Providers: []providers.Provider{providers.Claude{}},
 		Terminals: newTerminalManagerWith(events.emit, term),
 		Emit:      events.emit,

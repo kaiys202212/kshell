@@ -7,6 +7,7 @@ package desktop
 import (
 	"context"
 	"encoding/base64"
+	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
@@ -20,6 +21,9 @@ import (
 // attachTestApp 装配一个「扫描结果可变」的 App：terminal+chat 管理器都走桩后端。
 func attachTestApp(t *testing.T, acpDet *providers.ACPDetection) (*App, *eventLog, func([]providers.Session)) {
 	t.Helper()
+
+	// Home 用临时目录：mcpConfigDir 会真实写 MCP 配置文件，不能落在磁盘 D:\home
+	home := t.TempDir()
 
 	var mu sync.Mutex
 	var sessions []providers.Session
@@ -36,8 +40,8 @@ func attachTestApp(t *testing.T, acpDet *providers.ACPDetection) (*App, *eventLo
 
 	events := newEventLog()
 	app := NewAppWith(Options{
-		Home:      "D:/home",
-		CachePath: "D:/home/.kshell/cache/index.json",
+		Home:      home,
+		CachePath: filepath.Join(home, ".kshell", "cache", "index.json"),
 		Providers: []providers.Provider{providers.Claude{}},
 		Terminals: newTerminalManagerWith(events.emit, &stubTermBackend{}),
 		Chats:     newChatManagerWith(events.emit, fakeChatBackend{}, nil, nil, nil),

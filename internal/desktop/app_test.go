@@ -62,6 +62,9 @@ func setTools(t *testing.T, app *App, tools []discovery.Tool) {
 func newTestApp(t *testing.T) (*App, *stubLauncher, *[]string) {
 	t.Helper()
 
+	// Home 用临时目录：mcpConfigDir 会真实写 MCP 配置文件，不能落在磁盘 D:\home
+	home := t.TempDir()
+
 	// 测试里 quitApp 不应真调度 os.Exit；需要断言调度的用例自行注入 spy。
 	origForce := scheduleForceExit
 	scheduleForceExit = func(time.Duration) {}
@@ -76,8 +79,8 @@ func newTestApp(t *testing.T) (*App, *stubLauncher, *[]string) {
 	stub := &stubLauncher{}
 	var events []string
 	app := NewAppWith(Options{
-		Home:      "D:/home",
-		CachePath: "D:/home/.kshell/cache/index.json",
+		Home:      home,
+		CachePath: filepath.Join(home, ".kshell", "cache", "index.json"),
 		Providers: []providers.Provider{fakeProvider{
 			id:      "claude",
 			resume:  providers.Launch{Path: "claude", Args: []string{"--resume", "s1"}},
