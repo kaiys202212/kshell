@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yangk/kshell/internal/acp"
@@ -101,6 +103,11 @@ type Manager struct {
 	onHubQueued    func(hubMsgID string)
 	onHubDelivered func(hubMsgID string)
 
+	// bootID 是本 Manager 实例的唯一标识，参与会话 ID 生成。纯递增序列
+	// c1/c2/... 在进程重启后归零，落盘的 chatId（需求绑定、hub 归因）会撞上
+	// 新一轮同名 ID，造成假绑定。组成：纳秒时间戳 + 包级实例计数，后者兜底
+	// 同一计时器刻度内创建多个实例的场景（Windows 计时器精度粗）。
+	bootID string
 	mu      sync.Mutex
 	byKey   map[string]*session
 	byID    map[string]*session
@@ -115,8 +122,13 @@ func NewManager(b Backend,
 	return &Manager{
 		backend: b, onUpdate: onUpdate, onPermission: onPermission, onExit: onExit,
 		byKey: make(map[string]*session), byID: make(map[string]*session),
+		bootID: fmt.Sprintf("%s%x", strconv.FormatInt(time.Now().UnixNano(), 36), managerSeq.Add(1)),
 	}
 }
+
+// managerSeq 是包级 Manager 实例计数，混入 bootID 防同一计时器刻度内
+// 创建的多个实例拿到相同 bootID（Windows 纳秒计时器实际精度粗）。
+var managerSeq atomic.Int64
 
 // SetAutoAllowPermission 设置权限自动放行回调（nil=不自动放行）。
 func (m *Manager) SetAutoAllowPermission(fn func() bool) {
@@ -278,8 +290,10 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 
 	m.mu.Lock()
 	m.nextSeq++
+	// ID 含 bootID：进程内单调递增，跨进程重启不重复（bootID 取创建时刻，
+	// 纳秒级精度足以区分两次启动），防落盘 chatId 跨重启碰撞造成假绑定。
 	s := &session{
-		id:            fmt.Sprintf("c%d", m.nextSeq),
+		id:            fmt.Sprintf("c%s_%d", m.bootID, m.nextSeq),
 		key:           key,
 		m:             m,
 		info:          info,

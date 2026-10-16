@@ -167,6 +167,38 @@ func newTestManager(t *testing.T) (*Manager, *fakeBackend, *collector) {
 	return m, b, c
 }
 
+// TestSessionIDUniqueAcrossManagers 回归测试：会话 ID 必须跨 Manager 实例（等价
+// 跨进程重启）不重复。旧实现用纯递增序列 c1/c2/...，重启后归零，落盘的 chatId
+// （如需求绑定）会撞上新一轮的同名 ID，导致新会话被误展示为历史需求的绑定会话。
+func TestSessionIDUniqueAcrossManagers(t *testing.T) {
+	idOf := func(key string) string {
+		m, _, _ := newTestManager(t)
+		info, err := m.Open(key, Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		return info.ID
+	}
+	id1 := idOf("new:1")
+	id2 := idOf("new:1")
+	if id1 == id2 {
+		t.Fatalf("不同 Manager 实例生成了相同会话 ID: %q", id1)
+	}
+	// 同一 Manager 内序列仍单调：两次 Open 的 ID 必须不同
+	m, _, _ := newTestManager(t)
+	a, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open a: %v", err)
+	}
+	b, err := m.Open("new:2", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open b: %v", err)
+	}
+	if a.ID == b.ID {
+		t.Fatalf("同一 Manager 内会话 ID 重复: %q", a.ID)
+	}
+}
+
 func TestManagerOpenNewAndPrompt(t *testing.T) {
 	m, _, c := newTestManager(t)
 	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w", Title: "新会话"}, Spec{Path: "x"}, "")
@@ -805,6 +837,24 @@ func TestManagerPromptDrainsQueueOnTurnDone(t *testing.T) {
 
 // starting 态（握手可能数秒）期间 Prompt 会入队；Open 就绪后必须 drain 队列投递，
 // 否则该消息永远等不到 turn_done 触发，静默卡死。
+// waitAnyStatus 等待 Manager 中任意一个会话到达指定状态，返回其 ID。
+// 用于 Open 尚未返回（后台 goroutine 中握手被卡住）、拿不到 info.ID 的场景；
+// 不假设 ID 具体格式（ID 含 bootID 前缀，跨 Manager 不再是稳定的 c1/c2）。
+func waitAnyStatus(t *testing.T, m *Manager, want string) string {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, info := range m.List() {
+			if info.Status == want {
+				return info.ID
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("no session reached %s", want)
+	return ""
+}
+
 func TestManagerPromptQueuesWhileStarting(t *testing.T) {
 	m, b, _ := newTestManager(t)
 	b.conn.initGate = make(chan struct{}) // 卡住 Initialize，让会话停在 StatusStarting
@@ -821,8 +871,8 @@ func TestManagerPromptQueuesWhileStarting(t *testing.T) {
 	}()
 
 	// 会话在 Initialize 前已进 order/byID，状态为 StatusStarting；等它出现后取 id。
-	waitStatus(t, m, "c1", StatusStarting)
-	if err := m.Prompt("c1", "握手期消息"); err != nil {
+	id := waitAnyStatus(t, m, StatusStarting)
+	if err := m.Prompt(id, "握手期消息"); err != nil {
 		t.Fatalf("starting 期间 prompt 应入队: %v", err)
 	}
 
@@ -1273,13 +1323,16 @@ func TestManagerLoadReplayDoesNotPolluteInFlightTools(t *testing.T) {
 		}
 		opened <- info
 	}()
-	waitStatus(t, m, "c1", StatusStarting)
+	startID := waitAnyStatus(t, m, StatusStarting)
 	// 重放：历史里未终态的工具
 	b.last.SessionUpdate("s1", json.RawMessage(`{"sessionUpdate":"tool_call","toolCallId":"old1","title":"Task","status":"in_progress"}`))
 	close(b.conn.initGate)
 	info := <-opened
 	if info.ID == "" {
 		t.Fatal("open failed")
+	}
+	if info.ID != startID {
+		t.Fatalf("starting 期会话与 Open 返回会话不一致: %s vs %s", startID, info.ID)
 	}
 	if err := m.Prompt(info.ID, "hi"); err != nil {
 		t.Fatal(err)

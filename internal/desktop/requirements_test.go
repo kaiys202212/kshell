@@ -245,11 +245,11 @@ func TestListRequirementsFillsLiveTitle(t *testing.T) {
 	// 先开一个桩会话（openTestChat 未传 Title，空），再经 AttachSession 绑定
 	// 磁盘会话并注入标题（messages>0 才写标题，与生产扫描回填同路径）；
 	// live 条目不落快照（模拟旧数据），dead 条目落快照且 chatId 指向不存在的会话
-	openTestChat(t, m)
+	live := openTestChat(t, m)
 	if !m.AttachSession("disk-1", "/w", "", "实时标题", 3, time.Time{}) {
 		t.Fatal("前置：AttachSession 应命中桩会话")
 	}
-	if err := store.MarkDispatched(itLive.ID, "/w", "c1", ""); err != nil {
+	if err := store.MarkDispatched(itLive.ID, "/w", live.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.MarkDispatched(itDead.ID, "/w", "c-dead", "旧快照"); err != nil {
