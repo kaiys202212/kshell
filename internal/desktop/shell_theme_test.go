@@ -30,7 +30,7 @@ func newShellThemeTestApp(t *testing.T, mode string) *termTestEnv {
 	events := newEventLog()
 
 	app := NewAppWith(Options{
-		Home:      "D:/home",
+		Home:      dir,
 		CachePath: filepath.Join(dir, "cache/index.json"),
 		Config:    cfg,
 		Layout: config.Layout{

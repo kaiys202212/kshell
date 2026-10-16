@@ -152,9 +152,18 @@ function App() {
       const { markChatExited, setChatPermission, notify } = useAppStore.getState();
       markChatExited(id, exitCode, error);
       setChatPermission(id, null);
-      const reason = error
-        ? translateBackend(error)
-        : (i18n.t('ui.notify.session_exited', { 0: exitCode }) as string);
+      let reason: string;
+      if (!error) {
+        reason = i18n.t('ui.notify.session_exited', { 0: exitCode }) as string;
+      } else {
+        const translated = translateBackend(error);
+        // 未命中 wire key 的裸错误（如 "exit status 1"）：包一层本地化前缀并指明
+        // 日志位置，避免一条无上下文英文串；wire key 仍走原翻译路径。
+        reason =
+          translated === error
+            ? (i18n.t('ui.notify.session_exited_err', { err: error }) as string)
+            : translated;
+      }
       notify(reason, error ? 'error' : 'info');
     });
     // 技能命令列表：agent 的 available_commands_update，存 store 供输入框补全

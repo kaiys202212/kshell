@@ -897,6 +897,7 @@
       "task_cancelled": "任务已取消",
       "waiting_confirm": "等待确认",
       "session_exited": "会话已退出（退出码 {{0}}）",
+      "session_exited_err": "会话进程异常退出：{{err}}（详情见 ~/.kshell/logs/desktop.log）",
       "terminal_exited": "终端已退出",
       "terminal_exited_code": "终端异常退出（退出码 {{0}}）",
       "turn_stopped_reason": "Agent 提前停止（原因：{{0}}），没有可展示的回复内容。"

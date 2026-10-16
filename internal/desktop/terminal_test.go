@@ -287,9 +287,12 @@ func newTerminalTestApp(t *testing.T) *termTestEnv {
 	events := newEventLog()
 	launcher := &stubLauncher{}
 
+	// Home 用临时目录：mcpConfigDir 会真实写 MCP 配置文件，不能落在磁盘 D:\home
+	home := t.TempDir()
+
 	app := NewAppWith(Options{
-		Home:      "D:/home",
-		CachePath: "D:/home/.kshell/cache/index.json",
+		Home:      home,
+		CachePath: filepath.Join(home, ".kshell", "cache", "index.json"),
 		Providers: []providers.Provider{claude, codex},
 		Scan: func(string, []providers.Provider, string, discovery.ScanOptions) (*discovery.Result, error) {
 			return res, nil
