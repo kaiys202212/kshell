@@ -286,7 +286,8 @@ func TestForWorkspaceACP_CursorNpxStillInjects(t *testing.T) {
 // npx 形态下注入参数必须落在 -y <package> 之后：
 // `npx --model X -y pkg` 时 npm 把模型名当待安装的包（E404），只有
 // `npx -y pkg --model X` 才把参数传给适配器进程。
-// 用 cursor 验证：其 InjectModel 产出 --model 参数（claude 走 env 注入无 args）。
+// 用 cursor 验证：其 InjectModel 产出 --model 参数（claude 的模型注入走
+// --settings，见 TestForWorkspaceToolClaudeModelViaSettings）。
 func TestForWorkspaceACP_NpxModelArgsAfterPackage(t *testing.T) {
 	ps := []providers.Provider{providers.Cursor{}}
 	tools := []discovery.Tool{{

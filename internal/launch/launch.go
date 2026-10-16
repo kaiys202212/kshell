@@ -75,7 +75,7 @@ func applyModel(l providers.Launch, p providers.Provider, mo ModelOptions) provi
 				inner[k] = v
 			}
 			// 合并进 l.Args 既有的 --settings（主题注入先行时已有产物）；
-			// 没有则追加一组。env 键在 MergeSettingsArg 内做键级浅合并。
+			// 没有则前置一组（见 MergeSettingsArg 注释）。env 键做键级浅合并。
 			l.Args = providers.MergeSettingsArg(l.Args, map[string]any{"env": inner})
 		}
 	}
