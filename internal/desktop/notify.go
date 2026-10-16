@@ -84,11 +84,27 @@ func (a *App) dispatchNotifyOnce(dir string) {
 	}
 }
 
-// handleAgentNotify 分发一条 agent 通知：就绪期等待确认噪音直接过滤（见
-// dropUnpromptedWaiting）；窗口内重复事件丢弃（防气泡连刷）；始终推给前端
-// （非前台期间前端照常入队）；主窗非前台/不可见时弹独立置顶气泡（非系统
-// toast）；前台时只靠前端 NotificationBubble。
+// notifiableEvents 是 hook/OSC 通道的用户通知事件白名单：只放行「任务完成 /
+// 等待确认 / 出错」三类用户关心的语义。CLI 会混发内部状态广播（实测 codebuddy
+// 认证完成发 type=auth_success、带用户名 message），不过滤就会在新建 agent 时
+// 连弹无意义通知并灌进 AgentHub（2026-10-15 用户反馈）。新工具事件在此补充。
+var notifiableEvents = map[string]bool{
+	"Stop":                true, // claude/codebuddy/cursor hook：一轮完成
+	"agent-turn-complete": true, // codex notify：一轮完成
+	"session.idle":        true, // opencode 插件：一轮完成
+	"Notification":        true, // claude/codebuddy hook：等待确认
+	"attention":           true, // kshell OSC 扫描：等待确认
+	"error":               true, // chat 错误（与前端 eventLabel 语义对齐）
+}
+
+// handleAgentNotify 分发一条 agent 通知：白名单外的事件（CLI 内部状态广播）
+// 静默丢弃；就绪期等待确认噪音直接过滤（见 dropUnpromptedWaiting）；窗口内
+// 重复事件丢弃（防气泡连刷）；始终推给前端（非前台期间前端照常入队）；
+// 主窗非前台/不可见时弹独立置顶气泡（非系统 toast）；前台时只靠前端 NotificationBubble。
 func (a *App) handleAgentNotify(p agenthook.Payload) {
+	if !notifiableEvents[p.Event] {
+		return
+	}
 	if a.dropUnpromptedWaiting(p) {
 		return
 	}

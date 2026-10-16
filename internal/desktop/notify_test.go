@@ -97,6 +97,37 @@ func TestDispatchNotifyOnceDropsEmptyTermKey(t *testing.T) {
 	}
 }
 
+// TestHandleAgentNotifyEventWhitelist 覆盖「新建 agent 就弹通知」根因：
+// CLI 的内部状态广播（如 codebuddy 认证完成的 auth_success）不是用户关心的
+// 语义，弹气泡/进 Hub 全是噪音。handleAgentNotify 必须按事件白名单收口：
+// 只放行「任务完成 / 等待确认 / 出错」三类语义；未知事件静默丢弃。
+func TestHandleAgentNotifyEventWhitelist(t *testing.T) {
+	known := []string{
+		"Stop",                // claude/codebuddy/cursor hook：一轮完成
+		"agent-turn-complete", // codex notify：一轮完成
+		"session.idle",        // opencode 插件：一轮完成
+		"Notification",        // claude/codebuddy hook：等待确认
+		"attention",           // kshell OSC 扫描：等待确认
+		"error",               // chat 错误（前端 eventLabel 有对应语义）
+	}
+	for _, ev := range known {
+		a, names, _ := newNotifyTestApp(t)
+		a.handleAgentNotify(agenthook.Payload{Tool: "codebuddy", Event: ev, TermKey: "session:s1", Workspace: "d:/ws"})
+		if len(*names) != 1 {
+			t.Fatalf("已知事件 %q 应放行, 得到 %v", ev, *names)
+		}
+	}
+
+	unknown := []string{"auth_success", "auth_expired", "status_ping", ""}
+	for _, ev := range unknown {
+		a, names, payloads := newNotifyTestApp(t)
+		a.handleAgentNotify(agenthook.Payload{Tool: "codebuddy", Event: ev, TermKey: "session:s1", Workspace: "d:/ws", Summary: "杨凯."})
+		if len(*names) != 0 || len(*payloads) != 0 {
+			t.Fatalf("未知事件 %q 不应通知: names=%v", ev, *names)
+		}
+	}
+}
+
 // 窗口隐藏（收进托盘）：弹独立气泡，不走系统 toast；标题/正文按映射生成。
 func TestDispatchNotifyOnceHiddenShowsBubble(t *testing.T) {
 	dir := t.TempDir()

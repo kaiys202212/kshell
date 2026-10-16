@@ -370,21 +370,21 @@ export default function GitPanel({
                     <DropdownMenuItem
                       onSelect={() => void run(() => gitPull(wsPath, repoRel, snap?.SyncRemote ?? ''), t('ui.git.pulled'))}
                     >
-                      Pull
+                      {t('ui.git.pull')}
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onSelect={() => void run(() => gitFetch(wsPath, repoRel, snap?.SyncRemote ?? ''), t('ui.git.fetched'))}
                     >
-                      Fetch
+                      {t('ui.git.fetch')}
                     </DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => void run(() => gitFetchAll(wsPath, repoRel), t('ui.git.fetched_all'))}>
-                      Fetch all
+                      {t('ui.git.fetch_all')}
                     </DropdownMenuItem>
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
                 <DropdownMenuItem
                   onSelect={() => void run(() => gitPush(wsPath, repoRel, snap?.SyncRemote ?? ''), t('ui.git.pushed'))}
-                >Push</DropdownMenuItem>
+                >{t('ui.git.push')}</DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={!msg.trim() || staged.length === 0}
                   onSelect={() => {
@@ -425,9 +425,9 @@ export default function GitPanel({
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
                 <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>Stash</DropdownMenuSubTrigger>
+                  <DropdownMenuSubTrigger>{t('ui.git.stash')}</DropdownMenuSubTrigger>
                   <DropdownMenuSubContent>
-                    <DropdownMenuItem onSelect={() => void run(() => gitStashPush(wsPath, repoRel, ''))}>Stash All</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => void run(() => gitStashPush(wsPath, repoRel, ''))}>{t('ui.git.stash_all')}</DropdownMenuItem>
                     <DropdownMenuItem
                       disabled={(snap?.Stashes ?? []).length === 0}
                       onSelect={() => void run(() => gitStashPop(wsPath, repoRel, 0))}
@@ -601,13 +601,13 @@ export default function GitPanel({
                   size="icon"
                   variant="ghost"
                   disabled={busy}
-                  aria-label="Fetch"
+                  aria-label={t('ui.git.fetch')}
                   onClick={() => void run(() => gitFetch(wsPath, repoRel, snap?.SyncRemote ?? ''))}
                 >
                   <Download className="h-3.5 w-3.5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Fetch</TooltipContent>
+              <TooltipContent>{t('ui.git.fetch')}</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -615,13 +615,13 @@ export default function GitPanel({
                   size="icon"
                   variant="ghost"
                   disabled={busy}
-                  aria-label="Fetch all"
+                  aria-label={t('ui.git.fetch_all')}
                   onClick={() => void run(() => gitFetchAll(wsPath, repoRel))}
                 >
                   <CloudDownload className="h-3.5 w-3.5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Fetch all</TooltipContent>
+              <TooltipContent>{t('ui.git.fetch_all')}</TooltipContent>
             </Tooltip>
           </div>
           <GitLogGraph
