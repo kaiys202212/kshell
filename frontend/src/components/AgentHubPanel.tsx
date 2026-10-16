@@ -433,6 +433,14 @@ export default function AgentHubPanel() {
     const el = mentionListRef.current?.children[Math.min(mentionIndex, mentionMatches.length - 1)];
     if (el instanceof HTMLElement) el.scrollIntoView?.({ block: 'nearest' });
   }, [mentionIndex, mentionMatches, mentionClosed]);
+  // 候选集在弹层开着期间收缩（后台 scan:done 重建 chats / agentCmds 异步到达）：
+  // 重置 effect 只盯 draft，这里把高亮下标夹回范围，避免渲染出无高亮列表。
+  useEffect(() => {
+    setSlashIndex((i) => Math.min(i, Math.max(cmdMatches.length - 1, 0)));
+  }, [cmdMatches]);
+  useEffect(() => {
+    setMentionIndex((i) => Math.min(i, Math.max(mentionMatches.length - 1, 0)));
+  }, [mentionMatches]);
 
   // runClientCommand 执行 kshell 客户端命令（# 前缀触发），不投递给 agent。
   const runClientCommand = (name: string) => {

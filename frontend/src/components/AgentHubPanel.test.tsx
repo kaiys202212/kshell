@@ -1,6 +1,6 @@
 // AgentHubPanel：跨项目汇总运行中的 ACP agent，@ 指定目标发消息、跳转定位、新建 agent、粘贴。
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatInfo, ToolInfo } from '../lib/api';
 import { useAppStore } from '../state/store';
@@ -618,6 +618,30 @@ describe('AgentHubPanel', () => {
     fireEvent.keyDown(box, { key: 'Tab' });
     expect((box as HTMLTextAreaElement).value).toBe('@Cursor#c2 ');
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
+  it('弹层开着时 chats 后台收缩：高亮下标夹回最后一项，Enter 仍填入可见候选', () => {
+    useAppStore.setState({
+      chats: [
+        chat({ ID: 'c1', ToolID: 'claude', Title: '甲' }),
+        chat({ ID: 'c2', ToolID: 'cursor', Title: '乙' }),
+      ],
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '@' } });
+    // 高亮移到第二项后，后台 scan:done 使候选收缩为 1 个（act 包住触发同步重渲染）
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    act(() => {
+      useAppStore.setState({ chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })] });
+    });
+    const list = screen.getByRole('listbox', { name: tt('ui.hub.mention_aria') });
+    const options = within(list).getAllByRole('option');
+    expect(options).toHaveLength(1);
+    // 唯一候选保持高亮（不出现 aria-selected 全 false 的列表）
+    expect(options[0]).toHaveAttribute('aria-selected', 'true');
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c1 ');
   });
 
   it('@ 补全 Esc 关闭后，Enter 恢复发送语义（回落 lastAgentId 投递）', async () => {
