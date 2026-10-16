@@ -128,6 +128,34 @@ func TestHandleAgentNotifyEventWhitelist(t *testing.T) {
 	}
 }
 
+// TestHandleAgentNotifyNotificationSubtypeFilter 覆盖 Notification 事件的
+// 子类型黑名单：claude/codebuddy 把登录成功广播（auth_success）、空闲 60s
+// 自动提醒（idle_prompt）也走 Notification 事件，事件名白名单挡不住，
+// 必须按 notification_type 再过滤。黑名单外的子类型（含缺失/未知）一律
+// 放行，宁可多弹不可漏弹。
+func TestHandleAgentNotifyNotificationSubtypeFilter(t *testing.T) {
+	cases := []struct {
+		name string
+		p    agenthook.Payload
+		want int
+	}{
+		{"噪音: auth_success", agenthook.Payload{Tool: "codebuddy", Event: "Notification", NotificationType: "auth_success", Summary: "auth_success: 杨凯", TermKey: "session:s1", Workspace: "d:/ws"}, 0},
+		{"噪音: idle_prompt", agenthook.Payload{Tool: "claude", Event: "Notification", NotificationType: "idle_prompt", Summary: "Claude is waiting for your input", TermKey: "session:s1"}, 0},
+		{"放行: permission_prompt", agenthook.Payload{Tool: "claude", Event: "Notification", NotificationType: "permission_prompt", Summary: "needs your permission to use Bash", TermKey: "session:s1"}, 1},
+		{"放行: 空子类型", agenthook.Payload{Tool: "claude", Event: "Notification", Summary: "需要确认", TermKey: "session:s1"}, 1},
+		{"放行: 未知子类型", agenthook.Payload{Tool: "claude", Event: "Notification", NotificationType: "worker_permission_prompt", Summary: "worker 等待确认", TermKey: "session:s1"}, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a, names, payloads := newNotifyTestApp(t)
+			a.handleAgentNotify(c.p)
+			if len(*names) != c.want || len(*payloads) != c.want {
+				t.Fatalf("emit 次数应为 %d，得到 names=%v payloads=%v", c.want, *names, *payloads)
+			}
+		})
+	}
+}
+
 // 窗口隐藏（收进托盘）：弹独立气泡，不走系统 toast；标题/正文按映射生成。
 func TestDispatchNotifyOnceHiddenShowsBubble(t *testing.T) {
 	dir := t.TempDir()
