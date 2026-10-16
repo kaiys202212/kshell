@@ -19,8 +19,18 @@ type ModelInjector interface {
 	InjectModel(cfg ModelConfig) (args []string, env map[string]string)
 }
 
-// Claude：ANTHROPIC_* 环境变量；模型同步三个 DEFAULT 别名，兼容只认单一模型的代理端点。
-func (Claude) InjectModel(cfg ModelConfig) ([]string, map[string]string) {
+// SettingsEnvInjector 可选接口：把模型配置经 `--settings` 的 env 块注入。
+// 背景：claude CLI 会用用户级 settings.json 的 env 块**替换**进程继承的
+// 同名环境变量（官方 env-vars 文档 precedence 一节），走进程环境注入模型
+// 会被用户自己的 ANTHROPIC_* 配置覆盖；`--settings`（命令行层）优先级高于
+// 用户级 settings.json，可稳定压过。
+type SettingsEnvInjector interface {
+	SettingsEnv(cfg ModelConfig) map[string]string
+}
+
+// Claude 模型注入改走 settings env 块：返回需注入的环境变量（只含非空字段）。
+// 模型同步三个 DEFAULT 别名，兼容只认单一模型的代理端点。
+func (Claude) SettingsEnv(cfg ModelConfig) map[string]string {
 	env := map[string]string{}
 	if cfg.AnthropicBaseURL != "" {
 		env["ANTHROPIC_BASE_URL"] = cfg.AnthropicBaseURL
@@ -34,7 +44,13 @@ func (Claude) InjectModel(cfg ModelConfig) ([]string, map[string]string) {
 		env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = cfg.Model
 		env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = cfg.Model
 	}
-	return nil, env
+	return env
+}
+
+// Claude.InjectModel 保留接口实现但不再产出 env：进程环境注入对 claude 已被
+// 证实会被用户 settings.json 覆盖，保留只会造成"看似注入了"的假象。
+func (Claude) InjectModel(cfg ModelConfig) ([]string, map[string]string) {
+	return nil, nil
 }
 
 // Codex：-m <model> + OPENAI_* 环境变量。
