@@ -122,8 +122,10 @@ func (f *FS) WriteFile(ctx context.Context, root, relOrAbs string, data []byte) 
 	}
 	dir := path.Dir(abs)
 	tmpTpl := path.Join(dir, ".kshell-write.XXXXXX")
+	// cat/mv 任一失败必须清掉远端临时文件（否则 .kshell-write.* 残留），
+	// 且清理后用 exit 1 传播失败——不能让 rm 的成功退出码掩盖写失败。
 	cmd := fmt.Sprintf(
-		`tmp=$(mktemp %s) && cat > "$tmp" && mv -f "$tmp" %s`,
+		`tmp=$(mktemp %s) && { cat > "$tmp" && mv -f "$tmp" %s || { rm -f "$tmp"; exit 1; } ; }`,
 		shellSingleQuote(tmpTpl),
 		shellSingleQuote(abs),
 	)

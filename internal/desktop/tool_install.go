@@ -196,6 +196,7 @@ func (a *App) execInstallJob(id, action string, recipe providers.InstallRecipe, 
 	a.tools = tools
 	a.keepInstallTools = true
 	a.toolsReady = true
+	a.wakeScanWaitersLocked()
 	a.mu.Unlock()
 
 	_, _ = a.ScanSessions()

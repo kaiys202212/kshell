@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +54,69 @@ func TestScanCollectsSessionsAndWorkspaces(t *testing.T) {
 	}
 	if len(res.Failed) != 0 {
 		t.Fatalf("unexpected failures: %v", res.Failed)
+	}
+}
+
+// TestScanSessionOrderDeterministic 覆盖顺序随机：Result.Sessions 原先从 map
+// 遍历生成，同一输入多次 Scan 顺序不同（snapshot 与 API 层面不稳定）。
+// 输出必须按确定性排序（UpdatedAt 降序 → Path 升序）。
+func TestScanSessionOrderDeterministic(t *testing.T) {
+	home := t.TempDir()
+	sessionsDir := filepath.Join(home, ".claude", "projects", "D--data-workspace-demo")
+	// fixture 的 UpdatedAt 固定；写 3 个不同 mtime 的会话文件
+	writeSessionFile(t, filepath.Join(sessionsDir, "a.jsonl"), claudeFixtureContent(t))
+	writeSessionFile(t, filepath.Join(sessionsDir, "b.jsonl"), claudeFixtureContent(t))
+	writeSessionFile(t, filepath.Join(sessionsDir, "c.jsonl"), claudeFixtureContent(t))
+	// fixture 解析出的 ID 相同会被 dedupe；这里改写 sessionId 制造 3 个不同会话
+	rewriteSessionID := func(path, id string) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// fixture 首行含 "sessionId":"..."; 直接文本替换
+		s := string(data)
+		old := `"sessionId":"42a6304b-1fd3-45aa-b620-10aa37988f2a"`
+		if !strings.Contains(s, old) {
+			t.Fatalf("fixture 缺少预期 sessionId: %s", path)
+		}
+		if err := os.WriteFile(path, []byte(strings.ReplaceAll(s, old, `"sessionId":"`+id+`"`)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rewriteSessionID(filepath.Join(sessionsDir, "a.jsonl"), "aaa")
+	rewriteSessionID(filepath.Join(sessionsDir, "b.jsonl"), "bbb")
+	rewriteSessionID(filepath.Join(sessionsDir, "c.jsonl"), "ccc")
+	// 用不同 mtime 制造确定性的 UpdatedAt 差异
+	base := time.Now().Add(-time.Hour)
+	for _, f := range []string{"a.jsonl", "b.jsonl", "c.jsonl"} {
+		if err := os.Chtimes(filepath.Join(sessionsDir, f), base, base); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cachePath := filepath.Join(t.TempDir(), "cache", "index.json")
+	var first []string
+	for round := 0; round < 5; round++ {
+		res, err := Scan(home, []providers.Provider{providers.Claude{}}, cachePath, ScanOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, s := range res.Sessions {
+			ids = append(ids, s.ID)
+		}
+		if round == 0 {
+			first = ids
+			continue
+		}
+		for i := range ids {
+			if ids[i] != first[i] {
+				t.Fatalf("第 %d 轮顺序与首轮不一致: %v vs %v", round, ids, first)
+			}
+		}
+	}
+	if len(first) != 3 {
+		t.Fatalf("应有 3 个会话, got %v", first)
 	}
 }
 

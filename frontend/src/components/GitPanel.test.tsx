@@ -244,7 +244,7 @@ describe('GitPanel', () => {
   it('提交图显示日志并提供 Fetch all', async () => {
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
     expect(await screen.findByText('init')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Fetch all' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: tt('ui.git.fetch_all') })).toBeInTheDocument();
     expect(screen.getByLabelText(tt('ui.git.log_filter_aria'))).toBeInTheDocument();
   });
 
@@ -378,7 +378,7 @@ describe('GitPanel', () => {
     const sub = await screen.findByRole('menuitem', { name: new RegExp(tt('ui.git.pull')) });
     fireEvent.click(sub);
     fireEvent.pointerMove(sub);
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pull' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: tt('ui.git.pull') }));
     await waitFor(() => {
       expect(mocks.gitPull).toHaveBeenCalledWith(ws, '', 'gitcode');
     });
@@ -391,7 +391,7 @@ describe('GitPanel', () => {
     const subF = await screen.findByRole('menuitem', { name: new RegExp(tt('ui.git.pull')) });
     fireEvent.click(subF);
     fireEvent.pointerMove(subF);
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Fetch' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: tt('ui.git.fetch') }));
     await waitFor(() => {
       expect(mocks.gitFetch).toHaveBeenCalledWith(ws, '', 'gitcode');
     });
@@ -399,7 +399,7 @@ describe('GitPanel', () => {
 
     fireEvent.pointerDown(trigger, { button: 0 });
     fireEvent.click(trigger);
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Push' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: tt('ui.git.push') }));
     await waitFor(() => {
       expect(mocks.gitPush).toHaveBeenCalledWith(ws, '', 'gitcode');
     });
@@ -410,7 +410,7 @@ describe('GitPanel', () => {
     mocks.gitSCM.mockResolvedValue(snap({ SyncRemote: 'gitcode' }));
     render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
     await screen.findByText('init');
-    fireEvent.click(screen.getByRole('button', { name: 'Fetch' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.git.fetch') }));
     await waitFor(() => {
       expect(mocks.gitFetch).toHaveBeenCalledWith(ws, '', 'gitcode');
     });

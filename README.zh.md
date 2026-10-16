@@ -145,6 +145,7 @@ providers:
 - 可从工作区扫描候选：`~/.ssh/config`（高置信）、`.env*` / Spring `application*`（中）、`docker-compose` / `Makefile` / `deploy*.sh` / ansible（低）、README 等文档（低）
 - 候选勾选确认后才写入 `~/.kshell/connections.yaml`；低置信度默认不勾选
 - 私钥只存路径，不把密钥内容落盘
+- **密码认证的注意事项**：保存了密码的连接经 ASKPASS 机制（`KSHELL_SSH_PASSWORD` 环境变量）非交互认证。该变量会被 ssh 的本地子进程（如 `~/.ssh/config` 里配置的 `ProxyCommand` / `ProxySkip` 所指定的代理程序）完整继承——请勿在代理程序来源不可信的环境里使用密码保存功能。密码明文落盘于 `connections.yaml`（Windows 上权限位不生效，本机同用户进程可读），介意者请改用密钥认证
 
 ## 配置
 

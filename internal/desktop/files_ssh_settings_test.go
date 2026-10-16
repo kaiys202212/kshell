@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/remote"
 )
@@ -53,6 +54,9 @@ func newFilesEnv(t *testing.T) *filesEnv {
 		Store:         store,
 		Windows:       NewWindowManager(stub, nil),
 	})
+	// 默认把 root 注册为本地工作区：绑定层有工作区白名单（深度防御），
+	// 文件操作只对扫描出的工作区开放；个别用例如需「未注册根」场景可覆盖。
+	app.rawWorkspaces = []discovery.Workspace{{Path: root, Kind: discovery.KindLocal}}
 	return &filesEnv{app: app, stub: stub, root: root}
 }
 

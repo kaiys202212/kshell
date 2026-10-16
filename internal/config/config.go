@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yangk/kshell/internal/atomfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -169,7 +170,7 @@ func Load(p Layout) (Config, error) {
 	return c.normalized(), nil
 }
 
-// Save 先写临时文件再替换，避免写一半崩溃留下损坏配置（Windows 的 os.Rename 会覆盖目标文件）。
+// Save 原子写配置（atomfile：唯一临时文件 + 包级互斥，防写一半损坏与并发互踩）。
 func Save(p Layout, c Config) error {
 	if err := EnsureRoot(p); err != nil {
 		return err
@@ -178,16 +179,7 @@ func Save(p Layout, c Config) error {
 	if err != nil {
 		return err
 	}
-
-	tmp := p.Config + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, p.Config); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return atomfile.Write(p.Config, data, 0o755)
 }
 
 func (c Config) normalized() Config {

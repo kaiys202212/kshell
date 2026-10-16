@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"path/filepath"
+	"sync"
 
 	ignore "github.com/sabhiram/go-gitignore"
 )
@@ -9,11 +10,15 @@ import (
 var defaultBuiltin = []string{".git", "node_modules", "vendor", "dist", "build"}
 
 // Matcher 决定文件树里哪些条目不展示：仓库 .gitignore + 内置排除名单。
+// 并发安全：Skip 可多 goroutine 共享（parsers 缓存内部加锁），
+// 不再依赖「调用方持 treeMu」的隐式契约。
 type Matcher struct {
 	root    string
 	showAll bool
 	builtin map[string]bool
-	parsers map[string]ignore.IgnoreParser
+
+	parsersMu sync.Mutex
+	parsers   map[string]ignore.IgnoreParser
 }
 
 func NewMatcher(root string, exclude []string, showAll bool) *Matcher {
@@ -72,6 +77,8 @@ func (m *Matcher) Skip(path string, isDir bool) bool {
 }
 
 func (m *Matcher) parserFor(dir string) ignore.IgnoreParser {
+	m.parsersMu.Lock()
+	defer m.parsersMu.Unlock()
 	if p, ok := m.parsers[dir]; ok {
 		return p
 	}

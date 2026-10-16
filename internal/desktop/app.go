@@ -132,7 +132,11 @@ type App struct {
 	pendingScan bool
 	// scanned 标记本进程是否完成过一轮真实扫描（快照恢复不算）：
 	// 绑定调用据此决定要不要等首扫，避免拿快照当真结果错过新工作区。
-	scanned    bool
+	scanned bool
+	// scanNotify 是「首轮真实扫描完成」的单次通知 channel（ensure* 等待用）：
+	// 完成时 close 并置 nil，避免 25ms 忙轮询。注意 close 后再订阅是幂等的
+	//（读取已关 channel 立即返回），但要防重复 close——只在持锁且非 nil 时 close。
+	scanNotify chan struct{}
 	quitting   bool // 托盘「退出」已发起：BeforeClose 据此放行 Wails 的退出流程
 	trayActive bool // 系统托盘消息循环已启动：BeforeClose 据此判断能否收进托盘
 
@@ -799,6 +803,7 @@ func (a *App) runScan() {
 		a.rawWorkspaces = raw
 		a.scanned = true
 	}
+	a.wakeScanWaitersLocked()
 	savedTools := append([]discovery.Tool(nil), a.tools...)
 	a.mu.Unlock()
 
@@ -846,6 +851,7 @@ func (a *App) publishDetectedTools(tools []discovery.Tool) {
 	}
 	current := a.tools
 	a.toolsReady = true
+	a.wakeScanWaitersLocked() // ensureToolsReady 等待者也要被唤醒
 	a.mu.Unlock()
 	a.Emit("tools:updated")
 	a.maybeAutoRepair(current)
@@ -913,8 +919,27 @@ func (a *App) knownSessionIDs() []string {
 // 超时只是兜底：结果始终没就绪就按不存在处理，不让绑定调用无限挂起。
 const scanReadyTimeout = 3 * time.Second
 
+// wakeScanWaitersLocked 唤醒所有等首轮扫描结果的 goroutine（ensureScanReady /
+// ensureToolsReady 的 channel 订阅者）。调用方持锁。close 语义保证只唤醒一次。
+func (a *App) wakeScanWaitersLocked() {
+	if a.scanNotify != nil {
+		close(a.scanNotify)
+		a.scanNotify = nil
+	}
+}
+
+// scanNotifyCh 返回扫描完成通知 channel（已关的 channel 读取立即返回，幂等安全）。
+func (a *App) scanNotifyCh() <-chan struct{} {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.scanNotify == nil {
+		a.scanNotify = make(chan struct{})
+	}
+	return a.scanNotify
+}
+
 // ensureScanReady 等待本进程的首轮真实扫描结果就绪：尚未扫完且依赖已装配时触发一轮
-// 扫描（可能已在后台进行，不重复触发），轮询等待结果落位后返回。
+// 扫描（可能已在后台进行，不重复触发），channel 等待结果落位后返回。
 // 已扫完（scanned）立即返回——本方法只兜底「应用刚启动还没扫完」，
 // 不为「结果里确实没有」的场景再做全量扫描，避免无谓等待。
 // 注意：启动时用快照灌入的 result 不算「已扫完」，否则新出现的工作区/会话会被判为不存在。
@@ -935,10 +960,13 @@ func (a *App) ensureScanReady() {
 		if started {
 			go a.runScan()
 		}
-		if time.Now().After(deadline) {
+		notify := a.scanNotifyCh()
+		select {
+		case <-notify:
+			// 扫描完成：下一轮循环检查就绪状态
+		case <-time.After(time.Until(deadline)):
 			return
 		}
-		time.Sleep(25 * time.Millisecond)
 	}
 }
 
@@ -961,10 +989,12 @@ func (a *App) ensureToolsReady() {
 		if started {
 			go a.runScan()
 		}
-		if time.Now().After(deadline) {
+		notify := a.scanNotifyCh()
+		select {
+		case <-notify:
+		case <-time.After(time.Until(deadline)):
 			return
 		}
-		time.Sleep(25 * time.Millisecond)
 	}
 }
 

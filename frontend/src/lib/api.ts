@@ -1371,12 +1371,6 @@ export async function listTerminals(): Promise<TerminalInfo[]> {
   return a.ListTerminals();
 }
 
-// scrollbackTerminal 取终端最近输出的回放数据（base64；已退出的终端仍可读）。
-export async function scrollbackTerminal(id: string): Promise<string> {
-  const a = app();
-  if (!a) return '';
-  return a.ScrollbackTerminal(id);
-}
 
 // newSessionWithTool 在外部终端窗口新建会话（次要入口）；toolId 为空串等价于 NewSession。
 export async function newSessionWithTool(wsPath: string, toolId: string): Promise<void> {

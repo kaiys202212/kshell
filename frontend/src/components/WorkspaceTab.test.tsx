@@ -44,7 +44,6 @@ const mocks = vi.hoisted(() => ({
   writeTerminal: vi.fn(),
   resizeTerminal: vi.fn(),
   closeTerminal: vi.fn(),
-  scrollbackTerminal: vi.fn(),
   sendChatPrompt: vi.fn(),
   sendChatPromptBlocks: vi.fn(),
   listChatModels: vi.fn().mockResolvedValue(null),
@@ -163,9 +162,9 @@ beforeEach(() => {
 });
 
 describe('WorkspaceTab', () => {
-  it('收到 scan:done 后重取终端/聊天镜像（Go 侧扫描回填了新会话标题，页签要跟着更新）', async () => {
+  it('收到 scan:done 只重取工具列表；终端/聊天镜像由 App 全局刷新（避免 N 页签 N 倍 IPC）', async () => {
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
-    await act(async () => {}); // 让挂载期请求落位（聊天镜像挂载时由 App 层负责，这里只认事件后的重取）
+    await act(async () => {}); // 让挂载期请求落位
     expect(mocks.listTerminals).toHaveBeenCalledTimes(1);
     expect(mocks.listChats).not.toHaveBeenCalled();
 
@@ -173,8 +172,11 @@ describe('WorkspaceTab', () => {
       scanDoneCb?.({});
     });
 
-    expect(mocks.listTerminals).toHaveBeenCalledTimes(2);
-    expect(mocks.listChats).toHaveBeenCalledTimes(1);
+    // 页签自身不再拉镜像：listTerminals 仍只有挂载那一次，listChats 依旧不拉
+    expect(mocks.listTerminals).toHaveBeenCalledTimes(1);
+    expect(mocks.listChats).not.toHaveBeenCalled();
+    // 工具列表重取（scan:done 后「选择 agent」下拉需要）
+    expect(mocks.getTools).toHaveBeenCalledTimes(2);
   });
 
   it('「新建会话」下拉菜单选 agent 后开中心区内嵌终端并激活其页签', async () => {

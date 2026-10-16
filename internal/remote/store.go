@@ -4,11 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/yangk/kshell/internal/atomfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -95,22 +95,11 @@ func (s *Store) Save() error {
 
 // saveLocked 在已持有读锁时落盘（写锁是读锁的超集，RWMutex 允许）。
 func (s *Store) saveLocked() error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return err
-	}
 	data, err := yaml.Marshal(s.conns)
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return atomfile.Write(s.path, data, 0o755)
 }
 
 func (s *Store) Add(c Connection) (Connection, error) {
@@ -123,17 +112,42 @@ func (s *Store) Add(c Connection) (Connection, error) {
 	if c.Port <= 0 {
 		c.Port = defaultPort
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// 生成 ID 时对现有连接查重：UnixNano 后缀熵有限，同 target 快速连续 Add
+	//（批量导入候选）会碰撞，冲突的 ID 会让 Update/Delete 打到错误条目。
 	if c.ID == "" {
-		c.ID = newID(c)
+		for {
+			c.ID = newID(c)
+			if !s.hasIDLocked(c.ID) {
+				break
+			}
+		}
 	}
 	if c.Name == "" {
 		c.Name = c.Target()
 	}
+	// 先按「加入后」的快照落盘，成功后才改内存：落盘失败时内存不漂移，
+	// 否则下次 Load 用磁盘旧数据覆盖，用户刚确认的连接会「消失」。
+	saved := append(append([]Connection(nil), s.conns...), c)
+	backup := s.conns
+	s.conns = saved
+	if err := s.saveLocked(); err != nil {
+		s.conns = backup
+		return Connection{}, err
+	}
+	return c, nil
+}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.conns = append(s.conns, c)
-	return c, s.saveLocked()
+// hasIDLocked 报告 ID 是否已被占用（调用方持锁）。
+func (s *Store) hasIDLocked(id string) bool {
+	for _, c := range s.conns {
+		if c.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) Update(c Connection) error {
@@ -144,8 +158,13 @@ func (s *Store) Update(c Connection) error {
 			if strings.Contains(strings.ToUpper(c.IdentityFile), "PRIVATE KEY") {
 				return errKeyMaterial
 			}
+			old := s.conns[i]
 			s.conns[i] = c
-			return s.saveLocked()
+			if err := s.saveLocked(); err != nil {
+				s.conns[i] = old
+				return err
+			}
+			return nil
 		}
 	}
 	return ErrUnknownConnection
@@ -156,8 +175,13 @@ func (s *Store) Delete(id string) error {
 	defer s.mu.Unlock()
 	for i, c := range s.conns {
 		if c.ID == id {
-			s.conns = append(s.conns[:i], s.conns[i+1:]...)
-			return s.saveLocked()
+			backup := s.conns
+			s.conns = append(append([]Connection(nil), s.conns[:i]...), s.conns[i+1:]...)
+			if err := s.saveLocked(); err != nil {
+				s.conns = backup
+				return err
+			}
+			return nil
 		}
 	}
 	return ErrUnknownConnection

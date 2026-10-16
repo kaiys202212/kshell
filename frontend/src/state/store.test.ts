@@ -303,6 +303,38 @@ describe('store', () => {
     expect(useAppStore.getState().chatSeq.c1).toBe(0);
   });
 
+  it('已移除聊天的迟到 permission 事件不得重建孤儿 key', () => {
+    const chat = {
+      ID: 'c1',
+      Kind: 'new',
+      SessionID: '',
+      Workspace: 'D:\\w',
+      Title: 't',
+      ToolID: 'claude',
+      Status: 'running',
+      ExitCode: 0,
+      Error: '',
+    };
+    useAppStore.setState({ chats: [chat], chatItems: {}, chatSeq: {}, chatPermissions: {} });
+    useAppStore.getState().setChatPermission('c1', {
+      RequestID: 'r1',
+      SessionID: 's1',
+      ToolCall: { ToolCallID: 'tc1' },
+      Options: [],
+    });
+    expect(useAppStore.getState().chatPermissions.c1).toBeDefined();
+    // 用户关闭页签：removeChat 清掉权限；此后 Wails 事件管道里迟到的
+    // permission 推送不得把 key 重建回来（否则弹窗挂在已关闭的聊天上）
+    useAppStore.getState().removeChat('c1');
+    useAppStore.getState().setChatPermission('c1', {
+      RequestID: 'r2',
+      SessionID: 's1',
+      ToolCall: { ToolCallID: 'tc2' },
+      Options: [],
+    });
+    expect(useAppStore.getState().chatPermissions.c1).toBeUndefined();
+  });
+
   it('agent 通知：入队追加、dismiss 移除、clear 清空', () => {
     useAppStore.getState().pushAgentNotice({
       tool: 'claude', event: 'Stop', termKey: 'session:s1', workspace: 'D:\\w', summary: '完成',

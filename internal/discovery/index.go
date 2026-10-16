@@ -7,9 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"sync"
 	"time"
 
+	"github.com/yangk/kshell/internal/atomfile"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/providers"
 )
@@ -56,22 +58,11 @@ func LoadIndex(path string) *Index {
 }
 
 func (idx *Index) Save(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
 	data, err := json.Marshal(idx)
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return atomfile.Write(path, data, 0o755)
 }
 
 func (idx *Index) shouldReuse(path string, mtime, size int64) bool {
@@ -189,10 +180,9 @@ func Scan(home string, ps []providers.Provider, cachePath string, opts ScanOptio
 
 	idx.Version = indexVersion
 	idx.Entries = entries
-	if err := idx.Save(cachePath); err != nil {
-		// 缓存写不进去不该影响本次扫描结果
-		failed = append(failed, cachePath)
-	}
+	// 缓存写不进去不该影响本次扫描结果，更不能混进 Failed——那是「解析失败的
+	// 会话文件」口径，前端按数量提示用户，混入会让缓存错误冒充会话问题。
+	_ = idx.Save(cachePath)
 
 	sessions := make([]providers.Session, 0, len(entries))
 	for _, entry := range entries {
@@ -200,6 +190,15 @@ func Scan(home string, ps []providers.Provider, cachePath string, opts ScanOptio
 	}
 	sessions = append(sessions, enumerateSessions(home, ps, &failed)...)
 	sessions = dedupeSessions(sessions)
+	// 确定性输出：entries 来自 map 遍历，顺序随机会让 snapshot 与 API 结果
+	// 不稳定。下游（前端 SessionList、GroupSessions）虽各自排序兜底，
+	// 这里按同口径（UpdatedAt 降序 → Path 升序）统一收口。
+	sort.SliceStable(sessions, func(i, j int) bool {
+		if !sessions[i].UpdatedAt.Equal(sessions[j].UpdatedAt) {
+			return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
+		}
+		return sessions[i].Path < sessions[j].Path
+	})
 
 	return &Result{
 		Sessions:   sessions,

@@ -391,6 +391,9 @@ export const useAppStore = create<AppState>()(
       chatPermissions: {},
       setChatPermission: (id, req) =>
         set((s) => {
+          // 聊天已从镜像移除（用户关了页签）时忽略迟到的事件推送：
+          // 否则 Wails 管道里的旧 permission 会重建孤儿 key，弹窗挂在已关闭的聊天上
+          if (req && !s.chats.some((c) => c.ID === id)) return {};
           const next = { ...s.chatPermissions };
           if (req) next[id] = req;
           else delete next[id];

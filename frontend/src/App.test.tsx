@@ -49,7 +49,6 @@ const mocks = vi.hoisted(() => ({
   resizeTerminal: vi.fn(),
   closeTerminal: vi.fn(),
   listTerminals: vi.fn(),
-  scrollbackTerminal: vi.fn(),
   newSessionWithTool: vi.fn(),
   onTerminalData: vi.fn(),
   onTerminalExit: vi.fn(),
@@ -584,13 +583,16 @@ describe('App', () => {
     expect(useAppStore.getState().chatSeq.c1).toBe(9);
   });
 
-  it('chat:permission 事件写入待回应权限', () => {
+  it('chat:permission 事件写入待回应权限', async () => {
     let permCb: ((p: { id: string; request: ChatPermissionRequest }) => void) | undefined;
     mocks.onChatPermission.mockImplementation((cb: typeof permCb) => {
       permCb = cb;
       return () => {};
     });
+    // 权限防护要求聊天已在镜像：先让 listChats 落位 c1
+    mocks.listChats.mockResolvedValue([chat]);
     render(<App />);
+    await waitFor(() => expect(useAppStore.getState().chats).toHaveLength(1));
 
     act(() => {
       permCb?.({ id: 'c1', request: permission });
@@ -732,6 +734,54 @@ describe('App', () => {
     expect(open).toHaveBeenCalledWith('https://example.com/app');
     a.remove();
     vi.unstubAllGlobals();
+  });
+
+  // 终端聚焦时 Ctrl+K 必须让行给 shell（xterm 已把按键写入 pty），
+  // 否则一次按键双效应：shell 收到 kill-line + 快速切换器弹出。
+  function mountFakeXtermFocus(): HTMLElement {
+    const holder = document.createElement('div');
+    holder.className = 'xterm';
+    const textarea = document.createElement('textarea');
+    textarea.className = 'xterm-helper-textarea';
+    holder.appendChild(textarea);
+    document.body.appendChild(holder);
+    textarea.focus();
+    return holder;
+  }
+
+  it('终端聚焦时 Ctrl+K 不弹快速切换器（让行给 shell）', () => {
+    render(<App />);
+    const holder = mountFakeXtermFocus();
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    // 切换器未打开：没有搜索框
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    holder.remove();
+  });
+
+  it('焦点不在终端时 Ctrl+K 照常打开快速切换器', () => {
+    render(<App />);
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('scan:done 全局刷新终端/聊天镜像（一次订阅，页签不再各自重复拉取）', async () => {
+    let scanCb: ((p?: unknown) => void) | undefined;
+    mocks.onScanDone.mockImplementation((cb: typeof scanCb) => {
+      scanCb = cb;
+      return () => {};
+    });
+    mocks.listTerminals.mockResolvedValue([]);
+    mocks.listChats.mockResolvedValue([]);
+    render(<App />);
+    await act(async () => {}); // 挂载期初始拉取落位
+    const initTerms = mocks.listTerminals.mock.calls.length;
+    const initChats = mocks.listChats.mock.calls.length;
+
+    await act(async () => {
+      scanCb?.({});
+    });
+    expect(mocks.listTerminals.mock.calls.length).toBe(initTerms + 1);
+    expect(mocks.listChats.mock.calls.length).toBe(initChats + 1);
   });
 
   it('agent 通知：入队并按事件语义响提示音（完成轻音 / 等待确认与出错重音）', () => {

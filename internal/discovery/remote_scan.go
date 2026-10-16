@@ -26,6 +26,14 @@ func RemoteCacheDir(cacheRoot, connID string) string {
 	return filepath.Join(cacheRoot, "remote", connID)
 }
 
+// RemoteResult 是远端扫描结果：Failed 与本地 Scan 的 Result.Failed 同口径
+//（解析/列举失败的会话文件与原因），供上层状态栏提示——失败不可见会让
+// 「远端少了会话」无从诊断。
+type RemoteResult struct {
+	Sessions []providers.Session
+	Failed   []string
+}
+
 // ScanRemoteSessions 经 Runner 在远端列会话文件 / 执行 enumerator，拉文件头后本地 ParseSession，
 // 只保留 Workspace 归一化等于 remoteWS 的会话。
 // cachePath 非空时按 mtime+size 门控复用解析（index.json）；空则不做持久缓存。
@@ -37,7 +45,7 @@ func ScanRemoteSessions(
 	remoteWS string,
 	run RemoteRunner,
 	cachePath string,
-) ([]providers.Session, error) {
+) (*RemoteResult, error) {
 	if run == nil {
 		return nil, fmt.Errorf("err.remote.fs_no_runner")
 	}
@@ -113,8 +121,9 @@ func ScanRemoteSessions(
 		idx.Version = indexVersion
 		_ = idx.Save(cachePath) // 写失败不阻断结果
 	}
-	_ = failed // 部分失败已跳过；整连接失败只在拿不到 home 时返回
-	return sessions, nil
+	// 部分失败必须可见（与本地 Scan 的 Result.Failed 同口径），
+	// 否则远端「少了会话」无从诊断；整连接失败只在拿不到 home 时返回。
+	return &RemoteResult{Sessions: sessions, Failed: failed}, nil
 }
 
 type remoteFileMeta struct {
@@ -179,7 +188,48 @@ func remoteListSessionFiles(ctx context.Context, conn remote.Connection, run Rem
 		}
 		return nil, err
 	}
-	return parseRemoteFindFiles(stdout)
+	meta, perr := parseRemoteFindFiles(stdout)
+	if perr == nil && len(stderr) == 0 {
+		return meta, nil
+	}
+	// -printf 是 GNU 扩展：macOS/BSD find 会 stderr 报「unknown option」并被 || true 吞掉
+	//（退出码 1、输出空/畸形）。此时回退 POSIX find（纯路径列表；mtime=0 让缓存门控
+	// 退化为重解析，比整台远端静默扫描为空好）。stderr 为空且解析成功才是真·无文件。
+	return remoteListSessionFilesPOSIX(ctx, conn, run, root, pattern)
+}
+
+// remoteListSessionFilesPOSIX 无 -printf 的兼容列举：逐行纯路径，mtime/size 未知置 0。
+func remoteListSessionFilesPOSIX(ctx context.Context, conn remote.Connection, run RemoteRunner, root, pattern string) ([]remoteFileMeta, error) {
+	cmd := fmt.Sprintf(
+		"LC_ALL=C find %s -type f -name %s 2>/dev/null || true",
+		shellSingleQuote(root),
+		shellSingleQuote(pattern),
+	)
+	stdout, stderr, err := run(ctx, conn, cmd, nil)
+	if err != nil {
+		if len(stderr) > 0 {
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(stderr)))
+		}
+		return nil, err
+	}
+	return parseRemoteFindPaths(stdout), nil
+}
+
+// parseRemoteFindPaths 解析 POSIX find 的纯路径输出。
+func parseRemoteFindPaths(stdout []byte) []remoteFileMeta {
+	text := string(stdout)
+	if text == "" {
+		return nil
+	}
+	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+	out := make([]remoteFileMeta, 0, len(lines))
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		out = append(out, remoteFileMeta{path: NormalizeRemotePath(line)})
+	}
+	return out
 }
 
 func parseRemoteFindFiles(stdout []byte) ([]remoteFileMeta, error) {

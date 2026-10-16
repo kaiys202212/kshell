@@ -162,25 +162,16 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     // 工具列表只在挂载时取一次（用于「选择 agent」下拉），而扫描是异步的：
     // 必须订阅 scan:done 再取一次，否则挂载早于扫描完成时下拉会一直禁用，
     // 表现为「没有选择 agent 的选项」。
+    // 终端/聊天镜像不在此刷新：那是全局 store，App 层统一订阅 scan:done，
+    // 每个页签各自订阅会对同一事件产生 N 倍重复 IPC。
     const refresh = () => {
       getTools()
         .then((list) => setTools(list.filter((t) => t.Installed && t.BinPath !== '')))
         .catch(() => {});
     };
     refresh();
-    // 扫描完成后重取终端/聊天镜像：Go 侧会把新发现的会话回填到新建终端/聊天
-    // （SessionID/真实标题），页签标题与「恢复/切换」判断都依赖这份镜像
-    const refreshMirrors = () => {
-      listTerminals()
-        .then((list) => useAppStore.getState().setTerminals(list))
-        .catch(() => {});
-      listChats()
-        .then((list) => useAppStore.getState().setChats(list))
-        .catch(() => {});
-    };
     const offScan = onScanDone(() => {
       refresh();
-      refreshMirrors();
     });
     const offTools = onToolsUpdated(() => {
       refresh();

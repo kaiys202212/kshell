@@ -116,6 +116,27 @@ func TestDelete(t *testing.T) {
 	}
 }
 
+// TestAddRapidSameTargetUniqueIDs 覆盖 newID 碰撞：同 target 连续快速 Add
+// （如批量导入候选）时 UnixNano()%100000 后缀可能重复，ID 冲突会让后续
+// Update/Delete 打到错误条目。ID 必须互不相同。
+func TestAddRapidSameTargetUniqueIDs(t *testing.T) {
+	store := tempStore(t)
+	seen := map[string]bool{}
+	for i := 0; i < 50; i++ {
+		added, err := store.Add(Connection{Name: "dup", Host: "10.0.0.1", User: "root"})
+		if err != nil {
+			t.Fatalf("Add #%d: %v", i, err)
+		}
+		if seen[added.ID] {
+			t.Fatalf("ID 碰撞: %s", added.ID)
+		}
+		seen[added.ID] = true
+	}
+	if len(store.All()) != 50 {
+		t.Fatalf("应有 50 条连接, got %d", len(store.All()))
+	}
+}
+
 func TestConnectionPasswordRoundTrip(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "connections.yaml"))
 	_, err := store.Add(Connection{Name: "p", Host: "h", Password: "s3cret"})
@@ -187,6 +208,81 @@ func TestLoadMissingFileIsEmpty(t *testing.T) {
 	}
 	if len(store.All()) != 0 {
 		t.Fatal("expected no connections")
+	}
+}
+
+// unwritableStore 返回一个落盘必然失败的 store：父路径被文件占用，MkdirAll 失败。
+func unwritableStore(t *testing.T) *Store {
+	t.Helper()
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// path 的父目录是文件 blocker → MkdirAll 必失败
+	return NewStore(filepath.Join(blocker, "sub", "connections.yaml"))
+}
+
+// TestAddRollsBackWhenSaveFails 覆盖「先改内存后落盘」的一致性缺陷：
+// 落盘失败时内存必须回滚，否则重启后 Load 用磁盘旧数据覆盖内存，
+// 用户刚确认的连接「消失」且操作看似成功实则未持久化。
+func TestAddRollsBackWhenSaveFails(t *testing.T) {
+	store := unwritableStore(t)
+	_, err := store.Add(Connection{Name: "x", Host: "h"})
+	if err == nil {
+		t.Fatal("落盘失败应返回错误")
+	}
+	if got := store.All(); len(got) != 0 {
+		t.Fatalf("落盘失败后内存应回滚为空, got %+v", got)
+	}
+	if store.Has("h", "", 22) {
+		t.Fatal("落盘失败后 Has 仍应返回 false")
+	}
+}
+
+func TestUpdateRollsBackWhenSaveFails(t *testing.T) {
+	store := tempStore(t)
+	added := mustAdd(t, store, Connection{Name: "a", Host: "a", Workspace: "w1"})
+	// 破坏落盘能力：把 path 换成不可写位置（内存 conns 不受影响）
+	store.mu.Lock()
+	store.path = filepath.Join(filepath.Dir(store.path), "no-such-dir-parent-is-file", "c.yaml")
+	store.mu.Unlock()
+	// 制造「父目录是文件」：直接用 blocker 方案重建
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	store.path = filepath.Join(blocker, "sub", "connections.yaml")
+	store.mu.Unlock()
+
+	err := store.Update(Connection{ID: added.ID, Name: "renamed", Host: "a", Workspace: "w2"})
+	if err == nil {
+		t.Fatal("落盘失败应返回错误")
+	}
+	for _, c := range store.All() {
+		if c.ID == added.ID && c.Workspace != "w1" {
+			t.Fatalf("落盘失败后内存应回滚, got Workspace=%q", c.Workspace)
+		}
+	}
+}
+
+func TestDeleteRollsBackWhenSaveFails(t *testing.T) {
+	store := tempStore(t)
+	added := mustAdd(t, store, Connection{Name: "a", Host: "a"})
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	store.path = filepath.Join(blocker, "sub", "connections.yaml")
+	store.mu.Unlock()
+
+	if err := store.Delete(added.ID); err == nil {
+		t.Fatal("落盘失败应返回错误")
+	}
+	if len(store.All()) != 1 {
+		t.Fatalf("落盘失败后内存应回滚, got %+v", store.All())
 	}
 }
 

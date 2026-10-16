@@ -32,6 +32,32 @@ func TestIgnoreRespectsGitignore(t *testing.T) {
 	}
 }
 
+// TestMatcherConcurrentSkip 覆盖隐式并发契约：parserFor 会写 m.parsers 缓存 map，
+// 此前靠「调用方持 treeMu」的看不见的约定串行化；共享 Matcher 一旦被并行使用
+// （如并行预取）就是并发 map 写崩溃。加锁后 -race 下并发 Skip 必须干净。
+func TestMatcherConcurrentSkip(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, ".gitignore"), "*.log\n")
+	for i := 0; i < 8; i++ {
+		write(t, filepath.Join(root, "d"+string(rune('a'+i)), ".gitignore"), "*.tmp\n")
+	}
+
+	m := NewMatcher(root, nil, false)
+	done := make(chan struct{})
+	for g := 0; g < 8; g++ {
+		go func(g int) {
+			defer func() { done <- struct{}{} }()
+			for i := 0; i < 200; i++ {
+				_ = m.Skip(filepath.Join(root, "d"+string(rune('a'+g)), "x.bin"), false)
+				_ = m.Skip(filepath.Join(root, "y.log"), false)
+			}
+		}(g)
+	}
+	for g := 0; g < 8; g++ {
+		<-done
+	}
+}
+
 func TestBuiltinExcludesApplyWithoutGitignore(t *testing.T) {
 	root := t.TempDir()
 	m := NewMatcher(root, nil, false)

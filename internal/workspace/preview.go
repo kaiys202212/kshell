@@ -50,7 +50,9 @@ func PreviewFile(path string, maxBytes int, maxLines int) Preview {
 	buf := make([]byte, maxBytes)
 	n, err := io.ReadFull(f, buf)
 	buf = buf[:n]
-	truncated := n == maxBytes && err == nil
+	// 以真实文件大小判断截断：n == maxBytes 在文件恰好等大时也会成立，
+	// 那时内容其实读完了，不该显示「已截断」。
+	truncated := info.Size() > int64(maxBytes)
 
 	if isBinary(buf) {
 		return Preview{

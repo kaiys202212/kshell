@@ -87,9 +87,6 @@ type Agent struct {
 	baseCtx    context.Context // 反向请求处理器的基础 ctx，Close/进程退出时取消
 	baseCancel context.CancelFunc
 
-	writeErrMu   sync.Mutex
-	lastWriteErr error
-
 	mcp []McpServerStdio
 
 	readDone  chan struct{} // 读循环结束
@@ -212,13 +209,8 @@ func (a *Agent) writeResponse(id json.RawMessage, result any, rpcErr *RPCError) 
 		env.Result = struct{}{}
 	}
 	a.writeMu.Lock()
-	err := a.codec.write(env)
+	_ = a.codec.write(env)
 	a.writeMu.Unlock()
-	if err != nil {
-		a.writeErrMu.Lock()
-		a.lastWriteErr = err
-		a.writeErrMu.Unlock()
-	}
 }
 
 func (a *Agent) call(ctx context.Context, method string, params, out any) error {

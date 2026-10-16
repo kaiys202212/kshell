@@ -5,7 +5,52 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+// TestNestedGitRootsDepthLimit 覆盖深层大仓库卡顿根因：nestedGitRoots 原先
+// 全深度遍历、无超时。超过深度上限的嵌套 .git 不再收集；函数在时限内返回。
+func TestNestedGitRootsDepthLimit(t *testing.T) {
+	root := t.TempDir()
+	// 深度为 2 的嵌套仓库：root/a/b/.git（在上限 4 内，应收集）
+	shallow := filepath.Join(root, "a", "b", ".git")
+	if err := os.MkdirAll(shallow, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 深度为 8 的嵌套仓库：超过上限，不应收集
+	var deep string
+	{
+		p := root
+		for i := 0; i < 8; i++ {
+			p = filepath.Join(p, "d")
+		}
+		deep = p
+		if err := os.MkdirAll(filepath.Join(deep, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	roots := nestedGitRoots(root)
+	if time.Now().After(deadline) {
+		t.Fatal("nestedGitRoots 未在 5s 内返回")
+	}
+	foundShallow, foundDeep := false, false
+	for _, r := range roots {
+		if r == filepath.Join(root, "a", "b") {
+			foundShallow = true
+		}
+		if r == deep {
+			foundDeep = true
+		}
+	}
+	if !foundShallow {
+		t.Fatalf("上限内的嵌套仓库应被收集: %v", roots)
+	}
+	if foundDeep {
+		t.Fatalf("超过深度上限的嵌套仓库不应收集: %v", roots)
+	}
+}
 
 func TestParsePorcelainZ(t *testing.T) {
 	in := "M  a.go\x00?? b dir/c.txt\x00R  new.txt\x00old.txt\x00" +
