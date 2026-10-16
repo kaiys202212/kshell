@@ -337,6 +337,7 @@ describe('AgentHubPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.jump_session') }));
     expect(openTab).toHaveBeenCalledWith(expect.objectContaining({ Path: 'D:\\ws\\x', Name: 'x' }));
     expect(focus).not.toHaveBeenCalled();
+    expect(screen.queryByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
   });
 
   it('@ 指定目标发送：投递到该 agent 并记录 lastAgentId', async () => {

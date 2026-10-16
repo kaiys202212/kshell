@@ -1102,7 +1102,7 @@ export default function AgentHubPanel() {
             }
           }}
         />
-        {/* 发送行：自动滚动开关放发送按钮左侧（原来独立成行，与右上角浮动会话胶囊同位叠放） */}
+        {/* 发送行：自动滚动开关放发送按钮左侧 */}
         <div className="flex items-center justify-end gap-2">
           <label className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground">
             <input
