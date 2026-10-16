@@ -458,7 +458,21 @@ export default function RequirementList({ className }: { className?: string }) {
                 />
                 <span className="min-w-0 flex-1">
                   <span className="line-clamp-3 block break-words text-[13.5px] leading-relaxed">{r.text}</span>
+                  {/* 紧凑单行：session 片段 + 状态/tags/工作区徽章 + 行尾 hover 按钮组（含跳转/重开） */}
                   <span className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
+                    {/* 会话片段：已派发条目展示绑定会话的运行状态点与名称（实时标题优先） */}
+                    {(r.dispatchedTo || r.chatId) && (
+                      <span className="flex min-w-0 max-w-[45%] items-center gap-1.5 text-xs text-muted-foreground">
+                        {/* 状态点带 aria 文案：色点本身 aria-hidden，让读屏用户也能感知运行状态 */}
+                        <span
+                          data-testid="req-session-dot"
+                          role="img"
+                          aria-label={t(chat ? 'ui.requirements.session_running_aria' : 'ui.requirements.session_ended')}
+                          className={cn('h-1.5 w-1.5 shrink-0 rounded-full', sessionDotClass(chat?.Status))}
+                        />
+                        <span className="min-w-0 truncate" title={sessionName}>{sessionName}</span>
+                      </span>
+                    )}
                     <Badge
                       variant={statusBadgeVariant(status)}
                       className={cn(status === 'done' && 'bg-success/15 text-success')}
@@ -471,9 +485,34 @@ export default function RequirementList({ className }: { className?: string }) {
                       </Badge>
                     ))}
                     {r.dispatchedTo && <Badge variant="outline">{baseName(r.dispatchedTo)}</Badge>}
-                    {/* 操作按钮：徽章行行尾 hover 显现（兄弟节点定位，避免嵌套进文本区）。
+                    {/* 行尾按钮组：hover 显现（兄弟节点定位，避免嵌套进文本区）。
+                        会话跳转/重开在前，需求操作在后，同一行避免卡片纵向膨胀。
                         pending：编辑+删除；active：标记完成；done：归档；archived 不进活跃列表。 */}
                     <span className="ml-auto hidden shrink-0 gap-0.5 group-hover:flex">
+                      {chat && chat.Key ? (
+                        <button
+                          type="button"
+                          aria-label={t('ui.requirements.session_jump')}
+                          title={t('ui.requirements.session_jump')}
+                          className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          onClick={() => focusNoticeTarget(chat.Key!)}
+                        >
+                          <JumpGlyph />
+                        </button>
+                      ) : chat ? null : (
+                        // 重开仅限 pending/active：done 是终态，MarkDispatched 守卫会拒绝
+                        r.chatId && status !== 'done' && (
+                          <button
+                            type="button"
+                            aria-label={t('ui.requirements.session_reopen')}
+                            title={t('ui.requirements.session_reopen')}
+                            className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                            onClick={() => reopen(r)}
+                          >
+                            <ReopenGlyph />
+                          </button>
+                        )
+                      )}
                       {status === 'pending' && (
                         <>
                           <button
@@ -520,43 +559,6 @@ export default function RequirementList({ className }: { className?: string }) {
                       )}
                     </span>
                   </span>
-                  {/* 会话行：已派发条目展示绑定会话的名称与运行状态，行尾为跳转/重开入口 */}
-                  {(r.dispatchedTo || r.chatId) && (
-                    <span className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                      {/* 状态点带 aria 文案：色点本身 aria-hidden，让读屏用户也能感知运行状态 */}
-                      <span
-                        data-testid="req-session-dot"
-                        role="img"
-                        aria-label={t(chat ? 'ui.requirements.session_running_aria' : 'ui.requirements.session_ended')}
-                        className={cn('h-1.5 w-1.5 shrink-0 rounded-full', sessionDotClass(chat?.Status))}
-                      />
-                      <span className="min-w-0 truncate">{sessionName}</span>
-                      {chat && chat.Key ? (
-                        <button
-                          type="button"
-                          aria-label={t('ui.requirements.session_jump')}
-                          title={t('ui.requirements.session_jump')}
-                          className="ml-auto shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                          onClick={() => focusNoticeTarget(chat.Key!)}
-                        >
-                          <JumpGlyph />
-                        </button>
-                      ) : chat ? null : (
-                        // 重开仅限 pending/active：done 是终态，MarkDispatched 守卫会拒绝
-                        r.chatId && status !== 'done' && (
-                          <button
-                            type="button"
-                            aria-label={t('ui.requirements.session_reopen')}
-                            title={t('ui.requirements.session_reopen')}
-                            className="ml-auto shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                            onClick={() => reopen(r)}
-                          >
-                            <ReopenGlyph />
-                          </button>
-                        )
-                      )}
-                    </span>
-                  )}
                 </span>
               </li>
             );

@@ -315,6 +315,23 @@ describe('RequirementList', () => {
     expect(sessionDotOf(li)).toBeNull();
   });
 
+  it('紧凑布局：session 名与状态标签同处一行，跳转按钮与操作按钮同行', async () => {
+    useAppStore.setState({ chats: [liveChat as never] });
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '紧凑布局需求', status: 'active', chatId: 'c1', dispatchedTo: 'D:\\ws\\proj' }),
+    ]);
+    render(<RequirementList />);
+    const li = (await screen.findByText('紧凑布局需求')).closest('li') as HTMLElement;
+    // session 名（实时标题）与状态徽章在同一个 flex 行容器内（session 片段有嵌套容器，取其父比对）
+    const nameEl = within(li).getByText('实时标题');
+    const badgeEl = within(li).getByText(tt('ui.requirements.status_active'));
+    expect(nameEl.parentElement!.parentElement).toBe(badgeEl.parentElement);
+    // 跳转按钮与需求操作按钮（标记完成）在同一个 hover 容器内
+    const jumpBtn = within(li).getByLabelText(tt('ui.requirements.session_jump'));
+    const doneBtn = within(li).getByRole('button', { name: tt('ui.requirements.mark_done') });
+    expect(jumpBtn.parentElement).toBe(doneBtn.parentElement);
+  });
+
   it('操作图标移到徽章行（非右上角悬浮）：仍在条目内且 hover 显现', async () => {
     mocks.listRequirements.mockResolvedValue([req({ id: 'r1', text: '移位检查' })]);
     render(<RequirementList />);
