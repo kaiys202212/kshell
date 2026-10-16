@@ -29,6 +29,7 @@ import {
   onNotifyAgent,
   onNotifyFocus,
   onProjectsChanged,
+  onScanDone,
   onTerminalData,
   onTerminalExit,
   onTerminalMeta,
@@ -80,6 +81,21 @@ function App() {
     listTerminals()
       .then((list) => useAppStore.getState().setTerminals(list))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    // scan:done 全局刷新终端/聊天镜像：Go 侧扫描会把新发现的会话回填到终端/聊天
+    //（SessionID/真实标题），页签标题与「恢复/切换」判断依赖这份镜像。
+    // 镜像写的是全局 store，整应用订阅一次即可——各工作区页签各自订阅会 N 倍 IPC。
+    const offScan = onScanDone(() => {
+      listTerminals()
+        .then((list) => useAppStore.getState().setTerminals(list))
+        .catch(() => {});
+      listChats()
+        .then((list) => useAppStore.getState().setChats(list))
+        .catch(() => {});
+    });
+    return offScan;
   }, []);
 
   useEffect(() => {
@@ -294,6 +310,10 @@ function App() {
       // CodeMirror 查找面板等组件已处理的按键（Ctrl+F 打开编辑器检索）在此退让
       if (e.defaultPrevented) return;
       if (!e.ctrlKey) return;
+      // 终端聚焦时让行：xterm 已把按键（含 Ctrl+K 的 kill-line 语义）写入 pty，
+      // 全局快捷键再触发就是一次按键双效应（shell 收键 + 切换器弹出）。
+      const el = document.activeElement as HTMLElement | null;
+      if (el && el.closest('.xterm')) return;
       if (e.key === 'k' || e.key === 'K') {
         e.preventDefault();
         setSwitcherOpen((v) => !v); // toggle：已打开时再按关闭
