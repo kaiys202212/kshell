@@ -78,6 +78,15 @@ describe('RequirementList', () => {
     expect(within(li).getByText('P0')).toBeInTheDocument();
   });
 
+  it('存量数据 tags 为 null（旧版 Go 落盘）渲染不崩溃', async () => {
+    // Go nil slice 经 JSON 序列化是 null；类型上撒谎为 string[]，运行时是 null
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r9', text: '无标签存量需求', tags: null as unknown as string[] }),
+    ]);
+    render(<RequirementList />);
+    expect(await screen.findByText('无标签存量需求')).toBeInTheDocument();
+  });
+
   it('优先级色点：medium 用主色，low 用 muted 前景色', async () => {
     mocks.listRequirements.mockResolvedValue([
       req({ id: 'r2', text: '中优先级', priority: 'medium' }),

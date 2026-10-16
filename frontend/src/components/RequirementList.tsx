@@ -209,8 +209,8 @@ function ArchiveDialog({
       )],
     [archived],
   );
-  // tag chips：归档条目全部 tag 去重
-  const tags = useMemo(() => [...new Set(archived.flatMap((r) => r.tags))], [archived]);
+  // tag chips：归档条目全部 tag 去重（tags 可能为存量 null，防御性兜底）
+  const tags = useMemo(() => [...new Set(archived.flatMap((r) => r.tags ?? []))], [archived]);
 
   // 过滤 + archivedAt 降序（0 视为最旧沉底）；关键字匹配大小写不敏感
   // （tag 过滤是点 chip 精确选中，与关键字独立，无需大小写处理）
@@ -221,7 +221,7 @@ function ArchiveDialog({
           const kw = keyword.toLowerCase();
           return (!project || (r.dispatchedTo && baseName(r.dispatchedTo) === project))
             && (!kw || r.text.toLowerCase().includes(kw))
-            && (!tag || r.tags.includes(tag));
+            && (!tag || (r.tags ?? []).includes(tag));
         })
         .sort((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0)),
     [archived, project, keyword, tag],
@@ -422,7 +422,7 @@ export default function RequirementList({ className }: { className?: string }) {
                     >
                       {t(`ui.requirements.status_${status}`)}
                     </Badge>
-                    {r.tags.map((tag) => (
+                    {(r.tags ?? []).map((tag) => (
                       <Badge key={tag} variant="outline">
                         {tag}
                       </Badge>
