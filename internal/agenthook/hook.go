@@ -34,19 +34,20 @@ func handle(args []string, stdin io.Reader) int {
 	if raw == "" {
 		return 0
 	}
-	event, summary, ok := extractFields(raw)
+	event, summary, notificationType, ok := extractFields(raw)
 	if !ok {
 		// 坏 JSON：静默丢弃，收件箱只保留能被桌面端解析的事件
 		return 0
 	}
 
 	p := Payload{
-		Tool:      tool,
-		Event:     event,
-		TermKey:   os.Getenv("KSHELL_TERM_KEY"),
-		Workspace: os.Getenv("KSHELL_WORKSPACE"),
-		Summary:   summary,
-		Raw:       raw,
+		Tool:             tool,
+		Event:            event,
+		TermKey:          os.Getenv("KSHELL_TERM_KEY"),
+		Workspace:        os.Getenv("KSHELL_WORKSPACE"),
+		Summary:          summary,
+		NotificationType: notificationType,
+		Raw:              raw,
 	}
 	if err := writeInbox(p); err != nil {
 		return 0
@@ -86,17 +87,19 @@ func looksLikeJSON(s string) bool {
 // extractFields 启发式提取事件名与摘要：
 //   - claude/codebuddy/cursor 的 hook JSON 带 hook_event_name（如 "Stop"/"Notification"）；
 //   - codex notify 的 JSON 带 type（如 "agent-turn-complete"）；
-//   - Notification 场景可能带 message 作为摘要。
+//   - Notification 场景可能带 message 作为摘要；
+//   - Notification 还可能带子类型 notification_type（取值如 permission_prompt /
+//     idle_prompt / auth_success，见 claude code 与 codebuddy 官方 hooks 文档）。
 //
 // ok=false 表示 JSON 无法解析成对象，调用方应静默丢弃。
-func extractFields(raw string) (event, summary string, ok bool) {
+func extractFields(raw string) (event, summary, notificationType string, ok bool) {
 	var m map[string]any
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	// JSON null 也 unmarshal 成功但得 nil map：落盘会是全空 payload，视为解析失败丢弃
 	if m == nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	if v, ok := m["hook_event_name"].(string); ok {
 		event = v
@@ -106,5 +109,8 @@ func extractFields(raw string) (event, summary string, ok bool) {
 	if v, ok := m["message"].(string); ok {
 		summary = v
 	}
-	return event, summary, true
+	if v, ok := m["notification_type"].(string); ok {
+		notificationType = v
+	}
+	return event, summary, notificationType, true
 }
