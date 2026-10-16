@@ -242,14 +242,13 @@ func TestListRequirementsFillsLiveTitle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	info := openTestChat(t, m)
-	// openTestChat 未传 Title（空）；经 AttachSession 绑定磁盘会话并注入标题
-	// （messages>0 才写标题，与生产扫描回填同路径），live 条目不落快照（模拟
-	// 旧数据），dead 条目落快照且 chatId 指向不存在的会话
+	// 先开一个桩会话（openTestChat 未传 Title，空），再经 AttachSession 绑定
+	// 磁盘会话并注入标题（messages>0 才写标题，与生产扫描回填同路径）；
+	// live 条目不落快照（模拟旧数据），dead 条目落快照且 chatId 指向不存在的会话
+	openTestChat(t, m)
 	if !m.AttachSession("disk-1", "/w", "", "实时标题", 3, time.Time{}) {
 		t.Fatal("前置：AttachSession 应命中桩会话")
 	}
-	_ = info
 	if err := store.MarkDispatched(itLive.ID, "/w", "c1", ""); err != nil {
 		t.Fatal(err)
 	}

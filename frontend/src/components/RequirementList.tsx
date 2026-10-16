@@ -463,7 +463,7 @@ export default function RequirementList({ className }: { className?: string }) {
                     {/* 会话片段：已派发条目展示绑定会话的运行状态点与名称（实时标题优先） */}
                     {(r.dispatchedTo || r.chatId) && (
                       <span className="flex min-w-0 max-w-[45%] items-center gap-1.5 text-xs text-muted-foreground">
-                        {/* 状态点带 aria 文案：色点本身 aria-hidden，让读屏用户也能感知运行状态 */}
+                        {/* 状态点带 role=img + aria 文案：读屏用户也能感知运行状态 */}
                         <span
                           data-testid="req-session-dot"
                           role="img"
