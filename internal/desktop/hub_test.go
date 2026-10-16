@@ -9,6 +9,7 @@ import (
 	"github.com/yangk/kshell/internal/agenthook"
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/hub"
+	"github.com/yangk/kshell/internal/terminal"
 )
 
 // hubRecorder 收集 emit 的事件名与 hub 是否收到 agent 通知（并发安全）。
@@ -501,4 +502,40 @@ func TestSendChatPromptQueuedThenDelivered(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("投递后未完成状态清空+ack: cleared=%v, acked=%v", lastCleared, lastAcked)
+}
+
+// 终端 hook 通道（termKey = session:<磁盘会话ID>）的会话不在 chat manager 里，
+// recordHubAgentMessage 应从终端管理器按 Key 反查标题补 SessionTitle 快照；
+// 终端会话没有 chat ID，不得设 ChatID。
+func TestRecordHubAgentMessageTerminalSessionTitle(t *testing.T) {
+	store := hub.New(t.TempDir(), 0)
+	if err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	a := NewAppWith(Options{
+		HubStore:  store,
+		Terminals: newTerminalManagerWith(func(string, ...any) {}, &stubTermBackend{}),
+		Emit:      func(string, ...any) {},
+	})
+	m := a.terminals()
+	// 打开一个恢复的历史会话终端：key 即 termKey（terminal.go 的 "session:"+sessionID 约定）
+	if _, err := m.Open("session:s1", terminal.Info{
+		Kind: terminal.KindSession, SessionID: "s1", Workspace: "D:/ws",
+		Title: "修复登录页", ToolID: "codebuddy",
+	}, terminal.Spec{Path: "x"}, 80, 24); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	a.recordHubAgentMessage(agenthook.Payload{
+		Tool: "codebuddy", Event: "Stop", TermKey: "session:s1", Workspace: "D:/ws",
+	})
+	msgs := store.List()
+	if len(msgs) != 1 {
+		t.Fatalf("应落 1 条，得到 %d", len(msgs))
+	}
+	if msgs[0].SessionTitle != "修复登录页" {
+		t.Fatalf("SessionTitle = %q, 想要 修复登录页", msgs[0].SessionTitle)
+	}
+	if msgs[0].ChatID != "" {
+		t.Fatalf("终端通道不应设 ChatID，得到 %q", msgs[0].ChatID)
+	}
 }
