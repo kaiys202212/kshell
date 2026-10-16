@@ -285,15 +285,58 @@ describe('AgentHubPanel', () => {
     expect(screen.queryByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
   });
 
-  it('胶囊位置随归档展开下移避让，收起后回到标题行旁', () => {
+  it('胶囊内联在标题文字后（无浮动定位），归档展开不改变位置', () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);
     const bar = screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }).parentElement as HTMLElement;
-    expect(bar.className).toContain('top-11');
+    // 内联在标题行：relative 锚定展开面板，不再是 absolute 浮动位移
+    expect(bar.className).toContain('relative');
+    expect(bar.className).not.toContain('absolute');
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.history') }));
-    expect(bar.className).toContain('top-56');
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.history') }));
-    expect(bar.className).toContain('top-11');
+    expect(bar.className).not.toContain('top-56');
+  });
+
+  it('面板会话行点 @ 图标：草稿保留式追加 @ 标签并收起面板', () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder')) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '帮我看看' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.mention_session') }));
+    // 尾随空格便于继续输入（与 quickReply rephrase 同语义）
+    expect(box.value).toBe('帮我看看 @Claude Code#c1 ');
+    expect(screen.queryByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
+  });
+
+  it('面板会话行点跳转图标：打开工作区页签并按 chat.Key 定位会话对话页', () => {
+    const openTab = vi.spyOn(useAppStore.getState(), 'openTab');
+    const focus = vi.spyOn(useAppStore.getState(), 'requestFocusTerm');
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', Key: 'new:1', Workspace: 'D:\\ws\\a' })],
+      workspaces: [workspaceA],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.jump_session') }));
+    expect(openTab).toHaveBeenCalledWith(workspaceA);
+    expect(focus).toHaveBeenCalledWith('new:1');
+    expect(screen.queryByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
+  });
+
+  it('跳转图标：工作区不在列表时手工构造页签打开（Key 缺失只开页签不定位）', () => {
+    const openTab = vi.spyOn(useAppStore.getState(), 'openTab');
+    const focus = vi.spyOn(useAppStore.getState(), 'requestFocusTerm');
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', Key: '', Workspace: 'D:\\ws\\x' })],
+      workspaces: [],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.jump_session') }));
+    expect(openTab).toHaveBeenCalledWith(expect.objectContaining({ Path: 'D:\\ws\\x', Name: 'x' }));
+    expect(focus).not.toHaveBeenCalled();
   });
 
   it('@ 指定目标发送：投递到该 agent 并记录 lastAgentId', async () => {

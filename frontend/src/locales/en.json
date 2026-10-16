@@ -837,9 +837,11 @@
       "auto_scroll": "Auto-scroll",
       "quick_continue_text": "Continue with the current task.",
       "unknown_cmd": "Unknown command {{cmd}}. Available: #new #easynew #stop #model #clear",
-      "need_target_drag": "Mention a session with @, or drag one from the session bar at the top right.",
+      "need_target_drag": "Mention a session with @, or drag one from the session bar next to the title.",
       "session_bar_aria": "Active sessions",
       "session_panel_aria": "Session list",
+      "mention_session": "Mention this session",
+      "jump_session": "Open session chat",
       "close_session": "Close session",
       "close_session_failed": "Failed to close session: {{err}}"
     },
