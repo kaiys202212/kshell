@@ -105,8 +105,11 @@ type EnvVariable struct {
 }
 
 // McpServerStdio 是 session/new 注入的 stdio MCP 服务器。
+// Type 必须 omitempty：claude-agent-acp 按「"type" in server」区分形态，
+// 带 type（含空串）一律当 HTTP server 处理并丢弃 command/args，
+// claude CLI 拿到无命令的 server 会在 session/new 阶段退出（-32603）。
 type McpServerStdio struct {
-	Type    string        `json:"type"`
+	Type    string        `json:"type,omitempty"`
 	Name    string        `json:"name"`
 	Command string        `json:"command"`
 	Args    []string      `json:"args"`

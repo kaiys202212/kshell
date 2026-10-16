@@ -35,6 +35,26 @@ func TestDecodeRequestPermissionParams(t *testing.T) {
 	}
 }
 
+func TestMarshalMcpServerStdioOmitEmptyType(t *testing.T) {
+	// claude-agent-acp 按「"type" in server」区分形态：带 type 一律当 HTTP server，
+	// 丢弃 command/args。stdio server 必须省略 type，缺省即 stdio（ACP 语义）。
+	b, err := json.Marshal(McpServerStdio{Name: "kshell", Command: "exe", Args: []string{}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(b), `"type"`) {
+		t.Fatalf("stdio server 序列化不应含 type 键: %s", b)
+	}
+	// 显式设置 Type 时仍应保留（未来其他形态可用）。
+	b, err = json.Marshal(McpServerStdio{Type: "sse", Name: "k", Command: "exe"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"type":"sse"`) {
+		t.Fatalf("显式 Type 应保留: %s", b)
+	}
+}
+
 func TestMarshalOutboundParams(t *testing.T) {
 	// 空切片必须序列化为 []，不能是 null，否则 agent 会把 mcpServers 当成缺失。
 	b, err := json.Marshal(NewSessionParams{Cwd: "/x", McpServers: []any{}})

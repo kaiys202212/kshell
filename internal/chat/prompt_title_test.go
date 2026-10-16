@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"bytes"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -64,7 +66,7 @@ func TestOpenInjectsMCPFactory(t *testing.T) {
 	m := NewManager(oneBackend{conn: conn}, nil, nil, nil)
 	m.SetMCPFactory(func(id string) []acp.McpServerStdio {
 		return []acp.McpServerStdio{{
-			Type: "stdio", Name: "kshell", Command: "kshell", Args: []string{"mcp-archive", id},
+			Name: "kshell", Command: "kshell", Args: []string{"mcp-archive", id},
 		}}
 	})
 	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w", Title: "占位"}, Spec{Path: "x"}, "")
@@ -73,5 +75,14 @@ func TestOpenInjectsMCPFactory(t *testing.T) {
 	}
 	if len(conn.got) != 1 || len(conn.got[0].Args) != 2 || conn.got[0].Args[1] != info.ID {
 		t.Fatalf("mcp = %+v id=%s", conn.got, info.ID)
+	}
+	// stdio server 序列化不得携带 type 键：claude-agent-acp 见 type 即按
+	// HTTP 形态处理并丢弃 command，导致 session/new 崩溃。
+	b, err := json.Marshal(conn.got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(b, []byte(`"type"`)) {
+		t.Fatalf("mcp 序列化不应含 type 键: %s", b)
 	}
 }

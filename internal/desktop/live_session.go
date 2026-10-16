@@ -130,8 +130,9 @@ func (a *App) chatMCPServers(id string) []acp.McpServerStdio {
 	}
 	out := make([]acp.McpServerStdio, 0, len(servers))
 	for _, s := range servers {
+		// 不设 Type：claude-agent-acp 见 "type" 键即按 HTTP 形态处理并丢弃
+		// command，导致 claude CLI session/new 即退（-32603）。缺省即 stdio。
 		out = append(out, acp.McpServerStdio{
-			Type:    "stdio",
 			Name:    s.Name,
 			Command: exe,
 			Args:    s.Args,
