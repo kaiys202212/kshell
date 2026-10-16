@@ -32,6 +32,7 @@ const stderrTailLimit = 4096
 type session struct {
 	id        string
 	key       string
+	m         *Manager // 反向引用：静默回退定时器回调需要
 	info      Info
 	conn      Conn
 	sessionID string
@@ -56,9 +57,17 @@ type session struct {
 
 	queue []queuedMsg // 忙时排队的用户消息（按 blocks 整体投递），turn_done 后按序送出
 
-	modelState *acp.SessionModelState // agent 以 v1 models 形态报告的可用模型
+	modelState *acp.SessionModelState   // agent 以 v1 models 形态报告的可用模型
 	modelConfig *acp.SessionConfigOption // agent 以 configOptions(id=model) 形态报告的模型选项
-	commands    []Command                // 最近一次 available_commands_update 的技能列表
+	commands   []Command                // 最近一次 available_commands_update 的技能列表
+
+	// 状态活动跟随：提前返回 prompt 的 agent（codebuddy 等）随后仍推工具/思考
+	// 流水，Info.Status 必须跟随实际活动，否则 ListChats/chat:meta 携带的 ready
+	// 会在前端镜像同步时冲掉已拉回的 running（任务在跑却显示「空闲」）。
+	promptInFlight bool            // 是否有在途 session/prompt（投递忙闲唯一依据）
+	inFlightTools  map[string]bool // 未到终态的工具调用（子任务长静默期的运行信号）
+	lastActivity   time.Time       // 最近一次活动类更新时刻
+	idleTimer      *time.Timer     // 静默回退定时器（持锁操作）
 }
 
 type permissionResult struct {
@@ -174,11 +183,62 @@ func (s *session) notePromptTitle(text string) (Info, bool) {
 	return s.info, true
 }
 
+// stopIdleLocked 停掉静默回退定时器（调用方持锁）。
+func (s *session) stopIdleLocked() {
+	if s.idleTimer != nil {
+		s.idleTimer.Stop()
+		s.idleTimer = nil
+	}
+}
+
+// scheduleIdleFallbackLocked 重排静默回退定时器（调用方持锁）。
+// 有明确在途信号（在途 prompt / 在途工具）时不安排：前者由 turn_done 收尾，
+// 后者等工具终态后再排。
+func (s *session) scheduleIdleFallbackLocked() {
+	s.stopIdleLocked()
+	if s.promptInFlight || len(s.inFlightTools) > 0 {
+		return
+	}
+	sess := s
+	s.idleTimer = time.AfterFunc(activityIdleFallback, func() { sess.m.idleFallback(sess) })
+}
+
+// idleFallback 静默回退：running 会话持续无活动且无在途信号时回 ready，
+// 并经 onInfo 推送（desktop 层 Emit chat:meta，前端既有通路同步状态）。
+func (m *Manager) idleFallback(s *session) {
+	m.mu.Lock()
+	if m.byID[s.id] != s || s.exited || s.info.Status != StatusRunning ||
+		s.promptInFlight || len(s.inFlightTools) > 0 ||
+		time.Since(s.lastActivity) < activityIdleFallback {
+		m.mu.Unlock()
+		return
+	}
+	s.info.Status = StatusReady
+	s.stopIdleLocked()
+	onInfo := m.onInfo
+	out := s.info
+	m.mu.Unlock()
+	if onInfo != nil {
+		onInfo(out)
+	}
+}
+
 // handshakeTimeout 限制 initialize + session/new|load 的总耗时。
 // 已知 codebuddy --acp 的 session/new 可能死锁（kshell 侧无解），不设超时会让
 // Wails 绑定 goroutine 永久挂起、前端「打开会话」永远 pending。
 // var 仅为测试可缩短；生产代码不得修改。
 var handshakeTimeout = 30 * time.Second
+
+// activityIdleFallback 是「活动拉回 running 后」的静默回退阈值：turn_done 后
+// agent 仍推流水使状态保持 running，若持续无活动且无在途信号（在途 prompt /
+// 在途工具），状态回 ready 并经 onInfo 推送。var 仅为测试可缩短。
+var activityIdleFallback = 2 * time.Minute
+
+// isTerminalToolStatus 报告工具调用是否已到终态（不再算在途）。
+// ACP 规范取值 pending/in_progress/completed/failed；防御性把 error 也当终态。
+func isTerminalToolStatus(status string) bool {
+	return status == "completed" || status == "failed" || status == "error"
+}
 
 // wrapHandshakeErr 把握手超时映射成前端可翻译的 wire key；其他错误原样返回。
 func wrapHandshakeErr(err error) error {
@@ -219,13 +279,15 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	m.mu.Lock()
 	m.nextSeq++
 	s := &session{
-		id:       fmt.Sprintf("c%d", m.nextSeq),
-		key:      key,
-		info:     info,
-		pending:  make(map[string]chan permissionResult),
-		tools:    make(map[string]*ToolCall),
-		openedAt: time.Now(),
-		knownIDs: map[string]bool{},
+		id:            fmt.Sprintf("c%d", m.nextSeq),
+		key:           key,
+		m:             m,
+		info:          info,
+		pending:       make(map[string]chan permissionResult),
+		tools:         make(map[string]*ToolCall),
+		inFlightTools: make(map[string]bool),
+		openedAt:      time.Now(),
+		knownIDs:      map[string]bool{},
 	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.handler = &sessionHandler{m: m, id: s.id}
@@ -353,6 +415,7 @@ func (m *Manager) remove(s *session) {
 	pending := s.pending
 	s.pending = make(map[string]chan permissionResult)
 	cancelPending(pending)
+	s.stopIdleLocked() // 摘除后定时器不得再触发（防泄漏与悬垂）
 }
 
 // cancelPending 非阻塞地让所有等待中的权限请求以 cancelled 结束。
@@ -381,6 +444,7 @@ func (m *Manager) watchExit(s *session) {
 	s.info.Status = StatusExited
 	s.info.ExitCode = code
 	s.queue = nil // 进程已退出，排队的消息不再有投递机会
+	s.stopIdleLocked()
 	pending := s.pending
 	s.pending = make(map[string]chan permissionResult)
 	m.mu.Unlock()
@@ -475,7 +539,9 @@ func (m *Manager) PromptBlocksHub(id string, blocks []acp.ContentBlock, hubMsgID
 		return false, errNotFound
 	}
 	// 忙时入队：消息不丢，且照常补进时间线，界面立刻可见。
-	if s.info.Status != StatusReady {
+	// 忙闲只看在途 prompt 与握手期，不看展示状态——活动跟随会让状态在 turn_done
+	// 后仍为 running，此时 agent 已结束当前 turn，新消息必须立即投递而非卡队。
+	if s.info.Status == StatusStarting || s.promptInFlight {
 		s.queue = append(s.queue, qm)
 		userUpdate := s.appendUserBlocksLocked(blocks)
 		onUpdate := m.onUpdate
@@ -520,7 +586,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		m.mu.Unlock()
 		return errNotFound
 	}
-	if s.info.Status != StatusReady {
+	if s.info.Status == StatusStarting || s.promptInFlight {
 		// 竞态兜底：期间又有轮次启动，改入队；补时间线与 emit 与 PromptBlocksHub 忙分支一致，
 		// 否则该消息要等下一轮收尾才可见。
 		s.queue = append(s.queue, qm)
@@ -540,6 +606,9 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		return nil
 	}
 	s.info.Status = StatusRunning
+	// 在途 prompt 是投递忙闲依据；置位时停掉静默回退定时器（turn_done 会收尾）
+	s.promptInFlight = true
+	s.stopIdleLocked()
 	// 标题改写与 record 无关：即使是队列投递（record=false），这也是该新建会话的第一条用户消息。
 	infoSnap, titleChanged := s.notePromptTitle(flattenBlocks(blocks))
 	var userUpdate Update
@@ -576,7 +645,15 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 			m.mu.Unlock()
 			return
 		}
-		s.info.Status = StatusReady
+		s.promptInFlight = false
+		// 提前返回 prompt 的 agent（codebuddy 等）可能仍有在途工具（子任务）：
+		// 保持 running，等工具终态后的静默回退收尾；否则照旧回 ready。
+		// turn_done 事件两种情况都照发，前端由后续活动更新拉回（5474856 规则）。
+		if len(s.inFlightTools) > 0 {
+			s.scheduleIdleFallbackLocked()
+		} else {
+			s.info.Status = StatusReady
+		}
 		s.seq++
 		u := Update{Seq: s.seq, Type: "turn_done", StopReason: stop}
 		if err != nil {
@@ -1055,6 +1132,29 @@ func (m *Manager) onSessionUpdate(id, sessionID string, raw json.RawMessage) {
 	s.history = append(s.history, u)
 	if len(s.history) > maxHistory {
 		s.history = append([]Update(nil), s.history[len(s.history)-maxHistory:]...)
+	}
+	// 状态活动跟随（与前端 5474856 同规则）：活动类更新把 ready 拉回 running，
+	// 并维护在途工具集合与静默回退定时器。user/commands 不算 agent 活动。
+	switch u.Type {
+	case "thought", "assistant", "plan":
+		s.lastActivity = time.Now()
+		if s.info.Status == StatusReady && !s.exited {
+			s.info.Status = StatusRunning
+		}
+		s.scheduleIdleFallbackLocked()
+	case "tool":
+		s.lastActivity = time.Now()
+		if u.Tool != nil {
+			if isTerminalToolStatus(u.Tool.Status) {
+				delete(s.inFlightTools, u.ToolCallID)
+			} else {
+				s.inFlightTools[u.ToolCallID] = true
+			}
+		}
+		if s.info.Status == StatusReady && !s.exited {
+			s.info.Status = StatusRunning
+		}
+		s.scheduleIdleFallbackLocked()
 	}
 	m.mu.Unlock()
 	if m.onUpdate != nil {

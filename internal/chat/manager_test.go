@@ -979,3 +979,231 @@ func TestPromptHubRaceFallbackTriggersQueuedCallback(t *testing.T) {
 	m.RecallQueued(info.ID, "h2")
 	close(b.conn.promptGate)
 }
+
+// ---- 状态活动跟随：提前返回 prompt 的 agent（codebuddy 等）随后仍推流水，
+// 后端 Info.Status 必须跟随实际活动，否则 ListChats/chat:meta 携带的 ready
+// 会在前端镜像同步时冲掉已拉回的 running（表现为任务在跑却显示「空闲」）。
+
+func newIdleTestManager(t *testing.T) (*Manager, *fakeBackend, *collector, chan Info) {
+	t.Helper()
+	old := activityIdleFallback
+	activityIdleFallback = 60 * time.Millisecond
+	t.Cleanup(func() { activityIdleFallback = old })
+	m, b, c := newTestManager(t)
+	infoCh := make(chan Info, 16)
+	m.SetOnInfo(func(info Info) {
+		select {
+		case infoCh <- info:
+		default:
+		}
+	})
+	return m, b, c, infoCh
+}
+
+func waitIdleReady(t *testing.T, m *Manager, id string) Info {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if info, ok := m.Get(id); ok && info.Status == StatusReady {
+			return info
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("session %s never fell back to ready", id)
+	return Info{}
+}
+
+// turn_done 后活动类更新（thought/assistant/tool/plan）把后端状态拉回 running；
+// user 更新不算活动。
+func TestManagerActivityPullsStatusBackToRunning(t *testing.T) {
+	m, b, _, _ := newIdleTestManager(t)
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, info.ID, StatusReady)
+
+	for _, raw := range []string{
+		`{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"t"}}`,
+		`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"a"}}`,
+		`{"sessionUpdate":"tool_call","toolCallId":"c1","title":"T","status":"completed"}`,
+		`{"sessionUpdate":"plan","entries":[{"content":"s","priority":"high","status":"pending"}]}`,
+	} {
+		// 等上一轮回退到 ready，再注入本轮更新，状态应立即拉回 running
+		waitIdleReady(t, m, info.ID)
+		b.last.SessionUpdate("sess-new", json.RawMessage(raw))
+		waitStatus(t, m, info.ID, StatusRunning)
+	}
+	// user 分片不代表 agent 活动，不拉回
+	waitIdleReady(t, m, info.ID)
+	b.last.SessionUpdate("sess-new", json.RawMessage(`{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"u"}}`))
+	if info, ok := m.Get(info.ID); !ok || info.Status != StatusReady {
+		t.Fatalf("user 更新不应拉回 running: %+v", info)
+	}
+}
+
+// drainInfoCh 非阻塞清空 meta 通道（首条 prompt 的标题改写也会推 meta，与回退无关）。
+func drainInfoCh(infoCh chan Info) {
+	for {
+		select {
+		case <-infoCh:
+		default:
+			return
+		}
+	}
+}
+
+// 静默回退：running（活动拉回）持续无活动且无在途信号时回 ready，并经 onInfo 推送
+// （desktop 层据此 Emit chat:meta 同步前端）。
+func TestManagerIdleFallbackMarksReadyAndPushesMeta(t *testing.T) {
+	m, b, _, infoCh := newIdleTestManager(t)
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, info.ID, StatusReady)
+	b.last.SessionUpdate("sess-new", json.RawMessage(`{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"t"}}`))
+	waitStatus(t, m, info.ID, StatusRunning)
+
+	got := waitIdleReady(t, m, info.ID)
+	// onInfo 必须携带回退后的 ready 状态
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case meta := <-infoCh:
+			if meta.ID == info.ID && meta.Status == StatusReady {
+				return
+			}
+		default:
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("静默回退未推送 meta; got=%+v lastMeta=%v", got, infoCh)
+}
+
+// 在途工具：turn_done（prompt 提前返回）时仍有未终态工具 → 保持 running；
+// 工具终态且静默超时后才回 ready。
+func TestManagerTurnDoneKeepsRunningWhileToolInFlight(t *testing.T) {
+	m, b, c, infoCh := newIdleTestManager(t)
+	b.conn.promptGate = make(chan struct{})
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, info.ID, StatusRunning)
+	// 子任务工具在途
+	b.last.SessionUpdate("sess-new", json.RawMessage(`{"sessionUpdate":"tool_call","toolCallId":"sub1","title":"Task","status":"in_progress"}`))
+	// 放行 prompt（提前返回）
+	close(b.conn.promptGate)
+
+	// turn_done 已发但状态不得回 ready
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		done := false
+		for _, u := range c.updates {
+			if u.Type == "turn_done" {
+				done = true
+			}
+		}
+		c.mu.Unlock()
+		if done {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if info, ok := m.Get(info.ID); !ok || info.Status != StatusRunning {
+		t.Fatalf("在途工具期间 turn_done 不应回 ready: %+v", info)
+	}
+	// 静默期过去也不得回 ready（在途工具是明确运行信号）
+	time.Sleep(200 * time.Millisecond)
+	if info, ok := m.Get(info.ID); !ok || info.Status != StatusRunning {
+		t.Fatalf("在途工具期间不得静默回退: %+v", info)
+	}
+
+	// 工具终态 → 静默超时后回 ready 并推送 meta
+	b.last.SessionUpdate("sess-new", json.RawMessage(`{"sessionUpdate":"tool_call_update","toolCallId":"sub1","status":"completed"}`))
+	waitIdleReady(t, m, info.ID)
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case meta := <-infoCh:
+			if meta.ID == info.ID && meta.Status == StatusReady {
+				return
+			}
+		default:
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("工具终态回退未推送 meta")
+}
+
+// 投递解耦：活动拉回 running 期间再发消息必须立即投递（agent 已结束当前 turn，
+// ACP 层合法），不得因展示状态 running 卡死队列。
+func TestManagerPromptDeliversWhileActivityRunning(t *testing.T) {
+	m, b, _, _ := newIdleTestManager(t)
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "first"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, info.ID, StatusReady)
+	b.last.SessionUpdate("sess-new", json.RawMessage(`{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"t"}}`))
+	waitStatus(t, m, info.ID, StatusRunning)
+
+	if err := m.Prompt(info.ID, "second"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if b.conn.promptCount() >= 2 {
+			b.conn.mu.Lock()
+			got := append([]string(nil), b.conn.prompts...)
+			b.conn.mu.Unlock()
+			if got[1] != "second" {
+				t.Fatalf("second prompt = %q", got[1])
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("活动 running 期间消息未立即投递; prompts=%d", b.conn.promptCount())
+}
+
+// Close 后静默回退定时器不得再触发（不推 meta、不复活状态）。
+func TestManagerCloseStopsIdleFallback(t *testing.T) {
+	m, b, _, infoCh := newIdleTestManager(t)
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, info.ID, StatusReady)
+	b.last.SessionUpdate("sess-new", json.RawMessage(`{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"t"}}`))
+	waitStatus(t, m, info.ID, StatusRunning)
+	drainInfoCh(infoCh) // 清掉标题改写等历史 meta，只关注 Close 之后的新推送
+	if err := m.Close(info.ID); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	select {
+	case meta := <-infoCh:
+		if meta.ID == info.ID {
+			t.Fatalf("Close 后不得再推送 meta: %+v", meta)
+		}
+	default:
+	}
+}
