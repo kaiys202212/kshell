@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -303,5 +304,40 @@ func TestLoadArchiveMissing(t *testing.T) {
 	}
 	if _, err := s.LoadArchive("bad"); err == nil {
 		t.Fatalf("非法月份应报错")
+	}
+}
+
+// TestLoadV1LiveMigratesOnNextWrite：v1 live.json 升级到 v2 时历史不得丢失。
+func TestLoadV1LiveMigratesOnNextWrite(t *testing.T) {
+	dir := t.TempDir()
+	v1 := `{"version":1,"messages":[` +
+		`{"id":1,"kind":"user","text":"old-1","ts":100},` +
+		`{"id":2,"kind":"agent","text":"old-2","ts":200}]}`
+	if err := os.WriteFile(filepath.Join(dir, "live.json"), []byte(v1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := New(dir, 0)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.List(); len(got) != 2 || got[0].Text != "old-1" {
+		t.Fatalf("Load 后应保留 v1 消息，got %d 条", len(got))
+	}
+	if err := s.Append(Message{Kind: "user", Text: "new"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "live.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f file
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatal(err)
+	}
+	if f.Version != fileVersion {
+		t.Fatalf("重写后 version = %d, want %d", f.Version, fileVersion)
+	}
+	if len(f.Messages) != 3 || f.Messages[0].Text != "old-1" {
+		t.Fatalf("旧消息应保留，got %d 条", len(f.Messages))
 	}
 }
