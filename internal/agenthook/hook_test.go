@@ -242,6 +242,49 @@ func TestHandleMissingEventFields(t *testing.T) {
 	}
 }
 
+func TestHandleStdinNotificationType(t *testing.T) {
+	home := fakeHome(t)
+	t.Setenv("KSHELL_TERM_KEY", "term-7")
+
+	// Notification 除 message 外还带子类型 notification_type：原样透传，本层不做业务过滤
+	code := handle([]string{"agent-hook", "claude"},
+		strings.NewReader(`{"hook_event_name":"Notification","message":"auth_success: 杨凯","notification_type":"auth_success"}`))
+	if code != 0 {
+		t.Fatalf("handle 返回 %d，想要 0", code)
+	}
+
+	p := mustOnePayload(t, home)
+	if p.Event != "Notification" {
+		t.Errorf("Event = %q, 想要 Notification", p.Event)
+	}
+	if p.NotificationType != "auth_success" {
+		t.Errorf("NotificationType = %q, 想要 auth_success", p.NotificationType)
+	}
+	if p.Summary != "auth_success: 杨凯" {
+		t.Errorf("Summary = %q, 想要 auth_success: 杨凯", p.Summary)
+	}
+}
+
+func TestHandleMissingNotificationType(t *testing.T) {
+	home := fakeHome(t)
+	t.Setenv("KSHELL_TERM_KEY", "term-8")
+
+	// 非 Notification 事件无该字段：留空，不影响其余字段
+	code := handle([]string{"agent-hook", "claude"},
+		strings.NewReader(`{"hook_event_name":"Stop","stop_hook_active":true}`))
+	if code != 0 {
+		t.Fatalf("handle 返回 %d，想要 0", code)
+	}
+
+	p := mustOnePayload(t, home)
+	if p.NotificationType != "" {
+		t.Errorf("NotificationType = %q, 想要空", p.NotificationType)
+	}
+	if p.Event != "Stop" {
+		t.Errorf("Event = %q, 想要 Stop", p.Event)
+	}
+}
+
 func TestCleanupInboxRemovesOldKeepsNew(t *testing.T) {
 	home := fakeHome(t)
 	dir := inboxPath(t, home)

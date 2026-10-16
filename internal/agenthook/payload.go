@@ -21,6 +21,10 @@ type Payload struct {
 	// ChatID 是 ACP chat 通道（emitChatNotify）回填的会话 ID；hook/OSC 通道
 	// 无此字段（终端路径只有 termKey），recordHubAgentMessage 按有无分别归因。
 	ChatID string `json:"chatId,omitempty"`
+	// NotificationType 是 Notification 事件的子类型（claude/codebuddy hook JSON
+	// 里的 notification_type，取值如 permission_prompt / idle_prompt / auth_success）。
+	// 本层只透传、不做任何业务判断，供桌面端按子类型过滤噪音通知。
+	NotificationType string `json:"notificationType,omitempty"`
 }
 
 // InboxDir 返回通知收件箱目录：~/.kshell/notify/inbox。

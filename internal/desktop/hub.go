@@ -3,6 +3,7 @@ package desktop
 import (
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/yangk/kshell/internal/agenthook"
 	"github.com/yangk/kshell/internal/chat"
@@ -159,16 +160,45 @@ func (a *App) RecallHubMessage(hubMsgID int64) error {
 	return nil
 }
 
+// hubEventTextKey 把 agent 事件的空正文回退成稳定 wire key（前端 translateBackend
+// 渲染成当前语言）。映射与 frontend/src/lib/agentNotify.ts 的 eventLabel 保持一致：
+// 一侧改动必须同步另一侧。hook 通道的 Stop 载荷没有 message 字段，不回退会在
+// AgentHub 留下无正文气泡（2026-10-16 用户反馈）。
+func hubEventTextKey(event string) string {
+	switch event {
+	case "Notification", "attention":
+		return "ui.notify.waiting_confirm"
+	case "error":
+		return "ui.notify.task_error"
+	case "stopped":
+		return "ui.notify.task_stopped"
+	case "cancelled":
+		return "ui.notify.task_cancelled"
+	default:
+		return "ui.notify.task_done"
+	}
+}
+
 // recordHubAgentMessage 记录一条 agent 回复通知（hook/OSC 与 ACP 两条通道共用）。
-// 会话标题按 termKey/chatID 从 chat manager 反查后冗余落盘（SessionTitle）：
-// 会话关闭或重启后历史气泡仍能显示会话名而不是 #<id> 编码。
+// 会话标题按 termKey/chatID 反查后冗余落盘（SessionTitle）：会话关闭或重启后
+// 历史气泡仍能显示会话名而不是 #<id> 编码。反查顺序：
+//  1. chatID → chat manager（ACP 会话）；
+//  2. termKey → chat manager（ACP 会话的 Key）；
+//  3. termKey → 终端管理器（内嵌终端恢复的历史会话走 hook 通道，
+//     只存在于 terminal.Manager，OpenSessionTerminal 打开时已把磁盘会话
+//     标题写进 terminal.Info.Title）。
+// 正文为空（hook 通道 Stop 载荷没有 message 字段）时回退事件语义 wire key。
 func (a *App) recordHubAgentMessage(p agenthook.Payload) {
+	text := p.Summary
+	if strings.TrimSpace(text) == "" {
+		text = hubEventTextKey(p.Event)
+	}
 	m := hub.Message{
 		Kind:      "agent",
 		Tool:      p.Tool,
 		TermKey:   p.TermKey,
 		Workspace: p.Workspace,
-		Text:      p.Summary,
+		Text:      text,
 		Event:     p.Event,
 		Ts:        p.Ts,
 	}
@@ -186,6 +216,19 @@ func (a *App) recordHubAgentMessage(p agenthook.Payload) {
 					if m.ChatID == "" {
 						m.ChatID = info.ID
 					}
+					break
+				}
+			}
+		}
+	}
+	// 终端 hook 通道（termKey = session:<磁盘会话ID>）不在 chat manager 里，
+	// 从终端管理器反查标题补快照；OpenSessionTerminal 打开时已把磁盘会话标题
+	// 写进 terminal.Info.Title。不设 ChatID：终端会话没有 chat ID，避免归因串线。
+	if m.SessionTitle == "" && p.TermKey != "" {
+		if tm := a.terminals(); tm != nil {
+			for _, info := range tm.List() {
+				if info.Key == p.TermKey {
+					m.SessionTitle = info.Title
 					break
 				}
 			}

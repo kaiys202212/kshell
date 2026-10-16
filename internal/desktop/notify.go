@@ -87,7 +87,9 @@ func (a *App) dispatchNotifyOnce(dir string) {
 // notifiableEvents 是 hook/OSC 通道的用户通知事件白名单：只放行「任务完成 /
 // 等待确认 / 出错」三类用户关心的语义。CLI 会混发内部状态广播（实测 codebuddy
 // 认证完成发 type=auth_success、带用户名 message），不过滤就会在新建 agent 时
-// 连弹无意义通知并灌进 AgentHub（2026-10-15 用户反馈）。新工具事件在此补充。
+// 连弹无意义通知并灌进 AgentHub（2026-10-15 用户反馈）。claude/codebuddy 还会
+// 把登录成功、空闲提醒等内部状态走 Notification 事件，因此 Notification 还需
+// 过子类型黑名单（isNotificationNoise）。新工具事件在此补充。
 var notifiableEvents = map[string]bool{
 	"Stop":                true, // claude/codebuddy/cursor hook：一轮完成
 	"agent-turn-complete": true, // codex notify：一轮完成
@@ -97,12 +99,31 @@ var notifiableEvents = map[string]bool{
 	"error":               true, // chat 错误（与前端 eventLabel 语义对齐）
 }
 
+// notificationNoiseTypes 是 Notification 事件里确认为噪音的子类型
+//（notification_type）：auth_success 是登录成功广播、idle_prompt 是空闲 60s
+// 自动提醒，都不需要用户操作。用黑名单而非只放行 permission_prompt：claude
+// 合法等待确认子类型很多（worker_permission_prompt / elicitation_dialog 等），
+// 白名单会误伤；未知/缺失子类型放行，宁可多弹不可漏弹。
+var notificationNoiseTypes = map[string]bool{
+	"auth_success": true,
+	"idle_prompt":  true,
+}
+
+// isNotificationNoise 报告该 payload 是否为 Notification 事件里命中噪音
+// 子类型的内部状态广播；其余事件不受影响。
+func isNotificationNoise(p agenthook.Payload) bool {
+	return p.Event == "Notification" && notificationNoiseTypes[p.NotificationType]
+}
+
 // handleAgentNotify 分发一条 agent 通知：白名单外的事件（CLI 内部状态广播）
 // 静默丢弃；就绪期等待确认噪音直接过滤（见 dropUnpromptedWaiting）；窗口内
 // 重复事件丢弃（防气泡连刷）；始终推给前端（非前台期间前端照常入队）；
 // 主窗非前台/不可见时弹独立置顶气泡（非系统 toast）；前台时只靠前端 NotificationBubble。
 func (a *App) handleAgentNotify(p agenthook.Payload) {
 	if !notifiableEvents[p.Event] {
+		return
+	}
+	if isNotificationNoise(p) {
 		return
 	}
 	if a.dropUnpromptedWaiting(p) {
