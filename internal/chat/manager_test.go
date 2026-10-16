@@ -615,6 +615,54 @@ func TestUpdateSessionTitleSyncsBound(t *testing.T) {
 	}
 }
 
+// TestUpdateSessionTitleFiresOnInfo 扫描回填标题命中时经 onInfo 推送更新后的
+// Info（desktop 层据此 Emit chat:meta 并回填需求 sessionTitle 快照）；
+// 未命中（无绑定会话/标题未变）不触发。
+func TestUpdateSessionTitleFiresOnInfo(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	infos := make(chan Info, 4)
+	m.SetOnInfo(func(info Info) { infos <- info })
+	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, ToolID: "codebuddy", Title: "占位"}, Spec{Path: "x"}, ""); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if !m.AttachSession("disk-1", `D:\ws`, "codebuddy", "", 0, time.Time{}) {
+		t.Fatal("前置绑定失败")
+	}
+
+	// 未命中：无该磁盘会话绑定
+	if m.UpdateSessionTitle("disk-404", "别家标题", 1) {
+		t.Fatal("未绑定会话不应报告有更新")
+	}
+	select {
+	case info := <-infos:
+		t.Fatalf("未命中不应触发 onInfo: %+v", info)
+	default:
+	}
+
+	// 命中：推送的 Info 带新标题
+	if !m.UpdateSessionTitle("disk-1", "真实标题", 1) {
+		t.Fatal("已绑定会话应能更新标题")
+	}
+	select {
+	case info := <-infos:
+		if info.Title != "真实标题" || info.SessionID != "disk-1" {
+			t.Fatalf("onInfo Info 不符: %+v", info)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("命中后应触发 onInfo")
+	}
+
+	// 标题未变：再次调用返回 false 且不触发
+	if m.UpdateSessionTitle("disk-1", "真实标题", 1) {
+		t.Fatal("标题未变时不应报告有更新")
+	}
+	select {
+	case info := <-infos:
+		t.Fatalf("标题未变不应触发 onInfo: %+v", info)
+	default:
+	}
+}
+
 func TestAttachSessionSkipsNonCandidates(t *testing.T) {
 	m, _, _ := newTestManager(t)
 	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, ToolID: "codebuddy"}, Spec{Path: "x"}, ""); err != nil {

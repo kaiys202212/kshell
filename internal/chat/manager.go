@@ -882,20 +882,30 @@ func (m *Manager) AttachSession(sessionID, workspace, toolID, title string, mess
 
 // UpdateSessionTitle 按磁盘会话 ID 更新已绑定聊天的标题。
 // 必须已有用户消息（messages>0）且标题非空；用于扫描后把后来落盘的真实标题刷到页签。
+// 命中时经 onInfo 推送更新后的 Info（锁外；desktop 层 Emit chat:meta 并回填
+// 需求的会话标题快照）。
 func (m *Manager) UpdateSessionTitle(sessionID, title string, messages int) bool {
 	if sessionID == "" || title == "" || messages <= 0 {
 		return false
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	var out Info
+	updated := false
 	for _, s := range m.order {
 		if s.info.SessionID != sessionID || s.info.Title == title {
 			continue
 		}
 		s.info.Title = title
-		return true
+		out = s.info
+		updated = true
+		break
 	}
-	return false
+	onInfo := m.onInfo
+	m.mu.Unlock()
+	if updated && onInfo != nil {
+		onInfo(out)
+	}
+	return updated
 }
 
 func (m *Manager) History(id string) []Update {

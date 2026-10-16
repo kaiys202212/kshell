@@ -5,6 +5,7 @@ package desktop
 
 import (
 	"testing"
+	"time"
 
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/requirements"
@@ -47,7 +48,7 @@ func TestArchiveRequirementReleasesIdleChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	info := openTestChat(t, m)
-	if err := store.MarkDispatched(it.ID, "/w", info.ID); err != nil {
+	if err := store.MarkDispatched(it.ID, "/w", info.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SetStatus(it.ID, requirements.StatusDone); err != nil {
@@ -84,7 +85,7 @@ func TestArchiveRequirementKeepsBusyChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	info := openTestChat(t, m)
-	if err := store.MarkDispatched(it.ID, "/w", info.ID); err != nil {
+	if err := store.MarkDispatched(it.ID, "/w", info.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SetStatus(it.ID, requirements.StatusDone); err != nil {
@@ -153,5 +154,75 @@ func TestSetRequirementStatusBinding(t *testing.T) {
 	}
 	if rec.count("requirements:changed") == 0 {
 		t.Fatal("状态变更后应推送 requirements:changed")
+	}
+}
+
+// TestMarkRequirementDispatchedTitle 绑定层透传会话标题快照：派发时落盘 sessionTitle。
+func TestMarkRequirementDispatchedTitle(t *testing.T) {
+	app, store, m, rec := newRequirementTestApp(t, nil)
+	it, err := store.Add("带标题派发", "medium", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := openTestChat(t, m)
+
+	if err := app.MarkRequirementDispatched(it.ID, "/w", info.ID, "会话标题"); err != nil {
+		t.Fatalf("MarkRequirementDispatched: %v", err)
+	}
+	for _, cur := range store.List() {
+		if cur.ID == it.ID && cur.SessionTitle != "会话标题" {
+			t.Fatalf("sessionTitle = %q, want 会话标题", cur.SessionTitle)
+		}
+	}
+	if rec.count("requirements:changed") == 0 {
+		t.Fatal("派发后应推送 requirements:changed")
+	}
+}
+
+// TestChatTitleChangeUpdatesRequirement 聊天标题变化（首条消息改标题）时，
+// 已派发需求的 sessionTitle 快照随之更新；无关联需求的会话静默忽略。
+func TestChatTitleChangeUpdatesRequirement(t *testing.T) {
+	conn := &fakeChatConn{waitCh: make(chan struct{}), promptGate: make(chan struct{})}
+	app, store, m, _ := newRequirementTestApp(t, &fakeChatCaptureBackend{conn: conn})
+	// 钩子在 ensureSessionHooks 里接 SetOnInfo；桩 manager 需要显式接上同款回调
+	m.SetOnInfo(func(info chat.Info) {
+		store.SetSessionTitle(info.ID, info.Title)
+	})
+	it, err := store.Add("标题回填", "medium", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := openTestChat(t, m)
+	if err := app.MarkRequirementDispatched(it.ID, "/w", info.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.Prompt(info.ID, "第一条消息"); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	close(conn.promptGate) // 放行阻塞的 Prompt 让轮次收尾
+
+	// SetOnInfo 在锁外异步触发，轮询等快照更新
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		title := ""
+		for _, cur := range store.List() {
+			if cur.ID == it.ID {
+				title = cur.SessionTitle
+			}
+		}
+		if title == "第一条消息" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("sessionTitle 未回填, got %q", title)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// 无关联需求的会话：标题变化不报错（静默忽略）
+	other := openTestChat(t, m)
+	if err := m.Prompt(other.ID, "未关联会话"); err != nil {
+		t.Fatalf("prompt other: %v", err)
 	}
 }

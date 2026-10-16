@@ -882,7 +882,12 @@
       "archived_plain": "Archived.",
       "archived_empty": "No archived requirements.",
       "archive_open": "Archived",
-      "update_failed": "Failed to update requirement: {{err}}"
+      "update_failed": "Failed to update requirement: {{err}}",
+      "session_jump": "Go to session",
+      "session_running_aria": "Session running",
+      "session_reopen": "Reopen session",
+      "session_ended": "Session ended",
+      "reopen_failed": "Failed to reopen session: {{err}}"
     },
     "transcript": {
       "preview_title": "Session preview",

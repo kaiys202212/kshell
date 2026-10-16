@@ -68,13 +68,15 @@ func (a *App) DeleteRequirement(id string) error {
 	return nil
 }
 
-// MarkRequirementDispatched 标记需求已派发到某工作区并关联会话 ID；id 不存在返回错误。
-func (a *App) MarkRequirementDispatched(id, workspace, chatID string) error {
+// MarkRequirementDispatched 标记需求已派发到某工作区，并关联会话 ID 与会话标题
+// 快照（新建会话为占位标题、恢复会话为磁盘标题；随后标题变化经 SetOnInfo 回填）；
+// id 不存在返回错误。
+func (a *App) MarkRequirementDispatched(id, workspace, chatID, title string) error {
 	store := a.getRequirementStore()
 	if store == nil {
 		return errReqStoreNotReady
 	}
-	if err := store.MarkDispatched(id, workspace, chatID); err != nil {
+	if err := store.MarkDispatched(id, workspace, chatID, title); err != nil {
 		return err
 	}
 	a.Emit("requirements:changed")
