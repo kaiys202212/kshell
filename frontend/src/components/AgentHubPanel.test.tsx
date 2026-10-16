@@ -1,6 +1,6 @@
 // AgentHubPanel：跨项目汇总运行中的 ACP agent，@ 指定目标发消息、跳转定位、新建 agent、粘贴。
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatInfo, ToolInfo } from '../lib/api';
 import { useAppStore } from '../state/store';
@@ -606,12 +606,150 @@ describe('AgentHubPanel', () => {
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '@Cur' } });
-    const list = screen.getByRole('list', { name: tt('ui.hub.mention_aria') });
+    const list = screen.getByRole('listbox', { name: tt('ui.hub.mention_aria') });
     expect(list).toHaveTextContent('@Cursor#c2');
     // 第二行展示项目 · 会话标题
     expect(list).toHaveTextContent('a · 乙');
-    fireEvent.click(screen.getByRole('button', { name: /@Cursor#c2/ }));
+    // 候选为 role=option 的 li（与 # 弹层结构一致），mousedown 选中
+    const option = within(list).getByText('@Cursor#c2').closest('li')!;
+    fireEvent.mouseDown(option);
     expect((box as HTMLTextAreaElement).value).toBe('@Cursor#c2 ');
+  });
+
+  it('@ 补全键盘导航：ArrowDown/ArrowUp 切换高亮并夹取边界，Enter 填入不发送', () => {
+    useAppStore.setState({
+      chats: [
+        chat({ ID: 'c1', ToolID: 'claude', Title: '甲' }),
+        chat({ ID: 'c2', ToolID: 'cursor', Title: '乙' }),
+      ],
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '@' } });
+    const list = screen.getByRole('listbox', { name: tt('ui.hub.mention_aria') });
+    const options = within(list).getAllByRole('option');
+    expect(options).toHaveLength(2);
+    // 初始高亮第一项
+    expect(options[0]).toHaveAttribute('aria-selected', 'true');
+    // 下移到第二项
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    expect(options[1]).toHaveAttribute('aria-selected', 'true');
+    expect(options[0]).toHaveAttribute('aria-selected', 'false');
+    // 已到底再下移：夹取不越界
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    expect(options[1]).toHaveAttribute('aria-selected', 'true');
+    // 上移两步：夹回第一项
+    fireEvent.keyDown(box, { key: 'ArrowUp' });
+    fireEvent.keyDown(box, { key: 'ArrowUp' });
+    expect(options[0]).toHaveAttribute('aria-selected', 'true');
+    // Enter 填入高亮项对应 label，不发送
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c1 ');
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
+  it('@ 补全 Tab 同样填入高亮项', () => {
+    useAppStore.setState({
+      chats: [
+        chat({ ID: 'c1', ToolID: 'claude', Title: '甲' }),
+        chat({ ID: 'c2', ToolID: 'cursor', Title: '乙' }),
+      ],
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '@' } });
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    fireEvent.keyDown(box, { key: 'Tab' });
+    expect((box as HTMLTextAreaElement).value).toBe('@Cursor#c2 ');
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
+  it('弹层开着时 chats 后台收缩：高亮下标夹回最后一项，Enter 仍填入可见候选', () => {
+    useAppStore.setState({
+      chats: [
+        chat({ ID: 'c1', ToolID: 'claude', Title: '甲' }),
+        chat({ ID: 'c2', ToolID: 'cursor', Title: '乙' }),
+      ],
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '@' } });
+    // 高亮移到第二项后，后台 scan:done 使候选收缩为 1 个（act 包住触发同步重渲染）
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    act(() => {
+      useAppStore.setState({ chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })] });
+    });
+    const list = screen.getByRole('listbox', { name: tt('ui.hub.mention_aria') });
+    const options = within(list).getAllByRole('option');
+    expect(options).toHaveLength(1);
+    // 唯一候选保持高亮（不出现 aria-selected 全 false 的列表）
+    expect(options[0]).toHaveAttribute('aria-selected', 'true');
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c1 ');
+  });
+
+  it('@ 补全 Esc 关闭后，Enter 恢复发送语义（回落 lastAgentId 投递）', async () => {
+    useAppStore.setState({
+      chats: [
+        chat({ ID: 'c1', ToolID: 'claude', Title: '甲' }),
+        chat({ ID: 'c2', ToolID: 'cursor', Title: '乙' }),
+      ],
+      lastAgentId: 'c2',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '@' } });
+    expect(screen.getByRole('listbox', { name: tt('ui.hub.mention_aria') })).toBeTruthy();
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(screen.queryByRole('listbox', { name: tt('ui.hub.mention_aria') })).toBeNull();
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c2', '@'));
+    expect((box as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('@ 补全键盘切换时高亮项 scrollIntoView 跟随（保持可见）', () => {
+    useAppStore.setState({
+      chats: [
+        chat({ ID: 'c1', ToolID: 'claude', Title: '甲' }),
+        chat({ ID: 'c2', ToolID: 'cursor', Title: '乙' }),
+      ],
+    });
+    const spy = vi.fn();
+    const proto = HTMLElement.prototype as unknown as { scrollIntoView?: unknown };
+    const prev = proto.scrollIntoView;
+    proto.scrollIntoView = spy;
+    try {
+      render(<AgentHubPanel />);
+      const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+      fireEvent.change(box, { target: { value: '@' } });
+      fireEvent.keyDown(box, { key: 'ArrowDown' });
+      expect(spy).toHaveBeenCalledWith({ block: 'nearest' });
+      // 高亮的是第二项：scrollIntoView 的 this 是该 li
+      const list = screen.getByRole('listbox', { name: tt('ui.hub.mention_aria') });
+      const second = within(list).getAllByRole('option')[1];
+      expect(spy.mock.contexts).toContain(second);
+    } finally {
+      proto.scrollIntoView = prev;
+    }
+  });
+
+  it('# 弹层键盘切换时高亮项 scrollIntoView 跟随（保持可见）', () => {
+    const spy = vi.fn();
+    const proto = HTMLElement.prototype as unknown as { scrollIntoView?: unknown };
+    const prev = proto.scrollIntoView;
+    proto.scrollIntoView = spy;
+    try {
+      render(<AgentHubPanel />);
+      const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+      fireEvent.change(box, { target: { value: '#' } });
+      fireEvent.keyDown(box, { key: 'ArrowDown' });
+      expect(spy).toHaveBeenCalledWith({ block: 'nearest' });
+      const list = screen.getByRole('listbox', { name: tt('ui.hub.cmd_aria') });
+      const second = within(list).getAllByRole('option')[1];
+      expect(spy.mock.contexts).toContain(second);
+    } finally {
+      proto.scrollIntoView = prev;
+    }
   });
 
   it('无标题会话在面板兜底显示项目基名', () => {
