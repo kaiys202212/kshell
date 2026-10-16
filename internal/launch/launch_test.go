@@ -727,3 +727,33 @@ func TestForWorkspaceToolCodexUnchanged(t *testing.T) {
 		t.Fatalf("codex env = %+v", l.Env)
 	}
 }
+
+// ACP npx + bypass 组合：注入参数（--settings 与 --dangerously-skip-permissions）
+// 必须全部落在 -y <pkg> 之后，否则 npx 把它们当自身 flag/包名报 E404。
+func TestForSessionACPClaudeNpxSettingsWithBypass(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := acpTools(providers.ACPDetection{Available: true, Source: "npx", Package: "pkg"})
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{AnthropicBaseURL: "https://h/", Model: "glm-5"}, true
+	}}
+	s := providers.Session{ID: "ses_x", ToolID: "claude", Workspace: "/w"}
+	l, err := ForSessionACP(ps, tools, s, mo, PermissionOptions{Bypass: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Args) < 3 || l.Args[0] != "-y" || l.Args[1] != "pkg" {
+		t.Fatalf("args 应以 -y pkg 开头: %v", l.Args)
+	}
+	if findSettingsJSON(l.Args) == "" {
+		t.Fatalf("args 应含 --settings: %v", l.Args)
+	}
+	skip := false
+	for _, a := range l.Args[2:] {
+		if a == "--dangerously-skip-permissions" {
+			skip = true
+		}
+	}
+	if !skip {
+		t.Fatalf("args 应含 bypass 参数: %v", l.Args)
+	}
+}

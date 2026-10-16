@@ -24,12 +24,16 @@ func settingsArgObj(t *testing.T, args []string) (map[string]any, bool) {
 func TestMergeSettingsArgAppendsWhenAbsent(t *testing.T) {
 	obj := map[string]any{"env": map[string]any{"A": "1"}}
 	out := MergeSettingsArg([]string{"--resume", "s1"}, obj)
-	if !reflect.DeepEqual(out[:2], []string{"--resume", "s1"}) {
-		t.Fatalf("原参数应保留: %v", out)
+	// 前置：--settings 是会话级全局 flag，前置维持「注入参数全部在前」不变量
+	if !reflect.DeepEqual(out[2:], []string{"--resume", "s1"}) {
+		t.Fatalf("原参数应保留在尾部: %v", out)
+	}
+	if out[0] != "--settings" {
+		t.Fatalf("应前置 --settings: %v", out)
 	}
 	m, ok := settingsArgObj(t, out)
 	if !ok {
-		t.Fatalf("应新增 --settings: %v", out)
+		t.Fatalf("应有 --settings: %v", out)
 	}
 	if !reflect.DeepEqual(m, obj) {
 		t.Fatalf("settings = %+v, want %+v", m, obj)
