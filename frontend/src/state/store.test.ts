@@ -269,6 +269,76 @@ describe('store', () => {
     expect(useAppStore.getState().chats[0].Status).toBe('ready');
   });
 
+  it('turn_done 之后 agent 继续输出（thought/assistant/tool/plan）把状态拉回 running', () => {
+    // codebuddy 等 ACP 实现会在任务真正完成前提前返回 prompt 响应（turn_done 已到、
+    // 状态已回 ready），随后继续推 session/update 流水。显示层必须跟随 agent 实际活动。
+    const chat = {
+      ID: 'c1',
+      Kind: 'new',
+      SessionID: '',
+      Workspace: 'D:\\w',
+      Title: 't',
+      ToolID: 'codebuddy',
+      Status: 'ready',
+      ExitCode: 0,
+      Error: '',
+    };
+    useAppStore.setState({ chats: [chat], chatSeq: {}, chatItems: {} });
+    let seq = 1;
+    for (const type of ['tool', 'thought', 'assistant', 'plan'] as const) {
+      useAppStore.getState().applyChat('c1', { Seq: seq++, Type: type, MessageID: 'm1', Text: 'x' });
+      expect(useAppStore.getState().chats[0].Status).toBe('running');
+      // 回到 ready 再测下一种类型
+      useAppStore.setState({
+        chats: useAppStore.getState().chats.map((c) => (c.ID === 'c1' ? { ...c, Status: 'ready' } : c)),
+      });
+    }
+  });
+
+  it('commands/user 更新不代表 agent 活动，不把 ready 拉回 running', () => {
+    const chat = {
+      ID: 'c1',
+      Kind: 'new',
+      SessionID: '',
+      Workspace: 'D:\\w',
+      Title: 't',
+      ToolID: 'codebuddy',
+      Status: 'ready',
+      ExitCode: 0,
+      Error: '',
+    };
+    useAppStore.setState({ chats: [chat], chatSeq: {}, chatItems: {} });
+    useAppStore.getState().applyChat('c1', { Seq: 1, Type: 'commands', Commands: [] });
+    expect(useAppStore.getState().chats[0].Status).toBe('ready');
+    useAppStore.getState().applyChat('c1', { Seq: 2, Type: 'user', MessageID: 'u1', Text: 'hi' });
+    expect(useAppStore.getState().chats[0].Status).toBe('ready');
+  });
+
+  it('活动更新把状态拉回 running 后，再收 turn_done 仍回 ready；exited 不被活动更新复活', () => {
+    const chat = {
+      ID: 'c1',
+      Kind: 'new',
+      SessionID: '',
+      Workspace: 'D:\\w',
+      Title: 't',
+      ToolID: 'codebuddy',
+      Status: 'ready',
+      ExitCode: 0,
+      Error: '',
+    };
+    useAppStore.setState({ chats: [chat], chatSeq: {}, chatItems: {} });
+    useAppStore.getState().applyChat('c1', { Seq: 1, Type: 'tool', ToolCallID: 't1', Tool: { ToolCallID: 't1', Title: 'Bash' } });
+    expect(useAppStore.getState().chats[0].Status).toBe('running');
+    useAppStore.getState().applyChat('c1', { Seq: 2, Type: 'turn_done', StopReason: 'end_turn' });
+    expect(useAppStore.getState().chats[0].Status).toBe('ready');
+    // 退出是终态：迟到的活动输出不得复活
+    useAppStore.setState({
+      chats: useAppStore.getState().chats.map((c) => (c.ID === 'c1' ? { ...c, Status: 'exited' } : c)),
+    });
+    useAppStore.getState().applyChat('c1', { Seq: 3, Type: 'tool', ToolCallID: 't2', Tool: { ToolCallID: 't2', Title: 'Bash' } });
+    expect(useAppStore.getState().chats[0].Status).toBe('exited');
+  });
+
   it('setChatItems 落位时 chatSeq 只升不降：实时更新已抬高 Seq 的，历史回放不得重置回去', () => {
     const chat = {
       ID: 'c1',

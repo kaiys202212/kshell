@@ -346,7 +346,9 @@ export const useAppStore = create<AppState>()(
           const last = s.chatSeq[id] ?? 0;
           if (u.Seq <= last) return {};
           const items = applyChatUpdate(s.chatItems[id] ?? [], u);
-          // 仅负责「一轮结束回到 ready」与错误记录；running 由发送侧乐观置位。
+          // 状态跟随 agent 实际活动：一轮结束回到 ready，错误记录；
+          // running 除发送侧乐观置位外，turn_done 后 agent 继续输出的实时更新也拉回
+          // （codebuddy 等 ACP 实现会提前返回 prompt 响应，之后仍推工具调用等流水）。
           // 只有状态真的变化时才新建 chats，避免每个流式分片都触发列表重渲染。
           let chats = s.chats;
           if (u.Type === 'error' || u.Type === 'turn_done') {
@@ -358,6 +360,13 @@ export const useAppStore = create<AppState>()(
               }
               if (u.Type === 'error') return { ...c, Status: 'ready', Error: u.Text ?? c.Error };
               return { ...c, Status: 'ready' };
+            });
+          } else if (
+            u.Type === 'thought' || u.Type === 'assistant' || u.Type === 'tool' || u.Type === 'plan'
+          ) {
+            chats = s.chats.map((c) => {
+              if (c.ID !== id || c.Status === 'running' || c.Status === 'exited') return c;
+              return { ...c, Status: 'running' };
             });
           }
           return {
