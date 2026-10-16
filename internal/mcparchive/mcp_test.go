@@ -27,6 +27,64 @@ func TestHandleToolsListAndSuggest(t *testing.T) {
 	}
 }
 
+// ServeIO 必须按 MCP stdio 标准（换行分隔 JSON）读写；claude CLI 起本 server 后
+// 发换行 JSON initialize，若按 LSP Content-Length 帧解析将永不应答，客户端干等
+// 启动超时（实测 ~30s），把 ACP session/new 顶过握手上限。
+func TestServeIONewlineDelimitedJSON(t *testing.T) {
+	var out bytes.Buffer
+	in := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+		``,
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`, // 通知：不回包
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
+		`not-json`, // 非法行：回 error 响应
+	}, "\n")
+	if err := ServeIO(strings.NewReader(in), &out, nil); err != nil {
+		t.Fatalf("ServeIO: %v", err)
+	}
+	lines := nonEmptyLines(out.String())
+	if len(lines) != 3 {
+		t.Fatalf("应答应恰 3 行（initialize/tools/list/非法行），got %d: %q", len(lines), out.String())
+	}
+	if !strings.Contains(lines[0], `"protocolVersion"`) || !strings.Contains(lines[0], `"id":1`) {
+		t.Fatalf("initialize 应答异常: %s", lines[0])
+	}
+	if !strings.Contains(lines[1], `"suggest_archive"`) || !strings.Contains(lines[1], `"id":2`) {
+		t.Fatalf("tools/list 应答异常: %s", lines[1])
+	}
+	if !strings.Contains(lines[2], `"error"`) {
+		t.Fatalf("非法 JSON 行应回 error 响应: %s", lines[2])
+	}
+	// 不应有 LSP 帧头残留
+	if strings.Contains(out.String(), "Content-Length") {
+		t.Fatalf("不应输出 LSP 帧头: %q", out.String())
+	}
+}
+
+// 超长消息不得爆 Scanner 默认 64KB 上限：注入的 args 里可能带长 token。
+func TestServeIOLongLine(t *testing.T) {
+	var out bytes.Buffer
+	long := strings.Repeat("x", 200*1024)
+	in := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"junk":"` + long + `"}}`
+	if err := ServeIO(strings.NewReader(in), &out, nil); err != nil {
+		t.Fatalf("ServeIO: %v", err)
+	}
+	if !strings.Contains(out.String(), `"id":1`) {
+		t.Fatalf("超长行应正常应答: %d bytes", out.Len())
+	}
+}
+
+func nonEmptyLines(s string) []string {
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		l = strings.TrimRight(l, "\r")
+		if l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
 func TestWriteServersMerge(t *testing.T) {
 	path := t.TempDir() + "/mcp.json"
 	err := WriteServers(path, []ServerDef{

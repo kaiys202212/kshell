@@ -2,12 +2,10 @@ package mcpssh
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 )
 
@@ -81,60 +79,31 @@ func rpcResult(id json.RawMessage, result any, err error) []byte {
 	return b
 }
 
-// ServeIO 按 Content-Length 帧读写 stdio，直到输入结束。
+// ServeIO 按 MCP stdio 标准（换行分隔 JSON）读写，直到输入结束。
+// 此前误用 LSP Content-Length 帧：MCP 客户端发换行 JSON initialize 得不到
+// 应答，干等到启动超时（~30s）。与 mcparchive.ServeIO 同构。
 func ServeIO(r io.Reader, w io.Writer, tools *Tools) error {
-	br := bufio.NewReader(r)
-	for {
-		msg, err := readFrame(br)
-		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			return err
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024) // 超长消息不爆默认 64KB 上限
+	bw := bufio.NewWriter(w)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
 		}
-		resp, ok := Handle(msg, tools)
+		resp, ok := Handle([]byte(line), tools)
 		if !ok {
 			continue
 		}
-		if err := writeFrame(w, resp); err != nil {
+		if _, err := bw.Write(resp); err != nil {
+			return err
+		}
+		if err := bw.WriteByte('\n'); err != nil {
 			return err
 		}
 	}
-}
-
-func readFrame(r *bufio.Reader) ([]byte, error) {
-	var length int
-	for {
-		line, err := r.ReadString('\n')
-		if err != nil {
-			return nil, err
-		}
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			break
-		}
-		if strings.HasPrefix(strings.ToLower(line), "content-length:") {
-			n, err := strconv.Atoi(strings.TrimSpace(line[len("content-length:"):]))
-			if err != nil {
-				return nil, err
-			}
-			length = n
-		}
+	if err := sc.Err(); err != nil {
+		return err
 	}
-	if length < 0 {
-		return nil, fmt.Errorf("bad content-length")
-	}
-	buf := make([]byte, length)
-	if _, err := io.ReadFull(r, buf); err != nil {
-		return nil, err
-	}
-	return buf, nil
-}
-
-func writeFrame(w io.Writer, body []byte) error {
-	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "Content-Length: %d\r\n\r\n", len(body))
-	buf.Write(body)
-	_, err := w.Write(buf.Bytes())
-	return err
+	return bw.Flush()
 }

@@ -17,7 +17,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 )
 
@@ -210,62 +209,33 @@ func rpcResult(id json.RawMessage, result any, err error) []byte {
 	return b
 }
 
-// ServeIO 按 LSP 风格的 Content-Length 帧读写 stdio，直到输入结束。
+// ServeIO 按 MCP stdio 标准（换行分隔 JSON）读写，直到输入结束。
+// 此前误用 LSP Content-Length 帧：MCP 客户端（claude CLI 等）发换行 JSON
+// initialize 得不到应答，干等到启动超时（~30s），把 ACP 握手顶过上限。
 func ServeIO(r io.Reader, w io.Writer, suggest func(summary string) error) error {
-	br := bufio.NewReader(r)
-	for {
-		msg, err := readFrame(br)
-		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			return err
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024) // 超长消息（大 token 注入）不爆默认 64KB 上限
+	bw := bufio.NewWriter(w)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
 		}
-		resp, ok := Handle(msg, suggest)
+		resp, ok := Handle([]byte(line), suggest)
 		if !ok {
 			continue
 		}
-		if err := writeFrame(w, resp); err != nil {
+		if _, err := bw.Write(resp); err != nil {
+			return err
+		}
+		if err := bw.WriteByte('\n'); err != nil {
 			return err
 		}
 	}
-}
-
-func readFrame(r *bufio.Reader) ([]byte, error) {
-	var length int
-	for {
-		line, err := r.ReadString('\n')
-		if err != nil {
-			return nil, err
-		}
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			break
-		}
-		if strings.HasPrefix(strings.ToLower(line), "content-length:") {
-			n, err := strconv.Atoi(strings.TrimSpace(line[len("content-length:"):]))
-			if err != nil {
-				return nil, err
-			}
-			length = n
-		}
+	if err := sc.Err(); err != nil {
+		return err
 	}
-	if length < 0 {
-		return nil, fmt.Errorf("bad content-length")
-	}
-	buf := make([]byte, length)
-	if _, err := io.ReadFull(r, buf); err != nil {
-		return nil, err
-	}
-	return buf, nil
-}
-
-func writeFrame(w io.Writer, body []byte) error {
-	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "Content-Length: %d\r\n\r\n", len(body))
-	buf.Write(body)
-	_, err := w.Write(buf.Bytes())
-	return err
+	return bw.Flush()
 }
 
 // Main 是 `kshell mcp-archive` 子命令：把工具调用 POST 回桌面进程。

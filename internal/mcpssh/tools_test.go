@@ -1,6 +1,7 @@
 package mcpssh
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
@@ -141,4 +142,48 @@ func TestMainRequiresToken(t *testing.T) {
 	if _, err := backendFromFlags([]string{"--token", "  "}); err == nil {
 		t.Fatal("expected error for blank token")
 	}
+}
+
+// ServeIO 必须按 MCP stdio 标准（换行分隔 JSON）读写；与 mcparchive.ServeIO
+// 同构，此前按 LSP Content-Length 帧解析导致 MCP 客户端 initialize 无应答。
+func TestServeIONewlineDelimitedJSON(t *testing.T) {
+	b := &fakeBackend{conns: []remote.Connection{{ID: "c1", Host: "h", Name: "dev"}}}
+	var out bytes.Buffer
+	in := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+		``,
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`, // 通知：不回包
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
+		`not-json`, // 非法行：回 error 响应
+	}, "\n")
+	if err := ServeIO(strings.NewReader(in), &out, NewTools(b)); err != nil {
+		t.Fatalf("ServeIO: %v", err)
+	}
+	lines := nonEmptyLines(out.String())
+	if len(lines) != 3 {
+		t.Fatalf("应答应恰 3 行，got %d: %q", len(lines), out.String())
+	}
+	if !strings.Contains(lines[0], `"protocolVersion"`) || !strings.Contains(lines[0], `"id":1`) {
+		t.Fatalf("initialize 应答异常: %s", lines[0])
+	}
+	if !strings.Contains(lines[1], `"list_connections"`) || !strings.Contains(lines[1], `"id":2`) {
+		t.Fatalf("tools/list 应答异常: %s", lines[1])
+	}
+	if !strings.Contains(lines[2], `"error"`) {
+		t.Fatalf("非法 JSON 行应回 error 响应: %s", lines[2])
+	}
+	if strings.Contains(out.String(), "Content-Length") {
+		t.Fatalf("不应输出 LSP 帧头: %q", out.String())
+	}
+}
+
+func nonEmptyLines(s string) []string {
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		l = strings.TrimRight(l, "\r")
+		if l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
 }
