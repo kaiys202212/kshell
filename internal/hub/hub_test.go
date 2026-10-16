@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -303,5 +304,62 @@ func TestLoadArchiveMissing(t *testing.T) {
 	}
 	if _, err := s.LoadArchive("bad"); err == nil {
 		t.Fatalf("非法月份应报错")
+	}
+}
+
+// TestLoadV1LiveMigratesOnNextWrite：v1 live.json 升级到 v2 时历史不得丢失。
+func TestLoadV1LiveMigratesOnNextWrite(t *testing.T) {
+	dir := t.TempDir()
+	v1 := `{"version":1,"messages":[` +
+		`{"id":1,"kind":"user","text":"old-1","ts":100},` +
+		`{"id":2,"kind":"agent","text":"old-2","ts":200}]}`
+	if err := os.WriteFile(filepath.Join(dir, "live.json"), []byte(v1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := New(dir, 0)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.List(); len(got) != 2 || got[0].Text != "old-1" {
+		t.Fatalf("Load 后应保留 v1 消息，got %d 条", len(got))
+	}
+	if err := s.Append(Message{Kind: "user", Text: "new"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "live.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f file
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatal(err)
+	}
+	if f.Version != fileVersion {
+		t.Fatalf("重写后 version = %d, want %d", f.Version, fileVersion)
+	}
+	if len(f.Messages) != 3 || f.Messages[0].Text != "old-1" {
+		t.Fatalf("旧消息应保留，got %d 条", len(f.Messages))
+	}
+}
+
+// TestLoadRejectsUnknownVersions：version=0（缺失/非本程序产出）与大于当前版本的
+// live.json 都按空处理，防止误解析未知结构。
+func TestLoadRejectsUnknownVersions(t *testing.T) {
+	t.Run("v0", func(t *testing.T) { testLoadRejectsVersion(t, `{"messages":[{"id":1,"kind":"user","text":"x","ts":1}]}`) })
+	t.Run("v0显式", func(t *testing.T) { testLoadRejectsVersion(t, `{"version":0,"messages":[{"id":1,"kind":"user","text":"x","ts":1}]}`) })
+	t.Run("未来版本", func(t *testing.T) { testLoadRejectsVersion(t, `{"version":99,"messages":[{"id":1,"kind":"user","text":"x","ts":1}]}`) })
+}
+
+func testLoadRejectsVersion(t *testing.T, raw string) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "live.json"), []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := New(dir, 0)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.List(); len(got) != 0 {
+		t.Fatalf("应按空处理，got %d 条", len(got))
 	}
 }

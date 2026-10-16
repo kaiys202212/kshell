@@ -20,8 +20,9 @@ import (
 	"time"
 )
 
-// fileVersion 是落盘文件结构版本，结构变更时递增，旧文件自然失效。
-// v2：Message 增加 sessionTitle（会话标题快照，归因用）；旧 v1 文件按空处理。
+// fileVersion 是落盘文件结构版本，结构变更时递增。
+// v2：Message 增加 sessionTitle（会话标题快照，归因用）；旧 v1 文件可直接读取
+//（v1→v2 仅新增可选字段），下次写入时以当前版本重写完成迁移。
 const fileVersion = 2
 
 // defaultLiveCap 是 live 文件保留的消息条数上限（超出按月归档）。
@@ -110,7 +111,10 @@ func (s *Store) Load() error {
 
 	if data, err := os.ReadFile(s.livePath); err == nil {
 		var f file
-		if json.Unmarshal(data, &f) == nil && f.Version == fileVersion {
+		// 版本兼容：只接受本程序产出的旧版本（1..fileVersion）。
+		// vN→vN+1 仅新增可选字段时旧文件可直接反序列化，丢弃会让下一次写入
+		// 覆盖掉全部历史（2026-10-16 v1→v2 实际发生）。未知未来版本仍按空处理。
+		if json.Unmarshal(data, &f) == nil && f.Version >= 1 && f.Version <= fileVersion {
 			s.live = f.Messages
 		}
 	}

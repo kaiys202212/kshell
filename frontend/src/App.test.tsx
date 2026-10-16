@@ -628,6 +628,26 @@ describe('App', () => {
     ).toBe(true);
   });
 
+  it('chat:exit 裸错误（非 wire key）用本地化前缀包装', async () => {
+    let exitCb: ((p: { id: string; exitCode: number; error: string }) => void) | undefined;
+    mocks.onChatExit.mockImplementation((cb: typeof exitCb) => {
+      exitCb = cb;
+      return () => {};
+    });
+    mocks.listChats.mockResolvedValue([chat]);
+    render(<App />);
+    await waitFor(() => expect(useAppStore.getState().chats).toHaveLength(1));
+
+    act(() => {
+      exitCb?.({ id: 'c1', exitCode: 1, error: 'exit status 1' });
+    });
+
+    const expected = tt('ui.notify.session_exited_err').replace('{{err}}', 'exit status 1');
+    expect(
+      useAppStore.getState().toasts.some((t) => t.title === expected),
+    ).toBe(true);
+  });
+
   it('挂载时回放 chatHistory：时间线落位且 chatSeq 取历史最大 Seq', async () => {
     mocks.listChats.mockResolvedValue([chat]);
     mocks.chatHistory.mockResolvedValue([

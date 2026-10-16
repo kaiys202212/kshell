@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -25,9 +26,11 @@ func newWelcomeTestApp(t *testing.T) (*App, *hub.Store, *hubRecorder) {
 	}
 	res := &discovery.Result{Sessions: sessions, Workspaces: discovery.GroupSessions(sessions)}
 	term := &stubTermBackend{}
+	// Home 用临时目录：mcpConfigDir 会真实写 MCP 配置文件，不能落在磁盘 D:\home
+	home := t.TempDir()
 	app := NewAppWith(Options{
-		Home:      "D:/home",
-		CachePath: "D:/home/.kshell/cache/index.json",
+		Home:      home,
+		CachePath: filepath.Join(home, ".kshell", "cache", "index.json"),
 		Providers: []providers.Provider{providers.Claude{}},
 		Terminals: newTerminalManagerWith(rec.emit, term),
 		HubStore:  store,
