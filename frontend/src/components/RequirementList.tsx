@@ -281,7 +281,7 @@ function ArchiveDialog({
                   <span className="line-clamp-2 block break-words text-[13.5px] leading-relaxed">{r.text}</span>
                   <span className="mt-1 flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground">
                     <Badge variant="muted">{t('ui.requirements.status_archived')}</Badge>
-                    {r.tags.map((tg) => (
+                    {(r.tags ?? []).map((tg) => (
                       <Badge key={tg} variant="outline">{tg}</Badge>
                     ))}
                     {r.dispatchedTo && <Badge variant="outline">{baseName(r.dispatchedTo)}</Badge>}

@@ -451,6 +451,24 @@ describe('RequirementList', () => {
     expect(dlg.queryByText('活跃需求')).not.toBeInTheDocument();
   });
 
+  it('归档视图：存量条目 tags 为 null 渲染与过滤不崩溃', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({
+        id: 'a9',
+        text: '无标签归档条目',
+        status: 'archived',
+        archivedAt: Date.now() * 1e6,
+        tags: null as unknown as string[],
+      }),
+    ]);
+    render(<RequirementList />);
+    // archived 条目不进活跃列表（空态），直接开归档视图
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.requirements.archive_open') }));
+    await screen.findByText(tt('ui.requirements.archived_title'));
+    // tag chip 区为空但不崩；列表条目正常显示
+    expect(screen.getByText('无标签归档条目')).toBeInTheDocument();
+  });
+
   it('归档视图：项目下拉过滤', async () => {
     const dlg = await openArchiveDialog();
     // 下拉选项为 dispatchedTo 基名去重

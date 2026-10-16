@@ -325,7 +325,7 @@ export interface ChatAttachmentMeta {
 // chat.Update 的 JSON 形态
 export interface ChatUpdate {
   Seq: number;
-  Type: string; // user | assistant | thought | tool | plan | turn_done | error
+  Type: string; // user | assistant | thought | tool | plan | commands | turn_done | error
   MessageID?: string;
   Text?: string;
   ToolCallID?: string;

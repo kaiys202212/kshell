@@ -364,10 +364,17 @@ export const useAppStore = create<AppState>()(
           } else if (
             u.Type === 'thought' || u.Type === 'assistant' || u.Type === 'tool' || u.Type === 'plan'
           ) {
-            chats = s.chats.map((c) => {
-              if (c.ID !== id || c.Status === 'running' || c.Status === 'exited') return c;
-              return { ...c, Status: 'running' };
-            });
+            // 无状态可变时不新建数组：流式分片频率下，引用变化会让订阅 chats 的
+            // 列表（会话树/页签/hub）每片重渲染
+            const needRunning = s.chats.some(
+              (c) => c.ID === id && c.Status !== 'running' && c.Status !== 'exited',
+            );
+            if (needRunning) {
+              chats = s.chats.map((c) => {
+                if (c.ID !== id || c.Status === 'running' || c.Status === 'exited') return c;
+                return { ...c, Status: 'running' };
+              });
+            }
           }
           return {
             chatItems: { ...s.chatItems, [id]: items },
