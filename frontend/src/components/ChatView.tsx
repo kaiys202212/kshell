@@ -374,7 +374,8 @@ export default function ChatView({ chat, active }: Props) {
           if (it.type === 'user' || it.type === 'assistant') {
             return (
               <div key={it.key} className={cn('mb-3', it.type === 'user' ? 'text-right' : '')}>
-                <div className={cn('selectable inline-block max-w-[85%] break-words overflow-hidden rounded-md px-3 py-1.5 text-sm [&_pre]:whitespace-pre-wrap',
+                {/* wrapper 用 text-right 让气泡靠右；气泡本体 text-left 保证文字左对齐 */}
+                <div className={cn('selectable inline-block max-w-[85%] break-words overflow-hidden rounded-md px-3 py-1.5 text-left text-sm [&_pre]:whitespace-pre-wrap',
                   it.type === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
                   {it.type === 'assistant'
                     ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{it.text ?? ''}</ReactMarkdown>
