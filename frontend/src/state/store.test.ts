@@ -308,7 +308,7 @@ describe('store', () => {
       Error: '',
     };
     useAppStore.setState({ chats: [chat], chatSeq: {}, chatItems: {} });
-    useAppStore.getState().applyChat('c1', { Seq: 1, Type: 'commands', Commands: [] });
+    useAppStore.getState().applyChat('c1', { Seq: 1, Type: 'commands' });
     expect(useAppStore.getState().chats[0].Status).toBe('ready');
     useAppStore.getState().applyChat('c1', { Seq: 2, Type: 'user', MessageID: 'u1', Text: 'hi' });
     expect(useAppStore.getState().chats[0].Status).toBe('ready');
