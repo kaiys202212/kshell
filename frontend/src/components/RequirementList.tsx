@@ -442,8 +442,9 @@ export default function RequirementList({ className }: { className?: string }) {
             const status = r.status ?? 'pending';
             const draggable = status !== 'done' && status !== 'archived';
             // 会话行数据：活跃会话镜像命中时用实时标题/状态，否则回退落盘快照
+            // （|| 而非 ??：空串标题也视为缺失，回退快照）
             const chat = r.chatId ? chats.find((c) => c.ID === r.chatId) : undefined;
-            const sessionName = chat?.Title ?? r.sessionTitle ?? r.chatId;
+            const sessionName = chat?.Title || r.sessionTitle || r.chatId;
             return (
               <li
                 key={r.id}
@@ -529,17 +530,17 @@ export default function RequirementList({ className }: { className?: string }) {
                         className={cn('h-1.5 w-1.5 shrink-0 rounded-full', sessionDotClass(chat?.Status))}
                       />
                       <span className="min-w-0 truncate">{sessionName}</span>
-                      {chat ? (
+                      {chat && chat.Key ? (
                         <button
                           type="button"
                           aria-label={t('ui.requirements.session_jump')}
                           title={t('ui.requirements.session_jump')}
                           className="ml-auto shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                          onClick={() => chat.Key && focusNoticeTarget(chat.Key)}
+                          onClick={() => focusNoticeTarget(chat.Key!)}
                         >
                           <JumpGlyph />
                         </button>
-                      ) : (
+                      ) : chat ? null : (
                         r.chatId && (
                           <button
                             type="button"
