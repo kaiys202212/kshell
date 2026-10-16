@@ -13,6 +13,7 @@ import {
   deleteRequirement,
   listRequirements,
   onRequirementsChanged,
+  openWorkspaceACP,
   readClipboardPaste,
   setRequirementStatus,
   updateRequirement,
@@ -22,6 +23,8 @@ import { backendError } from '../lib/errors';
 import { quotePathForShell } from '../lib/dragPath';
 import { baseName } from '../lib/hubAttribution';
 import { formatRelativeTime } from '../lib/format';
+import { reopenRequirementSession } from '../lib/dispatchRequirement';
+import { focusNoticeTarget } from './NotificationBubble';
 import { cn } from '../lib/cn';
 import { useAppStore } from '../state/store';
 import { Badge } from './ui/badge';
@@ -39,6 +42,15 @@ function dotClass(priority: Requirement['priority']): string {
   return 'bg-primary';
 }
 
+// 会话运行状态点配色（token 体系内取色）：running 绿、starting 主色、
+// ready 灰、exited/不存在 红（退出或重启失效同视「已结束」）
+function sessionDotClass(status: string | undefined): string {
+  if (status === 'running') return 'bg-success';
+  if (status === 'starting') return 'bg-primary';
+  if (status === 'ready') return 'bg-muted-foreground';
+  return 'bg-destructive';
+}
+
 // 状态徽章配色（token 体系内取色）：pending 默认描边、active 主色、done 绿、archived 灰
 function statusBadgeVariant(status: Requirement['status']): 'default' | 'muted' | 'outline' {
   if (status === 'active') return 'default';
@@ -52,6 +64,24 @@ function statusBadgeVariant(status: Requirement['status']): 'default' | 'muted' 
 function archiveSessionName(r: Requirement): string {
   if (r.dispatchedTo) return baseName(r.dispatchedTo);
   return r.chatId ?? '';
+}
+
+// 跳转按钮图标（箭头出框）
+function JumpGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M14 5h5v5M19 5l-8 8M18 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
+    </svg>
+  );
+}
+
+// 重新打开按钮图标（循环箭头）
+function ReopenGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M20 12a8 8 0 1 1-2.3-5.6M20 3v4h-4" />
+    </svg>
+  );
 }
 
 // 编辑/新增对话框：受控 open，editing 非 null 表示编辑该条目。
@@ -303,6 +333,8 @@ export default function RequirementList({ className }: { className?: string }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Requirement | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
+  // 活跃会话镜像：会话行用实时标题/状态覆盖落盘快照（App.tsx 全局订阅维护）
+  const chats = useAppStore((s) => s.chats);
 
   const refresh = useCallback(() => {
     listRequirements()
@@ -366,6 +398,14 @@ export default function RequirementList({ className }: { className?: string }) {
       });
   };
 
+  // 重新打开已失效会话：在原工作区建新会话并更新绑定；失败提示。
+  // 成功后靠 markRequirementDispatched 触发的 requirements:changed 回流刷新。
+  const reopen = (r: Requirement) => {
+    void reopenRequirementSession(r).catch((e: unknown) => {
+      useAppStore.getState().notify(t('ui.requirements.reopen_failed', { err: backendError(e) }), 'error');
+    });
+  };
+
   // 活跃列表只显示非 archived 条目（listRequirements 全量返回）
   const activeItems = useMemo(() => items.filter((r) => r.status !== 'archived'), [items]);
 
@@ -401,6 +441,9 @@ export default function RequirementList({ className }: { className?: string }) {
           {activeItems.map((r) => {
             const status = r.status ?? 'pending';
             const draggable = status !== 'done' && status !== 'archived';
+            // 会话行数据：活跃会话镜像命中时用实时标题/状态，否则回退落盘快照
+            const chat = r.chatId ? chats.find((c) => c.ID === r.chatId) : undefined;
+            const sessionName = chat?.Title ?? r.sessionTitle ?? r.chatId;
             return (
               <li
                 key={r.id}
@@ -428,54 +471,88 @@ export default function RequirementList({ className }: { className?: string }) {
                       </Badge>
                     ))}
                     {r.dispatchedTo && <Badge variant="outline">{baseName(r.dispatchedTo)}</Badge>}
+                    {/* 操作按钮：徽章行行尾 hover 显现（兄弟节点定位，避免嵌套进文本区）。
+                        pending：编辑+删除；active：标记完成；done：归档；archived 不进活跃列表。 */}
+                    <span className="ml-auto hidden shrink-0 gap-0.5 group-hover:flex">
+                      {status === 'pending' && (
+                        <>
+                          <button
+                            type="button"
+                            aria-label={t('ui.requirements.edit')}
+                            title={t('ui.requirements.edit')}
+                            className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                            onClick={() => openEdit(r)}
+                          >
+                            <PencilGlyph />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={t('ui.requirements.delete')}
+                            title={t('ui.requirements.delete')}
+                            className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
+                            onClick={() => remove(r)}
+                          >
+                            <TrashGlyph />
+                          </button>
+                        </>
+                      )}
+                      {status === 'active' && (
+                        <button
+                          type="button"
+                          aria-label={t('ui.requirements.mark_done')}
+                          title={t('ui.requirements.mark_done')}
+                          className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          onClick={() => markDone(r)}
+                        >
+                          <CheckGlyph />
+                        </button>
+                      )}
+                      {status === 'done' && (
+                        <button
+                          type="button"
+                          aria-label={t('ui.requirements.archive_btn')}
+                          title={t('ui.requirements.archive_btn')}
+                          className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          onClick={() => archive(r)}
+                        >
+                          <ArchiveGlyph />
+                        </button>
+                      )}
+                    </span>
                   </span>
-                </span>
-                {/* 操作按钮：hover 显现（兄弟节点定位，避免嵌套进文本区）。
-                    pending：编辑+删除；active：标记完成；done：归档；archived 不进活跃列表。 */}
-                <span className="absolute right-1.5 top-1.5 hidden gap-0.5 group-hover:flex">
-                  {status === 'pending' && (
-                    <>
-                      <button
-                        type="button"
-                        aria-label={t('ui.requirements.edit')}
-                        title={t('ui.requirements.edit')}
-                        className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                        onClick={() => openEdit(r)}
-                      >
-                        <PencilGlyph />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={t('ui.requirements.delete')}
-                        title={t('ui.requirements.delete')}
-                        className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
-                        onClick={() => remove(r)}
-                      >
-                        <TrashGlyph />
-                      </button>
-                    </>
-                  )}
-                  {status === 'active' && (
-                    <button
-                      type="button"
-                      aria-label={t('ui.requirements.mark_done')}
-                      title={t('ui.requirements.mark_done')}
-                      className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                      onClick={() => markDone(r)}
-                    >
-                      <CheckGlyph />
-                    </button>
-                  )}
-                  {status === 'done' && (
-                    <button
-                      type="button"
-                      aria-label={t('ui.requirements.archive_btn')}
-                      title={t('ui.requirements.archive_btn')}
-                      className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                      onClick={() => archive(r)}
-                    >
-                      <ArchiveGlyph />
-                    </button>
+                  {/* 会话行：已派发条目展示绑定会话的名称与运行状态，行尾为跳转/重开入口 */}
+                  {(r.dispatchedTo || r.chatId) && (
+                    <span className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                      <span
+                        data-testid="req-session-dot"
+                        aria-hidden="true"
+                        className={cn('h-1.5 w-1.5 shrink-0 rounded-full', sessionDotClass(chat?.Status))}
+                      />
+                      <span className="min-w-0 truncate">{sessionName}</span>
+                      {chat ? (
+                        <button
+                          type="button"
+                          aria-label={t('ui.requirements.session_jump')}
+                          title={t('ui.requirements.session_jump')}
+                          className="ml-auto shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          onClick={() => chat.Key && focusNoticeTarget(chat.Key)}
+                        >
+                          <JumpGlyph />
+                        </button>
+                      ) : (
+                        r.chatId && (
+                          <button
+                            type="button"
+                            aria-label={t('ui.requirements.session_reopen')}
+                            title={t('ui.requirements.session_reopen')}
+                            className="ml-auto shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                            onClick={() => reopen(r)}
+                          >
+                            <ReopenGlyph />
+                          </button>
+                        )
+                      )}
+                    </span>
                   )}
                 </span>
               </li>

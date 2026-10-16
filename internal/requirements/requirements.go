@@ -43,6 +43,9 @@ type Item struct {
 	DispatchedTo string `json:"dispatchedTo,omitempty"`
 	// ChatID 是派发时创建的会话 ID；空表示未派发或无关联会话。
 	ChatID string `json:"chatId,omitempty"`
+	// SessionTitle 是关联会话标题的快照：会话关闭/重启后无法反查标题，
+	// 需求列表仍能展示会话名（实时标题由前端活跃会话镜像覆盖）。
+	SessionTitle string `json:"sessionTitle,omitempty"`
 	// Status 是需求状态（pending/active/done/archived）。
 	// 旧数据零值 "" 在 Load 时归一化为 pending，落盘后不再出现 ""。
 	Status string `json:"status"`
@@ -186,10 +189,11 @@ func (s *Store) Delete(id string) error {
 	return nil
 }
 
-// MarkDispatched 标记需求已派发到某工作区并关联会话 ID；id 不存在返回错误。
+// MarkDispatched 标记需求已派发到某工作区并关联会话 ID 与会话标题快照；
+// id 不存在返回错误。
 // 派发意味着需求进入执行阶段，状态置为 active。仅 pending/active 条目允许
 // 派发，done/archived 为终态，重新派发会把状态拉回 active，击穿归档不变量。
-func (s *Store) MarkDispatched(id, workspace, chatID string) error {
+func (s *Store) MarkDispatched(id, workspace, chatID, title string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -203,6 +207,7 @@ func (s *Store) MarkDispatched(id, workspace, chatID string) error {
 		old := s.items[i]
 		s.items[i].DispatchedTo = workspace
 		s.items[i].ChatID = chatID
+		s.items[i].SessionTitle = title
 		s.items[i].Status = StatusActive
 		if err := s.write(); err != nil {
 			s.items[i] = old // 落盘失败回滚
@@ -211,6 +216,35 @@ func (s *Store) MarkDispatched(id, workspace, chatID string) error {
 		return nil
 	}
 	return errors.New("需求不存在: " + id)
+}
+
+// SetSessionTitle 按 ChatID 更新关联需求的会话标题快照（会话首条消息改标题、
+// 扫描回填真实标题时调用）。返回是否发生更新：
+// 空标题、标题相同、无匹配条目、条目已归档（终态快照不改写）都返回 false。
+// 落盘失败返回错误。
+func (s *Store) SetSessionTitle(chatID, title string) (bool, error) {
+	if chatID == "" || title == "" {
+		return false, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := range s.items {
+		if s.items[i].ChatID != chatID || s.items[i].Status == StatusArchived {
+			continue
+		}
+		if s.items[i].SessionTitle == title {
+			return false, nil
+		}
+		old := s.items[i].SessionTitle
+		s.items[i].SessionTitle = title
+		if err := s.write(); err != nil {
+			s.items[i].SessionTitle = old // 落盘失败回滚
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // SetStatus 限制性地推进状态机：只允许 pending→active、active→done 两种

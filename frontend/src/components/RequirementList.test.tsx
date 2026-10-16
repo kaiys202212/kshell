@@ -19,8 +19,10 @@ const mocks = vi.hoisted(() => ({
   markRequirementDispatched: vi.fn(),
   onRequirementsChanged: vi.fn(),
   readClipboardPaste: vi.fn(),
+  openWorkspaceACP: vi.fn(),
+  getTools: vi.fn(),
 }));
-vi.mock('../lib/api', () => mocks);
+vi.mock('../lib/api', () => ({ ...mocks, onRequirementsChanged: mocks.onRequirementsChanged }));
 
 // 优先级色点用 data-testid 定位（直接断言 class，比比对完整 className 稳定）
 const dotOf = (li: HTMLElement) => li.querySelector('[data-testid="req-dot"]');
@@ -47,6 +49,10 @@ beforeEach(() => {
   mocks.archiveRequirement.mockResolvedValue({ released: true, chatId: '' });
   mocks.markRequirementDispatched.mockResolvedValue(undefined);
   mocks.onRequirementsChanged.mockImplementation(() => () => {});
+  // 重开会话走真实 dispatchRequirement.reopenRequirementSession → resolveToolID 读 getTools
+  mocks.getTools.mockResolvedValue([
+    { ID: 'tool-a', ACP: { Available: true, Source: '' } } as never,
+  ]);
 });
 
 // 填写并提交新增/编辑对话框；text 必填
@@ -192,6 +198,119 @@ describe('RequirementList', () => {
     const li2 = (await screen.findByText('执行中需求')).closest('li') as HTMLElement;
     expect(li1).toHaveAttribute('draggable', 'true');
     expect(li2).toHaveAttribute('draggable', 'true');
+  });
+
+  // ---- 会话行（会话名 + 运行状态 + 跳转/重开） ----
+
+  // 会话状态点用 data-testid 定位（class 断言比比对完整 className 稳定）
+  const sessionDotOf = (li: HTMLElement) => li.querySelector('[data-testid="req-session-dot"]');
+
+  const liveChat = {
+    ID: 'c1', Kind: 'new', SessionID: '', Workspace: 'D:\\ws\\proj',
+    Title: '实时标题', ToolID: 'claude', Status: 'running', ExitCode: 0, Error: '', Key: 'new:1',
+  };
+
+  it('已派发条目渲染会话行：活跃会话实时标题优先，running 状态点 + 跳转按钮', async () => {
+    useAppStore.setState({ chats: [liveChat as never] });
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '已派发需求', status: 'active', chatId: 'c1', dispatchedTo: 'D:\\ws\\proj', sessionTitle: '落盘标题' }),
+    ]);
+    render(<RequirementList />);
+    const li = (await screen.findByText('已派发需求')).closest('li') as HTMLElement;
+    // 实时镜像标题优先于落盘快照
+    expect(within(li).getByText('实时标题')).toBeInTheDocument();
+    expect(within(li).queryByText('落盘标题')).not.toBeInTheDocument();
+    expect(sessionDotOf(li)).toHaveClass('bg-success');
+    expect(within(li).getByLabelText(tt('ui.requirements.session_jump'))).toBeInTheDocument();
+  });
+
+  it('会话不存在：显示 sessionTitle 快照 + 已结束点 + 重新打开按钮', async () => {
+    useAppStore.setState({ chats: [] });
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '重启后需求', status: 'active', chatId: 'c-dead', dispatchedTo: 'D:\\ws\\proj', sessionTitle: '旧会话名' }),
+    ]);
+    render(<RequirementList />);
+    const li = (await screen.findByText('重启后需求')).closest('li') as HTMLElement;
+    expect(within(li).getByText('旧会话名')).toBeInTheDocument();
+    expect(sessionDotOf(li)).toHaveClass('bg-destructive');
+    expect(within(li).getByLabelText(tt('ui.requirements.session_reopen'))).toBeInTheDocument();
+  });
+
+  it('会话不存在且无快照：回退显示 chatId', async () => {
+    useAppStore.setState({ chats: [] });
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '无快照需求', status: 'active', chatId: 'c-raw', dispatchedTo: 'D:\\ws\\proj' }),
+    ]);
+    render(<RequirementList />);
+    const li = (await screen.findByText('无快照需求')).closest('li') as HTMLElement;
+    expect(within(li).getByText('c-raw')).toBeInTheDocument();
+  });
+
+  it('exited 会话：红色状态点 + 跳转按钮（聚焦工作区可见历史）', async () => {
+    useAppStore.setState({ chats: [{ ...liveChat, Status: 'exited' } as never] });
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '已退出需求', status: 'active', chatId: 'c1', dispatchedTo: 'D:\\ws\\proj' }),
+    ]);
+    render(<RequirementList />);
+    const li = (await screen.findByText('已退出需求')).closest('li') as HTMLElement;
+    expect(sessionDotOf(li)).toHaveClass('bg-destructive');
+    expect(within(li).getByLabelText(tt('ui.requirements.session_jump'))).toBeInTheDocument();
+  });
+
+  it('点击重新打开：调 openWorkspaceACP 与 markRequirementDispatched（带新 chat.ID 与标题）', async () => {
+    useAppStore.setState({ chats: [] });
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '待重开需求', status: 'active', chatId: 'c-dead', dispatchedTo: 'D:\\ws\\proj', sessionTitle: '旧会话名' }),
+    ]);
+    mocks.openWorkspaceACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: { ID: 'c-new', Kind: 'new', SessionID: '', Workspace: 'D:\\ws\\proj', Title: '新标题', ToolID: 'claude', Status: 'ready', ExitCode: 0, Error: '', Key: 'new:2' },
+    });
+    render(<RequirementList />);
+    const li = (await screen.findByText('待重开需求')).closest('li') as HTMLElement;
+    fireEvent.click(within(li).getByLabelText(tt('ui.requirements.session_reopen')));
+
+    await waitFor(() => expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', expect.any(String)));
+    await waitFor(() =>
+      expect(mocks.markRequirementDispatched).toHaveBeenCalledWith('r1', 'D:\\ws\\proj', 'c-new', '新标题'),
+    );
+  });
+
+  it('重新打开失败：提示 reopen_failed', async () => {
+    useAppStore.setState({ chats: [] });
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '重开失败需求', status: 'active', chatId: 'c-dead', dispatchedTo: 'D:\\ws\\proj', sessionTitle: '旧会话名' }),
+    ]);
+    mocks.openWorkspaceACP.mockRejectedValue(new Error('boom'));
+    render(<RequirementList />);
+    const li = (await screen.findByText('重开失败需求')).closest('li') as HTMLElement;
+    fireEvent.click(within(li).getByLabelText(tt('ui.requirements.session_reopen')));
+
+    await waitFor(() =>
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((x) => x.title.includes(tt('ui.requirements.reopen_failed').replace('{{err}}', 'boom'))),
+      ).toBe(true),
+    );
+  });
+
+  it('未派发条目不渲染会话行', async () => {
+    useAppStore.setState({ chats: [] });
+    mocks.listRequirements.mockResolvedValue([req({ id: 'r1', text: '纯 pending' })]);
+    render(<RequirementList />);
+    const li = (await screen.findByText('纯 pending')).closest('li') as HTMLElement;
+    expect(sessionDotOf(li)).toBeNull();
+  });
+
+  it('操作图标移到徽章行（非右上角悬浮）：仍在条目内且 hover 显现', async () => {
+    mocks.listRequirements.mockResolvedValue([req({ id: 'r1', text: '移位检查' })]);
+    render(<RequirementList />);
+    const li = (await screen.findByText('移位检查')).closest('li') as HTMLElement;
+    const editBtn = within(li).getByLabelText(tt('ui.requirements.edit'));
+    // 不再是 absolute 悬浮容器（top-1.5 right-1.5），而在徽章 flex 行内
+    expect(editBtn.closest('span')?.className).not.toContain('absolute');
+    expect(editBtn.closest('span')?.className).toContain('ml-auto');
   });
 
   it('requirements:changed 事件触发重拉列表', async () => {

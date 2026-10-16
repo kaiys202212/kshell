@@ -645,7 +645,7 @@ interface AppBindings {
   AddRequirement(text: string, priority: string, tags: string[]): Promise<Requirement>;
   UpdateRequirement(id: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
   DeleteRequirement(id: string): Promise<void>;
-  MarkRequirementDispatched(id: string, workspace: string, chatID: string): Promise<void>;
+  MarkRequirementDispatched(id: string, workspace: string, chatID: string, title: string): Promise<void>;
   ArchiveRequirement(id: string): Promise<{ released: boolean; chatId: string }>;
   SetRequirementStatus(id: string, status: string): Promise<void>;
 }
@@ -1537,7 +1537,8 @@ export function onHubChanged(cb: () => void): () => void {
 // dispatchedTo 非空表示已派发到该工作区路径；
 // status: pending | active | done | archived（Go 侧必出，但旧持久化数据可能缺，
 // 声明为可选、使用方兜底 'pending'）；chatId 非空表示已派发的会话 ID；
-// archivedAt 为归档时间戳（纳秒，Go UnixNano，0 表示未归档）。
+// sessionTitle 是关联会话标题的落盘快照（会话关闭/重启后仍可展示会话名，
+// 实时标题由前端活跃会话镜像覆盖）；archivedAt 为归档时间戳（纳秒，Go UnixNano）。
 export interface Requirement {
   id: string;
   text: string;
@@ -1546,6 +1547,7 @@ export interface Requirement {
   dispatchedTo?: string;
   status?: 'pending' | 'active' | 'done' | 'archived';
   chatId?: string;
+  sessionTitle?: string;
   archivedAt?: number;
   ts: number;
 }
@@ -1583,12 +1585,17 @@ export async function deleteRequirement(id: string): Promise<void> {
   await a.DeleteRequirement(id);
 }
 
-// markRequirementDispatched 标记需求已派发到某工作区并关联会话 ID；错误向上抛。
-// chatID 暂由调用方传 '' 占位，后续任务接入真实会话 ID。
-export async function markRequirementDispatched(id: string, workspace: string, chatID: string): Promise<void> {
+// markRequirementDispatched 标记需求已派发到某工作区并关联会话 ID 与标题快照；
+// title 为该会话当前标题（新建占位或磁盘标题），标题后续变化由 Go 侧回填。错误向上抛。
+export async function markRequirementDispatched(
+  id: string,
+  workspace: string,
+  chatID: string,
+  title: string,
+): Promise<void> {
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
-  await a.MarkRequirementDispatched(id, workspace, chatID);
+  await a.MarkRequirementDispatched(id, workspace, chatID, title);
 }
 
 // archiveRequirement 归档需求；released 表示关联会话是否已关闭（空闲自动关闭），

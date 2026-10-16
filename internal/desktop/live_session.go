@@ -52,6 +52,13 @@ func (a *App) ensureSessionHooks() {
 		if m := a.chats(); m != nil {
 			m.SetOnInfo(func(info chat.Info) {
 				a.Emit("chat:meta", info)
+				// 标题变化（首条消息改标题 / 扫描回填真实标题）时回填需求的会话名快照，
+				// 供会话关闭或重启后需求列表仍能展示。无关联需求时幂等忽略。
+				if info.Title != "" {
+					if store := a.getRequirementStore(); store != nil {
+						_, _ = store.SetSessionTitle(info.ID, info.Title)
+					}
+				}
 				if info.Prompted {
 					a.nudgeDiscovery()
 				}

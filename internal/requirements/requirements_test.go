@@ -160,7 +160,7 @@ func TestDeleteIdempotent(t *testing.T) {
 func TestMarkDispatched(t *testing.T) {
 	s, _ := newTestStore(t)
 	it, _ := s.Add("需求", "low", nil)
-	if err := s.MarkDispatched(it.ID, "D:/work/proj", "chat-9"); err != nil {
+	if err := s.MarkDispatched(it.ID, "D:/work/proj", "chat-9", "初始标题"); err != nil {
 		t.Fatalf("MarkDispatched: %v", err)
 	}
 	items := s.List()
@@ -170,11 +170,86 @@ func TestMarkDispatched(t *testing.T) {
 	if items[0].ChatID != "chat-9" {
 		t.Errorf("ChatID = %q, want chat-9", items[0].ChatID)
 	}
+	if items[0].SessionTitle != "初始标题" {
+		t.Errorf("SessionTitle = %q, want 初始标题", items[0].SessionTitle)
+	}
 	if items[0].Status != "active" {
 		t.Errorf("派发后 Status = %q, want active", items[0].Status)
 	}
-	if err := s.MarkDispatched("不存在", "x", "c"); err == nil {
+	if err := s.MarkDispatched("不存在", "x", "c", ""); err == nil {
 		t.Error("MarkDispatched 不存在的 id 应报错")
+	}
+}
+
+func TestSetSessionTitle(t *testing.T) {
+	s, _ := newTestStore(t)
+	it, _ := s.Add("需求", "low", nil)
+	_ = s.MarkDispatched(it.ID, "/ws", "chat-1", "旧标题")
+
+	// 按 ChatID 命中并更新
+	updated, err := s.SetSessionTitle("chat-1", "新标题")
+	if err != nil {
+		t.Fatalf("SetSessionTitle: %v", err)
+	}
+	if !updated {
+		t.Error("命中的 ChatID 应返回 updated=true")
+	}
+	if got := s.List()[0].SessionTitle; got != "新标题" {
+		t.Errorf("SessionTitle = %q, want 新标题", got)
+	}
+
+	// 标题相同：幂等不更新
+	updated, err = s.SetSessionTitle("chat-1", "新标题")
+	if err != nil || updated {
+		t.Errorf("相同标题应幂等返回 (false, nil), got (%v, %v)", updated, err)
+	}
+
+	// 空标题：忽略
+	updated, err = s.SetSessionTitle("chat-1", "")
+	if err != nil || updated {
+		t.Errorf("空标题应忽略返回 (false, nil), got (%v, %v)", updated, err)
+	}
+
+	// 无匹配 ChatID：幂等返回 (false, nil)，不报错（会话可能未绑定需求）
+	updated, err = s.SetSessionTitle("chat-404", "任意")
+	if err != nil || updated {
+		t.Errorf("无匹配应返回 (false, nil), got (%v, %v)", updated, err)
+	}
+}
+
+func TestSetSessionTitleArchivedRejected(t *testing.T) {
+	s, _ := newTestStore(t)
+	it, _ := s.Add("需求", "low", nil)
+	_ = s.MarkDispatched(it.ID, "/ws", "chat-1", "旧标题")
+	_ = s.SetStatus(it.ID, "done")
+	if err := s.Archive(it.ID); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+	// 归档条目是终态快照：标题不再改写
+	updated, err := s.SetSessionTitle("chat-1", "新标题")
+	if err != nil {
+		t.Fatalf("SetSessionTitle 不应报错: %v", err)
+	}
+	if updated {
+		t.Error("归档条目不应更新 sessionTitle")
+	}
+	if got := s.List()[0].SessionTitle; got != "旧标题" {
+		t.Errorf("归档条目 SessionTitle = %q, want 旧标题", got)
+	}
+}
+
+func TestSessionTitleRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	s1 := New(dir)
+	_ = s1.Load()
+	it, _ := s1.Add("需求", "low", nil)
+	_ = s1.MarkDispatched(it.ID, "/ws", "chat-7", "落盘标题")
+
+	s2 := New(dir)
+	_ = s2.Load()
+	items := s2.List()
+	if items[0].SessionTitle != "落盘标题" {
+		t.Errorf("重启后 SessionTitle = %q, want 落盘标题", items[0].SessionTitle)
 	}
 }
 
@@ -186,7 +261,7 @@ func TestPersistenceRoundTrip(t *testing.T) {
 	}
 	a, _ := s1.Add("需求一", "high", []string{"tag1"})
 	b, _ := s1.Add("需求二", "low", []string{"tag2", "tag3"})
-	_ = s1.MarkDispatched(b.ID, "/tmp/ws", "chat-1")
+	_ = s1.MarkDispatched(b.ID, "/tmp/ws", "chat-1", "")
 
 	// 重新创建 store 模拟进程重启
 	s2 := New(dir)
@@ -313,7 +388,7 @@ func TestStatusLifecycle(t *testing.T) {
 	}
 
 	// 派发：记录 workspace + chatID，置 active
-	if err := s.MarkDispatched(it.ID, `D:\ws`, "chat-1"); err != nil {
+	if err := s.MarkDispatched(it.ID, `D:\ws`, "chat-1", ""); err != nil {
 		t.Fatal(err)
 	}
 	got := s.List()[0]
@@ -346,16 +421,16 @@ func TestStatusLifecycle(t *testing.T) {
 func TestMarkDispatchedTerminalRejected(t *testing.T) {
 	s, _ := newTestStore(t)
 	done, _ := s.Add("已完成", "low", nil)
-	_ = s.MarkDispatched(done.ID, "/w", "c")
+	_ = s.MarkDispatched(done.ID, "/w", "c", "")
 	_ = s.SetStatus(done.ID, "done")
-	if err := s.MarkDispatched(done.ID, "/w2", "c2"); err == nil {
+	if err := s.MarkDispatched(done.ID, "/w2", "c2", ""); err == nil {
 		t.Error("done 状态不允许重新派发")
 	}
 	arch, _ := s.Add("已归档", "low", nil)
-	_ = s.MarkDispatched(arch.ID, "/w", "c")
+	_ = s.MarkDispatched(arch.ID, "/w", "c", "")
 	_ = s.SetStatus(arch.ID, "done")
 	_ = s.Archive(arch.ID)
-	if err := s.MarkDispatched(arch.ID, "/w3", "c3"); err == nil {
+	if err := s.MarkDispatched(arch.ID, "/w3", "c3", ""); err == nil {
 		t.Error("archived 状态不允许重新派发")
 	}
 	// 状态与派发字段都不应被改动
@@ -374,9 +449,9 @@ func TestListArchivedOrder(t *testing.T) {
 	s, _ := newTestStore(t)
 	a, _ := s.Add("旧需求", "low", []string{"x"})
 	b, _ := s.Add("新需求", "low", []string{"y"})
-	_ = s.MarkDispatched(a.ID, "/w1", "c1")
+	_ = s.MarkDispatched(a.ID, "/w1", "c1", "")
 	time.Sleep(2 * time.Millisecond)
-	_ = s.MarkDispatched(b.ID, "/w2", "c2")
+	_ = s.MarkDispatched(b.ID, "/w2", "c2", "")
 	_ = s.SetStatus(a.ID, "done")
 	_ = s.SetStatus(b.ID, "done")
 	_ = s.Archive(a.ID)
@@ -404,7 +479,7 @@ func TestSetStatusTransitions(t *testing.T) {
 		t.Error("不存在的 id 应报错")
 	}
 	// 合法迁移 pending → active → done
-	if err := s.MarkDispatched(it.ID, "/w", "c"); err != nil {
+	if err := s.MarkDispatched(it.ID, "/w", "c", ""); err != nil {
 		t.Fatalf("MarkDispatched: %v", err)
 	}
 	if err := s.SetStatus(it.ID, "done"); err != nil {
@@ -420,18 +495,18 @@ func TestSetStatusTransitions(t *testing.T) {
 func TestDeleteOnlyPending(t *testing.T) {
 	s, _ := newTestStore(t)
 	active, _ := s.Add("执行中", "low", nil)
-	_ = s.MarkDispatched(active.ID, "/w", "c")
+	_ = s.MarkDispatched(active.ID, "/w", "c", "")
 	if err := s.Delete(active.ID); err == nil {
 		t.Error("active 状态不允许删除")
 	}
 	done, _ := s.Add("已完成", "low", nil)
-	_ = s.MarkDispatched(done.ID, "/w", "c")
+	_ = s.MarkDispatched(done.ID, "/w", "c", "")
 	_ = s.SetStatus(done.ID, "done")
 	if err := s.Delete(done.ID); err == nil {
 		t.Error("done 状态不允许删除")
 	}
 	arch, _ := s.Add("已归档", "low", nil)
-	_ = s.MarkDispatched(arch.ID, "/w", "c")
+	_ = s.MarkDispatched(arch.ID, "/w", "c", "")
 	_ = s.SetStatus(arch.ID, "done")
 	_ = s.Archive(arch.ID)
 	if err := s.Delete(arch.ID); err == nil {
@@ -450,7 +525,7 @@ func TestUpdateOnlyPending(t *testing.T) {
 	if _, err := s.Update(it.ID, "新文本", "high", nil); err != nil {
 		t.Fatalf("pending 状态应可 Update: %v", err)
 	}
-	_ = s.MarkDispatched(it.ID, "/w", "c")
+	_ = s.MarkDispatched(it.ID, "/w", "c", "")
 	if _, err := s.Update(it.ID, "再改", "low", nil); err == nil {
 		t.Error("active 状态不允许 Update")
 	}
@@ -464,7 +539,7 @@ func TestArchiveOnlyDone(t *testing.T) {
 		t.Error("pending 状态不允许归档")
 	}
 	active, _ := s.Add("执行中", "low", nil)
-	_ = s.MarkDispatched(active.ID, "/w", "c")
+	_ = s.MarkDispatched(active.ID, "/w", "c", "")
 	if err := s.Archive(active.ID); err == nil {
 		t.Error("active 状态不允许归档")
 	}

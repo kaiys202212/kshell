@@ -882,7 +882,11 @@
       "archived_plain": "已归档。",
       "archived_empty": "暂无归档需求。",
       "archive_open": "归档",
-      "update_failed": "需求状态更新失败：{{err}}"
+      "update_failed": "需求状态更新失败：{{err}}",
+      "session_jump": "跳转到会话",
+      "session_reopen": "重新打开会话",
+      "session_ended": "会话已结束",
+      "reopen_failed": "重新打开会话失败：{{err}}"
     },
     "transcript": {
       "preview_title": "会话预览",
