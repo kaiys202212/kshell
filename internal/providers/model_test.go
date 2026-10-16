@@ -15,8 +15,8 @@ func TestInjectModelMappings(t *testing.T) {
 	}
 
 	args, env := Claude{}.InjectModel(cfg)
-	if len(args) != 0 {
-		t.Fatalf("claude args = %v", args)
+	if len(args) != 0 || len(env) != 0 {
+		t.Fatalf("claude InjectModel 应不再产出 env（改走 SettingsEnv）: args=%v env=%+v", args, env)
 	}
 	wantClaude := map[string]string{
 		"ANTHROPIC_BASE_URL":             "https://ant.example/",
@@ -26,8 +26,9 @@ func TestInjectModelMappings(t *testing.T) {
 		"ANTHROPIC_DEFAULT_OPUS_MODEL":   "m",
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL":  "m",
 	}
+	env = Claude{}.SettingsEnv(cfg)
 	if !reflect.DeepEqual(env, wantClaude) {
-		t.Fatalf("claude env = %+v", env)
+		t.Fatalf("claude SettingsEnv = %+v", env)
 	}
 
 	args, env = Codex{}.InjectModel(cfg)
@@ -103,7 +104,7 @@ func TestInjectModelOpencodeBareWithoutBaseURL(t *testing.T) {
 }
 
 func TestInjectModelClaudeIgnoresOpenAIURL(t *testing.T) {
-	_, env := Claude{}.InjectModel(ModelConfig{OpenAIBaseURL: "https://oai/", AnthropicBaseURL: ""})
+	env := Claude{}.SettingsEnv(ModelConfig{OpenAIBaseURL: "https://oai/", AnthropicBaseURL: ""})
 	if env["ANTHROPIC_BASE_URL"] != "" {
 		t.Fatalf("无 anthropic URL 时不应注入，got %+v", env)
 	}
