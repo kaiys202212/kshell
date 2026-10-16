@@ -3,6 +3,7 @@ package desktop
 import (
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/yangk/kshell/internal/agenthook"
 	"github.com/yangk/kshell/internal/chat"
@@ -159,16 +160,40 @@ func (a *App) RecallHubMessage(hubMsgID int64) error {
 	return nil
 }
 
+// hubEventTextKey 把 agent 事件的空正文回退成稳定 wire key（前端 translateBackend
+// 渲染成当前语言）。映射与 frontend/src/lib/agentNotify.ts 的 eventLabel 保持一致：
+// 一侧改动必须同步另一侧。hook 通道的 Stop 载荷没有 message 字段，不回退会在
+// AgentHub 留下无正文气泡（2026-10-16 用户反馈）。
+func hubEventTextKey(event string) string {
+	switch event {
+	case "Notification", "attention":
+		return "ui.notify.waiting_confirm"
+	case "error":
+		return "ui.notify.task_error"
+	case "stopped":
+		return "ui.notify.task_stopped"
+	case "cancelled":
+		return "ui.notify.task_cancelled"
+	default:
+		return "ui.notify.task_done"
+	}
+}
+
 // recordHubAgentMessage 记录一条 agent 回复通知（hook/OSC 与 ACP 两条通道共用）。
 // 会话标题按 termKey/chatID 从 chat manager 反查后冗余落盘（SessionTitle）：
 // 会话关闭或重启后历史气泡仍能显示会话名而不是 #<id> 编码。
+// 正文为空（hook 通道 Stop 载荷没有 message 字段）时回退事件语义 wire key。
 func (a *App) recordHubAgentMessage(p agenthook.Payload) {
+	text := p.Summary
+	if strings.TrimSpace(text) == "" {
+		text = hubEventTextKey(p.Event)
+	}
 	m := hub.Message{
 		Kind:      "agent",
 		Tool:      p.Tool,
 		TermKey:   p.TermKey,
 		Workspace: p.Workspace,
-		Text:      p.Summary,
+		Text:      text,
 		Event:     p.Event,
 		Ts:        p.Ts,
 	}

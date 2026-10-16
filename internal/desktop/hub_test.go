@@ -310,6 +310,69 @@ func TestSendChatPromptQueuedAndRecall(t *testing.T) {
 	t.Fatal("撤回后状态未更新")
 }
 
+// 空正文 agent 消息回退事件语义 wire key（hook 通道 Stop 载荷没有 message 字段）。
+// 映射必须与 frontend/src/lib/agentNotify.ts 的 eventLabel 保持一致。
+func TestRecordHubAgentMessageEmptyTextFallsBackToEventKey(t *testing.T) {
+	cases := []struct {
+		event string
+		want  string
+	}{
+		{"Stop", "ui.notify.task_done"},
+		{"agent-turn-complete", "ui.notify.task_done"},
+		{"session.idle", "ui.notify.task_done"},
+		{"done", "ui.notify.task_done"},
+		{"", "ui.notify.task_done"},
+		{"Notification", "ui.notify.waiting_confirm"},
+		{"attention", "ui.notify.waiting_confirm"},
+		{"error", "ui.notify.task_error"},
+		{"stopped", "ui.notify.task_stopped"},
+		{"cancelled", "ui.notify.task_cancelled"},
+	}
+	for _, c := range cases {
+		t.Run(c.event, func(t *testing.T) {
+			a, store, _ := newHubTestApp(t)
+			a.recordHubAgentMessage(agenthook.Payload{
+				Tool: "codebuddy", Event: c.event, TermKey: "session:s1", Workspace: "d:/ws",
+			})
+			msgs := store.List()
+			if len(msgs) != 1 {
+				t.Fatalf("event %q: 应落 1 条，得到 %d", c.event, len(msgs))
+			}
+			m := msgs[0]
+			if m.Text != c.want {
+				t.Fatalf("event %q: 正文应回退为 %q，得到 %q", c.event, c.want, m.Text)
+			}
+			if m.Kind != "agent" || m.Event != c.event {
+				t.Fatalf("event %q: 消息字段不符: %+v", c.event, m)
+			}
+		})
+	}
+}
+
+// 非空正文原样保留不覆盖；全空白正文视为空，回退事件语义 wire key。
+func TestRecordHubAgentMessageKeepsNonEmptyText(t *testing.T) {
+	a, store, _ := newHubTestApp(t)
+	a.recordHubAgentMessage(agenthook.Payload{
+		Tool: "codebuddy", Event: "Stop", TermKey: "session:s1", Workspace: "d:/ws", Summary: "实际回复内容",
+	})
+	msgs := store.List()
+	if len(msgs) != 1 || msgs[0].Text != "实际回复内容" {
+		t.Fatalf("非空 Summary 应原样保留: %+v", msgs)
+	}
+
+	a2, store2, _ := newHubTestApp(t)
+	a2.recordHubAgentMessage(agenthook.Payload{
+		Tool: "codebuddy", Event: "Stop", TermKey: "session:s1", Workspace: "d:/ws", Summary: "   ",
+	})
+	msgs2 := store2.List()
+	if len(msgs2) != 1 {
+		t.Fatalf("应落 1 条，得到 %d", len(msgs2))
+	}
+	if msgs2[0].Text != "ui.notify.task_done" {
+		t.Fatalf("全空白 Summary 应回退为 ui.notify.task_done，得到 %q", msgs2[0].Text)
+	}
+}
+
 // CloseChat 后队列清空（Manager.Close），但 Hub store 里该会话的 queued 消息
 // 没有任何状态修正路径——前端永远显示「排队中可撤回」而撤回必失败。
 // 关闭会话必须把这些 queued 消息清为已失效（status 置空）。
