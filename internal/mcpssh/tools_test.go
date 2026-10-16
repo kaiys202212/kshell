@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yangk/kshell/internal/remote"
 )
@@ -186,4 +188,35 @@ func nonEmptyLines(s string) []string {
 		}
 	}
 	return out
+}
+
+// 流式应答：stdin 保持打开（真实 MCP 长连接形态）也必须立即收到应答，
+// 否则与修复前同样表现为客户端握手超时。
+func TestServeIOStreamingFlush(t *testing.T) {
+	b := &fakeBackend{}
+	pr, pw := io.Pipe()
+	var out bytes.Buffer
+	done := make(chan error, 1)
+	go func() { done <- ServeIO(pr, &out, NewTools(b)) }()
+
+	if _, err := pw.Write([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(2 * time.Second)
+	for {
+		if strings.Contains(out.String(), `"id":1`) {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("stdin 未关闭时应答未到达（缺逐消息 Flush）: %q", out.String())
+		case err := <-done:
+			t.Fatalf("ServeIO 提前退出: %v", err)
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	pw.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("ServeIO: %v", err)
+	}
 }

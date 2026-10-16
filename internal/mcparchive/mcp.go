@@ -231,6 +231,10 @@ func ServeIO(r io.Reader, w io.Writer, suggest func(summary string) error) error
 		if err := bw.WriteByte('\n'); err != nil {
 			return err
 		}
+		// 逐消息 Flush：stdio 长连接下 stdin 不会关闭，攒缓冲客户端永远收不到。
+		if err := bw.Flush(); err != nil {
+			return err
+		}
 	}
 	if err := sc.Err(); err != nil {
 		return err
