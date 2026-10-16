@@ -18,12 +18,28 @@ func (a *App) getRequirementStore() *requirements.Store {
 }
 
 // ListRequirements 返回全部需求条目（最新在前）。store 未装配返回空切片。
+// 返回前按 ChatID 从 chat manager 反查实时标题补入副本（仅内存覆盖，不落盘——
+// 落盘由 SetOnInfo hook 的 SetSessionTitle 负责）：旧数据在标题快照机制上线前
+// 派发、SessionTitle 为空且会话仍存活时，列表也能显示会话名而不是裸 chatId。
 func (a *App) ListRequirements() []requirements.Item {
 	store := a.getRequirementStore()
 	if store == nil {
 		return []requirements.Item{}
 	}
-	return store.List()
+	items := store.List()
+	m := a.chats()
+	if m == nil {
+		return items
+	}
+	for i := range items {
+		if items[i].ChatID == "" || items[i].SessionTitle != "" {
+			continue
+		}
+		if info, ok := m.Get(items[i].ChatID); ok && info.Title != "" {
+			items[i].SessionTitle = info.Title
+		}
+	}
+	return items
 }
 
 // AddRequirement 新增一条需求（text 去空白非空；priority 非法回退 medium），

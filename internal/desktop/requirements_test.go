@@ -226,3 +226,54 @@ func TestChatTitleChangeUpdatesRequirement(t *testing.T) {
 		t.Fatalf("prompt other: %v", err)
 	}
 }
+
+// TestListRequirementsFillsLiveTitle ListRequirements 返回时按 ChatID 从
+// chat manager 反查实时标题补入返回副本（只影响本次返回，不落盘——落盘由
+// SetOnInfo hook 负责）：
+//  1. manager 有该会话且快照为空 → 返回实时标题；
+//  2. manager 无该会话（已关闭/重启）→ 保持落盘快照。
+func TestListRequirementsFillsLiveTitle(t *testing.T) {
+	app, store, m, _ := newRequirementTestApp(t, nil)
+	itLive, err := store.Add("实时标题反查", "medium", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	itDead, err := store.Add("关闭会话保持快照", "medium", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := openTestChat(t, m)
+	// openTestChat 未传 Title（空）；经 AttachSession 绑定磁盘会话并注入标题
+	// （messages>0 才写标题，与生产扫描回填同路径），live 条目不落快照（模拟
+	// 旧数据），dead 条目落快照且 chatId 指向不存在的会话
+	if !m.AttachSession("disk-1", "/w", "", "实时标题", 3, time.Time{}) {
+		t.Fatal("前置：AttachSession 应命中桩会话")
+	}
+	_ = info
+	if err := store.MarkDispatched(itLive.ID, "/w", "c1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDispatched(itDead.ID, "/w", "c-dead", "旧快照"); err != nil {
+		t.Fatal(err)
+	}
+
+	gotList := app.ListRequirements()
+	for _, cur := range gotList {
+		switch cur.ID {
+		case itLive.ID:
+			if cur.SessionTitle != "实时标题" {
+				t.Fatalf("live 条目应反查实时标题, got %q", cur.SessionTitle)
+			}
+		case itDead.ID:
+			if cur.SessionTitle != "旧快照" {
+				t.Fatalf("dead 条目应保持快照, got %q", cur.SessionTitle)
+			}
+		}
+	}
+	// 不落盘：再从 store 直读，live 条目快照仍为空
+	for _, cur := range store.List() {
+		if cur.ID == itLive.ID && cur.SessionTitle != "" {
+			t.Fatalf("反查不应落盘, store 快照 = %q", cur.SessionTitle)
+		}
+	}
+}
