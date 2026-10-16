@@ -1,10 +1,12 @@
 package launch
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
 
+	"github.com/yangk/kshell/internal/appearance"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
 )
@@ -486,8 +488,18 @@ func TestApplyModelACPClaude(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForWorkspaceACP: %v", err)
 	}
-	if l.Env["ANTHROPIC_MODEL"] != "mimo-v2.5" || l.Env["ANTHROPIC_BASE_URL"] != "https://h/" {
-		t.Fatalf("ACP env = %+v", l.Env)
+	// claude 模型注入改走 --settings env 块（env 注入会被用户 settings.json 覆盖）
+	raw := findSettingsJSON(l.Args)
+	if raw == "" {
+		t.Fatalf("ACP args 应含 --settings: %v", l.Args)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatalf("非法 JSON: %v", err)
+	}
+	envObj, _ := m["env"].(map[string]any)
+	if envObj["ANTHROPIC_MODEL"] != "mimo-v2.5" || envObj["ANTHROPIC_BASE_URL"] != "https://h/" {
+		t.Fatalf("ACP settings env = %+v", envObj)
 	}
 }
 
@@ -592,5 +604,126 @@ func TestForWorkspaceToolPrependsBinArgs(t *testing.T) {
 	}
 	if len(got.Args) != 1 || got.Args[0] != "index.js" {
 		t.Fatalf("新建会话也应前置 BinArgs, got %v", got.Args)
+	}
+}
+
+// findSettingsJSON 取 args 里 --settings 的值（JSON 字符串），未找到返回空。
+func findSettingsJSON(args []string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--settings" {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+// claude 新建会话：模型注入必须走 --settings env 块（用户级 settings.json 的
+// env 会替换进程环境变量，走 env 注入会被覆盖），且不再产出 ANTHROPIC_* env。
+func TestForWorkspaceToolClaudeModelViaSettings(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := []discovery.Tool{{ID: "claude", Installed: true, BinPath: "claude"}}
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{AnthropicBaseURL: "https://h/", APIKey: "k", Model: "glm-5"}, true
+	}}
+	l, err := ForWorkspaceTool(ps, tools, discovery.Workspace{Path: "/p"}, "claude", ThemeOptions{}, mo, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := findSettingsJSON(l.Args)
+	if raw == "" {
+		t.Fatalf("args 应含 --settings: %v", l.Args)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatalf("--settings 非法 JSON: %v (%q)", err, raw)
+	}
+	envObj, _ := m["env"].(map[string]any)
+	if envObj["ANTHROPIC_MODEL"] != "glm-5" || envObj["ANTHROPIC_BASE_URL"] != "https://h/" || envObj["ANTHROPIC_AUTH_TOKEN"] != "k" {
+		t.Fatalf("settings env = %+v", envObj)
+	}
+	if l.Env["ANTHROPIC_MODEL"] != "" || l.Env["ANTHROPIC_BASE_URL"] != "" {
+		t.Fatalf("claude 不应再走 env 注入, env = %v", l.Env)
+	}
+}
+
+// 与主题注入合并为单个 --settings 参数，env 与主题键共存。
+func TestForWorkspaceToolClaudeModelMergedWithTheme(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := []discovery.Tool{{ID: "claude", Installed: true, BinPath: "claude"}}
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{Model: "glm-5"}, true
+	}}
+	to := ThemeOptions{Mode: appearance.Dark}
+	l, err := ForWorkspaceTool(ps, tools, discovery.Workspace{Path: "/p"}, "claude", to, mo, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, a := range l.Args {
+		if a == "--settings" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("应合并为单个 --settings, got %d: %v", count, l.Args)
+	}
+	raw := findSettingsJSON(l.Args)
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatalf("非法 JSON: %v", err)
+	}
+	if m["theme"] != "dark" {
+		t.Fatalf("主题键应保留: %+v", m)
+	}
+	envObj, _ := m["env"].(map[string]any)
+	if envObj["ANTHROPIC_MODEL"] != "glm-5" {
+		t.Fatalf("env 应合入: %+v", m)
+	}
+}
+
+// ACP 路径同样经 --settings 注入（参数传给适配器，最终转发给 claude CLI）。
+func TestForWorkspaceACPClaudeModelViaSettings(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"})
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{AnthropicBaseURL: "https://h/", Model: "glm-5"}, true
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", mo, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := findSettingsJSON(l.Args)
+	if raw == "" {
+		t.Fatalf("ACP args 应含 --settings: %v", l.Args)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatalf("非法 JSON: %v", err)
+	}
+	envObj, _ := m["env"].(map[string]any)
+	if envObj["ANTHROPIC_MODEL"] != "glm-5" {
+		t.Fatalf("ACP settings env = %+v", envObj)
+	}
+	if l.Env["ANTHROPIC_MODEL"] != "" {
+		t.Fatalf("ACP 不应再走 env 注入, env = %v", l.Env)
+	}
+}
+
+// codex 未实现 SettingsEnvInjector：行为不变（-m 前置 + OPENAI_* env）。
+func TestForWorkspaceToolCodexUnchanged(t *testing.T) {
+	ps := []providers.Provider{providers.Codex{}}
+	tools := []discovery.Tool{{ID: "codex", Installed: true, BinPath: "codex"}}
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{OpenAIBaseURL: "https://h/", APIKey: "k", Model: "gpt-x"}, true
+	}}
+	l, err := ForWorkspaceTool(ps, tools, discovery.Workspace{Path: "/p"}, "codex", ThemeOptions{}, mo, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findSettingsJSON(l.Args) != "" {
+		t.Fatalf("codex 不应注入 --settings: %v", l.Args)
+	}
+	if l.Env["OPENAI_BASE_URL"] != "https://h/" || l.Env["OPENAI_API_KEY"] != "k" {
+		t.Fatalf("codex env = %+v", l.Env)
 	}
 }

@@ -50,6 +50,8 @@ type PermissionOptions struct {
 
 // applyModel 与 applyTheme 同构：provider 实现 ModelInjector 时注入环境变量，
 // 并把模型参数**前置**到已有参数之前（全局参数须在子命令如 codex resume 之前）。
+// 另支持 SettingsEnvInjector：模型 env 经 `--settings` 的 env 块注入——
+// claude 会用用户级 settings.json 的 env 替换进程环境变量，走 env 注入必被覆盖。
 func applyModel(l providers.Launch, p providers.Provider, mo ModelOptions) providers.Launch {
 	if mo.Resolver == nil {
 		return l
@@ -65,6 +67,17 @@ func applyModel(l providers.Launch, p providers.Provider, mo ModelOptions) provi
 			l.Args = append(append([]string(nil), args...), l.Args...)
 		}
 		l.Env = providers.MergeEnv(l.Env, env)
+	}
+	if se, ok := p.(providers.SettingsEnvInjector); ok {
+		if env := se.SettingsEnv(cfg); len(env) > 0 {
+			inner := make(map[string]any, len(env))
+			for k, v := range env {
+				inner[k] = v
+			}
+			// 合并进 l.Args 既有的 --settings（主题注入先行时已有产物）；
+			// 没有则追加一组。env 键在 MergeSettingsArg 内做键级浅合并。
+			l.Args = providers.MergeSettingsArg(l.Args, map[string]any{"env": inner})
+		}
 	}
 	return l
 }
