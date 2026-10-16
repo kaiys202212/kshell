@@ -306,6 +306,9 @@ export default function AgentHubPanel() {
   // 斜杠补全：draft 首词为 /xxx 时激活。
   const [slashClosed, setSlashClosed] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
+  // @ 补全键盘状态：与 # 弹层对称（index 高亮 + Esc 关闭标记）。
+  const [mentionClosed, setMentionClosed] = useState(false);
+  const [mentionIndex, setMentionIndex] = useState(0);
   // agent 技能按目标缓存：target 变化或打开命令模式时拉取，失败静默（补全是辅助功能）。
   const [agentCmds, setAgentCmds] = useState<ChatCommand[]>([]);
   // /model 内联下拉：非 null 时在输入区上方展示模型列表。
@@ -412,7 +415,24 @@ export default function AgentHubPanel() {
   useEffect(() => {
     setSlashClosed(false);
     setSlashIndex(0);
+    setMentionClosed(false);
+    setMentionIndex(0);
   }, [draft]);
+
+  // 键盘高亮项滚动跟随：index / 候选变化后把选中 li 滚进可视区。
+  // block:'nearest' 只做最小滚动，不牵动外层消息流容器；jsdom 无 scrollIntoView，可选调用防御。
+  const cmdListRef = useRef<HTMLUListElement>(null);
+  const mentionListRef = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    if (!cmdOpen) return;
+    const el = cmdListRef.current?.children[Math.min(slashIndex, cmdMatches.length - 1)];
+    if (el instanceof HTMLElement) el.scrollIntoView?.({ block: 'nearest' });
+  }, [slashIndex, cmdMatches, cmdOpen]);
+  useEffect(() => {
+    if (mentionMatches.length === 0) return;
+    const el = mentionListRef.current?.children[Math.min(mentionIndex, mentionMatches.length - 1)];
+    if (el instanceof HTMLElement) el.scrollIntoView?.({ block: 'nearest' });
+  }, [mentionIndex, mentionMatches, mentionClosed]);
 
   // runClientCommand 执行 kshell 客户端命令（# 前缀触发），不投递给 agent。
   const runClientCommand = (name: string) => {
@@ -937,22 +957,31 @@ export default function AgentHubPanel() {
             <span>{t('ui.hub.easynew_running')}</span>
           </div>
         )}
-        {mentionMatches.length > 0 && (
+        {mentionMatches.length > 0 && !mentionClosed && (
+          // 结构与 # 弹层对齐：role=listbox/option + 键盘高亮（bg-muted），列表限高自滚
           <ul
+            ref={mentionListRef}
+            role="listbox"
             aria-label={t('ui.hub.mention_aria')}
-            className="m-0 flex list-none flex-col gap-0.5 rounded border border-border bg-card p-1 text-xs"
+            className="m-0 flex max-h-48 list-none flex-col gap-0.5 overflow-y-auto rounded border border-border bg-card p-1 text-xs"
           >
-            {mentionMatches.map((o) => (
-              <li key={o.id}>
-                <button
-                  type="button"
-                  className="w-full rounded px-2 py-1 text-left hover:bg-muted/50"
-                  onClick={() => applyMention(o.label)}
-                >
-                  <span className="block font-mono">@{o.label}</span>
-                  {/* 第二行：项目 · 会话标题（label 保持短标签，详情只做展示） */}
-                  {o.detail && <span className="block truncate text-muted-foreground">{o.detail}</span>}
-                </button>
+            {mentionMatches.map((o, i) => (
+              <li
+                key={o.id}
+                role="option"
+                aria-selected={i === mentionIndex}
+                className={cn(
+                  'cursor-pointer rounded px-2 py-1 hover:bg-muted/50',
+                  i === mentionIndex && 'bg-muted',
+                )}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  applyMention(o.label);
+                }}
+              >
+                <span className="block font-mono">@{o.label}</span>
+                {/* 第二行：项目 · 会话标题（label 保持短标签，详情只做展示） */}
+                {o.detail && <span className="block truncate text-muted-foreground">{o.detail}</span>}
               </li>
             ))}
           </ul>
@@ -996,6 +1025,7 @@ export default function AgentHubPanel() {
         )}
         {cmdOpen && (
           <ul
+            ref={cmdListRef}
             role="listbox"
             aria-label={t('ui.hub.cmd_aria')}
             className="mb-1 max-h-48 overflow-y-auto rounded border border-border bg-card py-1 text-xs shadow-md"
@@ -1047,6 +1077,30 @@ export default function AgentHubPanel() {
               if (e.key === 'Escape') {
                 e.preventDefault();
                 setSlashClosed(true);
+                return;
+              }
+            }
+            // @ 补全键盘导航（与 # 弹层同模型）；Enter/Tab 填入高亮项，Esc 关闭后
+            // 恢复正常发送语义。两弹层按草稿形态互斥（#x 单 token vs @y 尾片段）。
+            if (mentionMatches.length > 0 && !mentionClosed) {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setMentionIndex((i) => Math.min(i + 1, mentionMatches.length - 1));
+                return;
+              }
+              if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setMentionIndex((i) => Math.max(i - 1, 0));
+                return;
+              }
+              if (e.key === 'Enter' || e.key === 'Tab') {
+                e.preventDefault();
+                applyMention(mentionMatches[Math.min(mentionIndex, mentionMatches.length - 1)].label);
+                return;
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setMentionClosed(true);
                 return;
               }
             }
