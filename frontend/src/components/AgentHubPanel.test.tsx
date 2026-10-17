@@ -6,7 +6,7 @@ import type { ChatInfo, ToolInfo } from '../lib/api';
 import { useAppStore } from '../state/store';
 import '../test/i18n';
 import { tt } from '../test/i18n';
-import { saveLastCreate, saveToolModels } from '../lib/agenthubDefaults';
+import { loadDefaultCreate, saveDefaultCreate, saveLastCreate, saveToolModels } from '../lib/agenthubDefaults';
 import AgentHubPanel from './AgentHubPanel';
 
 const api = vi.hoisted(() => ({
@@ -923,6 +923,45 @@ describe('AgentHubPanel', () => {
     await waitFor(() => {
       expect((screen.getByLabelText(tt('ui.hub.field_project')) as HTMLSelectElement).value).toBe('D:\\ws\\a');
     });
+  });
+
+  it('默认设置：齿轮按钮打开对话框，选工具保存后写入 defaultCreate', async () => {
+    api.getTools.mockResolvedValue([acpTool(), { ...acpTool('codex'), Name: 'Codex' }]);
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.default_settings') }));
+    expect(await screen.findByText(tt('ui.hub.default_settings_title'))).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(tt('ui.hub.field_tool')), { target: { value: 'claude' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.save') }));
+    expect(loadDefaultCreate()).toEqual({ toolId: 'claude', modelId: null });
+    // 保存后对话框关闭
+    expect(screen.queryByText(tt('ui.hub.default_settings_title'))).toBeNull();
+  });
+
+  it('默认设置：打开时按已存设置预填工具与模型', async () => {
+    api.getTools.mockResolvedValue([acpTool()]);
+    saveDefaultCreate({ toolId: 'claude', modelId: 'm1' });
+    saveToolModels('claude', ['m1', 'm2']);
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.default_settings') }));
+    await waitFor(() => {
+      expect((screen.getByLabelText(tt('ui.hub.field_tool')) as HTMLSelectElement).value).toBe('claude');
+      expect((screen.getByLabelText(tt('ui.hub.field_model')) as HTMLSelectElement).value).toBe('m1');
+    });
+  });
+
+  it('默认设置：无已存设置时打开为空选择，工具未选前保存不可用', async () => {
+    api.getTools.mockResolvedValue([acpTool()]);
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.default_settings') }));
+    await waitFor(() => expect(screen.getByText(tt('ui.hub.default_settings_title'))).toBeTruthy());
+    // 无已存设置时 toolId 状态为空（真实浏览器中 select 显示空白；jsdom 会归一化到首项，
+    // 故以「保存按钮禁用」断言空选择语义而非 select.value）
+    expect(screen.getByRole('button', { name: tt('ui.hub.save') })).toHaveAttribute('disabled');
+    // 模型空值即「默认模型」空选项
+    expect((screen.getByLabelText(tt('ui.hub.field_model')) as HTMLSelectElement).value).toBe('');
+    // 选上工具后保存变为可用
+    fireEvent.change(screen.getByLabelText(tt('ui.hub.field_tool')), { target: { value: 'claude' } });
+    expect(screen.getByRole('button', { name: tt('ui.hub.save') })).not.toHaveAttribute('disabled');
   });
 
   it('busy 创建中：显示加载覆盖层与 loading 按钮，防重复点击', async () => {

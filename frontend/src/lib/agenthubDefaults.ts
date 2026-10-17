@@ -2,10 +2,18 @@
 // 记住上次创建的项目/工具/模型与各工具的模型列表（下次打开直接预填），
 // 全部存 localStorage；隐私模式或损坏 JSON 一律静默降级（null / 空数组）。
 const LAST_CREATE_KEY = 'kshell.agenthub.lastCreate';
+const DEFAULT_CREATE_KEY = 'kshell.agenthub.defaultCreate';
 const MODELS_KEY_PREFIX = 'kshell.agenthub.models.';
 
 export interface LastAgentCreate {
   wsPath: string;
+  toolId: string;
+  modelId: string | null;
+}
+
+// DefaultAgentCreate：用户显式设置的「默认 agent 工具 + 模型」，
+// 供快速新建（easynew）与需求派发使用；modelId 为 null 即用该工具默认模型。
+export interface DefaultAgentCreate {
   toolId: string;
   modelId: string | null;
 }
@@ -38,6 +46,18 @@ export function loadLastCreate(): LastAgentCreate | null {
 // saveLastCreate 保存上次创建记录。
 export function saveLastCreate(v: LastAgentCreate): void {
   writeJSON(LAST_CREATE_KEY, v);
+}
+
+// loadDefaultCreate 读取用户显式设置的默认 agent 配置；缺失、损坏或结构不完整时返回 null。
+export function loadDefaultCreate(): DefaultAgentCreate | null {
+  const v = readJSON<Partial<DefaultAgentCreate>>(DEFAULT_CREATE_KEY);
+  if (!v || typeof v.toolId !== 'string') return null;
+  return { toolId: v.toolId, modelId: typeof v.modelId === 'string' ? v.modelId : null };
+}
+
+// saveDefaultCreate 保存用户显式设置的默认 agent 配置。
+export function saveDefaultCreate(v: DefaultAgentCreate): void {
+  writeJSON(DEFAULT_CREATE_KEY, v);
 }
 
 // loadToolModels 读取某工具缓存的模型 ID 列表；损坏或非数组返回空数组，非字符串项过滤。

@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowUpRight, AtSign, ChevronDown, Loader2 } from 'lucide-react';
+import { ArrowUpRight, AtSign, ChevronDown, Loader2, Settings2 } from 'lucide-react';
 import type { ChatCommand, ChatInfo, ChatModelsView, HubArchiveMonth, HubMessage, ToolInfo, Workspace } from '../lib/api';
 import {
   cancelChat,
@@ -27,7 +27,7 @@ import {
 } from '../lib/api';
 import { buildMentionOptions, resolveMentionTarget, type MentionAgent, type MentionOption } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
-import { loadLastCreate, loadToolModels, saveLastCreate, saveToolModels } from '../lib/agenthubDefaults';
+import { loadDefaultCreate, loadLastCreate, loadToolModels, saveDefaultCreate, saveLastCreate, saveToolModels } from '../lib/agenthubDefaults';
 import { quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
 import { attributionText, baseName, resolveAttribution } from '../lib/hubAttribution';
@@ -221,6 +221,8 @@ export default function AgentHubPanel() {
   const emptyTarget = t('ui.hub.new_agent');
   const [draft, setDraft] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
+  // 「默认设置」对话框开关：设置默认 agent 工具/模型，供 easynew 与需求派发使用
+  const [defaultsOpen, setDefaultsOpen] = useState(false);
   // /easynew 直建中的本地提示（不进 hub store，成功后由后端写欢迎词）
   const [easynewRunning, setEasynewRunning] = useState(false);
   // 归档入口：展开时列出月份，选中月份后加载该月旧消息内联展示。
@@ -868,6 +870,15 @@ export default function AgentHubPanel() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {/* 默认设置入口：设置默认 agent 工具/模型（供 easynew 与需求派发使用） */}
+          <Button
+            size="sm"
+            variant="outline"
+            aria-label={t('ui.hub.default_settings')}
+            onClick={() => setDefaultsOpen(true)}
+          >
+            <Settings2 aria-hidden className="h-3.5 w-3.5" />
+          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -1182,6 +1193,7 @@ export default function AgentHubPanel() {
       </div>
 
       <NewAgentDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+      <DefaultSettingsDialog open={defaultsOpen} onOpenChange={setDefaultsOpen} />
     </section>
   );
 }
@@ -1354,6 +1366,104 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
         </Button>
         <Button size="sm" disabled={!wsPath || !toolId || busy} onClick={() => void create()}>
           {busy ? t('ui.hub.creating') : t('ui.hub.create')}
+        </Button>
+      </div>
+    </Dialog>
+  );
+}
+
+// DefaultSettingsDialog：显式设置「默认 agent 工具 + 模型」，供快速新建（easynew）
+// 与需求派发使用。工具下拉仅列 ACP Available 工具；模型下拉数据源与 NewAgentDialog
+// 完全一致（kshell 注入模型 + loadToolModels 缓存去重），空值即「默认模型」。
+// 打开时按 loadDefaultCreate 预填（失效置空回落）；无已存设置时工具为空、必须选后才能保存。
+function DefaultSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const { t } = useTranslation();
+  const [tools, setTools] = useState<ToolInfo[]>([]);
+  const [toolId, setToolId] = useState('');
+  const [modelId, setModelId] = useState('');
+  // kshell 注入模型清单：打开时拉取，失败静默（与 NewAgentDialog 同语义）
+  const [injectedModels, setInjectedModels] = useState<string[]>([]);
+  // 预填只在 open 从 false→true 时执行一次，开着期间后台刷新不重置用户已选字段
+  const prevOpenRef = useRef(false);
+
+  useEffect(() => {
+    const opening = open && !prevOpenRef.current;
+    prevOpenRef.current = open;
+    if (!opening) return;
+    const saved = loadDefaultCreate();
+    void getTools()
+      .then((list) => {
+        const acp = list.filter((x) => x.ACP?.Available === true);
+        setTools(acp);
+        // 已存工具仍在可用列表才预填，否则空选择（保存按钮禁用兜底）
+        setToolId(saved && acp.some((x) => x.ID === saved.toolId) ? saved.toolId : '');
+      })
+      .catch(() => {});
+    void getModelConfig()
+      .then((cfg) => setInjectedModels(cfg.Models ?? []))
+      .catch(() => setInjectedModels([]));
+    // 模型预选：已存 modelId 在该工具的缓存模型列表里才预选，否则空（默认模型）
+    setModelId(saved?.modelId && loadToolModels(saved.toolId).includes(saved.modelId) ? saved.modelId : '');
+  }, [open]);
+
+  const save = () => {
+    if (!toolId) return;
+    saveDefaultCreate({ toolId, modelId: modelId || null });
+    onOpenChange(false);
+  };
+
+  // 模型下拉选项：与 NewAgentDialog 同口径（注入在前、缓存在后、Set 去重）
+  const cacheModels = toolId ? loadToolModels(toolId) : [];
+  const modelOptions = [...new Set([...injectedModels, ...cacheModels])];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange} className="w-80">
+      <DialogPrimitive.Title className="mb-3 text-sm font-medium">{t('ui.hub.default_settings_title')}</DialogPrimitive.Title>
+      <p className="mb-3 text-xs text-muted-foreground">{t('ui.hub.default_settings_desc')}</p>
+      <label className="mb-2 flex flex-col gap-1 text-xs text-muted-foreground">
+        {t('ui.hub.field_tool')}
+        <select
+          className="rounded border border-border bg-card px-2 py-1 text-sm text-foreground"
+          value={toolId}
+          onChange={(e) => {
+            setToolId(e.target.value);
+            // 工具切换即刷新模型下拉；原选中项在新工具缓存里不存在则回落默认
+            setModelId((cur) => (cur && loadToolModels(e.target.value).includes(cur) ? cur : ''));
+          }}
+        >
+          {tools.map((x) => (
+            <option key={x.ID} value={x.ID}>
+              {toolDisplayName(x.ID)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="mb-4 flex flex-col gap-1 text-xs text-muted-foreground">
+        {t('ui.hub.field_model')}
+        <select
+          className="rounded border border-border bg-card px-2 py-1 text-sm text-foreground"
+          value={modelId}
+          onChange={(e) => setModelId(e.target.value)}
+        >
+          {/* 无缓存只显示「默认模型」空选项；有缓存则直接列缓存模型 */}
+          {modelOptions.length === 0 ? (
+            <option value="">{t('ui.hub.default_model')}</option>
+          ) : (
+            modelOptions.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))
+          )}
+        </select>
+      </label>
+      {tools.length === 0 && <p className="mb-3 text-xs text-muted-foreground">{t('ui.hub.no_tools')}</p>}
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="outline" onClick={() => onOpenChange(false)}>
+          {t('ui.hub.cancel')}
+        </Button>
+        <Button size="sm" disabled={!toolId} onClick={save}>
+          {t('ui.hub.save')}
         </Button>
       </div>
     </Dialog>

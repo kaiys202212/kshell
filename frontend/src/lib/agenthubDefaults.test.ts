@@ -1,8 +1,10 @@
 // agenthubDefaults：新建 agent 默认值与模型列表缓存的 localStorage 读写测试。
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  loadDefaultCreate,
   loadLastCreate,
   loadToolModels,
+  saveDefaultCreate,
   saveLastCreate,
   saveToolModels,
 } from './agenthubDefaults';
@@ -64,5 +66,45 @@ describe('agenthubDefaults', () => {
     saveToolModels('claude', ['m1']);
     localStorage.clear();
     expect(loadToolModels('claude')).toEqual([]);
+  });
+
+  it('saveDefaultCreate 后 loadDefaultCreate 往返一致', () => {
+    const v = { toolId: 'claude', modelId: 'm2' };
+    saveDefaultCreate(v);
+    expect(loadDefaultCreate()).toEqual(v);
+  });
+
+  it('defaultCreate 的 modelId 为 null 时往返仍为 null', () => {
+    saveDefaultCreate({ toolId: 'codex', modelId: null });
+    expect(loadDefaultCreate()).toEqual({ toolId: 'codex', modelId: null });
+  });
+
+  it('defaultCreate 键损坏 JSON 时返回 null', () => {
+    localStorage.setItem('kshell.agenthub.defaultCreate', '{bad json');
+    expect(loadDefaultCreate()).toBeNull();
+  });
+
+  it('defaultCreate 结构缺 toolId 时返回 null', () => {
+    localStorage.setItem('kshell.agenthub.defaultCreate', JSON.stringify({ modelId: 'm1' }));
+    expect(loadDefaultCreate()).toBeNull();
+  });
+
+  it('清空后 loadDefaultCreate 返回 null', () => {
+    saveDefaultCreate({ toolId: 'claude', modelId: 'm2' });
+    localStorage.clear();
+    expect(loadDefaultCreate()).toBeNull();
+  });
+
+  it('defaultCreate 的 modelId 为非字符串时回落 null', () => {
+    localStorage.setItem('kshell.agenthub.defaultCreate', JSON.stringify({ toolId: 'claude', modelId: 42 }));
+    expect(loadDefaultCreate()).toEqual({ toolId: 'claude', modelId: null });
+  });
+
+  it('saveDefaultCreate 在 localStorage 写入异常时静默不抛错', () => {
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota');
+    });
+    expect(() => saveDefaultCreate({ toolId: 'claude', modelId: null })).not.toThrow();
+    spy.mockRestore();
   });
 });
