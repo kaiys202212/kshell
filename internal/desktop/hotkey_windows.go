@@ -4,8 +4,11 @@ package desktop
 
 import (
 	"log"
+	"runtime"
 	"sync"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 // 系统级热键 Alt+Shift+K（Windows）：message-only window + RegisterHotKey，
@@ -20,7 +23,11 @@ const (
 	hwndMessage       = 3 // HWND_MESSAGE：message-only window
 	wmHotkey          = 0x0312
 	wmQuit            = 0x0012
-	hotkeyThreadLabel = "hotkey"
+
+	// hotkeyClassName 用系统预注册类 "Static"：Win32 要求 lpClassName 非 NULL，
+	// 传 NULL 时 CreateWindowExW 必然失败；message-only window 对类要求宽松，
+	// 无需仿 bubble 走 RegisterClassExW 自注册。
+	hotkeyClassName = "Static"
 )
 
 var (
@@ -29,7 +36,8 @@ var (
 )
 
 // hotkeyState 保存热键线程信息：stopHotkey 需要向该线程 post WM_QUIT，
-// 而 thread id 只有热键 goroutine 自己知道（GetCurrentThreadId），用锁共享。
+// 而线程 id 只有热键 goroutine 自己知道（LockOSThread 后取），用锁共享。
+// runner 返回后清零：Windows 线程 id 可复用，残留旧值会误伤无关线程。
 var hotkeyState struct {
 	mu       sync.Mutex
 	threadID uintptr
@@ -41,15 +49,20 @@ var hotkeyRunner = func(a *App) {
 	runHotkeyLoop(a)
 }
 
-// startHotkey 在独立 goroutine 里注册热键并跑消息循环（Startup 末尾调用）。
-// 每个 App 生命周期只调用一次；热键线程 id 记入 hotkeyState 供 stopHotkey 使用。
+// startHotkey 注册热键并跑消息循环，阻塞至 WM_QUIT/出错（调用方需放 goroutine：
+// app.go Startup 里 `go startHotkey(a)`，本函数即 goroutine 主体，不再嵌套）。
+// 每个 App 生命周期只调用一次；线程 id 记入 hotkeyState 供 stopHotkey 使用。
+// 必须 LockOSThread：消息循环与建窗线程绑定（同 tray.go / bubble_windows.go），
+// goroutine 被调度迁移后 GetMessage 泵的是新线程队列，WM_HOTKEY 永远收不到。
 func startHotkey(a *App) {
-	go func() {
-		hotkeyState.mu.Lock()
-		hotkeyState.threadID, _, _ = kernel32GetCurrentThreadID.Call()
-		hotkeyState.mu.Unlock()
-		hotkeyRunner(a)
-	}()
+	runtime.LockOSThread()
+	hotkeyState.mu.Lock()
+	hotkeyState.threadID = uintptr(windows.GetCurrentThreadId()) // 钉死后取，与建窗/泵消息线程一致
+	hotkeyState.mu.Unlock()
+	hotkeyRunner(a)
+	hotkeyState.mu.Lock()
+	hotkeyState.threadID = 0
+	hotkeyState.mu.Unlock()
 }
 
 // stopHotkey 向热键线程 post WM_QUIT 结束消息循环（Shutdown 开头调用）。
@@ -69,9 +82,9 @@ func stopHotkey() {
 // 失败路径全部静默降级（log.Printf 后返回），热键不可用不阻塞应用启动。
 func runHotkeyLoop(a *App) {
 	// message-only window 不显示、不进任务栏，仅用于接收 WM_HOTKEY。
-	// 窗口类/标题/参数全部为默认值即可，系统对 HWND_MESSAGE 子窗口要求宽松。
+	className, _ := windows.UTF16PtrFromString(hotkeyClassName)
 	hwnd, _, _ := procCreateWindowExW.Call(
-		0, 0, 0, 0, 0, 0, 0, 0, hwndMessage, 0, 0, 0)
+		0, uintptr(unsafe.Pointer(className)), 0, 0, 0, 0, 0, 0, hwndMessage, 0, 0, 0)
 	if hwnd == 0 {
 		log.Printf("热键窗口创建失败，Alt+Shift+K 不可用")
 		return
@@ -87,17 +100,18 @@ func runHotkeyLoop(a *App) {
 		procDestroyWindow.Call(hwnd)
 	}()
 
-	var msg [3]uintptr // MSG 结构体：hwnd/message/wParam/lParam/time/pt，按 uintptr 对齐
+	// MSG 结构体必须用完整定义（bubble_windows.go 的 msgStruct）：
+	// x64 上 GetMessageW 写满 48 字节，手写 [3]uintptr 只有 24 字节会溢出栈。
+	var m msgStruct
 	for {
-		ret, _, _ := procGetMessageW.Call(
-			uintptr(unsafe.Pointer(&msg[0])), 0, 0, 0)
+		ret, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)
 		switch int32(ret) {
 		case -1: // 错误：直接退出循环走清理
 			return
 		case 0: // WM_QUIT
 			return
 		}
-		if msg[1] == wmHotkey { // msg[1] 是 message 字段
+		if m.message == wmHotkey {
 			a.toggleMainWindow()
 		}
 	}

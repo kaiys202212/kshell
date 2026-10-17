@@ -5,6 +5,7 @@ package desktop
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // stubHotkeyWindow 一次性替换 toggleMainWindow 用到的窗口抽象，
@@ -82,7 +83,9 @@ func TestToggleMainWindowShowsWhenHidden(t *testing.T) {
 	}
 }
 
-// 最小化：即使前台可见也走显示路径（先还原再聚焦）。
+// 最小化：即使前台可见也走显示路径，且只走 SC_RESTORE 还原（unminimise）——
+// 对最大化窗口 windowShow 之外的 SC_RESTORE 已足够，且不会解除最大化
+// （对齐 activateFromBubble：最小化与普通显示不可连调）。
 func TestToggleMainWindowShowsWhenMinimised(t *testing.T) {
 	a, c := newHotkeyApp(t)
 	c.foreground = true
@@ -90,8 +93,11 @@ func TestToggleMainWindowShowsWhenMinimised(t *testing.T) {
 
 	a.toggleMainWindow()
 
-	if c.show != 1 || c.unminimise != 1 {
-		t.Fatalf("最小化应走显示路径: show=%d unminimise=%d", c.show, c.unminimise)
+	if c.unminimise != 1 {
+		t.Fatalf("最小化应走 unminimise 还原, got %d", c.unminimise)
+	}
+	if c.show != 0 {
+		t.Fatalf("最小化路径不应再调用 windowShow（SC_RESTORE 已前置且保留最大化）, got %d", c.show)
 	}
 	if c.hide != 0 {
 		t.Fatalf("最小化不应调用 windowHide, got %d", c.hide)
@@ -131,4 +137,73 @@ func TestToggleMainWindowNilContextSafe(t *testing.T) {
 		t.Fatalf("ctx 为 nil 不应触碰窗口操作: hide=%d show=%d unminimise=%d",
 			c.hide, c.show, c.unminimise)
 	}
+}
+
+// stubHotkeyRunner 临时替换 hotkeyRunner，返回记录调用次数的钩子。
+func stubHotkeyRunner(t *testing.T, fn func(*App)) *int {
+	t.Helper()
+	calls := 0
+	orig := hotkeyRunner
+	hotkeyRunner = func(a *App) {
+		calls++
+		if fn != nil {
+			fn(a)
+		}
+	}
+	t.Cleanup(func() { hotkeyRunner = orig })
+	return &calls
+}
+
+// fakeHotkeyApp 组装最小 App 供热键线程生命周期测试使用（不触碰窗口）。
+func fakeHotkeyApp() *App {
+	return NewAppWith(Options{Emit: func(string, ...any) {}})
+}
+
+// stopHotkey 在热键未启动（tid=0）时必须安全跳过，不 panic、不误发消息。
+func TestStopHotkeyWithoutStart(t *testing.T) {
+	hotkeyState.mu.Lock()
+	orig := hotkeyState.threadID
+	hotkeyState.threadID = 0
+	hotkeyState.mu.Unlock()
+	t.Cleanup(func() {
+		hotkeyState.mu.Lock()
+		hotkeyState.threadID = orig
+		hotkeyState.mu.Unlock()
+	})
+
+	stopHotkey() // 不应 panic
+}
+
+// startHotkey 把 hotkeyRunner 丢进独立 goroutine，tid 记入 hotkeyState；
+// runner 返回后 hotkeyState 的 tid 必须清零（Windows 线程 id 可复用，
+// 残留旧值会让 stopHotkey 向无关线程 post WM_QUIT）。
+func TestStartHotkeyClearsThreadIDAfterRunnerReturns(t *testing.T) {
+	calls := stubHotkeyRunner(t, func(a *App) {
+		hotkeyState.mu.Lock()
+		if hotkeyState.threadID == 0 {
+			hotkeyState.mu.Unlock()
+			t.Error("runner 执行时 tid 应已记录")
+			return
+		}
+		hotkeyState.mu.Unlock()
+	})
+	a := fakeHotkeyApp()
+
+	startHotkey(a)
+
+	// 等 runner 跑完（tid 记录与清零都在 runner 前后同步完成）
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		hotkeyState.mu.Lock()
+		tid := hotkeyState.threadID
+		hotkeyState.mu.Unlock()
+		if *calls == 1 && tid == 0 {
+			return // runner 已执行且 tid 已清零
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	hotkeyState.mu.Lock()
+	tid := hotkeyState.threadID
+	hotkeyState.mu.Unlock()
+	t.Fatalf("runner 调用 %d 次, tid=%d; 期望 runner 执行且 tid 清零", *calls, tid)
 }
