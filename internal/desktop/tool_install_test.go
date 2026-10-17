@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -80,12 +81,14 @@ func TestUninstallCursorPurgeRejected(t *testing.T) {
 }
 
 func TestInstallSuccessRescansTools(t *testing.T) {
-	var scans int
+	// scans 由异步 ScanSessions goroutine 与测试主 goroutine 同时访问，
+	// 用原子计数避免 -race 报竞争。
+	var scans atomic.Int32
 	app := NewAppWith(Options{
 		Providers: providers.Builtins(),
 		Home:      t.TempDir(),
 		Scan: func(string, []providers.Provider, string, discovery.ScanOptions) (*discovery.Result, error) {
-			scans++
+			scans.Add(1)
 			return &discovery.Result{}, nil
 		},
 		Windows:       NewWindowManager(&stubLauncher{}, nil),
@@ -96,10 +99,10 @@ func TestInstallSuccessRescansTools(t *testing.T) {
 	}
 	waitJobIdle(t, app)
 	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) && scans == 0 {
+	for time.Now().Before(deadline) && scans.Load() == 0 {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if scans == 0 {
+	if scans.Load() == 0 {
 		t.Fatal("成功后应 ScanSessions")
 	}
 }

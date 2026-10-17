@@ -171,10 +171,24 @@ func TestRuntimeBindSuccess(t *testing.T) {
 		t.Fatalf("绑定成功后应转运行态: client=%v running=%v", r.Client() != nil, r.Running())
 	}
 
-	// 已绑定（running）时再次 Bind 报错。
-	if _, err := r.Bind(context.Background()); err == nil {
-		t.Fatal("已绑定再 Bind 应报错")
+	// 已绑定（running）时再次 Bind 允许重新扫码（-14 过期后恢复路径）：
+	// 返回新二维码，绑定状态回到 pending。
+	url2, err := r.Bind(context.Background())
+	if err != nil {
+		t.Fatalf("已绑定再 Bind 应允许重新扫码: %v", err)
 	}
+	if url2 != "https://qr/x" {
+		t.Fatalf("重绑二维码 URL = %q", url2)
+	}
+	if st := r.BindStatus(); st != "pending" {
+		t.Fatalf("重绑中 BindStatus = %q, 期望 pending", st)
+	}
+	// 绑定流程进行中再 Bind 拒绝（防并发重复起绑定 goroutine）。
+	if _, err := r.Bind(context.Background()); err == nil {
+		t.Fatal("绑定进行中再 Bind 应报错")
+	}
+	// 等第二次绑定转正后清理。
+	waitFor(t, 2*time.Second, func() bool { return r.BindStatus() == "ok" }, "重绑应成功")
 	r.Stop()
 }
 
@@ -196,15 +210,38 @@ func TestRuntimeBindExpired(t *testing.T) {
 }
 
 // 轮询 goroutine 收到消息转交 bridge；wxid 学习回调先装配再 Configure（与
-// desktop 装配顺序一致）。
+// desktop 装配顺序一致）。首轮积压被丢弃（见 TestRuntimeFirstPollDropsBacklog），
+// 消息须在次轮返回，故用 waitFor 轮询窗口而非固定 msgs。
 func TestRuntimePollLoopMessages(t *testing.T) {
-	s := &rtServer{msgs: []InboundMsg{{FromUserID: "u1", ContextToken: "ct-1", Text: "hi"}}}
-	r, _ := newTestRuntime(t, &fakeExec{hasCur: true}, s.handler())
+	var mu sync.Mutex
+	firstPoll := true
+	handler := func(w http.ResponseWriter, req *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if req.URL.Path == "/ilink/bot/getupdates" {
+			if firstPoll {
+				firstPoll = false
+				_, _ = w.Write([]byte(`{"code":0,"get_updates_buf":"cur-1","msgs":[]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"code":0,"get_updates_buf":"cur-2","msgs":[` +
+				`{"message_type":1,"from_user_id":"u1","context_token":"ct-1","item_list":[{"type":1,"text_item":{"text":"hi"}}]}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":0}`))
+	}
+	r, _ := newTestRuntime(t, &fakeExec{hasCur: true}, handler)
 	var learned string
-	r.SetOnLearnWxid(func(wxid string) { learned = wxid })
+	// learned 由学习回调（轮询 goroutine）与测试主 goroutine 并发读写，须加锁。
+	var muLearn sync.Mutex
+	r.SetOnLearnWxid(func(wxid string) { muLearn.Lock(); learned = wxid; muLearn.Unlock() })
 	r.Configure("tok", "")
 	r.Start()
-	waitFor(t, 2*time.Second, func() bool { return learned == "u1" }, "入站消息应触发学习")
+	waitFor(t, 2*time.Second, func() bool {
+		muLearn.Lock()
+		defer muLearn.Unlock()
+		return learned == "u1"
+	}, "入站消息应触发学习")
 	if st := r.Status(); st.Wxid != "u1" || !st.Bound || !st.Running {
 		t.Fatalf("Status = %+v", st)
 	}
@@ -221,6 +258,50 @@ func TestRuntimePollSessionExpired(t *testing.T) {
 	if st := r.Status(); st.Running || !st.Bound {
 		t.Fatalf("过期后 Status = %+v（Bound 仍真：凭据在）", st)
 	}
+}
+
+// TestRuntimeFirstPollDropsBacklog 首轮 getupdates（cursor=""）成功返回的
+// 积压消息只推进游标不投递：防陌生人消息错绑 wxid、旧文本被当命令执行。
+// 次轮起恢复正常投递。
+func TestRuntimeFirstPollDropsBacklog(t *testing.T) {
+	var mu sync.Mutex
+	firstPoll := true
+	var learned string
+	handler := func(w http.ResponseWriter, req *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch req.URL.Path {
+		case "/ilink/bot/getupdates":
+			if firstPoll {
+				firstPoll = false
+				// 首轮积压：陌生人消息（若投递会错绑 wxid 为 u-stranger）。
+				_, _ = w.Write([]byte(`{"code":0,"get_updates_buf":"cur-1","msgs":[` +
+					`{"message_type":1,"from_user_id":"u-stranger","context_token":"ct-old","item_list":[{"type":1,"text_item":{"text":"#l"}}]}]}`))
+				return
+			}
+			// 次轮：白名单用户的真实消息。
+			_, _ = w.Write([]byte(`{"code":0,"get_updates_buf":"cur-2","msgs":[` +
+				`{"message_type":1,"from_user_id":"u1","context_token":"ct-new","item_list":[{"type":1,"text_item":{"text":"hi"}}]}]}`))
+		default:
+			_, _ = w.Write([]byte(`{"code":0}`))
+		}
+	}
+	r, _ := newTestRuntime(t, &fakeExec{hasCur: true}, handler)
+	// learned 由学习回调（轮询 goroutine）与测试主 goroutine 并发读写，须加锁。
+	var muLearn sync.Mutex
+	r.SetOnLearnWxid(func(wxid string) { muLearn.Lock(); learned = wxid; muLearn.Unlock() })
+	r.Configure("tok", "")
+	r.Start()
+	// 次轮消息应触发学习（u1）；首轮的 u-stranger 不得被学习。
+	waitFor(t, 2*time.Second, func() bool {
+		muLearn.Lock()
+		defer muLearn.Unlock()
+		return learned == "u1"
+	}, "次轮消息应正常投递并学习 u1")
+	if st := r.Status(); st.Wxid != "u1" {
+		t.Fatalf("首轮积压消息不得错绑 wxid: Wxid = %q", st.Wxid)
+	}
+	r.Stop()
 }
 
 // OnHubMessage 异步转发到 bridge；bridge 为 nil 时安全跳过。

@@ -516,13 +516,16 @@ func (a *App) quitApp(ctx context.Context) {
 
 // Shutdown 供 Wails OnShutdown 挂载：先撤托盘，再限时清理子资源。
 // 清理超时也返回——避免关终端卡住时进程永远留在任务管理器。
+// cleanup 在调用方 goroutine 读出后再传入 goroutine：包级变量可能被测试
+// 在主 goroutine 改写，goroutine 内不再读它可避免 -race 误报。
 func (a *App) Shutdown(ctx context.Context) {
 	_ = ctx // 退出清理无取消语义：尽量收干净，但不能无限阻塞进程退出
 	quitTrayLoop()
+	cleanup := runShutdownCleanup
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		runShutdownCleanup(a)
+		cleanup(a)
 	}()
 	select {
 	case <-done:

@@ -18,11 +18,6 @@ func (a *App) startWeixin() {
 			c.Weixin = config.WeixinConfig{Enabled: p.Enabled, Token: p.Token, Wxid: p.Wxid}
 		})
 	})
-	r.SetOnPermission(func(chatID, reqID, desc string) {
-		if b := r.GetBridge(); b != nil {
-			b.OpenPermissionMenu(chatID, reqID, desc)
-		}
-	})
 	r.SetOnLearnWxid(func(wxid string) {
 		_ = a.saveConfig(func(c *config.Config) {
 			c.Weixin.Wxid = wxid
@@ -44,11 +39,13 @@ func (a *App) wxRuntime() *weixin.Runtime {
 }
 
 // wxHubConsole 惰性创建桌面端 AgentHub 共用的命令层 Console（首次 HubCommand 调用装配）。
+// 文案语言取当前配置语言（en / zh-CN）。
 func (a *App) wxHubConsole() *hub.Console {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.hubConsole == nil {
-		a.hubConsole = hub.NewConsole(newWXExecutor(a))
+		// 已持 a.mu：直接读 opts，不能再走 snapshot()（会重入 a.mu 死锁）。
+		a.hubConsole = hub.NewConsoleLang(newWXExecutor(a), normalizeLanguage(a.opts.Config.Language))
 	}
 	return a.hubConsole
 }

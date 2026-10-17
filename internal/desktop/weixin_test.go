@@ -42,15 +42,16 @@ func TestWeixinHubCommandHelp(t *testing.T) {
 	}
 }
 
-// HubCommand("#l") 空会话回「暂无会话」。
+// HubCommand("#l") 空会话回「暂无会话」（wxStatusApp 未设置语言，默认英文文案；
+// 命令层文案随语言配置走，见 internal/hub/lang.go）。
 func TestWeixinHubCommandListEmpty(t *testing.T) {
 	app := wxStatusApp(t)
 	replies, err := app.HubCommand("#l")
 	if err != nil {
 		t.Fatalf("HubCommand: %v", err)
 	}
-	if len(replies) != 1 || replies[0].Text != "暂无会话" {
-		t.Fatalf("#l 空会话应回「暂无会话」: %+v", replies)
+	if len(replies) != 1 || replies[0].Text != "No sessions yet" {
+		t.Fatalf("#l 空会话应回 No sessions yet: %+v", replies)
 	}
 }
 
@@ -121,21 +122,38 @@ func TestWeixinStatusView(t *testing.T) {
 	}
 }
 
-// 绑定状态机：未绑定时 BindStatus 为 idle；已绑定再 Bind 报错（不测真实网络）。
+// 绑定状态机：未绑定时 BindStatus 为 idle；已绑定时 Bind 允许重扫（-14 过期
+// 恢复路径）；绑定进行中再 Bind 报错（不测真实网络）。
 func TestWeixinBindGuards(t *testing.T) {
 	app := wxStatusApp(t)
 	if got := app.WeixinBindStatus(); got != "idle" {
 		t.Fatalf("初始 BindStatus = %q", got)
 	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ilink/bot/get_bot_qrcode" {
+			_, _ = w.Write([]byte(`{"code":0,"qrcode_img_content":"https://qr/x","qrcode":"key-1"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":0}`))
+	}))
+	t.Cleanup(srv.Close)
 	r := weixin.NewRuntime(newWXExecutor(app), "zh-CN")
 	r.SetPersist(func(weixin.WeixinPersist) error { return nil })
+	r.SetBaseURL(srv.URL)
 	r.Configure("tok", "u1")
 	app.mu.Lock()
 	app.wx = r
 	app.mu.Unlock()
-	if _, err := app.WeixinBind(); err == nil {
-		t.Fatal("已绑定再 Bind 应报错")
+	// 已绑定允许重扫：返回二维码 URL，状态进入 pending。
+	url, err := app.WeixinBind()
+	if err != nil || url == "" {
+		t.Fatalf("已绑定 WeixinBind 应允许重扫: url=%q err=%v", url, err)
 	}
+	// 绑定进行中拒绝。
+	if _, err := app.WeixinBind(); err == nil {
+		t.Fatal("绑定进行中再 Bind 应报错")
+	}
+	r.Stop()
 }
 
 // startWeixin 装配：配置有 token → Runtime 就绪并运行；配置为空 → Runtime 就绪但未运行。

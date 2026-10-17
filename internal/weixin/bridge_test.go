@@ -244,7 +244,9 @@ func TestBridgeDeliverHubMessage(t *testing.T) {
 	}
 
 	// agent 正常推送，带标题前缀，context_token 用最近入站的。
+	// 出站已改走异步串行队列：FlushForTest 等队列排空后再断言。
 	b.DeliverHubMessage(hub.Message{Kind: "agent", SessionTitle: "标题", Text: "hello world"})
+	b.FlushForTest()
 	sends := rc.sends()
 	if len(sends) != 1 {
 		t.Fatalf("sendmessage 次数 = %d, 期望 1", len(sends))
@@ -270,6 +272,7 @@ func TestBridgePendingOnSessionExpired(t *testing.T) {
 	b.HandleInbound("u1", "ct-1", "你好") // Send 成功，无 sendmessage，ctx 已记录
 
 	b.DeliverHubMessage(hub.Message{Kind: "agent", Text: "待发内容"})
+	b.FlushForTest()
 	if b.PendingCount() != 1 {
 		t.Fatalf("PendingCount = %d, 期望 1", b.PendingCount())
 	}
@@ -310,6 +313,7 @@ func TestBridgeSendRetry(t *testing.T) {
 		b := newBridge(t, "u1", ex, rc.handler(t))
 		b.HandleInbound("u1", "ct-1", "你好")
 		b.DeliverHubMessage(hub.Message{Kind: "agent", Text: "重试内容"})
+		b.FlushForTest()
 		if n := len(rc.sends()); n != 3 {
 			t.Errorf("sendmessage 次数 = %d, 期望 3（重试 2 次）", n)
 		}
@@ -324,6 +328,7 @@ func TestBridgeSendRetry(t *testing.T) {
 		b := newBridge(t, "u1", ex, rc.handler(t))
 		b.HandleInbound("u1", "ct-1", "你好")
 		b.DeliverHubMessage(hub.Message{Kind: "agent", Text: "失败内容"})
+		b.FlushForTest()
 		if n := len(rc.sends()); n != 3 {
 			t.Errorf("sendmessage 次数 = %d, 期望 3", n)
 		}
@@ -336,12 +341,35 @@ func TestBridgeSendRetry(t *testing.T) {
 	})
 }
 
+// flushPending 只在「本轮实际成功补发 ≥1 条」时才清零 undelivered：
+// pending 空时普通发送失败的计数不得被下一条入站消息误清。
+func TestBridgeUndeliveredNotClearedWhenPendingEmpty(t *testing.T) {
+	rc := &recorder{sendResp: func(call int) (int, string) {
+		// 出站 sendmessage 全部失败（call 1/2/3 = 重试三连）。
+		return 500, "{}"
+	}}
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b := newBridge(t, "u1", ex, rc.handler(t))
+	b.HandleInbound("u1", "ct-1", "你好")
+	b.DeliverHubMessage(hub.Message{Kind: "agent", Text: "失败内容"})
+	b.FlushForTest()
+	if got := b.Undelivered(); got != 1 {
+		t.Fatalf("发送失败后 Undelivered = %d, 期望 1", got)
+	}
+	// pending 为空的入站消息不得清零计数。
+	b.HandleInbound("u1", "ct-2", "再来一条")
+	if got := b.Undelivered(); got != 1 {
+		t.Fatalf("pending 空时入站不得清零: Undelivered = %d, 期望 1", got)
+	}
+}
+
 func TestBridgeTruncate(t *testing.T) {
 	rc := &recorder{}
 	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 	b := newBridge(t, "u1", ex, rc.handler(t))
 	b.HandleInbound("u1", "ct-1", "你好")
 	b.DeliverHubMessage(hub.Message{Kind: "agent", Text: strings.Repeat("字", 2000)})
+	b.FlushForTest()
 	sends := rc.sends()
 	if len(sends) != 1 {
 		t.Fatalf("sendmessage 次数 = %d, 期望 1", len(sends))

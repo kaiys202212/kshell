@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // itoa 供 commands.go / console.go 共用的整数转字符串。
@@ -40,7 +41,13 @@ type Reply struct {
 // Console 是一个渠道（微信/桌面端 AgentHub）的命令会话状态机。
 // 每个渠道持自己的实例，互不影响。
 type Console struct {
-	ex      Executor
+	// mu 保护以下状态字段：微信轮询 goroutine（HandleInbound → Handle）与
+	// chat 回调/装配 goroutine（OpenPermissionMenu/SetCurrent）并发访问。
+	// Executor 调用期间持锁可接受：现有实现不回调 Console。
+	mu sync.Mutex
+	ex Executor
+	// lang 是文案语言（"zh-CN" 中文，其余英文），创建后只读。
+	lang    string
 	current SessionRef
 	// hasCurrent 区分「确无当前会话」与「还没向后端问过」：零值哨兵无法区分。
 	hasCurrent bool
@@ -57,14 +64,21 @@ type pendingPermission struct {
 	desc   string // 权限请求描述；本期不回显，留作后续展示
 }
 
-// NewConsole 创建命令状态机。
+// NewConsole 创建命令状态机（默认中文文案）。
 func NewConsole(ex Executor) *Console {
-	return &Console{ex: ex}
+	return NewConsoleLang(ex, "zh-CN")
+}
+
+// NewConsoleLang 创建指定文案语言的命令状态机（"zh-CN" 中文，其余英文）。
+func NewConsoleLang(ex Executor, lang string) *Console {
+	return &Console{ex: ex, lang: lang}
 }
 
 // SetCurrent 显式设置当前会话上下文（渠道初始化时由装配方调用：
 // 微信桥用配置里记住的上次会话，桌面端用 hub 最后活跃会话）。
 func (c *Console) SetCurrent(ref SessionRef) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.current = ref
 	c.hasCurrent = true
 }
@@ -73,11 +87,16 @@ func (c *Console) SetCurrent(ref SessionRef) {
 // 之后的「1」/「2」输入被解释为允许/拒绝；回显由调用方处理。权限菜单
 // 只拦截数字回复，其余输入照常走命令与转发流程。
 func (c *Console) OpenPermissionMenu(chatID, reqID, desc string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.perm = &pendingPermission{chatID: chatID, reqID: reqID, desc: desc}
 }
 
 // Handle 处理一条用户输入，返回要回显的回复（可能多条，按序展示）。
+// 全程持锁：入站轮询与其他渠道的装配/权限事件并发时保证状态一致。
 func (c *Console) Handle(input string) []Reply {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return nil
@@ -104,7 +123,7 @@ func (c *Console) Handle(input string) []Reply {
 
 	// 其他文本：有活跃菜单则提示，否则发给当前会话。
 	if c.menu != nil {
-		return single(msgPickNumber)
+		return single(c.text("pick_number"))
 	}
 	return c.sendToCurrent(input)
 }
@@ -120,14 +139,14 @@ func (c *Console) handlePermission(input string) []Reply {
 		allow = false
 	default:
 		// 其余数字不消费菜单，让用户重新选。
-		return single("请回复 1（允许）或 2（拒绝）")
+		return single(c.text("perm_hint"))
 	}
 	c.perm = nil
 	if err := c.ex.GrantPermission(perm.chatID, perm.reqID, allow); err != nil {
 		// 请求可能已被桌面端处理，失败一律按失效提示。
-		return single(msgPermStale)
+		return single(c.text("perm_stale"))
 	}
-	return single(msgPermDone)
+	return single(c.text("perm_done"))
 }
 
 // handleCommand 分发 # 开头的命令。
@@ -158,7 +177,7 @@ func (c *Console) handleCommand(input string) []Reply {
 	case "#f":
 		return c.handleSearch(arg)
 	default:
-		return single(msgUnknownCmd)
+		return single(c.text("unknown_cmd"))
 	}
 }
 
@@ -174,10 +193,10 @@ func splitCmd(input string) (cmd, arg string) {
 // handleHelp 回复帮助全文与当前会话行。
 func (c *Console) handleHelp() []Reply {
 	var sb strings.Builder
-	sb.WriteString(helpText)
-	sb.WriteString("\n\n当前会话: ")
+	sb.WriteString(c.text("help"))
+	sb.WriteString("\n\n" + fmt.Sprintf(c.text("current_session"), ""))
 	if !c.hasActiveSession() {
-		sb.WriteString("无")
+		sb.WriteString(c.text("none"))
 	} else {
 		sb.WriteString(fmt.Sprintf("%s (%s)", c.current.Title, c.current.Tool))
 	}
@@ -205,7 +224,7 @@ func (c *Console) hasActiveSession() bool {
 func (c *Console) handleList(all bool) []Reply {
 	sessions := c.ex.ListSessions()
 	if len(sessions) == 0 {
-		return single(msgNoSessions)
+		return single(c.text("no_sessions"))
 	}
 	limit := len(sessions)
 	if !all && limit > 10 {
@@ -225,7 +244,7 @@ func (c *Console) handleList(all bool) []Reply {
 }
 
 // activateRef 把编号映射里的会话切为当前上下文：未激活的磁盘会话
-//（ChatID 空、SessionID 非空）走 OpenSession 激活，已激活的走 SwitchTo。
+// （ChatID 空、SessionID 非空）走 OpenSession 激活，已激活的走 SwitchTo。
 // 成功后 current 更新为实际可投递的 ref（OpenSession 返回新 ChatID）。
 func (c *Console) activateRef(ref SessionRef) error {
 	if ref.ChatID == "" && ref.SessionID != "" {
@@ -248,12 +267,12 @@ func (c *Console) activateRef(ref SessionRef) error {
 func (c *Console) switchByNumber(n int) []Reply {
 	ref, ok := c.refByNum(n)
 	if !ok {
-		return single(msgNoMapping)
+		return single(c.text("no_mapping"))
 	}
 	if err := c.activateRef(ref); err != nil {
-		return single(fmt.Sprintf(msgSwitchFailed, err))
+		return single(fmt.Sprintf(c.text("switch_failed"), err))
 	}
-	return single(formatCreated("已切换", ref))
+	return single(formatCreated(c.text("switched"), ref))
 }
 
 // refByNum 按编号查上次列表映射。
@@ -270,28 +289,28 @@ func (c *Console) refByNum(n int) (SessionRef, bool) {
 func (c *Console) handleEasyNew() []Reply {
 	ref, err := c.ex.EasyNew()
 	if err != nil {
-		return single(fmt.Sprintf(msgCreateFailed, err))
+		return single(fmt.Sprintf(c.text("create_failed"), err))
 	}
 	c.current = ref
 	c.hasCurrent = true
-	return single(formatCreated("已创建", ref))
+	return single(formatCreated(c.text("created"), ref))
 }
 
 // handleNewMenu 进入 #n 分步新建菜单 step1。
 func (c *Console) handleNewMenu() []Reply {
 	tools, _, _ := c.ex.NewMenuOptions()
 	if len(tools) == 0 {
-		return single(fmt.Sprintf(msgCreateFailed, "无可用工具"))
+		return single(fmt.Sprintf(c.text("create_failed"), c.text("no_tools")))
 	}
 	c.menu = &pendingMenu{kind: menuNew, step: 1, options: tools}
-	return c.renderOptions("选择工具:", tools)
+	return c.renderOptions(c.text("pick_tool"), tools)
 }
 
 // handleMenuNumber 处理活跃菜单里的数字选择。
 func (c *Console) handleMenuNumber(n int) []Reply {
 	menu := c.menu
 	if n < 1 || n > len(menu.options) {
-		return single(msgNoMapping)
+		return single(c.text("no_mapping"))
 	}
 	opt := menu.options[n-1]
 
@@ -304,11 +323,11 @@ func (c *Console) handleMenuNumber(n int) []Reply {
 			_, workspaces, _ := c.ex.NewMenuOptions()
 			if len(workspaces) == 0 {
 				c.menu = nil
-				return single(fmt.Sprintf(msgCreateFailed, "无可用工作区"))
+				return single(fmt.Sprintf(c.text("create_failed"), c.text("no_workspaces")))
 			}
 			menu.step = 2
 			menu.options = workspaces
-			return c.renderOptions("选择项目:", workspaces)
+			return c.renderOptions(c.text("pick_workspace"), workspaces)
 		case 2: // 已选项目 → 有模型列表则选模型，否则直接创建
 			menu.wsID = opt.ID
 			_, _, models := c.ex.NewMenuOptions()
@@ -317,26 +336,26 @@ func (c *Console) handleMenuNumber(n int) []Reply {
 			}
 			menu.step = 3
 			menu.options = models
-			return c.renderOptions("选择模型:", models)
+			return c.renderOptions(c.text("pick_model"), models)
 		default: // step3：已选模型 → 创建
 			return c.finishCreate(menu, opt.ID)
 		}
 	case menuModels:
 		c.menu = nil
 		if err := c.ex.SetModel(menu.targetChatID, opt.ID); err != nil {
-			return single(fmt.Sprintf(msgSwitchFailed, err))
+			return single(fmt.Sprintf(c.text("switch_failed"), err))
 		}
-		return single("已切换模型: " + opt.Label)
+		return single(fmt.Sprintf(c.text("model_switched"), opt.Label))
 	case menuSearch:
 		c.menu = nil
 		ref := menu.results[n-1]
 		if err := c.activateRef(ref); err != nil {
-			return single(fmt.Sprintf(msgSwitchFailed, err))
+			return single(fmt.Sprintf(c.text("switch_failed"), err))
 		}
-		return single(formatCreated("已切换", ref))
+		return single(formatCreated(c.text("switched"), ref))
 	}
 	c.menu = nil
-	return single(msgNoMapping)
+	return single(c.text("no_mapping"))
 }
 
 // finishCreate 用菜单里累积的参数创建会话；无论成败都清菜单。
@@ -344,41 +363,39 @@ func (c *Console) finishCreate(menu *pendingMenu, model string) []Reply {
 	c.menu = nil
 	ref, err := c.ex.CreateNew(menu.toolID, menu.wsID, model)
 	if err != nil {
-		return single(fmt.Sprintf(msgCreateFailed, err))
+		return single(fmt.Sprintf(c.text("create_failed"), err))
 	}
 	c.current = ref
 	c.hasCurrent = true
-	return single(formatCreated("已创建", ref))
+	return single(formatCreated(c.text("created"), ref))
 }
 
 // handleCancel 取消进行中的选择。
 func (c *Console) handleCancel() []Reply {
 	if c.menu == nil {
-		return single(msgNothingToCancel)
+		return single(c.text("nothing_to_cancel"))
 	}
 	c.menu = nil
-	return single(msgCancelled)
+	return single(c.text("cancelled"))
 }
 
-// handleStop 中断当前会话。
+// handleStop 中断当前会话。ChatID 空（未激活的磁盘会话）没有运行中的
+// 任务，直接按无活跃会话提示；SessionID 不能传给 ex.Stop（CancelChat 按
+// chat ID 解析，必报错）。
 func (c *Console) handleStop() []Reply {
-	if !c.hasActiveSession() {
-		return single(msgNoCurrent)
+	if !c.hasActiveSession() || c.current.ChatID == "" {
+		return single(c.text("no_current"))
 	}
-	target := c.current.ChatID
-	if target == "" {
-		target = c.current.SessionID
+	if err := c.ex.Stop(c.current.ChatID); err != nil {
+		return single(fmt.Sprintf(c.text("send_failed"), err))
 	}
-	if err := c.ex.Stop(target); err != nil {
-		return single(fmt.Sprintf(msgSendFailed, err))
-	}
-	return single(msgStopped)
+	return single(c.text("stopped"))
 }
 
 // handleModelsMenu 进入 #m 模型切换菜单。
 func (c *Console) handleModelsMenu() []Reply {
 	if !c.hasActiveSession() {
-		return single(msgNoCurrent)
+		return single(c.text("no_current"))
 	}
 	chatID := c.current.ChatID
 	if chatID == "" {
@@ -386,43 +403,43 @@ func (c *Console) handleModelsMenu() []Reply {
 	}
 	models, curID, err := c.ex.ListModels(chatID)
 	if err != nil {
-		return single(fmt.Sprintf(msgSwitchFailed, err))
+		return single(fmt.Sprintf(c.text("switch_failed"), err))
 	}
 	if len(models) == 0 {
-		return single("该会话无可选模型")
+		return single(c.text("no_models"))
 	}
 	c.menu = &pendingMenu{kind: menuModels, options: models, targetChatID: chatID}
-	return c.renderOptionsMarked("选择模型:", models, curID)
+	return c.renderOptionsMarked(c.text("pick_model"), models, curID)
 }
 
 // handleG 处理 "#g <n> <text>"：向编号 n 的会话发送文本（不切 current）。
 func (c *Console) handleG(arg string) []Reply {
 	nStr, text := splitCmd(arg)
 	if nStr == "" || text == "" {
-		return single(msgUsageG)
+		return single(c.text("usage_g"))
 	}
 	n, err := strconv.Atoi(nStr)
 	if err != nil || n < 1 {
-		return single(msgUsageG)
+		return single(c.text("usage_g"))
 	}
 	ref, ok := c.refByNum(n)
 	if !ok {
-		return single(msgNoMapping)
+		return single(c.text("no_mapping"))
 	}
 	if err := c.ex.Send(ref.ChatID, text); err != nil {
-		return single(fmt.Sprintf(msgSendFailed, err))
+		return single(fmt.Sprintf(c.text("send_failed"), err))
 	}
-	return single("已发送到: " + ref.Title)
+	return single(fmt.Sprintf(c.text("sent_to"), ref.Title))
 }
 
 // handleSearch 处理 "#f <kw>"：搜索并进入结果选择菜单。
 func (c *Console) handleSearch(arg string) []Reply {
 	if arg == "" {
-		return single(msgUsageF)
+		return single(c.text("usage_f"))
 	}
 	results := c.ex.SearchSessions(arg)
 	if len(results) == 0 {
-		return single(msgSearchNoMatch)
+		return single(c.text("search_no_match"))
 	}
 	c.refreshCurrent() // 与 #l 一致：先同步 current 再比对 ▶ 标记
 	for i := range results {
@@ -444,7 +461,8 @@ func (c *Console) handleSearch(arg string) []Reply {
 // handleStatus 文本化状态快照。
 func (c *Console) handleStatus() []Reply {
 	st := c.ex.Status()
-	return single(fmt.Sprintf("当前会话: %s\n运行中任务: %d\n未送达消息: %d", st.CurrentTitle, st.Running, st.Undelivered))
+	return single(fmt.Sprintf(c.text("current_session")+"\n"+c.text("status_running")+"\n"+c.text("status_undelivered"),
+		st.CurrentTitle, st.Running, st.Undelivered))
 }
 
 // renderOptions 渲染编号选项列表。
@@ -474,10 +492,10 @@ func (c *Console) renderOptionsMarked(title string, opts []MenuOption, curID str
 // sendToCurrent 把普通文本发给当前会话；成功不回显（agent 流程会回复）。
 func (c *Console) sendToCurrent(text string) []Reply {
 	if !c.hasActiveSession() {
-		return single(msgNoCurrentList)
+		return single(c.text("no_current_list"))
 	}
 	if err := c.ex.Send(c.current.ChatID, text); err != nil {
-		return single(fmt.Sprintf(msgSendFailed, err))
+		return single(fmt.Sprintf(c.text("send_failed"), err))
 	}
 	return nil
 }

@@ -46,8 +46,6 @@ type Runtime struct {
 
 	// persist 由 desktop 注入：token/wxid 变更落盘（saveConfig 包装）。
 	persist func(cfg WeixinPersist) error
-	// onPermission 由 desktop 注入：权限请求事件转发（chatID, reqID, desc）。
-	onPermission func(chatID, reqID, desc string)
 	// onLearnWxid 由 desktop 注入：wxid 首次从入站消息学习时落盘。
 	onLearnWxid func(wxid string)
 	// lang 文案语言。
@@ -74,9 +72,6 @@ func NewRuntime(ex hub.Executor, lang string) *Runtime {
 
 // SetPersist 装配落盘回调（Start 前调用）。
 func (r *Runtime) SetPersist(fn func(WeixinPersist) error) { r.persist = fn }
-
-// SetOnPermission 装配权限请求转发回调（Start 前调用）。
-func (r *Runtime) SetOnPermission(fn func(chatID, reqID, desc string)) { r.onPermission = fn }
 
 // SetOnLearnWxid 装配 wxid 学习回调（Configure 前调用；转交给 Bridge）。
 func (r *Runtime) SetOnLearnWxid(fn func(wxid string)) { r.onLearnWxid = fn }
@@ -127,9 +122,6 @@ func (r *Runtime) Configure(token, wxid string) {
 	r.stopLocked()
 	r.client = NewClient(token, r.baseURL)
 	r.bridge = NewBridge(r.client, r.ex, BridgeConfig{Wxid: wxid, Language: r.lang})
-	if r.onPermission != nil {
-		r.bridge.SetOnPermission(r.onPermission)
-	}
 	if r.onLearnWxid != nil {
 		r.bridge.SetOnLearnWxid(r.onLearnWxid)
 	}
@@ -159,6 +151,7 @@ func (r *Runtime) Start() {
 func (r *Runtime) pollLoop(ctx context.Context, client *Client, bridge *Bridge) {
 	backoff := pollBackoffInit
 	cursor := ""
+	first := true // 首轮成功响应前的积压丢弃标记
 	defer func() {
 		r.mu.Lock()
 		if r.cancel != nil {
@@ -186,6 +179,13 @@ func (r *Runtime) pollLoop(ctx context.Context, client *Client, bridge *Bridge) 
 		}
 		backoff = pollBackoffInit // 成功重置退避
 		cursor = next
+		if first {
+			// iLink 游标起点不可靠：新 token 首次 getupdates（cursor=""）可能
+			// 拉到历史积压——陌生人消息会错绑 wxid、旧文本会被当命令执行。
+			// 宁可丢重启窗口内的这一轮消息也不误投/错绑；窗口仅一轮。
+			first = false
+			continue
+		}
 		for _, m := range msgs {
 			bridge.HandleInbound(m.FromUserID, m.ContextToken, m.Text)
 		}
@@ -214,17 +214,17 @@ func wait(r *Runtime, backoff *time.Duration, ctx context.Context) bool {
 
 // Bind 发起扫码绑定：临时 Client（无 token）取二维码；内部 goroutine 以
 // bindPollInterval 轮询 PollQRCodeStatus，拿到 token 后经 persist 落盘并
-// 转正为运行态（Configure）。已绑定/绑定中返回错误。返回二维码内容 URL。
+// 转正为运行态（Configure）。总是允许重新绑定（-14 过期停轮询后恢复路径）：
+// 已有凭据时先停旧轮询，扫码成功后凭据被覆盖。仅绑定流程进行中
+// （bindStatus==pending）拒绝，防并发重复起绑定 goroutine。返回二维码内容 URL。
 func (r *Runtime) Bind(ctx context.Context) (string, error) {
 	r.mu.Lock()
-	if r.client != nil {
-		r.mu.Unlock()
-		return "", errors.New("err.weixin.already_bound")
-	}
 	if r.bindStatus == "pending" {
 		r.mu.Unlock()
 		return "", errors.New("err.weixin.bind_in_progress")
 	}
+	// 已有凭据（正常绑定或 -14 过期）：停旧轮询，等待扫码结果覆盖。
+	r.stopLocked()
 	tmp := NewClient("", r.baseURL)
 	r.bindStatus = "pending"
 	bctx, bcancel := context.WithCancel(context.Background())
@@ -319,13 +319,18 @@ func (r *Runtime) Stop() {
 	r.mu.Unlock()
 }
 
-// stopLocked 停止轮询（调用方持锁）。
+// stopLocked 停止轮询与出站 worker（调用方持锁）。
+// bridge.Close 会等 worker 排空退出；持锁调用安全：worker 的 deliver 只
+// 竞争 bridge 自身的 mu，不会回头取 Runtime.mu。
 func (r *Runtime) stopLocked() {
 	if r.cancel != nil {
 		r.cancel()
 		r.cancel = nil
 	}
 	r.running = false
+	if r.bridge != nil {
+		r.bridge.Close()
+	}
 }
 
 // Status 汇总当前运行状态快照。
@@ -348,8 +353,9 @@ func (r *Runtime) Status() WeixinStatus {
 	return st
 }
 
-// OnHubMessage 把 hub 出站消息镜像到微信：异步投递避免阻塞 hub 写入路径；
-// bridge 内部自有序列化。bridge 未创建时安全跳过。
+// OnHubMessage 把 hub 出站消息镜像到微信：同步调用（bridge 内部只入队即
+// 返回，串行 worker 保证按序投递），不再为每条消息起 goroutine。
+// bridge 未创建时安全跳过。
 func (r *Runtime) OnHubMessage(m hub.Message) {
 	r.mu.Lock()
 	bridge := r.bridge
@@ -357,7 +363,7 @@ func (r *Runtime) OnHubMessage(m hub.Message) {
 	if bridge == nil {
 		return
 	}
-	go bridge.DeliverHubMessage(m)
+	bridge.DeliverHubMessage(m)
 }
 
 // Undelivered 返回累计发送失败条数（executor.Status 用）；无 bridge 时为 0。

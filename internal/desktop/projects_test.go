@@ -16,7 +16,7 @@ import (
 
 // newProjectsEnv 组装项目表测试环境：临时项目文件 + 固定扫描结果 + 事件收集。
 // 扫描结果先跑一轮，让 result/rawWorkspaces 落位（applyProjects 只在已有结果时才广播）。
-func newProjectsEnv(t *testing.T, workspaces []discovery.Workspace) (*App, *discovery.ProjectStore, *[]string) {
+func newProjectsEnv(t *testing.T, workspaces []discovery.Workspace) (*App, *discovery.ProjectStore, *eventLog) {
 	t.Helper()
 
 	store := discovery.NewProjectStore(filepath.Join(t.TempDir(), "projects.yaml"))
@@ -24,7 +24,7 @@ func newProjectsEnv(t *testing.T, workspaces []discovery.Workspace) (*App, *disc
 		t.Fatalf("装载项目表: %v", err)
 	}
 
-	var events []string
+	events := newEventLog()
 	app := NewAppWith(Options{
 		Home:      t.TempDir(),
 		Projects:  store,
@@ -33,10 +33,10 @@ func newProjectsEnv(t *testing.T, workspaces []discovery.Workspace) (*App, *disc
 			return &discovery.Result{Workspaces: append([]discovery.Workspace(nil), workspaces...)}, nil
 		},
 		Windows: NewWindowManager(&stubLauncher{}, nil),
-		Emit:    func(name string, _ ...any) { events = append(events, name) },
+		Emit:    events.emit,
 	})
 	app.runScan() // 让 result/rawWorkspaces 落位
-	return app, store, &events
+	return app, store, events
 }
 
 func containsEvent(events []string, name string) bool {
@@ -80,8 +80,8 @@ func TestCreateProjectAddsAndEmits(t *testing.T) {
 	if manual := store.Manual(); len(manual) != 1 || manual[0] != dir {
 		t.Fatalf("项目表未落盘: %v", manual)
 	}
-	if !containsEvent(*events, "projects:changed") {
-		t.Fatalf("应广播 projects:changed, got %v", *events)
+	if !containsEvent(events.names(), "projects:changed") {
+		t.Fatalf("应广播 projects:changed, got %v", events.names())
 	}
 	if !hasWorkspace(app.GetWorkspaces(), dir) {
 		t.Fatalf("新项目未出现在工作区列表: %+v", app.GetWorkspaces())
@@ -102,8 +102,8 @@ func TestCreateProjectCancel(t *testing.T) {
 	if manual := store.Manual(); len(manual) != 0 {
 		t.Fatalf("取消不应写盘: %v", manual)
 	}
-	if containsEvent(*events, "projects:changed") {
-		t.Fatalf("取消不应广播 projects:changed: %v", *events)
+	if containsEvent(events.names(), "projects:changed") {
+		t.Fatalf("取消不应广播 projects:changed: %v", events.names())
 	}
 }
 
@@ -145,8 +145,8 @@ func TestHideAndRestoreProject(t *testing.T) {
 	if deleted[0].Path != dir || deleted[0].Name != name || !deleted[0].Exists || deleted[0].At == "" {
 		t.Fatalf("回收站条目字段不符: %+v", deleted[0])
 	}
-	if !containsEvent(*events, "projects:changed") {
-		t.Fatalf("删除应广播 projects:changed: %v", *events)
+	if !containsEvent(events.names(), "projects:changed") {
+		t.Fatalf("删除应广播 projects:changed: %v", events.names())
 	}
 
 	if err := app.RestoreProject(dir); err != nil {
@@ -186,7 +186,7 @@ func TestGetDeletedProjectsWithoutStore(t *testing.T) {
 }
 
 // newSSHProjectsEnv 在 newProjectsEnv 基础上挂上连接表与可注入的远端 Runner。
-func newSSHProjectsEnv(t *testing.T, run remotefs.Runner) (*App, *discovery.ProjectStore, *remote.Store, *[]string) {
+func newSSHProjectsEnv(t *testing.T, run remotefs.Runner) (*App, *discovery.ProjectStore, *remote.Store, *eventLog) {
 	t.Helper()
 	app, store, events := newProjectsEnv(t, nil)
 	connStore := remote.NewStore(filepath.Join(t.TempDir(), "connections.yaml"))
@@ -221,8 +221,8 @@ func TestAddSSHProjectAddsEmitsAndPresentsRef(t *testing.T) {
 	if len(entries) != 1 || entries[0].Kind != discovery.KindSSH || entries[0].ConnID != "c1" || entries[0].Path != "/home/u/proj" {
 		t.Fatalf("项目表: %+v", entries)
 	}
-	if !containsEvent(*events, "projects:changed") {
-		t.Fatalf("应广播 projects:changed: %v", *events)
+	if !containsEvent(events.names(), "projects:changed") {
+		t.Fatalf("应广播 projects:changed: %v", events.names())
 	}
 	list := app.GetWorkspaces()
 	if len(list) != 1 {

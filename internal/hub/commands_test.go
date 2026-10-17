@@ -370,6 +370,23 @@ func TestStop(t *testing.T) {
 	}
 }
 
+// handleStop：有 current 但 ChatID 空（未激活的磁盘会话）时，没有运行中的
+// 任务可中断，直接回「当前无活跃会话」，不得把 SessionID 误传给 ex.Stop
+// （CancelChat 按 chat ID 解析必报错）。
+func TestStopInactiveSessionNoChatID(t *testing.T) {
+	fe := &fakeExecutor{
+		hasCurrent:     true,
+		currentSession: wsRef(0, "", "sid-only", "", "claude", "磁盘会话", true),
+	}
+	c := NewConsole(fe)
+	if got := join(c.Handle("#s")); got != "当前无活跃会话" {
+		t.Fatalf("ChatID 空的中断应回无活跃会话: %q", got)
+	}
+	if len(fe.stopCalls) != 0 {
+		t.Fatalf("ChatID 空时不得调用 ex.Stop: %v", fe.stopCalls)
+	}
+}
+
 func TestModelsMenu(t *testing.T) {
 	fe := &fakeExecutor{
 		hasCurrent:     true,

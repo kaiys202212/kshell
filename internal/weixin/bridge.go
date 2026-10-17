@@ -62,25 +62,42 @@ type Bridge struct {
 	pending     []pendingMsg // -14 时缓存的待发
 	undelivered int          // 发送失败计数（#st 用）
 
+	// outbound 是串行出站队列：DeliverHubMessage 只入队，单 worker 按序
+	// deliver，避免 hub 消息因网络耗时不等而在微信侧乱序。
+	outbound chan string
+	// outMu 保护 outbound 的关闭状态：入队与 Close 并发时防 send-on-closed。
+	outMu     sync.Mutex
+	outClosed bool
+	// workerDone 关闭表示出站 worker 已退出（Close 等待用）。
+	workerDone chan struct{}
+	// workerOnce 保证 worker 惰性启动一次。
+	workerOnce sync.Once
+	// flushHook 仅供测试：worker 开始处理一条消息前回调（FlushForTest 用）。
+	flushHook func()
+
 	// onLearnWxid 非空时，wxid 首次从入站消息学习得到即回调（desktop 落盘）。
 	// 由 SetOnLearnWxid 在 Start 前装配，此后视为只读。
 	onLearnWxid func(wxid string)
-	// onPermission 非空时，命令层进入权限等待即回调（desktop 弹窗）。
-	onPermission func(chatID, reqID, desc string)
 
 	// sleep 供测试注入 no-op，避免重试真实等待。
 	sleep func(time.Duration)
 }
 
+// outboundCap 是出站队列容量：满时新消息直接丢弃计 undelivered，
+// 不阻塞 hub 写入路径。
+const outboundCap = 128
+
 // NewBridge 创建微信桥；内部持有独立的命令状态机。
 func NewBridge(client *Client, ex hub.Executor, cfg BridgeConfig) *Bridge {
 	return &Bridge{
-		client:  client,
-		ex:      ex,
-		console: hub.NewConsole(ex),
-		wxid:    cfg.Wxid,
-		lang:    cfg.Language,
-		sleep:   time.Sleep,
+		client:     client,
+		ex:         ex,
+		console:    hub.NewConsoleLang(ex, cfg.Language),
+		wxid:       cfg.Wxid,
+		lang:       cfg.Language,
+		outbound:   make(chan string, outboundCap),
+		workerDone: make(chan struct{}),
+		sleep:      time.Sleep,
 	}
 }
 
@@ -89,6 +106,26 @@ func (b *Bridge) Undelivered() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.undelivered
+}
+
+// flushSentinel 是 FlushForTest 投入的哨兵文本；worker 见到即回调 hook 并
+// 跳过真实投递（无网络副作用，不污染计数）。
+const flushSentinel = "\x00flush-sentinel"
+
+// FlushForTest 阻塞等待出站队列排空（worker 已处理完当前队列所有消息）。
+// 仅测试用：worker 串行消费，哨兵被处理即代表它之前的消息全部 deliver 完毕。
+func (b *Bridge) FlushForTest() {
+	b.startOutboundWorker()
+	done := make(chan struct{})
+	var once sync.Once
+	b.flushHook = func() { once.Do(func() { close(done) }) }
+	// 哨兵必须走普通队列才能保证「之前消息已处理完」的顺序语义。
+	b.enqueueOutbound(flushSentinel)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		panic("FlushForTest: 等待出站队列排空超时")
+	}
 }
 
 // PendingCount 返回因会话过期而排队等待补发的条数。
@@ -100,10 +137,6 @@ func (b *Bridge) PendingCount() int {
 
 // SetOnLearnWxid 装配 wxid 学习回调（Start 前调用，此后只读）。
 func (b *Bridge) SetOnLearnWxid(fn func(wxid string)) { b.onLearnWxid = fn }
-
-// SetOnPermission 装配权限请求转发回调：收到权限请求时通知调用方
-// （desktop 把它转给前端弹窗与 hub 命令层的权限菜单）。
-func (b *Bridge) SetOnPermission(fn func(chatID, reqID, desc string)) { b.onPermission = fn }
 
 // OpenPermissionMenu 让命令层进入权限等待状态（1=允许 / 2=拒绝）。
 // desktop 在收到 chat:permission 事件时转发进来，使微信侧数字回复生效。
@@ -158,7 +191,8 @@ func (b *Bridge) HandleInbound(fromUserID, contextToken, text string) {
 	_ = b.client.SendTyping(context.Background(), fromUserID, contextToken, 2)
 }
 
-// DeliverHubMessage 把 hub 的 agent 消息出站镜像到微信。
+// DeliverHubMessage 把 hub 的 agent 消息镜像到微信出站队列（串行 worker
+// 按序发送，保证顺序；队列满则丢弃计 undelivered，不阻塞调用方）。
 // 只镜像 agent 正文：用户消息、已撤回、ui.hub.* 事件与 wire key 形态文本
 // （后端稳定 key，非自然语言）一律跳过，防止刷屏。
 func (b *Bridge) DeliverHubMessage(m hub.Message) {
@@ -172,7 +206,60 @@ func (b *Bridge) DeliverHubMessage(m hub.Message) {
 	if m.SessionTitle != "" {
 		text = "[" + m.SessionTitle + "] " + text
 	}
-	b.deliver(text)
+	b.enqueueOutbound(text)
+}
+
+// enqueueOutbound 把一条文本放入串行出站队列；满或已关闭则丢弃计 undelivered。
+func (b *Bridge) enqueueOutbound(text string) {
+	b.outMu.Lock()
+	if b.outClosed {
+		b.outMu.Unlock()
+		b.mu.Lock()
+		b.undelivered++
+		b.mu.Unlock()
+		return
+	}
+	select {
+	case b.outbound <- text:
+		b.outMu.Unlock()
+	default:
+		b.outMu.Unlock()
+		b.mu.Lock()
+		b.undelivered++
+		b.mu.Unlock()
+	}
+}
+
+// startOutboundWorker 惰性启动单个出站 worker goroutine（与 Close 互斥，
+// 避免「先入队后关通道」与「worker 从未启动」交错）。
+func (b *Bridge) startOutboundWorker() {
+	b.workerOnce.Do(func() {
+		go func() {
+			defer close(b.workerDone)
+			for text := range b.outbound {
+				if text == flushSentinel {
+					if b.flushHook != nil {
+						b.flushHook()
+					}
+					continue
+				}
+				b.deliver(text)
+			}
+		}()
+	})
+}
+
+// Close 停止出站投递：关闭队列并等待 worker 排空退出。幂等；与入队并发
+// 安全（outMu 保证已关闭后入队直接丢弃，不触发 send-on-closed）。
+func (b *Bridge) Close() {
+	b.startOutboundWorker()
+	b.outMu.Lock()
+	if !b.outClosed {
+		b.outClosed = true
+		close(b.outbound)
+	}
+	b.outMu.Unlock()
+	<-b.workerDone
 }
 
 // isWireKey 报告文本是否为后端稳定 key 形态。
@@ -216,12 +303,17 @@ func (b *Bridge) deliver(text string) {
 }
 
 // flushPending 依次补发积压消息：成功一条删一条；失败保留并停止本轮。
-// 全部补发成功时清零 undelivered。从头弹出，与并发的 pending 追加互不覆盖。
+// 只在本轮实际成功补发 ≥1 条时清零 undelivered；pending 空时不动
+// （普通发送失败的计数不得被一条无补发的入站消息误清）。
+// 从头弹出，与并发的 pending 追加互不覆盖。
 func (b *Bridge) flushPending() {
+	sent := 0
 	for {
 		b.mu.Lock()
 		if len(b.pending) == 0 {
-			b.undelivered = 0
+			if sent > 0 {
+				b.undelivered = 0
+			}
 			b.mu.Unlock()
 			return
 		}
@@ -231,6 +323,7 @@ func (b *Bridge) flushPending() {
 		if err := b.client.SendMessage(context.Background(), pm.userID, pm.contextToken, pm.text); err != nil {
 			return // 失败保留剩余 pending，等下次入站再补
 		}
+		sent++
 		b.mu.Lock()
 		b.pending = b.pending[1:]
 		b.mu.Unlock()

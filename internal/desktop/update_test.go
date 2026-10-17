@@ -48,7 +48,7 @@ func TestCheckForUpdateSkipsDev(t *testing.T) {
 	if !info.Skipped || info.Available {
 		t.Fatalf("%+v", info)
 	}
-	for _, e := range *events {
+	for _, e := range events.names() {
 		if e == "update:available" {
 			t.Fatal("跳过时不应发 update:available")
 		}
@@ -75,13 +75,13 @@ func TestCheckForUpdateEmitsWhenAvailable(t *testing.T) {
 		t.Fatalf("%+v", info)
 	}
 	found := false
-	for _, e := range *events {
+	for _, e := range events.names() {
 		if e == "update:available" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("events = %v", *events)
+		t.Fatalf("events = %v", events.names())
 	}
 }
 
