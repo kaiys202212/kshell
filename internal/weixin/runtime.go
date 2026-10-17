@@ -37,11 +37,11 @@ type WeixinStatus struct {
 // Runtime 是微信桥的运行时封装：管理长轮询 goroutine 生命周期、绑定状态与
 // 配置落盘回调。desktop 在 Startup 时创建并注入回调，此后只经绑定方法交互。
 type Runtime struct {
-	mu     sync.Mutex
-	client *Client
-	bridge *Bridge
-	ex     hub.Executor
-	cancel context.CancelFunc // 轮询取消
+	mu      sync.Mutex
+	client  *Client
+	bridge  *Bridge
+	ex      hub.Executor
+	cancel  context.CancelFunc // 轮询取消
 	running bool
 
 	// persist 由 desktop 注入：token/wxid 变更落盘（saveConfig 包装）。

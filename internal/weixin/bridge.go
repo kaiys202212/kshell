@@ -102,7 +102,7 @@ func (b *Bridge) PendingCount() int {
 func (b *Bridge) SetOnLearnWxid(fn func(wxid string)) { b.onLearnWxid = fn }
 
 // SetOnPermission 装配权限请求转发回调：收到权限请求时通知调用方
-//（desktop 把它转给前端弹窗与 hub 命令层的权限菜单）。
+// （desktop 把它转给前端弹窗与 hub 命令层的权限菜单）。
 func (b *Bridge) SetOnPermission(fn func(chatID, reqID, desc string)) { b.onPermission = fn }
 
 // Wxid 返回当前白名单用户（可能为学习前的空串；测试与状态展示用）。
