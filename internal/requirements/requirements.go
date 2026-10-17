@@ -25,6 +25,10 @@ const fileVersion = 2
 // 文案本身不面向用户，勿改成自然语言。
 var ErrProjectRequired = errors.New("err.requirements.project_required")
 
+// ErrTextRequired 是需求文本缺失的稳定 wire key（前端 translateBackend 翻译），
+// 文案本身不面向用户，勿改成自然语言。
+var ErrTextRequired = errors.New("err.requirements.text_required")
+
 // 需求状态机取值：未开始 → 执行中 → 已完成 → 已归档。
 // 迁移约束见 SetStatus / Archive / Update / Delete 各方法的守卫。
 const (
@@ -46,6 +50,8 @@ type Item struct {
 	Tags []string `json:"tags"`
 	// Project 是需求所属项目（工作区路径）。v2 起新增必填；存量数据由
 	// 迁移（SetWorkspaceResolver + List 惰性触发）从 DispatchedTo 回填。
+	// 已知边界：迁移时 DispatchedTo 匹配不到工作区列表（如目标目录已删除）
+	// 的条目将永久留空本字段，需用户编辑需求时重选项目。
 	Project string `json:"project,omitempty"`
 	// DispatchedTo 是已派发目标工作区路径；空表示未派发。
 	DispatchedTo string `json:"dispatchedTo,omitempty"`
@@ -114,7 +120,14 @@ func (s *Store) Load() error {
 }
 
 // SetWorkspaceResolver 注入工作区路径解析函数，供存量迁移把 DispatchedTo
-// 回填为 Project。可在任意时机注入/替换；注入后由 List 惰性触发迁移。
+// 回填为 Project；注入后由 List 惰性触发迁移。
+//
+// 锁序契约：ensureMigrated 在持有 Store 内部锁（s.mu）时调用回调，因此——
+//   - 回调内不得再调用本 Store 的任何方法（会重入死锁）；
+//   - 调用方不得在持有会锁到本 Store 的锁时触发 List（同样死锁）。
+//
+// 注入时机：仅迁移完成标记置位前有效（见 ensureMigrated），migrated 置位后
+// 替换 resolver 不再有任何效果。
 func (s *Store) SetWorkspaceResolver(fn func() []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -179,7 +192,7 @@ func (s *Store) Add(project, text, priority string, tags []string) (Item, error)
 	}
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return Item{}, errors.New("需求文本不能为空")
+		return Item{}, ErrTextRequired
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -211,7 +224,7 @@ func (s *Store) Update(id, project, text, priority string, tags []string) (Item,
 	}
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return Item{}, errors.New("需求文本不能为空")
+		return Item{}, ErrTextRequired
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

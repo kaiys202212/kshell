@@ -2,7 +2,8 @@
   "err": {
     "session_not_found": "会话不存在或已被清理",
     "requirements": {
-      "project_required": "请选择项目"
+      "project_required": "请选择项目",
+      "text_required": "需求文本不能为空"
     },
     "backend": {
       "binding_missing": "未检测到后端绑定"
