@@ -87,6 +87,7 @@ afterEach(cleanup);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   mocks.onScanDone.mockImplementation((cb: typeof scanDoneCb) => {
     scanDoneCb = cb;
     return () => {};
@@ -109,6 +110,7 @@ beforeEach(() => {
     terminals: [],
     toasts: [],
     unreachableWorkspaces: {},
+    selectedProject: null,
   });
 });
 
@@ -158,15 +160,50 @@ describe('Home', () => {
     expect(within(one).getByText(count(1))).toBeInTheDocument();
   });
 
-  it('点击整卡打开工作区页签（键盘可达：整卡是 button）', async () => {
+  it('点击卡片选中项目（store + localStorage），再点同一卡片取消；不直接开页签', async () => {
     render(<Home />);
     const fresh = await screen.findByTitle('D:\\proj-new');
     expect(fresh.tagName).toBe('BUTTON');
 
     fireEvent.click(fresh);
+    expect(useAppStore.getState().selectedProject).toBe('D:\\proj-new');
+    expect(localStorage.getItem('kshell.home.selectedProject')).toBe('D:\\proj-new');
+    expect(useAppStore.getState().openTabs).toHaveLength(0);
+    // 选中样式：border-primary ring-2 ring-primary/40
+    expect(fresh.className).toContain('ring-2');
 
+    fireEvent.click(fresh);
+    expect(useAppStore.getState().selectedProject).toBeNull();
+    expect(localStorage.getItem('kshell.home.selectedProject')).toBeNull();
+    expect(fresh.className).not.toContain('ring-2');
+  });
+
+  it('点击另一张卡片切换选中；点「打开项目页签」图标才开页签且不影响选中态', async () => {
+    render(<Home />);
+    const fresh = await screen.findByTitle('D:\\proj-new');
+
+    fireEvent.click(fresh);
+    fireEvent.click(card('D:\\proj-old'));
+    expect(useAppStore.getState().selectedProject).toBe('D:\\proj-old');
+
+    // 图标按钮是卡片 button 的兄弟节点，定位到所在 li 内点击
+    const li = fresh.closest('li')!;
+    fireEvent.click(within(li).getByLabelText(tt('ui.home.open_project')));
     expect(useAppStore.getState().openTabs).toEqual([{ id: 'D:\\proj-new', name: 'proj-new' }]);
     expect(useAppStore.getState().activeTabId).toBe('D:\\proj-new');
+    // 开页签不得动选中态
+    expect(useAppStore.getState().selectedProject).toBe('D:\\proj-old');
+  });
+
+  it('selectedProject 不在工作区列表时自动清除（含大小写差异外的路径）；在列表则保留', async () => {
+    useAppStore.setState({ selectedProject: 'D:\\gone' });
+    render(<Home />);
+    await screen.findByTitle('D:\\proj-new');
+    await waitFor(() => expect(useAppStore.getState().selectedProject).toBeNull());
+
+    // 大小写不同的同一路径视为在列表（复用 sameWorkspacePath 归一化）
+    useAppStore.getState().setSelectedProject('d:\\proj-new');
+    await waitFor(() => expect(useAppStore.getState().selectedProject).toBe('d:\\proj-new'));
   });
 
   it('扫描中「重新扫描」按钮禁用并显示「扫描中…」，scan:done 后恢复可再扫', async () => {
@@ -341,7 +378,11 @@ describe('Home', () => {
     );
     expect(within(cardEl).getByText(tt('ui.home.remote_badge'))).toBeInTheDocument();
     expect(within(cardEl).getByText(tt('ui.home.remote_unreachable'))).toBeInTheDocument();
+    // 点击卡片只选中；经 hover 图标按钮才真正打开页签
     fireEvent.click(cardEl);
+    expect(useAppStore.getState().selectedProject).toBe(ref);
+    const li = cardEl.closest('li')!;
+    fireEvent.click(within(li).getByLabelText(tt('ui.home.open_project')));
     expect(useAppStore.getState().activeTabId).toBe(ref);
   });
 
@@ -491,59 +532,5 @@ describe('Home', () => {
     fireEvent.change(screen.getByTestId('home-filter'), { target: { value: 'p01' } });
     expect(screen.getByTitle('D:\\p01')).toBeInTheDocument();
     expect(screen.getAllByTestId('ws-name')).toHaveLength(1);
-  });
-
-  // ---- 拖拽派发 ----
-
-  it('drop 需求到项目卡片：解析 MIME JSON 后调 dispatchRequirement，成功提示', async () => {
-    mocks.dispatchRequirement.mockResolvedValue(undefined);
-    render(<Home />);
-    const cardEl = await screen.findByTitle('D:\\proj-new');
-
-    const dataTransfer = {
-      getData: vi.fn((type: string) =>
-        type === 'application/x-kshell-requirement'
-          ? JSON.stringify({ id: 'r1', text: '实现导出功能' })
-          : '',
-      ),
-    };
-    fireEvent.dragOver(cardEl, { dataTransfer });
-    fireEvent.drop(cardEl, { dataTransfer });
-
-    await waitFor(() =>
-      expect(mocks.dispatchRequirement).toHaveBeenCalledWith('r1', '实现导出功能', 'D:\\proj-new'),
-    );
-    expect(
-      useAppStore
-        .getState()
-        .toasts.some((x) => x.title === tt('ui.requirements.dispatch_ok').replace('{{name}}', 'proj-new')),
-    ).toBe(true);
-  });
-
-  it('drop 派发失败：提示 dispatch_failed，不含堆栈', async () => {
-    mocks.dispatchRequirement.mockRejectedValue(new Error('no_acp_tool'));
-    render(<Home />);
-    const cardEl = await screen.findByTitle('D:\\proj-new');
-
-    const dataTransfer = {
-      getData: vi.fn(() => JSON.stringify({ id: 'r1', text: '实现导出功能' })),
-    };
-    fireEvent.drop(cardEl, { dataTransfer });
-
-    await waitFor(() =>
-      expect(
-        useAppStore.getState().toasts.some((x) => x.tone === 'error'),
-      ).toBe(true),
-    );
-  });
-
-  it('drop 无自定义 MIME（普通文件拖入）：不触发派发', async () => {
-    render(<Home />);
-    const cardEl = await screen.findByTitle('D:\\proj-new');
-
-    const dataTransfer = { getData: vi.fn(() => '') };
-    fireEvent.drop(cardEl, { dataTransfer });
-
-    expect(mocks.dispatchRequirement).not.toHaveBeenCalled();
   });
 });

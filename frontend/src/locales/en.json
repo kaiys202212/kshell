@@ -424,6 +424,7 @@
       "delete_project_title": "Delete project (restorable from the recycle bin)",
       "deleted": "Deleted \"{{name}}\"; restore it from the recycle bin",
       "delete_failed": "Failed to delete project: {{err}}",
+      "open_project": "Open project tab",
       "added": "Added project \"{{name}}\"",
       "create_failed": "Failed to create project: {{err}}",
       "rescan": "Rescan",

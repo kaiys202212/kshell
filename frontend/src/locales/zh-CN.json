@@ -424,6 +424,7 @@
       "delete_project_title": "删除项目（可在回收站还原）",
       "deleted": "已删除「{{name}}」，可在回收站还原",
       "delete_failed": "删除项目失败：{{err}}",
+      "open_project": "打开项目页签",
       "added": "已添加项目「{{name}}」",
       "create_failed": "新建项目失败：{{err}}",
       "rescan": "重新扫描",

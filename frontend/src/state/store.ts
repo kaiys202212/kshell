@@ -13,6 +13,19 @@ import { normalizeWorkspacePath, sameWorkspacePath } from '../lib/workspacePath'
 // toast 的自增 id（模块级：store 单例，保证 id 唯一即可）
 let nextToastId = 1;
 
+// 首页选中项目的独立 localStorage 键（不入 kshell-tabs：值为单个路径字符串，
+// 读写都围绕它自身进行，无需走 persist 的整包序列化）
+const SELECTED_PROJECT_KEY = 'kshell.home.selectedProject';
+
+// 读初始选中项目：空串/读取异常（隐私模式等）都视为未选中
+function loadSelectedProject(): string | null {
+  try {
+    return localStorage.getItem(SELECTED_PROJECT_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
 // agent 通知的自增 id（同上）
 let nextNoticeId = 1;
 
@@ -183,6 +196,11 @@ interface AppState {
   // 气泡提示音开关（默认开）；随 kshell-tabs 持久化，播放时读当前值
   notifySound: boolean;
   setNotifySound(v: boolean): void;
+
+  // 首页当前选中的项目路径（null = 未选中；独立 localStorage 键，跨重启保留）。
+  // easynew 与需求列表以它为默认投递目标，Home 卡片点击切换。
+  selectedProject: string | null;
+  setSelectedProject(path: string | null): void;
 }
 
 // clampLayout 把任意输入收敛到合法范围（拖动、持久化恢复、测试都走这里）。
@@ -475,6 +493,17 @@ export const useAppStore = create<AppState>()(
 
       notifySound: true,
       setNotifySound: (notifySound) => set({ notifySound }),
+
+      selectedProject: loadSelectedProject(),
+      setSelectedProject: (path) => {
+        set({ selectedProject: path });
+        try {
+          if (path === null) localStorage.removeItem(SELECTED_PROJECT_KEY);
+          else localStorage.setItem(SELECTED_PROJECT_KEY, path);
+        } catch {
+          // 写失败（隐私模式等）静默：内存态仍然可用
+        }
+      },
 
       focusTermKey: null,
       requestFocusTerm: (termKey) => set({ focusTermKey: { termKey, seq: nextFocusSeq++ } }),

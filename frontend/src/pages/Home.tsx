@@ -1,12 +1,14 @@
 // 首页：工作区/项目卡片网格（名称、git 徽标、会话数、最后活动时间、工具分布），
 // 按最后活动时间倒序 —— 从未用过（Go 零值时间）的 git 扫描工作区排最后，再按名称。
-// 点击整卡打开工作区页签；键盘可达（整卡是 button）。
+// 点击整卡切换「选中项目」（再点取消），供 easynew / 需求列表作默认目标；
+// 卡片 hover 出「打开开发页签」图标按钮，点击才真正开工作区页签；键盘可达（整卡是 button）。
 // 项目表操作：「新建项目 / 回收站 / 重新扫描」按钮内联在左列项目区顶部；
 // 卡片 hover 出删除按钮（逻辑删除）；
 // 「回收站」弹层列出已删除项目可逐项还原。删除/还原后工作区列表由事件驱动刷新。
 // 数据流：先渲染缓存（GetWorkspaces），再触发后台扫描，等 "scan:done" 后重调
 // GetWorkspaces 刷新（统一走一条取数路径，事件 payload 只当触发信号用）。
 import * as DialogPrimitive from '@radix-ui/react-dialog';
+import { SquareArrowOutUpRight } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import AgentHubPanel from '../components/AgentHubPanel';
@@ -27,10 +29,10 @@ import {
   type Workspace,
 } from '../lib/api';
 import { backendError } from '../lib/errors';
-import { dispatchRequirement } from '../lib/dispatchRequirement';
 import { formatRelativeTime } from '../lib/format';
 import { badgeFor } from '../lib/toolBadge';
 import { MONO } from '../lib/ui';
+import { sameWorkspacePath } from '../lib/workspacePath';
 import { SETTINGS_TAB_ID, useAppStore } from '../state/store';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
@@ -38,7 +40,7 @@ import { Dialog } from '../components/ui/dialog';
 import { EmptyState } from '../components/ui/empty-state';
 import { Skeleton } from '../components/ui/skeleton';
 import { ToolDot } from '../components/ui/tool-dot';
-import RequirementList, { REQUIREMENT_MIME } from '../components/RequirementList';
+import RequirementList from '../components/RequirementList';
 
 // 卡片工具分布最多展示的徽标数，其余折叠成 "+N"
 const TOOL_BADGES_MAX = 3;
@@ -117,6 +119,8 @@ export default function Home() {
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const notify = useAppStore((s) => s.notify);
   const unreachableWorkspaces = useAppStore((s) => s.unreachableWorkspaces);
+  const selectedProject = useAppStore((s) => s.selectedProject);
+  const setSelectedProject = useAppStore((s) => s.setSelectedProject);
 
   const [deleted, setDeleted] = useState<DeletedProject[]>([]);
   const [binOpen, setBinOpen] = useState(false);
@@ -130,8 +134,15 @@ export default function Home() {
   const filterRef = useRef<HTMLInputElement>(null);
   // 卡片分页：当前页（1 起）；检索词变化时回第 1 页
   const [page, setPage] = useState(1);
-  // 需求拖拽悬停高亮的工作区路径（null 表示无悬停）
-  const [dragOverWs, setDragOverWs] = useState<string | null>(null);
+
+  // 选中态失效清理：selectedProject 不在当前工作区列表（路径归一化后比较）则清除。
+  // 列表为空时跳过：工作区是异步加载的，避免启动瞬间把跨重启恢复的选中态误清。
+  useEffect(() => {
+    if (!selectedProject || workspaces.length === 0) return;
+    if (!workspaces.some((w) => sameWorkspacePath(w.Path, selectedProject))) {
+      setSelectedProject(null);
+    }
+  }, [workspaces, selectedProject, setSelectedProject]);
 
   const refresh = useCallback(() => {
     getWorkspaces()
@@ -315,33 +326,6 @@ export default function Home() {
       refreshDeleted();
     } catch (err) {
       notify(t('ui.home.restore_failed', { err: backendError(err) }), 'error');
-    }
-  };
-
-  // dropRequirement：接收需求条目拖放，解析自定义 MIME 后派发到该工作区。
-  // 无 MIME 数据（普通文件拖入）静默忽略；派发成功/失败都 notify。
-  const dropRequirement = async (wsPath: string, e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOverWs(null);
-    const raw = e.dataTransfer.getData(REQUIREMENT_MIME);
-    if (!raw) return;
-    let payload: { id?: string; text?: string };
-    try {
-      payload = JSON.parse(raw);
-    } catch {
-      return;
-    }
-    if (!payload.id || !payload.text) return;
-    try {
-      await dispatchRequirement(payload.id, payload.text, wsPath);
-      notify(t('ui.requirements.dispatch_ok', { name: baseName(wsPath) }), 'success');
-    } catch (err) {
-      // no_acp_tool 是可预期的业务失败，用专门文案；其余走通用失败
-      if ((err as Error)?.message === 'no_acp_tool') {
-        notify(t('ui.requirements.no_acp_tool'), 'error');
-      } else {
-        notify(t('ui.requirements.dispatch_failed', { err: backendError(err) }), 'error');
-      }
     }
   };
 
@@ -578,6 +562,7 @@ export default function Home() {
                   // 左缘色条取占比最高的工具色；无工具上下文（如纯 git 扫描工作区）用主色
                   const barColor = shown[0] ? badgeFor(shown[0][0]).color : 'var(--primary)';
                   const subtitle = cardSubtitle(ws, t);
+                  const isSelected = selectedProject !== null && sameWorkspacePath(selectedProject, ws.Path);
                   return (
                     <li
                       key={ws.Path}
@@ -586,24 +571,16 @@ export default function Home() {
                         animation: 'kshell-rise-in var(--duration-base) var(--ease-out) both',
                         animationDelay: `${Math.min(i, 10) * 30}ms`,
                       }}
-                      // 需求拖放目标：dragover 高亮、drop 派发（preventDefault 才允许 drop）
-                      onDragOver={(e) => {
-                        // types 在部分环境（旧 jsdom、非拖拽合成事件）可能缺失，防御性兜底
-                        if (!e.dataTransfer.types?.includes(REQUIREMENT_MIME)) return;
-                        e.preventDefault();
-                        setDragOverWs(ws.Path);
-                      }}
-                      onDragLeave={() => setDragOverWs((cur) => (cur === ws.Path ? null : cur))}
-                      onDrop={(e) => void dropRequirement(ws.Path, e)}
                     >
                       <button
                         className={`relative flex h-full w-full min-w-0 flex-col gap-1 rounded border bg-card px-2.5 py-2 text-left transition-[background-color,border-color,box-shadow,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:-translate-y-px hover:bg-muted hover:shadow-[var(--shadow-card)] ${
-                          dragOverWs === ws.Path
-                            ? 'border-primary ring-1 ring-primary/40'
+                          isSelected
+                            ? 'border-primary ring-2 ring-primary/40'
                             : 'border-border hover:border-primary/40'
                         }`}
-                        onClick={() => openTab(ws)}
+                        onClick={() => setSelectedProject(isSelected ? null : ws.Path)}
                         title={subtitle}
+                        aria-pressed={isSelected}
                       >
                         <span
                           aria-hidden="true"
@@ -647,7 +624,20 @@ export default function Home() {
                           </span>
                         )}
                       </button>
-                      {/* 删除按钮：绝对定位的兄弟节点（卡片本身是 button，不能嵌套），hover 显现 */}
+                      {/* 「打开开发页签」/ 删除按钮：绝对定位的兄弟节点（卡片本身是 button，不能嵌套），hover 显现 */}
+                      <button
+                        type="button"
+                        aria-label={t('ui.home.open_project')}
+                        title={t('ui.home.open_project')}
+                        className="absolute right-8 top-1 hidden rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground group-hover:block"
+                        onClick={(e) => {
+                          // 不触发卡片自身的选中切换
+                          e.stopPropagation();
+                          openTab(ws);
+                        }}
+                      >
+                        <SquareArrowOutUpRight className="h-3.5 w-3.5" />
+                      </button>
                       <button
                         type="button"
                         aria-label={t('ui.home.delete_project', { name: ws.Name })}

@@ -19,6 +19,7 @@ beforeEach(() => {
     notifySound: true,
     unreachableWorkspaces: {},
     lastAgentId: null,
+    selectedProject: null,
   });
 });
 
@@ -570,5 +571,36 @@ describe('chat 模型与技能命令状态', () => {
     useAppStore.getState().setChatCommands('c1', [{ Name: 'plan', Description: 'P', InputHint: '主题' }]);
     expect(useAppStore.getState().chatCommands.c1?.[0]?.Name).toBe('plan');
     expect(useAppStore.getState().chatCommands.c1?.[0]?.InputHint).toBe('主题');
+  });
+});
+
+describe('selectedProject', () => {
+  it('setSelectedProject 赋值并写入 localStorage（kshell.home.selectedProject）', () => {
+    useAppStore.getState().setSelectedProject('D:\\proj-a');
+    expect(useAppStore.getState().selectedProject).toBe('D:\\proj-a');
+    expect(localStorage.getItem('kshell.home.selectedProject')).toBe('D:\\proj-a');
+  });
+
+  it('setSelectedProject(null) 清空选中态并移除 localStorage 键', () => {
+    useAppStore.getState().setSelectedProject('D:\\proj-a');
+    useAppStore.getState().setSelectedProject(null);
+    expect(useAppStore.getState().selectedProject).toBeNull();
+    expect(localStorage.getItem('kshell.home.selectedProject')).toBeNull();
+  });
+
+  it('初始值从 localStorage 恢复（模块级单例，需 resetModules 后动态 import）', async () => {
+    localStorage.clear();
+    localStorage.setItem('kshell.home.selectedProject', 'D:\\proj-b');
+    vi.resetModules();
+    const fresh = await import('./store');
+    expect(fresh.useAppStore.getState().selectedProject).toBe('D:\\proj-b');
+  });
+
+  it('初始值：空串视为未选中（null），缺失键同样为 null', async () => {
+    localStorage.clear();
+    localStorage.setItem('kshell.home.selectedProject', '');
+    vi.resetModules();
+    const fresh = await import('./store');
+    expect(fresh.useAppStore.getState().selectedProject).toBeNull();
   });
 });
