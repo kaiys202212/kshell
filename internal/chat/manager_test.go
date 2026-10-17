@@ -1372,3 +1372,63 @@ func TestManagerActivityDoesNotResurrectExited(t *testing.T) {
 		t.Fatalf("exited 被活动更新复活: %+v", got)
 	}
 }
+
+// 重建（同 key 重开）后新会话必须继承旧会话的 Seq 水位：前端按 Seq 门控去重，
+// 旧 ID 的 chatSeq 已被抬到 k，重建后新事件若 Seq 从 1 重新计数会被全部丢弃
+//（时间线冻结）。非重放重建（sessionID 为空）agent 不会重推历史，继承旧 history
+// 让新事件续在旧时间线之后。
+func TestManagerReopenInheritsSeqWatermark(t *testing.T) {
+	m, b, c := newTestManager(t)
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	oldID := info.ID
+	// 推几条事件把 Seq 水位抬高
+	for i := 0; i < 3; i++ {
+		b.last.SessionUpdate("sess-new", json.RawMessage(
+			`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"x"}}`))
+	}
+	waitForUpdates(t, c, 3)
+	// 模拟进程退出后同 key 重开（降级新起，sessionID 为空）
+	b.conn.crash()
+	waitStatus(t, m, oldID, StatusExited)
+	info2, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if info2.ID == oldID {
+		t.Fatal("重建应产生新 ID")
+	}
+	// 重建后继承 history 与 Seq 水位：history 非空、下一事件 Seq > 旧水位
+	hist := m.History(info2.ID)
+	if len(hist) == 0 {
+		t.Fatal("重建会话应继承旧时间线")
+	}
+	lastSeq := hist[len(hist)-1].Seq
+	b.last.SessionUpdate("sess-new", json.RawMessage(
+		`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"after"}}`))
+	waitForUpdates(t, c, 4)
+	c.mu.Lock()
+	last := c.updates[len(c.updates)-1]
+	c.mu.Unlock()
+	if last.Seq <= lastSeq {
+		t.Fatalf("重建后事件 Seq 应续在旧水位之后: last=%d new=%d", lastSeq, last.Seq)
+	}
+}
+
+// waitForUpdates 等到 collector 收满 n 条更新（超时失败）。
+func waitForUpdates(t *testing.T, c *collector, n int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		got := len(c.updates)
+		c.mu.Unlock()
+		if got >= n {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("超时未等到 %d 条更新", n)
+}

@@ -41,6 +41,10 @@ type Info struct {
 	Error     string
 	// Prompted 表示用户已发送过一条消息（新建会话据此立刻进列表、改标题）。
 	Prompted bool
+	// Rebuilt 是重建标记，仅经 chat:meta 推送时为 true：前端收到后须重置该 ID
+	// 的 Seq 门控并重拉 ChatHistory（重建会话的时间线换了基准，旧门控会误丢新事件）。
+	// 常规 List/Open 返回恒为 false。
+	Rebuilt bool
 	// KnownSessionIDs 仅新建会话使用：打开瞬间已有的磁盘会话，不进 JSON。
 	KnownSessionIDs []string `json:"-"`
 }

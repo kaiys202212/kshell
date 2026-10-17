@@ -298,6 +298,8 @@ export interface ChatInfo {
   Error: string;
   /** 用户已发送过消息；新建会话据此立刻出现在列表里 */
   Prompted?: boolean;
+  /** 重建标记：仅 chat:meta 推送可能为 true，前端须重置该 ID 的 Seq 门控并重拉历史 */
+  Rebuilt?: boolean;
 }
 
 export interface ChatToolCall {

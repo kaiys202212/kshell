@@ -322,6 +322,20 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 		openedAt:      time.Now(),
 		knownIDs:      map[string]bool{},
 	}
+	// 重建场景（同 key 的旧会话已退出被摘除）按「新会话是否重放历史」分流：
+	//  - 不重放（sessionID 为空：KindNew 新起 / KindSession 降级按工作区新起）：
+	//    agent 不会重推历史，前端时间线里的旧事件就是全部上下文，继承旧 history
+	//    与 Seq 水位让新事件续在旧时间线之后（Seq 从 0 重启会被前端
+	//    「Seq <= last 丢弃」门控吞掉，时间线冻结）。
+	//  - 重放（session/load）：agent 会重推历史分片，继承旧时间线会导致整段
+	//    重复——此时 fresh 起步，由重建方 emit chat:meta(Rebuilt) 通知前端重置
+	//    Seq 门控并重拉 ChatHistory。
+	if ok && sessionID == "" {
+		s.seq = old.seq
+		s.history = old.history
+		s.autoSeq = old.autoSeq
+		s.lastType = old.lastType
+	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.handler = &sessionHandler{m: m, id: s.id}
 	s.info.ID = s.id

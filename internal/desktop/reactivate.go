@@ -58,6 +58,16 @@ func (a *App) rebuildChat(m *chat.Manager, info chat.Info) (string, error) {
 					return "", fmt.Errorf("err.chat.rebuild_failed|%w", err)
 				}
 				a.rememberChatAlias(info.ID, out.ID)
+				// resume 会重放历史分片（manager 侧 fresh 起步、Seq 从头计数），
+				// 前端旧 ID 的 Seq 门控已抬高，必须通知重置并重拉 ChatHistory，
+				// 否则重放与后续新事件全被门控丢弃（时间线冻结）。Rebuilt 只在
+				// 此处为 true；重放基准换血也是前端唯一可信的重建信号。
+				// 注意返回值必须是新 ID（manager 只认它，调用方靠它投递），
+				// chat:meta 里才翻回旧 ID（前端索引空间）。
+				meta := out
+				meta.ID = info.ID
+				meta.Rebuilt = true
+				a.Emit("chat:meta", meta)
 				return out.ID, nil
 			}
 		}
@@ -173,18 +183,24 @@ func (a *App) rememberChatAlias(oldID, newID string) {
 	a.chatAliases[oldID] = newID
 }
 
-// forgetChatChain 清理别名表中指向被关会话链的全部条目（含以被关 ID 为
-// 起点/终点的环段）：CloseChat 成功后调用。别名只服务「重建后继续投递」，
-// 页签关掉意味着前端不再持有该链的任何 ID，残留会把已关会话误判成存活。
+// forgetChatChain 清理别名表中指向被关会话链的全部条目：CloseChat 成功后调用。
+// 别名只服务「重建后继续投递」，页签关掉意味着前端不再持有该链的任何 ID，
+// 残留会把已关会话误判成存活。先收集要删的键再统一删：边遍历边 delete 虽然在
+// Go map 语义上安全，但删掉的条目不再参与后续 originalChatIDLocked 回溯，
+// 链式重建（旧→新→更新）时后段会因前段被删而回溯断链、漏删。
 func (a *App) forgetChatChain(id string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	original := a.originalChatIDLocked(id)
+	// 链上所有键都指向同一链头（originalChatIDLocked 沿值回溯），用值域归因
+	// 即可整链清除：k 是旧 ID、v 是下一环，同链则 v 回溯回 original。
+	var doomed []string
 	for k, v := range a.chatAliases {
-		// 链上所有键都指向同一链头（originalChatIDLocked 沿值回溯），
-		// 用值域归因即可整链清除：k 是旧 ID、v 是下一环，同链则 v 回溯回 original。
 		if original == k || a.originalChatIDLocked(v) == original {
-			delete(a.chatAliases, k)
+			doomed = append(doomed, k)
 		}
+	}
+	for _, k := range doomed {
+		delete(a.chatAliases, k)
 	}
 }

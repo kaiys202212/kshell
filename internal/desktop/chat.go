@@ -51,14 +51,14 @@ func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, aut
 			emit("chat:update", map[string]any{"id": translate(id), "update": u})
 			switch u.Type {
 			case "turn_done":
-				emitChatNotify(emit, m, id, turnEvent(u.StopReason), stopFallback(u.StopReason), dedupe, onAgent, nil)
+				emitChatNotify(emit, m, id, turnEvent(u.StopReason), stopFallback(u.StopReason), dedupe, onAgent, origID)
 			case "error":
-				emitChatNotify(emit, m, id, "error", u.Text, dedupe, onAgent, nil)
+				emitChatNotify(emit, m, id, "error", u.Text, dedupe, onAgent, origID)
 			}
 		},
 		func(id string, r chat.PermissionRequest) {
 			emit("chat:permission", map[string]any{"id": translate(id), "request": r})
-			emitChatNotify(emit, m, id, "Notification", r.ToolCall.Title, dedupe, onAgent, nil)
+			emitChatNotify(emit, m, id, "Notification", r.ToolCall.Title, dedupe, onAgent, origID)
 		},
 		func(id string, code int, errMsg string) {
 			emit("chat:exit", map[string]any{"id": translate(id), "exitCode": code, "error": errMsg})
@@ -137,8 +137,9 @@ func lastAssistantText(h []chat.Update) string {
 // 权限请求本身仍经 chat:permission 推给前端弹窗，不影响交互。
 // onAgent 非 nil 时在放行后落 AgentHub 历史（与 hook 通道共用同一写入路径）。
 // 回调总在 Manager 锁外执行，Get 取锁安全。
-// ChatID 翻回原始 ID（前端归因空间），与出站事件同一口径。
-func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, event, summary string, allow func(agenthook.Payload) bool, onAgent func(agenthook.Payload), a *App) {
+// chatID 翻回原始 ID（前端归因空间），与出站事件同一口径；origID 为 nil 时恒等
+//（测试装配不关心别名链）。
+func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, event, summary string, allow func(agenthook.Payload) bool, onAgent func(agenthook.Payload), origID func(string) string) {
 	if m == nil {
 		return
 	}
@@ -153,8 +154,8 @@ func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, ev
 		summary = "ui.notify.turn_stopped_reason"
 	}
 	chatID := info.ID
-	if a != nil {
-		chatID = a.originalChatID(info.ID)
+	if origID != nil {
+		chatID = origID(info.ID)
 	}
 	p := agenthook.Payload{
 		Tool:      info.ToolID,
@@ -535,12 +536,20 @@ func (a *App) CloseChat(id string) error {
 }
 
 // ListChats 返回全部聊天会话快照，供前端还原页签。
+// 每条 Info.ID 统一翻回别名链头：前端镜像按 ID 整表映射（scan:done 后
+// setChats(mergeMirrorList)），manager 侧新 ID 不翻译的话旧 ID 行会被当成
+// 陌生行丢弃，重建过的页签直接消失。调用方（前端还原页签 / 归因反查）都以
+// 旧 ID 空间为索引，无需要新 ID 的场景。
 func (a *App) ListChats() []chat.Info {
 	m := a.chats()
 	if m == nil {
 		return []chat.Info{}
 	}
-	return m.List()
+	list := m.List()
+	for i := range list {
+		list[i].ID = a.originalChatID(list[i].ID)
+	}
+	return list
 }
 
 // ChatHistory 返回指定聊天的完整时间线（已退出的会话仍可读）。

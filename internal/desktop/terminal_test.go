@@ -176,6 +176,8 @@ type eventLog struct {
 type capturedEvent struct {
 	name    string
 	payload map[string]any
+	// raw 是单参数非 map 形态的原始值（如 chat:meta 直接 Emit 结构体），供测试断言。
+	raw any
 }
 
 func newEventLog() *eventLog { return &eventLog{ch: make(chan capturedEvent, 32)} }
@@ -185,6 +187,8 @@ func (l *eventLog) emit(name string, data ...any) {
 	if len(data) == 1 {
 		if m, ok := data[0].(map[string]any); ok {
 			ev.payload = m
+		} else {
+			ev.raw = data[0]
 		}
 	}
 	l.mu.Lock()

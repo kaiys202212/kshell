@@ -141,13 +141,20 @@ function App() {
     // 仅在某 chat 的「历史回放窗口」内缓冲其实时更新：chat:update 可能先于 chatHistory 到达，
     // 其高 Seq 会抢先抬高 chatSeq，导致随后回放的历史前缀被去重丢弃。
     // 窗口外的更新立即应用——尤其挂载后才新建的聊天，绝不能因为没有初始 listChats 条目而被永久缓冲。
+    // pendingRebuild 是重建重拉窗口（onChatMeta Rebuilt 标记开启），与种子窗口同一竞态语义。
     const pending = new Map<string, ChatUpdate[]>();
     // 流式分片节流：agent 高频输出（实测 50-60 事件/秒 × 多会话）会让长文本
     // markdown 全量重渲染打满主线程、页面假死。文本分片微批合并 ~100ms flush，
     // tool/plan/turn_done/error 等结构化事件不节流。chat 关闭/退出时丢弃缓冲。
     const throttle = createChatThrottle((id, u) => useAppStore.getState().applyChat(id, u as ChatUpdate));
     throttleDropRef.current = throttle.drop;
+    const pendingRebuild = new Map<string, ChatUpdate[]>();
     const offU = onChatUpdate(({ id, update }) => {
+      const rebuildBuf = pendingRebuild.get(id);
+      if (rebuildBuf) {
+        rebuildBuf.push(update);
+        return;
+      }
       const buf = pending.get(id);
       if (buf) {
         // 历史回放种子窗口内有意绕过节流器：窗口极短（单次 history await），
@@ -184,6 +191,29 @@ function App() {
     const offC = onChatCommands(({ id, commands }) => {
       useAppStore.getState().setChatCommands(id, commands);
     });
+    // 会话重建标记（Rebuilt，随 chat:meta 推送）：重建会话的时间线换了基准
+    //（manager 侧 fresh 起步、Seq 从头计数），旧 Seq 门控会把重放与新事件当重复
+    // 丢弃——先清时间线与 Seq 再重拉 ChatHistory 重建基准。重拉期间缓冲该 chat
+    // 的实时更新（pendingRebuild），与挂载种子窗口同一竞态处理。
+    // 镜像行的常规 upsert 仍由下方 meta 订阅负责（剥掉 Rebuilt 瞬时标记）。
+    const offM = onChatMeta((info) => {
+      if (!info.Rebuilt) return;
+      const buf: ChatUpdate[] = [];
+      pendingRebuild.set(info.ID, buf);
+      useAppStore.getState().setChatItems(info.ID, []);
+      void chatHistory(info.ID)
+        .then((hist) => {
+          useAppStore.getState().setChatItems(
+            info.ID,
+            hist.reduce((acc, u) => applyChatUpdate(acc, u), [] as TimelineItem[]),
+          );
+        })
+        .catch(() => {})
+        .finally(() => {
+          pendingRebuild.delete(info.ID);
+          for (const u of buf) useAppStore.getState().applyChat(info.ID, u);
+        });
+    });
 
     void listChats()
       .then(async (list) => {
@@ -207,6 +237,7 @@ function App() {
       offP();
       offX();
       offC();
+      offM();
       throttle.dispose();
     };
   }, []);
@@ -230,8 +261,10 @@ function App() {
 
   useEffect(() => {
     // 用户一提交，Go 就改标题并打上 Prompted；这里立刻写进镜像，不必等下一轮扫描。
+    // Rebuilt 重建标记由聊天事件总线 effect 处理（重置 Seq 门控并重拉历史），
+    // 这里统一剥掉标记：镜像行不携带瞬时状态，避免后续 upsert 把它当新信号。
     const offTerm = onTerminalMeta((info) => useAppStore.getState().upsertTerminal(info));
-    const offChat = onChatMeta((info) => useAppStore.getState().upsertChat(info));
+    const offChat = onChatMeta((info) => useAppStore.getState().upsertChat({ ...info, Rebuilt: false }));
     const offSuggest = onArchiveSuggest((p) => useAppStore.getState().setArchivePrompt(p));
     const refreshArchived = () => {
       void archivedIDs()

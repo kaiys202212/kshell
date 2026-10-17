@@ -539,3 +539,36 @@ func TestRecordHubAgentMessageTerminalSessionTitle(t *testing.T) {
 		t.Fatalf("终端通道不应设 ChatID，得到 %q", msgs[0].ChatID)
 	}
 }
+
+// 重建后 agent 回复落盘 ChatID 必须是链头（旧 ID）：出站翻译把通知 ChatID 翻回
+// 原始 ID，recordHubAgentMessage 反查 manager 拿到的是最新 ID，直接落盘会指向
+// 前端不认识的新 ID，hub 归因断线。
+func TestRecordHubAgentMessageLandsOnChainHead(t *testing.T) {
+	b := &recordingBackend{}
+	a, store, rec := newHubTestApp(t)
+	m := newChatManagerWith(rec.emit, b, nil, nil, a.recordHubAgentMessage, a.originalChatID)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	oldID := info.ID
+	// 构造别名链：old→new（模拟重建），出站通知带旧 ID
+	a.rememberChatAlias(oldID, "c-fake-new")
+
+	a.recordHubAgentMessage(agenthook.Payload{
+		Tool: "claude", Event: "done", TermKey: "session:s1", Workspace: "D:/w",
+		ChatID: oldID, Summary: "回复",
+	})
+	msgs := store.List()
+	if len(msgs) != 1 {
+		t.Fatalf("应落 1 条, got %d", len(msgs))
+	}
+	if msgs[0].ChatID != oldID {
+		t.Fatalf("agent 消息 ChatID 应落链头 %s, got %q", oldID, msgs[0].ChatID)
+	}
+}

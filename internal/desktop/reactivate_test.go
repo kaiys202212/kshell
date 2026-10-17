@@ -472,3 +472,75 @@ func waitPromptText(t *testing.T, c *recordingConn, text string) {
 	}
 	t.Fatalf("超时未等到 prompt %q, got %v", text, c.promptTexts())
 }
+
+// TestListChatsTranslatesToOriginalID 重建后 ListChats 只含旧 ID：前端镜像按 ID
+// 整表映射（scan:done 后 setChats），manager 侧新 ID 不翻回链头的话旧 ID 行会被
+// 当陌生行丢弃，重建过的页签直接消失。
+func TestListChatsTranslatesToOriginalID(t *testing.T) {
+	b := &recordingBackend{}
+	app := newReactivateTestApp(t, b)
+	m := app.chats()
+
+	opened, err := app.OpenSessionACP("s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	oldID := opened.Chat.ID
+	exitChatConn(t, m, oldID, b.connAt(0))
+	if err := app.SendChatPrompt(oldID, "唤醒"); err != nil {
+		t.Fatalf("SendChatPrompt: %v", err)
+	}
+	waitPromptText(t, b.connAt(1), "唤醒")
+
+	ids := map[string]bool{}
+	for _, c := range app.ListChats() {
+		ids[c.ID] = true
+	}
+	if len(ids) != 1 || !ids[oldID] {
+		t.Fatalf("重建后 ListChats 应只含旧 ID %s, got %v", oldID, ids)
+	}
+}
+
+// TestRebuildEmitsChatMetaRebuilt resume 重建后应 emit chat:meta(Rebuilt=true) 且
+// ID 翻回旧 ID：前端据此重置 Seq 门控并重拉 ChatHistory（重放基准换血）。
+func TestRebuildEmitsChatMetaRebuilt(t *testing.T) {
+	b := &recordingBackend{}
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "claude-agent-acp",
+	}, b)
+	app := env.app
+	m := app.chats()
+
+	opened, err := app.OpenSessionACP("s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	oldID := opened.Chat.ID
+	exitChatConn(t, m, oldID, b.connAt(0))
+	if err := app.SendChatPrompt(oldID, "唤醒"); err != nil {
+		t.Fatalf("SendChatPrompt: %v", err)
+	}
+	waitPromptText(t, b.connAt(1), "唤醒")
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		found := false
+		for _, ev := range env.events.all() {
+			if ev.name != "chat:meta" {
+				continue
+			}
+			info, ok := ev.raw.(chat.Info)
+			if !ok || info.ID != oldID {
+				continue
+			}
+			if info.Rebuilt {
+				found = true
+			}
+		}
+		if found {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("重建后未收到 chat:meta(旧ID, Rebuilt=true)")
+}

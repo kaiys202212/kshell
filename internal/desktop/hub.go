@@ -211,12 +211,15 @@ func (a *App) recordHubAgentMessage(p agenthook.Payload) {
 		if p.ChatID != "" {
 			// 入站 ChatID 可能是链头（出站翻译后的原始 ID，已不在 manager）：
 			// 先按别名链解析到最新再反查；解析不到仍按原值试一次。
+			// 落盘 ChatID 统一翻回链头（与 user 消息同一口径）：前端 hub 归因、
+			// 撤回、状态过滤都按落盘 ID 索引，混入 manager 侧新 ID 会让重建后的
+			// agent 回复归因到一条前端不认识的聊天上。
 			resolved, ok := a.resolveChatID(p.ChatID)
 			if !ok {
 				resolved = p.ChatID
 			}
 			if info, ok := mgr.Get(resolved); ok {
-				m.ChatID = info.ID
+				m.ChatID = a.originalChatID(info.ID)
 				m.SessionTitle = info.Title
 			}
 		}
@@ -225,7 +228,7 @@ func (a *App) recordHubAgentMessage(p agenthook.Payload) {
 				if info.Key == p.TermKey {
 					m.SessionTitle = info.Title
 					if m.ChatID == "" {
-						m.ChatID = info.ID
+						m.ChatID = a.originalChatID(info.ID) // 同口径：链头
 					}
 					break
 				}
@@ -259,7 +262,7 @@ func (a *App) recordHubWelcome(info chat.Info) {
 	}
 	a.recordHubMessage(hub.Message{
 		Kind:         "agent",
-		ChatID:       info.ID,
+		ChatID:       a.originalChatID(info.ID), // 欢迎词同样落链头（info 通常刚打开，恒等）
 		Tool:         info.ToolID,
 		TermKey:      info.Key,
 		Workspace:    info.Workspace,
