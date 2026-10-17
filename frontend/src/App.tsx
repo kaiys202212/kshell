@@ -3,7 +3,9 @@
 // 文件树展开态、SSH 状态、内嵌终端（xterm 缓冲与焦点）都不会丢。
 // 终端事件总线在这里建立一次：terminal:data → 注册表分发到已挂载的 xterm，
 // terminal:exit → 更新镜像并提示；Go 侧每会话保留 256KiB 环形缓冲兜住未挂载期间的输出。
-// 全局快捷键：Ctrl+K 打开快速切换器，Ctrl+F 在工作区页签内派发 kshell:focus-search。
+// 全局快捷键：键位表与分发逻辑收敛在 lib/keybindings，此处只注入动作
+//（Ctrl+K 切换器 / Ctrl+F 聚焦搜索 / Ctrl+1..9、Ctrl+Tab 切页签 / Ctrl+W 关页签 /
+// Ctrl+0、Ctrl+T 回首页 / F1 帮助面板）。
 import { useCallback, useEffect, useRef, useState } from 'react';
 import i18n from 'i18next';
 import {
@@ -42,6 +44,7 @@ import type { ChatUpdate, UpdateInfo } from './lib/api';
 import { encodeTerminalInput } from './lib/base64';
 import { appendChatInput } from './lib/chatInputRegistry';
 import { quotePathForShell } from './lib/dragPath';
+import { handleGlobalKey } from './lib/keybindings';
 import { OnFileDrop, OnFileDropOff } from '../wailsjs/runtime/runtime';
 import { handleAnchorClick } from './lib/openHref';
 import { eventLabel } from './lib/agentNotify';
@@ -73,6 +76,8 @@ function App() {
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const closeTab = useAppStore((s) => s.closeTab);
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  // 帮助面板（F1）：仅此一处使用，局部 state 即可，不入全局 store
+  const [helpOpen, setHelpOpen] = useState(false);
   const archivePrompt = useAppStore((s) => s.archivePrompt);
   const [updatePrompt, setUpdatePrompt] = useState<UpdateInfo | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
@@ -362,34 +367,54 @@ function App() {
   }, []);
 
   useEffect(() => {
-    // 单一全局 keydown：window 级监听不受输入框焦点影响（输入框聚焦时 Ctrl+K 仍触发），
-    // preventDefault 压掉浏览器/WebView 的默认快捷语义
+    // 单一全局 keydown：window 级监听不受输入框焦点影响；退让规则与匹配都收敛在
+    // handleGlobalKey（defaultPrevented 退让、xterm 聚焦分级），此处只注入动作。
+    // store 数据经 getState 现取现用，监听器只挂一次、不随页签变化重挂。
     const onKey = (e: KeyboardEvent) => {
-      // CodeMirror 查找面板等组件已处理的按键（Ctrl+F 打开编辑器检索）在此退让
-      if (e.defaultPrevented) return;
-      if (!e.ctrlKey) return;
-      // 终端聚焦时让行：xterm 已把按键（含 Ctrl+K 的 kill-line 语义）写入 pty，
-      // 全局快捷键再触发就是一次按键双效应（shell 收键 + 切换器弹出）。
-      const el = document.activeElement as HTMLElement | null;
-      if (el && el.closest('.xterm')) return;
-      if (e.key === 'k' || e.key === 'K') {
-        e.preventDefault();
-        setSwitcherOpen((v) => !v); // toggle：已打开时再按关闭
-      } else if (e.key === 'f' || e.key === 'F') {
-        e.preventDefault();
-        const { activeTabId: current } = useAppStore.getState();
-        if (current !== null && current !== SETTINGS_TAB_ID) {
-          // cancelable：Markdown 预览可见时优先消费（打开其检索工具条）
-          window.dispatchEvent(new CustomEvent('kshell:focus-search', { cancelable: true }));
-        } else if (current === null) {
-          // 首页：聚焦工作区过滤框
-          window.dispatchEvent(new CustomEvent('kshell:focus-home-filter'));
-        }
-      }
+      handleGlobalKey(e, {
+        switchToTab: (n) => {
+          const { openTabs } = useAppStore.getState();
+          const tab = openTabs[n - 1]; // n 从 1 起，越界（无第 N 个页签）忽略
+          if (tab) setActiveTab(tab.id);
+        },
+        nextTab: () => {
+          const { openTabs, activeTabId: cur } = useAppStore.getState();
+          if (openTabs.length === 0) return;
+          // 首页（null）视为第 -1 项：next 落到第一个页签
+          const idx = openTabs.findIndex((t) => t.id === cur);
+          setActiveTab(openTabs[(idx + 1) % openTabs.length].id);
+        },
+        prevTab: () => {
+          const { openTabs, activeTabId: cur } = useAppStore.getState();
+          if (openTabs.length === 0) return;
+          // 首页 findIndex 得 -1：(-1-1) 取模落到最后一个页签
+          const idx = openTabs.findIndex((t) => t.id === cur);
+          setActiveTab(openTabs[(idx - 1 + openTabs.length) % openTabs.length].id);
+        },
+        closeActiveTab: () => {
+          const { activeTabId: cur } = useAppStore.getState();
+          // 首页与设置页没有可关的工作区内容，忽略
+          if (cur === null || cur === SETTINGS_TAB_ID) return;
+          handleCloseTab(cur);
+        },
+        goHome: () => setActiveTab(null),
+        toggleSwitcher: () => setSwitcherOpen((v) => !v),
+        focusSearch: () => {
+          const { activeTabId: current } = useAppStore.getState();
+          if (current !== null && current !== SETTINGS_TAB_ID) {
+            // cancelable：Markdown 预览可见时优先消费（打开其检索工具条）
+            window.dispatchEvent(new CustomEvent('kshell:focus-search', { cancelable: true }));
+          } else if (current === null) {
+            // 首页：聚焦工作区过滤框
+            window.dispatchEvent(new CustomEvent('kshell:focus-home-filter'));
+          }
+        },
+        toggleHelp: () => setHelpOpen((v) => !v),
+      });
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [setActiveTab, handleCloseTab]);
 
   useEffect(() => {
     // 捕获阶段拦截 <a>：阻止 WebView 整页导航，改走系统打开或工作区文件。
