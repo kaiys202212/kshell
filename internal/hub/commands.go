@@ -31,6 +31,9 @@ type Executor interface {
 	ListSessions() []SessionRef
 	CurrentSession() (SessionRef, bool)
 	SwitchTo(chatID string) error
+	// OpenSession 打开一个尚未激活的磁盘会话（SessionID 非空时有效），返回可投递的引用。
+	// 已激活的会话直接返回现状。实现方负责激活（desktop 走 OpenSessionACP）。
+	OpenSession(sessionID string) (SessionRef, error)
 	EasyNew() (SessionRef, error)
 	NewMenuOptions() (tools, workspaces, models []MenuOption)
 	CreateNew(toolID, wsID, model string) (SessionRef, error)

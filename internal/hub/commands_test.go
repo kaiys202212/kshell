@@ -34,13 +34,16 @@ type fakeExecutor struct {
 	sendErr        error
 	grantErr       error
 	status         ConsoleStatus
+	openSessionRef SessionRef
+	openSessionErr error
 	// 记录调用参数
-	switchCalls   []string
-	createCalls   [][3]string // tool, ws, model
-	stopCalls     []string
-	setModelCalls [][2]string
-	sendCalls     [][2]string // chatID, text
-	grantCalls    [][3]string // chatID, reqID, allow
+	switchCalls      []string
+	openSessionCalls []string
+	createCalls      [][3]string // tool, ws, model
+	stopCalls        []string
+	setModelCalls    [][2]string
+	sendCalls        [][2]string // chatID, text
+	grantCalls       [][3]string // chatID, reqID, allow
 }
 
 func (f *fakeExecutor) ListSessions() []SessionRef { return f.listSessions }
@@ -52,6 +55,14 @@ func (f *fakeExecutor) CurrentSession() (SessionRef, bool) {
 func (f *fakeExecutor) SwitchTo(chatID string) error {
 	f.switchCalls = append(f.switchCalls, chatID)
 	return f.switchErr
+}
+
+func (f *fakeExecutor) OpenSession(sessionID string) (SessionRef, error) {
+	f.openSessionCalls = append(f.openSessionCalls, sessionID)
+	if f.openSessionErr != nil {
+		return SessionRef{}, f.openSessionErr
+	}
+	return f.openSessionRef, nil
 }
 
 func (f *fakeExecutor) EasyNew() (SessionRef, error) { return f.easyNewRef, f.easyNewErr }
@@ -617,5 +628,71 @@ func TestEmptyInput(t *testing.T) {
 	c := NewConsole(&fakeExecutor{})
 	if got := c.Handle("   "); len(got) != 0 {
 		t.Fatalf("空输入应返回空: %v", got)
+	}
+}
+
+// #l 列出的未激活磁盘会话（ChatID 空、SessionID 非空）用数字切换时，
+// 必须走 OpenSession 激活而非 SwitchTo；成功后 current 更新为返回的新 ref。
+func TestSwitchInactiveSessionOpensSession(t *testing.T) {
+	fe := &fakeExecutor{
+		listSessions: []SessionRef{
+			wsRef(0, "c1", "s1", `D:\ws\a`, "claude", "活跃会话", false),
+			wsRef(0, "", "s2", `D:\ws\b`, "codex", "磁盘会话", false),
+		},
+		hasCurrent:     true,
+		currentSession: wsRef(0, "c1", "s1", `D:\ws\a`, "claude", "活跃会话", true),
+		openSessionRef: wsRef(0, "c9", "s2", `D:\ws\b`, "codex", "磁盘会话", false),
+	}
+	c := NewConsole(fe)
+	if got := join(c.Handle("#l")); !strings.Contains(got, "2. [b] codex 磁盘会话") {
+		t.Fatalf("列表应含未激活会话: %q", got)
+	}
+	out := join(c.Handle("2"))
+	if len(fe.openSessionCalls) != 1 || fe.openSessionCalls[0] != "s2" {
+		t.Fatalf("未激活会话应走 OpenSession(s2)，实际 open=%v switch=%v",
+			fe.openSessionCalls, fe.switchCalls)
+	}
+	if len(fe.switchCalls) != 0 {
+		t.Fatalf("未激活会话不得走 SwitchTo: %v", fe.switchCalls)
+	}
+	if !strings.Contains(out, "已切换") {
+		t.Fatalf("OpenSession 成功应回已切换: %q", out)
+	}
+	// current 更新为返回的新 ref：#s 应命中新 chatID c9。
+	c.Handle("#s")
+	if len(fe.stopCalls) != 1 || fe.stopCalls[0] != "c9" {
+		t.Fatalf("切换后 current 应为 OpenSession 返回的 ref: %v", fe.stopCalls)
+	}
+}
+
+// OpenSession 失败回「切换失败」，current 不变（fake 无预置 current，保持零值）。
+func TestOpenSessionFailure(t *testing.T) {
+	fe := &fakeExecutor{
+		listSessions:   []SessionRef{wsRef(0, "", "s2", `D:\ws\b`, "codex", "磁盘会话", false)},
+		openSessionErr: errors.New("session gone"),
+	}
+	c := NewConsole(fe)
+	c.Handle("#l")
+	out := join(c.Handle("1"))
+	if !strings.Contains(out, "切换失败") {
+		t.Fatalf("OpenSession 失败应回切换失败: %q", out)
+	}
+	if c.hasCurrent {
+		t.Fatalf("失败不得改写 current: %+v", c.current)
+	}
+}
+
+// SetCurrent 显式注入上下文后，普通文本直接发给该 ChatID（不等 refreshCurrent）。
+func TestSetCurrentDirectsPlainText(t *testing.T) {
+	fe := &fakeExecutor{
+		listSessions: []SessionRef{wsRef(0, "c1", "", "", "claude", "A", false)},
+	}
+	c := NewConsole(fe)
+	c.SetCurrent(wsRef(0, "c-injected", "s-x", `D:\ws\c`, "gemini", "注入会话", false))
+	if got := c.Handle("你好"); len(got) != 0 {
+		t.Fatalf("注入后普通文本发送成功不应回显: %v", got)
+	}
+	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c-injected", "你好"} {
+		t.Fatalf("Send 应收到 SetCurrent 的 ChatID: %v", fe.sendCalls)
 	}
 }

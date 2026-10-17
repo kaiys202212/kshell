@@ -62,6 +62,13 @@ func NewConsole(ex Executor) *Console {
 	return &Console{ex: ex}
 }
 
+// SetCurrent 显式设置当前会话上下文（渠道初始化时由装配方调用：
+// 微信桥用配置里记住的上次会话，桌面端用 hub 最后活跃会话）。
+func (c *Console) SetCurrent(ref SessionRef) {
+	c.current = ref
+	c.hasCurrent = true
+}
+
 // OpenPermissionMenu 由渠道层在收到权限请求事件时调用（微信桥/桌面端均可），
 // 之后的「1」/「2」输入被解释为允许/拒绝；回显由调用方处理。权限菜单
 // 只拦截数字回复，其余输入照常走命令与转发流程。
@@ -217,17 +224,35 @@ func (c *Console) handleList(all bool) []Reply {
 	return single(strings.Join(lines, "\n"))
 }
 
+// activateRef 把编号映射里的会话切为当前上下文：未激活的磁盘会话
+//（ChatID 空、SessionID 非空）走 OpenSession 激活，已激活的走 SwitchTo。
+// 成功后 current 更新为实际可投递的 ref（OpenSession 返回新 ChatID）。
+func (c *Console) activateRef(ref SessionRef) error {
+	if ref.ChatID == "" && ref.SessionID != "" {
+		newRef, err := c.ex.OpenSession(ref.SessionID)
+		if err != nil {
+			return err
+		}
+		if newRef.ChatID != "" {
+			ref = newRef // 用激活后的可投递引用覆盖（含新 ChatID）
+		}
+	} else if err := c.ex.SwitchTo(ref.ChatID); err != nil {
+		return err
+	}
+	c.current = ref
+	c.hasCurrent = true
+	return nil
+}
+
 // switchByNumber 处理无菜单时的纯数字输入：按上次列表映射切换。
 func (c *Console) switchByNumber(n int) []Reply {
 	ref, ok := c.refByNum(n)
 	if !ok {
 		return single(msgNoMapping)
 	}
-	if err := c.ex.SwitchTo(ref.ChatID); err != nil {
+	if err := c.activateRef(ref); err != nil {
 		return single(fmt.Sprintf(msgSwitchFailed, err))
 	}
-	c.current = ref
-	c.hasCurrent = true
 	return single(formatCreated("已切换", ref))
 }
 
@@ -305,11 +330,9 @@ func (c *Console) handleMenuNumber(n int) []Reply {
 	case menuSearch:
 		c.menu = nil
 		ref := menu.results[n-1]
-		if err := c.ex.SwitchTo(ref.ChatID); err != nil {
+		if err := c.activateRef(ref); err != nil {
 			return single(fmt.Sprintf(msgSwitchFailed, err))
 		}
-		c.current = ref
-		c.hasCurrent = true
 		return single(formatCreated("已切换", ref))
 	}
 	c.menu = nil
