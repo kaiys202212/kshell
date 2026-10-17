@@ -24,7 +24,12 @@ import (
 func newChatManager(a *App) *chat.Manager {
 	m := newChatManagerWith(a.emitChatOut, chat.RealBackend{}, func() bool {
 		return a.snapshot().Config.PermissionMode == config.PermissionModeBypass
-	}, a.notifyDedupAllow, a.recordHubAgentMessage, a.originalChatID)
+	}, a.notifyDedupAllow, a.recordHubAgentMessage, a.originalChatID,
+		func(chatID, reqID, desc string) { // 微信桥权限菜单联动
+			if r := a.wxRuntime(); r != nil && r.HasBridge() {
+				r.GetBridge().OpenPermissionMenu(chatID, reqID, desc)
+			}
+		})
 	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
 	return m
 }
@@ -38,7 +43,9 @@ func newChatManager(a *App) *chat.Manager {
 // 转成 notify:agent 通知（与 hook 通道同一 payload 结构、同一条气泡路径）。
 // origID 把 manager 侧会话 ID 翻回前端持有的原始 ID（nil 为恒等，测试用）：
 // 重建换 ID 后前端仍按旧 ID 索引，出站事件必须统一翻译（见 emitChatOut）。
-func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, autoAllow func() bool, dedupe func(agenthook.Payload) bool, onAgent func(agenthook.Payload), origID func(string) string) *chat.Manager {
+// onWxPermission 非 nil 时权限请求同步转发给微信桥的命令层权限菜单
+//（nil 安全：测试装配不传；desktop 装配传闭包，运行时内部再判桥是否存在）。
+func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, autoAllow func() bool, dedupe func(agenthook.Payload) bool, onAgent func(agenthook.Payload), origID func(string) string, onWxPermission func(chatID, reqID, desc string)) *chat.Manager {
 	translate := func(id string) string {
 		if origID == nil {
 			return id
@@ -59,6 +66,9 @@ func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, aut
 		func(id string, r chat.PermissionRequest) {
 			emit("chat:permission", map[string]any{"id": translate(id), "request": r})
 			emitChatNotify(emit, m, id, "Notification", r.ToolCall.Title, dedupe, onAgent, origID)
+			if onWxPermission != nil { // 微信桥权限菜单联动（nil 安全，测试装配不传）
+				onWxPermission(translate(id), r.RequestID, r.ToolCall.Title)
+			}
 		},
 		func(id string, code int, errMsg string) {
 			emit("chat:exit", map[string]any{"id": translate(id), "exitCode": code, "error": errMsg})

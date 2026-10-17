@@ -100,7 +100,7 @@ func eventLabelForChat(e string) string {
 // chat turn 正常结束：额外 emit notify:agent（done 语义），payload 带 chat 的 key/tool/workspace。
 func TestChatTurnDoneEmitsAgentNotify(t *testing.T) {
 	rec := &notifyRecorder{}
-	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil)
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 
 	info, err := m.Open("session:s1", chat.Info{
@@ -127,7 +127,7 @@ func TestChatTurnDoneEmitsAgentNotify(t *testing.T) {
 func TestEmitChatNotifyCarriesAssistantReply(t *testing.T) {
 	rec := &notifyRecorder{}
 	b := &fakeChatCaptureBackend{}
-	m := newChatManagerWith(rec.emit, b, nil, nil, nil, nil)
+	m := newChatManagerWith(rec.emit, b, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 
 	info, err := m.Open("session:s1", chat.Info{
@@ -154,7 +154,7 @@ func TestEmitChatNotifyCarriesAssistantReply(t *testing.T) {
 //（2026-10-15 用户反馈：ChatView 显示 Turn stopped，Hub 只有空消息）。
 func TestChatStoppedEmptySummaryFallsBackToReason(t *testing.T) {
 	rec := &notifyRecorder{}
-	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil)
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 
 	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "D:/w", ToolID: "claude"},
@@ -172,7 +172,7 @@ func TestChatStoppedEmptySummaryFallsBackToReason(t *testing.T) {
 // chat turn 出错：emit error 语义通知，summary 带错误文本。
 func TestChatPromptErrorEmitsAgentNotify(t *testing.T) {
 	rec := &notifyRecorder{}
-	m := newChatManagerWith(rec.emit, fakeChatBackendPromptErr{}, nil, nil, nil, nil)
+	m := newChatManagerWith(rec.emit, fakeChatBackendPromptErr{}, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 
 	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "D:/w", ToolID: "codex"},
@@ -194,7 +194,7 @@ func TestChatPromptErrorEmitsAgentNotify(t *testing.T) {
 func TestChatPermissionEmitsAgentNotify(t *testing.T) {
 	rec := &notifyRecorder{}
 	b := &fakeChatCaptureBackend{}
-	m := newChatManagerWith(rec.emit, b, nil, nil, nil, nil)
+	m := newChatManagerWith(rec.emit, b, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 
 	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "D:/w", ToolID: "claude"},
@@ -226,7 +226,7 @@ func TestChatPermissionEmitsAgentNotify(t *testing.T) {
 // chat 已关闭（id 查不到）时不再发通知：静默跳过。
 func TestChatNotifySkipsUnknownChat(t *testing.T) {
 	rec := &notifyRecorder{}
-	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil)
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 
 	emitChatNotify(rec.emit, m, "c-missing", "done", "", nil, nil, nil)
@@ -283,7 +283,7 @@ func TestLastAssistantTextJoinsLastTurnChunks(t *testing.T) {
 //（修复前 chat 路径直发绕过去重，属结构性旁路）。dedupe 为 nil 时不去重。
 func TestChatNotifyDedupes(t *testing.T) {
 	rec := &notifyRecorder{}
-	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil)
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 
 	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "D:/w", ToolID: "claude"},
@@ -306,7 +306,7 @@ func TestChatNotifyDedupes(t *testing.T) {
 func TestAwaitPermissionAutoAllowSkipsAskUserQuestion(t *testing.T) {
 	rec := &notifyRecorder{}
 	b := &fakeChatCaptureBackend{}
-	m := newChatManagerWith(rec.emit, b, func() bool { return true }, nil, nil, nil)
+	m := newChatManagerWith(rec.emit, b, func() bool { return true }, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 
 	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "D:/w", ToolID: "codebuddy"},
@@ -357,7 +357,7 @@ func TestAwaitPermissionAutoAllowSkipsAskUserQuestion(t *testing.T) {
 func TestAwaitPermissionAutoAllowsOrdinaryToolUnderBypass(t *testing.T) {
 	rec := &notifyRecorder{}
 	b := &fakeChatCaptureBackend{}
-	m := newChatManagerWith(rec.emit, b, func() bool { return true }, nil, nil, nil)
+	m := newChatManagerWith(rec.emit, b, func() bool { return true }, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 
 	if _, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "D:/w", ToolID: "codebuddy"},
@@ -394,7 +394,7 @@ func TestAwaitPermissionAutoAllowsOrdinaryToolUnderBypass(t *testing.T) {
 func TestAwaitPermissionAutoAllowSkipsExitPlanMode(t *testing.T) {
 	rec := &notifyRecorder{}
 	b := &fakeChatCaptureBackend{}
-	m := newChatManagerWith(rec.emit, b, func() bool { return true }, nil, nil, nil)
+	m := newChatManagerWith(rec.emit, b, func() bool { return true }, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 
 	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "D:/w", ToolID: "codebuddy"},

@@ -81,6 +81,9 @@ func (r *Runtime) SetOnPermission(fn func(chatID, reqID, desc string)) { r.onPer
 // SetOnLearnWxid 装配 wxid 学习回调（Configure 前调用；转交给 Bridge）。
 func (r *Runtime) SetOnLearnWxid(fn func(wxid string)) { r.onLearnWxid = fn }
 
+// SetBaseURL 覆盖 iLink 客户端的基础地址（测试注入 httptest 用；须在 Configure 前调用）。
+func (r *Runtime) SetBaseURL(url string) { r.baseURL = url }
+
 // GetBridge 返回当前桥（未 Configure 时为 nil）。
 func (r *Runtime) GetBridge() *Bridge {
 	r.mu.Lock()

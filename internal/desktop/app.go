@@ -28,6 +28,7 @@ import (
 	"github.com/yangk/kshell/internal/requirements"
 	"github.com/yangk/kshell/internal/sessionarchive"
 	"github.com/yangk/kshell/internal/terminal"
+	"github.com/yangk/kshell/internal/weixin"
 	"github.com/yangk/kshell/internal/workspace"
 )
 
@@ -178,6 +179,11 @@ type App struct {
 	// chatAliases 是聊天重建后的新旧会话 ID 映射（旧 ID → 新 ID）：重建换 ID 后
 	// 前端页签仍持旧 ID，投递入口经别名解析继续无感投递。mu 保护。
 	chatAliases map[string]string
+
+	// wx 是微信桥运行时（startWeixin 装配；nil = 未启用微信桥）。mu 保护。
+	wx *weixin.Runtime
+	// hubConsole 是桌面端 AgentHub 命令层（HubCommand 惰性创建）。mu 保护。
+	hubConsole *hub.Console
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。
@@ -238,6 +244,7 @@ func (a *App) Startup(ctx context.Context) {
 
 	a.emitAppearance()
 	a.restartAppearanceWatcher()
+	a.startWeixin() // 微信桥：凭据已配置即启动长轮询，否则等前端扫码绑定
 }
 
 var updateCheckDelay = 3 * time.Second
@@ -550,6 +557,9 @@ var runShutdownCleanup = func(a *App) {
 	}
 	if sshHub != nil {
 		sshHub.Close()
+	}
+	if r := a.wxRuntime(); r != nil { // 微信桥：停长轮询（凭据保留，重启恢复）
+		r.Stop()
 	}
 }
 

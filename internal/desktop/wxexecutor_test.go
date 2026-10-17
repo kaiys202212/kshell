@@ -49,7 +49,7 @@ func TestWXExecutorListSessionsDedup(t *testing.T) {
 		{ID: "s2", ToolID: "codex", Workspace: `D:\ws\b`, Title: "仅磁盘", UpdatedAt: time.Now()},
 	})
 	// s1 已激活：活跃版标题优先。
-	m := newChatManagerWith(func(string, ...any) {}, fakeChatBackend{}, nil, nil, nil, nil)
+	m := newChatManagerWith(func(string, ...any) {}, fakeChatBackend{}, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 	if _, err := m.Open("session:s1", chat.Info{
 		Kind: chat.KindSession, SessionID: "s1", Workspace: `D:\ws\a`, Title: "活跃版本", ToolID: "claude",
@@ -80,7 +80,7 @@ func TestWXExecutorListSessionsDedup(t *testing.T) {
 // HubStore 最后一条消息的 ChatID 定位 current；无 hub 记录时回落 ListChats 第一个。
 func TestWXExecutorCurrentSession(t *testing.T) {
 	app := wxApp(t, nil)
-	m := newChatManagerWith(func(string, ...any) {}, fakeChatBackend{}, nil, nil, nil, nil)
+	m := newChatManagerWith(func(string, ...any) {}, fakeChatBackend{}, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 	if _, err := m.Open("new:1", chat.Info{
 		Kind: chat.KindNew, Workspace: `D:\ws\a`, Title: "甲会话", ToolID: "claude",
