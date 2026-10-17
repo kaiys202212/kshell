@@ -18,6 +18,8 @@ func (a *App) getRequirementStore() *requirements.Store {
 }
 
 // ListRequirements 返回全部需求条目（最新在前）。store 未装配返回空切片。
+// store.List 内部先尝试存量迁移（DispatchedTo → Project 回填，resolver 未就绪时
+// 自动推迟），保证前端拿到的列表已完成回填。
 // 返回前按 ChatID 从 chat manager 反查实时标题补入副本（仅内存覆盖，不落盘——
 // 落盘由 SetOnInfo hook 的 SetSessionTitle 负责）：旧数据在标题快照机制上线前
 // 派发、SessionTitle 为空且会话仍存活时，列表也能显示会话名而不是裸 chatId。
@@ -42,14 +44,14 @@ func (a *App) ListRequirements() []requirements.Item {
 	return items
 }
 
-// AddRequirement 新增一条需求（text 去空白非空；priority 非法回退 medium），
+// AddRequirement 新增一条需求（project/text 去空白非空；priority 非法回退 medium），
 // 成功后 emit requirements:changed 让前端刷新列表。
-func (a *App) AddRequirement(text, priority string, tags []string) (requirements.Item, error) {
+func (a *App) AddRequirement(project, text, priority string, tags []string) (requirements.Item, error) {
 	store := a.getRequirementStore()
 	if store == nil {
 		return requirements.Item{}, errReqStoreNotReady
 	}
-	it, err := store.Add(text, priority, tags)
+	it, err := store.Add(project, text, priority, tags)
 	if err != nil {
 		return requirements.Item{}, err
 	}
@@ -57,13 +59,13 @@ func (a *App) AddRequirement(text, priority string, tags []string) (requirements
 	return it, nil
 }
 
-// UpdateRequirement 修改需求（文本/优先级/标签整体替换）；id 不存在返回错误。
-func (a *App) UpdateRequirement(id, text, priority string, tags []string) (requirements.Item, error) {
+// UpdateRequirement 修改需求（项目/文本/优先级/标签整体替换）；id 不存在返回错误。
+func (a *App) UpdateRequirement(id, project, text, priority string, tags []string) (requirements.Item, error) {
 	store := a.getRequirementStore()
 	if store == nil {
 		return requirements.Item{}, errReqStoreNotReady
 	}
-	it, err := store.Update(id, text, priority, tags)
+	it, err := store.Update(id, project, text, priority, tags)
 	if err != nil {
 		return requirements.Item{}, err
 	}

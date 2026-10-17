@@ -388,6 +388,20 @@ func (a *App) initRealDeps() {
 		_ = store.Load() // 列表缺失/损坏不阻断启动（与 hub 同口径）
 		a.opts.RequirementsStore = store
 	}
+	// 存量迁移（DispatchedTo → Project 回填）的工作区来源：项目列表前端可见的
+	// 同一份 GetWorkspaces。迁移由 ListRequirements 惰性触发，Startup 时扫描
+	// 可能未完成（resolver 返回空列表），此时自动推迟到下次触发；闭包只在
+	// 绑定调用（已持锁外）执行，此处仅定义不调用，不会与本函数的 a.mu 死锁。
+	if a.opts.RequirementsStore != nil {
+		a.opts.RequirementsStore.SetWorkspaceResolver(func() []string {
+			ws := a.GetWorkspaces()
+			out := make([]string, 0, len(ws))
+			for _, w := range ws {
+				out = append(out, w.Path)
+			}
+			return out
+		})
+	}
 	if a.opts.Layout.Config == "" {
 		a.opts.Layout = paths
 	}

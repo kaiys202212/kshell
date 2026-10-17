@@ -17,8 +17,13 @@ import (
 	"time"
 )
 
-// fileVersion 是落盘文件结构版本，结构变更时递增，旧文件自然失效。
-const fileVersion = 1
+// fileVersion 是落盘文件结构版本，结构变更时递增。
+// v2：Item 新增 project 字段。Load 兼容读取更低版本（见 Load），只拒绝更高版本。
+const fileVersion = 2
+
+// ErrProjectRequired 是 project 缺失的稳定 wire key（前端 translateBackend 翻译），
+// 文案本身不面向用户，勿改成自然语言。
+var ErrProjectRequired = errors.New("err.requirements.project_required")
 
 // 需求状态机取值：未开始 → 执行中 → 已完成 → 已归档。
 // 迁移约束见 SetStatus / Archive / Update / Delete 各方法的守卫。
@@ -39,6 +44,9 @@ type Item struct {
 	Priority string `json:"priority"`
 	// Tags 是自由标签，可空。
 	Tags []string `json:"tags"`
+	// Project 是需求所属项目（工作区路径）。v2 起新增必填；存量数据由
+	// 迁移（SetWorkspaceResolver + List 惰性触发）从 DispatchedTo 回填。
+	Project string `json:"project,omitempty"`
 	// DispatchedTo 是已派发目标工作区路径；空表示未派发。
 	DispatchedTo string `json:"dispatchedTo,omitempty"`
 	// ChatID 是派发时创建的会话 ID；空表示未派发或无关联会话。
@@ -66,6 +74,11 @@ type Store struct {
 	mu       sync.Mutex
 	itemPath string
 	items    []Item
+	// workspaceResolver 返回当前已知工作区路径列表，供存量迁移把 DispatchedTo
+	// 回填为 Project；返回空列表表示扫描未就绪（迁移推迟到下次触发）。
+	workspaceResolver func() []string
+	// migrated 标记迁移已执行过（resolver 就绪并跑完一次后置位）。
+	migrated bool
 }
 
 // New 创建 store；dir 由调用方给出（桌面端传 ~/.kshell，测试传 temp 目录）。
@@ -73,7 +86,9 @@ func New(dir string) *Store {
 	return &Store{itemPath: filepath.Join(dir, "requirements.json")}
 }
 
-// Load 读 requirements.json。文件缺失/损坏/版本不符都按空处理，返回 nil，
+// Load 读 requirements.json。文件缺失/损坏按空处理，返回 nil。
+// 版本校验只拒绝**更高**版本（未来结构不认识），更低版本兼容读取——
+// v1 → v2 仅新增 project 字段，旧文件直接可解析，迁移负责回填。
 // 不让历史文件问题变成启动问题（对齐 hub.Store.Load 的口径）。
 func (s *Store) Load() error {
 	s.mu.Lock()
@@ -82,7 +97,7 @@ func (s *Store) Load() error {
 	s.items = nil
 	if data, err := os.ReadFile(s.itemPath); err == nil {
 		var f file
-		if json.Unmarshal(data, &f) == nil && f.Version == fileVersion {
+		if json.Unmarshal(data, &f) == nil && f.Version <= fileVersion {
 			// 旧数据没有 status 字段（零值 ""），归一化为 pending，
 			// 避免后续状态机判断遇到未知空值。
 			for i := range f.Items {
@@ -98,18 +113,70 @@ func (s *Store) Load() error {
 	return nil
 }
 
+// SetWorkspaceResolver 注入工作区路径解析函数，供存量迁移把 DispatchedTo
+// 回填为 Project。可在任意时机注入/替换；注入后由 List 惰性触发迁移。
+func (s *Store) SetWorkspaceResolver(fn func() []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.workspaceResolver = fn
+}
+
 // List 返回条目副本（复制切片，调用方可安全持有）。
+// 返回前先尝试存量迁移：desktop 层的 ListRequirements 走这里，保证前端
+// 拿到的列表已完成回填；workspace 扫描未就绪时自动推迟到下次调用。
 func (s *Store) List() []Item {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.ensureMigrated()
 	out := make([]Item, len(s.items))
 	copy(out, s.items)
 	return out
 }
 
+// ensureMigrated 执行存量迁移（调用方持锁，最多成功执行一次）：
+// 把 Project 为空且 DispatchedTo 命中 resolver 工作区列表的条目回填
+// Project = DispatchedTo 原值。resolver 未注入或返回空列表（扫描未完成）
+// 时不置完成标记，留给下次触发；落盘失败回滚内存，同样允许重试。
+func (s *Store) ensureMigrated() {
+	if s.migrated || s.workspaceResolver == nil {
+		return
+	}
+	ws := s.workspaceResolver()
+	if len(ws) == 0 {
+		return
+	}
+	old := append([]Item(nil), s.items...)
+	changed := false
+	for i := range s.items {
+		if s.items[i].Project != "" || s.items[i].DispatchedTo == "" {
+			continue
+		}
+		for _, w := range ws {
+			if sameWorkspacePath(w, s.items[i].DispatchedTo) {
+				s.items[i].Project = s.items[i].DispatchedTo
+				changed = true
+				break
+			}
+		}
+	}
+	if !changed {
+		s.migrated = true
+		return
+	}
+	if err := s.write(); err != nil {
+		s.items = old // 落盘失败回滚，下次触发重试
+		return
+	}
+	s.migrated = true
+}
+
 // Add 新增一条需求：生成 ID 与时间戳，插入列表头（最新在前）。
-// text 去空白后非空才允许保存；priority 非法值归一化为 medium。
-func (s *Store) Add(text, priority string, tags []string) (Item, error) {
+// text 与 project 去空白后非空才允许保存；priority 非法值归一化为 medium。
+func (s *Store) Add(project, text, priority string, tags []string) (Item, error) {
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return Item{}, ErrProjectRequired
+	}
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return Item{}, errors.New("需求文本不能为空")
@@ -122,6 +189,7 @@ func (s *Store) Add(text, priority string, tags []string) (Item, error) {
 		Text:     text,
 		Priority: normalizePriority(priority),
 		Tags:     copyTags(tags),
+		Project:  project,
 		Status:   StatusPending,
 		Ts:       time.Now().UnixNano(),
 	}
@@ -134,9 +202,13 @@ func (s *Store) Add(text, priority string, tags []string) (Item, error) {
 	return it, nil
 }
 
-// Update 修改既有需求（文本/优先级/标签整体替换）；id 不存在返回错误。
+// Update 修改既有需求（项目/文本/优先级/标签整体替换）；id 不存在返回错误。
 // 仅 pending 状态允许修改，防止执行中/已完成/已归档的需求被误改历史记录。
-func (s *Store) Update(id, text, priority string, tags []string) (Item, error) {
+func (s *Store) Update(id, project, text, priority string, tags []string) (Item, error) {
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return Item{}, ErrProjectRequired
+	}
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return Item{}, errors.New("需求文本不能为空")
@@ -152,6 +224,7 @@ func (s *Store) Update(id, text, priority string, tags []string) (Item, error) {
 			return Item{}, errors.New("仅未开始的需求允许修改")
 		}
 		old := s.items[i]
+		s.items[i].Project = project
 		s.items[i].Text = text
 		s.items[i].Priority = normalizePriority(priority)
 		s.items[i].Tags = copyTags(tags)
@@ -325,7 +398,7 @@ func (s *Store) ListArchived() []Item {
 }
 
 // write 原子写：先写同目录唯一临时文件再改名，避免写一半崩溃留下半截 JSON
-// （对齐 hub.writeFile）。写回时保持 version=1。调用方持锁。
+// （对齐 hub.writeFile）。写回时保持当前 fileVersion。调用方持锁。
 func (s *Store) write() error {
 	data, err := json.Marshal(&file{Version: fileVersion, Items: s.items})
 	if err != nil {
@@ -388,4 +461,22 @@ func copyTags(tags []string) []string {
 	out := make([]string, len(tags))
 	copy(out, tags)
 	return out
+}
+
+// normalizeWorkspacePath 归一化工作区路径：分隔符统一 '/'、去掉尾部多余
+// 分隔符、统一小写。语义对齐前端 lib/workspacePath.ts 的同名函数——
+// 同一目录在不同数据源里写法不一致（大小写漂移、斜杠方向不同），只按
+// 原样比较会把同一工作区当成两个。
+func normalizeWorkspacePath(p string) string {
+	if p == "" {
+		return ""
+	}
+	p = strings.ReplaceAll(p, `\`, "/")
+	p = strings.TrimRight(p, "/")
+	return strings.ToLower(p)
+}
+
+// sameWorkspacePath 判断两个路径是否指向同一工作区（归一化后比较）。
+func sameWorkspacePath(a, b string) bool {
+	return normalizeWorkspacePath(a) == normalizeWorkspacePath(b)
 }

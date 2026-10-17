@@ -43,7 +43,7 @@ func openTestChat(t *testing.T, m *chat.Manager) chat.Info {
 // 空闲（ready）的关联会话应被关闭释放并返回 Released=true。
 func TestArchiveRequirementReleasesIdleChat(t *testing.T) {
 	app, store, m, rec := newRequirementTestApp(t, nil)
-	it, err := store.Add("归档释放", "high", nil)
+	it, err := store.Add("/proj", "归档释放", "high", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestArchiveRequirementReleasesIdleChat(t *testing.T) {
 func TestArchiveRequirementKeepsBusyChat(t *testing.T) {
 	conn := &fakeChatConn{waitCh: make(chan struct{}), promptGate: make(chan struct{})}
 	app, store, m, _ := newRequirementTestApp(t, &fakeChatCaptureBackend{conn: conn})
-	it, err := store.Add("忙碌归档", "high", nil)
+	it, err := store.Add("/proj", "忙碌归档", "high", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestArchiveRequirementKeepsBusyChat(t *testing.T) {
 // TestArchiveRequirementNotDone 未完成的需求不可归档。
 func TestArchiveRequirementNotDone(t *testing.T) {
 	app, store, _, _ := newRequirementTestApp(t, nil)
-	it, err := store.Add("未完成", "medium", nil)
+	it, err := store.Add("/proj", "未完成", "medium", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestArchiveRequirementNotDone(t *testing.T) {
 // active→done 允许；pending→done 非法流转报错；成功后推送 requirements:changed。
 func TestSetRequirementStatusBinding(t *testing.T) {
 	app, store, _, rec := newRequirementTestApp(t, nil)
-	it, err := store.Add("状态流转", "medium", nil)
+	it, err := store.Add("/proj", "状态流转", "medium", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestSetRequirementStatusBinding(t *testing.T) {
 // TestMarkRequirementDispatchedTitle 绑定层透传会话标题快照：派发时落盘 sessionTitle。
 func TestMarkRequirementDispatchedTitle(t *testing.T) {
 	app, store, m, rec := newRequirementTestApp(t, nil)
-	it, err := store.Add("带标题派发", "medium", nil)
+	it, err := store.Add("/proj", "带标题派发", "medium", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestChatTitleChangeUpdatesRequirement(t *testing.T) {
 	m.SetOnInfo(func(info chat.Info) {
 		store.SetSessionTitle(info.ID, info.Title)
 	})
-	it, err := store.Add("标题回填", "medium", nil)
+	it, err := store.Add("/proj", "标题回填", "medium", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,11 +234,11 @@ func TestChatTitleChangeUpdatesRequirement(t *testing.T) {
 //  2. manager 无该会话（已关闭/重启）→ 保持落盘快照。
 func TestListRequirementsFillsLiveTitle(t *testing.T) {
 	app, store, m, _ := newRequirementTestApp(t, nil)
-	itLive, err := store.Add("实时标题反查", "medium", nil)
+	itLive, err := store.Add("/proj", "实时标题反查", "medium", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	itDead, err := store.Add("关闭会话保持快照", "medium", nil)
+	itDead, err := store.Add("/proj", "关闭会话保持快照", "medium", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

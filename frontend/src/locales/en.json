@@ -1,6 +1,9 @@
 {
   "err": {
     "session_not_found": "Session not found or has been cleaned up",
+    "requirements": {
+      "project_required": "Please select a project"
+    },
     "backend": {
       "binding_missing": "kshell backend binding not available"
     },

@@ -21,7 +21,7 @@ func newTestStore(t *testing.T) (*Store, string) {
 
 func TestAddAndList(t *testing.T) {
 	s, _ := newTestStore(t)
-	it, err := s.Add("  实现登录功能  ", "high", []string{"auth", "web"})
+	it, err := s.Add("/proj", "  实现登录功能  ", "high", []string{"auth", "web"})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -45,10 +45,10 @@ func TestAddAndList(t *testing.T) {
 
 func TestAddEmptyTextRejected(t *testing.T) {
 	s, _ := newTestStore(t)
-	if _, err := s.Add("   ", "high", nil); err == nil {
+	if _, err := s.Add("/proj", "   ", "high", nil); err == nil {
 		t.Error("纯空白文本应报错")
 	}
-	if _, err := s.Add("", "high", nil); err == nil {
+	if _, err := s.Add("/proj", "", "high", nil); err == nil {
 		t.Error("空文本应报错")
 	}
 }
@@ -56,7 +56,7 @@ func TestAddEmptyTextRejected(t *testing.T) {
 func TestPriorityNormalization(t *testing.T) {
 	s, _ := newTestStore(t)
 	for _, p := range []string{"HIGH", "urgent", "", "h1gh"} {
-		it, err := s.Add("x", p, nil)
+		it, err := s.Add("/proj", "x", p, nil)
 		if err != nil {
 			t.Fatalf("Add(%q): %v", p, err)
 		}
@@ -65,7 +65,7 @@ func TestPriorityNormalization(t *testing.T) {
 		}
 	}
 	for _, p := range []string{"high", "medium", "low"} {
-		it, err := s.Add("x", p, nil)
+		it, err := s.Add("/proj", "x", p, nil)
 		if err != nil {
 			t.Fatalf("Add(%q): %v", p, err)
 		}
@@ -77,8 +77,8 @@ func TestPriorityNormalization(t *testing.T) {
 
 func TestNewestFirst(t *testing.T) {
 	s, _ := newTestStore(t)
-	a, _ := s.Add("第一条", "low", nil)
-	b, _ := s.Add("第二条", "low", nil)
+	a, _ := s.Add("/proj", "第一条", "low", nil)
+	b, _ := s.Add("/proj", "第二条", "low", nil)
 	items := s.List()
 	if len(items) != 2 {
 		t.Fatalf("List 长度 = %d, want 2", len(items))
@@ -92,7 +92,7 @@ func TestIDUnique(t *testing.T) {
 	s, _ := newTestStore(t)
 	seen := map[string]bool{}
 	for i := 0; i < 100; i++ {
-		it, err := s.Add("x", "low", nil)
+		it, err := s.Add("/proj", "x", "low", nil)
 		if err != nil {
 			t.Fatalf("Add #%d: %v", i, err)
 		}
@@ -108,8 +108,8 @@ func TestIDUnique(t *testing.T) {
 
 func TestUpdate(t *testing.T) {
 	s, _ := newTestStore(t)
-	it, _ := s.Add("原文", "low", []string{"a"})
-	got, err := s.Update(it.ID, "改后文本", "high", []string{"b", "c"})
+	it, _ := s.Add("/proj", "原文", "low", []string{"a"})
+	got, err := s.Update(it.ID, "/proj", "改后文本", "high", []string{"b", "c"})
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
@@ -127,25 +127,25 @@ func TestUpdate(t *testing.T) {
 
 func TestUpdateValidation(t *testing.T) {
 	s, _ := newTestStore(t)
-	it, _ := s.Add("原文", "low", nil)
-	if _, err := s.Update(it.ID, "  ", "low", nil); err == nil {
+	it, _ := s.Add("/proj", "原文", "low", nil)
+	if _, err := s.Update(it.ID, "/proj", "  ", "low", nil); err == nil {
 		t.Error("Update 空文本应报错")
 	}
-	got, err := s.Update(it.ID, "正文", "bogus", nil)
+	got, err := s.Update(it.ID, "/proj", "正文", "bogus", nil)
 	if err != nil {
 		t.Fatalf("Update 非法 priority 不应报错, got %v", err)
 	}
 	if got.Priority != "medium" {
 		t.Errorf("Update 非法 priority 应回退 medium, got %q", got.Priority)
 	}
-	if _, err := s.Update("不存在", "x", "low", nil); err == nil {
+	if _, err := s.Update("不存在", "/proj", "x", "low", nil); err == nil {
 		t.Error("Update 不存在的 id 应报错")
 	}
 }
 
 func TestDeleteIdempotent(t *testing.T) {
 	s, _ := newTestStore(t)
-	it, _ := s.Add("待删", "low", nil)
+	it, _ := s.Add("/proj", "待删", "low", nil)
 	if err := s.Delete(it.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestDeleteIdempotent(t *testing.T) {
 
 func TestMarkDispatched(t *testing.T) {
 	s, _ := newTestStore(t)
-	it, _ := s.Add("需求", "low", nil)
+	it, _ := s.Add("/proj", "需求", "low", nil)
 	if err := s.MarkDispatched(it.ID, "D:/work/proj", "chat-9", "初始标题"); err != nil {
 		t.Fatalf("MarkDispatched: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestMarkDispatched(t *testing.T) {
 
 func TestSetSessionTitle(t *testing.T) {
 	s, _ := newTestStore(t)
-	it, _ := s.Add("需求", "low", nil)
+	it, _ := s.Add("/proj", "需求", "low", nil)
 	_ = s.MarkDispatched(it.ID, "/ws", "chat-1", "旧标题")
 
 	// 按 ChatID 命中并更新
@@ -219,7 +219,7 @@ func TestSetSessionTitle(t *testing.T) {
 
 func TestSetSessionTitleArchivedRejected(t *testing.T) {
 	s, _ := newTestStore(t)
-	it, _ := s.Add("需求", "low", nil)
+	it, _ := s.Add("/proj", "需求", "low", nil)
 	_ = s.MarkDispatched(it.ID, "/ws", "chat-1", "旧标题")
 	_ = s.SetStatus(it.ID, "done")
 	if err := s.Archive(it.ID); err != nil {
@@ -242,7 +242,7 @@ func TestSessionTitleRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	s1 := New(dir)
 	_ = s1.Load()
-	it, _ := s1.Add("需求", "low", nil)
+	it, _ := s1.Add("/proj", "需求", "low", nil)
 	_ = s1.MarkDispatched(it.ID, "/ws", "chat-7", "落盘标题")
 
 	s2 := New(dir)
@@ -259,8 +259,8 @@ func TestPersistenceRoundTrip(t *testing.T) {
 	if err := s1.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	a, _ := s1.Add("需求一", "high", []string{"tag1"})
-	b, _ := s1.Add("需求二", "low", []string{"tag2", "tag3"})
+	a, _ := s1.Add("/proj", "需求一", "high", []string{"tag1"})
+	b, _ := s1.Add("/proj", "需求二", "low", []string{"tag2", "tag3"})
 	_ = s1.MarkDispatched(b.ID, "/tmp/ws", "chat-1", "")
 
 	// 重新创建 store 模拟进程重启
@@ -303,11 +303,11 @@ func TestLoadCorruptOrMissing(t *testing.T) {
 	}
 	// 版本不符
 	s2 := New(dir)
-	if _, err := s2.Add("x", "low", nil); err != nil {
+	if _, err := s2.Add("/proj", "x", "low", nil); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "requirements.json"))
-	bad := strings.Replace(string(data), `"version":1`, `"version":99`, 1)
+	bad := strings.Replace(string(data), `"version":2`, `"version":99`, 1)
 	_ = os.WriteFile(filepath.Join(dir, "requirements.json"), []byte(bad), 0o600)
 	s3 := New(dir)
 	if err := s3.Load(); err != nil {
@@ -320,7 +320,7 @@ func TestLoadCorruptOrMissing(t *testing.T) {
 
 func TestListReturnsCopy(t *testing.T) {
 	s, _ := newTestStore(t)
-	if _, err := s.Add("原文", "low", nil); err != nil {
+	if _, err := s.Add("/proj", "原文", "low", nil); err != nil {
 		t.Fatal(err)
 	}
 	items := s.List()
@@ -338,7 +338,7 @@ func TestListReturnsCopy(t *testing.T) {
 func TestTagsAreCopiedOnAdd(t *testing.T) {
 	s, _ := newTestStore(t)
 	tags := []string{"a", "b"}
-	if _, err := s.Add("x", "low", tags); err != nil {
+	if _, err := s.Add("/proj", "x", "low", tags); err != nil {
 		t.Fatal(err)
 	}
 	// 修改调用方切片不应影响 store 内部状态
@@ -352,7 +352,7 @@ func TestTagsAreCopiedOnAdd(t *testing.T) {
 func TestFileWrittenAtomic(t *testing.T) {
 	dir := t.TempDir()
 	s := New(dir)
-	if _, err := s.Add("x", "low", nil); err != nil {
+	if _, err := s.Add("/proj", "x", "low", nil); err != nil {
 		t.Fatal(err)
 	}
 	// 原子写后目录里不应残留临时文件
@@ -370,8 +370,8 @@ func TestFileWrittenAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"version":1`) {
-		t.Errorf("落盘文件应含 version=1: %s", data)
+	if !strings.Contains(string(data), `"version":2`) {
+		t.Errorf("落盘文件应含 version=2: %s", data)
 	}
 }
 
@@ -379,7 +379,7 @@ func TestFileWrittenAtomic(t *testing.T) {
 // 以及各终态下对修改类操作的拒绝。
 func TestStatusLifecycle(t *testing.T) {
 	s, _ := newTestStore(t)
-	it, err := s.Add("需求A", "high", nil)
+	it, err := s.Add("/proj", "需求A", "high", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +400,7 @@ func TestStatusLifecycle(t *testing.T) {
 	if err := s.SetStatus(it.ID, "done"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Update(it.ID, "改文本", "low", nil); err == nil {
+	if _, err := s.Update(it.ID, "/proj", "改文本", "low", nil); err == nil {
 		t.Fatal("done 状态不允许 Update")
 	}
 	if err := s.Archive(it.ID); err != nil {
@@ -420,13 +420,13 @@ func TestStatusLifecycle(t *testing.T) {
 // 不可重新派发（否则会把状态拉回 active，击穿归档不变量）。
 func TestMarkDispatchedTerminalRejected(t *testing.T) {
 	s, _ := newTestStore(t)
-	done, _ := s.Add("已完成", "low", nil)
+	done, _ := s.Add("/proj", "已完成", "low", nil)
 	_ = s.MarkDispatched(done.ID, "/w", "c", "")
 	_ = s.SetStatus(done.ID, "done")
 	if err := s.MarkDispatched(done.ID, "/w2", "c2", ""); err == nil {
 		t.Error("done 状态不允许重新派发")
 	}
-	arch, _ := s.Add("已归档", "low", nil)
+	arch, _ := s.Add("/proj", "已归档", "low", nil)
 	_ = s.MarkDispatched(arch.ID, "/w", "c", "")
 	_ = s.SetStatus(arch.ID, "done")
 	_ = s.Archive(arch.ID)
@@ -447,8 +447,8 @@ func TestMarkDispatchedTerminalRejected(t *testing.T) {
 // TestListArchivedOrder 验证归档列表按 ArchivedAt 时间倒序（最新归档在前）。
 func TestListArchivedOrder(t *testing.T) {
 	s, _ := newTestStore(t)
-	a, _ := s.Add("旧需求", "low", []string{"x"})
-	b, _ := s.Add("新需求", "low", []string{"y"})
+	a, _ := s.Add("/proj", "旧需求", "low", []string{"x"})
+	b, _ := s.Add("/proj", "新需求", "low", []string{"y"})
 	_ = s.MarkDispatched(a.ID, "/w1", "c1", "")
 	time.Sleep(2 * time.Millisecond)
 	_ = s.MarkDispatched(b.ID, "/w2", "c2", "")
@@ -466,7 +466,7 @@ func TestListArchivedOrder(t *testing.T) {
 // TestSetStatusTransitions 覆盖非法迁移与非法值的拒绝。
 func TestSetStatusTransitions(t *testing.T) {
 	s, _ := newTestStore(t)
-	it, _ := s.Add("需求", "low", nil)
+	it, _ := s.Add("/proj", "需求", "low", nil)
 	// pending → done 不允许（必须先经过 active）
 	if err := s.SetStatus(it.ID, "done"); err == nil {
 		t.Error("pending → done 应被拒绝")
@@ -494,25 +494,25 @@ func TestSetStatusTransitions(t *testing.T) {
 // TestDeleteOnlyPending 验证仅 pending 状态可删除，active/done/archived 拒绝。
 func TestDeleteOnlyPending(t *testing.T) {
 	s, _ := newTestStore(t)
-	active, _ := s.Add("执行中", "low", nil)
+	active, _ := s.Add("/proj", "执行中", "low", nil)
 	_ = s.MarkDispatched(active.ID, "/w", "c", "")
 	if err := s.Delete(active.ID); err == nil {
 		t.Error("active 状态不允许删除")
 	}
-	done, _ := s.Add("已完成", "low", nil)
+	done, _ := s.Add("/proj", "已完成", "low", nil)
 	_ = s.MarkDispatched(done.ID, "/w", "c", "")
 	_ = s.SetStatus(done.ID, "done")
 	if err := s.Delete(done.ID); err == nil {
 		t.Error("done 状态不允许删除")
 	}
-	arch, _ := s.Add("已归档", "low", nil)
+	arch, _ := s.Add("/proj", "已归档", "low", nil)
 	_ = s.MarkDispatched(arch.ID, "/w", "c", "")
 	_ = s.SetStatus(arch.ID, "done")
 	_ = s.Archive(arch.ID)
 	if err := s.Delete(arch.ID); err == nil {
 		t.Error("archived 状态不允许删除")
 	}
-	pending, _ := s.Add("未开始", "low", nil)
+	pending, _ := s.Add("/proj", "未开始", "low", nil)
 	if err := s.Delete(pending.ID); err != nil {
 		t.Errorf("pending 状态应可删除: %v", err)
 	}
@@ -521,12 +521,12 @@ func TestDeleteOnlyPending(t *testing.T) {
 // TestUpdateOnlyPending 验证 Update 仅在 pending（或历史空状态）时允许。
 func TestUpdateOnlyPending(t *testing.T) {
 	s, _ := newTestStore(t)
-	it, _ := s.Add("原文", "low", nil)
-	if _, err := s.Update(it.ID, "新文本", "high", nil); err != nil {
+	it, _ := s.Add("/proj", "原文", "low", nil)
+	if _, err := s.Update(it.ID, "/proj", "新文本", "high", nil); err != nil {
 		t.Fatalf("pending 状态应可 Update: %v", err)
 	}
 	_ = s.MarkDispatched(it.ID, "/w", "c", "")
-	if _, err := s.Update(it.ID, "再改", "low", nil); err == nil {
+	if _, err := s.Update(it.ID, "/proj", "再改", "low", nil); err == nil {
 		t.Error("active 状态不允许 Update")
 	}
 }
@@ -534,11 +534,11 @@ func TestUpdateOnlyPending(t *testing.T) {
 // TestArchiveOnlyDone 验证仅 done 状态可归档。
 func TestArchiveOnlyDone(t *testing.T) {
 	s, _ := newTestStore(t)
-	pending, _ := s.Add("未开始", "low", nil)
+	pending, _ := s.Add("/proj", "未开始", "low", nil)
 	if err := s.Archive(pending.ID); err == nil {
 		t.Error("pending 状态不允许归档")
 	}
-	active, _ := s.Add("执行中", "low", nil)
+	active, _ := s.Add("/proj", "执行中", "low", nil)
 	_ = s.MarkDispatched(active.ID, "/w", "c", "")
 	if err := s.Archive(active.ID); err == nil {
 		t.Error("active 状态不允许归档")
@@ -569,7 +569,7 @@ func TestLoadNormalizesLegacyStatus(t *testing.T) {
 func TestAddEmptyTagsNotNil(t *testing.T) {
 	dir := t.TempDir()
 	s := New(dir)
-	if _, err := s.Add("无标签需求", "low", nil); err != nil {
+	if _, err := s.Add("/proj", "无标签需求", "low", nil); err != nil {
 		t.Fatal(err)
 	}
 	it := s.List()[0]
