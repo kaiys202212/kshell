@@ -230,6 +230,12 @@ func ForSessionACP(ps []providers.Provider, tools []discovery.Tool, s providers.
 	if !ok {
 		return providers.Launch{}, ErrToolNotRunnable
 	}
+	// 与 ForWorkspaceACP 同款门禁：工具没有可执行入口（如 Cursor 更新器清空
+	// shim 窗口内的 Broken 形态）时，适配器拿不到 CURSOR_AGENT_EXECUTABLE，
+	// 放行必在首条 prompt 时崩（spawn cursor-agent ENOENT → -32000 EOF）。
+	if !tool.Installed || tool.BinPath == "" {
+		return providers.Launch{}, ErrToolNotRunnable
+	}
 	p, ok := providerFor(ps, s.ToolID)
 	if !ok {
 		return providers.Launch{}, ErrToolNotRunnable

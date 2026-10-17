@@ -201,6 +201,25 @@ func TestForSessionACP_UsesWorkspaceDir(t *testing.T) {
 	}
 }
 
+// Broken 形态（如 Cursor 更新器清空入口窗口内 Detected=config-dir）：ACP 探测仍
+// Available，但适配器拿不到 CURSOR_AGENT_EXECUTABLE，放行必在首条 prompt 时崩
+//（-32000 EOF，spawn cursor-agent ENOENT）。恢复会话必须与新建会话同样拒绝。
+func TestForSessionACP_NoRunnableBinRefused(t *testing.T) {
+	ps := []providers.Provider{providers.Cursor{}}
+	s := providers.Session{ID: "s1", ToolID: "cursor", Workspace: "/proj"}
+	det := providers.ACPDetection{Available: true, Source: "npx", Package: "cursor-acp"}
+
+	broken := []discovery.Tool{{ID: "cursor", Installed: true, Broken: true, ACP: &det}}
+	if _, err := ForSessionACP(ps, broken, s, ModelOptions{}, PermissionOptions{}); !errors.Is(err, ErrToolNotRunnable) {
+		t.Fatalf("Broken 工具恢复会话应 ErrToolNotRunnable, got %v", err)
+	}
+
+	notInstalled := []discovery.Tool{{ID: "cursor", ACP: &det}}
+	if _, err := ForSessionACP(ps, notInstalled, s, ModelOptions{}, PermissionOptions{}); !errors.Is(err, ErrToolNotRunnable) {
+		t.Fatalf("未安装工具恢复会话应 ErrToolNotRunnable, got %v", err)
+	}
+}
+
 // cursor 直执行形态：kshell 探测到的 CLI 不在 PATH 上时，适配器自己找不到
 // cursor-agent，必须经 CURSOR_AGENT_EXECUTABLE 把路径传过去。
 func TestForWorkspaceACP_CursorInjectsAgentExecutable(t *testing.T) {
