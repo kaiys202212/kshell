@@ -285,8 +285,14 @@ func (a *App) toggleMainWindow() {
 	}
 	if hidden || !windowIsForeground() || windowIsMinimised(ctx) {
 		a.setWindowHidden(false)
-		windowUnminimise(ctx)
-		windowShow(ctx)
+		// 显示路径按窗口状态分流（对齐 activateFromBubble，见 notify.go）：
+		// 最小化走 SC_RESTORE 还原（等价任务栏点击，保留最大化状态）；
+		// 其余情况只前置。二者不可连调——无条件 unminimise 会解除最大化。
+		if windowIsMinimised(ctx) {
+			windowUnminimise(ctx)
+		} else {
+			windowShow(ctx)
+		}
 		return
 	}
 	windowHide(ctx)
