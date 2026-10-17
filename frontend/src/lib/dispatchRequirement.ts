@@ -39,6 +39,14 @@ function notifyFallbackTool(): void {
   useAppStore.getState().notify(i18n.t('ui.hub.default_tool_unavailable'), 'info');
 }
 
+// 在途守卫：派发是长操作（建会话→切模型→发文本→落盘），期间重复触发
+// （如连拖两次同一需求）会建两个会话、prompt 发两遍。模块级集合互斥，
+// 已在途的 id 直接返回 'busy' 由调用方提示；finally 保证失败路径也清理。
+const dispatchingIds = new Set<string>();
+
+// DispatchResult：'busy' 表示该需求已有一次派发在途（本次未执行任何流程）
+export type DispatchResult = 'ok' | 'busy';
+
 // dispatchRequirement 执行完整派发流程；失败向上抛，由调用方统一呈现。
 // defaults 提供时：toolId 经 getTools 校验 ACP 可用则替代自动选择，
 // 不可用则提示并回落 resolveToolID；modelId 有值在建会话后、发文本前切换，
@@ -48,36 +56,43 @@ export async function dispatchRequirement(
   text: string,
   wsPath: string,
   defaults?: DispatchDefaults,
-): Promise<void> {
-  let toolID: string | null = null;
-  if (defaults?.toolId) {
-    const tools = await getTools();
-    const ok = tools.some((x) => x.ID === defaults.toolId && x.ACP?.Available === true);
-    if (ok) {
-      toolID = defaults.toolId;
-    } else {
-      notifyFallbackTool();
+): Promise<DispatchResult> {
+  if (dispatchingIds.has(id)) return 'busy';
+  dispatchingIds.add(id);
+  try {
+    let toolID: string | null = null;
+    if (defaults?.toolId) {
+      const tools = await getTools();
+      const ok = tools.some((x) => x.ID === defaults.toolId && x.ACP?.Available === true);
+      if (ok) {
+        toolID = defaults.toolId;
+      } else {
+        notifyFallbackTool();
+      }
     }
-  }
-  if (!toolID) toolID = await resolveToolID();
-  if (!toolID) throw new Error('no_acp_tool');
-  const result = await openWorkspaceACP(wsPath, toolID);
-  if (!result.Chat) throw new Error('no_chat');
-  const chat = result.Chat;
-  if (defaults?.modelId) {
-    try {
-      await setChatModel(chat.ID, defaults.modelId);
-    } catch (e: unknown) {
-      // 切模型失败不阻断派发：提示后继续用工具默认模型发需求
-      useAppStore
-        .getState()
-        .notify(i18n.t('ui.hub.model_switch_failed', { err: backendError(e) }), 'error');
+    if (!toolID) toolID = await resolveToolID();
+    if (!toolID) throw new Error('no_acp_tool');
+    const result = await openWorkspaceACP(wsPath, toolID);
+    if (!result.Chat) throw new Error('no_chat');
+    const chat = result.Chat;
+    if (defaults?.modelId) {
+      try {
+        await setChatModel(chat.ID, defaults.modelId);
+      } catch (e: unknown) {
+        // 切模型失败不阻断派发：提示后继续用工具默认模型发需求
+        useAppStore
+          .getState()
+          .notify(i18n.t('ui.hub.model_switch_failed', { err: backendError(e) }), 'error');
+      }
     }
+    await sendChatPrompt(chat.ID, text);
+    // 落盘派发标记：关联真实会话 ID 与标题快照，归档时据此判断会话能否自动关闭
+    await markRequirementDispatched(id, wsPath, chat.ID, chat.Title);
+    useAppStore.getState().setLastAgentId(chat.ID);
+    return 'ok';
+  } finally {
+    dispatchingIds.delete(id);
   }
-  await sendChatPrompt(chat.ID, text);
-  // 落盘派发标记：关联真实会话 ID 与标题快照，归档时据此判断会话能否自动关闭
-  await markRequirementDispatched(id, wsPath, chat.ID, chat.Title);
-  useAppStore.getState().setLastAgentId(chat.ID);
 }
 
 // reopenRequirementSession 重新打开已失效会话（应用重启后 chatId 不再指向活跃会话）：

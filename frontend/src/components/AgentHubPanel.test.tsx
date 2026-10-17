@@ -1495,6 +1495,52 @@ describe('AgentHubPanel', () => {
     );
   });
 
+  it('面板 drop 在途守卫命中：dispatchRequirement 返回 busy 时提示派发中、不提示成功', async () => {
+    // 守卫本体在 lib 单测覆盖；这里断言面板消费 busy 结果的呈现
+    dispatchRequirement.mockResolvedValue('busy');
+    render(<AgentHubPanel />);
+    const panel = screen.getByTestId('hub-panel');
+    fireEvent.drop(panel, { dataTransfer: requirementDt({ id: 'r5', text: '文本', project: 'D:\\ws\\a' }) });
+
+    await waitFor(() =>
+      expect(
+        useAppStore.getState().toasts.some((x) => x.title.includes(tt('ui.requirements.dispatch_busy'))),
+      ).toBe(true),
+    );
+    expect(
+      useAppStore.getState().toasts.some((x) => x.title.includes(tt('ui.requirements.dispatch_ok'))),
+    ).toBe(false);
+  });
+
+  it('面板 drop 同一需求连拖两次：两次 drop 都交给 dispatchRequirement（lib 层守卫兜底互斥）', async () => {
+    // 第一次挂起制造在途窗口，期间第二次 drop 到达
+    let release!: () => void;
+    dispatchRequirement.mockImplementation(() => {
+      if (dispatchRequirement.mock.calls.length === 1) {
+        return new Promise<'ok'>((resolve) => {
+          release = () => resolve('ok');
+        });
+      }
+      return Promise.resolve('busy');
+    });
+    render(<AgentHubPanel />);
+    const panel = screen.getByTestId('hub-panel');
+    const dt = requirementDt({ id: 'r6', text: '文本', project: 'D:\\ws\\a' });
+    fireEvent.drop(panel, { dataTransfer: dt });
+    fireEvent.drop(panel, { dataTransfer: dt });
+
+    await waitFor(() => expect(dispatchRequirement).toHaveBeenCalledTimes(2));
+    expect(dispatchRequirement).toHaveBeenNthCalledWith(1, 'r6', '文本', 'D:\\ws\\a', undefined);
+    expect(dispatchRequirement).toHaveBeenNthCalledWith(2, 'r6', '文本', 'D:\\ws\\a', undefined);
+    // 第二次返回 busy：提示「派发中」而非成功
+    await waitFor(() =>
+      expect(
+        useAppStore.getState().toasts.some((x) => x.title.includes(tt('ui.requirements.dispatch_busy'))),
+      ).toBe(true),
+    );
+    release();
+  });
+
   it('面板 dragOver 非 REQUIREMENT_MIME 拖拽不高亮不允许 drop', () => {
     render(<AgentHubPanel />);
     const panel = screen.getByTestId('hub-panel');

@@ -677,7 +677,12 @@ export default function AgentHubPanel() {
       return;
     }
     void dispatchRequirement(id, text, project, loadDefaultCreate() ?? undefined)
-      .then(() => {
+      .then((res) => {
+        // 在途守卫命中：同一需求已有一次派发进行中，本次未执行，仅提示
+        if (res === 'busy') {
+          useAppStore.getState().notify(t('ui.requirements.dispatch_busy'), 'error');
+          return;
+        }
         useAppStore.getState().notify(t('ui.requirements.dispatch_ok', { name: wsBaseName(project) }), 'info');
       })
       .catch((err: unknown) => {

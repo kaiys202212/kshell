@@ -158,6 +158,72 @@ describe('dispatchRequirement', () => {
     await expect(dispatchRequirement('r1', '文本', 'D:\\ws')).rejects.toThrow('send boom');
     expect(mocks.markRequirementDispatched).not.toHaveBeenCalled();
   });
+
+  it('在途守卫：第一次派发未完成时同 id 再调返回 busy，不重复走流程', async () => {
+    useAppStore.setState({ chats: [], lastAgentId: '' });
+    mocks.getTools.mockResolvedValue([
+      { ID: 'tool-a', ACP: { Available: true, Source: '' } } as unknown as ToolInfo,
+    ]);
+    // 用未决 Promise 制造在途窗口：openWorkspaceACP 挂起期间第二次调用到达
+    let releaseOpen!: (v: { Kind: string; Chat: ChatInfo }) => void;
+    mocks.openWorkspaceACP.mockReturnValue(
+      new Promise<{ Kind: string; Chat: ChatInfo }>((resolve) => {
+        releaseOpen = resolve;
+      }),
+    );
+
+    const first = dispatchRequirement('r-busy', '文本', 'D:\\ws\\proj');
+    // 第一次仍在途：同 id 第二次调用直接 busy，不建会话不发文本
+    await expect(dispatchRequirement('r-busy', '文本', 'D:\\ws\\proj')).resolves.toBe('busy');
+    expect(mocks.openWorkspaceACP).toHaveBeenCalledTimes(1);
+    expect(mocks.sendChatPrompt).not.toHaveBeenCalled();
+
+    releaseOpen({ Kind: 'chat', Chat: chat({ ID: 'chat-real' }) });
+    await expect(first).resolves.toBe('ok');
+
+    // 在途窗口结束后集合已清理：再次调用重新走全流程
+    mocks.openWorkspaceACP.mockResolvedValue({ Kind: 'chat', Chat: chat({ ID: 'chat-real-2' }) });
+    await expect(dispatchRequirement('r-busy', '文本', 'D:\\ws\\proj')).resolves.toBe('ok');
+    expect(mocks.openWorkspaceACP).toHaveBeenCalledTimes(2);
+    expect(mocks.sendChatPrompt).toHaveBeenCalledTimes(2);
+  });
+
+  it('在途守卫：不同 id 互不影响，可并行派发', async () => {
+    useAppStore.setState({ chats: [], lastAgentId: '' });
+    mocks.getTools.mockResolvedValue([
+      { ID: 'tool-a', ACP: { Available: true, Source: '' } } as unknown as ToolInfo,
+    ]);
+    let releaseA!: (v: { Kind: string; Chat: ChatInfo }) => void;
+    mocks.openWorkspaceACP.mockImplementation((_ws: string) => {
+      // 第一个调用挂起制造在途窗口，第二个调用立即完成
+      if (mocks.openWorkspaceACP.mock.calls.length === 1) {
+        return new Promise<{ Kind: string; Chat: ChatInfo }>((resolve) => {
+          releaseA = resolve;
+        });
+      }
+      return Promise.resolve({ Kind: 'chat', Chat: chat({ ID: 'chat-b' }) });
+    });
+
+    const first = dispatchRequirement('r-a', '文本', 'D:\\ws\\a');
+    await expect(dispatchRequirement('r-b', '文本', 'D:\\ws\\b')).resolves.toBe('ok');
+    expect(mocks.sendChatPrompt).toHaveBeenCalledWith('chat-b', '文本');
+
+    releaseA({ Kind: 'chat', Chat: chat({ ID: 'chat-a' }) });
+    await expect(first).resolves.toBe('ok');
+  });
+
+  it('在途守卫：失败路径也清理集合（finally），失败后同 id 可重派', async () => {
+    useAppStore.setState({ chats: [], lastAgentId: '' });
+    mocks.getTools.mockResolvedValue([
+      { ID: 'tool-a', ACP: { Available: true, Source: '' } } as unknown as ToolInfo,
+    ]);
+    mocks.openWorkspaceACP.mockRejectedValueOnce(new Error('open boom'));
+    await expect(dispatchRequirement('r-fail', '文本', 'D:\\ws\\proj')).rejects.toThrow('open boom');
+
+    mocks.openWorkspaceACP.mockResolvedValue({ Kind: 'chat', Chat: chat({ ID: 'chat-real' }) });
+    await expect(dispatchRequirement('r-fail', '文本', 'D:\\ws\\proj')).resolves.toBe('ok');
+    expect(mocks.openWorkspaceACP).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('reopenRequirementSession', () => {

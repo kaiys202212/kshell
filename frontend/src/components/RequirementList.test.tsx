@@ -168,6 +168,11 @@ describe('RequirementList', () => {
     // 新增且无选中项目：project 状态为空串，保存按钮禁用兜底必填
     expect(screen.getByRole('button', { name: tt('ui.requirements.save') })).toHaveAttribute('disabled');
     expect(mocks.addRequirement).not.toHaveBeenCalled();
+    // 下拉含显式空选项（禁用），让用户明白保存为何禁用
+    const emptyOption = screen.getByTestId('req-project').querySelector('option[value=""]');
+    expect(emptyOption).not.toBeNull();
+    expect(emptyOption).toHaveAttribute('disabled');
+    expect(emptyOption).toHaveTextContent(tt('ui.requirements.select_project'));
 
     // 选上项目后保存可用
     fireEvent.change(screen.getByTestId('req-project'), { target: { value: 'D:\\ws\\a' } });

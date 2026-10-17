@@ -170,7 +170,10 @@ function RequirementDialog({
           value={project}
           onChange={(e) => setProject(e.target.value)}
         >
-          {/* 无工作区（测试/绑定缺失）时下拉为空，保存按钮禁用兜底必填 */}
+          {/* 显式空选项：无预选项目时让用户看到「请选择项目」，理解保存为何禁用 */}
+          <option value="" disabled>
+            {t('ui.requirements.select_project')}
+          </option>
           {workspaces.map((w) => (
             <option key={w.Path} value={w.Path}>
               {w.Name}
