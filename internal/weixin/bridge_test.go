@@ -22,10 +22,11 @@ type fakeExec struct {
 	sendErr  error
 }
 
-func (f *fakeExec) ListSessions() []hub.SessionRef         { return f.sessions }
-func (f *fakeExec) CurrentSession() (hub.SessionRef, bool) { return f.current, f.hasCur }
-func (f *fakeExec) SwitchTo(string) error                  { return nil }
-func (f *fakeExec) EasyNew() (hub.SessionRef, error)       { return hub.SessionRef{}, nil }
+func (f *fakeExec) ListSessions() []hub.SessionRef             { return f.sessions }
+func (f *fakeExec) CurrentSession() (hub.SessionRef, bool)     { return f.current, f.hasCur }
+func (f *fakeExec) SwitchTo(string) error                      { return nil }
+func (f *fakeExec) OpenSession(string) (hub.SessionRef, error) { return hub.SessionRef{}, nil }
+func (f *fakeExec) EasyNew() (hub.SessionRef, error)           { return hub.SessionRef{}, nil }
 func (f *fakeExec) NewMenuOptions() (tools, workspaces, models []hub.MenuOption) {
 	return nil, nil, nil
 }
