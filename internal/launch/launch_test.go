@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/yangk/kshell/internal/appearance"
+	"github.com/yangk/kshell/internal/cursoragent"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
 )
@@ -261,6 +263,105 @@ func TestForWorkspaceACP_OtherToolNoEnv(t *testing.T) {
 	}
 	if len(l.Env) != 0 {
 		t.Fatalf("非 cursor 工具 env 应为空, got %v", l.Env)
+	}
+}
+
+// shim 形态（.cmd/.bat）：Node ≥20.12 spawn .cmd 会同步 EINVAL（CVE-2024-27980），
+// cursor-acp 又不带 shell:true 直接 spawn，prompt 即崩（-32603）。
+// 必须改走 kshell 代理：CURSOR_AGENT_EXECUTABLE=kshell 自身 + node/脚本三元组。
+func TestForWorkspaceACP_CursorCmdShimInjectsProxy(t *testing.T) {
+	root := t.TempDir()
+	ver := filepath.Join(root, "versions", "2026.10.16-e3cb207")
+	if err := os.MkdirAll(ver, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile := func(p string) {
+		t.Helper()
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(filepath.Join(root, "cursor-agent.cmd"))
+	writeFile(filepath.Join(ver, "index.js"))
+	shim := filepath.Join(root, "cursor-agent.cmd")
+
+	oldNode := nodeLookPathFn
+	oldScript := cursorScriptResolveFn
+	t.Cleanup(func() { nodeLookPathFn = oldNode; cursorScriptResolveFn = oldScript })
+	nodeLookPathFn = func() (string, bool) { return `D:\nodejs\node.exe`, true }
+	cursorScriptResolveFn = func(shimPath string) (string, bool) {
+		return filepath.Join(ver, "index.js"), true
+	}
+
+	ps := []providers.Provider{providers.Cursor{}}
+	tools := []discovery.Tool{{
+		ID: "cursor", Installed: true, BinPath: shim,
+		ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "cursor-acp"},
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Env["CURSOR_AGENT_EXECUTABLE"] != exe {
+		t.Fatalf("CURSOR_AGENT_EXECUTABLE = %q, 期望代理 %q", l.Env["CURSOR_AGENT_EXECUTABLE"], exe)
+	}
+	if l.Env["KSHELL_AS_CURSOR_AGENT"] != "1" {
+		t.Fatalf("KSHELL_AS_CURSOR_AGENT = %q", l.Env["KSHELL_AS_CURSOR_AGENT"])
+	}
+	if l.Env["KSHELL_CURSOR_AGENT_NODE"] != `D:\nodejs\node.exe` {
+		t.Fatalf("NODE = %q", l.Env["KSHELL_CURSOR_AGENT_NODE"])
+	}
+	if l.Env["KSHELL_CURSOR_AGENT_SCRIPT"] != filepath.Join(ver, "index.js") {
+		t.Fatalf("SCRIPT = %q", l.Env["KSHELL_CURSOR_AGENT_SCRIPT"])
+	}
+}
+
+// shim 形态但 node 解析不到：无法提供代理，退回直注 shim（保持既有行为），
+// 不静默返回 nil——直注至少让「装了 shell shim 的老 Node」环境仍可用。
+func TestForWorkspaceACP_CursorCmdShimWithoutNodeFallsBack(t *testing.T) {
+	shim := `C:\ca\cursor-agent.cmd`
+	oldNode := nodeLookPathFn
+	t.Cleanup(func() { nodeLookPathFn = oldNode })
+	nodeLookPathFn = func() (string, bool) { return "", false }
+
+	ps := []providers.Provider{providers.Cursor{}}
+	tools := []discovery.Tool{{
+		ID: "cursor", Installed: true, BinPath: shim,
+		ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "cursor-acp"},
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Env["CURSOR_AGENT_EXECUTABLE"] != shim {
+		t.Fatalf("env = %v, 期望退回直注 shim", l.Env)
+	}
+	if _, ok := l.Env[cursoragent.EnvAsProxy]; ok {
+		t.Fatalf("无 node 时不得注入代理变量, got %v", l.Env)
+	}
+}
+
+// 非结束（.exe / 无后缀）形态不受 shim 分支影响。
+func TestForWorkspaceACP_CursorExeStillDirectInject(t *testing.T) {
+	oldNode := nodeLookPathFn
+	t.Cleanup(func() { nodeLookPathFn = oldNode })
+	nodeLookPathFn = func() (string, bool) { return "", false } // 不应被调用
+
+	ps := []providers.Provider{providers.Cursor{}}
+	tools := []discovery.Tool{{
+		ID: "cursor", Installed: true, BinPath: `C:\ca\cursor-agent.exe`,
+		ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "cursor-acp"},
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Env["CURSOR_AGENT_EXECUTABLE"] != `C:\ca\cursor-agent.exe` {
+		t.Fatalf("env = %v", l.Env)
 	}
 }
 

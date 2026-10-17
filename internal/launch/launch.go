@@ -5,6 +5,11 @@ package launch
 import (
 	"errors"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/yangk/kshell/internal/appearance"
 	"github.com/yangk/kshell/internal/claudeenv"
@@ -334,15 +339,36 @@ func reorderACPArgs(l providers.Launch, tool discovery.Tool, injectLen int) prov
 // acpAdapterEnv 为依赖本体 CLI 的适配器补充环境变量。目前只有 cursor-acp：
 // cursor-agent 常不在 PATH 上（Windows 装在 %LOCALAPPDATA%\cursor-agent），
 // 适配器默认只按 PATH 查找，须显式传 CURSOR_AGENT_EXECUTABLE。
-// node 入口形态无法被 Node spawn 成单一文件（.cmd 会 EINVAL），改把当前 kshell
-// 可执行文件当代理，由代理再 exec node + index.js。
+// 两类路径无法被 Node 直接 spawn 成单一文件：node 入口形态、以及 .cmd/.bat shim
+//（Node ≥20.12 出于 CVE-2024-27980 对 .cmd 同步抛 EINVAL，cursor-acp 的 spawn
+// 不带 shell:true，prompt 即崩 -32603）。两者都改把当前 kshell 可执行文件当代理，
+// 由代理再 exec node + index.js。
 func acpAdapterEnv(tool discovery.Tool) map[string]string {
 	if tool.ID != "cursor" || tool.BinPath == "" {
 		return nil
 	}
 	if len(tool.BinArgs) == 0 {
+		// .cmd/.bat shim：改走代理形态；node 或脚本解析不到时退回直注 shim
+		//（保持既有行为，至少老 Node 环境仍可用）。
+		if isCmdShim(tool.BinPath) {
+			node, ok := nodeLookPathFn()
+			if !ok {
+				return map[string]string{"CURSOR_AGENT_EXECUTABLE": tool.BinPath}
+			}
+			script, ok := cursorScriptResolveFn(tool.BinPath)
+			if !ok {
+				return map[string]string{"CURSOR_AGENT_EXECUTABLE": tool.BinPath}
+			}
+			return proxyEnv(node, script)
+		}
 		return map[string]string{"CURSOR_AGENT_EXECUTABLE": tool.BinPath}
 	}
+	return proxyEnv(tool.BinPath, tool.BinArgs[0])
+}
+
+// proxyEnv 组装 kshell 代理三元组：cursor-acp spawn kshell 自身，
+// kshell 进程入口看到 KSHELL_AS_CURSOR_AGENT 后转 exec node + 脚本。
+func proxyEnv(node, script string) map[string]string {
 	exe, err := os.Executable()
 	if err != nil || exe == "" {
 		// 解析不到自身路径时无法提供可 spawn 的 PE，退回不注入（cursor-acp 仍会 ENOENT）。
@@ -351,7 +377,121 @@ func acpAdapterEnv(tool discovery.Tool) map[string]string {
 	return map[string]string{
 		"CURSOR_AGENT_EXECUTABLE": exe,
 		cursoragent.EnvAsProxy:    "1",
-		cursoragent.EnvNode:       tool.BinPath,
-		cursoragent.EnvScript:     tool.BinArgs[0],
+		cursoragent.EnvNode:       node,
+		cursoragent.EnvScript:     script,
 	}
+}
+
+// isCmdShim 判断路径是否为 .cmd/.bat 批处理 shim（Node spawn 会 EINVAL 的形态）。
+func isCmdShim(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".cmd" || ext == ".bat"
+}
+
+// nodeLookPathFn 抽象 node.exe 查找，测试可替换。
+var nodeLookPathFn = func() (string, bool) {
+	p, err := exec.LookPath("node.exe")
+	if err != nil || p == "" {
+		return "", false
+	}
+	return p, true
+}
+
+// cursorScriptResolveFn 抽象「从 shim 路径解析 index.js」：shim 在安装根
+// （如 %LOCALAPPDATA%\cursor-agent\cursor-agent.cmd），本体脚本在
+// versions\<ver>\index.js（最新版本在前，与 providers 的版本排序同规则），
+// 更新器删光版本目录时兜底根目录 index.js。测试可替换。
+var cursorScriptResolveFn = func(shimPath string) (string, bool) {
+	abs, err := filepath.Abs(shimPath)
+	if err != nil {
+		return "", false
+	}
+	root := filepath.Dir(abs)
+	if root == "" {
+		return "", false
+	}
+	for _, dir := range cursorVersionDirs(root) {
+		script := filepath.Join(dir, "index.js")
+		if isFile(script) {
+			return script, true
+		}
+	}
+	script := filepath.Join(root, "index.js")
+	return script, isFile(script)
+}
+
+// cursorVersionDirs 列出安装根下 versions\<ver> 子目录，最新版本在前。
+// 目录名形如 YYYY.MM.DD-commit 或 YYYY.MM.DD-HH-MM-SS-commit，按 6 段数值
+// 降序排序（月份不补零时字典序会跨月错序）。非法目录名排在最后兜底。
+func cursorVersionDirs(root string) []string {
+	entries, err := os.ReadDir(filepath.Join(root, "versions"))
+	if err != nil {
+		return nil
+	}
+	type versioned struct {
+		path string
+		ver  [6]int
+		name string
+	}
+	var valid []versioned
+	var invalid []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.Contains(name, ".") || !strings.Contains(name, "-") {
+			continue
+		}
+		if ver, ok := parseVersionDir(name); ok {
+			valid = append(valid, versioned{path: filepath.Join(root, "versions", name), ver: ver, name: name})
+			continue
+		}
+		invalid = append(invalid, filepath.Join(root, "versions", name))
+	}
+	sort.SliceStable(valid, func(i, j int) bool {
+		for k := 0; k < 6; k++ {
+			if valid[i].ver[k] != valid[j].ver[k] {
+				return valid[i].ver[k] > valid[j].ver[k]
+			}
+		}
+		return valid[i].name > valid[j].name
+	})
+	sort.Sort(sort.Reverse(sort.StringSlice(invalid)))
+	out := make([]string, 0, len(valid)+len(invalid))
+	for _, v := range valid {
+		out = append(out, v.path)
+	}
+	return append(out, invalid...)
+}
+
+// parseVersionDir 解析 versions 目录名为 6 段数值版本号（缺时分秒补 0）。
+func parseVersionDir(name string) ([6]int, bool) {
+	var ver [6]int
+	segs := strings.Split(name, "-")
+	if len(segs) != 2 && len(segs) != 5 {
+		return ver, false
+	}
+	date := strings.Split(segs[0], ".")
+	if len(date) != 3 {
+		return ver, false
+	}
+	nums := append([]string{}, date...)
+	if len(segs) == 5 {
+		nums = append(nums, segs[1], segs[2], segs[3])
+	}
+	for i, s := range nums {
+		n, err := strconv.Atoi(s)
+		if err != nil {
+			return ver, false
+		}
+		ver[i] = n
+	}
+	return ver, true
+}
+
+// isFile 判断路径存在且为普通文件。
+func isFile(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.Mode().IsRegular()
 }
