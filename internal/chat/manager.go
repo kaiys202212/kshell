@@ -71,9 +71,9 @@ type session struct {
 
 	queue []queuedMsg // 忙时排队的用户消息（按 blocks 整体投递），turn_done 后按序送出
 
-	modelState *acp.SessionModelState   // agent 以 v1 models 形态报告的可用模型
+	modelState  *acp.SessionModelState   // agent 以 v1 models 形态报告的可用模型
 	modelConfig *acp.SessionConfigOption // agent 以 configOptions(id=model) 形态报告的模型选项
-	commands   []Command                // 最近一次 available_commands_update 的技能列表
+	commands    []Command                // 最近一次 available_commands_update 的技能列表
 
 	// 状态活动跟随：提前返回 prompt 的 agent（codebuddy 等）随后仍推工具/思考
 	// 流水，Info.Status 必须跟随实际活动，否则 ListChats/chat:meta 携带的 ready
@@ -102,14 +102,15 @@ type sessionHandler struct {
 }
 
 type Manager struct {
-	backend      Backend
-	onUpdate     func(id string, u Update)
-	onPermission func(id string, r PermissionRequest)
-	onExit       func(id string, code int, errMsg string)
-	onInfo       func(Info)  // 锁外；首条用户消息改写标题时
-	onCommands   func(id string, cmds []Command) // 锁外；技能列表推送
-	autoAllow    func() bool // bypass：自动选 allow 类 option，不弹窗
-	mcpFor       func(chatID string) []acp.McpServerStdio
+	backend         Backend
+	onUpdate        func(id string, u Update)
+	onPermission    func(id string, r PermissionRequest)
+	onExit          func(id string, code int, errMsg string)
+	onInfo          func(Info)                      // 锁外；首条用户消息改写标题时
+	onCommands      func(id string, cmds []Command) // 锁外；技能列表推送
+	settingsMetaFor func(chatID string) string      // 锁外；_meta 载荷工厂（claude settings 注入）
+	autoAllow       func() bool                     // bypass：自动选 allow 类 option，不弹窗
+	mcpFor          func(chatID string) []acp.McpServerStdio
 	// Hub 状态回调（锁外执行）：onHubQueued 在投递竞态兜底改入队时触发，
 	// onHubDelivered 在带 hubMsgID 的条目真正发起 conn.Prompt 前触发。
 	onHubQueued    func(hubMsgID string)
@@ -119,7 +120,7 @@ type Manager struct {
 	// c1/c2/... 在进程重启后归零，落盘的 chatId（需求绑定、hub 归因）会撞上
 	// 新一轮同名 ID，造成假绑定。组成：纳秒时间戳 + PID + 包级实例计数，
 	// 后两者兜底同刻度多实例（Windows 计时器精度粗）与多进程并发。
-	bootID string
+	bootID  string
 	mu      sync.Mutex
 	byKey   map[string]*session
 	byID    map[string]*session
@@ -178,6 +179,38 @@ func (m *Manager) SetMCPFactory(fn func(chatID string) []acp.McpServerStdio) {
 	m.mu.Lock()
 	m.mcpFor = fn
 	m.mu.Unlock()
+}
+
+// SetSettingsMetaFactory 注册 _meta 载荷工厂（备用通路）。生产路径走
+// chat.Spec.ACPSettingsJSON 直通（launch 层单一来源）；本工厂供无 launch
+// 层的调用方（如测试或未来 TUI 直连场景）注入，spec 载荷非空时被优先。
+func (m *Manager) SetSettingsMetaFactory(fn func(chatID string) string) {
+	m.mu.Lock()
+	m.settingsMetaFor = fn
+	m.mu.Unlock()
+}
+
+// applySettingsMeta 把 _meta 载荷交给连接：spec 直通载荷优先（单一来源，
+// 来自 launch 层组装的 ACPSettingsJSON），为空时回退 factory。
+func (m *Manager) applySettingsMeta(conn Conn, id, specPayload string) {
+	payload := specPayload
+	if payload == "" {
+		m.mu.Lock()
+		factory := m.settingsMetaFor
+		m.mu.Unlock()
+		if factory == nil {
+			return
+		}
+		payload = factory(id)
+	}
+	if payload == "" {
+		return
+	}
+	setter, ok := conn.(interface{ SetSettingsMeta(string) })
+	if !ok {
+		return
+	}
+	setter.SetSettingsMeta(payload)
 }
 
 func (m *Manager) applyMCP(conn Conn, id string) {
@@ -389,6 +422,7 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 		return Info{}, errors.New(msg)
 	}
 	m.applyMCP(conn, s.id)
+	m.applySettingsMeta(conn, s.id, spec.ACPSettingsJSON)
 
 	if sessionID != "" {
 		// load 前先确认对方声明了该能力，否则会拿到无意义的 RPC 错误。
@@ -534,7 +568,7 @@ func (m *Manager) fail(id string, code int, msg string) {
 }
 
 // flattenBlocks 把内容块展开成时间线用文本：text 块按序拼接，非文本块忽略
-//（附件另有 AttachmentMeta 展示）。
+// （附件另有 AttachmentMeta 展示）。
 func flattenBlocks(blocks []acp.ContentBlock) string {
 	parts := make([]string, 0, len(blocks))
 	for _, b := range blocks {

@@ -249,7 +249,7 @@ func TestForWorkspaceACP_CursorNodeEntryInjectsProxy(t *testing.T) {
 
 // 非 cursor 工具不得注入任何环境变量，防止回归为全量注入。
 // claude 是 git-bash 注入对象，这里 mock 探测未命中使 env 确定为空
-//（真实探测依赖本机 PATH/注册表，不能作为断言依据）。
+// （真实探测依赖本机 PATH/注册表，不能作为断言依据）。
 func TestForWorkspaceACP_OtherToolNoEnv(t *testing.T) {
 	oldGitBash := gitBashEnvFn
 	t.Cleanup(func() { gitBashEnvFn = oldGitBash })
@@ -971,5 +971,96 @@ func TestForSessionACPClaudeNpxSettingsWithBypass(t *testing.T) {
 	}
 	if !skip {
 		t.Fatalf("args 应含 bypass 参数: %v", l.Args)
+	}
+}
+
+// claude ACP 必须产出 ACPSettingsJSON 载荷——完整的 _meta 形态
+// {"claudeCode":{"options":{"settings":"{\"env\":{...}}"}}}，settings 值为
+// JSON 字符串（SDK 原样透传进 spawn argv，对象形态会变 "[object Object]"）。
+func TestFinalizeACPClaudeSettingsPayload(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"})
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{AnthropicBaseURL: "https://h/", APIKey: "k", Model: "glm-5.3-flash"}, true
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", mo, PermissionOptions{})
+	if err != nil {
+		t.Fatalf("ForWorkspaceACP: %v", err)
+	}
+	if l.ACPSettingsJSON == "" {
+		t.Fatalf("claude ACP 应产出 ACPSettingsJSON, launch=%+v", l)
+	}
+	var meta struct {
+		ClaudeCode struct {
+			Options struct {
+				Settings string `json:"settings"`
+			} `json:"options"`
+		} `json:"claudeCode"`
+	}
+	if err := json.Unmarshal([]byte(l.ACPSettingsJSON), &meta); err != nil {
+		t.Fatalf("载荷非法 JSON: %v (%q)", err, l.ACPSettingsJSON)
+	}
+	var envObj map[string]any
+	if err := json.Unmarshal([]byte(meta.ClaudeCode.Options.Settings), &envObj); err != nil {
+		t.Fatalf("settings 值应为内联 JSON 字符串: %v (%q)", err, meta.ClaudeCode.Options.Settings)
+	}
+	env, _ := envObj["env"].(map[string]any)
+	if env["ANTHROPIC_MODEL"] != "glm-5.3-flash" || env["ANTHROPIC_BASE_URL"] != "https://h/" || env["ANTHROPIC_AUTH_TOKEN"] != "k" {
+		t.Fatalf("env 块不符: %+v", env)
+	}
+}
+
+// 非 claude 工具不得产出 ACPSettingsJSON。
+func TestFinalizeACPNonClaudeNoSettings(t *testing.T) {
+	ps := []providers.Provider{providers.Codex{}}
+	tools := []discovery.Tool{{ID: "codex", Name: "Codex", Installed: true, BinPath: "codex", ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "codex-acp"}}}
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{OpenAIBaseURL: "https://h/", APIKey: "k", Model: "gpt-x"}, true
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "codex", mo, PermissionOptions{})
+	if err != nil {
+		t.Fatalf("ForWorkspaceACP: %v", err)
+	}
+	if l.ACPSettingsJSON != "" {
+		t.Fatalf("codex ACP 不应产出 settings 载荷: %q", l.ACPSettingsJSON)
+	}
+}
+
+// 模型未启用（Resolver nil）或 cfg 全空时不得产出。
+func TestFinalizeACPEmptyConfigNoSettings(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"})
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatalf("ForWorkspaceACP: %v", err)
+	}
+	if l.ACPSettingsJSON != "" {
+		t.Fatalf("Resolver nil 不应产出: %q", l.ACPSettingsJSON)
+	}
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{}, true
+	}}
+	l, err = ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", mo, PermissionOptions{})
+	if err != nil {
+		t.Fatalf("ForWorkspaceACP: %v", err)
+	}
+	if l.ACPSettingsJSON != "" {
+		t.Fatalf("空 cfg 不应产出: %q", l.ACPSettingsJSON)
+	}
+}
+
+// 终端路径不得产出 ACPSettingsJSON（那是 ACP 专属通道）。
+func TestTerminalNoACPSettingsPayload(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := []discovery.Tool{{ID: "claude", Installed: true, BinPath: "claude"}}
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{AnthropicBaseURL: "https://h/", APIKey: "k", Model: "glm-5"}, true
+	}}
+	l, err := ForWorkspaceTool(ps, tools, discovery.Workspace{Path: "/w"}, "claude", ThemeOptions{}, mo, PermissionOptions{})
+	if err != nil {
+		t.Fatalf("ForWorkspaceTool: %v", err)
+	}
+	if l.ACPSettingsJSON != "" {
+		t.Fatalf("终端路径不应产出 ACPSettingsJSON: %q", l.ACPSettingsJSON)
 	}
 }

@@ -89,6 +89,8 @@ type Agent struct {
 
 	mcp []McpServerStdio
 
+	settingsMeta json.RawMessage // session/new、session/load 的 _meta 载荷
+
 	readDone  chan struct{} // 读循环结束
 	done      chan struct{} // 连接关闭（读循环结束或 Close）
 	waitDone  chan struct{} // 子进程退出
@@ -275,6 +277,22 @@ func (a *Agent) SetMCP(servers []McpServerStdio) {
 	a.mu.Unlock()
 }
 
+// SetSettingsMeta 设置 session/new 与 session/load 参数里的 _meta 载荷
+//（如 claude 的 {"claudeCode":{"options":{"settings":"..."}}}）。
+// 空串表示不携带。签名用 string：chat 层的可选接口断言按精确签名匹配，
+// json.RawMessage 形参会让 *Agent 不满足 interface{ SetSettingsMeta(string) }。
+func (a *Agent) SetSettingsMeta(raw string) {
+	a.mu.Lock()
+	a.settingsMeta = json.RawMessage(raw)
+	a.mu.Unlock()
+}
+
+func (a *Agent) settingsMetaParams() json.RawMessage {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.settingsMeta
+}
+
 func (a *Agent) mcpParams() []any {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -310,7 +328,7 @@ func sessionStartFromResult(res NewSessionResult) SessionStart {
 
 func (a *Agent) NewSession(ctx context.Context, cwd string) (SessionStart, error) {
 	var res NewSessionResult
-	err := a.call(ctx, "session/new", NewSessionParams{Cwd: cwd, McpServers: a.mcpParams()}, &res)
+	err := a.call(ctx, "session/new", NewSessionParams{Cwd: cwd, McpServers: a.mcpParams(), Meta: a.settingsMetaParams()}, &res)
 	if err != nil {
 		return SessionStart{}, err
 	}
@@ -319,7 +337,7 @@ func (a *Agent) NewSession(ctx context.Context, cwd string) (SessionStart, error
 
 func (a *Agent) LoadSession(ctx context.Context, sessionID, cwd string) (SessionStart, error) {
 	var res NewSessionResult
-	if err := a.call(ctx, "session/load", LoadSessionParams{SessionID: sessionID, Cwd: cwd, McpServers: a.mcpParams()}, &res); err != nil {
+	if err := a.call(ctx, "session/load", LoadSessionParams{SessionID: sessionID, Cwd: cwd, McpServers: a.mcpParams(), Meta: a.settingsMetaParams()}, &res); err != nil {
 		return SessionStart{}, err
 	}
 	return sessionStartFromResult(res), nil

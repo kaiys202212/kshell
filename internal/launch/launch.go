@@ -3,6 +3,7 @@
 package launch
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -245,7 +246,42 @@ func ForSessionACP(ps []providers.Provider, tools []discovery.Tool, s providers.
 func finalizeACP(l providers.Launch, p providers.Provider, tool discovery.Tool, mo ModelOptions, po PermissionOptions) providers.Launch {
 	baseLen := len(l.Args)
 	out := finalize(l, p, mo, po)
+	out.ACPSettingsJSON = acpSettingsPayload(p, mo)
 	return reorderACPArgs(out, tool, len(out.Args)-baseLen)
+}
+
+// acpSettingsPayload 为 claude ACP 组装完整的 _meta 载荷
+// {"claudeCode":{"options":{"settings":"{\"env\":{...}}"}}}：适配器从
+// params._meta.claudeCode.options 读 SDK options，settings 值经 SDK 原样
+// 进 spawn argv → CLI 的 --settings（内联 JSON）。**settings 值必须是 JSON
+// 字符串而非对象**——SDK 无 sandbox 时不序列化，对象会被 Node 变成
+// "[object Object]" 致 CLI 启动失败。非 claude、Resolver 未命中或 env 全空
+// 时返回空串（session/new 不带 _meta）。
+func acpSettingsPayload(p providers.Provider, mo ModelOptions) string {
+	if p.ID() != "claude" || mo.Resolver == nil {
+		return ""
+	}
+	cfg, ok := mo.Resolver(p.ID())
+	if !ok {
+		return ""
+	}
+	env := providers.Claude{}.SettingsEnv(cfg)
+	if len(env) == 0 {
+		return ""
+	}
+	settingsJSON, err := json.Marshal(map[string]any{"env": env})
+	if err != nil {
+		return ""
+	}
+	b, err := json.Marshal(map[string]any{
+		"claudeCode": map[string]any{
+			"options": map[string]any{"settings": string(settingsJSON)},
+		},
+	})
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // ForWorkspaceACP 产出在工作区新建 ACP 会话的启动描述；toolID 为空时用首选工具。
