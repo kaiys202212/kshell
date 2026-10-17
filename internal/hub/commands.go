@@ -46,38 +46,7 @@ type Executor interface {
 	Status() ConsoleStatus
 }
 
-// —— 用户可见文案常量（双端共用；i18n 留给后续任务）——
-
-const (
-	helpText = `命令列表:
-#?  帮助
-#l  最近会话(前10)   #la 全部会话
-数字 切换到对应会话
-#en 快速新建会话     #n  分步新建会话
-#s  中断当前任务     #m  切换模型
-#g <编号> <内容>  向指定会话发送
-#f <关键词>  搜索会话
-#st 状态             #c  取消选择
-直接输入文字 = 发给当前会话`
-
-	msgNoCurrent       = "当前无活跃会话"
-	msgNoCurrentList   = "当前无活跃会话，#l 查看"
-	msgNoSessions      = "暂无会话"
-	msgNoMapping       = "编号不存在，#l 查看"
-	msgSwitchFailed    = "切换失败: %s"
-	msgCreateFailed    = "创建失败: %s"
-	msgSendFailed      = "发送失败: %s"
-	msgCancelled       = "已取消"
-	msgNothingToCancel = "无进行中的选择"
-	msgPickNumber      = "请回复数字选择，或 #c 取消"
-	msgStopped         = "已发送中断指令"
-	msgUnknownCmd      = "未知命令，#? 查看帮助"
-	msgUsageG          = "用法: #g <编号> <内容>"
-	msgUsageF          = "用法: #f <关键词>"
-	msgSearchNoMatch   = "未找到匹配会话"
-	msgPermDone        = "已处理权限请求"
-	msgPermStale       = "该选择已失效，请重新操作"
-)
+// —— 用户可见文案统一放 lang.go 的 cmdTexts（双语）——
 
 // lastBase 取路径的末段：兼容 Windows 反斜杠与 Unix 斜杠（跨渠道文本里的
 // 路径分隔不保证与运行平台一致，不能只依赖 filepath.Base）。
