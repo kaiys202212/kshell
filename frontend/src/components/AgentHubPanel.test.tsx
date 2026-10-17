@@ -13,6 +13,8 @@ import AgentHubPanel from './AgentHubPanel';
 const api = vi.hoisted(() => ({
   sendChatPrompt: vi.fn(),
   openWorkspaceACP: vi.fn(),
+  openSessionACP: vi.fn(),
+  getSessions: vi.fn(),
   getTools: vi.fn(),
   getModelConfig: vi.fn(),
   readClipboardPaste: vi.fn(),
@@ -56,6 +58,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   api.sendChatPrompt.mockResolvedValue(undefined);
   api.openWorkspaceACP.mockResolvedValue({ Kind: 'chat' });
+  api.openSessionACP.mockResolvedValue({ Kind: 'chat' });
+  api.getSessions.mockResolvedValue([]);
   api.getTools.mockResolvedValue([]);
   api.getModelConfig.mockResolvedValue({
     Enabled: false,
@@ -1589,5 +1593,160 @@ describe('AgentHubPanel', () => {
     fireEvent.change(select, { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.save') }));
     expect(loadDefaultCreate()).toEqual({ toolId: 'claude', modelId: null });
+  });
+});
+
+describe('AgentHubPanel #find', () => {
+  it('#find 出现在 hash 补全候选', () => {
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#fi' } });
+    const list = screen.getByRole('listbox', { name: tt('ui.hub.cmd_aria') });
+    expect(list).toHaveTextContent('#find');
+    expect(list).toHaveTextContent(tt('ui.hub.cmd_find_desc'));
+  });
+
+  it('裸 #find 回车：打开查找对话框（getSessions 被调），草稿清空，不投递', async () => {
+    api.getSessions.mockResolvedValue([]);
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#find' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.getSessions).toHaveBeenCalled());
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    expect((box as HTMLTextAreaElement).value).toBe('');
+    // 对话框标题出现即视为打开
+    expect(screen.getByText(tt('ui.hub.find_title'))).toBeTruthy();
+  });
+
+  it('#find claude 带参数发送：对话框打开且过滤框初值 claude，草稿清空，不透传不报错', async () => {
+    api.getSessions.mockResolvedValue([]);
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#find claude' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.getSessions).toHaveBeenCalled());
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    expect(
+      useAppStore.getState().toasts.some((t) => t.title === tt('ui.hub.unknown_cmd').replace('{{cmd}}', '#find')),
+    ).toBe(false);
+    expect((box as HTMLTextAreaElement).value).toBe('');
+    expect(screen.getByPlaceholderText(tt('ui.hub.find_placeholder'))).toHaveValue('claude');
+  });
+
+  it('过滤：输入关键词后列表只剩匹配行；无匹配显示空态', async () => {
+    api.getSessions.mockResolvedValue([
+      {
+        ID: 's1',
+        ToolID: 'claude',
+        Workspace: 'D:\\ws\\alpha',
+        Title: '重构认证',
+        CreatedAt: '2026-10-16T10:00:00Z',
+        UpdatedAt: new Date().toISOString(),
+        Messages: 3,
+        Path: '',
+      },
+      {
+        ID: 's2',
+        ToolID: 'codex',
+        Workspace: 'D:\\ws\\beta',
+        Title: '写文档',
+        CreatedAt: '2026-10-16T09:00:00Z',
+        UpdatedAt: '2026-10-16T09:00:00Z',
+        Messages: 1,
+        Path: '',
+      },
+    ]);
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#find' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByText('重构认证')).toBeTruthy());
+    expect(screen.getByText('写文档')).toBeTruthy();
+    // 关键词 alpha 只剩项目 alpha 的会话
+    const input = screen.getByPlaceholderText(tt('ui.hub.find_placeholder'));
+    fireEvent.change(input, { target: { value: 'alpha' } });
+    await waitFor(() => expect(screen.queryByText('写文档')).toBeNull());
+    expect(screen.getByText('重构认证')).toBeTruthy();
+    // 无匹配时空态文案
+    fireEvent.change(input, { target: { value: 'zzz没有' } });
+    await waitFor(() => expect(screen.getByText(tt('ui.hub.find_empty'))).toBeTruthy());
+  });
+
+  it('选中行：openSessionACP 被调、registerChat 生效、draft 追加 @label、对话框关闭', async () => {
+    api.getSessions.mockResolvedValue([
+      {
+        ID: 's1',
+        ToolID: 'claude',
+        Workspace: 'D:\\ws\\alpha',
+        Title: '重构认证',
+        CreatedAt: '2026-10-16T10:00:00Z',
+        UpdatedAt: new Date().toISOString(),
+        Messages: 3,
+        Path: '',
+      },
+    ]);
+    api.openSessionACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: {
+        ID: 'c77',
+        Key: 'k77',
+        Kind: 'session',
+        SessionID: 's1',
+        Workspace: 'D:\\ws\\alpha',
+        Title: '重构认证',
+        ToolID: 'claude',
+        Status: 'ready',
+        ExitCode: 0,
+        Error: '',
+        Prompted: true,
+      },
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#find' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByText('重构认证')).toBeTruthy());
+    fireEvent.click(screen.getByText('重构认证'));
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('s1'));
+    // registerChat 生效：upsertChat 进 store + lastAgentId 指向新 chat
+    expect(useAppStore.getState().chats.some((c) => c.ID === 'c77')).toBe(true);
+    expect(useAppStore.getState().lastAgentId).toBe('c77');
+    // draft 追加 @label（label 由 buildMentionOptions 生成：工具展示名#chatID）
+    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c77 ');
+    // 对话框关闭（标题不再渲染）
+    await waitFor(() => expect(screen.queryByText(tt('ui.hub.find_title'))).toBeNull());
+  });
+
+  it('openSessionACP reject：notify 错误 ui.hub.find_activate_failed，对话框保持', async () => {
+    api.getSessions.mockResolvedValue([
+      {
+        ID: 's1',
+        ToolID: 'claude',
+        Workspace: 'D:\\ws\\alpha',
+        Title: '重构认证',
+        CreatedAt: '2026-10-16T10:00:00Z',
+        UpdatedAt: new Date().toISOString(),
+        Messages: 3,
+        Path: '',
+      },
+    ]);
+    api.openSessionACP.mockRejectedValue(new Error('boom'));
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#find' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByText('重构认证')).toBeTruthy());
+    fireEvent.click(screen.getByText('重构认证'));
+    await waitFor(() =>
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((t) => t.title === tt('ui.hub.find_activate_failed').replace('{{err}}', 'boom')),
+      ).toBe(true),
+    );
+    // 对话框不关，草稿不追加
+    expect(screen.getByText(tt('ui.hub.find_title'))).toBeTruthy();
+    expect((box as HTMLTextAreaElement).value).toBe('');
   });
 });

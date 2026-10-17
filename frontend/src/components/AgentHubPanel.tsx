@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowUpRight, AtSign, ChevronDown, Loader2, Settings2 } from 'lucide-react';
-import type { ChatCommand, ChatInfo, ChatModelsView, HubArchiveMonth, HubMessage, ToolInfo, Workspace } from '../lib/api';
+import type { ChatCommand, ChatInfo, ChatModelsView, HubArchiveMonth, HubMessage, Session, ToolInfo, Workspace } from '../lib/api';
 import {
   cancelChat,
   clearHubMessages,
@@ -19,6 +19,7 @@ import {
   listHubArchive,
   listHubMessages,
   loadHubArchive,
+  openSessionACP,
   openWorkspaceACP,
   readClipboardPaste,
   recallHubMessage,
@@ -40,6 +41,7 @@ import { LIST_ROW, MONO } from '../lib/ui';
 import { useAppStore } from '../state/store';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
+import FindSessionDialog from './FindSessionDialog';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 
 // 消息流里渲染的一条：用户发出（右）或 agent 回复（左）。
@@ -53,6 +55,7 @@ const HUB_COMMANDS: { name: string; descKey: string }[] = [
   { name: 'stop', descKey: 'ui.hub.cmd_stop_desc' },
   { name: 'model', descKey: 'ui.hub.cmd_model_desc' },
   { name: 'clear', descKey: 'ui.hub.cmd_clear_desc' },
+  { name: 'find', descKey: 'ui.hub.cmd_find_desc' },
 ];
 const HUB_COMMAND_NAMES = new Set(HUB_COMMANDS.map((c) => c.name.toLowerCase()));
 
@@ -225,6 +228,9 @@ export default function AgentHubPanel() {
   const [dialogOpen, setDialogOpen] = useState(false);
   // 「默认设置」对话框开关：设置默认 agent 工具/模型，供 easynew 与需求派发使用
   const [defaultsOpen, setDefaultsOpen] = useState(false);
+  // #find 查找对话框：open 控制显隐，initialQuery 承接 `#find 关键词` 的初始过滤词
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
   // /easynew 直建中的本地提示（不进 hub store，成功后由后端写欢迎词）
   const [easynewRunning, setEasynewRunning] = useState(false);
   // 归档入口：展开时列出月份，选中月份后加载该月旧消息内联展示。
@@ -460,6 +466,10 @@ export default function AgentHubPanel() {
       openNewAgentDialog();
       return;
     }
+    if (name === 'find') {
+      openFindDialog('');
+      return;
+    }
     if (name === 'easynew') {
       runEasyNew();
       return;
@@ -618,6 +628,44 @@ export default function AgentHubPanel() {
     inputRef.current?.focus();
   };
 
+  // openFindDialog 打开 #find 查找对话框：keyword 为 `#find 关键词` 的初始过滤词。
+  const openFindDialog = (keyword: string) => {
+    setFindQuery(keyword);
+    setFindOpen(true);
+  };
+
+  // pickFoundSession 激活选中的已发现会话：OpenSessionACP 建聊天（Go 侧对已退出
+  // 会话自动重建），成功后 registerChat 登记 + 把该 chat 的 @ 标签追加进草稿
+  // （语义同 mentionSession），清掉 `#find ...` 草稿残留并聚焦输入框。
+  // 注意新 chat ID 与 GetSessions 的 session ID 无关，label 从返回的 Chat 构造。
+  const pickFoundSession = (s: Session) => {
+    void openSessionACP(s.ID)
+      .then((res) => {
+        if (!res.Chat) return;
+        const chat = res.Chat;
+        useAppStore.getState().upsertChat(chat);
+        useAppStore.getState().setLastAgentId(chat.ID);
+        // label 与 @ 补全候选用同一套生成逻辑，保证草稿里的提及可被 resolveMentionTarget 命中
+        const label = buildMentionOptions([
+          { id: chat.ID, toolId: chat.ToolID, title: chat.Title, workspace: chat.Workspace },
+        ])[0]?.label;
+        // 语义同 mentionSession：保留式追加 @ 标签（已有内容空格分隔）；
+        // `#find ...` 命令残留一并清掉（find 分支不消费草稿，激活成功后重建）。
+        setDraft((d) => {
+          const kept = d.replace(/#find(\s+\S+)?/g, '').trim();
+          if (!label) return kept;
+          return kept ? `${kept} @${label} ` : `@${label} `;
+        });
+        setFindOpen(false);
+        inputRef.current?.focus();
+      })
+      .catch((e: unknown) => {
+        useAppStore
+          .getState()
+          .notify(t('ui.hub.find_activate_failed', { err: backendError(e) }), 'error');
+      });
+  };
+
   // jumpToSession 跳到该会话所属项目页签并定位其对话页：openTab 激活工作区
   // （不在工作区列表时手工构造，与 WorkspaceTab 的 SSH 兜底同构），
   // 再经 requestFocusTerm(chat.Key) 让该工作区中心区切到会话页签；
@@ -703,6 +751,13 @@ export default function AgentHubPanel() {
       const name = cmdToken.slice(1).toLowerCase();
       if (!HUB_COMMAND_NAMES.has(name)) {
         useAppStore.getState().notify(t('ui.hub.unknown_cmd', { cmd: cmdToken }), 'error');
+        return;
+      }
+      // #find：不透传给 agent。带关键词（`#find claude`）时以剩余文本为初始过滤词
+      // 打开对话框；裸 `#find` 由下方单 token 宽松执行路径处理（关键词为空）。
+      if (name === 'find' && text !== cmdToken) {
+        setDraft('');
+        openFindDialog(text.slice(cmdToken.length).trim());
         return;
       }
       // 整体就是单个已知命令 token（尾空格已被 trim 掉）：宽松执行而非投递，
@@ -1267,6 +1322,12 @@ export default function AgentHubPanel() {
 
       <NewAgentDialog open={dialogOpen} onOpenChange={setDialogOpen} />
       <DefaultSettingsDialog open={defaultsOpen} onOpenChange={setDefaultsOpen} />
+      <FindSessionDialog
+        open={findOpen}
+        initialQuery={findQuery}
+        onClose={() => setFindOpen(false)}
+        onPick={pickFoundSession}
+      />
     </section>
   );
 }
