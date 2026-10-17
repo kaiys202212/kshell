@@ -37,7 +37,9 @@ func (a *App) ListRequirements() []requirements.Item {
 		if items[i].ChatID == "" || items[i].SessionTitle != "" {
 			continue
 		}
-		if info, ok := m.Get(items[i].ChatID); ok && info.Title != "" {
+		// 落盘 ChatID 是前端空间（原始 ID）；重建后 manager 里只有最新 ID，先解析再反查。
+		resolved, _ := a.resolveChatID(items[i].ChatID)
+		if info, ok := m.Get(resolved); ok && info.Title != "" {
 			items[i].SessionTitle = info.Title
 		}
 	}
@@ -146,9 +148,11 @@ func (a *App) ArchiveRequirement(id string) (ArchiveResult, error) {
 		break
 	}
 	if m := a.chats(); m != nil && res.ChatID != "" {
-		info, ok := m.Get(res.ChatID)
+		// 落盘 ChatID 是前端空间（原始 ID），manager 只认最新 ID，先解析再判状态/关闭。
+		resolved, _ := a.resolveChatID(res.ChatID)
+		info, ok := m.Get(resolved)
 		if ok && info.Status != chat.StatusRunning && info.Status != chat.StatusStarting {
-			if err := m.Close(res.ChatID); err == nil {
+			if err := m.Close(resolved); err == nil {
 				res.Released = true
 			}
 		}

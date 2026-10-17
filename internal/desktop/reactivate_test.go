@@ -88,6 +88,7 @@ func (b *recordingBackend) connAt(i int) *recordingConn {
 // flakyBackend 前几次成功、置位后起进程失败（模拟重建失败路径）。
 type flakyBackend struct {
 	failNext atomic.Bool
+	mu       sync.Mutex
 	conns    []chat.Conn
 }
 
@@ -96,8 +97,16 @@ func (b *flakyBackend) Start(spec chat.Spec, h acp.Handler) (chat.Conn, error) {
 		return nil, errors.New("起进程失败")
 	}
 	c := &fakeChatConn{waitCh: make(chan struct{})}
+	b.mu.Lock()
 	b.conns = append(b.conns, c)
+	b.mu.Unlock()
 	return c, nil
+}
+
+func (b *flakyBackend) connAt(i int) chat.Conn {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.conns[i]
 }
 
 // newReactivateTestApp 装配带桩后端的 App（与 newChatTestApp 同构，便于注入自定义 backend）。
@@ -191,7 +200,7 @@ func TestEnsureChatAliveUnknownIDGone(t *testing.T) {
 	}
 }
 
-// TestEnsureChatAliveOpenFailureNotReady 重建失败返回 err.chat.not_ready 语义。
+// TestEnsureChatAliveOpenFailureNotReady 重建失败返回 err.chat.rebuild_failed 语义（细节透出）。
 func TestEnsureChatAliveOpenFailureNotReady(t *testing.T) {
 	b := &flakyBackend{}
 	app := newReactivateTestApp(t, b)
@@ -202,11 +211,11 @@ func TestEnsureChatAliveOpenFailureNotReady(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	id := opened.Chat.ID
-	exitChatConn(t, m, id, b.conns[0])
+	exitChatConn(t, m, id, b.connAt(0))
 	b.failNext.Store(true)
 
-	if _, err := app.ensureChatAlive(id); err == nil || err.Error() != "err.chat.not_ready|起进程失败" {
-		t.Fatalf("want err.chat.not_ready|..., got %v", err)
+	if _, err := app.ensureChatAlive(id); err == nil || err.Error() != "err.chat.rebuild_failed|起进程失败" {
+		t.Fatalf("want err.chat.rebuild_failed|..., got %v", err)
 	}
 }
 
@@ -269,6 +278,184 @@ func TestEnsureChatAliveRebuildsNewChatByWorkspace(t *testing.T) {
 	// 新起路径不走 LoadSession
 	if got := b.connAt(1).loadedIDs(); len(got) != 0 {
 		t.Fatalf("新起不应 LoadSession, got %v", got)
+	}
+}
+
+// TestRebuildChatEmptyWorkspaceFails 工作区为空时不再合成空 path 的 launch，
+// 直接报 err.chat.rebuild_failed（细节透出，前端可提示具体原因）。
+func TestRebuildChatEmptyWorkspaceFails(t *testing.T) {
+	app := newReactivateTestApp(t, &recordingBackend{})
+	m := app.chats()
+	_, err := app.rebuildChat(m, chat.Info{ID: "cx_1", Key: "new:1", Kind: chat.KindNew})
+	if err == nil || err.Error() != "err.chat.rebuild_failed|workspace empty" {
+		t.Fatalf("want err.chat.rebuild_failed|workspace empty, got %v", err)
+	}
+}
+
+// TestRebuildChatSessionFallbackToWorkspace resume 降级路径：KindSession 有
+// SessionID 但 discovery 里查不到该磁盘会话（如缓存被清）→ 按工作区新起，
+// 宁可丢上下文也不报错卡死。
+func TestRebuildChatSessionFallbackToWorkspace(t *testing.T) {
+	b := &recordingBackend{}
+	app := newReactivateTestApp(t, b)
+	m := app.chats()
+
+	opened, err := app.OpenSessionACP("s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	oldID := opened.Chat.ID
+	exitChatConn(t, m, oldID, b.connAt(0))
+
+	// 直接构造一个指向「磁盘上不存在的会话」的 Info，绕过正常重建入口。
+	info, _ := m.Get(oldID)
+	_ = m.Close(oldID)
+	newID, err := app.rebuildChat(m, chat.Info{
+		ID:        oldID,
+		Key:       info.Key,
+		Kind:      chat.KindSession,
+		SessionID: "gone-session",
+		Workspace: info.Workspace,
+		ToolID:    info.ToolID,
+	})
+	if err != nil {
+		t.Fatalf("降级重建不应失败: %v", err)
+	}
+	if newID == oldID {
+		t.Fatalf("降级重建应产生新 ID, got %s", newID)
+	}
+	if got := b.connAt(1).loadedIDs(); len(got) != 0 {
+		t.Fatalf("降级按工作区新起不应 LoadSession, got %v", got)
+	}
+	got, ok := m.Get(newID)
+	if !ok || got.Kind != chat.KindNew {
+		t.Fatalf("降级重建应保持 KindNew: ok=%v info=%+v", ok, got)
+	}
+	// 别名链应覆盖降级路径：旧 ID 仍可解析到新会话
+	if resolved, ok := app.resolveChatID(oldID); !ok || resolved != newID {
+		t.Fatalf("降级后旧 ID 应解析到新会话: got %s ok=%v", resolved, ok)
+	}
+}
+
+// TestRebuiltChatEmitsOriginalID 集成：重建后 manager 的更新事件经出站翻译
+// 带回旧 ID——前端按旧 ID 索引的状态才收得到（Critical 修复点）。
+func TestRebuiltChatEmitsOriginalID(t *testing.T) {
+	b := &recordingBackend{}
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "claude-agent-acp",
+	}, b)
+	app := env.app
+	m := app.chats()
+
+	opened, err := app.OpenSessionACP("s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	oldID := opened.Chat.ID
+	exitChatConn(t, m, oldID, b.connAt(0))
+
+	// 触发重建（第二条消息经旧 ID 投递），等新会话推 turn_done。
+	if err := app.SendChatPrompt(oldID, "第一条"); err != nil {
+		t.Fatalf("SendChatPrompt: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		found := false
+		for _, ev := range env.events.all() {
+			if ev.name != "chat:update" {
+				continue
+			}
+			if id, _ := ev.payload["id"].(string); id == oldID {
+				if u, ok := ev.payload["update"].(chat.Update); ok && u.Type == "turn_done" {
+					found = true
+				}
+			}
+		}
+		if found {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("重建后未收到带旧 ID 的 chat:update(turn_done)")
+}
+
+// TestOldIDHitsNewSessionViaBindings 前端持旧 ID 调 ChatHistory / CancelChat /
+// ListChatModels 应命中重建后的新会话（入站别名解析）。
+func TestOldIDHitsNewSessionViaBindings(t *testing.T) {
+	b := &recordingBackend{}
+	app := newReactivateTestApp(t, b)
+	m := app.chats()
+
+	opened, err := app.OpenSessionACP("s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	oldID := opened.Chat.ID
+	exitChatConn(t, m, oldID, b.connAt(0))
+	if err := app.SendChatPrompt(oldID, "唤醒"); err != nil {
+		t.Fatalf("SendChatPrompt: %v", err)
+	}
+	waitPromptText(t, b.connAt(1), "唤醒")
+
+	// 旧 ID 读历史：应返回非空（含刚投递的 user 消息），证明命中新会话
+	hist := app.ChatHistory(oldID)
+	if len(hist) == 0 {
+		t.Fatal("旧 ID 调 ChatHistory 应命中重建后的新会话")
+	}
+	// 旧 ID 取模型视图：不报错即视为命中（fake conn 会话无模型信息时回空视图）
+	if _, err := app.ListChatModels(oldID); err != nil {
+		t.Fatalf("旧 ID 调 ListChatModels: %v", err)
+	}
+	// 旧 ID 取消：manager 里只有新 ID，Cancel 命中返回 nil；未解析时 errNotFound
+	if err := app.CancelChat(oldID); err != nil {
+		t.Fatalf("旧 ID 调 CancelChat: %v", err)
+	}
+}
+
+// TestCloseChatClearsAliasChain 重建后关闭新会话：别名整链清理，
+// 再向旧 ID 发送必须报 err.chat.gone（不静默复活）。
+func TestCloseChatClearsAliasChain(t *testing.T) {
+	b := &recordingBackend{}
+	app := newReactivateTestApp(t, b)
+	m := app.chats()
+
+	opened, err := app.OpenSessionACP("s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	oldID := opened.Chat.ID
+	exitChatConn(t, m, oldID, b.connAt(0))
+	if err := app.SendChatPrompt(oldID, "唤醒"); err != nil {
+		t.Fatalf("SendChatPrompt: %v", err)
+	}
+	newID, ok := app.resolveChatID(oldID)
+	if !ok || newID == oldID {
+		t.Fatalf("重建后应能解析出新 ID: %s ok=%v", newID, ok)
+	}
+
+	if err := app.CloseChat(newID); err != nil {
+		t.Fatalf("CloseChat: %v", err)
+	}
+	// 旧 ID 再发送：别名已清、manager 里也查不到 → err.chat.gone
+	err = app.SendChatPrompt(oldID, "不该送达")
+	if err == nil || err.Error() != "err.chat.gone" {
+		t.Fatalf("关链后旧 ID 发送应报 err.chat.gone, got %v", err)
+	}
+}
+
+// TestOriginalChatIDChain 链式重建（旧→新→更新）时出站翻译回溯到链头。
+func TestOriginalChatIDChain(t *testing.T) {
+	app := newReactivateTestApp(t, &recordingBackend{})
+	app.rememberChatAlias("c1", "c2")
+	app.rememberChatAlias("c2", "c3")
+	if got := app.originalChatID("c3"); got != "c1" {
+		t.Fatalf("链尾应翻回链头 c1, got %s", got)
+	}
+	if got := app.originalChatID("c1"); got != "c1" {
+		t.Fatalf("链头应原样返回, got %s", got)
+	}
+	if got := app.originalChatID("unrelated"); got != "unrelated" {
+		t.Fatalf("无别名应原样返回, got %s", got)
 	}
 }
 

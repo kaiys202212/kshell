@@ -51,6 +51,9 @@ func (a *App) ensureSessionHooks() {
 		}
 		if m := a.chats(); m != nil {
 			m.SetOnInfo(func(info chat.Info) {
+				// 出站统一原始 ID 空间：SetOnInfo 携带 manager 侧新 ID，翻回链头，
+				// 重建后前端按旧 ID upsert 才能命中同一镜像行（与 chat:update 同口径）。
+				info.ID = a.originalChatID(info.ID)
 				a.Emit("chat:meta", info)
 				// 标题变化（首条消息改标题 / 扫描回填真实标题）时回填需求的会话名快照，
 				// 供会话关闭或重启后需求列表仍能展示。无关联需求时幂等忽略。

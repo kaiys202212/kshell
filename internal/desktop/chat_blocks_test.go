@@ -33,7 +33,7 @@ func TestChatBlockToACP(t *testing.T) {
 
 // TestSendChatPromptBlocksForwards 验证 SendChatPromptBlocks 走 manager 并落时间线。
 func TestSendChatPromptBlocksForwards(t *testing.T) {
-	m := newChatManagerWith(func(string, ...any) {}, fakeChatBackend{}, nil, nil, nil)
+	m := newChatManagerWith(func(string, ...any) {}, fakeChatBackend{}, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "/w"}, chat.Spec{Path: "x"}, "")
 	if err != nil {
@@ -75,7 +75,7 @@ func TestChatModelsAPI(t *testing.T) {
 	conn := &fakeChatConn{start: acpSessionWithModels(), waitCh: make(chan struct{})}
 	b := &fakeChatCaptureBackend{conn: conn}
 	rec := &notifyRecorder{}
-	m := newChatManagerWith(rec.emit, b, nil, nil, nil)
+	m := newChatManagerWith(rec.emit, b, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "/w"}, chat.Spec{Path: "x"}, "")
 	if err != nil {
@@ -105,7 +105,7 @@ func TestChatModelsAPI(t *testing.T) {
 func TestChatModelsAPINilSlice(t *testing.T) {
 	b := &fakeChatCaptureBackend{} // 无 models 的 SessionStart
 	rec := &notifyRecorder{}
-	m := newChatManagerWith(rec.emit, b, nil, nil, nil)
+	m := newChatManagerWith(rec.emit, b, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "/w"}, chat.Spec{Path: "x"}, "")
 	if err != nil {
@@ -128,7 +128,7 @@ func TestChatModelsAPINilSlice(t *testing.T) {
 func TestChatCommandsEmitted(t *testing.T) {
 	b := &fakeChatCaptureBackend{}
 	rec := &notifyRecorder{}
-	m := newChatManagerWith(rec.emit, b, nil, nil, nil)
+	m := newChatManagerWith(rec.emit, b, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "/w"}, chat.Spec{Path: "x"}, "")
 	if err != nil {

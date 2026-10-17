@@ -37,11 +37,14 @@ func (a *App) recordHubUserMessage(chatID, text string) {
 }
 
 // recordHubUserMessageStatus 同上，但带投递状态（queued / 空）；hubID 非空时用预分配 ID。
+// ChatID 统一翻回原始 ID（别名链头）：前端 hub 归因与撤回都按落盘 ID 查，
+// 重建后新 ID 必须回到前端认识的旧 ID 空间（与出站事件同一口径）；
+// 归因反查仍用最新 ID（manager 只认它），发消息入口已解析过，通常本就是最新。
 func (a *App) recordHubUserMessageStatus(chatID, text, hubID, status string) {
 	if text == "" {
 		return
 	}
-	m := hub.Message{Kind: "user", ChatID: chatID, Text: text, Status: status}
+	m := hub.Message{Kind: "user", ChatID: a.originalChatID(chatID), Text: text, Status: status}
 	if mgr := a.chats(); mgr != nil {
 		if info, ok := mgr.Get(chatID); ok {
 			m.Tool = info.ToolID
@@ -142,11 +145,13 @@ func (a *App) RecallHubMessage(hubMsgID int64) error {
 		return errHubNotQueued
 	}
 	// 队列真移除：会话已关闭视为已投递（无法撤回）。
+	// 落盘的 ChatID 是原始 ID（前端空间），manager 只认最新 ID，先经别名解析。
 	m := a.chats()
 	if m == nil {
 		return errNotReady
 	}
-	if !m.RecallQueued(target.ChatID, strconv.FormatInt(hubMsgID, 10)) {
+	resolved, _ := a.resolveChatID(target.ChatID)
+	if !m.RecallQueued(resolved, strconv.FormatInt(hubMsgID, 10)) {
 		// 投递竞态：队列里已不在，修正状态为已送达后报错。
 		store.SetStatus(hubMsgID, "")
 		return errHubNotQueued
@@ -204,7 +209,13 @@ func (a *App) recordHubAgentMessage(p agenthook.Payload) {
 	}
 	if mgr := a.chats(); mgr != nil {
 		if p.ChatID != "" {
-			if info, ok := mgr.Get(p.ChatID); ok {
+			// 入站 ChatID 可能是链头（出站翻译后的原始 ID，已不在 manager）：
+			// 先按别名链解析到最新再反查；解析不到仍按原值试一次。
+			resolved, ok := a.resolveChatID(p.ChatID)
+			if !ok {
+				resolved = p.ChatID
+			}
+			if info, ok := mgr.Get(resolved); ok {
 				m.ChatID = info.ID
 				m.SessionTitle = info.Title
 			}

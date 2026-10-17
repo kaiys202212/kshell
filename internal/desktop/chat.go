@@ -19,10 +19,12 @@ import (
 
 // newChatManager 用真实后端装配聊天管理器（initRealDeps 用）。
 // Hub 投递回调在此接线：排队消息真正投递时改状态并补 ack 卡片。
+// 各回调的出站事件经 emitChatOut 统一翻译：manager 侧新 ID 翻回前端持有的
+// 原始 ID，重建后前端按旧 ID 索引的时间线/权限/退出状态才能继续收到。
 func newChatManager(a *App) *chat.Manager {
-	m := newChatManagerWith(a.Emit, chat.RealBackend{}, func() bool {
+	m := newChatManagerWith(a.emitChatOut, chat.RealBackend{}, func() bool {
 		return a.snapshot().Config.PermissionMode == config.PermissionModeBypass
-	}, a.notifyDedupAllow, a.recordHubAgentMessage)
+	}, a.notifyDedupAllow, a.recordHubAgentMessage, a.originalChatID)
 	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
 	return m
 }
@@ -34,29 +36,37 @@ func newChatManager(a *App) *chat.Manager {
 // onAgent 非 nil 时在同一条通知放行后落 AgentHub 历史（nil 表示不记，测试用）。
 // ACP 聊天不经过 hook 通道，turn 结束/出错/等权限在进程内已知，这里顺带
 // 转成 notify:agent 通知（与 hook 通道同一 payload 结构、同一条气泡路径）。
-func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, autoAllow func() bool, dedupe func(agenthook.Payload) bool, onAgent func(agenthook.Payload)) *chat.Manager {
+// origID 把 manager 侧会话 ID 翻回前端持有的原始 ID（nil 为恒等，测试用）：
+// 重建换 ID 后前端仍按旧 ID 索引，出站事件必须统一翻译（见 emitChatOut）。
+func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, autoAllow func() bool, dedupe func(agenthook.Payload) bool, onAgent func(agenthook.Payload), origID func(string) string) *chat.Manager {
+	translate := func(id string) string {
+		if origID == nil {
+			return id
+		}
+		return origID(id)
+	}
 	var m *chat.Manager
 	m = chat.NewManager(b,
 		func(id string, u chat.Update) {
-			emit("chat:update", map[string]any{"id": id, "update": u})
+			emit("chat:update", map[string]any{"id": translate(id), "update": u})
 			switch u.Type {
 			case "turn_done":
-				emitChatNotify(emit, m, id, turnEvent(u.StopReason), stopFallback(u.StopReason), dedupe, onAgent)
+				emitChatNotify(emit, m, id, turnEvent(u.StopReason), stopFallback(u.StopReason), dedupe, onAgent, nil)
 			case "error":
-				emitChatNotify(emit, m, id, "error", u.Text, dedupe, onAgent)
+				emitChatNotify(emit, m, id, "error", u.Text, dedupe, onAgent, nil)
 			}
 		},
 		func(id string, r chat.PermissionRequest) {
-			emit("chat:permission", map[string]any{"id": id, "request": r})
-			emitChatNotify(emit, m, id, "Notification", r.ToolCall.Title, dedupe, onAgent)
+			emit("chat:permission", map[string]any{"id": translate(id), "request": r})
+			emitChatNotify(emit, m, id, "Notification", r.ToolCall.Title, dedupe, onAgent, nil)
 		},
 		func(id string, code int, errMsg string) {
-			emit("chat:exit", map[string]any{"id": id, "exitCode": code, "error": errMsg})
+			emit("chat:exit", map[string]any{"id": translate(id), "exitCode": code, "error": errMsg})
 		})
 	m.SetAutoAllowPermission(autoAllow)
 	// 技能列表不走 chat:update 时间线：单独推 chat:commands，前端存 store 供输入框补全。
 	m.SetOnCommands(func(id string, cmds []chat.Command) {
-		emit("chat:commands", map[string]any{"id": id, "commands": cmds})
+		emit("chat:commands", map[string]any{"id": translate(id), "commands": cmds})
 	})
 	return m
 }
@@ -127,7 +137,8 @@ func lastAssistantText(h []chat.Update) string {
 // 权限请求本身仍经 chat:permission 推给前端弹窗，不影响交互。
 // onAgent 非 nil 时在放行后落 AgentHub 历史（与 hook 通道共用同一写入路径）。
 // 回调总在 Manager 锁外执行，Get 取锁安全。
-func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, event, summary string, allow func(agenthook.Payload) bool, onAgent func(agenthook.Payload)) {
+// ChatID 翻回原始 ID（前端归因空间），与出站事件同一口径。
+func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, event, summary string, allow func(agenthook.Payload) bool, onAgent func(agenthook.Payload), a *App) {
 	if m == nil {
 		return
 	}
@@ -141,6 +152,10 @@ func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, ev
 	if summary == "" && event == "stopped" {
 		summary = "ui.notify.turn_stopped_reason"
 	}
+	chatID := info.ID
+	if a != nil {
+		chatID = a.originalChatID(info.ID)
+	}
 	p := agenthook.Payload{
 		Tool:      info.ToolID,
 		Event:     event,
@@ -148,7 +163,7 @@ func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, ev
 		Workspace: info.Workspace,
 		Summary:   summary,
 		Ts:        time.Now().UnixNano(),
-		ChatID:    info.ID,
+		ChatID:    chatID,
 	}
 	if allow != nil && !allow(p) {
 		return
@@ -160,6 +175,22 @@ func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, ev
 }
 
 func (a *App) chats() *chat.Manager { return a.snapshot().Chats }
+
+// emitChatOut 是聊天事件的统一出站口：把 manager 给的会话 ID 翻回前端持有的
+// 最原始 ID（别名链头）再推送。重建换 ID 后前端页签/hub 归因仍按旧 ID 索引，
+// 不翻译的话 chat:update/permission/exit 会指向一个前端不认识的新 ID，
+// 回复不可见、running 状态永远回不到 ready。新会话（从未重建过）零开销。
+// payload 必须是单参数 map 且含 "id" 键（newChatManagerWith 的约定）。
+func (a *App) emitChatOut(name string, data ...any) {
+	if len(data) == 1 {
+		if m, ok := data[0].(map[string]any); ok {
+			if id, ok := m["id"].(string); ok {
+				m["id"] = a.originalChatID(id)
+			}
+		}
+	}
+	a.Emit(name, data...)
+}
 
 // OpenedSession 是统一打开结果：Kind 为 "chat" 或 "terminal"。
 type OpenedSession struct {
@@ -298,14 +329,16 @@ func (a *App) fallbackTerminalWorkspace(wsID, toolID, reason string) (OpenedSess
 // SendChatPrompt 向指定聊天会话发起一轮用户输入。
 // 发送成功后落盘 Hub 用户消息（忙时标记 queued 可撤回），并落一条模拟 agent
 // 确认卡片（入队 → ack_queued；立即投递的「已送达」ack 由 onHubDelivered 补）。
-// 投递前自动重建已退出的会话：重建后 ID 会变，后续一律用返回的新 ID。
+// 入口先按别名链把旧 ID 解析到最新：重建过的会话前端仍持旧 ID 也能继续发送；
+// 已退出时自动重建（ensureChatAlive）。
 func (a *App) SendChatPrompt(id, text string) error {
 	a.ensureSessionHooks()
 	m := a.chats()
 	if m == nil {
 		return errNotReady
 	}
-	sendID, err := a.ensureChatAlive(id)
+	resolved, _ := a.resolveChatID(id)
+	sendID, err := a.ensureChatAlive(resolved)
 	if err != nil {
 		return err
 	}
@@ -346,7 +379,7 @@ func chatBlocksToACP(blocks []ChatBlock) []acp.ContentBlock {
 }
 
 // SendChatPromptBlocks 向指定聊天发起一轮多形态内容块输入（文本 + 附件）。
-// 投递前自动重建已退出的会话（同 SendChatPrompt）。
+// 入口别名解析与重建同 SendChatPrompt。
 func (a *App) SendChatPromptBlocks(id string, blocks []ChatBlock) error {
 	a.ensureSessionHooks()
 	m := a.chats()
@@ -356,7 +389,8 @@ func (a *App) SendChatPromptBlocks(id string, blocks []ChatBlock) error {
 	if len(blocks) == 0 {
 		return nil
 	}
-	sendID, err := a.ensureChatAlive(id)
+	resolved, _ := a.resolveChatID(id)
+	sendID, err := a.ensureChatAlive(resolved)
 	if err != nil {
 		return err
 	}
@@ -406,12 +440,14 @@ func hubTextFromBlocks(blocks []ChatBlock) string {
 }
 
 // ListChatModels 返回会话的可用模型视图；agent 未报告模型信息时返回 ok=false 形态（空视图）。
+// 入口别名解析：重建后前端持旧 ID 也能查到新会话。
 func (a *App) ListChatModels(id string) (chat.ModelsView, error) {
 	m := a.chats()
 	if m == nil {
 		return chat.ModelsView{}, errNotReady
 	}
-	v, ok := m.Models(id)
+	resolved, _ := a.resolveChatID(id)
+	v, ok := m.Models(resolved)
 	if !ok {
 		// Models 必须回非 nil 空切片：nil slice 序列化成 JSON null，
 		// 前端 models.Models.find 会抛 TypeError 白屏
@@ -420,66 +456,80 @@ func (a *App) ListChatModels(id string) (chat.ModelsView, error) {
 	return v, nil
 }
 
-// SetChatModel 运行时切换会话模型。
+// SetChatModel 运行时切换会话模型。入口别名解析同 ListChatModels。
 func (a *App) SetChatModel(id, modelID string) error {
 	m := a.chats()
 	if m == nil {
 		return errNotReady
 	}
-	return m.SetModel(id, modelID)
+	resolved, _ := a.resolveChatID(id)
+	return m.SetModel(resolved, modelID)
 }
 
 // ListChatCommands 返回会话最近的技能/命令列表（available_commands_update）。
+// 入口别名解析同 ListChatModels。
 func (a *App) ListChatCommands(id string) []chat.Command {
 	m := a.chats()
 	if m == nil {
 		return []chat.Command{}
 	}
-	cmds := m.Commands(id)
+	resolved, _ := a.resolveChatID(id)
+	cmds := m.Commands(resolved)
 	if cmds == nil {
 		return []chat.Command{}
 	}
 	return cmds
 }
 
-// CancelChat 取消指定聊天会话中正在进行的轮次。
+// CancelChat 取消指定聊天会话中正在进行的轮次。入口别名解析同 ListChatModels。
 func (a *App) CancelChat(id string) error {
 	m := a.chats()
 	if m == nil {
 		return errNotReady
 	}
-	return m.Cancel(id)
+	resolved, _ := a.resolveChatID(id)
+	return m.Cancel(resolved)
 }
 
-// RespondChatPermission 以选中选项回答一次权限请求。
+// RespondChatPermission 以选中选项回答一次权限请求。入口别名解析同 ListChatModels。
 func (a *App) RespondChatPermission(id, requestID, optionID string) error {
 	m := a.chats()
 	if m == nil {
 		return errNotReady
 	}
-	return m.RespondPermission(id, requestID, optionID)
+	resolved, _ := a.resolveChatID(id)
+	return m.RespondPermission(resolved, requestID, optionID)
 }
 
 // CancelChatPermission 取消一次待决的权限请求（agent 侧收到 cancelled）。
+// 入口别名解析同 ListChatModels。
 func (a *App) CancelChatPermission(id, requestID string) error {
 	m := a.chats()
 	if m == nil {
 		return errNotReady
 	}
-	return m.CancelPermission(id, requestID)
+	resolved, _ := a.resolveChatID(id)
+	return m.CancelPermission(resolved, requestID)
 }
 
 // CloseChat 关闭聊天会话（幂等），前端关闭聊天页签时调用。
 // 关闭后队列清空、排队消息不再投递，Hub store 里该会话的 queued 状态
 // 必须同步失效，否则前端永远显示「排队中」而撤回必失败。
+// 入口别名解析：重建后前端仍持旧 ID 也能关掉新会话。成功后整链清理
+// 别名（forgetChatChain），避免已关会话被旧 ID 静默复活。
+// 清 queued 用原始 ID：hub 落盘的 ChatID 已统一翻回前端 ID 空间。
 func (a *App) CloseChat(id string) error {
 	m := a.chats()
 	if m == nil {
 		return errNotReady
 	}
-	err := m.Close(id)
+	resolved, _ := a.resolveChatID(id)
+	err := m.Close(resolved)
 	if store := a.snapshot().HubStore; store != nil {
-		store.ClearQueuedByChat(id)
+		store.ClearQueuedByChat(a.originalChatID(resolved))
+	}
+	if err == nil {
+		a.forgetChatChain(resolved)
 	}
 	return err
 }
@@ -494,12 +544,14 @@ func (a *App) ListChats() []chat.Info {
 }
 
 // ChatHistory 返回指定聊天的完整时间线（已退出的会话仍可读）。
+// 入口别名解析：重建后前端持旧 ID 也能读到新会话时间线。
 func (a *App) ChatHistory(id string) []chat.Update {
 	m := a.chats()
 	if m == nil {
 		return []chat.Update{}
 	}
-	h := m.History(id)
+	resolved, _ := a.resolveChatID(id)
+	h := m.History(resolved)
 	if h == nil {
 		return []chat.Update{}
 	}

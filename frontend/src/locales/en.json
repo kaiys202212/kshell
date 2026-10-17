@@ -22,6 +22,7 @@
     "chat": {
       "not_ready": "Chat backend is not initialized",
       "gone": "Chat session not found or closed",
+      "rebuild_failed": "Failed to reactivate session: {{0}}",
       "busy": "Previous turn is still running",
       "empty_key": "Chat key cannot be empty",
       "unsupported_protocol": "Unsupported protocol version {{0}}",

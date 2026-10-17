@@ -22,6 +22,7 @@
     "chat": {
       "not_ready": "后端未装配",
       "gone": "会话不存在或已关闭",
+      "rebuild_failed": "重新激活会话失败：{{0}}",
       "busy": "上一轮尚未结束",
       "empty_key": "key 不能为空",
       "unsupported_protocol": "不支持的协议版本 {{0}}",

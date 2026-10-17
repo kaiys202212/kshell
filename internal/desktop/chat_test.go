@@ -81,7 +81,7 @@ func TestChatManagerEmitsUpdate(t *testing.T) {
 		events[name]++
 		mu.Unlock()
 	}
-	m := newChatManagerWith(emit, fakeChatBackend{}, nil, nil, nil)
+	m := newChatManagerWith(emit, fakeChatBackend{}, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll) // 关掉 watchExit goroutine，避免测试泄漏
 	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "/w"}, chat.Spec{Path: "x"}, "")
 	if err != nil {
@@ -140,9 +140,10 @@ func newChatTestApp(t *testing.T, acpDet *providers.ACPDetection, backend chat.B
 		ID: "claude", Name: "Claude Code", BinPath: "claude", Installed: true, ACP: acpDet,
 	}}
 	if backend != nil {
+		// 出站翻译与生产装配（newChatManager）同口径：manager 侧 ID 翻回原始 ID。
 		app.opts.Chats = newChatManagerWith(events.emit, backend, func() bool {
 			return app.snapshot().Config.PermissionMode == config.PermissionModeBypass
-		}, nil, nil)
+		}, nil, nil, app.originalChatID)
 	}
 	app.mu.Unlock()
 

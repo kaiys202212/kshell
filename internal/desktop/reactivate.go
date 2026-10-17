@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/yangk/kshell/internal/chat"
@@ -11,12 +12,12 @@ import (
 // chatGoneErr 复用 chat 包的 err.chat.gone 语义：未知 ID（或已关闭页签）不可投递。
 // desktop 层不直接引用 chat 包内部错误变量，按 wire key 文本独立构造，保证
 // chat 侧改错误文案不影响此处（两处都译作「会话不存在或已关闭」）。
-var chatGoneErr = fmt.Errorf("err.chat.gone")
+var chatGoneErr = errors.New("err.chat.gone")
 
 // ensureChatAlive 保证 chat 可投递：已退出则按原 key 重建（有 SessionID 则
 // resume+LoadSession，否则按原 Workspace+ToolID 新起），无感继续对话。
 // 返回投递应使用的会话 ID：未重建时与入参相同；重建后是新 ID
-// （Manager.Open 摘除旧会话重新编号），调用方必须改用返回值投递。
+//（Manager.Open 摘除旧会话重新编号），调用方必须改用返回值投递。
 func (a *App) ensureChatAlive(chatID string) (string, error) {
 	m := a.chats()
 	if m == nil {
@@ -54,7 +55,7 @@ func (a *App) rebuildChat(m *chat.Manager, info chat.Info) (string, error) {
 					ToolID:    s.ToolID,
 				}, l, s.ID)
 				if err != nil {
-					return "", fmt.Errorf("err.chat.not_ready|%w", err)
+					return "", fmt.Errorf("err.chat.rebuild_failed|%w", err)
 				}
 				a.rememberChatAlias(info.ID, out.ID)
 				return out.ID, nil
@@ -64,6 +65,11 @@ func (a *App) rebuildChat(m *chat.Manager, info chat.Info) (string, error) {
 		// 宁可丢上下文也不让用户对着「会话已退出」干瞪眼。
 	}
 	// KindNew 或降级：按原 Workspace+ToolID 新起（与 openWorkspaceACP 同构）。
+	// 工作区路径为空时无法锚定重建（launch 合成空 cwd 必然失败）：
+	// 直接报错并携带底层原因，前端经 err.chat.rebuild_failed 透出细节。
+	if info.Workspace == "" {
+		return "", fmt.Errorf("err.chat.rebuild_failed|workspace empty")
+	}
 	ws, tools, ok := a.workspaceByIDReady(info.Workspace)
 	if !ok {
 		// 扫描结果里没有该工作区：用 Info 里的路径合成一个，路径仍是最可靠的锚点
@@ -71,7 +77,7 @@ func (a *App) rebuildChat(m *chat.Manager, info chat.Info) (string, error) {
 	}
 	l, err := launch.ForWorkspaceACP(o.Providers, tools, ws, info.ToolID, a.modelOptions(), a.permissionOptions())
 	if err != nil {
-		return "", fmt.Errorf("err.chat.not_ready|%w", err)
+		return "", fmt.Errorf("err.chat.rebuild_failed|%w", err)
 	}
 	// 新起不写欢迎词：这不是「第一次打开」，重复写会让 AgentHub 每次重建都多一条
 	out, err := openChat(m, key, chat.Info{
@@ -81,10 +87,67 @@ func (a *App) rebuildChat(m *chat.Manager, info chat.Info) (string, error) {
 		ToolID:    info.ToolID,
 	}, l, "")
 	if err != nil {
-		return "", fmt.Errorf("err.chat.not_ready|%w", err)
+		return "", fmt.Errorf("err.chat.rebuild_failed|%w", err)
 	}
 	a.rememberChatAlias(info.ID, out.ID)
 	return out.ID, nil
+}
+
+// resolveChatID 把前端持有的会话 ID 沿别名链解析到 manager 里的最新 ID：
+// 重建换 ID 后前端页签仍持旧 ID，所有接受 chatID 的入口都先过这里再操作。
+// 链尾在 manager 在册（或入参本就无别名）时原样返回；整个链都不在册时
+// 返回链尾与 false（已是最新仍查不到，调用方按 err.chat.gone 报）。
+func (a *App) resolveChatID(id string) (string, bool) {
+	m := a.chats()
+	if m == nil {
+		return id, false
+	}
+	cur := id
+	for {
+		if _, ok := m.Get(cur); ok {
+			return cur, true
+		}
+		next, ok := a.resolveChatAlias(cur)
+		if !ok {
+			return cur, false
+		}
+		cur = next
+	}
+}
+
+// originalChatID 把 manager 侧的新会话 ID 翻回前端持有的最原始 ID（别名链头）：
+// 出站事件统一用它，前端按旧 ID 索引的状态才收得到重建后的事件。
+// 新会话（从未重建过）链头即自身，零开销。
+func (a *App) originalChatID(id string) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.originalChatIDLocked(id)
+}
+
+// originalChatIDLocked 是 originalChatID 的锁内实现；调用方必须已持 a.mu。
+func (a *App) originalChatIDLocked(id string) string {
+	// 反向查找：命中「某旧 ID → id」的键即为链上更早一环，走到没有前驱为止。
+	// 别名链由重建顺序自然形成（old→new→newest），环由 rememberChatAlias 的
+	// 旧 ID 单调递增性质排除（新 ID 永不作为旧 ID 复用）。
+	cur := id
+	for prev, ok := a.chatAliasPrevLocked(cur); ok; prev, ok = a.chatAliasPrevLocked(cur) {
+		cur = prev
+	}
+	return cur
+}
+
+// chatAliasPrevLocked 反向查一步：谁指向 id。chatAliases 是 旧→新 单向表，
+// 反查需线性扫描（条目数为重建次数，量级极小，不值得维护第二张反向表）。
+func (a *App) chatAliasPrevLocked(id string) (string, bool) {
+	if a.chatAliases == nil {
+		return "", false
+	}
+	for old, newID := range a.chatAliases {
+		if newID == id {
+			return old, true
+		}
+	}
+	return "", false
 }
 
 // resolveChatAlias 把重建前的旧会话 ID 映射到重建后的新 ID：前端页签持有旧 ID，
@@ -100,6 +163,7 @@ func (a *App) resolveChatAlias(oldID string) (string, bool) {
 }
 
 // rememberChatAlias 记录一次重建的新旧 ID 映射（链式重建自然覆盖到最新）。
+// 新 ID 不会反过来成为旧 ID（Manager.Open 单调递增编号），所以链不会成环。
 func (a *App) rememberChatAlias(oldID, newID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -107,4 +171,20 @@ func (a *App) rememberChatAlias(oldID, newID string) {
 		a.chatAliases = make(map[string]string)
 	}
 	a.chatAliases[oldID] = newID
+}
+
+// forgetChatChain 清理别名表中指向被关会话链的全部条目（含以被关 ID 为
+// 起点/终点的环段）：CloseChat 成功后调用。别名只服务「重建后继续投递」，
+// 页签关掉意味着前端不再持有该链的任何 ID，残留会把已关会话误判成存活。
+func (a *App) forgetChatChain(id string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	original := a.originalChatIDLocked(id)
+	for k, v := range a.chatAliases {
+		// 链上所有键都指向同一链头（originalChatIDLocked 沿值回溯），
+		// 用值域归因即可整链清除：k 是旧 ID、v 是下一环，同链则 v 回溯回 original。
+		if original == k || a.originalChatIDLocked(v) == original {
+			delete(a.chatAliases, k)
+		}
+	}
 }

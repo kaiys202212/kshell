@@ -206,6 +206,13 @@ func (l *eventLog) names() []string {
 	return out
 }
 
+// all 返回快照副本（含 payload），供测试按条件扫描事件（如按 chat ID 断言出站翻译）。
+func (l *eventLog) all() []capturedEvent {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]capturedEvent(nil), l.events...)
+}
+
 // waitEvent 等一个指定名字的事件（超时失败）。
 func (l *eventLog) waitEvent(t *testing.T, name string) capturedEvent {
 	t.Helper()

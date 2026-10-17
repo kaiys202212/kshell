@@ -42,7 +42,7 @@ func newWelcomeTestApp(t *testing.T) (*App, *hub.Store, *hubRecorder) {
 		ID: "claude", Name: "Claude Code", BinPath: "claude", Installed: true,
 		ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"},
 	}}
-	app.opts.Chats = newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, app.recordHubAgentMessage)
+	app.opts.Chats = newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, app.recordHubAgentMessage, nil)
 	app.mu.Unlock()
 	t.Cleanup(func() { app.Shutdown(context.Background()) })
 	return app, store, rec
