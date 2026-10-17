@@ -855,8 +855,13 @@
       "archive_empty": "No archived messages",
       "quick_continue": "Continue",
       "quick_rephrase": "Explain differently",
-      "ack_delivered": "Delivered to the agent.",
-      "ack_queued": "Queued; will be delivered in order.",
+      "ack_delivered": "Got your message — I'm on it.",
+      "ack_queued": "I'm still on the current task; your message is queued and I'll get to it in order.",
+      "event_done": "I've finished the task.",
+      "event_error": "I ran into an error on the task.",
+      "event_stopped": "I had to stop the task early.",
+      "event_cancelled": "Okay, I've stopped the task.",
+      "event_waiting_confirm": "I need your confirmation before I can continue.",
       "recalled": "Recalled",
       "recall": "Recall",
       "recall_done": "Message recalled",
@@ -937,7 +942,7 @@
       "session_exited_err": "Session exited unexpectedly: {{err}} (see ~/.kshell/logs/desktop.log)",
       "terminal_exited": "Terminal exited",
       "terminal_exited_code": "Terminal exited abnormally (code {{0}})",
-      "turn_stopped_reason": "Agent stopped early (reason: {{0}}); no reply content to show."
+      "turn_stopped_reason": "I stopped this turn early (reason: {{0}}); no reply content to show."
     },
     "toast": {
       "close_aria": "Dismiss notification"

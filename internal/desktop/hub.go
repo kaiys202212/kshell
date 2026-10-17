@@ -166,21 +166,23 @@ func (a *App) RecallHubMessage(hubMsgID int64) error {
 }
 
 // hubEventTextKey 把 agent 事件的空正文回退成稳定 wire key（前端 translateBackend
-// 渲染成当前语言）。映射与 frontend/src/lib/agentNotify.ts 的 eventLabel 保持一致：
+// 渲染成当前语言）。文案是 AgentHub 里 agent 自己对客户说话，故用 ui.hub.event_*
+// 第一人称 key，与通知气泡共用的 ui.notify.*（第三人称标题）分开。
+// 语义映射仍与 frontend/src/lib/agentNotify.ts 的 eventLabel 保持一致：
 // 一侧改动必须同步另一侧。hook 通道的 Stop 载荷没有 message 字段，不回退会在
 // AgentHub 留下无正文气泡（2026-10-16 用户反馈）。
 func hubEventTextKey(event string) string {
 	switch event {
 	case "Notification", "attention":
-		return "ui.notify.waiting_confirm"
+		return "ui.hub.event_waiting_confirm"
 	case "error":
-		return "ui.notify.task_error"
+		return "ui.hub.event_error"
 	case "stopped":
-		return "ui.notify.task_stopped"
+		return "ui.hub.event_stopped"
 	case "cancelled":
-		return "ui.notify.task_cancelled"
+		return "ui.hub.event_cancelled"
 	default:
-		return "ui.notify.task_done"
+		return "ui.hub.event_done"
 	}
 }
 

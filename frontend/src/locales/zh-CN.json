@@ -855,8 +855,13 @@
       "archive_empty": "暂无归档消息",
       "quick_continue": "继续",
       "quick_rephrase": "重新说明",
-      "ack_delivered": "已送达，等待回复。",
-      "ack_queued": "已加入队列，将按顺序送达。",
+      "ack_delivered": "收到，我马上开始。",
+      "ack_queued": "我还在忙手头的任务，你的消息已排队，我会按顺序处理。",
+      "event_done": "我把任务做完了。",
+      "event_error": "我这边任务出错了。",
+      "event_stopped": "任务提前停了，我等你指示。",
+      "event_cancelled": "好的，任务我已停下。",
+      "event_waiting_confirm": "我在等你确认，确认后才能继续。",
       "recalled": "已撤回",
       "recall": "撤回",
       "recall_done": "已撤回一条消息",
@@ -937,7 +942,7 @@
       "session_exited_err": "会话进程异常退出：{{err}}（详情见 ~/.kshell/logs/desktop.log）",
       "terminal_exited": "终端已退出",
       "terminal_exited_code": "终端异常退出（退出码 {{0}}）",
-      "turn_stopped_reason": "Agent 提前停止（原因：{{0}}），没有可展示的回复内容。"
+      "turn_stopped_reason": "我提前停止了这轮回复（原因：{{0}}），没有可展示的内容。"
     },
     "toast": {
       "close_aria": "关闭提示"

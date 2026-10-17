@@ -312,22 +312,23 @@ func TestSendChatPromptQueuedAndRecall(t *testing.T) {
 }
 
 // 空正文 agent 消息回退事件语义 wire key（hook 通道 Stop 载荷没有 message 字段）。
-// 映射必须与 frontend/src/lib/agentNotify.ts 的 eventLabel 保持一致。
+// hub 气泡用 ui.hub.event_* 第一人称 key；语义映射必须与
+// frontend/src/lib/agentNotify.ts 的 eventLabel 保持一致。
 func TestRecordHubAgentMessageEmptyTextFallsBackToEventKey(t *testing.T) {
 	cases := []struct {
 		event string
 		want  string
 	}{
-		{"Stop", "ui.notify.task_done"},
-		{"agent-turn-complete", "ui.notify.task_done"},
-		{"session.idle", "ui.notify.task_done"},
-		{"done", "ui.notify.task_done"},
-		{"", "ui.notify.task_done"},
-		{"Notification", "ui.notify.waiting_confirm"},
-		{"attention", "ui.notify.waiting_confirm"},
-		{"error", "ui.notify.task_error"},
-		{"stopped", "ui.notify.task_stopped"},
-		{"cancelled", "ui.notify.task_cancelled"},
+		{"Stop", "ui.hub.event_done"},
+		{"agent-turn-complete", "ui.hub.event_done"},
+		{"session.idle", "ui.hub.event_done"},
+		{"done", "ui.hub.event_done"},
+		{"", "ui.hub.event_done"},
+		{"Notification", "ui.hub.event_waiting_confirm"},
+		{"attention", "ui.hub.event_waiting_confirm"},
+		{"error", "ui.hub.event_error"},
+		{"stopped", "ui.hub.event_stopped"},
+		{"cancelled", "ui.hub.event_cancelled"},
 	}
 	for _, c := range cases {
 		t.Run(c.event, func(t *testing.T) {
@@ -369,8 +370,8 @@ func TestRecordHubAgentMessageKeepsNonEmptyText(t *testing.T) {
 	if len(msgs2) != 1 {
 		t.Fatalf("应落 1 条，得到 %d", len(msgs2))
 	}
-	if msgs2[0].Text != "ui.notify.task_done" {
-		t.Fatalf("全空白 Summary 应回退为 ui.notify.task_done，得到 %q", msgs2[0].Text)
+	if msgs2[0].Text != "ui.hub.event_done" {
+		t.Fatalf("全空白 Summary 应回退为 ui.hub.event_done，得到 %q", msgs2[0].Text)
 	}
 }
 
