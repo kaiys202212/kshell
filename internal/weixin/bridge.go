@@ -105,6 +105,12 @@ func (b *Bridge) SetOnLearnWxid(fn func(wxid string)) { b.onLearnWxid = fn }
 // （desktop 把它转给前端弹窗与 hub 命令层的权限菜单）。
 func (b *Bridge) SetOnPermission(fn func(chatID, reqID, desc string)) { b.onPermission = fn }
 
+// OpenPermissionMenu 让命令层进入权限等待状态（1=允许 / 2=拒绝）。
+// desktop 在收到 chat:permission 事件时转发进来，使微信侧数字回复生效。
+func (b *Bridge) OpenPermissionMenu(chatID, reqID, desc string) {
+	b.console.OpenPermissionMenu(chatID, reqID, desc)
+}
+
 // Wxid 返回当前白名单用户（可能为学习前的空串；测试与状态展示用）。
 func (b *Bridge) Wxid() string {
 	b.mu.Lock()
