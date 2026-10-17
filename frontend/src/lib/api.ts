@@ -656,6 +656,7 @@ interface AppBindings {
   LoadHubArchive(month: string): Promise<HubMessage[]>;
   ClearHubMessages(): Promise<void>;
   RecallHubMessage(id: number): Promise<void>;
+  HubCommand(text: string): Promise<HubReply[]>;
   ListRequirements(): Promise<Requirement[]>;
   AddRequirement(project: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
   UpdateRequirement(id: string, project: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
@@ -1554,6 +1555,19 @@ export async function clearHubMessages(): Promise<void> {
   const a = app();
   if (!a) return;
   await a.ClearHubMessages();
+}
+
+// HubReply 是共享命令层（internal/hub.Reply）的一条回复文本，按序展示。
+export interface HubReply {
+  Text: string;
+}
+
+// hubCommand 把输入透传给 Go 侧共享命令层（internal/desktop/weixin.go HubCommand）。
+// 微信桥与桌面端 AgentHub 同源同语义；失败抛错由调用方经 backendError 提示。
+export async function hubCommand(text: string): Promise<HubReply[]> {
+  const a = app();
+  if (!a) return [];
+  return a.HubCommand(text);
 }
 
 // recallHubMessage 撤回一条排队中的 Hub 用户消息（后端从队列真移除并标记已撤回）。

@@ -33,6 +33,9 @@ let nextNoticeId = 1;
 // ChatView 本地消息队列的自增 id（同上）
 let nextQueueMsgId = 1;
 
+// hub 本地瞬态条目的负数自增 id（与后端落盘 ID 空间隔离，避免 React key 撞车）
+let nextHubLocalId = -1;
+
 // 通知气泡点击跳转的自增序号：同一 termKey 连续点击也要能再次触发页签切换
 let nextFocusSeq = 1;
 
@@ -216,6 +219,9 @@ interface AppState {
   // 由 App 订阅 hub:changed 后重拉填充，跨重启保留。
   hubMessages: HubMessage[];
   setHubMessages(list: HubMessage[] | ((prev: HubMessage[]) => HubMessage[])): void;
+  // pushHubLocal 往 hubMessages 追加一条本地瞬态提示（共享命令回显等）：
+  // 仅前端内存展示，id 取负数避免与后端落盘 ID 冲突，重拉历史后自然消失。
+  pushHubLocal(text: string): void;
 
   // 通知气泡点击后的「切到对应页签」请求（termKey = 终端/聊天 manager 的 key）。
   // 中心区页签选中态在各 WorkspaceTabView 的本地 state 里，只能经这里中转：
@@ -606,6 +612,14 @@ export const useAppStore = create<AppState>()(
       hubMessages: [],
       setHubMessages: (list) =>
         set((s) => ({ hubMessages: typeof list === 'function' ? list(s.hubMessages) : list })),
+      pushHubLocal: (text) =>
+        set((s) => ({
+          // id 用负数自增（同毫秒多条也不撞 key），不落盘，重拉历史即消失
+          hubMessages: [
+            ...s.hubMessages,
+            { id: nextHubLocalId--, kind: 'agent', text, workspace: '', chatId: '', ts: Date.now() },
+          ],
+        })),
 
       notifySound: true,
       setNotifySound: (notifySound) => set({ notifySound }),
