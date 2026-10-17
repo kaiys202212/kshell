@@ -604,3 +604,72 @@ describe('selectedProject', () => {
     expect(fresh.useAppStore.getState().selectedProject).toBeNull();
   });
 });
+
+describe('chatQueues（ChatView 本地消息队列）', () => {
+  beforeEach(() => {
+    useAppStore.setState({ chatQueues: {}, toasts: [] });
+  });
+
+  it('enqueueChat 追加到队尾，id 自增互不相同', () => {
+    useAppStore.getState().enqueueChat('c1', { text: '第一条' });
+    useAppStore.getState().enqueueChat('c1', { text: '第二条' });
+
+    const q = useAppStore.getState().chatQueues.c1;
+    expect(q).toHaveLength(2);
+    expect(q[0]).toMatchObject({ text: '第一条' });
+    expect(q[1]).toMatchObject({ text: '第二条' });
+    expect(q[0]!.id).not.toBe(q[1]!.id);
+  });
+
+  it('enqueueChat 支持 blocks（附件消息）', () => {
+    useAppStore.getState().enqueueChat('c1', {
+      text: '看',
+      blocks: [{ Type: 'text', Text: '看' }, { Type: 'image', Data: 'xx', MimeType: 'image/png' }],
+    });
+    expect(useAppStore.getState().chatQueues.c1![0]!.blocks).toHaveLength(2);
+  });
+
+  it('dequeueChatHead 取走队首并移除；空队列返回 null', () => {
+    useAppStore.getState().enqueueChat('c1', { text: '第一条' });
+    useAppStore.getState().enqueueChat('c1', { text: '第二条' });
+
+    const head = useAppStore.getState().dequeueChatHead('c1');
+    expect(head?.text).toBe('第一条');
+    expect(useAppStore.getState().chatQueues.c1).toHaveLength(1);
+    expect(useAppStore.getState().chatQueues.c1![0]!.text).toBe('第二条');
+
+    useAppStore.getState().dequeueChatHead('c1');
+    expect(useAppStore.getState().dequeueChatHead('c1')).toBeNull();
+  });
+
+  it('removeQueuedChat 按 id 撤回指定条目', () => {
+    useAppStore.getState().enqueueChat('c1', { text: 'A' });
+    useAppStore.getState().enqueueChat('c1', { text: 'B' });
+    const bid = useAppStore.getState().chatQueues.c1![1]!.id;
+
+    useAppStore.getState().removeQueuedChat('c1', bid);
+    const q = useAppStore.getState().chatQueues.c1;
+    expect(q).toHaveLength(1);
+    expect(q[0]!.text).toBe('A');
+  });
+
+  it('clearChatQueue 清空；removeChat 联动清队', () => {
+    useAppStore.getState().enqueueChat('c1', { text: 'A' });
+    useAppStore.getState().clearChatQueue('c1');
+    expect(useAppStore.getState().chatQueues.c1).toBeUndefined();
+
+    useAppStore.getState().enqueueChat('c1', { text: 'A' });
+    useAppStore.setState({ chats: [{ ID: 'c1', Kind: 'new', SessionID: 's', Workspace: 'D:\p', Title: 't', ToolID: 'claude', Status: 'ready', ExitCode: 0, Error: '' }] });
+    useAppStore.getState().removeChat('c1');
+    expect(useAppStore.getState().chatQueues.c1).toBeUndefined();
+  });
+
+  it('队列上限 50：超出丢最旧并提示 toast', () => {
+    for (let i = 0; i < 51; i++) useAppStore.getState().enqueueChat('c1', { text: `m${i}` });
+    const q = useAppStore.getState().chatQueues.c1;
+    expect(q).toHaveLength(50);
+    expect(q[0]!.text).toBe('m1');
+    expect(q[49]!.text).toBe('m50');
+    expect(useAppStore.getState().toasts.some((t) => t.tone === 'error')).toBe(true);
+  });
+});

@@ -39,7 +39,7 @@ beforeEach(() => {
   api.respondChatPermission.mockResolvedValue(undefined);
   api.cancelChatPermission.mockResolvedValue(undefined);
   api.listChats.mockResolvedValue([]);
-  useAppStore.setState({ chatItems: {}, chatSeq: {}, chatPermissions: {}, chats: [CHAT], chatModels: {}, chatCommands: {} });
+  useAppStore.setState({ chatItems: {}, chatSeq: {}, chatPermissions: {}, chats: [CHAT], chatModels: {}, chatCommands: {}, chatQueues: {}, toasts: [] });
 });
 afterEach(cleanup);
 
@@ -470,6 +470,87 @@ describe('ChatView', () => {
     fireEvent.click(screen.getByRole('link', { name: 'x' }));
     expect(open).toHaveBeenCalledWith('https://ex.com');
     vi.unstubAllGlobals();
+  });
+
+  // ---- 消息队列：running 时入队不出手，出队（回 ready）时才真正发送 ----
+  it('running 时 Enter 发送入队而不调后端，队列条目展示在输入区上方', () => {
+    render(<ChatView chat={{ ...CHAT, Status: 'running' }} active />);
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder'));
+    fireEvent.change(box, { target: { value: '排队消息' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    const q = useAppStore.getState().chatQueues.c1;
+    expect(q).toHaveLength(1);
+    expect(q![0]!.text).toBe('排队消息');
+    expect(screen.getByTestId('chat-queue')).toHaveTextContent('排队消息');
+  });
+
+  it('队列条目可撤回：点击 × 后从 store 与界面消失', () => {
+    useAppStore.setState({ chatQueues: { c1: [{ id: 7, text: '待撤回' }] } });
+    // 排队只发生在 running 期间；ready 首渲染沿会立即出队，故用 running 渲染
+    render(<ChatView chat={{ ...CHAT, Status: 'running' }} active />);
+    expect(screen.getByTestId('chat-queue')).toHaveTextContent('待撤回');
+    fireEvent.click(screen.getByTestId('chat-queue-remove-7'));
+    expect(useAppStore.getState().chatQueues.c1).toBeUndefined();
+    expect(screen.queryByTestId('chat-queue')).not.toBeInTheDocument();
+  });
+
+  it('running 时带附件发送入队保留 blocks，出队前不发后端', async () => {
+    render(<ChatView chat={{ ...CHAT, Status: 'running' }} active />);
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder'));
+    const file = new File(['x'], 'shot.png', { type: 'image/png' });
+    fireEvent.paste(box, { clipboardData: { files: [file] } });
+    // 粘贴附件经 FileReader 异步转 base64 后才进 chip，需等 chip 出现再发送
+    await screen.findByText('shot.png');
+    fireEvent.change(box, { target: { value: '看图' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(api.sendChatPromptBlocks).not.toHaveBeenCalled();
+    const q = useAppStore.getState().chatQueues.c1;
+    expect(q![0]!.text).toBe('看图');
+    expect(q![0]!.blocks).toHaveLength(2);
+  });
+
+  it('会话回 ready 时出队首条并真正发送，队列区移除该条', async () => {
+    useAppStore.setState({ chatQueues: { c1: [{ id: 1, text: '第一条' }, { id: 2, text: '第二条' }] } });
+    const { rerender } = render(<ChatView chat={{ ...CHAT, Status: 'running' }} active />);
+    rerender(<ChatView chat={{ ...CHAT, Status: 'ready' }} active />);
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '第一条'));
+    const q = useAppStore.getState().chatQueues.c1;
+    expect(q).toHaveLength(1);
+    expect(q![0]!.text).toBe('第二条');
+  });
+
+  it('出队后乐观置 running，多条排队时逐条出队', async () => {
+    useAppStore.setState({ chatQueues: { c1: [{ id: 1, text: '第一条' }, { id: 2, text: '第二条' }] } });
+    const { rerender } = render(<ChatView chat={{ ...CHAT, Status: 'ready' }} active />);
+    // 首渲染即 ready 也算转换沿（启动期入队可能发生在首渲染前）
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledTimes(1));
+    expect(useAppStore.getState().chats.find((c) => c.ID === 'c1')?.Status).toBe('running');
+    expect(useAppStore.getState().chatQueues.c1![0]!.text).toBe('第二条');
+    // 第一轮结束回 ready：先 running 再 ready，构成新的转换沿
+    rerender(<ChatView chat={{ ...CHAT, Status: 'running' }} active />);
+    rerender(<ChatView chat={{ ...CHAT, Status: 'ready' }} active />);
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledTimes(2));
+    expect(useAppStore.getState().chatQueues.c1).toBeUndefined();
+  });
+
+  it('出队带 blocks 的消息走 sendChatPromptBlocks', async () => {
+    useAppStore.setState({ chatQueues: { c1: [{ id: 1, text: '看图', blocks: [{ Type: 'image', Data: 'x', MimeType: 'image/png' }] }] } });
+    render(<ChatView chat={{ ...CHAT, Status: 'ready' }} active />);
+    await waitFor(() =>
+      expect(api.sendChatPromptBlocks).toHaveBeenCalledWith('c1', [{ Type: 'image', Data: 'x', MimeType: 'image/png' }]),
+    );
+  });
+
+  it('出队发送失败：提示错误且消息不回插队列', async () => {
+    api.sendChatPrompt.mockRejectedValueOnce(new Error('boom'));
+    useAppStore.setState({ chatQueues: { c1: [{ id: 1, text: '会失败的消息' }] } });
+    render(<ChatView chat={{ ...CHAT, Status: 'ready' }} active />);
+    await waitFor(() => {
+      expect(useAppStore.getState().toasts.some((t) => t.tone === 'error')).toBe(true);
+    });
+    expect(useAppStore.getState().chatQueues.c1).toBeUndefined();
+    expect(api.sendChatPrompt).toHaveBeenCalledTimes(1);
   });
 
   it('exited 后端错误为已注册 wire key 时渲染翻译文案而非裸 key', () => {

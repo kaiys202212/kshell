@@ -3,7 +3,8 @@
 // 重开应用后恢复上次的工作区页签；其余字段的数据来源都是 Go 绑定层，刷新即重取，不持久化。
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { ChatCommand, ChatInfo, ChatModelsView, ChatPermissionRequest, ChatUpdate, HubMessage, LanguageInfo, TerminalInfo, Workspace } from '../lib/api';
+import i18n from 'i18next';
+import type { ChatBlock, ChatCommand, ChatInfo, ChatModelsView, ChatPermissionRequest, ChatUpdate, HubMessage, LanguageInfo, TerminalInfo, Workspace } from '../lib/api';
 import type { AgentNotice } from '../lib/agentNotify';
 import type { AppearanceInfo } from '../lib/appearance';
 import { applyChatUpdate, type TimelineItem } from './chatUpdate';
@@ -28,6 +29,9 @@ function loadSelectedProject(): string | null {
 
 // agent 通知的自增 id（同上）
 let nextNoticeId = 1;
+
+// ChatView 本地消息队列的自增 id（同上）
+let nextQueueMsgId = 1;
 
 // 通知气泡点击跳转的自增序号：同一 termKey 连续点击也要能再次触发页签切换
 let nextFocusSeq = 1;
@@ -54,6 +58,23 @@ export interface Toast {
   id: number;
   title: string;
   tone: 'info' | 'success' | 'error';
+}
+
+// ChatView 本地队列的排队消息：running 时用户发送的消息先进队列，
+// 出队（会话回 ready）时才真正调 sendChatPrompt*，不进时间线。
+// blocks 有值表示带附件（发送走 sendChatPromptBlocks），否则走 sendChatPrompt。
+export interface ChatQueuedMessage {
+  id: number;
+  text: string;
+  blocks?: ChatBlock[];
+}
+
+// 队列长度上限：防止连环入队把输入区撑爆，超出丢最旧并提示
+const CHAT_QUEUE_CAP = 50;
+
+// tQueueFull 取「队列已满」提示文案（i18n：store 层不能写死用户可见文案）
+function tQueueFull(): string {
+  return i18n.t('ui.chat.queue_full');
 }
 
 // 设置页固定页签的保留标识（带命名空间前缀，不会与工作区路径冲突）
@@ -140,6 +161,13 @@ interface AppState {
   setChatModels(id: string, view: ChatModelsView | null): void;
   chatCommands: Record<string, ChatCommand[]>;
   setChatCommands(id: string, cmds: ChatCommand[]): void;
+
+  // ChatView 本地消息队列（agent 运行中用户再发消息的暂存；不持久化，随会话消亡）
+  chatQueues: Record<string, ChatQueuedMessage[]>;
+  enqueueChat(id: string, msg: { text: string; blocks?: ChatBlock[] }): void;
+  dequeueChatHead(id: string): ChatQueuedMessage | null;
+  removeQueuedChat(id: string, msgId: number): void;
+  clearChatQueue(id: string): void;
 
   // 终端静默启发 busy（不持久化；由 terminalBusy.ts 定时器驱动）
   terminalBusy: Record<string, true>;
@@ -348,6 +376,7 @@ export const useAppStore = create<AppState>()(
           chatPermissions: omitKey(s.chatPermissions, id),
           chatModels: omitKey(s.chatModels, id),
           chatCommands: omitKey(s.chatCommands, id),
+          chatQueues: omitKey(s.chatQueues, id),
         })),
       markChatExited: (id, exitCode, error) =>
         set((s) => ({
@@ -440,6 +469,54 @@ export const useAppStore = create<AppState>()(
       chatCommands: {},
       setChatCommands: (id, cmds) =>
         set((s) => ({ chatCommands: { ...s.chatCommands, [id]: cmds } })),
+
+      chatQueues: {},
+      enqueueChat: (id, msg) =>
+        set((s) => {
+          const q = s.chatQueues[id] ?? [];
+          let next: ChatQueuedMessage[];
+          if (q.length >= CHAT_QUEUE_CAP) {
+            next = [...q.slice(q.length - CHAT_QUEUE_CAP + 1), { ...msg, id: nextQueueMsgId++ }];
+            // 超限提示只在越界的那次入队发出，避免连环发送时 toast 刷屏
+            s.notify(tQueueFull(), 'error');
+          } else {
+            next = [...q, { ...msg, id: nextQueueMsgId++ }];
+          }
+          return { chatQueues: { ...s.chatQueues, [id]: next } };
+        }),
+      dequeueChatHead: (id) => {
+        // head 经 set 闭包取走：action 内不得引用 useAppStore.getState()——
+        // 那会构成 store 自身初始化器的循环类型推断（TS7022 把整个 store 推成 any）
+        let head: ChatQueuedMessage | null = null;
+        set((s) => {
+          const q = s.chatQueues[id];
+          if (!q || q.length === 0) return {};
+          head = q[0];
+          const rest = q.slice(1);
+          const next = { ...s.chatQueues };
+          if (rest.length === 0) delete next[id];
+          else next[id] = rest;
+          return { chatQueues: next };
+        });
+        return head;
+      },
+      removeQueuedChat: (id, msgId) =>
+        set((s) => {
+          const q = s.chatQueues[id];
+          if (!q) return {};
+          const next = q.filter((m) => m.id !== msgId);
+          const queues = { ...s.chatQueues };
+          if (next.length === 0) delete queues[id];
+          else queues[id] = next;
+          return { chatQueues: queues };
+        }),
+      clearChatQueue: (id) =>
+        set((s) => {
+          if (!s.chatQueues[id]) return {};
+          const queues = { ...s.chatQueues };
+          delete queues[id];
+          return { chatQueues: queues };
+        }),
 
       terminalBusy: {},
       setTerminalBusy: (id, busy) =>

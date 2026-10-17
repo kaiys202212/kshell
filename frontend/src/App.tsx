@@ -162,7 +162,8 @@ function App() {
     );
     const offX = onChatExit(({ id, exitCode, error }) => {
       throttle.drop(id); // 会话已退出：丢弃在途缓冲，避免迟到分片污染终态时间线
-      const { markChatExited, setChatPermission, notify } = useAppStore.getState();
+      const { markChatExited, setChatPermission, notify, clearChatQueue } = useAppStore.getState();
+      clearChatQueue(id); // 本地排队消息随会话消亡：进程已退出，发出也偏离用户意图
       markChatExited(id, exitCode, error);
       setChatPermission(id, null);
       let reason: string;

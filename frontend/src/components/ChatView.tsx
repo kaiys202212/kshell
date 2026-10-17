@@ -21,6 +21,7 @@ import { appendChatInput, registerChatInput, unregisterChatInput } from '../lib/
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
 import { useAppStore } from '../state/store';
+import type { ChatQueuedMessage } from '../state/store';
 import type { TimelineItem } from '../state/chatUpdate';
 import { cn } from '../lib/cn';
 import { handleAnchorClick } from '../lib/openHref';
@@ -37,6 +38,8 @@ interface Props {
 // 模块级稳定空数组：无消息时避免每次渲染返回新引用，防止自动滚动 effect 空转
 const EMPTY_ITEMS: TimelineItem[] = [];
 const EMPTY_COMMANDS: { Name: string; Description?: string; InputHint?: string }[] = [];
+// 队列空时的稳定引用（同上，避免 store 订阅在空态反复触发重渲染）
+const EMPTY_QUEUE: ChatQueuedMessage[] = [];
 
 // fileUriFromPath 把本机绝对路径转 file URI（Windows 反斜杠归一 + 空格等编码），
 // 供 resource_link 块引用；agent 与 kshell 同机，可直接按路径读取。
@@ -127,6 +130,7 @@ export default function ChatView({ chat, active }: Props) {
   // 用户是否停在底部（近底 40px 内）：仅在底部时才自动滚动，避免读历史时被新消息拽走
   const atBottom = useRef(true);
   const running = chat.Status === 'running';
+  const queued = useAppStore((s) => s.chatQueues[id]) ?? EMPTY_QUEUE;
 
   // 拖入文件落点经注册表转为附件 chip：外部（文件树/全局拖放）与页签内 drop 共用此入口。
   // 注册表约定传引号包裹的路径文本，这里剥引号后建 resource_link 块。
@@ -269,27 +273,58 @@ export default function ChatView({ chat, active }: Props) {
     setAttachments((arr) => arr.filter((_, i) => i !== index));
   };
 
-  const send = () => {
-    const text = draft.trim();
-    if ((!text && attachments.length === 0) || running) return;
-    setDraft('');
-    setAttachments([]);
+  // doSend 真正发起发送（直接发送与队列出队共用）：乐观置 running，失败回滚并提示。
+  const doSend = (payload: { text: string; blocks?: ChatBlock[] }) => {
     // 乐观置 running：turn_done/error 的 chat:update 会把它改回 ready
     useAppStore.getState().upsertChat({ ...chat, Status: 'running' });
     const fail = (e: unknown) => {
       useAppStore.getState().upsertChat({ ...chat, Status: 'ready' });
       useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
     };
-    if (attachments.length > 0) {
-      // 文本块在前，附件块在后
-      const blocks: ChatBlock[] = [];
-      if (text) blocks.push({ Type: 'text', Text: text });
-      for (const a of attachments) blocks.push(a.block);
-      sendChatPromptBlocks(id, blocks).catch(fail);
+    if (payload.blocks && payload.blocks.length > 0) {
+      sendChatPromptBlocks(id, payload.blocks).catch(fail);
     } else {
-      sendChatPrompt(id, text).catch(fail);
+      sendChatPrompt(id, payload.text).catch(fail);
     }
   };
+
+  const send = () => {
+    const text = draft.trim();
+    if (!text && attachments.length === 0) return;
+    // 文本块在前，附件块在后
+    let blocks: ChatBlock[] | undefined;
+    if (attachments.length > 0) {
+      blocks = [];
+      if (text) blocks.push({ Type: 'text', Text: text });
+      for (const a of attachments) blocks.push(a.block);
+    }
+    setDraft('');
+    setAttachments([]);
+    if (running) {
+      // agent 正在运行：消息进入本地队列，出队（回 ready）时才真正发送
+      useAppStore.getState().enqueueChat(id, { text, blocks });
+      return;
+    }
+    doSend({ text, blocks });
+  };
+
+  // 出队：会话状态回到 ready 的转换沿且队列非空时，取队首真正发送。
+  // 用 ref 记上一状态避免 ready→ready 的无关重渲染重复出队；首渲染即 ready
+  // 也算转换沿（页面刷新后队列虽不持久化，但启动期入队可能在首渲染前发生）。
+  const prevStatus = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevStatus.current;
+    prevStatus.current = chat.Status;
+    if (prev === chat.Status) return;
+    if (chat.Status !== 'ready') return;
+    // 出队与发送在 effect 中按序执行：dequeueChatHead 同步取走队首，
+    // doSend 复用直接发送路径（乐观置 running、失败 toast 不回插）
+    const head = useAppStore.getState().dequeueChatHead(id);
+    if (!head) return;
+    doSend({ text: head.text, blocks: head.blocks });
+    // doSend 闭包引用 chat（乐观更新用），状态沿触发时 chat 已是最新，无需进依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat.Status, id]);
 
   // resume 在 agent 提前停止后一键续做：向同一会话再发一轮「继续」。
   // 会话上下文完整，agent 自然从断点接着做；时间线照常补录 user「继续」，透明可追溯。
@@ -470,6 +505,23 @@ export default function ChatView({ chat, active }: Props) {
       </div>
 
       <div className="shrink-0 border-t border-border p-2">
+        {queued.length > 0 && (
+          <div data-testid="chat-queue" className="mb-1 flex flex-col gap-0.5">
+            {queued.map((m) => (
+              <span key={m.id} className="flex items-center gap-1 rounded border border-border bg-card px-1.5 py-0.5 text-xs">
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">{m.text}</span>
+                <button
+                  aria-label={t('ui.chat.queue_remove')}
+                  data-testid={`chat-queue-remove-${m.id}`}
+                  className="text-muted-foreground hover:text-destructive"
+                  onClick={() => useAppStore.getState().removeQueuedChat(id, m.id)}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         {attachments.length > 0 && (
           <div className="mb-1 flex flex-wrap gap-1">
             {attachments.map((a, i) => (
