@@ -345,11 +345,14 @@ func TestForWorkspaceACP_CursorCmdShimWithoutNodeFallsBack(t *testing.T) {
 	}
 }
 
-// 非结束（.exe / 无后缀）形态不受 shim 分支影响。
+// 非结束（.exe / 无后缀）形态不受 shim 分支影响；stub 被调用即失败，
+// 锁死 .exe 分支绝不进入 shim 解析。
 func TestForWorkspaceACP_CursorExeStillDirectInject(t *testing.T) {
 	oldNode := nodeLookPathFn
-	t.Cleanup(func() { nodeLookPathFn = oldNode })
-	nodeLookPathFn = func() (string, bool) { return "", false } // 不应被调用
+	oldScript := cursorScriptResolveFn
+	t.Cleanup(func() { nodeLookPathFn = oldNode; cursorScriptResolveFn = oldScript })
+	nodeLookPathFn = func() (string, bool) { t.Error(".exe 分支不得解析 node"); return "", false }
+	cursorScriptResolveFn = func(string) (string, bool) { t.Error(".exe 分支不得解析脚本"); return "", false }
 
 	ps := []providers.Provider{providers.Cursor{}}
 	tools := []discovery.Tool{{
@@ -362,6 +365,117 @@ func TestForWorkspaceACP_CursorExeStillDirectInject(t *testing.T) {
 	}
 	if l.Env["CURSOR_AGENT_EXECUTABLE"] != `C:\ca\cursor-agent.exe` {
 		t.Fatalf("env = %v", l.Env)
+	}
+}
+
+// .bat 同样是 Node spawn 会 EINVAL 的形态，须与 .cmd 同走代理。
+func TestForWorkspaceACP_CursorBatShimInjectsProxy(t *testing.T) {
+	oldNode := nodeLookPathFn
+	oldScript := cursorScriptResolveFn
+	t.Cleanup(func() { nodeLookPathFn = oldNode; cursorScriptResolveFn = oldScript })
+	nodeLookPathFn = func() (string, bool) { return `D:\nodejs\node.exe`, true }
+	cursorScriptResolveFn = func(string) (string, bool) { return `C:\ca\index.js`, true }
+
+	ps := []providers.Provider{providers.Cursor{}}
+	tools := []discovery.Tool{{
+		ID: "cursor", Installed: true, BinPath: `C:\ca\agent.bat`,
+		ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "cursor-acp"},
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Env[cursoragent.EnvScript] != `C:\ca\index.js` {
+		t.Fatalf("env = %v", l.Env)
+	}
+}
+
+// shim 形态但脚本解析不到（如 index.js 一并被更新器删光）：退回直注 shim。
+func TestForWorkspaceACP_CursorCmdShimWithoutScriptFallsBack(t *testing.T) {
+	shim := `C:\ca\cursor-agent.cmd`
+	oldNode := nodeLookPathFn
+	oldScript := cursorScriptResolveFn
+	t.Cleanup(func() { nodeLookPathFn = oldNode; cursorScriptResolveFn = oldScript })
+	nodeLookPathFn = func() (string, bool) { return `D:\nodejs\node.exe`, true }
+	cursorScriptResolveFn = func(string) (string, bool) { return "", false }
+
+	ps := []providers.Provider{providers.Cursor{}}
+	tools := []discovery.Tool{{
+		ID: "cursor", Installed: true, BinPath: shim,
+		ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "cursor-acp"},
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Env["CURSOR_AGENT_EXECUTABLE"] != shim {
+		t.Fatalf("env = %v, 期望退回直注 shim", l.Env)
+	}
+	if _, ok := l.Env[cursoragent.EnvAsProxy]; ok {
+		t.Fatalf("无脚本时不得注入代理变量, got %v", l.Env)
+	}
+}
+
+// parseVersionDir 表驱动：合法形态解析与非法形态拒绝。
+func TestParseVersionDir(t *testing.T) {
+	cases := []struct {
+		name  string
+		want  [6]int
+		valid bool
+	}{
+		{"2026.10.16-e3cb207", [6]int{2026, 10, 16, 0, 0, 0}, true},
+		{"2026.9.1-abc", [6]int{2026, 9, 1, 0, 0, 0}, true},
+		{"2026.10.16-12-30-05-e3cb207", [6]int{2026, 10, 16, 12, 30, 5}, true},
+		{"2026.10", [6]int{}, false},
+		{"2026.10.16", [6]int{}, false},
+		{"2026.10.16-12-abc", [6]int{}, false}, // 3 段非法
+		{"abc.def.ghi-x", [6]int{}, false},
+		{"", [6]int{}, false},
+	}
+	for _, c := range cases {
+		got, ok := parseVersionDir(c.name)
+		if ok != c.valid {
+			t.Errorf("parseVersionDir(%q) valid = %v, want %v", c.name, ok, c.valid)
+			continue
+		}
+		if ok && got != c.want {
+			t.Errorf("parseVersionDir(%q) = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// cursorVersionDirs 表驱动：多版本按 6 段数值降序（月份不补零不跨月错序），
+// 畸形目录排最后；versions 目录不存在返回空。
+func TestCursorVersionDirs(t *testing.T) {
+	root := t.TempDir()
+	vers := filepath.Join(root, "versions")
+	mk := func(names ...string) {
+		t.Helper()
+		for _, n := range names {
+			if err := os.MkdirAll(filepath.Join(vers, n), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	mk("2026.10.16-aaa", "2026.9.20-bbb", "2026.10.16-12-00-00-ccc", "garbage-dir", "bad.10.16-x")
+	got := cursorVersionDirs(root)
+	// garbage-dir 无 . 和 - 直接跳过；bad.10.16-x 含两者但解析失败，排最后兜底。
+	want := []string{
+		filepath.Join(vers, "2026.10.16-12-00-00-ccc"),
+		filepath.Join(vers, "2026.10.16-aaa"),
+		filepath.Join(vers, "2026.9.20-bbb"),
+		filepath.Join(vers, "bad.10.16-x"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+	if dirs := cursorVersionDirs(filepath.Join(root, "no-such")); dirs != nil {
+		t.Fatalf("versions 不存在应返回 nil, got %v", dirs)
 	}
 }
 

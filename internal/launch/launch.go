@@ -348,18 +348,22 @@ func acpAdapterEnv(tool discovery.Tool) map[string]string {
 		return nil
 	}
 	if len(tool.BinArgs) == 0 {
-		// .cmd/.bat shim：改走代理形态；node 或脚本解析不到时退回直注 shim
-		//（保持既有行为，至少老 Node 环境仍可用）。
+		// .cmd/.bat shim：改走代理形态；node、脚本或自身路径解析不到时一律
+		// 退回直注 shim（保持既有行为，至少老 Node 环境仍可用）。
 		if isCmdShim(tool.BinPath) {
+			fallback := map[string]string{"CURSOR_AGENT_EXECUTABLE": tool.BinPath}
 			node, ok := nodeLookPathFn()
 			if !ok {
-				return map[string]string{"CURSOR_AGENT_EXECUTABLE": tool.BinPath}
+				return fallback
 			}
 			script, ok := cursorScriptResolveFn(tool.BinPath)
 			if !ok {
-				return map[string]string{"CURSOR_AGENT_EXECUTABLE": tool.BinPath}
+				return fallback
 			}
-			return proxyEnv(node, script)
+			if env := proxyEnv(node, script); env != nil {
+				return env
+			}
+			return fallback
 		}
 		return map[string]string{"CURSOR_AGENT_EXECUTABLE": tool.BinPath}
 	}
