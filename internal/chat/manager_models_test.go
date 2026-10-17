@@ -5,6 +5,7 @@ package chat
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,6 +143,44 @@ func TestManagerSetModelFailureKeepsCurrent(t *testing.T) {
 	}
 	if v, _ := m.Models(info.ID); v.Current != "m1" {
 		t.Fatalf("current changed on failure: %q", v.Current)
+	}
+}
+
+// SetModel agent 不应答时必须超时返回，而不是永挂：创建窗体曾因此永远关不上
+// （runAgentCreate 在等 SetModel，createPromise 永不释放）。超时错误须映射成
+// 前端可翻译的 wire key（与握手超时同口径）。
+func TestManagerSetModelTimeoutWhenAgentSilent(t *testing.T) {
+	old := modelSetTimeout
+	modelSetTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { modelSetTimeout = old })
+
+	m, b, _ := newTestManager(t)
+	b.conn.newStart = acp.SessionStart{SessionID: "sess-new", Models: &acp.SessionModelState{
+		AvailableModels: []acp.ModelInfo{{ModelID: "m1", Name: "One"}}, CurrentModelID: "m1",
+	}}
+	b.conn.setModelGate = make(chan struct{})
+	defer close(b.conn.setModelGate) // 测试结束后放行 goroutine
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- m.SetModel(info.ID, "m2") }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected timeout error")
+		}
+		if !strings.Contains(err.Error(), "err.chat.model_timeout") {
+			t.Fatalf("err = %v, want err.chat.model_timeout", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("SetModel hung past timeout")
+	}
+	// 超时不得改写当前值
+	if v, _ := m.Models(info.ID); v.Current != "m1" {
+		t.Fatalf("current changed on timeout: %q", v.Current)
 	}
 }
 
