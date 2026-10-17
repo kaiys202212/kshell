@@ -61,6 +61,11 @@ type Bridge struct {
 	ctx         ctxInfo      // 最近入站消息的发送凭据
 	pending     []pendingMsg // -14 时缓存的待发
 	undelivered int          // 发送失败计数（#st 用）
+	learnedWxid bool         // wxid 是否已学习/配置（只置一次，防第二条消息重复学习）
+
+	// onLearnWxid 非空时，wxid 首次从入站消息学习得到即回调（desktop 落盘）。
+	// 由 SetOnLearnWxid 在 Start 前装配，此后视为只读。
+	onLearnWxid func(wxid string)
 
 	// sleep 供测试注入 no-op，避免重试真实等待。
 	sleep func(time.Duration)
@@ -92,11 +97,40 @@ func (b *Bridge) PendingCount() int {
 	return len(b.pending)
 }
 
+// SetOnLearnWxid 装配 wxid 学习回调（Start 前调用，此后只读）。
+func (b *Bridge) SetOnLearnWxid(fn func(wxid string)) { b.onLearnWxid = fn }
+
+// Wxid 返回当前白名单用户（可能为学习前的空串；测试与状态展示用）。
+func (b *Bridge) Wxid() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.wxid
+}
+
 // HandleInbound 处理一条入站消息：白名单过滤 → 记录发送上下文 →
 // 补发 pending → 交命令层并把回复逐条投递。
 func (b *Bridge) HandleInbound(fromUserID, contextToken, text string) {
-	if b.wxid == "" || fromUserID != b.wxid {
+	// wxid 待学习：iLink 扫码响应不带 wxid，首条白名单外的入站消息
+	// 即视为机主本人（首扫即绑），学习一次后按白名单过滤。学习与
+	// 白名单判断共用 mu，保证并发消息里只有一条能成为「首条」。
+	b.mu.Lock()
+	if b.wxid == "" {
+		if fromUserID == "" {
+			b.mu.Unlock()
+			return
+		}
+		b.wxid = fromUserID
+		b.learnedWxid = true
+		fn := b.onLearnWxid
+		b.mu.Unlock()
+		if fn != nil {
+			fn(fromUserID)
+		}
+	} else if fromUserID != b.wxid {
+		b.mu.Unlock()
 		return // 非白名单静默丢弃，不记录不回复
+	} else {
+		b.mu.Unlock()
 	}
 	b.mu.Lock()
 	b.ctx = ctxInfo{userID: fromUserID, contextToken: contextToken, valid: true}

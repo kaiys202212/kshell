@@ -147,6 +147,41 @@ func TestBridgeWhitelist(t *testing.T) {
 	}
 }
 
+// TestBridgeLearnWxid 验证学习机制：wxid 未配置时首条入站消息的发送者被
+// 记为白名单用户（回调通知 + 放行处理），后续其他用户仍被拒。
+func TestBridgeLearnWxid(t *testing.T) {
+	rc := &recorder{}
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}, sendErr: errors.New("boom")}
+	b := newBridge(t, "", ex, rc.handler(t)) // wxid 空 = 待学习
+	var learned string
+	b.SetOnLearnWxid(func(wxid string) { learned = wxid })
+
+	// 首条消息：学习 u1 并放行（Send 失败回显一条 sendmessage）。
+	b.HandleInbound("u1", "ct-1", "hi")
+	if learned != "u1" {
+		t.Fatalf("学习回调 wxid = %q, 期望 u1", learned)
+	}
+	if b.Wxid() != "u1" {
+		t.Fatalf("学习后 Wxid() = %q, 期望 u1", b.Wxid())
+	}
+	if n := len(rc.sends()); n != 1 {
+		t.Fatalf("首条消息应放行产生 1 次 sendmessage, got %d", n)
+	}
+
+	// 第二条不同 wxid 被拒：不再新增 sendmessage。
+	b.HandleInbound("u2", "ct-2", "hello")
+	if n := len(rc.sends()); n != 1 {
+		t.Fatalf("学习后其他用户应被拒, sendmessage 次数 = %d, 期望仍为 1", n)
+	}
+
+	// 空发送者不参与学习也不放行。
+	b2 := newBridge(t, "", ex, rc.handler(t))
+	b2.HandleInbound("", "ct", "hi")
+	if b2.Wxid() != "" {
+		t.Fatalf("空发送者不应触发学习: Wxid() = %q", b2.Wxid())
+	}
+}
+
 func TestBridgeInboundList(t *testing.T) {
 	rc := &recorder{}
 	ex := &fakeExec{hasCur: true, sessions: []hub.SessionRef{
