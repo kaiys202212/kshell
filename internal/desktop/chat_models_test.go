@@ -1,15 +1,12 @@
 package desktop
 
 import (
-	"context"
 	"encoding/json"
-	"path/filepath"
 	"testing"
 
 	"github.com/yangk/kshell/internal/acp"
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
-	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
 )
 
@@ -23,7 +20,7 @@ func (c *recChatConn) SetSettingsMeta(raw string) { c.gotMeta = raw }
 
 // recChatBackend 产出 recChatConn，并记录传入的 spec。
 type recChatBackend struct {
-	conn recChatConn // Start 后的快照（仅字段初值参考）
+	conn recChatConn  // Start 后的快照（仅字段初值参考）
 	live *recChatConn // manager 实际持有的连接指针
 	spec chat.Spec
 }
@@ -65,12 +62,22 @@ func TestOpenWorkspaceACPCarriesSettingsPayload(t *testing.T) {
 	if backend.spec.ACPSettingsJSON != backend.live.gotMeta {
 		t.Fatalf("spec 与 conn 载荷不一致: %q vs %q", backend.spec.ACPSettingsJSON, backend.live.gotMeta)
 	}
-	var m map[string]any
-	if err := unmarshalJSON(backend.live.gotMeta, &m); err != nil {
+	var meta struct {
+		ClaudeCode struct {
+			Options struct {
+				Settings string `json:"settings"`
+			} `json:"options"`
+		} `json:"claudeCode"`
+	}
+	if err := json.Unmarshal([]byte(backend.live.gotMeta), &meta); err != nil {
 		t.Fatalf("载荷非法 JSON: %v (%q)", err, backend.live.gotMeta)
 	}
-	if m["env"] == nil {
-		t.Fatalf("载荷缺 env 块: %q", backend.live.gotMeta)
+	var envWrap map[string]any
+	if err := json.Unmarshal([]byte(meta.ClaudeCode.Options.Settings), &envWrap); err != nil {
+		t.Fatalf("settings 值应为内联 JSON 字符串: %v (%q)", err, meta.ClaudeCode.Options.Settings)
+	}
+	if envWrap["env"] == nil {
+		t.Fatalf("settings 缺 env 块: %q", meta.ClaudeCode.Options.Settings)
 	}
 }
 
@@ -140,10 +147,31 @@ func TestListChatModelsAgentEmptyStillListsConfig(t *testing.T) {
 	}
 }
 
-func unmarshalJSON(s string, v any) error {
-	return json.Unmarshal([]byte(s), v)
-}
+// 模型注入未启用时不得把 kshell 配置模型列进下拉（选中也无法注入，假选项）。
+func TestListChatModelsDisabledNoConfigModels(t *testing.T) {
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "claude-agent-acp",
+	}, fakeChatBackend{})
+	env.app.mu.Lock()
+	env.app.opts.Config.SessionMode = config.SessionModeACP
+	env.app.opts.Config.Model = config.ModelConfig{
+		Enabled:     false,
+		ActiveModel: "glm-5.3-flash",
+		Models:      []string{"glm-5.3-flash"},
+	}
+	env.app.mu.Unlock()
 
-var _ = context.Background
-var _ = discovery.Result{}
-var _ = filepath.Join
+	opened, err := env.app.OpenSessionACP("s1")
+	if err != nil {
+		t.Fatalf("OpenSessionACP: %v", err)
+	}
+	v, err := env.app.ListChatModels(opened.Chat.ID)
+	if err != nil {
+		t.Fatalf("ListChatModels: %v", err)
+	}
+	for _, mo := range v.Models {
+		if mo.ID == "glm-5.3-flash" {
+			t.Fatalf("未启用时不应列出配置模型: %+v", v)
+		}
+	}
+}

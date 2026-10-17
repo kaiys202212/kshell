@@ -463,7 +463,7 @@ func (a *App) ListChatModels(id string) (chat.ModelsView, error) {
 // 已存在（按 ID）跳过；agent 无视图时以 Current=ActiveModel 返回配置列表。
 func (a *App) mergeConfigModels(v chat.ModelsView) chat.ModelsView {
 	cfg := a.snapshot().Config.Model
-	if len(cfg.Models) == 0 {
+	if !cfg.Enabled || len(cfg.Models) == 0 {
 		return v
 	}
 	seen := make(map[string]bool, len(v.Models))

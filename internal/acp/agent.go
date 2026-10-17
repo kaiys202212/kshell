@@ -279,10 +279,11 @@ func (a *Agent) SetMCP(servers []McpServerStdio) {
 
 // SetSettingsMeta 设置 session/new 与 session/load 参数里的 _meta 载荷
 //（如 claude 的 {"claudeCode":{"options":{"settings":"..."}}}）。
-// 空值表示不携带。
-func (a *Agent) SetSettingsMeta(raw json.RawMessage) {
+// 空串表示不携带。签名用 string：chat 层的可选接口断言按精确签名匹配，
+// json.RawMessage 形参会让 *Agent 不满足 interface{ SetSettingsMeta(string) }。
+func (a *Agent) SetSettingsMeta(raw string) {
 	a.mu.Lock()
-	a.settingsMeta = raw
+	a.settingsMeta = json.RawMessage(raw)
 	a.mu.Unlock()
 }
 

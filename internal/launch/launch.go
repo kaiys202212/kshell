@@ -250,11 +250,13 @@ func finalizeACP(l providers.Launch, p providers.Provider, tool discovery.Tool, 
 	return reorderACPArgs(out, tool, len(out.Args)-baseLen)
 }
 
-// acpSettingsPayload 为 claude ACP 组装 _meta 载荷：适配器会丢弃 argv 上的
-// --settings，模型配置只能经 session/new 的 _meta.claudeCode.options.settings
-//（内联 JSON 字符串）送达 CLI。值必须是字符串而非对象——SDK 原样把 settings
-// 值 push 进 spawn argv，对象会被 Node 序列化成 "[object Object]" 致 CLI 启动失败。
-// 非 claude、Resolver 未命中或 env 全空时返回空串。
+// acpSettingsPayload 为 claude ACP 组装完整的 _meta 载荷
+// {"claudeCode":{"options":{"settings":"{\"env\":{...}}"}}}：适配器从
+// params._meta.claudeCode.options 读 SDK options，settings 值经 SDK 原样
+// 进 spawn argv → CLI 的 --settings（内联 JSON）。**settings 值必须是 JSON
+// 字符串而非对象**——SDK 无 sandbox 时不序列化，对象会被 Node 变成
+// "[object Object]" 致 CLI 启动失败。非 claude、Resolver 未命中或 env 全空
+// 时返回空串（session/new 不带 _meta）。
 func acpSettingsPayload(p providers.Provider, mo ModelOptions) string {
 	if p.ID() != "claude" || mo.Resolver == nil {
 		return ""
@@ -267,7 +269,15 @@ func acpSettingsPayload(p providers.Provider, mo ModelOptions) string {
 	if len(env) == 0 {
 		return ""
 	}
-	b, err := json.Marshal(map[string]any{"env": env})
+	settingsJSON, err := json.Marshal(map[string]any{"env": env})
+	if err != nil {
+		return ""
+	}
+	b, err := json.Marshal(map[string]any{
+		"claudeCode": map[string]any{
+			"options": map[string]any{"settings": string(settingsJSON)},
+		},
+	})
 	if err != nil {
 		return ""
 	}

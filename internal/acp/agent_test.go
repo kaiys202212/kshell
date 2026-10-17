@@ -494,7 +494,7 @@ func TestNewSessionCarriesSettingsMeta(t *testing.T) {
 	if _, err := a.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
-	a.SetSettingsMeta(json.RawMessage(`{"claudeCode":{"options":{"settings":"{\"env\":{\"ANTHROPIC_MODEL\":\"m\"}}"}}}`))
+	a.SetSettingsMeta(`{"claudeCode":{"options":{"settings":"{\"env\":{\"ANTHROPIC_MODEL\":\"m\"}}"}}}`)
 	if _, err := a.NewSession(ctx, "/tmp"); err != nil {
 		t.Fatalf("new session: %v", err)
 	}
@@ -541,7 +541,7 @@ func TestLoadSessionCarriesSettingsMeta(t *testing.T) {
 	if _, err := a.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
-	a.SetSettingsMeta(json.RawMessage(`{"claudeCode":{"options":{"settings":"{\"env\":{\"ANTHROPIC_MODEL\":\"m\"}}"}}}`))
+	a.SetSettingsMeta(`{"claudeCode":{"options":{"settings":"{\"env\":{\"ANTHROPIC_MODEL\":\"m\"}}"}}}`)
 	if _, err := a.LoadSession(ctx, "sess-load", "/tmp"); err != nil {
 		t.Fatalf("load session: %v", err)
 	}

@@ -181,8 +181,9 @@ func (m *Manager) SetMCPFactory(fn func(chatID string) []acp.McpServerStdio) {
 	m.mu.Unlock()
 }
 
-// SetSettingsMetaFactory 在 session/new 与 session/load 前把 agent 专属的
-// _meta 载荷（如 claude 的 settings 注入）交给连接；返回空串表示不注入。
+// SetSettingsMetaFactory 注册 _meta 载荷工厂（备用通路）。生产路径走
+// chat.Spec.ACPSettingsJSON 直通（launch 层单一来源）；本工厂供无 launch
+// 层的调用方（如测试或未来 TUI 直连场景）注入，spec 载荷非空时被优先。
 func (m *Manager) SetSettingsMetaFactory(fn func(chatID string) string) {
 	m.mu.Lock()
 	m.settingsMetaFor = fn
@@ -567,7 +568,7 @@ func (m *Manager) fail(id string, code int, msg string) {
 }
 
 // flattenBlocks 把内容块展开成时间线用文本：text 块按序拼接，非文本块忽略
-//（附件另有 AttachmentMeta 展示）。
+// （附件另有 AttachmentMeta 展示）。
 func flattenBlocks(blocks []acp.ContentBlock) string {
 	parts := make([]string, 0, len(blocks))
 	for _, b := range blocks {
