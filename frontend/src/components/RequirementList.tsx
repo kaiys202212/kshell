@@ -17,12 +17,14 @@ import {
   setRequirementStatus,
   updateRequirement,
   type Requirement,
+  type Workspace,
 } from '../lib/api';
 import { backendError } from '../lib/errors';
 import { quotePathForShell } from '../lib/dragPath';
 import { baseName } from '../lib/hubAttribution';
 import { formatRelativeTime } from '../lib/format';
 import { reopenRequirementSession } from '../lib/dispatchRequirement';
+import { sameWorkspacePath } from '../lib/workspacePath';
 import { focusNoticeTarget } from './NotificationBubble';
 import { cn } from '../lib/cn';
 import { useAppStore } from '../state/store';
@@ -94,14 +96,17 @@ function RequirementDialog({
   onOpenChange: (v: boolean) => void;
 }) {
   const { t } = useTranslation();
+  const workspaces = useAppStore((s) => s.workspaces);
+  const [project, setProject] = useState('');
   const [text, setText] = useState('');
   const [priority, setPriority] = useState<Requirement['priority']>('medium');
   const [tagsInput, setTagsInput] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // 打开时按编辑对象回填；新增则清空
+  // 打开时按编辑对象回填；新增则默认当前选中项目（编辑场景 project 是后端必填字段）
   useEffect(() => {
     if (!open) return;
+    setProject(editing?.project ?? useAppStore.getState().selectedProject ?? '');
     setText(editing?.text ?? '');
     setPriority(editing?.priority ?? 'medium');
     setTagsInput((editing?.tags ?? []).join(', '));
@@ -111,6 +116,11 @@ function RequirementDialog({
   const save = () => {
     const trimmed = text.trim();
     if (!trimmed || busy) return;
+    // 第一道防线：project 必填（后端还有 err.requirements.project_required 兜底）
+    if (!project) {
+      useAppStore.getState().notify(t('err.requirements.project_required'), 'error');
+      return;
+    }
     // 逗号分隔转数组：去空白、丢空段、去重（重复标签会让 Badge key 冲突）
     const tags = [...new Set(
       tagsInput
@@ -120,8 +130,8 @@ function RequirementDialog({
     )];
     setBusy(true);
     const call = editing
-      ? updateRequirement(editing.id, trimmed, priority, tags)
-      : addRequirement(trimmed, priority, tags);
+      ? updateRequirement(editing.id, project, trimmed, priority, tags)
+      : addRequirement(project, trimmed, priority, tags);
     void call
       // 成功后靠 requirements:changed 事件回流刷新，这里只关弹窗
       .then(() => onOpenChange(false))
@@ -152,6 +162,22 @@ function RequirementDialog({
       <DialogPrimitive.Title className="mb-3 text-sm font-medium">
         {editing ? t('ui.requirements.edit') : t('ui.requirements.add')}
       </DialogPrimitive.Title>
+      <label className="mb-2 flex flex-col gap-1 text-xs text-muted-foreground">
+        {t('ui.requirements.field_project')}
+        <select
+          data-testid="req-project"
+          className="rounded border border-border bg-card px-2 py-1 text-sm text-foreground"
+          value={project}
+          onChange={(e) => setProject(e.target.value)}
+        >
+          {/* 无工作区（测试/绑定缺失）时下拉为空，保存按钮禁用兜底必填 */}
+          {workspaces.map((w) => (
+            <option key={w.Path} value={w.Path}>
+              {w.Name}
+            </option>
+          ))}
+        </select>
+      </label>
       <label className="mb-2 flex flex-col gap-1 text-xs text-muted-foreground">
         {t('ui.requirements.text_label')}
         <textarea
@@ -191,12 +217,19 @@ function RequirementDialog({
         <Button size="sm" variant="outline" onClick={() => onOpenChange(false)}>
           {t('ui.requirements.cancel')}
         </Button>
-        <Button size="sm" disabled={!text.trim() || busy} onClick={save}>
+        <Button size="sm" disabled={!text.trim() || !project || busy} onClick={save}>
           {t('ui.requirements.save')}
         </Button>
       </div>
     </Dialog>
   );
+}
+
+// projectDisplayName 项目徽标显示名：优先工作区列表里的显示名（Name），
+// 匹配不到（工作区已删/列表未加载）退化为路径末段。
+function projectDisplayName(project: string, workspaces: Workspace[]): string {
+  const ws = workspaces.find((w) => sameWorkspacePath(w.Path, project));
+  return ws?.Name || baseName(project);
 }
 
 // 归档检索视图：全量归档条目的只读列表，支持项目 / 关键字 / tag 过滤。
@@ -334,6 +367,10 @@ export default function RequirementList({ className }: { className?: string }) {
   const [archiveOpen, setArchiveOpen] = useState(false);
   // 活跃会话镜像：会话行用实时标题/状态覆盖落盘快照（App.tsx 全局订阅维护）
   const chats = useAppStore((s) => s.chats);
+  // 选中项目：过滤需求列表（不新增 props，直接读全局 store）
+  const selectedProject = useAppStore((s) => s.selectedProject);
+  // 工作区列表：项目徽标显示名来源
+  const workspaces = useAppStore((s) => s.workspaces);
 
   const refresh = useCallback(() => {
     listRequirements()
@@ -407,12 +444,23 @@ export default function RequirementList({ className }: { className?: string }) {
 
   // 活跃列表只显示非 archived 条目（listRequirements 全量返回）
   const activeItems = useMemo(() => items.filter((r) => r.status !== 'archived'), [items]);
+  // 选中项目时只显示属于该项目的条目（路径归一化比较）；未选中显示全部。
+  // 无 project 的存量条目在选中态下被过滤掉（用户编辑补选后重新可见）。
+  const shownItems = useMemo(
+    () =>
+      selectedProject
+        ? activeItems.filter((r) => !!r.project && sameWorkspacePath(r.project, selectedProject))
+        : activeItems,
+    [activeItems, selectedProject],
+  );
 
   const handleDragStart = (e: React.DragEvent<HTMLElement>, r: Requirement) => {
     // 终态（done/archived）禁拖：派发守卫会拒绝 markRequirementDispatched，
     // 但会话已建、prompt 已发，留下无主孤儿会话
     if (r.status === 'done' || r.status === 'archived') return;
-    e.dataTransfer.setData(REQUIREMENT_MIME, JSON.stringify({ id: r.id, text: r.text }));
+    // 无 project 禁拖：派发目标是需求自身 project（D1 决策），缺失则无处投递
+    if (!r.project) return;
+    e.dataTransfer.setData(REQUIREMENT_MIME, JSON.stringify({ id: r.id, text: r.text, project: r.project }));
     e.dataTransfer.setData('text/plain', r.text);
     e.dataTransfer.effectAllowed = 'copy';
   };
@@ -433,13 +481,17 @@ export default function RequirementList({ className }: { className?: string }) {
           </Button>
         </div>
       </div>
-      {activeItems.length === 0 ? (
-        <EmptyState className="min-h-0 flex-1 py-6" title={t('ui.requirements.empty')} />
+      {shownItems.length === 0 ? (
+        <EmptyState
+          className="min-h-0 flex-1 py-6"
+          title={t(activeItems.length === 0 ? 'ui.requirements.empty' : 'ui.requirements.empty_filtered')}
+        />
       ) : (
         <ul className="m-0 flex min-h-0 flex-1 list-none flex-col gap-2 overflow-y-auto p-0">
-          {activeItems.map((r) => {
+          {shownItems.map((r) => {
             const status = r.status ?? 'pending';
-            const draggable = status !== 'done' && status !== 'archived';
+            // 终态与无 project 条目均不可拖：拖拽派发目标是需求自身 project
+            const draggable = status !== 'done' && status !== 'archived' && !!r.project;
             // 会话行数据：活跃会话镜像命中时用实时标题/状态，否则回退落盘快照
             // （|| 而非 ??：空串标题也视为缺失，回退快照）
             const chat = r.chatId ? chats.find((c) => c.ID === r.chatId) : undefined;
@@ -449,6 +501,8 @@ export default function RequirementList({ className }: { className?: string }) {
                 key={r.id}
                 draggable={draggable}
                 onDragStart={(e) => handleDragStart(e, r)}
+                // 无 project 禁拖的可见解释：读屏与悬停用户都能感知原因
+                title={!r.project ? t('ui.requirements.no_project_drag_hint') : undefined}
                 className="group relative flex min-h-14 min-w-0 items-start gap-2 rounded border border-border px-3 py-2.5"
               >
                 <span
@@ -484,6 +538,12 @@ export default function RequirementList({ className }: { className?: string }) {
                         {tag}
                       </Badge>
                     ))}
+                    {/* 项目徽标：项目名取工作区显示名，匹配不到退化为路径末段 */}
+                    {r.project && (
+                      <Badge variant="outline" title={r.project}>
+                        {projectDisplayName(r.project, workspaces)}
+                      </Badge>
+                    )}
                     {r.dispatchedTo && <Badge variant="outline">{baseName(r.dispatchedTo)}</Badge>}
                     {/* 行尾按钮组：hover 显现（兄弟节点定位，避免嵌套进文本区）。
                         会话跳转/重开在前，需求操作在后，同一行避免卡片纵向膨胀。

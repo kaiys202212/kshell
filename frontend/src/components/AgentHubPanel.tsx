@@ -30,6 +30,8 @@ import { toolDisplayName } from '../lib/agentNotify';
 import { loadDefaultCreate, loadLastCreate, loadToolModels, saveDefaultCreate, saveLastCreate, saveToolModels } from '../lib/agenthubDefaults';
 import { quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
+import { dispatchRequirement } from '../lib/dispatchRequirement';
+import { REQUIREMENT_MIME } from './RequirementList';
 import { attributionText, baseName, resolveAttribution } from '../lib/hubAttribution';
 import { markdownBubbleClass } from '../lib/markdownStyles';
 import { sameWorkspacePath } from '../lib/workspacePath';
@@ -492,32 +494,48 @@ export default function AgentHubPanel() {
     }
   };
 
-  // runEasyNew /easynew 快建：lastCreate 的项目/工具仍有效时直接走创建流程（不弹窗），
+  // runEasyNew /easynew 快建：默认设置/上次记录仍有效时直接走创建流程（不弹窗），
   // 失效或没有默认值则打开新建弹窗让用户补选（补选后同样落默认值）。
+  // 取值优先级：toolId/modelId 来自显式默认设置（loadDefaultCreate），缺失回落
+  // lastCreate 全量；wsPath 优先当前选中项目（首页卡片点击），否则 lastCreate.wsPath。
   // 创建互斥：runAgentCreate 内部持锁；这里对弹窗入口另查锁，避免创建中又打开对话框重复操作。
   const runEasyNew = () => {
     if (createPromise !== null) {
       useAppStore.getState().notify(t('ui.hub.easynew_busy'), 'info');
       return;
     }
+    const defaults = loadDefaultCreate();
     const last = loadLastCreate();
+    // 项目来源：选中项目优先，其次上次创建记录；两者皆无 → 弹窗补选
+    const wsPath = useAppStore.getState().selectedProject ?? last?.wsPath;
     const wsOk =
-      last &&
-      useAppStore.getState().workspaces.some((w) => sameWorkspacePath(w.Path, last.wsPath));
-    if (!last || !wsOk) {
+      wsPath &&
+      useAppStore.getState().workspaces.some((w) => sameWorkspacePath(w.Path, wsPath));
+    if (!wsPath || !wsOk) {
       openNewAgentDialog();
       return;
     }
     setEasynewRunning(true);
-    // 工具有效性需异步拉工具列表校验（store 无镜像），确认有效才直建
+    // 工具有效性需异步拉工具列表校验（store 无镜像）：默认设置的工具可用则用之，
+    // 不可用提示回落；无默认设置时回落 lastCreate.toolId，再不可用才弹窗补选
     void getTools()
       .then((list) => list.filter((x) => x.ACP?.Available === true))
       .then((acp) => {
-        if (!last || !acp.some((x) => x.ID === last.toolId)) {
+        let toolId = defaults?.toolId && acp.some((x) => x.ID === defaults.toolId) ? defaults.toolId : '';
+        if (!toolId && defaults?.toolId) {
+          // 默认工具不可用（卸载/ACP 掉线）：提示后回落自动选择
+          useAppStore.getState().notify(t('ui.hub.default_tool_unavailable'), 'info');
+        }
+        if (!toolId && last && acp.some((x) => x.ID === last.toolId)) {
+          toolId = last.toolId;
+        }
+        if (!toolId) {
           openNewAgentDialog();
           return;
         }
-        return runAgentCreate(last.wsPath, last.toolId, last.modelId, {
+        // 模型：默认设置的 modelId 优先；无默认设置沿用 lastCreate.modelId
+        const modelId = defaults ? defaults.modelId : (last?.modelId ?? null);
+        return runAgentCreate(wsPath, toolId, modelId, {
           t,
           registerChat: (chat) => {
             useAppStore.getState().upsertChat(chat);
@@ -622,11 +640,51 @@ export default function AgentHubPanel() {
   };
 
   // 输入框拖放：接收浮动面板拖出的 @ 目标，追加进草稿（已有内容时空格分隔）。
+  // 需求拖拽（REQUIREMENT_MIME）跳过：那是面板级 drop 目标的职责，
+  // 不能把需求文本粘进输入框草稿（同一拖拽事件会同时命中两层）。
   const handleDrop = (e: React.DragEvent<HTMLTextAreaElement>) => {
+    if (e.dataTransfer.types.includes(REQUIREMENT_MIME)) return;
     e.preventDefault();
     const text = e.dataTransfer.getData('text/plain');
     if (!text) return;
     setDraft((d) => (d ? `${d.trimEnd()} ${text}` : text));
+  };
+
+  // 面板级需求拖放：RequirementList 拖出的需求条目投递到需求自身 project。
+  // dragOver 校验 MIME 后 preventDefault（允许 drop）并高亮面板；drop 解析
+  // payload 调 dispatchRequirement（带上默认设置），成功/失败均提示。
+  const [reqDragOver, setReqDragOver] = useState(false);
+  const handleRequirementDragOver = (e: React.DragEvent<HTMLElement>) => {
+    if (!e.dataTransfer.types.includes(REQUIREMENT_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setReqDragOver(true);
+  };
+  const handleRequirementDrop = (e: React.DragEvent<HTMLElement>) => {
+    if (!e.dataTransfer.types.includes(REQUIREMENT_MIME)) return;
+    e.preventDefault();
+    setReqDragOver(false);
+    let payload: { id?: string; text?: string; project?: string };
+    try {
+      payload = JSON.parse(e.dataTransfer.getData(REQUIREMENT_MIME)) as { id?: string; text?: string; project?: string };
+    } catch {
+      return;
+    }
+    const { id, text, project } = payload;
+    // project 缺失（旧 payload 或无 project 存量条目）：无处投递，直接失败提示
+    if (!id || !text || !project) {
+      useAppStore.getState().notify(t('ui.requirements.dispatch_failed', { err: t('ui.requirements.no_project_drag_hint') }), 'error');
+      return;
+    }
+    void dispatchRequirement(id, text, project, loadDefaultCreate() ?? undefined)
+      .then(() => {
+        useAppStore.getState().notify(t('ui.requirements.dispatch_ok', { name: wsBaseName(project) }), 'info');
+      })
+      .catch((err: unknown) => {
+        useAppStore
+          .getState()
+          .notify(t('ui.requirements.dispatch_failed', { err: backendError(err) }), 'error');
+      });
   };
 
   const send = () => {
@@ -755,7 +813,17 @@ export default function AgentHubPanel() {
   return (
     <section
       aria-label={t('ui.hub.title')}
-      className="relative flex min-h-0 flex-1 flex-col gap-2.5 rounded border border-border bg-card p-3 text-sm"
+      onDragOver={handleRequirementDragOver}
+      onDragLeave={(e) => {
+        // 只在离开面板边界时取消高亮（子元素间移动会触发 dragLeave，用 contains 过滤）
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setReqDragOver(false);
+      }}
+      onDrop={handleRequirementDrop}
+      data-testid="hub-panel"
+      className={cn(
+        'relative flex min-h-0 flex-1 flex-col gap-2.5 rounded border border-border bg-card p-3 text-sm',
+        reqDragOver && 'ring-2 ring-primary/40',
+      )}
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
@@ -1445,15 +1513,18 @@ function DefaultSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           value={modelId}
           onChange={(e) => setModelId(e.target.value)}
         >
-          {/* 无缓存只显示「默认模型」空选项；有缓存则直接列缓存模型 */}
+          {/* 头部恒有空选项：已设模型可清回「默认模型」（与 NewAgentDialog 的空值语义一致） */}
           {modelOptions.length === 0 ? (
             <option value="">{t('ui.hub.default_model')}</option>
           ) : (
-            modelOptions.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))
+            <>
+              <option value="">{t('ui.hub.default_model')}</option>
+              {modelOptions.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </>
           )}
         </select>
       </label>

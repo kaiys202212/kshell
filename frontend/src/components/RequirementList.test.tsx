@@ -31,18 +31,30 @@ function req(over: Partial<Requirement> & Pick<Requirement, 'id' | 'text'>): Req
   return { priority: 'medium', tags: [], ts: 1, ...over };
 }
 
+// 工作区（项目下拉/徽标显示名来源）
+const wsA = {
+  Path: 'D:\\ws\\a',
+  Name: 'a',
+  LastUsed: '',
+  SessionCount: 0,
+  ToolCounts: {},
+  Source: 'manual' as const,
+};
+
 afterEach(cleanup);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 项目字段相关测试的公共底座：工作区列表可用，无选中项目（不触发过滤）
+  useAppStore.setState({ workspaces: [wsA], selectedProject: null, chats: [], toasts: [] });
   mocks.listRequirements.mockResolvedValue([]);
   mocks.addRequirement.mockImplementation(
-    (text: string, p: string, tags: string[]) =>
-      Promise.resolve(req({ id: 'r-new', text, priority: p as Requirement['priority'], tags })),
+    (project: string, text: string, p: string, tags: string[]) =>
+      Promise.resolve(req({ id: 'r-new', project, text, priority: p as Requirement['priority'], tags })),
   );
   mocks.updateRequirement.mockImplementation(
-    (id: string, text: string, p: string, tags: string[]) =>
-      Promise.resolve(req({ id, text, priority: p as Requirement['priority'], tags })),
+    (id: string, project: string, text: string, p: string, tags: string[]) =>
+      Promise.resolve(req({ id, project, text, priority: p as Requirement['priority'], tags })),
   );
   mocks.deleteRequirement.mockResolvedValue(undefined);
   mocks.setRequirementStatus.mockResolvedValue(undefined);
@@ -55,9 +67,12 @@ beforeEach(() => {
   ]);
 });
 
-// 填写并提交新增/编辑对话框；text 必填
-async function submitDialog(fields: { text: string; priority?: string; tags?: string }) {
+// 填写并提交新增/编辑对话框；text 必填，project 缺省取当前选中项目（store selectedProject）
+async function submitDialog(fields: { text: string; project?: string; priority?: string; tags?: string }) {
   fireEvent.change(screen.getByTestId('req-text'), { target: { value: fields.text } });
+  if (fields.project !== undefined) {
+    fireEvent.change(screen.getByTestId('req-project'), { target: { value: fields.project } });
+  }
   if (fields.priority !== undefined) {
     fireEvent.change(screen.getByTestId('req-priority'), { target: { value: fields.priority } });
   }
@@ -114,7 +129,7 @@ describe('RequirementList', () => {
     expect(li).toHaveTextContent('demo-proj');
   });
 
-  it('新增流程：填表保存调 addRequirement（tags 逗号分隔转数组）', async () => {
+  it('新增流程：填表保存调 addRequirement（project 必填，tags 逗号分隔转数组）', async () => {
     render(<RequirementList />);
     await screen.findByText(tt('ui.requirements.empty'));
 
@@ -122,24 +137,57 @@ describe('RequirementList', () => {
     fireEvent.click(
       screen.getByRole('button', { name: (n) => n.includes(tt('ui.requirements.add')) }),
     );
-    await submitDialog({ text: '新需求', priority: 'high', tags: 'a, b ,c' });
+    await submitDialog({ text: '新需求', project: 'D:\\ws\\a', priority: 'high', tags: 'a, b ,c' });
 
     await waitFor(() =>
-      expect(mocks.addRequirement).toHaveBeenCalledWith('新需求', 'high', ['a', 'b', 'c']),
+      expect(mocks.addRequirement).toHaveBeenCalledWith('D:\\ws\\a', '新需求', 'high', ['a', 'b', 'c']),
     );
   });
 
-  it('编辑流程：点编辑回填表单，保存调 updateRequirement', async () => {
-    mocks.listRequirements.mockResolvedValue([req({ id: 'r1', text: '旧文本', priority: 'low', tags: ['x'] })]);
+  it('新增默认项目取当前选中项目', async () => {
+    useAppStore.setState({ selectedProject: 'D:\\ws\\a' });
+    render(<RequirementList />);
+    await screen.findByText(tt('ui.requirements.empty'));
+    fireEvent.click(
+      screen.getByRole('button', { name: (n) => n.includes(tt('ui.requirements.add')) }),
+    );
+    // 不手动改项目，直接保存：应使用 selectedProject 预填值
+    await submitDialog({ text: '选中项目需求' });
+    await waitFor(() =>
+      expect(mocks.addRequirement).toHaveBeenCalledWith('D:\\ws\\a', '选中项目需求', 'medium', []),
+    );
+  });
+
+  it('项目必填：未选项目时保存按钮禁用，不触发 addRequirement；选项目后可用', async () => {
+    render(<RequirementList />);
+    await screen.findByText(tt('ui.requirements.empty'));
+    fireEvent.click(
+      screen.getByRole('button', { name: (n) => n.includes(tt('ui.requirements.add')) }),
+    );
+    fireEvent.change(screen.getByTestId('req-text'), { target: { value: '没有项目的需求' } });
+    // 新增且无选中项目：project 状态为空串，保存按钮禁用兜底必填
+    expect(screen.getByRole('button', { name: tt('ui.requirements.save') })).toHaveAttribute('disabled');
+    expect(mocks.addRequirement).not.toHaveBeenCalled();
+
+    // 选上项目后保存可用
+    fireEvent.change(screen.getByTestId('req-project'), { target: { value: 'D:\\ws\\a' } });
+    expect(screen.getByRole('button', { name: tt('ui.requirements.save') })).not.toHaveAttribute('disabled');
+  });
+
+  it('编辑流程：点编辑回填表单（含项目），保存调 updateRequirement', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '旧文本', priority: 'low', tags: ['x'], project: 'D:\\ws\\a' }),
+    ]);
     render(<RequirementList />);
     await screen.findByText('旧文本');
 
     fireEvent.click(screen.getByLabelText(tt('ui.requirements.edit')));
     expect(screen.getByTestId('req-text')).toHaveValue('旧文本');
-    await submitDialog({ text: '新文本', priority: 'high', tags: 'x, y' });
+    expect(screen.getByTestId('req-project')).toHaveValue('D:\\ws\\a');
+    await submitDialog({ text: '新文本', project: 'D:\\ws\\a', priority: 'high', tags: 'x, y' });
 
     await waitFor(() =>
-      expect(mocks.updateRequirement).toHaveBeenCalledWith('r1', '新文本', 'high', ['x', 'y']),
+      expect(mocks.updateRequirement).toHaveBeenCalledWith('r1', 'D:\\ws\\a', '新文本', 'high', ['x', 'y']),
     );
   });
 
@@ -153,8 +201,8 @@ describe('RequirementList', () => {
     await waitFor(() => expect(mocks.deleteRequirement).toHaveBeenCalledWith('r1'));
   });
 
-  it('dragstart 设置 dataTransfer：自定义 MIME 带 JSON、text/plain 带纯文本、effectAllowed=copy', async () => {
-    mocks.listRequirements.mockResolvedValue([req({ id: 'r1', text: '拖我' })]);
+  it('dragstart 设置 dataTransfer：自定义 MIME 带 JSON（含 project）、text/plain 带纯文本、effectAllowed=copy', async () => {
+    mocks.listRequirements.mockResolvedValue([req({ id: 'r1', text: '拖我', project: 'D:\\ws\\a' })]);
     render(<RequirementList />);
     const li = await screen.findByText('拖我');
     const draggable = li.closest('[draggable="true"]') as HTMLElement;
@@ -166,7 +214,7 @@ describe('RequirementList', () => {
     });
     expect(dataTransfer.setData).toHaveBeenCalledWith(
       'application/x-kshell-requirement',
-      JSON.stringify({ id: 'r1', text: '拖我' }),
+      JSON.stringify({ id: 'r1', text: '拖我', project: 'D:\\ws\\a' }),
     );
     expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', '拖我');
     expect(dataTransfer.effectAllowed).toBe('copy');
@@ -188,10 +236,83 @@ describe('RequirementList', () => {
     expect(dataTransfer.setData).not.toHaveBeenCalled();
   });
 
-  it('archived 条目不进主列表，active/pending 仍可拖拽', async () => {
+  it('无 project 条目不可拖拽且带 title 提示；有 project 条目正常可拖', async () => {
     mocks.listRequirements.mockResolvedValue([
-      req({ id: 'r1', text: '未开始需求' }),
-      req({ id: 'r2', text: '执行中需求', status: 'active' }),
+      req({ id: 'r1', text: '无主需求' }),
+      req({ id: 'r2', text: '有主需求', project: 'D:\\ws\\a' }),
+    ]);
+    render(<RequirementList />);
+    const li1 = (await screen.findByText('无主需求')).closest('li') as HTMLElement;
+    const li2 = (await screen.findByText('有主需求')).closest('li') as HTMLElement;
+    expect(li1.getAttribute('draggable')).not.toBe('true');
+    expect(li1).toHaveAttribute('title', tt('ui.requirements.no_project_drag_hint'));
+    expect(li2).toHaveAttribute('draggable', 'true');
+    expect(li2.getAttribute('title')).toBeNull();
+
+    const dataTransfer = { setData: vi.fn(), effectAllowed: 'all' };
+    await act(async () => {
+      fireEvent.dragStart(li1, { dataTransfer });
+    });
+    expect(dataTransfer.setData).not.toHaveBeenCalled();
+  });
+
+  it('条目渲染项目徽标：显示工作区名，title 为完整路径', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '有项目需求', project: 'D:\\ws\\a' }),
+    ]);
+    render(<RequirementList />);
+    const li = (await screen.findByText('有项目需求')).closest('li') as HTMLElement;
+    const badge = within(li).getByText('a');
+    expect(badge).toHaveAttribute('title', 'D:\\ws\\a');
+  });
+
+  it('选中项目时只显示该项目条目，未选中显示全部', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '甲项目需求', project: 'D:\\ws\\a' }),
+      req({ id: 'r2', text: '乙项目需求', project: 'D:\\ws\\b' }),
+      req({ id: 'r3', text: '无主需求' }),
+    ]);
+    // 未选中：全部显示
+    render(<RequirementList />);
+    await screen.findByText('甲项目需求');
+    expect(screen.getByText('乙项目需求')).toBeInTheDocument();
+    expect(screen.getByText('无主需求')).toBeInTheDocument();
+    cleanup();
+
+    // 选中甲项目：只剩甲项目条目（路径归一化比较：正斜杠写法等价）
+    useAppStore.setState({ selectedProject: 'd:/ws/a' });
+    render(<RequirementList />);
+    expect(await screen.findByText('甲项目需求')).toBeInTheDocument();
+    expect(screen.queryByText('乙项目需求')).not.toBeInTheDocument();
+    expect(screen.queryByText('无主需求')).not.toBeInTheDocument();
+    cleanup();
+
+    // 选中乙项目：无甲项目条目，空态用过滤文案
+    useAppStore.setState({ selectedProject: 'D:\\ws\\b' });
+    render(<RequirementList />);
+    expect(await screen.findByText('乙项目需求')).toBeInTheDocument();
+    expect(screen.queryByText('甲项目需求')).not.toBeInTheDocument();
+  });
+
+  it('过滤后无条目：空态文案用 empty_filtered，与「完全无需求」的 empty 区分', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '甲项目需求', project: 'D:\\ws\\a' }),
+    ]);
+    useAppStore.setState({ selectedProject: 'D:\\ws\\b' });
+    render(<RequirementList />);
+    expect(await screen.findByText(tt('ui.requirements.empty_filtered'))).toBeInTheDocument();
+    // 完全无需求（无过滤）时仍用通用空态
+    cleanup();
+    mocks.listRequirements.mockResolvedValue([]);
+    useAppStore.setState({ selectedProject: null });
+    render(<RequirementList />);
+    expect(await screen.findByText(tt('ui.requirements.empty'))).toBeInTheDocument();
+  });
+
+  it('archived 条目不进主列表，active/pending 有 project 时仍可拖拽', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '未开始需求', project: 'D:\\ws\\a' }),
+      req({ id: 'r2', text: '执行中需求', status: 'active', project: 'D:\\ws\\a' }),
     ]);
     render(<RequirementList />);
     const li1 = (await screen.findByText('未开始需求')).closest('li') as HTMLElement;

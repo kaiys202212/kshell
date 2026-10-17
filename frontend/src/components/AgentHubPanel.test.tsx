@@ -7,6 +7,7 @@ import { useAppStore } from '../state/store';
 import '../test/i18n';
 import { tt } from '../test/i18n';
 import { loadDefaultCreate, saveDefaultCreate, saveLastCreate, saveToolModels } from '../lib/agenthubDefaults';
+import { REQUIREMENT_MIME } from './RequirementList';
 import AgentHubPanel from './AgentHubPanel';
 
 const api = vi.hoisted(() => ({
@@ -25,8 +26,14 @@ const api = vi.hoisted(() => ({
   loadHubArchive: vi.fn(),
   clearHubMessages: vi.fn(),
   recallHubMessage: vi.fn(),
+  listRequirements: vi.fn(),
+  markRequirementDispatched: vi.fn(),
 }));
 vi.mock('../lib/api', () => api);
+
+// dispatchRequirement 整体 mock：面板 drop 派发断言参数即可，流程细节在 lib 单测覆盖
+const dispatchRequirement = vi.hoisted(() => vi.fn());
+vi.mock('../lib/dispatchRequirement', () => ({ dispatchRequirement }));
 
 function chat(over: Partial<ChatInfo>): ChatInfo {
   return {
@@ -70,6 +77,9 @@ beforeEach(() => {
   api.loadHubArchive.mockResolvedValue([]);
   api.clearHubMessages.mockResolvedValue(undefined);
   api.recallHubMessage.mockResolvedValue(undefined);
+  api.listRequirements.mockResolvedValue([]);
+  api.markRequirementDispatched.mockResolvedValue(undefined);
+  dispatchRequirement.mockResolvedValue(undefined);
   useAppStore.setState({
     chats: [],
     agentNotices: [],
@@ -80,6 +90,7 @@ beforeEach(() => {
     lastAgentId: null,
     focusTermKey: null,
     toasts: [],
+    selectedProject: null,
   });
 });
 
@@ -247,6 +258,7 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '帮我看看  ' } });
     const dt = {
+      types: ['text/plain'],
       data: { 'text/plain': '@Claude Code#c1' } as Record<string, string>,
       setData(k: string, v: string) {
         this.data[k] = v;
@@ -264,6 +276,7 @@ describe('AgentHubPanel', () => {
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     const dt = {
+      types: ['text/plain'],
       data: { 'text/plain': '@Claude Code#c1' } as Record<string, string>,
       setData(k: string, v: string) {
         this.data[k] = v;
@@ -1343,5 +1356,192 @@ describe('AgentHubPanel', () => {
     ]);
     render(<AgentHubPanel />);
     expect(await screen.findByText(tt('ui.hub.ack_queued'))).toBeTruthy();
+  });
+
+  // ---- easynew 默认设置接入 ----
+
+  it('#easynew：默认设置的工具/模型优先于 lastCreate，项目取选中项目', async () => {
+    api.getTools.mockResolvedValue([acpTool(), { ...acpTool('codex'), Name: 'Codex' }]);
+    api.openWorkspaceACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'n7', Workspace: 'D:\\ws\\a', ToolID: 'codex' }),
+    });
+    api.listChatModels.mockResolvedValue({ Current: '', Models: [] });
+    saveDefaultCreate({ toolId: 'codex', modelId: 'm2' });
+    saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'm1' });
+    useAppStore.setState({ workspaces: [workspaceA], selectedProject: 'D:\\ws\\a' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#easynew' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'codex'));
+    // 默认设置的模型在创建后生效
+    await waitFor(() => expect(api.setChatModel).toHaveBeenCalledWith('n7', 'm2'));
+  });
+
+  it('#easynew：无选中项目时回落 lastCreate.wsPath', async () => {
+    api.getTools.mockResolvedValue([acpTool()]);
+    api.openWorkspaceACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'n8', Workspace: 'D:\\ws\\a', ToolID: 'claude' }),
+    });
+    api.listChatModels.mockResolvedValue({ Current: '', Models: [] });
+    saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: null });
+    useAppStore.setState({ workspaces: [workspaceA] });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#easynew' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'claude'));
+  });
+
+  it('#easynew：默认设置工具不可用时提示回落并沿用 lastCreate 工具', async () => {
+    api.getTools.mockResolvedValue([acpTool()]); // 只有 claude 可用，默认设置指向 gone-tool
+    api.openWorkspaceACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'n9', Workspace: 'D:\\ws\\a', ToolID: 'claude' }),
+    });
+    api.listChatModels.mockResolvedValue({ Current: '', Models: [] });
+    saveDefaultCreate({ toolId: 'gone-tool', modelId: null });
+    saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: null });
+    useAppStore.setState({ workspaces: [workspaceA], selectedProject: 'D:\\ws\\a' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#easynew' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'claude'));
+    expect(
+      useAppStore.getState().toasts.some((x) => x.title === tt('ui.hub.default_tool_unavailable')),
+    ).toBe(true);
+  });
+
+  // ---- 面板级需求拖放派发 ----
+
+  // 构造含 REQUIREMENT_MIME 的 dataTransfer（types 只读数组，jsdom 需手工模拟）
+  function requirementDt(payload: object) {
+    return {
+      types: [REQUIREMENT_MIME],
+      data: { [REQUIREMENT_MIME]: JSON.stringify(payload) } as Record<string, string>,
+      getData(k: string) {
+        return this.data[k] ?? '';
+      },
+      dropEffect: '',
+      preventDefault: vi.fn(),
+    };
+  }
+
+  it('面板 drop 需求条目：调 dispatchRequirement(id, text, project, 默认设置) 并提示成功', async () => {
+    saveDefaultCreate({ toolId: 'claude', modelId: 'm1' });
+    render(<AgentHubPanel />);
+    const panel = screen.getByTestId('hub-panel');
+    fireEvent.dragOver(panel, { dataTransfer: requirementDt({ id: 'r1', text: '需求文本', project: 'D:\\ws\\a' }) });
+    // dragOver 校验 MIME 后允许 drop 且面板高亮
+    expect(panel.className).toContain('ring-2');
+    fireEvent.drop(panel, { dataTransfer: requirementDt({ id: 'r1', text: '需求文本', project: 'D:\\ws\\a' }) });
+
+    await waitFor(() =>
+      expect(dispatchRequirement).toHaveBeenCalledWith('r1', '需求文本', 'D:\\ws\\a', { toolId: 'claude', modelId: 'm1' }),
+    );
+    await waitFor(() =>
+      expect(
+        useAppStore.getState().toasts.some((x) => x.title.includes(tt('ui.requirements.dispatch_ok').replace('{{name}}', 'a'))),
+      ).toBe(true),
+    );
+    // drop 后高亮取消
+    expect(panel.className).not.toContain('ring-2');
+  });
+
+  it('面板 drop 需求条目：无默认设置时 dispatchRequirement 收到 undefined', async () => {
+    render(<AgentHubPanel />);
+    const panel = screen.getByTestId('hub-panel');
+    fireEvent.drop(panel, { dataTransfer: requirementDt({ id: 'r2', text: '文本', project: 'D:\\ws\\a' }) });
+
+    await waitFor(() =>
+      expect(dispatchRequirement).toHaveBeenCalledWith('r2', '文本', 'D:\\ws\\a', undefined),
+    );
+  });
+
+  it('面板 drop 需求条目缺 project：提示派发失败且不调 dispatchRequirement', async () => {
+    render(<AgentHubPanel />);
+    const panel = screen.getByTestId('hub-panel');
+    fireEvent.drop(panel, { dataTransfer: requirementDt({ id: 'r3', text: '无主文本' }) });
+
+    expect(dispatchRequirement).not.toHaveBeenCalled();
+    // 失败提示的 err 插值为「补选项目」提示文案
+    const expected = tt('ui.requirements.dispatch_failed').replace(
+      '{{err}}',
+      tt('ui.requirements.no_project_drag_hint'),
+    );
+    await waitFor(() =>
+      expect(useAppStore.getState().toasts.some((x) => x.title === expected)).toBe(true),
+    );
+  });
+
+  it('面板 drop 派发失败：提示 dispatch_failed', async () => {
+    dispatchRequirement.mockRejectedValue(new Error('boom'));
+    render(<AgentHubPanel />);
+    const panel = screen.getByTestId('hub-panel');
+    fireEvent.drop(panel, { dataTransfer: requirementDt({ id: 'r4', text: '文本', project: 'D:\\ws\\a' }) });
+
+    await waitFor(() =>
+      expect(
+        useAppStore.getState().toasts.some((x) =>
+          x.title.includes(tt('ui.requirements.dispatch_failed').replace('{{err}}', 'boom')),
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it('面板 dragOver 非 REQUIREMENT_MIME 拖拽不高亮不允许 drop', () => {
+    render(<AgentHubPanel />);
+    const panel = screen.getByTestId('hub-panel');
+    const dt = { types: ['text/plain'], preventDefault: vi.fn(), dropEffect: '' };
+    fireEvent.dragOver(panel, { dataTransfer: dt });
+    expect(dt.preventDefault).not.toHaveBeenCalled();
+    expect(panel.className).not.toContain('ring-2');
+  });
+
+  it('输入框 drop 需求 MIME：不粘进草稿（两套拖放隔离），text/plain 仍正常追加', () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    // 需求拖拽：草稿不变
+    const reqDt = requirementDt({ id: 'r1', text: '需求文本', project: 'D:\\ws\\a' });
+    reqDt.data['text/plain'] = '需求文本'; // 拖拽源同时带 text/plain
+    fireEvent.drop(box, { dataTransfer: reqDt });
+    expect((box as HTMLTextAreaElement).value).toBe('');
+    // 会话标签拖拽：正常追加
+    const plainDt = {
+      types: ['text/plain'],
+      data: { 'text/plain': '@Claude Code#c1' } as Record<string, string>,
+      getData(k: string) {
+        return this.data[k] ?? '';
+      },
+    };
+    fireEvent.drop(box, { dataTransfer: plainDt });
+    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c1');
+  });
+
+  // ---- 默认设置对话框：清空模型回默认 ----
+
+  it('默认设置：模型下拉恒有头部空选项，可把已设模型清回默认模型', async () => {
+    api.getTools.mockResolvedValue([acpTool()]);
+    saveDefaultCreate({ toolId: 'claude', modelId: 'm1' });
+    saveToolModels('claude', ['m1', 'm2']);
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.default_settings') }));
+    const select = (await screen.findByLabelText(tt('ui.hub.field_model'))) as HTMLSelectElement;
+    // 头部空选项 + 两个缓存模型
+    await waitFor(() => expect(select.options).toHaveLength(3));
+    expect(select.options[0].value).toBe('');
+    expect(select.options[0].text).toBe(tt('ui.hub.default_model'));
+    expect(select.value).toBe('m1');
+    // 清回默认模型并保存
+    fireEvent.change(select, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.save') }));
+    expect(loadDefaultCreate()).toEqual({ toolId: 'claude', modelId: null });
   });
 });

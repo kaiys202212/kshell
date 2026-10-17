@@ -642,8 +642,8 @@ interface AppBindings {
   ClearHubMessages(): Promise<void>;
   RecallHubMessage(id: number): Promise<void>;
   ListRequirements(): Promise<Requirement[]>;
-  AddRequirement(text: string, priority: string, tags: string[]): Promise<Requirement>;
-  UpdateRequirement(id: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
+  AddRequirement(project: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
+  UpdateRequirement(id: string, project: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
   DeleteRequirement(id: string): Promise<void>;
   MarkRequirementDispatched(id: string, workspace: string, chatID: string, title: string): Promise<void>;
   ArchiveRequirement(id: string): Promise<{ released: boolean; chatId: string }>;
@@ -1544,6 +1544,8 @@ export interface Requirement {
   text: string;
   priority: 'high' | 'medium' | 'low';
   tags: string[];
+  // project 是需求所属项目（工作区路径）；v2 起后端必填，存量迁移可能留空
+  project?: string;
   dispatchedTo?: string;
   status?: 'pending' | 'active' | 'done' | 'archived';
   chatId?: string;
@@ -1559,23 +1561,29 @@ export async function listRequirements(): Promise<Requirement[]> {
   return (await a.ListRequirements()) ?? [];
 }
 
-// addRequirement 新增一条需求；错误向上抛，由调用方呈现。
-export async function addRequirement(text: string, priority: string, tags: string[]): Promise<Requirement> {
-  const a = app();
-  if (!a) throw new Error(ERR_NO_BINDING);
-  return a.AddRequirement(text, priority, tags);
-}
-
-// updateRequirement 修改需求（文本/优先级/标签整体替换）；错误向上抛。
-export async function updateRequirement(
-  id: string,
+// addRequirement 新增一条需求（project 必填，工作区路径）；错误向上抛，由调用方呈现。
+export async function addRequirement(
+  project: string,
   text: string,
   priority: string,
   tags: string[],
 ): Promise<Requirement> {
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
-  return a.UpdateRequirement(id, text, priority, tags);
+  return a.AddRequirement(project, text, priority, tags);
+}
+
+// updateRequirement 修改需求（项目/文本/优先级/标签整体替换）；错误向上抛。
+export async function updateRequirement(
+  id: string,
+  project: string,
+  text: string,
+  priority: string,
+  tags: string[],
+): Promise<Requirement> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  return a.UpdateRequirement(id, project, text, priority, tags);
 }
 
 // deleteRequirement 删除需求（幂等）；错误向上抛。
