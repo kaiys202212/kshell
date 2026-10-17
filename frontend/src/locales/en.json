@@ -724,6 +724,27 @@
       "section_tabs": "Open tabs",
       "section_workspaces": "Workspaces"
     },
+    "help": {
+      "title": "Keyboard shortcuts",
+      "shortcuts": {
+        "quick-switcher_name": "Quick switcher",
+        "quick-switcher_desc": "Toggle quick tab / workspace switcher",
+        "focus-search_name": "Focus search",
+        "focus-search_desc": "Focus search in the current view",
+        "switch-tab-n_name": "Switch to tab N",
+        "switch-tab-n_desc": "Switch to the Nth open tab (ignored if out of range)",
+        "next-tab_name": "Next tab",
+        "next-tab_desc": "Cycle to the next open tab",
+        "prev-tab_name": "Previous tab",
+        "prev-tab_desc": "Cycle to the previous open tab",
+        "close-tab_name": "Close tab",
+        "close-tab_desc": "Close the current workspace tab",
+        "go-home_name": "Go home",
+        "go-home_desc": "Back to the home page (new session entry)",
+        "toggle-help_name": "Help",
+        "toggle-help_desc": "Show / hide this shortcut cheat sheet"
+      }
+    },
     "titlebar": {
       "tabs_aria": "Tabs",
       "home": "Home",

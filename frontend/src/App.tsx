@@ -64,6 +64,7 @@ import ArchiveSuggest from './components/ArchiveSuggest';
 import UpdatePrompt from './components/UpdatePrompt';
 import NotificationBubble, { handleNotifyFocus } from './components/NotificationBubble';
 import QuickSwitcher from './components/QuickSwitcher';
+import HelpOverlay from './components/HelpOverlay';
 import TitleBar from './components/TitleBar';
 import { Toaster } from './components/ui/toaster';
 import { TooltipProvider } from './components/ui/tooltip';
@@ -462,6 +463,7 @@ function App() {
       <AgentSetupDialog />
       <ProjectSetupDialog />
       <QuickSwitcher open={switcherOpen} onOpenChange={setSwitcherOpen} />
+      <HelpOverlay open={helpOpen} onClose={() => setHelpOpen(false)} />
       <ArchiveSuggest
         open={!!archivePrompt}
         summary={archivePrompt?.summary ?? ''}

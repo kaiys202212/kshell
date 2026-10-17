@@ -724,6 +724,27 @@
       "section_tabs": "已打开的页签",
       "section_workspaces": "工作区"
     },
+    "help": {
+      "title": "键盘快捷键",
+      "shortcuts": {
+        "quick-switcher_name": "快速切换器",
+        "quick-switcher_desc": "打开 / 关闭页签与工作区快速切换",
+        "focus-search_name": "聚焦搜索",
+        "focus-search_desc": "聚焦当前视图的搜索框",
+        "switch-tab-n_name": "切到第 N 个页签",
+        "switch-tab-n_desc": "切到第 N 个已打开页签（越界忽略）",
+        "next-tab_name": "下一个页签",
+        "next-tab_desc": "循环切到下一个已打开页签",
+        "prev-tab_name": "上一个页签",
+        "prev-tab_desc": "循环切到上一个已打开页签",
+        "close-tab_name": "关闭页签",
+        "close-tab_desc": "关闭当前工作区页签",
+        "go-home_name": "回首页",
+        "go-home_desc": "回到首页（新建会话入口）",
+        "toggle-help_name": "帮助",
+        "toggle-help_desc": "显示 / 隐藏本快捷键速查表"
+      }
+    },
     "titlebar": {
       "tabs_aria": "页签",
       "home": "首页",
