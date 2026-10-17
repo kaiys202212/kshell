@@ -817,10 +817,11 @@ export default function AgentHubPanel() {
     }
   };
 
-  // activateAndSend 目标会话未激活时的「先激活再发送」路径：解析磁盘会话 ID →
-  // openSessionACP 激活（Go 侧对已退出会话自动重建）→ 登记进 store → 发送。
-  // 解析不到 / 激活失败都报错提示，不把消息投给空白会话（上下文丢失必须可见）。
-  const activateAndSend = (m: HubMessage, text: string) => {
+  // activateAndThen 目标会话未激活时的「先激活再处理」通用路径：解析磁盘会话 ID →
+  // openSessionACP 激活（Go 侧对已退出会话自动重建）→ 登记进 store → 回调 onReady
+  // 交给调用方决定后续动作（发送 / 填 @ 标签）。解析不到 / 激活失败都报错提示，
+  // 不把消息投给空白会话（上下文丢失必须可见）。
+  const activateAndThen = (m: HubMessage, onReady: (chat: ChatInfo) => void | Promise<void>) => {
     void resolveHubSessionId(m)
       .then(async (sessionID) => {
         if (!sessionID) {
@@ -832,7 +833,7 @@ export default function AgentHubPanel() {
         const chat = res.Chat;
         useAppStore.getState().upsertChat(chat);
         useAppStore.getState().setLastAgentId(chat.ID);
-        await sendChatPrompt(chat.ID, text);
+        await onReady(chat);
         useAppStore.getState().setLastAgentId(chat.ID);
       })
       .catch((e: unknown) => {
@@ -843,15 +844,26 @@ export default function AgentHubPanel() {
   // quickReply 处理快捷回复点击：
   // - send：把 quick_continue_text（实际文本，与按钮文案解耦）发给归因 agent；
   //   目标未激活（chats 反查不到，如会话已关闭/重启后未恢复）时先激活再发送；
-  // - rephrase：保留式追加 @目标 到输入框（不清空用户正在输入的草稿），聚焦由用户补写后手动发送。
+  // - rephrase：保留式追加 @目标 到输入框（不清空用户正在输入的草稿），聚焦由用户
+  //   补写后手动发送；目标未激活时同样先激活，激活后填新会话的 @ 标签，不自动发送。
   const quickReply = (m: HubMessage, action: 'send' | 'rephrase') => {
     const targetId = quickTarget(m);
     if (!targetId) {
       if (action === 'send') {
-        activateAndSend(m, t('ui.hub.quick_continue_text'));
+        const text = t('ui.hub.quick_continue_text');
+        activateAndThen(m, async (chat) => {
+          await sendChatPrompt(chat.ID, text);
+        });
         return;
       }
-      useAppStore.getState().notify(t('ui.hub.need_target'), 'error');
+      // rephrase：激活成功后填 @ 标签。label 优先从 mention 候选取（upsertChat 后
+      // options 已含新 chat）；时序兜底按同一规则构造，激活成功却填不进输入框才是异常，
+      // 用构造兜底而非报错。
+      activateAndThen(m, (chat) => {
+        const label = options.find((o) => o.id === chat.ID)?.label ?? `${toolDisplayName(chat.ToolID)}#${chat.ID}`;
+        setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
+        inputRef.current?.focus();
+      });
       return;
     }
     if (action === 'send') {

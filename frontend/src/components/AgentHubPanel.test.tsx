@@ -1413,6 +1413,57 @@ describe('AgentHubPanel', () => {
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
+  it('「换个说法」目标未激活时先激活会话再填 @ 新标签并聚焦，不发送', async () => {
+    // 记录的 chatId 不在 chats（会话已关闭/重启后未恢复）：走激活路径
+    api.listHubMessages.mockResolvedValue([
+      { id: 10, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c-dead', termKey: 'session:s-r1', text: 'ok', ts: 10 },
+    ]);
+    api.openSessionACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'c-r1', Key: 'session:s-r1', Kind: 'session', SessionID: 's-r1' }),
+    });
+    render(<AgentHubPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_rephrase') }));
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('s-r1'));
+    // 激活后新 chat 的 @ 标签填入输入框并聚焦（既有草稿保留式追加），不自动发送
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c-r1 '));
+    expect(document.activeElement).toBe(box);
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    // 激活后的会话登记进 store，后续消息可直达
+    expect(useAppStore.getState().chats.some((c) => c.ID === 'c-r1')).toBe(true);
+  });
+
+  it('「换个说法」激活成功但 options 暂无新 chat 时按 toolDisplayName#ID 兜底构造标签', async () => {
+    api.listHubMessages.mockResolvedValue([
+      { id: 11, kind: 'agent', tool: 'cursor', event: 'Stop', chatId: 'c-dead', sessionId: 's-r2', text: 'ok', ts: 11 },
+    ]);
+    api.openSessionACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'c-r2', Key: 'session:s-r2', Kind: 'session', SessionID: 's-r2', ToolID: 'cursor' }),
+    });
+    render(<AgentHubPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_rephrase') }));
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe('@Cursor#c-r2 '));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
+  it('「换个说法」目标未激活且激活链路解析不到会话时提示 need_target 且不填入', async () => {
+    // 无 sessionId / termKey 前缀 / workspace+标题：三级解析全落空
+    api.listHubMessages.mockResolvedValue([
+      { id: 12, kind: 'agent', tool: 'codex', event: 'Stop', text: 'x', ts: 12 },
+    ]);
+    render(<AgentHubPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_rephrase') }));
+    await waitFor(() =>
+      expect(useAppStore.getState().toasts.some((t) => t.title === tt('ui.hub.need_target'))).toBe(true),
+    );
+    expect(api.openSessionACP).not.toHaveBeenCalled();
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    expect((box as HTMLTextAreaElement).value).toBe('');
+  });
+
   it('queued 用户消息撤回按钮直接可见（无需 hover），点击后乐观标记已撤回', async () => {
     // 经 listHubMessages 回流（挂载 effect 会用拉取结果覆盖 store，直塞 state 会被清掉）
     api.listHubMessages.mockResolvedValue([
