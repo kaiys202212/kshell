@@ -1498,6 +1498,9 @@ export interface HubMessage {
   // sessionTitle 是落盘时的会话标题快照：会话关闭/重启后 chats 反查不到标题，
   // 归因回退到该字段，避免气泡显示 #<id> 编码。
   sessionTitle?: string;
+  // sessionId 是落盘时会话绑定的磁盘会话 ID 快照：会话未激活时「继续」快捷
+  // 按钮靠它经 openSessionACP 精确恢复原会话；旧格式记录无此字段。
+  sessionId?: string;
   text: string;
   event?: string;
   status?: string;

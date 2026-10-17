@@ -21,9 +21,11 @@ import (
 )
 
 // fileVersion 是落盘文件结构版本，结构变更时递增。
-// v2：Message 增加 sessionTitle（会话标题快照，归因用）；旧 v1 文件可直接读取
-//（v1→v2 仅新增可选字段），下次写入时以当前版本重写完成迁移。
-const fileVersion = 2
+// v2：Message 增加 sessionTitle（会话标题快照，归因用）。
+// v3：Message 增加 sessionId（磁盘会话 ID 快照，供「继续」按钮在会话未激活时
+// 精确 resume）；旧 v1/v2 文件可直接读取（仅新增可选字段），下次写入时以当前
+// 版本重写完成迁移。
+const fileVersion = 3
 
 // defaultLiveCap 是 live 文件保留的消息条数上限（超出按月归档）。
 const defaultLiveCap = 500
@@ -52,6 +54,10 @@ type Message struct {
 	// SessionTitle 是消息时刻的会话标题（冗余快照）：会话关闭或重启后 chats
 	// 里查不到标题，历史气泡归因只能落 #<id> 编码，落盘时带上可长期还原。
 	SessionTitle string `json:"sessionTitle,omitempty"`
+	// SessionID 是消息时刻会话绑定的磁盘会话 ID（冗余快照）：会话关闭或重启后
+	// chat manager 已无从反查，「继续」快捷按钮靠它经 OpenSessionACP 精确恢复
+	// 原会话（终端 hook 通道从 termKey 的 session: 前缀派生）。
+	SessionID string `json:"sessionId,omitempty"`
 	// Text 是正文：用户输入，或 agent 回复的 summary。
 	Text string `json:"text"`
 	// Event 是 agent 回复的事件语义（Stop/Notification/error...）；用户消息为空。
