@@ -114,6 +114,15 @@ type Config struct {
 	AgentSetupDismissed bool `yaml:"agent_setup_dismissed"`
 	// ProjectSetupDismissed 为 true 后不再自动弹出首次项目选择弹窗。
 	ProjectSetupDismissed bool `yaml:"project_setup_dismissed"`
+	// Weixin 是微信桥（iLink）的持久化配置。
+	Weixin WeixinConfig `yaml:"weixin"`
+}
+
+// WeixinConfig 是微信桥（iLink）的持久化配置。
+type WeixinConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Token   string `yaml:"token"` // iLink bot_token（扫码后获得）
+	Wxid    string `yaml:"wxid"`  // 白名单用户（首扫即绑）
 }
 
 func Default() Config {
