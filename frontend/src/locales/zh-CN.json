@@ -899,6 +899,7 @@
       "dispatch_ok": "已派发到「{{name}}」",
       "dispatch_failed": "派发失败：{{err}}",
       "dispatch_busy": "该需求正在派发中",
+      "quick_start": "快捷开始",
       "no_acp_tool": "没有可用的 ACP 工具，派发已取消",
       "save": "保存",
       "save_failed": "保存失败：{{err}}",

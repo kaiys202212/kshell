@@ -8,6 +8,7 @@ import RequirementList from './RequirementList';
 import type { Requirement } from '../lib/api';
 import { tt } from '../test/i18n';
 import { useAppStore } from '../state/store';
+import { saveDefaultCreate } from '../lib/agenthubDefaults';
 
 const mocks = vi.hoisted(() => ({
   listRequirements: vi.fn(),
@@ -21,8 +22,14 @@ const mocks = vi.hoisted(() => ({
   readClipboardPaste: vi.fn(),
   openWorkspaceACP: vi.fn(),
   getTools: vi.fn(),
+  dispatchRequirement: vi.fn(),
 }));
 vi.mock('../lib/api', () => ({ ...mocks, onRequirementsChanged: mocks.onRequirementsChanged }));
+// 只替换派发入口（快捷开始用），保留真实 reopenRequirementSession 供重开测试走原链路
+vi.mock('../lib/dispatchRequirement', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/dispatchRequirement')>()),
+  dispatchRequirement: mocks.dispatchRequirement,
+}));
 
 // 优先级色点用 data-testid 定位（直接断言 class，比比对完整 className 稳定）
 const dotOf = (li: HTMLElement) => li.querySelector('[data-testid="req-dot"]');
@@ -65,6 +72,8 @@ beforeEach(() => {
   mocks.getTools.mockResolvedValue([
     { ID: 'tool-a', ACP: { Available: true, Source: '' } } as never,
   ]);
+  // 快捷开始默认成功（具体用例再覆盖 busy / 失败分支）
+  mocks.dispatchRequirement.mockResolvedValue('ok');
 });
 
 // 填写并提交新增/编辑对话框；text 必填，project 缺省取当前选中项目（store selectedProject）
@@ -466,6 +475,108 @@ describe('RequirementList', () => {
     // 不再是 absolute 悬浮容器（top-1.5 right-1.5），而在徽章 flex 行内
     expect(editBtn.closest('span')?.className).not.toContain('absolute');
     expect(editBtn.closest('span')?.className).toContain('ml-auto');
+  });
+
+  // ---- 快捷开始（pending）与常显重开（会话失效） ----
+
+  it('pending 有 project：常显快捷开始按钮，点击调 dispatchRequirement（带默认派发配置）并提示成功', async () => {
+    saveDefaultCreate({ toolId: 'claude', modelId: null });
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '待派发文本', project: 'D:\\ws\\a' }),
+    ]);
+    render(<RequirementList />);
+    const li = (await screen.findByText('待派发文本')).closest('li') as HTMLElement;
+    const btn = within(li).getByLabelText(tt('ui.requirements.quick_start'));
+    // 常显：不在 hover-only（hidden）容器里
+    expect(btn.closest('span')?.className).not.toContain('hidden');
+
+    fireEvent.click(btn);
+    await waitFor(() =>
+      expect(mocks.dispatchRequirement).toHaveBeenCalledWith('r1', '待派发文本', 'D:\\ws\\a', {
+        toolId: 'claude',
+        modelId: null,
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((x) => x.title.includes(tt('ui.requirements.dispatch_ok').replace('{{name}}', 'a'))),
+      ).toBe(true),
+    );
+  });
+
+  it('pending 无 project：快捷开始禁用并带提示 title，不触发派发', async () => {
+    mocks.listRequirements.mockResolvedValue([req({ id: 'r1', text: '无主需求' })]);
+    render(<RequirementList />);
+    const li = (await screen.findByText('无主需求')).closest('li') as HTMLElement;
+    const btn = within(li).getByLabelText(tt('ui.requirements.quick_start'));
+    expect(btn).toHaveAttribute('disabled');
+    expect(btn).toHaveAttribute('title', tt('ui.requirements.no_project_drag_hint'));
+    expect(mocks.dispatchRequirement).not.toHaveBeenCalled();
+  });
+
+  it('active/done 条目不显示快捷开始按钮', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '执行中需求', status: 'active', project: 'D:\\ws\\a' }),
+      req({ id: 'r2', text: '已完成需求', status: 'done', project: 'D:\\ws\\a' }),
+    ]);
+    render(<RequirementList />);
+    const li1 = (await screen.findByText('执行中需求')).closest('li') as HTMLElement;
+    const li2 = (await screen.findByText('已完成需求')).closest('li') as HTMLElement;
+    expect(within(li1).queryByLabelText(tt('ui.requirements.quick_start'))).not.toBeInTheDocument();
+    expect(within(li2).queryByLabelText(tt('ui.requirements.quick_start'))).not.toBeInTheDocument();
+  });
+
+  it('快捷开始命中在途守卫：提示 dispatch_busy', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '重复派发需求', project: 'D:\\ws\\a' }),
+    ]);
+    mocks.dispatchRequirement.mockResolvedValue('busy');
+    render(<RequirementList />);
+    const li = (await screen.findByText('重复派发需求')).closest('li') as HTMLElement;
+    fireEvent.click(within(li).getByLabelText(tt('ui.requirements.quick_start')));
+
+    await waitFor(() =>
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((x) => x.title.includes(tt('ui.requirements.dispatch_busy'))),
+      ).toBe(true),
+    );
+  });
+
+  it('快捷开始失败：提示 dispatch_failed（含错误详情）', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '派发失败需求', project: 'D:\\ws\\a' }),
+    ]);
+    mocks.dispatchRequirement.mockRejectedValue(new Error('boom'));
+    render(<RequirementList />);
+    const li = (await screen.findByText('派发失败需求')).closest('li') as HTMLElement;
+    fireEvent.click(within(li).getByLabelText(tt('ui.requirements.quick_start')));
+
+    await waitFor(() =>
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((x) =>
+            x.title.includes(tt('ui.requirements.dispatch_failed').replace('{{err}}', 'boom')),
+          ),
+      ).toBe(true),
+    );
+  });
+
+  it('active 已绑定会话失效：重开按钮常显（不在 hover-only 容器内）', async () => {
+    useAppStore.setState({ chats: [] });
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r1', text: '常显重开需求', status: 'active', chatId: 'c-dead', dispatchedTo: 'D:\\ws\\proj' }),
+    ]);
+    render(<RequirementList />);
+    const li = (await screen.findByText('常显重开需求')).closest('li') as HTMLElement;
+    const btn = within(li).getByLabelText(tt('ui.requirements.session_reopen'));
+    // 常显：直接挂在行尾常显容器（ml-auto 且无 hidden），hover 前也可见
+    expect(btn.closest('span')?.className).toContain('ml-auto');
+    expect(btn.closest('span')?.className).not.toContain('hidden');
   });
 
   it('requirements:changed 事件触发重拉列表', async () => {

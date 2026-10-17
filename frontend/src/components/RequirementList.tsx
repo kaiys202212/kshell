@@ -23,7 +23,8 @@ import { backendError } from '../lib/errors';
 import { quotePathForShell } from '../lib/dragPath';
 import { baseName } from '../lib/hubAttribution';
 import { formatRelativeTime } from '../lib/format';
-import { reopenRequirementSession } from '../lib/dispatchRequirement';
+import { reopenRequirementSession, dispatchRequirement } from '../lib/dispatchRequirement';
+import { loadDefaultCreate } from '../lib/agenthubDefaults';
 import { sameWorkspacePath } from '../lib/workspacePath';
 import { focusNoticeTarget } from './NotificationBubble';
 import { cn } from '../lib/cn';
@@ -445,6 +446,39 @@ export default function RequirementList({ className }: { className?: string }) {
     });
   };
 
+  // 快捷开始在途集合：派发是长操作，期间禁用按钮避免连点；dispatchRequirement
+  // 内部的模块级守卫兜底双保险。组件本地记录用于渲染态。
+  const [startingIds, setStartingIds] = useState<ReadonlySet<string>>(new Set());
+
+  // 快捷开始：未开始需求一键派发（默认 agent + 需求自身项目），等价拖到
+  // AgentHub 的默认路径。成功/在途/失败提示与拖拽落点（AgentHubPanel）保持一致；
+  // 成功后 markRequirementDispatched 触发 requirements:changed 回流刷新列表。
+  const quickStart = (r: Requirement) => {
+    const wsPath = r.project;
+    if (!wsPath) return;
+    setStartingIds((prev) => new Set(prev).add(r.id));
+    void dispatchRequirement(r.id, r.text, wsPath, loadDefaultCreate() ?? undefined)
+      .then((res) => {
+        if (res === 'busy') {
+          useAppStore.getState().notify(t('ui.requirements.dispatch_busy'), 'error');
+          return;
+        }
+        useAppStore.getState().notify(t('ui.requirements.dispatch_ok', { name: baseName(wsPath) }), 'info');
+      })
+      .catch((e: unknown) => {
+        useAppStore
+          .getState()
+          .notify(t('ui.requirements.dispatch_failed', { err: backendError(e) }), 'error');
+      })
+      .finally(() => {
+        setStartingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(r.id);
+          return next;
+        });
+      });
+  };
+
   // 活跃列表只显示非 archived 条目（listRequirements 全量返回）
   const activeItems = useMemo(() => items.filter((r) => r.status !== 'archived'), [items]);
   // 选中项目时只显示属于该项目的条目（路径归一化比较）；未选中显示全部。
@@ -548,34 +582,49 @@ export default function RequirementList({ className }: { className?: string }) {
                       </Badge>
                     )}
                     {r.dispatchedTo && <Badge variant="outline">{baseName(r.dispatchedTo)}</Badge>}
-                    {/* 行尾按钮组：hover 显现（兄弟节点定位，避免嵌套进文本区）。
-                        会话跳转/重开在前，需求操作在后，同一行避免卡片纵向膨胀。
-                        pending：编辑+删除；active：标记完成；done：归档；archived 不进活跃列表。 */}
-                    <span className="ml-auto hidden shrink-0 gap-0.5 group-hover:flex">
-                      {chat && chat.Key ? (
+                    {/* 行尾按钮组分两段：常显区（快捷开始/重开，不用 hover 就能点）+
+                        hover 区（跳转与需求操作）。同一行避免卡片纵向膨胀。
+                        pending：快捷开始常显 + hover 编辑删除；active：hover 标记完成，
+                        已绑定且会话失效时重开常显；done：hover 归档；archived 不进活跃列表。 */}
+                    <span className="ml-auto flex shrink-0 items-center">
+                      {status === 'pending' && (
                         <button
                           type="button"
-                          aria-label={t('ui.requirements.session_jump')}
-                          title={t('ui.requirements.session_jump')}
-                          className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                          onClick={() => focusNoticeTarget(chat.Key!)}
+                          aria-label={t('ui.requirements.quick_start')}
+                          title={!r.project ? t('ui.requirements.no_project_drag_hint') : t('ui.requirements.quick_start')}
+                          // 无 project 无处派发（与拖拽同一限制）；在途期间禁用防连点
+                          disabled={!r.project || startingIds.has(r.id)}
+                          className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                          onClick={() => quickStart(r)}
                         >
-                          <JumpGlyph />
+                          <PlayGlyph />
                         </button>
-                      ) : chat ? null : (
-                        // 重开仅限 pending/active：done 是终态，MarkDispatched 守卫会拒绝
-                        r.chatId && status !== 'done' && (
+                      )}
+                      {!chat && r.chatId && status !== 'done' && (
+                        // 重开仅限 pending/active：done 是终态，MarkDispatched 守卫会拒绝。
+                        // 常显（不藏 hover）：会话失效是用户需要主动处理的异常态。
+                        <button
+                          type="button"
+                          aria-label={t('ui.requirements.session_reopen')}
+                          title={t('ui.requirements.session_reopen')}
+                          className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          onClick={() => reopen(r)}
+                        >
+                          <ReopenGlyph />
+                        </button>
+                      )}
+                      <span className="ml-auto hidden shrink-0 gap-0.5 group-hover:flex">
+                        {chat && chat.Key && (
                           <button
                             type="button"
-                            aria-label={t('ui.requirements.session_reopen')}
-                            title={t('ui.requirements.session_reopen')}
+                            aria-label={t('ui.requirements.session_jump')}
+                            title={t('ui.requirements.session_jump')}
                             className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                            onClick={() => reopen(r)}
+                            onClick={() => focusNoticeTarget(chat.Key!)}
                           >
-                            <ReopenGlyph />
+                            <JumpGlyph />
                           </button>
-                        )
-                      )}
+                        )}
                       {status === 'pending' && (
                         <>
                           <button
@@ -620,6 +669,7 @@ export default function RequirementList({ className }: { className?: string }) {
                           <ArchiveGlyph />
                         </button>
                       )}
+                      </span>
                     </span>
                   </span>
                 </span>
@@ -631,6 +681,15 @@ export default function RequirementList({ className }: { className?: string }) {
       <RequirementDialog open={dialogOpen} editing={editing} onOpenChange={setDialogOpen} />
       <ArchiveDialog open={archiveOpen} onOpenChange={setArchiveOpen} items={items} />
     </section>
+  );
+}
+
+// 快捷开始按钮图标（播放三角）
+function PlayGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M7 5.5v13l11-6.5-11-6.5Z" />
+    </svg>
   );
 }
 
