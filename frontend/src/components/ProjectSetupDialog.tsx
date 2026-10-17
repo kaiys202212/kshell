@@ -1,7 +1,7 @@
 // 首次项目选择弹窗：等首个 scan:done 后判定；仅对新用户弹一次，默认全选，
 // 确认后未勾选的工作区隐藏进回收站（可还原），关闭视为保留全部。
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   dismissProjectSetup,
@@ -24,11 +24,14 @@ export default function ProjectSetupDialog() {
   const [items, setItems] = useState<Workspace[]>([]);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [confirming, setConfirming] = useState(false);
+  // 判定只做一次：弹窗已打开或确认中时，后续 scan:done（设置页刷新等）不得重置勾选状态
+  const decidedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     // 首扫完成才有可信的工作区列表：等 scan:done 再判定，不在挂载时抢跑。
     const offScan = onScanDone(() => {
+      if (decidedRef.current) return;
       void (async () => {
         try {
           // Agent 安装向导要弹时本次让位：等下次启动（届时向导已 dismissed）再引导。
@@ -36,6 +39,7 @@ export default function ProjectSetupDialog() {
           if (!(await needsProjectSetup())) return;
           const list = await getWorkspaces();
           if (cancelled) return;
+          decidedRef.current = true;
           if (list.length === 0) {
             // 空结果放弃引导：落盘标记永不再弹，但不要给用户看一个空列表弹窗。
             await dismissProjectSetup();

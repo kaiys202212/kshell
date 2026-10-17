@@ -143,4 +143,15 @@ describe('ProjectSetupDialog', () => {
     });
     expect(mocks.hideProject).toHaveBeenCalledTimes(2);
   });
+
+  it('弹窗打开期间再收 scan:done 不重置勾选状态', async () => {
+    await openDialog();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'D:\\ws-b' }));
+    expect(screen.getByRole('checkbox', { name: 'D:\\ws-b' })).not.toBeChecked();
+    scanDoneCb?.(); // 设置页刷新等触发第二轮 scan:done
+    await waitFor(() => {
+      expect(mocks.needsProjectSetup).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByRole('checkbox', { name: 'D:\\ws-b' })).not.toBeChecked();
+  });
 });

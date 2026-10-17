@@ -65,9 +65,10 @@ func TestNeedsProjectSetupNotScanned(t *testing.T) {
 }
 
 func TestNeedsProjectSetupEmptyWorkspaces(t *testing.T) {
+	// 空结果仍返回 true：由前端拉到空列表后落盘标记放弃引导（见 project_setup.go 注释）
 	app := newProjectSetupApp(t, false, false, []discovery.Workspace{})
-	if app.NeedsProjectSetup() {
-		t.Fatal("扫描结果为空不应弹")
+	if !app.NeedsProjectSetup() {
+		t.Fatal("扫描完成但列表为空应仍进入引导（前端负责空结果落盘）")
 	}
 }
 
