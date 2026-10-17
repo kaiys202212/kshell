@@ -47,7 +47,12 @@ export function createChatThrottle(apply: ApplyFn): ChatThrottle {
   const flush = (id: string) => {
     const buf = buffers.get(id);
     if (!buf) return;
-    buf.timer = null;
+    // 提前 flush（结构化事件触发）时清掉挂起的定时器：否则陈旧定时器稍后触发，
+    // 会把届时新建缓冲的 timer 引用误清（后果仅是偶发提前 flush，但状态不精确）。
+    if (buf.timer !== null) {
+      clearTimeout(buf.timer);
+      buf.timer = null;
+    }
     const items = buf.items;
     buf.items = [];
     // 相邻同 key 的文本分片合并成一条（Seq 取最大，Text 串接），

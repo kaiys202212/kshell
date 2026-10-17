@@ -77,6 +77,9 @@ function App() {
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateError, setUpdateError] = useState('');
   const updateDismissedRef = useRef(false);
+  // chatThrottle.drop 的桥接 ref：节流器在聊天事件 effect 内创建，
+  // 关页签回调（handleCloseTab）在此取用，对已移除的 chat 丢弃缓冲。
+  const throttleDropRef = useRef<(id: string) => void>(() => {});
 
   useEffect(() => {
     listTerminals()
@@ -142,9 +145,12 @@ function App() {
     // markdown 全量重渲染打满主线程、页面假死。文本分片微批合并 ~100ms flush，
     // tool/plan/turn_done/error 等结构化事件不节流。chat 关闭/退出时丢弃缓冲。
     const throttle = createChatThrottle((id, u) => useAppStore.getState().applyChat(id, u as ChatUpdate));
+    throttleDropRef.current = throttle.drop;
     const offU = onChatUpdate(({ id, update }) => {
       const buf = pending.get(id);
       if (buf) {
+        // 历史回放种子窗口内有意绕过节流器：窗口极短（单次 history await），
+        // 且这些更新会先入 buf、回放后统一 apply，行为与旧直通路径等价。
         buf.push(update);
         return;
       }
@@ -275,6 +281,7 @@ function App() {
         closeTerminal(t.ID).catch(() => {});
       }
       for (const c of ownedChats) {
+        throttleDropRef.current(c.ID); // 丢弃在途流式缓冲，避免 flush 在已移除的 chat 上重建孤儿状态
         removeChat(c.ID);
         closeChat(c.ID).catch(() => {});
       }
