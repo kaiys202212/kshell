@@ -298,14 +298,19 @@ func (a *App) fallbackTerminalWorkspace(wsID, toolID, reason string) (OpenedSess
 // SendChatPrompt 向指定聊天会话发起一轮用户输入。
 // 发送成功后落盘 Hub 用户消息（忙时标记 queued 可撤回），并落一条模拟 agent
 // 确认卡片（入队 → ack_queued；立即投递的「已送达」ack 由 onHubDelivered 补）。
+// 投递前自动重建已退出的会话：重建后 ID 会变，后续一律用返回的新 ID。
 func (a *App) SendChatPrompt(id, text string) error {
 	a.ensureSessionHooks()
 	m := a.chats()
 	if m == nil {
 		return errNotReady
 	}
+	sendID, err := a.ensureChatAlive(id)
+	if err != nil {
+		return err
+	}
 	blocks := []acp.ContentBlock{{Type: "text", Text: text}}
-	return a.sendAndRecord(id, blocks, text)
+	return a.sendAndRecord(sendID, blocks, text)
 }
 
 // ChatBlock 是前端发来的多形态内容块（扁平结构）：text 用 Text；
@@ -341,6 +346,7 @@ func chatBlocksToACP(blocks []ChatBlock) []acp.ContentBlock {
 }
 
 // SendChatPromptBlocks 向指定聊天发起一轮多形态内容块输入（文本 + 附件）。
+// 投递前自动重建已退出的会话（同 SendChatPrompt）。
 func (a *App) SendChatPromptBlocks(id string, blocks []ChatBlock) error {
 	a.ensureSessionHooks()
 	m := a.chats()
@@ -350,8 +356,12 @@ func (a *App) SendChatPromptBlocks(id string, blocks []ChatBlock) error {
 	if len(blocks) == 0 {
 		return nil
 	}
+	sendID, err := a.ensureChatAlive(id)
+	if err != nil {
+		return err
+	}
 	acpBlocks := chatBlocksToACP(blocks)
-	return a.sendAndRecord(id, acpBlocks, hubTextFromBlocks(blocks))
+	return a.sendAndRecord(sendID, acpBlocks, hubTextFromBlocks(blocks))
 }
 
 // sendAndRecord 统一发送与 Hub 落盘：预留消息 ID → 先落 user 消息（queued 状态，

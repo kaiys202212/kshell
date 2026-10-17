@@ -174,6 +174,10 @@ type App struct {
 
 	// remoteSessions 按 ssh 工作区 Ref 缓存远端会话扫描结果（与本地 index 隔离）。
 	remoteSessions remoteSessionsCache
+
+	// chatAliases 是聊天重建后的新旧会话 ID 映射（旧 ID → 新 ID）：重建换 ID 后
+	// 前端页签仍持旧 ID，投递入口经别名解析继续无感投递。mu 保护。
+	chatAliases map[string]string
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。
