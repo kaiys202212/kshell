@@ -63,6 +63,9 @@ type Launch struct {
 	Dir  string
 	// Env 是额外环境变量；nil 表示仅继承当前进程环境，非空时会叠加在父环境之上。
 	Env map[string]string
+	// ACPSettingsJSON 是 ACP 路径专属的 _meta 载荷（claude 的
+	// {"env":{...}} 紧凑 JSON 字符串）；终端路径恒为空。空串表示不注入。
+	ACPSettingsJSON string
 }
 
 type Provider interface {
