@@ -238,6 +238,9 @@ func (a *App) Startup(ctx context.Context) {
 
 	a.emitAppearance()
 	a.restartAppearanceWatcher()
+
+	// 系统热键 Alt+Shift+K：独立 goroutine 跑 Win32 消息循环，随进程存活。
+	go startHotkey(a)
 }
 
 var updateCheckDelay = 3 * time.Second
@@ -267,6 +270,27 @@ func (a *App) scheduleUpdateCheck() {
 			_, _ = a.CheckForUpdate()
 		}
 	}
+}
+
+// toggleMainWindow 供系统热键 Alt+Shift+K 调用：唤起或隐藏主窗口。
+// 判定口径对齐托盘/气泡的显示路径——隐藏中、非前台、最小化任一成立即视为
+//「用户看不到窗口」，走显示路径（最小化先还原再前置）；否则收进托盘。
+// ctx 未就绪（Startup 之前/之后）时安全返回，不触碰任何窗口操作。
+func (a *App) toggleMainWindow() {
+	a.mu.Lock()
+	hidden, ctx := a.windowHidden, a.ctx
+	a.mu.Unlock()
+	if ctx == nil {
+		return
+	}
+	if hidden || !windowIsForeground() || windowIsMinimised(ctx) {
+		a.setWindowHidden(false)
+		windowUnminimise(ctx)
+		windowShow(ctx)
+		return
+	}
+	windowHide(ctx)
+	a.setWindowHidden(true)
 }
 
 // loadSnapshot 把上次扫描的落盘快照灌进内存，让前端首次 GetWorkspaces/GetSessions
@@ -511,6 +535,7 @@ func (a *App) quitApp(ctx context.Context) {
 // 清理超时也返回——避免关终端卡住时进程永远留在任务管理器。
 func (a *App) Shutdown(ctx context.Context) {
 	_ = ctx // 退出清理无取消语义：尽量收干净，但不能无限阻塞进程退出
+	stopHotkey()
 	quitTrayLoop()
 	done := make(chan struct{})
 	go func() {
