@@ -61,11 +61,12 @@ type Bridge struct {
 	ctx         ctxInfo      // 最近入站消息的发送凭据
 	pending     []pendingMsg // -14 时缓存的待发
 	undelivered int          // 发送失败计数（#st 用）
-	learnedWxid bool         // wxid 是否已学习/配置（只置一次，防第二条消息重复学习）
 
 	// onLearnWxid 非空时，wxid 首次从入站消息学习得到即回调（desktop 落盘）。
 	// 由 SetOnLearnWxid 在 Start 前装配，此后视为只读。
 	onLearnWxid func(wxid string)
+	// onPermission 非空时，命令层进入权限等待即回调（desktop 弹窗）。
+	onPermission func(chatID, reqID, desc string)
 
 	// sleep 供测试注入 no-op，避免重试真实等待。
 	sleep func(time.Duration)
@@ -100,6 +101,10 @@ func (b *Bridge) PendingCount() int {
 // SetOnLearnWxid 装配 wxid 学习回调（Start 前调用，此后只读）。
 func (b *Bridge) SetOnLearnWxid(fn func(wxid string)) { b.onLearnWxid = fn }
 
+// SetOnPermission 装配权限请求转发回调：收到权限请求时通知调用方
+//（desktop 把它转给前端弹窗与 hub 命令层的权限菜单）。
+func (b *Bridge) SetOnPermission(fn func(chatID, reqID, desc string)) { b.onPermission = fn }
+
 // Wxid 返回当前白名单用户（可能为学习前的空串；测试与状态展示用）。
 func (b *Bridge) Wxid() string {
 	b.mu.Lock()
@@ -120,7 +125,6 @@ func (b *Bridge) HandleInbound(fromUserID, contextToken, text string) {
 			return
 		}
 		b.wxid = fromUserID
-		b.learnedWxid = true
 		fn := b.onLearnWxid
 		b.mu.Unlock()
 		if fn != nil {
