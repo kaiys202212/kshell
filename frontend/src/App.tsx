@@ -48,6 +48,7 @@ import { eventLabel } from './lib/agentNotify';
 import { playNotifySound } from './lib/notifySound';
 import { backendError, translateBackend } from './lib/errors';
 import { applyChatUpdate, type TimelineItem } from './state/chatUpdate';
+import { createChatThrottle } from './state/chatThrottle';
 import { dispatchTerminalData } from './lib/terminalRegistry';
 import { cn } from './lib/cn';
 import { sameWorkspacePath } from './lib/workspacePath';
@@ -77,6 +78,9 @@ function App() {
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateError, setUpdateError] = useState('');
   const updateDismissedRef = useRef(false);
+  // chatThrottle.drop 的桥接 ref：节流器在聊天事件 effect 内创建，
+  // 关页签回调（handleCloseTab）在此取用，对已移除的 chat 丢弃缓冲。
+  const throttleDropRef = useRef<(id: string) => void>(() => {});
 
   useEffect(() => {
     listTerminals()
@@ -138,18 +142,26 @@ function App() {
     // 其高 Seq 会抢先抬高 chatSeq，导致随后回放的历史前缀被去重丢弃。
     // 窗口外的更新立即应用——尤其挂载后才新建的聊天，绝不能因为没有初始 listChats 条目而被永久缓冲。
     const pending = new Map<string, ChatUpdate[]>();
+    // 流式分片节流：agent 高频输出（实测 50-60 事件/秒 × 多会话）会让长文本
+    // markdown 全量重渲染打满主线程、页面假死。文本分片微批合并 ~100ms flush，
+    // tool/plan/turn_done/error 等结构化事件不节流。chat 关闭/退出时丢弃缓冲。
+    const throttle = createChatThrottle((id, u) => useAppStore.getState().applyChat(id, u as ChatUpdate));
+    throttleDropRef.current = throttle.drop;
     const offU = onChatUpdate(({ id, update }) => {
       const buf = pending.get(id);
       if (buf) {
+        // 历史回放种子窗口内有意绕过节流器：窗口极短（单次 history await），
+        // 且这些更新会先入 buf、回放后统一 apply，行为与旧直通路径等价。
         buf.push(update);
         return;
       }
-      useAppStore.getState().applyChat(id, update);
+      throttle.push(id, update);
     });
     const offP = onChatPermission(({ id, request }) =>
       useAppStore.getState().setChatPermission(id, request),
     );
     const offX = onChatExit(({ id, exitCode, error }) => {
+      throttle.drop(id); // 会话已退出：丢弃在途缓冲，避免迟到分片污染终态时间线
       const { markChatExited, setChatPermission, notify } = useAppStore.getState();
       markChatExited(id, exitCode, error);
       setChatPermission(id, null);
@@ -194,6 +206,7 @@ function App() {
       offP();
       offX();
       offC();
+      throttle.dispose();
     };
   }, []);
 
@@ -269,6 +282,7 @@ function App() {
         closeTerminal(t.ID).catch(() => {});
       }
       for (const c of ownedChats) {
+        throttleDropRef.current(c.ID); // 丢弃在途流式缓冲，避免 flush 在已移除的 chat 上重建孤儿状态
         removeChat(c.ID);
         closeChat(c.ID).catch(() => {});
       }

@@ -30,6 +30,7 @@ type fakeConn struct {
 	promptBlocks [][]acp.ContentBlock // 记录每次 Prompt 的原始 blocks（断言附件形态）
 	modelErr     error
 	modelCalls   []string
+	setModelGate chan struct{} // 非 nil 时 SetModel 阻塞等待，直到收到信号或 ctx 取消（模拟 agent 不应答）
 
 	initGate   chan struct{} // 非 nil 时 Initialize 阻塞等待，模拟握手耗时
 	initSet    bool
@@ -91,9 +92,19 @@ func (c *fakeConn) promptCount() int {
 func (c *fakeConn) SetModel(ctx context.Context, sessionID, modelID string) error {
 	c.mu.Lock()
 	c.modelCalls = append(c.modelCalls, modelID)
-	err := c.modelErr
+	gate := c.setModelGate
 	c.mu.Unlock()
-	return err
+	if gate != nil {
+		// 模拟真实 acp.Agent.call：ctx 取消时返回取消原因（超时挂死依赖此行为）
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.modelErr
 }
 func (c *fakeConn) Cancel(sessionID string) error {
 	c.mu.Lock()

@@ -986,6 +986,20 @@ func (m *Manager) Models(id string) (ModelsView, bool) {
 	return ModelsView{}, false
 }
 
+// modelSetTimeout 限制 SetModel 单次 RPC 的耗时。agent（codebuddy 有 RPC 死锁
+// 前科）在 turn 流式输出中可能不应答 set_model，无超时会让前端 runAgentCreate
+// 永挂、创建窗体关不上；超时错误上抛后前端走「切模型失败只提示不回滚」分支。
+// var 仅为测试可缩短；生产代码不得修改。
+var modelSetTimeout = 30 * time.Second
+
+// wrapModelTimeout 把 SetModel 超时映射成前端可翻译的 wire key；其他错误原样返回。
+func wrapModelTimeout(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return errors.New("err.chat.model_timeout")
+	}
+	return err
+}
+
 // SetModel 运行时切换会话模型；成功后乐观更新缓存视图供前端即时反映。
 func (m *Manager) SetModel(id, modelID string) error {
 	m.mu.Lock()
@@ -1001,7 +1015,9 @@ func (m *Manager) SetModel(id, modelID string) error {
 	if conn == nil || sid == "" {
 		return errNoBackend
 	}
-	if err := conn.SetModel(ctx, sid, modelID); err != nil {
+	rpcCtx, cancel := context.WithTimeout(ctx, modelSetTimeout)
+	defer cancel()
+	if err := wrapModelTimeout(conn.SetModel(rpcCtx, sid, modelID)); err != nil {
 		return err
 	}
 	m.mu.Lock()
