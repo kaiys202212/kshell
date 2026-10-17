@@ -116,9 +116,14 @@ type McpServerStdio struct {
 	Env     []EnvVariable `json:"env"`
 }
 
+// NewSessionParams 的 Meta 携带 agent 专属扩展（ACP _meta 位）：
+// claude-agent-acp 只从 params._meta.claudeCode.options 读 SDK options，
+// kshell 经它传 settings（模型 env 注入）——适配器 argv 形态的 --settings
+// 会被静默丢弃。空值 omitempty，对不认识 _meta 的 agent 零噪音。
 type NewSessionParams struct {
-	Cwd        string `json:"cwd"`
-	McpServers []any  `json:"mcpServers"`
+	Cwd        string          `json:"cwd"`
+	McpServers []any           `json:"mcpServers"`
+	Meta       json.RawMessage `json:"_meta,omitempty"`
 }
 
 type NewSessionResult struct {
@@ -137,9 +142,10 @@ type SessionStart struct {
 }
 
 type LoadSessionParams struct {
-	SessionID  string `json:"sessionId"`
-	Cwd        string `json:"cwd"`
-	McpServers []any  `json:"mcpServers"`
+	SessionID  string          `json:"sessionId"`
+	Cwd        string          `json:"cwd"`
+	McpServers []any           `json:"mcpServers"`
+	Meta       json.RawMessage `json:"_meta,omitempty"`
 }
 
 type PromptParams struct {

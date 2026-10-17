@@ -36,7 +36,21 @@ func fakeAgentMain() {
 				"agentCapabilities": map[string]any{"loadSession": true},
 				"agentInfo":         map[string]any{"name": "fake"},
 			})
-		case "session/new":
+		case "session/new", "session/load":
+			// ACP_FAKE_DUMP_PARAMS=1 时把请求 params 原样写 stderr（stdout 被
+			// codec 消费不能抢），测试从 Agent.Stderr() 里解析 dumpedParams 行。
+			if os.Getenv("ACP_FAKE_DUMP_PARAMS") == "1" {
+				dump, _ := json.Marshal(map[string]any{"dumpedParams": json.RawMessage(m.Params)})
+				fmt.Fprintln(os.Stderr, string(dump))
+			}
+			if m.Method == "session/load" {
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+					"sessionId": "sess-load",
+					"update":    map[string]any{"sessionUpdate": "user_message_chunk", "messageId": "m0", "content": map[string]any{"type": "text", "text": "hello"}},
+				}})
+				reply(map[string]any{})
+				continue
+			}
 			res := map[string]any{"sessionId": "sess-new"}
 			if os.Getenv("ACP_FAKE_MODELS") == "1" {
 				res["models"] = map[string]any{
@@ -66,12 +80,6 @@ func fakeAgentMain() {
 			} else {
 				reply(map[string]any{})
 			}
-		case "session/load":
-			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
-				"sessionId": "sess-load",
-				"update":    map[string]any{"sessionUpdate": "user_message_chunk", "messageId": "m0", "content": map[string]any{"type": "text", "text": "hello"}},
-			}})
-			reply(map[string]any{})
 		case "session/prompt":
 			if os.Getenv("ACP_FAKE_STDERR_EXIT") == "1" {
 				// 模拟 agent 中途崩溃：先往 stderr 写原因再退出，退出码非 0。
@@ -442,5 +450,104 @@ func TestAgentLoadSessionReplays(t *testing.T) {
 	defer h.mu.Unlock()
 	if len(h.updates) == 0 || !strings.HasPrefix(h.updates[0], "sess-load:user_message_chunk") {
 		t.Fatalf("replay updates = %v", h.updates)
+	}
+}
+
+// dumpedLine 从假 agent 的 stderr 输出里取最后一条 dumpedParams JSON 行。
+func dumpedLine(t *testing.T, out string) json.RawMessage {
+	t.Helper()
+	var last json.RawMessage
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "{\"dumpedParams\"") {
+			continue
+		}
+		var m struct {
+			DumpedParams json.RawMessage `json:"dumpedParams"`
+		}
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("解析 dump 行: %v", err)
+		}
+		last = m.DumpedParams
+	}
+	if last == nil {
+		t.Fatalf("未找到 dumpedParams 行, output:\n%s", out)
+	}
+	return last
+}
+
+// readAllStdout 读取假 agent 的 stdout 累积内容。stdout 同时承载 JSON-RPC
+// 响应，直接读会抢 codec 的流——这里用 dump 行写入临时文件代替：测试里
+// dumpedLine 只认 dumpedParams 前缀行，fake agent 的 stdout 由 codec 消费，
+// 无法旁路读取，所以 fake agent 改为把 dump 行写到 stderr。
+func readAllStdout(t *testing.T, a *Agent) string {
+	t.Helper()
+	return a.Stderr()
+}
+
+// session/new 参数必须把 settings 以 _meta.claudeCode.options.settings（字符串
+// 形态）透传——claude-agent-acp 只认这条通路，settings 为空时不得出现 _meta。
+func TestNewSessionCarriesSettingsMeta(t *testing.T) {
+	a := newTestAgent(t, fakeAgentSpecEnv(t, "ACP_FAKE_DUMP_PARAMS=1"))
+	ctx, cancel := testCtx()
+	defer cancel()
+	if _, err := a.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	a.SetSettingsMeta(json.RawMessage(`{"claudeCode":{"options":{"settings":"{\"env\":{\"ANTHROPIC_MODEL\":\"m\"}}"}}}`))
+	if _, err := a.NewSession(ctx, "/tmp"); err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	dump := dumpedLine(t, readAllStdout(t, a))
+	var head struct {
+		Meta struct {
+			ClaudeCode struct {
+				Options struct {
+					Settings string `json:"settings"`
+				} `json:"options"`
+			} `json:"claudeCode"`
+		} `json:"_meta"`
+	}
+	if err := json.Unmarshal(dump, &head); err != nil {
+		t.Fatalf("解析 params: %v", err)
+	}
+	if head.Meta.ClaudeCode.Options.Settings != `{"env":{"ANTHROPIC_MODEL":"m"}}` {
+		t.Fatalf("settings 注入错误: %s", dump)
+	}
+}
+
+// settings 为空（未启用模型注入）时 session/new 不得携带 _meta。
+func TestNewSessionNoMetaWhenSettingsEmpty(t *testing.T) {
+	a := newTestAgent(t, fakeAgentSpecEnv(t, "ACP_FAKE_DUMP_PARAMS=1"))
+	ctx, cancel := testCtx()
+	defer cancel()
+	if _, err := a.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.NewSession(ctx, "/tmp"); err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	dump := dumpedLine(t, readAllStdout(t, a))
+	if strings.Contains(string(dump), "_meta") {
+		t.Fatalf("空 settings 不应带 _meta: %s", dump)
+	}
+}
+
+// session/load 同样要带 settings（恢复会话也走适配器，同样吃不到 argv 注入）。
+func TestLoadSessionCarriesSettingsMeta(t *testing.T) {
+	a := newTestAgent(t, fakeAgentSpecEnv(t, "ACP_FAKE_DUMP_PARAMS=1"))
+	ctx, cancel := testCtx()
+	defer cancel()
+	if _, err := a.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	a.SetSettingsMeta(json.RawMessage(`{"claudeCode":{"options":{"settings":"{\"env\":{\"ANTHROPIC_MODEL\":\"m\"}}"}}}`))
+	if _, err := a.LoadSession(ctx, "sess-load", "/tmp"); err != nil {
+		t.Fatalf("load session: %v", err)
+	}
+	// load 会推重放通知，dump 行混在通知之后；dumpedLine 取最后一条即可
+	dump := dumpedLine(t, readAllStdout(t, a))
+	if !strings.Contains(string(dump), `"_meta"`) || !strings.Contains(string(dump), "ANTHROPIC_MODEL") {
+		t.Fatalf("load 未携带 settings _meta: %s", dump)
 	}
 }
