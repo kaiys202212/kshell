@@ -1,7 +1,8 @@
 // 首页：工作区/项目卡片网格（名称、git 徽标、会话数、最后活动时间、工具分布），
 // 按最后活动时间倒序 —— 从未用过（Go 零值时间）的 git 扫描工作区排最后，再按名称。
 // 点击整卡切换「选中项目」（再点取消），供 easynew / 需求列表作默认目标；
-// 卡片 hover 出「打开开发页签」图标按钮，点击才真正开工作区页签；键盘可达（整卡是 button）。
+// 卡片 hover 出「打开开发页签」/删除图标按钮，hover 或键盘聚焦时显现（键盘可达）；
+// 点「打开开发页签」才真正开工作区页签。
 // 项目表操作：「新建项目 / 回收站 / 重新扫描」按钮内联在左列项目区顶部；
 // 卡片 hover 出删除按钮（逻辑删除）；
 // 「回收站」弹层列出已删除项目可逐项还原。删除/还原后工作区列表由事件驱动刷新。
@@ -624,17 +625,14 @@ export default function Home() {
                           </span>
                         )}
                       </button>
-                      {/* 「打开开发页签」/ 删除按钮：绝对定位的兄弟节点（卡片本身是 button，不能嵌套），hover 显现 */}
+                      {/* 「打开开发页签」/ 删除按钮：绝对定位的兄弟节点（卡片本身是 button，不能嵌套），
+                          hover 或键盘聚焦时显现（透明度切换，不隐藏元素保证可聚焦） */}
                       <button
                         type="button"
                         aria-label={t('ui.home.open_project')}
                         title={t('ui.home.open_project')}
-                        className="absolute right-8 top-1 hidden rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground group-hover:block"
-                        onClick={(e) => {
-                          // 不触发卡片自身的选中切换
-                          e.stopPropagation();
-                          openTab(ws);
-                        }}
+                        className="absolute right-8 top-1 rounded p-1 text-muted-foreground opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:bg-muted hover:text-foreground"
+                        onClick={() => openTab(ws)}
                       >
                         <SquareArrowOutUpRight className="h-3.5 w-3.5" />
                       </button>
@@ -642,7 +640,7 @@ export default function Home() {
                         type="button"
                         aria-label={t('ui.home.delete_project', { name: ws.Name })}
                         title={t('ui.home.delete_project_title')}
-                        className="absolute right-1 top-1 hidden rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-destructive group-hover:block"
+                        className="absolute right-1 top-1 rounded p-1 text-muted-foreground opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:bg-muted hover:text-destructive"
                         onClick={() => void handleDelete(ws)}
                       >
                         <TrashGlyph />

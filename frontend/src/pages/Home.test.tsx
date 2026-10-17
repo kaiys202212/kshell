@@ -1,5 +1,6 @@
 // 首页工作区卡片测试：按最后活动时间倒序（零值排最后，再按名称）/ 卡片信息（会话数、
-// 相对时间、git 徽标、工具分布折叠）/ 点击整卡打开页签 / 重新扫描的扫描状态机 /
+// 相对时间、git 徽标、工具分布折叠）/ 点卡片选中项目、「打开项目页签」图标开页签 /
+// 重新扫描的扫描状态机 /
 // 项目表操作（新建、删除、回收站还原、projects:changed 刷新）。
 // 「新建项目 / 回收站 / 重新扫描」按钮已内联到左列项目区顶部；分页栏有项目时常显。
 // api 层整体打桩（vi.mock），与 App.test.tsx 同一套模式。
@@ -41,10 +42,8 @@ const mocks = vi.hoisted(() => ({
   deleteRequirement: vi.fn(),
   markRequirementDispatched: vi.fn(),
   onRequirementsChanged: vi.fn().mockImplementation(() => () => {}),
-  dispatchRequirement: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
-vi.mock('../lib/dispatchRequirement', () => mocks);
 
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
