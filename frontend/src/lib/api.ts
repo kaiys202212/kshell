@@ -502,6 +502,17 @@ export interface InstallSkillResult {
   Errors?: Record<string, string> | null;
 }
 
+// desktop.WeixinStatusView 的 JSON 形态（internal/desktop/weixin.go）：
+// Binding: idle | pending | ok | expired
+export interface WeixinStatusView {
+  bound: boolean;
+  running: boolean;
+  wxid: string;
+  pending: number;
+  undelivered: number;
+  binding: string;
+}
+
 interface AppBindings {
   ScanSessions(): Promise<unknown>;
   GetWorkspaces(): Promise<Workspace[]>;
@@ -652,6 +663,10 @@ interface AppBindings {
   MarkRequirementDispatched(id: string, workspace: string, chatID: string, title: string): Promise<void>;
   ArchiveRequirement(id: string): Promise<{ released: boolean; chatId: string }>;
   SetRequirementStatus(id: string, status: string): Promise<void>;
+  WeixinBind(): Promise<string>;
+  WeixinBindStatus(): Promise<string>;
+  WeixinUnbind(): Promise<void>;
+  WeixinStatus(): Promise<WeixinStatusView>;
 }
 
 declare global {
@@ -1998,4 +2013,38 @@ export function onChatCommands(cb: (p: { id: string; commands: ChatCommand[] }) 
   return EventsOn('chat:commands', (p: { id?: string; commands?: ChatCommand[] }) =>
     cb({ id: p?.id ?? '', commands: p?.commands ?? [] }),
   );
+}
+
+// 微信桥（internal/desktop/weixin.go）
+// WeixinBind 发起扫码绑定，返回二维码内容 URL（前端转二维码图）。
+export async function weixinBind(): Promise<string> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  return a.WeixinBind();
+}
+
+// WeixinBindStatus 返回绑定状态：idle / pending / ok / expired。
+export async function weixinBindStatus(): Promise<string> {
+  const a = app();
+  if (!a) return 'idle';
+  return a.WeixinBindStatus();
+}
+
+// WeixinUnbind 解绑并清空凭据。
+export async function weixinUnbind(): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.WeixinUnbind();
+}
+
+// WeixinStatus 返回微信桥状态快照；桥未装配时 Go 返回零值也正常返回，
+// 仅调用本身失败（异常）时返回 null，由调用方呈现错误态。
+export async function weixinStatus(): Promise<WeixinStatusView | null> {
+  const a = app();
+  if (!a) return null;
+  try {
+    return await a.WeixinStatus();
+  } catch {
+    return null;
+  }
 }

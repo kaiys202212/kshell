@@ -241,6 +241,21 @@
     "openrouter": { "name": "OpenRouter", "note": "仅 OpenAI 协议" }
   },
   "ui": {
+    "weixin": {
+      "title": "微信桥",
+      "desc": "绑定后可在微信里查看 agent 回复并发送指令（桌面端为主视角）。",
+      "bind": "绑定微信",
+      "rebind": "重新生成",
+      "unbind": "解绑",
+      "unbind_confirm": "确认解绑？",
+      "bound_as": "已绑定 {{0}}",
+      "running": "运行中",
+      "disconnected": "已断开，请重新绑定",
+      "scan_hint": "用微信扫码，确认后自动完成绑定",
+      "expired": "二维码已过期",
+      "pending_undelivered": "未送达 {{count}} 条",
+      "error": "微信桥操作失败"
+    },
     "error_boundary": {
       "title": "界面出现异常",
       "detail": "页面渲染出错，点击重载即可恢复。下方原始错误信息可用于反馈问题。",
@@ -251,6 +266,7 @@
       "nav": {
         "aria": "设置分区",
         "general": "通用",
+        "weixin": "微信",
         "model": "模型",
         "tools": "工具",
         "skills": "Skill 广场"
