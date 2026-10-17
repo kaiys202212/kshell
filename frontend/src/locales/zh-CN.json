@@ -773,6 +773,7 @@
       "send_failed": "发送失败：{{err}}",
       "queue_full": "消息队列已满，已丢弃最早的消息",
       "queue_remove": "移除排队消息",
+      "queue_attachment": "[附件]",
       "drop_unsupported": "该会话不可接收文件",
       "exited": "会话已退出",
       "exited_code": "（退出码 {{code}}）",

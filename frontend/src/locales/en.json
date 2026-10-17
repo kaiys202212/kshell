@@ -773,6 +773,7 @@
       "send_failed": "Failed to send: {{err}}",
       "queue_full": "Message queue is full, oldest message dropped",
       "queue_remove": "Remove queued message",
+      "queue_attachment": "[attachment]",
       "drop_unsupported": "This session cannot receive files",
       "exited": "Session exited",
       "exited_code": " (code {{code}})",

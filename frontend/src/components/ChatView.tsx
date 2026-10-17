@@ -274,10 +274,14 @@ export default function ChatView({ chat, active }: Props) {
   };
 
   // doSend 真正发起发送（直接发送与队列出队共用）：乐观置 running，失败回滚并提示。
-  const doSend = (payload: { text: string; blocks?: ChatBlock[] }) => {
+  // 出队来源的失败：条目插回队首 + 置 store 暂停标记，阻断后续自动出队——否则
+  // fail 置回的 ready（或对账镜像的 ready）会构成新沿，持续性失败会逐条烧穿队列。
+  // 暂停放 store：对账/镜像重建可能重挂本组件，组件 ref 会丢状态。
+  const doSend = (payload: { text: string; blocks?: ChatBlock[] }, dequeueSource?: ChatQueuedMessage) => {
     // 乐观置 running：turn_done/error 的 chat:update 会把它改回 ready
     useAppStore.getState().upsertChat({ ...chat, Status: 'running' });
     const fail = (e: unknown) => {
+      if (dequeueSource) useAppStore.getState().requeueChatHead(id, dequeueSource);
       useAppStore.getState().upsertChat({ ...chat, Status: 'ready' });
       useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
     };
@@ -300,8 +304,12 @@ export default function ChatView({ chat, active }: Props) {
     }
     setDraft('');
     setAttachments([]);
+    // 手动发送解除出队暂停：用户看到错误后主动重试，说明愿意继续。
+    // 入队与直发都算（入队路径在 enqueueChat 内解除，直发在这里解除）。
+    useAppStore.getState().clearQueuedPause(id);
     if (running) {
-      // agent 正在运行：消息进入本地队列，出队（回 ready）时才真正发送
+      // agent 正在运行：消息进入本地队列，出队（回 ready）时才真正发送。
+      // 手动发送同时解除出队暂停：用户看到错误后主动重试，说明愿意继续。
       useAppStore.getState().enqueueChat(id, { text, blocks });
       return;
     }
@@ -317,11 +325,12 @@ export default function ChatView({ chat, active }: Props) {
     prevStatus.current = chat.Status;
     if (prev === chat.Status) return;
     if (chat.Status !== 'ready') return;
+    if (useAppStore.getState().queuedPauseActive(id)) return;
     // 出队与发送在 effect 中按序执行：dequeueChatHead 同步取走队首，
-    // doSend 复用直接发送路径（乐观置 running、失败 toast 不回插）
+    // doSend 复用直接发送路径（失败插回队首 + 暂停）
     const head = useAppStore.getState().dequeueChatHead(id);
     if (!head) return;
-    doSend({ text: head.text, blocks: head.blocks });
+    doSend({ text: head.text, blocks: head.blocks }, head);
     // doSend 闭包引用 chat（乐观更新用），状态沿触发时 chat 已是最新，无需进依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat.Status, id]);
@@ -509,7 +518,7 @@ export default function ChatView({ chat, active }: Props) {
           <div data-testid="chat-queue" className="mb-1 flex flex-col gap-0.5">
             {queued.map((m) => (
               <span key={m.id} className="flex items-center gap-1 rounded border border-border bg-card px-1.5 py-0.5 text-xs">
-                <span className="min-w-0 flex-1 truncate text-muted-foreground">{m.text}</span>
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">{m.text || t('ui.chat.queue_attachment')}</span>
                 <button
                   aria-label={t('ui.chat.queue_remove')}
                   data-testid={`chat-queue-remove-${m.id}`}

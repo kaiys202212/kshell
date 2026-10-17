@@ -164,8 +164,16 @@ interface AppState {
 
   // ChatView 本地消息队列（agent 运行中用户再发消息的暂存；不持久化，随会话消亡）
   chatQueues: Record<string, ChatQueuedMessage[]>;
+  // 出队失败暂停标记（chatID → true）：置位后自动出队停摆，手动发送解除。
+  // 放 store 而非组件 ref：对账/镜像重建可能重挂 ChatView，ref 会丢状态。
+  queuedPaused: Record<string, true>;
   enqueueChat(id: string, msg: { text: string; blocks?: ChatBlock[] }): void;
   dequeueChatHead(id: string): ChatQueuedMessage | null;
+  // 出队发送失败：条目插回队首并置暂停标记（阻断自动出队，防持续性失败烧穿队列）；
+  // 手动发送（enqueueChat 或 clearQueuedPause）解除暂停。
+  requeueChatHead(id: string, msg: ChatQueuedMessage): void;
+  queuedPauseActive(id: string): boolean;
+  clearQueuedPause(id: string): void;
   removeQueuedChat(id: string, msgId: number): void;
   clearChatQueue(id: string): void;
 
@@ -377,6 +385,7 @@ export const useAppStore = create<AppState>()(
           chatModels: omitKey(s.chatModels, id),
           chatCommands: omitKey(s.chatCommands, id),
           chatQueues: omitKey(s.chatQueues, id),
+          queuedPaused: omitKey(s.queuedPaused, id),
         })),
       markChatExited: (id, exitCode, error) =>
         set((s) => ({
@@ -471,7 +480,10 @@ export const useAppStore = create<AppState>()(
         set((s) => ({ chatCommands: { ...s.chatCommands, [id]: cmds } })),
 
       chatQueues: {},
-      enqueueChat: (id, msg) =>
+      queuedPaused: {} as Record<string, true>,
+      enqueueChat: (id, msg) => {
+        // 手动发送解除出队暂停（入队与直发都是手动干预）；解除逻辑并入同一个
+        // set updater，避免在 action 内引用 useAppStore（会构成 TS7022 循环推断）
         set((s) => {
           const q = s.chatQueues[id] ?? [];
           let next: ChatQueuedMessage[];
@@ -482,8 +494,12 @@ export const useAppStore = create<AppState>()(
           } else {
             next = [...q, { ...msg, id: nextQueueMsgId++ }];
           }
-          return { chatQueues: { ...s.chatQueues, [id]: next } };
-        }),
+          if (!s.queuedPaused[id]) return { chatQueues: { ...s.chatQueues, [id]: next } };
+          const paused = { ...s.queuedPaused };
+          delete paused[id];
+          return { chatQueues: { ...s.chatQueues, [id]: next }, queuedPaused: paused };
+        });
+      },
       dequeueChatHead: (id) => {
         // head 经 set 闭包取走：action 内不得引用 useAppStore.getState()——
         // 那会构成 store 自身初始化器的循环类型推断（TS7022 把整个 store 推成 any）
@@ -500,6 +516,27 @@ export const useAppStore = create<AppState>()(
         });
         return head;
       },
+      requeueChatHead: (id, msg) =>
+        set((s) => {
+          const q = s.chatQueues[id] ?? [];
+          const paused = { ...s.queuedPaused, [id]: true as const };
+          return {
+            chatQueues: { ...s.chatQueues, [id]: [msg, ...q] },
+            queuedPaused: paused,
+          };
+        }),
+      queuedPauseActive: (id): boolean => {
+        // 读操作：从 getState 取，不进 set（避免订阅者把它当订阅源）。
+        // 显式返回类型：action 内引用 useAppStore 会让 TS 循环推断（TS7022/TS7023）。
+        return !!useAppStore.getState().queuedPaused[id];
+      },
+      clearQueuedPause: (id) =>
+        set((s) => {
+          if (!s.queuedPaused[id]) return {};
+          const paused = { ...s.queuedPaused };
+          delete paused[id];
+          return { queuedPaused: paused };
+        }),
       removeQueuedChat: (id, msgId) =>
         set((s) => {
           const q = s.chatQueues[id];
@@ -512,10 +549,12 @@ export const useAppStore = create<AppState>()(
         }),
       clearChatQueue: (id) =>
         set((s) => {
-          if (!s.chatQueues[id]) return {};
+          if (!s.chatQueues[id] && !s.queuedPaused[id]) return {};
           const queues = { ...s.chatQueues };
           delete queues[id];
-          return { chatQueues: queues };
+          const paused = { ...s.queuedPaused };
+          delete paused[id];
+          return { chatQueues: queues, queuedPaused: paused };
         }),
 
       terminalBusy: {},

@@ -39,7 +39,7 @@ beforeEach(() => {
   api.respondChatPermission.mockResolvedValue(undefined);
   api.cancelChatPermission.mockResolvedValue(undefined);
   api.listChats.mockResolvedValue([]);
-  useAppStore.setState({ chatItems: {}, chatSeq: {}, chatPermissions: {}, chats: [CHAT], chatModels: {}, chatCommands: {}, chatQueues: {}, toasts: [] });
+  useAppStore.setState({ chatItems: {}, chatSeq: {}, chatPermissions: {}, chats: [CHAT], chatModels: {}, chatCommands: {}, chatQueues: {}, queuedPaused: {}, toasts: [] });
 });
 afterEach(cleanup);
 
@@ -542,15 +542,63 @@ describe('ChatView', () => {
     );
   });
 
-  it('出队发送失败：提示错误且消息不回插队列', async () => {
+  it('出队发送失败：提示错误、消息插回队首并置暂停标记', async () => {
     api.sendChatPrompt.mockRejectedValueOnce(new Error('boom'));
     useAppStore.setState({ chatQueues: { c1: [{ id: 1, text: '会失败的消息' }] } });
     render(<ChatView chat={{ ...CHAT, Status: 'ready' }} active />);
     await waitFor(() => {
       expect(useAppStore.getState().toasts.some((t) => t.tone === 'error')).toBe(true);
     });
-    expect(useAppStore.getState().chatQueues.c1).toBeUndefined();
+    // 失败消息插回队首，用户可撤回或手动重试；自动出队暂停
+    expect(useAppStore.getState().chatQueues.c1).toHaveLength(1);
+    expect(useAppStore.getState().queuedPauseActive('c1')).toBe(true);
     expect(api.sendChatPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  // 级联场景必须经 store 驱动链路复现：doSend 乐观置 running 与失败置 ready
+  // 跨 promise 微任务，prop 序列为 ready→running→ready，直接 rerender 复现不了。
+  function StoreDrivenParent({ active }: { active: boolean }) {
+    const chats = useAppStore((s) => s.chats);
+    const c = chats.find((x) => x.ID === 'c1') ?? null;
+    if (!c) return null;
+    return <ChatView chat={c} active={active} />;
+  }
+
+  it('出队失败后暂停自动出队：后续 ready 沿不再烧穿队列', async () => {
+    api.sendChatPrompt.mockRejectedValue(new Error('boom'));
+    useAppStore.setState({ chats: [{ ...CHAT, Status: 'running' }], chatQueues: { c1: [{ id: 1, text: '第一条' }, { id: 2, text: '第二条' }] } });
+    render(<StoreDrivenParent active />);
+    // turn_done：store 置 ready → 出队「第一条」→ 失败 → fail 置 ready 构成新沿
+    useAppStore.getState().upsertChat({ ...CHAT, Status: 'ready' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledTimes(1));
+    // 暂停标记必须拦住级联：失败条目插回队首，队列仍是两条（第一条 + 第二条）。
+    // 等 fail 微任务跑完（requeue 完成）再手动发送，模拟真实时序。
+    await waitFor(() => expect(useAppStore.getState().chatQueues.c1).toHaveLength(2));
+    expect(api.sendChatPrompt).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().queuedPauseActive('c1')).toBe(true);
+    // 用户手动发送一次即解除暂停（重新恢复自动出队）
+    api.sendChatPrompt.mockResolvedValue(undefined);
+    const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder'));
+    fireEvent.change(box, { target: { value: '手动消息' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '手动消息'));
+    // 手动消息这轮结束回 ready：暂停已解除，插回队首的「第一条」自动重发，
+    // 这次成功；它这轮结束后「第二条」跟着出队（两个 upsert 间 flush 防批处理吞沿）
+    useAppStore.getState().upsertChat({ ...CHAT, Status: 'running' });
+    await new Promise((r) => setTimeout(r, 0));
+    useAppStore.getState().upsertChat({ ...CHAT, Status: 'ready' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '第一条'));
+    useAppStore.getState().upsertChat({ ...CHAT, Status: 'running' });
+    await new Promise((r) => setTimeout(r, 0));
+    useAppStore.getState().upsertChat({ ...CHAT, Status: 'ready' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '第二条'));
+    expect(useAppStore.getState().chatQueues.c1).toBeUndefined();
+  });
+
+  it('纯附件消息入队后条目显示附件占位文案而非空白', () => {
+    useAppStore.setState({ chatQueues: { c1: [{ id: 9, text: '', blocks: [{ Type: 'image', Data: 'x', MimeType: 'image/png' }] }] } });
+    render(<ChatView chat={{ ...CHAT, Status: 'running' }} active />);
+    expect(screen.getByTestId('chat-queue')).toHaveTextContent(tt('ui.chat.queue_attachment'));
   });
 
   it('exited 后端错误为已注册 wire key 时渲染翻译文案而非裸 key', () => {
