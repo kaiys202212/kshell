@@ -745,6 +745,13 @@
       "install_all": "一键安装",
       "tool_install_failed": "{{id}} 安装失败"
     },
+    "project_setup": {
+      "title": "选择要保留的工作区",
+      "hint": "未勾选的工作区将移入回收站，之后可随时还原。",
+      "count": "已选 {{count}} / {{total}}",
+      "close": "关闭",
+      "confirm": "确认"
+    },
     "new_session": {
       "title": "新建会话",
       "title_with_last": "新建会话（上次用 {{name}}）",

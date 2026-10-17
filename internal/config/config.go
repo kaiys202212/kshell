@@ -112,6 +112,8 @@ type Config struct {
 	DesktopShortcutEnsured bool `yaml:"desktop_shortcut_ensured"`
 	// AgentSetupDismissed 为 true 后不再自动弹出首次 Agent 安装向导。
 	AgentSetupDismissed bool `yaml:"agent_setup_dismissed"`
+	// ProjectSetupDismissed 为 true 后不再自动弹出首次项目选择弹窗。
+	ProjectSetupDismissed bool `yaml:"project_setup_dismissed"`
 }
 
 func Default() Config {

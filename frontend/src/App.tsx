@@ -55,6 +55,7 @@ import Home from './pages/Home';
 import Settings from './pages/Settings';
 import WorkspaceTabView from './pages/WorkspaceTab';
 import AgentSetupDialog from './components/AgentSetupDialog';
+import ProjectSetupDialog from './components/ProjectSetupDialog';
 import ArchiveSuggest from './components/ArchiveSuggest';
 import UpdatePrompt from './components/UpdatePrompt';
 import NotificationBubble, { handleNotifyFocus } from './components/NotificationBubble';
@@ -386,6 +387,7 @@ function App() {
         </div>
       </div>
       <AgentSetupDialog />
+      <ProjectSetupDialog />
       <QuickSwitcher open={switcherOpen} onOpenChange={setSwitcherOpen} />
       <ArchiveSuggest
         open={!!archivePrompt}

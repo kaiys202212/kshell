@@ -745,6 +745,13 @@
       "install_all": "One-click install",
       "tool_install_failed": "Failed to install {{id}}"
     },
+    "project_setup": {
+      "title": "Choose workspaces to keep",
+      "hint": "Unchecked workspaces will be moved to the recycle bin. You can restore them anytime.",
+      "count": "{{count}} of {{total}} selected",
+      "close": "Close",
+      "confirm": "Confirm"
+    },
     "new_session": {
       "title": "New session",
       "title_with_last": "New session (last used {{name}})",

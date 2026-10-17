@@ -568,6 +568,8 @@ interface AppBindings {
   UninstallSkill(id: string, removeEntity: boolean): Promise<void>;
   NeedsAgentSetup(): Promise<boolean>;
   DismissAgentSetup(): Promise<void>;
+  NeedsProjectSetup(): Promise<boolean>;
+  DismissProjectSetup(): Promise<void>;
   GetToolInstallRecipe(id: string): Promise<InstallRecipeView>;
   InstallBuiltinTool(id: string): Promise<void>;
   UninstallBuiltinTool(id: string, purgeConfig: boolean): Promise<void>;
@@ -1163,6 +1165,20 @@ export async function dismissAgentSetup(): Promise<void> {
   const a = app();
   if (!a) return;
   await a.DismissAgentSetup();
+}
+
+// needsProjectSetup 首扫完成后判定是否弹出首次项目选择弹窗（新用户且扫出工作区）
+export async function needsProjectSetup(): Promise<boolean> {
+  const a = app();
+  if (!a) return false;
+  return a.NeedsProjectSetup();
+}
+
+// dismissProjectSetup 落盘「已引导」，之后不再自动弹出首次项目选择弹窗
+export async function dismissProjectSetup(): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.DismissProjectSetup();
 }
 
 export async function getToolInstallRecipe(id: string): Promise<InstallRecipeView> {

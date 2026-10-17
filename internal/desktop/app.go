@@ -110,6 +110,9 @@ type Options struct {
 	RequirementsStore *requirements.Store
 	// RequirementsPath 是需求列表落盘文件完整路径；仅在未注入 RequirementsStore 时用于装配。
 	RequirementsPath string
+	// ConfigFileExisted 记录启动时 ~/.kshell/config.yaml 是否已存在：
+	// 已存在视为老用户，首次项目选择弹窗不再自动弹（测试可注入覆盖）。
+	ConfigFileExisted bool
 }
 
 // App 是暴露给前端的绑定对象：薄封装 discovery/providers/window 等核心包，
@@ -304,6 +307,11 @@ func (a *App) initRealDeps() {
 	}
 	_ = config.EnsureRoot(paths)
 
+	// 探测配置文件是否已存在（老用户判定），必须在 Load/Save 之前；
+	// EnsureRoot 只建目录不建 config.yaml，不影响探测结果。
+	_, statErr := os.Stat(paths.Config)
+	configFileExisted := statErr == nil
+
 	cfg, _ := config.Load(paths) // 读不到配置就用默认值，不阻断启动
 
 	_ = providers.EnsureProvidersFile(paths.Providers)
@@ -387,6 +395,9 @@ func (a *App) initRealDeps() {
 		store := requirements.New(filepath.Dir(a.opts.RequirementsPath))
 		_ = store.Load() // 列表缺失/损坏不阻断启动（与 hub 同口径）
 		a.opts.RequirementsStore = store
+	}
+	if !a.opts.ConfigFileExisted { // 未注入时用真实探测结果；注入 true 的测试场景保持不变
+		a.opts.ConfigFileExisted = configFileExisted
 	}
 	// 存量迁移（DispatchedTo → Project 回填）的工作区来源：项目列表前端可见的
 	// 同一份 GetWorkspaces。迁移由 ListRequirements 惰性触发，Startup 时扫描

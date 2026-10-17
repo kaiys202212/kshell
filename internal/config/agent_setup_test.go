@@ -20,3 +20,22 @@ func TestAgentSetupDismissedRoundTrip(t *testing.T) {
 		t.Fatal("应保留 agent_setup_dismissed")
 	}
 }
+
+func TestProjectSetupDismissedRoundTrip(t *testing.T) {
+	p := tempPaths(t)
+	cfg := Default()
+	if cfg.ProjectSetupDismissed {
+		t.Fatal("默认不应已标记")
+	}
+	cfg.ProjectSetupDismissed = true
+	if err := Save(p, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.ProjectSetupDismissed {
+		t.Fatal("应保留 project_setup_dismissed")
+	}
+}
