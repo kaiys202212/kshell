@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -45,10 +46,11 @@ type baseInfo struct {
 	ChannelVersion string `json:"channel_version"`
 }
 
-// apiResp 是服务端响应的通用外壳，code 非 0 表示错误。
+// apiResp 是服务端响应的通用外壳，errcode 非 0 表示错误。
+// 2026-10-17 真机联调证实字段是 errcode（非早期拆解记录的 code）。
 type apiResp struct {
-	Code int    `json:"code"`
-	Msg  string `json:"message"`
+	Errcode int    `json:"errcode"`
+	Errmsg  string `json:"errmsg"`
 }
 
 // post 发送 JSON POST 请求并解析响应到 out（可为 nil）。
@@ -75,10 +77,15 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Token)
-	// X-WECHAT-UIN：每请求随机 uint32 的 base64，模拟客户端行为。
+	// AuthorizationType 告知服务端按 bot_token 通道鉴权：真机联调证实不带该头
+	// 一律返回 errcode=-14 session timeout（登录两接口不校验，故绑定能成功）。
+	req.Header.Set("AuthorizationType", "ilink_bot_token")
+	// X-WECHAT-UIN：随机 uint32 的十进制字符串再 base64（参照 openclaw-weixin
+	// 1.0.2 api.ts buildHeaders；不是 4 字节二进制直接 base64）。
 	var uinRaw [4]byte
 	_, _ = rand.Read(uinRaw[:])
-	req.Header.Set("X-WECHAT-UIN", base64.StdEncoding.EncodeToString(uinRaw[:]))
+	uin := binary.BigEndian.Uint32(uinRaw[:])
+	req.Header.Set("X-WECHAT-UIN", base64.StdEncoding.EncodeToString([]byte(strconv.FormatUint(uint64(uin), 10))))
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -100,11 +107,11 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	if err := json.Unmarshal(data, &api); err != nil {
 		return fmt.Errorf("解析 iLink 响应: %w", err)
 	}
-	if api.Code == -14 {
+	if api.Errcode == -14 {
 		return ErrSessionExpired
 	}
-	if api.Code != 0 {
-		return fmt.Errorf("iLink 错误 code=%d: %s", api.Code, api.Msg)
+	if api.Errcode != 0 {
+		return fmt.Errorf("iLink 错误 errcode=%d: %s", api.Errcode, api.Errmsg)
 	}
 	if out != nil {
 		if err := json.Unmarshal(data, out); err != nil {

@@ -32,17 +32,17 @@ func (s *rtServer) handler() http.HandlerFunc {
 		defer s.mu.Unlock()
 		switch r.URL.Path {
 		case "/ilink/bot/get_bot_qrcode":
-			_, _ = w.Write([]byte(`{"code":0,"qrcode_img_content":"https://qr/x","qrcode":"key-1"}`))
+			_, _ = w.Write([]byte(`{"errcode":0,"qrcode_img_content":"https://qr/x","qrcode":"key-1"}`))
 		case "/ilink/bot/get_qrcode_status":
 			if s.pollToken != "" {
-				_, _ = w.Write([]byte(`{"code":0,"bot_token":"bot-tok"}`))
+				_, _ = w.Write([]byte(`{"errcode":0,"bot_token":"bot-tok"}`))
 			} else {
-				_, _ = w.Write([]byte(`{"code":0,"bot_token":""}`))
+				_, _ = w.Write([]byte(`{"errcode":0,"bot_token":""}`))
 			}
 		case "/ilink/bot/getupdates":
 			s.updates++
 			if s.expireUpdates > 0 && s.updates >= s.expireUpdates {
-				_, _ = w.Write([]byte(`{"code":-14,"message":"expired"}`))
+				_, _ = w.Write([]byte(`{"errcode":-14,"errmsg":"expired"}`))
 				return
 			}
 			if s.failAfterUpdates > 0 && s.updates > s.failAfterUpdates {
@@ -52,9 +52,9 @@ func (s *rtServer) handler() http.HandlerFunc {
 			}
 			var msgs []InboundMsg
 			msgs, s.msgs = s.msgs, nil
-			out := `{"code":0,"get_updates_buf":"cur-2","msgs":[]}`
+			out := `{"errcode":0,"get_updates_buf":"cur-2","msgs":[]}`
 			if len(msgs) > 0 {
-				out = `{"code":0,"get_updates_buf":"cur-2","msgs":[`
+				out = `{"errcode":0,"get_updates_buf":"cur-2","msgs":[`
 				for i, m := range msgs {
 					if i > 0 {
 						out += ","
@@ -66,7 +66,7 @@ func (s *rtServer) handler() http.HandlerFunc {
 			}
 			_, _ = w.Write([]byte(out))
 		default:
-			_, _ = w.Write([]byte(`{"code":0}`))
+			_, _ = w.Write([]byte(`{"errcode":0}`))
 		}
 	}
 }
@@ -221,14 +221,14 @@ func TestRuntimePollLoopMessages(t *testing.T) {
 		if req.URL.Path == "/ilink/bot/getupdates" {
 			if firstPoll {
 				firstPoll = false
-				_, _ = w.Write([]byte(`{"code":0,"get_updates_buf":"cur-1","msgs":[]}`))
+				_, _ = w.Write([]byte(`{"errcode":0,"get_updates_buf":"cur-1","msgs":[]}`))
 				return
 			}
-			_, _ = w.Write([]byte(`{"code":0,"get_updates_buf":"cur-2","msgs":[` +
+			_, _ = w.Write([]byte(`{"errcode":0,"get_updates_buf":"cur-2","msgs":[` +
 				`{"message_type":1,"from_user_id":"u1","context_token":"ct-1","item_list":[{"type":1,"text_item":{"text":"hi"}}]}]}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"code":0}`))
+		_, _ = w.Write([]byte(`{"errcode":0}`))
 	}
 	r, _ := newTestRuntime(t, &fakeExec{hasCur: true}, handler)
 	var learned string
@@ -275,15 +275,15 @@ func TestRuntimeFirstPollDropsBacklog(t *testing.T) {
 			if firstPoll {
 				firstPoll = false
 				// 首轮积压：陌生人消息（若投递会错绑 wxid 为 u-stranger）。
-				_, _ = w.Write([]byte(`{"code":0,"get_updates_buf":"cur-1","msgs":[` +
+				_, _ = w.Write([]byte(`{"errcode":0,"get_updates_buf":"cur-1","msgs":[` +
 					`{"message_type":1,"from_user_id":"u-stranger","context_token":"ct-old","item_list":[{"type":1,"text_item":{"text":"#l"}}]}]}`))
 				return
 			}
 			// 次轮：白名单用户的真实消息。
-			_, _ = w.Write([]byte(`{"code":0,"get_updates_buf":"cur-2","msgs":[` +
+			_, _ = w.Write([]byte(`{"errcode":0,"get_updates_buf":"cur-2","msgs":[` +
 				`{"message_type":1,"from_user_id":"u1","context_token":"ct-new","item_list":[{"type":1,"text_item":{"text":"hi"}}]}]}`))
 		default:
-			_, _ = w.Write([]byte(`{"code":0}`))
+			_, _ = w.Write([]byte(`{"errcode":0}`))
 		}
 	}
 	r, _ := newTestRuntime(t, &fakeExec{hasCur: true}, handler)

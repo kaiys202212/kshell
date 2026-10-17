@@ -263,7 +263,7 @@ func TestBridgeDeliverHubMessage(t *testing.T) {
 func TestBridgePendingOnSessionExpired(t *testing.T) {
 	rc := &recorder{sendResp: func(call int) (int, string) {
 		if call == 1 { // 首次 sendmessage 返回 -14
-			return 200, `{"code":-14,"message":"expired"}`
+			return 200, `{"errcode":-14,"errmsg":"expired"}`
 		}
 		return 200, "{}"
 	}}

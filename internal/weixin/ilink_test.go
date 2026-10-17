@@ -230,14 +230,15 @@ func TestSendTypingNoTicket(t *testing.T) {
 
 func TestSessionExpired(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"code":-14,"message":"session expired"}`)
+		// 真实服务端错误形态（2026-10-17 curl 实测）：errcode 字段，非 code。
+		io.WriteString(w, `{"errcode":-14,"errmsg":"session timeout"}`)
 	}))
 	defer srv.Close()
 
 	c := NewClient("tok-1", srv.URL)
 	_, _, err := c.GetUpdates(context.Background(), "cur")
 	if !errors.Is(err, ErrSessionExpired) {
-		t.Fatalf("code=-14 应映射为 ErrSessionExpired, 实际: %v", err)
+		t.Fatalf("errcode=-14 应映射为 ErrSessionExpired, 实际: %v", err)
 	}
 	if err := c.SendMessage(context.Background(), "u", "ct", "t"); !errors.Is(err, ErrSessionExpired) {
 		t.Fatalf("SendMessage 同样应映射 ErrSessionExpired, 实际: %v", err)
@@ -246,7 +247,7 @@ func TestSessionExpired(t *testing.T) {
 
 func TestOtherErrorCode(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"code":-99,"message":"boom"}`)
+		io.WriteString(w, `{"errcode":-99,"errmsg":"boom"}`)
 	}))
 	defer srv.Close()
 
@@ -256,14 +257,15 @@ func TestOtherErrorCode(t *testing.T) {
 		t.Fatalf("非 -14 错误码不应映射为 ErrSessionExpired: %v", err)
 	}
 	if !strings.Contains(err.Error(), "-99") {
-		t.Errorf("错误信息应包含 code: %v", err)
+		t.Errorf("错误信息应包含 errcode: %v", err)
 	}
 }
 
 func TestUINHeader(t *testing.T) {
-	var uin string
+	var uin, authType string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uin = r.Header.Get("X-WECHAT-UIN")
+		authType = r.Header.Get("AuthorizationType")
 		io.WriteString(w, `{}`)
 	}))
 	defer srv.Close()
@@ -275,12 +277,23 @@ func TestUINHeader(t *testing.T) {
 	if uin == "" {
 		t.Fatal("缺少 X-WECHAT-UIN 头")
 	}
+	// 参考实现（openclaw-weixin 1.0.2 api.ts）：随机 uint32 的十进制字符串再 base64，
+	// 不是 4 字节二进制直接 base64。解码后应是全数字的 ASCII。
 	raw, err := base64.StdEncoding.DecodeString(uin)
 	if err != nil {
 		t.Fatalf("X-WECHAT-UIN 不是合法 base64: %v", err)
 	}
-	if len(raw) != 4 {
-		t.Errorf("X-WECHAT-UIN 解码后 %d 字节, 期望 4", len(raw))
+	if len(raw) == 0 {
+		t.Fatal("X-WECHAT-UIN 解码后为空")
+	}
+	for _, b := range raw {
+		if b < '0' || b > '9' {
+			t.Fatalf("X-WECHAT-UIN 解码后 %q 非十进制数字串", raw)
+		}
+	}
+	// 2026-10-17 真机联调证实：不带该头一律 errcode=-14 session timeout。
+	if authType != "ilink_bot_token" {
+		t.Fatalf("AuthorizationType = %q, 期望 ilink_bot_token", authType)
 	}
 }
 
