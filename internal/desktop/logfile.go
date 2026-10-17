@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/yangk/kshell/internal/acp"
+	"github.com/yangk/kshell/internal/chat"
 )
 
 var desktopLogOnce sync.Once
@@ -39,5 +40,7 @@ func setupDesktopLog() {
 		log.Printf("desktop.log 启动 pid=%d", os.Getpid())
 		// ACP 协议层的日志钩子（agent 退出码 / stderr 尾部）同走 desktop.log。
 		acp.Logf = log.Printf
+		// chat 层诊断日志（turn 起止 / 在途工具 / 静默回退）同走 desktop.log。
+		chat.Logf = log.Printf
 	})
 }

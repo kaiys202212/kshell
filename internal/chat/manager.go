@@ -28,6 +28,17 @@ var (
 // maxHistory 限制每会话保留的时间线事件数，防止长会话内存无限增长。
 const maxHistory = 500
 
+// Logf 是宿主注入的日志钩子（desktop 侧重定向到 ~/.kshell/logs/desktop.log）。
+// 用于诊断「状态卡 running」问题：turn 起止、在途工具登记/摘除、静默回退
+// 定时排布与放弃原因。nil（默认，含测试）时静默。
+var Logf func(format string, args ...any)
+
+func logf(format string, args ...any) {
+	if Logf != nil {
+		Logf(format, args...)
+	}
+}
+
 // stderrTailLimit 限制异常停止时附加的 stderr 尾部字节数：足以容纳限流等
 // 错误文本，又不至于把长调试日志整段灌进时间线。
 const stderrTailLimit = 4096
@@ -210,6 +221,9 @@ func (s *session) stopIdleLocked() {
 func (s *session) scheduleIdleFallbackLocked() {
 	s.stopIdleLocked()
 	if s.promptInFlight || len(s.inFlightTools) > 0 {
+		// 诊断：不排定时器的原因必须留痕，否则「在途信号永久悬挂 → 兜底失效」不可见
+		logf("chat: idle 定时不排 id=%s promptInFlight=%v inFlightTools=%d %v",
+			s.id, s.promptInFlight, len(s.inFlightTools), s.inFlightTools)
 		return
 	}
 	sess := s
@@ -223,6 +237,9 @@ func (m *Manager) idleFallback(s *session) {
 	if m.byID[s.id] != s || s.exited || s.info.Status != StatusRunning ||
 		s.promptInFlight || len(s.inFlightTools) > 0 ||
 		time.Since(s.lastActivity) < activityIdleFallback {
+		// 诊断：定时器到点却放弃回退，原因必须留痕（哪个守卫没过）
+		logf("chat: 静默回退放弃 id=%s 在册=%v 已退出=%v 状态=%s promptInFlight=%v inFlightTools=%d 近期活动=%v",
+			s.id, m.byID[s.id] == s, s.exited, s.info.Status, s.promptInFlight, len(s.inFlightTools), time.Since(s.lastActivity))
 		m.mu.Unlock()
 		return
 	}
@@ -231,6 +248,7 @@ func (m *Manager) idleFallback(s *session) {
 	onInfo := m.onInfo
 	out := s.info
 	m.mu.Unlock()
+	logf("chat: 静默回退生效 id=%s 状态回 ready", s.id)
 	if onInfo != nil {
 		onInfo(out)
 	}
@@ -458,6 +476,8 @@ func (m *Manager) watchExit(s *session) {
 		m.mu.Unlock()
 		return
 	}
+	logf("chat: 进程退出 id=%s code=%d err=%s inFlightTools=%d promptInFlight=%v",
+		s.id, code, errMsg, len(s.inFlightTools), s.promptInFlight)
 	s.exited = true
 	s.info.Status = StatusExited
 	s.info.ExitCode = code
@@ -657,6 +677,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 				onDelivered(qm.hubMsgID)
 			}
 		}
+		logf("chat: turn 发起 id=%s inFlightTools=%d", id, len(s.inFlightTools))
 		stop, err := conn.Prompt(ctx, sid, blocks)
 		m.mu.Lock()
 		if cur := m.byID[id]; cur != s || s.exited {
@@ -664,6 +685,8 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 			return
 		}
 		s.promptInFlight = false
+		logf("chat: turn 结束 id=%s err=%v stop=%q inFlightTools=%d %v",
+			id, err, stop, len(s.inFlightTools), s.inFlightTools)
 		if err != nil {
 			// 轮次异常结束：在途工具不会再有终态更新，清掉防状态永久卡 running
 			s.inFlightTools = make(map[string]bool)
@@ -1179,6 +1202,9 @@ func (m *Manager) onSessionUpdate(id, sessionID string, raw json.RawMessage) {
 		if u.Tool != nil {
 			if isTerminalToolStatus(u.Tool.Status) {
 				delete(s.inFlightTools, u.ToolCallID)
+				// 诊断：终态摘除后剩余在途数决定兜底定时器能否重排
+				logf("chat: 工具终态 id=%s tool=%s status=%s 剩余在途=%d",
+					id, u.Tool.Name, u.Tool.Status, len(s.inFlightTools))
 			} else {
 				s.inFlightTools[u.ToolCallID] = true
 			}
