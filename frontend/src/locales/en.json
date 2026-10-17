@@ -894,6 +894,7 @@
       "dispatch_ok": "Dispatched to \"{{name}}\"",
       "dispatch_failed": "Dispatch failed: {{err}}",
       "dispatch_busy": "Requirement is already being dispatched",
+      "quick_start": "Quick start",
       "no_acp_tool": "No ACP-capable tool available; dispatch cancelled",
       "save": "Save",
       "save_failed": "Failed to save: {{err}}",
