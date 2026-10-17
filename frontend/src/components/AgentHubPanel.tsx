@@ -856,11 +856,11 @@ export default function AgentHubPanel() {
         });
         return;
       }
-      // rephrase：激活成功后填 @ 标签。label 优先从 mention 候选取（upsertChat 后
-      // options 已含新 chat）；时序兜底按同一规则构造，激活成功却填不进输入框才是异常，
-      // 用构造兜底而非报错。
+      // rephrase：激活成功后填 @ 标签。走到此分支说明点击时目标未激活，闭包里的
+      // options 必不含新 chat，直接按 buildMentionOptions 同一公式构造 label
+      // （toolDisplayName#chatID），激活成功却填不进输入框才是异常，不报错。
       activateAndThen(m, (chat) => {
-        const label = options.find((o) => o.id === chat.ID)?.label ?? `${toolDisplayName(chat.ToolID)}#${chat.ID}`;
+        const label = `${toolDisplayName(chat.ToolID)}#${chat.ID}`;
         setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
         inputRef.current?.focus();
       });
