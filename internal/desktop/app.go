@@ -28,6 +28,7 @@ import (
 	"github.com/yangk/kshell/internal/requirements"
 	"github.com/yangk/kshell/internal/sessionarchive"
 	"github.com/yangk/kshell/internal/terminal"
+	"github.com/yangk/kshell/internal/weixin"
 	"github.com/yangk/kshell/internal/workspace"
 )
 
@@ -178,6 +179,11 @@ type App struct {
 	// chatAliases 是聊天重建后的新旧会话 ID 映射（旧 ID → 新 ID）：重建换 ID 后
 	// 前端页签仍持旧 ID，投递入口经别名解析继续无感投递。mu 保护。
 	chatAliases map[string]string
+
+	// wx 是微信桥运行时（startWeixin 装配；nil = 未启用微信桥）。mu 保护。
+	wx *weixin.Runtime
+	// hubConsole 是桌面端 AgentHub 命令层（HubCommand 惰性创建）。mu 保护。
+	hubConsole *hub.Console
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。
@@ -241,6 +247,7 @@ func (a *App) Startup(ctx context.Context) {
 
 	// 系统热键 Alt+Shift+K：独立 goroutine 跑 Win32 消息循环，随进程存活。
 	go startHotkey(a)
+	a.startWeixin() // 微信桥：凭据已配置即启动长轮询，否则等前端扫码绑定
 }
 
 var updateCheckDelay = 3 * time.Second
@@ -539,14 +546,17 @@ func (a *App) quitApp(ctx context.Context) {
 
 // Shutdown 供 Wails OnShutdown 挂载：先撤托盘，再限时清理子资源。
 // 清理超时也返回——避免关终端卡住时进程永远留在任务管理器。
+// cleanup 在调用方 goroutine 读出后再传入 goroutine：包级变量可能被测试
+// 在主 goroutine 改写，goroutine 内不再读它可避免 -race 误报。
 func (a *App) Shutdown(ctx context.Context) {
 	_ = ctx // 退出清理无取消语义：尽量收干净，但不能无限阻塞进程退出
 	stopHotkey()
 	quitTrayLoop()
+	cleanup := runShutdownCleanup
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		runShutdownCleanup(a)
+		cleanup(a)
 	}()
 	select {
 	case <-done:
@@ -581,6 +591,9 @@ var runShutdownCleanup = func(a *App) {
 	}
 	if sshHub != nil {
 		sshHub.Close()
+	}
+	if r := a.wxRuntime(); r != nil { // 微信桥：停长轮询（凭据保留，重启恢复）
+		r.Stop()
 	}
 }
 

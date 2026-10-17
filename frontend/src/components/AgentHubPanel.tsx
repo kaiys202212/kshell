@@ -15,6 +15,7 @@ import {
   getTools,
   getModelConfig,
   getSessions,
+  hubCommand,
   listChatCommands,
   listChatModels,
   listHubArchive,
@@ -32,6 +33,7 @@ import { toolDisplayName } from '../lib/agentNotify';
 import { loadDefaultCreate, loadLastCreate, loadToolModels, saveDefaultCreate, saveLastCreate, saveToolModels } from '../lib/agenthubDefaults';
 import { quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
+import { isHubNumber, isNewHubCommand } from '../lib/hubCommands';
 import { dispatchRequirement } from '../lib/dispatchRequirement';
 import { REQUIREMENT_MIME } from './RequirementList';
 import { attributionText, baseName, resolveAttribution } from '../lib/hubAttribution';
@@ -703,6 +705,18 @@ export default function AgentHubPanel() {
   // dragOver 校验 MIME 后 preventDefault（允许 drop）并高亮面板；drop 解析
   // payload 调 dispatchRequirement（带上默认设置），成功/失败均提示。
   const [reqDragOver, setReqDragOver] = useState(false);
+
+  // runSharedCommand 把输入透传给 Go 侧共享命令层（微信/桌面端同源），
+  // 回复逐条作为本地系统提示渲染进 hub 消息流（不落盘、不投给 agent）。
+  const runSharedCommand = (text: string) => {
+    setDraft('');
+    void hubCommand(text)
+      .then((replies) => {
+        for (const r of replies) useAppStore.getState().pushHubLocal(r.Text);
+      })
+      .catch((e: unknown) => useAppStore.getState().notify(backendError(e), 'error'));
+  };
+
   const handleRequirementDragOver = (e: React.DragEvent<HTMLElement>) => {
     if (!e.dataTransfer.types.includes(REQUIREMENT_MIME)) return;
     e.preventDefault();
@@ -744,14 +758,26 @@ export default function AgentHubPanel() {
   const send = () => {
     const text = draft.trim();
     if (!text) return;
+    // 纯数字输入：命令层的「编号切换/菜单选择」语义，透传给共享命令层处理
+    //（#l/#f 的编号映射在 Go 侧，前端无从判断，统一透传）。
+    if (isHubNumber(text)) {
+      runSharedCommand(text);
+      return;
+    }
     // 仅当 trim 后以 # 开头才视为 kshell 客户端命令意图；行中 # 词
     // （如颜色 #333、issue #123）原样透传给 agent。取首词校验，
     // 未知命令提示并保留草稿。
     if (text.startsWith('#')) {
       const cmdToken = text.split(/\s+/)[0] ?? '';
       const name = cmdToken.slice(1).toLowerCase();
-      if (!HUB_COMMAND_NAMES.has(name)) {
+      // 旧命令表优先命中，行为零改动；未命中再查共享命令层新别名
+      //（#? #l #la #en #n #s #m #g #f #st #c），仍未知才提示。
+      if (!HUB_COMMAND_NAMES.has(name) && !isNewHubCommand(text)) {
         useAppStore.getState().notify(t('ui.hub.unknown_cmd', { cmd: cmdToken }), 'error');
+        return;
+      }
+      if (!HUB_COMMAND_NAMES.has(name)) {
+        runSharedCommand(text);
         return;
       }
       // #find：不透传给 agent。带关键词（`#find claude`）时以剩余文本为初始过滤词

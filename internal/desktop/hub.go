@@ -28,6 +28,9 @@ func (a *App) recordHubMessage(m hub.Message) {
 	}
 	_ = store.Append(m)
 	a.Emit("hub:changed")
+	if r := a.wxRuntime(); r != nil { // 微信桥出站镜像（异步，不阻塞写入路径）
+		r.OnHubMessage(m)
+	}
 }
 
 // recordHubUserMessage 记录一条用户发出的消息：从 chat manager 反查归因字段。

@@ -241,6 +241,21 @@
     "openrouter": { "name": "OpenRouter", "note": "OpenAI protocol only" }
   },
   "ui": {
+    "weixin": {
+      "title": "WeChat bridge",
+      "desc": "After binding, view agent replies and send commands in WeChat (desktop is the primary view).",
+      "bind": "Link WeChat",
+      "rebind": "Regenerate",
+      "unbind": "Unlink",
+      "unbind_confirm": "Confirm unlink?",
+      "bound_as": "Linked as {{0}}",
+      "running": "Running",
+      "disconnected": "Disconnected, please link again",
+      "scan_hint": "Scan with WeChat; binding completes automatically after confirmation",
+      "expired": "QR code expired",
+      "pending_undelivered": "{{count}} undelivered",
+      "error": "WeChat bridge operation failed"
+    },
     "error_boundary": {
       "title": "Something went wrong",
       "detail": "The interface failed to render. Reload to recover. The raw error below helps reporting the issue.",
@@ -251,6 +266,7 @@
       "nav": {
         "aria": "Settings sections",
         "general": "General",
+        "weixin": "WeChat",
         "model": "Model",
         "tools": "Tools",
         "skills": "Skill Plaza"

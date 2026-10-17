@@ -28,6 +28,7 @@ const api = vi.hoisted(() => ({
   loadHubArchive: vi.fn(),
   clearHubMessages: vi.fn(),
   recallHubMessage: vi.fn(),
+  hubCommand: vi.fn(),
   listRequirements: vi.fn(),
   markRequirementDispatched: vi.fn(),
 }));
@@ -81,6 +82,7 @@ beforeEach(() => {
   api.loadHubArchive.mockResolvedValue([]);
   api.clearHubMessages.mockResolvedValue(undefined);
   api.recallHubMessage.mockResolvedValue(undefined);
+  api.hubCommand.mockResolvedValue([]);
   api.listRequirements.mockResolvedValue([]);
   api.markRequirementDispatched.mockResolvedValue(undefined);
   dispatchRequirement.mockResolvedValue(undefined);
@@ -386,6 +388,54 @@ describe('AgentHubPanel', () => {
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c9', '继续'));
+  });
+
+  it('新命令别名 #l：透传 HubCommand、清空输入框且不投给 agent', async () => {
+    api.hubCommand.mockResolvedValue([{ Text: '会话列表' }]);
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#l' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.hubCommand).toHaveBeenCalledWith('#l'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    expect((box as HTMLTextAreaElement).value).toBe('');
+    // 回复文本作为系统提示渲染进 hub 消息流
+    await waitFor(() =>
+      expect(useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '会话列表')).toBe(true),
+    );
+  });
+
+  it('带参数新命令 #f claude：完整原文透传', async () => {
+    api.hubCommand.mockResolvedValue([]);
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#f claude' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.hubCommand).toHaveBeenCalledWith('#f claude'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
+  it('纯数字输入 3：同样透传 HubCommand（编号切换/菜单选择）', async () => {
+    api.hubCommand.mockResolvedValue([{ Text: '已切换' }]);
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '3' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.hubCommand).toHaveBeenCalledWith('3'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
+  it('旧命令 #new 优先命中，不走 HubCommand', () => {
+    useAppStore.setState({ chats: [], workspaces: [workspaceA], selectedProject: 'D:\\ws\\a' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#new' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    // 旧路径命中：打开新建 agent 对话框（输入清空），绝不透传 HubCommand
+    expect(api.hubCommand).not.toHaveBeenCalled();
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    expect((box as HTMLTextAreaElement).value).toBe('');
+    expect(screen.getByRole('dialog')).toBeTruthy();
   });
 
   it('未 @ 时回落到 hub 消息里最近一次 agent 回复的会话，而非 store.lastAgentId', async () => {

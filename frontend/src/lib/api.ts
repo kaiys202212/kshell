@@ -502,6 +502,17 @@ export interface InstallSkillResult {
   Errors?: Record<string, string> | null;
 }
 
+// desktop.WeixinStatusView 的 JSON 形态（internal/desktop/weixin.go）：
+// Binding: idle | pending | ok | expired
+export interface WeixinStatusView {
+  bound: boolean;
+  running: boolean;
+  wxid: string;
+  pending: number;
+  undelivered: number;
+  binding: string;
+}
+
 interface AppBindings {
   ScanSessions(): Promise<unknown>;
   GetWorkspaces(): Promise<Workspace[]>;
@@ -645,6 +656,7 @@ interface AppBindings {
   LoadHubArchive(month: string): Promise<HubMessage[]>;
   ClearHubMessages(): Promise<void>;
   RecallHubMessage(id: number): Promise<void>;
+  HubCommand(text: string): Promise<HubReply[]>;
   ListRequirements(): Promise<Requirement[]>;
   AddRequirement(project: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
   UpdateRequirement(id: string, project: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
@@ -652,6 +664,10 @@ interface AppBindings {
   MarkRequirementDispatched(id: string, workspace: string, chatID: string, title: string): Promise<void>;
   ArchiveRequirement(id: string): Promise<{ released: boolean; chatId: string }>;
   SetRequirementStatus(id: string, status: string): Promise<void>;
+  WeixinBind(): Promise<string>;
+  WeixinBindStatus(): Promise<string>;
+  WeixinUnbind(): Promise<void>;
+  WeixinStatus(): Promise<WeixinStatusView>;
 }
 
 declare global {
@@ -1541,6 +1557,19 @@ export async function clearHubMessages(): Promise<void> {
   await a.ClearHubMessages();
 }
 
+// HubReply 是共享命令层（internal/hub.Reply）的一条回复文本，按序展示。
+export interface HubReply {
+  Text: string;
+}
+
+// hubCommand 把输入透传给 Go 侧共享命令层（internal/desktop/weixin.go HubCommand）。
+// 微信桥与桌面端 AgentHub 同源同语义；失败抛错由调用方经 backendError 提示。
+export async function hubCommand(text: string): Promise<HubReply[]> {
+  const a = app();
+  if (!a) return [];
+  return a.HubCommand(text);
+}
+
 // recallHubMessage 撤回一条排队中的 Hub 用户消息（后端从队列真移除并标记已撤回）。
 export async function recallHubMessage(id: number): Promise<void> {
   const a = app();
@@ -1998,4 +2027,38 @@ export function onChatCommands(cb: (p: { id: string; commands: ChatCommand[] }) 
   return EventsOn('chat:commands', (p: { id?: string; commands?: ChatCommand[] }) =>
     cb({ id: p?.id ?? '', commands: p?.commands ?? [] }),
   );
+}
+
+// 微信桥（internal/desktop/weixin.go）
+// WeixinBind 发起扫码绑定，返回二维码内容 URL（前端转二维码图）。
+export async function weixinBind(): Promise<string> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  return a.WeixinBind();
+}
+
+// WeixinBindStatus 返回绑定状态：idle / pending / ok / expired。
+export async function weixinBindStatus(): Promise<string> {
+  const a = app();
+  if (!a) return 'idle';
+  return a.WeixinBindStatus();
+}
+
+// WeixinUnbind 解绑并清空凭据。
+export async function weixinUnbind(): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.WeixinUnbind();
+}
+
+// WeixinStatus 返回微信桥状态快照；桥未装配时 Go 返回零值也正常返回，
+// 仅调用本身失败（异常）时返回 null，由调用方呈现错误态。
+export async function weixinStatus(): Promise<WeixinStatusView | null> {
+  const a = app();
+  if (!a) return null;
+  try {
+    return await a.WeixinStatus();
+  } catch {
+    return null;
+  }
 }

@@ -59,7 +59,7 @@ func setTools(t *testing.T, app *App, tools []discovery.Tool) {
 }
 
 // newTestApp 组装一个扫描结果固定、弹窗打桩的 App。
-func newTestApp(t *testing.T) (*App, *stubLauncher, *[]string) {
+func newTestApp(t *testing.T) (*App, *stubLauncher, *eventLog) {
 	t.Helper()
 
 	// Home 用临时目录：mcpConfigDir 会真实写 MCP 配置文件，不能落在磁盘 D:\home
@@ -77,7 +77,7 @@ func newTestApp(t *testing.T) (*App, *stubLauncher, *[]string) {
 	res := &discovery.Result{Sessions: sessions, Workspaces: workspaces}
 
 	stub := &stubLauncher{}
-	var events []string
+	events := newEventLog()
 	app := NewAppWith(Options{
 		Home:      home,
 		CachePath: filepath.Join(home, ".kshell", "cache", "index.json"),
@@ -90,9 +90,9 @@ func newTestApp(t *testing.T) (*App, *stubLauncher, *[]string) {
 			return res, nil
 		},
 		Windows: NewWindowManager(stub, nil),
-		Emit:    func(name string, _ ...any) { events = append(events, name) },
+		Emit:    events.emit,
 	})
-	return app, stub, &events
+	return app, stub, events
 }
 
 func TestScanSessionsDelegatesToDiscovery(t *testing.T) {
@@ -104,8 +104,8 @@ func TestScanSessionsDelegatesToDiscovery(t *testing.T) {
 	if len(app.result.Sessions) != 1 || len(app.result.Workspaces) != 1 {
 		t.Fatalf("扫描后 result 未落位: %+v", app.result)
 	}
-	if len(*events) < 1 || (*events)[len(*events)-1] != "scan:done" {
-		t.Fatalf("扫描完成应推送 scan:done, got %v", *events)
+	if evs := events.names(); len(evs) < 1 || evs[len(evs)-1] != "scan:done" {
+		t.Fatalf("扫描完成应推送 scan:done, got %v", events.names())
 	}
 	if got := app.GetWorkspaces(); len(got) != 1 || got[0].Path != `D:\ws-a` {
 		t.Fatalf("GetWorkspaces = %+v", got)
@@ -313,13 +313,13 @@ func TestScanSessionsWhileScanningQueuesFollowUp(t *testing.T) {
 		app.mu.Lock()
 		busy := app.scanning
 		app.mu.Unlock()
-		if !busy && len(*events) >= 2 {
+		if !busy && len(events.names()) >= 2 {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if len(*events) < 2 {
-		t.Fatalf("两轮扫描都应推送 scan:done, got %v", *events)
+	if len(events.names()) < 2 {
+		t.Fatalf("两轮扫描都应推送 scan:done, got %v", events.names())
 	}
 }
 
@@ -460,8 +460,8 @@ func TestScanFailureStillEmits(t *testing.T) {
 	app.mu.Unlock()
 	app.runScan()
 
-	if countNamed(*events, "scan:done") != 2 {
-		t.Fatalf("每次扫描结束都要推送 scan:done 让前端复位, got %v", *events)
+	if countNamed(events.names(), "scan:done") != 2 {
+		t.Fatalf("每次扫描结束都要推送 scan:done 让前端复位, got %v", events.names())
 	}
 	if app.result == nil || len(app.result.Sessions) != 1 {
 		t.Fatalf("扫描失败应保留上一次结果, got %+v", app.result)
@@ -524,14 +524,14 @@ func TestReapOnceEmitsWindowClosed(t *testing.T) {
 	if err := app.ResumeSession("s1"); err != nil {
 		t.Fatalf("ResumeSession error: %v", err)
 	}
-	if lastNamed(*events) != "scan:done" {
-		t.Fatalf("前置：Resume 前最后事件应是 scan:done, got %v", *events)
+	if lastNamed(events.names()) != "scan:done" {
+		t.Fatalf("前置：Resume 前最后事件应是 scan:done, got %v", events.names())
 	}
 
 	app.reapOnce()
 
-	if lastNamed(*events) != "window:closed" {
-		t.Fatalf("Reap 发现死亡窗口后应推送 window:closed, got %v", *events)
+	if lastNamed(events.names()) != "window:closed" {
+		t.Fatalf("Reap 发现死亡窗口后应推送 window:closed, got %v", events.names())
 	}
 	if wm.Alive("kshell · 修复上传白名单") {
 		t.Fatal("死亡窗口应被 Reap 回收")
@@ -620,8 +620,7 @@ func TestGetToolsPublishedBeforeScanFinishes(t *testing.T) {
 	started := make(chan struct{})
 	block := make(chan struct{})
 	var startOnce sync.Once
-	var mu sync.Mutex
-	var events []string
+	events := newEventLog()
 	app := NewAppWith(Options{
 		Home:      t.TempDir(),
 		CachePath: filepath.Join(t.TempDir(), "index.json"),
@@ -632,11 +631,7 @@ func TestGetToolsPublishedBeforeScanFinishes(t *testing.T) {
 			return &discovery.Result{}, nil
 		},
 		Windows: NewWindowManager(&stubLauncher{}, nil),
-		Emit: func(name string, _ ...any) {
-			mu.Lock()
-			events = append(events, name)
-			mu.Unlock()
-		},
+		Emit:    events.emit,
 	})
 
 	go app.runScan()
@@ -657,17 +652,15 @@ func TestGetToolsPublishedBeforeScanFinishes(t *testing.T) {
 	if !found {
 		t.Fatalf("会话扫描未结束时就应能读到已探测的 CLI, got %+v", got)
 	}
-	mu.Lock()
 	sawTools := false
-	for _, e := range events {
+	for _, e := range events.names() {
 		if e == "tools:updated" {
 			sawTools = true
 			break
 		}
 	}
-	mu.Unlock()
 	if !sawTools {
-		t.Fatalf("DetectAll 结束后应推 tools:updated, got %v", events)
+		t.Fatalf("DetectAll 结束后应推 tools:updated, got %v", events.names())
 	}
 	close(block)
 }

@@ -8,8 +8,10 @@ import (
 	"testing"
 )
 
-// stubLauncher 记录 Launch/Focus 调用，便于断言
+// stubLauncher 记录 Launch/Focus 调用，便于断言。
+// mu 保护记录切片：并发同标题 LaunchSession 等测试在 -race 下会并发写入。
 type stubLauncher struct {
+	mu        sync.Mutex
 	launches  []launchCall
 	focuses   []string
 	launchErr error
@@ -23,11 +25,15 @@ type launchCall struct {
 }
 
 func (s *stubLauncher) Launch(dir, title string, args []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.launches = append(s.launches, launchCall{dir: dir, title: title, args: args})
 	return s.launchErr
 }
 
 func (s *stubLauncher) Focus(title string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.focuses = append(s.focuses, title)
 	return s.focusRet
 }

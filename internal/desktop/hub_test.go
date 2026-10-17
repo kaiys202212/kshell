@@ -82,7 +82,7 @@ func TestHandleAgentNotifyDedupSkipsHub(t *testing.T) {
 // SendChatPrompt 落一条 user 消息。
 func TestSendChatPromptRecordsHubUserMessage(t *testing.T) {
 	a, store, rec := newHubTestApp(t)
-	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil)
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m
 
@@ -117,7 +117,7 @@ func TestSendChatPromptRecordsHubUserMessage(t *testing.T) {
 func TestEmitChatNotifyRecordsHubMessage(t *testing.T) {
 	a, store, rec := newHubTestApp(t)
 	b := &fakeChatCaptureBackend{}
-	m := newChatManagerWith(rec.emit, b, nil, nil, a.recordHubAgentMessage, nil)
+	m := newChatManagerWith(rec.emit, b, nil, nil, a.recordHubAgentMessage, nil, nil)
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m
 
@@ -216,7 +216,7 @@ func waitStatusDesktop(t *testing.T, m *chat.Manager, id string) {
 // SendChatPrompt 空闲投递：user 消息先落 queued，投递回调随后清空并补 ack_delivered。
 func TestSendChatPromptImmediateAck(t *testing.T) {
 	a, store, rec := newHubTestApp(t)
-	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil)
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m
 	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
@@ -270,7 +270,7 @@ func TestSendChatPromptQueuedAndRecall(t *testing.T) {
 	conn := &fakeChatConn{waitCh: make(chan struct{})}
 	conn.promptGate = make(chan struct{})
 	b := &queueGateBackend{conn: conn}
-	m := newChatManagerWith(rec.emit, b, nil, nil, a.recordHubAgentMessage, nil)
+	m := newChatManagerWith(rec.emit, b, nil, nil, a.recordHubAgentMessage, nil, nil)
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m
 	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
@@ -390,7 +390,7 @@ func TestCloseChatClearsHubQueuedStatus(t *testing.T) {
 	conn := &fakeChatConn{waitCh: make(chan struct{})}
 	conn.promptGate = make(chan struct{})
 	b := &queueGateBackend{conn: conn}
-	m := newChatManagerWith(rec.emit, b, nil, nil, a.recordHubAgentMessage, nil)
+	m := newChatManagerWith(rec.emit, b, nil, nil, a.recordHubAgentMessage, nil, nil)
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m
 	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
@@ -439,7 +439,7 @@ func TestCloseChatClearsHubQueuedStatus(t *testing.T) {
 // 已送达的消息撤回报 err.hub.not_queued。
 func TestRecallHubMessageNotQueued(t *testing.T) {
 	a, store, rec := newHubTestApp(t)
-	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil)
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m
 	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
@@ -466,7 +466,7 @@ func TestSendChatPromptQueuedThenDelivered(t *testing.T) {
 	conn := &fakeChatConn{waitCh: make(chan struct{})}
 	conn.promptGate = make(chan struct{})
 	b := &queueGateBackend{conn: conn}
-	m := newChatManagerWith(rec.emit, b, nil, nil, a.recordHubAgentMessage, nil)
+	m := newChatManagerWith(rec.emit, b, nil, nil, a.recordHubAgentMessage, nil, nil)
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m
 	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
@@ -579,7 +579,7 @@ func TestRecordHubAgentMessageDerivesSessionIDFromTermKey(t *testing.T) {
 func TestRecordHubAgentMessageLandsOnChainHead(t *testing.T) {
 	b := &recordingBackend{}
 	a, store, rec := newHubTestApp(t)
-	m := newChatManagerWith(rec.emit, b, nil, nil, a.recordHubAgentMessage, a.originalChatID)
+	m := newChatManagerWith(rec.emit, b, nil, nil, a.recordHubAgentMessage, a.originalChatID, nil)
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m
 

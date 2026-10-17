@@ -23,7 +23,7 @@ func newRequirementTestApp(t *testing.T, backend chat.Backend) (*App, *requireme
 	if backend == nil {
 		backend = &fakeChatCaptureBackend{}
 	}
-	m := newChatManagerWith(rec.emit, backend, nil, nil, nil, nil)
+	m := newChatManagerWith(rec.emit, backend, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 	app := NewAppWith(Options{Chats: m, RequirementsStore: store, Emit: rec.emit})
 	return app, store, m, rec

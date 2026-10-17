@@ -52,6 +52,7 @@ import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
 import { ProvidersEditor } from '../components/ProvidersEditor';
 import { SkillPlaza } from '../components/SkillPlaza';
+import { WeixinSettings } from '../components/WeixinSettings';
 import { normalizeSpec, withoutBuiltinSpecs, type CustomProviderSpec } from '../lib/providersForm';
 
 // 语言行内置三选项；system（跟随系统）不是语言码，不在 getLanguageOptions 里
@@ -61,10 +62,11 @@ const BUILTIN_LANGUAGE_CODES = ['en', 'zh-CN', 'system'];
 // translateBackend 会把首行后的内容当参数吞掉，导致漏译）
 const translateLog = (text: string): string => text.split('\n').map(translateBackend).join('\n');
 
-type Section = 'general' | 'model' | 'tools' | 'skills';
+type Section = 'general' | 'weixin' | 'model' | 'tools' | 'skills';
 
 const SECTIONS: { id: Section; labelKey: string }[] = [
   { id: 'general', labelKey: 'ui.settings.nav.general' },
+  { id: 'weixin', labelKey: 'ui.settings.nav.weixin' },
   { id: 'model', labelKey: 'ui.settings.nav.model' },
   { id: 'tools', labelKey: 'ui.settings.nav.tools' },
   { id: 'skills', labelKey: 'ui.settings.nav.skills' },
@@ -809,6 +811,8 @@ export default function Settings() {
               </section>
             </>
           )}
+
+          {section === 'weixin' && <WeixinSettings />}
 
           {section === 'model' && (
             <section className="mb-5 rounded border border-border bg-card p-3.5">
