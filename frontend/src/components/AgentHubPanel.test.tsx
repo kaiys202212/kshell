@@ -1321,6 +1321,86 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c2', tt('ui.hub.quick_continue_text')));
   });
 
+  it('「继续」目标未激活时先激活再发送（termKey session: 前缀 resume）', async () => {
+    // 记录的 chatId 不在 chats（会话已关闭/重启后未恢复）：走激活路径
+    api.listHubMessages.mockResolvedValue([
+      { id: 5, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c-dead', termKey: 'session:s-9', text: 'ok', ts: 5 },
+    ]);
+    api.openSessionACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'c-new', Key: 'session:s-9', Kind: 'session', SessionID: 's-9' }),
+    });
+    render(<AgentHubPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_continue') }));
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('s-9'));
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c-new', tt('ui.hub.quick_continue_text')));
+    // 激活后的会话登记进 store，后续消息可直达
+    expect(useAppStore.getState().chats.some((c) => c.ID === 'c-new')).toBe(true);
+  });
+
+  it('「继续」目标未激活时优先用 sessionId 快照激活', async () => {
+    api.listHubMessages.mockResolvedValue([
+      { id: 6, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c-dead', sessionId: 's-snap', text: 'ok', ts: 6 },
+    ]);
+    api.openSessionACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'c-new2', Key: 'session:s-snap', Kind: 'session', SessionID: 's-snap' }),
+    });
+    render(<AgentHubPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_continue') }));
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('s-snap'));
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c-new2', tt('ui.hub.quick_continue_text')));
+  });
+
+  it('「继续」无 sessionId/termKey 前缀时按 workspace+tool+标题匹配发现会话激活', async () => {
+    // 存量记录（旧格式，无 sessionId；termKey 为 new:N 无磁盘会话 ID）
+    api.listHubMessages.mockResolvedValue([
+      { id: 7, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c-dead', termKey: 'new:2', workspace: 'D:\\ws\\a', sessionTitle: '重构认证', text: 'ok', ts: 7 },
+    ]);
+    api.getSessions.mockResolvedValue([
+      { ID: 's-legacy', ToolID: 'claude', Workspace: 'D:\\ws\\a', Title: '重构认证', CreatedAt: '', UpdatedAt: '', Messages: 3, Path: '' },
+      { ID: 's-other', ToolID: 'claude', Workspace: 'D:\\ws\\a', Title: '别的会话', CreatedAt: '', UpdatedAt: '', Messages: 1, Path: '' },
+    ]);
+    api.openSessionACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'c-legacy', Key: 'session:s-legacy', Kind: 'session', SessionID: 's-legacy' }),
+    });
+    render(<AgentHubPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_continue') }));
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('s-legacy'));
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c-legacy', tt('ui.hub.quick_continue_text')));
+  });
+
+  it('「继续」目标未激活且无法恢复会话时提示 need_target 且不发送', async () => {
+    api.listHubMessages.mockResolvedValue([
+      { id: 8, kind: 'agent', tool: 'codex', event: 'Stop', text: 'x', ts: 8 },
+    ]);
+    render(<AgentHubPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_continue') }));
+    await waitFor(() =>
+      expect(useAppStore.getState().toasts.some((t) => t.title === tt('ui.hub.need_target'))).toBe(true),
+    );
+    expect(api.openSessionACP).not.toHaveBeenCalled();
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
+  it('「继续」激活失败时报 find_activate_failed 且不发送', async () => {
+    api.listHubMessages.mockResolvedValue([
+      { id: 9, kind: 'agent', tool: 'claude', event: 'Stop', termKey: 'session:s-err', text: 'ok', ts: 9 },
+    ]);
+    api.openSessionACP.mockRejectedValue(new Error('boom'));
+    render(<AgentHubPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_continue') }));
+    await waitFor(() =>
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((t) => t.title === tt('ui.hub.find_activate_failed').replace('{{err}}', 'boom')),
+      ).toBe(true),
+    );
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
   it('快速回复无目标 agent 时提示 need_target 且不发送', async () => {
     api.listHubMessages.mockResolvedValue([
       { id: 4, kind: 'agent', tool: 'codex', event: 'Stop', text: 'x', ts: 4 },

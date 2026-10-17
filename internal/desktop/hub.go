@@ -50,6 +50,8 @@ func (a *App) recordHubUserMessageStatus(chatID, text, hubID, status string) {
 			m.Tool = info.ToolID
 			m.Workspace = info.Workspace
 			m.SessionTitle = info.Title
+			// 磁盘会话 ID 快照：会话关闭后「继续」按钮靠它精确 resume
+			m.SessionID = info.SessionID
 		}
 	}
 	a.recordHubMessageWithID(m, hubID)
@@ -223,6 +225,7 @@ func (a *App) recordHubAgentMessage(p agenthook.Payload) {
 			if info, ok := mgr.Get(resolved); ok {
 				m.ChatID = a.originalChatID(info.ID)
 				m.SessionTitle = info.Title
+				m.SessionID = info.SessionID
 			}
 		}
 		if m.SessionTitle == "" && p.TermKey != "" {
@@ -231,6 +234,9 @@ func (a *App) recordHubAgentMessage(p agenthook.Payload) {
 					m.SessionTitle = info.Title
 					if m.ChatID == "" {
 						m.ChatID = a.originalChatID(info.ID) // 同口径：链头
+					}
+					if m.SessionID == "" {
+						m.SessionID = info.SessionID
 					}
 					break
 				}
@@ -249,6 +255,12 @@ func (a *App) recordHubAgentMessage(p agenthook.Payload) {
 				}
 			}
 		}
+	}
+	// SessionID 仍为空时从 termKey 派生：session: 前缀即磁盘会话 ID（终端 hook
+	// 通道与查不到的 ACP 会话都走这里），快照供「继续」按钮精确 resume；
+	// 无前缀（如新建聊天的 new:N）不设。
+	if m.SessionID == "" && strings.HasPrefix(p.TermKey, "session:") {
+		m.SessionID = strings.TrimPrefix(p.TermKey, "session:")
 	}
 	a.recordHubMessage(m)
 }
@@ -269,6 +281,7 @@ func (a *App) recordHubWelcome(info chat.Info) {
 		TermKey:      info.Key,
 		Workspace:    info.Workspace,
 		SessionTitle: info.Title,
+		SessionID:    info.SessionID,
 		Text:         text,
 	})
 }

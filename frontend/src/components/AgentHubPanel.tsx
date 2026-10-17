@@ -14,6 +14,7 @@ import {
   closeChat,
   getTools,
   getModelConfig,
+  getSessions,
   listChatCommands,
   listChatModels,
   listHubArchive,
@@ -796,12 +797,60 @@ export default function AgentHubPanel() {
     return null;
   };
 
+  // resolveHubSessionId 从 hub 记录解析磁盘会话 ID（目标未激活时精确 resume 用）。
+  // 三级来源：sessionId 快照（新落盘）→ termKey 的 session: 前缀（KindSession
+  // 聊天与终端 hook 通道的 key 约定）→ workspace+tool+sessionTitle 匹配发现
+  // 缓存（存量记录兜底；GetSessions 按 UpdatedAt 降序，首条命中即最新）。
+  // 全部落空返回 null。getSessions 只读扫描缓存，失败按解析不到处理。
+  const resolveHubSessionId = async (m: HubMessage): Promise<string | null> => {
+    if (m.sessionId) return m.sessionId;
+    if (m.termKey?.startsWith('session:')) return m.termKey.slice('session:'.length);
+    if (!m.workspace || !m.tool || !m.sessionTitle) return null;
+    try {
+      const sessions = await getSessions();
+      const hit = sessions.find(
+        (s) => s.ToolID === m.tool && sameWorkspacePath(s.Workspace, m.workspace!) && s.Title === m.sessionTitle,
+      );
+      return hit?.ID ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  // activateAndSend 目标会话未激活时的「先激活再发送」路径：解析磁盘会话 ID →
+  // openSessionACP 激活（Go 侧对已退出会话自动重建）→ 登记进 store → 发送。
+  // 解析不到 / 激活失败都报错提示，不把消息投给空白会话（上下文丢失必须可见）。
+  const activateAndSend = (m: HubMessage, text: string) => {
+    void resolveHubSessionId(m)
+      .then(async (sessionID) => {
+        if (!sessionID) {
+          useAppStore.getState().notify(t('ui.hub.need_target'), 'error');
+          return;
+        }
+        const res = await openSessionACP(sessionID);
+        if (!res.Chat) return;
+        const chat = res.Chat;
+        useAppStore.getState().upsertChat(chat);
+        useAppStore.getState().setLastAgentId(chat.ID);
+        await sendChatPrompt(chat.ID, text);
+        useAppStore.getState().setLastAgentId(chat.ID);
+      })
+      .catch((e: unknown) => {
+        useAppStore.getState().notify(t('ui.hub.find_activate_failed', { err: backendError(e) }), 'error');
+      });
+  };
+
   // quickReply 处理快捷回复点击：
   // - send：把 quick_continue_text（实际文本，与按钮文案解耦）发给归因 agent；
+  //   目标未激活（chats 反查不到，如会话已关闭/重启后未恢复）时先激活再发送；
   // - rephrase：保留式追加 @目标 到输入框（不清空用户正在输入的草稿），聚焦由用户补写后手动发送。
   const quickReply = (m: HubMessage, action: 'send' | 'rephrase') => {
     const targetId = quickTarget(m);
     if (!targetId) {
+      if (action === 'send') {
+        activateAndSend(m, t('ui.hub.quick_continue_text'));
+        return;
+      }
       useAppStore.getState().notify(t('ui.hub.need_target'), 'error');
       return;
     }

@@ -342,6 +342,45 @@ func TestLoadV1LiveMigratesOnNextWrite(t *testing.T) {
 	}
 }
 
+// TestSessionIDRoundtrip：SessionID 快照随消息落盘并在重载后保留。
+// 「继续」快捷按钮在会话未激活时靠它经 OpenSessionACP 精确恢复原会话。
+func TestSessionIDRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir, 0)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(Message{Kind: "user", Text: "hi", SessionID: "s-9"}); err != nil {
+		t.Fatal(err)
+	}
+	s2 := New(dir, 0)
+	if err := s2.Load(); err != nil {
+		t.Fatal(err)
+	}
+	got := s2.List()
+	if len(got) != 1 || got[0].SessionID != "s-9" {
+		t.Fatalf("SessionID 应落盘并重载保留: %+v", got)
+	}
+}
+
+// TestLoadV2LiveWithoutSessionID：v2 旧文件（无 sessionId 字段）加载兼容，
+// 消息完整、SessionID 零值；下次写入按当前版本重写。
+func TestLoadV2LiveWithoutSessionID(t *testing.T) {
+	dir := t.TempDir()
+	v2 := `{"version":2,"messages":[{"id":1,"kind":"user","text":"old","ts":100}]}`
+	if err := os.WriteFile(filepath.Join(dir, "live.json"), []byte(v2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := New(dir, 0)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	got := s.List()
+	if len(got) != 1 || got[0].Text != "old" || got[0].SessionID != "" {
+		t.Fatalf("v2 消息应完整保留且 SessionID 为零值: %+v", got)
+	}
+}
+
 // TestLoadRejectsUnknownVersions：version=0（缺失/非本程序产出）与大于当前版本的
 // live.json 都按空处理，防止误解析未知结构。
 func TestLoadRejectsUnknownVersions(t *testing.T) {

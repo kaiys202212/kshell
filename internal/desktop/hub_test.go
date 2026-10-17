@@ -103,6 +103,9 @@ func TestSendChatPromptRecordsHubUserMessage(t *testing.T) {
 	if u.SessionTitle != "t" {
 		t.Fatalf("user 消息应带 SessionTitle 快照: %+v", u)
 	}
+	if u.SessionID != "s1" {
+		t.Fatalf("user 消息应带 SessionID 快照: %+v", u)
+	}
 	if rec.count("hub:changed") == 0 {
 		t.Fatalf("应 emit hub:changed，得到 %v", rec.names)
 	}
@@ -134,6 +137,10 @@ func TestEmitChatNotifyRecordsHubMessage(t *testing.T) {
 	// 会话标题快照随消息落盘：会话关闭/重启后 chats 反查不到，气泡归因靠它
 	if agent.SessionTitle != "t" {
 		t.Fatalf("agent 消息应带 SessionTitle 快照: %+v", agent)
+	}
+	// 磁盘会话 ID 快照随消息落盘：会话关闭后「继续」按钮靠它精确 resume
+	if agent.SessionID != "s1" {
+		t.Fatalf("agent 消息应带 SessionID 快照: %+v", agent)
 	}
 }
 
@@ -538,6 +545,31 @@ func TestRecordHubAgentMessageTerminalSessionTitle(t *testing.T) {
 	}
 	if msgs[0].ChatID != "" {
 		t.Fatalf("终端通道不应设 ChatID，得到 %q", msgs[0].ChatID)
+	}
+	if msgs[0].SessionID != "s1" {
+		t.Fatalf("终端通道应从 termKey 派生 SessionID: %+v", msgs[0])
+	}
+}
+
+// chat/终端管理器都查不到时，termKey 的 session: 前缀即磁盘会话 ID：
+// 快照落盘供「继续」按钮在会话未激活时精确 resume；无前缀（如 new:N）不设。
+func TestRecordHubAgentMessageDerivesSessionIDFromTermKey(t *testing.T) {
+	a, store, _ := newHubTestApp(t)
+	a.recordHubAgentMessage(agenthook.Payload{
+		Tool: "claude", Event: "done", TermKey: "session:s-42", Workspace: "D:/w", Summary: "ok",
+	})
+	msgs := store.List()
+	if len(msgs) != 1 || msgs[0].SessionID != "s-42" {
+		t.Fatalf("应从 termKey 派生 SessionID: %+v", msgs)
+	}
+
+	a2, store2, _ := newHubTestApp(t)
+	a2.recordHubAgentMessage(agenthook.Payload{
+		Tool: "claude", Event: "done", TermKey: "new:2", Workspace: "D:/w", Summary: "ok",
+	})
+	msgs2 := store2.List()
+	if len(msgs2) != 1 || msgs2[0].SessionID != "" {
+		t.Fatalf("无 session: 前缀不得设 SessionID: %+v", msgs2)
 	}
 }
 
