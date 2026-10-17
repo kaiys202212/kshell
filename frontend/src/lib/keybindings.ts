@@ -2,7 +2,7 @@
 // 设计要点（docs/plans/2026-10-17-global-shortcuts-design.md）：
 // 1. e.defaultPrevented 退让（组件已消费的按键不抢）；
 // 2. activeElement 在 .xterm 内分级退让——只有切 tab 类（不写 pty、无双效应）仍生效，
-//    Ctrl+K / Ctrl+F / Ctrl+W / F1 让行给终端语义；
+//    Ctrl+K / Ctrl+F / Ctrl+W / Ctrl+T / F1 让行给终端语义；
 // 3. 输入框聚焦不退让：这些键位不产生文本，输入框里 Ctrl+K/切 tab 仍可用。
 // actions 由调用方注入（App.tsx），纯函数便于测试与展示层（帮助面板）共用常量。
 
@@ -59,21 +59,31 @@ export const SHORTCUTS: ShortcutDef[] = [
     matches: (e) => e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'w' || e.key === 'W'),
   },
   {
-    // Ctrl+0 与 Ctrl+T 都映射回首页（首页=新建会话入口）
-    id: 'go-home',
-    keys: 'Ctrl+0 / Ctrl+T',
-    matches: (e) => {
-      if (!e.ctrlKey || e.shiftKey || e.altKey) return false;
-      return e.code === 'Digit0' || e.key === 't' || e.key === 'T';
-    },
+    // Ctrl+0 映射回首页（首页=新建会话入口）；xterm 聚焦时仍生效（e.code 判定，
+    // 不写 pty、无双效应）
+    id: 'go-home-0',
+    keys: 'Ctrl+0',
+    matches: (e) => e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'Digit0',
+  },
+  {
+    // Ctrl+T 同样映射回首页；但 xterm 聚焦时退让——Ctrl+T 会写入 pty（DC4），
+    // 放行即「shell 收键 + 全局动作」双效应，故归入非切 tab 类
+    id: 'go-home-t',
+    keys: 'Ctrl+T',
+    matches: (e) => e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 't' || e.key === 'T'),
   },
   { id: 'toggle-help', keys: 'F1', matches: (e) => e.key === 'F1' },
 ];
 
-// xterm 聚焦时仍生效的快捷键：切 tab 类（不写 pty、无双效应）
+// xterm 聚焦时仍生效的快捷键：切 tab 类（不写 pty、无双效应）。
+// go-home 拆成 go-home-0（e.code 判定，终端无此语义）与 go-home-t（Ctrl+T 会写 pty），
+// 只有 go-home-0 保留。
 function isTabSwitchShortcut(id: string): boolean {
   return (
-    id === 'switch-tab-n' || id === 'next-tab' || id === 'prev-tab' || id === 'go-home'
+    id === 'switch-tab-n' ||
+    id === 'next-tab' ||
+    id === 'prev-tab' ||
+    id === 'go-home-0'
   );
 }
 
@@ -92,7 +102,8 @@ function dispatch(id: string, e: KeyboardEvent, actions: GlobalKeyActions): bool
     case 'close-tab':
       actions.closeActiveTab();
       return true;
-    case 'go-home':
+    case 'go-home-0':
+    case 'go-home-t':
       actions.goHome();
       return true;
     case 'quick-switcher':

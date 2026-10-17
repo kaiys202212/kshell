@@ -739,8 +739,10 @@
         "prev-tab_desc": "循环切到上一个已打开页签",
         "close-tab_name": "关闭页签",
         "close-tab_desc": "关闭当前工作区页签",
-        "go-home_name": "回首页",
-        "go-home_desc": "回到首页（新建会话入口）",
+        "go-home-0_name": "回首页（Ctrl+0）",
+        "go-home-0_desc": "回到首页（新建会话入口）",
+        "go-home-t_name": "回首页（Ctrl+T）",
+        "go-home-t_desc": "回到首页；终端聚焦时让行给终端语义",
         "toggle-help_name": "帮助",
         "toggle-help_desc": "显示 / 隐藏本快捷键速查表"
       }

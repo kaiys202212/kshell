@@ -50,7 +50,7 @@ afterEach(() => {
 });
 
 describe('SHORTCUTS 表', () => {
-  it('包含全部 8 个快捷键定义，且均有展示键名与匹配函数', () => {
+  it('包含全部 9 个快捷键定义，且均有展示键名与匹配函数', () => {
     const ids = SHORTCUTS.map((s) => s.id);
     expect(ids).toEqual([
       'quick-switcher',
@@ -59,7 +59,8 @@ describe('SHORTCUTS 表', () => {
       'next-tab',
       'prev-tab',
       'close-tab',
-      'go-home',
+      'go-home-0',
+      'go-home-t',
       'toggle-help',
     ]);
     for (const s of SHORTCUTS) {
@@ -103,7 +104,7 @@ describe('handleGlobalKey：基础匹配', () => {
     expect(actions.switchToTab).not.toHaveBeenCalled();
   });
 
-  it('Ctrl+T 也映射 go-home（回首页=新建会话入口）', () => {
+  it('Ctrl+T 在非终端上下文也映射 go-home（回首页=新建会话入口）', () => {
     const actions = makeActions();
     const e = key({ key: 't', ctrl: true });
     expect(handleGlobalKey(e, actions)).toBe(true);
@@ -160,9 +161,9 @@ describe('handleGlobalKey：退让规则', () => {
     expect(actions.toggleSwitcher).not.toHaveBeenCalled();
   });
 
-  it('xterm 聚焦时：切 tab 类（1..9 / 0 / Ctrl+Tab / Ctrl+T）仍生效，其余退让', () => {
+  it('xterm 聚焦时：切 tab 类（1..9 / 0 / Ctrl+Tab）仍生效，其余退让（Ctrl+T 退让避免 pty 双效应）', () => {
     focusInXterm();
-    // 仍生效：switch-tab-n / go-home（0 与 T）/ next / prev
+    // 仍生效：switch-tab-n / go-home-0 / next / prev
     const a1 = makeActions();
     expect(handleGlobalKey(key({ key: '3', code: 'Digit3', ctrl: true }), a1)).toBe(true);
     expect(a1.switchToTab).toHaveBeenCalledWith(3);
@@ -175,9 +176,12 @@ describe('handleGlobalKey：退让规则', () => {
     expect(handleGlobalKey(key({ key: 'Tab', ctrl: true }), a3)).toBe(true);
     expect(a3.nextTab).toHaveBeenCalledTimes(1);
 
+    // 退让：Ctrl+T 在 xterm 有自身语义（向 pty 写 DC4），放行即双效应
     const a4 = makeActions();
-    expect(handleGlobalKey(key({ key: 't', ctrl: true }), a4)).toBe(true);
-    expect(a4.goHome).toHaveBeenCalledTimes(1);
+    const e4 = key({ key: 't', ctrl: true });
+    expect(handleGlobalKey(e4, a4)).toBe(false);
+    expect(e4.defaultPrevented).toBe(false);
+    expect(a4.goHome).not.toHaveBeenCalled();
 
     // 退让：Ctrl+K / Ctrl+F / Ctrl+W / F1
     for (const ev of [

@@ -739,8 +739,10 @@
         "prev-tab_desc": "Cycle to the previous open tab",
         "close-tab_name": "Close tab",
         "close-tab_desc": "Close the current workspace tab",
-        "go-home_name": "Go home",
-        "go-home_desc": "Back to the home page (new session entry)",
+        "go-home-0_name": "Go home (Ctrl+0)",
+        "go-home-0_desc": "Back to the home page (new session entry)",
+        "go-home-t_name": "Go home (Ctrl+T)",
+        "go-home-t_desc": "Back to the home page; yields to the terminal when it is focused",
         "toggle-help_name": "Help",
         "toggle-help_desc": "Show / hide this shortcut cheat sheet"
       }
