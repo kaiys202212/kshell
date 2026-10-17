@@ -308,7 +308,7 @@ func openChat(m *chat.Manager, key string, info chat.Info, l providers.Launch, s
 	if err != nil {
 		return chat.Info{}, err
 	}
-	return m.Open(key, info, chat.Spec{Path: spec.Path, Args: spec.Args, Dir: spec.Dir, Env: spec.Env}, sessionID)
+	return m.Open(key, info, chat.Spec{Path: spec.Path, Args: spec.Args, Dir: spec.Dir, Env: spec.Env, ACPSettingsJSON: l.ACPSettingsJSON}, sessionID)
 }
 
 func (a *App) fallbackTerminalSession(sessionID, reason string) (OpenedSession, error) {
@@ -442,6 +442,8 @@ func hubTextFromBlocks(blocks []ChatBlock) string {
 
 // ListChatModels 返回会话的可用模型视图；agent 未报告模型信息时返回 ok=false 形态（空视图）。
 // 入口别名解析：重建后前端持旧 ID 也能查到新会话。
+// agent 上报的列表会与 kshell 配置的模型列表合并（配置模型是注入通道的实际
+// 取值域，agent 自报列表里不会有它们；缺失项以 ID=Name=model 追加，去重）。
 func (a *App) ListChatModels(id string) (chat.ModelsView, error) {
 	m := a.chats()
 	if m == nil {
@@ -452,9 +454,36 @@ func (a *App) ListChatModels(id string) (chat.ModelsView, error) {
 	if !ok {
 		// Models 必须回非 nil 空切片：nil slice 序列化成 JSON null，
 		// 前端 models.Models.find 会抛 TypeError 白屏
-		return chat.ModelsView{Models: []chat.ModelView{}}, nil
+		v = chat.ModelsView{Models: []chat.ModelView{}}
 	}
-	return v, nil
+	return a.mergeConfigModels(v), nil
+}
+
+// mergeConfigModels 把 kshell 配置的模型列表并入 agent 上报视图：
+// 已存在（按 ID）跳过；agent 无视图时以 Current=ActiveModel 返回配置列表。
+func (a *App) mergeConfigModels(v chat.ModelsView) chat.ModelsView {
+	cfg := a.snapshot().Config.Model
+	if len(cfg.Models) == 0 {
+		return v
+	}
+	seen := make(map[string]bool, len(v.Models))
+	for _, mo := range v.Models {
+		seen[mo.ID] = true
+	}
+	merged := make([]chat.ModelView, 0, len(v.Models)+len(cfg.Models))
+	merged = append(merged, v.Models...)
+	for _, name := range cfg.Models {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		merged = append(merged, chat.ModelView{ID: name, Name: name})
+	}
+	out := chat.ModelsView{Current: v.Current, Models: merged}
+	if out.Current == "" {
+		out.Current = cfg.ActiveModel
+	}
+	return out
 }
 
 // SetChatModel 运行时切换会话模型。入口别名解析同 ListChatModels。

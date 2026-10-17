@@ -67,3 +67,18 @@ type metaRecordingConn struct {
 }
 
 func (c *metaRecordingConn) SetSettingsMeta(raw string) { c.rec.got = raw }
+
+// spec 直通载荷优先：launch 层组装的 ACPSettingsJSON 不经 factory 直接生效。
+func TestOpenSpecPayloadDeliversSettingsMeta(t *testing.T) {
+	conn := &settingsMetaConn{}
+	conn.newStart = acp.SessionStart{SessionID: "sess-new"}
+	b := &recordingBackend{inner: &fakeBackend{conn: &conn.fakeConn}, meta: conn}
+	m := NewManager(b, nil, nil, nil)
+	payload := `{"claudeCode":{"options":{"settings":"{\"env\":{}}"}}}`
+	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x", ACPSettingsJSON: payload}, ""); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if conn.got != payload {
+		t.Fatalf("spec 直通未生效, got %q", conn.got)
+	}
+}

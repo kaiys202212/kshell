@@ -189,14 +189,19 @@ func (m *Manager) SetSettingsMetaFactory(fn func(chatID string) string) {
 	m.mu.Unlock()
 }
 
-func (m *Manager) applySettingsMeta(conn Conn, id string) {
-	m.mu.Lock()
-	factory := m.settingsMetaFor
-	m.mu.Unlock()
-	if factory == nil {
-		return
+// applySettingsMeta 把 _meta 载荷交给连接：spec 直通载荷优先（单一来源，
+// 来自 launch 层组装的 ACPSettingsJSON），为空时回退 factory。
+func (m *Manager) applySettingsMeta(conn Conn, id, specPayload string) {
+	payload := specPayload
+	if payload == "" {
+		m.mu.Lock()
+		factory := m.settingsMetaFor
+		m.mu.Unlock()
+		if factory == nil {
+			return
+		}
+		payload = factory(id)
 	}
-	payload := factory(id)
 	if payload == "" {
 		return
 	}
@@ -416,7 +421,7 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 		return Info{}, errors.New(msg)
 	}
 	m.applyMCP(conn, s.id)
-	m.applySettingsMeta(conn, s.id)
+	m.applySettingsMeta(conn, s.id, spec.ACPSettingsJSON)
 
 	if sessionID != "" {
 		// load 前先确认对方声明了该能力，否则会拿到无意义的 RPC 错误。

@@ -24,6 +24,9 @@ type Spec struct {
 	Args []string
 	Dir  string
 	Env  []string
+	// ACPSettingsJSON 是 ACP 会话的 _meta 载荷（claude settings 注入），
+	// 经 launch 层组装后直通；空串表示不注入。
+	ACPSettingsJSON string
 }
 
 type Info struct {
