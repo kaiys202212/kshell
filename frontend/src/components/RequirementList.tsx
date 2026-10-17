@@ -570,17 +570,20 @@ export default function RequirementList({ className }: { className?: string }) {
                     >
                       {t(`ui.requirements.status_${status}`)}
                     </Badge>
-                    {(r.tags ?? []).map((tag) => (
-                      <Badge key={tag} variant="outline">
-                        {tag}
-                      </Badge>
-                    ))}
                     {/* 项目徽标：项目名取工作区显示名，匹配不到退化为路径末段 */}
                     {r.project && (
                       <Badge variant="outline" title={r.project}>
                         {projectDisplayName(r.project, workspaces)}
                       </Badge>
                     )}
+                    {/* tag 徽章：与项目显示名重复的隐藏（项目徽章已表达，避免同屏双 "kshell"） */}
+                    {(r.tags ?? [])
+                      .filter((tag) => !r.project || tag.toLowerCase() !== projectDisplayName(r.project, workspaces).toLowerCase())
+                      .map((tag) => (
+                        <Badge key={tag} variant="outline">
+                          {tag}
+                        </Badge>
+                      ))}
                     {r.dispatchedTo && <Badge variant="outline">{baseName(r.dispatchedTo)}</Badge>}
                     {/* 行尾按钮组分两段：常显区（快捷开始/重开，不用 hover 就能点）+
                         hover 区（跳转与需求操作）。同一行避免卡片纵向膨胀。
