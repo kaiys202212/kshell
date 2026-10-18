@@ -273,6 +273,7 @@ func TestBridgeDeliverHubMessage(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 // 回归：DeliverHubMessage 不经 FlushForTest 也要能送达——入队时惰性启动出站
 // worker。生产路径没人调 FlushForTest，worker 不启动则队列永远无人消费，
 // agent 回复全部滞留（真机「命令回复正常、agent 回复收不到」的根因）。
@@ -302,6 +303,26 @@ func TestBridgeOutboundWorkerLazyStart(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("2s 内未收到异步推送，sendmessage 次数 = %d（出站 worker 未消费队列？）", len(rc.sends()))
+}
+
+func TestBridgeDeliverHardBreaks(t *testing.T) {
+	// 出站统一套用 Markdown 硬换行：PC 端按 Markdown 渲染会把单个 \n
+	// 折叠成空格（真机证实），行尾两空格两端都能换行。
+	rc := &recorder{}
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b := newBridge(t, "u1", ex, rc.handler(t))
+	b.HandleInbound("u1", "ct-9", "你好") // call 1 是入站确认
+
+	b.DeliverHubMessage(hub.Message{Kind: "agent", Text: "第一行\n第二行\n\n第三段"})
+	b.FlushForTest()
+	sends := rc.sends()
+	if len(sends) != 2 {
+		t.Fatalf("sendmessage 次数 = %d, 期望 2（入站确认 + agent 推送）", len(sends))
+	}
+	text, _ := sendMsgFields(t, sends[1].body)
+	if text != "第一行  \n第二行\n\n第三段" {
+		t.Errorf("出站文本 = %q, 期望 %q", text, "第一行  \n第二行\n\n第三段")
+	}
 }
 
 func TestBridgePendingOnSessionExpired(t *testing.T) {

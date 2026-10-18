@@ -287,6 +287,9 @@ func isWireKey(s string) bool {
 // 其他失败重试 2 次后计 undelivered。
 func (b *Bridge) deliver(text string) {
 	text = truncateForWeixin(text, b.lang)
+	// PC 端微信按 Markdown 渲染 ClawBot 气泡，单个 \n 被折叠成空格；
+	// 统一升级为硬换行（行尾两空格），手机端纯文本渲染不受影响。
+	text = hardBreaks(text)
 	b.mu.Lock()
 	ctx := b.ctx
 	b.mu.Unlock()

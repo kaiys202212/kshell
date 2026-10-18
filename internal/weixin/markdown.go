@@ -86,3 +86,28 @@ func transformLines(s string) string {
 	s = reBlankRun.ReplaceAllString(s, "\n\n")
 	return s
 }
+
+// hardBreaks 把单个换行升级为 Markdown hard break（行尾两空格）：
+// ClawBot 气泡按 Markdown 渲染（真机证实），PC 端把单个 \n（soft break）
+// 折叠成空格，手机端按聊天文本换行；行尾两空格在两端都能换行。
+// 空行（\n\n 段落分隔）不动，下一行是空行的行也不加工（段落分隔已存在，
+// 行尾硬换行可能多出空行）；仅空白的行归一为空行（否则 Markdown 渲染时
+// 会被折叠吞掉）；已带两空格的行不重复追加（幂等）。
+func hardBreaks(s string) string {
+	if !strings.Contains(s, "\n") {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	for i := 0; i < len(lines)-1; i++ {
+		if strings.TrimSpace(lines[i]) == "" {
+			lines[i] = ""
+			continue
+		}
+		if strings.TrimSpace(lines[i+1]) == "" || strings.HasSuffix(lines[i], "  ") {
+			continue
+		}
+		lines[i] += "  "
+	}
+	// 相邻白行各自归一后可能残留 3+ 连续换行，压回段落分隔。
+	return reBlankRun.ReplaceAllString(strings.Join(lines, "\n"), "\n\n")
+}
