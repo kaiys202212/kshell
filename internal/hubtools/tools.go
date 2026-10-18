@@ -15,9 +15,10 @@ var ErrConfirmationRequired = errors.New("mutating tool requires user confirmati
 // PendingConfirm 携带一次待确认的写操作：确认后按 ToolName+ArgsJSON 重放执行。
 // 实现 error 并 Unwrap 到 ErrConfirmationRequired，调用方可用 errors.Is/As 判别。
 type PendingConfirm struct {
-	ToolName string // 工具名
-	ArgsJSON string // 原始参数 JSON（重放时用）
-	Summary  string // 人话参数摘要，展示给用户确认用
+	PendingID string // 确认状态机分配的挂起标识（Registry.Execute 填空，Session.Execute 填充）
+	ToolName  string // 工具名
+	ArgsJSON  string // 原始参数 JSON（重放时用）
+	Summary   string // 人话参数摘要，展示给用户确认用
 }
 
 func (p *PendingConfirm) Error() string {
@@ -142,6 +143,15 @@ func (r *Registry) Tools() []ToolDef {
 	}
 }
 
+// ExecuteConfirmed 是确认状态机的直接执行通道：绕过 Mutating 挂起，
+// 只接受写工具（只读工具走 Execute，无必要经此通道），供用户确认后重放。
+func (r *Registry) ExecuteConfirmed(ctx context.Context, name, argsJSON string) (string, error) {
+	if !mutatingTools[name] {
+		return "", fmt.Errorf("ExecuteConfirmed 只接受写工具, got: %s", name)
+	}
+	return r.executeMutating(ctx, name, argsJSON)
+}
+
 // Execute 解析 argsJSON 后调用 Bridge，把结果 JSON 序列化为文本返回给 LLM。
 // Mutating 工具不执行，返回包装 *PendingConfirm 的 ErrConfirmationRequired。
 func (r *Registry) Execute(ctx context.Context, name, argsJSON string) (string, error) {
@@ -204,6 +214,52 @@ func (r *Registry) Execute(ctx context.Context, name, argsJSON string) (string, 
 		}
 	default:
 		return "", fmt.Errorf("未知工具: %s", name)
+	}
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("序列化结果: %w", err)
+	}
+	return string(data), nil
+}
+
+// executeMutating 真正执行写工具：解析参数后调用 Bridge 并序列化结果。
+// 由 ExecuteConfirmed（确认后重放）调用，Execute 的 Mutating 分支不经过这里。
+func (r *Registry) executeMutating(ctx context.Context, name, argsJSON string) (string, error) {
+	var args map[string]any
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "", fmt.Errorf("参数不是合法 JSON: %w", err)
+	}
+	var out any
+	var err error
+	switch name {
+	case "create_requirement":
+		tags, _ := args["tags"].([]any)
+		tagList := make([]string, 0, len(tags))
+		for _, t := range tags {
+			if s, ok := t.(string); ok {
+				tagList = append(tagList, s)
+			}
+		}
+		out, err = r.b.CreateRequirement(argStr(args, "project"), argStr(args, "text"), argStr(args, "priority"), tagList)
+	case "update_requirement":
+		tags, _ := args["tags"].([]any)
+		tagList := make([]string, 0, len(tags))
+		for _, t := range tags {
+			if s, ok := t.(string); ok {
+				tagList = append(tagList, s)
+			}
+		}
+		out, err = r.b.UpdateRequirement(argStr(args, "id"), argStr(args, "project"), argStr(args, "text"), argStr(args, "priority"), tagList)
+	case "delete_requirement":
+		err = r.b.DeleteRequirement(argStr(args, "id"))
+		if err == nil {
+			out = map[string]string{"ok": "true", "id": argStr(args, "id")}
+		}
+	default:
+		return "", fmt.Errorf("未知写工具: %s", name)
 	}
 	if err != nil {
 		return "", err

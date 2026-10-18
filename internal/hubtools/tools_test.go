@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 )
 
 // fakeBridge 是内存桩：记录各方法调用次数，返回固定数据。
+// 带锁保护 calls：并发测试中 Session 会并发调用 Bridge。
 type fakeBridge struct {
+	mu        sync.Mutex
 	calls     map[string]int
 	reqs      []RequirementView
 	workspace *WorkspaceView
@@ -21,13 +24,27 @@ func newFakeBridge() *fakeBridge {
 	return &fakeBridge{calls: map[string]int{}}
 }
 
+// count 记录一次调用（线程安全）。
+func (f *fakeBridge) count(key string) {
+	f.mu.Lock()
+	f.calls[key]++
+	f.mu.Unlock()
+}
+
+// called 读取调用次数（线程安全）。
+func (f *fakeBridge) called(key string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls[key]
+}
+
 func (f *fakeBridge) ListRequirements() ([]RequirementView, error) {
-	f.calls["ListRequirements"]++
+	f.count("ListRequirements")
 	return f.reqs, nil
 }
 
 func (f *fakeBridge) GetRequirement(id string) (*RequirementView, error) {
-	f.calls["GetRequirement"]++
+	f.count("GetRequirement")
 	for i := range f.reqs {
 		if f.reqs[i].ID == id {
 			return &f.reqs[i], nil
@@ -37,37 +54,37 @@ func (f *fakeBridge) GetRequirement(id string) (*RequirementView, error) {
 }
 
 func (f *fakeBridge) CreateRequirement(project, text, priority string, tags []string) (RequirementView, error) {
-	f.calls["CreateRequirement"]++
+	f.count("CreateRequirement")
 	return RequirementView{ID: "new-1", Project: project, Text: text, Priority: priority, Tags: tags}, nil
 }
 
 func (f *fakeBridge) UpdateRequirement(id, project, text, priority string, tags []string) (RequirementView, error) {
-	f.calls["UpdateRequirement"]++
+	f.count("UpdateRequirement")
 	return RequirementView{ID: id, Project: project, Text: text, Priority: priority, Tags: tags}, nil
 }
 
 func (f *fakeBridge) DeleteRequirement(id string) error {
-	f.calls["DeleteRequirement"]++
+	f.count("DeleteRequirement")
 	return nil
 }
 
 func (f *fakeBridge) ListWorkspaces() ([]WorkspaceView, error) {
-	f.calls["ListWorkspaces"]++
+	f.count("ListWorkspaces")
 	return []WorkspaceView{{Path: "/w/a", Name: "a", SessionCount: 2}}, nil
 }
 
 func (f *fakeBridge) GetWorkspace(id string) (*WorkspaceView, error) {
-	f.calls["GetWorkspace"]++
+	f.count("GetWorkspace")
 	return f.workspace, nil
 }
 
 func (f *fakeBridge) ListRunningTasks() ([]TaskView, error) {
-	f.calls["ListRunningTasks"]++
+	f.count("ListRunningTasks")
 	return f.tasks, nil
 }
 
 func (f *fakeBridge) GetTaskDetail(id string) (*TaskView, error) {
-	f.calls["GetTaskDetail"]++
+	f.count("GetTaskDetail")
 	return f.task, nil
 }
 
@@ -149,8 +166,8 @@ func TestListRequirementsExec(t *testing.T) {
 	if !strings.Contains(out, `"id":"r1"`) || !strings.Contains(out, "修复登录超时") {
 		t.Fatalf("输出缺少关键字段: %s", out)
 	}
-	if f.calls["ListRequirements"] != 1 {
-		t.Fatalf("ListRequirements 应被调用 1 次, got %d", f.calls["ListRequirements"])
+	if f.called("ListRequirements") != 1 {
+		t.Fatalf("ListRequirements 应被调用 1 次, got %d", f.called("ListRequirements"))
 	}
 }
 
@@ -211,8 +228,8 @@ func TestMutatingPending(t *testing.T) {
 			}
 		}
 	}
-	if f.calls["CreateRequirement"] != 0 || f.calls["DeleteRequirement"] != 0 {
-		t.Fatalf("Mutating 工具挂起时不应触达 Bridge, calls=%v", f.calls)
+	if f.called("CreateRequirement") != 0 || f.called("DeleteRequirement") != 0 {
+		t.Fatalf("Mutating 工具挂起时不应触达 Bridge, create=%d delete=%d", f.called("CreateRequirement"), f.called("DeleteRequirement"))
 	}
 }
 
