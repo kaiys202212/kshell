@@ -41,14 +41,16 @@ func (a *App) startWeixin() {
 // 时由转写失败回执兜底。两者皆缺返回 weixin.ErrTranscriberNotConfigured 哨兵。
 func (a *App) weixinTranscriber() weixin.Transcriber {
 	return func(ctx context.Context, wav []byte) (string, error) {
-		plat, ok := a.snapshot().Config.Model.ActivePlatform()
+		cfgSnapshot := a.snapshot().Config.Model
+		plat, ok := cfgSnapshot.ActivePlatform()
 		if !ok || strings.TrimSpace(plat.OpenAIBaseURL) == "" {
 			return "", weixin.ErrTranscriberNotConfigured
 		}
 		cfg := hubtools.Config{BaseURL: plat.OpenAIBaseURL, APIKey: plat.APIKey}
-		chatModel := strings.TrimSpace(a.snapshot().Config.Model.ActiveModel)
-		if strings.TrimSpace(plat.ASRModel) == "" &&
-			(chatModel == "" || strings.TrimSpace(plat.APIKey) == "") {
+		chatModel := strings.TrimSpace(cfgSnapshot.ActiveModel)
+		// 对话模型三元组不齐（对齐 hubtools.Ready 口径：免费无 key 端点不尝试）；
+		// BaseURL 已在上一步查过，这里只查 Model 与 APIKey。
+		if strings.TrimSpace(plat.ASRModel) == "" && (chatModel == "" || strings.TrimSpace(plat.APIKey) == "") {
 			// ASR 模型未填且对话模型三元组不齐：无可用的转写来源。
 			return "", weixin.ErrTranscriberNotConfigured
 		}

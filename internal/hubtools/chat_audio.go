@@ -14,9 +14,11 @@ import (
 
 // chatTranscribePrompt 是多模态对话模型转写语音的约束：要求逐字转写、
 // 只输出文本，防止模型寒暄或自行发挥意图。
-const chatTranscribePrompt = "请逐字转写这段语音的内容，只输出转写文本本身，不要任何解释、标点修饰或额外说明。"
+const chatTranscribePrompt = "请逐字转写这段语音的内容，只输出转写文本本身，不要任何解释或额外说明，原样保留语音内容。"
 
-// timeoutChatTranscribe 是单次多模态 chat 转写请求的超时。
+// timeoutChatTranscribe 是单次多模态 chat 转写请求的超时。取 90s 对齐 hub
+// 工具循环上限（hubPromptTimeout）而非 ASR 的 60s：音频 base64 后请求体大、
+// 多模态推理慢，勿擅自统一成 60s。
 const timeoutChatTranscribe = 90 * time.Second
 
 // chatAudioLimit 是 chat 转写响应体的读入上限。
@@ -36,6 +38,9 @@ func TranscribeViaChat(ctx context.Context, cfg Config, model string, wav []byte
 	}
 	// 端点派生与 chat 客户端同口径：BaseURL 已带 /chat/completions 尾巴则直接用。
 	base := strings.TrimSuffix(strings.TrimSuffix(cfg.BaseURL, "/"), "/chat/completions")
+	if strings.TrimSpace(base) == "" {
+		return "", fmt.Errorf("err.hubtools.base_url_required")
+	}
 	endpoint := base + "/chat/completions"
 
 	reqBody := map[string]any{
