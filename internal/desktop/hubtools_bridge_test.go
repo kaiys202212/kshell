@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -550,7 +551,17 @@ func TestConfirmHubToolNotReady(t *testing.T) {
 
 // TestSaveHubRouteMode 验证路由模式写穿绑定：合法值落配置，非法值报 wire key。
 func TestSaveHubRouteMode(t *testing.T) {
-	a, _, _ := newBridgeTestApp(t)
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.AgentHub.RouteMode = config.RouteModeAuto
+	a := NewAppWith(Options{
+		Config: cfg,
+		Layout: config.Layout{
+			Root:   dir,
+			Config: filepath.Join(dir, "config.yaml"),
+			Cache:  filepath.Join(dir, "cache"),
+		},
+	})
 	if err := a.SaveHubRouteMode("force_auto"); err != nil {
 		t.Fatal(err)
 	}
