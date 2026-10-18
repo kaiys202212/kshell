@@ -171,8 +171,8 @@ func TestSameWorkspacePath(t *testing.T) {
 	}
 }
 
-// TestMigratePersistsVersion2 验证迁移落盘文件带 version=2（旧测试口径迁移到新版本号）。
-func TestMigratePersistsVersion2(t *testing.T) {
+// TestMigratePersistsCurrentVersion 验证迁移落盘文件带当前版本号（旧测试口径跟随 fileVersion）。
+func TestMigratePersistsCurrentVersion(t *testing.T) {
 	dir := t.TempDir()
 	legacy := `{"version":1,"items":[{"id":"v1","text":"迁移","priority":"low","dispatchedTo":"D:/work/proj","status":"active","ts":1}]}`
 	writeLegacyFile(t, dir, legacy)
@@ -185,7 +185,7 @@ func TestMigratePersistsVersion2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"version":2`) {
-		t.Errorf("迁移后落盘应含 version=2: %s", data)
+	if !strings.Contains(string(data), `"version":3`) {
+		t.Errorf("迁移后落盘应含 version=3: %s", data)
 	}
 }

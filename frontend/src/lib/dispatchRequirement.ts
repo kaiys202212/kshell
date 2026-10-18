@@ -86,8 +86,9 @@ export async function dispatchRequirement(
       }
     }
     await sendChatPrompt(chat.ID, text);
-    // 落盘派发标记：关联真实会话 ID 与标题快照，归档时据此判断会话能否自动关闭
-    await markRequirementDispatched(id, wsPath, chat.ID, chat.Title);
+    // 落盘派发标记：关联真实会话 ID 与标题快照、磁盘会话 ID（重启后恢复绑定），
+    // 归档时据此判断会话能否自动关闭
+    await markRequirementDispatched(id, wsPath, chat.ID, chat.Title, chat.SessionID);
     useAppStore.getState().setLastAgentId(chat.ID);
     return 'ok';
   } finally {
@@ -105,7 +106,7 @@ export async function reopenRequirementSession(r: Requirement): Promise<OpenedSe
   const result = await openWorkspaceACP(r.dispatchedTo, toolID);
   if (!result.Chat) throw new Error('no_chat');
   const chat = result.Chat;
-  await markRequirementDispatched(r.id, r.dispatchedTo, chat.ID, chat.Title);
+  await markRequirementDispatched(r.id, r.dispatchedTo, chat.ID, chat.Title, chat.SessionID);
   useAppStore.getState().upsertChat(chat);
   useAppStore.getState().setLastAgentId(chat.ID);
   return result;

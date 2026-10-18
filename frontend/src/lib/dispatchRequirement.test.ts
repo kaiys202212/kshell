@@ -79,7 +79,7 @@ describe('dispatchRequirement', () => {
     expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-a');
     expect(mocks.sendChatPrompt).toHaveBeenCalledWith('chat-real', '需求文本');
     // 关键断言：第三参为真实 chat.ID，第四参为会话标题快照
-    expect(mocks.markRequirementDispatched).toHaveBeenCalledWith('r1', 'D:\\ws\\proj', 'chat-real', '会话标题');
+    expect(mocks.markRequirementDispatched).toHaveBeenCalledWith('r1', 'D:\\ws\\proj', 'chat-real', '会话标题', 's1');
     expect(useAppStore.getState().lastAgentId).toBe('chat-real');
     // 无 defaults 时不切模型
     expect(mocks.setChatModel).not.toHaveBeenCalled();
@@ -240,7 +240,7 @@ describe('reopenRequirementSession', () => {
     expect(opened.Chat?.ID).toBe('chat-new');
     expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-last');
     expect(mocks.sendChatPrompt).not.toHaveBeenCalled(); // 重开不发需求文本
-    expect(mocks.markRequirementDispatched).toHaveBeenCalledWith('r1', 'D:\\ws\\proj', 'chat-new', '重开标题');
+    expect(mocks.markRequirementDispatched).toHaveBeenCalledWith('r1', 'D:\\ws\\proj', 'chat-new', '重开标题', 's1');
     expect(useAppStore.getState().lastAgentId).toBe('chat-new');
   });
 

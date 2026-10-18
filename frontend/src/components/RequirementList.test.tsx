@@ -138,6 +138,26 @@ describe('RequirementList', () => {
     expect(li).toHaveTextContent('demo-proj');
   });
 
+  it('派发目标与项目同一工作区时只显示一个徽章（无双 kshell）', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r5', text: '同项目派发', project: 'D:\\workspace\\kshell', dispatchedTo: 'D:\\workspace\\kshell' }),
+    ]);
+    render(<RequirementList />);
+    const li = (await screen.findByText('同项目派发')).closest('li') as HTMLElement;
+    // 项目徽章在，派发徽章被抑制：整行只出现一次基名
+    expect(within(li).getAllByText('kshell')).toHaveLength(1);
+  });
+
+  it('派发目标与项目不同工作区时两个徽章都显示', async () => {
+    mocks.listRequirements.mockResolvedValue([
+      req({ id: 'r6', text: '跨项目派发', project: 'D:\\ws\\a', dispatchedTo: 'D:\\workspace\\kshell' }),
+    ]);
+    render(<RequirementList />);
+    const li = (await screen.findByText('跨项目派发')).closest('li') as HTMLElement;
+    expect(within(li).getByText('a')).toBeInTheDocument(); // 项目徽标（工作区显示名）
+    expect(within(li).getByText('kshell')).toBeInTheDocument(); // 派发目标基名
+  });
+
   it('新增流程：填表保存调 addRequirement（project 必填，tags 逗号分隔转数组）', async () => {
     render(<RequirementList />);
     await screen.findByText(tt('ui.requirements.empty'));
@@ -419,7 +439,7 @@ describe('RequirementList', () => {
 
     await waitFor(() => expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', expect.any(String)));
     await waitFor(() =>
-      expect(mocks.markRequirementDispatched).toHaveBeenCalledWith('r1', 'D:\\ws\\proj', 'c-new', '新标题'),
+      expect(mocks.markRequirementDispatched).toHaveBeenCalledWith('r1', 'D:\\ws\\proj', 'c-new', '新标题', ''),
     );
   });
 

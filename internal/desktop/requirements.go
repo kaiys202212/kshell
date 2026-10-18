@@ -20,9 +20,11 @@ func (a *App) getRequirementStore() *requirements.Store {
 // ListRequirements 返回全部需求条目（最新在前）。store 未装配返回空切片。
 // store.List 内部先尝试存量迁移（DispatchedTo → Project 回填，resolver 未就绪时
 // 自动推迟），保证前端拿到的列表已完成回填。
-// 返回前按 ChatID 从 chat manager 反查实时标题补入副本（仅内存覆盖，不落盘——
-// 落盘由 SetOnInfo hook 的 SetSessionTitle 负责）：旧数据在标题快照机制上线前
-// 派发、SessionTitle 为空且会话仍存活时，列表也能显示会话名而不是裸 chatId。
+// 返回前做两层会话绑定维护（仅内存覆盖，不落盘——落盘由 SetOnInfo hook 的
+// SetSessionTitle / 惰性 SetSessionID 负责）：
+//  1. ChatID 直配活跃会话时补标题、并把磁盘会话 ID 惰性落盘（旧数据无 sessionId）；
+//  2. ChatID 失效（桌面端重启后 chat ID 含 bootID 不再有效）时按条目 SessionID
+//     反查活跃会话恢复 ChatID/SessionTitle，需求卡片的状态点与跳转随之恢复。
 func (a *App) ListRequirements() []requirements.Item {
 	store := a.getRequirementStore()
 	if store == nil {
@@ -33,14 +35,45 @@ func (a *App) ListRequirements() []requirements.Item {
 	if m == nil {
 		return items
 	}
+	// SessionID → 活跃会话索引：ChatID 失效时按磁盘会话 ID 恢复绑定。
+	bySession := make(map[string]chat.Info)
+	for _, c := range m.List() {
+		if c.SessionID != "" {
+			bySession[c.SessionID] = c
+		}
+	}
 	for i := range items {
-		if items[i].ChatID == "" || items[i].SessionTitle != "" {
+		it := &items[i]
+		if it.ChatID != "" {
+			// 落盘 ChatID 是前端空间（原始 ID）；重建后 manager 里只有最新 ID，先解析再反查。
+			resolved, ok := a.resolveChatID(it.ChatID)
+			if ok {
+				info, ok := m.Get(resolved)
+				if !ok {
+					continue
+				}
+				if it.SessionTitle == "" && info.Title != "" {
+					it.SessionTitle = info.Title
+				}
+				// 存量条目无 SessionID：借活跃会话补录落盘，重启后才能按它恢复。
+				if it.SessionID == "" && info.SessionID != "" {
+					_, _ = store.SetSessionID(it.ChatID, info.SessionID)
+					it.SessionID = info.SessionID
+				}
+				continue
+			}
+		}
+		// ChatID 直配失败：按 SessionID 反查活跃会话恢复绑定（含 ChatID 覆盖）。
+		if it.SessionID == "" {
 			continue
 		}
-		// 落盘 ChatID 是前端空间（原始 ID）；重建后 manager 里只有最新 ID，先解析再反查。
-		resolved, _ := a.resolveChatID(items[i].ChatID)
-		if info, ok := m.Get(resolved); ok && info.Title != "" {
-			items[i].SessionTitle = info.Title
+		info, ok := bySession[it.SessionID]
+		if !ok {
+			continue
+		}
+		it.ChatID = a.originalChatID(info.ID)
+		if it.SessionTitle == "" && info.Title != "" {
+			it.SessionTitle = info.Title
 		}
 	}
 	return items
@@ -90,13 +123,14 @@ func (a *App) DeleteRequirement(id string) error {
 
 // MarkRequirementDispatched 标记需求已派发到某工作区，并关联会话 ID 与会话标题
 // 快照（新建会话为占位标题、恢复会话为磁盘标题；随后标题变化经 SetOnInfo 回填）；
+// sessionID 是磁盘会话 ID（跨进程稳定，重启后据此恢复绑定）；
 // id 不存在返回错误。
-func (a *App) MarkRequirementDispatched(id, workspace, chatID, title string) error {
+func (a *App) MarkRequirementDispatched(id, workspace, chatID, title, sessionID string) error {
 	store := a.getRequirementStore()
 	if store == nil {
 		return errReqStoreNotReady
 	}
-	if err := store.MarkDispatched(id, workspace, chatID, title); err != nil {
+	if err := store.MarkDispatched(id, workspace, chatID, title, sessionID); err != nil {
 		return err
 	}
 	a.Emit("requirements:changed")

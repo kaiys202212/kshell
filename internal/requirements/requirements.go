@@ -19,7 +19,9 @@ import (
 
 // fileVersion 是落盘文件结构版本，结构变更时递增。
 // v2：Item 新增 project 字段。Load 兼容读取更低版本（见 Load），只拒绝更高版本。
-const fileVersion = 2
+// v3：Item 新增 sessionId 字段（磁盘会话 ID，跨进程稳定）；chat ID 含 bootID
+// 仅进程内有效，桌面端重启后需求卡片靠 sessionId 重新找到活跃会话。
+const fileVersion = 3
 
 // ErrProjectRequired 是 project 缺失的稳定 wire key（前端 translateBackend 翻译），
 // 文案本身不面向用户，勿改成自然语言。
@@ -56,7 +58,14 @@ type Item struct {
 	// DispatchedTo 是已派发目标工作区路径；空表示未派发。
 	DispatchedTo string `json:"dispatchedTo,omitempty"`
 	// ChatID 是派发时创建的会话 ID；空表示未派发或无关联会话。
+	// 注意 chat ID 含 bootID（进程内唯一），桌面端重启后不再有效；
+	// 跨进程恢复靠下面的 SessionID。
 	ChatID string `json:"chatId,omitempty"`
+	// SessionID 是关联的磁盘会话 ID（agent 工具自身的会话记录 ID），跨进程
+	// 稳定。派发时随 ChatID 一并落盘；桌面端重启后 ChatID 失效，desktop 层
+	// 按 SessionID 反查活跃会话恢复绑定。旧数据无此字段（零值），由
+	// ListRequirements 惰性回填。
+	SessionID string `json:"sessionId,omitempty"`
 	// SessionTitle 是关联会话标题的快照：会话关闭/重启后无法反查标题，
 	// 需求列表仍能展示会话名（实时标题由前端活跃会话镜像覆盖）。
 	SessionTitle string `json:"sessionTitle,omitempty"`
@@ -276,10 +285,11 @@ func (s *Store) Delete(id string) error {
 }
 
 // MarkDispatched 标记需求已派发到某工作区并关联会话 ID 与会话标题快照；
+// sessionID 是磁盘会话 ID（可空：降级新起的会话尚未绑定磁盘记录）；
 // id 不存在返回错误。
 // 派发意味着需求进入执行阶段，状态置为 active。仅 pending/active 条目允许
 // 派发，done/archived 为终态，重新派发会把状态拉回 active，击穿归档不变量。
-func (s *Store) MarkDispatched(id, workspace, chatID, title string) error {
+func (s *Store) MarkDispatched(id, workspace, chatID, title, sessionID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -293,6 +303,7 @@ func (s *Store) MarkDispatched(id, workspace, chatID, title string) error {
 		old := s.items[i]
 		s.items[i].DispatchedTo = workspace
 		s.items[i].ChatID = chatID
+		s.items[i].SessionID = sessionID
 		s.items[i].SessionTitle = title
 		s.items[i].Status = StatusActive
 		if err := s.write(); err != nil {
@@ -302,6 +313,34 @@ func (s *Store) MarkDispatched(id, workspace, chatID, title string) error {
 		return nil
 	}
 	return errors.New("需求不存在: " + id)
+}
+
+// SetSessionID 按 ChatID 补录关联需求的磁盘会话 ID（存量条目派发时尚无该字段，
+// ListRequirements 反查活跃会话时惰性回填）。返回是否发生更新：空 sessionID、
+// 已有同值、无匹配条目都返回 false。落盘失败返回错误。
+func (s *Store) SetSessionID(chatID, sessionID string) (bool, error) {
+	if chatID == "" || sessionID == "" {
+		return false, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := range s.items {
+		if s.items[i].ChatID != chatID {
+			continue
+		}
+		if s.items[i].SessionID == sessionID {
+			return false, nil
+		}
+		old := s.items[i].SessionID
+		s.items[i].SessionID = sessionID
+		if err := s.write(); err != nil {
+			s.items[i].SessionID = old // 落盘失败回滚
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // SetSessionTitle 按 ChatID 更新关联需求的会话标题快照（会话首条消息改标题、

@@ -48,7 +48,7 @@ func TestArchiveRequirementReleasesIdleChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	info := openTestChat(t, m)
-	if err := store.MarkDispatched(it.ID, "/w", info.ID, ""); err != nil {
+	if err := store.MarkDispatched(it.ID, "/w", info.ID, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SetStatus(it.ID, requirements.StatusDone); err != nil {
@@ -85,7 +85,7 @@ func TestArchiveRequirementKeepsBusyChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	info := openTestChat(t, m)
-	if err := store.MarkDispatched(it.ID, "/w", info.ID, ""); err != nil {
+	if err := store.MarkDispatched(it.ID, "/w", info.ID, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SetStatus(it.ID, requirements.StatusDone); err != nil {
@@ -166,7 +166,7 @@ func TestMarkRequirementDispatchedTitle(t *testing.T) {
 	}
 	info := openTestChat(t, m)
 
-	if err := app.MarkRequirementDispatched(it.ID, "/w", info.ID, "会话标题"); err != nil {
+	if err := app.MarkRequirementDispatched(it.ID, "/w", info.ID, "会话标题", ""); err != nil {
 		t.Fatalf("MarkRequirementDispatched: %v", err)
 	}
 	for _, cur := range store.List() {
@@ -193,7 +193,7 @@ func TestChatTitleChangeUpdatesRequirement(t *testing.T) {
 		t.Fatal(err)
 	}
 	info := openTestChat(t, m)
-	if err := app.MarkRequirementDispatched(it.ID, "/w", info.ID, ""); err != nil {
+	if err := app.MarkRequirementDispatched(it.ID, "/w", info.ID, "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -249,10 +249,10 @@ func TestListRequirementsFillsLiveTitle(t *testing.T) {
 	if !m.AttachSession("disk-1", "/w", "", "实时标题", 3, time.Time{}) {
 		t.Fatal("前置：AttachSession 应命中桩会话")
 	}
-	if err := store.MarkDispatched(itLive.ID, "/w", live.ID, ""); err != nil {
+	if err := store.MarkDispatched(itLive.ID, "/w", live.ID, "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.MarkDispatched(itDead.ID, "/w", "c-dead", "旧快照"); err != nil {
+	if err := store.MarkDispatched(itDead.ID, "/w", "c-dead", "旧快照", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -273,6 +273,80 @@ func TestListRequirementsFillsLiveTitle(t *testing.T) {
 	for _, cur := range store.List() {
 		if cur.ID == itLive.ID && cur.SessionTitle != "" {
 			t.Fatalf("反查不应落盘, store 快照 = %q", cur.SessionTitle)
+		}
+	}
+}
+
+// TestListRequirementsBackfillsSessionID 存量条目（无 sessionId）经活跃会话
+// 反查命中时，磁盘会话 ID 惰性落盘：桌面端重启后 ChatID 失效，靠它恢复绑定。
+func TestListRequirementsBackfillsSessionID(t *testing.T) {
+	app, store, m, _ := newRequirementTestApp(t, nil)
+	it, err := store.Add("/proj", "补录 SessionID", "medium", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := openTestChat(t, m)
+	if !m.AttachSession("disk-legacy", "/w", "", "标题", 3, time.Time{}) {
+		t.Fatal("前置：AttachSession 应命中桩会话")
+	}
+	if err := store.MarkDispatched(it.ID, "/w", live.ID, "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	got := app.ListRequirements()
+	for _, cur := range got {
+		if cur.ID == it.ID && cur.SessionID != "disk-legacy" {
+			t.Fatalf("返回条目应携带活跃会话 SessionID, got %q", cur.SessionID)
+		}
+	}
+	// 落盘：store 直读应有 SessionID（与标题反查不同，这里要持久化）
+	persisted := false
+	for _, cur := range store.List() {
+		if cur.ID == it.ID {
+			persisted = cur.SessionID == "disk-legacy"
+		}
+	}
+	if !persisted {
+		t.Fatal("SessionID 应已惰性落盘")
+	}
+}
+
+// TestListRequirementsRevivesBySessionID 桌面端重启后 ChatID 失效的场景：
+// 条目持旧 chatId（manager 里不存在）+ 磁盘会话被重新激活（新 chat ID 挂同
+// SessionID），ListRequirements 应按 SessionID 恢复绑定，返回的 ChatID 翻回
+// 别名链头（前端 ID 空间），状态点/跳转随之恢复。
+func TestListRequirementsRevivesBySessionID(t *testing.T) {
+	app, store, m, _ := newRequirementTestApp(t, nil)
+	it, err := store.Add("/proj", "重启恢复", "medium", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 重新激活后的会话：manager 里是新 chat ID，挂同一磁盘会话 ID
+	live := openTestChat(t, m)
+	if !m.AttachSession("disk-stable", "/w", "", "恢复标题", 3, time.Time{}) {
+		t.Fatal("前置：AttachSession 应命中桩会话")
+	}
+	// 落盘的是重启前的旧 chatId；SessionID 已有（重启前惰性回填过）
+	if err := store.MarkDispatched(it.ID, "/w", "c-old-dead", "", "disk-stable"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := app.ListRequirements()
+	for _, cur := range got {
+		if cur.ID != it.ID {
+			continue
+		}
+		if cur.ChatID != live.ID {
+			t.Fatalf("应按 SessionID 恢复 ChatID, got %q want %q", cur.ChatID, live.ID)
+		}
+		if cur.SessionTitle != "恢复标题" {
+			t.Fatalf("恢复时应补标题, got %q", cur.SessionTitle)
+		}
+	}
+	// 落盘 ChatID 不被改写：旧 chatId 是用户数据，恢复只在返回副本上生效
+	for _, cur := range store.List() {
+		if cur.ID == it.ID && cur.ChatID != "c-old-dead" {
+			t.Fatalf("恢复不应落盘改写 ChatID, store = %q", cur.ChatID)
 		}
 	}
 }

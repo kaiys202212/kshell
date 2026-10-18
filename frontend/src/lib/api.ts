@@ -661,7 +661,7 @@ interface AppBindings {
   AddRequirement(project: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
   UpdateRequirement(id: string, project: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
   DeleteRequirement(id: string): Promise<void>;
-  MarkRequirementDispatched(id: string, workspace: string, chatID: string, title: string): Promise<void>;
+  MarkRequirementDispatched(id: string, workspace: string, chatID: string, title: string, sessionID: string): Promise<void>;
   ArchiveRequirement(id: string): Promise<{ released: boolean; chatId: string }>;
   SetRequirementStatus(id: string, status: string): Promise<void>;
   WeixinBind(): Promise<string>;
@@ -1599,6 +1599,8 @@ export interface Requirement {
   dispatchedTo?: string;
   status?: 'pending' | 'active' | 'done' | 'archived';
   chatId?: string;
+  // sessionId 是磁盘会话 ID（跨进程稳定）；旧数据可能缺失
+  sessionId?: string;
   sessionTitle?: string;
   archivedAt?: number;
   ts: number;
@@ -1644,16 +1646,19 @@ export async function deleteRequirement(id: string): Promise<void> {
 }
 
 // markRequirementDispatched 标记需求已派发到某工作区并关联会话 ID 与标题快照；
-// title 为该会话当前标题（新建占位或磁盘标题），标题后续变化由 Go 侧回填。错误向上抛。
+// title 为该会话当前标题（新建占位或磁盘标题），标题后续变化由 Go 侧回填；
+// sessionId 为磁盘会话 ID（跨进程稳定，桌面端重启后据此恢复绑定），可空。
+// 错误向上抛。
 export async function markRequirementDispatched(
   id: string,
   workspace: string,
   chatID: string,
   title: string,
+  sessionId?: string,
 ): Promise<void> {
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
-  await a.MarkRequirementDispatched(id, workspace, chatID, title);
+  await a.MarkRequirementDispatched(id, workspace, chatID, title, sessionId ?? '');
 }
 
 // archiveRequirement 归档需求；released 表示关联会话是否已关闭（空闲自动关闭），

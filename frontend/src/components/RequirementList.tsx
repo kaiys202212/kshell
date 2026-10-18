@@ -350,7 +350,10 @@ function ArchiveDialog({
                     {(r.tags ?? []).map((tg) => (
                       <Badge key={tg} variant="outline">{tg}</Badge>
                     ))}
-                    {r.dispatchedTo && <Badge variant="outline">{baseName(r.dispatchedTo)}</Badge>}
+                    {/* 派发目标徽章：与 project 同一工作区时隐藏（避免双同名徽章），archived 视图同理 */}
+                    {r.dispatchedTo && !(r.project && sameWorkspacePath(r.project, r.dispatchedTo)) && (
+                      <Badge variant="outline">{baseName(r.dispatchedTo)}</Badge>
+                    )}
                     <span>{r.archivedAt ? formatRelativeTime(new Date(r.archivedAt / 1e6).toISOString()) : ''}</span>
                   </span>
                 </span>
@@ -584,7 +587,12 @@ export default function RequirementList({ className }: { className?: string }) {
                           {tag}
                         </Badge>
                       ))}
-                    {r.dispatchedTo && <Badge variant="outline">{baseName(r.dispatchedTo)}</Badge>}
+                    {/* 派发目标徽章：与 project 同一工作区时隐藏（项目徽章已表达，避免同屏双 "kshell"） */}
+                    {r.dispatchedTo && !(r.project && sameWorkspacePath(r.project, r.dispatchedTo)) && (
+                      <Badge variant="outline" title={r.dispatchedTo}>
+                        {baseName(r.dispatchedTo)}
+                      </Badge>
+                    )}
                     {/* 行尾按钮组分两段：常显区（快捷开始/重开，不用 hover 就能点）+
                         hover 区（跳转与需求操作）。同一行避免卡片纵向膨胀。
                         pending：快捷开始常显 + hover 编辑删除；active：hover 标记完成，

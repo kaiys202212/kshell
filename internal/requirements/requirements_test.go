@@ -160,7 +160,7 @@ func TestDeleteIdempotent(t *testing.T) {
 func TestMarkDispatched(t *testing.T) {
 	s, _ := newTestStore(t)
 	it, _ := s.Add("/proj", "需求", "low", nil)
-	if err := s.MarkDispatched(it.ID, "D:/work/proj", "chat-9", "初始标题"); err != nil {
+	if err := s.MarkDispatched(it.ID, "D:/work/proj", "chat-9", "初始标题", "sess-9"); err != nil {
 		t.Fatalf("MarkDispatched: %v", err)
 	}
 	items := s.List()
@@ -170,13 +170,16 @@ func TestMarkDispatched(t *testing.T) {
 	if items[0].ChatID != "chat-9" {
 		t.Errorf("ChatID = %q, want chat-9", items[0].ChatID)
 	}
+	if items[0].SessionID != "sess-9" {
+		t.Errorf("SessionID = %q, want sess-9", items[0].SessionID)
+	}
 	if items[0].SessionTitle != "初始标题" {
 		t.Errorf("SessionTitle = %q, want 初始标题", items[0].SessionTitle)
 	}
 	if items[0].Status != "active" {
 		t.Errorf("派发后 Status = %q, want active", items[0].Status)
 	}
-	if err := s.MarkDispatched("不存在", "x", "c", ""); err == nil {
+	if err := s.MarkDispatched("不存在", "x", "c", "", ""); err == nil {
 		t.Error("MarkDispatched 不存在的 id 应报错")
 	}
 }
@@ -184,7 +187,7 @@ func TestMarkDispatched(t *testing.T) {
 func TestSetSessionTitle(t *testing.T) {
 	s, _ := newTestStore(t)
 	it, _ := s.Add("/proj", "需求", "low", nil)
-	_ = s.MarkDispatched(it.ID, "/ws", "chat-1", "旧标题")
+	_ = s.MarkDispatched(it.ID, "/ws", "chat-1", "旧标题", "")
 
 	// 按 ChatID 命中并更新
 	updated, err := s.SetSessionTitle("chat-1", "新标题")
@@ -220,7 +223,7 @@ func TestSetSessionTitle(t *testing.T) {
 func TestSetSessionTitleArchivedRejected(t *testing.T) {
 	s, _ := newTestStore(t)
 	it, _ := s.Add("/proj", "需求", "low", nil)
-	_ = s.MarkDispatched(it.ID, "/ws", "chat-1", "旧标题")
+	_ = s.MarkDispatched(it.ID, "/ws", "chat-1", "旧标题", "")
 	_ = s.SetStatus(it.ID, "done")
 	if err := s.Archive(it.ID); err != nil {
 		t.Fatalf("Archive: %v", err)
@@ -243,7 +246,7 @@ func TestSessionTitleRoundTrip(t *testing.T) {
 	s1 := New(dir)
 	_ = s1.Load()
 	it, _ := s1.Add("/proj", "需求", "low", nil)
-	_ = s1.MarkDispatched(it.ID, "/ws", "chat-7", "落盘标题")
+	_ = s1.MarkDispatched(it.ID, "/ws", "chat-7", "落盘标题", "")
 
 	s2 := New(dir)
 	_ = s2.Load()
@@ -261,7 +264,7 @@ func TestPersistenceRoundTrip(t *testing.T) {
 	}
 	a, _ := s1.Add("/proj", "需求一", "high", []string{"tag1"})
 	b, _ := s1.Add("/proj", "需求二", "low", []string{"tag2", "tag3"})
-	_ = s1.MarkDispatched(b.ID, "/tmp/ws", "chat-1", "")
+	_ = s1.MarkDispatched(b.ID, "/tmp/ws", "chat-1", "", "")
 
 	// 重新创建 store 模拟进程重启
 	s2 := New(dir)
@@ -307,7 +310,7 @@ func TestLoadCorruptOrMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "requirements.json"))
-	bad := strings.Replace(string(data), `"version":2`, `"version":99`, 1)
+	bad := strings.Replace(string(data), `"version":3`, `"version":99`, 1)
 	_ = os.WriteFile(filepath.Join(dir, "requirements.json"), []byte(bad), 0o600)
 	s3 := New(dir)
 	if err := s3.Load(); err != nil {
@@ -349,6 +352,58 @@ func TestTagsAreCopiedOnAdd(t *testing.T) {
 	}
 }
 
+// TestSetSessionID 验证按 ChatID 惰性补录磁盘会话 ID 的幂等与短路语义。
+func TestSetSessionID(t *testing.T) {
+	s, _ := newTestStore(t)
+	it, _ := s.Add("/proj", "需求", "low", nil)
+	_ = s.MarkDispatched(it.ID, "/ws", "chat-1", "标题", "")
+
+	// 命中并写入
+	updated, err := s.SetSessionID("chat-1", "sess-1")
+	if err != nil || !updated {
+		t.Fatalf("SetSessionID = (%v, %v), want (true, nil)", updated, err)
+	}
+	if got := s.List()[0].SessionID; got != "sess-1" {
+		t.Errorf("SessionID = %q, want sess-1", got)
+	}
+
+	// 同值幂等
+	updated, err = s.SetSessionID("chat-1", "sess-1")
+	if err != nil || updated {
+		t.Errorf("同值应幂等返回 (false, nil), got (%v, %v)", updated, err)
+	}
+
+	// 空 sessionID 忽略
+	updated, err = s.SetSessionID("chat-1", "")
+	if err != nil || updated {
+		t.Errorf("空 sessionID 应忽略返回 (false, nil), got (%v, %v)", updated, err)
+	}
+
+	// 无匹配 ChatID 幂等返回
+	updated, err = s.SetSessionID("chat-404", "sess-x")
+	if err != nil || updated {
+		t.Errorf("无匹配应返回 (false, nil), got (%v, %v)", updated, err)
+	}
+}
+
+// TestLoadV2FileCompatible 验证 v2 落盘文件（无 sessionId 字段）兼容读取。
+func TestLoadV2FileCompatible(t *testing.T) {
+	dir := t.TempDir()
+	legacy := `{"version":2,"items":[{"id":"abc","text":"v2需求","priority":"low","chatId":"chat-v2","sessionTitle":"旧会话","status":"active","ts":123}]}`
+	if err := os.WriteFile(filepath.Join(dir, "requirements.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := New(dir)
+	_ = s.Load()
+	items := s.List()
+	if len(items) != 1 || items[0].ChatID != "chat-v2" {
+		t.Fatalf("v2 文件应可读取: %+v", items)
+	}
+	if items[0].SessionID != "" {
+		t.Errorf("v2 条目 SessionID 应为零值, got %q", items[0].SessionID)
+	}
+}
+
 func TestFileWrittenAtomic(t *testing.T) {
 	dir := t.TempDir()
 	s := New(dir)
@@ -370,8 +425,8 @@ func TestFileWrittenAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"version":2`) {
-		t.Errorf("落盘文件应含 version=2: %s", data)
+	if !strings.Contains(string(data), `"version":3`) {
+		t.Errorf("落盘文件应含 version=3: %s", data)
 	}
 }
 
@@ -388,7 +443,7 @@ func TestStatusLifecycle(t *testing.T) {
 	}
 
 	// 派发：记录 workspace + chatID，置 active
-	if err := s.MarkDispatched(it.ID, `D:\ws`, "chat-1", ""); err != nil {
+	if err := s.MarkDispatched(it.ID, `D:\ws`, "chat-1", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	got := s.List()[0]
@@ -421,16 +476,16 @@ func TestStatusLifecycle(t *testing.T) {
 func TestMarkDispatchedTerminalRejected(t *testing.T) {
 	s, _ := newTestStore(t)
 	done, _ := s.Add("/proj", "已完成", "low", nil)
-	_ = s.MarkDispatched(done.ID, "/w", "c", "")
+	_ = s.MarkDispatched(done.ID, "/w", "c", "", "")
 	_ = s.SetStatus(done.ID, "done")
-	if err := s.MarkDispatched(done.ID, "/w2", "c2", ""); err == nil {
+	if err := s.MarkDispatched(done.ID, "/w2", "c2", "", ""); err == nil {
 		t.Error("done 状态不允许重新派发")
 	}
 	arch, _ := s.Add("/proj", "已归档", "low", nil)
-	_ = s.MarkDispatched(arch.ID, "/w", "c", "")
+	_ = s.MarkDispatched(arch.ID, "/w", "c", "", "")
 	_ = s.SetStatus(arch.ID, "done")
 	_ = s.Archive(arch.ID)
-	if err := s.MarkDispatched(arch.ID, "/w3", "c3", ""); err == nil {
+	if err := s.MarkDispatched(arch.ID, "/w3", "c3", "", ""); err == nil {
 		t.Error("archived 状态不允许重新派发")
 	}
 	// 状态与派发字段都不应被改动
@@ -449,9 +504,9 @@ func TestListArchivedOrder(t *testing.T) {
 	s, _ := newTestStore(t)
 	a, _ := s.Add("/proj", "旧需求", "low", []string{"x"})
 	b, _ := s.Add("/proj", "新需求", "low", []string{"y"})
-	_ = s.MarkDispatched(a.ID, "/w1", "c1", "")
+	_ = s.MarkDispatched(a.ID, "/w1", "c1", "", "")
 	time.Sleep(2 * time.Millisecond)
-	_ = s.MarkDispatched(b.ID, "/w2", "c2", "")
+	_ = s.MarkDispatched(b.ID, "/w2", "c2", "", "")
 	_ = s.SetStatus(a.ID, "done")
 	_ = s.SetStatus(b.ID, "done")
 	_ = s.Archive(a.ID)
@@ -479,7 +534,7 @@ func TestSetStatusTransitions(t *testing.T) {
 		t.Error("不存在的 id 应报错")
 	}
 	// 合法迁移 pending → active → done
-	if err := s.MarkDispatched(it.ID, "/w", "c", ""); err != nil {
+	if err := s.MarkDispatched(it.ID, "/w", "c", "", ""); err != nil {
 		t.Fatalf("MarkDispatched: %v", err)
 	}
 	if err := s.SetStatus(it.ID, "done"); err != nil {
@@ -495,18 +550,18 @@ func TestSetStatusTransitions(t *testing.T) {
 func TestDeleteOnlyPending(t *testing.T) {
 	s, _ := newTestStore(t)
 	active, _ := s.Add("/proj", "执行中", "low", nil)
-	_ = s.MarkDispatched(active.ID, "/w", "c", "")
+	_ = s.MarkDispatched(active.ID, "/w", "c", "", "")
 	if err := s.Delete(active.ID); err == nil {
 		t.Error("active 状态不允许删除")
 	}
 	done, _ := s.Add("/proj", "已完成", "low", nil)
-	_ = s.MarkDispatched(done.ID, "/w", "c", "")
+	_ = s.MarkDispatched(done.ID, "/w", "c", "", "")
 	_ = s.SetStatus(done.ID, "done")
 	if err := s.Delete(done.ID); err == nil {
 		t.Error("done 状态不允许删除")
 	}
 	arch, _ := s.Add("/proj", "已归档", "low", nil)
-	_ = s.MarkDispatched(arch.ID, "/w", "c", "")
+	_ = s.MarkDispatched(arch.ID, "/w", "c", "", "")
 	_ = s.SetStatus(arch.ID, "done")
 	_ = s.Archive(arch.ID)
 	if err := s.Delete(arch.ID); err == nil {
@@ -525,7 +580,7 @@ func TestUpdateOnlyPending(t *testing.T) {
 	if _, err := s.Update(it.ID, "/proj", "新文本", "high", nil); err != nil {
 		t.Fatalf("pending 状态应可 Update: %v", err)
 	}
-	_ = s.MarkDispatched(it.ID, "/w", "c", "")
+	_ = s.MarkDispatched(it.ID, "/w", "c", "", "")
 	if _, err := s.Update(it.ID, "/proj", "再改", "low", nil); err == nil {
 		t.Error("active 状态不允许 Update")
 	}
@@ -539,7 +594,7 @@ func TestArchiveOnlyDone(t *testing.T) {
 		t.Error("pending 状态不允许归档")
 	}
 	active, _ := s.Add("/proj", "执行中", "low", nil)
-	_ = s.MarkDispatched(active.ID, "/w", "c", "")
+	_ = s.MarkDispatched(active.ID, "/w", "c", "", "")
 	if err := s.Archive(active.ID); err == nil {
 		t.Error("active 状态不允许归档")
 	}
