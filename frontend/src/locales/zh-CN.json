@@ -32,7 +32,8 @@
     },
     "hub": {
       "not_found": "消息不存在或已归档",
-      "not_queued": "消息已送达，无法撤回"
+      "not_queued": "消息已送达，无法撤回",
+      "invalid_route_mode": "无效的路由模式 {{0}}（可选 auto、agent、force_auto）"
     },
     "language": {
       "locales_not_dir": "locales 路径不是目录: {{0}}"
@@ -914,7 +915,18 @@
       "mention_session": "@ 该会话",
       "jump_session": "打开会话对话页",
       "close_session": "关闭会话",
-      "close_session_failed": "关闭会话失败：{{err}}"
+      "close_session_failed": "关闭会话失败：{{err}}",
+      "route_mode_label": "输入路由",
+      "route_mode_auto": "自动",
+      "route_mode_agent": "仅 agent",
+      "route_mode_force_auto": "强制工具",
+      "route_save_failed": "路由模式保存失败：{{err}}",
+      "confirm_title": "待确认操作",
+      "confirm_approve": "确认执行",
+      "confirm_reject": "拒绝",
+      "confirm_done": "该操作已处理",
+      "confirm_failed": "操作失败：{{err}}",
+      "confirm_expired": "确认已过期，请重新发起"
     },
     "requirements": {
       "title": "需求",

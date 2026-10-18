@@ -27,10 +27,12 @@ import {
   recallHubMessage,
   sendChatPrompt,
   setChatModel,
+  confirmHubTool,
+  saveHubRouteMode,
 } from '../lib/api';
 import { buildMentionOptions, resolveMentionTarget, type MentionAgent, type MentionOption } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
-import { loadDefaultCreate, loadLastCreate, loadToolModels, saveDefaultCreate, saveLastCreate, saveToolModels } from '../lib/agenthubDefaults';
+import { loadDefaultCreate, loadLastCreate, loadToolModels, loadHubRouteMode, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode } from '../lib/agenthubDefaults';
 import { saveHubDefaultCreate } from '../lib/api';
 import { quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
@@ -46,6 +48,7 @@ import { useAppStore } from '../state/store';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 import FindSessionDialog from './FindSessionDialog';
+import HubConfirmCard from './HubConfirmCard';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 
 // 消息流里渲染的一条：用户发出（右）或 agent 回复（左）。
@@ -244,6 +247,16 @@ export default function AgentHubPanel() {
   const [activeMonth, setActiveMonth] = useState<string | null>(null);
   // 自动滚动：开启时新消息把消息流滚到底；关闭后自由翻历史不被打断。
   const [autoScroll, setAutoScroll] = useState(readAutoScrollPref);
+  // 输入路由模式：auto=意图路由（默认）、agent=全部走 ACP、force_auto=直接工具循环。
+  // localStorage 为 UI 侧真值，变更时写穿后端 config.yaml（跨端副本，微信桥可读）。
+  const [routeMode, setRouteMode] = useState<HubRouteMode>(loadHubRouteMode);
+  const changeRouteMode = (mode: HubRouteMode) => {
+    setRouteMode(mode);
+    persistRouteModeLocal(mode);
+    saveHubRouteMode(mode).catch((e) => {
+      useAppStore.getState().notify(t('ui.hub.route_save_failed', { err: backendError(e) }), 'error');
+    });
+  };
   // 浮动会话胶囊：面板展开状态。
   const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
   const sessionBarRef = useRef<HTMLDivElement>(null);
@@ -1210,10 +1223,20 @@ export default function AgentHubPanel() {
                   <div className="mb-0.5 text-[11px] text-muted-foreground">
                     {[toolDisplayName(m.tool ?? ''), attr].filter(Boolean).join(' · ')}
                   </div>
-                  {/* 正文过 translateBackend：ack 卡片的 wire key 翻译成当前语言，普通文本原样返回 */}
-                  <div className={markdownBubbleClass}>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{translateBackend(m.text)}</ReactMarkdown>
-                  </div>
+                  {/* tool_confirm：写操作确认卡（摘要 + 确认/拒绝按钮），其余走 markdown */}
+                  {m.event === 'tool_confirm' ? (
+                    <HubConfirmCard
+                      message={m}
+                      onConfirm={(pendingID, approved) =>
+                        confirmHubTool(m.chatId ?? '', pendingID, approved)
+                      }
+                    />
+                  ) : (
+                    /* 正文过 translateBackend：ack 卡片的 wire key 翻译成当前语言，普通文本原样返回 */
+                    <div className={markdownBubbleClass}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{translateBackend(m.text)}</ReactMarkdown>
+                    </div>
+                  )}
                 </div>
                 {/* 快速回复：常显预设按钮，点击直达该卡片归因的 agent（send/填入两种动作） */}
                 <div className="mt-1 flex flex-wrap gap-1">
@@ -1394,8 +1417,21 @@ export default function AgentHubPanel() {
             }
           }}
         />
-        {/* 发送行：自动滚动开关放发送按钮左侧 */}
+        {/* 发送行：路由模式 + 自动滚动开关放发送按钮左侧 */}
         <div className="flex items-center justify-end gap-2">
+          <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            {t('ui.hub.route_mode_label')}
+            <select
+              data-testid="hub-route-mode"
+              className="rounded border border-border bg-card px-1 py-0.5 text-[11px]"
+              value={routeMode}
+              onChange={(e) => changeRouteMode(e.target.value as HubRouteMode)}
+            >
+              <option value="auto">{t('ui.hub.route_mode_auto')}</option>
+              <option value="agent">{t('ui.hub.route_mode_agent')}</option>
+              <option value="force_auto">{t('ui.hub.route_mode_force_auto')}</option>
+            </select>
+          </label>
           <label className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground">
             <input
               type="checkbox"

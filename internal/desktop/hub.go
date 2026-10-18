@@ -27,6 +27,20 @@ func (a *App) SaveHubDefaultCreate(toolID, modelID string) error {
 	})
 }
 
+// SaveHubRouteMode 持久化 AgentHub 输入路由模式（auto | agent | force_auto）
+// 到 config.yaml：前端 localStorage 之外的跨端副本，工具化路由层动态读这里。
+// 非法值报 wire key（前端 translateBackend 翻译）。
+func (a *App) SaveHubRouteMode(mode string) error {
+	switch mode {
+	case config.RouteModeAuto, config.RouteModeAgent, config.RouteModeForceAuto:
+	default:
+		return errors.New("err.hub.invalid_route_mode")
+	}
+	return a.saveConfig(func(c *config.Config) {
+		c.AgentHub.RouteMode = mode
+	})
+}
+
 // recordHubMessage 把一条消息写入 AgentHub 历史并通知前端刷新。
 // 这是用户消息与 agent 回复共用的唯一写入路径：两类消息进同一 store、同一 ID 序列，
 // 前端按 ID 排序即得一致时序。未装配 store（未就绪/测试）时静默跳过。

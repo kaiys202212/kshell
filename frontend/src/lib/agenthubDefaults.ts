@@ -4,6 +4,11 @@
 const LAST_CREATE_KEY = 'kshell.agenthub.lastCreate';
 const DEFAULT_CREATE_KEY = 'kshell.agenthub.defaultCreate';
 const MODELS_KEY_PREFIX = 'kshell.agenthub.models.';
+const ROUTE_MODE_KEY = 'kshell.agenthub.routeMode';
+
+// Hub 路由模式：auto=自动意图路由（默认）、agent=全部走 ACP agent、
+// force_auto=跳过意图判断直接进工具循环。
+export type HubRouteMode = 'auto' | 'agent' | 'force_auto';
 
 export interface LastAgentCreate {
   wsPath: string;
@@ -70,4 +75,20 @@ export function loadToolModels(toolId: string): string[] {
 // saveToolModels 缓存某工具的模型 ID 列表（成功拉到 listChatModels 后调用）。
 export function saveToolModels(toolId: string, modelIds: string[]): void {
   writeJSON(MODELS_KEY_PREFIX + toolId, modelIds);
+}
+
+// loadHubRouteMode 读取路由模式；缺失/非法回落 auto（与后端 Normalize 同语义）。
+export function loadHubRouteMode(): HubRouteMode {
+  const v = localStorage.getItem(ROUTE_MODE_KEY);
+  if (v === 'agent' || v === 'force_auto') return v;
+  return 'auto';
+}
+
+// saveHubRouteMode 保存路由模式到 localStorage（跨端副本由调用方写穿后端）。
+export function saveHubRouteMode(mode: HubRouteMode): void {
+  try {
+    localStorage.setItem(ROUTE_MODE_KEY, mode);
+  } catch {
+    // 写失败（隐私模式）静默：模式是辅助功能
+  }
 }

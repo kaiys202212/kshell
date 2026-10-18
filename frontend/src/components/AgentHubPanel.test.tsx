@@ -30,6 +30,8 @@ const api = vi.hoisted(() => ({
   recallHubMessage: vi.fn(),
   hubCommand: vi.fn(),
   saveHubDefaultCreate: vi.fn().mockResolvedValue(undefined),
+  saveHubRouteMode: vi.fn().mockResolvedValue(undefined),
+  confirmHubTool: vi.fn().mockResolvedValue(undefined),
   listRequirements: vi.fn(),
   markRequirementDispatched: vi.fn(),
 }));
@@ -1930,5 +1932,42 @@ describe('AgentHubPanel #find', () => {
     // 对话框不关，草稿不追加
     expect(screen.getByText(tt('ui.hub.find_title'))).toBeTruthy();
     expect((box as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('路由模式切换：写 localStorage 并写穿后端', async () => {
+    render(<AgentHubPanel />);
+    const sel = screen.getByTestId('hub-route-mode') as HTMLSelectElement;
+    expect(sel.value).toBe('auto');
+    fireEvent.change(sel, { target: { value: 'agent' } });
+    expect(sel.value).toBe('agent');
+    expect(localStorage.getItem('kshell.agenthub.routeMode')).toBe('agent');
+    await waitFor(() => expect(api.saveHubRouteMode).toHaveBeenCalledWith('agent'));
+  });
+
+  it('tool_confirm 消息渲染为确认卡：确认点击调 confirmHubTool', async () => {
+    api.confirmHubTool.mockResolvedValue(undefined);
+    useAppStore.setState({
+      hubMessages: [
+        {
+          id: 1,
+          kind: 'user',
+          chatId: 'c1',
+          text: '帮我新建需求',
+          ts: 1,
+        },
+        {
+          id: 2,
+          kind: 'agent',
+          chatId: 'c1',
+          event: 'tool_confirm',
+          text: '新建需求（项目 D:\\ws-a）：新增需求\n{"pending":"p9","tool":"create_requirement"}',
+          ts: 2,
+        },
+      ],
+    });
+    render(<AgentHubPanel />);
+    expect(screen.getByText('新建需求（项目 D:\\ws-a）：新增需求')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('hub-confirm-approve'));
+    await waitFor(() => expect(api.confirmHubTool).toHaveBeenCalledWith('c1', 'p9', true));
   });
 });

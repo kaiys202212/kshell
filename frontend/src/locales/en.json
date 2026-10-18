@@ -32,7 +32,8 @@
     },
     "hub": {
       "not_found": "Message not found or archived",
-      "not_queued": "Message already delivered; cannot recall"
+      "not_queued": "Message already delivered; cannot recall",
+      "invalid_route_mode": "Invalid routing mode {{0}} (choose auto, agent or force_auto)"
     },
     "language": {
       "locales_not_dir": "Locales path is not a directory: {{0}}"
@@ -914,7 +915,18 @@
       "mention_session": "Mention this session",
       "jump_session": "Open session chat",
       "close_session": "Close session",
-      "close_session_failed": "Failed to close session: {{err}}"
+      "close_session_failed": "Failed to close session: {{err}}",
+      "route_mode_label": "Input routing",
+      "route_mode_auto": "Auto",
+      "route_mode_agent": "Agent only",
+      "route_mode_force_auto": "Tools only",
+      "route_save_failed": "Failed to save routing mode: {{err}}",
+      "confirm_title": "Action awaiting confirmation",
+      "confirm_approve": "Approve",
+      "confirm_reject": "Reject",
+      "confirm_done": "This action has been handled",
+      "confirm_failed": "Action failed: {{err}}",
+      "confirm_expired": "Confirmation expired; please start again"
     },
     "requirements": {
       "title": "Requirements",

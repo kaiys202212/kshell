@@ -548,6 +548,21 @@ func TestConfirmHubToolNotReady(t *testing.T) {
 	}
 }
 
+// TestSaveHubRouteMode 验证路由模式写穿绑定：合法值落配置，非法值报 wire key。
+func TestSaveHubRouteMode(t *testing.T) {
+	a, _, _ := newBridgeTestApp(t)
+	if err := a.SaveHubRouteMode("force_auto"); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.snapshot().Config.AgentHub.RouteMode; got != "force_auto" {
+		t.Fatalf("路由模式应写穿配置: %s", got)
+	}
+	err := a.SaveHubRouteMode("bogus")
+	if err == nil || err.Error() != "err.hub.invalid_route_mode" {
+		t.Fatalf("非法值应报 err.hub.invalid_route_mode: %v", err)
+	}
+}
+
 // extractPendingID 从 tool_confirm 文本尾部 JSON 提取 pending ID。
 func extractPendingID(text string) string {
 	i := strings.LastIndex(text, "{")

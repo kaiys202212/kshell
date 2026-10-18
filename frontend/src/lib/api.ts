@@ -658,6 +658,8 @@ interface AppBindings {
   RecallHubMessage(id: number): Promise<void>;
   HubCommand(text: string): Promise<HubReply[]>;
   SaveHubDefaultCreate(toolID: string, modelID: string): Promise<void>;
+  SaveHubRouteMode(mode: string): Promise<void>;
+  ConfirmHubTool(chatID: string, pendingID: string, approved: boolean): Promise<void>;
   ListRequirements(): Promise<Requirement[]>;
   AddRequirement(project: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
   UpdateRequirement(id: string, project: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
@@ -1577,6 +1579,21 @@ export async function saveHubDefaultCreate(toolId: string, modelId: string | nul
   const a = app();
   if (!a) return;
   await a.SaveHubDefaultCreate(toolId, modelId ?? '');
+}
+
+// saveHubRouteMode 把路由模式写穿到后端 config.yaml（跨端副本，工具化路由层
+// 动态读这里）；纯浏览器调试（无绑定）静默跳过。
+export async function saveHubRouteMode(mode: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.SaveHubRouteMode(mode);
+}
+
+// confirmHubTool 提交/拒绝一个挂起的写操作确认（后端确认状态机消费）。
+export async function confirmHubTool(chatID: string, pendingID: string, approved: boolean): Promise<void> {
+  const a = app();
+  if (!a) throw new Error('err.desktop.not_ready');
+  await a.ConfirmHubTool(chatID, pendingID, approved);
 }
 
 // recallHubMessage 撤回一条排队中的 Hub 用户消息（后端从队列真移除并标记已撤回）。
