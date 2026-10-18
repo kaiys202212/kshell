@@ -260,6 +260,26 @@ func TestBridgeDeliverHubMessage(t *testing.T) {
 	}
 }
 
+func TestBridgeDeliverHardBreaks(t *testing.T) {
+	// 出站统一套用 Markdown 硬换行：PC 端按 Markdown 渲染会把单个 \n
+	// 折叠成空格（真机证实），行尾两空格两端都能换行。
+	rc := &recorder{}
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b := newBridge(t, "u1", ex, rc.handler(t))
+	b.HandleInbound("u1", "ct-9", "你好")
+
+	b.DeliverHubMessage(hub.Message{Kind: "agent", Text: "第一行\n第二行\n\n第三段"})
+	b.FlushForTest()
+	sends := rc.sends()
+	if len(sends) != 1 {
+		t.Fatalf("sendmessage 次数 = %d, 期望 1", len(sends))
+	}
+	text, _ := sendMsgFields(t, sends[0].body)
+	if text != "第一行  \n第二行\n\n第三段" {
+		t.Errorf("出站文本 = %q, 期望 %q", text, "第一行  \n第二行\n\n第三段")
+	}
+}
+
 func TestBridgePendingOnSessionExpired(t *testing.T) {
 	rc := &recorder{sendResp: func(call int) (int, string) {
 		if call == 1 { // 首次 sendmessage 返回 -14
