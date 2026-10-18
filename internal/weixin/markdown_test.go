@@ -41,3 +41,20 @@ func TestMarkdownToTextFenceContentUntouched(t *testing.T) {
 		t.Errorf("= %q, 期望 %q", got, want)
 	}
 }
+
+func TestHardBreaks(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"单换行升级为硬换行", "第一行\n第二行", "第一行  \n第二行"},
+		{"段落空行不动", "段一\n\n段二", "段一\n\n段二"},
+		{"连续行逐行升级", "a\nb\nc", "a  \nb  \nc"},
+		{"行尾已有两空格不重复", "a  \nb", "a  \nb"},
+		{"仅空白行归一为空行", "a\n \nb", "a\n\nb"},
+		{"单行不加工", "只有一行", "只有一行"},
+		{"空串", "", ""},
+	}
+	for _, c := range cases {
+		if got := hardBreaks(c.in); got != c.want {
+			t.Errorf("%s: hardBreaks(%q) = %q, 期望 %q", c.name, c.in, got, c.want)
+		}
+	}
+}
