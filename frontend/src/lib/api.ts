@@ -2034,6 +2034,12 @@ export function onChatCommands(cb: (p: { id: string; commands: ChatCommand[] }) 
   );
 }
 
+// onChatModels 订阅 chat:models：chat.Manager Open 完成后补偿推送模型视图，
+// 修复握手期 ChatView 挂载拉 ListChatModels 拿空的竞态。
+export function onChatModels(cb: (p: { id?: string; models?: ChatModelsView | null }) => void): () => void {
+  return EventsOn('chat:models', (p: { id?: string; models?: ChatModelsView | null }) => cb(p ?? {}));
+}
+
 // 微信桥（internal/desktop/weixin.go）
 // WeixinBind 发起扫码绑定，返回二维码内容 URL（前端转二维码图）。
 export async function weixinBind(): Promise<string> {

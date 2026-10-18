@@ -24,6 +24,7 @@ import {
   onArchiveSuggest,
   onChatExit,
   onChatCommands,
+  onChatModels,
   onChatMeta,
   onChatPermission,
   onChatUpdate,
@@ -197,6 +198,10 @@ function App() {
     const offC = onChatCommands(({ id, commands }) => {
       useAppStore.getState().setChatCommands(id, commands);
     });
+    // 模型视图补偿推送：Open 完成后后端补推一次，写入 store 供模型下拉渲染
+    const offMdl = onChatModels(({ id, models }) => {
+      if (id) useAppStore.getState().setChatModels(id, models ?? null);
+    });
     // 会话重建标记（Rebuilt，随 chat:meta 推送）：重建会话的时间线换了基准
     //（manager 侧 fresh 起步、Seq 从头计数），旧 Seq 门控会把重放与新事件当重复
     // 丢弃——先清时间线与 Seq 再重拉 ChatHistory 重建基准。重拉期间缓冲该 chat
@@ -243,6 +248,7 @@ function App() {
       offP();
       offX();
       offC();
+      offMdl();
       offM();
       throttle.dispose();
     };

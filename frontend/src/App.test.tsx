@@ -102,6 +102,7 @@ const mocks = vi.hoisted(() => ({
   onChatPermission: vi.fn(),
   onChatExit: vi.fn(),
   onChatCommands: vi.fn(),
+  onChatModels: vi.fn(),
   listChatModels: vi.fn().mockResolvedValue(null),
   listChatCommands: vi.fn().mockResolvedValue([]),
   refreshFiles: vi.fn().mockResolvedValue(undefined),
@@ -191,6 +192,7 @@ beforeEach(() => {
   mocks.onTerminalExit.mockImplementation(() => () => {});
   mocks.onTerminalMeta.mockImplementation(() => () => {});
   mocks.onChatMeta.mockImplementation(() => () => {});
+  mocks.onChatModels.mockImplementation(() => () => {});
   mocks.onArchiveSuggest.mockImplementation(() => () => {});
   mocks.onArchiveChanged.mockImplementation(() => () => {});
   mocks.archivedIDs.mockResolvedValue([]);
@@ -552,6 +554,20 @@ describe('App', () => {
     });
     expect(useAppStore.getState().chatCommands.c1?.[0]?.Name).toBe('plan');
     expect(useAppStore.getState().chatCommands.c1?.[0]?.Description).toBe('P');
+  });
+
+  it('chat:models 事件写入 store', async () => {
+    let mdlCb: ((p: { id: string; models: unknown }) => void) | undefined;
+    mocks.onChatModels.mockImplementation((cb: typeof mdlCb) => {
+      mdlCb = cb;
+      return () => {};
+    });
+    render(<App />);
+    const view = { Current: 'm1', Models: [{ ID: 'm1', Name: 'One' }] };
+    act(() => {
+      mdlCb?.({ id: 'c1', models: view });
+    });
+    expect(useAppStore.getState().chatModels.c1).toEqual(view);
   });
 
   it('chat:update 早于历史回放时先入缓冲，补放后历史前缀不丢', async () => {
