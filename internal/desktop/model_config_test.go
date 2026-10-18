@@ -262,28 +262,60 @@ func TestListModelPresetsNonEmpty(t *testing.T) {
 	}
 }
 
-func TestModelOptionsUsesActiveModel(t *testing.T) {
+func TestModelOptionsUsesActivePlatform(t *testing.T) {
 	app, _ := newModelApp(t)
 	app.mu.Lock()
 	app.opts.Config.Model = config.ModelConfig{
-		Enabled: true,
-		OpenAIBaseURL: "https://oai/", AnthropicBaseURL: "https://ant/",
-		APIKey: "k", ActiveModel: "glm-5",
+		Enabled:         true,
+		DefaultPlatform: "p1",
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", OpenAIBaseURL: "https://oai/", AnthropicBaseURL: "https://ant/", APIKey: "k"},
+			{ID: "p2", OpenAIBaseURL: "https://oai2/", APIKey: "k2"},
+		},
+		ActiveModel: "glm-5",
 	}
 	app.mu.Unlock()
 
 	mo := app.modelOptions()
 	for _, toolID := range []string{"claude", "codex", "anything"} {
 		mc, ok := mo.Resolver(toolID)
-		if !ok || mc.Model != "glm-5" || mc.OpenAIBaseURL != "https://oai/" || mc.APIKey != "k" {
+		if !ok || mc.Model != "glm-5" || mc.OpenAIBaseURL != "https://oai/" || mc.AnthropicBaseURL != "https://ant/" || mc.APIKey != "k" {
 			t.Fatalf("resolver(%s) = %+v ok=%v", toolID, mc, ok)
 		}
 	}
+	// 未启用时不注入。
 	app.mu.Lock()
-	app.opts.Config.Model = config.ModelConfig{Enabled: false, ActiveModel: "glm-5"}
+	app.opts.Config.Model = config.ModelConfig{Enabled: false, DefaultPlatform: "p1", ActiveModel: "glm-5"}
 	app.mu.Unlock()
 	if mo := app.modelOptions(); mo.Resolver != nil {
 		t.Fatal("未启用时不应注入")
+	}
+	// 启用但未配置任何平台：不注入。
+	app.mu.Lock()
+	app.opts.Config.Model = config.ModelConfig{Enabled: true, ActiveModel: "glm-5"}
+	app.mu.Unlock()
+	if mo := app.modelOptions(); mo.Resolver != nil {
+		t.Fatal("无平台时不应注入")
+	}
+}
+
+// DefaultPlatform 为空时回落第一个平台。
+func TestModelOptionsDefaultPlatformFallback(t *testing.T) {
+	app, _ := newModelApp(t)
+	app.mu.Lock()
+	app.opts.Config.Model = config.ModelConfig{
+		Enabled: true,
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", OpenAIBaseURL: "https://oai1/", APIKey: "k1"},
+			{ID: "p2", OpenAIBaseURL: "https://oai2/", APIKey: "k2"},
+		},
+		ActiveModel: "glm-5",
+	}
+	app.mu.Unlock()
+
+	mc, ok := app.modelOptions().Resolver("claude")
+	if !ok || mc.Model != "glm-5" || mc.OpenAIBaseURL != "https://oai1/" || mc.APIKey != "k1" {
+		t.Fatalf("应回落第一个平台: %+v ok=%v", mc, ok)
 	}
 }
 
@@ -306,13 +338,17 @@ func TestModelOptionsCodebuddyPrefersLastModel(t *testing.T) {
 	app, _ := newModelApp(t)
 	app.mu.Lock()
 	app.opts.Home = writeCodebuddySettings(t, "custom-local:deepseek-v4.1-flash")
-	app.opts.Config.Model = config.ModelConfig{Enabled: true, ActiveModel: "glm-5"}
+	app.opts.Config.Model = config.ModelConfig{
+		Enabled:   true,
+		Platforms: []config.ModelPlatform{{ID: "p1", OpenAIBaseURL: "https://oai/", APIKey: "k"}},
+		ActiveModel: "glm-5",
+	}
 	app.mu.Unlock()
 
 	mo := app.modelOptions()
 	// codebuddy：沿用记住的上次选择
 	mc, ok := mo.Resolver("codebuddy")
-	if !ok || mc.Model != "custom-local:deepseek-v4.1-flash" {
+	if !ok || mc.Model != "custom-local:deepseek-v4.1-flash" || mc.OpenAIBaseURL != "https://oai/" || mc.APIKey != "k" {
 		t.Fatalf("resolver(codebuddy) = %+v ok=%v", mc, ok)
 	}
 	// 其他工具：仍用 ActiveModel
@@ -383,13 +419,17 @@ func TestModelOptionsCursorPrefersLastModel(t *testing.T) {
 	app, _ := newModelApp(t)
 	app.mu.Lock()
 	app.opts.Home = writeCursorConfig(t, "grok-4.7")
-	app.opts.Config.Model = config.ModelConfig{Enabled: true, ActiveModel: "glm-5"}
+	app.opts.Config.Model = config.ModelConfig{
+		Enabled:   true,
+		Platforms: []config.ModelPlatform{{ID: "p1", OpenAIBaseURL: "https://oai/", APIKey: "k"}},
+		ActiveModel: "glm-5",
+	}
 	app.mu.Unlock()
 
 	mo := app.modelOptions()
 	// cursor：沿用记住的上次选择
 	mc, ok := mo.Resolver("cursor")
-	if !ok || mc.Model != "grok-4.7" {
+	if !ok || mc.Model != "grok-4.7" || mc.OpenAIBaseURL != "https://oai/" || mc.APIKey != "k" {
 		t.Fatalf("resolver(cursor) = %+v ok=%v", mc, ok)
 	}
 	// 其他工具：仍用 ActiveModel
