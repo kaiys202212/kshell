@@ -490,7 +490,8 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	// Open 完成后补偿推送一次模型视图：握手期前端拉 ListChatModels 可能拿空
 	// （starting 状态下 modelState/modelConfig 尚未赋值），靠此回调让 desktop
 	// 层 emit chat:models。s.modelState/modelConfig 在本 goroutine 的握手阶段
-	// 已赋值，此处读取无竞态。
+	// 已赋值，此处读取无竞态；并发写入方（SetModel 等）最早也要等 Open 返回
+	// 后才可能发生，约束即"Open 返回前不得有其他 goroutine 写这两字段"。
 	if onModels != nil && (s.modelState != nil || s.modelConfig != nil) {
 		onModels(s.id)
 	}
