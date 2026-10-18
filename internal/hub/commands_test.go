@@ -831,6 +831,38 @@ func TestSwitchAndSentSessionTag(t *testing.T) {
 	}
 }
 
+// #en 带消息：创建成功后消息自动发给新会话（CreateNew 返回即握手完成，
+// SendChatPrompt 对 starting 会话另有入队兜底）；发送失败追加发送失败回复。
+func TestEasyNewWithMessage(t *testing.T) {
+	fe := &fakeExecutor{
+		easyNewRef: SessionRef{ChatID: "n1", Tool: "claude", ToolName: "Claude Code", Title: "T"},
+	}
+	out := join(NewConsole(fe).Handle("#en 帮我写个 todo"))
+	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"n1", "帮我写个 todo"} {
+		t.Fatalf("#en 消息应自动下发: %v", fe.sendCalls)
+	}
+	if !strings.Contains(out, "我是 Claude Code") {
+		t.Fatalf("仍应回欢迎词: %q", out)
+	}
+
+	// 发送失败：欢迎词 + 发送失败两条都回
+	fe2 := &fakeExecutor{
+		easyNewRef: SessionRef{ChatID: "n1", Tool: "claude", Title: "T"},
+		sendErr:    errors.New("offline"),
+	}
+	out = join(NewConsole(fe2).Handle("#en 任务"))
+	if !strings.Contains(out, "我是 claude") || !strings.Contains(out, "发送失败") {
+		t.Fatalf("发送失败应同时回欢迎词与失败提示: %q", out)
+	}
+
+	// 无消息：不 Send
+	fe3 := &fakeExecutor{easyNewRef: SessionRef{ChatID: "n1", Tool: "claude", Title: "T"}}
+	NewConsole(fe3).Handle("#en")
+	if len(fe3.sendCalls) != 0 {
+		t.Fatalf("无消息不得 Send: %v", fe3.sendCalls)
+	}
+}
+
 // 全角问号帮助：#？ 与 ＃？ 均应出帮助（2026-10-18 用户反馈漏网字符）。
 func TestFullWidthQuestionHelp(t *testing.T) {
 	c := NewConsole(&fakeExecutor{

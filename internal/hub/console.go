@@ -165,7 +165,7 @@ func (c *Console) handleCommand(input string) []Reply {
 	case "#la":
 		return c.handleList(true)
 	case "#en":
-		return c.handleEasyNew()
+		return c.handleEasyNew(arg)
 	case "#n":
 		return c.handleNewMenu()
 	case "#s":
@@ -351,15 +351,24 @@ func (c *Console) refByNum(n int) (SessionRef, bool) {
 	return SessionRef{}, false
 }
 
-// handleEasyNew 快速新建。
-func (c *Console) handleEasyNew() []Reply {
+// handleEasyNew 快速新建。arg 非空时（"#en <消息>"）创建成功后把消息自动
+// 发给新会话：CreateNew 返回即已完成握手，SendChatPrompt 对仍在启动的会话
+// 也有入队兜底，agent 稍后回复并经 hub 镜像回微信。发送失败在欢迎词后追加
+// 发送失败提示。
+func (c *Console) handleEasyNew(arg string) []Reply {
 	ref, err := c.ex.EasyNew()
 	if err != nil {
 		return single(fmt.Sprintf(c.text("create_failed"), err))
 	}
 	c.current = ref
 	c.hasCurrent = true
-	return single(c.welcomeReply(ref))
+	replies := []Reply{{Text: c.welcomeReply(ref)}}
+	if arg != "" && ref.ChatID != "" {
+		if err := c.ex.Send(ref.ChatID, arg); err != nil {
+			replies = append(replies, Reply{Text: fmt.Sprintf(c.text("send_failed"), err)})
+		}
+	}
+	return replies
 }
 
 // handleNewMenu 进入 #n 分步新建菜单 step1。
