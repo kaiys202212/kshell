@@ -60,6 +60,71 @@ func (Cursor) ACPAdapter() ACPAdapter {
 	}
 }
 
+// cursorAuthConfigFile 是 Cursor CLI 存放登录态的配置文件（相对 ConfigDir）。
+const cursorAuthConfigFile = "cli-config.json"
+
+// Cursor 实现 AuthProber（编译期断言）：ACP 启动门禁依赖它判断登录态。
+var _ AuthProber = Cursor{}
+
+// ProbeAuth 读 ConfigDir 下的 cli-config.json 判断登录态。不依赖 Detect()
+// 成功与否——安装残缺时也要能给出登录结论，所以只用 DetectSpec 声明的
+// 静态 ConfigDirs 字段。拿不到 home 这类环境异常一律 AuthUnknown（保守放行）。
+func (Cursor) ProbeAuth() AuthStatus {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return AuthUnknown
+	}
+	return probeCursorAuth(Cursor{}.DetectSpec(home), home)
+}
+
+// probeCursorAuth 是 ProbeAuth 的可测核心，口径与 Detect(spec, home) 同构：
+// 按顺序检查各 ConfigDir，任一目录读到 cli-config.json 即以其解析结论返回；
+// 所有目录都没有该文件时，config 目录在视为从未登录（AuthOut），一个目录
+// 都没有（工具没装过）无从判断，只能 AuthUnknown。
+func probeCursorAuth(spec DetectSpec, home string) AuthStatus {
+	anyConfigDir := false
+	for _, dir := range spec.ConfigDirs {
+		root := expandHome(dir, home)
+		if !isDir(root) {
+			continue
+		}
+		anyConfigDir = true
+		data, err := os.ReadFile(filepath.Join(root, cursorAuthConfigFile))
+		if err != nil {
+			continue // 该目录下没有登录配置，看下一个目录
+		}
+		return parseCursorAuth(data)
+	}
+	if anyConfigDir {
+		return AuthOut
+	}
+	return AuthUnknown
+}
+
+// parseCursorAuth 解析 cli-config.json 的 authInfo（本机实测为
+// {email, displayName, userId, authId}）：
+//   - JSON 损坏、顶层不是对象、authInfo 不是对象 → AuthUnknown（稳定优先，不误判）；
+//   - 无 authInfo（含 null）、空对象、userId 缺失/为空/非字符串 → AuthOut；
+//   - userId 为非空字符串 → AuthIn。
+func parseCursorAuth(data []byte) AuthStatus {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		return AuthUnknown
+	}
+	raw, ok := top["authInfo"]
+	if !ok {
+		return AuthOut
+	}
+	var info map[string]any
+	if err := json.Unmarshal(raw, &info); err != nil {
+		return AuthUnknown
+	}
+	if uid, _ := info["userId"].(string); uid != "" {
+		return AuthIn
+	}
+	return AuthOut
+}
+
 // cursorVersionInstallDirs 列出官方安装根下 versions 子目录，**最新版本在前**。
 // 目录名形如 YYYY.MM.DD-commit 或 YYYY.MM.DD-HH-MM-SS-commit；必须按数值解析后
 // 降序排列——月份不补零（2026.9 vs 2026.10）时字典序会跨月错序。
