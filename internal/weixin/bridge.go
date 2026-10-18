@@ -3,7 +3,10 @@ package weixin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -41,6 +44,12 @@ type ctxInfo struct {
 	valid        bool
 }
 
+// queuedFile 是一条待转交附件：已下载解密落盘，等用户的下一条文字合并投递。
+type queuedFile struct {
+	Name string
+	Path string // 落盘绝对路径
+}
+
 // pendingMsg 是 context_token 失效（-14）时缓存的待发消息。
 // 补发时用各自存的凭据，而非最新入站的。
 type pendingMsg struct {
@@ -62,6 +71,10 @@ type Bridge struct {
 	ctx         ctxInfo      // 最近入站消息的发送凭据
 	pending     []pendingMsg // -14 时缓存的待发
 	undelivered int          // 发送失败计数（#st 用）
+	queue       []queuedFile // 待转交附件（等下一条可转发文字合并投递）
+
+	// filesDir 是附件落盘目录；NewBridge 给默认值，测试注入临时目录。
+	filesDir string
 
 	// outbound 是串行出站队列：DeliverHubMessage 只入队，单 worker 按序
 	// deliver，避免 hub 消息因网络耗时不等而在微信侧乱序。
@@ -97,9 +110,27 @@ func NewBridge(client *Client, ex hub.Executor, cfg BridgeConfig) *Bridge {
 		wxid:       cfg.Wxid,
 		lang:       cfg.Language,
 		outbound:   make(chan string, outboundCap),
+		filesDir:   defaultFilesDir(),
 		workerDone: make(chan struct{}),
 		sleep:      time.Sleep,
 	}
+}
+
+// defaultFilesDir 返回附件落盘默认目录 ~/.kshell/weixin-files；取不到主目录
+// 时回落系统临时目录（附件功能降级仍可用）。
+func defaultFilesDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return filepath.Join(os.TempDir(), "kshell-weixin-files")
+	}
+	return filepath.Join(home, ".kshell", "weixin-files")
+}
+
+// QueuedFiles 返回当前待转交附件数（#st 尾注用）。
+func (b *Bridge) QueuedFiles() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.queue)
 }
 
 // Undelivered 返回累计发送失败条数（#st 状态展示用）。
@@ -152,9 +183,89 @@ func (b *Bridge) Wxid() string {
 	return b.wxid
 }
 
-// HandleInbound 处理一条入站消息：白名单过滤 → 记录发送上下文 →
-// 补发 pending → 交命令层并把回复逐条投递。
+// HandleInbound 处理一条纯文本入站消息（无附件的历史入口）。
 func (b *Bridge) HandleInbound(fromUserID, contextToken, text string) {
+	b.HandleInboundMsg(InboundMsg{FromUserID: fromUserID, ContextToken: contextToken, Text: text})
+}
+
+// HandleInboundMsg 处理一条入站消息：白名单过滤 → 记录发送上下文 → 补发
+// pending → 附件下载落盘入队 → 文本与队列合并投递 → 回执逐条投递。
+//
+// 附件语义（2026-10-18 与用户确认）：微信客户端把「文字+附件」拆成多条消息
+// 发送，附件到达即下载落盘进队列等文字；收到可转发文字时把队列全部附件以
+// 「[附件] 名 已保存至 路径」说明行前置合并为一次投递；命令/纯数字不消费
+// 队列；投递失败（无会话/发送错误）时队列保留并补发回执，附件不丢。
+func (b *Bridge) HandleInboundMsg(m InboundMsg) {
+	if !b.admit(m.FromUserID) {
+		return
+	}
+	// 记录发送上下文：出站回执按最新入站凭据投递。
+	b.mu.Lock()
+	b.ctx = ctxInfo{userID: m.FromUserID, contextToken: m.ContextToken, valid: true}
+	b.mu.Unlock()
+
+	// typing 只是体验优化，失败静默。
+	_ = b.client.SendTyping(context.Background(), m.FromUserID, m.ContextToken, 1)
+
+	b.flushPending()
+
+	receipt := b.ingestAttachments(m.Attachments)
+
+	text := m.Text
+	var replies []hub.Reply
+	merged := false
+	trimmed := strings.TrimSpace(text)
+	// 可转发文字（非命令/纯数字）且队列非空：合并投递。
+	if isForwardableText(text) && b.QueuedFiles() > 0 {
+		text = b.queuedPrefix() + text
+		replies = b.console.Handle(text)
+		if len(replies) == 0 {
+			// 合并成功转发（agent 稍后回复）：清队列，附件信息已在投递文本里，
+			// 不再单独发附件回执；微信侧补既有 sent_ack。
+			b.clearQueue()
+			merged = true
+			ack := hub.CmdText(b.lang, "sent_ack")
+			if title := b.console.CurrentTitle(); title != "" {
+				ack = "【" + title + "】" + ack
+			}
+			replies = []hub.Reply{{Text: ack}}
+		}
+		// 转发失败（无会话/发送错误等有回复场景）：队列保留，回执照发。
+	} else if trimmed != "" {
+		replies = b.console.Handle(text)
+		if len(replies) == 0 {
+			// 命令层无回复 = 文本已成功转发给当前会话（agent 稍后回复）。
+			// 微信侧补一条已接收确认，与桌面端 AgentHub 的 ack 卡片同一文案语义
+			//（ui.hub.ack_delivered 不镜像到微信，这里是对应的微信侧回执），
+			// 带【会话名】归因前缀（无活跃会话时不加）。
+			ack := hub.CmdText(b.lang, "sent_ack")
+			if title := b.console.CurrentTitle(); title != "" {
+				ack = "【" + title + "】" + ack
+			}
+			replies = []hub.Reply{{Text: ack}}
+		}
+	}
+	// 未合并时补附件回执（收到/失败）；合并成功时已含说明行不再重复。
+	if !merged && receipt != "" {
+		replies = append(replies, hub.Reply{Text: receipt})
+	}
+	// #st 末尾追加待转交附件数，防用户遗忘队列（N>0 才追加）。
+	if strings.HasPrefix(strings.TrimSpace(m.Text), "#st") {
+		if n := b.QueuedFiles(); n > 0 {
+			replies = append(replies, hub.Reply{
+				Text: fmt.Sprintf(bridgeText(b.lang, "file.queued_st"), n),
+			})
+		}
+	}
+	for _, r := range replies {
+		b.deliver(r.Text)
+	}
+	// 回复已发出，取消输入状态。
+	_ = b.client.SendTyping(context.Background(), m.FromUserID, m.ContextToken, 2)
+}
+
+// admit 白名单过滤与 wxid 首条学习；未通过返回 false（静默丢弃）。
+func (b *Bridge) admit(fromUserID string) bool {
 	// wxid 待学习：iLink 扫码响应不带 wxid，首条白名单外的入站消息
 	// 即视为机主本人（首扫即绑），学习一次后按白名单过滤。学习与
 	// 白名单判断共用 mu，保证并发消息里只有一条能成为「首条」。
@@ -162,7 +273,7 @@ func (b *Bridge) HandleInbound(fromUserID, contextToken, text string) {
 	if b.wxid == "" {
 		if fromUserID == "" {
 			b.mu.Unlock()
-			return
+			return false
 		}
 		b.wxid = fromUserID
 		fn := b.onLearnWxid
@@ -171,39 +282,94 @@ func (b *Bridge) HandleInbound(fromUserID, contextToken, text string) {
 		if fn != nil {
 			fn(fromUserID)
 		}
-	} else if fromUserID != b.wxid {
-		b.mu.Unlock()
-		log.Printf("[weixin] 非白名单消息丢弃 from=%s", fromUserID)
-		return // 非白名单静默丢弃，不回复
-	} else {
-		b.mu.Unlock()
+		return true
 	}
-	b.mu.Lock()
-	b.ctx = ctxInfo{userID: fromUserID, contextToken: contextToken, valid: true}
+	ok := fromUserID == b.wxid
 	b.mu.Unlock()
+	if !ok {
+		log.Printf("[weixin] 非白名单消息丢弃 from=%s", fromUserID)
+	}
+	return ok
+}
 
-	// typing 只是体验优化，失败静默。
-	_ = b.client.SendTyping(context.Background(), fromUserID, contextToken, 1)
-
-	b.flushPending()
-
-	replies := b.console.Handle(text)
-	if len(replies) == 0 && strings.TrimSpace(text) != "" {
-		// 命令层无回复 = 文本已成功转发给当前会话（agent 稍后回复）。
-		// 微信侧补一条已接收确认，与桌面端 AgentHub 的 ack 卡片同一文案语义
-		//（ui.hub.ack_delivered 不镜像到微信，这里是对应的微信侧回执），
-		// 带【会话名】归因前缀（无活跃会话时不加）。
-		ack := hub.CmdText(b.lang, "sent_ack")
-		if title := b.console.CurrentTitle(); title != "" {
-			ack = "【" + title + "】" + ack
+// ingestAttachments 下载落盘每个附件并入队；返回微信侧回执文本（无新附件
+// 或全部成功且即将合并时也可为空——回执是否发出由调用方按合并结果决定）。
+// 下载/落盘在长轮询 goroutine 内同步执行：附件体积受微信限制，秒级阻塞可接受。
+func (b *Bridge) ingestAttachments(atts []InboundAttachment) string {
+	if len(atts) == 0 {
+		return ""
+	}
+	var got, failed []string
+	for _, att := range atts {
+		name := att.Name
+		if name == "" {
+			name = att.Kind + ".bin"
 		}
-		replies = []hub.Reply{{Text: ack}}
+		data, err := b.client.DownloadMedia(context.Background(), att)
+		if err == nil {
+			var path string
+			path, err = saveAttachment(b.filesDir, name, data)
+			if err == nil {
+				b.mu.Lock()
+				b.queue = append(b.queue, queuedFile{Name: name, Path: path})
+				total := len(b.queue)
+				b.mu.Unlock()
+				log.Printf("[weixin] 附件已落盘待转交 name=%s path=%s 队列=%d", name, path, total)
+				got = append(got, name)
+				continue
+			}
+		}
+		log.Printf("[weixin] 附件获取失败 name=%s: %v", name, err)
+		failed = append(failed, name)
 	}
-	for _, r := range replies {
-		b.deliver(r.Text)
+	var parts []string
+	if len(got) > 0 {
+		b.mu.Lock()
+		total := len(b.queue)
+		b.mu.Unlock()
+		parts = append(parts, fmt.Sprintf(bridgeText(b.lang, "file.received"),
+			strings.Join(got, "、"), total))
 	}
-	// 回复已发出，取消输入状态。
-	_ = b.client.SendTyping(context.Background(), fromUserID, contextToken, 2)
+	for _, name := range failed {
+		parts = append(parts, fmt.Sprintf(bridgeText(b.lang, "file.failed"), name))
+	}
+	return strings.Join(parts, "\n")
+}
+
+// queuedPrefix 取队列全部附件的说明行块（每附件一行 + 空行分隔），不消费队列；
+// 仅在合并投递成功后由 clearQueue 清空。
+func (b *Bridge) queuedPrefix() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var sb strings.Builder
+	for _, q := range b.queue {
+		sb.WriteString(fmt.Sprintf(bridgeText(b.lang, "file.line"), q.Name, q.Path))
+		sb.WriteByte('\n')
+	}
+	sb.WriteByte('\n')
+	return sb.String()
+}
+
+// clearQueue 清空待转交附件队列（合并投递成功后调用）。
+func (b *Bridge) clearQueue() {
+	b.mu.Lock()
+	b.queue = nil
+	b.mu.Unlock()
+}
+
+// isForwardableText 判断文本是否可携带附件队列转发：非空、非命令（# 与全角＃）、
+// 非纯数字（菜单/编号切换）。命令语义不应被附件说明行污染，也不消费队列。
+func isForwardableText(text string) bool {
+	t := strings.TrimSpace(text)
+	if t == "" || strings.HasPrefix(t, "#") || strings.HasPrefix(t, "＃") {
+		return false
+	}
+	for _, r := range t {
+		if r < '0' || r > '9' {
+			return true
+		}
+	}
+	return false // 全数字：菜单选择/编号切换
 }
 
 // DeliverHubMessage 把 hub 的 agent 消息镜像到微信出站队列（串行 worker

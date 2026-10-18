@@ -1,11 +1,14 @@
 package weixin
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -16,10 +19,11 @@ import (
 
 // fakeExec 是命令层的内存假执行端。
 type fakeExec struct {
-	sessions []hub.SessionRef
-	current  hub.SessionRef
-	hasCur   bool
-	sendErr  error
+	sessions  []hub.SessionRef
+	current   hub.SessionRef
+	hasCur    bool
+	sendErr   error
+	sentTexts []string // Send 收到的文本（按序记录）
 }
 
 func (f *fakeExec) ListSessions() []hub.SessionRef             { return f.sessions }
@@ -37,10 +41,13 @@ func (f *fakeExec) Stop(string) error                                   { return
 func (f *fakeExec) ListModels(string) ([]hub.MenuOption, string, error) { return nil, "", nil }
 func (f *fakeExec) SetModel(string, string) error                       { return nil }
 func (f *fakeExec) SearchSessions(string) []hub.SessionRef              { return nil }
-func (f *fakeExec) Send(string, string) error                           { return f.sendErr }
-func (f *fakeExec) GrantPermission(string, string, bool) error          { return nil }
-func (f *fakeExec) Status() hub.ConsoleStatus                           { return hub.ConsoleStatus{} }
-func (f *fakeExec) RecentMessages(int) []hub.Message                    { return nil }
+func (f *fakeExec) Send(chatID, text string) error {
+	f.sentTexts = append(f.sentTexts, text)
+	return f.sendErr
+}
+func (f *fakeExec) GrantPermission(string, string, bool) error { return nil }
+func (f *fakeExec) Status() hub.ConsoleStatus                  { return hub.ConsoleStatus{} }
+func (f *fakeExec) RecentMessages(int) []hub.Message           { return nil }
 
 // reqRecord 记录一次 HTTP 请求的路径与解码后的 JSON 体。
 type reqRecord struct {
@@ -449,4 +456,197 @@ func TestBridgeTruncate(t *testing.T) {
 	if !strings.Contains(text, "完整内容见桌面端") {
 		t.Errorf("截断文本缺少提示后缀: %q", text[len(text)-40:])
 	}
+}
+
+// —— 附件队列与合并投递 ——
+
+// newAttachBridge 构造支持附件的桥：临时落盘目录 + MediaBase 指向测试服务 +
+// /download 路由（返回 plain 的 ECB 密文；downloadStatus 非 200 模拟下载失败）。
+// 返回 recorder 供断言 sendmessage 内容。
+func newAttachBridge(t *testing.T, ex hub.Executor, plain []byte, downloadStatus int) (*Bridge, *recorder) {
+	t.Helper()
+	cipher := ecbEncrypt(t, []byte("0123456789abcdef"), plain)
+	rc := &recorder{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/download" {
+			if downloadStatus != 200 {
+				w.WriteHeader(downloadStatus)
+				return
+			}
+			w.Write(cipher)
+			return
+		}
+		rc.handler(t)(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	b := NewBridge(NewClient("tok", srv.URL), ex, BridgeConfig{Wxid: "u1", Language: "zh-CN"})
+	b.sleep = func(time.Duration) {}
+	b.client.MediaBase = srv.URL
+	b.filesDir = t.TempDir()
+	return b, rc
+}
+
+// fileKeyB64 是测试文件附件的密钥（base64(hex 32 字符) 形态，与密文 key 对应）。
+var fileKeyB64 = base64.StdEncoding.EncodeToString([]byte(hex.EncodeToString([]byte("0123456789abcdef"))))
+
+// attachMsg 构造一个文件附件消息。
+func attachMsg(token, name string) InboundMsg {
+	return InboundMsg{
+		FromUserID:   "u1",
+		ContextToken: token,
+		Attachments: []InboundAttachment{{
+			Kind: "file", Name: name, EncryptQueryParam: "eqp-1",
+			AESKey: fileKeyB64, MD5: "",
+		}},
+	}
+}
+
+func TestBridgeAttachmentMergeWithText(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b, rc := newAttachBridge(t, ex, []byte("附件内容"), 200)
+
+	// 附件先到：入队 + 回执，不投 executor。
+	b.HandleInboundMsg(attachMsg("ct-1", "需求.pdf"))
+	if got := len(ex.sentTexts); got != 0 {
+		t.Fatalf("附件到达不应投 executor, 实际 %d 条", got)
+	}
+	if n := b.QueuedFiles(); n != 1 {
+		t.Fatalf("队列 = %d, 期望 1", n)
+	}
+	sends := rc.sends()
+	if len(sends) == 0 || !strings.Contains(sendText(t, sends[0].body), "已收到") {
+		t.Fatalf("附件回执缺失: %v", sends)
+	}
+
+	// 文本到达：合并投递，队列清空。
+	b.HandleInboundMsg(InboundMsg{FromUserID: "u1", ContextToken: "ct-2", Text: "帮我修复登录"})
+	if len(ex.sentTexts) != 1 {
+		t.Fatalf("executor 应收到 1 条合并文本, 实际 %d", len(ex.sentTexts))
+	}
+	merged := ex.sentTexts[0]
+	if !strings.Contains(merged, "[附件] 需求.pdf 已保存至 ") {
+		t.Errorf("合并文本缺少附件说明行: %q", merged)
+	}
+	if !strings.Contains(merged, "帮我修复登录") {
+		t.Errorf("合并文本缺少用户文字: %q", merged)
+	}
+	if b.QueuedFiles() != 0 {
+		t.Errorf("队列未清空: %d", b.QueuedFiles())
+	}
+	// 附件说明行里的路径真实存在且内容解密正确（说明行后跟空行与用户文字）。
+	i := strings.Index(merged, "已保存至 ")
+	rest := merged[i+len("已保存至 "):]
+	path := rest[:strings.IndexAny(rest, "\n")]
+	if data, err := os.ReadFile(path); err != nil || string(data) != "附件内容" {
+		t.Errorf("落盘文件不可读或内容不符: %q %v", path, err)
+	}
+}
+
+func TestBridgeAttachmentAfterTextQueues(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b, _ := newAttachBridge(t, ex, []byte("内容"), 200)
+
+	// 文字先到：立即转发（无附件说明）。
+	b.HandleInboundMsg(InboundMsg{FromUserID: "u1", ContextToken: "ct-1", Text: "第一段需求"})
+	if len(ex.sentTexts) != 1 || strings.Contains(ex.sentTexts[0], "[附件]") {
+		t.Fatalf("纯文字应立即原样转发: %v", ex.sentTexts)
+	}
+	// 附件后到：进队列等下一条文字，不独立转发。
+	b.HandleInboundMsg(attachMsg("ct-2", "b.pdf"))
+	if len(ex.sentTexts) != 1 {
+		t.Fatalf("后到附件不应独立转发: %v", ex.sentTexts)
+	}
+	if b.QueuedFiles() != 1 {
+		t.Fatalf("队列 = %d, 期望 1", b.QueuedFiles())
+	}
+	// 第二条文字：合并。
+	b.HandleInboundMsg(InboundMsg{FromUserID: "u1", ContextToken: "ct-3", Text: "补充说明"})
+	if len(ex.sentTexts) != 2 {
+		t.Fatalf("合并投递缺失: %v", ex.sentTexts)
+	}
+	if !strings.Contains(ex.sentTexts[1], "[附件]") || !strings.Contains(ex.sentTexts[1], "补充说明") {
+		t.Errorf("第二条应含附件说明+文字: %q", ex.sentTexts[1])
+	}
+}
+
+func TestBridgeAttachmentCommandKeepsQueue(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b, rc := newAttachBridge(t, ex, []byte("内容"), 200)
+
+	b.HandleInboundMsg(attachMsg("ct-1", "a.pdf"))
+	b.HandleInboundMsg(InboundMsg{FromUserID: "u1", ContextToken: "ct-2", Text: "#l"})
+	// #l 是命令：照常执行（有回复），队列不动、executor 无投递。
+	if len(ex.sentTexts) != 0 {
+		t.Fatalf("命令不应携带附件投递: %v", ex.sentTexts)
+	}
+	if b.QueuedFiles() != 1 {
+		t.Fatalf("命令后队列应保留, 实际 %d", b.QueuedFiles())
+	}
+	sends := rc.sends()
+	// send[0]=附件回执，send[1]=#l 的命令回复（fake 无会话 → 暂无会话）。
+	if len(sends) < 2 || !strings.Contains(sendText(t, sends[1].body), "暂无会话") {
+		t.Fatalf("#l 回复缺失: %v", sends)
+	}
+}
+
+func TestBridgeAttachmentDownloadFail(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b, rc := newAttachBridge(t, ex, []byte("内容"), 403)
+
+	b.HandleInboundMsg(attachMsg("ct-1", "a.pdf"))
+	if b.QueuedFiles() != 0 {
+		t.Fatalf("下载失败不应入队: %d", b.QueuedFiles())
+	}
+	sends := rc.sends()
+	if len(sends) == 0 || !strings.Contains(sendText(t, sends[0].body), "获取失败") {
+		t.Fatalf("失败回执缺失: %v", sends)
+	}
+	if len(ex.sentTexts) != 0 {
+		t.Fatalf("失败附件不应投递: %v", ex.sentTexts)
+	}
+}
+
+func TestBridgeAttachmentMultiOrder(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b, rc := newAttachBridge(t, ex, []byte("内容"), 200)
+
+	b.HandleInboundMsg(attachMsg("ct-1", "需求.pdf"))
+	b.HandleInboundMsg(attachMsg("ct-2", "b.pdf"))
+	if b.QueuedFiles() != 2 {
+		t.Fatalf("队列 = %d, 期望 2", b.QueuedFiles())
+	}
+	sends := rc.sends()
+	if len(sends) < 2 || !strings.Contains(sendText(t, sends[1].body), "共 2 个") {
+		t.Errorf("第二个附件回执应报共 2 个: %v", sends)
+	}
+	b.HandleInboundMsg(InboundMsg{FromUserID: "u1", ContextToken: "ct-3", Text: "需求正文"})
+	if len(ex.sentTexts) != 1 {
+		t.Fatalf("合并投递缺失: %v", ex.sentTexts)
+	}
+	if n := strings.Count(ex.sentTexts[0], "[附件]"); n != 2 {
+		t.Errorf("合并文本应含 2 个附件说明行, 实际 %d: %q", n, ex.sentTexts[0])
+	}
+	if strings.Index(ex.sentTexts[0], "需求.pdf") > strings.Index(ex.sentTexts[0], "b.pdf") {
+		t.Errorf("附件说明行应按到达序: %q", ex.sentTexts[0])
+	}
+}
+
+func TestBridgeStatusQueuedNote(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b, rc := newAttachBridge(t, ex, []byte("内容"), 200)
+
+	b.HandleInboundMsg(attachMsg("ct-1", "a.pdf"))
+	b.HandleInboundMsg(InboundMsg{FromUserID: "u1", ContextToken: "ct-2", Text: "#st"})
+	sends := rc.sends()
+	// send[0]=附件回执, send[1]=#st 回复, send[2]=待转交尾注。
+	if len(sends) < 3 || !strings.Contains(sendText(t, sends[2].body), "待转交附件 1 个") {
+		t.Fatalf("#st 待转交尾注缺失: %v", sends)
+	}
+}
+
+// sendText 只取 sendmessage 请求体里的文本。
+func sendText(t *testing.T, body map[string]any) string {
+	t.Helper()
+	text, _ := sendMsgFields(t, body)
+	return text
 }

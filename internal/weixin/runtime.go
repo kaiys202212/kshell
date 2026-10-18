@@ -207,7 +207,7 @@ func (r *Runtime) pollLoop(ctx context.Context, client *Client, bridge *Bridge) 
 				log.Printf("[weixin] 丢弃积压消息 from=%s create_ms=%d", m.FromUserID, m.CreateMs)
 				continue
 			}
-			bridge.HandleInbound(m.FromUserID, m.ContextToken, m.Text)
+			bridge.HandleInboundMsg(m)
 		}
 	}
 }
