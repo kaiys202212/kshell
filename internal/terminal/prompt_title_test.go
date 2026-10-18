@@ -110,3 +110,44 @@ func TestPrepareSpecRunsBeforeStart(t *testing.T) {
 		t.Fatalf("args = %#v id=%s", got, info.ID)
 	}
 }
+
+// TestPrepareSpecSkipsNonAgentKinds 锁定「非 agent 会话不注入」的口径:
+// shell/ssh 是用户自己的命令行,login 跑的是工具官方登录命令(如 cursor-agent
+// login),三类都吃不得 MCP/agenthook 注入——注入参数会改变命令语义甚至让
+// 登录命令解析失败。agent 会话(session/new)则必须注入。
+func TestPrepareSpecSkipsNonAgentKinds(t *testing.T) {
+	cases := []struct {
+		kind   string
+		inject bool
+	}{
+		{KindSession, true},
+		{KindNew, true},
+		{KindShell, false},
+		{KindSSH, false},
+		{KindLogin, false},
+	}
+	for _, c := range cases {
+		t.Run(c.kind, func(t *testing.T) {
+			b := &stubBackend{}
+			m := NewManager(b, nil, nil)
+			m.SetPrepareSpec(func(id string, info Info, spec Spec) Spec {
+				spec.Args = append([]string{"--mcp-config", id}, spec.Args...)
+				return spec
+			})
+			key := "k:" + c.kind
+			if _, err := m.Open(key, Info{Kind: c.kind, Title: "占位"}, Spec{Path: "claude", Args: []string{"--resume", "s1"}}, 80, 24); err != nil {
+				t.Fatal(err)
+			}
+			got := b.lastSpec().Args
+			if c.inject {
+				if len(got) == 0 || got[0] != "--mcp-config" {
+					t.Fatalf("kind=%s 应注入, args = %#v", c.kind, got)
+				}
+				return
+			}
+			if len(got) != 2 || got[0] != "--resume" || got[1] != "s1" {
+				t.Fatalf("kind=%s 不应注入, args = %#v", c.kind, got)
+			}
+		})
+	}
+}

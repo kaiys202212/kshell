@@ -67,6 +67,15 @@ const cursorAuthConfigFile = "cli-config.json"
 // Cursor 实现 AuthProber（编译期断言）：ACP 启动门禁依赖它判断登录态。
 var _ AuthProber = Cursor{}
 
+// Cursor 实现 LoginCmdProvider（编译期断言）：登录弹窗据此起官方交互式登录终端。
+var _ LoginCmdProvider = Cursor{}
+
+// LoginCmd 返回官方交互式登录命令（cursor-agent login 走浏览器 OAuth）。
+// 特意给裸命令而非探测到的 BinPath：login 不依赖工作区，可执行文件以 PATH
+// 探测为准（shim 解析由 launcher 层兜底）；官方安装目录往往不在当前进程
+// PATH 上，provider 层若自己探测会与 Detect 的结论打架，不如统一交下游。
+func (Cursor) LoginCmd() []string { return []string{"cursor-agent", "login"} }
+
 // ProbeAuth 读 ConfigDir 下的 cli-config.json 判断登录态。不依赖 Detect()
 // 成功与否——安装残缺时也要能给出登录结论，所以只用 DetectSpec 声明的
 // 静态 ConfigDirs 字段。拿不到 home 这类环境异常一律 AuthUnknown（保守放行）。

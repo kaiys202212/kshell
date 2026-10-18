@@ -46,6 +46,22 @@ func TestCursorProbeAuthReturnsKnownStatus(t *testing.T) {
 	}
 }
 
+// TestCursorLoginCmd 锁定登录命令的裸命令形态:不带绝对路径,BinName 的实际
+// 解析(PATH 探测、Windows shim 兜底)由 desktop/launcher 层负责;给空命令时
+// desktop 层应判不支持,这里只保证声明本身正确。
+func TestCursorLoginCmd(t *testing.T) {
+	got := Cursor{}.LoginCmd()
+	want := []string{"cursor-agent", "login"}
+	if len(got) != len(want) {
+		t.Fatalf("LoginCmd() = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("LoginCmd() = %#v, want %#v", got, want)
+		}
+	}
+}
+
 func TestProbeCursorAuth(t *testing.T) {
 	cases := []struct {
 		name  string

@@ -85,6 +85,7 @@ func TestCallerReferencedKeysExist(t *testing.T) {
 		"toast.waiting_confirm",
 		"dialog.pick_project_dir",
 		"terminal.title",
+		"terminal.login_title",
 		"role.user",
 		"role.assistant",
 		"transcript.sqlite_body",

@@ -28,6 +28,7 @@ const (
 	KindNew     = "new"     // 在工作区新建会话（agent）
 	KindShell   = "shell"   // 预览区本地命令行
 	KindSSH     = "ssh"     // 预览区远程 SSH 命令行
+	KindLogin   = "login"   // 登录弹窗专用终端，跑工具的交互式登录命令
 
 	StatusRunning = "running"
 	StatusExited  = "exited"
@@ -238,8 +239,11 @@ func (m *Manager) SetPrepareSpec(fn func(id string, info Info, spec Spec) Spec) 
 
 // startLocked 启动进程并落位会话状态（调用方持锁）。
 // 失败时把会话归位到「已退出」，让调用方拿到错误、后续 Open 能重试。
+// prepareSpec 只服务 agent 会话的 MCP/agenthook 注入：shell/ssh 是用户自己的
+// 命令行，login 跑的是工具官方登录命令（如 cursor-agent login），三者都不得
+// 被注入——注入参数会改变命令语义，甚至让登录命令直接解析失败。
 func (m *Manager) startLocked(s *session, info Info, spec Spec, cols, rows int) error {
-	if m.prepareSpec != nil && info.Kind != KindShell && info.Kind != KindSSH {
+	if m.prepareSpec != nil && info.Kind != KindShell && info.Kind != KindSSH && info.Kind != KindLogin {
 		spec = m.prepareSpec(s.id, info, spec)
 	}
 	h, err := m.backend.Start(spec, cols, rows)
