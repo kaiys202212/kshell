@@ -75,6 +75,7 @@ func (w *wxExecutor) ListSessions() []hub.SessionRef {
 			SessionID: s.sessionID,
 			Workspace: s.workspace,
 			Tool:      s.tool,
+			ToolName:  w.a.toolDisplayName(s.tool),
 			Title:     s.title,
 		})
 	}
@@ -136,6 +137,7 @@ func (w *wxExecutor) OpenSession(sessionID string) (hub.SessionRef, error) {
 		SessionID: o.Chat.SessionID,
 		Workspace: o.Chat.Workspace,
 		Tool:      o.Chat.ToolID,
+		ToolName:  w.a.toolDisplayName(o.Chat.ToolID),
 		Title:     o.Chat.Title,
 	}, nil
 }
@@ -216,6 +218,7 @@ func (w *wxExecutor) CreateNew(toolID, wsID, model string) (hub.SessionRef, erro
 		SessionID: o.Chat.SessionID,
 		Workspace: o.Chat.Workspace,
 		Tool:      o.Chat.ToolID,
+		ToolName:  w.a.toolDisplayName(o.Chat.ToolID),
 		Title:     o.Chat.Title,
 	}, nil
 }

@@ -9,7 +9,9 @@ type SessionRef struct {
 	SessionID string // 磁盘会话 ID（可空）
 	Workspace string
 	Tool      string
-	Title     string
+	// ToolName 是工具展示名（欢迎词归因用）；查不到为空，消费方回落 Tool。
+	ToolName string
+	Title    string
 	Current   bool // 是否当前上下文
 }
 

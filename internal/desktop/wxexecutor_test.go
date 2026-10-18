@@ -77,6 +77,30 @@ func TestWXExecutorListSessionsDedup(t *testing.T) {
 	}
 }
 
+// 会话引用携带工具展示名（微信欢迎词归因用）：展示名来自扫描结果；查不到为空，
+// 由命令层回落 ToolID。
+func TestWXExecutorToolName(t *testing.T) {
+	app := wxApp(t, []providers.Session{
+		{ID: "s1", ToolID: "claude", Workspace: `D:\ws\a`, Title: "会话A", UpdatedAt: time.Now()},
+		{ID: "s2", ToolID: "unknown-tool", Workspace: `D:\ws\b`, Title: "会话B", UpdatedAt: time.Now()},
+	})
+	app.mu.Lock()
+	app.tools = []discovery.Tool{{ID: "claude", Name: "Claude Code", Installed: true}}
+	app.mu.Unlock()
+
+	ex := newWXExecutor(app)
+	bySession := map[string]hub.SessionRef{}
+	for _, r := range ex.ListSessions() {
+		bySession[r.SessionID] = r
+	}
+	if got := bySession["s1"].ToolName; got != "Claude Code" {
+		t.Fatalf("s1 应带工具展示名 Claude Code, got %q", got)
+	}
+	if got := bySession["s2"].ToolName; got != "" {
+		t.Fatalf("未知工具展示名应为空（消费方回落 ToolID）, got %q", got)
+	}
+}
+
 // HubStore 最后一条消息的 ChatID 定位 current；无 hub 记录时回落 ListChats 第一个。
 func TestWXExecutorCurrentSession(t *testing.T) {
 	app := wxApp(t, nil)
