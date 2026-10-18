@@ -18,6 +18,20 @@ const asrResponseLimit = 1 << 20
 // timeoutASR 是单次语音转写请求的超时。
 const timeoutASR = 60 * time.Second
 
+// TranscribeAuto 是语音转写的优先级链聚合（desktop 装配唯一入口）：
+// asrModel 非空走专用 ASR 端点；否则 chatModel 非空走多模态 chat 转写；
+// 两者皆空报错（desktop 层通常先行判断哨兵，不走到这里）。
+// 返回错误用 err.hubtools.voice_no_source 标识双空，便于上层归因。
+func TranscribeAuto(ctx context.Context, cfg Config, asrModel, chatModel string, wav []byte) (string, error) {
+	if strings.TrimSpace(asrModel) != "" {
+		return TranscribeAudio(ctx, cfg, asrModel, wav)
+	}
+	if strings.TrimSpace(chatModel) != "" {
+		return TranscribeViaChat(ctx, cfg, chatModel, wav)
+	}
+	return "", fmt.Errorf("err.hubtools.voice_no_source")
+}
+
 // TranscribeAudio 调 OpenAI 兼容 /audio/transcriptions 端点把 WAV 转成文字。
 // 复用 chat 的平台配置：BaseURL 带 /chat/completions 尾巴时剥掉再拼端点。
 // 响应缺 text 字段返回空串（语义：转写为空，由调用方决定回执）。

@@ -379,7 +379,7 @@
         "api_key_keep_hint": "已保存密钥，留空保持不变",
         "clear_key": "清除密钥",
         "asr_model": "语音转写模型（ASR）",
-        "asr_model_hint": "可选。走本平台的 OpenAI 兼容 /audio/transcriptions 端点，用于把微信语音转成文字（仅默认平台生效）。",
+        "asr_model_hint": "可选。填写专用 ASR 模型（走本平台 /audio/transcriptions 端点）；留空则用默认对话模型直接听语音转写（需该模型支持音频输入）。",
         "active_model": "当前模型",
         "models": "模型列表",
         "models_empty": "暂无模型，可手动添加或点「拉取模型」",

@@ -34,18 +34,25 @@ func (a *App) startWeixin() {
 	a.mu.Unlock()
 }
 
-// weixinTranscriber 返回语音转写函数：每次调用实时读模型平台配置（默认平台的
-// ASR 模型），改配置即时生效。未配置（无默认平台/ASR 模型/OpenAI 端点）时返回
-// weixin.ErrTranscriberNotConfigured 哨兵，桥据此回执「未配置」。
+// weixinTranscriber 返回语音转写函数：每次调用实时读模型平台配置，改配置即时
+// 生效。转写来源优先级链（2026-10-18 与用户确认）：默认平台 asr_model 已填走
+// 专用 ASR 端点；留空则用默认对话模型（ActiveModel，AgentHub 指令环节同款
+// chat 端点）经 input_audio 直接听音频转写——要求该模型支持音频输入，不支持
+// 时由转写失败回执兜底。两者皆缺返回 weixin.ErrTranscriberNotConfigured 哨兵。
 func (a *App) weixinTranscriber() weixin.Transcriber {
 	return func(ctx context.Context, wav []byte) (string, error) {
 		plat, ok := a.snapshot().Config.Model.ActivePlatform()
-		if !ok || strings.TrimSpace(plat.ASRModel) == "" || strings.TrimSpace(plat.OpenAIBaseURL) == "" {
+		if !ok || strings.TrimSpace(plat.OpenAIBaseURL) == "" {
 			return "", weixin.ErrTranscriberNotConfigured
 		}
-		return hubtools.TranscribeAudio(ctx,
-			hubtools.Config{BaseURL: plat.OpenAIBaseURL, APIKey: plat.APIKey},
-			plat.ASRModel, wav)
+		cfg := hubtools.Config{BaseURL: plat.OpenAIBaseURL, APIKey: plat.APIKey}
+		chatModel := strings.TrimSpace(a.snapshot().Config.Model.ActiveModel)
+		if strings.TrimSpace(plat.ASRModel) == "" &&
+			(chatModel == "" || strings.TrimSpace(plat.APIKey) == "") {
+			// ASR 模型未填且对话模型三元组不齐：无可用的转写来源。
+			return "", weixin.ErrTranscriberNotConfigured
+		}
+		return hubtools.TranscribeAuto(ctx, cfg, plat.ASRModel, chatModel, wav)
 	}
 }
 
