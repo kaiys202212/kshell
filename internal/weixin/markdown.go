@@ -108,5 +108,6 @@ func hardBreaks(s string) string {
 		}
 		lines[i] += "  "
 	}
-	return strings.Join(lines, "\n")
+	// 相邻白行各自归一后可能残留 3+ 连续换行，压回段落分隔。
+	return reBlankRun.ReplaceAllString(strings.Join(lines, "\n"), "\n\n")
 }
