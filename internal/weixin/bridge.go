@@ -3,6 +3,7 @@ package weixin
 import (
 	"context"
 	"errors"
+	"log"
 	"regexp"
 	"strings"
 	"sync"
@@ -166,12 +167,14 @@ func (b *Bridge) HandleInbound(fromUserID, contextToken, text string) {
 		b.wxid = fromUserID
 		fn := b.onLearnWxid
 		b.mu.Unlock()
+		log.Printf("[weixin] 学习白名单 wxid=%s（首条消息）", fromUserID)
 		if fn != nil {
 			fn(fromUserID)
 		}
 	} else if fromUserID != b.wxid {
 		b.mu.Unlock()
-		return // 非白名单静默丢弃，不记录不回复
+		log.Printf("[weixin] 非白名单消息丢弃 from=%s", fromUserID)
+		return // 非白名单静默丢弃，不回复
 	} else {
 		b.mu.Unlock()
 	}

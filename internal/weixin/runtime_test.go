@@ -1,6 +1,7 @@
 package weixin
 
 import (
+	"strconv"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -260,13 +261,17 @@ func TestRuntimePollSessionExpired(t *testing.T) {
 	}
 }
 
-// TestRuntimeFirstPollDropsBacklog 首轮 getupdates（cursor=""）成功返回的
-// 积压消息只推进游标不投递：防陌生人消息错绑 wxid、旧文本被当命令执行。
-// 次轮起恢复正常投递。
+// TestRuntimeFirstPollDropsBacklog cursor="" 的首轮 getupdates 可能拉到重启/
+// 重绑前的历史积压：**按消息时间判定**——过期积压只推进游标不投递（防陌生人
+// 消息错绑 wxid、旧文本被当命令执行）；新鲜消息（绑定窗口内到达）正常投递。
+// 2026-10-18 真机教训：曾按「首轮无条件丢弃」实现，用户扫码后立即发的消息
+// 正好落在首轮窗口被吞，wxid 学不到、回复石沉大海。
 func TestRuntimeFirstPollDropsBacklog(t *testing.T) {
 	var mu sync.Mutex
 	firstPoll := true
 	var learned string
+	old := time.Now().Add(-10 * time.Minute).UnixMilli() // 明显早于绑定的积压
+	now := time.Now().UnixMilli()
 	handler := func(w http.ResponseWriter, req *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -274,14 +279,14 @@ func TestRuntimeFirstPollDropsBacklog(t *testing.T) {
 		case "/ilink/bot/getupdates":
 			if firstPoll {
 				firstPoll = false
-				// 首轮积压：陌生人消息（若投递会错绑 wxid 为 u-stranger）。
+				// 首轮同时给两条：过期陌生人消息（须丢弃，否则错绑 u-stranger）
+				// 与新鲜白名单消息（须投递并学习 u1）。
 				_, _ = w.Write([]byte(`{"errcode":0,"get_updates_buf":"cur-1","msgs":[` +
-					`{"message_type":1,"from_user_id":"u-stranger","context_token":"ct-old","item_list":[{"type":1,"text_item":{"text":"#l"}}]}]}`))
+					`{"message_type":1,"from_user_id":"u-stranger","context_token":"ct-old","create_time_ms":` + fmtInt(old) + `,"item_list":[{"type":1,"text_item":{"text":"#l"}}]},` +
+					`{"message_type":1,"from_user_id":"u1","context_token":"ct-new","create_time_ms":` + fmtInt(now) + `,"item_list":[{"type":1,"text_item":{"text":"hi"}}]}]}`))
 				return
 			}
-			// 次轮：白名单用户的真实消息。
-			_, _ = w.Write([]byte(`{"errcode":0,"get_updates_buf":"cur-2","msgs":[` +
-				`{"message_type":1,"from_user_id":"u1","context_token":"ct-new","item_list":[{"type":1,"text_item":{"text":"hi"}}]}]}`))
+			_, _ = w.Write([]byte(`{"errcode":0,"get_updates_buf":"cur-2","msgs":[]}`))
 		default:
 			_, _ = w.Write([]byte(`{"errcode":0}`))
 		}
@@ -292,17 +297,20 @@ func TestRuntimeFirstPollDropsBacklog(t *testing.T) {
 	r.SetOnLearnWxid(func(wxid string) { muLearn.Lock(); learned = wxid; muLearn.Unlock() })
 	r.Configure("tok", "")
 	r.Start()
-	// 次轮消息应触发学习（u1）；首轮的 u-stranger 不得被学习。
+	// 新鲜消息应触发学习（u1）；过期积压的 u-stranger 不得被学习。
 	waitFor(t, 2*time.Second, func() bool {
 		muLearn.Lock()
 		defer muLearn.Unlock()
 		return learned == "u1"
-	}, "次轮消息应正常投递并学习 u1")
+	}, "首轮新鲜消息应正常投递并学习 u1")
 	if st := r.Status(); st.Wxid != "u1" {
-		t.Fatalf("首轮积压消息不得错绑 wxid: Wxid = %q", st.Wxid)
+		t.Fatalf("过期积压消息不得错绑 wxid: Wxid = %q", st.Wxid)
 	}
 	r.Stop()
 }
+
+// fmtInt 供测试拼 JSON 的 int64 毫秒时间戳。
+func fmtInt(n int64) string { return strconv.FormatInt(n, 10) }
 
 // OnHubMessage 异步转发到 bridge；bridge 为 nil 时安全跳过。
 func TestRuntimeOnHubMessage(t *testing.T) {

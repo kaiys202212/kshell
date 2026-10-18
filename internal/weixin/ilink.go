@@ -171,6 +171,7 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 			MessageType  int    `json:"message_type"`
 			FromUserID   string `json:"from_user_id"`
 			ContextToken string `json:"context_token"`
+			CreateMs     int64  `json:"create_time_ms"`
 			ItemList     []struct {
 				Type     int `json:"type"`
 				TextItem struct {
@@ -188,7 +189,7 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 		if m.MessageType == 2 {
 			continue
 		}
-		im := InboundMsg{FromUserID: m.FromUserID, ContextToken: m.ContextToken}
+		im := InboundMsg{FromUserID: m.FromUserID, ContextToken: m.ContextToken, CreateMs: m.CreateMs}
 		for _, item := range m.ItemList {
 			if item.Type == 1 {
 				im.Text += item.TextItem.Text

@@ -97,7 +97,7 @@ func TestGetUpdates(t *testing.T) {
 		gotBody = decodeBody(t, r.Body)
 		io.WriteString(w, `{
 			"msgs":[
-				{"message_type":1,"from_user_id":"u1","context_token":"ct1","item_list":[{"type":1,"text_item":{"text":"你"}}]},
+				{"message_type":1,"from_user_id":"u1","context_token":"ct1","create_time_ms":1792280448633,"item_list":[{"type":1,"text_item":{"text":"你"}}]},
 				{"message_type":2,"from_user_id":"u2","context_token":"ct2","item_list":[{"type":1,"text_item":{"text":"bot 自发"}}]},
 				{"message_type":1,"from_user_id":"u3","context_token":"ct3","item_list":[{"type":1,"text_item":{"text":"好"}},{"type":1,"text_item":{"text":"呀"}}]}
 			],
@@ -125,6 +125,10 @@ func TestGetUpdates(t *testing.T) {
 	}
 	if msgs[0].FromUserID != "u1" || msgs[0].ContextToken != "ct1" || msgs[0].Text != "你" {
 		t.Errorf("第一条消息解析错误: %+v", msgs[0])
+	}
+	// create_time_ms 供「按消息时间丢弃重启前积压」判定，必须解析。
+	if msgs[0].CreateMs != 1792280448633 {
+		t.Errorf("CreateMs = %d, 期望 1792280448633", msgs[0].CreateMs)
 	}
 	if msgs[1].FromUserID != "u3" || msgs[1].Text != "好呀" {
 		t.Errorf("第二条消息文本拼接错误: %+v", msgs[1])

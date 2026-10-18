@@ -3,6 +3,7 @@ package weixin
 import (
 	"context"
 	"errors"
+	"log"
 	"sync"
 	"time"
 
@@ -146,12 +147,30 @@ func (r *Runtime) Start() {
 	go r.pollLoop(ctx, client, bridge)
 }
 
+// backlogWindow 判定入站消息是否属于重启/重绑前的历史积压：消息创建时间早于
+// 本进程启动时间一定余量即视为积压。2026-10-18 真机教训：曾按「cursor="" 首轮
+// 无条件丢弃」实现，用户扫码后立即发的消息正好落在首轮窗口被吞（wxid 学不到、
+// 无回复）。改为按消息时间判定：积压丢、新鲜投，不依赖轮次。
+const backlogWindow = 2 * time.Minute
+
+// startedAt 是包级进程启动时刻（Runtime 创建时取，重绑不重置——重绑窗口内
+// 也不该把更早的陌生消息当新鲜处理；2 分钟余量覆盖绑定操作耗时）。
+var startedAt = time.Now()
+
+// isBacklog 报告消息是否为历史积压：服务端未给时间戳（CreateMs==0）时保守放行
+//（宁可投给白名单用户也不能吞正常消息；错绑风险由白名单机制兜底）。
+func isBacklog(m InboundMsg) bool {
+	if m.CreateMs == 0 {
+		return false
+	}
+	return time.UnixMilli(m.CreateMs).Before(startedAt.Add(-backlogWindow))
+}
+
 // pollLoop 长轮询主循环：游标游走取消息 → 白名单过滤（bridge）→ 命令层。
 // ErrSessionExpired 时停止（用户需重扫码）；其他错误指数退避重试。
 func (r *Runtime) pollLoop(ctx context.Context, client *Client, bridge *Bridge) {
 	backoff := pollBackoffInit
 	cursor := ""
-	first := true // 首轮成功响应前的积压丢弃标记
 	defer func() {
 		r.mu.Lock()
 		if r.cancel != nil {
@@ -166,12 +185,14 @@ func (r *Runtime) pollLoop(ctx context.Context, client *Client, bridge *Bridge) 
 		}
 		msgs, next, err := client.GetUpdates(ctx, cursor)
 		if errors.Is(err, ErrSessionExpired) {
-			return // 凭据失效：停轮询，Bound 仍真，用户重扫即可
+			log.Printf("[weixin] 会话过期（errcode=-14），停止轮询，请重新扫码绑定")
+			return
 		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return // Stop 取消引发的网络错误：不算退避场景
 			}
+			log.Printf("[weixin] 长轮询失败，退避重试: %v", err)
 			if wait(r, &backoff, ctx) {
 				return
 			}
@@ -179,14 +200,13 @@ func (r *Runtime) pollLoop(ctx context.Context, client *Client, bridge *Bridge) 
 		}
 		backoff = pollBackoffInit // 成功重置退避
 		cursor = next
-		if first {
-			// iLink 游标起点不可靠：新 token 首次 getupdates（cursor=""）可能
-			// 拉到历史积压——陌生人消息会错绑 wxid、旧文本会被当命令执行。
-			// 宁可丢重启窗口内的这一轮消息也不误投/错绑；窗口仅一轮。
-			first = false
-			continue
-		}
 		for _, m := range msgs {
+			if isBacklog(m) {
+				// 重启/重绑前的积压：只随游标推进自然丢弃，不投递。
+				// 防陌生人消息错绑 wxid、旧文本被当命令执行。
+				log.Printf("[weixin] 丢弃积压消息 from=%s create_ms=%d", m.FromUserID, m.CreateMs)
+				continue
+			}
 			bridge.HandleInbound(m.FromUserID, m.ContextToken, m.Text)
 		}
 	}

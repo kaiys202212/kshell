@@ -24,4 +24,7 @@ type InboundMsg struct {
 	FromUserID   string
 	ContextToken string
 	Text         string
+	// CreateMs 是消息创建时刻的 Unix 毫秒（服务端 create_time_ms），
+	// 供「重启/重绑前的过期积压丢弃」判定；服务端缺失时为 0。
+	CreateMs int64
 }
