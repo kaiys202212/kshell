@@ -364,6 +364,15 @@ func (a *App) SendChatPrompt(id, text string) error {
 		return err
 	}
 	blocks := []acp.ContentBlock{{Type: "text", Text: text}}
+	// 工具化路由分支：仅纯文本路径参与（Blocks 附件路径直接走原链路）。
+	// handled=true 时输入已被 hubtools 消费（含落盘）；false = 模型未配置 /
+	// RouteMode=agent / LLM 失败降级，落回原直连链路。
+	if h := a.hubTools(); h != nil {
+		handled, err := h.HandlePrompt(sendID, text)
+		if handled {
+			return err
+		}
+	}
 	return a.sendAndRecord(sendID, blocks, text)
 }
 

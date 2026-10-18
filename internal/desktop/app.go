@@ -125,6 +125,10 @@ type App struct {
 	ctx  context.Context
 	opts Options
 
+	// hubMu/hubRouter 是 AgentHub 工具化路由的懒初始化单例（见 hubtools_bridge.go）。
+	hubMu     sync.Mutex
+	hubRouter *hubRouter
+
 	tools []discovery.Tool
 	// rawWorkspaces 是**未叠加项目表**的扫描结果：项目列表永远从它派生，
 	// 否则「删除后再还原」会因为列表已被过滤掉而回不来。

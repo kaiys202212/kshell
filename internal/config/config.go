@@ -127,11 +127,20 @@ type WeixinConfig struct {
 	Wxid    string `yaml:"wxid"`  // 白名单用户（首扫即绑）
 }
 
+// AgentHub 路由模式：输入是直连 agent 还是先经本地模型工具化处理。
+const (
+	RouteModeAuto      = "auto"       // 默认：Task 6 的意图路由决定走向（当前暂按工具化）
+	RouteModeAgent     = "agent"      // 全部直连 agent，不启用工具化
+	RouteModeForceAuto = "force_auto" // 全部强制走工具化链路
+)
+
 // AgentHubConfig 是 AgentHub 的跨端持久化配置：前端「默认 agent 工具 + 模型」
 // 写穿到这里，微信桥等非浏览器端才能读到（localStorage 只存在于桌面端浏览器上下文）。
 type AgentHubConfig struct {
 	DefaultTool  string `yaml:"default_tool"`  // 快速新建（#en / easynew）默认工具 ID；空=回落第一个已安装
 	DefaultModel string `yaml:"default_model"` // 预留：默认模型 ID（当前新建链路用工具默认模型）
+	// RouteMode 是输入路由模式：auto（默认）| agent | force_auto。
+	RouteMode string `yaml:"route_mode"`
 }
 
 func Default() Config {
@@ -157,6 +166,7 @@ func Default() Config {
 		SessionMode:    SessionModeTUI,
 		PermissionMode: PermissionModeDefault,
 		Model:          ModelConfig{Models: []string{}},
+		AgentHub:       AgentHubConfig{RouteMode: RouteModeAuto},
 	}
 }
 
@@ -255,6 +265,13 @@ func (c Config) normalized() Config {
 	case PermissionModeDefault, PermissionModeBypass:
 	default:
 		c.PermissionMode = d.PermissionMode
+	}
+	// AgentHub 路由模式：空值或非法值一律回落 auto。
+	c.AgentHub.RouteMode = strings.TrimSpace(c.AgentHub.RouteMode)
+	switch c.AgentHub.RouteMode {
+	case RouteModeAuto, RouteModeAgent, RouteModeForceAuto:
+	default:
+		c.AgentHub.RouteMode = RouteModeAuto
 	}
 	// 模型配置：统一模型列表归一；旧 base_url / agents 迁移后清空。
 	c.Model.Preset = strings.TrimSpace(c.Model.Preset)
