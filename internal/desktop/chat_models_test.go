@@ -147,6 +147,118 @@ func TestListChatModelsAgentEmptyStillListsConfig(t *testing.T) {
 	}
 }
 
+// modelsView 合并视图与非 nil 空切片行为（ListChatModels 与 chat:models 推送共用同一函数）。
+func TestModelsViewMergesAndNeverNil(t *testing.T) {
+	t.Run("合并配置模型", func(t *testing.T) {
+		conn := &fakeChatConn{start: acp.SessionStart{SessionID: "s1",
+			Models: &acp.SessionModelState{
+				AvailableModels: []acp.ModelInfo{{ModelID: "m1", Name: "One"}}, CurrentModelID: "m1",
+			}}, waitCh: make(chan struct{})}
+		env := newChatTestApp(t, &providers.ACPDetection{
+			Available: true, Source: "path", BinPath: "claude-agent-acp",
+		}, &fakeChatCaptureBackend{conn: conn})
+		env.app.mu.Lock()
+		env.app.opts.Config.SessionMode = config.SessionModeACP
+		env.app.opts.Config.Model = config.ModelConfig{
+			Enabled:     true,
+			ActiveModel: "cfg1",
+			Models:      []string{"m1", "cfg1"},
+		}
+		env.app.mu.Unlock()
+
+		opened, err := env.app.OpenSessionACP("s1")
+		if err != nil {
+			t.Fatalf("OpenSessionACP: %v", err)
+		}
+		v, err := env.app.modelsView(opened.Chat.ID)
+		if err != nil {
+			t.Fatalf("modelsView: %v", err)
+		}
+		if v.Current != "m1" {
+			t.Fatalf("Current 应为 agent 上报的 m1: %+v", v)
+		}
+		ids := map[string]bool{}
+		for _, mo := range v.Models {
+			ids[mo.ID] = true
+		}
+		if !ids["m1"] || !ids["cfg1"] {
+			t.Fatalf("合并后应含 m1 与 cfg1: %+v", v)
+		}
+	})
+	t.Run("无模型时非nil空切片", func(t *testing.T) {
+		env := newChatTestApp(t, &providers.ACPDetection{
+			Available: true, Source: "path", BinPath: "claude-agent-acp",
+		}, fakeChatBackend{})
+		env.app.mu.Lock()
+		env.app.opts.Config.SessionMode = config.SessionModeACP
+		env.app.mu.Unlock()
+
+		opened, err := env.app.OpenSessionACP("s1")
+		if err != nil {
+			t.Fatalf("OpenSessionACP: %v", err)
+		}
+		v, err := env.app.modelsView(opened.Chat.ID)
+		if err != nil {
+			t.Fatalf("modelsView: %v", err)
+		}
+		if v.Models == nil {
+			t.Fatal("Models 为 nil，JSON 序列化会是 null")
+		}
+		if len(v.Models) != 0 {
+			t.Fatalf("无模型时应为空切片: %+v", v.Models)
+		}
+	})
+}
+
+// Open 完成后必须向前端推一次 chat:models：握手期前端拉 ListChatModels
+// 可能拿空（starting 状态竞态），manager 的 SetOnModels 回调在此补偿。
+// 生产接线在 newChatManager（RealBackend 不可桩），这里按方案 (a) 分层：
+// 用 newChatManagerWith 装配后手动接同一套 SetOnModels → modelsView → emit 逻辑。
+func TestOpenEmitsChatModels(t *testing.T) {
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "claude-agent-acp",
+	}, &fakeChatCaptureBackend{conn: &fakeChatConn{start: acp.SessionStart{SessionID: "s1",
+		Models: &acp.SessionModelState{
+			AvailableModels: []acp.ModelInfo{{ModelID: "m1", Name: "One"}}, CurrentModelID: "m1",
+		}}, waitCh: make(chan struct{})}})
+	env.app.mu.Lock()
+	env.app.opts.Config.SessionMode = config.SessionModeACP
+	env.app.mu.Unlock()
+	// 与 newChatManager 生产接线同构：modelsView 取视图，emitChatOut 语义（测试 emit 不翻译）
+	env.app.chats().SetOnModels(func(id string) {
+		v, err := env.app.modelsView(id)
+		if err != nil {
+			return
+		}
+		env.events.emit("chat:models", map[string]any{"id": id, "models": v})
+	})
+
+	opened, err := env.app.OpenSessionACP("s1")
+	if err != nil {
+		t.Fatalf("OpenSessionACP: %v", err)
+	}
+	ev := env.events.waitEvent(t, "chat:models")
+	if ev.payload["id"] != opened.Chat.ID {
+		t.Fatalf("payload id = %v, want %v", ev.payload["id"], opened.Chat.ID)
+	}
+	v, ok := ev.payload["models"].(chat.ModelsView)
+	if !ok {
+		t.Fatalf("payload models 类型不符: %T", ev.payload["models"])
+	}
+	if v.Models == nil {
+		t.Fatal("推送的 Models 为 nil")
+	}
+	found := false
+	for _, mo := range v.Models {
+		if mo.ID == "m1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("推送视图应含 m1: %+v", v)
+	}
+}
+
 // 模型注入未启用时不得把 kshell 配置模型列进下拉（选中也无法注入，假选项）。
 func TestListChatModelsDisabledNoConfigModels(t *testing.T) {
 	env := newChatTestApp(t, &providers.ACPDetection{

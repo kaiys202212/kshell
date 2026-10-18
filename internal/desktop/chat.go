@@ -31,6 +31,16 @@ func newChatManager(a *App) *chat.Manager {
 			}
 		})
 	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
+	// Open 完成且 agent 报告模型后补推一次模型视图：握手期前端拉 ListChatModels
+	// 可能拿空（starting 状态竞态）。emitChatOut 自带 origID 翻译，与
+	// chat:commands 等出站事件同一口径。
+	m.SetOnModels(func(id string) {
+		v, err := a.modelsView(id)
+		if err != nil {
+			return
+		}
+		a.emitChatOut("chat:models", map[string]any{"id": id, "models": v})
+	})
 	return m
 }
 
@@ -450,11 +460,18 @@ func hubTextFromBlocks(blocks []ChatBlock) string {
 	return sb.String()
 }
 
-// ListChatModels 返回会话的可用模型视图；agent 未报告模型信息时返回 ok=false 形态（空视图）。
-// 入口别名解析：重建后前端持旧 ID 也能查到新会话。
-// agent 上报的列表会与 kshell 配置的模型列表合并（配置模型是注入通道的实际
-// 取值域，agent 自报列表里不会有它们；缺失项以 ID=Name=model 追加，去重）。
+// ListChatModels 返回会话的可用模型视图；实现与 chat:models 推送共用 modelsView。
 func (a *App) ListChatModels(id string) (chat.ModelsView, error) {
+	return a.modelsView(id)
+}
+
+// modelsView 取某会话的合并模型视图；agent 未报告时返回空切片视图
+//（nil 会序列化成 null，前端 models.Models.find 会抛 TypeError 白屏）。
+// ListChatModels 与 chat:models 推送共用。入口别名解析：重建后前端持旧 ID
+// 也能查到新会话。agent 上报的列表会与 kshell 配置的模型列表合并（配置模型
+// 是注入通道的实际取值域，agent 自报列表里不会有它们；缺失项以 ID=Name=model
+// 追加，去重）。
+func (a *App) modelsView(id string) (chat.ModelsView, error) {
 	m := a.chats()
 	if m == nil {
 		return chat.ModelsView{}, errNotReady
@@ -462,8 +479,6 @@ func (a *App) ListChatModels(id string) (chat.ModelsView, error) {
 	resolved, _ := a.resolveChatID(id)
 	v, ok := m.Models(resolved)
 	if !ok {
-		// Models 必须回非 nil 空切片：nil slice 序列化成 JSON null，
-		// 前端 models.Models.find 会抛 TypeError 白屏
 		v = chat.ModelsView{Models: []chat.ModelView{}}
 	}
 	return a.mergeConfigModels(v), nil
