@@ -788,6 +788,19 @@ func TestFullWidthInputNormalization(t *testing.T) {
 	}
 }
 
+// 全角问号帮助：#？ 与 ＃？ 均应出帮助（2026-10-18 用户反馈漏网字符）。
+func TestFullWidthQuestionHelp(t *testing.T) {
+	c := NewConsole(&fakeExecutor{
+		hasCurrent:     true,
+		currentSession: wsRef(0, "c1", "", "", "claude", "A", true),
+	})
+	for _, in := range []string{"#？", "＃？", "#? ", "＃?"} {
+		if got := join(c.Handle(in)); !strings.Contains(got, "命令列表") {
+			t.Fatalf("%s 应按帮助处理: %q", in, got)
+		}
+	}
+}
+
 // #h 查询 AgentHub 最近消息：默认 10 条、参数条数、非法参数、空历史、超长截断。
 func TestRecentMessagesCommand(t *testing.T) {
 	long := strings.Repeat("长", recentTextCap+5)

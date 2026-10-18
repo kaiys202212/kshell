@@ -158,6 +158,8 @@ func (c *Console) handleCommand(input string) []Reply {
 	switch cmd {
 	case "#?":
 		return c.handleHelp()
+	case "#？": // 全角问号：手机输入法常把 ? 打成 ？（2026-10-18 用户反馈）
+		return c.handleHelp()
 	case "#l":
 		return c.handleList(false)
 	case "#la":
@@ -204,7 +206,7 @@ func splitCmd(input string) (cmd, arg string) {
 // knownCommands 是全角＃提升为命令前缀的白名单：只有 ＃ 后首词命中已知
 // 命令才视为命令意图，避免劫持以全角＃开头的普通文本（发往当前会话）。
 var knownCommands = map[string]bool{
-	"?": true, "l": true, "la": true, "en": true, "n": true, "s": true,
+	"?": true, "？": true, "l": true, "la": true, "en": true, "n": true, "s": true,
 	"m": true, "g": true, "f": true, "st": true, "c": true, "h": true,
 }
 
