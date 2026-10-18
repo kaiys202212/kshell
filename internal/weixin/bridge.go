@@ -44,6 +44,13 @@ type ctxInfo struct {
 	valid        bool
 }
 
+// ErrTranscriberNotConfigured 是语音转写未配置的哨兵：transcriber 实现方
+//（desktop 装配）在模型平台缺 ASR 模型时返回它，桥据此回执「未配置」而非「失败」。
+var ErrTranscriberNotConfigured = errors.New("err.weixin.voice_asr_unconfigured")
+
+// Transcriber 把 WAV 音频转成文字（OpenAI 兼容 ASR 端点，desktop 装配注入）。
+type Transcriber func(ctx context.Context, wav []byte) (string, error)
+
 // queuedFile 是一条待转交附件：已下载解密落盘，等用户的下一条文字合并投递。
 type queuedFile struct {
 	Name string
@@ -75,6 +82,8 @@ type Bridge struct {
 
 	// filesDir 是附件落盘目录；NewBridge 给默认值，测试注入临时目录。
 	filesDir string
+	// transcriber 是语音转写函数（desktop 注入）；nil = 未装配（纯语音回执提示）。
+	transcriber Transcriber
 
 	// outbound 是串行出站队列：DeliverHubMessage 只入队，单 worker 按序
 	// deliver，避免 hub 消息因网络耗时不等而在微信侧乱序。
@@ -124,6 +133,20 @@ func defaultFilesDir() string {
 		return filepath.Join(os.TempDir(), "kshell-weixin-files")
 	}
 	return filepath.Join(home, ".kshell", "weixin-files")
+}
+
+// SetTranscriber 装配语音转写函数（可随时替换：desktop 读实时配置）。
+func (b *Bridge) SetTranscriber(fn Transcriber) {
+	b.mu.Lock()
+	b.transcriber = fn
+	b.mu.Unlock()
+}
+
+// transcriberFn 加锁读当前转写函数。
+func (b *Bridge) transcriberFn() Transcriber {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.transcriber
 }
 
 // QueuedFiles 返回当前待转交附件数（#st 尾注用）。
@@ -213,6 +236,22 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	receipt := b.ingestAttachments(ctx, m.Attachments)
 
 	text := m.Text
+	// 纯语音（服务端无转写）：下载 → SILK→WAV → 模型转写；转写文本按
+	// 可转发文字处理（参与附件队列合并）；失败/未配置转回执。
+	if strings.TrimSpace(text) == "" && m.Voice != nil {
+		if transcript, err := b.transcribeVoice(ctx, m.Voice); err != nil {
+			if errors.Is(err, ErrTranscriberNotConfigured) {
+				receipt = joinNotes(receipt, bridgeText(b.lang, "voice.unconfigured"))
+			} else {
+				receipt = joinNotes(receipt, fmt.Sprintf(bridgeText(b.lang, "voice.failed"), err))
+			}
+		} else if strings.TrimSpace(transcript) == "" {
+			receipt = joinNotes(receipt, fmt.Sprintf(bridgeText(b.lang, "voice.failed"), "空转写结果"))
+		} else {
+			text = transcript
+		}
+	}
+
 	var replies []hub.Reply
 	merged := false
 	trimmed := strings.TrimSpace(text)
@@ -338,6 +377,35 @@ func (b *Bridge) ingestAttachments(ctx context.Context, atts []InboundAttachment
 		parts = append(parts, fmt.Sprintf(bridgeText(b.lang, "file.failed"), name))
 	}
 	return strings.Join(parts, "\n")
+}
+
+// transcribeVoice 完成语音到文字的完整链路：CDN 下载 → SILK 解码转 WAV →
+// 注入的 transcriber。未装配 transcriber 时直接返回哨兵（不下载）。
+func (b *Bridge) transcribeVoice(ctx context.Context, v *InboundAttachment) (string, error) {
+	fn := b.transcriberFn()
+	if fn == nil {
+		return "", ErrTranscriberNotConfigured
+	}
+	data, err := b.client.DownloadMedia(ctx, *v)
+	if err != nil {
+		return "", fmt.Errorf("下载语音: %w", err)
+	}
+	wav, err := silkToWAV(data)
+	if err != nil {
+		return "", err
+	}
+	return fn(ctx, wav)
+}
+
+// joinNotes 用换行合并回执片段（忽略空片段）。
+func joinNotes(a, b string) string {
+	if a == "" {
+		return b
+	}
+	if b == "" {
+		return a
+	}
+	return a + "\n" + b
 }
 
 // queuedPrefix 取队列全部附件的说明行块（每附件一行 + 空行分隔），不消费队列；

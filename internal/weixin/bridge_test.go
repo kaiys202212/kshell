@@ -1,6 +1,7 @@
 package weixin
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
@@ -672,5 +673,119 @@ func TestBridgeAttachmentAndTextSameMessage(t *testing.T) {
 	}
 	if strings.Contains(sendText(t, sends[0].body), "已收到") {
 		t.Errorf("合并投递后不应再发附件回执")
+	}
+}
+
+// —— 语音转写 ——
+
+// voiceMsg 构造一条纯语音消息（无服务端转写；媒体下载指向测试服务）。
+func voiceMsg(token string) InboundMsg {
+	return InboundMsg{
+		FromUserID:   "u1",
+		ContextToken: token,
+		Voice: &InboundAttachment{
+			Kind: "voice", Name: "voice.silk", EncryptQueryParam: "eqp-1", AESKey: fileKeyB64,
+		},
+	}
+}
+
+func TestBridgeVoiceTranscribedForward(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	pcm := bytes.Repeat([]byte{0x10, 0x02}, 1200)
+	b, rc := newAttachBridge(t, ex, encodeSilk(t, pcm, true), 200)
+	var gotWAV []byte
+	b.SetTranscriber(func(ctx context.Context, wav []byte) (string, error) {
+		gotWAV = wav
+		return "语音说的需求", nil
+	})
+
+	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
+	// 转写文本按普通文字转交 + ack；无附件回执。
+	if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "语音说的需求" {
+		t.Fatalf("转写文本应转交, 实际 %v", ex.sentTexts)
+	}
+	if !bytes.HasPrefix(gotWAV, []byte("RIFF")) {
+		t.Errorf("transcriber 收到的不是 WAV: % x", gotWAV[:min(4, len(gotWAV))])
+	}
+	sends := rc.sends()
+	if len(sends) != 1 {
+		t.Fatalf("sendmessage 次数 = %d, 期望 1（ack）", len(sends))
+	}
+}
+
+func TestBridgeVoiceMergesWithQueue(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	pcm := bytes.Repeat([]byte{0x10, 0x02}, 1200)
+	b, rc := newAttachBridge(t, ex, encodeSilk(t, pcm, true), 200)
+	b.SetTranscriber(func(ctx context.Context, wav []byte) (string, error) {
+		return "看一下刚发的文件", nil
+	})
+
+	// 附件先入队（回执 send[0]），语音转写文本与其合并投递。
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-1", "a.pdf"))
+	b.HandleInboundMsg(context.Background(), voiceMsg("ct-2"))
+	if len(ex.sentTexts) != 1 || !strings.Contains(ex.sentTexts[0], "[附件] a.pdf") ||
+		!strings.Contains(ex.sentTexts[0], "看一下刚发的文件") {
+		t.Fatalf("语音转写应与附件队列合并: %v", ex.sentTexts)
+	}
+	if b.QueuedFiles() != 0 {
+		t.Fatalf("队列应清空: %d", b.QueuedFiles())
+	}
+	sends := rc.sends()
+	if len(sends) != 2 {
+		t.Fatalf("sendmessage 次数 = %d, 期望 2（附件回执 + ack）", len(sends))
+	}
+	if strings.Contains(sendText(t, sends[1].body), "转写") {
+		t.Errorf("合并成功不应再发语音回执")
+	}
+}
+
+func TestBridgeVoiceUnconfigured(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	pcm := bytes.Repeat([]byte{0x10, 0x02}, 1200)
+	b, rc := newAttachBridge(t, ex, encodeSilk(t, pcm, true), 200)
+	// 不注入 transcriber：回执「未配置」，不下载、不投递。
+	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
+	if len(ex.sentTexts) != 0 {
+		t.Fatalf("未配置不应投递: %v", ex.sentTexts)
+	}
+	sends := rc.sends()
+	if len(sends) == 0 || !strings.Contains(sendText(t, sends[0].body), "未配置") {
+		t.Fatalf("未配置回执缺失: %v", sends)
+	}
+}
+
+func TestBridgeVoiceTranscribeFail(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	pcm := bytes.Repeat([]byte{0x10, 0x02}, 1200)
+	b, rc := newAttachBridge(t, ex, encodeSilk(t, pcm, true), 200)
+	b.SetTranscriber(func(ctx context.Context, wav []byte) (string, error) {
+		return "", context.DeadlineExceeded
+	})
+
+	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
+	if len(ex.sentTexts) != 0 {
+		t.Fatalf("转写失败不应投递: %v", ex.sentTexts)
+	}
+	sends := rc.sends()
+	if len(sends) == 0 || !strings.Contains(sendText(t, sends[0].body), "转写失败") {
+		t.Fatalf("失败回执缺失: %v", sends)
+	}
+}
+
+func TestBridgeVoiceServerTextSkipsASR(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	pcm := bytes.Repeat([]byte{0x10, 0x02}, 1200)
+	b, _ := newAttachBridge(t, ex, encodeSilk(t, pcm, true), 200)
+	b.SetTranscriber(func(ctx context.Context, wav []byte) (string, error) {
+		t.Error("有服务端转写时不应调用模型 ASR")
+		return "", nil
+	})
+
+	m := voiceMsg("ct-1")
+	m.Text = "服务端转写内容"
+	b.HandleInboundMsg(context.Background(), m)
+	if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "服务端转写内容" {
+		t.Fatalf("服务端转写应直通: %v", ex.sentTexts)
 	}
 }

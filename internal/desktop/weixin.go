@@ -2,9 +2,11 @@ package desktop
 
 import (
 	"context"
+	"strings"
 
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/hub"
+	"github.com/yangk/kshell/internal/hubtools"
 	"github.com/yangk/kshell/internal/weixin"
 )
 
@@ -24,11 +26,27 @@ func (a *App) startWeixin() {
 			c.Weixin.Enabled = true
 		})
 	})
+	r.SetTranscriber(a.weixinTranscriber())
 	r.Configure(cfg.Weixin.Token, cfg.Weixin.Wxid)
 
 	a.mu.Lock()
 	a.wx = r
 	a.mu.Unlock()
+}
+
+// weixinTranscriber 返回语音转写函数：每次调用实时读模型平台配置（默认平台的
+// ASR 模型），改配置即时生效。未配置（无默认平台/ASR 模型/OpenAI 端点）时返回
+// weixin.ErrTranscriberNotConfigured 哨兵，桥据此回执「未配置」。
+func (a *App) weixinTranscriber() weixin.Transcriber {
+	return func(ctx context.Context, wav []byte) (string, error) {
+		plat, ok := a.snapshot().Config.Model.ActivePlatform()
+		if !ok || strings.TrimSpace(plat.ASRModel) == "" || strings.TrimSpace(plat.OpenAIBaseURL) == "" {
+			return "", weixin.ErrTranscriberNotConfigured
+		}
+		return hubtools.TranscribeAudio(ctx,
+			hubtools.Config{BaseURL: plat.OpenAIBaseURL, APIKey: plat.APIKey},
+			plat.ASRModel, wav)
+	}
 }
 
 // wxRuntime 取当前微信运行时（未装配为 nil）。

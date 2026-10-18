@@ -11,6 +11,9 @@ var bridgeTexts = map[string]langPair{
 	"file.failed":    {"Failed to fetch attachment %s", "附件 %s 获取失败"},
 	"file.line":      {"[Attachment] %s saved at %s", "[附件] %s 已保存至 %s"},
 	"file.queued_st": {"%d attachment(s) queued for forwarding", "待转交附件 %d 个"},
+	// 语音转写回执。
+	"voice.unconfigured": {"Voice received but no ASR model configured (Settings → Model platform → ASR model)", "已收到语音，但未配置语音转写模型（设置 → 模型平台 → 语音转写模型）"},
+	"voice.failed":       {"Voice transcription failed: %v", "语音转写失败：%v"},
 }
 
 // bridgeText 按语言取文案；zh-CN 用中文，其余用英文；未知 key 原样返回。
