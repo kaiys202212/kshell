@@ -35,6 +35,10 @@
       "not_queued": "消息已送达，无法撤回",
       "invalid_route_mode": "无效的路由模式 {{0}}（可选 auto、agent、force_auto）"
     },
+    "hubtools": {
+      "unknown_pending": "该确认已失效（已被处理或被新对话替换）",
+      "pending_expired": "确认已过期，请重新发起"
+    },
     "language": {
       "locales_not_dir": "locales 路径不是目录: {{0}}"
     },
@@ -925,8 +929,7 @@
       "confirm_approve": "确认执行",
       "confirm_reject": "拒绝",
       "confirm_done": "该操作已处理",
-      "confirm_failed": "操作失败：{{err}}",
-      "confirm_expired": "确认已过期，请重新发起"
+      "confirm_failed": "操作失败：{{err}}"
     },
     "requirements": {
       "title": "需求",

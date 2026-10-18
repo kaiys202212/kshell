@@ -273,16 +273,21 @@ func TestHandlePromptForceAuto(t *testing.T) {
 
 // TestHandlePromptConfirm 验证写工具触发确认：tool_confirm 消息落盘后 ConfirmHubTool 走通。
 func TestHandlePromptConfirm(t *testing.T) {
-	// 两轮：第一轮回 tool_calls（create_requirement），第二轮回纯文本
+	// 三轮：第一轮回 tool_calls（create_requirement），第二轮回工具循环收尾文本，
+	// 第三轮（确认后喂回）回自然语言总结
 	round := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if round == 0 {
-			round++
+		round++
+		if round == 1 {
 			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"create_requirement","arguments":"{\"project\":\"D:\\\\ws-a\",\"text\":\"新增需求\"}"}}]}}]}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"已提交确认。"}}]}`))
+		if round == 2 {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"已提交确认。"}}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"需求已创建完成。"}}]}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -341,6 +346,16 @@ func TestHandlePromptConfirm(t *testing.T) {
 	got := a.getRequirementStore().List()
 	if len(got) != 1 || got[0].Text != "新增需求" {
 		t.Fatalf("确认后应写入需求: %+v", got)
+	}
+	// 确认结果经 LLM 总结后落盘（第三轮 mock 文本），不是裸 JSON
+	var final hub.Message
+	for _, mm := range store.List() {
+		if mm.Kind == "agent" && mm.Event == "" && mm.ID > confirm.ID {
+			final = mm
+		}
+	}
+	if final.Text != "需求已创建完成。" {
+		t.Fatalf("确认结果应喂回 LLM 总结后落盘: %+v", store.List())
 	}
 	// 二次确认同一 pendingID 应报未知
 	if err := a.ConfirmHubTool(confirm.ChatID, extractPendingID(confirm.Text), true); err == nil {

@@ -81,7 +81,9 @@ export default function HubConfirmCard({
             </Button>
           </div>
           {state === 'error' && errMsg && (
-            <div className="mt-1 text-xs text-destructive">{errMsg}</div>
+            <div className="mt-1 text-xs text-destructive">
+              {t('ui.hub.confirm_failed', { err: errMsg })}
+            </div>
           )}
         </>
       ) : null}

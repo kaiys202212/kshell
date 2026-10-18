@@ -334,6 +334,30 @@ func (a *App) ConfirmHubTool(chatID, pendingID string, approved bool) error {
 	if err != nil {
 		return err
 	}
+	// 设计要求：确认结果喂回 LLM 组织成自然语言再落盘；LLM 失败/空回复时
+	// 降级直接落工具结果（用户仍能看到发生了什么，只是少了润色）。
+	if approved {
+		if final := h.summarizeConfirm(text); final != "" {
+			text = final
+		}
+	}
 	a.recordHubMessage(hub.Message{Kind: "agent", ChatID: a.originalChatID(chatID), Text: text})
 	return nil
+}
+
+// summarizeConfirm 把写操作的工具结果 JSON 交回 LLM 组织成一句自然语言确认。
+// 失败或空回复返回空串（调用方降级落原始结果）。
+func (h *hubRouter) summarizeConfirm(result string) string {
+	msgs := []hubtools.Message{
+		{Role: "system", Content: hubtools.BuildSystemPrompt(nil, false)},
+		{Role: "user", Content: "写操作已由用户确认并执行完成，工具返回结果：\n" + result +
+			"\n\n请用一句简洁中文向用户说明执行结果，不要输出 JSON。"},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), hubPromptTimeout)
+	defer cancel()
+	resp, err := hubtools.NewClient(h.cfg).Chat(ctx, msgs, nil)
+	if err != nil {
+		return ""
+	}
+	return resp.Text
 }
