@@ -23,8 +23,10 @@ type AuthProber interface {
 
 // LoginCmdProvider 是可选接口:由提供官方交互式登录命令的工具实现(目前仅 Cursor)。
 // 返回**裸命令**(如 ["cursor-agent","login"]),不带绝对路径:登录不依赖工作区,
-// 可执行文件的实际解析(按 BinName 做 PATH 探测、Windows shim 兜底)交给
-// desktop/launcher 层,这里探测反而会与 Detect 的结论重复、两处口径易走偏。
+// 这里探测反而会与 Detect 的结论重复、两处口径易走偏。可执行文件的实际解析分两层:
+// 调用方(desktop.OpenLoginTerminal)优先复用探测结果 tool.BinPath/BinArgs 组装;
+// 裸名仅在探测缺失时回退,由 terminal 后端 commandLine 按 PATH 做 exec.LookPath,
+// Windows 的 .ps1 shim 由 launcher 解析(裸名对它是 no-op)。
 type LoginCmdProvider interface {
 	LoginCmd() []string
 }

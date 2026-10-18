@@ -79,7 +79,7 @@ type Info struct {
 	// Key 是 manager 的打开 key（session:<id> / new:<n> 等）：通知气泡按
 	// agenthook payload 的 termKey（即本 key）定位前端页签，与内部自增 ID 是两回事。
 	Key       string
-	Kind      string // KindSession | KindNew | KindShell | KindSSH
+	Kind      string // KindSession | KindNew | KindShell | KindSSH | KindLogin
 	SessionID string // Kind == KindSession 时关联的历史会话 ID
 	ConnID    string // Kind == KindSSH 时关联的连接 ID
 	Workspace string

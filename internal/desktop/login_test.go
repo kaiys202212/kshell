@@ -24,7 +24,17 @@ func (f *fakeLoginProvider) DisplayName() string { return f.name }
 func (f *fakeLoginProvider) LoginCmd() []string  { return f.cmd }
 
 // newLoginApp 组装带终端桩的 App(不触发真实扫描),供登录终端测试使用。
+// 默认探测表里 cursor 已装(BinPath 为裸名,与历史用例口径一致)。
 func newLoginApp(t *testing.T, ps []providers.Provider) (*App, *stubTermBackend) {
+	t.Helper()
+	return newLoginAppWithTools(t, ps, []discovery.Tool{
+		{ID: "cursor", Name: "Cursor", Installed: true, BinPath: "cursor-agent"},
+	})
+}
+
+// newLoginAppWithTools 在 newLoginApp 基础上允许自定义工具探测表,
+// 验证 OpenLoginTerminal 对 tool.BinPath/BinArgs 的复用与回退。
+func newLoginAppWithTools(t *testing.T, ps []providers.Provider, tools []discovery.Tool) (*App, *stubTermBackend) {
 	t.Helper()
 	dir := t.TempDir()
 	backend := &stubTermBackend{}
@@ -39,9 +49,7 @@ func newLoginApp(t *testing.T, ps []providers.Provider) (*App, *stubTermBackend)
 		Terminals: newTerminalManagerWith(func(string, ...any) {}, backend),
 		Emit:      func(string, ...any) {},
 	})
-	setTools(t, app, []discovery.Tool{
-		{ID: "cursor", Name: "Cursor", Installed: true, BinPath: "cursor-agent"},
-	})
+	setTools(t, app, tools)
 	return app, backend
 }
 
@@ -158,6 +166,78 @@ func TestOpenLoginTerminalHomeFallback(t *testing.T) {
 	}
 	if info.ID == "" {
 		t.Fatal("应返回终端 ID")
+	}
+}
+
+// TestOpenLoginTerminalUsesDetectedBinPath 探测到 BinPath 时优先复用探测结果:
+// 用探测到的可执行入口(含 node 入口形态的 BinArgs 前缀)拼 login 子命令,
+// 与工作区会话同等的启动能力——官方安装目录往往不在 GUI 进程 PATH,
+// 裸命令会在 terminal 后端 LookPath 处失败。
+func TestOpenLoginTerminalUsesDetectedBinPath(t *testing.T) {
+	app, backend := newLoginAppWithTools(t, []providers.Provider{
+		&fakeLoginProvider{id: "cursor", name: "Cursor", cmd: []string{"cursor-agent", "login"}},
+	}, []discovery.Tool{
+		{ID: "cursor", Name: "Cursor", Installed: true,
+			BinPath: `D:\tools\node.exe`, BinArgs: []string{`D:\tools\cursor-agent\index.js`}},
+	})
+	stubHomeDir(t, `D:\home-u`)
+
+	if _, err := app.OpenLoginTerminal("cursor", 80, 24); err != nil {
+		t.Fatalf("OpenLoginTerminal error: %v", err)
+	}
+	spec := backend.lastSpec()
+	if spec.Path != `D:\tools\node.exe` {
+		t.Fatalf("Spec.Path = %q, 期望探测到的 BinPath", spec.Path)
+	}
+	if len(spec.Args) != 2 || spec.Args[0] != `D:\tools\cursor-agent\index.js` || spec.Args[1] != "login" {
+		t.Fatalf("Spec.Args = %v, 期望 [BinArgs..., login]", spec.Args)
+	}
+}
+
+// TestOpenLoginTerminalFallsBackToLoginCmd 探测缺失(BinPath 为空或工具不在
+// 探测表)时回退 LoginCmd 裸命令:裸名对 launcher 的 shim 解析是 no-op,
+// 真正的 PATH 解析在 terminal 后端 commandLine,PATH 命中的安装仍可用。
+func TestOpenLoginTerminalFallsBackToLoginCmd(t *testing.T) {
+	cases := []struct {
+		name  string
+		tools []discovery.Tool
+	}{
+		{"BinPath 为空", []discovery.Tool{{ID: "cursor", Name: "Cursor", Installed: true}}},
+		{"工具不在探测表", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			app, backend := newLoginAppWithTools(t, []providers.Provider{
+				&fakeLoginProvider{id: "cursor", name: "Cursor", cmd: []string{"cursor-agent", "login"}},
+			}, c.tools)
+
+			if _, err := app.OpenLoginTerminal("cursor", 80, 24); err != nil {
+				t.Fatalf("OpenLoginTerminal error: %v", err)
+			}
+			spec := backend.lastSpec()
+			if spec.Path != "cursor-agent" || len(spec.Args) != 1 || spec.Args[0] != "login" {
+				t.Fatalf("Spec 未按 LoginCmd 裸命令组装 = %+v", spec)
+			}
+		})
+	}
+}
+
+// TestOpenLoginTerminalTitleFallsBackToToolID provider 无显示名时标题回退 toolID,
+// 不产出残缺标题。
+func TestOpenLoginTerminalTitleFallsBackToToolID(t *testing.T) {
+	app, _ := newLoginApp(t, []providers.Provider{
+		&fakeLoginProvider{id: "cursor", cmd: []string{"cursor-agent", "login"}},
+	})
+	// 标题直显文案依赖当前语言,钉住语言让断言稳定
+	applang.Set("zh-CN")
+	t.Cleanup(func() { applang.Set("en") })
+
+	info, err := app.OpenLoginTerminal("cursor", 80, 24)
+	if err != nil {
+		t.Fatalf("OpenLoginTerminal error: %v", err)
+	}
+	if info.Title != "cursor 登录" {
+		t.Fatalf("Title = %q, 期望「cursor 登录」", info.Title)
 	}
 }
 
