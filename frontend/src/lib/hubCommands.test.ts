@@ -17,6 +17,11 @@ describe('isHubNumber', () => {
     expect(isHubNumber('')).toBe(false);
     expect(isHubNumber(' 3 ')).toBe(false);
   });
+
+  it('全角数字归一化后识别为编号', () => {
+    expect(isHubNumber('１２')).toBe(true);
+    expect(isHubNumber('０')).toBe(false);
+  });
 });
 
 describe('isNewHubCommand', () => {
@@ -32,6 +37,15 @@ describe('isNewHubCommand', () => {
     expect(isNewHubCommand('#f')).toBe(true);
     expect(isNewHubCommand('#st')).toBe(true);
     expect(isNewHubCommand('#c')).toBe(true);
+    expect(isNewHubCommand('#h')).toBe(true);
+  });
+
+  it('全角＃/冒号/空格归一化后识别', () => {
+    expect(isNewHubCommand('＃en')).toBe(true);
+    expect(isNewHubCommand('＃g：1 hi')).toBe(true);
+    expect(isNewHubCommand('#g　2　hi')).toBe(true);
+    // ＃ 后不是已知命令：不命中（普通文本）
+    expect(isNewHubCommand('＃话题')).toBe(false);
   });
 
   it('大小写不敏感且带参数时只看首词', () => {

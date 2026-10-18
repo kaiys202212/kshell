@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 // itoa 供 commands.go / console.go 共用的整数转字符串。
@@ -101,6 +102,7 @@ func (c *Console) Handle(input string) []Reply {
 	if input == "" {
 		return nil
 	}
+	input = normalizeInput(input)
 
 	// permission 菜单只拦截数字回复；其余输入照常走命令/转发流程。
 	if c.perm != nil {
@@ -176,18 +178,78 @@ func (c *Console) handleCommand(input string) []Reply {
 		return c.handleG(arg)
 	case "#f":
 		return c.handleSearch(arg)
+	case "#h":
+		return c.handleRecent(arg)
 	default:
 		return single(c.text("unknown_cmd"))
 	}
 }
 
 // splitCmd 把 "#g 1 hi" 切成 cmd="#g"、arg="1 hi"；无参数时 arg 为空。
-// 已知命令都是无空格的短词，取第一个空白前的段。
+// 已知命令都是无空格的短词，取第一个空白前的段；全角冒号（如 "#g：1 hi"）
+// 同样视作命令词与参数的分隔（多字节，按完整 rune 长度跳过）。
 func splitCmd(input string) (cmd, arg string) {
-	if i := strings.IndexAny(input, " \t"); i >= 0 {
-		return input[:i], strings.TrimSpace(input[i+1:])
+	si := strings.IndexAny(input, " \t")
+	ci := strings.Index(input, "：")
+	i, sep := si, 1
+	if ci >= 0 && (si < 0 || ci < si) {
+		i, sep = ci, len("：")
 	}
-	return input, ""
+	if i < 0 {
+		return input, ""
+	}
+	return input[:i], strings.TrimSpace(input[i+sep:])
+}
+
+// knownCommands 是全角＃提升为命令前缀的白名单：只有 ＃ 后首词命中已知
+// 命令才视为命令意图，避免劫持以全角＃开头的普通文本（发往当前会话）。
+var knownCommands = map[string]bool{
+	"?": true, "l": true, "la": true, "en": true, "n": true, "s": true,
+	"m": true, "g": true, "f": true, "st": true, "c": true, "h": true,
+}
+
+// normalizeInput 归一化全角输入（手机输入法常把符号打成全角）：
+//   - 全角空格 → 半角空格（全局替换，普通文本里无歧义）
+//   - 纯全角数字串 → 半角（编号切换 / 菜单与权限回复）
+//   - 全角＃ → 半角 #（仅当 ＃ 后首词是已知命令时；带参数命令的编号后的
+//     全角冒号由 handleG 消化，命令词后的冒号由 splitCmd 消化）
+func normalizeInput(input string) string {
+	input = strings.ReplaceAll(input, "　", " ")
+	if input != "" {
+		allDigits := true
+		for _, r := range input {
+			if r < '０' || r > '９' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			return normalizeDigits(input)
+		}
+	}
+	if rest, ok := strings.CutPrefix(input, "＃"); ok {
+		token := rest
+		if i := strings.IndexAny(rest, " \t："); i >= 0 {
+			token = rest[:i]
+		}
+		if knownCommands[token] {
+			return "#" + rest
+		}
+	}
+	return input
+}
+
+// normalizeDigits 把字符串里的全角数字 ０-９ 转成半角 0-9，其余字符原样保留。
+func normalizeDigits(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r >= '０' && r <= '９' {
+			r = '0' + (r - '０')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // handleHelp 回复帮助全文与当前会话行。
@@ -234,12 +296,14 @@ func (c *Console) handleList(all bool) []Reply {
 	c.lastList = shown
 	c.refreshCurrent()
 
-	lines := make([]string, 0, limit)
+	lines := make([]string, 0, limit+1)
 	for i := range shown {
 		shown[i].Num = i + 1
 		shown[i].Current = shown[i].ChatID != "" && shown[i].ChatID == c.current.ChatID
 		lines = append(lines, formatRef(shown[i]))
 	}
+	// 引导提示：列表本身不说明数字的用途，新用户不知道可以直接回数字切换。
+	lines = append(lines, c.text("list_hint"))
 	return single(strings.Join(lines, "\n"))
 }
 
@@ -413,8 +477,21 @@ func (c *Console) handleModelsMenu() []Reply {
 }
 
 // handleG 处理 "#g <n> <text>"：向编号 n 的会话发送文本（不切 current）。
+// 编号兼容全角数字；编号后允许紧跟一个全角/半角冒号作分隔（"#g 1：hi"），
+// 正文里的冒号不受影响（只在编号后消化一个）。
 func (c *Console) handleG(arg string) []Reply {
-	nStr, text := splitCmd(arg)
+	i := 0
+	for i < len(arg) {
+		r, size := utf8.DecodeRuneInString(arg[i:])
+		if (r >= '0' && r <= '9') || (r >= '０' && r <= '９') {
+			i += size
+			continue
+		}
+		break
+	}
+	nStr := normalizeDigits(arg[:i])
+	text := strings.TrimSpace(arg[i:])
+	text = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(text, "："), ":"))
 	if nStr == "" || text == "" {
 		return single(c.text("usage_g"))
 	}
@@ -451,10 +528,12 @@ func (c *Console) handleSearch(arg string) []Reply {
 	// options 与 results 同序同长，供 handleMenuNumber 的编号边界检查共用。
 	menu := c.menu
 	menu.options = make([]MenuOption, len(results))
-	lines := make([]string, 0, len(results))
+	lines := make([]string, 0, len(results)+1)
 	for _, r := range results {
 		lines = append(lines, formatRef(r))
 	}
+	// 搜索结果同样靠数字选择，补一条引导（与菜单选择共用 pick_number 文案）。
+	lines = append(lines, c.text("pick_number"))
 	return single(strings.Join(lines, "\n"))
 }
 
@@ -463,6 +542,43 @@ func (c *Console) handleStatus() []Reply {
 	st := c.ex.Status()
 	return single(fmt.Sprintf(c.text("current_session")+"\n"+c.text("status_running")+"\n"+c.text("status_undelivered"),
 		st.CurrentTitle, st.Running, st.Undelivered))
+}
+
+// #h 的条数默认值与上限（上限防一次拉满 live 缓冲刷屏）。
+const (
+	recentDefault = 10
+	recentMax     = 50
+	// recentTextCap 是单条消息正文的最大回显长度（rune 数），超长截断加省略号。
+	recentTextCap = 80
+)
+
+// handleRecent 处理 "#h [条数]"：回显 AgentHub 最近 n 条消息（默认 10，上限 50）。
+func (c *Console) handleRecent(arg string) []Reply {
+	n := recentDefault
+	if arg != "" {
+		v, err := strconv.Atoi(normalizeDigits(arg))
+		if err != nil || v < 1 {
+			return single(c.text("usage_h"))
+		}
+		n = v
+	}
+	if n > recentMax {
+		n = recentMax
+	}
+	msgs := c.ex.RecentMessages(n)
+	if len(msgs) == 0 {
+		return single(c.text("no_messages"))
+	}
+	lines := make([]string, 0, len(msgs)+1)
+	lines = append(lines, fmt.Sprintf(c.text("recent_header"), len(msgs)))
+	for i, m := range msgs {
+		role := c.text("msg_agent")
+		if m.Kind == "user" {
+			role = c.text("msg_user")
+		}
+		lines = append(lines, itoa(i+1)+". ["+role+"]["+hubMsgTitle(m)+"] "+truncateOneLine(m.Text, recentTextCap))
+	}
+	return single(strings.Join(lines, "\n"))
 }
 
 // renderOptions 渲染编号选项列表。

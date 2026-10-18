@@ -35,6 +35,14 @@ var unwrapTags = []string{
 	"command-args",
 }
 
+// isCommandEcho 报告文本是否为斜杠命令回显（<command-name>/model</command-name>…）。
+// 这类记录是 CLI 对用户敲斜杠命令的回显，不是用户输入：command-name/command-message
+// 块被整块删除后只剩 command-args 的参数文本（如 /model default 只剩 "default"），
+// 拿去当标题会得到噪音，调用方应整条跳过。
+func isCommandEcho(raw string) bool {
+	return strings.Contains(raw, "<command-name>")
+}
+
 // 成对块（可跨行，非贪婪）；未闭合的标签只删标记本身、不吞后面的正文。
 var blockRes = buildBlockRes()
 var tagOnlyRe = buildTagOnlyRe()

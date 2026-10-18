@@ -187,7 +187,14 @@ func (b *Bridge) HandleInbound(fromUserID, contextToken, text string) {
 
 	b.flushPending()
 
-	for _, r := range b.console.Handle(text) {
+	replies := b.console.Handle(text)
+	if len(replies) == 0 && strings.TrimSpace(text) != "" {
+		// 命令层无回复 = 文本已成功转发给当前会话（agent 稍后回复）。
+		// 微信侧补一条已接收确认，与桌面端 AgentHub 的 ack 卡片同一文案语义
+		//（ui.hub.ack_delivered 不镜像到微信，这里是对应的微信侧回执）。
+		replies = []hub.Reply{{Text: hub.CmdText(b.lang, "sent_ack")}}
+	}
+	for _, r := range replies {
 		b.deliver(r.Text)
 	}
 	// 回复已发出，取消输入状态。
@@ -202,7 +209,8 @@ func (b *Bridge) DeliverHubMessage(m hub.Message) {
 	if m.Kind != "agent" || m.Status == hub.StatusRecalled {
 		return
 	}
-	if strings.HasPrefix(m.Event, "ui.hub.") || (m.Event == "" && isWireKey(m.Text)) {
+	if strings.HasPrefix(m.Event, "ui.hub.") || strings.HasPrefix(m.Text, "ui.hub.") ||
+		(m.Event == "" && isWireKey(m.Text)) {
 		return
 	}
 	text := markdownToText(m.Text)
@@ -213,7 +221,12 @@ func (b *Bridge) DeliverHubMessage(m hub.Message) {
 }
 
 // enqueueOutbound 把一条文本放入串行出站队列；满或已关闭则丢弃计 undelivered。
+// 首次入队时惰性启动出站 worker：生产路径只有这里会往队列投消息，
+// worker 只在 FlushForTest（测试）与 Close（排空退出）被调是不够的——
+// 否则队列永远无人消费，agent 回复全部滞留（2026-10-18 真机「微信收不到
+// agent 回复、命令回复正常」的根因）。
 func (b *Bridge) enqueueOutbound(text string) {
+	b.startOutboundWorker()
 	b.outMu.Lock()
 	if b.outClosed {
 		b.outMu.Unlock()

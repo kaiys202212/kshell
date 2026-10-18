@@ -97,12 +97,19 @@ func (Claude) ParseSession(path string, head []byte) (*Session, error) {
 		// isMeta 记录是 CLI 自己插的旁白（<local-command-caveat>、斜杠命令回显等），
 		// 一律不参与标题；剩下的候选再过 cleanTitle，纯包装文本会变成空串被跳过。
 		if meta, _ := rec["isMeta"].(bool); !meta {
-			text := cleanTitle(messageText(rec["message"]))
-			if title == "" && text != "" && rec["type"] == "user" {
-				title = oneLine(text, 80)
+			text := messageText(rec["message"])
+			// 斜杠命令回显（如 /model default）不带 isMeta 标记：command-name
+			// 块被删掉后只剩 command-args 的参数文本，会把 "default" 这类参数
+			// 当成标题。整条跳过，标题落到下一条真实消息。
+			if isCommandEcho(text) {
+				continue
 			}
-			if assistantTitle == "" && text != "" && rec["type"] == "assistant" {
-				assistantTitle = oneLine(text, 80)
+			cleaned := cleanTitle(text)
+			if title == "" && cleaned != "" && rec["type"] == "user" {
+				title = oneLine(cleaned, 80)
+			}
+			if assistantTitle == "" && cleaned != "" && rec["type"] == "assistant" {
+				assistantTitle = oneLine(cleaned, 80)
 			}
 		}
 	}

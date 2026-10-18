@@ -2,6 +2,8 @@
 
 > 沟通约定:与本项目相关的所有回复一律使用**中文**。
 
+> **必读**:本项目的工作流程、确认门禁、提交与验证规范见仓库根的 `AGENTS.md`,本文件只做代码导览;两者冲突时以 `AGENTS.md` 为准。
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Overview

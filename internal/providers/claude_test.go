@@ -78,6 +78,24 @@ func TestClaudeParseSessionSkipsWrapperTitles(t *testing.T) {
 	}
 }
 
+// 斜杠命令回显（/model default 等）不带 isMeta，但整条都不是用户输入：
+// 不能让 command-args 的参数文本（"default"）成为标题，标题应落到下一条真实消息。
+func TestClaudeParseSessionSkipsCommandEchoTitle(t *testing.T) {
+	p := Claude{}
+	head := []byte(strings.Join([]string{
+		`{"type":"user","sessionId":"s-4","cwd":"D:\\data\\ws","timestamp":"2026-10-18T08:00:00Z","message":{"role":"user","content":"<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>default</command-args>"}}`,
+		`{"type":"user","timestamp":"2026-10-18T08:01:00Z","message":{"role":"user","content":"帮我排查微信桥收不到消息的问题"}}`,
+	}, "\n"))
+
+	got, err := p.ParseSession(filepath.Join("testdata", "claude", "not-exists.jsonl"), head)
+	if err != nil {
+		t.Fatalf("ParseSession error: %v", err)
+	}
+	if got.Title != "帮我排查微信桥收不到消息的问题" {
+		t.Fatalf("title = %q, want next real user message (not command args)", got.Title)
+	}
+}
+
 // 全是包装记录时退回首条 assistant 文本；isMeta 记录里的正文同样不参与标题。
 func TestClaudeParseSessionFallsBackToAssistantTitle(t *testing.T) {
 	p := Claude{}

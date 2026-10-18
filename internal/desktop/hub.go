@@ -7,6 +7,7 @@ import (
 
 	"github.com/yangk/kshell/internal/agenthook"
 	"github.com/yangk/kshell/internal/chat"
+	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/hub"
 )
 
@@ -15,6 +16,16 @@ var (
 	errHubNotFound  = errors.New("err.hub.not_found")
 	errHubNotQueued = errors.New("err.hub.not_queued")
 )
+
+// SaveHubDefaultCreate 持久化「默认 agent 工具 + 模型」到 config.yaml（前端
+// localStorage 之外的跨端副本）：微信桥 #en 的 EasyNew 读这里，浏览器侧
+// localStorage 只在桌面端生效。modelID 空 = 用该工具默认模型。
+func (a *App) SaveHubDefaultCreate(toolID, modelID string) error {
+	return a.saveConfig(func(c *config.Config) {
+		c.AgentHub.DefaultTool = toolID
+		c.AgentHub.DefaultModel = modelID
+	})
+}
 
 // recordHubMessage 把一条消息写入 AgentHub 历史并通知前端刷新。
 // 这是用户消息与 agent 回复共用的唯一写入路径：两类消息进同一 store、同一 ID 序列，

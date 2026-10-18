@@ -36,6 +36,7 @@ type fakeExecutor struct {
 	status         ConsoleStatus
 	openSessionRef SessionRef
 	openSessionErr error
+	recentMessages []Message
 	// 记录调用参数
 	switchCalls      []string
 	openSessionCalls []string
@@ -108,6 +109,13 @@ func (f *fakeExecutor) GrantPermission(chatID, reqID string, allow bool) error {
 
 func (f *fakeExecutor) Status() ConsoleStatus { return f.status }
 
+func (f *fakeExecutor) RecentMessages(n int) []Message {
+	if len(f.recentMessages) > n {
+		return f.recentMessages[len(f.recentMessages)-n:]
+	}
+	return f.recentMessages
+}
+
 // join 把多条回复拼成一段文本，便于断言。
 func join(replies []Reply) string {
 	var sb strings.Builder
@@ -163,8 +171,12 @@ func TestListTruncatesTo10AndMarksCurrent(t *testing.T) {
 
 	out := join(c.Handle("#l"))
 	lines := strings.Split(out, "\n")
-	if len(lines) != 10 {
-		t.Fatalf("应只列前 10 个，得到 %d 行: %q", len(lines), out)
+	// 10 行列表 + 末尾 1 行「回复数字可切换」引导提示。
+	if len(lines) != 11 {
+		t.Fatalf("应只列前 10 个加引导提示，得到 %d 行: %q", len(lines), out)
+	}
+	if lines[10] != "回复数字可切换到对应会话" {
+		t.Fatalf("末行应为引导提示: %q", lines[10])
 	}
 	if !strings.HasPrefix(lines[2], "▶3. ") {
 		t.Fatalf("第 3 行应以 ▶3. 开头: %q", lines[2])
@@ -213,8 +225,8 @@ func TestListAll(t *testing.T) {
 	}
 	c := NewConsole(&fakeExecutor{listSessions: refs})
 	lines := strings.Split(join(c.Handle("#la")), "\n")
-	if len(lines) != 12 {
-		t.Fatalf("#la 应列全量 12 个，得到 %d 行", len(lines))
+	if len(lines) != 13 { // 12 个会话 + 末尾引导提示
+		t.Fatalf("#la 应列全量 12 个加引导提示，得到 %d 行", len(lines))
 	}
 }
 
@@ -711,5 +723,109 @@ func TestSetCurrentDirectsPlainText(t *testing.T) {
 	}
 	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c-injected", "你好"} {
 		t.Fatalf("Send 应收到 SetCurrent 的 ChatID: %v", fe.sendCalls)
+	}
+}
+
+// 全角符号归一化：＃前缀（仅已知命令提升）、全角空格、全角数字、全角冒号分隔。
+func TestFullWidthInputNormalization(t *testing.T) {
+	fe := &fakeExecutor{
+		listSessions: []SessionRef{
+			wsRef(0, "c1", "", "", "claude", "A", false),
+			wsRef(0, "c2", "", "", "codex", "B", true),
+		},
+		hasCurrent:     true,
+		currentSession: wsRef(0, "c2", "", "", "codex", "B", true),
+	}
+	c := NewConsole(fe)
+	c.Handle("#l")
+
+	// ＃l：全角井号 + 已知命令 → 列表
+	if got := join(c.Handle("＃l")); !strings.Contains(got, "1. [") {
+		t.Fatalf("＃l 应按命令处理: %q", got)
+	}
+	// ＃en：全角井号快速新建
+	if got := join(c.Handle("＃en")); !strings.Contains(got, "已创建") || !strings.Contains(got, "已创建") {
+		t.Fatalf("＃en 应触发快速新建: %q", got)
+	}
+	// 全角数字编号切换（先 #l 建映射）
+	c.Handle("#l")
+	if got := join(c.Handle("１")); !strings.Contains(got, "已切换") {
+		t.Fatalf("全角数字应按编号切换: %q", got)
+	}
+	if len(fe.switchCalls) == 0 || fe.switchCalls[len(fe.switchCalls)-1] != "c1" {
+		t.Fatalf("１ 应切到编号 1: %v", fe.switchCalls)
+	}
+	// ＃g：全角井号 + 全角冒号 + 全角空格
+	c.Handle("#l")
+	if got := join(c.Handle("＃g：1　你好")); !strings.Contains(got, "已发送到: A") {
+		t.Fatalf("＃g：1　你好 应发送成功: %q", got)
+	}
+	if fe.sendCalls[len(fe.sendCalls)-1] != [2]string{"c1", "你好"} {
+		t.Fatalf("#g 全角形态 Send 参数不符: %v", fe.sendCalls)
+	}
+	// 半角 #g 编号后跟全角冒号
+	c.Handle("#l")
+	if got := join(c.Handle("#g 1：再试")); !strings.Contains(got, "已发送到: A") {
+		t.Fatalf("#g 1：再试 应发送成功: %q", got)
+	}
+	if fe.sendCalls[len(fe.sendCalls)-1] != [2]string{"c1", "再试"} {
+		t.Fatalf("#g 编号后冒号 Send 参数不符: %v", fe.sendCalls)
+	}
+	// ＃g 1 注意：正文里的冒号不受影响
+	c.Handle("#l")
+	if got := join(c.Handle("#g 1 注意：细节")); !strings.Contains(got, "已发送到: A") {
+		t.Fatalf("正文冒号不应影响 #g: %q", got)
+	}
+	if fe.sendCalls[len(fe.sendCalls)-1] != [2]string{"c1", "注意：细节"} {
+		t.Fatalf("正文含冒号 Send 参数不符: %v", fe.sendCalls)
+	}
+	// ＃ + 未知首词：不劫持，按普通文本发给当前会话
+	if got := c.Handle("＃话题 标签"); len(got) != 0 {
+		t.Fatalf("＃未知词应按普通文本发送不回显: %v", got)
+	}
+	if fe.sendCalls[len(fe.sendCalls)-1] != [2]string{"c2", "＃话题 标签"} {
+		t.Fatalf("＃未知词应原文发给当前会话: %v", fe.sendCalls)
+	}
+}
+
+// #h 查询 AgentHub 最近消息：默认 10 条、参数条数、非法参数、空历史、超长截断。
+func TestRecentMessagesCommand(t *testing.T) {
+	long := strings.Repeat("长", recentTextCap+5)
+	fe := &fakeExecutor{recentMessages: []Message{
+		{Kind: "user", SessionTitle: "会话A", Text: "第一问"},
+		{Kind: "agent", SessionTitle: "会话A", Text: long},
+	}}
+	c := NewConsole(fe)
+
+	out := join(c.Handle("#h"))
+	if !strings.Contains(out, "最近 2 条消息:") || !strings.Contains(out, "1. [用户][会话A] 第一问") {
+		t.Fatalf("#h 默认格式不符: %q", out)
+	}
+	if !strings.Contains(out, strings.Repeat("长", recentTextCap)+"…") {
+		t.Fatalf("超长正文应截断加省略号: %q", out)
+	}
+
+	// 参数条数：#h 1 只取最后一条
+	out = join(c.Handle("#h 1"))
+	if !strings.Contains(out, "最近 1 条消息:") || !strings.Contains(out, "[agent]") {
+		t.Fatalf("#h 1 应只回最后一条: %q", out)
+	}
+
+	// 全角条数参数
+	out = join(c.Handle("#h １"))
+	if !strings.Contains(out, "最近 1 条消息:") {
+		t.Fatalf("#h 全角条数应生效: %q", out)
+	}
+
+	// 非法参数
+	for _, in := range []string{"#h abc", "#h 0", "#h -1"} {
+		if got := join(c.Handle(in)); !strings.Contains(got, "用法: #h [条数]") {
+			t.Fatalf("%s 应回用法: %q", in, got)
+		}
+	}
+
+	// 空历史
+	if got := join(NewConsole(&fakeExecutor{}).Handle("#h")); got != "暂无 AgentHub 消息" {
+		t.Fatalf("空历史应回暂无消息: %q", got)
 	}
 }

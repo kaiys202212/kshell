@@ -29,6 +29,7 @@ const api = vi.hoisted(() => ({
   clearHubMessages: vi.fn(),
   recallHubMessage: vi.fn(),
   hubCommand: vi.fn(),
+  saveHubDefaultCreate: vi.fn().mockResolvedValue(undefined),
   listRequirements: vi.fn(),
   markRequirementDispatched: vi.fn(),
 }));

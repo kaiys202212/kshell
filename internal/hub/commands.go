@@ -44,6 +44,8 @@ type Executor interface {
 	Send(chatID, text string) error
 	GrantPermission(chatID, reqID string, allow bool) error
 	Status() ConsoleStatus
+	// RecentMessages 取 AgentHub 最近 n 条消息（时间正序）；无历史返回空。
+	RecentMessages(n int) []Message
 }
 
 // —— 用户可见文案统一放 lang.go 的 cmdTexts（双语）——
@@ -72,4 +74,25 @@ func formatRef(r SessionRef) string {
 // formatCreated 是创建/切换成功后的单行回显。
 func formatCreated(verb string, r SessionRef) string {
 	return verb + ": [" + lastBase(r.Workspace) + "] " + r.Tool + " " + r.Title
+}
+
+// hubMsgTitle 取消息的归因标题：会话标题快照优先，缺省回落工具 ID。
+func hubMsgTitle(m Message) string {
+	if m.SessionTitle != "" {
+		return m.SessionTitle
+	}
+	if m.Tool != "" {
+		return m.Tool
+	}
+	return "-"
+}
+
+// truncateOneLine 把多行文本压成单行（连续空白折叠为单空格）并按 rune 截断。
+func truncateOneLine(s string, max int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
 }

@@ -116,6 +116,8 @@ type Config struct {
 	ProjectSetupDismissed bool `yaml:"project_setup_dismissed"`
 	// Weixin 是微信桥（iLink）的持久化配置。
 	Weixin WeixinConfig `yaml:"weixin"`
+	// AgentHub 是 AgentHub 的跨端持久化配置（默认工具/模型）。
+	AgentHub AgentHubConfig `yaml:"agenthub"`
 }
 
 // WeixinConfig 是微信桥（iLink）的持久化配置。
@@ -123,6 +125,13 @@ type WeixinConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Token   string `yaml:"token"` // iLink bot_token（扫码后获得）
 	Wxid    string `yaml:"wxid"`  // 白名单用户（首扫即绑）
+}
+
+// AgentHubConfig 是 AgentHub 的跨端持久化配置：前端「默认 agent 工具 + 模型」
+// 写穿到这里，微信桥等非浏览器端才能读到（localStorage 只存在于桌面端浏览器上下文）。
+type AgentHubConfig struct {
+	DefaultTool  string `yaml:"default_tool"`  // 快速新建（#en / easynew）默认工具 ID；空=回落第一个已安装
+	DefaultModel string `yaml:"default_model"` // 预留：默认模型 ID（当前新建链路用工具默认模型）
 }
 
 func Default() Config {

@@ -31,9 +31,10 @@ import {
 import { buildMentionOptions, resolveMentionTarget, type MentionAgent, type MentionOption } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
 import { loadDefaultCreate, loadLastCreate, loadToolModels, saveDefaultCreate, saveLastCreate, saveToolModels } from '../lib/agenthubDefaults';
+import { saveHubDefaultCreate } from '../lib/api';
 import { quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
-import { isHubNumber, isNewHubCommand } from '../lib/hubCommands';
+import { isHubNumber, isNewHubCommand, normalizeHubProbe } from '../lib/hubCommands';
 import { dispatchRequirement } from '../lib/dispatchRequirement';
 import { REQUIREMENT_MIME } from './RequirementList';
 import { attributionText, baseName, resolveAttribution } from '../lib/hubAttribution';
@@ -764,15 +765,17 @@ export default function AgentHubPanel() {
       runSharedCommand(text);
       return;
     }
-    // 仅当 trim 后以 # 开头才视为 kshell 客户端命令意图；行中 # 词
-    // （如颜色 #333、issue #123）原样透传给 agent。取首词校验，
-    // 未知命令提示并保留草稿。
-    if (text.startsWith('#')) {
-      const cmdToken = text.split(/\s+/)[0] ?? '';
+    // 仅当 trim 后以 #（含全角＃）开头才视为 kshell 客户端命令意图；行中 # 词
+    // （如颜色 #333、issue #123）原样透传给 agent。命令探测用全角归一化副本
+    // （＃/全角空格/冒号/数字，与 Go 侧 normalizeInput 同口径），原文透传不改写。
+    // 取首词校验，未知命令提示并保留草稿。
+    const probe = normalizeHubProbe(text);
+    if (probe.startsWith('#')) {
+      const cmdToken = probe.split(/\s+/)[0] ?? '';
       const name = cmdToken.slice(1).toLowerCase();
       // 旧命令表优先命中，行为零改动；未命中再查共享命令层新别名
-      //（#? #l #la #en #n #s #m #g #f #st #c），仍未知才提示。
-      if (!HUB_COMMAND_NAMES.has(name) && !isNewHubCommand(text)) {
+      //（#? #l #la #en #n #s #m #g #f #h #st #c），仍未知才提示。
+      if (!HUB_COMMAND_NAMES.has(name) && !isNewHubCommand(probe)) {
         useAppStore.getState().notify(t('ui.hub.unknown_cmd', { cmd: cmdToken }), 'error');
         return;
       }
@@ -782,14 +785,15 @@ export default function AgentHubPanel() {
       }
       // #find：不透传给 agent。带关键词（`#find claude`）时以剩余文本为初始过滤词
       // 打开对话框；裸 `#find` 由下方单 token 宽松执行路径处理（关键词为空）。
-      if (name === 'find' && text !== cmdToken) {
+      if (name === 'find' && probe !== cmdToken) {
         setDraft('');
+        // 探测归一化是逐字符等长替换，按原文字符串切片保持关键词原样
         openFindDialog(text.slice(cmdToken.length).trim());
         return;
       }
       // 整体就是单个已知命令 token（尾空格已被 trim 掉）：宽松执行而非投递，
       // 避免 #stop 因补全未弹而裸发给 agent。
-      if (text === cmdToken) {
+      if (probe === cmdToken) {
         runClientCommand(name);
         return;
       }
@@ -1630,6 +1634,9 @@ function DefaultSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   const save = () => {
     if (!toolId) return;
     saveDefaultCreate({ toolId, modelId: modelId || null });
+    // 同步写穿后端 config.yaml（跨端副本）：微信桥 #en 的默认工具读这里。
+    // 失败静默：localStorage 仍是桌面端的事实来源，仅跨端能力降级。
+    void saveHubDefaultCreate(toolId, modelId || null).catch(() => {});
     onOpenChange(false);
   };
 

@@ -40,6 +40,7 @@ func (f *fakeExec) SearchSessions(string) []hub.SessionRef              { return
 func (f *fakeExec) Send(string, string) error                           { return f.sendErr }
 func (f *fakeExec) GrantPermission(string, string, bool) error          { return nil }
 func (f *fakeExec) Status() hub.ConsoleStatus                           { return hub.ConsoleStatus{} }
+func (f *fakeExec) RecentMessages(int) []hub.Message                    { return nil }
 
 // reqRecord 记录一次 HTTP 请求的路径与解码后的 JSON 体。
 type reqRecord struct {
@@ -206,19 +207,24 @@ func TestBridgeInboundSendEcho(t *testing.T) {
 	rc := &recorder{}
 	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 	b := newBridge(t, "u1", ex, rc.handler(t))
-	// Send 成功：无回显消息。
+	// Send 成功：回一条已接收确认（agent 稍后回复，微信侧先给回执）。
 	b.HandleInbound("u1", "ct-1", "普通消息")
-	if n := len(rc.sends()); n != 0 {
-		t.Errorf("Send 成功时 sendmessage 次数 = %d, 期望 0", n)
-	}
-	// Send 失败：回显「发送失败」。
-	ex.sendErr = errors.New("boom")
-	b.HandleInbound("u1", "ct-2", "普通消息")
 	sends := rc.sends()
-	if len(sends) != 1 {
-		t.Fatalf("Send 失败时 sendmessage 次数 = %d, 期望 1", len(sends))
+	if n := len(sends); n != 1 {
+		t.Fatalf("Send 成功时 sendmessage 次数 = %d, 期望 1（已接收确认）", n)
 	}
 	text, _ := sendMsgFields(t, sends[0].body)
+	if !strings.Contains(text, "收到") {
+		t.Errorf("成功回显缺少已接收确认: %q", text)
+	}
+	// Send 失败：回显「发送失败」而非确认。
+	ex.sendErr = errors.New("boom")
+	b.HandleInbound("u1", "ct-2", "普通消息")
+	sends = rc.sends()
+	if len(sends) != 2 {
+		t.Fatalf("Send 失败时 sendmessage 次数 = %d, 期望 2", len(sends))
+	}
+	text, _ = sendMsgFields(t, sends[1].body)
 	if !strings.Contains(text, "发送失败") {
 		t.Errorf("失败回显缺少「发送失败」: %q", text)
 	}
@@ -228,8 +234,13 @@ func TestBridgeDeliverHubMessage(t *testing.T) {
 	rc := &recorder{}
 	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 	b := newBridge(t, "u1", ex, rc.handler(t))
-	// 先入站建立发送上下文。
+	// 先入站建立发送上下文（会产生一条已接收确认）。
 	b.HandleInbound("u1", "ct-9", "你好")
+	b.FlushForTest()
+	sends := rc.sends()
+	if len(sends) != 1 {
+		t.Fatalf("入站确认 sendmessage 次数 = %d, 期望 1", len(sends))
+	}
 
 	// kind=user 跳过。
 	b.DeliverHubMessage(hub.Message{Kind: "user", Text: "用户消息"})
@@ -237,21 +248,23 @@ func TestBridgeDeliverHubMessage(t *testing.T) {
 	b.DeliverHubMessage(hub.Message{Kind: "agent", Event: "ui.hub.ack_queued", Text: "whatever"})
 	// wire key 形态文本跳过。
 	b.DeliverHubMessage(hub.Message{Kind: "agent", Text: "hub.welcome"})
+	// hook 通道空正文回退：Text 是 ui.hub.* wire key 但 Event 非空，同样跳过。
+	b.DeliverHubMessage(hub.Message{Kind: "agent", Event: "Stop", Text: "ui.hub.event_done"})
 	// 已撤回跳过。
 	b.DeliverHubMessage(hub.Message{Kind: "agent", Status: hub.StatusRecalled, Text: "撤回消息"})
-	if n := len(rc.sends()); n != 0 {
-		t.Fatalf("应跳过的消息触发了 %d 次 sendmessage, 期望 0", n)
+	if n := len(rc.sends()); n != 1 {
+		t.Fatalf("应跳过的消息触发了 %d 次 sendmessage, 期望仍为 1（仅入站确认）", n)
 	}
 
 	// agent 正常推送，带标题前缀，context_token 用最近入站的。
 	// 出站已改走异步串行队列：FlushForTest 等队列排空后再断言。
 	b.DeliverHubMessage(hub.Message{Kind: "agent", SessionTitle: "标题", Text: "hello world"})
 	b.FlushForTest()
-	sends := rc.sends()
-	if len(sends) != 1 {
-		t.Fatalf("sendmessage 次数 = %d, 期望 1", len(sends))
+	sends = rc.sends()
+	if len(sends) != 2 {
+		t.Fatalf("sendmessage 次数 = %d, 期望 2（入站确认 + agent 推送）", len(sends))
 	}
-	text, token := sendMsgFields(t, sends[0].body)
+	text, token := sendMsgFields(t, sends[1].body)
 	if text != "[标题] hello world" {
 		t.Errorf("出站文本 = %q, 期望 [标题] hello world", text)
 	}
@@ -260,16 +273,47 @@ func TestBridgeDeliverHubMessage(t *testing.T) {
 	}
 }
 
+// 回归：DeliverHubMessage 不经 FlushForTest 也要能送达——入队时惰性启动出站
+// worker。生产路径没人调 FlushForTest，worker 不启动则队列永远无人消费，
+// agent 回复全部滞留（真机「命令回复正常、agent 回复收不到」的根因）。
+func TestBridgeOutboundWorkerLazyStart(t *testing.T) {
+	rc := &recorder{}
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b := newBridge(t, "u1", ex, rc.handler(t))
+	b.HandleInbound("u1", "ct-1", "你好") // 建立发送上下文（同步发一条入站确认）
+	if n := len(rc.sends()); n != 1 {
+		t.Fatalf("入站确认 sendmessage 次数 = %d, 期望 1", n)
+	}
+	b.DeliverHubMessage(hub.Message{Kind: "agent", Text: "异步推送"})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		sends := rc.sends()
+		if len(sends) >= 2 {
+			text, token := sendMsgFields(t, sends[1].body)
+			if text != "异步推送" {
+				t.Errorf("出站文本 = %q, 期望 异步推送", text)
+			}
+			if token != "ct-1" {
+				t.Errorf("context_token = %q, 期望 ct-1", token)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("2s 内未收到异步推送，sendmessage 次数 = %d（出站 worker 未消费队列？）", len(rc.sends()))
+}
+
 func TestBridgePendingOnSessionExpired(t *testing.T) {
 	rc := &recorder{sendResp: func(call int) (int, string) {
-		if call == 1 { // 首次 sendmessage 返回 -14
+		if call == 2 { // call 1 是入站确认；首条出站 sendmessage（call 2）返回 -14
 			return 200, `{"errcode":-14,"errmsg":"expired"}`
 		}
 		return 200, "{}"
 	}}
 	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 	b := newBridge(t, "u1", ex, rc.handler(t))
-	b.HandleInbound("u1", "ct-1", "你好") // Send 成功，无 sendmessage，ctx 已记录
+	b.HandleInbound("u1", "ct-1", "你好") // Send 成功，入站确认走 sendmessage（call 1），ctx 已记录
 
 	b.DeliverHubMessage(hub.Message{Kind: "agent", Text: "待发内容"})
 	b.FlushForTest()
@@ -283,10 +327,10 @@ func TestBridgePendingOnSessionExpired(t *testing.T) {
 	// 服务端恢复后再入站 → pending 自动补发。
 	b.HandleInbound("u1", "ct-2", "再来一条")
 	sends := rc.sends()
-	if len(sends) != 2 { // 第 1 次是失败的那条，第 2 次是补发
-		t.Fatalf("sendmessage 次数 = %d, 期望 2", len(sends))
+	if len(sends) != 4 { // 入站确认、失败的待发内容、补发、第二条入站确认
+		t.Fatalf("sendmessage 次数 = %d, 期望 4", len(sends))
 	}
-	text, token := sendMsgFields(t, sends[1].body)
+	text, token := sendMsgFields(t, sends[2].body)
 	if text != "待发内容" {
 		t.Errorf("补发文本 = %q, 期望 待发内容", text)
 	}
@@ -304,7 +348,7 @@ func TestBridgePendingOnSessionExpired(t *testing.T) {
 func TestBridgeSendRetry(t *testing.T) {
 	t.Run("前2次失败第3次成功", func(t *testing.T) {
 		rc := &recorder{sendResp: func(call int) (int, string) {
-			if call <= 2 {
+			if call == 2 || call == 3 { // call 1 是入站确认（成功）；出站重试三连
 				return 500, "{}"
 			}
 			return 200, "{}"
@@ -314,8 +358,8 @@ func TestBridgeSendRetry(t *testing.T) {
 		b.HandleInbound("u1", "ct-1", "你好")
 		b.DeliverHubMessage(hub.Message{Kind: "agent", Text: "重试内容"})
 		b.FlushForTest()
-		if n := len(rc.sends()); n != 3 {
-			t.Errorf("sendmessage 次数 = %d, 期望 3（重试 2 次）", n)
+		if n := len(rc.sends()); n != 4 {
+			t.Errorf("sendmessage 次数 = %d, 期望 4（入站确认 + 重试 3 次）", n)
 		}
 		if b.Undelivered() != 0 {
 			t.Errorf("重试成功后 Undelivered = %d, 期望 0", b.Undelivered())
@@ -326,14 +370,14 @@ func TestBridgeSendRetry(t *testing.T) {
 		rc := &recorder{sendResp: func(int) (int, string) { return 500, "{}" }}
 		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 		b := newBridge(t, "u1", ex, rc.handler(t))
-		b.HandleInbound("u1", "ct-1", "你好")
+		b.HandleInbound("u1", "ct-1", "你好") // 入站确认三次全失败，undelivered = 1
 		b.DeliverHubMessage(hub.Message{Kind: "agent", Text: "失败内容"})
 		b.FlushForTest()
-		if n := len(rc.sends()); n != 3 {
-			t.Errorf("sendmessage 次数 = %d, 期望 3", n)
+		if n := len(rc.sends()); n != 6 {
+			t.Errorf("sendmessage 次数 = %d, 期望 6（确认与推送各重试 3 次）", n)
 		}
-		if b.Undelivered() != 1 {
-			t.Errorf("Undelivered = %d, 期望 1", b.Undelivered())
+		if b.Undelivered() != 2 {
+			t.Errorf("Undelivered = %d, 期望 2（确认与推送各计一次）", b.Undelivered())
 		}
 		if b.PendingCount() != 0 {
 			t.Errorf("普通失败不应入 pending: PendingCount = %d", b.PendingCount())
@@ -350,16 +394,16 @@ func TestBridgeUndeliveredNotClearedWhenPendingEmpty(t *testing.T) {
 	}}
 	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 	b := newBridge(t, "u1", ex, rc.handler(t))
-	b.HandleInbound("u1", "ct-1", "你好")
+	b.HandleInbound("u1", "ct-1", "你好") // 入站确认三连失败，undelivered = 1
 	b.DeliverHubMessage(hub.Message{Kind: "agent", Text: "失败内容"})
 	b.FlushForTest()
-	if got := b.Undelivered(); got != 1 {
-		t.Fatalf("发送失败后 Undelivered = %d, 期望 1", got)
+	if got := b.Undelivered(); got != 2 {
+		t.Fatalf("发送失败后 Undelivered = %d, 期望 2（确认与推送各计一次）", got)
 	}
 	// pending 为空的入站消息不得清零计数。
 	b.HandleInbound("u1", "ct-2", "再来一条")
-	if got := b.Undelivered(); got != 1 {
-		t.Fatalf("pending 空时入站不得清零: Undelivered = %d, 期望 1", got)
+	if got := b.Undelivered(); got != 3 {
+		t.Fatalf("pending 空时入站不得清零: Undelivered = %d, 期望 3", got)
 	}
 }
 
@@ -367,14 +411,14 @@ func TestBridgeTruncate(t *testing.T) {
 	rc := &recorder{}
 	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 	b := newBridge(t, "u1", ex, rc.handler(t))
-	b.HandleInbound("u1", "ct-1", "你好")
+	b.HandleInbound("u1", "ct-1", "你好") // 入站确认（sends[0]）
 	b.DeliverHubMessage(hub.Message{Kind: "agent", Text: strings.Repeat("字", 2000)})
 	b.FlushForTest()
 	sends := rc.sends()
-	if len(sends) != 1 {
-		t.Fatalf("sendmessage 次数 = %d, 期望 1", len(sends))
+	if len(sends) != 2 {
+		t.Fatalf("sendmessage 次数 = %d, 期望 2（入站确认 + 推送）", len(sends))
 	}
-	text, _ := sendMsgFields(t, sends[0].body)
+	text, _ := sendMsgFields(t, sends[1].body)
 	runes := []rune(text)
 	if len(runes) > 1510 {
 		t.Errorf("截断后 rune 数 = %d, 期望 ≤1510", len(runes))

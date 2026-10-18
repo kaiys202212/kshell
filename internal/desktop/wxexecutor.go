@@ -140,16 +140,28 @@ func (w *wxExecutor) OpenSession(sessionID string) (hub.SessionRef, error) {
 	}, nil
 }
 
-// EasyNew 快速新建：默认工具 = 第一个已安装工具，默认工作区 = 第一个工作区；
-// 模型不指定（launch 层自行用默认）。
-func (w *wxExecutor) EasyNew() (hub.SessionRef, error) {
-	toolID := ""
-	for _, t := range w.a.GetTools() {
-		if t.Installed {
-			toolID = t.ID
-			break
+// easyNewToolID 选快速新建的工具：配置里的 AgentHub 默认工具优先（已安装
+// 校验，失效回落），未配置回落第一个已安装工具。
+func (w *wxExecutor) easyNewToolID() string {
+	toolID := w.a.snapshot().Config.AgentHub.DefaultTool
+	if toolID != "" && !w.toolInstalled(toolID) {
+		toolID = "" // 配置的工具已卸载：回落第一个已安装
+	}
+	if toolID == "" {
+		for _, t := range w.a.GetTools() {
+			if t.Installed {
+				toolID = t.ID
+				break
+			}
 		}
 	}
+	return toolID
+}
+
+// EasyNew 快速新建：默认工具 = easyNewToolID（配置默认优先），默认工作区 =
+// 第一个工作区；模型不指定（launch 层自行用默认）。
+func (w *wxExecutor) EasyNew() (hub.SessionRef, error) {
+	toolID := w.easyNewToolID()
 	if toolID == "" {
 		return hub.SessionRef{}, fmt.Errorf("err.weixin.no_tools")
 	}
@@ -158,6 +170,16 @@ func (w *wxExecutor) EasyNew() (hub.SessionRef, error) {
 		return hub.SessionRef{}, fmt.Errorf("err.weixin.no_workspaces")
 	}
 	return w.CreateNew(toolID, ws[0].Path, "")
+}
+
+// toolInstalled 报告工具 ID 是否在已安装列表里。
+func (w *wxExecutor) toolInstalled(id string) bool {
+	for _, t := range w.a.GetTools() {
+		if t.ID == id {
+			return t.Installed
+		}
+	}
+	return false
 }
 
 // NewMenuOptions 返回 #n 分步新建的选项：工具（已安装）、工作区（末段路径展示）、
@@ -271,6 +293,22 @@ func (w *wxExecutor) Status() hub.ConsoleStatus {
 		st.CurrentTitle = cur.Title
 	}
 	return st
+}
+
+// RecentMessages 取 AgentHub 最近 n 条消息（时间正序），供 #h 命令。
+// store 未装配（未就绪/测试）或无历史时返回空。
+func (w *wxExecutor) RecentMessages(n int) []hub.Message {
+	store := w.a.snapshot().HubStore
+	if store == nil || n <= 0 {
+		return nil
+	}
+	msgs := store.List()
+	if len(msgs) > n {
+		msgs = msgs[len(msgs)-n:]
+	}
+	out := make([]hub.Message, len(msgs))
+	copy(out, msgs)
+	return out
 }
 
 // wxLastBase 取路径末段：与 hub 包内 lastBase 同一实现（跨渠道文本里的路径

@@ -186,3 +186,41 @@ func TestWXExecutorGrantPermissionOptionIDs(t *testing.T) {
 		t.Fatalf("reject 转发不应失败（Chats 为 nil 时 errNotReady 可接受）: %v", err)
 	}
 }
+
+// easyNewToolID：配置的 AgentHub 默认工具优先，失效（未安装）回落第一个已安装。
+func TestWXExecutorEasyNewDefaultTool(t *testing.T) {
+	app := wxApp(t, nil)
+	ex := newWXExecutor(app)
+	app.mu.Lock()
+	app.tools = []discovery.Tool{
+		{ID: "claude", Installed: true},
+		{ID: "codex", Installed: true},
+	}
+	app.mu.Unlock()
+
+	// 未配置：回落第一个已安装（字母序 claude 在前）。
+	if got := ex.easyNewToolID(); got != "claude" {
+		t.Fatalf("未配置默认工具应回落 claude, got %q", got)
+	}
+	// 配置 codex：优先使用配置。
+	app.mu.Lock()
+	app.opts.Config.AgentHub.DefaultTool = "codex"
+	app.mu.Unlock()
+	if got := ex.easyNewToolID(); got != "codex" {
+		t.Fatalf("配置的默认工具应生效, got %q", got)
+	}
+	// 配置的工具未安装：回落第一个已安装。
+	app.mu.Lock()
+	app.opts.Config.AgentHub.DefaultTool = "gone"
+	app.mu.Unlock()
+	if got := ex.easyNewToolID(); got != "claude" {
+		t.Fatalf("失效默认工具应回落 claude, got %q", got)
+	}
+	// 工具表里根本没有该项（连 Installed 字段都没有）：同样回落。
+	app.mu.Lock()
+	app.opts.Config.AgentHub.DefaultTool = "unknown-tool"
+	app.mu.Unlock()
+	if got := ex.easyNewToolID(); got != "claude" {
+		t.Fatalf("未知默认工具应回落 claude, got %q", got)
+	}
+}

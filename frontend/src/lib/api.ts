@@ -657,6 +657,7 @@ interface AppBindings {
   ClearHubMessages(): Promise<void>;
   RecallHubMessage(id: number): Promise<void>;
   HubCommand(text: string): Promise<HubReply[]>;
+  SaveHubDefaultCreate(toolID: string, modelID: string): Promise<void>;
   ListRequirements(): Promise<Requirement[]>;
   AddRequirement(project: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
   UpdateRequirement(id: string, project: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
@@ -1568,6 +1569,14 @@ export async function hubCommand(text: string): Promise<HubReply[]> {
   const a = app();
   if (!a) return [];
   return a.HubCommand(text);
+}
+
+// saveHubDefaultCreate 把「默认 agent 工具 + 模型」写穿到后端 config.yaml
+//（localStorage 之外的跨端副本），供微信桥 #en 读取；modelId 空 = 工具默认模型。
+export async function saveHubDefaultCreate(toolId: string, modelId: string | null): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.SaveHubDefaultCreate(toolId, modelId ?? '');
 }
 
 // recallHubMessage 撤回一条排队中的 Hub 用户消息（后端从队列真移除并标记已撤回）。
