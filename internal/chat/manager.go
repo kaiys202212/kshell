@@ -108,6 +108,7 @@ type Manager struct {
 	onExit          func(id string, code int, errMsg string)
 	onInfo          func(Info)                      // 锁外；首条用户消息改写标题时
 	onCommands      func(id string, cmds []Command) // 锁外；技能列表推送
+	onModels        func(id string)                 // 锁外；握手完成后模型视图推送
 	settingsMetaFor func(chatID string) string      // 锁外；_meta 载荷工厂（claude settings 注入）
 	autoAllow       func() bool                     // bypass：自动选 allow 类 option，不弹窗
 	mcpFor          func(chatID string) []acp.McpServerStdio
@@ -161,6 +162,14 @@ func (m *Manager) SetOnInfo(fn func(Info)) {
 func (m *Manager) SetOnCommands(fn func(id string, cmds []Command)) {
 	m.mu.Lock()
 	m.onCommands = fn
+	m.mu.Unlock()
+}
+
+// SetOnModels 注册模型视图推送回调（锁外执行）。Open 完成 new/load 并
+// 赋值 modelState/modelConfig 后触发一次；agent 未报告模型时不触发。
+func (m *Manager) SetOnModels(fn func(id string)) {
+	m.mu.Lock()
+	m.onModels = fn
 	m.mu.Unlock()
 }
 
@@ -475,7 +484,16 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 		s.queue = s.queue[1:]
 		hasNext = true
 	}
+	onModels := m.onModels
 	m.mu.Unlock()
+
+	// Open 完成后补偿推送一次模型视图：握手期前端拉 ListChatModels 可能拿空
+	// （starting 状态下 modelState/modelConfig 尚未赋值），靠此回调让 desktop
+	// 层 emit chat:models。s.modelState/modelConfig 在本 goroutine 的握手阶段
+	// 已赋值，此处读取无竞态。
+	if onModels != nil && (s.modelState != nil || s.modelConfig != nil) {
+		onModels(s.id)
+	}
 
 	go m.watchExit(s)
 	if hasNext {

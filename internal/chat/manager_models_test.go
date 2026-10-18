@@ -184,6 +184,63 @@ func TestManagerSetModelTimeoutWhenAgentSilent(t *testing.T) {
 	}
 }
 
+// Open 完成（new 或 load）后必须推送一次模型视图回调：握手期前端拉空
+// ListChatModels 的竞态靠此补偿（codebuddy 偶发丢内置模型的根因）。
+func TestManagerPushesModelsAfterOpen(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		load bool
+	}{
+		{name: "new"},
+		{name: "load"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, b, _ := newTestManager(t)
+			b.conn.newStart = acp.SessionStart{SessionID: "sess-new", Models: &acp.SessionModelState{
+				AvailableModels: []acp.ModelInfo{{ModelID: "m1", Name: "One"}}, CurrentModelID: "m1",
+			}}
+			pushed := make(chan string, 1)
+			m.SetOnModels(func(id string) { pushed <- id })
+			var info Info
+			var err error
+			if tc.load {
+				info, err = m.Open("session:s1", Info{Kind: KindSession, Workspace: "/w", SessionID: "s1"}, Spec{Path: "x"}, "s1")
+			} else {
+				info, err = m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+			}
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			select {
+			case id := <-pushed:
+				if id != info.ID {
+					t.Fatalf("pushed id = %q, want %q", id, info.ID)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("onModels not called")
+			}
+			if v, ok := m.Models(info.ID); !ok || v.Current != "m1" || len(v.Models) != 1 {
+				t.Fatalf("Models = %+v ok=%v", v, ok)
+			}
+		})
+	}
+}
+
+// agent 未报告模型信息（nil modelState 且 nil modelConfig）时不推送。
+func TestManagerNoModelsPushWhenUnreported(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	pushed := make(chan string, 1)
+	m.SetOnModels(func(id string) { pushed <- id })
+	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, ""); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	select {
+	case id := <-pushed:
+		t.Fatalf("unexpected push for %q", id)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 // 多块 Prompt：时间线 user 事件带展开文本与附件 meta，连接收到原始 blocks。
 func TestManagerPromptBlocksTimelineAndConn(t *testing.T) {
 	m, b, c := newTestManager(t)
