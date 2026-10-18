@@ -216,7 +216,7 @@ func (b *Bridge) DeliverHubMessage(m hub.Message) {
 		return
 	}
 	if strings.HasPrefix(m.Event, "ui.hub.") || strings.HasPrefix(m.Text, "ui.hub.") ||
-		strings.HasPrefix(m.Text, "hub.welcome") ||
+		(m.Text == "hub.welcome" || strings.HasPrefix(m.Text, "hub.welcome|")) ||
 		(m.Event == "" && isWireKey(m.Text)) {
 		return
 	}

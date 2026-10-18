@@ -85,9 +85,10 @@ func (c *Console) SetCurrent(ref SessionRef) {
 }
 
 // CurrentTitle 返回当前会话标题快照（微信桥 ack 回退归因用；无活跃会话为
-// 空串）。仅在 Handle 返回后读取（桥的回执路径），与 Handle 内的 current
-// 更新串行。
+// 空串）。加锁读：与 mu 保护声明一致，防未来装配路径并发调用成真竞争。
 func (c *Console) CurrentTitle() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.current.Title
 }
 
