@@ -6,24 +6,15 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/yangk/kshell/internal/config"
 )
 
-func setFetchModelConfig(t *testing.T, app *App, oai, ant string) {
-	t.Helper()
-	app.mu.Lock()
-	app.opts.Config.Model = config.ModelConfig{
-		Enabled: true, OpenAIBaseURL: oai, AnthropicBaseURL: ant, APIKey: "k",
-	}
-	app.mu.Unlock()
-}
-
-func TestFetchAvailableModelsMergesEndpoints(t *testing.T) {
+// TestFetchAvailableModelsUsesFormValues 验证拉取用的是前端传入的表单值
+// （而非已保存配置），编辑未保存也能拉。
+func TestFetchAvailableModelsUsesFormValues(t *testing.T) {
 	var oaiPath, antPath string
 	oai := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		oaiPath = r.URL.Path
-		if got := r.Header.Get("Authorization"); got != "Bearer k" {
+		if got := r.Header.Get("Authorization"); got != "Bearer form-key" {
 			t.Errorf("OpenAI 鉴权头 = %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -32,7 +23,7 @@ func TestFetchAvailableModelsMergesEndpoints(t *testing.T) {
 	defer oai.Close()
 	ant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		antPath = r.URL.Path
-		if got := r.Header.Get("x-api-key"); got != "k" {
+		if got := r.Header.Get("x-api-key"); got != "form-key" {
 			t.Errorf("Anthropic 鉴权头 = %q", got)
 		}
 		if got := r.Header.Get("anthropic-version"); got == "" {
@@ -44,8 +35,7 @@ func TestFetchAvailableModelsMergesEndpoints(t *testing.T) {
 	defer ant.Close()
 
 	app, _ := newModelApp(t)
-	setFetchModelConfig(t, app, oai.URL, ant.URL)
-	v, err := app.FetchAvailableModels()
+	v, err := app.FetchAvailableModels("p1", oai.URL, ant.URL, "form-key")
 	if err != nil {
 		t.Fatalf("FetchAvailableModels: %v", err)
 	}
@@ -75,8 +65,7 @@ func TestFetchAvailableModelsPartialFailure(t *testing.T) {
 	defer ant.Close()
 
 	app, _ := newModelApp(t)
-	setFetchModelConfig(t, app, oai.URL, ant.URL)
-	v, err := app.FetchAvailableModels()
+	v, err := app.FetchAvailableModels("p1", oai.URL, ant.URL, "k")
 	if err != nil {
 		t.Fatalf("单端失败不应整体报错: %v", err)
 	}
@@ -90,8 +79,11 @@ func TestFetchAvailableModelsPartialFailure(t *testing.T) {
 
 func TestFetchAvailableModelsNoEndpoint(t *testing.T) {
 	app, _ := newModelApp(t)
-	setFetchModelConfig(t, app, "", "")
-	if _, err := app.FetchAvailableModels(); err == nil {
+	// 双端点均为空应报 no_endpoint，与已保存配置无关。
+	if _, err := app.FetchAvailableModels("p1", "", "", ""); err == nil {
 		t.Fatal("两端都未配置应报错")
+	}
+	if _, err := app.FetchAvailableModels("p1", "   ", "", ""); err == nil {
+		t.Fatal("空白端点也应报错")
 	}
 }
