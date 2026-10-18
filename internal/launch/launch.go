@@ -26,6 +26,9 @@ var ErrToolNotRunnable = errors.New("err.launch.no_binary")
 // 与 ErrToolNotRunnable 区分开：前端译成「正在自更新，请稍后重试」而非「无二进制」。
 var ErrToolUpdating = errors.New("err.launch.updating")
 
+// ErrNotLoggedIn 表示目标工具需要登录但当前未登录（新建 ACP 会话被门禁拒绝）。
+var ErrNotLoggedIn = errors.New("err.launch.not_logged_in")
+
 // ThemeOptions 描述主题注入所需信息：模式 + 生成文件落盘目录（空则跳过文件类注入）。
 type ThemeOptions struct {
 	Mode     appearance.Mode
@@ -313,6 +316,13 @@ func ForWorkspaceACP(ps []providers.Provider, tools []discovery.Tool, ws discove
 			return providers.Launch{}, ErrToolNotRunnable
 		}
 		tool, p = t, pp
+	}
+	// 新建 ACP 的登录门禁：放在两条选路（显式 toolID 与 PreferredTool）汇合之后、
+	// acpLaunch 之前，保证 PreferredTool 路径同样被覆盖。只拦新建；恢复
+	//（ForSessionACP）与终端（ForWorkspaceTool）路径按用户决策放行。unknown
+	// 必须保守放行——探测不稳定时宁可多跑一次失败的 ACP，不能错杀已登录用户。
+	if tool.Auth == string(providers.AuthOut) {
+		return providers.Launch{}, ErrNotLoggedIn
 	}
 	l, err := acpLaunch(tool, ws.Path)
 	if err != nil {

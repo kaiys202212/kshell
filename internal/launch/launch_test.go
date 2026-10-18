@@ -80,6 +80,9 @@ func TestLaunchErrorKeys(t *testing.T) {
 	if got := ErrToolUpdating.Error(); got != "err.launch.updating" {
 		t.Fatalf("ErrToolUpdating = %q, want err.launch.updating", got)
 	}
+	if got := ErrNotLoggedIn.Error(); got != "err.launch.not_logged_in" {
+		t.Fatalf("ErrNotLoggedIn = %q, want err.launch.not_logged_in", got)
+	}
 }
 
 // 自更新进行中的工具：新建/恢复会话一律返回 ErrToolUpdating（前端译成「稍后重试」），
@@ -163,6 +166,46 @@ func TestForWorkspaceACP_Unavailable(t *testing.T) {
 	tools := acpTools(providers.ACPDetection{Available: false})
 	if _, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{}, PermissionOptions{}); err != ErrACPUnavailable {
 		t.Fatalf("want ErrACPUnavailable, got %v", err)
+	}
+}
+
+// ForWorkspaceACP 登录门禁：Auth=out 的新建 ACP 直接拒绝（ErrNotLoggedIn）；
+// in/unknown 保守放行——unknown 表示探测不稳定，宁可多跑一次失败的 ACP，
+// 不能错杀已登录用户。显式 toolID 与 PreferredTool（toolID 为空）两条选路
+// 都要被同一道门禁覆盖；恢复路径（ForSessionACP）按用户决策不拦，一并锁死。
+func TestForWorkspaceACP_AuthGate(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	det := providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"}
+	cases := []struct {
+		name    string
+		auth    string
+		wantErr error
+	}{
+		{"未登录拒绝", "out", ErrNotLoggedIn},
+		{"已登录放行", "in", nil},
+		{"未知保守放行", "unknown", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tools := []discovery.Tool{{ID: "claude", Installed: true, BinPath: "claude", Auth: c.auth, ACP: &det}}
+			_, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", ModelOptions{}, PermissionOptions{})
+			if !errors.Is(err, c.wantErr) {
+				t.Fatalf("Auth=%q err = %v, want %v", c.auth, err, c.wantErr)
+			}
+		})
+	}
+
+	// PreferredTool 路径（toolID 为空）同样被门禁覆盖。
+	tools := []discovery.Tool{{ID: "claude", Installed: true, BinPath: "claude", Auth: "out", ACP: &det}}
+	ws := discovery.Workspace{Path: "/w", ToolCounts: map[string]int{"claude": 3}}
+	if _, err := ForWorkspaceACP(ps, tools, ws, "", ModelOptions{}, PermissionOptions{}); !errors.Is(err, ErrNotLoggedIn) {
+		t.Fatalf("PreferredTool 路径 Auth=out 应 ErrNotLoggedIn, got %v", err)
+	}
+
+	// 恢复路径不拦截（用户决策：恢复不门禁），防止后续误把门禁扩到 ForSessionACP。
+	s := providers.Session{ID: "s1", ToolID: "claude", Workspace: "/p"}
+	if _, err := ForSessionACP(ps, tools, s, ModelOptions{}, PermissionOptions{}); err != nil {
+		t.Fatalf("Auth=out 恢复 ACP 不应被拒, got %v", err)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
+	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/providers"
 )
 
@@ -268,5 +269,54 @@ func TestOpenSessionACPFailureFallsBack(t *testing.T) {
 	}
 	if got.Fallback == "" {
 		t.Fatal("起进程失败的回退应带 Fallback 原因")
+	}
+}
+
+// TestOpenWorkspace_NotLoggedInFallsBackWithReason 验证未登录工具走偏好 ACP
+// 新建会话时静默降级终端，且 Fallback 携带 wire key（前端据此提示
+// 「未登录已降级，去登录」），而不是当作错误抛出。
+func TestOpenWorkspace_NotLoggedInFallsBackWithReason(t *testing.T) {
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "claude-agent-acp",
+	}, fakeChatBackend{})
+	env.app.mu.Lock()
+	env.app.opts.Config.SessionMode = config.SessionModeACP
+	env.app.tools[0].Auth = string(providers.AuthOut)
+	env.app.mu.Unlock()
+
+	got, err := env.app.OpenWorkspace(`D:\w`, "claude")
+	if err != nil {
+		t.Fatalf("OpenWorkspace error: %v", err)
+	}
+	if got.Kind != "terminal" || got.Terminal == nil {
+		t.Fatalf("未登录应降级终端: %+v", got)
+	}
+	if got.Fallback != launch.ErrNotLoggedIn.Error() {
+		t.Fatalf("Fallback = %q, want %q", got.Fallback, launch.ErrNotLoggedIn.Error())
+	}
+	if env.term.starts() != 1 {
+		t.Fatalf("应启动一个终端进程, got %d", env.term.starts())
+	}
+}
+
+// TestOpenWorkspaceACP_NotLoggedInRejected 验证显式 ACP 新建在未登录时原样
+// 返回门禁错误且不起终端（用户明确要求 ACP，失败必须可见、不得静默降级）。
+func TestOpenWorkspaceACP_NotLoggedInRejected(t *testing.T) {
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "claude-agent-acp",
+	}, fakeChatBackend{})
+	env.app.mu.Lock()
+	env.app.tools[0].Auth = string(providers.AuthOut)
+	env.app.mu.Unlock()
+
+	got, err := env.app.OpenWorkspaceACP(`D:\w`, "claude")
+	if !errors.Is(err, launch.ErrNotLoggedIn) {
+		t.Fatalf("未登录显式 ACP 应返回 ErrNotLoggedIn, got %v", err)
+	}
+	if got.Kind != "" || got.Terminal != nil || got.Chat != nil {
+		t.Fatalf("显式 ACP 被拒不应产出任何会话: %+v", got)
+	}
+	if env.term.starts() != 0 {
+		t.Fatalf("显式 ACP 被拒不应起终端进程, got %d", env.term.starts())
 	}
 }

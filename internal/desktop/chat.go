@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -313,6 +314,12 @@ func (a *App) openWorkspaceACP(wsID, toolID string, allowFallback bool) (OpenedS
 			return OpenedSession{}, err
 		} else if !allowFallback {
 			return OpenedSession{}, err
+		} else if errors.Is(err, launch.ErrNotLoggedIn) {
+			// 未登录被新建 ACP 门禁拒绝：偏好路径不算错误，静默降级终端并把
+			// wire key 带进 Fallback 供前端提示「未登录已降级，去登录」；
+			// 显式 ACP 路径已在上一分支原样报错。其余错误维持原行为
+			//（落到下方 fallbackTerminalWorkspace，reason 仍为空）。
+			return a.fallbackTerminalWorkspace(wsID, toolID, launch.ErrNotLoggedIn.Error())
 		}
 	} else if !allowFallback {
 		return OpenedSession{}, errNotReady
