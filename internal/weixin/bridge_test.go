@@ -273,7 +273,6 @@ func TestBridgeDeliverHubMessage(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 // 回归：DeliverHubMessage 不经 FlushForTest 也要能送达——入队时惰性启动出站
 // worker。生产路径没人调 FlushForTest，worker 不启动则队列永远无人消费，
 // agent 回复全部滞留（真机「命令回复正常、agent 回复收不到」的根因）。
