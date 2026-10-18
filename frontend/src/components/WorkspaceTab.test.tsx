@@ -64,6 +64,8 @@ const mocks = vi.hoisted(() => ({
   stopFileWatch: vi.fn(),
   onFilesChanged: vi.fn(() => () => {}),
   revealInExplorer: vi.fn().mockResolvedValue(undefined),
+  checkToolAuth: vi.fn().mockResolvedValue('unknown'),
+  openLoginTerminal: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -77,6 +79,10 @@ vi.mock('./TerminalView', () => ({
 }));
 vi.mock('./PdfPreview', () => ({
   default: () => null,
+}));
+// 登录弹窗打桩：WorkspaceTab 层只验证「按钮打开弹窗」的联动；弹窗内部行为见 LoginDialog.test
+vi.mock('./LoginDialog', () => ({
+  default: ({ toolName }: { toolName: string }) => <div data-testid="login-dialog">{toolName}</div>,
 }));
 
 // scanDoneCb 记录被订阅的 scan:done 回调，供用例手动触发「扫描完成」。
@@ -286,6 +292,44 @@ describe('WorkspaceTab', () => {
     await waitFor(() => {
       expect(useAppStore.getState().toasts.some((t) => t.tone === 'info' && t.title === expected)).toBe(true);
     });
+  });
+
+  it('未登录降级（err.launch.not_logged_in）不走通用模板，出现带「去登录」的专用提示条', async () => {
+    mocks.getTools.mockResolvedValue([toolClaude]);
+    mocks.openWorkspace.mockResolvedValue({
+      Kind: 'terminal',
+      Terminal: term,
+      Fallback: 'err.launch.not_logged_in',
+    });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+
+    await screen.findByRole('button', { name: tt('ui.new_session.title') });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.new_session.title') }));
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: /Claude Code/ }));
+
+    const expected = tt('ui.workspace.fallback_not_logged_in').replace('{{name}}', 'Claude Code');
+    expect(await screen.findByText(expected)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: tt('ui.auth.go_login') })).toBeInTheDocument();
+    // 通用降级模板（toast）不触发：两条文案不同
+    const generic = tt('ui.workspace.fallback').replace('{{reason}}', tt('err.launch.not_logged_in'));
+    expect(useAppStore.getState().toasts.some((t) => t.title === generic)).toBe(false);
+  });
+
+  it('未登录提示条点「去登录」打开登录弹窗（传入所选工具）', async () => {
+    mocks.getTools.mockResolvedValue([toolClaude]);
+    mocks.openWorkspace.mockResolvedValue({
+      Kind: 'terminal',
+      Terminal: term,
+      Fallback: 'err.launch.not_logged_in',
+    });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+
+    await screen.findByRole('button', { name: tt('ui.new_session.title') });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.new_session.title') }));
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: /Claude Code/ }));
+
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.auth.go_login') }));
+    expect(await screen.findByTestId('login-dialog')).toHaveTextContent('Claude Code');
   });
 
   it('恢复会话回退终端时，回退原因（wire key）经 translateBackend 翻译后展示', async () => {

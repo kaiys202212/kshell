@@ -164,4 +164,33 @@ describe('NewSessionMenu', () => {
     fireEvent.click(screen.getByRole('menuitemradio', { name: /Claude Code/ }));
     expect(onSelect).toHaveBeenCalledWith('claude');
   });
+
+  it('Auth=out 的工具项带「未登录」徽标（tooltip 提示），选择行为不变', () => {
+    const withAuth: ToolInfo[] = [
+      { ...tools[0], Auth: 'out' },
+      { ...tools[1] },
+    ];
+    const { onSelect } = setup({ tools: withAuth });
+
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+
+    const badge = screen.getByText(tt('ui.auth.not_logged_in'));
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveAttribute('title', tt('ui.auth.not_logged_in_hint'));
+    // 徽标只是提示：不影响可选性
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /Claude Code/ }));
+    expect(onSelect).toHaveBeenCalledWith('claude');
+  });
+
+  it('Auth 非 out（in/unknown/缺省）不显示未登录徽标', () => {
+    const withAuth: ToolInfo[] = [
+      { ...tools[0], Auth: 'in' },
+      { ...tools[1], Auth: 'unknown' },
+    ];
+    setup({ tools: withAuth });
+
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+
+    expect(screen.queryByText(tt('ui.auth.not_logged_in'))).not.toBeInTheDocument();
+  });
 });

@@ -45,8 +45,15 @@ const mocks = vi.hoisted(() => ({
   getAppVersion: vi.fn(),
   checkForUpdate: vi.fn(),
   applyUpdate: vi.fn(),
+  checkToolAuth: vi.fn().mockResolvedValue('unknown'),
+  openLoginTerminal: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
+
+// 登录弹窗打桩：Settings 层只验证「登录按钮打开弹窗」；弹窗内部行为见 LoginDialog.test
+vi.mock('../components/LoginDialog', () => ({
+  default: ({ toolName }: { toolName: string }) => <div data-testid="login-dialog">{toolName}</div>,
+}));
 
 const tools: ToolInfo[] = [
   {
@@ -283,6 +290,43 @@ describe('Settings', () => {
       'title',
       expect.stringContaining(tt('ui.settings.tools.title_config_only')),
     );
+  });
+
+  it('已安装工具按登录态显示徽标：in→已登录、out→未登录+登录按钮、unknown→无徽标', async () => {
+    mocks.getTools.mockResolvedValue([
+      { ...tools[0], Auth: 'in' },
+      { ...tools[3], Auth: 'out' },
+      { ...tools[1], Auth: 'unknown' },
+    ]);
+    render(<Settings />);
+    goTools();
+
+    const codebuddy = await screen.findByText('CodeBuddy');
+    expect(codebuddy.closest('li')).toHaveTextContent(tt('ui.auth.logged_in'));
+    expect(codebuddy.closest('li')).not.toHaveTextContent(tt('ui.auth.not_logged_in'));
+
+    const claude = screen.getByText('Claude Code');
+    const claudeRow = claude.closest('li')!;
+    expect(claudeRow).toHaveTextContent(tt('ui.auth.not_logged_in'));
+    expect(
+      within(claudeRow).getByRole('button', { name: tt('ui.auth.login') }),
+    ).toBeInTheDocument();
+
+    const mytool = screen.getByText('MyTool');
+    expect(mytool.closest('li')).not.toHaveTextContent(tt('ui.auth.logged_in'));
+    expect(mytool.closest('li')).not.toHaveTextContent(tt('ui.auth.not_logged_in'));
+  });
+
+  it('未登录工具卡片的「登录」按钮打开登录弹窗（传入该工具）', async () => {
+    mocks.getTools.mockResolvedValue([{ ...tools[3], Auth: 'out' }]);
+    render(<Settings />);
+    goTools();
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: tt('ui.auth.login') }),
+    );
+
+    expect(await screen.findByTestId('login-dialog')).toHaveTextContent('Claude Code');
   });
 
   it('残缺安装显示「已损坏」徽标与「修复」按钮', async () => {
