@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -23,9 +24,17 @@ const mediaBaseDefault = "https://novac2c.cdn.weixin.qq.com/c2c"
 // timeoutDownloadMedia 是单次媒体下载的超时。
 const timeoutDownloadMedia = 60 * time.Second
 
+// maxMediaSize 是下载密文的读入上限（微信附件上限的宽松余量）：CDN 响应异常
+// 或字段真机证伪时防无界读内存（长轮询 goroutine 内同步执行）。
+const maxMediaSize = 256 << 20
+
+// cdnDownloadParam 是 CDN 下载 URL 的查询参数名。真机未证实（同 getupdates
+// 附件字段名，证伪时与 ilink.go 一并修）。
+const cdnDownloadParam = "encrypted_query_param"
+
 // DownloadMedia 下载并解密一个附件：GET CDN download（带 encrypt_query_param）
-// → AES-128-ECB 解密 → PKCS7 去填充。MD5 有值时对账，不匹配只记日志仍返回数据
-//（宁可把文件交给 agent 也不因对账失败丢弃）。
+// → AES-128-ECB 解密 → PKCS7 去填充。MD5/明文长度有值时对账，不符只记日志仍
+// 返回数据（宁可把文件交给 agent 也不因对账失败丢弃）。
 func (c *Client) DownloadMedia(ctx context.Context, att InboundAttachment) ([]byte, error) {
 	key, err := decodeAESKey(att.Kind, att.AESKey)
 	if err != nil {
@@ -41,7 +50,7 @@ func (c *Client) DownloadMedia(ctx context.Context, att InboundAttachment) ([]by
 	dctx, cancel := context.WithTimeout(ctx, timeoutDownloadMedia)
 	defer cancel()
 	req, err := http.NewRequestWithContext(dctx, http.MethodGet,
-		base+"/download?encrypted_query_param="+urlQueryEscape(att.EncryptQueryParam), nil)
+		base+"/download?"+cdnDownloadParam+"="+urlQueryEscape(att.EncryptQueryParam), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -53,9 +62,12 @@ func (c *Client) DownloadMedia(ctx context.Context, att InboundAttachment) ([]by
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("下载附件 %q: HTTP %d", att.Name, resp.StatusCode)
 	}
-	cipher, err := io.ReadAll(resp.Body)
+	cipher, err := io.ReadAll(io.LimitReader(resp.Body, maxMediaSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("读取附件 %q: %w", att.Name, err)
+	}
+	if len(cipher) > maxMediaSize {
+		return nil, fmt.Errorf("附件 %q 密文超过上限 %d 字节", att.Name, maxMediaSize)
 	}
 	plain, err := aesEcbDecrypt(key, cipher)
 	if err != nil {
@@ -65,6 +77,9 @@ func (c *Client) DownloadMedia(ctx context.Context, att InboundAttachment) ([]by
 		if sum := md5.Sum(plain); hex.EncodeToString(sum[:]) != strings.ToLower(att.MD5) {
 			log.Printf("[weixin] 附件 %q MD5 不匹配（期望 %s），仍按解密结果投递", att.Name, att.MD5)
 		}
+	}
+	if att.Size > 0 && att.Size != int64(len(plain)) {
+		log.Printf("[weixin] 附件 %q 明文长度 %d 与服务端 len %d 不符，仍按解密结果投递", att.Name, len(plain), att.Size)
 	}
 	return plain, nil
 }
@@ -154,7 +169,7 @@ func saveAttachment(dir, name string, data []byte) (string, error) {
 	for n := 0; ; n++ {
 		name := prefix + stem + ext
 		if n > 0 {
-			name = prefix + stem + "-" + itoaWeixin(n) + ext
+			name = prefix + stem + "-" + strconv.Itoa(n) + ext
 		}
 		path := filepath.Join(dir, name)
 		if _, err := os.Stat(path); err == nil {
@@ -167,19 +182,4 @@ func saveAttachment(dir, name string, data []byte) (string, error) {
 		}
 		return path, nil
 	}
-}
-
-// itoaWeixin 是包内小整数转十进制（避免为此引 strconv 别名链）。
-func itoaWeixin(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
 }

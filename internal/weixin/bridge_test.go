@@ -1,6 +1,7 @@
 package weixin
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -506,7 +507,7 @@ func TestBridgeAttachmentMergeWithText(t *testing.T) {
 	b, rc := newAttachBridge(t, ex, []byte("附件内容"), 200)
 
 	// 附件先到：入队 + 回执，不投 executor。
-	b.HandleInboundMsg(attachMsg("ct-1", "需求.pdf"))
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-1", "需求.pdf"))
 	if got := len(ex.sentTexts); got != 0 {
 		t.Fatalf("附件到达不应投 executor, 实际 %d 条", got)
 	}
@@ -519,7 +520,7 @@ func TestBridgeAttachmentMergeWithText(t *testing.T) {
 	}
 
 	// 文本到达：合并投递，队列清空。
-	b.HandleInboundMsg(InboundMsg{FromUserID: "u1", ContextToken: "ct-2", Text: "帮我修复登录"})
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-2", Text: "帮我修复登录"})
 	if len(ex.sentTexts) != 1 {
 		t.Fatalf("executor 应收到 1 条合并文本, 实际 %d", len(ex.sentTexts))
 	}
@@ -547,12 +548,12 @@ func TestBridgeAttachmentAfterTextQueues(t *testing.T) {
 	b, _ := newAttachBridge(t, ex, []byte("内容"), 200)
 
 	// 文字先到：立即转发（无附件说明）。
-	b.HandleInboundMsg(InboundMsg{FromUserID: "u1", ContextToken: "ct-1", Text: "第一段需求"})
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-1", Text: "第一段需求"})
 	if len(ex.sentTexts) != 1 || strings.Contains(ex.sentTexts[0], "[附件]") {
 		t.Fatalf("纯文字应立即原样转发: %v", ex.sentTexts)
 	}
 	// 附件后到：进队列等下一条文字，不独立转发。
-	b.HandleInboundMsg(attachMsg("ct-2", "b.pdf"))
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-2", "b.pdf"))
 	if len(ex.sentTexts) != 1 {
 		t.Fatalf("后到附件不应独立转发: %v", ex.sentTexts)
 	}
@@ -560,7 +561,7 @@ func TestBridgeAttachmentAfterTextQueues(t *testing.T) {
 		t.Fatalf("队列 = %d, 期望 1", b.QueuedFiles())
 	}
 	// 第二条文字：合并。
-	b.HandleInboundMsg(InboundMsg{FromUserID: "u1", ContextToken: "ct-3", Text: "补充说明"})
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-3", Text: "补充说明"})
 	if len(ex.sentTexts) != 2 {
 		t.Fatalf("合并投递缺失: %v", ex.sentTexts)
 	}
@@ -573,8 +574,8 @@ func TestBridgeAttachmentCommandKeepsQueue(t *testing.T) {
 	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 	b, rc := newAttachBridge(t, ex, []byte("内容"), 200)
 
-	b.HandleInboundMsg(attachMsg("ct-1", "a.pdf"))
-	b.HandleInboundMsg(InboundMsg{FromUserID: "u1", ContextToken: "ct-2", Text: "#l"})
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-1", "a.pdf"))
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-2", Text: "#l"})
 	// #l 是命令：照常执行（有回复），队列不动、executor 无投递。
 	if len(ex.sentTexts) != 0 {
 		t.Fatalf("命令不应携带附件投递: %v", ex.sentTexts)
@@ -593,7 +594,7 @@ func TestBridgeAttachmentDownloadFail(t *testing.T) {
 	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 	b, rc := newAttachBridge(t, ex, []byte("内容"), 403)
 
-	b.HandleInboundMsg(attachMsg("ct-1", "a.pdf"))
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-1", "a.pdf"))
 	if b.QueuedFiles() != 0 {
 		t.Fatalf("下载失败不应入队: %d", b.QueuedFiles())
 	}
@@ -610,8 +611,8 @@ func TestBridgeAttachmentMultiOrder(t *testing.T) {
 	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 	b, rc := newAttachBridge(t, ex, []byte("内容"), 200)
 
-	b.HandleInboundMsg(attachMsg("ct-1", "需求.pdf"))
-	b.HandleInboundMsg(attachMsg("ct-2", "b.pdf"))
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-1", "需求.pdf"))
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-2", "b.pdf"))
 	if b.QueuedFiles() != 2 {
 		t.Fatalf("队列 = %d, 期望 2", b.QueuedFiles())
 	}
@@ -619,7 +620,7 @@ func TestBridgeAttachmentMultiOrder(t *testing.T) {
 	if len(sends) < 2 || !strings.Contains(sendText(t, sends[1].body), "共 2 个") {
 		t.Errorf("第二个附件回执应报共 2 个: %v", sends)
 	}
-	b.HandleInboundMsg(InboundMsg{FromUserID: "u1", ContextToken: "ct-3", Text: "需求正文"})
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-3", Text: "需求正文"})
 	if len(ex.sentTexts) != 1 {
 		t.Fatalf("合并投递缺失: %v", ex.sentTexts)
 	}
@@ -635,8 +636,8 @@ func TestBridgeStatusQueuedNote(t *testing.T) {
 	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 	b, rc := newAttachBridge(t, ex, []byte("内容"), 200)
 
-	b.HandleInboundMsg(attachMsg("ct-1", "a.pdf"))
-	b.HandleInboundMsg(InboundMsg{FromUserID: "u1", ContextToken: "ct-2", Text: "#st"})
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-1", "a.pdf"))
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-2", Text: "#st"})
 	sends := rc.sends()
 	// send[0]=附件回执, send[1]=#st 回复, send[2]=待转交尾注。
 	if len(sends) < 3 || !strings.Contains(sendText(t, sends[2].body), "待转交附件 1 个") {
@@ -649,4 +650,27 @@ func sendText(t *testing.T, body map[string]any) string {
 	t.Helper()
 	text, _ := sendMsgFields(t, body)
 	return text
+}
+
+func TestBridgeAttachmentAndTextSameMessage(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b, rc := newAttachBridge(t, ex, []byte("内容"), 200)
+
+	// 同条消息同时带附件与文字：附件直接随本轮文字合并投递，不发附件回执。
+	m := attachMsg("ct-1", "需求.pdf")
+	m.Text = "看这个文件"
+	b.HandleInboundMsg(context.Background(), m)
+	if len(ex.sentTexts) != 1 || !strings.Contains(ex.sentTexts[0], "[附件]") || !strings.Contains(ex.sentTexts[0], "看这个文件") {
+		t.Fatalf("同条消息应合并投递: %v", ex.sentTexts)
+	}
+	if b.QueuedFiles() != 0 {
+		t.Fatalf("队列应已清空: %d", b.QueuedFiles())
+	}
+	sends := rc.sends()
+	if len(sends) != 1 {
+		t.Fatalf("同条消息只应有 ack 一条 sendmessage: %v", sends)
+	}
+	if strings.Contains(sendText(t, sends[0].body), "已收到") {
+		t.Errorf("合并投递后不应再发附件回执")
+	}
 }

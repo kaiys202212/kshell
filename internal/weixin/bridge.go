@@ -185,17 +185,18 @@ func (b *Bridge) Wxid() string {
 
 // HandleInbound 处理一条纯文本入站消息（无附件的历史入口）。
 func (b *Bridge) HandleInbound(fromUserID, contextToken, text string) {
-	b.HandleInboundMsg(InboundMsg{FromUserID: fromUserID, ContextToken: contextToken, Text: text})
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: fromUserID, ContextToken: contextToken, Text: text})
 }
 
 // HandleInboundMsg 处理一条入站消息：白名单过滤 → 记录发送上下文 → 补发
 // pending → 附件下载落盘入队 → 文本与队列合并投递 → 回执逐条投递。
+// ctx 来自长轮询 goroutine：下载附件可耗时，Stop/重绑取消要能穿透。
 //
 // 附件语义（2026-10-18 与用户确认）：微信客户端把「文字+附件」拆成多条消息
 // 发送，附件到达即下载落盘进队列等文字；收到可转发文字时把队列全部附件以
 // 「[附件] 名 已保存至 路径」说明行前置合并为一次投递；命令/纯数字不消费
 // 队列；投递失败（无会话/发送错误）时队列保留并补发回执，附件不丢。
-func (b *Bridge) HandleInboundMsg(m InboundMsg) {
+func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	if !b.admit(m.FromUserID) {
 		return
 	}
@@ -209,7 +210,7 @@ func (b *Bridge) HandleInboundMsg(m InboundMsg) {
 
 	b.flushPending()
 
-	receipt := b.ingestAttachments(m.Attachments)
+	receipt := b.ingestAttachments(ctx, m.Attachments)
 
 	text := m.Text
 	var replies []hub.Reply
@@ -224,11 +225,7 @@ func (b *Bridge) HandleInboundMsg(m InboundMsg) {
 			// 不再单独发附件回执；微信侧补既有 sent_ack。
 			b.clearQueue()
 			merged = true
-			ack := hub.CmdText(b.lang, "sent_ack")
-			if title := b.console.CurrentTitle(); title != "" {
-				ack = "【" + title + "】" + ack
-			}
-			replies = []hub.Reply{{Text: ack}}
+			replies = []hub.Reply{{Text: b.deliveredAck()}}
 		}
 		// 转发失败（无会话/发送错误等有回复场景）：队列保留，回执照发。
 	} else if trimmed != "" {
@@ -236,21 +233,17 @@ func (b *Bridge) HandleInboundMsg(m InboundMsg) {
 		if len(replies) == 0 {
 			// 命令层无回复 = 文本已成功转发给当前会话（agent 稍后回复）。
 			// 微信侧补一条已接收确认，与桌面端 AgentHub 的 ack 卡片同一文案语义
-			//（ui.hub.ack_delivered 不镜像到微信，这里是对应的微信侧回执），
-			// 带【会话名】归因前缀（无活跃会话时不加）。
-			ack := hub.CmdText(b.lang, "sent_ack")
-			if title := b.console.CurrentTitle(); title != "" {
-				ack = "【" + title + "】" + ack
-			}
-			replies = []hub.Reply{{Text: ack}}
+			//（ui.hub.ack_delivered 不镜像到微信，这里是对应的微信侧回执）。
+			replies = []hub.Reply{{Text: b.deliveredAck()}}
 		}
 	}
 	// 未合并时补附件回执（收到/失败）；合并成功时已含说明行不再重复。
 	if !merged && receipt != "" {
 		replies = append(replies, hub.Reply{Text: receipt})
 	}
-	// #st 末尾追加待转交附件数，防用户遗忘队列（N>0 才追加）。
-	if strings.HasPrefix(strings.TrimSpace(m.Text), "#st") {
+	// #st 末尾追加待转交附件数，防用户遗忘队列（N>0 才追加）。按空白取第一
+	// 段与 "#st"/"＃st" 精确比较，避免 "#stop" 等未来命令误伤。
+	if first := strings.Fields(trimmed); len(first) > 0 && (first[0] == "#st" || first[0] == "＃st") {
 		if n := b.QueuedFiles(); n > 0 {
 			replies = append(replies, hub.Reply{
 				Text: fmt.Sprintf(bridgeText(b.lang, "file.queued_st"), n),
@@ -262,6 +255,16 @@ func (b *Bridge) HandleInboundMsg(m InboundMsg) {
 	}
 	// 回复已发出，取消输入状态。
 	_ = b.client.SendTyping(context.Background(), m.FromUserID, m.ContextToken, 2)
+}
+
+// deliveredAck 是「文本已成功转发给当前会话」的微信侧回执，与桌面端
+// AgentHub 的 ack 卡片同一文案语义，带【会话名】归因前缀（无活跃会话不加）。
+func (b *Bridge) deliveredAck() string {
+	ack := hub.CmdText(b.lang, "sent_ack")
+	if title := b.console.CurrentTitle(); title != "" {
+		ack = "【" + title + "】" + ack
+	}
+	return ack
 }
 
 // admit 白名单过滤与 wxid 首条学习；未通过返回 false（静默丢弃）。
@@ -294,8 +297,9 @@ func (b *Bridge) admit(fromUserID string) bool {
 
 // ingestAttachments 下载落盘每个附件并入队；返回微信侧回执文本（无新附件
 // 或全部成功且即将合并时也可为空——回执是否发出由调用方按合并结果决定）。
-// 下载/落盘在长轮询 goroutine 内同步执行：附件体积受微信限制，秒级阻塞可接受。
-func (b *Bridge) ingestAttachments(atts []InboundAttachment) string {
+// 下载/落盘在长轮询 goroutine 内同步执行：附件体积受微信限制，秒级阻塞可接受；
+// ctx 取消（Stop/重绑）时未完成的附件按失败处理，不阻塞退出。
+func (b *Bridge) ingestAttachments(ctx context.Context, atts []InboundAttachment) string {
 	if len(atts) == 0 {
 		return ""
 	}
@@ -305,7 +309,7 @@ func (b *Bridge) ingestAttachments(atts []InboundAttachment) string {
 		if name == "" {
 			name = att.Kind + ".bin"
 		}
-		data, err := b.client.DownloadMedia(context.Background(), att)
+		data, err := b.client.DownloadMedia(ctx, att)
 		if err == nil {
 			var path string
 			path, err = saveAttachment(b.filesDir, name, data)
