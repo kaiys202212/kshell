@@ -25,7 +25,16 @@ func (a *App) GetTools() []discovery.Tool {
 	if a.tools == nil {
 		return []discovery.Tool{}
 	}
-	return a.tools
+	// 出口归一化：Auth 三态（in/out/unknown）必须总有值。历史快照灌入或测试
+	// 构造的工具可能漏填（空串），前端按 Auth === 'out' 做未登录徽标/降级判断，
+	// 空串会被当成「已登录」误判，出口统一补成 unknown。
+	tools := append([]discovery.Tool(nil), a.tools...)
+	for i := range tools {
+		if tools[i].Auth == "" {
+			tools[i].Auth = string(providers.AuthUnknown)
+		}
+	}
+	return tools
 }
 
 // CheckToolAuth 专供登录弹窗轮询：按 toolID 找到 provider 并实时探测登录态。

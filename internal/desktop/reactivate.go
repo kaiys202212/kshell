@@ -87,6 +87,11 @@ func (a *App) rebuildChat(m *chat.Manager, info chat.Info) (string, error) {
 	}
 	l, err := launch.ForWorkspaceACP(o.Providers, tools, ws, info.ToolID, a.modelOptions(), a.permissionOptions())
 	if err != nil {
+		// 未登录是用户可自助修复的前置状态，不是重建链路故障：返回裸 wire key，
+		// 前端 translateBackend 直译并引导去登录，不当「重建失败」复合错误展示。
+		if errors.Is(err, launch.ErrNotLoggedIn) {
+			return "", err
+		}
 		return "", fmt.Errorf("err.chat.rebuild_failed|%w", err)
 	}
 	// 新起不写欢迎词：这不是「第一次打开」，重复写会让 AgentHub 每次重建都多一条

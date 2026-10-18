@@ -77,3 +77,18 @@ func TestCheckToolAuthWithoutProber(t *testing.T) {
 		t.Fatalf("CheckToolAuth = %q, want %q", got, providers.AuthUnknown)
 	}
 }
+
+// TestGetToolsNormalizesAuth 出口归一化：Auth 空串（历史快照灌入/测试构造漏填）
+// 必须补成 unknown，前端按三态判断未登录徽标/降级，空串会被误当「已登录」。
+func TestGetToolsNormalizesAuth(t *testing.T) {
+	// newAuthApp 播种的工具未填 Auth（空串）
+	app := newAuthApp(t, []providers.Provider{fakeProvider{id: "cursor"}})
+
+	tools := app.GetTools()
+	if len(tools) != 1 {
+		t.Fatalf("应有 1 个工具, got %d", len(tools))
+	}
+	if tools[0].Auth != string(providers.AuthUnknown) {
+		t.Fatalf("GetTools Auth = %q, want %q（空串应归一化为 unknown）", tools[0].Auth, providers.AuthUnknown)
+	}
+}

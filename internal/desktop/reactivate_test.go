@@ -10,6 +10,7 @@ import (
 
 	"github.com/yangk/kshell/internal/acp"
 	"github.com/yangk/kshell/internal/chat"
+	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/providers"
 )
 
@@ -289,6 +290,39 @@ func TestRebuildChatEmptyWorkspaceFails(t *testing.T) {
 	_, err := app.rebuildChat(m, chat.Info{ID: "cx_1", Key: "new:1", Kind: chat.KindNew})
 	if err == nil || err.Error() != "err.chat.rebuild_failed|workspace empty" {
 		t.Fatalf("want err.chat.rebuild_failed|workspace empty, got %v", err)
+	}
+}
+
+// TestRebuildChatNotLoggedInBareWireKey 重建时工具已登出：返回裸 wire key
+// err.launch.not_logged_in（前端可直译并引导去登录），不得包成
+// err.chat.rebuild_failed|... 复合错误。
+func TestRebuildChatNotLoggedInBareWireKey(t *testing.T) {
+	b := &recordingBackend{}
+	app := newReactivateTestApp(t, b)
+	m := app.chats()
+
+	opened, err := app.OpenWorkspaceACP(`D:\w`, "claude")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	oldID := opened.Chat.ID
+	exitChatConn(t, m, oldID, b.connAt(0))
+
+	// 登出：重建路径的 launch 门禁据此拒绝
+	app.mu.Lock()
+	for i := range app.tools {
+		if app.tools[i].ID == "claude" {
+			app.tools[i].Auth = string(providers.AuthOut)
+		}
+	}
+	app.mu.Unlock()
+
+	_, err = app.ensureChatAlive(oldID)
+	if err == nil || err.Error() != launch.ErrNotLoggedIn.Error() {
+		t.Fatalf("未登录重建应返回裸 %q, got %v", launch.ErrNotLoggedIn.Error(), err)
+	}
+	if b.count() != 1 {
+		t.Fatalf("未登录不应起新连接, got %d", b.count())
 	}
 }
 
