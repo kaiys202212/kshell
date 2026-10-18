@@ -135,6 +135,51 @@ func TestGetUpdates(t *testing.T) {
 	}
 }
 
+func TestGetUpdatesAttachments(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{
+			"msgs":[
+				{"message_type":1,"from_user_id":"u1","context_token":"ct1","create_time_ms":1792280448633,
+				 "item_list":[
+					{"type":4,"file_item":{"media":{"encrypt_query_param":"eqp-f","aes_key":"a2V5ZmlsZWhleGMyNTY="},"file_name":"需求.pdf","len":1024,"md5":"abc"}},
+					{"type":2,"image_item":{"media":{"encrypt_query_param":"eqp-i","aes_key":"cmF3MTZieXRlcw=="},"len":2048}}
+				 ]},
+				{"message_type":1,"from_user_id":"u2","context_token":"ct2",
+				 "item_list":[{"type":3,"voice_item":{"text":"语音转写内容"}}]}
+			],
+			"get_updates_buf":"cursor-a"
+		}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok-1", srv.URL)
+	msgs, _, err := c.GetUpdates(context.Background(), "")
+	if err != nil {
+		t.Fatalf("GetUpdates: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("消息数 = %d, 期望 2", len(msgs))
+	}
+	// 文件 + 图片两条附件。
+	if len(msgs[0].Attachments) != 2 {
+		t.Fatalf("附件数 = %d, 期望 2: %+v", len(msgs[0].Attachments), msgs[0].Attachments)
+	}
+	f, im := msgs[0].Attachments[0], msgs[0].Attachments[1]
+	if f.Kind != "file" || f.Name != "需求.pdf" || f.EncryptQueryParam != "eqp-f" || f.AESKey != "a2V5ZmlsZWhleGMyNTY=" || f.Size != 1024 {
+		t.Errorf("文件附件解析错误: %+v", f)
+	}
+	if im.Kind != "image" || im.Name != "image.jpg" || im.EncryptQueryParam != "eqp-i" || im.AESKey != "cmF3MTZieXRlcw==" {
+		t.Errorf("图片附件解析错误: %+v", im)
+	}
+	// 语音无 text 字段可用（ASR 转写由桥层取 voice_item.text），附件为空、文本为空。
+	if len(msgs[1].Attachments) != 0 {
+		t.Errorf("语音消息不应产生附件: %+v", msgs[1].Attachments)
+	}
+	if msgs[1].Text != "语音转写内容" {
+		t.Errorf("语音 ASR 转写应作为文本透传: %+v", msgs[1])
+	}
+}
+
 func TestSendMessage(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

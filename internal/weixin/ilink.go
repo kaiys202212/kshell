@@ -27,6 +27,8 @@ type Client struct {
 	HTTP    *http.Client
 	Token   string
 	BaseURL string
+	// MediaBase 是媒体 CDN 基础地址（下载附件用）；空串时用默认值。测试注入点。
+	MediaBase string
 }
 
 // NewClient 创建 iLink 客户端；baseURL 为空时用官方默认域名。
@@ -35,15 +37,22 @@ func NewClient(token, baseURL string) *Client {
 		baseURL = "https://ilinkai.weixin.qq.com"
 	}
 	return &Client{
-		HTTP:    &http.Client{Timeout: 40 * time.Second},
-		Token:   token,
-		BaseURL: baseURL,
+		HTTP:      &http.Client{Timeout: 40 * time.Second},
+		Token:     token,
+		BaseURL:   baseURL,
+		MediaBase: mediaBaseDefault,
 	}
 }
 
 // baseInfo 是所有请求体都带的渠道信息。
 type baseInfo struct {
 	ChannelVersion string `json:"channel_version"`
+}
+
+// CDNMedia 是所有媒体 item 共用的 CDN 引用：下载参数与 base64 AES 密钥。
+type CDNMedia struct {
+	EncryptQueryParam string `json:"encrypt_query_param"`
+	AESKey            string `json:"aes_key"`
 }
 
 // apiResp 是服务端响应的通用外壳，errcode 非 0 表示错误。
@@ -159,6 +168,8 @@ func (c *Client) PollQRCodeStatus(ctx context.Context, qrcodeKey string) (QRStat
 }
 
 // GetUpdates 长轮询收消息，返回入站消息与新游标。bot 自发消息（message_type==2）已过滤。
+// 附件（图片 type 2 / 文件 type 4）解析进 Attachments；语音的 ASR 转写
+//（voice_item.text）非空时作为文本透传。
 func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeoutGetUpdates)
 	defer cancel()
@@ -177,6 +188,19 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 				TextItem struct {
 					Text string `json:"text"`
 				} `json:"text_item"`
+				VoiceItem struct {
+					Text string `json:"text"`
+				} `json:"voice_item"`
+				ImageItem struct {
+					Media    CDNMedia `json:"media"`
+					FileSize int64    `json:"len"`
+				} `json:"image_item"`
+				FileItem struct {
+					Media    CDNMedia `json:"media"`
+					FileName string   `json:"file_name"`
+					FileSize int64    `json:"len"`
+					MD5      string   `json:"md5"`
+				} `json:"file_item"`
 			} `json:"item_list"`
 		} `json:"msgs"`
 		NewCursor string `json:"get_updates_buf"`
@@ -191,8 +215,29 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 		}
 		im := InboundMsg{FromUserID: m.FromUserID, ContextToken: m.ContextToken, CreateMs: m.CreateMs}
 		for _, item := range m.ItemList {
-			if item.Type == 1 {
+			switch item.Type {
+			case 1:
 				im.Text += item.TextItem.Text
+			case 3:
+				// 语音：ASR 转写直接当文本（服务端已转好），其余字段（SILK 音频）不做。
+				im.Text += item.VoiceItem.Text
+			case 2:
+				im.Attachments = append(im.Attachments, InboundAttachment{
+					Kind:              "image",
+					Name:              "image.jpg",
+					EncryptQueryParam: item.ImageItem.Media.EncryptQueryParam,
+					AESKey:            item.ImageItem.Media.AESKey,
+					Size:              item.ImageItem.FileSize,
+				})
+			case 4:
+				im.Attachments = append(im.Attachments, InboundAttachment{
+					Kind:              "file",
+					Name:              item.FileItem.FileName,
+					EncryptQueryParam: item.FileItem.Media.EncryptQueryParam,
+					AESKey:            item.FileItem.Media.AESKey,
+					Size:              item.FileItem.FileSize,
+					MD5:               item.FileItem.MD5,
+				})
 			}
 		}
 		msgs = append(msgs, im)
