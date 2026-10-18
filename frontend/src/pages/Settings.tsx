@@ -83,6 +83,7 @@ interface PlatDraft {
   APIKey: string;
   ClearAPIKey: boolean;
   Models: string[];
+  ASRModel: string;
   APIKeySet: boolean;
   IsNew: boolean;
 }
@@ -433,6 +434,7 @@ export default function Settings() {
             APIKey: '',
             ClearAPIKey: false,
             Models: [...(p.Models ?? [])],
+            ASRModel: p.ASRModel || '',
             APIKeySet: p.APIKeySet,
             IsNew: false,
           }
@@ -445,6 +447,7 @@ export default function Settings() {
             APIKey: '',
             ClearAPIKey: false,
             Models: [],
+            ASRModel: '',
             APIKeySet: false,
             IsNew: true,
           },
@@ -522,6 +525,7 @@ export default function Settings() {
           APIKey: platDraft.APIKey,
           ClearAPIKey: platDraft.ClearAPIKey,
           Models: [...platDraft.Models],
+          ASRModel: platDraft.ASRModel.trim(),
         }
       : null;
     const inputs = modelPlatforms.map((p) =>
@@ -536,6 +540,7 @@ export default function Settings() {
             APIKey: '',
             ClearAPIKey: false,
             Models: [...p.Models],
+            ASRModel: p.ASRModel || '',
           },
     );
     if (draftInput && platDraft && !modelPlatforms.some((p) => p.ID === platDraft.ID)) {
@@ -1175,6 +1180,18 @@ export default function Settings() {
                         {t('ui.settings.model.clear_key')}
                       </label>
                     )}
+                    <label className="text-xs text-muted-foreground" htmlFor="model-asr-model">
+                      {t('ui.settings.model.asr_model')}
+                    </label>
+                    <input
+                      id="model-asr-model"
+                      aria-label={t('ui.settings.model.asr_model')}
+                      className={inputClass}
+                      placeholder="FunAudioLLM/SenseVoiceSmall"
+                      value={platDraft.ASRModel}
+                      onChange={(e) => setPlatDraft({ ...platDraft, ASRModel: e.target.value })}
+                    />
+                    <p className="text-xs text-muted-foreground">{t('ui.settings.model.asr_model_hint')}</p>
                     <p className="text-xs text-muted-foreground">{t('ui.settings.model.models')}</p>
                     {platDraft.Models.length === 0 && (
                       <p className="text-xs text-muted-foreground">{t('ui.settings.model.models_empty')}</p>

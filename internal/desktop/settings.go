@@ -121,6 +121,7 @@ type ModelPlatformView struct {
 	Models           []string `json:"Models"`
 	APIKeySet        bool     `json:"APIKeySet"`
 	IsDefault        bool     `json:"IsDefault"`
+	ASRModel         string   `json:"ASRModel"`
 }
 
 // ModelConfigView 是回传前端的模型配置视图。
@@ -141,6 +142,7 @@ type ModelPlatformInput struct {
 	APIKey           string   `json:"APIKey"`
 	ClearAPIKey      bool     `json:"ClearAPIKey"`
 	Models           []string `json:"Models"`
+	ASRModel         string   `json:"ASRModel"`
 }
 
 // ModelConfigInput 是前端提交的模型配置：整体保存语义。
@@ -169,6 +171,7 @@ func (a *App) GetModelConfig() (ModelConfigView, error) {
 			Models:           models,
 			APIKeySet:        p.APIKey != "",
 			IsDefault:        p.ID == m.DefaultPlatform || (m.DefaultPlatform == "" && i == 0),
+			ASRModel:         p.ASRModel,
 		})
 	}
 	return ModelConfigView{
@@ -233,6 +236,7 @@ func (a *App) SetModelConfig(in ModelConfigInput) error {
 			AnthropicBaseURL: ant,
 			APIKey:           pi.APIKey,
 			Models:           cleanModels(pi.Models),
+			ASRModel:         strings.TrimSpace(pi.ASRModel),
 		}
 		if prev, ok := old[id]; ok {
 			switch {

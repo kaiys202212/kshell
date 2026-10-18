@@ -378,6 +378,8 @@
         "api_key_unset": "Not set",
         "api_key_keep_hint": "Key saved; leave blank to keep it",
         "clear_key": "Clear key",
+        "asr_model": "Voice transcription model (ASR)",
+        "asr_model_hint": "Optional. OpenAI-compatible /audio/transcriptions endpoint on this platform; used to transcribe WeChat voice messages (default platform only).",
         "active_model": "Active model",
         "models": "Model list",
         "models_empty": "No models yet; add manually or click \"Fetch models\"",

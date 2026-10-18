@@ -399,6 +399,7 @@ export interface ModelPlatformView {
   Models: string[];
   APIKeySet: boolean;
   IsDefault: boolean;
+  ASRModel: string;
 }
 
 // desktop.ModelConfigView 的 JSON 形态：平台列表 + 全局默认平台/模型。
@@ -420,6 +421,7 @@ export interface ModelPlatformInput {
   APIKey: string;
   ClearAPIKey: boolean;
   Models: string[];
+  ASRModel: string;
 }
 
 // desktop.ModelConfigInput 的 JSON 形态：整体保存语义，输入列表不含的平台即删除。

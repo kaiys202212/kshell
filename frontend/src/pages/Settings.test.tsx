@@ -151,6 +151,7 @@ const platView = (over: Partial<ModelPlatformView> = {}): ModelPlatformView => (
   Models: ['m1'],
   APIKeySet: false,
   IsDefault: true,
+  ASRModel: '',
   ...over,
 });
 
