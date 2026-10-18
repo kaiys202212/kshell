@@ -1,0 +1,231 @@
+package hubtools
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+)
+
+// fakeBridge 是内存桩：记录各方法调用次数，返回固定数据。
+type fakeBridge struct {
+	calls     map[string]int
+	reqs      []RequirementView
+	workspace *WorkspaceView
+	tasks     []TaskView
+	task      *TaskView
+}
+
+func newFakeBridge() *fakeBridge {
+	return &fakeBridge{calls: map[string]int{}}
+}
+
+func (f *fakeBridge) ListRequirements() ([]RequirementView, error) {
+	f.calls["ListRequirements"]++
+	return f.reqs, nil
+}
+
+func (f *fakeBridge) GetRequirement(id string) (*RequirementView, error) {
+	f.calls["GetRequirement"]++
+	for i := range f.reqs {
+		if f.reqs[i].ID == id {
+			return &f.reqs[i], nil
+		}
+	}
+	return nil, errors.New("需求不存在: " + id)
+}
+
+func (f *fakeBridge) CreateRequirement(project, text, priority string, tags []string) (RequirementView, error) {
+	f.calls["CreateRequirement"]++
+	return RequirementView{ID: "new-1", Project: project, Text: text, Priority: priority, Tags: tags}, nil
+}
+
+func (f *fakeBridge) UpdateRequirement(id, project, text, priority string, tags []string) (RequirementView, error) {
+	f.calls["UpdateRequirement"]++
+	return RequirementView{ID: id, Project: project, Text: text, Priority: priority, Tags: tags}, nil
+}
+
+func (f *fakeBridge) DeleteRequirement(id string) error {
+	f.calls["DeleteRequirement"]++
+	return nil
+}
+
+func (f *fakeBridge) ListWorkspaces() ([]WorkspaceView, error) {
+	f.calls["ListWorkspaces"]++
+	return []WorkspaceView{{Path: "/w/a", Name: "a", SessionCount: 2}}, nil
+}
+
+func (f *fakeBridge) GetWorkspace(id string) (*WorkspaceView, error) {
+	f.calls["GetWorkspace"]++
+	return f.workspace, nil
+}
+
+func (f *fakeBridge) ListRunningTasks() ([]TaskView, error) {
+	f.calls["ListRunningTasks"]++
+	return f.tasks, nil
+}
+
+func (f *fakeBridge) GetTaskDetail(id string) (*TaskView, error) {
+	f.calls["GetTaskDetail"]++
+	return f.task, nil
+}
+
+func TestToolsRegistered(t *testing.T) {
+	r := NewRegistry(newFakeBridge())
+	got := r.Tools()
+	want := map[string]bool{
+		"list_requirements": false, "get_requirement": false,
+		"create_requirement": false, "update_requirement": false, "delete_requirement": false,
+		"list_workspaces": false, "get_workspace": false,
+		"list_running_tasks": false, "get_task_detail": false,
+	}
+	seen := map[string]bool{}
+	for _, td := range got {
+		if _, dup := seen[td.Name]; dup {
+			t.Fatalf("工具名重复: %s", td.Name)
+		}
+		seen[td.Name] = true
+		if _, ok := want[td.Name]; !ok {
+			t.Fatalf("未预期的工具: %s", td.Name)
+		}
+		want[td.Name] = true
+	}
+	for name, ok := range want {
+		if !ok {
+			t.Fatalf("缺少工具: %s", name)
+		}
+	}
+}
+
+func TestSchemaValid(t *testing.T) {
+	r := NewRegistry(newFakeBridge())
+	for _, td := range r.Tools() {
+		if !json.Valid([]byte(fmtJSON(td.Parameters))) {
+			t.Fatalf("%s: Parameters 不是合法 JSON", td.Name)
+		}
+		if td.Parameters["type"] != "object" {
+			t.Fatalf("%s: Parameters.type 应为 object, got %v", td.Name, td.Parameters["type"])
+		}
+		if td.Description == "" {
+			t.Fatalf("%s: 描述为空", td.Name)
+		}
+	}
+}
+
+// fmtJSON 序列化辅助（避免测试内重复 import 别名）。
+func fmtJSON(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
+// TestMutatingFlag 通过注册表元数据断言三个写工具的 Mutating 标记。
+func TestMutatingFlag(t *testing.T) {
+	r := NewRegistry(newFakeBridge())
+	mutating := map[string]bool{}
+	for name, m := range r.mutating {
+		mutating[name] = m
+	}
+	for _, name := range []string{"create_requirement", "update_requirement", "delete_requirement"} {
+		if !mutating[name] {
+			t.Fatalf("%s 应标记为 Mutating", name)
+		}
+	}
+	for _, name := range []string{"list_requirements", "get_requirement", "list_workspaces", "get_workspace", "list_running_tasks", "get_task_detail"} {
+		if mutating[name] {
+			t.Fatalf("%s 不应标记为 Mutating", name)
+		}
+	}
+}
+
+func TestListRequirementsExec(t *testing.T) {
+	f := newFakeBridge()
+	f.reqs = []RequirementView{{ID: "r1", Text: "修复登录超时", Priority: "high", Status: "pending"}}
+	r := NewRegistry(f)
+	out, err := r.Execute(context.Background(), "list_requirements", `{}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, `"id":"r1"`) || !strings.Contains(out, "修复登录超时") {
+		t.Fatalf("输出缺少关键字段: %s", out)
+	}
+	if f.calls["ListRequirements"] != 1 {
+		t.Fatalf("ListRequirements 应被调用 1 次, got %d", f.calls["ListRequirements"])
+	}
+}
+
+func TestGetWorkspaceExec(t *testing.T) {
+	f := newFakeBridge()
+	f.workspace = &WorkspaceView{Path: "/w/a", Name: "a", SessionCount: 3, ToolCounts: map[string]int{"claude": 2}}
+	r := NewRegistry(f)
+	out, err := r.Execute(context.Background(), "get_workspace", `{"id":"/w/a"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, `"/w/a"`) || !strings.Contains(out, `"sessionCount":3`) {
+		t.Fatalf("输出缺少关键字段: %s", out)
+	}
+}
+
+func TestListRunningTasksExec(t *testing.T) {
+	f := newFakeBridge()
+	f.tasks = []TaskView{{ID: "t1", Title: "重构 hubtools", ToolID: "claude", Workspace: "/w/a", Status: "running"}}
+	r := NewRegistry(f)
+	out, err := r.Execute(context.Background(), "list_running_tasks", `{}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, `"id":"t1"`) || !strings.Contains(out, `"status":"running"`) {
+		t.Fatalf("输出缺少关键字段: %s", out)
+	}
+}
+
+func TestMutatingPending(t *testing.T) {
+	f := newFakeBridge()
+	r := NewRegistry(f)
+	for _, tc := range []struct {
+		name    string
+		args    string
+		summary []string
+	}{
+		{"create_requirement", `{"project":"/w/a","text":"新增导出功能","priority":"high","tags":["p2"]}`, []string{"新增导出功能", "/w/a"}},
+		{"delete_requirement", `{"id":"r42"}`, []string{"r42"}},
+	} {
+		out, err := r.Execute(context.Background(), tc.name, tc.args)
+		if out != "" {
+			t.Fatalf("%s: 挂起时不应有结果文本, got %q", tc.name, out)
+		}
+		if !errors.Is(err, ErrConfirmationRequired) {
+			t.Fatalf("%s: 应返回 ErrConfirmationRequired, got %v", tc.name, err)
+		}
+		var pending *PendingConfirm
+		if !errors.As(err, &pending) {
+			t.Fatalf("%s: 错误应包装 *PendingConfirm, got %v", tc.name, err)
+		}
+		if pending.ToolName != tc.name || pending.ArgsJSON != tc.args {
+			t.Fatalf("%s: PendingConfirm 字段不符: %+v", tc.name, pending)
+		}
+		for _, kw := range tc.summary {
+			if !strings.Contains(pending.Summary, kw) {
+				t.Fatalf("%s: 摘要 %q 缺少 %q", tc.name, pending.Summary, kw)
+			}
+		}
+	}
+	if f.calls["CreateRequirement"] != 0 || f.calls["DeleteRequirement"] != 0 {
+		t.Fatalf("Mutating 工具挂起时不应触达 Bridge, calls=%v", f.calls)
+	}
+}
+
+func TestUnknownTool(t *testing.T) {
+	r := NewRegistry(newFakeBridge())
+	if _, err := r.Execute(context.Background(), "no_such_tool", `{}`); err == nil {
+		t.Fatal("未知工具应返回 error")
+	}
+}
+
+func TestBadArgsJSON(t *testing.T) {
+	r := NewRegistry(newFakeBridge())
+	if _, err := r.Execute(context.Background(), "list_workspaces", `{bad`); err == nil {
+		t.Fatal("非法 JSON 应返回 error")
+	}
+}
