@@ -90,6 +90,9 @@ type ModelPlatform struct {
 	AnthropicBaseURL string   `yaml:"anthropic_base_url"`
 	APIKey           string   `yaml:"api_key"`
 	Models           []string `yaml:"models"`
+	// ASRModel 是可选的语音转写模型（OpenAI 兼容 /audio/transcriptions 端点），
+	// 供微信桥把无转写的语音转成文字；空 = 该平台不做语音转写。
+	ASRModel string `yaml:"asr_model,omitempty"`
 }
 
 // ModelConfig 是模型平台配置集合 + 默认模型选择。
@@ -377,6 +380,7 @@ func (c Config) normalized() Config {
 		p.OpenAIBaseURL = sanitizeHTTPURL(p.OpenAIBaseURL)
 		p.AnthropicBaseURL = sanitizeHTTPURL(p.AnthropicBaseURL)
 		p.Models = normalizeModels(p.Models)
+		p.ASRModel = strings.TrimSpace(p.ASRModel)
 	}
 	if c.Model.Platforms == nil {
 		c.Model.Platforms = []ModelPlatform{}

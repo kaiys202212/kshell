@@ -189,7 +189,9 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 					Text string `json:"text"`
 				} `json:"text_item"`
 				VoiceItem struct {
-					Text string `json:"text"`
+					Text  string   `json:"text"`
+					Media CDNMedia `json:"media"`
+					Size  int64    `json:"len"`
 				} `json:"voice_item"`
 				ImageItem struct {
 					Media    CDNMedia `json:"media"`
@@ -219,8 +221,16 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 			case 1:
 				im.Text += item.TextItem.Text
 			case 3:
-				// 语音：ASR 转写直接当文本（服务端已转好），其余字段（SILK 音频）不做。
+				// 语音：服务端 ASR 转写非空时直接当文本；媒体信息恒填 Voice，
+				// 供桥层在转写缺失时下载后走模型转写（详见 bridge.go）。
 				im.Text += item.VoiceItem.Text
+				im.Voice = &InboundAttachment{
+					Kind:              "voice",
+					Name:              "voice.silk",
+					EncryptQueryParam: item.VoiceItem.Media.EncryptQueryParam,
+					AESKey:            item.VoiceItem.Media.AESKey,
+					Size:              item.VoiceItem.Size,
+				}
 			case 2:
 				im.Attachments = append(im.Attachments, InboundAttachment{
 					Kind:              "image",

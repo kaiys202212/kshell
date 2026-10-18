@@ -544,6 +544,42 @@ func TestActivePlatform(t *testing.T) {
 }
 
 // TestModelConfigPlatformsRoundTrip 覆盖多平台配置的保存/加载往返。
+func TestModelPlatformASRModelRoundTrip(t *testing.T) {
+	p := tempPaths(t)
+	want := Default()
+	want.Model = ModelConfig{
+		Enabled: true,
+		Platforms: []ModelPlatform{
+			{ID: "p1", Name: "A", OpenAIBaseURL: "https://a.example.com/v1", APIKey: "k1",
+				ASRModel: "FunAudioLLM/SenseVoiceSmall", Models: []string{"m1"}},
+			{ID: "p2", Name: "B", OpenAIBaseURL: "https://b.example.com/v1", Models: []string{"m2"}},
+		},
+		DefaultPlatform: "p1",
+	}
+	if err := Save(p, want); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Model.Platforms[0].ASRModel != "FunAudioLLM/SenseVoiceSmall" {
+		t.Fatalf("asr_model 保存往返丢失: %+v", got.Model.Platforms[0])
+	}
+	if got.Model.Platforms[1].ASRModel != "" {
+		t.Fatalf("未配置平台 asr_model 应为空: %+v", got.Model.Platforms[1])
+	}
+	// 归一化：前后空白去除。
+	want.Model.Platforms[0].ASRModel = "  padded/model  "
+	if err := Save(p, want); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, _ = Load(p)
+	if got.Model.Platforms[0].ASRModel != "padded/model" {
+		t.Fatalf("asr_model 应去空白: %q", got.Model.Platforms[0].ASRModel)
+	}
+}
+
 func TestModelConfigPlatformsRoundTrip(t *testing.T) {
 	p := tempPaths(t)
 	want := Default()

@@ -45,6 +45,10 @@ type InboundMsg struct {
 	// Attachments 是消息携带的附件（图片/文件）；纯文本消息为空。
 	// 微信客户端把「文字+附件」拆成多条消息发送，同条消息内两者并存也合法。
 	Attachments []InboundAttachment
+	// Voice 是语音媒体信息（item type 3）：无论服务端是否给出 ASR 转写都填充，
+	// 供桥层在 Text 为空时走模型转写；非语音消息为 nil。语音不进 Attachments
+	//（它不是待转交附件，是文本的替代来源）。
+	Voice *InboundAttachment
 	// CreateMs 是消息创建时刻的 Unix 毫秒（服务端 create_time_ms），
 	// 供「重启/重绑前的过期积压丢弃」判定；服务端缺失时为 0。
 	CreateMs int64

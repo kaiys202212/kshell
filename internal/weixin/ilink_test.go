@@ -180,6 +180,51 @@ func TestGetUpdatesAttachments(t *testing.T) {
 	}
 }
 
+func TestGetUpdatesVoice(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{
+			"msgs":[
+				{"message_type":1,"from_user_id":"u1","context_token":"ct1",
+				 "item_list":[{"type":3,"voice_item":{"text":"","media":{"encrypt_query_param":"eqp-v","aes_key":"aGV4MzJjaGFycw=="},"len":8192}}]},
+				{"message_type":1,"from_user_id":"u2","context_token":"ct2",
+				 "item_list":[{"type":3,"voice_item":{"text":"服务端转写内容","media":{"encrypt_query_param":"eqp-v2","aes_key":"aGV4MzJjaGFycw=="}},"type":3}]}
+			],
+			"get_updates_buf":"cursor-v"
+		}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok-1", srv.URL)
+	msgs, _, err := c.GetUpdates(context.Background(), "")
+	if err != nil {
+		t.Fatalf("GetUpdates: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("消息数 = %d, 期望 2", len(msgs))
+	}
+	// 无转写：Voice 携带媒体信息，Text 为空（桥层据此走模型转写）。
+	if msgs[0].Text != "" {
+		t.Errorf("无转写语音 Text 应为空: %q", msgs[0].Text)
+	}
+	if msgs[0].Voice == nil {
+		t.Fatal("无转写语音应填充 Voice")
+	}
+	if msgs[0].Voice.Kind != "voice" || msgs[0].Voice.EncryptQueryParam != "eqp-v" ||
+		msgs[0].Voice.AESKey != "aGV4MzJjaGFycw==" || msgs[0].Voice.Size != 8192 {
+		t.Errorf("Voice 媒体信息解析错误: %+v", msgs[0].Voice)
+	}
+	if len(msgs[0].Attachments) != 0 {
+		t.Errorf("语音不应进附件列表: %+v", msgs[0].Attachments)
+	}
+	// 有转写：Text 直通，Voice 媒体信息同样保留（桥层优先用 Text）。
+	if msgs[1].Text != "服务端转写内容" {
+		t.Errorf("ASR 转写应作为文本透传: %+v", msgs[1])
+	}
+	if msgs[1].Voice == nil || msgs[1].Voice.EncryptQueryParam != "eqp-v2" {
+		t.Errorf("有转写语音的 Voice 媒体信息缺失: %+v", msgs[1].Voice)
+	}
+}
+
 func TestSendMessage(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
