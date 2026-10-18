@@ -168,8 +168,12 @@ func TestChatLoopLimit(t *testing.T) {
 		[]Message{{Role: "user", Content: "hi"}},
 		[]ToolDef{{Name: "loop"}},
 		func(ctx context.Context, name, args string) (string, error) { return "ok", nil })
-	if err == nil || !strings.Contains(err.Error(), "工具调用轮次超限") {
+	if err == nil || !strings.Contains(err.Error(), "err.hubtools.round_limit") {
 		t.Fatalf("期望轮次超限错误，得到 %v", err)
+	}
+	// 超限判定应发生在发起请求之前，不多发最后一次 HTTP 往返
+	if n > maxToolRounds {
+		t.Fatalf("请求次数 %d 超过 maxToolRounds=%d", n, maxToolRounds)
 	}
 }
 
@@ -181,7 +185,10 @@ func TestChatServerError(t *testing.T) {
 
 	c := newTestClient(srv.URL)
 	_, err := c.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil)
-	if err == nil || !strings.Contains(err.Error(), "500") {
+	if err == nil || !strings.Contains(err.Error(), "err.hubtools.request_failed") {
+		t.Fatalf("期望含 request_failed 的错误，得到 %v", err)
+	}
+	if !strings.Contains(err.Error(), "500") {
 		t.Fatalf("期望含 500 的错误，得到 %v", err)
 	}
 }

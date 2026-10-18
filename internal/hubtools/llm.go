@@ -123,6 +123,10 @@ func (c *Client) ChatWithExecutor(ctx context.Context, msgs []Message, tools []T
 	copy(dialog, msgs)
 
 	for round := 0; ; round++ {
+		// 超限判定放在发请求之前，避免触顶后还多发一次往返
+		if round >= maxToolRounds {
+			return Response{}, errors.New("err.hubtools.round_limit")
+		}
 		resp, err := c.once(ctx, dialog, tools)
 		if err != nil {
 			return Response{}, err
@@ -130,9 +134,6 @@ func (c *Client) ChatWithExecutor(ctx context.Context, msgs []Message, tools []T
 		// 无工具调用或未注入执行器：直接返回
 		if len(resp.ToolCalls) == 0 || exec == nil {
 			return resp, nil
-		}
-		if round >= maxToolRounds {
-			return Response{}, errors.New("工具调用轮次超限")
 		}
 
 		dialog = append(dialog, Message{Role: "assistant", ToolCalls: resp.ToolCalls})
@@ -184,7 +185,7 @@ func (c *Client) once(ctx context.Context, msgs []Message, tools []ToolDef) (Res
 		return Response{}, fmt.Errorf("读取响应: %w", err)
 	}
 	if httpResp.StatusCode != http.StatusOK {
-		return Response{}, fmt.Errorf("LLM 请求失败: 状态码 %d, 响应: %.512s", httpResp.StatusCode, respBody)
+		return Response{}, fmt.Errorf("err.hubtools.request_failed: 状态码 %d, 响应: %.512s", httpResp.StatusCode, respBody)
 	}
 
 	var parsed chatResponse
