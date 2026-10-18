@@ -226,11 +226,9 @@ beforeEach(() => {
   mocks.setCloseBehavior.mockResolvedValue(undefined);
   mocks.getModelConfig.mockResolvedValue({
     Enabled: false,
-    Preset: '',
-    OpenAIBaseURL: '',
-    AnthropicBaseURL: '',
-    Agents: {},
-    APIKeySet: false,
+    Platforms: [],
+    DefaultPlatform: '',
+    ActiveModel: '',
   });
   mocks.setModelConfig.mockResolvedValue(undefined);
   mocks.listModelPresets.mockResolvedValue([]);

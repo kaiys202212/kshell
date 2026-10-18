@@ -39,7 +39,15 @@ import {
   setSessionMode,
   uninstallBuiltinTool,
 } from '../lib/api';
-import type { InstallRecipeView, ModelPreset, ToolInfo, ToolInstallJobView, UpdateInfo } from '../lib/api';
+import type {
+  InstallRecipeView,
+  ModelPlatformInput,
+  ModelPlatformView,
+  ModelPreset,
+  ToolInfo,
+  ToolInstallJobView,
+  UpdateInfo,
+} from '../lib/api';
 import { cn } from '../lib/cn';
 import { backendError, translateBackend } from '../lib/errors';
 import { applyUiFontSize, clampUiFontSize } from '../lib/appearance';
@@ -63,6 +71,27 @@ const BUILTIN_LANGUAGE_CODES = ['en', 'zh-CN', 'system'];
 const translateLog = (text: string): string => text.split('\n').map(translateBackend).join('\n');
 
 type Section = 'general' | 'weixin' | 'model' | 'tools' | 'skills';
+
+// PlatDraft：平台编辑态草稿（新增/编辑共用）。APIKey 只在表单里流转（空串=保持原值），
+// APIKeySet / IsNew 仅为占位与交互辅助，不参与提交。
+interface PlatDraft {
+  ID: string;
+  Name: string;
+  Preset: string;
+  OpenAIBaseURL: string;
+  AnthropicBaseURL: string;
+  APIKey: string;
+  ClearAPIKey: boolean;
+  Models: string[];
+  APIKeySet: boolean;
+  IsNew: boolean;
+}
+
+// genPlatformID：新平台 ID 用 UUID；兜底时间戳串（测试环境可能无 crypto.randomUUID）。
+const genPlatformID = (): string =>
+  typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 const SECTIONS: { id: Section; labelKey: string }[] = [
   { id: 'general', labelKey: 'ui.settings.nav.general' },
@@ -93,14 +122,12 @@ export default function Settings() {
   const [permissionMode, setPermissionModeLocal] = useState('default');
   const [presets, setPresets] = useState<ModelPreset[]>([]);
   const [modelEnabled, setModelEnabled] = useState(false);
-  const [modelPreset, setModelPreset] = useState('custom');
-  const [modelOpenAIURL, setModelOpenAIURL] = useState('');
-  const [modelAnthropicURL, setModelAnthropicURL] = useState('');
-  const [modelApiKey, setModelApiKey] = useState('');
-  const [modelApiKeySet, setModelApiKeySet] = useState(false);
-  const [modelClearKey, setModelClearKey] = useState(false);
-  const [modelModels, setModelModels] = useState<string[]>([]);
+  const [modelPlatforms, setModelPlatforms] = useState<ModelPlatformView[]>([]);
+  const [modelDefault, setModelDefault] = useState('');
   const [modelActive, setModelActive] = useState('');
+  // 平台编辑态：null=未在编辑；草稿字段见 PlatDraft
+  const [platDraft, setPlatDraft] = useState<PlatDraft | null>(null);
+  const [platNameError, setPlatNameError] = useState('');
   const [modelNewModel, setModelNewModel] = useState('');
   const [modelFetched, setModelFetched] = useState<string[] | null>(null);
   const [modelFetchedFilter, setModelFetchedFilter] = useState('');
@@ -122,7 +149,7 @@ export default function Settings() {
   const notify = useAppStore((s) => s.notify);
   const notifySound = useAppStore((s) => s.notifySound);
   const setNotifySound = useAppStore((s) => s.setNotifySound);
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   // 语言选中态：store 为准（main.tsx 启动接线 + language:changed 事件写入），
   // 本地 state 只做点击后的即时反馈。依赖整个对象：事件携带新对象身份，
   // 即使 configured 同值确认也能回同步一次。
@@ -223,11 +250,9 @@ export default function Settings() {
       .then((v) => {
         if (cancelled) return;
         setModelEnabled(v.Enabled);
-        setModelPreset(v.Preset || 'custom');
-        setModelOpenAIURL(v.OpenAIBaseURL);
-        setModelAnthropicURL(v.AnthropicBaseURL);
-        setModelApiKeySet(v.APIKeySet);
-        setModelModels(v.Models ?? []);
+        setModelPlatforms(v.Platforms ?? []);
+        // 默认平台未显式指定时后端回落第一个，前端同样回落保证选中态可见
+        setModelDefault(v.DefaultPlatform || v.Platforms?.[0]?.ID || '');
         setModelActive(v.ActiveModel ?? '');
       })
       .catch(() => {});
@@ -381,19 +406,210 @@ export default function Settings() {
     }
   };
 
-  const applyPreset = (id: string, forceModels: boolean) => {
-    setModelPreset(id);
+  // presetLabel：已知预设译为当前语言名称（preset.<id>.name），未知预设显示原始标识
+  const presetLabel = (preset: string): string => {
+    if (!preset) return '';
+    const key = `preset.${preset}.name`;
+    return i18n.exists(key) ? (i18n.t(key) as string) : preset;
+  };
+
+  // openPlatEditor：进入平台编辑态；p 缺省为新增（新 UUID），否则沿用原平台字段。
+  // 密钥不回填明文：APIKey 留空=保持原值。
+  const openPlatEditor = (p?: ModelPlatformView) => {
+    setPlatNameError('');
+    setModelNewModel('');
+    setModelFetched(null);
+    setModelFetchErrors([]);
+    setModelFetchedFilter('');
     setModelDirtyHint(false);
-    if (id === 'custom') return;
-    const p = presets.find((x) => x.ID === id);
-    if (!p) return;
-    setModelOpenAIURL(p.OpenAIBaseURL);
-    setModelAnthropicURL(p.AnthropicBaseURL);
-    // 推荐模型：强制（按钮）时总是加入列表并设为当前；切换预设时仅在列表为空时兜底。
-    if (p.RecommendedModel && (forceModels || (!modelModels.length && !modelActive))) {
-      setModelModels((prev) => (prev.includes(p.RecommendedModel) ? prev : [...prev, p.RecommendedModel]));
-      setModelActive(p.RecommendedModel);
-      setModelDirtyHint(true);
+    setPlatDraft(
+      p
+        ? {
+            ID: p.ID,
+            Name: p.Name,
+            Preset: p.Preset || 'custom',
+            OpenAIBaseURL: p.OpenAIBaseURL,
+            AnthropicBaseURL: p.AnthropicBaseURL,
+            APIKey: '',
+            ClearAPIKey: false,
+            Models: [...(p.Models ?? [])],
+            APIKeySet: p.APIKeySet,
+            IsNew: false,
+          }
+        : {
+            ID: genPlatformID(),
+            Name: '',
+            Preset: 'custom',
+            OpenAIBaseURL: '',
+            AnthropicBaseURL: '',
+            APIKey: '',
+            ClearAPIKey: false,
+            Models: [],
+            APIKeySet: false,
+            IsNew: true,
+          },
+    );
+  };
+
+  const closePlatEditor = () => {
+    setPlatDraft(null);
+    setPlatNameError('');
+    setModelNewModel('');
+    setModelFetched(null);
+    setModelFetchErrors([]);
+    setModelFetchedFilter('');
+  };
+
+  // applyPlatPreset：预设作用到编辑中的平台——填双 URL；
+  // 推荐模型：强制（按钮）时未含即加入，切换预设时仅在列表为空时兜底。
+  const applyPlatPreset = (id: string, forceModels: boolean) => {
+    if (!platDraft) return;
+    setModelDirtyHint(false);
+    const next = { ...platDraft, Preset: id };
+    if (id !== 'custom') {
+      const p = presets.find((x) => x.ID === id);
+      if (p) {
+        next.OpenAIBaseURL = p.OpenAIBaseURL;
+        next.AnthropicBaseURL = p.AnthropicBaseURL;
+        if (
+          p.RecommendedModel &&
+          (forceModels ? !next.Models.includes(p.RecommendedModel) : !next.Models.length)
+        ) {
+          next.Models = [...next.Models, p.RecommendedModel];
+          setModelDirtyHint(true);
+        }
+      }
+    }
+    setPlatDraft(next);
+  };
+
+  // handleSetDefault：本地改默认平台，随下一次整包保存落盘；
+  // 换默认平台后原默认模型可能不属于新平台（悬空会被注入），同步清掉。
+  const handleSetDefault = (id: string) => {
+    setModelDefault(id);
+    const target = modelPlatforms.find((p) => p.ID === id);
+    if (target && target.Models.length > 0 && !target.Models.includes(modelActive)) {
+      setModelActive('');
+    }
+    setModelDirtyHint(true);
+  };
+
+  // handleDeletePlatform：window.confirm 确认后本地移除；删的是默认平台时清空选择
+  //（后端回落第一个），并同步清掉不属于新默认平台的默认模型。
+  const handleDeletePlatform = (p: ModelPlatformView) => {
+    if (!window.confirm(t('ui.settings.model.delete_confirm', { 0: p.Name }))) return;
+    const rest = modelPlatforms.filter((x) => x.ID !== p.ID);
+    setModelPlatforms(rest);
+    const newDefault = modelDefault === p.ID ? '' : modelDefault;
+    setModelDefault(newDefault);
+    const target = rest.find((x) => x.ID === newDefault) ?? rest[0];
+    if (target && target.Models.length > 0 && !target.Models.includes(modelActive)) {
+      setModelActive('');
+    }
+    setModelDirtyHint(true);
+  };
+
+  // mergeDraftPlatforms：把编辑中的平台按 ID 合并进列表并转成提交结构；
+  // 已存在平台不携带密钥（APIKey 空串=后端保持原值）。
+  const mergeDraftPlatforms = (): ModelPlatformInput[] => {
+    const draftInput: ModelPlatformInput | null = platDraft
+      ? {
+          ID: platDraft.ID,
+          Name: platDraft.Name.trim(),
+          Preset: platDraft.Preset,
+          OpenAIBaseURL: platDraft.OpenAIBaseURL.trim(),
+          AnthropicBaseURL: platDraft.AnthropicBaseURL.trim(),
+          APIKey: platDraft.APIKey,
+          ClearAPIKey: platDraft.ClearAPIKey,
+          Models: [...platDraft.Models],
+        }
+      : null;
+    const inputs = modelPlatforms.map((p) =>
+      p.ID === platDraft?.ID && draftInput
+        ? draftInput
+        : {
+            ID: p.ID,
+            Name: p.Name,
+            Preset: p.Preset,
+            OpenAIBaseURL: p.OpenAIBaseURL.trim(),
+            AnthropicBaseURL: p.AnthropicBaseURL.trim(),
+            APIKey: '',
+            ClearAPIKey: false,
+            Models: [...p.Models],
+          },
+    );
+    if (draftInput && platDraft && !modelPlatforms.some((p) => p.ID === platDraft.ID)) {
+      inputs.push(draftInput);
+    }
+    return inputs;
+  };
+
+  const handleSaveModel = async () => {
+    if (modelSaving) return;
+    // 前端校验：编辑中的平台名称必填（后端同 key 校验兜底，前端拦截省一次往返）
+    if (platDraft && !platDraft.Name.trim()) {
+      setPlatNameError(t('ui.settings.model.platform_name_required'));
+      return;
+    }
+    const platforms = mergeDraftPlatforms();
+    setModelSaving(true);
+    try {
+      await setModelConfig({
+        Enabled: modelEnabled,
+        Platforms: platforms,
+        DefaultPlatform: modelDefault,
+        ActiveModel: modelActive.trim(),
+      });
+      // 保存后重拉：密钥设置状态只在后端有真相；重拉失败不影响已成功的保存
+      try {
+        const v = await getModelConfig();
+        setModelPlatforms(v.Platforms ?? []);
+        setModelDefault(v.DefaultPlatform || v.Platforms?.[0]?.ID || '');
+        setModelActive(v.ActiveModel ?? '');
+      } catch {
+        // 忽略：保存已成功，仅回显失败
+      }
+      closePlatEditor();
+      setModelDirtyHint(false);
+      notify(t('ui.settings.model.saved'), 'info');
+    } catch (e: unknown) {
+      notify(backendError(e), 'error');
+    } finally {
+      setModelSaving(false);
+    }
+  };
+
+  // addToPlatModels：TrimSpace、去空、去重后追加进编辑中平台的模型列表。
+  const addToPlatModels = (raw: string) => {
+    if (!platDraft) return;
+    const v = raw.trim();
+    if (!v || platDraft.Models.includes(v)) return;
+    setPlatDraft({ ...platDraft, Models: [...platDraft.Models, v] });
+  };
+
+  const handleAddModel = () => {
+    addToPlatModels(modelNewModel);
+    setModelNewModel('');
+  };
+
+  const handleFetchModels = async () => {
+    if (!platDraft || modelFetching) return;
+    setModelFetching(true);
+    setModelFetchedFilter('');
+    try {
+      const v = await fetchAvailableModels(
+        platDraft.ID,
+        platDraft.OpenAIBaseURL.trim(),
+        platDraft.AnthropicBaseURL.trim(),
+        platDraft.APIKey,
+      );
+      setModelFetched(v.Models);
+      setModelFetchErrors(v.Errors);
+    } catch (e: unknown) {
+      setModelFetched([]);
+      setModelFetchErrors([backendError(e)]);
+    } finally {
+      setModelFetching(false);
     }
   };
 
@@ -433,72 +649,6 @@ export default function Settings() {
       setYamlError(backendError(e));
     }
   };
-
-  const handleSaveModel = async () => {
-    if (modelSaving) return;
-    setModelSaving(true);
-    try {
-      await setModelConfig({
-        Enabled: modelEnabled,
-        Preset: modelPreset,
-        OpenAIBaseURL: modelOpenAIURL.trim(),
-        AnthropicBaseURL: modelAnthropicURL.trim(),
-        APIKey: modelApiKey,
-        ClearAPIKey: modelClearKey,
-        Models: modelModels,
-        ActiveModel: modelActive.trim(),
-      });
-      if (modelApiKey) setModelApiKeySet(true);
-      if (modelClearKey) setModelApiKeySet(false);
-      setModelApiKey('');
-      setModelClearKey(false);
-      setModelDirtyHint(false);
-      notify(t('ui.settings.model.saved'), 'info');
-    } catch (e: unknown) {
-      notify(backendError(e), 'error');
-    } finally {
-      setModelSaving(false);
-    }
-  };
-
-  // addToModelList：TrimSpace、去空、去重后追加进统一模型列表。
-  const addToModelList = (raw: string) => {
-    const v = raw.trim();
-    if (!v) return;
-    setModelModels((prev) => (prev.includes(v) ? prev : [...prev, v]));
-  };
-
-  const handleAddModel = () => {
-    addToModelList(modelNewModel);
-    setModelNewModel('');
-  };
-
-  const handleFetchModels = async () => {
-    if (modelFetching) return;
-    setModelFetching(true);
-    setModelFetchedFilter('');
-    try {
-      const v = await fetchAvailableModels();
-      setModelFetched(v.Models);
-      setModelFetchErrors(v.Errors);
-    } catch (e: unknown) {
-      setModelFetched([]);
-      setModelFetchErrors([backendError(e)]);
-    } finally {
-      setModelFetching(false);
-    }
-  };
-
-  // 拉取结果本地检索：大小写不敏感子串匹配；空过滤词时原样返回全部
-  const fetchedQuery = modelFetchedFilter.trim().toLowerCase();
-  const filteredFetched =
-    modelFetched === null
-      ? []
-      : fetchedQuery
-        ? modelFetched.filter((m) => m.toLowerCase().includes(fetchedQuery))
-        : modelFetched;
-
-  const busyAny = !!pendingId || !!job?.Running;
 
   const cmdPreview = (tool: ToolInfo, recipe: InstallRecipeView) => {
     if (!tool.BinPath) return recipe.InstallCmd;
@@ -543,6 +693,20 @@ export default function Settings() {
 
   const inputClass = 'rounded border border-input bg-card px-2 py-1 text-sm';
   const uninstallRecipe = uninstallTarget ? recipes[uninstallTarget.ID] : undefined;
+
+  // 拉取结果本地检索：大小写不敏感子串匹配；空过滤词时原样返回全部
+  const fetchedQuery = modelFetchedFilter.trim().toLowerCase();
+  const filteredFetched =
+    modelFetched === null
+      ? []
+      : fetchedQuery
+        ? modelFetched.filter((m) => m.toLowerCase().includes(fetchedQuery))
+        : modelFetched;
+
+  const busyAny = !!pendingId || !!job?.Running;
+
+  // 默认平台的模型列表供「默认模型」下拉使用；modelDefault 缺失时回落第一个平台
+  const defaultPlat = modelPlatforms.find((p) => p.ID === modelDefault) ?? modelPlatforms[0];
 
   // 语言选项：内置三项 + 外部语言包（label 用包内 $name，缺省回退语言码）；
   // 配置值不在任何选项里（如外部包被删）时兜底追加该 code，保证选中态可见。
@@ -826,201 +990,294 @@ export default function Settings() {
                 {t('ui.settings.model.enable')}
               </label>
               <div className="grid gap-2">
-                <label className="text-xs text-muted-foreground" htmlFor="model-preset">
-                  {t('ui.settings.model.preset')}
-                </label>
-                <select
-                  id="model-preset"
-                  aria-label={t('ui.settings.model.preset')}
-                  className={inputClass}
-                  value={modelPreset}
-                  onChange={(e) => applyPreset(e.target.value, false)}
-                >
-                  {presets.map((p) => (
-                    <option key={p.ID} value={p.ID}>
-                      {translateBackend(p.Name)}
-                      {p.Note ? ` — ${translateBackend(p.Note)}` : ''}
-                    </option>
-                  ))}
-                </select>
-                {modelDirtyHint && (
-                  <p className="text-xs text-muted-foreground">{t('ui.settings.model.dirty')}</p>
-                )}
-                <label className="text-xs text-muted-foreground" htmlFor="model-openai-url">
-                  OpenAI Base URL
-                </label>
-                <input
-                  id="model-openai-url"
-                  aria-label="OpenAI Base URL"
-                  className={inputClass}
-                  placeholder="https://..."
-                  value={modelOpenAIURL}
-                  onChange={(e) => {
-                    setModelOpenAIURL(e.target.value);
-                    setModelDirtyHint(true);
-                  }}
-                />
-                <label className="text-xs text-muted-foreground" htmlFor="model-anthropic-url">
-                  Anthropic Base URL
-                </label>
-                <input
-                  id="model-anthropic-url"
-                  aria-label="Anthropic Base URL"
-                  className={inputClass}
-                  placeholder="https://..."
-                  value={modelAnthropicURL}
-                  onChange={(e) => {
-                    setModelAnthropicURL(e.target.value);
-                    setModelDirtyHint(true);
-                  }}
-                />
-                <label className="text-xs text-muted-foreground" htmlFor="model-api-key">
-                  {t('ui.settings.model.api_key')}
-                </label>
-                <input
-                  id="model-api-key"
-                  aria-label={t('ui.settings.model.api_key')}
-                  type="password"
-                  className={inputClass}
-                  placeholder={
-                    modelApiKeySet
-                      ? t('ui.settings.model.api_key_set')
-                      : t('ui.settings.model.api_key_unset')
-                  }
-                  value={modelApiKey}
-                  onChange={(e) => setModelApiKey(e.target.value)}
-                />
-                <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <input
-                    type="checkbox"
-                    checked={modelClearKey}
-                    onChange={(e) => setModelClearKey(e.target.checked)}
-                    aria-label={t('ui.settings.model.clear_key')}
-                  />
-                  {t('ui.settings.model.clear_key')}
-                </label>
                 <label className="text-xs text-muted-foreground" htmlFor="model-active">
                   {t('ui.settings.model.active_model')}
                 </label>
-                <input
+                <select
                   id="model-active"
                   aria-label={t('ui.settings.model.active_model')}
                   className={inputClass}
-                  list="model-list-options"
                   value={modelActive}
-                  onChange={(e) => {
-                    setModelActive(e.target.value);
-                    setModelDirtyHint(true);
-                  }}
-                />
-                <datalist id="model-list-options">
-                  {modelModels.map((m) => (
-                    <option key={m} value={m} />
+                  onChange={(e) => setModelActive(e.target.value)}
+                >
+                  {(defaultPlat?.Models ?? []).map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
                   ))}
-                </datalist>
-                <p className="text-xs text-muted-foreground">{t('ui.settings.model.models')}</p>
-                {modelModels.length === 0 && (
+                </select>
+                {(!defaultPlat || defaultPlat.Models.length === 0) && (
                   <p className="text-xs text-muted-foreground">{t('ui.settings.model.models_empty')}</p>
                 )}
-                <ul className="grid gap-1">
-                  {modelModels.map((m) => (
-                    <li key={m} className="flex items-center gap-2 text-sm">
-                      <span className="flex-1 truncate" title={m}>{m}</span>
-                      <Button
-                        variant="secondary"
-                        type="button"
-                        disabled={modelActive === m}
-                        onClick={() => {
-                          setModelActive(m);
-                          setModelDirtyHint(true);
-                        }}
-                      >
-                        {t('ui.settings.model.set_active')}
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        type="button"
-                        onClick={() => {
-                          setModelModels((prev) => prev.filter((x) => x !== m));
-                          setModelDirtyHint(true);
-                        }}
-                      >
-                        {t('ui.settings.model.remove')}
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-                <div className="flex gap-2">
-                  <input
-                    aria-label={t('ui.settings.model.add_model')}
-                    placeholder={t('ui.settings.model.add_model')}
-                    className={inputClass}
-                    value={modelNewModel}
-                    onChange={(e) => setModelNewModel(e.target.value)}
-                  />
-                  <Button type="button" onClick={handleAddModel}>
-                    {t('ui.settings.model.add')}
-                  </Button>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button type="button" variant="secondary" disabled={modelFetching} onClick={() => void handleFetchModels()}>
-                    {modelFetching ? t('ui.settings.model.fetching') : t('ui.settings.model.fetch_models')}
-                  </Button>
-                  <span className="text-xs text-muted-foreground">{t('ui.settings.model.fetch_hint')}</span>
-                </div>
-                {modelFetchErrors.length > 0 && (
-                  <ul className="text-xs text-warning">
-                    {modelFetchErrors.map((k) => (
-                      <li key={k}>{translateBackend(k)}</li>
+
+                {modelPlatforms.length === 0 && (
+                  <p className="text-xs text-muted-foreground">{t('ui.settings.model.platforms_empty')}</p>
+                )}
+                {modelPlatforms.length > 0 && (
+                  <ul className="grid gap-2">
+                    {modelPlatforms.map((p) => (
+                      <li key={p.ID} className="rounded border border-border p-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="truncate text-sm font-medium">{p.Name}</span>
+                            {p.IsDefault || p.ID === modelDefault ? (
+                              <Badge>{t('ui.settings.model.default_badge')}</Badge>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                type="button"
+                                disabled={!!platDraft}
+                                onClick={() => handleSetDefault(p.ID)}
+                              >
+                                {t('ui.settings.model.set_default')}
+                              </Button>
+                            )}
+                          </div>
+                          <div className="flex shrink-0 gap-1">
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              type="button"
+                              disabled={!!platDraft}
+                              onClick={() => openPlatEditor(p)}
+                            >
+                              {t('ui.settings.model.edit_platform')}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              type="button"
+                              disabled={!!platDraft}
+                              onClick={() => handleDeletePlatform(p)}
+                            >
+                              {t('ui.settings.model.delete_platform')}
+                            </Button>
+                          </div>
+                        </div>
+                        <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
+                          {p.OpenAIBaseURL || '…'} / {p.AnthropicBaseURL || '…'}
+                        </p>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                          {p.Preset && <span>{presetLabel(p.Preset)}</span>}
+                          <span>
+                            {p.APIKeySet
+                              ? t('ui.settings.model.api_key_set')
+                              : t('ui.settings.model.api_key_unset')}
+                          </span>
+                          <span>{t('ui.settings.model.models_count', { 0: p.Models.length })}</span>
+                        </div>
+                      </li>
                     ))}
                   </ul>
                 )}
-                {modelFetched !== null && (
-                  <>
-                    <input
-                      type="search"
-                      className={inputClass}
-                      placeholder={t('ui.settings.model.fetch_filter_placeholder')}
-                      aria-label={t('ui.settings.model.fetch_filter_placeholder')}
-                      value={modelFetchedFilter}
-                      onChange={(e) => setModelFetchedFilter(e.target.value)}
-                    />
-                    <ul
-                      data-testid="model-fetch-list"
-                      className="grid max-h-64 gap-1 overflow-y-auto rounded border border-border p-1"
-                    >
-                      {modelFetched.length === 0 && modelFetchErrors.length === 0 && (
-                        <li className="px-1 text-xs text-muted-foreground">{t('ui.settings.model.fetch_empty')}</li>
-                      )}
-                      {modelFetched.length > 0 && filteredFetched.length === 0 && (
-                        <li className="px-1 text-xs text-muted-foreground">
-                          {t('ui.settings.model.fetch_filter_empty')}
-                        </li>
-                      )}
-                      {filteredFetched.map((m) => (
-                        <li key={m} className="flex items-center gap-2 text-sm">
-                          <span className="flex-1 truncate" title={m}>{m}</span>
-                          {!modelModels.includes(m) && (
-                            <Button variant="secondary" type="button" onClick={() => addToModelList(m)}>
-                              {t('ui.settings.model.add')}
-                            </Button>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                )}
-                <div className="flex flex-wrap gap-2">
-                  <Button onClick={() => void handleSaveModel()} disabled={modelSaving}>
-                    {t('ui.settings.model.save')}
-                  </Button>
+                <div>
                   <Button
                     variant="secondary"
                     type="button"
-                    disabled={modelPreset === 'custom'}
-                    onClick={() => applyPreset(modelPreset, true)}
+                    disabled={!!platDraft}
+                    onClick={() => openPlatEditor()}
                   >
-                    {t('ui.settings.model.apply_recommended')}
+                    {t('ui.settings.model.add_platform')}
+                  </Button>
+                </div>
+
+                {platDraft && (
+                  <div className="mt-1 grid gap-2 rounded border border-border bg-background p-2.5">
+                    <p className="text-sm font-medium">{t('ui.settings.model.edit_platform')}</p>
+                    <label className="text-xs text-muted-foreground" htmlFor="platform-name">
+                      {t('ui.settings.model.platform_name')}
+                    </label>
+                    <input
+                      id="platform-name"
+                      aria-label={t('ui.settings.model.platform_name')}
+                      className={inputClass}
+                      placeholder={t('ui.settings.model.platform_name_placeholder')}
+                      value={platDraft.Name}
+                      onChange={(e) => {
+                        setPlatDraft({ ...platDraft, Name: e.target.value });
+                        setPlatNameError('');
+                      }}
+                    />
+                    {platNameError && <p className="text-xs text-destructive">{platNameError}</p>}
+                    <label className="text-xs text-muted-foreground" htmlFor="platform-preset">
+                      {t('ui.settings.model.preset')}
+                    </label>
+                    <select
+                      id="platform-preset"
+                      aria-label={t('ui.settings.model.preset')}
+                      className={inputClass}
+                      value={platDraft.Preset}
+                      onChange={(e) => applyPlatPreset(e.target.value, false)}
+                    >
+                      {presets.map((p) => (
+                        <option key={p.ID} value={p.ID}>
+                          {translateBackend(p.Name)}
+                          {p.Note ? ` — ${translateBackend(p.Note)}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    {modelDirtyHint && (
+                      <p className="text-xs text-muted-foreground">{t('ui.settings.model.dirty')}</p>
+                    )}
+                    <label className="text-xs text-muted-foreground" htmlFor="model-openai-url">
+                      {t('ui.settings.model.openai_base_url')}
+                    </label>
+                    <input
+                      id="model-openai-url"
+                      aria-label={t('ui.settings.model.openai_base_url')}
+                      className={inputClass}
+                      placeholder="https://..."
+                      value={platDraft.OpenAIBaseURL}
+                      onChange={(e) => {
+                        setPlatDraft({ ...platDraft, OpenAIBaseURL: e.target.value });
+                        setModelDirtyHint(true);
+                      }}
+                    />
+                    <label className="text-xs text-muted-foreground" htmlFor="model-anthropic-url">
+                      {t('ui.settings.model.anthropic_base_url')}
+                    </label>
+                    <input
+                      id="model-anthropic-url"
+                      aria-label={t('ui.settings.model.anthropic_base_url')}
+                      className={inputClass}
+                      placeholder="https://..."
+                      value={platDraft.AnthropicBaseURL}
+                      onChange={(e) => {
+                        setPlatDraft({ ...platDraft, AnthropicBaseURL: e.target.value });
+                        setModelDirtyHint(true);
+                      }}
+                    />
+                    <label className="text-xs text-muted-foreground" htmlFor="model-api-key">
+                      {t('ui.settings.model.api_key')}
+                    </label>
+                    <input
+                      id="model-api-key"
+                      aria-label={t('ui.settings.model.api_key')}
+                      type="password"
+                      className={inputClass}
+                      placeholder={
+                        !platDraft.IsNew && platDraft.APIKeySet
+                          ? t('ui.settings.model.api_key_keep_hint')
+                          : t('ui.settings.model.api_key_unset')
+                      }
+                      value={platDraft.APIKey}
+                      onChange={(e) => setPlatDraft({ ...platDraft, APIKey: e.target.value })}
+                    />
+                    {!platDraft.IsNew && platDraft.APIKeySet && (
+                      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          checked={platDraft.ClearAPIKey}
+                          onChange={(e) => setPlatDraft({ ...platDraft, ClearAPIKey: e.target.checked })}
+                          aria-label={t('ui.settings.model.clear_key')}
+                        />
+                        {t('ui.settings.model.clear_key')}
+                      </label>
+                    )}
+                    <p className="text-xs text-muted-foreground">{t('ui.settings.model.models')}</p>
+                    {platDraft.Models.length === 0 && (
+                      <p className="text-xs text-muted-foreground">{t('ui.settings.model.models_empty')}</p>
+                    )}
+                    <ul className="grid gap-1">
+                      {platDraft.Models.map((m) => (
+                        <li key={m} className="flex items-center gap-2 text-sm">
+                          <span className="flex-1 truncate" title={m}>{m}</span>
+                          <Button
+                            variant="secondary"
+                            type="button"
+                            onClick={() => {
+                              setPlatDraft({
+                                ...platDraft,
+                                Models: platDraft.Models.filter((x) => x !== m),
+                              });
+                              setModelDirtyHint(true);
+                            }}
+                          >
+                            {t('ui.settings.model.remove')}
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="flex gap-2">
+                      <input
+                        aria-label={t('ui.settings.model.add_model')}
+                        placeholder={t('ui.settings.model.add_model')}
+                        className={inputClass}
+                        value={modelNewModel}
+                        onChange={(e) => setModelNewModel(e.target.value)}
+                      />
+                      <Button type="button" onClick={handleAddModel}>
+                        {t('ui.settings.model.add')}
+                      </Button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button type="button" variant="secondary" disabled={modelFetching} onClick={() => void handleFetchModels()}>
+                        {modelFetching ? t('ui.settings.model.fetching') : t('ui.settings.model.fetch_models')}
+                      </Button>
+                      <span className="text-xs text-muted-foreground">{t('ui.settings.model.fetch_hint')}</span>
+                    </div>
+                    {modelFetchErrors.length > 0 && (
+                      <ul className="text-xs text-warning">
+                        {modelFetchErrors.map((k) => (
+                          <li key={k}>{translateBackend(k)}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {modelFetched !== null && (
+                      <>
+                        <input
+                          type="search"
+                          className={inputClass}
+                          placeholder={t('ui.settings.model.fetch_filter_placeholder')}
+                          aria-label={t('ui.settings.model.fetch_filter_placeholder')}
+                          value={modelFetchedFilter}
+                          onChange={(e) => setModelFetchedFilter(e.target.value)}
+                        />
+                        <ul
+                          data-testid="model-fetch-list"
+                          className="grid max-h-64 gap-1 overflow-y-auto rounded border border-border p-1"
+                        >
+                          {modelFetched.length === 0 && modelFetchErrors.length === 0 && (
+                            <li className="px-1 text-xs text-muted-foreground">{t('ui.settings.model.fetch_empty')}</li>
+                          )}
+                          {modelFetched.length > 0 && filteredFetched.length === 0 && (
+                            <li className="px-1 text-xs text-muted-foreground">
+                              {t('ui.settings.model.fetch_filter_empty')}
+                            </li>
+                          )}
+                          {filteredFetched.map((m) => (
+                            <li key={m} className="flex items-center gap-2 text-sm">
+                              <span className="flex-1 truncate" title={m}>{m}</span>
+                              {!platDraft.Models.includes(m) && (
+                                <Button variant="secondary" type="button" onClick={() => addToPlatModels(m)}>
+                                  {t('ui.settings.model.add')}
+                                </Button>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="secondary"
+                        type="button"
+                        disabled={platDraft.Preset === 'custom'}
+                        onClick={() => applyPlatPreset(platDraft.Preset, true)}
+                      >
+                        {t('ui.settings.model.apply_recommended')}
+                      </Button>
+                      <Button variant="secondary" type="button" onClick={closePlatEditor}>
+                        {t('ui.settings.tools.cancel')}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-1 flex flex-wrap gap-2">
+                  <Button onClick={() => void handleSaveModel()} disabled={modelSaving}>
+                    {t('ui.settings.model.save')}
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">{t('ui.settings.model.desc')}</p>

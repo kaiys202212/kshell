@@ -388,27 +388,45 @@ export interface OpenedSession {
   Fallback?: string;
 }
 
-// desktop.ModelConfigView 的 JSON 形态（internal/desktop/settings.go）：
-// 密钥不回传明文，只以 APIKeySet 表示是否已设置。
-export interface ModelConfigView {
-  Enabled: boolean;
+// desktop.ModelPlatformView 的 JSON 形态（internal/desktop/settings.go）：
+// 单个模型平台；密钥不回传明文，只以 APIKeySet 表示是否已设置。
+export interface ModelPlatformView {
+  ID: string;
+  Name: string;
   Preset: string;
   OpenAIBaseURL: string;
   AnthropicBaseURL: string;
   Models: string[];
-  ActiveModel: string;
   APIKeySet: boolean;
+  IsDefault: boolean;
 }
 
-// desktop.ModelConfigInput 的 JSON 形态：APIKey 留空表示不修改，ClearAPIKey 为真时清除。
-export interface ModelConfigInput {
+// desktop.ModelConfigView 的 JSON 形态：平台列表 + 全局默认平台/模型。
+export interface ModelConfigView {
   Enabled: boolean;
+  Platforms: ModelPlatformView[];
+  DefaultPlatform: string;
+  ActiveModel: string;
+}
+
+// desktop.ModelPlatformInput 的 JSON 形态：APIKey 留空表示不修改（仅对已存在平台），
+// ClearAPIKey 为真时显式清除。
+export interface ModelPlatformInput {
+  ID: string;
+  Name: string;
   Preset: string;
   OpenAIBaseURL: string;
   AnthropicBaseURL: string;
   APIKey: string;
   ClearAPIKey: boolean;
   Models: string[];
+}
+
+// desktop.ModelConfigInput 的 JSON 形态：整体保存语义，输入列表不含的平台即删除。
+export interface ModelConfigInput {
+  Enabled: boolean;
+  Platforms: ModelPlatformInput[];
+  DefaultPlatform: string;
   ActiveModel: string;
 }
 
@@ -625,7 +643,7 @@ interface AppBindings {
   GetModelConfig(): Promise<ModelConfigView>;
   SetModelConfig(input: ModelConfigInput): Promise<void>;
   ListModelPresets(): Promise<ModelPreset[]>;
-  FetchAvailableModels(): Promise<ModelsFetchView>;
+  FetchAvailableModels(platformID: string, openaiURL: string, anthropicURL: string, apiKey: string): Promise<ModelsFetchView>;
   GetSessionMode(): Promise<string>;
   SetSessionMode(mode: string): Promise<void>;
   GetPermissionMode(): Promise<string>;
@@ -1825,24 +1843,22 @@ export async function setCloseBehavior(mode: string): Promise<void> {
 
 // ---- 模型配置 ----
 
-// getModelConfig 返回模型注入配置（密钥只回传是否已设置的布尔）；绑定不可用时兜底空配置。
+// getModelConfig 返回模型注入配置（多平台列表；密钥只回传是否已设置的布尔）；绑定不可用时兜底空配置。
 export async function getModelConfig(): Promise<ModelConfigView> {
   const a = app();
   if (!a) {
-  return {
+    return {
       Enabled: false,
-      Preset: '',
-      OpenAIBaseURL: '',
-      AnthropicBaseURL: '',
-      Models: [],
+      Platforms: [],
+      DefaultPlatform: '',
       ActiveModel: '',
-      APIKeySet: false,
     };
   }
   return a.GetModelConfig();
 }
 
-// setModelConfig 保存模型注入配置（APIKey 留空不改、ClearAPIKey 为真清除），错误向上抛。
+// setModelConfig 保存模型注入配置（整体保存：列表不含的平台即删除；
+// APIKey 留空不改、ClearAPIKey 为真清除），错误向上抛。
 export async function setModelConfig(input: ModelConfigInput): Promise<void> {
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
@@ -1855,10 +1871,16 @@ export async function listModelPresets(): Promise<ModelPreset[]> {
   return a.ListModelPresets();
 }
 
-export async function fetchAvailableModels(): Promise<ModelsFetchView> {
+// fetchAvailableModels 用表单当前值直拉双端点；platformID 仅作后端日志标识，不参与拉取。
+export async function fetchAvailableModels(
+  platformID: string,
+  openaiURL: string,
+  anthropicURL: string,
+  apiKey: string,
+): Promise<ModelsFetchView> {
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
-  return a.FetchAvailableModels();
+  return a.FetchAvailableModels(platformID, openaiURL, anthropicURL, apiKey);
 }
 
 export async function getSessionMode(): Promise<string> {

@@ -477,9 +477,9 @@ func (a *App) ListChatModels(id string) (chat.ModelsView, error) {
 // modelsView 取某会话的合并模型视图；agent 未报告时返回空切片视图
 //（nil 会序列化成 null，前端 models.Models.find 会抛 TypeError 白屏）。
 // ListChatModels 与 chat:models 推送共用。入口别名解析：重建后前端持旧 ID
-// 也能查到新会话。agent 上报的列表会与 kshell 配置的模型列表合并（配置模型
-// 是注入通道的实际取值域，agent 自报列表里不会有它们；缺失项以 ID=Name=model
-// 追加，去重）。
+// 也能查到新会话。agent 上报的列表会与 kshell 配置的平台模型合并（配置模型
+// 是注入通道的实际取值域，agent 自报列表里不会有它们；单平台裸名、多平台
+// 加前缀追加，去重，详见 mergeConfigModels）。
 func (a *App) modelsView(id string) (chat.ModelsView, error) {
 	m := a.chats()
 	if m == nil {
@@ -494,40 +494,127 @@ func (a *App) modelsView(id string) (chat.ModelsView, error) {
 }
 
 // mergeConfigModels 把 kshell 配置的模型列表并入 agent 上报视图：
-// 已存在（按 ID）跳过；agent 无视图时以 Current=ActiveModel 返回配置列表。
+// 已存在（按 ID）跳过；数据源为配置的平台列表。单平台保持裸名
+//（ID=Name=model，向后兼容旧保存的 modelId）；多平台加
+// "kshell:<platID>:<model>" 前缀，默认平台条目排最前，其余按列表顺序。
 func (a *App) mergeConfigModels(v chat.ModelsView) chat.ModelsView {
 	cfg := a.snapshot().Config.Model
-	if !cfg.Enabled || len(cfg.Models) == 0 {
+	if !cfg.Enabled || len(cfg.Platforms) == 0 {
 		return v
 	}
 	seen := make(map[string]bool, len(v.Models))
 	for _, mo := range v.Models {
 		seen[mo.ID] = true
 	}
-	merged := make([]chat.ModelView, 0, len(v.Models)+len(cfg.Models))
-	merged = append(merged, v.Models...)
-	for _, name := range cfg.Models {
-		name = strings.TrimSpace(name)
-		if name == "" || seen[name] {
+	add := func(id, name string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		v.Models = append(v.Models, chat.ModelView{ID: id, Name: name})
+	}
+	if len(cfg.Platforms) == 1 {
+		for _, name := range cfg.Platforms[0].Models {
+			name = strings.TrimSpace(name)
+			add(name, name)
+		}
+		if v.Current == "" {
+			v.Current = cfg.ActiveModel
+		}
+		return v
+	}
+	// 多平台：默认平台排最前（命中 DefaultPlatform，否则第一个），其余按列表顺序。
+	def, _ := cfg.ActivePlatform()
+	var defPlat *config.ModelPlatform
+	rest := make([]config.ModelPlatform, 0, len(cfg.Platforms))
+	for _, p := range cfg.Platforms {
+		if p.ID == def.ID && defPlat == nil {
+			pc := p
+			defPlat = &pc
 			continue
 		}
-		merged = append(merged, chat.ModelView{ID: name, Name: name})
+		rest = append(rest, p)
 	}
-	out := chat.ModelsView{Current: v.Current, Models: merged}
-	if out.Current == "" {
-		out.Current = cfg.ActiveModel
+	ordered := rest
+	if defPlat != nil {
+		ordered = append([]config.ModelPlatform{*defPlat}, rest...)
 	}
-	return out
+	for _, p := range ordered {
+		for _, name := range p.Models {
+			name = strings.TrimSpace(name)
+			add("kshell:"+p.ID+":"+name, p.Name+": "+name)
+		}
+	}
+	// Current 空时回落：ActiveModel 能对应到某平台模型则取该条目的前缀 ID。
+	// 按默认平台优先的全体平台顺序搜索（不止默认平台）：ActiveModel 可能是
+	// 上一次会话内跨平台切换留下的、属于非默认平台的模型名。
+	if v.Current == "" && cfg.ActiveModel != "" {
+		for _, p := range ordered {
+			for _, name := range p.Models {
+				if strings.TrimSpace(name) == cfg.ActiveModel {
+					v.Current = "kshell:" + p.ID + ":" + cfg.ActiveModel
+					return v
+				}
+			}
+		}
+	}
+	return v
+}
+
+// splitKshellModelID 解析下拉前缀 ID "kshell:<platID>:<model>"。
+// platID 是平台 ID（不含冒号），model 可能含冒号，因此去掉 "kshell:" 头后
+// 按第一个冒号切分，剩余全部视为 model。非前缀或 platID 为空返回 ok=false。
+func splitKshellModelID(id string) (platID, model string, ok bool) {
+	rest, found := strings.CutPrefix(id, "kshell:")
+	if !found {
+		return "", "", false
+	}
+	i := strings.Index(rest, ":")
+	if i <= 0 {
+		return "", "", false
+	}
+	model = rest[i+1:]
+	if model == "" {
+		// 畸形 ID（如 "kshell:plat:"）：空模型名不应下发给 SetModel，按透传容错。
+		return "", "", false
+	}
+	return rest[:i], model, true
 }
 
 // SetChatModel 运行时切换会话模型。入口别名解析同 ListChatModels。
+// 下拉前缀 ID 在转发前解析：默认平台只切模型；跨平台先落盘切换默认平台
+// 与活跃模型再切（保存失败则不切）；platID 已不在配置（配置删除后下拉
+// 缓存未刷）时原样透传容错，不崩、不误存。
 func (a *App) SetChatModel(id, modelID string) error {
 	m := a.chats()
 	if m == nil {
 		return errNotReady
 	}
 	resolved, _ := a.resolveChatID(id)
-	return m.SetModel(resolved, modelID)
+	platID, model, ok := splitKshellModelID(modelID)
+	if !ok {
+		return m.SetModel(resolved, modelID)
+	}
+	cfg := a.snapshot().Config.Model
+	found := false
+	for _, p := range cfg.Platforms {
+		if p.ID == platID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return m.SetModel(resolved, modelID)
+	}
+	if def, _ := cfg.ActivePlatform(); def.ID != platID {
+		if err := a.saveConfig(func(c *config.Config) {
+			c.Model.DefaultPlatform = platID
+			c.Model.ActiveModel = model
+		}); err != nil {
+			return err
+		}
+	}
+	return m.SetModel(resolved, model)
 }
 
 // ListChatCommands 返回会话最近的技能/命令列表（available_commands_update）。

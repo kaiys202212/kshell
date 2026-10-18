@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -22,14 +23,17 @@ type ModelsFetchView struct {
 // fetchTimeout 拉取模型列表的单请求超时。
 const fetchTimeout = 10 * time.Second
 
-// FetchAvailableModels 从已保存配置的 OpenAI 兼容端点与 Anthropic 端点并发拉取
-// 可用模型列表并合并去重。只信已保存配置（已过 URL 校验），不接受前端传 URL。
-func (a *App) FetchAvailableModels() (ModelsFetchView, error) {
-	m := a.snapshot().Config.Model
-	oaiURL := strings.TrimRight(m.OpenAIBaseURL, "/")
-	antURL := strings.TrimRight(m.AnthropicBaseURL, "/")
+// FetchAvailableModels 用前端传入的表单端点与密钥并发拉取 OpenAI 兼容端点与
+// Anthropic 端点的可用模型列表并合并去重（编辑未保存也能拉）。
+// platformID 当前仅透传日志/未来扩展用，不参与拉取。
+func (a *App) FetchAvailableModels(platformID, openaiURL, anthropicURL, apiKey string) (ModelsFetchView, error) {
+	oaiURL := strings.TrimRight(strings.TrimSpace(openaiURL), "/")
+	antURL := strings.TrimRight(strings.TrimSpace(anthropicURL), "/")
 	if oaiURL == "" && antURL == "" {
 		return ModelsFetchView{}, fmt.Errorf("err.model_fetch.no_endpoint")
+	}
+	if platformID != "" {
+		log.Printf("[model_fetch] 平台 %q 拉取模型列表", platformID)
 	}
 
 	var (
@@ -64,7 +68,7 @@ func (a *App) FetchAvailableModels() (ModelsFetchView, error) {
 		if oaiURL == "" {
 			return
 		}
-		list, err := fetchOpenAIModels(ctx, oaiURL, m.APIKey)
+		list, err := fetchOpenAIModels(ctx, oaiURL, apiKey)
 		if err != nil {
 			fail("err.model_fetch.openai_failed")
 			return
@@ -76,7 +80,7 @@ func (a *App) FetchAvailableModels() (ModelsFetchView, error) {
 		if antURL == "" {
 			return
 		}
-		list, err := fetchAnthropicModels(ctx, antURL, m.APIKey)
+		list, err := fetchAnthropicModels(ctx, antURL, apiKey)
 		if err != nil {
 			fail("err.model_fetch.anthropic_failed")
 			return

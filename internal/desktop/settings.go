@@ -111,58 +111,79 @@ func (a *App) LoadProvidersYAML() (string, error) {
 	return string(data), nil
 }
 
-// ModelConfigView 是回传前端的模型配置视图：绝不包含密钥明文。
-type ModelConfigView struct {
-	Enabled          bool     `json:"Enabled"`
+// ModelPlatformView 是回传前端的单平台视图：不含密钥明文。
+type ModelPlatformView struct {
+	ID               string   `json:"ID"`
+	Name             string   `json:"Name"`
 	Preset           string   `json:"Preset"`
 	OpenAIBaseURL    string   `json:"OpenAIBaseURL"`
 	AnthropicBaseURL string   `json:"AnthropicBaseURL"`
 	Models           []string `json:"Models"`
-	ActiveModel      string   `json:"ActiveModel"`
 	APIKeySet        bool     `json:"APIKeySet"`
+	IsDefault        bool     `json:"IsDefault"`
 }
 
-// ModelConfigInput 是前端提交的模型配置：APIKey 空串=保持原值，ClearAPIKey 显式清除。
-type ModelConfigInput struct {
-	Enabled          bool     `json:"Enabled"`
+// ModelConfigView 是回传前端的模型配置视图。
+type ModelConfigView struct {
+	Enabled         bool                `json:"Enabled"`
+	Platforms       []ModelPlatformView `json:"Platforms"`
+	DefaultPlatform string              `json:"DefaultPlatform"`
+	ActiveModel     string              `json:"ActiveModel"`
+}
+
+// ModelPlatformInput 是前端提交的单平台：APIKey 空串=保持原值（仅对已存在平台），ClearAPIKey 显式清除。
+type ModelPlatformInput struct {
+	ID               string   `json:"ID"`
+	Name             string   `json:"Name"`
 	Preset           string   `json:"Preset"`
 	OpenAIBaseURL    string   `json:"OpenAIBaseURL"`
 	AnthropicBaseURL string   `json:"AnthropicBaseURL"`
 	APIKey           string   `json:"APIKey"`
 	ClearAPIKey      bool     `json:"ClearAPIKey"`
 	Models           []string `json:"Models"`
-	ActiveModel      string   `json:"ActiveModel"`
+}
+
+// ModelConfigInput 是前端提交的模型配置：整体保存语义。
+type ModelConfigInput struct {
+	Enabled         bool                 `json:"Enabled"`
+	Platforms       []ModelPlatformInput `json:"Platforms"`
+	DefaultPlatform string               `json:"DefaultPlatform"`
+	ActiveModel     string               `json:"ActiveModel"`
 }
 
 func (a *App) GetModelConfig() (ModelConfigView, error) {
 	m := a.snapshot().Config.Model
-	models := m.Models
-	if models == nil {
-		models = []string{}
+	views := make([]ModelPlatformView, 0, len(m.Platforms))
+	for i, p := range m.Platforms {
+		models := p.Models
+		if models == nil {
+			models = []string{}
+		}
+		// 默认平台未显式指定时与 ActivePlatform() 一致回落第一个。
+		views = append(views, ModelPlatformView{
+			ID:               p.ID,
+			Name:             p.Name,
+			Preset:           p.Preset,
+			OpenAIBaseURL:    p.OpenAIBaseURL,
+			AnthropicBaseURL: p.AnthropicBaseURL,
+			Models:           models,
+			APIKeySet:        p.APIKey != "",
+			IsDefault:        p.ID == m.DefaultPlatform || (m.DefaultPlatform == "" && i == 0),
+		})
 	}
 	return ModelConfigView{
-		Enabled:          m.Enabled,
-		Preset:           m.Preset,
-		OpenAIBaseURL:    m.OpenAIBaseURL,
-		AnthropicBaseURL: m.AnthropicBaseURL,
-		Models:           models,
-		ActiveModel:      m.ActiveModel,
-		APIKeySet:        m.APIKey != "",
+		Enabled:         m.Enabled,
+		Platforms:       views,
+		DefaultPlatform: m.DefaultPlatform,
+		ActiveModel:     m.ActiveModel,
 	}, nil
 }
 
-func (a *App) SetModelConfig(in ModelConfigInput) error {
-	oai := strings.TrimSpace(in.OpenAIBaseURL)
-	ant := strings.TrimSpace(in.AnthropicBaseURL)
-	if err := validateHTTPURL(oai, "OpenAI Base URL"); err != nil {
-		return err
-	}
-	if err := validateHTTPURL(ant, "Anthropic Base URL"); err != nil {
-		return err
-	}
-	models := make([]string, 0, len(in.Models))
+// cleanModels 对模型 ID 列表 TrimSpace、去空串、去重并保持顺序。
+func cleanModels(in []string) []string {
+	models := make([]string, 0, len(in))
 	seen := map[string]bool{}
-	for _, v := range in.Models {
+	for _, v := range in {
 		v = strings.TrimSpace(v)
 		if v == "" || seen[v] {
 			continue
@@ -170,20 +191,106 @@ func (a *App) SetModelConfig(in ModelConfigInput) error {
 		seen[v] = true
 		models = append(models, v)
 	}
+	return models
+}
+
+// SetModelConfig 整包保存模型平台配置：输入列表即最终平台列表，
+// 未出现在输入中的既有平台视为删除；已存在平台 APIKey 空串=保留原值。
+func (a *App) SetModelConfig(in ModelConfigInput) error {
+	old := make(map[string]config.ModelPlatform, len(a.snapshot().Config.Model.Platforms))
+	for _, p := range a.snapshot().Config.Model.Platforms {
+		old[p.ID] = p
+	}
+
+	platforms := make([]config.ModelPlatform, 0, len(in.Platforms))
+	seen := map[string]bool{}
+	for _, pi := range in.Platforms {
+		name := strings.TrimSpace(pi.Name)
+		if name == "" {
+			return errors.New("err.settings.model_platform_name_required")
+		}
+		id := strings.TrimSpace(pi.ID)
+		if id == "" {
+			return errors.New("err.settings.model_platform_id_required")
+		}
+		if seen[id] {
+			return fmt.Errorf("err.settings.model_platform_id_duplicated|%s", id)
+		}
+		seen[id] = true
+		oai := strings.TrimSpace(pi.OpenAIBaseURL)
+		ant := strings.TrimSpace(pi.AnthropicBaseURL)
+		if err := validateHTTPURL(oai, fmt.Sprintf("%s OpenAI Base URL", name)); err != nil {
+			return err
+		}
+		if err := validateHTTPURL(ant, fmt.Sprintf("%s Anthropic Base URL", name)); err != nil {
+			return err
+		}
+		p := config.ModelPlatform{
+			ID:               id,
+			Name:             name,
+			Preset:           strings.TrimSpace(pi.Preset),
+			OpenAIBaseURL:    oai,
+			AnthropicBaseURL: ant,
+			APIKey:           pi.APIKey,
+			Models:           cleanModels(pi.Models),
+		}
+		if prev, ok := old[id]; ok {
+			switch {
+			case pi.ClearAPIKey:
+				p.APIKey = ""
+			case pi.APIKey == "":
+				p.APIKey = prev.APIKey
+			}
+		}
+		platforms = append(platforms, p)
+	}
+
+	// DefaultPlatform 必须命中某个平台，否则回落第一个；无平台则置空。
+	def := strings.TrimSpace(in.DefaultPlatform)
+	switch {
+	case def != "" && seen[def]:
+	case len(platforms) > 0:
+		def = platforms[0].ID
+	default:
+		def = ""
+	}
+
 	return a.saveConfig(func(c *config.Config) {
 		c.Model.Enabled = in.Enabled
-		c.Model.Preset = strings.TrimSpace(in.Preset)
-		c.Model.OpenAIBaseURL = oai
-		c.Model.AnthropicBaseURL = ant
-		c.Model.BaseURL = ""
-		c.Model.Models = models
+		c.Model.Platforms = platforms
+		c.Model.DefaultPlatform = def
 		c.Model.ActiveModel = strings.TrimSpace(in.ActiveModel)
-		switch {
-		case in.ClearAPIKey:
-			c.Model.APIKey = ""
-		case in.APIKey != "":
-			c.Model.APIKey = in.APIKey
+		// 默认模型必须属于默认平台，否则清空：悬空模型名会拿着新平台端点
+		// 注入一个不存在的模型（删默认平台 / 换默认平台后的典型悬空场景）。
+		// 默认平台未配模型列表时不校验（保留旧版自由输入模型名的用法）。
+		if c.Model.ActiveModel != "" && def != "" {
+			found := false
+			hasList := false
+			for _, p := range platforms {
+				if p.ID != def {
+					continue
+				}
+				hasList = len(p.Models) > 0
+				for _, m := range p.Models {
+					if m == c.Model.ActiveModel {
+						found = true
+						break
+					}
+				}
+				break
+			}
+			if hasList && !found {
+				c.Model.ActiveModel = ""
+			}
 		}
+		// 保存时清空全部 legacy 单平台字段，避免 Load 再迁移。
+		c.Model.Preset = ""
+		c.Model.OpenAIBaseURL = ""
+		c.Model.AnthropicBaseURL = ""
+		c.Model.BaseURL = ""
+		c.Model.APIKey = ""
+		c.Model.Models = nil
+		c.Model.Agents = nil
 	})
 }
 

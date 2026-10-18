@@ -775,12 +775,17 @@ func cursorLastModel(home string) string {
 	return id
 }
 
-// modelOptions 组装模型注入 resolver：未启用时返回空（不注入）。
+// modelOptions 组装模型注入 resolver：未启用或无可用平台时返回空（不注入）。
+// 端点与密钥取默认平台（DefaultPlatform 命中，否则第一个）。
 // codebuddy/cursor 优先沿用各自 CLI 记住的上次选择（用户在面板切过的模型），
 // 没有记录时回落 kshell 设置页的 ActiveModel；其他工具始终用 ActiveModel。
 func (a *App) modelOptions() launch.ModelOptions {
 	m := a.snapshot().Config.Model
 	if !m.Enabled {
+		return launch.ModelOptions{}
+	}
+	p, ok := m.ActivePlatform()
+	if !ok {
 		return launch.ModelOptions{}
 	}
 	return launch.ModelOptions{Resolver: func(toolID string) (providers.ModelConfig, bool) {
@@ -796,9 +801,9 @@ func (a *App) modelOptions() launch.ModelOptions {
 			}
 		}
 		return providers.ModelConfig{
-			OpenAIBaseURL:    m.OpenAIBaseURL,
-			AnthropicBaseURL: m.AnthropicBaseURL,
-			APIKey:           m.APIKey,
+			OpenAIBaseURL:    p.OpenAIBaseURL,
+			AnthropicBaseURL: p.AnthropicBaseURL,
+			APIKey:           p.APIKey,
 			Model:            model,
 		}, true
 	}}

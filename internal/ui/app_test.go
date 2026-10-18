@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 	"github.com/yangk/kshell/internal/appearance"
+	"github.com/yangk/kshell/internal/config"
 )
 
 func TestAppRendersThreeRegions(t *testing.T) {
@@ -29,6 +30,50 @@ func TestAppRendersThreeRegions(t *testing.T) {
 func TestViewNamesMatchViewCount(t *testing.T) {
 	if len(viewNames) != int(viewCount) {
 		t.Fatalf("viewNames(%d) 与 viewCount(%d) 不一致，加视图时两处都要改", len(viewNames), int(viewCount))
+	}
+}
+
+// TestModelOptionsPlatformInjection 覆盖 TUI 侧模型注入的平台语义：
+// 端点与密钥取默认平台（DefaultPlatform 命中，否则第一个），
+// 模型名用默认模型 ActiveModel；无平台或未启用时不注入。
+func TestModelOptionsPlatformInjection(t *testing.T) {
+	newWithModel := func(mc config.ModelConfig) Model {
+		return NewModelWith(Options{Config: config.Config{MaxDepth: 10, Model: mc}})
+	}
+
+	// DefaultPlatform 命中：注入该平台端点与密钥，模型取 ActiveModel。
+	m := newWithModel(config.ModelConfig{
+		Enabled:         true,
+		DefaultPlatform: "p1",
+		ActiveModel:     "glm-5",
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", OpenAIBaseURL: "https://oai/", AnthropicBaseURL: "https://ant/", APIKey: "k"},
+			{ID: "p2", OpenAIBaseURL: "https://oai2/", APIKey: "k2"},
+		},
+	})
+	mc, ok := m.modelOptions().Resolver("claude")
+	if !ok || mc.Model != "glm-5" || mc.OpenAIBaseURL != "https://oai/" || mc.AnthropicBaseURL != "https://ant/" || mc.APIKey != "k" {
+		t.Fatalf("resolver(claude) = %+v ok=%v", mc, ok)
+	}
+
+	// DefaultPlatform 为空：回落第一个平台。
+	m = newWithModel(config.ModelConfig{
+		Enabled:   true,
+		Platforms: []config.ModelPlatform{{ID: "p1", OpenAIBaseURL: "https://oai1/", APIKey: "k1"}},
+	})
+	mc, ok = m.modelOptions().Resolver("claude")
+	if !ok || mc.OpenAIBaseURL != "https://oai1/" || mc.APIKey != "k1" {
+		t.Fatalf("应回落第一个平台: %+v ok=%v", mc, ok)
+	}
+
+	// 启用但无平台 / 未启用：不注入。
+	for _, mc := range []config.ModelConfig{
+		{Enabled: true},
+		{Enabled: false, Platforms: []config.ModelPlatform{{ID: "p1"}}},
+	} {
+		if got := newWithModel(mc).modelOptions().Resolver; got != nil {
+			t.Fatalf("Enabled=%v Platforms=%d 不应注入", mc.Enabled, len(mc.Platforms))
+		}
 	}
 }
 
