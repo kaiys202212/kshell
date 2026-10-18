@@ -13,6 +13,7 @@ import (
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/hub"
+	"github.com/yangk/kshell/internal/hubtools"
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/requirements"
 )
@@ -343,6 +344,150 @@ func TestHandlePromptConfirm(t *testing.T) {
 	// 二次确认同一 pendingID 应报未知
 	if err := a.ConfirmHubTool(confirm.ChatID, extractPendingID(confirm.Text), true); err == nil {
 		t.Fatal("同一 pendingID 不应可重复消费")
+	}
+}
+
+// TestHandlePromptBusyDegrades 验证串行化：已有在途工具化对话时，第二条输入
+// 不触碰其 session/pending，直接返回 handled=false 落回原链路。
+func TestHandlePromptBusyDegrades(t *testing.T) {
+	release := make(chan struct{})
+	gotReq := make(chan struct{})
+	var once sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(gotReq) })
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"第一条的回复"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	a, store, rec := newBridgeTestApp(t)
+	a.opts.Config.Model.OpenAIBaseURL = srv.URL
+	a.opts.Config.Model.APIKey = "k-test"
+	a.opts.Config.Model.ActiveModel = "test-model"
+	a.opts.Config.AgentHub.RouteMode = config.RouteModeForceAuto
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+
+	h := a.hubTools()
+	if h == nil {
+		t.Fatal("就绪配置下 hubTools 不应为 nil")
+	}
+	done := make(chan struct{})
+	go func() {
+		handled, _ := h.HandlePrompt("s1", "第一条")
+		if !handled {
+			t.Error("第一条应被工具化消费")
+		}
+		close(done)
+	}()
+	<-gotReq
+	// 在途期间第二条：应拒绝（handled=false），且不等待第一条完成
+	second, _ := h.HandlePrompt("s1", "第二条")
+	if second {
+		t.Fatal("在途期间第二条输入不应被工具化消费")
+	}
+	close(release)
+	<-done
+	// 第二条未落盘（原链路接管后才会落）
+	for _, mm := range store.List() {
+		if mm.Kind == "user" && mm.Text == "第二条" {
+			t.Fatalf("第二条不应由 hubtools 落盘: %+v", mm)
+		}
+	}
+}
+
+// TestHandlePromptFailureClearsPending 验证 LLM 失败降级时清除在途会话与挂起：
+// 降级后 ConfirmHubTool 不可再消费从未展示的确认卡。
+func TestHandlePromptFailureClearsPending(t *testing.T) {
+	round := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if round == 0 {
+			round++
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"create_requirement","arguments":"{\"project\":\"p\",\"text\":\"t\"}"}}]}}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	a, store, rec := newBridgeTestApp(t)
+	a.opts.Config.Model.OpenAIBaseURL = srv.URL
+	a.opts.Config.Model.APIKey = "k-test"
+	a.opts.Config.Model.ActiveModel = "test-model"
+	a.opts.Config.AgentHub.RouteMode = config.RouteModeForceAuto
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+
+	h := a.hubTools()
+	handled, err := h.HandlePrompt("s1", "帮我新建需求")
+	if handled || err != nil {
+		t.Fatalf("失败应降级 handled=false, err=nil，得到 %v %v", handled, err)
+	}
+	if h.session != nil || h.currentPending() != nil {
+		t.Fatalf("失败后 session/pending 应清除: %+v %+v", h.session, h.currentPending())
+	}
+	if cerr := a.ConfirmHubTool("s1", "whatever", true); cerr != hubtools.ErrUnknownPending {
+		t.Fatalf("降级后确认应报未知挂起: %v", cerr)
+	}
+	// store 无痕（延迟落盘）
+	if n := len(store.List()); n != 0 {
+		t.Fatalf("失败降级不应落盘: %+v", store.List())
+	}
+}
+
+// TestHubToolsReconfigFollowsConfig 验证路由器配置时效：配置变更重建、
+// RouteMode=agent 即时关闭。
+func TestHubToolsReconfigFollowsConfig(t *testing.T) {
+	a, _, _ := newBridgeTestApp(t)
+	a.opts.Config.Model.OpenAIBaseURL = "http://x"
+	a.opts.Config.Model.APIKey = "k"
+	a.opts.Config.Model.ActiveModel = "m1"
+	h1 := a.hubTools()
+	if h1 == nil || h1.cfg.Model != "m1" {
+		t.Fatalf("初始路由器不符: %+v", h1)
+	}
+	a.opts.Config.Model.ActiveModel = "m2"
+	h2 := a.hubTools()
+	if h2 == nil || h2.cfg.Model != "m2" {
+		t.Fatalf("配置变更后应重建路由器: %+v", h2)
+	}
+	a.opts.Config.AgentHub.RouteMode = config.RouteModeAgent
+	if h := a.hubTools(); h != nil {
+		t.Fatalf("RouteMode=agent 应即时关闭: %+v", h)
+	}
+	a.opts.Config.AgentHub.RouteMode = config.RouteModeAuto
+	if h := a.hubTools(); h == nil {
+		t.Fatal("回改 auto 后应恢复")
+	}
+}
+
+// TestHandlePromptEmptyTextDegrades 验证模型完成但无文本且无挂起时降级原链路
+//（user 消息尚未落盘，store 无痕）。
+func TestHandlePromptEmptyTextDegrades(t *testing.T) {
+	mock := &hubLLMMock{bodies: []string{`""`}}
+	srv := httptest.NewServer(http.HandlerFunc(mock.handler))
+	t.Cleanup(srv.Close)
+
+	a, store, rec := newBridgeTestApp(t)
+	a.opts.Config.Model.OpenAIBaseURL = srv.URL
+	a.opts.Config.Model.APIKey = "k-test"
+	a.opts.Config.Model.ActiveModel = "test-model"
+	a.opts.Config.AgentHub.RouteMode = config.RouteModeForceAuto
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+
+	h := a.hubTools()
+	handled, err := h.HandlePrompt("s1", "hi")
+	if handled || err != nil {
+		t.Fatalf("空回复应降级 handled=false, err=nil，得到 %v %v", handled, err)
+	}
+	if n := len(store.List()); n != 0 {
+		t.Fatalf("空回复降级不应落盘: %+v", store.List())
 	}
 }
 

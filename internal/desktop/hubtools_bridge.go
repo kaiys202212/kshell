@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"time"
 
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
@@ -155,33 +156,38 @@ func (b *desktopBridge) GetTaskDetail(id string) (*hubtools.TaskView, error) {
 	return nil, nil
 }
 
+// hubPromptTimeout 是单条输入完整工具循环（含 LLM 多轮请求）的超时上限。
+const hubPromptTimeout = 90 * time.Second
+
 // hubRouter 承载 AgentHub 输入的工具化处理。会话生命周期 = 一条用户输入的
 // 处理期 + 确认等待期：新输入到来时整体替换（旧 pending 因此失效）。
-// 取舍：同屏只允许一条在途工具化对话，避免多会话确认卡错乱；用户在确认前
-// 再发一条消息即视为放弃旧操作。
+// 取舍：同屏只允许一条在途工具化对话（inflight 串行化），避免多会话确认卡
+// 错乱；在途期间新输入直接降级原链路（ACP 忙时排队语义接管）。
 type hubRouter struct {
 	app *App
 	cfg hubtools.Config
+
+	inflight sync.Mutex // HandlePrompt 串行化（TryLock）
 
 	mu      sync.Mutex
 	session *hubtools.Session        // 当前在途会话；HandlePrompt 开始时替换
 	pending *hubtools.PendingConfirm // 本轮挂起的写操作（nil = 无）
 }
 
-// hubTools 返回输入路由器（App 级懒初始化单例）；未就绪（模型三元组缺失）
-// 或显式关闭（RouteMode=agent）时返回 nil，调用方据此落回原直连链路。
+// hubTools 返回输入路由器；未就绪（模型三元组缺失）或显式关闭（RouteMode=agent）
+// 时返回 nil，调用方据此落回原直连链路。
+// 配置时效：每次调用重读配置判断就绪与模式——关闭态不缓存（回改配置立即恢复），
+// 就绪态配置变更时重建路由器（旧 session/pending 一并失效，即用户改模型配置
+// 会丢弃未确认的写操作，属可接受的显式行为）。
 func (a *App) hubTools() *hubRouter {
 	a.hubMu.Lock()
 	defer a.hubMu.Unlock()
-	if a.hubRouter != nil {
-		return a.hubRouter
-	}
 	cfg, ok := hubtools.FromModelConfig(a.snapshot().Config.Model)
-	if !ok {
+	if !ok || a.snapshot().Config.AgentHub.RouteMode == config.RouteModeAgent {
 		return nil
 	}
-	if a.snapshot().Config.AgentHub.RouteMode == config.RouteModeAgent {
-		return nil
+	if a.hubRouter != nil && a.hubRouter.cfg == cfg {
+		return a.hubRouter
 	}
 	a.hubRouter = &hubRouter{app: a, cfg: cfg}
 	return a.hubRouter
@@ -197,6 +203,13 @@ func (a *App) hubTools() *hubRouter {
 // force_auto / auto 共用本入口；auto 的 LLM 意图判定由 Task 6 的 router.go
 // 在此之前插入（当前 auto 暂直接进工具循环）。
 func (h *hubRouter) HandlePrompt(sendID, text string) (bool, error) {
+	// 串行化：已有在途工具化对话时直接降级原链路，不触碰其 session/pending
+	//（否则会互相污染挂起状态与确认卡归属）。
+	if !h.inflight.TryLock() {
+		return false, nil
+	}
+	defer h.inflight.Unlock()
+
 	reg := hubtools.NewRegistry(&desktopBridge{app: h.app})
 
 	// 会话生命周期：每条输入一轮，替换旧会话（旧 pending 失效）
@@ -223,10 +236,21 @@ func (h *hubRouter) HandlePrompt(sendID, text string) (bool, error) {
 		{Role: "system", Content: hubSystemPrompt},
 		{Role: "user", Content: text},
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), hubPromptTimeout)
+	defer cancel()
 	resp, err := hubtools.NewClient(h.cfg).ChatWithExecutor(
-		context.Background(), msgs, reg.Tools(), exec)
+		ctx, msgs, reg.Tools(), exec)
 	if err != nil {
-		// LLM 失败：user 消息尚未落盘（延迟写），store 无痕，直接降级。
+		// LLM 失败：user 消息尚未落盘（延迟写），store 无痕，直接降级；
+		// 同时清除在途会话与挂起，防止从未展示确认卡的操作仍可被 ConfirmHubTool 消费。
+		h.clearTurn()
+		return false, nil
+	}
+
+	// 模型完成但未产出文本且无挂起：视为路由未产出结果，降级原链路
+	//（user 消息尚未落盘，store 无痕）。须在落盘前判定。
+	if h.currentPending() == nil && resp.Text == "" {
+		h.clearTurn()
 		return false, nil
 	}
 
@@ -263,6 +287,14 @@ func (h *hubRouter) HandlePrompt(sendID, text string) (bool, error) {
 		Text: resp.Text,
 	})
 	return true, nil
+}
+
+// clearTurn 清除当前在途会话与挂起操作（降级/异常收尾时调用）。
+func (h *hubRouter) clearTurn() {
+	h.mu.Lock()
+	h.session = nil
+	h.pending = nil
+	h.mu.Unlock()
 }
 
 // currentPending 取当前挂起操作（可能为 nil）。
