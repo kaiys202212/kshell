@@ -84,6 +84,13 @@ func (c *Console) SetCurrent(ref SessionRef) {
 	c.hasCurrent = true
 }
 
+// CurrentTitle 返回当前会话标题快照（微信桥 ack 回退归因用；无活跃会话为
+// 空串）。仅在 Handle 返回后读取（桥的回执路径），与 Handle 内的 current
+// 更新串行。
+func (c *Console) CurrentTitle() string {
+	return c.current.Title
+}
+
 // OpenPermissionMenu 由渠道层在收到权限请求事件时调用（微信桥/桌面端均可），
 // 之后的「1」/「2」输入被解释为允许/拒绝；回显由调用方处理。权限菜单
 // 只拦截数字回复，其余输入照常走命令与转发流程。

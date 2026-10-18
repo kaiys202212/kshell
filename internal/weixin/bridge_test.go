@@ -205,17 +205,18 @@ func TestBridgeInboundList(t *testing.T) {
 
 func TestBridgeInboundSendEcho(t *testing.T) {
 	rc := &recorder{}
-	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1", Title: "会话A"}}
 	b := newBridge(t, "u1", ex, rc.handler(t))
-	// Send 成功：回一条已接收确认（agent 稍后回复，微信侧先给回执）。
+	// Send 成功：回一条已接收确认（agent 稍后回复，微信侧先给回执），
+	// 带【会话名】归因前缀（console 无回复 = 文本已转发，2026-10-18 用户反馈）。
 	b.HandleInbound("u1", "ct-1", "普通消息")
 	sends := rc.sends()
 	if n := len(sends); n != 1 {
 		t.Fatalf("Send 成功时 sendmessage 次数 = %d, 期望 1（已接收确认）", n)
 	}
 	text, _ := sendMsgFields(t, sends[0].body)
-	if !strings.Contains(text, "收到") {
-		t.Errorf("成功回显缺少已接收确认: %q", text)
+	if !strings.Contains(text, "【会话A】收到") {
+		t.Errorf("成功回显缺少【会话名】前缀与已接收确认: %q", text)
 	}
 	// Send 失败：回显「发送失败」而非确认。
 	ex.sendErr = errors.New("boom")
@@ -248,6 +249,8 @@ func TestBridgeDeliverHubMessage(t *testing.T) {
 	b.DeliverHubMessage(hub.Message{Kind: "agent", Event: "ui.hub.ack_queued", Text: "whatever"})
 	// wire key 形态文本跳过。
 	b.DeliverHubMessage(hub.Message{Kind: "agent", Text: "hub.welcome"})
+	// hub.welcome|<工具名>（含空格逃过 isWireKey）：欢迎词由命令层覆盖，跳过。
+	b.DeliverHubMessage(hub.Message{Kind: "agent", SessionTitle: "标题", Text: "hub.welcome|Claude Code"})
 	// hook 通道空正文回退：Text 是 ui.hub.* wire key 但 Event 非空，同样跳过。
 	b.DeliverHubMessage(hub.Message{Kind: "agent", Event: "Stop", Text: "ui.hub.event_done"})
 	// 已撤回跳过。
@@ -265,8 +268,8 @@ func TestBridgeDeliverHubMessage(t *testing.T) {
 		t.Fatalf("sendmessage 次数 = %d, 期望 2（入站确认 + agent 推送）", len(sends))
 	}
 	text, token := sendMsgFields(t, sends[1].body)
-	if text != "[标题] hello world" {
-		t.Errorf("出站文本 = %q, 期望 [标题] hello world", text)
+	if text != "【标题】hello world" {
+		t.Errorf("出站文本 = %q, 期望 【标题】hello world", text)
 	}
 	if token != "ct-9" {
 		t.Errorf("context_token = %q, 期望 ct-9", token)

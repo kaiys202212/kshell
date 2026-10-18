@@ -191,8 +191,13 @@ func (b *Bridge) HandleInbound(fromUserID, contextToken, text string) {
 	if len(replies) == 0 && strings.TrimSpace(text) != "" {
 		// 命令层无回复 = 文本已成功转发给当前会话（agent 稍后回复）。
 		// 微信侧补一条已接收确认，与桌面端 AgentHub 的 ack 卡片同一文案语义
-		//（ui.hub.ack_delivered 不镜像到微信，这里是对应的微信侧回执）。
-		replies = []hub.Reply{{Text: hub.CmdText(b.lang, "sent_ack")}}
+		//（ui.hub.ack_delivered 不镜像到微信，这里是对应的微信侧回执），
+		// 带【会话名】归因前缀（无活跃会话时不加）。
+		ack := hub.CmdText(b.lang, "sent_ack")
+		if title := b.console.CurrentTitle(); title != "" {
+			ack = "【" + title + "】" + ack
+		}
+		replies = []hub.Reply{{Text: ack}}
 	}
 	for _, r := range replies {
 		b.deliver(r.Text)
@@ -203,19 +208,21 @@ func (b *Bridge) HandleInbound(fromUserID, contextToken, text string) {
 
 // DeliverHubMessage 把 hub 的 agent 消息镜像到微信出站队列（串行 worker
 // 按序发送，保证顺序；队列满则丢弃计 undelivered，不阻塞调用方）。
-// 只镜像 agent 正文：用户消息、已撤回、ui.hub.* 事件与 wire key 形态文本
-// （后端稳定 key，非自然语言）一律跳过，防止刷屏。
+// 只镜像 agent 正文：用户消息、已撤回、ui.hub.* 事件、hub.welcome 欢迎词
+//（微信侧由命令层欢迎词覆盖，避免重复问候）与 wire key 形态文本
+//（后端稳定 key，非自然语言）一律跳过，防止刷屏。
 func (b *Bridge) DeliverHubMessage(m hub.Message) {
 	if m.Kind != "agent" || m.Status == hub.StatusRecalled {
 		return
 	}
 	if strings.HasPrefix(m.Event, "ui.hub.") || strings.HasPrefix(m.Text, "ui.hub.") ||
+		strings.HasPrefix(m.Text, "hub.welcome") ||
 		(m.Event == "" && isWireKey(m.Text)) {
 		return
 	}
 	text := markdownToText(m.Text)
 	if m.SessionTitle != "" {
-		text = "[" + m.SessionTitle + "] " + text
+		text = "【" + m.SessionTitle + "】" + text
 	}
 	b.enqueueOutbound(text)
 }
