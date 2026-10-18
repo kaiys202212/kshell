@@ -65,12 +65,9 @@ beforeEach(() => {
   api.getTools.mockResolvedValue([]);
   api.getModelConfig.mockResolvedValue({
     Enabled: false,
-    Preset: '',
-    OpenAIBaseURL: '',
-    AnthropicBaseURL: '',
-    Models: [],
+    Platforms: [],
+    DefaultPlatform: '',
     ActiveModel: '',
-    APIKeySet: false,
   });
   api.readClipboardPaste.mockResolvedValue({ Text: '', Path: '' });
   api.listChatCommands.mockResolvedValue([]);
@@ -858,12 +855,20 @@ describe('AgentHubPanel', () => {
     api.getTools.mockResolvedValue([acpTool()]);
     api.getModelConfig.mockResolvedValue({
       Enabled: true,
-      Preset: 'openai',
-      OpenAIBaseURL: 'https://h/',
-      AnthropicBaseURL: 'https://h/',
-      Models: ['glm-5.3-flash', 'deepseek-v4.1-flash'],
+      Platforms: [
+        {
+          ID: 'p1',
+          Name: 'P',
+          Preset: 'openai',
+          OpenAIBaseURL: 'https://h/',
+          AnthropicBaseURL: 'https://h/',
+          Models: ['glm-5.3-flash', 'deepseek-v4.1-flash'],
+          APIKeySet: true,
+          IsDefault: true,
+        },
+      ],
+      DefaultPlatform: 'p1',
       ActiveModel: 'glm-5.3-flash',
-      APIKeySet: true,
     });
     useAppStore.setState({ workspaces: [workspaceA] });
     render(<AgentHubPanel />);

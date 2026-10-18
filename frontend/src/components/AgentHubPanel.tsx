@@ -1468,9 +1468,12 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
         });
       })
       .catch(() => {});
-    // kshell 注入模型（设置页 model.models）：拉取失败静默，回落仅缓存
+    // kshell 注入模型（设置页默认平台的模型列表）：拉取失败静默，回落仅缓存
     void getModelConfig()
-      .then((cfg) => setInjectedModels(cfg.Models ?? []))
+      .then((cfg) => {
+        const def = cfg.Platforms?.find((p) => p.ID === cfg.DefaultPlatform) ?? cfg.Platforms?.[0];
+        setInjectedModels(def?.Models ?? []);
+      })
       .catch(() => setInjectedModels([]));
     setWsPath((cur) => {
       if (cur && workspaces.some((w) => sameWorkspacePath(w.Path, cur))) return cur;
@@ -1625,7 +1628,10 @@ function DefaultSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
       })
       .catch(() => {});
     void getModelConfig()
-      .then((cfg) => setInjectedModels(cfg.Models ?? []))
+      .then((cfg) => {
+        const def = cfg.Platforms?.find((p) => p.ID === cfg.DefaultPlatform) ?? cfg.Platforms?.[0];
+        setInjectedModels(def?.Models ?? []);
+      })
       .catch(() => setInjectedModels([]));
     // 模型预选：已存 modelId 在该工具的缓存模型列表里才预选，否则空（默认模型）
     setModelId(saved?.modelId && loadToolModels(saved.toolId).includes(saved.modelId) ? saved.modelId : '');
