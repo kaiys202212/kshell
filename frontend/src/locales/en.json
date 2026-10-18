@@ -827,7 +827,7 @@
       "stop_reason": {
         "max_tokens": "Output length limit reached",
         "max_turn_requests": "Turn request limit reached (agent-internal)",
-        "refusal": "Agent refused to continue (possibly an API error/rate limit)",
+        "refusal": "Agent stopped early (login or API errors possible; see details below)",
         "cancelled": "Cancelled"
       },
       "input_placeholder": "Type a message; Enter to send, Shift+Enter for a new line",
