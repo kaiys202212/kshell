@@ -483,17 +483,29 @@ export default function Settings() {
     setPlatDraft(next);
   };
 
-  // handleSetDefault：本地改默认平台，随下一次整包保存落盘
+  // handleSetDefault：本地改默认平台，随下一次整包保存落盘；
+  // 换默认平台后原默认模型可能不属于新平台（悬空会被注入），同步清掉。
   const handleSetDefault = (id: string) => {
     setModelDefault(id);
+    const target = modelPlatforms.find((p) => p.ID === id);
+    if (target && target.Models.length > 0 && !target.Models.includes(modelActive)) {
+      setModelActive('');
+    }
     setModelDirtyHint(true);
   };
 
-  // handleDeletePlatform：window.confirm 确认后本地移除；删的是默认平台时清空选择（后端回落第一个）
+  // handleDeletePlatform：window.confirm 确认后本地移除；删的是默认平台时清空选择
+  //（后端回落第一个），并同步清掉不属于新默认平台的默认模型。
   const handleDeletePlatform = (p: ModelPlatformView) => {
     if (!window.confirm(t('ui.settings.model.delete_confirm', { 0: p.Name }))) return;
-    setModelPlatforms((prev) => prev.filter((x) => x.ID !== p.ID));
-    setModelDefault((cur) => (cur === p.ID ? '' : cur));
+    const rest = modelPlatforms.filter((x) => x.ID !== p.ID);
+    setModelPlatforms(rest);
+    const newDefault = modelDefault === p.ID ? '' : modelDefault;
+    setModelDefault(newDefault);
+    const target = rest.find((x) => x.ID === newDefault) ?? rest[0];
+    if (target && target.Models.length > 0 && !target.Models.includes(modelActive)) {
+      setModelActive('');
+    }
     setModelDirtyHint(true);
   };
 

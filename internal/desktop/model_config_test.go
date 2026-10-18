@@ -177,6 +177,58 @@ func TestSetModelConfigPlatformCRUD(t *testing.T) {
 	}
 }
 
+// TestSetModelConfigDanglingActiveModel 换默认平台后悬空的默认模型应被清空：
+// 悬空模型名会拿着新平台端点注入一个不存在的模型。默认平台无模型列表时不校验，
+// 保留旧版自由输入模型名的用法。
+func TestSetModelConfigDanglingActiveModel(t *testing.T) {
+	app, layout := newModelApp(t)
+
+	// 默认平台 p2 有模型列表且不含 m-a → ActiveModel 悬空被清空。
+	if err := app.SetModelConfig(ModelConfigInput{
+		Enabled: true,
+		Platforms: []ModelPlatformInput{
+			{ID: "p1", Name: "A", Models: []string{"m-a"}},
+			{ID: "p2", Name: "B", Models: []string{"m-b"}},
+		},
+		DefaultPlatform: "p2",
+		ActiveModel:     "m-a",
+	}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	loaded, _ := config.Load(layout)
+	if loaded.Model.ActiveModel != "" {
+		t.Fatalf("悬空默认模型应清空，got %q", loaded.Model.ActiveModel)
+	}
+
+	// 归属正确时保留。
+	if err := app.SetModelConfig(ModelConfigInput{
+		Enabled:         true,
+		Platforms:       []ModelPlatformInput{{ID: "p2", Name: "B", Models: []string{"m-b"}}},
+		DefaultPlatform: "p2",
+		ActiveModel:     "m-b",
+	}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	loaded, _ = config.Load(layout)
+	if loaded.Model.ActiveModel != "m-b" {
+		t.Fatalf("归属正确的默认模型应保留，got %q", loaded.Model.ActiveModel)
+	}
+
+	// 默认平台无模型列表时不校验（自由输入）。
+	if err := app.SetModelConfig(ModelConfigInput{
+		Enabled:         true,
+		Platforms:       []ModelPlatformInput{{ID: "p2", Name: "B"}},
+		DefaultPlatform: "p2",
+		ActiveModel:     "custom-x",
+	}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	loaded, _ = config.Load(layout)
+	if loaded.Model.ActiveModel != "custom-x" {
+		t.Fatalf("无列表时应保留自由输入，got %q", loaded.Model.ActiveModel)
+	}
+}
+
 func TestSetModelConfigValidation(t *testing.T) {
 	cases := []struct {
 		name    string

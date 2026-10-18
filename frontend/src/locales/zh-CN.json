@@ -144,7 +144,10 @@
       "yaml_parse_failed": "YAML 解析失败：{{0}}",
       "http_url_required": "{{0}} 必须以 http:// 或 https:// 开头",
       "invalid_session_mode": "无效的会话模式：{{0}}",
-      "invalid_permission_mode": "无效的权限模式：{{0}}"
+      "invalid_permission_mode": "无效的权限模式：{{0}}",
+      "model_platform_name_required": "平台名称不能为空",
+      "model_platform_id_required": "平台标识不能为空",
+      "model_platform_id_duplicated": "平台标识重复：{{0}}"
     },
     "model_fetch": {
       "no_endpoint": "尚未配置任何 Base URL，无法拉取模型",

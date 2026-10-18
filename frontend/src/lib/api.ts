@@ -1854,7 +1854,7 @@ export async function listModelPresets(): Promise<ModelPreset[]> {
   return a.ListModelPresets();
 }
 
-// fetchAvailableModels 用表单当前值直拉双端点；platformID 供后端回落该平台已存密钥。
+// fetchAvailableModels 用表单当前值直拉双端点；platformID 仅作后端日志标识，不参与拉取。
 export async function fetchAvailableModels(
   platformID: string,
   openaiURL: string,

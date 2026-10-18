@@ -214,7 +214,7 @@ func (a *App) SetModelConfig(in ModelConfigInput) error {
 			return errors.New("err.settings.model_platform_id_required")
 		}
 		if seen[id] {
-			return errors.New("err.settings.model_platform_id_duplicated")
+			return fmt.Errorf("err.settings.model_platform_id_duplicated|%s", id)
 		}
 		seen[id] = true
 		oai := strings.TrimSpace(pi.OpenAIBaseURL)
@@ -260,6 +260,29 @@ func (a *App) SetModelConfig(in ModelConfigInput) error {
 		c.Model.Platforms = platforms
 		c.Model.DefaultPlatform = def
 		c.Model.ActiveModel = strings.TrimSpace(in.ActiveModel)
+		// 默认模型必须属于默认平台，否则清空：悬空模型名会拿着新平台端点
+		// 注入一个不存在的模型（删默认平台 / 换默认平台后的典型悬空场景）。
+		// 默认平台未配模型列表时不校验（保留旧版自由输入模型名的用法）。
+		if c.Model.ActiveModel != "" && def != "" {
+			found := false
+			hasList := false
+			for _, p := range platforms {
+				if p.ID != def {
+					continue
+				}
+				hasList = len(p.Models) > 0
+				for _, m := range p.Models {
+					if m == c.Model.ActiveModel {
+						found = true
+						break
+					}
+				}
+				break
+			}
+			if hasList && !found {
+				c.Model.ActiveModel = ""
+			}
+		}
 		// 保存时清空全部 legacy 单平台字段，避免 Load 再迁移。
 		c.Model.Preset = ""
 		c.Model.OpenAIBaseURL = ""

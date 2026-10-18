@@ -537,6 +537,8 @@ func (a *App) mergeConfigModels(v chat.ModelsView) chat.ModelsView {
 		}
 	}
 	// Current 空时回落：ActiveModel 能对应到某平台模型则取该条目的前缀 ID。
+	// 按默认平台优先的全体平台顺序搜索（不止默认平台）：ActiveModel 可能是
+	// 上一次会话内跨平台切换留下的、属于非默认平台的模型名。
 	if v.Current == "" && cfg.ActiveModel != "" {
 		for _, p := range ordered {
 			for _, name := range p.Models {
@@ -562,7 +564,12 @@ func splitKshellModelID(id string) (platID, model string, ok bool) {
 	if i <= 0 {
 		return "", "", false
 	}
-	return rest[:i], rest[i+1:], true
+	model = rest[i+1:]
+	if model == "" {
+		// 畸形 ID（如 "kshell:plat:"）：空模型名不应下发给 SetModel，按透传容错。
+		return "", "", false
+	}
+	return rest[:i], model, true
 }
 
 // SetChatModel 运行时切换会话模型。入口别名解析同 ListChatModels。
