@@ -246,7 +246,7 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 				receipt = joinNotes(receipt, fmt.Sprintf(bridgeText(b.lang, "voice.failed"), err))
 			}
 		} else if strings.TrimSpace(transcript) == "" {
-			receipt = joinNotes(receipt, fmt.Sprintf(bridgeText(b.lang, "voice.failed"), "空转写结果"))
+			receipt = joinNotes(receipt, fmt.Sprintf(bridgeText(b.lang, "voice.failed"), bridgeText(b.lang, "voice.empty")))
 		} else {
 			text = transcript
 		}

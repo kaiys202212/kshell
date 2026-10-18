@@ -15,6 +15,8 @@ const voiceSampleRate = 24000
 // 供 ASR 端点消费。微信流常带 STX(0x02) 前缀 + "#!SILK_V3" 头（silk-go 的
 // TencentCompat 编码即此形态），归一化剥前缀后交给解码器；格式与真机不符时
 // 只需改这里。yoshino-s/silk-go 为 ccgo 转译的纯 Go 实现，无 cgo 依赖。
+// 注意：silk-go 的 ccgo 代码在 `go test -race` 下会触发 checkptr fatal（非本包
+// 竞态）；本包排查竞态时跳过语音相关用例或改用无 -race 的对照基线。
 func silkToWAV(data []byte) ([]byte, error) {
 	if bytes.HasPrefix(data, []byte{0x02}) && bytes.HasPrefix(data[1:], []byte("#!SILK_V3")) {
 		data = data[1:]
