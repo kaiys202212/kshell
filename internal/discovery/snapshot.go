@@ -94,5 +94,10 @@ func LoadSnapshot(path string) (*Result, []Tool, error) {
 	if tools == nil {
 		tools = []Tool{}
 	}
+	// 登录态是实时状态：快照里的 Auth 是上次扫描的冻结结论，恢复时一律归
+	// unknown（保守放行），由后台首轮 DetectAll 重新实探后整表覆盖。
+	for i := range tools {
+		tools[i].Auth = string(providers.AuthUnknown)
+	}
 	return res, tools, nil
 }

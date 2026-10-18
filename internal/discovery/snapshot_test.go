@@ -83,6 +83,28 @@ func TestLoadSnapshotRejectsBadInput(t *testing.T) {
 	}
 }
 
+// TestLoadSnapshotResetsAuthToUnknown 锁定「快照恢复不冻结登录态」：快照里的
+// Auth 是上次扫描的冻结结论，恢复时必须归 unknown（保守放行），由后台首轮
+// DetectAll 重新实探覆盖。
+func TestLoadSnapshotResetsAuthToUnknown(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "snapshot.json")
+	tools := []Tool{{ID: "cursor", Name: "Cursor", Installed: true, Auth: string(providers.AuthIn)}}
+	if err := SaveSnapshot(path, sampleResult(), tools); err != nil {
+		t.Fatalf("SaveSnapshot: %v", err)
+	}
+
+	_, got, err := LoadSnapshot(path)
+	if err != nil {
+		t.Fatalf("LoadSnapshot: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d tools, want 1", len(got))
+	}
+	if got[0].Auth != string(providers.AuthUnknown) {
+		t.Fatalf("快照恢复的 Auth = %q, want %q（不得沿用冻结值）", got[0].Auth, providers.AuthUnknown)
+	}
+}
+
 // TestLoadSnapshotNormalizesEmptyCollections 保证反序列化后切片/map 非 nil：
 // 前端直接遍历它们，null 会炸。
 func TestLoadSnapshotNormalizesEmptyCollections(t *testing.T) {

@@ -29,6 +29,74 @@ func (s stubProvider) ResumeCmd(providers.Session, string) providers.Launch {
 	return providers.Launch{}
 }
 
+// stubAuthProvider 在 stubProvider 上叠加可控的 ProbeAuth 返回值与调用计数，
+// 验证 Tool.Auth 的注入与「每次组装都实探」的实时性。
+type stubAuthProvider struct {
+	stubProvider
+	status providers.AuthStatus
+	calls  int
+}
+
+func (s *stubAuthProvider) ProbeAuth() providers.AuthStatus {
+	s.calls++
+	return s.status
+}
+
+func TestDetectAllFillsAuth(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	prober := &stubAuthProvider{id: "cursor", status: providers.AuthOut}
+
+	tests := []struct {
+		name    string
+		p       providers.Provider
+		want    providers.AuthStatus
+		wantAsk int // ProbeAuth 期望被调用的次数
+	}{
+		{"实现 AuthProber 的注入实探结论", prober, providers.AuthOut, 1},
+		{"未实现 AuthProber 的保守填 unknown", stubProvider{id: "claude"}, providers.AuthUnknown, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tools := DetectAll(t.TempDir(), []providers.Provider{tt.p})
+			if len(tools) != 1 {
+				t.Fatalf("got %d tools, want 1", len(tools))
+			}
+			if tools[0].Auth != string(tt.want) {
+				t.Fatalf("Auth = %q, want %q", tools[0].Auth, tt.want)
+			}
+		})
+	}
+	if prober.calls != 1 {
+		t.Fatalf("ProbeAuth 调用 %d 次, want 1", prober.calls)
+	}
+}
+
+// TestDetectAllCachedReprobesAuth 锁定「登录态不被缓存冻结」：toolcache 只缓存
+// 版本指纹，Tool 每次都重建、Auth 每次都实探——缓存命中的第二轮也必须拿到翻转
+// 后的登录态。
+func TestDetectAllCachedReprobesAuth(t *testing.T) {
+	binDir := t.TempDir()
+	writeFakeBin(t, binDir, "cursor")
+	t.Setenv("PATH", binDir)
+	cachePath := filepath.Join(t.TempDir(), "toolcache.json")
+
+	p := &stubAuthProvider{id: "cursor", spec: providers.DetectSpec{BinName: "cursor"}, status: providers.AuthOut}
+	first := DetectAllCached(t.TempDir(), []providers.Provider{p}, cachePath)
+	if first[0].Auth != string(providers.AuthOut) || p.calls != 1 {
+		t.Fatalf("首轮 Auth = %q calls = %d, want out/1", first[0].Auth, p.calls)
+	}
+
+	// 版本不变（缓存命中）但登录态翻转：Auth 必须重新实探
+	p.status = providers.AuthIn
+	second := DetectAllCached(t.TempDir(), []providers.Provider{p}, cachePath)
+	if second[0].Version != "cursor 1.2.3" {
+		t.Fatalf("版本应命中缓存, got %q", second[0].Version)
+	}
+	if second[0].Auth != string(providers.AuthIn) || p.calls != 2 {
+		t.Fatalf("缓存命中也必须重探登录态: Auth = %q calls = %d, want in/2", second[0].Auth, p.calls)
+	}
+}
+
 func writeFakeBin(t *testing.T, dir, name string) {
 	t.Helper()
 	var path string

@@ -23,6 +23,11 @@ type Tool struct {
 	Updating bool
 	// ACP 为 nil 表示该 provider 不支持 ACP；非 nil 时其 Available 表示本机是否可用。
 	ACP *providers.ACPDetection
+	// Auth 是登录态（见 providers.AuthProber）：in=已登录、out=未登录、
+	// unknown=无法稳定探测，调用方必须保守放行。它是实时状态，每次组装都实探，
+	// 不得沿用任何缓存/快照里的历史结论（toolcache 只缓存版本指纹；
+	// 快照恢复路径见 LoadSnapshot 的归 unknown 处理）。
+	Auth string
 }
 
 // DetectAll 汇总所有 provider 的安装状态，已安装的排在前面（UI 顶栏按此顺序展示）。
@@ -58,6 +63,13 @@ func detectAll(home string, ps []providers.Provider, probe func(bin string, args
 		if ap, ok := p.(providers.ACPProvider); ok {
 			det := providers.DetectACP(ap.ACPAdapter())
 			t.ACP = &det
+		}
+		// 登录态是实时状态：对实现 AuthProber 的 provider 实探，未实现的保守填
+		// unknown（调用方放行）。缓存只影响版本号，这里每次都会重新执行。
+		if ap, ok := p.(providers.AuthProber); ok {
+			t.Auth = string(ap.ProbeAuth())
+		} else {
+			t.Auth = string(providers.AuthUnknown)
 		}
 		tools = append(tools, t)
 	}
