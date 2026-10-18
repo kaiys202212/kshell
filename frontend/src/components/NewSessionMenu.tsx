@@ -122,6 +122,7 @@ export default function NewSessionMenu({
           </button>
           {tools.map((t) => {
             const active = t.ID === value;
+            const loggedOut = t.Auth === 'out';
             return (
               <button
                 key={t.ID}
@@ -133,8 +134,19 @@ export default function NewSessionMenu({
               >
                 <CheckGlyph show={active} />
                 <span className="min-w-0 truncate">{t.Name}</span>
+                {/* 未登录徽标：仅提示，不改变可选性（ACP 偏好下后端会自动降级终端） */}
+                {loggedOut && (
+                  <span
+                    className="ml-auto shrink-0 rounded bg-destructive/10 px-1 text-[10px] leading-4 text-destructive"
+                    title={tr('ui.auth.not_logged_in_hint')}
+                  >
+                    {tr('ui.auth.not_logged_in')}
+                  </span>
+                )}
                 {t.Version && (
-                  <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                  <span
+                    className={cn('shrink-0 text-[10px] text-muted-foreground', !loggedOut && 'ml-auto')}
+                  >
                     {t.Version}
                   </span>
                 )}

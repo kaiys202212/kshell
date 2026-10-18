@@ -50,6 +50,7 @@ import { useAppStore } from '../state/store';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
+import LoginDialog from '../components/LoginDialog';
 import { ProvidersEditor } from '../components/ProvidersEditor';
 import { SkillPlaza } from '../components/SkillPlaza';
 import { WeixinSettings } from '../components/WeixinSettings';
@@ -115,6 +116,8 @@ export default function Settings() {
   const [pendingId, setPendingId] = useState('');
   const [uninstallTarget, setUninstallTarget] = useState<ToolInfo | null>(null);
   const [purgeConfig, setPurgeConfig] = useState(false);
+  // 登录弹窗目标：工具卡片「登录」按钮打开（out 态才显示按钮）
+  const [loginTool, setLoginTool] = useState<ToolInfo | null>(null);
   const [appVersion, setAppVersion] = useState('');
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
@@ -1091,6 +1094,13 @@ export default function Settings() {
                                   <Badge variant="warning">{t('ui.settings.tools.unverified')}</Badge>
                                 )
                               )}
+                              {/* 登录态徽标：in→已登录（绿）、out→未登录（红）；unknown/缺省不标注 */}
+                              {tool.Installed && !isBroken && tool.Auth === 'in' && (
+                                <Badge variant="success">{t('ui.auth.logged_in')}</Badge>
+                              )}
+                              {tool.Installed && !isBroken && tool.Auth === 'out' && (
+                                <Badge variant="destructive">{t('ui.auth.not_logged_in')}</Badge>
+                              )}
                               {tool.Installed && !isBroken ? (
                                 tool.Version && (
                                   <span className="text-xs text-muted-foreground">{tool.Version}</span>
@@ -1103,28 +1113,36 @@ export default function Settings() {
                                 </span>
                               )}
                             </div>
-                            {recipe && (
-                              <Button
-                                size="sm"
-                                variant={hasBin ? 'secondary' : 'default'}
-                                disabled={busyAny}
-                                onClick={() =>
-                                  hasBin ? openUninstall(tool) : void handleInstall(tool.ID)
-                                }
-                              >
-                                {rowBusy
-                                  ? hasBin
-                                    ? t('ui.settings.tools.uninstalling')
-                                    : isBroken
-                                      ? t('ui.settings.tools.repairing')
-                                      : t('ui.settings.tools.installing')
-                                  : hasBin
-                                    ? t('ui.settings.tools.uninstall')
-                                    : isBroken
-                                      ? t('ui.settings.tools.repair')
-                                      : t('ui.settings.tools.install')}
-                              </Button>
-                            )}
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              {/* 未登录的已安装工具：快捷打开登录弹窗（与卡片徽标同源） */}
+                              {tool.Installed && !isBroken && tool.Auth === 'out' && (
+                                <Button size="sm" variant="secondary" onClick={() => setLoginTool(tool)}>
+                                  {t('ui.auth.login')}
+                                </Button>
+                              )}
+                              {recipe && (
+                                <Button
+                                  size="sm"
+                                  variant={hasBin ? 'secondary' : 'default'}
+                                  disabled={busyAny}
+                                  onClick={() =>
+                                    hasBin ? openUninstall(tool) : void handleInstall(tool.ID)
+                                  }
+                                >
+                                  {rowBusy
+                                    ? hasBin
+                                      ? t('ui.settings.tools.uninstalling')
+                                      : isBroken
+                                        ? t('ui.settings.tools.repairing')
+                                        : t('ui.settings.tools.installing')
+                                    : hasBin
+                                      ? t('ui.settings.tools.uninstall')
+                                      : isBroken
+                                        ? t('ui.settings.tools.repair')
+                                        : t('ui.settings.tools.install')}
+                                </Button>
+                              )}
+                            </div>
                           </div>
                           {recipe && (
                             <p className="font-mono text-[11px] text-muted-foreground">
@@ -1229,6 +1247,13 @@ export default function Settings() {
           {section === 'skills' && <SkillPlaza />}
         </div>
       </div>
+      {loginTool && (
+        <LoginDialog
+          toolID={loginTool.ID}
+          toolName={loginTool.Name}
+          onClose={() => setLoginTool(null)}
+        />
+      )}
     </div>
   );
 }

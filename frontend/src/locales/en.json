@@ -118,7 +118,11 @@
     "launch": {
       "no_binary": "This tool has no executable, cannot start a session",
       "no_acp_adapter": "This tool has no available ACP adapter",
-      "updating": "This tool is self-updating, please try again in a moment"
+      "updating": "This tool is self-updating, please try again in a moment",
+      "not_logged_in": "This tool is not logged in; chat mode is unavailable."
+    },
+    "login": {
+      "unsupported": "This tool does not support logging in inside kshell."
     },
     "launcher": {
       "no_exec": "No executable specified (the tool only has a config directory)"
@@ -786,6 +790,19 @@
       "install_all": "One-click install",
       "tool_install_failed": "Failed to install {{id}}"
     },
+    "auth": {
+      "logged_in": "Logged in",
+      "not_logged_in": "Not logged in",
+      "not_logged_in_hint": "Not logged in: chat mode is unavailable and sessions fall back to the terminal",
+      "login": "Log in",
+      "go_login": "Log in",
+      "login_title": "Log in to {{name}}",
+      "login_hint": "Complete the login in the terminal below. This dialog closes automatically once login is detected.",
+      "login_waiting": "Waiting for login to complete…",
+      "login_success": "{{name}} logged in",
+      "login_open_failed": "Failed to open login: {{err}}",
+      "close": "Close"
+    },
     "project_setup": {
       "title": "Choose workspaces to keep",
       "hint": "Unchecked workspaces will be moved to the recycle bin. You can restore them anytime.",
@@ -1029,6 +1046,7 @@
     },
     "workspace": {
       "fallback": "Fell back to terminal mode: {{reason}}",
+      "fallback_not_logged_in": "{{name}} is not logged in; fell back to terminal mode.",
       "open_session_failed": "Failed to open session: {{err}}",
       "new_session_failed": "Failed to start session: {{err}}",
       "open_terminal_failed": "Failed to open terminal: {{err}}",

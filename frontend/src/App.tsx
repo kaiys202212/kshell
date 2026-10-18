@@ -301,8 +301,11 @@ function App() {
     });
     const offExit = onTerminalExit(({ id, exitCode }) => {
       clearTerminalBusy(id);
-      const { markTerminalExited: mark, notify } = useAppStore.getState();
+      const { markTerminalExited: mark, notify, terminals } = useAppStore.getState();
       mark(id, exitCode);
+      // 登录终端（login:<toolID>）的退出是登录弹窗流程的一部分：弹窗自己收尾，
+      // 不再全局提示「终端已退出」，避免登录成功提示后紧跟一条噪音。
+      if (terminals.find((x) => x.ID === id)?.Kind === 'login') return;
       notify(
         exitCode === 0
           ? (i18n.t('ui.notify.terminal_exited') as string)

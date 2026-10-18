@@ -47,7 +47,9 @@ import SshPanel from '../components/SshPanel';
 import TerminalView from '../components/TerminalView';
 import AgentActivityIcon from '../components/AgentActivityIcon';
 import ChatView from '../components/ChatView';
+import LoginDialog from '../components/LoginDialog';
 import NewSessionMenu from '../components/NewSessionMenu';
+import { Button } from '../components/ui/button';
 import { EmptyState } from '../components/ui/empty-state';
 import { ToolDot } from '../components/ui/tool-dot';
 import { resolveAgentActivity } from '../state/agentActivity';
@@ -105,6 +107,10 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   const [showArchived, setShowArchived] = useState(false);
   // 新建会话后的延迟重扫定时器（卸载/再次新建时清掉，避免重复触发）
   const rescanTimers = useRef<number[]>([]);
+  // 未登录降级提示条：Fallback 携带裸 wire key err.launch.not_logged_in 时出现，
+  // 带「去登录」按钮打开登录弹窗（notify 系统不支持按钮，走内嵌提示条）
+  const [loginPrompt, setLoginPrompt] = useState<{ toolID: string; toolName: string } | null>(null);
+  const [loginOpen, setLoginOpen] = useState(false);
 
   const layout = useAppStore((s) => s.layout);
   const setLayout = useAppStore((s) => s.setLayout);
@@ -222,6 +228,19 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     setPreviewSession(null);
   }, []);
 
+  // 未登录是用户可自助修复的状态：用「文案 + 去登录」的专用提示条取代通用降级模板；
+  // 其余 Fallback 原因仍走通用 notify。toolID 取本次请求参数（会话场景为会话所属工具）。
+  const showFallback = useCallback(
+    (fallback: string, toolID: string) => {
+      if (fallback !== 'err.launch.not_logged_in') {
+        notify(tr('ui.workspace.fallback', { reason: translateBackend(fallback) }), 'info');
+        return;
+      }
+      setLoginPrompt({ toolID, toolName: tools.find((x) => x.ID === toolID)?.Name ?? toolID });
+    },
+    [notify, tr, tools],
+  );
+
   // 恢复历史会话：优先走 ACP 聊天，Go 侧按可用性决定聊天或回退终端
   const openChatOrTerminal = useCallback(
     (s: Session) => {
@@ -235,7 +254,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             useAppStore.getState().upsertTerminal(res.Terminal);
             selectCenterTab(res.Terminal.ID);
           }
-          if (res.Fallback) notify(tr('ui.workspace.fallback', { reason: translateBackend(res.Fallback) }), 'info');
+          if (res.Fallback) showFallback(res.Fallback, s.ToolID || res.Terminal?.ToolID || '');
           if (isSSHWorkspaceRef(tab.id)) useAppStore.getState().clearUnreachable(tab.id);
         })
         .catch((e: unknown) => {
@@ -243,7 +262,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           if (isSSHWorkspaceRef(tab.id)) useAppStore.getState().markUnreachable(tab.id);
         });
     },
-    [notify, selectCenterTab, closeSessionPreview, tr, tab.id],
+    [showFallback, selectCenterTab, closeSessionPreview, notify, tr, tab.id],
   );
 
   const handleSelectSessionRow = useCallback(
@@ -285,7 +304,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         useAppStore.getState().upsertTerminal(res.Terminal);
         selectCenterTab(res.Terminal.ID);
       }
-      if (res.Fallback) notify(tr('ui.workspace.fallback', { reason: translateBackend(res.Fallback) }), 'info');
+      if (res.Fallback) showFallback(res.Fallback, id);
       if (isSSHWorkspaceRef(tab.id)) useAppStore.getState().clearUnreachable(tab.id);
       // 新会话要过一会儿才落进工具自己的会话存储；按退避多扫几次，避免单次过早/撞车
       for (const tid of rescanTimers.current) window.clearTimeout(tid);
@@ -401,7 +420,27 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   };
 
   return (
-    <div className="flex min-h-0 flex-1">
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* 未登录降级提示条：文案带「去登录」，点击打开登录弹窗（弹窗内嵌官方登录终端） */}
+      {loginPrompt && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border bg-warning/10 px-3 py-1.5 text-xs text-warning">
+          <span className="min-w-0 flex-1 truncate">
+            {tr('ui.workspace.fallback_not_logged_in', { name: loginPrompt.toolName })}
+          </span>
+          <Button type="button" size="sm" variant="secondary" onClick={() => setLoginOpen(true)}>
+            {tr('ui.auth.go_login')}
+          </Button>
+          <button
+            type="button"
+            aria-label={tr('ui.auth.close')}
+            className="shrink-0 hover:opacity-80"
+            onClick={() => setLoginPrompt(null)}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+      <div className="flex min-h-0 flex-1">
       {/* 滚动隔离：左栏整体不滚动（overflow-hidden），固定新建会话/归档行，仅会话列表内部滚动 */}
       <aside
         className="flex shrink-0 flex-col gap-2 overflow-hidden border-r border-border bg-card p-2.5"
@@ -772,6 +811,14 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           <ActiveTerminalsPanel wsPath={tab.id} onNewShell={handleNewShell} />
         </div>
       </aside>
+      </div>
+      {loginOpen && loginPrompt && (
+        <LoginDialog
+          toolID={loginPrompt.toolID}
+          toolName={loginPrompt.toolName}
+          onClose={() => setLoginOpen(false)}
+        />
+      )}
     </div>
   );
 }

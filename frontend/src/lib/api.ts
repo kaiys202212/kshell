@@ -109,6 +109,8 @@ export interface RemoteResult {
 
 // discovery.Tool 的 JSON 形态（internal/discovery/tools.go）。
 // Source: path / install-dir / config-dir（config-dir = 只检测到配置目录，没有可执行程序）
+// Auth: 登录态三态 in / out / unknown（后端 GetTools 出口归一化，总有值；
+//       旧事件快照可能缺字段，读取时按 undefined 兜底成 unknown）
 export interface ToolInfo {
   ID: string;
   Name: string;
@@ -116,6 +118,7 @@ export interface ToolInfo {
   Version: string;
   Installed: boolean;
   Source: string;
+  Auth?: string;
   // Broken：Installed 但没有任何可执行入口（config-dir 兜底），安装残缺。
   Broken?: boolean;
   ACP?: { Available: boolean; Source: string; BinPath?: string; Package?: string };
@@ -573,6 +576,8 @@ interface AppBindings {
   ImportSSHConnections(wsPath: string, items: SshClientCandidate[]): Promise<SshConnection[]>;
   ExecRemote(connID: string, cmd: string): Promise<RemoteResult>;
   GetTools(): Promise<ToolInfo[]>;
+  CheckToolAuth(toolID: string): Promise<string>;
+  OpenLoginTerminal(toolID: string, cols: number, rows: number): Promise<TerminalInfo>;
   SearchSkills(query: string, limit: number): Promise<SkillSummary[]>;
   GetSkillDetail(id: string): Promise<SkillDetail>;
   ListSkillTargets(): Promise<SkillTargetInfo[]>;
@@ -1134,6 +1139,14 @@ export async function getTools(): Promise<ToolInfo[]> {
   return a.GetTools();
 }
 
+// checkToolAuth 实时探测工具登录态（in/out/unknown），登录弹窗轮询专用。
+// 未知 toolID 返回 unknown 且不报错（后端契约：不打断轮询流程）。
+export async function checkToolAuth(toolID: string): Promise<string> {
+  const a = app();
+  if (!a) return 'unknown';
+  return a.CheckToolAuth(toolID);
+}
+
 export async function searchSkills(query: string, limit = 20): Promise<SkillSummary[]> {
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
@@ -1361,6 +1374,19 @@ export async function openShellTerminal(
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
   return a.OpenShellTerminal(wsPath, cols, rows);
+}
+
+// openLoginTerminal 为指定工具打开跑官方交互式登录命令的终端（登录弹窗专用）。
+// key 固定 login:<toolID>，同工具全局唯一（运行中重复打开直接复用）。
+// 不支持登录（无 LoginCmdProvider / 未装且探测缺失）抛 err.login.unsupported。
+export async function openLoginTerminal(
+  toolID: string,
+  cols: number,
+  rows: number,
+): Promise<TerminalInfo> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  return a.OpenLoginTerminal(toolID, cols, rows);
 }
 
 // ClipboardPaste 原生剪贴板快照（internal/desktop.ClipboardPaste）：路径优先于文本。

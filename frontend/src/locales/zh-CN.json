@@ -118,7 +118,11 @@
     "launch": {
       "no_binary": "该工具没有可执行程序，无法启动会话",
       "no_acp_adapter": "该工具没有可用的 ACP 适配器",
-      "updating": "检测到该工具正在自更新，请稍等片刻后重试"
+      "updating": "检测到该工具正在自更新，请稍等片刻后重试",
+      "not_logged_in": "该工具未登录，无法使用聊天模式"
+    },
+    "login": {
+      "unsupported": "该工具不支持在 kshell 内登录"
     },
     "launcher": {
       "no_exec": "launcher: 未指定可执行文件（工具只检测到配置目录，没有可执行程序）"
@@ -786,6 +790,19 @@
       "install_all": "一键安装",
       "tool_install_failed": "{{id}} 安装失败"
     },
+    "auth": {
+      "logged_in": "已登录",
+      "not_logged_in": "未登录",
+      "not_logged_in_hint": "未登录：聊天模式不可用，会话将回退终端",
+      "login": "登录",
+      "go_login": "去登录",
+      "login_title": "登录 {{name}}",
+      "login_hint": "在下方终端完成登录，检测到登录成功后本窗口会自动关闭。",
+      "login_waiting": "等待登录完成…",
+      "login_success": "{{name}} 登录成功",
+      "login_open_failed": "打开登录失败：{{err}}",
+      "close": "关闭"
+    },
     "project_setup": {
       "title": "选择要保留的工作区",
       "hint": "未勾选的工作区将移入回收站，之后可随时还原。",
@@ -1029,6 +1046,7 @@
     },
     "workspace": {
       "fallback": "已回退到终端模式：{{reason}}",
+      "fallback_not_logged_in": "{{name}} 未登录，已回退到终端模式。",
       "open_session_failed": "打开会话失败：{{err}}",
       "new_session_failed": "新建会话失败：{{err}}",
       "open_terminal_failed": "打开终端失败：{{err}}",
