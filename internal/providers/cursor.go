@@ -3,6 +3,7 @@ package providers
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -78,9 +79,12 @@ func (Cursor) ProbeAuth() AuthStatus {
 }
 
 // probeCursorAuth 是 ProbeAuth 的可测核心，口径与 Detect(spec, home) 同构：
-// 按顺序检查各 ConfigDir，任一目录读到 cli-config.json 即以其解析结论返回；
+// 按顺序检查各 ConfigDir，任一目录读到 cli-config.json 即以其解析结论返回
+// （first-hit-wins，解析异常也停）；目录在但文件不存在继续看下一个目录；
 // 所有目录都没有该文件时，config 目录在视为从未登录（AuthOut），一个目录
-// 都没有（工具没装过）无从判断，只能 AuthUnknown。
+// 都没有（工具没装过）无从判断，只能 AuthUnknown。文件存在却读取失败
+// （权限/IO 等，非不存在）视为状态不可知，直接 AuthUnknown——绝不落到
+// anyConfigDir → AuthOut，那会错杀已登录用户。
 func probeCursorAuth(spec DetectSpec, home string) AuthStatus {
 	anyConfigDir := false
 	for _, dir := range spec.ConfigDirs {
@@ -91,7 +95,10 @@ func probeCursorAuth(spec DetectSpec, home string) AuthStatus {
 		anyConfigDir = true
 		data, err := os.ReadFile(filepath.Join(root, cursorAuthConfigFile))
 		if err != nil {
-			continue // 该目录下没有登录配置，看下一个目录
+			if errors.Is(err, fs.ErrNotExist) {
+				continue // 该目录下没有登录配置，看下一个目录
+			}
+			return AuthUnknown // 文件在却读不出来（权限/IO 等）：保守放行
 		}
 		return parseCursorAuth(data)
 	}

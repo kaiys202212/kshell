@@ -25,9 +25,15 @@ func writeAuthFixture(t *testing.T, home, relDir, content string) {
 // loggedInConfig 是本机实测的 cli-config.json 登录形态(键结构一致,值已脱敏)。
 const loggedInConfig = `{"version":"1.0","authInfo":{"email":"a@b.c","displayName":"u","userId":"uid-1","authId":"aid"}}`
 
-// Cursor 必须实现 AuthProber,否则 ACP 启动门禁拿不到登录态(编译期断言)。
-func TestCursorImplementsAuthProber(t *testing.T) {
-	var _ AuthProber = Cursor{}
+// writeAuthBrokenConfig 在 home/relDir 下造出「cli-config.json 是个同名目录」的
+// 异常现场:os.ReadFile 会稳定报出**非 NotExist** 的读错误(POSIX 为 is a
+// directory,Windows 为 Access is denied),用于锁定「文件在却读不出来必须
+// AuthUnknown,不得回落 AuthOut」的保守口径。
+func writeAuthBrokenConfig(t *testing.T, home, relDir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(home, relDir, "cli-config.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // ProbeAuth 是无参接口,只能拿三种结论之一;绝不能返回零值空串。
@@ -141,6 +147,34 @@ func TestProbeCursorAuth(t *testing.T) {
 				writeAuthFixture(t, home, ".cursor-b", loggedInConfig)
 			},
 			want: AuthIn,
+		},
+		{
+			name: "未知:唯一目录的 cli-config.json 读取失败(非不存在)",
+			dirs: []string{"~/.cursor"},
+			setup: func(t *testing.T, home string) {
+				writeAuthFixture(t, home, ".cursor", "")
+				writeAuthBrokenConfig(t, home, ".cursor")
+			},
+			want: AuthUnknown,
+		},
+		{
+			name: "多目录:首目录读取失败,直接返回不看后续(即使后续已登录)",
+			dirs: []string{"~/.cursor-a", "~/.cursor-b"},
+			setup: func(t *testing.T, home string) {
+				writeAuthFixture(t, home, ".cursor-a", "")
+				writeAuthBrokenConfig(t, home, ".cursor-a")
+				writeAuthFixture(t, home, ".cursor-b", loggedInConfig)
+			},
+			want: AuthUnknown,
+		},
+		{
+			name: "多目录:首目录 JSON 损坏,以其结论即返(first-hit-wins)",
+			dirs: []string{"~/.cursor-a", "~/.cursor-b"},
+			setup: func(t *testing.T, home string) {
+				writeAuthFixture(t, home, ".cursor-a", `{"authInfo":`)
+				writeAuthFixture(t, home, ".cursor-b", loggedInConfig)
+			},
+			want: AuthUnknown,
 		},
 	}
 	for _, c := range cases {
