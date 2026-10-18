@@ -561,7 +561,7 @@ func (m Model) themeOptions() launch.ThemeOptions {
 }
 
 // modelOptions 组装模型注入 resolver：未启用或无可用平台时返回空（不注入）。
-// 端点与密钥取默认平台（DefaultPlatform 命中，否则第一个）；模型名沿用 agents[toolID]。
+// 端点与密钥取默认平台（DefaultPlatform 命中，否则第一个）；模型名用默认模型 ActiveModel。
 func (m Model) modelOptions() launch.ModelOptions {
 	cfg := m.opts.Config.Model
 	if !cfg.Enabled {
@@ -576,7 +576,7 @@ func (m Model) modelOptions() launch.ModelOptions {
 			OpenAIBaseURL:    p.OpenAIBaseURL,
 			AnthropicBaseURL: p.AnthropicBaseURL,
 			APIKey:           p.APIKey,
-			Model:            cfg.Agents[toolID],
+			Model:            cfg.ActiveModel,
 		}, true
 	}}
 }
