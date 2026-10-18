@@ -107,7 +107,7 @@ func TestSetModelConfigPlatformCRUD(t *testing.T) {
 	// legacy 字段应全部清空。
 	if loaded.Model.Preset != "" || loaded.Model.OpenAIBaseURL != "" ||
 		loaded.Model.AnthropicBaseURL != "" || loaded.Model.BaseURL != "" ||
-		loaded.Model.APIKey != "" || loaded.Model.Models != nil || loaded.Model.Agents != nil {
+		loaded.Model.APIKey != "" || len(loaded.Model.Models) != 0 || loaded.Model.Agents != nil {
 		t.Fatalf("legacy 字段未清空: %+v", loaded.Model)
 	}
 

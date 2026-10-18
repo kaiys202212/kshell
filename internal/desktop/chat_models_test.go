@@ -43,10 +43,11 @@ func TestOpenWorkspaceACPCarriesSettingsPayload(t *testing.T) {
 	env.app.mu.Lock()
 	env.app.opts.Config.SessionMode = config.SessionModeACP
 	env.app.opts.Config.Model = config.ModelConfig{
-		Enabled:          true,
-		AnthropicBaseURL: "https://h/",
-		APIKey:           "k",
-		ActiveModel:      "glm-5.3-flash",
+		Enabled:     true,
+		ActiveModel: "glm-5.3-flash",
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "GLM", AnthropicBaseURL: "https://h/", APIKey: "k"},
+		},
 	}
 	env.app.mu.Unlock()
 
