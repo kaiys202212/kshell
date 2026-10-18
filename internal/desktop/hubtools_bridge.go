@@ -14,9 +14,6 @@ import (
 	"github.com/yangk/kshell/internal/requirements"
 )
 
-// hubSystemPrompt 是工具化链路的系统提示词占位：Task 6 换真实现（意图路由 + 完整人设）。
-const hubSystemPrompt = "你是 kshell 的助手，可以调用工具查询本机需求、工作区与运行中会话。"
-
 // desktopBridge 把 App 既有能力适配为 hubtools.Bridge：只做视图映射，不重复实现查询。
 type desktopBridge struct {
 	app *App
@@ -195,13 +192,14 @@ func (a *App) hubTools() *hubRouter {
 
 // HandlePrompt 处理一条用户输入：构造会话调 LLM 工具循环 → 落盘 assistant
 // 消息或 tool_confirm 卡片。返回 handled=true 表示输入已被工具化链路消费；
-// handled=false 表示 LLM 调用失败，调用方落回原直连链路。
+// handled=false 表示应落回原直连链路（LLM 失败 / 意图路由判为非数据操作 /
+// 空回复 / 已有在途对话）。
 //
 // user 消息落盘时机（取舍）：hub.Store 无删除 API，若先落盘后失败会出现
 // 「原链路再落一条」的重复。因此这里延迟到 LLM 成功后才落 user 消息，
 // 失败时 store 完全无痕，降级路径与未启用工具化完全一致。
-// force_auto / auto 共用本入口；auto 的 LLM 意图判定由 Task 6 的 router.go
-// 在此之前插入（当前 auto 暂直接进工具循环）。
+// force_auto / auto 共用本入口：auto 模式系统提示词含路由规则，模型输出
+// route=agent 时降级原链路；force_auto 跳过路由判断直接进工具循环。
 func (h *hubRouter) HandlePrompt(sendID, text string) (bool, error) {
 	// 串行化：已有在途工具化对话时直接降级原链路，不触碰其 session/pending
 	//（否则会互相污染挂起状态与确认卡归属）。
@@ -233,7 +231,7 @@ func (h *hubRouter) HandlePrompt(sendID, text string) (bool, error) {
 	}
 
 	msgs := []hubtools.Message{
-		{Role: "system", Content: hubSystemPrompt},
+		{Role: "system", Content: hubtools.BuildSystemPrompt(reg.Tools(), h.routeAware())},
 		{Role: "user", Content: text},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), hubPromptTimeout)
@@ -247,11 +245,19 @@ func (h *hubRouter) HandlePrompt(sendID, text string) (bool, error) {
 		return false, nil
 	}
 
-	// 模型完成但未产出文本且无挂起：视为路由未产出结果，降级原链路
-	//（user 消息尚未落盘，store 无痕）。须在落盘前判定。
-	if h.currentPending() == nil && resp.Text == "" {
-		h.clearTurn()
-		return false, nil
+	// 模型完成但无挂起时的降级判定（须在落盘前做，此时 user 消息尚未落盘，
+	// store 无痕，原链路接管后不重复）：
+	// 1) 空文本 = 路由未产出结果；
+	// 2) auto 模式下模型输出 route=agent = 意图判定为非数据操作，原文转投原链路。
+	if h.currentPending() == nil {
+		if resp.Text == "" {
+			h.clearTurn()
+			return false, nil
+		}
+		if h.routeAware() && hubtools.ParseRouteAgent(resp.Text) {
+			h.clearTurn()
+			return false, nil
+		}
 	}
 
 	// LLM 成功：先落 user 消息（归因快照），再落结果
@@ -295,6 +301,12 @@ func (h *hubRouter) clearTurn() {
 	h.session = nil
 	h.pending = nil
 	h.mu.Unlock()
+}
+
+// routeAware 报告当前是否启用意图路由判定（auto 默认启用；force_auto 跳过，
+// 输入无条件进工具循环）。动态读配置，与 hubTools 的配置时效语义一致。
+func (h *hubRouter) routeAware() bool {
+	return h.app.snapshot().Config.AgentHub.RouteMode != config.RouteModeForceAuto
 }
 
 // currentPending 取当前挂起操作（可能为 nil）。

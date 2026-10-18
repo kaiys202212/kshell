@@ -491,6 +491,63 @@ func TestHandlePromptEmptyTextDegrades(t *testing.T) {
 	}
 }
 
+// TestHandlePromptAutoRouteAgent 验证 auto 模式意图路由：模型输出 route=agent
+// 时降级原链路（store 无痕）；force_auto 不做该判定直接消费。
+func TestHandlePromptAutoRouteAgent(t *testing.T) {
+	// 两次调用各取一条：第一次给 auto（route=agent），第二次给 force_auto（纯文本）
+	mock := &hubLLMMock{bodies: []string{`"{\"route\":\"agent\"}"`, `"直接回答"`}}
+	srv := httptest.NewServer(http.HandlerFunc(mock.handler))
+	t.Cleanup(srv.Close)
+
+	newApp := func(mode string) (*App, *hub.Store) {
+		a, store, rec := newBridgeTestApp(t)
+		a.opts.Config.Model.OpenAIBaseURL = srv.URL
+		a.opts.Config.Model.APIKey = "k-test"
+		a.opts.Config.Model.ActiveModel = "test-model"
+		a.opts.Config.AgentHub.RouteMode = mode
+		m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
+		t.Cleanup(m.CloseAll)
+		a.opts.Chats = m
+		return a, store
+	}
+
+	// auto：route=agent → handled=false，store 无痕
+	a, store := newApp(config.RouteModeAuto)
+	h := a.hubTools()
+	handled, err := h.HandlePrompt("s1", "帮我写个冒泡排序")
+	if handled || err != nil {
+		t.Fatalf("route=agent 应降级，得到 %v %v", handled, err)
+	}
+	if n := len(store.List()); n != 0 {
+		t.Fatalf("route=agent 降级不应落盘: %+v", store.List())
+	}
+
+	// force_auto：同样回复不做路由判定 → 直接消费落盘
+	a2, store2 := newApp(config.RouteModeForceAuto)
+	h2 := a2.hubTools()
+	handled2, err2 := h2.HandlePrompt("s1", "帮我写个冒泡排序")
+	if !handled2 || err2 != nil {
+		t.Fatalf("force_auto 应直接消费，得到 %v %v", handled2, err2)
+	}
+	var ans hub.Message
+	for _, mm := range store2.List() {
+		if mm.Kind == "agent" && mm.Event == "" {
+			ans = mm
+		}
+	}
+	if ans.Text == "" {
+		t.Fatalf("force_auto 应落盘 assistant 消息: %+v", store2.List())
+	}
+}
+
+// TestConfirmHubToolNotReady 验证未配置模型时确认绑定返回未就绪错误。
+func TestConfirmHubToolNotReady(t *testing.T) {
+	a, _, _ := newBridgeTestApp(t)
+	if err := a.ConfirmHubTool("s1", "p1", true); err != errNotReady {
+		t.Fatalf("未配置模型应返回 errNotReady，得到 %v", err)
+	}
+}
+
 // extractPendingID 从 tool_confirm 文本尾部 JSON 提取 pending ID。
 func extractPendingID(text string) string {
 	i := strings.LastIndex(text, "{")
