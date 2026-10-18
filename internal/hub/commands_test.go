@@ -256,7 +256,7 @@ func TestEasyNew(t *testing.T) {
 	}
 	c := NewConsole(fe)
 	out := join(c.Handle("#en"))
-	if !strings.Contains(out, "已创建: [proj] claude 新会话") {
+	if !strings.Contains(out, "【新会话】你好！我是 claude，会话已就绪") {
 		t.Fatalf("EasyNew 成功文案不符: %q", out)
 	}
 	// current 已更新：#s 应命中 new1
@@ -294,8 +294,8 @@ func TestNewMenuFullFlow(t *testing.T) {
 		t.Fatalf("step3 应列模型: %s", out)
 	}
 	out = join(c.Handle("2")) // opus
-	if !strings.Contains(out, "已创建") {
-		t.Fatalf("创建成功应回已创建: %s", out)
+	if !strings.Contains(out, "我是 codex") {
+		t.Fatalf("创建成功应回欢迎词: %s", out)
 	}
 	if len(fe.createCalls) != 1 || fe.createCalls[0] != [3]string{"codex", "ws1", "opus"} {
 		t.Fatalf("CreateNew 参数不符: %v", fe.createCalls)
@@ -318,7 +318,7 @@ func TestNewMenuSkipsEmptyModels(t *testing.T) {
 	c.Handle("#n")
 	c.Handle("1")              // 选工具 → 选项目
 	out := join(c.Handle("1")) // 选项目 → models 为空直接创建
-	if !strings.Contains(out, "已创建") {
+	if !strings.Contains(out, "会话已就绪") {
 		t.Fatalf("models 为空时选完项目应直接创建: %s", out)
 	}
 	if len(fe.createCalls) != 1 || fe.createCalls[0] != [3]string{"claude", "ws1", ""} {
@@ -451,7 +451,7 @@ func TestGSend(t *testing.T) {
 	c := NewConsole(fe)
 	c.Handle("#l") // #g 依据上次列表的编号映射
 	out := join(c.Handle("#g 1 hello world"))
-	if !strings.Contains(out, "已发送到: A") {
+	if !strings.Contains(out, "已发送到: 【A】") {
 		t.Fatalf("#g 成功文案不符: %q", out)
 	}
 	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c1", "hello world"} {
@@ -744,7 +744,7 @@ func TestFullWidthInputNormalization(t *testing.T) {
 		t.Fatalf("＃l 应按命令处理: %q", got)
 	}
 	// ＃en：全角井号快速新建
-	if got := join(c.Handle("＃en")); !strings.Contains(got, "已创建") || !strings.Contains(got, "已创建") {
+	if got := join(c.Handle("＃en")); !strings.Contains(got, "会话已就绪") {
 		t.Fatalf("＃en 应触发快速新建: %q", got)
 	}
 	// 全角数字编号切换（先 #l 建映射）
@@ -757,7 +757,7 @@ func TestFullWidthInputNormalization(t *testing.T) {
 	}
 	// ＃g：全角井号 + 全角冒号 + 全角空格
 	c.Handle("#l")
-	if got := join(c.Handle("＃g：1　你好")); !strings.Contains(got, "已发送到: A") {
+	if got := join(c.Handle("＃g：1　你好")); !strings.Contains(got, "已发送到: 【A】") {
 		t.Fatalf("＃g：1　你好 应发送成功: %q", got)
 	}
 	if fe.sendCalls[len(fe.sendCalls)-1] != [2]string{"c1", "你好"} {
@@ -765,7 +765,7 @@ func TestFullWidthInputNormalization(t *testing.T) {
 	}
 	// 半角 #g 编号后跟全角冒号
 	c.Handle("#l")
-	if got := join(c.Handle("#g 1：再试")); !strings.Contains(got, "已发送到: A") {
+	if got := join(c.Handle("#g 1：再试")); !strings.Contains(got, "已发送到: 【A】") {
 		t.Fatalf("#g 1：再试 应发送成功: %q", got)
 	}
 	if fe.sendCalls[len(fe.sendCalls)-1] != [2]string{"c1", "再试"} {
@@ -773,7 +773,7 @@ func TestFullWidthInputNormalization(t *testing.T) {
 	}
 	// ＃g 1 注意：正文里的冒号不受影响
 	c.Handle("#l")
-	if got := join(c.Handle("#g 1 注意：细节")); !strings.Contains(got, "已发送到: A") {
+	if got := join(c.Handle("#g 1 注意：细节")); !strings.Contains(got, "已发送到: 【A】") {
 		t.Fatalf("正文冒号不应影响 #g: %q", got)
 	}
 	if fe.sendCalls[len(fe.sendCalls)-1] != [2]string{"c1", "注意：细节"} {
@@ -785,6 +785,49 @@ func TestFullWidthInputNormalization(t *testing.T) {
 	}
 	if fe.sendCalls[len(fe.sendCalls)-1] != [2]string{"c2", "＃话题 标签"} {
 		t.Fatalf("＃未知词应原文发给当前会话: %v", fe.sendCalls)
+	}
+}
+
+// 创建成功回复 agent 口吻欢迎词，含【会话名】与工具展示名（2026-10-18 用户反馈）。
+func TestCreateReplyAgentVoice(t *testing.T) {
+	fe := &fakeExecutor{
+		easyNewRef: SessionRef{ChatID: "n1", Tool: "codebuddy", ToolName: "CodeBuddy", Title: "kshell · CodeBuddy"},
+	}
+	out := join(NewConsoleLang(fe, "en").Handle("#en"))
+	want := "【kshell · CodeBuddy】Hi! This is CodeBuddy. The session is ready — type any task below and I will start working on it."
+	if out != want {
+		t.Fatalf("欢迎词不符:\n得到 %q\n期望 %q", out, want)
+	}
+	// 工具展示名缺失回落 ToolID
+	fe2 := &fakeExecutor{easyNewRef: SessionRef{ChatID: "n1", Tool: "claude", Title: "T"}}
+	if got := join(NewConsoleLang(fe2, "en").Handle("#en")); !strings.Contains(got, "This is claude.") {
+		t.Fatalf("无展示名应回落 ToolID: %q", got)
+	}
+	// 分步菜单创建同样回欢迎词（默认中文文案）
+	fe3 := &fakeExecutor{
+		tools:      []MenuOption{{ID: "claude", Label: "Claude"}},
+		workspaces: []MenuOption{{ID: "ws1", Label: `D:\proj`}},
+		createRef:  SessionRef{ChatID: "nc1", Tool: "claude", ToolName: "Claude Code", Title: "新会话"},
+	}
+	c3 := NewConsole(fe3)
+	c3.Handle("#n")
+	c3.Handle("1")
+	if got := join(c3.Handle("1")); !strings.Contains(got, "我是 Claude Code") || !strings.Contains(got, "【新会话】") {
+		t.Fatalf("菜单创建应回欢迎词: %q", got)
+	}
+}
+
+// 切换与 #g 回复统一【会话名】。
+func TestSwitchAndSentSessionTag(t *testing.T) {
+	fe := &fakeExecutor{listSessions: []SessionRef{wsRef(0, "c1", "", "", "claude", "会话A", false)}}
+	c := NewConsole(fe)
+	c.Handle("#l")
+	if got := join(c.Handle("1")); !strings.Contains(got, "已切换: 【会话A】") {
+		t.Fatalf("切换回复应带【会话名】: %q", got)
+	}
+	c.Handle("#l")
+	if got := join(c.Handle("#g 1 hi")); !strings.Contains(got, "已发送到: 【会话A】") {
+		t.Fatalf("#g 回复应带【会话名】: %q", got)
 	}
 }
 

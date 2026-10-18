@@ -338,7 +338,7 @@ func (c *Console) switchByNumber(n int) []Reply {
 	if err := c.activateRef(ref); err != nil {
 		return single(fmt.Sprintf(c.text("switch_failed"), err))
 	}
-	return single(formatCreated(c.text("switched"), ref))
+	return single(formatSwitched(c.text("switched"), ref))
 }
 
 // refByNum 按编号查上次列表映射。
@@ -359,7 +359,7 @@ func (c *Console) handleEasyNew() []Reply {
 	}
 	c.current = ref
 	c.hasCurrent = true
-	return single(formatCreated(c.text("created"), ref))
+	return single(c.welcomeReply(ref))
 }
 
 // handleNewMenu 进入 #n 分步新建菜单 step1。
@@ -418,7 +418,7 @@ func (c *Console) handleMenuNumber(n int) []Reply {
 		if err := c.activateRef(ref); err != nil {
 			return single(fmt.Sprintf(c.text("switch_failed"), err))
 		}
-		return single(formatCreated(c.text("switched"), ref))
+		return single(formatSwitched(c.text("switched"), ref))
 	}
 	c.menu = nil
 	return single(c.text("no_mapping"))
@@ -433,7 +433,7 @@ func (c *Console) finishCreate(menu *pendingMenu, model string) []Reply {
 	}
 	c.current = ref
 	c.hasCurrent = true
-	return single(formatCreated(c.text("created"), ref))
+	return single(c.welcomeReply(ref))
 }
 
 // handleCancel 取消进行中的选择。
@@ -508,7 +508,7 @@ func (c *Console) handleG(arg string) []Reply {
 	if err := c.ex.Send(ref.ChatID, text); err != nil {
 		return single(fmt.Sprintf(c.text("send_failed"), err))
 	}
-	return single(fmt.Sprintf(c.text("sent_to"), ref.Title))
+	return single(fmt.Sprintf(c.text("sent_to"), sessionTag(ref.Title)))
 }
 
 // handleSearch 处理 "#f <kw>"：搜索并进入结果选择菜单。

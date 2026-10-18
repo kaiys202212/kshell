@@ -1,6 +1,9 @@
 package hub
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // SessionRef 是命令层可见的一个可切换会话（编号映射用）。
 type SessionRef struct {
@@ -73,9 +76,27 @@ func formatRef(r SessionRef) string {
 	return prefix + itoa(r.Num) + ". [" + lastBase(r.Workspace) + "] " + r.Tool + " " + r.Title
 }
 
-// formatCreated 是创建/切换成功后的单行回显。
-func formatCreated(verb string, r SessionRef) string {
-	return verb + ": [" + lastBase(r.Workspace) + "] " + r.Tool + " " + r.Title
+// sessionTag 把会话标题格式化为【会话名】归因前缀；标题为空返回空串。
+func sessionTag(title string) string {
+	if title == "" {
+		return ""
+	}
+	return "【" + title + "】"
+}
+
+// formatSwitched 是切换成功后的单行回显（verb 为含 %s 的文案，传【会话名】）。
+func formatSwitched(verb string, r SessionRef) string {
+	return fmt.Sprintf(verb, sessionTag(r.Title))
+}
+
+// welcomeReply 是创建成功后的 agent 第一人称欢迎词：【会话名】+ session_ready
+//（工具展示名缺失回落 ToolID）。
+func (c *Console) welcomeReply(r SessionRef) string {
+	name := r.ToolName
+	if name == "" {
+		name = r.Tool
+	}
+	return sessionTag(r.Title) + fmt.Sprintf(c.text("session_ready"), name)
 }
 
 // hubMsgTitle 取消息的归因标题：会话标题快照优先，缺省回落工具 ID。

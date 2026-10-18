@@ -11,7 +11,7 @@ var cmdTexts = map[string]langPair{
 #?  Help
 #l  Recent sessions (first 10)
 #la All sessions
-#en Quick new session
+#en [text]  Quick new session (text sent after ready)
 #n  Step-by-step new session
 #s  Interrupt current task
 #m  Switch model
@@ -26,7 +26,7 @@ Plain text = send to current session`,
 #?  帮助
 #l  最近会话(前10)
 #la 全部会话
-#en 快速新建会话
+#en [内容] 快速新建会话（内容自动下发）
 #n  分步新建会话
 #s  中断当前任务
 #m  切换模型
@@ -59,11 +59,15 @@ Plain text = send to current session`,
 	"list_hint":         {"Reply with a number to switch session", "回复数字可切换到对应会话"},
 	"sent_ack":          {"Got your message — I'm on it.", "收到，我马上开始。"},
 
+	// 创建成功后的 agent 第一人称欢迎词（%s = 工具展示名）；文案与 AgentHub
+	// 前端 hub.welcome key 保持一致，一侧改动须同步另一侧与 locales。
+	"session_ready": {"Hi! This is %s. The session is ready — type any task below and I will start working on it.",
+		"你好！我是 %s，会话已就绪——在下方输入任务，我马上开始。"},
+
 	// helpText 之外的状态行/标签
 	"current_session":    {"Current session: %s", "当前会话: %s"},
 	"none":               {"none", "无"},
-	"created":            {"Created", "已创建"},
-	"switched":           {"Switched", "已切换"},
+	"switched":           {"Switched: %s", "已切换: %s"},
 	"model_switched":     {"Model switched: %s", "已切换模型: %s"},
 	"pick_tool":          {"Pick a tool:", "选择工具:"},
 	"pick_workspace":     {"Pick a workspace:", "选择项目:"},
