@@ -30,13 +30,11 @@ func (a *App) GetTools() []discovery.Tool {
 
 // CheckToolAuth 专供登录弹窗轮询：按 toolID 找到 provider 并实时探测登录态。
 // 刻意绕过 a.tools（其中快照灌入/上轮扫描的 Auth 都可能是历史结论），每次调用
-// 都直接走 providers.AuthProber 实探。与 GetTools 同源：先 ensureToolsReady 等
-// provider 表装配完成，再经 snapshot() 加锁读取。
+// 都直接走 providers.AuthProber 实探。不依赖扫描就绪：provider 表（o.Providers）
+// 启动装配即可用，直接 snapshot() 加锁读取，避免轮询入口白等 scanReadyTimeout。
 // 未实现 AuthProber 或 toolID 未知时返回 AuthUnknown 与 nil 错误——前端轮询
 // 逻辑据此继续等待，不当作异常打断弹窗流程。
 func (a *App) CheckToolAuth(toolID string) (string, error) {
-	a.ensureToolsReady()
-
 	o := a.snapshot()
 	for _, p := range o.Providers {
 		if p.ID() != toolID {

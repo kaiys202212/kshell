@@ -66,8 +66,8 @@ func detectAll(home string, ps []providers.Provider, probe func(bin string, args
 		}
 		// 登录态是实时状态：对实现 AuthProber 的 provider 实探，未实现的保守填
 		// unknown（调用方放行）。缓存只影响版本号，这里每次都会重新执行。
-		if ap, ok := p.(providers.AuthProber); ok {
-			t.Auth = string(ap.ProbeAuth())
+		if prober, ok := p.(providers.AuthProber); ok {
+			t.Auth = string(prober.ProbeAuth())
 		} else {
 			t.Auth = string(providers.AuthUnknown)
 		}
