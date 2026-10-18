@@ -50,14 +50,19 @@ func TestSetModelConfigKeepOverwriteClear(t *testing.T) {
 		t.Fatalf("Set: %v", err)
 	}
 	loaded, _ := config.Load(layout)
-	if loaded.Model.APIKey != "k1" || !loaded.Model.Enabled || loaded.Model.Preset != "deepseek" {
+	// legacy 字段落盘后由 config.Load 迁入 default 平台，顶层清空。
+	pl, ok := loaded.Model.ActivePlatform()
+	if !ok {
+		t.Fatalf("persist 1 应迁移出默认平台，got %+v", loaded.Model)
+	}
+	if pl.APIKey != "k1" || !loaded.Model.Enabled || pl.Preset != "deepseek" {
 		t.Fatalf("persist 1 = %+v", loaded.Model)
 	}
-	if loaded.Model.OpenAIBaseURL != "https://oai/" || loaded.Model.AnthropicBaseURL != "https://ant/" {
-		t.Fatalf("urls = %+v", loaded.Model)
+	if pl.OpenAIBaseURL != "https://oai/" || pl.AnthropicBaseURL != "https://ant/" {
+		t.Fatalf("urls = %+v", pl)
 	}
-	if len(loaded.Model.Models) != 2 || loaded.Model.Models[0] != "m" || loaded.Model.Models[1] != "gpt-x" {
-		t.Fatalf("models 应 TrimSpace/去空/去重: %#v", loaded.Model.Models)
+	if len(pl.Models) != 2 || pl.Models[0] != "m" || pl.Models[1] != "gpt-x" {
+		t.Fatalf("models 应 TrimSpace/去空/去重: %#v", pl.Models)
 	}
 	if loaded.Model.ActiveModel != "gpt-x" {
 		t.Fatalf("active_model 未 TrimSpace: %q", loaded.Model.ActiveModel)
@@ -69,8 +74,8 @@ func TestSetModelConfigKeepOverwriteClear(t *testing.T) {
 		t.Fatalf("Set keep: %v", err)
 	}
 	loaded, _ = config.Load(layout)
-	if loaded.Model.APIKey != "k1" {
-		t.Fatalf("留空应保持密钥，got %q", loaded.Model.APIKey)
+	if pl, ok := loaded.Model.ActivePlatform(); !ok || pl.APIKey != "k1" {
+		t.Fatalf("留空应保持密钥，got %+v ok=%v", loaded.Model, ok)
 	}
 
 	if err := app.SetModelConfig(ModelConfigInput{Enabled: true, ClearAPIKey: true, Models: []string{}}); err != nil {
