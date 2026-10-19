@@ -53,8 +53,7 @@ func (a *App) ensureSessionHooks() {
 			m.SetOnInfo(func(info chat.Info) {
 				// 出站统一原始 ID 空间：SetOnInfo 携带 manager 侧新 ID，翻回链头，
 				// 重建后前端按旧 ID upsert 才能命中同一镜像行（与 chat:update 同口径）。
-				info.ID = a.originalChatID(info.ID)
-				a.Emit("chat:meta", info)
+				info = a.emitChatMeta(info)
 				// 标题变化（首条消息改标题 / 扫描回填真实标题）时回填需求的会话名快照，
 				// 供会话关闭或重启后需求列表仍能展示。无关联需求时幂等忽略。
 				// 故意同步落盘：SetSessionTitle 幂等短路（同标题不写），正常是内存命中
@@ -71,6 +70,17 @@ func (a *App) ensureSessionHooks() {
 			m.SetMCPFactory(a.chatMCPServers)
 		}
 	})
+}
+
+// emitChatMeta 把会话快照推给前端，ID 先翻回链头（与 SetOnInfo 同口径）。
+// Manager.Open 成功本身不回调 onInfo：共享命令层（#en / 微信桥）创建或激活
+// 会话时前端没有打开结果可登记，必须由打开路径主动推一次，否则 chats 镜像
+// 缺行，AgentHub 快捷操作解析不到目标会话。返回翻回链头后的快照，供调用方
+// 继续使用（如回填需求的会话标题）。
+func (a *App) emitChatMeta(info chat.Info) chat.Info {
+	info.ID = a.originalChatID(info.ID)
+	a.Emit("chat:meta", info)
+	return info
 }
 
 func (a *App) nudgeDiscovery() {

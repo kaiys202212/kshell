@@ -968,6 +968,7 @@ func (a *App) attachDiscoveredSessions(sessions []providers.Session, prevIDs map
 			}
 			if o.Chats != nil && o.Chats.AttachSession(s.ID, s.Workspace, s.ToolID, s.Title, s.Messages, s.CreatedAt) {
 				changed++
+				a.backfillHubSessionID(o.Chats, s.ID)
 			}
 		}
 		if o.Terminals != nil && o.Terminals.UpdateSessionTitle(s.ID, s.Title, s.Messages) {
@@ -979,6 +980,30 @@ func (a *App) attachDiscoveredSessions(sessions []providers.Session, prevIDs map
 	}
 	a.flushPendingArchive()
 	return changed
+}
+
+// backfillHubSessionID 在扫描把磁盘会话绑定到新建聊天后，回填 hub 历史消息的
+// SessionID 快照：新建会话落盘欢迎词时还没有磁盘 ID，若不回填，会话关闭或
+// 重启后 AgentHub 的「继续 / 换个说法」只能靠标题猜测（新建占位标题与磁盘
+// summary 不一致，必然失败），无法精确 resume 原会话。
+func (a *App) backfillHubSessionID(m *chat.Manager, sessionID string) {
+	store := a.snapshot().HubStore
+	if store == nil || sessionID == "" {
+		return
+	}
+	chatID := ""
+	for _, info := range m.List() {
+		if info.SessionID == sessionID {
+			chatID = a.originalChatID(info.ID) // hub 落盘统一链头 ID
+			break
+		}
+	}
+	if chatID == "" {
+		return
+	}
+	if store.BackfillSessionID(chatID, sessionID) > 0 {
+		a.Emit("hub:changed")
+	}
 }
 
 // knownSessionIDs 当前扫描结果里的磁盘会话 ID（打开新建页签时快照，防止把左侧已有会话绑上去）。

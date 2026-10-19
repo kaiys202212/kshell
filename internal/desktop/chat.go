@@ -256,6 +256,7 @@ func (a *App) openSessionACP(sessionID string, allowFallback bool) (OpenedSessio
 				ToolID:    s.ToolID,
 			}, l, s.ID)
 			if err == nil {
+				a.emitChatMeta(info)
 				return OpenedSession{Kind: "chat", Chat: &info}, nil
 			}
 			if allowFallback {
@@ -305,6 +306,7 @@ func (a *App) openWorkspaceACP(wsID, toolID string, allowFallback bool) (OpenedS
 			}, l, "")
 			if err == nil {
 				a.recordHubWelcome(info)
+				a.emitChatMeta(info)
 				return OpenedSession{Kind: "chat", Chat: &info}, nil
 			}
 			if allowFallback {

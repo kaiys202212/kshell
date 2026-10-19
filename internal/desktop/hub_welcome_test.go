@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/hub"
 	"github.com/yangk/kshell/internal/providers"
@@ -82,5 +83,83 @@ func TestOpenWorkspaceACPRecordsHubWelcome(t *testing.T) {
 		if msg.Kind == "agent" && strings.HasPrefix(msg.Text, "hub.welcome|") && msg.ChatID != got.Chat.ID {
 			t.Fatalf("resume 不应写欢迎词: %+v", msg)
 		}
+	}
+}
+
+// OpenWorkspaceACP 成功后必须主动推 chat:meta：共享命令层（#en/微信）创建会话时
+// 前端拿不到打开结果，不推则 chats 镜像缺失，AgentHub 快捷操作解析不到目标。
+func TestOpenWorkspaceACPEmitChatMeta(t *testing.T) {
+	app, _, rec := newWelcomeTestApp(t)
+
+	got, err := app.OpenWorkspaceACP(`D:\w`, "claude")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if got.Kind != "chat" || got.Chat == nil {
+		t.Fatalf("应走聊天路径: %+v", got)
+	}
+	info, ok := rec.lastRaw("chat:meta").(chat.Info)
+	if !ok {
+		t.Fatalf("应 emit chat:meta，得到 %v", rec.names)
+	}
+	if info.ID != got.Chat.ID || info.ToolID != "claude" || info.Workspace != `D:\w` {
+		t.Fatalf("chat:meta 负载不符: %+v，want id=%s", info, got.Chat.ID)
+	}
+}
+
+// OpenSessionACP 激活历史会话后同样要推 chat:meta，前端镜像才立即可用。
+func TestOpenSessionACPEmitChatMeta(t *testing.T) {
+	app, _, rec := newWelcomeTestApp(t)
+
+	got, err := app.OpenSessionACP("s1")
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if got.Kind != "chat" || got.Chat == nil {
+		t.Fatalf("应走聊天路径: %+v", got)
+	}
+	info, ok := rec.lastRaw("chat:meta").(chat.Info)
+	if !ok {
+		t.Fatalf("应 emit chat:meta，得到 %v", rec.names)
+	}
+	if info.ID != got.Chat.ID || info.SessionID != "s1" {
+		t.Fatalf("chat:meta 负载不符: %+v，want id=%s session=s1", info, got.Chat.ID)
+	}
+}
+
+// 扫描把磁盘会话绑定到新建聊天后，欢迎词的 SessionID 快照要同步回填：
+// 会话关闭/重启后「继续/换个说法」靠它精确 resume。
+func TestAttachBackfillsHubSessionID(t *testing.T) {
+	app, store, rec := newWelcomeTestApp(t)
+
+	got, err := app.OpenWorkspaceACP(`D:\w`, "claude")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	welcome := waitHubKind(t, store, "agent")
+	if welcome.ChatID != got.Chat.ID || welcome.SessionID != "" {
+		t.Fatalf("前置：欢迎词应无 SessionID 快照: %+v", welcome)
+	}
+	before := rec.count("hub:changed")
+
+	app.attachDiscoveredSessions([]providers.Session{{
+		ID: "s2", ToolID: "claude", Workspace: `D:\w`, Title: "新任务",
+		Messages: 1, CreatedAt: time.Now(),
+	}}, map[string]bool{"s1": true})
+
+	var found bool
+	for _, m := range store.List() {
+		if m.ID == welcome.ID {
+			found = true
+			if m.SessionID != "s2" {
+				t.Fatalf("欢迎词 SessionID 应回填为 s2: %+v", m)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("欢迎词应仍在 live")
+	}
+	if rec.count("hub:changed") <= before {
+		t.Fatalf("回填后应 emit hub:changed，得到 %v", rec.names)
 	}
 }

@@ -16,12 +16,30 @@ import (
 type hubRecorder struct {
 	mu    sync.Mutex
 	names []string
+	raws  []any // 与 names 对齐：单参数事件的首个负载（如 chat:meta 的 chat.Info）
 }
 
 func (r *hubRecorder) emit(name string, data ...any) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.names = append(r.names, name)
+	var raw any
+	if len(data) > 0 {
+		raw = data[0]
+	}
+	r.raws = append(r.raws, raw)
+}
+
+// lastRaw 返回最近一次指定事件的单参数负载；未出现返回 nil。
+func (r *hubRecorder) lastRaw(name string) any {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := len(r.names) - 1; i >= 0; i-- {
+		if r.names[i] == name {
+			return r.raws[i]
+		}
+	}
+	return nil
 }
 
 func (r *hubRecorder) count(name string) int {
