@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowUpRight, AtSign, ChevronDown, Loader2, Settings2 } from 'lucide-react';
+import { ArrowUpRight, Loader2, Settings2 } from 'lucide-react';
 import type { ChatCommand, ChatInfo, ChatModelsView, HubArchiveMonth, HubMessage, Session, ToolInfo, Workspace } from '../lib/api';
 import {
   cancelChat,
@@ -43,7 +43,7 @@ import { attributionText, baseName, resolveAttribution } from '../lib/hubAttribu
 import { markdownBubbleClass } from '../lib/markdownStyles';
 import { sameWorkspacePath } from '../lib/workspacePath';
 import { cn } from '../lib/cn';
-import { LIST_ROW, MONO } from '../lib/ui';
+import { LIST_ROW } from '../lib/ui';
 import { useAppStore } from '../state/store';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
@@ -160,13 +160,6 @@ interface SlashItem {
   kind: 'client' | 'agent';
 }
 
-// statusKey 把 chat.Status 映射到状态点文案 key（未知按空闲处理）。
-function statusKey(status: string): string {
-  if (status === 'running' || status === 'starting') return 'ui.hub.status_running';
-  if (status === 'exited') return 'ui.hub.status_exited';
-  return 'ui.hub.status_ready';
-}
-
 // statusDotClass 状态点配色：运行中用主色（Teal），退出用 muted，其余描边。
 function statusDotClass(status: string): string {
   if (status === 'running' || status === 'starting') return 'bg-primary';
@@ -257,9 +250,6 @@ export default function AgentHubPanel() {
       useAppStore.getState().notify(t('ui.hub.route_save_failed', { err: backendError(e) }), 'error');
     });
   };
-  // 浮动会话胶囊：面板展开状态。
-  const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
-  const sessionBarRef = useRef<HTMLDivElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -318,18 +308,6 @@ export default function AgentHubPanel() {
     };
   }, []);
 
-  // 面板展开时点击胶囊与面板之外收起（mousedown 在点击前触发，避免先跑外层 onClick）
-  useEffect(() => {
-    if (!sessionPanelOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (sessionBarRef.current && !sessionBarRef.current.contains(e.target as Node)) {
-        setSessionPanelOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [sessionPanelOpen]);
-
   // 斜杠补全：draft 首词为 /xxx 时激活。
   const [slashClosed, setSlashClosed] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
@@ -354,17 +332,6 @@ export default function AgentHubPanel() {
       ),
     [chats],
   );
-
-  // 按 Workspace 分组（用 sameWorkspacePath 归并大小写/分隔符差异）
-  const groups = useMemo(() => {
-    const out: { workspace: string; rows: ChatInfo[] }[] = [];
-    for (const c of chats) {
-      const g = out.find((x) => sameWorkspacePath(x.workspace, c.Workspace));
-      if (g) g.rows.push(c);
-      else out.push({ workspace: c.Workspace, rows: [c] });
-    }
-    return out;
-  }, [chats]);
 
   // @ 补全：草稿末尾是未闭合的 @ 片段时给出候选（v1 只按草稿尾匹配，不做光标跟踪）。
   // mentionQuery 为 null 表示当前不在 @ 输入中。
@@ -613,12 +580,6 @@ export default function AgentHubPanel() {
       );
   };
 
-  // pickSessionRow 把面板里的会话设为默认投递目标（「直接发送将投递到它」），并收起面板。
-  const pickSessionRow = (id: string) => {
-    useAppStore.getState().setLastAgentId(id);
-    setSessionPanelOpen(false);
-  };
-
   // closeSession 关闭空闲会话：走与 WorkspaceTab 一致的正确组合——后端 Manager.Close
   // （closeChat，幂等，真摘除会话；cancelChat 只取消当前轮，对空闲会话是 no-op），
   // 成功后才从 store 摘除（失败保留行，可重试），列表随 chats 状态自动收缩（面板保持开）。
@@ -637,11 +598,11 @@ export default function AgentHubPanel() {
   };
 
   // mentionSession 把会话的 @ 标签保留式追加进输入框（语义同 quickReply rephrase：
-  // 不清空已有草稿，空格分隔），收起面板并聚焦，待用户补写后手动发送。
+  // 不清空已有草稿，空格分隔），聚焦输入框，待用户补写后手动发送。
+  // chips 平铺后点击 chip 主体即触发本函数（原 @ 图标行为并入主体）。
   const mentionSession = (c: ChatInfo) => {
     const label = sessionDragLabel(c);
     setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
-    setSessionPanelOpen(false);
     inputRef.current?.focus();
   };
 
@@ -701,7 +662,6 @@ export default function AgentHubPanel() {
       } satisfies Workspace,
     );
     if (c.Key) st.requestFocusTerm(c.Key);
-    setSessionPanelOpen(false);
   };
 
   // 输入框拖放：接收浮动面板拖出的 @ 目标，追加进草稿（已有内容时空格分隔）。
@@ -1247,113 +1207,79 @@ export default function AgentHubPanel() {
             ))}
           </ul>
         )}
-        {/* 会话胶囊：紧邻输入框上方；relative 锚定，展开面板向上弹出（不挤占固定行高）。
-            原在顶栏标题后，2026-10 挪到输入区；面板随之改为 bottom-full 向上展开，
-            避免向下盖住输入框。胶囊宽度沿用顶栏版（多展示会话标题）。 */}
-        <div ref={sessionBarRef} className="relative min-w-0">
-          <button
-            type="button"
-            aria-label={t('ui.hub.session_bar_aria')}
-            className="flex max-w-72 items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-xs shadow-sm hover:bg-muted/50"
-            onClick={() => setSessionPanelOpen((v) => !v)}
-          >
-            {(() => {
-              const target = fallbackId ? chats.find((c) => c.ID === fallbackId) : null;
-              if (!target) return <span className="truncate text-muted-foreground">{t('ui.hub.empty')}</span>;
+        {/* 会话 chips 平铺：每个会话一枚，点击主体即 @ 该会话（原 @ 图标行为并入主体）；
+            默认接收目标（下一句话的投递对象，@ 提及优先于回落链）高亮标注。
+            flex-wrap 超宽自动换行继续平铺；拖拽 chip 仍可把 @ 标签放进输入框。
+            容器限高自滚（同归档区口径）：会话多时约两行后滚动，不挤压消息流。 */}
+        <div
+          data-testid="hub-session-chips"
+          className="flex max-h-20 shrink-0 flex-wrap items-center gap-1 overflow-y-auto"
+        >
+          {chats.length === 0 ? (
+            <span className="text-muted-foreground">{t('ui.hub.empty')}</span>
+          ) : (
+            chats.map((c) => {
+              const busy = c.Status === 'running' || c.Status === 'starting';
+              const isTarget = c.ID === currentTargetId;
               return (
-                <>
-                  <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', statusDotClass(target.Status))} />
-                  <span className="min-w-0 truncate">
-                    {target.Title || wsBaseName(target.Workspace) || emptyTarget}
-                  </span>
-                </>
-              );
-            })()}
-            <ChevronDown aria-hidden className={cn('h-3 w-3 shrink-0 text-muted-foreground transition-transform', sessionPanelOpen && 'rotate-180')} />
-          </button>
-          {sessionPanelOpen && (
-            // role=region 供测试/读屏定位整个面板；分组标题用 workspace 基名，内层 ul 不再加 label
-            <div
-              role="region"
-              aria-label={t('ui.hub.session_panel_aria')}
-              className="absolute bottom-full left-0 z-20 mb-1 max-h-64 w-80 overflow-y-auto rounded border border-border bg-card p-1.5 text-xs shadow-md"
-            >
-              {groups.length === 0 ? (
-                <span className="text-muted-foreground">{t('ui.hub.empty')}</span>
-              ) : (
-                groups.map((g) => (
-                  <div key={g.workspace} className="flex flex-col gap-1 py-1">
-                    <span className={cn(MONO, 'truncate')} title={g.workspace}>
-                      {wsBaseName(g.workspace)}
+                <div
+                  key={c.ID}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('text/plain', `@${sessionDragLabel(c)}`);
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
+                  className={cn(
+                    LIST_ROW,
+                    // 默认接收目标高亮：下一句话将投给该会话，需一眼可辨
+                    isTarget ? 'border-primary/60 bg-primary/10' : '',
+                    'flex max-w-56 min-w-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs',
+                  )}
+                >
+                  <button
+                    type="button"
+                    title={t('ui.hub.mention_session')}
+                    // 点击主体是「追加 @ 标签」（可连点），非切换，故不用 toggle 语义；
+                    // 高亮态用 aria-current 表达（可见文本已足够读屏，不再叠加 aria-label）
+                    aria-current={isTarget ? 'true' : undefined}
+                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                    onClick={() => mentionSession(c)}
+                  >
+                    <span
+                      aria-hidden
+                      className={cn('h-1.5 w-1.5 shrink-0 rounded-full', statusDotClass(c.Status))}
+                    />
+                    <span className="min-w-0 truncate font-medium">
+                      {/* 无标题会话兜底显示项目基名，避免出现「新会话」同名列无法区分 */}
+                      {c.Title || wsBaseName(c.Workspace) || emptyTarget}
                     </span>
-                    <ul className="m-0 flex list-none flex-col gap-1 p-0">
-                      {g.rows.map((c) => {
-                        const busy = c.Status === 'running' || c.Status === 'starting';
-                        return (
-                          <li key={c.ID}>
-                            <div
-                              className={cn(LIST_ROW, 'flex min-w-0 items-center gap-1.5 px-2.5 py-1.5')}
-                              draggable
-                              onDragStart={(e) => {
-                                e.dataTransfer.setData('text/plain', `@${sessionDragLabel(c)}`);
-                                e.dataTransfer.effectAllowed = 'copy';
-                              }}
-                            >
-                              <button
-                                type="button"
-                                className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-                                onClick={() => pickSessionRow(c.ID)}
-                              >
-                                <span
-                                  aria-hidden
-                                  className={cn('h-1.5 w-1.5 shrink-0 rounded-full', statusDotClass(c.Status))}
-                                />
-                                <span className="min-w-0 truncate font-medium">
-                                  {/* 无标题会话兜底显示项目基名，避免出现「新会话」同名列无法区分 */}
-                                  {c.Title || wsBaseName(c.Workspace) || emptyTarget}
-                                </span>
-                                <span className="shrink-0 truncate text-[11px] text-muted-foreground">
-                                  {toolDisplayName(c.ToolID)} · {t(statusKey(c.Status))}
-                                </span>
-                              </button>
-                              {/* @ 该会话：把 @ 标签填进输入框；跳转：开项目页签定位该会话对话页。
-                                  与 × 同为行内独立 button，无冒泡联动 */}
-                              <button
-                                type="button"
-                                aria-label={t('ui.hub.mention_session')}
-                                className="shrink-0 text-muted-foreground hover:text-foreground"
-                                onClick={() => mentionSession(c)}
-                              >
-                                <AtSign aria-hidden className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                aria-label={t('ui.hub.jump_session')}
-                                className="shrink-0 text-muted-foreground hover:text-foreground"
-                                onClick={() => jumpToSession(c)}
-                              >
-                                <ArrowUpRight aria-hidden className="h-3.5 w-3.5" />
-                              </button>
-                              {/* 空闲会话才可关闭（忙碌 agent 正在跑任务） */}
-                              {!busy && (
-                                <button
-                                  type="button"
-                                  aria-label={t('ui.hub.close_session')}
-                                  className="shrink-0 text-muted-foreground hover:text-destructive"
-                                  onClick={() => closeSession(c.ID)}
-                                >
-                                  ×
-                                </button>
-                              )}
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                ))
-              )}
-            </div>
+                    <span className="shrink-0 truncate text-[11px] text-muted-foreground">
+                      {toolDisplayName(c.ToolID)}
+                    </span>
+                  </button>
+                  {/* 跳转：开项目页签定位该会话对话页。与 × 同为行内独立 button，无冒泡联动 */}
+                  <button
+                    type="button"
+                    aria-label={t('ui.hub.jump_session')}
+                    className="shrink-0 text-muted-foreground hover:text-foreground"
+                    onClick={() => jumpToSession(c)}
+                  >
+                    <ArrowUpRight aria-hidden className="h-3.5 w-3.5" />
+                  </button>
+                  {/* 空闲会话才可关闭（忙碌 agent 正在跑任务） */}
+                  {!busy && (
+                    <button
+                      type="button"
+                      aria-label={t('ui.hub.close_session')}
+                      className="shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => closeSession(c.ID)}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
         <textarea
