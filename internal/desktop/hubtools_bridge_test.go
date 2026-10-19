@@ -556,6 +556,119 @@ func TestHandlePromptAutoRouteAgent(t *testing.T) {
 	}
 }
 
+// TestRecentMessagesFilters 验证聊天记录上下文映射：只取纯文本消息（排除
+// 事件卡/排队消息）、字段映射、超长截断 200 字、n 条取尾部。
+func TestRecentMessagesFilters(t *testing.T) {
+	a, store, _ := newBridgeTestApp(t)
+	long := strings.Repeat("长", 250)
+	seed := []hub.Message{
+		{Kind: "agent", Event: "tool_confirm", Text: "确认卡不应出现"},
+		{Kind: "user", Status: hub.StatusQueued, Text: "排队消息不应出现"},
+		{Kind: "agent", Event: "ack", Text: "ack 不应出现"},
+		{Kind: "user", ChatID: "c1", Tool: "cursor", SessionTitle: "修 bug", Text: long},
+		{Kind: "agent", ChatID: "c1", Tool: "cursor", SessionTitle: "修 bug", Text: "已修复"},
+	}
+	for i := range seed {
+		if err := store.Append(seed[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b := &desktopBridge{app: a}
+	got := b.RecentMessages(10)
+	if len(got) != 2 {
+		t.Fatalf("应只保留 2 条纯文本消息: %+v", got)
+	}
+	if got[0].Agent != "cursor「修 bug」" || got[0].Sender != "用户" {
+		t.Fatalf("字段映射不符: %+v", got[0])
+	}
+	if n := len([]rune(got[0].Text)); n != 200 {
+		t.Fatalf("超长文本应按字截断 200，得到 %d", n)
+	}
+	if got[0].ChatID != "c1" {
+		t.Fatalf("ChatID 应随条目带出供 refMap: %+v", got[0])
+	}
+	if got[1].Sender != "助手" || got[1].Text != "已修复" {
+		t.Fatalf("助手消息映射不符: %+v", got[1])
+	}
+	tail := b.RecentMessages(1)
+	if len(tail) != 1 || tail[0].Text != "已修复" {
+		t.Fatalf("n=1 应取尾部一条: %+v", tail)
+	}
+}
+
+// TestHandlePromptDispatchTask 验证意图派发端到端：auto 模式模型第一轮发起
+// dispatch_task，任务文本直投记录编号对应会话（落一条 queued user 消息），
+// 第二轮收尾文本照常落盘。
+func TestHandlePromptDispatchTask(t *testing.T) {
+	round := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		round++
+		if round == 1 {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"dispatch_task","arguments":"{\"ref\":\"1\",\"task\":\"继续修复登录\"}"}}]}}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"已派发给 Cursor。"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	a, store, rec := newBridgeTestApp(t)
+	a.opts.Config.Model.OpenAIBaseURL = srv.URL
+	a.opts.Config.Model.APIKey = "k-test"
+	a.opts.Config.Model.ActiveModel = "test-model"
+	a.opts.Config.AgentHub.RouteMode = config.RouteModeAuto
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "修复登录", ToolID: "cursor",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 预置一条归因到该会话的 agent 消息：记录编号 [1] → info.ID
+	if err := store.Append(hub.Message{
+		Kind: "agent", ChatID: info.ID, Tool: "cursor", SessionTitle: "修复登录", Text: "我在修",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.SendChatPrompt(info.ID, "继续修"); err != nil {
+		t.Fatal(err)
+	}
+
+	// 派发任务直投目标会话：落一条 queued user 消息，正文为 task 文本
+	var dispatched hub.Message
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && dispatched.ID == 0 {
+		for _, mm := range store.List() {
+			if mm.Kind == "user" && mm.Text == "继续修复登录" {
+				dispatched = mm
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if dispatched.ID == 0 {
+		t.Fatalf("派发任务未落盘: %+v", store.List())
+	}
+	if dispatched.ChatID != info.ID || dispatched.Status != hub.StatusQueued {
+		t.Fatalf("派发消息应归因目标会话且排队: %+v", dispatched)
+	}
+	// 原始输入与最终回复照常落盘
+	var orig, ans hub.Message
+	for _, mm := range store.List() {
+		if mm.Kind == "user" && mm.Text == "继续修" {
+			orig = mm
+		}
+		if mm.Kind == "agent" && mm.Event == "" && mm.Text == "已派发给 Cursor。" {
+			ans = mm
+		}
+	}
+	if orig.ID == 0 || ans.ID == 0 {
+		t.Fatalf("原始输入/最终回复未落盘: %+v", store.List())
+	}
+}
+
 // TestConfirmHubToolNotReady 验证未配置模型时确认绑定返回未就绪错误。
 func TestConfirmHubToolNotReady(t *testing.T) {
 	a, _, _ := newBridgeTestApp(t)

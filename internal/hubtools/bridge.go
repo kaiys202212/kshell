@@ -45,11 +45,13 @@ type TaskView struct {
 }
 
 // ChatLogEntry 是注入提示词的一条聊天记录摘要：会话归属（agent 名）、
-// 消息发出方与截断后的正文，由宿主从 hub 存储映射而来。
+// 消息发出方与截断后的正文，由宿主从 hub 存储映射而来。ChatID 不渲染进
+// 提示词（编号即引用），供宿主构建编号→会话映射。
 type ChatLogEntry struct {
 	Agent  string
 	Sender string
 	Text   string
+	ChatID string
 }
 
 // Bridge 提供宿主能力查询与需求写入（写操作由确认门禁前置把关）。

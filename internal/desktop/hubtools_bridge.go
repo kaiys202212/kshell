@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -179,11 +180,11 @@ func (b *desktopBridge) RecentMessages(n int) []hubtools.ChatLogEntry {
 		if m.SessionTitle != "" {
 			agent += "「" + m.SessionTitle + "」"
 		}
-		text := m.Text
+		text := []rune(m.Text)
 		if len(text) > 200 {
 			text = text[:200]
 		}
-		out = append(out, hubtools.ChatLogEntry{Agent: agent, Sender: sender, Text: text})
+		out = append(out, hubtools.ChatLogEntry{Agent: agent, Sender: sender, Text: string(text), ChatID: m.ChatID})
 	}
 	if len(out) > n {
 		out = out[len(out)-n:]
@@ -271,7 +272,16 @@ func (h *hubRouter) HandlePrompt(sendID, text string) (bool, error) {
 	}
 	defer h.inflight.Unlock()
 
-	reg := hubtools.NewRegistry(&desktopBridge{app: h.app})
+	// 聊天记录上下文：取最近 10 条纯文本消息构建编号→ChatID 映射，
+	// 注入本次 desktopBridge 供 dispatch_task 解析 ref；同时渲染进系统提示词。
+	recent := (&desktopBridge{app: h.app}).RecentMessages(10)
+	refs := make(map[string]string, len(recent))
+	for i, it := range recent {
+		if it.ChatID != "" {
+			refs[strconv.Itoa(i+1)] = it.ChatID
+		}
+	}
+	reg := hubtools.NewRegistry(&desktopBridge{app: h.app, chatRefs: refs})
 
 	// 会话生命周期：每条输入一轮，替换旧会话（旧 pending 失效）
 	h.mu.Lock()
@@ -294,7 +304,7 @@ func (h *hubRouter) HandlePrompt(sendID, text string) (bool, error) {
 	}
 
 	msgs := []hubtools.Message{
-		{Role: "system", Content: hubtools.BuildSystemPrompt(reg.Tools(), h.routeAware(), nil)},
+		{Role: "system", Content: hubtools.BuildSystemPrompt(reg.Tools(), h.routeAware(), recent)},
 		{Role: "user", Content: text},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), hubPromptTimeout)
