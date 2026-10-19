@@ -20,6 +20,8 @@ export function HelpSection() {
   useEffect(() => {
     let cancelled = false;
     setFailed(false);
+    // 重拉前先清掉旧内容，避免切换页签/语言后短暂显示错配的上一个文档
+    setMarkdown('');
     (tab === 'guide' ? getHelpDoc : getChangelogDoc)(i18n.language)
       .then((md) => {
         if (cancelled) return;
@@ -34,18 +36,8 @@ export function HelpSection() {
     };
   }, [tab, i18n.language, attempt]);
 
-  if (failed) {
-    return (
-      <section className="flex flex-col items-start gap-3 rounded border border-border bg-card p-3.5 text-sm text-muted-foreground">
-        <p>{t('ui.settings.help.loadFailed')}</p>
-        <Button variant="secondary" onClick={() => setAttempt((n) => n + 1)}>
-          {t('ui.settings.help.retry')}
-        </Button>
-      </section>
-    );
-  }
-
-  // 页签样式沿用设置页既有分段控件口径（Button default/secondary + aria-pressed）
+  // 页签样式沿用设置页既有分段控件口径（Button default/secondary + aria-pressed）；
+  // 失败时页签栏仍保留，仅内容区显示失败文案与重试入口
   return (
     <section className="rounded border border-border bg-card">
       <div className="flex gap-2 border-b border-border p-3">
@@ -64,7 +56,16 @@ export function HelpSection() {
           {t('ui.settings.help.tab.changelog')}
         </Button>
       </div>
-      <MarkdownPreview markdown={markdown} />
+      {failed ? (
+        <div className="flex flex-col items-start gap-3 p-3.5 text-sm text-muted-foreground">
+          <p>{t('ui.settings.help.loadFailed')}</p>
+          <Button variant="secondary" onClick={() => setAttempt((n) => n + 1)}>
+            {t('ui.settings.help.retry')}
+          </Button>
+        </div>
+      ) : (
+        <MarkdownPreview markdown={markdown} />
+      )}
     </section>
   );
 }

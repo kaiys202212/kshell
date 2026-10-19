@@ -43,7 +43,11 @@ describe('HelpSection', () => {
     expect(await screen.findByText('Changelog EN')).toBeInTheDocument();
   });
 
-  it('语言切换后重新按新语言拉取文档', async () => {
+  it('语言切换后重新按新语言拉取文档并替换内容', async () => {
+    // mock 按 lang 返回不同内容，断言渲染内容真正替换而非只看调用参数
+    mocks.getHelpDoc.mockImplementation((lang: string) =>
+      Promise.resolve(lang === 'zh-CN' ? '# 指南 ZH' : '# Guide EN'),
+    );
     render(<HelpSection />);
     await screen.findByText('Guide EN');
     await act(async () => {
@@ -52,12 +56,17 @@ describe('HelpSection', () => {
     await waitFor(() => {
       expect(mocks.getHelpDoc).toHaveBeenLastCalledWith('zh-CN');
     });
+    expect(await screen.findByText('指南 ZH')).toBeInTheDocument();
+    expect(screen.queryByText('Guide EN')).not.toBeInTheDocument();
   });
 
   it('拉取失败显示失败文案与重试按钮，点重试后重新拉取', async () => {
     mocks.getHelpDoc.mockRejectedValueOnce(new Error('boom')).mockResolvedValue('# Guide OK');
     render(<HelpSection />);
     expect(await screen.findByText(tt('ui.settings.help.loadFailed'))).toBeInTheDocument();
+    // 失败态页签栏仍保留
+    expect(screen.getByRole('button', { name: tt('ui.settings.help.tab.guide') })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: tt('ui.settings.help.tab.changelog') })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.help.retry') }));
     expect(mocks.getHelpDoc).toHaveBeenCalledTimes(2);
     expect(await screen.findByText('Guide OK')).toBeInTheDocument();
