@@ -776,8 +776,9 @@ func TestBridgeQuoteReplyRouting(t *testing.T) {
 	}
 
 	t.Run("svr_id 命中切会话投递", func(t *testing.T) {
-		ex := &fakeExec{sessions: sessions, hasCur: true, current: hub.SessionRef{ChatID: "c2"}}
-		b := newBridge(t, "u1", ex, (&recorder{}).handler(t))
+		rc := &recorder{}
+		ex := &fakeExec{sessions: sessions, hasCur: true, current: hub.SessionRef{ChatID: "c2", Title: "会话B"}}
+		b := newBridge(t, "u1", ex, rc.handler(t))
 		b.rememberSvrID("9001", "c1")
 		b.HandleInboundMsg(context.Background(), quoteMsg("ct-1", "9001", "【会话A】旧回复", "继续这个"))
 		if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "继续这个" {
@@ -785,6 +786,14 @@ func TestBridgeQuoteReplyRouting(t *testing.T) {
 		}
 		if len(ex.switchCalls) != 1 || ex.switchCalls[0] != "c1" {
 			t.Errorf("应切换到 c1: %v", ex.switchCalls)
+		}
+		// ack 归因前缀应为切换后的新会话标题（用户据它确认切换生效）。
+		sends := rc.sends()
+		if len(sends) == 0 {
+			t.Fatal("应有 ack 回执")
+		}
+		if ack := sendText(t, sends[0].body); !strings.Contains(ack, "已发送给 会话A") && !strings.Contains(ack, "会话A") {
+			t.Errorf("ack 应带新会话【会话A】归因: %q", ack)
 		}
 	})
 

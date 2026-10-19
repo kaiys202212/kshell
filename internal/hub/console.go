@@ -670,6 +670,11 @@ func (c *Console) HandleQuoted(chatID, text string) (bool, []Reply) {
 	if chatID == "" {
 		return false, nil
 	}
+	// 活跃菜单（#n/#m/#f）进行中与 Handle 同口径：提示选数字，不切会话
+	// 不投递——否则旧菜单悬着，随后的数字回复会被误消费。
+	if c.menu != nil {
+		return true, single(c.text("pick_number"))
+	}
 	for _, r := range c.ex.ListSessions() {
 		if r.ChatID != chatID {
 			continue

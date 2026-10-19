@@ -192,6 +192,20 @@ func TestHandleQuoted(t *testing.T) {
 		}
 	})
 
+	t.Run("活跃菜单进行中不劫持", func(t *testing.T) {
+		// #f 搜索出结果后菜单挂着：引用回复应提示选数字，不切会话不投递。
+		ex := &fakeExecutor{listSessions: sessions, searchResult: sessions}
+		c := NewConsole(ex)
+		c.Handle("#f 会话")
+		handled, replies := c.HandleQuoted("c1", "继续")
+		if !handled || len(replies) != 1 || !strings.Contains(replies[0].Text, "请回复数字") && !strings.Contains(replies[0].Text, "pick_number") {
+			t.Fatalf("菜单进行中应回 pick_number 提示, 实际 (%v, %v)", handled, replies)
+		}
+		if len(ex.sendCalls) != 0 || len(ex.switchCalls) != 0 {
+			t.Errorf("菜单进行中不应投递/切换: send=%v switch=%v", ex.sendCalls, ex.switchCalls)
+		}
+	})
+
 	t.Run("发送失败报错", func(t *testing.T) {
 		ex := &fakeExecutor{listSessions: sessions, hasCurrent: true, currentSession: SessionRef{ChatID: "other"}, sendErr: errors.New("发送失败")}
 		c := NewConsole(ex)

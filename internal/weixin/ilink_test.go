@@ -288,6 +288,9 @@ func TestGetUpdatesRefMsgPartial(t *testing.T) {
 	if msgs[0].Ref.SvrID != "9001" {
 		t.Errorf("Ref.SvrID = %q, 期望 9001", msgs[0].Ref.SvrID)
 	}
+	if msgs[0].Ref.Text != "" {
+		t.Errorf("partial_text 不应拼进 Text: %q", msgs[0].Ref.Text)
+	}
 }
 
 func TestSendMessage(t *testing.T) {
