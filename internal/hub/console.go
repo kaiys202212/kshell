@@ -598,8 +598,10 @@ func (c *Console) handleRecent(arg string) []Reply {
 		return single(c.text("no_messages"))
 	}
 	if n > len(c.lastRecent) {
-		return single(c.text("no_mapping"))
+		return single(c.text("recent_no_mapping"))
 	}
+	// 详情正文原样拼接：消息本身即 Markdown，行首 #/** 等按 Markdown 渲染是
+	// 预期行为（与 AgentHub 气泡一致），不做转义（已知例外，评审 M-2）。
 	m := c.lastRecent[n-1]
 	role := c.text("msg_agent")
 	if m.Kind == "user" {
@@ -623,21 +625,19 @@ func (c *Console) renderRecentList(msgs []Message) string {
 	return fmt.Sprintf(c.text("recent_header"), len(msgs)) + "\n\n" + strings.Join(lines, "\n")
 }
 
-// renderOptions 渲染编号选项列表。
+// renderOptions 渲染编号选项列表（标题与列表间空行，Markdown 段落分隔）。
 func (c *Console) renderOptions(title string, opts []MenuOption) []Reply {
-	lines := make([]string, 0, len(opts)+1)
-	lines = append(lines, title)
+	lines := make([]string, 0, len(opts))
 	for i, o := range opts {
 		lines = append(lines, itoa(i+1)+". "+o.Label)
 	}
-	return single(strings.Join(lines, "\n"))
+	return single(title + "\n\n" + strings.Join(lines, "\n"))
 }
 
 // renderOptionsMarked 同 renderOptions，但当前项（curID）在编号后标 ▶
 //（行首 ▶ 会打断 Markdown 有序列表解析）。
 func (c *Console) renderOptionsMarked(title string, opts []MenuOption, curID string) []Reply {
-	lines := make([]string, 0, len(opts)+1)
-	lines = append(lines, title)
+	lines := make([]string, 0, len(opts))
 	for i, o := range opts {
 		mark := ""
 		if o.ID == curID {
@@ -645,7 +645,7 @@ func (c *Console) renderOptionsMarked(title string, opts []MenuOption, curID str
 		}
 		lines = append(lines, itoa(i+1)+". "+mark+o.Label)
 	}
-	return single(strings.Join(lines, "\n"))
+	return single(title + "\n\n" + strings.Join(lines, "\n"))
 }
 
 // sendToCurrent 把普通文本发给当前会话；成功不回显（agent 流程会回复）。

@@ -47,6 +47,8 @@ var cmdTexts = map[string]langPair{
 	"no_current_list":   {"No active session, use #l to list", "当前无活跃会话，#l 查看"},
 	"no_sessions":       {"No sessions yet", "暂无会话"},
 	"no_mapping":        {"No such number, use #l to list", "编号不存在，#l 查看"},
+	// #h 序号越界专用：no_mapping 引导 #l 是切会话，语境不对（评审 M-1）。
+	"recent_no_mapping": {"No such number, use #h for recent messages", "编号不存在，#h 查看最近消息"},
 	"switch_failed":     {"Switch failed: %s", "切换失败: %s"},
 	"create_failed":     {"Create failed: %s", "创建失败: %s"},
 	"send_failed":       {"Send failed: %s", "发送失败: %s"},

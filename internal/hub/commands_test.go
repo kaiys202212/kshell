@@ -295,6 +295,10 @@ func TestNewMenuFullFlow(t *testing.T) {
 	if !strings.Contains(out, "选择工具") || !strings.Contains(out, "1. Claude") {
 		t.Fatalf("step1 应列工具: %s", out)
 	}
+	// Markdown 一致性：菜单标题与选项列表间须空行分隔（同 #l 的 hint 分隔）。
+	if !strings.Contains(out, "选择工具:\n\n1. Claude") {
+		t.Fatalf("菜单标题与列表间应空行分隔: %q", out)
+	}
 	out = join(c.Handle("2")) // codex
 	if !strings.Contains(out, "选择项目") || !strings.Contains(out, "2. E:\\lib") {
 		t.Fatalf("step2 应列项目: %s", out)
@@ -420,6 +424,9 @@ func TestModelsMenu(t *testing.T) {
 	out := join(c.Handle("#m"))
 	if !strings.Contains(out, "选择模型") || !strings.Contains(out, "2. ▶ Opus") {
 		t.Fatalf("#m 应列模型并标当前: %s", out)
+	}
+	if !strings.Contains(out, "选择模型:\n\n1. Sonnet") {
+		t.Fatalf("模型菜单标题与列表间应空行分隔: %q", out)
 	}
 	out = join(c.Handle("1"))
 	if !strings.Contains(out, "已切换模型: Sonnet") {
@@ -925,9 +932,9 @@ func TestRecentMessagesCommand(t *testing.T) {
 		t.Fatalf("无快照时 #h 1 应自动取最近列表查详情: %q", out)
 	}
 
-	// 越界 / 非法参数
-	if got := join(c.Handle("#h 99")); !strings.Contains(got, "编号不存在") {
-		t.Fatalf("#h 99 应提示编号不存在: %q", got)
+	// 越界 / 非法参数（越界文案须指向 #h 而非 #l，见 recent_no_mapping）
+	if got := join(c.Handle("#h 99")); !strings.Contains(got, "编号不存在") || !strings.Contains(got, "#h 查看最近消息") {
+		t.Fatalf("#h 99 应提示编号不存在并引导 #h: %q", got)
 	}
 	for _, in := range []string{"#h abc", "#h 0", "#h -1"} {
 		if got := join(c.Handle(in)); !strings.Contains(got, "用法: #h 或 #h <序号>") {
