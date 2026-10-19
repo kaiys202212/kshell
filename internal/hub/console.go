@@ -18,6 +18,7 @@ const (
 	menuNew    menuKind = iota // #n 分步新建：选工具→项目→模型
 	menuModels                 // #m 切换模型
 	menuSearch                 // #f 搜索结果选择
+	menuPick                   // 无精确目标：列会话等用户选，正文暂存
 )
 
 // pendingMenu 是进行中的多步选择状态（设计决策：无定时器，菜单保持到用户处理或 #c）。
@@ -32,6 +33,8 @@ type pendingMenu struct {
 	targetChatID string       // models 菜单的目标会话
 	// search 菜单字段
 	results []SessionRef // 搜索结果（同时刷进编号映射）
+	// pick 菜单字段：正文在用户回编号后立即发送
+	pendingText string
 }
 
 // Reply 是一条要回显给用户的回复。
@@ -52,7 +55,10 @@ type Console struct {
 	current SessionRef
 	// hasCurrent 区分「确无当前会话」与「还没向后端问过」：零值哨兵无法区分。
 	hasCurrent bool
-	menu       *pendingMenu
+	// currentMark 是当前上下文采纳时的 hub 归因消息 ID（水位）：只有更新的
+	// 归因才覆盖 current，显式切换（#l/#f 选号、新建）把水位抬到当下。
+	currentMark int64
+	menu        *pendingMenu
 	perm       *pendingPermission
 	// lastList 是最近一次列表/搜索的编号映射（纯数字与 #g 依据它路由）。
 	lastList []SessionRef
@@ -277,20 +283,32 @@ func (c *Console) handleHelp() []Reply {
 	return single(sb.String())
 }
 
-// refreshCurrent 从执行后端同步当前会话（后端是唯一事实来源，切换可能
-// 发生在别的渠道）。
+// refreshCurrent 从执行后端同步最新归因。只有比水位更新的 hub 归因才覆盖
+// current：显式切换（选号/新建）把水位抬到当下，避免旧消息把目标抢回去。
 func (c *Console) refreshCurrent() {
-	if cur, ok := c.ex.CurrentSession(); ok {
-		c.current = cur
-		c.hasCurrent = true
+	id, ref, ok := c.ex.LastActivity()
+	if !ok {
+		return
+	}
+	if c.hasCurrent && id <= c.currentMark {
+		return
+	}
+	c.current = ref
+	c.hasCurrent = true
+	c.currentMark = id
+}
+
+// markCurrent 把归因水位抬到后端当前进度：显式选择发生在此刻之前的历史
+// 归因不再有资格覆盖它。
+func (c *Console) markCurrent() {
+	if id, _, ok := c.ex.LastActivity(); ok && id > c.currentMark {
+		c.currentMark = id
 	}
 }
 
-// hasActiveSession 报告当前是否有活跃会话（惰性问一次后端）。
+// hasActiveSession 报告当前是否有活跃会话（每次都向后端同步归因）。
 func (c *Console) hasActiveSession() bool {
-	if !c.hasCurrent {
-		c.refreshCurrent()
-	}
+	c.refreshCurrent()
 	return c.hasCurrent
 }
 
@@ -321,22 +339,24 @@ func (c *Console) handleList(all bool) []Reply {
 
 // activateRef 把编号映射里的会话切为当前上下文：未激活的磁盘会话
 // （ChatID 空、SessionID 非空）走 OpenSession 激活，已激活的走 SwitchTo。
-// 成功后 current 更新为实际可投递的 ref（OpenSession 返回新 ChatID）。
-func (c *Console) activateRef(ref SessionRef) error {
+// 成功后 current 更新为实际可投递的 ref（OpenSession 返回新 ChatID），
+// 并把归因水位抬到当下（显式选择优先于旧归因）。
+func (c *Console) activateRef(ref SessionRef) (SessionRef, error) {
 	if ref.ChatID == "" && ref.SessionID != "" {
 		newRef, err := c.ex.OpenSession(ref.SessionID)
 		if err != nil {
-			return err
+			return SessionRef{}, err
 		}
 		if newRef.ChatID != "" {
 			ref = newRef // 用激活后的可投递引用覆盖（含新 ChatID）
 		}
 	} else if err := c.ex.SwitchTo(ref.ChatID); err != nil {
-		return err
+		return SessionRef{}, err
 	}
 	c.current = ref
 	c.hasCurrent = true
-	return nil
+	c.markCurrent()
+	return ref, nil
 }
 
 // switchByNumber 处理无菜单时的纯数字输入：按上次列表映射切换。
@@ -345,7 +365,8 @@ func (c *Console) switchByNumber(n int) []Reply {
 	if !ok {
 		return single(c.text("no_mapping"))
 	}
-	if err := c.activateRef(ref); err != nil {
+	ref, err := c.activateRef(ref)
+	if err != nil {
 		return single(fmt.Sprintf(c.text("switch_failed"), err))
 	}
 	return single(formatSwitched(c.text("switched"), ref))
@@ -372,6 +393,7 @@ func (c *Console) handleEasyNew(arg string) []Reply {
 	}
 	c.current = ref
 	c.hasCurrent = true
+	c.markCurrent()
 	replies := []Reply{{Text: c.welcomeReply(ref)}}
 	if arg != "" && ref.ChatID != "" {
 		if err := c.ex.Send(ref.ChatID, arg); err != nil {
@@ -433,11 +455,22 @@ func (c *Console) handleMenuNumber(n int) []Reply {
 		return single(fmt.Sprintf(c.text("model_switched"), opt.Label))
 	case menuSearch:
 		c.menu = nil
-		ref := menu.results[n-1]
-		if err := c.activateRef(ref); err != nil {
+		ref, err := c.activateRef(menu.results[n-1])
+		if err != nil {
 			return single(fmt.Sprintf(c.text("switch_failed"), err))
 		}
 		return single(formatSwitched(c.text("switched"), ref))
+	case menuPick:
+		// 先清菜单：激活/发送失败也不保留待发正文，避免静默改投。
+		c.menu = nil
+		ref, err := c.activateRef(menu.results[n-1])
+		if err != nil {
+			return single(fmt.Sprintf(c.text("switch_failed"), err))
+		}
+		if err := c.ex.Send(ref.ChatID, menu.pendingText); err != nil {
+			return single(fmt.Sprintf(c.text("send_failed"), err))
+		}
+		return single(fmt.Sprintf(c.text("sent_to"), sessionTag(ref.Title)))
 	}
 	c.menu = nil
 	return single(c.text("no_mapping"))
@@ -452,6 +485,7 @@ func (c *Console) finishCreate(menu *pendingMenu, model string) []Reply {
 	}
 	c.current = ref
 	c.hasCurrent = true
+	c.markCurrent()
 	return single(c.welcomeReply(ref))
 }
 
@@ -648,15 +682,74 @@ func (c *Console) renderOptionsMarked(title string, opts []MenuOption, curID str
 	return single(title + "\n\n" + strings.Join(lines, "\n"))
 }
 
-// sendToCurrent 把普通文本发给当前会话；成功不回显（agent 流程会回复）。
+// sendToCurrent 把普通文本发给精确命中的当前会话；未激活的磁盘会话先
+// OpenSession 激活。无精确目标时进入待选列表，由用户回编号后发送。
 func (c *Console) sendToCurrent(text string) []Reply {
-	if !c.hasActiveSession() {
-		return single(c.text("no_current_list"))
+	c.refreshCurrent()
+	ref := c.current
+	if !c.hasCurrent || (ref.ChatID == "" && ref.SessionID == "") {
+		return c.listForPending(text)
 	}
-	if err := c.ex.Send(c.current.ChatID, text); err != nil {
+	if ref.ChatID == "" {
+		activated, err := c.activateRef(ref)
+		if err != nil {
+			return single(fmt.Sprintf(c.text("switch_failed"), err))
+		}
+		ref = activated
+	}
+	if ref.ChatID == "" {
+		return c.listForPending(text)
+	}
+	if err := c.ex.Send(ref.ChatID, text); err != nil {
 		return single(fmt.Sprintf(c.text("send_failed"), err))
 	}
 	return nil
+}
+
+// listForPending 列出前 10 个会话并暂存正文，等用户回编号后立即发送。
+// 与 #l 共用编号映射（lastList），#c 取消时随菜单丢弃正文。
+func (c *Console) listForPending(text string) []Reply {
+	sessions := c.ex.ListSessions()
+	if len(sessions) == 0 {
+		return single(c.text("no_sessions"))
+	}
+	limit := len(sessions)
+	if limit > 10 {
+		limit = 10
+	}
+	shown := sessions[:limit]
+	for i := range shown {
+		shown[i].Num = i + 1
+		shown[i].Current = false // 无精确目标：不标当前
+	}
+	c.lastList = shown
+	c.menu = &pendingMenu{
+		kind:        menuPick,
+		options:     make([]MenuOption, len(shown)),
+		results:     shown,
+		pendingText: text,
+	}
+	lines := make([]string, 0, limit)
+	for _, r := range shown {
+		lines = append(lines, formatRef(r))
+	}
+	return single(strings.Join([]string{
+		c.text("pick_target"),
+		strings.Join(lines, "\n"),
+		c.text("pick_number"),
+	}, "\n\n"))
+}
+
+// PickTarget 供 AgentHub 在无精确目标时直接进入待选列表（暂存正文）。
+// 仅 trim/normalize，不做任何投递。
+func (c *Console) PickTarget(text string) []Reply {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	text = normalizeInput(strings.TrimSpace(text))
+	if text == "" {
+		return nil
+	}
+	return c.listForPending(text)
 }
 
 // single 构造单条回复。
