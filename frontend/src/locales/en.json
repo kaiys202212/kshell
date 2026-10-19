@@ -835,7 +835,7 @@
       "auto": "Auto (most used in this workspace)"
     },
     "whatsNew": {
-      "title": "What's new in {{version}}",
+      "title": "{{version}} changelog",
       "confirm": "Got it"
     },
     "update_prompt": {

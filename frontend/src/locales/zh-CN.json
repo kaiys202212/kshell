@@ -835,7 +835,7 @@
       "auto": "自动（该工作区最常用）"
     },
     "whatsNew": {
-      "title": "{{version}} 更新内容",
+      "title": "{{version}} 更新日志",
       "confirm": "我知道了"
     },
     "update_prompt": {

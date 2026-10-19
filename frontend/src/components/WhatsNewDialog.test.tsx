@@ -49,6 +49,14 @@ describe('WhatsNewDialog', () => {
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
 
+  it('markVersionSeen 失败也不阻塞关闭', async () => {
+    mocks.markVersionSeen.mockRejectedValue(new Error('boom'));
+    const onOpenChange = renderDialog();
+    await screen.findByText('Changelog v0.1.17');
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.whatsNew.confirm') }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
   it('拉取失败显示失败文案与重试，点重试重新拉取', async () => {
     mocks.getChangelogDoc.mockRejectedValueOnce(new Error('boom')).mockResolvedValue('# OK');
     renderDialog();
