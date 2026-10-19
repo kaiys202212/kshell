@@ -151,7 +151,7 @@ AgentHub is a multi-agent collaboration panel: run several agent sessions in one
 ### Creating agents & messaging
 
 - "New Agent" in the panel picks a project and tool; defaults are configured in Settings first.
-- The `/easynew` command reuses the last project and tool for a quick start.
+- The `#easynew` command reuses the last project and tool for a quick start.
 - Type into the input box to send to the current target; `@` targets a specific agent (auto-routed when omitted).
 - Queued messages show ack indicators (delivered / queued); messages can be recalled.
 
@@ -159,12 +159,12 @@ AgentHub is a multi-agent collaboration panel: run several agent sessions in one
 
 Type `#` to open the command palette:
 
-- `/new` — create an agent.
-- `/easynew` — quick-create using the last configuration.
-- `/stop` — stop the target agent.
-- `/model` — switch models.
-- `/clear` — clear this view.
-- `/find` — find and activate a discovered session.
+- `#new` — create an agent.
+- `#easynew` — quick-create using the last configuration.
+- `#stop` — stop the target agent.
+- `#model` — switch models.
+- `#clear` — clear this view.
+- `#find` — find and activate a discovered session.
 
 ### Input routing modes
 
