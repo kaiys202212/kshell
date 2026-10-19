@@ -1,6 +1,6 @@
 // AgentHubPanel：跨项目汇总运行中的 ACP agent，@ 指定目标发消息、跳转定位、新建 agent、粘贴。
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatInfo, ToolInfo } from '../lib/api';
 import { useAppStore } from '../state/store';
@@ -142,7 +142,7 @@ describe('AgentHubPanel', () => {
     expect(inputArea?.querySelector('textarea')).not.toBeNull();
   });
 
-  it('有会话时 chips 常驻平铺渲染：无需展开即可见每枚 chip（状态点+标题+工具名）', () => {
+  it('有会话时 chips 常驻平铺渲染：无需展开即可见每枚 chip（状态点+标题+工具图标）', () => {
     useAppStore.setState({
       chats: [
         chat({ ID: 'c1', Title: '重构认证', ToolID: 'claude', Status: 'ready' }),
@@ -155,9 +155,11 @@ describe('AgentHubPanel', () => {
     // 每个会话一枚 chip，常驻可见（无展开前置步骤）
     expect(within(chips).getByText('重构认证')).toBeTruthy();
     expect(within(chips).getByText('乙')).toBeTruthy();
-    // chip 比原胶囊信息更全：标题旁展示工具名
-    expect(within(chips).getAllByText(/Claude Code/).length).toBeGreaterThan(0);
-    expect(within(chips).getAllByText(/Cursor/).length).toBeGreaterThan(0);
+    // 标题旁用工具图标，悬停仍能看到工具名
+    expect(chips.querySelector('[data-tool="claude"]')).toBeTruthy();
+    expect(chips.querySelector('[data-tool="cursor"]')).toBeTruthy();
+    expect(within(chips).getByTitle('Claude Code')).toBeTruthy();
+    expect(within(chips).getByTitle('Cursor')).toBeTruthy();
     // 状态点存在（aria-hidden 装饰，用样式类断言运行中主色点）
     expect(chips.querySelectorAll('.bg-primary').length).toBeGreaterThan(0);
   });
@@ -172,7 +174,7 @@ describe('AgentHubPanel', () => {
     const main = within(chips).getByRole('button', { name: /重构认证/ });
     fireEvent.click(main);
     // 尾随空格便于继续输入（与 quickReply rephrase 同语义）
-    expect(box.value).toBe('帮我看看 @Claude Code#c1 ');
+    expect(box.value).toBe('帮我看看 @Claude Code#重构认证 ');
     expect(document.activeElement).toBe(box);
   });
 
@@ -260,7 +262,7 @@ describe('AgentHubPanel', () => {
       effectAllowed: '',
     };
     fireEvent.dragStart(chip, { dataTransfer: dt });
-    expect(dt.getData('text/plain')).toBe('@Claude Code#c1');
+    expect(dt.getData('text/plain')).toBe('@Claude Code#重构认证');
     expect(dt.effectAllowed).toBe('copy');
   });
 
@@ -307,7 +309,7 @@ describe('AgentHubPanel', () => {
     const chips = screen.getByTestId('hub-session-chips');
     fireEvent.click(within(chips).getByRole('button', { name: /重构认证/ }));
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder')) as HTMLTextAreaElement;
-    expect(box.value).toBe('@Claude Code#c1 ');
+    expect(box.value).toBe('@Claude Code#重构认证 ');
     // 归档展开不影响 chips
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.history') }));
     expect(screen.getByTestId('hub-session-chips')).toBeTruthy();
@@ -768,6 +770,15 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe('"D:\\ws\\a b\\pic.png"'));
   });
 
+  it('粘贴拦截原生默认行为（防原生插入与 handlePaste 双写）', () => {
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    const evt = createEvent.paste(box);
+    const spy = vi.spyOn(evt, 'preventDefault');
+    fireEvent(box, evt);
+    expect(spy).toHaveBeenCalled();
+  });
+
   it('输入 @ 显示补全候选，点击补全为完整标签', () => {
     useAppStore.setState({
       chats: [
@@ -779,13 +790,13 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '@Cur' } });
     const list = screen.getByRole('listbox', { name: tt('ui.hub.mention_aria') });
-    expect(list).toHaveTextContent('@Cursor#c2');
+    expect(list).toHaveTextContent('@Cursor#乙');
     // 第二行展示项目 · 会话标题
     expect(list).toHaveTextContent('a · 乙');
     // 候选为 role=option 的 li（与 # 弹层结构一致），mousedown 选中
-    const option = within(list).getByText('@Cursor#c2').closest('li')!;
+    const option = within(list).getByText('@Cursor#乙').closest('li')!;
     fireEvent.mouseDown(option);
-    expect((box as HTMLTextAreaElement).value).toBe('@Cursor#c2 ');
+    expect((box as HTMLTextAreaElement).value).toBe('@Cursor#乙 ');
   });
 
   it('@ 补全键盘导航：ArrowDown/ArrowUp 切换高亮并夹取边界，Enter 填入不发送', () => {
@@ -816,7 +827,7 @@ describe('AgentHubPanel', () => {
     expect(options[0]).toHaveAttribute('aria-selected', 'true');
     // Enter 填入高亮项对应 label，不发送
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c1 ');
+    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#甲 ');
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
@@ -832,7 +843,7 @@ describe('AgentHubPanel', () => {
     fireEvent.change(box, { target: { value: '@' } });
     fireEvent.keyDown(box, { key: 'ArrowDown' });
     fireEvent.keyDown(box, { key: 'Tab' });
-    expect((box as HTMLTextAreaElement).value).toBe('@Cursor#c2 ');
+    expect((box as HTMLTextAreaElement).value).toBe('@Cursor#乙 ');
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
@@ -857,7 +868,7 @@ describe('AgentHubPanel', () => {
     // 唯一候选保持高亮（不出现 aria-selected 全 false 的列表）
     expect(options[0]).toHaveAttribute('aria-selected', 'true');
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c1 ');
+    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#甲 ');
   });
 
   it('@ 补全 Esc 关闭后，Enter 恢复发送语义（回落 lastAgentId 投递）', async () => {
@@ -1377,7 +1388,7 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-9'));
     await waitFor(() => {
       const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder')) as HTMLTextAreaElement;
-      expect(box.value).toContain('@Claude Code#c-new');
+      expect(box.value).toContain('@Claude Code#strategy');
     });
   });
 
@@ -1584,7 +1595,7 @@ describe('AgentHubPanel', () => {
     const btn = await screen.findByRole('button', { name: tt('ui.hub.quick_rephrase') });
     fireEvent.click(btn);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c1 ');
+    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#重构认证 ');
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(box);
   });
@@ -1600,7 +1611,7 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '帮我看看' } });
     fireEvent.click(btn);
-    expect((box as HTMLTextAreaElement).value).toBe('帮我看看 @Claude Code#c1 ');
+    expect((box as HTMLTextAreaElement).value).toBe('帮我看看 @Claude Code#重构认证 ');
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(box);
   });
@@ -1721,14 +1732,14 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('s-r1'));
     // 激活后新 chat 的 @ 标签填入输入框并聚焦（既有草稿保留式追加），不自动发送
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c-r1 '));
+    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#重构认证 '));
     expect(document.activeElement).toBe(box);
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
     // 激活后的会话登记进 store，后续消息可直达
     expect(useAppStore.getState().chats.some((c) => c.ID === 'c-r1')).toBe(true);
   });
 
-  it('「换个说法」激活成功但 options 暂无新 chat 时按 toolDisplayName#ID 兜底构造标签', async () => {
+  it('「换个说法」激活成功但 options 暂无新 chat 时按会话标题构造 @ 标签', async () => {
     api.listHubMessages.mockResolvedValue([
       { id: 11, kind: 'agent', tool: 'cursor', event: 'Stop', chatId: 'c-dead', sessionId: 's-r2', text: 'ok', ts: 11 },
     ]);
@@ -1739,7 +1750,7 @@ describe('AgentHubPanel', () => {
     render(<AgentHubPanel />);
     fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_rephrase') }));
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe('@Cursor#c-r2 '));
+    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe('@Cursor#重构认证 '));
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
@@ -2137,8 +2148,8 @@ describe('AgentHubPanel #find', () => {
     // registerChat 生效：upsertChat 进 store + lastAgentId 指向新 chat
     expect(useAppStore.getState().chats.some((c) => c.ID === 'c77')).toBe(true);
     expect(useAppStore.getState().lastAgentId).toBe('c77');
-    // draft 追加 @label（label 由 buildMentionOptions 生成：工具展示名#chatID）
-    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c77 ');
+    // draft 追加 @ 标签（工具展示名#会话标题，不再写 chat id）
+    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#重构认证 ');
     // 对话框关闭（标题不再渲染）
     await waitFor(() => expect(screen.queryByText(tt('ui.hub.find_title'))).toBeNull());
   });

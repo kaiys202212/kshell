@@ -8,10 +8,31 @@ const agents: MentionAgent[] = [
 ];
 
 describe('buildMentionOptions', () => {
-  it('标签附加稳定 id，同名不冲突', () => {
+  it('路由标签用稳定 id；写入标签用会话标题', () => {
     const opts = buildMentionOptions(agents);
     expect(opts.map((o) => o.label)).toEqual(['Claude Code#c1', 'Claude Code#c2', 'Cursor#c3']);
+    expect(opts.map((o) => o.insert)).toEqual(['Claude Code#重构认证', 'Claude Code#写测试', 'Cursor#调样式']);
     expect(opts.map((o) => o.id)).toEqual(['c1', 'c2', 'c3']);
+  });
+
+  it('同工具同标题时写入标签退回 id，标题相同项目不同则带上项目名', () => {
+    const dup: MentionAgent[] = [
+      { id: 'c1', toolId: 'claude', title: '同名', workspace: 'D:\\ws\\a' },
+      { id: 'c2', toolId: 'claude', title: '同名', workspace: 'D:\\ws\\b' },
+    ];
+    const opts = buildMentionOptions(dup);
+    expect(opts.map((o) => o.insert)).toEqual(['Claude Code#同名 · a', 'Claude Code#同名 · b']);
+    const sameProject: MentionAgent[] = [
+      { id: 'c1', toolId: 'cursor', title: '同名', workspace: 'D:\\ws\\a' },
+      { id: 'c2', toolId: 'cursor', title: '同名', workspace: 'D:\\ws\\a' },
+    ];
+    expect(buildMentionOptions(sameProject).map((o) => o.insert)).toEqual(['Cursor#c1', 'Cursor#c2']);
+  });
+
+  it('没有标题时写入标签用项目基名', () => {
+    const opts = buildMentionOptions([{ id: 'cdm8_1_2', toolId: 'cursor', title: '', workspace: 'D:\\ws\\kshell' }]);
+    expect(opts[0].insert).toBe('Cursor#kshell');
+    expect(opts[0].label).toBe('Cursor#cdm8_1_2');
   });
 
   it('标签与列表顺序无关（打乱输入后 id↔label 映射不变）', () => {
@@ -59,9 +80,10 @@ describe('displayMentionTitles', () => {
 });
 
 describe('resolveMentionTarget', () => {
-  it('命中唯一 @ 时路由到该 agent', () => {
+  it('命中唯一 @ 时路由到该 agent（id 与标题两种写法）', () => {
     const opts = buildMentionOptions(agents);
     expect(resolveMentionTarget('帮我看下 @Cursor#c3', opts, 'c1')).toBe('c3');
+    expect(resolveMentionTarget('帮我看下 @Cursor#调样式', opts, 'c1')).toBe('c3');
   });
 
   it('多个 @ 以最后一个为准', () => {
