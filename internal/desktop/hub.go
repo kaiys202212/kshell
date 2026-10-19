@@ -11,10 +11,12 @@ import (
 	"github.com/yangk/kshell/internal/hub"
 )
 
-// Hub 撤回相关错误（wire key，前端 translateBackend 翻译）。
+// Hub 撤回与 #f 直投相关错误（wire key，前端 translateBackend 翻译）。
 var (
-	errHubNotFound  = errors.New("err.hub.not_found")
-	errHubNotQueued = errors.New("err.hub.not_queued")
+	errHubNotFound    = errors.New("err.hub.not_found")
+	errHubNotQueued   = errors.New("err.hub.not_queued")
+	errHubFollowEmpty = errors.New("err.hub.follow_empty")
+	errHubFollowNone  = errors.New("err.hub.follow_none")
 )
 
 // SaveHubDefaultCreate 持久化「默认 agent 工具 + 模型」到 config.yaml（前端

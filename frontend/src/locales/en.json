@@ -33,7 +33,9 @@
     "hub": {
       "not_found": "Message not found or archived",
       "not_queued": "Message already delivered; cannot recall",
-      "invalid_route_mode": "Invalid routing mode {{0}} (choose auto, agent or force_auto)"
+      "invalid_route_mode": "Invalid routing mode {{0}} (choose auto, agent or force_auto)",
+      "follow_empty": "#f is missing the message to send",
+      "follow_none": "No agent session to follow"
     },
     "hubtools": {
       "unknown_pending": "This confirmation is no longer valid (already handled or replaced)",

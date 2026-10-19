@@ -33,7 +33,9 @@
     "hub": {
       "not_found": "消息不存在或已归档",
       "not_queued": "消息已送达，无法撤回",
-      "invalid_route_mode": "无效的路由模式 {{0}}（可选 auto、agent、force_auto）"
+      "invalid_route_mode": "无效的路由模式 {{0}}（可选 auto、agent、force_auto）",
+      "follow_empty": "#f 后缺少要发送的内容",
+      "follow_none": "没有可跟踪的 agent 会话"
     },
     "hubtools": {
       "unknown_pending": "该确认已失效（已被处理或被新对话替换）",

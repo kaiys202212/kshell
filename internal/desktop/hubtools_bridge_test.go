@@ -669,6 +669,68 @@ func TestHandlePromptDispatchTask(t *testing.T) {
 	}
 }
 
+// TestSendChatPromptFollow 验证 #f 直投指令：绕过工具化路由，把消息体投给
+// 最近一条 agent 消息归属的会话；空消息体/无会话分别报对应 wire key。
+func TestSendChatPromptFollow(t *testing.T) {
+	a, store, rec := newBridgeTestApp(t)
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+	chatA, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "修复登录", ToolID: "cursor",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatB, err := m.Open("session:s2", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w2", Title: "t2", ToolID: "claude",
+	}, chat.Spec{Path: "y"}, "s2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 最近一条 agent 消息归属 chatA
+	if err := store.Append(hub.Message{
+		Kind: "agent", ChatID: chatA.ID, Tool: "cursor", SessionTitle: "修复登录", Text: "我在修",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 正常 #f：消息体投给 chatA（而非入参 chatB），不走 LLM
+	if err := a.SendChatPrompt(chatB.ID, "#f 继续修"); err != nil {
+		t.Fatal(err)
+	}
+	var u hub.Message
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && u.ID == 0 {
+		for _, mm := range store.List() {
+			if mm.Kind == "user" && mm.Text == "继续修" {
+				u = mm
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if u.ID == 0 {
+		t.Fatalf("#f 消息未落盘: %+v", store.List())
+	}
+	if u.ChatID != chatA.ID {
+		t.Fatalf("#f 应直投最近 agent 会话: %+v", u)
+	}
+
+	// 空消息体
+	err = a.SendChatPrompt(chatB.ID, "#f")
+	if err == nil || err.Error() != "err.hub.follow_empty" {
+		t.Fatalf("空消息体应报 err.hub.follow_empty: %v", err)
+	}
+	// 无 agent 消息（清空 store）
+	if err := store.Clear(); err != nil {
+		t.Fatal(err)
+	}
+	err = a.SendChatPrompt(chatB.ID, "#f 继续修")
+	if err == nil || err.Error() != "err.hub.follow_none" {
+		t.Fatalf("无会话应报 err.hub.follow_none: %v", err)
+	}
+}
+
 // TestConfirmHubToolNotReady 验证未配置模型时确认绑定返回未就绪错误。
 func TestConfirmHubToolNotReady(t *testing.T) {
 	a, _, _ := newBridgeTestApp(t)

@@ -358,6 +358,24 @@ func (a *App) SendChatPrompt(id, text string) error {
 	if m == nil {
 		return errNotReady
 	}
+	// #f 直投指令（follow 最新 agent 会话）：先于工具化路由解析，不走意图
+	// 识别，也不依赖模型配置；目标已退出时经 ensureChatAlive 按快照重建。
+	if rest, ok := parseFollowPrompt(text); ok {
+		if rest == "" {
+			return errHubFollowEmpty
+		}
+		target := a.latestAgentChatID()
+		if target == "" {
+			return errHubFollowNone
+		}
+		resolved, _ := a.resolveChatID(target)
+		sendID, err := a.ensureChatAlive(resolved)
+		if err != nil {
+			return err
+		}
+		blocks := []acp.ContentBlock{{Type: "text", Text: rest}}
+		return a.sendAndRecord(sendID, blocks, rest)
+	}
 	resolved, _ := a.resolveChatID(id)
 	sendID, err := a.ensureChatAlive(resolved)
 	if err != nil {
@@ -374,6 +392,35 @@ func (a *App) SendChatPrompt(id, text string) error {
 		}
 	}
 	return a.sendAndRecord(sendID, blocks, text)
+}
+
+// parseFollowPrompt 解析 #f 直投指令：输入整串为 "#f" 时返回空消息体；
+// "#f <消息>" 返回消息体。其余输入不是指令（false）。
+func parseFollowPrompt(text string) (string, bool) {
+	t := strings.TrimSpace(text)
+	if t == "#f" {
+		return "", true
+	}
+	if rest, ok := strings.CutPrefix(t, "#f "); ok {
+		return strings.TrimSpace(rest), true
+	}
+	return "", false
+}
+
+// latestAgentChatID 返回 hub store 最近一条纯文本 agent 消息归属的会话 ID，
+// 没有时返回空串。#f 直投的目标来源。
+func (a *App) latestAgentChatID() string {
+	store := a.snapshot().HubStore
+	if store == nil {
+		return ""
+	}
+	list := store.List()
+	for i := len(list) - 1; i >= 0; i-- {
+		if mm := list[i]; mm.Kind == "agent" && mm.Event == "" && mm.ChatID != "" {
+			return mm.ChatID
+		}
+	}
+	return ""
 }
 
 // ChatBlock 是前端发来的多形态内容块（扁平结构）：text 用 Text；
