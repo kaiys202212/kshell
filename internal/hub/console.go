@@ -659,6 +659,34 @@ func (c *Console) sendToCurrent(text string) []Reply {
 	return nil
 }
 
+// HandleQuoted 处理引用回复：按 chatID 定位会话，切换当前上下文后投递
+//（2026-10-20 用户确认：切换，后续裸消息跟随被引用的 agent）。handled=false
+// 表示定位失败（chatID 空/未命中），调用方回落普通 Handle；切换/发送失败
+// handled=true 且回执错误文案。投递成功 handled=true 且 replies 空（静默，
+// agent 回复自带【会话名】归因，与普通转发语义一致）。
+func (c *Console) HandleQuoted(chatID, text string) (bool, []Reply) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if chatID == "" {
+		return false, nil
+	}
+	// 活跃菜单（#n/#m/#f）进行中与 Handle 同口径：提示选数字，不切会话
+	// 不投递——否则旧菜单悬着，随后的数字回复会被误消费。
+	if c.menu != nil {
+		return true, single(c.text("pick_number"))
+	}
+	for _, r := range c.ex.ListSessions() {
+		if r.ChatID != chatID {
+			continue
+		}
+		if err := c.activateRef(r); err != nil {
+			return true, single(fmt.Sprintf(c.text("switch_failed"), err))
+		}
+		return true, c.sendToCurrent(text)
+	}
+	return false, nil
+}
+
 // single 构造单条回复。
 func single(text string) []Reply {
 	return []Reply{{Text: text}}

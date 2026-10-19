@@ -137,6 +137,85 @@ func wsRef(num int, chatID, sessionID, ws, tool, title string, current bool) Ses
 	return SessionRef{Num: num, ChatID: chatID, SessionID: sessionID, Workspace: ws, Tool: tool, Title: title, Current: current}
 }
 
+// —— HandleQuoted：引用回复按 chatID 定位会话，切换后投递 ——
+
+func TestHandleQuoted(t *testing.T) {
+	sessions := []SessionRef{
+		{ChatID: "c1", Tool: "codex", Title: "会话A"},
+		{ChatID: "", SessionID: "s2", Tool: "claude", Title: "未激活"}, // 未激活：不在引用命中范围
+	}
+
+	t.Run("命中切换并投递", func(t *testing.T) {
+		ex := &fakeExecutor{listSessions: sessions, hasCurrent: true, currentSession: SessionRef{ChatID: "other"}}
+		c := NewConsole(ex)
+		handled, replies := c.HandleQuoted("c1", "继续修这个 bug")
+		if !handled || len(replies) != 0 {
+			t.Fatalf("handled = %v, replies = %v, 期望 true + 静默", handled, replies)
+		}
+		if len(ex.switchCalls) != 1 || ex.switchCalls[0] != "c1" {
+			t.Errorf("应先 SwitchTo(c1): %v", ex.switchCalls)
+		}
+		if len(ex.sendCalls) != 1 || ex.sendCalls[0] != [2]string{"c1", "继续修这个 bug"} {
+			t.Errorf("投递目标错误: %v", ex.sendCalls)
+		}
+	})
+
+	t.Run("chatID 未命中 handled=false", func(t *testing.T) {
+		ex := &fakeExecutor{listSessions: sessions}
+		c := NewConsole(ex)
+		handled, replies := c.HandleQuoted("nope", "文本")
+		if handled || replies != nil {
+			t.Errorf("未命中应 (false, nil) 走普通路径, 实际 (%v, %v)", handled, replies)
+		}
+		if len(ex.sendCalls) != 0 || len(ex.switchCalls) != 0 {
+			t.Errorf("未命中不应投递/切换: send=%v switch=%v", ex.sendCalls, ex.switchCalls)
+		}
+	})
+
+	t.Run("未激活会话不命中", func(t *testing.T) {
+		ex := &fakeExecutor{listSessions: sessions}
+		c := NewConsole(ex)
+		if handled, _ := c.HandleQuoted("s2", "文本"); handled {
+			t.Error("SessionID 不应被 chatID 命中")
+		}
+	})
+
+	t.Run("切换失败报错不投递", func(t *testing.T) {
+		ex := &fakeExecutor{listSessions: sessions, switchErr: errors.New("激活失败")}
+		c := NewConsole(ex)
+		handled, replies := c.HandleQuoted("c1", "文本")
+		if !handled || len(replies) != 1 || !strings.Contains(replies[0].Text, "激活失败") {
+			t.Fatalf("切换失败应 (true, 错误回执), 实际 (%v, %v)", handled, replies)
+		}
+		if len(ex.sendCalls) != 0 {
+			t.Errorf("切换失败不应投递: %v", ex.sendCalls)
+		}
+	})
+
+	t.Run("活跃菜单进行中不劫持", func(t *testing.T) {
+		// #f 搜索出结果后菜单挂着：引用回复应提示选数字，不切会话不投递。
+		ex := &fakeExecutor{listSessions: sessions, searchResult: sessions}
+		c := NewConsole(ex)
+		c.Handle("#f 会话")
+		handled, replies := c.HandleQuoted("c1", "继续")
+		if !handled || len(replies) != 1 || !strings.Contains(replies[0].Text, "请回复数字") && !strings.Contains(replies[0].Text, "pick_number") {
+			t.Fatalf("菜单进行中应回 pick_number 提示, 实际 (%v, %v)", handled, replies)
+		}
+		if len(ex.sendCalls) != 0 || len(ex.switchCalls) != 0 {
+			t.Errorf("菜单进行中不应投递/切换: send=%v switch=%v", ex.sendCalls, ex.switchCalls)
+		}
+	})
+
+	t.Run("发送失败报错", func(t *testing.T) {
+		ex := &fakeExecutor{listSessions: sessions, hasCurrent: true, currentSession: SessionRef{ChatID: "other"}, sendErr: errors.New("发送失败")}
+		c := NewConsole(ex)
+		handled, replies := c.HandleQuoted("c1", "文本")
+		if !handled || len(replies) != 1 || !strings.Contains(replies[0].Text, "发送失败") {
+			t.Fatalf("发送失败应 (true, 错误回执), 实际 (%v, %v)", handled, replies)
+		}
+	})
+}
+
 func TestHelpWithCurrent(t *testing.T) {
 	c := NewConsole(&fakeExecutor{
 		hasCurrent:     true,

@@ -183,6 +183,13 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 			FromUserID   string `json:"from_user_id"`
 			ContextToken string `json:"context_token"`
 			CreateMs     int64  `json:"create_time_ms"`
+			// RefMsg 是引用回复的被引用消息（用户对 bot 出站消息长按引用时
+			// 携带）。字段名按参考实现（openclaw-weixin / wechatbot-go），
+			// 真机联调不符时先抓 [weixin] 日志核对此 tag。
+			RefMsg struct {
+				SvrID string `json:"svr_id"`
+				Text  string `json:"text"`
+			} `json:"ref_msg"`
 			ItemList     []struct {
 				Type     int `json:"type"`
 				TextItem struct {
@@ -216,6 +223,9 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 			continue
 		}
 		im := InboundMsg{FromUserID: m.FromUserID, ContextToken: m.ContextToken, CreateMs: m.CreateMs}
+		if m.RefMsg.SvrID != "" || m.RefMsg.Text != "" {
+			im.Ref = &RefMsg{SvrID: m.RefMsg.SvrID, Text: m.RefMsg.Text}
+		}
 		for _, item := range m.ItemList {
 			switch item.Type {
 			case 1:
@@ -256,7 +266,9 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 }
 
 // SendMessage 回复文本消息；client_id 内部生成，from_user_id 恒为空。
-func (c *Client) SendMessage(ctx context.Context, toUserID, contextToken, text string) error {
+// 返回响应里的服务端消息 ID（svr_id）：桥层缓存「svr_id → 会话」供引用回复
+// 归因；响应未携带时返回空串（字段名真机未验证，拿不到即降级标题匹配）。
+func (c *Client) SendMessage(ctx context.Context, toUserID, contextToken, text string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeoutSendMessage)
 	defer cancel()
 	body := map[string]any{
@@ -273,7 +285,13 @@ func (c *Client) SendMessage(ctx context.Context, toUserID, contextToken, text s
 		},
 		"base_info": baseInfo{ChannelVersion: channelVersion},
 	}
-	return c.post(ctx, "/ilink/bot/sendmessage", body, nil)
+	var out struct {
+		SvrID string `json:"svr_id"`
+	}
+	if err := c.post(ctx, "/ilink/bot/sendmessage", body, &out); err != nil {
+		return "", err
+	}
+	return out.SvrID, nil
 }
 
 // SendTyping 发送/取消输入状态（1=输入中 2=取消）。内部先 getconfig 换取 typing_ticket。

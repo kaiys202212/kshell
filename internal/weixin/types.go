@@ -37,6 +37,17 @@ type InboundAttachment struct {
 	MD5 string
 }
 
+// RefMsg 是引用回复携带的被引用消息信息。用户在微信里对 bot 出站消息
+// 「引用回复」时，iLink 在 getupdates 载荷附上 ref_msg。
+type RefMsg struct {
+	// SvrID 是被引用消息的服务端 ID（sendmessage 响应回执的 svr_id），
+	// 桥层据此精确归因到出站时的会话。
+	SvrID string
+	// Text 是被引用消息的文本（引用纯媒体消息时可能为空或仅有
+	// partial_text 摘要；归因据此做【会话名】前缀匹配兜底）。
+	Text string
+}
+
 // InboundMsg 是一条入站消息（bot 自发的已跳过）。
 type InboundMsg struct {
 	FromUserID   string
@@ -52,4 +63,7 @@ type InboundMsg struct {
 	// CreateMs 是消息创建时刻的 Unix 毫秒（服务端 create_time_ms），
 	// 供「重启/重绑前的过期积压丢弃」判定；服务端缺失时为 0。
 	CreateMs int64
+	// Ref 是引用回复的被引用消息信息；非引用回复消息为 nil。
+	// 纯媒体消息被引用时部分客户端不带 ref_msg，此时也为 nil。
+	Ref *RefMsg
 }
