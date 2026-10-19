@@ -277,7 +277,16 @@
         "weixin": "WeChat",
         "model": "Model",
         "tools": "Tools",
-        "skills": "Skill Plaza"
+        "skills": "Skill Plaza",
+        "help": "Help"
+      },
+      "help": {
+        "tab": {
+          "guide": "Usage guide",
+          "changelog": "Changelog"
+        },
+        "loadFailed": "Failed to load the document.",
+        "retry": "Retry"
       },
       "skills": {
         "plaza_title": "Browse skills",

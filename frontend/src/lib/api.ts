@@ -615,6 +615,10 @@ interface AppBindings {
   PickFile(title: string): Promise<string>;
   RestartApp(): Promise<void>;
   GetAppVersion(): Promise<string>;
+  GetHelpDoc(lang: string): Promise<string>;
+  GetChangelogDoc(lang: string): Promise<string>;
+  GetLastSeenVersion(): Promise<string>;
+  MarkVersionSeen(version: string): Promise<void>;
   CheckForUpdate(): Promise<UpdateInfo>;
   ApplyUpdate(): Promise<void>;
   OpenSessionTerminal(sessionId: string, cols: number, rows: number): Promise<TerminalInfo>;
@@ -1317,6 +1321,36 @@ export async function getAppVersion(): Promise<string> {
   const a = app();
   if (!a) return '';
   return a.GetAppVersion();
+}
+
+// ---- 内嵌帮助文档（internal/appdocs embed）----
+
+// getHelpDoc 读功能使用说明（lang 直接传 i18n.language，后端仅认 zh-CN 其余回退 en）
+export async function getHelpDoc(lang: string): Promise<string> {
+  const a = app();
+  if (!a) return '';
+  return a.GetHelpDoc(lang);
+}
+
+// getChangelogDoc 读升级日志
+export async function getChangelogDoc(lang: string): Promise<string> {
+  const a = app();
+  if (!a) return '';
+  return a.GetChangelogDoc(lang);
+}
+
+// getLastSeenVersion 读上次「已知新版本」标记（升级弹窗判新增用）；无记录返回空串
+export async function getLastSeenVersion(): Promise<string> {
+  const a = app();
+  if (!a) return '';
+  return a.GetLastSeenVersion();
+}
+
+// markVersionSeen 记录「已知新版本」标记；无绑定静默跳过（纯浏览器调试场景）
+export async function markVersionSeen(version: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.MarkVersionSeen(version);
 }
 
 export async function checkForUpdate(): Promise<UpdateInfo> {

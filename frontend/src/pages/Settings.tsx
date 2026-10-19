@@ -58,6 +58,7 @@ import { useAppStore } from '../state/store';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
+import { HelpSection } from '../components/HelpSection';
 import { ProvidersEditor } from '../components/ProvidersEditor';
 import { SkillPlaza } from '../components/SkillPlaza';
 import { WeixinSettings } from '../components/WeixinSettings';
@@ -70,7 +71,7 @@ const BUILTIN_LANGUAGE_CODES = ['en', 'zh-CN', 'system'];
 // translateBackend 会把首行后的内容当参数吞掉，导致漏译）
 const translateLog = (text: string): string => text.split('\n').map(translateBackend).join('\n');
 
-type Section = 'general' | 'weixin' | 'model' | 'tools' | 'skills';
+type Section = 'general' | 'weixin' | 'model' | 'tools' | 'skills' | 'help';
 
 // PlatDraft：平台编辑态草稿（新增/编辑共用）。APIKey 只在表单里流转（空串=保持原值），
 // APIKeySet / IsNew 仅为占位与交互辅助，不参与提交。
@@ -100,6 +101,7 @@ const SECTIONS: { id: Section; labelKey: string }[] = [
   { id: 'model', labelKey: 'ui.settings.nav.model' },
   { id: 'tools', labelKey: 'ui.settings.nav.tools' },
   { id: 'skills', labelKey: 'ui.settings.nav.skills' },
+  { id: 'help', labelKey: 'ui.settings.nav.help' },
 ];
 
 export default function Settings() {
@@ -1501,6 +1503,7 @@ export default function Settings() {
           )}
 
           {section === 'skills' && <SkillPlaza />}
+          {section === 'help' && <HelpSection />}
         </div>
       </div>
     </div>

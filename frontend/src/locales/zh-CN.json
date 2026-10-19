@@ -277,7 +277,16 @@
         "weixin": "微信",
         "model": "模型",
         "tools": "工具",
-        "skills": "Skill 广场"
+        "skills": "Skill 广场",
+        "help": "帮助"
+      },
+      "help": {
+        "tab": {
+          "guide": "功能使用说明",
+          "changelog": "升级日志"
+        },
+        "loadFailed": "文档加载失败。",
+        "retry": "重试"
       },
       "skills": {
         "plaza_title": "浏览 Skill",
