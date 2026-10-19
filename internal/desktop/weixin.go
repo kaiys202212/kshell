@@ -156,3 +156,12 @@ func (a *App) HubCommand(text string) ([]hub.Reply, error) {
 	}
 	return a.wxHubConsole().Handle(text), nil
 }
+
+// HubPickTarget 是 AgentHub 无精确目标时的待选入口：共享 Console 输出编号
+// 会话列表并暂存正文；用户回数字由 HubCommand 完成激活与发送。
+func (a *App) HubPickTarget(text string) ([]hub.Reply, error) {
+	if !a.snapshot().ready() {
+		return nil, errNotReady
+	}
+	return a.wxHubConsole().PickTarget(text), nil
+}

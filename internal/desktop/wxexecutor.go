@@ -24,6 +24,7 @@ var _ hub.Executor = (*wxExecutor)(nil)
 // wxChatInfo 是会话合成列表的中间形态：活跃 chat 或磁盘会话二选一。
 type wxChatInfo struct {
 	chatID    string // 活跃 chat ID；磁盘会话为空
+	key       string // 活跃 chat 的 manager key（termKey 归因用）
 	sessionID string // 磁盘会话 ID（活跃 chat 也可能绑定）
 	tool      string
 	workspace string
@@ -38,6 +39,7 @@ func (w *wxExecutor) collectSessions() []wxChatInfo {
 	for _, info := range w.a.ListChats() {
 		out = append(out, wxChatInfo{
 			chatID:    info.ID,
+			key:       info.Key,
 			sessionID: info.SessionID,
 			tool:      info.ToolID,
 			workspace: info.Workspace,
@@ -72,6 +74,7 @@ func (w *wxExecutor) ListSessions() []hub.SessionRef {
 	for _, s := range list {
 		out = append(out, hub.SessionRef{
 			ChatID:    s.chatID,
+			Key:       s.key,
 			SessionID: s.sessionID,
 			Workspace: s.workspace,
 			Tool:      s.tool,
@@ -82,31 +85,58 @@ func (w *wxExecutor) ListSessions() []hub.SessionRef {
 	return out
 }
 
-// CurrentSession 从合成列表里找 hub 最后活跃会话；无 hub 记录时回落第一个活跃 chat。
-func (w *wxExecutor) CurrentSession() (hub.SessionRef, bool) {
-	refs := w.ListSessions()
-	if len(refs) == 0 {
-		return hub.SessionRef{}, false
+// LastActivity 从 hub 历史最新一条往前扫，按 chatId → termKey → sessionId
+// 快照三级精确匹配合成会话列表；一条都命中不了时 ok=false（不猜、不回落
+// 第一个 chat）。返回命中消息的 ID 供 Console 比较归因水位。
+func (w *wxExecutor) LastActivity() (int64, hub.SessionRef, bool) {
+	store := w.a.snapshot().HubStore
+	if store == nil {
+		return 0, hub.SessionRef{}, false
+	}
+	msgs := store.List()
+	if len(msgs) == 0 {
+		return 0, hub.SessionRef{}, false
 	}
 	// hub 落盘 ChatID 是前端 ID 空间（链头），与 ListSessions 里的 ChatID 同口径。
-	var lastChatID string
-	if store := w.a.snapshot().HubStore; store != nil {
-		if msgs := store.List(); len(msgs) > 0 {
-			lastChatID = msgs[len(msgs)-1].ChatID
+	byChat := make(map[string]hub.SessionRef)
+	byKey := make(map[string]hub.SessionRef)
+	bySession := make(map[string]hub.SessionRef)
+	for _, r := range w.ListSessions() {
+		if r.ChatID != "" {
+			byChat[r.ChatID] = r
+		}
+		if r.Key != "" {
+			byKey[r.Key] = r
+		}
+		if r.SessionID != "" {
+			bySession[r.SessionID] = r
 		}
 	}
-	if lastChatID != "" {
-		for _, r := range refs {
-			if r.ChatID == lastChatID {
-				return r, true
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.ChatID != "" {
+			if r, ok := byChat[m.ChatID]; ok {
+				return m.ID, r, true
+			}
+		}
+		if m.TermKey != "" {
+			if r, ok := byKey[m.TermKey]; ok {
+				return m.ID, r, true
+			}
+			// termKey 的 session: 前缀即磁盘会话 ID（未激活时也能精确 resume）。
+			if sid, ok := strings.CutPrefix(m.TermKey, "session:"); ok {
+				if r, ok := bySession[sid]; ok {
+					return m.ID, r, true
+				}
+			}
+		}
+		if m.SessionID != "" {
+			if r, ok := bySession[m.SessionID]; ok {
+				return m.ID, r, true
 			}
 		}
 	}
-	// 回落：ListChats 第一个（refs 活跃在前，等价于首个 ChatID 非空的条目）。
-	if refs[0].ChatID != "" {
-		return refs[0], true
-	}
-	return hub.SessionRef{}, false
+	return 0, hub.SessionRef{}, false
 }
 
 // SwitchTo 轻量校验目标 chat 存在即成功（微信切上下文不需要真的在桌面端弹窗，
@@ -134,6 +164,7 @@ func (w *wxExecutor) OpenSession(sessionID string) (hub.SessionRef, error) {
 	}
 	return hub.SessionRef{
 		ChatID:    w.a.originalChatID(o.Chat.ID),
+		Key:       o.Chat.Key,
 		SessionID: o.Chat.SessionID,
 		Workspace: o.Chat.Workspace,
 		Tool:      o.Chat.ToolID,
@@ -215,6 +246,7 @@ func (w *wxExecutor) CreateNew(toolID, wsID, model string) (hub.SessionRef, erro
 	}
 	return hub.SessionRef{
 		ChatID:    w.a.originalChatID(o.Chat.ID),
+		Key:       o.Chat.Key,
 		SessionID: o.Chat.SessionID,
 		Workspace: o.Chat.Workspace,
 		Tool:      o.Chat.ToolID,
@@ -292,7 +324,7 @@ func (w *wxExecutor) Status() hub.ConsoleStatus {
 		}
 	}
 	st := hub.ConsoleStatus{Running: running}
-	if cur, ok := w.CurrentSession(); ok {
+	if _, cur, ok := w.LastActivity(); ok {
 		st.CurrentTitle = cur.Title
 	}
 	return st

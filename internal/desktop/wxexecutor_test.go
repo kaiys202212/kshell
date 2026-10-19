@@ -101,8 +101,9 @@ func TestWXExecutorToolName(t *testing.T) {
 	}
 }
 
-// HubStore 最后一条消息的 ChatID 定位 current；无 hub 记录时回落 ListChats 第一个。
-func TestWXExecutorCurrentSession(t *testing.T) {
+// wxActiveApp 构造带两个活跃新建会话的 App，返回 manager 与 executor。
+func wxActiveApp(t *testing.T) (*App, *chat.Manager, *wxExecutor) {
+	t.Helper()
 	app := wxApp(t, nil)
 	m := newChatManagerWith(func(string, ...any) {}, fakeChatBackend{}, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
@@ -119,24 +120,81 @@ func TestWXExecutorCurrentSession(t *testing.T) {
 	app.mu.Lock()
 	app.opts.Chats = m
 	app.mu.Unlock()
+	return app, m, newWXExecutor(app)
+}
 
-	ex := newWXExecutor(app)
-	// 无 hub 记录：回落 ListChats 第一个。
-	cur, ok := ex.CurrentSession()
-	if !ok || cur.Title != "甲会话" {
-		t.Fatalf("无 hub 记录应回落第一个 chat: %+v ok=%v", cur, ok)
+// 无 hub 记录或消息都无归因时：ok=false，不再回落第一个 chat。
+func TestWXExecutorLastActivityNoAttribution(t *testing.T) {
+	app, _, ex := wxActiveApp(t)
+	if _, _, ok := ex.LastActivity(); ok {
+		t.Fatal("无 hub 记录时不应有归因")
 	}
-
-	// 落一条乙会话的 hub 消息：current 应切到乙。
-	// 落盘 ChatID 是前端 ID 空间（ListChats 的 ID）；Open 后未重建，链头即 manager ID。
 	store := app.snapshot().HubStore
 	if store == nil {
 		t.Fatal("wxApp 未装配 HubStore")
 	}
-	_ = store.Append(hub.Message{Kind: "agent", ChatID: app.originalChatID(listLastID(m)), Text: "hi"})
-	cur, ok = ex.CurrentSession()
-	if !ok || cur.Title != "乙会话" {
-		t.Fatalf("应按 hub 最后消息定位到乙会话: %+v ok=%v", cur, ok)
+	// 有会话、有 hub 消息，但消息不带任何归因字段：仍视为无精确目标。
+	_ = store.Append(hub.Message{Kind: "agent", Text: "hi"})
+	if _, _, ok := ex.LastActivity(); ok {
+		t.Fatal("无归因字段的消息不得回落第一个 chat")
+	}
+}
+
+// 最新消息 ChatID 精确命中活跃 chat。
+func TestWXExecutorLastActivityChatID(t *testing.T) {
+	app, m, ex := wxActiveApp(t)
+	store := app.snapshot().HubStore
+	_ = store.Append(hub.Message{Kind: "user", ChatID: app.originalChatID(listLastID(m)), Text: "hi"})
+	msgs := store.List()
+	gotID, ref, ok := ex.LastActivity()
+	if !ok || ref.Title != "乙会话" || ref.ChatID != app.originalChatID(listLastID(m)) {
+		t.Fatalf("应按 ChatID 命中乙会话: %+v ok=%v", ref, ok)
+	}
+	if gotID != msgs[len(msgs)-1].ID {
+		t.Fatalf("应返回命中消息的 ID: got %d want %d", gotID, msgs[len(msgs)-1].ID)
+	}
+}
+
+// 最新消息是旧 ChatID（已失效）时继续往前扫，TermKey 精确命中活跃 chat。
+func TestWXExecutorLastActivityTermKey(t *testing.T) {
+	app, m, ex := wxActiveApp(t)
+	store := app.snapshot().HubStore
+	list := m.List()
+	first := list[0]
+	_ = store.Append(hub.Message{Kind: "user", TermKey: first.Key, Text: "hi"})
+	// 更旧的一条无效归因不影响往前扫。
+	_ = store.Append(hub.Message{Kind: "agent", Text: "noise"})
+	msgs := store.List()
+	gotID, ref, ok := ex.LastActivity()
+	if !ok || ref.ChatID != app.originalChatID(first.ID) || ref.Key != first.Key {
+		t.Fatalf("应按 TermKey 命中甲会话: %+v ok=%v", ref, ok)
+	}
+	if gotID != msgs[len(msgs)-2].ID {
+		t.Fatalf("应返回命中消息的 ID: got %d want %d", gotID, msgs[len(msgs)-2].ID)
+	}
+}
+
+// 旧消息的 SessionID 快照命中磁盘会话：返回未激活引用（ChatID 空）。
+func TestWXExecutorLastActivitySessionSnapshot(t *testing.T) {
+	app := wxApp(t, []providers.Session{
+		{ID: "s2", ToolID: "codex", Workspace: `D:\ws\b`, Title: "磁盘会话", UpdatedAt: time.Now()},
+	})
+	store := app.snapshot().HubStore
+	_ = store.Append(hub.Message{Kind: "user", SessionID: "s2", Text: "hi"})
+	ex := newWXExecutor(app)
+	_, ref, ok := ex.LastActivity()
+	if !ok || ref.SessionID != "s2" || ref.ChatID != "" || ref.Title != "磁盘会话" {
+		t.Fatalf("应按 SessionID 命中未激活磁盘会话: %+v ok=%v", ref, ok)
+	}
+
+	// termKey session: 前缀同样视为磁盘会话快照。
+	app2 := wxApp(t, []providers.Session{
+		{ID: "s3", ToolID: "claude", Workspace: `D:\ws\c`, Title: "前缀会话", UpdatedAt: time.Now()},
+	})
+	_ = app2.snapshot().HubStore.Append(hub.Message{Kind: "agent", TermKey: "session:s3", Text: "hi"})
+	_, ref, ok = newWXExecutor(app2).LastActivity()
+	if !ok || ref.SessionID != "s3" || ref.ChatID != "" {
+		t.Fatalf("termKey session: 前缀应命中磁盘会话: %+v ok=%v", ref, ok)
 	}
 }
 
@@ -184,8 +242,8 @@ func TestWXExecutorEasyNewNoTools(t *testing.T) {
 func TestWXExecutorEmptySessionsNoPanic(t *testing.T) {
 	app := wxApp(t, nil)
 	ex := newWXExecutor(app)
-	if _, ok := ex.CurrentSession(); ok {
-		t.Fatal("空会话时 CurrentSession 应 ok=false")
+	if _, _, ok := ex.LastActivity(); ok {
+		t.Fatal("空会话时 LastActivity 应 ok=false")
 	}
 	if got := ex.SearchSessions("x"); len(got) != 0 {
 		t.Fatalf("空会话搜索应为空: %+v", got)

@@ -24,26 +24,26 @@ type fakeExecutor struct {
 	lastActivityID  int64
 	lastActivityRef SessionRef
 	hasActivity     bool
-	switchErr      error
-	easyNewRef     SessionRef
-	easyNewErr     error
-	tools          []MenuOption
-	workspaces     []MenuOption
-	models         []MenuOption
-	createRef      SessionRef
-	createErr      error
-	stopErr        error
-	listModels     []MenuOption
-	listModelsCur  string
-	listModelsErr  error
-	setModelErr    error
-	searchResult   []SessionRef
-	sendErr        error
-	grantErr       error
-	status         ConsoleStatus
-	openSessionRef SessionRef
-	openSessionErr error
-	recentMessages []Message
+	switchErr       error
+	easyNewRef      SessionRef
+	easyNewErr      error
+	tools           []MenuOption
+	workspaces      []MenuOption
+	models          []MenuOption
+	createRef       SessionRef
+	createErr       error
+	stopErr         error
+	listModels      []MenuOption
+	listModelsCur   string
+	listModelsErr   error
+	setModelErr     error
+	searchResult    []SessionRef
+	sendErr         error
+	grantErr        error
+	status          ConsoleStatus
+	openSessionRef  SessionRef
+	openSessionErr  error
+	recentMessages  []Message
 	// 记录调用参数
 	switchCalls      []string
 	openSessionCalls []string
@@ -175,9 +175,9 @@ func TestListTruncatesTo10AndMarksCurrent(t *testing.T) {
 	refs[2].Current = true
 	refs[2].ChatID = "chat-3"
 	fe := &fakeExecutor{
-		listSessions:   refs,
+		listSessions:    refs,
 		hasActivity:     true,
-		lastActivityRef: refs[2], // Current 由 ex.CurrentSession 比对得出
+		lastActivityRef: refs[2], // ▶ 由 refreshCurrent 与归因 ChatID 比对得出
 	}
 	c := NewConsole(fe)
 
@@ -207,7 +207,7 @@ func TestListTruncatesTo10AndMarksCurrent(t *testing.T) {
 
 func TestListRefreshesCurrent(t *testing.T) {
 	fe := &fakeExecutor{
-		listSessions:   []SessionRef{wsRef(0, "c1", "", `D:\a\b`, "codex", "标题", false)},
+		listSessions:    []SessionRef{wsRef(0, "c1", "", `D:\a\b`, "codex", "标题", false)},
 		hasActivity:     true,
 		lastActivityRef: wsRef(0, "c1", "", `D:\a\b`, "codex", "标题", true),
 	}
@@ -420,8 +420,8 @@ func TestModelsMenu(t *testing.T) {
 	fe := &fakeExecutor{
 		hasActivity:     true,
 		lastActivityRef: wsRef(0, "c1", "", "", "claude", "A", true),
-		listModels:     []MenuOption{{ID: "sonnet", Label: "Sonnet"}, {ID: "opus", Label: "Opus"}},
-		listModelsCur:  "opus",
+		listModels:      []MenuOption{{ID: "sonnet", Label: "Sonnet"}, {ID: "opus", Label: "Opus"}},
+		listModelsCur:   "opus",
 	}
 	c := NewConsole(fe)
 	out := join(c.Handle("#m"))
@@ -443,8 +443,8 @@ func TestModelsMenu(t *testing.T) {
 	fe2 := &fakeExecutor{
 		hasActivity:     true,
 		lastActivityRef: wsRef(0, "c1", "", "", "claude", "A", true),
-		listModels:     []MenuOption{{ID: "sonnet", Label: "Sonnet"}},
-		setModelErr:    errors.New("nope"),
+		listModels:      []MenuOption{{ID: "sonnet", Label: "Sonnet"}},
+		setModelErr:     errors.New("nope"),
 	}
 	c2 := NewConsole(fe2)
 	c2.Handle("#m")
@@ -645,7 +645,7 @@ func TestPlainTextInput(t *testing.T) {
 	fe2 := &fakeExecutor{
 		hasActivity:     true,
 		lastActivityRef: wsRef(0, "c1", "", "", "claude", "A", true),
-		sendErr:        errors.New("offline"),
+		sendErr:         errors.New("offline"),
 	}
 	out = join(NewConsole(fe2).Handle("你好"))
 	if !strings.Contains(out, "发送失败") {
@@ -690,7 +690,7 @@ func TestSwitchInactiveSessionOpensSession(t *testing.T) {
 		},
 		hasActivity:     true,
 		lastActivityRef: wsRef(0, "c1", "s1", `D:\ws\a`, "claude", "活跃会话", true),
-		openSessionRef: wsRef(0, "c9", "s2", `D:\ws\b`, "codex", "磁盘会话", false),
+		openSessionRef:  wsRef(0, "c9", "s2", `D:\ws\b`, "codex", "磁盘会话", false),
 	}
 	c := NewConsole(fe)
 	if got := join(c.Handle("#l")); !strings.Contains(got, "2. [b] codex 磁盘会话") {

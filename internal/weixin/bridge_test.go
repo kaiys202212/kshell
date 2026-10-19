@@ -25,15 +25,16 @@ type fakeExec struct {
 	sessions  []hub.SessionRef
 	current   hub.SessionRef
 	hasCur    bool
+	lastID    int64
 	sendErr   error
 	sentTexts []string // Send 收到的文本（按序记录）
 }
 
-func (f *fakeExec) ListSessions() []hub.SessionRef             { return f.sessions }
-func (f *fakeExec) CurrentSession() (hub.SessionRef, bool)     { return f.current, f.hasCur }
-func (f *fakeExec) SwitchTo(string) error                      { return nil }
-func (f *fakeExec) OpenSession(string) (hub.SessionRef, error) { return hub.SessionRef{}, nil }
-func (f *fakeExec) EasyNew() (hub.SessionRef, error)           { return hub.SessionRef{}, nil }
+func (f *fakeExec) ListSessions() []hub.SessionRef              { return f.sessions }
+func (f *fakeExec) LastActivity() (int64, hub.SessionRef, bool) { return f.lastID, f.current, f.hasCur }
+func (f *fakeExec) SwitchTo(string) error                       { return nil }
+func (f *fakeExec) OpenSession(string) (hub.SessionRef, error)  { return hub.SessionRef{}, nil }
+func (f *fakeExec) EasyNew() (hub.SessionRef, error)            { return hub.SessionRef{}, nil }
 func (f *fakeExec) NewMenuOptions() (tools, workspaces, models []hub.MenuOption) {
 	return nil, nil, nil
 }
@@ -815,5 +816,26 @@ func TestBridgeVoiceServerTextSkipsASR(t *testing.T) {
 	b.HandleInboundMsg(context.Background(), m)
 	if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "服务端转写内容" {
 		t.Fatalf("服务端转写应直通: %v", ex.sentTexts)
+	}
+}
+
+// 普通文本无精确目标：桥层转发待选列表（而非「收到」ack），不调用 Send。
+func TestBridgeInboundNoTargetListsSessions(t *testing.T) {
+	rc := &recorder{}
+	ex := &fakeExec{sessions: []hub.SessionRef{
+		{ChatID: "c1", Workspace: "/a/proj", Tool: "claude", Title: "会话A"},
+	}}
+	b := newBridge(t, "u1", ex, rc.handler(t))
+	b.HandleInbound("u1", "ct-1", "普通消息")
+	sends := rc.sends()
+	if len(sends) != 1 {
+		t.Fatalf("sendmessage 次数 = %d, 期望 1（待选列表）", len(sends))
+	}
+	text, _ := sendMsgFields(t, sends[0].body)
+	if !strings.Contains(text, "未精确匹配到会话") || !strings.Contains(text, "1. [proj] claude 会话A") {
+		t.Errorf("应回待选列表: %q", text)
+	}
+	if len(ex.sentTexts) != 0 {
+		t.Errorf("无精确目标时不得投递: %v", ex.sentTexts)
 	}
 }
