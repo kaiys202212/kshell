@@ -834,6 +834,10 @@
       "menu_aria": "选择 agent 新建会话",
       "auto": "自动（该工作区最常用）"
     },
+    "whatsNew": {
+      "title": "{{version}} 更新内容",
+      "confirm": "我知道了"
+    },
     "update_prompt": {
       "title": "发现新版本 {{version}}",
       "body": "当前 {{current}}。稍后则本会话不再提醒，下次启动仍会检查。",

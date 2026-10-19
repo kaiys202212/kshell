@@ -834,6 +834,10 @@
       "menu_aria": "Choose an agent to start a new session",
       "auto": "Auto (most used in this workspace)"
     },
+    "whatsNew": {
+      "title": "What's new in {{version}}",
+      "confirm": "Got it"
+    },
     "update_prompt": {
       "title": "New version {{version}} found",
       "body": "Current {{current}}. If you postpone, this session will not remind you again; it will check again next launch.",
