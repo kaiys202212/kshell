@@ -3,6 +3,7 @@ package hubtools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -170,6 +171,48 @@ func TestTranscribeViaChat(t *testing.T) {
 	txt, _ := contents[0].(map[string]any)
 	if t2, _ := txt["text"].(string); !strings.Contains(t2, "转写") {
 		t.Errorf("text 块提示词缺失: %v", txt)
+	}
+}
+
+func TestTranscribeViaChatAudioUnsupported(t *testing.T) {
+	// 400 + 响应体含 input_audio（火山等网关对不支持音频的模型的真实报错形态）
+	// → 哨兵 ErrChatAudioUnsupported，不再透传网关原始报错。
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"error":{"code":"InvalidParameter","message":"The parameter `+"`messages.content.input_audio`"+` specified in the request are not valid: audio input is not supported by this model. Request id: 021792..."}}`)
+	}))
+	defer srv.Close()
+	cfg := Config{BaseURL: srv.URL, APIKey: "k"}
+	_, err := TranscribeViaChat(context.Background(), cfg, "glm-5.3-flash", []byte("x"))
+	if !errors.Is(err, ErrChatAudioUnsupported) {
+		t.Fatalf("应返回 ErrChatAudioUnsupported, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "err.hubtools.chat_audio_unsupported") {
+		t.Errorf("错误串应含稳定 key: %v", err)
+	}
+
+	// 400 + 与音频无关的其他参数错 → 普通错误，不误判。
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"error":{"code":"InvalidParameter","message":"The parameter temperature is not valid"}}`)
+	}))
+	defer srv2.Close()
+	cfg2 := Config{BaseURL: srv2.URL, APIKey: "k"}
+	_, err = TranscribeViaChat(context.Background(), cfg2, "m", []byte("x"))
+	if err == nil || errors.Is(err, ErrChatAudioUnsupported) {
+		t.Fatalf("无关 400 不应判为音频不支持: %v", err)
+	}
+
+	// 404（部分网关对未知字段报 404）+ input_audio 文案 → 哨兵。
+	srv3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, `{"error":{"message":"Unknown parameter: input_audio"}}`)
+	}))
+	defer srv3.Close()
+	cfg3 := Config{BaseURL: srv3.URL, APIKey: "k"}
+	_, err = TranscribeViaChat(context.Background(), cfg3, "m", []byte("x"))
+	if !errors.Is(err, ErrChatAudioUnsupported) {
+		t.Fatalf("404+input_audio 应返回哨兵, got %v", err)
 	}
 }
 

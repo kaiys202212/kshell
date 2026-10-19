@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,6 +21,12 @@ const chatTranscribePrompt = "请逐字转写这段语音的内容，只输出�
 // 工具循环上限（hubPromptTimeout）而非 ASR 的 60s：音频 base64 后请求体大、
 // 多模态推理慢，勿擅自统一成 60s。
 const timeoutChatTranscribe = 90 * time.Second
+
+// ErrChatAudioUnsupported 表示默认对话模型不支持音频输入（chat 转写回落链的
+// 常态而非异常）：主流 coding 模型（Claude 全系 / GPT 标准版 / GLM / DeepSeek /
+// 豆包 coding 系列）均不接受 input_audio，网关以 400/404/422 拒绝。上层据此
+// 给出「去配置 asr_model」的行动指引，而不是透传网关原始报错。
+var ErrChatAudioUnsupported = errors.New("err.hubtools.chat_audio_unsupported")
 
 // chatAudioLimit 是 chat 转写响应体的读入上限。
 const chatAudioLimit = 1 << 20
@@ -84,6 +91,10 @@ func TranscribeViaChat(ctx context.Context, cfg Config, model string, wav []byte
 		return "", fmt.Errorf("读取 chat 转写响应: %w", err)
 	}
 	if httpResp.StatusCode != http.StatusOK {
+		if isAudioUnsupportedStatus(httpResp.StatusCode) && isAudioUnsupportedBody(string(data)) {
+			// 保留原始报错于日志可读的包装里，但 errors.Is 可归因到哨兵。
+			return "", fmt.Errorf("%w: 状态码 %d, 响应: %.512s", ErrChatAudioUnsupported, httpResp.StatusCode, data)
+		}
 		return "", fmt.Errorf("err.hubtools.chat_transcribe_failed: 状态码 %d, 响应: %.512s", httpResp.StatusCode, data)
 	}
 	var out struct {
@@ -100,4 +111,18 @@ func TranscribeViaChat(ctx context.Context, cfg Config, model string, wav []byte
 		return "", fmt.Errorf("chat 转写响应无 choices")
 	}
 	return out.Choices[0].Message.Content, nil
+}
+
+// isAudioUnsupportedStatus 判定状态码是否可能是「模型不支持音频」：主流网关
+// 对不认识的 input_audio 字段报 400，个别报 404/422，其余状态码不猜。
+func isAudioUnsupportedStatus(code int) bool {
+	return code == http.StatusBadRequest || code == http.StatusNotFound || code == http.StatusUnprocessableEntity
+}
+
+// isAudioUnsupportedBody 判定响应体是否指向音频输入被拒：各家报错都带
+// input_audio 字段名或明确的 audio not supported 文案，双条件覆盖大小写差异。
+func isAudioUnsupportedBody(body string) bool {
+	lower := strings.ToLower(body)
+	return strings.Contains(lower, "input_audio") ||
+		(strings.Contains(lower, "audio") && strings.Contains(lower, "not supported"))
 }
