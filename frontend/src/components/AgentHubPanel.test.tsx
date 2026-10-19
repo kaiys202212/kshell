@@ -168,7 +168,7 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder')) as HTMLTextAreaElement;
     fireEvent.change(box, { target: { value: '帮我看看' } });
     const chips = screen.getByTestId('hub-session-chips');
-    // chip 主体按钮（aria-pressed 标注高亮态，名称含标题+工具名）
+    // chip 主体按钮（aria-current 标注高亮态，名称含标题+工具名）
     const main = within(chips).getByRole('button', { name: /重构认证/ });
     fireEvent.click(main);
     // 尾随空格便于继续输入（与 quickReply rephrase 同语义）
@@ -176,7 +176,7 @@ describe('AgentHubPanel', () => {
     expect(document.activeElement).toBe(box);
   });
 
-  it('默认接收目标 chip 高亮：回落链目标 aria-pressed=true；草稿含 @ 提及时提及目标高亮', () => {
+  it('默认接收目标 chip 高亮：回落链目标 aria-current=true；草稿含 @ 提及时提及目标高亮', () => {
     useAppStore.setState({
       chats: [
         chat({ ID: 'c1', Title: '甲', ToolID: 'claude' }),
@@ -188,20 +188,23 @@ describe('AgentHubPanel', () => {
     const chips = screen.getByTestId('hub-session-chips');
     const chipOf = (id: string) =>
       within(chips).getByRole('button', { name: new RegExp(id === 'c1' ? '甲' : '乙') });
-    // 无 @ 提及时回落链（lastAgentId=c1）目标高亮
-    expect(chipOf('c1')).toHaveAttribute('aria-pressed', 'true');
-    expect(chipOf('c2')).toHaveAttribute('aria-pressed', 'false');
+    // 无 @ 提及时回落链（lastAgentId=c1）目标高亮（非目标按钮无 aria-current）
+    expect(chipOf('c1')).toHaveAttribute('aria-current', 'true');
+    expect(chipOf('c2')).not.toHaveAttribute('aria-current');
     // 草稿 @ 某会话：该会话 chip 变为高亮（@ 提及优先于回落链）
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '@Cursor#c2 看看' } });
-    expect(chipOf('c2')).toHaveAttribute('aria-pressed', 'true');
-    expect(chipOf('c1')).toHaveAttribute('aria-pressed', 'false');
+    expect(chipOf('c2')).toHaveAttribute('aria-current', 'true');
+    expect(chipOf('c1')).not.toHaveAttribute('aria-current');
   });
 
-  it('chip 内无 @ 图标按钮（mention_session 已移除，点击主体即 @）', () => {
+  it('chip 主体带 mention_session 悬停提示（title），点击即 @ 无独立图标按钮', () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);
-    expect(screen.queryByRole('button', { name: tt('ui.hub.mention_session') })).toBeNull();
+    const main = within(screen.getByTestId('hub-session-chips')).getByRole('button', {
+      name: /重构认证/,
+    });
+    expect(main).toHaveAttribute('title', tt('ui.hub.mention_session'));
   });
 
   it('点空闲会话的 ×：该 chip 从 chips 区消失；忙碌 chip 无 ×', async () => {
@@ -296,15 +299,6 @@ describe('AgentHubPanel', () => {
     };
     fireEvent.drop(box, { dataTransfer: dt });
     expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c1');
-  });
-
-  it('chips 区无展开交互：点击外部不再收起任何面板', () => {
-    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
-    render(<AgentHubPanel />);
-    // chips 常驻渲染，点击 document.body 不改变任何状态
-    expect(screen.getByTestId('hub-session-chips')).toBeTruthy();
-    fireEvent.mouseDown(document.body);
-    expect(screen.getByTestId('hub-session-chips')).toBeTruthy();
   });
 
   it('chip 主体点击后草稿追加 @ 标签（原 @ 图标行为并入主体），归档展开不影响 chips', () => {

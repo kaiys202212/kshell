@@ -1209,8 +1209,12 @@ export default function AgentHubPanel() {
         )}
         {/* 会话 chips 平铺：每个会话一枚，点击主体即 @ 该会话（原 @ 图标行为并入主体）；
             默认接收目标（下一句话的投递对象，@ 提及优先于回落链）高亮标注。
-            flex-wrap 超宽自动换行继续平铺；拖拽 chip 仍可把 @ 标签放进输入框。 */}
-        <div data-testid="hub-session-chips" className="flex flex-wrap items-center gap-1">
+            flex-wrap 超宽自动换行继续平铺；拖拽 chip 仍可把 @ 标签放进输入框。
+            容器限高自滚（同归档区口径）：会话多时约两行后滚动，不挤压消息流。 */}
+        <div
+          data-testid="hub-session-chips"
+          className="flex max-h-20 shrink-0 flex-wrap items-center gap-1 overflow-y-auto"
+        >
           {chats.length === 0 ? (
             <span className="text-muted-foreground">{t('ui.hub.empty')}</span>
           ) : (
@@ -1234,7 +1238,10 @@ export default function AgentHubPanel() {
                 >
                   <button
                     type="button"
-                    aria-pressed={isTarget}
+                    title={t('ui.hub.mention_session')}
+                    // 点击主体是「追加 @ 标签」（可连点），非切换，故不用 toggle 语义；
+                    // 高亮态用 aria-current 表达（可见文本已足够读屏，不再叠加 aria-label）
+                    aria-current={isTarget ? 'true' : undefined}
                     className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                     onClick={() => mentionSession(c)}
                   >
