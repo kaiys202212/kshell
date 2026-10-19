@@ -30,7 +30,7 @@ import {
   confirmHubTool,
   saveHubRouteMode,
 } from '../lib/api';
-import { buildMentionOptions, resolveMentionTarget, type MentionAgent, type MentionOption } from '../lib/agentMentions';
+import { buildMentionOptions, displayMentionTitles, resolveMentionTarget, type MentionAgent, type MentionOption } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
 import { loadDefaultCreate, loadLastCreate, loadToolModels, loadHubRouteMode, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode } from '../lib/agenthubDefaults';
 import { saveHubDefaultCreate } from '../lib/api';
@@ -320,18 +320,17 @@ export default function AgentHubPanel() {
   const [modelMenu, setModelMenu] = useState<{ targetId: string; view: ChatModelsView } | null>(null);
 
   // @ 补全项：展示名 + 会话 id，顺序无关（Claude Code#c1 ...）
-  const options = useMemo(
+  const mentionAgents = useMemo(
     () =>
-      buildMentionOptions(
-        chats.map<MentionAgent>((c) => ({
-          id: c.ID,
-          toolId: c.ToolID,
-          title: c.Title,
-          workspace: c.Workspace,
-        })),
-      ),
+      chats.map<MentionAgent>((c) => ({
+        id: c.ID,
+        toolId: c.ToolID,
+        title: c.Title,
+        workspace: c.Workspace,
+      })),
     [chats],
   );
+  const options = useMemo(() => buildMentionOptions(mentionAgents), [mentionAgents]);
 
   // @ 补全：草稿末尾是未闭合的 @ 片段时给出候选（v1 只按草稿尾匹配，不做光标跟踪）。
   // mentionQuery 为 null 表示当前不在 @ 输入中。
@@ -1046,11 +1045,12 @@ export default function AgentHubPanel() {
                   // 已撤回：灰显卡片 + 标签，原文保留（在原消息上标记，不删除）
                   <div className="selectable inline-block break-words overflow-hidden rounded-md bg-muted px-3 py-1.5 text-left text-muted-foreground">
                     <span className="mb-0.5 block text-[11px] opacity-80">{t('ui.hub.recalled')}</span>
-                    <span className="whitespace-pre-wrap opacity-70">{m.text}</span>
+                    <span className="whitespace-pre-wrap opacity-70">{displayMentionTitles(m.text, mentionAgents)}</span>
                   </div>
                 ) : (
                   <div className="selectable inline-block break-words overflow-hidden rounded-md bg-primary px-3 py-1.5 text-left text-primary-foreground">
-                    <span className="whitespace-pre-wrap">{m.text}</span>
+                    {/* @提及#ID 展示为 #会话标题（落盘原文不动，事后可读） */}
+                    <span className="whitespace-pre-wrap">{displayMentionTitles(m.text, mentionAgents)}</span>
                   </div>
                 )}
                 {/* queued 撤回按钮常显在气泡下方（文档流，右对齐容器内自然靠右） */}
