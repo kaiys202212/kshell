@@ -384,6 +384,34 @@ export default function AgentHubPanel() {
     () => resolveMentionTarget(draft, options, fallbackId),
     [draft, options, fallbackId],
   );
+  // 待激活 chip 数据：currentTargetId 为 pending: 前缀时，从命中的那条 hub 消息
+  // 取展示信息（会话标题快照 / 工具名）。精确命中已激活 chat 时为 null（普通 chip
+  // 高亮接管）。取「lastHubAgentId 所看的那条」最稳妥：同样倒序扫，命中 pending
+  // 的第一条消息即 chip 的来源。
+  const pendingTarget = useMemo(() => {
+    if (!currentTargetId?.startsWith(PENDING_PREFIX)) return null;
+    const sessionID = currentTargetId.slice(PENDING_PREFIX.length);
+    for (let i = hubMessages.length - 1; i >= 0; i--) {
+      const m = hubMessages[i];
+      if (hubPendingSessionId(m) !== sessionID) continue;
+      return { sessionID, title: m.sessionTitle || sessionID, tool: m.tool || '' };
+    }
+    return { sessionID, title: sessionID, tool: '' };
+  }, [currentTargetId, hubMessages]);
+  // mentionPending 待激活 chip 点击：先激活原会话，成功后按普通 chip 语义把
+  // 新会话的 @ 标签追加进输入框。
+  const mentionPending = () => {
+    if (!pendingTarget) return;
+    void activatePending(pendingTarget.sessionID).then((chat) => {
+      if (!chat) return;
+      // 不调 mentionSession：then 回调捕获的是点击轮渲染的旧闭包，其 options
+      // 还不含刚激活的 chat，label 会兜底成会话标题。直接按 buildMentionOptions
+      // 同一公式构造 label（与 quickReply rephrase 激活后填标签同款做法）。
+      const label = `${toolDisplayName(chat.ToolID)}#${chat.ID}`;
+      setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
+      inputRef.current?.focus();
+    });
+  };
   // 命令模式打开且目标变化时拉取 agent 技能；失败静默。
   // 依赖用 inSlashMode 而非 slashQuery：避免每次按键都重拉。
   useEffect(() => {
@@ -486,6 +514,34 @@ export default function AgentHubPanel() {
       return;
     }
     if (!currentTargetId) return; // 理论不可达；保底
+    // pending: 目标 = 最近交互的会话未激活但有磁盘会话 ID 快照：先激活原会话，
+    // 再对激活出的真实 chat ID 执行命令；激活失败报错且不执行（与 send 同语义，
+    // 绝不把命令落到 pending: 前缀串上或同 workspace 其他会话上）。
+    if (currentTargetId.startsWith(PENDING_PREFIX)) {
+      const sessionID = currentTargetId.slice(PENDING_PREFIX.length);
+      if (name !== 'stop' && name !== 'model') return; // 其余命令无 pending 语义，防御
+      void activatePending(sessionID).then((chat) => {
+        if (!chat) return;
+        if (name === 'stop') {
+          void cancelChat(chat.ID)
+            .then(() => useAppStore.getState().notify(t('ui.hub.stop_done'), 'info'))
+            .catch((e: unknown) =>
+              useAppStore.getState().notify(t('ui.hub.stop_failed', { err: backendError(e) }), 'error'),
+            );
+          return;
+        }
+        void listChatModels(chat.ID)
+          .then((view) => {
+            if (!view || !view.Models || view.Models.length === 0) {
+              useAppStore.getState().notify(t('ui.hub.no_models'), 'error');
+              return;
+            }
+            setModelMenu({ targetId: chat.ID, view });
+          })
+          .catch((e: unknown) => useAppStore.getState().notify(backendError(e), 'error'));
+      });
+      return;
+    }
     if (name === 'stop') {
       void cancelChat(currentTargetId)
         .then(() => useAppStore.getState().notify(t('ui.hub.stop_done'), 'info'))
@@ -748,6 +804,24 @@ export default function AgentHubPanel() {
       });
   };
 
+  // activatePending 激活一个 pending 会话（磁盘会话 ID）并登记进 store：
+  // send() 的 pending 分支与 #stop/#model 的 pending 处理共用。激活成功返回
+  // 新 chat Info（调用方继续对 chat.ID 操作）；失败 toast find_activate_failed
+  // 并返回 null（调用方必须停止后续动作，不落模糊匹配误投）。
+  const activatePending = async (sessionID: string): Promise<ChatInfo | null> => {
+    try {
+      const res = await openSessionACP(sessionID);
+      if (!res.Chat) return null;
+      const chat = res.Chat;
+      useAppStore.getState().upsertChat(chat);
+      useAppStore.getState().setLastAgentId(chat.ID);
+      return chat;
+    } catch (e: unknown) {
+      useAppStore.getState().notify(t('ui.hub.find_activate_failed', { err: backendError(e) }), 'error');
+      return null;
+    }
+  };
+
   const send = () => {
     const text = draft.trim();
     if (!text) return;
@@ -804,25 +878,18 @@ export default function AgentHubPanel() {
     // 上下文丢失必须可见，绝不落 workspace 模糊匹配误投同项目会话。
     if (targetId.startsWith(PENDING_PREFIX)) {
       const sessionID = targetId.slice(PENDING_PREFIX.length);
-      // 激活与发送分开 catch：失败阶段不同，文案不同（激活失败 vs 发送失败），
-      // 混在一个 catch 里会把投递失败误报成「激活会话失败」误导排查。
-      void openSessionACP(sessionID)
-        .then(async (res) => {
-          if (!res.Chat) return;
-          const chat = res.Chat;
-          useAppStore.getState().upsertChat(chat);
-          useAppStore.getState().setLastAgentId(chat.ID);
-          await sendChatPrompt(chat.ID, text)
-            .then(() => {
-              useAppStore.getState().setLastAgentId(chat.ID);
-            })
-            .catch((e: unknown) => {
-              useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
-            });
-        })
-        .catch((e: unknown) => {
-          useAppStore.getState().notify(t('ui.hub.find_activate_failed', { err: backendError(e) }), 'error');
-        });
+      void activatePending(sessionID).then((chat) => {
+        if (!chat) return;
+        // 激活与发送分开 catch：失败阶段不同，文案不同（激活失败 vs 发送失败），
+        // 混在一个 catch 里会把投递失败误报成「激活会话失败」误导排查。
+        void sendChatPrompt(chat.ID, text)
+          .then(() => {
+            useAppStore.getState().setLastAgentId(chat.ID);
+          })
+          .catch((e: unknown) => {
+            useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
+          });
+      });
       return;
     }
     // 用户消息由 Go 侧落盘并经 hub:changed 回流（单一数据源），失败只提示不回滚。
@@ -1326,6 +1393,36 @@ export default function AgentHubPanel() {
                 </div>
               );
             })
+          )}
+          {/* 待激活 chip：默认投递目标命中未激活会话（pending: 前缀）时出现，
+              虚线边框区分已激活 chips；点击先激活原会话再 @ 填入（mentionPending）。 */}
+          {pendingTarget && (
+            <div
+              className={cn(
+                'flex max-w-56 min-w-0 items-center gap-1 rounded-full border border-dashed border-primary/60 bg-primary/10 px-2.5 py-1 text-xs',
+              )}
+            >
+              <button
+                type="button"
+                title={t('ui.hub.pending_chip_aria')}
+                aria-current="true"
+                className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                onClick={mentionPending}
+              >
+                <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/40" />
+                <span className="min-w-0 truncate font-medium">
+                  {pendingTarget.title}
+                  <span className="ml-1 text-[11px] font-normal text-muted-foreground">
+                    {t('ui.hub.pending_chip')}
+                  </span>
+                </span>
+                {pendingTarget.tool && (
+                  <span className="shrink-0 truncate text-[11px] text-muted-foreground">
+                    {toolDisplayName(pendingTarget.tool)}
+                  </span>
+                )}
+              </button>
+            </div>
           )}
         </div>
         <textarea
