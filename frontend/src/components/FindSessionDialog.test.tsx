@@ -13,14 +13,19 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('../lib/api', () => api);
 
+// yesterday 取相对当前时间的一天前：相对时间断言不能写死日期，否则过几天必挂。
+function yesterday(): string {
+  return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+}
+
 function session(over: Partial<Session>): Session {
   return {
     ID: 's1',
     ToolID: 'claude',
     Workspace: 'D:\\ws\\alpha',
     Title: '重构认证',
-    CreatedAt: '2026-10-16T10:00:00Z',
-    UpdatedAt: '2026-10-16T10:00:00Z',
+    CreatedAt: yesterday(),
+    UpdatedAt: yesterday(),
     Messages: 3,
     Path: '',
     ...over,

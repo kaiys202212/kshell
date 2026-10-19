@@ -30,7 +30,14 @@ import {
   confirmHubTool,
   saveHubRouteMode,
 } from '../lib/api';
-import { buildMentionOptions, displayMentionTitles, resolveMentionTarget, type MentionAgent, type MentionOption } from '../lib/agentMentions';
+import {
+  buildMentionOptions,
+  displayMentionTitles,
+  resolveMentionTarget,
+  stripLeadingMentions,
+  type MentionAgent,
+  type MentionOption,
+} from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
 import { loadDefaultCreate, loadLastCreate, loadToolModels, loadHubRouteMode, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode } from '../lib/agenthubDefaults';
 import { saveHubDefaultCreate } from '../lib/api';
@@ -46,6 +53,7 @@ import { cn } from '../lib/cn';
 import { LIST_ROW } from '../lib/ui';
 import { useAppStore } from '../state/store';
 import { Button } from './ui/button';
+import { ToolIcon } from './ui/tool-icons';
 import { Dialog } from './ui/dialog';
 import FindSessionDialog from './FindSessionDialog';
 import HubConfirmCard from './HubConfirmCard';
@@ -339,7 +347,7 @@ export default function AgentHubPanel() {
   // /model 内联下拉：非 null 时在输入区上方展示模型列表。
   const [modelMenu, setModelMenu] = useState<{ targetId: string; view: ChatModelsView } | null>(null);
 
-  // @ 补全项：展示名 + 会话 id，顺序无关（Claude Code#c1 ...）
+  // @ 补全项：insert 为写入草稿的标签（工具名#会话标题），label 为路由串。
   const mentionAgents = useMemo(
     () =>
       chats.map<MentionAgent>((c) => ({
@@ -352,6 +360,22 @@ export default function AgentHubPanel() {
   );
   const options = useMemo(() => buildMentionOptions(mentionAgents), [mentionAgents]);
 
+  // mentionLabelForChat 给「刚激活、尚未进入渲染期 chats」的会话构造写入标签。
+  // 必须基于实时 store 的全量会话：visibleMentionLabel 的同名消歧依赖完整列表，
+  // 只用单元素列表会生成与补全候选不一致、resolveMentionTarget 也命中不了的标签。
+  const mentionLabelForChat = (chat: ChatInfo): string | undefined => {
+    const agents = useAppStore.getState().chats.map<MentionAgent>((c) => ({
+      id: c.ID,
+      toolId: c.ToolID,
+      title: c.Title,
+      workspace: c.Workspace,
+    }));
+    if (!agents.some((a) => a.id === chat.ID)) {
+      agents.push({ id: chat.ID, toolId: chat.ToolID, title: chat.Title, workspace: chat.Workspace });
+    }
+    return buildMentionOptions(agents).find((o) => o.id === chat.ID)?.insert;
+  };
+
   // @ 补全：草稿末尾是未闭合的 @ 片段时给出候选（v1 只按草稿尾匹配，不做光标跟踪）。
   // mentionQuery 为 null 表示当前不在 @ 输入中。
   const mentionQuery = useMemo(() => {
@@ -360,7 +384,11 @@ export default function AgentHubPanel() {
   }, [draft]);
   const mentionMatches = useMemo(() => {
     if (mentionQuery === null) return [];
-    return options.filter((o) => o.label.toLowerCase().includes(mentionQuery));
+    return options.filter((o) =>
+      o.insert.toLowerCase().includes(mentionQuery) ||
+      o.label.toLowerCase().includes(mentionQuery) ||
+      (o.detail?.toLowerCase().includes(mentionQuery) ?? false),
+    );
   }, [mentionQuery, options]);
 
   // applyMention 把草稿尾部的 @ 片段替换成完整标签（补一个尾随空格方便继续输入）
@@ -368,8 +396,15 @@ export default function AgentHubPanel() {
     setDraft((d) => d.replace(/@([^\s@]*)$/, `@${label} `));
   };
 
-  // ---- 命令补全：draft 为单个 /xxx（agent 技能）或 #xxx（客户端命令）时激活 ----
-  const slashQuery = /^\/([^\s]*)$/.exec(draft)?.[1] ?? null;
+  // ---- 命令补全：draft 尾部为 /xxx（agent 技能）或整段为 #xxx（客户端命令）时激活 ----
+  // 斜杠按尾部 token 匹配：@ 目标（chips/补全写入）在前时仍能继续补全技能。
+  // 但 / 之前除 @ 标签外不能有其他文字：技能要求 "/" 位于正文首字符，
+  // 否则选中也不会执行，弹层只会误导。
+  const slashMatch = /(?:^|\s)\/([^\s]*)$/.exec(draft);
+  const slashQuery =
+    slashMatch && stripLeadingMentions(draft.slice(0, slashMatch.index), options) === ''
+      ? slashMatch[1]
+      : null;
   const hashQuery = /^#([^\s]*)$/.exec(draft)?.[1] ?? null;
   const inSlashMode = slashQuery !== null;
   const inHashMode = hashQuery !== null;
@@ -405,9 +440,9 @@ export default function AgentHubPanel() {
     void activatePending(pendingTarget.sessionID).then((chat) => {
       if (!chat) return;
       // 不调 mentionSession：then 回调捕获的是点击轮渲染的旧闭包，其 options
-      // 还不含刚激活的 chat，label 会兜底成会话标题。直接按 buildMentionOptions
-      // 同一公式构造 label（与 quickReply rephrase 激活后填标签同款做法）。
-      const label = `${toolDisplayName(chat.ToolID)}#${chat.ID}`;
+      // 还不含刚激活的 chat；按实时 store 的全量列表构造，保证同名消歧与补全一致。
+      const label = mentionLabelForChat(chat);
+      if (!label) return;
       setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
       inputRef.current?.focus();
     });
@@ -630,13 +665,14 @@ export default function AgentHubPanel() {
     setDialogOpen(true);
   };
 
-  // applySlash：客户端命令直接执行，agent 技能切入 draft 后正常发送。
+  // applySlash：客户端命令直接执行，agent 技能替换草稿尾部 / 词后正常发送。
+  // 只替换尾部 token，保留前面的 @ 目标（chips 写入的标签不因选技能被清掉）。
   const applySlash = (item: SlashItem) => {
     if (item.kind === 'client') {
       runClientCommand(item.name);
       return;
     }
-    setDraft(`/${item.name} `);
+    setDraft((d) => d.replace(/(^|\s)\/[^\s]*$/, (_m, lead: string) => `${lead}/${item.name} `));
     setSlashClosed(false);
     setSlashIndex(0);
   };
@@ -669,7 +705,7 @@ export default function AgentHubPanel() {
   // sessionDragLabel 从 mention 候选反查拖拽用的 @ 标签；找不到兜底会话标题。
   const sessionDragLabel = (c: ChatInfo): string => {
     const opt = options.find((o) => o.id === c.ID);
-    return opt?.label ?? (c.Title || wsBaseName(c.Workspace) || emptyTarget);
+    return opt?.insert ?? (c.Title || wsBaseName(c.Workspace) || emptyTarget);
   };
 
   // mentionSession 把会话的 @ 标签保留式追加进输入框（语义同 quickReply rephrase：
@@ -698,10 +734,9 @@ export default function AgentHubPanel() {
         const chat = res.Chat;
         useAppStore.getState().upsertChat(chat);
         useAppStore.getState().setLastAgentId(chat.ID);
-        // label 与 @ 补全候选用同一套生成逻辑，保证草稿里的提及可被 resolveMentionTarget 命中
-        const label = buildMentionOptions([
-          { id: chat.ID, toolId: chat.ToolID, title: chat.Title, workspace: chat.Workspace },
-        ])[0]?.label;
+        // label 与 @ 补全候选用同一套生成逻辑（含全量会话的同名消歧），
+        // 保证草稿里的提及可被 resolveMentionTarget 命中
+        const label = mentionLabelForChat(chat);
         // 语义同 mentionSession：保留式追加 @ 标签（已有内容空格分隔）；
         // `#find ...` 命令残留一并清掉（find 分支不消费草稿，激活成功后重建）。
         setDraft((d) => {
@@ -873,6 +908,10 @@ export default function AgentHubPanel() {
       return;
     }
     setDraft('');
+    // @ 标签只是 Hub 的路由标记，不交给 agent：去掉开头标签后若正文以 "/" 开头
+    // （斜杠技能），用剥离后的正文投递，保证 "/" 落在首字符；其余消息保持原样。
+    const stripped = stripLeadingMentions(text, options);
+    const deliverText = stripped.startsWith('/') ? stripped : text;
     // pending: 目标 = 最近交互的会话未激活（chats 查不到），但有磁盘会话 ID 快照：
     // 先 openSessionACP 激活原会话，再向新 chat 投递。激活失败报错不投递——
     // 上下文丢失必须可见，绝不落 workspace 模糊匹配误投同项目会话。
@@ -882,7 +921,7 @@ export default function AgentHubPanel() {
         if (!chat) return;
         // 激活与发送分开 catch：失败阶段不同，文案不同（激活失败 vs 发送失败），
         // 混在一个 catch 里会把投递失败误报成「激活会话失败」误导排查。
-        void sendChatPrompt(chat.ID, text)
+        void sendChatPrompt(chat.ID, deliverText)
           .then(() => {
             useAppStore.getState().setLastAgentId(chat.ID);
           })
@@ -893,7 +932,7 @@ export default function AgentHubPanel() {
       return;
     }
     // 用户消息由 Go 侧落盘并经 hub:changed 回流（单一数据源），失败只提示不回滚。
-    void sendChatPrompt(targetId, text)
+    void sendChatPrompt(targetId, deliverText)
       .then(() => {
         useAppStore.getState().setLastAgentId(targetId);
       })
@@ -972,10 +1011,10 @@ export default function AgentHubPanel() {
         return;
       }
       // rephrase：激活成功后填 @ 标签。走到此分支说明点击时目标未激活，闭包里的
-      // options 必不含新 chat，直接按 buildMentionOptions 同一公式构造 label
-      // （toolDisplayName#chatID），激活成功却填不进输入框才是异常，不报错。
+      // options 必不含新 chat，按实时 store 的全量列表构造（同名消歧与补全一致）。
       activateAndThen(m, (chat) => {
-        const label = `${toolDisplayName(chat.ToolID)}#${chat.ID}`;
+        const label = mentionLabelForChat(chat);
+        if (!label) return;
         setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
         inputRef.current?.focus();
       });
@@ -991,9 +1030,8 @@ export default function AgentHubPanel() {
         });
       return;
     }
-    // rephrase：从 mention 候选反查目标 label；找不到兜底提示（不误填错误目标）。
-    // 兜底分支防御性保留（options 派生自同一 chats，正常不可达）
-    const label = options.find((o) => o.id === targetId)?.label;
+    // rephrase：从 mention 候选反查展示标签（会话标题）；找不到兜底提示。
+    const label = options.find((o) => o.id === targetId)?.insert;
     if (!label) {
       useAppStore.getState().notify(t('ui.hub.need_target_drag'), 'error');
       return;
@@ -1131,7 +1169,7 @@ export default function AgentHubPanel() {
                         .join(' · ')}
                     </div>
                     {m.kind === 'user' ? (
-                      <span className="whitespace-pre-wrap">{m.text}</span>
+                      <span className="whitespace-pre-wrap">{displayMentionTitles(m.text, mentionAgents)}</span>
                     ) : (
                       <div className={cn(markdownBubbleClass, '[&_pre]:whitespace-pre-wrap')}>
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{translateBackend(m.text)}</ReactMarkdown>
@@ -1248,11 +1286,11 @@ export default function AgentHubPanel() {
                 )}
                 onMouseDown={(e) => {
                   e.preventDefault();
-                  applyMention(o.label);
+                  applyMention(o.insert);
                 }}
               >
-                <span className="block font-mono">@{o.label}</span>
-                {/* 第二行：项目 · 会话标题（label 保持短标签，详情只做展示） */}
+                <span className="block">@{o.insert}</span>
+                {/* 第二行：项目 · 会话标题（insert 已是会话标题，详情补充项目） */}
                 {o.detail && <span className="block truncate text-muted-foreground">{o.detail}</span>}
               </li>
             ))}
@@ -1263,8 +1301,8 @@ export default function AgentHubPanel() {
             <div className="flex items-center justify-between px-2 py-0.5 text-muted-foreground">
               <span className="truncate">
                 {t('ui.hub.model_label')}
-                {options.find((o) => o.id === modelMenu.targetId)?.label
-                  ? ` · ${options.find((o) => o.id === modelMenu.targetId)?.label}`
+                {options.find((o) => o.id === modelMenu.targetId)?.insert
+                  ? ` · ${options.find((o) => o.id === modelMenu.targetId)?.insert}`
                   : ''}
               </span>
               <button
@@ -1346,7 +1384,7 @@ export default function AgentHubPanel() {
                     LIST_ROW,
                     // 默认接收目标高亮：下一句话将投给该会话，需一眼可辨
                     isTarget ? 'border-primary/60 bg-primary/10' : '',
-                    'flex max-w-56 min-w-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs',
+                    'flex max-w-[21rem] min-w-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs',
                   )}
                 >
                   <button
@@ -1366,8 +1404,8 @@ export default function AgentHubPanel() {
                       {/* 无标题会话兜底显示项目基名，避免出现「新会话」同名列无法区分 */}
                       {c.Title || wsBaseName(c.Workspace) || emptyTarget}
                     </span>
-                    <span className="shrink-0 truncate text-[11px] text-muted-foreground">
-                      {toolDisplayName(c.ToolID)}
+                    <span className="shrink-0" title={toolDisplayName(c.ToolID)}>
+                      <ToolIcon toolID={c.ToolID} label={toolDisplayName(c.ToolID)} />
                     </span>
                   </button>
                   {/* 跳转：开项目页签定位该会话对话页。与 × 同为行内独立 button，无冒泡联动 */}
@@ -1398,7 +1436,7 @@ export default function AgentHubPanel() {
               虚线边框区分已激活 chips；点击先激活原会话再 @ 填入（mentionPending）。
               可与 chats.length === 0 的 empty 占位共存：空状态下用户仍能看到待激活目标。 */}
           {pendingTarget && (
-            <div className="flex max-w-56 min-w-0 items-center gap-1 rounded-full border border-dashed border-primary/60 bg-primary/10 px-2.5 py-1 text-xs">
+            <div className="flex max-w-[21rem] min-w-0 items-center gap-1 rounded-full border border-dashed border-primary/60 bg-primary/10 px-2.5 py-1 text-xs">
               <button
                 type="button"
                 title={t('ui.hub.pending_chip_aria')}
@@ -1414,8 +1452,8 @@ export default function AgentHubPanel() {
                   </span>
                 </span>
                 {pendingTarget.tool && (
-                  <span className="shrink-0 truncate text-[11px] text-muted-foreground">
-                    {toolDisplayName(pendingTarget.tool)}
+                  <span className="shrink-0" title={toolDisplayName(pendingTarget.tool)}>
+                    <ToolIcon toolID={pendingTarget.tool} label={toolDisplayName(pendingTarget.tool)} />
                   </span>
                 )}
               </button>
@@ -1428,7 +1466,12 @@ export default function AgentHubPanel() {
           placeholder={t('ui.hub.input_placeholder')}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          onPaste={() => void handlePaste()}
+          onPaste={(e) => {
+            // 拦截原生粘贴：文本/图片路径统一走 handlePaste（后端读剪贴板），
+            // 否则原生插入与 handlePaste 追加各写一遍，草稿出现重复文字
+            e.preventDefault();
+            void handlePaste();
+          }}
           onDragOver={(e) => e.preventDefault()}
           onDrop={handleDrop}
           onKeyDown={(e) => {
@@ -1469,7 +1512,7 @@ export default function AgentHubPanel() {
               }
               if (e.key === 'Enter' || e.key === 'Tab') {
                 e.preventDefault();
-                applyMention(mentionMatches[Math.min(mentionIndex, mentionMatches.length - 1)].label);
+                applyMention(mentionMatches[Math.min(mentionIndex, mentionMatches.length - 1)].insert);
                 return;
               }
               if (e.key === 'Escape') {
