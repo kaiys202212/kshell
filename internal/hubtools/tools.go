@@ -140,6 +140,14 @@ func (r *Registry) Tools() []ToolDef {
 				"id": strProp("任务（会话）ID，必填"),
 			}, "id"),
 		},
+		{
+			Name:        "dispatch_task",
+			Description: "把一个明确任务派发到聊天记录中的某个 agent 会话执行（ref 为近期聊天记录里的编号）。立即执行，无需确认。",
+			Parameters: schema(map[string]any{
+				"ref":  strProp("目标会话编号，取近期聊天记录列表里的 [n]，必填"),
+				"task": strProp("派发的任务描述，必填"),
+			}, "ref", "task"),
+		},
 	}
 }
 
@@ -212,6 +220,12 @@ func (r *Registry) Execute(ctx context.Context, name, argsJSON string) (string, 
 		if out == nil {
 			return "", errors.New("任务不存在")
 		}
+	case "dispatch_task":
+		label, derr := r.b.DispatchTask(argStr(args, "ref"), argStr(args, "task"))
+		if derr != nil {
+			return "", derr
+		}
+		out = map[string]string{"chat": label}
 	default:
 		return "", fmt.Errorf("未知工具: %s", name)
 	}

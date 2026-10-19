@@ -113,6 +113,7 @@ func TestToolsRegistered(t *testing.T) {
 		"create_requirement": false, "update_requirement": false, "delete_requirement": false,
 		"list_workspaces": false, "get_workspace": false,
 		"list_running_tasks": false, "get_task_detail": false,
+		"dispatch_task": false,
 	}
 	seen := map[string]bool{}
 	for _, td := range got {
@@ -151,6 +152,32 @@ func TestSchemaValid(t *testing.T) {
 func fmtJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// TestDispatchTaskExec 验证 dispatch_task 即时执行：透传 ref/task 给 Bridge，
+// 结果包装为 {"chat": label}；Bridge 错误原样透传；不是 Mutating（无挂起）。
+func TestDispatchTaskExec(t *testing.T) {
+	s, f := newTestSession()
+	f.dispatchLabel = "Cursor「修复登录」"
+	result, pending, err := s.Execute(context.Background(), "dispatch_task", `{"ref":"3","task":"修复登录"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if pending != nil {
+		t.Fatalf("dispatch_task 不应产生 pending: %+v", pending)
+	}
+	if !strings.Contains(result, `"chat":"Cursor「修复登录」"`) {
+		t.Fatalf("结果应含目标标签: %s", result)
+	}
+	if f.dispatchRef != "3" || f.dispatchTaskText != "修复登录" {
+		t.Fatalf("实参未透传: ref=%q task=%q", f.dispatchRef, f.dispatchTaskText)
+	}
+
+	// ref 无法解析：错误透传给模型
+	f.dispatchErr = errors.New("未知的会话编号: 9")
+	if _, _, err := s.Execute(context.Background(), "dispatch_task", `{"ref":"9","task":"x"}`); err == nil {
+		t.Fatal("Bridge 错误应透传")
+	}
 }
 
 // TestMutatingFlag 通过注册表元数据断言三个写工具的 Mutating 标记。
