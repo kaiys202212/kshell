@@ -272,10 +272,16 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	var replies []hub.Reply
 	merged := false
 	trimmed := strings.TrimSpace(text)
+	// 引用归因只对可转发文字生效：命令（#l 等）与纯数字（编号/菜单）保持
+	// 原语义，引用前缀不劫持它们（2026-10-20 设计决策）。
+	quotedChatID := ""
+	if m.Ref != nil && isForwardableText(text) {
+		quotedChatID = b.resolveQuote(m.Ref)
+	}
 	// 可转发文字（非命令/纯数字）且队列非空：合并投递。
 	if isForwardableText(text) && b.QueuedFiles() > 0 {
 		text = b.queuedPrefix() + text
-		replies = b.console.Handle(text)
+		replies = b.dispatchConsole(text, quotedChatID)
 		if len(replies) == 0 {
 			// 合并成功转发（agent 稍后回复）：清队列，附件信息已在投递文本里，
 			// 不再单独发附件回执；微信侧补既有 sent_ack。
@@ -285,7 +291,7 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 		}
 		// 转发失败（无会话/发送错误等有回复场景）：队列保留，回执照发。
 	} else if trimmed != "" {
-		replies = b.console.Handle(text)
+		replies = b.dispatchConsole(text, quotedChatID)
 		if len(replies) == 0 {
 			// 命令层无回复 = 文本已成功转发给当前会话（agent 稍后回复）。
 			// 微信侧补一条已接收确认，与桌面端 AgentHub 的 ack 卡片同一文案语义
@@ -311,6 +317,18 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	}
 	// 回复已发出，取消输入状态。
 	_ = b.client.SendTyping(context.Background(), m.FromUserID, m.ContextToken, 2)
+}
+
+// dispatchConsole 把可转发文本交给命令层：quotedChatID 非空时先走引用
+// 路由（切换到被引用会话再投递）；定位失败（handled=false）回落普通
+// Handle（发当前会话），与无引用消息同语义。
+func (b *Bridge) dispatchConsole(text, quotedChatID string) []hub.Reply {
+	if quotedChatID != "" {
+		if handled, replies := b.console.HandleQuoted(quotedChatID, text); handled {
+			return replies
+		}
+	}
+	return b.console.Handle(text)
 }
 
 // deliveredAck 是「文本已成功转发给当前会话」的微信侧回执，与桌面端

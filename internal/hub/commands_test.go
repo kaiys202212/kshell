@@ -148,9 +148,9 @@ func TestHandleQuoted(t *testing.T) {
 	t.Run("命中切换并投递", func(t *testing.T) {
 		ex := &fakeExecutor{listSessions: sessions, hasCurrent: true, currentSession: SessionRef{ChatID: "other"}}
 		c := NewConsole(ex)
-		replies := c.HandleQuoted("c1", "继续修这个 bug")
-		if len(replies) != 0 {
-			t.Fatalf("成功投递应静默, 实际 %v", replies)
+		handled, replies := c.HandleQuoted("c1", "继续修这个 bug")
+		if !handled || len(replies) != 0 {
+			t.Fatalf("handled = %v, replies = %v, 期望 true + 静默", handled, replies)
 		}
 		if len(ex.switchCalls) != 1 || ex.switchCalls[0] != "c1" {
 			t.Errorf("应先 SwitchTo(c1): %v", ex.switchCalls)
@@ -160,11 +160,12 @@ func TestHandleQuoted(t *testing.T) {
 		}
 	})
 
-	t.Run("chatID 未命中返回 nil", func(t *testing.T) {
+	t.Run("chatID 未命中 handled=false", func(t *testing.T) {
 		ex := &fakeExecutor{listSessions: sessions}
 		c := NewConsole(ex)
-		if replies := c.HandleQuoted("nope", "文本"); replies != nil {
-			t.Errorf("未命中应返回 nil 走普通路径, 实际 %v", replies)
+		handled, replies := c.HandleQuoted("nope", "文本")
+		if handled || replies != nil {
+			t.Errorf("未命中应 (false, nil) 走普通路径, 实际 (%v, %v)", handled, replies)
 		}
 		if len(ex.sendCalls) != 0 || len(ex.switchCalls) != 0 {
 			t.Errorf("未命中不应投递/切换: send=%v switch=%v", ex.sendCalls, ex.switchCalls)
@@ -174,17 +175,17 @@ func TestHandleQuoted(t *testing.T) {
 	t.Run("未激活会话不命中", func(t *testing.T) {
 		ex := &fakeExecutor{listSessions: sessions}
 		c := NewConsole(ex)
-		if replies := c.HandleQuoted("s2", "文本"); replies != nil {
-			t.Errorf("SessionID 不应被 chatID 命中, 实际 %v", replies)
+		if handled, _ := c.HandleQuoted("s2", "文本"); handled {
+			t.Error("SessionID 不应被 chatID 命中")
 		}
 	})
 
 	t.Run("切换失败报错不投递", func(t *testing.T) {
 		ex := &fakeExecutor{listSessions: sessions, switchErr: errors.New("激活失败")}
 		c := NewConsole(ex)
-		replies := c.HandleQuoted("c1", "文本")
-		if len(replies) != 1 || !strings.Contains(replies[0].Text, "激活失败") {
-			t.Fatalf("切换失败应回执错误, 实际 %v", replies)
+		handled, replies := c.HandleQuoted("c1", "文本")
+		if !handled || len(replies) != 1 || !strings.Contains(replies[0].Text, "激活失败") {
+			t.Fatalf("切换失败应 (true, 错误回执), 实际 (%v, %v)", handled, replies)
 		}
 		if len(ex.sendCalls) != 0 {
 			t.Errorf("切换失败不应投递: %v", ex.sendCalls)
@@ -194,9 +195,9 @@ func TestHandleQuoted(t *testing.T) {
 	t.Run("发送失败报错", func(t *testing.T) {
 		ex := &fakeExecutor{listSessions: sessions, hasCurrent: true, currentSession: SessionRef{ChatID: "other"}, sendErr: errors.New("发送失败")}
 		c := NewConsole(ex)
-		replies := c.HandleQuoted("c1", "文本")
-		if len(replies) != 1 || !strings.Contains(replies[0].Text, "发送失败") {
-			t.Fatalf("发送失败应回执, 实际 %v", replies)
+		handled, replies := c.HandleQuoted("c1", "文本")
+		if !handled || len(replies) != 1 || !strings.Contains(replies[0].Text, "发送失败") {
+			t.Fatalf("发送失败应 (true, 错误回执), 实际 (%v, %v)", handled, replies)
 		}
 	})
 }
