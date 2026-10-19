@@ -324,6 +324,15 @@ export interface ChatAttachmentMeta {
   MimeType?: string;
 }
 
+// chat.QueueItem 的 JSON 形态（internal/chat/types.go）：忙时排队待投递的一条
+// 用户消息。ID 是会话内稳定标识（Hub 来源复用消息 ID，本地入队为 qN）。
+export interface ChatQueueItem {
+  ID: string;
+  HubMsgID?: string;
+  Text: string;
+  Attachments?: ChatAttachmentMeta[];
+}
+
 // chat.Update 的 JSON 形态
 export interface ChatUpdate {
   Seq: number;
@@ -663,6 +672,8 @@ interface AppBindings {
   ListChatModels(id: string): Promise<ChatModelsView>;
   SetChatModel(id: string, modelID: string): Promise<void>;
   ListChatCommands(id: string): Promise<ChatCommand[]>;
+  ListChatQueue(id: string): Promise<ChatQueueItem[]>;
+  RemoveChatQueued(id: string, itemID: string): Promise<void>;
   CancelChat(id: string): Promise<void>;
   RespondChatPermission(id: string, requestID: string, optionID: string): Promise<void>;
   CancelChatPermission(id: string, requestID: string): Promise<void>;
@@ -2035,6 +2046,20 @@ export async function chatHistory(id: string): Promise<ChatUpdate[]> {
   return a.ChatHistory(id);
 }
 
+// listChatQueue 拉取后端待发送队列快照（ChatView 挂载/会话切换时回填）。
+export async function listChatQueue(id: string): Promise<ChatQueueItem[]> {
+  const a = app();
+  if (!a) return [];
+  return (await a.ListChatQueue(id)) ?? [];
+}
+
+// removeChatQueued 撤销一条后端排队消息（Hub 来源会同步标 recalled）。
+export async function removeChatQueued(id: string, itemID: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.RemoveChatQueued(id, itemID);
+}
+
 export function onTerminalMeta(cb: (info: TerminalInfo) => void): () => void {
   return EventsOn('terminal:meta', (p: TerminalInfo) => {
     if (p?.ID) cb(p);
@@ -2115,6 +2140,13 @@ export function onChatExit(cb: (p: { id: string; exitCode: number; error: string
 export function onChatCommands(cb: (p: { id: string; commands: ChatCommand[] }) => void): () => void {
   return EventsOn('chat:commands', (p: { id?: string; commands?: ChatCommand[] }) =>
     cb({ id: p?.id ?? '', commands: p?.commands ?? [] }),
+  );
+}
+
+// onChatQueue 订阅后端待发送队列全量快照（入队/出队/撤销/清空时推送）。
+export function onChatQueue(cb: (p: { id: string; items: ChatQueueItem[] }) => void): () => void {
+  return EventsOn('chat:queue', (p: { id?: string; items?: ChatQueueItem[] }) =>
+    cb({ id: p?.id ?? '', items: p?.items ?? [] }),
   );
 }
 

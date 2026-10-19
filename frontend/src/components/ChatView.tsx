@@ -4,14 +4,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { ChatAttachmentMeta, ChatBlock, ChatInfo, ChatToolCall } from '../lib/api';
+import type { ChatAttachmentMeta, ChatBlock, ChatInfo, ChatQueueItem, ChatToolCall } from '../lib/api';
 import {
   cancelChat,
   cancelChatPermission,
   listChatCommands,
   listChatModels,
+  listChatQueue,
   listChats,
   pickFile,
+  removeChatQueued,
   respondChatPermission,
   sendChatPrompt,
   sendChatPromptBlocks,
@@ -40,6 +42,8 @@ const EMPTY_ITEMS: TimelineItem[] = [];
 const EMPTY_COMMANDS: { Name: string; Description?: string; InputHint?: string }[] = [];
 // 队列空时的稳定引用（同上，避免 store 订阅在空态反复触发重渲染）
 const EMPTY_QUEUE: ChatQueuedMessage[] = [];
+// 后端队列空时的稳定引用（同上）
+const EMPTY_BACKEND_QUEUE: ChatQueueItem[] = [];
 
 // fileUriFromPath 把本机绝对路径转 file URI（Windows 反斜杠归一 + 空格等编码），
 // 供 resource_link 块引用；agent 与 kshell 同机，可直接按路径读取。
@@ -131,6 +135,8 @@ export default function ChatView({ chat, active }: Props) {
   const atBottom = useRef(true);
   const running = chat.Status === 'running';
   const queued = useAppStore((s) => s.chatQueues[id]) ?? EMPTY_QUEUE;
+  // 后端待发送队列（任何来源入队：AgentHub / 其他 ACP 客户端）；展示在后端在前
+  const backendQueued = useAppStore((s) => s.chatBackendQueues[id]) ?? EMPTY_BACKEND_QUEUE;
 
   // 拖入文件落点经注册表转为附件 chip：外部（文件树/全局拖放）与页签内 drop 共用此入口。
   // 注册表约定传引号包裹的路径文本，这里剥引号后建 resource_link 块。
@@ -159,6 +165,12 @@ export default function ChatView({ chat, active }: Props) {
     void listChatCommands(id)
       .then((cmds) => {
         if (!cancelled) useAppStore.getState().setChatCommands(id, cmds);
+      })
+      .catch(() => {});
+    // 后端待发送队列回填：事件订阅在 App 层，挂载瞬间可能已错过入队推送
+    void listChatQueue(id)
+      .then((list) => {
+        if (!cancelled) useAppStore.getState().setChatBackendQueue(id, list);
       })
       .catch(() => {});
     return () => {
@@ -347,6 +359,24 @@ export default function ChatView({ chat, active }: Props) {
     sendChatPrompt(id, t('ui.chat.resume_turn')).catch(fail);
   };
 
+  // 撤销后端排队条目：先乐观移除，失败提示并按后端真实快照重拉对齐
+  // （失败多为竞态：条目刚被投递/已在别处撤回）。
+  const removeBackendQueued = async (item: ChatQueueItem) => {
+    const store = useAppStore.getState();
+    store.removeChatBackendQueueItem(id, item.ID);
+    try {
+      await removeChatQueued(id, item.ID);
+    } catch (e) {
+      store.notify(t('ui.chat.queue_remove_failed', { err: backendError(e) }), 'error');
+      try {
+        const list = await listChatQueue(id);
+        useAppStore.getState().setChatBackendQueue(id, list);
+      } catch {
+        // 重拉也失败：保留乐观结果，下一次 chat:queue 事件或重新挂载会纠正
+      }
+    }
+  };
+
   const switchModel = async (modelID: string) => {
     try {
       await setChatModel(id, modelID);
@@ -514,8 +544,23 @@ export default function ChatView({ chat, active }: Props) {
       </div>
 
       <div className="shrink-0 border-t border-border p-2">
-        {queued.length > 0 && (
+        {backendQueued.length + queued.length > 0 && (
           <div data-testid="chat-queue" className="mb-1 flex flex-col gap-0.5">
+            {/* 后端队列在前：这些消息已交给 agent 排队，撤销走真移除 */}
+            {backendQueued.map((item) => (
+              <span key={`backend-${item.ID}`} className="flex items-center gap-1 rounded border border-border bg-card px-1.5 py-0.5 text-xs">
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">{item.Text || t('ui.chat.queue_attachment')}</span>
+                <button
+                  aria-label={t('ui.chat.queue_remove')}
+                  data-testid={`chat-queue-remove-backend-${item.ID}`}
+                  className="text-muted-foreground hover:text-destructive"
+                  onClick={() => void removeBackendQueued(item)}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            {/* 本地队列在后：尚未交给后端，撤回只出前端队列 */}
             {queued.map((m) => (
               <span key={m.id} className="flex items-center gap-1 rounded border border-border bg-card px-1.5 py-0.5 text-xs">
                 <span className="min-w-0 flex-1 truncate text-muted-foreground">{m.text || t('ui.chat.queue_attachment')}</span>

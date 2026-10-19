@@ -673,3 +673,55 @@ describe('chatQueues（ChatView 本地消息队列）', () => {
     expect(useAppStore.getState().toasts.some((t) => t.tone === 'error')).toBe(true);
   });
 });
+
+describe('chatBackendQueues（后端待发送队列镜像）', () => {
+  beforeEach(() => {
+    useAppStore.setState({ chatBackendQueues: {}, chatQueues: {}, toasts: [] });
+  });
+
+  it('setChatBackendQueue 用快照整体替换（含清空）', () => {
+    useAppStore.getState().setChatBackendQueue('c1', [
+      { ID: '1', HubMsgID: '1', Text: 'A' },
+      { ID: 'q1', Text: 'B' },
+    ]);
+    expect(useAppStore.getState().chatBackendQueues.c1).toHaveLength(2);
+
+    useAppStore.getState().setChatBackendQueue('c1', [{ ID: 'q2', Text: 'C' }]);
+    const q = useAppStore.getState().chatBackendQueues.c1;
+    expect(q).toHaveLength(1);
+    expect(q![0]!.Text).toBe('C');
+
+    // 空快照删除键（组件拿 undefined 时用空数组兜底）
+    useAppStore.getState().setChatBackendQueue('c1', []);
+    expect(useAppStore.getState().chatBackendQueues.c1).toBeUndefined();
+  });
+
+  it('removeChatBackendQueueItem 只删指定条目，其余保留', () => {
+    useAppStore.getState().setChatBackendQueue('c1', [
+      { ID: '1', HubMsgID: '1', Text: 'A' },
+      { ID: 'q1', Text: 'B' },
+    ]);
+    useAppStore.getState().removeChatBackendQueueItem('c1', '1');
+    const q = useAppStore.getState().chatBackendQueues.c1;
+    expect(q).toHaveLength(1);
+    expect(q![0]!.ID).toBe('q1');
+
+    // 删到空时键消失；未知 chat/条目是 no-op
+    useAppStore.getState().removeChatBackendQueueItem('c1', 'q1');
+    expect(useAppStore.getState().chatBackendQueues.c1).toBeUndefined();
+    useAppStore.getState().removeChatBackendQueueItem('nope', 'x');
+  });
+
+  it('removeChat / removeChatState 联动清理镜像', () => {
+    useAppStore.getState().setChatBackendQueue('c1', [{ ID: '1', Text: 'A' }]);
+    useAppStore.getState().removeChatState('c1');
+    expect(useAppStore.getState().chatBackendQueues.c1).toBeUndefined();
+
+    useAppStore.getState().setChatBackendQueue('c1', [{ ID: '1', Text: 'A' }]);
+    useAppStore.setState({
+      chats: [{ ID: 'c1', Kind: 'new', SessionID: 's', Workspace: 'D:/p', Title: 't', ToolID: 'claude', Status: 'ready', ExitCode: 0, Error: '' }],
+    });
+    useAppStore.getState().removeChat('c1');
+    expect(useAppStore.getState().chatBackendQueues.c1).toBeUndefined();
+  });
+});

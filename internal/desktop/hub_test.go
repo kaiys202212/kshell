@@ -337,6 +337,149 @@ func TestSendChatPromptQueuedAndRecall(t *testing.T) {
 	t.Fatal("撤回后状态未更新")
 }
 
+// chat:queue 快照事件：忙时入队的消息经 newChatManagerWith 装配后自动推送，
+// payload 携带会话 ID 与队列条目（前端据此镜像后端队列）。
+func TestChatManagerEmitsQueueSnapshot(t *testing.T) {
+	a, _, rec := newHubTestApp(t)
+	conn := &fakeChatConn{waitCh: make(chan struct{})}
+	conn.promptGate = make(chan struct{})
+	m := newChatManagerWith(rec.emit, &queueGateBackend{conn: conn}, nil, nil, a.recordHubAgentMessage, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := m.Prompt(info.ID, "first"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatusDesktop(t, m, info.ID)
+	if err := a.SendChatPrompt(info.ID, "second"); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, ok := rec.lastRaw("chat:queue").(map[string]any)
+	if !ok {
+		t.Fatalf("未收到 chat:queue 快照，事件=%v", rec.names)
+	}
+	if raw["id"] != info.ID {
+		t.Fatalf("快照会话 ID 不符: %v", raw["id"])
+	}
+	items, ok := raw["items"].([]chat.QueueItem)
+	if !ok || len(items) != 1 {
+		t.Fatalf("快照条目不符: %#v", raw["items"])
+	}
+	if items[0].Text != "second" || items[0].HubMsgID == "" {
+		t.Fatalf("条目字段不符: %+v", items[0])
+	}
+	close(conn.promptGate)
+}
+
+// ListChatQueue 列出 Hub 来源条目；RemoveChatQueued 撤销后队列清空、Hub 状态
+// 标 recalled，并保证释放忙轮次后该条不会投递。
+func TestListChatQueueAndRemoveChatQueued(t *testing.T) {
+	a, store, rec := newHubTestApp(t)
+	conn := &fakeChatConn{waitCh: make(chan struct{})}
+	conn.promptGate = make(chan struct{})
+	m := newChatManagerWith(rec.emit, &queueGateBackend{conn: conn}, nil, nil, a.recordHubAgentMessage, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := m.Prompt(info.ID, "first"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatusDesktop(t, m, info.ID)
+	if err := a.SendChatPrompt(info.ID, "second"); err != nil {
+		t.Fatal(err)
+	}
+	u := waitHubText(t, store, "second")
+
+	items := a.ListChatQueue(info.ID)
+	if len(items) != 1 {
+		t.Fatalf("应列出 1 条待发送，得到 %+v", items)
+	}
+	if want := strconv.FormatInt(u.ID, 10); items[0].HubMsgID != want || items[0].ID != want {
+		t.Fatalf("Hub 条目 ID 不符: %+v, want %s", items[0], want)
+	}
+	if err := a.RemoveChatQueued(info.ID, items[0].ID); err != nil {
+		t.Fatalf("撤销: %v", err)
+	}
+	if got := a.ListChatQueue(info.ID); len(got) != 0 {
+		t.Fatalf("撤销后队列应为空: %+v", got)
+	}
+	for _, mm := range store.List() {
+		if mm.ID == u.ID && mm.Status != hub.StatusRecalled {
+			t.Fatalf("撤销后 Hub 状态应为 recalled: %+v", mm)
+		}
+	}
+	if rec.count("hub:changed") == 0 {
+		t.Fatalf("撤销 Hub 条目应 emit hub:changed，事件=%v", rec.names)
+	}
+
+	close(conn.promptGate) // 释放忙轮次：被撤销条目不得投递
+	time.Sleep(50 * time.Millisecond)
+	for _, mm := range store.List() {
+		if mm.Event == "ui.hub.ack_delivered" && mm.ChatID == info.ID {
+			t.Fatalf("已撤销消息不得补 ack_delivered")
+		}
+		if mm.ID == u.ID && mm.Status != hub.StatusRecalled {
+			t.Fatalf("投递后 Hub 状态被改写: %+v", mm)
+		}
+	}
+}
+
+// 非 Hub 来源（ChatView 本地入队）条目可独立撤销，不改动 Hub 状态。
+func TestRemoveChatQueuedLocalItem(t *testing.T) {
+	a, store, rec := newHubTestApp(t)
+	conn := &fakeChatConn{waitCh: make(chan struct{})}
+	conn.promptGate = make(chan struct{})
+	m := newChatManagerWith(rec.emit, &queueGateBackend{conn: conn}, nil, nil, a.recordHubAgentMessage, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := m.Prompt(info.ID, "first"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatusDesktop(t, m, info.ID)
+	if err := m.Prompt(info.ID, "local"); err != nil {
+		t.Fatal(err)
+	}
+
+	items := a.ListChatQueue(info.ID)
+	if len(items) != 1 || items[0].HubMsgID != "" || items[0].Text != "local" {
+		t.Fatalf("本地条目不符: %+v", items)
+	}
+	if err := a.RemoveChatQueued(info.ID, items[0].ID); err != nil {
+		t.Fatalf("撤销本地条目: %v", err)
+	}
+	if got := a.ListChatQueue(info.ID); len(got) != 0 {
+		t.Fatalf("撤销后队列应为空: %+v", got)
+	}
+	if len(store.List()) != 0 {
+		t.Fatalf("本地条目撤销不得落 Hub 消息: %+v", store.List())
+	}
+	if rec.count("hub:changed") != 0 {
+		t.Fatalf("本地条目撤销不得 emit hub:changed，事件=%v", rec.names)
+	}
+	close(conn.promptGate)
+}
+
 // 空正文 agent 消息回退事件语义 wire key（hook 通道 Stop 载荷没有 message 字段）。
 // hub 气泡用 ui.hub.event_* 第一人称 key；语义映射必须与
 // frontend/src/lib/agentNotify.ts 的 eventLabel 保持一致。

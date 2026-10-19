@@ -1417,6 +1417,135 @@ func TestManagerReopenInheritsSeqWatermark(t *testing.T) {
 	}
 }
 
+// queueEvents 收集队列快照回调（并发安全）。
+type queueEvents struct {
+	mu     sync.Mutex
+	events [][]QueueItem
+}
+
+func (q *queueEvents) on(id string, items []QueueItem) {
+	q.mu.Lock()
+	q.events = append(q.events, append([]QueueItem(nil), items...))
+	q.mu.Unlock()
+}
+
+func (q *queueEvents) last() []QueueItem {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.events) == 0 {
+		return nil
+	}
+	return q.events[len(q.events)-1]
+}
+
+// Queue 返回 FIFO 快照：Hub 条目复用 hubMsgID 作条目标识，普通 Prompt 分配 qN。
+func TestManagerQueueSnapshot(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	b.conn.promptGate = make(chan struct{})
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "first"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, info.ID, StatusRunning)
+	if _, err := m.PromptHub(info.ID, "second", "h1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "third"); err != nil {
+		t.Fatal(err)
+	}
+
+	items := m.Queue(info.ID)
+	if len(items) != 2 {
+		t.Fatalf("queue len = %d: %+v", len(items), items)
+	}
+	if items[0].ID != "h1" || items[0].HubMsgID != "h1" || items[0].Text != "second" {
+		t.Fatalf("Hub 条目快照不符: %+v", items[0])
+	}
+	if items[1].ID == "" || items[1].ID == "h1" || items[1].HubMsgID != "" || items[1].Text != "third" {
+		t.Fatalf("普通条目应分配独立 ID: %+v", items[1])
+	}
+	if got := m.Queue("nope"); len(got) != 0 {
+		t.Fatalf("未知会话应返回空快照: %+v", got)
+	}
+}
+
+// RemoveQueued 按 ID 原子移除：返回关联 Hub ID，移除的条目不再投递。
+func TestManagerRemoveQueuedPreventsDelivery(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	b.conn.promptGate = make(chan struct{})
+	info, _ := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	_ = m.Prompt(info.ID, "first")
+	waitStatus(t, m, info.ID, StatusRunning)
+	if _, err := m.PromptHub(info.ID, "second", "h1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "third"); err != nil {
+		t.Fatal(err)
+	}
+	items := m.Queue(info.ID)
+	if len(items) != 2 {
+		t.Fatalf("queue len = %d", len(items))
+	}
+
+	hubID, err := m.RemoveQueued(info.ID, "h1")
+	if err != nil || hubID != "h1" {
+		t.Fatalf("remove hub item: hubID=%q err=%v", hubID, err)
+	}
+	if _, err := m.RemoveQueued(info.ID, items[1].ID); err != nil {
+		t.Fatalf("remove local item: %v", err)
+	}
+	if _, err := m.RemoveQueued(info.ID, "missing"); !errors.Is(err, errQueueGone) {
+		t.Fatalf("missing item err = %v, want err.chat.queue_gone", err)
+	}
+
+	b.conn.mu.Lock()
+	gate := b.conn.promptGate
+	b.conn.mu.Unlock()
+	close(gate)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if b.conn.promptCount() >= 1 {
+			time.Sleep(100 * time.Millisecond) // 给潜在误投递留窗口
+			b.conn.mu.Lock()
+			got := append([]string(nil), b.conn.prompts...)
+			b.conn.mu.Unlock()
+			if len(got) != 1 || got[0] != "first" {
+				t.Fatalf("移除后不应再投递: %v", got)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("first prompt 未完成")
+}
+
+// Close 清空队列时必须推送空快照，前端才能撤掉残留的队列条目。
+func TestManagerQueueClearedOnCloseEmitsEmpty(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	b.conn.promptGate = make(chan struct{})
+	info, _ := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	_ = m.Prompt(info.ID, "first")
+	waitStatus(t, m, info.ID, StatusRunning)
+	_ = m.Prompt(info.ID, "second")
+
+	ev := &queueEvents{}
+	m.SetOnQueue(ev.on)
+	if err := m.Close(info.ID); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := ev.last(); len(got) == 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("Close 未推送空队列快照: %+v", ev.last())
+}
+
 // waitForUpdates 等到 collector 收满 n 条更新（超时失败）。
 func waitForUpdates(t *testing.T, c *collector, n int) {
 	t.Helper()
