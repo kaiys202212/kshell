@@ -586,8 +586,47 @@ describe('AgentHubPanel', () => {
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-9'));
-    await waitFor(() => expect(useAppStore.getState().toasts.length).toBeGreaterThan(0));
+    // err.chat.gone 是注册过的 wire key，backendError 会翻译成 en 文案
+    await waitFor(() =>
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((x) => x.title === tt('ui.hub.find_activate_failed').replace('{{err}}', tt('err.chat.gone'))),
+      ).toBe(true),
+    );
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
+  it('待激活会话激活成功但发送失败时，报 send_failed 而非激活失败', async () => {
+    // 评审 M2：激活与发送分段 catch，避免投递失败被误报成「激活会话失败」
+    api.openSessionACP.mockResolvedValue({ Kind: 'chat', Chat: chat({ ID: 'c-new', SessionID: 'sess-9' }) });
+    api.sendChatPrompt.mockRejectedValue(new Error('boom'));
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
+      hubMessages: [
+        {
+          id: 1,
+          kind: 'agent',
+          tool: 'claude',
+          event: 'Stop',
+          workspace: 'D:\\ws\\a',
+          sessionId: 'sess-9',
+          text: '回复',
+          ts: 1,
+        },
+      ],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '继续' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() =>
+      expect(
+        useAppStore.getState().toasts.some((x) => x.title === tt('ui.chat.send_failed').replace('{{err}}', 'boom')),
+      ).toBe(true),
+    );
+    expect(useAppStore.getState().toasts.every((x) => !x.title.startsWith(tt('ui.hub.find_activate_failed').replace('{{err}}', '')))).toBe(true);
   });
 
   it('渲染持久历史中的用户消息与 agent 回复', async () => {

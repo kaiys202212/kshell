@@ -804,14 +804,21 @@ export default function AgentHubPanel() {
     // 上下文丢失必须可见，绝不落 workspace 模糊匹配误投同项目会话。
     if (targetId.startsWith(PENDING_PREFIX)) {
       const sessionID = targetId.slice(PENDING_PREFIX.length);
+      // 激活与发送分开 catch：失败阶段不同，文案不同（激活失败 vs 发送失败），
+      // 混在一个 catch 里会把投递失败误报成「激活会话失败」误导排查。
       void openSessionACP(sessionID)
         .then(async (res) => {
           if (!res.Chat) return;
           const chat = res.Chat;
           useAppStore.getState().upsertChat(chat);
           useAppStore.getState().setLastAgentId(chat.ID);
-          await sendChatPrompt(chat.ID, text);
-          useAppStore.getState().setLastAgentId(chat.ID);
+          await sendChatPrompt(chat.ID, text)
+            .then(() => {
+              useAppStore.getState().setLastAgentId(chat.ID);
+            })
+            .catch((e: unknown) => {
+              useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
+            });
         })
         .catch((e: unknown) => {
           useAppStore.getState().notify(t('ui.hub.find_activate_failed', { err: backendError(e) }), 'error');
