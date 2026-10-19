@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildMentionOptions, resolveMentionTarget, type MentionAgent } from './agentMentions';
+import { buildMentionOptions, displayMentionTitles, resolveMentionTarget, type MentionAgent } from './agentMentions';
 
 const agents: MentionAgent[] = [
   { id: 'c1', toolId: 'claude', title: '重构认证', workspace: 'D:\\ws\\a' },
@@ -30,6 +30,31 @@ describe('buildMentionOptions', () => {
     expect(noWs[0].detail).toBe('只有标题');
     const neither = buildMentionOptions([{ id: 'c8', toolId: 'codex', title: '', workspace: '' }]);
     expect(neither[0].detail).toBeUndefined();
+  });
+});
+
+describe('displayMentionTitles', () => {
+  it('把 @提及#会话ID 展示为 #会话标题', () => {
+    expect(displayMentionTitles('@Claude Code#c1 帮我看下', agents)).toBe('@Claude Code#重构认证 帮我看下');
+  });
+
+  it('多处提及与多次出现都替换；未知 id 保留原文', () => {
+    const text = '@Cursor#c3 看 A\n@Cursor#c3 看 B @Claude Code#c999 未知';
+    expect(displayMentionTitles(text, agents)).toBe('@Cursor#调样式 看 A\n@Cursor#调样式 看 B @Claude Code#c999 未知');
+  });
+
+  it('标题为空的会话保留原文', () => {
+    const noTitle: MentionAgent[] = [{ id: 'c1', toolId: 'claude', title: '', workspace: '' }];
+    expect(displayMentionTitles('@Claude Code#c1 hi', noTitle)).toBe('@Claude Code#c1 hi');
+  });
+
+  it('id 前缀重叠时长标签优先，不被短 id 截断误替换', () => {
+    const overlap: MentionAgent[] = [
+      { id: 'c1x', toolId: 'claude', title: '长会话', workspace: '' },
+      { id: 'c1', toolId: 'claude', title: '短会话', workspace: '' },
+    ];
+    expect(displayMentionTitles('@Claude Code#c1x hi', overlap)).toBe('@Claude Code#长会话 hi');
+    expect(displayMentionTitles('@Claude Code#c1 hi', overlap)).toBe('@Claude Code#短会话 hi');
   });
 });
 

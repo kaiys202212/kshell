@@ -33,6 +33,24 @@ export function buildMentionOptions(agents: MentionAgent[]): MentionOption[] {
   });
 }
 
+// displayMentionTitles 把文本里的 @提及#会话ID 替换为 @提及#会话标题，仅供
+// 展示层渲染（落盘原文不动，路由解析仍用 ID）：裸 ID 事后无从分辨发给谁，
+// 标题才可读。标题为空的会话保留原文；与 resolveMentionTarget 同用「长标签
+// 优先」策略，防 id 前缀重叠时短 id 截断误替换。
+export function displayMentionTitles(text: string, agents: MentionAgent[]): string {
+  const sorted = [...agents]
+    .filter((a) => a.title)
+    .sort((a, b) => b.id.length - a.id.length);
+  let out = text;
+  for (const a of sorted) {
+    out = out.replaceAll(
+      `@${toolDisplayName(a.toolId)}#${a.id}`,
+      `@${toolDisplayName(a.toolId)}#${a.title}`,
+    );
+  }
+  return out;
+}
+
 // resolveMentionTarget 解析投递目标：
 // - 输入里有命中补全项的 @ 时，取最后一个命中项（v1 简化：不做多目标广播）；
 // - 无 @ 时回落到 lastAgentId；
