@@ -258,6 +258,8 @@ func finalizeACP(l providers.Launch, p providers.Provider, tool discovery.Tool, 
 	if tool.ID == "cursor" {
 		// 官方 acp 子命令不接受外部模型名（`--model <自定义名>` 进程即退出
 		// "Cannot use this model"）；cursor 的模型切换走会话内 session/set_model。
+		// 旧适配器回退路径同样不注入：cursor-acp 0.1.0 本就不透传 --model
+		//（"not wired in v1"），注入与不注入无行为差别，统一跳过防误配。
 		mo = ModelOptions{}
 	}
 	out := finalize(l, p, mo, po)
@@ -371,10 +373,10 @@ func acpLaunch(tool discovery.Tool, dir string) (providers.Launch, error) {
 
 // cursorRootShimFn 兜底解析 cursor-agent 入口：discovery 在更新器清空
 // versions\<ver>\node.exe 的窗口里会给出 BinPath=""（Broken 形态），但根目录
-// shim（cursor-agent.cmd / agent.cmd）通常仍在。依次探测 PATH 与 Windows
-// 官方安装根，命中返回 shim/二进制路径。测试可替换。
+// shim（cursor-agent.cmd / agent.cmd）通常仍在。PATH 只探测 cursor-agent 名
+//（"agent" 太宽泛，仅限官方安装根内匹配），再扫 Windows 官方安装根。测试可替换。
 var cursorRootShimFn = func() (string, bool) {
-	for _, name := range []string{"cursor-agent", "cursor-agent.exe", "agent"} {
+	for _, name := range []string{"cursor-agent", "cursor-agent.exe"} {
 		if p, err := exec.LookPath(name); err == nil && p != "" {
 			return p, true
 		}
