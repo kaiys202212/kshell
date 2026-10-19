@@ -132,6 +132,8 @@ type Config struct {
 	AgentSetupDismissed bool `yaml:"agent_setup_dismissed"`
 	// ProjectSetupDismissed 为 true 后不再自动弹出首次项目选择弹窗。
 	ProjectSetupDismissed bool `yaml:"project_setup_dismissed"`
+	// LastSeenVersion 记录用户已确认过的最新版本号（升级后弹升级日志的去重依据）。
+	LastSeenVersion string `yaml:"lastseenversion"`
 	// Weixin 是微信桥（iLink）的持久化配置。
 	Weixin WeixinConfig `yaml:"weixin"`
 	// AgentHub 是 AgentHub 的跨端持久化配置（默认工具/模型）。
@@ -284,6 +286,8 @@ func (c Config) normalized() Config {
 	default:
 		c.PermissionMode = d.PermissionMode
 	}
+	// 已读版本号：仅去首尾空白，其余原样保留。
+	c.LastSeenVersion = strings.TrimSpace(c.LastSeenVersion)
 	// AgentHub 路由模式：空值或非法值一律回落 auto。
 	c.AgentHub.RouteMode = strings.TrimSpace(c.AgentHub.RouteMode)
 	switch c.AgentHub.RouteMode {
