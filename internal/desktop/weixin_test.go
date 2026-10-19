@@ -1,6 +1,9 @@
 package desktop
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +13,7 @@ import (
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/hub"
+	"github.com/yangk/kshell/internal/hubtools"
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/weixin"
 )
@@ -185,5 +189,49 @@ func TestWeixinStartWeixinAssembly(t *testing.T) {
 	st2 := app2.WeixinStatus()
 	if st2.Bound || st2.Running || st2.Binding != "idle" {
 		t.Fatalf("空配置 Status = %+v", st2)
+	}
+}
+
+// weixinTranscriber 映射：hubtools「模型不支持音频」哨兵应映射为
+// weixin.ErrVoiceUnsupported（%w 包裹保留原 key 供日志归因），其余错误原样透传。
+func TestWeixinTranscriberMapsAudioUnsupported(t *testing.T) {
+	app := wxStatusApp(t)
+	orig := app.snapshot().Config.Model
+	app.mu.Lock()
+	app.opts.Config.Model.Platforms = []config.ModelPlatform{{
+		ID: "p1", Name: "p", OpenAIBaseURL: "http://unused", APIKey: "k", Models: []string{"m1"},
+	}}
+	app.opts.Config.Model.DefaultPlatform = "p1"
+	app.mu.Unlock()
+	defer func() {
+		app.mu.Lock()
+		app.opts.Config.Model = orig
+		app.mu.Unlock()
+	}()
+
+	tr := app.weixinTranscriber()
+	if tr == nil {
+		t.Fatal("weixinTranscriber 应非 nil")
+	}
+
+	// 平台配置了专用 ASR 模型：转写路径由 hubtools 决定，这里不真正发请求，
+	// 只验证映射逻辑 —— 用无网络 BaseURL 会以连接错误失败，属普通错误透传。
+	_, err := tr(context.Background(), []byte("x"))
+	if err != nil && errors.Is(err, weixin.ErrVoiceUnsupported) {
+		t.Fatalf("连接错误不应被判为不支持音频: %v", err)
+	}
+
+	// 哨兵映射：直接构造 hubtools 哨兵经映射函数（与闭包内同款逻辑）。
+	wrapped := fmt.Errorf("%w: 状态码 400", hubtools.ErrChatAudioUnsupported)
+	mapped := mapVoiceErr(wrapped)
+	if !errors.Is(mapped, weixin.ErrVoiceUnsupported) {
+		t.Fatalf("hubtools 哨兵应映射为 weixin.ErrVoiceUnsupported: %v", mapped)
+	}
+	if !errors.Is(mapped, hubtools.ErrChatAudioUnsupported) {
+		t.Fatalf("映射应保留原哨兵链供日志: %v", mapped)
+	}
+	other := context.DeadlineExceeded
+	if mapVoiceErr(other) != other {
+		t.Fatalf("普通错误应原样透传: %v", mapVoiceErr(other))
 	}
 }

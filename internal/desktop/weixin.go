@@ -2,6 +2,8 @@ package desktop
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/yangk/kshell/internal/config"
@@ -54,8 +56,22 @@ func (a *App) weixinTranscriber() weixin.Transcriber {
 			// ASR 模型未填且对话模型三元组不齐：无可用的转写来源。
 			return "", weixin.ErrTranscriberNotConfigured
 		}
-		return hubtools.TranscribeAuto(ctx, cfg, plat.ASRModel, chatModel, wav)
+		text, err := hubtools.TranscribeAuto(ctx, cfg, plat.ASRModel, chatModel, wav)
+		if err != nil {
+			return "", mapVoiceErr(err)
+		}
+		return text, nil
 	}
+}
+
+// mapVoiceErr 把 hubtools「模型不支持音频」哨兵映射为 weixin.ErrVoiceUnsupported
+//（%w 双层包裹，两层哨兵都在链上：桥层归因到 weixin 哨兵，日志仍可归因到
+// hubtools 原始 key）。其余错误原样透传。
+func mapVoiceErr(err error) error {
+	if err != nil && errors.Is(err, hubtools.ErrChatAudioUnsupported) {
+		return fmt.Errorf("%w: %w", weixin.ErrVoiceUnsupported, err)
+	}
+	return err
 }
 
 // wxRuntime 取当前微信运行时（未装配为 nil）。
