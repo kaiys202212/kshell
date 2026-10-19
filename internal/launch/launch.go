@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -230,11 +231,14 @@ func ForSessionACP(ps []providers.Provider, tools []discovery.Tool, s providers.
 	if !ok {
 		return providers.Launch{}, ErrToolNotRunnable
 	}
-	// 与 ForWorkspaceACP 同款门禁：工具没有可执行入口（如 Cursor 更新器清空
-	// shim 窗口内的 Broken 形态）时，适配器拿不到 CURSOR_AGENT_EXECUTABLE，
-	// 放行必在首条 prompt 时崩（spawn cursor-agent ENOENT → -32000 EOF）。
+	// 与 ForWorkspaceACP 同款门禁：工具没有可执行入口时放行必在首条 prompt 时崩。
+	// cursor 例外：官方通道能从已知位置（根目录 shim / PATH）兜底解析入口——
+	// 更新器清空 versions\<ver>\node.exe 的窗口里 discovery 会给出 BinPath=""，
+	// 但根目录 shim 通常仍在，此时恢复会话依然可用（见 officialCursorACP）。
 	if !tool.Installed || tool.BinPath == "" {
-		return providers.Launch{}, ErrToolNotRunnable
+		if !(tool.ID == "cursor" && cursorOfficialResolvable(tool)) {
+			return providers.Launch{}, ErrToolNotRunnable
+		}
 	}
 	p, ok := providerFor(ps, s.ToolID)
 	if !ok {
@@ -251,6 +255,13 @@ func ForSessionACP(ps []providers.Provider, tools []discovery.Tool, s providers.
 // 注入参数前置后需重排到 -y <package> 之后（否则 npm 把模型名当包名）。
 func finalizeACP(l providers.Launch, p providers.Provider, tool discovery.Tool, mo ModelOptions, po PermissionOptions) providers.Launch {
 	baseLen := len(l.Args)
+	if tool.ID == "cursor" {
+		// 官方 acp 子命令不接受外部模型名（`--model <自定义名>` 进程即退出
+		// "Cannot use this model"）；cursor 的模型切换走会话内 session/set_model。
+		// 旧适配器回退路径同样不注入：cursor-acp 0.1.0 本就不透传 --model
+		//（"not wired in v1"），注入与不注入无行为差别，统一跳过防误配。
+		mo = ModelOptions{}
+	}
 	out := finalize(l, p, mo, po)
 	out.ACPSettingsJSON = acpSettingsPayload(p, mo)
 	return reorderACPArgs(out, tool, len(out.Args)-baseLen)
@@ -326,6 +337,15 @@ var gitBashEnvFn = claudeenv.GitBashEnv
 
 // acpLaunch 按适配器探测结果组装 ACP 启动描述。
 func acpLaunch(tool discovery.Tool, dir string) (providers.Launch, error) {
+	// cursor 优先官方直连：cursor-agent 原生支持 acp 子命令（持久 ACP 服务，
+	// 真会话记忆），无需第三方 cursor-acp 适配器。官方不可用（shim 且解析不到
+	// node/脚本）才回退适配器路径。
+	if tool.ID == "cursor" {
+		if l, ok := officialCursorACP(tool); ok {
+			l.Dir = dir
+			return l, nil
+		}
+	}
 	if tool.ACP == nil || !tool.ACP.Available {
 		return providers.Launch{}, ErrACPUnavailable
 	}
@@ -349,6 +369,90 @@ func acpLaunch(tool discovery.Tool, dir string) (providers.Launch, error) {
 		}
 	}
 	return l, nil
+}
+
+// cursorRootShimFn 兜底解析 cursor-agent 入口：discovery 在更新器清空
+// versions\<ver>\node.exe 的窗口里会给出 BinPath=""（Broken 形态），但根目录
+// shim（cursor-agent.cmd / agent.cmd）通常仍在。PATH 只探测 cursor-agent 名
+//（"agent" 太宽泛，仅限官方安装根内匹配），再扫 Windows 官方安装根。测试可替换。
+var cursorRootShimFn = func() (string, bool) {
+	for _, name := range []string{"cursor-agent", "cursor-agent.exe"} {
+		if p, err := exec.LookPath(name); err == nil && p != "" {
+			return p, true
+		}
+	}
+	if runtime.GOOS != "windows" {
+		return "", false
+	}
+	root := filepath.Join(os.Getenv("LOCALAPPDATA"), "cursor-agent")
+	for _, name := range []string{"cursor-agent.cmd", "agent.cmd", "cursor-agent.exe", "agent.exe"} {
+		p := filepath.Join(root, name)
+		if isFile(p) {
+			return p, true
+		}
+	}
+	return "", false
+}
+
+// cursorOfficialResolvable 报告 cursor 官方 ACP 入口能否解析（含兜底探测）。
+func cursorOfficialResolvable(tool discovery.Tool) bool {
+	_, ok := officialCursorACP(tool)
+	return ok
+}
+
+// cursorNodeEntryFn 第二级兜底：根目录 shim 也被更新器删光时（只留
+// versions\<ver>\index.js 的极端窗口），用系统 node 直接跑最新版本的
+// index.js——官方更新器从不删版本目录内的 index.js 本体。测试可替换。
+var cursorNodeEntryFn = func() (string, bool) {
+	root := os.Getenv("LOCALAPPDATA")
+	if root == "" {
+		return "", false
+	}
+	for _, dir := range cursorVersionDirs(filepath.Join(root, "cursor-agent")) {
+		script := filepath.Join(dir, "index.js")
+		if isFile(script) {
+			return script, true
+		}
+	}
+	return "", false
+}
+
+// officialCursorACP 解析 cursor-agent 本体直连的 ACP 启动描述（官方 `acp` 子命令）。
+// 入口形态：node 入口（BinPath=node.exe，BinArgs=[index.js]）直接
+// `node index.js acp`；.cmd/.bat shim 先解析 node 与 versions\<ver>\index.js，
+// 解析不到返回 false（走适配器回退）；原生二进制（含 macOS/Linux）直接 `本体 acp`。
+// BinPath 为空（更新器清空入口的窗口）时依次经 cursorRootShimFn、
+// cursorNodeEntryFn 兜底。kshell 自身即 ACP 客户端，无需代理三元组。
+func officialCursorACP(tool discovery.Tool) (providers.Launch, bool) {
+	binPath, binArgs := tool.BinPath, tool.BinArgs
+	if binPath == "" {
+		if p, ok := cursorRootShimFn(); ok {
+			binPath = p
+		} else if script, ok := cursorNodeEntryFn(); ok {
+			node, ok2 := nodeLookPathFn()
+			if !ok2 {
+				return providers.Launch{}, false
+			}
+			return providers.Launch{Path: node, Args: []string{script, "acp"}}, true
+		} else {
+			return providers.Launch{}, false
+		}
+	}
+	if len(binArgs) > 0 {
+		return providers.Launch{Path: binPath, Args: []string{binArgs[0], "acp"}}, true
+	}
+	if isCmdShim(binPath) {
+		node, ok := nodeLookPathFn()
+		if !ok {
+			return providers.Launch{}, false
+		}
+		script, ok := cursorScriptResolveFn(binPath)
+		if !ok {
+			return providers.Launch{}, false
+		}
+		return providers.Launch{Path: node, Args: []string{script, "acp"}}, true
+	}
+	return providers.Launch{Path: binPath, Args: []string{"acp"}}, true
 }
 
 // reorderACPArgs 把 finalize 前置进 Args 的注入参数挪到 npx 包名之后：
