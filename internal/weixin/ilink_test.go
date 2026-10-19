@@ -225,6 +225,71 @@ func TestGetUpdatesVoice(t *testing.T) {
 	}
 }
 
+func TestGetUpdatesRefMsg(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{
+			"msgs":[
+				{"message_type":1,"from_user_id":"u1","context_token":"ct1",
+				 "item_list":[{"type":1,"text_item":{"text":"这条没看懂"}}],
+				 "ref_msg":{"svr_id":"18446744073709551615","text":"【会话A】agent 的回复正文"}},
+				{"message_type":1,"from_user_id":"u2","context_token":"ct2",
+				 "item_list":[{"type":1,"text_item":{"text":"普通消息"}}]}
+			],
+			"get_updates_buf":"cursor-r"
+		}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok-1", srv.URL)
+	msgs, _, err := c.GetUpdates(context.Background(), "")
+	if err != nil {
+		t.Fatalf("GetUpdates: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("消息数 = %d, 期望 2", len(msgs))
+	}
+	if msgs[0].Ref == nil {
+		t.Fatal("引用回复应解析出 Ref")
+	}
+	if msgs[0].Ref.SvrID != "18446744073709551615" {
+		t.Errorf("Ref.SvrID = %q", msgs[0].Ref.SvrID)
+	}
+	if msgs[0].Ref.Text != "【会话A】agent 的回复正文" {
+		t.Errorf("Ref.Text = %q", msgs[0].Ref.Text)
+	}
+	if msgs[1].Ref != nil {
+		t.Errorf("普通消息 Ref 应为 nil: %+v", msgs[1].Ref)
+	}
+}
+
+func TestGetUpdatesRefMsgPartial(t *testing.T) {
+	// partial_text 形态：引用超长消息时服务端只给首尾摘要。首版不拼接，
+	// Text 允许为空（归因还有 svr_id 与【标题】前缀两级）。
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{
+			"msgs":[
+				{"message_type":1,"from_user_id":"u1","context_token":"ct1",
+				 "item_list":[{"type":1,"text_item":{"text":"看看这段"}}],
+				 "ref_msg":{"svr_id":"9001","partial_text":{"start":"开头","end":"结尾","startindex":0,"endindex":5}}}
+			],
+			"get_updates_buf":"cursor-p"
+		}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok-1", srv.URL)
+	msgs, _, err := c.GetUpdates(context.Background(), "")
+	if err != nil {
+		t.Fatalf("GetUpdates: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Ref == nil {
+		t.Fatalf("应解析出 Ref: %+v", msgs)
+	}
+	if msgs[0].Ref.SvrID != "9001" {
+		t.Errorf("Ref.SvrID = %q, 期望 9001", msgs[0].Ref.SvrID)
+	}
+}
+
 func TestSendMessage(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

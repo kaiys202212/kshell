@@ -183,6 +183,13 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 			FromUserID   string `json:"from_user_id"`
 			ContextToken string `json:"context_token"`
 			CreateMs     int64  `json:"create_time_ms"`
+			// RefMsg 是引用回复的被引用消息（用户对 bot 出站消息长按引用时
+			// 携带）。字段名按参考实现（openclaw-weixin / wechatbot-go），
+			// 真机联调不符时先抓 [weixin] 日志核对此 tag。
+			RefMsg struct {
+				SvrID string `json:"svr_id"`
+				Text  string `json:"text"`
+			} `json:"ref_msg"`
 			ItemList     []struct {
 				Type     int `json:"type"`
 				TextItem struct {
@@ -216,6 +223,9 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 			continue
 		}
 		im := InboundMsg{FromUserID: m.FromUserID, ContextToken: m.ContextToken, CreateMs: m.CreateMs}
+		if m.RefMsg.SvrID != "" || m.RefMsg.Text != "" {
+			im.Ref = &RefMsg{SvrID: m.RefMsg.SvrID, Text: m.RefMsg.Text}
+		}
 		for _, item := range m.ItemList {
 			switch item.Type {
 			case 1:
