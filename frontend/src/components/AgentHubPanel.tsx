@@ -1395,13 +1395,10 @@ export default function AgentHubPanel() {
             })
           )}
           {/* 待激活 chip：默认投递目标命中未激活会话（pending: 前缀）时出现，
-              虚线边框区分已激活 chips；点击先激活原会话再 @ 填入（mentionPending）。 */}
+              虚线边框区分已激活 chips；点击先激活原会话再 @ 填入（mentionPending）。
+              可与 chats.length === 0 的 empty 占位共存：空状态下用户仍能看到待激活目标。 */}
           {pendingTarget && (
-            <div
-              className={cn(
-                'flex max-w-56 min-w-0 items-center gap-1 rounded-full border border-dashed border-primary/60 bg-primary/10 px-2.5 py-1 text-xs',
-              )}
-            >
+            <div className="flex max-w-56 min-w-0 items-center gap-1 rounded-full border border-dashed border-primary/60 bg-primary/10 px-2.5 py-1 text-xs">
               <button
                 type="button"
                 title={t('ui.hub.pending_chip_aria')}
