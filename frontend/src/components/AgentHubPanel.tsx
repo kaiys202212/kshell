@@ -347,7 +347,7 @@ export default function AgentHubPanel() {
   // /model 内联下拉：非 null 时在输入区上方展示模型列表。
   const [modelMenu, setModelMenu] = useState<{ targetId: string; view: ChatModelsView } | null>(null);
 
-  // @ 补全项：展示名 + 会话 id，顺序无关（Claude Code#c1 ...）
+  // @ 补全项：insert 为写入草稿的标签（工具名#会话标题），label 为路由串。
   const mentionAgents = useMemo(
     () =>
       chats.map<MentionAgent>((c) => ({
@@ -359,6 +359,22 @@ export default function AgentHubPanel() {
     [chats],
   );
   const options = useMemo(() => buildMentionOptions(mentionAgents), [mentionAgents]);
+
+  // mentionLabelForChat 给「刚激活、尚未进入渲染期 chats」的会话构造写入标签。
+  // 必须基于实时 store 的全量会话：visibleMentionLabel 的同名消歧依赖完整列表，
+  // 只用单元素列表会生成与补全候选不一致、resolveMentionTarget 也命中不了的标签。
+  const mentionLabelForChat = (chat: ChatInfo): string | undefined => {
+    const agents = useAppStore.getState().chats.map<MentionAgent>((c) => ({
+      id: c.ID,
+      toolId: c.ToolID,
+      title: c.Title,
+      workspace: c.Workspace,
+    }));
+    if (!agents.some((a) => a.id === chat.ID)) {
+      agents.push({ id: chat.ID, toolId: chat.ToolID, title: chat.Title, workspace: chat.Workspace });
+    }
+    return buildMentionOptions(agents).find((o) => o.id === chat.ID)?.insert;
+  };
 
   // @ 补全：草稿末尾是未闭合的 @ 片段时给出候选（v1 只按草稿尾匹配，不做光标跟踪）。
   // mentionQuery 为 null 表示当前不在 @ 输入中。
@@ -424,10 +440,8 @@ export default function AgentHubPanel() {
     void activatePending(pendingTarget.sessionID).then((chat) => {
       if (!chat) return;
       // 不调 mentionSession：then 回调捕获的是点击轮渲染的旧闭包，其 options
-      // 还不含刚激活的 chat。按 buildMentionOptions 的 insert 写入会话标题。
-      const label = buildMentionOptions([
-        { id: chat.ID, toolId: chat.ToolID, title: chat.Title, workspace: chat.Workspace },
-      ])[0]?.insert;
+      // 还不含刚激活的 chat；按实时 store 的全量列表构造，保证同名消歧与补全一致。
+      const label = mentionLabelForChat(chat);
       if (!label) return;
       setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
       inputRef.current?.focus();
@@ -720,10 +734,9 @@ export default function AgentHubPanel() {
         const chat = res.Chat;
         useAppStore.getState().upsertChat(chat);
         useAppStore.getState().setLastAgentId(chat.ID);
-        // label 与 @ 补全候选用同一套生成逻辑，保证草稿里的提及可被 resolveMentionTarget 命中
-        const label = buildMentionOptions([
-          { id: chat.ID, toolId: chat.ToolID, title: chat.Title, workspace: chat.Workspace },
-        ])[0]?.insert;
+        // label 与 @ 补全候选用同一套生成逻辑（含全量会话的同名消歧），
+        // 保证草稿里的提及可被 resolveMentionTarget 命中
+        const label = mentionLabelForChat(chat);
         // 语义同 mentionSession：保留式追加 @ 标签（已有内容空格分隔）；
         // `#find ...` 命令残留一并清掉（find 分支不消费草稿，激活成功后重建）。
         setDraft((d) => {
@@ -998,11 +1011,9 @@ export default function AgentHubPanel() {
         return;
       }
       // rephrase：激活成功后填 @ 标签。走到此分支说明点击时目标未激活，闭包里的
-      // options 必不含新 chat，按 buildMentionOptions 的 insert（会话标题）构造。
+      // options 必不含新 chat，按实时 store 的全量列表构造（同名消歧与补全一致）。
       activateAndThen(m, (chat) => {
-        const label = buildMentionOptions([
-          { id: chat.ID, toolId: chat.ToolID, title: chat.Title, workspace: chat.Workspace },
-        ])[0]?.insert;
+        const label = mentionLabelForChat(chat);
         if (!label) return;
         setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
         inputRef.current?.focus();
@@ -1279,7 +1290,7 @@ export default function AgentHubPanel() {
                 }}
               >
                 <span className="block">@{o.insert}</span>
-                {/* 第二行：项目 · 会话标题（label 保持短标签，详情只做展示） */}
+                {/* 第二行：项目 · 会话标题（insert 已是会话标题，详情补充项目） */}
                 {o.detail && <span className="block truncate text-muted-foreground">{o.detail}</span>}
               </li>
             ))}

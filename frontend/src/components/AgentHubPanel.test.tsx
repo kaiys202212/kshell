@@ -2180,6 +2180,38 @@ describe('AgentHubPanel #find', () => {
     await waitFor(() => expect(screen.queryByText(tt('ui.hub.find_title'))).toBeNull());
   });
 
+  it('同名会话经 #find 激活：写入带项目消歧的 @ 标签（与全量补全候选一致）', async () => {
+    useAppStore.setState({
+      chats: [chat({ ID: 'c0', Title: '重构认证', Workspace: 'D:\\ws\\a' })],
+      lastAgentId: 'c0',
+    });
+    api.getSessions.mockResolvedValue([
+      {
+        ID: 's1',
+        ToolID: 'claude',
+        Workspace: 'D:\\ws\\alpha',
+        Title: '重构认证',
+        CreatedAt: new Date().toISOString(),
+        UpdatedAt: new Date().toISOString(),
+        Messages: 3,
+        Path: '',
+      },
+    ]);
+    api.openSessionACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'c77', Key: 'k77', Kind: 'session', SessionID: 's1', Workspace: 'D:\\ws\\alpha' }),
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder')) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '#find' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByText('重构认证'));
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('s1'));
+    // 两个同名 claude 会话：插入标签须带项目名，且能被 resolveMentionTarget 命中
+    expect(box.value).toBe('@Claude Code#重构认证 · alpha ');
+  });
+
   it('openSessionACP reject：notify 错误 ui.hub.find_activate_failed，对话框保持', async () => {
     api.getSessions.mockResolvedValue([
       {
