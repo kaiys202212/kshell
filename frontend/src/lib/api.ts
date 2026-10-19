@@ -681,6 +681,7 @@ interface AppBindings {
   ClearHubMessages(): Promise<void>;
   RecallHubMessage(id: number): Promise<void>;
   HubCommand(text: string): Promise<HubReply[]>;
+  HubPickTarget(text: string): Promise<HubReply[]>;
   SaveHubDefaultCreate(toolID: string, modelID: string): Promise<void>;
   SaveHubRouteMode(mode: string): Promise<void>;
   ConfirmHubTool(chatID: string, pendingID: string, approved: boolean): Promise<void>;
@@ -1625,6 +1626,14 @@ export async function hubCommand(text: string): Promise<HubReply[]> {
   const a = app();
   if (!a) return [];
   return a.HubCommand(text);
+}
+
+// hubPickTarget 在无精确目标时把待发正文交给共享命令层：后端输出编号会话列表并
+// 暂存正文，用户回复数字（仍走 hubCommand）完成激活与发送；与微信桥同一语义。
+export async function hubPickTarget(text: string): Promise<HubReply[]> {
+  const a = app();
+  if (!a) return [];
+  return a.HubPickTarget(text);
 }
 
 // saveHubDefaultCreate 把「默认 agent 工具 + 模型」写穿到后端 config.yaml
