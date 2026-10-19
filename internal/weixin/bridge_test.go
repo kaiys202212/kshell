@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -770,6 +771,33 @@ func TestBridgeVoiceTranscribeFail(t *testing.T) {
 	sends := rc.sends()
 	if len(sends) == 0 || !strings.Contains(sendText(t, sends[0].body), "转写失败") {
 		t.Fatalf("失败回执缺失: %v", sends)
+	}
+}
+
+func TestBridgeVoiceAudioUnsupported(t *testing.T) {
+	// 对话模型不支持音频输入（常态而非异常）：回执走 voice.unsupported
+	// 指引文案，不透传底层网关报错，也不投递。
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	pcm := bytes.Repeat([]byte{0x10, 0x02}, 1200)
+	b, rc := newAttachBridge(t, ex, encodeSilk(t, pcm, true), 200)
+	b.SetTranscriber(func(ctx context.Context, wav []byte) (string, error) {
+		return "", fmt.Errorf("%w: 状态码 400", ErrVoiceUnsupported)
+	})
+
+	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
+	if len(ex.sentTexts) != 0 {
+		t.Fatalf("不支持音频不应投递: %v", ex.sentTexts)
+	}
+	sends := rc.sends()
+	if len(sends) == 0 {
+		t.Fatal("应有回执")
+	}
+	text := sendText(t, sends[0].body)
+	if !strings.Contains(text, "不支持") && !strings.Contains(text, "not support") {
+		t.Fatalf("回执应为不支持音频指引文案: %v", text)
+	}
+	if strings.Contains(text, "状态码 400") {
+		t.Fatalf("回执不应透传底层报错: %v", text)
 	}
 }
 

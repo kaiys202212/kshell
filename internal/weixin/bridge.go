@@ -48,6 +48,12 @@ type ctxInfo struct {
 //（desktop 装配）在模型平台缺 ASR 模型时返回它，桥据此回执「未配置」而非「失败」。
 var ErrTranscriberNotConfigured = errors.New("err.weixin.voice_asr_unconfigured")
 
+// ErrVoiceUnsupported 是「默认对话模型不支持音频输入」的哨兵：transcriber
+// 实现方在 chat 回落转写被网关以不支持音频拒绝时返回它（desktop 层从
+// hubtools.ErrChatAudioUnsupported 映射而来），桥据此回执配置指引而非透传
+// 网关原始报错。
+var ErrVoiceUnsupported = errors.New("err.weixin.voice_unsupported")
+
 // Transcriber 把 WAV 音频转成文字（OpenAI 兼容 ASR 端点，desktop 装配注入）。
 type Transcriber func(ctx context.Context, wav []byte) (string, error)
 
@@ -240,9 +246,13 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	// 可转发文字处理（参与附件队列合并）；失败/未配置转回执。
 	if strings.TrimSpace(text) == "" && m.Voice != nil {
 		if transcript, err := b.transcribeVoice(ctx, m.Voice); err != nil {
-			if errors.Is(err, ErrTranscriberNotConfigured) {
+			switch {
+			case errors.Is(err, ErrTranscriberNotConfigured):
 				receipt = joinNotes(receipt, bridgeText(b.lang, "voice.unconfigured"))
-			} else {
+			case errors.Is(err, ErrVoiceUnsupported):
+				// 模型不支持音频输入：给配置指引，不透传网关报错。
+				receipt = joinNotes(receipt, bridgeText(b.lang, "voice.unsupported"))
+			default:
 				receipt = joinNotes(receipt, fmt.Sprintf(bridgeText(b.lang, "voice.failed"), err))
 			}
 		} else if strings.TrimSpace(transcript) == "" {

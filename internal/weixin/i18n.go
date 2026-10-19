@@ -13,6 +13,7 @@ var bridgeTexts = map[string]langPair{
 	"file.queued_st": {"%d attachment(s) queued for forwarding", "待转交附件 %d 个"},
 	// 语音转写回执。
 	"voice.unconfigured": {"Voice received but no ASR model configured (Settings → Model platform → ASR model)", "已收到语音，但未配置语音转写模型（设置 → 模型平台 → 语音转写模型）"},
+	"voice.unsupported":  {"Voice received, but the current chat model does not accept audio input. Please configure a dedicated ASR model (Settings → Model platform → ASR model).", "已收到语音，但当前对话模型不支持音频输入，请在设置 → 模型平台 → 语音转写模型（asr_model）中配置专用转写模型"},
 	"voice.failed":       {"Voice transcription failed: %v", "语音转写失败：%v"},
 	"voice.empty":        {"Empty transcription result", "转写结果为空"},
 }
