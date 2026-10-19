@@ -201,10 +201,15 @@ func TestForSessionACP_UsesWorkspaceDir(t *testing.T) {
 	}
 }
 
-// Broken 形态（如 Cursor 更新器清空入口窗口内 Detected=config-dir）：ACP 探测仍
-// Available，但适配器拿不到 CURSOR_AGENT_EXECUTABLE，放行必在首条 prompt 时崩
-//（-32000 EOF，spawn cursor-agent ENOENT）。恢复会话必须与新建会话同样拒绝。
+// Broken 形态（如 Cursor 更新器清空入口窗口内 Detected=config-dir）：
+// 恢复会话必须拒绝——除非官方通道能从已知位置解析出入口。
 func TestForSessionACP_NoRunnableBinRefused(t *testing.T) {
+	oldShim := cursorRootShimFn
+	oldEntry := cursorNodeEntryFn
+	t.Cleanup(func() { cursorRootShimFn = oldShim; cursorNodeEntryFn = oldEntry })
+	cursorRootShimFn = func() (string, bool) { return "", false }
+	cursorNodeEntryFn = func() (string, bool) { return "", false }
+
 	ps := []providers.Provider{providers.Cursor{}}
 	s := providers.Session{ID: "s1", ToolID: "cursor", Workspace: "/proj"}
 	det := providers.ACPDetection{Available: true, Source: "npx", Package: "cursor-acp"}
@@ -220,9 +225,65 @@ func TestForSessionACP_NoRunnableBinRefused(t *testing.T) {
 	}
 }
 
-// cursor 直执行形态：kshell 探测到的 CLI 不在 PATH 上时，适配器自己找不到
-// cursor-agent，必须经 CURSOR_AGENT_EXECUTABLE 把路径传过去。
-func TestForWorkspaceACP_CursorInjectsAgentExecutable(t *testing.T) {
+// BinPath 为空的 Broken 窗口（更新器清空 versions\<ver>\node.exe，discovery 给
+// BinPath=""）但根目录 shim 仍在：官方通道从已知位置兜底解析，新建与恢复会话都可用。
+func TestForSessionACP_CursorBrokenBinRescuedByRootShim(t *testing.T) {
+	shim := `C:\ca\cursor-agent.cmd`
+	oldShim := cursorRootShimFn
+	oldNode := nodeLookPathFn
+	oldScript := cursorScriptResolveFn
+	t.Cleanup(func() { cursorRootShimFn = oldShim; nodeLookPathFn = oldNode; cursorScriptResolveFn = oldScript })
+	cursorRootShimFn = func() (string, bool) { return shim, true }
+	nodeLookPathFn = func() (string, bool) { return `D:\nodejs\node.exe`, true }
+	cursorScriptResolveFn = func(string) (string, bool) { return `C:\ca\versions\v1\index.js`, true }
+
+	ps := []providers.Provider{providers.Cursor{}}
+	s := providers.Session{ID: "s1", ToolID: "cursor", Workspace: "/proj"}
+	det := providers.ACPDetection{Available: true, Source: "npx", Package: "cursor-acp"}
+	broken := []discovery.Tool{{ID: "cursor", Installed: true, Broken: true, ACP: &det}}
+
+	l, err := ForSessionACP(ps, broken, s, ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Path != `D:\nodejs\node.exe` || len(l.Args) != 2 || l.Args[0] != `C:\ca\versions\v1\index.js` || l.Args[1] != "acp" {
+		t.Fatalf("launch = %+v", l)
+	}
+}
+
+// 极端窗口：根目录 shim 也被删光、只剩 versions\<ver>\index.js——
+// 用系统 node 直接跑最新版本的 index.js 官方 acp。
+func TestForWorkspaceACP_CursorBrokenBinRescuedByVersionScript(t *testing.T) {
+	root := t.TempDir()
+	ver := filepath.Join(root, "versions", "2026.10.16-abc")
+	if err := os.MkdirAll(ver, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ver, "index.js"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldShim := cursorRootShimFn
+	oldNode := nodeLookPathFn
+	oldEntry := cursorNodeEntryFn
+	t.Cleanup(func() { cursorRootShimFn = oldShim; nodeLookPathFn = oldNode; cursorNodeEntryFn = oldEntry })
+	cursorRootShimFn = func() (string, bool) { return "", false }
+	nodeLookPathFn = func() (string, bool) { return `D:\nodejs\node.exe`, true }
+	cursorNodeEntryFn = func() (string, bool) { return filepath.Join(ver, "index.js"), true }
+
+	ps := []providers.Provider{providers.Cursor{}}
+	tools := []discovery.Tool{{ID: "cursor", Installed: true}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Path != `D:\nodejs\node.exe` || len(l.Args) != 2 || l.Args[0] != filepath.Join(ver, "index.js") || l.Args[1] != "acp" {
+		t.Fatalf("launch = %+v", l)
+	}
+}
+
+// cursor 原生二进制：官方通道直接 `本体 acp`，不再经第三方适配器、不注入任何 env。
+func TestForWorkspaceACP_CursorExeOfficialACP(t *testing.T) {
 	ps := []providers.Provider{providers.Cursor{}}
 	tools := []discovery.Tool{{
 		ID: "cursor", Installed: true, BinPath: `%LOCALAPPDATA%\cursor-agent\cursor-agent.exe`,
@@ -232,13 +293,17 @@ func TestForWorkspaceACP_CursorInjectsAgentExecutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if l.Env["CURSOR_AGENT_EXECUTABLE"] != `%LOCALAPPDATA%\cursor-agent\cursor-agent.exe` {
-		t.Fatalf("env = %v", l.Env)
+	if l.Path != `%LOCALAPPDATA%\cursor-agent\cursor-agent.exe` || len(l.Args) != 1 || l.Args[0] != "acp" {
+		t.Fatalf("launch = %+v", l)
+	}
+	if len(l.Env) != 0 {
+		t.Fatalf("官方通道不应注入 env, got %v", l.Env)
 	}
 }
 
-// node 入口形态无法直接当 spawn 目标：注入当前可执行文件作代理，并带上 node/脚本路径。
-func TestForWorkspaceACP_CursorNodeEntryInjectsProxy(t *testing.T) {
+// node 入口形态：官方通道由 kshell 直接 spawn `node index.js acp`，
+// 不再需要可 spawn 的 PE 代理（kshell 自身就是 ACP 客户端）。
+func TestForWorkspaceACP_CursorNodeEntryOfficialACP(t *testing.T) {
 	ps := []providers.Provider{providers.Cursor{}}
 	tools := []discovery.Tool{{
 		ID: "cursor", Installed: true, BinPath: `C:\agent\node.exe`, BinArgs: []string{`C:\agent\index.js`},
@@ -248,21 +313,11 @@ func TestForWorkspaceACP_CursorNodeEntryInjectsProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
+	if l.Path != `C:\agent\node.exe` || len(l.Args) != 2 || l.Args[0] != `C:\agent\index.js` || l.Args[1] != "acp" {
+		t.Fatalf("launch = %+v", l)
 	}
-	if l.Env["CURSOR_AGENT_EXECUTABLE"] != exe {
-		t.Fatalf("CURSOR_AGENT_EXECUTABLE = %q, 期望当前可执行文件 %q", l.Env["CURSOR_AGENT_EXECUTABLE"], exe)
-	}
-	if l.Env["KSHELL_AS_CURSOR_AGENT"] != "1" {
-		t.Fatalf("KSHELL_AS_CURSOR_AGENT = %q", l.Env["KSHELL_AS_CURSOR_AGENT"])
-	}
-	if l.Env["KSHELL_CURSOR_AGENT_NODE"] != `C:\agent\node.exe` {
-		t.Fatalf("NODE = %q", l.Env["KSHELL_CURSOR_AGENT_NODE"])
-	}
-	if l.Env["KSHELL_CURSOR_AGENT_SCRIPT"] != `C:\agent\index.js` {
-		t.Fatalf("SCRIPT = %q", l.Env["KSHELL_CURSOR_AGENT_SCRIPT"])
+	if len(l.Env) != 0 {
+		t.Fatalf("官方通道不应注入 env, got %v", l.Env)
 	}
 }
 
@@ -285,10 +340,9 @@ func TestForWorkspaceACP_OtherToolNoEnv(t *testing.T) {
 	}
 }
 
-// shim 形态（.cmd/.bat）：Node ≥20.12 spawn .cmd 会同步 EINVAL（CVE-2024-27980），
-// cursor-acp 又不带 shell:true 直接 spawn，prompt 即崩（-32603）。
-// 必须改走 kshell 代理：CURSOR_AGENT_EXECUTABLE=kshell 自身 + node/脚本三元组。
-func TestForWorkspaceACP_CursorCmdShimInjectsProxy(t *testing.T) {
+// shim 形态（.cmd/.bat）：官方通道解析 node + versions\<ver>\index.js 后
+// 直接 spawn，不依赖第三方 cursor-acp，也不注入代理三元组。
+func TestForWorkspaceACP_CursorCmdShimOfficialACP(t *testing.T) {
 	root := t.TempDir()
 	ver := filepath.Join(root, "versions", "2026.10.16-e3cb207")
 	if err := os.MkdirAll(ver, 0o755); err != nil {
@@ -321,26 +375,16 @@ func TestForWorkspaceACP_CursorCmdShimInjectsProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
+	if l.Path != `D:\nodejs\node.exe` || len(l.Args) != 2 || l.Args[0] != filepath.Join(ver, "index.js") || l.Args[1] != "acp" {
+		t.Fatalf("launch = %+v", l)
 	}
-	if l.Env["CURSOR_AGENT_EXECUTABLE"] != exe {
-		t.Fatalf("CURSOR_AGENT_EXECUTABLE = %q, 期望代理 %q", l.Env["CURSOR_AGENT_EXECUTABLE"], exe)
-	}
-	if l.Env["KSHELL_AS_CURSOR_AGENT"] != "1" {
-		t.Fatalf("KSHELL_AS_CURSOR_AGENT = %q", l.Env["KSHELL_AS_CURSOR_AGENT"])
-	}
-	if l.Env["KSHELL_CURSOR_AGENT_NODE"] != `D:\nodejs\node.exe` {
-		t.Fatalf("NODE = %q", l.Env["KSHELL_CURSOR_AGENT_NODE"])
-	}
-	if l.Env["KSHELL_CURSOR_AGENT_SCRIPT"] != filepath.Join(ver, "index.js") {
-		t.Fatalf("SCRIPT = %q", l.Env["KSHELL_CURSOR_AGENT_SCRIPT"])
+	if len(l.Env) != 0 {
+		t.Fatalf("官方通道不应注入 env, got %v", l.Env)
 	}
 }
 
-// shim 形态但 node 解析不到：无法提供代理，退回直注 shim（保持既有行为），
-// 不静默返回 nil——直注至少让「装了 shell shim 的老 Node」环境仍可用。
+// shim 形态但 node 解析不到：官方通道不可用，回退第三方适配器路径
+// （cursor-acp 在 PATH 上时直执行 + 直注 shim env，保持既有兜底行为）。
 func TestForWorkspaceACP_CursorCmdShimWithoutNodeFallsBack(t *testing.T) {
 	shim := `C:\ca\cursor-agent.cmd`
 	oldNode := nodeLookPathFn
@@ -356,6 +400,9 @@ func TestForWorkspaceACP_CursorCmdShimWithoutNodeFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if l.Path != "cursor-acp" || len(l.Args) != 0 {
+		t.Fatalf("launch = %+v, 期望回退 cursor-acp 适配器", l)
+	}
 	if l.Env["CURSOR_AGENT_EXECUTABLE"] != shim {
 		t.Fatalf("env = %v, 期望退回直注 shim", l.Env)
 	}
@@ -364,9 +411,9 @@ func TestForWorkspaceACP_CursorCmdShimWithoutNodeFallsBack(t *testing.T) {
 	}
 }
 
-// 非结束（.exe / 无后缀）形态不受 shim 分支影响；stub 被调用即失败，
+// 非结束（.exe / 无后缀）形态走官方直连；stub 被调用即失败，
 // 锁死 .exe 分支绝不进入 shim 解析。
-func TestForWorkspaceACP_CursorExeStillDirectInject(t *testing.T) {
+func TestForWorkspaceACP_CursorExeOfficialNoShimResolve(t *testing.T) {
 	oldNode := nodeLookPathFn
 	oldScript := cursorScriptResolveFn
 	t.Cleanup(func() { nodeLookPathFn = oldNode; cursorScriptResolveFn = oldScript })
@@ -382,13 +429,13 @@ func TestForWorkspaceACP_CursorExeStillDirectInject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if l.Env["CURSOR_AGENT_EXECUTABLE"] != `C:\ca\cursor-agent.exe` {
-		t.Fatalf("env = %v", l.Env)
+	if l.Path != `C:\ca\cursor-agent.exe` || len(l.Args) != 1 || l.Args[0] != "acp" {
+		t.Fatalf("launch = %+v", l)
 	}
 }
 
-// .bat 同样是 Node spawn 会 EINVAL 的形态，须与 .cmd 同走代理。
-func TestForWorkspaceACP_CursorBatShimInjectsProxy(t *testing.T) {
+// .bat 同样是 shim 形态，与 .cmd 同走官方直连。
+func TestForWorkspaceACP_CursorBatShimOfficialACP(t *testing.T) {
 	oldNode := nodeLookPathFn
 	oldScript := cursorScriptResolveFn
 	t.Cleanup(func() { nodeLookPathFn = oldNode; cursorScriptResolveFn = oldScript })
@@ -404,12 +451,13 @@ func TestForWorkspaceACP_CursorBatShimInjectsProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if l.Env[cursoragent.EnvScript] != `C:\ca\index.js` {
-		t.Fatalf("env = %v", l.Env)
+	if l.Path != `D:\nodejs\node.exe` || len(l.Args) != 2 || l.Args[0] != `C:\ca\index.js` || l.Args[1] != "acp" {
+		t.Fatalf("launch = %+v", l)
 	}
 }
 
-// shim 形态但脚本解析不到（如 index.js 一并被更新器删光）：退回直注 shim。
+// shim 形态但脚本解析不到（如 index.js 一并被更新器删光）：官方通道不可用，
+// 回退第三方适配器路径（直注 shim env，无代理变量）。
 func TestForWorkspaceACP_CursorCmdShimWithoutScriptFallsBack(t *testing.T) {
 	shim := `C:\ca\cursor-agent.cmd`
 	oldNode := nodeLookPathFn
@@ -426,6 +474,9 @@ func TestForWorkspaceACP_CursorCmdShimWithoutScriptFallsBack(t *testing.T) {
 	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", ModelOptions{}, PermissionOptions{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if l.Path != "cursor-acp" || len(l.Args) != 0 {
+		t.Fatalf("launch = %+v, 期望回退 cursor-acp 适配器", l)
 	}
 	if l.Env["CURSOR_AGENT_EXECUTABLE"] != shim {
 		t.Fatalf("env = %v, 期望退回直注 shim", l.Env)
@@ -498,31 +549,34 @@ func TestCursorVersionDirs(t *testing.T) {
 	}
 }
 
-// npx 兜底形态下注入依然生效（本体路径与适配器来源无关）。
-func TestForWorkspaceACP_CursorNpxStillInjects(t *testing.T) {
+// 官方通道不可用（shim 且无 node）时回退 npx 适配器，env 仍直注 shim。
+func TestForWorkspaceACP_CursorNpxFallbackWithoutNode(t *testing.T) {
+	shim := `C:\ca\cursor-agent.cmd`
+	oldNode := nodeLookPathFn
+	t.Cleanup(func() { nodeLookPathFn = oldNode })
+	nodeLookPathFn = func() (string, bool) { return "", false }
+
 	ps := []providers.Provider{providers.Cursor{}}
 	tools := []discovery.Tool{{
-		ID: "cursor", Installed: true, BinPath: `%LOCALAPPDATA%\cursor-agent\cursor-agent.exe`,
+		ID: "cursor", Installed: true, BinPath: shim,
 		ACP: &providers.ACPDetection{Available: true, Source: "npx", Package: "cursor-acp"},
 	}}
 	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", ModelOptions{}, PermissionOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if l.Args[0] != "-y" || l.Args[1] != "cursor-acp" {
+	if l.Path != "npx" || len(l.Args) != 2 || l.Args[0] != "-y" || l.Args[1] != "cursor-acp" {
 		t.Fatalf("args = %v", l.Args)
 	}
-	if l.Env["CURSOR_AGENT_EXECUTABLE"] != `%LOCALAPPDATA%\cursor-agent\cursor-agent.exe` {
+	if l.Env["CURSOR_AGENT_EXECUTABLE"] != shim {
 		t.Fatalf("env = %v", l.Env)
 	}
 }
 
-// npx 形态下注入参数必须落在 -y <package> 之后：
-// `npx --model X -y pkg` 时 npm 把模型名当待安装的包（E404），只有
-// `npx -y pkg --model X` 才把参数传给适配器进程。
-// 用 cursor 验证：其 InjectModel 产出 --model 参数（claude 的模型注入走
-// --settings，见 TestForWorkspaceToolClaudeModelViaSettings）。
-func TestForWorkspaceACP_NpxModelArgsAfterPackage(t *testing.T) {
+// 官方 acp 子命令不接受外部模型名（`--model <自定义名>` 进程即退出
+// "Cannot use this model"），cursor 的模型切换只能走会话内 session/set_model：
+// 模型注入必须整体跳过。
+func TestForWorkspaceACP_CursorOfficialSkipsModelInjection(t *testing.T) {
 	ps := []providers.Provider{providers.Cursor{}}
 	tools := []discovery.Tool{{
 		ID: "cursor", Installed: true, BinPath: "cursor-agent",
@@ -535,58 +589,46 @@ func TestForWorkspaceACP_NpxModelArgsAfterPackage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"-y", "cursor-acp", "--model", "glm-5.3-flash"}
-	if len(l.Args) != len(want) {
-		t.Fatalf("args = %v, want %v", l.Args, want)
-	}
-	for i := range want {
-		if l.Args[i] != want[i] {
-			t.Fatalf("args = %v, want %v", l.Args, want)
-		}
+	if len(l.Args) != 1 || l.Args[0] != "acp" {
+		t.Fatalf("args = %v, want [acp]", l.Args)
 	}
 }
 
-// npx 形态带 ExtraArgs 时注入参数在 -y <pkg> 之后、ExtraArgs 之前。
-func TestForWorkspaceACP_NpxModelArgsWithExtraArgs(t *testing.T) {
-	ps := []providers.Provider{providers.Cursor{}}
-	tools := []discovery.Tool{{
-		ID: "cursor", Installed: true, BinPath: "cursor-agent",
-		ACP: &providers.ACPDetection{Available: true, Source: "npx", Package: "pkg", ExtraArgs: []string{"--foo"}},
-	}}
-	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
-		return providers.ModelConfig{Model: "m1"}, true
-	}}
-	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", mo, PermissionOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"-y", "pkg", "--model", "m1", "--foo"}
-	if len(l.Args) != len(want) {
-		t.Fatalf("args = %v, want %v", l.Args, want)
-	}
-	for i := range want {
-		if l.Args[i] != want[i] {
-			t.Fatalf("args = %v, want %v", l.Args, want)
-		}
-	}
-}
-
-// path 形态下模型参数仍应前置（无 -y 前缀问题）。
-func TestForWorkspaceACP_PathModelArgsPrepended(t *testing.T) {
+// 恢复会话路径同样走官方直连且不注入模型。
+func TestForSessionACP_CursorOfficialSkipsModelInjection(t *testing.T) {
 	ps := []providers.Provider{providers.Cursor{}}
 	tools := []discovery.Tool{{
 		ID: "cursor", Installed: true, BinPath: "cursor-agent",
 		ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "cursor-acp"},
 	}}
+	s := providers.Session{ID: "s1", ToolID: "cursor", Workspace: "/p"}
 	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
 		return providers.ModelConfig{Model: "m1"}, true
 	}}
-	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", mo, PermissionOptions{})
+	l, err := ForSessionACP(ps, tools, s, mo, PermissionOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(l.Args) != 2 || l.Args[0] != "--model" || l.Args[1] != "m1" {
-		t.Fatalf("path args = %v", l.Args)
+	if l.Dir != "/p" {
+		t.Fatalf("dir = %q", l.Dir)
+	}
+	if len(l.Args) != 1 || l.Args[0] != "acp" {
+		t.Fatalf("args = %v, want [acp]", l.Args)
+	}
+}
+
+// 官方通道不依赖 cursor-acp 适配器探测：ACP 探测不可用时仍可直连。
+func TestForWorkspaceACP_CursorOfficialWithoutAdapterDetection(t *testing.T) {
+	ps := []providers.Provider{providers.Cursor{}}
+	tools := []discovery.Tool{{
+		ID: "cursor", Installed: true, BinPath: "cursor-agent",
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Path != "cursor-agent" || len(l.Args) != 1 || l.Args[0] != "acp" {
+		t.Fatalf("launch = %+v", l)
 	}
 }
 
