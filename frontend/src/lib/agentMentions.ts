@@ -66,6 +66,30 @@ export function buildMentionOptions(agents: MentionAgent[]): MentionOption[] {
   });
 }
 
+// mentionTokens 列出草稿里可能出现的 @ 标签写法（路由 id 与写入标题两种），
+// 长串优先，避免一个标签是另一个标签前缀时先截短。
+function mentionTokens(options: MentionOption[]): string[] {
+  const out = new Set<string>();
+  for (const o of options) {
+    out.add(`@${o.label}`);
+    if (o.insert && o.insert !== o.label) out.add(`@${o.insert}`);
+  }
+  return [...out].sort((a, b) => b.length - a.length);
+}
+
+// stripLeadingMentions 去掉正文开头的 @ 标签（可多个、空格分隔）。
+// Hub 的 @ 标签只是路由标记；斜杠技能要求 "/" 落在正文首字符才会被 agent 识别。
+// 只剥离开头：正文中间与邮箱里的 @ 保持原样。
+export function stripLeadingMentions(text: string, options: MentionOption[]): string {
+  const tokens = mentionTokens(options);
+  let out = text.trimStart();
+  for (;;) {
+    const hit = tokens.find((tok) => out.startsWith(tok));
+    if (!hit) return out;
+    out = out.slice(hit.length).trimStart();
+  }
+}
+
 // displayMentionTitles 把文本里的 @工具#会话ID 换成 @工具#会话标题，仅供展示
 //（落盘原文可以仍是 id）。标题与项目都空时保留原文。长 id 优先，避免前缀截断。
 export function displayMentionTitles(text: string, agents: MentionAgent[]): string {

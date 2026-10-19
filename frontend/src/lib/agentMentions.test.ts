@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildMentionOptions, displayMentionTitles, resolveMentionTarget, type MentionAgent } from './agentMentions';
+import {
+  buildMentionOptions,
+  displayMentionTitles,
+  resolveMentionTarget,
+  stripLeadingMentions,
+  type MentionAgent,
+} from './agentMentions';
 
 const agents: MentionAgent[] = [
   { id: 'c1', toolId: 'claude', title: '重构认证', workspace: 'D:\\ws\\a' },
@@ -119,5 +125,34 @@ describe('resolveMentionTarget', () => {
   it('无 lastAgentId 且仅邮箱时返回 null', () => {
     const opts = buildMentionOptions(agents);
     expect(resolveMentionTarget('a@b.com', opts, null)).toBeNull();
+  });
+});
+
+describe('stripLeadingMentions', () => {
+  const opts = buildMentionOptions(agents);
+
+  it('去掉开头单个 @ 标签（标题写法）', () => {
+    expect(stripLeadingMentions('@Claude Code#重构认证 /commit', opts)).toBe('/commit');
+  });
+
+  it('去掉开头多个 @ 标签', () => {
+    expect(stripLeadingMentions('@Claude Code#重构认证 @Cursor#调样式 /commit', opts)).toBe('/commit');
+  });
+
+  it('同时认路由 id 写法', () => {
+    expect(stripLeadingMentions('@Claude Code#c1 /commit', opts)).toBe('/commit');
+  });
+
+  it('正文中间及邮箱里的 @ 不动', () => {
+    expect(stripLeadingMentions('帮我看看 @Claude Code#重构认证', opts)).toBe('帮我看看 @Claude Code#重构认证');
+    expect(stripLeadingMentions('a@b.com 帮我看看', opts)).toBe('a@b.com 帮我看看');
+  });
+
+  it('长标签优先，避免标题是另一标签前缀时截断', () => {
+    const longer = buildMentionOptions([
+      { id: 'c9', toolId: 'claude', title: '重构认证补充', workspace: 'D:\\ws\\a' },
+      { id: 'c1', toolId: 'claude', title: '重构认证', workspace: 'D:\\ws\\a' },
+    ]);
+    expect(stripLeadingMentions('@Claude Code#重构认证补充 /go', longer)).toBe('/go');
   });
 });

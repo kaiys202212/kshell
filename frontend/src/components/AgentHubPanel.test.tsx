@@ -1507,6 +1507,32 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '/commit fix bug'));
   });
 
+  it('@ 目标后输入 / 仍弹技能补全：选中只替换尾部词，发送时去掉 @ 前缀', async () => {
+    api.listChatCommands.mockResolvedValue([{ Name: 'commit', Description: 'Commit changes' }]);
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder')) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 /' } });
+    await waitFor(() =>
+      expect(screen.getByRole('listbox', { name: tt('ui.hub.cmd_aria') })).toHaveTextContent('/commit'),
+    );
+    fireEvent.keyDown(box, { key: 'Enter' });
+    // @ 目标保留，仅尾部 / 词替换成技能
+    expect(box.value).toBe('@Claude Code#重构认证 /commit ');
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '/commit'));
+  });
+
+  it('/ 前有普通文字时不弹技能补全（"/" 不在正文首字符，技能不会执行）', async () => {
+    api.listChatCommands.mockResolvedValue([{ Name: 'commit', Description: 'Commit changes' }]);
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '看看 /' } });
+    await waitFor(() => expect(api.listChatCommands).not.toHaveBeenCalled());
+    expect(screen.queryByRole('listbox', { name: tt('ui.hub.cmd_aria') })).toBeNull();
+  });
+
   it('/ 开头但不匹配任何 agent 技能：不拦截，原样发送给 agent', async () => {
     api.listChatCommands.mockResolvedValue([]);
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });

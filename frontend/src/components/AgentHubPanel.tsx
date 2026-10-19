@@ -30,7 +30,14 @@ import {
   confirmHubTool,
   saveHubRouteMode,
 } from '../lib/api';
-import { buildMentionOptions, displayMentionTitles, resolveMentionTarget, type MentionAgent, type MentionOption } from '../lib/agentMentions';
+import {
+  buildMentionOptions,
+  displayMentionTitles,
+  resolveMentionTarget,
+  stripLeadingMentions,
+  type MentionAgent,
+  type MentionOption,
+} from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
 import { loadDefaultCreate, loadLastCreate, loadToolModels, loadHubRouteMode, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode } from '../lib/agenthubDefaults';
 import { saveHubDefaultCreate } from '../lib/api';
@@ -373,8 +380,15 @@ export default function AgentHubPanel() {
     setDraft((d) => d.replace(/@([^\s@]*)$/, `@${label} `));
   };
 
-  // ---- 命令补全：draft 为单个 /xxx（agent 技能）或 #xxx（客户端命令）时激活 ----
-  const slashQuery = /^\/([^\s]*)$/.exec(draft)?.[1] ?? null;
+  // ---- 命令补全：draft 尾部为 /xxx（agent 技能）或整段为 #xxx（客户端命令）时激活 ----
+  // 斜杠按尾部 token 匹配：@ 目标（chips/补全写入）在前时仍能继续补全技能。
+  // 但 / 之前除 @ 标签外不能有其他文字：技能要求 "/" 位于正文首字符，
+  // 否则选中也不会执行，弹层只会误导。
+  const slashMatch = /(?:^|\s)\/([^\s]*)$/.exec(draft);
+  const slashQuery =
+    slashMatch && stripLeadingMentions(draft.slice(0, slashMatch.index), options) === ''
+      ? slashMatch[1]
+      : null;
   const hashQuery = /^#([^\s]*)$/.exec(draft)?.[1] ?? null;
   const inSlashMode = slashQuery !== null;
   const inHashMode = hashQuery !== null;
@@ -637,13 +651,14 @@ export default function AgentHubPanel() {
     setDialogOpen(true);
   };
 
-  // applySlash：客户端命令直接执行，agent 技能切入 draft 后正常发送。
+  // applySlash：客户端命令直接执行，agent 技能替换草稿尾部 / 词后正常发送。
+  // 只替换尾部 token，保留前面的 @ 目标（chips 写入的标签不因选技能被清掉）。
   const applySlash = (item: SlashItem) => {
     if (item.kind === 'client') {
       runClientCommand(item.name);
       return;
     }
-    setDraft(`/${item.name} `);
+    setDraft((d) => d.replace(/(^|\s)\/[^\s]*$/, (_m, lead: string) => `${lead}/${item.name} `));
     setSlashClosed(false);
     setSlashIndex(0);
   };
@@ -880,6 +895,10 @@ export default function AgentHubPanel() {
       return;
     }
     setDraft('');
+    // @ 标签只是 Hub 的路由标记，不交给 agent：去掉开头标签后若正文以 "/" 开头
+    // （斜杠技能），用剥离后的正文投递，保证 "/" 落在首字符；其余消息保持原样。
+    const stripped = stripLeadingMentions(text, options);
+    const deliverText = stripped.startsWith('/') ? stripped : text;
     // pending: 目标 = 最近交互的会话未激活（chats 查不到），但有磁盘会话 ID 快照：
     // 先 openSessionACP 激活原会话，再向新 chat 投递。激活失败报错不投递——
     // 上下文丢失必须可见，绝不落 workspace 模糊匹配误投同项目会话。
@@ -889,7 +908,7 @@ export default function AgentHubPanel() {
         if (!chat) return;
         // 激活与发送分开 catch：失败阶段不同，文案不同（激活失败 vs 发送失败），
         // 混在一个 catch 里会把投递失败误报成「激活会话失败」误导排查。
-        void sendChatPrompt(chat.ID, text)
+        void sendChatPrompt(chat.ID, deliverText)
           .then(() => {
             useAppStore.getState().setLastAgentId(chat.ID);
           })
@@ -900,7 +919,7 @@ export default function AgentHubPanel() {
       return;
     }
     // 用户消息由 Go 侧落盘并经 hub:changed 回流（单一数据源），失败只提示不回滚。
-    void sendChatPrompt(targetId, text)
+    void sendChatPrompt(targetId, deliverText)
       .then(() => {
         useAppStore.getState().setLastAgentId(targetId);
       })
