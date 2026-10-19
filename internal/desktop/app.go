@@ -285,7 +285,7 @@ func (a *App) scheduleUpdateCheck() {
 
 // toggleMainWindow 供系统热键 Alt+Shift+K 调用：唤起或隐藏主窗口。
 // 判定口径对齐托盘/气泡的显示路径——隐藏中、非前台、最小化任一成立即视为
-//「用户看不到窗口」，走显示路径（最小化先还原再前置）；否则收进托盘。
+// 「用户看不到窗口」，走显示路径（最小化先还原再前置）；否则收进托盘。
 // ctx 未就绪（Startup 之前/之后）时安全返回，不触碰任何窗口操作。
 func (a *App) toggleMainWindow() {
 	a.mu.Lock()
@@ -993,7 +993,9 @@ func (a *App) backfillHubSessionID(m *chat.Manager, sessionID string) {
 	}
 	chatID := ""
 	for _, info := range m.List() {
-		if info.SessionID == sessionID {
+		// 只服务新建会话（欢迎词落盘时还没有磁盘 ID）；KindSession 由
+		// recordHubUserMessageStatus 落盘时已带快照，无需也不应回填。
+		if info.Kind == chat.KindNew && info.SessionID == sessionID {
 			chatID = a.originalChatID(info.ID) // hub 落盘统一链头 ID
 			break
 		}

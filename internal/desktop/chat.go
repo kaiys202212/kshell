@@ -54,7 +54,7 @@ func newChatManager(a *App) *chat.Manager {
 // origID 把 manager 侧会话 ID 翻回前端持有的原始 ID（nil 为恒等，测试用）：
 // 重建换 ID 后前端仍按旧 ID 索引，出站事件必须统一翻译（见 emitChatOut）。
 // onWxPermission 非 nil 时权限请求同步转发给微信桥的命令层权限菜单
-//（nil 安全：测试装配不传；desktop 装配传闭包，运行时内部再判桥是否存在）。
+// （nil 安全：测试装配不传；desktop 装配传闭包，运行时内部再判桥是否存在）。
 func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, autoAllow func() bool, dedupe func(agenthook.Payload) bool, onAgent func(agenthook.Payload), origID func(string) string, onWxPermission func(chatID, reqID, desc string)) *chat.Manager {
 	translate := func(id string) string {
 		if origID == nil {
@@ -93,7 +93,7 @@ func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, aut
 
 // turnEvent 把 stopReason 归纳为通知事件 id：只有 end_turn/空 才算完成；
 // cancelled 是用户主动取消（中性，不报错也不报完成）；其余
-//（max_tokens / max_turn_requests / refusal / 未知值）是 agent 提前停止——
+// （max_tokens / max_turn_requests / refusal / 未知值）是 agent 提前停止——
 // 此前一律报「任务完成」，正是「任务没做完却停了且毫无提示」的根因。
 func turnEvent(stop string) string {
 	switch stop {
@@ -158,7 +158,7 @@ func lastAssistantText(h []chat.Update) string {
 // onAgent 非 nil 时在放行后落 AgentHub 历史（与 hook 通道共用同一写入路径）。
 // 回调总在 Manager 锁外执行，Get 取锁安全。
 // chatID 翻回原始 ID（前端归因空间），与出站事件同一口径；origID 为 nil 时恒等
-//（测试装配不关心别名链）。
+// （测试装配不关心别名链）。
 func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, event, summary string, allow func(agenthook.Payload) bool, onAgent func(agenthook.Payload), origID func(string) string) {
 	if m == nil {
 		return
@@ -305,8 +305,9 @@ func (a *App) openWorkspaceACP(wsID, toolID string, allowFallback bool) (OpenedS
 				KnownSessionIDs: a.knownSessionIDs(),
 			}, l, "")
 			if err == nil {
-				a.recordHubWelcome(info)
+				// 先让前端登记会话再落欢迎词：欢迎卡一旦可见，快捷操作就能解析到目标。
 				a.emitChatMeta(info)
+				a.recordHubWelcome(info)
 				return OpenedSession{Kind: "chat", Chat: &info}, nil
 			}
 			if allowFallback {
@@ -524,7 +525,7 @@ func (a *App) ListChatModels(id string) (chat.ModelsView, error) {
 }
 
 // modelsView 取某会话的合并模型视图；agent 未报告时返回空切片视图
-//（nil 会序列化成 null，前端 models.Models.find 会抛 TypeError 白屏）。
+// （nil 会序列化成 null，前端 models.Models.find 会抛 TypeError 白屏）。
 // ListChatModels 与 chat:models 推送共用。入口别名解析：重建后前端持旧 ID
 // 也能查到新会话。agent 上报的列表会与 kshell 配置的平台模型合并（配置模型
 // 是注入通道的实际取值域，agent 自报列表里不会有它们；单平台裸名、多平台
@@ -544,7 +545,7 @@ func (a *App) modelsView(id string) (chat.ModelsView, error) {
 
 // mergeConfigModels 把 kshell 配置的模型列表并入 agent 上报视图：
 // 已存在（按 ID）跳过；数据源为配置的平台列表。单平台保持裸名
-//（ID=Name=model，向后兼容旧保存的 modelId）；多平台加
+// （ID=Name=model，向后兼容旧保存的 modelId）；多平台加
 // "kshell:<platID>:<model>" 前缀，默认平台条目排最前，其余按列表顺序。
 func (a *App) mergeConfigModels(v chat.ModelsView) chat.ModelsView {
 	cfg := a.snapshot().Config.Model

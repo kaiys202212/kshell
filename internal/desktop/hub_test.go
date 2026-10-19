@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -621,5 +622,23 @@ func TestRecordHubAgentMessageLandsOnChainHead(t *testing.T) {
 	}
 	if msgs[0].ChatID != oldID {
 		t.Fatalf("agent 消息 ChatID 应落链头 %s, got %q", oldID, msgs[0].ChatID)
+	}
+}
+
+// recordHubAck 的归因字段应完整复制用户消息（含 SessionID）：
+// 绑定磁盘会话后产生的排队/送达卡片在会话关闭后也要能精确 resume；
+// 缺快照时这类卡片仍会落回标题猜测而报 need_target。
+func TestRecordHubAckCopiesSessionID(t *testing.T) {
+	a, store, _ := newHubTestApp(t)
+	if err := store.Append(hub.Message{Kind: "user", ChatID: "c1", Text: "hi", SessionID: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	id := store.List()[0].ID
+	a.recordHubAck(strconv.FormatInt(id, 10), "ui.hub.ack_queued")
+
+	msgs := store.List()
+	last := msgs[len(msgs)-1]
+	if last.Kind != "agent" || last.SessionID != "s1" {
+		t.Fatalf("ack 应复制用户消息的 SessionID: %+v", last)
 	}
 }

@@ -124,6 +124,7 @@ func (a *App) recordHubAck(hubID, key string) {
 			m.Tool = u.Tool
 			m.Workspace = u.Workspace
 			m.SessionTitle = u.SessionTitle
+			m.SessionID = u.SessionID // 绑定后的排队/送达卡片也要能精确 resume
 			break
 		}
 	}
