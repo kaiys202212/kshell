@@ -22,7 +22,7 @@ func TestLastSeenVersionRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if loaded.LastSeenVersion != "v1.2.3" {
-		t.Fatalf("应保留 lastseenversion, got %q", loaded.LastSeenVersion)
+		t.Fatalf("应保留 last_seen_version, got %q", loaded.LastSeenVersion)
 	}
 }
 
@@ -31,15 +31,15 @@ func TestLastSeenVersionYAMLKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "lastseenversion:") {
-		t.Fatalf("yaml 应含 lastseenversion 键: %s", data)
+	if !strings.Contains(string(data), "last_seen_version:") {
+		t.Fatalf("yaml 应含 last_seen_version 键: %s", data)
 	}
 	var c Config
-	if err := yaml.Unmarshal([]byte("lastseenversion: v0.1.0\n"), &c); err != nil {
+	if err := yaml.Unmarshal([]byte("last_seen_version: v0.1.0\n"), &c); err != nil {
 		t.Fatal(err)
 	}
 	if c.LastSeenVersion != "v0.1.0" {
-		t.Fatalf("反序列化 lastseenversion 失败, got %q", c.LastSeenVersion)
+		t.Fatalf("反序列化 last_seen_version 失败, got %q", c.LastSeenVersion)
 	}
 }
 

@@ -133,7 +133,7 @@ type Config struct {
 	// ProjectSetupDismissed 为 true 后不再自动弹出首次项目选择弹窗。
 	ProjectSetupDismissed bool `yaml:"project_setup_dismissed"`
 	// LastSeenVersion 记录用户已确认过的最新版本号（升级后弹升级日志的去重依据）。
-	LastSeenVersion string `yaml:"lastseenversion"`
+	LastSeenVersion string `yaml:"last_seen_version"`
 	// Weixin 是微信桥（iLink）的持久化配置。
 	Weixin WeixinConfig `yaml:"weixin"`
 	// AgentHub 是 AgentHub 的跨端持久化配置（默认工具/模型）。

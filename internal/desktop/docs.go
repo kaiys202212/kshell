@@ -1,6 +1,8 @@
 package desktop
 
 import (
+	"strings"
+
 	"github.com/yangk/kshell/internal/appdocs"
 	"github.com/yangk/kshell/internal/config"
 )
@@ -21,5 +23,5 @@ func (a *App) GetLastSeenVersion() string {
 
 // MarkVersionSeen 持久化用户已确认的版本号，用于升级后弹升级日志的去重。
 func (a *App) MarkVersionSeen(version string) error {
-	return a.saveConfig(func(cfg *config.Config) { cfg.LastSeenVersion = version })
+	return a.saveConfig(func(cfg *config.Config) { cfg.LastSeenVersion = strings.TrimSpace(version) })
 }
