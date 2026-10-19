@@ -416,7 +416,7 @@ func (a *App) latestAgentChatID() string {
 	}
 	list := store.List()
 	for i := len(list) - 1; i >= 0; i-- {
-		if mm := list[i]; mm.Kind == "agent" && mm.Event == "" && mm.ChatID != "" {
+		if mm := list[i]; mm.Kind == "agent" && mm.Event == "" && mm.ChatID != "" && mm.Text != "" {
 			return mm.ChatID
 		}
 	}

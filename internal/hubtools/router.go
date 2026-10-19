@@ -23,7 +23,9 @@ func BuildSystemPrompt(tools []ToolDef, routeAware bool, recent []ChatLogEntry) 
 	if len(recent) > 0 {
 		b.WriteString("\n近期聊天记录（旧→新，编号 [n] 供 dispatch_task 的 ref 参数引用）：\n")
 		for i, it := range recent {
-			b.WriteString(fmt.Sprintf("[%d] 会话=%s 方向=%s 内容=%s\n", i+1, it.Agent, it.Sender, it.Text))
+			// 折叠换行保持一行一条，编号行结构不被多行消息破坏。
+			text := strings.ReplaceAll(it.Text, "\n", " ")
+			b.WriteString(fmt.Sprintf("[%d] 会话=%s 方向=%s 内容=%s\n", i+1, it.Agent, it.Sender, text))
 		}
 	}
 	if routeAware {
