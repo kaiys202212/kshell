@@ -504,6 +504,92 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '继续'));
   });
 
+  it('最新 agent 回复带 sessionId 快照但会话未激活时，先激活原会话再发送，不误投同 workspace 会话', async () => {
+    // 回归场景：strategy 会话（未激活）发了最后一条消息，同 workspace 还挂着
+    // 另一个已激活 chat。旧逻辑 chats.find 查不到该消息的 chatId，落到 workspace
+    // 模糊匹配，把回复投给了同项目的另一个会话。
+    api.openSessionACP.mockResolvedValue({ Kind: 'chat', Chat: chat({ ID: 'c-new', SessionID: 'sess-9', Title: 'strategy' }) });
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
+      hubMessages: [
+        {
+          id: 1,
+          kind: 'agent',
+          tool: 'claude',
+          event: 'Stop',
+          workspace: 'D:\\ws\\a',
+          sessionId: 'sess-9',
+          sessionTitle: 'strategy',
+          text: 'strategy 的回复',
+          ts: 2,
+        },
+      ],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '继续' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-9'));
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c-new', '继续'));
+    // 绝不投给同 workspace 的 c1
+    expect(api.sendChatPrompt).not.toHaveBeenCalledWith('c1', '继续');
+  });
+
+  it('最新 agent 回复仅带 session: 前缀 termKey（无 sessionId 快照）时同样激活后发送', async () => {
+    api.openSessionACP.mockResolvedValue({ Kind: 'chat', Chat: chat({ ID: 'c-new', SessionID: 'sess-8' }) });
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
+      hubMessages: [
+        {
+          id: 1,
+          kind: 'agent',
+          tool: 'claude',
+          event: 'Stop',
+          workspace: 'D:\\ws\\a',
+          termKey: 'session:sess-8',
+          text: '回复',
+          ts: 1,
+        },
+      ],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '继续' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-8'));
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c-new', '继续'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalledWith('c1', '继续');
+  });
+
+  it('待激活会话激活失败时报错且不投递，不落回 workspace 模糊匹配', async () => {
+    api.openSessionACP.mockRejectedValue(new Error('err.chat.gone'));
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
+      hubMessages: [
+        {
+          id: 1,
+          kind: 'agent',
+          tool: 'claude',
+          event: 'Stop',
+          workspace: 'D:\\ws\\a',
+          sessionId: 'sess-9',
+          text: '回复',
+          ts: 1,
+        },
+      ],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '继续' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-9'));
+    await waitFor(() => expect(useAppStore.getState().toasts.length).toBeGreaterThan(0));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
   it('渲染持久历史中的用户消息与 agent 回复', async () => {
     api.listHubMessages.mockResolvedValue([
       { id: 1, kind: 'user', chatId: 'c1', text: '帮我修复', ts: 1 },

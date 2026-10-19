@@ -172,12 +172,29 @@ function wsBaseName(ws: string): string {
   return baseName(ws);
 }
 
+// PENDING_PREFIX 标记「目标会话存在但未激活」的投递目标：lastHubAgentId 从消息
+// 的 sessionId 快照 / session: 前缀 termKey 解析出磁盘会话 ID，send() 据此先
+// openSessionACP 激活再投递，避免精确归因命中不了已激活 chats 时误投同 workspace 会话。
+const PENDING_PREFIX = 'pending:';
+
+// hubPendingSessionId 从一条 hub 消息解析待激活磁盘会话 ID（同步可得的两种来源）：
+// sessionId 快照优先，其次 termKey 的 session: 前缀。都没有返回 null。
+// 异步的 workspace+tool+title 缓存查找不在此做（lastHubAgentId 是同步 useMemo，
+// 且模糊兜底仍由 workspace 匹配承担）。
+function hubPendingSessionId(m: HubMessage): string | null {
+  if (m.sessionId) return m.sessionId;
+  if (m.termKey?.startsWith('session:')) return m.termKey.slice('session:'.length);
+  return null;
+}
+
 // lastHubAgentId 从 hub 消息历史倒序找「最近一次交互」的目标 agent：
 // 消息经归因字段反查 chat，再确认该 chat 仍是当前 mention 候选。
-// 字段匹配方式与 hubAttribution 相同（chatId 按会话 ID、termKey 按会话 Key、
-// workspace 用 sameWorkspacePath 归并），但优先级不同：精确匹配（chatId/termKey）
-// 先于模糊匹配（workspace）；user 与 agent 消息都参与匹配（user 消息也带目标
-// agent 的归因字段）。
+// 每条消息按四级尝试：chatId 精确 → termKey 精确 → 会话未激活但有磁盘会话 ID
+//（返回 pending: 前缀标记，由 send() 先激活再投递）→ workspace 模糊匹配。
+// pending 排在模糊之前：精确归因命中不了已激活 chats 时（会话关闭/重启），
+// 有磁盘会话 ID 就该激活原会话，而不是借 workspace 模糊误投同项目其他会话；
+// 模糊匹配只服务完全无精确归因的旧记录。user 与 agent 消息都参与匹配
+//（user 消息也带目标 agent 的归因字段）。
 // 已知局限：同 workspace 多 chat 时 chats.find 取列表第一个，未必是最近交互
 // 的那个（降级行为，可接受）。找不到返回 null。
 function lastHubAgentId(messages: HubMessage[], options: MentionOption[], chats: ChatInfo[]): string | null {
@@ -185,9 +202,12 @@ function lastHubAgentId(messages: HubMessage[], options: MentionOption[], chats:
     const m = messages[i];
     const c =
       chats.find((x) => x.ID === m.chatId) ??
-      chats.find((x) => m.termKey && x.Key === m.termKey) ??
-      chats.find((x) => m.workspace && sameWorkspacePath(x.Workspace, m.workspace));
+      chats.find((x) => m.termKey && x.Key === m.termKey);
     if (c && options.some((o) => o.id === c.ID)) return c.ID;
+    const pending = hubPendingSessionId(m);
+    if (pending) return PENDING_PREFIX + pending;
+    const f = m.workspace ? chats.find((x) => sameWorkspacePath(x.Workspace, m.workspace!)) : undefined;
+    if (f && options.some((o) => o.id === f.ID)) return f.ID;
   }
   return null;
 }
@@ -779,6 +799,25 @@ export default function AgentHubPanel() {
       return;
     }
     setDraft('');
+    // pending: 目标 = 最近交互的会话未激活（chats 查不到），但有磁盘会话 ID 快照：
+    // 先 openSessionACP 激活原会话，再向新 chat 投递。激活失败报错不投递——
+    // 上下文丢失必须可见，绝不落 workspace 模糊匹配误投同项目会话。
+    if (targetId.startsWith(PENDING_PREFIX)) {
+      const sessionID = targetId.slice(PENDING_PREFIX.length);
+      void openSessionACP(sessionID)
+        .then(async (res) => {
+          if (!res.Chat) return;
+          const chat = res.Chat;
+          useAppStore.getState().upsertChat(chat);
+          useAppStore.getState().setLastAgentId(chat.ID);
+          await sendChatPrompt(chat.ID, text);
+          useAppStore.getState().setLastAgentId(chat.ID);
+        })
+        .catch((e: unknown) => {
+          useAppStore.getState().notify(t('ui.hub.find_activate_failed', { err: backendError(e) }), 'error');
+        });
+      return;
+    }
     // 用户消息由 Go 侧落盘并经 hub:changed 回流（单一数据源），失败只提示不回滚。
     void sendChatPrompt(targetId, text)
       .then(() => {
