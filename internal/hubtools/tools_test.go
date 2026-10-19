@@ -18,6 +18,12 @@ type fakeBridge struct {
 	workspace *WorkspaceView
 	tasks     []TaskView
 	task      *TaskView
+	recent    []ChatLogEntry
+	// dispatch 桩：记录实参并返回预置结果
+	dispatchRef      string
+	dispatchTaskText string
+	dispatchLabel    string
+	dispatchErr      error
 }
 
 func newFakeBridge() *fakeBridge {
@@ -86,6 +92,17 @@ func (f *fakeBridge) ListRunningTasks() ([]TaskView, error) {
 func (f *fakeBridge) GetTaskDetail(id string) (*TaskView, error) {
 	f.count("GetTaskDetail")
 	return f.task, nil
+}
+
+func (f *fakeBridge) RecentMessages(n int) []ChatLogEntry {
+	f.count("RecentMessages")
+	return f.recent
+}
+
+func (f *fakeBridge) DispatchTask(ref, task string) (string, error) {
+	f.count("DispatchTask")
+	f.dispatchRef, f.dispatchTaskText = ref, task
+	return f.dispatchLabel, f.dispatchErr
 }
 
 func TestToolsRegistered(t *testing.T) {

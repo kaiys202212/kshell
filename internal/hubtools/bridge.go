@@ -44,6 +44,14 @@ type TaskView struct {
 	Status    string `json:"status"`
 }
 
+// ChatLogEntry 是注入提示词的一条聊天记录摘要：会话归属（agent 名）、
+// 消息发出方与截断后的正文，由宿主从 hub 存储映射而来。
+type ChatLogEntry struct {
+	Agent  string
+	Sender string
+	Text   string
+}
+
 // Bridge 提供宿主能力查询与需求写入（写操作由确认门禁前置把关）。
 type Bridge interface {
 	ListRequirements() ([]RequirementView, error)
@@ -55,4 +63,9 @@ type Bridge interface {
 	GetWorkspace(id string) (*WorkspaceView, error)
 	ListRunningTasks() ([]TaskView, error)
 	GetTaskDetail(id string) (*TaskView, error)
+	// RecentMessages 返回最近 n 条纯文本聊天记录摘要，供意图识别做上下文。
+	RecentMessages(n int) []ChatLogEntry
+	// DispatchTask 把任务派发到 ref 对应的聊天会话（ref 由本轮提示词里的
+	// 记录编号定义），返回目标会话人话标签；ref 无法解析时返回错误。
+	DispatchTask(ref, task string) (string, error)
 }

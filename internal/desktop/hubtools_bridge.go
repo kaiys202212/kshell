@@ -3,9 +3,11 @@ package desktop
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/yangk/kshell/internal/acp"
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
@@ -15,8 +17,11 @@ import (
 )
 
 // desktopBridge 把 App 既有能力适配为 hubtools.Bridge：只做视图映射，不重复实现查询。
+// chatRefs 是本轮提示词的记录编号→ChatID 映射（HandlePrompt 构建上下文时注入），
+// 供 dispatch_task 解析 ref。
 type desktopBridge struct {
-	app *App
+	app      *App
+	chatRefs map[string]string
 }
 
 // toRequirementView 把 requirements.Item 映射为 hubtools 视图（字段同名对齐）。
@@ -153,6 +158,64 @@ func (b *desktopBridge) GetTaskDetail(id string) (*hubtools.TaskView, error) {
 	return nil, nil
 }
 
+// RecentMessages 从 hub store 取最近 n 条纯文本消息映射为提示词摘要。
+func (b *desktopBridge) RecentMessages(n int) []hubtools.ChatLogEntry {
+	store := b.app.snapshot().HubStore
+	if store == nil {
+		return nil
+	}
+	all := store.List()
+	out := make([]hubtools.ChatLogEntry, 0, n)
+	for _, m := range all {
+		// 只取纯文本对话（排除 ack 卡片、确认卡等事件消息）。
+		if m.Event != "" || m.Status != "" || m.Text == "" {
+			continue
+		}
+		sender := "助手"
+		if m.Kind == "user" {
+			sender = "用户"
+		}
+		agent := m.Tool
+		if m.SessionTitle != "" {
+			agent += "「" + m.SessionTitle + "」"
+		}
+		text := m.Text
+		if len(text) > 200 {
+			text = text[:200]
+		}
+		out = append(out, hubtools.ChatLogEntry{Agent: agent, Sender: sender, Text: text})
+	}
+	if len(out) > n {
+		out = out[len(out)-n:]
+	}
+	return out
+}
+
+// DispatchTask 把任务派发到 ref 对应会话（ref 由本轮提示词编号定义），
+// 返回目标会话标签供模型组织回复。
+func (b *desktopBridge) DispatchTask(ref, task string) (string, error) {
+	chatID, ok := b.chatRefs[ref]
+	if !ok {
+		return "", fmt.Errorf("未知的会话编号: %s", ref)
+	}
+	resolved, _ := b.app.resolveChatID(chatID)
+	sendID, err := b.app.ensureChatAlive(resolved)
+	if err != nil {
+		return "", err
+	}
+	blocks := []acp.ContentBlock{{Type: "text", Text: task}}
+	if err := b.app.sendAndRecord(sendID, blocks, task); err != nil {
+		return "", err
+	}
+	label := resolved
+	if m := b.app.chats(); m != nil {
+		if info, ok := m.Get(sendID); ok {
+			label = info.ToolID + "「" + info.Title + "」"
+		}
+	}
+	return label, nil
+}
+
 // hubPromptTimeout 是单条输入完整工具循环（含 LLM 多轮请求）的超时上限。
 const hubPromptTimeout = 90 * time.Second
 
@@ -231,7 +294,7 @@ func (h *hubRouter) HandlePrompt(sendID, text string) (bool, error) {
 	}
 
 	msgs := []hubtools.Message{
-		{Role: "system", Content: hubtools.BuildSystemPrompt(reg.Tools(), h.routeAware())},
+		{Role: "system", Content: hubtools.BuildSystemPrompt(reg.Tools(), h.routeAware(), nil)},
 		{Role: "user", Content: text},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), hubPromptTimeout)
@@ -349,7 +412,7 @@ func (a *App) ConfirmHubTool(chatID, pendingID string, approved bool) error {
 // 失败或空回复返回空串（调用方降级落原始结果）。
 func (h *hubRouter) summarizeConfirm(result string) string {
 	msgs := []hubtools.Message{
-		{Role: "system", Content: hubtools.BuildSystemPrompt(nil, false)},
+		{Role: "system", Content: hubtools.BuildSystemPrompt(nil, false, nil)},
 		{Role: "user", Content: "写操作已由用户确认并执行完成，工具返回结果：\n" + result +
 			"\n\n请用一句简洁中文向用户说明执行结果，不要输出 JSON。"},
 	}
