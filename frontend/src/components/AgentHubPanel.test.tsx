@@ -134,6 +134,16 @@ describe('AgentHubPanel', () => {
     );
   });
 
+  it('会话胶囊位于输入区上方（与 textarea 同容器，不在顶栏）', () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const pill = screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') });
+    const inputArea = pill.closest('[data-testid="hub-input-area"]');
+    expect(inputArea).not.toBeNull();
+    // 结构意图：胶囊紧邻输入框上方，与 textarea 同属输入区容器
+    expect(inputArea?.querySelector('textarea')).not.toBeNull();
+  });
+
   it('有会话时渲染浮动胶囊（默认目标名），旧固定列表不再渲染', () => {
     useAppStore.setState({
       chats: [
