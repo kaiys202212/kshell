@@ -7,36 +7,41 @@ package hub
 type langPair struct{ En, Zh string }
 
 var cmdTexts = map[string]langPair{
-	"help": {`Commands:
-#?  Help
-#l  Recent sessions (first 10)
-#la All sessions
-#en [text]  Quick new session (text sent after ready)
-#n  Step-by-step new session
-#s  Interrupt current task
-#m  Switch model
-#h [count] Recent hub messages
-#g <number> <text>  Send to a session
-#f <keyword>  Search sessions
-#st Status
-#c  Cancel selection
-<number>  Switch to that session
-Plain text = send to current session`,
-		`命令列表:
-#?  帮助
-#l  最近会话(前10)
-#la 全部会话
-#en [内容] 快速新建会话（内容自动下发）
-#n  分步新建会话
-#s  中断当前任务
-#m  切换模型
-#h [条数] 查看最近消息
-#g <编号> <内容>  向指定会话发送
-#f <关键词>  搜索会话
-#st 状态
-#c  取消选择
-数字  切换到对应会话
-直接输入文字 = 发给当前会话`},
+	// help 是 Markdown 文案：AgentHub 与微信气泡均按 Markdown 渲染，用列表
+	// 与加粗表达结构（单个 \n 会被 soft-break 折叠；行首 # 命令词会被解析成
+	// 标题，故一律列表项形式）。
+	"help": {`**Commands**
+
+- #?  Help
+- #l  Recent sessions (first 10)
+- #la All sessions
+- #en [text]  Quick new session (text sent after ready)
+- #n  Step-by-step new session
+- #s  Interrupt current task
+- #m  Switch model
+- #h  Recent hub messages; #h <number> shows one message in full
+- #g <number> <text>  Send to a session
+- #f <keyword>  Search sessions
+- #st Status
+- #c  Cancel selection
+- <number>  Switch to that session
+- Plain text = send to current session`,
+		`**命令列表**
+
+- #?  帮助
+- #l  最近会话(前10)
+- #la 全部会话
+- #en [内容] 快速新建会话（内容自动下发）
+- #n  分步新建会话
+- #s  中断当前任务
+- #m  切换模型
+- #h  查看最近消息；#h <序号> 看某条全文
+- #g <编号> <内容>  向指定会话发送
+- #f <关键词>  搜索会话
+- #st 状态
+- #c  取消选择
+- 数字  切换到对应会话
+- 直接输入文字 = 发给当前会话`},
 
 	"no_current":        {"No active session", "当前无活跃会话"},
 	"no_current_list":   {"No active session, use #l to list", "当前无活跃会话，#l 查看"},
@@ -79,12 +84,13 @@ Plain text = send to current session`,
 	"status_running":     {"Running tasks: %d", "运行中任务: %d"},
 	"status_undelivered": {"Undelivered messages: %d", "未送达消息: %d"},
 
-	// #h 最近消息
-	"usage_h":      {"Usage: #h [count]", "用法: #h [条数]"},
-	"no_messages":  {"No hub messages yet", "暂无 AgentHub 消息"},
-	"recent_header": {"Recent %d messages:", "最近 %d 条消息:"},
-	"msg_user":     {"user", "用户"},
-	"msg_agent":    {"agent", "agent"},
+	// #h 最近消息（Markdown 列表 + 序号查全文详情头）
+	"usage_h":       {"Usage: #h or #h <number>", "用法: #h 或 #h <序号>"},
+	"no_messages":   {"No hub messages yet", "暂无 AgentHub 消息"},
+	"recent_header": {"**Recent %d messages:**", "**最近 %d 条消息:**"},
+	"msg_detail":    {"**Message %d** [%s][%s]", "**消息 %d** [%s][%s]"},
+	"msg_user":      {"user", "用户"},
+	"msg_agent":     {"agent", "agent"},
 }
 
 // CmdText 按语言取命令层文案：zh-CN 用中文，其余英文；未知 key 原样返回。

@@ -2,10 +2,14 @@ package hub
 
 import (
 	"errors"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 )
+
+// reBareCmd 匹配行首裸命令词（Markdown 里会被解析成标题）。
+var reBareCmd = regexp.MustCompile(`(?m)^#[a-z?？]`)
 
 // fmtS 整数转字符串的简写。
 func fmtS(n int) string { return strconv.Itoa(n) }
@@ -139,11 +143,16 @@ func TestHelpWithCurrent(t *testing.T) {
 		currentSession: wsRef(0, "c1", "", `D:\work\demo`, "claude", "修复登录", true),
 	})
 	out := join(c.Handle("#?"))
-	if !strings.Contains(out, "命令列表") || !strings.Contains(out, "#l") || !strings.Contains(out, "#st") {
-		t.Fatalf("帮助应含命令表: %s", out)
+	if !strings.Contains(out, "**命令列表**") || !strings.Contains(out, "- #l") || !strings.Contains(out, "#st") {
+		t.Fatalf("帮助应含 Markdown 命令表: %s", out)
 	}
 	if !strings.Contains(out, "当前会话: 修复登录 (claude)") {
 		t.Fatalf("帮助应含当前会话行: %s", out)
+	}
+	// Markdown 化关键约束：命令词不得出现在行首（会被 ReactMarkdown 解析为
+	// 标题），必须以列表项形式出现。
+	if reBareCmd.MatchString(out) {
+		t.Fatalf("帮助不得有行首裸命令（会渲染成标题）: %s", out)
 	}
 }
 
@@ -171,15 +180,16 @@ func TestListTruncatesTo10AndMarksCurrent(t *testing.T) {
 
 	out := join(c.Handle("#l"))
 	lines := strings.Split(out, "\n")
-	// 10 行列表 + 末尾 1 行「回复数字可切换」引导提示。
-	if len(lines) != 11 {
-		t.Fatalf("应只列前 10 个加引导提示，得到 %d 行: %q", len(lines), out)
+	// 10 行列表 + 空行 + 末尾 1 行「回复数字可切换」引导提示（空行分隔防
+	// Markdown 懒续行把提示吞进列表项）。
+	if len(lines) != 12 {
+		t.Fatalf("应只列前 10 个加空行加引导提示，得到 %d 行: %q", len(lines), out)
 	}
-	if lines[10] != "回复数字可切换到对应会话" {
-		t.Fatalf("末行应为引导提示: %q", lines[10])
+	if lines[10] != "" || lines[11] != "回复数字可切换到对应会话" {
+		t.Fatalf("末尾应空行+引导提示: %q", lines[10:])
 	}
-	if !strings.HasPrefix(lines[2], "▶3. ") {
-		t.Fatalf("第 3 行应以 ▶3. 开头: %q", lines[2])
+	if !strings.Contains(lines[2], "3. ▶") {
+		t.Fatalf("第 3 行应在编号后标 ▶: %q", lines[2])
 	}
 	if !strings.Contains(lines[0], "1. [repo] claude 会话1") {
 		t.Fatalf("首行应含编号、工作区末段与标题: %q", lines[0])
@@ -201,7 +211,7 @@ func TestListRefreshesCurrent(t *testing.T) {
 	c := NewConsole(fe)
 	out := join(c.Handle("#l"))
 	// c1 是当前会话，应标 ▶（由 #l 内 refreshCurrent 比对 ChatID 得出）。
-	if !strings.HasPrefix(out, "▶1. [b] codex 标题") {
+	if !strings.HasPrefix(out, "1. ▶ [b] codex 标题") {
 		t.Fatalf("列表行格式不符: %q", out)
 	}
 	// current 被刷新：#? 应显示
@@ -225,7 +235,7 @@ func TestListAll(t *testing.T) {
 	}
 	c := NewConsole(&fakeExecutor{listSessions: refs})
 	lines := strings.Split(join(c.Handle("#la")), "\n")
-	if len(lines) != 13 { // 12 个会话 + 末尾引导提示
+	if len(lines) != 14 { // 12 个会话 + 空行 + 末尾引导提示
 		t.Fatalf("#la 应列全量 12 个加引导提示，得到 %d 行", len(lines))
 	}
 }
@@ -408,7 +418,7 @@ func TestModelsMenu(t *testing.T) {
 	}
 	c := NewConsole(fe)
 	out := join(c.Handle("#m"))
-	if !strings.Contains(out, "选择模型") || !strings.Contains(out, "▶2. Opus") {
+	if !strings.Contains(out, "选择模型") || !strings.Contains(out, "2. ▶ Opus") {
 		t.Fatalf("#m 应列模型并标当前: %s", out)
 	}
 	out = join(c.Handle("1"))
@@ -522,7 +532,7 @@ func TestStatus(t *testing.T) {
 		status: ConsoleStatus{CurrentTitle: "修复登录", Running: 2, Undelivered: 5},
 	})
 	out := join(c.Handle("#st"))
-	want := "当前会话: 修复登录\n运行中任务: 2\n未送达消息: 5"
+	want := "- 当前会话: 修复登录\n- 运行中任务: 2\n- 未送达消息: 5"
 	if out != want {
 		t.Fatalf("#st 格式不符:\n得到 %q\n期望 %q", out, want)
 	}
@@ -876,7 +886,8 @@ func TestFullWidthQuestionHelp(t *testing.T) {
 	}
 }
 
-// #h 查询 AgentHub 最近消息：默认 10 条、参数条数、非法参数、空历史、超长截断。
+// #h 查询 AgentHub 最近消息：默认 10 条列表（存快照）、超长截断；
+// `#h <序号>` 回显上次列表第 N 条全文（条数参数已砍，2026-10-19 用户决策 A）。
 func TestRecentMessagesCommand(t *testing.T) {
 	long := strings.Repeat("长", recentTextCap+5)
 	fe := &fakeExecutor{recentMessages: []Message{
@@ -886,34 +897,49 @@ func TestRecentMessagesCommand(t *testing.T) {
 	c := NewConsole(fe)
 
 	out := join(c.Handle("#h"))
-	if !strings.Contains(out, "最近 2 条消息:") || !strings.Contains(out, "1. [用户][会话A] 第一问") {
+	if !strings.Contains(out, "**最近 2 条消息:**") || !strings.Contains(out, "1. [用户][会话A] 第一问") {
 		t.Fatalf("#h 默认格式不符: %q", out)
 	}
 	if !strings.Contains(out, strings.Repeat("长", recentTextCap)+"…") {
 		t.Fatalf("超长正文应截断加省略号: %q", out)
 	}
 
-	// 参数条数：#h 1 只取最后一条
-	out = join(c.Handle("#h 1"))
-	if !strings.Contains(out, "最近 1 条消息:") || !strings.Contains(out, "[agent]") {
-		t.Fatalf("#h 1 应只回最后一条: %q", out)
+	// 序号查全文：#h 2 回显快照第 2 条完整正文（不截断、无省略号）
+	out = join(c.Handle("#h 2"))
+	if !strings.Contains(out, "**消息 2** [agent][会话A]") {
+		t.Fatalf("#h 2 应含详情头: %q", out)
+	}
+	if !strings.Contains(out, long) || strings.Contains(out, "…") {
+		t.Fatalf("#h 2 应回全文不截断: %q", out)
 	}
 
-	// 全角条数参数
+	// 全角序号
 	out = join(c.Handle("#h １"))
-	if !strings.Contains(out, "最近 1 条消息:") {
-		t.Fatalf("#h 全角条数应生效: %q", out)
+	if !strings.Contains(out, "**消息 1** [用户][会话A]\n\n第一问") {
+		t.Fatalf("#h 全角序号应查详情: %q", out)
 	}
 
-	// 非法参数
+	// 无快照直接查：自动取最近一批再按序号取
+	out = join(NewConsole(fe).Handle("#h 1"))
+	if !strings.Contains(out, "**消息 1** [用户][会话A]\n\n第一问") {
+		t.Fatalf("无快照时 #h 1 应自动取最近列表查详情: %q", out)
+	}
+
+	// 越界 / 非法参数
+	if got := join(c.Handle("#h 99")); !strings.Contains(got, "编号不存在") {
+		t.Fatalf("#h 99 应提示编号不存在: %q", got)
+	}
 	for _, in := range []string{"#h abc", "#h 0", "#h -1"} {
-		if got := join(c.Handle(in)); !strings.Contains(got, "用法: #h [条数]") {
+		if got := join(c.Handle(in)); !strings.Contains(got, "用法: #h 或 #h <序号>") {
 			t.Fatalf("%s 应回用法: %q", in, got)
 		}
 	}
 
-	// 空历史
+	// 空历史：列表与查详情分别提示
 	if got := join(NewConsole(&fakeExecutor{}).Handle("#h")); got != "暂无 AgentHub 消息" {
 		t.Fatalf("空历史应回暂无消息: %q", got)
+	}
+	if got := join(NewConsole(&fakeExecutor{}).Handle("#h 1")); !strings.Contains(got, "暂无 AgentHub 消息") {
+		t.Fatalf("空历史查详情应回暂无消息: %q", got)
 	}
 }

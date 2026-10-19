@@ -67,13 +67,14 @@ func lastBase(p string) string {
 	return p
 }
 
-// formatRef 把会话格式化为一行列表项（含编号与当前标记）。
+// formatRef 把会话格式化为一行列表项（含编号与当前标记）。▶ 标记放编号后
+// 而非行首：行首 ▶ 会打断 Markdown 有序列表解析（回复按 Markdown 渲染）。
 func formatRef(r SessionRef) string {
-	prefix := ""
+	mark := ""
 	if r.Current {
-		prefix = "▶"
+		mark = "▶ "
 	}
-	return prefix + itoa(r.Num) + ". [" + lastBase(r.Workspace) + "] " + r.Tool + " " + r.Title
+	return itoa(r.Num) + ". " + mark + "[" + lastBase(r.Workspace) + "] " + r.Tool + " " + r.Title
 }
 
 // sessionTag 把会话标题格式化为【会话名】归因前缀；标题为空返回空串。
