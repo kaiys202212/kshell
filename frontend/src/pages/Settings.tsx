@@ -752,7 +752,8 @@ export default function Settings() {
       </nav>
 
       <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-2xl">
+        {/* skills / help 内容宽（卡片列表、长文档），放开限宽占满内容区；其余表单类分区保持窄栏易读 */}
+        <div className={cn(section !== 'skills' && section !== 'help' && 'max-w-2xl')}>
           <h1 className="mb-4 text-lg font-semibold">{t('ui.settings.title')}</h1>
 
           {section === 'general' && (
