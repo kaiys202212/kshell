@@ -266,7 +266,9 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 }
 
 // SendMessage 回复文本消息；client_id 内部生成，from_user_id 恒为空。
-func (c *Client) SendMessage(ctx context.Context, toUserID, contextToken, text string) error {
+// 返回响应里的服务端消息 ID（svr_id）：桥层缓存「svr_id → 会话」供引用回复
+// 归因；响应未携带时返回空串（字段名真机未验证，拿不到即降级标题匹配）。
+func (c *Client) SendMessage(ctx context.Context, toUserID, contextToken, text string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeoutSendMessage)
 	defer cancel()
 	body := map[string]any{
@@ -283,7 +285,13 @@ func (c *Client) SendMessage(ctx context.Context, toUserID, contextToken, text s
 		},
 		"base_info": baseInfo{ChannelVersion: channelVersion},
 	}
-	return c.post(ctx, "/ilink/bot/sendmessage", body, nil)
+	var out struct {
+		SvrID string `json:"svr_id"`
+	}
+	if err := c.post(ctx, "/ilink/bot/sendmessage", body, &out); err != nil {
+		return "", err
+	}
+	return out.SvrID, nil
 }
 
 // SendTyping 发送/取消输入状态（1=输入中 2=取消）。内部先 getconfig 换取 typing_ticket。

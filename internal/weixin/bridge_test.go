@@ -654,6 +654,104 @@ func sendText(t *testing.T, body map[string]any) string {
 	return text
 }
 
+// —— 引用归因映射 ——
+
+func TestBridgeRememberSvrID(t *testing.T) {
+	t.Run("出站成功记录映射", func(t *testing.T) {
+		rc := &recorder{sendResp: func(int) (int, string) { return 200, `{"svr_id":"9001"}` }}
+		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+		b := newBridge(t, "u1", ex, rc.handler(t))
+		b.HandleInbound("u1", "ct-1", "你好") // 入站确认（无 chatID，不记录）
+		b.DeliverHubMessage(hub.Message{Kind: "agent", ChatID: "c1", SessionTitle: "会话A", Text: "回复"})
+		b.FlushForTest()
+		b.mu.Lock()
+		got := b.svrMap["9001"]
+		b.mu.Unlock()
+		if got != "c1" {
+			t.Fatalf("svrMap[9001] = %q, 期望 c1", got)
+		}
+	})
+	t.Run("响应无 svr_id 不记录不报错", func(t *testing.T) {
+		rc := &recorder{}
+		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+		b := newBridge(t, "u1", ex, rc.handler(t))
+		b.DeliverHubMessage(hub.Message{Kind: "agent", ChatID: "c1", Text: "回复"})
+		b.FlushForTest()
+		b.mu.Lock()
+		n := len(b.svrMap)
+		b.mu.Unlock()
+		if n != 0 {
+			t.Fatalf("svrMap 应为空, 实际 %d 条", n)
+		}
+	})
+	t.Run("超上限丢最旧", func(t *testing.T) {
+		rc := &recorder{}
+		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+		b := newBridge(t, "u1", ex, rc.handler(t))
+		for i := 0; i < svrMapCap+10; i++ {
+			b.rememberSvrID(fmt.Sprintf("svr-%d", i), "c1")
+		}
+		b.mu.Lock()
+		_, hasOld := b.svrMap["svr-0"]
+		_, hasNew := b.svrMap[fmt.Sprintf("svr-%d", svrMapCap+9)]
+		b.mu.Unlock()
+		if hasOld {
+			t.Error("最旧映射应被淘汰")
+		}
+		if !hasNew {
+			t.Error("最新映射应保留")
+		}
+	})
+}
+
+func TestQuoteTitle(t *testing.T) {
+	for in, want := range map[string]string{
+		"【会话A】回复正文":    "会话A",
+		"  【带空格标题】正文":  "带空格标题",
+		"没有前缀的普通文本":    "",
+		"【未闭合的标题":      "",
+		"【外层【内层】】正文": "外层【内层",
+	} {
+		if got := quoteTitle(in); got != want {
+			t.Errorf("quoteTitle(%q) = %q, 期望 %q", in, got, want)
+		}
+	}
+}
+
+func TestBridgeResolveQuote(t *testing.T) {
+	ex := &fakeExec{sessions: []hub.SessionRef{
+		{ChatID: "c1", Title: "会话A"},
+		{ChatID: "", SessionID: "s2", Title: "未激活会话"}, // 未激活：ChatID 空，标题匹配应跳过
+	}}
+	rc := &recorder{}
+	b := newBridge(t, "u1", ex, rc.handler(t))
+	b.rememberSvrID("9001", "c1")
+
+	t.Run("svr_id 精确命中", func(t *testing.T) {
+		if got := b.resolveQuote(&RefMsg{SvrID: "9001", Text: "【不匹配的标题】x"}); got != "c1" {
+			t.Errorf("resolveQuote = %q, 期望 c1（svr_id 优先）", got)
+		}
+	})
+	t.Run("标题兜底命中", func(t *testing.T) {
+		if got := b.resolveQuote(&RefMsg{SvrID: "unknown", Text: "【会话A】回复正文"}); got != "c1" {
+			t.Errorf("resolveQuote = %q, 期望 c1（标题匹配）", got)
+		}
+	})
+	t.Run("未激活会话不参与标题匹配", func(t *testing.T) {
+		if got := b.resolveQuote(&RefMsg{SvrID: "unknown", Text: "【未激活会话】正文"}); got != "" {
+			t.Errorf("resolveQuote = %q, 期望空（未激活跳过）", got)
+		}
+	})
+	t.Run("双不命中返回空", func(t *testing.T) {
+		if got := b.resolveQuote(&RefMsg{SvrID: "x", Text: "普通引用文本"}); got != "" {
+			t.Errorf("resolveQuote = %q, 期望空", got)
+		}
+		if got := b.resolveQuote(nil); got != "" {
+			t.Errorf("resolveQuote(nil) = %q, 期望空", got)
+		}
+	})
+}
+
 func TestBridgeAttachmentAndTextSameMessage(t *testing.T) {
 	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 	b, rc := newAttachBridge(t, ex, []byte("内容"), 200)

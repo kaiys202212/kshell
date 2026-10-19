@@ -69,6 +69,7 @@ type pendingMsg struct {
 	userID       string
 	contextToken string
 	text         string
+	chatID       string // 出站文本归属的 agent 会话（引用归因映射用，可空）
 }
 
 // Bridge 是微信消息桥：入站经白名单过滤后交给命令层，出站把 hub 的 agent
@@ -85,6 +86,11 @@ type Bridge struct {
 	pending     []pendingMsg // -14 时缓存的待发
 	undelivered int          // 发送失败计数（#st 用）
 	queue       []queuedFile // 待转交附件（等下一条可转发文字合并投递）
+	// svrMap 是「出站消息 svr_id → chatID」的引用归因映射（rememberSvrID
+	// 写，resolveQuote 读）。内存态不落盘：引用回复通常紧跟原消息，跨重启
+	// 的旧引用靠【会话名】标题匹配兜底。svrOrder 记录插入序，超上限丢最旧。
+	svrMap   map[string]string
+	svrOrder []string
 
 	// filesDir 是附件落盘目录；NewBridge 给默认值，测试注入临时目录。
 	filesDir string
@@ -93,7 +99,7 @@ type Bridge struct {
 
 	// outbound 是串行出站队列：DeliverHubMessage 只入队，单 worker 按序
 	// deliver，避免 hub 消息因网络耗时不等而在微信侧乱序。
-	outbound chan string
+	outbound chan outMsg
 	// outMu 保护 outbound 的关闭状态：入队与 Close 并发时防 send-on-closed。
 	outMu     sync.Mutex
 	outClosed bool
@@ -124,7 +130,8 @@ func NewBridge(client *Client, ex hub.Executor, cfg BridgeConfig) *Bridge {
 		console:    hub.NewConsoleLang(ex, cfg.Language),
 		wxid:       cfg.Wxid,
 		lang:       cfg.Language,
-		outbound:   make(chan string, outboundCap),
+		outbound:   make(chan outMsg, outboundCap),
+		svrMap:     map[string]string{},
 		filesDir:   defaultFilesDir(),
 		workerDone: make(chan struct{}),
 		sleep:      time.Sleep,
@@ -181,7 +188,7 @@ func (b *Bridge) FlushForTest() {
 	var once sync.Once
 	b.flushHook = func() { once.Do(func() { close(done) }) }
 	// 哨兵必须走普通队列才能保证「之前消息已处理完」的顺序语义。
-	b.enqueueOutbound(flushSentinel)
+	b.enqueueOutbound(outMsg{text: flushSentinel})
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -300,7 +307,7 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 		}
 	}
 	for _, r := range replies {
-		b.deliver(r.Text)
+		b.deliver(r.Text, "") // 命令回复/ack 不归属会话，不进引用映射
 	}
 	// 回复已发出，取消输入状态。
 	_ = b.client.SendTyping(context.Background(), m.FromUserID, m.ContextToken, 2)
@@ -472,7 +479,14 @@ func (b *Bridge) DeliverHubMessage(m hub.Message) {
 	if m.SessionTitle != "" {
 		text = "【" + m.SessionTitle + "】" + text
 	}
-	b.enqueueOutbound(text)
+	b.enqueueOutbound(outMsg{svrKey: m.ChatID, text: text})
+}
+
+// outMsg 是一条待投递的出站文本。svrKey 是归属 agent 会话的 chat ID：
+// 发送成功后缓存「响应 svr_id → svrKey」供引用回复归因；空串不缓存。
+type outMsg struct {
+	svrKey string
+	text   string
 }
 
 // enqueueOutbound 把一条文本放入串行出站队列；满或已关闭则丢弃计 undelivered。
@@ -480,7 +494,7 @@ func (b *Bridge) DeliverHubMessage(m hub.Message) {
 // worker 只在 FlushForTest（测试）与 Close（排空退出）被调是不够的——
 // 否则队列永远无人消费，agent 回复全部滞留（2026-10-18 真机「微信收不到
 // agent 回复、命令回复正常」的根因）。
-func (b *Bridge) enqueueOutbound(text string) {
+func (b *Bridge) enqueueOutbound(m outMsg) {
 	b.startOutboundWorker()
 	b.outMu.Lock()
 	if b.outClosed {
@@ -491,7 +505,7 @@ func (b *Bridge) enqueueOutbound(text string) {
 		return
 	}
 	select {
-	case b.outbound <- text:
+	case b.outbound <- m:
 		b.outMu.Unlock()
 	default:
 		b.outMu.Unlock()
@@ -507,14 +521,14 @@ func (b *Bridge) startOutboundWorker() {
 	b.workerOnce.Do(func() {
 		go func() {
 			defer close(b.workerDone)
-			for text := range b.outbound {
-				if text == flushSentinel {
+			for m := range b.outbound {
+				if m.text == flushSentinel {
 					if b.flushHook != nil {
 						b.flushHook()
 					}
 					continue
 				}
-				b.deliver(text)
+				b.deliver(m.text, m.svrKey)
 			}
 		}()
 	})
@@ -538,9 +552,69 @@ func isWireKey(s string) bool {
 	return s != "" && !strings.ContainsAny(s, " \t\n") && len(s) < 64 && reWireKey.MatchString(s)
 }
 
+// svrMapCap 是引用归因映射的上限：超限丢最旧（引用回复总是紧跟原消息，
+// 热数据就最近几十条）。
+const svrMapCap = 256
+
+// rememberSvrID 记录「出站消息 svr_id → chatID」；svrID 或 chatID 为空、
+// svr_id 重复时不记（响应字段真机未验证，拿不到即降级标题匹配，不报错）。
+func (b *Bridge) rememberSvrID(svrID, chatID string) {
+	if svrID == "" || chatID == "" {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, dup := b.svrMap[svrID]; dup {
+		return
+	}
+	b.svrMap[svrID] = chatID
+	b.svrOrder = append(b.svrOrder, svrID)
+	for len(b.svrOrder) > svrMapCap {
+		old := b.svrOrder[0]
+		b.svrOrder = b.svrOrder[1:]
+		delete(b.svrMap, old)
+	}
+}
+
+// resolveQuote 按引用归因出目标 chatID：svr_id 精确映射优先，【会话名】
+// 标题匹配兜底；都不命中返回空串（调用方回落当前会话）。
+func (b *Bridge) resolveQuote(ref *RefMsg) string {
+	if ref == nil {
+		return ""
+	}
+	b.mu.Lock()
+	chatID := b.svrMap[ref.SvrID]
+	b.mu.Unlock()
+	if chatID != "" {
+		return chatID
+	}
+	title := quoteTitle(ref.Text)
+	if title == "" {
+		return ""
+	}
+	for _, s := range b.ex.ListSessions() {
+		if s.Title == title && s.ChatID != "" {
+			return s.ChatID
+		}
+	}
+	return ""
+}
+
+// quoteTitle 从引用文本里提取出站的【会话名】前缀；无前缀返回空串。
+var reQuoteTitle = regexp.MustCompile(`^【([^】]+)】`)
+
+func quoteTitle(text string) string {
+	m := reQuoteTitle.FindStringSubmatch(strings.TrimSpace(text))
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
+}
+
 // deliver 投递一条文本：截断 → 用当前上下文发送；-14 入 pending，
-// 其他失败重试 2 次后计 undelivered。
-func (b *Bridge) deliver(text string) {
+// 其他失败重试 2 次后计 undelivered。chatID 是该文本归属的 agent 会话，
+// 发送成功且响应带回 svr_id 时记入引用归因映射（chatID 空则跳过）。
+func (b *Bridge) deliver(text, chatID string) {
 	text = truncateForWeixin(text, b.lang)
 	// PC 端微信按 Markdown 渲染 ClawBot 气泡，单个 \n 被折叠成空格；
 	// 统一升级为硬换行（行尾两空格），手机端纯文本渲染不受影响。
@@ -554,20 +628,22 @@ func (b *Bridge) deliver(text string) {
 		b.mu.Unlock()
 		return
 	}
-	err := b.client.SendMessage(context.Background(), ctx.userID, ctx.contextToken, text)
+	svrID, err := b.client.SendMessage(context.Background(), ctx.userID, ctx.contextToken, text)
 	if errors.Is(err, ErrSessionExpired) {
 		b.mu.Lock()
-		b.pending = append(b.pending, pendingMsg{userID: ctx.userID, contextToken: ctx.contextToken, text: text})
+		b.pending = append(b.pending, pendingMsg{userID: ctx.userID, contextToken: ctx.contextToken, text: text, chatID: chatID})
 		b.mu.Unlock()
 		return
 	}
 	if err == nil {
+		b.rememberSvrID(svrID, chatID)
 		return
 	}
 	// 普通失败：重试 sendRetry 次。
 	for i := 0; i < sendRetry; i++ {
 		b.sleep(sendRetryWait)
-		if err = b.client.SendMessage(context.Background(), ctx.userID, ctx.contextToken, text); err == nil {
+		if svrID, err = b.client.SendMessage(context.Background(), ctx.userID, ctx.contextToken, text); err == nil {
+			b.rememberSvrID(svrID, chatID)
 			return
 		}
 	}
@@ -594,9 +670,11 @@ func (b *Bridge) flushPending() {
 		pm := b.pending[0]
 		b.mu.Unlock()
 
-		if err := b.client.SendMessage(context.Background(), pm.userID, pm.contextToken, pm.text); err != nil {
+		svrID, err := b.client.SendMessage(context.Background(), pm.userID, pm.contextToken, pm.text)
+		if err != nil {
 			return // 失败保留剩余 pending，等下次入站再补
 		}
+		b.rememberSvrID(svrID, pm.chatID)
 		sent++
 		b.mu.Lock()
 		b.pending = b.pending[1:]
