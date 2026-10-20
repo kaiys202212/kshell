@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 
 	"github.com/yangk/kshell/internal/discovery"
@@ -47,6 +48,22 @@ func newTerminalManagerWith(emit func(name string, data ...any), b terminal.Back
 // terminals 返回终端管理器；未装配（未走 Startup）时返回 nil。
 func (a *App) terminals() *terminal.Manager {
 	return a.snapshot().Terminals
+}
+
+// terminalSessionIDs 返回当前终端在册的磁盘会话 ID 集合（Key 的 session: 前缀）。
+// 只认 session: 前缀：chat 与 terminal 共用 new:<n> key 形态，字符串相同但
+// 互不相关，不限前缀会把 ACP 新建会话误判为终端激活。Hub / OpenSessionACP /
+// wxExecutor 共用本方法，避免语义漂移。
+func (a *App) terminalSessionIDs() map[string]bool {
+	out := map[string]bool{}
+	if tm := a.terminals(); tm != nil {
+		for _, info := range tm.List() {
+			if sid, ok := strings.CutPrefix(info.Key, "session:"); ok {
+				out[sid] = true
+			}
+		}
+	}
+	return out
 }
 
 // OpenSessionTerminal 在中心区打开（已打开则复用）某历史会话的内嵌终端。

@@ -92,19 +92,9 @@ func (w *wxExecutor) acpCapableTool(id string) (capable, known bool) {
 	return false, false
 }
 
-// terminalSessionIDs 返回当前终端在册的磁盘会话 ID 集合（Key 的 session: 前缀）。
-// 只认 session: 前缀：chat 与 terminal 共用 new:<n> key 形态，字符串相同但
-// 互不相关，不限前缀会把 ACP 新建会话误判为终端激活。
+// terminalSessionIDs 委托 App 共享实现（与 OpenSessionACP 同一口径）。
 func (w *wxExecutor) terminalSessionIDs() map[string]bool {
-	out := map[string]bool{}
-	if tm := w.a.terminals(); tm != nil {
-		for _, info := range tm.List() {
-			if sid, ok := strings.CutPrefix(info.Key, "session:"); ok {
-				out[sid] = true
-			}
-		}
-	}
-	return out
+	return w.a.terminalSessionIDs()
 }
 
 // sessionRefs 把中间形态转成命令层 SessionRef（补工具展示名）。

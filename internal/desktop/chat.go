@@ -247,6 +247,10 @@ func (a *App) OpenSessionACP(sessionID string) (OpenedSession, error) {
 
 func (a *App) openSessionACP(sessionID string, allowFallback bool) (OpenedSession, error) {
 	a.ensureSessionHooks()
+	// 规则2：桌面端终端页签在册时禁止抢拉 ACP（与 AgentHub / wxExecutor 同口径）。
+	if a.terminalSessionIDs()[sessionID] {
+		return OpenedSession{}, errors.New("err.hub.terminal_active")
+	}
 	s, tools, ok := a.sessionByIDReady(sessionID)
 	if !ok {
 		return OpenedSession{}, errSessionNotFound

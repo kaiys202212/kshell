@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/providers"
+	"github.com/yangk/kshell/internal/terminal"
 )
 
 type fakeChatConn struct {
@@ -223,6 +225,22 @@ func TestOpenSessionACPExplicit(t *testing.T) {
 	}
 	if got.Kind != "chat" || got.Chat == nil {
 		t.Fatalf("显式 ACP 应走聊天: %+v", got)
+	}
+}
+
+// TestOpenSessionACPRefusesTerminalActive 终端页签在册时禁止抢拉 ACP。
+func TestOpenSessionACPRefusesTerminalActive(t *testing.T) {
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "claude-agent-acp",
+	}, fakeChatBackend{})
+	tm := env.app.terminals()
+	if _, err := tm.Open("session:s1", terminal.Info{
+		Kind: terminal.KindSession, SessionID: "s1", Workspace: `D:\w`, Title: "t", ToolID: "claude",
+	}, terminal.Spec{Path: "x"}, 80, 24); err != nil {
+		t.Fatalf("open terminal: %v", err)
+	}
+	if _, err := env.app.OpenSessionACP("s1"); err == nil || !strings.Contains(err.Error(), "err.hub.terminal_active") {
+		t.Fatalf("终端在册应报 err.hub.terminal_active, got %v", err)
 	}
 }
 
