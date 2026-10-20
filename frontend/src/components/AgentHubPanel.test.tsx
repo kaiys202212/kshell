@@ -1543,6 +1543,16 @@ describe('AgentHubPanel', () => {
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
+  it('@ 目标后的纯数字按正文投递，不当菜单编号命令', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 3' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '3'));
+    expect(api.hubCommand).not.toHaveBeenCalled();
+  });
+
   it('只有 @ 标签时不投递：提示并保留草稿', () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);

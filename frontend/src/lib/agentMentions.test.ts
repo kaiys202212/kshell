@@ -193,4 +193,14 @@ describe('stripMentionTags', () => {
     expect(stripMentionTags('@Claude Code#c1 ', opts)).toBe('');
     expect(stripMentionTags('', opts)).toBe('');
   });
+
+  it('保留正文缩进与连续空格，只收敛标签接缝', () => {
+    const text = '@Claude Code#c1 看下这段\n    function f() {\n        return  1;\n    }';
+    expect(stripMentionTags(text, opts)).toBe('看下这段\n    function f() {\n        return  1;\n    }');
+  });
+
+  it('独占一行的标签不留空行，行尾标签不留空格', () => {
+    expect(stripMentionTags('hello\n@Claude Code#c1\nworld', opts)).toBe('hello\nworld');
+    expect(stripMentionTags('hello @Claude Code#c1\nworld', opts)).toBe('hello\nworld');
+  });
 });

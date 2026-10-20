@@ -93,18 +93,30 @@ export function stripLeadingMentions(text: string, options: MentionOption[]): st
 // stripMentionTags 移除文本中所有已知 @ 路由标签（开头与正文中间都算）：
 // @ 标签只供 Hub 解析投递目标，不应进入 agent 会话，也不应在气泡里展示。
 // 只清理当前会话列表能生成的标签，普通 @ 与邮箱保持原样；长标签优先，
-// 避免标题是另一标签前缀时误截断。移除后折叠行内多余空格，保留换行。
+// 避免标题是另一标签前缀时误截断。只归一化标签两侧的空白，正文内部的
+// 缩进、连续空格与换行原样保留（投递代码片段不能被改写）。
 export function stripMentionTags(text: string, options: MentionOption[]): string {
+  // 先统一替换成哨兵，再一次性处理接缝：直接删标签会把两侧空白拼在一起，
+  // 而全局折叠空白会抹掉正文缩进。
+  const MARK = '\u0001';
   let out = text;
   let removed = false;
   for (const tok of mentionTokens(options)) {
     if (out.includes(tok)) {
-      out = out.split(tok).join('');
+      out = out.split(tok).join(MARK);
       removed = true;
     }
   }
   // 没命中标签时原样返回，不因清洗改写用户原文（如连续空格）。
-  return removed ? out.replace(/[ \t]{2,}/g, ' ').trim() : out;
+  if (!removed) return out;
+  return out
+    // 行首标签连同其后空白删掉；标签独占一行时连换行一起删，不留空行。
+    .replace(new RegExp(`^[ \\t]*${MARK}[ \\t]*\\r?\\n?`, 'gm'), '')
+    // 行尾标签：连同其前空白一起删，避免行尾残留空格。
+    .replace(new RegExp(`[ \\t]*${MARK}[ \\t]*(?=\\r?\\n|$)`, 'g'), '')
+    // 行内标签：接缝收敛为一个空格。
+    .replace(new RegExp(`[ \\t]*${MARK}[ \\t]*`, 'g'), ' ')
+    .trim();
 }
 
 // displayMentionTitles 把文本里的 @工具#会话ID 换成 @工具#会话标题，仅供展示

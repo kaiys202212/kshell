@@ -875,8 +875,10 @@ export default function AgentHubPanel() {
     }
     // 纯数字输入：命令层的「编号切换/菜单选择」语义，透传给共享命令层处理
     //（#l/#f 的编号映射在 Go 侧，前端无从判断，统一透传）。
-    if (isHubNumber(body)) {
-      runSharedCommand(body);
+    // 判定用原始草稿：`@目标 3` 是回答 agent 的正文（剥离后恰为 "3"），
+    // 不应被误当成菜单编号命令。
+    if (isHubNumber(text)) {
+      runSharedCommand(text);
       return;
     }
     // 仅当 trim 后以 #（含全角＃）开头才视为 kshell 客户端命令意图；行中 # 词
