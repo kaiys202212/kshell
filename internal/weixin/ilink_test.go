@@ -135,6 +135,164 @@ func TestGetUpdates(t *testing.T) {
 	}
 }
 
+func TestGetUpdatesAttachments(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{
+			"msgs":[
+				{"message_type":1,"from_user_id":"u1","context_token":"ct1","create_time_ms":1792280448633,
+				 "item_list":[
+					{"type":4,"file_item":{"media":{"encrypt_query_param":"eqp-f","aes_key":"a2V5ZmlsZWhleGMyNTY="},"file_name":"需求.pdf","len":1024,"md5":"abc"}},
+					{"type":2,"image_item":{"media":{"encrypt_query_param":"eqp-i","aes_key":"cmF3MTZieXRlcw=="},"len":2048}}
+				 ]},
+				{"message_type":1,"from_user_id":"u2","context_token":"ct2",
+				 "item_list":[{"type":3,"voice_item":{"text":"语音转写内容"}}]}
+			],
+			"get_updates_buf":"cursor-a"
+		}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok-1", srv.URL)
+	msgs, _, err := c.GetUpdates(context.Background(), "")
+	if err != nil {
+		t.Fatalf("GetUpdates: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("消息数 = %d, 期望 2", len(msgs))
+	}
+	// 文件 + 图片两条附件。
+	if len(msgs[0].Attachments) != 2 {
+		t.Fatalf("附件数 = %d, 期望 2: %+v", len(msgs[0].Attachments), msgs[0].Attachments)
+	}
+	f, im := msgs[0].Attachments[0], msgs[0].Attachments[1]
+	if f.Kind != "file" || f.Name != "需求.pdf" || f.EncryptQueryParam != "eqp-f" || f.AESKey != "a2V5ZmlsZWhleGMyNTY=" || f.Size != 1024 {
+		t.Errorf("文件附件解析错误: %+v", f)
+	}
+	if im.Kind != "image" || im.Name != "image.jpg" || im.EncryptQueryParam != "eqp-i" || im.AESKey != "cmF3MTZieXRlcw==" {
+		t.Errorf("图片附件解析错误: %+v", im)
+	}
+	// 语音无 text 字段可用（ASR 转写由桥层取 voice_item.text），附件为空、文本为空。
+	if len(msgs[1].Attachments) != 0 {
+		t.Errorf("语音消息不应产生附件: %+v", msgs[1].Attachments)
+	}
+	if msgs[1].Text != "语音转写内容" {
+		t.Errorf("语音 ASR 转写应作为文本透传: %+v", msgs[1])
+	}
+}
+
+func TestGetUpdatesVoice(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{
+			"msgs":[
+				{"message_type":1,"from_user_id":"u1","context_token":"ct1",
+				 "item_list":[{"type":3,"voice_item":{"text":"","media":{"encrypt_query_param":"eqp-v","aes_key":"aGV4MzJjaGFycw=="},"len":8192}}]},
+				{"message_type":1,"from_user_id":"u2","context_token":"ct2",
+				 "item_list":[{"type":3,"voice_item":{"text":"服务端转写内容","media":{"encrypt_query_param":"eqp-v2","aes_key":"aGV4MzJjaGFycw=="}},"type":3}]}
+			],
+			"get_updates_buf":"cursor-v"
+		}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok-1", srv.URL)
+	msgs, _, err := c.GetUpdates(context.Background(), "")
+	if err != nil {
+		t.Fatalf("GetUpdates: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("消息数 = %d, 期望 2", len(msgs))
+	}
+	// 无转写：Voice 携带媒体信息，Text 为空（桥层据此走模型转写）。
+	if msgs[0].Text != "" {
+		t.Errorf("无转写语音 Text 应为空: %q", msgs[0].Text)
+	}
+	if msgs[0].Voice == nil {
+		t.Fatal("无转写语音应填充 Voice")
+	}
+	if msgs[0].Voice.Kind != "voice" || msgs[0].Voice.EncryptQueryParam != "eqp-v" ||
+		msgs[0].Voice.AESKey != "aGV4MzJjaGFycw==" || msgs[0].Voice.Size != 8192 {
+		t.Errorf("Voice 媒体信息解析错误: %+v", msgs[0].Voice)
+	}
+	if len(msgs[0].Attachments) != 0 {
+		t.Errorf("语音不应进附件列表: %+v", msgs[0].Attachments)
+	}
+	// 有转写：Text 直通，Voice 媒体信息同样保留（桥层优先用 Text）。
+	if msgs[1].Text != "服务端转写内容" {
+		t.Errorf("ASR 转写应作为文本透传: %+v", msgs[1])
+	}
+	if msgs[1].Voice == nil || msgs[1].Voice.EncryptQueryParam != "eqp-v2" {
+		t.Errorf("有转写语音的 Voice 媒体信息缺失: %+v", msgs[1].Voice)
+	}
+}
+
+func TestGetUpdatesRefMsg(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{
+			"msgs":[
+				{"message_type":1,"from_user_id":"u1","context_token":"ct1",
+				 "item_list":[{"type":1,"text_item":{"text":"这条没看懂"}}],
+				 "ref_msg":{"svr_id":"18446744073709551615","text":"【会话A】agent 的回复正文"}},
+				{"message_type":1,"from_user_id":"u2","context_token":"ct2",
+				 "item_list":[{"type":1,"text_item":{"text":"普通消息"}}]}
+			],
+			"get_updates_buf":"cursor-r"
+		}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok-1", srv.URL)
+	msgs, _, err := c.GetUpdates(context.Background(), "")
+	if err != nil {
+		t.Fatalf("GetUpdates: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("消息数 = %d, 期望 2", len(msgs))
+	}
+	if msgs[0].Ref == nil {
+		t.Fatal("引用回复应解析出 Ref")
+	}
+	if msgs[0].Ref.SvrID != "18446744073709551615" {
+		t.Errorf("Ref.SvrID = %q", msgs[0].Ref.SvrID)
+	}
+	if msgs[0].Ref.Text != "【会话A】agent 的回复正文" {
+		t.Errorf("Ref.Text = %q", msgs[0].Ref.Text)
+	}
+	if msgs[1].Ref != nil {
+		t.Errorf("普通消息 Ref 应为 nil: %+v", msgs[1].Ref)
+	}
+}
+
+func TestGetUpdatesRefMsgPartial(t *testing.T) {
+	// partial_text 形态：引用超长消息时服务端只给首尾摘要。首版不拼接，
+	// Text 允许为空（归因还有 svr_id 与【标题】前缀两级）。
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{
+			"msgs":[
+				{"message_type":1,"from_user_id":"u1","context_token":"ct1",
+				 "item_list":[{"type":1,"text_item":{"text":"看看这段"}}],
+				 "ref_msg":{"svr_id":"9001","partial_text":{"start":"开头","end":"结尾","startindex":0,"endindex":5}}}
+			],
+			"get_updates_buf":"cursor-p"
+		}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok-1", srv.URL)
+	msgs, _, err := c.GetUpdates(context.Background(), "")
+	if err != nil {
+		t.Fatalf("GetUpdates: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Ref == nil {
+		t.Fatalf("应解析出 Ref: %+v", msgs)
+	}
+	if msgs[0].Ref.SvrID != "9001" {
+		t.Errorf("Ref.SvrID = %q, 期望 9001", msgs[0].Ref.SvrID)
+	}
+	if msgs[0].Ref.Text != "" {
+		t.Errorf("partial_text 不应拼进 Text: %q", msgs[0].Ref.Text)
+	}
+}
+
 func TestSendMessage(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -147,7 +305,7 @@ func TestSendMessage(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient("tok-1", srv.URL)
-	if err := c.SendMessage(context.Background(), "u9", "ct9", "回复内容"); err != nil {
+	if _, err := c.SendMessage(context.Background(), "u9", "ct9", "回复内容"); err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
 	msg, ok := gotBody["msg"].(map[string]any)
@@ -184,6 +342,39 @@ func TestSendMessage(t *testing.T) {
 	if textItem["text"] != "回复内容" {
 		t.Errorf("text = %v, 期望 回复内容", textItem["text"])
 	}
+}
+
+func TestClientSendMessageSvrID(t *testing.T) {
+	// sendmessage 响应携带服务端消息 ID（svr_id）：引用回复归因的依据。
+	// 字段名按参考实现；真机不符时这里先挂，改 tag 即可。
+	t.Run("响应含 svr_id", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, `{"svr_id":"18446744073709551615"}`)
+		}))
+		defer srv.Close()
+		c := NewClient("tok-1", srv.URL)
+		svrID, err := c.SendMessage(context.Background(), "u9", "ct9", "回复内容")
+		if err != nil {
+			t.Fatalf("SendMessage: %v", err)
+		}
+		if svrID != "18446744073709551615" {
+			t.Errorf("svrID = %q", svrID)
+		}
+	})
+	t.Run("响应无 svr_id 返回空串", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, `{}`)
+		}))
+		defer srv.Close()
+		c := NewClient("tok-1", srv.URL)
+		svrID, err := c.SendMessage(context.Background(), "u9", "ct9", "回复内容")
+		if err != nil {
+			t.Fatalf("SendMessage: %v", err)
+		}
+		if svrID != "" {
+			t.Errorf("svrID = %q, 期望空串", svrID)
+		}
+	})
 }
 
 func TestSendTyping(t *testing.T) {
@@ -244,7 +435,7 @@ func TestSessionExpired(t *testing.T) {
 	if !errors.Is(err, ErrSessionExpired) {
 		t.Fatalf("errcode=-14 应映射为 ErrSessionExpired, 实际: %v", err)
 	}
-	if err := c.SendMessage(context.Background(), "u", "ct", "t"); !errors.Is(err, ErrSessionExpired) {
+	if _, err := c.SendMessage(context.Background(), "u", "ct", "t"); !errors.Is(err, ErrSessionExpired) {
 		t.Fatalf("SendMessage 同样应映射 ErrSessionExpired, 实际: %v", err)
 	}
 }
@@ -256,7 +447,7 @@ func TestOtherErrorCode(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient("tok-1", srv.URL)
-	err := c.SendMessage(context.Background(), "u", "ct", "t")
+	_, err := c.SendMessage(context.Background(), "u", "ct", "t")
 	if err == nil || errors.Is(err, ErrSessionExpired) {
 		t.Fatalf("非 -14 错误码不应映射为 ErrSessionExpired: %v", err)
 	}
@@ -275,7 +466,7 @@ func TestUINHeader(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient("tok-1", srv.URL)
-	if err := c.SendMessage(context.Background(), "u", "ct", "t"); err != nil {
+	if _, err := c.SendMessage(context.Background(), "u", "ct", "t"); err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
 	if uin == "" {
@@ -308,7 +499,7 @@ func TestServerError(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient("tok-1", srv.URL)
-	if err := c.SendMessage(context.Background(), "u", "ct", "t"); err == nil {
+	if _, err := c.SendMessage(context.Background(), "u", "ct", "t"); err == nil {
 		t.Error("服务端 500 应返回 error")
 	}
 }

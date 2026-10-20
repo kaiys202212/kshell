@@ -3,7 +3,10 @@ package weixin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -41,12 +44,32 @@ type ctxInfo struct {
 	valid        bool
 }
 
+// ErrTranscriberNotConfigured 是语音转写未配置的哨兵：transcriber 实现方
+//（desktop 装配）在模型平台缺 ASR 模型时返回它，桥据此回执「未配置」而非「失败」。
+var ErrTranscriberNotConfigured = errors.New("err.weixin.voice_asr_unconfigured")
+
+// ErrVoiceUnsupported 是「默认对话模型不支持音频输入」的哨兵：transcriber
+// 实现方在 chat 回落转写被网关以不支持音频拒绝时返回它（desktop 层从
+// hubtools.ErrChatAudioUnsupported 映射而来），桥据此回执配置指引而非透传
+// 网关原始报错。
+var ErrVoiceUnsupported = errors.New("err.weixin.voice_unsupported")
+
+// Transcriber 把 WAV 音频转成文字（OpenAI 兼容 ASR 端点，desktop 装配注入）。
+type Transcriber func(ctx context.Context, wav []byte) (string, error)
+
+// queuedFile 是一条待转交附件：已下载解密落盘，等用户的下一条文字合并投递。
+type queuedFile struct {
+	Name string
+	Path string // 落盘绝对路径
+}
+
 // pendingMsg 是 context_token 失效（-14）时缓存的待发消息。
 // 补发时用各自存的凭据，而非最新入站的。
 type pendingMsg struct {
 	userID       string
 	contextToken string
 	text         string
+	chatID       string // 出站文本归属的 agent 会话（引用归因映射用，可空）
 }
 
 // Bridge 是微信消息桥：入站经白名单过滤后交给命令层，出站把 hub 的 agent
@@ -62,10 +85,24 @@ type Bridge struct {
 	ctx         ctxInfo      // 最近入站消息的发送凭据
 	pending     []pendingMsg // -14 时缓存的待发
 	undelivered int          // 发送失败计数（#st 用）
+	queue       []queuedFile // 待转交附件（等下一条可转发文字合并投递）
+	// svrMap 是「出站消息 svr_id → chatID」的引用归因映射（rememberSvrID
+	// 写，resolveQuote 读）。内存态不落盘：引用回复通常紧跟原消息，跨重启
+	// 的旧引用靠【会话名】标题匹配兜底。svrOrder 记录插入序，超上限丢最旧。
+	svrMap   map[string]string
+	svrOrder []string
+
+	// filesDir 是附件落盘目录；NewBridge 给默认值，测试注入临时目录。
+	filesDir string
+	// transcriber 是语音转写函数（desktop 注入）；nil = 未装配（纯语音回执提示）。
+	transcriber Transcriber
+	// toolName 按工具 ID 查展示名（desktop 注入，与欢迎词归因同源）；
+	// nil 或查不到时出站标题栏回落工具 ID。
+	toolName func(string) string
 
 	// outbound 是串行出站队列：DeliverHubMessage 只入队，单 worker 按序
 	// deliver，避免 hub 消息因网络耗时不等而在微信侧乱序。
-	outbound chan string
+	outbound chan outMsg
 	// outMu 保护 outbound 的关闭状态：入队与 Close 并发时防 send-on-closed。
 	outMu     sync.Mutex
 	outClosed bool
@@ -96,10 +133,50 @@ func NewBridge(client *Client, ex hub.Executor, cfg BridgeConfig) *Bridge {
 		console:    hub.NewConsoleLang(ex, cfg.Language),
 		wxid:       cfg.Wxid,
 		lang:       cfg.Language,
-		outbound:   make(chan string, outboundCap),
+		outbound:   make(chan outMsg, outboundCap),
+		svrMap:     map[string]string{},
+		filesDir:   defaultFilesDir(),
 		workerDone: make(chan struct{}),
 		sleep:      time.Sleep,
 	}
+}
+
+// defaultFilesDir 返回附件落盘默认目录 ~/.kshell/weixin-files；取不到主目录
+// 时回落系统临时目录（附件功能降级仍可用）。
+func defaultFilesDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return filepath.Join(os.TempDir(), "kshell-weixin-files")
+	}
+	return filepath.Join(home, ".kshell", "weixin-files")
+}
+
+// SetTranscriber 装配语音转写函数（可随时替换：desktop 读实时配置）。
+func (b *Bridge) SetTranscriber(fn Transcriber) {
+	b.mu.Lock()
+	b.transcriber = fn
+	b.mu.Unlock()
+}
+
+// SetToolName 装配工具展示名查询函数（desktop 注入，可随时替换）。
+func (b *Bridge) SetToolName(fn func(string) string) {
+	b.mu.Lock()
+	b.toolName = fn
+	b.mu.Unlock()
+}
+
+// transcriberFn 加锁读当前转写函数。
+func (b *Bridge) transcriberFn() Transcriber {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.transcriber
+}
+
+// QueuedFiles 返回当前待转交附件数（#st 尾注用）。
+func (b *Bridge) QueuedFiles() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.queue)
 }
 
 // Undelivered 返回累计发送失败条数（#st 状态展示用）。
@@ -121,7 +198,7 @@ func (b *Bridge) FlushForTest() {
 	var once sync.Once
 	b.flushHook = func() { once.Do(func() { close(done) }) }
 	// 哨兵必须走普通队列才能保证「之前消息已处理完」的顺序语义。
-	b.enqueueOutbound(flushSentinel)
+	b.enqueueOutbound(outMsg{text: flushSentinel})
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -152,9 +229,134 @@ func (b *Bridge) Wxid() string {
 	return b.wxid
 }
 
-// HandleInbound 处理一条入站消息：白名单过滤 → 记录发送上下文 →
-// 补发 pending → 交命令层并把回复逐条投递。
+// HandleInbound 处理一条纯文本入站消息（无附件的历史入口）。
 func (b *Bridge) HandleInbound(fromUserID, contextToken, text string) {
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: fromUserID, ContextToken: contextToken, Text: text})
+}
+
+// HandleInboundMsg 处理一条入站消息：白名单过滤 → 记录发送上下文 → 补发
+// pending → 附件下载落盘入队 → 文本与队列合并投递 → 回执逐条投递。
+// ctx 来自长轮询 goroutine：下载附件可耗时，Stop/重绑取消要能穿透。
+//
+// 附件语义（2026-10-18 与用户确认）：微信客户端把「文字+附件」拆成多条消息
+// 发送，附件到达即下载落盘进队列等文字；收到可转发文字时把队列全部附件以
+// 「[附件] 名 已保存至 路径」说明行前置合并为一次投递；命令/纯数字不消费
+// 队列；投递失败（无会话/发送错误）时队列保留并补发回执，附件不丢。
+func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
+	if !b.admit(m.FromUserID) {
+		return
+	}
+	// 记录发送上下文：出站回执按最新入站凭据投递。
+	b.mu.Lock()
+	b.ctx = ctxInfo{userID: m.FromUserID, contextToken: m.ContextToken, valid: true}
+	b.mu.Unlock()
+
+	// typing 只是体验优化，失败静默。
+	_ = b.client.SendTyping(context.Background(), m.FromUserID, m.ContextToken, 1)
+
+	b.flushPending()
+
+	receipt := b.ingestAttachments(ctx, m.Attachments)
+
+	text := m.Text
+	// 语音（无论服务端有无转写文本）：下载 → SILK→WAV → 落盘入附件队列，
+	// 音频作为文件随下一条可转发文字转交模型（不依赖 ASR 可用性）；文本为
+	// 空时再走本地转写，转写文本按可转发文字处理（参与附件队列合并）；
+	// 转写失败/未配置转回执。
+	if m.Voice != nil {
+		note, transcript, terr := b.ingestVoice(ctx, m.Voice, strings.TrimSpace(text) == "")
+		receipt = joinNotes(receipt, note)
+		if strings.TrimSpace(text) == "" {
+			switch {
+			case errors.Is(terr, ErrTranscriberNotConfigured):
+				receipt = joinNotes(receipt, bridgeText(b.lang, "voice.unconfigured"))
+			case errors.Is(terr, ErrVoiceUnsupported):
+				// 模型不支持音频输入：给配置指引，不透传网关报错。
+				receipt = joinNotes(receipt, bridgeText(b.lang, "voice.unsupported"))
+			case terr != nil:
+				receipt = joinNotes(receipt, fmt.Sprintf(bridgeText(b.lang, "voice.failed"), terr))
+			case strings.TrimSpace(transcript) == "":
+				receipt = joinNotes(receipt, fmt.Sprintf(bridgeText(b.lang, "voice.failed"), bridgeText(b.lang, "voice.empty")))
+			default:
+				text = transcript
+			}
+		}
+	}
+
+	var replies []hub.Reply
+	merged := false
+	trimmed := strings.TrimSpace(text)
+	// 引用归因只对可转发文字生效：命令（#l 等）与纯数字（编号/菜单）保持
+	// 原语义，引用前缀不劫持它们（2026-10-20 设计决策）。
+	quotedChatID := ""
+	if m.Ref != nil && isForwardableText(text) {
+		quotedChatID = b.resolveQuote(m.Ref)
+	}
+	// 可转发文字（非命令/纯数字）且队列非空：合并投递。
+	if isForwardableText(text) && b.QueuedFiles() > 0 {
+		text = b.queuedPrefix() + text
+		replies = b.dispatchConsole(text, quotedChatID)
+		if len(replies) == 0 {
+			// 合并成功转发（agent 稍后回复）：清队列，附件信息已在投递文本里，
+			// 不再单独发附件回执；微信侧补既有 sent_ack。
+			b.clearQueue()
+			merged = true
+			replies = []hub.Reply{{Text: b.deliveredAck()}}
+		}
+		// 转发失败（无会话/发送错误等有回复场景）：队列保留，回执照发。
+	} else if trimmed != "" {
+		replies = b.dispatchConsole(text, quotedChatID)
+		if len(replies) == 0 {
+			// 命令层无回复 = 文本已成功转发给当前会话（agent 稍后回复）。
+			// 微信侧补一条已接收确认，与桌面端 AgentHub 的 ack 卡片同一文案语义
+			//（ui.hub.ack_delivered 不镜像到微信，这里是对应的微信侧回执）。
+			replies = []hub.Reply{{Text: b.deliveredAck()}}
+		}
+	}
+	// 未合并时补附件回执（收到/失败）；合并成功时已含说明行不再重复。
+	if !merged && receipt != "" {
+		replies = append(replies, hub.Reply{Text: receipt})
+	}
+	// #st 末尾追加待转交附件数，防用户遗忘队列（N>0 才追加）。按空白取第一
+	// 段与 "#st"/"＃st" 精确比较，避免 "#stop" 等未来命令误伤。
+	if first := strings.Fields(trimmed); len(first) > 0 && (first[0] == "#st" || first[0] == "＃st") {
+		if n := b.QueuedFiles(); n > 0 {
+			replies = append(replies, hub.Reply{
+				Text: fmt.Sprintf(bridgeText(b.lang, "file.queued_st"), n),
+			})
+		}
+	}
+	for _, r := range replies {
+		b.deliver(r.Text, "") // 命令回复/ack 不归属会话，不进引用映射
+	}
+	// 回复已发出，取消输入状态。
+	_ = b.client.SendTyping(context.Background(), m.FromUserID, m.ContextToken, 2)
+}
+
+// dispatchConsole 把可转发文本交给命令层：quotedChatID 非空时先走引用
+// 路由（切换到被引用会话再投递）；定位失败（handled=false）回落普通
+// Handle（发当前会话），与无引用消息同语义。
+func (b *Bridge) dispatchConsole(text, quotedChatID string) []hub.Reply {
+	if quotedChatID != "" {
+		if handled, replies := b.console.HandleQuoted(quotedChatID, text); handled {
+			return replies
+		}
+	}
+	return b.console.Handle(text)
+}
+
+// deliveredAck 是「文本已成功转发给当前会话」的微信侧回执，与桌面端
+// AgentHub 的 ack 卡片同一文案语义，带【会话名】归因前缀（无活跃会话不加）。
+func (b *Bridge) deliveredAck() string {
+	ack := hub.CmdText(b.lang, "sent_ack")
+	if title := b.console.CurrentTitle(); title != "" {
+		ack = "【" + title + "】" + ack
+	}
+	return ack
+}
+
+// admit 白名单过滤与 wxid 首条学习；未通过返回 false（静默丢弃）。
+func (b *Bridge) admit(fromUserID string) bool {
 	// wxid 待学习：iLink 扫码响应不带 wxid，首条白名单外的入站消息
 	// 即视为机主本人（首扫即绑），学习一次后按白名单过滤。学习与
 	// 白名单判断共用 mu，保证并发消息里只有一条能成为「首条」。
@@ -162,7 +364,7 @@ func (b *Bridge) HandleInbound(fromUserID, contextToken, text string) {
 	if b.wxid == "" {
 		if fromUserID == "" {
 			b.mu.Unlock()
-			return
+			return false
 		}
 		b.wxid = fromUserID
 		fn := b.onLearnWxid
@@ -171,39 +373,151 @@ func (b *Bridge) HandleInbound(fromUserID, contextToken, text string) {
 		if fn != nil {
 			fn(fromUserID)
 		}
-	} else if fromUserID != b.wxid {
-		b.mu.Unlock()
+		return true
+	}
+	ok := fromUserID == b.wxid
+	b.mu.Unlock()
+	if !ok {
 		log.Printf("[weixin] 非白名单消息丢弃 from=%s", fromUserID)
-		return // 非白名单静默丢弃，不回复
-	} else {
+	}
+	return ok
+}
+
+// ingestAttachments 下载落盘每个附件并入队；返回微信侧回执文本（无新附件
+// 或全部成功且即将合并时也可为空——回执是否发出由调用方按合并结果决定）。
+// 下载/落盘在长轮询 goroutine 内同步执行：附件体积受微信限制，秒级阻塞可接受；
+// ctx 取消（Stop/重绑）时未完成的附件按失败处理，不阻塞退出。
+func (b *Bridge) ingestAttachments(ctx context.Context, atts []InboundAttachment) string {
+	if len(atts) == 0 {
+		return ""
+	}
+	var got, failed []string
+	for _, att := range atts {
+		name := att.Name
+		if name == "" {
+			name = att.Kind + ".bin"
+		}
+		data, err := b.client.DownloadMedia(ctx, att)
+		if err == nil {
+			var path string
+			path, err = saveAttachment(b.filesDir, name, data)
+			if err == nil {
+				b.mu.Lock()
+				b.queue = append(b.queue, queuedFile{Name: name, Path: path})
+				total := len(b.queue)
+				b.mu.Unlock()
+				log.Printf("[weixin] 附件已落盘待转交 name=%s path=%s 队列=%d", name, path, total)
+				got = append(got, name)
+				continue
+			}
+		}
+		log.Printf("[weixin] 附件获取失败 name=%s: %v", name, err)
+		failed = append(failed, name)
+	}
+	var parts []string
+	if len(got) > 0 {
+		b.mu.Lock()
+		total := len(b.queue)
 		b.mu.Unlock()
+		parts = append(parts, fmt.Sprintf(bridgeText(b.lang, "file.received"),
+			strings.Join(got, "、"), total))
+	}
+	for _, name := range failed {
+		parts = append(parts, fmt.Sprintf(bridgeText(b.lang, "file.failed"), name))
+	}
+	return strings.Join(parts, "\n")
+}
+
+// ingestVoice 完成语音的文件化与转写：CDN 下载 → SILK 解码转 WAV → 落盘
+// 入附件队列（音频作为文件随下一条可转发文字转交模型），needTranscribe 时
+// 再交给注入的 transcriber 得转写文本。返回微信侧回执片段（file.received）、
+// 转写文本与转写错误：未装配 transcriber 时 err 为哨兵；下载/解码/落盘失败
+// 时回执为空、err 为底层错误（调用方转 voice.failed 回执）。落盘结果不受
+// 转写可用性影响，语音转交不依赖 ASR 配置。
+func (b *Bridge) ingestVoice(ctx context.Context, v *InboundAttachment, needTranscribe bool) (note, transcript string, err error) {
+	wav, err := b.voiceWAV(ctx, v)
+	if err != nil {
+		return "", "", err
+	}
+	name := "voice.wav"
+	path, err := saveAttachment(b.filesDir, name, wav)
+	if err != nil {
+		return "", "", err
 	}
 	b.mu.Lock()
-	b.ctx = ctxInfo{userID: fromUserID, contextToken: contextToken, valid: true}
+	b.queue = append(b.queue, queuedFile{Name: name, Path: path})
+	total := len(b.queue)
 	b.mu.Unlock()
+	log.Printf("[weixin] 语音已落盘待转交 path=%s 队列=%d", path, total)
+	note = fmt.Sprintf(bridgeText(b.lang, "file.received"), name, total)
+	if !needTranscribe {
+		return note, "", nil
+	}
+	fn := b.transcriberFn()
+	if fn == nil {
+		return note, "", ErrTranscriberNotConfigured
+	}
+	transcript, err = fn(ctx, wav)
+	if err != nil {
+		return note, "", err
+	}
+	return note, transcript, nil
+}
 
-	// typing 只是体验优化，失败静默。
-	_ = b.client.SendTyping(context.Background(), fromUserID, contextToken, 1)
+// voiceWAV 下载语音媒体并解码为 WAV（SILK → 24kHz 单声道 PCM，voice.go）。
+func (b *Bridge) voiceWAV(ctx context.Context, v *InboundAttachment) ([]byte, error) {
+	data, err := b.client.DownloadMedia(ctx, *v)
+	if err != nil {
+		return nil, fmt.Errorf("下载语音: %w", err)
+	}
+	return silkToWAV(data)
+}
 
-	b.flushPending()
+// joinNotes 用换行合并回执片段（忽略空片段）。
+func joinNotes(a, b string) string {
+	if a == "" {
+		return b
+	}
+	if b == "" {
+		return a
+	}
+	return a + "\n" + b
+}
 
-	replies := b.console.Handle(text)
-	if len(replies) == 0 && strings.TrimSpace(text) != "" {
-		// 命令层无回复 = 文本已成功转发给当前会话（agent 稍后回复）。
-		// 微信侧补一条已接收确认，与桌面端 AgentHub 的 ack 卡片同一文案语义
-		//（ui.hub.ack_delivered 不镜像到微信，这里是对应的微信侧回执），
-		// 带【会话名】归因前缀（无活跃会话时不加）。
-		ack := hub.CmdText(b.lang, "sent_ack")
-		if title := b.console.CurrentTitle(); title != "" {
-			ack = "【" + title + "】" + ack
+// queuedPrefix 取队列全部附件的说明行块（每附件一行 + 空行分隔），不消费队列；
+// 仅在合并投递成功后由 clearQueue 清空。
+func (b *Bridge) queuedPrefix() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var sb strings.Builder
+	for _, q := range b.queue {
+		sb.WriteString(fmt.Sprintf(bridgeText(b.lang, "file.line"), q.Name, q.Path))
+		sb.WriteByte('\n')
+	}
+	sb.WriteByte('\n')
+	return sb.String()
+}
+
+// clearQueue 清空待转交附件队列（合并投递成功后调用）。
+func (b *Bridge) clearQueue() {
+	b.mu.Lock()
+	b.queue = nil
+	b.mu.Unlock()
+}
+
+// isForwardableText 判断文本是否可携带附件队列转发：非空、非命令（# 与全角＃）、
+// 非纯数字（菜单/编号切换）。命令语义不应被附件说明行污染，也不消费队列。
+func isForwardableText(text string) bool {
+	t := strings.TrimSpace(text)
+	if t == "" || strings.HasPrefix(t, "#") || strings.HasPrefix(t, "＃") {
+		return false
+	}
+	for _, r := range t {
+		if r < '0' || r > '9' {
+			return true
 		}
-		replies = []hub.Reply{{Text: ack}}
 	}
-	for _, r := range replies {
-		b.deliver(r.Text)
-	}
-	// 回复已发出，取消输入状态。
-	_ = b.client.SendTyping(context.Background(), fromUserID, contextToken, 2)
+	return false // 全数字：菜单选择/编号切换
 }
 
 // DeliverHubMessage 把 hub 的 agent 消息镜像到微信出站队列（串行 worker
@@ -221,10 +535,47 @@ func (b *Bridge) DeliverHubMessage(m hub.Message) {
 		return
 	}
 	text := markdownToText(m.Text)
-	if m.SessionTitle != "" {
-		text = "【" + m.SessionTitle + "】" + text
+	if bar := b.titleBar(m); bar != "" {
+		text = bar + "\n" + text
 	}
-	b.enqueueOutbound(text)
+	b.enqueueOutbound(outMsg{svrKey: m.ChatID, text: text})
+}
+
+// outMsg 是一条待投递的出站文本。svrKey 是归属 agent 会话的 chat ID：
+// 发送成功后缓存「响应 svr_id → svrKey」供引用回复归因；空串不缓存。
+type outMsg struct {
+	svrKey string
+	text   string
+}
+
+// titleBar 组装出站镜像消息的标题栏（独立一行，与正文换行分隔，不再同行拼接）：
+// 项目名 · agent 展示名 · 会话标题，缺项跳过，全空返回空串。项目名取工作区
+// 路径基名；agent 名查注入的展示名（回落工具 ID）。
+func (b *Bridge) titleBar(m hub.Message) string {
+	var parts []string
+	if m.Workspace != "" {
+		parts = append(parts, filepath.Base(m.Workspace))
+	}
+	if m.Tool != "" {
+		b.mu.Lock()
+		fn := b.toolName
+		b.mu.Unlock()
+		name := ""
+		if fn != nil {
+			name = fn(m.Tool)
+		}
+		if name == "" {
+			name = m.Tool
+		}
+		parts = append(parts, name)
+	}
+	if m.SessionTitle != "" {
+		parts = append(parts, m.SessionTitle)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "【" + strings.Join(parts, " · ") + "】"
 }
 
 // enqueueOutbound 把一条文本放入串行出站队列；满或已关闭则丢弃计 undelivered。
@@ -232,7 +583,7 @@ func (b *Bridge) DeliverHubMessage(m hub.Message) {
 // worker 只在 FlushForTest（测试）与 Close（排空退出）被调是不够的——
 // 否则队列永远无人消费，agent 回复全部滞留（2026-10-18 真机「微信收不到
 // agent 回复、命令回复正常」的根因）。
-func (b *Bridge) enqueueOutbound(text string) {
+func (b *Bridge) enqueueOutbound(m outMsg) {
 	b.startOutboundWorker()
 	b.outMu.Lock()
 	if b.outClosed {
@@ -243,7 +594,7 @@ func (b *Bridge) enqueueOutbound(text string) {
 		return
 	}
 	select {
-	case b.outbound <- text:
+	case b.outbound <- m:
 		b.outMu.Unlock()
 	default:
 		b.outMu.Unlock()
@@ -259,14 +610,14 @@ func (b *Bridge) startOutboundWorker() {
 	b.workerOnce.Do(func() {
 		go func() {
 			defer close(b.workerDone)
-			for text := range b.outbound {
-				if text == flushSentinel {
+			for m := range b.outbound {
+				if m.text == flushSentinel {
 					if b.flushHook != nil {
 						b.flushHook()
 					}
 					continue
 				}
-				b.deliver(text)
+				b.deliver(m.text, m.svrKey)
 			}
 		}()
 	})
@@ -290,9 +641,69 @@ func isWireKey(s string) bool {
 	return s != "" && !strings.ContainsAny(s, " \t\n") && len(s) < 64 && reWireKey.MatchString(s)
 }
 
+// svrMapCap 是引用归因映射的上限：超限丢最旧（引用回复总是紧跟原消息，
+// 热数据就最近几十条）。
+const svrMapCap = 256
+
+// rememberSvrID 记录「出站消息 svr_id → chatID」；svrID 或 chatID 为空、
+// svr_id 重复时不记（响应字段真机未验证，拿不到即降级标题匹配，不报错）。
+func (b *Bridge) rememberSvrID(svrID, chatID string) {
+	if svrID == "" || chatID == "" {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, dup := b.svrMap[svrID]; dup {
+		return
+	}
+	b.svrMap[svrID] = chatID
+	b.svrOrder = append(b.svrOrder, svrID)
+	for len(b.svrOrder) > svrMapCap {
+		old := b.svrOrder[0]
+		b.svrOrder = b.svrOrder[1:]
+		delete(b.svrMap, old)
+	}
+}
+
+// resolveQuote 按引用归因出目标 chatID：svr_id 精确映射优先，【会话名】
+// 标题匹配兜底；都不命中返回空串（调用方回落当前会话）。
+func (b *Bridge) resolveQuote(ref *RefMsg) string {
+	if ref == nil {
+		return ""
+	}
+	b.mu.Lock()
+	chatID := b.svrMap[ref.SvrID]
+	b.mu.Unlock()
+	if chatID != "" {
+		return chatID
+	}
+	title := quoteTitle(ref.Text)
+	if title == "" {
+		return ""
+	}
+	for _, s := range b.ex.ListSessions() {
+		if s.Title == title && s.ChatID != "" {
+			return s.ChatID
+		}
+	}
+	return ""
+}
+
+// quoteTitle 从引用文本里提取出站的【会话名】前缀；无前缀返回空串。
+var reQuoteTitle = regexp.MustCompile(`^【([^】]+)】`)
+
+func quoteTitle(text string) string {
+	m := reQuoteTitle.FindStringSubmatch(strings.TrimSpace(text))
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
+}
+
 // deliver 投递一条文本：截断 → 用当前上下文发送；-14 入 pending，
-// 其他失败重试 2 次后计 undelivered。
-func (b *Bridge) deliver(text string) {
+// 其他失败重试 2 次后计 undelivered。chatID 是该文本归属的 agent 会话，
+// 发送成功且响应带回 svr_id 时记入引用归因映射（chatID 空则跳过）。
+func (b *Bridge) deliver(text, chatID string) {
 	text = truncateForWeixin(text, b.lang)
 	// PC 端微信按 Markdown 渲染 ClawBot 气泡，单个 \n 被折叠成空格；
 	// 统一升级为硬换行（行尾两空格），手机端纯文本渲染不受影响。
@@ -306,20 +717,22 @@ func (b *Bridge) deliver(text string) {
 		b.mu.Unlock()
 		return
 	}
-	err := b.client.SendMessage(context.Background(), ctx.userID, ctx.contextToken, text)
+	svrID, err := b.client.SendMessage(context.Background(), ctx.userID, ctx.contextToken, text)
 	if errors.Is(err, ErrSessionExpired) {
 		b.mu.Lock()
-		b.pending = append(b.pending, pendingMsg{userID: ctx.userID, contextToken: ctx.contextToken, text: text})
+		b.pending = append(b.pending, pendingMsg{userID: ctx.userID, contextToken: ctx.contextToken, text: text, chatID: chatID})
 		b.mu.Unlock()
 		return
 	}
 	if err == nil {
+		b.rememberSvrID(svrID, chatID)
 		return
 	}
 	// 普通失败：重试 sendRetry 次。
 	for i := 0; i < sendRetry; i++ {
 		b.sleep(sendRetryWait)
-		if err = b.client.SendMessage(context.Background(), ctx.userID, ctx.contextToken, text); err == nil {
+		if svrID, err = b.client.SendMessage(context.Background(), ctx.userID, ctx.contextToken, text); err == nil {
+			b.rememberSvrID(svrID, chatID)
 			return
 		}
 	}
@@ -346,9 +759,11 @@ func (b *Bridge) flushPending() {
 		pm := b.pending[0]
 		b.mu.Unlock()
 
-		if err := b.client.SendMessage(context.Background(), pm.userID, pm.contextToken, pm.text); err != nil {
+		svrID, err := b.client.SendMessage(context.Background(), pm.userID, pm.contextToken, pm.text)
+		if err != nil {
 			return // 失败保留剩余 pending，等下次入站再补
 		}
+		b.rememberSvrID(svrID, pm.chatID)
 		sent++
 		b.mu.Lock()
 		b.pending = b.pending[1:]

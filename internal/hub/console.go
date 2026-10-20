@@ -56,6 +56,8 @@ type Console struct {
 	perm       *pendingPermission
 	// lastList 是最近一次列表/搜索的编号映射（纯数字与 #g 依据它路由）。
 	lastList []SessionRef
+	// lastRecent 是最近一次 #h 列表的消息快照（#h <序号> 查全文依据它索引）。
+	lastRecent []Message
 }
 
 // pendingPermission 是权限请求的选择状态（1 允许 / 2 拒绝）。
@@ -262,7 +264,7 @@ func normalizeDigits(s string) string {
 	return b.String()
 }
 
-// handleHelp 回复帮助全文与当前会话行。
+// handleHelp 回复帮助全文与当前会话行（help 本身是 Markdown，段落间空行）。
 func (c *Console) handleHelp() []Reply {
 	var sb strings.Builder
 	sb.WriteString(c.text("help"))
@@ -313,8 +315,8 @@ func (c *Console) handleList(all bool) []Reply {
 		lines = append(lines, formatRef(shown[i]))
 	}
 	// 引导提示：列表本身不说明数字的用途，新用户不知道可以直接回数字切换。
-	lines = append(lines, c.text("list_hint"))
-	return single(strings.Join(lines, "\n"))
+	// 提示与列表间用空行分隔，防 Markdown 懒续行把提示吞进最后一个列表项。
+	return single(strings.Join([]string{strings.Join(lines, "\n"), c.text("list_hint")}, "\n\n"))
 }
 
 // activateRef 把编号映射里的会话切为当前上下文：未激活的磁盘会话
@@ -551,77 +553,99 @@ func (c *Console) handleSearch(arg string) []Reply {
 	for _, r := range results {
 		lines = append(lines, formatRef(r))
 	}
-	// 搜索结果同样靠数字选择，补一条引导（与菜单选择共用 pick_number 文案）。
-	lines = append(lines, c.text("pick_number"))
-	return single(strings.Join(lines, "\n"))
+	// 搜索结果同样靠数字选择，补一条引导（与菜单选择共用 pick_number 文案），
+	// 空行分隔防 Markdown 懒续行。
+	return single(strings.Join([]string{strings.Join(lines, "\n"), c.text("pick_number")}, "\n\n"))
 }
 
-// handleStatus 文本化状态快照。
+// handleStatus 文本化状态快照（无序列表，按 Markdown 渲染不挤行）。
 func (c *Console) handleStatus() []Reply {
 	st := c.ex.Status()
-	return single(fmt.Sprintf(c.text("current_session")+"\n"+c.text("status_running")+"\n"+c.text("status_undelivered"),
+	return single(fmt.Sprintf("- "+c.text("current_session")+"\n- "+c.text("status_running")+"\n- "+c.text("status_undelivered"),
 		st.CurrentTitle, st.Running, st.Undelivered))
 }
 
-// #h 的条数默认值与上限（上限防一次拉满 live 缓冲刷屏）。
+// #h 的条数默认值（列表固定取最近 N 条）与单条正文截断上限（rune 数）。
 const (
 	recentDefault = 10
-	recentMax     = 50
-	// recentTextCap 是单条消息正文的最大回显长度（rune 数），超长截断加省略号。
+	// recentTextCap 是列表里单条消息正文的最大回显长度，超长截断加省略号；
+	// #h <序号> 查全文不受此限（微信端另有 truncateForWeixin 兜底）。
 	recentTextCap = 80
 )
 
-// handleRecent 处理 "#h [条数]"：回显 AgentHub 最近 n 条消息（默认 10，上限 50）。
+// handleRecent 处理 "#h" 与 "#h <序号>"：无参回显 AgentHub 最近 10 条消息
+//（存快照供序号索引）；带数字序号回显上次列表第 N 条的完整正文，无快照时
+// 先自动取最近一批。条数参数已砍（2026-10-19 用户决策：#h <n> 语义让位序号）。
 func (c *Console) handleRecent(arg string) []Reply {
-	n := recentDefault
-	if arg != "" {
-		v, err := strconv.Atoi(normalizeDigits(arg))
-		if err != nil || v < 1 {
-			return single(c.text("usage_h"))
+	if arg == "" {
+		msgs := c.ex.RecentMessages(recentDefault)
+		if len(msgs) == 0 {
+			return single(c.text("no_messages"))
 		}
-		n = v
+		c.lastRecent = msgs
+		return single(c.renderRecentList(msgs))
 	}
-	if n > recentMax {
-		n = recentMax
+	n, err := strconv.Atoi(normalizeDigits(arg))
+	if err != nil || n < 1 {
+		return single(c.text("usage_h"))
 	}
-	msgs := c.ex.RecentMessages(n)
-	if len(msgs) == 0 {
+	if len(c.lastRecent) == 0 {
+		if msgs := c.ex.RecentMessages(recentDefault); len(msgs) > 0 {
+			c.lastRecent = msgs
+		}
+	}
+	if len(c.lastRecent) == 0 {
 		return single(c.text("no_messages"))
 	}
-	lines := make([]string, 0, len(msgs)+1)
-	lines = append(lines, fmt.Sprintf(c.text("recent_header"), len(msgs)))
+	if n > len(c.lastRecent) {
+		return single(c.text("recent_no_mapping"))
+	}
+	// 详情正文原样拼接：消息本身即 Markdown，行首 #/** 等按 Markdown 渲染是
+	// 预期行为（与 AgentHub 气泡一致），不做转义（已知例外，评审 M-2）。
+	m := c.lastRecent[n-1]
+	role := c.text("msg_agent")
+	if m.Kind == "user" {
+		role = c.text("msg_user")
+	}
+	return single(fmt.Sprintf(c.text("msg_detail"), n, role, hubMsgTitle(m)) + "\n\n" + m.Text)
+}
+
+// renderRecentList 渲染 #h 列表：加粗表头 + 空行 + 有序列表（1=最旧），
+// 单条正文按 rune 截断防刷屏。
+func (c *Console) renderRecentList(msgs []Message) string {
+	roleUser := c.text("msg_user")
+	lines := make([]string, 0, len(msgs))
 	for i, m := range msgs {
 		role := c.text("msg_agent")
 		if m.Kind == "user" {
-			role = c.text("msg_user")
+			role = roleUser
 		}
 		lines = append(lines, itoa(i+1)+". ["+role+"]["+hubMsgTitle(m)+"] "+truncateOneLine(m.Text, recentTextCap))
 	}
-	return single(strings.Join(lines, "\n"))
+	return fmt.Sprintf(c.text("recent_header"), len(msgs)) + "\n\n" + strings.Join(lines, "\n")
 }
 
-// renderOptions 渲染编号选项列表。
+// renderOptions 渲染编号选项列表（标题与列表间空行，Markdown 段落分隔）。
 func (c *Console) renderOptions(title string, opts []MenuOption) []Reply {
-	lines := make([]string, 0, len(opts)+1)
-	lines = append(lines, title)
+	lines := make([]string, 0, len(opts))
 	for i, o := range opts {
 		lines = append(lines, itoa(i+1)+". "+o.Label)
 	}
-	return single(strings.Join(lines, "\n"))
+	return single(title + "\n\n" + strings.Join(lines, "\n"))
 }
 
-// renderOptionsMarked 同 renderOptions，但当前项（curID）标 ▶。
+// renderOptionsMarked 同 renderOptions，但当前项（curID）在编号后标 ▶
+//（行首 ▶ 会打断 Markdown 有序列表解析）。
 func (c *Console) renderOptionsMarked(title string, opts []MenuOption, curID string) []Reply {
-	lines := make([]string, 0, len(opts)+1)
-	lines = append(lines, title)
+	lines := make([]string, 0, len(opts))
 	for i, o := range opts {
 		mark := ""
 		if o.ID == curID {
-			mark = "▶"
+			mark = "▶ "
 		}
-		lines = append(lines, mark+itoa(i+1)+". "+o.Label)
+		lines = append(lines, itoa(i+1)+". "+mark+o.Label)
 	}
-	return single(strings.Join(lines, "\n"))
+	return single(title + "\n\n" + strings.Join(lines, "\n"))
 }
 
 // sendToCurrent 把普通文本发给当前会话；成功不回显（agent 流程会回复）。
@@ -633,6 +657,34 @@ func (c *Console) sendToCurrent(text string) []Reply {
 		return single(fmt.Sprintf(c.text("send_failed"), err))
 	}
 	return nil
+}
+
+// HandleQuoted 处理引用回复：按 chatID 定位会话，切换当前上下文后投递
+//（2026-10-20 用户确认：切换，后续裸消息跟随被引用的 agent）。handled=false
+// 表示定位失败（chatID 空/未命中），调用方回落普通 Handle；切换/发送失败
+// handled=true 且回执错误文案。投递成功 handled=true 且 replies 空（静默，
+// agent 回复自带【会话名】归因，与普通转发语义一致）。
+func (c *Console) HandleQuoted(chatID, text string) (bool, []Reply) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if chatID == "" {
+		return false, nil
+	}
+	// 活跃菜单（#n/#m/#f）进行中与 Handle 同口径：提示选数字，不切会话
+	// 不投递——否则旧菜单悬着，随后的数字回复会被误消费。
+	if c.menu != nil {
+		return true, single(c.text("pick_number"))
+	}
+	for _, r := range c.ex.ListSessions() {
+		if r.ChatID != chatID {
+			continue
+		}
+		if err := c.activateRef(r); err != nil {
+			return true, single(fmt.Sprintf(c.text("switch_failed"), err))
+		}
+		return true, c.sendToCurrent(text)
+	}
+	return false, nil
 }
 
 // single 构造单条回复。

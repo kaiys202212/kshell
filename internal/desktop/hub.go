@@ -11,10 +11,12 @@ import (
 	"github.com/yangk/kshell/internal/hub"
 )
 
-// Hub 撤回相关错误（wire key，前端 translateBackend 翻译）。
+// Hub 撤回与 #f 直投相关错误（wire key，前端 translateBackend 翻译）。
 var (
-	errHubNotFound  = errors.New("err.hub.not_found")
-	errHubNotQueued = errors.New("err.hub.not_queued")
+	errHubNotFound    = errors.New("err.hub.not_found")
+	errHubNotQueued   = errors.New("err.hub.not_queued")
+	errHubFollowEmpty = errors.New("err.hub.follow_empty")
+	errHubFollowNone  = errors.New("err.hub.follow_none")
 )
 
 // SaveHubDefaultCreate 持久化「默认 agent 工具 + 模型」到 config.yaml（前端
@@ -24,6 +26,20 @@ func (a *App) SaveHubDefaultCreate(toolID, modelID string) error {
 	return a.saveConfig(func(c *config.Config) {
 		c.AgentHub.DefaultTool = toolID
 		c.AgentHub.DefaultModel = modelID
+	})
+}
+
+// SaveHubRouteMode 持久化 AgentHub 输入路由模式（auto | agent | force_auto）
+// 到 config.yaml：前端 localStorage 之外的跨端副本，工具化路由层动态读这里。
+// 非法值报 wire key（前端 translateBackend 翻译）。
+func (a *App) SaveHubRouteMode(mode string) error {
+	switch mode {
+	case config.RouteModeAuto, config.RouteModeAgent, config.RouteModeForceAuto:
+	default:
+		return errors.New("err.hub.invalid_route_mode")
+	}
+	return a.saveConfig(func(c *config.Config) {
+		c.AgentHub.RouteMode = mode
 	})
 }
 
@@ -108,6 +124,7 @@ func (a *App) recordHubAck(hubID, key string) {
 			m.Tool = u.Tool
 			m.Workspace = u.Workspace
 			m.SessionTitle = u.SessionTitle
+			m.SessionID = u.SessionID // 绑定后的排队/送达卡片也要能精确 resume
 			break
 		}
 	}

@@ -55,7 +55,7 @@ func newChatManager(a *App) *chat.Manager {
 // origID 把 manager 侧会话 ID 翻回前端持有的原始 ID（nil 为恒等，测试用）：
 // 重建换 ID 后前端仍按旧 ID 索引，出站事件必须统一翻译（见 emitChatOut）。
 // onWxPermission 非 nil 时权限请求同步转发给微信桥的命令层权限菜单
-//（nil 安全：测试装配不传；desktop 装配传闭包，运行时内部再判桥是否存在）。
+// （nil 安全：测试装配不传；desktop 装配传闭包，运行时内部再判桥是否存在）。
 func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, autoAllow func() bool, dedupe func(agenthook.Payload) bool, onAgent func(agenthook.Payload), origID func(string) string, onWxPermission func(chatID, reqID, desc string)) *chat.Manager {
 	translate := func(id string) string {
 		if origID == nil {
@@ -94,7 +94,7 @@ func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, aut
 
 // turnEvent 把 stopReason 归纳为通知事件 id：只有 end_turn/空 才算完成；
 // cancelled 是用户主动取消（中性，不报错也不报完成）；其余
-//（max_tokens / max_turn_requests / refusal / 未知值）是 agent 提前停止——
+// （max_tokens / max_turn_requests / refusal / 未知值）是 agent 提前停止——
 // 此前一律报「任务完成」，正是「任务没做完却停了且毫无提示」的根因。
 func turnEvent(stop string) string {
 	switch stop {
@@ -159,7 +159,7 @@ func lastAssistantText(h []chat.Update) string {
 // onAgent 非 nil 时在放行后落 AgentHub 历史（与 hook 通道共用同一写入路径）。
 // 回调总在 Manager 锁外执行，Get 取锁安全。
 // chatID 翻回原始 ID（前端归因空间），与出站事件同一口径；origID 为 nil 时恒等
-//（测试装配不关心别名链）。
+// （测试装配不关心别名链）。
 func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, event, summary string, allow func(agenthook.Payload) bool, onAgent func(agenthook.Payload), origID func(string) string) {
 	if m == nil {
 		return
@@ -257,6 +257,7 @@ func (a *App) openSessionACP(sessionID string, allowFallback bool) (OpenedSessio
 				ToolID:    s.ToolID,
 			}, l, s.ID)
 			if err == nil {
+				a.emitChatMeta(info)
 				return OpenedSession{Kind: "chat", Chat: &info}, nil
 			}
 			if allowFallback {
@@ -305,6 +306,8 @@ func (a *App) openWorkspaceACP(wsID, toolID string, allowFallback bool) (OpenedS
 				KnownSessionIDs: a.knownSessionIDs(),
 			}, l, "")
 			if err == nil {
+				// 先让前端登记会话再落欢迎词：欢迎卡一旦可见，快捷操作就能解析到目标。
+				a.emitChatMeta(info)
 				a.recordHubWelcome(info)
 				return OpenedSession{Kind: "chat", Chat: &info}, nil
 			}
@@ -365,13 +368,69 @@ func (a *App) SendChatPrompt(id, text string) error {
 	if m == nil {
 		return errNotReady
 	}
+	// #f 直投指令（follow 最新 agent 会话）：先于工具化路由解析，不走意图
+	// 识别，也不依赖模型配置；目标已退出时经 ensureChatAlive 按快照重建。
+	if rest, ok := parseFollowPrompt(text); ok {
+		if rest == "" {
+			return errHubFollowEmpty
+		}
+		target := a.latestAgentChatID()
+		if target == "" {
+			return errHubFollowNone
+		}
+		resolved, _ := a.resolveChatID(target)
+		sendID, err := a.ensureChatAlive(resolved)
+		if err != nil {
+			return err
+		}
+		blocks := []acp.ContentBlock{{Type: "text", Text: rest}}
+		return a.sendAndRecord(sendID, blocks, rest)
+	}
 	resolved, _ := a.resolveChatID(id)
 	sendID, err := a.ensureChatAlive(resolved)
 	if err != nil {
 		return err
 	}
 	blocks := []acp.ContentBlock{{Type: "text", Text: text}}
+	// 工具化路由分支：仅纯文本路径参与（Blocks 附件路径直接走原链路）。
+	// handled=true 时输入已被 hubtools 消费（含落盘）；false = 模型未配置 /
+	// RouteMode=agent / LLM 失败降级，落回原直连链路。
+	if h := a.hubTools(); h != nil {
+		handled, err := h.HandlePrompt(sendID, text)
+		if handled {
+			return err
+		}
+	}
 	return a.sendAndRecord(sendID, blocks, text)
+}
+
+// parseFollowPrompt 解析 #f 直投指令：输入整串为 "#f" 时返回空消息体；
+// "#f <消息>" 返回消息体。其余输入不是指令（false）。
+func parseFollowPrompt(text string) (string, bool) {
+	t := strings.TrimSpace(text)
+	if t == "#f" {
+		return "", true
+	}
+	if rest, ok := strings.CutPrefix(t, "#f "); ok {
+		return strings.TrimSpace(rest), true
+	}
+	return "", false
+}
+
+// latestAgentChatID 返回 hub store 最近一条纯文本 agent 消息归属的会话 ID，
+// 没有时返回空串。#f 直投的目标来源。
+func (a *App) latestAgentChatID() string {
+	store := a.snapshot().HubStore
+	if store == nil {
+		return ""
+	}
+	list := store.List()
+	for i := len(list) - 1; i >= 0; i-- {
+		if mm := list[i]; mm.Kind == "agent" && mm.Event == "" && mm.ChatID != "" && mm.Text != "" {
+			return mm.ChatID
+		}
+	}
+	return ""
 }
 
 // ChatBlock 是前端发来的多形态内容块（扁平结构）：text 用 Text；
@@ -473,11 +532,11 @@ func (a *App) ListChatModels(id string) (chat.ModelsView, error) {
 }
 
 // modelsView 取某会话的合并模型视图；agent 未报告时返回空切片视图
-//（nil 会序列化成 null，前端 models.Models.find 会抛 TypeError 白屏）。
+// （nil 会序列化成 null，前端 models.Models.find 会抛 TypeError 白屏）。
 // ListChatModels 与 chat:models 推送共用。入口别名解析：重建后前端持旧 ID
-// 也能查到新会话。agent 上报的列表会与 kshell 配置的模型列表合并（配置模型
-// 是注入通道的实际取值域，agent 自报列表里不会有它们；缺失项以 ID=Name=model
-// 追加，去重）。
+// 也能查到新会话。agent 上报的列表会与 kshell 配置的平台模型合并（配置模型
+// 是注入通道的实际取值域，agent 自报列表里不会有它们；单平台裸名、多平台
+// 加前缀追加，去重，详见 mergeConfigModels）。
 func (a *App) modelsView(id string) (chat.ModelsView, error) {
 	m := a.chats()
 	if m == nil {
@@ -492,40 +551,112 @@ func (a *App) modelsView(id string) (chat.ModelsView, error) {
 }
 
 // mergeConfigModels 把 kshell 配置的模型列表并入 agent 上报视图：
-// 已存在（按 ID）跳过；agent 无视图时以 Current=ActiveModel 返回配置列表。
+// 已存在（按 ID）跳过；数据源为配置的平台列表。单平台保持裸名
+// （ID=Name=model，向后兼容旧保存的 modelId）；多平台加
+// "kshell:<platID>:<model>" 前缀，默认平台条目排最前，其余按列表顺序。
+// 不改写 Current：当前模型以 agent 上报为准（默认模型由 agent 自行决定）。
 func (a *App) mergeConfigModels(v chat.ModelsView) chat.ModelsView {
 	cfg := a.snapshot().Config.Model
-	if !cfg.Enabled || len(cfg.Models) == 0 {
+	if !cfg.Enabled || len(cfg.Platforms) == 0 {
 		return v
 	}
 	seen := make(map[string]bool, len(v.Models))
 	for _, mo := range v.Models {
 		seen[mo.ID] = true
 	}
-	merged := make([]chat.ModelView, 0, len(v.Models)+len(cfg.Models))
-	merged = append(merged, v.Models...)
-	for _, name := range cfg.Models {
-		name = strings.TrimSpace(name)
-		if name == "" || seen[name] {
+	add := func(id, name string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		v.Models = append(v.Models, chat.ModelView{ID: id, Name: name})
+	}
+	if len(cfg.Platforms) == 1 {
+		for _, name := range cfg.Platforms[0].Models {
+			name = strings.TrimSpace(name)
+			add(name, name)
+		}
+		return v
+	}
+	// 多平台：默认平台排最前（命中 DefaultPlatform，否则第一个），其余按列表顺序。
+	def, _ := cfg.ActivePlatform()
+	var defPlat *config.ModelPlatform
+	rest := make([]config.ModelPlatform, 0, len(cfg.Platforms))
+	for _, p := range cfg.Platforms {
+		if p.ID == def.ID && defPlat == nil {
+			pc := p
+			defPlat = &pc
 			continue
 		}
-		merged = append(merged, chat.ModelView{ID: name, Name: name})
+		rest = append(rest, p)
 	}
-	out := chat.ModelsView{Current: v.Current, Models: merged}
-	if out.Current == "" {
-		out.Current = cfg.ActiveModel
+	ordered := rest
+	if defPlat != nil {
+		ordered = append([]config.ModelPlatform{*defPlat}, rest...)
 	}
-	return out
+	for _, p := range ordered {
+		for _, name := range p.Models {
+			name = strings.TrimSpace(name)
+			add("kshell:"+p.ID+":"+name, p.Name+": "+name)
+		}
+	}
+	return v
+}
+
+// splitKshellModelID 解析下拉前缀 ID "kshell:<platID>:<model>"。
+// platID 是平台 ID（不含冒号），model 可能含冒号，因此去掉 "kshell:" 头后
+// 按第一个冒号切分，剩余全部视为 model。非前缀或 platID 为空返回 ok=false。
+func splitKshellModelID(id string) (platID, model string, ok bool) {
+	rest, found := strings.CutPrefix(id, "kshell:")
+	if !found {
+		return "", "", false
+	}
+	i := strings.Index(rest, ":")
+	if i <= 0 {
+		return "", "", false
+	}
+	model = rest[i+1:]
+	if model == "" {
+		// 畸形 ID（如 "kshell:plat:"）：空模型名不应下发给 SetModel，按透传容错。
+		return "", "", false
+	}
+	return rest[:i], model, true
 }
 
 // SetChatModel 运行时切换会话模型。入口别名解析同 ListChatModels。
+// 下拉前缀 ID 在转发前解析：默认平台只切模型；跨平台先落盘切换默认平台
+// 与活跃模型再切（保存失败则不切）；platID 已不在配置（配置删除后下拉
+// 缓存未刷）时原样透传容错，不崩、不误存。
 func (a *App) SetChatModel(id, modelID string) error {
 	m := a.chats()
 	if m == nil {
 		return errNotReady
 	}
 	resolved, _ := a.resolveChatID(id)
-	return m.SetModel(resolved, modelID)
+	platID, model, ok := splitKshellModelID(modelID)
+	if !ok {
+		return m.SetModel(resolved, modelID)
+	}
+	cfg := a.snapshot().Config.Model
+	found := false
+	for _, p := range cfg.Platforms {
+		if p.ID == platID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return m.SetModel(resolved, modelID)
+	}
+	if def, _ := cfg.ActivePlatform(); def.ID != platID {
+		if err := a.saveConfig(func(c *config.Config) {
+			c.Model.DefaultPlatform = platID
+			c.Model.ActiveModel = model
+		}); err != nil {
+			return err
+		}
+	}
+	return m.SetModel(resolved, model)
 }
 
 // ListChatCommands 返回会话最近的技能/命令列表（available_commands_update）。

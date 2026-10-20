@@ -41,6 +41,9 @@ const mocks = vi.hoisted(() => ({
   saveProvidersYAML: vi.fn(),
   restartApp: vi.fn(),
   getAppVersion: vi.fn().mockResolvedValue('dev'),
+  getLastSeenVersion: vi.fn().mockResolvedValue(''),
+  markVersionSeen: vi.fn().mockResolvedValue(undefined),
+  getChangelogDoc: vi.fn(),
   checkForUpdate: vi.fn(),
   applyUpdate: vi.fn(),
   openSessionTerminal: vi.fn(),
@@ -224,13 +227,14 @@ beforeEach(() => {
   mocks.onUpdateAvailable.mockReturnValue(() => {});
   mocks.getCloseBehavior.mockResolvedValue('tray');
   mocks.setCloseBehavior.mockResolvedValue(undefined);
+  mocks.getLastSeenVersion.mockResolvedValue('');
+  mocks.markVersionSeen.mockResolvedValue(undefined);
+  mocks.getChangelogDoc.mockResolvedValue('# Changelog');
   mocks.getModelConfig.mockResolvedValue({
     Enabled: false,
-    Preset: '',
-    OpenAIBaseURL: '',
-    AnthropicBaseURL: '',
-    Agents: {},
-    APIKeySet: false,
+    Platforms: [],
+    DefaultPlatform: '',
+    ActiveModel: '',
   });
   mocks.setModelConfig.mockResolvedValue(undefined);
   mocks.listModelPresets.mockResolvedValue([]);
@@ -863,5 +867,50 @@ describe('App', () => {
     });
     expect(playNotifySound).toHaveBeenLastCalledWith('attention');
     expect(useAppStore.getState().agentNotices).toHaveLength(3);
+  });
+
+  it('版本与上次已确认版本不一致时弹出升级日志弹窗', async () => {
+    mocks.getAppVersion.mockResolvedValue('v0.1.17');
+    mocks.getLastSeenVersion.mockResolvedValue('v0.1.16');
+    mocks.getChangelogDoc.mockResolvedValue('# Changelog EN');
+    render(<App />);
+    expect(await screen.findByRole('dialog')).toHaveTextContent(
+      tt('ui.whatsNew.title').replace('{{version}}', 'v0.1.17'),
+    );
+    expect(await screen.findByText('Changelog EN')).toBeInTheDocument();
+  });
+
+  it('点「我知道了」写已读标记并关闭弹窗', async () => {
+    mocks.getAppVersion.mockResolvedValue('v0.1.17');
+    mocks.getLastSeenVersion.mockResolvedValue('v0.1.16');
+    mocks.getChangelogDoc.mockResolvedValue('# Changelog EN');
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.whatsNew.confirm') }));
+    await waitFor(() => expect(mocks.markVersionSeen).toHaveBeenCalledWith('v0.1.17'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('dev 版本不弹升级弹窗', async () => {
+    mocks.getAppVersion.mockResolvedValue('dev');
+    mocks.getLastSeenVersion.mockResolvedValue('');
+    render(<App />);
+    await act(async () => {}); // 挂载期版本比对落位
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(mocks.markVersionSeen).not.toHaveBeenCalled();
+  });
+
+  it('getAppVersion 失败时按 dev 处理不弹', async () => {
+    mocks.getAppVersion.mockRejectedValue(new Error('boom'));
+    render(<App />);
+    await act(async () => {});
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('版本一致时不弹升级弹窗', async () => {
+    mocks.getAppVersion.mockResolvedValue('v0.1.17');
+    mocks.getLastSeenVersion.mockResolvedValue('v0.1.17');
+    render(<App />);
+    await act(async () => {});
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });

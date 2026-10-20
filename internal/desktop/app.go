@@ -2,7 +2,6 @@ package desktop
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -124,6 +123,10 @@ type App struct {
 	mu   sync.Mutex
 	ctx  context.Context
 	opts Options
+
+	// hubMu/hubRouter 是 AgentHub 工具化路由的懒初始化单例（见 hubtools_bridge.go）。
+	hubMu     sync.Mutex
+	hubRouter *hubRouter
 
 	tools []discovery.Tool
 	// rawWorkspaces 是**未叠加项目表**的扫描结果：项目列表永远从它派生，
@@ -281,7 +284,7 @@ func (a *App) scheduleUpdateCheck() {
 
 // toggleMainWindow 供系统热键 Alt+Shift+K 调用：唤起或隐藏主窗口。
 // 判定口径对齐托盘/气泡的显示路径——隐藏中、非前台、最小化任一成立即视为
-//「用户看不到窗口」，走显示路径（最小化先还原再前置）；否则收进托盘。
+// 「用户看不到窗口」，走显示路径（最小化先还原再前置）；否则收进托盘。
 // ctx 未就绪（Startup 之前/之后）时安全返回，不触碰任何窗口操作。
 func (a *App) toggleMainWindow() {
 	a.mu.Lock()
@@ -708,94 +711,23 @@ func (a *App) themeOptions() launch.ThemeOptions {
 	}
 }
 
-// codebuddySettingsPath 返回用户级 codebuddy settings.json 路径；测试注入 home 为空串时返回空串。
-func codebuddySettingsPath(home string) string {
-	if home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".codebuddy", "settings.json")
-}
-
-// codebuddyLastModel 读取 codebuddy 记住的上次模型选择（settings.json 的 model 字段）。
-// 读取失败或值为空时返回空串，调用方回落到 kshell 自己的 ActiveModel。
-func codebuddyLastModel(home string) string {
-	path := codebuddySettingsPath(home)
-	if path == "" {
-		return ""
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var m struct {
-		Model string `json:"model"`
-	}
-	if err := json.Unmarshal(b, &m); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(m.Model)
-}
-
-// cursorConfigPath 返回用户级 cursor CLI 配置路径；home 为空串时返回空串。
-func cursorConfigPath(home string) string {
-	if home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".cursor", "cli-config.json")
-}
-
-// cursorLastModel 读取 cursor CLI 记住的上次模型选择（cli-config.json 的
-// selectedModel.modelId）。"default"（=Auto，跟随内置默认）与读取失败/为空
-// 都返回空串，调用方回落到 kshell 自己的 ActiveModel。
-func cursorLastModel(home string) string {
-	path := cursorConfigPath(home)
-	if path == "" {
-		return ""
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var m struct {
-		SelectedModel struct {
-			ModelID string `json:"modelId"`
-		} `json:"selectedModel"`
-	}
-	if err := json.Unmarshal(b, &m); err != nil {
-		return ""
-	}
-	id := strings.TrimSpace(m.SelectedModel.ModelID)
-	if id == "" || id == "default" {
-		return ""
-	}
-	return id
-}
-
-// modelOptions 组装模型注入 resolver：未启用时返回空（不注入）。
-// codebuddy/cursor 优先沿用各自 CLI 记住的上次选择（用户在面板切过的模型），
-// 没有记录时回落 kshell 设置页的 ActiveModel；其他工具始终用 ActiveModel。
+// modelOptions 组装模型注入 resolver：未启用或无可用平台时返回空（不注入）。
+// 只注入端点与密钥（取默认平台，DefaultPlatform 命中否则第一个），不注入模型名——
+// 默认模型由 agent 自行决定；settings 配置的模型仅经聊天下拉提供切换。
 func (a *App) modelOptions() launch.ModelOptions {
 	m := a.snapshot().Config.Model
 	if !m.Enabled {
 		return launch.ModelOptions{}
 	}
-	return launch.ModelOptions{Resolver: func(toolID string) (providers.ModelConfig, bool) {
-		model := m.ActiveModel
-		switch toolID {
-		case "codebuddy":
-			if last := codebuddyLastModel(a.opts.Home); last != "" {
-				model = last
-			}
-		case "cursor":
-			if last := cursorLastModel(a.opts.Home); last != "" {
-				model = last
-			}
-		}
+	p, ok := m.ActivePlatform()
+	if !ok {
+		return launch.ModelOptions{}
+	}
+	return launch.ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
 		return providers.ModelConfig{
-			OpenAIBaseURL:    m.OpenAIBaseURL,
-			AnthropicBaseURL: m.AnthropicBaseURL,
-			APIKey:           m.APIKey,
-			Model:            model,
+			OpenAIBaseURL:    p.OpenAIBaseURL,
+			AnthropicBaseURL: p.AnthropicBaseURL,
+			APIKey:           p.APIKey,
 		}, true
 	}}
 }
@@ -959,6 +891,7 @@ func (a *App) attachDiscoveredSessions(sessions []providers.Session, prevIDs map
 			}
 			if o.Chats != nil && o.Chats.AttachSession(s.ID, s.Workspace, s.ToolID, s.Title, s.Messages, s.CreatedAt) {
 				changed++
+				a.backfillHubSessionID(o.Chats, s.ID)
 			}
 		}
 		if o.Terminals != nil && o.Terminals.UpdateSessionTitle(s.ID, s.Title, s.Messages) {
@@ -970,6 +903,32 @@ func (a *App) attachDiscoveredSessions(sessions []providers.Session, prevIDs map
 	}
 	a.flushPendingArchive()
 	return changed
+}
+
+// backfillHubSessionID 在扫描把磁盘会话绑定到新建聊天后，回填 hub 历史消息的
+// SessionID 快照：新建会话落盘欢迎词时还没有磁盘 ID，若不回填，会话关闭或
+// 重启后 AgentHub 的「继续 / 换个说法」只能靠标题猜测（新建占位标题与磁盘
+// summary 不一致，必然失败），无法精确 resume 原会话。
+func (a *App) backfillHubSessionID(m *chat.Manager, sessionID string) {
+	store := a.snapshot().HubStore
+	if store == nil || sessionID == "" {
+		return
+	}
+	chatID := ""
+	for _, info := range m.List() {
+		// 只服务新建会话（欢迎词落盘时还没有磁盘 ID）；KindSession 由
+		// recordHubUserMessageStatus 落盘时已带快照，无需也不应回填。
+		if info.Kind == chat.KindNew && info.SessionID == sessionID {
+			chatID = a.originalChatID(info.ID) // hub 落盘统一链头 ID
+			break
+		}
+	}
+	if chatID == "" {
+		return
+	}
+	if store.BackfillSessionID(chatID, sessionID) > 0 {
+		a.Emit("hub:changed")
+	}
 }
 
 // knownSessionIDs 当前扫描结果里的磁盘会话 ID（打开新建页签时快照，防止把左侧已有会话绑上去）。

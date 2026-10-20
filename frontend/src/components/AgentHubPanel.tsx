@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowUpRight, AtSign, ChevronDown, Loader2, Settings2 } from 'lucide-react';
+import { ArrowUpRight, Loader2, Settings2 } from 'lucide-react';
 import type { ChatCommand, ChatInfo, ChatModelsView, HubArchiveMonth, HubMessage, Session, ToolInfo, Workspace } from '../lib/api';
 import {
   cancelChat,
@@ -27,10 +27,20 @@ import {
   recallHubMessage,
   sendChatPrompt,
   setChatModel,
+  confirmHubTool,
+  saveHubRouteMode,
 } from '../lib/api';
-import { buildMentionOptions, resolveMentionTarget, type MentionAgent, type MentionOption } from '../lib/agentMentions';
+import {
+  buildMentionOptions,
+  displayMentionTitles,
+  resolveMentionTarget,
+  stripLeadingMentions,
+  stripMentionTags,
+  type MentionAgent,
+  type MentionOption,
+} from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
-import { loadDefaultCreate, loadLastCreate, loadToolModels, saveDefaultCreate, saveLastCreate, saveToolModels } from '../lib/agenthubDefaults';
+import { loadDefaultCreate, loadLastCreate, loadToolModels, loadHubRouteMode, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode } from '../lib/agenthubDefaults';
 import { saveHubDefaultCreate } from '../lib/api';
 import { quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
@@ -41,11 +51,13 @@ import { attributionText, baseName, resolveAttribution } from '../lib/hubAttribu
 import { markdownBubbleClass } from '../lib/markdownStyles';
 import { sameWorkspacePath } from '../lib/workspacePath';
 import { cn } from '../lib/cn';
-import { LIST_ROW, MONO } from '../lib/ui';
+import { LIST_ROW } from '../lib/ui';
 import { useAppStore } from '../state/store';
 import { Button } from './ui/button';
+import { ToolIcon } from './ui/tool-icons';
 import { Dialog } from './ui/dialog';
 import FindSessionDialog from './FindSessionDialog';
+import HubConfirmCard from './HubConfirmCard';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 
 // 消息流里渲染的一条：用户发出（右）或 agent 回复（左）。
@@ -157,13 +169,6 @@ interface SlashItem {
   kind: 'client' | 'agent';
 }
 
-// statusKey 把 chat.Status 映射到状态点文案 key（未知按空闲处理）。
-function statusKey(status: string): string {
-  if (status === 'running' || status === 'starting') return 'ui.hub.status_running';
-  if (status === 'exited') return 'ui.hub.status_exited';
-  return 'ui.hub.status_ready';
-}
-
 // statusDotClass 状态点配色：运行中用主色（Teal），退出用 muted，其余描边。
 function statusDotClass(status: string): string {
   if (status === 'running' || status === 'starting') return 'bg-primary';
@@ -176,12 +181,29 @@ function wsBaseName(ws: string): string {
   return baseName(ws);
 }
 
+// PENDING_PREFIX 标记「目标会话存在但未激活」的投递目标：lastHubAgentId 从消息
+// 的 sessionId 快照 / session: 前缀 termKey 解析出磁盘会话 ID，send() 据此先
+// openSessionACP 激活再投递，避免精确归因命中不了已激活 chats 时误投同 workspace 会话。
+const PENDING_PREFIX = 'pending:';
+
+// hubPendingSessionId 从一条 hub 消息解析待激活磁盘会话 ID（同步可得的两种来源）：
+// sessionId 快照优先，其次 termKey 的 session: 前缀。都没有返回 null。
+// 异步的 workspace+tool+title 缓存查找不在此做（lastHubAgentId 是同步 useMemo，
+// 且模糊兜底仍由 workspace 匹配承担）。
+function hubPendingSessionId(m: HubMessage): string | null {
+  if (m.sessionId) return m.sessionId;
+  if (m.termKey?.startsWith('session:')) return m.termKey.slice('session:'.length);
+  return null;
+}
+
 // lastHubAgentId 从 hub 消息历史倒序找「最近一次交互」的目标 agent：
 // 消息经归因字段反查 chat，再确认该 chat 仍是当前 mention 候选。
-// 字段匹配方式与 hubAttribution 相同（chatId 按会话 ID、termKey 按会话 Key、
-// workspace 用 sameWorkspacePath 归并），但优先级不同：精确匹配（chatId/termKey）
-// 先于模糊匹配（workspace）；user 与 agent 消息都参与匹配（user 消息也带目标
-// agent 的归因字段）。
+// 每条消息按四级尝试：chatId 精确 → termKey 精确 → 会话未激活但有磁盘会话 ID
+//（返回 pending: 前缀标记，由 send() 先激活再投递）→ workspace 模糊匹配。
+// pending 排在模糊之前：精确归因命中不了已激活 chats 时（会话关闭/重启），
+// 有磁盘会话 ID 就该激活原会话，而不是借 workspace 模糊误投同项目其他会话；
+// 模糊匹配只服务完全无精确归因的旧记录。user 与 agent 消息都参与匹配
+//（user 消息也带目标 agent 的归因字段）。
 // 已知局限：同 workspace 多 chat 时 chats.find 取列表第一个，未必是最近交互
 // 的那个（降级行为，可接受）。找不到返回 null。
 function lastHubAgentId(messages: HubMessage[], options: MentionOption[], chats: ChatInfo[]): string | null {
@@ -189,9 +211,12 @@ function lastHubAgentId(messages: HubMessage[], options: MentionOption[], chats:
     const m = messages[i];
     const c =
       chats.find((x) => x.ID === m.chatId) ??
-      chats.find((x) => m.termKey && x.Key === m.termKey) ??
-      chats.find((x) => m.workspace && sameWorkspacePath(x.Workspace, m.workspace));
+      chats.find((x) => m.termKey && x.Key === m.termKey);
     if (c && options.some((o) => o.id === c.ID)) return c.ID;
+    const pending = hubPendingSessionId(m);
+    if (pending) return PENDING_PREFIX + pending;
+    const f = m.workspace ? chats.find((x) => sameWorkspacePath(x.Workspace, m.workspace!)) : undefined;
+    if (f && options.some((o) => o.id === f.ID)) return f.ID;
   }
   return null;
 }
@@ -244,9 +269,16 @@ export default function AgentHubPanel() {
   const [activeMonth, setActiveMonth] = useState<string | null>(null);
   // 自动滚动：开启时新消息把消息流滚到底；关闭后自由翻历史不被打断。
   const [autoScroll, setAutoScroll] = useState(readAutoScrollPref);
-  // 浮动会话胶囊：面板展开状态。
-  const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
-  const sessionBarRef = useRef<HTMLDivElement>(null);
+  // 输入路由模式：auto=意图路由（默认）、agent=全部走 ACP、force_auto=直接工具循环。
+  // localStorage 为 UI 侧真值，变更时写穿后端 config.yaml（跨端副本，微信桥可读）。
+  const [routeMode, setRouteMode] = useState<HubRouteMode>(loadHubRouteMode);
+  const changeRouteMode = (mode: HubRouteMode) => {
+    setRouteMode(mode);
+    persistRouteModeLocal(mode);
+    saveHubRouteMode(mode).catch((e) => {
+      useAppStore.getState().notify(t('ui.hub.route_save_failed', { err: backendError(e) }), 'error');
+    });
+  };
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -305,18 +337,6 @@ export default function AgentHubPanel() {
     };
   }, []);
 
-  // 面板展开时点击胶囊与面板之外收起（mousedown 在点击前触发，避免先跑外层 onClick）
-  useEffect(() => {
-    if (!sessionPanelOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (sessionBarRef.current && !sessionBarRef.current.contains(e.target as Node)) {
-        setSessionPanelOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [sessionPanelOpen]);
-
   // 斜杠补全：draft 首词为 /xxx 时激活。
   const [slashClosed, setSlashClosed] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
@@ -328,30 +348,39 @@ export default function AgentHubPanel() {
   // /model 内联下拉：非 null 时在输入区上方展示模型列表。
   const [modelMenu, setModelMenu] = useState<{ targetId: string; view: ChatModelsView } | null>(null);
 
-  // @ 补全项：展示名 + 会话 id，顺序无关（Claude Code#c1 ...）
-  const options = useMemo(
+  // @ 补全项：insert 为写入草稿的标签（工具名#会话标题），label 为路由串。
+  const mentionAgents = useMemo(
     () =>
-      buildMentionOptions(
-        chats.map<MentionAgent>((c) => ({
-          id: c.ID,
-          toolId: c.ToolID,
-          title: c.Title,
-          workspace: c.Workspace,
-        })),
-      ),
+      chats.map<MentionAgent>((c) => ({
+        id: c.ID,
+        toolId: c.ToolID,
+        title: c.Title,
+        workspace: c.Workspace,
+      })),
     [chats],
   );
+  const options = useMemo(() => buildMentionOptions(mentionAgents), [mentionAgents]);
 
-  // 按 Workspace 分组（用 sameWorkspacePath 归并大小写/分隔符差异）
-  const groups = useMemo(() => {
-    const out: { workspace: string; rows: ChatInfo[] }[] = [];
-    for (const c of chats) {
-      const g = out.find((x) => sameWorkspacePath(x.workspace, c.Workspace));
-      if (g) g.rows.push(c);
-      else out.push({ workspace: c.Workspace, rows: [c] });
+  // userBubbleText 用户气泡不展示 Hub @ 路由标签：历史消息先按会话标题
+  // 替换 id 写法，再整体移除标签；新消息投递前已剥离，气泡天然干净。
+  const userBubbleText = (text: string) =>
+    stripMentionTags(displayMentionTitles(text, mentionAgents), options);
+
+  // mentionLabelForChat 给「刚激活、尚未进入渲染期 chats」的会话构造写入标签。
+  // 必须基于实时 store 的全量会话：visibleMentionLabel 的同名消歧依赖完整列表，
+  // 只用单元素列表会生成与补全候选不一致、resolveMentionTarget 也命中不了的标签。
+  const mentionLabelForChat = (chat: ChatInfo): string | undefined => {
+    const agents = useAppStore.getState().chats.map<MentionAgent>((c) => ({
+      id: c.ID,
+      toolId: c.ToolID,
+      title: c.Title,
+      workspace: c.Workspace,
+    }));
+    if (!agents.some((a) => a.id === chat.ID)) {
+      agents.push({ id: chat.ID, toolId: chat.ToolID, title: chat.Title, workspace: chat.Workspace });
     }
-    return out;
-  }, [chats]);
+    return buildMentionOptions(agents).find((o) => o.id === chat.ID)?.insert;
+  };
 
   // @ 补全：草稿末尾是未闭合的 @ 片段时给出候选（v1 只按草稿尾匹配，不做光标跟踪）。
   // mentionQuery 为 null 表示当前不在 @ 输入中。
@@ -361,7 +390,11 @@ export default function AgentHubPanel() {
   }, [draft]);
   const mentionMatches = useMemo(() => {
     if (mentionQuery === null) return [];
-    return options.filter((o) => o.label.toLowerCase().includes(mentionQuery));
+    return options.filter((o) =>
+      o.insert.toLowerCase().includes(mentionQuery) ||
+      o.label.toLowerCase().includes(mentionQuery) ||
+      (o.detail?.toLowerCase().includes(mentionQuery) ?? false),
+    );
   }, [mentionQuery, options]);
 
   // applyMention 把草稿尾部的 @ 片段替换成完整标签（补一个尾随空格方便继续输入）
@@ -369,8 +402,15 @@ export default function AgentHubPanel() {
     setDraft((d) => d.replace(/@([^\s@]*)$/, `@${label} `));
   };
 
-  // ---- 命令补全：draft 为单个 /xxx（agent 技能）或 #xxx（客户端命令）时激活 ----
-  const slashQuery = /^\/([^\s]*)$/.exec(draft)?.[1] ?? null;
+  // ---- 命令补全：draft 尾部为 /xxx（agent 技能）或整段为 #xxx（客户端命令）时激活 ----
+  // 斜杠按尾部 token 匹配：@ 目标（chips/补全写入）在前时仍能继续补全技能。
+  // 但 / 之前除 @ 标签外不能有其他文字：技能要求 "/" 位于正文首字符，
+  // 否则选中也不会执行，弹层只会误导。
+  const slashMatch = /(?:^|\s)\/([^\s]*)$/.exec(draft);
+  const slashQuery =
+    slashMatch && stripLeadingMentions(draft.slice(0, slashMatch.index), options) === ''
+      ? slashMatch[1]
+      : null;
   const hashQuery = /^#([^\s]*)$/.exec(draft)?.[1] ?? null;
   const inSlashMode = slashQuery !== null;
   const inHashMode = hashQuery !== null;
@@ -385,6 +425,34 @@ export default function AgentHubPanel() {
     () => resolveMentionTarget(draft, options, fallbackId),
     [draft, options, fallbackId],
   );
+  // 待激活 chip 数据：currentTargetId 为 pending: 前缀时，从命中的那条 hub 消息
+  // 取展示信息（会话标题快照 / 工具名）。精确命中已激活 chat 时为 null（普通 chip
+  // 高亮接管）。取「lastHubAgentId 所看的那条」最稳妥：同样倒序扫，命中 pending
+  // 的第一条消息即 chip 的来源。
+  const pendingTarget = useMemo(() => {
+    if (!currentTargetId?.startsWith(PENDING_PREFIX)) return null;
+    const sessionID = currentTargetId.slice(PENDING_PREFIX.length);
+    for (let i = hubMessages.length - 1; i >= 0; i--) {
+      const m = hubMessages[i];
+      if (hubPendingSessionId(m) !== sessionID) continue;
+      return { sessionID, title: m.sessionTitle || sessionID, tool: m.tool || '' };
+    }
+    return { sessionID, title: sessionID, tool: '' };
+  }, [currentTargetId, hubMessages]);
+  // mentionPending 待激活 chip 点击：先激活原会话，成功后按普通 chip 语义把
+  // 新会话的 @ 标签追加进输入框。
+  const mentionPending = () => {
+    if (!pendingTarget) return;
+    void activatePending(pendingTarget.sessionID).then((chat) => {
+      if (!chat) return;
+      // 不调 mentionSession：then 回调捕获的是点击轮渲染的旧闭包，其 options
+      // 还不含刚激活的 chat；按实时 store 的全量列表构造，保证同名消歧与补全一致。
+      const label = mentionLabelForChat(chat);
+      if (!label) return;
+      setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
+      inputRef.current?.focus();
+    });
+  };
   // 命令模式打开且目标变化时拉取 agent 技能；失败静默。
   // 依赖用 inSlashMode 而非 slashQuery：避免每次按键都重拉。
   useEffect(() => {
@@ -487,6 +555,34 @@ export default function AgentHubPanel() {
       return;
     }
     if (!currentTargetId) return; // 理论不可达；保底
+    // pending: 目标 = 最近交互的会话未激活但有磁盘会话 ID 快照：先激活原会话，
+    // 再对激活出的真实 chat ID 执行命令；激活失败报错且不执行（与 send 同语义，
+    // 绝不把命令落到 pending: 前缀串上或同 workspace 其他会话上）。
+    if (currentTargetId.startsWith(PENDING_PREFIX)) {
+      const sessionID = currentTargetId.slice(PENDING_PREFIX.length);
+      if (name !== 'stop' && name !== 'model') return; // 其余命令无 pending 语义，防御
+      void activatePending(sessionID).then((chat) => {
+        if (!chat) return;
+        if (name === 'stop') {
+          void cancelChat(chat.ID)
+            .then(() => useAppStore.getState().notify(t('ui.hub.stop_done'), 'info'))
+            .catch((e: unknown) =>
+              useAppStore.getState().notify(t('ui.hub.stop_failed', { err: backendError(e) }), 'error'),
+            );
+          return;
+        }
+        void listChatModels(chat.ID)
+          .then((view) => {
+            if (!view || !view.Models || view.Models.length === 0) {
+              useAppStore.getState().notify(t('ui.hub.no_models'), 'error');
+              return;
+            }
+            setModelMenu({ targetId: chat.ID, view });
+          })
+          .catch((e: unknown) => useAppStore.getState().notify(backendError(e), 'error'));
+      });
+      return;
+    }
     if (name === 'stop') {
       void cancelChat(currentTargetId)
         .then(() => useAppStore.getState().notify(t('ui.hub.stop_done'), 'info'))
@@ -575,13 +671,14 @@ export default function AgentHubPanel() {
     setDialogOpen(true);
   };
 
-  // applySlash：客户端命令直接执行，agent 技能切入 draft 后正常发送。
+  // applySlash：客户端命令直接执行，agent 技能替换草稿尾部 / 词后正常发送。
+  // 只替换尾部 token，保留前面的 @ 目标（chips 写入的标签不因选技能被清掉）。
   const applySlash = (item: SlashItem) => {
     if (item.kind === 'client') {
       runClientCommand(item.name);
       return;
     }
-    setDraft(`/${item.name} `);
+    setDraft((d) => d.replace(/(^|\s)\/[^\s]*$/, (_m, lead: string) => `${lead}/${item.name} `));
     setSlashClosed(false);
     setSlashIndex(0);
   };
@@ -600,12 +697,6 @@ export default function AgentHubPanel() {
       );
   };
 
-  // pickSessionRow 把面板里的会话设为默认投递目标（「直接发送将投递到它」），并收起面板。
-  const pickSessionRow = (id: string) => {
-    useAppStore.getState().setLastAgentId(id);
-    setSessionPanelOpen(false);
-  };
-
   // closeSession 关闭空闲会话：走与 WorkspaceTab 一致的正确组合——后端 Manager.Close
   // （closeChat，幂等，真摘除会话；cancelChat 只取消当前轮，对空闲会话是 no-op），
   // 成功后才从 store 摘除（失败保留行，可重试），列表随 chats 状态自动收缩（面板保持开）。
@@ -620,15 +711,15 @@ export default function AgentHubPanel() {
   // sessionDragLabel 从 mention 候选反查拖拽用的 @ 标签；找不到兜底会话标题。
   const sessionDragLabel = (c: ChatInfo): string => {
     const opt = options.find((o) => o.id === c.ID);
-    return opt?.label ?? (c.Title || wsBaseName(c.Workspace) || emptyTarget);
+    return opt?.insert ?? (c.Title || wsBaseName(c.Workspace) || emptyTarget);
   };
 
   // mentionSession 把会话的 @ 标签保留式追加进输入框（语义同 quickReply rephrase：
-  // 不清空已有草稿，空格分隔），收起面板并聚焦，待用户补写后手动发送。
+  // 不清空已有草稿，空格分隔），聚焦输入框，待用户补写后手动发送。
+  // chips 平铺后点击 chip 主体即触发本函数（原 @ 图标行为并入主体）。
   const mentionSession = (c: ChatInfo) => {
     const label = sessionDragLabel(c);
     setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
-    setSessionPanelOpen(false);
     inputRef.current?.focus();
   };
 
@@ -649,10 +740,9 @@ export default function AgentHubPanel() {
         const chat = res.Chat;
         useAppStore.getState().upsertChat(chat);
         useAppStore.getState().setLastAgentId(chat.ID);
-        // label 与 @ 补全候选用同一套生成逻辑，保证草稿里的提及可被 resolveMentionTarget 命中
-        const label = buildMentionOptions([
-          { id: chat.ID, toolId: chat.ToolID, title: chat.Title, workspace: chat.Workspace },
-        ])[0]?.label;
+        // label 与 @ 补全候选用同一套生成逻辑（含全量会话的同名消歧），
+        // 保证草稿里的提及可被 resolveMentionTarget 命中
+        const label = mentionLabelForChat(chat);
         // 语义同 mentionSession：保留式追加 @ 标签（已有内容空格分隔）；
         // `#find ...` 命令残留一并清掉（find 分支不消费草稿，激活成功后重建）。
         setDraft((d) => {
@@ -688,7 +778,6 @@ export default function AgentHubPanel() {
       } satisfies Workspace,
     );
     if (c.Key) st.requestFocusTerm(c.Key);
-    setSessionPanelOpen(false);
   };
 
   // 输入框拖放：接收浮动面板拖出的 @ 目标，追加进草稿（已有内容时空格分隔）。
@@ -756,11 +845,38 @@ export default function AgentHubPanel() {
       });
   };
 
+  // activatePending 激活一个 pending 会话（磁盘会话 ID）并登记进 store：
+  // send() 的 pending 分支与 #stop/#model 的 pending 处理共用。激活成功返回
+  // 新 chat Info（调用方继续对 chat.ID 操作）；失败 toast find_activate_failed
+  // 并返回 null（调用方必须停止后续动作，不落模糊匹配误投）。
+  const activatePending = async (sessionID: string): Promise<ChatInfo | null> => {
+    try {
+      const res = await openSessionACP(sessionID);
+      if (!res.Chat) return null;
+      const chat = res.Chat;
+      useAppStore.getState().upsertChat(chat);
+      useAppStore.getState().setLastAgentId(chat.ID);
+      return chat;
+    } catch (e: unknown) {
+      useAppStore.getState().notify(t('ui.hub.find_activate_failed', { err: backendError(e) }), 'error');
+      return null;
+    }
+  };
+
   const send = () => {
     const text = draft.trim();
     if (!text) return;
+    // @ 标签只供 Hub 路由：命令探测与投递正文都用剥离后的 body，
+    // 路由解析 resolveMentionTarget 仍看原始草稿（需要标签才能选目标）。
+    const body = stripMentionTags(text, options);
+    if (!body) {
+      useAppStore.getState().notify(t('ui.hub.empty_message'), 'error');
+      return;
+    }
     // 纯数字输入：命令层的「编号切换/菜单选择」语义，透传给共享命令层处理
     //（#l/#f 的编号映射在 Go 侧，前端无从判断，统一透传）。
+    // 判定用原始草稿：`@目标 3` 是回答 agent 的正文（剥离后恰为 "3"），
+    // 不应被误当成菜单编号命令。
     if (isHubNumber(text)) {
       runSharedCommand(text);
       return;
@@ -769,7 +885,7 @@ export default function AgentHubPanel() {
     // （如颜色 #333、issue #123）原样透传给 agent。命令探测用全角归一化副本
     // （＃/全角空格/冒号/数字，与 Go 侧 normalizeInput 同口径），原文透传不改写。
     // 取首词校验，未知命令提示并保留草稿。
-    const probe = normalizeHubProbe(text);
+    const probe = normalizeHubProbe(body);
     if (probe.startsWith('#')) {
       const cmdToken = probe.split(/\s+/)[0] ?? '';
       const name = cmdToken.slice(1).toLowerCase();
@@ -780,7 +896,7 @@ export default function AgentHubPanel() {
         return;
       }
       if (!HUB_COMMAND_NAMES.has(name)) {
-        runSharedCommand(text);
+        runSharedCommand(body);
         return;
       }
       // #find：不透传给 agent。带关键词（`#find claude`）时以剩余文本为初始过滤词
@@ -788,7 +904,7 @@ export default function AgentHubPanel() {
       if (name === 'find' && probe !== cmdToken) {
         setDraft('');
         // 探测归一化是逐字符等长替换，按原文字符串切片保持关键词原样
-        openFindDialog(text.slice(cmdToken.length).trim());
+        openFindDialog(body.slice(cmdToken.length).trim());
         return;
       }
       // 整体就是单个已知命令 token（尾空格已被 trim 掉）：宽松执行而非投递，
@@ -807,8 +923,27 @@ export default function AgentHubPanel() {
       return;
     }
     setDraft('');
+    // pending: 目标 = 最近交互的会话未激活（chats 查不到），但有磁盘会话 ID 快照：
+    // 先 openSessionACP 激活原会话，再向新 chat 投递。激活失败报错不投递——
+    // 上下文丢失必须可见，绝不落 workspace 模糊匹配误投同项目会话。
+    if (targetId.startsWith(PENDING_PREFIX)) {
+      const sessionID = targetId.slice(PENDING_PREFIX.length);
+      void activatePending(sessionID).then((chat) => {
+        if (!chat) return;
+        // 激活与发送分开 catch：失败阶段不同，文案不同（激活失败 vs 发送失败），
+        // 混在一个 catch 里会把投递失败误报成「激活会话失败」误导排查。
+        void sendChatPrompt(chat.ID, body)
+          .then(() => {
+            useAppStore.getState().setLastAgentId(chat.ID);
+          })
+          .catch((e: unknown) => {
+            useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
+          });
+      });
+      return;
+    }
     // 用户消息由 Go 侧落盘并经 hub:changed 回流（单一数据源），失败只提示不回滚。
-    void sendChatPrompt(targetId, text)
+    void sendChatPrompt(targetId, body)
       .then(() => {
         useAppStore.getState().setLastAgentId(targetId);
       })
@@ -887,10 +1022,10 @@ export default function AgentHubPanel() {
         return;
       }
       // rephrase：激活成功后填 @ 标签。走到此分支说明点击时目标未激活，闭包里的
-      // options 必不含新 chat，直接按 buildMentionOptions 同一公式构造 label
-      // （toolDisplayName#chatID），激活成功却填不进输入框才是异常，不报错。
+      // options 必不含新 chat，按实时 store 的全量列表构造（同名消歧与补全一致）。
       activateAndThen(m, (chat) => {
-        const label = `${toolDisplayName(chat.ToolID)}#${chat.ID}`;
+        const label = mentionLabelForChat(chat);
+        if (!label) return;
         setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
         inputRef.current?.focus();
       });
@@ -906,9 +1041,8 @@ export default function AgentHubPanel() {
         });
       return;
     }
-    // rephrase：从 mention 候选反查目标 label；找不到兜底提示（不误填错误目标）。
-    // 兜底分支防御性保留（options 派生自同一 chats，正常不可达）
-    const label = options.find((o) => o.id === targetId)?.label;
+    // rephrase：从 mention 候选反查展示标签（会话标题）；找不到兜底提示。
+    const label = options.find((o) => o.id === targetId)?.insert;
     if (!label) {
       useAppStore.getState().notify(t('ui.hub.need_target_drag'), 'error');
       return;
@@ -979,114 +1113,6 @@ export default function AgentHubPanel() {
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <h2 className="shrink-0 text-sm font-medium">{t('ui.hub.title')}</h2>
-          {/* 会话胶囊内联在标题文字后：relative 锚定，展开面板 absolute 下挂（不挤占固定行高）。
-              胶囊与面板都比原右上角浮动版加宽，多展示会话标题。 */}
-          <div ref={sessionBarRef} className="relative min-w-0">
-            <button
-              type="button"
-              aria-label={t('ui.hub.session_bar_aria')}
-              className="flex max-w-72 items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-xs shadow-sm hover:bg-muted/50"
-              onClick={() => setSessionPanelOpen((v) => !v)}
-            >
-              {(() => {
-                const target = fallbackId ? chats.find((c) => c.ID === fallbackId) : null;
-                if (!target) return <span className="truncate text-muted-foreground">{t('ui.hub.empty')}</span>;
-                return (
-                  <>
-                    <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', statusDotClass(target.Status))} />
-                    <span className="min-w-0 truncate">
-                      {target.Title || wsBaseName(target.Workspace) || emptyTarget}
-                    </span>
-                  </>
-                );
-              })()}
-              <ChevronDown aria-hidden className={cn('h-3 w-3 shrink-0 text-muted-foreground transition-transform', sessionPanelOpen && 'rotate-180')} />
-            </button>
-            {sessionPanelOpen && (
-              // role=region 供测试/读屏定位整个面板；分组标题用 workspace 基名，内层 ul 不再加 label
-              <div
-                role="region"
-                aria-label={t('ui.hub.session_panel_aria')}
-                className="absolute left-0 top-full z-20 mt-1 max-h-64 w-80 overflow-y-auto rounded border border-border bg-card p-1.5 text-xs shadow-md"
-              >
-                {groups.length === 0 ? (
-                  <span className="text-muted-foreground">{t('ui.hub.empty')}</span>
-                ) : (
-                  groups.map((g) => (
-                    <div key={g.workspace} className="flex flex-col gap-1 py-1">
-                      <span className={cn(MONO, 'truncate')} title={g.workspace}>
-                        {wsBaseName(g.workspace)}
-                      </span>
-                      <ul className="m-0 flex list-none flex-col gap-1 p-0">
-                        {g.rows.map((c) => {
-                          const busy = c.Status === 'running' || c.Status === 'starting';
-                          return (
-                            <li key={c.ID}>
-                              <div
-                                className={cn(LIST_ROW, 'flex min-w-0 items-center gap-1.5 px-2.5 py-1.5')}
-                                draggable
-                                onDragStart={(e) => {
-                                  e.dataTransfer.setData('text/plain', `@${sessionDragLabel(c)}`);
-                                  e.dataTransfer.effectAllowed = 'copy';
-                                }}
-                              >
-                                <button
-                                  type="button"
-                                  className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-                                  onClick={() => pickSessionRow(c.ID)}
-                                >
-                                  <span
-                                    aria-hidden
-                                    className={cn('h-1.5 w-1.5 shrink-0 rounded-full', statusDotClass(c.Status))}
-                                  />
-                                  <span className="min-w-0 truncate font-medium">
-                                    {/* 无标题会话兜底显示项目基名，避免出现「新会话」同名列无法区分 */}
-                                    {c.Title || wsBaseName(c.Workspace) || emptyTarget}
-                                  </span>
-                                  <span className="shrink-0 truncate text-[11px] text-muted-foreground">
-                                    {toolDisplayName(c.ToolID)} · {t(statusKey(c.Status))}
-                                  </span>
-                                </button>
-                                {/* @ 该会话：把 @ 标签填进输入框；跳转：开项目页签定位该会话对话页。
-                                    与 × 同为行内独立 button，无冒泡联动 */}
-                                <button
-                                  type="button"
-                                  aria-label={t('ui.hub.mention_session')}
-                                  className="shrink-0 text-muted-foreground hover:text-foreground"
-                                  onClick={() => mentionSession(c)}
-                                >
-                                  <AtSign aria-hidden className="h-3.5 w-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  aria-label={t('ui.hub.jump_session')}
-                                  className="shrink-0 text-muted-foreground hover:text-foreground"
-                                  onClick={() => jumpToSession(c)}
-                                >
-                                  <ArrowUpRight aria-hidden className="h-3.5 w-3.5" />
-                                </button>
-                                {/* 空闲会话才可关闭（忙碌 agent 正在跑任务） */}
-                                {!busy && (
-                                  <button
-                                    type="button"
-                                    aria-label={t('ui.hub.close_session')}
-                                    className="shrink-0 text-muted-foreground hover:text-destructive"
-                                    onClick={() => closeSession(c.ID)}
-                                  >
-                                    ×
-                                  </button>
-                                )}
-                              </div>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {/* 默认设置入口：设置默认 agent 工具/模型（供 easynew 与需求派发使用） */}
@@ -1154,7 +1180,7 @@ export default function AgentHubPanel() {
                         .join(' · ')}
                     </div>
                     {m.kind === 'user' ? (
-                      <span className="whitespace-pre-wrap">{m.text}</span>
+                      <span className="whitespace-pre-wrap">{userBubbleText(m.text)}</span>
                     ) : (
                       <div className={cn(markdownBubbleClass, '[&_pre]:whitespace-pre-wrap')}>
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{translateBackend(m.text)}</ReactMarkdown>
@@ -1181,11 +1207,12 @@ export default function AgentHubPanel() {
                   // 已撤回：灰显卡片 + 标签，原文保留（在原消息上标记，不删除）
                   <div className="selectable inline-block break-words overflow-hidden rounded-md bg-muted px-3 py-1.5 text-left text-muted-foreground">
                     <span className="mb-0.5 block text-[11px] opacity-80">{t('ui.hub.recalled')}</span>
-                    <span className="whitespace-pre-wrap opacity-70">{m.text}</span>
+                    <span className="whitespace-pre-wrap opacity-70">{userBubbleText(m.text)}</span>
                   </div>
                 ) : (
                   <div className="selectable inline-block break-words overflow-hidden rounded-md bg-primary px-3 py-1.5 text-left text-primary-foreground">
-                    <span className="whitespace-pre-wrap">{m.text}</span>
+                    {/* @ 路由标签不展示（落盘原文不动，路由信息由归因行承担） */}
+                    <span className="whitespace-pre-wrap">{userBubbleText(m.text)}</span>
                   </div>
                 )}
                 {/* queued 撤回按钮常显在气泡下方（文档流，右对齐容器内自然靠右） */}
@@ -1210,10 +1237,20 @@ export default function AgentHubPanel() {
                   <div className="mb-0.5 text-[11px] text-muted-foreground">
                     {[toolDisplayName(m.tool ?? ''), attr].filter(Boolean).join(' · ')}
                   </div>
-                  {/* 正文过 translateBackend：ack 卡片的 wire key 翻译成当前语言，普通文本原样返回 */}
-                  <div className={markdownBubbleClass}>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{translateBackend(m.text)}</ReactMarkdown>
-                  </div>
+                  {/* tool_confirm：写操作确认卡（摘要 + 确认/拒绝按钮），其余走 markdown */}
+                  {m.event === 'tool_confirm' ? (
+                    <HubConfirmCard
+                      message={m}
+                      onConfirm={(pendingID, approved) =>
+                        confirmHubTool(m.chatId ?? '', pendingID, approved)
+                      }
+                    />
+                  ) : (
+                    /* 正文过 translateBackend：ack 卡片的 wire key 翻译成当前语言，普通文本原样返回 */
+                    <div className={markdownBubbleClass}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{translateBackend(m.text)}</ReactMarkdown>
+                    </div>
+                  )}
                 </div>
                 {/* 快速回复：常显预设按钮，点击直达该卡片归因的 agent（send/填入两种动作） */}
                 <div className="mt-1 flex flex-wrap gap-1">
@@ -1234,7 +1271,7 @@ export default function AgentHubPanel() {
         })}
       </div>
 
-      <div className="flex flex-col gap-1 border-t border-border pt-2">
+      <div data-testid="hub-input-area" className="flex flex-col gap-1 border-t border-border pt-2">
         {easynewRunning && (
           <div className="flex items-center gap-1.5 rounded border border-border bg-card px-2 py-1 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -1260,11 +1297,11 @@ export default function AgentHubPanel() {
                 )}
                 onMouseDown={(e) => {
                   e.preventDefault();
-                  applyMention(o.label);
+                  applyMention(o.insert);
                 }}
               >
-                <span className="block font-mono">@{o.label}</span>
-                {/* 第二行：项目 · 会话标题（label 保持短标签，详情只做展示） */}
+                <span className="block">@{o.insert}</span>
+                {/* 第二行：项目 · 会话标题（insert 已是会话标题，详情补充项目） */}
                 {o.detail && <span className="block truncate text-muted-foreground">{o.detail}</span>}
               </li>
             ))}
@@ -1275,8 +1312,8 @@ export default function AgentHubPanel() {
             <div className="flex items-center justify-between px-2 py-0.5 text-muted-foreground">
               <span className="truncate">
                 {t('ui.hub.model_label')}
-                {options.find((o) => o.id === modelMenu.targetId)?.label
-                  ? ` · ${options.find((o) => o.id === modelMenu.targetId)?.label}`
+                {options.find((o) => o.id === modelMenu.targetId)?.insert
+                  ? ` · ${options.find((o) => o.id === modelMenu.targetId)?.insert}`
                   : ''}
               </span>
               <button
@@ -1332,13 +1369,120 @@ export default function AgentHubPanel() {
             ))}
           </ul>
         )}
+        {/* 会话 chips 平铺：每个会话一枚，点击主体即 @ 该会话（原 @ 图标行为并入主体）；
+            默认接收目标（下一句话的投递对象，@ 提及优先于回落链）高亮标注。
+            flex-wrap 超宽自动换行继续平铺；拖拽 chip 仍可把 @ 标签放进输入框。
+            容器限高自滚（同归档区口径）：会话多时约两行后滚动，不挤压消息流。 */}
+        <div
+          data-testid="hub-session-chips"
+          className="flex max-h-20 shrink-0 flex-wrap items-center gap-1 overflow-y-auto"
+        >
+          {chats.length === 0 ? (
+            <span className="text-muted-foreground">{t('ui.hub.empty')}</span>
+          ) : (
+            chats.map((c) => {
+              const busy = c.Status === 'running' || c.Status === 'starting';
+              const isTarget = c.ID === currentTargetId;
+              return (
+                <div
+                  key={c.ID}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('text/plain', `@${sessionDragLabel(c)}`);
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
+                  className={cn(
+                    LIST_ROW,
+                    // 默认接收目标高亮：下一句话将投给该会话，需一眼可辨
+                    isTarget ? 'border-primary/60 bg-primary/10' : '',
+                    'flex max-w-[21rem] min-w-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs',
+                  )}
+                >
+                  <button
+                    type="button"
+                    title={t('ui.hub.mention_session')}
+                    // 点击主体是「追加 @ 标签」（可连点），非切换，故不用 toggle 语义；
+                    // 高亮态用 aria-current 表达（可见文本已足够读屏，不再叠加 aria-label）
+                    aria-current={isTarget ? 'true' : undefined}
+                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                    onClick={() => mentionSession(c)}
+                  >
+                    <span
+                      aria-hidden
+                      className={cn('h-1.5 w-1.5 shrink-0 rounded-full', statusDotClass(c.Status))}
+                    />
+                    <span className="min-w-0 truncate font-medium">
+                      {/* 无标题会话兜底显示项目基名，避免出现「新会话」同名列无法区分 */}
+                      {c.Title || wsBaseName(c.Workspace) || emptyTarget}
+                    </span>
+                    <span className="shrink-0" title={toolDisplayName(c.ToolID)}>
+                      <ToolIcon toolID={c.ToolID} label={toolDisplayName(c.ToolID)} />
+                    </span>
+                  </button>
+                  {/* 跳转：开项目页签定位该会话对话页。与 × 同为行内独立 button，无冒泡联动 */}
+                  <button
+                    type="button"
+                    aria-label={t('ui.hub.jump_session')}
+                    className="shrink-0 text-muted-foreground hover:text-foreground"
+                    onClick={() => jumpToSession(c)}
+                  >
+                    <ArrowUpRight aria-hidden className="h-3.5 w-3.5" />
+                  </button>
+                  {/* 空闲会话才可关闭（忙碌 agent 正在跑任务） */}
+                  {!busy && (
+                    <button
+                      type="button"
+                      aria-label={t('ui.hub.close_session')}
+                      className="shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => closeSession(c.ID)}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              );
+            })
+          )}
+          {/* 待激活 chip：默认投递目标命中未激活会话（pending: 前缀）时出现，
+              虚线边框区分已激活 chips；点击先激活原会话再 @ 填入（mentionPending）。
+              可与 chats.length === 0 的 empty 占位共存：空状态下用户仍能看到待激活目标。 */}
+          {pendingTarget && (
+            <div className="flex max-w-[21rem] min-w-0 items-center gap-1 rounded-full border border-dashed border-primary/60 bg-primary/10 px-2.5 py-1 text-xs">
+              <button
+                type="button"
+                title={t('ui.hub.pending_chip_aria')}
+                aria-current="true"
+                className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                onClick={mentionPending}
+              >
+                <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/40" />
+                <span className="min-w-0 truncate font-medium">
+                  {pendingTarget.title}
+                  <span className="ml-1 text-[11px] font-normal text-muted-foreground">
+                    {t('ui.hub.pending_chip')}
+                  </span>
+                </span>
+                {pendingTarget.tool && (
+                  <span className="shrink-0" title={toolDisplayName(pendingTarget.tool)}>
+                    <ToolIcon toolID={pendingTarget.tool} label={toolDisplayName(pendingTarget.tool)} />
+                  </span>
+                )}
+              </button>
+            </div>
+          )}
+        </div>
         <textarea
           ref={inputRef}
           className="min-h-16 w-full resize-none rounded border border-border bg-card p-2 text-sm"
           placeholder={t('ui.hub.input_placeholder')}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          onPaste={() => void handlePaste()}
+          onPaste={(e) => {
+            // 拦截原生粘贴：文本/图片路径统一走 handlePaste（后端读剪贴板），
+            // 否则原生插入与 handlePaste 追加各写一遍，草稿出现重复文字
+            e.preventDefault();
+            void handlePaste();
+          }}
           onDragOver={(e) => e.preventDefault()}
           onDrop={handleDrop}
           onKeyDown={(e) => {
@@ -1379,7 +1523,7 @@ export default function AgentHubPanel() {
               }
               if (e.key === 'Enter' || e.key === 'Tab') {
                 e.preventDefault();
-                applyMention(mentionMatches[Math.min(mentionIndex, mentionMatches.length - 1)].label);
+                applyMention(mentionMatches[Math.min(mentionIndex, mentionMatches.length - 1)].insert);
                 return;
               }
               if (e.key === 'Escape') {
@@ -1394,8 +1538,21 @@ export default function AgentHubPanel() {
             }
           }}
         />
-        {/* 发送行：自动滚动开关放发送按钮左侧 */}
+        {/* 发送行：路由模式 + 自动滚动开关放发送按钮左侧 */}
         <div className="flex items-center justify-end gap-2">
+          <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            {t('ui.hub.route_mode_label')}
+            <select
+              data-testid="hub-route-mode"
+              className="rounded border border-border bg-card px-1 py-0.5 text-[11px]"
+              value={routeMode}
+              onChange={(e) => changeRouteMode(e.target.value as HubRouteMode)}
+            >
+              <option value="auto">{t('ui.hub.route_mode_auto')}</option>
+              <option value="agent">{t('ui.hub.route_mode_agent')}</option>
+              <option value="force_auto">{t('ui.hub.route_mode_force_auto')}</option>
+            </select>
+          </label>
           <label className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground">
             <input
               type="checkbox"
@@ -1468,9 +1625,12 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
         });
       })
       .catch(() => {});
-    // kshell 注入模型（设置页 model.models）：拉取失败静默，回落仅缓存
+    // kshell 注入模型（设置页默认平台的模型列表）：拉取失败静默，回落仅缓存
     void getModelConfig()
-      .then((cfg) => setInjectedModels(cfg.Models ?? []))
+      .then((cfg) => {
+        const def = cfg.Platforms?.find((p) => p.ID === cfg.DefaultPlatform) ?? cfg.Platforms?.[0];
+        setInjectedModels(def?.Models ?? []);
+      })
       .catch(() => setInjectedModels([]));
     setWsPath((cur) => {
       if (cur && workspaces.some((w) => sameWorkspacePath(w.Path, cur))) return cur;
@@ -1625,7 +1785,10 @@ function DefaultSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
       })
       .catch(() => {});
     void getModelConfig()
-      .then((cfg) => setInjectedModels(cfg.Models ?? []))
+      .then((cfg) => {
+        const def = cfg.Platforms?.find((p) => p.ID === cfg.DefaultPlatform) ?? cfg.Platforms?.[0];
+        setInjectedModels(def?.Models ?? []);
+      })
       .catch(() => setInjectedModels([]));
     // 模型预选：已存 modelId 在该工具的缓存模型列表里才预选，否则空（默认模型）
     setModelId(saved?.modelId && loadToolModels(saved.toolId).includes(saved.modelId) ? saved.modelId : '');

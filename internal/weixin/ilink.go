@@ -27,6 +27,8 @@ type Client struct {
 	HTTP    *http.Client
 	Token   string
 	BaseURL string
+	// MediaBase 是媒体 CDN 基础地址（下载附件用）；空串时用默认值。测试注入点。
+	MediaBase string
 }
 
 // NewClient 创建 iLink 客户端；baseURL 为空时用官方默认域名。
@@ -35,15 +37,22 @@ func NewClient(token, baseURL string) *Client {
 		baseURL = "https://ilinkai.weixin.qq.com"
 	}
 	return &Client{
-		HTTP:    &http.Client{Timeout: 40 * time.Second},
-		Token:   token,
-		BaseURL: baseURL,
+		HTTP:      &http.Client{Timeout: 40 * time.Second},
+		Token:     token,
+		BaseURL:   baseURL,
+		MediaBase: mediaBaseDefault,
 	}
 }
 
 // baseInfo 是所有请求体都带的渠道信息。
 type baseInfo struct {
 	ChannelVersion string `json:"channel_version"`
+}
+
+// CDNMedia 是所有媒体 item 共用的 CDN 引用：下载参数与 base64 AES 密钥。
+type CDNMedia struct {
+	EncryptQueryParam string `json:"encrypt_query_param"`
+	AESKey            string `json:"aes_key"`
 }
 
 // apiResp 是服务端响应的通用外壳，errcode 非 0 表示错误。
@@ -159,6 +168,8 @@ func (c *Client) PollQRCodeStatus(ctx context.Context, qrcodeKey string) (QRStat
 }
 
 // GetUpdates 长轮询收消息，返回入站消息与新游标。bot 自发消息（message_type==2）已过滤。
+// 附件（图片 type 2 / 文件 type 4）解析进 Attachments；语音的 ASR 转写
+//（voice_item.text）非空时作为文本透传。
 func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeoutGetUpdates)
 	defer cancel()
@@ -172,11 +183,33 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 			FromUserID   string `json:"from_user_id"`
 			ContextToken string `json:"context_token"`
 			CreateMs     int64  `json:"create_time_ms"`
+			// RefMsg 是引用回复的被引用消息（用户对 bot 出站消息长按引用时
+			// 携带）。字段名按参考实现（openclaw-weixin / wechatbot-go），
+			// 真机联调不符时先抓 [weixin] 日志核对此 tag。
+			RefMsg struct {
+				SvrID string `json:"svr_id"`
+				Text  string `json:"text"`
+			} `json:"ref_msg"`
 			ItemList     []struct {
 				Type     int `json:"type"`
 				TextItem struct {
 					Text string `json:"text"`
 				} `json:"text_item"`
+				VoiceItem struct {
+					Text  string   `json:"text"`
+					Media CDNMedia `json:"media"`
+					Size  int64    `json:"len"`
+				} `json:"voice_item"`
+				ImageItem struct {
+					Media    CDNMedia `json:"media"`
+					FileSize int64    `json:"len"`
+				} `json:"image_item"`
+				FileItem struct {
+					Media    CDNMedia `json:"media"`
+					FileName string   `json:"file_name"`
+					FileSize int64    `json:"len"`
+					MD5      string   `json:"md5"`
+				} `json:"file_item"`
 			} `json:"item_list"`
 		} `json:"msgs"`
 		NewCursor string `json:"get_updates_buf"`
@@ -190,9 +223,41 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 			continue
 		}
 		im := InboundMsg{FromUserID: m.FromUserID, ContextToken: m.ContextToken, CreateMs: m.CreateMs}
+		if m.RefMsg.SvrID != "" || m.RefMsg.Text != "" {
+			im.Ref = &RefMsg{SvrID: m.RefMsg.SvrID, Text: m.RefMsg.Text}
+		}
 		for _, item := range m.ItemList {
-			if item.Type == 1 {
+			switch item.Type {
+			case 1:
 				im.Text += item.TextItem.Text
+			case 3:
+				// 语音：服务端 ASR 转写非空时直接当文本；媒体信息恒填 Voice，
+				// 供桥层在转写缺失时下载后走模型转写（详见 bridge.go）。
+				im.Text += item.VoiceItem.Text
+				im.Voice = &InboundAttachment{
+					Kind:              "voice",
+					Name:              "voice.silk",
+					EncryptQueryParam: item.VoiceItem.Media.EncryptQueryParam,
+					AESKey:            item.VoiceItem.Media.AESKey,
+					Size:              item.VoiceItem.Size,
+				}
+			case 2:
+				im.Attachments = append(im.Attachments, InboundAttachment{
+					Kind:              "image",
+					Name:              "image.jpg",
+					EncryptQueryParam: item.ImageItem.Media.EncryptQueryParam,
+					AESKey:            item.ImageItem.Media.AESKey,
+					Size:              item.ImageItem.FileSize,
+				})
+			case 4:
+				im.Attachments = append(im.Attachments, InboundAttachment{
+					Kind:              "file",
+					Name:              item.FileItem.FileName,
+					EncryptQueryParam: item.FileItem.Media.EncryptQueryParam,
+					AESKey:            item.FileItem.Media.AESKey,
+					Size:              item.FileItem.FileSize,
+					MD5:               item.FileItem.MD5,
+				})
 			}
 		}
 		msgs = append(msgs, im)
@@ -201,7 +266,9 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 }
 
 // SendMessage 回复文本消息；client_id 内部生成，from_user_id 恒为空。
-func (c *Client) SendMessage(ctx context.Context, toUserID, contextToken, text string) error {
+// 返回响应里的服务端消息 ID（svr_id）：桥层缓存「svr_id → 会话」供引用回复
+// 归因；响应未携带时返回空串（字段名真机未验证，拿不到即降级标题匹配）。
+func (c *Client) SendMessage(ctx context.Context, toUserID, contextToken, text string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeoutSendMessage)
 	defer cancel()
 	body := map[string]any{
@@ -218,7 +285,13 @@ func (c *Client) SendMessage(ctx context.Context, toUserID, contextToken, text s
 		},
 		"base_info": baseInfo{ChannelVersion: channelVersion},
 	}
-	return c.post(ctx, "/ilink/bot/sendmessage", body, nil)
+	var out struct {
+		SvrID string `json:"svr_id"`
+	}
+	if err := c.post(ctx, "/ilink/bot/sendmessage", body, &out); err != nil {
+		return "", err
+	}
+	return out.SvrID, nil
 }
 
 // SendTyping 发送/取消输入状态（1=输入中 2=取消）。内部先 getconfig 换取 typing_ticket。

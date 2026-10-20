@@ -5,6 +5,7 @@ import type { ChatInfo } from '../lib/api';
 import { DRAG_MIME } from '../lib/dragPath';
 import { OPEN_FILE_EVENT } from '../lib/openHref';
 import { useAppStore } from '../state/store';
+import { markdownBubbleClass } from '../lib/markdownStyles';
 import ChatView from './ChatView';
 import { tt } from '../test/i18n';
 
@@ -607,6 +608,19 @@ describe('ChatView', () => {
     );
     expect(container.textContent).toContain(tt('err.chat.gone'));
     expect(container.textContent).not.toContain('err.chat.gone');
+  });
+
+  // assistant 气泡此前裸渲染 ReactMarkdown，Tailwind preflight 把表格边框清零，
+  // 表格挤成一团；须与 AgentHub 同口径套 markdownBubbleClass。
+  it('assistant 表格走共享 markdown 样式（边框/宽度）', () => {
+    useAppStore.setState({
+      chatItems: { c1: [{ key: 'm3', type: 'assistant', text: '| a | b |\n| - | - |\n| 1 | 2 |', seq: 3 }] },
+    });
+    const { container } = render(<ChatView chat={CHAT} active />);
+    const table = container.querySelector('table');
+    expect(table).not.toBeNull();
+    const wrapper = table!.closest('div');
+    expect(wrapper?.className).toContain(markdownBubbleClass);
   });
 
   it('助手 Markdown 相对路径打开工作区文件', () => {

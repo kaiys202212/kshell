@@ -74,6 +74,22 @@ func (fakeChatBackendErr) Start(spec chat.Spec, h acp.Handler) (chat.Conn, error
 	return nil, errors.New("起进程失败")
 }
 
+// TestParseFollowPrompt 验证 #f 指令解析边界：整串 "#f"、"#f <消息>" 命中；
+// "#fix something"、大写 "#F"、普通文本不触发。
+func TestParseFollowPrompt(t *testing.T) {
+	if rest, ok := parseFollowPrompt("#f"); !ok || rest != "" {
+		t.Fatalf("#f 应命中且消息体为空: %q %v", rest, ok)
+	}
+	if rest, ok := parseFollowPrompt("  #f 继续修  "); !ok || rest != "继续修" {
+		t.Fatalf("#f <消息> 应命中并 Trim: %q %v", rest, ok)
+	}
+	for _, in := range []string{"#fix something", "#F 继续修", "#继续修", "看看 #f 怎么用"} {
+		if _, ok := parseFollowPrompt(in); ok {
+			t.Fatalf("%q 不应被识别为 #f 指令", in)
+		}
+	}
+}
+
 func TestChatManagerEmitsUpdate(t *testing.T) {
 	var mu sync.Mutex
 	events := map[string]int{}

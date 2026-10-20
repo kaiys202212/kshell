@@ -49,6 +49,10 @@ type Runtime struct {
 	persist func(cfg WeixinPersist) error
 	// onLearnWxid 由 desktop 注入：wxid 首次从入站消息学习时落盘。
 	onLearnWxid func(wxid string)
+	// transcriber 由 desktop 注入：语音转写（实时配置，装配到 bridge）。
+	transcriber Transcriber
+	// toolName 由 desktop 注入：工具展示名（出站标题栏归因，装配到 bridge）。
+	toolName func(string) string
 	// lang 文案语言。
 	lang string
 
@@ -76,6 +80,30 @@ func (r *Runtime) SetPersist(fn func(WeixinPersist) error) { r.persist = fn }
 
 // SetOnLearnWxid 装配 wxid 学习回调（Configure 前调用；转交给 Bridge）。
 func (r *Runtime) SetOnLearnWxid(fn func(wxid string)) { r.onLearnWxid = fn }
+
+// SetTranscriber 装配语音转写函数：转发给已存在的 bridge 并记录，Configure
+// 创建新 bridge（重绑）时再次注入。
+func (r *Runtime) SetTranscriber(fn Transcriber) {
+	r.mu.Lock()
+	r.transcriber = fn
+	bridge := r.bridge
+	r.mu.Unlock()
+	if bridge != nil {
+		bridge.SetTranscriber(fn)
+	}
+}
+
+// SetToolName 装配工具展示名查询函数（出站标题栏归因用）：转发给已存在的
+// bridge 并记录，Configure 创建新 bridge（重绑）时再次注入。
+func (r *Runtime) SetToolName(fn func(string) string) {
+	r.mu.Lock()
+	r.toolName = fn
+	bridge := r.bridge
+	r.mu.Unlock()
+	if bridge != nil {
+		bridge.SetToolName(fn)
+	}
+}
 
 // SetBaseURL 覆盖 iLink 客户端的基础地址（测试注入 httptest 用；须在 Configure 前调用）。
 func (r *Runtime) SetBaseURL(url string) { r.baseURL = url }
@@ -123,6 +151,12 @@ func (r *Runtime) Configure(token, wxid string) {
 	r.stopLocked()
 	r.client = NewClient(token, r.baseURL)
 	r.bridge = NewBridge(r.client, r.ex, BridgeConfig{Wxid: wxid, Language: r.lang})
+	if r.transcriber != nil {
+		r.bridge.SetTranscriber(r.transcriber)
+	}
+	if r.toolName != nil {
+		r.bridge.SetToolName(r.toolName)
+	}
 	if r.onLearnWxid != nil {
 		r.bridge.SetOnLearnWxid(r.onLearnWxid)
 	}
@@ -207,7 +241,7 @@ func (r *Runtime) pollLoop(ctx context.Context, client *Client, bridge *Bridge) 
 				log.Printf("[weixin] 丢弃积压消息 from=%s create_ms=%d", m.FromUserID, m.CreateMs)
 				continue
 			}
-			bridge.HandleInbound(m.FromUserID, m.ContextToken, m.Text)
+			bridge.HandleInboundMsg(ctx, m)
 		}
 	}
 }

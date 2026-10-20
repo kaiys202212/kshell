@@ -51,12 +51,9 @@ beforeEach(() => {
   api.getTools.mockResolvedValue([]);
   api.getModelConfig.mockResolvedValue({
     Enabled: false,
-    Preset: '',
-    OpenAIBaseURL: '',
-    AnthropicBaseURL: '',
-    Models: [],
+    Platforms: [],
+    DefaultPlatform: '',
     ActiveModel: '',
-    APIKeySet: false,
   });
   api.listHubMessages.mockResolvedValue([]);
   api.listHubArchive.mockResolvedValue([]);

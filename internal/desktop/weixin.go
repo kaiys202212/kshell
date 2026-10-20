@@ -2,9 +2,13 @@ package desktop
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/hub"
+	"github.com/yangk/kshell/internal/hubtools"
 	"github.com/yangk/kshell/internal/weixin"
 )
 
@@ -24,11 +28,51 @@ func (a *App) startWeixin() {
 			c.Weixin.Enabled = true
 		})
 	})
+	r.SetTranscriber(a.weixinTranscriber())
+	r.SetToolName(a.toolDisplayName)
 	r.Configure(cfg.Weixin.Token, cfg.Weixin.Wxid)
 
 	a.mu.Lock()
 	a.wx = r
 	a.mu.Unlock()
+}
+
+// weixinTranscriber 返回语音转写函数：每次调用实时读模型平台配置，改配置即时
+// 生效。转写来源优先级链（2026-10-18 与用户确认）：默认平台 asr_model 已填走
+// 专用 ASR 端点；留空则用默认对话模型（ActiveModel，AgentHub 指令环节同款
+// chat 端点）经 input_audio 直接听音频转写——要求该模型支持音频输入，不支持
+// 时由转写失败回执兜底。两者皆缺返回 weixin.ErrTranscriberNotConfigured 哨兵。
+func (a *App) weixinTranscriber() weixin.Transcriber {
+	return func(ctx context.Context, wav []byte) (string, error) {
+		cfgSnapshot := a.snapshot().Config.Model
+		plat, ok := cfgSnapshot.ActivePlatform()
+		if !ok || strings.TrimSpace(plat.OpenAIBaseURL) == "" {
+			return "", weixin.ErrTranscriberNotConfigured
+		}
+		cfg := hubtools.Config{BaseURL: plat.OpenAIBaseURL, APIKey: plat.APIKey}
+		chatModel := strings.TrimSpace(cfgSnapshot.ActiveModel)
+		// 对话模型三元组不齐（对齐 hubtools.Ready 口径：免费无 key 端点不尝试）；
+		// BaseURL 已在上一步查过，这里只查 Model 与 APIKey。
+		if strings.TrimSpace(plat.ASRModel) == "" && (chatModel == "" || strings.TrimSpace(plat.APIKey) == "") {
+			// ASR 模型未填且对话模型三元组不齐：无可用的转写来源。
+			return "", weixin.ErrTranscriberNotConfigured
+		}
+		text, err := hubtools.TranscribeAuto(ctx, cfg, plat.ASRModel, chatModel, wav)
+		if err != nil {
+			return "", mapVoiceErr(err)
+		}
+		return text, nil
+	}
+}
+
+// mapVoiceErr 把 hubtools「模型不支持音频」哨兵映射为 weixin.ErrVoiceUnsupported
+//（%w 双层包裹，两层哨兵都在链上：桥层归因到 weixin 哨兵，日志仍可归因到
+// hubtools 原始 key）。其余错误原样透传。
+func mapVoiceErr(err error) error {
+	if err != nil && errors.Is(err, hubtools.ErrChatAudioUnsupported) {
+		return fmt.Errorf("%w: %w", weixin.ErrVoiceUnsupported, err)
+	}
+	return err
 }
 
 // wxRuntime 取当前微信运行时（未装配为 nil）。

@@ -560,17 +560,23 @@ func (m Model) themeOptions() launch.ThemeOptions {
 	}
 }
 
+// modelOptions 组装模型注入 resolver：未启用或无可用平台时返回空（不注入）。
+// 只注入端点与密钥（取默认平台，DefaultPlatform 命中否则第一个），不注入模型名——
+// 默认模型由 agent 自行决定；settings 配置的模型仅经聊天下拉提供切换。
 func (m Model) modelOptions() launch.ModelOptions {
 	cfg := m.opts.Config.Model
 	if !cfg.Enabled {
 		return launch.ModelOptions{}
 	}
-	return launch.ModelOptions{Resolver: func(toolID string) (providers.ModelConfig, bool) {
+	p, ok := cfg.ActivePlatform()
+	if !ok {
+		return launch.ModelOptions{}
+	}
+	return launch.ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
 		return providers.ModelConfig{
-			OpenAIBaseURL:    cfg.OpenAIBaseURL,
-			AnthropicBaseURL: cfg.AnthropicBaseURL,
-			APIKey:           cfg.APIKey,
-			Model:            cfg.Agents[toolID],
+			OpenAIBaseURL:    p.OpenAIBaseURL,
+			AnthropicBaseURL: p.AnthropicBaseURL,
+			APIKey:           p.APIKey,
 		}, true
 	}}
 }

@@ -1,11 +1,17 @@
 package weixin
 
 import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -16,15 +22,26 @@ import (
 
 // fakeExec 是命令层的内存假执行端。
 type fakeExec struct {
-	sessions []hub.SessionRef
-	current  hub.SessionRef
-	hasCur   bool
-	sendErr  error
+	sessions  []hub.SessionRef
+	current   hub.SessionRef
+	hasCur    bool
+	sendErr   error
+	sentTexts []string // Send 收到的文本（按序记录）
+	// switchCalls / currentCalls：SwitchTo 与 CurrentSession 调用记录
+	//（引用回复切换语义断言用）。
+	switchCalls  []string
+	currentCalls int
 }
 
-func (f *fakeExec) ListSessions() []hub.SessionRef             { return f.sessions }
-func (f *fakeExec) CurrentSession() (hub.SessionRef, bool)     { return f.current, f.hasCur }
-func (f *fakeExec) SwitchTo(string) error                      { return nil }
+func (f *fakeExec) ListSessions() []hub.SessionRef { return f.sessions }
+func (f *fakeExec) CurrentSession() (hub.SessionRef, bool) {
+	f.currentCalls++
+	return f.current, f.hasCur
+}
+func (f *fakeExec) SwitchTo(chatID string) error {
+	f.switchCalls = append(f.switchCalls, chatID)
+	return nil
+}
 func (f *fakeExec) OpenSession(string) (hub.SessionRef, error) { return hub.SessionRef{}, nil }
 func (f *fakeExec) EasyNew() (hub.SessionRef, error)           { return hub.SessionRef{}, nil }
 func (f *fakeExec) NewMenuOptions() (tools, workspaces, models []hub.MenuOption) {
@@ -37,10 +54,13 @@ func (f *fakeExec) Stop(string) error                                   { return
 func (f *fakeExec) ListModels(string) ([]hub.MenuOption, string, error) { return nil, "", nil }
 func (f *fakeExec) SetModel(string, string) error                       { return nil }
 func (f *fakeExec) SearchSessions(string) []hub.SessionRef              { return nil }
-func (f *fakeExec) Send(string, string) error                           { return f.sendErr }
-func (f *fakeExec) GrantPermission(string, string, bool) error          { return nil }
-func (f *fakeExec) Status() hub.ConsoleStatus                           { return hub.ConsoleStatus{} }
-func (f *fakeExec) RecentMessages(int) []hub.Message                    { return nil }
+func (f *fakeExec) Send(chatID, text string) error {
+	f.sentTexts = append(f.sentTexts, text)
+	return f.sendErr
+}
+func (f *fakeExec) GrantPermission(string, string, bool) error { return nil }
+func (f *fakeExec) Status() hub.ConsoleStatus                  { return hub.ConsoleStatus{} }
+func (f *fakeExec) RecentMessages(int) []hub.Message           { return nil }
 
 // reqRecord 记录一次 HTTP 请求的路径与解码后的 JSON 体。
 type reqRecord struct {
@@ -259,7 +279,8 @@ func TestBridgeDeliverHubMessage(t *testing.T) {
 		t.Fatalf("应跳过的消息触发了 %d 次 sendmessage, 期望仍为 1（仅入站确认）", n)
 	}
 
-	// agent 正常推送，带标题前缀，context_token 用最近入站的。
+	// agent 正常推送，带标题栏（仅会话标题时与旧前缀同形），标题独立一行，
+	// context_token 用最近入站的。
 	// 出站已改走异步串行队列：FlushForTest 等队列排空后再断言。
 	b.DeliverHubMessage(hub.Message{Kind: "agent", SessionTitle: "标题", Text: "hello world"})
 	b.FlushForTest()
@@ -268,11 +289,49 @@ func TestBridgeDeliverHubMessage(t *testing.T) {
 		t.Fatalf("sendmessage 次数 = %d, 期望 2（入站确认 + agent 推送）", len(sends))
 	}
 	text, token := sendMsgFields(t, sends[1].body)
-	if text != "【标题】hello world" {
-		t.Errorf("出站文本 = %q, 期望 【标题】hello world", text)
+	// deliver 阶段统一升级硬换行（行尾两空格，微信 PC 端 Markdown 渲染需要）。
+	if text != "【标题】  \nhello world" {
+		t.Errorf("出站文本 = %q, 期望 【标题】  \\nhello world", text)
 	}
 	if token != "ct-9" {
 		t.Errorf("context_token = %q, 期望 ct-9", token)
+	}
+}
+
+// 标题栏归因：项目名（工作区基名）· agent 展示名 · 会话标题；展示名查不到
+// 回落工具 ID；Workspace/Tool/SessionTitle 全空时不加标题栏。
+func TestBridgeDeliverHubMessageTitleBar(t *testing.T) {
+	rc := &recorder{}
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b := newBridge(t, "u1", ex, rc.handler(t))
+	b.SetToolName(func(id string) string {
+		if id == "claude" {
+			return "Claude Code"
+		}
+		return ""
+	})
+	b.HandleInbound("u1", "ct-1", "你好") // 建立发送上下文
+	b.FlushForTest()
+
+	b.DeliverHubMessage(hub.Message{Kind: "agent", Workspace: `D:\ws\proj`, Tool: "claude",
+		SessionTitle: "标题", Text: "正文"})
+	// 展示名查不到回落工具 ID。
+	b.DeliverHubMessage(hub.Message{Kind: "agent", Tool: "codex", Text: "无标题"})
+	// 全空：不加标题栏。
+	b.DeliverHubMessage(hub.Message{Kind: "agent", Text: "裸文本"})
+	b.FlushForTest()
+	sends := rc.sends()
+	if len(sends) != 4 {
+		t.Fatalf("sendmessage 次数 = %d, 期望 4（入站确认 + 3 条推送）", len(sends))
+	}
+	if text, _ := sendMsgFields(t, sends[1].body); text != "【proj · Claude Code · 标题】  \n正文" {
+		t.Errorf("出站文本 = %q, 期望 【proj · Claude Code · 标题】  \\n正文", text)
+	}
+	if text, _ := sendMsgFields(t, sends[2].body); text != "【codex】  \n无标题" {
+		t.Errorf("出站文本 = %q, 期望 【codex】  \\n无标题", text)
+	}
+	if text, _ := sendMsgFields(t, sends[3].body); text != "裸文本" {
+		t.Errorf("出站文本 = %q, 期望 裸文本", text)
 	}
 }
 
@@ -448,5 +507,637 @@ func TestBridgeTruncate(t *testing.T) {
 	}
 	if !strings.Contains(text, "完整内容见桌面端") {
 		t.Errorf("截断文本缺少提示后缀: %q", text[len(text)-40:])
+	}
+}
+
+// —— 附件队列与合并投递 ——
+
+// newAttachBridge 构造支持附件的桥：临时落盘目录 + MediaBase 指向测试服务 +
+// /download 路由（返回 plain 的 ECB 密文；downloadStatus 非 200 模拟下载失败）。
+// 返回 recorder 供断言 sendmessage 内容。
+func newAttachBridge(t *testing.T, ex hub.Executor, plain []byte, downloadStatus int) (*Bridge, *recorder) {
+	t.Helper()
+	cipher := ecbEncrypt(t, []byte("0123456789abcdef"), plain)
+	rc := &recorder{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/download" {
+			if downloadStatus != 200 {
+				w.WriteHeader(downloadStatus)
+				return
+			}
+			w.Write(cipher)
+			return
+		}
+		rc.handler(t)(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	b := NewBridge(NewClient("tok", srv.URL), ex, BridgeConfig{Wxid: "u1", Language: "zh-CN"})
+	b.sleep = func(time.Duration) {}
+	b.client.MediaBase = srv.URL
+	b.filesDir = t.TempDir()
+	return b, rc
+}
+
+// fileKeyB64 是测试文件附件的密钥（base64(hex 32 字符) 形态，与密文 key 对应）。
+var fileKeyB64 = base64.StdEncoding.EncodeToString([]byte(hex.EncodeToString([]byte("0123456789abcdef"))))
+
+// attachMsg 构造一个文件附件消息。
+func attachMsg(token, name string) InboundMsg {
+	return InboundMsg{
+		FromUserID:   "u1",
+		ContextToken: token,
+		Attachments: []InboundAttachment{{
+			Kind: "file", Name: name, EncryptQueryParam: "eqp-1",
+			AESKey: fileKeyB64, MD5: "",
+		}},
+	}
+}
+
+func TestBridgeAttachmentMergeWithText(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b, rc := newAttachBridge(t, ex, []byte("附件内容"), 200)
+
+	// 附件先到：入队 + 回执，不投 executor。
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-1", "需求.pdf"))
+	if got := len(ex.sentTexts); got != 0 {
+		t.Fatalf("附件到达不应投 executor, 实际 %d 条", got)
+	}
+	if n := b.QueuedFiles(); n != 1 {
+		t.Fatalf("队列 = %d, 期望 1", n)
+	}
+	sends := rc.sends()
+	if len(sends) == 0 || !strings.Contains(sendText(t, sends[0].body), "已收到") {
+		t.Fatalf("附件回执缺失: %v", sends)
+	}
+
+	// 文本到达：合并投递，队列清空。
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-2", Text: "帮我修复登录"})
+	if len(ex.sentTexts) != 1 {
+		t.Fatalf("executor 应收到 1 条合并文本, 实际 %d", len(ex.sentTexts))
+	}
+	merged := ex.sentTexts[0]
+	if !strings.Contains(merged, "[附件] 需求.pdf 已保存至 ") {
+		t.Errorf("合并文本缺少附件说明行: %q", merged)
+	}
+	if !strings.Contains(merged, "帮我修复登录") {
+		t.Errorf("合并文本缺少用户文字: %q", merged)
+	}
+	if b.QueuedFiles() != 0 {
+		t.Errorf("队列未清空: %d", b.QueuedFiles())
+	}
+	// 附件说明行里的路径真实存在且内容解密正确（说明行后跟空行与用户文字）。
+	i := strings.Index(merged, "已保存至 ")
+	rest := merged[i+len("已保存至 "):]
+	path := rest[:strings.IndexAny(rest, "\n")]
+	if data, err := os.ReadFile(path); err != nil || string(data) != "附件内容" {
+		t.Errorf("落盘文件不可读或内容不符: %q %v", path, err)
+	}
+}
+
+func TestBridgeAttachmentAfterTextQueues(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b, _ := newAttachBridge(t, ex, []byte("内容"), 200)
+
+	// 文字先到：立即转发（无附件说明）。
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-1", Text: "第一段需求"})
+	if len(ex.sentTexts) != 1 || strings.Contains(ex.sentTexts[0], "[附件]") {
+		t.Fatalf("纯文字应立即原样转发: %v", ex.sentTexts)
+	}
+	// 附件后到：进队列等下一条文字，不独立转发。
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-2", "b.pdf"))
+	if len(ex.sentTexts) != 1 {
+		t.Fatalf("后到附件不应独立转发: %v", ex.sentTexts)
+	}
+	if b.QueuedFiles() != 1 {
+		t.Fatalf("队列 = %d, 期望 1", b.QueuedFiles())
+	}
+	// 第二条文字：合并。
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-3", Text: "补充说明"})
+	if len(ex.sentTexts) != 2 {
+		t.Fatalf("合并投递缺失: %v", ex.sentTexts)
+	}
+	if !strings.Contains(ex.sentTexts[1], "[附件]") || !strings.Contains(ex.sentTexts[1], "补充说明") {
+		t.Errorf("第二条应含附件说明+文字: %q", ex.sentTexts[1])
+	}
+}
+
+func TestBridgeAttachmentCommandKeepsQueue(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b, rc := newAttachBridge(t, ex, []byte("内容"), 200)
+
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-1", "a.pdf"))
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-2", Text: "#l"})
+	// #l 是命令：照常执行（有回复），队列不动、executor 无投递。
+	if len(ex.sentTexts) != 0 {
+		t.Fatalf("命令不应携带附件投递: %v", ex.sentTexts)
+	}
+	if b.QueuedFiles() != 1 {
+		t.Fatalf("命令后队列应保留, 实际 %d", b.QueuedFiles())
+	}
+	sends := rc.sends()
+	// send[0]=附件回执，send[1]=#l 的命令回复（fake 无会话 → 暂无会话）。
+	if len(sends) < 2 || !strings.Contains(sendText(t, sends[1].body), "暂无会话") {
+		t.Fatalf("#l 回复缺失: %v", sends)
+	}
+}
+
+func TestBridgeAttachmentDownloadFail(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b, rc := newAttachBridge(t, ex, []byte("内容"), 403)
+
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-1", "a.pdf"))
+	if b.QueuedFiles() != 0 {
+		t.Fatalf("下载失败不应入队: %d", b.QueuedFiles())
+	}
+	sends := rc.sends()
+	if len(sends) == 0 || !strings.Contains(sendText(t, sends[0].body), "获取失败") {
+		t.Fatalf("失败回执缺失: %v", sends)
+	}
+	if len(ex.sentTexts) != 0 {
+		t.Fatalf("失败附件不应投递: %v", ex.sentTexts)
+	}
+}
+
+func TestBridgeAttachmentMultiOrder(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b, rc := newAttachBridge(t, ex, []byte("内容"), 200)
+
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-1", "需求.pdf"))
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-2", "b.pdf"))
+	if b.QueuedFiles() != 2 {
+		t.Fatalf("队列 = %d, 期望 2", b.QueuedFiles())
+	}
+	sends := rc.sends()
+	if len(sends) < 2 || !strings.Contains(sendText(t, sends[1].body), "共 2 个") {
+		t.Errorf("第二个附件回执应报共 2 个: %v", sends)
+	}
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-3", Text: "需求正文"})
+	if len(ex.sentTexts) != 1 {
+		t.Fatalf("合并投递缺失: %v", ex.sentTexts)
+	}
+	if n := strings.Count(ex.sentTexts[0], "[附件]"); n != 2 {
+		t.Errorf("合并文本应含 2 个附件说明行, 实际 %d: %q", n, ex.sentTexts[0])
+	}
+	if strings.Index(ex.sentTexts[0], "需求.pdf") > strings.Index(ex.sentTexts[0], "b.pdf") {
+		t.Errorf("附件说明行应按到达序: %q", ex.sentTexts[0])
+	}
+}
+
+func TestBridgeStatusQueuedNote(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b, rc := newAttachBridge(t, ex, []byte("内容"), 200)
+
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-1", "a.pdf"))
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-2", Text: "#st"})
+	sends := rc.sends()
+	// send[0]=附件回执, send[1]=#st 回复, send[2]=待转交尾注。
+	if len(sends) < 3 || !strings.Contains(sendText(t, sends[2].body), "待转交附件 1 个") {
+		t.Fatalf("#st 待转交尾注缺失: %v", sends)
+	}
+}
+
+// sendText 只取 sendmessage 请求体里的文本。
+func sendText(t *testing.T, body map[string]any) string {
+	t.Helper()
+	text, _ := sendMsgFields(t, body)
+	return text
+}
+
+// —— 引用归因映射 ——
+
+func TestBridgeRememberSvrID(t *testing.T) {
+	t.Run("出站成功记录映射", func(t *testing.T) {
+		rc := &recorder{sendResp: func(int) (int, string) { return 200, `{"svr_id":"9001"}` }}
+		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+		b := newBridge(t, "u1", ex, rc.handler(t))
+		b.HandleInbound("u1", "ct-1", "你好") // 入站确认（无 chatID，不记录）
+		b.DeliverHubMessage(hub.Message{Kind: "agent", ChatID: "c1", SessionTitle: "会话A", Text: "回复"})
+		b.FlushForTest()
+		b.mu.Lock()
+		got := b.svrMap["9001"]
+		b.mu.Unlock()
+		if got != "c1" {
+			t.Fatalf("svrMap[9001] = %q, 期望 c1", got)
+		}
+	})
+	t.Run("响应无 svr_id 不记录不报错", func(t *testing.T) {
+		rc := &recorder{}
+		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+		b := newBridge(t, "u1", ex, rc.handler(t))
+		b.DeliverHubMessage(hub.Message{Kind: "agent", ChatID: "c1", Text: "回复"})
+		b.FlushForTest()
+		b.mu.Lock()
+		n := len(b.svrMap)
+		b.mu.Unlock()
+		if n != 0 {
+			t.Fatalf("svrMap 应为空, 实际 %d 条", n)
+		}
+	})
+	t.Run("超上限丢最旧", func(t *testing.T) {
+		rc := &recorder{}
+		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+		b := newBridge(t, "u1", ex, rc.handler(t))
+		for i := 0; i < svrMapCap+10; i++ {
+			b.rememberSvrID(fmt.Sprintf("svr-%d", i), "c1")
+		}
+		b.mu.Lock()
+		_, hasOld := b.svrMap["svr-0"]
+		_, hasNew := b.svrMap[fmt.Sprintf("svr-%d", svrMapCap+9)]
+		b.mu.Unlock()
+		if hasOld {
+			t.Error("最旧映射应被淘汰")
+		}
+		if !hasNew {
+			t.Error("最新映射应保留")
+		}
+	})
+}
+
+func TestQuoteTitle(t *testing.T) {
+	for in, want := range map[string]string{
+		"【会话A】回复正文":   "会话A",
+		"  【带空格标题】正文": "带空格标题",
+		"没有前缀的普通文本":   "",
+		"【未闭合的标题":     "",
+		"【外层【内层】】正文":  "外层【内层",
+	} {
+		if got := quoteTitle(in); got != want {
+			t.Errorf("quoteTitle(%q) = %q, 期望 %q", in, got, want)
+		}
+	}
+}
+
+func TestBridgeResolveQuote(t *testing.T) {
+	ex := &fakeExec{sessions: []hub.SessionRef{
+		{ChatID: "c1", Title: "会话A"},
+		{ChatID: "", SessionID: "s2", Title: "未激活会话"}, // 未激活：ChatID 空，标题匹配应跳过
+	}}
+	rc := &recorder{}
+	b := newBridge(t, "u1", ex, rc.handler(t))
+	b.rememberSvrID("9001", "c1")
+
+	t.Run("svr_id 精确命中", func(t *testing.T) {
+		if got := b.resolveQuote(&RefMsg{SvrID: "9001", Text: "【不匹配的标题】x"}); got != "c1" {
+			t.Errorf("resolveQuote = %q, 期望 c1（svr_id 优先）", got)
+		}
+	})
+	t.Run("标题兜底命中", func(t *testing.T) {
+		if got := b.resolveQuote(&RefMsg{SvrID: "unknown", Text: "【会话A】回复正文"}); got != "c1" {
+			t.Errorf("resolveQuote = %q, 期望 c1（标题匹配）", got)
+		}
+	})
+	t.Run("未激活会话不参与标题匹配", func(t *testing.T) {
+		if got := b.resolveQuote(&RefMsg{SvrID: "unknown", Text: "【未激活会话】正文"}); got != "" {
+			t.Errorf("resolveQuote = %q, 期望空（未激活跳过）", got)
+		}
+	})
+	t.Run("双不命中返回空", func(t *testing.T) {
+		if got := b.resolveQuote(&RefMsg{SvrID: "x", Text: "普通引用文本"}); got != "" {
+			t.Errorf("resolveQuote = %q, 期望空", got)
+		}
+		if got := b.resolveQuote(nil); got != "" {
+			t.Errorf("resolveQuote(nil) = %q, 期望空", got)
+		}
+	})
+}
+
+// —— 引用回复路由 ——
+
+// quoteMsg 构造一条引用回复入站消息。
+func quoteMsg(token, svrID, quoteText, text string) InboundMsg {
+	return InboundMsg{FromUserID: "u1", ContextToken: token, Text: text, Ref: &RefMsg{SvrID: svrID, Text: quoteText}}
+}
+
+func TestBridgeQuoteReplyRouting(t *testing.T) {
+	sessions := []hub.SessionRef{
+		{ChatID: "c1", Title: "会话A"},
+		{ChatID: "c2", Title: "会话B"},
+	}
+
+	t.Run("svr_id 命中切会话投递", func(t *testing.T) {
+		rc := &recorder{}
+		ex := &fakeExec{sessions: sessions, hasCur: true, current: hub.SessionRef{ChatID: "c2", Title: "会话B"}}
+		b := newBridge(t, "u1", ex, rc.handler(t))
+		b.rememberSvrID("9001", "c1")
+		b.HandleInboundMsg(context.Background(), quoteMsg("ct-1", "9001", "【会话A】旧回复", "继续这个"))
+		if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "继续这个" {
+			t.Fatalf("应投给引用会话: %v", ex.sentTexts)
+		}
+		if len(ex.switchCalls) != 1 || ex.switchCalls[0] != "c1" {
+			t.Errorf("应切换到 c1: %v", ex.switchCalls)
+		}
+		// ack 归因前缀应为切换后的新会话标题（用户据它确认切换生效）。
+		sends := rc.sends()
+		if len(sends) == 0 {
+			t.Fatal("应有 ack 回执")
+		}
+		if ack := sendText(t, sends[0].body); !strings.Contains(ack, "已发送给 会话A") && !strings.Contains(ack, "会话A") {
+			t.Errorf("ack 应带新会话【会话A】归因: %q", ack)
+		}
+	})
+
+	t.Run("标题兜底命中", func(t *testing.T) {
+		ex := &fakeExec{sessions: sessions, hasCur: true, current: hub.SessionRef{ChatID: "c2"}}
+		b := newBridge(t, "u1", ex, (&recorder{}).handler(t))
+		b.HandleInboundMsg(context.Background(), quoteMsg("ct-1", "unknown", "【会话B】旧回复", "看一下"))
+		if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "看一下" {
+			t.Fatalf("应按标题投给会话B: %v", ex.sentTexts)
+		}
+		if len(ex.switchCalls) != 1 || ex.switchCalls[0] != "c2" {
+			t.Errorf("应切换到 c2: %v", ex.switchCalls)
+		}
+	})
+
+	t.Run("双不命中回落当前会话", func(t *testing.T) {
+		ex := &fakeExec{sessions: sessions, hasCur: true, current: hub.SessionRef{ChatID: "c2"}}
+		b := newBridge(t, "u1", ex, (&recorder{}).handler(t))
+		b.HandleInboundMsg(context.Background(), quoteMsg("ct-1", "x", "普通引用无前缀", "普通消息"))
+		if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "普通消息" {
+			t.Fatalf("应回落当前会话: %v", ex.sentTexts)
+		}
+		if len(ex.switchCalls) != 0 {
+			t.Errorf("回落不应切换: %v", ex.switchCalls)
+		}
+	})
+
+	t.Run("引用+命令走普通命令路径", func(t *testing.T) {
+		ex := &fakeExec{sessions: sessions, hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+		b := newBridge(t, "u1", ex, (&recorder{}).handler(t))
+		b.rememberSvrID("9001", "c2")
+		b.HandleInboundMsg(context.Background(), quoteMsg("ct-1", "9001", "【会话B】旧回复", "#l"))
+		if len(ex.sentTexts) != 0 {
+			t.Fatalf("#l 是命令不应投递文本: %v", ex.sentTexts)
+		}
+		if len(ex.switchCalls) != 0 {
+			t.Errorf("命令不应触发切换: %v", ex.switchCalls)
+		}
+	})
+
+	t.Run("引用+纯数字走编号切换", func(t *testing.T) {
+		ex := &fakeExec{sessions: sessions, hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+		b := newBridge(t, "u1", ex, (&recorder{}).handler(t))
+		b.rememberSvrID("9001", "c2")
+		// 先 #l 建立编号映射（1 → c1），再引用回复纯数字 1。
+		b.HandleInbound("u1", "ct-0", "#l")
+		b.HandleInboundMsg(context.Background(), quoteMsg("ct-1", "9001", "【会话B】旧回复", "1"))
+		if len(ex.switchCalls) != 1 || ex.switchCalls[0] != "c1" {
+			t.Fatalf("纯数字应走编号切换到 c1: %v", ex.switchCalls)
+		}
+		if len(ex.sentTexts) != 0 {
+			t.Errorf("编号切换不应投递文本: %v", ex.sentTexts)
+		}
+	})
+
+	t.Run("引用+附件队列照常合并", func(t *testing.T) {
+		ex := &fakeExec{sessions: sessions, hasCur: true, current: hub.SessionRef{ChatID: "c2"}}
+		cipher := ecbEncrypt(t, []byte("0123456789abcdef"), []byte("内容"))
+		rc := &recorder{}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/download" {
+				w.Write(cipher)
+				return
+			}
+			rc.handler(t)(w, r)
+		}))
+		defer srv.Close()
+		bb := NewBridge(NewClient("tok", srv.URL), ex, BridgeConfig{Wxid: "u1", Language: "zh-CN"})
+		bb.sleep = func(time.Duration) {}
+		bb.client.MediaBase = srv.URL
+		bb.filesDir = t.TempDir()
+		bb.rememberSvrID("9001", "c1")
+
+		bb.HandleInboundMsg(context.Background(), attachMsg("ct-0", "a.pdf"))
+		bb.HandleInboundMsg(context.Background(), quoteMsg("ct-1", "9001", "【会话A】旧回复", "看这个"))
+		if len(ex.sentTexts) != 1 || !strings.Contains(ex.sentTexts[0], "[附件] a.pdf") || !strings.Contains(ex.sentTexts[0], "看这个") {
+			t.Fatalf("引用回复应与附件队列合并: %v", ex.sentTexts)
+		}
+		if len(ex.switchCalls) != 1 || ex.switchCalls[0] != "c1" {
+			t.Errorf("合并投递同样应切换: %v", ex.switchCalls)
+		}
+		if bb.QueuedFiles() != 0 {
+			t.Errorf("队列应清空: %d", bb.QueuedFiles())
+		}
+	})
+}
+
+func TestBridgeAttachmentAndTextSameMessage(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b, rc := newAttachBridge(t, ex, []byte("内容"), 200)
+
+	// 同条消息同时带附件与文字：附件直接随本轮文字合并投递，不发附件回执。
+	m := attachMsg("ct-1", "需求.pdf")
+	m.Text = "看这个文件"
+	b.HandleInboundMsg(context.Background(), m)
+	if len(ex.sentTexts) != 1 || !strings.Contains(ex.sentTexts[0], "[附件]") || !strings.Contains(ex.sentTexts[0], "看这个文件") {
+		t.Fatalf("同条消息应合并投递: %v", ex.sentTexts)
+	}
+	if b.QueuedFiles() != 0 {
+		t.Fatalf("队列应已清空: %d", b.QueuedFiles())
+	}
+	sends := rc.sends()
+	if len(sends) != 1 {
+		t.Fatalf("同条消息只应有 ack 一条 sendmessage: %v", sends)
+	}
+	if strings.Contains(sendText(t, sends[0].body), "已收到") {
+		t.Errorf("合并投递后不应再发附件回执")
+	}
+}
+
+// —— 语音转写 ——
+
+// voiceMsg 构造一条纯语音消息（无服务端转写；媒体下载指向测试服务）。
+func voiceMsg(token string) InboundMsg {
+	return InboundMsg{
+		FromUserID:   "u1",
+		ContextToken: token,
+		Voice: &InboundAttachment{
+			Kind: "voice", Name: "voice.silk", EncryptQueryParam: "eqp-1", AESKey: fileKeyB64,
+		},
+	}
+}
+
+func TestBridgeVoiceTranscribedForward(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	pcm := bytes.Repeat([]byte{0x10, 0x02}, 1200)
+	b, rc := newAttachBridge(t, ex, encodeSilk(t, pcm, true), 200)
+	var gotWAV []byte
+	b.SetTranscriber(func(ctx context.Context, wav []byte) (string, error) {
+		gotWAV = wav
+		return "语音说的需求", nil
+	})
+
+	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
+	// 语音落盘入队后与转写文本合并投递：附件说明行 + 转写文本，一条 ack。
+	if len(ex.sentTexts) != 1 {
+		t.Fatalf("转写文本应合并投递, 实际 %v", ex.sentTexts)
+	}
+	merged := ex.sentTexts[0]
+	if !strings.Contains(merged, "[附件] voice.wav 已保存至 ") || !strings.Contains(merged, "语音说的需求") {
+		t.Fatalf("合并文本应含语音文件说明行与转写文本: %q", merged)
+	}
+	if !bytes.HasPrefix(gotWAV, []byte("RIFF")) {
+		t.Errorf("transcriber 收到的不是 WAV: % x", gotWAV[:min(4, len(gotWAV))])
+	}
+	if b.QueuedFiles() != 0 {
+		t.Errorf("队列应已清空: %d", b.QueuedFiles())
+	}
+	// 落盘语音文件可读且是合法 WAV（说明行后跟空行与转写文本）。
+	i := strings.Index(merged, "已保存至 ")
+	rest := merged[i+len("已保存至 "):]
+	path := rest[:strings.IndexAny(rest, "\n")]
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("语音文件未落盘: %v", err)
+	}
+	if !bytes.HasPrefix(data, []byte("RIFF")) {
+		t.Errorf("落盘文件不是 WAV: % x", data[:min(4, len(data))])
+	}
+	sends := rc.sends()
+	if len(sends) != 1 {
+		t.Fatalf("sendmessage 次数 = %d, 期望 1（ack）", len(sends))
+	}
+}
+
+func TestBridgeVoiceMergesWithQueue(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	pcm := bytes.Repeat([]byte{0x10, 0x02}, 1200)
+	b, rc := newAttachBridge(t, ex, encodeSilk(t, pcm, true), 200)
+	b.SetTranscriber(func(ctx context.Context, wav []byte) (string, error) {
+		return "看一下刚发的文件", nil
+	})
+
+	// 附件先入队（回执 send[0]），语音转写文本与其合并投递。
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-1", "a.pdf"))
+	b.HandleInboundMsg(context.Background(), voiceMsg("ct-2"))
+	if len(ex.sentTexts) != 1 || !strings.Contains(ex.sentTexts[0], "[附件] a.pdf") ||
+		!strings.Contains(ex.sentTexts[0], "看一下刚发的文件") {
+		t.Fatalf("语音转写应与附件队列合并: %v", ex.sentTexts)
+	}
+	if b.QueuedFiles() != 0 {
+		t.Fatalf("队列应清空: %d", b.QueuedFiles())
+	}
+	sends := rc.sends()
+	if len(sends) != 2 {
+		t.Fatalf("sendmessage 次数 = %d, 期望 2（附件回执 + ack）", len(sends))
+	}
+	if strings.Contains(sendText(t, sends[1].body), "转写") {
+		t.Errorf("合并成功不应再发语音回执")
+	}
+}
+
+func TestBridgeVoiceUnconfigured(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	pcm := bytes.Repeat([]byte{0x10, 0x02}, 1200)
+	b, rc := newAttachBridge(t, ex, encodeSilk(t, pcm, true), 200)
+	// 不注入 transcriber：语音文件仍落盘入队（转交不依赖 ASR），回执
+	//「未配置」，不投递。
+	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
+	if len(ex.sentTexts) != 0 {
+		t.Fatalf("未配置不应投递: %v", ex.sentTexts)
+	}
+	if n := b.QueuedFiles(); n != 1 {
+		t.Fatalf("语音文件应入队待转交, 队列 = %d", n)
+	}
+	sends := rc.sends()
+	if len(sends) == 0 || !strings.Contains(sendText(t, sends[0].body), "未配置") {
+		t.Fatalf("未配置回执缺失: %v", sends)
+	}
+}
+
+func TestBridgeVoiceTranscribeFail(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	pcm := bytes.Repeat([]byte{0x10, 0x02}, 1200)
+	b, rc := newAttachBridge(t, ex, encodeSilk(t, pcm, true), 200)
+	b.SetTranscriber(func(ctx context.Context, wav []byte) (string, error) {
+		return "", context.DeadlineExceeded
+	})
+
+	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
+	if len(ex.sentTexts) != 0 {
+		t.Fatalf("转写失败不应投递: %v", ex.sentTexts)
+	}
+	if n := b.QueuedFiles(); n != 1 {
+		t.Fatalf("转写失败后语音文件仍应入队待转交, 队列 = %d", n)
+	}
+	sends := rc.sends()
+	if len(sends) == 0 || !strings.Contains(sendText(t, sends[0].body), "转写失败") {
+		t.Fatalf("失败回执缺失: %v", sends)
+	}
+}
+
+func TestBridgeVoiceAudioUnsupported(t *testing.T) {
+	// 对话模型不支持音频输入（常态而非异常）：回执走 voice.unsupported
+	// 指引文案，不透传底层网关报错，也不投递。
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	pcm := bytes.Repeat([]byte{0x10, 0x02}, 1200)
+	b, rc := newAttachBridge(t, ex, encodeSilk(t, pcm, true), 200)
+	b.SetTranscriber(func(ctx context.Context, wav []byte) (string, error) {
+		return "", fmt.Errorf("%w: 状态码 400", ErrVoiceUnsupported)
+	})
+
+	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
+	if len(ex.sentTexts) != 0 {
+		t.Fatalf("不支持音频不应投递: %v", ex.sentTexts)
+	}
+	sends := rc.sends()
+	if len(sends) == 0 {
+		t.Fatal("应有回执")
+	}
+	text := sendText(t, sends[0].body)
+	if !strings.Contains(text, "不支持") && !strings.Contains(text, "not support") {
+		t.Fatalf("回执应为不支持音频指引文案: %v", text)
+	}
+	if strings.Contains(text, "状态码 400") {
+		t.Fatalf("回执不应透传底层报错: %v", text)
+	}
+}
+
+func TestBridgeVoiceServerTextSkipsASR(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	pcm := bytes.Repeat([]byte{0x10, 0x02}, 1200)
+	b, _ := newAttachBridge(t, ex, encodeSilk(t, pcm, true), 200)
+	b.SetTranscriber(func(ctx context.Context, wav []byte) (string, error) {
+		t.Error("有服务端转写时不应调用模型 ASR")
+		return "", nil
+	})
+
+	m := voiceMsg("ct-1")
+	m.Text = "服务端转写内容"
+	b.HandleInboundMsg(context.Background(), m)
+	// 服务端转写直通，且语音文件同样落盘随行转交。
+	if len(ex.sentTexts) != 1 || !strings.Contains(ex.sentTexts[0], "[附件] voice.wav 已保存至 ") ||
+		!strings.Contains(ex.sentTexts[0], "服务端转写内容") {
+		t.Fatalf("服务端转写应直通并携带语音文件: %v", ex.sentTexts)
+	}
+	if b.QueuedFiles() != 0 {
+		t.Fatalf("队列应清空: %d", b.QueuedFiles())
+	}
+}
+
+func TestBridgeVoiceEmptyTranscriptKeepsFile(t *testing.T) {
+	// 转写结果为空：语音文件仍入队待下一条文字转交，回执「转写结果为空」。
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	pcm := bytes.Repeat([]byte{0x10, 0x02}, 1200)
+	b, rc := newAttachBridge(t, ex, encodeSilk(t, pcm, true), 200)
+	b.SetTranscriber(func(ctx context.Context, wav []byte) (string, error) {
+		return "", nil
+	})
+
+	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
+	if len(ex.sentTexts) != 0 {
+		t.Fatalf("空转写不应投递: %v", ex.sentTexts)
+	}
+	if n := b.QueuedFiles(); n != 1 {
+		t.Fatalf("语音文件应入队待转交, 队列 = %d", n)
+	}
+	// 下一条文字合并转交语音文件。
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-2", Text: "听一下"})
+	if len(ex.sentTexts) != 1 || !strings.Contains(ex.sentTexts[0], "[附件] voice.wav 已保存至 ") ||
+		!strings.Contains(ex.sentTexts[0], "听一下") {
+		t.Fatalf("下一条文字应合并转交语音文件: %v", ex.sentTexts)
+	}
+	sends := rc.sends()
+	if len(sends) != 2 {
+		t.Fatalf("sendmessage 次数 = %d, 期望 2（空转写回执 + ack）", len(sends))
 	}
 }

@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	"github.com/yangk/kshell/internal/acp"
@@ -42,10 +43,11 @@ func TestOpenWorkspaceACPCarriesSettingsPayload(t *testing.T) {
 	env.app.mu.Lock()
 	env.app.opts.Config.SessionMode = config.SessionModeACP
 	env.app.opts.Config.Model = config.ModelConfig{
-		Enabled:          true,
-		AnthropicBaseURL: "https://h/",
-		APIKey:           "k",
-		ActiveModel:      "glm-5.3-flash",
+		Enabled:     true,
+		ActiveModel: "glm-5.3-flash",
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "GLM", AnthropicBaseURL: "https://h/", APIKey: "k"},
+		},
 	}
 	env.app.mu.Unlock()
 
@@ -91,7 +93,7 @@ func TestListChatModelsMergesConfigModels(t *testing.T) {
 	env.app.opts.Config.Model = config.ModelConfig{
 		Enabled:     true,
 		ActiveModel: "glm-5.3-flash",
-		Models:      []string{"glm-5.3-flash", "deepseek-v4.1-flash", "kimi-k3"},
+		Platforms:   []config.ModelPlatform{{ID: "p1", Name: "P", Models: []string{"glm-5.3-flash", "deepseek-v4.1-flash", "kimi-k3"}}},
 	}
 	env.app.mu.Unlock()
 
@@ -117,7 +119,8 @@ func TestListChatModelsMergesConfigModels(t *testing.T) {
 	}
 }
 
-// agent 无模型视图但 kshell 有配置时，仍应返回 kshell 列表（Current=ActiveModel）。
+// agent 无模型视图但 kshell 有配置时，仍应返回 kshell 列表；
+// Current 保持空（当前模型以 agent 上报为准，不再回落 ActiveModel）。
 func TestListChatModelsAgentEmptyStillListsConfig(t *testing.T) {
 	env := newChatTestApp(t, &providers.ACPDetection{
 		Available: true, Source: "path", BinPath: "claude-agent-acp",
@@ -127,7 +130,7 @@ func TestListChatModelsAgentEmptyStillListsConfig(t *testing.T) {
 	env.app.opts.Config.Model = config.ModelConfig{
 		Enabled:     true,
 		ActiveModel: "glm-5.3-flash",
-		Models:      []string{"glm-5.3-flash"},
+		Platforms:   []config.ModelPlatform{{ID: "p1", Name: "P", Models: []string{"glm-5.3-flash"}}},
 	}
 	env.app.mu.Unlock()
 
@@ -142,8 +145,8 @@ func TestListChatModelsAgentEmptyStillListsConfig(t *testing.T) {
 	if len(v.Models) != 1 || v.Models[0].ID != "glm-5.3-flash" {
 		t.Fatalf("应回 kshell 配置模型: %+v", v)
 	}
-	if v.Current != "glm-5.3-flash" {
-		t.Fatalf("Current 应为 ActiveModel: %+v", v)
+	if v.Current != "" {
+		t.Fatalf("agent 未上报时 Current 应保持空: %+v", v)
 	}
 }
 
@@ -162,7 +165,7 @@ func TestModelsViewMergesAndNeverNil(t *testing.T) {
 		env.app.opts.Config.Model = config.ModelConfig{
 			Enabled:     true,
 			ActiveModel: "cfg1",
-			Models:      []string{"m1", "cfg1"},
+			Platforms:   []config.ModelPlatform{{ID: "p1", Name: "P", Models: []string{"m1", "cfg1"}}},
 		}
 		env.app.mu.Unlock()
 
@@ -269,7 +272,7 @@ func TestListChatModelsDisabledNoConfigModels(t *testing.T) {
 	env.app.opts.Config.Model = config.ModelConfig{
 		Enabled:     false,
 		ActiveModel: "glm-5.3-flash",
-		Models:      []string{"glm-5.3-flash"},
+		Platforms:   []config.ModelPlatform{{ID: "p1", Name: "P", Models: []string{"glm-5.3-flash"}}},
 	}
 	env.app.mu.Unlock()
 
@@ -285,5 +288,266 @@ func TestListChatModelsDisabledNoConfigModels(t *testing.T) {
 		if mo.ID == "glm-5.3-flash" {
 			t.Fatalf("未启用时不应列出配置模型: %+v", v)
 		}
+	}
+}
+
+// openChatEnv 构造一个已打开的聊天会话环境，返回环境与会话 ID。
+func openChatEnv(t *testing.T, conn *fakeChatConn) (*chatTestEnv, string) {
+	t.Helper()
+	var backend chat.Backend = fakeChatBackend{}
+	if conn != nil {
+		backend = &fakeChatCaptureBackend{conn: conn}
+	}
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "claude-agent-acp",
+	}, backend)
+	env.app.mu.Lock()
+	env.app.opts.Config.SessionMode = config.SessionModeACP
+	env.app.mu.Unlock()
+	opened, err := env.app.OpenSessionACP("s1")
+	if err != nil {
+		t.Fatalf("OpenSessionACP: %v", err)
+	}
+	return env, opened.Chat.ID
+}
+
+// 单平台：保持现状裸名行为（ID=Name=model），Current 不回落（agent 上报为准）。
+func TestMergeConfigModelsSinglePlatformBareNames(t *testing.T) {
+	env, id := openChatEnv(t, nil)
+	env.app.mu.Lock()
+	env.app.opts.Config.Model = config.ModelConfig{
+		Enabled:     true,
+		ActiveModel: "m2",
+		Platforms:   []config.ModelPlatform{{ID: "p1", Name: "P", Models: []string{"m1", " m2 "}}},
+	}
+	env.app.mu.Unlock()
+
+	v, err := env.app.ListChatModels(id)
+	if err != nil {
+		t.Fatalf("ListChatModels: %v", err)
+	}
+	if v.Current != "" {
+		t.Fatalf("agent 未上报时 Current 应保持空: %+v", v)
+	}
+	if len(v.Models) != 2 || v.Models[0].ID != "m1" || v.Models[0].Name != "m1" ||
+		v.Models[1].ID != "m2" || v.Models[1].Name != "m2" {
+		t.Fatalf("单平台应保持裸名: %+v", v.Models)
+	}
+}
+
+// 多平台：前缀 ID/Name、默认平台排最前、其余按列表顺序；
+// Current 不回落（agent 上报为准），ActiveModel 不影响 Current。
+func TestMergeConfigModelsMultiPlatformPrefixed(t *testing.T) {
+	platforms := []config.ModelPlatform{
+		{ID: "p1", Name: "Alpha", Models: []string{"a1", "a2"}},
+		{ID: "p2", Name: "Beta", Models: []string{"b1", "b2"}},
+	}
+	cases := []struct {
+		name      string
+		defPlat   string
+		active    string
+		wantIDs   []string
+		wantNames map[string]string
+	}{
+		{
+			name: "默认平台排最前", defPlat: "p2", active: "b1",
+			wantIDs:   []string{"kshell:p2:b1", "kshell:p2:b2", "kshell:p1:a1", "kshell:p1:a2"},
+			wantNames: map[string]string{"kshell:p2:b1": "Beta: b1", "kshell:p1:a1": "Alpha: a1"},
+		},
+		{
+			name: "ActiveModel不影响Current", defPlat: "p2", active: "a1",
+			wantIDs: []string{"kshell:p2:b1", "kshell:p2:b2", "kshell:p1:a1", "kshell:p1:a2"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, id := openChatEnv(t, nil)
+			env.app.mu.Lock()
+			env.app.opts.Config.Model = config.ModelConfig{
+				Enabled:         true,
+				DefaultPlatform: tc.defPlat,
+				ActiveModel:     tc.active,
+				Platforms:       platforms,
+			}
+			env.app.mu.Unlock()
+
+			v, err := env.app.ListChatModels(id)
+			if err != nil {
+				t.Fatalf("ListChatModels: %v", err)
+			}
+			var gotIDs []string
+			for _, mo := range v.Models {
+				gotIDs = append(gotIDs, mo.ID)
+			}
+			if len(gotIDs) != len(tc.wantIDs) {
+				t.Fatalf("条目数不符: got %v", gotIDs)
+			}
+			for i, want := range tc.wantIDs {
+				if gotIDs[i] != want {
+					t.Fatalf("顺序错误: got %v, want %v", gotIDs, tc.wantIDs)
+				}
+			}
+			for _, mo := range v.Models {
+				if want, ok := tc.wantNames[mo.ID]; ok && mo.Name != want {
+					t.Fatalf("%s Name = %q, want %q", mo.ID, mo.Name, want)
+				}
+			}
+			if v.Current != "" {
+				t.Fatalf("agent 未上报时 Current 应保持空，got %q", v.Current)
+			}
+		})
+	}
+}
+
+// 多平台去重：agent 自报 ID 与前缀 ID 相同时只保留 agent 条目。
+func TestMergeConfigModelsMultiPlatformDedupe(t *testing.T) {
+	conn := &fakeChatConn{start: acp.SessionStart{SessionID: "s1",
+		Models: &acp.SessionModelState{
+			AvailableModels: []acp.ModelInfo{{ModelID: "kshell:p1:a1", Name: "Ghost"}},
+			CurrentModelID:  "kshell:p1:a1",
+		}}, waitCh: make(chan struct{})}
+	env, id := openChatEnv(t, conn)
+	env.app.mu.Lock()
+	env.app.opts.Config.Model = config.ModelConfig{
+		Enabled:     true,
+		ActiveModel: "b1",
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "Alpha", Models: []string{"a1"}},
+			{ID: "p2", Name: "Beta", Models: []string{"b1"}},
+		},
+	}
+	env.app.mu.Unlock()
+
+	v, err := env.app.ListChatModels(id)
+	if err != nil {
+		t.Fatalf("ListChatModels: %v", err)
+	}
+	count := 0
+	for _, mo := range v.Models {
+		if mo.ID == "kshell:p1:a1" {
+			count++
+			if mo.Name != "Ghost" {
+				t.Fatalf("应保留 agent 条目: %+v", mo)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("重复条目数 = %d: %+v", count, v)
+	}
+}
+
+// setModelApp 构造带 Layout 的聊天 App，供 SetChatModel 断言配置落盘。
+func setModelApp(t *testing.T, model config.ModelConfig) (*App, *fakeChatConn, config.Layout, string) {
+	t.Helper()
+	conn := &fakeChatConn{start: acpSessionWithModels(), waitCh: make(chan struct{})}
+	dir := t.TempDir()
+	layout := config.Layout{
+		Root:   dir,
+		Config: filepath.Join(dir, "config.yaml"),
+		Cache:  filepath.Join(dir, "cache"),
+	}
+	m := newChatManagerWith(func(string, ...any) {}, &fakeChatCaptureBackend{conn: conn}, nil, nil, nil, nil, nil)
+	t.Cleanup(m.CloseAll)
+	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "/w"}, chat.Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	cfg := config.Default()
+	cfg.Model = model
+	app := NewAppWith(Options{Chats: m, Config: cfg, Layout: layout})
+	// 初态先落盘，模拟用户已保存过模型配置。
+	if err := config.Save(layout, cfg); err != nil {
+		t.Fatalf("Save 初态: %v", err)
+	}
+	return app, conn, layout, info.ID
+}
+
+func TestSetChatModelPlatformPrefix(t *testing.T) {
+	app, conn, layout, id := setModelApp(t, config.ModelConfig{
+		Enabled:         true,
+		DefaultPlatform: "p1",
+		ActiveModel:     "a1",
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "Alpha", Models: []string{"a1"}},
+			{ID: "p2", Name: "Beta", Models: []string{"b1", "b2"}},
+		},
+	})
+
+	// 1. 默认平台前缀：只切模型，config 不变。
+	if err := app.SetChatModel(id, "kshell:p1:a1"); err != nil {
+		t.Fatalf("SetChatModel: %v", err)
+	}
+	if len(conn.modelCalls) != 1 || conn.modelCalls[0] != "a1" {
+		t.Fatalf("SetModel 应收到裸名: %v", conn.modelCalls)
+	}
+	loaded, _ := config.Load(layout)
+	if loaded.Model.DefaultPlatform != "p1" || loaded.Model.ActiveModel != "a1" {
+		t.Fatalf("默认平台切换不应改配置: %+v", loaded.Model)
+	}
+
+	// 2. 跨平台前缀：落盘 DefaultPlatform/ActiveModel，SetModel 收到裸名。
+	if err := app.SetChatModel(id, "kshell:p2:b2"); err != nil {
+		t.Fatalf("SetChatModel: %v", err)
+	}
+	if len(conn.modelCalls) != 2 || conn.modelCalls[1] != "b2" {
+		t.Fatalf("跨平台 SetModel 应收到裸名: %v", conn.modelCalls)
+	}
+	loaded, _ = config.Load(layout)
+	if loaded.Model.DefaultPlatform != "p2" || loaded.Model.ActiveModel != "b2" {
+		t.Fatalf("跨平台切换应落盘: %+v", loaded.Model)
+	}
+	if got := app.snapshot().Config.Model.DefaultPlatform; got != "p2" {
+		t.Fatalf("内存配置应同步更新: %q", got)
+	}
+
+	// 3. 前缀含未知 platID：透传不落盘。
+	if err := app.SetChatModel(id, "kshell:px:m"); err != nil {
+		t.Fatalf("SetChatModel: %v", err)
+	}
+	if conn.modelCalls[2] != "kshell:px:m" {
+		t.Fatalf("未知平台应原样透传: %v", conn.modelCalls)
+	}
+	loaded, _ = config.Load(layout)
+	if loaded.Model.DefaultPlatform != "p2" {
+		t.Fatalf("未知平台不应误存: %+v", loaded.Model)
+	}
+
+	// 4. 非前缀 ID：透传。
+	if err := app.SetChatModel(id, "plain-model"); err != nil {
+		t.Fatalf("SetChatModel: %v", err)
+	}
+	if conn.modelCalls[3] != "plain-model" {
+		t.Fatalf("非前缀应原样透传: %v", conn.modelCalls)
+	}
+	loaded, _ = config.Load(layout)
+	if loaded.Model.DefaultPlatform != "p2" || loaded.Model.ActiveModel != "b2" {
+		t.Fatalf("透传不应改配置: %+v", loaded.Model)
+	}
+}
+
+// 跨平台前缀但 saveConfig 失败（无 Layout）：返回错误且不切模型。
+func TestSetChatModelSaveFailsKeepsModel(t *testing.T) {
+	conn := &fakeChatConn{start: acpSessionWithModels(), waitCh: make(chan struct{})}
+	m := newChatManagerWith(func(string, ...any) {}, &fakeChatCaptureBackend{conn: conn}, nil, nil, nil, nil, nil)
+	t.Cleanup(m.CloseAll)
+	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "/w"}, chat.Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	cfg := config.Default()
+	cfg.Model = config.ModelConfig{
+		Enabled: true,
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "Alpha", Models: []string{"a1"}},
+			{ID: "p2", Name: "Beta", Models: []string{"b1"}},
+		},
+	}
+	app := NewAppWith(Options{Chats: m, Config: cfg}) // 无 Layout → saveConfig 失败
+
+	if err := app.SetChatModel(info.ID, "kshell:p2:b1"); err == nil {
+		t.Fatal("保存失败应返回错误")
+	}
+	if len(conn.modelCalls) != 0 {
+		t.Fatalf("保存失败不应切模型: %v", conn.modelCalls)
 	}
 }

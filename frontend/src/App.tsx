@@ -16,6 +16,8 @@ import {
   closeTerminal,
   confirmArchive,
   getAppearance,
+  getAppVersion,
+  getLastSeenVersion,
   listChats,
   listHubMessages,
   listTerminals,
@@ -61,6 +63,7 @@ import Settings from './pages/Settings';
 import WorkspaceTabView from './pages/WorkspaceTab';
 import AgentSetupDialog from './components/AgentSetupDialog';
 import ProjectSetupDialog from './components/ProjectSetupDialog';
+import WhatsNewDialog from './components/WhatsNewDialog';
 import ArchiveSuggest from './components/ArchiveSuggest';
 import UpdatePrompt from './components/UpdatePrompt';
 import NotificationBubble, { handleNotifyFocus } from './components/NotificationBubble';
@@ -80,6 +83,8 @@ function App() {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   // 帮助面板（F1）：仅此一处使用，局部 state 即可，不入全局 store
   const [helpOpen, setHelpOpen] = useState(false);
+  // 升级弹窗：非空即弹，值为待展示的当前版本号
+  const [whatsNewVersion, setWhatsNewVersion] = useState('');
   const archivePrompt = useAppStore((s) => s.archivePrompt);
   const [updatePrompt, setUpdatePrompt] = useState<UpdateInfo | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
@@ -92,6 +97,22 @@ function App() {
   useEffect(() => {
     listTerminals()
       .then((list) => useAppStore.getState().setTerminals(list))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    // 升级弹窗判定：当前版本与上次已确认版本不一致才弹。
+    // dev / 空串（本地未注入版本、绑定缺失、查询失败）一律按 dev 处理：
+    // 不弹、不写 lastSeenVersion，避免开发构建污染版本标记。
+    // 注意：全新安装 lastSeenVersion 为空串也会弹一次完整升级日志，这是有意口径——
+    // 存量老用户升级后同样为空，加非空守卫会让真正目标人群永远看不到弹窗，勿当 bug 修。
+    getAppVersion()
+      .then((v) => {
+        if (!v || v === 'dev') return;
+        return getLastSeenVersion().then((seen) => {
+          if (seen !== v) setWhatsNewVersion(v);
+        });
+      })
       .catch(() => {});
   }, []);
 
@@ -471,6 +492,13 @@ function App() {
       </div>
       <AgentSetupDialog />
       <ProjectSetupDialog />
+      <WhatsNewDialog
+        open={!!whatsNewVersion}
+        currentVersion={whatsNewVersion}
+        onOpenChange={(o) => {
+          if (!o) setWhatsNewVersion('');
+        }}
+      />
       <QuickSwitcher open={switcherOpen} onOpenChange={setSwitcherOpen} />
       <HelpOverlay open={helpOpen} onClose={() => setHelpOpen(false)} />
       <ArchiveSuggest

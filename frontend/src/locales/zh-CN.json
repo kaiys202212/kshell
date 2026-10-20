@@ -32,7 +32,14 @@
     },
     "hub": {
       "not_found": "消息不存在或已归档",
-      "not_queued": "消息已送达，无法撤回"
+      "not_queued": "消息已送达，无法撤回",
+      "invalid_route_mode": "无效的路由模式 {{0}}（可选 auto、agent、force_auto）",
+      "follow_empty": "#f 后缺少要发送的内容",
+      "follow_none": "没有可跟踪的 agent 会话"
+    },
+    "hubtools": {
+      "unknown_pending": "该确认已失效（已被处理或被新对话替换）",
+      "pending_expired": "确认已过期，请重新发起"
     },
     "language": {
       "locales_not_dir": "locales 路径不是目录: {{0}}"
@@ -148,7 +155,10 @@
       "yaml_parse_failed": "YAML 解析失败：{{0}}",
       "http_url_required": "{{0}} 必须以 http:// 或 https:// 开头",
       "invalid_session_mode": "无效的会话模式：{{0}}",
-      "invalid_permission_mode": "无效的权限模式：{{0}}"
+      "invalid_permission_mode": "无效的权限模式：{{0}}",
+      "model_platform_name_required": "平台名称不能为空",
+      "model_platform_id_required": "平台标识不能为空",
+      "model_platform_id_duplicated": "平台标识重复：{{0}}"
     },
     "model_fetch": {
       "no_endpoint": "尚未配置任何 Base URL，无法拉取模型",
@@ -273,7 +283,16 @@
         "weixin": "微信",
         "model": "模型",
         "tools": "工具",
-        "skills": "Skill 广场"
+        "skills": "Skill 广场",
+        "help": "帮助"
+      },
+      "help": {
+        "tab": {
+          "guide": "功能使用说明",
+          "changelog": "升级日志"
+        },
+        "loadFailed": "文档加载失败。",
+        "retry": "重试"
       },
       "skills": {
         "plaza_title": "浏览 Skill",
@@ -356,17 +375,33 @@
         "enable": "启用模型配置",
         "preset": "提供商预设",
         "dirty": "字段已改（预设仍保留）",
+        "platforms_empty": "暂无平台，点击「添加平台」开始。",
+        "add_platform": "添加平台",
+        "edit_platform": "编辑平台",
+        "platform_name": "平台名称",
+        "platform_name_placeholder": "如 DeepSeek",
+        "platform_name_required": "请填写平台名称",
+        "set_default": "设为默认",
+        "default_badge": "默认",
+        "delete_platform": "删除",
+        "delete_confirm": "删除平台「{{0}}」？",
+        "models_count": "{{0}} 个模型",
+        "openai_base_url": "OpenAI Base URL",
+        "anthropic_base_url": "Anthropic Base URL",
         "api_key": "模型 API Key",
         "api_key_set": "已设置（留空不修改）",
         "api_key_unset": "未设置",
+        "api_key_keep_hint": "已保存密钥，留空保持不变",
         "clear_key": "清除密钥",
+        "asr_model": "语音转写模型（ASR）",
+        "asr_model_hint": "可选。填写专用 ASR 模型（走本平台 /audio/transcriptions 端点）；留空则用默认对话模型直接听语音转写（需该模型支持音频输入）。",
         "active_model": "当前模型",
-        "models": "模型列表（点击「设为当前」切换启动时注入的模型）",
+        "models": "模型列表",
         "models_empty": "暂无模型，可手动添加或点「拉取模型」",
         "add_model": "模型 ID",
         "add": "添加",
         "fetch_models": "拉取模型",
-        "fetch_hint": "从已保存的端点拉取，改完 URL 请先保存",
+        "fetch_hint": "使用表单中的端点与密钥直接拉取",
         "fetching": "拉取中…",
         "fetch_empty": "端点未返回任何模型",
         "fetch_filter_placeholder": "检索模型…",
@@ -818,6 +853,10 @@
       "menu_aria": "选择 agent 新建会话",
       "auto": "自动（该工作区最常用）"
     },
+    "whatsNew": {
+      "title": "{{version}} 更新日志",
+      "confirm": "我知道了"
+    },
     "update_prompt": {
       "title": "发现新版本 {{version}}",
       "body": "当前 {{current}}。稍后则本会话不再提醒，下次启动仍会检查。",
@@ -871,9 +910,6 @@
       "mention_aria": "提及候选",
       "input_placeholder": "给 agent 发消息；# 调命令，@ 指定目标",
       "send": "发送",
-      "status_running": "运行中",
-      "status_ready": "空闲",
-      "status_exited": "已退出",
       "field_project": "项目",
       "field_tool": "工具",
       "field_model": "模型",
@@ -925,13 +961,24 @@
       "auto_scroll": "自动滚动",
       "quick_continue_text": "请继续执行当前任务。",
       "unknown_cmd": "未知命令 {{cmd}}。可用命令：#new #easynew #stop #model #clear",
-      "need_target_drag": "用 @ 引用会话，或从标题旁会话浮层拖入输入框。",
-      "session_bar_aria": "活跃会话",
-      "session_panel_aria": "会话列表",
+      "need_target_drag": "用 @ 引用会话，或点击会话 chip / 拖入输入框。",
+      "empty_message": "消息内容不能为空。",
+      "pending_chip": "待激活",
+      "pending_chip_aria": "待激活会话：点击激活并引用",
       "mention_session": "@ 该会话",
       "jump_session": "打开会话对话页",
       "close_session": "关闭会话",
-      "close_session_failed": "关闭会话失败：{{err}}"
+      "close_session_failed": "关闭会话失败：{{err}}",
+      "route_mode_label": "输入路由",
+      "route_mode_auto": "自动",
+      "route_mode_agent": "仅 agent",
+      "route_mode_force_auto": "强制工具",
+      "route_save_failed": "路由模式保存失败：{{err}}",
+      "confirm_title": "待确认操作",
+      "confirm_approve": "确认执行",
+      "confirm_reject": "拒绝",
+      "confirm_done": "该操作已处理",
+      "confirm_failed": "操作失败：{{err}}"
     },
     "requirements": {
       "title": "需求",

@@ -1,10 +1,10 @@
 package weixin
 
 import (
-	"strconv"
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -367,4 +367,20 @@ func TestRuntimePollBackoff(t *testing.T) {
 		return s.updates >= 4
 	}, "失败后应按退避持续重试")
 	r.Stop()
+}
+
+func TestRuntimeSetTranscriberForwards(t *testing.T) {
+	r := NewRuntime(nil, "zh-CN")
+	// Configure 前装配：创建 bridge 时注入。
+	r.SetTranscriber(func(ctx context.Context, wav []byte) (string, error) { return "x", nil })
+	r.baseURL = "http://unused" // 不真正轮询
+	r.Configure("tok", "")
+	if b := r.GetBridge(); b == nil || b.transcriberFn() == nil {
+		t.Fatal("Configure 后 bridge 应持有 transcriber")
+	}
+	// Configure 后再装配：现有 bridge 即时生效（重绑重建同样生效）。
+	r.SetTranscriber(nil)
+	if b := r.GetBridge(); b.transcriberFn() != nil {
+		t.Fatal("SetTranscriber 应即时转发给现有 bridge")
+	}
 }

@@ -50,11 +50,22 @@ func TestLegacyBaseURLMigratesToDual(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got.Model.OpenAIBaseURL != "https://legacy.example/v1" {
-		t.Fatalf("openai = %q", got.Model.OpenAIBaseURL)
+	// 旧 base_url 迁入 default 平台的双端点，legacy 字段清空。
+	pl, ok := got.Model.ActivePlatform()
+	if !ok {
+		t.Fatalf("应迁移出默认平台，got %+v", got.Model)
 	}
-	if got.Model.AnthropicBaseURL != "https://legacy.example/v1" {
-		t.Fatalf("anthropic = %q", got.Model.AnthropicBaseURL)
+	if pl.OpenAIBaseURL != "https://legacy.example/v1" {
+		t.Fatalf("openai = %q", pl.OpenAIBaseURL)
+	}
+	if pl.AnthropicBaseURL != "https://legacy.example/v1" {
+		t.Fatalf("anthropic = %q", pl.AnthropicBaseURL)
+	}
+	if pl.APIKey != "k" {
+		t.Fatalf("api_key = %q", pl.APIKey)
+	}
+	if got.Model.OpenAIBaseURL != "" || got.Model.BaseURL != "" || got.Model.APIKey != "" {
+		t.Fatalf("legacy 字段应清空，got %+v", got.Model)
 	}
 }
 
@@ -74,10 +85,21 @@ func TestModelDualURLRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Model.Preset != "deepseek" ||
-		loaded.Model.OpenAIBaseURL != cfg.Model.OpenAIBaseURL ||
-		loaded.Model.AnthropicBaseURL != cfg.Model.AnthropicBaseURL {
-		t.Fatalf("loaded model = %+v", loaded.Model)
+	// 旧字段经迁移后落在 default 平台上，ActiveModel 保留。
+	pl, ok := loaded.Model.ActivePlatform()
+	if !ok {
+		t.Fatalf("应迁移出默认平台，got %+v", loaded.Model)
+	}
+	if pl.Name != "deepseek" ||
+		pl.OpenAIBaseURL != cfg.Model.OpenAIBaseURL ||
+		pl.AnthropicBaseURL != cfg.Model.AnthropicBaseURL {
+		t.Fatalf("loaded platform = %+v", pl)
+	}
+	if got := pl.Models; len(got) != 1 || got[0] != "deepseek-chat" {
+		t.Fatalf("platform models = %#v", got)
+	}
+	if loaded.Model.ActiveModel != "deepseek-chat" {
+		t.Fatalf("active_model = %q", loaded.Model.ActiveModel)
 	}
 }
 

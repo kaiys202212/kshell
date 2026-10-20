@@ -81,18 +81,36 @@ const (
 	PermissionModeBypass  = "bypass"
 )
 
-// ModelConfig 是全局模型/端点配置 + 统一模型列表。
-// BaseURL/Agents 为旧字段：仅读取迁移用，保存时 omitempty 且迁移后清空。
-type ModelConfig struct {
-	Enabled          bool     `yaml:"enabled"`
+// ModelPlatform 是一个模型平台（供应商）配置：独立端点与密钥。
+type ModelPlatform struct {
+	ID               string   `yaml:"id"`      // 稳定标识，前端生成
+	Name             string   `yaml:"name"`    // 展示名（模型前缀用）
 	Preset           string   `yaml:"preset"`
 	OpenAIBaseURL    string   `yaml:"openai_base_url"`
 	AnthropicBaseURL string   `yaml:"anthropic_base_url"`
-	BaseURL          string   `yaml:"base_url,omitempty"` // legacy
 	APIKey           string   `yaml:"api_key"`
-	Models           []string `yaml:"models"`       // 统一模型 ID 列表（去空、去重）
-	ActiveModel      string   `yaml:"active_model"` // 当前选中项；空=不注入模型名
-	Agents           map[string]string `yaml:"agents,omitempty"` // legacy
+	Models           []string `yaml:"models"`
+	// ASRModel 是可选的语音转写模型（OpenAI 兼容 /audio/transcriptions 端点），
+	// 供微信桥把无转写的语音转成文字；空 = 该平台不做语音转写。
+	ASRModel string `yaml:"asr_model,omitempty"`
+}
+
+// ModelConfig 是模型平台配置集合 + 默认模型选择。
+// Preset/OpenAIBaseURL/AnthropicBaseURL/BaseURL/APIKey/Models/Agents 为旧单平台字段：
+// 仅读取迁移用（归一化时迁入 Platforms 并清空），保存时 omitempty 不再落盘。
+type ModelConfig struct {
+	Enabled         bool            `yaml:"enabled"`
+	Platforms       []ModelPlatform `yaml:"platforms"`
+	DefaultPlatform string          `yaml:"default_platform"` // 平台 ID；空=第一个
+	// legacy 单平台字段：读取后迁移进 Platforms，归一化后清空。
+	Preset           string            `yaml:"preset,omitempty"`
+	OpenAIBaseURL    string            `yaml:"openai_base_url,omitempty"`
+	AnthropicBaseURL string            `yaml:"anthropic_base_url,omitempty"`
+	BaseURL          string            `yaml:"base_url,omitempty"`
+	APIKey           string            `yaml:"api_key,omitempty"`
+	Models           []string          `yaml:"models,omitempty"`
+	ActiveModel      string            `yaml:"active_model"` // 默认模型；仅供 kshell 自身 LLM 调用（hub 自主工具/微信 ASR），不注入给 agent
+	Agents           map[string]string `yaml:"agents,omitempty"`
 }
 
 type Config struct {
@@ -114,6 +132,8 @@ type Config struct {
 	AgentSetupDismissed bool `yaml:"agent_setup_dismissed"`
 	// ProjectSetupDismissed 为 true 后不再自动弹出首次项目选择弹窗。
 	ProjectSetupDismissed bool `yaml:"project_setup_dismissed"`
+	// LastSeenVersion 记录用户已确认过的最新版本号（升级后弹升级日志的去重依据）。
+	LastSeenVersion string `yaml:"last_seen_version"`
 	// Weixin 是微信桥（iLink）的持久化配置。
 	Weixin WeixinConfig `yaml:"weixin"`
 	// AgentHub 是 AgentHub 的跨端持久化配置（默认工具/模型）。
@@ -127,11 +147,20 @@ type WeixinConfig struct {
 	Wxid    string `yaml:"wxid"`  // 白名单用户（首扫即绑）
 }
 
+// AgentHub 路由模式：输入是直连 agent 还是先经本地模型工具化处理。
+const (
+	RouteModeAuto      = "auto"       // 默认：Task 6 的意图路由决定走向（当前暂按工具化）
+	RouteModeAgent     = "agent"      // 全部直连 agent，不启用工具化
+	RouteModeForceAuto = "force_auto" // 全部强制走工具化链路
+)
+
 // AgentHubConfig 是 AgentHub 的跨端持久化配置：前端「默认 agent 工具 + 模型」
 // 写穿到这里，微信桥等非浏览器端才能读到（localStorage 只存在于桌面端浏览器上下文）。
 type AgentHubConfig struct {
 	DefaultTool  string `yaml:"default_tool"`  // 快速新建（#en / easynew）默认工具 ID；空=回落第一个已安装
 	DefaultModel string `yaml:"default_model"` // 预留：默认模型 ID（当前新建链路用工具默认模型）
+	// RouteMode 是输入路由模式：auto（默认）| agent | force_auto。
+	RouteMode string `yaml:"route_mode"`
 }
 
 func Default() Config {
@@ -156,7 +185,8 @@ func Default() Config {
 		CloseBehavior:  CloseBehaviorTray,
 		SessionMode:    SessionModeTUI,
 		PermissionMode: PermissionModeDefault,
-		Model:          ModelConfig{Models: []string{}},
+		Model:          ModelConfig{Models: []string{}, Platforms: []ModelPlatform{}},
+		AgentHub:       AgentHubConfig{RouteMode: RouteModeAuto},
 	}
 }
 
@@ -256,6 +286,15 @@ func (c Config) normalized() Config {
 	default:
 		c.PermissionMode = d.PermissionMode
 	}
+	// 已读版本号：仅去首尾空白，其余原样保留。
+	c.LastSeenVersion = strings.TrimSpace(c.LastSeenVersion)
+	// AgentHub 路由模式：空值或非法值一律回落 auto。
+	c.AgentHub.RouteMode = strings.TrimSpace(c.AgentHub.RouteMode)
+	switch c.AgentHub.RouteMode {
+	case RouteModeAuto, RouteModeAgent, RouteModeForceAuto:
+	default:
+		c.AgentHub.RouteMode = RouteModeAuto
+	}
 	// 模型配置：统一模型列表归一；旧 base_url / agents 迁移后清空。
 	c.Model.Preset = strings.TrimSpace(c.Model.Preset)
 	c.Model.OpenAIBaseURL = sanitizeHTTPURL(c.Model.OpenAIBaseURL)
@@ -292,7 +331,111 @@ func (c Config) normalized() Config {
 	c.Model.Agents = nil
 	c.Model.Models = normalizeModels(c.Model.Models)
 	c.Model.ActiveModel = strings.TrimSpace(c.Model.ActiveModel)
+
+	// 旧单平台字段迁移：Platforms 为空且 legacy 有任一实质内容时，
+	// 打包成一个 default 平台（Name 用 Preset 展示名，缺省「默认平台」）。
+	if len(c.Model.Platforms) == 0 &&
+		(c.Model.Preset != "" || c.Model.OpenAIBaseURL != "" || c.Model.AnthropicBaseURL != "" ||
+			c.Model.APIKey != "" || len(c.Model.Models) > 0) {
+		name := c.Model.Preset
+		if name == "" {
+			name = "默认平台"
+		}
+		c.Model.Platforms = []ModelPlatform{{
+			ID:               "default",
+			Name:             name,
+			Preset:           c.Model.Preset,
+			OpenAIBaseURL:    c.Model.OpenAIBaseURL,
+			AnthropicBaseURL: c.Model.AnthropicBaseURL,
+			APIKey:           c.Model.APIKey,
+			Models:           c.Model.Models,
+		}}
+		c.Model.DefaultPlatform = "default"
+		// ActiveModel 原样保留：语义不变，属于默认平台域。
+		// Models 已随平台打包，顶层清掉（末尾统一置空 slice）。
+		c.Model.Models = nil
+	}
+
+	// 平台归一化：先收集既有显式 ID，再为缺失 ID 按序补 p1/p2…（冲突顺延跳号）；
+	// 端点与模型逐平台归一。
+	used := map[string]bool{}
+	for i := range c.Model.Platforms {
+		p := &c.Model.Platforms[i]
+		p.ID = strings.TrimSpace(p.ID)
+		p.Name = strings.TrimSpace(p.Name)
+		if p.ID != "" {
+			used[p.ID] = true
+		}
+	}
+	n := 0
+	for i := range c.Model.Platforms {
+		p := &c.Model.Platforms[i]
+		if p.ID == "" {
+			for {
+				n++
+				id := fmt.Sprintf("p%d", n)
+				if !used[id] {
+					p.ID = id
+					used[id] = true
+					break
+				}
+			}
+		}
+		p.OpenAIBaseURL = sanitizeHTTPURL(p.OpenAIBaseURL)
+		p.AnthropicBaseURL = sanitizeHTTPURL(p.AnthropicBaseURL)
+		p.Models = normalizeModels(p.Models)
+		p.ASRModel = strings.TrimSpace(p.ASRModel)
+	}
+	if c.Model.Platforms == nil {
+		c.Model.Platforms = []ModelPlatform{}
+	}
+
+	// DefaultPlatform 校验：指向不存在的平台时回落第一个；无平台则连同 ActiveModel 清空。
+	c.Model.DefaultPlatform = strings.TrimSpace(c.Model.DefaultPlatform)
+	if c.Model.DefaultPlatform != "" {
+		found := false
+		for _, p := range c.Model.Platforms {
+			if p.ID == c.Model.DefaultPlatform {
+				found = true
+				break
+			}
+		}
+		if !found {
+			if len(c.Model.Platforms) > 0 {
+				c.Model.DefaultPlatform = c.Model.Platforms[0].ID
+			} else {
+				c.Model.DefaultPlatform = ""
+				c.Model.ActiveModel = ""
+			}
+		}
+	}
+
+	// legacy 字段已完成迁移/归一，全部清空（保存时 omitempty 不再落盘）。
+	// Models 保持非 nil 空 slice，与 Default() 及旧版归一化行为一致。
+	c.Model.Preset = ""
+	c.Model.OpenAIBaseURL = ""
+	c.Model.AnthropicBaseURL = ""
+	c.Model.APIKey = ""
+	if c.Model.Models == nil {
+		c.Model.Models = []string{}
+	}
 	return c
+}
+
+// ActivePlatform 返回默认平台（DefaultPlatform 命中，否则第一个）。
+// 无平台时返回 false。
+func (m ModelConfig) ActivePlatform() (ModelPlatform, bool) {
+	if len(m.Platforms) == 0 {
+		return ModelPlatform{}, false
+	}
+	if m.DefaultPlatform != "" {
+		for _, p := range m.Platforms {
+			if p.ID == m.DefaultPlatform {
+				return p, true
+			}
+		}
+	}
+	return m.Platforms[0], true
 }
 
 // normalizeModels 对模型 ID 列表 TrimSpace、去空串、去重并保持顺序；返回非 nil slice。

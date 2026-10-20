@@ -384,9 +384,15 @@ func TestLoadV2LiveWithoutSessionID(t *testing.T) {
 // TestLoadRejectsUnknownVersions：version=0（缺失/非本程序产出）与大于当前版本的
 // live.json 都按空处理，防止误解析未知结构。
 func TestLoadRejectsUnknownVersions(t *testing.T) {
-	t.Run("v0", func(t *testing.T) { testLoadRejectsVersion(t, `{"messages":[{"id":1,"kind":"user","text":"x","ts":1}]}`) })
-	t.Run("v0显式", func(t *testing.T) { testLoadRejectsVersion(t, `{"version":0,"messages":[{"id":1,"kind":"user","text":"x","ts":1}]}`) })
-	t.Run("未来版本", func(t *testing.T) { testLoadRejectsVersion(t, `{"version":99,"messages":[{"id":1,"kind":"user","text":"x","ts":1}]}`) })
+	t.Run("v0", func(t *testing.T) {
+		testLoadRejectsVersion(t, `{"messages":[{"id":1,"kind":"user","text":"x","ts":1}]}`)
+	})
+	t.Run("v0显式", func(t *testing.T) {
+		testLoadRejectsVersion(t, `{"version":0,"messages":[{"id":1,"kind":"user","text":"x","ts":1}]}`)
+	})
+	t.Run("未来版本", func(t *testing.T) {
+		testLoadRejectsVersion(t, `{"version":99,"messages":[{"id":1,"kind":"user","text":"x","ts":1}]}`)
+	})
 }
 
 func testLoadRejectsVersion(t *testing.T, raw string) {
@@ -400,5 +406,55 @@ func testLoadRejectsVersion(t *testing.T, raw string) {
 	}
 	if got := s.List(); len(got) != 0 {
 		t.Fatalf("应按空处理，got %d 条", len(got))
+	}
+}
+
+// TestBackfillSessionID：扫描把磁盘会话绑定到新建聊天后，给该会话的历史消息
+// 补上 SessionID 快照；只补空值、只改目标 chat，并持久化。
+func TestBackfillSessionID(t *testing.T) {
+	s := newTestStore(t, 10)
+	for _, m := range []Message{
+		{Kind: "agent", ChatID: "c1", Text: "welcome"},
+		{Kind: "user", ChatID: "c1", Text: "hi", SessionID: "keep"},
+		{Kind: "agent", ChatID: "c2", Text: "other"},
+	} {
+		if err := s.Append(m); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := s.BackfillSessionID("c1", "s-9"); got != 1 {
+		t.Fatalf("应回填 1 条，得到 %d", got)
+	}
+	msgs := s.List()
+	if msgs[0].SessionID != "s-9" {
+		t.Fatalf("空快照应被回填: %+v", msgs[0])
+	}
+	if msgs[1].SessionID != "keep" {
+		t.Fatalf("已有快照不应被覆盖: %+v", msgs[1])
+	}
+	if msgs[2].SessionID != "" {
+		t.Fatalf("其他 chat 不应被修改: %+v", msgs[2])
+	}
+
+	// 幂等：快照已存在时不重复计数。
+	if got := s.BackfillSessionID("c1", "s-9"); got != 0 {
+		t.Fatalf("重复回填应为 0，得到 %d", got)
+	}
+	// 空参数短路。
+	if got := s.BackfillSessionID("", "s-9"); got != 0 {
+		t.Fatalf("空 chatID 应为 0，得到 %d", got)
+	}
+	if got := s.BackfillSessionID("c1", ""); got != 0 {
+		t.Fatalf("空 sessionID 应为 0，得到 %d", got)
+	}
+
+	// 持久化：重载后快照仍在。
+	s2 := New(s.dir, 10)
+	if err := s2.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if got := s2.List()[0].SessionID; got != "s-9" {
+		t.Fatalf("重载后 SessionID = %q", got)
 	}
 }

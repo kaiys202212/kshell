@@ -6,7 +6,7 @@ import Settings from './Settings';
 import { useAppStore } from '../state/store';
 import { initI18n } from '../i18n';
 import { tt } from '../test/i18n';
-import type { ToolInfo } from '../lib/api';
+import type { ModelPlatformView, ToolInfo } from '../lib/api';
 
 const mocks = vi.hoisted(() => ({
   getTools: vi.fn(),
@@ -148,6 +148,20 @@ function goModel() {
   fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.nav.model') }));
 }
 
+// platView：构造后端 ModelConfigView.Platforms 的单平台视图
+const platView = (over: Partial<ModelPlatformView> = {}): ModelPlatformView => ({
+  ID: 'p1',
+  Name: 'DeepSeek',
+  Preset: 'deepseek',
+  OpenAIBaseURL: 'https://oai/',
+  AnthropicBaseURL: 'https://ant/',
+  Models: ['m1'],
+  APIKeySet: false,
+  IsDefault: true,
+  ASRModel: '',
+  ...over,
+});
+
 afterEach(cleanup);
 
 // 外部语言用例会经 initI18n 注册临时语言（如 ja），跑完还原为仅内置，
@@ -211,12 +225,9 @@ beforeEach(() => {
   ]);
   mocks.getModelConfig.mockResolvedValue({
     Enabled: false,
-    Preset: '',
-    OpenAIBaseURL: '',
-    AnthropicBaseURL: '',
-    Models: [],
+    Platforms: [],
+    DefaultPlatform: '',
     ActiveModel: '',
-    APIKeySet: false,
   });
   mocks.setModelConfig.mockResolvedValue(undefined);
   mocks.fetchAvailableModels.mockResolvedValue({ Models: [], Errors: [] });
@@ -657,108 +668,247 @@ describe('Settings', () => {
     expect(await screen.findByText(tt('ui.settings.permission_mode.bypass_warning'))).toBeInTheDocument();
   });
 
-  it('模型区回填双 URL、统一模型列表、留空保存', async () => {
+  it('平台卡片渲染：名称/默认徽标/密钥状态/模型数，非默认平台显示设为默认按钮', async () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
-      Preset: 'deepseek',
-      OpenAIBaseURL: 'https://oai/',
-      AnthropicBaseURL: 'https://ant/',
-      Models: ['mimo-v2.5'],
-      ActiveModel: 'mimo-v2.5',
-      APIKeySet: true,
-    });
-    render(<Settings />);
-    goModel();
-
-    expect(await screen.findByLabelText('OpenAI Base URL')).toHaveValue('https://oai/');
-    expect(screen.getByLabelText('Anthropic Base URL')).toHaveValue('https://ant/');
-    expect(screen.getByLabelText(tt('ui.settings.model.api_key'))).toHaveValue('');
-    expect(screen.getByPlaceholderText(tt('ui.settings.model.api_key_set'))).toBeInTheDocument();
-    expect(screen.getByLabelText(tt('ui.settings.model.active_model'))).toHaveValue('mimo-v2.5');
-
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
-    await waitFor(() =>
-      expect(mocks.setModelConfig).toHaveBeenCalledWith(
-        expect.objectContaining({
-          Enabled: true,
-          OpenAIBaseURL: 'https://oai/',
-          AnthropicBaseURL: 'https://ant/',
-          APIKey: '',
-          ClearAPIKey: false,
-          Models: ['mimo-v2.5'],
-          ActiveModel: 'mimo-v2.5',
+      Platforms: [
+        platView({ Models: ['a', 'b'], APIKeySet: true, IsDefault: true }),
+        platView({
+          ID: 'p2',
+          Name: 'GLM',
+          Preset: 'mystery',
+          OpenAIBaseURL: '',
+          AnthropicBaseURL: '',
+          Models: [],
+          APIKeySet: false,
+          IsDefault: false,
         }),
-      ),
-    );
-  });
-
-  it('手动添加、设为当前、删除统一模型', async () => {
-    mocks.getModelConfig.mockResolvedValue({
-      Enabled: true,
-      Preset: 'custom',
-      OpenAIBaseURL: '',
-      AnthropicBaseURL: '',
-      Models: ['m1'],
-      ActiveModel: 'm1',
-      APIKeySet: false,
+      ],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'a',
     });
     render(<Settings />);
     goModel();
 
-    // 手动添加
-    await screen.findByLabelText(tt('ui.settings.model.active_model'));
-    fireEvent.change(screen.getByLabelText(tt('ui.settings.model.add_model')), {
-      target: { value: ' m2 ' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.add') }));
-    // 设为当前（m2 行）
-    const rows = screen.getAllByRole('listitem');
-    const m2Row = rows.find((r) => r.textContent?.includes('m2'));
-    expect(m2Row).toBeDefined();
-    fireEvent.click(within(m2Row!).getByRole('button', { name: tt('ui.settings.model.set_active') }));
-    expect(screen.getByLabelText(tt('ui.settings.model.active_model'))).toHaveValue('m2');
-    // 删除 m1
-    const m1Row = screen.getAllByRole('listitem').find((r) => r.textContent?.includes('m1'));
-    fireEvent.click(within(m1Row!).getByRole('button', { name: tt('ui.settings.model.remove') }));
-    expect(screen.queryByRole('listitem', { name: /m1/ })).not.toBeInTheDocument();
+    // 平台名与已知预设译名同为 DeepSeek：取第一个（平台名 span）
+    const p1 = (await screen.findAllByText('DeepSeek'))[0].closest('li')!;
+    expect(within(p1).getByText(tt('ui.settings.model.default_badge'))).toBeInTheDocument();
+    expect(within(p1).queryByRole('button', { name: tt('ui.settings.model.set_default') })).toBeNull();
+    expect(p1).toHaveTextContent(tt('ui.settings.model.api_key_set'));
+    expect(p1).toHaveTextContent(tt('ui.settings.model.models_count').replace('{{0}}', '2'));
+    // 已知预设经 preset.<id>.name 翻译
+    expect(p1).toHaveTextContent(tt('preset.deepseek.name'));
 
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
-    await waitFor(() =>
-      expect(mocks.setModelConfig).toHaveBeenCalledWith(
-        expect.objectContaining({ Models: ['m2'], ActiveModel: 'm2' }),
-      ),
-    );
+    const p2 = screen.getByText('GLM').closest('li')!;
+    expect(within(p2).getByRole('button', { name: tt('ui.settings.model.set_default') })).toBeInTheDocument();
+    // 未知预设显示原始标识
+    expect(p2).toHaveTextContent('mystery');
   });
 
-  it('拉取模型后可加入列表', async () => {
+  it('平台列表为空时显示空态与添加入口', async () => {
+    render(<Settings />);
+    goModel();
+
+    expect(await screen.findByText(tt('ui.settings.model.platforms_empty'))).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: tt('ui.settings.model.add_platform') })).toBeInTheDocument();
+  });
+
+  it('默认模型下拉只列默认平台的模型', async () => {
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [
+        platView({ Models: ['m1', 'm2'] }),
+        platView({ ID: 'p2', Name: 'GLM', Models: ['m3'], IsDefault: false }),
+      ],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
+    });
+    render(<Settings />);
+    goModel();
+
+    const sel = (await screen.findByLabelText(tt('ui.settings.model.active_model'))) as HTMLSelectElement;
+    await waitFor(() => expect(sel.options).toHaveLength(2));
+    expect(Array.from(sel.options).map((o) => o.value)).toEqual(['m1', 'm2']);
+  });
+
+  it('添加平台→填写→保存：载荷含新平台（UUID 形态 ID）', async () => {
+    vi.stubGlobal('crypto', { randomUUID: () => '123e4567-e89b-12d3-a456-426614174000' });
+    render(<Settings />);
+    goModel();
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.add_platform') }));
+    fireEvent.change(screen.getByLabelText(tt('ui.settings.model.platform_name')), {
+      target: { value: 'DeepSeek' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
+    vi.unstubAllGlobals();
+
+    await waitFor(() => expect(mocks.setModelConfig).toHaveBeenCalledTimes(1));
+    const arg = mocks.setModelConfig.mock.calls[0][0];
+    expect(arg.Enabled).toBe(false);
+    expect(arg.Platforms).toHaveLength(1);
+    expect(arg.Platforms[0].Name).toBe('DeepSeek');
+    expect(arg.Platforms[0].ID).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  it('编辑平台改名保存：沿用原平台 ID', async () => {
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [platView()],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
+    });
+    render(<Settings />);
+    goModel();
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.edit_platform') }));
+    const nameInput = screen.getByLabelText(tt('ui.settings.model.platform_name'));
+    expect(nameInput).toHaveValue('DeepSeek');
+    fireEvent.change(nameInput, { target: { value: 'DeepSeek2' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
+
+    await waitFor(() => expect(mocks.setModelConfig).toHaveBeenCalledTimes(1));
+    const arg = mocks.setModelConfig.mock.calls[0][0];
+    expect(arg.Platforms[0]).toEqual(expect.objectContaining({ ID: 'p1', Name: 'DeepSeek2' }));
+  });
+
+  it('删除平台需确认，确认后保存载荷不含该平台', async () => {
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirm);
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [platView(), platView({ ID: 'p2', Name: 'GLM', IsDefault: false })],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
+    });
+    render(<Settings />);
+    goModel();
+    const p1 = (await screen.findAllByText('DeepSeek'))[0].closest('li')!;
+    fireEvent.click(
+      within(p1.closest('li')!).getByRole('button', { name: tt('ui.settings.model.delete_platform') }),
+    );
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('DeepSeek'));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
+    vi.unstubAllGlobals();
+
+    await waitFor(() => expect(mocks.setModelConfig).toHaveBeenCalledTimes(1));
+    const arg = mocks.setModelConfig.mock.calls[0][0];
+    expect(arg.Platforms.map((p: { ID: string }) => p.ID)).toEqual(['p2']);
+  });
+
+  it('取消删除确认时不改动平台列表', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => false));
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [platView(), platView({ ID: 'p2', Name: 'GLM', IsDefault: false })],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
+    });
+    render(<Settings />);
+    goModel();
+    const p1 = (await screen.findAllByText('DeepSeek'))[0].closest('li')!;
+    fireEvent.click(
+      within(p1.closest('li')!).getByRole('button', { name: tt('ui.settings.model.delete_platform') }),
+    );
+    vi.unstubAllGlobals();
+
+    expect(screen.getByText('GLM')).toBeInTheDocument();
+    expect(screen.getAllByText('DeepSeek').length).toBeGreaterThan(0);
+  });
+
+  it('设为默认后保存载荷 DefaultPlatform 更新', async () => {
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [platView(), platView({ ID: 'p2', Name: 'GLM', IsDefault: false })],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
+    });
+    render(<Settings />);
+    goModel();
+    const p2 = (await screen.findByText('GLM')).closest('li')!;
+    fireEvent.click(within(p2).getByRole('button', { name: tt('ui.settings.model.set_default') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
+
+    await waitFor(() => expect(mocks.setModelConfig).toHaveBeenCalledTimes(1));
+    expect(mocks.setModelConfig.mock.calls[0][0].DefaultPlatform).toBe('p2');
+  });
+
+  it('平台名称必填：为空时前端拦截，不调用保存', async () => {
+    render(<Settings />);
+    goModel();
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.add_platform') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
+
+    expect(await screen.findByText(tt('ui.settings.model.platform_name_required'))).toBeInTheDocument();
+    expect(mocks.setModelConfig).not.toHaveBeenCalled();
+  });
+
+  it('保存成功后 notify 已保存提示', async () => {
+    useAppStore.setState({ toasts: [] });
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [platView()],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
+    });
+    render(<Settings />);
+    goModel();
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.save') }));
+
+    await waitFor(() => {
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((t) => t.tone === 'info' && t.title === tt('ui.settings.model.saved')),
+      ).toBe(true);
+    });
+  });
+
+  it('拉取模型以编辑中平台 ID 与表单端点/密钥四参调用，结果可加入列表', async () => {
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [platView({ APIKeySet: true })],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
+    });
     mocks.fetchAvailableModels.mockResolvedValue({
-      Models: ['m-a', 'm-b'],
+      Models: ['m-a'],
       Errors: ['err.model_fetch.openai_failed'],
     });
-    mocks.getModelConfig.mockResolvedValue({
-      Enabled: true,
-      Preset: 'custom',
-      OpenAIBaseURL: 'https://oai/',
-      AnthropicBaseURL: 'https://ant/',
-      Models: [],
-      ActiveModel: '',
-      APIKeySet: true,
-    });
     render(<Settings />);
     goModel();
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.edit_platform') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.fetch_models') }));
 
-    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.fetch_models') }));
+    expect(mocks.fetchAvailableModels).toHaveBeenCalledWith('p1', 'https://oai/', 'https://ant/', '');
     // 错误 key 经 translateBackend 展示
     expect(await screen.findByText(tt('err.model_fetch.openai_failed'))).toBeInTheDocument();
     const rowA = screen.getAllByRole('listitem').find((r) => r.textContent?.includes('m-a'));
     fireEvent.click(within(rowA!).getByRole('button', { name: tt('ui.settings.model.add') }));
 
     fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
-    await waitFor(() =>
-      expect(mocks.setModelConfig).toHaveBeenCalledWith(
-        expect.objectContaining({ Models: ['m-a'] }),
-      ),
-    );
+    await waitFor(() => expect(mocks.setModelConfig).toHaveBeenCalledTimes(1));
+    expect(mocks.setModelConfig.mock.calls[0][0].Platforms[0].Models).toEqual(['m1', 'm-a']);
+  });
+
+  it('编辑态手动添加模型（去空格去重）并在保存载荷中体现', async () => {
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [platView({ Models: ['m1'] })],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
+    });
+    render(<Settings />);
+    goModel();
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.edit_platform') }));
+    fireEvent.change(screen.getByLabelText(tt('ui.settings.model.add_model')), {
+      target: { value: ' m2 ' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.add') }));
+    const m2row = screen.getAllByRole('listitem').find((r) => r.textContent?.includes('m2'));
+    expect(m2row).toBeDefined();
+
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
+    await waitFor(() => expect(mocks.setModelConfig).toHaveBeenCalledTimes(1));
+    expect(mocks.setModelConfig.mock.calls[0][0].Platforms[0].Models).toEqual(['m1', 'm2']);
   });
 
   it('拉取模型列表支持检索过滤', async () => {
@@ -768,17 +918,14 @@ describe('Settings', () => {
     });
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
-      Preset: 'custom',
-      OpenAIBaseURL: 'https://oai/',
-      AnthropicBaseURL: 'https://ant/',
-      Models: [],
+      Platforms: [platView({ Models: [] })],
+      DefaultPlatform: 'p1',
       ActiveModel: '',
-      APIKeySet: true,
     });
     render(<Settings />);
     goModel();
-
-    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.fetch_models') }));
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.edit_platform') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.fetch_models') }));
     const filter = await screen.findByPlaceholderText(tt('ui.settings.model.fetch_filter_placeholder'));
 
     // 输入「QUEN」大小写不敏感命中 qwen 前缀，gpt 被过滤掉
@@ -793,17 +940,14 @@ describe('Settings', () => {
     mocks.fetchAvailableModels.mockResolvedValue({ Models: ['qwen-max'], Errors: [] });
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
-      Preset: 'custom',
-      OpenAIBaseURL: 'https://oai/',
-      AnthropicBaseURL: 'https://ant/',
-      Models: [],
+      Platforms: [platView({ Models: [] })],
+      DefaultPlatform: 'p1',
       ActiveModel: '',
-      APIKeySet: true,
     });
     render(<Settings />);
     goModel();
-
-    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.fetch_models') }));
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.edit_platform') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.fetch_models') }));
     const filter = await screen.findByPlaceholderText(tt('ui.settings.model.fetch_filter_placeholder'));
     fireEvent.change(filter, { target: { value: 'zzz-nomatch' } });
 
@@ -812,21 +956,36 @@ describe('Settings', () => {
     expect(screen.queryByText(tt('ui.settings.model.fetch_empty'))).not.toBeInTheDocument();
   });
 
+  it('拉取结果 Models/Errors 为 null 时不崩溃（旧后端 JSON null 兼容）', async () => {
+    // 模拟 Go nil slice 序列化出的 null：前端须兜底为空数组而非读 length 崩溃
+    mocks.fetchAvailableModels.mockResolvedValue({ Models: null, Errors: null });
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [platView({ Models: [] })],
+      DefaultPlatform: 'p1',
+      ActiveModel: '',
+    });
+    render(<Settings />);
+    goModel();
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.edit_platform') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.fetch_models') }));
+
+    // 拉取完成且显示空列表占位，页面未崩溃
+    expect(await screen.findByText(tt('ui.settings.model.fetch_empty'))).toBeInTheDocument();
+  });
+
   it('再次拉取会清空上一轮检索词', async () => {
     mocks.fetchAvailableModels.mockResolvedValue({ Models: ['qwen-max', 'gpt-4o'], Errors: [] });
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
-      Preset: 'custom',
-      OpenAIBaseURL: 'https://oai/',
-      AnthropicBaseURL: 'https://ant/',
-      Models: [],
+      Platforms: [platView({ Models: [] })],
+      DefaultPlatform: 'p1',
       ActiveModel: '',
-      APIKeySet: true,
     });
     render(<Settings />);
     goModel();
-
-    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.fetch_models') }));
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.edit_platform') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.fetch_models') }));
     const filter = await screen.findByPlaceholderText(tt('ui.settings.model.fetch_filter_placeholder'));
     fireEvent.change(filter, { target: { value: 'qwen' } });
     expect(screen.getByPlaceholderText(tt('ui.settings.model.fetch_filter_placeholder'))).toHaveValue('qwen');
@@ -841,55 +1000,57 @@ describe('Settings', () => {
     mocks.fetchAvailableModels.mockResolvedValue({ Models: ['a', 'b'], Errors: [] });
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
-      Preset: 'custom',
-      OpenAIBaseURL: 'https://oai/',
-      AnthropicBaseURL: 'https://ant/',
-      Models: [],
+      Platforms: [platView({ Models: [] })],
+      DefaultPlatform: 'p1',
       ActiveModel: '',
-      APIKeySet: true,
     });
     render(<Settings />);
     goModel();
-
-    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.fetch_models') }));
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.edit_platform') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.fetch_models') }));
     const list = await screen.findByTestId('model-fetch-list');
     expect(list.className).toContain('overflow-y-auto');
     expect(list.className).toContain('max-h-');
   });
 
-  it('选择预设填入双 URL 与推荐模型', async () => {
+  it('编辑态选择预设填入双 URL 与推荐模型', async () => {
     render(<Settings />);
     goModel();
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.add_platform') }));
     const sel = await screen.findByLabelText(tt('ui.settings.model.preset'));
     // 预设 Name 为 wire key，经 translateBackend 翻成当前语言文案
     expect(screen.getByRole('option', { name: tt('preset.deepseek.name') })).toBeInTheDocument();
     await act(async () => {
       fireEvent.change(sel, { target: { value: 'deepseek' } });
     });
-    expect(screen.getByLabelText('OpenAI Base URL')).toHaveValue('https://api.deepseek.com');
-    expect(screen.getByLabelText('Anthropic Base URL')).toHaveValue(
+    expect(screen.getByLabelText(tt('ui.settings.model.openai_base_url'))).toHaveValue(
+      'https://api.deepseek.com',
+    );
+    expect(screen.getByLabelText(tt('ui.settings.model.anthropic_base_url'))).toHaveValue(
       'https://api.deepseek.com/anthropic',
     );
-    expect(screen.getByLabelText(tt('ui.settings.model.active_model'))).toHaveValue('deepseek-chat');
+    // 推荐模型进入编辑中平台的模型列表
+    expect(screen.getByText('deepseek-chat')).toBeInTheDocument();
   });
 
-  it('勾选清除密钥时提交 ClearAPIKey', async () => {
+  it('编辑已有平台：密钥留空占位提示保持，勾选清除密钥提交 ClearAPIKey', async () => {
     mocks.getModelConfig.mockResolvedValue({
-      Enabled: false,
-      Preset: '',
-      OpenAIBaseURL: '',
-      AnthropicBaseURL: '',
-      Models: [],
-      ActiveModel: '',
-      APIKeySet: true,
+      Enabled: true,
+      Platforms: [platView({ APIKeySet: true })],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
     });
     render(<Settings />);
     goModel();
-    fireEvent.click(await screen.findByLabelText(tt('ui.settings.model.clear_key')));
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.edit_platform') }));
+    expect(screen.getByPlaceholderText(tt('ui.settings.model.api_key_keep_hint'))).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(tt('ui.settings.model.clear_key')));
     fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
-    await waitFor(() =>
-      expect(mocks.setModelConfig).toHaveBeenCalledWith(expect.objectContaining({ ClearAPIKey: true })),
-    );
+
+    await waitFor(() => expect(mocks.setModelConfig).toHaveBeenCalledTimes(1));
+    const arg = mocks.setModelConfig.mock.calls[0][0];
+    expect(arg.Platforms[0].ClearAPIKey).toBe(true);
+    expect(arg.Platforms[0].APIKey).toBe('');
   });
 
   it('切换关闭行为失败时提示错误且保持原选中态', async () => {

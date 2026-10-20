@@ -1,6 +1,6 @@
 // AgentHubPanel：跨项目汇总运行中的 ACP agent，@ 指定目标发消息、跳转定位、新建 agent、粘贴。
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatInfo, ToolInfo } from '../lib/api';
 import { useAppStore } from '../state/store';
@@ -30,6 +30,8 @@ const api = vi.hoisted(() => ({
   recallHubMessage: vi.fn(),
   hubCommand: vi.fn(),
   saveHubDefaultCreate: vi.fn().mockResolvedValue(undefined),
+  saveHubRouteMode: vi.fn().mockResolvedValue(undefined),
+  confirmHubTool: vi.fn().mockResolvedValue(undefined),
   listRequirements: vi.fn(),
   markRequirementDispatched: vi.fn(),
 }));
@@ -65,12 +67,9 @@ beforeEach(() => {
   api.getTools.mockResolvedValue([]);
   api.getModelConfig.mockResolvedValue({
     Enabled: false,
-    Preset: '',
-    OpenAIBaseURL: '',
-    AnthropicBaseURL: '',
-    Models: [],
+    Platforms: [],
+    DefaultPlatform: '',
     ActiveModel: '',
-    APIKeySet: false,
   });
   api.readClipboardPaste.mockResolvedValue({ Text: '', Path: '' });
   api.listChatCommands.mockResolvedValue([]);
@@ -127,105 +126,113 @@ const workspaceA = {
 };
 
 describe('AgentHubPanel', () => {
-  it('无 agent 时胶囊显示空文案', () => {
+  it('无会话时 chips 区显示空文案', () => {
     useAppStore.setState({ chats: [] });
     render(<AgentHubPanel />);
-    expect(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') })).toHaveTextContent(
-      tt('ui.hub.empty'),
-    );
+    expect(screen.getByTestId('hub-session-chips')).toHaveTextContent(tt('ui.hub.empty'));
   });
 
-  it('有会话时渲染浮动胶囊（默认目标名），旧固定列表不再渲染', () => {
+  it('会话 chips 位于输入区上方（与 textarea 同容器）', () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const chips = screen.getByTestId('hub-session-chips');
+    const inputArea = chips.closest('[data-testid="hub-input-area"]');
+    expect(inputArea).not.toBeNull();
+    // 结构意图：chips 区紧邻输入框上方，与 textarea 同属输入区容器
+    expect(inputArea?.querySelector('textarea')).not.toBeNull();
+  });
+
+  it('有会话时 chips 常驻平铺渲染：无需展开即可见每枚 chip（状态点+标题+工具图标）', () => {
     useAppStore.setState({
       chats: [
-        {
-          ID: 'c1',
-          Key: 'new:1',
-          Kind: 'new',
-          SessionID: '',
-          Workspace: 'D:\\ws\\a',
-          Title: '重构认证',
-          ToolID: 'claude',
-          Status: 'ready',
-          ExitCode: 0,
-          Error: '',
-          Prompted: true,
-        },
+        chat({ ID: 'c1', Title: '重构认证', ToolID: 'claude', Status: 'ready' }),
+        chat({ ID: 'c2', Title: '乙', ToolID: 'cursor', Status: 'running', Workspace: 'D:\\ws\\b' }),
       ],
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
-    const pill = screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') });
-    expect(pill).toHaveTextContent('重构认证');
-    // 旧固定分组列表已删除：不再存在以 Hub 标题命名的列表
-    expect(screen.queryByRole('list', { name: tt('ui.hub.title') })).toBeNull();
-    // 面板未展开时不出现「工具 · 状态」行文案
-    expect(screen.queryByText(/Claude Code · /)).toBeNull();
+    const chips = screen.getByTestId('hub-session-chips');
+    // 每个会话一枚 chip，常驻可见（无展开前置步骤）
+    expect(within(chips).getByText('重构认证')).toBeTruthy();
+    expect(within(chips).getByText('乙')).toBeTruthy();
+    // 标题旁用工具图标，悬停仍能看到工具名
+    expect(chips.querySelector('[data-tool="claude"]')).toBeTruthy();
+    expect(chips.querySelector('[data-tool="cursor"]')).toBeTruthy();
+    expect(within(chips).getByTitle('Claude Code')).toBeTruthy();
+    expect(within(chips).getByTitle('Cursor')).toBeTruthy();
+    // 状态点存在（aria-hidden 装饰，用样式类断言运行中主色点）
+    expect(chips.querySelectorAll('.bg-primary').length).toBeGreaterThan(0);
   });
 
-  it('点胶囊展开面板列出全部会话，再点收起', () => {
+  it('点击 chip 主体：草稿保留式追加 @ 标签并聚焦输入框', () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder')) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '帮我看看' } });
+    const chips = screen.getByTestId('hub-session-chips');
+    // chip 主体按钮（aria-current 标注高亮态，名称含标题+工具名）
+    const main = within(chips).getByRole('button', { name: /重构认证/ });
+    fireEvent.click(main);
+    // 尾随空格便于继续输入（与 quickReply rephrase 同语义）
+    expect(box.value).toBe('帮我看看 @Claude Code#重构认证 ');
+    expect(document.activeElement).toBe(box);
+  });
+
+  it('默认接收目标 chip 高亮：回落链目标 aria-current=true；草稿含 @ 提及时提及目标高亮', () => {
     useAppStore.setState({
-      chats: [chat({ ID: 'c1' }), chat({ ID: 'c2', Title: '乙', Workspace: 'D:\\ws\\b' })],
+      chats: [
+        chat({ ID: 'c1', Title: '甲', ToolID: 'claude' }),
+        chat({ ID: 'c2', Title: '乙', ToolID: 'cursor', Workspace: 'D:\\ws\\b' }),
+      ],
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
-    const pill = screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') });
-    // 外层容器单个 region（session_panel_aria），内层 ul 不再带 aria-label
-    expect(screen.queryByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
-    fireEvent.click(pill);
-    const region = screen.getByRole('region', { name: tt('ui.hub.session_panel_aria') });
-    const panel = pill.parentElement as HTMLElement;
-    expect(panel).toHaveTextContent('重构认证');
-    expect(panel).toHaveTextContent('乙');
-    expect(region).toHaveTextContent('重构认证');
-    expect(region).toHaveTextContent('乙');
-    fireEvent.click(pill);
-    expect(screen.queryByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
+    const chips = screen.getByTestId('hub-session-chips');
+    const chipOf = (id: string) =>
+      within(chips).getByRole('button', { name: new RegExp(id === 'c1' ? '甲' : '乙') });
+    // 无 @ 提及时回落链（lastAgentId=c1）目标高亮（非目标按钮无 aria-current）
+    expect(chipOf('c1')).toHaveAttribute('aria-current', 'true');
+    expect(chipOf('c2')).not.toHaveAttribute('aria-current');
+    // 草稿 @ 某会话：该会话 chip 变为高亮（@ 提及优先于回落链）
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '@Cursor#c2 看看' } });
+    expect(chipOf('c2')).toHaveAttribute('aria-current', 'true');
+    expect(chipOf('c1')).not.toHaveAttribute('aria-current');
   });
 
-  it('点击面板会话行：记录 lastAgentId 并收起面板（不再跳工作区页签）', () => {
-    const setLast = vi.spyOn(useAppStore.getState(), 'setLastAgentId');
-    const setActive = vi.spyOn(useAppStore.getState(), 'setActiveTab');
-    const focus = vi.spyOn(useAppStore.getState(), 'requestFocusTerm');
-    useAppStore.setState({
-      chats: [chat({ ID: 'c1', Key: 'new:1', Workspace: 'D:\\ws\\a' })],
-      openTabs: [{ id: 'D:\\ws\\a', name: 'a' }],
-      lastAgentId: null,
-    });
+  it('chip 主体带 mention_session 悬停提示（title），点击即 @ 无独立图标按钮', () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
-    fireEvent.click(screen.getByText('重构认证'));
-    expect(setLast).toHaveBeenCalledWith('c1');
-    expect(screen.queryByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
-    expect(setActive).not.toHaveBeenCalled();
-    expect(focus).not.toHaveBeenCalled();
+    const main = within(screen.getByTestId('hub-session-chips')).getByRole('button', {
+      name: /重构认证/,
+    });
+    expect(main).toHaveAttribute('title', tt('ui.hub.mention_session'));
   });
 
-  it('点空闲会话的 ×：该会话行从面板消失（removeChat + closeChat），面板保持展开；忙碌行无 ×', async () => {
+  it('点空闲会话的 ×：该 chip 从 chips 区消失；忙碌 chip 无 ×', async () => {
     useAppStore.setState({
       chats: [chat({ ID: 'c1' }), chat({ ID: 'c2', Title: '乙', Status: 'running' })],
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
+    // chips 常驻：无需展开
+    const chips = screen.getByTestId('hub-session-chips');
     // 仅空闲的 c1 有关闭按钮（c2 running 无）
     const closes = screen.getAllByRole('button', { name: tt('ui.hub.close_session') });
     expect(closes).toHaveLength(1);
     fireEvent.click(closes[0]);
-    // 断言结果而非实现：c1 行从面板消失，c2 仍在，面板保持展开
-    await waitFor(() => expect(screen.queryByText('重构认证')).toBeNull());
-    expect(screen.getByText('乙')).toBeTruthy();
-    expect(screen.getByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeTruthy();
+    // 断言结果而非实现：c1 chip 消失，c2 仍在，chips 区常驻
+    await waitFor(() => expect(within(chips).queryByText('重构认证')).toBeNull());
+    expect(within(chips).getByText('乙')).toBeTruthy();
     // 后端 Manager.Close 已被调用（幂等），不再调 cancelChat（那只会取消当前轮）
     await waitFor(() => expect(api.closeChat).toHaveBeenCalledWith('c1'));
     expect(api.cancelChat).not.toHaveBeenCalled();
   });
 
-  it('关闭会话失败时提示 close_session_failed 且行不消失', async () => {
+  it('关闭会话失败时提示 close_session_failed 且 chip 不消失', async () => {
     api.closeChat.mockRejectedValue(new Error('boom'));
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.close_session') }));
     await waitFor(() =>
       expect(
@@ -234,16 +241,16 @@ describe('AgentHubPanel', () => {
           .toasts.some((t) => t.title === tt('ui.hub.close_session_failed').replace('{{err}}', 'boom')),
       ).toBe(true),
     );
-    // 失败不摘除：行仍在面板里，可重试（胶囊同文案，故在 region 内断言）
-    expect(screen.getByRole('region', { name: tt('ui.hub.session_panel_aria') })).toHaveTextContent('重构认证');
+    // 失败不摘除：chip 仍在 chips 区，可重试
+    expect(screen.getByTestId('hub-session-chips')).toHaveTextContent('重构认证');
   });
 
-  it('会话行可拖拽：dragStart 写入 @ 标签到 dataTransfer', () => {
+  it('chip 可拖拽：dragStart 写入 @ 标签到 dataTransfer', () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
-    const panel = screen.getByRole('region', { name: tt('ui.hub.session_panel_aria') });
-    const row = within(panel).getByText('重构认证').closest('div')!;
+    const chips = screen.getByTestId('hub-session-chips');
+    // chip 容器 div：含标题文本的可拖拽节点
+    const chip = within(chips).getByText('重构认证').closest('div[draggable="true"]')!;
     const dt = {
       data: {} as Record<string, string>,
       setData(k: string, v: string) {
@@ -254,8 +261,8 @@ describe('AgentHubPanel', () => {
       },
       effectAllowed: '',
     };
-    fireEvent.dragStart(row, { dataTransfer: dt });
-    expect(dt.getData('text/plain')).toBe('@Claude Code#c1');
+    fireEvent.dragStart(chip, { dataTransfer: dt });
+    expect(dt.getData('text/plain')).toBe('@Claude Code#重构认证');
     expect(dt.effectAllowed).toBe('copy');
   });
 
@@ -296,39 +303,19 @@ describe('AgentHubPanel', () => {
     expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c1');
   });
 
-  it('面板展开时点击胶囊之外的区域收起', () => {
+  it('chip 主体点击后草稿追加 @ 标签（原 @ 图标行为并入主体），归档展开不影响 chips', () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
-    expect(screen.getByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeTruthy();
-    fireEvent.mouseDown(document.body);
-    expect(screen.queryByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
-  });
-
-  it('胶囊内联在标题文字后（无浮动定位），归档展开不改变位置', () => {
-    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
-    render(<AgentHubPanel />);
-    const bar = screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }).parentElement as HTMLElement;
-    // 内联在标题行：relative 锚定展开面板，不再是 absolute 浮动位移
-    expect(bar.className).toContain('relative');
-    expect(bar.className).not.toContain('absolute');
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.history') }));
-    expect(bar.className).not.toContain('top-56');
-  });
-
-  it('面板会话行点 @ 图标：草稿保留式追加 @ 标签并收起面板', () => {
-    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
-    render(<AgentHubPanel />);
+    const chips = screen.getByTestId('hub-session-chips');
+    fireEvent.click(within(chips).getByRole('button', { name: /重构认证/ }));
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder')) as HTMLTextAreaElement;
-    fireEvent.change(box, { target: { value: '帮我看看' } });
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.mention_session') }));
-    // 尾随空格便于继续输入（与 quickReply rephrase 同语义）
-    expect(box.value).toBe('帮我看看 @Claude Code#c1 ');
-    expect(screen.queryByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
+    expect(box.value).toBe('@Claude Code#重构认证 ');
+    // 归档展开不影响 chips
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.history') }));
+    expect(screen.getByTestId('hub-session-chips')).toBeTruthy();
   });
 
-  it('面板会话行点跳转图标：打开工作区页签并按 chat.Key 定位会话对话页', () => {
+  it('chip 点跳转图标：打开工作区页签并按 chat.Key 定位会话对话页', () => {
     const openTab = vi.spyOn(useAppStore.getState(), 'openTab');
     const focus = vi.spyOn(useAppStore.getState(), 'requestFocusTerm');
     useAppStore.setState({
@@ -337,11 +324,9 @@ describe('AgentHubPanel', () => {
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.jump_session') }));
     expect(openTab).toHaveBeenCalledWith(workspaceA);
     expect(focus).toHaveBeenCalledWith('new:1');
-    expect(screen.queryByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
   });
 
   it('跳转图标：工作区不在列表时手工构造页签打开（Key 缺失只开页签不定位）', () => {
@@ -353,11 +338,9 @@ describe('AgentHubPanel', () => {
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.jump_session') }));
     expect(openTab).toHaveBeenCalledWith(expect.objectContaining({ Path: 'D:\\ws\\x', Name: 'x' }));
     expect(focus).not.toHaveBeenCalled();
-    expect(screen.queryByRole('region', { name: tt('ui.hub.session_panel_aria') })).toBeNull();
   });
 
   it('@ 指定目标发送：投递到该 agent 并记录 lastAgentId', async () => {
@@ -366,7 +349,7 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '@Claude Code#c1 帮我看下' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '@Claude Code#c1 帮我看下'));
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '帮我看下'));
     expect(useAppStore.getState().lastAgentId).toBe('c1');
     expect((box as HTMLTextAreaElement).value).toBe('');
   });
@@ -523,6 +506,131 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '继续'));
   });
 
+  it('最新 agent 回复带 sessionId 快照但会话未激活时，先激活原会话再发送，不误投同 workspace 会话', async () => {
+    // 回归场景：strategy 会话（未激活）发了最后一条消息，同 workspace 还挂着
+    // 另一个已激活 chat。旧逻辑 chats.find 查不到该消息的 chatId，落到 workspace
+    // 模糊匹配，把回复投给了同项目的另一个会话。
+    api.openSessionACP.mockResolvedValue({ Kind: 'chat', Chat: chat({ ID: 'c-new', SessionID: 'sess-9', Title: 'strategy' }) });
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
+      hubMessages: [
+        {
+          id: 1,
+          kind: 'agent',
+          tool: 'claude',
+          event: 'Stop',
+          workspace: 'D:\\ws\\a',
+          sessionId: 'sess-9',
+          sessionTitle: 'strategy',
+          text: 'strategy 的回复',
+          ts: 2,
+        },
+      ],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '继续' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-9'));
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c-new', '继续'));
+    // 绝不投给同 workspace 的 c1
+    expect(api.sendChatPrompt).not.toHaveBeenCalledWith('c1', '继续');
+  });
+
+  it('最新 agent 回复仅带 session: 前缀 termKey（无 sessionId 快照）时同样激活后发送', async () => {
+    api.openSessionACP.mockResolvedValue({ Kind: 'chat', Chat: chat({ ID: 'c-new', SessionID: 'sess-8' }) });
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
+      hubMessages: [
+        {
+          id: 1,
+          kind: 'agent',
+          tool: 'claude',
+          event: 'Stop',
+          workspace: 'D:\\ws\\a',
+          termKey: 'session:sess-8',
+          text: '回复',
+          ts: 1,
+        },
+      ],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '继续' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-8'));
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c-new', '继续'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalledWith('c1', '继续');
+  });
+
+  it('待激活会话激活失败时报错且不投递，不落回 workspace 模糊匹配', async () => {
+    api.openSessionACP.mockRejectedValue(new Error('err.chat.gone'));
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
+      hubMessages: [
+        {
+          id: 1,
+          kind: 'agent',
+          tool: 'claude',
+          event: 'Stop',
+          workspace: 'D:\\ws\\a',
+          sessionId: 'sess-9',
+          text: '回复',
+          ts: 1,
+        },
+      ],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '继续' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-9'));
+    // err.chat.gone 是注册过的 wire key，backendError 会翻译成 en 文案
+    await waitFor(() =>
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((x) => x.title === tt('ui.hub.find_activate_failed').replace('{{err}}', tt('err.chat.gone'))),
+      ).toBe(true),
+    );
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
+  it('待激活会话激活成功但发送失败时，报 send_failed 而非激活失败', async () => {
+    // 评审 M2：激活与发送分段 catch，避免投递失败被误报成「激活会话失败」
+    api.openSessionACP.mockResolvedValue({ Kind: 'chat', Chat: chat({ ID: 'c-new', SessionID: 'sess-9' }) });
+    api.sendChatPrompt.mockRejectedValue(new Error('boom'));
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
+      hubMessages: [
+        {
+          id: 1,
+          kind: 'agent',
+          tool: 'claude',
+          event: 'Stop',
+          workspace: 'D:\\ws\\a',
+          sessionId: 'sess-9',
+          text: '回复',
+          ts: 1,
+        },
+      ],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '继续' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() =>
+      expect(
+        useAppStore.getState().toasts.some((x) => x.title === tt('ui.chat.send_failed').replace('{{err}}', 'boom')),
+      ).toBe(true),
+    );
+    expect(useAppStore.getState().toasts.every((x) => !x.title.startsWith(tt('ui.hub.find_activate_failed').replace('{{err}}', '')))).toBe(true);
+  });
+
   it('渲染持久历史中的用户消息与 agent 回复', async () => {
     api.listHubMessages.mockResolvedValue([
       { id: 1, kind: 'user', chatId: 'c1', text: '帮我修复', ts: 1 },
@@ -635,12 +743,10 @@ describe('AgentHubPanel', () => {
     expect(screen.getByText('持久正文')).toBeTruthy();
   });
 
-  it('拉取失败不阻塞：无会话时胶囊显示空文案', async () => {
+  it('拉取失败不阻塞：无会话时 chips 区显示空文案', async () => {
     api.listHubMessages.mockRejectedValue(new Error('boom'));
     render(<AgentHubPanel />);
-    expect(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') })).toHaveTextContent(
-      tt('ui.hub.empty'),
-    );
+    expect(screen.getByTestId('hub-session-chips')).toHaveTextContent(tt('ui.hub.empty'));
   });
 
   it('历史入口：展开归档月份并加载旧消息', async () => {
@@ -664,6 +770,15 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe('"D:\\ws\\a b\\pic.png"'));
   });
 
+  it('粘贴拦截原生默认行为（防原生插入与 handlePaste 双写）', () => {
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    const evt = createEvent.paste(box);
+    const spy = vi.spyOn(evt, 'preventDefault');
+    fireEvent(box, evt);
+    expect(spy).toHaveBeenCalled();
+  });
+
   it('输入 @ 显示补全候选，点击补全为完整标签', () => {
     useAppStore.setState({
       chats: [
@@ -675,13 +790,13 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '@Cur' } });
     const list = screen.getByRole('listbox', { name: tt('ui.hub.mention_aria') });
-    expect(list).toHaveTextContent('@Cursor#c2');
+    expect(list).toHaveTextContent('@Cursor#乙');
     // 第二行展示项目 · 会话标题
     expect(list).toHaveTextContent('a · 乙');
     // 候选为 role=option 的 li（与 # 弹层结构一致），mousedown 选中
-    const option = within(list).getByText('@Cursor#c2').closest('li')!;
+    const option = within(list).getByText('@Cursor#乙').closest('li')!;
     fireEvent.mouseDown(option);
-    expect((box as HTMLTextAreaElement).value).toBe('@Cursor#c2 ');
+    expect((box as HTMLTextAreaElement).value).toBe('@Cursor#乙 ');
   });
 
   it('@ 补全键盘导航：ArrowDown/ArrowUp 切换高亮并夹取边界，Enter 填入不发送', () => {
@@ -712,7 +827,7 @@ describe('AgentHubPanel', () => {
     expect(options[0]).toHaveAttribute('aria-selected', 'true');
     // Enter 填入高亮项对应 label，不发送
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c1 ');
+    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#甲 ');
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
@@ -728,7 +843,7 @@ describe('AgentHubPanel', () => {
     fireEvent.change(box, { target: { value: '@' } });
     fireEvent.keyDown(box, { key: 'ArrowDown' });
     fireEvent.keyDown(box, { key: 'Tab' });
-    expect((box as HTMLTextAreaElement).value).toBe('@Cursor#c2 ');
+    expect((box as HTMLTextAreaElement).value).toBe('@Cursor#乙 ');
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
@@ -753,7 +868,7 @@ describe('AgentHubPanel', () => {
     // 唯一候选保持高亮（不出现 aria-selected 全 false 的列表）
     expect(options[0]).toHaveAttribute('aria-selected', 'true');
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c1 ');
+    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#甲 ');
   });
 
   it('@ 补全 Esc 关闭后，Enter 恢复发送语义（回落 lastAgentId 投递）', async () => {
@@ -820,15 +935,14 @@ describe('AgentHubPanel', () => {
     }
   });
 
-  it('无标题会话在面板兜底显示项目基名', () => {
+  it('无标题会话在 chip 兜底显示项目基名', () => {
     useAppStore.setState({
       chats: [chat({ ID: 'c1', Title: '', Workspace: 'D:\\ws\\gamma' })],
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.session_bar_aria') }));
-    // 分组标题与会话兜底同名（同项目）：至少出现两次即证明兜底生效
-    expect(screen.getAllByText('gamma').length).toBeGreaterThanOrEqual(2);
+    // chip 主体兜底显示项目基名（chips 常驻，无需展开）
+    expect(screen.getByTestId('hub-session-chips')).toHaveTextContent('gamma');
   });
 
   it('新建 agent：选项目与 ACP 工具后调用 openWorkspaceACP 并登记新 chat', async () => {
@@ -858,12 +972,20 @@ describe('AgentHubPanel', () => {
     api.getTools.mockResolvedValue([acpTool()]);
     api.getModelConfig.mockResolvedValue({
       Enabled: true,
-      Preset: 'openai',
-      OpenAIBaseURL: 'https://h/',
-      AnthropicBaseURL: 'https://h/',
-      Models: ['glm-5.3-flash', 'deepseek-v4.1-flash'],
+      Platforms: [
+        {
+          ID: 'p1',
+          Name: 'P',
+          Preset: 'openai',
+          OpenAIBaseURL: 'https://h/',
+          AnthropicBaseURL: 'https://h/',
+          Models: ['glm-5.3-flash', 'deepseek-v4.1-flash'],
+          APIKeySet: true,
+          IsDefault: true,
+        },
+      ],
+      DefaultPlatform: 'p1',
       ActiveModel: 'glm-5.3-flash',
-      APIKeySet: true,
     });
     useAppStore.setState({ workspaces: [workspaceA] });
     render(<AgentHubPanel />);
@@ -1178,13 +1300,13 @@ describe('AgentHubPanel', () => {
     expect((box as HTMLTextAreaElement).value).toBe('#nope');
   });
 
-  it('发送带 @ 提及及行中 # 词：整体透传给 agent（仅 trim 后 # 开头才视为命令）', () => {
+  it('正文中间的 @ 提及剥离标签，行中 # 词仍原样投递', () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '@Claude Code#c1 #nope rest' } });
+    fireEvent.change(box, { target: { value: '看下 @Claude Code#c1 #nope rest' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '@Claude Code#c1 #nope rest');
+    expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '看下 #nope rest');
     expect(
       useAppStore
         .getState()
@@ -1206,6 +1328,70 @@ describe('AgentHubPanel', () => {
     ).toBe(false);
   });
 
+  it('pending 目标时 chips 区追加「待激活」chip 并高亮；已激活目标不出现', async () => {
+    // 挂载 effect 会用 listHubMessages() 覆盖 setState 预置的 hubMessages，
+    // mock 必须返回同一批消息（与消息流测试同口径）。
+    const msgs = [
+      { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', workspace: 'D:\\ws\\a', sessionId: 'sess-9', sessionTitle: 'strategy', text: '回复', ts: 1 },
+    ];
+    api.listHubMessages.mockResolvedValue(msgs);
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
+      hubMessages: msgs,
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    // 待激活 chip 存在：显示会话标题快照 + 待激活后缀，且 aria-current 高亮
+    const pendingChip = await screen.findByTitle(tt('ui.hub.pending_chip_aria'));
+    expect(pendingChip.closest('[aria-current="true"]')).toBeTruthy();
+    const chips = screen.getByTestId('hub-session-chips');
+    expect(chips.textContent).toContain(tt('ui.hub.pending_chip'));
+    // 已激活目标（c1）不是高亮目标：pending 才是
+    const c1Chip = screen.getByText('甲');
+    expect(c1Chip.closest('[aria-current="true"]')).toBeNull();
+  });
+
+  it('pending 目标已激活（会话重新打开）后待激活 chip 消失', async () => {
+    api.listHubMessages.mockResolvedValue([
+      { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', workspace: 'D:\\ws\\a', sessionId: 'sess-9', sessionTitle: '甲', text: '回复', ts: 1 },
+    ]);
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
+      hubMessages: [
+        { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', workspace: 'D:\\ws\\a', sessionId: 'sess-9', sessionTitle: '甲', text: '回复', ts: 1 },
+      ],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    // 最新消息精确命中已激活 c1：currentTargetId='c1'，无待激活 chip
+    await screen.findByText('甲');
+    expect(screen.queryByText(new RegExp(tt('ui.hub.pending_chip')))).toBeNull();
+  });
+
+  it('点击待激活 chip：激活原会话并把 @ 标签填入输入框', async () => {
+    api.openSessionACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'c-new', SessionID: 'sess-9', Title: 'strategy', Workspace: 'D:\\ws\\a' }),
+    });
+    const msgs = [
+      { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', workspace: 'D:\\ws\\a', sessionId: 'sess-9', sessionTitle: 'strategy', text: '回复', ts: 1 },
+    ];
+    api.listHubMessages.mockResolvedValue(msgs);
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
+      hubMessages: msgs,
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const chip = await screen.findByTitle(tt('ui.hub.pending_chip_aria'));
+    fireEvent.click(chip);
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-9'));
+    await waitFor(() => {
+      const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder')) as HTMLTextAreaElement;
+      expect(box.value).toContain('@Claude Code#strategy');
+    });
+  });
+
   it('发送 #stop（带尾空格）：单 token 已知命令直接执行 cancelChat，不投递', async () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);
@@ -1214,6 +1400,74 @@ describe('AgentHubPanel', () => {
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(api.cancelChat).toHaveBeenCalledWith('c1'));
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
+  it('#stop 在 pending 目标下先激活原会话再对激活出的 chat 取消', async () => {
+    api.openSessionACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'c-new', SessionID: 'sess-9', Title: 'strategy' }),
+    });
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
+      hubMessages: [
+        { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', workspace: 'D:\\ws\\a', sessionId: 'sess-9', sessionTitle: 'strategy', text: '回复', ts: 1 },
+      ],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#stop ' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-9'));
+    await waitFor(() => expect(api.cancelChat).toHaveBeenCalledWith('c-new'));
+    expect(api.cancelChat).not.toHaveBeenCalledWith('c1');
+    expect(api.cancelChat).not.toHaveBeenCalledWith('pending:sess-9');
+  });
+
+  it('#stop 在 pending 目标激活失败时报激活失败且不调 cancelChat', async () => {
+    api.openSessionACP.mockRejectedValue(new Error('err.chat.gone'));
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
+      hubMessages: [
+        { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', workspace: 'D:\\ws\\a', sessionId: 'sess-9', text: '回复', ts: 1 },
+      ],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#stop ' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-9'));
+    await waitFor(() =>
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((x) => x.title === tt('ui.hub.find_activate_failed').replace('{{err}}', tt('err.chat.gone'))),
+      ).toBe(true),
+    );
+    expect(api.cancelChat).not.toHaveBeenCalled();
+  });
+
+  it('#model 在 pending 目标下先激活原会话再拉取模型列表并弹菜单', async () => {
+    api.openSessionACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'c-new', SessionID: 'sess-9', Title: 'strategy' }),
+    });
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
+      hubMessages: [
+        { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', workspace: 'D:\\ws\\a', sessionId: 'sess-9', sessionTitle: 'strategy', text: '回复', ts: 1 },
+      ],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#model ' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-9'));
+    await waitFor(() => expect(api.listChatModels).toHaveBeenCalledWith('c-new'));
+    expect(api.listChatModels).not.toHaveBeenCalledWith('c1');
+    expect(api.listChatModels).not.toHaveBeenCalledWith('pending:sess-9');
   });
 
   it('hash 补全大小写不敏感过滤（#ST 只匹配 stop）', () => {
@@ -1251,6 +1505,85 @@ describe('AgentHubPanel', () => {
     fireEvent.change(box, { target: { value: '/commit fix bug' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '/commit fix bug'));
+  });
+
+  it('@ 目标后输入 / 仍弹技能补全：选中只替换尾部词，发送时去掉 @ 前缀', async () => {
+    api.listChatCommands.mockResolvedValue([{ Name: 'commit', Description: 'Commit changes' }]);
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder')) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 /' } });
+    await waitFor(() =>
+      expect(screen.getByRole('listbox', { name: tt('ui.hub.cmd_aria') })).toHaveTextContent('/commit'),
+    );
+    fireEvent.keyDown(box, { key: 'Enter' });
+    // @ 目标保留，仅尾部 / 词替换成技能
+    expect(box.value).toBe('@Claude Code#重构认证 /commit ');
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '/commit'));
+  });
+
+  it('@ 目标的普通消息：投递正文不含路由标签', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 帮我修复' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '帮我修复'));
+  });
+
+  it('@ 目标后的 # 命令仍按客户端命令执行（标签不参与命令探测）', async () => {
+    api.hubCommand.mockResolvedValue([]);
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 #l' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.hubCommand).toHaveBeenCalledWith('#l'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
+  it('@ 目标后的纯数字按正文投递，不当菜单编号命令', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 3' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '3'));
+    expect(api.hubCommand).not.toHaveBeenCalled();
+  });
+
+  it('只有 @ 标签时不投递：提示并保留草稿', () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder')) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 ' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    expect(
+      useAppStore.getState().toasts.some((x) => x.title === tt('ui.hub.empty_message')),
+    ).toBe(true);
+    expect(box.value).toBe('@Claude Code#重构认证 ');
+  });
+
+  it('历史用户消息气泡不展示 @ 路由标签', () => {
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1' })],
+      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '@Claude Code#c1 旧消息', ts: 1 }],
+    });
+    render(<AgentHubPanel />);
+    expect(screen.getByText('旧消息')).toBeTruthy();
+    expect(screen.queryByText(/@Claude Code#/)).toBeNull();
+  });
+
+  it('/ 前有普通文字时不弹技能补全（"/" 不在正文首字符，技能不会执行）', async () => {
+    api.listChatCommands.mockResolvedValue([{ Name: 'commit', Description: 'Commit changes' }]);
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '看看 /' } });
+    await waitFor(() => expect(api.listChatCommands).not.toHaveBeenCalled());
+    expect(screen.queryByRole('listbox', { name: tt('ui.hub.cmd_aria') })).toBeNull();
   });
 
   it('/ 开头但不匹配任何 agent 技能：不拦截，原样发送给 agent', async () => {
@@ -1341,7 +1674,7 @@ describe('AgentHubPanel', () => {
     const btn = await screen.findByRole('button', { name: tt('ui.hub.quick_rephrase') });
     fireEvent.click(btn);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c1 ');
+    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#重构认证 ');
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(box);
   });
@@ -1357,7 +1690,7 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '帮我看看' } });
     fireEvent.click(btn);
-    expect((box as HTMLTextAreaElement).value).toBe('帮我看看 @Claude Code#c1 ');
+    expect((box as HTMLTextAreaElement).value).toBe('帮我看看 @Claude Code#重构认证 ');
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(box);
   });
@@ -1478,14 +1811,14 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('s-r1'));
     // 激活后新 chat 的 @ 标签填入输入框并聚焦（既有草稿保留式追加），不自动发送
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c-r1 '));
+    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#重构认证 '));
     expect(document.activeElement).toBe(box);
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
     // 激活后的会话登记进 store，后续消息可直达
     expect(useAppStore.getState().chats.some((c) => c.ID === 'c-r1')).toBe(true);
   });
 
-  it('「换个说法」激活成功但 options 暂无新 chat 时按 toolDisplayName#ID 兜底构造标签', async () => {
+  it('「换个说法」激活成功但 options 暂无新 chat 时按会话标题构造 @ 标签', async () => {
     api.listHubMessages.mockResolvedValue([
       { id: 11, kind: 'agent', tool: 'cursor', event: 'Stop', chatId: 'c-dead', sessionId: 's-r2', text: 'ok', ts: 11 },
     ]);
@@ -1496,7 +1829,7 @@ describe('AgentHubPanel', () => {
     render(<AgentHubPanel />);
     fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_rephrase') }));
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe('@Cursor#c-r2 '));
+    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe('@Cursor#重构认证 '));
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
@@ -1894,10 +2227,42 @@ describe('AgentHubPanel #find', () => {
     // registerChat 生效：upsertChat 进 store + lastAgentId 指向新 chat
     expect(useAppStore.getState().chats.some((c) => c.ID === 'c77')).toBe(true);
     expect(useAppStore.getState().lastAgentId).toBe('c77');
-    // draft 追加 @label（label 由 buildMentionOptions 生成：工具展示名#chatID）
-    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#c77 ');
+    // draft 追加 @ 标签（工具展示名#会话标题，不再写 chat id）
+    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#重构认证 ');
     // 对话框关闭（标题不再渲染）
     await waitFor(() => expect(screen.queryByText(tt('ui.hub.find_title'))).toBeNull());
+  });
+
+  it('同名会话经 #find 激活：写入带项目消歧的 @ 标签（与全量补全候选一致）', async () => {
+    useAppStore.setState({
+      chats: [chat({ ID: 'c0', Title: '重构认证', Workspace: 'D:\\ws\\a' })],
+      lastAgentId: 'c0',
+    });
+    api.getSessions.mockResolvedValue([
+      {
+        ID: 's1',
+        ToolID: 'claude',
+        Workspace: 'D:\\ws\\alpha',
+        Title: '重构认证',
+        CreatedAt: new Date().toISOString(),
+        UpdatedAt: new Date().toISOString(),
+        Messages: 3,
+        Path: '',
+      },
+    ]);
+    api.openSessionACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'c77', Key: 'k77', Kind: 'session', SessionID: 's1', Workspace: 'D:\\ws\\alpha' }),
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder')) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '#find' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByText('重构认证'));
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('s1'));
+    // 两个同名 claude 会话：插入标签须带项目名，且能被 resolveMentionTarget 命中
+    expect(box.value).toBe('@Claude Code#重构认证 · alpha ');
   });
 
   it('openSessionACP reject：notify 错误 ui.hub.find_activate_failed，对话框保持', async () => {
@@ -1930,5 +2295,42 @@ describe('AgentHubPanel #find', () => {
     // 对话框不关，草稿不追加
     expect(screen.getByText(tt('ui.hub.find_title'))).toBeTruthy();
     expect((box as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('路由模式切换：写 localStorage 并写穿后端', async () => {
+    render(<AgentHubPanel />);
+    const sel = screen.getByTestId('hub-route-mode') as HTMLSelectElement;
+    expect(sel.value).toBe('auto');
+    fireEvent.change(sel, { target: { value: 'agent' } });
+    expect(sel.value).toBe('agent');
+    expect(localStorage.getItem('kshell.agenthub.routeMode')).toBe('agent');
+    await waitFor(() => expect(api.saveHubRouteMode).toHaveBeenCalledWith('agent'));
+  });
+
+  it('tool_confirm 消息渲染为确认卡：确认点击调 confirmHubTool', async () => {
+    api.confirmHubTool.mockResolvedValue(undefined);
+    useAppStore.setState({
+      hubMessages: [
+        {
+          id: 1,
+          kind: 'user',
+          chatId: 'c1',
+          text: '帮我新建需求',
+          ts: 1,
+        },
+        {
+          id: 2,
+          kind: 'agent',
+          chatId: 'c1',
+          event: 'tool_confirm',
+          text: '新建需求（项目 D:\\ws-a）：新增需求\n{"pending":"p9","tool":"create_requirement"}',
+          ts: 2,
+        },
+      ],
+    });
+    render(<AgentHubPanel />);
+    expect(screen.getByText('新建需求（项目 D:\\ws-a）：新增需求')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('hub-confirm-approve'));
+    await waitFor(() => expect(api.confirmHubTool).toHaveBeenCalledWith('c1', 'p9', true));
   });
 });

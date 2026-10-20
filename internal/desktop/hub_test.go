@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -16,12 +17,30 @@ import (
 type hubRecorder struct {
 	mu    sync.Mutex
 	names []string
+	raws  []any // 与 names 对齐：单参数事件的首个负载（如 chat:meta 的 chat.Info）
 }
 
 func (r *hubRecorder) emit(name string, data ...any) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.names = append(r.names, name)
+	var raw any
+	if len(data) > 0 {
+		raw = data[0]
+	}
+	r.raws = append(r.raws, raw)
+}
+
+// lastRaw 返回最近一次指定事件的单参数负载；未出现返回 nil。
+func (r *hubRecorder) lastRaw(name string) any {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := len(r.names) - 1; i >= 0; i-- {
+		if r.names[i] == name {
+			return r.raws[i]
+		}
+	}
+	return nil
 }
 
 func (r *hubRecorder) count(name string) int {
@@ -603,5 +622,23 @@ func TestRecordHubAgentMessageLandsOnChainHead(t *testing.T) {
 	}
 	if msgs[0].ChatID != oldID {
 		t.Fatalf("agent 消息 ChatID 应落链头 %s, got %q", oldID, msgs[0].ChatID)
+	}
+}
+
+// recordHubAck 的归因字段应完整复制用户消息（含 SessionID）：
+// 绑定磁盘会话后产生的排队/送达卡片在会话关闭后也要能精确 resume；
+// 缺快照时这类卡片仍会落回标题猜测而报 need_target。
+func TestRecordHubAckCopiesSessionID(t *testing.T) {
+	a, store, _ := newHubTestApp(t)
+	if err := store.Append(hub.Message{Kind: "user", ChatID: "c1", Text: "hi", SessionID: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	id := store.List()[0].ID
+	a.recordHubAck(strconv.FormatInt(id, 10), "ui.hub.ack_queued")
+
+	msgs := store.List()
+	last := msgs[len(msgs)-1]
+	if last.Kind != "agent" || last.SessionID != "s1" {
+		t.Fatalf("ack 应复制用户消息的 SessionID: %+v", last)
 	}
 }
