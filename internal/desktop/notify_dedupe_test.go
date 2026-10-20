@@ -115,6 +115,47 @@ func TestNotifyDeduperCleanupKeepsLongWindow(t *testing.T) {
 	}
 }
 
+// TestNotifyDeduperCompletionContentDedupes 验证完成类带正文时走内容长窗：
+// ACP 失败后再点「继续」常超过 2s 短窗，若本轮无新 assistant，emitChatNotify 会再次
+// 用上一轮正文发 done——短窗会放行导致 Hub 复读历史；非空 summary 必须在长窗内拦住。
+// 空 summary 的完成类仍保持短窗，避免合法连续两轮完成被吞。
+func TestNotifyDeduperCompletionContentDedupes(t *testing.T) {
+	for _, event := range []string{"done", "stopped", "Stop", "agent-turn-complete"} {
+		t.Run(event, func(t *testing.T) {
+			now := time.Unix(1000, 0)
+			d := newNotifyDeduper(notifyDedupWindow, notifyDedupWaitWindow)
+			d.now = func() time.Time { return now }
+
+			done := agenthook.Payload{
+				Tool: "claude", Event: event, TermKey: "session:s1",
+				Summary: "后台构建任务已确认完成 (exit 0)",
+			}
+			if !d.allow(done) {
+				t.Fatal("带正文完成类首条应放行")
+			}
+			now = now.Add(5 * time.Second) // 已超短窗：报错后点「继续」的典型间隔
+			if d.allow(done) {
+				t.Fatal("带正文完成类长窗内同文应被拦，避免 Hub 复读")
+			}
+
+			next := done
+			next.Summary = "已修复空态提示"
+			if !d.allow(next) {
+				t.Fatal("不同正文的完成类应放行")
+			}
+
+			empty := agenthook.Payload{Tool: "claude", Event: event, TermKey: "session:s2"}
+			if !d.allow(empty) {
+				t.Fatal("空正文完成类首条应放行")
+			}
+			now = now.Add(3 * time.Second)
+			if !d.allow(empty) {
+				t.Fatal("空正文完成类超短窗后应放行，不得被内容长窗吞掉")
+			}
+		})
+	}
+}
+
 // TestNotifyDeduperAttentionUsesWaitWindow 验证 gemini 的 attention 事件同样走长窗。
 func TestNotifyDeduperAttentionUsesWaitWindow(t *testing.T) {
 	now := time.Unix(1000, 0)
