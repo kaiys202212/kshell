@@ -132,6 +132,17 @@ export function hubInjectedModelsForTool(toolId: string, injected: string[]): st
   return injected;
 }
 
+// rememberChatModels 把一次模型视图回写到工具缓存：新建路径之外的模型上报
+// （chat:models 补偿推送、ChatView 挂载拉取）也落缓存，旧格式缓存（裸 ID 无
+// 展示名）得以自愈。视图缺模型或 toolId 为空一律忽略，不覆盖既有缓存。
+export function rememberChatModels(
+  toolId: string,
+  view: { Models?: Array<{ ID: string; Name?: string }> | null } | null,
+): void {
+  if (!toolId || !view?.Models || view.Models.length === 0) return;
+  saveToolModels(toolId, view.Models.map((m) => ({ id: m.ID, name: m.Name || m.ID })));
+}
+
 // mergeHubModelOptions：注入模型在前、工具缓存其后，按 id 去重。
 // 注入项无独立展示名时 name=id（设置页裸模型名）。
 export function mergeHubModelOptions(injected: string[], cache: ToolModelOption[]): ToolModelOption[] {

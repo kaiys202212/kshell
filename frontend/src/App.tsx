@@ -52,6 +52,7 @@ import { handleGlobalKey } from './lib/keybindings';
 import { OnFileDrop, OnFileDropOff } from '../wailsjs/runtime/runtime';
 import { handleAnchorClick } from './lib/openHref';
 import { eventLabel } from './lib/agentNotify';
+import { rememberChatModels } from './lib/agenthubDefaults';
 import { playNotifySound } from './lib/notifySound';
 import { backendError, translateBackend } from './lib/errors';
 import { applyChatUpdate, type TimelineItem } from './state/chatUpdate';
@@ -222,7 +223,12 @@ function App() {
     });
     // 模型视图补偿推送：Open 完成后后端补推一次，写入 store 供模型下拉渲染
     const offMdl = onChatModels(({ id, models }) => {
-      if (id) useAppStore.getState().setChatModels(id, models ?? null);
+      if (!id) return;
+      useAppStore.getState().setChatModels(id, models ?? null);
+      // 回写工具模型缓存：新建路径若中途失败（agent 退出/列表拉空），
+      // 补偿推送是唯一可靠的名字来源，旧格式缓存靠它自愈。
+      const chat = useAppStore.getState().chats.find((c) => c.ID === id);
+      if (chat) rememberChatModels(chat.ToolID, models ?? null);
     });
     // 后端待发送队列快照：任何来源（AgentHub/本地/TUI）入队都推到这里，
     // ChatView 与本地 chatQueues 合并展示。

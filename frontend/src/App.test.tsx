@@ -575,6 +575,31 @@ describe('App', () => {
     expect(useAppStore.getState().chatModels.c1).toEqual(view);
   });
 
+  it('chat:models 事件按会话 ToolID 回写工具模型缓存', async () => {
+    localStorage.clear();
+    let mdlCb: ((p: { id: string; models: unknown }) => void) | undefined;
+    mocks.onChatModels.mockImplementation((cb: typeof mdlCb) => {
+      mdlCb = cb;
+      return () => {};
+    });
+    mocks.listChats.mockResolvedValue([{ ...chat, ToolID: 'cursor' }]);
+    render(<App />);
+    await act(async () => {});
+    act(() => {
+      mdlCb?.({ id: 'c1', models: { Current: 'default[]', Models: [{ ID: 'default[]', Name: 'Auto' }] } });
+    });
+    expect(JSON.parse(localStorage.getItem('kshell.agenthub.models.cursor') ?? '[]')).toEqual([
+      { id: 'default[]', name: 'Auto' },
+    ]);
+    // 未注册会话的推送不抛错也不写缓存
+    expect(() => {
+      act(() => {
+        mdlCb?.({ id: 'ghost', models: { Current: '', Models: [{ ID: 'g', Name: 'G' }] } });
+      });
+    }).not.toThrow();
+    expect(localStorage.getItem('kshell.agenthub.models.ghost')).toBeNull();
+  });
+
   it('chat:update 早于历史回放时先入缓冲，补放后历史前缀不丢', async () => {
     let updateCb: ((p: { id: string; update: { Seq: number; Type: string; MessageID?: string; Text?: string } }) => void) | undefined;
     let resolveHist: ((h: unknown[]) => void) | undefined;

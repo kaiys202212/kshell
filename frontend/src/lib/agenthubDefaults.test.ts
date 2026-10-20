@@ -7,6 +7,7 @@ import {
   loadToolModelOptions,
   loadToolModels,
   mergeHubModelOptions,
+  rememberChatModels,
   rememberLastModel,
   saveDefaultCreate,
   saveLastCreate,
@@ -123,6 +124,33 @@ describe('agenthubDefaults', () => {
   it('hubInjectedModelsForTool：cursor 不展示平台注入模型', () => {
     expect(hubInjectedModelsForTool('cursor', ['glm-5.3-flash', 'cfg2'])).toEqual([]);
     expect(hubInjectedModelsForTool('claude', ['glm-5.3-flash'])).toEqual(['glm-5.3-flash']);
+  });
+
+  describe('rememberChatModels', () => {
+    it('把视图模型回写缓存并保留 Name', () => {
+      rememberChatModels('cursor', { Models: [{ ID: 'default[]', Name: 'Auto' }, { ID: 'm2', Name: 'Two' }] });
+      expect(loadToolModelOptions('cursor')).toEqual([
+        { id: 'default[]', name: 'Auto' },
+        { id: 'm2', name: 'Two' },
+      ]);
+    });
+
+    it('Name 缺失回落 ID', () => {
+      rememberChatModels('cursor', { Models: [{ ID: 'm1' }] });
+      expect(loadToolModelOptions('cursor')).toEqual([{ id: 'm1', name: 'm1' }]);
+    });
+
+    it('视图为 null 或 Models 空时不覆盖既有缓存', () => {
+      saveToolModels('cursor', [{ id: 'keep', name: 'Keep' }]);
+      rememberChatModels('cursor', null);
+      rememberChatModels('cursor', { Models: [] });
+      expect(loadToolModelOptions('cursor')).toEqual([{ id: 'keep', name: 'Keep' }]);
+    });
+
+    it('toolId 为空时忽略', () => {
+      rememberChatModels('', { Models: [{ ID: 'm1', Name: 'M1' }] });
+      expect(loadToolModelOptions('')).toEqual([]);
+    });
   });
 
   describe('rememberLastModel', () => {
