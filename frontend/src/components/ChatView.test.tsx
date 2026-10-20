@@ -295,8 +295,20 @@ describe('ChatView', () => {
     await waitFor(() => expect(api.setChatModel).toHaveBeenCalledWith('c1', 'm2'));
   });
 
-  it('模型切换成功后把所切模型记为该工具的上次模型（lastCreate 回写）', async () => {
+  it('挂载拉取模型后按会话 ToolID 回写工具模型缓存', async () => {
     api.listChatModels.mockResolvedValue({
+      Current: 'default[]',
+      Models: [{ ID: 'default[]', Name: 'Auto' }],
+    });
+    render(<ChatView chat={CHAT} active />);
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem('kshell.agenthub.models.claude') ?? '[]')).toEqual([
+        { id: 'default[]', name: 'Auto' },
+      ]),
+    );
+  });
+
+  it('模型切换成功后把所切模型记为该工具的上次模型（lastCreate 回写）', async () => {    api.listChatModels.mockResolvedValue({
       Current: 'm1',
       Models: [{ ID: 'm1', Name: 'Sonnet' }, { ID: 'm2', Name: 'Opus' }],
     });

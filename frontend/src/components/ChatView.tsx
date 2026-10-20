@@ -23,7 +23,7 @@ import { appendChatInput, registerChatInput, unregisterChatInput } from '../lib/
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
 import { markdownBubbleClass } from '../lib/markdownStyles';
-import { rememberLastModel } from '../lib/agenthubDefaults';
+import { rememberChatModels, rememberLastModel } from '../lib/agenthubDefaults';
 import { useAppStore } from '../state/store';
 import type { ChatQueuedMessage } from '../state/store';
 import type { TimelineItem } from '../state/chatUpdate';
@@ -162,6 +162,9 @@ export default function ChatView({ chat, active }: Props) {
     void listChatModels(id)
       .then((v) => {
         if (!cancelled) useAppStore.getState().setChatModels(id, v);
+        // 回写工具模型缓存：恢复型会话若错过 chat:models 推送，
+        // 挂载拉取是兜底的名字来源，旧格式缓存靠它自愈。
+        if (!cancelled) rememberChatModels(chat.ToolID, v);
       })
       .catch(() => {});
     void listChatCommands(id)
