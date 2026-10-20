@@ -10,6 +10,7 @@ import (
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/hub"
 	"github.com/yangk/kshell/internal/providers"
+	"github.com/yangk/kshell/internal/terminal"
 )
 
 // wxSessionsResult 是注入 GetSessions（磁盘会话）用的扫描结果构造辅助。
@@ -85,7 +86,7 @@ func TestWXExecutorToolName(t *testing.T) {
 		{ID: "s2", ToolID: "unknown-tool", Workspace: `D:\ws\b`, Title: "会话B", UpdatedAt: time.Now()},
 	})
 	app.mu.Lock()
-	app.tools = []discovery.Tool{{ID: "claude", Name: "Claude Code", Installed: true}}
+	app.tools = []discovery.Tool{{ID: "claude", Name: "Claude Code", Installed: true, ACP: &providers.ACPDetection{Available: true}}}
 	app.mu.Unlock()
 
 	ex := newWXExecutor(app)
@@ -403,5 +404,82 @@ func TestWXExecutorEasyNewDefaultTool(t *testing.T) {
 	app.mu.Unlock()
 	if got := ex.easyNewToolID(); got != "claude" {
 		t.Fatalf("未知默认工具应回落 claude, got %q", got)
+	}
+}
+
+// 规则1/2：非 ACP 工具的磁盘会话不进命令层列表；终端激活态的 ACP 会话保留
+// 并标 TerminalActive；工具能力未知时保守保留（不过滤）。
+func TestWXExecutorListSessionsReplyability(t *testing.T) {
+	app := wxApp(t, []providers.Session{
+		{ID: "s-acp", ToolID: "claude", Workspace: `D:\ws\a`, Title: "ACP 会话", UpdatedAt: time.Now()},
+		{ID: "s-noacp", ToolID: "codex", Workspace: `D:\ws\b`, Title: "非 ACP 会话", UpdatedAt: time.Now()},
+		{ID: "s-unknown", ToolID: "mystery", Workspace: `D:\ws\c`, Title: "未知工具", UpdatedAt: time.Now()},
+	})
+	app.mu.Lock()
+	app.tools = []discovery.Tool{
+		{ID: "claude", Name: "Claude Code", Installed: true, ACP: &providers.ACPDetection{Available: true}},
+		{ID: "codex", Name: "Codex", Installed: true}, // 无 ACP 探测 → 不支持
+	}
+	app.mu.Unlock()
+
+	ex := newWXExecutor(app)
+	byID := map[string]hub.SessionRef{}
+	for _, r := range ex.ListSessions() {
+		byID[r.SessionID] = r
+	}
+	if _, ok := byID["s-noacp"]; ok {
+		t.Fatalf("非 ACP 工具的会话不应进列表: %+v", byID)
+	}
+	if _, ok := byID["s-unknown"]; !ok {
+		t.Fatalf("能力未知的工具会话应保守保留: %+v", byID)
+	}
+	if r := byID["s-acp"]; r.TerminalActive {
+		t.Fatalf("未在终端打开的会话不应标 TerminalActive: %+v", r)
+	}
+}
+
+// 终端在册的磁盘会话标 TerminalActive；OpenSession 对其报 err.hub.terminal_active。
+func TestWXExecutorTerminalActiveSession(t *testing.T) {
+	app := wxApp(t, []providers.Session{
+		{ID: "s1", ToolID: "claude", Workspace: `D:\ws\a`, Title: "会话A", UpdatedAt: time.Now()},
+	})
+	app.mu.Lock()
+	app.tools = []discovery.Tool{{ID: "claude", Installed: true, ACP: &providers.ACPDetection{Available: true}}}
+	app.mu.Unlock()
+	tm := newTerminalManagerWith(func(string, ...any) {}, &stubTermBackend{})
+	app.mu.Lock()
+	app.opts.Terminals = tm
+	app.mu.Unlock()
+	if _, err := tm.Open("session:s1", terminal.Info{
+		Kind: terminal.KindSession, SessionID: "s1", Workspace: "D:/ws", Title: "会话A", ToolID: "claude",
+	}, terminal.Spec{Path: "x"}, 80, 24); err != nil {
+		t.Fatalf("open terminal: %v", err)
+	}
+
+	ex := newWXExecutor(app)
+	list := ex.ListSessions()
+	if len(list) != 1 || !list[0].TerminalActive {
+		t.Fatalf("终端在册的磁盘会话应标 TerminalActive: %+v", list)
+	}
+	if _, err := ex.OpenSession("s1"); err == nil || !strings.Contains(err.Error(), "err.hub.terminal_active") {
+		t.Fatalf("终端激活态应报 err.hub.terminal_active, got %v", err)
+	}
+}
+
+// LastActivity 跳过已知非 ACP 工具的消息，继续向前找可回复目标。
+func TestWXExecutorLastActivitySkipsNonACP(t *testing.T) {
+	app := wxApp(t, nil)
+	app.mu.Lock()
+	app.tools = []discovery.Tool{{ID: "codex", Installed: true}} // 无 ACP
+	app.mu.Unlock()
+	store := app.snapshot().HubStore
+	if err := store.Append(hub.Message{Kind: "agent", Tool: "codex", TermKey: "session:s9", Text: "终端回复"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ex := newWXExecutor(app)
+	_, _, ok := ex.LastActivity()
+	if ok {
+		t.Fatalf("非 ACP 工具的消息不应产生命令层目标")
 	}
 }

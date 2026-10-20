@@ -1,11 +1,13 @@
 package desktop
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/hub"
+	"github.com/yangk/kshell/internal/launch"
 )
 
 // wxSessionsCap 是微信 #l/#la 可见会话的合成列表总上限（活跃 + 磁盘合并后截断）。
@@ -53,6 +55,11 @@ func (w *wxExecutor) collectAllSessions() []wxChatInfo {
 		if s.ID == "" || seenSession[s.ID] {
 			continue // 活跃优先：已激活的磁盘会话不再重复出现
 		}
+		// 规则1：已知能力且不支持 ACP 的工具会话不可从命令层激活/投递，不进列表。
+		// 能力未知（扫描未完成/自定义工具）保守保留，激活失败显性化。
+		if capable, known := w.acpCapableTool(s.ToolID); known && !capable {
+			continue
+		}
 		seenSession[s.ID] = true
 		out = append(out, wxChatInfo{
 			sessionID: s.ID,
@@ -73,11 +80,39 @@ func (w *wxExecutor) collectSessions() []wxChatInfo {
 	return out
 }
 
+// acpCapableTool 报告工具是否具备 ACP 能力。tools 列表查不到该 ID 时返回
+// known=false（能力未知）：调用方保守放行（不过滤、不跳过归因），激活交给
+// OpenSessionACP 权威判定——避免扫描未完成或自定义工具被误杀。
+func (w *wxExecutor) acpCapableTool(id string) (capable, known bool) {
+	for _, t := range w.a.GetTools() {
+		if t.ID == id {
+			return launch.ACPCapable(t), true
+		}
+	}
+	return false, false
+}
+
+// terminalSessionIDs 返回当前终端在册的磁盘会话 ID 集合（Key 的 session: 前缀）。
+// 只认 session: 前缀：chat 与 terminal 共用 new:<n> key 形态，字符串相同但
+// 互不相关，不限前缀会把 ACP 新建会话误判为终端激活。
+func (w *wxExecutor) terminalSessionIDs() map[string]bool {
+	out := map[string]bool{}
+	if tm := w.a.terminals(); tm != nil {
+		for _, info := range tm.List() {
+			if sid, ok := strings.CutPrefix(info.Key, "session:"); ok {
+				out[sid] = true
+			}
+		}
+	}
+	return out
+}
+
 // sessionRefs 把中间形态转成命令层 SessionRef（补工具展示名）。
 func (w *wxExecutor) sessionRefs(list []wxChatInfo) []hub.SessionRef {
+	term := w.terminalSessionIDs()
 	out := make([]hub.SessionRef, 0, len(list))
 	for _, s := range list {
-		out = append(out, hub.SessionRef{
+		ref := hub.SessionRef{
 			ChatID:    s.chatID,
 			Key:       s.key,
 			SessionID: s.sessionID,
@@ -85,7 +120,13 @@ func (w *wxExecutor) sessionRefs(list []wxChatInfo) []hub.SessionRef {
 			Tool:      s.tool,
 			ToolName:  w.a.toolDisplayName(s.tool),
 			Title:     s.title,
-		})
+		}
+		// 规则2 标记只落磁盘引用：活跃 ACP chat 自身可投递，即便同会话恰好
+		// 也被终端打开（罕见），不应阻止对 chat 的正常投递。
+		if s.chatID == "" && s.sessionID != "" && term[s.sessionID] {
+			ref.TerminalActive = true
+		}
+		out = append(out, ref)
 	}
 	return out
 }
@@ -129,6 +170,13 @@ func (w *wxExecutor) LastActivity() (int64, hub.SessionRef, bool) {
 		m := msgs[i]
 		if m.Status == hub.StatusRecalled {
 			continue // 已撤回的用户消息不代表用户最终选择
+		}
+		// 规则1：已知非 ACP 工具的消息不可作为命令层目标，跳过继续向前找，
+		// 避免把当前上下文锚到必然发不出去的会话。能力未知保守放行。
+		if m.Tool != "" {
+			if capable, known := w.acpCapableTool(m.Tool); known && !capable {
+				continue
+			}
 		}
 		attributed := false
 		if m.ChatID != "" {
@@ -193,7 +241,19 @@ func (w *wxExecutor) SwitchTo(chatID string) error {
 }
 
 // OpenSession 激活一个尚未打开的磁盘会话（走 OpenSessionACP），返回可投递引用。
+// 终端激活态显式报可自助恢复的错误（规则2）；已知不支持 ACP 的工具直接拒绝
+//（规则1），不再进 launch 层试错。
 func (w *wxExecutor) OpenSession(sessionID string) (hub.SessionRef, error) {
+	if w.terminalSessionIDs()[sessionID] {
+		return hub.SessionRef{}, errors.New("err.hub.terminal_active")
+	}
+	if s, tools, ok := w.a.sessionByIDReady(sessionID); ok {
+		for _, t := range tools {
+			if t.ID == s.ToolID && !launch.ACPCapable(t) {
+				return hub.SessionRef{}, errors.New("err.hub.acp_unsupported")
+			}
+		}
+	}
 	o, err := w.a.OpenSessionACP(sessionID)
 	if err != nil {
 		return hub.SessionRef{}, err
