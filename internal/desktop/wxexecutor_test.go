@@ -198,6 +198,57 @@ func TestWXExecutorLastActivitySessionSnapshot(t *testing.T) {
 	}
 }
 
+// 会话文件已消失但仍带 SessionID 快照：按快照返回未激活引用（激活失败可见），
+// 不回落到更旧消息的归因。
+func TestWXExecutorLastActivityGoneSessionSnapshot(t *testing.T) {
+	app := wxApp(t, nil)
+	store := app.snapshot().HubStore
+	_ = store.Append(hub.Message{
+		Kind: "user", SessionID: "gone", Workspace: `D:\ws\z`, Tool: "claude",
+		SessionTitle: "旧会话", Text: "hi",
+	})
+	_, ref, ok := newWXExecutor(app).LastActivity()
+	if !ok || ref.SessionID != "gone" || ref.ChatID != "" || ref.Title != "旧会话" || ref.Tool != "claude" {
+		t.Fatalf("应按 SessionID 快照返回未激活引用: %+v ok=%v", ref, ok)
+	}
+	if ref.ToolName != "" {
+		t.Fatalf("未知工具展示名应为空, got %q", ref.ToolName)
+	}
+}
+
+// 最新一条带归因却解析不到（失效 ChatID）时停止扫描：不得借用更旧归因误投。
+func TestWXExecutorLastActivityStaleLatestStopsScan(t *testing.T) {
+	app := wxApp(t, []providers.Session{
+		{ID: "s1", ToolID: "claude", Workspace: `D:\ws\a`, Title: "旧会话", UpdatedAt: time.Now()},
+	})
+	store := app.snapshot().HubStore
+	_ = store.Append(hub.Message{Kind: "user", TermKey: "session:s1", Text: "old"})
+	_ = store.Append(hub.Message{Kind: "agent", ChatID: "c-gone", Text: "new"})
+	if _, ref, ok := newWXExecutor(app).LastActivity(); ok {
+		t.Fatalf("最新归因失效时不得回落到更旧会话: %+v", ref)
+	}
+}
+
+// AgentHub 直接投递（不经 Console）后，桌面端 Console 的待选菜单必须失效：
+// 之后的纯数字不得发送旧暂存正文。
+func TestHubSendClearsPendingPick(t *testing.T) {
+	app, m, _ := wxActiveApp(t)
+	if _, err := app.HubPickTarget("待发正文"); err != nil {
+		t.Fatalf("pick: %v", err)
+	}
+	if err := app.SendChatPrompt(m.List()[0].ID, "另一条"); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if _, err := app.HubCommand("1"); err != nil {
+		t.Fatalf("number: %v", err)
+	}
+	for _, msg := range app.snapshot().HubStore.List() {
+		if msg.Kind == "user" && msg.Text == "待发正文" {
+			t.Fatalf("直接投递后旧暂存正文不得被数字发送: %+v", msg)
+		}
+	}
+}
+
 // listLastID 取 manager 列表最后一条的 ID（ListChats 顺序同 manager.order）。
 func listLastID(m *chat.Manager) string {
 	l := m.List()

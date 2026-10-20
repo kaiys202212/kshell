@@ -892,12 +892,13 @@ export default function AgentHubPanel() {
     const targetId = resolveMentionTarget(text, options, fallbackId);
     if (!targetId) {
       // 无精确目标：把正文交给共享命令层列会话并暂存，用户回复数字后由
-      // HubCommand（数字透传路径）完成激活与发送；微信桥同语义。不清草稿再
-      // 重试就可能重复下单，这里先清空。
-      setDraft('');
+      // HubCommand（数字透传路径）完成激活与发送；微信桥同语义。仅当后端
+      // 确实建立了待选菜单才清草稿（无会话/其他菜单进行中时保留正文）；
+      // 等待期间用户若改了草稿，也不覆盖新内容。
       void hubPickTarget(text)
-        .then((replies) => {
-          for (const r of replies) useAppStore.getState().pushHubLocal(r.Text);
+        .then((view) => {
+          for (const r of view.Replies) useAppStore.getState().pushHubLocal(r.Text);
+          if (view.Pending) setDraft((d) => (d.trim() === text ? '' : d));
         })
         .catch((e: unknown) => useAppStore.getState().notify(backendError(e), 'error'));
       return;

@@ -40,6 +40,9 @@ type pendingMenu struct {
 // Reply 是一条要回显给用户的回复。
 type Reply struct {
 	Text string
+	// Sent 标记该回复对应一次成功投递（当前仅待选编号发送）。微信桥据此
+	// 消费待转交附件队列：附件说明已随暂存正文发出，不得在下一条消息重复拼入。
+	Sent bool `json:",omitempty"`
 }
 
 // Console 是一个渠道（微信/桌面端 AgentHub）的命令会话状态机。
@@ -171,6 +174,11 @@ func (c *Console) handlePermission(input string) []Reply {
 func (c *Console) handleCommand(input string) []Reply {
 	// #g / #f 是带参数命令，其余先按单词切。
 	cmd, arg := splitCmd(input)
+	// 除 #c（显式取消并回文案）外，任何命令都让待选正文失效：用户已转向
+	// 其他操作，残留菜单会把后续纯数字误解成选会话并发送旧正文。
+	if cmd != "#c" && c.menu != nil && c.menu.kind == menuPick {
+		c.menu = nil
+	}
 	switch cmd {
 	case "#?":
 		return c.handleHelp()
@@ -470,7 +478,7 @@ func (c *Console) handleMenuNumber(n int) []Reply {
 		if err := c.ex.Send(ref.ChatID, menu.pendingText); err != nil {
 			return single(fmt.Sprintf(c.text("send_failed"), err))
 		}
-		return single(fmt.Sprintf(c.text("sent_to"), sessionTag(ref.Title)))
+		return []Reply{{Text: fmt.Sprintf(c.text("sent_to"), sessionTag(ref.Title)), Sent: true}}
 	}
 	c.menu = nil
 	return single(c.text("no_mapping"))
@@ -688,7 +696,8 @@ func (c *Console) sendToCurrent(text string) []Reply {
 	c.refreshCurrent()
 	ref := c.current
 	if !c.hasCurrent || (ref.ChatID == "" && ref.SessionID == "") {
-		return c.listForPending(text)
+		replies, _ := c.listForPending(text)
+		return replies
 	}
 	if ref.ChatID == "" {
 		activated, err := c.activateRef(ref)
@@ -698,7 +707,8 @@ func (c *Console) sendToCurrent(text string) []Reply {
 		ref = activated
 	}
 	if ref.ChatID == "" {
-		return c.listForPending(text)
+		replies, _ := c.listForPending(text)
+		return replies
 	}
 	if err := c.ex.Send(ref.ChatID, text); err != nil {
 		return single(fmt.Sprintf(c.text("send_failed"), err))
@@ -708,10 +718,11 @@ func (c *Console) sendToCurrent(text string) []Reply {
 
 // listForPending 列出前 10 个会话并暂存正文，等用户回编号后立即发送。
 // 与 #l 共用编号映射（lastList），#c 取消时随菜单丢弃正文。
-func (c *Console) listForPending(text string) []Reply {
+// 第二个返回值报告是否建立了待选菜单（无会话时为 false）。
+func (c *Console) listForPending(text string) ([]Reply, bool) {
 	sessions := c.ex.ListSessions()
 	if len(sessions) == 0 {
-		return single(c.text("no_sessions"))
+		return single(c.text("no_sessions")), false
 	}
 	limit := len(sessions)
 	if limit > 10 {
@@ -737,19 +748,34 @@ func (c *Console) listForPending(text string) []Reply {
 		c.text("pick_target"),
 		strings.Join(lines, "\n"),
 		c.text("pick_number"),
-	}, "\n\n"))
+	}, "\n\n")), true
 }
 
 // PickTarget 供 AgentHub 在无精确目标时直接进入待选列表（暂存正文）。
-// 仅 trim/normalize，不做任何投递。
-func (c *Console) PickTarget(text string) []Reply {
+// 只 trim，不做命令归一化：正文必须原样投递。第二个返回值报告是否建立
+// 待选菜单（无会话/当前有其他选择时为 false，调用方应保留用户草稿）。
+func (c *Console) PickTarget(text string) ([]Reply, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	text = normalizeInput(strings.TrimSpace(text))
+	text = strings.TrimSpace(text)
 	if text == "" {
-		return nil
+		return nil, false
+	}
+	// 其他菜单（#n/#m/#f）进行中：不覆盖，避免静默丢失用户已做的选择。
+	if c.menu != nil && c.menu.kind != menuPick {
+		return single(c.text("pick_busy")), false
 	}
 	return c.listForPending(text)
+}
+
+// CancelPick 让待选菜单失效（AgentHub 已经另行投递）。仅清理 menuPick，
+// 不碰其他选择菜单；lastList 保留，后续数字仍可按最近列表切换。
+func (c *Console) CancelPick() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.menu != nil && c.menu.kind == menuPick {
+		c.menu = nil
+	}
 }
 
 // single 构造单条回复。

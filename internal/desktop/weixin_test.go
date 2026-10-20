@@ -251,18 +251,37 @@ func TestWeixinHubPickTarget(t *testing.T) {
 	}
 	before := len(store.List())
 
-	replies, err := app.HubPickTarget("  随便看看  ")
+	view, err := app.HubPickTarget("  随便看看  ")
 	if err != nil {
 		t.Fatalf("HubPickTarget: %v", err)
 	}
-	if len(replies) != 1 {
-		t.Fatalf("应返回一条待选回复: %+v", replies)
+	if !view.Pending {
+		t.Fatal("有会话时应报告进入待选菜单（前端据此清草稿）")
 	}
-	text := replies[0].Text
+	if len(view.Replies) != 1 {
+		t.Fatalf("应返回一条待选回复: %+v", view.Replies)
+	}
+	text := view.Replies[0].Text
 	if !strings.Contains(text, "未精确匹配到会话") || !strings.Contains(text, "1. [a] claude 会话A") {
 		t.Fatalf("待选回复应含提示与编号列表: %q", text)
 	}
 	if got := len(store.List()); got != before {
 		t.Fatalf("HubPickTarget 不得写 hub 历史: before=%d after=%d", before, got)
+	}
+
+	// 无会话：不进菜单（Pending=false），前端保留草稿。
+	empty := wxApp(t, nil)
+	empty.mu.Lock()
+	empty.opts.Config.Language = "zh-CN"
+	empty.mu.Unlock()
+	view, err = empty.HubPickTarget("随便看看")
+	if err != nil {
+		t.Fatalf("HubPickTarget(empty): %v", err)
+	}
+	if view.Pending {
+		t.Fatal("无会话时不应报告进入待选菜单")
+	}
+	if len(view.Replies) != 1 || !strings.Contains(view.Replies[0].Text, "暂无会话") {
+		t.Fatalf("无会话应回暂无会话: %+v", view.Replies)
 	}
 }

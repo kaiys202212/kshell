@@ -593,6 +593,36 @@ func TestBridgeAttachmentCommandKeepsQueue(t *testing.T) {
 	}
 }
 
+// 无精确目标时附件前缀进入待选正文；用户回编号成功投递后队列必须清空，
+// 否则下一条普通文本会重复附带同一批附件。
+func TestBridgePickConsumesAttachmentQueue(t *testing.T) {
+	ex := &fakeExec{sessions: []hub.SessionRef{
+		{ChatID: "c1", Tool: "claude", Title: "会话A", Workspace: `D:\ws\a`},
+	}}
+	b, _ := newAttachBridge(t, ex, []byte("内容"), 200)
+
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-1", "a.pdf"))
+	if b.QueuedFiles() != 1 {
+		t.Fatalf("附件应先入队: %d", b.QueuedFiles())
+	}
+	// 无当前会话：输出待选列表，正文（含附件前缀）暂存，不投递。
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-2", Text: "帮我修复"})
+	if len(ex.sentTexts) != 0 {
+		t.Fatalf("待选阶段不应投递: %v", ex.sentTexts)
+	}
+	if b.QueuedFiles() != 1 {
+		t.Fatalf("待选阶段队列应保留: %d", b.QueuedFiles())
+	}
+	// 回编号：发送暂存正文（含附件说明），成功后队列消费。
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-3", Text: "1"})
+	if len(ex.sentTexts) != 1 || !strings.Contains(ex.sentTexts[0], "[附件] a.pdf") || !strings.Contains(ex.sentTexts[0], "帮我修复") {
+		t.Fatalf("回编号应发送含附件说明的暂存正文: %v", ex.sentTexts)
+	}
+	if b.QueuedFiles() != 0 {
+		t.Fatalf("成功投递后队列应清空: %d", b.QueuedFiles())
+	}
+}
+
 func TestBridgeAttachmentDownloadFail(t *testing.T) {
 	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 	b, rc := newAttachBridge(t, ex, []byte("内容"), 403)

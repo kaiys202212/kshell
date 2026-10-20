@@ -1077,15 +1077,85 @@ func TestPickTargetListsSessions(t *testing.T) {
 		wsRef(0, "c1", "", `D:\ws\a`, "claude", "会话A", false),
 	}}
 	c := NewConsole(fe)
-	out := join(c.PickTarget("  随便看看  "))
-	if !strings.Contains(out, "未精确匹配到会话") || !strings.Contains(out, "1. [a] claude 会话A") {
-		t.Fatalf("PickTarget 应输出待选列表: %q", out)
+	out, pending := c.PickTarget("  随便看看  ")
+	if !pending {
+		t.Fatal("有会话时应报告已进入待选菜单")
+	}
+	if !strings.Contains(join(out), "未精确匹配到会话") || !strings.Contains(join(out), "1. [a] claude 会话A") {
+		t.Fatalf("PickTarget 应输出待选列表: %v", out)
 	}
 	if len(fe.sendCalls) != 0 {
 		t.Fatalf("PickTarget 不得直接投递: %v", fe.sendCalls)
 	}
-	c.Handle("1")
+	sent := c.Handle("1")
 	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c1", "随便看看"} {
 		t.Fatalf("回编号应发送去掉首尾空白的正文: %v", fe.sendCalls)
+	}
+	if len(sent) != 1 || !sent[0].Sent {
+		t.Fatalf("待选投递成功应标记 Sent（微信桥据此清附件队列）: %+v", sent)
+	}
+}
+
+// 无会话：不进菜单、不清草稿（Pending=false），只回暂无会话。
+func TestPickTargetNoSessionsNotPending(t *testing.T) {
+	c := NewConsole(&fakeExecutor{})
+	out, pending := c.PickTarget("  随便看看  ")
+	if pending {
+		t.Fatal("无会话时不应报告进入待选菜单")
+	}
+	if got := join(out); got != "暂无会话" {
+		t.Fatalf("无会话应回暂无会话: %q", got)
+	}
+}
+
+// 任意命令（#c 除外）让待选正文失效：后续数字不得再发送旧正文。
+func TestCommandInvalidatesPendingPick(t *testing.T) {
+	fe := &fakeExecutor{listSessions: []SessionRef{
+		wsRef(0, "c1", "", `D:\ws\a`, "claude", "会话A", false),
+		wsRef(0, "c2", "", `D:\ws\b`, "codex", "会话B", false),
+	}}
+	c := NewConsole(fe)
+	if _, pending := c.PickTarget("旧正文"); !pending {
+		t.Fatal("应先进入待选菜单")
+	}
+	c.Handle("#l") // 显式查看列表：旧待选正文失效
+	c.Handle("1")
+	if len(fe.sendCalls) != 0 {
+		t.Fatalf("命令后的数字不得发送旧正文: %v", fe.sendCalls)
+	}
+	if len(fe.switchCalls) != 1 || fe.switchCalls[0] != "c1" {
+		t.Fatalf("命令后的数字应正常切换: %v", fe.switchCalls)
+	}
+}
+
+// 其他菜单（#n/#m/#f）进行中：PickTarget 不覆盖它，正文不标记为已暂存。
+func TestPickTargetBusyWithOtherMenu(t *testing.T) {
+	fe := &fakeExecutor{
+		tools: []MenuOption{{ID: "claude", Label: "Claude Code"}},
+	}
+	c := NewConsole(fe)
+	c.Handle("#n")
+	out, pending := c.PickTarget("正文")
+	if pending {
+		t.Fatal("#n 进行中不应建立待选菜单")
+	}
+	if !strings.Contains(join(out), "请先完成") {
+		t.Fatalf("应提示先完成当前选择: %v", out)
+	}
+	if c.menu == nil || c.menu.kind != menuNew {
+		t.Fatal("#n 菜单不应被覆盖")
+	}
+}
+
+// PickTarget 只 trim，不改写正文（全角空格必须原样投递）。
+func TestPickTargetPreservesOriginalText(t *testing.T) {
+	fe := &fakeExecutor{listSessions: []SessionRef{
+		wsRef(0, "c1", "", `D:\ws\a`, "claude", "会话A", false),
+	}}
+	c := NewConsole(fe)
+	c.PickTarget("你好　世界")
+	c.Handle("1")
+	if len(fe.sendCalls) != 1 || fe.sendCalls[0][1] != "你好　世界" {
+		t.Fatalf("暂存正文应保持原文: %v", fe.sendCalls)
 	}
 }

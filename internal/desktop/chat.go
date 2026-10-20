@@ -355,7 +355,14 @@ func (a *App) fallbackTerminalWorkspace(wsID, toolID, reason string) (OpenedSess
 // 确认卡片（入队 → ack_queued；立即投递的「已送达」ack 由 onHubDelivered 补）。
 // 入口先按别名链把旧 ID 解析到最新：重建过的会话前端仍持旧 ID 也能继续发送；
 // 已退出时自动重建（ensureChatAlive）。
-func (a *App) SendChatPrompt(id, text string) error {
+func (a *App) SendChatPrompt(id, text string) (err error) {
+	// 成功投递即视为用户已转向另一条消息：AgentHub 的待选暂存正文失效，
+	// 否则之后的纯数字可能把旧正文发给错误会话。失败时保留待选，便于重试。
+	defer func() {
+		if err == nil {
+			a.clearHubPendingPick()
+		}
+	}()
 	a.ensureSessionHooks()
 	m := a.chats()
 	if m == nil {
@@ -460,7 +467,7 @@ func chatBlocksToACP(blocks []ChatBlock) []acp.ContentBlock {
 
 // SendChatPromptBlocks 向指定聊天发起一轮多形态内容块输入（文本 + 附件）。
 // 入口别名解析与重建同 SendChatPrompt。
-func (a *App) SendChatPromptBlocks(id string, blocks []ChatBlock) error {
+func (a *App) SendChatPromptBlocks(id string, blocks []ChatBlock) (err error) {
 	a.ensureSessionHooks()
 	m := a.chats()
 	if m == nil {
@@ -469,6 +476,12 @@ func (a *App) SendChatPromptBlocks(id string, blocks []ChatBlock) error {
 	if len(blocks) == 0 {
 		return nil
 	}
+	// 同 SendChatPrompt：附件投递成功同样让待选暂存正文失效。
+	defer func() {
+		if err == nil {
+			a.clearHubPendingPick()
+		}
+	}()
 	resolved, _ := a.resolveChatID(id)
 	sendID, err := a.ensureChatAlive(resolved)
 	if err != nil {

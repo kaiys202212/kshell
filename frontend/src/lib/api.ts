@@ -681,7 +681,7 @@ interface AppBindings {
   ClearHubMessages(): Promise<void>;
   RecallHubMessage(id: number): Promise<void>;
   HubCommand(text: string): Promise<HubReply[]>;
-  HubPickTarget(text: string): Promise<HubReply[]>;
+  HubPickTarget(text: string): Promise<HubPickView>;
   SaveHubDefaultCreate(toolID: string, modelID: string): Promise<void>;
   SaveHubRouteMode(mode: string): Promise<void>;
   ConfirmHubTool(chatID: string, pendingID: string, approved: boolean): Promise<void>;
@@ -1618,6 +1618,16 @@ export async function clearHubMessages(): Promise<void> {
 // HubReply 是共享命令层（internal/hub.Reply）的一条回复文本，按序展示。
 export interface HubReply {
   Text: string;
+  // Sent 标记一次成功投递（当前仅待选编号发送），前端无需处理。
+  Sent?: boolean;
+}
+
+// HubPickView 是 HubPickTarget 的返回（internal/desktop.HubPickView）：
+// Pending=true 表示正文已暂存进待选菜单，可清空草稿；false 时（无会话/
+// 其他菜单进行中）应保留草稿，避免用户正文丢失。
+export interface HubPickView {
+  Replies: HubReply[];
+  Pending: boolean;
 }
 
 // hubCommand 把输入透传给 Go 侧共享命令层（internal/desktop/weixin.go HubCommand）。
@@ -1630,9 +1640,9 @@ export async function hubCommand(text: string): Promise<HubReply[]> {
 
 // hubPickTarget 在无精确目标时把待发正文交给共享命令层：后端输出编号会话列表并
 // 暂存正文，用户回复数字（仍走 hubCommand）完成激活与发送；与微信桥同一语义。
-export async function hubPickTarget(text: string): Promise<HubReply[]> {
+export async function hubPickTarget(text: string): Promise<HubPickView> {
   const a = app();
-  if (!a) return [];
+  if (!a) return { Replies: [], Pending: false };
   return a.HubPickTarget(text);
 }
 
