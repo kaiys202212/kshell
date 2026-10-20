@@ -42,7 +42,7 @@ import {
   type MentionOption,
 } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
-import { loadDefaultCreate, loadLastCreate, loadToolModelOptions, loadToolModels, loadHubRouteMode, mergeHubModelOptions, rememberLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode } from '../lib/agenthubDefaults';
+import { hubInjectedModelsForTool, loadDefaultCreate, loadLastCreate, loadToolModelOptions, loadToolModels, loadHubRouteMode, mergeHubModelOptions, rememberLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode } from '../lib/agenthubDefaults';
 import { saveHubDefaultCreate } from '../lib/api';
 import { quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
@@ -1754,8 +1754,11 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
   };
 
   // 模型下拉选项：kshell 注入模型在前、工具缓存模型在后，按 id 去重；文案用 name。
-  // 渲染期直接同步读 localStorage（成本极低，toolId/缓存变化后下次渲染即刷新）
-  const modelOptions = mergeHubModelOptions(injectedModels, toolId ? loadToolModelOptions(toolId) : []);
+  // Cursor 不合并平台注入（ACP 不支持该通道）。渲染期同步读 localStorage。
+  const modelOptions = mergeHubModelOptions(
+    hubInjectedModelsForTool(toolId, injectedModels),
+    toolId ? loadToolModelOptions(toolId) : [],
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange} className="w-80">
@@ -1884,8 +1887,11 @@ function DefaultSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     onOpenChange(false);
   };
 
-  // 模型下拉选项：与 NewAgentDialog 同口径（注入在前、缓存在后、按 id 去重；文案用 name）
-  const modelOptions = mergeHubModelOptions(injectedModels, toolId ? loadToolModelOptions(toolId) : []);
+  // 模型下拉选项：与 NewAgentDialog 同口径（Cursor 不合并平台注入）
+  const modelOptions = mergeHubModelOptions(
+    hubInjectedModelsForTool(toolId, injectedModels),
+    toolId ? loadToolModelOptions(toolId) : [],
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange} className="w-80">

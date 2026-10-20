@@ -125,6 +125,13 @@ export function saveToolModels(toolId: string, models: Array<string | ToolModelO
   writeJSON(MODELS_KEY_PREFIX + toolId, opts);
 }
 
+// hubInjectedModelsForTool：平台注入模型仅给支持 Claude settings 注入的工具。
+// Cursor ACP 不支持该通道，返回空以免下拉出现无效平台模型。
+export function hubInjectedModelsForTool(toolId: string, injected: string[]): string[] {
+  if (toolId === 'cursor') return [];
+  return injected;
+}
+
 // mergeHubModelOptions：注入模型在前、工具缓存其后，按 id 去重。
 // 注入项无独立展示名时 name=id（设置页裸模型名）。
 export function mergeHubModelOptions(injected: string[], cache: ToolModelOption[]): ToolModelOption[] {

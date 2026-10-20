@@ -3,11 +3,13 @@ package desktop
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yangk/kshell/internal/acp"
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
+	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
 )
 
@@ -390,6 +392,49 @@ func openChatEnv(t *testing.T, conn *fakeChatConn) (*chatTestEnv, string) {
 		t.Fatalf("OpenSessionACP: %v", err)
 	}
 	return env, opened.Chat.ID
+}
+
+// Cursor ACP 不支持 kshell 平台模型注入：ListChatModels 不得合并配置模型，
+// 只保留 agent 自报列表（如 Auto / default[]）。
+func TestCursorSkipsMergeConfigModels(t *testing.T) {
+	conn := &fakeChatConn{start: acp.SessionStart{SessionID: "cs1",
+		Models: &acp.SessionModelState{
+			AvailableModels: []acp.ModelInfo{{ModelID: "default[]", Name: "Auto"}},
+			CurrentModelID:  "default[]",
+		}}, waitCh: make(chan struct{})}
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "cursor-agent",
+	}, &fakeChatCaptureBackend{conn: conn})
+	env.app.mu.Lock()
+	env.app.opts.Config.SessionMode = config.SessionModeACP
+	env.app.opts.Providers = []providers.Provider{providers.Cursor{}}
+	env.app.tools = []discovery.Tool{{
+		ID: "cursor", Name: "Cursor", BinPath: "cursor-agent", Installed: true,
+		ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "cursor-agent"},
+	}}
+	env.app.opts.Config.Model = config.ModelConfig{
+		Enabled:     true,
+		ActiveModel: "cfg1",
+		Platforms:   []config.ModelPlatform{{ID: "p1", Name: "P", Models: []string{"cfg1", "cfg2"}}},
+	}
+	env.app.mu.Unlock()
+
+	opened, err := env.app.OpenWorkspaceACP(`D:\w`, "cursor", "")
+	if err != nil {
+		t.Fatalf("OpenWorkspaceACP: %v", err)
+	}
+	v, err := env.app.ListChatModels(opened.Chat.ID)
+	if err != nil {
+		t.Fatalf("ListChatModels: %v", err)
+	}
+	if len(v.Models) != 1 || v.Models[0].ID != "default[]" || v.Models[0].Name != "Auto" {
+		t.Fatalf("cursor 应只保留 agent 自报模型: %+v", v.Models)
+	}
+	for _, mo := range v.Models {
+		if mo.ID == "cfg1" || mo.ID == "cfg2" || strings.HasPrefix(mo.ID, "kshell:") {
+			t.Fatalf("cursor 不得合并平台模型: %+v", v.Models)
+		}
+	}
 }
 
 // 单平台：保持现状裸名行为（ID=Name=model），Current 不回落（agent 上报为准）。

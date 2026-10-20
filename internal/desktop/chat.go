@@ -593,6 +593,7 @@ func (a *App) ListChatModels(id string) (chat.ModelsView, error) {
 // 也能查到新会话。agent 上报的列表会与 kshell 配置的平台模型合并（配置模型
 // 是注入通道的实际取值域，agent 自报列表里不会有它们；单平台裸名、多平台
 // 加前缀追加，去重，详见 mergeConfigModels）。
+// Cursor ACP 不走该注入通道：跳过合并，只回 agent 自报列表。
 func (a *App) modelsView(id string) (chat.ModelsView, error) {
 	m := a.chats()
 	if m == nil {
@@ -603,7 +604,16 @@ func (a *App) modelsView(id string) (chat.ModelsView, error) {
 	if !ok {
 		v = chat.ModelsView{Models: []chat.ModelView{}}
 	}
+	if info, ok := m.Get(resolved); ok && !mergesKshellPlatformModels(info.ToolID) {
+		return v, nil
+	}
 	return a.mergeConfigModels(v), nil
+}
+
+// mergesKshellPlatformModels 报告该工具 ACP 会话是否合并 kshell 平台模型。
+// Cursor 不支持 Claude settings / ANTHROPIC_* 注入通道，合并只会误导选型。
+func mergesKshellPlatformModels(toolID string) bool {
+	return toolID != "cursor"
 }
 
 // mergeConfigModels 把 kshell 配置的模型列表并入 agent 上报视图：

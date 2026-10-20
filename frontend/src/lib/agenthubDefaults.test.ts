@@ -1,6 +1,7 @@
 // agenthubDefaults：新建 agent 默认值与模型列表缓存的 localStorage 读写测试。
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  hubInjectedModelsForTool,
   loadDefaultCreate,
   loadLastCreate,
   loadToolModelOptions,
@@ -117,6 +118,11 @@ describe('agenthubDefaults', () => {
       { id: 'deepseek-v4.1-flash', name: 'deepseek-v4.1-flash' },
       { id: 'default[]', name: 'Auto' },
     ]);
+  });
+
+  it('hubInjectedModelsForTool：cursor 不展示平台注入模型', () => {
+    expect(hubInjectedModelsForTool('cursor', ['glm-5.3-flash', 'cfg2'])).toEqual([]);
+    expect(hubInjectedModelsForTool('claude', ['glm-5.3-flash'])).toEqual(['glm-5.3-flash']);
   });
 
   describe('rememberLastModel', () => {
