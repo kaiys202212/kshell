@@ -36,7 +36,9 @@
       "not_queued": "Message already delivered; cannot recall",
       "invalid_route_mode": "Invalid routing mode {{0}} (choose auto, agent or force_auto)",
       "follow_empty": "#f is missing the message to send",
-      "follow_none": "No agent session to follow"
+      "follow_none": "No agent session to follow",
+      "terminal_active": "Session is running in a terminal; close that terminal tab first",
+      "acp_unsupported": "This tool does not support chat mode"
     },
     "hubtools": {
       "unknown_pending": "This confirmation is no longer valid (already handled or replaced)",
@@ -962,6 +964,9 @@
       "recall_failed": "Recall failed: {{err}}",
       "auto_scroll": "Auto-scroll",
       "quick_continue_text": "Continue with the current task.",
+      "readonly_badge": "Read-only",
+      "readonly_tool": "This tool does not support chat mode; messages are view-only",
+      "readonly_terminal": "Session is running in a terminal; reply from Hub is unavailable until it closes",
       "unknown_cmd": "Unknown command {{cmd}}. Available: #new #easynew #stop #model #clear",
       "need_target_drag": "Mention a session with @, click a session chip, or drag one into the input box.",
       "empty_message": "Message content cannot be empty.",

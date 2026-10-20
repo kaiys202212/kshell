@@ -36,7 +36,9 @@
       "not_queued": "消息已送达，无法撤回",
       "invalid_route_mode": "无效的路由模式 {{0}}（可选 auto、agent、force_auto）",
       "follow_empty": "#f 后缺少要发送的内容",
-      "follow_none": "没有可跟踪的 agent 会话"
+      "follow_none": "没有可跟踪的 agent 会话",
+      "terminal_active": "会话正以终端模式运行，请先关闭对应终端页签",
+      "acp_unsupported": "该工具不支持对话模式"
     },
     "hubtools": {
       "unknown_pending": "该确认已失效（已被处理或被新对话替换）",
@@ -962,6 +964,9 @@
       "recall_failed": "撤回失败：{{err}}",
       "auto_scroll": "自动滚动",
       "quick_continue_text": "请继续执行当前任务。",
+      "readonly_badge": "只读",
+      "readonly_tool": "该工具不支持对话模式，消息仅供查看",
+      "readonly_terminal": "会话正在终端中运行，暂不能从 Hub 回复；关闭终端后可恢复",
       "unknown_cmd": "未知命令 {{cmd}}。可用命令：#new #easynew #stop #model #clear",
       "need_target_drag": "用 @ 引用会话，或点击会话 chip / 拖入输入框。",
       "empty_message": "消息内容不能为空。",

@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   sendChatPrompt: vi.fn(),
   openWorkspaceACP: vi.fn(),
   getTools: vi.fn(),
+  onToolsUpdated: vi.fn(),
   getModelConfig: vi.fn(),
   readClipboardPaste: vi.fn(),
   listChatCommands: vi.fn(),
@@ -49,6 +50,7 @@ function chat(over: Partial<ChatInfo>): ChatInfo {
 beforeEach(() => {
   vi.clearAllMocks();
   api.getTools.mockResolvedValue([]);
+  api.onToolsUpdated.mockImplementation(() => () => {});
   api.getModelConfig.mockResolvedValue({
     Enabled: false,
     Platforms: [],

@@ -2,7 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatInfo, ToolInfo } from '../lib/api';
+import type { ChatInfo, TerminalInfo, ToolInfo } from '../lib/api';
 import { useAppStore } from '../state/store';
 import '../test/i18n';
 import { tt } from '../test/i18n';
@@ -16,6 +16,7 @@ const api = vi.hoisted(() => ({
   openSessionACP: vi.fn(),
   getSessions: vi.fn(),
   getTools: vi.fn(),
+  onToolsUpdated: vi.fn(),
   getModelConfig: vi.fn(),
   readClipboardPaste: vi.fn(),
   listChatCommands: vi.fn(),
@@ -65,7 +66,14 @@ beforeEach(() => {
   api.openWorkspaceACP.mockResolvedValue({ Kind: 'chat' });
   api.openSessionACP.mockResolvedValue({ Kind: 'chat' });
   api.getSessions.mockResolvedValue([]);
-  api.getTools.mockResolvedValue([]);
+  // 默认给可回复工具集：既有快捷按钮/激活用例假定 claude/cursor/codex 均可回复；
+  // 只读语义用例自行覆盖 getTools（返回空列表或非 ACP 工具）。
+  api.getTools.mockResolvedValue([
+    acpTool(),
+    { ...acpTool('cursor'), Name: 'Cursor' },
+    { ...acpTool('codex'), Name: 'Codex' },
+  ]);
+  api.onToolsUpdated.mockImplementation(() => () => {});
   api.getModelConfig.mockResolvedValue({
     Enabled: false,
     Platforms: [],
@@ -78,7 +86,9 @@ beforeEach(() => {
   api.setChatModel.mockResolvedValue(undefined);
   api.cancelChat.mockResolvedValue(undefined);
   api.closeChat.mockResolvedValue(undefined);
-  api.listHubMessages.mockResolvedValue([]);
+  // 回显 store 当前 hubMessages：挂载 effect 会用 listHubMessages() 覆盖 setState
+  // 预置值，回显让「预置 + act 刷新（等 tools 加载）」的用例不被清空。
+  api.listHubMessages.mockImplementation(async () => useAppStore.getState().hubMessages);
   api.listHubArchive.mockResolvedValue([]);
   api.loadHubArchive.mockResolvedValue([]);
   api.clearHubMessages.mockResolvedValue(undefined);
@@ -97,6 +107,7 @@ beforeEach(() => {
     activeTabId: null,
     lastAgentId: null,
     focusTermKey: null,
+    terminals: [],
     toasts: [],
     selectedProject: null,
   });
@@ -116,6 +127,21 @@ const acpTool = (id = 'claude'): ToolInfo => ({
   Installed: true,
   Source: 'path',
   ACP: { Available: true, Source: 'builtin' },
+});
+
+// 终端在册条目工厂：Key 为终端 manager 的 key（session:<id> / new:<n>）
+const term = (over: Partial<TerminalInfo> & Pick<TerminalInfo, 'Key'>): TerminalInfo => ({
+  ID: 't1',
+  Kind: 'session',
+  SessionID: '',
+  Workspace: 'D:\\ws\\a',
+  Title: 'x',
+  ToolID: 'claude',
+  Status: 'running',
+  ExitCode: 0,
+  Cols: 80,
+  Rows: 24,
+  ...over,
 });
 
 const workspaceA = {
@@ -459,6 +485,7 @@ describe('AgentHubPanel', () => {
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -478,6 +505,7 @@ describe('AgentHubPanel', () => {
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -494,6 +522,7 @@ describe('AgentHubPanel', () => {
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -576,6 +605,7 @@ describe('AgentHubPanel', () => {
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -604,6 +634,7 @@ describe('AgentHubPanel', () => {
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -631,6 +662,7 @@ describe('AgentHubPanel', () => {
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -667,6 +699,7 @@ describe('AgentHubPanel', () => {
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -1281,6 +1314,8 @@ describe('AgentHubPanel', () => {
   });
 
   it('选中 #clear：清空本地 Hub 消息流与 agent 通知，且不投递后端', async () => {
+    // 显式空列表：挂载 effect 的 listHubMessages 不能回显预置消息，否则清空后被再次写回
+    api.listHubMessages.mockResolvedValue([]);
     useAppStore.setState({
       chats: [chat({ ID: 'c1' })],
       lastAgentId: 'c1',
@@ -1462,6 +1497,7 @@ describe('AgentHubPanel', () => {
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '#stop ' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -1481,6 +1517,7 @@ describe('AgentHubPanel', () => {
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '#stop ' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -1508,6 +1545,7 @@ describe('AgentHubPanel', () => {
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '#model ' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -1830,6 +1868,49 @@ describe('AgentHubPanel', () => {
       ).toBe(true),
     );
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
+  it('非 ACP 工具的 agent 气泡：只读徽标 + 隐藏快捷按钮（规则1）', async () => {
+    // codex 无 ACP 探测 → replyState 'tool'：永久只读
+    api.getTools.mockResolvedValue([{ ...acpTool('codex'), Name: 'Codex', ACP: undefined }]);
+    useAppStore.setState({ chats: [chat({ ID: 'c1', ToolID: 'codex' })] });
+    api.listHubMessages.mockResolvedValue([
+      { id: 2, kind: 'agent', tool: 'codex', event: 'Stop', chatId: 'c1', text: 'done', ts: 2 },
+    ]);
+    render(<AgentHubPanel />);
+    await screen.findByText('done');
+    expect(screen.getAllByText(tt('ui.hub.readonly_badge'))).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: tt('ui.hub.quick_continue') })).toBeNull();
+    expect(screen.queryByRole('button', { name: tt('ui.hub.quick_rephrase') })).toBeNull();
+  });
+
+  it('终端激活态的 agent 气泡：只读徽标 + 隐藏快捷按钮（规则2）', async () => {
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', Key: 'session:s1', ToolID: 'claude' })],
+      terminals: [term({ Key: 'session:s1' })],
+    });
+    api.listHubMessages.mockResolvedValue([
+      { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', termKey: 'session:s1', text: 'done', ts: 2 },
+    ]);
+    render(<AgentHubPanel />);
+    await screen.findByText('done');
+    expect(screen.getAllByText(tt('ui.hub.readonly_badge'))).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: tt('ui.hub.quick_continue') })).toBeNull();
+    expect(screen.queryByRole('button', { name: tt('ui.hub.quick_rephrase') })).toBeNull();
+  });
+
+  it('离线 ACP 气泡不受只读影响：终端激活条带徽标，离线条按钮照常（规则3）', async () => {
+    useAppStore.setState({ terminals: [term({ Key: 'session:s1' })] });
+    api.listHubMessages.mockResolvedValue([
+      { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', termKey: 'session:s1', text: 'term', ts: 1 },
+      { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', termKey: 'session:s-off', text: 'off', ts: 2 },
+    ]);
+    render(<AgentHubPanel />);
+    await screen.findByText('off');
+    // 仅终端激活那条带徽标；离线那条快捷按钮照常
+    expect(screen.getAllByText(tt('ui.hub.readonly_badge'))).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: tt('ui.hub.quick_continue') })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: tt('ui.hub.quick_rephrase') })).toHaveLength(1);
   });
 
   it('快速回复无目标 agent 时提示 need_target 且不发送', async () => {

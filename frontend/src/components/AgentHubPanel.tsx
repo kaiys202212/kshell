@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowUpRight, Loader2, Settings2 } from 'lucide-react';
-import type { ChatCommand, ChatInfo, ChatModelsView, HubArchiveMonth, HubMessage, Session, ToolInfo, Workspace } from '../lib/api';
+import type { ChatCommand, ChatInfo, ChatModelsView, HubArchiveMonth, HubMessage, Session, TerminalInfo, ToolInfo, Workspace } from '../lib/api';
 import {
   cancelChat,
   clearHubMessages,
@@ -22,6 +22,7 @@ import {
   listHubArchive,
   listHubMessages,
   loadHubArchive,
+  onToolsUpdated,
   openSessionACP,
   openWorkspaceACP,
   readClipboardPaste,
@@ -46,6 +47,7 @@ import { saveHubDefaultCreate } from '../lib/api';
 import { quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
 import { isHubNumber, isNewHubCommand, normalizeHubProbe } from '../lib/hubCommands';
+import { replyState, terminalActive } from '../lib/hubReply';
 import { dispatchRequirement } from '../lib/dispatchRequirement';
 import { REQUIREMENT_MIME } from './RequirementList';
 import { attributionText, baseName, resolveAttribution } from '../lib/hubAttribution';
@@ -204,9 +206,19 @@ function hubPendingSessionId(m: HubMessage): string | null {
 // 没有精确归因时由 send() 交给共享命令层列出会话让用户选择。
 // user 与 agent 消息都参与匹配（user 消息也带目标 agent 的归因字段）。
 // 找不到返回 null。
-function lastHubAgentId(messages: HubMessage[], options: MentionOption[], chats: ChatInfo[]): string | null {
+function lastHubAgentId(
+  messages: HubMessage[],
+  options: MentionOption[],
+  chats: ChatInfo[],
+  tools: ToolInfo[],
+  terminals: TerminalInfo[],
+): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
+    // 只读会话不作为「最近交互目标」回落（规则1/2）：否则会把消息投给非目标
+    // 会话，或触发对终端激活会话必然冲突的 ACP 激活。只作用于 agent 消息——
+    // user 消息不带 tool 字段，按归因字段照常参与匹配。
+    if (m.kind === 'agent' && replyState(m, tools, terminals) !== 'acp') continue;
     const c =
       chats.find((x) => x.ID === m.chatId) ??
       chats.find((x) => m.termKey && x.Key === m.termKey);
@@ -245,8 +257,28 @@ export default function AgentHubPanel() {
   const chats = useAppStore((s) => s.chats);
   const hubMessages = useAppStore((s) => s.hubMessages);
   const lastAgentId = useAppStore((s) => s.lastAgentId);
+  const terminals = useAppStore((s) => s.terminals);
   // 消息归因：workspace/chatId/termKey → 「项目 · 会话」文本。
   const attrOf = useAttribution();
+  // 工具 ACP 能力（近似判定，见 hubReply.ts）：拉一次探测结果，tools:updated 后重拉。
+  // 探测未完成/工具未知时按只读保守展示，权威判定在后端 ForSessionACP。
+  const [tools, setTools] = useState<ToolInfo[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      void getTools()
+        .then((list) => {
+          if (!cancelled) setTools(list);
+        })
+        .catch(() => {});
+    };
+    load();
+    const off = onToolsUpdated(load);
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, []);
 
   const emptyTarget = t('ui.hub.new_agent');
   const [draft, setDraft] = useState('');
@@ -416,9 +448,9 @@ export default function AgentHubPanel() {
   // 斜杠命令目标解析与 send 共用。
   const fallbackId = useMemo(
     () =>
-      lastHubAgentId(hubMessages, options, chats) ??
+      lastHubAgentId(hubMessages, options, chats, tools, terminals) ??
       (lastAgentId && options.some((o) => o.id === lastAgentId) ? lastAgentId : null),
-    [hubMessages, options, chats, lastAgentId],
+    [hubMessages, options, chats, lastAgentId, tools, terminals],
   );
   // 目标解析：优先 @ 提及，其次回落链（与 send 一致）。
   const currentTargetId = useMemo(
@@ -937,6 +969,12 @@ export default function AgentHubPanel() {
     // 上下文丢失必须可见，绝不落 workspace 模糊匹配误投同项目会话。
     if (targetId.startsWith(PENDING_PREFIX)) {
       const sessionID = targetId.slice(PENDING_PREFIX.length);
+      // 激活前再查一次终端在册（渲染与点击之间终端可能已打开）：终端激活态会话
+      // 不允许从 Hub 抢激活（会与终端 PTY 形成双写方），提示后不投递。
+      if (terminalActive(`session:${sessionID}`, terminals)) {
+        useAppStore.getState().notify(t('err.hub.terminal_active'), 'error');
+        return;
+      }
       void activatePending(sessionID).then((chat) => {
         if (!chat) return;
         // 激活与发送分开 catch：失败阶段不同，文案不同（激活失败 vs 发送失败），
@@ -962,7 +1000,9 @@ export default function AgentHubPanel() {
   };
 
   // quickTarget 从 agent 卡片归因解析目标 chat ID：chatId 优先，termKey 反查兜底。
+  // 只读消息（非 ACP 工具/终端激活态）返回 null：快捷按钮已隐藏，防御误调用。
   const quickTarget = (m: HubMessage): string | null => {
+    if (replyState(m, tools, terminals) !== 'acp') return null;
     if (m.chatId && chats.some((c) => c.ID === m.chatId)) return m.chatId;
     if (m.termKey) {
       const c = chats.find((x) => x.Key === m.termKey);
@@ -1207,6 +1247,8 @@ export default function AgentHubPanel() {
       <div ref={logRef} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-2" role="log" aria-live="polite">
         {hubMessages.map((m) => {
           const attr = attrOf(m);
+          // 三态判定（规则1/2/3）：badge 与快捷按钮显隐由 st 驱动（见 hubReply.ts）
+          const st = replyState(m, tools, terminals);
           return m.kind === 'user' ? (
             <div key={`h${m.id}`} className="text-right">
               {attr && <div className="mb-0.5 text-[11px] text-muted-foreground">{attr}</div>}
@@ -1245,6 +1287,15 @@ export default function AgentHubPanel() {
                   {/* 归因行：工具 · 项目 · 会话；缺项跳过，全缺只剩工具名 */}
                   <div className="mb-0.5 text-[11px] text-muted-foreground">
                     {[toolDisplayName(m.tool ?? ''), attr].filter(Boolean).join(' · ')}
+                    {/* 只读徽标：非 ACP 工具（永久）或终端激活态（激活期），title 说明原因 */}
+                    {st !== 'acp' && (
+                      <span
+                        className="ml-1 rounded bg-background px-1 text-[10px] text-muted-foreground ring-1 ring-border"
+                        title={t(st === 'tool' ? 'ui.hub.readonly_tool' : 'ui.hub.readonly_terminal')}
+                      >
+                        {t('ui.hub.readonly_badge')}
+                      </span>
+                    )}
                   </div>
                   {/* tool_confirm：写操作确认卡（摘要 + 确认/拒绝按钮），其余走 markdown */}
                   {m.event === 'tool_confirm' ? (
@@ -1261,19 +1312,22 @@ export default function AgentHubPanel() {
                     </div>
                   )}
                 </div>
-                {/* 快速回复：常显预设按钮，点击直达该卡片归因的 agent（send/填入两种动作） */}
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {QUICK_REPLIES.map((q) => (
-                    <button
-                      key={q.key}
-                      type="button"
-                      className="rounded border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                      onClick={() => quickReply(m, q.action)}
-                    >
-                      {t(q.key)}
-                    </button>
-                  ))}
-                </div>
+                {/* 快速回复：常显预设按钮，点击直达该卡片归因的 agent（send/填入两种动作）；
+                    只读气泡（st !== 'acp'）不渲染——必然失败的入口不给用户 */}
+                {st === 'acp' && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {QUICK_REPLIES.map((q) => (
+                      <button
+                        key={q.key}
+                        type="button"
+                        className="rounded border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                        onClick={() => quickReply(m, q.action)}
+                      >
+                        {t(q.key)}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           );
