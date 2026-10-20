@@ -46,6 +46,13 @@ describe('terminalActive', () => {
     expect(terminalActive('session:s9', terms)).toBe(false);
     expect(terminalActive(undefined, terms)).toBe(false);
   });
+  it('仅 sessionId 命中在册终端为真', () => {
+    expect(terminalActive(undefined, terms, 's1')).toBe(true);
+    expect(terminalActive('new:3', terms, 's1')).toBe(true);
+  });
+  it('sessionId 不在册为假', () => {
+    expect(terminalActive(undefined, terms, 's9')).toBe(false);
+  });
 });
 
 describe('replyState', () => {
@@ -55,6 +62,11 @@ describe('replyState', () => {
   });
   it('ACP 工具 + 终端在册 → terminal（激活期只读）', () => {
     expect(replyState(msg({ tool: 'claude', termKey: 'session:s1' }), tools, terms)).toBe('terminal');
+  });
+  it('ACP 工具 + 仅 sessionId 命中终端 → terminal', () => {
+    expect(replyState(msg({ tool: 'claude', sessionId: 's1', termKey: 'new:3' }), tools, terms)).toBe(
+      'terminal',
+    );
   });
   it('ACP 工具 + 离线 → acp（PENDING 激活回复）', () => {
     expect(replyState(msg({ tool: 'claude', termKey: 'session:s9' }), tools, terms)).toBe('acp');

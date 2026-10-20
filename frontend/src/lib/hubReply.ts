@@ -15,18 +15,29 @@ export function isACPTool(tools: ToolInfo[], toolId?: string): boolean {
   return tools.find((t) => t.ID === toolId)?.ACP?.Available === true;
 }
 
-// terminalActive 判定：termKey 当前在终端管理器在册。只认 session: 前缀——
-// chat 与 terminal 共用 new:<n> key 形态，字符串相同但互不相关，不限前缀会把
-// ACP 新建会话误判为终端激活（与后端 terminalSessionIDs 同一约束）。
-export function terminalActive(termKey: string | undefined, terminals: TerminalInfo[]): boolean {
-  if (!termKey || !termKey.startsWith('session:')) return false;
-  return terminals.some((t) => t.Key === termKey);
+// terminalActive 判定：桌面端终端页签在册即占用。
+// - termKey 以 session: 开头且 Key 精确匹配；或
+// - sessionId 非空且存在 Key=session:<sessionId> 的终端
+// new: 前缀不参与（chat/terminal 共用 new:<n> 形态，防误伤 ACP 新建会话；
+// 与后端 terminalSessionIDs 同一约束）。
+export function terminalActive(
+  termKey: string | undefined,
+  terminals: TerminalInfo[],
+  sessionId?: string,
+): boolean {
+  if (termKey?.startsWith('session:') && terminals.some((t) => t.Key === termKey)) {
+    return true;
+  }
+  if (sessionId && terminals.some((t) => t.Key === `session:${sessionId}`)) {
+    return true;
+  }
+  return false;
 }
 
 // replyState 按序判定：非 ACP 工具 → tool（永久只读）；终端在册 → terminal
 //（激活期只读，关闭后自动恢复）；其余 → acp（可回复，离线走 openSessionACP）。
 export function replyState(m: HubMessage, tools: ToolInfo[], terminals: TerminalInfo[]): HubReplyState {
   if (!isACPTool(tools, m.tool)) return 'tool';
-  if (terminalActive(m.termKey, terminals)) return 'terminal';
+  if (terminalActive(m.termKey, terminals, m.sessionId)) return 'terminal';
   return 'acp';
 }
