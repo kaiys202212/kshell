@@ -351,8 +351,8 @@ var handshakeTimeout = 30 * time.Second
 // var 仅为测试可缩短；生产代码不得修改。
 var handshakeTimeoutSlow = 120 * time.Second
 
-// handshakeTimeoutFor 按工具选握手超时：slowTools 里命中的用 slow 上限，
-// 其余（含空/未知工具）用默认值。
+// handshakeTimeoutFor 按工具选握手超时：已知「合法慢」的工具（cursor）用
+// slow 上限，其余（含空/未知工具）用默认值。
 func handshakeTimeoutFor(toolID string) time.Duration {
 	if toolID == "cursor" {
 		return handshakeTimeoutSlow
