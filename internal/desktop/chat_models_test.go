@@ -51,7 +51,7 @@ func TestOpenWorkspaceACPCarriesSettingsPayload(t *testing.T) {
 	}
 	env.app.mu.Unlock()
 
-	got, err := env.app.OpenWorkspaceACP(`D:\w`, "claude")
+	got, err := env.app.OpenWorkspaceACP(`D:\w`, "claude", "")
 	if err != nil {
 		t.Fatalf("OpenWorkspaceACP: %v", err)
 	}
@@ -80,6 +80,87 @@ func TestOpenWorkspaceACPCarriesSettingsPayload(t *testing.T) {
 	}
 	if envWrap["env"] == nil {
 		t.Fatalf("settings 缺 env 块: %q", meta.ClaudeCode.Options.Settings)
+	}
+	// 无显式 modelID：不得注入 ActiveModel（no-default-model）
+	envMap, _ := envWrap["env"].(map[string]any)
+	if _, ok := envMap["ANTHROPIC_MODEL"]; ok {
+		t.Fatalf("无 modelID 时不应注入 ANTHROPIC_MODEL: %v", envMap)
+	}
+}
+
+// 显式 modelID 的新建：该次 Claude settings 必须带 ANTHROPIC_MODEL（及 DEFAULT 别名），
+// 与「设置页 ActiveModel 全局注入」无关——easynew/弹窗选定的模型要在 session/new 就生效。
+func TestOpenWorkspaceACPInjectsCreateModel(t *testing.T) {
+	backend := &recChatBackend{}
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "claude-agent-acp",
+	}, backend)
+	env.app.mu.Lock()
+	env.app.opts.Config.SessionMode = config.SessionModeACP
+	env.app.opts.Config.Model = config.ModelConfig{
+		Enabled: true,
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "P", AnthropicBaseURL: "https://h/", APIKey: "k", Models: []string{"deepseek-v4.1-flash"}},
+		},
+	}
+	env.app.mu.Unlock()
+
+	if _, err := env.app.OpenWorkspaceACP(`D:\w`, "claude", "deepseek-v4.1-flash"); err != nil {
+		t.Fatalf("OpenWorkspaceACP: %v", err)
+	}
+	var meta struct {
+		ClaudeCode struct {
+			Options struct {
+				Settings string `json:"settings"`
+			} `json:"options"`
+		} `json:"claudeCode"`
+	}
+	if err := json.Unmarshal([]byte(backend.live.gotMeta), &meta); err != nil {
+		t.Fatalf("载荷: %v", err)
+	}
+	var envWrap map[string]any
+	if err := json.Unmarshal([]byte(meta.ClaudeCode.Options.Settings), &envWrap); err != nil {
+		t.Fatalf("settings: %v", err)
+	}
+	envMap, _ := envWrap["env"].(map[string]any)
+	if envMap["ANTHROPIC_MODEL"] != "deepseek-v4.1-flash" {
+		t.Fatalf("应注入创建模型: %v", envMap)
+	}
+}
+
+// kshell 前缀 modelID 注入时剥成裸名。
+func TestOpenWorkspaceACPInjectsBareModelFromPrefix(t *testing.T) {
+	backend := &recChatBackend{}
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "claude-agent-acp",
+	}, backend)
+	env.app.mu.Lock()
+	env.app.opts.Config.SessionMode = config.SessionModeACP
+	env.app.opts.Config.Model = config.ModelConfig{
+		Enabled: true,
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "P", AnthropicBaseURL: "https://h/", APIKey: "k"},
+			{ID: "p2", Name: "Q", AnthropicBaseURL: "https://q/", APIKey: "k2"},
+		},
+	}
+	env.app.mu.Unlock()
+
+	if _, err := env.app.OpenWorkspaceACP(`D:\w`, "claude", "kshell:p2:m-x"); err != nil {
+		t.Fatalf("OpenWorkspaceACP: %v", err)
+	}
+	var meta struct {
+		ClaudeCode struct {
+			Options struct {
+				Settings string `json:"settings"`
+			} `json:"options"`
+		} `json:"claudeCode"`
+	}
+	_ = json.Unmarshal([]byte(backend.live.gotMeta), &meta)
+	var envWrap map[string]any
+	_ = json.Unmarshal([]byte(meta.ClaudeCode.Options.Settings), &envWrap)
+	envMap, _ := envWrap["env"].(map[string]any)
+	if envMap["ANTHROPIC_MODEL"] != "m-x" {
+		t.Fatalf("前缀应剥成裸名: %v", envMap)
 	}
 }
 
@@ -460,6 +541,49 @@ func setModelApp(t *testing.T, model config.ModelConfig) (*App, *fakeChatConn, c
 		t.Fatalf("Save 初态: %v", err)
 	}
 	return app, conn, layout, info.ID
+}
+
+// SetChatModel 成功后必须推 chat:models，否则 easynew 建后切模型前端仍显示 default。
+func TestSetChatModelEmitsChatModels(t *testing.T) {
+	conn := &fakeChatConn{
+		start: acp.SessionStart{
+			SessionID: "s1",
+			Models: &acp.SessionModelState{
+				AvailableModels: []acp.ModelInfo{
+					{ModelID: "default", Name: "Default"},
+					{ModelID: "deepseek-v4.1-flash", Name: "DS"},
+				},
+				CurrentModelID: "default",
+			},
+		},
+		waitCh: make(chan struct{}),
+	}
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "claude-agent-acp",
+	}, &fakeChatCaptureBackend{conn: conn})
+	env.app.mu.Lock()
+	env.app.opts.Config.SessionMode = config.SessionModeACP
+	env.app.mu.Unlock()
+
+	opened, err := env.app.OpenWorkspaceACP(`D:\w`, "claude", "")
+	if err != nil {
+		t.Fatalf("OpenWorkspaceACP: %v", err)
+	}
+	// newChatTestApp 不接线 SetOnModels（无握手 chat:models）；只断言 SetChatModel 推送
+	if err := env.app.SetChatModel(opened.Chat.ID, "deepseek-v4.1-flash"); err != nil {
+		t.Fatalf("SetChatModel: %v", err)
+	}
+	ev := env.events.waitEvent(t, "chat:models")
+	if ev.payload["id"] != opened.Chat.ID {
+		t.Fatalf("id = %v, want %v", ev.payload["id"], opened.Chat.ID)
+	}
+	v, ok := ev.payload["models"].(chat.ModelsView)
+	if !ok {
+		t.Fatalf("models 类型: %T", ev.payload["models"])
+	}
+	if v.Current != "deepseek-v4.1-flash" {
+		t.Fatalf("推送 Current = %q, want deepseek-v4.1-flash", v.Current)
+	}
 }
 
 func TestSetChatModelPlatformPrefix(t *testing.T) {

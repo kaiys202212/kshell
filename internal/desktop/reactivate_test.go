@@ -255,7 +255,7 @@ func TestEnsureChatAliveRebuildsNewChatByWorkspace(t *testing.T) {
 	app := newReactivateTestApp(t, b)
 	m := app.chats()
 
-	opened, err := app.OpenWorkspaceACP(`D:\w`, "claude")
+	opened, err := app.OpenWorkspaceACP(`D:\w`, "claude", "")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -301,7 +301,7 @@ func TestRebuildChatNotLoggedInBareWireKey(t *testing.T) {
 	app := newReactivateTestApp(t, b)
 	m := app.chats()
 
-	opened, err := app.OpenWorkspaceACP(`D:\w`, "claude")
+	opened, err := app.OpenWorkspaceACP(`D:\w`, "claude", "")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

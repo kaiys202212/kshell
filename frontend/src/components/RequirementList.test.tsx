@@ -437,7 +437,7 @@ describe('RequirementList', () => {
     const li = (await screen.findByText('待重开需求')).closest('li') as HTMLElement;
     fireEvent.click(within(li).getByLabelText(tt('ui.requirements.session_reopen')));
 
-    await waitFor(() => expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', expect.any(String)));
+    await waitFor(() => expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', expect.any(String), null));
     await waitFor(() =>
       expect(mocks.markRequirementDispatched).toHaveBeenCalledWith('r1', 'D:\\ws\\proj', 'c-new', '新标题', ''),
     );

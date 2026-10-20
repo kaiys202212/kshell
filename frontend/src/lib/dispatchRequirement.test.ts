@@ -63,7 +63,7 @@ describe('dispatchRequirement', () => {
 
     await dispatchRequirement('r1', '文本', 'D:\\ws\\proj');
 
-    expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-last');
+    expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-last', null);
     expect(mocks.getTools).not.toHaveBeenCalled();
   });
 
@@ -76,7 +76,7 @@ describe('dispatchRequirement', () => {
 
     await dispatchRequirement('r1', '需求文本', 'D:\\ws\\proj');
 
-    expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-a');
+    expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-a', null);
     expect(mocks.sendChatPrompt).toHaveBeenCalledWith('chat-real', '需求文本');
     // 关键断言：第三参为真实 chat.ID，第四参为会话标题快照
     expect(mocks.markRequirementDispatched).toHaveBeenCalledWith('r1', 'D:\\ws\\proj', 'chat-real', '会话标题', 's1');
@@ -97,7 +97,7 @@ describe('dispatchRequirement', () => {
 
     await dispatchRequirement('r1', '需求文本', 'D:\\ws\\proj', { toolId: 'tool-def', modelId: null });
 
-    expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-def');
+    expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-def', null);
   });
 
   it('defaults.modelId 有值：建会话后先 setChatModel 再 sendChatPrompt', async () => {
@@ -109,6 +109,7 @@ describe('dispatchRequirement', () => {
 
     await dispatchRequirement('r1', '需求文本', 'D:\\ws\\proj', { toolId: 'tool-def', modelId: 'm2' });
 
+    expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-def', 'm2');
     expect(mocks.setChatModel).toHaveBeenCalledWith('chat-real', 'm2');
     // 时序：setChatModel 必须先于 sendChatPrompt，确保首轮就用对模型
     const modelOrder = mocks.setChatModel.mock.invocationCallOrder[0];
@@ -127,7 +128,8 @@ describe('dispatchRequirement', () => {
     await dispatchRequirement('r1', '需求文本', 'D:\\ws\\proj', { toolId: 'tool-def', modelId: 'm2' });
 
     // 回落到 resolveToolID 自动选择（无 lastAgentId → 第一个 ACP 可用工具）
-    expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-a');
+    // 工具回落后仍带上 defaults.modelId（创建注入 + 建后 SetModel）
+    expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-a', 'm2');
     expect(
       useAppStore.getState().toasts.some((t) => t.title.includes(tt('ui.hub.default_tool_unavailable'))),
     ).toBe(true);
@@ -238,7 +240,7 @@ describe('reopenRequirementSession', () => {
     });
 
     expect(opened.Chat?.ID).toBe('chat-new');
-    expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-last');
+    expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-last', null);
     expect(mocks.sendChatPrompt).not.toHaveBeenCalled(); // 重开不发需求文本
     expect(mocks.markRequirementDispatched).toHaveBeenCalledWith('r1', 'D:\\ws\\proj', 'chat-new', '重开标题', 's1');
     expect(useAppStore.getState().lastAgentId).toBe('chat-new');

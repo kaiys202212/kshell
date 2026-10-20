@@ -671,7 +671,7 @@ interface AppBindings {
   OpenSession(sessionID: string): Promise<OpenedSession>;
   OpenSessionACP(sessionID: string): Promise<OpenedSession>;
   OpenWorkspace(wsID: string, toolID: string): Promise<OpenedSession>;
-  OpenWorkspaceACP(wsID: string, toolID: string): Promise<OpenedSession>;
+  OpenWorkspaceACP(wsID: string, toolID: string, modelID: string): Promise<OpenedSession>;
   SendChatPrompt(id: string, text: string): Promise<void>;
   SendChatPromptBlocks(id: string, blocks: ChatBlock[]): Promise<void>;
   ListChatModels(id: string): Promise<ChatModelsView>;
@@ -2019,10 +2019,14 @@ export async function openWorkspace(wsID: string, toolID: string): Promise<Opene
   return a.OpenWorkspace(wsID, toolID);
 }
 
-export async function openWorkspaceACP(wsID: string, toolID: string): Promise<OpenedSession> {
+export async function openWorkspaceACP(
+  wsID: string,
+  toolID: string,
+  modelID: string | null = null,
+): Promise<OpenedSession> {
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
-  return a.OpenWorkspaceACP(wsID, toolID);
+  return a.OpenWorkspaceACP(wsID, toolID, modelID ?? '');
 }
 
 export async function sendChatPrompt(id: string, text: string): Promise<void> {
