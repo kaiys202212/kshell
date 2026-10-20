@@ -161,7 +161,7 @@ describe('LoginDialog', () => {
     expect(api.checkToolAuth).toHaveBeenCalledTimes(3);
   });
 
-  it('不支持登录（err.login.unsupported）：展示翻译后的错误，不开终端、轮询继续', async () => {
+  it('不支持登录（err.login.unsupported）：展示翻译后的错误，不开终端、轮询停止', async () => {
     vi.useFakeTimers();
     api.openLoginTerminal.mockRejectedValue(new Error('err.login.unsupported'));
     renderDialog();
@@ -169,11 +169,11 @@ describe('LoginDialog', () => {
     await act(async () => {}); // 让 openLoginTerminal 的拒绝落位
     const alert = screen.getByRole('alert');
     expect(alert).toHaveTextContent(tt('err.login.unsupported'));
-    // 打开失败不影响登录态轮询（探测到 in 仍可正常收尾）
+    // 打开失败即停轮询：只剩挂载时的立即探测一次，之后不再新增（空转 10 分钟没有意义）
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(6000);
     });
-    expect(api.checkToolAuth).toHaveBeenCalled();
+    expect(api.checkToolAuth).toHaveBeenCalledTimes(1);
     expect(mocks.terminals).toHaveLength(0);
   });
 });

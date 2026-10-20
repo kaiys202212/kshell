@@ -48,6 +48,12 @@ export default function LoginDialog({ toolID, toolName, onClose }: Props) {
   const [openError, setOpenError] = useState('');
   const [polling, setPolling] = useState(true);
   const hostRef = useRef<HTMLDivElement | null>(null);
+  // onClose 经 ref 透传：父组件传的是内联箭头函数，直接进依赖会让父每次重渲染
+  // 都拆掉轮询定时器重建，轮询节奏失去 2s 间隔的意义
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
 
   // 挂载即开登录终端；key 固定 login:<toolID>，运行中重复打开由后端复用同一会话
   useEffect(() => {
@@ -57,7 +63,11 @@ export default function LoginDialog({ toolID, toolName, onClose }: Props) {
         if (!cancelled) setInfo(opened);
       })
       .catch((e: unknown) => {
-        if (!cancelled) setOpenError(t('ui.auth.login_open_failed', { err: backendError(e) }));
+        // 打开失败（含不支持登录）即停轮询：探测入口已不可用，继续轮询只是空转
+        if (!cancelled) {
+          setOpenError(t('ui.auth.login_open_failed', { err: backendError(e) }));
+          setPolling(false);
+        }
       });
     return () => {
       cancelled = true;
@@ -139,7 +149,7 @@ export default function LoginDialog({ toolID, toolName, onClose }: Props) {
           setPolling(false);
           notify(t('ui.auth.login_success', { name: toolName }), 'success');
           void scanSessions(); // 重扫会实探登录态并 Emit tools:updated，各处徽标随之刷新
-          onClose();
+          onCloseRef.current();
         })
         .catch(() => {
           // 单次探测失败（后端忙等）不中断轮询，下一次再试
@@ -155,7 +165,7 @@ export default function LoginDialog({ toolID, toolName, onClose }: Props) {
       window.clearInterval(timer);
       window.clearTimeout(cap);
     };
-  }, [polling, toolID, toolName, notify, onClose, t]);
+  }, [polling, toolID, toolName, notify, t]);
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }} className="w-[36rem] max-w-[90vw]">
