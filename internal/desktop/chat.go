@@ -547,6 +547,7 @@ func (a *App) modelsView(id string) (chat.ModelsView, error) {
 // 已存在（按 ID）跳过；数据源为配置的平台列表。单平台保持裸名
 // （ID=Name=model，向后兼容旧保存的 modelId）；多平台加
 // "kshell:<platID>:<model>" 前缀，默认平台条目排最前，其余按列表顺序。
+// 不改写 Current：当前模型以 agent 上报为准（默认模型由 agent 自行决定）。
 func (a *App) mergeConfigModels(v chat.ModelsView) chat.ModelsView {
 	cfg := a.snapshot().Config.Model
 	if !cfg.Enabled || len(cfg.Platforms) == 0 {
@@ -567,9 +568,6 @@ func (a *App) mergeConfigModels(v chat.ModelsView) chat.ModelsView {
 		for _, name := range cfg.Platforms[0].Models {
 			name = strings.TrimSpace(name)
 			add(name, name)
-		}
-		if v.Current == "" {
-			v.Current = cfg.ActiveModel
 		}
 		return v
 	}
@@ -593,19 +591,6 @@ func (a *App) mergeConfigModels(v chat.ModelsView) chat.ModelsView {
 		for _, name := range p.Models {
 			name = strings.TrimSpace(name)
 			add("kshell:"+p.ID+":"+name, p.Name+": "+name)
-		}
-	}
-	// Current 空时回落：ActiveModel 能对应到某平台模型则取该条目的前缀 ID。
-	// 按默认平台优先的全体平台顺序搜索（不止默认平台）：ActiveModel 可能是
-	// 上一次会话内跨平台切换留下的、属于非默认平台的模型名。
-	if v.Current == "" && cfg.ActiveModel != "" {
-		for _, p := range ordered {
-			for _, name := range p.Models {
-				if strings.TrimSpace(name) == cfg.ActiveModel {
-					v.Current = "kshell:" + p.ID + ":" + cfg.ActiveModel
-					return v
-				}
-			}
 		}
 	}
 	return v

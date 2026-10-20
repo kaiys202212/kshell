@@ -119,7 +119,8 @@ func TestListChatModelsMergesConfigModels(t *testing.T) {
 	}
 }
 
-// agent 无模型视图但 kshell 有配置时，仍应返回 kshell 列表（Current=ActiveModel）。
+// agent 无模型视图但 kshell 有配置时，仍应返回 kshell 列表；
+// Current 保持空（当前模型以 agent 上报为准，不再回落 ActiveModel）。
 func TestListChatModelsAgentEmptyStillListsConfig(t *testing.T) {
 	env := newChatTestApp(t, &providers.ACPDetection{
 		Available: true, Source: "path", BinPath: "claude-agent-acp",
@@ -144,8 +145,8 @@ func TestListChatModelsAgentEmptyStillListsConfig(t *testing.T) {
 	if len(v.Models) != 1 || v.Models[0].ID != "glm-5.3-flash" {
 		t.Fatalf("应回 kshell 配置模型: %+v", v)
 	}
-	if v.Current != "glm-5.3-flash" {
-		t.Fatalf("Current 应为 ActiveModel: %+v", v)
+	if v.Current != "" {
+		t.Fatalf("agent 未上报时 Current 应保持空: %+v", v)
 	}
 }
 
@@ -310,7 +311,7 @@ func openChatEnv(t *testing.T, conn *fakeChatConn) (*chatTestEnv, string) {
 	return env, opened.Chat.ID
 }
 
-// 单平台：保持现状裸名行为（ID=Name=model），Current 空时回落 ActiveModel。
+// 单平台：保持现状裸名行为（ID=Name=model），Current 不回落（agent 上报为准）。
 func TestMergeConfigModelsSinglePlatformBareNames(t *testing.T) {
 	env, id := openChatEnv(t, nil)
 	env.app.mu.Lock()
@@ -325,8 +326,8 @@ func TestMergeConfigModelsSinglePlatformBareNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListChatModels: %v", err)
 	}
-	if v.Current != "m2" {
-		t.Fatalf("Current 应回落 ActiveModel: %+v", v)
+	if v.Current != "" {
+		t.Fatalf("agent 未上报时 Current 应保持空: %+v", v)
 	}
 	if len(v.Models) != 2 || v.Models[0].ID != "m1" || v.Models[0].Name != "m1" ||
 		v.Models[1].ID != "m2" || v.Models[1].Name != "m2" {
@@ -335,7 +336,7 @@ func TestMergeConfigModelsSinglePlatformBareNames(t *testing.T) {
 }
 
 // 多平台：前缀 ID/Name、默认平台排最前、其余按列表顺序；
-// Current 空时回落 ActiveModel 对应条目的前缀 ID（优先默认平台）。
+// Current 不回落（agent 上报为准），ActiveModel 不影响 Current。
 func TestMergeConfigModelsMultiPlatformPrefixed(t *testing.T) {
 	platforms := []config.ModelPlatform{
 		{ID: "p1", Name: "Alpha", Models: []string{"a1", "a2"}},
@@ -347,23 +348,15 @@ func TestMergeConfigModelsMultiPlatformPrefixed(t *testing.T) {
 		active    string
 		wantIDs   []string
 		wantNames map[string]string
-		wantCur   string
 	}{
 		{
-			name: "默认平台排最前且回落默认平台模型", defPlat: "p2", active: "b1",
+			name: "默认平台排最前", defPlat: "p2", active: "b1",
 			wantIDs:   []string{"kshell:p2:b1", "kshell:p2:b2", "kshell:p1:a1", "kshell:p1:a2"},
 			wantNames: map[string]string{"kshell:p2:b1": "Beta: b1", "kshell:p1:a1": "Alpha: a1"},
-			wantCur:   "kshell:p2:b1",
 		},
 		{
-			name: "ActiveModel命中非默认平台", defPlat: "p2", active: "a1",
+			name: "ActiveModel不影响Current", defPlat: "p2", active: "a1",
 			wantIDs: []string{"kshell:p2:b1", "kshell:p2:b2", "kshell:p1:a1", "kshell:p1:a2"},
-			wantCur: "kshell:p1:a1",
-		},
-		{
-			name: "ActiveModel无对应模型时Current保持空", defPlat: "p2", active: "zz",
-			wantIDs: []string{"kshell:p2:b1", "kshell:p2:b2", "kshell:p1:a1", "kshell:p1:a2"},
-			wantCur: "",
 		},
 	}
 	for _, tc := range cases {
@@ -399,8 +392,8 @@ func TestMergeConfigModelsMultiPlatformPrefixed(t *testing.T) {
 					t.Fatalf("%s Name = %q, want %q", mo.ID, mo.Name, want)
 				}
 			}
-			if v.Current != tc.wantCur {
-				t.Fatalf("Current = %q, want %q", v.Current, tc.wantCur)
+			if v.Current != "" {
+				t.Fatalf("agent 未上报时 Current 应保持空，got %q", v.Current)
 			}
 		})
 	}

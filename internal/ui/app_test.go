@@ -35,13 +35,13 @@ func TestViewNamesMatchViewCount(t *testing.T) {
 
 // TestModelOptionsPlatformInjection 覆盖 TUI 侧模型注入的平台语义：
 // 端点与密钥取默认平台（DefaultPlatform 命中，否则第一个），
-// 模型名用默认模型 ActiveModel；无平台或未启用时不注入。
+// 不注入模型名（默认模型由 agent 自行决定）；无平台或未启用时不注入。
 func TestModelOptionsPlatformInjection(t *testing.T) {
 	newWithModel := func(mc config.ModelConfig) Model {
 		return NewModelWith(Options{Config: config.Config{MaxDepth: 10, Model: mc}})
 	}
 
-	// DefaultPlatform 命中：注入该平台端点与密钥，模型取 ActiveModel。
+	// DefaultPlatform 命中：注入该平台端点与密钥，ActiveModel 不注入。
 	m := newWithModel(config.ModelConfig{
 		Enabled:         true,
 		DefaultPlatform: "p1",
@@ -52,7 +52,7 @@ func TestModelOptionsPlatformInjection(t *testing.T) {
 		},
 	})
 	mc, ok := m.modelOptions().Resolver("claude")
-	if !ok || mc.Model != "glm-5" || mc.OpenAIBaseURL != "https://oai/" || mc.AnthropicBaseURL != "https://ant/" || mc.APIKey != "k" {
+	if !ok || mc.Model != "" || mc.OpenAIBaseURL != "https://oai/" || mc.AnthropicBaseURL != "https://ant/" || mc.APIKey != "k" {
 		t.Fatalf("resolver(claude) = %+v ok=%v", mc, ok)
 	}
 

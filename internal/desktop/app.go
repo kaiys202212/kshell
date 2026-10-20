@@ -2,7 +2,6 @@ package desktop
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -712,73 +711,9 @@ func (a *App) themeOptions() launch.ThemeOptions {
 	}
 }
 
-// codebuddySettingsPath 返回用户级 codebuddy settings.json 路径；测试注入 home 为空串时返回空串。
-func codebuddySettingsPath(home string) string {
-	if home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".codebuddy", "settings.json")
-}
-
-// codebuddyLastModel 读取 codebuddy 记住的上次模型选择（settings.json 的 model 字段）。
-// 读取失败或值为空时返回空串，调用方回落到 kshell 自己的 ActiveModel。
-func codebuddyLastModel(home string) string {
-	path := codebuddySettingsPath(home)
-	if path == "" {
-		return ""
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var m struct {
-		Model string `json:"model"`
-	}
-	if err := json.Unmarshal(b, &m); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(m.Model)
-}
-
-// cursorConfigPath 返回用户级 cursor CLI 配置路径；home 为空串时返回空串。
-func cursorConfigPath(home string) string {
-	if home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".cursor", "cli-config.json")
-}
-
-// cursorLastModel 读取 cursor CLI 记住的上次模型选择（cli-config.json 的
-// selectedModel.modelId）。"default"（=Auto，跟随内置默认）与读取失败/为空
-// 都返回空串，调用方回落到 kshell 自己的 ActiveModel。
-func cursorLastModel(home string) string {
-	path := cursorConfigPath(home)
-	if path == "" {
-		return ""
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var m struct {
-		SelectedModel struct {
-			ModelID string `json:"modelId"`
-		} `json:"selectedModel"`
-	}
-	if err := json.Unmarshal(b, &m); err != nil {
-		return ""
-	}
-	id := strings.TrimSpace(m.SelectedModel.ModelID)
-	if id == "" || id == "default" {
-		return ""
-	}
-	return id
-}
-
 // modelOptions 组装模型注入 resolver：未启用或无可用平台时返回空（不注入）。
-// 端点与密钥取默认平台（DefaultPlatform 命中，否则第一个）。
-// codebuddy/cursor 优先沿用各自 CLI 记住的上次选择（用户在面板切过的模型），
-// 没有记录时回落 kshell 设置页的 ActiveModel；其他工具始终用 ActiveModel。
+// 只注入端点与密钥（取默认平台，DefaultPlatform 命中否则第一个），不注入模型名——
+// 默认模型由 agent 自行决定；settings 配置的模型仅经聊天下拉提供切换。
 func (a *App) modelOptions() launch.ModelOptions {
 	m := a.snapshot().Config.Model
 	if !m.Enabled {
@@ -788,23 +723,11 @@ func (a *App) modelOptions() launch.ModelOptions {
 	if !ok {
 		return launch.ModelOptions{}
 	}
-	return launch.ModelOptions{Resolver: func(toolID string) (providers.ModelConfig, bool) {
-		model := m.ActiveModel
-		switch toolID {
-		case "codebuddy":
-			if last := codebuddyLastModel(a.opts.Home); last != "" {
-				model = last
-			}
-		case "cursor":
-			if last := cursorLastModel(a.opts.Home); last != "" {
-				model = last
-			}
-		}
+	return launch.ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
 		return providers.ModelConfig{
 			OpenAIBaseURL:    p.OpenAIBaseURL,
 			AnthropicBaseURL: p.AnthropicBaseURL,
 			APIKey:           p.APIKey,
-			Model:            model,
 		}, true
 	}}
 }

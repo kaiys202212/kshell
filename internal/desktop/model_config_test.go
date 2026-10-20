@@ -1,7 +1,6 @@
 package desktop
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -331,7 +330,8 @@ func TestModelOptionsUsesActivePlatform(t *testing.T) {
 	mo := app.modelOptions()
 	for _, toolID := range []string{"claude", "codex", "anything"} {
 		mc, ok := mo.Resolver(toolID)
-		if !ok || mc.Model != "glm-5" || mc.OpenAIBaseURL != "https://oai/" || mc.AnthropicBaseURL != "https://ant/" || mc.APIKey != "k" {
+		// ActiveModel 不再注入给 agent（默认模型由 agent 自行决定），仅注入端点与密钥。
+		if !ok || mc.Model != "" || mc.OpenAIBaseURL != "https://oai/" || mc.AnthropicBaseURL != "https://ant/" || mc.APIKey != "k" {
 			t.Fatalf("resolver(%s) = %+v ok=%v", toolID, mc, ok)
 		}
 	}
@@ -366,136 +366,8 @@ func TestModelOptionsDefaultPlatformFallback(t *testing.T) {
 	app.mu.Unlock()
 
 	mc, ok := app.modelOptions().Resolver("claude")
-	if !ok || mc.Model != "glm-5" || mc.OpenAIBaseURL != "https://oai1/" || mc.APIKey != "k1" {
-		t.Fatalf("应回落第一个平台: %+v ok=%v", mc, ok)
-	}
-}
-
-// writeCodebuddySettings 在 t.TempDir 下造一个 ~/.codebuddy/settings.json。
-func writeCodebuddySettings(t *testing.T, model string) string {
-	t.Helper()
-	home := t.TempDir()
-	dir := filepath.Join(home, ".codebuddy")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	content := `{"model":"` + model + `"}`
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return home
-}
-
-func TestModelOptionsCodebuddyPrefersLastModel(t *testing.T) {
-	app, _ := newModelApp(t)
-	app.mu.Lock()
-	app.opts.Home = writeCodebuddySettings(t, "custom-local:deepseek-v4.1-flash")
-	app.opts.Config.Model = config.ModelConfig{
-		Enabled:   true,
-		Platforms: []config.ModelPlatform{{ID: "p1", OpenAIBaseURL: "https://oai/", APIKey: "k"}},
-		ActiveModel: "glm-5",
-	}
-	app.mu.Unlock()
-
-	mo := app.modelOptions()
-	// codebuddy：沿用记住的上次选择
-	mc, ok := mo.Resolver("codebuddy")
-	if !ok || mc.Model != "custom-local:deepseek-v4.1-flash" || mc.OpenAIBaseURL != "https://oai/" || mc.APIKey != "k" {
-		t.Fatalf("resolver(codebuddy) = %+v ok=%v", mc, ok)
-	}
-	// 其他工具：仍用 ActiveModel
-	mc, ok = mo.Resolver("claude")
-	if !ok || mc.Model != "glm-5" {
-		t.Fatalf("resolver(claude) = %+v ok=%v", mc, ok)
-	}
-	// codebuddy 无记录：回落 ActiveModel
-	app.mu.Lock()
-	app.opts.Home = t.TempDir()
-	app.mu.Unlock()
-	mc, ok = mo.Resolver("codebuddy")
-	if !ok || mc.Model != "glm-5" {
-		t.Fatalf("resolver(codebuddy, no record) = %+v ok=%v", mc, ok)
-	}
-}
-
-// writeCursorConfig 在 t.TempDir 下造一个 ~/.cursor/cli-config.json。
-func writeCursorConfig(t *testing.T, modelID string) string {
-	t.Helper()
-	home := t.TempDir()
-	dir := filepath.Join(home, ".cursor")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	content := `{"selectedModel":{"modelId":"` + modelID + `"}}`
-	if err := os.WriteFile(filepath.Join(dir, "cli-config.json"), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return home
-}
-
-func TestCursorLastModel(t *testing.T) {
-	// 有记录：返回该值
-	home := writeCursorConfig(t, "grok-4.6")
-	if got := cursorLastModel(home); got != "grok-4.6" {
-		t.Fatalf("cursorLastModel = %q", got)
-	}
-	// "default"（Auto）：返回空串（回落 ActiveModel）
-	home = writeCursorConfig(t, "default")
-	if got := cursorLastModel(home); got != "" {
-		t.Fatalf("default model: got %q", got)
-	}
-	// modelId 为空：空串
-	home = writeCursorConfig(t, "")
-	if got := cursorLastModel(home); got != "" {
-		t.Fatalf("empty modelId: got %q", got)
-	}
-	// 无 cli-config.json：空串
-	if got := cursorLastModel(t.TempDir()); got != "" {
-		t.Fatalf("missing file: got %q", got)
-	}
-	// JSON 非法：空串
-	home = t.TempDir()
-	dir := filepath.Join(home, ".cursor")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "cli-config.json"), []byte("{bad"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := cursorLastModel(home); got != "" {
-		t.Fatalf("bad json: got %q", got)
-	}
-}
-
-func TestModelOptionsCursorPrefersLastModel(t *testing.T) {
-	app, _ := newModelApp(t)
-	app.mu.Lock()
-	app.opts.Home = writeCursorConfig(t, "grok-4.7")
-	app.opts.Config.Model = config.ModelConfig{
-		Enabled:   true,
-		Platforms: []config.ModelPlatform{{ID: "p1", OpenAIBaseURL: "https://oai/", APIKey: "k"}},
-		ActiveModel: "glm-5",
-	}
-	app.mu.Unlock()
-
-	mo := app.modelOptions()
-	// cursor：沿用记住的上次选择
-	mc, ok := mo.Resolver("cursor")
-	if !ok || mc.Model != "grok-4.7" || mc.OpenAIBaseURL != "https://oai/" || mc.APIKey != "k" {
-		t.Fatalf("resolver(cursor) = %+v ok=%v", mc, ok)
-	}
-	// 其他工具：仍用 ActiveModel
-	mc, ok = mo.Resolver("codebuddy")
-	if !ok || mc.Model != "glm-5" {
-		t.Fatalf("resolver(codebuddy) = %+v ok=%v", mc, ok)
-	}
-	// cursor 记录为 default（Auto）：回落 ActiveModel
-	app.mu.Lock()
-	app.opts.Home = writeCursorConfig(t, "default")
-	app.mu.Unlock()
-	mc, ok = mo.Resolver("cursor")
-	if !ok || mc.Model != "glm-5" {
-		t.Fatalf("resolver(cursor, default) = %+v ok=%v", mc, ok)
+	if !ok || mc.Model != "" || mc.OpenAIBaseURL != "https://oai1/" || mc.APIKey != "k1" {
+		t.Fatalf("应回落第一个平台且不带模型名: %+v ok=%v", mc, ok)
 	}
 }
 
