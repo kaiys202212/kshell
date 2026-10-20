@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -167,6 +168,63 @@ func (c *Client) PollQRCodeStatus(ctx context.Context, qrcodeKey string) (QRStat
 	return QRStatus{BotToken: out.BotToken, BaseURL: out.BaseURL, Scanned: out.BotToken != ""}, nil
 }
 
+// flexID 是 iLink 的消息 ID 字段：线上常以 JSON number（uint64）出现，
+// 超过 float64 精确整数范围；自定义解码保留十进制原文，避免精度丢失。
+// 同时接受字符串形态。对齐 openclaw-weixin 的 LOSSLESS_ID_FIELDS 处理。
+type flexID string
+
+func (id *flexID) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 || string(b) == "null" {
+		*id = ""
+		return nil
+	}
+	if b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		*id = flexID(s)
+		return nil
+	}
+	// 数字：原样保留十进制文本（含超大 uint64）。
+	*id = flexID(b)
+	return nil
+}
+
+// wireRefMsg 对齐 openclaw-weixin RefMessage：官方挂在 MessageItem.ref_msg；
+// 摘要字段是 title（非 text）；svr_id 可能是 JSON number。
+type wireRefMsg struct {
+	SvrID flexID `json:"svr_id"`
+	Title string `json:"title"`
+	Text  string `json:"text"` // 兼容旧/测试载荷
+	MessageItem *struct {
+		TextItem struct {
+			Text string `json:"text"`
+		} `json:"text_item"`
+	} `json:"message_item"`
+}
+
+// parseWireRef 把协议 RefMessage 压成桥层 RefMsg：Text 优先 title，
+// 再 text，再嵌套 message_item 正文（供【标题栏】兜底匹配）。
+func parseWireRef(r *wireRefMsg) *RefMsg {
+	if r == nil {
+		return nil
+	}
+	text := strings.TrimSpace(r.Title)
+	if text == "" {
+		text = strings.TrimSpace(r.Text)
+	}
+	if text == "" && r.MessageItem != nil {
+		text = strings.TrimSpace(r.MessageItem.TextItem.Text)
+	}
+	id := string(r.SvrID)
+	if id == "" && text == "" {
+		return nil
+	}
+	return &RefMsg{SvrID: id, Text: text}
+}
+
 // GetUpdates 长轮询收消息，返回入站消息与新游标。bot 自发消息（message_type==2）已过滤。
 // 附件（图片 type 2 / 文件 type 4）解析进 Attachments；语音的 ASR 转写
 //（voice_item.text）非空时作为文本透传。
@@ -183,15 +241,11 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 			FromUserID   string `json:"from_user_id"`
 			ContextToken string `json:"context_token"`
 			CreateMs     int64  `json:"create_time_ms"`
-			// RefMsg 是引用回复的被引用消息（用户对 bot 出站消息长按引用时
-			// 携带）。字段名按参考实现（openclaw-weixin / wechatbot-go），
-			// 真机联调不符时先抓 [weixin] 日志核对此 tag。
-			RefMsg struct {
-				SvrID string `json:"svr_id"`
-				Text  string `json:"text"`
-			} `json:"ref_msg"`
-			ItemList     []struct {
-				Type     int `json:"type"`
+			// 根级 ref_msg：早期拆解/测试载荷；真机以 item 级为准。
+			RefMsg   wireRefMsg `json:"ref_msg"`
+			ItemList []struct {
+				Type   int        `json:"type"`
+				RefMsg wireRefMsg `json:"ref_msg"`
 				TextItem struct {
 					Text string `json:"text"`
 				} `json:"text_item"`
@@ -223,8 +277,23 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 			continue
 		}
 		im := InboundMsg{FromUserID: m.FromUserID, ContextToken: m.ContextToken, CreateMs: m.CreateMs}
-		if m.RefMsg.SvrID != "" || m.RefMsg.Text != "" {
-			im.Ref = &RefMsg{SvrID: m.RefMsg.SvrID, Text: m.RefMsg.Text}
+		// 官方：ref_msg 在 item_list 项上；根级仅作兼容兜底。
+		var picked *wireRefMsg
+		for i := range m.ItemList {
+			r := &m.ItemList[i].RefMsg
+			if string(r.SvrID) != "" || r.Title != "" || r.Text != "" || r.MessageItem != nil {
+				picked = r
+				break
+			}
+		}
+		if picked == nil {
+			r := &m.RefMsg
+			if string(r.SvrID) != "" || r.Title != "" || r.Text != "" || r.MessageItem != nil {
+				picked = r
+			}
+		}
+		if picked != nil {
+			im.Ref = parseWireRef(picked)
 		}
 		for _, item := range m.ItemList {
 			switch item.Type {
@@ -266,8 +335,8 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 }
 
 // SendMessage 回复文本消息；client_id 内部生成，from_user_id 恒为空。
-// 返回响应里的服务端消息 ID（svr_id）：桥层缓存「svr_id → 会话」供引用回复
-// 归因；响应未携带时返回空串（字段名真机未验证，拿不到即降级标题匹配）。
+// 返回服务端消息 ID：官方字段为 message_id（uint64）；兼容旧 svr_id。
+// 桥层缓存「ID → 会话」供引用回复归因；均缺失时返回空串（降级标题匹配）。
 func (c *Client) SendMessage(ctx context.Context, toUserID, contextToken, text string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeoutSendMessage)
 	defer cancel()
@@ -286,12 +355,16 @@ func (c *Client) SendMessage(ctx context.Context, toUserID, contextToken, text s
 		"base_info": baseInfo{ChannelVersion: channelVersion},
 	}
 	var out struct {
-		SvrID string `json:"svr_id"`
+		MessageID flexID `json:"message_id"`
+		SvrID     flexID `json:"svr_id"`
 	}
 	if err := c.post(ctx, "/ilink/bot/sendmessage", body, &out); err != nil {
 		return "", err
 	}
-	return out.SvrID, nil
+	if id := string(out.MessageID); id != "" {
+		return id, nil
+	}
+	return string(out.SvrID), nil
 }
 
 // SendTyping 发送/取消输入状态（1=输入中 2=取消）。内部先 getconfig 换取 typing_ticket。

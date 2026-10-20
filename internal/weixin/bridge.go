@@ -86,9 +86,10 @@ type Bridge struct {
 	pending     []pendingMsg // -14 时缓存的待发
 	undelivered int          // 发送失败计数（#st 用）
 	queue       []queuedFile // 待转交附件（等下一条可转发文字合并投递）
-	// svrMap 是「出站消息 svr_id → chatID」的引用归因映射（rememberSvrID
-	// 写，resolveQuote 读）。内存态不落盘：引用回复通常紧跟原消息，跨重启
-	// 的旧引用靠【会话名】标题匹配兜底。svrOrder 记录插入序，超上限丢最旧。
+	// svrMap 是「出站消息 ID（message_id）→ chatID」的引用归因映射
+	//（rememberSvrID 写，resolveQuote 读）。内存态不落盘：引用回复通常紧跟
+	// 原消息，跨重启的旧引用靠【标题栏】匹配兜底。svrOrder 记录插入序，
+	// 超上限丢最旧。
 	svrMap   map[string]string
 	svrOrder []string
 
@@ -673,8 +674,10 @@ func (b *Bridge) rememberSvrID(svrID, chatID string) {
 	}
 }
 
-// resolveQuote 按引用归因出目标 chatID：svr_id 精确映射优先，【会话名】
-// 标题匹配兜底；都不命中返回空串（调用方回落当前会话）。
+// resolveQuote 按引用归因出目标 chatID：消息 ID 精确映射优先，标题栏
+// 匹配兜底；都不命中返回空串（调用方回落当前会话）。
+// 标题栏优先匹配与出站 titleBar 同构的「项目 · 工具 · 会话」全文，再回落
+// 纯会话标题（ack【会话名】形态）。
 func (b *Bridge) resolveQuote(ref *RefMsg) string {
 	if ref == nil {
 		return ""
@@ -689,12 +692,50 @@ func (b *Bridge) resolveQuote(ref *RefMsg) string {
 	if title == "" {
 		return ""
 	}
+	var titleOnly string
 	for _, s := range b.ex.ListSessions() {
-		if s.Title == title && s.ChatID != "" {
+		if s.ChatID == "" {
+			continue
+		}
+		if b.sessionBarInner(s) == title {
 			return s.ChatID
 		}
+		if s.Title == title && titleOnly == "" {
+			titleOnly = s.ChatID
+		}
 	}
-	return ""
+	return titleOnly
+}
+
+// sessionBarInner 组装与 titleBar 同构的栏内文案（无【】包裹），供引用
+// 标题兜底比对。工具展示名优先 SessionRef.ToolName，再查注入的 toolName，
+// 最后回落 Tool ID。
+func (b *Bridge) sessionBarInner(s hub.SessionRef) string {
+	var parts []string
+	if s.Workspace != "" {
+		parts = append(parts, filepath.Base(s.Workspace))
+	}
+	if s.Tool != "" || s.ToolName != "" {
+		name := s.ToolName
+		if name == "" {
+			b.mu.Lock()
+			fn := b.toolName
+			b.mu.Unlock()
+			if fn != nil {
+				name = fn(s.Tool)
+			}
+		}
+		if name == "" {
+			name = s.Tool
+		}
+		if name != "" {
+			parts = append(parts, name)
+		}
+	}
+	if s.Title != "" {
+		parts = append(parts, s.Title)
+	}
+	return strings.Join(parts, " · ")
 }
 
 // quoteTitle 从引用文本里提取出站的【会话名】前缀；无前缀返回空串。

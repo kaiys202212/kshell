@@ -293,6 +293,45 @@ func TestGetUpdatesRefMsgPartial(t *testing.T) {
 	}
 }
 
+func TestGetUpdatesRefMsgOnItem(t *testing.T) {
+	// 官方 openclaw：ref_msg 在 item_list 项上；title 为摘要；svr_id 可为数字。
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{
+			"msgs":[
+				{"message_type":1,"from_user_id":"u1","context_token":"ct1",
+				 "item_list":[{
+				   "type":1,
+				   "text_item":{"text":"继续修"},
+				   "ref_msg":{
+				     "svr_id":18446744073709551615,
+				     "title":"【proj · Claude Code · 会话A】旧回复开头"
+				   }
+				 }]}
+			],
+			"get_updates_buf":"cursor-item-ref"
+		}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok-1", srv.URL)
+	msgs, _, err := c.GetUpdates(context.Background(), "")
+	if err != nil {
+		t.Fatalf("GetUpdates: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Ref == nil {
+		t.Fatalf("应解析出 item 级 Ref: %+v", msgs)
+	}
+	if msgs[0].Ref.SvrID != "18446744073709551615" {
+		t.Errorf("Ref.SvrID = %q", msgs[0].Ref.SvrID)
+	}
+	if msgs[0].Ref.Text != "【proj · Claude Code · 会话A】旧回复开头" {
+		t.Errorf("Ref.Text = %q, 期望 title 摘要", msgs[0].Ref.Text)
+	}
+	if msgs[0].Text != "继续修" {
+		t.Errorf("入站正文 = %q", msgs[0].Text)
+	}
+}
+
 func TestSendMessage(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -345,34 +384,63 @@ func TestSendMessage(t *testing.T) {
 }
 
 func TestClientSendMessageSvrID(t *testing.T) {
-	// sendmessage 响应携带服务端消息 ID（svr_id）：引用回复归因的依据。
-	// 字段名按参考实现；真机不符时这里先挂，改 tag 即可。
-	t.Run("响应含 svr_id", func(t *testing.T) {
+	// sendmessage 官方回执字段是 message_id（uint64）；旧实现误读 svr_id。
+	// openclaw-weixin 对 message_id/msg_id/svr_id 做无损字符串化，避免 JSON
+	// number 精度丢失（>2^53）。
+	t.Run("响应含 message_id 字符串", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, `{"message_id":"9001"}`)
+		}))
+		defer srv.Close()
+		c := NewClient("tok-1", srv.URL)
+		id, err := c.SendMessage(context.Background(), "u9", "ct9", "回复内容")
+		if err != nil {
+			t.Fatalf("SendMessage: %v", err)
+		}
+		if id != "9001" {
+			t.Errorf("id = %q, 期望 9001", id)
+		}
+	})
+	t.Run("响应含 message_id 数字无损", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, `{"message_id":18446744073709551615}`)
+		}))
+		defer srv.Close()
+		c := NewClient("tok-1", srv.URL)
+		id, err := c.SendMessage(context.Background(), "u9", "ct9", "回复内容")
+		if err != nil {
+			t.Fatalf("SendMessage: %v", err)
+		}
+		if id != "18446744073709551615" {
+			t.Errorf("id = %q, 期望无损 uint64 字符串", id)
+		}
+	})
+	t.Run("兼容旧 svr_id 字段", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			io.WriteString(w, `{"svr_id":"18446744073709551615"}`)
 		}))
 		defer srv.Close()
 		c := NewClient("tok-1", srv.URL)
-		svrID, err := c.SendMessage(context.Background(), "u9", "ct9", "回复内容")
+		id, err := c.SendMessage(context.Background(), "u9", "ct9", "回复内容")
 		if err != nil {
 			t.Fatalf("SendMessage: %v", err)
 		}
-		if svrID != "18446744073709551615" {
-			t.Errorf("svrID = %q", svrID)
+		if id != "18446744073709551615" {
+			t.Errorf("id = %q", id)
 		}
 	})
-	t.Run("响应无 svr_id 返回空串", func(t *testing.T) {
+	t.Run("响应无 ID 返回空串", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			io.WriteString(w, `{}`)
 		}))
 		defer srv.Close()
 		c := NewClient("tok-1", srv.URL)
-		svrID, err := c.SendMessage(context.Background(), "u9", "ct9", "回复内容")
+		id, err := c.SendMessage(context.Background(), "u9", "ct9", "回复内容")
 		if err != nil {
 			t.Fatalf("SendMessage: %v", err)
 		}
-		if svrID != "" {
-			t.Errorf("svrID = %q, 期望空串", svrID)
+		if id != "" {
+			t.Errorf("id = %q, 期望空串", id)
 		}
 	})
 }

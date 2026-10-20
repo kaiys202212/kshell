@@ -733,7 +733,7 @@ func sendText(t *testing.T, body map[string]any) string {
 
 func TestBridgeRememberSvrID(t *testing.T) {
 	t.Run("出站成功记录映射", func(t *testing.T) {
-		rc := &recorder{sendResp: func(int) (int, string) { return 200, `{"svr_id":"9001"}` }}
+		rc := &recorder{sendResp: func(int) (int, string) { return 200, `{"message_id":"9001"}` }}
 		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 		b := newBridge(t, "u1", ex, rc.handler(t))
 		b.HandleInbound("u1", "ct-1", "你好") // 入站确认（无 chatID，不记录）
@@ -746,7 +746,7 @@ func TestBridgeRememberSvrID(t *testing.T) {
 			t.Fatalf("svrMap[9001] = %q, 期望 c1", got)
 		}
 	})
-	t.Run("响应无 svr_id 不记录不报错", func(t *testing.T) {
+	t.Run("响应无 message_id 不记录不报错", func(t *testing.T) {
 		rc := &recorder{}
 		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 		b := newBridge(t, "u1", ex, rc.handler(t))
@@ -795,7 +795,8 @@ func TestQuoteTitle(t *testing.T) {
 
 func TestBridgeResolveQuote(t *testing.T) {
 	ex := &fakeExec{sessions: []hub.SessionRef{
-		{ChatID: "c1", Title: "会话A"},
+		{ChatID: "c1", Title: "会话A", Workspace: `D:\ws\proj`, Tool: "claude", ToolName: "Claude Code"},
+		{ChatID: "c2", Title: "会话B", Workspace: `D:\ws\other`, Tool: "codex"},
 		{ChatID: "", SessionID: "s2", Title: "未激活会话"}, // 未激活：ChatID 空，标题匹配应跳过
 	}}
 	rc := &recorder{}
@@ -807,9 +808,23 @@ func TestBridgeResolveQuote(t *testing.T) {
 			t.Errorf("resolveQuote = %q, 期望 c1（svr_id 优先）", got)
 		}
 	})
-	t.Run("标题兜底命中", func(t *testing.T) {
+	t.Run("纯会话标题兜底命中", func(t *testing.T) {
 		if got := b.resolveQuote(&RefMsg{SvrID: "unknown", Text: "【会话A】回复正文"}); got != "c1" {
 			t.Errorf("resolveQuote = %q, 期望 c1（标题匹配）", got)
+		}
+	})
+	t.Run("复合标题栏兜底命中", func(t *testing.T) {
+		// 与 DeliverHubMessage titleBar 同构：项目 · 工具展示名 · 会话
+		text := "【proj · Claude Code · 会话A】旧回复正文"
+		if got := b.resolveQuote(&RefMsg{SvrID: "unknown", Text: text}); got != "c1" {
+			t.Errorf("resolveQuote = %q, 期望 c1（复合栏匹配）", got)
+		}
+	})
+	t.Run("复合栏优先于同名纯标题歧义", func(t *testing.T) {
+		// c2 的复合栏应精确命中，即使另一会话 Title 碰巧含相似片段也不串。
+		text := "【other · codex · 会话B】x"
+		if got := b.resolveQuote(&RefMsg{SvrID: "x", Text: text}); got != "c2" {
+			t.Errorf("resolveQuote = %q, 期望 c2", got)
 		}
 	})
 	t.Run("未激活会话不参与标题匹配", func(t *testing.T) {
@@ -871,6 +886,23 @@ func TestBridgeQuoteReplyRouting(t *testing.T) {
 		}
 		if len(ex.switchCalls) != 1 || ex.switchCalls[0] != "c2" {
 			t.Errorf("应切换到 c2: %v", ex.switchCalls)
+		}
+	})
+
+	t.Run("复合标题栏兜底投递", func(t *testing.T) {
+		rich := []hub.SessionRef{
+			{ChatID: "c1", Title: "会话A", Workspace: `D:\ws\proj`, Tool: "claude", ToolName: "Claude Code"},
+			{ChatID: "c2", Title: "会话B", Workspace: `D:\ws\b`, Tool: "codex"},
+		}
+		ex := &fakeExec{sessions: rich, hasCur: true, current: hub.SessionRef{ChatID: "c2", Title: "会话B"}}
+		b := newBridge(t, "u1", ex, (&recorder{}).handler(t))
+		quote := "【proj · Claude Code · 会话A】旧回复"
+		b.HandleInboundMsg(context.Background(), quoteMsg("ct-1", "unknown", quote, "继续这个"))
+		if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "继续这个" {
+			t.Fatalf("复合栏应投给 c1: %v", ex.sentTexts)
+		}
+		if len(ex.switchCalls) != 1 || ex.switchCalls[0] != "c1" {
+			t.Errorf("应切换到 c1: %v", ex.switchCalls)
 		}
 	})
 

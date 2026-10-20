@@ -38,13 +38,14 @@ type InboundAttachment struct {
 }
 
 // RefMsg 是引用回复携带的被引用消息信息。用户在微信里对 bot 出站消息
-// 「引用回复」时，iLink 在 getupdates 载荷附上 ref_msg。
+// 「引用回复」时，iLink 在 getupdates 的 item_list[].ref_msg 附上引用
+//（偶见根级 ref_msg，解析层两边都收）。
 type RefMsg struct {
-	// SvrID 是被引用消息的服务端 ID（sendmessage 响应回执的 svr_id），
+	// SvrID 是被引用消息的服务端 ID（与 sendmessage 回执 message_id 同族），
 	// 桥层据此精确归因到出站时的会话。
 	SvrID string
-	// Text 是被引用消息的文本（引用纯媒体消息时可能为空或仅有
-	// partial_text 摘要；归因据此做【会话名】前缀匹配兜底）。
+	// Text 是被引用摘要：优先协议 title，再 text / 嵌套正文；归因据此做
+	// 【标题栏】前缀匹配兜底（出站为「项目 · 工具 · 会话」复合栏）。
 	Text string
 }
 
