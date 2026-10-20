@@ -48,6 +48,14 @@ func TestFetchAvailableModelsUsesFormValues(t *testing.T) {
 	if len(v.Errors) != 0 {
 		t.Fatalf("不应有错误: %v", v.Errors)
 	}
+	// Errors 无失败时也必须是非 nil 空数组：nil slice 会被 JSON 序列化成 null，
+	// 前端直接读 modelFetchErrors.length 会整页崩溃。
+	if v.Errors == nil {
+		t.Fatal("Errors 应为空数组而非 nil（JSON 序列化为 [] 而非 null）")
+	}
+	if b, _ := json.Marshal(v); strings.Contains(string(b), `"Errors":null`) {
+		t.Fatalf("Errors 不应序列化为 null: %s", b)
+	}
 	if strings.Join(v.Models, ",") != "m-a,m-b,m-c" {
 		t.Fatalf("合并去重排序失败: %#v", v.Models)
 	}

@@ -912,6 +912,24 @@ describe('Settings', () => {
     expect(screen.queryByText(tt('ui.settings.model.fetch_empty'))).not.toBeInTheDocument();
   });
 
+  it('拉取结果 Models/Errors 为 null 时不崩溃（旧后端 JSON null 兼容）', async () => {
+    // 模拟 Go nil slice 序列化出的 null：前端须兜底为空数组而非读 length 崩溃
+    mocks.fetchAvailableModels.mockResolvedValue({ Models: null, Errors: null });
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [platView({ Models: [] })],
+      DefaultPlatform: 'p1',
+      ActiveModel: '',
+    });
+    render(<Settings />);
+    goModel();
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.edit_platform') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.fetch_models') }));
+
+    // 拉取完成且显示空列表占位，页面未崩溃
+    expect(await screen.findByText(tt('ui.settings.model.fetch_empty'))).toBeInTheDocument();
+  });
+
   it('再次拉取会清空上一轮检索词', async () => {
     mocks.fetchAvailableModels.mockResolvedValue({ Models: ['qwen-max', 'gpt-4o'], Errors: [] });
     mocks.getModelConfig.mockResolvedValue({

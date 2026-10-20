@@ -94,6 +94,10 @@ func (a *App) FetchAvailableModels(platformID, openaiURL, anthropicURL, apiKey s
 	if models == nil {
 		out.Models = []string{}
 	}
+	// nil slice 会被 JSON 序列化成 null，前端读 length 会崩溃，统一兜底为空数组
+	if errs == nil {
+		out.Errors = []string{}
+	}
 	if len(errs) > 0 && len(models) == 0 {
 		return out, fmt.Errorf("err.model_fetch.all_failed")
 	}

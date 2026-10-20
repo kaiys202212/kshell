@@ -610,8 +610,8 @@ export default function Settings() {
         platDraft.AnthropicBaseURL.trim(),
         platDraft.APIKey,
       );
-      setModelFetched(v.Models);
-      setModelFetchErrors(v.Errors);
+      setModelFetched(v.Models ?? []);
+      setModelFetchErrors(v.Errors ?? []);
     } catch (e: unknown) {
       setModelFetched([]);
       setModelFetchErrors([backendError(e)]);
