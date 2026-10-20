@@ -1168,3 +1168,30 @@ func TestTerminalNoACPSettingsPayload(t *testing.T) {
 		t.Fatalf("终端路径不应产出 ACPSettingsJSON: %q", l.ACPSettingsJSON)
 	}
 }
+
+// ACPCapable 轻量能力判定：适配器可用或 cursor 官方直连可解析即 true。
+func TestACPCapable(t *testing.T) {
+	orig := cursorRootShimFn
+	origNode := nodeLookPathFn
+	origScript := cursorScriptResolveFn
+	t.Cleanup(func() { cursorRootShimFn = orig; nodeLookPathFn = origNode; cursorScriptResolveFn = origScript })
+	cursorRootShimFn = func() (string, bool) { return "C:/fake/cursor-agent.cmd", true }
+	nodeLookPathFn = func() (string, bool) { return "C:/fake/node.exe", true }
+	cursorScriptResolveFn = func(string) (string, bool) { return "C:/fake/versions/0.1/index.js", true }
+
+	cases := []struct {
+		name string
+		tool discovery.Tool
+		want bool
+	}{
+		{"适配器可用", discovery.Tool{ID: "claude", ACP: &providers.ACPDetection{Available: true}}, true},
+		{"适配器探测不可用", discovery.Tool{ID: "gemini", ACP: &providers.ACPDetection{Available: false}}, false},
+		{"无 ACP 探测", discovery.Tool{ID: "codex"}, false},
+		{"cursor 官方直连兜底", discovery.Tool{ID: "cursor"}, true},
+	}
+	for _, c := range cases {
+		if got := ACPCapable(c.tool); got != c.want {
+			t.Fatalf("%s: ACPCapable = %v, 想要 %v", c.name, got, c.want)
+		}
+	}
+}

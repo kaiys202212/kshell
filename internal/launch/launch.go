@@ -410,6 +410,20 @@ func cursorOfficialResolvable(tool discovery.Tool) bool {
 	return ok
 }
 
+// ACPCapable 报告工具当前是否具备 ACP 会话能力（轻量静态判定，不发进程）：
+// 适配器探测可用即 true；cursor 官方直连是适配器之外的额外路径，按 shim/node
+// 兜底能否解析判定。命令层列表过滤与激活预检用它；权威判定仍是
+// ForSessionACP（激活失败显性报错，双保险）。
+func ACPCapable(tool discovery.Tool) bool {
+	if tool.ACP != nil && tool.ACP.Available {
+		return true
+	}
+	if tool.ID == "cursor" {
+		return cursorOfficialResolvable(tool)
+	}
+	return false
+}
+
 // cursorNodeEntryFn 第二级兜底：根目录 shim 也被更新器删光时（只留
 // versions\<ver>\index.js 的极端窗口），用系统 node 直接跑最新版本的
 // index.js——官方更新器从不删版本目录内的 index.js 本体。测试可替换。
