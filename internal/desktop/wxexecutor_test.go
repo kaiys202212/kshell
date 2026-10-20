@@ -249,6 +249,53 @@ func TestHubSendClearsPendingPick(t *testing.T) {
 	}
 }
 
+// 待选建立 → 回数字：Console 经 wxExecutor.Send 走真实 SendChatPrompt。这是
+// 唯一让「Handle 持 c.mu」与「发送成功 → clearHubPendingPick」相遇的链路
+// （回归：inConsoleSend 标志缺失时此处 c.mu 不可重入死锁）。发送成功后暂存
+// 正文入 hub 历史、回复带 Sent 标记，且菜单已清——再回数字不再重复发送。
+func TestHubPickNumberSendDeliversPending(t *testing.T) {
+	app, _, _ := wxActiveApp(t)
+	if _, err := app.HubPickTarget("待发正文"); err != nil {
+		t.Fatalf("pick: %v", err)
+	}
+	replies, err := app.HubCommand("1")
+	if err != nil {
+		t.Fatalf("number: %v", err)
+	}
+	sent := false
+	for _, r := range replies {
+		// 测试 App 默认英文文案（sent_to = "Sent to: ..."），Sent 标记是稳定契约。
+		if r.Sent && strings.HasPrefix(r.Text, "Sent to") {
+			sent = true
+		}
+	}
+	if !sent {
+		t.Fatalf("回数字应发送暂存正文并标记 Sent: %+v", replies)
+	}
+	delivered := 0
+	for _, msg := range app.snapshot().HubStore.List() {
+		if msg.Kind == "user" && msg.Text == "待发正文" {
+			delivered++
+		}
+	}
+	if delivered != 1 {
+		t.Fatalf("暂存正文应恰好投递一次: %d", delivered)
+	}
+	// 菜单已清：再回数字只按最近列表切换，不得重复发送旧正文。
+	if _, err := app.HubCommand("1"); err != nil {
+		t.Fatalf("number again: %v", err)
+	}
+	delivered = 0
+	for _, msg := range app.snapshot().HubStore.List() {
+		if msg.Kind == "user" && msg.Text == "待发正文" {
+			delivered++
+		}
+	}
+	if delivered != 1 {
+		t.Fatalf("菜单已清后数字不得重复发送旧正文: %d", delivered)
+	}
+}
+
 // listLastID 取 manager 列表最后一条的 ID（ListChats 顺序同 manager.order）。
 func listLastID(m *chat.Manager) string {
 	l := m.List()

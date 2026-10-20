@@ -50,7 +50,8 @@ type Reply struct {
 type Console struct {
 	// mu 保护以下状态字段：微信轮询 goroutine（HandleInbound → Handle）与
 	// chat 回调/装配 goroutine（OpenPermissionMenu/SetCurrent）并发访问。
-	// Executor 调用期间持锁可接受：现有实现不回调 Console。
+	// Executor 调用期间持锁可接受：Executor 不得在回调里再进入 Console
+	//（桌面端 wxExecutor.Send 经 inConsoleSend 标志跳过 CancelPick 重入）。
 	mu sync.Mutex
 	ex Executor
 	// lang 是文案语言（"zh-CN" 中文，其余英文），创建后只读。

@@ -181,6 +181,11 @@ func (a *App) HubPickTarget(text string) (HubPickView, error) {
 // clearHubPendingPick 让桌面端 AgentHub 的待选菜单失效（不惰性创建 Console）。
 // 用户另行投递后，旧暂存正文不得再被后续纯数字选中发送。
 func (a *App) clearHubPendingPick() {
+	// Console 回调链路（wxExecutor.Send → SendChatPrompt）全程持 c.mu，此处
+	// 再锁 c.mu 即死锁；该链路 menuPick 分支发送前已自清菜单，跳过即可。
+	if a.inConsoleSend.Load() {
+		return
+	}
 	// 先取指针再释放 a.mu：Console 执行后端会反向取 a.mu，避免锁序死锁。
 	a.mu.Lock()
 	c := a.hubConsole
