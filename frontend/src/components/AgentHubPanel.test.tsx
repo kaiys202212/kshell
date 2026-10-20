@@ -154,10 +154,11 @@ const workspaceA = {
 };
 
 describe('AgentHubPanel', () => {
-  it('无会话时 chips 区显示空文案', () => {
+  it('无会话时 chips 区不渲染空文案（2026-10-20 反馈：留空不提示）', () => {
     useAppStore.setState({ chats: [] });
     render(<AgentHubPanel />);
-    expect(screen.getByTestId('hub-session-chips')).toHaveTextContent(tt('ui.hub.empty'));
+    expect(screen.getByTestId('hub-session-chips')).toHaveTextContent('');
+    expect(screen.queryByText(tt('ui.hub.empty'))).toBeNull();
   });
 
   it('会话 chips 位于输入区上方（与 textarea 同容器）', () => {
@@ -823,10 +824,10 @@ describe('AgentHubPanel', () => {
     expect(screen.getByText('持久正文')).toBeTruthy();
   });
 
-  it('拉取失败不阻塞：无会话时 chips 区显示空文案', async () => {
+  it('拉取失败不阻塞：无会话时 chips 区不渲染空文案', async () => {
     api.listHubMessages.mockRejectedValue(new Error('boom'));
     render(<AgentHubPanel />);
-    expect(screen.getByTestId('hub-session-chips')).toHaveTextContent(tt('ui.hub.empty'));
+    expect(screen.queryByText(tt('ui.hub.empty'))).toBeNull();
   });
 
   it('历史入口：展开归档月份并加载旧消息', async () => {

@@ -1444,10 +1444,8 @@ export default function AgentHubPanel() {
           data-testid="hub-session-chips"
           className="flex max-h-20 shrink-0 flex-wrap items-center gap-1 overflow-y-auto"
         >
-          {chats.length === 0 ? (
-            <span className="text-muted-foreground">{t('ui.hub.empty')}</span>
-          ) : (
-            chats.map((c) => {
+          {/* 无会话时不渲染空态提示（2026-10-20 用户反馈）：留空容器即可，chips 有会话才出现 */}
+          {chats.map((c) => {
               const busy = c.Status === 'running' || c.Status === 'starting';
               const isTarget = c.ID === currentTargetId;
               return (
@@ -1508,11 +1506,10 @@ export default function AgentHubPanel() {
                   )}
                 </div>
               );
-            })
-          )}
+            })}
           {/* 待激活 chip：默认投递目标命中未激活会话（pending: 前缀）时出现，
               虚线边框区分已激活 chips；点击先激活原会话再 @ 填入（mentionPending）。
-              可与 chats.length === 0 的 empty 占位共存：空状态下用户仍能看到待激活目标。 */}
+              无已激活会话时也可出现：空状态下用户仍能看到待激活目标。 */}
           {pendingTarget && (
             <div className="flex max-w-[21rem] min-w-0 items-center gap-1 rounded-full border border-dashed border-primary/60 bg-primary/10 px-2.5 py-1 text-xs">
               <button
