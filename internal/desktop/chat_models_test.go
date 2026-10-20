@@ -437,7 +437,7 @@ func TestCursorSkipsMergeConfigModels(t *testing.T) {
 	}
 }
 
-// 单平台：保持现状裸名行为（ID=Name=model），Current 不回落（agent 上报为准）。
+// 单平台：ID 仍裸名（兼容旧 modelId）；Name 带平台展示前缀（仅展示，不进 ID）。
 func TestMergeConfigModelsSinglePlatformBareNames(t *testing.T) {
 	env, id := openChatEnv(t, nil)
 	env.app.mu.Lock()
@@ -455,9 +455,9 @@ func TestMergeConfigModelsSinglePlatformBareNames(t *testing.T) {
 	if v.Current != "" {
 		t.Fatalf("agent 未上报时 Current 应保持空: %+v", v)
 	}
-	if len(v.Models) != 2 || v.Models[0].ID != "m1" || v.Models[0].Name != "m1" ||
-		v.Models[1].ID != "m2" || v.Models[1].Name != "m2" {
-		t.Fatalf("单平台应保持裸名: %+v", v.Models)
+	if len(v.Models) != 2 || v.Models[0].ID != "m1" || v.Models[0].Name != "P: m1" ||
+		v.Models[1].ID != "m2" || v.Models[1].Name != "P: m2" {
+		t.Fatalf("单平台 ID 裸名、Name 带平台前缀: %+v", v.Models)
 	}
 }
 

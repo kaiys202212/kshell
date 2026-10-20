@@ -616,10 +616,20 @@ func mergesKshellPlatformModels(toolID string) bool {
 	return toolID != "cursor"
 }
 
+// platformModelDisplayName 生成平台模型的展示名：有平台名则「平台名: 模型」，
+// 仅用于 UI/微信菜单；不得写入模型 ID 或下发给 SetModel。
+func platformModelDisplayName(platName, model string) string {
+	platName = strings.TrimSpace(platName)
+	if platName == "" {
+		return model
+	}
+	return platName + ": " + model
+}
+
 // mergeConfigModels 把 kshell 配置的模型列表并入 agent 上报视图：
-// 已存在（按 ID）跳过；数据源为配置的平台列表。单平台保持裸名
-// （ID=Name=model，向后兼容旧保存的 modelId）；多平台加
-// "kshell:<platID>:<model>" 前缀，默认平台条目排最前，其余按列表顺序。
+// 已存在（按 ID）跳过；数据源为配置的平台列表。单平台 ID 保持裸名
+// （向后兼容旧保存的 modelId）；多平台 ID 加 "kshell:<platID>:<model>"，
+// 默认平台条目排最前，其余按列表顺序。Name 一律带平台展示前缀（仅展示）。
 // 不改写 Current：当前模型以 agent 上报为准（默认模型由 agent 自行决定）。
 func (a *App) mergeConfigModels(v chat.ModelsView) chat.ModelsView {
 	cfg := a.snapshot().Config.Model
@@ -638,9 +648,10 @@ func (a *App) mergeConfigModels(v chat.ModelsView) chat.ModelsView {
 		v.Models = append(v.Models, chat.ModelView{ID: id, Name: name})
 	}
 	if len(cfg.Platforms) == 1 {
-		for _, name := range cfg.Platforms[0].Models {
+		p := cfg.Platforms[0]
+		for _, name := range p.Models {
 			name = strings.TrimSpace(name)
-			add(name, name)
+			add(name, platformModelDisplayName(p.Name, name))
 		}
 		return v
 	}
@@ -663,7 +674,7 @@ func (a *App) mergeConfigModels(v chat.ModelsView) chat.ModelsView {
 	for _, p := range ordered {
 		for _, name := range p.Models {
 			name = strings.TrimSpace(name)
-			add("kshell:"+p.ID+":"+name, p.Name+": "+name)
+			add("kshell:"+p.ID+":"+name, platformModelDisplayName(p.Name, name))
 		}
 	}
 	return v
