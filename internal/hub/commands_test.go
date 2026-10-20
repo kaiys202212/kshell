@@ -1267,3 +1267,32 @@ func TestTryCancelPick(t *testing.T) {
 		t.Fatal("成功后待选菜单应已清空")
 	}
 }
+
+// 列表对终端运行中的会话追加〔终端〕标记（规则2：保留展示但明确不可投递）。
+func TestHandleListMarksTerminalActive(t *testing.T) {
+	ex := &fakeExecutor{listSessions: []SessionRef{
+		{ChatID: "c1", Tool: "claude", Title: "普通会话"},
+		{SessionID: "s2", Tool: "claude", Title: "终端会话", TerminalActive: true},
+	}}
+	c := NewConsoleLang(ex, "zh-CN")
+	joined := join(c.Handle("#l"))
+	if !strings.Contains(joined, "终端会话 〔终端〕") {
+		t.Fatalf("终端会话应带〔终端〕标记: %q", joined)
+	}
+	if strings.Contains(joined, "普通会话 〔终端〕") {
+		t.Fatalf("普通会话不应带标记: %q", joined)
+	}
+}
+
+// errText：Executor 返回的 err.hub.* wire key 翻成命令层双语文案。
+func TestConsoleErrTextTranslatesWireKeys(t *testing.T) {
+	ex := &fakeExecutor{}
+	c := NewConsoleLang(ex, "zh-CN")
+	got := c.errText(errors.New("err.hub.terminal_active"))
+	if got == "err.hub.terminal_active" || got == "" {
+		t.Fatalf("wire key 应翻成文案, got %q", got)
+	}
+	if got := c.errText(errors.New("err.other.raw")); got != "err.other.raw" {
+		t.Fatalf("未知 key 原样返回, got %q", got)
+	}
+}

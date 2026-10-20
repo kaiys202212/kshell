@@ -17,6 +17,9 @@ type SessionRef struct {
 	ToolName string
 	Title    string
 	Current   bool // 是否当前上下文
+	// TerminalActive 为 true：会话正以终端模式运行（规则2 动态判定）。保留在
+	// 列表展示并加「终端」标记，但 SwitchTo/Send/OpenSession 会被 Executor 拦截。
+	TerminalActive bool
 }
 
 // MenuOption 是菜单里的一项（工具/项目/模型）。
@@ -92,6 +95,15 @@ func sessionTag(title string) string {
 // formatSwitched 是切换成功后的单行回显（verb 为含 %s 的文案，传【会话名】）。
 func formatSwitched(verb string, r SessionRef) string {
 	return fmt.Sprintf(verb, sessionTag(r.Title))
+}
+
+// errText 把 Executor 层错误翻成命令层双语文案：错误串是 wire key 且在
+// cmdTexts 里时取文案，否则原样返回（保留底层细节）。
+func (c *Console) errText(err error) string {
+	if _, ok := cmdTexts[err.Error()]; ok {
+		return c.text(err.Error())
+	}
+	return err.Error()
 }
 
 // welcomeReply 是创建成功后的 agent 第一人称欢迎词：【会话名】+ session_ready

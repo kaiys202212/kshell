@@ -64,7 +64,7 @@ type Console struct {
 	// 归因才覆盖 current，显式切换（#l/#f 选号、新建）把水位抬到当下。
 	currentMark int64
 	menu        *pendingMenu
-	perm       *pendingPermission
+	perm        *pendingPermission
 	// lastList 是最近一次列表/搜索的编号映射（纯数字与 #g 依据它路由）。
 	lastList []SessionRef
 	// lastRecent 是最近一次 #h 列表的消息快照（#h <序号> 查全文依据它索引）。
@@ -340,7 +340,12 @@ func (c *Console) handleList(all bool) []Reply {
 	for i := range shown {
 		shown[i].Num = i + 1
 		shown[i].Current = shown[i].ChatID != "" && shown[i].ChatID == c.current.ChatID
-		lines = append(lines, formatRef(shown[i]))
+		line := formatRef(shown[i])
+		if shown[i].TerminalActive {
+			// 终端运行中的会话：明确标记（规则2），保留在列表供认知。
+			line += " 〔" + c.text("tag_terminal") + "〕"
+		}
+		lines = append(lines, line)
 	}
 	// 引导提示：列表本身不说明数字的用途，新用户不知道可以直接回数字切换。
 	// 提示与列表间用空行分隔，防 Markdown 懒续行把提示吞进最后一个列表项。
@@ -377,7 +382,7 @@ func (c *Console) switchByNumber(n int) []Reply {
 	}
 	ref, err := c.activateRef(ref)
 	if err != nil {
-		return single(fmt.Sprintf(c.text("switch_failed"), err))
+		return single(fmt.Sprintf(c.text("switch_failed"), c.errText(err)))
 	}
 	return single(formatSwitched(c.text("switched"), ref))
 }
@@ -460,14 +465,14 @@ func (c *Console) handleMenuNumber(n int) []Reply {
 	case menuModels:
 		c.menu = nil
 		if err := c.ex.SetModel(menu.targetChatID, opt.ID); err != nil {
-			return single(fmt.Sprintf(c.text("switch_failed"), err))
+			return single(fmt.Sprintf(c.text("switch_failed"), c.errText(err)))
 		}
 		return single(fmt.Sprintf(c.text("model_switched"), opt.Label))
 	case menuSearch:
 		c.menu = nil
 		ref, err := c.activateRef(menu.results[n-1])
 		if err != nil {
-			return single(fmt.Sprintf(c.text("switch_failed"), err))
+			return single(fmt.Sprintf(c.text("switch_failed"), c.errText(err)))
 		}
 		return single(formatSwitched(c.text("switched"), ref))
 	case menuPick:
@@ -475,7 +480,7 @@ func (c *Console) handleMenuNumber(n int) []Reply {
 		c.menu = nil
 		ref, err := c.activateRef(menu.results[n-1])
 		if err != nil {
-			return single(fmt.Sprintf(c.text("switch_failed"), err))
+			return single(fmt.Sprintf(c.text("switch_failed"), c.errText(err)))
 		}
 		if err := c.ex.Send(ref.ChatID, menu.pendingText); err != nil {
 			return single(fmt.Sprintf(c.text("send_failed"), err))
@@ -532,7 +537,7 @@ func (c *Console) handleModelsMenu() []Reply {
 	}
 	models, curID, err := c.ex.ListModels(chatID)
 	if err != nil {
-		return single(fmt.Sprintf(c.text("switch_failed"), err))
+		return single(fmt.Sprintf(c.text("switch_failed"), c.errText(err)))
 	}
 	if len(models) == 0 {
 		return single(c.text("no_models"))
@@ -618,7 +623,7 @@ const (
 )
 
 // handleRecent 处理 "#h" 与 "#h <序号>"：无参回显 AgentHub 最近 10 条消息
-//（存快照供序号索引）；带数字序号回显上次列表第 N 条的完整正文，无快照时
+// （存快照供序号索引）；带数字序号回显上次列表第 N 条的完整正文，无快照时
 // 先自动取最近一批。条数参数已砍（2026-10-19 用户决策：#h <n> 语义让位序号）。
 func (c *Console) handleRecent(arg string) []Reply {
 	if arg == "" {
@@ -679,7 +684,7 @@ func (c *Console) renderOptions(title string, opts []MenuOption) []Reply {
 }
 
 // renderOptionsMarked 同 renderOptions，但当前项（curID）在编号后标 ▶
-//（行首 ▶ 会打断 Markdown 有序列表解析）。
+// （行首 ▶ 会打断 Markdown 有序列表解析）。
 func (c *Console) renderOptionsMarked(title string, opts []MenuOption, curID string) []Reply {
 	lines := make([]string, 0, len(opts))
 	for i, o := range opts {
@@ -704,7 +709,7 @@ func (c *Console) sendToCurrent(text string) []Reply {
 	if ref.ChatID == "" {
 		activated, err := c.activateRef(ref)
 		if err != nil {
-			return single(fmt.Sprintf(c.text("switch_failed"), err))
+			return single(fmt.Sprintf(c.text("switch_failed"), c.errText(err)))
 		}
 		ref = activated
 	}
@@ -719,7 +724,7 @@ func (c *Console) sendToCurrent(text string) []Reply {
 }
 
 // HandleQuoted 处理引用回复：按 chatID 定位会话，切换当前上下文后投递
-//（2026-10-20 用户确认：切换，后续裸消息跟随被引用的 agent）。handled=false
+// （2026-10-20 用户确认：切换，后续裸消息跟随被引用的 agent）。handled=false
 // 表示定位失败（chatID 空/未命中），调用方回落普通 Handle；切换/发送失败
 // handled=true 且回执错误文案。投递成功 handled=true 且 replies 空（静默，
 // agent 回复自带【会话名】归因，与普通转发语义一致）。
@@ -739,7 +744,7 @@ func (c *Console) HandleQuoted(chatID, text string) (bool, []Reply) {
 			continue
 		}
 		if _, err := c.activateRef(r); err != nil {
-			return true, single(fmt.Sprintf(c.text("switch_failed"), err))
+			return true, single(fmt.Sprintf(c.text("switch_failed"), c.errText(err)))
 		}
 		return true, c.sendToCurrent(text)
 	}
@@ -800,7 +805,7 @@ func (c *Console) PickTarget(text string) ([]Reply, bool) {
 
 // TryCancelPick 让待选菜单失效（AgentHub 已经另行投递）。仅清理 menuPick，
 // 不碰其他选择菜单；lastList 保留，后续数字仍可按最近列表切换。锁被占用
-//（Console.Handle 全程持锁回调 Executor 发送）时返回 false 并放弃：该链路
+// （Console.Handle 全程持锁回调 Executor 发送）时返回 false 并放弃：该链路
 // 任一 ex.Send 调用点进入前 menu 必非 menuPick，放弃取消无损语义。
 func (c *Console) TryCancelPick() bool {
 	if !c.mu.TryLock() {

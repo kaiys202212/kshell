@@ -46,6 +46,12 @@ var cmdTexts = map[string]langPair{
 	"no_current":        {"No active session", "当前无活跃会话"},
 	"no_current_list":   {"No active session, use #l to list", "当前无活跃会话，#l 查看"},
 	"no_sessions":       {"No sessions yet", "暂无会话"},
+	// AgentHub 只读语义（规则1/2）：列表标记与 Executor 拦截错误。错误 key 用
+	// wire key 原样作键，errText 据此翻译；前端 locales 的 err.hub.* 与此同源，
+	// 一侧改动须同步另一侧。
+	"tag_terminal":            {"terminal", "终端"},
+	"err.hub.terminal_active": {"Session is running in a terminal, close it first", "会话正以终端模式运行，请先关闭对应终端页签"},
+	"err.hub.acp_unsupported": {"This tool has no chat mode", "该工具不支持对话模式"},
 	"no_mapping":        {"No such number, use #l to list", "编号不存在，#l 查看"},
 	// #h 序号越界专用：no_mapping 引导 #l 是切会话，语境不对（评审 M-1）。
 	"recent_no_mapping": {"No such number, use #h for recent messages", "编号不存在，#h 查看最近消息"},
