@@ -101,10 +101,16 @@ type queuedMsg struct {
 }
 
 // enqueueLocked 把条目追加到队尾并补齐稳定 ID（调用方持锁）。
+// 带 hubMsgID 的条目统一以 hubMsgID 作条目标识（撤回按 hub ID 定位，
+// 竞态回退等未预置 id 的路径也不例外）；普通 Prompt 分配 qN。
 func (s *session) enqueueLocked(q queuedMsg) queuedMsg {
 	if q.id == "" {
-		s.queueSeq++
-		q.id = "q" + strconv.Itoa(s.queueSeq)
+		if q.hubMsgID != "" {
+			q.id = q.hubMsgID
+		} else {
+			s.queueSeq++
+			q.id = "q" + strconv.Itoa(s.queueSeq)
+		}
 	}
 	s.queue = append(s.queue, q)
 	return q

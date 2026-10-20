@@ -676,7 +676,7 @@ describe('chatQueues（ChatView 本地消息队列）', () => {
 
 describe('chatBackendQueues（后端待发送队列镜像）', () => {
   beforeEach(() => {
-    useAppStore.setState({ chatBackendQueues: {}, chatQueues: {}, toasts: [] });
+    useAppStore.setState({ chatBackendQueues: {}, chatQueueRevs: {}, chatQueues: {}, toasts: [] });
   });
 
   it('setChatBackendQueue 用快照整体替换（含清空）', () => {
@@ -712,16 +712,29 @@ describe('chatBackendQueues（后端待发送队列镜像）', () => {
     useAppStore.getState().removeChatBackendQueueItem('nope', 'x');
   });
 
-  it('removeChat / removeChatState 联动清理镜像', () => {
+  it('bumpChatQueueRev 按会话自增，供回填丢弃过期快照', () => {
+    expect(useAppStore.getState().chatQueueRevs.c1 ?? 0).toBe(0);
+    useAppStore.getState().bumpChatQueueRev('c1');
+    useAppStore.getState().bumpChatQueueRev('c1');
+    useAppStore.getState().bumpChatQueueRev('c2');
+    expect(useAppStore.getState().chatQueueRevs.c1).toBe(2);
+    expect(useAppStore.getState().chatQueueRevs.c2).toBe(1);
+  });
+
+  it('removeChat / removeChatState 联动清理镜像与版本', () => {
     useAppStore.getState().setChatBackendQueue('c1', [{ ID: '1', Text: 'A' }]);
+    useAppStore.getState().bumpChatQueueRev('c1');
     useAppStore.getState().removeChatState('c1');
     expect(useAppStore.getState().chatBackendQueues.c1).toBeUndefined();
+    expect(useAppStore.getState().chatQueueRevs.c1).toBeUndefined();
 
     useAppStore.getState().setChatBackendQueue('c1', [{ ID: '1', Text: 'A' }]);
+    useAppStore.getState().bumpChatQueueRev('c1');
     useAppStore.setState({
       chats: [{ ID: 'c1', Kind: 'new', SessionID: 's', Workspace: 'D:/p', Title: 't', ToolID: 'claude', Status: 'ready', ExitCode: 0, Error: '' }],
     });
     useAppStore.getState().removeChat('c1');
     expect(useAppStore.getState().chatBackendQueues.c1).toBeUndefined();
+    expect(useAppStore.getState().chatQueueRevs.c1).toBeUndefined();
   });
 });

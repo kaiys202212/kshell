@@ -1087,7 +1087,9 @@ func TestPromptHubRaceFallbackTriggersQueuedCallback(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("onHubQueued 未触发")
 	}
-	m.RecallQueued(info.ID, "h2")
+	if !m.RecallQueued(info.ID, "h2") {
+		t.Fatal("竞态入队条目应按 hubMsgID 分配条目标识，否则按 hub ID 撤回失效")
+	}
 	close(b.conn.promptGate)
 }
 
@@ -1429,13 +1431,13 @@ func (q *queueEvents) on(id string, items []QueueItem) {
 	q.mu.Unlock()
 }
 
-func (q *queueEvents) last() []QueueItem {
+func (q *queueEvents) last() ([]QueueItem, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.events) == 0 {
-		return nil
+		return nil, false
 	}
-	return q.events[len(q.events)-1]
+	return q.events[len(q.events)-1], true
 }
 
 // Queue 返回 FIFO 快照：Hub 条目复用 hubMsgID 作条目标识，普通 Prompt 分配 qN。
@@ -1538,12 +1540,16 @@ func TestManagerQueueClearedOnCloseEmitsEmpty(t *testing.T) {
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if got := ev.last(); len(got) == 0 {
+		if got, ok := ev.last(); ok && len(got) == 0 {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("Close 未推送空队列快照: %+v", ev.last())
+	if got, ok := ev.last(); !ok {
+		t.Fatal("Close 未推送任何队列快照")
+	} else {
+		t.Fatalf("Close 未推送空队列快照: %+v", got)
+	}
 }
 
 // waitForUpdates 等到 collector 收满 n 条更新（超时失败）。

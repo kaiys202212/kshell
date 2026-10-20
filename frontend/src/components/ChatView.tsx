@@ -167,10 +167,16 @@ export default function ChatView({ chat, active }: Props) {
         if (!cancelled) useAppStore.getState().setChatCommands(id, cmds);
       })
       .catch(() => {});
-    // 后端待发送队列回填：事件订阅在 App 层，挂载瞬间可能已错过入队推送
+    // 后端待发送队列回填：事件订阅在 App 层，挂载瞬间可能已错过入队推送。
+    // 回填期间若版本前进（收到 chat:queue 事件等），说明已有更新快照落地，
+    // 迟到的过期响应直接丢弃，不覆盖新状态。
+    const revAtStart = useAppStore.getState().chatQueueRevs[id] ?? 0;
     void listChatQueue(id)
       .then((list) => {
-        if (!cancelled) useAppStore.getState().setChatBackendQueue(id, list);
+        if (cancelled) return;
+        const st = useAppStore.getState();
+        if ((st.chatQueueRevs[id] ?? 0) !== revAtStart) return;
+        st.setChatBackendQueue(id, list);
       })
       .catch(() => {});
     return () => {

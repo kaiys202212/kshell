@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatInfo } from '../lib/api';
 import { DRAG_MIME } from '../lib/dragPath';
@@ -43,7 +43,7 @@ beforeEach(() => {
   api.respondChatPermission.mockResolvedValue(undefined);
   api.cancelChatPermission.mockResolvedValue(undefined);
   api.listChats.mockResolvedValue([]);
-  useAppStore.setState({ chatItems: {}, chatSeq: {}, chatPermissions: {}, chats: [CHAT], chatModels: {}, chatCommands: {}, chatQueues: {}, queuedPaused: {}, toasts: [] });
+  useAppStore.setState({ chatItems: {}, chatSeq: {}, chatPermissions: {}, chats: [CHAT], chatModels: {}, chatCommands: {}, chatQueues: {}, chatBackendQueues: {}, chatQueueRevs: {}, queuedPaused: {}, toasts: [] });
 });
 afterEach(cleanup);
 
@@ -640,6 +640,30 @@ describe('ChatView', () => {
     // 失败后重拉：后端已不在队列（投递竞态），镜像保持为空
     await waitFor(() => expect(api.listChatQueue).toHaveBeenCalledTimes(2));
     expect(useAppStore.getState().chatBackendQueues.c1).toBeUndefined();
+  });
+
+  it('挂载回填期间收到 chat:queue 事件时，丢弃过期快照不覆盖新状态', async () => {
+    let resolveBackfill!: (items: { ID: string; Text: string }[]) => void;
+    api.listChatQueue.mockReturnValue(
+      new Promise((res) => {
+        resolveBackfill = res;
+      }),
+    );
+    render(<ChatView chat={{ ...CHAT, Status: 'running' }} active />);
+    await waitFor(() => expect(api.listChatQueue).toHaveBeenCalledWith('c1'));
+
+    // 回填未返回时 App 收到新事件：推进版本并写入新快照
+    act(() => {
+      useAppStore.getState().bumpChatQueueRev('c1');
+      useAppStore.getState().setChatBackendQueue('c1', [{ ID: '43', Text: '新快照' }]);
+    });
+    await act(async () => {
+      resolveBackfill([{ ID: '42', Text: '过期快照' }]);
+    });
+
+    expect(await screen.findByText('新快照')).toBeInTheDocument();
+    expect(screen.queryByText('过期快照')).not.toBeInTheDocument();
+    expect(useAppStore.getState().chatBackendQueues.c1?.map((it) => it.ID)).toEqual(['43']);
   });
 
   it('后端纯附件条目显示附件占位文案', async () => {

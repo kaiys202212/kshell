@@ -185,6 +185,9 @@ interface AppState {
   chatBackendQueues: Record<string, ChatQueueItem[]>;
   setChatBackendQueue(id: string, items: ChatQueueItem[]): void;
   removeChatBackendQueueItem(id: string, itemID: string): void;
+  // 队列版本号（会话级自增）：回填等慢速异步路径据此识别过期快照，不覆盖新状态
+  chatQueueRevs: Record<string, number>;
+  bumpChatQueueRev(id: string): void;
 
   // 终端静默启发 busy（不持久化；由 terminalBusy.ts 定时器驱动）
   terminalBusy: Record<string, true>;
@@ -399,6 +402,7 @@ export const useAppStore = create<AppState>()(
           chatQueues: omitKey(s.chatQueues, id),
           queuedPaused: omitKey(s.queuedPaused, id),
           chatBackendQueues: omitKey(s.chatBackendQueues, id),
+          chatQueueRevs: omitKey(s.chatQueueRevs, id),
         })),
       markChatExited: (id, exitCode, error) =>
         set((s) => ({
@@ -472,6 +476,7 @@ export const useAppStore = create<AppState>()(
           chatModels: omitKey(s.chatModels, id),
           chatCommands: omitKey(s.chatCommands, id),
           chatBackendQueues: omitKey(s.chatBackendQueues, id),
+          chatQueueRevs: omitKey(s.chatQueueRevs, id),
         })),
 
       chatPermissions: {},
@@ -589,8 +594,18 @@ export const useAppStore = create<AppState>()(
           const next = { ...s.chatBackendQueues };
           if (rest.length === 0) delete next[id];
           else next[id] = rest;
-          return { chatBackendQueues: next };
+          return {
+            chatBackendQueues: next,
+            // 乐观移除也推进版本：挂载回填迟到时不得复活已删条目
+            chatQueueRevs: { ...s.chatQueueRevs, [id]: (s.chatQueueRevs[id] ?? 0) + 1 },
+          };
         }),
+
+      chatQueueRevs: {},
+      bumpChatQueueRev: (id) =>
+        set((s) => ({
+          chatQueueRevs: { ...s.chatQueueRevs, [id]: (s.chatQueueRevs[id] ?? 0) + 1 },
+        })),
 
       terminalBusy: {},
       setTerminalBusy: (id, busy) =>

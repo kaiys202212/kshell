@@ -227,7 +227,11 @@ function App() {
     // 后端待发送队列快照：任何来源（AgentHub/本地/TUI）入队都推到这里，
     // ChatView 与本地 chatQueues 合并展示。
     const offQ = onChatQueue(({ id, items }) => {
-      if (id) useAppStore.getState().setChatBackendQueue(id, items);
+      if (!id) return;
+      const st = useAppStore.getState();
+      // 事件快照先推进版本：挂载回填的迟到响应据此识别过期，不覆盖新状态
+      st.bumpChatQueueRev(id);
+      st.setChatBackendQueue(id, items);
     });
     // 会话重建标记（Rebuilt，随 chat:meta 推送）：重建会话的时间线换了基准
     //（manager 侧 fresh 起步、Seq 从头计数），旧 Seq 门控会把重放与新事件当重复
