@@ -23,7 +23,8 @@ func writeAuthFixture(t *testing.T, home, relDir, content string) {
 }
 
 // loggedInConfig 是本机实测的 cli-config.json 登录形态(键结构一致,值已脱敏)。
-const loggedInConfig = `{"version":"1.0","authInfo":{"email":"a@b.c","displayName":"u","userId":"uid-1","authId":"aid"}}`
+// 2026-10 起 cursor-agent 把 userId 写成 JSON number；字符串形态仍兼容。
+const loggedInConfig = `{"version":"1.0","authInfo":{"email":"a@b.c","displayName":"u","userId":164059570,"authId":"aid"}}`
 
 // writeAuthBrokenConfig 在 home/relDir 下造出「cli-config.json 是个同名目录」的
 // 异常现场:os.ReadFile 会稳定报出**非 NotExist** 的读错误(POSIX 为 is a
@@ -70,10 +71,18 @@ func TestProbeCursorAuth(t *testing.T) {
 		want  AuthStatus
 	}{
 		{
-			name: "已登录:authInfo.userId 非空",
+			name: "已登录:authInfo.userId 为非零数字(当前 CLI)",
 			dirs: []string{"~/.cursor"},
 			setup: func(t *testing.T, home string) {
 				writeAuthFixture(t, home, ".cursor", loggedInConfig)
+			},
+			want: AuthIn,
+		},
+		{
+			name: "已登录:authInfo.userId 为非空字符串(旧形态)",
+			dirs: []string{"~/.cursor"},
+			setup: func(t *testing.T, home string) {
+				writeAuthFixture(t, home, ".cursor", `{"authInfo":{"userId":"uid-1"}}`)
 			},
 			want: AuthIn,
 		},
@@ -102,10 +111,18 @@ func TestProbeCursorAuth(t *testing.T) {
 			want: AuthOut,
 		},
 		{
-			name: "未登录:userId 不是字符串",
+			name: "未登录:userId 为数字 0",
 			dirs: []string{"~/.cursor"},
 			setup: func(t *testing.T, home string) {
-				writeAuthFixture(t, home, ".cursor", `{"authInfo":{"userId":123}}`)
+				writeAuthFixture(t, home, ".cursor", `{"authInfo":{"userId":0}}`)
+			},
+			want: AuthOut,
+		},
+		{
+			name: "未登录:userId 类型异常(布尔)",
+			dirs: []string{"~/.cursor"},
+			setup: func(t *testing.T, home string) {
+				writeAuthFixture(t, home, ".cursor", `{"authInfo":{"userId":true}}`)
 			},
 			want: AuthOut,
 		},

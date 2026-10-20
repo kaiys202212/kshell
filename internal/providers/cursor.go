@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -120,8 +121,9 @@ func probeCursorAuth(spec DetectSpec, home string) AuthStatus {
 // parseCursorAuth 解析 cli-config.json 的 authInfo（本机实测为
 // {email, displayName, userId, authId}）：
 //   - JSON 损坏、顶层不是对象、authInfo 不是对象 → AuthUnknown（稳定优先，不误判）；
-//   - 无 authInfo（含 null）、空对象、userId 缺失/为空/非字符串 → AuthOut；
-//   - userId 为非空字符串 → AuthIn。
+//   - 无 authInfo（含 null）、空对象、userId 缺失/无效 → AuthOut；
+//   - userId 有效（非空字符串，或非零有限 JSON number）→ AuthIn。
+// 2026-10 起 cursor-agent 把 userId 写成 number；旧版为字符串，两者都认。
 func parseCursorAuth(data []byte) AuthStatus {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(data, &top); err != nil {
@@ -135,10 +137,23 @@ func parseCursorAuth(data []byte) AuthStatus {
 	if err := json.Unmarshal(raw, &info); err != nil {
 		return AuthUnknown
 	}
-	if uid, _ := info["userId"].(string); uid != "" {
+	if cursorUserIDPresent(info["userId"]) {
 		return AuthIn
 	}
 	return AuthOut
+}
+
+// cursorUserIDPresent 判断 authInfo.userId 是否表示有效登录身份。
+// encoding/json 把 JSON number 解成 float64；0 / NaN / Inf 视为无效。
+func cursorUserIDPresent(v any) bool {
+	switch x := v.(type) {
+	case string:
+		return x != ""
+	case float64:
+		return x != 0 && !math.IsNaN(x) && !math.IsInf(x, 0)
+	default:
+		return false
+	}
 }
 
 // cursorVersionInstallDirs 列出官方安装根下 versions 子目录，**最新版本在前**。
