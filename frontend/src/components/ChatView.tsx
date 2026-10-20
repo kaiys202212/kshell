@@ -20,6 +20,7 @@ import {
 import { appendChatInput, registerChatInput, unregisterChatInput } from '../lib/chatInputRegistry';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
+import { markdownBubbleClass } from '../lib/markdownStyles';
 import { useAppStore } from '../state/store';
 import type { ChatQueuedMessage } from '../state/store';
 import type { TimelineItem } from '../state/chatUpdate';
@@ -421,8 +422,9 @@ export default function ChatView({ chat, active }: Props) {
                 {/* wrapper 用 text-right 让气泡靠右；气泡本体 text-left 保证文字左对齐 */}
                 <div className={cn('selectable inline-block max-w-[85%] break-words overflow-hidden rounded-md px-3 py-1.5 text-left text-sm [&_pre]:whitespace-pre-wrap',
                   it.type === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
+                  {/* markdown 内容元素样式与 AgentHub/预览共用 markdownBubbleClass；pre 折行策略归容器管 */}
                   {it.type === 'assistant'
-                    ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{it.text ?? ''}</ReactMarkdown>
+                    ? <div className={markdownBubbleClass}><ReactMarkdown remarkPlugins={[remarkGfm]}>{it.text ?? ''}</ReactMarkdown></div>
                     : <span className="whitespace-pre-wrap">{it.text}</span>}
                 </div>
                 {it.type === 'user' && it.attachments && it.attachments.length > 0 && (
