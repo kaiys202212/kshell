@@ -191,11 +191,26 @@ func (a *App) RecallHubMessage(hubMsgID int64) error {
 	}
 	// RecallStatus 只允许 queued → recalled 单向迁移：并发的两次撤回里，
 	// 慢的那次已越过上面检查后，不会把先到的 recalled 覆写回其他状态。
-	if !store.RecallStatus(hubMsgID) {
+	if !a.markHubRecalled(strconv.FormatInt(hubMsgID, 10)) {
 		return errHubNotQueued
 	}
-	a.Emit("hub:changed")
 	return nil
+}
+
+// markHubRecalled 把 Hub 用户消息从 queued 单向迁移到 recalled 并 emit
+// hub:changed；迁移失败（已投递/已撤回/ID 非法/无 store）返回 false。
+// RecallHubMessage 与 RemoveChatQueued 共用同一口径。
+func (a *App) markHubRecalled(hubMsgID string) bool {
+	id, err := strconv.ParseInt(hubMsgID, 10, 64)
+	if err != nil {
+		return false
+	}
+	store := a.snapshot().HubStore
+	if store == nil || !store.RecallStatus(id) {
+		return false
+	}
+	a.Emit("hub:changed")
+	return true
 }
 
 // hubEventTextKey 把 agent 事件的空正文回退成稳定 wire key（前端 translateBackend
