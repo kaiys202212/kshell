@@ -75,7 +75,9 @@ describe('FileTree', () => {
 
     expect(await screen.findByText('README.md')).toBeInTheDocument();
     expect(mocks.listFiles).toHaveBeenCalledTimes(1);
-    expect(mocks.listFiles).toHaveBeenCalledWith('D:\\proj', '', false);
+    expect(mocks.listFiles).toHaveBeenCalledWith('D:\\proj', '', true);
+    // showAll 默认勾选
+    expect(screen.getByRole('checkbox', { name: tt('ui.files.show_all_aria') })).toBeChecked();
     expect(screen.queryByText('main.ts')).not.toBeInTheDocument();
   });
 
@@ -85,12 +87,12 @@ describe('FileTree', () => {
 
     fireEvent.click(await screen.findByText('src'));
     expect(await screen.findByText('main.ts')).toBeInTheDocument();
-    expect(mocks.listFiles).toHaveBeenLastCalledWith('D:\\proj', 'src', false);
+    expect(mocks.listFiles).toHaveBeenLastCalledWith('D:\\proj', 'src', true);
 
     mocks.listFiles.mockResolvedValueOnce([node('tree.go', false, 'src/lib/tree.go')]);
     fireEvent.click(screen.getByText('lib'));
     expect(await screen.findByText('tree.go')).toBeInTheDocument();
-    expect(mocks.listFiles).toHaveBeenLastCalledWith('D:\\proj', 'src/lib', false);
+    expect(mocks.listFiles).toHaveBeenLastCalledWith('D:\\proj', 'src/lib', true);
   });
 
   it('收起再展开已加载的目录不重复请求（子层缓存）', async () => {
@@ -194,7 +196,7 @@ describe('FileTree', () => {
     expect(await screen.findByText('N')).toBeInTheDocument();
   });
 
-  it('显示全部：切换后根层与已展开目录均带 showAll=true', async () => {
+  it('显示全部：切换后根层与已展开目录均跟随新值（默认勾选，点击后取消）', async () => {
     mocks.listFiles.mockResolvedValueOnce(root).mockResolvedValueOnce(srcChildren);
     render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
     await screen.findByText('README.md');
@@ -204,8 +206,8 @@ describe('FileTree', () => {
     mocks.listFiles.mockImplementation(async (_ws, rel) => (rel === 'src' ? srcChildren : root));
     fireEvent.click(screen.getByRole('checkbox', { name: tt('ui.files.show_all_aria') }));
     await waitFor(() => {
-      expect(mocks.listFiles).toHaveBeenCalledWith('D:\\proj', '', true);
-      expect(mocks.listFiles).toHaveBeenCalledWith('D:\\proj', 'src', true);
+      expect(mocks.listFiles).toHaveBeenCalledWith('D:\\proj', '', false);
+      expect(mocks.listFiles).toHaveBeenCalledWith('D:\\proj', 'src', false);
     });
   });
 
@@ -241,7 +243,7 @@ describe('FileTree', () => {
     // 防抖 200ms + 渲染，findBy 默认 1s 超时足够
     expect(await screen.findByText('main.go')).toBeInTheDocument();
     expect(screen.getByText('src')).toBeInTheDocument(); // 所在目录后缀
-    expect(mocks.searchFiles).toHaveBeenCalledWith('D:\\proj', 'main', false);
+    expect(mocks.searchFiles).toHaveBeenCalledWith('D:\\proj', 'main', true);
 
     fireEvent.click(screen.getByText('main.go'));
     expect(onOpen).toHaveBeenCalledWith('D:\\proj\\src\\main.go');
@@ -264,8 +266,8 @@ describe('FileTree', () => {
       expect(mocks.refreshFiles).toHaveBeenCalledWith('D:\\proj');
     });
     await waitFor(() => {
-      expect(mocks.listFiles).toHaveBeenCalledWith('D:\\proj', '', false);
-      expect(mocks.listFiles).toHaveBeenCalledWith('D:\\proj', 'src', false);
+      expect(mocks.listFiles).toHaveBeenCalledWith('D:\\proj', '', true);
+      expect(mocks.listFiles).toHaveBeenCalledWith('D:\\proj', 'src', true);
     });
     expect(await screen.findByText('main.ts')).toBeInTheDocument();
   });

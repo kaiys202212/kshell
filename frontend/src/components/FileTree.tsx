@@ -546,8 +546,8 @@ export default function FileTree({
   // 选中集（relPath）与 shift 范围多选的锚点：锚点是上一次非 shift 单击的行
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
-  // 显示全部（含忽略文件）；不持久化，切换由下方 effect 走 requestReload 重拉已展开路径
-  const [showAll, setShowAll] = useState(false);
+  // 显示全部（含忽略文件），默认勾选；不持久化，切换由下方 effect 走 requestReload 重拉已展开路径
+  const [showAll, setShowAll] = useState(true);
   const gitMap = useAppStore((s) => s.gitStatus[wsPath]);
   const rootBranch = useAppStore((s) => s.gitBranch[wsPath]);
   const dirBranches = useAppStore((s) => s.gitDirBranches[wsPath]);
