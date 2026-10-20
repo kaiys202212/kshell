@@ -131,6 +131,53 @@ func ReadHead(path string, limit int) ([]byte, error) {
 	return buf, nil
 }
 
+// ReadTail 只读文件尾部。恢复会话上次模型等场景需看最近记录，同样禁止整读。
+// 若 limit 切在某行中间，丢弃首截断残缺行，保证返回值从完整行开始（整文件
+// 小于 limit 时原样返回，可能无前导换行）。
+func ReadTail(path string, limit int) ([]byte, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	size := info.Size()
+	if size == 0 {
+		return nil, nil
+	}
+	start := int64(0)
+	readN := size
+	if size > int64(limit) {
+		start = size - int64(limit)
+		readN = int64(limit)
+	}
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return nil, err
+	}
+	buf := make([]byte, readN)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return nil, err
+	}
+	buf = buf[:n]
+	if start == 0 {
+		return buf, nil
+	}
+	// 从中间切开：丢掉第一个 '\n' 之前的残缺前缀。
+	if i := bytes.IndexByte(buf, '\n'); i >= 0 {
+		return buf[i+1:], nil
+	}
+	// 整段无换行（极限长行）：无法保证完整行，返回空以免误解析半截 JSON。
+	return nil, nil
+}
+
 // CountLines 只数换行符，用来估算消息条数——比整文件 JSON 反序列化便宜几个数量级。
 func CountLines(path string) (int, error) {
 	f, err := os.Open(path)
