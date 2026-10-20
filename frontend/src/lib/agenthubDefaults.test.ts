@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   loadDefaultCreate,
   loadLastCreate,
+  loadToolModelOptions,
   loadToolModels,
   rememberLastModel,
   saveDefaultCreate,
@@ -47,8 +48,29 @@ describe('agenthubDefaults', () => {
     expect(loadToolModels('claude')).toEqual(['m1', 'm2']);
   });
 
+  it('saveToolModels 对象形态后 loadToolModelOptions 保留 name', () => {
+    saveToolModels('cursor', [
+      { id: 'default[]', name: 'Auto' },
+      { id: 'm2', name: 'Two' },
+    ]);
+    expect(loadToolModelOptions('cursor')).toEqual([
+      { id: 'default[]', name: 'Auto' },
+      { id: 'm2', name: 'Two' },
+    ]);
+    expect(loadToolModels('cursor')).toEqual(['default[]', 'm2']);
+  });
+
+  it('旧版 string[] 缓存升格为 name=id', () => {
+    localStorage.setItem('kshell.agenthub.models.cursor', JSON.stringify(['default[]', 'm2']));
+    expect(loadToolModelOptions('cursor')).toEqual([
+      { id: 'default[]', name: 'default[]' },
+      { id: 'm2', name: 'm2' },
+    ]);
+  });
+
   it('工具未缓存时 loadToolModels 返回空数组', () => {
     expect(loadToolModels('codex')).toEqual([]);
+    expect(loadToolModelOptions('codex')).toEqual([]);
   });
 
   it('模型列表键损坏 JSON 或非数组时返回空数组', () => {
@@ -61,6 +83,17 @@ describe('agenthubDefaults', () => {
   it('模型列表里的非字符串项被过滤', () => {
     localStorage.setItem('kshell.agenthub.models.claude', JSON.stringify(['m1', 3, null]));
     expect(loadToolModels('claude')).toEqual(['m1']);
+  });
+
+  it('对象项缺 id 或 id 非字符串时过滤；缺 name 回落 id', () => {
+    localStorage.setItem(
+      'kshell.agenthub.models.claude',
+      JSON.stringify([{ id: 'm1' }, { id: 3, name: 'x' }, { name: 'orphan' }, { id: 'm2', name: '' }]),
+    );
+    expect(loadToolModelOptions('claude')).toEqual([
+      { id: 'm1', name: 'm1' },
+      { id: 'm2', name: 'm2' },
+    ]);
   });
 
   it('清空后 loadToolModels 返回空数组', () => {

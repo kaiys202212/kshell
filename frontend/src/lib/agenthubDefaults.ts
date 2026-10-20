@@ -79,16 +79,50 @@ export function saveDefaultCreate(v: DefaultAgentCreate): void {
   writeJSON(DEFAULT_CREATE_KEY, v);
 }
 
-// loadToolModels 读取某工具缓存的模型 ID 列表；损坏或非数组返回空数组，非字符串项过滤。
-export function loadToolModels(toolId: string): string[] {
-  const v = readJSON<unknown>(MODELS_KEY_PREFIX + toolId);
-  if (!Array.isArray(v)) return [];
-  return v.filter((x): x is string => typeof x === 'string');
+// ToolModelOption：模型下拉一项；id 用于 SetModel，name 用于展示（Cursor Auto 等）。
+export interface ToolModelOption {
+  id: string;
+  name: string;
 }
 
-// saveToolModels 缓存某工具的模型 ID 列表（成功拉到 listChatModels 后调用）。
-export function saveToolModels(toolId: string, modelIds: string[]): void {
-  writeJSON(MODELS_KEY_PREFIX + toolId, modelIds);
+function normalizeToolModelOption(x: unknown): ToolModelOption | null {
+  if (typeof x === 'string') {
+    return x ? { id: x, name: x } : null;
+  }
+  if (!x || typeof x !== 'object') return null;
+  const id = (x as { id?: unknown }).id;
+  if (typeof id !== 'string' || !id) return null;
+  const name = (x as { name?: unknown }).name;
+  return { id, name: typeof name === 'string' && name ? name : id };
+}
+
+// loadToolModelOptions 读取某工具缓存的模型选项（id+展示名）。
+// 兼容旧版 string[]（升格为 name=id）；损坏或非数组返回空数组。
+export function loadToolModelOptions(toolId: string): ToolModelOption[] {
+  const v = readJSON<unknown>(MODELS_KEY_PREFIX + toolId);
+  if (!Array.isArray(v)) return [];
+  const out: ToolModelOption[] = [];
+  for (const x of v) {
+    const opt = normalizeToolModelOption(x);
+    if (opt) out.push(opt);
+  }
+  return out;
+}
+
+// loadToolModels 读取某工具缓存的模型 ID 列表（兼容旧调用方）。
+export function loadToolModels(toolId: string): string[] {
+  return loadToolModelOptions(toolId).map((m) => m.id);
+}
+
+// saveToolModels 缓存某工具的模型列表（成功拉到 listChatModels 后调用）。
+// 接受 string（旧）或 {id,name}；一律落盘为对象形态。
+export function saveToolModels(toolId: string, models: Array<string | ToolModelOption>): void {
+  const opts: ToolModelOption[] = [];
+  for (const m of models) {
+    const opt = normalizeToolModelOption(m);
+    if (opt) opts.push(opt);
+  }
+  writeJSON(MODELS_KEY_PREFIX + toolId, opts);
 }
 
 // loadHubRouteMode 读取路由模式；缺失/非法回落 auto（与后端 Normalize 同语义）。
