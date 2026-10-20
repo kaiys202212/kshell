@@ -1946,6 +1946,29 @@ describe('AgentHubPanel', () => {
     expect(screen.queryByRole('button', { name: tt('ui.hub.quick_rephrase') })).toBeNull();
   });
 
+  it('终端在册 + 消息仅 sessionId（termKey 为 new:N）：只读，不调 openSessionACP', async () => {
+    // 历史 ACP 欢迎词常带 new:N；扫描回填 sessionId 后用户又以 TUI 打开同会话
+    useAppStore.setState({ terminals: [term({ Key: 'session:s1' })] });
+    api.listHubMessages.mockResolvedValue([
+      {
+        id: 2,
+        kind: 'agent',
+        tool: 'claude',
+        event: 'Stop',
+        chatId: 'c-dead',
+        termKey: 'new:3',
+        sessionId: 's1',
+        text: 'done',
+        ts: 2,
+      },
+    ]);
+    render(<AgentHubPanel />);
+    await screen.findByText('done');
+    expect(screen.getAllByText(tt('ui.hub.readonly_badge'))).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: tt('ui.hub.quick_continue') })).toBeNull();
+    expect(api.openSessionACP).not.toHaveBeenCalled();
+  });
+
   it('离线 ACP 气泡不受只读影响：终端激活条带徽标，离线条按钮照常（规则3）', async () => {
     useAppStore.setState({ terminals: [term({ Key: 'session:s1' })] });
     api.listHubMessages.mockResolvedValue([

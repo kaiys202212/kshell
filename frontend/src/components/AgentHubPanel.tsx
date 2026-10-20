@@ -765,11 +765,20 @@ export default function AgentHubPanel() {
     setFindOpen(true);
   };
 
+  // refuseTerminalSession 终端页签在册时禁止抢拉 ACP：toast 既有文案并返回 true
+  //（调用方中止）。与后端 OpenSessionACP / wxExecutor 同一 session: 前缀语义。
+  const refuseTerminalSession = (sessionID: string): boolean => {
+    if (!terminalActive(`session:${sessionID}`, terminals, sessionID)) return false;
+    useAppStore.getState().notify(t('err.hub.terminal_active'), 'error');
+    return true;
+  };
+
   // pickFoundSession 激活选中的已发现会话：OpenSessionACP 建聊天（Go 侧对已退出
   // 会话自动重建），成功后 registerChat 登记 + 把该 chat 的 @ 标签追加进草稿
   // （语义同 mentionSession），清掉 `#find ...` 草稿残留并聚焦输入框。
   // 注意新 chat ID 与 GetSessions 的 session ID 无关，label 从返回的 Chat 构造。
   const pickFoundSession = (s: Session) => {
+    if (refuseTerminalSession(s.ID)) return;
     void openSessionACP(s.ID)
       .then((res) => {
         if (!res.Chat) return;
@@ -886,6 +895,7 @@ export default function AgentHubPanel() {
   // 新 chat Info（调用方继续对 chat.ID 操作）；失败 toast find_activate_failed
   // 并返回 null（调用方必须停止后续动作，不落模糊匹配误投）。
   const activatePending = async (sessionID: string): Promise<ChatInfo | null> => {
+    if (refuseTerminalSession(sessionID)) return null;
     try {
       const res = await openSessionACP(sessionID);
       if (!res.Chat) return null;
@@ -967,18 +977,15 @@ export default function AgentHubPanel() {
         .catch((e: unknown) => useAppStore.getState().notify(backendError(e), 'error'));
       return;
     }
-    setDraft('');
     // pending: 目标 = 最近交互的会话未激活（chats 查不到），但有磁盘会话 ID 快照：
     // 先 openSessionACP 激活原会话，再向新 chat 投递。激活失败报错不投递——
     // 上下文丢失必须可见，绝不落 workspace 模糊匹配误投同项目会话。
     if (targetId.startsWith(PENDING_PREFIX)) {
       const sessionID = targetId.slice(PENDING_PREFIX.length);
       // 激活前再查一次终端在册（渲染与点击之间终端可能已打开）：终端激活态会话
-      // 不允许从 Hub 抢激活（会与终端 PTY 形成双写方），提示后不投递。
-      if (terminalActive(`session:${sessionID}`, terminals)) {
-        useAppStore.getState().notify(t('err.hub.terminal_active'), 'error');
-        return;
-      }
+      // 不允许从 Hub 抢激活（会与终端 PTY 形成双写方），提示后不投递、不清草稿。
+      if (refuseTerminalSession(sessionID)) return;
+      setDraft('');
       void activatePending(sessionID).then((chat) => {
         if (!chat) return;
         // 激活与发送分开 catch：失败阶段不同，文案不同（激活失败 vs 发送失败），
@@ -993,6 +1000,7 @@ export default function AgentHubPanel() {
       });
       return;
     }
+    setDraft('');
     // 用户消息由 Go 侧落盘并经 hub:changed 回流（单一数据源），失败只提示不回滚。
     void sendChatPrompt(targetId, body)
       .then(() => {
@@ -1046,6 +1054,7 @@ export default function AgentHubPanel() {
           useAppStore.getState().notify(t('ui.hub.need_target'), 'error');
           return;
         }
+        if (refuseTerminalSession(sessionID)) return;
         const res = await openSessionACP(sessionID);
         if (!res.Chat) return;
         const chat = res.Chat;
@@ -1064,7 +1073,10 @@ export default function AgentHubPanel() {
   //   目标未激活（chats 反查不到，如会话已关闭/重启后未恢复）时先激活再发送；
   // - rephrase：保留式追加 @目标 到输入框（不清空用户正在输入的草稿），聚焦由用户
   //   补写后手动发送；目标未激活时同样先激活，激活后填新会话的 @ 标签，不自动发送。
+  // 只读态（非 ACP / 终端占用）直接 return：快捷按钮应已隐藏；勿把 quickTarget
+  // 的 null 误当成「待激活」去 openSessionACP。
   const quickReply = (m: HubMessage, action: 'send' | 'rephrase') => {
+    if (replyState(m, tools, terminals) !== 'acp') return;
     const targetId = quickTarget(m);
     if (!targetId) {
       if (action === 'send') {
