@@ -42,7 +42,7 @@ import {
   type MentionOption,
 } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
-import { loadDefaultCreate, loadLastCreate, loadToolModels, loadHubRouteMode, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode } from '../lib/agenthubDefaults';
+import { loadDefaultCreate, loadLastCreate, loadToolModels, loadHubRouteMode, rememberLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode } from '../lib/agenthubDefaults';
 import { saveHubDefaultCreate } from '../lib/api';
 import { quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
@@ -675,8 +675,9 @@ export default function AgentHubPanel() {
           openNewAgentDialog();
           return;
         }
-        // 模型：默认设置的 modelId 优先；无默认设置沿用 lastCreate.modelId
-        const modelId = defaults ? defaults.modelId : (last?.modelId ?? null);
+        // 模型：默认设置显式选了模型才恒用之；未选（null）时回落 lastCreate.modelId
+        //（上次模型），再无则 null = 工具默认模型。默认设置只固定工具，不锁死模型。
+        const modelId = defaults?.modelId ?? last?.modelId ?? null;
         return runAgentCreate(wsPath, toolId, modelId, {
           t,
           registerChat: (chat) => {
@@ -723,6 +724,9 @@ export default function AgentHubPanel() {
       .then(() => {
         // 乐观更新 store 视图，供 ChatView 等复用
         useAppStore.getState().setChatModels(menu.targetId, { ...menu.view, Current: modelID });
+        // 回写「上次模型」：下次新建该工具会话时预填（查不到会话信息则跳过）
+        const info = useAppStore.getState().chats.find((c) => c.ID === menu.targetId);
+        if (info) rememberLastModel(info.ToolID, info.Workspace, modelID);
       })
       .catch((e: unknown) =>
         useAppStore.getState().notify(t('ui.hub.model_switch_failed', { err: backendError(e) }), 'error'),

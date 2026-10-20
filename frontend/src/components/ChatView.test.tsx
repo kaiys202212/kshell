@@ -5,6 +5,7 @@ import type { ChatInfo } from '../lib/api';
 import { DRAG_MIME } from '../lib/dragPath';
 import { OPEN_FILE_EVENT } from '../lib/openHref';
 import { useAppStore } from '../state/store';
+import { loadLastCreate, saveLastCreate } from '../lib/agenthubDefaults';
 import { markdownBubbleClass } from '../lib/markdownStyles';
 import ChatView from './ChatView';
 import { tt } from '../test/i18n';
@@ -292,6 +293,41 @@ describe('ChatView', () => {
     fireEvent.pointerDown(item);
     fireEvent.click(item);
     await waitFor(() => expect(api.setChatModel).toHaveBeenCalledWith('c1', 'm2'));
+  });
+
+  it('模型切换成功后把所切模型记为该工具的上次模型（lastCreate 回写）', async () => {
+    api.listChatModels.mockResolvedValue({
+      Current: 'm1',
+      Models: [{ ID: 'm1', Name: 'Sonnet' }, { ID: 'm2', Name: 'Opus' }],
+    });
+    saveLastCreate({ wsPath: 'D:\\p', toolId: 'claude', modelId: 'm1' });
+    render(<ChatView chat={CHAT} active />);
+    const trigger = await screen.findByRole('button', { name: /Sonnet/ });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    const item = await screen.findByRole('menuitem', { name: 'Opus' });
+    fireEvent.pointerDown(item);
+    fireEvent.click(item);
+    await waitFor(() => expect(api.setChatModel).toHaveBeenCalledWith('c1', 'm2'));
+    await waitFor(() =>
+      expect(loadLastCreate()).toEqual({ wsPath: 'D:\\p', toolId: 'claude', modelId: 'm2' }),
+    );
+  });
+
+  it('模型切换失败时不回写 lastCreate', async () => {
+    api.listChatModels.mockResolvedValue({
+      Current: 'm1',
+      Models: [{ ID: 'm1', Name: 'Sonnet' }, { ID: 'm2', Name: 'Opus' }],
+    });
+    api.setChatModel.mockRejectedValueOnce(new Error('unsupported'));
+    saveLastCreate({ wsPath: 'D:\\p', toolId: 'claude', modelId: 'm1' });
+    render(<ChatView chat={CHAT} active />);
+    const trigger = await screen.findByRole('button', { name: /Sonnet/ });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    const item = await screen.findByRole('menuitem', { name: 'Opus' });
+    fireEvent.pointerDown(item);
+    fireEvent.click(item);
+    await waitFor(() => expect(api.setChatModel).toHaveBeenCalledWith('c1', 'm2'));
+    expect(loadLastCreate()).toEqual({ wsPath: 'D:\\p', toolId: 'claude', modelId: 'm1' });
   });
 
   it('agent 未报告模型时不显示模型控件', async () => {

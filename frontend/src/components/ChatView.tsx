@@ -23,6 +23,7 @@ import { appendChatInput, registerChatInput, unregisterChatInput } from '../lib/
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
 import { markdownBubbleClass } from '../lib/markdownStyles';
+import { rememberLastModel } from '../lib/agenthubDefaults';
 import { useAppStore } from '../state/store';
 import type { ChatQueuedMessage } from '../state/store';
 import type { TimelineItem } from '../state/chatUpdate';
@@ -389,6 +390,8 @@ export default function ChatView({ chat, active }: Props) {
       await setChatModel(id, modelID);
       // 乐观更新当前模型，避免等 agent 二次推送
       if (models) useAppStore.getState().setChatModels(id, { ...models, Current: modelID });
+      // 回写「上次模型」：下次新建该工具会话时预填
+      rememberLastModel(chat.ToolID, chat.Workspace, modelID);
     } catch (e) {
       useAppStore.getState().notify(t('ui.chat.model_switch_failed', { err: backendError(e) }), 'error');
     }

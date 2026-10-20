@@ -4,6 +4,7 @@ import {
   loadDefaultCreate,
   loadLastCreate,
   loadToolModels,
+  rememberLastModel,
   saveDefaultCreate,
   saveLastCreate,
   saveToolModels,
@@ -66,6 +67,36 @@ describe('agenthubDefaults', () => {
     saveToolModels('claude', ['m1']);
     localStorage.clear();
     expect(loadToolModels('claude')).toEqual([]);
+  });
+
+  describe('rememberLastModel', () => {
+    it('lastCreate 同工具时只更新 modelId，保留原 wsPath', () => {
+      saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'm1' });
+      rememberLastModel('claude', 'D:\\ws\\b', 'm2');
+      expect(loadLastCreate()).toEqual({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'm2' });
+    });
+
+    it('lastCreate 工具不同时以传入 wsPath/toolId 新建记录', () => {
+      saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'm1' });
+      rememberLastModel('codex', 'D:\\ws\\b', 'm2');
+      expect(loadLastCreate()).toEqual({ wsPath: 'D:\\ws\\b', toolId: 'codex', modelId: 'm2' });
+    });
+
+    it('无 lastCreate 记录时新建', () => {
+      rememberLastModel('codex', 'D:\\ws\\b', 'm2');
+      expect(loadLastCreate()).toEqual({ wsPath: 'D:\\ws\\b', toolId: 'codex', modelId: 'm2' });
+    });
+
+    it('modelId 空串时不写（语义为回落默认模型，不留记忆）', () => {
+      saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'm1' });
+      rememberLastModel('claude', 'D:\\ws\\a', '');
+      expect(loadLastCreate()).toEqual({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'm1' });
+    });
+
+    it('toolId 空串时不写（无法定位工具）', () => {
+      rememberLastModel('', 'D:\\ws\\a', 'm1');
+      expect(loadLastCreate()).toBeNull();
+    });
   });
 
   it('saveDefaultCreate 后 loadDefaultCreate 往返一致', () => {

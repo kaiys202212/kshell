@@ -53,6 +53,20 @@ export function saveLastCreate(v: LastAgentCreate): void {
   writeJSON(LAST_CREATE_KEY, v);
 }
 
+// rememberLastModel 把一次成功的模型切换记为该工具的「上次模型」：
+// lastCreate 同工具时原地更新 modelId（保留 wsPath），否则以传入 wsPath/toolId
+// 新建记录。toolId/modelId 缺失直接忽略——无法定位工具，或语义是回落默认模型
+// （切回默认不应把「默认」当成一个被记住的模型）。失败静默（辅助功能）。
+export function rememberLastModel(toolId: string, wsPath: string, modelId: string): void {
+  if (!toolId || !modelId) return;
+  const last = loadLastCreate();
+  if (last && last.toolId === toolId) {
+    saveLastCreate({ ...last, modelId });
+    return;
+  }
+  saveLastCreate({ wsPath, toolId, modelId });
+}
+
 // loadDefaultCreate 读取用户显式设置的默认 agent 配置；缺失、损坏或结构不完整时返回 null。
 export function loadDefaultCreate(): DefaultAgentCreate | null {
   const v = readJSON<Partial<DefaultAgentCreate>>(DEFAULT_CREATE_KEY);

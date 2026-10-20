@@ -6,7 +6,7 @@ import type { ChatInfo, TerminalInfo, ToolInfo } from '../lib/api';
 import { useAppStore } from '../state/store';
 import '../test/i18n';
 import { tt } from '../test/i18n';
-import { loadDefaultCreate, saveDefaultCreate, saveLastCreate, saveToolModels } from '../lib/agenthubDefaults';
+import { loadDefaultCreate, loadLastCreate, saveDefaultCreate, saveLastCreate, saveToolModels } from '../lib/agenthubDefaults';
 import { REQUIREMENT_MIME } from './RequirementList';
 import AgentHubPanel from './AgentHubPanel';
 
@@ -1555,6 +1555,52 @@ describe('AgentHubPanel', () => {
     expect(api.listChatModels).not.toHaveBeenCalledWith('pending:sess-9');
   });
 
+  it('#model 菜单切换成功后把所切模型记为该工具的上次模型（lastCreate 回写）', async () => {
+    api.listChatModels.mockResolvedValue({
+      Current: 'm1',
+      Models: [
+        { ID: 'm1', Name: 'Model One' },
+        { ID: 'm2', Name: 'Model Two' },
+      ],
+    });
+    saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'm1' });
+    useAppStore.setState({ chats: [chat({ ID: 'c1', ToolID: 'claude', Workspace: 'D:\\ws\\a' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#model' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.listChatModels).toHaveBeenCalledWith('c1'));
+    // 模型菜单出现，点选 Model Two
+    const menu = await screen.findByRole('list', { name: tt('ui.hub.model_label') });
+    fireEvent.click(within(menu).getByRole('button', { name: 'Model Two' }));
+    await waitFor(() => expect(api.setChatModel).toHaveBeenCalledWith('c1', 'm2'));
+    // 成功后回写 lastCreate：同工具原地更新 modelId，wsPath 保留
+    await waitFor(() =>
+      expect(loadLastCreate()).toEqual({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'm2' }),
+    );
+  });
+
+  it('#model 菜单切换失败时不回写 lastCreate', async () => {
+    api.listChatModels.mockResolvedValue({
+      Current: 'm1',
+      Models: [
+        { ID: 'm1', Name: 'Model One' },
+        { ID: 'm2', Name: 'Model Two' },
+      ],
+    });
+    api.setChatModel.mockRejectedValueOnce(new Error('model boom'));
+    saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'm1' });
+    useAppStore.setState({ chats: [chat({ ID: 'c1', ToolID: 'claude', Workspace: 'D:\\ws\\a' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#model' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    const menu = await screen.findByRole('list', { name: tt('ui.hub.model_label') });
+    fireEvent.click(within(menu).getByRole('button', { name: 'Model Two' }));
+    await waitFor(() => expect(api.setChatModel).toHaveBeenCalledWith('c1', 'm2'));
+    expect(loadLastCreate()).toEqual({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'm1' });
+  });
+
   it('hash 补全大小写不敏感过滤（#ST 只匹配 stop）', () => {
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
@@ -2025,6 +2071,26 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'codex'));
     // 默认设置的模型在创建后生效
     await waitFor(() => expect(api.setChatModel).toHaveBeenCalledWith('n7', 'm2'));
+  });
+
+  it('#easynew：默认设置未显式选模型时回落 lastCreate.modelId（上次模型）', async () => {
+    api.getTools.mockResolvedValue([acpTool()]);
+    api.openWorkspaceACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'n10', Workspace: 'D:\\ws\\a', ToolID: 'claude' }),
+    });
+    api.listChatModels.mockResolvedValue({ Current: '', Models: [] });
+    saveDefaultCreate({ toolId: 'claude', modelId: null });
+    saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'm9' });
+    useAppStore.setState({ workspaces: [workspaceA], selectedProject: 'D:\\ws\\a' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#easynew' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'claude'));
+    // 默认设置只固定工具；模型跟随上次创建记录
+    await waitFor(() => expect(api.setChatModel).toHaveBeenCalledWith('n10', 'm9'));
   });
 
   it('#easynew：无选中项目时回落 lastCreate.wsPath', async () => {
