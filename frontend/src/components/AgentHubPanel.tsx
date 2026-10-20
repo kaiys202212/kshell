@@ -2,7 +2,7 @@
 // 与 ChatView 的区别：ChatView 绑定单个 chat.ID，本组件是跨会话聚合视图——
 // 左侧列出所有运行中的 ACP agent（按项目分组、点击跳转），右侧合并展示
 // 用户发出的消息与 agent 结束通知（summary 为 agent 回复正文）。
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -29,7 +29,6 @@ import {
   recallHubMessage,
   sendChatPrompt,
   setChatModel,
-  confirmHubTool,
   saveHubRouteMode,
 } from '../lib/api';
 import {
@@ -60,7 +59,7 @@ import { Button } from './ui/button';
 import { ToolIcon } from './ui/tool-icons';
 import { Dialog } from './ui/dialog';
 import FindSessionDialog from './FindSessionDialog';
-import HubConfirmCard from './HubConfirmCard';
+import HubMessageList, { type HubQuickAction } from './HubMessageList';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 
 // 消息流里渲染的一条：用户发出（右）或 agent 回复（左）。
@@ -77,13 +76,6 @@ const HUB_COMMANDS: { name: string; descKey: string }[] = [
   { name: 'find', descKey: 'ui.hub.cmd_find_desc' },
 ];
 const HUB_COMMAND_NAMES = new Set(HUB_COMMANDS.map((c) => c.name.toLowerCase()));
-
-// 快速回复预设按钮（常显）：send 点击即把 quick_continue_text 发给归因 agent；
-// rephrase 把 @ 目标填入输入框由用户补充后手动发送。按钮文案与发送文本解耦。
-const QUICK_REPLIES: { key: string; action: 'send' | 'rephrase' }[] = [
-  { key: 'ui.hub.quick_continue', action: 'send' },
-  { key: 'ui.hub.quick_rephrase', action: 'rephrase' },
-];
 
 // 创建互斥锁（session 级，防 /easynew 与对话框并发重复建会话）。
 // 持有 promise 引用而非布尔：只有创建 Promise 自己的 finally 才释放锁，
@@ -1081,49 +1073,56 @@ export default function AgentHubPanel() {
   //   补写后手动发送；目标未激活时同样先激活，激活后填新会话的 @ 标签，不自动发送。
   // 只读态（非 ACP / 终端占用）直接 return：快捷按钮应已隐藏；勿把 quickTarget
   // 的 null 误当成「待激活」去 openSessionACP。
-  const quickReply = (m: HubMessage, action: 'send' | 'rephrase') => {
-    if (replyState(m, tools, terminals) !== 'acp') return;
-    const targetId = quickTarget(m);
-    if (!targetId) {
-      if (action === 'send') {
-        const text = t('ui.hub.quick_continue_text');
-        activateAndThen(m, async (chat) => {
-          await sendChatPrompt(chat.ID, text);
+  // useCallback：稳定引用交给 memo(HubMessageList)，draft 重渲时不拖消息树。
+  const quickReply = useCallback(
+    (m: HubMessage, action: HubQuickAction) => {
+      if (replyState(m, tools, terminals) !== 'acp') return;
+      const targetId = quickTarget(m);
+      if (!targetId) {
+        if (action === 'send') {
+          const text = t('ui.hub.quick_continue_text');
+          activateAndThen(m, async (chat) => {
+            await sendChatPrompt(chat.ID, text);
+          });
+          return;
+        }
+        // rephrase：激活成功后填 @ 标签。走到此分支说明点击时目标未激活，闭包里的
+        // options 必不含新 chat，按实时 store 的全量列表构造（同名消歧与补全一致）。
+        activateAndThen(m, (chat) => {
+          const label = mentionLabelForChat(chat);
+          if (!label) return;
+          setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
+          inputRef.current?.focus();
         });
         return;
       }
-      // rephrase：激活成功后填 @ 标签。走到此分支说明点击时目标未激活，闭包里的
-      // options 必不含新 chat，按实时 store 的全量列表构造（同名消歧与补全一致）。
-      activateAndThen(m, (chat) => {
-        const label = mentionLabelForChat(chat);
-        if (!label) return;
-        setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
-        inputRef.current?.focus();
-      });
-      return;
-    }
-    if (action === 'send') {
-      void sendChatPrompt(targetId, t('ui.hub.quick_continue_text'))
-        .then(() => {
-          useAppStore.getState().setLastAgentId(targetId);
-        })
-        .catch((e: unknown) => {
-          useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
-        });
-      return;
-    }
-    // rephrase：从 mention 候选反查展示标签（会话标题）；找不到兜底提示。
-    const label = options.find((o) => o.id === targetId)?.insert;
-    if (!label) {
-      useAppStore.getState().notify(t('ui.hub.need_target_drag'), 'error');
-      return;
-    }
-    setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
-    inputRef.current?.focus();
-  };
+      if (action === 'send') {
+        void sendChatPrompt(targetId, t('ui.hub.quick_continue_text'))
+          .then(() => {
+            useAppStore.getState().setLastAgentId(targetId);
+          })
+          .catch((e: unknown) => {
+            useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
+          });
+        return;
+      }
+      // rephrase：从 mention 候选反查展示标签（会话标题）；找不到兜底提示。
+      const label = options.find((o) => o.id === targetId)?.insert;
+      if (!label) {
+        useAppStore.getState().notify(t('ui.hub.need_target_drag'), 'error');
+        return;
+      }
+      setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
+      inputRef.current?.focus();
+    },
+    // quickTarget / activateAndThen / mentionLabelForChat 闭包随 render；依赖会随
+    // chats/tools/terminals/options/t 变化——消息有更新时本应刷新回调，draft 不变这些时稳定。
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 与既有闭包语义对齐，避免无谓扩依赖
+    [tools, terminals, options, t, chats],
+  );
 
   // recall 撤回排队中的用户消息：后端真移除 + 标记已撤回；乐观更新，hub:changed 回流兜底。
-  const recall = (m: HubMessage) => {
+  const recall = useCallback((m: HubMessage) => {
     void recallHubMessage(m.id)
       .then(() => {
         useAppStore
@@ -1134,7 +1133,7 @@ export default function AgentHubPanel() {
       .catch((e: unknown) => {
         useAppStore.getState().notify(t('ui.hub.recall_failed', { err: backendError(e) }), 'error');
       });
-  };
+  }, [t]);
 
   // openHistory 展开归档入口：拉月份列表。
   const openHistory = () => {
@@ -1265,95 +1264,10 @@ export default function AgentHubPanel() {
         </div>
       )}
 
-      {/* 水平内边距避免气泡贴边/挤滚动条；gap-3 拉开卡片垂直间距 */}
+      {/* 水平内边距避免气泡贴边/挤滚动条；gap-3 拉开卡片垂直间距。
+          消息流独立 memo：draft 变化不重跑 ReactMarkdown。 */}
       <div ref={logRef} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-2" role="log" aria-live="polite">
-        {hubMessages.map((m) => {
-          const attr = attrOf(m);
-          // 三态判定（规则1/2/3）：badge 与快捷按钮显隐由 st 驱动（见 hubReply.ts）
-          const st = replyState(m, tools, terminals);
-          return m.kind === 'user' ? (
-            <div key={`h${m.id}`} className="text-right">
-              {attr && <div className="mb-0.5 text-[11px] text-muted-foreground">{attr}</div>}
-              {/* 气泡内强制居左：外层 text-right 只负责把卡片推到行尾，避免长文贴右边缘 */}
-              <div className="group inline-block max-w-[85%]">
-                {m.status === 'recalled' ? (
-                  // 已撤回：灰显卡片 + 标签，原文保留（在原消息上标记，不删除）
-                  <div className="selectable inline-block break-words overflow-hidden rounded-md bg-muted px-3 py-1.5 text-left text-muted-foreground">
-                    <span className="mb-0.5 block text-[11px] opacity-80">{t('ui.hub.recalled')}</span>
-                    <span className="whitespace-pre-wrap opacity-70">{userBubbleText(m.text)}</span>
-                  </div>
-                ) : (
-                  <div className="selectable inline-block break-words overflow-hidden rounded-md bg-primary px-3 py-1.5 text-left text-primary-foreground">
-                    {/* @ 路由标签不展示（落盘原文不动，路由信息由归因行承担） */}
-                    <span className="whitespace-pre-wrap">{userBubbleText(m.text)}</span>
-                  </div>
-                )}
-                {/* queued 撤回按钮常显在气泡下方（文档流，右对齐容器内自然靠右） */}
-                {m.status === 'queued' && (
-                  <div className="mt-1">
-                    <button
-                      type="button"
-                      className="rounded border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground hover:text-destructive"
-                      onClick={() => recall(m)}
-                    >
-                      {t('ui.hub.recall')}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div key={`h${m.id}`} className="text-left">
-              <div className="group inline-block max-w-[85%]">
-                <div className="selectable break-words overflow-hidden rounded-md bg-muted px-3 py-1.5 [&_pre]:whitespace-pre-wrap">
-                  {/* 归因行：工具 · 项目 · 会话；缺项跳过，全缺只剩工具名 */}
-                  <div className="mb-0.5 text-[11px] text-muted-foreground">
-                    {[toolDisplayName(m.tool ?? ''), attr].filter(Boolean).join(' · ')}
-                    {/* 只读徽标：非 ACP 工具（永久）或终端激活态（激活期），title 说明原因 */}
-                    {st !== 'acp' && (
-                      <span
-                        className="ml-1 rounded bg-background px-1 text-[10px] text-muted-foreground ring-1 ring-border"
-                        title={t(st === 'tool' ? 'ui.hub.readonly_tool' : 'ui.hub.readonly_terminal')}
-                      >
-                        {t('ui.hub.readonly_badge')}
-                      </span>
-                    )}
-                  </div>
-                  {/* tool_confirm：写操作确认卡（摘要 + 确认/拒绝按钮），其余走 markdown */}
-                  {m.event === 'tool_confirm' ? (
-                    <HubConfirmCard
-                      message={m}
-                      onConfirm={(pendingID, approved) =>
-                        confirmHubTool(m.chatId ?? '', pendingID, approved)
-                      }
-                    />
-                  ) : (
-                    /* 正文过 translateBackend：ack 卡片的 wire key 翻译成当前语言，普通文本原样返回 */
-                    <div className={markdownBubbleClass}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{translateBackend(m.text)}</ReactMarkdown>
-                    </div>
-                  )}
-                </div>
-                {/* 快速回复：常显预设按钮，点击直达该卡片归因的 agent（send/填入两种动作）；
-                    只读气泡（st !== 'acp'）不渲染——必然失败的入口不给用户 */}
-                {st === 'acp' && (
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {QUICK_REPLIES.map((q) => (
-                      <button
-                        key={q.key}
-                        type="button"
-                        className="rounded border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                        onClick={() => quickReply(m, q.action)}
-                      >
-                        {t(q.key)}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
+        <HubMessageList tools={tools} onRecall={recall} onQuickReply={quickReply} />
       </div>
 
       <div data-testid="hub-input-area" className="flex flex-col gap-1 border-t border-border pt-2">
