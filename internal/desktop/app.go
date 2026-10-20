@@ -715,6 +715,13 @@ func (a *App) themeOptions() launch.ThemeOptions {
 // 只注入端点与密钥（取默认平台，DefaultPlatform 命中否则第一个），不注入模型名——
 // 默认模型由 agent 自行决定；settings 配置的模型仅经聊天下拉提供切换。
 func (a *App) modelOptions() launch.ModelOptions {
+	return a.modelOptionsForCreate("")
+}
+
+// modelOptionsForCreate 组装本次启动的模型选项：端点/密钥照常；createModel
+// 非空时写入 Model（剥 kshell 前缀），供 Claude settings 注入 ANTHROPIC_MODEL。
+// 空 createModel = 不注入模型名（no-default-model）。
+func (a *App) modelOptionsForCreate(createModel string) launch.ModelOptions {
 	m := a.snapshot().Config.Model
 	if !m.Enabled {
 		return launch.ModelOptions{}
@@ -723,11 +730,23 @@ func (a *App) modelOptions() launch.ModelOptions {
 	if !ok {
 		return launch.ModelOptions{}
 	}
+	model := strings.TrimSpace(createModel)
+	if platID, bare, ok := splitKshellModelID(model); ok {
+		// 跨平台前缀：端点改用目标平台（若仍在配置中），模型用裸名。
+		model = bare
+		for _, x := range m.Platforms {
+			if x.ID == platID {
+				p = x
+				break
+			}
+		}
+	}
 	return launch.ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
 		return providers.ModelConfig{
 			OpenAIBaseURL:    p.OpenAIBaseURL,
 			AnthropicBaseURL: p.AnthropicBaseURL,
 			APIKey:           p.APIKey,
+			Model:            model,
 		}, true
 	}}
 }

@@ -72,7 +72,7 @@ export async function dispatchRequirement(
     }
     if (!toolID) toolID = await resolveToolID();
     if (!toolID) throw new Error('no_acp_tool');
-    const result = await openWorkspaceACP(wsPath, toolID);
+    const result = await openWorkspaceACP(wsPath, toolID, defaults?.modelId ?? null);
     if (!result.Chat) throw new Error('no_chat');
     const chat = result.Chat;
     if (defaults?.modelId) {
@@ -103,7 +103,7 @@ export async function reopenRequirementSession(r: Requirement): Promise<OpenedSe
   if (!r.dispatchedTo) throw new Error('no_workspace');
   const toolID = await resolveToolID();
   if (!toolID) throw new Error('no_acp_tool');
-  const result = await openWorkspaceACP(r.dispatchedTo, toolID);
+  const result = await openWorkspaceACP(r.dispatchedTo, toolID, null);
   if (!result.Chat) throw new Error('no_chat');
   const chat = result.Chat;
   await markRequirementDispatched(r.id, r.dispatchedTo, chat.ID, chat.Title, chat.SessionID);

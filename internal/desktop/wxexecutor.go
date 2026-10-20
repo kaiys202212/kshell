@@ -281,7 +281,7 @@ func (w *wxExecutor) easyNewToolID() string {
 }
 
 // EasyNew 快速新建：默认工具 = easyNewToolID（配置默认优先），默认工作区 =
-// 第一个工作区；模型不指定（launch 层自行用默认）。
+// 第一个工作区；模型取 AgentHub.DefaultModel（空 = 工具默认）。
 func (w *wxExecutor) EasyNew() (hub.SessionRef, error) {
 	toolID := w.easyNewToolID()
 	if toolID == "" {
@@ -291,7 +291,8 @@ func (w *wxExecutor) EasyNew() (hub.SessionRef, error) {
 	if len(ws) == 0 {
 		return hub.SessionRef{}, fmt.Errorf("err.weixin.no_workspaces")
 	}
-	return w.CreateNew(toolID, ws[0].Path, "")
+	model := w.a.snapshot().Config.AgentHub.DefaultModel
+	return w.CreateNew(toolID, ws[0].Path, model)
 }
 
 // toolInstalled 报告工具 ID 是否在已安装列表里。
@@ -323,18 +324,22 @@ func (w *wxExecutor) NewMenuOptions() (tools, workspaces, models []hub.MenuOptio
 	return tools, workspaces, nil
 }
 
-// CreateNew 在指定工作区以指定工具新建 ACP 会话；model 忽略（launch 默认）。
+// CreateNew 在指定工作区以指定工具新建 ACP 会话；model 非空时注入该次创建模型。
 func (w *wxExecutor) CreateNew(toolID, wsID, model string) (hub.SessionRef, error) {
-	_ = model
-	o, err := w.a.OpenWorkspaceACP(wsID, toolID)
+	o, err := w.a.OpenWorkspaceACP(wsID, toolID, model)
 	if err != nil {
 		return hub.SessionRef{}, err
 	}
 	if o.Kind != "chat" || o.Chat == nil {
 		return hub.SessionRef{}, fmt.Errorf("err.weixin.open_not_chat|%s", o.Kind)
 	}
+	chatID := w.a.originalChatID(o.Chat.ID)
+	// 注入覆盖 Claude 启动默认；再 SetModel 对齐 Current（与桌面 easynew 同口径）。
+	if model != "" {
+		_ = w.a.SetChatModel(chatID, model)
+	}
 	return hub.SessionRef{
-		ChatID:    w.a.originalChatID(o.Chat.ID),
+		ChatID:    chatID,
 		Key:       o.Chat.Key,
 		SessionID: o.Chat.SessionID,
 		Workspace: o.Chat.Workspace,

@@ -120,7 +120,8 @@ export async function runAgentCreate(
   // 避免旧创建的 finally 清掉期间新创建已持有的锁。
   async function doCreate(): Promise<boolean> {
     try {
-      const result = await openWorkspaceACP(wsPath, toolId);
+      // modelId 同步传给后端：Claude 经 settings 注入 ANTHROPIC_MODEL，避免仅靠建后 SetModel
+      const result = await openWorkspaceACP(wsPath, toolId, modelId);
       if (!result.Chat) {
         onClose();
         return true;
@@ -134,10 +135,18 @@ export async function runAgentCreate(
       if (view && view.Models && view.Models.length > 0) {
         saveToolModels(toolId, view.Models.map((m) => m.ID));
       }
-      // 用户选了模型且与 agent 当前模型不同：建后再 SetModel
-      if (modelId && view && view.Current !== modelId) {
+      // 用户选了模型且与 agent 当前模型不同：建后再 SetModel。
+      // view 拉取失败（null）也要切——否则握手竞态会让 easynew 永远停在 default。
+      if (modelId && (!view || view.Current !== modelId)) {
         try {
           await setChatModel(chat.ID, modelId);
+          // 乐观更新 store：后端会推 chat:models，这里立刻反映，避免下拉卡在 default
+          if (view) {
+            useAppStore.getState().setChatModels(chat.ID, { ...view, Current: modelId });
+          } else {
+            const refreshed = await listChatModels(chat.ID).catch(() => null);
+            if (refreshed) useAppStore.getState().setChatModels(chat.ID, refreshed);
+          }
         } catch (e: unknown) {
           // 会话已建成，切模型失败只提示，不回滚
           useAppStore.getState().notify(t('ui.hub.model_switch_failed', { err: backendError(e) }), 'error');

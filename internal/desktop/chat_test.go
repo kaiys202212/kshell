@@ -343,7 +343,7 @@ func TestOpenWorkspaceACP_NotLoggedInRejected(t *testing.T) {
 	env.app.tools[0].Auth = string(providers.AuthOut)
 	env.app.mu.Unlock()
 
-	got, err := env.app.OpenWorkspaceACP(`D:\w`, "claude")
+	got, err := env.app.OpenWorkspaceACP(`D:\w`, "claude", "")
 	if !errors.Is(err, launch.ErrNotLoggedIn) {
 		t.Fatalf("未登录显式 ACP 应返回 ErrNotLoggedIn, got %v", err)
 	}

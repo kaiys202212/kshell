@@ -292,15 +292,17 @@ func (a *App) OpenWorkspace(wsID, toolID string) (OpenedSession, error) {
 	if !a.preferACP() {
 		return a.fallbackTerminalWorkspace(wsID, toolID, "")
 	}
-	return a.openWorkspaceACP(wsID, toolID, true)
+	return a.openWorkspaceACP(wsID, toolID, "", true)
 }
 
 // OpenWorkspaceACP 显式以 ACP 新建会话（忽略会话模式偏好）。
-func (a *App) OpenWorkspaceACP(wsID, toolID string) (OpenedSession, error) {
-	return a.openWorkspaceACP(wsID, toolID, false)
+// modelID 非空时仅本次创建注入该模型（Claude 经 settings ANTHROPIC_MODEL）；
+// 空串 = 不注入模型名（no-default-model：由 agent 自身默认决定）。
+func (a *App) OpenWorkspaceACP(wsID, toolID, modelID string) (OpenedSession, error) {
+	return a.openWorkspaceACP(wsID, toolID, modelID, false)
 }
 
-func (a *App) openWorkspaceACP(wsID, toolID string, allowFallback bool) (OpenedSession, error) {
+func (a *App) openWorkspaceACP(wsID, toolID, modelID string, allowFallback bool) (OpenedSession, error) {
 	a.ensureSessionHooks()
 	ws, tools, ok := a.workspaceByIDReady(wsID)
 	if !ok {
@@ -308,7 +310,7 @@ func (a *App) openWorkspaceACP(wsID, toolID string, allowFallback bool) (OpenedS
 	}
 	o := a.snapshot()
 	if m := o.Chats; m != nil {
-		if l, err := launch.ForWorkspaceACP(o.Providers, tools, ws, toolID, a.modelOptions(), a.permissionOptions()); err == nil {
+		if l, err := launch.ForWorkspaceACP(o.Providers, tools, ws, toolID, a.modelOptionsForCreate(modelID), a.permissionOptions()); err == nil {
 			info, err := openChat(m, "new:"+nextChatSeq(), chat.Info{
 				Kind:            chat.KindNew,
 				Workspace:       ws.Path,
@@ -681,6 +683,8 @@ func splitKshellModelID(id string) (platID, model string, ok bool) {
 // 下拉前缀 ID 在转发前解析：默认平台只切模型；跨平台先落盘切换默认平台
 // 与活跃模型再切（保存失败则不切）；platID 已不在配置（配置删除后下拉
 // 缓存未刷）时原样透传容错，不崩、不误存。
+// 成功后推 chat:models，与 restoreSessionModel 同口径——否则 easynew 建后
+// SetModel 成功但前端仍停在握手期的 Current=default。
 func (a *App) SetChatModel(id, modelID string) error {
 	m := a.chats()
 	if m == nil {
@@ -688,29 +692,39 @@ func (a *App) SetChatModel(id, modelID string) error {
 	}
 	resolved, _ := a.resolveChatID(id)
 	platID, model, ok := splitKshellModelID(modelID)
+	var err error
 	if !ok {
-		return m.SetModel(resolved, modelID)
-	}
-	cfg := a.snapshot().Config.Model
-	found := false
-	for _, p := range cfg.Platforms {
-		if p.ID == platID {
-			found = true
-			break
+		err = m.SetModel(resolved, modelID)
+	} else {
+		cfg := a.snapshot().Config.Model
+		found := false
+		for _, p := range cfg.Platforms {
+			if p.ID == platID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			err = m.SetModel(resolved, modelID)
+		} else if def, _ := cfg.ActivePlatform(); def.ID != platID {
+			if err = a.saveConfig(func(c *config.Config) {
+				c.Model.DefaultPlatform = platID
+				c.Model.ActiveModel = model
+			}); err != nil {
+				return err
+			}
+			err = m.SetModel(resolved, model)
+		} else {
+			err = m.SetModel(resolved, model)
 		}
 	}
-	if !found {
-		return m.SetModel(resolved, modelID)
+	if err != nil {
+		return err
 	}
-	if def, _ := cfg.ActivePlatform(); def.ID != platID {
-		if err := a.saveConfig(func(c *config.Config) {
-			c.Model.DefaultPlatform = platID
-			c.Model.ActiveModel = model
-		}); err != nil {
-			return err
-		}
+	if view, viewErr := a.modelsView(resolved); viewErr == nil {
+		a.emitChatOut("chat:models", map[string]any{"id": id, "models": view})
 	}
-	return m.SetModel(resolved, model)
+	return nil
 }
 
 // ListChatCommands 返回会话最近的技能/命令列表（available_commands_update）。

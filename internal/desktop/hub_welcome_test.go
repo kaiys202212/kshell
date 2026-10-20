@@ -55,7 +55,7 @@ func newWelcomeTestApp(t *testing.T) (*App, *hub.Store, *hubRecorder) {
 func TestOpenWorkspaceACPRecordsHubWelcome(t *testing.T) {
 	app, store, rec := newWelcomeTestApp(t)
 
-	got, err := app.OpenWorkspaceACP(`D:\w`, "claude")
+	got, err := app.OpenWorkspaceACP(`D:\w`, "claude", "")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestOpenWorkspaceACPRecordsHubWelcome(t *testing.T) {
 func TestOpenWorkspaceACPEmitChatMeta(t *testing.T) {
 	app, _, rec := newWelcomeTestApp(t)
 
-	got, err := app.OpenWorkspaceACP(`D:\w`, "claude")
+	got, err := app.OpenWorkspaceACP(`D:\w`, "claude", "")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestOpenSessionACPEmitChatMeta(t *testing.T) {
 func TestAttachBackfillsHubSessionID(t *testing.T) {
 	app, store, rec := newWelcomeTestApp(t)
 
-	got, err := app.OpenWorkspaceACP(`D:\w`, "claude")
+	got, err := app.OpenWorkspaceACP(`D:\w`, "claude", "")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
