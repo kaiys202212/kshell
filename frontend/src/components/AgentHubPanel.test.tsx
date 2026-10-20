@@ -349,7 +349,7 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '@Claude Code#c1 帮我看下' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '@Claude Code#c1 帮我看下'));
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '帮我看下'));
     expect(useAppStore.getState().lastAgentId).toBe('c1');
     expect((box as HTMLTextAreaElement).value).toBe('');
   });
@@ -1300,13 +1300,13 @@ describe('AgentHubPanel', () => {
     expect((box as HTMLTextAreaElement).value).toBe('#nope');
   });
 
-  it('发送带 @ 提及及行中 # 词：整体透传给 agent（仅 trim 后 # 开头才视为命令）', () => {
+  it('正文中间的 @ 提及剥离标签，行中 # 词仍原样投递', () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '@Claude Code#c1 #nope rest' } });
+    fireEvent.change(box, { target: { value: '看下 @Claude Code#c1 #nope rest' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '@Claude Code#c1 #nope rest');
+    expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '看下 #nope rest');
     expect(
       useAppStore
         .getState()
@@ -1521,6 +1521,49 @@ describe('AgentHubPanel', () => {
     expect(box.value).toBe('@Claude Code#重构认证 /commit ');
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '/commit'));
+  });
+
+  it('@ 目标的普通消息：投递正文不含路由标签', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 帮我修复' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '帮我修复'));
+  });
+
+  it('@ 目标后的 # 命令仍按客户端命令执行（标签不参与命令探测）', async () => {
+    api.hubCommand.mockResolvedValue([]);
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 #l' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.hubCommand).toHaveBeenCalledWith('#l'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+  });
+
+  it('只有 @ 标签时不投递：提示并保留草稿', () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder')) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 ' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    expect(
+      useAppStore.getState().toasts.some((x) => x.title === tt('ui.hub.empty_message')),
+    ).toBe(true);
+    expect(box.value).toBe('@Claude Code#重构认证 ');
+  });
+
+  it('历史用户消息气泡不展示 @ 路由标签', () => {
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1' })],
+      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '@Claude Code#c1 旧消息', ts: 1 }],
+    });
+    render(<AgentHubPanel />);
+    expect(screen.getByText('旧消息')).toBeTruthy();
+    expect(screen.queryByText(/@Claude Code#/)).toBeNull();
   });
 
   it('/ 前有普通文字时不弹技能补全（"/" 不在正文首字符，技能不会执行）', async () => {

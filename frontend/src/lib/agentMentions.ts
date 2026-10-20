@@ -90,6 +90,23 @@ export function stripLeadingMentions(text: string, options: MentionOption[]): st
   }
 }
 
+// stripMentionTags 移除文本中所有已知 @ 路由标签（开头与正文中间都算）：
+// @ 标签只供 Hub 解析投递目标，不应进入 agent 会话，也不应在气泡里展示。
+// 只清理当前会话列表能生成的标签，普通 @ 与邮箱保持原样；长标签优先，
+// 避免标题是另一标签前缀时误截断。移除后折叠行内多余空格，保留换行。
+export function stripMentionTags(text: string, options: MentionOption[]): string {
+  let out = text;
+  let removed = false;
+  for (const tok of mentionTokens(options)) {
+    if (out.includes(tok)) {
+      out = out.split(tok).join('');
+      removed = true;
+    }
+  }
+  // 没命中标签时原样返回，不因清洗改写用户原文（如连续空格）。
+  return removed ? out.replace(/[ \t]{2,}/g, ' ').trim() : out;
+}
+
 // displayMentionTitles 把文本里的 @工具#会话ID 换成 @工具#会话标题，仅供展示
 //（落盘原文可以仍是 id）。标题与项目都空时保留原文。长 id 优先，避免前缀截断。
 export function displayMentionTitles(text: string, agents: MentionAgent[]): string {

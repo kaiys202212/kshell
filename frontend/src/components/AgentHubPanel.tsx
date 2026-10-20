@@ -35,6 +35,7 @@ import {
   displayMentionTitles,
   resolveMentionTarget,
   stripLeadingMentions,
+  stripMentionTags,
   type MentionAgent,
   type MentionOption,
 } from '../lib/agentMentions';
@@ -359,6 +360,11 @@ export default function AgentHubPanel() {
     [chats],
   );
   const options = useMemo(() => buildMentionOptions(mentionAgents), [mentionAgents]);
+
+  // userBubbleText 用户气泡不展示 Hub @ 路由标签：历史消息先按会话标题
+  // 替换 id 写法，再整体移除标签；新消息投递前已剥离，气泡天然干净。
+  const userBubbleText = (text: string) =>
+    stripMentionTags(displayMentionTitles(text, mentionAgents), options);
 
   // mentionLabelForChat 给「刚激活、尚未进入渲染期 chats」的会话构造写入标签。
   // 必须基于实时 store 的全量会话：visibleMentionLabel 的同名消歧依赖完整列表，
@@ -860,17 +866,24 @@ export default function AgentHubPanel() {
   const send = () => {
     const text = draft.trim();
     if (!text) return;
+    // @ 标签只供 Hub 路由：命令探测与投递正文都用剥离后的 body，
+    // 路由解析 resolveMentionTarget 仍看原始草稿（需要标签才能选目标）。
+    const body = stripMentionTags(text, options);
+    if (!body) {
+      useAppStore.getState().notify(t('ui.hub.empty_message'), 'error');
+      return;
+    }
     // 纯数字输入：命令层的「编号切换/菜单选择」语义，透传给共享命令层处理
     //（#l/#f 的编号映射在 Go 侧，前端无从判断，统一透传）。
-    if (isHubNumber(text)) {
-      runSharedCommand(text);
+    if (isHubNumber(body)) {
+      runSharedCommand(body);
       return;
     }
     // 仅当 trim 后以 #（含全角＃）开头才视为 kshell 客户端命令意图；行中 # 词
     // （如颜色 #333、issue #123）原样透传给 agent。命令探测用全角归一化副本
     // （＃/全角空格/冒号/数字，与 Go 侧 normalizeInput 同口径），原文透传不改写。
     // 取首词校验，未知命令提示并保留草稿。
-    const probe = normalizeHubProbe(text);
+    const probe = normalizeHubProbe(body);
     if (probe.startsWith('#')) {
       const cmdToken = probe.split(/\s+/)[0] ?? '';
       const name = cmdToken.slice(1).toLowerCase();
@@ -881,7 +894,7 @@ export default function AgentHubPanel() {
         return;
       }
       if (!HUB_COMMAND_NAMES.has(name)) {
-        runSharedCommand(text);
+        runSharedCommand(body);
         return;
       }
       // #find：不透传给 agent。带关键词（`#find claude`）时以剩余文本为初始过滤词
@@ -889,7 +902,7 @@ export default function AgentHubPanel() {
       if (name === 'find' && probe !== cmdToken) {
         setDraft('');
         // 探测归一化是逐字符等长替换，按原文字符串切片保持关键词原样
-        openFindDialog(text.slice(cmdToken.length).trim());
+        openFindDialog(body.slice(cmdToken.length).trim());
         return;
       }
       // 整体就是单个已知命令 token（尾空格已被 trim 掉）：宽松执行而非投递，
@@ -908,10 +921,6 @@ export default function AgentHubPanel() {
       return;
     }
     setDraft('');
-    // @ 标签只是 Hub 的路由标记，不交给 agent：去掉开头标签后若正文以 "/" 开头
-    // （斜杠技能），用剥离后的正文投递，保证 "/" 落在首字符；其余消息保持原样。
-    const stripped = stripLeadingMentions(text, options);
-    const deliverText = stripped.startsWith('/') ? stripped : text;
     // pending: 目标 = 最近交互的会话未激活（chats 查不到），但有磁盘会话 ID 快照：
     // 先 openSessionACP 激活原会话，再向新 chat 投递。激活失败报错不投递——
     // 上下文丢失必须可见，绝不落 workspace 模糊匹配误投同项目会话。
@@ -921,7 +930,7 @@ export default function AgentHubPanel() {
         if (!chat) return;
         // 激活与发送分开 catch：失败阶段不同，文案不同（激活失败 vs 发送失败），
         // 混在一个 catch 里会把投递失败误报成「激活会话失败」误导排查。
-        void sendChatPrompt(chat.ID, deliverText)
+        void sendChatPrompt(chat.ID, body)
           .then(() => {
             useAppStore.getState().setLastAgentId(chat.ID);
           })
@@ -932,7 +941,7 @@ export default function AgentHubPanel() {
       return;
     }
     // 用户消息由 Go 侧落盘并经 hub:changed 回流（单一数据源），失败只提示不回滚。
-    void sendChatPrompt(targetId, deliverText)
+    void sendChatPrompt(targetId, body)
       .then(() => {
         useAppStore.getState().setLastAgentId(targetId);
       })
@@ -1169,7 +1178,7 @@ export default function AgentHubPanel() {
                         .join(' · ')}
                     </div>
                     {m.kind === 'user' ? (
-                      <span className="whitespace-pre-wrap">{displayMentionTitles(m.text, mentionAgents)}</span>
+                      <span className="whitespace-pre-wrap">{userBubbleText(m.text)}</span>
                     ) : (
                       <div className={cn(markdownBubbleClass, '[&_pre]:whitespace-pre-wrap')}>
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{translateBackend(m.text)}</ReactMarkdown>
@@ -1196,12 +1205,12 @@ export default function AgentHubPanel() {
                   // 已撤回：灰显卡片 + 标签，原文保留（在原消息上标记，不删除）
                   <div className="selectable inline-block break-words overflow-hidden rounded-md bg-muted px-3 py-1.5 text-left text-muted-foreground">
                     <span className="mb-0.5 block text-[11px] opacity-80">{t('ui.hub.recalled')}</span>
-                    <span className="whitespace-pre-wrap opacity-70">{displayMentionTitles(m.text, mentionAgents)}</span>
+                    <span className="whitespace-pre-wrap opacity-70">{userBubbleText(m.text)}</span>
                   </div>
                 ) : (
                   <div className="selectable inline-block break-words overflow-hidden rounded-md bg-primary px-3 py-1.5 text-left text-primary-foreground">
-                    {/* @提及#ID 展示为 #会话标题（落盘原文不动，事后可读） */}
-                    <span className="whitespace-pre-wrap">{displayMentionTitles(m.text, mentionAgents)}</span>
+                    {/* @ 路由标签不展示（落盘原文不动，路由信息由归因行承担） */}
+                    <span className="whitespace-pre-wrap">{userBubbleText(m.text)}</span>
                   </div>
                 )}
                 {/* queued 撤回按钮常显在气泡下方（文档流，右对齐容器内自然靠右） */}

@@ -945,6 +945,7 @@
       "quick_continue_text": "请继续执行当前任务。",
       "unknown_cmd": "未知命令 {{cmd}}。可用命令：#new #easynew #stop #model #clear",
       "need_target_drag": "用 @ 引用会话，或点击会话 chip / 拖入输入框。",
+      "empty_message": "消息内容不能为空。",
       "pending_chip": "待激活",
       "pending_chip_aria": "待激活会话：点击激活并引用",
       "mention_session": "@ 该会话",

@@ -945,6 +945,7 @@
       "quick_continue_text": "Continue with the current task.",
       "unknown_cmd": "Unknown command {{cmd}}. Available: #new #easynew #stop #model #clear",
       "need_target_drag": "Mention a session with @, click a session chip, or drag one into the input box.",
+      "empty_message": "Message content cannot be empty.",
       "pending_chip": "pending",
       "pending_chip_aria": "Pending session: click to activate and mention",
       "mention_session": "Mention this session",

@@ -4,6 +4,7 @@ import {
   displayMentionTitles,
   resolveMentionTarget,
   stripLeadingMentions,
+  stripMentionTags,
   type MentionAgent,
 } from './agentMentions';
 
@@ -154,5 +155,42 @@ describe('stripLeadingMentions', () => {
       { id: 'c1', toolId: 'claude', title: '重构认证', workspace: 'D:\\ws\\a' },
     ]);
     expect(stripLeadingMentions('@Claude Code#重构认证补充 /go', longer)).toBe('/go');
+  });
+});
+
+describe('stripMentionTags', () => {
+  const opts = buildMentionOptions(agents);
+
+  it('去掉开头标签（id 与标题两种写法）', () => {
+    expect(stripMentionTags('@Claude Code#c1 帮我修复', opts)).toBe('帮我修复');
+    expect(stripMentionTags('@Claude Code#重构认证 /commit', opts)).toBe('/commit');
+  });
+
+  it('去掉正文中间的标签并折叠多余空格', () => {
+    expect(stripMentionTags('帮我看看 @Claude Code#重构认证', opts)).toBe('帮我看看');
+    expect(stripMentionTags('看下 @Cursor#c3 这个', opts)).toBe('看下 这个');
+  });
+
+  it('多个标签与混排正文都清理', () => {
+    expect(stripMentionTags('@Cursor#c3 看 A @Claude Code#c2 然后收尾', opts)).toBe('看 A 然后收尾');
+    expect(stripMentionTags('@Claude Code#c1@Cursor#c3 紧邻', opts)).toBe('紧邻');
+  });
+
+  it('邮箱与普通 @ 保持原样', () => {
+    expect(stripMentionTags('a@b.com 帮我看看', opts)).toBe('a@b.com 帮我看看');
+    expect(stripMentionTags('问下 @某某 这个怎么弄', opts)).toBe('问下 @某某 这个怎么弄');
+  });
+
+  it('长标签优先，不截断标题', () => {
+    const longer = buildMentionOptions([
+      { id: 'c9', toolId: 'claude', title: '重构认证补充', workspace: 'D:\\ws\\a' },
+      { id: 'c1', toolId: 'claude', title: '重构认证', workspace: 'D:\\ws\\a' },
+    ]);
+    expect(stripMentionTags('@Claude Code#重构认证补充 /go', longer)).toBe('/go');
+  });
+
+  it('只有标签时返回空串；空文本保持空串', () => {
+    expect(stripMentionTags('@Claude Code#c1 ', opts)).toBe('');
+    expect(stripMentionTags('', opts)).toBe('');
   });
 });
