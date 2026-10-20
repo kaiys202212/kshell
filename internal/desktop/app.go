@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -189,10 +188,6 @@ type App struct {
 	wx *weixin.Runtime
 	// hubConsole 是桌面端 AgentHub 命令层（HubCommand 惰性创建）。mu 保护。
 	hubConsole *hub.Console
-	// inConsoleSend 标记当前 goroutine 正处于「Console 回调 Executor 发送」中：
-	// Console.Handle 全程持 c.mu，此时 SendChatPrompt 成功后的 clearHubPendingPick
-	// 不得再锁 c.mu（不可重入死锁）。见 wxExecutor.Send 与 clearHubPendingPick。
-	inConsoleSend atomic.Bool
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。

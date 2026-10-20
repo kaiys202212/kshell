@@ -251,8 +251,9 @@ func TestHubSendClearsPendingPick(t *testing.T) {
 
 // 待选建立 → 回数字：Console 经 wxExecutor.Send 走真实 SendChatPrompt。这是
 // 唯一让「Handle 持 c.mu」与「发送成功 → clearHubPendingPick」相遇的链路
-// （回归：inConsoleSend 标志缺失时此处 c.mu 不可重入死锁）。发送成功后暂存
-// 正文入 hub 历史、回复带 Sent 标记，且菜单已清——再回数字不再重复发送。
+// （回归：clearHubPendingPick 若阻塞等 c.mu 即不可重入死锁，须走 TryLock）。
+// 发送成功后暂存正文入 hub 历史、回复带 Sent 标记，且菜单已清——再回数字
+// 不再重复发送。
 func TestHubPickNumberSendDeliversPending(t *testing.T) {
 	app, _, _ := wxActiveApp(t)
 	if _, err := app.HubPickTarget("待发正文"); err != nil {

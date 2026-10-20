@@ -340,11 +340,6 @@ func (w *wxExecutor) SearchSessions(kw string) []hub.SessionRef {
 
 // Send 向指定会话发送一轮用户输入（含 hub 落盘、忙时入队等既有链路）。
 func (w *wxExecutor) Send(chatID, text string) error {
-	// Console.Handle 持 c.mu 调用进来：SendChatPrompt 成功后的 clearHubPendingPick
-	// 会试图再锁同一把 c.mu（不可重入），必须置标志让那条路径跳过。menuPick
-	// 分支在 Send 前已自清菜单，这里的 CancelPick 本就冗余。
-	w.a.inConsoleSend.Store(true)
-	defer w.a.inConsoleSend.Store(false)
 	return w.a.SendChatPrompt(chatID, text)
 }
 

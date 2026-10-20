@@ -1159,3 +1159,32 @@ func TestPickTargetPreservesOriginalText(t *testing.T) {
 		t.Fatalf("暂存正文应保持原文: %v", fe.sendCalls)
 	}
 }
+
+// TryCancelPick：锁空闲时清掉 menuPick 并报告成功；锁被占用（Handle 持锁回调
+// Executor 发送的形态）时返回 false 且不动菜单——调用方据此放弃，无损语义。
+func TestTryCancelPick(t *testing.T) {
+	fe := &fakeExecutor{listSessions: []SessionRef{
+		wsRef(0, "c1", "", `D:\ws\a`, "claude", "会话A", false),
+	}}
+	c := NewConsole(fe)
+	if _, pending := c.PickTarget("待发正文"); !pending {
+		t.Fatal("应先进入待选菜单")
+	}
+	// 模拟 Handle 持锁：先占住锁再调 TryCancelPick。
+	c.mu.Lock()
+	if c.TryCancelPick() {
+		c.mu.Unlock()
+		t.Fatal("锁被占用时应报告失败")
+	}
+	if c.menu == nil || c.menu.kind != menuPick {
+		c.mu.Unlock()
+		t.Fatal("锁被占用时不得动菜单")
+	}
+	c.mu.Unlock()
+	if !c.TryCancelPick() {
+		t.Fatal("锁空闲时应报告成功")
+	}
+	if c.menu != nil {
+		t.Fatal("成功后待选菜单应已清空")
+	}
+}

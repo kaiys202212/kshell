@@ -50,8 +50,9 @@ type Reply struct {
 type Console struct {
 	// mu 保护以下状态字段：微信轮询 goroutine（HandleInbound → Handle）与
 	// chat 回调/装配 goroutine（OpenPermissionMenu/SetCurrent）并发访问。
-	// Executor 调用期间持锁可接受：Executor 不得在回调里再进入 Console
-	//（桌面端 wxExecutor.Send 经 inConsoleSend 标志跳过 CancelPick 重入）。
+	// Executor 调用期间持锁可接受：回调需再进入 Console 的路径（如桌面端
+	// 发送成功后 clearHubPendingPick → TryCancelPick）必须用 TryLock 放弃，
+	// 不得同步阻塞等锁（Handle 全程持锁，阻塞即死锁）。
 	mu sync.Mutex
 	ex Executor
 	// lang 是文案语言（"zh-CN" 中文，其余英文），创建后只读。
@@ -769,14 +770,19 @@ func (c *Console) PickTarget(text string) ([]Reply, bool) {
 	return c.listForPending(text)
 }
 
-// CancelPick 让待选菜单失效（AgentHub 已经另行投递）。仅清理 menuPick，
-// 不碰其他选择菜单；lastList 保留，后续数字仍可按最近列表切换。
-func (c *Console) CancelPick() {
-	c.mu.Lock()
+// TryCancelPick 让待选菜单失效（AgentHub 已经另行投递）。仅清理 menuPick，
+// 不碰其他选择菜单；lastList 保留，后续数字仍可按最近列表切换。锁被占用
+//（Console.Handle 全程持锁回调 Executor 发送）时返回 false 并放弃：该链路
+// 任一 ex.Send 调用点进入前 menu 必非 menuPick，放弃取消无损语义。
+func (c *Console) TryCancelPick() bool {
+	if !c.mu.TryLock() {
+		return false
+	}
 	defer c.mu.Unlock()
 	if c.menu != nil && c.menu.kind == menuPick {
 		c.menu = nil
 	}
+	return true
 }
 
 // single 构造单条回复。
