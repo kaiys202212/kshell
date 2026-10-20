@@ -5,6 +5,7 @@ import {
   loadLastCreate,
   loadToolModelOptions,
   loadToolModels,
+  mergeHubModelOptions,
   rememberLastModel,
   saveDefaultCreate,
   saveLastCreate,
@@ -100,6 +101,22 @@ describe('agenthubDefaults', () => {
     saveToolModels('claude', ['m1']);
     localStorage.clear();
     expect(loadToolModels('claude')).toEqual([]);
+  });
+
+  it('mergeHubModelOptions：注入在前、缓存其后、按 id 去重', () => {
+    expect(
+      mergeHubModelOptions(
+        ['glm-5.3-flash', 'deepseek-v4.1-flash'],
+        [
+          { id: 'default[]', name: 'Auto' },
+          { id: 'glm-5.3-flash', name: 'should-dedupe' },
+        ],
+      ),
+    ).toEqual([
+      { id: 'glm-5.3-flash', name: 'glm-5.3-flash' },
+      { id: 'deepseek-v4.1-flash', name: 'deepseek-v4.1-flash' },
+      { id: 'default[]', name: 'Auto' },
+    ]);
   });
 
   describe('rememberLastModel', () => {

@@ -125,6 +125,25 @@ export function saveToolModels(toolId: string, models: Array<string | ToolModelO
   writeJSON(MODELS_KEY_PREFIX + toolId, opts);
 }
 
+// mergeHubModelOptions：注入模型在前、工具缓存其后，按 id 去重。
+// 注入项无独立展示名时 name=id（设置页裸模型名）。
+export function mergeHubModelOptions(injected: string[], cache: ToolModelOption[]): ToolModelOption[] {
+  const seen = new Set<string>();
+  const out: ToolModelOption[] = [];
+  for (const raw of injected) {
+    const id = typeof raw === 'string' ? raw.trim() : '';
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, name: id });
+  }
+  for (const m of cache) {
+    if (!m.id || seen.has(m.id)) continue;
+    seen.add(m.id);
+    out.push({ id: m.id, name: m.name || m.id });
+  }
+  return out;
+}
+
 // loadHubRouteMode 读取路由模式；缺失/非法回落 auto（与后端 Normalize 同语义）。
 export function loadHubRouteMode(): HubRouteMode {
   const v = localStorage.getItem(ROUTE_MODE_KEY);

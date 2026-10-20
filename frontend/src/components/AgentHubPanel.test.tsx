@@ -6,7 +6,7 @@ import type { ChatInfo, TerminalInfo, ToolInfo } from '../lib/api';
 import { useAppStore } from '../state/store';
 import '../test/i18n';
 import { tt } from '../test/i18n';
-import { loadDefaultCreate, loadLastCreate, saveDefaultCreate, saveLastCreate, saveToolModels } from '../lib/agenthubDefaults';
+import { loadDefaultCreate, loadLastCreate, loadToolModelOptions, saveDefaultCreate, saveLastCreate, saveToolModels } from '../lib/agenthubDefaults';
 import { REQUIREMENT_MIME } from './RequirementList';
 import AgentHubPanel from './AgentHubPanel';
 
@@ -1099,6 +1099,55 @@ describe('AgentHubPanel', () => {
     const select = (await screen.findByLabelText(tt('ui.hub.field_model'))) as HTMLSelectElement;
     await waitFor(() => expect(select.options).toHaveLength(1)); // 仅「默认模型」
     expect(select.value).toBe('');
+  });
+
+  it('新建 agent：模型下拉文案用 Name，value 仍为 ID（Cursor Auto→default[]）', async () => {
+    api.getTools.mockResolvedValue([{ ...acpTool('cursor'), Name: 'Cursor' }]);
+    saveToolModels('cursor', [
+      { id: 'default[]', name: 'Auto' },
+      { id: 'grok-4.7[fast=true]', name: 'grok-4.7' },
+    ]);
+    useAppStore.setState({ workspaces: [workspaceA] });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
+    await waitFor(() => {
+      expect((screen.getByLabelText(tt('ui.hub.field_tool')) as HTMLSelectElement).value).toBe('cursor');
+    });
+    const select = screen.getByLabelText(tt('ui.hub.field_model')) as HTMLSelectElement;
+    const auto = Array.from(select.options).find((o) => o.value === 'default[]');
+    expect(auto).toBeTruthy();
+    expect(auto!.textContent).toBe('Auto');
+    const grok = Array.from(select.options).find((o) => o.value === 'grok-4.7[fast=true]');
+    expect(grok!.textContent).toBe('grok-4.7');
+  });
+
+  it('新建 agent：创建成功后按 listChatModels 的 Name 落缓存', async () => {
+    api.getTools.mockResolvedValue([{ ...acpTool('cursor'), Name: 'Cursor' }]);
+    api.openWorkspaceACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'n-auto', Workspace: 'D:\\ws\\a', ToolID: 'cursor' }),
+    });
+    api.listChatModels.mockResolvedValue({
+      Current: 'default[]',
+      Models: [
+        { ID: 'default[]', Name: 'Auto' },
+        { ID: 'm2', Name: 'Two' },
+      ],
+    });
+    useAppStore.setState({ workspaces: [workspaceA] });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
+    await waitFor(() => {
+      expect((screen.getByLabelText(tt('ui.hub.field_tool')) as HTMLSelectElement).value).toBe('cursor');
+    });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.create') }));
+    await waitFor(() => expect(api.listChatModels).toHaveBeenCalledWith('n-auto'));
+    await waitFor(() =>
+      expect(loadToolModelOptions('cursor')).toEqual([
+        { id: 'default[]', name: 'Auto' },
+        { id: 'm2', name: 'Two' },
+      ]),
+    );
   });
 
   it('新建 agent：单窗体含项目/工具/模型三字段，选模型创建后自动切换', async () => {

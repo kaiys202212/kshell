@@ -42,7 +42,7 @@ import {
   type MentionOption,
 } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
-import { loadDefaultCreate, loadLastCreate, loadToolModels, loadHubRouteMode, rememberLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode } from '../lib/agenthubDefaults';
+import { loadDefaultCreate, loadLastCreate, loadToolModelOptions, loadToolModels, loadHubRouteMode, mergeHubModelOptions, rememberLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode } from '../lib/agenthubDefaults';
 import { saveHubDefaultCreate } from '../lib/api';
 import { quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
@@ -132,7 +132,11 @@ export async function runAgentCreate(
       // 拉模型列表缓存，供下次预填模型下拉；失败静默（默认值是辅助功能）
       const view = await listChatModels(chat.ID).catch(() => null);
       if (view && view.Models && view.Models.length > 0) {
-        saveToolModels(toolId, view.Models.map((m) => m.ID));
+        // 保留 Name：Cursor Auto 等 ACP 展示名与 modelId（如 default[]）不同
+        saveToolModels(
+          toolId,
+          view.Models.map((m) => ({ id: m.ID, name: m.Name || m.ID })),
+        );
       }
       // 用户选了模型且与 agent 当前模型不同：建后再 SetModel
       if (modelId && view && view.Current !== modelId) {
@@ -1747,10 +1751,9 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     if (ok && seq === seqRef.current) onOpenChange(false);
   };
 
-  // 模型下拉选项：kshell 注入模型在前、工具缓存模型在后，Set 去重。
+  // 模型下拉选项：kshell 注入模型在前、工具缓存模型在后，按 id 去重；文案用 name。
   // 渲染期直接同步读 localStorage（成本极低，toolId/缓存变化后下次渲染即刷新）
-  const cacheModels = toolId ? loadToolModels(toolId) : [];
-  const modelOptions = [...new Set([...injectedModels, ...cacheModels])];
+  const modelOptions = mergeHubModelOptions(injectedModels, toolId ? loadToolModelOptions(toolId) : []);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange} className="w-80">
@@ -1798,13 +1801,13 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
             onChange={(e) => setModelId(e.target.value)}
             disabled={busy}
           >
-            {/* 无缓存只显示「默认模型」空选项；有缓存则直接列缓存模型 */}
+            {/* 无缓存只显示「默认模型」空选项；有缓存则直接列缓存模型（文案用 name） */}
             {modelOptions.length === 0 ? (
               <option value="">{t('ui.hub.default_model')}</option>
             ) : (
               modelOptions.map((m) => (
-                <option key={m} value={m}>
-                  {m}
+                <option key={m.id} value={m.id}>
+                  {m.name}
                 </option>
               ))
             )}
@@ -1879,9 +1882,8 @@ function DefaultSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     onOpenChange(false);
   };
 
-  // 模型下拉选项：与 NewAgentDialog 同口径（注入在前、缓存在后、Set 去重）
-  const cacheModels = toolId ? loadToolModels(toolId) : [];
-  const modelOptions = [...new Set([...injectedModels, ...cacheModels])];
+  // 模型下拉选项：与 NewAgentDialog 同口径（注入在前、缓存在后、按 id 去重；文案用 name）
+  const modelOptions = mergeHubModelOptions(injectedModels, toolId ? loadToolModelOptions(toolId) : []);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange} className="w-80">
@@ -1919,8 +1921,8 @@ function DefaultSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
             <>
               <option value="">{t('ui.hub.default_model')}</option>
               {modelOptions.map((m) => (
-                <option key={m} value={m}>
-                  {m}
+                <option key={m.id} value={m.id}>
+                  {m.name}
                 </option>
               ))}
             </>
