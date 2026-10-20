@@ -786,14 +786,30 @@ func TestAttachSessionSkipsNonCandidates(t *testing.T) {
 
 // 新建聊天的 Info.SessionID 不应被 agent 返回的 ACP 会话 ID 污染：
 // 那是协议内部 ID，与磁盘会话 ID 不是同一体系；Info.SessionID 留空等扫描回填。
+// Cursor 例外：ACP sessionId 与 ~/.cursor/acp-sessions/<id> 同一体系，见
+// TestManagerOpenNewCursorBindsACPSessionID。
 func TestManagerOpenNewKeepsInfoSessionIDEmpty(t *testing.T) {
 	m, _, _ := newTestManager(t)
-	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w", Title: "新会话"}, Spec{Path: "x"}, "")
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w", Title: "新会话", ToolID: "claude"}, Spec{Path: "x"}, "")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	if info.SessionID != "" {
 		t.Fatalf("KindNew 的 Info.SessionID 应留空等回填, got %q", info.SessionID)
+	}
+}
+
+// Cursor ACP 的 session/new ID 即 acp-sessions 目录名：新建时立刻写入 Info.SessionID，
+// 欢迎词与后续 hub 消息才能带快照，关闭页签后「换个说法」才能精确 resume。
+func TestManagerOpenNewCursorBindsACPSessionID(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	b.conn.newStart.SessionID = "2ce99fcb-7257-4521-bb55-8b9b1a86f48b"
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w", Title: "新会话", ToolID: "cursor"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if info.SessionID != "2ce99fcb-7257-4521-bb55-8b9b1a86f48b" {
+		t.Fatalf("Cursor KindNew 应绑定 ACP SessionID, got %q", info.SessionID)
 	}
 }
 

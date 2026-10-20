@@ -236,10 +236,17 @@ func parseCursorVersionDir(name string) ([6]int, bool) {
 func (Cursor) SessionRoots(home string) []string { return nil }
 
 func (Cursor) EnumerateSessions(home, _ string) ([]Session, error) {
-	sessions, err := listCursorChatSessions(home)
+	chats, err := listCursorChatSessions(home)
 	if err != nil {
 		return nil, err
 	}
+	// cursor-acp / kshell 新建的会话落在 acp-sessions，不进 chats；
+	// 必须合并枚举，否则 AttachSession 与 AgentHub 快捷回复绑不上 SessionID。
+	acp, err := listCursorACPSessions(home)
+	if err != nil {
+		return nil, err
+	}
+	sessions := mergeCursorSessions(chats, acp)
 	if len(sessions) > 0 {
 		for i := range sessions {
 			enrichCursorSession(home, &sessions[i])

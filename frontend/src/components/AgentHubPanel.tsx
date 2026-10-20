@@ -47,6 +47,7 @@ import { quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
 import { isHubNumber, isNewHubCommand, normalizeHubProbe } from '../lib/hubCommands';
 import { replyState, terminalActive } from '../lib/hubReply';
+import { resolveHubSessionIdFromSessions } from '../lib/hubSessionResolve';
 import { dispatchRequirement } from '../lib/dispatchRequirement';
 import { REQUIREMENT_MIME } from './RequirementList';
 import { attributionText, baseName, resolveAttribution } from '../lib/hubAttribution';
@@ -1022,22 +1023,16 @@ export default function AgentHubPanel() {
   };
 
   // resolveHubSessionId 从 hub 记录解析磁盘会话 ID（目标未激活时精确 resume 用）。
-  // 三级来源：sessionId 快照（新落盘）→ termKey 的 session: 前缀（KindSession
-  // 聊天与终端 hook 通道的 key 约定）→ workspace+tool+sessionTitle 匹配发现
-  // 缓存（存量记录兜底；GetSessions 按 UpdatedAt 降序，首条命中即最新）。
-  // 全部落空返回 null。getSessions 只读扫描缓存，失败按解析不到处理。
+  // 来源见 resolveHubSessionIdFromSessions（含 Cursor acp-sessions 时间邻近兜底）。
+  // 已有 sessionId / session: termKey 时不打 getSessions；否则读扫描缓存，失败当空列表。
   const resolveHubSessionId = async (m: HubMessage): Promise<string | null> => {
     if (m.sessionId) return m.sessionId;
     if (m.termKey?.startsWith('session:')) return m.termKey.slice('session:'.length);
-    if (!m.workspace || !m.tool || !m.sessionTitle) return null;
     try {
       const sessions = await getSessions();
-      const hit = sessions.find(
-        (s) => s.ToolID === m.tool && sameWorkspacePath(s.Workspace, m.workspace!) && s.Title === m.sessionTitle,
-      );
-      return hit?.ID ?? null;
+      return resolveHubSessionIdFromSessions(m, sessions);
     } catch {
-      return null;
+      return resolveHubSessionIdFromSessions(m, []);
     }
   };
 

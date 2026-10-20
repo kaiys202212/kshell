@@ -524,8 +524,13 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	m.mu.Lock()
 	s.sessionID = sessionID
 	// Info.SessionID 统一表示「绑定的磁盘会话 ID」：恢复型聊天传入的就是磁盘 ID，保持不变；
-	// 新建聊天协议层拿到的是 ACP 内部 ID（与磁盘会话 ID 不同体系），Info 留空等扫描回填。
+	// 新建聊天协议层拿到的通常是 ACP 内部 ID（与磁盘会话 ID 不同体系），Info 留空等扫描回填。
+	// Cursor 例外：session/new 的 ID 即 ~/.cursor/acp-sessions/<id>，与发现层同一体系，
+	// 立刻写入才能让欢迎词/hub 快照带上 SessionID，关闭后快捷回复可精确 resume。
 	if info.SessionID == "" && info.Kind == KindSession {
+		s.info.SessionID = sessionID
+	}
+	if info.SessionID == "" && info.Kind == KindNew && info.ToolID == "cursor" && sessionID != "" {
 		s.info.SessionID = sessionID
 	}
 	s.info.Status = StatusReady
