@@ -24,7 +24,7 @@ var cmdTexts = map[string]langPair{
 - #f <keyword>  Search sessions
 - #st Status
 - #c  Cancel selection
-- <number>  Switch to that session
+- <number>  After #h: view that message; after #l/#la/#f: switch session
 - Plain text = send to current session`,
 		`**命令列表**
 
@@ -40,7 +40,7 @@ var cmdTexts = map[string]langPair{
 - #f <关键词>  搜索会话
 - #st 状态
 - #c  取消选择
-- 数字  切换到对应会话
+- 数字  #h 后查看该条全文；#l/#la/#f 后切换会话
 - 直接输入文字 = 发给当前会话`},
 
 	"no_current":        {"No active session", "当前无活跃会话"},
@@ -100,6 +100,7 @@ var cmdTexts = map[string]langPair{
 	"usage_h":       {"Usage: #h or #h <number>", "用法: #h 或 #h <序号>"},
 	"no_messages":   {"No hub messages yet", "暂无 AgentHub 消息"},
 	"recent_header": {"**Recent %d messages:**", "**最近 %d 条消息:**"},
+	"recent_hint":   {"Reply with a number to view full message", "回复数字可查看该条全文"},
 	"msg_detail":    {"**Message %d** [%s][%s]", "**消息 %d** [%s][%s]"},
 	"msg_user":      {"user", "用户"},
 	"msg_agent":     {"agent", "agent"},

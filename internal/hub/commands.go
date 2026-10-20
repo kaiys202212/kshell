@@ -56,7 +56,8 @@ type Executor interface {
 	Send(chatID, text string) error
 	GrantPermission(chatID, reqID string, allow bool) error
 	Status() ConsoleStatus
-	// RecentMessages 取 AgentHub 最近 n 条消息（时间正序）；无历史返回空。
+	// RecentMessages 取 AgentHub 最近 n 条可见消息（时间正序；已滤 ui.hub.* /
+	// hub.welcome / 已撤回）；无历史返回空。实现宜走 VisibleMessages。
 	RecentMessages(n int) []Message
 }
 

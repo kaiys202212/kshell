@@ -424,20 +424,15 @@ func (w *wxExecutor) Status() hub.ConsoleStatus {
 	return st
 }
 
-// RecentMessages 取 AgentHub 最近 n 条消息（时间正序），供 #h 命令。
+// RecentMessages 取 AgentHub 最近 n 条可见消息（时间正序），供 #h 命令。
+// 过滤 ui.hub.* / hub.welcome / 已撤回，与命令层 VisibleMessages 同源。
 // store 未装配（未就绪/测试）或无历史时返回空。
 func (w *wxExecutor) RecentMessages(n int) []hub.Message {
 	store := w.a.snapshot().HubStore
 	if store == nil || n <= 0 {
 		return nil
 	}
-	msgs := store.List()
-	if len(msgs) > n {
-		msgs = msgs[len(msgs)-n:]
-	}
-	out := make([]hub.Message, len(msgs))
-	copy(out, msgs)
-	return out
+	return hub.VisibleMessages(store.List(), n)
 }
 
 // wxLastBase 取路径末段：与 hub 包内 lastBase 同一实现（跨渠道文本里的路径

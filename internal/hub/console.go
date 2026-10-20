@@ -69,6 +69,9 @@ type Console struct {
 	lastList []SessionRef
 	// lastRecent 是最近一次 #h 列表的消息快照（#h <序号> 查全文依据它索引）。
 	lastRecent []Message
+	// digitRecent 为 true 时，无菜单纯数字按 lastRecent 查全文（#h 语境）；
+	// false 时按 lastList 切会话（#l/#la/#f/待选列表语境）。默认 false。
+	digitRecent bool
 }
 
 // pendingPermission 是权限请求的选择状态（1 允许 / 2 拒绝）。
@@ -136,10 +139,13 @@ func (c *Console) Handle(input string) []Reply {
 		return c.handleCommand(input)
 	}
 
-	// 纯数字：菜单选择或编号切换。
+	// 纯数字：菜单选择；否则按数字语境（#h→查全文 / #l 等→切会话）。
 	if n, err := strconv.Atoi(input); err == nil && n > 0 {
 		if c.menu != nil {
 			return c.handleMenuNumber(n)
+		}
+		if c.digitRecent {
+			return c.handleRecent(input)
 		}
 		return c.switchByNumber(n)
 	}
@@ -346,6 +352,7 @@ func (c *Console) handleList(all bool) []Reply {
 	}
 	shown := sessions[:limit]
 	c.lastList = shown
+	c.digitRecent = false // #l/#la 后纯数字切会话
 	c.refreshCurrent()
 
 	lines := make([]string, 0, limit+1)
@@ -615,6 +622,7 @@ func (c *Console) handleSearch(arg string) []Reply {
 		results[i].Current = results[i].ChatID != "" && results[i].ChatID == c.current.ChatID
 	}
 	c.lastList = results // 搜索结果同样编号，供菜单数字与后续切换共用
+	c.digitRecent = false
 	c.menu = &pendingMenu{kind: menuSearch, results: results}
 	// options 与 results 同序同长，供 handleMenuNumber 的编号边界检查共用。
 	menu := c.menu
@@ -653,6 +661,7 @@ func (c *Console) handleRecent(arg string) []Reply {
 			return single(c.text("no_messages"))
 		}
 		c.lastRecent = msgs
+		c.digitRecent = true // #h 后纯数字查全文
 		return single(c.renderRecentList(msgs))
 	}
 	n, err := strconv.Atoi(normalizeDigits(arg))
@@ -664,6 +673,8 @@ func (c *Console) handleRecent(arg string) []Reply {
 			c.lastRecent = msgs
 		}
 	}
+	// #h <序号> 同样进入查全文语境，便于随后再回纯数字。
+	c.digitRecent = true
 	if len(c.lastRecent) == 0 {
 		return single(c.text("no_messages"))
 	}
@@ -692,7 +703,9 @@ func (c *Console) renderRecentList(msgs []Message) string {
 		}
 		lines = append(lines, itoa(i+1)+". ["+role+"]["+hubMsgTitle(m)+"] "+truncateOneLine(m.Text, recentTextCap))
 	}
-	return fmt.Sprintf(c.text("recent_header"), len(msgs)) + "\n\n" + strings.Join(lines, "\n")
+	// 引导与列表空行分隔，防 Markdown 懒续行吞进末项（同 list_hint）。
+	return fmt.Sprintf(c.text("recent_header"), len(msgs)) + "\n\n" +
+		strings.Join(lines, "\n") + "\n\n" + c.text("recent_hint")
 }
 
 // renderOptions 渲染编号选项列表（标题与列表间空行，Markdown 段落分隔）。
@@ -776,6 +789,7 @@ func (c *Console) listForPending(text string) ([]Reply, bool) {
 		shown[i].Current = false // 无精确目标：不标当前
 	}
 	c.lastList = shown
+	c.digitRecent = false
 	enNum := limit + 1
 	c.menu = &pendingMenu{
 		kind:        menuPick,

@@ -117,10 +117,7 @@ func (f *fakeExecutor) GrantPermission(chatID, reqID string, allow bool) error {
 func (f *fakeExecutor) Status() ConsoleStatus { return f.status }
 
 func (f *fakeExecutor) RecentMessages(n int) []Message {
-	if len(f.recentMessages) > n {
-		return f.recentMessages[len(f.recentMessages)-n:]
-	}
-	return f.recentMessages
+	return VisibleMessages(f.recentMessages, n)
 }
 
 // join 把多条回复拼成一段文本，便于断言。
@@ -1031,6 +1028,72 @@ func TestRecentMessagesCommand(t *testing.T) {
 	}
 	if got := join(NewConsole(&fakeExecutor{}).Handle("#h 1")); !strings.Contains(got, "暂无 AgentHub 消息") {
 		t.Fatalf("空历史查详情应回暂无消息: %q", got)
+	}
+}
+
+// #h 须过滤 ui.hub.* / hub.welcome / 已撤回，再取最近可见条。
+func TestRecentMessagesFiltersHubNoise(t *testing.T) {
+	fe := &fakeExecutor{recentMessages: []Message{
+		{Kind: "user", SessionTitle: "A", Text: "真实提问"},
+		{Kind: "agent", SessionTitle: "A", Event: "ui.hub.ack_delivered", Text: "ui.hub.ack_delivered"},
+		{Kind: "agent", SessionTitle: "A", Text: "ui.hub.ack_queued"},
+		{Kind: "agent", SessionTitle: "A", Text: "hub.welcome|CodeBuddy"},
+		{Kind: "agent", SessionTitle: "A", Status: StatusRecalled, Text: "已撤回正文"},
+		{Kind: "agent", SessionTitle: "A", Text: "真实回复"},
+	}}
+	out := join(NewConsole(fe).Handle("#h"))
+	if strings.Contains(out, "ack_delivered") || strings.Contains(out, "ack_queued") ||
+		strings.Contains(out, "hub.welcome") || strings.Contains(out, "已撤回") {
+		t.Fatalf("#h 不应含事件/欢迎/撤回噪声: %q", out)
+	}
+	if !strings.Contains(out, "**最近 2 条消息:**") ||
+		!strings.Contains(out, "1. [用户][A] 真实提问") ||
+		!strings.Contains(out, "2. [agent][A] 真实回复") {
+		t.Fatalf("#h 应只列可见对话: %q", out)
+	}
+	if !strings.Contains(out, "回复数字可查看该条全文") {
+		t.Fatalf("#h 应含查全文引导: %q", out)
+	}
+}
+
+// #h 后纯数字查全文；#l 后纯数字仍切会话（数字语境 A）。
+func TestDigitContextAfterRecentVsList(t *testing.T) {
+	fe := &fakeExecutor{
+		listSessions: []SessionRef{
+			wsRef(0, "c1", "", "", "claude", "会话一", false),
+			wsRef(0, "c2", "", "", "codex", "会话二", false),
+		},
+		recentMessages: []Message{
+			{Kind: "user", SessionTitle: "会话一", Text: "第一问很长正文"},
+			{Kind: "agent", SessionTitle: "会话一", Text: "第一答全文内容"},
+		},
+	}
+	c := NewConsole(fe)
+
+	_ = c.Handle("#h")
+	out := join(c.Handle("2"))
+	if !strings.Contains(out, "**消息 2**") || !strings.Contains(out, "第一答全文内容") {
+		t.Fatalf("#h 后纯数字 2 应查全文: %q", out)
+	}
+	if len(fe.switchCalls) != 0 {
+		t.Fatalf("#h 后纯数字不得 SwitchTo: %v", fe.switchCalls)
+	}
+
+	_ = c.Handle("#l")
+	out = join(c.Handle("2"))
+	if !strings.Contains(out, "已切换") || len(fe.switchCalls) != 1 || fe.switchCalls[0] != "c2" {
+		t.Fatalf("#l 后纯数字 2 应切会话: out=%q switch=%v", out, fe.switchCalls)
+	}
+
+	// 再 #h 后数字语境回到查全文
+	fe.switchCalls = nil
+	_ = c.Handle("#h")
+	out = join(c.Handle("1"))
+	if !strings.Contains(out, "**消息 1**") || !strings.Contains(out, "第一问很长正文") {
+		t.Fatalf("再次 #h 后纯数字应查全文: %q", out)
+	}
+	if len(fe.switchCalls) != 0 {
+		t.Fatalf("再次 #h 后纯数字不得 SwitchTo: %v", fe.switchCalls)
 	}
 }
 
