@@ -345,6 +345,21 @@ func (m *Manager) idleFallback(s *session) {
 // var 仅为测试可缩短；生产代码不得修改。
 var handshakeTimeout = 30 * time.Second
 
+// handshakeTimeoutSlow 是「合法慢」工具的握手超时上限。cursor 官方 ACP 的
+// session/new 返回前要串行完成一串云端请求（auth 校验 → 模型列表/配置拉取），
+// 实测 14~20s、网络差时超 30s——不是死锁，不该被默认超时误杀（2026-10-20 排查）。
+// var 仅为测试可缩短；生产代码不得修改。
+var handshakeTimeoutSlow = 120 * time.Second
+
+// handshakeTimeoutFor 按工具选握手超时：slowTools 里命中的用 slow 上限，
+// 其余（含空/未知工具）用默认值。
+func handshakeTimeoutFor(toolID string) time.Duration {
+	if toolID == "cursor" {
+		return handshakeTimeoutSlow
+	}
+	return handshakeTimeout
+}
+
 // activityIdleFallback 是「活动拉回 running 后」的静默回退阈值：turn_done 后
 // agent 仍推流水使状态保持 running，若持续无活动且无在途信号（在途 prompt /
 // 在途工具），状态回 ready 并经 onInfo 推送。var 仅为测试可缩短。
@@ -455,8 +470,8 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	m.mu.Unlock()
 
 	// 握手阶段（Initialize/session new/load）包独立超时：agent 挂死时 Open 能返回错误，
-	// Prompt 仍用长命 s.ctx（轮次可持续任意久）。
-	hsCtx, hsCancel := context.WithTimeout(s.ctx, handshakeTimeout)
+	// Prompt 仍用长命 s.ctx（轮次可持续任意久）。合法慢的工具（cursor）按工具放宽。
+	hsCtx, hsCancel := context.WithTimeout(s.ctx, handshakeTimeoutFor(info.ToolID))
 	defer hsCancel()
 
 	init, err := conn.Initialize(hsCtx)

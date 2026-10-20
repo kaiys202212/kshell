@@ -486,6 +486,59 @@ func TestManagerOpenHandshakeTimeout(t *testing.T) {
 	}
 }
 
+// handshakeTimeoutFor 按工具选超时:cursor 命中 slow 值,其余命中默认值。
+// 通过临时改两个 var 到可区分的值断言路由正确。
+func TestHandshakeTimeoutFor(t *testing.T) {
+	oldDef, oldSlow := handshakeTimeout, handshakeTimeoutSlow
+	handshakeTimeout, handshakeTimeoutSlow = 30*time.Second, 120*time.Second
+	defer func() { handshakeTimeout, handshakeTimeoutSlow = oldDef, oldSlow }()
+
+	if got := handshakeTimeoutFor("cursor"); got != 120*time.Second {
+		t.Fatalf("cursor 应命中 slow 超时, got %v", got)
+	}
+	for _, id := range []string{"claude", "codex", "codebuddy", "", "unknown"} {
+		if got := handshakeTimeoutFor(id); got != 30*time.Second {
+			t.Fatalf("工具 %q 应命中默认超时, got %v", id, got)
+		}
+	}
+}
+
+// cursor 握手用 slow 超时:默认超时已到点时,cursor 会话不得被误杀;
+// slow 超时到点后才按 wire key 失败(与默认路径同一出口)。
+func TestManagerOpenHandshakeTimeoutCursorSlow(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	b.conn.initGate = make(chan struct{}) // 卡死 Initialize,模拟握手耗时
+	defer close(b.conn.initGate)
+
+	// 默认 30s 太长:缩成 50ms 证明 cursor 不受它约束;slow 缩成 300ms 可控验证。
+	oldDef, oldSlow := handshakeTimeout, handshakeTimeoutSlow
+	handshakeTimeout = 50 * time.Millisecond
+	handshakeTimeoutSlow = 300 * time.Millisecond
+	defer func() { handshakeTimeout, handshakeTimeoutSlow = oldDef, oldSlow }()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w", ToolID: "cursor"}, Spec{Path: "x"}, "")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("默认超时(50ms)不该杀掉 cursor 握手, got %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "err.chat.handshake_timeout") {
+			t.Fatalf("slow 超时应返回握手超时 wire key, got %v", err)
+		}
+		if got := m.List(); len(got) != 0 {
+			t.Fatalf("failed open left ghost sessions: %+v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cursor 握手未在 slow 超时后返回")
+	}
+}
+
 func TestManagerOpenBackendError(t *testing.T) {
 	b := &fakeBackend{conn: &fakeConn{waitCh: make(chan struct{})}, err: errors.New("boom")}
 	m := NewManager(b, nil, nil, nil)
