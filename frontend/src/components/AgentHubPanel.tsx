@@ -206,15 +206,10 @@ function hubMessageAttributed(m: HubMessage): boolean {
   return !!(m.chatId || m.termKey || m.sessionId);
 }
 
-// hubHasAttributed 历史里是否存在任一条可归因消息（供 fallback 决定能否用 lastAgentId）。
-function hubHasAttributed(messages: HubMessage[]): boolean {
-  return messages.some(hubMessageAttributed);
-}
-
 // lastHubAgentId 只看「最后一条可归因消息」：
 // - 已激活且在 mention 候选中 → 返回 chat ID（默认接收者）
 // - 未激活 / TUI·终端 / 非 ACP / 归因失效 → null（无默认，走 hubPickTarget）
-// 不向前扫描更旧 ACP。调用方在「无任何可归因」时才可回落 lastAgentId。
+// 不向前扫描更旧 ACP，也不用 store.lastAgentId 顶替。
 function lastHubAgentId(
   messages: HubMessage[],
   options: MentionOption[],
@@ -263,7 +258,6 @@ export default function AgentHubPanel() {
   const { t } = useTranslation();
   const chats = useAppStore((s) => s.chats);
   const hubMessages = useAppStore((s) => s.hubMessages);
-  const lastAgentId = useAppStore((s) => s.lastAgentId);
   const terminals = useAppStore((s) => s.terminals);
   // 消息归因：workspace/chatId/termKey → 「项目 · 会话」文本。
   const attrOf = useAttribution();
@@ -449,14 +443,12 @@ export default function AgentHubPanel() {
   const hashQuery = /^#([^\s]*)$/.exec(draft)?.[1] ?? null;
   const inSlashMode = slashQuery !== null;
   const inHashMode = hashQuery !== null;
-  // 默认投递目标：最后一条可归因且已激活 ACP 优先；无任何可归因消息时才回落
-  // lastAgentId。若最后可归因为未激活/TUI，返回 null（不借用 lastAgentId）。
-  const fallbackId = useMemo(() => {
-    const fromHub = lastHubAgentId(hubMessages, options, chats, tools, terminals);
-    if (fromHub) return fromHub;
-    if (hubHasAttributed(hubMessages)) return null;
-    return lastAgentId && options.some((o) => o.id === lastAgentId) ? lastAgentId : null;
-  }, [hubMessages, options, chats, lastAgentId, tools, terminals]);
+  // 默认投递目标：仅最后一条可归因且已激活 ACP；否则 null（走待选含 en）。
+  // 不用 store.lastAgentId——与微信 Console 一致，避免空 hub 时桌面直发、微信待选分叉。
+  const fallbackId = useMemo(
+    () => lastHubAgentId(hubMessages, options, chats, tools, terminals),
+    [hubMessages, options, chats, tools, terminals],
+  );
   // 目标解析：优先 @ 提及，其次回落链（与 send 一致）。
   const currentTargetId = useMemo(
     () => resolveMentionTarget(draft, options, fallbackId),

@@ -1315,8 +1315,13 @@ describe('AgentHubPanel', () => {
   });
 
   it('/ 补全不再混入客户端命令（/ 前缀只留给 agent 技能）', async () => {
-    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1' })],
+      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
+      lastAgentId: 'c1',
+    });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '/' } });
     await waitFor(() => expect(api.listChatCommands).toHaveBeenCalledWith('c1'));
@@ -1345,8 +1350,13 @@ describe('AgentHubPanel', () => {
 
   it('agent 技能与客户端命令同名时不去重也不冲突（/ 只列 agent 技能）', async () => {
     api.listChatCommands.mockResolvedValue([{ Name: 'Clear', Description: 'agent clear' }]);
-    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1' })],
+      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
+      lastAgentId: 'c1',
+    });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '/' } });
     await waitFor(() => expect(api.listChatCommands).toHaveBeenCalledWith('c1'));
@@ -1358,8 +1368,13 @@ describe('AgentHubPanel', () => {
   });
 
   it('选中 #stop：对目标 agent 调 cancelChat', async () => {
-    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1' })],
+      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
+      lastAgentId: 'c1',
+    });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '#stop' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -1407,18 +1422,37 @@ describe('AgentHubPanel', () => {
     ).toBe(false);
   });
 
-  it('行中 # 词（颜色值）不拦截：正常投递给 agent', () => {
-    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+  it('行中 # 词（颜色值）不拦截：正常投递给 agent', async () => {
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1' })],
+      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
+      lastAgentId: 'c1',
+    });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '把按钮颜色改成 #333' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '把按钮颜色改成 #333');
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '把按钮颜色改成 #333'));
     expect(
       useAppStore
         .getState()
         .toasts.some((t) => t.title === tt('ui.hub.unknown_cmd').replace('{{cmd}}', '#333')),
     ).toBe(false);
+  });
+
+  it('空 hub 仅有 lastAgentId：不直发，走待选', async () => {
+    api.hubPickTarget.mockResolvedValue({
+      Replies: [{ Text: '未精确匹配到会话——回复编号' }],
+      Pending: true,
+    });
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], hubMessages: [], lastAgentId: 'c1' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '继续' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.hubPickTarget).toHaveBeenCalledWith('继续'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
   it('最后消息未激活时无默认接收者：不出现待激活 chip 高亮', async () => {
@@ -1550,8 +1584,13 @@ describe('AgentHubPanel', () => {
     });
     api.setChatModel.mockRejectedValueOnce(new Error('model boom'));
     saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'm1' });
-    useAppStore.setState({ chats: [chat({ ID: 'c1', ToolID: 'claude', Workspace: 'D:\\ws\\a' })], lastAgentId: 'c1' });
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Workspace: 'D:\\ws\\a' })],
+      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
+      lastAgentId: 'c1',
+    });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '#model' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -1571,8 +1610,13 @@ describe('AgentHubPanel', () => {
   });
 
   it('hash 补全键盘导航：# → ArrowDown×2 选中 stop，Enter 执行', async () => {
-    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1' })],
+      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
+      lastAgentId: 'c1',
+    });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '#' } });
     fireEvent.keyDown(box, { key: 'ArrowDown' });
@@ -1584,8 +1628,13 @@ describe('AgentHubPanel', () => {
 
   it('agent 技能出现在命令列表，选中后切入草稿并可投递', async () => {
     api.listChatCommands.mockResolvedValue([{ Name: 'commit', Description: 'Commit changes' }]);
-    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1' })],
+      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
+      lastAgentId: 'c1',
+    });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '/' } });
     await waitFor(() =>
@@ -1679,8 +1728,13 @@ describe('AgentHubPanel', () => {
 
   it('/ 开头但不匹配任何 agent 技能：不拦截，原样发送给 agent', async () => {
     api.listChatCommands.mockResolvedValue([]);
-    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1' })],
+      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
+      lastAgentId: 'c1',
+    });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '/agent-only-cmd arg' } });
     fireEvent.keyDown(box, { key: 'Enter' });

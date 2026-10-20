@@ -809,15 +809,20 @@ func (c *Console) finishPickEasyNew(text string) []Reply {
 	c.hasCurrent = true
 	c.markCurrent()
 	replies := []Reply{{Text: c.welcomeReply(ref)}}
-	if text != "" && ref.ChatID != "" {
-		if err := c.ex.Send(ref.ChatID, text); err != nil {
-			replies = append(replies, Reply{Text: fmt.Sprintf(c.text("send_failed"), err)})
-		} else {
-			replies = append(replies, Reply{
-				Text: fmt.Sprintf(c.text("sent_to"), sessionTag(ref.Title)),
-				Sent: true,
-			})
-		}
+	if text == "" {
+		return replies
+	}
+	if ref.ChatID == "" {
+		replies = append(replies, Reply{Text: fmt.Sprintf(c.text("send_failed"), c.text("no_current"))})
+		return replies
+	}
+	if err := c.ex.Send(ref.ChatID, text); err != nil {
+		replies = append(replies, Reply{Text: fmt.Sprintf(c.text("send_failed"), err)})
+	} else {
+		replies = append(replies, Reply{
+			Text: fmt.Sprintf(c.text("sent_to"), sessionTag(ref.Title)),
+			Sent: true,
+		})
 	}
 	return replies
 }

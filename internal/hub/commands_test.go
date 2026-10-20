@@ -1130,6 +1130,30 @@ func TestPendingPickCancelDiscardsText(t *testing.T) {
 	}
 }
 
+// 当前会话终端占用：不作默认投递，进入待选（含 en）。
+func TestPlainTextTerminalActiveCurrentGoesToPick(t *testing.T) {
+	ref := wsRef(0, "c1", "s1", `D:\ws\a`, "claude", "终端会话", false)
+	ref.TerminalActive = true
+	fe := &fakeExecutor{
+		lastActivityID:  9,
+		lastActivityRef: ref,
+		hasActivity:     true,
+		listSessions:    []SessionRef{ref},
+		easyNewRef:      wsRef(0, "c-new", "", `D:\ws\a`, "claude", "新会话", false),
+	}
+	c := NewConsole(fe)
+	out := join(c.Handle("你好"))
+	if !strings.Contains(out, "未精确匹配到会话") || !strings.Contains(out, "en") {
+		t.Fatalf("终端占用默认目标应进待选: %q", out)
+	}
+	if len(fe.sendCalls) != 0 {
+		t.Fatalf("进待选前不得发送: %v", fe.sendCalls)
+	}
+	if len(fe.openSessionCalls) != 0 {
+		t.Fatalf("不得 OpenSession: %v", fe.openSessionCalls)
+	}
+}
+
 // 当前会话是未激活磁盘会话：不再自动激活，进入待选（含 en）。
 func TestPlainTextInactiveCurrentGoesToPick(t *testing.T) {
 	fe := &fakeExecutor{
