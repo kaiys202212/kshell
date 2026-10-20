@@ -29,6 +29,7 @@ func (a *App) startWeixin() {
 		})
 	})
 	r.SetTranscriber(a.weixinTranscriber())
+	r.SetToolName(a.toolDisplayName)
 	r.Configure(cfg.Weixin.Token, cfg.Weixin.Wxid)
 
 	a.mu.Lock()

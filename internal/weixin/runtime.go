@@ -51,6 +51,8 @@ type Runtime struct {
 	onLearnWxid func(wxid string)
 	// transcriber 由 desktop 注入：语音转写（实时配置，装配到 bridge）。
 	transcriber Transcriber
+	// toolName 由 desktop 注入：工具展示名（出站标题栏归因，装配到 bridge）。
+	toolName func(string) string
 	// lang 文案语言。
 	lang string
 
@@ -88,6 +90,18 @@ func (r *Runtime) SetTranscriber(fn Transcriber) {
 	r.mu.Unlock()
 	if bridge != nil {
 		bridge.SetTranscriber(fn)
+	}
+}
+
+// SetToolName 装配工具展示名查询函数（出站标题栏归因用）：转发给已存在的
+// bridge 并记录，Configure 创建新 bridge（重绑）时再次注入。
+func (r *Runtime) SetToolName(fn func(string) string) {
+	r.mu.Lock()
+	r.toolName = fn
+	bridge := r.bridge
+	r.mu.Unlock()
+	if bridge != nil {
+		bridge.SetToolName(fn)
 	}
 }
 
@@ -139,6 +153,9 @@ func (r *Runtime) Configure(token, wxid string) {
 	r.bridge = NewBridge(r.client, r.ex, BridgeConfig{Wxid: wxid, Language: r.lang})
 	if r.transcriber != nil {
 		r.bridge.SetTranscriber(r.transcriber)
+	}
+	if r.toolName != nil {
+		r.bridge.SetToolName(r.toolName)
 	}
 	if r.onLearnWxid != nil {
 		r.bridge.SetOnLearnWxid(r.onLearnWxid)

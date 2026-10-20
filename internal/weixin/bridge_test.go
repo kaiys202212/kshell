@@ -279,7 +279,8 @@ func TestBridgeDeliverHubMessage(t *testing.T) {
 		t.Fatalf("应跳过的消息触发了 %d 次 sendmessage, 期望仍为 1（仅入站确认）", n)
 	}
 
-	// agent 正常推送，带标题前缀，context_token 用最近入站的。
+	// agent 正常推送，带标题栏（仅会话标题时与旧前缀同形），标题独立一行，
+	// context_token 用最近入站的。
 	// 出站已改走异步串行队列：FlushForTest 等队列排空后再断言。
 	b.DeliverHubMessage(hub.Message{Kind: "agent", SessionTitle: "标题", Text: "hello world"})
 	b.FlushForTest()
@@ -288,11 +289,49 @@ func TestBridgeDeliverHubMessage(t *testing.T) {
 		t.Fatalf("sendmessage 次数 = %d, 期望 2（入站确认 + agent 推送）", len(sends))
 	}
 	text, token := sendMsgFields(t, sends[1].body)
-	if text != "【标题】hello world" {
-		t.Errorf("出站文本 = %q, 期望 【标题】hello world", text)
+	// deliver 阶段统一升级硬换行（行尾两空格，微信 PC 端 Markdown 渲染需要）。
+	if text != "【标题】  \nhello world" {
+		t.Errorf("出站文本 = %q, 期望 【标题】  \\nhello world", text)
 	}
 	if token != "ct-9" {
 		t.Errorf("context_token = %q, 期望 ct-9", token)
+	}
+}
+
+// 标题栏归因：项目名（工作区基名）· agent 展示名 · 会话标题；展示名查不到
+// 回落工具 ID；Workspace/Tool/SessionTitle 全空时不加标题栏。
+func TestBridgeDeliverHubMessageTitleBar(t *testing.T) {
+	rc := &recorder{}
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b := newBridge(t, "u1", ex, rc.handler(t))
+	b.SetToolName(func(id string) string {
+		if id == "claude" {
+			return "Claude Code"
+		}
+		return ""
+	})
+	b.HandleInbound("u1", "ct-1", "你好") // 建立发送上下文
+	b.FlushForTest()
+
+	b.DeliverHubMessage(hub.Message{Kind: "agent", Workspace: `D:\ws\proj`, Tool: "claude",
+		SessionTitle: "标题", Text: "正文"})
+	// 展示名查不到回落工具 ID。
+	b.DeliverHubMessage(hub.Message{Kind: "agent", Tool: "codex", Text: "无标题"})
+	// 全空：不加标题栏。
+	b.DeliverHubMessage(hub.Message{Kind: "agent", Text: "裸文本"})
+	b.FlushForTest()
+	sends := rc.sends()
+	if len(sends) != 4 {
+		t.Fatalf("sendmessage 次数 = %d, 期望 4（入站确认 + 3 条推送）", len(sends))
+	}
+	if text, _ := sendMsgFields(t, sends[1].body); text != "【proj · Claude Code · 标题】  \n正文" {
+		t.Errorf("出站文本 = %q, 期望 【proj · Claude Code · 标题】  \\n正文", text)
+	}
+	if text, _ := sendMsgFields(t, sends[2].body); text != "【codex】  \n无标题" {
+		t.Errorf("出站文本 = %q, 期望 【codex】  \\n无标题", text)
+	}
+	if text, _ := sendMsgFields(t, sends[3].body); text != "裸文本" {
+		t.Errorf("出站文本 = %q, 期望 裸文本", text)
 	}
 }
 
@@ -928,12 +967,30 @@ func TestBridgeVoiceTranscribedForward(t *testing.T) {
 	})
 
 	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
-	// 转写文本按普通文字转交 + ack；无附件回执。
-	if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "语音说的需求" {
-		t.Fatalf("转写文本应转交, 实际 %v", ex.sentTexts)
+	// 语音落盘入队后与转写文本合并投递：附件说明行 + 转写文本，一条 ack。
+	if len(ex.sentTexts) != 1 {
+		t.Fatalf("转写文本应合并投递, 实际 %v", ex.sentTexts)
+	}
+	merged := ex.sentTexts[0]
+	if !strings.Contains(merged, "[附件] voice.wav 已保存至 ") || !strings.Contains(merged, "语音说的需求") {
+		t.Fatalf("合并文本应含语音文件说明行与转写文本: %q", merged)
 	}
 	if !bytes.HasPrefix(gotWAV, []byte("RIFF")) {
 		t.Errorf("transcriber 收到的不是 WAV: % x", gotWAV[:min(4, len(gotWAV))])
+	}
+	if b.QueuedFiles() != 0 {
+		t.Errorf("队列应已清空: %d", b.QueuedFiles())
+	}
+	// 落盘语音文件可读且是合法 WAV（说明行后跟空行与转写文本）。
+	i := strings.Index(merged, "已保存至 ")
+	rest := merged[i+len("已保存至 "):]
+	path := rest[:strings.IndexAny(rest, "\n")]
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("语音文件未落盘: %v", err)
+	}
+	if !bytes.HasPrefix(data, []byte("RIFF")) {
+		t.Errorf("落盘文件不是 WAV: % x", data[:min(4, len(data))])
 	}
 	sends := rc.sends()
 	if len(sends) != 1 {
@@ -972,10 +1029,14 @@ func TestBridgeVoiceUnconfigured(t *testing.T) {
 	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 	pcm := bytes.Repeat([]byte{0x10, 0x02}, 1200)
 	b, rc := newAttachBridge(t, ex, encodeSilk(t, pcm, true), 200)
-	// 不注入 transcriber：回执「未配置」，不下载、不投递。
+	// 不注入 transcriber：语音文件仍落盘入队（转交不依赖 ASR），回执
+	//「未配置」，不投递。
 	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
 	if len(ex.sentTexts) != 0 {
 		t.Fatalf("未配置不应投递: %v", ex.sentTexts)
+	}
+	if n := b.QueuedFiles(); n != 1 {
+		t.Fatalf("语音文件应入队待转交, 队列 = %d", n)
 	}
 	sends := rc.sends()
 	if len(sends) == 0 || !strings.Contains(sendText(t, sends[0].body), "未配置") {
@@ -994,6 +1055,9 @@ func TestBridgeVoiceTranscribeFail(t *testing.T) {
 	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
 	if len(ex.sentTexts) != 0 {
 		t.Fatalf("转写失败不应投递: %v", ex.sentTexts)
+	}
+	if n := b.QueuedFiles(); n != 1 {
+		t.Fatalf("转写失败后语音文件仍应入队待转交, 队列 = %d", n)
 	}
 	sends := rc.sends()
 	if len(sends) == 0 || !strings.Contains(sendText(t, sends[0].body), "转写失败") {
@@ -1040,7 +1104,40 @@ func TestBridgeVoiceServerTextSkipsASR(t *testing.T) {
 	m := voiceMsg("ct-1")
 	m.Text = "服务端转写内容"
 	b.HandleInboundMsg(context.Background(), m)
-	if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "服务端转写内容" {
-		t.Fatalf("服务端转写应直通: %v", ex.sentTexts)
+	// 服务端转写直通，且语音文件同样落盘随行转交。
+	if len(ex.sentTexts) != 1 || !strings.Contains(ex.sentTexts[0], "[附件] voice.wav 已保存至 ") ||
+		!strings.Contains(ex.sentTexts[0], "服务端转写内容") {
+		t.Fatalf("服务端转写应直通并携带语音文件: %v", ex.sentTexts)
+	}
+	if b.QueuedFiles() != 0 {
+		t.Fatalf("队列应清空: %d", b.QueuedFiles())
+	}
+}
+
+func TestBridgeVoiceEmptyTranscriptKeepsFile(t *testing.T) {
+	// 转写结果为空：语音文件仍入队待下一条文字转交，回执「转写结果为空」。
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	pcm := bytes.Repeat([]byte{0x10, 0x02}, 1200)
+	b, rc := newAttachBridge(t, ex, encodeSilk(t, pcm, true), 200)
+	b.SetTranscriber(func(ctx context.Context, wav []byte) (string, error) {
+		return "", nil
+	})
+
+	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
+	if len(ex.sentTexts) != 0 {
+		t.Fatalf("空转写不应投递: %v", ex.sentTexts)
+	}
+	if n := b.QueuedFiles(); n != 1 {
+		t.Fatalf("语音文件应入队待转交, 队列 = %d", n)
+	}
+	// 下一条文字合并转交语音文件。
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-2", Text: "听一下"})
+	if len(ex.sentTexts) != 1 || !strings.Contains(ex.sentTexts[0], "[附件] voice.wav 已保存至 ") ||
+		!strings.Contains(ex.sentTexts[0], "听一下") {
+		t.Fatalf("下一条文字应合并转交语音文件: %v", ex.sentTexts)
+	}
+	sends := rc.sends()
+	if len(sends) != 2 {
+		t.Fatalf("sendmessage 次数 = %d, 期望 2（空转写回执 + ack）", len(sends))
 	}
 }

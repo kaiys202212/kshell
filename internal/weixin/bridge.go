@@ -96,6 +96,9 @@ type Bridge struct {
 	filesDir string
 	// transcriber 是语音转写函数（desktop 注入）；nil = 未装配（纯语音回执提示）。
 	transcriber Transcriber
+	// toolName 按工具 ID 查展示名（desktop 注入，与欢迎词归因同源）；
+	// nil 或查不到时出站标题栏回落工具 ID。
+	toolName func(string) string
 
 	// outbound 是串行出站队列：DeliverHubMessage 只入队，单 worker 按序
 	// deliver，避免 hub 消息因网络耗时不等而在微信侧乱序。
@@ -152,6 +155,13 @@ func defaultFilesDir() string {
 func (b *Bridge) SetTranscriber(fn Transcriber) {
 	b.mu.Lock()
 	b.transcriber = fn
+	b.mu.Unlock()
+}
+
+// SetToolName 装配工具展示名查询函数（desktop 注入，可随时替换）。
+func (b *Bridge) SetToolName(fn func(string) string) {
+	b.mu.Lock()
+	b.toolName = fn
 	b.mu.Unlock()
 }
 
@@ -249,23 +259,27 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	receipt := b.ingestAttachments(ctx, m.Attachments)
 
 	text := m.Text
-	// 纯语音（服务端无转写）：下载 → SILK→WAV → 模型转写；转写文本按
-	// 可转发文字处理（参与附件队列合并）；失败/未配置转回执。
-	if strings.TrimSpace(text) == "" && m.Voice != nil {
-		if transcript, err := b.transcribeVoice(ctx, m.Voice); err != nil {
+	// 语音（无论服务端有无转写文本）：下载 → SILK→WAV → 落盘入附件队列，
+	// 音频作为文件随下一条可转发文字转交模型（不依赖 ASR 可用性）；文本为
+	// 空时再走本地转写，转写文本按可转发文字处理（参与附件队列合并）；
+	// 转写失败/未配置转回执。
+	if m.Voice != nil {
+		note, transcript, terr := b.ingestVoice(ctx, m.Voice, strings.TrimSpace(text) == "")
+		receipt = joinNotes(receipt, note)
+		if strings.TrimSpace(text) == "" {
 			switch {
-			case errors.Is(err, ErrTranscriberNotConfigured):
+			case errors.Is(terr, ErrTranscriberNotConfigured):
 				receipt = joinNotes(receipt, bridgeText(b.lang, "voice.unconfigured"))
-			case errors.Is(err, ErrVoiceUnsupported):
+			case errors.Is(terr, ErrVoiceUnsupported):
 				// 模型不支持音频输入：给配置指引，不透传网关报错。
 				receipt = joinNotes(receipt, bridgeText(b.lang, "voice.unsupported"))
+			case terr != nil:
+				receipt = joinNotes(receipt, fmt.Sprintf(bridgeText(b.lang, "voice.failed"), terr))
+			case strings.TrimSpace(transcript) == "":
+				receipt = joinNotes(receipt, fmt.Sprintf(bridgeText(b.lang, "voice.failed"), bridgeText(b.lang, "voice.empty")))
 			default:
-				receipt = joinNotes(receipt, fmt.Sprintf(bridgeText(b.lang, "voice.failed"), err))
+				text = transcript
 			}
-		} else if strings.TrimSpace(transcript) == "" {
-			receipt = joinNotes(receipt, fmt.Sprintf(bridgeText(b.lang, "voice.failed"), bridgeText(b.lang, "voice.empty")))
-		} else {
-			text = transcript
 		}
 	}
 
@@ -414,22 +428,49 @@ func (b *Bridge) ingestAttachments(ctx context.Context, atts []InboundAttachment
 	return strings.Join(parts, "\n")
 }
 
-// transcribeVoice 完成语音到文字的完整链路：CDN 下载 → SILK 解码转 WAV →
-// 注入的 transcriber。未装配 transcriber 时直接返回哨兵（不下载）。
-func (b *Bridge) transcribeVoice(ctx context.Context, v *InboundAttachment) (string, error) {
+// ingestVoice 完成语音的文件化与转写：CDN 下载 → SILK 解码转 WAV → 落盘
+// 入附件队列（音频作为文件随下一条可转发文字转交模型），needTranscribe 时
+// 再交给注入的 transcriber 得转写文本。返回微信侧回执片段（file.received）、
+// 转写文本与转写错误：未装配 transcriber 时 err 为哨兵；下载/解码/落盘失败
+// 时回执为空、err 为底层错误（调用方转 voice.failed 回执）。落盘结果不受
+// 转写可用性影响，语音转交不依赖 ASR 配置。
+func (b *Bridge) ingestVoice(ctx context.Context, v *InboundAttachment, needTranscribe bool) (note, transcript string, err error) {
+	wav, err := b.voiceWAV(ctx, v)
+	if err != nil {
+		return "", "", err
+	}
+	name := "voice.wav"
+	path, err := saveAttachment(b.filesDir, name, wav)
+	if err != nil {
+		return "", "", err
+	}
+	b.mu.Lock()
+	b.queue = append(b.queue, queuedFile{Name: name, Path: path})
+	total := len(b.queue)
+	b.mu.Unlock()
+	log.Printf("[weixin] 语音已落盘待转交 path=%s 队列=%d", path, total)
+	note = fmt.Sprintf(bridgeText(b.lang, "file.received"), name, total)
+	if !needTranscribe {
+		return note, "", nil
+	}
 	fn := b.transcriberFn()
 	if fn == nil {
-		return "", ErrTranscriberNotConfigured
+		return note, "", ErrTranscriberNotConfigured
 	}
+	transcript, err = fn(ctx, wav)
+	if err != nil {
+		return note, "", err
+	}
+	return note, transcript, nil
+}
+
+// voiceWAV 下载语音媒体并解码为 WAV（SILK → 24kHz 单声道 PCM，voice.go）。
+func (b *Bridge) voiceWAV(ctx context.Context, v *InboundAttachment) ([]byte, error) {
 	data, err := b.client.DownloadMedia(ctx, *v)
 	if err != nil {
-		return "", fmt.Errorf("下载语音: %w", err)
+		return nil, fmt.Errorf("下载语音: %w", err)
 	}
-	wav, err := silkToWAV(data)
-	if err != nil {
-		return "", err
-	}
-	return fn(ctx, wav)
+	return silkToWAV(data)
 }
 
 // joinNotes 用换行合并回执片段（忽略空片段）。
@@ -494,8 +535,8 @@ func (b *Bridge) DeliverHubMessage(m hub.Message) {
 		return
 	}
 	text := markdownToText(m.Text)
-	if m.SessionTitle != "" {
-		text = "【" + m.SessionTitle + "】" + text
+	if bar := b.titleBar(m); bar != "" {
+		text = bar + "\n" + text
 	}
 	b.enqueueOutbound(outMsg{svrKey: m.ChatID, text: text})
 }
@@ -505,6 +546,36 @@ func (b *Bridge) DeliverHubMessage(m hub.Message) {
 type outMsg struct {
 	svrKey string
 	text   string
+}
+
+// titleBar 组装出站镜像消息的标题栏（独立一行，与正文换行分隔，不再同行拼接）：
+// 项目名 · agent 展示名 · 会话标题，缺项跳过，全空返回空串。项目名取工作区
+// 路径基名；agent 名查注入的展示名（回落工具 ID）。
+func (b *Bridge) titleBar(m hub.Message) string {
+	var parts []string
+	if m.Workspace != "" {
+		parts = append(parts, filepath.Base(m.Workspace))
+	}
+	if m.Tool != "" {
+		b.mu.Lock()
+		fn := b.toolName
+		b.mu.Unlock()
+		name := ""
+		if fn != nil {
+			name = fn(m.Tool)
+		}
+		if name == "" {
+			name = m.Tool
+		}
+		parts = append(parts, name)
+	}
+	if m.SessionTitle != "" {
+		parts = append(parts, m.SessionTitle)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "【" + strings.Join(parts, " · ") + "】"
 }
 
 // enqueueOutbound 把一条文本放入串行出站队列；满或已关闭则丢弃计 undelivered。
