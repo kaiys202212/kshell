@@ -161,11 +161,11 @@ func (w *wxExecutor) LastActivity() (int64, hub.SessionRef, bool) {
 		if m.Status == hub.StatusRecalled {
 			continue // 已撤回的用户消息不代表用户最终选择
 		}
-		// 规则1：已知非 ACP 工具的消息不可作为命令层目标，跳过继续向前找，
-		// 避免把当前上下文锚到必然发不出去的会话。能力未知保守放行。
+		// 规则1：已知非 ACP 工具的消息不可作默认接收者。停止扫描（不借用更旧
+		// ACP），返回不可投递引用供 Console 清除 current。能力未知保守放行。
 		if m.Tool != "" {
 			if capable, known := w.acpCapableTool(m.Tool); known && !capable {
-				continue
+				return m.ID, hub.SessionRef{Tool: m.Tool, Title: m.SessionTitle}, true
 			}
 		}
 		attributed := false

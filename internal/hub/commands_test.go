@@ -715,10 +715,10 @@ func TestPlainTextInput(t *testing.T) {
 	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c1", "你好"} {
 		t.Fatalf("Send 参数不符: %v", fe.sendCalls)
 	}
-	// 无 current 且无会话：不再只提示无当前会话，而是进入待选列表（无会话可列）
+	// 无 current 且无会话：进入待选（仅 en）
 	out := join(NewConsole(&fakeExecutor{}).Handle("你好"))
-	if !strings.Contains(out, "暂无会话") {
-		t.Fatalf("无 current 普通文本应提示暂无会话: %q", out)
+	if !strings.Contains(out, "未精确匹配到会话") || !strings.Contains(out, "1. en") {
+		t.Fatalf("无 current 普通文本应进仅 en 待选: %q", out)
 	}
 	// 发送失败
 	fe2 := &fakeExecutor{
@@ -1130,27 +1130,31 @@ func TestPendingPickCancelDiscardsText(t *testing.T) {
 	}
 }
 
-// 当前会话是未激活磁盘会话：普通文本先 OpenSession 激活再发送。
-func TestPlainTextActivatesInactiveCurrent(t *testing.T) {
+// 当前会话是未激活磁盘会话：不再自动激活，进入待选（含 en）。
+func TestPlainTextInactiveCurrentGoesToPick(t *testing.T) {
 	fe := &fakeExecutor{
 		lastActivityID:  7,
 		lastActivityRef: wsRef(0, "", "s1", `D:\ws\a`, "claude", "磁盘会话", false),
 		hasActivity:     true,
-		openSessionRef:  wsRef(0, "c8", "s1", `D:\ws\a`, "claude", "磁盘会话", false),
+		listSessions: []SessionRef{
+			wsRef(0, "c1", "", `D:\ws\a`, "claude", "活跃A", false),
+		},
+		easyNewRef: wsRef(0, "c-new", "", `D:\ws\a`, "claude", "新会话", false),
 	}
 	c := NewConsole(fe)
-	if got := c.Handle("你好"); len(got) != 0 {
-		t.Fatalf("激活并发送成功不应回显: %v", got)
+	out := join(c.Handle("你好"))
+	if !strings.Contains(out, "未精确匹配到会话") || !strings.Contains(out, "en") {
+		t.Fatalf("未激活默认目标应进待选: %q", out)
 	}
-	if len(fe.openSessionCalls) != 1 || fe.openSessionCalls[0] != "s1" {
-		t.Fatalf("应激活磁盘会话: %v", fe.openSessionCalls)
+	if len(fe.openSessionCalls) != 0 {
+		t.Fatalf("不得自动 OpenSession: %v", fe.openSessionCalls)
 	}
-	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c8", "你好"} {
-		t.Fatalf("应发给激活后的 ChatID: %v", fe.sendCalls)
+	if len(fe.sendCalls) != 0 {
+		t.Fatalf("进待选前不得发送: %v", fe.sendCalls)
 	}
 }
 
-// AgentHub 无目标时调用 PickTarget：直接输出同一份待选列表，暂存正文。
+// AgentHub 无目标时调用 PickTarget：列会话 + en，暂存正文。
 func TestPickTargetListsSessions(t *testing.T) {
 	fe := &fakeExecutor{listSessions: []SessionRef{
 		wsRef(0, "c1", "", `D:\ws\a`, "claude", "会话A", false),
@@ -1160,8 +1164,11 @@ func TestPickTargetListsSessions(t *testing.T) {
 	if !pending {
 		t.Fatal("有会话时应报告已进入待选菜单")
 	}
-	if !strings.Contains(join(out), "未精确匹配到会话") || !strings.Contains(join(out), "1. [a] claude 会话A") {
-		t.Fatalf("PickTarget 应输出待选列表: %v", out)
+	joined := join(out)
+	if !strings.Contains(joined, "未精确匹配到会话") ||
+		!strings.Contains(joined, "1. [a] claude 会话A") ||
+		!strings.Contains(joined, "2. en") {
+		t.Fatalf("PickTarget 应输出会话与 en: %v", out)
 	}
 	if len(fe.sendCalls) != 0 {
 		t.Fatalf("PickTarget 不得直接投递: %v", fe.sendCalls)
@@ -1175,15 +1182,50 @@ func TestPickTargetListsSessions(t *testing.T) {
 	}
 }
 
-// 无会话：不进菜单、不清草稿（Pending=false），只回暂无会话。
-func TestPickTargetNoSessionsNotPending(t *testing.T) {
-	c := NewConsole(&fakeExecutor{})
-	out, pending := c.PickTarget("  随便看看  ")
-	if pending {
-		t.Fatal("无会话时不应报告进入待选菜单")
+// 待选末项 en：快速新建并把暂存正文发出。
+func TestPickTargetAppendsEasyNewOption(t *testing.T) {
+	fe := &fakeExecutor{
+		listSessions: []SessionRef{
+			wsRef(0, "c1", "", `D:\ws\a`, "claude", "会话A", false),
+		},
+		easyNewRef: wsRef(0, "c-new", "", `D:\ws\a`, "claude", "新会话", false),
 	}
-	if got := join(out); got != "暂无会话" {
-		t.Fatalf("无会话应回暂无会话: %q", got)
+	c := NewConsole(fe)
+	if _, pending := c.PickTarget("任务正文"); !pending {
+		t.Fatal("应进入待选")
+	}
+	sent := c.Handle("2")
+	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c-new", "任务正文"} {
+		t.Fatalf("选 en 应 EasyNew 后发送: %v", fe.sendCalls)
+	}
+	okSent := false
+	for _, r := range sent {
+		if r.Sent {
+			okSent = true
+			break
+		}
+	}
+	if !okSent {
+		t.Fatalf("成功投递应标记 Sent: %+v", sent)
+	}
+}
+
+// 无会话：仍进待选，仅展示 en（Pending=true，便于清空草稿）。
+func TestPickTargetOnlyEasyNewWhenNoSessions(t *testing.T) {
+	fe := &fakeExecutor{
+		easyNewRef: wsRef(0, "c-new", "", `D:\ws\a`, "claude", "新会话", false),
+	}
+	c := NewConsole(fe)
+	out, pending := c.PickTarget("  随便看看  ")
+	if !pending {
+		t.Fatal("无会话仅 en 时也应进入待选菜单")
+	}
+	if !strings.Contains(join(out), "1. en") {
+		t.Fatalf("无会话应仅列出 en: %v", out)
+	}
+	c.Handle("1")
+	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c-new", "随便看看"} {
+		t.Fatalf("选 en 应发送: %v", fe.sendCalls)
 	}
 }
 

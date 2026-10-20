@@ -293,8 +293,15 @@ func (c *Console) handleHelp() []Reply {
 	return single(sb.String())
 }
 
+// sessionDeliverable 判定会话可否作为默认投递目标：须已激活 ACP（有 ChatID）
+// 且非终端占用。未激活磁盘会话 / 终端会话可出现在待选列表，但不作默认 current。
+func sessionDeliverable(ref SessionRef) bool {
+	return ref.ChatID != "" && !ref.TerminalActive
+}
+
 // refreshCurrent 从执行后端同步最新归因。只有比水位更新的 hub 归因才覆盖
 // current：显式切换（选号/新建）把水位抬到当下，避免旧消息把目标抢回去。
+// 最新归因不可投递（未激活 / 终端）时清除 current，进入「无默认接收者」。
 func (c *Console) refreshCurrent() {
 	id, ref, ok := c.ex.LastActivity()
 	if !ok {
@@ -303,9 +310,14 @@ func (c *Console) refreshCurrent() {
 	if c.hasCurrent && id <= c.currentMark {
 		return
 	}
+	c.currentMark = id
+	if !sessionDeliverable(ref) {
+		c.hasCurrent = false
+		c.current = SessionRef{}
+		return
+	}
 	c.current = ref
 	c.hasCurrent = true
-	c.currentMark = id
 }
 
 // markCurrent 把归因水位抬到后端当前进度：显式选择发生在此刻之前的历史
@@ -477,12 +489,21 @@ func (c *Console) handleMenuNumber(n int) []Reply {
 		return single(formatSwitched(c.text("switched"), ref))
 	case menuPick:
 		// 先清菜单：激活/发送失败也不保留待发正文，避免静默改投。
+		pending := menu.pendingText
+		results := menu.results
 		c.menu = nil
-		ref, err := c.activateRef(menu.results[n-1])
+		// 末项 en：快速新建并投递暂存正文（与 #en <消息> 同语义）。
+		if n == len(results)+1 {
+			return c.finishPickEasyNew(pending)
+		}
+		if n < 1 || n > len(results) {
+			return single(c.text("no_mapping"))
+		}
+		ref, err := c.activateRef(results[n-1])
 		if err != nil {
 			return single(fmt.Sprintf(c.text("switch_failed"), c.errText(err)))
 		}
-		if err := c.ex.Send(ref.ChatID, menu.pendingText); err != nil {
+		if err := c.ex.Send(ref.ChatID, pending); err != nil {
 			return single(fmt.Sprintf(c.text("send_failed"), err))
 		}
 		return []Reply{{Text: fmt.Sprintf(c.text("sent_to"), sessionTag(ref.Title)), Sent: true}}
@@ -697,23 +718,12 @@ func (c *Console) renderOptionsMarked(title string, opts []MenuOption, curID str
 	return single(title + "\n\n" + strings.Join(lines, "\n"))
 }
 
-// sendToCurrent 把普通文本发给精确命中的当前会话；未激活的磁盘会话先
-// OpenSession 激活。无精确目标时进入待选列表，由用户回编号后发送。
+// sendToCurrent 把普通文本发给精确命中的当前会话。无默认接收者（含最新
+// 归因为未激活/终端）时进入待选列表（会话 + en），由用户回编号后发送。
 func (c *Console) sendToCurrent(text string) []Reply {
 	c.refreshCurrent()
 	ref := c.current
-	if !c.hasCurrent || (ref.ChatID == "" && ref.SessionID == "") {
-		replies, _ := c.listForPending(text)
-		return replies
-	}
-	if ref.ChatID == "" {
-		activated, err := c.activateRef(ref)
-		if err != nil {
-			return single(fmt.Sprintf(c.text("switch_failed"), c.errText(err)))
-		}
-		ref = activated
-	}
-	if ref.ChatID == "" {
+	if !c.hasCurrent || !sessionDeliverable(ref) {
 		replies, _ := c.listForPending(text)
 		return replies
 	}
@@ -751,14 +761,11 @@ func (c *Console) HandleQuoted(chatID, text string) (bool, []Reply) {
 	return false, nil
 }
 
-// listForPending 列出前 10 个会话并暂存正文，等用户回编号后立即发送。
-// 与 #l 共用编号映射（lastList），#c 取消时随菜单丢弃正文。
-// 第二个返回值报告是否建立了待选菜单（无会话时为 false）。
+// listForPending 列出前 10 个会话 + 末项 en（快速新建），暂存正文等用户回编号。
+// 与 #l 共用编号映射（lastList 仅会话；en 走 menuPick 末项），#c 取消丢弃正文。
+// 无会话时仍 Pending=true（仅 en），便于桌面清空草稿。
 func (c *Console) listForPending(text string) ([]Reply, bool) {
 	sessions := c.ex.ListSessions()
-	if len(sessions) == 0 {
-		return single(c.text("no_sessions")), false
-	}
 	limit := len(sessions)
 	if limit > 10 {
 		limit = 10
@@ -769,21 +776,50 @@ func (c *Console) listForPending(text string) ([]Reply, bool) {
 		shown[i].Current = false // 无精确目标：不标当前
 	}
 	c.lastList = shown
+	enNum := limit + 1
 	c.menu = &pendingMenu{
 		kind:        menuPick,
-		options:     make([]MenuOption, len(shown)),
+		options:     make([]MenuOption, enNum), // 含末项 en，供编号越界校验
 		results:     shown,
 		pendingText: text,
 	}
-	lines := make([]string, 0, limit)
+	lines := make([]string, 0, enNum)
 	for _, r := range shown {
-		lines = append(lines, formatRef(r))
+		line := formatRef(r)
+		if r.TerminalActive {
+			line += " 〔" + c.text("tag_terminal") + "〕"
+		}
+		lines = append(lines, line)
 	}
+	lines = append(lines, fmt.Sprintf(c.text("pick_en"), enNum))
 	return single(strings.Join([]string{
 		c.text("pick_target"),
 		strings.Join(lines, "\n"),
 		c.text("pick_number"),
 	}, "\n\n")), true
+}
+
+// finishPickEasyNew 待选选中 en：快速新建并把暂存正文发出（成功标 Sent）。
+func (c *Console) finishPickEasyNew(text string) []Reply {
+	ref, err := c.ex.EasyNew()
+	if err != nil {
+		return single(fmt.Sprintf(c.text("create_failed"), err))
+	}
+	c.current = ref
+	c.hasCurrent = true
+	c.markCurrent()
+	replies := []Reply{{Text: c.welcomeReply(ref)}}
+	if text != "" && ref.ChatID != "" {
+		if err := c.ex.Send(ref.ChatID, text); err != nil {
+			replies = append(replies, Reply{Text: fmt.Sprintf(c.text("send_failed"), err)})
+		} else {
+			replies = append(replies, Reply{
+				Text: fmt.Sprintf(c.text("sent_to"), sessionTag(ref.Title)),
+				Sent: true,
+			})
+		}
+	}
+	return replies
 }
 
 // PickTarget 供 AgentHub 在无精确目标时直接进入待选列表（暂存正文）。

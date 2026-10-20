@@ -466,20 +466,31 @@ func TestWXExecutorTerminalActiveSession(t *testing.T) {
 	}
 }
 
-// LastActivity 跳过已知非 ACP 工具的消息，继续向前找可回复目标。
-func TestWXExecutorLastActivitySkipsNonACP(t *testing.T) {
-	app := wxApp(t, nil)
+// LastActivity：最新可归因为已知非 ACP 时停止扫描，返回不可投递引用
+//（空 ChatID），不借用更旧的 ACP 会话。
+func TestWXExecutorLastActivityNonACPStopsScan(t *testing.T) {
+	app, m, ex := wxActiveApp(t)
 	app.mu.Lock()
-	app.tools = []discovery.Tool{{ID: "codex", Installed: true}} // 无 ACP
+	app.tools = []discovery.Tool{
+		{ID: "codex", Installed: true}, // 无 ACP
+		{ID: "claude", Name: "Claude Code", Installed: true, ACP: &providers.ACPDetection{Available: true}},
+	}
 	app.mu.Unlock()
 	store := app.snapshot().HubStore
+	oldID := app.originalChatID(listLastID(m))
+	_ = store.Append(hub.Message{Kind: "user", ChatID: oldID, Tool: "claude", Text: "old"})
 	if err := store.Append(hub.Message{Kind: "agent", Tool: "codex", TermKey: "session:s9", Text: "终端回复"}); err != nil {
 		t.Fatal(err)
 	}
 
-	ex := newWXExecutor(app)
-	_, _, ok := ex.LastActivity()
-	if ok {
-		t.Fatalf("非 ACP 工具的消息不应产生命令层目标")
+	_, ref, ok := ex.LastActivity()
+	if !ok {
+		t.Fatal("非 ACP 最新消息应返回水位（供清除 current），ok 须为 true")
+	}
+	if ref.ChatID != "" {
+		t.Fatalf("非 ACP 不得作为可投递目标（也不得命中更旧 ACP %s）: %+v", oldID, ref)
+	}
+	if ref.Tool != "codex" {
+		t.Fatalf("应带回非 ACP 工具标记: %+v", ref)
 	}
 }

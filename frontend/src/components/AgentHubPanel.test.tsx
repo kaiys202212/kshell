@@ -207,22 +207,23 @@ describe('AgentHubPanel', () => {
     expect(document.activeElement).toBe(box);
   });
 
-  it('默认接收目标 chip 高亮：回落链目标 aria-current=true；草稿含 @ 提及时提及目标高亮', () => {
+  it('默认接收目标 chip 高亮：最后可归因已激活会话 aria-current=true；草稿含 @ 提及时提及目标高亮', async () => {
     useAppStore.setState({
       chats: [
         chat({ ID: 'c1', Title: '甲', ToolID: 'claude' }),
         chat({ ID: 'c2', Title: '乙', ToolID: 'cursor', Workspace: 'D:\\ws\\b' }),
       ],
-      lastAgentId: 'c1',
+      hubMessages: [{ id: 1, kind: 'agent', chatId: 'c1', tool: 'claude', event: 'Stop', text: 'hi', ts: 1 }],
+      lastAgentId: 'c2',
     });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const chips = screen.getByTestId('hub-session-chips');
     const chipOf = (id: string) =>
       within(chips).getByRole('button', { name: new RegExp(id === 'c1' ? '甲' : '乙') });
-    // 无 @ 提及时回落链（lastAgentId=c1）目标高亮（非目标按钮无 aria-current）
+    // 无 @：最后可归因 c1 高亮（不用 lastAgentId=c2）
     expect(chipOf('c1')).toHaveAttribute('aria-current', 'true');
     expect(chipOf('c2')).not.toHaveAttribute('aria-current');
-    // 草稿 @ 某会话：该会话 chip 变为高亮（@ 提及优先于回落链）
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '@Cursor#c2 看看' } });
     expect(chipOf('c2')).toHaveAttribute('aria-current', 'true');
@@ -401,8 +402,8 @@ describe('AgentHubPanel', () => {
     );
   });
 
-  it('待选列表未能建立（无会话）：保留草稿，避免用户正文丢失', async () => {
-    api.hubPickTarget.mockResolvedValue({ Replies: [{ Text: '暂无会话' }], Pending: false });
+  it('待选列表未能建立（Pending=false）：保留草稿，避免用户正文丢失', async () => {
+    api.hubPickTarget.mockResolvedValue({ Replies: [{ Text: '请先完成当前选择' }], Pending: false });
     useAppStore.setState({ chats: [], lastAgentId: null });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
@@ -410,15 +411,20 @@ describe('AgentHubPanel', () => {
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(api.hubPickTarget).toHaveBeenCalledWith('别弄丢我'));
     await waitFor(() =>
-      expect(useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '暂无会话')).toBe(true),
+      expect(useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '请先完成当前选择')).toBe(true),
     );
     expect((box as HTMLTextAreaElement).value).toBe('别弄丢我');
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
-  it('未 @ 但有最后交互：发给 lastAgentId', async () => {
-    useAppStore.setState({ chats: [chat({ ID: 'c9' })], lastAgentId: 'c9' });
+  it('未 @ 但最后可归因为已激活会话：直发该会话', async () => {
+    useAppStore.setState({
+      chats: [chat({ ID: 'c9' })],
+      hubMessages: [{ id: 1, kind: 'user', chatId: 'c9', text: '先前', ts: 1 }],
+      lastAgentId: null,
+    });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -552,20 +558,39 @@ describe('AgentHubPanel', () => {
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
-  it('hub 消息匹配不到任何 agent 时回落 store.lastAgentId', async () => {
+  it('hub 消息不可投递时不回落 store.lastAgentId，改为列会话待选', async () => {
+    api.hubPickTarget.mockResolvedValue({
+      Replies: [{ Text: '未精确匹配到会话——回复编号' }],
+      Pending: true,
+    });
+    // 工具表覆盖：codex 无 ACP → replyState=tool，最后可归因但不可投递
+    api.getTools.mockResolvedValue([acpTool(), { ID: 'codex', Name: 'Codex', Installed: true }]);
     useAppStore.setState({
       chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
-      hubMessages: [{ id: 1, kind: 'agent', tool: 'codex', event: 'Stop', workspace: 'D:\\ws\\gone', text: '旧回复', ts: 1 }],
+      hubMessages: [
+        {
+          id: 1,
+          kind: 'agent',
+          tool: 'codex',
+          event: 'Stop',
+          workspace: 'D:\\ws\\gone',
+          sessionId: 'sess-gone',
+          text: '旧回复',
+          ts: 1,
+        },
+      ],
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '继续'));
+    await waitFor(() => expect(api.hubPickTarget).toHaveBeenCalledWith('继续'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
-  it('store.lastAgentId 已不在候选列表：不投递，改为列会话待选', async () => {
+  it('无 hub 归因且仅有无效 lastAgentId：列会话待选', async () => {
     api.hubPickTarget.mockResolvedValue({
       Replies: [{ Text: '未精确匹配到会话——回复编号' }],
       Pending: true,
@@ -583,11 +608,11 @@ describe('AgentHubPanel', () => {
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
-  it('最新 agent 回复带 sessionId 快照但会话未激活时，先激活原会话再发送，不误投同 workspace 会话', async () => {
-    // 回归场景：strategy 会话（未激活）发了最后一条消息，同 workspace 还挂着
-    // 另一个已激活 chat。旧逻辑 chats.find 查不到该消息的 chatId，落到 workspace
-    // 模糊匹配，把回复投给了同项目的另一个会话。
-    api.openSessionACP.mockResolvedValue({ Kind: 'chat', Chat: chat({ ID: 'c-new', SessionID: 'sess-9', Title: 'strategy' }) });
+  it('最新 agent 回复未激活时走待选，不自动激活、不误投同 workspace 会话', async () => {
+    api.hubPickTarget.mockResolvedValue({
+      Replies: [{ Text: '未精确匹配到会话——回复编号\n\n1. [a] claude 甲\n2. en — 快速新建' }],
+      Pending: true,
+    });
     useAppStore.setState({
       chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
       hubMessages: [
@@ -610,14 +635,16 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-9'));
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c-new', '继续'));
-    // 绝不投给同 workspace 的 c1
-    expect(api.sendChatPrompt).not.toHaveBeenCalledWith('c1', '继续');
+    await waitFor(() => expect(api.hubPickTarget).toHaveBeenCalledWith('继续'));
+    expect(api.openSessionACP).not.toHaveBeenCalled();
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
-  it('最新 agent 回复仅带 session: 前缀 termKey（无 sessionId 快照）时同样激活后发送', async () => {
-    api.openSessionACP.mockResolvedValue({ Kind: 'chat', Chat: chat({ ID: 'c-new', SessionID: 'sess-8' }) });
+  it('最新 agent 仅带 session: termKey 未激活时同样走待选', async () => {
+    api.hubPickTarget.mockResolvedValue({
+      Replies: [{ Text: '未精确匹配到会话——回复编号' }],
+      Pending: true,
+    });
     useAppStore.setState({
       chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
       hubMessages: [
@@ -639,77 +666,9 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-8'));
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c-new', '继续'));
-    expect(api.sendChatPrompt).not.toHaveBeenCalledWith('c1', '继续');
-  });
-
-  it('待激活会话激活失败时报错且不投递，不落回 workspace 模糊匹配', async () => {
-    api.openSessionACP.mockRejectedValue(new Error('err.chat.gone'));
-    useAppStore.setState({
-      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
-      hubMessages: [
-        {
-          id: 1,
-          kind: 'agent',
-          tool: 'claude',
-          event: 'Stop',
-          workspace: 'D:\\ws\\a',
-          sessionId: 'sess-9',
-          text: '回复',
-          ts: 1,
-        },
-      ],
-      lastAgentId: 'c1',
-    });
-    render(<AgentHubPanel />);
-    await act(async () => {});
-    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '继续' } });
-    fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-9'));
-    // err.chat.gone 是注册过的 wire key，backendError 会翻译成 en 文案
-    await waitFor(() =>
-      expect(
-        useAppStore
-          .getState()
-          .toasts.some((x) => x.title === tt('ui.hub.find_activate_failed').replace('{{err}}', tt('err.chat.gone'))),
-      ).toBe(true),
-    );
+    await waitFor(() => expect(api.hubPickTarget).toHaveBeenCalledWith('继续'));
+    expect(api.openSessionACP).not.toHaveBeenCalled();
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
-  });
-
-  it('待激活会话激活成功但发送失败时，报 send_failed 而非激活失败', async () => {
-    // 评审 M2：激活与发送分段 catch，避免投递失败被误报成「激活会话失败」
-    api.openSessionACP.mockResolvedValue({ Kind: 'chat', Chat: chat({ ID: 'c-new', SessionID: 'sess-9' }) });
-    api.sendChatPrompt.mockRejectedValue(new Error('boom'));
-    useAppStore.setState({
-      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
-      hubMessages: [
-        {
-          id: 1,
-          kind: 'agent',
-          tool: 'claude',
-          event: 'Stop',
-          workspace: 'D:\\ws\\a',
-          sessionId: 'sess-9',
-          text: '回复',
-          ts: 1,
-        },
-      ],
-      lastAgentId: 'c1',
-    });
-    render(<AgentHubPanel />);
-    await act(async () => {});
-    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '继续' } });
-    fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() =>
-      expect(
-        useAppStore.getState().toasts.some((x) => x.title === tt('ui.chat.send_failed').replace('{{err}}', 'boom')),
-      ).toBe(true),
-    );
-    expect(useAppStore.getState().toasts.every((x) => !x.title.startsWith(tt('ui.hub.find_activate_failed').replace('{{err}}', '')))).toBe(true);
   });
 
   it('渲染持久历史中的用户消息与 agent 回复', async () => {
@@ -952,15 +911,17 @@ describe('AgentHubPanel', () => {
     expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#甲 ');
   });
 
-  it('@ 补全 Esc 关闭后，Enter 恢复发送语义（回落 lastAgentId 投递）', async () => {
+  it('@ 补全 Esc 关闭后，Enter 恢复发送语义（回落最后可归因会话）', async () => {
     useAppStore.setState({
       chats: [
         chat({ ID: 'c1', ToolID: 'claude', Title: '甲' }),
         chat({ ID: 'c2', ToolID: 'cursor', Title: '乙' }),
       ],
-      lastAgentId: 'c2',
+      hubMessages: [{ id: 1, kind: 'user', chatId: 'c2', text: '先前', ts: 1 }],
+      lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '@' } });
     expect(screen.getByRole('listbox', { name: tt('ui.hub.mention_aria') })).toBeTruthy();
@@ -1460,9 +1421,7 @@ describe('AgentHubPanel', () => {
     ).toBe(false);
   });
 
-  it('pending 目标时 chips 区追加「待激活」chip 并高亮；已激活目标不出现', async () => {
-    // 挂载 effect 会用 listHubMessages() 覆盖 setState 预置的 hubMessages，
-    // mock 必须返回同一批消息（与消息流测试同口径）。
+  it('最后消息未激活时无默认接收者：不出现待激活 chip 高亮', async () => {
     const msgs = [
       { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', workspace: 'D:\\ws\\a', sessionId: 'sess-9', sessionTitle: 'strategy', text: '回复', ts: 1 },
     ];
@@ -1473,14 +1432,9 @@ describe('AgentHubPanel', () => {
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
-    // 待激活 chip 存在：显示会话标题快照 + 待激活后缀，且 aria-current 高亮
-    const pendingChip = await screen.findByTitle(tt('ui.hub.pending_chip_aria'));
-    expect(pendingChip.closest('[aria-current="true"]')).toBeTruthy();
-    const chips = screen.getByTestId('hub-session-chips');
-    expect(chips.textContent).toContain(tt('ui.hub.pending_chip'));
-    // 已激活目标（c1）不是高亮目标：pending 才是
-    const c1Chip = screen.getByText('甲');
-    expect(c1Chip.closest('[aria-current="true"]')).toBeNull();
+    await act(async () => {});
+    expect(screen.queryByTitle(tt('ui.hub.pending_chip_aria'))).toBeNull();
+    expect(screen.getByText('甲').closest('[aria-current="true"]')).toBeNull();
   });
 
   it('pending 目标已激活（会话重新打开）后待激活 chip 消失', async () => {
@@ -1500,33 +1454,14 @@ describe('AgentHubPanel', () => {
     expect(screen.queryByText(new RegExp(tt('ui.hub.pending_chip')))).toBeNull();
   });
 
-  it('点击待激活 chip：激活原会话并把 @ 标签填入输入框', async () => {
-    api.openSessionACP.mockResolvedValue({
-      Kind: 'chat',
-      Chat: chat({ ID: 'c-new', SessionID: 'sess-9', Title: 'strategy', Workspace: 'D:\\ws\\a' }),
-    });
-    const msgs = [
-      { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', workspace: 'D:\\ws\\a', sessionId: 'sess-9', sessionTitle: 'strategy', text: '回复', ts: 1 },
-    ];
-    api.listHubMessages.mockResolvedValue(msgs);
+  it('发送 #stop（带尾空格）：对最后可归因已激活会话 cancelChat，不投递', async () => {
     useAppStore.setState({
-      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
-      hubMessages: msgs,
+      chats: [chat({ ID: 'c1' })],
+      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
       lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
-    const chip = await screen.findByTitle(tt('ui.hub.pending_chip_aria'));
-    fireEvent.click(chip);
-    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-9'));
-    await waitFor(() => {
-      const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder')) as HTMLTextAreaElement;
-      expect(box.value).toContain('@Claude Code#strategy');
-    });
-  });
-
-  it('发送 #stop（带尾空格）：单 token 已知命令直接执行 cancelChat，不投递', async () => {
-    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
-    render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '#stop ' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -1534,11 +1469,7 @@ describe('AgentHubPanel', () => {
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
-  it('#stop 在 pending 目标下先激活原会话再对激活出的 chat 取消', async () => {
-    api.openSessionACP.mockResolvedValue({
-      Kind: 'chat',
-      Chat: chat({ ID: 'c-new', SessionID: 'sess-9', Title: 'strategy' }),
-    });
+  it('#stop 在无默认目标（未激活最后消息）时提示无目标且不激活', async () => {
     useAppStore.setState({
       chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
       hubMessages: [
@@ -1551,42 +1482,15 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '#stop ' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-9'));
-    await waitFor(() => expect(api.cancelChat).toHaveBeenCalledWith('c-new'));
-    expect(api.cancelChat).not.toHaveBeenCalledWith('c1');
-    expect(api.cancelChat).not.toHaveBeenCalledWith('pending:sess-9');
-  });
-
-  it('#stop 在 pending 目标激活失败时报激活失败且不调 cancelChat', async () => {
-    api.openSessionACP.mockRejectedValue(new Error('err.chat.gone'));
-    useAppStore.setState({
-      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
-      hubMessages: [
-        { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', workspace: 'D:\\ws\\a', sessionId: 'sess-9', text: '回复', ts: 1 },
-      ],
-      lastAgentId: 'c1',
-    });
-    render(<AgentHubPanel />);
-    await act(async () => {});
-    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '#stop ' } });
-    fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-9'));
+    expect(api.openSessionACP).not.toHaveBeenCalled();
+    expect(api.cancelChat).not.toHaveBeenCalled();
     await waitFor(() =>
-      expect(
-        useAppStore
-          .getState()
-          .toasts.some((x) => x.title === tt('ui.hub.find_activate_failed').replace('{{err}}', tt('err.chat.gone'))),
-      ).toBe(true),
+      expect(useAppStore.getState().toasts.some((x) => x.title === tt('ui.hub.need_target_drag'))).toBe(true),
     );
     expect(api.cancelChat).not.toHaveBeenCalled();
   });
 
-  it('#model 在 pending 目标下先激活原会话再拉取模型列表并弹菜单', async () => {
-    api.openSessionACP.mockResolvedValue({
-      Kind: 'chat',
-      Chat: chat({ ID: 'c-new', SessionID: 'sess-9', Title: 'strategy' }),
-    });
+  it('#model 在无默认目标（未激活最后消息）时提示 need_target_drag', async () => {
     useAppStore.setState({
       chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
       hubMessages: [
@@ -1599,10 +1503,11 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '#model ' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('sess-9'));
-    await waitFor(() => expect(api.listChatModels).toHaveBeenCalledWith('c-new'));
-    expect(api.listChatModels).not.toHaveBeenCalledWith('c1');
-    expect(api.listChatModels).not.toHaveBeenCalledWith('pending:sess-9');
+    expect(api.openSessionACP).not.toHaveBeenCalled();
+    expect(api.listChatModels).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(useAppStore.getState().toasts.some((x) => x.title === tt('ui.hub.need_target_drag'))).toBe(true),
+    );
   });
 
   it('#model 菜单切换成功后把所切模型记为该工具的上次模型（lastCreate 回写）', async () => {
@@ -1614,8 +1519,13 @@ describe('AgentHubPanel', () => {
       ],
     });
     saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'm1' });
-    useAppStore.setState({ chats: [chat({ ID: 'c1', ToolID: 'claude', Workspace: 'D:\\ws\\a' })], lastAgentId: 'c1' });
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Workspace: 'D:\\ws\\a' })],
+      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
+      lastAgentId: 'c1',
+    });
     render(<AgentHubPanel />);
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '#model' } });
     fireEvent.keyDown(box, { key: 'Enter' });

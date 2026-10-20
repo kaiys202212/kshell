@@ -188,28 +188,33 @@ function wsBaseName(ws: string): string {
   return baseName(ws);
 }
 
-// PENDING_PREFIX 标记「目标会话存在但未激活」的投递目标：lastHubAgentId 从消息
-// 的 sessionId 快照 / session: 前缀 termKey 解析出磁盘会话 ID，send() 据此先
-// openSessionACP 激活再投递，避免精确归因命中不了已激活 chats 时误投同 workspace 会话。
+// PENDING_PREFIX 标记「目标会话存在但未激活」：仅用于用户显式点「继续」等
+// 快捷操作（activatePending），不再作为无 @ 发送的默认回落目标。
 const PENDING_PREFIX = 'pending:';
 
 // hubPendingSessionId 从一条 hub 消息解析待激活磁盘会话 ID（同步可得的两种来源）：
 // sessionId 快照优先，其次 termKey 的 session: 前缀。都没有返回 null。
-// 异步的 workspace+tool+title 缓存查找不在此做（lastHubAgentId 是同步 useMemo）。
 function hubPendingSessionId(m: HubMessage): string | null {
   if (m.sessionId) return m.sessionId;
   if (m.termKey?.startsWith('session:')) return m.termKey.slice('session:'.length);
   return null;
 }
 
-// lastHubAgentId 从 hub 消息历史倒序找「最近一次交互」的目标 agent：
-// 消息经归因字段反查 chat，再确认该 chat 仍是当前 mention 候选。
-// 每条消息按三级尝试：chatId 精确 → termKey 精确 → 会话未激活但有磁盘会话 ID
-//（返回 pending: 前缀标记，由 send() 先激活再投递）。
-// 不做 workspace 模糊匹配：多会话同项目时猜错会把消息投给非目标 agent，
-// 没有精确归因时由 send() 交给共享命令层列出会话让用户选择。
-// user 与 agent 消息都参与匹配（user 消息也带目标 agent 的归因字段）。
-// 找不到返回 null。
+// hubMessageAttributed 消息是否带可解析归因（有 chatId / termKey / sessionId）。
+// 本地提示/回执无归因，不算「最后一条可归因消息」。
+function hubMessageAttributed(m: HubMessage): boolean {
+  return !!(m.chatId || m.termKey || m.sessionId);
+}
+
+// hubHasAttributed 历史里是否存在任一条可归因消息（供 fallback 决定能否用 lastAgentId）。
+function hubHasAttributed(messages: HubMessage[]): boolean {
+  return messages.some(hubMessageAttributed);
+}
+
+// lastHubAgentId 只看「最后一条可归因消息」：
+// - 已激活且在 mention 候选中 → 返回 chat ID（默认接收者）
+// - 未激活 / TUI·终端 / 非 ACP / 归因失效 → null（无默认，走 hubPickTarget）
+// 不向前扫描更旧 ACP。调用方在「无任何可归因」时才可回落 lastAgentId。
 function lastHubAgentId(
   messages: HubMessage[],
   options: MentionOption[],
@@ -219,16 +224,14 @@ function lastHubAgentId(
 ): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    // 只读会话不作为「最近交互目标」回落（规则1/2）：否则会把消息投给非目标
-    // 会话，或触发对终端激活会话必然冲突的 ACP 激活。只作用于 agent 消息——
-    // user 消息不带 tool 字段，按归因字段照常参与匹配。
-    if (m.kind === 'agent' && replyState(m, tools, terminals) !== 'acp') continue;
+    if (!hubMessageAttributed(m)) continue;
+    // 最后一条可归因即止：不可投递则无默认接收者。
+    if (m.kind === 'agent' && replyState(m, tools, terminals) !== 'acp') return null;
     const c =
       chats.find((x) => x.ID === m.chatId) ??
       chats.find((x) => m.termKey && x.Key === m.termKey);
     if (c && options.some((o) => o.id === c.ID)) return c.ID;
-    const pending = hubPendingSessionId(m);
-    if (pending) return PENDING_PREFIX + pending;
+    return null;
   }
   return null;
 }
@@ -446,16 +449,14 @@ export default function AgentHubPanel() {
   const hashQuery = /^#([^\s]*)$/.exec(draft)?.[1] ?? null;
   const inSlashMode = slashQuery !== null;
   const inHashMode = hashQuery !== null;
-  // 默认投递目标回落链：hub 最近一次交互的 agent 优先（比 lastAgentId 更能反映
-  // hub 视角的最新目标），再退 store.lastAgentId。lastAgentId 可能指向已关闭的
-  // 会话，仅在其仍处于当前候选列表时才采用，避免向不存在的 chat 投递。
-  // 斜杠命令目标解析与 send 共用。
-  const fallbackId = useMemo(
-    () =>
-      lastHubAgentId(hubMessages, options, chats, tools, terminals) ??
-      (lastAgentId && options.some((o) => o.id === lastAgentId) ? lastAgentId : null),
-    [hubMessages, options, chats, lastAgentId, tools, terminals],
-  );
+  // 默认投递目标：最后一条可归因且已激活 ACP 优先；无任何可归因消息时才回落
+  // lastAgentId。若最后可归因为未激活/TUI，返回 null（不借用 lastAgentId）。
+  const fallbackId = useMemo(() => {
+    const fromHub = lastHubAgentId(hubMessages, options, chats, tools, terminals);
+    if (fromHub) return fromHub;
+    if (hubHasAttributed(hubMessages)) return null;
+    return lastAgentId && options.some((o) => o.id === lastAgentId) ? lastAgentId : null;
+  }, [hubMessages, options, chats, lastAgentId, tools, terminals]);
   // 目标解析：优先 @ 提及，其次回落链（与 send 一致）。
   const currentTargetId = useMemo(
     () => resolveMentionTarget(draft, options, fallbackId),
