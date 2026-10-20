@@ -263,6 +263,8 @@ func (a *App) openSessionACP(sessionID string, allowFallback bool) (OpenedSessio
 			}, l, s.ID)
 			if err == nil {
 				a.emitChatMeta(info)
+				// 按会话 JSONL 尾部上次真实模型恢复（不在列表则静默跳过）。
+				a.restoreSessionModel(info.ID, s.ToolID, s.Path)
 				return OpenedSession{Kind: "chat", Chat: &info}, nil
 			}
 			if allowFallback {

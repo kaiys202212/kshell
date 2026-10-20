@@ -58,6 +58,8 @@ func (a *App) rebuildChat(m *chat.Manager, info chat.Info) (string, error) {
 					return "", fmt.Errorf("err.chat.rebuild_failed|%w", err)
 				}
 				a.rememberChatAlias(info.ID, out.ID)
+				// 按会话 JSONL 尾部上次真实模型恢复（与 OpenSessionACP 同口径）。
+				a.restoreSessionModel(out.ID, s.ToolID, s.Path)
 				// resume 会重放历史分片（manager 侧 fresh 起步、Seq 从头计数），
 				// 前端旧 ID 的 Seq 门控已抬高，必须通知重置并重拉 ChatHistory，
 				// 否则重放与后续新事件全被门控丢弃（时间线冻结）。Rebuilt 只在
