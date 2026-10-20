@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatInfo } from '../lib/api';
 import { DRAG_MIME } from '../lib/dragPath';
@@ -15,6 +15,8 @@ const api = vi.hoisted(() => ({
   listChatModels: vi.fn(),
   setChatModel: vi.fn(),
   listChatCommands: vi.fn(),
+  listChatQueue: vi.fn(),
+  removeChatQueued: vi.fn(),
   pickFile: vi.fn(),
   cancelChat: vi.fn(),
   respondChatPermission: vi.fn(),
@@ -35,12 +37,14 @@ beforeEach(() => {
   api.listChatModels.mockResolvedValue(null);
   api.setChatModel.mockResolvedValue(undefined);
   api.listChatCommands.mockResolvedValue([]);
+  api.listChatQueue.mockResolvedValue([]);
+  api.removeChatQueued.mockResolvedValue(undefined);
   api.pickFile.mockResolvedValue('');
   api.cancelChat.mockResolvedValue(undefined);
   api.respondChatPermission.mockResolvedValue(undefined);
   api.cancelChatPermission.mockResolvedValue(undefined);
   api.listChats.mockResolvedValue([]);
-  useAppStore.setState({ chatItems: {}, chatSeq: {}, chatPermissions: {}, chats: [CHAT], chatModels: {}, chatCommands: {}, chatQueues: {}, queuedPaused: {}, toasts: [] });
+  useAppStore.setState({ chatItems: {}, chatSeq: {}, chatPermissions: {}, chats: [CHAT], chatModels: {}, chatCommands: {}, chatQueues: {}, chatBackendQueues: {}, chatQueueRevs: {}, queuedPaused: {}, toasts: [] });
 });
 afterEach(cleanup);
 
@@ -600,6 +604,77 @@ describe('ChatView', () => {
     useAppStore.setState({ chatQueues: { c1: [{ id: 9, text: '', blocks: [{ Type: 'image', Data: 'x', MimeType: 'image/png' }] }] } });
     render(<ChatView chat={{ ...CHAT, Status: 'running' }} active />);
     expect(screen.getByTestId('chat-queue')).toHaveTextContent(tt('ui.chat.queue_attachment'));
+  });
+
+  // ---- 后端待发送队列：任何来源（AgentHub 等）入队的消息都要在输入区可见 ----
+  it('挂载时回填后端队列，展示在本地队列之前', async () => {
+    api.listChatQueue.mockResolvedValue([{ ID: '42', HubMsgID: '42', Text: 'Hub 排队' }]);
+    useAppStore.setState({ chatQueues: { c1: [{ id: 1, text: '本地排队' }] } });
+    render(<ChatView chat={{ ...CHAT, Status: 'running' }} active />);
+    await waitFor(() => expect(api.listChatQueue).toHaveBeenCalledWith('c1'));
+    const q = await screen.findByTestId('chat-queue');
+    await waitFor(() => expect(q).toHaveTextContent('Hub 排队'));
+    const text = q.textContent ?? '';
+    expect(text.indexOf('Hub 排队')).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf('Hub 排队')).toBeLessThan(text.indexOf('本地排队'));
+  });
+
+  it('后端队列条目可撤销：点击 × 调 removeChatQueued 并立即消失', async () => {
+    api.listChatQueue.mockResolvedValue([{ ID: '42', HubMsgID: '42', Text: '待撤销' }]);
+    render(<ChatView chat={{ ...CHAT, Status: 'running' }} active />);
+    await screen.findByText('待撤销');
+    fireEvent.click(screen.getByTestId('chat-queue-remove-backend-42'));
+    expect(api.removeChatQueued).toHaveBeenCalledWith('c1', '42');
+    expect(screen.queryByText('待撤销')).not.toBeInTheDocument();
+    expect(useAppStore.getState().chatBackendQueues.c1).toBeUndefined();
+  });
+
+  it('后端条目撤销失败：提示错误并重拉队列对齐', async () => {
+    api.listChatQueue.mockResolvedValueOnce([{ ID: '42', HubMsgID: '42', Text: '可能已投递' }]);
+    api.removeChatQueued.mockRejectedValueOnce(new Error('err.chat.queue_gone'));
+    render(<ChatView chat={{ ...CHAT, Status: 'running' }} active />);
+    await screen.findByText('可能已投递');
+    fireEvent.click(screen.getByTestId('chat-queue-remove-backend-42'));
+    await waitFor(() =>
+      expect(useAppStore.getState().toasts.some((t) => t.tone === 'error')).toBe(true),
+    );
+    // 失败后重拉：后端已不在队列（投递竞态），镜像保持为空
+    await waitFor(() => expect(api.listChatQueue).toHaveBeenCalledTimes(2));
+    expect(useAppStore.getState().chatBackendQueues.c1).toBeUndefined();
+  });
+
+  it('挂载回填期间收到 chat:queue 事件时，丢弃过期快照不覆盖新状态', async () => {
+    let resolveBackfill!: (items: { ID: string; Text: string }[]) => void;
+    api.listChatQueue.mockReturnValue(
+      new Promise((res) => {
+        resolveBackfill = res;
+      }),
+    );
+    render(<ChatView chat={{ ...CHAT, Status: 'running' }} active />);
+    await waitFor(() => expect(api.listChatQueue).toHaveBeenCalledWith('c1'));
+
+    // 回填未返回时 App 收到新事件：推进版本并写入新快照
+    act(() => {
+      useAppStore.getState().bumpChatQueueRev('c1');
+      useAppStore.getState().setChatBackendQueue('c1', [{ ID: '43', Text: '新快照' }]);
+    });
+    await act(async () => {
+      resolveBackfill([{ ID: '42', Text: '过期快照' }]);
+    });
+
+    expect(await screen.findByText('新快照')).toBeInTheDocument();
+    expect(screen.queryByText('过期快照')).not.toBeInTheDocument();
+    expect(useAppStore.getState().chatBackendQueues.c1?.map((it) => it.ID)).toEqual(['43']);
+  });
+
+  it('后端纯附件条目显示附件占位文案', async () => {
+    api.listChatQueue.mockResolvedValue([
+      { ID: 'q1', Text: '', Attachments: [{ MimeType: 'image/png' }] },
+    ]);
+    render(<ChatView chat={{ ...CHAT, Status: 'running' }} active />);
+    await waitFor(() =>
+      expect(screen.getByTestId('chat-queue')).toHaveTextContent(tt('ui.chat.queue_attachment')),
+    );
   });
 
   it('exited 后端错误为已注册 wire key 时渲染翻译文案而非裸 key', () => {

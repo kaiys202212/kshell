@@ -22,6 +22,7 @@
     "chat": {
       "not_ready": "后端未装配",
       "gone": "会话不存在或已关闭",
+      "queue_gone": "该消息已投递或已撤销",
       "rebuild_failed": "重新激活会话失败：{{0}}",
       "busy": "上一轮尚未结束",
       "empty_key": "key 不能为空",
@@ -869,6 +870,7 @@
       "send_failed": "发送失败：{{err}}",
       "queue_full": "消息队列已满，已丢弃最早的消息",
       "queue_remove": "移除排队消息",
+      "queue_remove_failed": "取消排队失败：{{err}}",
       "queue_attachment": "[附件]",
       "drop_unsupported": "该会话不可接收文件",
       "exited": "会话已退出",

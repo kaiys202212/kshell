@@ -23,6 +23,8 @@ const attachCreatedGrace = 2 * time.Minute
 var (
 	errNoBackend = errors.New("err.chat.not_ready")
 	errNotFound  = errors.New("err.chat.gone")
+	// errQueueGone 表示待撤销的条目已不在队列（已投递/已被撤回）。
+	errQueueGone = errors.New("err.chat.queue_gone")
 )
 
 // maxHistory 限制每会话保留的时间线事件数，防止长会话内存无限增长。
@@ -69,7 +71,8 @@ type session struct {
 	knownIDs       map[string]bool // 打开时扫描结果里已有的磁盘会话，禁止绑到本新建聊天
 	promptTitleSet bool
 
-	queue []queuedMsg // 忙时排队的用户消息（按 blocks 整体投递），turn_done 后按序送出
+	queue    []queuedMsg // 忙时排队的用户消息（按 blocks 整体投递），turn_done 后按序送出
+	queueSeq int         // 非 Hub 队列条目的会话内自增 ID（qN），撤销时定位
 
 	modelState  *acp.SessionModelState   // agent 以 v1 models 形态报告的可用模型
 	modelConfig *acp.SessionConfigOption // agent 以 configOptions(id=model) 形态报告的模型选项
@@ -92,8 +95,39 @@ type permissionResult struct {
 // queuedMsg 是忙时排队的用户消息：blocks 为投递内容，hubMsgID 为关联的
 // AgentHub 消息 ID（供撤回定位与投递回调；普通 Prompt 为空串）。
 type queuedMsg struct {
+	id       string // Hub 条目复用 hubMsgID，其余为 qN
 	blocks   []acp.ContentBlock
 	hubMsgID string
+}
+
+// enqueueLocked 把条目追加到队尾并补齐稳定 ID（调用方持锁）。
+// 带 hubMsgID 的条目统一以 hubMsgID 作条目标识（撤回按 hub ID 定位，
+// 竞态回退等未预置 id 的路径也不例外）；普通 Prompt 分配 qN。
+func (s *session) enqueueLocked(q queuedMsg) queuedMsg {
+	if q.id == "" {
+		if q.hubMsgID != "" {
+			q.id = q.hubMsgID
+		} else {
+			s.queueSeq++
+			q.id = "q" + strconv.Itoa(s.queueSeq)
+		}
+	}
+	s.queue = append(s.queue, q)
+	return q
+}
+
+// queueItemsLocked 生成队列全量快照（调用方持锁）；空队列返回空切片而非 nil。
+func (s *session) queueItemsLocked() []QueueItem {
+	out := make([]QueueItem, 0, len(s.queue))
+	for _, q := range s.queue {
+		out = append(out, QueueItem{
+			ID:          q.id,
+			HubMsgID:    q.hubMsgID,
+			Text:        flattenBlocks(q.blocks),
+			Attachments: attachmentMetas(q.blocks),
+		})
+	}
+	return out
 }
 
 type sessionHandler struct {
@@ -116,6 +150,8 @@ type Manager struct {
 	// onHubDelivered 在带 hubMsgID 的条目真正发起 conn.Prompt 前触发。
 	onHubQueued    func(hubMsgID string)
 	onHubDelivered func(hubMsgID string)
+	// onQueue 在队列变化时推送全量快照（锁外执行），供前端展示/撤销。
+	onQueue func(id string, items []QueueItem)
 
 	// bootID 是本 Manager 实例的唯一标识，参与会话 ID 生成。纯递增序列
 	// c1/c2/... 在进程重启后归零，落盘的 chatId（需求绑定、hub 归因）会撞上
@@ -180,6 +216,13 @@ func (m *Manager) SetOnHubCallbacks(queued, delivered func(hubMsgID string)) {
 	m.mu.Lock()
 	m.onHubQueued = queued
 	m.onHubDelivered = delivered
+	m.mu.Unlock()
+}
+
+// SetOnQueue 注册队列快照回调（锁外执行；nil 表示不推送）。
+func (m *Manager) SetOnQueue(fn func(id string, items []QueueItem)) {
+	m.mu.Lock()
+	m.onQueue = fn
 	m.mu.Unlock()
 }
 
@@ -484,8 +527,14 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 		s.queue = s.queue[1:]
 		hasNext = true
 	}
+	items := s.queueItemsLocked()
+	onQueue := m.onQueue
 	onModels := m.onModels
 	m.mu.Unlock()
+
+	if onQueue != nil {
+		onQueue(s.id, items)
+	}
 
 	// Open 完成后补偿推送一次模型视图：握手期前端拉 ListChatModels 可能拿空
 	// （starting 状态下 modelState/modelConfig 尚未赋值），靠此回调让 desktop
@@ -548,12 +597,17 @@ func (m *Manager) watchExit(s *session) {
 	s.exited = true
 	s.info.Status = StatusExited
 	s.info.ExitCode = code
+	hadQueue := len(s.queue) > 0
 	s.queue = nil // 进程已退出，排队的消息不再有投递机会
+	onQueue := m.onQueue
 	s.stopIdleLocked()
 	pending := s.pending
 	s.pending = make(map[string]chan permissionResult)
 	m.mu.Unlock()
 
+	if hadQueue && onQueue != nil {
+		onQueue(s.id, []QueueItem{})
+	}
 	// 进程已消失，等待中的权限请求不可能再被回答，全部以 cancelled 收尾。
 	cancelPending(pending)
 	if s.cancel != nil {
@@ -575,9 +629,14 @@ func (m *Manager) fail(id string, code int, msg string) {
 	s.info.Status = StatusExited
 	s.info.ExitCode = code
 	s.info.Error = msg
+	hadQueue := len(s.queue) > 0
 	s.queue = nil // 失败会话不再投递排队消息
+	onQueue := m.onQueue
 	m.mu.Unlock()
 
+	if hadQueue && onQueue != nil {
+		onQueue(id, []QueueItem{})
+	}
 	// 握手/启动失败不留下幽灵会话。这里不回调 onExit：失败会话的 id 从未返回给
 	// 前端（Open 直接报错），推 chat:exit 前端也无从对应，属无效事件。
 	m.remove(s)
@@ -636,7 +695,7 @@ func (m *Manager) PromptBlocksHub(id string, blocks []acp.ContentBlock, hubMsgID
 	if len(blocks) == 0 {
 		return false, nil
 	}
-	qm := queuedMsg{blocks: blocks, hubMsgID: hubMsgID}
+	qm := queuedMsg{id: hubMsgID, blocks: blocks, hubMsgID: hubMsgID}
 	m.mu.Lock()
 	s := m.byID[id]
 	if s == nil || s.exited {
@@ -647,17 +706,59 @@ func (m *Manager) PromptBlocksHub(id string, blocks []acp.ContentBlock, hubMsgID
 	// 忙闲只看在途 prompt 与握手期，不看展示状态——活动跟随会让状态在 turn_done
 	// 后仍为 running，此时 agent 已结束当前 turn，新消息必须立即投递而非卡队。
 	if s.info.Status == StatusStarting || s.promptInFlight {
-		s.queue = append(s.queue, qm)
+		s.enqueueLocked(qm)
 		userUpdate := s.appendUserBlocksLocked(blocks)
+		items := s.queueItemsLocked()
 		onUpdate := m.onUpdate
+		onQueue := m.onQueue
 		m.mu.Unlock()
 		if onUpdate != nil {
 			onUpdate(id, userUpdate)
+		}
+		if onQueue != nil {
+			onQueue(id, items)
 		}
 		return true, nil
 	}
 	m.mu.Unlock()
 	return false, m.deliverTurn(id, s, qm, true)
+}
+
+// Queue 返回指定会话当前排队消息的 FIFO 快照；会话不存在返回空切片。
+func (m *Manager) Queue(id string) []QueueItem {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.byID[id]
+	if s == nil {
+		return []QueueItem{}
+	}
+	return s.queueItemsLocked()
+}
+
+// RemoveQueued 按条目标识从队列原子移除，返回关联的 Hub 消息 ID。
+// 会话不存在返回 err.chat.gone；条目已投递/已撤回返回 err.chat.queue_gone。
+func (m *Manager) RemoveQueued(id, itemID string) (string, error) {
+	m.mu.Lock()
+	s := m.byID[id]
+	if s == nil {
+		m.mu.Unlock()
+		return "", errNotFound
+	}
+	for i, q := range s.queue {
+		if q.id != itemID {
+			continue
+		}
+		s.queue = append(s.queue[:i], s.queue[i+1:]...)
+		items := s.queueItemsLocked()
+		onQueue := m.onQueue
+		m.mu.Unlock()
+		if onQueue != nil {
+			onQueue(id, items)
+		}
+		return q.hubMsgID, nil
+	}
+	m.mu.Unlock()
+	return "", errQueueGone
 }
 
 // RecallQueued 从指定会话的队列中移除 hubMsgID 对应的条目（真移除，agent 收不到）；
@@ -666,19 +767,8 @@ func (m *Manager) RecallQueued(id, hubMsgID string) bool {
 	if hubMsgID == "" {
 		return false
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	s := m.byID[id]
-	if s == nil {
-		return false
-	}
-	for i, q := range s.queue {
-		if q.hubMsgID == hubMsgID {
-			s.queue = append(s.queue[:i], s.queue[i+1:]...)
-			return true
-		}
-	}
-	return false
+	_, err := m.RemoveQueued(id, hubMsgID)
+	return err == nil
 }
 
 // deliverTurn 发起一轮；record 为 true 时补 user 时间线并 emit。
@@ -694,16 +784,21 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 	if s.info.Status == StatusStarting || s.promptInFlight {
 		// 竞态兜底：期间又有轮次启动，改入队；补时间线与 emit 与 PromptBlocksHub 忙分支一致，
 		// 否则该消息要等下一轮收尾才可见。
-		s.queue = append(s.queue, qm)
+		s.enqueueLocked(qm)
 		var userUpdate Update
 		onUpdate := m.onUpdate
 		if record {
 			userUpdate = s.appendUserBlocksLocked(blocks)
 		}
+		items := s.queueItemsLocked()
+		onQueue := m.onQueue
 		onQueued := m.onHubQueued
 		m.mu.Unlock()
 		if record && onUpdate != nil {
 			onUpdate(id, userUpdate)
+		}
+		if onQueue != nil {
+			onQueue(id, items)
 		}
 		if qm.hubMsgID != "" && onQueued != nil {
 			onQueued(qm.hubMsgID)
@@ -789,9 +884,14 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 			s.queue = s.queue[1:]
 			hasNext = true
 		}
+		items := s.queueItemsLocked()
+		onQueue := m.onQueue
 		m.mu.Unlock()
 		if m.onUpdate != nil {
 			m.onUpdate(id, u)
+		}
+		if hasNext && onQueue != nil {
+			onQueue(id, items)
 		}
 		if hasNext {
 			_ = m.deliverTurn(id, s, next, false)
@@ -877,7 +977,9 @@ func (m *Manager) Close(id string) error {
 	}
 	s.exited = true
 	s.info.Status = StatusExited
+	hadQueue := len(s.queue) > 0
 	s.queue = nil // 关闭后不再投递已排队的消息
+	onQueue := m.onQueue
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -886,6 +988,9 @@ func (m *Manager) Close(id string) error {
 	conn := s.conn
 	m.mu.Unlock()
 
+	if hadQueue && onQueue != nil {
+		onQueue(id, []QueueItem{})
+	}
 	cancelPending(pending)
 	// 先关连接再摘除：watchExit 看到 exited 后直接返回，不会误推 onExit
 	var closeErr error

@@ -22,6 +22,7 @@
     "chat": {
       "not_ready": "Chat backend is not initialized",
       "gone": "Chat session not found or closed",
+      "queue_gone": "This message was already delivered or recalled",
       "rebuild_failed": "Failed to reactivate session: {{0}}",
       "busy": "Previous turn is still running",
       "empty_key": "Chat key cannot be empty",
@@ -869,6 +870,7 @@
       "send_failed": "Failed to send: {{err}}",
       "queue_full": "Message queue is full, oldest message dropped",
       "queue_remove": "Remove queued message",
+      "queue_remove_failed": "Failed to remove queued message: {{err}}",
       "queue_attachment": "[attachment]",
       "drop_unsupported": "This session cannot receive files",
       "exited": "Session exited",

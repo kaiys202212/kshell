@@ -83,6 +83,15 @@ type AttachmentMeta struct {
 	MimeType string `json:"MimeType,omitempty"`
 }
 
+// QueueItem 是忙时排队待投递的一条用户消息快照（ACP 聊天页输入区展示与撤销用）。
+// ID 是稳定条目标识：Hub 来源复用 hubMsgID，普通 Prompt 用会话内 qN。
+type QueueItem struct {
+	ID          string           `json:"ID"`
+	HubMsgID    string           `json:"HubMsgID,omitempty"`
+	Text        string           `json:"Text"`
+	Attachments []AttachmentMeta `json:"Attachments,omitempty"`
+}
+
 // ModelView / ModelsView 是给前端的模型切换视图，统一 v1 models 与
 // configOptions 两种 agent 形态。
 type ModelView struct {

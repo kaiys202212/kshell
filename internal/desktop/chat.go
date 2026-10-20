@@ -89,6 +89,11 @@ func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, aut
 	m.SetOnCommands(func(id string, cmds []chat.Command) {
 		emit("chat:commands", map[string]any{"id": translate(id), "commands": cmds})
 	})
+	// 待发送队列同理：队列变化时推全量快照，前端镜像后展示/撤销。
+	// onQueue 总在 manager 解锁后触发，emit 不会阻塞聊天主路径。
+	m.SetOnQueue(func(id string, items []chat.QueueItem) {
+		emit("chat:queue", map[string]any{"id": translate(id), "items": items})
+	})
 	return m
 }
 
@@ -524,6 +529,36 @@ func hubTextFromBlocks(blocks []ChatBlock) string {
 		}
 	}
 	return sb.String()
+}
+
+// ListChatQueue 返回会话当前待投递队列快照（输入框上方展示与撤销）。
+// 入口别名解析：重建后前端持旧 ID 也能查到新会话的队列。
+func (a *App) ListChatQueue(id string) []chat.QueueItem {
+	m := a.chats()
+	if m == nil {
+		return []chat.QueueItem{}
+	}
+	resolved, _ := a.resolveChatID(id)
+	return m.Queue(resolved)
+}
+
+// RemoveChatQueued 撤销一条待投递消息（真移除，agent 收不到）。
+// Hub 来源条目同步把原消息标记为 recalled；本地条目只出队。
+// 条目已投递/已被撤销时返回 err.chat.queue_gone。
+func (a *App) RemoveChatQueued(id, itemID string) error {
+	m := a.chats()
+	if m == nil {
+		return errNotReady
+	}
+	resolved, _ := a.resolveChatID(id)
+	hubMsgID, err := m.RemoveQueued(resolved, itemID)
+	if err != nil {
+		return err
+	}
+	if hubMsgID != "" {
+		a.markHubRecalled(hubMsgID)
+	}
+	return nil
 }
 
 // ListChatModels 返回会话的可用模型视图；实现与 chat:models 推送共用 modelsView。

@@ -4,7 +4,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import i18n from 'i18next';
-import type { ChatBlock, ChatCommand, ChatInfo, ChatModelsView, ChatPermissionRequest, ChatUpdate, HubMessage, LanguageInfo, TerminalInfo, Workspace } from '../lib/api';
+import type { ChatBlock, ChatCommand, ChatInfo, ChatModelsView, ChatPermissionRequest, ChatQueueItem, ChatUpdate, HubMessage, LanguageInfo, TerminalInfo, Workspace } from '../lib/api';
 import type { AgentNotice } from '../lib/agentNotify';
 import type { AppearanceInfo } from '../lib/appearance';
 import { applyChatUpdate, type TimelineItem } from './chatUpdate';
@@ -179,6 +179,15 @@ interface AppState {
   clearQueuedPause(id: string): void;
   removeQueuedChat(id: string, msgId: number): void;
   clearChatQueue(id: string): void;
+
+  // 后端待发送队列镜像（chat:queue 全量快照，任何来源入队都可见）。
+  // 与 chatQueues（ChatView 本地暂存，尚未交给后端）共存：展示时后端在前。
+  chatBackendQueues: Record<string, ChatQueueItem[]>;
+  setChatBackendQueue(id: string, items: ChatQueueItem[]): void;
+  removeChatBackendQueueItem(id: string, itemID: string): void;
+  // 队列版本号（会话级自增）：回填等慢速异步路径据此识别过期快照，不覆盖新状态
+  chatQueueRevs: Record<string, number>;
+  bumpChatQueueRev(id: string): void;
 
   // 终端静默启发 busy（不持久化；由 terminalBusy.ts 定时器驱动）
   terminalBusy: Record<string, true>;
@@ -392,6 +401,8 @@ export const useAppStore = create<AppState>()(
           chatCommands: omitKey(s.chatCommands, id),
           chatQueues: omitKey(s.chatQueues, id),
           queuedPaused: omitKey(s.queuedPaused, id),
+          chatBackendQueues: omitKey(s.chatBackendQueues, id),
+          chatQueueRevs: omitKey(s.chatQueueRevs, id),
         })),
       markChatExited: (id, exitCode, error) =>
         set((s) => ({
@@ -464,6 +475,8 @@ export const useAppStore = create<AppState>()(
           chatSeq: omitKey(s.chatSeq, id),
           chatModels: omitKey(s.chatModels, id),
           chatCommands: omitKey(s.chatCommands, id),
+          chatBackendQueues: omitKey(s.chatBackendQueues, id),
+          chatQueueRevs: omitKey(s.chatQueueRevs, id),
         })),
 
       chatPermissions: {},
@@ -562,6 +575,37 @@ export const useAppStore = create<AppState>()(
           delete paused[id];
           return { chatQueues: queues, queuedPaused: paused };
         }),
+
+      chatBackendQueues: {},
+      setChatBackendQueue: (id, items) =>
+        set((s) => {
+          const next = { ...s.chatBackendQueues };
+          // 空快照删键：组件侧用 `?? EMPTY` 兜底，键是否存在不影响渲染
+          if (items.length === 0) delete next[id];
+          else next[id] = items;
+          return { chatBackendQueues: next };
+        }),
+      removeChatBackendQueueItem: (id, itemID) =>
+        set((s) => {
+          const q = s.chatBackendQueues[id];
+          if (!q) return {};
+          const rest = q.filter((it) => it.ID !== itemID);
+          if (rest.length === q.length) return {};
+          const next = { ...s.chatBackendQueues };
+          if (rest.length === 0) delete next[id];
+          else next[id] = rest;
+          return {
+            chatBackendQueues: next,
+            // 乐观移除也推进版本：挂载回填迟到时不得复活已删条目
+            chatQueueRevs: { ...s.chatQueueRevs, [id]: (s.chatQueueRevs[id] ?? 0) + 1 },
+          };
+        }),
+
+      chatQueueRevs: {},
+      bumpChatQueueRev: (id) =>
+        set((s) => ({
+          chatQueueRevs: { ...s.chatQueueRevs, [id]: (s.chatQueueRevs[id] ?? 0) + 1 },
+        })),
 
       terminalBusy: {},
       setTerminalBusy: (id, busy) =>

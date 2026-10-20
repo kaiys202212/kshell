@@ -106,6 +106,7 @@ const mocks = vi.hoisted(() => ({
   onChatExit: vi.fn(),
   onChatCommands: vi.fn(),
   onChatModels: vi.fn(),
+  onChatQueue: vi.fn(() => () => {}),
   listChatModels: vi.fn().mockResolvedValue(null),
   listChatCommands: vi.fn().mockResolvedValue([]),
   refreshFiles: vi.fn().mockResolvedValue(undefined),
