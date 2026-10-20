@@ -308,7 +308,8 @@ describe('ChatView', () => {
     );
   });
 
-  it('模型切换成功后把所切模型记为该工具的上次模型（lastCreate 回写）', async () => {    api.listChatModels.mockResolvedValue({
+  it('模型切换成功后把所切模型记为该工具的上次模型（lastCreate 回写）', async () => {
+    api.listChatModels.mockResolvedValue({
       Current: 'm1',
       Models: [{ ID: 'm1', Name: 'Sonnet' }, { ID: 'm2', Name: 'Opus' }],
     });

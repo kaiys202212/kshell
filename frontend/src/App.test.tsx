@@ -576,6 +576,7 @@ describe('App', () => {
   });
 
   it('chat:models 事件按会话 ToolID 回写工具模型缓存', async () => {
+    localStorage.clear();
     let mdlCb: ((p: { id: string; models: unknown }) => void) | undefined;
     mocks.onChatModels.mockImplementation((cb: typeof mdlCb) => {
       mdlCb = cb;
