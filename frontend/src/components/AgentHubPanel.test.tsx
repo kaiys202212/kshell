@@ -1017,7 +1017,7 @@ describe('AgentHubPanel', () => {
       Platforms: [
         {
           ID: 'p1',
-          Name: 'P',
+          Name: '智谱',
           Preset: 'openai',
           OpenAIBaseURL: 'https://h/',
           AnthropicBaseURL: 'https://h/',
@@ -1038,7 +1038,10 @@ describe('AgentHubPanel', () => {
     const values = Array.from(select.options).map((o) => o.value);
     expect(values).toContain('glm-5.3-flash');
     expect(values).toContain('deepseek-v4.1-flash');
-    expect(values[0]).toBe('glm-5.3-flash'); // 注入模型在前
+    expect(values[0]).toBe('glm-5.3-flash'); // 注入模型在前；value 仍为裸 ID
+    // 展示名带平台前缀，不得把平台名写进 value
+    expect(select.options[0].textContent).toBe('智谱: glm-5.3-flash');
+    expect(select.options[1].textContent).toBe('智谱: deepseek-v4.1-flash');
     // 缓存模型与注入模型重复时去重：缓存 m1 与注入 glm 重名（用不同 key 模拟不重复）
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.cancel') }));
     saveToolModels('claude', ['glm-5.3-flash', 'cache-only']);
@@ -1049,6 +1052,8 @@ describe('AgentHubPanel', () => {
     expect(new Set(merged).size).toBe(merged.length);
     expect(merged[0]).toBe('glm-5.3-flash'); // 注入模型在前
     expect(merged).toContain('cache-only');
+    const glmOpt = Array.from(refreshed.options).find((o) => o.value === 'glm-5.3-flash');
+    expect(glmOpt?.textContent).toBe('智谱: glm-5.3-flash');
   });
 
   it('新建 agent：getModelConfig 失败时静默回退仅默认选项', async () => {

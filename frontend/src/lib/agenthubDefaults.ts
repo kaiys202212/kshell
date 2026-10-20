@@ -125,9 +125,20 @@ export function saveToolModels(toolId: string, models: Array<string | ToolModelO
   writeJSON(MODELS_KEY_PREFIX + toolId, opts);
 }
 
+// formatPlatformModelName：平台配置模型的展示名（「平台名: 模型」）。
+// 仅 UI 文案；平台名为空则回落裸 modelId，绝不把平台名写进 id。
+export function formatPlatformModelName(platformName: string, modelId: string): string {
+  const plat = platformName.trim();
+  if (!plat) return modelId;
+  return `${plat}: ${modelId}`;
+}
+
 // hubInjectedModelsForTool：平台注入模型仅给支持 Claude settings 注入的工具。
 // Cursor ACP 不支持该通道，返回空以免下拉出现无效平台模型。
-export function hubInjectedModelsForTool(toolId: string, injected: string[]): string[] {
+export function hubInjectedModelsForTool<T extends string | ToolModelOption>(
+  toolId: string,
+  injected: T[],
+): T[] {
   if (toolId === 'cursor') return [];
   return injected;
 }
@@ -144,15 +155,18 @@ export function rememberChatModels(
 }
 
 // mergeHubModelOptions：注入模型在前、工具缓存其后，按 id 去重。
-// 注入项无独立展示名时 name=id（设置页裸模型名）。
-export function mergeHubModelOptions(injected: string[], cache: ToolModelOption[]): ToolModelOption[] {
+// 注入项可为裸 id 或 {id,name}（平台前缀只进 name）。
+export function mergeHubModelOptions(
+  injected: Array<string | ToolModelOption>,
+  cache: ToolModelOption[],
+): ToolModelOption[] {
   const seen = new Set<string>();
   const out: ToolModelOption[] = [];
   for (const raw of injected) {
-    const id = typeof raw === 'string' ? raw.trim() : '';
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    out.push({ id, name: id });
+    const opt = normalizeToolModelOption(raw);
+    if (!opt || seen.has(opt.id)) continue;
+    seen.add(opt.id);
+    out.push(opt);
   }
   for (const m of cache) {
     if (!m.id || seen.has(m.id)) continue;

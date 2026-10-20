@@ -41,7 +41,7 @@ import {
   type MentionOption,
 } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
-import { hubInjectedModelsForTool, loadDefaultCreate, loadLastCreate, loadToolModelOptions, loadToolModels, loadHubRouteMode, mergeHubModelOptions, rememberLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode } from '../lib/agenthubDefaults';
+import { formatPlatformModelName, hubInjectedModelsForTool, loadDefaultCreate, loadLastCreate, loadToolModelOptions, loadToolModels, loadHubRouteMode, mergeHubModelOptions, rememberLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode, type ToolModelOption } from '../lib/agenthubDefaults';
 import { saveHubDefaultCreate } from '../lib/api';
 import { quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
@@ -1589,7 +1589,8 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
   const [busy, setBusy] = useState(false);
   const [modelId, setModelId] = useState('');
   // kshell 注入模型清单：打开时拉取，失败静默（下拉是辅助功能，回落纯缓存）
-  const [injectedModels, setInjectedModels] = useState<string[]>([]);
+  // name 带平台展示前缀，id 仍为裸模型名（SetModel 用）。
+  const [injectedModels, setInjectedModels] = useState<ToolModelOption[]>([]);
   // seq 使关闭后在途的 create 失效，避免其 setState 污染下次打开。
   const seqRef = useRef(0);
   // 记录上次 open 值：预填只在 open 从 false→true 时执行，
@@ -1625,7 +1626,14 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     void getModelConfig()
       .then((cfg) => {
         const def = cfg.Platforms?.find((p) => p.ID === cfg.DefaultPlatform) ?? cfg.Platforms?.[0];
-        setInjectedModels(def?.Models ?? []);
+        const platName = def?.Name ?? '';
+        const opts: ToolModelOption[] = [];
+        for (const raw of def?.Models ?? []) {
+          const id = typeof raw === 'string' ? raw.trim() : '';
+          if (!id) continue;
+          opts.push({ id, name: formatPlatformModelName(platName, id) });
+        }
+        setInjectedModels(opts);
       })
       .catch(() => setInjectedModels([]));
     setWsPath((cur) => {
@@ -1765,7 +1773,8 @@ function DefaultSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   const [toolId, setToolId] = useState('');
   const [modelId, setModelId] = useState('');
   // kshell 注入模型清单：打开时拉取，失败静默（与 NewAgentDialog 同语义）
-  const [injectedModels, setInjectedModels] = useState<string[]>([]);
+  // name 带平台展示前缀，id 仍为裸模型名。
+  const [injectedModels, setInjectedModels] = useState<ToolModelOption[]>([]);
   // 预填只在 open 从 false→true 时执行一次，开着期间后台刷新不重置用户已选字段
   const prevOpenRef = useRef(false);
 
@@ -1785,7 +1794,14 @@ function DefaultSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     void getModelConfig()
       .then((cfg) => {
         const def = cfg.Platforms?.find((p) => p.ID === cfg.DefaultPlatform) ?? cfg.Platforms?.[0];
-        setInjectedModels(def?.Models ?? []);
+        const platName = def?.Name ?? '';
+        const opts: ToolModelOption[] = [];
+        for (const raw of def?.Models ?? []) {
+          const id = typeof raw === 'string' ? raw.trim() : '';
+          if (!id) continue;
+          opts.push({ id, name: formatPlatformModelName(platName, id) });
+        }
+        setInjectedModels(opts);
       })
       .catch(() => setInjectedModels([]));
     // 模型预选：已存 modelId 在该工具的缓存模型列表里才预选，否则空（默认模型）

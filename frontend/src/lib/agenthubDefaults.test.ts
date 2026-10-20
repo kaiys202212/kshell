@@ -1,6 +1,7 @@
 // agenthubDefaults：新建 agent 默认值与模型列表缓存的 localStorage 读写测试。
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  formatPlatformModelName,
   hubInjectedModelsForTool,
   loadDefaultCreate,
   loadLastCreate,
@@ -121,9 +122,30 @@ describe('agenthubDefaults', () => {
     ]);
   });
 
+  it('mergeHubModelOptions：注入项可带独立展示名（平台前缀），id 仍为裸模型名', () => {
+    expect(
+      mergeHubModelOptions(
+        [{ id: 'glm-x', name: '智谱: glm-x' }],
+        [{ id: 'cache-only', name: 'Cache' }],
+      ),
+    ).toEqual([
+      { id: 'glm-x', name: '智谱: glm-x' },
+      { id: 'cache-only', name: 'Cache' },
+    ]);
+  });
+
+  it('formatPlatformModelName：有平台名则加前缀，空名回落裸 id', () => {
+    expect(formatPlatformModelName('智谱', 'glm-x')).toBe('智谱: glm-x');
+    expect(formatPlatformModelName('  ', 'glm-x')).toBe('glm-x');
+    expect(formatPlatformModelName('', 'glm-x')).toBe('glm-x');
+  });
+
   it('hubInjectedModelsForTool：cursor 不展示平台注入模型', () => {
     expect(hubInjectedModelsForTool('cursor', ['glm-5.3-flash', 'cfg2'])).toEqual([]);
     expect(hubInjectedModelsForTool('claude', ['glm-5.3-flash'])).toEqual(['glm-5.3-flash']);
+    expect(
+      hubInjectedModelsForTool('cursor', [{ id: 'glm-x', name: '智谱: glm-x' }]),
+    ).toEqual([]);
   });
 
   describe('rememberChatModels', () => {
