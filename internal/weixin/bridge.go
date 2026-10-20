@@ -326,6 +326,14 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 			})
 		}
 	}
+	// 待选编号发送成功：暂存正文（可能已带附件说明前缀）已投递，消费队列，
+	// 避免下一条普通文本重复附带同一批附件。
+	for _, r := range replies {
+		if r.Sent {
+			b.clearQueue()
+			break
+		}
+	}
 	for _, r := range replies {
 		b.deliver(r.Text, "") // 命令回复/ack 不归属会话，不进引用映射
 	}

@@ -29,6 +29,7 @@ const api = vi.hoisted(() => ({
   clearHubMessages: vi.fn(),
   recallHubMessage: vi.fn(),
   hubCommand: vi.fn(),
+  hubPickTarget: vi.fn(),
   saveHubDefaultCreate: vi.fn().mockResolvedValue(undefined),
   saveHubRouteMode: vi.fn().mockResolvedValue(undefined),
   confirmHubTool: vi.fn().mockResolvedValue(undefined),
@@ -83,6 +84,7 @@ beforeEach(() => {
   api.clearHubMessages.mockResolvedValue(undefined);
   api.recallHubMessage.mockResolvedValue(undefined);
   api.hubCommand.mockResolvedValue([]);
+  api.hubPickTarget.mockResolvedValue({ Replies: [], Pending: false });
   api.listRequirements.mockResolvedValue([]);
   api.markRequirementDispatched.mockResolvedValue(undefined);
   dispatchRequirement.mockResolvedValue(undefined);
@@ -354,15 +356,37 @@ describe('AgentHubPanel', () => {
     expect((box as HTMLTextAreaElement).value).toBe('');
   });
 
-  it('未 @ 且无最后交互：提示 need_target_drag 且不发送', () => {
+  it('未 @ 且无最后交互：调用 hubPickTarget 列出会话、清空草稿且不发送', async () => {
+    api.hubPickTarget.mockResolvedValue({
+      Replies: [{ Text: '未精确匹配到会话——回复编号' }],
+      Pending: true,
+    });
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '随便看看' } });
     fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.hubPickTarget).toHaveBeenCalledWith('随便看看'));
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
-    expect(useAppStore.getState().toasts.some((t) => t.title === tt('ui.hub.need_target_drag'))).toBe(true);
-    expect((box as HTMLTextAreaElement).value).toBe('随便看看');
+    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe(''));
+    await waitFor(() =>
+      expect(useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '未精确匹配到会话——回复编号')).toBe(true),
+    );
+  });
+
+  it('待选列表未能建立（无会话）：保留草稿，避免用户正文丢失', async () => {
+    api.hubPickTarget.mockResolvedValue({ Replies: [{ Text: '暂无会话' }], Pending: false });
+    useAppStore.setState({ chats: [], lastAgentId: null });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '别弄丢我' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.hubPickTarget).toHaveBeenCalledWith('别弄丢我'));
+    await waitFor(() =>
+      expect(useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '暂无会话')).toBe(true),
+    );
+    expect((box as HTMLTextAreaElement).value).toBe('别弄丢我');
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
   it('未 @ 但有最后交互：发给 lastAgentId', async () => {
@@ -430,7 +454,7 @@ describe('AgentHubPanel', () => {
       ],
       hubMessages: [
         { id: 1, kind: 'user', chatId: 'c1', workspace: 'D:\\ws\\a', text: '给甲的', ts: 1 },
-        { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', workspace: 'D:\\ws\\b', text: '乙的回复', ts: 2 },
+        { id: 2, kind: 'agent', chatId: 'c2', tool: 'claude', event: 'Stop', workspace: 'D:\\ws\\b', text: '乙的回复', ts: 2 },
       ],
       lastAgentId: 'c1',
     });
@@ -476,21 +500,26 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c2', '继续'));
   });
 
-  it('hub 消息 workspace 与 chat.Workspace 经 sameWorkspacePath 归并后命中回落', async () => {
+  it('hub 消息只有 workspace 归因：不再模糊猜同项目会话，改为列会话待选', async () => {
+    api.hubPickTarget.mockResolvedValue({
+      Replies: [{ Text: '未精确匹配到会话——回复编号' }],
+      Pending: true,
+    });
     useAppStore.setState({
       chats: [
         chat({ ID: 'c1', ToolID: 'claude', Title: '甲' }),
         chat({ ID: 'c2', ToolID: 'claude', Title: '乙', Workspace: 'D:\\ws\\b' }),
       ],
-      // 消息 workspace 小写 + 正斜杠：与 chat 的 Windows 反斜杠路径归并为同一项目
+      // 消息 workspace 小写 + 正斜杠：旧逻辑会归并到乙，现要求精确归因，不得猜。
       hubMessages: [{ id: 1, kind: 'agent', tool: 'claude', event: 'Stop', workspace: 'd:/ws/b', text: '乙的回复', ts: 1 }],
-      lastAgentId: 'c1',
+      lastAgentId: null,
     });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c2', '继续'));
+    await waitFor(() => expect(api.hubPickTarget).toHaveBeenCalledWith('继续'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
   it('hub 消息匹配不到任何 agent 时回落 store.lastAgentId', async () => {
@@ -504,6 +533,24 @@ describe('AgentHubPanel', () => {
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '继续'));
+  });
+
+  it('store.lastAgentId 已不在候选列表：不投递，改为列会话待选', async () => {
+    api.hubPickTarget.mockResolvedValue({
+      Replies: [{ Text: '未精确匹配到会话——回复编号' }],
+      Pending: true,
+    });
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
+      hubMessages: [],
+      lastAgentId: 'c-gone',
+    });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '继续' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.hubPickTarget).toHaveBeenCalledWith('继续'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
   it('最新 agent 回复带 sessionId 快照但会话未激活时，先激活原会话再发送，不误投同 workspace 会话', async () => {

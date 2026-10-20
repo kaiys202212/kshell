@@ -157,3 +157,39 @@ func (a *App) HubCommand(text string) ([]hub.Reply, error) {
 	}
 	return a.wxHubConsole().Handle(text), nil
 }
+
+// HubPickView 是 HubPickTarget 的返回：Replies 按序回显；Pending 为真表示
+// 已建立待选菜单（正文已暂存），前端可清空草稿；false 时（无会话/其他菜单
+// 进行中）应保留草稿，避免正文丢失。
+type HubPickView struct {
+	Replies []hub.Reply
+	Pending bool
+}
+
+// HubPickTarget 是 AgentHub 无精确目标时的待选入口：共享 Console 输出编号
+// 会话列表并暂存正文；用户回数字由 HubCommand 完成激活与发送。
+func (a *App) HubPickTarget(text string) (HubPickView, error) {
+	if !a.snapshot().ready() {
+		return HubPickView{}, errNotReady
+	}
+	replies, pending := a.wxHubConsole().PickTarget(text)
+	if replies == nil {
+		replies = []hub.Reply{} // 统一成空数组，前端可直接遍历
+	}
+	return HubPickView{Replies: replies, Pending: pending}, nil
+}
+
+// clearHubPendingPick 让桌面端 AgentHub 的待选菜单失效（不惰性创建 Console）。
+// 用户另行投递后，旧暂存正文不得再被后续纯数字选中发送。
+func (a *App) clearHubPendingPick() {
+	// 先取指针再释放 a.mu：Console 执行后端会反向取 a.mu，避免锁序死锁。
+	a.mu.Lock()
+	c := a.hubConsole
+	a.mu.Unlock()
+	if c != nil {
+		// TryLock 而非阻塞 Lock：Console.Handle 全程持 c.mu 回调 Executor
+		// 发送，同步重入即死锁；此时 Handle 的 menu 必非 menuPick（见
+		// TryCancelPick 注释），放弃取消无损语义。
+		c.TryCancelPick()
+	}
+}

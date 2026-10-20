@@ -18,29 +18,32 @@ func fmtS(n int) string { return strconv.Itoa(n) }
 // 并记录关键调用参数供断言。
 type fakeExecutor struct {
 	// 可配置返回值
-	listSessions   []SessionRef
-	currentSession SessionRef
-	hasCurrent     bool
-	switchErr      error
-	easyNewRef     SessionRef
-	easyNewErr     error
-	tools          []MenuOption
-	workspaces     []MenuOption
-	models         []MenuOption
-	createRef      SessionRef
-	createErr      error
-	stopErr        error
-	listModels     []MenuOption
-	listModelsCur  string
-	listModelsErr  error
-	setModelErr    error
-	searchResult   []SessionRef
-	sendErr        error
-	grantErr       error
-	status         ConsoleStatus
-	openSessionRef SessionRef
-	openSessionErr error
-	recentMessages []Message
+	listSessions []SessionRef
+	// lastActivityID 是假后端最后一条可归因 hub 消息的 ID（Console 水位比较用）；
+	// lastActivityRef/hasActivity 模拟精确命中的会话。
+	lastActivityID  int64
+	lastActivityRef SessionRef
+	hasActivity     bool
+	switchErr       error
+	easyNewRef      SessionRef
+	easyNewErr      error
+	tools           []MenuOption
+	workspaces      []MenuOption
+	models          []MenuOption
+	createRef       SessionRef
+	createErr       error
+	stopErr         error
+	listModels      []MenuOption
+	listModelsCur   string
+	listModelsErr   error
+	setModelErr     error
+	searchResult    []SessionRef
+	sendErr         error
+	grantErr        error
+	status          ConsoleStatus
+	openSessionRef  SessionRef
+	openSessionErr  error
+	recentMessages  []Message
 	// 记录调用参数
 	switchCalls      []string
 	openSessionCalls []string
@@ -53,8 +56,8 @@ type fakeExecutor struct {
 
 func (f *fakeExecutor) ListSessions() []SessionRef { return f.listSessions }
 
-func (f *fakeExecutor) CurrentSession() (SessionRef, bool) {
-	return f.currentSession, f.hasCurrent
+func (f *fakeExecutor) LastActivity() (int64, SessionRef, bool) {
+	return f.lastActivityID, f.lastActivityRef, f.hasActivity
 }
 
 func (f *fakeExecutor) SwitchTo(chatID string) error {
@@ -146,7 +149,7 @@ func TestHandleQuoted(t *testing.T) {
 	}
 
 	t.Run("命中切换并投递", func(t *testing.T) {
-		ex := &fakeExecutor{listSessions: sessions, hasCurrent: true, currentSession: SessionRef{ChatID: "other"}}
+		ex := &fakeExecutor{listSessions: sessions, hasActivity: true, lastActivityRef: SessionRef{ChatID: "other"}}
 		c := NewConsole(ex)
 		handled, replies := c.HandleQuoted("c1", "继续修这个 bug")
 		if !handled || len(replies) != 0 {
@@ -207,7 +210,7 @@ func TestHandleQuoted(t *testing.T) {
 	})
 
 	t.Run("发送失败报错", func(t *testing.T) {
-		ex := &fakeExecutor{listSessions: sessions, hasCurrent: true, currentSession: SessionRef{ChatID: "other"}, sendErr: errors.New("发送失败")}
+		ex := &fakeExecutor{listSessions: sessions, hasActivity: true, lastActivityRef: SessionRef{ChatID: "other"}, sendErr: errors.New("发送失败")}
 		c := NewConsole(ex)
 		handled, replies := c.HandleQuoted("c1", "文本")
 		if !handled || len(replies) != 1 || !strings.Contains(replies[0].Text, "发送失败") {
@@ -218,8 +221,8 @@ func TestHandleQuoted(t *testing.T) {
 
 func TestHelpWithCurrent(t *testing.T) {
 	c := NewConsole(&fakeExecutor{
-		hasCurrent:     true,
-		currentSession: wsRef(0, "c1", "", `D:\work\demo`, "claude", "修复登录", true),
+		hasActivity:     true,
+		lastActivityRef: wsRef(0, "c1", "", `D:\work\demo`, "claude", "修复登录", true),
 	})
 	out := join(c.Handle("#?"))
 	if !strings.Contains(out, "**命令列表**") || !strings.Contains(out, "- #l") || !strings.Contains(out, "#st") {
@@ -251,9 +254,9 @@ func TestListTruncatesTo10AndMarksCurrent(t *testing.T) {
 	refs[2].Current = true
 	refs[2].ChatID = "chat-3"
 	fe := &fakeExecutor{
-		listSessions:   refs,
-		hasCurrent:     true,
-		currentSession: refs[2], // Current 由 ex.CurrentSession 比对得出
+		listSessions:    refs,
+		hasActivity:     true,
+		lastActivityRef: refs[2], // ▶ 由 refreshCurrent 与归因 ChatID 比对得出
 	}
 	c := NewConsole(fe)
 
@@ -283,9 +286,9 @@ func TestListTruncatesTo10AndMarksCurrent(t *testing.T) {
 
 func TestListRefreshesCurrent(t *testing.T) {
 	fe := &fakeExecutor{
-		listSessions:   []SessionRef{wsRef(0, "c1", "", `D:\a\b`, "codex", "标题", false)},
-		hasCurrent:     true,
-		currentSession: wsRef(0, "c1", "", `D:\a\b`, "codex", "标题", true),
+		listSessions:    []SessionRef{wsRef(0, "c1", "", `D:\a\b`, "codex", "标题", false)},
+		hasActivity:     true,
+		lastActivityRef: wsRef(0, "c1", "", `D:\a\b`, "codex", "标题", true),
 	}
 	c := NewConsole(fe)
 	out := join(c.Handle("#l"))
@@ -460,8 +463,8 @@ func TestCancel(t *testing.T) {
 
 func TestStop(t *testing.T) {
 	fe := &fakeExecutor{
-		hasCurrent:     true,
-		currentSession: wsRef(0, "c1", "sid1", "", "claude", "A", true),
+		hasActivity:     true,
+		lastActivityRef: wsRef(0, "c1", "sid1", "", "claude", "A", true),
 	}
 	c := NewConsole(fe)
 	if got := join(c.Handle("#s")); got != "已发送中断指令" {
@@ -480,8 +483,8 @@ func TestStop(t *testing.T) {
 // （CancelChat 按 chat ID 解析必报错）。
 func TestStopInactiveSessionNoChatID(t *testing.T) {
 	fe := &fakeExecutor{
-		hasCurrent:     true,
-		currentSession: wsRef(0, "", "sid-only", "", "claude", "磁盘会话", true),
+		hasActivity:     true,
+		lastActivityRef: wsRef(0, "", "sid-only", "", "claude", "磁盘会话", true),
 	}
 	c := NewConsole(fe)
 	if got := join(c.Handle("#s")); got != "当前无活跃会话" {
@@ -494,10 +497,10 @@ func TestStopInactiveSessionNoChatID(t *testing.T) {
 
 func TestModelsMenu(t *testing.T) {
 	fe := &fakeExecutor{
-		hasCurrent:     true,
-		currentSession: wsRef(0, "c1", "", "", "claude", "A", true),
-		listModels:     []MenuOption{{ID: "sonnet", Label: "Sonnet"}, {ID: "opus", Label: "Opus"}},
-		listModelsCur:  "opus",
+		hasActivity:     true,
+		lastActivityRef: wsRef(0, "c1", "", "", "claude", "A", true),
+		listModels:      []MenuOption{{ID: "sonnet", Label: "Sonnet"}, {ID: "opus", Label: "Opus"}},
+		listModelsCur:   "opus",
 	}
 	c := NewConsole(fe)
 	out := join(c.Handle("#m"))
@@ -517,10 +520,10 @@ func TestModelsMenu(t *testing.T) {
 
 	// 失败路径
 	fe2 := &fakeExecutor{
-		hasCurrent:     true,
-		currentSession: wsRef(0, "c1", "", "", "claude", "A", true),
-		listModels:     []MenuOption{{ID: "sonnet", Label: "Sonnet"}},
-		setModelErr:    errors.New("nope"),
+		hasActivity:     true,
+		lastActivityRef: wsRef(0, "c1", "", "", "claude", "A", true),
+		listModels:      []MenuOption{{ID: "sonnet", Label: "Sonnet"}},
+		setModelErr:     errors.New("nope"),
 	}
 	c2 := NewConsole(fe2)
 	c2.Handle("#m")
@@ -541,8 +544,8 @@ func TestGSend(t *testing.T) {
 			wsRef(0, "c1", "", "", "claude", "A", false),
 			wsRef(0, "c2", "", "", "codex", "B", true),
 		},
-		hasCurrent:     true,
-		currentSession: wsRef(0, "c2", "", "", "codex", "B", true),
+		hasActivity:     true,
+		lastActivityRef: wsRef(0, "c2", "", "", "codex", "B", true),
 	}
 	c := NewConsole(fe)
 	c.Handle("#l") // #g 依据上次列表的编号映射
@@ -652,8 +655,8 @@ func TestPermissionMenu(t *testing.T) {
 
 func TestPermissionMenuNonNumericPassesThrough(t *testing.T) {
 	fe := &fakeExecutor{
-		hasCurrent:     true,
-		currentSession: wsRef(0, "c1", "", "", "claude", "A", true),
+		hasActivity:     true,
+		lastActivityRef: wsRef(0, "c1", "", "", "claude", "A", true),
 	}
 	c := NewConsole(fe)
 	c.OpenPermissionMenu("chat1", "req1", "描述")
@@ -702,8 +705,8 @@ func TestPermissionMenuFailure(t *testing.T) {
 
 func TestPlainTextInput(t *testing.T) {
 	fe := &fakeExecutor{
-		hasCurrent:     true,
-		currentSession: wsRef(0, "c1", "", "", "claude", "A", true),
+		hasActivity:     true,
+		lastActivityRef: wsRef(0, "c1", "", "", "claude", "A", true),
 	}
 	c := NewConsole(fe)
 	if got := c.Handle("你好"); len(got) != 0 {
@@ -712,16 +715,16 @@ func TestPlainTextInput(t *testing.T) {
 	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c1", "你好"} {
 		t.Fatalf("Send 参数不符: %v", fe.sendCalls)
 	}
-	// 无 current
+	// 无 current 且无会话：不再只提示无当前会话，而是进入待选列表（无会话可列）
 	out := join(NewConsole(&fakeExecutor{}).Handle("你好"))
-	if !strings.Contains(out, "当前无活跃会话") {
-		t.Fatalf("无 current 普通文本应提示: %q", out)
+	if !strings.Contains(out, "暂无会话") {
+		t.Fatalf("无 current 普通文本应提示暂无会话: %q", out)
 	}
 	// 发送失败
 	fe2 := &fakeExecutor{
-		hasCurrent:     true,
-		currentSession: wsRef(0, "c1", "", "", "claude", "A", true),
-		sendErr:        errors.New("offline"),
+		hasActivity:     true,
+		lastActivityRef: wsRef(0, "c1", "", "", "claude", "A", true),
+		sendErr:         errors.New("offline"),
 	}
 	out = join(NewConsole(fe2).Handle("你好"))
 	if !strings.Contains(out, "发送失败") {
@@ -764,9 +767,9 @@ func TestSwitchInactiveSessionOpensSession(t *testing.T) {
 			wsRef(0, "c1", "s1", `D:\ws\a`, "claude", "活跃会话", false),
 			wsRef(0, "", "s2", `D:\ws\b`, "codex", "磁盘会话", false),
 		},
-		hasCurrent:     true,
-		currentSession: wsRef(0, "c1", "s1", `D:\ws\a`, "claude", "活跃会话", true),
-		openSessionRef: wsRef(0, "c9", "s2", `D:\ws\b`, "codex", "磁盘会话", false),
+		hasActivity:     true,
+		lastActivityRef: wsRef(0, "c1", "s1", `D:\ws\a`, "claude", "活跃会话", true),
+		openSessionRef:  wsRef(0, "c9", "s2", `D:\ws\b`, "codex", "磁盘会话", false),
 	}
 	c := NewConsole(fe)
 	if got := join(c.Handle("#l")); !strings.Contains(got, "2. [b] codex 磁盘会话") {
@@ -829,8 +832,8 @@ func TestFullWidthInputNormalization(t *testing.T) {
 			wsRef(0, "c1", "", "", "claude", "A", false),
 			wsRef(0, "c2", "", "", "codex", "B", true),
 		},
-		hasCurrent:     true,
-		currentSession: wsRef(0, "c2", "", "", "codex", "B", true),
+		hasActivity:     true,
+		lastActivityRef: wsRef(0, "c2", "", "", "codex", "B", true),
 	}
 	c := NewConsole(fe)
 	c.Handle("#l")
@@ -879,8 +882,9 @@ func TestFullWidthInputNormalization(t *testing.T) {
 	if got := c.Handle("＃话题 标签"); len(got) != 0 {
 		t.Fatalf("＃未知词应按普通文本发送不回显: %v", got)
 	}
-	if fe.sendCalls[len(fe.sendCalls)-1] != [2]string{"c2", "＃话题 标签"} {
-		t.Fatalf("＃未知词应原文发给当前会话: %v", fe.sendCalls)
+	// 上一步 １ 是显式切换：水位内的旧 hub 归因不得把目标抢回 c2。
+	if fe.sendCalls[len(fe.sendCalls)-1] != [2]string{"c1", "＃话题 标签"} {
+		t.Fatalf("＃未知词应发给显式选中的会话: %v", fe.sendCalls)
 	}
 }
 
@@ -962,8 +966,8 @@ func TestEasyNewWithMessage(t *testing.T) {
 // 全角问号帮助：#？ 与 ＃？ 均应出帮助（2026-10-18 用户反馈漏网字符）。
 func TestFullWidthQuestionHelp(t *testing.T) {
 	c := NewConsole(&fakeExecutor{
-		hasCurrent:     true,
-		currentSession: wsRef(0, "c1", "", "", "claude", "A", true),
+		hasActivity:     true,
+		lastActivityRef: wsRef(0, "c1", "", "", "claude", "A", true),
 	})
 	for _, in := range []string{"#？", "＃？", "#? ", "＃?"} {
 		if got := join(c.Handle(in)); !strings.Contains(got, "命令列表") {
@@ -1027,5 +1031,239 @@ func TestRecentMessagesCommand(t *testing.T) {
 	}
 	if got := join(NewConsole(&fakeExecutor{}).Handle("#h 1")); !strings.Contains(got, "暂无 AgentHub 消息") {
 		t.Fatalf("空历史查详情应回暂无消息: %q", got)
+	}
+}
+
+// 用户显式选了编号后，水位内更旧的 hub 归因不得把投递目标抢回去。
+func TestExplicitSwitchBeatsStaleActivity(t *testing.T) {
+	fe := &fakeExecutor{
+		listSessions: []SessionRef{
+			wsRef(0, "c1", "", "", "claude", "A", false),
+			wsRef(0, "c2", "", "", "codex", "B", false),
+		},
+		lastActivityID:  7,
+		lastActivityRef: wsRef(0, "c1", "", "", "claude", "A", false),
+		hasActivity:     true,
+	}
+	c := NewConsole(fe)
+	c.Handle("#l")
+	c.Handle("2") // 显式切到 c2
+	if got := c.Handle("你好"); len(got) != 0 {
+		t.Fatalf("普通文本发送成功不应回显: %v", got)
+	}
+	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c2", "你好"} {
+		t.Fatalf("显式选择应胜过旧归因: %v", fe.sendCalls)
+	}
+}
+
+// hub 出现更新归因（如别的渠道新建会话并发了消息）时，应覆盖显式选择。
+func TestNewerActivityOverridesExplicitSwitch(t *testing.T) {
+	fe := &fakeExecutor{
+		listSessions: []SessionRef{
+			wsRef(0, "c1", "", "", "claude", "A", false),
+			wsRef(0, "c2", "", "", "codex", "B", false),
+		},
+		lastActivityID:  7,
+		lastActivityRef: wsRef(0, "c1", "", "", "claude", "A", false),
+		hasActivity:     true,
+	}
+	c := NewConsole(fe)
+	c.Handle("#l")
+	c.Handle("2") // 显式切到 c2
+	// 新会话产生更高水位的归因。
+	fe.lastActivityID = 8
+	fe.lastActivityRef = wsRef(0, "c3", "", "", "gemini", "C", false)
+	if got := c.Handle("你好"); len(got) != 0 {
+		t.Fatalf("普通文本发送成功不应回显: %v", got)
+	}
+	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c3", "你好"} {
+		t.Fatalf("新归因应覆盖显式选择: %v", fe.sendCalls)
+	}
+}
+
+// 无精确目标：列出会话并暂存正文，不投递；回编号后激活并立即发送。
+func TestPlainTextWithoutTargetListsSessions(t *testing.T) {
+	fe := &fakeExecutor{listSessions: []SessionRef{
+		wsRef(0, "c1", "", `D:\ws\a`, "claude", "会话A", false),
+		wsRef(0, "", "s2", `D:\ws\b`, "codex", "会话B", false),
+	}}
+	c := NewConsole(fe)
+	out := join(c.Handle("帮我修个 bug"))
+	for _, want := range []string{"未精确匹配到会话", "1. [a] claude 会话A", "2. [b] codex 会话B", "请回复数字选择"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("无目标列表缺少 %q: %q", want, out)
+		}
+	}
+	if len(fe.sendCalls) != 0 {
+		t.Fatalf("列会话时不得投递: %v", fe.sendCalls)
+	}
+
+	fe.openSessionRef = wsRef(0, "c9", "s2", `D:\ws\b`, "codex", "会话B", false)
+	out = join(c.Handle("2"))
+	if len(fe.openSessionCalls) != 1 || fe.openSessionCalls[0] != "s2" {
+		t.Fatalf("回编号应激活所选磁盘会话: %v", fe.openSessionCalls)
+	}
+	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c9", "帮我修个 bug"} {
+		t.Fatalf("回编号应立即发送暂存正文: %v", fe.sendCalls)
+	}
+	if !strings.Contains(out, "已发送到: 【会话B】") {
+		t.Fatalf("发送成功应回已发送到: %q", out)
+	}
+}
+
+// #c 取消待选：暂存正文丢弃，后续数字只切换不发送。
+func TestPendingPickCancelDiscardsText(t *testing.T) {
+	fe := &fakeExecutor{listSessions: []SessionRef{
+		wsRef(0, "c1", "", "", "claude", "会话A", false),
+	}}
+	c := NewConsole(fe)
+	c.Handle("先别发")
+	if got := join(c.Handle("#c")); got != "已取消" {
+		t.Fatalf("取消待选文案不符: %q", got)
+	}
+	c.Handle("1")
+	if len(fe.switchCalls) != 1 || fe.switchCalls[0] != "c1" {
+		t.Fatalf("取消后数字应正常切换: %v", fe.switchCalls)
+	}
+	if len(fe.sendCalls) != 0 {
+		t.Fatalf("取消后不得再发送暂存正文: %v", fe.sendCalls)
+	}
+}
+
+// 当前会话是未激活磁盘会话：普通文本先 OpenSession 激活再发送。
+func TestPlainTextActivatesInactiveCurrent(t *testing.T) {
+	fe := &fakeExecutor{
+		lastActivityID:  7,
+		lastActivityRef: wsRef(0, "", "s1", `D:\ws\a`, "claude", "磁盘会话", false),
+		hasActivity:     true,
+		openSessionRef:  wsRef(0, "c8", "s1", `D:\ws\a`, "claude", "磁盘会话", false),
+	}
+	c := NewConsole(fe)
+	if got := c.Handle("你好"); len(got) != 0 {
+		t.Fatalf("激活并发送成功不应回显: %v", got)
+	}
+	if len(fe.openSessionCalls) != 1 || fe.openSessionCalls[0] != "s1" {
+		t.Fatalf("应激活磁盘会话: %v", fe.openSessionCalls)
+	}
+	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c8", "你好"} {
+		t.Fatalf("应发给激活后的 ChatID: %v", fe.sendCalls)
+	}
+}
+
+// AgentHub 无目标时调用 PickTarget：直接输出同一份待选列表，暂存正文。
+func TestPickTargetListsSessions(t *testing.T) {
+	fe := &fakeExecutor{listSessions: []SessionRef{
+		wsRef(0, "c1", "", `D:\ws\a`, "claude", "会话A", false),
+	}}
+	c := NewConsole(fe)
+	out, pending := c.PickTarget("  随便看看  ")
+	if !pending {
+		t.Fatal("有会话时应报告已进入待选菜单")
+	}
+	if !strings.Contains(join(out), "未精确匹配到会话") || !strings.Contains(join(out), "1. [a] claude 会话A") {
+		t.Fatalf("PickTarget 应输出待选列表: %v", out)
+	}
+	if len(fe.sendCalls) != 0 {
+		t.Fatalf("PickTarget 不得直接投递: %v", fe.sendCalls)
+	}
+	sent := c.Handle("1")
+	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c1", "随便看看"} {
+		t.Fatalf("回编号应发送去掉首尾空白的正文: %v", fe.sendCalls)
+	}
+	if len(sent) != 1 || !sent[0].Sent {
+		t.Fatalf("待选投递成功应标记 Sent（微信桥据此清附件队列）: %+v", sent)
+	}
+}
+
+// 无会话：不进菜单、不清草稿（Pending=false），只回暂无会话。
+func TestPickTargetNoSessionsNotPending(t *testing.T) {
+	c := NewConsole(&fakeExecutor{})
+	out, pending := c.PickTarget("  随便看看  ")
+	if pending {
+		t.Fatal("无会话时不应报告进入待选菜单")
+	}
+	if got := join(out); got != "暂无会话" {
+		t.Fatalf("无会话应回暂无会话: %q", got)
+	}
+}
+
+// 任意命令（#c 除外）让待选正文失效：后续数字不得再发送旧正文。
+func TestCommandInvalidatesPendingPick(t *testing.T) {
+	fe := &fakeExecutor{listSessions: []SessionRef{
+		wsRef(0, "c1", "", `D:\ws\a`, "claude", "会话A", false),
+		wsRef(0, "c2", "", `D:\ws\b`, "codex", "会话B", false),
+	}}
+	c := NewConsole(fe)
+	if _, pending := c.PickTarget("旧正文"); !pending {
+		t.Fatal("应先进入待选菜单")
+	}
+	c.Handle("#l") // 显式查看列表：旧待选正文失效
+	c.Handle("1")
+	if len(fe.sendCalls) != 0 {
+		t.Fatalf("命令后的数字不得发送旧正文: %v", fe.sendCalls)
+	}
+	if len(fe.switchCalls) != 1 || fe.switchCalls[0] != "c1" {
+		t.Fatalf("命令后的数字应正常切换: %v", fe.switchCalls)
+	}
+}
+
+// 其他菜单（#n/#m/#f）进行中：PickTarget 不覆盖它，正文不标记为已暂存。
+func TestPickTargetBusyWithOtherMenu(t *testing.T) {
+	fe := &fakeExecutor{
+		tools: []MenuOption{{ID: "claude", Label: "Claude Code"}},
+	}
+	c := NewConsole(fe)
+	c.Handle("#n")
+	out, pending := c.PickTarget("正文")
+	if pending {
+		t.Fatal("#n 进行中不应建立待选菜单")
+	}
+	if !strings.Contains(join(out), "请先完成") {
+		t.Fatalf("应提示先完成当前选择: %v", out)
+	}
+	if c.menu == nil || c.menu.kind != menuNew {
+		t.Fatal("#n 菜单不应被覆盖")
+	}
+}
+
+// PickTarget 只 trim，不改写正文（全角空格必须原样投递）。
+func TestPickTargetPreservesOriginalText(t *testing.T) {
+	fe := &fakeExecutor{listSessions: []SessionRef{
+		wsRef(0, "c1", "", `D:\ws\a`, "claude", "会话A", false),
+	}}
+	c := NewConsole(fe)
+	c.PickTarget("你好　世界")
+	c.Handle("1")
+	if len(fe.sendCalls) != 1 || fe.sendCalls[0][1] != "你好　世界" {
+		t.Fatalf("暂存正文应保持原文: %v", fe.sendCalls)
+	}
+}
+
+// TryCancelPick：锁空闲时清掉 menuPick 并报告成功；锁被占用（Handle 持锁回调
+// Executor 发送的形态）时返回 false 且不动菜单——调用方据此放弃，无损语义。
+func TestTryCancelPick(t *testing.T) {
+	fe := &fakeExecutor{listSessions: []SessionRef{
+		wsRef(0, "c1", "", `D:\ws\a`, "claude", "会话A", false),
+	}}
+	c := NewConsole(fe)
+	if _, pending := c.PickTarget("待发正文"); !pending {
+		t.Fatal("应先进入待选菜单")
+	}
+	// 模拟 Handle 持锁：先占住锁再调 TryCancelPick。
+	c.mu.Lock()
+	if c.TryCancelPick() {
+		c.mu.Unlock()
+		t.Fatal("锁被占用时应报告失败")
+	}
+	if c.menu == nil || c.menu.kind != menuPick {
+		c.mu.Unlock()
+		t.Fatal("锁被占用时不得动菜单")
+	}
+	c.mu.Unlock()
+	if !c.TryCancelPick() {
+		t.Fatal("锁空闲时应报告成功")
+	}
+	if c.menu != nil {
+		t.Fatal("成功后待选菜单应已清空")
 	}
 }

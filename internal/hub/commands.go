@@ -9,6 +9,7 @@ import (
 type SessionRef struct {
 	Num       int    // 编号（ListSessions 返回时由 Console 统一编号 1..N）
 	ChatID    string // 活跃 chat 的 ID；未激活的磁盘会话为空
+	Key       string // 活跃 chat 的 termKey（hub 归因精确匹配用；可空）
 	SessionID string // 磁盘会话 ID（可空）
 	Workspace string
 	Tool      string
@@ -34,7 +35,10 @@ type ConsoleStatus struct {
 // Executor 是命令层的执行后端（desktop App 实现；测试用 fake）。
 type Executor interface {
 	ListSessions() []SessionRef
-	CurrentSession() (SessionRef, bool)
+	// LastActivity 从 hub 历史最新一条往前扫，返回第一条可精确归因的消息 ID
+	// 与命中的会话（chatId → termKey → sessionId 快照）；无精确归因时 ok=false。
+	// ID 用作 Console 的归因水位：显式切换只在水位内优先。
+	LastActivity() (id int64, ref SessionRef, ok bool)
 	SwitchTo(chatID string) error
 	// OpenSession 打开一个尚未激活的磁盘会话（SessionID 非空时有效），返回可投递的引用。
 	// 已激活的会话直接返回现状。实现方负责激活（desktop 走 OpenSessionACP）。

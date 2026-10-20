@@ -11,9 +11,9 @@ import (
 // go test -race 下此前会报数据竞争（perm/menu/current/lastList/hasCurrent 无锁）。
 func TestConsoleConcurrentAccess(t *testing.T) {
 	fe := &fakeExecutor{
-		listSessions:   []SessionRef{wsRef(0, "c1", "", "", "claude", "A", false)},
-		hasCurrent:     true,
-		currentSession: wsRef(0, "c1", "", "", "claude", "A", true),
+		listSessions:    []SessionRef{wsRef(0, "c1", "", "", "claude", "A", false)},
+		hasActivity:     true,
+		lastActivityRef: wsRef(0, "c1", "", "", "claude", "A", true),
 	}
 	c := NewConsole(fe)
 
@@ -44,7 +44,7 @@ func TestConsoleConcurrentAccess(t *testing.T) {
 	wg.Wait()
 
 	// 并发结束后状态机应仍可用。
-	c.SetCurrent(fe.currentSession)
+	c.SetCurrent(fe.lastActivityRef)
 	out := join(c.Handle("#l"))
 	if !strings.Contains(out, "[") {
 		t.Fatalf("并发后状态机应仍可用: %q", out)

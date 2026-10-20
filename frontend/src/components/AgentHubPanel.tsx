@@ -16,6 +16,7 @@ import {
   getModelConfig,
   getSessions,
   hubCommand,
+  hubPickTarget,
   listChatCommands,
   listChatModels,
   listHubArchive,
@@ -188,8 +189,7 @@ const PENDING_PREFIX = 'pending:';
 
 // hubPendingSessionId 从一条 hub 消息解析待激活磁盘会话 ID（同步可得的两种来源）：
 // sessionId 快照优先，其次 termKey 的 session: 前缀。都没有返回 null。
-// 异步的 workspace+tool+title 缓存查找不在此做（lastHubAgentId 是同步 useMemo，
-// 且模糊兜底仍由 workspace 匹配承担）。
+// 异步的 workspace+tool+title 缓存查找不在此做（lastHubAgentId 是同步 useMemo）。
 function hubPendingSessionId(m: HubMessage): string | null {
   if (m.sessionId) return m.sessionId;
   if (m.termKey?.startsWith('session:')) return m.termKey.slice('session:'.length);
@@ -198,14 +198,12 @@ function hubPendingSessionId(m: HubMessage): string | null {
 
 // lastHubAgentId 从 hub 消息历史倒序找「最近一次交互」的目标 agent：
 // 消息经归因字段反查 chat，再确认该 chat 仍是当前 mention 候选。
-// 每条消息按四级尝试：chatId 精确 → termKey 精确 → 会话未激活但有磁盘会话 ID
-//（返回 pending: 前缀标记，由 send() 先激活再投递）→ workspace 模糊匹配。
-// pending 排在模糊之前：精确归因命中不了已激活 chats 时（会话关闭/重启），
-// 有磁盘会话 ID 就该激活原会话，而不是借 workspace 模糊误投同项目其他会话；
-// 模糊匹配只服务完全无精确归因的旧记录。user 与 agent 消息都参与匹配
-//（user 消息也带目标 agent 的归因字段）。
-// 已知局限：同 workspace 多 chat 时 chats.find 取列表第一个，未必是最近交互
-// 的那个（降级行为，可接受）。找不到返回 null。
+// 每条消息按三级尝试：chatId 精确 → termKey 精确 → 会话未激活但有磁盘会话 ID
+//（返回 pending: 前缀标记，由 send() 先激活再投递）。
+// 不做 workspace 模糊匹配：多会话同项目时猜错会把消息投给非目标 agent，
+// 没有精确归因时由 send() 交给共享命令层列出会话让用户选择。
+// user 与 agent 消息都参与匹配（user 消息也带目标 agent 的归因字段）。
+// 找不到返回 null。
 function lastHubAgentId(messages: HubMessage[], options: MentionOption[], chats: ChatInfo[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
@@ -215,8 +213,6 @@ function lastHubAgentId(messages: HubMessage[], options: MentionOption[], chats:
     if (c && options.some((o) => o.id === c.ID)) return c.ID;
     const pending = hubPendingSessionId(m);
     if (pending) return PENDING_PREFIX + pending;
-    const f = m.workspace ? chats.find((x) => sameWorkspacePath(x.Workspace, m.workspace!)) : undefined;
-    if (f && options.some((o) => o.id === f.ID)) return f.ID;
   }
   return null;
 }
@@ -415,9 +411,13 @@ export default function AgentHubPanel() {
   const inSlashMode = slashQuery !== null;
   const inHashMode = hashQuery !== null;
   // 默认投递目标回落链：hub 最近一次交互的 agent 优先（比 lastAgentId 更能反映
-  // hub 视角的最新目标），再退 store.lastAgentId。斜杠命令目标解析与 send 共用。
+  // hub 视角的最新目标），再退 store.lastAgentId。lastAgentId 可能指向已关闭的
+  // 会话，仅在其仍处于当前候选列表时才采用，避免向不存在的 chat 投递。
+  // 斜杠命令目标解析与 send 共用。
   const fallbackId = useMemo(
-    () => lastHubAgentId(hubMessages, options, chats) ?? lastAgentId,
+    () =>
+      lastHubAgentId(hubMessages, options, chats) ??
+      (lastAgentId && options.some((o) => o.id === lastAgentId) ? lastAgentId : null),
     [hubMessages, options, chats, lastAgentId],
   );
   // 目标解析：优先 @ 提及，其次回落链（与 send 一致）。
@@ -919,7 +919,16 @@ export default function AgentHubPanel() {
     // 回落链与 currentTargetId 共用 fallbackId（见上）。
     const targetId = resolveMentionTarget(text, options, fallbackId);
     if (!targetId) {
-      useAppStore.getState().notify(t('ui.hub.need_target_drag'), 'error');
+      // 无精确目标：把正文交给共享命令层列会话并暂存，用户回复数字后由
+      // HubCommand（数字透传路径）完成激活与发送；微信桥同语义。仅当后端
+      // 确实建立了待选菜单才清草稿（无会话/其他菜单进行中时保留正文）；
+      // 等待期间用户若改了草稿，也不覆盖新内容。
+      void hubPickTarget(text)
+        .then((view) => {
+          for (const r of view.Replies) useAppStore.getState().pushHubLocal(r.Text);
+          if (view.Pending) setDraft((d) => (d.trim() === text ? '' : d));
+        })
+        .catch((e: unknown) => useAppStore.getState().notify(backendError(e), 'error'));
       return;
     }
     setDraft('');

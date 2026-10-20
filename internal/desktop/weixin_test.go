@@ -235,3 +235,53 @@ func TestWeixinTranscriberMapsAudioUnsupported(t *testing.T) {
 		t.Fatalf("普通错误应原样透传: %v", mapVoiceErr(other))
 	}
 }
+
+// HubPickTarget 是 AgentHub 无精确目标时的待选入口：返回编号列表、暂存正文，
+// 不写 hub 历史、不投递。
+func TestWeixinHubPickTarget(t *testing.T) {
+	app := wxApp(t, []providers.Session{
+		{ID: "s1", ToolID: "claude", Workspace: `D:\ws\a`, Title: "会话A"},
+	})
+	app.mu.Lock()
+	app.opts.Config.Language = "zh-CN"
+	app.mu.Unlock()
+	store := app.snapshot().HubStore
+	if store == nil {
+		t.Fatal("wxApp 未装配 HubStore")
+	}
+	before := len(store.List())
+
+	view, err := app.HubPickTarget("  随便看看  ")
+	if err != nil {
+		t.Fatalf("HubPickTarget: %v", err)
+	}
+	if !view.Pending {
+		t.Fatal("有会话时应报告进入待选菜单（前端据此清草稿）")
+	}
+	if len(view.Replies) != 1 {
+		t.Fatalf("应返回一条待选回复: %+v", view.Replies)
+	}
+	text := view.Replies[0].Text
+	if !strings.Contains(text, "未精确匹配到会话") || !strings.Contains(text, "1. [a] claude 会话A") {
+		t.Fatalf("待选回复应含提示与编号列表: %q", text)
+	}
+	if got := len(store.List()); got != before {
+		t.Fatalf("HubPickTarget 不得写 hub 历史: before=%d after=%d", before, got)
+	}
+
+	// 无会话：不进菜单（Pending=false），前端保留草稿。
+	empty := wxApp(t, nil)
+	empty.mu.Lock()
+	empty.opts.Config.Language = "zh-CN"
+	empty.mu.Unlock()
+	view, err = empty.HubPickTarget("随便看看")
+	if err != nil {
+		t.Fatalf("HubPickTarget(empty): %v", err)
+	}
+	if view.Pending {
+		t.Fatal("无会话时不应报告进入待选菜单")
+	}
+	if len(view.Replies) != 1 || !strings.Contains(view.Replies[0].Text, "暂无会话") {
+		t.Fatalf("无会话应回暂无会话: %+v", view.Replies)
+	}
+}

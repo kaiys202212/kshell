@@ -7,8 +7,8 @@ import (
 
 // 英文态：NewConsoleLang(ex, "en") 下帮助全文应含 "Commands"。
 func TestHelpEnglish(t *testing.T) {
-	c := NewConsoleLang(&fakeExecutor{hasCurrent: true,
-		currentSession: wsRef(0, "c1", "", `D:\work\demo`, "claude", "fix login", true),
+	c := NewConsoleLang(&fakeExecutor{hasActivity: true,
+		lastActivityRef: wsRef(0, "c1", "", `D:\work\demo`, "claude", "fix login", true),
 	}, "en")
 	out := join(c.Handle("#?"))
 	if !strings.Contains(out, "Commands") {
@@ -31,8 +31,8 @@ func TestCommonTextsEnglish(t *testing.T) {
 	if got := join(c.Handle("5")); !strings.Contains(got, "No such number") {
 		t.Fatalf("英文态编号不存在 = %q", got)
 	}
-	if got := join(c.Handle("hello")); !strings.Contains(got, "No active session") {
-		t.Fatalf("英文态无活跃会话 = %q", got)
+	if got := join(c.Handle("hello")); !strings.Contains(got, "No sessions yet") {
+		t.Fatalf("英文态无会话可列 = %q", got)
 	}
 }
 

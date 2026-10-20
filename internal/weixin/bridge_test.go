@@ -25,19 +25,15 @@ type fakeExec struct {
 	sessions  []hub.SessionRef
 	current   hub.SessionRef
 	hasCur    bool
+	lastID    int64
 	sendErr   error
 	sentTexts []string // Send 收到的文本（按序记录）
-	// switchCalls / currentCalls：SwitchTo 与 CurrentSession 调用记录
-	//（引用回复切换语义断言用）。
-	switchCalls  []string
-	currentCalls int
+	// switchCalls：SwitchTo 调用记录（引用回复切换语义断言用）。
+	switchCalls []string
 }
 
-func (f *fakeExec) ListSessions() []hub.SessionRef { return f.sessions }
-func (f *fakeExec) CurrentSession() (hub.SessionRef, bool) {
-	f.currentCalls++
-	return f.current, f.hasCur
-}
+func (f *fakeExec) ListSessions() []hub.SessionRef              { return f.sessions }
+func (f *fakeExec) LastActivity() (int64, hub.SessionRef, bool) { return f.lastID, f.current, f.hasCur }
 func (f *fakeExec) SwitchTo(chatID string) error {
 	f.switchCalls = append(f.switchCalls, chatID)
 	return nil
@@ -641,6 +637,36 @@ func TestBridgeAttachmentCommandKeepsQueue(t *testing.T) {
 	}
 }
 
+// 无精确目标时附件前缀进入待选正文；用户回编号成功投递后队列必须清空，
+// 否则下一条普通文本会重复附带同一批附件。
+func TestBridgePickConsumesAttachmentQueue(t *testing.T) {
+	ex := &fakeExec{sessions: []hub.SessionRef{
+		{ChatID: "c1", Tool: "claude", Title: "会话A", Workspace: `D:\ws\a`},
+	}}
+	b, _ := newAttachBridge(t, ex, []byte("内容"), 200)
+
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-1", "a.pdf"))
+	if b.QueuedFiles() != 1 {
+		t.Fatalf("附件应先入队: %d", b.QueuedFiles())
+	}
+	// 无当前会话：输出待选列表，正文（含附件前缀）暂存，不投递。
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-2", Text: "帮我修复"})
+	if len(ex.sentTexts) != 0 {
+		t.Fatalf("待选阶段不应投递: %v", ex.sentTexts)
+	}
+	if b.QueuedFiles() != 1 {
+		t.Fatalf("待选阶段队列应保留: %d", b.QueuedFiles())
+	}
+	// 回编号：发送暂存正文（含附件说明），成功后队列消费。
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-3", Text: "1"})
+	if len(ex.sentTexts) != 1 || !strings.Contains(ex.sentTexts[0], "[附件] a.pdf") || !strings.Contains(ex.sentTexts[0], "帮我修复") {
+		t.Fatalf("回编号应发送含附件说明的暂存正文: %v", ex.sentTexts)
+	}
+	if b.QueuedFiles() != 0 {
+		t.Fatalf("成功投递后队列应清空: %d", b.QueuedFiles())
+	}
+}
+
 func TestBridgeAttachmentDownloadFail(t *testing.T) {
 	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 	b, rc := newAttachBridge(t, ex, []byte("内容"), 403)
@@ -1139,5 +1165,26 @@ func TestBridgeVoiceEmptyTranscriptKeepsFile(t *testing.T) {
 	sends := rc.sends()
 	if len(sends) != 2 {
 		t.Fatalf("sendmessage 次数 = %d, 期望 2（空转写回执 + ack）", len(sends))
+	}
+}
+
+// 普通文本无精确目标：桥层转发待选列表（而非「收到」ack），不调用 Send。
+func TestBridgeInboundNoTargetListsSessions(t *testing.T) {
+	rc := &recorder{}
+	ex := &fakeExec{sessions: []hub.SessionRef{
+		{ChatID: "c1", Workspace: "/a/proj", Tool: "claude", Title: "会话A"},
+	}}
+	b := newBridge(t, "u1", ex, rc.handler(t))
+	b.HandleInbound("u1", "ct-1", "普通消息")
+	sends := rc.sends()
+	if len(sends) != 1 {
+		t.Fatalf("sendmessage 次数 = %d, 期望 1（待选列表）", len(sends))
+	}
+	text, _ := sendMsgFields(t, sends[0].body)
+	if !strings.Contains(text, "未精确匹配到会话") || !strings.Contains(text, "1. [proj] claude 会话A") {
+		t.Errorf("应回待选列表: %q", text)
+	}
+	if len(ex.sentTexts) != 0 {
+		t.Errorf("无精确目标时不得投递: %v", ex.sentTexts)
 	}
 }
