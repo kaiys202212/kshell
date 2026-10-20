@@ -109,7 +109,7 @@ type ModelConfig struct {
 	BaseURL          string            `yaml:"base_url,omitempty"`
 	APIKey           string            `yaml:"api_key,omitempty"`
 	Models           []string          `yaml:"models,omitempty"`
-	ActiveModel      string            `yaml:"active_model"` // 默认模型；空=不注入模型名
+	ActiveModel      string            `yaml:"active_model"` // 默认模型；仅供 kshell 自身 LLM 调用（hub 自主工具/微信 ASR），不注入给 agent
 	Agents           map[string]string `yaml:"agents,omitempty"`
 }
 
