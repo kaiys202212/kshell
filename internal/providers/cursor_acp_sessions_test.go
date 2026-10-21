@@ -29,12 +29,29 @@ func writeACPSessionMeta(t *testing.T, home, id, title, cwd string) string {
 	return path
 }
 
+func writeACPSessionWithStore(t *testing.T, home, id, title, cwd string, msgs []map[string]any) string {
+	t.Helper()
+	writeACPSessionMeta(t, home, id, title, cwd)
+	store := filepath.Join(home, ".cursor", "acp-sessions", id, "store.db")
+	name := title
+	if name == "" {
+		name = "Store Fallback"
+	}
+	writeCursorACPStore(t, store, name, msgs)
+	return store
+}
+
 func TestListCursorACPSessions(t *testing.T) {
 	home := t.TempDir()
 	id := "2ce99fcb-7257-4521-bb55-8b9b1a86f48b"
-	meta := writeACPSessionMeta(t, home, id, "Activate Session Explain", `d:\data\workspace\moxi\kshell`)
+	store := writeACPSessionWithStore(t, home, id, "Activate Session Explain", `d:\data\workspace\moxi\kshell`, []map[string]any{
+		{"role": "user", "content": "hello"},
+		{"role": "assistant", "content": "hi"},
+	})
 	// 无 meta 的目录应跳过
 	os.MkdirAll(filepath.Join(home, ".cursor", "acp-sessions", "no-meta"), 0o755)
+	// 仅 meta、无 store 的空壳应跳过
+	writeACPSessionMeta(t, home, "empty-shell-id", "", `d:\ws`)
 
 	got, err := listCursorACPSessions(home)
 	if err != nil {
@@ -54,20 +71,25 @@ func TestListCursorACPSessions(t *testing.T) {
 	if s.Workspace != `d:\data\workspace\moxi\kshell` {
 		t.Fatalf("workspace %q", s.Workspace)
 	}
-	if s.Path != meta {
-		t.Fatalf("Path=%q want meta.json", s.Path)
+	if s.Path != store {
+		t.Fatalf("Path=%q want store.db", s.Path)
 	}
-	// 时间取自 meta mtime
-	st, _ := os.Stat(meta)
+	if s.Messages != 2 {
+		t.Fatalf("Messages=%d", s.Messages)
+	}
+	st, _ := os.Stat(store)
 	if s.UpdatedAt.IsZero() || s.UpdatedAt.Sub(st.ModTime()).Abs() > time.Second {
-		t.Fatalf("UpdatedAt=%v meta mtime=%v", s.UpdatedAt, st.ModTime())
+		t.Fatalf("UpdatedAt=%v store mtime=%v", s.UpdatedAt, st.ModTime())
 	}
 }
 
 func TestEnumerateSessionsIncludesACPSessions(t *testing.T) {
 	home := t.TempDir()
 	acpID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-	writeACPSessionMeta(t, home, acpID, "ACP Only", `D:\ws`)
+	writeACPSessionWithStore(t, home, acpID, "ACP Only", `D:\ws`, []map[string]any{
+		{"role": "user", "content": "q"},
+		{"role": "assistant", "content": "a"},
+	})
 	// chats 里另有一条，Enumerate 应两者都有且 chats 优先保留
 	chatID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 	writeMeta(t, filepath.Join(home, ".cursor", "chats", "h", chatID), true, "From Chats", `D:\ws`)
@@ -99,7 +121,10 @@ func TestEnumerateSessionsPrefersChatsWhenSameID(t *testing.T) {
 	home := t.TempDir()
 	id := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 	writeMeta(t, filepath.Join(home, ".cursor", "chats", "h", id), true, "Chats Title", `D:\ws`)
-	writeACPSessionMeta(t, home, id, "ACP Title", `D:\other`)
+	writeACPSessionWithStore(t, home, id, "ACP Title", `D:\other`, []map[string]any{
+		{"role": "user", "content": "q"},
+		{"role": "assistant", "content": "a"},
+	})
 
 	got, err := (Cursor{}).EnumerateSessions(home, "")
 	if err != nil {

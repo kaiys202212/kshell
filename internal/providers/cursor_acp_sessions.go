@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -18,6 +19,8 @@ type cursorACPSessionMeta struct {
 // listCursorACPSessions 枚举 Cursor 官方 ACP 会话目录。
 // kshell / cursor-acp 创建的会话落在这里，不进 ~/.cursor/chats/，
 // 若不枚举则 AttachSession 与 AgentHub 快捷回复永远绑不上 SessionID。
+//
+// 空壳（无 store.db 或抽不出对话正文）跳过，避免列表堆满 UUID。
 func listCursorACPSessions(home string) ([]Session, error) {
 	root := filepath.Join(home, ".cursor", "acp-sessions")
 	entries, err := os.ReadDir(root)
@@ -45,20 +48,16 @@ func listCursorACPSessions(home string) ([]Session, error) {
 		if m.Cwd == "" {
 			continue
 		}
-		title := m.Title
-		if title == "" {
-			title = id
-		}
+		title := strings.TrimSpace(m.Title)
 		updated := time.Time{}
 		if st, err := os.Stat(metaPath); err == nil {
 			updated = st.ModTime()
 		}
-		// store.db 往往比 meta 更新更勤（对话进行中），优先作 UpdatedAt
 		storePath := filepath.Join(root, id, "store.db")
 		if st, err := os.Stat(storePath); err == nil && st.ModTime().After(updated) {
 			updated = st.ModTime()
 		}
-		out = append(out, Session{
+		s := Session{
 			ID:        id,
 			ToolID:    cursorID,
 			Workspace: m.Cwd,
@@ -67,7 +66,17 @@ func listCursorACPSessions(home string) ([]Session, error) {
 			UpdatedAt: updated,
 			Path:      metaPath,
 			ACPOnly:   true, // 仅能以 ACP 激活；TUI resume 会静默丢上下文
-		})
+		}
+		if _, err := os.Stat(storePath); err != nil {
+			continue // 无 store → 空壳
+		}
+		if !enrichCursorACPSession(&s, storePath) {
+			continue
+		}
+		if strings.TrimSpace(s.Title) == "" {
+			s.Title = id
+		}
+		out = append(out, s)
 	}
 	return out, nil
 }

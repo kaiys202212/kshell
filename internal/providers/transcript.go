@@ -18,11 +18,17 @@ var errTranscriptNoPath = errors.New("err.transcript.no_path")
 // 全量读入会话文件，不做长度截断——预览必须能看到全部消息内容。
 // SQLite（OpenCode）无法按文件展开，返回说明文案。
 func FormatSessionMarkdown(s Session) (string, error) {
-	if s.ToolID == opencodeID || strings.EqualFold(filepath.Ext(s.Path), ".db") {
-		return sqliteSessionMarkdown(s), nil
-	}
 	if strings.TrimSpace(s.Path) == "" {
 		return "", errTranscriptNoPath
+	}
+	// Cursor ACP store.db：按根 blob 链还原 user/assistant 正文（先于通用 sqlite 占位）。
+	if strings.EqualFold(filepath.Ext(s.Path), ".db") && (s.ToolID == cursorID || s.ACPOnly) {
+		if turns, _, err := turnsFromCursorStore(s.Path); err == nil && len(turns) > 0 {
+			return renderTurns(s.Title, turns), nil
+		}
+	}
+	if s.ToolID == opencodeID || strings.EqualFold(filepath.Ext(s.Path), ".db") {
+		return sqliteSessionMarkdown(s), nil
 	}
 
 	raw, err := os.ReadFile(s.Path)
