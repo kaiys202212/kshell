@@ -260,7 +260,7 @@ func TestHubPickNumberSendDeliversPending(t *testing.T) {
 	if _, err := app.HubPickTarget("待发正文"); err != nil {
 		t.Fatalf("pick: %v", err)
 	}
-	replies, err := app.HubCommand("1")
+	replies, err := app.HubCommand("2")
 	if err != nil {
 		t.Fatalf("number: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestHubPickNumberSendDeliversPending(t *testing.T) {
 		t.Fatalf("暂存正文应恰好投递一次: %d", delivered)
 	}
 	// 菜单已清：再回数字只按最近列表切换，不得重复发送旧正文。
-	if _, err := app.HubCommand("1"); err != nil {
+	if _, err := app.HubCommand("2"); err != nil {
 		t.Fatalf("number again: %v", err)
 	}
 	delivered = 0

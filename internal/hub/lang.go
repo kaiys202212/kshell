@@ -62,8 +62,12 @@ var cmdTexts = map[string]langPair{
 	"nothing_to_cancel": {"Nothing to cancel", "无进行中的选择"},
 	"pick_number":       {"Reply with a number, or #c to cancel", "请回复数字选择，或 #c 取消"},
 	"pick_target":       {"No exact session matched — reply with a number to send this message:", "未精确匹配到会话——回复编号，将把这条消息发送到所选会话:"},
-	// 待选列表末项：快速新建（与 #en 同语义，编号由 listForPending 填入）。
-	"pick_en":           {"%d. en — quick new session", "%d. en — 快速新建"},
+	// 待选分组菜单：分组一「新建」（选中转 #n 分步流程），分组二最近会话。
+	"pick_group_new_label": {"new session", "新建 session"},
+	"pick_group_new":       {"--- New session ---", "--- 新建会话 ---"},
+	"pick_group_recent":    {"--- Recent sessions ---", "--- 最近会话 ---"},
+	// 分步新建完成并移交暂存正文后的第一人称确认（与 sent_ack 同语气）。
+	"handoff_done":      {"Task handed off — I'll keep you posted here.", "任务移交完成——进展我会随时在这里同步。"},
 	"pick_busy":         {"Finish or cancel the current selection first (#c), then resend", "请先完成或取消当前选择（#c），再重新发送"},
 	"stopped":           {"Interrupt sent", "已发送中断指令"},
 	"unknown_cmd":       {"Unknown command, use #? for help", "未知命令，#? 查看帮助"},

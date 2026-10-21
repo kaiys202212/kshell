@@ -657,8 +657,8 @@ func TestBridgePickConsumesAttachmentQueue(t *testing.T) {
 	if b.QueuedFiles() != 1 {
 		t.Fatalf("待选阶段队列应保留: %d", b.QueuedFiles())
 	}
-	// 回编号：发送暂存正文（含附件说明），成功后队列消费。
-	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-3", Text: "1"})
+	// 回编号：发送暂存正文（含附件说明），成功后队列消费（编号 1 是「新建」，会话在 2）。
+	b.HandleInboundMsg(context.Background(), InboundMsg{FromUserID: "u1", ContextToken: "ct-3", Text: "2"})
 	if len(ex.sentTexts) != 1 || !strings.Contains(ex.sentTexts[0], "[附件] a.pdf") || !strings.Contains(ex.sentTexts[0], "帮我修复") {
 		t.Fatalf("回编号应发送含附件说明的暂存正文: %v", ex.sentTexts)
 	}
@@ -1213,7 +1213,7 @@ func TestBridgeInboundNoTargetListsSessions(t *testing.T) {
 		t.Fatalf("sendmessage 次数 = %d, 期望 1（待选列表）", len(sends))
 	}
 	text, _ := sendMsgFields(t, sends[0].body)
-	if !strings.Contains(text, "未精确匹配到会话") || !strings.Contains(text, "1. [proj] claude 会话A") {
+	if !strings.Contains(text, "未精确匹配到会话") || !strings.Contains(text, "2. [proj] claude 会话A") {
 		t.Errorf("应回待选列表: %q", text)
 	}
 	if len(ex.sentTexts) != 0 {
