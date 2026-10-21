@@ -23,6 +23,7 @@ const api = vi.hoisted(() => ({
   respondChatPermission: vi.fn(),
   cancelChatPermission: vi.fn(),
   listChats: vi.fn(),
+  openExternalURL: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../lib/api', () => api);
 
@@ -515,15 +516,12 @@ describe('ChatView', () => {
   });
 
   it('助手 Markdown 的 http 链接走系统打开', () => {
-    const open = vi.fn();
-    vi.stubGlobal('runtime', { BrowserOpenURL: open });
     useAppStore.setState({
       chatItems: { c1: [{ key: 'm2', type: 'assistant', text: '[x](https://ex.com)', seq: 2 }] },
     });
     render(<ChatView chat={CHAT} active />);
     fireEvent.click(screen.getByRole('link', { name: 'x' }));
-    expect(open).toHaveBeenCalledWith('https://ex.com');
-    vi.unstubAllGlobals();
+    expect(api.openExternalURL).toHaveBeenCalledWith('https://ex.com');
   });
 
   // ---- 消息队列：running 时入队不出手，出队（回 ready）时才真正发送 ----

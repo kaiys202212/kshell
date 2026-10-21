@@ -22,6 +22,7 @@ const api = vi.hoisted(() => ({
   writeTerminal: vi.fn(),
   resizeTerminal: vi.fn(),
   scanSessions: vi.fn(),
+  openExternalURL: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../lib/api', () => api);
 

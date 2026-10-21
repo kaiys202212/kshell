@@ -465,12 +465,17 @@ function App() {
   }, [setActiveTab, handleCloseTab]);
 
   useEffect(() => {
-    // 捕获阶段拦截 <a>：阻止 WebView 整页导航，改走系统打开或工作区文件。
+    // 捕获阶段拦截 <a>：阻止 WebView 弹窗/整页导航，改走系统打开或工作区文件。
+    // auxclick 覆盖中键；不处理则 WebView2 会 NewWindowRequested 弹出 kshell 内置窗体。
     const onClick = (e: MouseEvent) => {
       handleAnchorClick(e);
     };
     document.addEventListener('click', onClick, true);
-    return () => document.removeEventListener('click', onClick, true);
+    document.addEventListener('auxclick', onClick, true);
+    return () => {
+      document.removeEventListener('click', onClick, true);
+      document.removeEventListener('auxclick', onClick, true);
+    };
   }, []);
 
   const isHome = activeTabId === null;

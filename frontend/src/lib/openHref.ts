@@ -1,6 +1,8 @@
 // 超链接点击：带协议交给系统默认程序，相对路径在工作区内打开文件。
 // 分类必须用元素上的 href 属性，不能用 a.href（WebView 会按自身基址改写）。
 
+import { openExternalURL } from './api';
+
 export type HrefAction =
   | { kind: 'ignore' }
   | { kind: 'external'; url: string }
@@ -108,11 +110,9 @@ export function classifyHref(href: string, opts?: ClassifyOpts): HrefAction {
   return resolveWorkspace(raw, opts ?? {});
 }
 
-type RuntimeHost = { BrowserOpenURL?: (url: string) => void };
-
 export function openExternal(url: string): void {
-  const rt = (globalThis as { runtime?: RuntimeHost }).runtime;
-  rt?.BrowserOpenURL?.(url);
+  // 异步绑定；失败静默（系统侧偶发），避免打断阅读。
+  void Promise.resolve(openExternalURL(url)).catch(() => {});
 }
 
 export function requestOpenWorkspaceFile(workspace: string, path: string): void {
@@ -139,16 +139,24 @@ function eventElement(target: EventTarget | null): Element | null {
 
 const HANDLED = '_kshellHrefHandled';
 
-type HandledEvent = { [HANDLED]?: boolean };
+type HandledEvent = {
+  [HANDLED]?: boolean;
+  preventDefault?: () => void;
+  stopImmediatePropagation?: () => void;
+};
 
-export function consumeHrefEvent(ev: HandledEvent & { preventDefault?: () => void }): boolean {
+export function consumeHrefEvent(ev: HandledEvent): boolean {
   if (ev[HANDLED]) return false;
   ev[HANDLED] = true;
   ev.preventDefault?.();
+  // 阻止其它监听器（含 WebView 默认新窗路径相关冒泡）继续处理同一点击
+  ev.stopImmediatePropagation?.();
   return true;
 }
 
 export function handleAnchorClick(ev: MouseEvent, opts?: ClassifyOpts): boolean {
+  // 主键 / 中键；右键留给上下文菜单
+  if (typeof ev.button === 'number' && ev.button !== 0 && ev.button !== 1) return false;
   const el = eventElement(ev.target);
   if (!el) return false;
   const a = el.closest('a');

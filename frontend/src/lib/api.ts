@@ -566,6 +566,7 @@ interface AppBindings {
   StopFileWatch(wsPath: string): void;
   RevealInExplorer(wsPath: string, path: string): Promise<void>;
   OpenInDefaultApp(wsPath: string, path: string): Promise<void>;
+  OpenExternalURL(url: string): Promise<void>;
   RenameEntry(wsPath: string, relPath: string, newName: string): Promise<string>;
   CreateEntry(wsPath: string, dirRelPath: string, name: string, isDir: boolean): Promise<string>;
   DeleteEntry(wsPath: string, relPath: string): Promise<void>;
@@ -880,6 +881,14 @@ export async function openInDefaultApp(wsPath: string, path: string): Promise<vo
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
   await a.OpenInDefaultApp(wsPath, path);
+}
+
+// OpenExternalURL 用系统默认程序打开 http(s)/mailto 等外链。
+// 不走 Wails BrowserOpenURL：校验过严会静默失败，且 WebView2 未拦截时会弹应用内窗体。
+export async function openExternalURL(url: string): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.OpenExternalURL(url);
 }
 
 // onFilesChanged 订阅工作区文件树变更（Go 侧 watch/刷新后推送），返回取消订阅函数。

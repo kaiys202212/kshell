@@ -7,6 +7,11 @@ import {
   requestOpenWorkspaceFile,
 } from './openHref';
 
+const api = vi.hoisted(() => ({
+  openExternalURL: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('./api', () => api);
+
 describe('classifyHref', () => {
   const ws = 'D:\\proj';
 
@@ -93,15 +98,12 @@ describe('classifyHref', () => {
 
 describe('handleHref / 点击', () => {
   afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
-  it('external 调用 BrowserOpenURL', () => {
-    const open = vi.fn();
-    vi.stubGlobal('runtime', { BrowserOpenURL: open });
+  it('external 调用 OpenExternalURL', () => {
     handleHref('https://example.com');
-    expect(open).toHaveBeenCalledWith('https://example.com');
+    expect(api.openExternalURL).toHaveBeenCalledWith('https://example.com');
   });
 
   it('workspace 派发 kshell:open-file', () => {
@@ -134,8 +136,6 @@ describe('handleHref / 点击', () => {
   });
 
   it('捕获 a 点击 preventDefault 并用 attribute href', () => {
-    const open = vi.fn();
-    vi.stubGlobal('runtime', { BrowserOpenURL: open });
     const a = document.createElement('a');
     a.setAttribute('href', 'https://example.com/from-attr');
     Object.defineProperty(a, 'href', { get: () => 'wails://localhost/hijacked' });
@@ -147,7 +147,7 @@ describe('handleHref / 点击', () => {
     const handled = handleAnchorClick(ev);
     expect(handled).toBe(true);
     expect(ev.defaultPrevented).toBe(true);
-    expect(open).toHaveBeenCalledWith('https://example.com/from-attr');
+    expect(api.openExternalURL).toHaveBeenCalledWith('https://example.com/from-attr');
     a.remove();
   });
 

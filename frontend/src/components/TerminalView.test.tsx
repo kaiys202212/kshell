@@ -30,6 +30,7 @@ const api = vi.hoisted(() => ({
   writeTerminal: vi.fn(),
   resizeTerminal: vi.fn(),
   readClipboardPaste: vi.fn(),
+  openExternalURL: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../lib/api', () => api);
 
@@ -221,6 +222,7 @@ beforeEach(() => {
   api.writeTerminal.mockResolvedValue(undefined);
   api.resizeTerminal.mockResolvedValue(undefined);
   api.readClipboardPaste.mockResolvedValue({ Text: '', Path: '' });
+  api.openExternalURL.mockResolvedValue(undefined);
   useAppStore.getState().setAppearance({ mode: 'system', resolved: 'dark', fontSize: 13 });
 
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
@@ -567,15 +569,12 @@ describe('TerminalView', () => {
   });
 
   it('加载 web-links，点击 http 走系统打开', () => {
-    const open = vi.fn();
-    vi.stubGlobal('runtime', { BrowserOpenURL: open });
     render(<TerminalView term={TERM} active />);
     expect(mocks.webLinks).toHaveLength(1);
     const ev = new MouseEvent('click', { cancelable: true });
     mocks.webLinks[0].handler?.(ev, 'https://example.com/t');
     expect(ev.defaultPrevented).toBe(true);
-    expect(open).toHaveBeenCalledWith('https://example.com/t');
-    vi.unstubAllGlobals();
+    expect(api.openExternalURL).toHaveBeenCalledWith('https://example.com/t');
   });
 
   it('有选区时 Ctrl+C 写入剪贴板并拦截默认行为', async () => {

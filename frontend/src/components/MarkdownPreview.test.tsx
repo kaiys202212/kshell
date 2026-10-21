@@ -7,9 +7,14 @@ import { OPEN_FILE_EVENT } from '../lib/openHref';
 import { tt } from '../test/i18n';
 import MarkdownPreview from './MarkdownPreview';
 
+const api = vi.hoisted(() => ({
+  openExternalURL: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('../lib/api', () => api);
+
 afterEach(() => {
   cleanup();
-  vi.unstubAllGlobals();
+  vi.clearAllMocks();
   delete (HTMLElement.prototype as { offsetParent?: unknown }).offsetParent;
 });
 
@@ -39,13 +44,11 @@ describe('MarkdownPreview', () => {
   });
 
   it('点击 http 链接调用系统打开且 preventDefault', () => {
-    const open = vi.fn();
-    vi.stubGlobal('runtime', { BrowserOpenURL: open });
     render(<MarkdownPreview markdown="[x](https://example.com)" />);
     const link = screen.getByRole('link', { name: 'x' });
     const ev = fireEvent.click(link);
     expect(ev).toBe(false); // preventDefault → fireEvent.click 返回 false
-    expect(open).toHaveBeenCalledWith('https://example.com');
+    expect(api.openExternalURL).toHaveBeenCalledWith('https://example.com');
   });
 
   it('相对路径派发打开工作区文件', () => {

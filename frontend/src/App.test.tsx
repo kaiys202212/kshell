@@ -114,6 +114,7 @@ const mocks = vi.hoisted(() => ({
   stopFileWatch: vi.fn(),
   onFilesChanged: vi.fn(() => () => {}),
   revealInExplorer: vi.fn().mockResolvedValue(undefined),
+  openExternalURL: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('./lib/api', () => mocks);
 
@@ -789,17 +790,14 @@ describe('App', () => {
   });
 
   it('捕获页面内 a 点击并交给系统打开', () => {
-    const open = vi.fn();
-    vi.stubGlobal('runtime', { BrowserOpenURL: open });
     render(<App />);
     const a = document.createElement('a');
     a.setAttribute('href', 'https://example.com/app');
     a.textContent = 'ext';
     document.body.appendChild(a);
     fireEvent.click(a);
-    expect(open).toHaveBeenCalledWith('https://example.com/app');
+    expect(mocks.openExternalURL).toHaveBeenCalledWith('https://example.com/app');
     a.remove();
-    vi.unstubAllGlobals();
   });
 
   // 终端聚焦时 Ctrl+K 必须让行给 shell（xterm 已把按键写入 pty），

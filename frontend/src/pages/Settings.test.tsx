@@ -47,6 +47,7 @@ const mocks = vi.hoisted(() => ({
   applyUpdate: vi.fn(),
   checkToolAuth: vi.fn().mockResolvedValue('unknown'),
   openLoginTerminal: vi.fn(),
+  openExternalURL: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -1255,14 +1256,11 @@ describe('Settings', () => {
   });
 
   it('点击反馈问题打开 GitHub Issues 新建页', async () => {
-    const open = vi.fn();
-    vi.stubGlobal('runtime', { BrowserOpenURL: open });
     mocks.getAppVersion.mockResolvedValue('v0.1.0');
     render(<Settings />);
     await screen.findByRole('heading', { name: tt('ui.settings.about.title') });
     fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.about.feedback') }));
-    expect(open).toHaveBeenCalledWith('https://github.com/kaiys202212/kshell/issues/new');
-    vi.unstubAllGlobals();
+    expect(mocks.openExternalURL).toHaveBeenCalledWith('https://github.com/kaiys202212/kshell/issues/new');
   });
 
   it('开发构建检查更新：跳过原因 wire key 经 translateBackend 翻译展示', async () => {
