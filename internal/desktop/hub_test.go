@@ -735,6 +735,46 @@ func TestRecordHubAgentMessageDerivesSessionIDFromTermKey(t *testing.T) {
 	}
 }
 
+// new:N 终端若已 AttachSession（Info.SessionID 非空），hook Stop 应快照该 ID，
+// 不能因 termKey 无 session: 前缀而丢掉激活句柄。
+func TestRecordHubAgentMessageCopiesSessionIDFromNewTerminal(t *testing.T) {
+	store := hub.New(t.TempDir(), 0)
+	if err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	a := NewAppWith(Options{
+		HubStore:  store,
+		Terminals: newTerminalManagerWith(func(string, ...any) {}, &stubTermBackend{}),
+		Emit:      func(string, ...any) {},
+	})
+	tm := a.terminals()
+	if _, err := tm.Open("new:3", terminal.Info{
+		Kind: terminal.KindNew, SessionID: "disk-99", Workspace: "D:/ws",
+		Title: "Debug browser", ToolID: "codebuddy",
+	}, terminal.Spec{Path: "x"}, 80, 24); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	a.recordHubAgentMessage(agenthook.Payload{
+		Event: "Stop", TermKey: "new:3", Workspace: "D:/ws",
+	})
+	msgs := store.List()
+	if len(msgs) != 1 {
+		t.Fatalf("应落 1 条，得到 %d", len(msgs))
+	}
+	if msgs[0].SessionID != "disk-99" {
+		t.Fatalf("应从终端 Info 抄 SessionID: %+v", msgs[0])
+	}
+	if msgs[0].SessionTitle != "Debug browser" {
+		t.Fatalf("SessionTitle = %q", msgs[0].SessionTitle)
+	}
+	if msgs[0].Tool != "codebuddy" {
+		t.Fatalf("Tool 应从终端补全: %+v", msgs[0])
+	}
+	if msgs[0].ChatID != "" {
+		t.Fatalf("终端通道不应设 ChatID")
+	}
+}
+
 // 重建后 agent 回复落盘 ChatID 必须是链头（旧 ID）：出站翻译把通知 ChatID 翻回
 // 原始 ID，recordHubAgentMessage 反查 manager 拿到的是最新 ID，直接落盘会指向
 // 前端不认识的新 ID，hub 归因断线。

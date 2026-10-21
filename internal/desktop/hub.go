@@ -289,22 +289,31 @@ func (a *App) recordHubAgentMessage(p agenthook.Payload) {
 			}
 		}
 	}
-	// 终端 hook 通道（termKey = session:<磁盘会话ID>）不在 chat manager 里，
-	// 从终端管理器反查标题补快照；OpenSessionTerminal 打开时已把磁盘会话标题
-	// 写进 terminal.Info.Title。不设 ChatID：终端会话没有 chat ID，避免归因串线。
-	if m.SessionTitle == "" && p.TermKey != "" {
+	// 终端 hook 通道（termKey = session:<id> 或 new:N）不在 chat manager 里，
+	// 从终端管理器反查标题 / SessionID / Tool；OpenSessionTerminal 打开时已把
+	// 磁盘会话标题写进 Title，AttachSession 后 Info.SessionID 也会有值。
+	// 不设 ChatID：终端会话没有 chat ID，避免归因串线。
+	if p.TermKey != "" {
 		if tm := a.terminals(); tm != nil {
 			for _, info := range tm.List() {
-				if info.Key == p.TermKey {
-					m.SessionTitle = info.Title
-					break
+				if info.Key != p.TermKey {
+					continue
 				}
+				if m.SessionTitle == "" {
+					m.SessionTitle = info.Title
+				}
+				if m.SessionID == "" {
+					m.SessionID = info.SessionID
+				}
+				if m.Tool == "" {
+					m.Tool = info.ToolID
+				}
+				break
 			}
 		}
 	}
-	// SessionID 仍为空时从 termKey 派生：session: 前缀即磁盘会话 ID（终端 hook
-	// 通道与查不到的 ACP 会话都走这里），快照供「继续」按钮精确 resume；
-	// 无前缀（如新建聊天的 new:N）不设。
+	// SessionID 仍为空时从 termKey 派生：session: 前缀即磁盘会话 ID；
+	// 无前缀（如 new:N）不设——依赖上方 Info.SessionID 或扫描回填。
 	if m.SessionID == "" && strings.HasPrefix(p.TermKey, "session:") {
 		m.SessionID = strings.TrimPrefix(p.TermKey, "session:")
 	}

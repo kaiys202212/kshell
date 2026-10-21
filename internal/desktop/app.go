@@ -907,6 +907,7 @@ func (a *App) attachDiscoveredSessions(sessions []providers.Session, prevIDs map
 		if !prevIDs[s.ID] {
 			if o.Terminals != nil && o.Terminals.AttachSession(s.ID, s.Workspace, s.ToolID, s.Title, s.Messages, s.CreatedAt) {
 				changed++
+				a.backfillHubSessionIDByTerminal(o.Terminals, s.ID)
 			}
 			if o.Chats != nil && o.Chats.AttachSession(s.ID, s.Workspace, s.ToolID, s.Title, s.Messages, s.CreatedAt) {
 				changed++
@@ -920,6 +921,8 @@ func (a *App) attachDiscoveredSessions(sessions []providers.Session, prevIDs map
 			changed++
 		}
 	}
+	// 扫描完成后对 live 中仍缺 sessionId 的消息做 orphan 回填（标题/邻近）。
+	a.backfillHubMissingSessionIDs(sessions)
 	a.flushPendingArchive()
 	return changed
 }
@@ -946,6 +949,47 @@ func (a *App) backfillHubSessionID(m *chat.Manager, sessionID string) {
 		return
 	}
 	if store.BackfillSessionID(chatID, sessionID) > 0 {
+		a.Emit("hub:changed")
+	}
+}
+
+// backfillHubSessionIDByTerminal 终端 AttachSession 后按 termKey 回填：
+// hook 通道消息常无 ChatID，只有 new:N，必须靠 Key 对齐才能补 sessionId。
+func (a *App) backfillHubSessionIDByTerminal(tm *terminal.Manager, sessionID string) {
+	store := a.snapshot().HubStore
+	if store == nil || tm == nil || sessionID == "" {
+		return
+	}
+	termKey := ""
+	for _, info := range tm.List() {
+		if info.SessionID == sessionID {
+			termKey = info.Key
+			break
+		}
+	}
+	if termKey == "" {
+		return
+	}
+	if store.BackfillSessionIDByTermKey(termKey, sessionID) > 0 {
+		a.Emit("hub:changed")
+	}
+}
+
+// backfillHubMissingSessionIDs 用本轮扫描的磁盘会话给 live 里仍缺 sessionId
+// 的消息补快照（session: 前缀 / 标题精确 / 邻近唯一）。
+func (a *App) backfillHubMissingSessionIDs(sessions []providers.Session) {
+	store := a.snapshot().HubStore
+	if store == nil || len(sessions) == 0 {
+		return
+	}
+	refs := make([]hub.DiskSession, 0, len(sessions))
+	for _, s := range sessions {
+		refs = append(refs, hub.DiskSession{
+			ID: s.ID, ToolID: s.ToolID, Workspace: s.Workspace,
+			Title: s.Title, UpdatedAt: s.UpdatedAt,
+		})
+	}
+	if store.BackfillMissingSessionIDs(refs) > 0 {
 		a.Emit("hub:changed")
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
 )
 
 // ts 生成指定年月日（UTC 中午）的 UnixNano，避免时区把测试跨月。
@@ -456,5 +457,97 @@ func TestBackfillSessionID(t *testing.T) {
 	}
 	if got := s2.List()[0].SessionID; got != "s-9" {
 		t.Fatalf("重载后 SessionID = %q", got)
+	}
+}
+
+// TestBackfillSessionIDByTermKey：终端 hook 消息无 ChatID，按 termKey 回填。
+func TestBackfillSessionIDByTermKey(t *testing.T) {
+	s := newTestStore(t, 10)
+	for _, m := range []Message{
+		{Kind: "agent", TermKey: "new:3", Text: "done"},
+		{Kind: "agent", TermKey: "new:3", Text: "again", SessionID: "keep"},
+		{Kind: "agent", TermKey: "new:4", Text: "other"},
+	} {
+		if err := s.Append(m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := s.BackfillSessionIDByTermKey("new:3", "s-term"); got != 1 {
+		t.Fatalf("应回填 1 条，得到 %d", got)
+	}
+	msgs := s.List()
+	if msgs[0].SessionID != "s-term" {
+		t.Fatalf("空快照应被回填: %+v", msgs[0])
+	}
+	if msgs[1].SessionID != "keep" {
+		t.Fatalf("已有快照不应覆盖: %+v", msgs[1])
+	}
+	if msgs[2].SessionID != "" {
+		t.Fatalf("其他 termKey 不应改: %+v", msgs[2])
+	}
+	if got := s.BackfillSessionIDByTermKey("new:3", "s-term"); got != 0 {
+		t.Fatalf("幂等应为 0，得到 %d", got)
+	}
+	if got := s.BackfillSessionIDByTermKey("", "s"); got != 0 || s.BackfillSessionIDByTermKey("new:3", "") != 0 {
+		t.Fatal("空参数应短路")
+	}
+}
+
+// TestBackfillMissingSessionIDs：orphan 三级匹配（session: 前缀 / 标题精确 / 邻近）。
+func TestBackfillMissingSessionIDs(t *testing.T) {
+	s := newTestStore(t, 20)
+	now := time.Date(2026, 10, 21, 16, 0, 0, 0, time.Local)
+	msgTs := now.UnixNano()
+	for _, m := range []Message{
+		{Kind: "agent", TermKey: "session:from-key", Text: "a", Ts: msgTs},
+		{Kind: "agent", Tool: "codebuddy", Workspace: `D:\ws`, SessionTitle: "精确标题", Text: "b", Ts: msgTs},
+		{Kind: "agent", Tool: "codebuddy", Workspace: `D:\ws`, SessionTitle: "错标题", Text: "c", Ts: msgTs},
+		{Kind: "agent", Tool: "codebuddy", Workspace: `D:\ws`, Text: "d", SessionID: "already", Ts: msgTs},
+	} {
+		if err := s.Append(m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refs := []DiskSession{
+		// from-key 仅服务 session: 前缀用例；workspace 不同以免干扰邻近
+		{ID: "from-key", ToolID: "other", Workspace: `d:\other`, Title: "x", UpdatedAt: now},
+		{ID: "exact-1", ToolID: "codebuddy", Workspace: `d:\ws`, Title: "精确标题", UpdatedAt: now.Add(-30 * time.Minute)},
+		// 邻近：唯一最近（第二近差 >5 分钟）
+		{ID: "near-1", ToolID: "codebuddy", Workspace: `d:\ws`, Title: "别的", UpdatedAt: now.Add(-30 * time.Second)},
+		{ID: "near-2", ToolID: "codebuddy", Workspace: `d:\ws`, Title: "更远", UpdatedAt: now.Add(-20 * time.Minute)},
+	}
+	if got := s.BackfillMissingSessionIDs(refs); got != 3 {
+		t.Fatalf("应回填 3 条（前缀+标题+邻近），得到 %d；msgs=%+v", got, s.List())
+	}
+	msgs := s.List()
+	if msgs[0].SessionID != "from-key" {
+		t.Fatalf("session: 前缀: %+v", msgs[0])
+	}
+	if msgs[1].SessionID != "exact-1" {
+		t.Fatalf("标题精确: %+v", msgs[1])
+	}
+	if msgs[2].SessionID != "near-1" {
+		t.Fatalf("邻近唯一: %+v", msgs[2])
+	}
+	if msgs[3].SessionID != "already" {
+		t.Fatalf("已有不应覆盖: %+v", msgs[3])
+	}
+}
+
+// TestBackfillMissingSessionIDsAmbiguousProximity：前两名距离差过近则不回填。
+func TestBackfillMissingSessionIDsAmbiguousProximity(t *testing.T) {
+	s := newTestStore(t, 10)
+	now := time.Date(2026, 10, 21, 16, 0, 0, 0, time.Local)
+	if err := s.Append(Message{
+		Kind: "agent", Tool: "codebuddy", Workspace: `D:\ws`, Text: "x", Ts: now.UnixNano(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	refs := []DiskSession{
+		{ID: "a", ToolID: "codebuddy", Workspace: `d:\ws`, Title: "t1", UpdatedAt: now.Add(-time.Minute)},
+		{ID: "b", ToolID: "codebuddy", Workspace: `d:\ws`, Title: "t2", UpdatedAt: now.Add(-2 * time.Minute)},
+	}
+	if got := s.BackfillMissingSessionIDs(refs); got != 0 {
+		t.Fatalf("歧义邻近不应回填，得到 %d", got)
 	}
 }

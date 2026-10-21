@@ -286,6 +286,28 @@ func (s *Store) BackfillSessionID(chatID, sessionID string) int {
 	return changed
 }
 
+// BackfillSessionIDByTermKey 给 termKey 匹配且尚未绑定磁盘会话的消息补上 SessionID。
+// 终端 hook 通道消息常无 ChatID（只有 termKey=new:N），扫描 AttachSession 后
+// 由 desktop 按终端 Key 调用；只补空快照，返回更新条数。
+func (s *Store) BackfillSessionIDByTermKey(termKey, sessionID string) int {
+	if termKey == "" || sessionID == "" {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := 0
+	for i := range s.live {
+		if s.live[i].TermKey == termKey && s.live[i].SessionID == "" {
+			s.live[i].SessionID = sessionID
+			changed++
+		}
+	}
+	if changed > 0 {
+		_ = s.writeLive()
+	}
+	return changed
+}
+
 // Clear 清空 live 消息（归档保留，符合「只增不删」）。
 func (s *Store) Clear() error {
 	s.mu.Lock()
