@@ -1,9 +1,17 @@
 # Changelog
 
-## Unreleased
+## v0.1.17 (2026-10-21)
 
 - New "Help" section in Settings: built-in bilingual docs for the user guide and changelog, always available in-app.
 - The full changelog now pops up automatically after upgrading to a new version, so new features are easy to spot.
+- AgentHub WeChat bridge upgrades: voice messages are saved and forwarded with the conversation, attachments are merged with text, quoted replies are attributed to the right session, and outbound messages always start with [session name].
+- AgentHub supports `#f` to send directly to the latest session; when there is no exact match, sessions are listed for selection and replying with a number delivers the message.
+- AgentHub sessions are now flat chips above the input box — tap one to @ that session; completion notifications are deduplicated by text to avoid replaying history.
+- AgentHub gains autonomous tools and `dispatch_task`, plus a routing-mode switch and a confirmation card before write operations.
+- Cursor chat now uses the official ACP channel, with login-state detection and a login dialog, plus a fallback hint when not signed in.
+- Cursor acp-sessions are discovered automatically; inactive sessions can be activated with a quick reply, and titles and previews are restored from store.db.
+- Activating a Claude session over ACP restores the last used model; new sessions sync the selected model and reuse it next time.
+- Fixed Markdown table rendering in ACP chat bubbles, frontend crashes when the model list is empty, and model-name matching failures when restoring sessions.
 
 ## v0.1.16 (2026-10-18)
 
