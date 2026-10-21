@@ -51,6 +51,7 @@ import { resolveHubSessionIdFromSessions } from '../lib/hubSessionResolve';
 import { dispatchRequirement } from '../lib/dispatchRequirement';
 import { REQUIREMENT_MIME } from './RequirementList';
 import { attributionText, baseName, resolveAttribution } from '../lib/hubAttribution';
+import { chipSessionLabel } from '../lib/hubChipLabel';
 import { markdownBubbleClass } from '../lib/markdownStyles';
 import { sameWorkspacePath } from '../lib/workspacePath';
 import { cn } from '../lib/cn';
@@ -468,9 +469,14 @@ export default function AgentHubPanel() {
     for (let i = hubMessages.length - 1; i >= 0; i--) {
       const m = hubMessages[i];
       if (hubPendingSessionId(m) !== sessionID) continue;
-      return { sessionID, title: m.sessionTitle || sessionID, tool: m.tool || '' };
+      return {
+        sessionID,
+        title: m.sessionTitle || sessionID,
+        tool: m.tool || '',
+        workspace: m.workspace || '',
+      };
     }
-    return { sessionID, title: sessionID, tool: '' };
+    return { sessionID, title: sessionID, tool: '', workspace: '' };
   }, [currentTargetId, hubMessages]);
   // mentionPending 待激活 chip 点击：先激活原会话，成功后按普通 chip 语义把
   // 新会话的 @ 标签追加进输入框。
@@ -1416,8 +1422,8 @@ export default function AgentHubPanel() {
                       className={cn('h-1.5 w-1.5 shrink-0 rounded-full', statusDotClass(c.Status))}
                     />
                     <span className="min-w-0 truncate font-medium">
-                      {/* 无标题会话兜底显示项目基名，避免出现「新会话」同名列无法区分 */}
-                      {c.Title || wsBaseName(c.Workspace) || emptyTarget}
+                      {/* 始终带项目前两字前缀，跨项目同名会话可一眼区分 */}
+                      {chipSessionLabel(c.Title, c.Workspace, emptyTarget)}
                     </span>
                     <span className="shrink-0" title={toolDisplayName(c.ToolID)}>
                       <ToolIcon toolID={c.ToolID} label={toolDisplayName(c.ToolID)} />
@@ -1460,7 +1466,7 @@ export default function AgentHubPanel() {
               >
                 <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/40" />
                 <span className="min-w-0 truncate font-medium">
-                  {pendingTarget.title}
+                  {chipSessionLabel(pendingTarget.title, pendingTarget.workspace)}
                   <span className="ml-1 text-[11px] font-normal text-muted-foreground">
                     {t('ui.hub.pending_chip')}
                   </span>

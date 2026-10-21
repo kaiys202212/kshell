@@ -193,9 +193,9 @@ describe('AgentHubPanel', () => {
     });
     render(<AgentHubPanel />);
     const chips = screen.getByTestId('hub-session-chips');
-    // 每个会话一枚 chip，常驻可见（无展开前置步骤）
-    expect(within(chips).getByText('重构认证')).toBeTruthy();
-    expect(within(chips).getByText('乙')).toBeTruthy();
+    // 每个会话一枚 chip，常驻可见；文案始终带项目前两字前缀
+    expect(within(chips).getByText('a · 重构认证')).toBeTruthy();
+    expect(within(chips).getByText('b · 乙')).toBeTruthy();
     // 标题旁用工具图标，悬停仍能看到工具名
     expect(chips.querySelector('[data-tool="claude"]')).toBeTruthy();
     expect(chips.querySelector('[data-tool="cursor"]')).toBeTruthy();
@@ -281,8 +281,8 @@ describe('AgentHubPanel', () => {
     expect(closes).toHaveLength(1);
     fireEvent.click(closes[0]);
     // 断言结果而非实现：c1 chip 消失，c2 仍在，chips 区常驻
-    await waitFor(() => expect(within(chips).queryByText('重构认证')).toBeNull());
-    expect(within(chips).getByText('乙')).toBeTruthy();
+    await waitFor(() => expect(within(chips).queryByText('a · 重构认证')).toBeNull());
+    expect(within(chips).getByText('a · 乙')).toBeTruthy();
     // 后端 Manager.Close 已被调用（幂等），不再调 cancelChat（那只会取消当前轮）
     await waitFor(() => expect(api.closeChat).toHaveBeenCalledWith('c1'));
     expect(api.cancelChat).not.toHaveBeenCalled();
@@ -301,7 +301,7 @@ describe('AgentHubPanel', () => {
       ).toBe(true),
     );
     // 失败不摘除：chip 仍在 chips 区，可重试
-    expect(screen.getByTestId('hub-session-chips')).toHaveTextContent('重构认证');
+    expect(screen.getByTestId('hub-session-chips')).toHaveTextContent('a · 重构认证');
   });
 
   it('chip 可拖拽：dragStart 写入 @ 标签到 dataTransfer', () => {
@@ -309,7 +309,7 @@ describe('AgentHubPanel', () => {
     render(<AgentHubPanel />);
     const chips = screen.getByTestId('hub-session-chips');
     // chip 容器 div：含标题文本的可拖拽节点
-    const chip = within(chips).getByText('重构认证').closest('div[draggable="true"]')!;
+    const chip = within(chips).getByText('a · 重构认证').closest('div[draggable="true"]')!;
     const dt = {
       data: {} as Record<string, string>,
       setData(k: string, v: string) {
@@ -1502,7 +1502,7 @@ describe('AgentHubPanel', () => {
     render(<AgentHubPanel />);
     await act(async () => {});
     expect(screen.queryByTitle(tt('ui.hub.pending_chip_aria'))).toBeNull();
-    expect(screen.getByText('甲').closest('[aria-current="true"]')).toBeNull();
+    expect(screen.getByText('a · 甲').closest('[aria-current="true"]')).toBeNull();
   });
 
   it('pending 目标已激活（会话重新打开）后待激活 chip 消失', async () => {
@@ -1518,7 +1518,7 @@ describe('AgentHubPanel', () => {
     });
     render(<AgentHubPanel />);
     // 最新消息精确命中已激活 c1：currentTargetId='c1'，无待激活 chip
-    await screen.findByText('甲');
+    await screen.findByText('a · 甲');
     expect(screen.queryByText(new RegExp(tt('ui.hub.pending_chip')))).toBeNull();
   });
 
