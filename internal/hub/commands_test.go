@@ -45,9 +45,13 @@ type fakeExecutor struct {
 	openSessionRef  SessionRef
 	openSessionErr  error
 	recentMessages  []Message
+	// recoverRef/recoverOK 模拟 RecoverSession（引用过期 chatID 恢复）。
+	recoverRef SessionRef
+	recoverOK  bool
 	// 记录调用参数
 	switchCalls      []string
 	openSessionCalls []string
+	recoverCalls     []string
 	createCalls      [][3]string // tool, ws, model
 	stopCalls        []string
 	setModelCalls    [][2]string
@@ -72,6 +76,14 @@ func (f *fakeExecutor) OpenSession(sessionID string) (SessionRef, error) {
 		return SessionRef{}, f.openSessionErr
 	}
 	return f.openSessionRef, nil
+}
+
+func (f *fakeExecutor) RecoverSession(chatID string) (SessionRef, bool) {
+	f.recoverCalls = append(f.recoverCalls, chatID)
+	if !f.recoverOK {
+		return SessionRef{}, false
+	}
+	return f.recoverRef, true
 }
 
 func (f *fakeExecutor) EasyNew() (SessionRef, error) { return f.easyNewRef, f.easyNewErr }
@@ -170,6 +182,38 @@ func TestHandleQuoted(t *testing.T) {
 		}
 		if len(ex.sendCalls) != 0 || len(ex.switchCalls) != 0 {
 			t.Errorf("未命中不应投递/切换: send=%v switch=%v", ex.sendCalls, ex.switchCalls)
+		}
+	})
+
+	t.Run("过期 chatID 经 RecoverSession 激活后投递", func(t *testing.T) {
+		ex := &fakeExecutor{
+			listSessions:   sessions,
+			recoverOK:      true,
+			recoverRef:     SessionRef{SessionID: "s-old", Tool: "claude", Title: "旧会话"},
+			openSessionRef: SessionRef{ChatID: "c-new", SessionID: "s-old", Tool: "claude", Title: "旧会话"},
+		}
+		c := NewConsole(ex)
+		handled, replies := c.HandleQuoted("c-closed", "继续")
+		if !handled || len(replies) != 0 {
+			t.Fatalf("恢复后应静默投递: handled=%v replies=%v", handled, replies)
+		}
+		if len(ex.recoverCalls) != 1 || ex.recoverCalls[0] != "c-closed" {
+			t.Errorf("应调用 RecoverSession: %v", ex.recoverCalls)
+		}
+		if len(ex.openSessionCalls) != 1 || ex.openSessionCalls[0] != "s-old" {
+			t.Errorf("应 OpenSession(s-old): %v", ex.openSessionCalls)
+		}
+		if len(ex.sendCalls) != 1 || ex.sendCalls[0] != [2]string{"c-new", "继续"} {
+			t.Errorf("应发到新 chat: %v", ex.sendCalls)
+		}
+	})
+
+	t.Run("RecoverSession 失败仍 handled=false", func(t *testing.T) {
+		ex := &fakeExecutor{listSessions: sessions, recoverOK: false}
+		c := NewConsole(ex)
+		handled, _ := c.HandleQuoted("c-closed", "文本")
+		if handled {
+			t.Fatal("恢复失败应回落待选")
 		}
 	})
 
@@ -628,6 +672,35 @@ func TestGUsageErrors(t *testing.T) {
 	}
 	if got := join(c.Handle("#g 9 hi")); !strings.Contains(got, "编号不存在") {
 		t.Fatalf("#g 越界编号应提示: %q", got)
+	}
+}
+
+func TestGOpensDiskSession(t *testing.T) {
+	// #g 对未激活磁盘会话须先 OpenSession，且不改 current。
+	fe := &fakeExecutor{
+		listSessions: []SessionRef{
+			{SessionID: "s-disk", Tool: "claude", Title: "磁盘A"},
+			wsRef(0, "c2", "", "", "codex", "B", true),
+		},
+		hasActivity:     true,
+		lastActivityRef: wsRef(0, "c2", "", "", "codex", "B", true),
+		openSessionRef:  SessionRef{ChatID: "c-opened", SessionID: "s-disk", Tool: "claude", Title: "磁盘A"},
+	}
+	c := NewConsole(fe)
+	c.Handle("#l")
+	out := join(c.Handle("#g 1 hi disk"))
+	if !strings.Contains(out, "已发送到: 【磁盘A】") {
+		t.Fatalf("#g 激活磁盘后应成功: %q", out)
+	}
+	if len(fe.openSessionCalls) != 1 || fe.openSessionCalls[0] != "s-disk" {
+		t.Fatalf("应 OpenSession(s-disk): %v", fe.openSessionCalls)
+	}
+	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c-opened", "hi disk"} {
+		t.Fatalf("Send 参数不符: %v", fe.sendCalls)
+	}
+	c.Handle("#s")
+	if len(fe.stopCalls) != 1 || fe.stopCalls[0] != "c2" {
+		t.Fatalf("#g 仍不得切 current: %v", fe.stopCalls)
 	}
 }
 

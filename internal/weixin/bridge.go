@@ -217,6 +217,25 @@ func (b *Bridge) PendingCount() int {
 // SetOnLearnWxid 装配 wxid 学习回调（Start 前调用，此后只读）。
 func (b *Bridge) SetOnLearnWxid(fn func(wxid string)) { b.onLearnWxid = fn }
 
+// TryCancelPick 让命令层待选菜单失效（跨渠道投递成功后由 Runtime 调用）。
+func (b *Bridge) TryCancelPick() bool {
+	if b == nil || b.console == nil {
+		return false
+	}
+	return b.console.TryCancelPick()
+}
+
+// PickTarget 进入待选菜单并暂存正文（与桌面 HubPickTarget 同语义；测试与
+// 跨渠道清理回归用）。生产入站归因失败路径经 dispatchConsole 调用 console。
+func (b *Bridge) PickTarget(text string) ([]hub.Reply, bool) {
+	return b.console.PickTarget(text)
+}
+
+// HandleConsole 把文本交给命令层（测试：清待选后回数字不得再发旧正文）。
+func (b *Bridge) HandleConsole(text string) []hub.Reply {
+	return b.console.Handle(text)
+}
+
 // OpenPermissionMenu 让命令层进入权限等待状态（1=允许 / 2=拒绝）。
 // desktop 在收到 chat:permission 事件时转发进来，使微信侧数字回复生效。
 func (b *Bridge) OpenPermissionMenu(chatID, reqID, desc string) {

@@ -181,8 +181,8 @@ func (a *App) HubPickTarget(text string) (HubPickView, error) {
 	return HubPickView{Replies: replies, Pending: pending}, nil
 }
 
-// clearHubPendingPick 让桌面端 AgentHub 的待选菜单失效（不惰性创建 Console）。
-// 用户另行投递后，旧暂存正文不得再被后续纯数字选中发送。
+// clearHubPendingPick 让待选菜单失效（桌面 AgentHub + 微信桥两套 Console）。
+// 任一侧成功投递后两侧旧暂存都不得再被数字误发。不惰性创建 hubConsole。
 func (a *App) clearHubPendingPick() {
 	// 先取指针再释放 a.mu：Console 执行后端会反向取 a.mu，避免锁序死锁。
 	a.mu.Lock()
@@ -193,5 +193,9 @@ func (a *App) clearHubPendingPick() {
 		// 发送，同步重入即死锁；此时 Handle 的 menu 必非 menuPick（见
 		// TryCancelPick 注释），放弃取消无损语义。
 		c.TryCancelPick()
+	}
+	// 微信桥独立 Console：同样 TryCancelPick，与桌面侧对称清理。
+	if r := a.wxRuntime(); r != nil {
+		r.TryCancelPick()
 	}
 }

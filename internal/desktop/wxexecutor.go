@@ -216,6 +216,48 @@ func (w *wxExecutor) snapshotRef(m hub.Message, sessionID string) hub.SessionRef
 	}
 }
 
+// RecoverSession 按过期/历史 chatID 从 hub 快照取 SessionID，再在全量会话中
+// 找同 SessionID（可能已是新 ChatID）或返回仅含 SessionID 的磁盘引用供
+// OpenSession。无 SessionID / 无命中返回 ok=false（调用方进待选）。
+func (w *wxExecutor) RecoverSession(chatID string) (hub.SessionRef, bool) {
+	if chatID == "" {
+		return hub.SessionRef{}, false
+	}
+	store := w.a.snapshot().HubStore
+	if store == nil {
+		return hub.SessionRef{}, false
+	}
+	sessionID := ""
+	var snap hub.Message
+	for _, m := range store.List() {
+		if m.ChatID == "" || m.ChatID != chatID {
+			continue
+		}
+		if m.SessionID == "" {
+			continue
+		}
+		// 取该 chatID 最近一条带 SessionID 的快照（List 时间正序）。
+		sessionID = m.SessionID
+		snap = m
+	}
+	if sessionID == "" {
+		return hub.SessionRef{}, false
+	}
+	for _, r := range w.sessionRefs(w.collectAllSessions()) {
+		if r.SessionID == sessionID {
+			return r, true
+		}
+	}
+	// 磁盘文件可能已不在列表（被能力过滤等）：仍返回快照引用，OpenSession 失败显性化。
+	return hub.SessionRef{
+		SessionID: sessionID,
+		Workspace: snap.Workspace,
+		Tool:      snap.Tool,
+		ToolName:  w.a.toolDisplayName(snap.Tool),
+		Title:     snap.SessionTitle,
+	}, true
+}
+
 // SwitchTo 轻量校验目标 chat 存在即成功（微信切上下文不需要真的在桌面端弹窗，
 // 真正的活跃性检查由 SendChatPrompt 内的 ensureChatAlive 负责）。
 func (w *wxExecutor) SwitchTo(chatID string) error {

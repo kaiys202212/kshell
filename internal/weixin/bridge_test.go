@@ -39,7 +39,10 @@ func (f *fakeExec) SwitchTo(chatID string) error {
 	return nil
 }
 func (f *fakeExec) OpenSession(string) (hub.SessionRef, error) { return hub.SessionRef{}, nil }
-func (f *fakeExec) EasyNew() (hub.SessionRef, error)           { return hub.SessionRef{}, nil }
+func (f *fakeExec) RecoverSession(string) (hub.SessionRef, bool) {
+	return hub.SessionRef{}, false
+}
+func (f *fakeExec) EasyNew() (hub.SessionRef, error) { return hub.SessionRef{}, nil }
 func (f *fakeExec) NewMenuOptions() (tools, workspaces, models []hub.MenuOption) {
 	return nil, nil, nil
 }

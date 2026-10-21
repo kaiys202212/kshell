@@ -108,6 +108,14 @@ func (r *Runtime) SetToolName(fn func(string) string) {
 // SetBaseURL 覆盖 iLink 客户端的基础地址（测试注入 httptest 用；须在 Configure 前调用）。
 func (r *Runtime) SetBaseURL(url string) { r.baseURL = url }
 
+// TryCancelPick 让微信桥命令层的待选（及带暂存的 menuNew）失效。
+// bridge 未装配时 no-op。供桌面端 SendChatPrompt 成功后跨渠道清待选。
+func (r *Runtime) TryCancelPick() {
+	if b := r.GetBridge(); b != nil {
+		b.TryCancelPick()
+	}
+}
+
 // GetBridge 返回当前桥（未 Configure 时为 nil）。
 func (r *Runtime) GetBridge() *Bridge {
 	r.mu.Lock()

@@ -46,6 +46,9 @@ type Executor interface {
 	// OpenSession 打开一个尚未激活的磁盘会话（SessionID 非空时有效），返回可投递的引用。
 	// 已激活的会话直接返回现状。实现方负责激活（desktop 走 OpenSessionACP）。
 	OpenSession(sessionID string) (SessionRef, error)
+	// RecoverSession 按历史/过期 chatID 尝试找回可投递或可激活引用（同 SessionID
+	// 的新 chat 或磁盘会话）。找不到返回 ok=false。禁止 workspace 模糊猜。
+	RecoverSession(chatID string) (SessionRef, bool)
 	EasyNew() (SessionRef, error)
 	NewMenuOptions() (tools, workspaces, models []MenuOption)
 	CreateNew(toolID, wsID, model string) (SessionRef, error)

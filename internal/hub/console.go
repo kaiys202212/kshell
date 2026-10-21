@@ -629,6 +629,20 @@ func (c *Console) handleG(arg string) []Reply {
 	if !ok {
 		return single(c.text("no_mapping"))
 	}
+	// 未激活磁盘会话先 OpenSession；成功后仍不改 current（#g 不切上下文）。
+	if ref.ChatID == "" {
+		if ref.SessionID == "" {
+			return single(c.text("no_mapping"))
+		}
+		opened, err := c.ex.OpenSession(ref.SessionID)
+		if err != nil {
+			return single(fmt.Sprintf(c.text("switch_failed"), c.errText(err)))
+		}
+		if opened.ChatID == "" {
+			return single(fmt.Sprintf(c.text("switch_failed"), c.text("no_mapping")))
+		}
+		ref = opened
+	}
 	if err := c.ex.Send(ref.ChatID, text); err != nil {
 		return single(fmt.Sprintf(c.text("send_failed"), err))
 	}
@@ -797,18 +811,27 @@ func (c *Console) HandleQuoted(chatID, text string) (bool, []Reply) {
 		if r.ChatID != chatID {
 			continue
 		}
-		ref, err := c.activateRef(r)
-		if err != nil {
-			return true, single(fmt.Sprintf(c.text("switch_failed"), c.errText(err)))
-		}
-		// 直发被引用会话：不得走 sendToCurrent→refreshCurrent，否则并发/跃迁
-		// 的 LastActivity 会把目标抢回「最后活跃」会话。
-		if err := c.ex.Send(ref.ChatID, text); err != nil {
-			return true, single(fmt.Sprintf(c.text("send_failed"), c.errText(err)))
-		}
-		return true, nil
+		return true, c.sendQuoted(r, text)
+	}
+	// 列表无此 chatID（已关/重建）：尝试按 SessionID 恢复，失败才回落待选。
+	if ref, ok := c.ex.RecoverSession(chatID); ok {
+		return true, c.sendQuoted(ref, text)
 	}
 	return false, nil
+}
+
+// sendQuoted 激活引用目标并直发正文；失败回错误回执（调用方 handled=true）。
+func (c *Console) sendQuoted(r SessionRef, text string) []Reply {
+	ref, err := c.activateRef(r)
+	if err != nil {
+		return single(fmt.Sprintf(c.text("switch_failed"), c.errText(err)))
+	}
+	// 直发被引用会话：不得走 sendToCurrent→refreshCurrent，否则并发/跃迁
+	// 的 LastActivity 会把目标抢回「最后活跃」会话。
+	if err := c.ex.Send(ref.ChatID, text); err != nil {
+		return single(fmt.Sprintf(c.text("send_failed"), c.errText(err)))
+	}
+	return nil
 }
 
 // pickNewSentinel 是待选菜单分组一首项（新建会话）的哨兵 ID。

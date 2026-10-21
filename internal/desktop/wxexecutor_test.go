@@ -11,6 +11,7 @@ import (
 	"github.com/yangk/kshell/internal/hub"
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/terminal"
+	"github.com/yangk/kshell/internal/weixin"
 )
 
 // wxSessionsResult 是注入 GetSessions（磁盘会话）用的扫描结果构造辅助。
@@ -251,6 +252,40 @@ func TestHubSendClearsPendingPick(t *testing.T) {
 	}
 }
 
+// 桌面直发成功后须同时清微信桥 Console 的待选，避免微信侧数字误发旧暂存。
+func TestHubSendClearsWeixinBridgePendingPick(t *testing.T) {
+	app, m, _ := wxActiveApp(t)
+	r := weixin.NewRuntime(newWXExecutor(app), "zh-CN")
+	r.SetPersist(func(weixin.WeixinPersist) error { return nil })
+	r.Configure("tok", "u1")
+	app.mu.Lock()
+	app.wx = r
+	app.mu.Unlock()
+	bridge := r.GetBridge()
+	if bridge == nil {
+		t.Fatal("应有 bridge")
+	}
+	replies, pending := bridge.PickTarget("微信暂存")
+	if !pending || len(replies) == 0 {
+		t.Fatalf("微信侧应建立待选: pending=%v replies=%v", pending, replies)
+	}
+	if err := app.SendChatPrompt(m.List()[0].ID, "桌面直发"); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	// 微信桥再回数字不得投递「微信暂存」。
+	out := bridge.HandleConsole("2")
+	for _, r := range out {
+		if r.Sent {
+			t.Fatalf("桌面直发后微信待选应已失效: %+v", out)
+		}
+	}
+	for _, msg := range app.snapshot().HubStore.List() {
+		if msg.Kind == "user" && msg.Text == "微信暂存" {
+			t.Fatalf("微信旧暂存不得被数字发送: %+v", msg)
+		}
+	}
+}
+
 // 待选建立 → 回数字：Console 经 wxExecutor.Send 走真实 SendChatPrompt。这是
 // 唯一让「Handle 持 c.mu」与「发送成功 → clearHubPendingPick」相遇的链路
 // （回归：clearHubPendingPick 若阻塞等 c.mu 即不可重入死锁，须走 TryLock）。
@@ -296,6 +331,46 @@ func TestHubPickNumberSendDeliversPending(t *testing.T) {
 	}
 	if delivered != 1 {
 		t.Fatalf("菜单已清后数字不得重复发送旧正文: %d", delivered)
+	}
+}
+
+// RecoverSession：hub 里旧 chatID 带 SessionID 快照时，找回同 SessionID 的活跃/磁盘引用。
+func TestWXExecutorRecoverSession(t *testing.T) {
+	app := wxApp(t, []providers.Session{
+		{ID: "s-recover", ToolID: "claude", Workspace: `D:\ws\a`, Title: "可恢复", UpdatedAt: time.Now()},
+	})
+	m := newChatManagerWith(func(string, ...any) {}, fakeChatBackend{}, nil, nil, nil, nil, nil)
+	t.Cleanup(m.CloseAll)
+	if _, err := m.Open("new:1", chat.Info{
+		Kind: chat.KindSession, SessionID: "s-recover", Workspace: `D:\ws\a`,
+		Title: "可恢复", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, ""); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	app.mu.Lock()
+	app.opts.Chats = m
+	app.mu.Unlock()
+
+	oldID := "c-closed-old"
+	if err := app.snapshot().HubStore.Append(hub.Message{
+		Kind: "user", ChatID: oldID, SessionID: "s-recover",
+		Tool: "claude", SessionTitle: "可恢复", Text: "旧",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ex := newWXExecutor(app)
+	ref, ok := ex.RecoverSession(oldID)
+	if !ok {
+		t.Fatal("应恢复到同 SessionID 会话")
+	}
+	if ref.SessionID != "s-recover" {
+		t.Fatalf("SessionID = %q", ref.SessionID)
+	}
+	if ref.ChatID == "" {
+		t.Fatal("活跃会话应带回 ChatID")
+	}
+	if _, ok := ex.RecoverSession("never-seen"); ok {
+		t.Fatal("未知 chatID 不得恢复")
 	}
 }
 
