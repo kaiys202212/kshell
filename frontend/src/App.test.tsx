@@ -113,6 +113,7 @@ const mocks = vi.hoisted(() => ({
   startFileWatch: vi.fn().mockResolvedValue(undefined),
   stopFileWatch: vi.fn(),
   onFilesChanged: vi.fn(() => () => {}),
+  onGitChanged: vi.fn(() => () => {}),
   revealInExplorer: vi.fn().mockResolvedValue(undefined),
   openExternalURL: vi.fn().mockResolvedValue(undefined),
 }));

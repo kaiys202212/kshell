@@ -65,6 +65,7 @@ const mocks = vi.hoisted(() => ({
   startFileWatch: vi.fn().mockResolvedValue(undefined),
   stopFileWatch: vi.fn(),
   onFilesChanged: vi.fn(() => () => {}),
+  onGitChanged: vi.fn(() => () => {}),
   revealInExplorer: vi.fn().mockResolvedValue(undefined),
   checkToolAuth: vi.fn().mockResolvedValue('unknown'),
   openLoginTerminal: vi.fn(),
