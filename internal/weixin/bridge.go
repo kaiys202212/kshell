@@ -294,9 +294,12 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 		quotedChatID = b.resolveQuote(m.Ref)
 	}
 	// 可转发文字（非命令/纯数字）且队列非空：合并投递。
+	// quoted：用户明确引用了某条消息（可转发正文）。归因失败时不得发当前会话，
+	// 须进待选让用户选目标（见 dispatchConsole）。
+	quoted := m.Ref != nil && isForwardableText(text)
 	if isForwardableText(text) && b.QueuedFiles() > 0 {
 		text = b.queuedPrefix() + text
-		replies = b.dispatchConsole(text, quotedChatID)
+		replies = b.dispatchConsole(text, quotedChatID, quoted)
 		if len(replies) == 0 {
 			// 合并成功转发（agent 稍后回复）：清队列，附件信息已在投递文本里，
 			// 不再单独发附件回执；微信侧补既有 sent_ack。
@@ -306,7 +309,7 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 		}
 		// 转发失败（无会话/发送错误等有回复场景）：队列保留，回执照发。
 	} else if trimmed != "" {
-		replies = b.dispatchConsole(text, quotedChatID)
+		replies = b.dispatchConsole(text, quotedChatID, quoted)
 		if len(replies) == 0 {
 			// 命令层无回复 = 文本已成功转发给当前会话（agent 稍后回复）。
 			// 微信侧补一条已接收确认，与桌面端 AgentHub 的 ack 卡片同一文案语义
@@ -342,14 +345,20 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	_ = b.client.SendTyping(context.Background(), m.FromUserID, m.ContextToken, 2)
 }
 
-// dispatchConsole 把可转发文本交给命令层：quotedChatID 非空时先走引用
-// 路由（切换到被引用会话再投递）；定位失败（handled=false）回落普通
-// Handle（发当前会话），与无引用消息同语义。
-func (b *Bridge) dispatchConsole(text, quotedChatID string) []hub.Reply {
+// dispatchConsole 把可转发文本交给命令层。
+// quotedChatID 非空时先走引用路由（切换到被引用会话再投递）。
+// quoted 表示用户明确引用了消息：归因失败或 chatID 不在列表时进待选
+//（PickTarget），不得回落发「当前会话」——引用已表明不想跟默认目标。
+// 无引用（quoted=false）仍走普通 Handle（当前或无目标待选）。
+func (b *Bridge) dispatchConsole(text, quotedChatID string, quoted bool) []hub.Reply {
 	if quotedChatID != "" {
 		if handled, replies := b.console.HandleQuoted(quotedChatID, text); handled {
 			return replies
 		}
+	}
+	if quoted {
+		replies, _ := b.console.PickTarget(text)
+		return replies
 	}
 	return b.console.Handle(text)
 }
@@ -675,7 +684,7 @@ func (b *Bridge) rememberSvrID(svrID, chatID string) {
 }
 
 // resolveQuote 按引用归因出目标 chatID：消息 ID 精确映射优先，标题栏
-// 匹配兜底；都不命中返回空串（调用方回落当前会话）。
+// 匹配兜底；都不命中返回空串（调用方对「有引用」进待选，无引用才发当前）。
 // 标题栏优先匹配与出站 titleBar 同构的「项目 · 工具 · 会话」全文，再回落
 // 纯会话标题（ack【会话名】形态）；微信截断无闭合】时按前缀匹配复合栏。
 func (b *Bridge) resolveQuote(ref *RefMsg) string {

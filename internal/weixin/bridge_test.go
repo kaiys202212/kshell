@@ -925,15 +925,49 @@ func TestBridgeQuoteReplyRouting(t *testing.T) {
 		}
 	})
 
-	t.Run("双不命中回落当前会话", func(t *testing.T) {
-		ex := &fakeExec{sessions: sessions, hasCur: true, current: hub.SessionRef{ChatID: "c2"}}
-		b := newBridge(t, "u1", ex, (&recorder{}).handler(t))
+	t.Run("双不命中进待选不发当前", func(t *testing.T) {
+		// 明确引用但归因失败：不得发到当前会话，应进编号待选。
+		rc := &recorder{}
+		ex := &fakeExec{sessions: sessions, hasCur: true, current: hub.SessionRef{ChatID: "c2", Title: "会话B"}}
+		b := newBridge(t, "u1", ex, rc.handler(t))
 		b.HandleInboundMsg(context.Background(), quoteMsg("ct-1", "x", "普通引用无前缀", "普通消息"))
-		if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "普通消息" {
-			t.Fatalf("应回落当前会话: %v", ex.sentTexts)
+		if len(ex.sentTexts) != 0 {
+			t.Fatalf("归因失败不得投递当前: %v", ex.sentTexts)
 		}
 		if len(ex.switchCalls) != 0 {
-			t.Errorf("回落不应切换: %v", ex.switchCalls)
+			t.Errorf("归因失败不应切换: %v", ex.switchCalls)
+		}
+		sends := rc.sends()
+		if len(sends) == 0 {
+			t.Fatal("应有待选列表回执")
+		}
+		out := sendText(t, sends[0].body)
+		if !strings.Contains(out, "未精确匹配") && !strings.Contains(out, "No exact") {
+			t.Errorf("回执应为待选提示: %q", out)
+		}
+		// 回数字 2 = 列表第一会话 c1（1 是新建哨兵）
+		b.HandleInbound("u1", "ct-2", "2")
+		if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "普通消息" {
+			t.Fatalf("待选编号应投递暂存正文: %v", ex.sentTexts)
+		}
+		if len(ex.switchCalls) != 1 || ex.switchCalls[0] != "c1" {
+			t.Errorf("应切换到选中的 c1: %v", ex.switchCalls)
+		}
+	})
+
+	t.Run("引用 chatID 已不在列表进待选", func(t *testing.T) {
+		// svrMap 仍指向已关闭会话：HandleQuoted 未命中，同样待选而非发当前。
+		rc := &recorder{}
+		ex := &fakeExec{sessions: sessions, hasCur: true, current: hub.SessionRef{ChatID: "c2", Title: "会话B"}}
+		b := newBridge(t, "u1", ex, rc.handler(t))
+		b.rememberSvrID("gone-svr", "c-closed")
+		b.HandleInboundMsg(context.Background(), quoteMsg("ct-1", "gone-svr", "【已关】x", "还发这个"))
+		if len(ex.sentTexts) != 0 {
+			t.Fatalf("过期 chatID 不得投递: %v", ex.sentTexts)
+		}
+		out := sendText(t, rc.sends()[0].body)
+		if !strings.Contains(out, "未精确匹配") && !strings.Contains(out, "No exact") {
+			t.Errorf("过期 chatID 应进待选: %q", out)
 		}
 	})
 
