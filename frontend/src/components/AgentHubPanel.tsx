@@ -178,9 +178,9 @@ interface SlashItem {
   kind: 'client' | 'agent';
 }
 
-// statusDotClass 状态点配色：运行中用主色（Teal），退出用 muted，其余描边。
+// statusDotClass 状态点配色：运行中/握手中/等待登录用主色（Teal），退出用 muted，其余描边。
 function statusDotClass(status: string): string {
-  if (status === 'running' || status === 'starting') return 'bg-primary';
+  if (status === 'running' || status === 'starting' || status === 'authenticating') return 'bg-primary';
   if (status === 'exited') return 'bg-muted-foreground/40';
   return 'border border-muted-foreground bg-transparent';
 }
@@ -1385,7 +1385,7 @@ export default function AgentHubPanel() {
         >
           {/* 无会话时不渲染空态提示（2026-10-20 用户反馈）：留空容器即可，chips 有会话才出现 */}
           {chats.map((c) => {
-              const busy = c.Status === 'running' || c.Status === 'starting';
+              const busy = c.Status === 'running' || c.Status === 'starting' || c.Status === 'authenticating';
               const isTarget = c.ID === currentTargetId;
               return (
                 <div

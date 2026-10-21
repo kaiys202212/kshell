@@ -205,6 +205,23 @@ describe('AgentHubPanel', () => {
     expect(chips.querySelectorAll('.bg-primary').length).toBeGreaterThan(0);
   });
 
+  it('authenticating 状态与 starting 同类：chip 计入 busy（主色点、无关闭按钮）', () => {
+    useAppStore.setState({
+      chats: [
+        chat({ ID: 'c1', Title: '登录中', ToolID: 'cursor', Status: 'authenticating' }),
+        chat({ ID: 'c2', Title: '对照组', ToolID: 'cursor', Status: 'ready', Workspace: 'D:\\ws\\b' }),
+      ],
+      lastAgentId: 'c1',
+    });
+    render(<AgentHubPanel />);
+    const chips = screen.getByTestId('hub-session-chips');
+    // authenticating chip 状态点为主色（与 starting/running 同类）
+    const busyChip = within(chips).getByRole('button', { name: /登录中/ });
+    expect(busyChip.querySelector('.bg-primary')).not.toBeNull();
+    // busy 会话不提供关闭按钮；非 busy 对照组仍有关闭入口（关闭按钮按会话枚举）
+    expect(within(chips).getAllByRole('button', { name: tt('ui.hub.close_session') }).length).toBe(1);
+  });
+
   it('点击 chip 主体：草稿保留式追加 @ 标签并聚焦输入框', () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);

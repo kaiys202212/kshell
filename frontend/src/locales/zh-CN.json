@@ -29,7 +29,11 @@
       "unsupported_protocol": "不支持的协议版本 {{0}}",
       "no_session_load": "该 agent 不支持 session/load",
       "handshake_timeout": "agent 30 秒内未完成握手（可能已挂死），请重试或更换 agent",
-      "model_timeout": "agent 30 秒内未响应切换模型（可能正忙或已挂死），会话保持原样"
+      "model_timeout": "agent 30 秒内未响应切换模型（可能正忙或已挂死），会话保持原样",
+      "auth_required": "Agent 未登录，已在浏览器打开登录页；完成后将自动继续，也可以在终端运行其 login 命令后重试。"
+    },
+    "session": {
+      "acp_only": "该会话来自 ACP（如 Cursor acp-sessions），仅能在聊天中打开，无法在终端恢复（会丢失上下文）。"
     },
     "hub": {
       "not_found": "消息不存在或已归档",
@@ -877,6 +881,7 @@
       "drop_unsupported": "该会话不可接收文件",
       "exited": "会话已退出",
       "exited_code": "（退出码 {{code}}）",
+      "status_authenticating": "等待浏览器登录…",
       "error_suffix": "：{{error}}",
       "thought": "思考",
       "tool_fallback": "工具",
