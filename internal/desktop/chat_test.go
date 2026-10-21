@@ -444,6 +444,20 @@ func TestResumeSessionACPOnlyRejected(t *testing.T) {
 	}
 }
 
+// TestOpenSessionTerminalACPOnlyRejected 验证内嵌终端入口同样拦截 ACPOnly
+// 会话（防御纵深：该绑定一旦被前端接通即复现「静默丢上下文」）。
+func TestOpenSessionTerminalACPOnlyRejected(t *testing.T) {
+	env := newChatTestApp(t, &providers.ACPDetection{Available: false}, fakeChatBackend{})
+	markACPOnly(t, env.app, "s1")
+
+	if _, err := env.app.OpenSessionTerminal("s1", 80, 24); !errors.Is(err, errSessionACPOnly) {
+		t.Fatalf("err = %v, want errSessionACPOnly", err)
+	}
+	if env.term.starts() != 0 {
+		t.Fatalf("不得起终端进程, got %d", env.term.starts())
+	}
+}
+
 // TestShouldBlockTerminalFallback 表驱动锁定路由判断：只认 ACPOnly 标记。
 func TestShouldBlockTerminalFallback(t *testing.T) {
 	cases := []struct {

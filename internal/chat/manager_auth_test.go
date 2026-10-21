@@ -102,7 +102,7 @@ func TestOpenAuthTimeoutMapsToAuthRequired(t *testing.T) {
 	}
 }
 
-// 登录后重试仍 -32000：原始 RPCError 上抛（不得吞成 auth_required 之外的东西）。
+// 登录后重试仍 -32000：归一成稳定 key（裸 RPCError 不给前端）。
 func TestOpenRetryStillAuthRequired(t *testing.T) {
 	m, b, _ := newTestManager(t)
 	conn := b.conn
@@ -111,9 +111,33 @@ func TestOpenRetryStillAuthRequired(t *testing.T) {
 	conn.newAuthN = 5 // 恒报未登录：重试也失败
 
 	_, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
-	var rpcErr *acp.RPCError
-	if !errors.As(err, &rpcErr) || rpcErr.Code != acp.ErrCodeAuthRequired {
-		t.Fatalf("err = %v, want 原始 authRequired RPCError", err)
+	if err == nil || err.Error() != "err.chat.auth_required" {
+		t.Fatalf("err = %v, want err.chat.auth_required", err)
+	}
+}
+
+// 认证失败的握手不得留下幽灵 authenticating 会话：失败时最后一次 onInfo
+// 必须是 exited 终态（authenticating 已外发，前端 upsert 会保留该行）。
+func TestOpenAuthFailPushesTerminalMeta(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	conn := b.conn
+	conn.initSet = true
+	conn.initResult = authInit(acp.AuthMethod{ID: "cursor_login"})
+	conn.newAuthN = 1
+	conn.authErr = errors.New("browser login cancelled")
+
+	var statuses []string
+	m.SetOnInfo(func(i Info) { statuses = append(statuses, i.Status) })
+
+	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, ""); err == nil {
+		t.Fatal("authenticate 失败应报错")
+	}
+	// List 不残留（m.fail 摘除），且外发序列以 authenticating 开头、exited 收尾。
+	if got := m.List(); len(got) != 0 {
+		t.Fatalf("失败会话应被摘除, List=%+v", got)
+	}
+	if len(statuses) != 2 || statuses[0] != StatusAuthenticating || statuses[1] != StatusExited {
+		t.Fatalf("外发状态序列 = %v, want [authenticating exited]", statuses)
 	}
 }
 

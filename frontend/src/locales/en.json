@@ -30,7 +30,7 @@
       "no_session_load": "This agent does not support session/load",
       "handshake_timeout": "Agent did not finish handshake within 30s (agent may be hung); please retry or switch agent",
       "model_timeout": "Agent did not respond to model switch within 30s (may be busy or hung); session kept as-is",
-      "auth_required": "Agent is not logged in. The login page has been opened in your browser; the session will continue automatically once done, or run its login command in a terminal and retry."
+      "auth_required": "Agent is not logged in or login was not completed. Complete the official login flow in your browser and retry, or run its login command in a terminal."
     },
     "session": {
       "acp_only": "This session comes from ACP (e.g. Cursor acp-sessions) and can only be opened in chat; it cannot be resumed in a terminal (context would be lost)."

@@ -436,6 +436,11 @@ export default function ChatView({ chat, active }: Props) {
           {chat.Error ? t('ui.chat.error_suffix', { error: translateBackend(chat.Error) }) : ''}
         </div>
       )}
+      {chat.Status === 'authenticating' && (
+        <div className="shrink-0 break-words bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+          {t('ui.chat.status_authenticating')}
+        </div>
+      )}
       {models && models.Models && models.Models.length > 0 && (
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1 text-xs">
           <span className="text-muted-foreground">{t('ui.chat.model_label')}</span>

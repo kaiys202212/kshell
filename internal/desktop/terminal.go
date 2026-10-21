@@ -74,6 +74,11 @@ func (a *App) OpenSessionTerminal(sessionID string, cols, rows int) (terminal.In
 	if !ok {
 		return terminal.Info{}, errSessionNotFound
 	}
+	// ACPOnly 会话（如 Cursor acp-sessions 来源）与 ResumeSession 同口径拒绝：
+	// TUI resume 不在 chats 库里的 ID 会静默起全新会话丢上下文。
+	if shouldBlockTerminalFallback(s) {
+		return terminal.Info{}, errSessionACPOnly
+	}
 	m := a.terminals()
 	if m == nil {
 		return terminal.Info{}, errNotReady

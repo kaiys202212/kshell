@@ -385,7 +385,7 @@ func wrapHandshakeErr(err error) error {
 var authTimeout = 5 * time.Minute
 
 // errAuthRequired 是 agent 报告未登录且认证未完成的稳定错误 key：
-// 前端据此提示并提供「去登录」入口。
+// 前端据此翻译提示（登录页是否打开、如何重试由具体场景决定）。
 var errAuthRequired = errors.New("err.chat.auth_required")
 
 // isAuthRequired 判断 session/new|load 的错误是否为 ACP 规范的 authRequired。
@@ -401,6 +401,26 @@ func (m *Manager) pushAuthenticating(s *session) {
 	if s.info.Status != StatusExited {
 		s.info.Status = StatusAuthenticating
 	}
+	onInfo := m.onInfo
+	out := s.info
+	m.mu.Unlock()
+	if onInfo != nil {
+		onInfo(out)
+	}
+}
+
+// failAuthMeta 在已外发 authenticating 的会话握手失败时补发终态 meta。
+// m.fail 有意静默摘除（其前提是「失败会话的 id 从未返回前端」），但
+// authenticating 状态已经过 onInfo 外发、前端 upsert 会保留该行；不补终态
+// 会留下无关闭按钮的幽灵 chip，用户每次重试还会多一枚。
+func (m *Manager) failAuthMeta(s *session, errMsg string) {
+	m.mu.Lock()
+	if s.info.Status != StatusAuthenticating || m.byID[s.id] != s {
+		m.mu.Unlock()
+		return
+	}
+	s.info.Status = StatusExited
+	s.info.Error = errMsg
 	onInfo := m.onInfo
 	out := s.info
 	m.mu.Unlock()
@@ -447,6 +467,10 @@ func (m *Manager) startSession(conn Conn, init acp.InitializeResult, s *session,
 	defer retryCancel()
 	start, err = do(retryCtx)
 	if err != nil {
+		// 登录后仍报未登录：归一成稳定 key，不透传裸 RPCError 给前端。
+		if isAuthRequired(err) {
+			return acp.SessionStart{}, errAuthRequired
+		}
 		return acp.SessionStart{}, wrapHandshakeErr(err)
 	}
 	return start, nil
@@ -542,8 +566,9 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	s.conn = conn
 	m.mu.Unlock()
 
-	// 握手阶段（Initialize/session new/load）包独立超时：agent 挂死时 Open 能返回错误，
-	// Prompt 仍用长命 s.ctx（轮次可持续任意久）。合法慢的工具（cursor）按工具放宽。
+	// 握手阶段包独立超时：Initialize 用下方 hsCtx，session/new|load 的超时在
+	// startSession 内自管（登录重试需换全新上下文）。agent 挂死时 Open 能返回
+	// 错误，Prompt 仍用长命 s.ctx（轮次可持续任意久）。合法慢的工具（cursor）按工具放宽。
 	hsCtx, hsCancel := context.WithTimeout(s.ctx, handshakeTimeoutFor(info.ToolID))
 	defer hsCancel()
 
@@ -577,6 +602,7 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	if err != nil {
 		_ = conn.Close()
 		err = wrapHandshakeErr(err)
+		m.failAuthMeta(s, err.Error())
 		m.fail(s.id, 0, err.Error())
 		return Info{}, err
 	}

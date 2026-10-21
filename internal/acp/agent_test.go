@@ -50,6 +50,13 @@ func fakeAgentMain() {
 			}
 			reply(init)
 		case "authenticate":
+			// 校验出站参数形态：json tag 必须是 methodId（写错时全部测试
+			// 依旧绿灯，对真实 Cursor 必然失败）。
+			var p AuthenticateParams
+			if err := json.Unmarshal(m.Params, &p); err != nil || p.MethodID != "cursor_login" {
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(*m.ID), "error": map[string]any{"code": -32602, "message": "bad methodId"}})
+				continue
+			}
 			reply(map[string]any{})
 		case "session/new", "session/load":
 			if authN > 0 || authStuck {
