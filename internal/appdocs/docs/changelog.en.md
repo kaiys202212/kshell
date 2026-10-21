@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.1.18 (2026-10-22)
+
+- AgentHub's session-pick menu is now grouped: a quick "new session" entry on top plus the 5 most recent sessions; the user's original message is visible immediately while picking.
+- WeChat quoted delivery improved: it yields to pending picks and sends straight to the target session; failed attribution enters the pick flow instead of misfiring at the current session; outbound messages are attributed by SessionID on disk, so expired quotes still resolve by session.
+- A "starting agent" animation shows while activating or creating a session, so waiting is no longer silent.
+- AgentHub / WeChat show the full last reply, with automatic splitting for over-length messages.
+- AgentHub session chips always show the first two characters of the project name, and messages carry absolute timestamps and the attributed tool name.
+- Cursor ACP sessions use the first user question as the title and prefer Cursor's bundled node.exe.
+- Fixed AgentHub termKey collisions mixing up session names across tools, cross-client pick clearing, external links now open in the system browser, plus a lighter file-tree watcher with independent git status color sync.
+
 ## v0.1.17 (2026-10-21)
 
 - New "Help" section in Settings: built-in bilingual docs for the user guide and changelog, always available in-app.
