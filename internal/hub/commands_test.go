@@ -1445,8 +1445,9 @@ func TestPickTargetPreservesOriginalText(t *testing.T) {
 	}
 }
 
-// TryCancelPick：锁空闲时清掉 menuPick 并报告成功；锁被占用（Handle 持锁回调
-// Executor 发送的形态）时返回 false 且不动菜单——调用方据此放弃，无损语义。
+// TryCancelPick：锁空闲时清掉 menuPick（及由其转入、带暂存正文的 menuNew）
+// 并报告成功；锁被占用（Handle 持锁回调 Executor 发送的形态）时返回 false 且
+// 不动菜单——调用方据此放弃，无损语义。
 func TestTryCancelPick(t *testing.T) {
 	fe := &fakeExecutor{listSessions: []SessionRef{
 		wsRef(0, "c1", "", `D:\ws\a`, "claude", "会话A", false),
@@ -1471,6 +1472,50 @@ func TestTryCancelPick(t *testing.T) {
 	}
 	if c.menu != nil {
 		t.Fatal("成功后待选菜单应已清空")
+	}
+}
+
+// TryCancelPick 对待选「新建」转入的 menuNew（带暂存正文）同样生效：
+// 用户已另行投递后，分步新建走完不得再把旧正文发到新建会话。
+func TestTryCancelPickCleansMenuNewWithPending(t *testing.T) {
+	fe := &fakeExecutor{
+		listSessions: []SessionRef{
+			wsRef(0, "c1", "", `D:\ws\a`, "claude", "会话A", false),
+		},
+		tools:      []MenuOption{{ID: "claude", Label: "Claude"}},
+		workspaces: []MenuOption{{ID: "ws1", Label: `D:\proj`}},
+		createRef:  wsRef(0, "c-new", "", `D:\ws\a`, "claude", "新会话", false),
+	}
+	c := NewConsole(fe)
+	if _, pending := c.PickTarget("旧正文"); !pending {
+		t.Fatal("应先进入待选菜单")
+	}
+	c.Handle("1") // 转 menuNew step1
+	if c.menu == nil || c.menu.kind != menuNew || c.menu.pendingText == "" {
+		t.Fatal("应已转入带暂存正文的 menuNew")
+	}
+	if !c.TryCancelPick() {
+		t.Fatal("应报告成功")
+	}
+	if c.menu != nil {
+		t.Fatal("带暂存正文的 menuNew 应被清理")
+	}
+}
+
+// 纯 #n 进入的 menuNew（无暂存正文）不受 TryCancelPick 影响：正常分步流程
+// 不因另行投递被打断。
+func TestTryCancelPickKeepsPlainMenuNew(t *testing.T) {
+	fe := &fakeExecutor{
+		tools:      []MenuOption{{ID: "claude", Label: "Claude"}},
+		workspaces: []MenuOption{{ID: "ws1", Label: `D:\proj`}},
+	}
+	c := NewConsole(fe)
+	c.Handle("#n")
+	if !c.TryCancelPick() {
+		t.Fatal("应报告成功")
+	}
+	if c.menu == nil || c.menu.kind != menuNew {
+		t.Fatal("无暂存正文的 #n 菜单不应被清理")
 	}
 }
 

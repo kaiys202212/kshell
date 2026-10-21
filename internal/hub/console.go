@@ -867,16 +867,17 @@ func (c *Console) PickTarget(text string) ([]Reply, bool) {
 	return c.listForPending(text)
 }
 
-// TryCancelPick 让待选菜单失效（AgentHub 已经另行投递）。仅清理 menuPick，
-// 不碰其他选择菜单；lastList 保留，后续数字仍可按最近列表切换。锁被占用
-// （Console.Handle 全程持锁回调 Executor 发送）时返回 false 并放弃：该链路
-// 任一 ex.Send 调用点进入前 menu 必非 menuPick，放弃取消无损语义。
+// TryCancelPick 让待选菜单失效（AgentHub 已经另行投递）。清理 menuPick，以及
+// 由 menuPick「新建」入口转入、仍带暂存正文的 menuNew（另行投递后旧正文同样
+// 不得再被发送）；其余选择菜单不碰。lastList 保留，后续数字仍可按最近列表
+// 切换。锁被占用（Console.Handle 全程持锁回调 Executor 发送）时返回 false 并
+// 放弃：该链路任一 ex.Send 调用点进入前 menu 必非 menuPick，放弃取消无损语义。
 func (c *Console) TryCancelPick() bool {
 	if !c.mu.TryLock() {
 		return false
 	}
 	defer c.mu.Unlock()
-	if c.menu != nil && c.menu.kind == menuPick {
+	if c.menu != nil && (c.menu.kind == menuPick || (c.menu.kind == menuNew && c.menu.pendingText != "")) {
 		c.menu = nil
 	}
 	return true

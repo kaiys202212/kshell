@@ -64,7 +64,6 @@ var cmdTexts = map[string]langPair{
 	"pick_target":       {"No exact session matched — reply with a number to send this message:", "未精确匹配到会话——回复编号，将把这条消息发送到所选会话:"},
 	// 待选分组菜单：分组一「新建」（选中转 #n 分步流程），分组二最近会话。
 	"pick_group_new_label": {"new session", "新建 session"},
-	"pick_group_new":       {"--- New session ---", "--- 新建会话 ---"},
 	"pick_group_recent":    {"--- Recent sessions ---", "--- 最近会话 ---"},
 	// 分步新建完成并移交暂存正文后的第一人称确认（与 sent_ack 同语气）。
 	"handoff_done":      {"Task handed off — I'll keep you posted here.", "任务移交完成——进展我会随时在这里同步。"},
