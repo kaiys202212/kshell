@@ -231,6 +231,9 @@ interface AppState {
   // pushHubLocal 往 hubMessages 追加一条本地瞬态提示（共享命令回显等）：
   // 仅前端内存展示，id 取负数避免与后端落盘 ID 冲突，重拉历史后自然消失。
   pushHubLocal(text: string): void;
+  // pushHubLocalUser 同上，但 kind='user'：待选场景用户原话的即时可见性
+  //（权威落盘在发送链 sendAndRecord，重拉历史后由落盘记录接管显示）。
+  pushHubLocalUser(text: string): void;
 
   // 通知气泡点击后的「切到对应页签」请求（termKey = 终端/聊天 manager 的 key）。
   // 中心区页签选中态在各 WorkspaceTabView 的本地 state 里，只能经这里中转：
@@ -662,6 +665,13 @@ export const useAppStore = create<AppState>()(
           hubMessages: [
             ...s.hubMessages,
             { id: nextHubLocalId--, kind: 'agent', text, workspace: '', chatId: '', ts: Date.now() },
+          ],
+        })),
+      pushHubLocalUser: (text) =>
+        set((s) => ({
+          hubMessages: [
+            ...s.hubMessages,
+            { id: nextHubLocalId--, kind: 'user', text, workspace: '', chatId: '', ts: Date.now() },
           ],
         })),
 

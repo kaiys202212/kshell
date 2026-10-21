@@ -237,7 +237,7 @@ func TestWeixinTranscriberMapsAudioUnsupported(t *testing.T) {
 }
 
 // HubPickTarget 是 AgentHub 无精确目标时的待选入口：返回编号列表、暂存正文，
-// 不写 hub 历史、不投递。
+// 不写 hub 历史（原话可见性由前端本地渲染，权威落盘在发送链）、不投递。
 func TestWeixinHubPickTarget(t *testing.T) {
 	app := wxApp(t, []providers.Session{
 		{ID: "s1", ToolID: "claude", Workspace: `D:\ws\a`, Title: "会话A"},
@@ -249,7 +249,6 @@ func TestWeixinHubPickTarget(t *testing.T) {
 	if store == nil {
 		t.Fatal("wxApp 未装配 HubStore")
 	}
-	before := len(store.List())
 
 	view, err := app.HubPickTarget("  随便看看  ")
 	if err != nil {
@@ -267,8 +266,11 @@ func TestWeixinHubPickTarget(t *testing.T) {
 		!strings.Contains(text, "2. [a] claude 会话A") {
 		t.Fatalf("待选回复应含分组菜单: %q", text)
 	}
-	if got := len(store.List()); got != before {
-		t.Fatalf("HubPickTarget 不得写 hub 历史: before=%d after=%d", before, got)
+	// 不落盘：原话可见性由前端本地渲染，权威落盘在发送链。
+	for _, msg := range store.List() {
+		if msg.Kind == "user" && msg.Text == "随便看看" {
+			t.Fatalf("HubPickTarget 不得写 hub 历史（前端本地渲染负责可见性）: %+v", msg)
+		}
 	}
 
 	// 无会话：仍进菜单（仅新建入口，Pending=true），前端可清草稿。

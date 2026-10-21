@@ -231,7 +231,8 @@ func TestWXExecutorLastActivityStaleLatestStopsScan(t *testing.T) {
 }
 
 // AgentHub 直接投递（不经 Console）后，桌面端 Console 的待选菜单必须失效：
-// 之后的纯数字不得发送旧暂存正文。
+// 之后的纯数字不得发送旧暂存正文。（HubPickTarget 不写历史；直接投递路径
+// 落盘「另一条」，数字再发送「待发正文」即失败。）
 func TestHubSendClearsPendingPick(t *testing.T) {
 	app, m, _ := wxActiveApp(t)
 	if _, err := app.HubPickTarget("待发正文"); err != nil {
@@ -253,8 +254,8 @@ func TestHubSendClearsPendingPick(t *testing.T) {
 // 待选建立 → 回数字：Console 经 wxExecutor.Send 走真实 SendChatPrompt。这是
 // 唯一让「Handle 持 c.mu」与「发送成功 → clearHubPendingPick」相遇的链路
 // （回归：clearHubPendingPick 若阻塞等 c.mu 即不可重入死锁，须走 TryLock）。
-// 发送成功后暂存正文入 hub 历史、回复带 Sent 标记，且菜单已清——再回数字
-// 不再重复发送。
+// 回复带 Sent 标记，且菜单已清——再回数字不再重复发送。暂存正文由发送链
+// sendAndRecord 落盘（可见性由前端本地渲染，HubPickTarget 不写历史）。
 func TestHubPickNumberSendDeliversPending(t *testing.T) {
 	app, _, _ := wxActiveApp(t)
 	if _, err := app.HubPickTarget("待发正文"); err != nil {
@@ -281,7 +282,7 @@ func TestHubPickNumberSendDeliversPending(t *testing.T) {
 		}
 	}
 	if delivered != 1 {
-		t.Fatalf("暂存正文应恰好投递一次: %d", delivered)
+		t.Fatalf("暂存正文应恰好落盘一次: %d", delivered)
 	}
 	// 菜单已清：再回数字只按最近列表切换，不得重复发送旧正文。
 	if _, err := app.HubCommand("2"); err != nil {

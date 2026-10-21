@@ -166,8 +166,10 @@ type HubPickView struct {
 	Pending bool
 }
 
-// HubPickTarget 是 AgentHub 无精确目标时的待选入口：共享 Console 输出编号
-// 会话列表并暂存正文；用户回数字由 HubCommand 完成激活与发送。
+// HubPickTarget 是 AgentHub 无精确目标时的待选入口：共享 Console 输出分组
+// 菜单并暂存正文；用户回数字由 HubCommand 完成激活与发送。用户原话的即时
+// 可见性由前端本地渲染（瞬态，不落盘）——权威落盘仍由发送链 sendAndRecord
+// 完成，避免同文重复入库。
 func (a *App) HubPickTarget(text string) (HubPickView, error) {
 	if !a.snapshot().ready() {
 		return HubPickView{}, errNotReady

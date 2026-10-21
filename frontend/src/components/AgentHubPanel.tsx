@@ -978,6 +978,10 @@ export default function AgentHubPanel() {
       // 等待期间用户若改了草稿，也不覆盖新内容。
       void hubPickTarget(text)
         .then((view) => {
+          if (view.Pending) {
+            // 原话先于菜单即时可见（本地瞬态；权威落盘在数字选中后的发送链）。
+            useAppStore.getState().pushHubLocalUser(text);
+          }
           for (const r of view.Replies) useAppStore.getState().pushHubLocal(r.Text);
           if (view.Pending) setDraft((d) => (d.trim() === text ? '' : d));
         })
