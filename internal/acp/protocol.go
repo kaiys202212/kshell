@@ -8,6 +8,9 @@ type Spec struct {
 	Args []string
 	Dir  string
 	Env  []string
+	// Label 是进程退出日志的归属标记（聊天ID/工具ID），由 chat 层填入；
+	// 空则日志无归属。仅用于诊断，不参与协议。
+	Label string
 }
 
 // Implementation 是 initialize 的 clientInfo/agentInfo。

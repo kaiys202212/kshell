@@ -10,5 +10,5 @@ import (
 type RealBackend struct{}
 
 func (RealBackend) Start(spec Spec, h acp.Handler) (Conn, error) {
-	return acp.NewAgent(context.Background(), acp.Spec{Path: spec.Path, Args: spec.Args, Dir: spec.Dir, Env: spec.Env}, h)
+	return acp.NewAgent(context.Background(), acp.Spec{Path: spec.Path, Args: spec.Args, Dir: spec.Dir, Env: spec.Env, Label: spec.Label}, h)
 }

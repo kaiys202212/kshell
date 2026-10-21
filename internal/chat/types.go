@@ -30,6 +30,9 @@ type Spec struct {
 	// ACPSettingsJSON 是 ACP 会话的 _meta 载荷（claude settings 注入），
 	// 经 launch 层组装后直通；空串表示不注入。
 	ACPSettingsJSON string
+	// Label 是进程退出日志归属（聊天ID/工具ID），由 Manager.Open 在启动前填入，
+	// 透传给 acp 层落盘；调用方无需设置。
+	Label string
 }
 
 type Info struct {

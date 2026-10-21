@@ -49,6 +49,9 @@ export interface Session {
   UpdatedAt: string; // RFC3339
   Messages: number;
   Path: string;
+  // 仅 ACP 激活的会话（如 Cursor acp-sessions 来源，终端 resume 会丢上下文）；
+  // live 行（Path 以 live: 开头）不带该字段。
+  ACPOnly?: boolean;
 }
 
 /** GetSessionPreview 返回的只读对话 Markdown（全量，不截断） */

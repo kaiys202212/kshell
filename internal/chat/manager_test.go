@@ -161,13 +161,15 @@ func (c *fakeConn) crash() {
 }
 
 type fakeBackend struct {
-	conn *fakeConn
-	err  error
-	last acp.Handler
+	conn     *fakeConn
+	err      error
+	last     acp.Handler
+	lastSpec Spec
 }
 
 func (b *fakeBackend) Start(spec Spec, h acp.Handler) (Conn, error) {
 	b.last = h
+	b.lastSpec = spec
 	if b.err != nil {
 		return nil, b.err
 	}
@@ -233,6 +235,45 @@ func TestSessionIDUniqueAcrossManagers(t *testing.T) {
 	}
 	if a.ID == b.ID {
 		t.Fatalf("同一 Manager 内会话 ID 重复: %q", a.ID)
+	}
+}
+
+// Open 必须把聊天 ID/工具写进 Spec.Label：acp 层进程退出日志靠它归因，
+// 否则 desktop.log 里的 agent 退出无法对应到具体聊天。
+func TestManagerOpenSetsSpecLabel(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w", ToolID: "cursor"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	want := info.ID + "/cursor"
+	if b.lastSpec.Label != want {
+		t.Fatalf("Spec.Label = %q, want %q", b.lastSpec.Label, want)
+	}
+}
+
+// 握手期 agent 进程死亡（failPending 上抛 -32603 exit status/EOF、连接已关闭）
+// 必须映射成稳定 wire key，前端才能翻译；业务性 -32603 原样透传。
+func TestWrapHandshakeErrAgentDied(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"exit status", &acp.RPCError{Code: -32603, Message: "exit status 1"}, "err.chat.agent_died"},
+		{"eof", &acp.RPCError{Code: -32603, Message: "EOF"}, "err.chat.agent_died"},
+		{"closed", errors.New("err.acp.closed"), "err.chat.agent_died"},
+		{"timeout", context.DeadlineExceeded, "err.chat.handshake_timeout"},
+		{"business internal", &acp.RPCError{Code: -32603, Message: "model overloaded"}, "acp rpc error -32603: model overloaded"},
+		{"other", errors.New("boom"), "boom"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := wrapHandshakeErr(tc.err).Error()
+			if got != tc.want {
+				t.Fatalf("wrapHandshakeErr(%v) = %q, want %q", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 

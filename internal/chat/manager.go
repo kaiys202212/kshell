@@ -371,12 +371,30 @@ func isTerminalToolStatus(status string) bool {
 	return status == "completed" || status == "failed" || status == "error"
 }
 
-// wrapHandshakeErr 把握手超时映射成前端可翻译的 wire key；其他错误原样返回。
+// wrapHandshakeErr 把握手超时与 agent 进程死亡映射成前端可翻译的 wire key；
+// 其他错误原样返回。
 func wrapHandshakeErr(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return errors.New("err.chat.handshake_timeout")
 	}
+	if isAgentDiedErr(err) {
+		return errors.New("err.chat.agent_died")
+	}
 	return err
+}
+
+// isAgentDiedErr 判断握手错误是否源于 agent 进程死亡：连接层 failPending 把
+// 退出码/EOF 以 -32603 上抛（message 为 "exit status N" 或 "EOF"），
+// call 在已关闭连接上返回 err.acp.closed。业务性 -32603（如 agent 内部错误）
+// 的 message 不带这些特征，不受影响。
+func isAgentDiedErr(err error) bool {
+	var rpcErr *acp.RPCError
+	if errors.As(err, &rpcErr) && rpcErr.Code == -32603 {
+		if rpcErr.Message == "EOF" || strings.HasPrefix(rpcErr.Message, "exit status") {
+			return true
+		}
+	}
+	return strings.Contains(err.Error(), "err.acp.closed")
 }
 
 // authTimeout 限制 authenticate（浏览器登录）的等待时长：用户要在浏览器完成
@@ -550,6 +568,8 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	m.order = append(m.order, s)
 	m.mu.Unlock()
 
+	// 退出日志归属：acp 层进程退出按「聊天ID/工具ID」落盘，便于 desktop.log 归因。
+	spec.Label = s.id + "/" + info.ToolID
 	conn, err := m.backend.Start(spec, s.handler)
 	if err != nil {
 		m.fail(s.id, 0, err.Error())

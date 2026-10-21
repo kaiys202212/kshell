@@ -436,7 +436,9 @@ func TestAgentLogsExitCodeAndStderrTail(t *testing.T) {
 	}
 	t.Cleanup(func() { Logf = prev })
 
-	a, err := NewAgent(context.Background(), fakeAgentSpecEnv(t, "ACP_FAKE_STDERR_EXIT=1"), &captureHandler{})
+	spec := fakeAgentSpecEnv(t, "ACP_FAKE_STDERR_EXIT=1")
+	spec.Label = "cTest_1/cursor"
+	a, err := NewAgent(context.Background(), spec, &captureHandler{})
 	if err != nil {
 		t.Fatalf("NewAgent: %v", err)
 	}
@@ -462,6 +464,51 @@ func TestAgentLogsExitCodeAndStderrTail(t *testing.T) {
 	}
 	if !strings.Contains(joined, "boom-reason") {
 		t.Fatalf("日志缺 stderr 尾部, got:\n%s", joined)
+	}
+	// 退出日志必须带上归属（label）并标明「异常退出」，与主动关闭区分。
+	if !strings.Contains(joined, "异常退出") {
+		t.Fatalf("日志缺异常退出标记, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "cTest_1/cursor") {
+		t.Fatalf("日志缺 label, got:\n%s", joined)
+	}
+}
+
+// Close 是用户关页签/重建触发的主动关闭：Windows 上杀出的 code=1 与真实崩溃
+// 同形，日志必须区分，否则 desktop.log 里无法归因。
+func TestAgentCloseLogsDeliberate(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+	prev := Logf
+	Logf = func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, fmt.Sprintf(format, args...))
+	}
+	t.Cleanup(func() { Logf = prev })
+
+	spec := fakeAgentSpec(t)
+	spec.Label = "cDel_2/claude"
+	a, err := NewAgent(context.Background(), spec, &captureHandler{})
+	if err != nil {
+		t.Fatalf("NewAgent: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := a.Initialize(ctx); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	_ = a.Close()
+	_, _ = a.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "主动关闭") || !strings.Contains(joined, "cDel_2/claude") {
+		t.Fatalf("日志缺主动关闭/label, got:\n%s", joined)
+	}
+	if strings.Contains(joined, "异常退出") {
+		t.Fatalf("主动关闭不得记成异常退出, got:\n%s", joined)
 	}
 }
 

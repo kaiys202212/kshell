@@ -381,6 +381,35 @@ describe('SessionList', () => {
   });
 });
 
+describe('SessionList ACP/TUI 标记', () => {
+  it('cursor + ACPOnly 会话行显示 ACP 徽标', async () => {
+    mocks.getSessions.mockResolvedValue([
+      { ID: 'cs1', ToolID: 'cursor', Workspace: 'D:\\proj-a', Title: 'ACP 对话', CreatedAt: minutesAgo(9), UpdatedAt: minutesAgo(9), Messages: 2, Path: 'pc1', ACPOnly: true },
+    ] satisfies Session[]);
+    renderList();
+    const row = await findRow('ACP 对话');
+    expect(within(row).getByTestId('session-mode-badge')).toHaveTextContent('ACP');
+  });
+
+  it('cursor 非 ACPOnly 显示 TUI；其他工具与 live 行不标', async () => {
+    mocks.getSessions.mockResolvedValue([
+      { ID: 'cs2', ToolID: 'cursor', Workspace: 'D:\\proj-a', Title: 'TUI 对话', CreatedAt: minutesAgo(9), UpdatedAt: minutesAgo(9), Messages: 2, Path: 'pc2', ACPOnly: false },
+      { ID: 'cs3', ToolID: 'claude', Workspace: 'D:\\proj-a', Title: '普通对话', CreatedAt: minutesAgo(8), UpdatedAt: minutesAgo(8), Messages: 2, Path: 'pc3', ACPOnly: false },
+    ] satisfies Session[]);
+    useAppStore.setState({
+      terminals: [terminal({ ID: 'lt1', SessionID: '', Kind: 'session', ToolID: 'cursor', Title: '新开会话', Prompted: true })],
+    });
+    renderList();
+    const tuiRow = await findRow('TUI 对话');
+    expect(within(tuiRow).getByTestId('session-mode-badge')).toHaveTextContent('TUI');
+    const plainRow = await findRow('普通对话');
+    expect(within(plainRow).queryByTestId('session-mode-badge')).toBeNull();
+    // live 行（Path live: 前缀）不带 ACPOnly，不得误标成 TUI
+    const liveRow = await findRow('新开会话');
+    expect(within(liveRow).queryByTestId('session-mode-badge')).toBeNull();
+  });
+});
+
 describe('SessionList agent 活动图标', () => {
   it('打开 chat running 时列表行有「执行中」', async () => {
     useAppStore.setState({ chats: [chat({ Status: 'running' })] });

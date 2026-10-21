@@ -29,6 +29,7 @@
       "unsupported_protocol": "不支持的协议版本 {{0}}",
       "no_session_load": "该 agent 不支持 session/load",
       "handshake_timeout": "agent 30 秒内未完成握手（可能已挂死），请重试或更换 agent",
+      "agent_died": "agent 进程在启动期间意外退出，请重试；若反复出现请查看 ~/.kshell/logs/desktop.log",
       "model_timeout": "agent 30 秒内未响应切换模型（可能正忙或已挂死），会话保持原样",
       "auth_required": "Agent 未登录或登录未完成。请在浏览器完成官方登录流程后重试，或在终端运行其 login 命令。"
     },
@@ -515,6 +516,8 @@
       "remote_unreachable": "远程不可达，请检查 SSH 连接",
       "remote_scan_failed": "远端会话扫描失败：{{err}}",
       "archived": "已归档",
+      "mode_acp": "ACP 会话（窗口内聊天打开）",
+      "mode_tui": "TUI 会话（外部终端打开）",
       "untitled": "(无标题)",
       "messages_one": "{{count}} 条",
       "messages_other": "{{count}} 条",

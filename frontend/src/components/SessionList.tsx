@@ -504,6 +504,17 @@ export default function SessionList({
                   </div>
                   <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                     <ToolDot toolID={s.ToolID} className="shrink-0" />
+                    {/* 磁盘扫描的 cursor 会话标注激活方式：ACPOnly 仅能 ACP 激活，
+                        其余可终端 resume；live 行无该字段不标。 */}
+                    {s.ToolID === 'cursor' && typeof s.ACPOnly === 'boolean' && (
+                      <span
+                        data-testid="session-mode-badge"
+                        className="shrink-0 rounded-sm bg-muted px-1 py-px text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                        title={t(s.ACPOnly ? 'ui.session_list.mode_acp' : 'ui.session_list.mode_tui')}
+                      >
+                        {s.ACPOnly ? 'ACP' : 'TUI'}
+                      </span>
+                    )}
                     <span className={`whitespace-nowrap ${MONO}`}>{formatRelativeTime(s.UpdatedAt)}</span>
                     <span className={`whitespace-nowrap ${MONO}`}>{t('ui.session_list.messages', { count: s.Messages })}</span>
                     {showArchived ? (

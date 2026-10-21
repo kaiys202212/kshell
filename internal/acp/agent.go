@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/yangk/kshell/internal/executil"
 )
@@ -74,6 +75,11 @@ type Agent struct {
 	codec   *codec
 	stderr  *syncBuffer
 	handler Handler
+	label   string // 退出日志归属（聊天ID/工具ID），启动后不可变
+
+	// deliberate 标记 Close() 主动关闭：Windows 上杀进程的退出码 1 与真实
+	// 崩溃同形，waitLoop 依据它区分「主动关闭」与「异常退出」。
+	deliberate atomic.Bool
 
 	writeMu sync.Mutex
 
@@ -128,6 +134,7 @@ func NewAgent(ctx context.Context, spec Spec, h Handler) (*Agent, error) {
 		codec:      newCodec(bufio.NewReaderSize(stdout, 1<<20), stdin),
 		stderr:     sb,
 		handler:    h,
+		label:      spec.Label,
 		pending:    make(map[string]chan message),
 		baseCtx:    baseCtx,
 		baseCancel: baseCancel,
@@ -394,7 +401,12 @@ func (a *Agent) waitLoop() {
 	code := a.exitCode
 	a.mu.Unlock()
 	// agent 为什么停了，唯一线索就是退出码与 stderr：必须落盘（此前 Stderr() 无调用点）。
-	logf("acp: agent 退出 code=%d err=%v", code, err)
+	// 带 label（聊天ID/工具ID）并区分主动关闭/异常退出，否则 desktop.log 无法归因。
+	reason := "异常退出"
+	if a.deliberate.Load() {
+		reason = "主动关闭"
+	}
+	logf("acp: agent %s label=%s code=%d err=%v", reason, a.label, code, err)
 	if tail := StderrTail(a.stderr.String(), 2048); strings.TrimSpace(tail) != "" {
 		logf("acp: agent stderr 尾部: %s", tail)
 	}
@@ -435,6 +447,9 @@ func (a *Agent) Wait() (int, error) {
 // Close 结束连接：关 stdin、杀进程并唤醒等待者，幂等。
 func (a *Agent) Close() error {
 	a.closeOnce.Do(func() {
+		// 先置位再杀进程：waitLoop 在 Wait 返回后读该标志，若后置会有竞态
+		// 把主动关闭记成异常退出。
+		a.deliberate.Store(true)
 		_ = a.stdin.Close()
 		killProcessTree(a.cmd)
 	})
