@@ -19,6 +19,7 @@ import {
   listFiles,
   moveEntry,
   onFilesChanged,
+  onGitChanged,
   refreshFiles,
   renameEntry,
   revealInExplorer,
@@ -641,17 +642,24 @@ export default function FileTree({
         .getState()
         .notify(e instanceof Error ? backendError(e) : t('ui.files.watch_failed'), 'error');
     });
-    const unsub = onFilesChanged((path) => {
+    const unsubFiles = onFilesChanged((path) => {
       if (sameWorkspacePath(path, wsPath)) {
         clearSelection();
         requestReloadRef.current();
+      }
+    });
+    // 纯 git 元数据变更只刷色标，避免 git add/commit 触发整树 list（控性能）
+    const unsubGit = onGitChanged((path) => {
+      if (sameWorkspacePath(path, wsPath)) {
+        void refreshGitStatus(wsPath);
       }
     });
     return () => {
       reloadGenRef.current += 1;
       reloadInFlightRef.current = false;
       reloadPendingRef.current = false;
-      unsub();
+      unsubFiles();
+      unsubGit();
       stopFileWatch(wsPath);
     };
   }, [wsPath]);

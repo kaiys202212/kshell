@@ -898,6 +898,13 @@ export function onFilesChanged(cb: (path: string) => void): () => void {
   });
 }
 
+// onGitChanged 订阅 .git 元数据变更（HEAD/index/refs）；只刷色标，不重建文件树。
+export function onGitChanged(cb: (path: string) => void): () => void {
+  return EventsOn('git:changed', (p: { path?: string }) => {
+    if (p?.path) cb(p.path);
+  });
+}
+
 // RenameEntry 重命名工作区内文件/目录（只允许改最后一段名字），返回新绝对路径。
 // Go 侧会作废树缓存；错误（目标已存在、越界等）向上抛。
 export async function renameEntry(wsPath: string, relPath: string, newName: string): Promise<string> {

@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   startFileWatch: vi.fn().mockResolvedValue(undefined),
   stopFileWatch: vi.fn(),
   onFilesChanged: vi.fn<(cb: (path: string) => void) => () => void>(() => () => {}),
+  onGitChanged: vi.fn<(cb: (path: string) => void) => () => void>(() => () => {}),
   revealInExplorer: vi.fn().mockResolvedValue(undefined),
   isSSHWorkspaceRef: (p: string) => typeof p === 'string' && p.startsWith('ssh://'),
 }));
@@ -293,6 +294,36 @@ describe('FileTree', () => {
       expect(mocks.refreshFiles).toHaveBeenCalled();
       expect(mocks.listFiles.mock.calls.length).toBeGreaterThan(calls);
     });
+  });
+
+  it('git:changed 只刷色标不重建文件树', async () => {
+    let gitCb: ((p: string) => void) | null = null;
+    mocks.onGitChanged.mockImplementation((cb) => {
+      gitCb = cb;
+      return () => {
+        gitCb = null;
+      };
+    });
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.gitStatus.mockResolvedValue({
+      Status: { 'README.md': 'modified' },
+      IsRepo: true,
+      Branch: 'main',
+      DirBranches: { '': 'main' },
+    });
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+    mocks.refreshFiles.mockClear();
+    const listCalls = mocks.listFiles.mock.calls.length;
+    mocks.gitStatus.mockClear();
+    await act(async () => {
+      gitCb?.('D:/proj');
+    });
+    await waitFor(() => {
+      expect(mocks.gitStatus).toHaveBeenCalledWith('D:\\proj');
+    });
+    expect(mocks.refreshFiles).not.toHaveBeenCalled();
+    expect(mocks.listFiles.mock.calls.length).toBe(listCalls);
   });
 
   // 慢 reload 若后完成且带旧数据，不得盖住随后触发的新结果（串行 + 尾随）
