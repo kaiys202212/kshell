@@ -713,6 +713,60 @@ func TestRecordHubAgentMessageTerminalSessionTitle(t *testing.T) {
 	}
 }
 
+// ACP chat 与终端各自生成 new:N，重启后必撞号。hook 无 ChatID 时不得把
+// Cursor 会话的标题/ChatID 串到 CodeBuddy 终端通知上（用户可见为同名消息上下工具不一致）。
+func TestRecordHubAgentMessageTermKeyCollisionKeepsTerminalAttribution(t *testing.T) {
+	store := hub.New(t.TempDir(), 0)
+	if err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	rec := &hubRecorder{}
+	a := NewAppWith(Options{
+		HubStore:  store,
+		Terminals: newTerminalManagerWith(rec.emit, &stubTermBackend{}),
+		Emit:      rec.emit,
+	})
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+
+	if _, err := m.Open("new:2", chat.Info{
+		Kind: chat.KindNew, Workspace: `D:\data\workspace\moxi\kshell`,
+		Title: "Analyze Error Screenshot", ToolID: "cursor",
+	}, chat.Spec{Path: "x"}, ""); err != nil {
+		t.Fatalf("open chat: %v", err)
+	}
+	tm := a.terminals()
+	if _, err := tm.Open("new:2", terminal.Info{
+		Kind: terminal.KindNew, Workspace: `D:\data\workspace\moxi\strategy`,
+		Title: "Debug browser_navigate", ToolID: "codebuddy",
+	}, terminal.Spec{Path: "x"}, 80, 24); err != nil {
+		t.Fatalf("open terminal: %v", err)
+	}
+
+	a.recordHubAgentMessage(agenthook.Payload{
+		Tool: "codebuddy", Event: "Notification", TermKey: "new:2",
+		Workspace: `D:\data\workspace\moxi\strategy`, Summary: "needs your permission to use Bash",
+	})
+	msgs := store.List()
+	if len(msgs) != 1 {
+		t.Fatalf("应落 1 条，得到 %d", len(msgs))
+	}
+	got := msgs[0]
+	if got.Tool != "codebuddy" {
+		t.Fatalf("Tool = %q, want codebuddy", got.Tool)
+	}
+	if got.SessionTitle != "Debug browser_navigate" {
+		t.Fatalf("SessionTitle = %q, want 终端标题（不得串 Cursor）", got.SessionTitle)
+	}
+	if got.ChatID != "" {
+		t.Fatalf("hook 通道不得因 termKey 撞号写入 ChatID，得到 %q", got.ChatID)
+	}
+	if got.Workspace != `D:\data\workspace\moxi\strategy` {
+		t.Fatalf("Workspace = %q", got.Workspace)
+	}
+}
+
 // chat/终端管理器都查不到时，termKey 的 session: 前缀即磁盘会话 ID：
 // 快照落盘供「继续」按钮在会话未激活时精确 resume；无前缀（如 new:N）不设。
 func TestRecordHubAgentMessageDerivesSessionIDFromTermKey(t *testing.T) {

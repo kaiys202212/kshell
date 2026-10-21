@@ -257,46 +257,29 @@ func (a *App) recordHubAgentMessage(p agenthook.Payload) {
 		Event:     p.Event,
 		Ts:        p.Ts,
 	}
-	if mgr := a.chats(); mgr != nil {
-		if p.ChatID != "" {
-			// 入站 ChatID 可能是链头（出站翻译后的原始 ID，已不在 manager）：
-			// 先按别名链解析到最新再反查；解析不到仍按原值试一次。
-			// 落盘 ChatID 统一翻回链头（与 user 消息同一口径）：前端 hub 归因、
-			// 撤回、状态过滤都按落盘 ID 索引，混入 manager 侧新 ID 会让重建后的
-			// agent 回复归因到一条前端不认识的聊天上。
-			resolved, ok := a.resolveChatID(p.ChatID)
-			if !ok {
-				resolved = p.ChatID
-			}
-			if info, ok := mgr.Get(resolved); ok {
-				m.ChatID = a.originalChatID(info.ID)
-				m.SessionTitle = info.Title
-				m.SessionID = info.SessionID
-			}
+	// ACP 通道带 ChatID：只认显式 ID（别名链翻到链头）。不得凭 termKey 给
+	// hook 凭空补 ChatID——chat/terminal 各自生成 new:N，撞号会串到异工具会话。
+	if mgr := a.chats(); mgr != nil && p.ChatID != "" {
+		resolved, ok := a.resolveChatID(p.ChatID)
+		if !ok {
+			resolved = p.ChatID
 		}
-		if m.SessionTitle == "" && p.TermKey != "" {
-			for _, info := range mgr.List() {
-				if info.Key == p.TermKey {
-					m.SessionTitle = info.Title
-					if m.ChatID == "" {
-						m.ChatID = a.originalChatID(info.ID) // 同口径：链头
-					}
-					if m.SessionID == "" {
-						m.SessionID = info.SessionID
-					}
-					break
-				}
-			}
+		if info, ok := mgr.Get(resolved); ok {
+			m.ChatID = a.originalChatID(info.ID)
+			m.SessionTitle = info.Title
+			m.SessionID = info.SessionID
 		}
 	}
-	// 终端 hook 通道（termKey = session:<id> 或 new:N）不在 chat manager 里，
-	// 从终端管理器反查标题 / SessionID / Tool；OpenSessionTerminal 打开时已把
-	// 磁盘会话标题写进 Title，AttachSession 后 Info.SessionID 也会有值。
-	// 不设 ChatID：终端会话没有 chat ID，避免归因串线。
+	// hook 通道无 ChatID：先查终端（termKey 本属终端）。OpenSessionTerminal
+	// 打开时已把磁盘会话标题写进 Title；AttachSession 后 Info.SessionID 也会有值。
+	// 工具不一致则跳过，避免与 ACP 的 new:N 撞号串标。
 	if p.TermKey != "" {
 		if tm := a.terminals(); tm != nil {
 			for _, info := range tm.List() {
 				if info.Key != p.TermKey {
+					continue
+				}
+				if !toolIDMatches(p.Tool, info.ToolID) {
 					continue
 				}
 				if m.SessionTitle == "" {
@@ -312,12 +295,39 @@ func (a *App) recordHubAgentMessage(p agenthook.Payload) {
 			}
 		}
 	}
+	// 仍缺标题：按 termKey 查 chat，须工具一致；仍不写 ChatID（仅 ACP 显式带入）。
+	if m.SessionTitle == "" && p.TermKey != "" {
+		if mgr := a.chats(); mgr != nil {
+			for _, info := range mgr.List() {
+				if info.Key != p.TermKey {
+					continue
+				}
+				if !toolIDMatches(p.Tool, info.ToolID) {
+					continue
+				}
+				m.SessionTitle = info.Title
+				if m.SessionID == "" {
+					m.SessionID = info.SessionID
+				}
+				break
+			}
+		}
+	}
 	// SessionID 仍为空时从 termKey 派生：session: 前缀即磁盘会话 ID；
 	// 无前缀（如 new:N）不设——依赖上方 Info.SessionID 或扫描回填。
 	if m.SessionID == "" && strings.HasPrefix(p.TermKey, "session:") {
 		m.SessionID = strings.TrimPrefix(p.TermKey, "session:")
 	}
 	a.recordHubMessage(m)
+}
+
+// toolIDMatches 判断 hook/通知载荷工具与会话 ToolID 是否可对齐。
+// 任一侧为空视为未知、放行（兼容旧载荷缺 tool）；两侧都有则要求相等（忽略大小写）。
+func toolIDMatches(payloadTool, sessionTool string) bool {
+	if payloadTool == "" || sessionTool == "" {
+		return true
+	}
+	return strings.EqualFold(payloadTool, sessionTool)
 }
 
 // recordHubWelcome 在工作区新建 agent 会话成功后，模拟该 agent 向 hub 消息流发一条欢迎词：

@@ -112,4 +112,33 @@ describe('resolveAttribution', () => {
     expect(attributionText({ project: 'a' })).toBe('a');
     expect(attributionText({ session: 'b' })).toBe('b');
   });
+
+  it('termKey 与 ACP chat 撞 new:N：工具不一致时用终端标题，不串 Cursor 会话名', () => {
+    const a = resolveAttribution(
+      {
+        tool: 'codebuddy',
+        workspace: 'D:\\ws\\strategy',
+        termKey: 'new:2',
+        sessionTitle: 'Analyze Error Screenshot', // 历史误写快照
+      },
+      [chat({ Key: 'new:2', ToolID: 'cursor', Title: 'Analyze Error Screenshot', Workspace: 'D:\\ws\\kshell' })],
+      [term({ Key: 'new:2', ToolID: 'codebuddy', Title: 'Debug browser', Workspace: 'D:\\ws\\strategy' })],
+    );
+    expect(a.project).toBe('strategy');
+    expect(a.session).toBe('Debug browser');
+  });
+
+  it('chatId 指向异工具会话：忽略该 chat 标题，回落 termKey/快照', () => {
+    const a = resolveAttribution(
+      {
+        tool: 'codebuddy',
+        chatId: 'c1',
+        termKey: 'new:2',
+        sessionTitle: '误写快照',
+      },
+      [chat({ ID: 'c1', Key: 'new:2', ToolID: 'cursor', Title: 'Cursor 会话' })],
+      [term({ Key: 'new:2', ToolID: 'codebuddy', Title: 'CodeBuddy 终端' })],
+    );
+    expect(a.session).toBe('CodeBuddy 终端');
+  });
 });
