@@ -23,6 +23,7 @@ import {
   listHubMessages,
   loadHubArchive,
   onToolsUpdated,
+  onHubBusy,
   openSessionACP,
   openWorkspaceACP,
   readClipboardPaste,
@@ -296,6 +297,9 @@ export default function AgentHubPanel() {
   const [findQuery, setFindQuery] = useState('');
   // /easynew 直建中的本地提示（不进 hub store，成功后由后端写欢迎词）
   const [easynewRunning, setEasynewRunning] = useState(false);
+  // hub:busy：后端激活/新建会话期间的动画提示（OpenSession/CreateNew 前后 Emit）。
+  const [hubBusy, setHubBusy] = useState(false);
+  useEffect(() => onHubBusy(setHubBusy), []);
   // 归档入口：展开时列出月份，选中月份后加载该月旧消息内联展示。
   const [historyOpen, setHistoryOpen] = useState(false);
   const [archiveMonths, setArchiveMonths] = useState<HubArchiveMonth[]>([]);
@@ -978,6 +982,10 @@ export default function AgentHubPanel() {
       // 等待期间用户若改了草稿，也不覆盖新内容。
       void hubPickTarget(text)
         .then((view) => {
+          if (view.Pending) {
+            // 原话先于菜单即时可见（本地瞬态；权威落盘在数字选中后的发送链）。
+            useAppStore.getState().pushHubLocalUser(text);
+          }
           for (const r of view.Replies) useAppStore.getState().pushHubLocal(r.Text);
           if (view.Pending) setDraft((d) => (d.trim() === text ? '' : d));
         })
@@ -1284,10 +1292,10 @@ export default function AgentHubPanel() {
       </div>
 
       <div data-testid="hub-input-area" className="flex flex-col gap-1 border-t border-border pt-2">
-        {easynewRunning && (
+        {(easynewRunning || hubBusy) && (
           <div className="flex items-center gap-1.5 rounded border border-border bg-card px-2 py-1 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-            <span>{t('ui.hub.easynew_running')}</span>
+            <span>{hubBusy ? t('ui.hub.starting_agent') : t('ui.hub.easynew_running')}</span>
           </div>
         )}
         {mentionMatches.length > 0 && !mentionClosed && (

@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   archiveSession: vi.fn(),
   onScanDone: vi.fn(),
   onToolsUpdated: vi.fn(),
+  onHubBusy: vi.fn(() => () => {}),
   openSession: vi.fn(),
   openShellTerminal: vi.fn(),
   openSSHTerminal: vi.fn(),

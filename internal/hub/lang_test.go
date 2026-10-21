@@ -31,8 +31,8 @@ func TestCommonTextsEnglish(t *testing.T) {
 	if got := join(c.Handle("5")); !strings.Contains(got, "No such number") {
 		t.Fatalf("英文态编号不存在 = %q", got)
 	}
-	if got := join(c.Handle("hello")); !strings.Contains(got, "No exact session matched") || !strings.Contains(got, "1. en") {
-		t.Fatalf("英文态无会话应进仅 en 待选 = %q", got)
+	if got := join(c.Handle("hello")); !strings.Contains(got, "No exact session matched") || !strings.Contains(got, "1. new session") {
+		t.Fatalf("英文态无会话应进仅新建入口待选 = %q", got)
 	}
 }
 

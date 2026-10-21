@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   // AgentHubPanel 被 Home 渲染，api mock 需补齐其工具能力拉取依赖
   getTools: vi.fn().mockResolvedValue([]),
   onToolsUpdated: vi.fn().mockImplementation(() => () => {}),
+  onHubBusy: vi.fn(() => () => {}),
   // RequirementList 被 Home 渲染，api mock 需补齐其依赖
   listRequirements: vi.fn().mockResolvedValue([]),
   addRequirement: vi.fn(),

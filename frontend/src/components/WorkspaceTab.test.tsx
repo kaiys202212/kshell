@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   focusSession: vi.fn(),
   onScanDone: vi.fn(),
   onToolsUpdated: vi.fn(),
+  onHubBusy: vi.fn(() => () => {}),
   onWindowClosed: vi.fn(),
   listFiles: vi.fn(),
   previewFile: vi.fn(),

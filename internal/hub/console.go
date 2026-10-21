@@ -495,18 +495,27 @@ func (c *Console) handleMenuNumber(n int) []Reply {
 		}
 		return single(formatSwitched(c.text("switched"), ref))
 	case menuPick:
+		// 首项哨兵「新建」：转 #n 分步流程，暂存正文随身携带，
+		// 创建成功后自动移交（finishCreateHandoff）。
+		if n == 1 {
+			tools, _, _ := c.ex.NewMenuOptions()
+			if len(tools) == 0 {
+				c.menu = nil
+				return single(fmt.Sprintf(c.text("create_failed"), c.text("no_tools")))
+			}
+			menu.kind = menuNew
+			menu.step = 1
+			menu.options = tools
+			return c.renderOptions(c.text("pick_tool"), tools)
+		}
 		// 先清菜单：激活/发送失败也不保留待发正文，避免静默改投。
 		pending := menu.pendingText
 		results := menu.results
 		c.menu = nil
-		// 末项 en：快速新建并投递暂存正文（与 #en <消息> 同语义）。
-		if n == len(results)+1 {
-			return c.finishPickEasyNew(pending)
-		}
-		if n < 1 || n > len(results) {
+		if n < 2 || n > len(results)+1 {
 			return single(c.text("no_mapping"))
 		}
-		ref, err := c.activateRef(results[n-1])
+		ref, err := c.activateRef(results[n-2])
 		if err != nil {
 			return single(fmt.Sprintf(c.text("switch_failed"), c.errText(err)))
 		}
@@ -520,6 +529,8 @@ func (c *Console) handleMenuNumber(n int) []Reply {
 }
 
 // finishCreate 用菜单里累积的参数创建会话；无论成败都清菜单。
+// 菜单带暂存正文（待选「新建」入口转入）时：创建成功后把正文发给新会话，
+// 回复欢迎词 + 移交确认；失败丢弃正文（不误发到错误目标）。
 func (c *Console) finishCreate(menu *pendingMenu, model string) []Reply {
 	c.menu = nil
 	ref, err := c.ex.CreateNew(menu.toolID, menu.wsID, model)
@@ -529,7 +540,24 @@ func (c *Console) finishCreate(menu *pendingMenu, model string) []Reply {
 	c.current = ref
 	c.hasCurrent = true
 	c.markCurrent()
-	return single(c.welcomeReply(ref))
+	replies := []Reply{{Text: c.welcomeReply(ref)}}
+	pending := menu.pendingText
+	if pending == "" {
+		return replies
+	}
+	if ref.ChatID == "" {
+		replies = append(replies, Reply{Text: fmt.Sprintf(c.text("send_failed"), c.text("no_current"))})
+		return replies
+	}
+	if err := c.ex.Send(ref.ChatID, pending); err != nil {
+		replies = append(replies, Reply{Text: fmt.Sprintf(c.text("send_failed"), err)})
+		return replies
+	}
+	replies = append(replies, Reply{
+		Text: c.text("handoff_done"),
+		Sent: true,
+	})
+	return replies
 }
 
 // handleCancel 取消进行中的选择。
@@ -774,71 +802,52 @@ func (c *Console) HandleQuoted(chatID, text string) (bool, []Reply) {
 	return false, nil
 }
 
-// listForPending 列出前 10 个会话 + 末项 en（快速新建），暂存正文等用户回编号。
-// 与 #l 共用编号映射（lastList 仅会话；en 走 menuPick 末项），#c 取消丢弃正文。
-// 无会话时仍 Pending=true（仅 en），便于桌面清空草稿。
+// pickNewSentinel 是待选菜单分组一首项（新建会话）的哨兵 ID。
+const pickNewSentinel = "__new__"
+
+// listForPending 列出分组菜单：分组一首项「新建」（选中转 #n 分步流程），
+// 分组二最近 5 个会话；暂存正文等用户回编号。#c 取消丢弃正文。
+// 无会话时仍 Pending=true（仅新建入口），便于桌面清空草稿。
 func (c *Console) listForPending(text string) ([]Reply, bool) {
 	sessions := c.ex.ListSessions()
 	limit := len(sessions)
-	if limit > 10 {
-		limit = 10
+	if limit > 5 {
+		limit = 5
 	}
 	shown := sessions[:limit]
 	for i := range shown {
-		shown[i].Num = i + 1
+		shown[i].Num = i + 2 // 编号 1 留给「新建」哨兵
 		shown[i].Current = false // 无精确目标：不标当前
 	}
 	c.lastList = shown
 	c.digitRecent = false
-	enNum := limit + 1
+	opts := make([]MenuOption, 0, limit+1)
+	opts = append(opts, MenuOption{ID: pickNewSentinel, Label: c.text("pick_group_new_label")})
+	for _, r := range shown {
+		opts = append(opts, MenuOption{ID: itoa(r.Num), Label: ""}) // 占位，渲染走 formatRef
+	}
 	c.menu = &pendingMenu{
 		kind:        menuPick,
-		options:     make([]MenuOption, enNum), // 含末项 en，供编号越界校验
+		options:     opts,
 		results:     shown,
 		pendingText: text,
 	}
-	lines := make([]string, 0, enNum)
-	for _, r := range shown {
-		line := formatRef(r)
-		if r.TerminalActive {
-			line += " 〔" + c.text("tag_terminal") + "〕"
+	lines := []string{"1. " + c.text("pick_group_new_label")}
+	if len(shown) > 0 {
+		lines = append(lines, "", c.text("pick_group_recent"))
+		for _, r := range shown {
+			line := formatRef(r)
+			if r.TerminalActive {
+				line += " 〔" + c.text("tag_terminal") + "〕"
+			}
+			lines = append(lines, line)
 		}
-		lines = append(lines, line)
 	}
-	lines = append(lines, fmt.Sprintf(c.text("pick_en"), enNum))
 	return single(strings.Join([]string{
 		c.text("pick_target"),
 		strings.Join(lines, "\n"),
 		c.text("pick_number"),
 	}, "\n\n")), true
-}
-
-// finishPickEasyNew 待选选中 en：快速新建并把暂存正文发出（成功标 Sent）。
-func (c *Console) finishPickEasyNew(text string) []Reply {
-	ref, err := c.ex.EasyNew()
-	if err != nil {
-		return single(fmt.Sprintf(c.text("create_failed"), err))
-	}
-	c.current = ref
-	c.hasCurrent = true
-	c.markCurrent()
-	replies := []Reply{{Text: c.welcomeReply(ref)}}
-	if text == "" {
-		return replies
-	}
-	if ref.ChatID == "" {
-		replies = append(replies, Reply{Text: fmt.Sprintf(c.text("send_failed"), c.text("no_current"))})
-		return replies
-	}
-	if err := c.ex.Send(ref.ChatID, text); err != nil {
-		replies = append(replies, Reply{Text: fmt.Sprintf(c.text("send_failed"), err)})
-	} else {
-		replies = append(replies, Reply{
-			Text: fmt.Sprintf(c.text("sent_to"), sessionTag(ref.Title)),
-			Sent: true,
-		})
-	}
-	return replies
 }
 
 // PickTarget 供 AgentHub 在无精确目标时直接进入待选列表（暂存正文）。
@@ -858,16 +867,17 @@ func (c *Console) PickTarget(text string) ([]Reply, bool) {
 	return c.listForPending(text)
 }
 
-// TryCancelPick 让待选菜单失效（AgentHub 已经另行投递）。仅清理 menuPick，
-// 不碰其他选择菜单；lastList 保留，后续数字仍可按最近列表切换。锁被占用
-// （Console.Handle 全程持锁回调 Executor 发送）时返回 false 并放弃：该链路
-// 任一 ex.Send 调用点进入前 menu 必非 menuPick，放弃取消无损语义。
+// TryCancelPick 让待选菜单失效（AgentHub 已经另行投递）。清理 menuPick，以及
+// 由 menuPick「新建」入口转入、仍带暂存正文的 menuNew（另行投递后旧正文同样
+// 不得再被发送）；其余选择菜单不碰。lastList 保留，后续数字仍可按最近列表
+// 切换。锁被占用（Console.Handle 全程持锁回调 Executor 发送）时返回 false 并
+// 放弃：该链路任一 ex.Send 调用点进入前 menu 必非 menuPick，放弃取消无损语义。
 func (c *Console) TryCancelPick() bool {
 	if !c.mu.TryLock() {
 		return false
 	}
 	defer c.mu.Unlock()
-	if c.menu != nil && c.menu.kind == menuPick {
+	if c.menu != nil && (c.menu.kind == menuPick || (c.menu.kind == menuNew && c.menu.pendingText != "")) {
 		c.menu = nil
 	}
 	return true

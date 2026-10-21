@@ -2,6 +2,7 @@ package hub
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -712,10 +713,10 @@ func TestPlainTextInput(t *testing.T) {
 	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c1", "你好"} {
 		t.Fatalf("Send 参数不符: %v", fe.sendCalls)
 	}
-	// 无 current 且无会话：进入待选（仅 en）
+	// 无 current 且无会话：进入待选（仅新建入口）
 	out := join(NewConsole(&fakeExecutor{}).Handle("你好"))
-	if !strings.Contains(out, "未精确匹配到会话") || !strings.Contains(out, "1. en") {
-		t.Fatalf("无 current 普通文本应进仅 en 待选: %q", out)
+	if !strings.Contains(out, "未精确匹配到会话") || !strings.Contains(out, "1. 新建 session") {
+		t.Fatalf("无 current 普通文本应进仅新建入口待选: %q", out)
 	}
 	// 发送失败
 	fe2 := &fakeExecutor{
@@ -1152,7 +1153,7 @@ func TestPlainTextWithoutTargetListsSessions(t *testing.T) {
 	}}
 	c := NewConsole(fe)
 	out := join(c.Handle("帮我修个 bug"))
-	for _, want := range []string{"未精确匹配到会话", "1. [a] claude 会话A", "2. [b] codex 会话B", "请回复数字选择"} {
+	for _, want := range []string{"未精确匹配到会话", "2. [a] claude 会话A", "3. [b] codex 会话B", "请回复数字选择"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("无目标列表缺少 %q: %q", want, out)
 		}
@@ -1162,7 +1163,7 @@ func TestPlainTextWithoutTargetListsSessions(t *testing.T) {
 	}
 
 	fe.openSessionRef = wsRef(0, "c9", "s2", `D:\ws\b`, "codex", "会话B", false)
-	out = join(c.Handle("2"))
+	out = join(c.Handle("3"))
 	if len(fe.openSessionCalls) != 1 || fe.openSessionCalls[0] != "s2" {
 		t.Fatalf("回编号应激活所选磁盘会话: %v", fe.openSessionCalls)
 	}
@@ -1184,7 +1185,7 @@ func TestPendingPickCancelDiscardsText(t *testing.T) {
 	if got := join(c.Handle("#c")); got != "已取消" {
 		t.Fatalf("取消待选文案不符: %q", got)
 	}
-	c.Handle("1")
+	c.Handle("2") // 编号 1 是「新建」，c1 在编号 2
 	if len(fe.switchCalls) != 1 || fe.switchCalls[0] != "c1" {
 		t.Fatalf("取消后数字应正常切换: %v", fe.switchCalls)
 	}
@@ -1206,7 +1207,7 @@ func TestPlainTextTerminalActiveCurrentGoesToPick(t *testing.T) {
 	}
 	c := NewConsole(fe)
 	out := join(c.Handle("你好"))
-	if !strings.Contains(out, "未精确匹配到会话") || !strings.Contains(out, "en") {
+	if !strings.Contains(out, "未精确匹配到会话") || !strings.Contains(out, "新建 session") {
 		t.Fatalf("终端占用默认目标应进待选: %q", out)
 	}
 	if len(fe.sendCalls) != 0 {
@@ -1230,7 +1231,7 @@ func TestPlainTextInactiveCurrentGoesToPick(t *testing.T) {
 	}
 	c := NewConsole(fe)
 	out := join(c.Handle("你好"))
-	if !strings.Contains(out, "未精确匹配到会话") || !strings.Contains(out, "en") {
+	if !strings.Contains(out, "未精确匹配到会话") || !strings.Contains(out, "新建 session") {
 		t.Fatalf("未激活默认目标应进待选: %q", out)
 	}
 	if len(fe.openSessionCalls) != 0 {
@@ -1241,7 +1242,7 @@ func TestPlainTextInactiveCurrentGoesToPick(t *testing.T) {
 	}
 }
 
-// AgentHub 无目标时调用 PickTarget：列会话 + en，暂存正文。
+// AgentHub 无目标时调用 PickTarget：分组菜单（新建 + 最近 5 会话），暂存正文。
 func TestPickTargetListsSessions(t *testing.T) {
 	fe := &fakeExecutor{listSessions: []SessionRef{
 		wsRef(0, "c1", "", `D:\ws\a`, "claude", "会话A", false),
@@ -1253,14 +1254,17 @@ func TestPickTargetListsSessions(t *testing.T) {
 	}
 	joined := join(out)
 	if !strings.Contains(joined, "未精确匹配到会话") ||
-		!strings.Contains(joined, "1. [a] claude 会话A") ||
-		!strings.Contains(joined, "2. en") {
-		t.Fatalf("PickTarget 应输出会话与 en: %v", out)
+		!strings.Contains(joined, "1. 新建") ||
+		!strings.Contains(joined, "2. [a] claude 会话A") {
+		t.Fatalf("PickTarget 应输出分组菜单（新建+会话）: %v", out)
+	}
+	if strings.Contains(joined, "en —") {
+		t.Fatalf("分组菜单不再追加 en 项: %v", out)
 	}
 	if len(fe.sendCalls) != 0 {
 		t.Fatalf("PickTarget 不得直接投递: %v", fe.sendCalls)
 	}
-	sent := c.Handle("1")
+	sent := c.Handle("2")
 	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c1", "随便看看"} {
 		t.Fatalf("回编号应发送去掉首尾空白的正文: %v", fe.sendCalls)
 	}
@@ -1269,21 +1273,68 @@ func TestPickTargetListsSessions(t *testing.T) {
 	}
 }
 
-// 待选末项 en：快速新建并把暂存正文发出。
-func TestPickTargetAppendsEasyNewOption(t *testing.T) {
+// PickTarget 列表最多 5 个会话（编号顺延）。
+func TestPickTargetCapsFiveSessions(t *testing.T) {
+	var refs []SessionRef
+	for i := 0; i < 8; i++ {
+		refs = append(refs, wsRef(0, fmtS(i), "", fmtS(i), "claude", fmt.Sprintf("会话%d", i), false))
+	}
+	fe := &fakeExecutor{listSessions: refs}
+	c := NewConsole(fe)
+	out, pending := c.PickTarget("正文")
+	if !pending {
+		t.Fatal("应进入待选菜单")
+	}
+	joined := join(out)
+	if !strings.Contains(joined, "6. [4]") {
+		t.Fatalf("应列到第 5 个会话（编号 6）: %v", out)
+	}
+	if strings.Contains(joined, "7. [5]") {
+		t.Fatalf("不得列出第 6 个会话: %v", out)
+	}
+}
+
+// 待选选「新建」：转 #n 分步流程（选工具→项目→模型→创建→发送暂存正文）。
+func TestPickTargetNewGoesMenuNew(t *testing.T) {
 	fe := &fakeExecutor{
 		listSessions: []SessionRef{
 			wsRef(0, "c1", "", `D:\ws\a`, "claude", "会话A", false),
 		},
-		easyNewRef: wsRef(0, "c-new", "", `D:\ws\a`, "claude", "新会话", false),
+		tools:      []MenuOption{{ID: "claude", Label: "Claude"}},
+		workspaces: []MenuOption{{ID: "ws1", Label: `D:\proj`}},
+		models:     []MenuOption{{ID: "sonnet", Label: "Sonnet"}},
+		createRef:  wsRef(0, "c-new", "", `D:\ws\a`, "claude", "新会话", false),
 	}
 	c := NewConsole(fe)
 	if _, pending := c.PickTarget("任务正文"); !pending {
 		t.Fatal("应进入待选")
 	}
-	sent := c.Handle("2")
+	// 选 1（新建）→ 工具菜单
+	out := c.Handle("1")
+	if !strings.Contains(join(out), "选择工具") {
+		t.Fatalf("选新建应进入选工具步骤: %v", out)
+	}
+	// 选工具 → 项目菜单
+	out = c.Handle("1")
+	if !strings.Contains(join(out), "选择项目") {
+		t.Fatalf("选工具后应进入选项目步骤: %v", out)
+	}
+	// 选项目 → 模型菜单
+	out = c.Handle("1")
+	if !strings.Contains(join(out), "选择模型") {
+		t.Fatalf("选项目后应进入选模型步骤: %v", out)
+	}
+	// 选模型 → 创建并发送暂存正文
+	sent := c.Handle("1")
+	if len(fe.createCalls) != 1 || fe.createCalls[0] != [3]string{"claude", "ws1", "sonnet"} {
+		t.Fatalf("CreateNew 参数不符: %v", fe.createCalls)
+	}
 	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c-new", "任务正文"} {
-		t.Fatalf("选 en 应 EasyNew 后发送: %v", fe.sendCalls)
+		t.Fatalf("创建成功后应发送暂存正文: %v", fe.sendCalls)
+	}
+	joined := join(sent)
+	if !strings.Contains(joined, "会话已就绪") || !strings.Contains(joined, "任务移交完成") {
+		t.Fatalf("新建移交应回复欢迎词与移交确认: %v", sent)
 	}
 	okSent := false
 	for _, r := range sent {
@@ -1297,22 +1348,48 @@ func TestPickTargetAppendsEasyNewOption(t *testing.T) {
 	}
 }
 
-// 无会话：仍进待选，仅展示 en（Pending=true，便于清空草稿）。
+// 待选选「新建」创建失败：暂存正文丢弃，不误发。
+func TestPickTargetNewCreateFailDropsPending(t *testing.T) {
+	fe := &fakeExecutor{
+		tools:      []MenuOption{{ID: "claude", Label: "Claude"}},
+		workspaces: []MenuOption{{ID: "ws1", Label: `D:\proj`}},
+		createErr:  errors.New("boom"),
+	}
+	c := NewConsole(fe)
+	if _, pending := c.PickTarget("正文"); !pending {
+		t.Fatal("应进入待选")
+	}
+	c.Handle("1") // 新建 → 工具
+	c.Handle("1") // 工具 → 项目
+	c.Handle("1") // 项目（无模型 → 直接创建）
+	if len(fe.createCalls) != 1 {
+		t.Fatalf("应触发创建: %v", fe.createCalls)
+	}
+	if len(fe.sendCalls) != 0 {
+		t.Fatalf("创建失败不得发送暂存正文: %v", fe.sendCalls)
+	}
+}
+
+// 无会话：仍进待选，仅展示「新建」入口（Pending=true，便于清空草稿）。
 func TestPickTargetOnlyEasyNewWhenNoSessions(t *testing.T) {
 	fe := &fakeExecutor{
-		easyNewRef: wsRef(0, "c-new", "", `D:\ws\a`, "claude", "新会话", false),
+		tools:      []MenuOption{{ID: "claude", Label: "Claude"}},
+		workspaces: []MenuOption{{ID: "ws1", Label: `D:\proj`}},
+		createRef:  wsRef(0, "c-new", "", `D:\ws\a`, "claude", "新会话", false),
 	}
 	c := NewConsole(fe)
 	out, pending := c.PickTarget("  随便看看  ")
 	if !pending {
-		t.Fatal("无会话仅 en 时也应进入待选菜单")
+		t.Fatal("无会话仅新建入口时也应进入待选菜单")
 	}
-	if !strings.Contains(join(out), "1. en") {
-		t.Fatalf("无会话应仅列出 en: %v", out)
+	if !strings.Contains(join(out), "1. 新建") {
+		t.Fatalf("无会话应仅列出新建入口: %v", out)
 	}
-	c.Handle("1")
+	c.Handle("1") // 新建 → 工具
+	c.Handle("1") // 工具 → 项目
+	c.Handle("1") // 项目 → 创建
 	if len(fe.sendCalls) != 1 || fe.sendCalls[0] != [2]string{"c-new", "随便看看"} {
-		t.Fatalf("选 en 应发送: %v", fe.sendCalls)
+		t.Fatalf("新建后应发送: %v", fe.sendCalls)
 	}
 }
 
@@ -1362,14 +1439,15 @@ func TestPickTargetPreservesOriginalText(t *testing.T) {
 	}}
 	c := NewConsole(fe)
 	c.PickTarget("你好　世界")
-	c.Handle("1")
+	c.Handle("2") // 编号 1 是「新建」，c1 在编号 2
 	if len(fe.sendCalls) != 1 || fe.sendCalls[0][1] != "你好　世界" {
 		t.Fatalf("暂存正文应保持原文: %v", fe.sendCalls)
 	}
 }
 
-// TryCancelPick：锁空闲时清掉 menuPick 并报告成功；锁被占用（Handle 持锁回调
-// Executor 发送的形态）时返回 false 且不动菜单——调用方据此放弃，无损语义。
+// TryCancelPick：锁空闲时清掉 menuPick（及由其转入、带暂存正文的 menuNew）
+// 并报告成功；锁被占用（Handle 持锁回调 Executor 发送的形态）时返回 false 且
+// 不动菜单——调用方据此放弃，无损语义。
 func TestTryCancelPick(t *testing.T) {
 	fe := &fakeExecutor{listSessions: []SessionRef{
 		wsRef(0, "c1", "", `D:\ws\a`, "claude", "会话A", false),
@@ -1394,6 +1472,50 @@ func TestTryCancelPick(t *testing.T) {
 	}
 	if c.menu != nil {
 		t.Fatal("成功后待选菜单应已清空")
+	}
+}
+
+// TryCancelPick 对待选「新建」转入的 menuNew（带暂存正文）同样生效：
+// 用户已另行投递后，分步新建走完不得再把旧正文发到新建会话。
+func TestTryCancelPickCleansMenuNewWithPending(t *testing.T) {
+	fe := &fakeExecutor{
+		listSessions: []SessionRef{
+			wsRef(0, "c1", "", `D:\ws\a`, "claude", "会话A", false),
+		},
+		tools:      []MenuOption{{ID: "claude", Label: "Claude"}},
+		workspaces: []MenuOption{{ID: "ws1", Label: `D:\proj`}},
+		createRef:  wsRef(0, "c-new", "", `D:\ws\a`, "claude", "新会话", false),
+	}
+	c := NewConsole(fe)
+	if _, pending := c.PickTarget("旧正文"); !pending {
+		t.Fatal("应先进入待选菜单")
+	}
+	c.Handle("1") // 转 menuNew step1
+	if c.menu == nil || c.menu.kind != menuNew || c.menu.pendingText == "" {
+		t.Fatal("应已转入带暂存正文的 menuNew")
+	}
+	if !c.TryCancelPick() {
+		t.Fatal("应报告成功")
+	}
+	if c.menu != nil {
+		t.Fatal("带暂存正文的 menuNew 应被清理")
+	}
+}
+
+// 纯 #n 进入的 menuNew（无暂存正文）不受 TryCancelPick 影响：正常分步流程
+// 不因另行投递被打断。
+func TestTryCancelPickKeepsPlainMenuNew(t *testing.T) {
+	fe := &fakeExecutor{
+		tools:      []MenuOption{{ID: "claude", Label: "Claude"}},
+		workspaces: []MenuOption{{ID: "ws1", Label: `D:\proj`}},
+	}
+	c := NewConsole(fe)
+	c.Handle("#n")
+	if !c.TryCancelPick() {
+		t.Fatal("应报告成功")
+	}
+	if c.menu == nil || c.menu.kind != menuNew {
+		t.Fatal("无暂存正文的 #n 菜单不应被清理")
 	}
 }
 

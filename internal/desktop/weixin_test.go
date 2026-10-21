@@ -237,7 +237,7 @@ func TestWeixinTranscriberMapsAudioUnsupported(t *testing.T) {
 }
 
 // HubPickTarget 是 AgentHub 无精确目标时的待选入口：返回编号列表、暂存正文，
-// 不写 hub 历史、不投递。
+// 不写 hub 历史（原话可见性由前端本地渲染，权威落盘在发送链）、不投递。
 func TestWeixinHubPickTarget(t *testing.T) {
 	app := wxApp(t, []providers.Session{
 		{ID: "s1", ToolID: "claude", Workspace: `D:\ws\a`, Title: "会话A"},
@@ -249,7 +249,6 @@ func TestWeixinHubPickTarget(t *testing.T) {
 	if store == nil {
 		t.Fatal("wxApp 未装配 HubStore")
 	}
-	before := len(store.List())
 
 	view, err := app.HubPickTarget("  随便看看  ")
 	if err != nil {
@@ -263,15 +262,18 @@ func TestWeixinHubPickTarget(t *testing.T) {
 	}
 	text := view.Replies[0].Text
 	if !strings.Contains(text, "未精确匹配到会话") ||
-		!strings.Contains(text, "1. [a] claude 会话A") ||
-		!strings.Contains(text, "2. en") {
-		t.Fatalf("待选回复应含会话与 en: %q", text)
+		!strings.Contains(text, "1. 新建 session") ||
+		!strings.Contains(text, "2. [a] claude 会话A") {
+		t.Fatalf("待选回复应含分组菜单: %q", text)
 	}
-	if got := len(store.List()); got != before {
-		t.Fatalf("HubPickTarget 不得写 hub 历史: before=%d after=%d", before, got)
+	// 不落盘：原话可见性由前端本地渲染，权威落盘在发送链。
+	for _, msg := range store.List() {
+		if msg.Kind == "user" && msg.Text == "随便看看" {
+			t.Fatalf("HubPickTarget 不得写 hub 历史（前端本地渲染负责可见性）: %+v", msg)
+		}
 	}
 
-	// 无会话：仍进菜单（仅 en，Pending=true），前端可清草稿。
+	// 无会话：仍进菜单（仅新建入口，Pending=true），前端可清草稿。
 	empty := wxApp(t, nil)
 	empty.mu.Lock()
 	empty.opts.Config.Language = "zh-CN"
@@ -281,9 +283,9 @@ func TestWeixinHubPickTarget(t *testing.T) {
 		t.Fatalf("HubPickTarget(empty): %v", err)
 	}
 	if !view.Pending {
-		t.Fatal("无会话仅 en 时应报告进入待选菜单")
+		t.Fatal("无会话仅新建入口时应报告进入待选菜单")
 	}
-	if len(view.Replies) != 1 || !strings.Contains(view.Replies[0].Text, "1. en") {
-		t.Fatalf("无会话应回仅 en 待选: %+v", view.Replies)
+	if len(view.Replies) != 1 || !strings.Contains(view.Replies[0].Text, "1. 新建 session") {
+		t.Fatalf("无会话应回仅新建入口待选: %+v", view.Replies)
 	}
 }

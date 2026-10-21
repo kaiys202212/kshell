@@ -15,6 +15,7 @@ const api = vi.hoisted(() => ({
   openWorkspaceACP: vi.fn(),
   getTools: vi.fn(),
   onToolsUpdated: vi.fn(),
+  onHubBusy: vi.fn(() => () => {}),
   getModelConfig: vi.fn(),
   readClipboardPaste: vi.fn(),
   listChatCommands: vi.fn(),
