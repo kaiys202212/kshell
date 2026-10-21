@@ -10,6 +10,10 @@ import (
 
 const jsonrpcVersion = "2.0"
 
+// ErrCodeAuthRequired 是 ACP 规范的「未登录」错误码：agent 在 session/new|load
+// 缺登录态时返回，客户端应从 initialize 广播的 authMethods 里选一种调 authenticate。
+const ErrCodeAuthRequired = -32000
+
 // RPCError 是 JSON-RPC 错误对象。
 type RPCError struct {
 	Code    int             `json:"code"`
@@ -47,10 +51,10 @@ type message struct {
 	RawID   json.RawMessage `json:"-"`            // 入站 id 的原始形态（数字/字符串），由 read() 单独解出：
 	// 反向请求的应答须原样回传该形态。不能与 ID 同 tag（vet 禁止重复 json tag），
 	// 且编码端从不 marshaling message，故无出站影响。
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *RPCError       `json:"error,omitempty"`
+	Method string          `json:"method,omitempty"`
+	Params json.RawMessage `json:"params,omitempty"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  *RPCError       `json:"error,omitempty"`
 }
 
 // codec 在读取端用 json.Decoder（天然按 JSON 值流式切分，兼容分片读）；

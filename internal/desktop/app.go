@@ -1097,6 +1097,11 @@ func (a *App) ResumeSession(id string) error {
 	if !ok {
 		return errSessionNotFound
 	}
+	// ACPOnly 会话（如 Cursor acp-sessions 来源）在 TUI chats 库里没有对应
+	// 记录，resume 会静默起全新会话丢上下文：拒绝弹终端窗并返回稳定错误 key。
+	if shouldBlockTerminalFallback(s) {
+		return errSessionACPOnly
+	}
 	o := a.snapshot()
 	l, toolID, err := a.launchForSession(s, tools)
 	if err != nil {

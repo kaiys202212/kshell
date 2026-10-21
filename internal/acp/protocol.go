@@ -41,6 +41,12 @@ type AuthMethod struct {
 	Name string `json:"name"`
 }
 
+// AuthenticateParams 是 authenticate 请求的参数：methodId 取自 initialize
+// 广播的 authMethods 列表。
+type AuthenticateParams struct {
+	MethodID string `json:"methodId"`
+}
+
 type InitializeResult struct {
 	ProtocolVersion   int               `json:"protocolVersion"`
 	AgentCapabilities AgentCapabilities `json:"agentCapabilities"`

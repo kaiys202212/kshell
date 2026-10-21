@@ -17,6 +17,9 @@ const (
 	StatusReady    = "ready"
 	StatusRunning  = "running"
 	StatusExited   = "exited"
+	// StatusAuthenticating 表示握手期收到 authRequired，正在等用户浏览器登录：
+	// 前端按忙态渲染（不可关闭），登录完成/失败后由 Open 流程收尾。
+	StatusAuthenticating = "authenticating"
 )
 
 type Spec struct {
@@ -126,12 +129,12 @@ type PermissionOption struct {
 }
 
 type PermissionRequest struct {
-	RequestID string             `json:"RequestID"`
-	SessionID string             `json:"SessionID"`
-	ToolCall  ToolCall           `json:"ToolCall"`
+	RequestID string   `json:"RequestID"`
+	SessionID string   `json:"SessionID"`
+	ToolCall  ToolCall `json:"ToolCall"`
 	// Options 由 awaitPermission 逐项 append 构造；agent 推送空列表时保持 nil，
 	// 会被序列化成 null。前端用 ?? [] 兜底，这里仍初始化为空切片保证 JSON 恒为数组。
-	Options   []PermissionOption `json:"Options"`
+	Options []PermissionOption `json:"Options"`
 }
 
 // Conn 是 ACP 连接的高层封装；真实实现是 acp.Agent，测试注入假实现。
@@ -141,6 +144,9 @@ type Conn interface {
 	LoadSession(ctx context.Context, sessionID, cwd string) (acp.SessionStart, error)
 	Prompt(ctx context.Context, sessionID string, blocks []acp.ContentBlock) (string, error)
 	SetModel(ctx context.Context, sessionID, modelID string) error
+	// Authenticate 在 session/new|load 报 authRequired（-32000）后用 initialize
+	// 广播的 authMethod 发起登录（agent 端拉起浏览器流程）。
+	Authenticate(ctx context.Context, methodID string) error
 	Cancel(sessionID string) error
 	// Stderr 返回 agent 进程 stderr 缓冲（异常停止时辅助归因，如 429 限流文本）。
 	Stderr() string

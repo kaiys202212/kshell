@@ -232,9 +232,34 @@ func (a *App) preferACP() bool {
 	return a.snapshot().Config.SessionMode == config.SessionModeACP
 }
 
+// errSessionACPOnly 是 ACPOnly 会话激活失败的稳定错误 key：这类会话仅能以
+// ACP（聊天面板）打开，任何终端路径都被拒绝。
+var errSessionACPOnly = errors.New("err.session.acp_only")
+
+// shouldBlockTerminalFallback 判断该会话是否禁止回退终端激活。ACPOnly 会话
+// （如 Cursor acp-sessions 来源，TUI chats 库里没有对应记录）TUI resume 会
+// 静默起全新会话、上下文全丢，ACP 失败必须显式报错而不是降级终端。
+// 抽成独立函数便于表驱动单测（不必为路由判断硬搭 Wails 环境）。
+func shouldBlockTerminalFallback(s providers.Session) bool {
+	return s.ACPOnly
+}
+
+// acpOnlyErr 统一 ACPOnly 拦截分支的返回错误：有触发 fallback 的原始错误时
+// 原样透传（保留具体原因），否则退回稳定 key err.session.acp_only。
+func acpOnlyErr(err error) error {
+	if err != nil {
+		return err
+	}
+	return errSessionACPOnly
+}
+
 // OpenSession 恢复历史会话：偏好 ACP 且可用时走聊天，否则终端。
+// ACPOnly 会话不受会话模式偏好影响，一律走 ACP（终端 resume 会静默丢上下文）。
 func (a *App) OpenSession(sessionID string) (OpenedSession, error) {
 	if !a.preferACP() {
+		if s, _, ok := a.sessionByIDReady(sessionID); ok && shouldBlockTerminalFallback(s) {
+			return a.openSessionACP(sessionID, true)
+		}
 		return a.fallbackTerminalSession(sessionID, "")
 	}
 	return a.openSessionACP(sessionID, true)
@@ -255,31 +280,45 @@ func (a *App) openSessionACP(sessionID string, allowFallback bool) (OpenedSessio
 	if !ok {
 		return OpenedSession{}, errSessionNotFound
 	}
+	// ACPOnly 会话绝不能回退终端：TUI resume 会静默起全新会话丢上下文。
+	// allowFallback 为假时本就不回退，无需特判。
+	blockTerminal := allowFallback && shouldBlockTerminalFallback(s)
 	o := a.snapshot()
 	if m := o.Chats; m != nil {
-		if l, err := launch.ForSessionACP(o.Providers, tools, s, a.modelOptions(), a.permissionOptions()); err == nil {
-			info, err := openChat(m, "session:"+sessionID, chat.Info{
-				Kind:      chat.KindSession,
-				SessionID: s.ID,
-				Workspace: s.Workspace,
-				Title:     s.Title,
-				ToolID:    s.ToolID,
-			}, l, s.ID)
-			if err == nil {
-				a.emitChatMeta(info)
-				// 按会话 JSONL 尾部上次真实模型恢复（不在列表则静默跳过）。
-				a.restoreSessionModel(info.ID, s.ToolID, s.Path)
-				return OpenedSession{Kind: "chat", Chat: &info}, nil
+		l, launchErr := launch.ForSessionACP(o.Providers, tools, s, a.modelOptions(), a.permissionOptions())
+		if launchErr != nil {
+			if blockTerminal {
+				return OpenedSession{}, acpOnlyErr(launchErr)
 			}
 			if allowFallback {
-				return a.fallbackTerminalSession(sessionID, err.Error())
+				return a.fallbackTerminalSession(sessionID, "")
 			}
-			return OpenedSession{}, err
-		} else if !allowFallback {
-			return OpenedSession{}, err
+			return OpenedSession{}, launchErr
 		}
-	} else if !allowFallback {
-		return OpenedSession{}, errNotReady
+		info, err := openChat(m, "session:"+sessionID, chat.Info{
+			Kind:      chat.KindSession,
+			SessionID: s.ID,
+			Workspace: s.Workspace,
+			Title:     s.Title,
+			ToolID:    s.ToolID,
+		}, l, s.ID)
+		if err == nil {
+			a.emitChatMeta(info)
+			// 按会话 JSONL 尾部上次真实模型恢复（不在列表则静默跳过）。
+			a.restoreSessionModel(info.ID, s.ToolID, s.Path)
+			return OpenedSession{Kind: "chat", Chat: &info}, nil
+		}
+		if blockTerminal {
+			return OpenedSession{}, acpOnlyErr(err)
+		}
+		if allowFallback {
+			return a.fallbackTerminalSession(sessionID, err.Error())
+		}
+		return OpenedSession{}, err
+	}
+	// 聊天管理器未就绪：偏好路径回退终端，显式路径报未就绪。
+	if blockTerminal {
+		return OpenedSession{}, acpOnlyErr(nil)
 	}
 	if allowFallback {
 		return a.fallbackTerminalSession(sessionID, "")

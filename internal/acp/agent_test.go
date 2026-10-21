@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +19,14 @@ func fakeAgentMain() {
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	enc := json.NewEncoder(os.Stdout)
+	// ACP_FAKE_AUTH=1：initialize 广播 authMethods，session/new|load 首次报
+	// -32000 authRequired，authenticate 后重试成功；ACP_FAKE_AUTH_STUCK=1
+	// 时重试仍报 -32000（登录没解决任何问题的失败路径）。
+	authN := 0
+	if os.Getenv("ACP_FAKE_AUTH") == "1" {
+		authN = 1
+	}
+	authStuck := os.Getenv("ACP_FAKE_AUTH_STUCK") == "1"
 	for sc.Scan() {
 		var m message
 		if json.Unmarshal(sc.Bytes(), &m) != nil {
@@ -31,12 +40,25 @@ func fakeAgentMain() {
 		}
 		switch m.Method {
 		case "initialize":
-			reply(map[string]any{
+			init := map[string]any{
 				"protocolVersion":   1,
 				"agentCapabilities": map[string]any{"loadSession": true},
 				"agentInfo":         map[string]any{"name": "fake"},
-			})
+			}
+			if authN > 0 || authStuck {
+				init["authMethods"] = []any{map[string]any{"id": "cursor_login", "name": "Cursor Login"}}
+			}
+			reply(init)
+		case "authenticate":
+			reply(map[string]any{})
 		case "session/new", "session/load":
+			if authN > 0 || authStuck {
+				if authN > 0 {
+					authN--
+				}
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(*m.ID), "error": map[string]any{"code": -32000, "message": "authRequired"}})
+				continue
+			}
 			// ACP_FAKE_DUMP_PARAMS=1 时把请求 params 原样写 stderr（stdout 被
 			// codec 消费不能抢），测试从 Agent.Stderr() 里解析 dumpedParams 行。
 			if os.Getenv("ACP_FAKE_DUMP_PARAMS") == "1" {
@@ -377,6 +399,12 @@ func TestAgentProcessExitFailsPendingCall(t *testing.T) {
 	// test/exit 让子进程在请求挂起时退出：等待者必须收到显式错误而非零值成功。
 	if err := a.call(ctx, "test/exit", nil, nil); err == nil {
 		t.Fatal("expected error when process exits during pending call")
+	} else {
+		var rpcErr *RPCError
+		// 连接断开兜底不得占用 -32000：否则上层把进程崩溃误判成未登录。
+		if !errors.As(err, &rpcErr) || rpcErr.Code == ErrCodeAuthRequired {
+			t.Fatalf("进程退出错误不得占用 authRequired 语义: %v", err)
+		}
 	}
 	// Wait 必须能正常返回，不能挂起。
 	waitDone := make(chan struct{})
@@ -549,5 +577,53 @@ func TestLoadSessionCarriesSettingsMeta(t *testing.T) {
 	dump := dumpedLine(t, readAllStdout(t, a))
 	if !strings.Contains(string(dump), `"_meta"`) || !strings.Contains(string(dump), "ANTHROPIC_MODEL") {
 		t.Fatalf("load 未携带 settings _meta: %s", dump)
+	}
+}
+
+// ACP 认证握手全链路：未登录 session/new 报 -32000 authRequired，
+// authenticate（浏览器登录）后重试成功。
+func TestAgentAuthenticateThenRetry(t *testing.T) {
+	a := newTestAgent(t, fakeAgentSpecEnv(t, "ACP_FAKE_AUTH=1"))
+	ctx, cancel := testCtx()
+	defer cancel()
+	init, err := a.Initialize(ctx)
+	if err != nil || len(init.AuthMethods) != 1 || init.AuthMethods[0].ID != "cursor_login" {
+		t.Fatalf("initialize 应广播 authMethods: %v %+v", err, init)
+	}
+	if _, err := a.NewSession(ctx, "/tmp"); err == nil {
+		t.Fatal("未登录 session/new 应报错")
+	} else {
+		var rpcErr *RPCError
+		if !errors.As(err, &rpcErr) || rpcErr.Code != ErrCodeAuthRequired {
+			t.Fatalf("应报 authRequired, got %v", err)
+		}
+	}
+	if err := a.Authenticate(ctx, "cursor_login"); err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	ss, err := a.NewSession(ctx, "/tmp")
+	if err != nil || ss.SessionID != "sess-new" {
+		t.Fatalf("登录后 session/new 应成功: %v %+v", err, ss)
+	}
+}
+
+// authenticate 后重试仍 -32000：RPCError 原样上抛，由 chat 层归一成稳定 key。
+func TestAgentAuthStuckReturnsRPCError(t *testing.T) {
+	a := newTestAgent(t, fakeAgentSpecEnv(t, "ACP_FAKE_AUTH=1", "ACP_FAKE_AUTH_STUCK=1"))
+	ctx, cancel := testCtx()
+	defer cancel()
+	if _, err := a.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.NewSession(ctx, "/tmp"); err == nil {
+		t.Fatal("未登录 session/new 应报错")
+	}
+	if err := a.Authenticate(ctx, "cursor_login"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := a.NewSession(ctx, "/tmp")
+	var rpcErr *RPCError
+	if !errors.As(err, &rpcErr) || rpcErr.Code != ErrCodeAuthRequired {
+		t.Fatalf("重试仍应报 authRequired, got %v", err)
 	}
 }

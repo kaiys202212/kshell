@@ -54,6 +54,10 @@ type Session struct {
 	UpdatedAt time.Time
 	Messages  int
 	Path      string
+	// ACPOnly 表示该会话仅能以 ACP 激活（如 Cursor acp-sessions 来源，TUI
+	// chats 库里没有对应记录）：TUI resume 一个不在 chats 库里的 ID 会静默
+	// 起全新会话（不报错、上下文全丢），因此这类会话禁止回退终端。
+	ACPOnly bool
 }
 
 // Launch 描述一次进程启动：会话恢复与新建会话都用它，交给 launcher 统一处理（含 Windows 的 .ps1 shim）。

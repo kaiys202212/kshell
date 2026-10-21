@@ -55,9 +55,10 @@ func (c *fakeChatConn) SetModel(ctx context.Context, sessionID, modelID string) 
 	c.modelCalls = append(c.modelCalls, modelID)
 	return c.modelErr
 }
-func (c *fakeChatConn) Cancel(sessionID string) error { return nil }
-func (c *fakeChatConn) Stderr() string                { return "" }
-func (c *fakeChatConn) Wait() (int, error)            { <-c.waitCh; return 0, nil }
+func (c *fakeChatConn) Authenticate(ctx context.Context, methodID string) error { return nil }
+func (c *fakeChatConn) Cancel(sessionID string) error                           { return nil }
+func (c *fakeChatConn) Stderr() string                                          { return "" }
+func (c *fakeChatConn) Wait() (int, error)                                      { <-c.waitCh; return 0, nil }
 func (c *fakeChatConn) Close() error {
 	c.once.Do(func() { close(c.waitCh) })
 	return nil
@@ -352,5 +353,122 @@ func TestOpenWorkspaceACP_NotLoggedInRejected(t *testing.T) {
 	}
 	if env.term.starts() != 0 {
 		t.Fatalf("显式 ACP 被拒不应起终端进程, got %d", env.term.starts())
+	}
+}
+
+// markACPOnly 把指定会话标记为仅能 ACP 激活（模拟 Cursor acp-sessions 来源）。
+func markACPOnly(t *testing.T, app *App, id string) {
+	t.Helper()
+	app.mu.Lock()
+	for i := range app.result.Sessions {
+		if app.result.Sessions[i].ID == id {
+			app.result.Sessions[i].ACPOnly = true
+		}
+	}
+	app.mu.Unlock()
+}
+
+// TestOpenSessionACPOnlyBlocksFallback 验证 ACPOnly 会话（Cursor acp-sessions
+// 来源）在偏好路径失败时一律显式报错、绝不回退终端——TUI resume 一个不在
+// chats 库里的 ID 会静默起全新会话丢上下文，静默降级等于数据丢失。
+func TestOpenSessionACPOnlyBlocksFallback(t *testing.T) {
+	cases := []struct {
+		name    string
+		backend chat.Backend
+		acp     *providers.ACPDetection
+		wantErr error
+	}{
+		{"acp 不可用", fakeChatBackend{}, &providers.ACPDetection{Available: false}, launch.ErrACPUnavailable},
+		{"起进程失败", fakeChatBackendErr{}, &providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"}, nil},
+		// backend=nil：聊天管理器未就绪也要报错，而不是弹终端
+		{"chats 未就绪", nil, &providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"}, errSessionACPOnly},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// 不设 SessionModeACP：默认 tui 偏好下 ACPOnly 也要强制走 ACP 路径
+			env := newChatTestApp(t, c.acp, c.backend)
+			markACPOnly(t, env.app, "s1")
+
+			got, err := env.app.OpenSession("s1")
+			if err == nil {
+				t.Fatalf("ACPOnly 会话激活失败应报错而非回退终端: %+v", got)
+			}
+			if c.wantErr != nil && !errors.Is(err, c.wantErr) {
+				t.Fatalf("err = %v, want %v", err, c.wantErr)
+			}
+			if got.Kind != "" || got.Terminal != nil || got.Chat != nil {
+				t.Fatalf("拦截分支不应产出任何会话: %+v", got)
+			}
+			if env.term.starts() != 0 {
+				t.Fatalf("不得起终端进程, got %d", env.term.starts())
+			}
+		})
+	}
+}
+
+// TestOpenSessionACPOnlyIgnoresTUIPreference 验证默认 tui 偏好下 ACPOnly 会话
+// 仍强制走 ACP：按实际存储模式激活，而不是按全局偏好。
+func TestOpenSessionACPOnlyIgnoresTUIPreference(t *testing.T) {
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "claude-agent-acp",
+	}, fakeChatBackend{})
+	markACPOnly(t, env.app, "s1")
+
+	got, err := env.app.OpenSession("s1")
+	if err != nil {
+		t.Fatalf("OpenSession error: %v", err)
+	}
+	if got.Kind != "chat" || got.Chat == nil {
+		t.Fatalf("ACPOnly 会话应强制走聊天路径: %+v", got)
+	}
+	if got.Chat.SessionID != "s1" {
+		t.Fatalf("Chat.SessionID = %q, want s1", got.Chat.SessionID)
+	}
+	if env.term.starts() != 0 {
+		t.Fatalf("不得起终端进程, got %d", env.term.starts())
+	}
+}
+
+// TestResumeSessionACPOnlyRejected 验证 TUI 弹窗 resume 入口拒绝 ACPOnly 会话：
+// chats 库里没有对应记录，resume 会静默起全新会话丢上下文。
+func TestResumeSessionACPOnlyRejected(t *testing.T) {
+	env := newChatTestApp(t, &providers.ACPDetection{Available: false}, fakeChatBackend{})
+	markACPOnly(t, env.app, "s1")
+
+	if err := env.app.ResumeSession("s1"); !errors.Is(err, errSessionACPOnly) {
+		t.Fatalf("err = %v, want errSessionACPOnly", err)
+	}
+	// 对照：普通会话不受拦截（此环境无窗口管理器，应走 errNotReady 而非 ACPOnly）
+	if err := env.app.ResumeSession("s2"); err == nil || errors.Is(err, errSessionACPOnly) {
+		t.Fatalf("普通会话不应被 ACPOnly 拦截, got %v", err)
+	}
+}
+
+// TestShouldBlockTerminalFallback 表驱动锁定路由判断：只认 ACPOnly 标记。
+func TestShouldBlockTerminalFallback(t *testing.T) {
+	cases := []struct {
+		name string
+		s    providers.Session
+		want bool
+	}{
+		{"普通会话放行", providers.Session{ID: "s1"}, false},
+		{"ACPOnly 拦截", providers.Session{ID: "s2", ACPOnly: true}, true},
+		{"其余字段不影响", providers.Session{ID: "s3", ToolID: "cursor", Path: "x"}, false},
+	}
+	for _, c := range cases {
+		if got := shouldBlockTerminalFallback(c.s); got != c.want {
+			t.Fatalf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestACPOnlyErr 验证错误统一口：有原始错误透传保留原因，nil 退回稳定 key。
+func TestACPOnlyErr(t *testing.T) {
+	orig := errors.New("起进程失败")
+	if got := acpOnlyErr(orig); got != orig {
+		t.Fatalf("非 nil 应原样透传, got %v", got)
+	}
+	if got := acpOnlyErr(nil); !errors.Is(got, errSessionACPOnly) {
+		t.Fatalf("nil 应退回 errSessionACPOnly, got %v", got)
 	}
 }

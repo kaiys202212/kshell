@@ -35,6 +35,13 @@ type fakeConn struct {
 	initGate   chan struct{} // 非 nil 时 Initialize 阻塞等待，模拟握手耗时
 	initSet    bool
 	initResult acp.InitializeResult
+
+	newAuthN  int      // >0 时 NewSession 前 N 次返回 authRequired（模拟未登录脚本）
+	loadAuthN int      // 同上，作用于 LoadSession
+	newCalls  int      // NewSession 调用次数（断言 -32000 后重试恰好一次）
+	loadCalls int      // LoadSession 调用次数
+	authCalls []string // 记录每次 Authenticate 的 methodID
+	authErr   error    // 非 nil 时 Authenticate 返回该错误
 }
 
 func (c *fakeConn) Initialize(ctx context.Context) (acp.InitializeResult, error) {
@@ -54,6 +61,11 @@ func (c *fakeConn) Initialize(ctx context.Context) (acp.InitializeResult, error)
 func (c *fakeConn) NewSession(ctx context.Context, cwd string) (acp.SessionStart, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.newCalls++
+	if c.newAuthN > 0 {
+		c.newAuthN--
+		return acp.SessionStart{}, &acp.RPCError{Code: acp.ErrCodeAuthRequired, Message: "authRequired"}
+	}
 	if c.newStart.SessionID == "" {
 		c.newStart.SessionID = "sess-new"
 	}
@@ -62,11 +74,25 @@ func (c *fakeConn) NewSession(ctx context.Context, cwd string) (acp.SessionStart
 func (c *fakeConn) LoadSession(ctx context.Context, sessionID, cwd string) (acp.SessionStart, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.loadCalls++
+	if c.loadAuthN > 0 {
+		c.loadAuthN--
+		return acp.SessionStart{}, &acp.RPCError{Code: acp.ErrCodeAuthRequired, Message: "authRequired"}
+	}
 	start := c.newStart
 	if start.SessionID == "" {
 		start.SessionID = sessionID
 	}
 	return start, c.loadErr
+}
+
+// Authenticate 记录 methodID 并按脚本应答（断言登录流程用）。
+func (c *fakeConn) Authenticate(ctx context.Context, methodID string) error {
+	c.mu.Lock()
+	c.authCalls = append(c.authCalls, methodID)
+	err := c.authErr
+	c.mu.Unlock()
+	return err
 }
 func (c *fakeConn) Prompt(ctx context.Context, sessionID string, blocks []acp.ContentBlock) (string, error) {
 	c.mu.Lock()
@@ -1364,7 +1390,8 @@ func TestManagerPromptDeliversWhileActivityRunning(t *testing.T) {
 }
 
 // Close 后静默回退定时器不得再触发（不推 meta、不复活状态）。
-func TestManagerCloseStopsIdleFallback(t *testing.T) {	m, b, _, infoCh := newIdleTestManager(t)
+func TestManagerCloseStopsIdleFallback(t *testing.T) {
+	m, b, _, infoCh := newIdleTestManager(t)
 	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
 	if err != nil {
 		t.Fatal(err)

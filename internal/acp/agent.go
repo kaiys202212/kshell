@@ -368,6 +368,14 @@ func (a *Agent) SetModel(ctx context.Context, sessionID, modelID string) error {
 	return a.call(ctx, "session/set_config_option", SetConfigOptionParams{SessionID: sessionID, OptionID: "model", Value: value}, nil)
 }
 
+// Authenticate 用指定登录方式完成认证：未登录的 session/new|load 报
+// -32000 authRequired 后，客户端选 initialize 广播的 authMethod 调本方法，
+// agent 端负责拉起官方登录流程（如 Cursor 的浏览器登录）。out 恒为 nil
+//（规范只回空结果），错误上抛由 chat 层归一化。
+func (a *Agent) Authenticate(ctx context.Context, methodID string) error {
+	return a.call(ctx, "authenticate", AuthenticateParams{MethodID: methodID}, nil)
+}
+
 func (a *Agent) Cancel(sessionID string) error {
 	return a.notify("session/cancel", CancelParams{SessionID: sessionID})
 }
@@ -407,7 +415,9 @@ func (a *Agent) failPending(err error) {
 	a.closed = true
 	for id, ch := range a.pending {
 		delete(a.pending, id)
-		ch <- message{Error: &RPCError{Code: -32000, Message: err.Error()}}
+		// -32603（JSON-RPC internal error）：连接断开不是 agent 的业务语义，
+		// 不得占用规范保留给 authRequired 的 -32000，否则上层会把进程崩溃误判成未登录。
+		ch <- message{Error: &RPCError{Code: -32603, Message: err.Error()}}
 	}
 	a.mu.Unlock()
 	a.baseCancel() // 取消在途的反向请求处理器，避免泄漏阻塞

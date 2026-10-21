@@ -379,6 +379,79 @@ func wrapHandshakeErr(err error) error {
 	return err
 }
 
+// authTimeout 限制 authenticate（浏览器登录）的等待时长：用户要在浏览器完成
+// 官方登录流程，超时视为放弃，错误归一成 err.chat.auth_required。var 仅为测试
+// 可缩短；生产代码不得修改。
+var authTimeout = 5 * time.Minute
+
+// errAuthRequired 是 agent 报告未登录且认证未完成的稳定错误 key：
+// 前端据此提示并提供「去登录」入口。
+var errAuthRequired = errors.New("err.chat.auth_required")
+
+// isAuthRequired 判断 session/new|load 的错误是否为 ACP 规范的 authRequired。
+func isAuthRequired(err error) bool {
+	var rpcErr *acp.RPCError
+	return errors.As(err, &rpcErr) && rpcErr.Code == acp.ErrCodeAuthRequired
+}
+
+// pushAuthenticating 把会话置为等待登录态并经 onInfo 推送（锁外执行），
+// 前端借此把页签渲染成忙态（不可关闭）。
+func (m *Manager) pushAuthenticating(s *session) {
+	m.mu.Lock()
+	if s.info.Status != StatusExited {
+		s.info.Status = StatusAuthenticating
+	}
+	onInfo := m.onInfo
+	out := s.info
+	m.mu.Unlock()
+	if onInfo != nil {
+		onInfo(out)
+	}
+}
+
+// startSession 执行 session/new|load；收到 authRequired（-32000）时置等待登录态、
+// 调 authenticate 走浏览器登录，成功后用全新超时上下文重试一次——authenticate
+// 可长达数分钟，原握手上下文早超时，重试绝不能复用。返回未包装的原始错误，
+// 由调用方统一走 wrapHandshakeErr + m.fail 收尾。
+func (m *Manager) startSession(conn Conn, init acp.InitializeResult, s *session, sessionID string) (acp.SessionStart, error) {
+	do := func(ctx context.Context) (acp.SessionStart, error) {
+		if sessionID != "" {
+			return conn.LoadSession(ctx, sessionID, s.info.Workspace)
+		}
+		return conn.NewSession(ctx, s.info.Workspace)
+	}
+	hsTimeout := handshakeTimeoutFor(s.info.ToolID)
+	hsCtx, hsCancel := context.WithTimeout(s.ctx, hsTimeout)
+	defer hsCancel()
+	start, err := do(hsCtx)
+	if !isAuthRequired(err) {
+		return start, err
+	}
+	m.pushAuthenticating(s)
+	if len(init.AuthMethods) == 0 {
+		// agent 报告需要登录却不提供任何登录方式：无从认证，直接给稳定 key。
+		return acp.SessionStart{}, errAuthRequired
+	}
+	authCtx, authCancel := context.WithTimeout(s.ctx, authTimeout)
+	defer authCancel()
+	if err := conn.Authenticate(authCtx, init.AuthMethods[0].ID); err != nil {
+		// 登录超时 / agent 再次报未登录：归一成稳定 key（前者若透传会被
+		// 调用方误译成 handshake_timeout，语义完全不同）。
+		if errors.Is(err, context.DeadlineExceeded) || isAuthRequired(err) {
+			return acp.SessionStart{}, errAuthRequired
+		}
+		return acp.SessionStart{}, err
+	}
+	// 登录成功：重试原请求，换全新握手超时上下文。
+	retryCtx, retryCancel := context.WithTimeout(s.ctx, hsTimeout)
+	defer retryCancel()
+	start, err = do(retryCtx)
+	if err != nil {
+		return acp.SessionStart{}, wrapHandshakeErr(err)
+	}
+	return start, nil
+}
+
 // Open 起进程并完成 initialize + session/new|load；sessionID 非空则 load。
 func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info, error) {
 	if m.backend == nil {
@@ -499,25 +572,17 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 			m.fail(s.id, 0, msg)
 			return Info{}, errors.New(msg)
 		}
-		start, err := conn.LoadSession(hsCtx, sessionID, info.Workspace)
-		if err != nil {
-			_ = conn.Close()
-			err = wrapHandshakeErr(err)
-			m.fail(s.id, 0, err.Error())
-			return Info{}, err
-		}
-		s.modelState = start.Models
-		s.modelConfig = start.ModelConfig
-	} else {
-		start, err := conn.NewSession(hsCtx, info.Workspace)
-		if err != nil {
-			_ = conn.Close()
-			err = wrapHandshakeErr(err)
-			m.fail(s.id, 0, err.Error())
-			return Info{}, err
-		}
-		s.modelState = start.Models
-		s.modelConfig = start.ModelConfig
+	}
+	start, err := m.startSession(conn, init, s, sessionID)
+	if err != nil {
+		_ = conn.Close()
+		err = wrapHandshakeErr(err)
+		m.fail(s.id, 0, err.Error())
+		return Info{}, err
+	}
+	s.modelState = start.Models
+	s.modelConfig = start.ModelConfig
+	if sessionID == "" {
 		sessionID = start.SessionID
 	}
 

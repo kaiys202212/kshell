@@ -47,6 +47,10 @@ func TestListCursorACPSessions(t *testing.T) {
 	if s.ID != id || s.ToolID != cursorID || s.Title != "Activate Session Explain" {
 		t.Fatalf("%+v", s)
 	}
+	// acp-sessions 来源必须标记 ACPOnly：TUI resume 这类 ID 会静默起全新会话丢上下文
+	if !s.ACPOnly {
+		t.Fatal("acp-sessions 来源的会话应标记 ACPOnly")
+	}
 	if s.Workspace != `d:\data\workspace\moxi\kshell` {
 		t.Fatalf("workspace %q", s.Workspace)
 	}
@@ -82,6 +86,13 @@ func TestEnumerateSessionsIncludesACPSessions(t *testing.T) {
 	if byID[chatID].Title != "From Chats" {
 		t.Fatalf("missing chats session: %+v", got)
 	}
+	// acp-sessions 来源带 ACPOnly 标记；chats 来源绝不能带（否则会被误禁终端）
+	if !byID[acpID].ACPOnly {
+		t.Fatalf("acp-sessions 来源应带 ACPOnly 标记: %+v", byID[acpID])
+	}
+	if byID[chatID].ACPOnly {
+		t.Fatalf("chats 来源不应带 ACPOnly 标记: %+v", byID[chatID])
+	}
 }
 
 func TestEnumerateSessionsPrefersChatsWhenSameID(t *testing.T) {
@@ -103,5 +114,9 @@ func TestEnumerateSessionsPrefersChatsWhenSameID(t *testing.T) {
 	}
 	if hit == nil || hit.Title != "Chats Title" || hit.Workspace != `D:\ws` {
 		t.Fatalf("同 ID 应保留 chats 条目: %+v", hit)
+	}
+	// chats 优先保留的条目同样不能带 ACPOnly 标记
+	if hit.ACPOnly {
+		t.Fatalf("同 ID 保留的 chats 条目不应带 ACPOnly 标记: %+v", hit)
 	}
 }

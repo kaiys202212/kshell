@@ -66,6 +66,7 @@ func listCursorACPSessions(home string) ([]Session, error) {
 			CreatedAt: updated,
 			UpdatedAt: updated,
 			Path:      metaPath,
+			ACPOnly:   true, // 仅能以 ACP 激活；TUI resume 会静默丢上下文
 		})
 	}
 	return out, nil
