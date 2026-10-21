@@ -305,6 +305,10 @@ func TestForWorkspaceACP_CursorBrokenBinRescuedByVersionScript(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ver, "index.js"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	bundled := filepath.Join(ver, "node.exe")
+	if err := os.WriteFile(bundled, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	oldShim := cursorRootShimFn
 	oldNode := nodeLookPathFn
@@ -320,8 +324,8 @@ func TestForWorkspaceACP_CursorBrokenBinRescuedByVersionScript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if l.Path != `D:\nodejs\node.exe` || len(l.Args) != 2 || l.Args[0] != filepath.Join(ver, "index.js") || l.Args[1] != "acp" {
-		t.Fatalf("launch = %+v", l)
+	if l.Path != bundled || len(l.Args) != 2 || l.Args[0] != filepath.Join(ver, "index.js") || l.Args[1] != "acp" {
+		t.Fatalf("launch = %+v, want bundled %s", l, bundled)
 	}
 }
 
@@ -399,11 +403,14 @@ func TestForWorkspaceACP_CursorCmdShimOfficialACP(t *testing.T) {
 	}
 	writeFile(filepath.Join(root, "cursor-agent.cmd"))
 	writeFile(filepath.Join(ver, "index.js"))
+	bundled := filepath.Join(ver, "node.exe")
+	writeFile(bundled)
 	shim := filepath.Join(root, "cursor-agent.cmd")
 
 	oldNode := nodeLookPathFn
 	oldScript := cursorScriptResolveFn
 	t.Cleanup(func() { nodeLookPathFn = oldNode; cursorScriptResolveFn = oldScript })
+	// PATH 上另有系统 Node：官方通道必须优先 versions 内自带 node.exe
 	nodeLookPathFn = func() (string, bool) { return `D:\nodejs\node.exe`, true }
 	cursorScriptResolveFn = func(shimPath string) (string, bool) {
 		return filepath.Join(ver, "index.js"), true
@@ -418,11 +425,43 @@ func TestForWorkspaceACP_CursorCmdShimOfficialACP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if l.Path != `D:\nodejs\node.exe` || len(l.Args) != 2 || l.Args[0] != filepath.Join(ver, "index.js") || l.Args[1] != "acp" {
-		t.Fatalf("launch = %+v", l)
+	if l.Path != bundled || len(l.Args) != 2 || l.Args[0] != filepath.Join(ver, "index.js") || l.Args[1] != "acp" {
+		t.Fatalf("launch = %+v, want bundled node %s", l, bundled)
 	}
 	if len(l.Env) != 0 {
 		t.Fatalf("官方通道不应注入 env, got %v", l.Env)
+	}
+}
+
+// 无自带 node.exe 时仍回落 PATH node（老布局 / 残缺安装兜底）。
+func TestForWorkspaceACP_CursorCmdShimFallsBackToPathNode(t *testing.T) {
+	root := t.TempDir()
+	ver := filepath.Join(root, "versions", "2026.10.16-e3cb207")
+	if err := os.MkdirAll(ver, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ver, "index.js"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(root, "cursor-agent.cmd")
+	if err := os.WriteFile(shim, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldNode := nodeLookPathFn
+	oldScript := cursorScriptResolveFn
+	t.Cleanup(func() { nodeLookPathFn = oldNode; cursorScriptResolveFn = oldScript })
+	nodeLookPathFn = func() (string, bool) { return `D:\nodejs\node.exe`, true }
+	cursorScriptResolveFn = func(string) (string, bool) { return filepath.Join(ver, "index.js"), true }
+
+	ps := []providers.Provider{providers.Cursor{}}
+	tools := []discovery.Tool{{ID: "cursor", Installed: true, BinPath: shim}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "cursor", ModelOptions{}, PermissionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Path != `D:\nodejs\node.exe` {
+		t.Fatalf("无自带 node 时应回落 PATH, got %+v", l)
 	}
 }
 

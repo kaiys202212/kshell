@@ -453,7 +453,7 @@ func officialCursorACP(tool discovery.Tool) (providers.Launch, bool) {
 		if p, ok := cursorRootShimFn(); ok {
 			binPath = p
 		} else if script, ok := cursorNodeEntryFn(); ok {
-			node, ok2 := nodeLookPathFn()
+			node, ok2 := nodeForCursorScript(script)
 			if !ok2 {
 				return providers.Launch{}, false
 			}
@@ -466,17 +466,31 @@ func officialCursorACP(tool discovery.Tool) (providers.Launch, bool) {
 		return providers.Launch{Path: binPath, Args: []string{binArgs[0], "acp"}}, true
 	}
 	if isCmdShim(binPath) {
-		node, ok := nodeLookPathFn()
+		script, ok := cursorScriptResolveFn(binPath)
 		if !ok {
 			return providers.Launch{}, false
 		}
-		script, ok := cursorScriptResolveFn(binPath)
+		node, ok := nodeForCursorScript(script)
 		if !ok {
 			return providers.Launch{}, false
 		}
 		return providers.Launch{Path: node, Args: []string{script, "acp"}}, true
 	}
 	return providers.Launch{Path: binPath, Args: []string{"acp"}}, true
+}
+
+// nodeForCursorScript 优先用 index.js 同目录的官方 node.exe（与 cursor-agent
+// 自带原生模块 ABI 一致）；没有再回落 PATH 上的 node.exe。
+// AgentHub ACP 若误用系统 Node，常见 Windows ACCESS_VIOLATION（0xC0000005），
+// 而 TUI 经官方 shim 用自带 node 则正常。
+func nodeForCursorScript(script string) (string, bool) {
+	if script != "" {
+		bundled := filepath.Join(filepath.Dir(script), "node.exe")
+		if isFile(bundled) {
+			return bundled, true
+		}
+	}
+	return nodeLookPathFn()
 }
 
 // reorderACPArgs 把 finalize 前置进 Args 的注入参数挪到 npx 包名之后：
@@ -522,11 +536,11 @@ func acpAdapterEnv(tool discovery.Tool) map[string]string {
 		// 退回直注 shim（保持既有行为，至少老 Node 环境仍可用）。
 		if isCmdShim(tool.BinPath) {
 			fallback := map[string]string{"CURSOR_AGENT_EXECUTABLE": tool.BinPath}
-			node, ok := nodeLookPathFn()
+			script, ok := cursorScriptResolveFn(tool.BinPath)
 			if !ok {
 				return fallback
 			}
-			script, ok := cursorScriptResolveFn(tool.BinPath)
+			node, ok := nodeForCursorScript(script)
 			if !ok {
 				return fallback
 			}
