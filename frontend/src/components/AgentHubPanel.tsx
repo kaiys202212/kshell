@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowUpRight, Loader2, Settings2 } from 'lucide-react';
+import { ArrowUpRight, CircleHelp, Loader2, Settings2 } from 'lucide-react';
 import type { ChatCommand, ChatInfo, ChatModelsView, HubArchiveMonth, HubMessage, Session, TerminalInfo, ToolInfo, Workspace } from '../lib/api';
 import {
   cancelChat,
@@ -288,6 +288,8 @@ export default function AgentHubPanel() {
   const [dialogOpen, setDialogOpen] = useState(false);
   // 「默认设置」对话框开关：设置默认 agent 工具/模型，供 easynew 与需求派发使用
   const [defaultsOpen, setDefaultsOpen] = useState(false);
+  // 使用说明弹窗：介绍 ACP 支持范围、各工具的平台模型注入情况与常用操作
+  const [helpOpen, setHelpOpen] = useState(false);
   // #find 查找对话框：open 控制显隐，initialQuery 承接 `#find 关键词` 的初始过滤词
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
@@ -1178,6 +1180,16 @@ export default function AgentHubPanel() {
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <h2 className="shrink-0 text-sm font-medium">{t('ui.hub.title')}</h2>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-6 w-6 shrink-0 text-muted-foreground"
+            aria-label={t('ui.hub.help_aria')}
+            title={t('ui.hub.help_aria')}
+            onClick={() => setHelpOpen(true)}
+          >
+            <CircleHelp aria-hidden className="h-3.5 w-3.5" />
+          </Button>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {/* 默认设置入口：设置默认 agent 工具/模型（供 easynew 与需求派发使用） */}
@@ -1561,6 +1573,7 @@ export default function AgentHubPanel() {
 
       <NewAgentDialog open={dialogOpen} onOpenChange={setDialogOpen} />
       <DefaultSettingsDialog open={defaultsOpen} onOpenChange={setDefaultsOpen} />
+      <HelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
       <FindSessionDialog
         open={findOpen}
         initialQuery={findQuery}
@@ -1869,6 +1882,89 @@ function DefaultSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         </Button>
         <Button size="sm" disabled={!toolId} onClick={save}>
           {t('ui.hub.save')}
+        </Button>
+      </div>
+    </Dialog>
+  );
+}
+
+// HelpDialog：说明 AgentHub 的 ACP 支持范围、各工具的平台模型注入情况与常用操作。
+// 内容与后端能力对齐：ACPProvider 目前由 claude / codebuddy / cursor 实现，
+// 平台模型注入见 launch.finalizeACP 与 providers.ModelInjector。
+function HelpDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const { t } = useTranslation();
+  const supported = [
+    {
+      tool: 'Claude Code',
+      acp: t('ui.hub.help_claude_acp'),
+      injected: true,
+      detail: t('ui.hub.help_claude_model'),
+    },
+    {
+      tool: 'CodeBuddy',
+      acp: t('ui.hub.help_codebuddy_acp'),
+      injected: true,
+      detail: t('ui.hub.help_codebuddy_model'),
+    },
+    {
+      tool: 'Cursor',
+      acp: t('ui.hub.help_cursor_acp'),
+      injected: false,
+      detail: t('ui.hub.help_cursor_model'),
+    },
+  ];
+  const usage = [
+    t('ui.hub.help_usage_1'),
+    t('ui.hub.help_usage_2'),
+    t('ui.hub.help_usage_3'),
+    t('ui.hub.help_usage_4'),
+    t('ui.hub.help_usage_5'),
+  ];
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange} className="max-h-[80vh] w-[34rem] overflow-y-auto">
+      <DialogPrimitive.Title className="mb-2 text-sm font-medium">{t('ui.hub.help_title')}</DialogPrimitive.Title>
+      <p className="mb-3 text-xs text-muted-foreground">{t('ui.hub.help_intro')}</p>
+
+      <div className="mb-1.5 text-xs font-medium">{t('ui.hub.help_tools_title')}</div>
+      <table className="mb-4 w-full table-fixed border-collapse text-left text-xs">
+        <thead>
+          <tr className="text-muted-foreground">
+            <th className="w-[22%] border-b border-border py-1 pr-2 font-medium">{t('ui.hub.help_col_tool')}</th>
+            <th className="w-[36%] border-b border-border py-1 pr-2 font-medium">{t('ui.hub.help_col_acp')}</th>
+            <th className="w-[42%] border-b border-border py-1 font-medium">{t('ui.hub.help_col_model')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {supported.map((row) => (
+            <tr key={row.tool} className="align-top">
+              <td className="border-b border-border py-1.5 pr-2 font-medium">{row.tool}</td>
+              <td className="border-b border-border py-1.5 pr-2 text-muted-foreground">{row.acp}</td>
+              <td className="border-b border-border py-1.5">
+                <span
+                  className={cn(
+                    'rounded px-1.5 py-0.5',
+                    row.injected ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground',
+                  )}
+                >
+                  {t(row.injected ? 'ui.hub.help_model_yes' : 'ui.hub.help_model_no')}
+                </span>
+                <div className="mt-1 text-muted-foreground">{row.detail}</div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div className="mb-1.5 text-xs font-medium">{t('ui.hub.help_usage_title')}</div>
+      <ol className="m-0 list-decimal space-y-1 pl-4 text-xs text-muted-foreground">
+        {usage.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ol>
+
+      <div className="mt-4 flex justify-end">
+        <Button size="sm" onClick={() => onOpenChange(false)}>
+          {t('ui.hub.help_close')}
         </Button>
       </div>
     </Dialog>

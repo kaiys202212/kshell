@@ -161,6 +161,18 @@ describe('AgentHubPanel', () => {
     expect(screen.queryByText(tt('ui.hub.empty'))).toBeNull();
   });
 
+  it('标题旁问号按钮：打开使用说明，列出 ACP 工具与平台模型注入状态', () => {
+    useAppStore.setState({ chats: [] });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.help_aria') }));
+    expect(screen.getByText(tt('ui.hub.help_title'))).toBeInTheDocument();
+    for (const tool of ['Claude Code', 'CodeBuddy', 'Cursor']) {
+      expect(screen.getByText(tool)).toBeInTheDocument();
+    }
+    expect(screen.getAllByText(tt('ui.hub.help_model_yes'))).toHaveLength(2);
+    expect(screen.getAllByText(tt('ui.hub.help_model_no'))).toHaveLength(1);
+  });
+
   it('会话 chips 位于输入区上方（与 textarea 同容器）', () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);
