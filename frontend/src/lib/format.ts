@@ -2,6 +2,7 @@
 // 非组件 lib 直接用 i18next 单例（不能走 useTranslation），文案在 time.* 下。
 // N 走 count 复数（en 有 _one/_other 区分，n=1 得 "1 minute ago"）；just_now 无数字。
 import i18next from 'i18next';
+import { hubTsToMs } from './hubSessionResolve';
 
 export function formatRelativeTime(iso: string): string {
   const t = new Date(iso).getTime();
@@ -31,4 +32,23 @@ export function formatDuration(ns: number): string {
   const ms = ns / 1e6;
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(2)}s`;
+}
+
+// formatHubTime 把 Hub 消息 Ts（UnixNano / ms）格式化为本地绝对时间：
+// 当天 HH:mm；同年跨天 MM-DD HH:mm；跨年 YYYY-MM-DD HH:mm。夹具小整数返回空串。
+export function formatHubTime(ts: number, now: Date = new Date()): string {
+  const ms = hubTsToMs(ts);
+  if (ms == null) return '';
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (sameDay) return hm;
+  const mdHm = `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`;
+  if (d.getFullYear() === now.getFullYear()) return mdHm;
+  return `${d.getFullYear()}-${mdHm}`;
 }

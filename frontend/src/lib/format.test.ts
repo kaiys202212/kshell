@@ -1,6 +1,6 @@
 // 相对时间 / 输出尾部 / 时长格式化测试。
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { formatDuration, formatRelativeTime, tailLines } from './format';
+import { formatDuration, formatHubTime, formatRelativeTime, tailLines } from './format';
 import { tt } from '../test/i18n';
 
 // time.* 走 count 复数（en 规则 one/other），断言按 en 资源拼出期望串，与具体语言解耦
@@ -74,6 +74,30 @@ describe('tailLines', () => {
 
   it('空串返回空串', () => {
     expect(tailLines('', 50)).toBe('');
+  });
+});
+
+describe('formatHubTime', () => {
+  it('当天显示 HH:mm', () => {
+    const now = new Date(2026, 9, 21, 16, 30, 0); // 本地 Oct 21
+    const ts = new Date(2026, 9, 21, 9, 5, 0).getTime() * 1e6; // nano
+    expect(formatHubTime(ts, now)).toBe('09:05');
+  });
+
+  it('同年跨天显示 MM-DD HH:mm', () => {
+    const now = new Date(2026, 9, 21, 16, 0, 0);
+    const ts = new Date(2026, 8, 1, 8, 0, 0).getTime() * 1e6;
+    expect(formatHubTime(ts, now)).toBe('09-01 08:00');
+  });
+
+  it('跨年显示 YYYY-MM-DD HH:mm', () => {
+    const now = new Date(2026, 9, 21, 16, 0, 0);
+    const ts = new Date(2025, 11, 31, 23, 59, 0).getTime() * 1e6;
+    expect(formatHubTime(ts, now)).toBe('2025-12-31 23:59');
+  });
+
+  it('夹具小整数返回空串', () => {
+    expect(formatHubTime(1)).toBe('');
   });
 });
 

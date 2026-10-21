@@ -15,11 +15,18 @@ import {
 } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
 import { translateBackend } from '../lib/errors';
+import { formatHubTime } from '../lib/format';
 import { attributionText, resolveAttribution } from '../lib/hubAttribution';
 import { replyState, type HubReplyState } from '../lib/hubReply';
 import { markdownBubbleClass } from '../lib/markdownStyles';
 import { useAppStore } from '../state/store';
 import HubConfirmCard from './HubConfirmCard';
+
+// hubHeaderLine：工具名 · 项目/会话归因 · 绝对时间；缺项跳过。用户/agent 共用。
+function hubHeaderLine(m: HubMessage, attr: string): string {
+  const tool = m.tool ? toolDisplayName(m.tool) : '';
+  return [tool, attr, formatHubTime(m.ts)].filter(Boolean).join(' · ');
+}
 
 const QUICK_REPLIES: { key: string; action: 'send' | 'rephrase' }[] = [
   { key: 'ui.hub.quick_continue', action: 'send' },
@@ -53,10 +60,12 @@ const HubMessageItem = memo(function HubMessageItem({
 }: HubMessageItemProps) {
   const { t } = useTranslation();
 
+  const header = hubHeaderLine(m, attr);
+
   if (m.kind === 'user') {
     return (
       <div className="text-right">
-        {attr && <div className="mb-0.5 text-[11px] text-muted-foreground">{attr}</div>}
+        {header && <div className="mb-0.5 text-[11px] text-muted-foreground">{header}</div>}
         <div className="group inline-block max-w-[85%]">
           {m.status === 'recalled' ? (
             <div className="selectable inline-block break-words overflow-hidden rounded-md bg-muted px-3 py-1.5 text-left text-muted-foreground">
@@ -89,7 +98,7 @@ const HubMessageItem = memo(function HubMessageItem({
       <div className="group inline-block max-w-[85%]">
         <div className="selectable break-words overflow-hidden rounded-md bg-muted px-3 py-1.5 [&_pre]:whitespace-pre-wrap">
           <div className="mb-0.5 text-[11px] text-muted-foreground">
-            {[toolDisplayName(m.tool ?? ''), attr].filter(Boolean).join(' · ')}
+            {header}
             {st !== 'acp' && (
               <span
                 className="ml-1 rounded bg-background px-1 text-[10px] text-muted-foreground ring-1 ring-border"
