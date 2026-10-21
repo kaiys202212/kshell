@@ -1,7 +1,7 @@
 // replyState 三态判定：与后端 wxExecutor/launch.ACPCapable 同一语义，
 // 两侧测试互为镜像（后端改动必须同步这里）。
 import { describe, expect, it } from 'vitest';
-import { isACPTool, replyState, terminalActive } from './hubReply';
+import { isACPTool, isHubWelcome, replyState, terminalActive } from './hubReply';
 import type { HubMessage, TerminalInfo, ToolInfo } from './api';
 
 const tools: ToolInfo[] = [
@@ -52,6 +52,18 @@ describe('terminalActive', () => {
   });
   it('sessionId 不在册为假', () => {
     expect(terminalActive(undefined, terms, 's9')).toBe(false);
+  });
+});
+
+describe('isHubWelcome', () => {
+  it('精确 key 与带工具名插值为真；其它正文为假', () => {
+    expect(isHubWelcome('hub.welcome')).toBe(true);
+    expect(isHubWelcome('hub.welcome|Cursor')).toBe(true);
+    expect(isHubWelcome('hub.welcome|Claude Code')).toBe(true);
+    expect(isHubWelcome('done')).toBe(false);
+    expect(isHubWelcome('ui.hub.event_done')).toBe(false);
+    expect(isHubWelcome(undefined)).toBe(false);
+    expect(isHubWelcome('')).toBe(false);
   });
 });
 

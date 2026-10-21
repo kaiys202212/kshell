@@ -740,6 +740,29 @@ describe('AgentHubPanel', () => {
     expect(screen.getByText('普通回复正文')).toBeTruthy();
   });
 
+  it('欢迎词气泡不显示 Continue / Explain differently（合成就绪提示无任务可续）', async () => {
+    useAppStore.setState({
+      chats: [chat({ ID: 'c-cur', Key: 'new:1', ToolID: 'cursor', Title: 'kshell · Cursor' })],
+    });
+    api.listHubMessages.mockResolvedValue([
+      {
+        id: 1,
+        kind: 'agent',
+        tool: 'cursor',
+        chatId: 'c-cur',
+        termKey: 'new:1',
+        text: 'hub.welcome|Cursor',
+        ts: 1,
+      },
+      { id: 2, kind: 'agent', tool: 'cursor', chatId: 'c-cur', event: 'Stop', text: '任务完成', ts: 2 },
+    ]);
+    render(<AgentHubPanel />);
+    expect(await screen.findByText(tt('hub.welcome').replace('{{0}}', 'Cursor'))).toBeTruthy();
+    // 普通完成气泡仍有快捷按钮；欢迎词气泡不得有（共一对，不是两对）
+    expect(screen.getAllByRole('button', { name: tt('ui.hub.quick_continue') })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: tt('ui.hub.quick_rephrase') })).toHaveLength(1);
+  });
+
   it('agent 回复归因：气泡头部展示 工具 · 项目 · 会话标题', async () => {
     useAppStore.setState({
       chats: [chat({ ID: 'c1', Workspace: 'D:\\ws\\alpha', Title: '重构认证' })],

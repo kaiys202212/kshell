@@ -34,6 +34,14 @@ export function terminalActive(
   return false;
 }
 
+// isHubWelcome 判定合成欢迎词 wire key：与 Go hub.recent / 微信镜像跳过口径一致
+//（精确 hub.welcome 或 hub.welcome|<工具名>）。欢迎词不是一轮任务完成，
+// AgentHub 不得显示 Continue / Explain differently（点了常发往已退出会话报错）。
+export function isHubWelcome(text: string | undefined): boolean {
+  if (!text) return false;
+  return text === 'hub.welcome' || text.startsWith('hub.welcome|');
+}
+
 // replyState 按序判定：非 ACP 工具 → tool（永久只读）；终端在册 → terminal
 //（激活期只读，关闭后自动恢复）；其余 → acp（可回复，离线走 openSessionACP）。
 export function replyState(m: HubMessage, tools: ToolInfo[], terminals: TerminalInfo[]): HubReplyState {

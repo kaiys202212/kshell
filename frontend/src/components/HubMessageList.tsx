@@ -17,7 +17,7 @@ import { toolDisplayName } from '../lib/agentNotify';
 import { translateBackend } from '../lib/errors';
 import { formatHubTime } from '../lib/format';
 import { attributionText, resolveAttribution } from '../lib/hubAttribution';
-import { replyState, type HubReplyState } from '../lib/hubReply';
+import { isHubWelcome, replyState, type HubReplyState } from '../lib/hubReply';
 import { markdownBubbleClass } from '../lib/markdownStyles';
 import { useAppStore } from '../state/store';
 import HubConfirmCard from './HubConfirmCard';
@@ -119,7 +119,7 @@ const HubMessageItem = memo(function HubMessageItem({
             </div>
           )}
         </div>
-        {st === 'acp' && (
+        {st === 'acp' && !isHubWelcome(m.text) && (
           <div className="mt-1 flex flex-wrap gap-1">
             {QUICK_REPLIES.map((q) => (
               <button

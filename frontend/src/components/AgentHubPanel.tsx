@@ -47,7 +47,7 @@ import { saveHubDefaultCreate } from '../lib/api';
 import { quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
 import { isHubNumber, isNewHubCommand, normalizeHubProbe } from '../lib/hubCommands';
-import { replyState, terminalActive } from '../lib/hubReply';
+import { isHubWelcome, replyState, terminalActive } from '../lib/hubReply';
 import { resolveHubSessionIdFromSessions } from '../lib/hubSessionResolve';
 import { dispatchRequirement } from '../lib/dispatchRequirement';
 import { REQUIREMENT_MIME } from './RequirementList';
@@ -1087,6 +1087,8 @@ export default function AgentHubPanel() {
   // useCallback：稳定引用交给 memo(HubMessageList)，draft 重渲时不拖消息树。
   const quickReply = useCallback(
     (m: HubMessage, action: HubQuickAction) => {
+      // 欢迎词无任务可续：按钮应已隐藏；防御误调用勿 sendChatPrompt。
+      if (isHubWelcome(m.text)) return;
       if (replyState(m, tools, terminals) !== 'acp') return;
       const targetId = quickTarget(m);
       if (!targetId) {
