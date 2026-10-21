@@ -198,6 +198,12 @@ type wireRefMsg struct {
 	SvrID flexID `json:"svr_id"`
 	Title string `json:"title"`
 	Text  string `json:"text"` // 兼容旧/测试载荷
+	// PartialText：超长引用时服务端省略 title，只给首尾摘要；start 常含出站
+	// 【标题栏】前缀，供 resolveQuote 标题兜底。
+	PartialText *struct {
+		Start string `json:"start"`
+		End   string `json:"end"`
+	} `json:"partial_text"`
 	MessageItem *struct {
 		TextItem struct {
 			Text string `json:"text"`
@@ -205,8 +211,17 @@ type wireRefMsg struct {
 	} `json:"message_item"`
 }
 
+// wireRefPresent 报告协议 RefMessage 是否携带任何可用字段（含 partial_text）。
+func wireRefPresent(r *wireRefMsg) bool {
+	if r == nil {
+		return false
+	}
+	return string(r.SvrID) != "" || r.Title != "" || r.Text != "" ||
+		r.MessageItem != nil || (r.PartialText != nil && strings.TrimSpace(r.PartialText.Start) != "")
+}
+
 // parseWireRef 把协议 RefMessage 压成桥层 RefMsg：Text 优先 title，
-// 再 text，再嵌套 message_item 正文（供【标题栏】兜底匹配）。
+// 再 text，再 partial_text.start，再嵌套 message_item 正文（供【标题栏】兜底）。
 func parseWireRef(r *wireRefMsg) *RefMsg {
 	if r == nil {
 		return nil
@@ -214,6 +229,9 @@ func parseWireRef(r *wireRefMsg) *RefMsg {
 	text := strings.TrimSpace(r.Title)
 	if text == "" {
 		text = strings.TrimSpace(r.Text)
+	}
+	if text == "" && r.PartialText != nil {
+		text = strings.TrimSpace(r.PartialText.Start)
 	}
 	if text == "" && r.MessageItem != nil {
 		text = strings.TrimSpace(r.MessageItem.TextItem.Text)
@@ -281,14 +299,14 @@ func (c *Client) GetUpdates(ctx context.Context, cursor string) ([]InboundMsg, s
 		var picked *wireRefMsg
 		for i := range m.ItemList {
 			r := &m.ItemList[i].RefMsg
-			if string(r.SvrID) != "" || r.Title != "" || r.Text != "" || r.MessageItem != nil {
+			if wireRefPresent(r) {
 				picked = r
 				break
 			}
 		}
 		if picked == nil {
 			r := &m.RefMsg
-			if string(r.SvrID) != "" || r.Title != "" || r.Text != "" || r.MessageItem != nil {
+			if wireRefPresent(r) {
 				picked = r
 			}
 		}

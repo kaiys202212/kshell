@@ -795,8 +795,9 @@ func TestQuoteTitle(t *testing.T) {
 		"【会话A】回复正文":   "会话A",
 		"  【带空格标题】正文": "带空格标题",
 		"没有前缀的普通文本":   "",
-		"【未闭合的标题":     "",
-		"【外层【内层】】正文":  "外层【内层",
+		// 微信摘要常截断：无闭合】时仍取出栏内前缀供前缀匹配。
+		"【proj · Claude Code · 会": "proj · Claude Code · 会",
+		"【外层【内层】】正文":      "外层【内层",
 	} {
 		if got := quoteTitle(in); got != want {
 			t.Errorf("quoteTitle(%q) = %q, 期望 %q", in, got, want)
@@ -829,6 +830,13 @@ func TestBridgeResolveQuote(t *testing.T) {
 		text := "【proj · Claude Code · 会话A】旧回复正文"
 		if got := b.resolveQuote(&RefMsg{SvrID: "unknown", Text: text}); got != "c1" {
 			t.Errorf("resolveQuote = %q, 期望 c1（复合栏匹配）", got)
+		}
+	})
+	t.Run("截断复合标题栏前缀命中", func(t *testing.T) {
+		// 真机 title/partial_text 常在栏中截断，无闭合】。
+		text := "【proj · Claude Code · 会"
+		if got := b.resolveQuote(&RefMsg{SvrID: "unknown", Text: text}); got != "c1" {
+			t.Errorf("resolveQuote = %q, 期望 c1（截断前缀）", got)
 		}
 	})
 	t.Run("复合栏优先于同名纯标题歧义", func(t *testing.T) {

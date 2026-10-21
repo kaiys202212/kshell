@@ -785,19 +785,28 @@ func (c *Console) HandleQuoted(chatID, text string) (bool, []Reply) {
 	if chatID == "" {
 		return false, nil
 	}
-	// 活跃菜单（#n/#m/#f）进行中与 Handle 同口径：提示选数字，不切会话
-	// 不投递——否则旧菜单悬着，随后的数字回复会被误消费。
+	// #n/#m/#f 进行中：提示选数字，不切会话不投递（避免数字回复被误消费）。
+	// menuPick（无精确目标待选）让路：引用是更强的显式目标，清掉旧暂存再投递。
 	if c.menu != nil {
-		return true, single(c.text("pick_number"))
+		if c.menu.kind != menuPick {
+			return true, single(c.text("pick_number"))
+		}
+		c.menu = nil
 	}
 	for _, r := range c.ex.ListSessions() {
 		if r.ChatID != chatID {
 			continue
 		}
-		if _, err := c.activateRef(r); err != nil {
+		ref, err := c.activateRef(r)
+		if err != nil {
 			return true, single(fmt.Sprintf(c.text("switch_failed"), c.errText(err)))
 		}
-		return true, c.sendToCurrent(text)
+		// 直发被引用会话：不得走 sendToCurrent→refreshCurrent，否则并发/跃迁
+		// 的 LastActivity 会把目标抢回「最后活跃」会话。
+		if err := c.ex.Send(ref.ChatID, text); err != nil {
+			return true, single(fmt.Sprintf(c.text("send_failed"), c.errText(err)))
+		}
+		return true, nil
 	}
 	return false, nil
 }

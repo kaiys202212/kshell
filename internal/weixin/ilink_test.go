@@ -263,14 +263,14 @@ func TestGetUpdatesRefMsg(t *testing.T) {
 }
 
 func TestGetUpdatesRefMsgPartial(t *testing.T) {
-	// partial_text 形态：引用超长消息时服务端只给首尾摘要。首版不拼接，
-	// Text 允许为空（归因还有 svr_id 与【标题】前缀两级）。
+	// partial_text 形态：新版客户端常省略 title，只给首尾摘要；start 常含出站
+	// 【标题栏】前缀，须落入 Ref.Text 供标题兜底（svrMap 未命中时）。
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{
 			"msgs":[
 				{"message_type":1,"from_user_id":"u1","context_token":"ct1",
 				 "item_list":[{"type":1,"text_item":{"text":"看看这段"}}],
-				 "ref_msg":{"svr_id":"9001","partial_text":{"start":"开头","end":"结尾","startindex":0,"endindex":5}}}
+				 "ref_msg":{"svr_id":"9001","partial_text":{"start":"【会话A】开头","end":"结尾","startindex":0,"endindex":5}}}
 			],
 			"get_updates_buf":"cursor-p"
 		}`)
@@ -288,8 +288,8 @@ func TestGetUpdatesRefMsgPartial(t *testing.T) {
 	if msgs[0].Ref.SvrID != "9001" {
 		t.Errorf("Ref.SvrID = %q, 期望 9001", msgs[0].Ref.SvrID)
 	}
-	if msgs[0].Ref.Text != "" {
-		t.Errorf("partial_text 不应拼进 Text: %q", msgs[0].Ref.Text)
+	if msgs[0].Ref.Text != "【会话A】开头" {
+		t.Errorf("Ref.Text 应取 partial_text.start: %q", msgs[0].Ref.Text)
 	}
 }
 

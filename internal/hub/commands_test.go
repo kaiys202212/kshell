@@ -207,6 +207,45 @@ func TestHandleQuoted(t *testing.T) {
 		}
 	})
 
+	t.Run("待选菜单不阻挡引用投递", func(t *testing.T) {
+		// menuPick 是「无精确目标」暂存正文：用户随后引用某 agent 是更强的显式目标，
+		// 应清掉待选并投递给被引用会话（正文用引用这条，丢弃旧暂存）。
+		ex := &fakeExecutor{listSessions: sessions}
+		c := NewConsole(ex)
+		c.PickTarget("旧暂存正文")
+		handled, replies := c.HandleQuoted("c1", "引用续问")
+		if !handled || len(replies) != 0 {
+			t.Fatalf("待选应让路引用: handled=%v replies=%v", handled, replies)
+		}
+		if c.menu != nil {
+			t.Errorf("引用投递后应清除待选菜单, menu=%+v", c.menu)
+		}
+		if len(ex.sendCalls) != 1 || ex.sendCalls[0] != [2]string{"c1", "引用续问"} {
+			t.Errorf("应投递引用正文到 c1: %v", ex.sendCalls)
+		}
+	})
+
+	t.Run("引用投递不被 LastActivity 抢回", func(t *testing.T) {
+		// activateRef 抬水位后再 refreshCurrent 若看到更新归因，旧 sendToCurrent
+		// 会把目标抢回「最后活跃」会话。引用必须直发被引用 chatID。
+		ex := &stealingActivityExecutor{
+			fakeExecutor: fakeExecutor{
+				listSessions:    sessions,
+				hasActivity:     true,
+				lastActivityID:  10,
+				lastActivityRef: SessionRef{ChatID: "other", Title: "别人"},
+			},
+		}
+		c := NewConsole(ex)
+		handled, replies := c.HandleQuoted("c1", "继续修")
+		if !handled || len(replies) != 0 {
+			t.Fatalf("handled=%v replies=%v", handled, replies)
+		}
+		if len(ex.sendCalls) != 1 || ex.sendCalls[0] != [2]string{"c1", "继续修"} {
+			t.Fatalf("必须直发 c1，不得被抢到 other: %v", ex.sendCalls)
+		}
+	})
+
 	t.Run("发送失败报错", func(t *testing.T) {
 		ex := &fakeExecutor{listSessions: sessions, hasActivity: true, lastActivityRef: SessionRef{ChatID: "other"}, sendErr: errors.New("发送失败")}
 		c := NewConsole(ex)
@@ -215,6 +254,21 @@ func TestHandleQuoted(t *testing.T) {
 			t.Fatalf("发送失败应 (true, 错误回执), 实际 (%v, %v)", handled, replies)
 		}
 	})
+}
+
+// stealingActivityExecutor 在第二次 LastActivity 调用时抬高水位并指向 other，
+// 模拟 activateRef.markCurrent 与 sendToCurrent.refreshCurrent 之间的归因跃迁。
+type stealingActivityExecutor struct {
+	fakeExecutor
+	calls int
+}
+
+func (s *stealingActivityExecutor) LastActivity() (int64, SessionRef, bool) {
+	s.calls++
+	if s.calls >= 2 {
+		return s.lastActivityID + 1, s.lastActivityRef, true
+	}
+	return s.lastActivityID, s.lastActivityRef, s.hasActivity
 }
 
 func TestHelpWithCurrent(t *testing.T) {

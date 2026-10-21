@@ -677,7 +677,7 @@ func (b *Bridge) rememberSvrID(svrID, chatID string) {
 // resolveQuote 按引用归因出目标 chatID：消息 ID 精确映射优先，标题栏
 // 匹配兜底；都不命中返回空串（调用方回落当前会话）。
 // 标题栏优先匹配与出站 titleBar 同构的「项目 · 工具 · 会话」全文，再回落
-// 纯会话标题（ack【会话名】形态）。
+// 纯会话标题（ack【会话名】形态）；微信截断无闭合】时按前缀匹配复合栏。
 func (b *Bridge) resolveQuote(ref *RefMsg) string {
 	if ref == nil {
 		return ""
@@ -693,16 +693,26 @@ func (b *Bridge) resolveQuote(ref *RefMsg) string {
 		return ""
 	}
 	var titleOnly string
+	var prefixHit string
 	for _, s := range b.ex.ListSessions() {
 		if s.ChatID == "" {
 			continue
 		}
-		if b.sessionBarInner(s) == title {
+		bar := b.sessionBarInner(s)
+		if bar == title {
 			return s.ChatID
+		}
+		// 截断摘要：栏内容以 title 为前缀（或 title 以栏为前缀，防极端短截断）。
+		if prefixHit == "" && bar != "" &&
+			(strings.HasPrefix(bar, title) || strings.HasPrefix(title, bar)) {
+			prefixHit = s.ChatID
 		}
 		if s.Title == title && titleOnly == "" {
 			titleOnly = s.ChatID
 		}
+	}
+	if prefixHit != "" {
+		return prefixHit
 	}
 	return titleOnly
 }
@@ -738,15 +748,23 @@ func (b *Bridge) sessionBarInner(s hub.SessionRef) string {
 	return strings.Join(parts, " · ")
 }
 
-// quoteTitle 从引用文本里提取出站的【会话名】前缀；无前缀返回空串。
+// quoteTitle 从引用文本里提取出站的【标题栏】前缀；无前缀返回空串。
+// 微信摘要常截断：有开【无闭】时仍返回栏内已见片段，供 resolveQuote 前缀匹配。
 var reQuoteTitle = regexp.MustCompile(`^【([^】]+)】`)
 
 func quoteTitle(text string) string {
-	m := reQuoteTitle.FindStringSubmatch(strings.TrimSpace(text))
-	if len(m) < 2 {
-		return ""
+	text = strings.TrimSpace(text)
+	m := reQuoteTitle.FindStringSubmatch(text)
+	if len(m) >= 2 {
+		return m[1]
 	}
-	return m[1]
+	if strings.HasPrefix(text, "【") {
+		rest := strings.TrimPrefix(text, "【")
+		if rest != "" {
+			return rest
+		}
+	}
+	return ""
 }
 
 // deliver 投递一条文本：硬换行 → 按 maxSendRunes 拆片 → 用当前上下文逐片发送；
