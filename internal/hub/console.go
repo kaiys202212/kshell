@@ -647,7 +647,7 @@ func (c *Console) handleStatus() []Reply {
 const (
 	recentDefault = 10
 	// recentTextCap 是列表里单条消息正文的最大回显长度，超长截断加省略号；
-	// #h <序号> 查全文不受此限（微信端另有 truncateForWeixin 兜底）。
+	// #h <序号> 查全文不受此限（微信端超长按 maxSendRunes 拆条投递）。
 	recentTextCap = 80
 )
 

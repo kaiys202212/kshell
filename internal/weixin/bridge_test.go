@@ -485,24 +485,35 @@ func TestBridgeUndeliveredNotClearedWhenPendingEmpty(t *testing.T) {
 	}
 }
 
-func TestBridgeTruncate(t *testing.T) {
+// 超长 agent 回复按 maxSendRunes 拆成多条连续投递，拼接后等于全文，不再截断。
+func TestBridgeSplitLongMessage(t *testing.T) {
 	rc := &recorder{}
 	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 	b := newBridge(t, "u1", ex, rc.handler(t))
 	b.HandleInbound("u1", "ct-1", "你好") // 入站确认（sends[0]）
-	b.DeliverHubMessage(hub.Message{Kind: "agent", Text: strings.Repeat("字", 2000)})
+	body := strings.Repeat("字", 2000)
+	b.DeliverHubMessage(hub.Message{Kind: "agent", Text: body})
 	b.FlushForTest()
 	sends := rc.sends()
-	if len(sends) != 2 {
-		t.Fatalf("sendmessage 次数 = %d, 期望 2（入站确认 + 推送）", len(sends))
+	if len(sends) < 3 { // 入站确认 + 至少 2 条拆片
+		t.Fatalf("超长推送应拆成多条，sendmessage 次数 = %d（含入站确认），期望 ≥3", len(sends))
 	}
-	text, _ := sendMsgFields(t, sends[1].body)
-	runes := []rune(text)
-	if len(runes) > 1510 {
-		t.Errorf("截断后 rune 数 = %d, 期望 ≤1510", len(runes))
+	// sends[0] 是入站确认；其后均为拆条推送
+	var joined strings.Builder
+	for i := 1; i < len(sends); i++ {
+		text, _ := sendMsgFields(t, sends[i].body)
+		if strings.Contains(text, "完整内容见桌面端") {
+			t.Errorf("拆条不得带截断提示: %q", text[len(text)-40:])
+		}
+		runes := []rune(text)
+		if len(runes) > maxSendRunes {
+			t.Errorf("分片 %d rune 数 = %d, 期望 ≤%d", i, len(runes), maxSendRunes)
+		}
+		joined.WriteString(text)
 	}
-	if !strings.Contains(text, "完整内容见桌面端") {
-		t.Errorf("截断文本缺少提示后缀: %q", text[len(text)-40:])
+	want := hardBreaks(body)
+	if joined.String() != want {
+		t.Fatalf("分片拼接应等于全文：got %d rune, want %d", len([]rune(joined.String())), len([]rune(want)))
 	}
 }
 

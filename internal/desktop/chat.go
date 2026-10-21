@@ -124,10 +124,8 @@ func stopFallback(stop string) string {
 
 // lastAssistantText 取会话时间线中最后一轮 assistant 回复的拼接文本。
 // 「最后一轮」= 最后一条 assistant 的 MessageID；同一 MessageID 的分片按序拼接。
-// 返回空串表示尚无回复；超长按 rune 截断避免 payload 过大（maxLen 为字符数，
-// 按字节切会把中文字符切成非法 UTF-8，JSON 里变 U+FFFD 乱码）。
+// 返回空串表示尚无回复。全文保留（不截断），供 AgentHub / 微信镜像完整展示。
 func lastAssistantText(h []chat.Update) string {
-	const maxLen = 2000
 	lastID := ""
 	idx := -1
 	for i := len(h) - 1; i >= 0; i-- {
@@ -146,11 +144,7 @@ func lastAssistantText(h []chat.Update) string {
 			b.WriteString(u.Text)
 		}
 	}
-	s := strings.TrimSpace(b.String())
-	if r := []rune(s); len(r) > maxLen {
-		s = string(r[:maxLen])
-	}
-	return s
+	return strings.TrimSpace(b.String())
 }
 
 // emitChatNotify 把一条聊天侧事件转成 agent 通知气泡 payload。

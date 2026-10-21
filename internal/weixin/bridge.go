@@ -21,7 +21,7 @@ const sendRetry = 2
 // sendRetryWait 是重试间隔。
 const sendRetryWait = 500 * time.Millisecond
 
-// maxSendRunes 是单条微信文本消息的最大长度（超出截断并提示去桌面端看全文）。
+// maxSendRunes 是单条微信文本消息的最大长度（超出按此上限拆成多条连续发送）。
 const maxSendRunes = 1500
 
 // reWireKey 判断文本是否形如 wire key（如 hub.welcome / err.xxx）：
@@ -749,14 +749,15 @@ func quoteTitle(text string) string {
 	return m[1]
 }
 
-// deliver 投递一条文本：截断 → 用当前上下文发送；-14 入 pending，
-// 其他失败重试 2 次后计 undelivered。chatID 是该文本归属的 agent 会话，
-// 发送成功且响应带回 svr_id 时记入引用归因映射（chatID 空则跳过）。
+// deliver 投递一条文本：硬换行 → 按 maxSendRunes 拆片 → 用当前上下文逐片发送；
+// -14 时剩余分片入 pending，其他失败重试 2 次后计 undelivered。
+// chatID 是该文本归属的 agent 会话，发送成功且响应带回 svr_id 时记入引用
+// 归因映射（chatID 空则跳过）；同一原文的多分片共用 chatID。
 func (b *Bridge) deliver(text, chatID string) {
-	text = truncateForWeixin(text, b.lang)
 	// PC 端微信按 Markdown 渲染 ClawBot 气泡，单个 \n 被折叠成空格；
-	// 统一升级为硬换行（行尾两空格），手机端纯文本渲染不受影响。
-	text = hardBreaks(text)
+	// 统一升级为硬换行（行尾两空格），手机端纯文本渲染不受影响。先变换再拆片，
+	// 保证每片发送长度仍 ≤ maxSendRunes。
+	chunks := splitForWeixin(hardBreaks(text))
 	b.mu.Lock()
 	ctx := b.ctx
 	b.mu.Unlock()
@@ -766,28 +767,37 @@ func (b *Bridge) deliver(text, chatID string) {
 		b.mu.Unlock()
 		return
 	}
-	svrID, err := b.client.SendMessage(context.Background(), ctx.userID, ctx.contextToken, text)
-	if errors.Is(err, ErrSessionExpired) {
-		b.mu.Lock()
-		b.pending = append(b.pending, pendingMsg{userID: ctx.userID, contextToken: ctx.contextToken, text: text, chatID: chatID})
-		b.mu.Unlock()
-		return
-	}
-	if err == nil {
-		b.rememberSvrID(svrID, chatID)
-		return
-	}
-	// 普通失败：重试 sendRetry 次。
-	for i := 0; i < sendRetry; i++ {
-		b.sleep(sendRetryWait)
-		if svrID, err = b.client.SendMessage(context.Background(), ctx.userID, ctx.contextToken, text); err == nil {
+	for i, chunk := range chunks {
+		svrID, err := b.client.SendMessage(context.Background(), ctx.userID, ctx.contextToken, chunk)
+		if errors.Is(err, ErrSessionExpired) {
+			b.mu.Lock()
+			for _, rest := range chunks[i:] {
+				b.pending = append(b.pending, pendingMsg{userID: ctx.userID, contextToken: ctx.contextToken, text: rest, chatID: chatID})
+			}
+			b.mu.Unlock()
+			return
+		}
+		if err == nil {
 			b.rememberSvrID(svrID, chatID)
+			continue
+		}
+		// 普通失败：重试 sendRetry 次。
+		ok := false
+		for j := 0; j < sendRetry; j++ {
+			b.sleep(sendRetryWait)
+			if svrID, err = b.client.SendMessage(context.Background(), ctx.userID, ctx.contextToken, chunk); err == nil {
+				b.rememberSvrID(svrID, chatID)
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			b.mu.Lock()
+			b.undelivered += len(chunks) - i
+			b.mu.Unlock()
 			return
 		}
 	}
-	b.mu.Lock()
-	b.undelivered++
-	b.mu.Unlock()
 }
 
 // flushPending 依次补发积压消息：成功一条删一条；失败保留并停止本轮。
@@ -820,17 +830,21 @@ func (b *Bridge) flushPending() {
 	}
 }
 
-// truncateForWeixin 截断到 maxSendRunes 并追加「完整内容见桌面端」提示。
-// 提示语较长时可能略微超出上限（≤ maxSendRunes + 10），不影响发送。
-func truncateForWeixin(s, lang string) string {
+// splitForWeixin 按 maxSendRunes 把文本拆成若干片（按 rune，避免切坏中文）。
+// 不超过上限时返回单元素切片；空串返回含一个空串的切片，由调用方决定是否发送。
+func splitForWeixin(s string) []string {
 	runes := []rune(s)
 	if len(runes) <= maxSendRunes {
-		return s
+		return []string{s}
 	}
-	hint := bridgeText(lang, "msg.truncated")
-	cut := maxSendRunes - len([]rune(hint))
-	if cut < 0 {
-		cut = 0
+	out := make([]string, 0, (len(runes)+maxSendRunes-1)/maxSendRunes)
+	for len(runes) > 0 {
+		n := maxSendRunes
+		if n > len(runes) {
+			n = len(runes)
+		}
+		out = append(out, string(runes[:n]))
+		runes = runes[n:]
 	}
-	return string(runes[:cut]) + hint
+	return out
 }

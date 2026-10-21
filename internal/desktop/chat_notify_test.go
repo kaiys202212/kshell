@@ -235,20 +235,18 @@ func TestChatNotifySkipsUnknownChat(t *testing.T) {
 	}
 }
 
-// 超长中文回复按 rune 边界截断：按字节切会落在多字节字符中间，产出非法 UTF-8，
-// JSON 序列化后变 U+FFFD 乱码（本项目回复正文以中文为主，必然命中）。
-func TestLastAssistantTextTruncatesOnRuneBoundary(t *testing.T) {
-	const maxLen = 2000
-	// 每个汉字 3 字节，总长远超 maxLen，且 maxLen 处必落在字符中间
-	text := strings.Repeat("中文回复", 800) // 3200 个 rune
+// 末轮 assistant 回复全文保留：AgentHub / 微信镜像需要完整正文，不再按 2000
+// rune 截断。中文多字节场景仍须保证合法 UTF-8。
+func TestLastAssistantTextKeepsFullReply(t *testing.T) {
+	text := strings.Repeat("中文回复", 800) // 3200 个 rune，远超旧上限 2000
 	h := []chat.Update{{Type: "assistant", MessageID: "m1", Text: text}}
 
 	got := lastAssistantText(h)
 	if !utf8.ValidString(got) {
-		t.Fatalf("截断结果不是合法 UTF-8（出现乱码）: %q", got)
+		t.Fatalf("结果不是合法 UTF-8（出现乱码）: %q", got)
 	}
-	if n := utf8.RuneCountInString(got); n != maxLen {
-		t.Fatalf("截断长度 = %d 个 rune, 想要 %d", n, maxLen)
+	if got != text {
+		t.Fatalf("应保留全文：rune 数 = %d, 想要 %d", utf8.RuneCountInString(got), utf8.RuneCountInString(text))
 	}
 }
 
