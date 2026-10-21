@@ -242,6 +242,11 @@ func cursorContentText(content any) string {
 
 // enrichCursorACPSession 用 store.db 补齐 Path / Messages / Title / 时间。
 // 无可用对话正文时返回 false（调用方应跳过该空壳）。
+//
+// 标题优先级（与 ~/.cursor/chats transcript 口径一致）：
+//  1. store 首条用户提问（ClipPromptTitle，48 字）——覆盖 Cursor 自动短 meta.title；
+//  2. 已有 Title（来自 meta.json）若非空且非 UUID；
+//  3. store meta.name。
 func enrichCursorACPSession(s *Session, storePath string) bool {
 	turns, meta, err := turnsFromCursorStore(storePath)
 	if err != nil || len(turns) == 0 {
@@ -249,16 +254,11 @@ func enrichCursorACPSession(s *Session, storePath string) bool {
 	}
 	s.Path = storePath
 	s.Messages = len(turns)
-	if strings.TrimSpace(s.Title) == "" || s.Title == s.ID {
+	if title := firstUserPromptTitle(turns); title != "" {
+		s.Title = title
+	} else if strings.TrimSpace(s.Title) == "" || s.Title == s.ID {
 		if name := strings.TrimSpace(meta.Name); name != "" {
-			s.Title = oneLine(name, 80)
-		} else {
-			for _, t := range turns {
-				if t.Role == "user" && t.Text != "" {
-					s.Title = oneLine(t.Text, 80)
-					break
-				}
-			}
+			s.Title = ClipPromptTitle(name)
 		}
 	}
 	if created := meta.CreatedAt(); !created.IsZero() {
@@ -267,4 +267,17 @@ func enrichCursorACPSession(s *Session, storePath string) bool {
 		}
 	}
 	return true
+}
+
+// firstUserPromptTitle 从对话轮次取首条可用用户提问作页签标题。
+func firstUserPromptTitle(turns []previewTurn) string {
+	for _, t := range turns {
+		if t.Role != "user" || t.Text == "" {
+			continue
+		}
+		if title := ClipPromptTitle(t.Text); title != "" {
+			return title
+		}
+	}
+	return ""
 }

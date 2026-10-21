@@ -61,7 +61,8 @@ func TestListCursorACPSessions(t *testing.T) {
 		t.Fatalf("len=%d %+v", len(got), got)
 	}
 	s := got[0]
-	if s.ID != id || s.ToolID != cursorID || s.Title != "Activate Session Explain" {
+	// 标题取首条用户提问，不用 Cursor 自动 meta.title
+	if s.ID != id || s.ToolID != cursorID || s.Title != "hello" {
 		t.Fatalf("%+v", s)
 	}
 	// acp-sessions 来源必须标记 ACPOnly：TUI resume 这类 ID 会静默起全新会话丢上下文
@@ -102,7 +103,7 @@ func TestEnumerateSessionsIncludesACPSessions(t *testing.T) {
 	for _, s := range got {
 		byID[s.ID] = s
 	}
-	if byID[acpID].Title != "ACP Only" {
+	if byID[acpID].Title != "q" {
 		t.Fatalf("missing acp session: %+v", got)
 	}
 	if byID[chatID].Title != "From Chats" {

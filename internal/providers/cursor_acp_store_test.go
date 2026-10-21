@@ -159,30 +159,62 @@ func TestListCursorACPSessionsSkipsEmptyAndEnrichesFromStore(t *testing.T) {
 	if s.Messages != 2 {
 		t.Fatalf("Messages=%d want 2", s.Messages)
 	}
-	// meta.json 无 title 时优先 store name
-	if s.Title != "From Store Name" {
-		t.Fatalf("Title=%q", s.Title)
+	// 有用户提问时优先首条提问，不用 store name
+	if s.Title != "真实问题标题" {
+		t.Fatalf("Title=%q, want 真实问题标题", s.Title)
 	}
 	if !s.ACPOnly {
 		t.Fatal("want ACPOnly")
 	}
 }
 
-func TestListCursorACPSessionsPrefersMetaTitle(t *testing.T) {
+// 有用户提问时覆盖 Cursor 自动 meta.title（短英文摘要易歧义）。
+func TestListCursorACPSessionsPrefersFirstUserPrompt(t *testing.T) {
 	home := t.TempDir()
 	id := "33333333-3333-4333-8333-333333333333"
-	writeACPSessionMeta(t, home, id, "Meta Title", `D:\ws`)
+	writeACPSessionMeta(t, home, id, "Analyze Error Screenshot", `D:\ws`)
 	store := filepath.Join(home, ".cursor", "acp-sessions", id, "store.db")
 	writeCursorACPStore(t, store, "Store Name", []map[string]any{
-		{"role": "user", "content": "hi"},
+		{"role": "user", "content": []any{
+			map[string]any{"type": "text", "text": "<user_query>如截图，agent名标记还是有bug，同一个消息名上下工具不一致</user_query>"},
+		}},
 		{"role": "assistant", "content": "yo"},
 	})
 	got, err := listCursorACPSessions(home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].Title != "Meta Title" {
-		t.Fatalf("%+v", got)
+	want := "如截图，agent名标记还是有bug，同一个消息名上下工具不一致"
+	if len(got) != 1 || got[0].Title != want {
+		t.Fatalf("Title=%q want %q; %+v", got[0].Title, want, got)
+	}
+}
+
+// 用户正文被判定为纯上下文注入、抽不出提问时，回落 meta.title。
+func TestListCursorACPSessionsFallsBackMetaWhenNoUserPrompt(t *testing.T) {
+	home := t.TempDir()
+	id := "44444444-4444-4444-8444-444444444444"
+	writeACPSessionMeta(t, home, id, "Meta Fallback", `D:\ws`)
+	store := filepath.Join(home, ".cursor", "acp-sessions", id, "store.db")
+	writeCursorACPStore(t, store, "Store Name", []map[string]any{
+		{"role": "user", "content": "<user_info>os</user_info><git_status>clean</git_status>"},
+		{"role": "assistant", "content": "yo"},
+	})
+	got, err := listCursorACPSessions(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Title != "Meta Fallback" {
+		t.Fatalf("应回落 meta.title: %+v", got)
+	}
+}
+
+func TestFirstUserPromptTitleClipsTo48(t *testing.T) {
+	long := strings.Repeat("中", 60)
+	got := firstUserPromptTitle([]previewTurn{{Role: "user", Text: long}})
+	runes := []rune(got)
+	if len(runes) != 48 || runes[len(runes)-1] != '…' {
+		t.Fatalf("len=%d title=%q", len(runes), got)
 	}
 }
 
