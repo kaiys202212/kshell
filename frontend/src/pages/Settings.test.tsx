@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   onToolInstallDone: vi.fn(),
   onScanDone: vi.fn(),
   onToolsUpdated: vi.fn(),
+  onHubBusy: vi.fn(() => () => {}),
   scanSessions: vi.fn(),
   getAppVersion: vi.fn(),
   checkForUpdate: vi.fn(),

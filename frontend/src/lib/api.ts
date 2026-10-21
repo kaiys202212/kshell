@@ -1730,6 +1730,12 @@ export function onHubChanged(cb: () => void): () => void {
   return EventsOn('hub:changed', () => cb());
 }
 
+// onHubBusy 订阅 AgentHub 忙碌状态（Go 激活/新建会话前后 Emit hub:busy true/false），
+// 前端据此显示「正在启动 agent」动画；返回取消订阅函数。
+export function onHubBusy(cb: (busy: boolean) => void): () => void {
+  return EventsOn('hub:busy', (busy: boolean) => cb(!!busy));
+}
+
 // Requirement 是需求列表里的一条（internal/requirements.Item 的 JSON 形态）。
 // priority: high | medium | low（Go 侧非法值回退 medium）；
 // dispatchedTo 非空表示已派发到该工作区路径；

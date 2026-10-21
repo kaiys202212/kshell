@@ -969,6 +969,7 @@
       "find_empty": "没有匹配的会话",
       "find_activate_failed": "激活会话失败：{{err}}",
       "easynew_running": "正在创建 agent…",
+      "starting_agent": "正在启动 agent…",
       "easynew_busy": "已有创建在进行中",
       "model_label": "模型",
       "no_models": "该 agent 未报告可用模型",

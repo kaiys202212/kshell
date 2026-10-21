@@ -969,6 +969,7 @@
       "find_empty": "No matching sessions",
       "find_activate_failed": "Failed to activate session: {{err}}",
       "easynew_running": "Creating agent…",
+      "starting_agent": "Starting agent…",
       "easynew_busy": "Another creation is already running",
       "model_label": "Model",
       "no_models": "This agent reports no models",

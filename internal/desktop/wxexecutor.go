@@ -232,7 +232,8 @@ func (w *wxExecutor) SwitchTo(chatID string) error {
 
 // OpenSession 激活一个尚未打开的磁盘会话（走 OpenSessionACP），返回可投递引用。
 // 终端激活态显式报可自助恢复的错误（规则2）；已知不支持 ACP 的工具直接拒绝
-//（规则1），不再进 launch 层试错。
+//（规则1），不再进 launch 层试错。激活耗时（agent 启动）期间发 hub:busy
+// 事件，桌面端 AgentHub 据此显示进行中动画。
 func (w *wxExecutor) OpenSession(sessionID string) (hub.SessionRef, error) {
 	if w.terminalSessionIDs()[sessionID] {
 		return hub.SessionRef{}, errors.New("err.hub.terminal_active")
@@ -244,7 +245,9 @@ func (w *wxExecutor) OpenSession(sessionID string) (hub.SessionRef, error) {
 			}
 		}
 	}
+	w.a.Emit("hub:busy", true)
 	o, err := w.a.OpenSessionACP(sessionID)
+	w.a.Emit("hub:busy", false)
 	if err != nil {
 		return hub.SessionRef{}, err
 	}
@@ -325,8 +328,11 @@ func (w *wxExecutor) NewMenuOptions() (tools, workspaces, models []hub.MenuOptio
 }
 
 // CreateNew 在指定工作区以指定工具新建 ACP 会话；model 非空时注入该次创建模型。
+// 新建耗时（agent 启动）期间发 hub:busy 事件，桌面端 AgentHub 据此显示动画。
 func (w *wxExecutor) CreateNew(toolID, wsID, model string) (hub.SessionRef, error) {
+	w.a.Emit("hub:busy", true)
 	o, err := w.a.OpenWorkspaceACP(wsID, toolID, model)
+	w.a.Emit("hub:busy", false)
 	if err != nil {
 		return hub.SessionRef{}, err
 	}
