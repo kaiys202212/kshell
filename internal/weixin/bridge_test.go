@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -30,6 +31,9 @@ type fakeExec struct {
 	sentTexts []string // Send 收到的文本（按序记录）
 	// switchCalls：SwitchTo 调用记录（引用回复切换语义断言用）。
 	switchCalls []string
+	// openSessionRef / openSessionCalls：OpenSession 回执与调用记录。
+	openSessionRef   hub.SessionRef
+	openSessionCalls []string
 }
 
 func (f *fakeExec) ListSessions() []hub.SessionRef              { return f.sessions }
@@ -38,7 +42,13 @@ func (f *fakeExec) SwitchTo(chatID string) error {
 	f.switchCalls = append(f.switchCalls, chatID)
 	return nil
 }
-func (f *fakeExec) OpenSession(string) (hub.SessionRef, error) { return hub.SessionRef{}, nil }
+func (f *fakeExec) OpenSession(sessionID string) (hub.SessionRef, error) {
+	f.openSessionCalls = append(f.openSessionCalls, sessionID)
+	if f.openSessionRef.ChatID != "" || f.openSessionRef.SessionID != "" {
+		return f.openSessionRef, nil
+	}
+	return hub.SessionRef{}, nil
+}
 func (f *fakeExec) RecoverSession(string) (hub.SessionRef, bool) {
 	return hub.SessionRef{}, false
 }
@@ -133,7 +143,10 @@ func newBridge(t *testing.T, wxid string, ex hub.Executor, h http.HandlerFunc) *
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	b := NewBridge(NewClient("tok", srv.URL), ex, BridgeConfig{Wxid: wxid, Language: "zh-CN"})
+	b := NewBridge(NewClient("tok", srv.URL), ex, BridgeConfig{
+		Wxid: wxid, Language: "zh-CN",
+		SvrMapPath: filepath.Join(t.TempDir(), "weixin-svr-map.json"),
+	})
 	b.sleep = func(time.Duration) {} // 重试等待注入 no-op，避免真实等待
 	return b
 }
@@ -541,7 +554,10 @@ func newAttachBridge(t *testing.T, ex hub.Executor, plain []byte, downloadStatus
 		rc.handler(t)(w, r)
 	}))
 	t.Cleanup(srv.Close)
-	b := NewBridge(NewClient("tok", srv.URL), ex, BridgeConfig{Wxid: "u1", Language: "zh-CN"})
+	b := NewBridge(NewClient("tok", srv.URL), ex, BridgeConfig{
+		Wxid: "u1", Language: "zh-CN",
+		SvrMapPath: filepath.Join(t.TempDir(), "weixin-svr-map.json"),
+	})
 	b.sleep = func(time.Duration) {}
 	b.client.MediaBase = srv.URL
 	b.filesDir = t.TempDir()
@@ -751,13 +767,57 @@ func TestBridgeRememberSvrID(t *testing.T) {
 		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 		b := newBridge(t, "u1", ex, rc.handler(t))
 		b.HandleInbound("u1", "ct-1", "你好") // 入站确认（无 chatID，不记录）
-		b.DeliverHubMessage(hub.Message{Kind: "agent", ChatID: "c1", SessionTitle: "会话A", Text: "回复"})
+		b.DeliverHubMessage(hub.Message{
+			Kind: "agent", ChatID: "c1", SessionID: "s1", SessionTitle: "会话A", Text: "回复",
+		})
 		b.FlushForTest()
 		b.mu.Lock()
 		got := b.svrMap["9001"]
+		path := b.svrMapPath
 		b.mu.Unlock()
-		if got != "c1" {
-			t.Fatalf("svrMap[9001] = %q, 期望 c1", got)
+		if got.ChatID != "c1" || got.SessionID != "s1" || got.Title != "会话A" {
+			t.Fatalf("svrMap[9001] = %+v, 期望 c1/s1/会话A", got)
+		}
+		loaded, _ := loadSvrMapAccount(path, "u1")
+		if loaded["9001"].SessionID != "s1" {
+			t.Fatalf("落盘应含 SessionID: %+v", loaded["9001"])
+		}
+	})
+	t.Run("重启后从落盘恢复归因", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "svr.json")
+		rc := &recorder{sendResp: func(int) (int, string) { return 200, `{"message_id":"7701"}` }}
+		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+		b1 := newBridge(t, "u1", ex, rc.handler(t))
+		b1.svrMapPath = path
+		b1.HandleInbound("u1", "ct-1", "hi")
+		b1.DeliverHubMessage(hub.Message{
+			Kind: "agent", ChatID: "c-old", SessionID: "s-disk", SessionTitle: "旧会话", Text: "答",
+		})
+		b1.FlushForTest()
+
+		ex2 := &fakeExec{
+			sessions:       []hub.SessionRef{{ChatID: "c2", Title: "其它"}},
+			hasCur:         true,
+			current:        hub.SessionRef{ChatID: "c2", Title: "其它"},
+			openSessionRef: hub.SessionRef{ChatID: "c-new", SessionID: "s-disk", Title: "旧会话"},
+		}
+		b2 := newBridge(t, "u1", ex2, (&recorder{}).handler(t))
+		b2.svrMapPath = path
+		m, order := loadSvrMapAccount(path, "u1")
+		b2.mu.Lock()
+		b2.svrMap, b2.svrOrder = m, order
+		b2.mu.Unlock()
+
+		chatID, sid := b2.resolveQuote(&RefMsg{SvrID: "7701", Text: "x"})
+		if chatID != "c-old" || sid != "s-disk" {
+			t.Fatalf("重启后 resolveQuote = %q/%q", chatID, sid)
+		}
+		b2.HandleInboundMsg(context.Background(), quoteMsg("ct-2", "7701", "【旧会话】答", "续问"))
+		if len(ex2.openSessionCalls) != 1 || ex2.openSessionCalls[0] != "s-disk" {
+			t.Fatalf("过期 chatID 应靠 sessionHint OpenSession: %v", ex2.openSessionCalls)
+		}
+		if len(ex2.sentTexts) != 1 || ex2.sentTexts[0] != "续问" {
+			t.Fatalf("应投递续问: %v", ex2.sentTexts)
 		}
 	})
 	t.Run("响应无 message_id 不记录不报错", func(t *testing.T) {
@@ -777,12 +837,12 @@ func TestBridgeRememberSvrID(t *testing.T) {
 		rc := &recorder{}
 		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
 		b := newBridge(t, "u1", ex, rc.handler(t))
-		for i := 0; i < svrMapCap+10; i++ {
+		for i := 0; i < svrMapPersistCap+10; i++ {
 			b.rememberSvrID(fmt.Sprintf("svr-%d", i), "c1")
 		}
 		b.mu.Lock()
 		_, hasOld := b.svrMap["svr-0"]
-		_, hasNew := b.svrMap[fmt.Sprintf("svr-%d", svrMapCap+9)]
+		_, hasNew := b.svrMap[fmt.Sprintf("svr-%d", svrMapPersistCap+9)]
 		b.mu.Unlock()
 		if hasOld {
 			t.Error("最旧映射应被淘汰")
@@ -819,47 +879,47 @@ func TestBridgeResolveQuote(t *testing.T) {
 	b.rememberSvrID("9001", "c1")
 
 	t.Run("svr_id 精确命中", func(t *testing.T) {
-		if got := b.resolveQuote(&RefMsg{SvrID: "9001", Text: "【不匹配的标题】x"}); got != "c1" {
-			t.Errorf("resolveQuote = %q, 期望 c1（svr_id 优先）", got)
+		if chatID, _ := b.resolveQuote(&RefMsg{SvrID: "9001", Text: "【不匹配的标题】x"}); chatID != "c1" {
+			t.Errorf("resolveQuote = %q, 期望 c1（svr_id 优先）", chatID)
 		}
 	})
 	t.Run("纯会话标题兜底命中", func(t *testing.T) {
-		if got := b.resolveQuote(&RefMsg{SvrID: "unknown", Text: "【会话A】回复正文"}); got != "c1" {
-			t.Errorf("resolveQuote = %q, 期望 c1（标题匹配）", got)
+		if chatID, _ := b.resolveQuote(&RefMsg{SvrID: "unknown", Text: "【会话A】回复正文"}); chatID != "c1" {
+			t.Errorf("resolveQuote = %q, 期望 c1（标题匹配）", chatID)
 		}
 	})
 	t.Run("复合标题栏兜底命中", func(t *testing.T) {
 		// 与 DeliverHubMessage titleBar 同构：项目 · 工具展示名 · 会话
 		text := "【proj · Claude Code · 会话A】旧回复正文"
-		if got := b.resolveQuote(&RefMsg{SvrID: "unknown", Text: text}); got != "c1" {
-			t.Errorf("resolveQuote = %q, 期望 c1（复合栏匹配）", got)
+		if chatID, _ := b.resolveQuote(&RefMsg{SvrID: "unknown", Text: text}); chatID != "c1" {
+			t.Errorf("resolveQuote = %q, 期望 c1（复合栏匹配）", chatID)
 		}
 	})
 	t.Run("截断复合标题栏前缀命中", func(t *testing.T) {
 		// 真机 title/partial_text 常在栏中截断，无闭合】。
 		text := "【proj · Claude Code · 会"
-		if got := b.resolveQuote(&RefMsg{SvrID: "unknown", Text: text}); got != "c1" {
-			t.Errorf("resolveQuote = %q, 期望 c1（截断前缀）", got)
+		if chatID, _ := b.resolveQuote(&RefMsg{SvrID: "unknown", Text: text}); chatID != "c1" {
+			t.Errorf("resolveQuote = %q, 期望 c1（截断前缀）", chatID)
 		}
 	})
 	t.Run("复合栏优先于同名纯标题歧义", func(t *testing.T) {
 		// c2 的复合栏应精确命中，即使另一会话 Title 碰巧含相似片段也不串。
 		text := "【other · codex · 会话B】x"
-		if got := b.resolveQuote(&RefMsg{SvrID: "x", Text: text}); got != "c2" {
-			t.Errorf("resolveQuote = %q, 期望 c2", got)
+		if chatID, _ := b.resolveQuote(&RefMsg{SvrID: "x", Text: text}); chatID != "c2" {
+			t.Errorf("resolveQuote = %q, 期望 c2", chatID)
 		}
 	})
 	t.Run("未激活会话不参与标题匹配", func(t *testing.T) {
-		if got := b.resolveQuote(&RefMsg{SvrID: "unknown", Text: "【未激活会话】正文"}); got != "" {
-			t.Errorf("resolveQuote = %q, 期望空（未激活跳过）", got)
+		if chatID, _ := b.resolveQuote(&RefMsg{SvrID: "unknown", Text: "【未激活会话】正文"}); chatID != "" {
+			t.Errorf("resolveQuote = %q, 期望空（未激活跳过）", chatID)
 		}
 	})
 	t.Run("双不命中返回空", func(t *testing.T) {
-		if got := b.resolveQuote(&RefMsg{SvrID: "x", Text: "普通引用文本"}); got != "" {
-			t.Errorf("resolveQuote = %q, 期望空", got)
+		if chatID, _ := b.resolveQuote(&RefMsg{SvrID: "x", Text: "普通引用文本"}); chatID != "" {
+			t.Errorf("resolveQuote = %q, 期望空", chatID)
 		}
-		if got := b.resolveQuote(nil); got != "" {
-			t.Errorf("resolveQuote(nil) = %q, 期望空", got)
+		if chatID, _ := b.resolveQuote(nil); chatID != "" {
+			t.Errorf("resolveQuote(nil) = %q, 期望空", chatID)
 		}
 	})
 }
@@ -1014,7 +1074,7 @@ func TestBridgeQuoteReplyRouting(t *testing.T) {
 			rc.handler(t)(w, r)
 		}))
 		defer srv.Close()
-		bb := NewBridge(NewClient("tok", srv.URL), ex, BridgeConfig{Wxid: "u1", Language: "zh-CN"})
+		bb := NewBridge(NewClient("tok", srv.URL), ex, BridgeConfig{Wxid: "u1", Language: "zh-CN", SvrMapPath: filepath.Join(t.TempDir(), "svr.json")})
 		bb.sleep = func(time.Duration) {}
 		bb.client.MediaBase = srv.URL
 		bb.filesDir = t.TempDir()

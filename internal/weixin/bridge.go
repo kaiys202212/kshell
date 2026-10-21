@@ -35,6 +35,9 @@ type BridgeConfig struct {
 	Wxid string
 	// Language 是桥文案语言（"en" / "zh-CN"）。
 	Language string
+	// SvrMapPath 是出站消息 ID→会话归因落盘路径；空则用 defaultSvrMapPath。
+	// 测试注入临时文件，避免写真实 ~/.kshell。
+	SvrMapPath string
 }
 
 // ctxInfo 是最近一次白名单入站消息的发送凭据（出站镜像按它投递）。
@@ -70,6 +73,8 @@ type pendingMsg struct {
 	contextToken string
 	text         string
 	chatID       string // 出站文本归属的 agent 会话（引用归因映射用，可空）
+	sessionID    string // 磁盘会话 ID（落盘归因，可空）
+	title        string // 会话标题快照（可空）
 }
 
 // Bridge 是微信消息桥：入站经白名单过滤后交给命令层，出站把 hub 的 agent
@@ -86,12 +91,12 @@ type Bridge struct {
 	pending     []pendingMsg // -14 时缓存的待发
 	undelivered int          // 发送失败计数（#st 用）
 	queue       []queuedFile // 待转交附件（等下一条可转发文字合并投递）
-	// svrMap 是「出站消息 ID（message_id）→ chatID」的引用归因映射
-	//（rememberSvrID 写，resolveQuote 读）。内存态不落盘：引用回复通常紧跟
-	// 原消息，跨重启的旧引用靠【标题栏】匹配兜底。svrOrder 记录插入序，
-	// 超上限丢最旧。
-	svrMap   map[string]string
-	svrOrder []string
+	// svrMap 是「出站消息 ID（message_id）→ 会话归因」映射（rememberSvrAttr
+	// 写，resolveQuote 读）。按 wxid 落盘到 svrMapPath，跨重启仍可按
+	// SessionID 恢复已关会话。svrOrder 记录插入序，超上限丢最旧。
+	svrMap     map[string]svrAttr
+	svrOrder   []string
+	svrMapPath string
 
 	// filesDir 是附件落盘目录；NewBridge 给默认值，测试注入临时目录。
 	filesDir string
@@ -128,6 +133,11 @@ const outboundCap = 128
 
 // NewBridge 创建微信桥；内部持有独立的命令状态机。
 func NewBridge(client *Client, ex hub.Executor, cfg BridgeConfig) *Bridge {
+	path := cfg.SvrMapPath
+	if path == "" {
+		path = defaultSvrMapPath()
+	}
+	m, order := loadSvrMapAccount(path, cfg.Wxid)
 	return &Bridge{
 		client:     client,
 		ex:         ex,
@@ -135,7 +145,9 @@ func NewBridge(client *Client, ex hub.Executor, cfg BridgeConfig) *Bridge {
 		wxid:       cfg.Wxid,
 		lang:       cfg.Language,
 		outbound:   make(chan outMsg, outboundCap),
-		svrMap:     map[string]string{},
+		svrMap:     m,
+		svrOrder:   order,
+		svrMapPath: path,
 		filesDir:   defaultFilesDir(),
 		workerDone: make(chan struct{}),
 		sleep:      time.Sleep,
@@ -308,9 +320,9 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	trimmed := strings.TrimSpace(text)
 	// 引用归因只对可转发文字生效：命令（#l 等）与纯数字（编号/菜单）保持
 	// 原语义，引用前缀不劫持它们（2026-10-20 设计决策）。
-	quotedChatID := ""
+	quotedChatID, quotedSession := "", ""
 	if m.Ref != nil && isForwardableText(text) {
-		quotedChatID = b.resolveQuote(m.Ref)
+		quotedChatID, quotedSession = b.resolveQuote(m.Ref)
 	}
 	// 可转发文字（非命令/纯数字）且队列非空：合并投递。
 	// quoted：用户明确引用了某条消息（可转发正文）。归因失败时不得发当前会话，
@@ -318,7 +330,7 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	quoted := m.Ref != nil && isForwardableText(text)
 	if isForwardableText(text) && b.QueuedFiles() > 0 {
 		text = b.queuedPrefix() + text
-		replies = b.dispatchConsole(text, quotedChatID, quoted)
+		replies = b.dispatchConsole(text, quotedChatID, quotedSession, quoted)
 		if len(replies) == 0 {
 			// 合并成功转发（agent 稍后回复）：清队列，附件信息已在投递文本里，
 			// 不再单独发附件回执；微信侧补既有 sent_ack。
@@ -328,7 +340,7 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 		}
 		// 转发失败（无会话/发送错误等有回复场景）：队列保留，回执照发。
 	} else if trimmed != "" {
-		replies = b.dispatchConsole(text, quotedChatID, quoted)
+		replies = b.dispatchConsole(text, quotedChatID, quotedSession, quoted)
 		if len(replies) == 0 {
 			// 命令层无回复 = 文本已成功转发给当前会话（agent 稍后回复）。
 			// 微信侧补一条已接收确认，与桌面端 AgentHub 的 ack 卡片同一文案语义
@@ -358,20 +370,20 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 		}
 	}
 	for _, r := range replies {
-		b.deliver(r.Text, "") // 命令回复/ack 不归属会话，不进引用映射
+		b.deliver(r.Text, "", "", "") // 命令回复/ack 不归属会话，不进引用映射
 	}
 	// 回复已发出，取消输入状态。
 	_ = b.client.SendTyping(context.Background(), m.FromUserID, m.ContextToken, 2)
 }
 
 // dispatchConsole 把可转发文本交给命令层。
-// quotedChatID 非空时先走引用路由（切换到被引用会话再投递）。
+// quotedChatID / sessionHint 任一非空时先走引用路由（切换到被引用会话再投递）。
 // quoted 表示用户明确引用了消息：归因失败或 chatID 不在列表时进待选
 //（PickTarget），不得回落发「当前会话」——引用已表明不想跟默认目标。
 // 无引用（quoted=false）仍走普通 Handle（当前或无目标待选）。
-func (b *Bridge) dispatchConsole(text, quotedChatID string, quoted bool) []hub.Reply {
-	if quotedChatID != "" {
-		if handled, replies := b.console.HandleQuoted(quotedChatID, text); handled {
+func (b *Bridge) dispatchConsole(text, quotedChatID, sessionHint string, quoted bool) []hub.Reply {
+	if quotedChatID != "" || sessionHint != "" {
+		if handled, replies := b.console.HandleQuoted(quotedChatID, sessionHint, text); handled {
 			return replies
 		}
 	}
@@ -404,6 +416,12 @@ func (b *Bridge) admit(fromUserID string) bool {
 			return false
 		}
 		b.wxid = fromUserID
+		// 学习后加载该账号落盘归因（扫码绑定路径 Configure 时 wxid 常为空）。
+		if b.svrMapPath != "" {
+			m, order := loadSvrMapAccount(b.svrMapPath, fromUserID)
+			b.svrMap = m
+			b.svrOrder = order
+		}
 		fn := b.onLearnWxid
 		b.mu.Unlock()
 		log.Printf("[weixin] 学习白名单 wxid=%s（首条消息）", fromUserID)
@@ -575,14 +593,18 @@ func (b *Bridge) DeliverHubMessage(m hub.Message) {
 	if bar := b.titleBar(m); bar != "" {
 		text = bar + "\n" + text
 	}
-	b.enqueueOutbound(outMsg{svrKey: m.ChatID, text: text})
+	b.enqueueOutbound(outMsg{
+		chatID: m.ChatID, sessionID: m.SessionID, title: m.SessionTitle, text: text,
+	})
 }
 
-// outMsg 是一条待投递的出站文本。svrKey 是归属 agent 会话的 chat ID：
-// 发送成功后缓存「响应 svr_id → svrKey」供引用回复归因；空串不缓存。
+// outMsg 是一条待投递的出站文本。chatID 是归属 agent 会话：
+// 发送成功后缓存「响应 message_id → 归因」供引用回复；空串不缓存。
 type outMsg struct {
-	svrKey string
-	text   string
+	chatID    string
+	sessionID string
+	title     string
+	text      string
 }
 
 // titleBar 组装出站镜像消息的标题栏（独立一行，与正文换行分隔，不再同行拼接）：
@@ -654,7 +676,7 @@ func (b *Bridge) startOutboundWorker() {
 					}
 					continue
 				}
-				b.deliver(m.text, m.svrKey)
+				b.deliver(m.text, m.chatID, m.sessionID, m.title)
 			}
 		}()
 	})
@@ -678,71 +700,85 @@ func isWireKey(s string) bool {
 	return s != "" && !strings.ContainsAny(s, " \t\n") && len(s) < 64 && reWireKey.MatchString(s)
 }
 
-// svrMapCap 是引用归因映射的上限：超限丢最旧（引用回复总是紧跟原消息，
-// 热数据就最近几十条）。
-const svrMapCap = 256
-
-// rememberSvrID 记录「出站消息 svr_id → chatID」；svrID 或 chatID 为空、
-// svr_id 重复时不记（响应字段真机未验证，拿不到即降级标题匹配，不报错）。
+// rememberSvrID 是 rememberSvrAttr 的兼容入口（仅 chatID，无 SessionID/标题）。
 func (b *Bridge) rememberSvrID(svrID, chatID string) {
+	b.rememberSvrAttr(svrID, chatID, "", "")
+}
+
+// rememberSvrAttr 记录「出站消息 ID → 会话归因」并异步落盘；svrID 或 chatID
+// 为空、重复时不记（拿不到 message_id 即降级标题匹配，不报错）。
+func (b *Bridge) rememberSvrAttr(svrID, chatID, sessionID, title string) {
 	if svrID == "" || chatID == "" {
 		return
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	if _, dup := b.svrMap[svrID]; dup {
+		b.mu.Unlock()
 		return
 	}
-	b.svrMap[svrID] = chatID
+	b.svrMap[svrID] = svrAttr{
+		ChatID: chatID, SessionID: sessionID, Title: title, Ts: time.Now().Unix(),
+	}
 	b.svrOrder = append(b.svrOrder, svrID)
-	for len(b.svrOrder) > svrMapCap {
+	for len(b.svrOrder) > svrMapPersistCap {
 		old := b.svrOrder[0]
 		b.svrOrder = b.svrOrder[1:]
 		delete(b.svrMap, old)
 	}
+	path, wxid := b.svrMapPath, b.wxid
+	snap := make(map[string]svrAttr, len(b.svrMap))
+	for k, v := range b.svrMap {
+		snap[k] = v
+	}
+	order := append([]string(nil), b.svrOrder...)
+	b.mu.Unlock()
+	if err := saveSvrMapAccount(path, wxid, snap, order); err != nil {
+		log.Printf("[weixin] 落盘 svrMap 失败: %v", err)
+	}
 }
 
-// resolveQuote 按引用归因出目标 chatID：消息 ID 精确映射优先，标题栏
-// 匹配兜底；都不命中返回空串（调用方对「有引用」进待选，无引用才发当前）。
+// resolveQuote 按引用归因出目标 chatID 与 sessionHint：消息 ID 精确映射优先，
+// 标题栏匹配兜底；都不命中返回空（调用方对「有引用」进待选，无引用才发当前）。
+// sessionHint 供 chatID 过期且 hub 无快照时 OpenSession。
 // 标题栏优先匹配与出站 titleBar 同构的「项目 · 工具 · 会话」全文，再回落
 // 纯会话标题（ack【会话名】形态）；微信截断无闭合】时按前缀匹配复合栏。
-func (b *Bridge) resolveQuote(ref *RefMsg) string {
+func (b *Bridge) resolveQuote(ref *RefMsg) (chatID, sessionID string) {
 	if ref == nil {
-		return ""
+		return "", ""
 	}
 	b.mu.Lock()
-	chatID := b.svrMap[ref.SvrID]
+	attr := b.svrMap[ref.SvrID]
 	b.mu.Unlock()
-	if chatID != "" {
-		return chatID
+	if attr.ChatID != "" {
+		return attr.ChatID, attr.SessionID
 	}
 	title := quoteTitle(ref.Text)
 	if title == "" {
-		return ""
+		return "", ""
 	}
-	var titleOnly string
-	var prefixHit string
+	var titleOnly, titleOnlySID string
+	var prefixHit, prefixSID string
 	for _, s := range b.ex.ListSessions() {
 		if s.ChatID == "" {
 			continue
 		}
 		bar := b.sessionBarInner(s)
 		if bar == title {
-			return s.ChatID
+			return s.ChatID, s.SessionID
 		}
 		// 截断摘要：栏内容以 title 为前缀（或 title 以栏为前缀，防极端短截断）。
 		if prefixHit == "" && bar != "" &&
 			(strings.HasPrefix(bar, title) || strings.HasPrefix(title, bar)) {
-			prefixHit = s.ChatID
+			prefixHit, prefixSID = s.ChatID, s.SessionID
 		}
 		if s.Title == title && titleOnly == "" {
-			titleOnly = s.ChatID
+			titleOnly, titleOnlySID = s.ChatID, s.SessionID
 		}
 	}
 	if prefixHit != "" {
-		return prefixHit
+		return prefixHit, prefixSID
 	}
-	return titleOnly
+	return titleOnly, titleOnlySID
 }
 
 // sessionBarInner 组装与 titleBar 同构的栏内文案（无【】包裹），供引用
@@ -797,9 +833,9 @@ func quoteTitle(text string) string {
 
 // deliver 投递一条文本：硬换行 → 按 maxSendRunes 拆片 → 用当前上下文逐片发送；
 // -14 时剩余分片入 pending，其他失败重试 2 次后计 undelivered。
-// chatID 是该文本归属的 agent 会话，发送成功且响应带回 svr_id 时记入引用
-// 归因映射（chatID 空则跳过）；同一原文的多分片共用 chatID。
-func (b *Bridge) deliver(text, chatID string) {
+// chatID/sessionID/title 是该文本归属的 agent 会话归因，发送成功且响应带回
+// message_id 时记入映射（chatID 空则跳过）；同一原文的多分片共用归因。
+func (b *Bridge) deliver(text, chatID, sessionID, title string) {
 	// PC 端微信按 Markdown 渲染 ClawBot 气泡，单个 \n 被折叠成空格；
 	// 统一升级为硬换行（行尾两空格），手机端纯文本渲染不受影响。先变换再拆片，
 	// 保证每片发送长度仍 ≤ maxSendRunes。
@@ -818,13 +854,16 @@ func (b *Bridge) deliver(text, chatID string) {
 		if errors.Is(err, ErrSessionExpired) {
 			b.mu.Lock()
 			for _, rest := range chunks[i:] {
-				b.pending = append(b.pending, pendingMsg{userID: ctx.userID, contextToken: ctx.contextToken, text: rest, chatID: chatID})
+				b.pending = append(b.pending, pendingMsg{
+					userID: ctx.userID, contextToken: ctx.contextToken, text: rest,
+					chatID: chatID, sessionID: sessionID, title: title,
+				})
 			}
 			b.mu.Unlock()
 			return
 		}
 		if err == nil {
-			b.rememberSvrID(svrID, chatID)
+			b.rememberSvrAttr(svrID, chatID, sessionID, title)
 			continue
 		}
 		// 普通失败：重试 sendRetry 次。
@@ -832,7 +871,7 @@ func (b *Bridge) deliver(text, chatID string) {
 		for j := 0; j < sendRetry; j++ {
 			b.sleep(sendRetryWait)
 			if svrID, err = b.client.SendMessage(context.Background(), ctx.userID, ctx.contextToken, chunk); err == nil {
-				b.rememberSvrID(svrID, chatID)
+				b.rememberSvrAttr(svrID, chatID, sessionID, title)
 				ok = true
 				break
 			}
@@ -868,7 +907,7 @@ func (b *Bridge) flushPending() {
 		if err != nil {
 			return // 失败保留剩余 pending，等下次入站再补
 		}
-		b.rememberSvrID(svrID, pm.chatID)
+		b.rememberSvrAttr(svrID, pm.chatID, pm.sessionID, pm.title)
 		sent++
 		b.mu.Lock()
 		b.pending = b.pending[1:]

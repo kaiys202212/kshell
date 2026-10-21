@@ -790,13 +790,13 @@ func (c *Console) sendToCurrent(text string) []Reply {
 
 // HandleQuoted 处理引用回复：按 chatID 定位会话，切换当前上下文后投递
 // （2026-10-20 用户确认：切换，后续裸消息跟随被引用的 agent）。handled=false
-// 表示定位失败（chatID 空/未命中），调用方回落普通 Handle；切换/发送失败
-// handled=true 且回执错误文案。投递成功 handled=true 且 replies 空（静默，
-// agent 回复自带【会话名】归因，与普通转发语义一致）。
-func (c *Console) HandleQuoted(chatID, text string) (bool, []Reply) {
+// 表示定位失败（chatID/sessionHint 皆无法恢复），调用方回落普通 Handle/待选。
+// sessionHint 来自出站 svrMap 落盘的 SessionID：chatID 过期且 hub 无快照时仍可 OpenSession。
+// 切换/发送失败 handled=true 且回执错误文案；成功 replies 空（静默）。
+func (c *Console) HandleQuoted(chatID, sessionHint, text string) (bool, []Reply) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if chatID == "" {
+	if chatID == "" && sessionHint == "" {
 		return false, nil
 	}
 	// #n/#m/#f 进行中：提示选数字，不切会话不投递（避免数字回复被误消费）。
@@ -807,15 +807,21 @@ func (c *Console) HandleQuoted(chatID, text string) (bool, []Reply) {
 		}
 		c.menu = nil
 	}
-	for _, r := range c.ex.ListSessions() {
-		if r.ChatID != chatID {
-			continue
+	if chatID != "" {
+		for _, r := range c.ex.ListSessions() {
+			if r.ChatID != chatID {
+				continue
+			}
+			return true, c.sendQuoted(r, text)
 		}
-		return true, c.sendQuoted(r, text)
+		// 列表无此 chatID（已关/重建）：尝试按 hub SessionID 恢复。
+		if ref, ok := c.ex.RecoverSession(chatID); ok {
+			return true, c.sendQuoted(ref, text)
+		}
 	}
-	// 列表无此 chatID（已关/重建）：尝试按 SessionID 恢复，失败才回落待选。
-	if ref, ok := c.ex.RecoverSession(chatID); ok {
-		return true, c.sendQuoted(ref, text)
+	// svrMap 落盘带来的 SessionID 提示：hub 也无快照时仍可激活磁盘会话。
+	if sessionHint != "" {
+		return true, c.sendQuoted(SessionRef{SessionID: sessionHint}, text)
 	}
 	return false, nil
 }
