@@ -56,8 +56,8 @@ func TestGetZhCNReturnsChinese(t *testing.T) {
 	if got := Get("help", "zh-CN"); !strings.Contains(got, "帮助") {
 		t.Error("中文 help 应包含「帮助」标记")
 	}
-	if got := Get("changelog", "zh-CN"); !strings.Contains(got, "未发布") {
-		t.Error("中文 changelog 应包含「未发布」小节")
+	if got := Get("changelog", "zh-CN"); !strings.Contains(got, "## v") {
+		t.Error("中文 changelog 应包含版本小节（## vX.Y.Z）")
 	}
 }
 
