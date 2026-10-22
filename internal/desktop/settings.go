@@ -288,7 +288,7 @@ func (a *App) SetModelConfig(in ModelConfigInput) error {
 		def = ""
 	}
 
-	return a.saveConfig(func(c *config.Config) {
+	err := a.saveConfig(func(c *config.Config) {
 		c.Model.Enabled = in.Enabled
 		c.Model.Platforms = platforms
 		c.Model.DefaultPlatform = def
@@ -325,6 +325,12 @@ func (a *App) SetModelConfig(in ModelConfigInput) error {
 		c.Model.Models = nil
 		c.Model.Agents = nil
 	})
+	if err != nil {
+		return err
+	}
+	// 持久同步到 OpenCode/CodeBuddy 自有配置；失败不回滚本次保存。
+	a.syncAgentModels()
+	return nil
 }
 
 func validateHTTPURL(u, label string) error {

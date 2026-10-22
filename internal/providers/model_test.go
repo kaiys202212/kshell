@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -55,51 +54,25 @@ func TestInjectModelMappings(t *testing.T) {
 		t.Fatalf("cursor 不应注入共享 API Key，got %+v", env)
 	}
 
+	// OpenCode / CodeBuddy：改走 agentsync 持久配置，启动注入为空。
 	args, env = CodeBuddy{}.InjectModel(cfg)
-	if !reflect.DeepEqual(args, []string{"--model", "m"}) {
-		t.Fatalf("codebuddy args = %v", args)
-	}
-	if env["CODEBUDDY_MODEL"] != "m" {
-		t.Fatalf("codebuddy env = %+v", env)
-	}
-
-	args, env = Opencode{}.InjectModel(cfg)
-	if !reflect.DeepEqual(args, []string{"--model", "kshell/m"}) {
-		t.Fatalf("opencode args = %v", args)
-	}
-	raw := env["OPENCODE_CONFIG_CONTENT"]
-	if raw == "" {
-		t.Fatal("opencode 应注入 OPENCODE_CONFIG_CONTENT")
-	}
-	var doc map[string]any
-	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
-		t.Fatalf("CONFIG_CONTENT JSON: %v", err)
-	}
-	if doc["model"] != "kshell/m" {
-		t.Fatalf("config model = %v", doc["model"])
-	}
-	prov, _ := doc["provider"].(map[string]any)
-	kshell, _ := prov["kshell"].(map[string]any)
-	opts, _ := kshell["options"].(map[string]any)
-	if opts["baseURL"] != "https://oai.example/" || opts["apiKey"] != "k" {
-		t.Fatalf("kshell options = %+v", opts)
-	}
-}
-
-func TestInjectModelOpencodeProviderSlash(t *testing.T) {
-	args, env := Opencode{}.InjectModel(ModelConfig{Model: "openai/gpt-4o"})
-	if !reflect.DeepEqual(args, []string{"--model", "openai/gpt-4o"}) {
-		t.Fatalf("args = %v", args)
-	}
-	if len(env) != 0 {
-		t.Fatalf("已带 provider/ 时不应写 CONFIG_CONTENT，got %+v", env)
-	}
-}
-
-func TestInjectModelOpencodeBareWithoutBaseURL(t *testing.T) {
-	args, env := Opencode{}.InjectModel(ModelConfig{Model: "glm-5.3-flash"})
 	if len(args) != 0 || len(env) != 0 {
-		t.Fatalf("裸名无端点不应注入：args=%v env=%+v", args, env)
+		t.Fatalf("codebuddy 不应再启动注入: args=%v env=%+v", args, env)
+	}
+	args, env = Opencode{}.InjectModel(cfg)
+	if len(args) != 0 || len(env) != 0 {
+		t.Fatalf("opencode 不应再启动注入: args=%v env=%+v", args, env)
+	}
+}
+
+func TestInjectModelOpencodeNoLongerInjects(t *testing.T) {
+	args, env := Opencode{}.InjectModel(ModelConfig{Model: "openai/gpt-4o", OpenAIBaseURL: "https://h/"})
+	if len(args) != 0 || len(env) != 0 {
+		t.Fatalf("opencode 应空注入: args=%v env=%+v", args, env)
+	}
+	args, env = Opencode{}.InjectModel(ModelConfig{Model: "glm-5.3-flash"})
+	if len(args) != 0 || len(env) != 0 {
+		t.Fatalf("opencode 应空注入: args=%v env=%+v", args, env)
 	}
 }
 

@@ -1,11 +1,14 @@
 package desktop
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/yangk/kshell/internal/config"
+	"github.com/yangk/kshell/internal/discovery"
 )
 
 func newModelApp(t *testing.T) (*App, config.Layout) {
@@ -388,5 +391,48 @@ func TestSessionAndPermissionModeRoundTrip(t *testing.T) {
 	}
 	if err := app.SetSessionMode("bogus"); err == nil {
 		t.Fatal("非法 session_mode 应报错")
+	}
+}
+
+// SetModelConfig 成功后应把平台模型同步进已安装 OpenCode 的 opencode.json。
+func TestSetModelConfigSyncsOpenCode(t *testing.T) {
+	home := t.TempDir()
+	dir := t.TempDir()
+	layout := config.Layout{
+		Root: dir, Config: filepath.Join(dir, "config.yaml"), Cache: filepath.Join(dir, "cache"),
+	}
+	app := NewAppWith(Options{Config: config.Default(), Layout: layout, Home: home})
+	app.mu.Lock()
+	app.tools = []discovery.Tool{{ID: "opencode", Installed: true, BinPath: "opencode"}}
+	app.mu.Unlock()
+
+	if err := app.SetModelConfig(ModelConfigInput{
+		Enabled:         true,
+		DefaultPlatform: "p1",
+		Platforms: []ModelPlatformInput{{
+			ID: "p1", Name: "智谱", OpenAIBaseURL: "https://api.example/v1",
+			APIKey: "sk-test", Models: []string{"glm-x"},
+		}},
+	}); err != nil {
+		t.Fatalf("SetModelConfig: %v", err)
+	}
+
+	path := filepath.Join(home, ".config", "opencode", "opencode.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("应写入 opencode.json: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	prov, _ := doc["provider"].(map[string]any)
+	ks, ok := prov["kshell-p1"].(map[string]any)
+	if !ok {
+		t.Fatalf("缺少 kshell-p1: %#v", prov)
+	}
+	opts, _ := ks["options"].(map[string]any)
+	if opts["apiKey"] != "sk-test" || opts["baseURL"] != "https://api.example/v1" {
+		t.Fatalf("options = %#v", opts)
 	}
 }

@@ -1,10 +1,5 @@
 package providers
 
-import (
-	"encoding/json"
-	"strings"
-)
-
 // ModelConfig 是按工具适配后的模型注入值（双协议端点/密钥 + 该工具的模型名）。
 type ModelConfig struct {
 	OpenAIBaseURL    string
@@ -98,60 +93,14 @@ func (Cursor) InjectModel(cfg ModelConfig) ([]string, map[string]string) {
 	return []string{"--model", cfg.Model}, nil
 }
 
-// CodeBuddy：`--model` + CODEBUDDY_MODEL（文档约定 env 覆盖默认模型）。
-func (CodeBuddy) InjectModel(cfg ModelConfig) ([]string, map[string]string) {
-	var args []string
-	env := map[string]string{}
-	if cfg.Model != "" {
-		args = append(args, "--model", cfg.Model)
-		env["CODEBUDDY_MODEL"] = cfg.Model
-	}
-	return args, env
+// CodeBuddy：平台模型改由 agentsync 写入 ~/.codebuddy/models.json，
+// 启动时不再注入 --model / CODEBUDDY_MODEL，避免与自有配置双通道打架。
+func (CodeBuddy) InjectModel(ModelConfig) ([]string, map[string]string) {
+	return nil, nil
 }
 
-// Opencode：需要 provider/model。裸模型名且有 BaseURL 时经 OPENCODE_CONFIG_CONTENT
-// 注册临时 openai-compatible provider `kshell`，避免非法 --model 破坏启动/续聊。
-func (Opencode) InjectModel(cfg ModelConfig) ([]string, map[string]string) {
-	model := strings.TrimSpace(cfg.Model)
-	if model == "" {
-		return nil, nil
-	}
-
-	// 已是 provider/model：只传 CLI flag。
-	if strings.Contains(model, "/") {
-		return []string{"--model", model}, nil
-	}
-
-	base := strings.TrimSpace(cfg.OpenAIBaseURL)
-	if base == "" {
-		base = strings.TrimSpace(cfg.AnthropicBaseURL)
-	}
-	// 裸名且无端点：不注入 --model（OpenCode 会拒识或开出空会话）。
-	if base == "" {
-		return nil, nil
-	}
-
-	full := "kshell/" + model
-	content, err := json.Marshal(map[string]any{
-		"provider": map[string]any{
-			"kshell": map[string]any{
-				"npm":  "@ai-sdk/openai-compatible",
-				"name": "kshell",
-				"options": map[string]any{
-					"baseURL": base,
-					"apiKey":  cfg.APIKey,
-				},
-				"models": map[string]any{
-					model: map[string]any{"name": model},
-				},
-			},
-		},
-		"model": full,
-	})
-	if err != nil {
-		return nil, nil
-	}
-	return []string{"--model", full}, map[string]string{
-		"OPENCODE_CONFIG_CONTENT": string(content),
-	}
+// Opencode：平台模型改由 agentsync 写入 opencode.json 的 provider.kshell-*，
+// 启动时不再注入 OPENCODE_CONFIG_CONTENT / --model。
+func (Opencode) InjectModel(ModelConfig) ([]string, map[string]string) {
+	return nil, nil
 }
