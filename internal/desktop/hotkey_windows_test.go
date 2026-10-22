@@ -6,6 +6,9 @@ import (
 	"context"
 	"testing"
 	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 // stubHotkeyWindow 一次性替换 toggleMainWindow 用到的窗口抽象，
@@ -157,6 +160,30 @@ func stubHotkeyRunner(t *testing.T, fn func(*App)) *int {
 // fakeHotkeyApp 组装最小 App 供热键线程生命周期测试使用（不触碰窗口）。
 func fakeHotkeyApp() *App {
 	return NewAppWith(Options{Emit: func(string, ...any) {}})
+}
+
+// hwndMessage 必须等于 Win32 HWND_MESSAGE ((HWND)-3)，误写成 3 时
+// CreateWindowExW 建窗失败，Alt+Shift+K 全程不可用。
+func TestHwndMessageIsWin32HWNDMessage(t *testing.T) {
+	want := ^uintptr(2) // (HWND)-3
+	if hwndMessage != want {
+		t.Fatalf("hwndMessage=%#x, want HWND_MESSAGE=%#x（误用字面量 3 会导致建窗失败）",
+			hwndMessage, want)
+	}
+}
+
+// 用生产路径相同的类名 + hwndMessage 真建 message-only 窗口，防止常量/参数再漂。
+func TestCreateMessageOnlyWindowWithHwndMessage(t *testing.T) {
+	className, err := windows.UTF16PtrFromString(hotkeyClassName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hwnd, _, createErr := procCreateWindowExW.Call(
+		0, uintptr(unsafe.Pointer(className)), 0, 0, 0, 0, 0, 0, hwndMessage, 0, 0, 0)
+	if hwnd == 0 {
+		t.Fatalf("CreateWindowExW(HWND_MESSAGE) 失败 errno=%v", createErr)
+	}
+	procDestroyWindow.Call(hwnd)
 }
 
 // stopHotkey 在热键未启动（tid=0）时必须安全跳过，不 panic、不误发消息。

@@ -19,10 +19,12 @@ const (
 	modAlt            = 0x1
 	modShift          = 0x4
 	modNoRepeat       = 0x4000
-	hotkeyVK          = 'K'
-	hwndMessage       = 3 // HWND_MESSAGE：message-only window
-	wmHotkey          = 0x0312
-	wmQuit            = 0x0012
+	hotkeyVK = 'K'
+	// hwndMessage 即 Win32 HWND_MESSAGE ((HWND)-3)。切勿写成字面量 3：
+	// 父句柄错误时 CreateWindowExW 必然失败，热键全程不可用。
+	hwndMessage = ^uintptr(2)
+	wmHotkey    = 0x0312
+	wmQuit      = 0x0012
 
 	// hotkeyClassName 用系统预注册类 "Static"：Win32 要求 lpClassName 非 NULL，
 	// 传 NULL 时 CreateWindowExW 必然失败；message-only window 对类要求宽松，
@@ -83,15 +85,15 @@ func stopHotkey() {
 func runHotkeyLoop(a *App) {
 	// message-only window 不显示、不进任务栏，仅用于接收 WM_HOTKEY。
 	className, _ := windows.UTF16PtrFromString(hotkeyClassName)
-	hwnd, _, _ := procCreateWindowExW.Call(
+	hwnd, _, createErr := procCreateWindowExW.Call(
 		0, uintptr(unsafe.Pointer(className)), 0, 0, 0, 0, 0, 0, hwndMessage, 0, 0, 0)
 	if hwnd == 0 {
-		log.Printf("热键窗口创建失败，Alt+Shift+K 不可用")
+		log.Printf("热键窗口创建失败（errno=%v），Alt+Shift+K 不可用", createErr)
 		return
 	}
-	if ret, _, _ := procRegisterHotKey.Call(hwnd, hotkeyID,
+	if ret, _, regErr := procRegisterHotKey.Call(hwnd, hotkeyID,
 		uintptr(modAlt|modShift|modNoRepeat), uintptr(hotkeyVK)); ret == 0 {
-		log.Printf("注册热键 Alt+Shift+K 失败（可能被其它程序占用），已跳过")
+		log.Printf("注册热键 Alt+Shift+K 失败（errno=%v，可能被其它程序占用），已跳过", regErr)
 		procDestroyWindow.Call(hwnd)
 		return
 	}
