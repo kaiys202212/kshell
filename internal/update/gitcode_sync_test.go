@@ -214,6 +214,117 @@ func TestSyncGitCodePatchesLatestOnConflict(t *testing.T) {
 	}
 }
 
+// Release 已存在（releaseExists GET 200，重跑 CI 的主路径）时同样要补 PATCH
+// release_status=latest，否则重建 tag 后 /releases/latest 仍指旧版本。
+func TestSyncGitCodePatchesLatestWhenExists(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ZipName), []byte("ZIPDATA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, SumsName), []byte("abc  "+ZipName+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var patched bool
+	var uploaded bool
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	mux.HandleFunc("/api/v5/repos/"+GitCodeOwner+"/kshell/releases/tags/v0.2.0", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			patched = true
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"tag_name": "v0.2.0"})
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"tag_name": "v0.2.0"})
+	})
+	mux.HandleFunc("/api/v5/repos/"+GitCodeOwner+"/kshell/releases/v0.2.0/upload_url", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("file_name")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"url":     srv.URL + "/obs/" + name,
+			"headers": map[string]string{"Content-Type": "application/octet-stream"},
+		})
+	})
+	mux.HandleFunc("/obs/", func(w http.ResponseWriter, r *http.Request) {
+		uploaded = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	err := SyncGitCode(context.Background(), SyncOptions{
+		BaseURL: srv.URL + "/api/v5",
+		Token:   "tok",
+		Owner:   GitCodeOwner,
+		Repo:    "kshell",
+		Tag:     "v0.2.0",
+		Dir:     dir,
+		HTTP:    srv.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !patched {
+		t.Fatal("release 已存在时也应 PATCH release_status=latest")
+	}
+	if !uploaded {
+		t.Fatal("PATCH 失败不应阻断附件上传")
+	}
+}
+
+// PATCH 失败（非 2xx）不应阻断附件上传。
+func TestSyncGitCodePatchFailureDoesNotBlockUpload(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ZipName), []byte("ZIPDATA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, SumsName), []byte("abc  "+ZipName+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var uploaded bool
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	mux.HandleFunc("/api/v5/repos/"+GitCodeOwner+"/kshell/releases/tags/v0.2.0", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"tag_name": "v0.2.0"})
+	})
+	mux.HandleFunc("/api/v5/repos/"+GitCodeOwner+"/kshell/releases/v0.2.0/upload_url", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("file_name")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"url":     srv.URL + "/obs/" + name,
+			"headers": map[string]string{"Content-Type": "application/octet-stream"},
+		})
+	})
+	mux.HandleFunc("/obs/", func(w http.ResponseWriter, r *http.Request) {
+		uploaded = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	err := SyncGitCode(context.Background(), SyncOptions{
+		BaseURL: srv.URL + "/api/v5",
+		Token:   "tok",
+		Owner:   GitCodeOwner,
+		Repo:    "kshell",
+		Tag:     "v0.2.0",
+		Dir:     dir,
+		HTTP:    srv.Client(),
+	})
+	if err != nil {
+		t.Fatalf("PATCH 失败不应返回错误: %v", err)
+	}
+	if !uploaded {
+		t.Fatal("PATCH 失败不应阻断附件上传")
+	}
+}
+
 func TestSyncGitCodeRetriesUpload(t *testing.T) {
 	dir := t.TempDir()
 	zipPath := filepath.Join(dir, ZipName)

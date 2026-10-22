@@ -4,10 +4,15 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/yangk/kshell/internal/update"
 	"github.com/yangk/kshell/internal/version"
 )
+
+// checkOverallTimeout 限制单次检查的整体耗时：跨源取最大后不再提前返回，
+// 6 源 × 单源 12s 的最坏串行等待对同步 UI 调用不可接受。
+const checkOverallTimeout = 25 * time.Second
 
 // UpdateInfo 给前端的检查结果（JSON 字段名与绑定一致）。
 type UpdateInfo struct {
@@ -21,7 +26,9 @@ type UpdateInfo struct {
 }
 
 var checkUpdateFn = func() (update.CheckResult, error) {
-	return update.Client{Current: version.Current()}.Check(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), checkOverallTimeout)
+	defer cancel()
+	return update.Client{Current: version.Current()}.Check(ctx)
 }
 
 var applyUpdateFn = func(ctx context.Context, dest string, r update.CheckResult) error {

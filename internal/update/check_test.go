@@ -274,13 +274,30 @@ func TestCheckSendsNoCacheHeader(t *testing.T) {
 	defer srv.Close()
 	c := Client{
 		Current: "v0.1.0",
-		Sources: []Source{{Name: "local", LatestURL: srv.URL}},
+		Sources: []Source{{Name: "local", LatestURL: srv.URL + "/repos/x/releases/latest"}},
 	}
 	if _, err := c.Check(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if gotHeader != "no-cache" {
 		t.Fatalf("Cache-Control = %q, want no-cache", gotHeader)
+	}
+}
+
+// no-cache 只用于 latest 检查，zip/sums 大文件下载不应带头强制回源。
+func TestDownloadDoesNotSendNoCacheHeader(t *testing.T) {
+	var gotHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("Cache-Control")
+		_, _ = w.Write([]byte("DATA"))
+	}))
+	defer srv.Close()
+	c := Client{HTTP: srv.Client()}
+	if _, err := c.getThroughSources(context.Background(), srv.URL+"/download/v0.2.0/"+ZipName); err != nil {
+		t.Fatal(err)
+	}
+	if gotHeader != "" {
+		t.Fatalf("下载请求不应带 Cache-Control, got %q", gotHeader)
 	}
 }
 

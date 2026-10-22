@@ -317,8 +317,11 @@ func (c Client) httpGet(ctx context.Context, url string) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", userAgent)
-	// 绕过 CDN/代理层缓存，避免拿到滞后的 latest。
-	req.Header.Set("Cache-Control", "no-cache")
+	// latest 检查请求绕过 CDN/代理层缓存，避免拿到滞后的 latest；
+	// zip/sums 大文件下载复用本函数，按 URL 识别后不带头以免强制回源拖慢。
+	if strings.Contains(url, "releases/latest") {
+		req.Header.Set("Cache-Control", "no-cache")
+	}
 	if strings.Contains(url, "api.github.com") {
 		req.Header.Set("Accept", "application/vnd.github+json")
 	}

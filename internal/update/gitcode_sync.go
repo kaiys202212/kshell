@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -59,6 +60,10 @@ func SyncGitCode(ctx context.Context, opts SyncOptions) error {
 		if err := api.createRelease(ctx, opts.Tag); err != nil {
 			return err
 		}
+	} else if err := api.patchLatest(ctx, opts.Tag); err != nil {
+		// Release 已存在（重跑 CI/重建 tag）：确保 latest 标记指向本 tag。
+		// 失败不阻断附件上传，但留日志以便诊断 latest 指向旧版本的案例。
+		log.Printf("gitcode-sync: 标记 %s 为 latest 失败: %v", opts.Tag, err)
 	}
 	for _, f := range files {
 		body, err := os.ReadFile(f)
@@ -145,10 +150,11 @@ func (a gitcodeAPI) createRelease(ctx context.Context, tag string) error {
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusUnprocessableEntity {
-		// Release 已存在（重跑 CI/重建 tag）：补打 latest 标记，避免
-		// GitCode /releases/latest 继续指向旧版本（升级检查的国内主源）。
+		// Release 已存在（窄竞态：查询 404 后创建撞车）：补打 latest 标记。
 		// 尽力而为，失败不阻断附件上传。
-		_ = a.patchLatest(ctx, tag)
+		if err := a.patchLatest(ctx, tag); err != nil {
+			log.Printf("gitcode-sync: 创建撞车后标记 %s 为 latest 失败: %v", tag, err)
+		}
 		return nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
