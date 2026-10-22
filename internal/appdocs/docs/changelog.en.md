@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.19 (2026-10-23)
+
+- Model sync gains a Claude target: switching the default platform or installing Claude now auto-injects `settings.json` statically, syncing the active model and platform model aliases.
+- Platform model sync now also writes OpenCode / CodeBuddy native configs.
+- Fixed upgrade check version comparison across sources — the latest of all sources is picked — and corrected GitCode latest-tag detection.
+- Fixed the global shortcut Alt+Shift+K occasionally failing to register.
+- AgentHub welcome bubbles no longer show quick-reply buttons.
+
 ## v0.1.18 (2026-10-22)
 
 - AgentHub's session-pick menu is now grouped: a quick "new session" entry on top plus the 5 most recent sessions; the user's original message is visible immediately while picking.
