@@ -25,9 +25,9 @@ type Target interface {
 	Sync(home string, in SyncInput) error
 }
 
-// DefaultTargets 返回首版同步目标：OpenCode + CodeBuddy。
+// DefaultTargets 返回同步目标：OpenCode + CodeBuddy + Claude。
 func DefaultTargets() []Target {
-	return []Target{OpenCode{}, CodeBuddy{}}
+	return []Target{OpenCode{}, CodeBuddy{}, Claude{}}
 }
 
 // SyncAll 对已安装（或已有配置文件）的目标做命名空间同步。
