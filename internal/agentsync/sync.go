@@ -12,6 +12,9 @@ import (
 type SyncInput struct {
 	Enabled   bool
 	Platforms []config.ModelPlatform
+	// DefaultPlatformID 是静态注入类目标（如 Claude settings.json 只有一份
+	// env）需要落盘的平台；空 = 第一个平台。
+	DefaultPlatformID string
 }
 
 // Target 是某一个 agent 的自有配置同步适配器。
@@ -59,7 +62,7 @@ func SyncTool(home, toolID string, in SyncInput) error {
 
 // InputFromModel 从 config.ModelConfig 组装 SyncInput。
 func InputFromModel(m config.ModelConfig) SyncInput {
-	return SyncInput{Enabled: m.Enabled, Platforms: m.Platforms}
+	return SyncInput{Enabled: m.Enabled, Platforms: m.Platforms, DefaultPlatformID: m.DefaultPlatform}
 }
 
 // writeAtomic 先写临时文件再 rename，避免半截 JSON。
