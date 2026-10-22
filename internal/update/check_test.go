@@ -3,6 +3,9 @@ package update
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -174,9 +177,6 @@ func TestCheckUsesGitCodeAttachWhenZipAssetMissing(t *testing.T) {
 		Current: "v0.1.0",
 		Sources: DefaultSources(),
 		Get: func(_ context.Context, url string) ([]byte, error) {
-			if url != GitCodeLatestURL() {
-				t.Fatalf("应先打 GitCode，got %s", url)
-			}
 			return []byte(body), nil
 		},
 	}
@@ -193,6 +193,94 @@ func TestCheckUsesGitCodeAttachWhenZipAssetMissing(t *testing.T) {
 	}
 	if got.Source != "gitcode" {
 		t.Fatalf("Source = %q", got.Source)
+	}
+}
+
+// 跨源取最大：靠前的源返回过期 latest（镜像缓存滞后）时，应继续问后续源并取
+// semver 最大的结果，而不是首胜短路。这是「一次只升一个小版本」问题的回归测试。
+func TestCheckTakesMaxAcrossSources(t *testing.T) {
+	pinCheckWindowsPackage(t)
+	stale := githubLatestJSON("v0.1.17", "https://github.com/kaiys202212/kshell/releases/download/v0.1.17/"+ZipName)
+	fresh := githubLatestJSON("v0.1.18", "https://github.com/kaiys202212/kshell/releases/download/v0.1.18/"+ZipName)
+	c := Client{
+		Current: "v0.1.10",
+		Sources: []Source{
+			{Name: "stale-mirror", Prefix: "https://stale.example/"},
+			{Name: "github", Prefix: ""},
+		},
+		Get: func(_ context.Context, url string) ([]byte, error) {
+			if strings.HasPrefix(url, "https://stale.example/") {
+				return []byte(stale), nil
+			}
+			return []byte(fresh), nil
+		},
+	}
+	got, err := c.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Latest != "v0.1.18" {
+		t.Fatalf("Latest = %q, want v0.1.18（应跨源取最大而非首胜）", got.Latest)
+	}
+	if got.Source != "github" {
+		t.Fatalf("Source = %q, want github", got.Source)
+	}
+	if !got.Available {
+		t.Fatalf("Available = false: %+v", got)
+	}
+	if !strings.Contains(got.ZipURL, "v0.1.18") {
+		t.Fatalf("ZipURL = %q, 应取自胜出源", got.ZipURL)
+	}
+}
+
+// 胜出源（最大 tag）缺 zip 资产时，应退而取下一个有资产的次新源，而不是整体失败。
+func TestCheckFallsBackWhenMaxSourceMissingAsset(t *testing.T) {
+	pinCheckWindowsPackage(t)
+	freshNoAsset := `{"tag_name":"v0.1.18","body":"","assets":[]}`
+	stale := githubLatestJSON("v0.1.17", "https://github.com/kaiys202212/kshell/releases/download/v0.1.17/"+ZipName)
+	c := Client{
+		Current: "v0.1.10",
+		Sources: []Source{
+			{Name: "stale-mirror", Prefix: "https://stale.example/"},
+			{Name: "github", Prefix: ""},
+		},
+		Get: func(_ context.Context, url string) ([]byte, error) {
+			if strings.HasPrefix(url, "https://stale.example/") {
+				return []byte(stale), nil
+			}
+			return []byte(freshNoAsset), nil
+		},
+	}
+	got, err := c.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Latest != "v0.1.17" {
+		t.Fatalf("Latest = %q, want v0.1.17（最大源缺资产时退回次新可用源）", got.Latest)
+	}
+	if !got.Available {
+		t.Fatalf("Available = false: %+v", got)
+	}
+}
+
+func TestCheckSendsNoCacheHeader(t *testing.T) {
+	pinCheckWindowsPackage(t)
+	body := githubLatestJSON("v0.2.0", "https://github.com/kaiys202212/kshell/releases/download/v0.2.0/"+ZipName)
+	var gotHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("Cache-Control")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	c := Client{
+		Current: "v0.1.0",
+		Sources: []Source{{Name: "local", LatestURL: srv.URL}},
+	}
+	if _, err := c.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotHeader != "no-cache" {
+		t.Fatalf("Cache-Control = %q, want no-cache", gotHeader)
 	}
 }
 

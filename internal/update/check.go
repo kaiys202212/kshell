@@ -166,7 +166,17 @@ func Newer(current, latest string) bool {
 	return semver.Compare(a, b) < 0
 }
 
-// Check 依次尝试各源，直到 latest release JSON 成功。
+// checkCandidate 是单个源成功解析出的 latest 候选。
+type checkCandidate struct {
+	tagName string
+	notes   string
+	zipURL  string
+	sumsURL string
+	source  string
+}
+
+// Check 遍历所有源取 latest，跨源选 semver 最大的候选。
+// 单源（镜像缓存滞后）返回过期版本不再影响结论，避免「一次只升一个小版本」。
 func (c Client) Check(ctx context.Context) (CheckResult, error) {
 	cur := strings.TrimSpace(c.Current)
 	out := CheckResult{Current: cur}
@@ -190,6 +200,8 @@ func (c Client) Check(ctx context.Context) (CheckResult, error) {
 	if get == nil {
 		get = c.httpGet
 	}
+	wantZip := CurrentPackageZip()
+	var best *checkCandidate
 	var last error
 	for _, s := range src {
 		u := s.checkURL()
@@ -203,38 +215,46 @@ func (c Client) Check(ctx context.Context) (CheckResult, error) {
 			last = err
 			continue
 		}
-		out.Latest = rel.TagName
-		out.Notes = rel.Body
-		out.Source = s.Name
-		wantZip := CurrentPackageZip()
+		cand := checkCandidate{tagName: rel.TagName, notes: rel.Body, source: s.Name}
 		for _, a := range rel.Assets {
 			switch a.Name {
 			case wantZip:
-				out.ZipURL = a.BrowserDownloadURL
+				cand.zipURL = a.BrowserDownloadURL
 			case SumsName:
-				out.SumsURL = a.BrowserDownloadURL
+				cand.sumsURL = a.BrowserDownloadURL
 			}
 		}
-		if out.ZipURL == "" && s.Attach && rel.TagName != "" {
-			out.ZipURL = GitCodeAttachURL(rel.TagName, wantZip)
-			if out.SumsURL == "" {
-				out.SumsURL = GitCodeAttachURL(rel.TagName, SumsName)
+		if cand.zipURL == "" && s.Attach && rel.TagName != "" {
+			cand.zipURL = GitCodeAttachURL(rel.TagName, wantZip)
+			if cand.sumsURL == "" {
+				cand.sumsURL = GitCodeAttachURL(rel.TagName, SumsName)
 			}
 		}
-		if out.ZipURL == "" {
+		if cand.zipURL == "" {
 			last = fmt.Errorf("err.update.release_missing_asset|%s|%s", rel.TagName, wantZip)
 			continue
 		}
-		out.Available = Newer(cur, rel.TagName)
-		if !out.Available {
-			out.Reason = "update.reason.up_to_date"
+		// 取 semver 最大的候选；并列时保留先到者（源链靠前者优先）。
+		if best == nil || semver.Compare(canon(cand.tagName), canon(best.tagName)) > 0 {
+			best = &cand
 		}
-		return out, nil
 	}
-	if last == nil {
-		last = fmt.Errorf("err.update.no_source")
+	if best == nil {
+		if last == nil {
+			last = fmt.Errorf("err.update.no_source")
+		}
+		return out, last
 	}
-	return out, last
+	out.Latest = best.tagName
+	out.Notes = best.notes
+	out.Source = best.source
+	out.ZipURL = best.zipURL
+	out.SumsURL = best.sumsURL
+	out.Available = Newer(cur, best.tagName)
+	if !out.Available {
+		out.Reason = "update.reason.up_to_date"
+	}
+	return out, nil
 }
 
 // errNoDownloadSource 是下载无候选源时的兜底（wire key，前端直译）。
@@ -297,6 +317,8 @@ func (c Client) httpGet(ctx context.Context, url string) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", userAgent)
+	// 绕过 CDN/代理层缓存，避免拿到滞后的 latest。
+	req.Header.Set("Cache-Control", "no-cache")
 	if strings.Contains(url, "api.github.com") {
 		req.Header.Set("Accept", "application/vnd.github+json")
 	}

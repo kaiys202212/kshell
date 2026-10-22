@@ -145,10 +145,34 @@ func (a gitcodeAPI) createRelease(ctx context.Context, tag string) error {
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusUnprocessableEntity {
+		// Release 已存在（重跑 CI/重建 tag）：补打 latest 标记，避免
+		// GitCode /releases/latest 继续指向旧版本（升级检查的国内主源）。
+		// 尽力而为，失败不阻断附件上传。
+		_ = a.patchLatest(ctx, tag)
 		return nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("创建 GitCode Release: HTTP %d %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return nil
+}
+
+// patchLatest 把已有 Release 标记为 latest（PATCH release_status）。
+func (a gitcodeAPI) patchLatest(ctx context.Context, tag string) error {
+	payload, _ := json.Marshal(map[string]string{"release_status": "latest"})
+	req, err := a.newReq(ctx, http.MethodPatch, "/repos/"+a.owner+"/"+a.repo+"/releases/tags/"+tag, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("标记 GitCode latest: HTTP %d", resp.StatusCode)
 	}
 	return nil
 }
