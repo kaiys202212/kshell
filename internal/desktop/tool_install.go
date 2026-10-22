@@ -199,8 +199,8 @@ func (a *App) execInstallJob(id, action string, recipe providers.InstallRecipe, 
 	a.wakeScanWaitersLocked()
 	a.mu.Unlock()
 
-	// 新装 OpenCode/CodeBuddy：把当前平台模型写入其自有配置。
-	if action == "install" && (id == "opencode" || id == "codebuddy") {
+	// 新装 OpenCode/CodeBuddy/Claude：把当前平台模型写入其自有配置。
+	if action == "install" && (id == "opencode" || id == "codebuddy" || id == "claude") {
 		a.syncAgentModelTool(id)
 	}
 

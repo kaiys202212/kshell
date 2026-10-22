@@ -5,7 +5,7 @@ import (
 	"github.com/yangk/kshell/internal/discovery"
 )
 
-// syncAgentModels 把当前模型平台写入已安装（或已有配置）的 OpenCode/CodeBuddy。
+// syncAgentModels 把当前模型平台写入已安装（或已有配置）的 OpenCode/CodeBuddy/Claude。
 // 失败只记日志语义：调用方不因同步失败回滚配置保存。
 func (a *App) syncAgentModels() {
 	o := a.snapshot()

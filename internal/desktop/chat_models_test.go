@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -718,5 +719,58 @@ func TestSetChatModelSaveFailsKeepsModel(t *testing.T) {
 	}
 	if len(conn.modelCalls) != 0 {
 		t.Fatalf("保存失败不应切模型: %v", conn.modelCalls)
+	}
+}
+
+// 跨平台切默认平台后，应把新默认平台的 Anthropic 端点写入 ~/.claude/settings.json。
+func TestSetChatModelCrossPlatformSyncsClaude(t *testing.T) {
+	home := t.TempDir()
+	conn := &fakeChatConn{start: acpSessionWithModels(), waitCh: make(chan struct{})}
+	dir := t.TempDir()
+	layout := config.Layout{
+		Root:   dir,
+		Config: filepath.Join(dir, "config.yaml"),
+		Cache:  filepath.Join(dir, "cache"),
+	}
+	m := newChatManagerWith(func(string, ...any) {}, &fakeChatCaptureBackend{conn: conn}, nil, nil, nil, nil, nil)
+	t.Cleanup(m.CloseAll)
+	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "/w"}, chat.Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	cfg := config.Default()
+	cfg.Model = config.ModelConfig{
+		Enabled:         true,
+		DefaultPlatform: "p1",
+		ActiveModel:     "a1",
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "Alpha", AnthropicBaseURL: "https://a.example/", APIKey: "ka", Models: []string{"a1"}},
+			{ID: "p2", Name: "Beta", AnthropicBaseURL: "https://b.example/", APIKey: "kb", Models: []string{"b2"}},
+		},
+	}
+	if err := config.Save(layout, cfg); err != nil {
+		t.Fatalf("Save 初态: %v", err)
+	}
+	app := NewAppWith(Options{Chats: m, Config: cfg, Layout: layout, Home: home})
+	app.mu.Lock()
+	app.tools = []discovery.Tool{{ID: "claude", Installed: true}}
+	app.mu.Unlock()
+
+	if err := app.SetChatModel(info.ID, "kshell:p2:b2"); err != nil {
+		t.Fatalf("SetChatModel: %v", err)
+	}
+
+	path := filepath.Join(home, ".claude", "settings.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("应写入 settings.json: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	env, _ := doc["env"].(map[string]any)
+	if env["ANTHROPIC_BASE_URL"] != "https://b.example/" || env["ANTHROPIC_AUTH_TOKEN"] != "kb" {
+		t.Fatalf("跨平台后 Claude env = %#v", env)
 	}
 }

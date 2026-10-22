@@ -436,3 +436,32 @@ func TestSetModelConfigSyncsOpenCode(t *testing.T) {
 		t.Fatalf("options = %#v", opts)
 	}
 }
+
+// syncAgentModelTool("claude") 应写入 ~/.claude/settings.json（新装路径底层调用）。
+func TestSyncAgentModelToolClaude(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.Default()
+	cfg.Model = config.ModelConfig{
+		Enabled:         true,
+		DefaultPlatform: "p1",
+		Platforms: []config.ModelPlatform{{
+			ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk-1",
+		}},
+	}
+	app := NewAppWith(Options{Home: home, Config: cfg})
+	app.syncAgentModelTool("claude")
+
+	path := filepath.Join(home, ".claude", "settings.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("应写入 settings.json: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	env, _ := doc["env"].(map[string]any)
+	if env["ANTHROPIC_BASE_URL"] != "https://ant.example/" || env["ANTHROPIC_AUTH_TOKEN"] != "sk-1" {
+		t.Fatalf("Claude env = %#v", env)
+	}
+}

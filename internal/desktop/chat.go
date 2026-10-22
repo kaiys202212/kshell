@@ -767,6 +767,7 @@ func (a *App) SetChatModel(id, modelID string) error {
 			}); err != nil {
 				return err
 			}
+			a.syncAgentModels() // 默认平台变了，静态注入随之重写
 			err = m.SetModel(resolved, model)
 		} else {
 			err = m.SetModel(resolved, model)
