@@ -14,17 +14,17 @@ type ModelInjector interface {
 	InjectModel(cfg ModelConfig) (args []string, env map[string]string)
 }
 
-// SettingsEnvInjector 可选接口：把模型配置经 `--settings` 的 env 块注入。
-// 背景：claude CLI 会用用户级 settings.json 的 env 块**替换**进程继承的
-// 同名环境变量（官方 env-vars 文档 precedence 一节），走进程环境注入模型
-// 会被用户自己的 ANTHROPIC_* 配置覆盖；`--settings`（命令行层）优先级高于
-// 用户级 settings.json，可稳定压过。
+// SettingsEnvInjector 可选接口：产出模型相关 env 映射（只含非空字段）。
+// 终端路径改由 agentsync 静态写入 ~/.claude/settings.json，不再经 argv
+// `--settings` 临时注入；本接口仍供 ACP 路径（acpSettingsPayload → _meta）
+// 直接调用 Claude.SettingsEnv，以支持会话内跨平台切端点。
 type SettingsEnvInjector interface {
 	SettingsEnv(cfg ModelConfig) map[string]string
 }
 
-// Claude 模型注入改走 settings env 块：返回需注入的环境变量（只含非空字段）。
+// Claude.SettingsEnv 返回 ACP _meta 载荷用的 env（只含非空字段）。
 // 模型同步三个 DEFAULT 别名，兼容只认单一模型的代理端点。
+// 静态 settings.json 路径不写 ANTHROPIC_MODEL（由 agent 自选）。
 func (Claude) SettingsEnv(cfg ModelConfig) map[string]string {
 	env := map[string]string{}
 	if cfg.AnthropicBaseURL != "" {
@@ -42,8 +42,8 @@ func (Claude) SettingsEnv(cfg ModelConfig) map[string]string {
 	return env
 }
 
-// Claude.InjectModel 保留接口实现但不再产出 env：进程环境注入对 claude 已被
-// 证实会被用户 settings.json 覆盖，保留只会造成"看似注入了"的假象。
+// Claude.InjectModel 保留接口实现但不再产出：端点/密钥走静态 settings.json，
+// 会话模型走 ACP SettingsEnv；进程 env 注入会被用户 settings.json 覆盖。
 func (Claude) InjectModel(cfg ModelConfig) ([]string, map[string]string) {
 	return nil, nil
 }
