@@ -156,21 +156,86 @@ func TestClaudeSyncSwitchesPlatform(t *testing.T) {
 	}
 }
 
-// 不写模型名（延续 50192db：模型由 agent 自选）。
-func TestClaudeSyncNeverWritesModel(t *testing.T) {
+// ActiveModel 写入 ANTHROPIC_MODEL，并把平台模型列表映射到 Sonnet/Opus/Haiku，
+// 否则 Claude TUI /model 只能看到 settings.json 里陈旧的 mimo 等值。
+func TestClaudeSyncWritesActiveModelAndDefaults(t *testing.T) {
+	home := t.TempDir()
+	c := Claude{}
+	in := SyncInput{
+		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "glm-5.3-flash",
+		Platforms: []config.ModelPlatform{{
+			ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk-1",
+			Models: []string{"glm-5.3-flash", "deepseek-v4.1-flash", "kimi-k3", "glm-5.3"},
+		}},
+	}
+	if err := c.Sync(home, in); err != nil {
+		t.Fatal(err)
+	}
+	env := readClaudeSettings(t, home)["env"].(map[string]any)
+	if env["ANTHROPIC_MODEL"] != "glm-5.3-flash" {
+		t.Fatalf("ANTHROPIC_MODEL = %v", env["ANTHROPIC_MODEL"])
+	}
+	if env["ANTHROPIC_DEFAULT_SONNET_MODEL"] != "glm-5.3-flash" {
+		t.Fatalf("SONNET = %v", env["ANTHROPIC_DEFAULT_SONNET_MODEL"])
+	}
+	if env["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "deepseek-v4.1-flash" {
+		t.Fatalf("OPUS = %v", env["ANTHROPIC_DEFAULT_OPUS_MODEL"])
+	}
+	if env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "kimi-k3" {
+		t.Fatalf("HAIKU = %v", env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+	}
+}
+
+// ActiveModel 空时回落平台模型列表首项；无模型则不写 MODEL 键。
+func TestClaudeSyncModelFallsBackToFirstPlatformModel(t *testing.T) {
 	home := t.TempDir()
 	c := Claude{}
 	in := SyncInput{Enabled: true, DefaultPlatformID: "p1", Platforms: []config.ModelPlatform{
-		{ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk-1"},
+		{ID: "p1", AnthropicBaseURL: "https://ant.example/", Models: []string{"kimi-k3"}},
 	}}
 	if err := c.Sync(home, in); err != nil {
 		t.Fatal(err)
 	}
 	env := readClaudeSettings(t, home)["env"].(map[string]any)
+	if env["ANTHROPIC_MODEL"] != "kimi-k3" {
+		t.Fatalf("应回落首项: %v", env["ANTHROPIC_MODEL"])
+	}
+
+	home2 := t.TempDir()
+	in2 := SyncInput{Enabled: true, DefaultPlatformID: "p1", Platforms: []config.ModelPlatform{
+		{ID: "p1", AnthropicBaseURL: "https://ant.example/"},
+	}}
+	if err := c.Sync(home2, in2); err != nil {
+		t.Fatal(err)
+	}
+	env2 := readClaudeSettings(t, home2)["env"].(map[string]any)
 	for _, k := range []string{"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"} {
-		if _, ok := env[k]; ok {
-			t.Fatalf("不应写 %s: %v", k, env)
+		if _, ok := env2[k]; ok {
+			t.Fatalf("无模型名不应写 %s: %v", k, env2)
 		}
+	}
+}
+
+// Enabled=false 时清除模型键（含用户 settings 里残留的 mimo 等）。
+func TestClaudeSyncDisabledRemovesModelKeys(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"),
+		[]byte(`{"env":{"ANTHROPIC_MODEL":"mimo-v2.5-pro","ANTHROPIC_DEFAULT_SONNET_MODEL":"mimo-v2.5","KEEP":"yes"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := (Claude{}).Sync(home, SyncInput{Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	env := readClaudeSettings(t, home)["env"].(map[string]any)
+	if _, ok := env["ANTHROPIC_MODEL"]; ok {
+		t.Fatalf("ANTHROPIC_MODEL 应被清除: %v", env)
+	}
+	if env["KEEP"] != "yes" {
+		t.Fatalf("其他键应保留: %v", env)
 	}
 }
 

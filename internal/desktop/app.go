@@ -169,6 +169,9 @@ type App struct {
 	// toolsReady：本进程已完成过一次 DetectAll（快照灌入不算）。GetTools 据此
 	// 等待，避免会话扫描尚未结束时一直拿着「BinPath 为空」的旧快照。
 	toolsReady bool
+	// agentModelsSyncOnce：启动后首轮探测完成时把平台模型同步进各工具自有配置
+	//（尤其 Claude settings.json），避免用户仍读到陈旧 ANTHROPIC_MODEL。
+	agentModelsSyncOnce sync.Once
 	// windowHidden 跟踪主窗口是否已收进托盘（wails v2.16 无 WindowIsVisible 可查）：
 	// 通知 dispatcher 据此决定要不要弹独立置顶气泡。
 	windowHidden bool
@@ -879,6 +882,8 @@ func (a *App) publishDetectedTools(tools []discovery.Tool) {
 	a.mu.Unlock()
 	a.Emit("tools:updated")
 	a.maybeAutoRepair(current)
+	// 首轮探测完成后同步一次：重启即可把 ActiveModel/平台列表写入 Claude settings。
+	a.agentModelsSyncOnce.Do(func() { a.syncAgentModels() })
 }
 
 // finishScan 结束本轮扫描标志。keepBusyOnPending 为 true 且有排队请求时保持 scanning，

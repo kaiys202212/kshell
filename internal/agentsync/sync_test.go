@@ -12,3 +12,10 @@ func TestInputFromModelCarriesDefaultPlatform(t *testing.T) {
 		t.Fatalf("DefaultPlatformID = %q, want p1", in.DefaultPlatformID)
 	}
 }
+
+func TestInputFromModelCarriesActiveModel(t *testing.T) {
+	in := InputFromModel(config.ModelConfig{Enabled: true, ActiveModel: "glm-5.3-flash"})
+	if in.ActiveModel != "glm-5.3-flash" {
+		t.Fatalf("ActiveModel = %q", in.ActiveModel)
+	}
+}

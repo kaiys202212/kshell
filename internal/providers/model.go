@@ -24,7 +24,8 @@ type SettingsEnvInjector interface {
 
 // Claude.SettingsEnv 返回 ACP _meta 载荷用的 env（只含非空字段）。
 // 模型同步三个 DEFAULT 别名，兼容只认单一模型的代理端点。
-// 静态 settings.json 路径不写 ANTHROPIC_MODEL（由 agent 自选）。
+// 静态 settings.json 由 agentsync.Claude 写入同名键（含 ActiveModel 与
+// 平台列表映射的 DEFAULT 别名）；ACP 会话级仍可经本方法覆盖。
 func (Claude) SettingsEnv(cfg ModelConfig) map[string]string {
 	env := map[string]string{}
 	if cfg.AnthropicBaseURL != "" {
