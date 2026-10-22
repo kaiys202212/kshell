@@ -847,18 +847,15 @@ func TestApplyModelACPClaude(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForWorkspaceACP: %v", err)
 	}
-	// claude 模型注入改走 --settings env 块（env 注入会被用户 settings.json 覆盖）
-	raw := findSettingsJSON(l.Args)
-	if raw == "" {
-		t.Fatalf("ACP args 应含 --settings: %v", l.Args)
+	// ACP 端点/密钥走 ACPSettingsJSON（_meta），不再经 argv --settings。
+	if l.ACPSettingsJSON == "" {
+		t.Fatalf("ACP 应产出 ACPSettingsJSON: %+v", l)
 	}
-	var m map[string]any
-	if err := json.Unmarshal([]byte(raw), &m); err != nil {
-		t.Fatalf("非法 JSON: %v", err)
+	if findSettingsJSON(l.Args) != "" {
+		t.Fatalf("ACP argv 不应再含模型 --settings: %v", l.Args)
 	}
-	envObj, _ := m["env"].(map[string]any)
-	if envObj["ANTHROPIC_MODEL"] != "mimo-v2.5" || envObj["ANTHROPIC_BASE_URL"] != "https://h/" {
-		t.Fatalf("ACP settings env = %+v", envObj)
+	if l.Env["ANTHROPIC_MODEL"] != "" || l.Env["ANTHROPIC_BASE_URL"] != "" {
+		t.Fatalf("ACP 不应走进程 env 注入: %v", l.Env)
 	}
 }
 
@@ -976,9 +973,9 @@ func findSettingsJSON(args []string) string {
 	return ""
 }
 
-// claude 新建会话：模型注入必须走 --settings env 块（用户级 settings.json 的
-// env 会替换进程环境变量，走 env 注入会被覆盖），且不再产出 ANTHROPIC_* env。
-func TestForWorkspaceToolClaudeModelViaSettings(t *testing.T) {
+// claude 终端路径：端点/密钥改静态写入 ~/.claude/settings.json，启动时
+// 不再经 --settings 合入 ANTHROPIC_*；也不走进程 env。主题 --settings 可保留。
+func TestForWorkspaceToolClaudeModelNoSettingsInject(t *testing.T) {
 	ps := []providers.Provider{providers.Claude{}}
 	tools := []discovery.Tool{{ID: "claude", Installed: true, BinPath: "claude"}}
 	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
@@ -988,29 +985,30 @@ func TestForWorkspaceToolClaudeModelViaSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := findSettingsJSON(l.Args)
-	if raw == "" {
-		t.Fatalf("args 应含 --settings: %v", l.Args)
+	if raw := findSettingsJSON(l.Args); raw != "" {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			t.Fatalf("--settings 非法 JSON: %v", err)
+		}
+		if envObj, _ := m["env"].(map[string]any); envObj != nil {
+			for _, k := range []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL"} {
+				if _, ok := envObj[k]; ok {
+					t.Fatalf("终端 --settings 不应合入 %s: %+v", k, m)
+				}
+			}
+		}
 	}
-	var m map[string]any
-	if err := json.Unmarshal([]byte(raw), &m); err != nil {
-		t.Fatalf("--settings 非法 JSON: %v (%q)", err, raw)
-	}
-	envObj, _ := m["env"].(map[string]any)
-	if envObj["ANTHROPIC_MODEL"] != "glm-5" || envObj["ANTHROPIC_BASE_URL"] != "https://h/" || envObj["ANTHROPIC_AUTH_TOKEN"] != "k" {
-		t.Fatalf("settings env = %+v", envObj)
-	}
-	if l.Env["ANTHROPIC_MODEL"] != "" || l.Env["ANTHROPIC_BASE_URL"] != "" {
-		t.Fatalf("claude 不应再走 env 注入, env = %v", l.Env)
+	if l.Env["ANTHROPIC_MODEL"] != "" || l.Env["ANTHROPIC_BASE_URL"] != "" || l.Env["ANTHROPIC_AUTH_TOKEN"] != "" {
+		t.Fatalf("claude 不应走进程 env 注入, env = %v", l.Env)
 	}
 }
 
-// 与主题注入合并为单个 --settings 参数，env 与主题键共存。
-func TestForWorkspaceToolClaudeModelMergedWithTheme(t *testing.T) {
+// 主题仍走 --settings；模型 env 不再合入（静态 settings.json 已覆盖端点）。
+func TestForWorkspaceToolClaudeThemeSettingsOnly(t *testing.T) {
 	ps := []providers.Provider{providers.Claude{}}
 	tools := []discovery.Tool{{ID: "claude", Installed: true, BinPath: "claude"}}
 	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
-		return providers.ModelConfig{Model: "glm-5"}, true
+		return providers.ModelConfig{Model: "glm-5", AnthropicBaseURL: "https://h/", APIKey: "k"}, true
 	}}
 	to := ThemeOptions{Mode: appearance.Dark}
 	l, err := ForWorkspaceTool(ps, tools, discovery.Workspace{Path: "/p"}, "claude", to, mo, PermissionOptions{})
@@ -1024,7 +1022,7 @@ func TestForWorkspaceToolClaudeModelMergedWithTheme(t *testing.T) {
 		}
 	}
 	if count != 1 {
-		t.Fatalf("应合并为单个 --settings, got %d: %v", count, l.Args)
+		t.Fatalf("主题应保留单个 --settings, got %d: %v", count, l.Args)
 	}
 	raw := findSettingsJSON(l.Args)
 	var m map[string]any
@@ -1034,13 +1032,17 @@ func TestForWorkspaceToolClaudeModelMergedWithTheme(t *testing.T) {
 	if m["theme"] != "dark" {
 		t.Fatalf("主题键应保留: %+v", m)
 	}
-	envObj, _ := m["env"].(map[string]any)
-	if envObj["ANTHROPIC_MODEL"] != "glm-5" {
-		t.Fatalf("env 应合入: %+v", m)
+	if envObj, _ := m["env"].(map[string]any); envObj != nil {
+		if _, ok := envObj["ANTHROPIC_BASE_URL"]; ok {
+			t.Fatalf("主题 --settings 不应再合入模型 env: %+v", m)
+		}
+		if _, ok := envObj["ANTHROPIC_MODEL"]; ok {
+			t.Fatalf("主题 --settings 不应再合入模型 env: %+v", m)
+		}
 	}
 }
 
-// ACP 路径同样经 --settings 注入（参数传给适配器，最终转发给 claude CLI）。
+// ACP 路径经 ACPSettingsJSON（_meta）注入，argv 不再带模型 --settings。
 func TestForWorkspaceACPClaudeModelViaSettings(t *testing.T) {
 	ps := []providers.Provider{providers.Claude{}}
 	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"})
@@ -1051,17 +1053,11 @@ func TestForWorkspaceACPClaudeModelViaSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := findSettingsJSON(l.Args)
-	if raw == "" {
-		t.Fatalf("ACP args 应含 --settings: %v", l.Args)
+	if l.ACPSettingsJSON == "" {
+		t.Fatalf("ACP 应产出 ACPSettingsJSON")
 	}
-	var m map[string]any
-	if err := json.Unmarshal([]byte(raw), &m); err != nil {
-		t.Fatalf("非法 JSON: %v", err)
-	}
-	envObj, _ := m["env"].(map[string]any)
-	if envObj["ANTHROPIC_MODEL"] != "glm-5" {
-		t.Fatalf("ACP settings env = %+v", envObj)
+	if findSettingsJSON(l.Args) != "" {
+		t.Fatalf("ACP argv 不应含模型 --settings: %v", l.Args)
 	}
 	if l.Env["ANTHROPIC_MODEL"] != "" {
 		t.Fatalf("ACP 不应再走 env 注入, env = %v", l.Env)
@@ -1087,8 +1083,7 @@ func TestForWorkspaceToolCodexUnchanged(t *testing.T) {
 	}
 }
 
-// ACP npx + bypass 组合：注入参数（--settings 与 --dangerously-skip-permissions）
-// 必须全部落在 -y <pkg> 之后，否则 npx 把它们当自身 flag/包名报 E404。
+// ACP npx + bypass：权限参数必须落在 -y <pkg> 之后；模型走 ACPSettingsJSON。
 func TestForSessionACPClaudeNpxSettingsWithBypass(t *testing.T) {
 	ps := []providers.Provider{providers.Claude{}}
 	tools := acpTools(providers.ACPDetection{Available: true, Source: "npx", Package: "pkg"})
@@ -1103,8 +1098,11 @@ func TestForSessionACPClaudeNpxSettingsWithBypass(t *testing.T) {
 	if len(l.Args) < 3 || l.Args[0] != "-y" || l.Args[1] != "pkg" {
 		t.Fatalf("args 应以 -y pkg 开头: %v", l.Args)
 	}
-	if findSettingsJSON(l.Args) == "" {
-		t.Fatalf("args 应含 --settings: %v", l.Args)
+	if l.ACPSettingsJSON == "" {
+		t.Fatalf("应产出 ACPSettingsJSON")
+	}
+	if findSettingsJSON(l.Args) != "" {
+		t.Fatalf("argv 不应含模型 --settings: %v", l.Args)
 	}
 	skip := false
 	for _, a := range l.Args[2:] {
