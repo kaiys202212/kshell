@@ -126,6 +126,94 @@ func TestCodeBuddySyncAvailableModels(t *testing.T) {
 	}
 }
 
+// 当前平台仍有的 mid：清掉 vendor=user 裸名镜像（Custom），只留 kshell 条目；
+// 与 claim 无关的用户自定义保留。
+func TestCodeBuddySyncRemovesUserMirrorOfClaimedMids(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".codebuddy")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seed := map[string]any{
+		"models": []any{
+			map[string]any{"id": "glm-5.3-flash", "name": "glm-5.3-flash", "vendor": "user"},
+			map[string]any{"id": "qwen-max", "name": "qwen-max", "vendor": "user"},
+		},
+	}
+	raw, _ := json.MarshalIndent(seed, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "models.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in := SyncInput{
+		Enabled: true,
+		Platforms: []config.ModelPlatform{{
+			ID: "default", Name: "openai", OpenAIBaseURL: "https://api.example/v1",
+			APIKey: "sk", Models: []string{"glm-5.3-flash"},
+		}},
+	}
+	if err := (CodeBuddy{}).Sync(home, in); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	ids := map[string]bool{}
+	for _, m := range sliceOfMaps(readCodeBuddyJSON(t, home)["models"]) {
+		id, _ := m["id"].(string)
+		ids[id] = true
+	}
+	if ids["glm-5.3-flash"] {
+		t.Fatal("应清除与平台 mid 碰撞的 user 镜像 glm-5.3-flash")
+	}
+	if !ids["kshell-default/glm-5.3-flash"] {
+		t.Fatal("应写入 kshell-default/glm-5.3-flash")
+	}
+	if !ids["qwen-max"] {
+		t.Fatal("无关用户自定义 qwen-max 应保留")
+	}
+}
+
+// 平台已删：旧 kshell 条目的裸 mid 仍 claim，清掉对应 user 孤儿镜像。
+func TestCodeBuddySyncRemovesOrphanUserMirrorOfOldKshell(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".codebuddy")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seed := map[string]any{
+		"models": []any{
+			map[string]any{"id": "kshell-gone/old-mid", "name": "openai: old-mid", "vendor": "kshell"},
+			map[string]any{"id": "old-mid", "name": "old-mid", "vendor": "user"},
+			map[string]any{"id": "keep-me", "name": "keep-me", "vendor": "user"},
+		},
+	}
+	raw, _ := json.MarshalIndent(seed, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "models.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in := SyncInput{
+		Enabled: true,
+		Platforms: []config.ModelPlatform{{
+			ID: "default", Name: "openai", OpenAIBaseURL: "https://api.example/v1",
+			APIKey: "sk", Models: []string{"other"},
+		}},
+	}
+	if err := (CodeBuddy{}).Sync(home, in); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	ids := map[string]bool{}
+	for _, m := range sliceOfMaps(readCodeBuddyJSON(t, home)["models"]) {
+		id, _ := m["id"].(string)
+		ids[id] = true
+	}
+	if ids["kshell-gone/old-mid"] || ids["old-mid"] {
+		t.Fatalf("旧平台 kshell 与 user 孤儿均应清除，got %v", ids)
+	}
+	if !ids["keep-me"] {
+		t.Fatal("keep-me 应保留")
+	}
+	if !ids["kshell-default/other"] {
+		t.Fatal("应写入当前平台模型")
+	}
+}
+
 func TestCodeBuddyReconcileDefaultModel(t *testing.T) {
 	dir := func(t *testing.T) string {
 		t.Helper()

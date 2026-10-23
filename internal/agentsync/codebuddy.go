@@ -29,11 +29,34 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 	}
 
 	models := sliceOfMaps(doc["models"])
+	// claim：旧 kshell 条目裸 mid ∪ 当前平台裸 mid。用于清掉与之碰撞的
+	// vendor=user 裸名镜像（/model 里的 Custom），以及平台已删后的孤儿。
+	claim := map[string]bool{}
+	for _, m := range models {
+		id, _ := m["id"].(string)
+		vendor, _ := m["vendor"].(string)
+		if isKshellModelID(id) || vendor == "kshell" {
+			if bare := bareModelID(id); bare != "" {
+				claim[bare] = true
+			}
+		}
+	}
+	for _, p := range in.Platforms {
+		for _, mid := range p.Models {
+			if mid = strings.TrimSpace(mid); mid != "" {
+				claim[mid] = true
+			}
+		}
+	}
+
 	kept := make([]map[string]any, 0, len(models))
 	for _, m := range models {
 		id, _ := m["id"].(string)
 		vendor, _ := m["vendor"].(string)
 		if isKshellModelID(id) || vendor == "kshell" {
+			continue
+		}
+		if claimedModelID(id, claim) {
 			continue
 		}
 		kept = append(kept, m)
@@ -43,7 +66,7 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 	availKept := make([]string, 0, len(availRaw))
 	for _, a := range availRaw {
 		s, _ := a.(string)
-		if s == "" || isKshellModelID(s) {
+		if s == "" || isKshellModelID(s) || claimedModelID(s, claim) {
 			continue
 		}
 		availKept = append(availKept, s)
@@ -171,6 +194,26 @@ func (CodeBuddy) reconcileDefaultModel(codebuddyDir string, candidates []string)
 
 func isKshellModelID(id string) bool {
 	return strings.HasPrefix(id, "kshell-")
+}
+
+// bareModelID 从 kshell-<plat>/<mid> 或带 :/ 前缀的 id 取裸 mid；无分隔则原样。
+func bareModelID(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	if i := strings.LastIndexAny(id, ":/"); i >= 0 && i+1 < len(id) {
+		return id[i+1:]
+	}
+	return id
+}
+
+// claimedModelID 报告 id（或其裸名）是否落在 kshell claim 集合内。
+func claimedModelID(id string, claim map[string]bool) bool {
+	if claim[id] {
+		return true
+	}
+	return claim[bareModelID(id)]
 }
 
 func chatCompletionsURL(base string) string {
