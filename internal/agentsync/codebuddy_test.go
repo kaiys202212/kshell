@@ -214,6 +214,61 @@ func TestCodeBuddySyncRemovesOrphanUserMirrorOfOldKshell(t *testing.T) {
 	}
 }
 
+// mid 含 '/'：claim 必须是完整 mid，不能只取末段误删无关条目。
+func TestCodeBuddySyncClaimPreservesFullMidWithSlash(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".codebuddy")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seed := map[string]any{
+		"models": []any{
+			map[string]any{"id": "kshell-gone/org/model", "name": "openai: org/model", "vendor": "kshell"},
+			map[string]any{"id": "org/model", "name": "org/model", "vendor": "user"},
+			map[string]any{"id": "model", "name": "model", "vendor": "user"},
+		},
+		"availableModels": []any{"org/model", "model", "foreign"},
+	}
+	raw, _ := json.MarshalIndent(seed, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "models.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in := SyncInput{
+		Enabled: true,
+		Platforms: []config.ModelPlatform{{
+			ID: "default", Name: "openai", OpenAIBaseURL: "https://api.example/v1",
+			APIKey: "sk", Models: []string{"other"},
+		}},
+	}
+	if err := (CodeBuddy{}).Sync(home, in); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	doc := readCodeBuddyJSON(t, home)
+	ids := map[string]bool{}
+	for _, m := range sliceOfMaps(doc["models"]) {
+		id, _ := m["id"].(string)
+		ids[id] = true
+	}
+	if ids["kshell-gone/org/model"] || ids["org/model"] {
+		t.Fatalf("完整 mid org/model 的 kshell/user 应清除, got %v", ids)
+	}
+	if !ids["model"] {
+		t.Fatal("短名 model 不得因 mid 含 / 被误 claim 删除")
+	}
+	avail, _ := doc["availableModels"].([]any)
+	got := map[string]bool{}
+	for _, a := range avail {
+		s, _ := a.(string)
+		got[s] = true
+	}
+	if got["org/model"] {
+		t.Fatal("availableModels 应丢掉 claim 的 org/model")
+	}
+	if !got["model"] || !got["foreign"] {
+		t.Fatalf("availableModels 应保留 model 与 foreign, got %v", avail)
+	}
+}
+
 func TestCodeBuddyReconcileDefaultModel(t *testing.T) {
 	dir := func(t *testing.T) string {
 		t.Helper()

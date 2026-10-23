@@ -295,6 +295,57 @@ func TestClaudeSyncKeepsTopLevelModelWhenInPlatformList(t *testing.T) {
 	}
 }
 
+// 默认平台无模型列表：不校验顶层 model（自由输入）。
+func TestClaudeSyncKeepsTopLevelModelWhenNoPlatformList(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"),
+		[]byte(`{"model":"free-form"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in := SyncInput{
+		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "free-form",
+		Platforms: []config.ModelPlatform{{
+			ID: "p1", AnthropicBaseURL: "https://ant.example/",
+		}},
+	}
+	if err := (Claude{}).Sync(home, in); err != nil {
+		t.Fatal(err)
+	}
+	if got := readClaudeSettings(t, home)["model"]; got != "free-form" {
+		t.Fatalf("无列表时应保留顶层 model, got %v", got)
+	}
+}
+
+// 仅 ActiveModel 命中（不在平台列表）时仍保留顶层 model。
+func TestClaudeSyncKeepsTopLevelModelMatchingActiveOnly(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"),
+		[]byte(`{"model":"active-only"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in := SyncInput{
+		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "active-only",
+		Platforms: []config.ModelPlatform{{
+			ID: "p1", AnthropicBaseURL: "https://ant.example/",
+			Models: []string{"listed-a", "listed-b"},
+		}},
+	}
+	if err := (Claude{}).Sync(home, in); err != nil {
+		t.Fatal(err)
+	}
+	if got := readClaudeSettings(t, home)["model"]; got != "active-only" {
+		t.Fatalf("ActiveModel 命中应保留, got %v", got)
+	}
+}
+
 func TestClaudeSyncKeepsBuiltinAliasTopLevelModel(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, ".claude")

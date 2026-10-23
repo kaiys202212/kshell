@@ -36,7 +36,7 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 		id, _ := m["id"].(string)
 		vendor, _ := m["vendor"].(string)
 		if isKshellModelID(id) || vendor == "kshell" {
-			if bare := bareModelID(id); bare != "" {
+			if bare := kshellBareMid(id); bare != "" {
 				claim[bare] = true
 			}
 		}
@@ -196,7 +196,23 @@ func isKshellModelID(id string) bool {
 	return strings.HasPrefix(id, "kshell-")
 }
 
-// bareModelID 从 kshell-<plat>/<mid> 或带 :/ 前缀的 id 取裸 mid；无分隔则原样。
+// kshellBareMid 从 kshell-<plat>/<mid> 取第一个 '/' 之后的整段 mid
+//（mid 本身可含 '/' 或 ':'）；非 kshell id 返回空。
+func kshellBareMid(id string) string {
+	id = strings.TrimSpace(id)
+	if !isKshellModelID(id) {
+		return ""
+	}
+	rest := id[len("kshell-"):]
+	i := strings.Index(rest, "/")
+	if i < 0 || i+1 >= len(rest) {
+		return ""
+	}
+	return rest[i+1:]
+}
+
+// bareModelID 对外来 id 剥平台前缀（最后一个 ':' 或 '/' 之后）；无分隔则原样。
+// 仅用于「外来条目是否命中 claim」，不要用来解析 kshell id。
 func bareModelID(id string) string {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -208,7 +224,7 @@ func bareModelID(id string) string {
 	return id
 }
 
-// claimedModelID 报告 id（或其裸名）是否落在 kshell claim 集合内。
+// claimedModelID 报告 id（或其剥离前缀后的裸名）是否落在 kshell claim 集合内。
 func claimedModelID(id string, claim map[string]bool) bool {
 	if claim[id] {
 		return true
