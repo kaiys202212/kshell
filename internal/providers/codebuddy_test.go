@@ -103,27 +103,34 @@ func TestCodeBuddyLoginCmd(t *testing.T) {
 	}
 }
 
-// TestParseCodeBuddyAuthMethods 表驱动：initialize 响应行的解析。
-// 实测锚点（2.172.1 未登录）：authMethods = iOA/external/internal/selfhosted。
-func TestParseCodeBuddyAuthMethods(t *testing.T) {
+// TestParseCodeBuddyUserId 表驱动：_codebuddy.ai/getUserInfo 响应行的解析。
+// 实测锚点（2.172.1 已登录）：result.userInfo.userId 为非空 UUID；
+// 未登录时 getUserInfo 返回 {userInfo: void 0}，序列化后 result 为空对象。
+func TestParseCodeBuddyUserId(t *testing.T) {
 	cases := []struct {
-		name string
-		line string
-		wantN int
-		wantOK bool
+		name     string
+		line     string
+		wantID   string
+		wantOK   bool
+		wantErr  bool
 	}{
-		{"未登录（实测形态）", `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[{"id":"iOA","name":"Login with iOA"},{"id":"internal","name":"Login with WeChat"}]}}`, 2, true},
-		{"已登录（不广播 authMethods）", `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}`, 0, true},
-		{"authMethods 显式空数组", `{"jsonrpc":"2.0","id":1,"result":{"authMethods":[]}}`, 0, true},
-		{"非 id=1 的其他响应", `{"jsonrpc":"2.0","id":2,"result":{}}`, 0, false},
-		{"请求回调行（无 id 字段）", `{"jsonrpc":"2.0","method":"session/request_permission","params":{}}`, 0, false},
-		{"坏 JSON", "not-json\n", 0, false},
-		{"空行", "", 0, false},
+		{
+			"已登录（实测形态，截断凭据字段）",
+			`{"jsonrpc":"2.0","id":2,"result":{"userInfo":{"userId":"c7c9f058-1a4e-4e0e-af6c-31b31ebb0924","userName":"杨凯","authType":"personal"}}}`,
+			"c7c9f058-1a4e-4e0e-af6c-31b31ebb0924", true, false,
+		},
+		{"未登录：result 为空对象", `{"jsonrpc":"2.0","id":2,"result":{}}`, "", true, false},
+		{"未登录：userInfo 缺省", `{"jsonrpc":"2.0","id":2,"result":{"userInfo":null}}`, "", true, false},
+		{"旧版本无扩展方法（-32601）", `{"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"method not found"}}`, "", false, true},
+		{"非 id=2 的其他响应（initialize）", `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}`, "", false, false},
+		{"请求回调行（无 id 字段）", `{"jsonrpc":"2.0","method":"session/request_permission","params":{}}`, "", false, false},
+		{"坏 JSON", "not-json\n", "", false, false},
+		{"空行", "", "", false, false},
 	}
 	for _, c := range cases {
-		n, ok := parseCodeBuddyAuthMethods(c.line)
-		if n != c.wantN || ok != c.wantOK {
-			t.Fatalf("%s: parse = (%d,%v), want (%d,%v)", c.name, n, ok, c.wantN, c.wantOK)
+		id, ok, errResp := parseCodeBuddyUserId(c.line)
+		if id != c.wantID || ok != c.wantOK || errResp != c.wantErr {
+			t.Fatalf("%s: parse = (%q,%v,%v), want (%q,%v,%v)", c.name, id, ok, errResp, c.wantID, c.wantOK, c.wantErr)
 		}
 	}
 }
@@ -131,20 +138,20 @@ func TestParseCodeBuddyAuthMethods(t *testing.T) {
 // TestProbeCodeBuddyAuth 表驱动：run 的返回组合 → 三态结论。
 func TestProbeCodeBuddyAuth(t *testing.T) {
 	cases := []struct {
-		name string
-		line string
-		err  error
-		want AuthStatus
+		name   string
+		userID string
+		err    error
+		want   AuthStatus
 	}{
-		{"未登录（authMethods 非空）", `{"jsonrpc":"2.0","id":1,"result":{"authMethods":[{"id":"iOA"}]}}`, nil, AuthOut},
-		{"已登录（无 authMethods）", `{"jsonrpc":"2.0","id":1,"result":{"agentCapabilities":{}}}`, nil, AuthIn},
+		{"已登录（userId 非空）", "c7c9f058-1a4e-4e0e-af6c-31b31ebb0924", nil, AuthIn},
+		{"未登录（userId 空）", "", nil, AuthOut},
 		{"找不到 bin", "", errNoCodeBuddyBin, AuthUnknown},
 		{"子进程超时", "", errors.New("signal: killed"), AuthUnknown},
-		{"无响应（EOF）", "", nil, AuthUnknown},
-		{"响应形态异常（非 id=1）", `{"jsonrpc":"2.0","id":9,"result":{}}`, nil, AuthUnknown},
+		{"旧版本无扩展方法", "", errors.New("codebuddy: getUserInfo 返回错误"), AuthUnknown},
+		{"无响应（EOF）", "", errors.New("codebuddy: 探测无响应"), AuthUnknown},
 	}
 	for _, c := range cases {
-		got := probeCodeBuddyAuth(func() (string, error) { return c.line, c.err })
+		got := probeCodeBuddyAuth(func() (string, error) { return c.userID, c.err })
 		if got != c.want {
 			t.Fatalf("%s: probe = %q, want %q", c.name, got, c.want)
 		}
@@ -165,7 +172,7 @@ func TestCodeBuddyAuthCacheTTL(t *testing.T) {
 	})
 	codeBuddyAuthRun = func() (string, error) {
 		calls++
-		return `{"jsonrpc":"2.0","id":1,"result":{"authMethods":[{"id":"iOA"}]}}`, nil
+		return "", nil // userId 空 = 未登录
 	}
 	// 重置缓存后首探：实探 1 次，结论 out 并落缓存。
 	codeBuddyAuthMu.Lock()
@@ -187,7 +194,7 @@ func TestCodeBuddyAuthCacheTTL(t *testing.T) {
 	// 把缓存拨过期：重新实探，结论翻转 in（换一次桩输出）并落新缓存。
 	codeBuddyAuthRun = func() (string, error) {
 		calls++
-		return `{"jsonrpc":"2.0","id":1,"result":{}}`, nil
+		return "c7c9f058-1a4e-4e0e-af6c-31b31ebb0924", nil // 登录后 userId 非空
 	}
 	codeBuddyAuthMu.Lock()
 	codeBuddyAuthCache.expires = time.Now().Add(-time.Second)

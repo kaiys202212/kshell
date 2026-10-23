@@ -423,8 +423,9 @@
       },
       "tools": {
         "title": "工具检测",
-        "rescan": "重新扫描",
-        "rescanning": "扫描中…",
+        "rescan": "刷新",
+        "rescanning": "刷新中…",
+        "rescan_hint": "重新检测工具安装与登录状态",
         "auto_repairing": "检测到 {{0}} 安装损坏，正在自动修复…",
         "loading": "加载中……",
         "empty": "未检测到任何工具",

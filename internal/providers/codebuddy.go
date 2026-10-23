@@ -127,15 +127,17 @@ type codeBuddyAuthCacheEntry struct {
 var (
 	codeBuddyAuthMu    sync.Mutex
 	codeBuddyAuthCache codeBuddyAuthCacheEntry
-	// codeBuddyAuthRun 是可替换的实探函数（测试打桩），生产为 codeBuddyACPInitialize。
-	codeBuddyAuthRun = codeBuddyACPInitialize
+	// codeBuddyAuthRun 是可替换的实探函数（测试打桩），生产为 codeBuddyACPUserId。
+	codeBuddyAuthRun = codeBuddyACPUserId
 )
 
 // ProbeAuth 判定 CodeBuddy 登录态。破例起子进程（auth.go 约定只读静态文件，
 // 与 Trae 同一先例）：CodeBuddy 的登录态没有稳定可读文件——凭据在加密的
-// security/ 存储里，未登录时目录形态与已登录无法区分（实测）；ACP initialize
-// 是官方协议入口：未登录时广播 authMethods（本机实测 iOA/external/internal/
-// selfhosted 四种），已登录不广播。任何拿不准的失败一律 AuthUnknown 保守放行。
+// security/ 存储里，磁盘形态与登录态无关联（实测）。走 ACP 的官方扩展方法
+// `_codebuddy.ai/getUserInfo`（2.172.1 源码与实机验证）：已登录返回
+// result.userInfo.userId（非空），未登录 result 为空对象；注意 initialize 的
+// authMethods 是硬编码恒广播的（源码实测），不能作为登录态判据。任何拿不准的
+// 失败一律 AuthUnknown 保守放行。
 func (CodeBuddy) ProbeAuth() AuthStatus {
 	codeBuddyAuthMu.Lock()
 	if !codeBuddyAuthCache.expires.IsZero() && time.Now().Before(codeBuddyAuthCache.expires) {
@@ -151,59 +153,77 @@ func (CodeBuddy) ProbeAuth() AuthStatus {
 	return st
 }
 
-// probeCodeBuddyAuth 是可测核心：run 返回一行 stdout 输出。
-//   - 出错（无 bin / 超时 / 进程异常）→ AuthUnknown；
-//   - id=1 响应且 authMethods 非空 → AuthOut；
-//   - id=1 响应且 authMethods 空/缺省 → AuthIn；
-//   - 输出形态异常（非 id=1 响应）→ AuthUnknown。
+// probeCodeBuddyAuth 是可测核心：run 返回登录用户 ID。
+//   - 出错（无 bin / 超时 / 进程异常 / 旧版本无扩展方法）→ AuthUnknown；
+//   - userId 非空 → AuthIn；
+//   - userId 为空（getUserInfo 响应无 userInfo）→ AuthOut。
 func probeCodeBuddyAuth(run func() (string, error)) AuthStatus {
-	line, err := run()
+	userID, err := run()
 	if err != nil {
 		return AuthUnknown
 	}
-	n, ok := parseCodeBuddyAuthMethods(line)
-	if !ok {
-		return AuthUnknown
+	if userID != "" {
+		return AuthIn
 	}
-	if n > 0 {
-		return AuthOut
-	}
-	return AuthIn
+	return AuthOut
 }
 
-// codeBuddyInitResponse 是 initialize 响应的解析目标：只关心 id 与 authMethods。
-type codeBuddyInitResponse struct {
+// codeBuddyLineID 解析一行输出里的 JSON-RPC id（请求回调、其他响应、坏 JSON
+// 返回 nil），用于探测的两步握手触发判定。
+type codeBuddyLineID struct {
+	ID *int `json:"id"`
+}
+
+// codeBuddyUserInfoResponse 是 `_codebuddy.ai/getUserInfo` 响应的解析目标。
+// 只解 userId 一个字段：响应里还带 accessToken，绝不整包保留/落日志（探测
+// 结果只有登录态三态，敏感凭据不进内存以外的任何地方）。
+type codeBuddyUserInfoResponse struct {
 	ID     *int `json:"id"`
 	Result struct {
-		AuthMethods []struct {
-			ID string `json:"id"`
-		} `json:"authMethods"`
+		UserInfo struct {
+			UserID string `json:"userId"`
+		} `json:"userInfo"`
 	} `json:"result"`
+	Error *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
 }
 
-// parseCodeBuddyAuthMethods 解析一行 ndJsonStream 输出：是 id=1 的 initialize
-// 响应时返回 authMethods 数量与 ok=true；其余行（agent 反向请求、其他响应、
-// 坏 JSON）返回 ok=false。
-func parseCodeBuddyAuthMethods(line string) (int, bool) {
-	var r codeBuddyInitResponse
+// parseCodeBuddyUserId 解析一行 ndJsonStream 输出：
+//   - 是 id=2 的 getUserInfo 响应 → (userId, ok=true, errResp=false)；
+//     userId 非空=已登录，空=未登录（未登录时 result 序列化为空对象）；
+//   - 是 id=2 的 error 响应（如旧版本无此扩展方法返回 -32601）→ ok=false、
+//     errResp=true（上层归一 AuthUnknown）；
+//   - 其余行（initialize 响应、agent 反向请求、坏 JSON）→ 双 false，跳过。
+func parseCodeBuddyUserId(line string) (userID string, ok bool, errResp bool) {
+	var r codeBuddyUserInfoResponse
 	if err := json.Unmarshal([]byte(line), &r); err != nil {
-		return 0, false
+		return "", false, false
 	}
-	if r.ID == nil || *r.ID != 1 {
-		return 0, false
+	if r.ID == nil || *r.ID != 2 {
+		return "", false, false
 	}
-	return len(r.Result.AuthMethods), true
+	if r.Error != nil {
+		return "", false, true
+	}
+	return r.Result.UserInfo.UserID, true, false
 }
 
-// codeBuddyInitJSON 是探测用的 initialize 请求（协议常量，与 chat 握手解耦：
-// 探测只到 initialize 为止，绝不下发 session/new）。
+// codeBuddyInitJSON 是探测第一步的 initialize 请求（协议常量，与 chat 握手
+// 解耦：探测只到 initialize + getUserInfo 为止，绝不下发 session/new）。
 const codeBuddyInitJSON = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":true,"writeTextFile":false}}}}`
 
-// codeBuddyACPInitialize 起 `codebuddy --acp` 子进程，stdin 写一条 initialize，
-// 逐行读 stdout 直到 id=1 的响应（拿到即杀进程返回）。bin 解析复用 FindBins：
-// Windows npm 安装命中的是 codebuddy.cmd（.ps1 不在 PATHEXT，LookPath 不会
-// 返回），CreateProcess 可直接执行 .cmd。
-func codeBuddyACPInitialize() (string, error) {
+// codeBuddyUserInfoJSON 是探测第二步：官方扩展方法 _codebuddy.ai/getUserInfo
+//（2.172.1 实机验证，无需会话即可调用）。
+const codeBuddyUserInfoJSON = `{"jsonrpc":"2.0","id":2,"method":"_codebuddy.ai/getUserInfo"}`
+
+// codeBuddyACPUserId 起 `codebuddy --acp` 子进程做两步探测：initialize（id=1）
+// → 收到响应后发 `_codebuddy.ai/getUserInfo`（id=2）→ 收到响应即杀进程，
+// 返回登录用户 ID（空串=未登录）。bin 解析复用 FindBins：Windows npm 安装
+// 命中的是 codebuddy.cmd（.ps1 不在 PATHEXT，LookPath 不会返回），
+// CreateProcess 可直接执行 .cmd。
+func codeBuddyACPUserId() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return "", errNoCodeBuddyBin
@@ -235,12 +255,28 @@ func codeBuddyACPInitialize() (string, error) {
 	if _, err := stdin.Write([]byte(codeBuddyInitJSON + "\n")); err != nil {
 		return "", err
 	}
-	_ = stdin.Close()
+	sentUserInfo := false
 	sc := bufio.NewScanner(stdout)
 	for sc.Scan() {
 		line := sc.Text()
-		if _, ok := parseCodeBuddyAuthMethods(line); ok {
-			return line, nil
+		if !sentUserInfo {
+			// 第一步：等 initialize 的 id=1 响应（收到即发第二步请求）。
+			var probe codeBuddyLineID
+			if json.Unmarshal([]byte(line), &probe) == nil && probe.ID != nil && *probe.ID == 1 {
+				sentUserInfo = true
+				_, _ = stdin.Write([]byte(codeBuddyUserInfoJSON + "\n"))
+			}
+			continue
+		}
+		// 第二步：等 getUserInfo 的 id=2 响应。error 响应（旧版本无扩展方法）
+		// 归一为错误，上层 AuthUnknown 保守放行。
+		userID, ok, errResp := parseCodeBuddyUserId(line)
+		if errResp {
+			return "", errors.New("codebuddy: getUserInfo 返回错误")
+		}
+		if ok {
+			_ = stdin.Close()
+			return userID, nil
 		}
 		if ctx.Err() != nil {
 			return "", ctx.Err()
@@ -249,6 +285,6 @@ func codeBuddyACPInitialize() (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	// stdout 关闭却始终没有 id=1 响应：形态异常按 unknown 处理。
-	return "", errors.New("codebuddy: initialize 无响应")
+	// stdout 关闭却始终没有期望响应：形态异常按 unknown 处理。
+	return "", errors.New("codebuddy: 探测无响应")
 }

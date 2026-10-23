@@ -1316,6 +1316,7 @@ export default function Settings() {
                   <Button
                     variant="secondary"
                     type="button"
+                    title={t('ui.settings.tools.rescan_hint')}
                     disabled={rescanning}
                     onClick={() => {
                       if (rescanning) return;

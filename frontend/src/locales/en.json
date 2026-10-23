@@ -423,8 +423,9 @@
       },
       "tools": {
         "title": "Tool detection",
-        "rescan": "Rescan",
-        "rescanning": "Scanning...",
+        "rescan": "Refresh",
+        "rescanning": "Refreshing...",
+        "rescan_hint": "Re-detect tool installation and login status",
         "auto_repairing": "Detected a broken {{0}} installation, auto-repairing...",
         "loading": "Loading...",
         "empty": "No tools detected",
