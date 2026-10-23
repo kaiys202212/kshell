@@ -681,9 +681,9 @@ func (a *App) mergeConfigModels(v chat.ModelsView) chat.ModelsView {
 		if id == "" || seen[id] {
 			return
 		}
-		// 展示名判重：agent 自报列表可能已含 kshell 命名空间条目
-		// （kshell-default/<m>，名 "<plat>: <m>"），与配置侧副本同名不同 ID，
-		// 只按 ID 判重会在下拉里重复出现。
+		// 展示名判重：agent 自报列表可能已含 kshell 注入的条目
+		//（codebuddy 为裸 mid，ACP 层带 custom-local: 前缀；名 "<plat>: <m>"），
+		// 与配置侧副本同名不同 ID，只按 ID 判重会在下拉里重复出现。
 		if name != "" && seenName[name] {
 			return
 		}

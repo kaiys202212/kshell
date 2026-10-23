@@ -775,8 +775,8 @@ func TestSetChatModelCrossPlatformSyncsClaude(t *testing.T) {
 	}
 }
 
-// mergeConfigModels 对 agent 已上报的同名条目（如 kshell 命名空间
-// kshell-default/<m>，名 "openai: <m>"）不再追加配置侧副本，消除下拉重复。
+// mergeConfigModels 对 agent 已上报的同名条目（kshell 注入的裸 mid，ACP 层
+// 带 custom-local: 前缀，名 "openai: <m>"）不再追加配置侧副本，消除下拉重复。
 func TestMergeConfigModelsDedupesByDisplayName(t *testing.T) {
 	env := newChatTestApp(t, nil, nil)
 	env.app.mu.Lock()
@@ -791,7 +791,7 @@ func TestMergeConfigModelsDedupesByDisplayName(t *testing.T) {
 	env.app.mu.Unlock()
 
 	in := chat.ModelsView{Models: []chat.ModelView{
-		{ID: "kshell-p1/glm-x", Name: "openai: glm-x"},
+		{ID: "custom-local:glm-x", Name: "openai: glm-x"},
 	}}
 	got := env.app.mergeConfigModels(in)
 	names := map[string]int{}

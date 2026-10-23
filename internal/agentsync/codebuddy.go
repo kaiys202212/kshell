@@ -5,9 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/yangk/kshell/internal/config"
 )
 
-// CodeBuddy 把平台模型合并进 ~/.codebuddy/models.json（kshell 命名空间）。
+// CodeBuddy 把默认平台的模型合并进 ~/.codebuddy/models.json。
+// 条目 id 必须是裸模型名：CodeBuddy CLI 把自定义条目 id 剥掉 custom-local:
+// 前缀后原样作为上游 model 透传（无独立的上游模型名字段），任何本地命名
+// 空间前缀都会被上游 404 拒绝；平台归属只留在展示名与 vendor。
 type CodeBuddy struct{}
 
 func (CodeBuddy) ToolID() string { return "codebuddy" }
@@ -29,20 +34,26 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 	}
 
 	models := sliceOfMaps(doc["models"])
-	// claim：旧 kshell 条目裸 mid ∪ 当前平台裸 mid。用于清掉与之碰撞的
-	// vendor=user 裸名镜像（/model 里的 Custom），以及平台已删后的孤儿。
+	// claim：既有 kshell 条目的裸 mid（兼容旧 "kshell-<plat>/<mid>" 与新裸名
+	// 两种格式）∪ 默认平台裸 mid。用于清掉与之碰撞的 vendor=user 镜像
+	//（/model 里的 Custom），以及平台已删后的孤儿。非默认平台的 mid 不 claim：
+	// 其模型不再注入，用户的同名自定义条目应保留。
 	claim := map[string]bool{}
 	for _, m := range models {
 		id, _ := m["id"].(string)
 		vendor, _ := m["vendor"].(string)
-		if isKshellModelID(id) || vendor == "kshell" {
+		if vendor == "kshell" {
+			claim[strings.TrimSpace(id)] = true
+		}
+		if isKshellModelID(id) {
 			if bare := kshellBareMid(id); bare != "" {
 				claim[bare] = true
 			}
 		}
 	}
-	for _, p := range in.Platforms {
-		for _, mid := range p.Models {
+	def, hasDef := defaultPlatform(in)
+	if hasDef {
+		for _, mid := range def.Models {
 			if mid = strings.TrimSpace(mid); mid != "" {
 				claim[mid] = true
 			}
@@ -78,30 +89,28 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 		delete(doc, "availableModels")
 	}
 
-	if in.Enabled {
-		for _, p := range in.Platforms {
-			base := strings.TrimSpace(p.OpenAIBaseURL)
-			if base == "" {
-				continue
-			}
+	var kshellIDs []string
+	if in.Enabled && hasDef {
+		base := strings.TrimSpace(def.OpenAIBaseURL)
+		if base != "" {
 			url := chatCompletionsURL(base)
-			platName := strings.TrimSpace(p.Name)
+			platName := strings.TrimSpace(def.Name)
 			if platName == "" {
-				platName = p.ID
+				platName = def.ID
 			}
-			for _, mid := range p.Models {
+			for _, mid := range def.Models {
 				mid = strings.TrimSpace(mid)
 				if mid == "" {
 					continue
 				}
-				id := "kshell-" + p.ID + "/" + mid
 				kept = append(kept, map[string]any{
-					"id":     id,
+					"id":     mid,
 					"name":   platName + ": " + mid,
 					"vendor": "kshell",
-					"apiKey": p.APIKey,
+					"apiKey": def.APIKey,
 					"url":    url,
 				})
+				kshellIDs = append(kshellIDs, mid)
 			}
 		}
 	}
@@ -127,22 +136,37 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 			candidateIDs = append(candidateIDs, id)
 		}
 	}
-	return c.reconcileDefaultModel(filepath.Dir(path), candidateIDs)
+	return c.reconcileDefaultModel(filepath.Dir(path), candidateIDs, kshellIDs)
+}
+
+// defaultPlatform 解析默认平台：DefaultPlatformID 命中优先，否则第一个平台。
+func defaultPlatform(in SyncInput) (config.ModelPlatform, bool) {
+	for _, p := range in.Platforms {
+		if p.ID == in.DefaultPlatformID {
+			return p, true
+		}
+	}
+	if len(in.Platforms) > 0 {
+		return in.Platforms[0], true
+	}
+	return config.ModelPlatform{}, false
 }
 
 // reconcileDefaultModel 校正 ~/.codebuddy/settings.json 的默认模型（"model"，
 // 由 CodeBuddy CLI 写入，kshell 不管理该文件）：平台被删除后该值悬空，
-// 新建实例不切模型即报错。降级顺序：
+// 新建实例不切模型即报错。candidates 为 models.json 现存全部条目 id（含外来），
+// kshellIDs 为本次 Sync 写入的 kshell 条目 id（裸模型名）。降级顺序：
 //  1. 精确命中候选 id → 不动；
-//  2. 剥离平台前缀（最后一个 ':' 或 '/' 之后）得裸名，命中候选 id 或其 '/'
-//     后缀（如 custom-local:glm-5.3-flash → glm-5.3-flash）→ 回写完整 id；
-//  3. 无命中但原值形似命名空间 id（含 ':' 或 '/' 分隔符）且存在 kshell 候选
+//  2. 剥离平台前缀（最后一个 ':' 或 '/' 之后）得裸名，命中候选 id（如
+//     custom-local:glm-5.3-flash / 旧 kshell-default/glm-5.3-flash → 裸名）
+//     → 回写完整 id；
+//  3. 无命中但原值形似命名空间 id（含 ':' 或 '/' 分隔符）且存在 kshell 条目
 //     → 回写第一个 kshell id；
 //  4. 其余（含纯裸名无命中——可能是 CLI 内置模型 id）→ 不动。
 //
 // settings.json 缺失/损坏/model 非字符串一律跳过；静默自愈，不外抛告警。
 // 注意：回写会按字母序重排 settings.json 的键（JSON 无语义，可接受）。
-func (CodeBuddy) reconcileDefaultModel(codebuddyDir string, candidates []string) error {
+func (CodeBuddy) reconcileDefaultModel(codebuddyDir string, candidates, kshellIDs []string) error {
 	settingsPath := filepath.Join(codebuddyDir, "settings.json")
 	settings, err := readJSONObject(settingsPath)
 	if err != nil {
@@ -170,15 +194,10 @@ func (CodeBuddy) reconcileDefaultModel(codebuddyDir string, candidates []string)
 			break
 		}
 	}
-	if resolved == "" && qualified {
+	if resolved == "" && qualified && len(kshellIDs) > 0 {
 		// 仅当原值形似已消失的命名空间 id（带平台前缀）才兜底回退；
 		// 纯裸名无命中可能是 CLI 内置模型，不得覆盖。
-		for _, id := range candidates {
-			if isKshellModelID(id) {
-				resolved = id
-				break
-			}
-		}
+		resolved = kshellIDs[0]
 	}
 	if resolved == "" || resolved == cur {
 		return nil
