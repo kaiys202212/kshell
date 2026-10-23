@@ -48,6 +48,12 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 		}
 		availKept = append(availKept, s)
 	}
+	// kshell 不再向 availableModels 写入条目：CLI 把该键当权威过滤清单，
+	// 写入会挤出内置模型（ACP 下拉丢内置）。清完自有条目后为空则整键删除；
+	// 仍有外来条目时保留原样（不越权动别人的清单）。
+	if len(availKept) == 0 {
+		delete(doc, "availableModels")
+	}
 
 	if in.Enabled {
 		for _, p := range in.Platforms {
@@ -73,19 +79,88 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 					"apiKey": p.APIKey,
 					"url":    url,
 				})
-				availKept = append(availKept, id)
 			}
 		}
 	}
 
+	if len(availKept) > 0 {
+		doc["availableModels"] = availKept
+	}
+
+	candidateIDs := make([]string, 0, len(kept))
+	for _, m := range kept {
+		if id, _ := m["id"].(string); id != "" {
+			candidateIDs = append(candidateIDs, id)
+		}
+	}
+	if err := c.reconcileDefaultModel(filepath.Dir(path), candidateIDs); err != nil {
+		return err
+	}
+
 	doc["models"] = kept
-	doc["availableModels"] = availKept
 	raw, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return err
 	}
 	raw = append(raw, '\n')
 	return writeAtomic(path, raw)
+}
+
+// reconcileDefaultModel 校正 ~/.codebuddy/settings.json 的默认模型（"model"，
+// 由 CodeBuddy CLI 写入，kshell 不管理该文件）：平台被删除后该值悬空，
+// 新建实例不切模型即报错。降级顺序：
+//  1. 精确命中候选 id → 不动；
+//  2. 剥离平台前缀（最后一个 ':' 或 '/' 之后）得裸名，命中候选 id 或其 '/'
+//     后缀（如 custom-local:glm-5.3-flash → glm-5.3-flash）→ 回写完整 id；
+//  3. 无命中且有 kshell 候选 → 回写第一个 kshell id；
+//  4. 无候选 → 不动。
+//
+// settings.json 缺失/损坏/model 非字符串一律跳过；静默自愈，不外抛告警。
+func (CodeBuddy) reconcileDefaultModel(codebuddyDir string, candidates []string) error {
+	settingsPath := filepath.Join(codebuddyDir, "settings.json")
+	settings, err := readJSONObject(settingsPath)
+	if err != nil {
+		return nil // 损坏：跳过，不扩大故障面
+	}
+	cur, _ := settings["model"].(string)
+	cur = strings.TrimSpace(cur)
+	if cur == "" || len(candidates) == 0 {
+		return nil
+	}
+	for _, id := range candidates {
+		if id == cur {
+			return nil
+		}
+	}
+	bare := cur
+	if i := strings.LastIndexAny(cur, ":/"); i >= 0 && i+1 < len(cur) {
+		bare = cur[i+1:]
+	}
+	resolved := ""
+	for _, id := range candidates {
+		if id == bare || strings.HasSuffix(id, "/"+bare) {
+			resolved = id
+			break
+		}
+	}
+	if resolved == "" {
+		for _, id := range candidates {
+			if isKshellModelID(id) {
+				resolved = id
+				break
+			}
+		}
+	}
+	if resolved == "" || resolved == cur {
+		return nil
+	}
+	settings["model"] = resolved
+	raw, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	return writeAtomic(settingsPath, raw)
 }
 
 func isKshellModelID(id string) bool {

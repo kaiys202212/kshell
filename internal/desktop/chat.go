@@ -670,14 +670,27 @@ func (a *App) mergeConfigModels(v chat.ModelsView) chat.ModelsView {
 		return v
 	}
 	seen := make(map[string]bool, len(v.Models))
+	seenName := make(map[string]bool, len(v.Models))
 	for _, mo := range v.Models {
 		seen[mo.ID] = true
+		if mo.Name != "" {
+			seenName[mo.Name] = true
+		}
 	}
 	add := func(id, name string) {
 		if id == "" || seen[id] {
 			return
 		}
+		// 展示名判重：agent 自报列表可能已含 kshell 命名空间条目
+		// （kshell-default/<m>，名 "<plat>: <m>"），与配置侧副本同名不同 ID，
+		// 只按 ID 判重会在下拉里重复出现。
+		if name != "" && seenName[name] {
+			return
+		}
 		seen[id] = true
+		if name != "" {
+			seenName[name] = true
+		}
 		v.Models = append(v.Models, chat.ModelView{ID: id, Name: name})
 	}
 	if len(cfg.Platforms) == 1 {

@@ -67,6 +67,173 @@ func TestCodeBuddySyncMergesNamespace(t *testing.T) {
 	}
 }
 
+// Sync 后 availableModels 只剩外来条目；kshell-only 时整键删除（内置模型
+// 不再被权威清单挤出 ACP 上报）。
+func TestCodeBuddySyncAvailableModels(t *testing.T) {
+	in := SyncInput{
+		Enabled: true,
+		Platforms: []config.ModelPlatform{{
+			ID: "p1", Name: "P", OpenAIBaseURL: "https://oai/", APIKey: "k", Models: []string{"m"},
+		}},
+	}
+
+	// 场景一：availableModels 仅 kshell 条目 → 整键删除。
+	home := t.TempDir()
+	dir := filepath.Join(home, ".codebuddy")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seed := map[string]any{
+		"models":          []any{},
+		"availableModels": []any{"kshell-old/x"},
+	}
+	raw, _ := json.MarshalIndent(seed, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "models.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := (CodeBuddy{}).Sync(home, in); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	doc := readCodeBuddyJSON(t, home)
+	if _, ok := doc["availableModels"]; ok {
+		t.Fatal("kshell-only 的 availableModels 应整键删除")
+	}
+
+	// 场景二：含外来条目 → 保留外来条目，清 kshell 条目。
+	home2 := t.TempDir()
+	dir2 := filepath.Join(home2, ".codebuddy")
+	if err := os.MkdirAll(dir2, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seed2 := map[string]any{
+		"models":          []any{},
+		"availableModels": []any{"foreign-model", "kshell-old/x"},
+	}
+	raw2, _ := json.MarshalIndent(seed2, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir2, "models.json"), raw2, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := (CodeBuddy{}).Sync(home2, in); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	doc2 := readCodeBuddyJSON(t, home2)
+	avail, ok := doc2["availableModels"].([]any)
+	if !ok {
+		t.Fatalf("外来条目存在时应保留键，got %T", doc2["availableModels"])
+	}
+	if len(avail) != 1 || avail[0] != "foreign-model" {
+		t.Fatalf("应只剩 foreign-model，got %v", avail)
+	}
+}
+
+func TestCodeBuddyReconcileDefaultModel(t *testing.T) {
+	dir := func(t *testing.T) string {
+		t.Helper()
+		d := filepath.Join(t.TempDir(), ".codebuddy")
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	write := func(t *testing.T, dir, name string, doc map[string]any) {
+		t.Helper()
+		raw, _ := json.MarshalIndent(doc, "", "  ")
+		if err := os.WriteFile(filepath.Join(dir, name), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	candidates := []string{
+		"qwen-max", "glm-5.3-flash",
+		"kshell-default/glm-5.3-flash", "kshell-p2/ds-x",
+	}
+
+	t.Run("精确命中不动", func(t *testing.T) {
+		d := dir(t)
+		write(t, d, "models.json", map[string]any{"models": []any{}})
+		write(t, d, "settings.json", map[string]any{"model": "kshell-default/glm-5.3-flash", "keep": 1})
+		if err := (CodeBuddy{}).reconcileDefaultModel(d, candidates); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		got := readCodeBuddySettings(t, d)
+		if got["model"] != "kshell-default/glm-5.3-flash" {
+			t.Fatalf("不应改写，got %v", got["model"])
+		}
+	})
+
+	t.Run("裸名降级回写", func(t *testing.T) {
+		d := dir(t)
+		write(t, d, "models.json", map[string]any{"models": []any{}})
+		write(t, d, "settings.json", map[string]any{"model": "custom-local:glm-5.3-flash"})
+		if err := (CodeBuddy{}).reconcileDefaultModel(d, candidates); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		got := readCodeBuddySettings(t, d)
+		if got["model"] != "glm-5.3-flash" {
+			t.Fatalf("应回写裸名命中条目，got %v", got["model"])
+		}
+	})
+
+	t.Run("无命中回退首个kshell", func(t *testing.T) {
+		d := dir(t)
+		write(t, d, "models.json", map[string]any{"models": []any{}})
+		write(t, d, "settings.json", map[string]any{"model": "old-plat:gone"})
+		if err := (CodeBuddy{}).reconcileDefaultModel(d, candidates); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		got := readCodeBuddySettings(t, d)
+		if got["model"] != "kshell-default/glm-5.3-flash" {
+			t.Fatalf("应回退首个 kshell id，got %v", got["model"])
+		}
+	})
+
+	t.Run("无候选不动", func(t *testing.T) {
+		d := dir(t)
+		write(t, d, "models.json", map[string]any{"models": []any{}})
+		write(t, d, "settings.json", map[string]any{"model": "old-plat:gone"})
+		if err := (CodeBuddy{}).reconcileDefaultModel(d, nil); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		got := readCodeBuddySettings(t, d)
+		if got["model"] != "old-plat:gone" {
+			t.Fatalf("无候选时不应改写，got %v", got["model"])
+		}
+	})
+
+	t.Run("缺失与损坏跳过", func(t *testing.T) {
+		d := dir(t)
+		write(t, d, "models.json", map[string]any{"models": []any{}})
+		// settings.json 缺失。
+		if err := (CodeBuddy{}).reconcileDefaultModel(d, candidates); err != nil {
+			t.Fatalf("缺失 settings 不应报错: %v", err)
+		}
+		// JSON 损坏。
+		if err := os.WriteFile(filepath.Join(d, "settings.json"), []byte("{bad"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := (CodeBuddy{}).reconcileDefaultModel(d, candidates); err != nil {
+			t.Fatalf("损坏 settings 不应报错: %v", err)
+		}
+		// model 非字符串 / 空。
+		write(t, d, "settings.json", map[string]any{"model": ""})
+		if err := (CodeBuddy{}).reconcileDefaultModel(d, candidates); err != nil {
+			t.Fatalf("空 model 不应报错: %v", err)
+		}
+	})
+}
+
+func readCodeBuddySettings(t *testing.T, dir string) map[string]any {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	return doc
+}
+
 func TestCodeBuddyChatCompletionsURL(t *testing.T) {
 	if got := chatCompletionsURL("https://x/v1/"); got != "https://x/v1/chat/completions" {
 		t.Fatalf("got %q", got)

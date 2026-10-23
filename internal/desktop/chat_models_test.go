@@ -774,3 +774,40 @@ func TestSetChatModelCrossPlatformSyncsClaude(t *testing.T) {
 		t.Fatalf("跨平台后 Claude env = %#v", env)
 	}
 }
+
+// mergeConfigModels 对 agent 已上报的同名条目（如 kshell 命名空间
+// kshell-default/<m>，名 "openai: <m>"）不再追加配置侧副本，消除下拉重复。
+func TestMergeConfigModelsDedupesByDisplayName(t *testing.T) {
+	env := newChatTestApp(t, nil, nil)
+	env.app.mu.Lock()
+	env.app.opts.Config.Model = config.ModelConfig{
+		Enabled:         true,
+		DefaultPlatform: "p1",
+		ActiveModel:     "glm-x",
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "openai", Models: []string{"glm-x", "ds-x"}},
+		},
+	}
+	env.app.mu.Unlock()
+
+	in := chat.ModelsView{Models: []chat.ModelView{
+		{ID: "kshell-p1/glm-x", Name: "openai: glm-x"},
+	}}
+	got := env.app.mergeConfigModels(in)
+	names := map[string]int{}
+	for _, mo := range got.Models {
+		names[mo.Name]++
+	}
+	if names["openai: glm-x"] != 1 {
+		t.Fatalf("同名条目应去重为一份，got %#v", got.Models)
+	}
+	var hasDs bool
+	for _, mo := range got.Models {
+		if mo.Name == "openai: ds-x" {
+			hasDs = true
+		}
+	}
+	if !hasDs {
+		t.Fatalf("不同名条目应照常追加，got %#v", got.Models)
+	}
+}
