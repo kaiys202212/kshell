@@ -12,16 +12,18 @@
 import i18n from 'i18next';
 import { getTools, markRequirementDispatched, openWorkspaceACP, sendChatPrompt, setChatModel, type OpenedSession, type Requirement } from './api';
 import { backendError } from './errors';
+import { usableForACP } from './toolUsable';
 import { useAppStore } from '../state/store';
 
 // resolveToolID 选派发用的 ACP 工具：优先当前默认 agent（lastAgentId 对应 chat 存在），
-// 否则取第一个 ACP 可用的工具；都没有返回 null（调用方提示 no_acp_tool）。
+// 否则取第一个可用的 ACP 工具（lib/toolUsable：Auth=out 不可用）；都没有返回 null
+//（调用方提示 no_acp_tool）。
 export async function resolveToolID(): Promise<string | null> {
   const { chats, lastAgentId } = useAppStore.getState();
   const last = lastAgentId ? chats.find((c) => c.ID === lastAgentId) : undefined;
   if (last?.ToolID) return last.ToolID;
   const tools = await getTools();
-  const acp = tools.find((x) => x.ACP?.Available === true);
+  const acp = tools.find(usableForACP);
   return acp?.ID ?? null;
 }
 
@@ -63,7 +65,7 @@ export async function dispatchRequirement(
     let toolID: string | null = null;
     if (defaults?.toolId) {
       const tools = await getTools();
-      const ok = tools.some((x) => x.ID === defaults.toolId && x.ACP?.Available === true);
+      const ok = tools.some((x) => x.ID === defaults.toolId && usableForACP(x));
       if (ok) {
         toolID = defaults.toolId;
       } else {

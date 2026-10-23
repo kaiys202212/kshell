@@ -56,6 +56,7 @@ import { chipSessionLabel } from '../lib/hubChipLabel';
 import { markdownBubbleClass } from '../lib/markdownStyles';
 import { sameWorkspacePath } from '../lib/workspacePath';
 import { cn } from '../lib/cn';
+import { usableForACP } from '../lib/toolUsable';
 import { LIST_ROW } from '../lib/ui';
 import { useAppStore } from '../state/store';
 import { Button } from './ui/button';
@@ -670,9 +671,10 @@ export default function AgentHubPanel() {
     }
     setEasynewRunning(true);
     // 工具有效性需异步拉工具列表校验（store 无镜像）：默认设置的工具可用则用之，
-    // 不可用提示回落；无默认设置时回落 lastCreate.toolId，再不可用才弹窗补选
+    // 不可用提示回落；无默认设置时回落 lastCreate.toolId，再不可用才弹窗补选。
+    // 过滤口径与 NewAgentDialog 一致：确定未登录（Auth=out）的工具不可见。
     void getTools()
-      .then((list) => list.filter((x) => x.ACP?.Available === true))
+      .then((list) => list.filter(usableForACP))
       .then((acp) => {
         let toolId = defaults?.toolId && acp.some((x) => x.ID === defaults.toolId) ? defaults.toolId : '';
         if (!toolId && defaults?.toolId) {
@@ -1637,7 +1639,9 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     const last = loadLastCreate();
     void getTools()
       .then((list) => {
-        const acp = list.filter((x) => x.ACP?.Available === true);
+        // 通用规则：确定未登录（Auth=out）的工具不进新建下拉（unknown 保守放行），
+        // 登录入口收敛到设置页工具分区；口径见 lib/toolUsable。
+        const acp = list.filter(usableForACP);
         setTools(acp);
         setToolId((cur) => {
           if (cur && acp.some((x) => x.ID === cur)) return cur;
@@ -1809,7 +1813,9 @@ function DefaultSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     const saved = loadDefaultCreate();
     void getTools()
       .then((list) => {
-        const acp = list.filter((x) => x.ACP?.Available === true);
+        // 通用规则：确定未登录（Auth=out）的工具不进新建下拉（unknown 保守放行），
+        // 登录入口收敛到设置页工具分区；口径见 lib/toolUsable。
+        const acp = list.filter(usableForACP);
         setTools(acp);
         // 已存工具仍在可用列表才预填，否则空选择（保存按钮禁用兜底）
         setToolId(saved && acp.some((x) => x.ID === saved.toolId) ? saved.toolId : '');

@@ -30,6 +30,7 @@ import { appendChatInput } from '../lib/chatInputRegistry';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
 import { badgeFor } from '../lib/toolBadge';
+import { usableForSessionMenu } from '../lib/toolUsable';
 import { cn } from '../lib/cn';
 import { displayTitle } from '../lib/title';
 import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
@@ -172,7 +173,9 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     // 每个页签各自订阅会对同一事件产生 N 倍重复 IPC。
     const refresh = () => {
       getTools()
-        .then((list) => setTools(list.filter((t) => t.Installed && t.BinPath !== '')))
+        // 统一口径见 lib/toolUsable：确定未登录（Auth=out）的工具不在下拉出现，
+        // 登录入口收敛到设置页工具分区。
+        .then((list) => setTools(list.filter(usableForSessionMenu)))
         .catch(() => {});
     };
     refresh();

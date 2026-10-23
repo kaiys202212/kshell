@@ -4,6 +4,8 @@
 //   本组件只在拿到终端 Info 后登记自己的 xterm，卸载时注销。
 // - 登录态轮询 CheckToolAuth（2s 一次，10 分钟上限）：探测到 in → 成功提示 +
 //   触发后台重扫（工具表实时刷新）+ 自动关闭。
+// - 手动关闭（按钮 / Esc / 遮罩）同样触发一次后台重扫：用户可能在弹窗外完成登录，
+//   关闭即刷新登录态口径（用户要求：关闭登录弹窗也触发刷新）。
 // - 关闭弹窗刻意不杀登录终端进程：登录流程可能仍在进行，进程由后端按 key 复用管理。
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useEffect, useRef, useState } from 'react';
@@ -167,8 +169,17 @@ export default function LoginDialog({ toolID, toolName, onClose }: Props) {
     };
   }, [polling, toolID, toolName, notify, t]);
 
+  // closeManual 手动关闭（关闭按钮 / Esc / 点遮罩）：先触发一次后台重扫——
+  // 重新探测登录态并广播 tools:updated（登录终端进程保留运行，用户可能在关闭后
+  // 才完成登录，下次刷新即翻转）——再走 onClose。轮询成功路径已自带重扫，
+  // 这里只覆盖「未等登录成功就关」的刷新诉求，不做双扫去重（两个路径互斥）。
+  const closeManual = () => {
+    void scanSessions();
+    onClose();
+  };
+
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }} className="w-[36rem] max-w-[90vw]">
+    <Dialog open onOpenChange={(o) => { if (!o) closeManual(); }} className="w-[36rem] max-w-[90vw]">
       <DialogPrimitive.Title className="text-sm font-medium">
         {t('ui.auth.login_title', { name: toolName })}
       </DialogPrimitive.Title>
@@ -184,7 +195,7 @@ export default function LoginDialog({ toolID, toolName, onClose }: Props) {
         <span className="text-xs text-muted-foreground">
           {polling && !openError ? t('ui.auth.login_waiting') : ''}
         </span>
-        <Button type="button" variant="secondary" onClick={onClose}>
+        <Button type="button" variant="secondary" onClick={closeManual}>
           {t('ui.auth.close')}
         </Button>
       </div>

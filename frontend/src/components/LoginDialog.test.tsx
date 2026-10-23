@@ -177,4 +177,16 @@ describe('LoginDialog', () => {
     expect(api.checkToolAuth).toHaveBeenCalledTimes(1);
     expect(mocks.terminals).toHaveLength(0);
   });
+
+  it('手动关闭也触发一次重扫（关闭按钮）：用户可能在弹窗外完成登录，关闭即刷新登录态', async () => {
+    const onClose = renderDialog();
+    await act(async () => {}); // 等终端 Info 落位
+    expect(api.scanSessions).not.toHaveBeenCalled(); // 未登录成功前不重扫
+
+    act(() => {
+      screen.getByRole('button', { name: tt('ui.auth.close') }).click();
+    });
+    expect(api.scanSessions).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

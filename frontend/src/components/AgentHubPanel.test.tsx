@@ -1264,6 +1264,23 @@ describe('AgentHubPanel', () => {
     });
   });
 
+  it('新建 agent：确定未登录（Auth=out）的工具不进下拉，unknown 保守放行', async () => {
+    // codebuddy out（确定未登录）、codex unknown（探测不稳）、claude 缺省（老快照形态）
+    api.getTools.mockResolvedValue([
+      { ...acpTool('codebuddy'), Name: 'CodeBuddy', Auth: 'out' },
+      { ...acpTool('codex'), Name: 'Codex', Auth: 'unknown' },
+      acpTool(),
+    ]);
+    useAppStore.setState({ workspaces: [workspaceA] });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
+    const toolSelect = (await screen.findByLabelText(tt('ui.hub.field_tool'))) as HTMLSelectElement;
+    const ids = Array.from(toolSelect.options).map((o) => o.value);
+    expect(ids).toContain('codex'); // unknown 保守放行
+    expect(ids).toContain('claude'); // Auth 缺省（unknown 同义）放行
+    expect(ids).not.toContain('codebuddy'); // out 隐藏：登录入口收敛到设置页工具分区
+  });
+
   it('默认设置：齿轮按钮打开对话框，选工具保存后写入 defaultCreate', async () => {
     api.getTools.mockResolvedValue([acpTool(), { ...acpTool('codex'), Name: 'Codex' }]);
     render(<AgentHubPanel />);
