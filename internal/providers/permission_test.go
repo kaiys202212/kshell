@@ -30,12 +30,16 @@ func TestInjectPermissionBypass(t *testing.T) {
 	if !reflect.DeepEqual(args, []string{"--permission-mode", "bypassPermissions"}) || len(env) != 0 {
 		t.Fatalf("codebuddy bypass = %v %v", args, env)
 	}
+	args, env = Trae{}.InjectPermission(true)
+	if !reflect.DeepEqual(args, []string{"--permission-mode", "bypass_permissions"}) || len(env) != 0 {
+		t.Fatalf("trae bypass = %v %v", args, env)
+	}
 }
 
 func TestInjectPermissionDefaultNoop(t *testing.T) {
 	for _, p := range []interface {
 		InjectPermission(bool) ([]string, map[string]string)
-	}{Claude{}, Codex{}, Gemini{}, Opencode{}, Cursor{}, CodeBuddy{}, Generic{}} {
+	}{Claude{}, Codex{}, Gemini{}, Opencode{}, Cursor{}, CodeBuddy{}, Trae{}, Generic{}} {
 		args, env := p.InjectPermission(false)
 		if len(args) != 0 || len(env) != 0 {
 			t.Fatalf("%T default 不应注入：%v %v", p, args, env)

@@ -10,6 +10,8 @@ var targetRel = map[string][]string{
 	"gemini":    {".gemini", "skills"},
 	"opencode":  {".config", "opencode", "skills"},
 	"codebuddy": {".codebuddy", "skills"},
+	// TRAE CLI 全局技能目录（官方文档 docs.trae.cn/cli_skills：~/.traecli/skills）
+	"trae": {".traecli", "skills"},
 }
 
 // TargetRoot 返回 toolID 对应用户级 skills 根目录；未知 tool 返回 false。
@@ -24,5 +26,5 @@ func TargetRoot(toolID, home string) (string, bool) {
 
 // KnownToolIDs 返回支持 skill 安装的内置 tool 列表（稳定顺序）。
 func KnownToolIDs() []string {
-	return []string{"claude", "cursor", "codex", "gemini", "opencode", "codebuddy"}
+	return []string{"claude", "cursor", "codex", "gemini", "opencode", "codebuddy", "trae"}
 }

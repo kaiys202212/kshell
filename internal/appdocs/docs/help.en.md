@@ -2,7 +2,7 @@
 
 kshell is a lightweight manager for agent coding tools, built on the idea of "discover → choose → deliver":
 
-- It automatically discovers locally installed agent CLIs (Claude Code / Codex / Gemini / OpenCode / Cursor / CodeBuddy, etc.) along with their workspaces and session history.
+- It automatically discovers locally installed agent CLIs (Claude Code / Codex / Gemini / OpenCode / Cursor / CodeBuddy / TRAE CLI, etc.) along with their workspaces and session history.
 - Sessions are resumed or created in one click; conversation capability is delegated to each tool's own CLI — kshell does not reimplement it.
 - It ships with both a desktop app and a TUI with consistent features; this guide covers the desktop app.
 

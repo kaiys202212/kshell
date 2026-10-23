@@ -928,6 +928,8 @@
       "help_claude_model": "Injected into each new session via ACP _meta settings env (model, endpoint, key).",
       "help_codebuddy_acp": "Built-in --acp",
       "help_codebuddy_model": "Passes --model on launch and sets the CODEBUDDY_MODEL env var.",
+      "help_trae_acp": "Built-in acp subcommand",
+      "help_trae_model": "No platform model injection yet; uses TRAE's own account models.",
       "help_cursor_acp": "Official cursor-agent acp (cursor-acp fallback)",
       "help_cursor_model": "Launch rejects --model, so nothing is injected; switch models in-session with #model.",
       "help_usage_title": "Quick start",

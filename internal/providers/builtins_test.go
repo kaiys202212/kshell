@@ -10,7 +10,7 @@ func TestBuiltinsCoverKnownTools(t *testing.T) {
 		}
 		ids[p.ID()] = true
 	}
-	for _, want := range []string{"claude", "codex", "cursor", "codebuddy", "gemini", "opencode"} {
+	for _, want := range []string{"claude", "codex", "cursor", "codebuddy", "trae", "gemini", "opencode"} {
 		if !ids[want] {
 			t.Fatalf("builtin %q missing: %v", want, ids)
 		}
@@ -29,7 +29,7 @@ func TestMergeProvidersSkipsBuiltinIDs(t *testing.T) {
 	for _, p := range ps {
 		ids = append(ids, p.ID())
 	}
-	want := []string{"claude", "codex", "cursor", "codebuddy", "gemini", "opencode"}
+	want := []string{"claude", "codex", "cursor", "codebuddy", "trae", "gemini", "opencode"}
 	if len(ids) != len(want) {
 		t.Fatalf("ids = %v, want %v", ids, want)
 	}
@@ -39,9 +39,12 @@ func TestMergeProvidersSkipsBuiltinIDs(t *testing.T) {
 		}
 	}
 
-	// opencode / codebuddy 必须是内置实现，而不是 yaml 里的 Generic：内置优先。
-	if _, ok := ps[5].(Opencode); !ok {
-		t.Fatalf("opencode entry is %T, want providers.Opencode", ps[5])
+	// opencode / codebuddy / trae 必须是内置实现，而不是 yaml 里的 Generic：内置优先。
+	if _, ok := ps[6].(Opencode); !ok {
+		t.Fatalf("opencode entry is %T, want providers.Opencode", ps[6])
+	}
+	if _, ok := ps[4].(Trae); !ok {
+		t.Fatalf("trae entry is %T, want providers.Trae", ps[4])
 	}
 	if _, ok := ps[3].(CodeBuddy); !ok {
 		t.Fatalf("codebuddy entry is %T, want providers.CodeBuddy", ps[3])

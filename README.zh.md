@@ -2,7 +2,7 @@
 
 # kshell
 
-轻量级 agent 工作台：发现本机已安装的编程 agent（Claude Code / Codex / Cursor / Gemini 等）及其工作区与会话，一键恢复或新建。附带文件树预览/编辑、git 状态、内嵌终端、远程 SSH，以及可选的 ACP 聊天。
+轻量级 agent 工作台：发现本机已安装的编程 agent（Claude Code / Codex / Cursor / Gemini / TRAE CLI 等）及其工作区与会话，一键恢复或新建。附带文件树预览/编辑、git 状态、内嵌终端、远程 SSH，以及可选的 ACP 聊天。
 
 两个独立入口，没有模式开关：
 
@@ -114,6 +114,7 @@ kshell
 | Codex CLI | `~/.codex/sessions/**/*.jsonl` | 已验证 | 无（走终端） |
 | Cursor | `~/.cursor/projects/*/agent-transcripts/`（`cursor-agent` / `agent`） | 内置 | `cursor-acp` |
 | CodeBuddy | `~/.codebuddy/projects/*/*.jsonl` | 已验证 | CLI `--acp` |
+| TRAE CLI | `~/.trae/cli/sessions/**/rollout-*.jsonl` | 按官方文档推断，未实测 | CLI `acp` 子命令 |
 | Gemini CLI | `~/.gemini/tmp/` | 按公开默认值推断，未实测 | 无 |
 | OpenCode | SQLite（`opencode db … --format json`） | 内置（`--session`） | 无 |
 

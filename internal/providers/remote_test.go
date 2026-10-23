@@ -59,6 +59,7 @@ func TestRemoteSSHRunnerArgs(t *testing.T) {
 		{"gemini", Gemini{}, []string{"--resume", "s1"}},
 		{"opencode", Opencode{}, []string{"--session", "s1"}},
 		{"codebuddy", CodeBuddy{}, []string{"--resume", "s1"}},
+		{"trae", Trae{}, []string{"resume", "s1"}},
 		{"cursor-fallback", Cursor{}, []string{"--resume", "s1"}},
 	}
 	s := Session{ID: "s1", Workspace: "/home/u/ws"}

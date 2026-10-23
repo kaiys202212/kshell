@@ -121,6 +121,30 @@ function CodeBuddyMark() {
   );
 }
 
+// TRAE：近似品牌标（蓝紫渐变 tile + 白色三角），识别用。
+function TraeMark() {
+  const g = `trae-${uidToken(useId())}`;
+  return (
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path
+        fill={`url(#${g})`}
+        d="M18.821 0H5.18A5.179 5.179 0 000 5.179V18.82A5.179 5.179 0 005.179 24H18.82A5.179 5.179 0 0024 18.821V5.18A5.179 5.179 0 0018.821 0z"
+      />
+      <path
+        fill="#fff"
+        fillRule="evenodd"
+        d="M12 4.8l7.6 13.2H4.4L12 4.8zm0 5.5l-2.4 4.3h4.8L12 10.3z"
+      />
+      <defs>
+        <linearGradient id={g} x1="3" x2="21" y1="3" y2="21" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#4C5BFF" />
+          <stop offset="1" stopColor="#8A3BFF" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+}
+
 function CursorMark() {
   return (
     <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="currentColor" fillRule="evenodd">
@@ -155,11 +179,12 @@ const MARKS: Record<string, () => ReactNode> = {
   codex: () => <CodexMark />,
   gemini: () => <GeminiMark />,
   codebuddy: () => <CodeBuddyMark />,
+  trae: () => <TraeMark />,
   cursor: () => <CursorMark />,
   opencode: () => <OpenCodeMark />,
 };
 
-const TILE_TOOLS = new Set(['codex', 'codebuddy']);
+const TILE_TOOLS = new Set(['codex', 'codebuddy', 'trae']);
 
 export function ToolIcon({ toolID, label }: { toolID: string; label: string }) {
   const id = toolID.toLowerCase();

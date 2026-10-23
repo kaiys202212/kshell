@@ -2,7 +2,7 @@
 
 kshell 是轻量级 agent 编程工具管理器，核心理念是「发现 → 选择 → 交付」：
 
-- 自动发现本机已安装的 agent CLI（Claude Code / Codex / Gemini / OpenCode / Cursor / CodeBuddy 等）及其工作区与历史会话；
+- 自动发现本机已安装的 agent CLI（Claude Code / Codex / Gemini / OpenCode / Cursor / CodeBuddy / TRAE CLI 等）及其工作区与历史会话；
 - 一键恢复或新建会话，对话能力交由各工具自身 CLI 完成，kshell 不重复实现；
 - 桌面端与 TUI 双入口，功能一致，本说明以桌面端为准。
 

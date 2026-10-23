@@ -6,6 +6,7 @@ import { badgeFor } from './toolBadge';
 describe('badgeFor', () => {
   it.each([
     ['codebuddy', 'CodeBuddy', 'tool-badge--codebuddy', 'var(--tool-codebuddy)'],
+    ['trae', 'TRAE CLI', 'tool-badge--trae', 'var(--tool-trae)'],
     ['codex', 'Codex', 'tool-badge--codex', 'var(--tool-codex)'],
     ['claude', 'Claude', 'tool-badge--claude', 'var(--tool-claude)'],
     ['gemini', 'Gemini', 'tool-badge--gemini', 'var(--tool-gemini)'],

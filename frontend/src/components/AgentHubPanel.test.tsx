@@ -167,11 +167,11 @@ describe('AgentHubPanel', () => {
     render(<AgentHubPanel />);
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.help_aria') }));
     expect(screen.getByText(tt('ui.hub.help_title'))).toBeInTheDocument();
-    for (const tool of ['Claude Code', 'CodeBuddy', 'Cursor']) {
+    for (const tool of ['Claude Code', 'CodeBuddy', 'TRAE CLI', 'Cursor']) {
       expect(screen.getByText(tool)).toBeInTheDocument();
     }
     expect(screen.getAllByText(tt('ui.hub.help_model_yes'))).toHaveLength(2);
-    expect(screen.getAllByText(tt('ui.hub.help_model_no'))).toHaveLength(1);
+    expect(screen.getAllByText(tt('ui.hub.help_model_no'))).toHaveLength(2);
   });
 
   it('会话 chips 位于输入区上方（与 textarea 同容器）', () => {

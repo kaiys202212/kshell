@@ -13,6 +13,7 @@ const OTHER_COLOR = 'var(--muted-foreground)';
 
 const TOOL_BADGES: Record<string, ToolBadge> = {
   codebuddy: { label: 'CodeBuddy', className: 'tool-badge--codebuddy', color: 'var(--tool-codebuddy)' },
+  trae: { label: 'TRAE CLI', className: 'tool-badge--trae', color: 'var(--tool-trae)' },
   codex: { label: 'Codex', className: 'tool-badge--codex', color: 'var(--tool-codex)' },
   claude: { label: 'Claude', className: 'tool-badge--claude', color: 'var(--tool-claude)' },
   gemini: { label: 'Gemini', className: 'tool-badge--gemini', color: 'var(--tool-gemini)' },

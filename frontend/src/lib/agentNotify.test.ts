@@ -6,6 +6,7 @@ describe('toolDisplayName', () => {
   it('已知工具映射成展示名', () => {
     expect(toolDisplayName('claude')).toBe('Claude Code');
     expect(toolDisplayName('codebuddy')).toBe('CodeBuddy');
+    expect(toolDisplayName('trae')).toBe('TRAE CLI');
     expect(toolDisplayName('codex')).toBe('Codex');
     expect(toolDisplayName('opencode')).toBe('OpenCode');
     expect(toolDisplayName('gemini')).toBe('Gemini CLI');

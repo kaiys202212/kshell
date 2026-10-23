@@ -2,7 +2,7 @@
 
 # kshell
 
-Lightweight agent workbench: discover the coding agents already installed on your machine (Claude Code / Codex / Cursor / Gemini, etc.) together with their workspaces and sessions, then resume or create one in a single click. Ships with a file-tree preview/editor, git status, an embedded terminal, remote SSH, and optional ACP chat.
+Lightweight agent workbench: discover the coding agents already installed on your machine (Claude Code / Codex / Cursor / Gemini / TRAE CLI, etc.) together with their workspaces and sessions, then resume or create one in a single click. Ships with a file-tree preview/editor, git status, an embedded terminal, remote SSH, and optional ACP chat.
 
 Two independent entry points, no mode switch:
 
@@ -114,6 +114,7 @@ kshell
 | Codex CLI | `~/.codex/sessions/**/*.jsonl` | Verified | None (uses terminal) |
 | Cursor | `~/.cursor/projects/*/agent-transcripts/` (`cursor-agent` / `agent`) | Built-in | `cursor-acp` |
 | CodeBuddy | `~/.codebuddy/projects/*/*.jsonl` | Verified | CLI `--acp` |
+| TRAE CLI | `~/.trae/cli/sessions/**/rollout-*.jsonl` | Inferred from official docs, not yet tested | CLI `acp` subcommand |
 | Gemini CLI | `~/.gemini/tmp/` | Inferred from public defaults, not yet tested | None |
 | OpenCode | SQLite (`opencode db … --format json`) | Built-in (`--session`) | None |
 

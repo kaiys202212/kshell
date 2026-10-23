@@ -47,6 +47,15 @@ func (CodeBuddy) InjectPermission(bypass bool) ([]string, map[string]string) {
 	return []string{"--permission-mode", "bypassPermissions"}, nil
 }
 
+// Trae：bypass 时注入 --permission-mode bypass_permissions（官方权限模式预设）。
+// 不用 --yolo：它会连带跳过沙箱，风险远超 bypass 模式本身。
+func (Trae) InjectPermission(bypass bool) ([]string, map[string]string) {
+	if !bypass {
+		return nil, nil
+	}
+	return []string{"--permission-mode", "bypass_permissions"}, nil
+}
+
 // Opencode：bypass 时注入 --auto（自动放行未显式 deny 的权限，opencode 1.x 根级 flag）。
 func (Opencode) InjectPermission(bypass bool) ([]string, map[string]string) {
 	if !bypass {

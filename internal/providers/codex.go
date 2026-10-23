@@ -12,7 +12,9 @@ import (
 
 const codexID = "codex"
 
-var errCodexNoSessionMeta = errors.New("codex: 会话文件缺少 session_meta 记录")
+// errRolloutNoSessionMeta 是 rollout 格式（codex 系）的通用缺元数据错误，
+// Codex 与同构 fork（如 Trae CLI）共用。
+var errRolloutNoSessionMeta = errors.New("rollout: 会话文件缺少 session_meta 记录")
 
 // Codex 对应 Codex CLI。会话存于 ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl，
 // 首行 type=session_meta，payload 里带 session_id / cwd / timestamp。
@@ -36,6 +38,13 @@ func (Codex) SessionRoots(home string) []string {
 func (Codex) SessionFilePattern() string { return "*.jsonl" }
 
 func (Codex) ParseSession(path string, head []byte) (*Session, error) {
+	return parseCodexRollout(path, head, codexID)
+}
+
+// parseCodexRollout 解析 codex-rs rollout 格式的会话文件（Trae CLI 等 fork 复用）。
+// 首行 type=session_meta（payload 带 session_id / cwd），其余是 event_msg /
+// response_item / fork 专属记录（如 trae 的 history_mutation），未知类型跳过。
+func parseCodexRollout(path string, head []byte, toolID string) (*Session, error) {
 	var (
 		id, cwd, title   string
 		created, updated time.Time
@@ -92,7 +101,7 @@ func (Codex) ParseSession(path string, head []byte) (*Session, error) {
 	}
 
 	if id == "" {
-		return nil, errCodexNoSessionMeta
+		return nil, errRolloutNoSessionMeta
 	}
 
 	messages := 0
@@ -102,7 +111,7 @@ func (Codex) ParseSession(path string, head []byte) (*Session, error) {
 
 	return &Session{
 		ID:        id,
-		ToolID:    codexID,
+		ToolID:    toolID,
 		Workspace: cwd,
 		Title:     title,
 		CreatedAt: created,

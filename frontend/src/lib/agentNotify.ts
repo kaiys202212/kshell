@@ -17,6 +17,7 @@ export function toolDisplayName(tool: string): string {
   const names: Record<string, string> = {
     claude: 'Claude Code',
     codebuddy: 'CodeBuddy',
+    trae: 'TRAE CLI',
     codex: 'Codex',
     opencode: 'OpenCode',
     gemini: 'Gemini CLI',

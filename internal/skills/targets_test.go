@@ -19,6 +19,7 @@ func TestTargetRoot(t *testing.T) {
 		{"gemini", filepath.Join(home, ".gemini", "skills"), true},
 		{"opencode", filepath.Join(home, ".config", "opencode", "skills"), true},
 		{"codebuddy", filepath.Join(home, ".codebuddy", "skills"), true},
+		{"trae", filepath.Join(home, ".traecli", "skills"), true},
 		{"unknown", "", false},
 	}
 	for _, tc := range cases {
