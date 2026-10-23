@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/yangk/kshell/internal/config"
 )
 
 // CodeBuddy 把默认平台的模型合并进 ~/.codebuddy/models.json。
@@ -37,7 +35,8 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 	// claim：既有 kshell 条目的裸 mid（兼容旧 "kshell-<plat>/<mid>" 与新裸名
 	// 两种格式）∪ 默认平台裸 mid。用于清掉与之碰撞的 vendor=user 镜像
 	//（/model 里的 Custom），以及平台已删后的孤儿。非默认平台的 mid 不 claim：
-	// 其模型不再注入，用户的同名自定义条目应保留。
+	// 其模型不再注入，用户的同名自定义条目应保留。claim 构建与 Enabled 无关
+	//（禁用时同样清掉镜像条目，仅不再写入新条目）。
 	claim := map[string]bool{}
 	for _, m := range models {
 		id, _ := m["id"].(string)
@@ -51,8 +50,8 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 			}
 		}
 	}
-	def, hasDef := defaultPlatform(in)
-	if hasDef {
+	def := pickPlatform(in)
+	if def != nil {
 		for _, mid := range def.Models {
 			if mid = strings.TrimSpace(mid); mid != "" {
 				claim[mid] = true
@@ -90,7 +89,7 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 	}
 
 	var kshellIDs []string
-	if in.Enabled && hasDef {
+	if in.Enabled && def != nil {
 		base := strings.TrimSpace(def.OpenAIBaseURL)
 		if base != "" {
 			url := chatCompletionsURL(base)
@@ -137,19 +136,6 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 		}
 	}
 	return c.reconcileDefaultModel(filepath.Dir(path), candidateIDs, kshellIDs)
-}
-
-// defaultPlatform 解析默认平台：DefaultPlatformID 命中优先，否则第一个平台。
-func defaultPlatform(in SyncInput) (config.ModelPlatform, bool) {
-	for _, p := range in.Platforms {
-		if p.ID == in.DefaultPlatformID {
-			return p, true
-		}
-	}
-	if len(in.Platforms) > 0 {
-		return in.Platforms[0], true
-	}
-	return config.ModelPlatform{}, false
 }
 
 // reconcileDefaultModel 校正 ~/.codebuddy/settings.json 的默认模型（"model"，
