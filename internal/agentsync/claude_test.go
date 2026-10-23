@@ -239,6 +239,87 @@ func TestClaudeSyncDisabledRemovesModelKeys(t *testing.T) {
 	}
 }
 
+// 顶层 model 指向已不在默认平台列表中的旧模型 → 删除，避免 /model Custom 悬空。
+func TestClaudeSyncClearsStaleTopLevelModel(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"),
+		[]byte(`{"model":"gone-mid","env":{"KEEP":"1"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in := SyncInput{
+		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "glm-5.3-flash",
+		Platforms: []config.ModelPlatform{{
+			ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk",
+			Models: []string{"glm-5.3-flash", "deepseek-v4.1-flash"},
+		}},
+	}
+	if err := (Claude{}).Sync(home, in); err != nil {
+		t.Fatal(err)
+	}
+	doc := readClaudeSettings(t, home)
+	if _, ok := doc["model"]; ok {
+		t.Fatalf("悬空顶层 model 应被清除: %v", doc["model"])
+	}
+	env := doc["env"].(map[string]any)
+	if env["ANTHROPIC_MODEL"] != "glm-5.3-flash" {
+		t.Fatalf("ANTHROPIC_MODEL = %v", env["ANTHROPIC_MODEL"])
+	}
+}
+
+func TestClaudeSyncKeepsTopLevelModelWhenInPlatformList(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"),
+		[]byte(`{"model":"glm-5.3-flash"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in := SyncInput{
+		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "glm-5.3-flash",
+		Platforms: []config.ModelPlatform{{
+			ID: "p1", AnthropicBaseURL: "https://ant.example/",
+			Models: []string{"glm-5.3-flash"},
+		}},
+	}
+	if err := (Claude{}).Sync(home, in); err != nil {
+		t.Fatal(err)
+	}
+	if got := readClaudeSettings(t, home)["model"]; got != "glm-5.3-flash" {
+		t.Fatalf("列表内 model 应保留, got %v", got)
+	}
+}
+
+func TestClaudeSyncKeepsBuiltinAliasTopLevelModel(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"),
+		[]byte(`{"model":"sonnet"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in := SyncInput{
+		Enabled: true, DefaultPlatformID: "p1",
+		Platforms: []config.ModelPlatform{{
+			ID: "p1", AnthropicBaseURL: "https://ant.example/",
+			Models: []string{"glm-5.3-flash"},
+		}},
+	}
+	if err := (Claude{}).Sync(home, in); err != nil {
+		t.Fatal(err)
+	}
+	if got := readClaudeSettings(t, home)["model"]; got != "sonnet" {
+		t.Fatalf("内置别名应保留, got %v", got)
+	}
+}
+
 // Claude 注册进 DefaultTargets 且 ToolID 正确，SyncAll/SyncTool 才能路由到它。
 func TestClaudeInDefaultTargets(t *testing.T) {
 	found := false

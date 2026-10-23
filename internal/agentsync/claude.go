@@ -68,12 +68,57 @@ func (c Claude) Sync(home string, in SyncInput) error {
 	} else {
 		delete(doc, "env")
 	}
+	reconcileClaudeTopLevelModel(doc, in)
 	raw, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return err
 	}
 	raw = append(raw, '\n')
 	return writeAtomic(path, raw)
+}
+
+// reconcileClaudeTopLevelModel 校正 settings.json 顶层 "model"（Claude /model
+// 会写入）：默认平台有模型列表时，若该值既非内置别名、也不在列表/ActiveModel
+// 中，视为旧平台残留并删除，避免 Custom 悬空。无列表时不校验（自由输入）。
+func reconcileClaudeTopLevelModel(doc map[string]any, in SyncInput) {
+	cur, ok := doc["model"].(string)
+	if !ok {
+		return
+	}
+	cur = strings.TrimSpace(cur)
+	if cur == "" {
+		delete(doc, "model")
+		return
+	}
+	if isClaudeBuiltinModelAlias(cur) {
+		return
+	}
+	models := platformModelNames(in)
+	if len(models) == 0 {
+		return
+	}
+	active := strings.TrimSpace(in.ActiveModel)
+	bare := bareModelID(cur)
+	for _, m := range models {
+		if cur == m || bare == m {
+			return
+		}
+	}
+	if active != "" && (cur == active || bare == active) {
+		return
+	}
+	delete(doc, "model")
+}
+
+func isClaudeBuiltinModelAlias(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "default", "sonnet", "opus", "haiku",
+		"sonnet[1m]", "opus[1m]", "haiku[1m]",
+		"sonnet-1m", "opus-1m", "haiku-1m":
+		return true
+	default:
+		return false
+	}
 }
 
 // writeModelEnv 写入 ANTHROPIC_MODEL 与三个 DEFAULT 别名；无可用模型名则不写。
