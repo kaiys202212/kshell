@@ -186,6 +186,19 @@ func TestCodeBuddyReconcileDefaultModel(t *testing.T) {
 		}
 	})
 
+	t.Run("纯裸名无命中不动（内置模型保护）", func(t *testing.T) {
+		d := dir(t)
+		write(t, d, "models.json", map[string]any{"models": []any{}})
+		write(t, d, "settings.json", map[string]any{"model": "gpt-4o"})
+		if err := (CodeBuddy{}).reconcileDefaultModel(d, candidates); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		got := readCodeBuddySettings(t, d)
+		if got["model"] != "gpt-4o" {
+			t.Fatalf("CLI 内置模型 id 不应被覆盖，got %v", got["model"])
+		}
+	})
+
 	t.Run("无候选不动", func(t *testing.T) {
 		d := dir(t)
 		write(t, d, "models.json", map[string]any{"models": []any{}})

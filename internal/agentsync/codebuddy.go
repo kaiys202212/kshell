@@ -87,23 +87,24 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 		doc["availableModels"] = availKept
 	}
 
+	doc["models"] = kept
+	raw, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := writeAtomic(path, raw); err != nil {
+		return err
+	}
+
+	// 先落 models.json 再校正 settings.json：models.json 写失败时不动默认模型，
+	// 避免两文件状态分叉。
 	candidateIDs := make([]string, 0, len(kept))
 	for _, m := range kept {
 		if id, _ := m["id"].(string); id != "" {
 			candidateIDs = append(candidateIDs, id)
 		}
 	}
-	if err := c.reconcileDefaultModel(filepath.Dir(path), candidateIDs); err != nil {
-		return err
-	}
-
-	doc["models"] = kept
-	raw, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		return err
-	}
-	raw = append(raw, '\n')
-	return writeAtomic(path, raw)
+	return c.reconcileDefaultModel(filepath.Dir(path), candidateIDs)
 }
 
 // reconcileDefaultModel 校正 ~/.codebuddy/settings.json 的默认模型（"model"，
@@ -112,10 +113,12 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 //  1. 精确命中候选 id → 不动；
 //  2. 剥离平台前缀（最后一个 ':' 或 '/' 之后）得裸名，命中候选 id 或其 '/'
 //     后缀（如 custom-local:glm-5.3-flash → glm-5.3-flash）→ 回写完整 id；
-//  3. 无命中且有 kshell 候选 → 回写第一个 kshell id；
-//  4. 无候选 → 不动。
+//  3. 无命中但原值形似命名空间 id（含 ':' 或 '/' 分隔符）且存在 kshell 候选
+//     → 回写第一个 kshell id；
+//  4. 其余（含纯裸名无命中——可能是 CLI 内置模型 id）→ 不动。
 //
 // settings.json 缺失/损坏/model 非字符串一律跳过；静默自愈，不外抛告警。
+// 注意：回写会按字母序重排 settings.json 的键（JSON 无语义，可接受）。
 func (CodeBuddy) reconcileDefaultModel(codebuddyDir string, candidates []string) error {
 	settingsPath := filepath.Join(codebuddyDir, "settings.json")
 	settings, err := readJSONObject(settingsPath)
@@ -133,6 +136,7 @@ func (CodeBuddy) reconcileDefaultModel(codebuddyDir string, candidates []string)
 		}
 	}
 	bare := cur
+	qualified := strings.ContainsAny(cur, ":/")
 	if i := strings.LastIndexAny(cur, ":/"); i >= 0 && i+1 < len(cur) {
 		bare = cur[i+1:]
 	}
@@ -143,7 +147,9 @@ func (CodeBuddy) reconcileDefaultModel(codebuddyDir string, candidates []string)
 			break
 		}
 	}
-	if resolved == "" {
+	if resolved == "" && qualified {
+		// 仅当原值形似已消失的命名空间 id（带平台前缀）才兜底回退；
+		// 纯裸名无命中可能是 CLI 内置模型，不得覆盖。
 		for _, id := range candidates {
 			if isKshellModelID(id) {
 				resolved = id
