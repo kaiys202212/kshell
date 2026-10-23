@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"errors"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -118,6 +119,33 @@ func TestTraeLoginCmd(t *testing.T) {
 	cmd := (Trae{}).LoginCmd()
 	if len(cmd) != 2 || cmd[0] != "traecli" || cmd[1] != "login" {
 		t.Fatalf("LoginCmd = %v", cmd)
+	}
+}
+
+// TestTraeProbeAuth 表驱动：login status 的输出/退出码组合 → 三态结论。
+// 实测锚点（0.211.1 未登录）：exit 非 0 + "Not logged in"。
+func TestTraeProbeAuth(t *testing.T) {
+	cases := []struct {
+		name string
+		out  string
+		err  error
+		want AuthStatus
+	}{
+		{"已登录", "Logged in as user@corp (SSO)\n", nil, AuthIn},
+		{"未登录（实测形态）", "Not logged in\n", errors.New("exit 1"), AuthOut},
+		{"未登录输出但大小写不同", "NOT LOGGED IN", errors.New("exit 1"), AuthOut},
+		{"找不到 bin", "", errNoTraeBin, AuthUnknown},
+		{"超时（无标识输出）", "", errors.New("signal: killed"), AuthUnknown},
+		{"exit 0 却说未登录（形态异常）", "not logged in", nil, AuthUnknown},
+		{"崩溃输出", "panic: boom", errors.New("exit 2"), AuthUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := probeTraeAuth(func() (string, error) { return tc.out, tc.err })
+			if got != tc.want {
+				t.Fatalf("probeTraeAuth = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

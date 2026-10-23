@@ -1,9 +1,16 @@
 package providers
 
 import (
+	"context"
+	"errors"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
+
+	"github.com/yangk/kshell/internal/executil"
 )
 
 const traeID = "trae"
@@ -22,6 +29,61 @@ var _ LoginCmdProvider = Trae{}
 // LoginCmd 返回官方交互式登录命令。traecli login 走企业浏览器 SSO；
 // PAT 场景（TRAECLI_PERSONAL_ACCESS_TOKEN）也覆盖，由 CLI 自己引导。
 func (Trae) LoginCmd() []string { return []string{"traecli", "login"} }
+
+// Trae 实现 AuthProber（编译期断言）。
+var _ AuthProber = Trae{}
+
+// traeAuthTimeout 限制 login status 单次探测耗时：CLI 卡死不能拖住扫描与登录弹窗轮询。
+const traeAuthTimeout = 3 * time.Second
+
+var errNoTraeBin = errors.New("trae: 未找到 traecli 可执行文件")
+
+// ProbeAuth 用官方 `traecli login status` 子命令判定登录态。破例起子进程
+//（auth.go 的约定是只读静态配置文件）：TRAE 登录态没有稳定可读文件——
+// 0.211.1 未登录时 ~/.trae/cli 下无 auth 产物，登录后文件形态未实测，
+// 而 login status 是官方子命令（未登录：exit 非 0 + "Not logged in"，实测）。
+// 探测点只有 DetectAll 组装与登录弹窗轮询（CheckToolAuth），单次 ~0.5s 可接受；
+// 任何拿不准的失败一律 AuthUnknown 保守放行（宁可多跑一次失败的会话）。
+func (Trae) ProbeAuth() AuthStatus {
+	return probeTraeAuth(traeLoginStatus)
+}
+
+// probeTraeAuth 是可测核心：
+//   - exit 0 且输出不含「not logged in」→ AuthIn；
+//   - 非 0 退出且输出含「not logged in」（大小写不敏感）→ AuthOut（0.211.1 实测）；
+//   - 其余（找不到 bin、超时、输出形态异常）→ AuthUnknown。
+func probeTraeAuth(run func() (string, error)) AuthStatus {
+	out, err := run()
+	loggedOut := strings.Contains(strings.ToLower(out), "not logged in")
+	switch {
+	case err == nil && !loggedOut:
+		return AuthIn
+	case err != nil && loggedOut:
+		return AuthOut
+	default:
+		return AuthUnknown
+	}
+}
+
+// traeLoginStatus 运行 traecli login status，返回合并输出与进程错误。
+// bin 解析复用 FindBins 口径：PATH 命中优先，落空再扫 InstallDirs 候选
+//（官方安装器只写用户 PATH，已运行进程可能持旧值）。
+func traeLoginStatus() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", errNoTraeBin
+	}
+	bins := FindBins(Trae{}.DetectSpec(home), home)
+	if len(bins) == 0 {
+		return "", errNoTraeBin
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), traeAuthTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bins[0], "login", "status")
+	executil.HideWindow(cmd) // 桌面端扫描时避免黑窗闪烁
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
 
 func (Trae) ID() string          { return traeID }
 func (Trae) DisplayName() string { return "TRAE CLI" }
