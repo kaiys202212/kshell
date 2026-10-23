@@ -192,6 +192,7 @@
       "cursor_no_clear": "Cursor 不支持清除配置",
       "cursor_agent_not_found": "未找到 cursor-agent 可执行文件",
       "still_detected": "仍检测到可执行文件: {{0}}",
+      "bin_in_use": "{{0}} 被进程占用无法删除（{{1}}）：请退出该工具的终端/会话，或结束相关进程后重试",
       "unknown_shell": "未知 shell: {{0}}"
     },
     "update": {
@@ -236,6 +237,7 @@
       "uninstall_cmd_failed_removed": "卸载命令失败但仍已删除残留二进制: {{0}}",
       "remove_residual_failed": "删除残留失败: {{0}}: {{1}}",
       "residual_removed": "已删除残留: {{0}}",
+      "sessions_closed": "卸载前已关闭该工具的会话: {{0}} 个",
       "npm_missing": "未找到 npm，请先安装 Node.js"
     }
   },

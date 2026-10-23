@@ -10,11 +10,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"time"
 
+	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/executil"
 	"github.com/yangk/kshell/internal/providers"
+	"github.com/yangk/kshell/internal/terminal"
 )
 
 var (
@@ -214,6 +218,10 @@ func (a *App) execInstallCommand(id, action string, recipe providers.InstallReci
 	var cmdErr error
 	// 先补常见安装目录进 PATH，否则 FindBins/Detect 看不到 %APPDATA%\npm 里的残留。
 	ensureToolBinsOnPATH()
+	// 卸载前置：先关掉 kshell 管理的该工具会话（ACP 聊天 + 内嵌终端 + 登录终端）。
+	// Windows 下运行中的可执行文件被锁，不关就删不掉（实测 traex.exe 残留案例：
+	// 卸载报「仍检测到可执行文件」，实为该进程仍在跑）。
+	a.closeToolSessions(id, onLog)
 	if recipe.UninstallCmd != "" {
 		cmdErr = a.runInstallCmd(a.runCtx(), recipe.Shell, recipe.UninstallCmd, onLog)
 	} else if tool := a.toolByID(id); tool.BinPath != "" {
@@ -229,7 +237,12 @@ func (a *App) execInstallCommand(id, action string, recipe providers.InstallReci
 		cmdErr = errCursorNoBin
 	}
 
-	removed := a.removeLeftoverBins(id, onLog)
+	removed, failures := a.removeLeftoverBins(id, onLog)
+	// 删除失败（典型：文件被进程占用）→ 给可操作错误：提示退出会话/结束进程
+	// 后重试，而不是只报「仍检测到」让用户无从下手（2026-10-23 用户反馈）。
+	if len(failures) > 0 {
+		return fmt.Errorf("err.tool.bin_in_use|%s|%s", failures[0].path, failures[0].err)
+	}
 	if left := a.leftoverBins(id); len(left) > 0 {
 		return fmt.Errorf("err.tool.still_detected|%s", left[0])
 	}
@@ -263,7 +276,7 @@ func (a *App) leftoverBins(id string) []string {
 	return nil
 }
 
-func (a *App) removeLeftoverBins(id string, onLog func(string)) int {
+func (a *App) removeLeftoverBins(id string, onLog func(string)) (int, []binRemoveFailure) {
 	extra := a.toolByID(id).BinPath
 	bins := a.leftoverBins(id)
 	if extra != "" {
@@ -279,20 +292,81 @@ func (a *App) removeLeftoverBins(id string, onLog func(string)) int {
 		}
 	}
 	n := 0
+	var failures []binRemoveFailure
 	for _, bin := range bins {
-		if err := os.Remove(bin); err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
+		err := os.Remove(bin)
+		if err != nil && !os.IsNotExist(err) {
+			// 短重试一次：closeToolSessions 杀完会话后句柄释放是异步的
+			//（Windows 实测为几百毫秒级），立即删常差这一拍。
+			time.Sleep(binRemoveRetryDelay)
+			err = os.Remove(bin)
+		}
+		if err == nil {
 			if onLog != nil {
-				onLog("tool.log.remove_residual_failed|" + bin + "|" + err.Error())
+				onLog("tool.log.residual_removed|" + bin)
 			}
+			n++
+			continue
+		}
+		if os.IsNotExist(err) {
 			continue
 		}
 		if onLog != nil {
-			onLog("tool.log.residual_removed|" + bin)
+			onLog("tool.log.remove_residual_failed|" + bin + "|" + err.Error())
 		}
-		n++
+		failures = append(failures, binRemoveFailure{path: bin, err: err})
+	}
+	return n, failures
+}
+
+// binRemoveFailure 是残留删除失败明细：路径 + 底层错误（供卸载错误带出可操作信息）。
+type binRemoveFailure struct {
+	path string
+	err  error
+}
+
+// binRemoveRetryDelay：残留删除失败后的单次重试等待（句柄释放竞态）。
+const binRemoveRetryDelay = 400 * time.Millisecond
+
+// binCloseSettleDelay：closeToolSessions 杀完会话后的统一等待——Windows 进程
+// 终止与句柄释放异步，不等这一拍，紧随其后的文件删除很容易失败。
+const binCloseSettleDelay = 800 * time.Millisecond
+
+// closeToolSessions 关闭 kshell 管理的指定工具全部会话（卸载前置步骤）：
+// ACP 聊天先 Cancel（取消当前轮）再 Close（真摘除并杀 agent 子进程），
+// 内嵌终端（含 login:<toolID> 登录终端）按 Close 终止进程树。只关 kshell
+// 自己启动的会话；用户在系统终端里手跑的进程不越权处置，删除失败时由
+// err.tool.bin_in_use 提示用户自行退出。
+func (a *App) closeToolSessions(id string, onLog func(string)) int {
+	n := 0
+	if cm := a.chats(); cm != nil {
+		for _, c := range cm.List() {
+			if c.ToolID != id || c.Status == chat.StatusExited {
+				continue
+			}
+			_ = cm.Cancel(c.ID)
+			if err := cm.Close(c.ID); err == nil {
+				n++
+			}
+		}
+	}
+	if tm := a.terminals(); tm != nil {
+		for _, t := range tm.List() {
+			if t.ToolID != id || t.Status == terminal.StatusExited {
+				continue
+			}
+			if err := tm.Close(t.ID); err == nil {
+				n++
+			}
+		}
+	}
+	if n > 0 {
+		if onLog != nil {
+			onLog("tool.log.sessions_closed|" + strconv.Itoa(n))
+		}
+		// 杀进程是异步收尾：等句柄释放再返回，让紧随其后的文件删除不至于
+		// 撞上「进程已死、句柄未放」的窗口。
+		time.Sleep(binCloseSettleDelay)
 	}
 	return n
 }

@@ -192,6 +192,7 @@
       "cursor_no_clear": "Cursor does not support clearing its configuration",
       "cursor_agent_not_found": "cursor-agent executable not found",
       "still_detected": "Executable still detected: {{0}}",
+      "bin_in_use": "{{0}} is locked by a running process ({{1}}): close its terminals/sessions or end the process, then retry",
       "unknown_shell": "Unknown shell: {{0}}"
     },
     "update": {
@@ -236,6 +237,7 @@
       "uninstall_cmd_failed_removed": "Uninstall command failed, but residual binaries were removed: {{0}}",
       "remove_residual_failed": "Failed to remove residual file {{0}}: {{1}}",
       "residual_removed": "Removed residual file {{0}}",
+      "sessions_closed": "Closed {{0}} session(s) of this tool before uninstall",
       "npm_missing": "npm not found; install Node.js first"
     }
   },

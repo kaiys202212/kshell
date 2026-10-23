@@ -14,6 +14,7 @@ import (
 
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
+	"github.com/yangk/kshell/internal/terminal"
 )
 
 func waitJobIdle(t *testing.T, app *App) {
@@ -554,5 +555,152 @@ func TestUninstallCursorNodeEntryRemovesLeftoverVersions(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(root, name, "node.exe")); !os.IsNotExist(err) {
 			t.Fatalf("版本目录 %s 的 node.exe 应被删除", name)
 		}
+	}
+}
+
+// stubUninstallProvider：带安装配方的桩 provider，DetectSpec 的 InstallDirs 指向
+// 测试临时目录。卸载相关测试绝不能用内置 trae（其 InstallDirs 指向本机真实
+// 安装目录 %LOCALAPPDATA%\Programs\TraeCLI\bin，会误删用户安装）。
+type stubUninstallProvider struct {
+	fakeProvider
+	recipe providers.InstallRecipe
+	spec   providers.DetectSpec
+}
+
+func (p stubUninstallProvider) DetectSpec(string) providers.DetectSpec { return p.spec }
+func (p stubUninstallProvider) InstallRecipe() providers.InstallRecipe  { return p.recipe }
+
+// TestUninstallClosesToolSessionsFirst 卸载前置关闭该工具的 kshell 管理会话
+//（2026-10-23 用户反馈：卸载 TRAE 报「仍检测到可执行文件」，实为 traex.exe
+// 仍在运行锁文件）。其他工具的终端不受影响，关闭动作记入日志。
+func TestUninstallClosesToolSessionsFirst(t *testing.T) {
+	isolatePATH(t)
+	home := t.TempDir()
+	bindir := t.TempDir()
+	bin := filepath.Join(bindir, "stubtool.exe")
+	if err := os.WriteFile(bin, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := stubUninstallProvider{
+		fakeProvider: fakeProvider{id: "stubtool"},
+		spec:         providers.DetectSpec{BinName: "stubtool", InstallDirs: []string{bindir}},
+	}
+	app := NewAppWith(Options{
+		Providers: []providers.Provider{p},
+		Home:      home,
+		Scan: func(string, []providers.Provider, string, discovery.ScanOptions) (*discovery.Result, error) {
+			return &discovery.Result{}, nil
+		},
+		Windows: NewWindowManager(&stubLauncher{}, nil),
+		InstallRunner: func(context.Context, string, string, func(string)) error {
+			return nil
+		},
+	})
+	setTools(t, app, []discovery.Tool{{ID: "stubtool", Installed: true, BinPath: bin}})
+
+	backend := &stubTermBackend{}
+	tm := newTerminalManagerWith(func(string, ...any) {}, backend)
+	app.mu.Lock()
+	app.opts.Terminals = tm
+	app.mu.Unlock()
+
+	// stubtool 的登录终端 + claude 的终端：卸载 stubtool 只应关前者。
+	if _, err := tm.Open("login:stubtool", terminal.Info{
+		Kind: terminal.KindLogin, ToolID: "stubtool", Title: "stub login",
+	}, terminal.Spec{}, 80, 24); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tm.Open("term:claude", terminal.Info{
+		Kind: terminal.KindSession, ToolID: "claude", Title: "claude term",
+	}, terminal.Spec{}, 80, 24); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.UninstallBuiltinTool("stubtool", false); err != nil {
+		t.Fatal(err)
+	}
+	waitJobIdle(t, app)
+
+	job := app.GetToolInstallJob()
+	if job.Error != "" {
+		t.Fatalf("卸载应成功, job=%+v", job)
+	}
+	if !strings.Contains(job.Log, "tool.log.sessions_closed|1") {
+		t.Fatalf("应记录关闭会话数, log=%q", job.Log)
+	}
+	backend.mu.Lock()
+	stubHandle, claudeHandle := backend.handles[0], backend.handles[1]
+	backend.mu.Unlock()
+	if !stubHandle.isClosed() {
+		t.Fatal("被卸载工具的终端应被关闭")
+	}
+	if claudeHandle.isClosed() {
+		t.Fatal("其他工具的终端不应被关闭")
+	}
+	if _, err := os.Stat(bin); !os.IsNotExist(err) {
+		t.Fatal("可执行文件应被删除")
+	}
+}
+
+// TestUninstallBinInUseReportsActionableError 残留删除失败（典型：进程占用）时，
+// 错误换成可操作的 err.tool.bin_in_use（提示退出会话/结束进程后重试），
+// 而不是只有路径的「仍检测到可执行文件」。用非空目录模拟删不掉的路径：
+// os.Remove 对非空目录必败，跨平台稳定。
+func TestUninstallBinInUseReportsActionableError(t *testing.T) {
+	isolatePATH(t)
+	home := t.TempDir()
+	locked := filepath.Join(home, "locked-bin")
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(locked, "child.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := stubUninstallProvider{
+		fakeProvider: fakeProvider{id: "stubtool"},
+		spec:         providers.DetectSpec{BinName: "stubtool", InstallDirs: []string{t.TempDir()}},
+	}
+	app := NewAppWith(Options{
+		Providers: []providers.Provider{p},
+		Home:      home,
+		Scan: func(string, []providers.Provider, string, discovery.ScanOptions) (*discovery.Result, error) {
+			return &discovery.Result{}, nil
+		},
+		Windows: NewWindowManager(&stubLauncher{}, nil),
+		InstallRunner: func(context.Context, string, string, func(string)) error {
+			return nil
+		},
+	})
+	// BinPath 指向非空目录：卸载主删与残留重删都必然失败。
+	setTools(t, app, []discovery.Tool{{ID: "stubtool", Installed: true, BinPath: locked}})
+	if err := app.UninstallBuiltinTool("stubtool", false); err != nil {
+		t.Fatal(err)
+	}
+	waitJobIdle(t, app)
+	job := app.GetToolInstallJob()
+	if !strings.HasPrefix(job.Error, "err.tool.bin_in_use|") {
+		t.Fatalf("删除失败应报 bin_in_use, got %q", job.Error)
+	}
+	if !strings.Contains(job.Error, locked) {
+		t.Fatalf("错误应带残留路径, got %q", job.Error)
+	}
+}
+
+// TestCloseToolSessionsNilManagersSafe 未装配 manager（未走 Startup）时不 panic，
+// 静默返回 0：卸载入口对未初始化的应用实例同样可用。
+func TestCloseToolSessionsNilManagersSafe(t *testing.T) {
+	app := NewAppWith(Options{
+		Providers: providers.Builtins(),
+		Home:      t.TempDir(),
+		Scan: func(string, []providers.Provider, string, discovery.ScanOptions) (*discovery.Result, error) {
+			return &discovery.Result{}, nil
+		},
+		Windows: NewWindowManager(&stubLauncher{}, nil),
+	})
+	var logged []string
+	if n := app.closeToolSessions("trae", func(line string) { logged = append(logged, line) }); n != 0 {
+		t.Fatalf("无 manager 时应关闭 0 个, got %d", n)
+	}
+	if len(logged) != 0 {
+		t.Fatalf("无关闭不应记日志, got %v", logged)
 	}
 }
