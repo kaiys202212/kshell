@@ -141,8 +141,13 @@ func TestBridgeAdaptsRequirements(t *testing.T) {
 		t.Fatalf("不存在的 ssh 工作区应返回 nil: %+v err=%v", got, err)
 	}
 
-	// 运行中任务：对齐 chat.Info（running 状态会话）
-	m := newChatManagerWith(func(string, ...any) {}, fakeChatBackend{}, nil, nil, nil, nil, nil)
+	// 运行中任务：对齐 chat.Info（running 状态会话）。
+	// 用 promptGate 钳住 running：无门闩时 fake conn 的 Prompt 秒回，
+	// running 是瞬态，轮询错过就偶发「未进入 running / GetTaskDetail 未命中」。
+	conn := &fakeChatConn{waitCh: make(chan struct{})}
+	conn.promptGate = make(chan struct{})
+	m := newChatManagerWith(func(string, ...any) {}, &queueGateBackend{conn: conn}, nil, nil, nil, nil, nil)
+	t.Cleanup(func() { close(conn.promptGate) }) // 先于 CloseAll 释放忙轮次
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m
 	info, err := m.Open("session:s1", chat.Info{
