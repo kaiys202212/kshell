@@ -5,8 +5,9 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import TitleBar from './TitleBar';
-import { SETTINGS_TAB_ID } from '../state/store';
+import { SETTINGS_TAB_ID, useAppStore } from '../state/store';
 import { tt } from '../test/i18n';
+
 
 const runtime = vi.hoisted(() => ({
   WindowMinimise: vi.fn(),
@@ -41,7 +42,14 @@ afterEach(cleanup);
 beforeEach(() => {
   vi.clearAllMocks();
   runtime.WindowIsMaximised.mockResolvedValue(false);
+  useAppStore.setState({
+    chats: [],
+    terminals: [],
+    chatPermissions: {},
+    terminalBusy: {},
+  });
 });
+
 
 describe('TitleBar', () => {
   it('渲染首页 / 工作区页签 / 设置 / 三个窗口控件', () => {
@@ -149,5 +157,35 @@ describe('TitleBar', () => {
     setup();
 
     await waitFor(() => expect(screen.getByRole('button', { name: tt('ui.titlebar.maximize') })).toBeInTheDocument());
+  });
+
+  it('工作区有 running 会话时项目页签出现旋转「执行中」图标', () => {
+    useAppStore.setState({
+      chats: [
+        {
+          ID: 'c1',
+          Kind: 'new',
+          SessionID: '',
+          Workspace: 'D:\\proj-a',
+          Title: '忙',
+          ToolID: 'claude',
+          Status: 'running',
+          ExitCode: 0,
+          Error: '',
+        },
+      ],
+    });
+    setup();
+    const wrapper = screen.getByRole('button', { name: 'proj-a' }).closest('div.group')!;
+    expect(wrapper.querySelector('[aria-label="' + tt('ui.agent_activity.running') + '"]')).toBeTruthy();
+    // 另一项目无工作态
+    const other = screen.getByRole('button', { name: 'proj-b' }).closest('div.group')!;
+    expect(other.querySelector('[aria-label="' + tt('ui.agent_activity.running') + '"]')).toBeNull();
+  });
+
+  it('工作区页签使用加宽 max-w-48', () => {
+    setup();
+    const wrapper = screen.getByRole('button', { name: 'proj-a' }).closest('div.group')!;
+    expect(wrapper.className).toMatch(/max-w-48/);
   });
 });

@@ -27,14 +27,20 @@ import {
 import type { Session, SshConnection, TerminalInfo, ToolInfo } from '../lib/api';
 import { encodeTerminalInput } from '../lib/base64';
 import { appendChatInput } from '../lib/chatInputRegistry';
-import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
+import { quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
 import { badgeFor } from '../lib/toolBadge';
 import { usableForSessionMenu } from '../lib/toolUsable';
 import { cn } from '../lib/cn';
+import {
+  loadCenterTabOrder,
+  mergeCenterTabOrder,
+  saveCenterTabOrder,
+} from '../lib/centerTabOrder';
 import { displayTitle } from '../lib/title';
-import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
+import { TAB_ACTIVE, TAB_BASE } from '../lib/ui';
 import { sameWorkspacePath } from '../lib/workspacePath';
+import CenterSessionTabs, { type CenterSessionTabItem } from '../components/CenterSessionTabs';
 import FileTree from '../components/FileTree';
 import FileTabsPane from '../components/FileTabsPane';
 import GitPanel from '../components/GitPanel';
@@ -46,13 +52,11 @@ import SessionTranscript from '../components/SessionTranscript';
 import ActiveTerminalsPanel from '../components/ActiveTerminalsPanel';
 import SshPanel from '../components/SshPanel';
 import TerminalView from '../components/TerminalView';
-import AgentActivityIcon from '../components/AgentActivityIcon';
 import ChatView from '../components/ChatView';
 import LoginDialog from '../components/LoginDialog';
 import NewSessionMenu from '../components/NewSessionMenu';
 import { Button } from '../components/ui/button';
 import { EmptyState } from '../components/ui/empty-state';
-import { ToolDot } from '../components/ui/tool-dot';
 import { resolveAgentActivity } from '../state/agentActivity';
 import { LAYOUT_DEFAULT, useAppStore } from '../state/store';
 import type { WorkspaceTab } from '../state/store';
@@ -90,10 +94,6 @@ const NEW_SESSION_RESCAN_DELAYS_MS = [3000, 8000, 15000];
 // 右栏「文件 | SSH」子页签：扁平下划线式
 const paneTabBase = `${TAB_BASE} h-7 text-xs`;
 const paneTabActive = TAB_ACTIVE;
-
-// 中心区页签：与标题栏同语言（下划线激活），终端页签带工具徽标与关闭键
-const centerTabBase = `group ${TAB_BASE} h-7 max-w-56 text-xs`;
-const centerTabActive = TAB_ACTIVE;
 
 export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; visible: boolean }) {
   const { t: tr } = useTranslation();
@@ -144,6 +144,58 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     () => chats.filter((c) => sameWorkspacePath(c.Workspace, tab.id)),
     [chats, tab.id],
   );
+
+  // 中心区会话页签顺序：localStorage 持久化；新建追加末尾，拖动后写回
+  const liveSessionIDs = useMemo(
+    () => [...terms.map((t) => t.ID), ...chatsForWs.map((c) => c.ID)],
+    [terms, chatsForWs],
+  );
+  const [savedTabOrder, setSavedTabOrder] = useState(() => loadCenterTabOrder(tab.id));
+  const sessionTabOrder = useMemo(
+    () => mergeCenterTabOrder(savedTabOrder, liveSessionIDs),
+    [savedTabOrder, liveSessionIDs],
+  );
+  useEffect(() => {
+    saveCenterTabOrder(tab.id, sessionTabOrder);
+  }, [tab.id, sessionTabOrder]);
+
+  const centerSessionItems = useMemo<CenterSessionTabItem[]>(() => {
+    const out: CenterSessionTabItem[] = [];
+    for (const t of terms) {
+      const badge = badgeFor(t.ToolID);
+      const label = displayTitle(t.Title) || tr('ui.workspace.new_session');
+      out.push({
+        id: t.ID,
+        kind: 'terminal',
+        label,
+        toolID: t.ToolID,
+        activity: resolveAgentActivity({
+          status: t.Status,
+          hasPermission: false,
+          kind: 'terminal',
+          busy: !!terminalBusy[t.ID],
+        }),
+        titleAttr: t.ToolID ? tr('ui.workspace.tab_title_tool', { label, tool: badge.label }) : label,
+        exited: t.Status === 'exited',
+      });
+    }
+    for (const c of chatsForWs) {
+      const label = displayTitle(c.Title) || tr('ui.workspace.new_session');
+      out.push({
+        id: c.ID,
+        kind: 'chat',
+        label,
+        toolID: c.ToolID,
+        activity: resolveAgentActivity({
+          status: c.Status,
+          hasPermission: !!chatPermissions[c.ID],
+          kind: 'chat',
+        }),
+        titleAttr: label,
+      });
+    }
+    return out;
+  }, [terms, chatsForWs, terminalBusy, chatPermissions, tr]);
 
   const selectedSessionID = useMemo(() => {
     if (centerTab === SESSION_TAB) {
@@ -515,181 +567,30 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
-        {/* 中心区页签条：左钉会话预览 + 可关会话；右钉文件 | 终端 */}
-        <div
-          className="flex shrink-0 items-stretch border-b border-border"
-          role="tablist"
-          aria-label={tr('ui.workspace.center_tabs_aria')}
-        >
-          <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
-          <button
-            role="tab"
-            aria-selected={centerTab === SESSION_TAB}
-            className={cn(centerTabBase, centerTab === SESSION_TAB && centerTabActive)}
-            onClick={() => selectCenterTab(SESSION_TAB)}
-          >
-            {tr('ui.workspace.session_preview')}
-            {centerTab === SESSION_TAB && <span className={TAB_UNDERLINE} />}
-          </button>
-          {terms.map((t) => {
-            const badge = badgeFor(t.ToolID);
-            const active = centerTab === t.ID;
-            // 渲染层再洗一次：Cursor 包装标签 / OSC 查色残片等；洗净后为空则用占位，勿回退原文
-            const label = displayTitle(t.Title) || tr('ui.workspace.new_session');
-            const activity = resolveAgentActivity({
-              status: t.Status,
-              hasPermission: false,
-              kind: 'terminal',
-              busy: !!terminalBusy[t.ID],
-            });
-            return (
-              <div
-                key={t.ID}
-                className={cn(centerTabBase, active && centerTabActive)}
-                // 整条页签可点（标题右侧的工具徽标/留白此前点不动，只有标题按钮响应）
-                onClick={() => selectCenterTab(t.ID)}
-                onAuxClick={(e) => {
-                  if (e.button === 1) {
-                    e.preventDefault();
-                    handleCloseTerminal(t.ID);
-                  }
-                }}
-                // 拖文件到未激活页签标题：先切页签再插入，落点反馈与结果一致
-                onDragOver={(e) => {
-                  if (e.dataTransfer.types.includes(DRAG_MIME)) e.preventDefault();
-                }}
-                onDrop={(e) => {
-                  const p = e.dataTransfer.getData(DRAG_MIME);
-                  if (!p) return;
-                  e.preventDefault();
-                  e.stopPropagation();
-                  selectCenterTab(t.ID); // 先切页签，插入后用户立即看到
-                  if (t.Status !== 'exited') void writeTerminal(t.ID, encodeTerminalInput(quotePathForShell(p)));
-                }}
-              >
-                <AgentActivityIcon activity={activity} />
-                <button
-                  role="tab"
-                  aria-selected={active}
-                  className="min-w-0 truncate text-xs"
-                  title={t.ToolID ? tr('ui.workspace.tab_title_tool', { label, tool: badge.label }) : label}
-                >
-                  {label}
-                </button>
-                {/* 中栏 agent 页签徽标只留图标，工具名见悬停 title */}
-                {t.ToolID && <ToolDot toolID={t.ToolID} className="shrink-0" showLabel={false} />}
-                <button
-                  className={cn(
-                    'ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-sm leading-none text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground',
-                    active ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100',
-                  )}
-                  aria-label={tr('ui.workspace.close_terminal', { label })}
-                  onClick={(e) => {
-                    e.stopPropagation(); // 只关，不顺带切到/切走该页签
-                    handleCloseTerminal(t.ID);
-                  }}
-                >
-                  ×
-                </button>
-                {active && <span className={TAB_UNDERLINE} />}
-              </div>
-            );
-          })}
-          {chatsForWs.map((c) => {
-            const active = centerTab === c.ID;
-            const label = displayTitle(c.Title) || tr('ui.workspace.new_session');
-            const activity = resolveAgentActivity({
-              status: c.Status,
-              hasPermission: !!chatPermissions[c.ID],
-              kind: 'chat',
-            });
-            return (
-              <div
-                key={c.ID}
-                className={cn(centerTabBase, active && centerTabActive)}
-                // 整条页签可点（标题右侧的徽标/留白也响应）
-                onClick={() => selectCenterTab(c.ID)}
-                onAuxClick={(e) => {
-                  if (e.button === 1) {
-                    e.preventDefault();
-                    handleCloseChat(c.ID);
-                  }
-                }}
-                // 同终端页签：拖文件到聊天页签标题先切换，再投递到输入框草稿
-                onDragOver={(e) => {
-                  if (e.dataTransfer.types.includes(DRAG_MIME)) e.preventDefault();
-                }}
-                onDrop={(e) => {
-                  const p = e.dataTransfer.getData(DRAG_MIME);
-                  if (!p) return;
-                  e.preventDefault();
-                  e.stopPropagation();
-                  selectCenterTab(c.ID);
-                  appendChatInput(c.ID, quotePathForShell(p));
-                }}
-              >
-                <AgentActivityIcon activity={activity} />
-                <button
-                  role="tab"
-                  aria-selected={active}
-                  className="min-w-0 truncate text-xs"
-                  title={label}
-                >
-                  {label}
-                </button>
-                {/* 聊天标题通常已含工具名，徽标只留图标避免重复 */}
-                {c.ToolID && <ToolDot toolID={c.ToolID} className="shrink-0" showLabel={false} />}
-                <button
-                  className={cn(
-                    'ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-sm leading-none text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground',
-                    active ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-100',
-                  )}
-                  aria-label={tr('ui.workspace.close_chat', { label })}
-                  onClick={(e) => {
-                    e.stopPropagation(); // 只关，不顺带切到/切走该页签
-                    handleCloseChat(c.ID);
-                  }}
-                >
-                  ×
-                </button>
-                {active && <span className={TAB_UNDERLINE} />}
-              </div>
-            );
-          })}
-          </div>
-          <button
-            role="tab"
-            aria-selected={centerTab === FILES_TAB}
-            className={cn(
-              centerTabBase,
-              'ml-auto shrink-0 border-l border-border bg-muted/40 text-muted-foreground',
-              centerTab === FILES_TAB && cn(centerTabActive, 'bg-muted/70'),
-            )}
-            onClick={() => selectCenterTab(FILES_TAB)}
-          >
-            {tr('ui.workspace.files_tab')}
-            {centerTab === FILES_TAB && <span className={TAB_UNDERLINE} />}
-          </button>
-          <button
-            role="tab"
-            aria-selected={centerTab === TERMINALS_TAB}
-            aria-label={tr('ui.workspace.terminals_aria')}
-            className={cn(
-              centerTabBase,
-              'shrink-0 border-l border-border bg-muted/40 text-muted-foreground',
-              centerTab === TERMINALS_TAB && cn(centerTabActive, 'bg-muted/70'),
-            )}
-            onClick={() => selectCenterTab(TERMINALS_TAB)}
-          >
-            {tr('ui.workspace.terminals_tab')}
-            {toolTerms.length > 0 && (
-              <span className="rounded-sm bg-muted px-1 font-mono text-[10px] text-muted-foreground">
-                {toolTerms.length}
-              </span>
-            )}
-            {centerTab === TERMINALS_TAB && <span className={TAB_UNDERLINE} />}
-          </button>
-        </div>
+        <CenterSessionTabs
+          items={centerSessionItems}
+          order={sessionTabOrder}
+          centerTab={centerTab}
+          previewTabId={SESSION_TAB}
+          filesTabId={FILES_TAB}
+          terminalsTabId={TERMINALS_TAB}
+          toolTermCount={toolTerms.length}
+          onSelect={selectCenterTab}
+          onClose={(id) => {
+            if (terms.some((t) => t.ID === id)) handleCloseTerminal(id);
+            else handleCloseChat(id);
+          }}
+          onReorder={(next) => {
+            setSavedTabOrder(next);
+            saveCenterTabOrder(tab.id, next);
+          }}
+          onFileDropTerminal={(id, path, exited) => {
+            if (!exited) void writeTerminal(id, encodeTerminalInput(quotePathForShell(path)));
+          }}
+          onFileDropChat={(id, path) => {
+            appendChatInput(id, quotePathForShell(path));
+          }}
+        />
 
         <div className="min-h-0 flex-1 overflow-hidden">
           {/* 切页签时的淡入：动画挂在各内容包裹层上——hidden 切 display 会重放动画，

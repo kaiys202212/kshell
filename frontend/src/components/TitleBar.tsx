@@ -3,7 +3,7 @@
 // 窗口控件走 Wails runtime：最小化 / 最大化切换 / 关闭；最大化图标靠
 // WindowIsMaximised + resize 事件（防抖）校正——Wails v2 不推窗口状态事件，
 // 用户用 Win+↑ 或贴边改变状态时只能靠尺寸变化间接发现。
-import { useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Quit,
@@ -13,10 +13,14 @@ import {
 } from '../../wailsjs/runtime/runtime';
 import { cn } from '../lib/cn';
 import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE, TAB_UNDERLINE_PREVIEW } from '../lib/ui';
-import { SETTINGS_TAB_ID, type WorkspaceTab } from '../state/store';
+import { sameWorkspacePath } from '../lib/workspacePath';
+import { resolveAgentActivity } from '../state/agentActivity';
+import { SETTINGS_TAB_ID, useAppStore, type WorkspaceTab } from '../state/store';
+import AgentActivityIcon from './AgentActivityIcon';
 
 // 页签基础态：扁平下划线激活态，不做胶囊填充；group 供 hover 预览条显隐用
-const tabBase = `kshell-no-drag group ${TAB_BASE} h-7 max-w-28`;
+// 工作区页签 max-w-48（~192px）加宽，避免长项目名几乎看不见
+const tabBase = `kshell-no-drag group ${TAB_BASE} h-7 max-w-48`;
 const tabActive = TAB_ACTIVE;
 
 // 窗口控件按钮：Windows 习惯的热区，关闭键 hover 变危险色
@@ -56,6 +60,43 @@ function CloseGlyph() {
   );
 }
 
+/** 该工作区是否有会话处于「执行中」（与中心区旋转图标同口径） */
+export function workspaceHasRunning(
+  wsPath: string,
+  chats: { ID: string; Workspace: string; Status: string }[],
+  terminals: { ID: string; Workspace: string; Status: string; Kind: string }[],
+  chatPermissions: Record<string, unknown>,
+  terminalBusy: Record<string, boolean>,
+): boolean {
+  for (const c of chats) {
+    if (!sameWorkspacePath(c.Workspace, wsPath)) continue;
+    if (
+      resolveAgentActivity({
+        status: c.Status,
+        hasPermission: !!chatPermissions[c.ID],
+        kind: 'chat',
+      }) === 'running'
+    ) {
+      return true;
+    }
+  }
+  for (const t of terminals) {
+    if (t.Kind !== 'session' && t.Kind !== 'new') continue;
+    if (!sameWorkspacePath(t.Workspace, wsPath)) continue;
+    if (
+      resolveAgentActivity({
+        status: t.Status,
+        hasPermission: false,
+        kind: 'terminal',
+        busy: !!terminalBusy[t.ID],
+      }) === 'running'
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 interface Props {
   tabs: WorkspaceTab[];
   // null = 首页
@@ -67,6 +108,18 @@ interface Props {
 export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
   const { t: tr } = useTranslation();
   const [maximised, setMaximised] = useState(false);
+  const chats = useAppStore((s) => s.chats);
+  const terminals = useAppStore((s) => s.terminals);
+  const chatPermissions = useAppStore((s) => s.chatPermissions);
+  const terminalBusy = useAppStore((s) => s.terminalBusy);
+
+  const runningByTab = useMemo(() => {
+    const m = new Map<string, boolean>();
+    for (const t of tabs) {
+      m.set(t.id, workspaceHasRunning(t.id, chats, terminals, chatPermissions, terminalBusy));
+    }
+    return m;
+  }, [tabs, chats, terminals, chatPermissions, terminalBusy]);
 
   // 查询最大化状态；绑定在纯浏览器/测试环境不存在时不抛错
   const queryMaximised = useCallback(() => {
@@ -141,6 +194,7 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
 
         {tabs.map((t) => {
           const active = activeTabId === t.id;
+          const running = runningByTab.get(t.id);
           return (
             <div
               key={t.id}
@@ -154,6 +208,7 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
                 }
               }}
             >
+              {running ? <AgentActivityIcon activity="running" /> : null}
               <button className="kshell-no-drag min-w-0 truncate" title={t.id}>
                 {t.name}
               </button>

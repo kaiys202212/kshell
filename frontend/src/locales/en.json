@@ -1152,6 +1152,8 @@
       "tab_title_tool": "{{label}} ({{tool}})",
       "close_terminal": "Close terminal {{label}}",
       "close_chat": "Close session {{label}}",
+      "more_sessions_aria": "More sessions",
+      "more_sessions_active": "Active",
       "files_tab": "Files",
       "terminals_aria": "Terminal",
       "terminals_tab": "Terminal",

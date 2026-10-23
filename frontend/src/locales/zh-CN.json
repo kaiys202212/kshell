@@ -1152,6 +1152,8 @@
       "tab_title_tool": "{{label}}（{{tool}}）",
       "close_terminal": "关闭终端 {{label}}",
       "close_chat": "关闭会话 {{label}}",
+      "more_sessions_aria": "更多会话",
+      "more_sessions_active": "当前",
       "files_tab": "文件",
       "terminals_aria": "终端",
       "terminals_tab": "终端",
