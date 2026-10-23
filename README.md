@@ -114,7 +114,7 @@ kshell
 | Codex CLI | `~/.codex/sessions/**/*.jsonl` | Verified | None (uses terminal) |
 | Cursor | `~/.cursor/projects/*/agent-transcripts/` (`cursor-agent` / `agent`) | Built-in | `cursor-acp` |
 | CodeBuddy | `~/.codebuddy/projects/*/*.jsonl` | Verified | CLI `--acp` |
-| TRAE CLI | `~/.trae/cli/sessions/**/rollout-*.jsonl` | Inferred from official docs, not yet tested | CLI `acp` subcommand |
+| TRAE CLI | `~/.trae/cli/sessions/**/rollout-*.jsonl` | Verified install on 0.211.1 (session resume awaits enterprise login) | CLI `acp serve` subcommand |
 | Gemini CLI | `~/.gemini/tmp/` | Inferred from public defaults, not yet tested | None |
 | OpenCode | SQLite (`opencode db … --format json`) | Built-in (`--session`) | None |
 

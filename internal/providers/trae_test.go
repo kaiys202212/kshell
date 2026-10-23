@@ -2,6 +2,7 @@ package providers
 
 import (
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -99,15 +100,38 @@ func TestTraeNewSessionCmd(t *testing.T) {
 }
 
 func TestTraeACPAdapter(t *testing.T) {
-	// CLI 自带 acp 子命令（stdio），适配器与 CLI 同二进制，无 npx 兜底。
+	// stdio server 是 acp serve（两层子命令，`traecli acp` 只打 usage），
+	// 0.211.1 实测握手通过；适配器与 CLI 同二进制，无 npx 兜底。
 	a := (Trae{}).ACPAdapter()
 	if len(a.BinNames) != 2 || a.BinNames[0] != "traecli" || a.BinNames[1] != "traex" {
 		t.Fatalf("bin names = %v", a.BinNames)
 	}
-	if len(a.ExtraArgs) != 1 || a.ExtraArgs[0] != "acp" {
-		t.Fatalf("extra args = %v", a.ExtraArgs)
+	if len(a.ExtraArgs) != 2 || a.ExtraArgs[0] != "acp" || a.ExtraArgs[1] != "serve" {
+		t.Fatalf("extra args = %v, want [acp serve]", a.ExtraArgs)
 	}
 	if a.NPMPackage != "" {
 		t.Fatalf("want no npm package, got %q", a.NPMPackage)
+	}
+}
+
+func TestTraeLoginCmd(t *testing.T) {
+	cmd := (Trae{}).LoginCmd()
+	if len(cmd) != 2 || cmd[0] != "traecli" || cmd[1] != "login" {
+		t.Fatalf("LoginCmd = %v", cmd)
+	}
+}
+
+func TestTraeDetectSpecInstallDirs(t *testing.T) {
+	spec := (Trae{}).DetectSpec(`C:\home`)
+	if spec.BinName != "traecli" {
+		t.Fatalf("BinName = %q", spec.BinName)
+	}
+	if len(spec.AltBinNames) != 1 || spec.AltBinNames[0] != "traex" {
+		t.Fatalf("AltBinNames = %v", spec.AltBinNames)
+	}
+	if runtime.GOOS == "windows" {
+		if len(spec.InstallDirs) != 1 || spec.InstallDirs[0] != `%LOCALAPPDATA%\Programs\TraeCLI\bin` {
+			t.Fatalf("InstallDirs = %v", spec.InstallDirs)
+		}
 	}
 }

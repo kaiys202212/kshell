@@ -367,6 +367,8 @@ func toolBinDirs() []string {
 		}
 		if local := os.Getenv("LOCALAPPDATA"); local != "" {
 			dirs = append(dirs, filepath.Join(local, "cursor-agent"))
+			// TRAE CLI 官方安装器：写用户 PATH，但已运行进程看不到新值。
+			dirs = append(dirs, filepath.Join(local, "Programs", "TraeCLI", "bin"))
 		}
 		return dirs
 	}

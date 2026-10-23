@@ -928,7 +928,7 @@
       "help_claude_model": "新建会话时经 ACP _meta 的 settings env 注入平台模型、端点与密钥。",
       "help_codebuddy_acp": "CLI 内置 --acp",
       "help_codebuddy_model": "启动时传 --model，并设置 CODEBUDDY_MODEL 环境变量。",
-      "help_trae_acp": "CLI 内置 acp 子命令",
+      "help_trae_acp": "CLI 内置 acp serve 子命令",
       "help_trae_model": "暂不支持平台模型注入，使用 TRAE 自有账号模型。",
       "help_cursor_acp": "官方 cursor-agent acp（cursor-acp 兜底）",
       "help_cursor_model": "启动不接受 --model，故不注入；请在会话内用 #model 切换模型。",
