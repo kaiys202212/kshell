@@ -87,6 +87,58 @@ func TestPersistBlocks(t *testing.T) {
 	}
 }
 
+// resource 块只设 Resource{Blob, MimeType}（无顶层 Data/MimeType）：兜底来源也应正确落盘。
+func TestPersistBlocksResourceBlobFallback(t *testing.T) {
+	root := t.TempDir()
+	blocks := []acp.ContentBlock{
+		{Type: "resource", Name: "notes.txt", Resource: &acp.ResourceContents{Blob: "aGVsbG8=", MimeType: "text/plain"}},
+	}
+	metas := persistBlocks(root, "chat1", blocks)
+	if len(metas) != 1 {
+		t.Fatalf("metas 数量 = %d", len(metas))
+	}
+	meta := metas[0]
+	if meta.Kind != "file" || meta.MimeType != "text/plain" || meta.Path == "" {
+		t.Fatalf("resource meta = %+v", meta)
+	}
+	data, err := os.ReadFile(meta.Path)
+	if err != nil {
+		t.Fatalf("读落盘文件: %v", err)
+	}
+	if string(data) != "hello" {
+		t.Fatalf("落盘内容 = %q, want hello", data)
+	}
+}
+
+// 同一 chatID 下循环连发（模拟 Windows 粗时钟下同刻消息的多轮落盘）：
+// 全局递增序号保证文件名互不相交，目录内文件数 = 调用数 × 块数。
+func TestPersistBlocksFilenameUnique(t *testing.T) {
+	root := t.TempDir()
+	const calls, blocksPerCall = 20, 2
+	blocks := []acp.ContentBlock{
+		{Type: "image", MimeType: "image/png", Data: "aGVsbG8="},
+		{Type: "resource", Name: "a.bin", Data: "aGVsbG8="},
+	}
+	for i := 0; i < calls; i++ {
+		metas := persistBlocks(root, "chat1", blocks)
+		if len(metas) != blocksPerCall {
+			t.Fatalf("第 %d 次调用 metas 数量 = %d", i, len(metas))
+		}
+		for _, m := range metas {
+			if m.Path == "" {
+				t.Fatalf("第 %d 次调用出现未落盘 meta: %+v", i, m)
+			}
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "chat1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != calls*blocksPerCall {
+		t.Fatalf("落盘文件数 = %d, want %d（文件名碰撞覆盖）", len(entries), calls*blocksPerCall)
+	}
+}
+
 // root 为空串：完全不落盘，meta 不带 Path，不 panic。
 func TestPersistBlocksEmptyRoot(t *testing.T) {
 	blocks := []acp.ContentBlock{

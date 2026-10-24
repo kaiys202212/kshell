@@ -5,13 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/yangk/kshell/internal/acp"
 )
 
-// mimeExtByPrefix 是 MimeType → 扩展名映射；未列出的走 .bin 兜底。
-var mimeExtByPrefix = map[string]string{
+// mimeExtMap 是 MimeType → 扩展名映射（精确匹配）；未列出的走 .bin 兜底。
+var mimeExtMap = map[string]string{
 	"image/png":  ".png",
 	"image/jpeg": ".jpg",
 	"image/webp": ".webp",
@@ -22,10 +23,21 @@ var mimeExtByPrefix = map[string]string{
 
 // mimeExt 把 MimeType 转成落盘扩展名；未知或空返回 .bin（表驱动，便于扩充）。
 func mimeExt(mime string) string {
-	if ext, ok := mimeExtByPrefix[mime]; ok {
+	if ext, ok := mimeExtMap[mime]; ok {
 		return ext
 	}
 	return ".bin"
+}
+
+// attachFileSeq 是落盘文件名的全局递增序号。仅靠 unixnano 在 Windows 上不够：
+// 时钟粒度粗（约 0.5–15ms）且程序化连发消息会落在同一刻，块索引又随每轮重置，
+// 同刻两轮消息的第 0 块就会撞名覆盖。全局单调递增序号彻底保证唯一。
+var attachFileSeq atomic.Int64
+
+// attachFileName 生成落盘文件名主体（不含扩展名）：unixnano36 前缀保趋势有序，
+// 全局递增序号保同刻唯一。
+func attachFileName() string {
+	return strconv.FormatInt(time.Now().UnixNano(), 36) + "-" + strconv.FormatInt(attachFileSeq.Add(1), 10)
 }
 
 // persistBlocks 遍历用户消息内容块，把 image / 内嵌 resource 的 base64 解码落盘
@@ -61,17 +73,19 @@ func persistBlocks(root, chatID string, blocks []acp.ContentBlock) []AttachmentM
 		}
 		return out
 	}
-	for i, b := range blocks {
+	for _, b := range blocks {
 		switch b.Type {
 		case "text":
 			continue
 		case "image":
 			meta := AttachmentMeta{Kind: "image", MimeType: b.MimeType}
-			meta.Path = persistBase64(dir, strconv.FormatInt(time.Now().UnixNano(), 36)+"-"+strconv.Itoa(i)+mimeExt(b.MimeType), b.Data)
+			meta.Path = persistBase64(dir, attachFileName()+mimeExt(b.MimeType), b.Data)
 			out = append(out, meta)
 		case "resource":
 			meta := AttachmentMeta{Kind: "file", Name: b.Name, MimeType: b.MimeType}
 			// ACP 规范把内嵌资源内容放在 resource.blob；部分实现直接用顶层 data，两者都接。
+			// 已知边界：文本内嵌资源走 Resource.Text（非 base64），当前不落盘仅记 meta
+			//（data 为空时 persistBase64 返回空 Path，meta 正常降级）。
 			data, mime := b.Data, b.MimeType
 			if data == "" && b.Resource != nil {
 				data = b.Resource.Blob
@@ -80,7 +94,7 @@ func persistBlocks(root, chatID string, blocks []acp.ContentBlock) []AttachmentM
 				mime = b.Resource.MimeType
 			}
 			meta.MimeType = mime
-			meta.Path = persistBase64(dir, strconv.FormatInt(time.Now().UnixNano(), 36)+"-"+strconv.Itoa(i)+mimeExt(mime), data)
+			meta.Path = persistBase64(dir, attachFileName()+mimeExt(mime), data)
 			out = append(out, meta)
 		case "resource_link":
 			out = append(out, AttachmentMeta{Kind: "file", Name: b.Name, MimeType: b.MimeType, URI: b.URI})
@@ -88,7 +102,8 @@ func persistBlocks(root, chatID string, blocks []acp.ContentBlock) []AttachmentM
 			// 音频暂无预览诉求，维持旧形态（Kind 留空按 file 兜底渲染）。
 			out = append(out, AttachmentMeta{MimeType: b.MimeType})
 		default:
-			out = append(out, AttachmentMeta{Name: b.Name, MimeType: b.MimeType})
+			// 空 Kind 前端按 file 渲染，这里统一显式标注，与 metaWithoutPersist 一致。
+			out = append(out, AttachmentMeta{Kind: "file", Name: b.Name, MimeType: b.MimeType})
 		}
 	}
 	return out

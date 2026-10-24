@@ -832,10 +832,13 @@ func (m *Manager) PromptBlocksHub(id string, blocks []acp.ContentBlock, hubMsgID
 	if len(blocks) == 0 {
 		return false, nil
 	}
-	// 附件落盘与元数据预计算放在持锁之前：persistBlocks 只读 attachmentsRoot
-	// （装配在会话打开前完成，之后不变，竞态窗口可接受）并做磁盘 IO，不应拖住
+	// attachmentsRoot 由 SetAttachmentsRoot 经锁写入，读它也须在锁内快照拿到
+	// happens-before；快照后立即解锁，persistBlocks 的磁盘 IO 不持锁，不拖住
 	// 管理器锁阻塞其他会话的事件推送。
-	metas := persistBlocks(m.attachmentsRoot, id, blocks)
+	m.mu.Lock()
+	root := m.attachmentsRoot
+	m.mu.Unlock()
+	metas := persistBlocks(root, id, blocks)
 	qm := queuedMsg{id: hubMsgID, blocks: blocks, hubMsgID: hubMsgID, attachments: metas}
 	m.mu.Lock()
 	s := m.byID[id]
