@@ -39,7 +39,7 @@ func waitTurnDone(t *testing.T, c *collector) {
 // available_commands_update 必须归一化为 commands 事件（名称/描述/输入提示）。
 func TestNormalizeUpdateCommands(t *testing.T) {
 	raw := json.RawMessage(`{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"create_plan","description":"写计划","input":{"hint":"主题"}}]}`)
-	u, ok := normalizeUpdate(raw)
+	u, _, ok := normalizeUpdate(raw)
 	if !ok || u.Type != "commands" {
 		t.Fatalf("normalize = ok=%v u=%+v", ok, u)
 	}

@@ -1401,22 +1401,69 @@ type acpCommand struct {
 	} `json:"input"`
 }
 
+// blockDesc 是消息分片 content 单块的描述形态（按 ACP 小写字段解码；前端模型
+// 是 PascalCase，故与 acpUpdate 分开）。content 为纯字符串时无块描述。
+type blockDesc struct {
+	Type     string `json:"type"`
+	MimeType string `json:"mimeType"`
+	Data     string `json:"data"`
+	URI      string `json:"uri"`
+	Name     string `json:"name"`
+	// resource 内嵌形态
+	Resource *struct {
+		MimeType string `json:"mimeType"`
+		Text     string `json:"text"`
+		Blob     string `json:"blob"`
+	} `json:"resource"`
+}
+
+// parseBlockDesc 把 content 单块 JSON 解析为 blockDesc；纯字符串或解析失败返回 nil。
+func parseBlockDesc(raw json.RawMessage) *blockDesc {
+	if len(raw) == 0 {
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return nil
+	}
+	var bd blockDesc
+	if err := json.Unmarshal(raw, &bd); err != nil {
+		return nil
+	}
+	return &bd
+}
+
+// blockFromDesc 把块描述还原成 acp.ContentBlock，供 persistBlocks 复用落盘逻辑。
+func blockFromDesc(bd *blockDesc) acp.ContentBlock {
+	b := acp.ContentBlock{Type: bd.Type, Data: bd.Data, MimeType: bd.MimeType, URI: bd.URI, Name: bd.Name}
+	if bd.Resource != nil {
+		b.Resource = &acp.ResourceContents{
+			MimeType: bd.Resource.MimeType,
+			Text:     bd.Resource.Text,
+			Blob:     bd.Resource.Blob,
+		}
+	}
+	return b
+}
+
 // normalizeUpdate 把 ACP session/update 转成前端时间线事件；不支持的变体返回 ok=false。
-func normalizeUpdate(raw json.RawMessage) (Update, bool) {
+// 三种消息分片额外返回 content 单块的块描述（纯字符串 content 为 nil），供调用方
+// 把 agent 推送流里的图片/文件引用捞回时间线。
+func normalizeUpdate(raw json.RawMessage) (Update, *blockDesc, bool) {
 	var u acpUpdate
 	if err := json.Unmarshal(raw, &u); err != nil {
-		return Update{}, false
+		return Update{}, nil, false
 	}
 	switch u.SessionUpdate {
 	case "user_message_chunk":
-		return Update{Type: "user", MessageID: u.MessageID, Text: contentText(u.Content)}, true
+		return Update{Type: "user", MessageID: u.MessageID, Text: contentText(u.Content)}, parseBlockDesc(u.Content), true
 	case "agent_message_chunk":
-		return Update{Type: "assistant", MessageID: u.MessageID, Text: contentText(u.Content)}, true
+		return Update{Type: "assistant", MessageID: u.MessageID, Text: contentText(u.Content)}, parseBlockDesc(u.Content), true
 	case "agent_thought_chunk":
-		return Update{Type: "thought", MessageID: u.MessageID, Text: contentText(u.Content)}, true
+		return Update{Type: "thought", MessageID: u.MessageID, Text: contentText(u.Content)}, parseBlockDesc(u.Content), true
 	case "tool_call", "tool_call_update":
 		if u.ToolCallID == "" {
-			return Update{}, false
+			return Update{}, nil, false
 		}
 		var probe struct {
 			Content []json.RawMessage `json:"content"`
@@ -1430,13 +1477,13 @@ func normalizeUpdate(raw json.RawMessage) (Update, bool) {
 			Kind: u.Kind, Status: u.Status, Content: content,
 			RawInput: u.RawInput, RawOutput: u.RawOutput,
 		}
-		return Update{Type: "tool", ToolCallID: tc.ToolCallID, Tool: &tc}, true
+		return Update{Type: "tool", ToolCallID: tc.ToolCallID, Tool: &tc}, nil, true
 	case "plan":
 		plan := make([]PlanEntry, 0, len(u.Entries))
 		for _, e := range u.Entries {
 			plan = append(plan, PlanEntry{Content: e.Content, Priority: e.Priority, Status: e.Status})
 		}
-		return Update{Type: "plan", Plan: plan}, true
+		return Update{Type: "plan", Plan: plan}, nil, true
 	case "available_commands_update":
 		cmds := make([]Command, 0, len(u.AvailableCommands))
 		for _, c := range u.AvailableCommands {
@@ -1446,9 +1493,9 @@ func normalizeUpdate(raw json.RawMessage) (Update, bool) {
 			}
 			cmds = append(cmds, Command{Name: c.Name, Description: c.Description, InputHint: hint})
 		}
-		return Update{Type: "commands", Commands: cmds}, true
+		return Update{Type: "commands", Commands: cmds}, nil, true
 	default:
-		return Update{}, false
+		return Update{}, nil, false
 	}
 }
 
@@ -1471,9 +1518,21 @@ func contentText(raw json.RawMessage) string {
 }
 
 func (m *Manager) onSessionUpdate(id, sessionID string, raw json.RawMessage) {
-	u, ok := normalizeUpdate(raw)
+	u, bd, ok := normalizeUpdate(raw)
 	if !ok {
 		return
+	}
+	// agent 推送流里的非文本块（图片/内嵌资源/文件引用）捞回时间线：构造块交给
+	// persistBlocks 复用用户消息的落盘逻辑。落盘是磁盘 IO，须在锁外——与
+	// PromptBlocksHub 相同的锁内快照 root 模式；会话已不存在时不写孤儿文件。
+	if bd != nil && (bd.Type == "image" || bd.Type == "resource" || bd.Type == "resource_link") {
+		m.mu.Lock()
+		root := m.attachmentsRoot
+		_, alive := m.byID[id]
+		m.mu.Unlock()
+		if alive {
+			u.Attachments = persistBlocks(root, id, []acp.ContentBlock{blockFromDesc(bd)})
+		}
 	}
 	// 技能列表是会话状态而非时间线事件：存会话、单独推送，不进历史。
 	if u.Type == "commands" {

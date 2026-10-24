@@ -642,7 +642,7 @@ func TestManagerProcessExitCancelsPendingPermission(t *testing.T) {
 }
 
 func TestNormalizeUpdateIgnoresUnknownVariant(t *testing.T) {
-	if _, ok := normalizeUpdate(json.RawMessage(`{"sessionUpdate":"usage_update"}`)); ok {
+	if _, _, ok := normalizeUpdate(json.RawMessage(`{"sessionUpdate":"usage_update"}`)); ok {
 		t.Fatal("want ok=false for unknown variant")
 	}
 }
