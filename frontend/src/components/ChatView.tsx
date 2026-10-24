@@ -220,6 +220,13 @@ export default function ChatView({ chat, active }: Props) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [items, active]);
 
+  // ImageLightbox 走 Radix Portal 渲染到 body，不受父级 hidden 类约束：
+  // ChatView 常驻挂载（切页签仅加 hidden 不卸载），失活时若不回收预览状态，
+  // lightbox 遮罩会残留并遮挡新页签。
+  useEffect(() => {
+    if (!active) setPreview(null);
+  }, [active]);
+
   const handleScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -418,7 +425,8 @@ export default function ChatView({ chat, active }: Props) {
     const action = attachmentAction(meta, chat.Workspace);
     switch (action.kind) {
       case 'preview':
-        setPreview({ name: meta.Name, path: action.path });
+        // meta.Name 可能为空，与 chip 展示同样用 attachmentLabel 兜底
+        setPreview({ name: attachmentLabel(meta, t('ui.chat.attachment_image')), path: action.path });
         return;
       case 'default':
         openInDefaultApp(action.wsPath, action.rel).catch((e) => {

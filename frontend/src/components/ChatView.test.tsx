@@ -539,6 +539,28 @@ describe('ChatView', () => {
     expect(api.readChatAttachmentData).toHaveBeenCalledWith('D:\\cache\\shot.png');
   });
 
+  it('active 由 true 变 false 后 lightbox 关闭，Portal 遮罩不残留', async () => {
+    api.readChatAttachmentData.mockResolvedValue({
+      Base64: 'iVBORw0KGgo=', Mime: 'image/png', Size: 12, AbsPath: 'D:\\cache\\shot.png',
+    });
+    useAppStore.setState({
+      chatItems: {
+        c1: [{ key: 'u1', type: 'user', text: '看图', seq: 1, attachments: [{ Name: 'shot.png', Kind: 'image', Path: 'D:\\cache\\shot.png' }] }],
+      },
+    });
+    const { rerender } = render(<ChatView chat={CHAT} active />);
+
+    fireEvent.click(screen.getByText('shot.png'));
+    await screen.findByRole('img');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    // 模拟切页签：ChatView 常驻挂载仅 hidden，Portal 渲染到 body 不受父级约束，
+    // 须由组件在失活时回收预览状态
+    rerender(<ChatView chat={CHAT} active={false} />);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  });
+
   it('user file 附件（工作区内 file URI）点击调 openInDefaultApp', async () => {
     useAppStore.setState({
       chatItems: {
