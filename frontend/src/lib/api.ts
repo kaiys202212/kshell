@@ -328,6 +328,12 @@ export interface ChatPlanEntry {
 export interface ChatAttachmentMeta {
   Name?: string;
   MimeType?: string;
+  // Kind: image（图片，Path 为落盘缓存绝对路径，可直接预览）| file（资源链接/落盘文件）
+  Kind?: 'image' | 'file';
+  // Path：图片/内嵌资源落盘缓存绝对路径
+  Path?: string;
+  // URI：resource_link 原始 URI（file:///... 或 http 等其它协议）
+  URI?: string;
 }
 
 // chat.QueueItem 的 JSON 形态（internal/chat/types.go）：忙时排队待投递的一条
@@ -560,6 +566,8 @@ interface AppBindings {
   ListFiles(wsPath: string, relPath: string, showAll: boolean): Promise<FileNode[]>;
   PreviewFile(wsPath: string, path: string): Promise<FilePreview>;
   ReadFileBytes(wsPath: string, path: string): Promise<FileBytes>;
+  ReadChatAttachmentData(absPath: string): Promise<FileBytes>;
+  OpenLocalPath(absPath: string): Promise<void>;
   SearchFiles(wsPath: string, query: string, showAll: boolean): Promise<SearchHit[]>;
   RefreshFiles(wsPath: string): Promise<void>;
   StartFileWatch(wsPath: string): Promise<void>;
@@ -839,6 +847,13 @@ export async function readFileBytes(wsPath: string, path: string): Promise<FileB
   return a.ReadFileBytes(wsPath, path);
 }
 
+// ReadChatAttachmentData 读取聊天附件落盘缓存字节（图片 lightbox 用）；绑定不可用时返回 null
+export async function readChatAttachmentData(path: string): Promise<FileBytes | null> {
+  const a = app();
+  if (!a) return null;
+  return a.ReadChatAttachmentData(path);
+}
+
 // SearchFiles 递归搜索工作区内名字包含 query 的文件/目录（大小写不敏感，上限 2000）。
 // 忽略规则与文件树一致；错误向上抛。
 export async function searchFiles(wsPath: string, query: string, showAll = false): Promise<SearchHit[]> {
@@ -881,6 +896,13 @@ export async function openInDefaultApp(wsPath: string, path: string): Promise<vo
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
   await a.OpenInDefaultApp(wsPath, path);
+}
+
+// OpenLocalPath 用系统默认应用打开任意本地绝对路径（不限于工作区内）；无绑定抛错。
+export async function openLocalPath(path: string): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.OpenLocalPath(path);
 }
 
 // OpenExternalURL 用系统默认程序打开 http(s)/mailto 等外链。

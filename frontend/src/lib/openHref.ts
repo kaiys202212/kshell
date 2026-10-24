@@ -17,13 +17,14 @@ export const OPEN_FILE_EVENT = 'kshell:open-file';
 
 const DANGEROUS_SCHEMES = new Set(['javascript', 'data', 'vbscript', 'blob']);
 
-function posixNorm(p: string): string {
+// 以下三个工具被 chatAttachment 等模块复用，导出避免复制路径逻辑
+export function posixNorm(p: string): string {
   // 反斜杠统一成斜杠后，把盘符后的多余斜杠压成一个，避免 HTML 属性/拼接产生 D://proj
   const slashed = p.replace(/\\/g, '/');
   return slashed.replace(/^([a-zA-Z]:)\/+/, '$1/').replace(/\/{2,}/g, '/');
 }
 
-function toNative(posixPath: string, workspaceRoot: string): string {
+export function toNative(posixPath: string, workspaceRoot: string): string {
   if (workspaceRoot.includes('\\') || /^[a-zA-Z]:/.test(workspaceRoot)) {
     return posixPath.replace(/\//g, '\\');
   }
@@ -53,7 +54,7 @@ function joinPosix(base: string, rel: string): string {
   return `/${body}`;
 }
 
-function isInsideWorkspace(root: string, abs: string): boolean {
+export function isInsideWorkspace(root: string, abs: string): boolean {
   const r = posixNorm(root).replace(/\/+$/, '').toLowerCase();
   const a = posixNorm(abs).replace(/\/+$/, '').toLowerCase();
   return a === r || a.startsWith(`${r}/`);
