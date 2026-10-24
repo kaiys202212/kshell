@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -94,10 +95,12 @@ type permissionResult struct {
 
 // queuedMsg 是忙时排队的用户消息：blocks 为投递内容，hubMsgID 为关联的
 // AgentHub 消息 ID（供撤回定位与投递回调；普通 Prompt 为空串）。
+// attachments 是入队前预计算的附件元数据（含落盘 Path），时间线与队列快照共用。
 type queuedMsg struct {
-	id       string // Hub 条目复用 hubMsgID，其余为 qN
-	blocks   []acp.ContentBlock
-	hubMsgID string
+	id          string // Hub 条目复用 hubMsgID，其余为 qN
+	blocks      []acp.ContentBlock
+	hubMsgID    string
+	attachments []AttachmentMeta
 }
 
 // enqueueLocked 把条目追加到队尾并补齐稳定 ID（调用方持锁）。
@@ -124,7 +127,7 @@ func (s *session) queueItemsLocked() []QueueItem {
 			ID:          q.id,
 			HubMsgID:    q.hubMsgID,
 			Text:        flattenBlocks(q.blocks),
-			Attachments: attachmentMetas(q.blocks),
+			Attachments: q.attachments,
 		})
 	}
 	return out
@@ -152,6 +155,10 @@ type Manager struct {
 	onHubDelivered func(hubMsgID string)
 	// onQueue 在队列变化时推送全量快照（锁外执行），供前端展示/撤销。
 	onQueue func(id string, items []QueueItem)
+
+	// attachmentsRoot 是附件落盘缓存的根目录（desktop 装配时注入；空串=不落盘，
+	// 仅保留元数据）。装配发生在任何会话打开之前，读取不持锁（见 PromptBlocksHub）。
+	attachmentsRoot string
 
 	// bootID 是本 Manager 实例的唯一标识，参与会话 ID 生成。纯递增序列
 	// c1/c2/... 在进程重启后归零，落盘的 chatId（需求绑定、hub 归因）会撞上
@@ -185,6 +192,15 @@ func (m *Manager) SetAutoAllowPermission(fn func() bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.autoAllow = fn
+}
+
+// SetAttachmentsRoot 设置附件落盘缓存根目录。空串=不落盘（仅元数据，旧兼容
+// 形态）；desktop 装配时注入实际目录，测试注入 t.TempDir()。照 SetOnInfo 的
+// 锁模式赋值；目录应在会话打开前设置，之后不承诺并发可见性。
+func (m *Manager) SetAttachmentsRoot(dir string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.attachmentsRoot = dir
 }
 
 // SetOnInfo 注册标题变化回调（锁外执行）。
@@ -699,6 +715,11 @@ func (m *Manager) remove(s *session) {
 	s.pending = make(map[string]chan permissionResult)
 	cancelPending(pending)
 	s.stopIdleLocked() // 摘除后定时器不得再触发（防泄漏与悬垂）
+	// 尽力清理该会话的附件落盘缓存：本地小目录，RemoveAll 在锁内执行可接受
+	// （毫秒级，避免引入第二把锁或泄漏 goroutine）；错误忽略（缓存目录非关键数据）。
+	if m.attachmentsRoot != "" {
+		_ = os.RemoveAll(filepath.Join(m.attachmentsRoot, s.id))
+	}
 }
 
 // cancelPending 非阻塞地让所有等待中的权限请求以 cancelled 结束。
@@ -788,21 +809,6 @@ func flattenBlocks(blocks []acp.ContentBlock) string {
 	return strings.Join(parts, "\n")
 }
 
-// attachmentMetas 提取非文本块的展示信息。
-func attachmentMetas(blocks []acp.ContentBlock) []AttachmentMeta {
-	var out []AttachmentMeta
-	for _, b := range blocks {
-		switch b.Type {
-		case "text":
-		case "image", "audio":
-			out = append(out, AttachmentMeta{MimeType: b.MimeType})
-		default:
-			out = append(out, AttachmentMeta{Name: b.Name, MimeType: b.MimeType})
-		}
-	}
-	return out
-}
-
 // Prompt 向会话发起一轮纯文本输入；忙时入队，当前轮结束后自动投递。
 func (m *Manager) Prompt(id, text string) error {
 	_, err := m.PromptBlocksHub(id, []acp.ContentBlock{{Type: "text", Text: text}}, "")
@@ -826,7 +832,11 @@ func (m *Manager) PromptBlocksHub(id string, blocks []acp.ContentBlock, hubMsgID
 	if len(blocks) == 0 {
 		return false, nil
 	}
-	qm := queuedMsg{id: hubMsgID, blocks: blocks, hubMsgID: hubMsgID}
+	// 附件落盘与元数据预计算放在持锁之前：persistBlocks 只读 attachmentsRoot
+	// （装配在会话打开前完成，之后不变，竞态窗口可接受）并做磁盘 IO，不应拖住
+	// 管理器锁阻塞其他会话的事件推送。
+	metas := persistBlocks(m.attachmentsRoot, id, blocks)
+	qm := queuedMsg{id: hubMsgID, blocks: blocks, hubMsgID: hubMsgID, attachments: metas}
 	m.mu.Lock()
 	s := m.byID[id]
 	if s == nil || s.exited {
@@ -838,7 +848,7 @@ func (m *Manager) PromptBlocksHub(id string, blocks []acp.ContentBlock, hubMsgID
 	// 后仍为 running，此时 agent 已结束当前 turn，新消息必须立即投递而非卡队。
 	if s.info.Status == StatusStarting || s.promptInFlight {
 		s.enqueueLocked(qm)
-		userUpdate := s.appendUserBlocksLocked(blocks)
+		userUpdate := s.appendUserBlocksLocked(blocks, qm.attachments)
 		items := s.queueItemsLocked()
 		onUpdate := m.onUpdate
 		onQueue := m.onQueue
@@ -919,7 +929,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		var userUpdate Update
 		onUpdate := m.onUpdate
 		if record {
-			userUpdate = s.appendUserBlocksLocked(blocks)
+			userUpdate = s.appendUserBlocksLocked(blocks, qm.attachments)
 		}
 		items := s.queueItemsLocked()
 		onQueue := m.onQueue
@@ -944,7 +954,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 	infoSnap, titleChanged := s.notePromptTitle(flattenBlocks(blocks))
 	var userUpdate Update
 	if record {
-		userUpdate = s.appendUserBlocksLocked(blocks)
+		userUpdate = s.appendUserBlocksLocked(blocks, qm.attachments)
 	}
 	sid := s.sessionID
 	conn := s.conn
@@ -1032,16 +1042,16 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 }
 
 // appendUserBlocksLocked 追加一条 user 消息进时间线并返回该事件（调用方持锁）。
-// 文本取 text 块拼接；非文本块记入 Attachments 供前端渲染附件标识。
+// 文本取 text 块拼接；非文本块记入 Attachments（预计算的 metas，含落盘 Path）。
 // 超过 maxHistory 时截断保留尾部，避免长会话内存无限增长。
-func (s *session) appendUserBlocksLocked(blocks []acp.ContentBlock) Update {
+func (s *session) appendUserBlocksLocked(blocks []acp.ContentBlock, metas []AttachmentMeta) Update {
 	s.seq++
 	u := Update{
 		Seq:         s.seq,
 		Type:        "user",
 		MessageID:   fmt.Sprintf("user:%d", s.seq),
 		Text:        flattenBlocks(blocks),
-		Attachments: attachmentMetas(blocks),
+		Attachments: metas,
 	}
 	s.history = append(s.history, u)
 	if len(s.history) > maxHistory {

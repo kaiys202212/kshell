@@ -84,9 +84,17 @@ type Command struct {
 }
 
 // AttachmentMeta 是用户消息里非文本附件的展示信息（发送的原始块由连接层持有）。
+// Kind/Path/URI 支撑前端点击预览：image/file 的 Path 指向落盘缓存文件（base64
+// 解码后），resource_link 保留原始 URI；Kind 空串按 file 处理（旧事件兼容）。
 type AttachmentMeta struct {
 	Name     string `json:"Name,omitempty"`
 	MimeType string `json:"MimeType,omitempty"`
+	// Kind 是附件类别："image" | "file"；空按 file 处理。
+	Kind string `json:"Kind,omitempty"`
+	// Path 是落盘缓存文件的绝对路径（image / 内嵌 resource 用；未落盘为空）。
+	Path string `json:"Path,omitempty"`
+	// URI 是 resource_link 的原始 URI（不落盘，前端直接打开）。
+	URI string `json:"URI,omitempty"`
 }
 
 // QueueItem 是忙时排队待投递的一条用户消息快照（ACP 聊天页输入区展示与撤销用）。
