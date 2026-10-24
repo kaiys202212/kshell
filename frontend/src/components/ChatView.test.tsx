@@ -24,6 +24,9 @@ const api = vi.hoisted(() => ({
   cancelChatPermission: vi.fn(),
   listChats: vi.fn(),
   openExternalURL: vi.fn().mockResolvedValue(undefined),
+  openInDefaultApp: vi.fn(),
+  openLocalPath: vi.fn(),
+  readChatAttachmentData: vi.fn(),
 }));
 vi.mock('../lib/api', () => api);
 
@@ -46,6 +49,9 @@ beforeEach(() => {
   api.respondChatPermission.mockResolvedValue(undefined);
   api.cancelChatPermission.mockResolvedValue(undefined);
   api.listChats.mockResolvedValue([]);
+  api.openInDefaultApp.mockResolvedValue(undefined);
+  api.openLocalPath.mockResolvedValue(undefined);
+  api.readChatAttachmentData.mockResolvedValue(null);
   useAppStore.setState({ chatItems: {}, chatSeq: {}, chatPermissions: {}, chats: [CHAT], chatModels: {}, chatCommands: {}, chatQueues: {}, chatBackendQueues: {}, chatQueueRevs: {}, queuedPaused: {}, toasts: [] });
 });
 afterEach(cleanup);
@@ -513,6 +519,86 @@ describe('ChatView', () => {
     render(<ChatView chat={CHAT} active />);
     expect(screen.getByText('a.txt')).toBeInTheDocument();
     expect(screen.getByText(tt('ui.chat.attachment_image'))).toBeInTheDocument();
+  });
+
+  // ---- 附件 chip 点击：attachmentAction 分派 preview/default/local/external/none ----
+  it('user 图片附件 chip（带 Path）点击打开 ImageLightbox', async () => {
+    api.readChatAttachmentData.mockResolvedValue({
+      Base64: 'iVBORw0KGgo=', Mime: 'image/png', Size: 12, AbsPath: 'D:\\cache\\shot.png',
+    });
+    useAppStore.setState({
+      chatItems: {
+        c1: [{ key: 'u1', type: 'user', text: '看图', seq: 1, attachments: [{ Name: 'shot.png', Kind: 'image', Path: 'D:\\cache\\shot.png' }] }],
+      },
+    });
+    render(<ChatView chat={CHAT} active />);
+
+    fireEvent.click(screen.getByText('shot.png'));
+    const img = await screen.findByRole('img');
+    expect(img).toHaveAttribute('src', expect.stringMatching(/^data:image\/png;base64,/));
+    expect(api.readChatAttachmentData).toHaveBeenCalledWith('D:\\cache\\shot.png');
+  });
+
+  it('user file 附件（工作区内 file URI）点击调 openInDefaultApp', async () => {
+    useAppStore.setState({
+      chatItems: {
+        c1: [{ key: 'u1', type: 'user', text: '文档', seq: 1, attachments: [{ Name: 'doc.pdf', Kind: 'file', URI: 'file:///D:/p/doc.pdf' }] }],
+      },
+    });
+    render(<ChatView chat={CHAT} active />);
+
+    fireEvent.click(screen.getByText('doc.pdf'));
+    await waitFor(() => expect(api.openInDefaultApp).toHaveBeenCalledWith('D:\\p', 'doc.pdf'));
+    expect(api.readChatAttachmentData).not.toHaveBeenCalled();
+  });
+
+  it('assistant 消息附件 chips 渲染且可预览', async () => {
+    api.readChatAttachmentData.mockResolvedValue({
+      Base64: 'iVBORw0KGgo=', Mime: 'image/png', Size: 12, AbsPath: 'D:\\cache\\1.png',
+    });
+    useAppStore.setState({
+      chatItems: {
+        c1: [{ key: 'a1', type: 'assistant', text: '', seq: 2, attachments: [{ Name: '1.png', Kind: 'image', Path: 'D:\\cache\\1.png' }] }],
+      },
+    });
+    render(<ChatView chat={CHAT} active />);
+
+    // 此前 assistant 不渲染附件 chips
+    fireEvent.click(screen.getByText('1.png'));
+    await screen.findByRole('img');
+    expect(api.readChatAttachmentData).toHaveBeenCalledWith('D:\\cache\\1.png');
+  });
+
+  it('旧 meta（仅 Name/MimeType）chip 点击无动作', () => {
+    useAppStore.setState({
+      chatItems: {
+        c1: [{ key: 'u1', type: 'user', text: '旧数据', seq: 1, attachments: [{ Name: 'a.txt' }, { MimeType: 'image/png' }] }],
+      },
+    });
+    render(<ChatView chat={CHAT} active />);
+
+    fireEvent.click(screen.getByText('a.txt'));
+    fireEvent.click(screen.getByText(tt('ui.chat.attachment_image')));
+    expect(api.readChatAttachmentData).not.toHaveBeenCalled();
+    expect(api.openInDefaultApp).not.toHaveBeenCalled();
+    expect(api.openLocalPath).not.toHaveBeenCalled();
+    expect(api.openExternalURL).not.toHaveBeenCalled();
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  });
+
+  it('系统打开失败提示 attachment_open_failed', async () => {
+    api.openInDefaultApp.mockRejectedValueOnce(new Error('no app'));
+    useAppStore.setState({
+      chatItems: {
+        c1: [{ key: 'u1', type: 'user', text: '文档', seq: 1, attachments: [{ Name: 'doc.pdf', Kind: 'file', URI: 'file:///D:/p/doc.pdf' }] }],
+      },
+    });
+    render(<ChatView chat={CHAT} active />);
+
+    fireEvent.click(screen.getByText('doc.pdf'));
+    await waitFor(() => {
+      expect(useAppStore.getState().toasts.some((t) => t.tone === 'error')).toBe(true);
+    });
   });
 
   it('助手 Markdown 的 http 链接走系统打开', () => {

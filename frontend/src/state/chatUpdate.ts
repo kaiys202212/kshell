@@ -28,7 +28,14 @@ export function applyChatUpdate(items: TimelineItem[], u: ChatUpdate): TimelineI
     const idx = items.findIndex((it) => it.key === key && it.type === u.Type);
     if (idx >= 0) {
       const next = items.slice();
-      next[idx] = { ...next[idx], text: (next[idx].text ?? '') + (u.Text ?? ''), seq: u.Seq };
+      const cur = next[idx];
+      const merged: TimelineItem = { ...cur, text: (cur.text ?? '') + (u.Text ?? ''), seq: u.Seq };
+      // image/resource_link 块作为独立分片推送：归并时追加而非丢弃；
+      // 无新附件时保留原数组引用，避免无关分片引发下游重渲染
+      if (u.Attachments && u.Attachments.length > 0) {
+        merged.attachments = [...(cur.attachments ?? []), ...u.Attachments];
+      }
+      next[idx] = merged;
       return next;
     }
     return [

@@ -74,4 +74,37 @@ describe('applyChatUpdate', () => {
     expect(items[0].attachments?.[0].Name).toBe('a.txt');
     expect(items[0].attachments?.[1].MimeType).toBe('image/png');
   });
+
+  // 后端把 image/resource_link 块拆成独立分片推送：同 MessageID 归并时
+  // attachments 必须追加而非丢弃（此前文本归并分支直接丢掉 u.Attachments）。
+  it('同 MessageID 分片归并时 attachments 追加合并', () => {
+    let items = emptyChatItems();
+    items = applyChatUpdate(items, { Seq: 1, Type: 'assistant', MessageID: 'm1', Text: '结果' });
+    items = applyChatUpdate(items, {
+      Seq: 2,
+      Type: 'assistant',
+      MessageID: 'm1',
+      Text: '如图',
+      Attachments: [{ Kind: 'image', Path: 'D:\\c\\1.png', MimeType: 'image/png' }],
+    });
+    const m1 = items.find((it) => it.key === 'm1');
+    expect(m1?.text).toBe('结果如图');
+    expect(m1?.attachments).toHaveLength(1);
+    expect(m1?.attachments?.[0].Kind).toBe('image');
+  });
+
+  // 无新附件的归并不应产生新数组引用：避免无关分片导致下游 memo/比较失效
+  it('归并无新附件时保留原 attachments 引用', () => {
+    let items = emptyChatItems();
+    items = applyChatUpdate(items, {
+      Seq: 1,
+      Type: 'user',
+      MessageID: 'u1',
+      Text: 'a',
+      Attachments: [{ Name: 'a.txt' }],
+    });
+    const before = items.find((it) => it.key === 'u1')?.attachments;
+    items = applyChatUpdate(items, { Seq: 2, Type: 'user', MessageID: 'u1', Text: 'b' });
+    expect(items.find((it) => it.key === 'u1')?.attachments).toBe(before);
+  });
 });

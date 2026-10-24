@@ -914,7 +914,10 @@
       "attach_paste_failed": "Cannot read the pasted file. Use the attachment button instead.",
       "remove_attachment": "Remove attachment",
       "attachment_image": "Image",
-      "attachment_file": "File"
+      "attachment_file": "File",
+      "attachment_open_failed": "Failed to open attachment: {{err}}",
+      "attachment_preview_failed": "Failed to load image preview",
+      "attachment_close": "Close preview"
     },
     "hub": {
       "title": "Agent Hub",

@@ -12,6 +12,9 @@ import {
   listChatModels,
   listChatQueue,
   listChats,
+  openExternalURL,
+  openInDefaultApp,
+  openLocalPath,
   pickFile,
   removeChatQueued,
   respondChatPermission,
@@ -20,6 +23,7 @@ import {
   setChatModel,
 } from '../lib/api';
 import { appendChatInput, registerChatInput, unregisterChatInput } from '../lib/chatInputRegistry';
+import { attachmentAction } from '../lib/chatAttachment';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
 import { markdownBubbleClass } from '../lib/markdownStyles';
@@ -32,6 +36,7 @@ import { handleAnchorClick } from '../lib/openHref';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
+import ImageLightbox from './ImageLightbox';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 
 interface Props {
@@ -132,6 +137,8 @@ export default function ChatView({ chat, active }: Props) {
   const [draft, setDraft] = useState('');
   const [dropHint, setDropHint] = useState(false);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  // 图片附件 lightbox：Path 为落盘缓存绝对路径
+  const [preview, setPreview] = useState<{ name?: string; path: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // 用户是否停在底部（近底 40px 内）：仅在底部时才自动滚动，避免读历史时被新消息拽走
   const atBottom = useRef(true);
@@ -404,6 +411,60 @@ export default function ChatView({ chat, active }: Props) {
   const currentModelName =
     models?.Models?.find((m) => m.ID === models.Current)?.Name ?? models?.Current ?? '';
 
+  // 附件 chip 点击分派（attachmentAction 纯函数归类，副作用在此触发）：
+  // preview → lightbox；default/local → 系统打开（失败 toast）；external → 外链
+  // （openExternalURL 内部失败静默）；none → 不响应。
+  const openAttachment = (meta: ChatAttachmentMeta) => {
+    const action = attachmentAction(meta, chat.Workspace);
+    switch (action.kind) {
+      case 'preview':
+        setPreview({ name: meta.Name, path: action.path });
+        return;
+      case 'default':
+        openInDefaultApp(action.wsPath, action.rel).catch((e) => {
+          useAppStore.getState().notify(t('ui.chat.attachment_open_failed', { err: backendError(e) }), 'error');
+        });
+        return;
+      case 'local':
+        openLocalPath(action.abs).catch((e) => {
+          useAppStore.getState().notify(t('ui.chat.attachment_open_failed', { err: backendError(e) }), 'error');
+        });
+        return;
+      case 'external':
+        void openExternalURL(action.url).catch(() => {});
+        return;
+      case 'none':
+        return;
+    }
+  };
+
+  // 时间线附件 chips：user 靠右（justify-end）、assistant 靠左（justify-start）。
+  // 可点的 meta 渲染 button，旧数据（attachmentAction 归 none）保持 span 不可点。
+  const renderAttachmentChips = (atts: ChatAttachmentMeta[] | undefined, align: 'start' | 'end') => {
+    if (!atts || atts.length === 0) return null;
+    return (
+      <div className={cn('mt-0.5 flex flex-wrap gap-1 text-xs text-muted-foreground', align === 'end' ? 'justify-end' : 'justify-start')}>
+        {atts.map((att, i) => {
+          const label = attachmentLabel(att, t('ui.chat.attachment_image'));
+          const clickable = attachmentAction(att, chat.Workspace).kind !== 'none';
+          return clickable ? (
+            <button
+              key={i}
+              className="cursor-pointer rounded border border-border px-1 py-0.5 hover:bg-muted"
+              onClick={() => openAttachment(att)}
+            >
+              {label}
+            </button>
+          ) : (
+            <span key={i} className="rounded border border-border px-1 py-0.5">
+              {label}
+            </span>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
     <div
       className="relative flex h-full min-h-0 flex-col"
@@ -469,22 +530,14 @@ export default function ChatView({ chat, active }: Props) {
                 {/* wrapper 用 text-right 让气泡靠右；气泡本体 text-left 保证文字左对齐 */}
                 <div className={cn('selectable inline-block max-w-[85%] break-words overflow-hidden rounded-md px-3 py-1.5 text-left text-sm [&_pre]:whitespace-pre-wrap',
                   it.type === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
-                  {/* markdown 内容元素样式与 AgentHub/预览共用 markdownBubbleClass；pre 折行策略归容器管 */}
-                  {it.type === 'assistant'
-                    ? <div className={markdownBubbleClass}><ReactMarkdown remarkPlugins={[remarkGfm]}>{it.text ?? ''}</ReactMarkdown></div>
-                    : <span className="whitespace-pre-wrap">{it.text}</span>}
-                </div>
-                {it.type === 'user' && it.attachments && it.attachments.length > 0 && (
-                  <div className="mt-0.5 flex flex-wrap justify-end gap-1 text-xs text-muted-foreground">
-                    {it.attachments.map((att, i) => (
-                      <span key={i} className="rounded border border-border px-1 py-0.5">
-                        {attachmentLabel(att, t('ui.chat.attachment_image'))}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                {/* markdown 内容元素样式与 AgentHub/预览共用 markdownBubbleClass；pre 折行策略归容器管 */}
+                {it.type === 'assistant'
+                  ? <div className={markdownBubbleClass}><ReactMarkdown remarkPlugins={[remarkGfm]}>{it.text ?? ''}</ReactMarkdown></div>
+                  : <span className="whitespace-pre-wrap">{it.text}</span>}
               </div>
-            );
+              {renderAttachmentChips(it.attachments, it.type === 'user' ? 'end' : 'start')}
+            </div>
+          );
           }
           if (it.type === 'thought') {
             return (
@@ -680,6 +733,10 @@ export default function ChatView({ chat, active }: Props) {
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded border-2 border-dashed border-primary bg-primary/10 text-sm">
           {t('ui.chat.drop_hint')}
         </div>
+      )}
+
+      {preview && (
+        <ImageLightbox name={preview.name} path={preview.path} onClose={() => setPreview(null)} />
       )}
 
       {permission && (

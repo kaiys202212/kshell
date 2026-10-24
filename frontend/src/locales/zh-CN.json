@@ -914,7 +914,10 @@
       "attach_paste_failed": "无法读取粘贴的文件，请改用附件按钮。",
       "remove_attachment": "移除附件",
       "attachment_image": "图片",
-      "attachment_file": "文件"
+      "attachment_file": "文件",
+      "attachment_open_failed": "打开附件失败：{{err}}",
+      "attachment_preview_failed": "图片预览加载失败",
+      "attachment_close": "关闭预览"
     },
     "hub": {
       "title": "Agent 汇总",
