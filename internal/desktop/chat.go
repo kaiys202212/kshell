@@ -18,12 +18,12 @@ import (
 	"github.com/yangk/kshell/internal/terminal"
 )
 
-// newChatManager 用真实后端装配聊天管理器（initRealDeps 用）。
-// Hub 投递回调在此接线：排队消息真正投递时改状态并补 ack 卡片。
+// newChatManager 用给定后端装配聊天管理器（initRealDeps 传 RealBackend，测试
+// 注入桩）。Hub 投递回调在此接线：排队消息真正投递时改状态并补 ack 卡片。
 // 各回调的出站事件经 emitChatOut 统一翻译：manager 侧新 ID 翻回前端持有的
 // 原始 ID，重建后前端按旧 ID 索引的时间线/权限/退出状态才能继续收到。
-func newChatManager(a *App) *chat.Manager {
-	m := newChatManagerWith(a.emitChatOut, chat.RealBackend{}, func() bool {
+func newChatManager(a *App, b chat.Backend) *chat.Manager {
+	m := newChatManagerWith(a.emitChatOut, b, func() bool {
 		return a.snapshot().Config.PermissionMode == config.PermissionModeBypass
 	}, a.notifyDedupAllow, a.recordHubAgentMessage, a.originalChatID,
 		func(chatID, reqID, desc string) { // 微信桥权限菜单联动
@@ -32,6 +32,10 @@ func newChatManager(a *App) *chat.Manager {
 			}
 		})
 	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
+	// 附件落盘缓存根目录：persistBlocks 按会话写入 <root>/<chatID>/，读回走
+	// ReadChatAttachmentData（同前缀校验）。本函数只在 initRealDeps 持锁期间
+	// 被调用，这里直读 a.opts（走 a.snapshot() 会重入 a.mu 死锁）。
+	m.SetAttachmentsRoot(a.opts.ChatAttachmentsDir)
 	// Open 完成且 agent 报告模型后补推一次模型视图：握手期前端拉 ListChatModels
 	// 可能拿空（starting 状态竞态）。emitChatOut 自带 origID 翻译，与
 	// chat:commands 等出站事件同一口径。

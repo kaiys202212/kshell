@@ -90,6 +90,9 @@ type Options struct {
 	Layout config.Layout
 	// ThemeCacheDir 是主题注入文件目录，供启动 agent 时使用。
 	ThemeCacheDir string
+	// ChatAttachmentsDir 是聊天附件落盘缓存根目录（<root>/<chatID>/<file>）：
+	// chat.Manager persistBlocks 落盘、ReadChatAttachmentData 读回共用同一根。
+	ChatAttachmentsDir string
 	// InstallRunner 注入安装/卸载命令执行器；nil 则走真实 runShellCommand（测试打桩用）。
 	InstallRunner installCmdRunner
 	// PurgeDirs 清除已展开的配置目录；nil 则 os.RemoveAll。目录不存在视为成功。
@@ -379,6 +382,10 @@ func (a *App) initRealDeps() {
 	if a.opts.CachePath == "" {
 		a.opts.CachePath = paths.CacheIndex
 	}
+	if a.opts.ChatAttachmentsDir == "" {
+		// CachePath 指向 index.json，其父目录即 ~/.kshell/cache
+		a.opts.ChatAttachmentsDir = filepath.Join(filepath.Dir(a.opts.CachePath), "chat-attachments")
+	}
 	if a.opts.ProvidersPath == "" {
 		a.opts.ProvidersPath = paths.Providers
 	}
@@ -403,7 +410,7 @@ func (a *App) initRealDeps() {
 		a.opts.Terminals = newTerminalManager(a)
 	}
 	if a.opts.Chats == nil { // 幂等：已注入（测试）或已装配过就不重建
-		a.opts.Chats = newChatManager(a)
+		a.opts.Chats = newChatManager(a, chat.RealBackend{})
 	}
 	if a.opts.SignalPath == "" {
 		a.opts.SignalPath = paths.SignalExit
