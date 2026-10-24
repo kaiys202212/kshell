@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.20 (2026-10-24)
+
+- Built-in TRAE CLI support: discovery, session parsing and resume, ACP chat, skills, and installation all work end to end; login state is detected via `traecli login status`.
+- Session tab improvements: overflow tabs collapse into a "more" menu, drag-to-reorder is supported, project tabs are wider, and a spinning indicator shows while working.
+- Tools that are not signed in no longer appear in the session creation entry (CodeBuddy / TRAE login detection); the list refreshes automatically when the login dialog closes.
+- Model sync robustness: dangling default models self-heal, sync no longer evicts built-in models, ACP dropdowns dedupe same-name entries; Claude sync clears dangling top-level model, and CodeBuddy sync cleans up old-platform mirrored models and only injects the default platform.
+- Uninstalling a tool now closes its kshell sessions first; deletion failures clearly report the process-in-use cause.
+- CodeBuddy login detection now uses `_codebuddy.ai/getUserInfo` for better reliability; the tool-section refresh button was renamed with an action hint.
+
 ## v0.1.19 (2026-10-23)
 
 - Model sync gains a Claude target: switching the default platform or installing Claude now auto-injects `settings.json` statically, syncing the active model and platform model aliases.
