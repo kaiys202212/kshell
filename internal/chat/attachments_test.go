@@ -16,6 +16,7 @@ func TestMimeExt(t *testing.T) {
 		{"image/webp", ".webp"},
 		{"image/gif", ".gif"},
 		{"application/pdf", ".bin"},
+		{"image/svg+xml", ".svg"},
 		{"", ".bin"},
 	}
 	for _, tc := range cases {
@@ -117,6 +118,25 @@ func TestPersistBlocksBadBase64(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(filepath.Join(root, "chat1")); err == nil && len(entries) > 0 {
 		t.Fatalf("坏 base64 不应产生落盘文件: %d 个", len(entries))
+	}
+}
+
+// root 指向已存在的普通文件：MkdirAll 必败，走降级分支；text 块不应产生全空条目。
+func TestPersistBlocksMkdirAllFails(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "blocked")
+	if err := os.WriteFile(root, []byte("占位"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	blocks := []acp.ContentBlock{
+		{Type: "text", Text: "看这张图"},
+		{Type: "image", MimeType: "image/png", Data: "aGVsbG8="},
+	}
+	metas := persistBlocks(root, "chat1", blocks)
+	if len(metas) != 1 {
+		t.Fatalf("metas 数量 = %d, want 1（text 跳过）: %+v", len(metas), metas)
+	}
+	if metas[0].Kind != "image" || metas[0].Path != "" {
+		t.Fatalf("降级 image meta = %+v", metas[0])
 	}
 }
 

@@ -17,7 +17,7 @@ var mimeExtByPrefix = map[string]string{
 	"image/webp": ".webp",
 	"image/gif":  ".gif",
 	"image/bmp":  ".bmp",
-	"image/svg":  ".svg",
+	"image/svg+xml": ".svg",
 }
 
 // mimeExt 把 MimeType 转成落盘扩展名；未知或空返回 .bin（表驱动，便于扩充）。
@@ -54,6 +54,9 @@ func persistBlocks(root, chatID string, blocks []acp.ContentBlock) []AttachmentM
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		// 目录建不出来（权限/磁盘）：全部降级为不带 Path 的元数据。
 		for _, b := range blocks {
+			if b.Type == "text" {
+				continue
+			}
 			out = append(out, metaWithoutPersist(b))
 		}
 		return out
