@@ -698,7 +698,7 @@ func (m Model) renderRight(height, width int) string {
 }
 
 func (m Model) renderTopBar() string {
-	left := m.theme.Title.Render(" kshell ") + " " + m.renderTabs() + " " + m.renderToolChips()
+	left := m.theme.Title.Render(" Capybara ") + " " + m.renderTabs() + " " + m.renderToolChips()
 	right := m.theme.Muted.Render(m.workspaceHeader())
 	return joinHorizontalFit(m.width, left, right)
 }

@@ -271,7 +271,7 @@ func (a *Agent) Initialize(ctx context.Context) (InitializeResult, error) {
 	var res InitializeResult
 	params := InitializeParams{
 		ProtocolVersion: 1,
-		ClientInfo:      Implementation{Name: "kshell", Title: "kshell", Version: "0.1.0"},
+		ClientInfo:      Implementation{Name: "kshell", Title: "Capybara", Version: "0.1.0"},
 	}
 	err := a.call(ctx, "initialize", params, &res)
 	return res, err

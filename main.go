@@ -52,7 +52,7 @@ var desktopApp = desktop.NewAppWith(desktop.Options{TrayIcon: trayIcon()})
 // --wails-draggable:drag（见 style.css 的 .kshell-drag）。
 func RunDesktop(src fs.FS) error {
 	return wails.Run(&options.App{
-		Title:     "kshell",
+		Title:     "Capybara",
 		Width:     1280,
 		Height:    800,
 		MinWidth:  960,

@@ -21,12 +21,12 @@ var helpContent = []string{
 	"i                 扫描工作区里的连接并进入导入界面",
 	"space / 回车      勾选候选 / 导入勾选项",
 	"x                 输入命令并在远程执行",
-	"s                 进入交互式 shell（退出后回到 kshell）",
+	"s                 进入交互式 shell（退出后回到 Capybara）",
 	"t                 连通性测试",
 	"b / d             绑定到当前工作区 / 删除连接",
 	"",
 	"?                 显示/关闭本帮助",
-	"q                 退出 kshell",
+	"q                 退出 Capybara",
 }
 
 func renderHelp(height, width int, theme Theme) string {

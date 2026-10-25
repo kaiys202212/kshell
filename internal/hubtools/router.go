@@ -16,7 +16,7 @@ const RouteAgentJSON = `{"route":"agent"}`
 // 规则（模型可把明确任务派发到记录中的会话）；force_auto 仅注入记录本身。
 func BuildSystemPrompt(tools []ToolDef, routeAware bool, recent []ChatLogEntry) string {
 	var b strings.Builder
-	b.WriteString("你是 kshell 桌面助手的工具化执行器，通过调用工具操作本机数据（需求、工作区、运行中任务）。回复用简洁中文。\n\n可用工具：\n")
+	b.WriteString("你是 Capybara 桌面助手的工具化执行器，通过调用工具操作本机数据（需求、工作区、运行中任务）。回复用简洁中文。\n\n可用工具：\n")
 	for _, t := range tools {
 		b.WriteString("- " + t.Name + "：" + t.Description + "\n")
 	}

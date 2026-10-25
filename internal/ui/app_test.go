@@ -15,7 +15,7 @@ func TestAppRendersThreeRegions(t *testing.T) {
 	m := NewModel()
 	out := m.View()
 
-	for _, want := range []string{"kshell", "Sessions", "Files", "Remote", "PREVIEW"} {
+	for _, want := range []string{"Capybara", "Sessions", "Files", "Remote", "PREVIEW"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("view missing %q:\n%s", want, out)
 		}
