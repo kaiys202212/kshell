@@ -22,8 +22,9 @@ describe('decodePercentText', () => {
     expect(decodePercentText('%E4%B8')).toBe('%E4%B8'); // 截断
   });
 
-  it('解码出控制字符时保留原样', () => {
-    expect(decodePercentText('a%0Ab')).toBe('a%0Ab');
+  it('解码出控制字符时保留原样（≥2 组才进守卫）', () => {
+    expect(decodePercentText('a%0A%0Ab')).toBe('a%0A%0Ab');
+    expect(decodePercentText('x%09%0Ay')).toBe('x%09%0Ay');
   });
 
   it('普通文本与孤立 % 原样返回', () => {

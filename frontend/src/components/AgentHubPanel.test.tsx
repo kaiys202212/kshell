@@ -260,6 +260,22 @@ describe('AgentHubPanel', () => {
     expect(chipOf('c1')).not.toHaveAttribute('aria-current');
   });
 
+  it('Hub 实时消息流气泡里的百分号编码文件名展示时还原为中文', async () => {
+    useAppStore.setState({
+      chats: [chat({ ID: 'c1', Title: '甲', ToolID: 'claude' })],
+      hubMessages: [
+        { id: 1, kind: 'user', chatId: 'c1', text: '合并 %E6%A8%A1%E5%9D%97.md', ts: 1 },
+        { id: 2, kind: 'agent', chatId: 'c1', tool: 'claude', event: 'Stop', text: '见 %E6%B8%85%E5%8D%95.md', ts: 2 },
+      ],
+    });
+    render(<AgentHubPanel />);
+    await act(async () => {});
+
+    expect(screen.getByText('合并 模块.md')).toBeInTheDocument();
+    expect(screen.getByText('见 清单.md')).toBeInTheDocument();
+    expect(screen.queryByText(/%E6%A8%A1/)).not.toBeInTheDocument();
+  });
+
   it('chip 主体带 mention_session 悬停提示（title），点击即 @ 无独立图标按钮', () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: 'c1' });
     render(<AgentHubPanel />);

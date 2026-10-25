@@ -14,6 +14,7 @@ import {
   type MentionAgent,
 } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
+import { decodePercentText } from '../lib/displayText';
 import { translateBackend } from '../lib/errors';
 import { formatHubTime } from '../lib/format';
 import { attributionText, resolveAttribution } from '../lib/hubAttribution';
@@ -115,7 +116,7 @@ const HubMessageItem = memo(function HubMessageItem({
             />
           ) : (
             <div className={markdownBubbleClass}>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{translateBackend(m.text)}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{decodePercentText(translateBackend(m.text))}</ReactMarkdown>
             </div>
           )}
         </div>
@@ -161,7 +162,9 @@ function HubMessageList({ tools, onRecall, onQuickReply }: HubMessageListProps) 
         const attr = attributionText(resolveAttribution(m, chats, terminals));
         const st = replyState(m, tools, terminals);
         const userText =
-          m.kind === 'user' ? stripMentionTags(displayMentionTitles(m.text, mentionAgents), options) : '';
+          m.kind === 'user'
+            ? decodePercentText(stripMentionTags(displayMentionTitles(m.text, mentionAgents), options))
+            : '';
         return (
           <HubMessageItem
             key={`h${m.id}`}
