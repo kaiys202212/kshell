@@ -52,6 +52,14 @@ beforeEach(() => {
 
 
 describe('TitleBar', () => {
+  it('品牌区显示 Capybara 名称与卡皮巴拉图标', () => {
+    setup();
+
+    expect(screen.getByText('Capybara')).toBeInTheDocument();
+    const icon = screen.getByRole('img', { name: 'Capybara' });
+    expect(icon).toHaveAttribute('src', '/appicon.png');
+  });
+
   it('渲染首页 / 工作区页签 / 设置 / 三个窗口控件', () => {
     setup();
 

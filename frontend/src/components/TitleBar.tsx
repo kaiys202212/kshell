@@ -172,9 +172,9 @@ export default function TitleBar({ tabs, activeTabId, onSelectTab, onCloseTab }:
       onDoubleClick={onDoubleClick}
     >
       <div className="flex shrink-0 items-center gap-1.5 pr-3">
-        <span className="text-[13px] font-semibold tracking-wide">
-          <span className="text-primary">k</span>shell
-        </span>
+        {/* 品牌图标随 public/appicon.png 走构建产物；品牌名不进 i18n（与窗口标题/托盘一致） */}
+        <img src="/appicon.png" alt="Capybara" className="h-4 w-4" draggable={false} />
+        <span className="text-[13px] font-semibold tracking-wide">Capybara</span>
       </div>
 
       {/* 页签区：首页 + 工作区页签（可关、中键关闭）；溢出横向滚动 */}
