@@ -157,20 +157,29 @@ func TestExeNewSiblingExistsDetectsUpgradeOldLeftovers(t *testing.T) {
 func TestPrepareLaunchUpgradeRemovesLeftoversOnGraceClear(t *testing.T) {
 	removeCalls := 0
 	removedExe := ""
+	killCalls := 0
+	peerCalls := 0
 	err := prepareLaunchWith(launchPrepDeps{
 		selfExe:    `C:\app\kshell-desktop.exe`,
 		signalPath: "sig",
+		// 首次枚举仍有 peer，grace 轮询第二次即清空，让循环真正走
+		// 「grace 内清空」分支退出，而不是落到超时强杀。
 		listPeers: func() ([]int, error) {
-			return []int{99}, nil
+			peerCalls++
+			if peerCalls == 1 {
+				return []int{99}, nil
+			}
+			return nil, nil
 		},
 		writeSignal: func(string) error { return nil },
-		mutexFree: func() bool {
-			return true
+		mutexFree:   func() bool { return true },
+		killPIDs: func([]int) error {
+			killCalls++
+			return nil
 		},
-		killPIDs:  func([]int) error { return errors.New("等待成功后不应 kill") },
-		sleep:     func(time.Duration) {},
+		sleep:      func(time.Duration) {},
 		exeModTime: func(string) (time.Time, error) { return time.Now().Add(-time.Hour), nil },
-		newExists: func(string) bool { return false },
+		newExists:  func(string) bool { return false },
 		removeUpgradeOld: func(exe string) error {
 			removeCalls++
 			removedExe = exe
@@ -183,10 +192,61 @@ func TestPrepareLaunchUpgradeRemovesLeftoversOnGraceClear(t *testing.T) {
 		t.Fatal(err)
 	}
 	if removeCalls != 1 {
-		t.Fatalf("升级清场后应补删一次残留, got %d", removeCalls)
+		t.Fatalf("grace 清空后应补删一次残留, got %d", removeCalls)
 	}
 	if removedExe != `C:\app\kshell-desktop.exe` {
 		t.Fatalf("补删应按 selfExe 定位, got %q", removedExe)
+	}
+	if killCalls != 0 {
+		t.Fatalf("grace 内清空不应走到强杀, got %d", killCalls)
+	}
+}
+
+func TestPrepareLaunchUpgradeRemovesLeftoversOnRecheckCleared(t *testing.T) {
+	// 超时后最后一次枚举发现 peer 已自行消失：应走「复查清空」分支补删，
+	// 而不是强杀。now 每次调用推进 1ms，保证循环次数与最终枚举时点确定。
+	const graceMs = 5
+	nowMs := 0
+	removeCalls := 0
+	killCalls := 0
+	err := prepareLaunchWith(launchPrepDeps{
+		selfExe:    `C:\app\kshell-desktop.exe`,
+		signalPath: "sig",
+		listPeers: func() ([]int, error) {
+			// 截止前一直有 peer；超时后的复查枚举返回空。
+			if nowMs < graceMs {
+				return []int{99}, nil
+			}
+			return nil, nil
+		},
+		writeSignal: func(string) error { return nil },
+		mutexFree:   func() bool { return false },
+		killPIDs: func([]int) error {
+			killCalls++
+			return nil
+		},
+		sleep:      func(time.Duration) {},
+		exeModTime: func(string) (time.Time, error) { return time.Now().Add(-time.Hour), nil },
+		newExists:  func(string) bool { return false },
+		removeUpgradeOld: func(string) error {
+			removeCalls++
+			return nil
+		},
+		graceWait: time.Duration(graceMs) * time.Millisecond,
+		pollEvery: time.Millisecond,
+		now: func() time.Time {
+			nowMs++
+			return time.Unix(0, 0).Add(time.Duration(nowMs) * time.Millisecond)
+		},
+	}, []string{`C:\app\kshell-desktop.exe`, "--after-update"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removeCalls != 1 {
+		t.Fatalf("超时复查 peer 已消失后应补删一次残留, got %d", removeCalls)
+	}
+	if killCalls != 0 {
+		t.Fatalf("复查已清空不应强杀, got %d", killCalls)
 	}
 }
 

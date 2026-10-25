@@ -21,10 +21,10 @@ func TestDesktopPeerFilterUsesExecutableName(t *testing.T) {
 	defer func() { desktopExeName = orig }()
 
 	tests := []struct {
-		name     string
-		exeName  string
-		wantSub  string
-		notWant  string
+		name    string
+		exeName string
+		wantSub string
+		notWant string
 	}{
 		{name: "改名安装按实际名过滤", exeName: "kshell-desktop1.exe", wantSub: "Name='kshell-desktop1.exe'", notWant: "Name='kshell-desktop.exe'"},
 		{name: "名字含单引号成对转义", exeName: `my'app.exe`, wantSub: "Name='my''app.exe'"},
