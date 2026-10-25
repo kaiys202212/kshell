@@ -45,6 +45,7 @@ import { toolDisplayName } from '../lib/agentNotify';
 import { formatPlatformModelName, hubInjectedModelsForTool, loadDefaultCreate, loadLastCreate, loadToolModelOptions, loadToolModels, loadHubRouteMode, mergeHubModelOptions, rememberLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode, type ToolModelOption } from '../lib/agenthubDefaults';
 import { saveHubDefaultCreate } from '../lib/api';
 import { quotePathForShell } from '../lib/dragPath';
+import { decodePercentText } from '../lib/displayText';
 import { backendError, translateBackend } from '../lib/errors';
 import { isHubNumber, isNewHubCommand, normalizeHubProbe } from '../lib/hubCommands';
 import { isHubWelcome, replyState, terminalActive } from '../lib/hubReply';
@@ -402,8 +403,9 @@ export default function AgentHubPanel() {
 
   // userBubbleText 用户气泡不展示 Hub @ 路由标签：历史消息先按会话标题
   // 替换 id 写法，再整体移除标签；新消息投递前已剥离，气泡天然干净。
+  // 末尾做百分号编码文件名还原，只影响展示（存储原文不动）。
   const userBubbleText = (text: string) =>
-    stripMentionTags(displayMentionTitles(text, mentionAgents), options);
+    decodePercentText(stripMentionTags(displayMentionTitles(text, mentionAgents), options));
 
   // mentionLabelForChat 给「刚激活、尚未进入渲染期 chats」的会话构造写入标签。
   // 必须基于实时 store 的全量会话：visibleMentionLabel 的同名消歧依赖完整列表，
@@ -1278,7 +1280,7 @@ export default function AgentHubPanel() {
                       <span className="whitespace-pre-wrap">{userBubbleText(m.text)}</span>
                     ) : (
                       <div className={cn(markdownBubbleClass, '[&_pre]:whitespace-pre-wrap')}>
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{translateBackend(m.text)}</ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{decodePercentText(translateBackend(m.text))}</ReactMarkdown>
                       </div>
                     )}
                   </div>

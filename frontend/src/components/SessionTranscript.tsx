@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getSessionPreview } from '../lib/api';
 import { backendError } from '../lib/errors';
+import { decodePercentText } from '../lib/displayText';
 import MarkdownPreview from './MarkdownPreview';
 import { Button } from './ui/button';
 import { EmptyState } from './ui/empty-state';
@@ -66,7 +67,8 @@ export default function SessionTranscript({
           <EmptyState title={t('ui.transcript.load_failed')} hint={error} />
         ) : (
           <div className="min-h-0 flex-1">
-            <MarkdownPreview markdown={markdown} workspaceRoot={workspaceRoot} />
+            {/* 展示层还原百分号编码文件名；后端预览原文不动 */}
+            <MarkdownPreview markdown={decodePercentText(markdown)} workspaceRoot={workspaceRoot} />
           </div>
         )}
       </div>

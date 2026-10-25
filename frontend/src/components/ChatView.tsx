@@ -24,6 +24,7 @@ import {
 } from '../lib/api';
 import { appendChatInput, registerChatInput, unregisterChatInput } from '../lib/chatInputRegistry';
 import { attachmentAction } from '../lib/chatAttachment';
+import { decodePercentText } from '../lib/displayText';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
 import { markdownBubbleClass } from '../lib/markdownStyles';
@@ -539,9 +540,10 @@ export default function ChatView({ chat, active }: Props) {
                 <div className={cn('selectable inline-block max-w-[85%] break-words overflow-hidden rounded-md px-3 py-1.5 text-left text-sm [&_pre]:whitespace-pre-wrap',
                   it.type === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
                 {/* markdown 内容元素样式与 AgentHub/预览共用 markdownBubbleClass；pre 折行策略归容器管 */}
+                {/* 展示层还原百分号编码文件名；存储原文不动 */}
                 {it.type === 'assistant'
-                  ? <div className={markdownBubbleClass}><ReactMarkdown remarkPlugins={[remarkGfm]}>{it.text ?? ''}</ReactMarkdown></div>
-                  : <span className="whitespace-pre-wrap">{it.text}</span>}
+                  ? <div className={markdownBubbleClass}><ReactMarkdown remarkPlugins={[remarkGfm]}>{decodePercentText(it.text ?? '')}</ReactMarkdown></div>
+                  : <span className="whitespace-pre-wrap">{decodePercentText(it.text ?? '')}</span>}
               </div>
               {renderAttachmentChips(it.attachments, it.type === 'user' ? 'end' : 'start')}
             </div>
@@ -552,7 +554,7 @@ export default function ChatView({ chat, active }: Props) {
               <details key={it.key} className="mb-3 text-xs text-muted-foreground">
                 <summary className="cursor-pointer select-none italic">{t('ui.chat.thought')}</summary>
                 <div className="selectable mt-1 whitespace-pre-wrap break-words rounded border border-border px-2 py-1 italic">
-                  {it.text}
+                  {decodePercentText(it.text ?? '')}
                 </div>
               </details>
             );

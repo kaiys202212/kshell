@@ -574,6 +574,18 @@ describe('ChatView', () => {
     expect(api.readChatAttachmentData).not.toHaveBeenCalled();
   });
 
+  it('气泡里的百分号编码文件名展示时还原为中文', () => {
+    useAppStore.setState({
+      chatItems: {
+        c1: [{ key: 'u1', type: 'user', text: '请合并 %E6%A8%A1%E5%9D%97%E4%B8%8E%E6%95%B0%E6%8D%AE%E9%9C%80%E6%B1%82%E8%AF%B4%E6%98%8E.md', seq: 1 }],
+      },
+    });
+    render(<ChatView chat={CHAT} active />);
+
+    expect(screen.getByText('请合并 模块与数据需求说明.md')).toBeInTheDocument();
+    expect(screen.queryByText(/%E6%A8%A1/)).not.toBeInTheDocument();
+  });
+
   it('assistant 消息附件 chips 渲染且可预览', async () => {
     api.readChatAttachmentData.mockResolvedValue({
       Base64: 'iVBORw0KGgo=', Mime: 'image/png', Size: 12, AbsPath: 'D:\\cache\\1.png',
