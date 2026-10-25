@@ -1544,6 +1544,14 @@ export async function closeTerminal(id: string): Promise<void> {
   await a.CloseTerminal(id);
 }
 
+// scrollbackTerminal 取终端最近输出的回放数据（base64，Go 侧 256KiB 环形缓冲）。
+// 供 TerminalView 重挂载时重建滚动缓冲；未知/未就绪终端由调用方按错误跳过。
+export async function scrollbackTerminal(id: string): Promise<string> {
+  const a = app();
+  if (!a) return '';
+  return a.ScrollbackTerminal(id);
+}
+
 // listTerminals 返回全部内嵌终端快照（用于重挂载后还原页签）。
 export async function listTerminals(): Promise<TerminalInfo[]> {
   const a = app();

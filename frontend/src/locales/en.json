@@ -349,6 +349,12 @@
         "zh_cn": "简体中文",
         "system": "System"
       },
+      "center_layout": {
+        "title": "Center area layout",
+        "tabs": "Tabbed",
+        "split": "Split",
+        "desc": "Split divides the center area: agent sessions on the left, files and terminals on the right. Applies globally; also togglable via the button on the tab bar."
+      },
       "close_behavior": {
         "title": "Close behavior",
         "tray": "Minimize to tray",
@@ -1177,7 +1183,12 @@
       "active_terminals_workspace": "{{name}}",
       "pick_session": "Select a session from the list on the left to preview",
       "right_panel_aria": "Files, Git, SSH and Terminal panel",
-      "resize_files": "Resize file panel"
+      "resize_files": "Resize file panel",
+      "layout_toggle_split": "Switch to split layout",
+      "layout_toggle_tabs": "Switch to tabbed layout",
+      "left_pane_aria": "Agent sessions pane",
+      "right_pane_aria": "Files and terminals pane",
+      "split_resize": "Resize split panes"
     }
   }
 }

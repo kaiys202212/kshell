@@ -117,3 +117,49 @@ describe('CenterSessionTabs', () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 });
+
+describe('CenterSessionTabs variant（分割模式）', () => {
+  it('variant=agent 隐藏右钉「文件」「终端」，会话页签照常', () => {
+    setup({ variant: 'agent' });
+    expect(screen.getByRole('tab', { name: tt('ui.workspace.session_preview') })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '新会话' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: tt('ui.workspace.files_tab') })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: tt('ui.workspace.terminals_aria') })).not.toBeInTheDocument();
+  });
+
+  it('variant=tool 只渲染右钉「文件」「终端」，无预览钉与会话页签', () => {
+    setup({ variant: 'tool' });
+    expect(screen.getByRole('tab', { name: tt('ui.workspace.files_tab') })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: tt('ui.workspace.terminals_aria') })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: tt('ui.workspace.session_preview') })).not.toBeInTheDocument();
+    expect(screen.queryByText('新会话')).not.toBeInTheDocument();
+  });
+
+  it('multi-tab 模式下切换按钮提示切到分割并回调 onLayoutToggle', () => {
+    const onLayoutToggle = vi.fn();
+    setup({ variant: 'agent', layoutMode: 'tabs', onLayoutToggle });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.workspace.layout_toggle_split') }));
+    expect(onLayoutToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('split 模式下切换按钮提示切回多页签', () => {
+    const onLayoutToggle = vi.fn();
+    setup({ variant: 'agent', layoutMode: 'split', onLayoutToggle });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.workspace.layout_toggle_tabs') }));
+    expect(onLayoutToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('full 变体也可带切换按钮（多页签模式的快捷入口）', () => {
+    const onLayoutToggle = vi.fn();
+    setup({ layoutMode: 'tabs', onLayoutToggle });
+    expect(
+      screen.getByRole('button', { name: tt('ui.workspace.layout_toggle_split') }),
+    ).toBeInTheDocument();
+  });
+
+  it('未传 onLayoutToggle 时不渲染切换按钮（兼容既有调用方）', () => {
+    setup();
+    expect(screen.queryByRole('button', { name: tt('ui.workspace.layout_toggle_split') })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: tt('ui.workspace.layout_toggle_tabs') })).not.toBeInTheDocument();
+  });
+});

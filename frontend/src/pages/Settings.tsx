@@ -160,6 +160,8 @@ export default function Settings() {
   const notify = useAppStore((s) => s.notify);
   const notifySound = useAppStore((s) => s.notifySound);
   const setNotifySound = useAppStore((s) => s.setNotifySound);
+  const layoutMode = useAppStore((s) => s.layoutMode);
+  const setLayoutMode = useAppStore((s) => s.setLayoutMode);
   const { t, i18n } = useTranslation();
   // 语言选中态：store 为准（main.tsx 启动接线 + language:changed 事件写入），
   // 本地 state 只做点击后的即时反馈。依赖整个对象：事件携带新对象身份，
@@ -842,6 +844,30 @@ export default function Settings() {
                     </Button>
                   ))}
                 </div>
+              </section>
+
+              <section className="mb-5 rounded border border-border bg-card p-3.5">
+                <h2 className="mb-3 text-sm font-medium">{t('ui.settings.center_layout.title')}</h2>
+                <div className="flex gap-2">
+                  {(
+                    [
+                      { value: 'tabs', labelKey: 'ui.settings.center_layout.tabs' },
+                      { value: 'split', labelKey: 'ui.settings.center_layout.split' },
+                    ] as { value: typeof layoutMode; labelKey: string }[]
+                  ).map((opt) => (
+                    <Button
+                      key={opt.value}
+                      variant={layoutMode === opt.value ? 'default' : 'secondary'}
+                      aria-pressed={layoutMode === opt.value}
+                      onClick={() => setLayoutMode(opt.value)}
+                    >
+                      {t(opt.labelKey)}
+                    </Button>
+                  ))}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t('ui.settings.center_layout.desc')}
+                </p>
               </section>
 
               <section className="mb-5 rounded border border-border bg-card p-3.5">

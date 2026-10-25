@@ -3,7 +3,7 @@
 // 聊天页签：先切页签再经 chatInputRegistry 投递到输入框草稿。
 // api 层整体打桩（vi.mock），与 App.test.tsx 同一套模式；重子组件替换为轻桩。
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WorkspaceTabView from './WorkspaceTab';
 import { encodeTerminalInput } from '../lib/base64';
@@ -160,7 +160,8 @@ beforeEach(() => {
     chats: [chat],
     chatPermissions: {},
     terminalBusy: {},
-    layout: { left: 288, right: 300 },
+    layout: { left: 288, right: 300, center: 480 },
+    layoutMode: 'tabs',
   });
 });
 
@@ -449,5 +450,114 @@ describe('WorkspaceTabView agent 活动图标', () => {
       }),
     );
     expect(screen.getByTestId('file-tabs-pane')).toHaveAttribute('data-active', '');
+  });
+});
+
+describe('WorkspaceTabView 分割模式', () => {
+  const ARIA = () => tt('ui.workspace.center_tabs_aria');
+
+  it('split 渲染两条页签条：左条有预览钉无文件钉，右条相反', () => {
+    useAppStore.setState({ layoutMode: 'split' });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    const lists = screen.getAllByRole('tablist', { name: ARIA() });
+    expect(lists).toHaveLength(2);
+    const leftTabs = [...lists[0]!.querySelectorAll('[role="tab"]')];
+    const rightTabs = [...lists[1]!.querySelectorAll('[role="tab"]')];
+    const labels = (els: Element[]) => els.map((t) => t.getAttribute('aria-label') || t.textContent);
+    // 左条：预览钉 + 会话页签，无文件/终端钉
+    expect(labels(leftTabs)[0]).toMatch(tt('ui.workspace.session_preview'));
+    expect(labels(leftTabs)).toContain('修登录页');
+    expect(labels(leftTabs)).not.toContain(tt('ui.workspace.files_tab'));
+    // 右条：只有文件/终端钉
+    expect(labels(rightTabs)).toContain(tt('ui.workspace.files_tab'));
+    expect(labels(rightTabs)).not.toContain(tt('ui.workspace.session_preview'));
+    expect(labels(rightTabs)).not.toContain('修登录页');
+  });
+
+  it('split 模式：点左条会话页签激活终端，再点右条文件页签不改变左半', () => {
+    useAppStore.setState({ layoutMode: 'split' });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    expect(screen.getByTestId('terminal-t1').getAttribute('data-active')).toBe('false');
+
+    fireEvent.click(screen.getByRole('tab', { name: '修登录页' }));
+    expect(screen.getByTestId('terminal-t1').getAttribute('data-active')).toBe('true');
+
+    fireEvent.click(screen.getByRole('tab', { name: tt('ui.workspace.files_tab') }));
+    expect(screen.getByTestId('terminal-t1').getAttribute('data-active')).toBe('true');
+  });
+
+  it('split 模式：打开文件路由到右半，左半 agent 页签不受影响', () => {
+    useAppStore.setState({ layoutMode: 'split' });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    fireEvent(
+      window,
+      new CustomEvent(OPEN_FILE_EVENT, {
+        detail: { workspace: 'D:\\proj-a', path: 'D:\\proj-a\\README.md' },
+      }),
+    );
+    expect(screen.getByTestId('file-tabs-pane')).toHaveAttribute(
+      'data-active',
+      'D:\\proj-a\\README.md',
+    );
+    expect(screen.getByTestId('terminal-t1').getAttribute('data-active')).toBe('false');
+  });
+
+  it('tabs 模式切到文件后切 split：左半预览、右半文件各自保持激活', () => {
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    fireEvent.click(screen.getByRole('tab', { name: tt('ui.workspace.files_tab') }));
+    act(() => {
+      useAppStore.setState({ layoutMode: 'split' });
+    });
+
+    const lists = screen.getAllByRole('tablist', { name: ARIA() });
+    const preview = [...lists[0]!.querySelectorAll('[role="tab"]')][0]!;
+    expect(preview.textContent).toMatch(tt('ui.workspace.session_preview'));
+    expect(preview.getAttribute('aria-selected')).toBe('true');
+    const rightFiles = [...lists[1]!.querySelectorAll('[role="tab"]')].find(
+      (t) => t.textContent === tt('ui.workspace.files_tab'),
+    )!;
+    expect(rightFiles.getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('split 模式切回 tabs：活跃页签跟随最后点击的半区', () => {
+    useAppStore.setState({ layoutMode: 'split' });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    fireEvent.click(screen.getByRole('tab', { name: '修登录页' }));
+    fireEvent.click(screen.getByRole('tab', { name: tt('ui.workspace.files_tab') }));
+    act(() => {
+      useAppStore.setState({ layoutMode: 'tabs' });
+    });
+
+    // 最后点击的是右半文件页签 → 多页签模式激活「文件」
+    const filesTab = screen.getByRole('tab', { name: tt('ui.workspace.files_tab') });
+    expect(filesTab.getAttribute('aria-selected')).toBe('true');
+    // 左半最后激活的会话页签在切回后仍保留（点击预览钉可回会话）
+    fireEvent.click(screen.getByRole('tab', { name: '修登录页' }));
+    expect(screen.getByTestId('terminal-t1').getAttribute('data-active')).toBe('true');
+  });
+
+  it('split 模式：关闭左半活跃会话页签，左半回落会话预览空态', () => {
+    useAppStore.setState({ layoutMode: 'split' });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    fireEvent.click(screen.getByRole('tab', { name: '修登录页' }));
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: tt('ui.workspace.close_terminal').replace('{{label}}', '修登录页'),
+      }),
+    );
+
+    const lists = screen.getAllByRole('tablist', { name: ARIA() });
+    const preview = [...lists[0]!.querySelectorAll('[role="tab"]')][0]!;
+    expect(preview.textContent).toMatch(tt('ui.workspace.session_preview'));
+    expect(preview.getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('页签条切换按钮写入 store 的 layoutMode', () => {
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.workspace.layout_toggle_split') }));
+    expect(useAppStore.getState().layoutMode).toBe('split');
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.workspace.layout_toggle_tabs') }));
+    expect(useAppStore.getState().layoutMode).toBe('tabs');
   });
 });

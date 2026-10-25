@@ -2,7 +2,7 @@
 // openTabs/activeTabId 经 persist 中间件落 localStorage（kshell-tabs）。
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatInfo, TerminalInfo } from '../lib/api';
-import { SETTINGS_TAB_ID, dedupeTabs, useAppStore } from './store';
+import { SETTINGS_TAB_ID, LAYOUT_CENTER_DEFAULT, dedupeTabs, useAppStore } from './store';
 
 beforeEach(() => {
   // persist 会在每次 setState 后写 localStorage，用例间必须清干净避免互相污染
@@ -12,7 +12,7 @@ beforeEach(() => {
     openTabs: [],
     activeTabId: null,
     terminals: [],
-    layout: { left: 288, right: 300 },
+    layout: { left: 288, right: 300, center: 480 },
     terminalBusy: {},
     agentNotices: [],
     focusTermKey: null,
@@ -160,12 +160,12 @@ describe('store', () => {
     expect(useAppStore.getState().chatSeq.x).toBe(0);
   });
 
-  it('三栏宽度：setLayout 持久化且 clamp 到 [200,720]', () => {
+  it('三栏宽度：setLayout 持久化且 clamp 到 [200,720]，center 不受影响', () => {
     useAppStore.getState().setLayout({ left: 9999, right: 10 });
-    expect(useAppStore.getState().layout).toEqual({ left: 720, right: 200 });
+    expect(useAppStore.getState().layout).toMatchObject({ left: 720, right: 200 });
 
     useAppStore.getState().setLayout({ left: 320 });
-    expect(useAppStore.getState().layout).toEqual({ left: 320, right: 200 });
+    expect(useAppStore.getState().layout).toMatchObject({ left: 320, right: 200 });
 
     // 非法值（NaN/Infinity）回落到下限而不是写进 store
     useAppStore.getState().setLayout({ left: Number.NaN });
@@ -174,7 +174,58 @@ describe('store', () => {
     const parsed = JSON.parse(localStorage.getItem('kshell-tabs')!) as {
       state: { layout: { left: number; right: number } };
     };
-    expect(parsed.state.layout).toEqual({ left: 200, right: 200 });
+    expect(parsed.state.layout).toMatchObject({ left: 200, right: 200 });
+  });
+
+  it('center 宽度（分割模式左半区）：clamp 到 [260,1200]，与左右两栏互不干扰', () => {
+    useAppStore.getState().setLayout({ center: 99999 });
+    expect(useAppStore.getState().layout.center).toBe(1200);
+    expect(useAppStore.getState().layout.left).toBe(288);
+
+    useAppStore.getState().setLayout({ center: 1 });
+    expect(useAppStore.getState().layout.center).toBe(260);
+
+    useAppStore.getState().setLayout({ center: Number.NaN });
+    expect(useAppStore.getState().layout.center).toBe(260);
+
+    useAppStore.getState().setLayout({ center: LAYOUT_CENTER_DEFAULT });
+    expect(useAppStore.getState().layout.center).toBe(480);
+
+    const parsed = JSON.parse(localStorage.getItem('kshell-tabs')!) as {
+      state: { layout: { center: number } };
+    };
+    expect(parsed.state.layout.center).toBe(480);
+  });
+
+  it('layoutMode 默认 tabs，setLayoutMode 切换并持久化', () => {
+    expect(useAppStore.getState().layoutMode).toBe('tabs');
+    useAppStore.getState().setLayoutMode('split');
+    expect(useAppStore.getState().layoutMode).toBe('split');
+    const parsed = JSON.parse(localStorage.getItem('kshell-tabs')!) as {
+      state: { layoutMode: string };
+    };
+    expect(parsed.state.layoutMode).toBe('split');
+  });
+
+  it('persist 恢复旧存档：layout 缺 center 字段时补默认值，layoutMode 缺省为 tabs', async () => {
+    localStorage.clear();
+    localStorage.setItem(
+      'kshell-tabs',
+      JSON.stringify({ state: { layout: { left: 300, right: 320 }, layoutMode: 'split' }, version: 0 }),
+    );
+    vi.resetModules();
+    const fresh = await import('./store');
+    const s = fresh.useAppStore.getState();
+    expect(s.layout).toEqual({ left: 300, right: 320, center: LAYOUT_CENTER_DEFAULT });
+    expect(s.layoutMode).toBe('split');
+  });
+
+  it('persist 恢复旧存档：layout 字段整体缺失时整块用默认值', async () => {
+    localStorage.clear();
+    localStorage.setItem('kshell-tabs', JSON.stringify({ state: { openTabs: [] }, version: 0 }));
+    vi.resetModules();
+    const fresh = await import('./store');
+    expect(fresh.useAppStore.getState().layout).toEqual(fresh.LAYOUT_DEFAULT);
   });
 
   it('applyChat：已退出的聊天收到 turn_done/error 不再复活为 ready', () => {

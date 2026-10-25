@@ -1,6 +1,8 @@
 // 工作区页签：三栏布局（左右两栏宽度可拖动）。
 //   左栏：会话列表
-//   中栏：左钉「会话预览」+ 可关 agent/chat；右钉「文件」「终端」
+//   中栏：布局模式可配（store.layoutMode，全局持久化）：
+//     tabs  — 单区多页签：左钉「会话预览」+ 可关 agent/chat；右钉「文件」「终端」（默认）
+//     split — 左右分割：左半 agent（预览+会话页签），右半「文件」「终端」，中间可拖
 //   右栏：文件树 | Git | SSH | Terminal（运行中的 shell/ssh）
 // 终端页签一旦打开就常挂载（非激活用 hidden），xterm 缓冲与焦点不丢；
 // 工作区页签本身也由 App 常挂载，因此只有关闭页签才会真正结束终端进程。
@@ -40,6 +42,7 @@ import {
 import { displayTitle } from '../lib/title';
 import { TAB_ACTIVE, TAB_BASE } from '../lib/ui';
 import { sameWorkspacePath } from '../lib/workspacePath';
+import { LAYOUT_CENTER_DEFAULT, LAYOUT_CENTER_MAX, LAYOUT_CENTER_MIN } from '../state/store';
 import CenterSessionTabs, { type CenterSessionTabItem } from '../components/CenterSessionTabs';
 import FileTree from '../components/FileTree';
 import FileTabsPane from '../components/FileTabsPane';
@@ -98,7 +101,11 @@ const paneTabActive = TAB_ACTIVE;
 export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; visible: boolean }) {
   const { t: tr } = useTranslation();
   const [rightPane, setRightPane] = useState<RightPane>('files');
-  const [centerTab, setCenterTab] = useState<string>(SESSION_TAB);
+  // 中心区活跃页签按「半区」记录：左半（agent 类）与右半（文件/终端）各持一份，
+  // 多页签模式用 lastSide 派生单一活跃页签——两种模式间切换无需迁移状态。
+  const [leftTab, setLeftTab] = useState<string>(SESSION_TAB);
+  const [rightTab, setRightTab] = useState<string>(FILES_TAB);
+  const [lastSide, setLastSide] = useState<'left' | 'right'>('left');
   const [toolSubTab, setToolSubTab] = useState('');
   const [previewSession, setPreviewSession] = useState<Session | null>(null);
   const [fileTabs, setFileTabs] = useState(emptyFileTabs);
@@ -115,20 +122,34 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
 
   const layout = useAppStore((s) => s.layout);
   const setLayout = useAppStore((s) => s.setLayout);
+  const layoutMode = useAppStore((s) => s.layoutMode);
+  const setLayoutMode = useAppStore((s) => s.setLayoutMode);
   const terminals = useAppStore((s) => s.terminals);
   const chats = useAppStore((s) => s.chats);
   const chatPermissions = useAppStore((s) => s.chatPermissions);
   const terminalBusy = useAppStore((s) => s.terminalBusy);
   const notify = useAppStore((s) => s.notify);
+
+  // 多页签模式下的活跃页签：跟随最后点击的半区
+  const centerTab = lastSide === 'left' ? leftTab : rightTab;
+  const selectCenterTab = useCallback((next: string) => {
+    // 文件/终端钉归右半，其余（预览钉、终端/聊天 id）归左半
+    if (next === FILES_TAB || next === TERMINALS_TAB) {
+      setRightTab(next);
+      setLastSide('right');
+    } else {
+      setLeftTab(next);
+      setLastSide('left');
+    }
+  }, []);
+  const toggleLayout = useCallback(() => {
+    setLayoutMode(layoutMode === 'split' ? 'tabs' : 'split');
+  }, [layoutMode, setLayoutMode]);
   // 通知气泡的「切到对应页签」请求（见 store.requestFocusTerm）
   const focusTermKey = useAppStore((s) => s.focusTermKey);
   // 新建会话的工具选择：全局持久化（'' = 自动），跨页签/重启记住用户的选择
   const toolId = useAppStore((s) => s.newSessionTool);
   const setToolId = useAppStore((s) => s.setNewSessionTool);
-
-  const selectCenterTab = useCallback((next: string) => {
-    setCenterTab(next);
-  }, []);
 
   // 本工作区全部内嵌终端（按创建顺序）
   const allTerms = useMemo<TerminalInfo[]>(
@@ -197,18 +218,19 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     return out;
   }, [terms, chatsForWs, terminalBusy, chatPermissions, tr]);
 
+  // 会话列表选中态跟随左半（agent）活跃页签，右半切文件不影响高亮
   const selectedSessionID = useMemo(() => {
-    if (centerTab === SESSION_TAB) {
+    if (leftTab === SESSION_TAB) {
       return previewSession?.ID ?? null;
     }
-    const t = terms.find((x) => x.ID === centerTab);
+    const t = terms.find((x) => x.ID === leftTab);
     if (t?.SessionID) return t.SessionID;
     if (t?.Prompted) return `live:${t.ID}`;
-    const c = chatsForWs.find((x) => x.ID === centerTab);
+    const c = chatsForWs.find((x) => x.ID === leftTab);
     if (c?.SessionID) return c.SessionID;
     if (c?.Prompted) return `live:${c.ID}`;
     return null;
-  }, [centerTab, previewSession, terms, chatsForWs]);
+  }, [leftTab, previewSession, terms, chatsForWs]);
 
   useEffect(() => {
     // 挂载时补一次镜像：页签是常挂载的，但终端可能在别的工作区页签里被创建
@@ -244,15 +266,15 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   }, []);
 
   useEffect(() => {
-    // 当前中心区页签指向的终端/聊天已不存在时退回会话预览
+    // 左半活跃页签指向的终端/聊天已不存在时退回会话预览（右半只有钉住页签，无需回落）
     if (
-      !PINNED_CENTER.has(centerTab) &&
-      !terms.some((t) => t.ID === centerTab) &&
-      !chatsForWs.some((c) => c.ID === centerTab)
+      !PINNED_CENTER.has(leftTab) &&
+      !terms.some((t) => t.ID === leftTab) &&
+      !chatsForWs.some((c) => c.ID === leftTab)
     ) {
-      selectCenterTab(SESSION_TAB);
+      setLeftTab(SESSION_TAB);
     }
-  }, [terms, chatsForWs, centerTab, selectCenterTab]);
+  }, [terms, chatsForWs, leftTab]);
 
   useEffect(() => {
     // 消费通知气泡 / 右栏 Terminal 的页签聚焦请求：本工作区持有该 termKey
@@ -474,6 +496,64 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
       });
   };
 
+  // 中心区内容包裹层：两种布局共用同一组子元素、只换容器，
+  // 且全部用 hidden 切换显示（切页签/切布局都不重挂，xterm 缓冲不丢）
+  const tabsMode = layoutMode === 'tabs';
+  const fadeStyle = { animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' };
+  const previewVisible = tabsMode ? centerTab === SESSION_TAB : leftTab === SESSION_TAB;
+  const filesVisible = tabsMode ? centerTab === FILES_TAB : rightTab === FILES_TAB;
+  const toolsVisible = tabsMode ? centerTab === TERMINALS_TAB : rightTab === TERMINALS_TAB;
+  const agentVisible = (id: string) => visible && (tabsMode ? centerTab === id : leftTab === id);
+
+  const sessionPreviewPane = (
+    <div key="preview" className={cn('h-full', !previewVisible && 'hidden')} style={fadeStyle}>
+      {previewSession ? (
+        <SessionTranscript
+          sessionID={previewSession.ID}
+          workspaceRoot={previewSession.Workspace}
+          title={displayTitle(previewSession.Title) || tr('ui.workspace.new_session')}
+          onActivate={() => openChatOrTerminal(previewSession)}
+        />
+      ) : (
+        <EmptyState title={tr('ui.workspace.pick_session')} />
+      )}
+    </div>
+  );
+  const filesPane = (
+    <div key="files" className={cn('h-full', !filesVisible && 'hidden')} style={fadeStyle}>
+      <FileTabsPane
+        wsPath={tab.id}
+        state={fileTabs}
+        dirty={fileDirty}
+        onChange={setFileTabs}
+        onDirty={(path, d) => setFileDirty((prev) => ({ ...prev, [path]: d }))}
+        onOpenBrowser={openBrowserTab}
+      />
+    </div>
+  );
+  const toolsPane = (
+    <div key="tools" className={cn('h-full', !toolsVisible && 'hidden')} style={fadeStyle}>
+      <PreviewToolPane
+        terms={toolTerms}
+        active={visible && toolsVisible}
+        subTab={toolSubTab}
+        onSubTab={setToolSubTab}
+        onCloseTerminal={handleCloseTerminal}
+        onNewShell={handleNewShell}
+      />
+    </div>
+  );
+  const termPanes = terms.map((t) => (
+    <div key={t.ID} className={cn('h-full', !agentVisible(t.ID) && 'hidden')} style={fadeStyle}>
+      <TerminalView term={t} active={agentVisible(t.ID)} />
+    </div>
+  ));
+  const chatPanes = chatsForWs.map((c) => (
+    <div key={c.ID} className={cn('h-full', !agentVisible(c.ID) && 'hidden')} style={fadeStyle}>
+      <ChatView chat={c} active={agentVisible(c.ID)} />
+    </div>
+  ));
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 未登录降级提示条：文案带「去登录」，点击打开登录弹窗（弹窗内嵌官方登录终端） */}
@@ -566,96 +646,125 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         label={tr('ui.workspace.resize_sessions')}
       />
 
-      <main className="flex min-w-0 flex-1 flex-col">
-        <CenterSessionTabs
-          items={centerSessionItems}
-          order={sessionTabOrder}
-          centerTab={centerTab}
-          previewTabId={SESSION_TAB}
-          filesTabId={FILES_TAB}
-          terminalsTabId={TERMINALS_TAB}
-          toolTermCount={toolTerms.length}
-          onSelect={selectCenterTab}
-          onClose={(id) => {
-            if (terms.some((t) => t.ID === id)) handleCloseTerminal(id);
-            else handleCloseChat(id);
-          }}
-          onReorder={(next) => {
-            setSavedTabOrder(next);
-            saveCenterTabOrder(tab.id, next);
-          }}
-          onFileDropTerminal={(id, path, exited) => {
-            if (!exited) void writeTerminal(id, encodeTerminalInput(quotePathForShell(path)));
-          }}
-          onFileDropChat={(id, path) => {
-            appendChatInput(id, quotePathForShell(path));
-          }}
-        />
+      {tabsMode ? (
+        <main className="flex min-w-0 flex-1 flex-col">
+          <CenterSessionTabs
+            variant="full"
+            items={centerSessionItems}
+            order={sessionTabOrder}
+            centerTab={centerTab}
+            previewTabId={SESSION_TAB}
+            filesTabId={FILES_TAB}
+            terminalsTabId={TERMINALS_TAB}
+            toolTermCount={toolTerms.length}
+            layoutMode={layoutMode}
+            onLayoutToggle={toggleLayout}
+            onSelect={selectCenterTab}
+            onClose={(id) => {
+              if (terms.some((t) => t.ID === id)) handleCloseTerminal(id);
+              else handleCloseChat(id);
+            }}
+            onReorder={(next) => {
+              setSavedTabOrder(next);
+              saveCenterTabOrder(tab.id, next);
+            }}
+            onFileDropTerminal={(id, path, exited) => {
+              if (!exited) void writeTerminal(id, encodeTerminalInput(quotePathForShell(path)));
+            }}
+            onFileDropChat={(id, path) => {
+              appendChatInput(id, quotePathForShell(path));
+            }}
+          />
 
-        <div className="min-h-0 flex-1 overflow-hidden">
-          {/* 切页签时的淡入：动画挂在各内容包裹层上——hidden 切 display 会重放动画，
-              因此无需 key 重挂（重挂会丢 xterm 缓冲，违背「终端常挂载」约定） */}
-          <div
-            className={cn('h-full', centerTab !== SESSION_TAB && 'hidden')}
-            style={{ animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' }}
-          >
-            {previewSession ? (
-              <SessionTranscript
-                sessionID={previewSession.ID}
-                workspaceRoot={previewSession.Workspace}
-                title={displayTitle(previewSession.Title) || tr('ui.workspace.new_session')}
-                onActivate={() => openChatOrTerminal(previewSession)}
-              />
-            ) : (
-              <EmptyState title={tr('ui.workspace.pick_session')} />
-            )}
+          <div className="min-h-0 flex-1 overflow-hidden">
+            {/* 切页签时的淡入：动画挂在各内容包裹层上——hidden 切 display 会重放动画，
+                因此无需 key 重挂（重挂会丢 xterm 缓冲，违背「终端常挂载」约定） */}
+            {sessionPreviewPane}
+            {filesPane}
+            {toolsPane}
+            {termPanes}
+            {chatPanes}
           </div>
-          <div
-            className={cn('h-full', centerTab !== FILES_TAB && 'hidden')}
-            style={{ animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' }}
+        </main>
+      ) : (
+        <main className="flex min-w-0 flex-1">
+          {/* 左半：agent（会话预览 + 会话页签） */}
+          <section
+            className="flex min-w-0 flex-col"
+            style={{ width: layout.center }}
+            aria-label={tr('ui.workspace.left_pane_aria')}
           >
-            <FileTabsPane
-              wsPath={tab.id}
-              state={fileTabs}
-              dirty={fileDirty}
-              onChange={setFileTabs}
-              onDirty={(path, d) => setFileDirty((prev) => ({ ...prev, [path]: d }))}
-              onOpenBrowser={openBrowserTab}
+            <CenterSessionTabs
+              variant="agent"
+              items={centerSessionItems}
+              order={sessionTabOrder}
+              centerTab={leftTab}
+              previewTabId={SESSION_TAB}
+              filesTabId={FILES_TAB}
+              terminalsTabId={TERMINALS_TAB}
+              toolTermCount={toolTerms.length}
+              layoutMode={layoutMode}
+              onLayoutToggle={toggleLayout}
+              onSelect={selectCenterTab}
+              onClose={(id) => {
+                if (terms.some((t) => t.ID === id)) handleCloseTerminal(id);
+                else handleCloseChat(id);
+              }}
+              onReorder={(next) => {
+                setSavedTabOrder(next);
+                saveCenterTabOrder(tab.id, next);
+              }}
+              onFileDropTerminal={(id, path, exited) => {
+                if (!exited) void writeTerminal(id, encodeTerminalInput(quotePathForShell(path)));
+              }}
+              onFileDropChat={(id, path) => {
+                appendChatInput(id, quotePathForShell(path));
+              }}
             />
-          </div>
-          <div
-            className={cn('h-full', centerTab !== TERMINALS_TAB && 'hidden')}
-            style={{ animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' }}
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {sessionPreviewPane}
+              {termPanes}
+              {chatPanes}
+            </div>
+          </section>
+
+          <ResizeHandle
+            side="left"
+            width={layout.center}
+            onResize={(w) => setLayout({ center: w })}
+            defaultWidth={LAYOUT_CENTER_DEFAULT}
+            min={LAYOUT_CENTER_MIN}
+            max={LAYOUT_CENTER_MAX}
+            label={tr('ui.workspace.split_resize')}
+          />
+
+          {/* 右半：文件 + 终端 */}
+          <section
+            className="flex min-w-0 flex-1 flex-col"
+            aria-label={tr('ui.workspace.right_pane_aria')}
           >
-            <PreviewToolPane
-              terms={toolTerms}
-              active={visible && centerTab === TERMINALS_TAB}
-              subTab={toolSubTab}
-              onSubTab={setToolSubTab}
-              onCloseTerminal={handleCloseTerminal}
-              onNewShell={handleNewShell}
+            <CenterSessionTabs
+              variant="tool"
+              items={[]}
+              order={[]}
+              centerTab={rightTab}
+              previewTabId={SESSION_TAB}
+              filesTabId={FILES_TAB}
+              terminalsTabId={TERMINALS_TAB}
+              toolTermCount={toolTerms.length}
+              onSelect={selectCenterTab}
+              onClose={() => {}}
+              onReorder={() => {}}
+              onFileDropTerminal={() => {}}
+              onFileDropChat={() => {}}
             />
-          </div>
-          {terms.map((t) => (
-            <div
-              key={t.ID}
-              className={cn('h-full', centerTab !== t.ID && 'hidden')}
-              style={{ animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' }}
-            >
-              <TerminalView term={t} active={visible && centerTab === t.ID} />
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {filesPane}
+              {toolsPane}
             </div>
-          ))}
-          {chatsForWs.map((c) => (
-            <div
-              key={c.ID}
-              className={cn('h-full', centerTab !== c.ID && 'hidden')}
-              style={{ animation: 'kshell-fade-in var(--duration-fast) var(--ease-out)' }}
-            >
-              <ChatView chat={c} active={visible && centerTab === c.ID} />
-            </div>
-          ))}
-        </div>
-      </main>
+          </section>
+        </main>
+      )}
 
       <ResizeHandle
         side="right"

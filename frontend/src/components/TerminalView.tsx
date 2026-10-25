@@ -10,9 +10,9 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
 import type { TerminalInfo } from '../lib/api';
-import { readClipboardPaste, resizeTerminal, writeTerminal } from '../lib/api';
+import { readClipboardPaste, resizeTerminal, scrollbackTerminal, writeTerminal } from '../lib/api';
 import { terminalTheme } from '../lib/appearance';
-import { encodeTerminalInput } from '../lib/base64';
+import { base64ToBytes, encodeTerminalInput } from '../lib/base64';
 import { composeTerminalPaste, isCopyKey, isPasteKey } from '../lib/clipboardPaste';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { handleHref } from '../lib/openHref';
@@ -153,11 +153,37 @@ export default function TerminalView({ term, active }: Props) {
       void resizeTerminal(termId, cols, rows);
     });
 
+    // 重挂载回放：组件卸载期间 Go 侧每会话保留最近 256KiB 环形缓冲（terminal:data
+    // 对未登记实例直接丢弃）。注册保持同步（与既有语义一致），但回放快照写入之前
+    // 把 live 输出暂存在 pendingLive——快照取自 Go 环形缓冲、必然包含这批字节，
+    // 直接写会造成重复+乱序；先回放快照再冲刷缓冲，顺序与内容都严格一致。
+    // 布局切换 / 前端重载等一切重挂场景由此不再丢滚动历史。
+    const pendingLive: Uint8Array[] = [];
+    let replayed = false;
     registerTerminal(termId, {
-      write: (bytes) => instance.write(bytes),
+      write: (bytes) => {
+        if (!replayed) {
+          pendingLive.push(bytes);
+          return;
+        }
+        instance.write(bytes);
+      },
       focus: () => instance.focus(),
       fit: () => fitAddon.fit(),
     });
+    void (async () => {
+      let snap: Uint8Array | null = null;
+      try {
+        snap = base64ToBytes(await scrollbackTerminal(termId));
+      } catch {
+        snap = null; // 终端尚未就绪/已不存在：跳过回放，后续 live 输出照常直写
+      }
+      if (!alive) return; // 已卸载：不写实例（注册表已随 cleanup 注销）
+      replayed = true;
+      if (snap && snap.length > 0) instance.write(snap);
+      for (const bytes of pendingLive) instance.write(bytes);
+      pendingLive.length = 0;
+    })();
 
     // IME 组合全程钳制（第三轮：视觉 caret + 横向溢出锁）：
     // xterm CompositionHelper 会把 .composition-view / textarea 重钉到 buffer 光标；

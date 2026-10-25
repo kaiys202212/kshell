@@ -167,7 +167,7 @@ beforeEach(() => {
     chatPermissions: {},
     toasts: [],
     newSessionTool: '',
-    layout: { left: 288, right: 300 },
+    layout: { left: 288, right: 300, center: 480 },
   });
 });
 
