@@ -3,6 +3,7 @@
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { base64UrlUtf8 } from '../lib/fileUrl';
 import { OPEN_FILE_EVENT } from '../lib/openHref';
 import { tt } from '../test/i18n';
 import MarkdownPreview from './MarkdownPreview';
@@ -35,6 +36,56 @@ async function openBar() {
     window.dispatchEvent(new CustomEvent('kshell:focus-search', { cancelable: true }));
   });
 }
+
+describe('MarkdownPreview 图片相对路径解析', () => {
+  const ws = 'D:\\proj';
+  const file = 'D:\\proj\\docs\\readme.md';
+  const b64 = (dir: string) => base64UrlUtf8(dir);
+  const fileUrl = (dir: string, name: string) =>
+    `${window.location.origin}/__kshell-file/${b64(dir)}/${encodeURIComponent(name)}`;
+
+  it('相对路径 ./img.png → sourceFile 所在目录的 __kshell-file URL', () => {
+    render(<MarkdownPreview markdown="![x](./img.png)" workspaceRoot={ws} sourceFile={file} />);
+    const img = screen.getByRole('img');
+    expect(img).toHaveAttribute('src', fileUrl('D:\\proj\\docs', 'img.png'));
+  });
+
+  it('裸文件名 img.png 同样以 sourceFile 目录为基点', () => {
+    render(<MarkdownPreview markdown="![x](img.png)" workspaceRoot={ws} sourceFile={file} />);
+    expect(screen.getByRole('img')).toHaveAttribute('src', fileUrl('D:\\proj\\docs', 'img.png'));
+  });
+
+  it('../ 回退仍锁定在工作区内', () => {
+    render(
+      <MarkdownPreview markdown="![x](../assets/p.png)" workspaceRoot={ws} sourceFile={file} />,
+    );
+    expect(screen.getByRole('img')).toHaveAttribute('src', fileUrl('D:\\proj\\assets', 'p.png'));
+  });
+
+  it('工作区根相对 /img.png → workspaceRoot 目录', () => {
+    render(<MarkdownPreview markdown="![x](/img.png)" workspaceRoot={ws} sourceFile={file} />);
+    expect(screen.getByRole('img')).toHaveAttribute('src', fileUrl('D:\\proj', 'img.png'));
+  });
+
+  it('http 外链 src 原样保留', () => {
+    render(
+      <MarkdownPreview markdown="![x](https://example.com/a.png)" workspaceRoot={ws} sourceFile={file} />,
+    );
+    expect(screen.getByRole('img')).toHaveAttribute('src', 'https://example.com/a.png');
+  });
+
+  it('无 workspaceRoot 时 src 原样保留', () => {
+    render(<MarkdownPreview markdown="![x](./img.png)" />);
+    expect(screen.getByRole('img')).toHaveAttribute('src', './img.png');
+  });
+
+  it('工作区外绝对路径 src 原样保留', () => {
+    render(
+      <MarkdownPreview markdown="![x](D:/other/img.png)" workspaceRoot={ws} sourceFile={file} />,
+    );
+    expect(screen.getByRole('img')).toHaveAttribute('src', 'D:/other/img.png');
+  });
+});
 
 describe('MarkdownPreview', () => {
   it('渲染 # Hi 为 heading「Hi」', () => {

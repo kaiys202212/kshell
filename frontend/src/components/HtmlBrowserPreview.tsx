@@ -7,21 +7,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { openInDefaultApp, readFileBytes } from '../lib/api';
 import { backendError } from '../lib/errors';
+import { base64UrlUtf8, dirName } from '../lib/fileUrl';
 import { Button } from './ui/button';
-
-// base64url（无填充）编码 UTF-8 字符串，与 Go base64.RawURLEncoding 对齐
-export function base64UrlUtf8(s: string): string {
-  const bytes = new TextEncoder().encode(s);
-  let bin = '';
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-// 目录绝对路径（兼容 Windows 分隔符）
-export function dirName(abs: string): string {
-  const i = Math.max(abs.lastIndexOf('\\'), abs.lastIndexOf('/'));
-  return i > 0 ? abs.slice(0, i) : abs;
-}
 
 // 注入 head：storage polyfill（opaque origin 下访问 localStorage/cookie 会抛
 // SecurityError，连带页面脚本崩溃、按钮失去交互——用内存实现兜底）+ 导航拦截
