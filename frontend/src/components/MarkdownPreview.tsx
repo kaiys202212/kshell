@@ -1,19 +1,28 @@
 // Markdown 预览：react-markdown + remark-gfm，样式跟随主题文本色。
 // 顶部检索工具条：渲染结果内高亮命中（rehypeHighlightSearch）、计数、上下跳转；
 // 命中标记经 rehype 插件在 React 渲染路径内生成，不做 DOM 后处理。
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { useTranslation } from 'react-i18next';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Pluggable } from 'unified';
 import { MD_SEARCH_LIMIT, rehypeHighlightSearch } from '../lib/rehypeHighlightSearch';
-import { handleAnchorClick } from '../lib/openHref';
+import { workspaceFileUrl } from '../lib/fileUrl';
+import { SCHEME_RE, classifyHref, handleAnchorClick } from '../lib/openHref';
 import { markdownBubbleClass } from '../lib/markdownStyles';
 
 export interface MarkdownPreviewProps {
   markdown: string;
   workspaceRoot?: string;
   sourceFile?: string;
+}
+
+// 默认 urlTransform 把 `D:/…` 盘符路径当未知协议清成空串;单字母"协议"实为
+// Windows 盘符,放行后由 img 组件按工作区解析,安全性仍由 classifyHref 兜底。
+function mdUrlTransform(url: string): string {
+  const m = url.match(SCHEME_RE);
+  if (m && m[1].length === 1) return url;
+  return defaultUrlTransform(url);
 }
 
 export default function MarkdownPreview({
@@ -62,6 +71,20 @@ export default function MarkdownPreview({
     () => (query ? [[rehypeHighlightSearch, query, totalRef] as Pluggable] : []),
     [query],
   );
+
+  // 图片 src:工作区内(相对 sourceFile 所在目录)改走 /__kshell-file/ 受限通道;
+  // 外链、无工作区上下文、工作区外路径原样保留(与改动前行为一致)。
+  const components = useMemo<Components>(() => {
+    const opts = { workspaceRoot, sourceFile };
+    return {
+      // node 是 react-markdown ExtraProps 注入的 hast 节点,解构剔除避免铺进 DOM
+      img: ({ src, node, ...rest }: ComponentProps<'img'> & { node?: unknown }) => {
+        const action = classifyHref(src ?? '', opts);
+        if (action.kind !== 'workspace') return <img src={src} {...rest} />;
+        return <img src={workspaceFileUrl(action.path)} {...rest} />;
+      },
+    };
+  }, [workspaceRoot, sourceFile]);
 
   // 渲染完成后读取插件写入的命中数（react-markdown 同步转换）
   useLayoutEffect(() => {
@@ -145,7 +168,12 @@ export default function MarkdownPreview({
         </div>
       )}
       <div ref={scrollRef} className={bodyClass}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypePlugins}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={rehypePlugins}
+          urlTransform={mdUrlTransform}
+          components={components}
+        >
           {markdown}
         </ReactMarkdown>
       </div>

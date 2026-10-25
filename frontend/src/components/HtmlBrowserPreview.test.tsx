@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tt } from '../test/i18n';
-import HtmlBrowserPreview, { base64UrlUtf8, dirName, injectBase } from './HtmlBrowserPreview';
+import HtmlBrowserPreview, { injectBase } from './HtmlBrowserPreview';
 
 const mocks = vi.hoisted(() => ({
   readFileBytes: vi.fn(),
@@ -85,17 +85,6 @@ describe('HtmlBrowserPreview', () => {
     await screen.findByTestId('html-browser-frame');
     window.dispatchEvent(new MessageEvent('message', { data: { kshell: 'open-external' } }));
     expect(mocks.openInDefaultApp).toHaveBeenCalledWith(ws, 'page.html');
-  });
-
-  it('base64UrlUtf8 与 Go RawURLEncoding 对齐（-/_、无填充、UTF-8）', () => {
-    expect(base64UrlUtf8('D:\\proj a')).toBe(btoa('D:\\proj a').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
-    expect(base64UrlUtf8('中文路径')).toBe('5Lit5paH6Lev5b6E');
-    expect(base64UrlUtf8('')).toBe('');
-  });
-
-  it('dirName 兼容两种分隔符', () => {
-    expect(dirName('D:\\ws\\a\\page.html')).toBe('D:\\ws\\a');
-    expect(dirName('/home/u/a/page.html')).toBe('/home/u/a');
   });
 
   it('injectBase：head 最前注入导航拦截脚本与 <base>；无 head 时插到 doctype 后', () => {
