@@ -12,7 +12,9 @@
       "not_ready": "Desktop is not initialized yet",
       "session_gone": "Session not found or has been cleaned up",
       "workspace_gone": "Workspace not found",
-      "invalid_close_behavior": "Invalid close behavior {{0}} (choose tray or exit)"
+      "invalid_close_behavior": "Invalid close behavior {{0}} (choose tray or exit)",
+      "autostart_unsupported": "Autostart is not supported on this platform or build",
+      "autostart_failed": "Failed to update autostart: {{0}}"
     },
     "acp": {
       "no_agent": "No agent executable specified",
@@ -351,6 +353,10 @@
         "title": "Close behavior",
         "tray": "Minimize to tray",
         "exit": "Quit"
+      },
+      "autostart": {
+        "title": "Launch at sign-in",
+        "desc": "Start Capybara in the tray when you sign in to Windows"
       },
       "notify": {
         "title": "Notifications",

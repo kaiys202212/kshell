@@ -490,6 +490,7 @@ export interface ToolInstallJobView {
   Trigger?: string;
 }
 
+// desktop.UpdateInfo 的 JSON 形态（internal/desktop/update.go）
 export interface UpdateInfo {
   Current: string;
   Latest: string;
@@ -498,6 +499,13 @@ export interface UpdateInfo {
   Available: boolean;
   Skipped: boolean;
   Reason: string;
+}
+
+// desktop.AutostartInfoView 的 JSON 形态（internal/desktop/autostart.go）：
+// Supported=false（dev 构建 / 非 Windows 平台）时设置页整体隐藏自启动区块。
+export interface AutostartInfoView {
+  Supported: boolean;
+  Enabled: boolean;
 }
 
 export interface SkillSummary {
@@ -665,6 +673,8 @@ interface AppBindings {
   GetDeletedProjects(): Promise<DeletedProject[]>;
   GetCloseBehavior(): Promise<string>;
   SetCloseBehavior(mode: string): Promise<void>;
+  AutostartInfo(): Promise<AutostartInfoView>;
+  SetAutostart(on: boolean): Promise<void>;
   GetAppearance(): Promise<AppearanceInfo>;
   SetAppearanceMode(mode: string): Promise<void>;
   SetAppearanceFontSize(n: number): Promise<void>;
@@ -1978,6 +1988,28 @@ export async function setCloseBehavior(mode: string): Promise<void> {
   const a = app();
   if (!a) return;
   await a.SetCloseBehavior(mode);
+}
+
+// ---- 开机自启动 ----
+
+// getAutostartInfo 返回自启动支持与开启状态；绑定缺失或调用抛错（dev 构建 /
+// 老后端）一律视为不支持，前端据此整体隐藏该设置区块。
+export async function getAutostartInfo(): Promise<AutostartInfoView> {
+  const a = app();
+  if (!a) return { Supported: false, Enabled: false };
+  try {
+    return await a.AutostartInfo();
+  } catch {
+    return { Supported: false, Enabled: false };
+  }
+}
+
+// setAutostart 切换开机自启动（Go 侧先写注册表再落盘 config，不落半态）；
+// 错误向上抛（wire key），由调用方经 backendError 呈现。
+export async function setAutostart(on: boolean): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.SetAutostart(on);
 }
 
 // ---- 模型配置 ----

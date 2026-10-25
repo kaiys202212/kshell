@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   setLanguage: vi.fn(),
   getCloseBehavior: vi.fn(),
   setCloseBehavior: vi.fn(),
+  getAutostartInfo: vi.fn(),
+  setAutostart: vi.fn(),
   getModelConfig: vi.fn(),
   setModelConfig: vi.fn(),
   listModelPresets: vi.fn(),
@@ -210,6 +212,9 @@ beforeEach(() => {
   mocks.applyUpdate.mockResolvedValue(undefined);
   mocks.getCloseBehavior.mockResolvedValue('tray');
   mocks.setCloseBehavior.mockResolvedValue(undefined);
+  // 自启动默认不支持（dev 构建形态），区块整体隐藏；支持态用例各自覆写
+  mocks.getAutostartInfo.mockResolvedValue({ Supported: false, Enabled: false });
+  mocks.setAutostart.mockResolvedValue(undefined);
   mocks.getSessionMode.mockResolvedValue('tui');
   mocks.setSessionMode.mockResolvedValue(undefined);
   mocks.getPermissionMode.mockResolvedValue('default');
@@ -654,6 +659,68 @@ describe('Settings', () => {
       expect(exitBtn).toHaveAttribute('aria-pressed', 'true');
     });
     expect(screen.getByRole('button', { name: tt('ui.settings.close_behavior.tray') })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('支持自启动时渲染区块：初始态来自 AutostartInfo().Enabled，切换调用 SetAutostart 并更新 UI', async () => {
+    mocks.getAutostartInfo.mockResolvedValue({ Supported: true, Enabled: true });
+    render(<Settings />);
+
+    const cb = await screen.findByLabelText(tt('ui.settings.autostart.desc'));
+    expect(screen.getByRole('heading', { name: tt('ui.settings.autostart.title') })).toBeInTheDocument();
+    expect(cb).toBeChecked();
+
+    await act(async () => {
+      fireEvent.click(cb);
+    });
+    expect(mocks.setAutostart).toHaveBeenCalledWith(false);
+    expect(await screen.findByLabelText(tt('ui.settings.autostart.desc'))).not.toBeChecked();
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText(tt('ui.settings.autostart.desc')));
+    });
+    expect(mocks.setAutostart).toHaveBeenLastCalledWith(true);
+    expect(await screen.findByLabelText(tt('ui.settings.autostart.desc'))).toBeChecked();
+  });
+
+  it('SetAutostart 失败时提示错误并回退到原状态', async () => {
+    useAppStore.setState({ toasts: [] });
+    mocks.getAutostartInfo.mockResolvedValue({ Supported: true, Enabled: false });
+    mocks.setAutostart.mockRejectedValueOnce(new Error('err.desktop.autostart_failed|boom'));
+    render(<Settings />);
+
+    const cb = await screen.findByLabelText(tt('ui.settings.autostart.desc'));
+    await act(async () => {
+      fireEvent.click(cb);
+    });
+    // wire key 错误经 backendError 翻译后进 toast，开关回退到原状态
+    await waitFor(() => {
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some(
+            (t) =>
+              t.tone === 'error' &&
+              t.title === tt('err.desktop.autostart_failed').replace('{{0}}', 'boom'),
+          ),
+      ).toBe(true);
+    });
+    expect(screen.getByLabelText(tt('ui.settings.autostart.desc'))).not.toBeChecked();
+  });
+
+  it('Supported=false 或 AutostartInfo 抛错时不渲染自启动区块', async () => {
+    mocks.getAutostartInfo.mockResolvedValue({ Supported: false, Enabled: false });
+    const { unmount } = render(<Settings />);
+    await screen.findByRole('heading', { name: tt('ui.settings.about.title') });
+    expect(screen.queryByRole('heading', { name: tt('ui.settings.autostart.title') })).toBeNull();
+    expect(screen.queryByLabelText(tt('ui.settings.autostart.desc'))).toBeNull();
+    unmount();
+
+    // 绑定不存在/调用抛错（dev 构建或老后端）同样不渲染
+    mocks.getAutostartInfo.mockRejectedValue(new Error('绑定异常'));
+    render(<Settings />);
+    await screen.findByRole('heading', { name: tt('ui.settings.about.title') });
+    expect(screen.queryByRole('heading', { name: tt('ui.settings.autostart.title') })).toBeNull();
+    expect(screen.queryByLabelText(tt('ui.settings.autostart.desc'))).toBeNull();
   });
 
   it('会话模式与权限模式可切换', async () => {

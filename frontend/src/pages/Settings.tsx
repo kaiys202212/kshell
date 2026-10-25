@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   getAppearance,
+  getAutostartInfo,
   getCloseBehavior,
   getModelConfig,
   getPermissionMode,
@@ -29,6 +30,7 @@ import {
   getAppVersion,
   saveProvidersYAML,
   scanSessions,
+  setAutostart,
   setAppearanceMode,
   setAppearanceFontSize,
   setAppearanceShowWhitespace,
@@ -40,6 +42,7 @@ import {
   uninstallBuiltinTool,
 } from '../lib/api';
 import type {
+  AutostartInfoView,
   InstallRecipeView,
   ModelPlatformInput,
   ModelPlatformView,
@@ -122,6 +125,8 @@ export default function Settings() {
   const [fontSize, setFontSizeLocal] = useState(13);
   const [showWhitespace, setShowWhitespaceLocal] = useState(false);
   const [closeBehavior, setCloseBehaviorLocal] = useState<string>('tray');
+  // 开机自启动：null=查询中/不支持（区块隐藏），Supported 才渲染
+  const [autostartInfo, setAutostartInfo] = useState<AutostartInfoView | null>(null);
   const [sessionMode, setSessionModeLocal] = useState('tui');
   const [permissionMode, setPermissionModeLocal] = useState('default');
   const [presets, setPresets] = useState<ModelPreset[]>([]);
@@ -235,6 +240,11 @@ export default function Settings() {
     getCloseBehavior()
       .then((mode) => {
         if (!cancelled) setCloseBehaviorLocal(mode);
+      })
+      .catch(() => {});
+    getAutostartInfo()
+      .then((info) => {
+        if (!cancelled) setAutostartInfo(info);
       })
       .catch(() => {});
     getSessionMode()
@@ -388,6 +398,18 @@ export default function Settings() {
       await setCloseBehavior(mode);
       setCloseBehaviorLocal(mode);
     } catch (e: unknown) {
+      notify(backendError(e), 'error');
+    }
+  };
+
+  // handleAutostart：乐观更新开关，SetAutostart 失败回滚到原状态并提示
+  const handleAutostart = async (on: boolean) => {
+    if (!autostartInfo || on === autostartInfo.Enabled) return;
+    setAutostartInfo({ ...autostartInfo, Enabled: on });
+    try {
+      await setAutostart(on);
+    } catch (e: unknown) {
+      setAutostartInfo((prev) => (prev ? { ...prev, Enabled: !on } : prev));
       notify(backendError(e), 'error');
     }
   };
@@ -840,6 +862,21 @@ export default function Settings() {
                   ))}
                 </div>
               </section>
+
+              {autostartInfo?.Supported && (
+                <section className="mb-5 rounded border border-border bg-card p-3.5">
+                  <h2 className="mb-3 text-sm font-medium">{t('ui.settings.autostart.title')}</h2>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={autostartInfo.Enabled}
+                      onChange={(e) => void handleAutostart(e.currentTarget.checked)}
+                      aria-label={t('ui.settings.autostart.desc')}
+                    />
+                    {t('ui.settings.autostart.desc')}
+                  </label>
+                </section>
+              )}
 
               <section className="mb-5 rounded border border-border bg-card p-3.5">
                 <h2 className="mb-3 text-sm font-medium">{t('ui.settings.notify.title')}</h2>
