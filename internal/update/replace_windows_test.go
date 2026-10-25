@@ -3,7 +3,7 @@
 package update
 
 import (
-	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -12,27 +12,85 @@ func TestReplaceWaitStartPowerShell(t *testing.T) {
 	pid := 4242
 	cur := `C:\Program Files\kshell\kshell-desktop.exe`
 	nxt := cur + ".new"
-	ps := replaceWaitStartPowerShell(pid, cur, nxt)
+	log := `C:\Users\u\.kshell\logs\update.log`
+	ps := replaceWaitStartPowerShell(pid, cur, nxt, log)
 	for _, want := range []string{
 		"Wait-Process -Id 4242",
-		"Move-Item -LiteralPath",
-		cur + ".new",
-		"Start-Process -LiteralPath",
+		// 日志：绝对路径由 Go 侧算好嵌入，每步 Add-Content 追加
+		log,
+		"Add-Content -LiteralPath $log",
+		"-Encoding UTF8",
+		// 旧 exe 改名让位（改名不动文件本体，助手进程持有映像也不碍事）
+		".upgrade-old",
+		// 残留删不掉时回退唯一名
+		"[DateTime]::Now.Ticks",
+		"Remove-Item -LiteralPath $old",
+		// 新 exe 纯改名落位（不用 Move-Item -Force，避免覆盖=删除语义）
+		"Rename-Item -LiteralPath $cur",
+		"Rename-Item -LiteralPath $new",
+		"Start-Process -LiteralPath $cur",
 		"-ArgumentList '--after-update'",
 		"-WindowStyle Normal",
-		"Start-Sleep",
+		// 整体 try/catch，失败也写日志
+		"catch",
+		// 尽力清理 .upgrade-old* 残留
+		".upgrade-old*",
+		// 路径含空格应原样保留在单引号里
+		cur,
+		nxt,
 	} {
 		if !strings.Contains(ps, want) {
 			t.Fatalf("脚本缺少 %q:\n%s", want, ps)
 		}
 	}
-	if !strings.Contains(ps, "for (") && !strings.Contains(ps, "for(") {
-		t.Fatalf("应重试 Move-Item:\n%s", ps)
+
+	// 关键顺序：等旧进程 → 旧 exe 改名让位 → 新 exe 改名落位 → 拉起新进程
+	type step struct {
+		name  string
+		token string
+	}
+	order := []step{
+		{"等旧进程退出", "Wait-Process -Id 4242"},
+		{"旧 exe 改名让位", "Rename-Item -LiteralPath $cur -NewName"},
+		{"新 exe 改名落位", "Rename-Item -LiteralPath $new -NewName"},
+		{"拉起新进程", "Start-Process -LiteralPath $cur"},
+	}
+	last := -1
+	for _, s := range order {
+		i := strings.Index(ps, s.token)
+		if i < 0 {
+			t.Fatalf("缺少步骤 %s:\n%s", s.name, ps)
+		}
+		if i < last {
+			t.Fatalf("步骤 %s 顺序错误:\n%s", s.name, ps)
+		}
+		last = i
 	}
 
-	ps = replaceWaitStartPowerShell(os.Getpid(), `C:\a'b.exe`, `C:\a'b.exe.new`)
+	// 单引号转义
+	ps = replaceWaitStartPowerShell(pid, `C:\a'b.exe`, `C:\a'b.exe.new`, log)
 	if strings.Contains(ps, `a'b`) && !strings.Contains(ps, `a''b`) {
 		t.Fatalf("单引号应转义: %s", ps)
+	}
+
+	// 拿不到日志路径时回退脚本侧 USERPROFILE
+	ps = replaceWaitStartPowerShell(pid, cur, nxt, "")
+	if !strings.Contains(ps, "Join-Path $env:USERPROFILE") {
+		t.Fatalf("日志路径为空应回退 USERPROFILE:\n%s", ps)
+	}
+}
+
+func TestUpdateLogPath(t *testing.T) {
+	t.Setenv("USERPROFILE", `C:\up-test`)
+	t.Setenv("HOME", "")
+	if got := updateLogPath(); got != filepath.Join(`C:\up-test`, ".kshell", "logs", "update.log") {
+		t.Fatalf("updateLogPath() = %q", got)
+	}
+	// 无 home 不 panic，返回空串由脚本侧兜底
+	t.Setenv("USERPROFILE", "")
+	t.Setenv("HOME", "")
+	if got := updateLogPath(); got != "" {
+		t.Fatalf("无 home 时应返回空串, got %q", got)
 	}
 }
 
