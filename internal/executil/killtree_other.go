@@ -10,6 +10,7 @@ import (
 // KillProcessTree 非 Windows 平台按进程组终止：仅当 cmd 经 PrepareProcessGroup
 // 声明了独立进程组时 kill(-pgid) 连带清理孙进程（npx → 适配器 node 的两层树）；
 // 否则维持只杀直属的保守语义——kshell 与子进程同组时盲目 kill(-pid) 会误杀自身。
+// 约定：PrepareProcessGroup 只以 Pgid=0（自为首领）置位，故 pgid==cmd.Process.Pid。
 func KillProcessTree(cmd *exec.Cmd) {
 	if cmd == nil || cmd.Process == nil {
 		return
