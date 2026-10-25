@@ -1,25 +1,16 @@
-//go:build !windows
+//go:build !windows && !darwin
 
 package desktop
 
 import (
 	"os/exec"
-	"path/filepath"
-	"runtime"
 
 	"github.com/yangk/kshell/internal/executil"
 )
 
+// revealInOS Linux 等其它平台走 xdg-open；darwin 的选中行为见 files_reveal_darwin.go。
 func revealInOS(abs string, isDir bool) error {
-	target := abs
-	if !isDir {
-		target = filepath.Dir(abs)
-	}
-	name := "xdg-open"
-	if runtime.GOOS == "darwin" {
-		name = "open"
-	}
-	cmd := exec.Command(name, target)
+	cmd := exec.Command("xdg-open", abs)
 	executil.HideWindow(cmd)
 	return cmd.Start()
 }
