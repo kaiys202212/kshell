@@ -88,10 +88,18 @@ export const SETTINGS_TAB_ID = 'kshell:settings';
 export interface LayoutSizes {
   left: number;
   right: number;
+  // 中心区左右分割模式下左半区（agent）宽度；多页签模式不使用
+  center: number;
 }
-export const LAYOUT_DEFAULT: LayoutSizes = { left: 340, right: 360 };
+export const LAYOUT_CENTER_MIN = 260;
+export const LAYOUT_CENTER_MAX = 1200;
+export const LAYOUT_CENTER_DEFAULT = 480;
+export const LAYOUT_DEFAULT: LayoutSizes = { left: 340, right: 360, center: LAYOUT_CENTER_DEFAULT };
 export const LAYOUT_MIN = 200;
 export const LAYOUT_MAX = 720;
+
+// 中心区布局模式：tabs=单区多页签（现状），split=左右分割（左 agent / 右文件+终端）
+export type LayoutMode = 'tabs' | 'split';
 
 interface AppState {
   workspaces: Workspace[];
@@ -203,6 +211,9 @@ interface AppState {
   // 工作区页签三栏宽度（持久化，跨会话保留）
   layout: LayoutSizes;
   setLayout(patch: Partial<LayoutSizes>): void;
+  // 中心区布局模式（持久化，全局生效）
+  layoutMode: LayoutMode;
+  setLayoutMode(mode: LayoutMode): void;
 
   // 新建会话选用的工具（'' = 自动：该工作区最常用；持久化，记住用户的选择）
   newSessionTool: string;
@@ -261,6 +272,12 @@ interface AppState {
 export function clampLayout(v: number): number {
   if (!Number.isFinite(v)) return LAYOUT_MIN;
   return Math.min(LAYOUT_MAX, Math.max(LAYOUT_MIN, Math.round(v)));
+}
+
+// 分割模式左半区宽度的同构收敛
+export function clampCenter(v: number): number {
+  if (!Number.isFinite(v)) return LAYOUT_CENTER_MIN;
+  return Math.min(LAYOUT_CENTER_MAX, Math.max(LAYOUT_CENTER_MIN, Math.round(v)));
 }
 
 // dedupeTabs 合并持久化恢复的页签里大小写不同的同一路径（存量自愈）：
@@ -632,8 +649,12 @@ export const useAppStore = create<AppState>()(
           layout: {
             left: patch.left === undefined ? s.layout.left : clampLayout(patch.left),
             right: patch.right === undefined ? s.layout.right : clampLayout(patch.right),
+            center: patch.center === undefined ? s.layout.center : clampCenter(patch.center),
           },
         })),
+
+      layoutMode: 'tabs',
+      setLayoutMode: (layoutMode) => set({ layoutMode }),
 
       newSessionTool: '',
       setNewSessionTool: (newSessionTool) => set({ newSessionTool }),
@@ -699,20 +720,28 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'kshell-tabs',
-      // 只持久化页签、三栏宽度、新建会话的工具选择与通知提示音开关：
+      // 只持久化页签、三栏宽度、布局模式、新建会话的工具选择与通知提示音开关：
       // 工作区/终端/提示要么来自 Go 侧、要么是易失的内存态
       partialize: (s) => ({
         openTabs: s.openTabs,
         activeTabId: s.activeTabId,
         layout: s.layout,
+        layoutMode: s.layoutMode,
         newSessionTool: s.newSessionTool,
         notifySound: s.notifySound,
       }),
-      // 恢复时合并大小写重复的存量页签（见 dedupeTabs 注释）
+      // 恢复时合并大小写重复的存量页签（见 dedupeTabs 注释）；
+      // 旧存档 layout 缺 center 字段时用默认值兜底
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<AppState>;
         const deduped = dedupeTabs(p.openTabs ?? [], p.activeTabId ?? null);
-        return { ...current, ...p, openTabs: deduped.tabs, activeTabId: deduped.activeTabId };
+        return {
+          ...current,
+          ...p,
+          layout: { ...LAYOUT_DEFAULT, ...p.layout },
+          openTabs: deduped.tabs,
+          activeTabId: deduped.activeTabId,
+        };
       },
     },
   ),
