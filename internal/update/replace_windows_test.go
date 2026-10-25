@@ -33,6 +33,14 @@ func TestReplaceWaitStartPowerShell(t *testing.T) {
 		"-WindowStyle Normal",
 		// 整体 try/catch，失败也写日志
 		"catch",
+		// catch rethrow 前尽力回滚：旧 exe 已让位（改名成功）而新 exe 未落位时，
+		// 先把旧 exe 改名回去，避免安装目录落到无可执行文件。$old 在 Ticks 回退
+		// 分支里才是实际让位名，回滚必须用 $old 而非固定 .upgrade-old。
+		"if($old -and -not (Test-Path -LiteralPath $cur) -and (Test-Path -LiteralPath $old))",
+		"Rename-Item -LiteralPath $old -NewName (Split-Path -LiteralPath $cur -Leaf)",
+		// finally 残留清理加前置守卫：仅当新 exe 已在位（Test-Path $cur）才删
+		// .upgrade-old*，否则保留刚让位的旧 exe，绝不删掉唯一可执行文件
+		"if(Test-Path -LiteralPath $cur){ Log 'cleanup upgrade-old leftovers'",
 		// 尽力清理 .upgrade-old* 残留
 		".upgrade-old*",
 		// 路径含空格应原样保留在单引号里
@@ -73,10 +81,11 @@ func TestReplaceWaitStartPowerShell(t *testing.T) {
 		t.Fatalf("单引号应转义: %s", ps)
 	}
 
-	// 拿不到日志路径时回退脚本侧 USERPROFILE
+	// 拿不到日志路径时回退脚本侧 USERPROFILE；Join-Path 必须移进守卫，
+	// 避免空 USERPROFILE 时 Join-Path 抛错被外层吞掉、日志静默失效
 	ps = replaceWaitStartPowerShell(pid, cur, nxt, "")
-	if !strings.Contains(ps, "Join-Path $env:USERPROFILE") {
-		t.Fatalf("日志路径为空应回退 USERPROFILE:\n%s", ps)
+	if !strings.Contains(ps, "if(-not $log -and $env:USERPROFILE){ $log=Join-Path $env:USERPROFILE") {
+		t.Fatalf("日志路径为空应回退 USERPROFILE 且受空值守卫:\n%s", ps)
 	}
 }
 
