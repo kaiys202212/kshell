@@ -67,6 +67,13 @@ describe('MarkdownPreview 图片相对路径解析', () => {
     expect(screen.getByRole('img')).toHaveAttribute('src', fileUrl('D:\\proj', 'img.png'));
   });
 
+  it('工作区内盘符绝对路径 → __kshell-file URL(mdUrlTransform 放行正向覆盖)', () => {
+    render(
+      <MarkdownPreview markdown="![x](D:/proj/docs/p.png)" workspaceRoot={ws} sourceFile={file} />,
+    );
+    expect(screen.getByRole('img')).toHaveAttribute('src', fileUrl('D:\\proj\\docs', 'p.png'));
+  });
+
   it('http 外链 src 原样保留', () => {
     render(
       <MarkdownPreview markdown="![x](https://example.com/a.png)" workspaceRoot={ws} sourceFile={file} />,

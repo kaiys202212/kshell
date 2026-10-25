@@ -8,7 +8,7 @@ import remarkGfm from 'remark-gfm';
 import type { Pluggable } from 'unified';
 import { MD_SEARCH_LIMIT, rehypeHighlightSearch } from '../lib/rehypeHighlightSearch';
 import { workspaceFileUrl } from '../lib/fileUrl';
-import { classifyHref, handleAnchorClick } from '../lib/openHref';
+import { SCHEME_RE, classifyHref, handleAnchorClick } from '../lib/openHref';
 import { markdownBubbleClass } from '../lib/markdownStyles';
 
 export interface MarkdownPreviewProps {
@@ -20,7 +20,7 @@ export interface MarkdownPreviewProps {
 // 默认 urlTransform 把 `D:/…` 盘符路径当未知协议清成空串;单字母"协议"实为
 // Windows 盘符,放行后由 img 组件按工作区解析,安全性仍由 classifyHref 兜底。
 function mdUrlTransform(url: string): string {
-  const m = url.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+  const m = url.match(SCHEME_RE);
   if (m && m[1].length === 1) return url;
   return defaultUrlTransform(url);
 }
@@ -77,7 +77,8 @@ export default function MarkdownPreview({
   const components = useMemo<Components>(() => {
     const opts = { workspaceRoot, sourceFile };
     return {
-      img: ({ src, ...rest }: ComponentProps<'img'>) => {
+      // node 是 react-markdown ExtraProps 注入的 hast 节点,解构剔除避免铺进 DOM
+      img: ({ src, node, ...rest }: ComponentProps<'img'> & { node?: unknown }) => {
         const action = classifyHref(src ?? '', opts);
         if (action.kind !== 'workspace') return <img src={src} {...rest} />;
         return <img src={workspaceFileUrl(action.path)} {...rest} />;

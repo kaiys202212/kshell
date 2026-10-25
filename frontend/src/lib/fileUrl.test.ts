@@ -19,12 +19,12 @@ describe('dirName', () => {
 describe('workspaceFileUrl', () => {
   it('Windows 绝对路径 → origin + __kshell-file + b64(目录) + 编码文件名', () => {
     const dir = 'D:\\ws\\a';
-    const expected = `http://localhost:3000/__kshell-file/${base64UrlUtf8(dir)}/${encodeURIComponent('img.png')}`;
+    const expected = `${window.location.origin}/__kshell-file/${base64UrlUtf8(dir)}/${encodeURIComponent('img.png')}`;
     expect(workspaceFileUrl('D:\\ws\\a\\img.png')).toBe(expected);
   });
 
   it('posix 绝对路径同样成立', () => {
-    const expected = `http://localhost:3000/__kshell-file/${base64UrlUtf8('/home/u/a')}/${encodeURIComponent('p 1.png')}`;
+    const expected = `${window.location.origin}/__kshell-file/${base64UrlUtf8('/home/u/a')}/${encodeURIComponent('p 1.png')}`;
     expect(workspaceFileUrl('/home/u/a/p 1.png')).toBe(expected);
   });
 

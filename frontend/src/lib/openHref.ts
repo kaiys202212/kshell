@@ -17,6 +17,9 @@ export const OPEN_FILE_EVENT = 'kshell:open-file';
 
 const DANGEROUS_SCHEMES = new Set(['javascript', 'data', 'vbscript', 'blob']);
 
+// URL scheme 前缀(如 https:、D:);单字母为 Windows 盘符,导出供 mdUrlTransform 等复用
+export const SCHEME_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):/;
+
 // 以下三个工具被 chatAttachment 等模块复用，导出避免复制路径逻辑
 export function posixNorm(p: string): string {
   // 反斜杠统一成斜杠后，把盘符后的多余斜杠压成一个，避免 HTML 属性/拼接产生 D://proj
@@ -101,7 +104,7 @@ export function classifyHref(href: string, opts?: ClassifyOpts): HrefAction {
   const raw = href.trim();
   if (!raw || raw.startsWith('#')) return { kind: 'ignore' };
 
-  const m = raw.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+  const m = raw.match(SCHEME_RE);
   if (m) {
     const scheme = m[1].toLowerCase();
     if (scheme.length === 1) return resolveWorkspace(raw, opts ?? {});
