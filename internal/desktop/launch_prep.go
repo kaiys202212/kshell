@@ -23,8 +23,13 @@ const (
 const afterUpdateFlag = "--after-update"
 
 type launchPrepDeps struct {
-	selfExe     string
-	signalPath  string
+	selfExe    string
+	signalPath string
+	// listPeers 枚举参与升级清场的 GUI peer（Windows 侧按命令行白名单豁免
+	// 助手进程）：单实例互斥锁只有 GUI 持有，改名交换后助手进程（mcp-archive
+	// / mcp-ssh / agent-hook / --ssh-askpass）已不阻塞任何替换步骤，杀它们
+	// 纯破坏在跑的 agent 会话；助手死活只影响残留（.upgrade-old*）补删时点，
+	// 残留由下次升级脚本兜底，故清场一律零打扰。
 	listPeers   func() ([]int, error)
 	writeSignal func(path string) error
 	mutexFree   func() bool
