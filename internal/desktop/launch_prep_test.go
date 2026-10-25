@@ -13,25 +13,19 @@ import (
 func TestDetectUpgradeLaunch(t *testing.T) {
 	now := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
 
-	if !detectUpgradeLaunch([]string{"exe", "--after-update"}, now, false, false, now.Add(-time.Hour)) {
+	if !detectUpgradeLaunch([]string{"exe", "--after-update"}, now, false, now.Add(-time.Hour)) {
 		t.Fatal("flag 应为升级")
 	}
-	if !detectUpgradeLaunch([]string{"exe"}, now, true, false, now.Add(-time.Hour)) {
+	if !detectUpgradeLaunch([]string{"exe"}, now, true, now.Add(-time.Hour)) {
 		t.Fatal(".new 应为升级")
 	}
-	if !detectUpgradeLaunch([]string{"exe"}, now, false, false, now.Add(-30*time.Second)) {
+	// upgrade-old* 残留不单列信号：残留 ⊆ mtime 窗口内，本就由 recent-alone
+	// 判真；超窗残留必须保持非升级，防止补删失败的永久残留把日常双击误判成升级。
+	if !detectUpgradeLaunch([]string{"exe"}, now, false, now.Add(-30*time.Second)) {
 		t.Fatal("近 mtime 应为升级")
 	}
-	if detectUpgradeLaunch([]string{"exe"}, now, false, false, now.Add(-time.Hour)) {
+	if detectUpgradeLaunch([]string{"exe"}, now, false, now.Add(-time.Hour)) {
 		t.Fatal("日常双击不应为升级")
-	}
-	// upgrade-old* 残留只在 mtime 窗口内才采信：补删失败时残留会永久存在，
-	// 超窗残留不能把日常双击误判成升级。
-	if !detectUpgradeLaunch([]string{"exe"}, now, false, true, now.Add(-30*time.Second)) {
-		t.Fatal("残留 + 窗口内 mtime 应为升级")
-	}
-	if detectUpgradeLaunch([]string{"exe"}, now, false, true, now.Add(-time.Hour)) {
-		t.Fatal("残留 + 超窗 mtime 不应为升级")
 	}
 }
 
@@ -131,8 +125,8 @@ func TestPrepareLaunchUpgradeTimeoutKills(t *testing.T) {
 }
 
 func TestExeNewSiblingExists(t *testing.T) {
-	// exe.new 是升级中间产物的无条件信号；upgrade-old* 残留不再无条件算数
-	// （见 exeUpgradeOldResidualExists 的窗口门控），由独立函数负责。
+	// exe.new 是升级中间产物的无条件信号；upgrade-old* 残留不构成独立信号，
+	// 是否升级由 detectUpgradeLaunch 的 recent-alone（mtime 窗口）统一覆盖。
 	tests := []struct {
 		name    string
 		sibling string // 相对 exe 需创建的残留文件名；空表示不创建任何残留
@@ -162,43 +156,10 @@ func TestExeNewSiblingExists(t *testing.T) {
 	}
 }
 
-func TestExeUpgradeOldResidualExists(t *testing.T) {
-	// 改名交换会把旧 exe 改名 exe.upgrade-old（被占用时回退
-	// exe.upgrade-old-<ticks>），前缀扫描需覆盖两种形态；upgrade-oldfoo
-	// 也命中——这是我们自己的命名空间，可接受（前缀足够独特）。
-	tests := []struct {
-		name    string
-		sibling string
-		want    bool
-	}{
-		{name: "无残留为假"},
-		{name: ".upgrade-old 残留为真", sibling: ".upgrade-old", want: true},
-		{name: ".upgrade-old-ticks 残留为真", sibling: ".upgrade-old-133900000000000000", want: true},
-		{name: "前缀语义 .upgrade-oldfoo 也为真", sibling: ".upgrade-oldfoo", want: true},
-		{name: "无关文件不命中", sibling: "-other.txt"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			exe := filepath.Join(dir, "app.exe")
-			if tt.sibling != "" {
-				if err := os.WriteFile(exe+tt.sibling, []byte("x"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if got := exeUpgradeOldResidualExists(exe); got != tt.want {
-				t.Fatalf("exeUpgradeOldResidualExists(%q) = %v, want %v", exe, got, tt.want)
-			}
-		})
-	}
-	if exeUpgradeOldResidualExists("") {
-		t.Fatal("空 exe 应为假")
-	}
-}
-
-func TestIsUpgradeLaunchStaleUpgradeOldResidualNotUpgrade(t *testing.T) {
-	// 集成锁定：残留存在时，是否升级取决于 exe mtime 是否在升级窗口内，
-	// 防止补删失败的永久残留把日常双击误判成升级、清场误杀在跑实例。
+func TestIsUpgradeLaunchResidualCoveredByMtimeWindow(t *testing.T) {
+	// 集成锁定：upgrade-old* 残留不是独立信号，残留场景是否升级完全由 exe
+	// mtime 是否在升级窗口内（recent-alone）决定——防止补删失败的永久残留
+	// 把日常双击误判成升级、清场误杀在跑实例。
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "app.exe")
 	if err := os.WriteFile(exe+".upgrade-old", []byte("x"), 0o600); err != nil {
@@ -216,11 +177,10 @@ func TestIsUpgradeLaunchStaleUpgradeOldResidualNotUpgrade(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := isUpgradeLaunch(launchPrepDeps{
-				selfExe:          exe,
-				exeModTime:       func(string) (time.Time, error) { return tt.modTime, nil },
-				newExists:        exeNewSiblingExists,
-				upgradeOldExists: exeUpgradeOldResidualExists,
-				now:              func() time.Time { return now },
+				selfExe:    exe,
+				exeModTime: func(string) (time.Time, error) { return tt.modTime, nil },
+				newExists:  exeNewSiblingExists,
+				now:        func() time.Time { return now },
 			}, []string{exe})
 			if got != tt.want {
 				t.Fatalf("isUpgradeLaunch = %v, want %v", got, tt.want)
@@ -245,10 +205,9 @@ func TestPrepareLaunchUpgradeRemovesLeftoversOnEarlyExit(t *testing.T) {
 			t.Fatal("枚举失败不应 kill")
 			return nil
 		},
-		sleep:            func(time.Duration) {},
-		exeModTime:       func(string) (time.Time, error) { return time.Now().Add(-time.Hour), nil },
-		newExists:        func(string) bool { return false },
-		upgradeOldExists: func(string) bool { return false },
+		sleep:      func(time.Duration) {},
+		exeModTime: func(string) (time.Time, error) { return time.Now().Add(-time.Hour), nil },
+		newExists:  func(string) bool { return false },
 		removeUpgradeOld: func(string) error {
 			removeCalls++
 			return nil

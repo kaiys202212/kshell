@@ -32,9 +32,8 @@ type launchPrepDeps struct {
 	sleep       func(d time.Duration)
 	exeModTime  func(path string) (time.Time, error)
 	// newExists 仅认 exe.new（升级中间产物的无条件信号）；upgrade-old* 残留
-	// 另由 upgradeOldExists 给出，只在 exe mtime 处于升级窗口内时才采信。
-	newExists        func(exe string) bool
-	upgradeOldExists func(exe string) bool
+	// 不单列信号，是否升级由 detectUpgradeLaunch 的 recent-alone 统一覆盖。
+	newExists func(exe string) bool
 	// removeUpgradeOld 清场结束后尽力删除 exe.upgrade-old / exe.upgrade-old-*
 	// 残留；仅升级拉起路径调用，日常双击绝不删文件。
 	removeUpgradeOld func(exe string) error
@@ -45,11 +44,12 @@ type launchPrepDeps struct {
 }
 
 // detectUpgradeLaunch 判定是否升级拉起。--after-update 参数是权威信号；
-// exe.new 是升级中间产物的无条件信号。upgradeOldExists（exe.upgrade-old*
-// 残留）不作独立信号：它是改名交换的常规产物，清场补删/脚本 finally 失败
-// 时会永久残留，若仅凭残留判定，之后每次日常双击都会被误判成升级而清场
-// 误杀在跑实例，故只在 exe mtime 处于升级窗口内时才采信。
-func detectUpgradeLaunch(args []string, now time.Time, newExists, upgradeOldExists bool, modTime time.Time) bool {
+// exe.new 是升级中间产物的无条件信号。exe.upgrade-old* 残留不单列信号：
+// 残留信号由 recent-alone（exe mtime 处于升级窗口内）覆盖，不单列——残留
+// ⊆ 窗口内本就由 recent-alone 判真，单列只会重复；超窗残留则必须保持非
+// 升级，它是改名交换的常规产物，补删/finally 失败时会永久残留，仅凭残留
+// 判定会让之后每次日常双击都被误判成升级而清场误杀在跑实例。
+func detectUpgradeLaunch(args []string, now time.Time, newExists bool, modTime time.Time) bool {
 	for _, a := range args {
 		if a == afterUpdateFlag {
 			return true
@@ -58,11 +58,7 @@ func detectUpgradeLaunch(args []string, now time.Time, newExists, upgradeOldExis
 	if newExists {
 		return true
 	}
-	recent := !modTime.IsZero() && !now.Before(modTime) && now.Sub(modTime) <= upgradeModTimeWindow
-	if upgradeOldExists && recent {
-		return true
-	}
-	return recent
+	return !modTime.IsZero() && !now.Before(modTime) && now.Sub(modTime) <= upgradeModTimeWindow
 }
 
 func isUpgradeLaunch(d launchPrepDeps, args []string) bool {
@@ -78,11 +74,7 @@ func isUpgradeLaunch(d launchPrepDeps, args []string) bool {
 	if d.newExists != nil {
 		newEx = d.newExists(d.selfExe)
 	}
-	oldEx := false
-	if d.upgradeOldExists != nil {
-		oldEx = d.upgradeOldExists(d.selfExe)
-	}
-	return detectUpgradeLaunch(args, nowFn(), newEx, oldEx, modTime)
+	return detectUpgradeLaunch(args, nowFn(), newEx, modTime)
 }
 
 // prepareLaunchWith 仅在升级拉起时清场：写 exit.signal → 等待 peer/Mutex；
@@ -171,7 +163,6 @@ func PrepareLaunch(args []string) error {
 		sleep:            time.Sleep,
 		exeModTime:       fileModTime,
 		newExists:        exeNewSiblingExists,
-		upgradeOldExists: exeUpgradeOldResidualExists,
 		removeUpgradeOld: removeUpgradeOldLeftovers,
 		graceWait:        defaultGraceWait,
 		pollEvery:        defaultPollEvery,
@@ -199,22 +190,15 @@ func fileModTime(path string) (time.Time, error) {
 }
 
 // exeNewSiblingExists 判断 exe 同目录是否存在升级中间产物 exe.new（旧覆盖式
-// 脚本产物，存在即刚发生升级）。upgrade-old* 残留不在此判定：它是改名交换
-// 的常规产物且可能因清理失败永久残留，须叠加 exe mtime 窗口约束，见
-// exeUpgradeOldResidualExists 与 detectUpgradeLaunch。
+// 脚本产物，存在即刚发生升级）。upgrade-old* 残留不在此判定也不单列信号：
+// 它是改名交换的常规产物且可能因清理失败永久残留，是否升级由
+// detectUpgradeLaunch 的 recent-alone（exe mtime 窗口）统一覆盖。
 func exeNewSiblingExists(exe string) bool {
 	if exe == "" {
 		return false
 	}
 	_, err := os.Stat(exe + ".new")
 	return err == nil
-}
-
-// exeUpgradeOldResidualExists 判断 exe 同目录是否存在改名交换残留
-// exe.upgrade-old / exe.upgrade-old-<ticks>（后者在旧文件被占用时启用）。
-// 返回值本身不构成升级信号，须叠加 exe mtime 窗口约束后采信。
-func exeUpgradeOldResidualExists(exe string) bool {
-	return len(upgradeOldResiduals(exe)) > 0
 }
 
 // upgradeOldResiduals 列出 exe 同目录下的 upgrade-old* 残留。用 ReadDir +
