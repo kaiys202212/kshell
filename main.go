@@ -41,17 +41,30 @@ func trayIcon() []byte {
 }
 
 // desktopApp 是暴露给前端的绑定对象（Task 3 起逐步实现各方法）；
-// 托盘图标在装配期经 Options 注入（embed 数据在包初始化时即可用）。
-var desktopApp = desktop.NewAppWith(desktop.Options{TrayIcon: trayIcon()})
+// 托盘图标在装配期经 Options 注入（embed 数据在包初始化时即可用）；
+// StartHidden 在此一并透传（os.Args 在包初始化时已可用），Startup 据此同步
+// windowHidden 标志，避免静默拉起后「窗口实际隐藏、标志仍为 false」的语义滞后。
+var desktopApp = desktop.NewAppWith(desktop.Options{
+	TrayIcon:    trayIcon(),
+	StartHidden: startHiddenFromArgs(os.Args),
+})
 
-// RunDesktop 用给定的前端资源启动 Wails 窗口（拆出来便于测试）。
+// startHiddenFromArgs 判定本次是否为开机自启动的静默拉起：只认 os.Args[1]
+// （即应用自己的第一个参数），避免用户在会话参数里误传同名值。
+// 该判定放在隐藏子命令分发之后、PrepareLaunch 之前，保证 agent-hook /
+// askpass / mcp-* 等子命令路径完全不受影响。
+func startHiddenFromArgs(args []string) bool {
+	return len(args) > 1 && args[1] == "--autostart-hidden"
+}
+
+// desktopOptions 组装 Wails 启动选项（拆出来便于测试断言 StartHidden 透传）。
 //
 // Frameless：标题栏由前端自绘（页签直接排进标题栏）。Wails v2 默认走
 // framelessWithDecorations 分支（DWM 扩展边框进客户区），因此缩放边框、系统阴影、
 // 最小化/最大化动画都保留，只是标题栏内容归前端——窗口拖拽靠 CSS
 // --wails-draggable:drag（见 style.css 的 .kshell-drag）。
-func RunDesktop(src fs.FS) error {
-	return wails.Run(&options.App{
+func desktopOptions(src fs.FS, startHidden bool) *options.App {
+	return &options.App{
 		Title:     "Capybara",
 		Width:     1280,
 		Height:    800,
@@ -60,6 +73,9 @@ func RunDesktop(src fs.FS) error {
 		Frameless: true,
 		// 默认最大化启动（2026-10-04 优化轮）
 		WindowStartState: options.Maximised,
+		// 开机自启动静默拉起：启动即隐藏进托盘，托盘「显示主窗口」照常唤起。
+		// 升级拉起（--after-update）不传该参数，窗口照常出现。
+		StartHidden: startHidden,
 		AssetServer: &assetserver.Options{
 			Assets: src,
 			// HTML 浏览器页签的子资源通道：Wails 仅在内嵌资产未命中时回调此 Handler，
@@ -77,7 +93,12 @@ func RunDesktop(src fs.FS) error {
 		Bind: []interface{}{
 			desktopApp,
 		},
-	})
+	}
+}
+
+// RunDesktop 用给定的前端资源启动 Wails 窗口（拆出来便于测试）。
+func RunDesktop(src fs.FS, startHidden bool) error {
+	return wails.Run(desktopOptions(src, startHidden))
 }
 
 func main() {
@@ -111,7 +132,7 @@ func main() {
 	}
 	// 升级拉起时在单实例锁之前清场（兼容旧版替换脚本只 Start-Process 的路径）。
 	_ = desktop.PrepareLaunch(os.Args)
-	if err := RunDesktop(assets); err != nil {
+	if err := RunDesktop(assets, startHiddenFromArgs(os.Args)); err != nil {
 		fmt.Fprintln(os.Stderr, "kshell 桌面版启动失败:", err)
 		os.Exit(1)
 	}

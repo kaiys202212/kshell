@@ -88,6 +88,9 @@ const mocks = vi.hoisted(() => ({
   onUpdateAvailable: vi.fn((_cb: unknown) => () => {}),
   getCloseBehavior: vi.fn(),
   setCloseBehavior: vi.fn(),
+  // Settings 页自启动查询：默认不支持（区块隐藏），不影响 App 层用例
+  getAutostartInfo: vi.fn().mockResolvedValue({ Supported: false, Enabled: false }),
+  setAutostart: vi.fn(),
   getModelConfig: vi.fn(),
   setModelConfig: vi.fn(),
   listModelPresets: vi.fn(),

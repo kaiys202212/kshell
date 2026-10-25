@@ -12,7 +12,9 @@
       "not_ready": "桌面版尚未初始化完成",
       "session_gone": "会话不存在或已被清理",
       "workspace_gone": "工作区不存在",
-      "invalid_close_behavior": "非法的关闭行为 {{0}}（可选 tray / exit）"
+      "invalid_close_behavior": "非法的关闭行为 {{0}}（可选 tray / exit）",
+      "autostart_unsupported": "当前平台或构建不支持开机自启动",
+      "autostart_failed": "设置开机自启动失败: {{0}}"
     },
     "acp": {
       "no_agent": "未指定 agent 可执行文件",
@@ -351,6 +353,10 @@
         "title": "关闭行为",
         "tray": "收进托盘",
         "exit": "直接退出"
+      },
+      "autostart": {
+        "title": "开机自启动",
+        "desc": "登录 Windows 后自动在托盘启动 Capybara"
       },
       "notify": {
         "title": "通知",
