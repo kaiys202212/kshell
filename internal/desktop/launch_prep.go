@@ -3,6 +3,7 @@ package desktop
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/yangk/kshell/internal/config"
@@ -30,7 +31,10 @@ type launchPrepDeps struct {
 	killPIDs    func(pids []int) error
 	sleep       func(d time.Duration)
 	exeModTime  func(path string) (time.Time, error)
-	newExists   func(exe string) bool
+	// newExists 仅认 exe.new（升级中间产物的无条件信号）；upgrade-old* 残留
+	// 另由 upgradeOldExists 给出，只在 exe mtime 处于升级窗口内时才采信。
+	newExists        func(exe string) bool
+	upgradeOldExists func(exe string) bool
 	// removeUpgradeOld 清场结束后尽力删除 exe.upgrade-old / exe.upgrade-old-*
 	// 残留；仅升级拉起路径调用，日常双击绝不删文件。
 	removeUpgradeOld func(exe string) error
@@ -40,7 +44,12 @@ type launchPrepDeps struct {
 	now              func() time.Time
 }
 
-func detectUpgradeLaunch(args []string, now time.Time, newExists bool, modTime time.Time) bool {
+// detectUpgradeLaunch 判定是否升级拉起。--after-update 参数是权威信号；
+// exe.new 是升级中间产物的无条件信号。upgradeOldExists（exe.upgrade-old*
+// 残留）不作独立信号：它是改名交换的常规产物，清场补删/脚本 finally 失败
+// 时会永久残留，若仅凭残留判定，之后每次日常双击都会被误判成升级而清场
+// 误杀在跑实例，故只在 exe mtime 处于升级窗口内时才采信。
+func detectUpgradeLaunch(args []string, now time.Time, newExists, upgradeOldExists bool, modTime time.Time) bool {
 	for _, a := range args {
 		if a == afterUpdateFlag {
 			return true
@@ -49,10 +58,11 @@ func detectUpgradeLaunch(args []string, now time.Time, newExists bool, modTime t
 	if newExists {
 		return true
 	}
-	if !modTime.IsZero() && !now.Before(modTime) && now.Sub(modTime) <= upgradeModTimeWindow {
+	recent := !modTime.IsZero() && !now.Before(modTime) && now.Sub(modTime) <= upgradeModTimeWindow
+	if upgradeOldExists && recent {
 		return true
 	}
-	return false
+	return recent
 }
 
 func isUpgradeLaunch(d launchPrepDeps, args []string) bool {
@@ -68,7 +78,11 @@ func isUpgradeLaunch(d launchPrepDeps, args []string) bool {
 	if d.newExists != nil {
 		newEx = d.newExists(d.selfExe)
 	}
-	return detectUpgradeLaunch(args, nowFn(), newEx, modTime)
+	oldEx := false
+	if d.upgradeOldExists != nil {
+		oldEx = d.upgradeOldExists(d.selfExe)
+	}
+	return detectUpgradeLaunch(args, nowFn(), newEx, oldEx, modTime)
 }
 
 // prepareLaunchWith 仅在升级拉起时清场：写 exit.signal → 等待 peer/Mutex；
@@ -76,6 +90,13 @@ func isUpgradeLaunch(d launchPrepDeps, args []string) bool {
 func prepareLaunchWith(d launchPrepDeps, args []string) error {
 	if !isUpgradeLaunch(d, args) {
 		return nil
+	}
+	// 凡走升级清场路径，收尾必尽力补删改名交换残留（旧 exe 改名让位后以
+	// upgrade-old* 形式存在，此时旧助手进程已被清理或退出，删除通常能成功）；
+	// 失败静默忽略，留给下次升级兜底。defer 覆盖包括首次枚举即空/出错在内
+	// 的所有出口。
+	if d.removeUpgradeOld != nil {
+		defer func() { _ = d.removeUpgradeOld(d.selfExe) }()
 	}
 	if d.listPeers == nil {
 		return nil
@@ -86,15 +107,6 @@ func prepareLaunchWith(d launchPrepDeps, args []string) error {
 	}
 	if d.writeSignal != nil && d.signalPath != "" {
 		_ = d.writeSignal(d.signalPath)
-	}
-
-	// 升级脚本已改为「改名交换」，旧 exe 以 exe.upgrade-old* 形式残留；等
-	// peer 清理完成（旧助手进程退出/被杀）后文件不再被占用，是补删的最佳
-	// 时机。失败静默忽略，留给下次升级兜底。
-	cleanupLeftovers := func() {
-		if d.removeUpgradeOld != nil {
-			_ = d.removeUpgradeOld(d.selfExe)
-		}
 	}
 
 	grace := d.graceWait
@@ -119,7 +131,6 @@ func prepareLaunchWith(d launchPrepDeps, args []string) error {
 		clear, err := d.listPeers()
 		if err == nil && len(clear) == 0 {
 			if d.mutexFree == nil || d.mutexFree() {
-				cleanupLeftovers()
 				return nil
 			}
 		}
@@ -128,7 +139,6 @@ func prepareLaunchWith(d launchPrepDeps, args []string) error {
 
 	peers, err = d.listPeers()
 	if err != nil || len(peers) == 0 {
-		cleanupLeftovers()
 		return nil
 	}
 	if d.killPIDs != nil {
@@ -137,7 +147,6 @@ func prepareLaunchWith(d launchPrepDeps, args []string) error {
 	if d.postKillWait > 0 {
 		sleep(d.postKillWait)
 	}
-	cleanupLeftovers()
 	return nil
 }
 
@@ -162,6 +171,7 @@ func PrepareLaunch(args []string) error {
 		sleep:            time.Sleep,
 		exeModTime:       fileModTime,
 		newExists:        exeNewSiblingExists,
+		upgradeOldExists: exeUpgradeOldResidualExists,
 		removeUpgradeOld: removeUpgradeOldLeftovers,
 		graceWait:        defaultGraceWait,
 		pollEvery:        defaultPollEvery,
@@ -188,36 +198,54 @@ func fileModTime(path string) (time.Time, error) {
 	return st.ModTime(), nil
 }
 
-// exeNewSiblingExists 判断 exe 同目录是否存在升级中间产物。除了老的 exe.new
-// （旧覆盖式脚本产物），改名交换脚本会留下 exe.upgrade-old / exe.upgrade-old-<ticks>
-// （后者在旧文件被占用时启用），任一前缀残留都说明刚发生过升级拉起。
+// exeNewSiblingExists 判断 exe 同目录是否存在升级中间产物 exe.new（旧覆盖式
+// 脚本产物，存在即刚发生升级）。upgrade-old* 残留不在此判定：它是改名交换
+// 的常规产物且可能因清理失败永久残留，须叠加 exe mtime 窗口约束，见
+// exeUpgradeOldResidualExists 与 detectUpgradeLaunch。
 func exeNewSiblingExists(exe string) bool {
 	if exe == "" {
 		return false
 	}
-	if _, err := os.Stat(exe + ".new"); err == nil {
-		return true
+	_, err := os.Stat(exe + ".new")
+	return err == nil
+}
+
+// exeUpgradeOldResidualExists 判断 exe 同目录是否存在改名交换残留
+// exe.upgrade-old / exe.upgrade-old-<ticks>（后者在旧文件被占用时启用）。
+// 返回值本身不构成升级信号，须叠加 exe mtime 窗口约束后采信。
+func exeUpgradeOldResidualExists(exe string) bool {
+	return len(upgradeOldResiduals(exe)) > 0
+}
+
+// upgradeOldResiduals 列出 exe 同目录下的 upgrade-old* 残留。用 ReadDir +
+// HasPrefix 前缀匹配而非 Glob：exe 安装路径可能含 [ ] ? 等字符，Glob 会把
+// 它们当模式元字符导致漏判。前缀语义刻意宽松（upgrade-oldfoo 也命中）——
+// 这是 kshell 自己的命名空间，前缀足够独特，不会误伤他物。
+func upgradeOldResiduals(exe string) []string {
+	if exe == "" {
+		return nil
 	}
-	matches, err := filepath.Glob(exe + ".upgrade-old*")
+	dir := filepath.Dir(exe)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return false
+		return nil
 	}
-	return len(matches) > 0
+	prefix := filepath.Base(exe) + ".upgrade-old"
+	var out []string
+	for _, e := range entries {
+		if name := e.Name(); strings.HasPrefix(name, prefix) {
+			out = append(out, filepath.Join(dir, name))
+		}
+	}
+	return out
 }
 
 // removeUpgradeOldLeftovers 尽力删除升级改名交换留下的旧 exe 残留。调用时机
 // 在清场结束之后（旧助手进程已被清理或自然退出），文件不再被占用，删除通常
 // 能成功；个别失败静默忽略，由下次升级脚本的 finally 兜底。
 func removeUpgradeOldLeftovers(exe string) error {
-	if exe == "" {
-		return nil
-	}
-	matches, err := filepath.Glob(exe + ".upgrade-old*")
-	if err != nil {
-		return err
-	}
 	var firstErr error
-	for _, m := range matches {
+	for _, m := range upgradeOldResiduals(exe) {
 		if err := os.Remove(m); err != nil && firstErr == nil {
 			firstErr = err
 		}

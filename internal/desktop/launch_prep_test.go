@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,17 +13,25 @@ import (
 func TestDetectUpgradeLaunch(t *testing.T) {
 	now := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
 
-	if !detectUpgradeLaunch([]string{"exe", "--after-update"}, now, false, now.Add(-time.Hour)) {
+	if !detectUpgradeLaunch([]string{"exe", "--after-update"}, now, false, false, now.Add(-time.Hour)) {
 		t.Fatal("flag 应为升级")
 	}
-	if !detectUpgradeLaunch([]string{"exe"}, now, true, now.Add(-time.Hour)) {
+	if !detectUpgradeLaunch([]string{"exe"}, now, true, false, now.Add(-time.Hour)) {
 		t.Fatal(".new 应为升级")
 	}
-	if !detectUpgradeLaunch([]string{"exe"}, now, false, now.Add(-30*time.Second)) {
+	if !detectUpgradeLaunch([]string{"exe"}, now, false, false, now.Add(-30*time.Second)) {
 		t.Fatal("近 mtime 应为升级")
 	}
-	if detectUpgradeLaunch([]string{"exe"}, now, false, now.Add(-time.Hour)) {
+	if detectUpgradeLaunch([]string{"exe"}, now, false, false, now.Add(-time.Hour)) {
 		t.Fatal("日常双击不应为升级")
+	}
+	// upgrade-old* 残留只在 mtime 窗口内才采信：补删失败时残留会永久存在，
+	// 超窗残留不能把日常双击误判成升级。
+	if !detectUpgradeLaunch([]string{"exe"}, now, false, true, now.Add(-30*time.Second)) {
+		t.Fatal("残留 + 窗口内 mtime 应为升级")
+	}
+	if detectUpgradeLaunch([]string{"exe"}, now, false, true, now.Add(-time.Hour)) {
+		t.Fatal("残留 + 超窗 mtime 不应为升级")
 	}
 }
 
@@ -121,10 +130,9 @@ func TestPrepareLaunchUpgradeTimeoutKills(t *testing.T) {
 	}
 }
 
-func TestExeNewSiblingExistsDetectsUpgradeOldLeftovers(t *testing.T) {
-	// 升级脚本已改为「改名交换」：旧 exe 改名 exe.upgrade-old（被占用时回退
-	// exe.upgrade-old-<ticks>），exe.new 不再长期存在，故 upgrade-old 前缀
-	// 残留同样要视为升级拉起。
+func TestExeNewSiblingExists(t *testing.T) {
+	// exe.new 是升级中间产物的无条件信号；upgrade-old* 残留不再无条件算数
+	// （见 exeUpgradeOldResidualExists 的窗口门控），由独立函数负责。
 	tests := []struct {
 		name    string
 		sibling string // 相对 exe 需创建的残留文件名；空表示不创建任何残留
@@ -132,8 +140,8 @@ func TestExeNewSiblingExistsDetectsUpgradeOldLeftovers(t *testing.T) {
 	}{
 		{name: "无残留为假"},
 		{name: ".new 残留为真", sibling: ".new", want: true},
-		{name: ".upgrade-old 残留为真", sibling: ".upgrade-old", want: true},
-		{name: ".upgrade-old-ticks 残留为真", sibling: ".upgrade-old-133900000000000000", want: true},
+		{name: ".upgrade-old 不再无条件为真", sibling: ".upgrade-old"},
+		{name: ".upgrade-old-ticks 不再无条件为真", sibling: ".upgrade-old-133900000000000000"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -151,6 +159,173 @@ func TestExeNewSiblingExistsDetectsUpgradeOldLeftovers(t *testing.T) {
 	}
 	if exeNewSiblingExists("") {
 		t.Fatal("空 exe 应为假")
+	}
+}
+
+func TestExeUpgradeOldResidualExists(t *testing.T) {
+	// 改名交换会把旧 exe 改名 exe.upgrade-old（被占用时回退
+	// exe.upgrade-old-<ticks>），前缀扫描需覆盖两种形态；upgrade-oldfoo
+	// 也命中——这是我们自己的命名空间，可接受（前缀足够独特）。
+	tests := []struct {
+		name    string
+		sibling string
+		want    bool
+	}{
+		{name: "无残留为假"},
+		{name: ".upgrade-old 残留为真", sibling: ".upgrade-old", want: true},
+		{name: ".upgrade-old-ticks 残留为真", sibling: ".upgrade-old-133900000000000000", want: true},
+		{name: "前缀语义 .upgrade-oldfoo 也为真", sibling: ".upgrade-oldfoo", want: true},
+		{name: "无关文件不命中", sibling: "-other.txt"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			exe := filepath.Join(dir, "app.exe")
+			if tt.sibling != "" {
+				if err := os.WriteFile(exe+tt.sibling, []byte("x"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := exeUpgradeOldResidualExists(exe); got != tt.want {
+				t.Fatalf("exeUpgradeOldResidualExists(%q) = %v, want %v", exe, got, tt.want)
+			}
+		})
+	}
+	if exeUpgradeOldResidualExists("") {
+		t.Fatal("空 exe 应为假")
+	}
+}
+
+func TestIsUpgradeLaunchStaleUpgradeOldResidualNotUpgrade(t *testing.T) {
+	// 集成锁定：残留存在时，是否升级取决于 exe mtime 是否在升级窗口内，
+	// 防止补删失败的永久残留把日常双击误判成升级、清场误杀在跑实例。
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "app.exe")
+	if err := os.WriteFile(exe+".upgrade-old", []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name    string
+		modTime time.Time
+		want    bool
+	}{
+		{name: "超窗残留不算升级", modTime: now.Add(-time.Hour)},
+		{name: "窗口内残留算升级", modTime: now.Add(-30 * time.Second), want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isUpgradeLaunch(launchPrepDeps{
+				selfExe:          exe,
+				exeModTime:       func(string) (time.Time, error) { return tt.modTime, nil },
+				newExists:        exeNewSiblingExists,
+				upgradeOldExists: exeUpgradeOldResidualExists,
+				now:              func() time.Time { return now },
+			}, []string{exe})
+			if got != tt.want {
+				t.Fatalf("isUpgradeLaunch = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPrepareLaunchUpgradeRemovesLeftoversOnEarlyExit(t *testing.T) {
+	// defer 语义：升级拉起后即使首次枚举 peer 即失败提前返回，收尾仍补删。
+	removeCalls := 0
+	err := prepareLaunchWith(launchPrepDeps{
+		selfExe:    `C:\app\kshell-desktop.exe`,
+		signalPath: "sig",
+		listPeers:  func() ([]int, error) { return nil, errors.New("boom") },
+		writeSignal: func(string) error {
+			t.Fatal("枚举失败不应写 signal")
+			return nil
+		},
+		mutexFree: func() bool { return true },
+		killPIDs: func([]int) error {
+			t.Fatal("枚举失败不应 kill")
+			return nil
+		},
+		sleep:            func(time.Duration) {},
+		exeModTime:       func(string) (time.Time, error) { return time.Now().Add(-time.Hour), nil },
+		newExists:        func(string) bool { return false },
+		upgradeOldExists: func(string) bool { return false },
+		removeUpgradeOld: func(string) error {
+			removeCalls++
+			return nil
+		},
+	}, []string{`C:\app\kshell-desktop.exe`, "--after-update"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removeCalls != 1 {
+		t.Fatalf("提前返回也应补删一次, got %d", removeCalls)
+	}
+}
+
+func TestRemoveUpgradeOldLeftovers(t *testing.T) {
+	countResiduals := func(t *testing.T, exe string) int {
+		t.Helper()
+		entries, err := os.ReadDir(filepath.Dir(exe))
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), filepath.Base(exe)+".upgrade-old") {
+				n++
+			}
+		}
+		return n
+	}
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, exe string)
+		wantErr  bool
+		wantLeft int
+	}{
+		{name: "无残留不报错"},
+		{name: "多残留全删",
+			setup: func(t *testing.T, exe string) {
+				// 固化前缀语义：upgrade-old / 带时间戳 / 前缀粘连均删除
+				for _, s := range []string{".upgrade-old", ".upgrade-old-123", ".upgrade-oldfoo"} {
+					if err := os.WriteFile(exe+s, []byte("x"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			},
+			wantLeft: 0,
+		},
+		{name: "部分失败返回错误",
+			setup: func(t *testing.T, exe string) {
+				if err := os.WriteFile(exe+".upgrade-old", []byte("x"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				// 非空目录无法被 os.Remove 删除，用于制造失败项
+				if err := os.MkdirAll(filepath.Join(exe+".upgrade-old-1", "inner"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantErr:  true,
+			wantLeft: 1, // 失败的非空目录保留
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exe := filepath.Join(t.TempDir(), "app.exe")
+			if tt.setup != nil {
+				tt.setup(t, exe)
+			}
+			err := removeUpgradeOldLeftovers(exe)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("removeUpgradeOldLeftovers err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got := countResiduals(t, exe); got != tt.wantLeft {
+				t.Fatalf("剩余残留 %d, want %d", got, tt.wantLeft)
+			}
+		})
+	}
+	if err := removeUpgradeOldLeftovers(""); err != nil {
+		t.Fatalf("空 exe 应安全返回: %v", err)
 	}
 }
 
