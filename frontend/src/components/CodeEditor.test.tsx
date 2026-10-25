@@ -2,7 +2,8 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import CodeEditor, { buildWhitespaceFoldExtensions } from './CodeEditor';
+import CodeEditor, { buildThemeExtensions, buildWhitespaceFoldExtensions } from './CodeEditor';
+import { oneDark } from '@codemirror/theme-one-dark';
 
 afterEach(cleanup);
 
@@ -51,6 +52,15 @@ describe('CodeEditor', () => {
     }).not.toThrow();
   });
 
+  it('亮色主题下语法着色不丢失（关键字被高亮 span 包裹）', () => {
+    render(
+      <CodeEditor value={'const x = 1;'} path="a.js" readOnly theme="light" />,
+    );
+    const content = screen.getByTestId('code-editor').querySelector('.cm-content');
+    expect(content).toBeTruthy();
+    expect(content!.querySelector('span[class]')).toBeTruthy();
+  });
+
   it('始终挂载 fold gutter', () => {
     render(
       <CodeEditor value={'function f() {\n  return 1;\n}\n'} path="a.js" readOnly theme="dark" />,
@@ -90,6 +100,15 @@ describe('CodeEditor', () => {
     );
     expect(root.querySelector('.cm-editor')).toBe(cmBefore);
     expect(root.querySelector('.cm-highlightSpace')).toBeTruthy();
+  });
+});
+
+describe('buildThemeExtensions', () => {
+  it('暗色挂 oneDark，亮色挂默认语法高亮', () => {
+    expect(buildThemeExtensions('dark')[0]).toBe(oneDark);
+    const light = buildThemeExtensions('light');
+    expect(light.length).toBe(1);
+    expect(light[0]).not.toBe(oneDark);
   });
 });
 

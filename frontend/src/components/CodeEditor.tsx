@@ -8,7 +8,7 @@ import { html } from '@codemirror/lang-html';
 import { javascript } from '@codemirror/lang-javascript';
 import { json } from '@codemirror/lang-json';
 import { markdown } from '@codemirror/lang-markdown';
-import { StreamLanguage, foldGutter, foldKeymap } from '@codemirror/language';
+import { defaultHighlightStyle, StreamLanguage, foldGutter, foldKeymap, syntaxHighlighting } from '@codemirror/language';
 import { powerShell } from '@codemirror/legacy-modes/mode/powershell';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
 import { python } from '@codemirror/lang-python';
@@ -26,6 +26,12 @@ export interface CodeEditorProps {
   theme: 'light' | 'dark';
   /** 显示空格/Tab 等高亮；默认 false。 */
   showWhitespace?: boolean;
+}
+
+/** 主题扩展：暗色挂 oneDark（自带配色）；亮色必须显式挂默认高亮，
+ * 否则 CodeMirror 6 不做任何语法着色。供组件与单测复用。 */
+export function buildThemeExtensions(theme: 'light' | 'dark'): Extension[] {
+  return theme === 'dark' ? [oneDark] : [syntaxHighlighting(defaultHighlightStyle)];
 }
 
 /** 折叠始终开启；空白高亮按开关。供组件与单测复用。 */
@@ -109,9 +115,7 @@ export default function CodeEditor({
     if (readOnly) {
       extensions.push(EditorState.readOnly.of(true));
     }
-    if (theme === 'dark') {
-      extensions.push(oneDark);
-    }
+    extensions.push(...buildThemeExtensions(theme));
 
     const view = new EditorView({
       state: EditorState.create({
