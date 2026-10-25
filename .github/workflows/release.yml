@@ -80,11 +80,14 @@ jobs:
           wails build ${WEBKIT_TAG:-} -ldflags "-X github.com/yangk/kshell/internal/version.Version=${VERSION}"
           mkdir -p dist/pkg
           # macOS：必须打整包 .app（energye/systray 依赖 AppKit/NSBundle）；裸 Mach-O 会 SIGTRAP。
+          # .app 名取自 wails.json 的 name（packager.go: bundlename = ProjectData.Name + ".app"），
+          # 品牌改名后为 Capybara.app，这里通配查找；发布物统一改名为 kshell-desktop.app。
           # Linux：仍为顶层裸二进制 kshell-desktop。
-          if [ -d build/bin/kshell.app ]; then
+          APP_SRC=$(find build/bin -maxdepth 1 -type d -name '*.app' | head -n1)
+          if [ -n "$APP_SRC" ]; then
             rm -rf dist/pkg/kshell-desktop.app
-            cp -R build/bin/kshell.app dist/pkg/kshell-desktop.app
-            chmod +x dist/pkg/kshell-desktop.app/Contents/MacOS/kshell
+            cp -R "$APP_SRC" dist/pkg/kshell-desktop.app
+            chmod +x dist/pkg/kshell-desktop.app/Contents/MacOS/*
             (cd dist/pkg && zip -ry "../${ZIP_NAME}" kshell-desktop.app)
           elif [ -e build/bin/kshell ]; then
             cp build/bin/kshell dist/kshell-desktop
