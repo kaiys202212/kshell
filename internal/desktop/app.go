@@ -257,6 +257,9 @@ func (a *App) Startup(ctx context.Context) {
 	// 系统热键 Alt+Shift+K：独立 goroutine 跑 Win32 消息循环，随进程存活。
 	go startHotkey(a)
 	a.startWeixin() // 微信桥：凭据已配置即启动长轮询，否则等前端扫码绑定
+
+	// 开机自启动：把注册表与 config.Autostart 对齐（release 才生效；失败仅记日志）。
+	a.syncAutostartOnStartup()
 }
 
 var updateCheckDelay = 3 * time.Second
