@@ -108,7 +108,12 @@ func NewAgent(ctx context.Context, spec Spec, h Handler) (*Agent, error) {
 	if spec.Path == "" {
 		return nil, errors.New("err.acp.no_agent")
 	}
-	cmd := exec.CommandContext(ctx, spec.Path, spec.Args...)
+	// 与探测进程同款约束：绝不能依赖 CommandContext 的超时杀——Windows 上
+	// agent 经 npm .cmd 包装启动，ctx 取消只杀直属 cmd.exe，node 真身成孤儿。
+	// 这里用普通 Command + 独立守卫 goroutine：ctx 取消时树杀兜底；
+	// ctx 为 Background（当前唯一调用方 chat.Backend）时 Done() 为 nil，
+	// goroutine 阻塞到连接关闭（done）后退出，不泄漏。
+	cmd := exec.Command(spec.Path, spec.Args...)
 	executil.HideWindow(cmd)
 	cmd.Dir = spec.Dir
 	if len(spec.Env) > 0 {
@@ -144,6 +149,13 @@ func NewAgent(ctx context.Context, spec Spec, h Handler) (*Agent, error) {
 	}
 	go a.readLoop()
 	go a.waitLoop()
+	go func() {
+		select {
+		case <-ctx.Done(): // 调用方取消：树杀整棵进程（正常关闭走 Close，不经此路）
+			executil.KillProcessTree(cmd)
+		case <-a.done:
+		}
+	}()
 	return a, nil
 }
 

@@ -37,14 +37,19 @@ func TestKillProcessTreeKillsGrandchild(t *testing.T) {
 	_ = cmd.Wait()
 
 	// 直属进程必须已退出（Wait 返回即证）。
-	// 孙代必须消失：轮询确认，给系统几秒收敛窗口。
+	// 孙代必须消失：轮询确认，给系统几秒收敛窗口。查询出错按未知处理继续
+	// 重试（PowerShell 偶发失败不得让断言假通过），超期才判失败。
 	deadline := time.Now().Add(10 * time.Second)
+	var lastErr error
 	for {
-		if !processExists(childPID) {
+		exists, err := processExists(childPID)
+		if err != nil {
+			lastErr = err
+		} else if !exists {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("孙进程 ping (pid=%d) 在树杀后仍存活：孤儿泄漏复现", childPID)
+			t.Fatalf("孙进程 ping (pid=%d) 在树杀后仍存活（最后查询错误: %v）：孤儿泄漏复现", childPID, lastErr)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
@@ -73,9 +78,10 @@ func waitGrandchild(t *testing.T, parentPID int, timeout time.Duration) (int, er
 }
 
 // firstChildPID 经 PowerShell 查询直属子进程（本仓库 Windows 测试环境有 PowerShell）。
+// 按计划要求同时校验进程名为 PING.EXE，防 PID 复用或意外子进程干扰。
 func firstChildPID(parentPID int) (int, error) {
 	ps := fmt.Sprintf(
-		`(Get-CimInstance Win32_Process -Filter "ParentProcessId=%d" | Select-Object -First 1).ProcessId`,
+		`(Get-CimInstance Win32_Process -Filter "ParentProcessId=%d AND Name='PING.EXE'" | Select-Object -First 1).ProcessId`,
 		parentPID)
 	out, err := exec.Command("powershell", "-NoProfile", "-Command", ps).Output()
 	if err != nil {
@@ -83,17 +89,18 @@ func firstChildPID(parentPID int) (int, error) {
 	}
 	var pid int
 	if _, err := fmt.Sscanf(string(out), "%d", &pid); err != nil {
-		return 0, fmt.Errorf("无子进程: %w", err)
+		return 0, fmt.Errorf("无 PING.EXE 子进程: %w", err)
 	}
 	return pid, nil
 }
 
-// processExists 报告进程是否仍存活。
-func processExists(pid int) bool {
+// processExists 报告进程是否仍存活；查询失败返回 error（由调用方重试），
+// 不得把「查询不到」与「进程不存在」混为一谈。
+func processExists(pid int) (bool, error) {
 	ps := fmt.Sprintf(`if (Get-Process -Id %d -ErrorAction SilentlyContinue) { 'yes' }`, pid)
 	out, err := exec.Command("powershell", "-NoProfile", "-Command", ps).Output()
 	if err != nil {
-		return false
+		return true, err // 未知，按可能存活处理
 	}
-	return len(out) > 0 && out[0] == 'y'
+	return len(out) > 0 && out[0] == 'y', nil
 }

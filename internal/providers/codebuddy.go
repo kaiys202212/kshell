@@ -251,7 +251,10 @@ func codeBuddyACPUserId() (string, error) {
 	if err := cmd.Start(); err != nil {
 		return "", err
 	}
-	treeKill := func() { executil.KillProcessTree(cmd) }
+	// sync.Once 串行化 timer 与 defer 的并发收尸：killTimer.Stop 不等待已在
+	// 执行的回调，两个 goroutine 同时对同一 PID 跑树杀虽幂等，仍以防万一。
+	var treeKillOnce sync.Once
+	treeKill := func() { treeKillOnce.Do(func() { executil.KillProcessTree(cmd) }) }
 	killTimer := time.AfterFunc(codeBuddyAuthProbeTimeout, treeKill)
 	// 统一收尾：拿到响应或超时/EOF 都要杀整棵进程树，不留孤儿 node 进程。
 	defer func() {
