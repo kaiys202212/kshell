@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/yangk/kshell/internal/atomfile"
+	"github.com/yangk/kshell/internal/version"
 	"gopkg.in/yaml.v3"
 )
 
@@ -134,6 +135,14 @@ type Config struct {
 	ProjectSetupDismissed bool `yaml:"project_setup_dismissed"`
 	// LastSeenVersion 记录用户已确认过的最新版本号（升级后弹升级日志的去重依据）。
 	LastSeenVersion string `yaml:"last_seen_version"`
+	// Autostart 开机自启动开关：发布版缺省开、dev 构建缺省关（见 isReleaseFn）。
+	// 缺省值只在 config.yaml 缺字段时生效——显式 false 必须保留，因此解码时
+	// 用 autostartSet 区分「未写字段」与「写了 false」（见 UnmarshalYAML）。
+	Autostart bool `yaml:"autostart"`
+
+	// autostartSet 由 UnmarshalYAML 置位：config.yaml 显式写过 autostart 键。
+	// 不落盘（yaml 忽略未导出字段），仅归一化时用于决定是否补缺省值。
+	autostartSet bool
 	// Weixin 是微信桥（iLink）的持久化配置。
 	Weixin WeixinConfig `yaml:"weixin"`
 	// AgentHub 是 AgentHub 的跨端持久化配置（默认工具/模型）。
@@ -163,8 +172,30 @@ type AgentHubConfig struct {
 	RouteMode string `yaml:"route_mode"`
 }
 
+// isReleaseFn 是发布态判定的包级变量：默认走 version.IsRelease，测试可注入。
+var isReleaseFn = version.IsRelease
+
+// defaultAutostart 返回 autostart 缺省值：发布版默认开启（需求确认的形态），
+// dev 构建不开启也不注册。
+func defaultAutostart(release bool) bool { return release }
+
+// UnmarshalYAML 在标准解码前检测 autostart 键是否显式出现：bool 零值无法区分
+// 「未写字段」与「写了 false」，未写时置位标记交给 normalized 补缺省值，
+// 显式写的值（含 false）随后被别名类型解码原样覆盖保留。
+func (c *Config) UnmarshalYAML(node *yaml.Node) error {
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == "autostart" {
+			c.autostartSet = true
+			break
+		}
+	}
+	type plain Config
+	return node.Decode((*plain)(c))
+}
+
 func Default() Config {
 	return Config{
+		Autostart: defaultAutostart(isReleaseFn()),
 		ScanRoots: []string{"~"},
 		MaxDepth:  4,
 		Exclude:   []string{".git", "node_modules", "vendor", "dist"},
@@ -288,6 +319,13 @@ func (c Config) normalized() Config {
 	}
 	// 已读版本号：仅去首尾空白，其余原样保留。
 	c.LastSeenVersion = strings.TrimSpace(c.LastSeenVersion)
+	// 开机自启动：config.yaml 未写该字段时补发布态缺省值（显式写过的 false/true 原样保留）。
+	if !c.autostartSet {
+		c.Autostart = defaultAutostart(isReleaseFn())
+	}
+	// 消费完即复位：归一化产物（Load 返回值）与手构造的 Config 保持可 DeepEqual；
+	// normalized 只在 Load 末尾调用一次，复位不影响显式 false 的保留语义。
+	c.autostartSet = false
 	// AgentHub 路由模式：空值或非法值一律回落 auto。
 	c.AgentHub.RouteMode = strings.TrimSpace(c.AgentHub.RouteMode)
 	switch c.AgentHub.RouteMode {
