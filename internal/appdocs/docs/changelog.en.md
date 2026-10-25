@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.1.21 (2026-10-25)
+
+- Chat attachments are fully usable: image and file reference blocks in agent replies are recovered into the timeline, attachments can be clicked to preview or open with the system, and images are cached on disk.
+- Configurable center layout: tabbed mode or left-right split (agent on the left, files + terminal on the right) with a draggable divider, switchable from both Settings and the tab bar; terminal remount replays scrollback history.
+- New auto-start on boot: a Settings toggle that silently launches to tray when the system starts.
+- Brand refresh to Capybara: capybara icon and display name, plus an open-source repository link in the About section.
+- Chat bubbles and session previews now decode percent-encoded file names for display; stored content is untouched.
+- Markdown preview supports relative-path images, loaded securely through the restricted file channel.
+- Fixed syntax highlighting loss in the source editor under the light theme.
+- Upgrade replacement now uses a rename-exchange with automatic rollback; upgrades still auto-relaunch the new version while the assistant is alive, fully undisturbed.
+- Orphan processes are systematically eliminated: ACP adapters, login probes, and other subprocesses run in their own process groups and are terminated as a group on exit.
+- macOS fixes: follow-system light/dark now reads AppleInterfaceStyle, and file reveal uses `open -R` to select the target.
+- Fixed the image lightbox preview state not being reset when switching tabs.
+
 ## v0.1.20 (2026-10-24)
 
 - Built-in TRAE CLI support: discovery, session parsing and resume, ACP chat, skills, and installation all work end to end; login state is detected via `traecli login status`.
