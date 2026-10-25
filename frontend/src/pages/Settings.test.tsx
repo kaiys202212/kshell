@@ -1254,6 +1254,7 @@ describe('Settings', () => {
     expect(await screen.findByText(/v0\.1\.0/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: tt('ui.settings.about.check_update') })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: tt('ui.settings.about.feedback') })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: tt('ui.settings.about.open_source') })).toBeInTheDocument();
   });
 
   it('点击反馈问题打开 GitHub Issues 新建页', async () => {
@@ -1262,6 +1263,14 @@ describe('Settings', () => {
     await screen.findByRole('heading', { name: tt('ui.settings.about.title') });
     fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.about.feedback') }));
     expect(mocks.openExternalURL).toHaveBeenCalledWith('https://github.com/kaiys202212/kshell/issues/new');
+  });
+
+  it('点击开源地址打开 GitHub 仓库首页', async () => {
+    mocks.getAppVersion.mockResolvedValue('v0.1.0');
+    render(<Settings />);
+    await screen.findByRole('heading', { name: tt('ui.settings.about.title') });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.about.open_source') }));
+    expect(mocks.openExternalURL).toHaveBeenCalledWith('https://github.com/kaiys202212/kshell');
   });
 
   it('开发构建检查更新：跳过原因 wire key 经 translateBackend 翻译展示', async () => {

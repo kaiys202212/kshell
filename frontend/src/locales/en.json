@@ -375,6 +375,7 @@
         "checking": "Checking...",
         "check_update": "Check for updates",
         "feedback": "Report an issue",
+        "open_source": "Open source",
         "upgrade_now": "Upgrade now",
         "up_to_date": "Up to date",
         "new_version": "New version {{0}}",

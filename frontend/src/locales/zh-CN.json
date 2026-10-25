@@ -375,6 +375,7 @@
         "checking": "检查中…",
         "check_update": "检查更新",
         "feedback": "反馈问题",
+        "open_source": "开源地址",
         "upgrade_now": "立即升级",
         "up_to_date": "已是最新",
         "new_version": "新版本 {{0}}",

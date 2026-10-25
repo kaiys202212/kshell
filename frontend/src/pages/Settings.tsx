@@ -53,7 +53,7 @@ import { backendError, translateBackend } from '../lib/errors';
 import { applyUiFontSize, clampUiFontSize } from '../lib/appearance';
 import { getLanguageOptions } from '../i18n';
 import { openExternal } from '../lib/openHref';
-import { GITHUB_ISSUES_NEW_URL } from '../lib/projectLinks';
+import { GITHUB_ISSUES_NEW_URL, GITHUB_REPO_URL } from '../lib/projectLinks';
 import { useAppStore } from '../state/store';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
@@ -932,6 +932,9 @@ export default function Settings() {
                   </Button>
                   <Button variant="secondary" onClick={() => openExternal(GITHUB_ISSUES_NEW_URL)}>
                     {t('ui.settings.about.feedback')}
+                  </Button>
+                  <Button variant="secondary" onClick={() => openExternal(GITHUB_REPO_URL)}>
+                    {t('ui.settings.about.open_source')}
                   </Button>
                   {updateInfo?.Available && (
                     <Button
