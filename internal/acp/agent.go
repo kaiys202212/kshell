@@ -451,7 +451,7 @@ func (a *Agent) Close() error {
 		// 把主动关闭记成异常退出。
 		a.deliberate.Store(true)
 		_ = a.stdin.Close()
-		killProcessTree(a.cmd)
+		executil.KillProcessTree(a.cmd)
 	})
 	a.failPending(io.EOF)
 	return nil

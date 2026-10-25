@@ -221,8 +221,8 @@ const codeBuddyUserInfoJSON = `{"jsonrpc":"2.0","id":2,"method":"_codebuddy.ai/g
 // codeBuddyACPUserId 起 `codebuddy --acp` 子进程做两步探测：initialize（id=1）
 // → 收到响应后发 `_codebuddy.ai/getUserInfo`（id=2）→ 收到响应即杀进程，
 // 返回登录用户 ID（空串=未登录）。bin 解析复用 FindBins：Windows npm 安装
-// 命中的是 codebuddy.cmd（.ps1 不在 PATHEXT，LookPath 不会返回），
-// CreateProcess 可直接执行 .cmd。
+// 命中的是 codebuddy.cmd（.ps1 不在 PATHEXT，LookPath 不会返回），CreateProcess
+// 会经 cmd.exe 包装执行它——node 真身是孙代，收尾必须树杀（见下方 treeKill）。
 func codeBuddyACPUserId() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
@@ -232,9 +232,13 @@ func codeBuddyACPUserId() (string, error) {
 	if len(bins) == 0 {
 		return "", errNoCodeBuddyBin
 	}
+	// ctx 只做 deadline 判据（保留 context.DeadlineExceeded 错误语义）；
+	// 绝不用 exec.CommandContext 执行超时杀——它只杀直属的 cmd.exe 包装，
+	// node 成孤儿（2026-10-25 实测堆积 88 个 ~140MB 孤儿 node）。杀进程
+	// 统一走树杀：timer 兜底超时，defer 兜底正常/异常路径。
 	ctx, cancel := context.WithTimeout(context.Background(), codeBuddyAuthProbeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bins[0], "--acp")
+	cmd := exec.Command(bins[0], "--acp")
 	executil.HideWindow(cmd) // 扫描与轮询时避免黑窗闪烁
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -247,9 +251,12 @@ func codeBuddyACPUserId() (string, error) {
 	if err := cmd.Start(); err != nil {
 		return "", err
 	}
-	// 统一收尾：拿到响应或超时/EOF 都要杀进程收尸，不留孤儿 node 进程。
+	treeKill := func() { executil.KillProcessTree(cmd) }
+	killTimer := time.AfterFunc(codeBuddyAuthProbeTimeout, treeKill)
+	// 统一收尾：拿到响应或超时/EOF 都要杀整棵进程树，不留孤儿 node 进程。
 	defer func() {
-		_ = cmd.Process.Kill()
+		killTimer.Stop()
+		treeKill()
 		_ = cmd.Wait()
 	}()
 	if _, err := stdin.Write([]byte(codeBuddyInitJSON + "\n")); err != nil {
