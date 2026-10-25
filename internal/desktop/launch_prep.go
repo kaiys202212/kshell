@@ -22,19 +22,22 @@ const (
 const afterUpdateFlag = "--after-update"
 
 type launchPrepDeps struct {
-	selfExe      string
-	signalPath   string
-	listPeers    func() ([]int, error)
-	writeSignal  func(path string) error
-	mutexFree    func() bool
-	killPIDs     func(pids []int) error
-	sleep        func(d time.Duration)
-	exeModTime   func(path string) (time.Time, error)
-	newExists    func(exe string) bool
-	graceWait    time.Duration
-	pollEvery    time.Duration
-	postKillWait time.Duration
-	now          func() time.Time
+	selfExe     string
+	signalPath  string
+	listPeers   func() ([]int, error)
+	writeSignal func(path string) error
+	mutexFree   func() bool
+	killPIDs    func(pids []int) error
+	sleep       func(d time.Duration)
+	exeModTime  func(path string) (time.Time, error)
+	newExists   func(exe string) bool
+	// removeUpgradeOld 清场结束后尽力删除 exe.upgrade-old / exe.upgrade-old-*
+	// 残留；仅升级拉起路径调用，日常双击绝不删文件。
+	removeUpgradeOld func(exe string) error
+	graceWait        time.Duration
+	pollEvery        time.Duration
+	postKillWait     time.Duration
+	now              func() time.Time
 }
 
 func detectUpgradeLaunch(args []string, now time.Time, newExists bool, modTime time.Time) bool {
@@ -85,6 +88,15 @@ func prepareLaunchWith(d launchPrepDeps, args []string) error {
 		_ = d.writeSignal(d.signalPath)
 	}
 
+	// 升级脚本已改为「改名交换」，旧 exe 以 exe.upgrade-old* 形式残留；等
+	// peer 清理完成（旧助手进程退出/被杀）后文件不再被占用，是补删的最佳
+	// 时机。失败静默忽略，留给下次升级兜底。
+	cleanupLeftovers := func() {
+		if d.removeUpgradeOld != nil {
+			_ = d.removeUpgradeOld(d.selfExe)
+		}
+	}
+
 	grace := d.graceWait
 	if grace <= 0 {
 		grace = defaultGraceWait
@@ -107,6 +119,7 @@ func prepareLaunchWith(d launchPrepDeps, args []string) error {
 		clear, err := d.listPeers()
 		if err == nil && len(clear) == 0 {
 			if d.mutexFree == nil || d.mutexFree() {
+				cleanupLeftovers()
 				return nil
 			}
 		}
@@ -115,6 +128,7 @@ func prepareLaunchWith(d launchPrepDeps, args []string) error {
 
 	peers, err = d.listPeers()
 	if err != nil || len(peers) == 0 {
+		cleanupLeftovers()
 		return nil
 	}
 	if d.killPIDs != nil {
@@ -123,6 +137,7 @@ func prepareLaunchWith(d launchPrepDeps, args []string) error {
 	if d.postKillWait > 0 {
 		sleep(d.postKillWait)
 	}
+	cleanupLeftovers()
 	return nil
 }
 
@@ -138,18 +153,19 @@ func PrepareLaunch(args []string) error {
 		signalPath = layout.SignalExit
 	}
 	_ = prepareLaunchWith(launchPrepDeps{
-		selfExe:      exe,
-		signalPath:   signalPath,
-		listPeers:    listDesktopPeerPIDs,
-		writeSignal:  writeExitSignalFile,
-		mutexFree:    singleInstanceMutexFree,
-		killPIDs:     killProcessIDs,
-		sleep:        time.Sleep,
-		exeModTime:   fileModTime,
-		newExists:    exeNewSiblingExists,
-		graceWait:    defaultGraceWait,
-		pollEvery:    defaultPollEvery,
-		postKillWait: defaultPostKillWait,
+		selfExe:          exe,
+		signalPath:       signalPath,
+		listPeers:        listDesktopPeerPIDs,
+		writeSignal:      writeExitSignalFile,
+		mutexFree:        singleInstanceMutexFree,
+		killPIDs:         killProcessIDs,
+		sleep:            time.Sleep,
+		exeModTime:       fileModTime,
+		newExists:        exeNewSiblingExists,
+		removeUpgradeOld: removeUpgradeOldLeftovers,
+		graceWait:        defaultGraceWait,
+		pollEvery:        defaultPollEvery,
+		postKillWait:     defaultPostKillWait,
 	}, args)
 	return nil
 }
@@ -172,10 +188,39 @@ func fileModTime(path string) (time.Time, error) {
 	return st.ModTime(), nil
 }
 
+// exeNewSiblingExists 判断 exe 同目录是否存在升级中间产物。除了老的 exe.new
+// （旧覆盖式脚本产物），改名交换脚本会留下 exe.upgrade-old / exe.upgrade-old-<ticks>
+// （后者在旧文件被占用时启用），任一前缀残留都说明刚发生过升级拉起。
 func exeNewSiblingExists(exe string) bool {
 	if exe == "" {
 		return false
 	}
-	_, err := os.Stat(exe + ".new")
-	return err == nil
+	if _, err := os.Stat(exe + ".new"); err == nil {
+		return true
+	}
+	matches, err := filepath.Glob(exe + ".upgrade-old*")
+	if err != nil {
+		return false
+	}
+	return len(matches) > 0
+}
+
+// removeUpgradeOldLeftovers 尽力删除升级改名交换留下的旧 exe 残留。调用时机
+// 在清场结束之后（旧助手进程已被清理或自然退出），文件不再被占用，删除通常
+// 能成功；个别失败静默忽略，由下次升级脚本的 finally 兜底。
+func removeUpgradeOldLeftovers(exe string) error {
+	if exe == "" {
+		return nil
+	}
+	matches, err := filepath.Glob(exe + ".upgrade-old*")
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, m := range matches {
+		if err := os.Remove(m); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }

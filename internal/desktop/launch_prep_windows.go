@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -14,10 +15,35 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// desktopExeName 抽象「当前 exe 名」来源（包级变量便于测试替换）。peer 枚举
+// 必须按实际安装名过滤：exe 改名安装（如 kshell-desktop1.exe）时若硬编码
+// kshell-desktop.exe，残留实例/助手清不掉，新进程会被单实例锁挡住静默退出。
+var desktopExeName = func() string {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		// 拿不到自身路径时回退传统安装名，聊胜于无。
+		return "kshell-desktop.exe"
+	}
+	return filepath.Base(exe)
+}
+
+// wqlLiteral 转义 WQL 单引号字符串字面量内的单引号（WQL 无反斜杠转义，
+// 成对单引号即字面单引号）。
+func wqlLiteral(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
+// desktopPeerFilterCmd 构造枚举同映像 peer 进程的 PowerShell 命令；单独拆出
+// 是为了测试能校验过滤值确实来自实际 exe 名而非硬编码。
+func desktopPeerFilterCmd() *exec.Cmd {
+	return exec.Command("powershell", "-NoProfile", "-Command",
+		fmt.Sprintf(`Get-CimInstance Win32_Process -Filter "Name='%s'" | Select-Object -ExpandProperty ProcessId`,
+			wqlLiteral(desktopExeName())))
+}
+
 func listDesktopPeerPIDs() ([]int, error) {
 	self := os.Getpid()
-	cmd := exec.Command("powershell", "-NoProfile", "-Command",
-		`Get-CimInstance Win32_Process -Filter "Name='kshell-desktop.exe'" | Select-Object -ExpandProperty ProcessId`)
+	cmd := desktopPeerFilterCmd()
 	executil.HideWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
