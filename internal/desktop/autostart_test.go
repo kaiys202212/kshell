@@ -195,7 +195,40 @@ func TestSetAutostartRegistryFailureNoConfigWrite(t *testing.T) {
 	}
 }
 
+func TestMarkStartHidden(t *testing.T) {
+	t.Run("StartHidden置位", func(t *testing.T) {
+		a := NewAppWith(Options{StartHidden: true})
+		a.markStartHidden()
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if !a.windowHidden {
+			t.Fatal("StartHidden 静默拉起应把 windowHidden 置位 true")
+		}
+	})
+	t.Run("正常启动不动", func(t *testing.T) {
+		a := NewAppWith(Options{})
+		a.markStartHidden()
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if a.windowHidden {
+			t.Fatal("正常启动不得置位 windowHidden")
+		}
+	})
+}
+
 func TestSyncAutostartOnStartup(t *testing.T) {
+	t.Run("config未就绪→零调用", func(t *testing.T) {
+		withAutostartEnv(t, true, true)
+		r := &autostartRecorder{}
+		r.inject(t)
+		// initRealDeps 早退时 Layout 为零值：config 未就绪不得按零值 Autostart 误删用户注册。
+		a := NewAppWith(Options{Config: config.Config{Autostart: true}})
+
+		a.syncAutostartOnStartup()
+		if r.enableCalls != 0 || r.disableCalls != 0 {
+			t.Fatalf("config 未就绪不得动注册表: enable=%d disable=%d", r.enableCalls, r.disableCalls)
+		}
+	})
 	t.Run("开→Enable", func(t *testing.T) {
 		withAutostartEnv(t, true, true)
 		r := &autostartRecorder{}

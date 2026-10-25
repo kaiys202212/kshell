@@ -61,6 +61,15 @@ func (a *App) SetAutostart(on bool) error {
 	return a.saveConfig(func(cfg *config.Config) { cfg.Autostart = on })
 }
 
+// markStartHidden 在 Startup 装配完依赖后同步 windowHidden 标志：
+// StartHidden 静默拉起时窗口实际已隐藏，标志若滞后为 false，
+// 热键/通知的「窗口是否可见」分流会误判为可见。
+func (a *App) markStartHidden() {
+	if a.snapshot().StartHidden {
+		a.setWindowHidden(true)
+	}
+}
+
 // applyAutostart 把注册表对齐到目标状态：开→Enable（当前 exe 路径），关→Disable。
 func applyAutostart(on bool) error {
 	if on {
@@ -74,10 +83,14 @@ func applyAutostart(on bool) error {
 }
 
 // syncAutostartOnStartup 在 Startup 末尾对齐注册表与 config.Autostart：
-// 仅 release 且平台支持时执行（dev/不支持则完全不动注册表）；
-// 失败仅写启动日志，绝不阻断启动——下次启动会再同步。
+// 仅 release 且平台支持、config 已就绪时执行（dev/不支持/config 未就绪则
+// 完全不动注册表——initRealDeps 早退时 opts.Config 是零值，按它同步会把
+// 用户注册误删成 Disable）；失败仅写启动日志，绝不阻断启动——下次启动会再同步。
 func (a *App) syncAutostartOnStartup() {
 	if !isReleaseFn() || !autostartSupportedFn() {
+		return
+	}
+	if a.snapshot().Layout.Config == "" { // config 未就绪（依赖装配早退），不得按零值配置同步
 		return
 	}
 	on := a.snapshot().Config.Autostart

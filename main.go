@@ -41,8 +41,13 @@ func trayIcon() []byte {
 }
 
 // desktopApp 是暴露给前端的绑定对象（Task 3 起逐步实现各方法）；
-// 托盘图标在装配期经 Options 注入（embed 数据在包初始化时即可用）。
-var desktopApp = desktop.NewAppWith(desktop.Options{TrayIcon: trayIcon()})
+// 托盘图标在装配期经 Options 注入（embed 数据在包初始化时即可用）；
+// StartHidden 在此一并透传（os.Args 在包初始化时已可用），Startup 据此同步
+// windowHidden 标志，避免静默拉起后「窗口实际隐藏、标志仍为 false」的语义滞后。
+var desktopApp = desktop.NewAppWith(desktop.Options{
+	TrayIcon:    trayIcon(),
+	StartHidden: startHiddenFromArgs(os.Args),
+})
 
 // startHiddenFromArgs 判定本次是否为开机自启动的静默拉起：只认 os.Args[1]
 // （即应用自己的第一个参数），避免用户在会话参数里误传同名值。

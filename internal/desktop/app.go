@@ -116,6 +116,10 @@ type Options struct {
 	// ConfigFileExisted 记录启动时 ~/.kshell/config.yaml 是否已存在：
 	// 已存在视为老用户，首次项目选择弹窗不再自动弹（测试可注入覆盖）。
 	ConfigFileExisted bool
+	// StartHidden 表示本次为开机自启动的静默拉起（--autostart-hidden）：
+	// Wails 已按参数隐藏窗口，Startup 据此把 windowHidden 标志同步置位，
+	// 否则窗口实际隐藏而标志滞后为 false，热键/通知分流会误判「窗口可见」。
+	StartHidden bool
 }
 
 // App 是暴露给前端的绑定对象：薄封装 discovery/providers/window 等核心包，
@@ -225,6 +229,7 @@ func (a *App) Startup(ctx context.Context) {
 	a.mu.Unlock()
 
 	a.initRealDeps()
+	a.markStartHidden()
 	// 原生气泡点击 → 恢复主窗 + 前端聚焦；必须在通知轮询启动前绑好。
 	bubbleActivate = a.activateFromBubble
 	// 语言运行态：按配置初始化直显文案（托盘等），必须在启动托盘前设置，
