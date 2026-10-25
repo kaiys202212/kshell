@@ -536,6 +536,23 @@ describe('WorkspaceTabView 分割模式', () => {
     expect(screen.getByTestId('terminal-t1').getAttribute('data-active')).toBe('true');
   });
 
+  it('split 模式：关闭左半活跃会话页签，左半回落会话预览空态', () => {
+    useAppStore.setState({ layoutMode: 'split' });
+    render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
+    fireEvent.click(screen.getByRole('tab', { name: '修登录页' }));
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: tt('ui.workspace.close_terminal').replace('{{label}}', '修登录页'),
+      }),
+    );
+
+    const lists = screen.getAllByRole('tablist', { name: ARIA() });
+    const preview = [...lists[0]!.querySelectorAll('[role="tab"]')][0]!;
+    expect(preview.textContent).toMatch(tt('ui.workspace.session_preview'));
+    expect(preview.getAttribute('aria-selected')).toBe('true');
+  });
+
   it('页签条切换按钮写入 store 的 layoutMode', () => {
     render(<WorkspaceTabView tab={{ id: 'D:\\proj-a', name: 'proj-a' }} visible />);
     fireEvent.click(screen.getByRole('button', { name: tt('ui.workspace.layout_toggle_split') }));

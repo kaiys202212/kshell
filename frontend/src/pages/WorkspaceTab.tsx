@@ -42,7 +42,7 @@ import {
 import { displayTitle } from '../lib/title';
 import { TAB_ACTIVE, TAB_BASE } from '../lib/ui';
 import { sameWorkspacePath } from '../lib/workspacePath';
-import { LAYOUT_CENTER_DEFAULT } from '../state/store';
+import { LAYOUT_CENTER_DEFAULT, LAYOUT_CENTER_MAX, LAYOUT_CENTER_MIN } from '../state/store';
 import CenterSessionTabs, { type CenterSessionTabItem } from '../components/CenterSessionTabs';
 import FileTree from '../components/FileTree';
 import FileTabsPane from '../components/FileTabsPane';
@@ -733,6 +733,8 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
             width={layout.center}
             onResize={(w) => setLayout({ center: w })}
             defaultWidth={LAYOUT_CENTER_DEFAULT}
+            min={LAYOUT_CENTER_MIN}
+            max={LAYOUT_CENTER_MAX}
             label={tr('ui.workspace.split_resize')}
           />
 

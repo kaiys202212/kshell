@@ -849,15 +849,17 @@ export default function Settings() {
               <section className="mb-5 rounded border border-border bg-card p-3.5">
                 <h2 className="mb-3 text-sm font-medium">{t('ui.settings.center_layout.title')}</h2>
                 <div className="flex gap-2">
-                  {[
-                    { value: 'tabs', labelKey: 'ui.settings.center_layout.tabs' },
-                    { value: 'split', labelKey: 'ui.settings.center_layout.split' },
-                  ].map((opt) => (
+                  {(
+                    [
+                      { value: 'tabs', labelKey: 'ui.settings.center_layout.tabs' },
+                      { value: 'split', labelKey: 'ui.settings.center_layout.split' },
+                    ] as { value: typeof layoutMode; labelKey: string }[]
+                  ).map((opt) => (
                     <Button
                       key={opt.value}
                       variant={layoutMode === opt.value ? 'default' : 'secondary'}
                       aria-pressed={layoutMode === opt.value}
-                      onClick={() => setLayoutMode(opt.value as typeof layoutMode)}
+                      onClick={() => setLayoutMode(opt.value)}
                     >
                       {t(opt.labelKey)}
                     </Button>

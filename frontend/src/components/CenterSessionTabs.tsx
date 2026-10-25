@@ -325,6 +325,9 @@ export default function CenterSessionTabs({
       </>
       )}
 
+      {/* 布局切换按钮在 tablist 之外（ARIA 要求 tablist 只含 tab），视觉上仍居条尾 */}
+      </div>
+
       {onLayoutToggle && (
         <button
           type="button"
@@ -344,7 +347,6 @@ export default function CenterSessionTabs({
           )}
         </button>
       )}
-      </div>
     </div>
   );
 }

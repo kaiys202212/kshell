@@ -220,6 +220,14 @@ describe('store', () => {
     expect(s.layoutMode).toBe('split');
   });
 
+  it('persist 恢复旧存档：layout 字段整体缺失时整块用默认值', async () => {
+    localStorage.clear();
+    localStorage.setItem('kshell-tabs', JSON.stringify({ state: { openTabs: [] }, version: 0 }));
+    vi.resetModules();
+    const fresh = await import('./store');
+    expect(fresh.useAppStore.getState().layout).toEqual(fresh.LAYOUT_DEFAULT);
+  });
+
   it('applyChat：已退出的聊天收到 turn_done/error 不再复活为 ready', () => {
     const exited: ChatInfo = {
       ID: 'c1',

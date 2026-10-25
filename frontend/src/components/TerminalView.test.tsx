@@ -25,12 +25,13 @@ const mocks = vi.hoisted(() => ({
   webLinks: [] as any[],
 }));
 
-// TerminalView 只用到 api 的这两个方法
+// TerminalView 只用到 api 的这几个方法
 const api = vi.hoisted(() => ({
   writeTerminal: vi.fn(),
   resizeTerminal: vi.fn(),
   readClipboardPaste: vi.fn(),
   openExternalURL: vi.fn().mockResolvedValue(undefined),
+  scrollbackTerminal: vi.fn(),
 }));
 vi.mock('../lib/api', () => api);
 
@@ -221,6 +222,7 @@ beforeEach(() => {
   clearTerminalRegistry();
   api.writeTerminal.mockResolvedValue(undefined);
   api.resizeTerminal.mockResolvedValue(undefined);
+  api.scrollbackTerminal.mockResolvedValue(''); // 默认无回放内容
   api.readClipboardPaste.mockResolvedValue({ Text: '', Path: '' });
   api.openExternalURL.mockResolvedValue(undefined);
   useAppStore.getState().setAppearance({ mode: 'system', resolved: 'dark', fontSize: 13 });
@@ -259,8 +261,10 @@ afterEach(() => {
 });
 
 describe('TerminalView', () => {
-  it('挂载即登记到注册表，并把 dispatch 来的 base64 输出写进终端', () => {
+  it('挂载即登记到注册表，并把 dispatch 来的 base64 输出写进终端', async () => {
     render(<TerminalView term={TERM} active />);
+    // 回放快照（默认空）取回后注册的 write 才切换为直写，先冲一帧微任务
+    await act(async () => {});
     const instance = term();
 
     // open 到带 xterm-host 的容器（样式由 style.css 提供）
@@ -278,6 +282,35 @@ describe('TerminalView', () => {
     expect(dispatchTerminalData(TERM.ID, bytesToBase64(bytes))).toBe(true);
     expect(instance.written).toHaveLength(1);
     expect(Array.from(instance.written[0] as Uint8Array)).toEqual(Array.from(bytes));
+  });
+
+  it('挂载时回放 Go 侧滚动缓冲；回放前到达的 live 输出先缓冲、随快照一并按序写入', async () => {
+    const head = new TextEncoder().encode('\x1b[90m--- 历史输出 ---\r\n');
+    api.scrollbackTerminal.mockResolvedValue(bytesToBase64(head));
+    render(<TerminalView term={TERM} active />);
+    const instance = term();
+
+    // 快照尚未取回：live 输出进待冲刷缓冲（不丢、也不抢在回放前面）
+    const live = new TextEncoder().encode('live-after-remount\r\n');
+    expect(dispatchTerminalData(TERM.ID, bytesToBase64(live))).toBe(true);
+    expect(instance.written).toHaveLength(0);
+
+    await act(async () => {});
+    expect(api.scrollbackTerminal).toHaveBeenCalledWith(TERM.ID);
+    expect(instance.written).toHaveLength(2);
+    expect(Array.from(instance.written[0] as Uint8Array)).toEqual(Array.from(head));
+    expect(Array.from(instance.written[1] as Uint8Array)).toEqual(Array.from(live));
+  });
+
+  it('ScrollbackTerminal 报错（终端未就绪等）时跳过回放，live 输出照常直写', async () => {
+    api.scrollbackTerminal.mockRejectedValue(new Error('not ready'));
+    render(<TerminalView term={TERM} active />);
+    await act(async () => {});
+    const instance = term();
+
+    const bytes = new TextEncoder().encode('direct\r\n');
+    expect(dispatchTerminalData(TERM.ID, bytesToBase64(bytes))).toBe(true);
+    expect(instance.written).toHaveLength(1);
   });
 
   it('构造时使用 store 字号，变化后热更新 options.fontSize', () => {
