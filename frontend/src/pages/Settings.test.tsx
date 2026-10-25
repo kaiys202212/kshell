@@ -650,6 +650,30 @@ describe('Settings', () => {
     expect(screen.getByRole('button', { name: tt('ui.settings.close_behavior.exit') })).toHaveAttribute('aria-pressed', 'true');
   });
 
+  it('中心区布局默认多页签，切到左右分割写回 store 的 layoutMode', async () => {
+    useAppStore.setState({ layoutMode: 'tabs', toasts: [] });
+    render(<Settings />);
+
+    const tabsBtn = await screen.findByRole('button', { name: tt('ui.settings.center_layout.tabs') });
+    expect(tabsBtn).toHaveAttribute('aria-pressed', 'true');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.center_layout.split') }));
+    });
+    expect(useAppStore.getState().layoutMode).toBe('split');
+    expect(screen.getByRole('button', { name: tt('ui.settings.center_layout.split') })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: tt('ui.settings.center_layout.tabs') })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('中心区布局初始为分割时「左右分割」选中', async () => {
+    useAppStore.setState({ layoutMode: 'split', toasts: [] });
+    render(<Settings />);
+
+    const splitBtn = await screen.findByRole('button', { name: tt('ui.settings.center_layout.split') });
+    expect(splitBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: tt('ui.settings.center_layout.tabs') })).toHaveAttribute('aria-pressed', 'false');
+  });
+
   it('加载时回填关闭行为：返回 exit 时「直接退出」选中', async () => {
     mocks.getCloseBehavior.mockResolvedValueOnce('exit');
     render(<Settings />);
