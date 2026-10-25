@@ -1177,7 +1177,12 @@
       "active_terminals_workspace": "{{name}}",
       "pick_session": "Select a session from the list on the left to preview",
       "right_panel_aria": "Files, Git, SSH and Terminal panel",
-      "resize_files": "Resize file panel"
+      "resize_files": "Resize file panel",
+      "layout_toggle_split": "Switch to split layout",
+      "layout_toggle_tabs": "Switch to tabbed layout",
+      "left_pane_aria": "Agent sessions pane",
+      "right_pane_aria": "Files and terminals pane",
+      "split_resize": "Resize split panes"
     }
   }
 }

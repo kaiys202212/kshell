@@ -1,8 +1,9 @@
 // 中心区页签条：左钉「会话预览」+ 可关会话页签（溢出进「更多」菜单、可拖排序）
 // + 右钉「文件 | 终端」。会话过多时不出现横向滚动条。
+// variant 支持中心区分割布局：agent 条隐藏右钉、tool 条只渲染右钉。
 import { useLayoutEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { MoreHorizontal } from 'lucide-react';
+import { Columns2, MoreHorizontal, PanelTop } from 'lucide-react';
 import {
   CENTER_TAB_MIME,
   MORE_BTN_WIDTH,
@@ -12,6 +13,7 @@ import {
 import { cn } from '../lib/cn';
 import { DRAG_MIME } from '../lib/dragPath';
 import { TAB_ACTIVE, TAB_BASE, TAB_UNDERLINE } from '../lib/ui';
+import type { LayoutMode } from '../state/store';
 import type { AgentActivity } from '../state/agentActivity';
 import AgentActivityIcon from './AgentActivityIcon';
 import { ToolDot } from './ui/tool-dot';
@@ -44,6 +46,11 @@ export interface CenterSessionTabsProps {
   filesTabId: string;
   terminalsTabId: string;
   toolTermCount: number;
+  /** full=完整条（默认）；agent=只留预览钉+会话页签；tool=只留右钉「文件|终端」 */
+  variant?: 'full' | 'agent' | 'tool';
+  /** 传入时在条尾渲染布局模式切换按钮 */
+  layoutMode?: LayoutMode;
+  onLayoutToggle?(): void;
   onSelect(id: string): void;
   onClose(id: string): void;
   onReorder(next: string[]): void;
@@ -59,6 +66,9 @@ export default function CenterSessionTabs({
   filesTabId,
   terminalsTabId,
   toolTermCount,
+  variant = 'full',
+  layoutMode,
+  onLayoutToggle,
   onSelect,
   onClose,
   onReorder,
@@ -169,17 +179,20 @@ export default function CenterSessionTabs({
         role="tablist"
         aria-label={tr('ui.workspace.center_tabs_aria')}
       >
-      <button
-        role="tab"
-        aria-selected={centerTab === previewTabId}
-        className={cn(centerTabBase, 'shrink-0', centerTab === previewTabId && centerTabActive)}
-        onClick={() => onSelect(previewTabId)}
-      >
-        {tr('ui.workspace.session_preview')}
-        {centerTab === previewTabId && <span className={TAB_UNDERLINE} />}
-      </button>
+      {variant !== 'tool' && (
+        <button
+          role="tab"
+          aria-selected={centerTab === previewTabId}
+          className={cn(centerTabBase, 'shrink-0', centerTab === previewTabId && centerTabActive)}
+          onClick={() => onSelect(previewTabId)}
+        >
+          {tr('ui.workspace.session_preview')}
+          {centerTab === previewTabId && <span className={TAB_UNDERLINE} />}
+        </button>
+      )}
 
       {/* 仅会话页签区参与溢出测量；预览钉与右钉不计入 available */}
+      {variant !== 'tool' && (
       <div ref={stripRef} className="flex min-w-0 flex-1 items-stretch overflow-hidden">
         {ordered.map((it) => {
           if (hiddenSet.has(it.id)) return null;
@@ -273,7 +286,10 @@ export default function CenterSessionTabs({
           </DropdownMenu>
         )}
       </div>
+      )}
 
+      {variant !== 'agent' && (
+      <>
       <button
         role="tab"
         aria-selected={centerTab === filesTabId}
@@ -306,6 +322,28 @@ export default function CenterSessionTabs({
         )}
         {centerTab === terminalsTabId && <span className={TAB_UNDERLINE} />}
       </button>
+      </>
+      )}
+
+      {onLayoutToggle && (
+        <button
+          type="button"
+          className={cn(centerTabBase, 'shrink-0 border-l border-border px-1.5')}
+          aria-label={tr(
+            layoutMode === 'split' ? 'ui.workspace.layout_toggle_tabs' : 'ui.workspace.layout_toggle_split',
+          )}
+          title={tr(
+            layoutMode === 'split' ? 'ui.workspace.layout_toggle_tabs' : 'ui.workspace.layout_toggle_split',
+          )}
+          onClick={onLayoutToggle}
+        >
+          {layoutMode === 'split' ? (
+            <PanelTop className="h-3.5 w-3.5" aria-hidden />
+          ) : (
+            <Columns2 className="h-3.5 w-3.5" aria-hidden />
+          )}
+        </button>
+      )}
       </div>
     </div>
   );
