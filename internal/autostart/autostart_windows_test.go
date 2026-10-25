@@ -53,6 +53,21 @@ func TestEnableWritesQuotedCommand(t *testing.T) {
 	}
 }
 
+func TestEnabledMissingKeyIsFalse(t *testing.T) {
+	// 指向一个从未创建过的键：Enabled 应返回 (false, nil) 而非报错。
+	orig := runKeyPath
+	runKeyPath = "Software\\kshell-autostart-test-missing-key"
+	t.Cleanup(func() { runKeyPath = orig })
+
+	on, err := Enabled()
+	if err != nil {
+		t.Fatalf("键不存在时 Enabled 不应报错: %v", err)
+	}
+	if on {
+		t.Fatal("键不存在时 Enabled 应为 false")
+	}
+}
+
 func TestDisableRemovesValue(t *testing.T) {
 	useTestKey(t)
 	if err := Enable(`C:\kshell\kshell.exe`); err != nil {

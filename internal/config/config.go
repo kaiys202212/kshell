@@ -320,8 +320,9 @@ func (c Config) normalized() Config {
 	// 已读版本号：仅去首尾空白，其余原样保留。
 	c.LastSeenVersion = strings.TrimSpace(c.LastSeenVersion)
 	// 开机自启动：config.yaml 未写该字段时补发布态缺省值（显式写过的 false/true 原样保留）。
+	// 直接取 d.Autostart（Default() 已按 isReleaseFn 算过），保证两处缺省同源。
 	if !c.autostartSet {
-		c.Autostart = defaultAutostart(isReleaseFn())
+		c.Autostart = d.Autostart
 	}
 	// 消费完即复位：归一化产物（Load 返回值）与手构造的 Config 保持可 DeepEqual；
 	// normalized 只在 Load 末尾调用一次，复位不影响显式 false 的保留语义。

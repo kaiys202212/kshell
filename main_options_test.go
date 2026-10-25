@@ -18,7 +18,7 @@ func TestStartHiddenFromArgs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		if got := startHiddenFromArgs(tc.args); got != tc.want {
-			t.Fatalf("startHiddenFromArgs(%q) = %v, want %v", tc.args, got, tc.want)
+			t.Errorf("startHiddenFromArgs(%q) = %v, want %v", tc.args, got, tc.want)
 		}
 	}
 }

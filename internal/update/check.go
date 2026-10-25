@@ -137,6 +137,8 @@ type releaseJSON struct {
 }
 
 // ShouldSkip 开发/未知版本不查网。
+// 口径与 internal/version 的 IsRelease 相同（空/dev/unknown 视为非发布），
+// 单边修改前先互相对照，防止两处判定分叉。
 func ShouldSkip(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "", "dev", "unknown":

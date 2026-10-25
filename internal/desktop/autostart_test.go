@@ -21,7 +21,7 @@ type autostartRecorder struct {
 
 func (r *autostartRecorder) inject(t *testing.T) {
 	t.Helper()
-	origEnabledFn, origSupportedFn, origEnableFn, origDisableFn := isReleaseFn, autostartSupportedFn, autostartEnableFn, autostartDisableFn
+	origReleaseFn, origSupportedFn, origEnableFn, origDisableFn := isReleaseFn, autostartSupportedFn, autostartEnableFn, autostartDisableFn
 	origEnabledStateFn := autostartEnabledFn
 	autostartEnableFn = func(exe string) error {
 		r.enableCalls++
@@ -37,7 +37,7 @@ func (r *autostartRecorder) inject(t *testing.T) {
 		return r.enabledVal, nil
 	}
 	t.Cleanup(func() {
-		isReleaseFn, autostartSupportedFn, autostartEnableFn, autostartDisableFn = origEnabledFn, origSupportedFn, origEnableFn, origDisableFn
+		isReleaseFn, autostartSupportedFn, autostartEnableFn, autostartDisableFn = origReleaseFn, origSupportedFn, origEnableFn, origDisableFn
 		autostartEnabledFn = origEnabledStateFn
 	})
 }
