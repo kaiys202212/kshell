@@ -240,6 +240,7 @@ func codeBuddyACPUserId() (string, error) {
 	defer cancel()
 	cmd := exec.Command(bins[0], "--acp")
 	executil.HideWindow(cmd) // 扫描与轮询时避免黑窗闪烁
+	executil.PrepareProcessGroup(cmd) // 独立进程组：超时/收尾树杀连带清理孙 node
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return "", err

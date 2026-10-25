@@ -115,6 +115,8 @@ func NewAgent(ctx context.Context, spec Spec, h Handler) (*Agent, error) {
 	// goroutine 阻塞到连接关闭（done）后退出，不泄漏。
 	cmd := exec.Command(spec.Path, spec.Args...)
 	executil.HideWindow(cmd)
+	// 独立进程组：Close/ctx 取消时组杀整棵 ACP 进程树（npx → 适配器 node）。
+	executil.PrepareProcessGroup(cmd)
 	cmd.Dir = spec.Dir
 	if len(spec.Env) > 0 {
 		cmd.Env = append(os.Environ(), spec.Env...)
