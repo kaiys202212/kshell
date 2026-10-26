@@ -383,3 +383,87 @@ func TestClaudeInDefaultTargets(t *testing.T) {
 		t.Fatal("DefaultTargets 应包含 claude")
 	}
 }
+
+// claudeDisplayKeys 是纳入清理的显示名/残留键组(4 别名 × NAME/DESCRIPTION/
+// SUPPORTED_CAPABILITIES + FABLE 别名 ID 键),与 claude.go 的 kshellEnvKeys 对应。
+var claudeDisplayKeys = []string{
+	"ANTHROPIC_DEFAULT_FABLE_MODEL",
+	"ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+	"ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION",
+	"ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES",
+	"ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+	"ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION",
+	"ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES",
+	"ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+	"ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION",
+	"ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES",
+	"ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+	"ANTHROPIC_DEFAULT_FABLE_MODEL_DESCRIPTION",
+	"ANTHROPIC_DEFAULT_FABLE_MODEL_SUPPORTED_CAPABILITIES",
+}
+
+func seedDisplayKeys(t *testing.T, home string) {
+	t.Helper()
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"KEEP": "yes"}
+	for _, k := range claudeDisplayKeys {
+		env[k] = "MiniMax-M3"
+	}
+	b, err := json.Marshal(map[string]any{"env": env})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Enabled 同步:残留显示名键被清除(实际请求走 _MODEL ID 键,但 /model label
+// 优先取 _NAME,残留旧平台显示名会让用户误以为模型没切换),且绝不代写。
+func TestClaudeSyncRemovesStaleDisplayKeys(t *testing.T) {
+	home := t.TempDir()
+	seedDisplayKeys(t, home)
+	in := SyncInput{
+		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "glm-5.3-flash",
+		Platforms: []config.ModelPlatform{{
+			ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk",
+			Models: []string{"gpt-5", "deepseek-v4.1-flash", "glm-5.3"},
+		}},
+	}
+	if err := (Claude{}).Sync(home, in); err != nil {
+		t.Fatal(err)
+	}
+	env := readClaudeSettings(t, home)["env"].(map[string]any)
+	for _, k := range claudeDisplayKeys {
+		if _, ok := env[k]; ok {
+			t.Fatalf("%s 应被清除: %v", k, env)
+		}
+	}
+	if env["KEEP"] != "yes" {
+		t.Fatalf("无关用户键应保留: %v", env)
+	}
+	if env["ANTHROPIC_MODEL"] != "glm-5.3-flash" {
+		t.Fatalf("现有管理键写入不受影响: %v", env["ANTHROPIC_MODEL"])
+	}
+}
+
+// Disabled 同步同样清理显示名键(与 6 管理键的先删语义一致)。
+func TestClaudeSyncDisabledRemovesDisplayKeys(t *testing.T) {
+	home := t.TempDir()
+	seedDisplayKeys(t, home)
+	if err := (Claude{}).Sync(home, SyncInput{Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	env := readClaudeSettings(t, home)["env"].(map[string]any)
+	for _, k := range claudeDisplayKeys {
+		if _, ok := env[k]; ok {
+			t.Fatalf("disabled 时 %s 也应被清除: %v", k, env)
+		}
+	}
+	if env["KEEP"] != "yes" {
+		t.Fatalf("无关用户键应保留: %v", env)
+	}
+}

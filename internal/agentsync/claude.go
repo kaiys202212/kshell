@@ -32,6 +32,13 @@ func (c Claude) ConfigExists(home string) bool {
 
 // kshellEnvKeys 是 kshell 静态注入接管的固定键；先删后建，用户同名键会被覆盖
 //（与 ccswitch 行为一致）。含模型键，避免 settings.json 残留 mimo 等旧值。
+//
+// 新版 Claude Code 为 sonnet/opus/haiku/fable 四别名引入 _MODEL_NAME/
+// _MODEL_DESCRIPTION/_MODEL_SUPPORTED_CAPABILITIES 显示名键：实际请求走
+// _MODEL(ID) 键，但 /model 列表 label 优先取 _NAME，旧平台残留会让用户误以为
+// 模型没切换。这组键 kshell 只清理不代写——不设时 Claude 会从模型 ID 自动
+// 推导显示名。ANTHROPIC_DEFAULT_FABLE_MODEL 同理只清理：kshell 平台列表尚未
+// 映射 Fable 别名，残留会把 /model 的 Fable 条目指向旧平台模型。
 var kshellEnvKeys = []string{
 	"ANTHROPIC_BASE_URL",
 	"ANTHROPIC_AUTH_TOKEN",
@@ -39,6 +46,19 @@ var kshellEnvKeys = []string{
 	"ANTHROPIC_DEFAULT_SONNET_MODEL",
 	"ANTHROPIC_DEFAULT_OPUS_MODEL",
 	"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+	"ANTHROPIC_DEFAULT_FABLE_MODEL",
+	"ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+	"ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION",
+	"ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES",
+	"ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+	"ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION",
+	"ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES",
+	"ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+	"ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION",
+	"ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES",
+	"ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+	"ANTHROPIC_DEFAULT_FABLE_MODEL_DESCRIPTION",
+	"ANTHROPIC_DEFAULT_FABLE_MODEL_SUPPORTED_CAPABILITIES",
 }
 
 func (c Claude) Sync(home string, in SyncInput) error {
