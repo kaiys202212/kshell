@@ -84,28 +84,24 @@ func (c *Client) DownloadMedia(ctx context.Context, att InboundAttachment) ([]by
 	return plain, nil
 }
 
-// decodeAESKey 解码服务端下发的 base64 AES-128 密钥。参考实现证实两类媒体编码
-// 不一致：图片 = base64(原始 16 字节)；文件/语音/视频 = base64(hex 字符串 32 字符)。
+// decodeAESKey 解码服务端下发的 base64 AES-128 密钥，按长度自适应：16 字节
+// 直接用；32 字节且可 hex 解码则再解一层。参考实现称图片 = base64(原始 16
+// 字节)、文件/语音 = base64(hex 串)，但 2026-10-27 真机证实图片同样下发 hex
+// 串形态，故不再按 kind 分叉（随机密钥 32 字节恰全为 hex 字符的概率可忽略）。
 func decodeAESKey(kind, keyB64 string) ([]byte, error) {
 	raw, err := base64.StdEncoding.DecodeString(keyB64)
 	if err != nil {
 		return nil, fmt.Errorf("base64 解码失败: %w", err)
 	}
-	if kind == "image" {
-		if len(raw) != 16 {
-			return nil, fmt.Errorf("图片密钥解码后 %d 字节, 期望 16", len(raw))
-		}
+	if len(raw) == 16 {
 		return raw, nil
 	}
-	// file（及语音/视频，v1 未用）：hex 字符串再解一层。
-	key, err := hex.DecodeString(string(raw))
-	if err != nil {
-		return nil, fmt.Errorf("hex 解码失败: %w", err)
+	if len(raw) == 32 {
+		if key, hexErr := hex.DecodeString(string(raw)); hexErr == nil {
+			return key, nil
+		}
 	}
-	if len(key) != 16 {
-		return nil, fmt.Errorf("文件密钥解码后 %d 字节, 期望 16", len(key))
-	}
-	return key, nil
+	return nil, fmt.Errorf("%s 密钥解码后 %d 字节, 无法还原 16 字节 AES 密钥", kind, len(raw))
 }
 
 // aesEcbDecrypt 做 AES-128-ECB 逐块解密并去 PKCS7 填充（Go 标准库不提供 ECB，

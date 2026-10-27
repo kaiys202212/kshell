@@ -91,6 +91,33 @@ func TestDownloadMediaImageRawKey(t *testing.T) {
 	}
 }
 
+func TestDownloadMediaImageHexKey(t *testing.T) {
+	// 真机（2026-10-27）证伪参考实现的「图片 = base64(原始 16 字节)」假设：
+	// 服务端给图片下发的密钥与文件/语音同形态，base64 解码后是 32 字符 hex 串。
+	hexKey := []byte("0123456789abcdef")
+	keyB64 := base64.StdEncoding.EncodeToString([]byte(hex.EncodeToString(hexKey)))
+	plain := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}
+	cipher := ecbEncrypt(t, hexKey, plain)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		w.Write(cipher)
+	}))
+	defer srv.Close()
+
+	c := NewClient("tok", "")
+	c.MediaBase = srv.URL
+	data, err := c.DownloadMedia(context.Background(), InboundAttachment{
+		Kind: "image", EncryptQueryParam: "eqp-3", AESKey: keyB64,
+	})
+	if err != nil {
+		t.Fatalf("DownloadMedia: %v", err)
+	}
+	if string(data) != string(plain) {
+		t.Errorf("解密结果错误: %q", data)
+	}
+}
+
 func TestDownloadMediaErrors(t *testing.T) {
 	raw := []byte("0123456789abcdef")
 	keyB64 := base64.StdEncoding.EncodeToString([]byte(hex.EncodeToString(raw)))
