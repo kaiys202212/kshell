@@ -97,9 +97,11 @@ func decodeAESKey(kind, keyB64 string) ([]byte, error) {
 		return raw, nil
 	}
 	if len(raw) == 32 {
-		if key, hexErr := hex.DecodeString(string(raw)); hexErr == nil {
+		key, hexErr := hex.DecodeString(string(raw))
+		if hexErr == nil {
 			return key, nil
 		}
+		return nil, fmt.Errorf("%s 密钥 hex 解码失败: %w", kind, hexErr)
 	}
 	return nil, fmt.Errorf("%s 密钥解码后 %d 字节, 无法还原 16 字节 AES 密钥", kind, len(raw))
 }

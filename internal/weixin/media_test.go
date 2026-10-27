@@ -127,10 +127,17 @@ func TestDownloadMediaErrors(t *testing.T) {
 	if _, err := c.DownloadMedia(context.Background(), InboundAttachment{Kind: "file", AESKey: "!!不是base64"}); err == nil {
 		t.Error("非法 key 应报错")
 	}
-	// 图片 key 解码后长度不是 16 字节。
+	// key base64 解码后长度既非 16 也非 32（任何 kind 都报错）。
 	badLen := base64.StdEncoding.EncodeToString([]byte("short"))
 	if _, err := c.DownloadMedia(context.Background(), InboundAttachment{Kind: "image", AESKey: badLen}); err == nil {
-		t.Error("图片 key 非 16 字节应报错")
+		t.Error("key 解码后 5 字节应报错")
+	}
+	// 32 字节但不是合法 hex 串：报 hex 具体原因而非笼统长度错误。
+	notHex := base64.StdEncoding.EncodeToString([]byte("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"))
+	if _, err := c.DownloadMedia(context.Background(), InboundAttachment{Kind: "file", AESKey: notHex}); err == nil {
+		t.Error("32 字节非 hex 串应报错")
+	} else if !strings.Contains(err.Error(), "hex 解码失败") {
+		t.Errorf("错误应带 hex 解码原因: %v", err)
 	}
 	// 密文长度不是块大小的整数倍。
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
