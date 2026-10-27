@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.22 (2026-10-27)
+
+- Claude model sync is smoother: newly installed Claude Code is initialized automatically, no need to go through the onboarding wizard; syncing now clears leftover display-name keys from newer versions, so `/model` shows the real model instead of being overridden.
+- Fixed WeChat image attachment transfer failures.
+
 ## v0.1.21 (2026-10-25)
 
 - Chat attachments are fully usable: image and file reference blocks in agent replies are recovered into the timeline, attachments can be clicked to preview or open with the system, and images are cached on disk.
