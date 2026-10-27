@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.23 (2026-10-27)
+
+- Fixed the one-click update failure: the update script in v0.1.21 / v0.1.22 always errored on Windows PowerShell 5.1, so the downloaded new version could never be swapped into place (leaving a leftover `kshell-desktop.exe.new` in the install directory) and auto-update kept failing. Updates work normally from this version on.
+- The update script is now fully compatible with both the bundled Windows PowerShell 5.1 and PowerShell 7, with real-execution tests added to prevent this class of bug from slipping through again.
+- Note: if you are stuck on v0.1.21 or v0.1.22, auto-update cannot heal itself — please download this version's package manually and overwrite-install once with the app closed.
+
 ## v0.1.22 (2026-10-27)
 
 - Claude model sync is smoother: newly installed Claude Code is initialized automatically, no need to go through the onboarding wizard; syncing now clears leftover display-name keys from newer versions, so `/model` shows the real model instead of being overridden.
