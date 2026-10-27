@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yangk/kshell/internal/config"
@@ -466,4 +467,95 @@ func TestClaudeSyncDisabledRemovesDisplayKeys(t *testing.T) {
 	if env["KEEP"] != "yes" {
 		t.Fatalf("无关用户键应保留: %v", env)
 	}
+}
+
+// Sync 无条件把 ~/.claude.json 的 hasCompletedOnboarding 置 true,跳过新版
+// Claude Code 首启的登录/引导页(触发条件选 B:与注入 Enabled/平台无关)。
+func TestClaudeSyncWritesOnboardingSkip(t *testing.T) {
+	onboardingPath := func(home string) string {
+		return filepath.Join(home, ".claude.json")
+	}
+	in := SyncInput{Enabled: false}
+
+	t.Run("missing 新建", func(t *testing.T) {
+		home := t.TempDir()
+		if err := (Claude{}).Sync(home, in); err != nil {
+			t.Fatalf("Sync: %v", err)
+		}
+		b, err := os.ReadFile(onboardingPath(home))
+		if err != nil {
+			t.Fatalf("应新建 ~/.claude.json: %v", err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(b, &doc); err != nil {
+			t.Fatalf("非法 JSON: %v", err)
+		}
+		if doc["hasCompletedOnboarding"] != true {
+			t.Fatalf("hasCompletedOnboarding = %v", doc["hasCompletedOnboarding"])
+		}
+	})
+
+	t.Run("merge 保留既有内容与大整型", func(t *testing.T) {
+		home := t.TempDir()
+		original := `{"projects":{"d:/w":{"history":[]}},"firstStartTime":1700000000000}`
+		if err := os.WriteFile(onboardingPath(home), []byte(original), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := (Claude{}).Sync(home, in); err != nil {
+			t.Fatalf("Sync: %v", err)
+		}
+		b, err := os.ReadFile(onboardingPath(home))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), `1700000000000`) {
+			t.Fatalf("大整型被重写变形: %s", b)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(b, &doc); err != nil {
+			t.Fatalf("非法 JSON: %v", err)
+		}
+		if doc["hasCompletedOnboarding"] != true {
+			t.Fatalf("hasCompletedOnboarding = %v", doc["hasCompletedOnboarding"])
+		}
+		if _, ok := doc["projects"]; !ok {
+			t.Fatalf("既有顶层键被破坏: %v", doc)
+		}
+	})
+
+	t.Run("noop 已是 true 不改文件", func(t *testing.T) {
+		home := t.TempDir()
+		original := []byte(`{"hasCompletedOnboarding":true,"theme":"dark"}`)
+		if err := os.WriteFile(onboardingPath(home), original, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := (Claude{}).Sync(home, in); err != nil {
+			t.Fatalf("Sync: %v", err)
+		}
+		b, err := os.ReadFile(onboardingPath(home))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != string(original) {
+			t.Fatalf("已完成引导时文件被重写: %s", b)
+		}
+	})
+
+	t.Run("corrupt 损坏文件跳过不写", func(t *testing.T) {
+		home := t.TempDir()
+		original := `{"hasCompletedOnboarding":`
+		if err := os.WriteFile(onboardingPath(home), []byte(original), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := (Claude{}).Sync(home, in); err != nil {
+			t.Fatalf("损坏文件不应让 Sync 报错: %v", err)
+		}
+		b, err := os.ReadFile(onboardingPath(home))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != original {
+			t.Fatalf("损坏文件被改动: %s", b)
+		}
+	})
 }

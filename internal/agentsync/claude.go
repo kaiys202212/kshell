@@ -1,6 +1,7 @@
 package agentsync
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -94,7 +95,41 @@ func (c Claude) Sync(home string, in SyncInput) error {
 		return err
 	}
 	raw = append(raw, '\n')
-	return writeAtomic(path, raw)
+	if err := writeAtomic(path, raw); err != nil {
+		return err
+	}
+	skipOnboarding(home)
+	return nil
+}
+
+// skipOnboarding 把 ~/.claude.json 的 hasCompletedOnboarding 置 true，跳过
+// 新版 Claude Code 首启的登录/引导页。与注入 Enabled 无关：新装未配平台时
+// 同样不该被引导页卡住。已是 true 不重写（文件可能很大）；损坏或不可读时
+// 静默跳过，不碰文件。错误不外抛——引导标记失败不应阻断 settings 同步。
+func skipOnboarding(home string) {
+	path := filepath.Join(home, ".claude.json")
+	doc := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil {
+		if len(strings.TrimSpace(string(b))) > 0 {
+			dec := json.NewDecoder(bytes.NewReader(b))
+			dec.UseNumber() // 大整型时间戳经 float64 会丢精度
+			if err := dec.Decode(&doc); err != nil || doc == nil {
+				return
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return
+	}
+	if v, ok := doc["hasCompletedOnboarding"].(bool); ok && v {
+		return
+	}
+	doc["hasCompletedOnboarding"] = true
+	raw, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return
+	}
+	raw = append(raw, '\n')
+	_ = writeAtomic(path, raw)
 }
 
 // reconcileClaudeTopLevelModel 校正 settings.json 顶层 "model"（Claude /model
