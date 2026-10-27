@@ -559,3 +559,45 @@ func TestClaudeSyncWritesOnboardingSkip(t *testing.T) {
 		}
 	})
 }
+
+// 默认平台只有 OpenAI 协议(无 AnthropicBaseURL)时,kshell 不接管 Claude 的
+// 端点/模型:陈旧模型键被清掉,平台模型列表不得写成 ANTHROPIC_MODEL,顶层
+// model(官方登录用户自选)也不得被平台列表校验误删。
+func TestClaudeSyncSkipsModelKeysWithoutAnthropicEndpoint(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"),
+		[]byte(`{"model":"my-choice","env":{"ANTHROPIC_MODEL":"stale","KEEP":"1"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in := SyncInput{
+		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "gpt-5",
+		Platforms: []config.ModelPlatform{{
+			ID: "p1", OpenAIBaseURL: "https://oai.example/v1", APIKey: "sk-oai",
+			Models: []string{"gpt-5", "deepseek-v4.1-flash"},
+		}},
+	}
+	if err := (Claude{}).Sync(home, in); err != nil {
+		t.Fatal(err)
+	}
+	doc := readClaudeSettings(t, home)
+	env := doc["env"].(map[string]any)
+	for _, k := range []string{
+		"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+		"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN",
+	} {
+		if _, ok := env[k]; ok {
+			t.Fatalf("OpenAI-only 平台不应写 %s: %v", k, env)
+		}
+	}
+	if env["KEEP"] != "1" {
+		t.Fatalf("无关用户键应保留: %v", env)
+	}
+	if doc["model"] != "my-choice" {
+		t.Fatalf("不接管时顶层 model 应保留, got %v", doc["model"])
+	}
+}

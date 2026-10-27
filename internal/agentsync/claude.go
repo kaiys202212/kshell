@@ -18,6 +18,8 @@ import (
 // 模型：ANTHROPIC_MODEL = ActiveModel（空则平台列表首项）；Sonnet/Opus/Haiku
 // 三个 DEFAULT 别名依次映射平台模型列表前三项（不足则回落 ActiveModel），
 // 让 Claude TUI /model 能切到 kshell 配置的模型，而不是 settings 里陈旧值。
+// 模型键与顶层 model 校正仅当默认平台配置了 Anthropic 端点时才启用——只有
+// OpenAI 协议的平台不接管 Claude（否则 OpenAI 模型名会被发给官方端点）。
 type Claude struct{}
 
 func (Claude) ToolID() string { return "claude" }
@@ -81,15 +83,17 @@ func (c Claude) Sync(home string, in SyncInput) error {
 			if p.APIKey != "" {
 				env["ANTHROPIC_AUTH_TOKEN"] = p.APIKey
 			}
+			writeModelEnv(env, in)
 		}
-		writeModelEnv(env, in)
 	}
 	if len(env) > 0 {
 		doc["env"] = env
 	} else {
 		delete(doc, "env")
 	}
-	reconcileClaudeTopLevelModel(doc, in)
+	if claudeModelManaged(in) {
+		reconcileClaudeTopLevelModel(doc, in)
+	}
 	raw, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return err
@@ -174,6 +178,15 @@ func isClaudeBuiltinModelAlias(s string) bool {
 	default:
 		return false
 	}
+}
+
+// claudeModelManaged 报告默认平台是否配置了 Anthropic 端点——只有此时 kshell
+// 才接管 Claude 的模型键与顶层 model。仅配 OpenAI 协议的平台不能把它的模型名
+// 塞给 Claude（官方端点会报模型不存在），也不能按它的列表校验用户自己选定的
+// 顶层 model。
+func claudeModelManaged(in SyncInput) bool {
+	p := pickPlatform(in)
+	return p != nil && strings.TrimSpace(p.AnthropicBaseURL) != ""
 }
 
 // writeModelEnv 写入 ANTHROPIC_MODEL 与三个 DEFAULT 别名；无可用模型名则不写。

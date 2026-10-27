@@ -28,9 +28,12 @@ type SettingsEnvInjector interface {
 // 平台列表映射的 DEFAULT 别名）；ACP 会话级仍可经本方法覆盖。
 func (Claude) SettingsEnv(cfg ModelConfig) map[string]string {
 	env := map[string]string{}
-	if cfg.AnthropicBaseURL != "" {
-		env["ANTHROPIC_BASE_URL"] = cfg.AnthropicBaseURL
+	// 无 Anthropic 端点时整组不注入：只配 OpenAI 协议的平台，其 key/模型名
+	// 不能作为 ANTHROPIC_* 发往官方端点（401/模型不存在）。
+	if cfg.AnthropicBaseURL == "" {
+		return env
 	}
+	env["ANTHROPIC_BASE_URL"] = cfg.AnthropicBaseURL
 	if cfg.APIKey != "" {
 		env["ANTHROPIC_AUTH_TOKEN"] = cfg.APIKey
 	}

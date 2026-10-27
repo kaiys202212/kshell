@@ -81,6 +81,15 @@ func TestInjectModelClaudeIgnoresOpenAIURL(t *testing.T) {
 	if env["ANTHROPIC_BASE_URL"] != "" {
 		t.Fatalf("无 anthropic URL 时不应注入，got %+v", env)
 	}
+	// 无 Anthropic 端点时整组不注入：OpenAI 的 key/模型名不得被当作
+	// ANTHROPIC_AUTH_TOKEN/ANTHROPIC_MODEL 发往官方端点。
+	env = Claude{}.SettingsEnv(ModelConfig{
+		OpenAIBaseURL: "https://oai/", AnthropicBaseURL: "",
+		APIKey: "sk-oai", Model: "gpt-5",
+	})
+	if len(env) != 0 {
+		t.Fatalf("无 anthropic URL 时应返回空 env，got %+v", env)
+	}
 }
 
 func TestInjectModelEmptyInjectsNothing(t *testing.T) {
