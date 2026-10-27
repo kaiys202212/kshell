@@ -3,6 +3,7 @@
 package update
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -152,6 +153,50 @@ func TestReplaceWaitStartPowerShell_真实执行(t *testing.T) {
 	}
 	if leftovers, _ := filepath.Glob(cur + ".upgrade-old*"); len(leftovers) > 0 {
 		t.Fatalf(".upgrade-old* 残留应被清理: %v", leftovers)
+	}
+}
+
+// TestReplaceWaitStartPowerShell_pwsh7 兼容性探测：脚本要同时跑在 Windows
+// PowerShell 5.1 与 pwsh 7（[IO.Path]、Start-Process -FilePath 等构造在两者
+// 均有效）。装有 pwsh 的机器上真跑一遍，没有则跳过——5.1 覆盖由
+// TestReplaceWaitStartPowerShell_真实执行 保证。
+func TestReplaceWaitStartPowerShell_pwsh7(t *testing.T) {
+	pwsh, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skip("本机无 pwsh 7，跳过（5.1 已由真实执行用例覆盖）")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("拿不到测试二进制路径: %v", err)
+	}
+	src, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatalf("读测试二进制: %v", err)
+	}
+	dir := t.TempDir()
+	cur := filepath.Join(dir, "kshell-desktop.exe")
+	nxt := cur + ".new"
+	for _, p := range []string{cur, nxt} {
+		if err := os.WriteFile(p, src, 0o755); err != nil {
+			t.Fatalf("准备 %s: %v", p, err)
+		}
+	}
+	logPath := filepath.Join(dir, "logs", "update.log")
+	ps := replaceWaitStartPowerShell(999999, cur, nxt, logPath)
+	cmd := exec.Command(pwsh, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps)
+	out, err := cmd.CombinedOutput()
+	logBody, _ := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("pwsh 7 下脚本执行失败: %v\n脚本输出: %s\n升级日志:\n%s", err, out, logBody)
+	}
+	if !strings.Contains(string(logBody), "update done") {
+		t.Fatalf("日志缺少 'update done':\n%s\n脚本输出: %s", logBody, out)
+	}
+	if _, serr := os.Stat(nxt); !os.IsNotExist(serr) {
+		t.Fatalf(".new 应已改名落位")
+	}
+	if got, rerr := os.ReadFile(cur); rerr != nil || !bytes.Equal(got, src) {
+		t.Fatalf("落位 exe 内容应与 .new 一致: err=%v equal=%v", rerr, len(got) == len(src) && bytes.Equal(got, src))
 	}
 }
 
