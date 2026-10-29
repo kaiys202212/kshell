@@ -159,29 +159,50 @@ func (m Model) WithStatus(text string, warn bool) Model {
 
 // Init 启动时后台扫描，先渲染空面板再补数据，UI 不阻塞。
 func (m Model) Init() tea.Cmd {
-	return scanCmd(m.opts)
+	return startupScanCmd(m.opts)
 }
+
+// detectTools 抽成变量供测试注入探测结果：单测里真跑 DetectAll 会执行本机
+// 已装 CLI 的版本探测，既慢又依赖环境。
+var detectTools = discovery.DetectAll
 
 func scanCmd(o Options) tea.Cmd {
 	return func() tea.Msg {
 		if o.Home == "" {
 			return scanDoneMsg{err: errNoHome}
 		}
-		tools := discovery.DetectAll(o.Home, o.Providers)
-		res, err := discovery.Scan(o.Home, o.Providers, o.CachePath, discovery.ScanOptions{
-			Roots:    o.Config.ScanRoots,
-			MaxDepth: o.Config.MaxDepth,
-			Exclude:  o.Config.Exclude,
-		})
-		if err != nil {
-			return scanDoneMsg{tools: tools, err: err}
+		return scanWithTools(o, detectTools(o.Home, o.Providers))
+	}
+}
+
+// startupScanCmd 在首轮扫描前把平台模型同步进各工具自有配置，之后不再同步：
+// TUI 的 Config 是启动时的快照，运行期每次扫描都写会把桌面端刚保存的新配置回滚。
+func startupScanCmd(o Options) tea.Cmd {
+	return func() tea.Msg {
+		if o.Home == "" {
+			return scanDoneMsg{err: errNoHome}
 		}
-		return scanDoneMsg{
-			tools:      tools,
-			workspaces: discovery.ApplyProjects(res.Workspaces, o.Projects, nil),
-			sessions:   res.Sessions,
-			failed:     len(res.Failed),
-		}
+		tools := detectTools(o.Home, o.Providers)
+		syncAgentModels(o.Home, o.Config.Model, tools)
+		return scanWithTools(o, tools)
+	}
+}
+
+// scanWithTools 用已探测的工具表跑会话扫描；启动路径复用同一份探测结果。
+func scanWithTools(o Options, tools []discovery.Tool) scanDoneMsg {
+	res, err := discovery.Scan(o.Home, o.Providers, o.CachePath, discovery.ScanOptions{
+		Roots:    o.Config.ScanRoots,
+		MaxDepth: o.Config.MaxDepth,
+		Exclude:  o.Config.Exclude,
+	})
+	if err != nil {
+		return scanDoneMsg{tools: tools, err: err}
+	}
+	return scanDoneMsg{
+		tools:      tools,
+		workspaces: discovery.ApplyProjects(res.Workspaces, o.Projects, nil),
+		sessions:   res.Sessions,
+		failed:     len(res.Failed),
 	}
 }
 
