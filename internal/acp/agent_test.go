@@ -631,9 +631,20 @@ func dumpedLine(t *testing.T, out string) json.RawMessage {
 // 响应，直接读会抢 codec 的流——这里用 dump 行写入临时文件代替：测试里
 // dumpedLine 只认 dumpedParams 前缀行，fake agent 的 stdout 由 codec 消费，
 // 无法旁路读取，所以 fake agent 改为把 dump 行写到 stderr。
+//
+// stderr 由后台 goroutine 拷进同步缓冲，dump 行落盘与 Stderr() 之间存在
+// 短暂竞态；空等一次会偶发读不到（TestNewSessionNoMetaWhenSettingsEmpty
+// 曾因此 flake）。轮询到 dump 出现或超时，超时仍返回最新内容供 dumpedLine
+// 报出有意义的失败。
 func readAllStdout(t *testing.T, a *Agent) string {
 	t.Helper()
-	return a.Stderr()
+	deadline := time.Now().Add(2 * time.Second)
+	out := a.Stderr()
+	for !strings.Contains(out, "dumpedParams") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+		out = a.Stderr()
+	}
+	return out
 }
 
 // session/new 参数必须把 settings 以 _meta.claudeCode.options.settings（字符串
