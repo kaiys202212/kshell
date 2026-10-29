@@ -221,3 +221,36 @@ func TestProbeCursorAuth(t *testing.T) {
 		})
 	}
 }
+
+func TestProbeOpencodeAuth(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		absent  bool
+		want    AuthStatus
+	}{
+		{name: "文件不存在", absent: true, want: AuthOut},
+		{name: "空对象", content: `{}`, want: AuthOut},
+		{name: "值为 null", content: `{"deepseek":null}`, want: AuthOut},
+		{name: "有 api 凭据", content: `{"deepseek":{"type":"api","key":"sk-x"}}`, want: AuthIn},
+		{name: "有 oauth 凭据", content: `{"x":{"type":"oauth","refresh":"r"}}`, want: AuthIn},
+		{name: "损坏 JSON", content: `{`, want: AuthUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			if !tc.absent {
+				dir := filepath.Join(home, ".local", "share", "opencode")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(tc.content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := probeOpencodeAuth(home); got != tc.want {
+				t.Fatalf("probeOpencodeAuth() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

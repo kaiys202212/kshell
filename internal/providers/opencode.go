@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -27,6 +29,54 @@ const (
 )
 
 var errOpencodeNotFileBased = errors.New("opencode: 会话存放在 SQLite 库中，请走 EnumerateSessions")
+
+// Opencode 实现 ACPProvider / LoginCmdProvider / AuthProber（编译期断言）。
+var (
+	_ ACPProvider      = Opencode{}
+	_ LoginCmdProvider = Opencode{}
+	_ AuthProber       = Opencode{}
+)
+
+// ACPAdapter 声明 opencode 的 ACP 入口：CLI 自带 acp 子命令（stdio ndjson）。
+func (Opencode) ACPAdapter() ACPAdapter {
+	return ACPAdapter{BinNames: []string{"opencode"}, NPMPackage: "opencode-ai", ExtraArgs: []string{"acp"}}
+}
+
+// LoginCmd 返回官方交互式登录命令；desktop 登录弹窗复用探测到的可执行入口。
+func (Opencode) LoginCmd() []string { return []string{"opencode", "auth", "login"} }
+
+// ProbeAuth 读取 opencode 的 auth.json：至少一个 provider 有凭据对象才算已登录。
+func (Opencode) ProbeAuth() AuthStatus {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return AuthUnknown
+	}
+	return probeOpencodeAuth(home)
+}
+
+// probeOpencodeAuth 抽出 home 参数便于表驱动测试；读不到/损坏一律 Unknown
+//（保守放行），文件不存在或没有有效凭据是 Out。
+func probeOpencodeAuth(home string) AuthStatus {
+	path := filepath.Join(home, ".local", "share", "opencode", "auth.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return AuthOut
+		}
+		return AuthUnknown
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		return AuthUnknown
+	}
+	for _, raw := range top {
+		var obj map[string]any
+		if err := json.Unmarshal(raw, &obj); err == nil && len(obj) > 0 {
+			return AuthIn
+		}
+	}
+	return AuthOut
+}
 
 // Opencode 对应 opencode CLI。
 // 会话发现不走文件：新版 opencode 已把 JSON 会话迁移到 ~/.local/share/opencode/opencode.db，

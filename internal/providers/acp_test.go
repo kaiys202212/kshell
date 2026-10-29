@@ -91,3 +91,29 @@ func TestCursorACPAdapter(t *testing.T) {
 		t.Fatalf("npm package = %q", a.NPMPackage)
 	}
 }
+
+func TestOpencodeACPAdapter(t *testing.T) {
+	a := Opencode{}.ACPAdapter()
+	if len(a.BinNames) != 1 || a.BinNames[0] != "opencode" {
+		t.Fatalf("BinNames = %#v", a.BinNames)
+	}
+	if a.NPMPackage != "opencode-ai" {
+		t.Fatalf("NPMPackage = %q", a.NPMPackage)
+	}
+	if len(a.ExtraArgs) != 1 || a.ExtraArgs[0] != "acp" {
+		t.Fatalf("ExtraArgs = %#v", a.ExtraArgs)
+	}
+}
+
+func TestOpencodeLoginCmd(t *testing.T) {
+	got := Opencode{}.LoginCmd()
+	want := []string{"opencode", "auth", "login"}
+	if len(got) != len(want) {
+		t.Fatalf("LoginCmd() = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("LoginCmd() = %#v, want %#v", got, want)
+		}
+	}
+}
