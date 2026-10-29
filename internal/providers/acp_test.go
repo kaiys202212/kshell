@@ -104,16 +104,3 @@ func TestOpencodeACPAdapter(t *testing.T) {
 		t.Fatalf("ExtraArgs = %#v", a.ExtraArgs)
 	}
 }
-
-func TestOpencodeLoginCmd(t *testing.T) {
-	got := Opencode{}.LoginCmd()
-	want := []string{"opencode", "auth", "login"}
-	if len(got) != len(want) {
-		t.Fatalf("LoginCmd() = %#v, want %#v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("LoginCmd() = %#v, want %#v", got, want)
-		}
-	}
-}

@@ -14,14 +14,14 @@ const (
 	AuthOut AuthStatus = "out"
 )
 
-// AuthProber 是可选接口:由能稳定探测登录态的 provider 实现(目前仅 Cursor)。
+// AuthProber 是可选接口:由能稳定探测登录态的 provider 实现(目前为 Cursor 与 OpenCode)。
 // 实现只读自身静态配置文件,不启动子进程,也不依赖 Detect() 成功——
 // 安装残缺(Broken)时登录态往往仍是可信的,探测结论不能跟着安装判定一起失效。
 type AuthProber interface {
 	ProbeAuth() AuthStatus
 }
 
-// LoginCmdProvider 是可选接口:由提供官方交互式登录命令的工具实现(目前仅 Cursor)。
+// LoginCmdProvider 是可选接口:由提供官方交互式登录命令的工具实现(目前为 Cursor 与 OpenCode)。
 // 返回**裸命令**(如 ["cursor-agent","login"]),不带绝对路径:登录不依赖工作区,
 // 这里探测反而会与 Detect 的结论重复、两处口径易走偏。可执行文件的实际解析分两层:
 // 调用方(desktop.OpenLoginTerminal)优先复用探测结果 tool.BinPath/BinArgs 组装;

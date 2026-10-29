@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,7 +44,11 @@ func (Opencode) ACPAdapter() ACPAdapter {
 // LoginCmd 返回官方交互式登录命令；desktop 登录弹窗复用探测到的可执行入口。
 func (Opencode) LoginCmd() []string { return []string{"opencode", "auth", "login"} }
 
-// ProbeAuth 读取 opencode 的 auth.json：至少一个 provider 有凭据对象才算已登录。
+// ProbeAuth 读取 opencode 的 auth.json：至少一个 provider 有非空凭据才算已登录。
+// auth.json 只由 `opencode auth login` 写入；用户也可能把凭据直接配在
+// ~/.config/opencode/opencode.json 的 provider.*.options.apiKey 里而不生成该文件，
+// 所以文件缺失不能判为未登录——一律 AuthUnknown 保守放行，只有明确读到
+// 空凭据（文件在、能解析、但没有有效值）才判 Out。
 func (Opencode) ProbeAuth() AuthStatus {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
@@ -54,25 +57,34 @@ func (Opencode) ProbeAuth() AuthStatus {
 	return probeOpencodeAuth(home)
 }
 
-// probeOpencodeAuth 抽出 home 参数便于表驱动测试；读不到/损坏一律 Unknown
-//（保守放行），文件不存在或没有有效凭据是 Out。
+// probeOpencodeAuth 抽出 home 参数便于表驱动测试。缺文件、读失败、JSON 损坏、
+// 顶层 null 都是 Unknown（错误方向必须偏保守，不能错杀已登录用户）；
+// 仅当文件存在且解析成功、却没有任何 provider 带非空凭据时才判 Out。
 func probeOpencodeAuth(home string) AuthStatus {
-	path := filepath.Join(home, ".local", "share", "opencode", "auth.json")
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Join(opencodeDataDir(home), "auth.json"))
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return AuthOut
-		}
 		return AuthUnknown
 	}
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(data, &top); err != nil {
 		return AuthUnknown
 	}
+	if top == nil {
+		return AuthUnknown
+	}
 	for _, raw := range top {
 		var obj map[string]any
-		if err := json.Unmarshal(raw, &obj); err == nil && len(obj) > 0 {
-			return AuthIn
+		if err := json.Unmarshal(raw, &obj); err != nil {
+			continue
+		}
+		for key, val := range obj {
+			// type 只是方式标记（api/oauth），不算凭据本身。
+			if key == "type" {
+				continue
+			}
+			if s, ok := val.(string); ok && strings.TrimSpace(s) != "" {
+				return AuthIn
+			}
 		}
 	}
 	return AuthOut
@@ -227,8 +239,13 @@ func canonicalCWD(cwd string) string {
 	return filepath.Clean(strings.TrimSpace(cwd))
 }
 
+// opencodeDataDir 是 opencode 的数据目录（会话库与 auth.json 同放此处）。
+func opencodeDataDir(home string) string {
+	return filepath.Join(home, ".local", "share", "opencode")
+}
+
 func opencodeDBPath(home string) string {
-	return filepath.Join(home, ".local", "share", "opencode", "opencode.db")
+	return filepath.Join(opencodeDataDir(home), "opencode.db")
 }
 
 func (Opencode) InstallRecipe() InstallRecipe {

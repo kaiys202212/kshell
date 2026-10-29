@@ -37,6 +37,16 @@ func writeAuthBrokenConfig(t *testing.T, home, relDir string) {
 	}
 }
 
+// writeOpencodeBrokenAuth 同样造出 auth.json 是目录的读错误现场(POSIX 为
+// is a directory,Windows 为 Access is denied),锁定「文件在却读不出来必须
+// AuthUnknown」的口径。
+func writeOpencodeBrokenAuth(t *testing.T, home string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(opencodeDataDir(home), "auth.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // ProbeAuth 是无参接口,只能拿三种结论之一;绝不能返回零值空串。
 func TestCursorProbeAuthReturnsKnownStatus(t *testing.T) {
 	got := Cursor{}.ProbeAuth()
@@ -53,6 +63,20 @@ func TestCursorProbeAuthReturnsKnownStatus(t *testing.T) {
 func TestCursorLoginCmd(t *testing.T) {
 	got := Cursor{}.LoginCmd()
 	want := []string{"cursor-agent", "login"}
+	if len(got) != len(want) {
+		t.Fatalf("LoginCmd() = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("LoginCmd() = %#v, want %#v", got, want)
+		}
+	}
+}
+
+// TestOpencodeLoginCmd 锁定登录命令的裸命令形态(同 TestCursorLoginCmd)。
+func TestOpencodeLoginCmd(t *testing.T) {
+	got := Opencode{}.LoginCmd()
+	want := []string{"opencode", "auth", "login"}
 	if len(got) != len(want) {
 		t.Fatalf("LoginCmd() = %#v, want %#v", got, want)
 	}
@@ -227,11 +251,16 @@ func TestProbeOpencodeAuth(t *testing.T) {
 		name    string
 		content string
 		absent  bool
+		broken  bool
 		want    AuthStatus
 	}{
-		{name: "文件不存在", absent: true, want: AuthOut},
+		// 缺文件不代表未登录:凭据也可能写在 ~/.config/opencode 的配置里,保守放行。
+		{name: "文件不存在", absent: true, want: AuthUnknown},
+		{name: "文件读不出来", broken: true, want: AuthUnknown},
 		{name: "空对象", content: `{}`, want: AuthOut},
+		{name: "顶层为 null", content: `null`, want: AuthUnknown},
 		{name: "值为 null", content: `{"deepseek":null}`, want: AuthOut},
+		{name: "空凭据", content: `{"deepseek":{"type":"api","key":""}}`, want: AuthOut},
 		{name: "有 api 凭据", content: `{"deepseek":{"type":"api","key":"sk-x"}}`, want: AuthIn},
 		{name: "有 oauth 凭据", content: `{"x":{"type":"oauth","refresh":"r"}}`, want: AuthIn},
 		{name: "损坏 JSON", content: `{`, want: AuthUnknown},
@@ -239,8 +268,13 @@ func TestProbeOpencodeAuth(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
-			if !tc.absent {
-				dir := filepath.Join(home, ".local", "share", "opencode")
+			switch {
+			case tc.absent:
+				// 什么都不造
+			case tc.broken:
+				writeOpencodeBrokenAuth(t, home)
+			default:
+				dir := opencodeDataDir(home)
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					t.Fatal(err)
 				}
