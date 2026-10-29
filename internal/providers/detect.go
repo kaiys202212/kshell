@@ -156,8 +156,8 @@ func ProbeVersion(bin string, args ...string) string {
 	defer cancel()
 
 	full := append(append([]string(nil), args...), "--version")
-	cmd := exec.CommandContext(ctx, bin, full...)
-	executil.HideWindow(cmd) // 桌面端扫描时避免黑窗闪烁
+	// 走统一入口：含空格 .cmd + 需引号的入口参数（如 node 主脚本路径）不会截断。
+	cmd := executil.NewCLICommand(ctx, bin, full)
 	out, err := cmd.Output()
 	if err != nil {
 		return "unknown"
