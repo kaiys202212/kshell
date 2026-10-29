@@ -1,6 +1,6 @@
 // store 增量测试：notify/dismissToast 轻量提示队列、
 // openTabs/activeTabId 经 persist 中间件落 localStorage（kshell-tabs）。
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatInfo, TerminalInfo } from '../lib/api';
 import { SETTINGS_TAB_ID, LAYOUT_CENTER_DEFAULT, dedupeTabs, useAppStore } from './store';
 
@@ -787,5 +787,87 @@ describe('chatBackendQueues（后端待发送队列镜像）', () => {
     useAppStore.getState().removeChat('c1');
     expect(useAppStore.getState().chatBackendQueues.c1).toBeUndefined();
     expect(useAppStore.getState().chatQueueRevs.c1).toBeUndefined();
+  });
+});
+
+describe('chat config 与 elicitation 状态', () => {
+  const chat = {
+    ID: 'c1',
+    Kind: 'new',
+    SessionID: 's1',
+    Workspace: 'D:/w',
+    Title: 't',
+    ToolID: 'claude',
+    Status: 'ready',
+    ExitCode: 0,
+    Error: '',
+  };
+
+  beforeEach(() => {
+    useAppStore.setState({ chats: [chat], chatConfigs: {}, chatElicitations: {} });
+  });
+
+  afterEach(() => {
+    useAppStore.setState({ chats: [], chatConfigs: {}, chatElicitations: {} });
+  });
+
+  it('setChatConfigs 按 id 存取并随 removeChatState 清理', () => {
+    useAppStore.getState().setChatConfigs('c1', {
+      Options: [
+        { ID: 'model', Name: 'Model', Type: 'select', Current: 'm1', Options: [] },
+        { ID: 'mode', Name: 'Session Mode', Type: 'select', Current: 'build', Options: [{ Value: 'plan', Name: 'plan' }] },
+      ],
+    });
+    expect(useAppStore.getState().chatConfigs.c1?.Options).toHaveLength(2);
+    useAppStore.getState().setChatElicitation('c1', {
+      RequestID: 'r1', SessionID: 's1', Message: 'Q', Fields: [],
+    });
+    expect(useAppStore.getState().chatElicitations.c1?.RequestID).toBe('r1');
+    useAppStore.getState().removeChatState('c1');
+    expect(useAppStore.getState().chatConfigs.c1).toBeUndefined();
+    expect(useAppStore.getState().chatElicitations.c1).toBeUndefined();
+  });
+
+  it('未在 chats 中的迟到 elicitation 事件被忽略', () => {
+    useAppStore.setState({ chats: [], chatElicitations: {} });
+    useAppStore.getState().setChatElicitation('c1', {
+      RequestID: 'late', SessionID: 's1', Message: 'Q', Fields: [],
+    });
+    expect(useAppStore.getState().chatElicitations.c1).toBeUndefined();
+
+    useAppStore.setState({ chats: [chat] });
+    useAppStore.getState().setChatElicitation('c1', {
+      RequestID: 'r2', SessionID: 's1', Message: 'Q', Fields: [],
+    });
+    expect(useAppStore.getState().chatElicitations.c1?.RequestID).toBe('r2');
+  });
+
+  it('未在 chats 中的迟到 config 事件被忽略，null 删除键', () => {
+    useAppStore.setState({ chats: [], chatConfigs: {} });
+    useAppStore.getState().setChatConfigs('c1', {
+      Options: [{ ID: 'model', Name: 'Model', Type: 'select', Current: 'm1', Options: [] }],
+    });
+    expect(useAppStore.getState().chatConfigs.c1).toBeUndefined();
+
+    useAppStore.setState({ chats: [chat] });
+    useAppStore.getState().setChatConfigs('c1', {
+      Options: [{ ID: 'model', Name: 'Model', Type: 'select', Current: 'm1', Options: [] }],
+    });
+    expect(useAppStore.getState().chatConfigs.c1?.Options).toHaveLength(1);
+
+    useAppStore.getState().setChatConfigs('c1', null);
+    expect(useAppStore.getState().chatConfigs.c1).toBeUndefined();
+  });
+
+  it('removeChat 联动清理 config 与 elicitation', () => {
+    useAppStore.getState().setChatConfigs('c1', {
+      Options: [{ ID: 'model', Name: 'Model', Type: 'select', Current: 'm1', Options: [] }],
+    });
+    useAppStore.getState().setChatElicitation('c1', {
+      RequestID: 'r1', SessionID: 's1', Message: 'Q', Fields: [],
+    });
+    useAppStore.getState().removeChat('c1');
+    expect(useAppStore.getState().chatConfigs.c1).toBeUndefined();
+    expect(useAppStore.getState().chatElicitations.c1).toBeUndefined();
   });
 });

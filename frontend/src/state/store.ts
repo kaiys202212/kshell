@@ -4,7 +4,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import i18n from 'i18next';
-import type { ChatBlock, ChatCommand, ChatInfo, ChatModelsView, ChatPermissionRequest, ChatQueueItem, ChatUpdate, HubMessage, LanguageInfo, TerminalInfo, Workspace } from '../lib/api';
+import type { ChatBlock, ChatCommand, ChatConfigOptionsView, ChatElicitationRequest, ChatInfo, ChatModelsView, ChatPermissionRequest, ChatQueueItem, ChatUpdate, HubMessage, LanguageInfo, TerminalInfo, Workspace } from '../lib/api';
 import type { AgentNotice } from '../lib/agentNotify';
 import type { AppearanceInfo } from '../lib/appearance';
 import { applyChatUpdate, type TimelineItem } from './chatUpdate';
@@ -172,6 +172,12 @@ interface AppState {
   setChatModels(id: string, view: ChatModelsView | null): void;
   chatCommands: Record<string, ChatCommand[]>;
   setChatCommands(id: string, cmds: ChatCommand[]): void;
+
+  // 每个聊天的通用配置项（model / mode 等）与待填写的 elicitation 表单
+  chatConfigs: Record<string, ChatConfigOptionsView | null>;
+  setChatConfigs(id: string, view: ChatConfigOptionsView | null): void;
+  chatElicitations: Record<string, ChatElicitationRequest | null>;
+  setChatElicitation(id: string, req: ChatElicitationRequest | null): void;
 
   // ChatView 本地消息队列（agent 运行中用户再发消息的暂存；不持久化，随会话消亡）
   chatQueues: Record<string, ChatQueuedMessage[]>;
@@ -419,6 +425,8 @@ export const useAppStore = create<AppState>()(
           chatPermissions: omitKey(s.chatPermissions, id),
           chatModels: omitKey(s.chatModels, id),
           chatCommands: omitKey(s.chatCommands, id),
+          chatConfigs: omitKey(s.chatConfigs, id),
+          chatElicitations: omitKey(s.chatElicitations, id),
           chatQueues: omitKey(s.chatQueues, id),
           queuedPaused: omitKey(s.queuedPaused, id),
           chatBackendQueues: omitKey(s.chatBackendQueues, id),
@@ -495,6 +503,8 @@ export const useAppStore = create<AppState>()(
           chatSeq: omitKey(s.chatSeq, id),
           chatModels: omitKey(s.chatModels, id),
           chatCommands: omitKey(s.chatCommands, id),
+          chatConfigs: omitKey(s.chatConfigs, id),
+          chatElicitations: omitKey(s.chatElicitations, id),
           chatBackendQueues: omitKey(s.chatBackendQueues, id),
           chatQueueRevs: omitKey(s.chatQueueRevs, id),
         })),
@@ -517,6 +527,27 @@ export const useAppStore = create<AppState>()(
       chatCommands: {},
       setChatCommands: (id, cmds) =>
         set((s) => ({ chatCommands: { ...s.chatCommands, [id]: cmds } })),
+
+      chatConfigs: {},
+      setChatConfigs: (id, view) =>
+        set((s) => {
+          // 与 elicitation 一致：聊天已关闭时忽略迟到的配置推送
+          if (view && !s.chats.some((c) => c.ID === id)) return {};
+          const next = { ...s.chatConfigs };
+          if (view) next[id] = view;
+          else delete next[id];
+          return { chatConfigs: next };
+        }),
+      chatElicitations: {},
+      setChatElicitation: (id, req) =>
+        set((s) => {
+          // 与权限请求一致：聊天已关闭时忽略迟到推送，避免孤儿表单挂在关闭的会话上
+          if (req && !s.chats.some((c) => c.ID === id)) return {};
+          const next = { ...s.chatElicitations };
+          if (req) next[id] = req;
+          else delete next[id];
+          return { chatElicitations: next };
+        }),
 
       chatQueues: {},
       queuedPaused: {} as Record<string, true>,

@@ -109,6 +109,8 @@ const mocks = vi.hoisted(() => ({
   onChatPermission: vi.fn(),
   onChatExit: vi.fn(),
   onChatCommands: vi.fn(),
+  onChatConfig: vi.fn(),
+  onChatElicitation: vi.fn(),
   onChatModels: vi.fn(),
   onChatQueue: vi.fn(() => () => {}),
   listChatModels: vi.fn().mockResolvedValue(null),
@@ -203,6 +205,8 @@ beforeEach(() => {
   mocks.onTerminalMeta.mockImplementation(() => () => {});
   mocks.onChatMeta.mockImplementation(() => () => {});
   mocks.onChatModels.mockImplementation(() => () => {});
+  mocks.onChatConfig.mockImplementation(() => () => {});
+  mocks.onChatElicitation.mockImplementation(() => () => {});
   mocks.onArchiveSuggest.mockImplementation(() => () => {});
   mocks.onArchiveChanged.mockImplementation(() => () => {});
   mocks.archivedIDs.mockResolvedValue([]);
@@ -273,6 +277,8 @@ beforeEach(() => {
     chatPermissions: {},
     chatModels: {},
     chatCommands: {},
+    chatConfigs: {},
+    chatElicitations: {},
     layout: { left: 288, right: 300, center: 480 },
   });
 });
@@ -581,6 +587,43 @@ describe('App', () => {
     expect(useAppStore.getState().chatModels.c1).toEqual(view);
   });
 
+  it('chat:config 事件写入 store', async () => {
+    let cfgCb: ((p: { id: string; options: { Options: unknown[] } }) => void) | undefined;
+    mocks.onChatConfig.mockImplementation((cb: typeof cfgCb) => {
+      cfgCb = cb;
+      return () => {};
+    });
+    // 迟到事件防护要求聊天已在镜像：先让 listChats 落位 c1
+    mocks.listChats.mockResolvedValue([chat]);
+    render(<App />);
+    await waitFor(() => expect(useAppStore.getState().chats).toHaveLength(1));
+
+    const options = {
+      Options: [{ ID: 'model', Name: 'Model', Type: 'select', Current: 'm1', Options: [] }],
+    };
+    act(() => {
+      cfgCb?.({ id: 'c1', options });
+    });
+    expect(useAppStore.getState().chatConfigs.c1).toEqual(options);
+  });
+
+  it('chat:elicitation 事件写入 store', async () => {
+    let eliCb: ((p: { id: string; request: { RequestID: string; SessionID: string; Message: string; Fields: unknown[] } }) => void) | undefined;
+    mocks.onChatElicitation.mockImplementation((cb: typeof eliCb) => {
+      eliCb = cb;
+      return () => {};
+    });
+    mocks.listChats.mockResolvedValue([chat]);
+    render(<App />);
+    await waitFor(() => expect(useAppStore.getState().chats).toHaveLength(1));
+
+    const request = { RequestID: 'r1', SessionID: 's1', Message: 'Q', Fields: [] };
+    act(() => {
+      eliCb?.({ id: 'c1', request });
+    });
+    expect(useAppStore.getState().chatElicitations.c1?.RequestID).toBe('r1');
+  });
+
   it('chat:models 事件按会话 ToolID 回写工具模型缓存', async () => {
     localStorage.clear();
     let mdlCb: ((p: { id: string; models: unknown }) => void) | undefined;
@@ -664,6 +707,9 @@ describe('App', () => {
 
     act(() => {
       useAppStore.getState().setChatPermission('c1', permission);
+      useAppStore.getState().setChatElicitation('c1', {
+        RequestID: 'r1', SessionID: 's1', Message: 'Q', Fields: [],
+      });
     });
     act(() => {
       exitCb?.({ id: 'c1', exitCode: 3, error: '' });
@@ -673,6 +719,7 @@ describe('App', () => {
     expect(c?.Status).toBe('exited');
     expect(c?.ExitCode).toBe(3);
     expect(useAppStore.getState().chatPermissions.c1).toBeUndefined();
+    expect(useAppStore.getState().chatElicitations.c1).toBeUndefined();
     expect(
       useAppStore
         .getState()

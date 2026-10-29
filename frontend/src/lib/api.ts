@@ -376,6 +376,55 @@ export interface ChatCommand {
   InputHint?: string;
 }
 
+// chat.ConfigOptionValueView / ConfigOptionView / ConfigOptionsView 的 JSON 形态
+//（internal/chat/types.go）：通用会话配置项（model / mode 等）。
+export interface ChatConfigOptionValue {
+  Value: string;
+  Name: string;
+  Description?: string;
+}
+
+export interface ChatConfigOption {
+  ID: string;
+  Name: string;
+  Description?: string;
+  Category?: string;
+  Type: string;
+  Current: string;
+  Options: ChatConfigOptionValue[];
+}
+
+export interface ChatConfigOptionsView {
+  Options: ChatConfigOption[];
+}
+
+// chat.ElicitationOption / ElicitationField / ElicitationRequest 的 JSON 形态：
+// agent 发起的 elicitation 表单请求。
+export interface ChatElicitationOption {
+  Value: string;
+  Title?: string;
+}
+
+export interface ChatElicitationField {
+  Key: string;
+  Kind: 'text' | 'number' | 'integer' | 'boolean' | 'select' | 'multiselect';
+  Title?: string;
+  Description?: string;
+  Required?: boolean;
+  Options?: ChatElicitationOption[];
+  Default?: unknown;
+}
+
+export interface ChatElicitationRequest {
+  RequestID: string;
+  SessionID: string;
+  ToolCallID?: string;
+  Message: string;
+  Fields: ChatElicitationField[];
+}
+
+export type ChatElicitationAction = 'accept' | 'decline' | 'cancel';
+
 // desktop.ChatBlock 的 JSON 形态（internal/desktop/chat.go）：
 // text 用 Text；image 用 Data(base64)+MimeType；resource_link 用 URI+Name；
 // resource（粘贴的小文件内容）用 URI+MimeType+Data。
@@ -698,6 +747,10 @@ interface AppBindings {
   SendChatPromptBlocks(id: string, blocks: ChatBlock[]): Promise<void>;
   ListChatModels(id: string): Promise<ChatModelsView>;
   SetChatModel(id: string, modelID: string): Promise<void>;
+  ListChatConfigOptions(id: string): Promise<ChatConfigOptionsView>;
+  SetChatConfigOption(id: string, configID: string, value: string): Promise<void>;
+  RespondChatElicitation(id: string, requestID: string, action: ChatElicitationAction, content: Record<string, unknown>): Promise<void>;
+  CancelChatElicitation(id: string, requestID: string): Promise<void>;
   ListChatCommands(id: string): Promise<ChatCommand[]>;
   ListChatQueue(id: string): Promise<ChatQueueItem[]>;
   RemoveChatQueued(id: string, itemID: string): Promise<void>;
@@ -2140,6 +2193,30 @@ export async function setChatModel(id: string, modelID: string): Promise<void> {
   await a.SetChatModel(id, modelID);
 }
 
+export async function listChatConfigOptions(id: string): Promise<ChatConfigOptionsView | null> {
+  const a = app();
+  if (!a) return null;
+  return a.ListChatConfigOptions(id);
+}
+
+export async function setChatConfigOption(id: string, configID: string, value: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.SetChatConfigOption(id, configID, value);
+}
+
+export async function respondChatElicitation(id: string, requestID: string, action: ChatElicitationAction, content: Record<string, unknown>): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.RespondChatElicitation(id, requestID, action, content);
+}
+
+export async function cancelChatElicitation(id: string, requestID: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.CancelChatElicitation(id, requestID);
+}
+
 export async function listChatCommands(id: string): Promise<ChatCommand[]> {
   const a = app();
   if (!a) return [];
@@ -2290,6 +2367,24 @@ export function onChatQueue(cb: (p: { id: string; items: ChatQueueItem[] }) => v
 // 修复握手期 ChatView 挂载拉 ListChatModels 拿空的竞态。
 export function onChatModels(cb: (p: { id?: string; models?: ChatModelsView | null }) => void): () => void {
   return EventsOn('chat:models', (p: { id?: string; models?: ChatModelsView | null }) => cb(p ?? {}));
+}
+
+// onChatConfig 订阅 chat:config：agent 的 config_option_update 推送，全量替换配置视图。
+// 缺 id 或 options 的事件直接丢弃，避免用空视图覆盖已有配置。
+export function onChatConfig(cb: (p: { id: string; options: ChatConfigOptionsView }) => void): () => void {
+  return EventsOn('chat:config', (p: { id?: string; options?: ChatConfigOptionsView }) => {
+    if (!p?.id || !p.options) return;
+    cb({ id: p.id, options: p.options });
+  });
+}
+
+// onChatElicitation 订阅 chat:elicitation：agent 请求用户填写表单。
+// 缺 id 或 request 的事件直接丢弃：空表单渲染成弹窗会误导用户。
+export function onChatElicitation(cb: (p: { id: string; request: ChatElicitationRequest }) => void): () => void {
+  return EventsOn('chat:elicitation', (p: { id?: string; request?: ChatElicitationRequest }) => {
+    if (!p?.id || !p.request) return;
+    cb({ id: p.id, request: p.request });
+  });
 }
 
 // 微信桥（internal/desktop/weixin.go）

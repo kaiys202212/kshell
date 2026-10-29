@@ -26,6 +26,8 @@ import {
   onArchiveSuggest,
   onChatExit,
   onChatCommands,
+  onChatConfig,
+  onChatElicitation,
   onChatModels,
   onChatMeta,
   onChatPermission,
@@ -199,10 +201,11 @@ function App() {
     );
     const offX = onChatExit(({ id, exitCode, error }) => {
       throttle.drop(id); // 会话已退出：丢弃在途缓冲，避免迟到分片污染终态时间线
-      const { markChatExited, setChatPermission, notify, clearChatQueue } = useAppStore.getState();
+      const { markChatExited, setChatPermission, setChatElicitation, notify, clearChatQueue } = useAppStore.getState();
       clearChatQueue(id); // 本地排队消息随会话消亡：进程已退出，发出也偏离用户意图
       markChatExited(id, exitCode, error);
       setChatPermission(id, null);
+      setChatElicitation(id, null);
       let reason: string;
       if (!error) {
         reason = i18n.t('ui.notify.session_exited', { 0: exitCode }) as string;
@@ -229,6 +232,16 @@ function App() {
       // 补偿推送是唯一可靠的名字来源，旧格式缓存靠它自愈。
       const chat = useAppStore.getState().chats.find((c) => c.ID === id);
       if (chat) rememberChatModels(chat.ToolID, models ?? null);
+    });
+    // 通用配置项视图：agent 的 config_option_update 全量推送，写入 store
+    const offCfg = onChatConfig(({ id, options }) => {
+      if (!id) return;
+      useAppStore.getState().setChatConfigs(id, options);
+    });
+    // elicitation 表单请求：agent 请求用户填写，写入 store 供弹窗渲染
+    const offEli = onChatElicitation(({ id, request }) => {
+      if (!id) return;
+      useAppStore.getState().setChatElicitation(id, request);
     });
     // 后端待发送队列快照：任何来源（AgentHub/本地/TUI）入队都推到这里，
     // ChatView 与本地 chatQueues 合并展示。
@@ -286,6 +299,8 @@ function App() {
       offX();
       offC();
       offMdl();
+      offCfg();
+      offEli();
       offQ();
       offM();
       throttle.dispose();
