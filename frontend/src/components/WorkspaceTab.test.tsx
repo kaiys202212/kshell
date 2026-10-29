@@ -56,6 +56,10 @@ const mocks = vi.hoisted(() => ({
   cancelChat: vi.fn(),
   respondChatPermission: vi.fn(),
   cancelChatPermission: vi.fn(),
+  listChatConfigOptions: vi.fn().mockResolvedValue(null),
+  setChatConfigOption: vi.fn().mockResolvedValue(undefined),
+  respondChatElicitation: vi.fn().mockResolvedValue(undefined),
+  cancelChatElicitation: vi.fn().mockResolvedValue(undefined),
   closeChat: vi.fn(),
   listChats: vi.fn(),
   chatHistory: vi.fn(),
@@ -157,6 +161,10 @@ beforeEach(() => {
   mocks.cancelChat.mockResolvedValue(undefined);
   mocks.respondChatPermission.mockResolvedValue(undefined);
   mocks.cancelChatPermission.mockResolvedValue(undefined);
+  mocks.listChatConfigOptions.mockResolvedValue(null);
+  mocks.setChatConfigOption.mockResolvedValue(undefined);
+  mocks.respondChatElicitation.mockResolvedValue(undefined);
+  mocks.cancelChatElicitation.mockResolvedValue(undefined);
   useAppStore.setState({
     windowStatus: {},
     scanState: 'done',
@@ -165,6 +173,8 @@ beforeEach(() => {
     chatItems: {},
     chatSeq: {},
     chatPermissions: {},
+    chatConfigs: {},
+    chatElicitations: {},
     toasts: [],
     newSessionTool: '',
     layout: { left: 288, right: 300, center: 480 },

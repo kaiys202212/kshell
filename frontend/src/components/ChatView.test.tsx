@@ -22,6 +22,10 @@ const api = vi.hoisted(() => ({
   cancelChat: vi.fn(),
   respondChatPermission: vi.fn(),
   cancelChatPermission: vi.fn(),
+  listChatConfigOptions: vi.fn(),
+  setChatConfigOption: vi.fn(),
+  respondChatElicitation: vi.fn(),
+  cancelChatElicitation: vi.fn(),
   listChats: vi.fn(),
   openExternalURL: vi.fn().mockResolvedValue(undefined),
   openInDefaultApp: vi.fn(),
@@ -48,11 +52,15 @@ beforeEach(() => {
   api.cancelChat.mockResolvedValue(undefined);
   api.respondChatPermission.mockResolvedValue(undefined);
   api.cancelChatPermission.mockResolvedValue(undefined);
+  api.listChatConfigOptions.mockResolvedValue(null);
+  api.setChatConfigOption.mockResolvedValue(undefined);
+  api.respondChatElicitation.mockResolvedValue(undefined);
+  api.cancelChatElicitation.mockResolvedValue(undefined);
   api.listChats.mockResolvedValue([]);
   api.openInDefaultApp.mockResolvedValue(undefined);
   api.openLocalPath.mockResolvedValue(undefined);
   api.readChatAttachmentData.mockResolvedValue(null);
-  useAppStore.setState({ chatItems: {}, chatSeq: {}, chatPermissions: {}, chats: [CHAT], chatModels: {}, chatCommands: {}, chatQueues: {}, chatBackendQueues: {}, chatQueueRevs: {}, queuedPaused: {}, toasts: [] });
+  useAppStore.setState({ chatItems: {}, chatSeq: {}, chatPermissions: {}, chats: [CHAT], chatModels: {}, chatCommands: {}, chatConfigs: {}, chatElicitations: {}, chatQueues: {}, chatBackendQueues: {}, chatQueueRevs: {}, queuedPaused: {}, toasts: [] });
 });
 afterEach(cleanup);
 
@@ -910,5 +918,118 @@ describe('ChatView', () => {
     expect(screen.getByText('助手句').closest('.selectable')).not.toBeNull();
     expect(screen.getByText('思考句').closest('.selectable')).not.toBeNull();
     expect(screen.getByText(/工具输出/).closest('.selectable')).not.toBeNull();
+  });
+
+  it('渲染并切换 mode 配置项', async () => {
+    api.listChatConfigOptions.mockResolvedValue({
+      Options: [
+        { ID: 'model', Name: 'Model', Type: 'select', Current: 'm1', Options: [] },
+        { ID: 'mode', Name: 'Session Mode', Type: 'select', Current: 'build', Options: [
+          { Value: 'build', Name: 'build' }, { Value: 'plan', Name: 'plan' },
+        ] },
+      ],
+    });
+    render(<ChatView chat={CHAT} active />);
+    const btn = await screen.findByRole('button', { name: /Session Mode/ });
+    fireEvent.pointerDown(btn, { button: 0, ctrlKey: false });
+    const item = await screen.findByRole('menuitem', { name: 'plan' });
+    fireEvent.pointerDown(item);
+    fireEvent.click(item);
+    await waitFor(() => expect(api.setChatConfigOption).toHaveBeenCalledWith('c1', 'mode', 'plan'));
+  });
+
+  it('多个配置项可依次打开并分别切换，互不干扰', async () => {
+    api.listChatConfigOptions.mockResolvedValue({
+      Options: [
+        { ID: 'mode', Name: 'Session Mode', Type: 'select', Current: 'build', Options: [
+          { Value: 'build', Name: 'build' }, { Value: 'plan', Name: 'plan' },
+        ] },
+        { ID: 'effort', Name: 'Reasoning Effort', Type: 'select', Current: 'low', Options: [
+          { Value: 'low', Name: 'low' }, { Value: 'high', Name: 'high' },
+        ] },
+      ],
+    });
+    render(<ChatView chat={CHAT} active />);
+
+    const modeBtn = await screen.findByRole('button', { name: /Session Mode/ });
+    fireEvent.pointerDown(modeBtn, { button: 0, ctrlKey: false });
+    const plan = await screen.findByRole('menuitem', { name: 'plan' });
+    fireEvent.pointerDown(plan);
+    fireEvent.click(plan);
+    await waitFor(() => expect(api.setChatConfigOption).toHaveBeenCalledWith('c1', 'mode', 'plan'));
+
+    const effortBtn = screen.getByRole('button', { name: /Reasoning Effort/ });
+    fireEvent.pointerDown(effortBtn, { button: 0, ctrlKey: false });
+    const high = await screen.findByRole('menuitem', { name: 'high' });
+    fireEvent.pointerDown(high);
+    fireEvent.click(high);
+    await waitFor(() => expect(api.setChatConfigOption).toHaveBeenCalledWith('c1', 'effort', 'high'));
+  });
+
+  it('elicitation 表单提交 accept 与内容', async () => {
+    useAppStore.setState({ chatElicitations: { c1: {
+      RequestID: 'r1', SessionID: 's1', Message: 'Which package manager?',
+      Fields: [{ Key: 'pm', Kind: 'select', Required: true, Options: [{ Value: 'bun', Title: 'Bun' }] }],
+    } } });
+    render(<ChatView chat={CHAT} active />);
+    fireEvent.change(screen.getByLabelText('pm'), { target: { value: 'bun' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.chat.elicitation_submit') }));
+    await waitFor(() => expect(api.respondChatElicitation).toHaveBeenCalledWith('c1', 'r1', 'accept', { pm: 'bun' }));
+  });
+
+  it('elicitation 拒绝发送 decline', () => {
+    useAppStore.setState({ chatElicitations: { c1: {
+      RequestID: 'r2', SessionID: 's1', Message: 'Q', Fields: [],
+    } } });
+    render(<ChatView chat={CHAT} active />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.chat.elicitation_decline') }));
+    expect(api.respondChatElicitation).toHaveBeenCalledWith('c1', 'r2', 'decline', {});
+  });
+
+  it('elicitation 必填为空时禁用提交，填写后启用', async () => {
+    useAppStore.setState({ chatElicitations: { c1: {
+      RequestID: 'r3', SessionID: 's1', Message: 'Name?',
+      Fields: [{ Key: 'name', Kind: 'text', Required: true }],
+    } } });
+    render(<ChatView chat={CHAT} active />);
+    const submit = () => screen.getByRole('button', { name: tt('ui.chat.elicitation_submit') });
+    expect(submit()).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('name'), { target: { value: '   ' } });
+    expect(submit()).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('name'), { target: { value: 'abc' } });
+    await waitFor(() => expect(submit()).toBeEnabled());
+  });
+
+  it('elicitation 提交时数字转 Number、布尔转 Boolean 并跳过空的可选项', async () => {
+    useAppStore.setState({ chatElicitations: { c1: {
+      RequestID: 'r4', SessionID: 's1', Message: 'Details',
+      Fields: [
+        { Key: 'count', Kind: 'number' },
+        { Key: 'ratio', Kind: 'integer' },
+        { Key: 'flag', Kind: 'boolean' },
+        { Key: 'note', Kind: 'text' },
+      ],
+    } } });
+    render(<ChatView chat={CHAT} active />);
+    fireEvent.change(screen.getByLabelText('count'), { target: { value: '3' } });
+    fireEvent.change(screen.getByLabelText('ratio'), { target: { value: '2' } });
+    fireEvent.click(screen.getByLabelText('flag'));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.chat.elicitation_submit') }));
+    await waitFor(() =>
+      expect(api.respondChatElicitation).toHaveBeenCalledWith('c1', 'r4', 'accept', {
+        count: 3, ratio: 2, flag: true,
+      }),
+    );
+  });
+
+  it('elicitation Esc 取消时通知后端 cancel 并清空表单', async () => {
+    useAppStore.setState({ chatElicitations: { c1: {
+      RequestID: 'r5', SessionID: 's1', Message: 'Q', Fields: [],
+    } } });
+    render(<ChatView chat={CHAT} active />);
+    const dialog = screen.getByRole('dialog');
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(api.cancelChatElicitation).toHaveBeenCalledWith('c1', 'r5'));
+    expect(useAppStore.getState().chatElicitations.c1 ?? null).toBeNull();
   });
 });

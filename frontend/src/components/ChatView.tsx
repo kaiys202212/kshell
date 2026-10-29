@@ -7,8 +7,10 @@ import remarkGfm from 'remark-gfm';
 import type { ChatAttachmentMeta, ChatBlock, ChatInfo, ChatQueueItem, ChatToolCall } from '../lib/api';
 import {
   cancelChat,
+  cancelChatElicitation,
   cancelChatPermission,
   listChatCommands,
+  listChatConfigOptions,
   listChatModels,
   listChatQueue,
   listChats,
@@ -17,9 +19,11 @@ import {
   openLocalPath,
   pickFile,
   removeChatQueued,
+  respondChatElicitation,
   respondChatPermission,
   sendChatPrompt,
   sendChatPromptBlocks,
+  setChatConfigOption,
   setChatModel,
 } from '../lib/api';
 import { appendChatInput, registerChatInput, unregisterChatInput } from '../lib/chatInputRegistry';
@@ -134,10 +138,14 @@ export default function ChatView({ chat, active }: Props) {
   const items = useAppStore((s) => s.chatItems[id]) ?? EMPTY_ITEMS;
   const permission = useAppStore((s) => s.chatPermissions[id]) ?? null;
   const models = useAppStore((s) => s.chatModels[id]) ?? null;
+  const configs = useAppStore((s) => s.chatConfigs[id]) ?? null;
+  const elicitation = useAppStore((s) => s.chatElicitations[id]) ?? null;
   const commands = useAppStore((s) => s.chatCommands[id]) ?? EMPTY_COMMANDS;
   const [draft, setDraft] = useState('');
   const [dropHint, setDropHint] = useState(false);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  // elicitation 表单的本地作答状态：按 RequestID 变化重置默认值
+  const [elicitationValues, setElicitationValues] = useState<Record<string, unknown>>({});
   // 图片附件 lightbox：Path 为落盘缓存绝对路径
   const [preview, setPreview] = useState<{ name?: string; path: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -178,6 +186,12 @@ export default function ChatView({ chat, active }: Props) {
     void listChatCommands(id)
       .then((cmds) => {
         if (!cancelled) useAppStore.getState().setChatCommands(id, cmds);
+      })
+      .catch(() => {});
+    // 通用配置项（mode 等）兜底拉取：agent 推送 chat:config 会随后覆盖
+    void listChatConfigOptions(id)
+      .then((v) => {
+        if (!cancelled) useAppStore.getState().setChatConfigs(id, v);
       })
       .catch(() => {});
     // 后端待发送队列回填：事件订阅在 App 层，挂载瞬间可能已错过入队推送。
@@ -227,6 +241,24 @@ export default function ChatView({ chat, active }: Props) {
   useEffect(() => {
     if (!active) setPreview(null);
   }, [active]);
+
+  // elicitation 请求变化时按字段类型重置作答：Default 优先，多选空数组，布尔 false，其余空串。
+  useEffect(() => {
+    if (!elicitation) {
+      setElicitationValues({});
+      return;
+    }
+    const init: Record<string, unknown> = {};
+    for (const f of elicitation.Fields ?? []) {
+      if (f.Default !== undefined) init[f.Key] = f.Default;
+      else if (f.Kind === 'multiselect') init[f.Key] = [];
+      else if (f.Kind === 'boolean') init[f.Key] = false;
+      else init[f.Key] = '';
+    }
+    setElicitationValues(init);
+    // 仅按 RequestID 重置：同一次请求内的其它字段变化不应清空用户作答
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [elicitation?.RequestID]);
 
   const handleScroll = () => {
     const el = scrollRef.current;
@@ -415,9 +447,85 @@ export default function ChatView({ chat, active }: Props) {
     }
   };
 
+  const switchConfig = async (optionID: string, value: string) => {
+    // 每次都从 store 读最新快照：agent 可能已推送新状态，闭包里的 configs 会过期
+    const latest = useAppStore.getState().chatConfigs[id];
+    const previous = latest?.Options?.find((o) => o.ID === optionID)?.Current;
+    const applyCurrent = (next: string) => {
+      const snap = useAppStore.getState().chatConfigs[id];
+      if (!snap) return;
+      useAppStore.getState().setChatConfigs(id, {
+        ...snap,
+        Options: (snap.Options ?? []).map((o) => (o.ID === optionID ? { ...o, Current: next } : o)),
+      });
+    };
+    // 先乐观更新当前值，避免等 agent 二次推送
+    applyCurrent(value);
+    try {
+      await setChatConfigOption(id, optionID, value);
+    } catch (e) {
+      // 仅当界面上仍是本次尝试的值才回滚，避免覆盖 agent 期间推送的新状态
+      const current = useAppStore.getState().chatConfigs[id]?.Options?.find((o) => o.ID === optionID)?.Current;
+      if (current === value && previous !== undefined) applyCurrent(previous);
+      useAppStore.getState().notify(t('ui.chat.config_switch_failed', { err: backendError(e) }), 'error');
+    }
+  };
+
   // Models 用 ?. 兜底：Go 侧 nil slice 序列化成 null，wailsjs 生成类型不可信
   const currentModelName =
     models?.Models?.find((m) => m.ID === models.Current)?.Name ?? models?.Current ?? '';
+  // 配置行只展示 select 型非 model 项：模型已有独立下拉，避免重复选择器
+  const configOptions = (configs?.Options ?? []).filter((o) => o.ID !== 'model' && o.Type === 'select');
+  const showConfigRow = (models?.Models?.length ?? 0) > 0 || configOptions.length > 0;
+
+  const setElicitationValue = (key: string, value: unknown) => {
+    setElicitationValues((v) => ({ ...v, [key]: value }));
+  };
+
+  const toggleElicitationMulti = (key: string, value: string, checked: boolean) => {
+    setElicitationValues((v) => {
+      const cur = Array.isArray(v[key]) ? (v[key] as string[]) : [];
+      return { ...v, [key]: checked ? [...cur, value] : cur.filter((x) => x !== value) };
+    });
+  };
+
+  // 必填校验：空串 / null / undefined / 空数组视为未作答；false 与 0 是有效答案
+  const elicitationRequiredMissing =
+    (elicitation?.Fields ?? []).some((f) => {
+      if (!f.Required) return false;
+      const v = elicitationValues[f.Key];
+      // 空白字符串不算作答；false / 0 是有效答案
+      return v === undefined || v === null || (typeof v === 'string' && v.trim() === '') ||
+        (Array.isArray(v) && v.length === 0);
+    }) ?? false;
+
+  const closeElicitation = () => {
+    useAppStore.getState().setChatElicitation(id, null);
+    setElicitationValues({});
+  };
+
+  const submitElicitation = () => {
+    if (!elicitation) return;
+    const req = elicitation;
+    const content: Record<string, unknown> = {};
+    for (const f of req.Fields ?? []) {
+      const v = elicitationValues[f.Key];
+      if (v === '' || v === undefined || v === null) continue;
+      if (Array.isArray(v) && v.length === 0) continue;
+      if (f.Kind === 'number' || f.Kind === 'integer') content[f.Key] = Number(v);
+      else if (f.Kind === 'boolean') content[f.Key] = Boolean(v);
+      else content[f.Key] = v;
+    }
+    closeElicitation();
+    void respondChatElicitation(id, req.RequestID, 'accept', content);
+  };
+
+  const declineElicitation = () => {
+    if (!elicitation) return;
+    const req = elicitation;
+    closeElicitation();
+    void respondChatElicitation(id, req.RequestID, 'decline', {});
+  };
 
   // 附件 chip 点击分派（attachmentAction 纯函数归类，副作用在此触发）：
   // preview → lightbox；default/local → 系统打开（失败 toast）；external → 外链
@@ -511,24 +619,49 @@ export default function ChatView({ chat, active }: Props) {
           {t('ui.chat.status_authenticating')}
         </div>
       )}
-      {models && models.Models && models.Models.length > 0 && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1 text-xs">
-          <span className="text-muted-foreground">{t('ui.chat.model_label')}</span>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className="rounded border border-border px-2 py-0.5 hover:bg-muted">
-                {currentModelName} <span className="text-muted-foreground">▾</span>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              {models.Models?.map((m) => (
-                <DropdownMenuItem key={m.ID} onSelect={() => void switchModel(m.ID)}>
-                  <span className={cn(m.ID === models.Current && 'font-medium')}>{m.Name}</span>
-                  {m.Description && <span className="ml-2 text-muted-foreground">{m.Description}</span>}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+      {showConfigRow && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-1 text-xs">
+          {models && models.Models && models.Models.length > 0 && (
+            <>
+              <span className="text-muted-foreground">{t('ui.chat.model_label')}</span>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="rounded border border-border px-2 py-0.5 hover:bg-muted">
+                    {currentModelName} <span className="text-muted-foreground">▾</span>
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  {models.Models?.map((m) => (
+                    <DropdownMenuItem key={m.ID} onSelect={() => void switchModel(m.ID)}>
+                      <span className={cn(m.ID === models.Current && 'font-medium')}>{m.Name}</span>
+                      {m.Description && <span className="ml-2 text-muted-foreground">{m.Description}</span>}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
+          )}
+          {configOptions.map((opt) => (
+            <div key={opt.ID} className="flex items-center gap-1">
+              <span className="text-muted-foreground">{opt.Name}</span>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button aria-label={opt.Name} className="rounded border border-border px-2 py-0.5 hover:bg-muted">
+                    {(opt.Options ?? []).find((o) => o.Value === opt.Current)?.Name ?? opt.Current}{' '}
+                    <span className="text-muted-foreground">▾</span>
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  {(opt.Options ?? []).map((o) => (
+                    <DropdownMenuItem key={o.Value} onSelect={() => void switchConfig(opt.ID, o.Value)}>
+                      <span className={cn(o.Value === opt.Current && 'font-medium')}>{o.Name}</span>
+                      {o.Description && <span className="ml-2 text-muted-foreground">{o.Description}</span>}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          ))}
         </div>
       )}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-2">
@@ -779,6 +912,98 @@ export default function ChatView({ chat, active }: Props) {
                 useAppStore.getState().setChatPermission(id, null);
                 void cancelChatPermission(id, permission.RequestID);
               }}>{t('ui.chat.reject')}</button>
+          </div>
+        </Dialog>
+      )}
+
+      {elicitation && (
+        <Dialog
+          open
+          onOpenChange={(next) => {
+            if (next) return;
+            // Esc / 遮罩点击等同放弃：清掉表单并通知后端取消该次请求
+            closeElicitation();
+            void cancelChatElicitation(id, elicitation.RequestID);
+          }}
+          className="w-[28rem]"
+        >
+          <DialogPrimitive.Title className="mb-1 text-sm font-medium">{t('ui.chat.elicitation_title')}</DialogPrimitive.Title>
+          <p className="mb-3 break-words text-xs text-muted-foreground">{elicitation.Message}</p>
+          <div className="flex flex-col gap-3">
+            {(elicitation.Fields ?? []).map((f) => {
+              const label = f.Title || f.Key;
+              const controlId = `elicitation-${id}-${f.Key}`;
+              const value = elicitationValues[f.Key];
+              if (f.Kind === 'boolean') {
+                return (
+                  <label key={f.Key} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      aria-label={f.Key}
+                      checked={Boolean(value)}
+                      onChange={(e) => setElicitationValue(f.Key, e.target.checked)}
+                    />
+                    <span>{label}</span>
+                  </label>
+                );
+              }
+              if (f.Kind === 'select') {
+                return (
+                  <label key={f.Key} htmlFor={controlId} className="flex flex-col gap-1 text-sm">
+                    <span>{label}</span>
+                    <select
+                      id={controlId}
+                      aria-label={f.Key}
+                      className="rounded border border-border bg-card px-2 py-1 text-sm"
+                      value={value === undefined || value === null ? '' : String(value)}
+                      onChange={(e) => setElicitationValue(f.Key, e.target.value)}
+                    >
+                      <option value="" />
+                      {(f.Options ?? []).map((o) => (
+                        <option key={o.Value} value={o.Value}>{o.Title || o.Value}</option>
+                      ))}
+                    </select>
+                  </label>
+                );
+              }
+              if (f.Kind === 'multiselect') {
+                const selected = Array.isArray(value) ? (value as string[]) : [];
+                return (
+                  <fieldset key={f.Key} aria-label={f.Key} className="flex flex-col gap-1 text-sm">
+                    <legend>{label}</legend>
+                    {(f.Options ?? []).map((o) => (
+                      <label key={o.Value} className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          aria-label={`${f.Key}:${o.Value}`}
+                          checked={selected.includes(o.Value)}
+                          onChange={(e) => toggleElicitationMulti(f.Key, o.Value, e.target.checked)}
+                        />
+                        <span>{o.Title || o.Value}</span>
+                      </label>
+                    ))}
+                  </fieldset>
+                );
+              }
+              const inputType = f.Kind === 'number' || f.Kind === 'integer' ? 'number' : 'text';
+              return (
+                <label key={f.Key} htmlFor={controlId} className="flex flex-col gap-1 text-sm">
+                  <span>{label}</span>
+                  <input
+                    id={controlId}
+                    type={inputType}
+                    aria-label={f.Key}
+                    className="rounded border border-border bg-card px-2 py-1 text-sm"
+                    value={value === undefined || value === null ? '' : String(value)}
+                    onChange={(e) => setElicitationValue(f.Key, e.target.value)}
+                  />
+                </label>
+              );
+            })}
+          </div>
+          <div className="mt-4 flex items-center justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={declineElicitation}>{t('ui.chat.elicitation_decline')}</Button>
+            <Button size="sm" disabled={elicitationRequiredMissing} onClick={submitElicitation}>{t('ui.chat.elicitation_submit')}</Button>
           </div>
         </Dialog>
       )}
