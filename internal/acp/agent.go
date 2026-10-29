@@ -110,11 +110,9 @@ func NewAgent(ctx context.Context, spec Spec, h Handler) (*Agent, error) {
 	}
 	// 与探测进程同款约束：绝不能依赖 CommandContext 的超时杀——Windows 上
 	// agent 经 npm .cmd 包装启动，ctx 取消只杀直属 cmd.exe，node 真身成孤儿。
-	// 这里用普通 Command + 独立守卫 goroutine：ctx 取消时树杀兜底；
-	// ctx 为 Background（当前唯一调用方 chat.Backend）时 Done() 为 nil，
-	// goroutine 阻塞到连接关闭（done）后退出，不泄漏。
-	// Background ctx 无 Done：与上面「不用 CommandContext 超时杀」的约束一致，
-	// 只借统一入口做 shim 解析 / 隐藏黑窗 / Windows 批处理包装。
+	// 因此这里传 Background（无 Done，不会触发 CommandContext 杀进程），
+	// 只用统一入口做 shim 解析 / 隐藏黑窗 / 批处理包装；收尾由下方独立守卫
+	// goroutine 做进程组树杀兜底。
 	cmd := executil.NewCLICommand(context.Background(), spec.Path, spec.Args)
 	// 独立进程组：Close/ctx 取消时组杀整棵 ACP 进程树（npx → 适配器 node）。
 	executil.PrepareProcessGroup(cmd)

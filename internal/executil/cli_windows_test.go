@@ -42,3 +42,13 @@ func TestWrapBatchFileLeavesExeAlone(t *testing.T) {
 		t.Fatalf("非批处理不应写 CmdLine: %q", cmd.SysProcAttr.CmdLine)
 	}
 }
+
+// TestWrapBatchFileKeepsHiddenWindow 锁死调用顺序：HideWindow 的标志不能被包装抹掉。
+func TestWrapBatchFileKeepsHiddenWindow(t *testing.T) {
+	bat := filepath.Join(t.TempDir(), "Program Files Fake", "tool.cmd")
+	cmd := NewCLICommand(context.Background(), bat, []string{"a b"})
+	attr := cmd.SysProcAttr
+	if attr == nil || !attr.HideWindow || attr.CreationFlags != createNoWindow || attr.CmdLine == "" {
+		t.Fatalf("批处理包装后应保留隐藏窗口标志: %+v", attr)
+	}
+}

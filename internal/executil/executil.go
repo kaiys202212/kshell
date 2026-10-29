@@ -21,6 +21,10 @@ func HideWindow(cmd *exec.Cmd) { hideWindow(cmd) }
 // NewCLICommand 构造调用外部 CLI 的命令。
 // 相比直接 exec.Command：额外解析 .ps1 shim、隐藏黑窗，并在 Windows 上把
 // .cmd/.bat 交给 %COMSPEC% /S /C（路径含空格时不包装会被截成 C:\Program）。
+//
+// 需要超时杀语义的调用方才传真实 ctx。.cmd → node 的场景（ACP、codebuddy 探测）
+// 必须传 context.Background()：CommandContext 取消只杀直属 cmd.exe，node 会成孤儿，
+// 这类调用方应由自己用 timer + 进程组树杀收尾。
 func NewCLICommand(ctx context.Context, bin string, args []string) *exec.Cmd {
 	path, resolved := ResolveShim(bin, args)
 	cmd := exec.CommandContext(ctx, path, resolved...)
