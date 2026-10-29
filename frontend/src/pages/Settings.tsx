@@ -515,14 +515,11 @@ export default function Settings() {
     setPlatDraft(next);
   };
 
-  // handleSetDefault：本地改默认平台，随下一次整包保存落盘；
-  // 换默认平台后原默认模型可能不属于新平台（悬空会被注入），同步清掉。
+  // handleSetDefault：本地改默认平台，随下一次整包保存落盘。
+  // 只切徽标/按钮，不动 ActiveModel 与下拉——它们跟随已保存的默认平台，
+  // 保存后重新拉取时由后端清理悬空模型并刷新列表。
   const handleSetDefault = (id: string) => {
     setModelDefault(id);
-    const target = modelPlatforms.find((p) => p.ID === id);
-    if (target && target.Models.length > 0 && !target.Models.includes(modelActive)) {
-      setModelActive('');
-    }
     setModelDirtyHint(true);
   };
 
@@ -739,8 +736,11 @@ export default function Settings() {
 
   const busyAny = !!pendingId || !!job?.Running;
 
-  // 默认平台的模型列表供「默认模型」下拉使用；modelDefault 缺失时回落第一个平台
-  const defaultPlat = modelPlatforms.find((p) => p.ID === modelDefault) ?? modelPlatforms[0];
+  // 徽标跟随本地待保存的默认平台（空时回落第一个），保证点击后全列表只有一个 Default
+  const effectiveDefault = modelDefault || modelPlatforms[0]?.ID || '';
+  // 默认模型下拉只跟随已保存的默认平台（IsDefault）：点「设为默认」不立即换列表，
+  // 保存成功重新拉取后才刷新；IsDefault 缺失时回落第一个平台
+  const savedDefaultPlat = modelPlatforms.find((p) => p.IsDefault) ?? modelPlatforms[0];
 
   // 语言选项：内置三项 + 外部语言包（label 用包内 $name，缺省回退语言码）；
   // 配置值不在任何选项里（如外部包被删）时兜底追加该 code，保证选中态可见。
@@ -1077,13 +1077,13 @@ export default function Settings() {
                   value={modelActive}
                   onChange={(e) => setModelActive(e.target.value)}
                 >
-                  {(defaultPlat?.Models ?? []).map((m) => (
+                  {(savedDefaultPlat?.Models ?? []).map((m) => (
                     <option key={m} value={m}>
                       {m}
                     </option>
                   ))}
                 </select>
-                {(!defaultPlat || defaultPlat.Models.length === 0) && (
+                {(!savedDefaultPlat || savedDefaultPlat.Models.length === 0) && (
                   <p className="text-xs text-muted-foreground">{t('ui.settings.model.models_empty')}</p>
                 )}
 
@@ -1097,7 +1097,7 @@ export default function Settings() {
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex min-w-0 items-center gap-2">
                             <span className="truncate text-sm font-medium">{p.Name}</span>
-                            {p.IsDefault || p.ID === modelDefault ? (
+                            {p.ID === effectiveDefault ? (
                               <Badge>{t('ui.settings.model.default_badge')}</Badge>
                             ) : (
                               <Button

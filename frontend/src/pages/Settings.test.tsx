@@ -924,6 +924,85 @@ describe('Settings', () => {
     expect(mocks.setModelConfig.mock.calls[0][0].DefaultPlatform).toBe('p2');
   });
 
+  it('设为默认后仅新平台显示默认徽标，原默认平台恢复按钮', async () => {
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [
+        platView({ Models: ['m1'], IsDefault: true }),
+        platView({ ID: 'p2', Name: 'GLM', Models: ['m3'], IsDefault: false }),
+      ],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
+    });
+    render(<Settings />);
+    goModel();
+    const p2 = (await screen.findByText('GLM')).closest('li')!;
+    fireEvent.click(within(p2).getByRole('button', { name: tt('ui.settings.model.set_default') }));
+
+    const p1 = screen.getAllByText('DeepSeek')[0].closest('li')!;
+    expect(within(p1).queryByText(tt('ui.settings.model.default_badge'))).toBeNull();
+    expect(
+      within(p1).getByRole('button', { name: tt('ui.settings.model.set_default') }),
+    ).toBeInTheDocument();
+    expect(within(p2).getByText(tt('ui.settings.model.default_badge'))).toBeInTheDocument();
+  });
+
+  it('设为默认后 Active model 下拉在保存前保持已保存平台的模型', async () => {
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [
+        platView({ Models: ['m1'], IsDefault: true }),
+        platView({ ID: 'p2', Name: 'GLM', Models: ['m3'], IsDefault: false }),
+      ],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
+    });
+    render(<Settings />);
+    goModel();
+    const p2 = (await screen.findByText('GLM')).closest('li')!;
+    fireEvent.click(within(p2).getByRole('button', { name: tt('ui.settings.model.set_default') }));
+
+    const sel = screen.getByLabelText(tt('ui.settings.model.active_model')) as HTMLSelectElement;
+    expect(Array.from(sel.options).map((o) => o.value)).toEqual(['m1']);
+    expect(sel.value).toBe('m1');
+  });
+
+  it('保存后 Active model 下拉刷新为新默认平台模型且徽标唯一', async () => {
+    mocks.getModelConfig
+      .mockResolvedValueOnce({
+        Enabled: true,
+        Platforms: [
+          platView({ Models: ['m1'], IsDefault: true }),
+          platView({ ID: 'p2', Name: 'GLM', Models: ['m3'], IsDefault: false }),
+        ],
+        DefaultPlatform: 'p1',
+        ActiveModel: 'm1',
+      })
+      .mockResolvedValueOnce({
+        Enabled: true,
+        Platforms: [
+          platView({ Models: ['m1'], IsDefault: false }),
+          platView({ ID: 'p2', Name: 'GLM', Models: ['m3'], IsDefault: true }),
+        ],
+        DefaultPlatform: 'p2',
+        ActiveModel: 'm3',
+      });
+    render(<Settings />);
+    goModel();
+    const p2 = (await screen.findByText('GLM')).closest('li')!;
+    fireEvent.click(within(p2).getByRole('button', { name: tt('ui.settings.model.set_default') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
+
+    const sel = (await screen.findByLabelText(
+      tt('ui.settings.model.active_model'),
+    )) as HTMLSelectElement;
+    await waitFor(() => expect(Array.from(sel.options).map((o) => o.value)).toEqual(['m3']));
+    expect(sel.value).toBe('m3');
+    const p1 = screen.getAllByText('DeepSeek')[0].closest('li')!;
+    expect(within(p1).queryByText(tt('ui.settings.model.default_badge'))).toBeNull();
+    expect(within(p2).getByText(tt('ui.settings.model.default_badge'))).toBeInTheDocument();
+  });
+
   it('平台名称必填：为空时前端拦截，不调用保存', async () => {
     render(<Settings />);
     goModel();
