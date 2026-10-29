@@ -317,6 +317,11 @@ func (a *App) SetModelConfig(in ModelConfigInput) error {
 				c.Model.ActiveModel = ""
 			}
 		}
+		if len(platforms) == 0 {
+			// 空平台列表下 ActiveModel 无意义：留着会让配置继续被视为
+			// 「kshell 托管过模型」，之后每次启动同步都清掉 ccswitch 配置。
+			c.Model.ActiveModel = ""
+		}
 		// 保存时清空全部 legacy 单平台字段，避免 Load 再迁移。
 		c.Model.Preset = ""
 		c.Model.OpenAIBaseURL = ""

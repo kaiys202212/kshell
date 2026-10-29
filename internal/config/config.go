@@ -451,6 +451,13 @@ func (c Config) normalized() Config {
 
 	// legacy 字段已完成迁移/归一，全部清空（保存时 omitempty 不再落盘）。
 	// Models 保持非 nil 空 slice，与 Default() 及旧版归一化行为一致。
+	// 无平台时 ActiveModel 必然悬空（端点/密钥都不存在），一并清空：否则它会
+	// 作为「kshell 托管过模型」的唯一痕迹，让启动同步反复清掉用户或 ccswitch
+	// 写入的 ANTHROPIC_*。真正清理历史注入由保存路径用旧配置做一次性同步。
+	if len(c.Model.Platforms) == 0 {
+		c.Model.DefaultPlatform = ""
+		c.Model.ActiveModel = ""
+	}
 	c.Model.Preset = ""
 	c.Model.OpenAIBaseURL = ""
 	c.Model.AnthropicBaseURL = ""
