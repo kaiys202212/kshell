@@ -20,7 +20,15 @@ type Implementation struct {
 	Version string `json:"version,omitempty"`
 }
 
-type ClientCapabilities struct{} // v1 不声明任何可选能力
+// ElicitationCapabilities 声明客户端支持的 elicitation 形态；
+// 目前只实现 form（结构化表单），url 等形态不声明。
+type ElicitationCapabilities struct {
+	Form *struct{} `json:"form,omitempty"`
+}
+
+type ClientCapabilities struct {
+	Elicitation *ElicitationCapabilities `json:"elicitation,omitempty"`
+}
 
 type InitializeParams struct {
 	ProtocolVersion    int                `json:"protocolVersion"`
@@ -92,8 +100,8 @@ type SessionModelState struct {
 	CurrentModelID  string      `json:"currentModelId"`
 }
 
-// ConfigOptionValue / SessionConfigOption 是新式会话配置选项的最小解析面：
-// 只关心 id=model 的 select 选项（模型切换的另一种 agent 实现路径）。
+// ConfigOptionValue / SessionConfigOption 是新式会话配置选项的解析面：
+// 既覆盖 id=model 的模型切换路径，也覆盖 OpenCode 的 mode 等其它 select 选项。
 type ConfigOptionValue struct {
 	Value       string `json:"value"`
 	Name        string `json:"name"`
@@ -102,6 +110,9 @@ type ConfigOptionValue struct {
 
 type SessionConfigOption struct {
 	ID           string              `json:"id"`
+	Name         string              `json:"name,omitempty"`
+	Description  string              `json:"description,omitempty"`
+	Category     string              `json:"category,omitempty"`
 	Type         string              `json:"type,omitempty"`
 	CurrentValue json.RawMessage     `json:"currentValue,omitempty"`
 	Options      []ConfigOptionValue `json:"options,omitempty"`
@@ -145,6 +156,9 @@ type NewSessionResult struct {
 type SessionStart struct {
 	SessionID string
 	Models    *SessionModelState
+	// ConfigOptions 保留 agent 报告的全部会话配置选项（model/mode 等），
+	// 供 UI 渲染通用选择器，而非只识别 model。
+	ConfigOptions []SessionConfigOption
 	// ModelConfig 非 nil 表示 agent 以 configOptions 形态报告了 id=model 的
 	// 选项（新式模型切换路径），选项值列表与当前值都在里面。
 	ModelConfig *SessionConfigOption
@@ -172,10 +186,35 @@ type SetModelParams struct {
 }
 
 // SetConfigOptionParams 的 Value 按 agent 声明可能是字符串或其他 JSON 值，保留原样序列化。
+// 字段名为 configId（而非 optionId），OpenCode 等实现按此严格校验。
 type SetConfigOptionParams struct {
 	SessionID string          `json:"sessionId"`
-	OptionID  string          `json:"optionId"`
+	ConfigID  string          `json:"configId"`
 	Value     json.RawMessage `json:"value"`
+}
+
+// SetConfigOptionResult 返回设置后的完整配置状态（不是增量）。
+type SetConfigOptionResult struct {
+	ConfigOptions []SessionConfigOption `json:"configOptions"`
+}
+
+// ElicitationParams 是 agent 发来的 elicitation/create 反向请求参数。
+// 目前只处理 mode=form；其余形态原样保留以便未来扩展。
+type ElicitationParams struct {
+	SessionID       string          `json:"sessionId,omitempty"`
+	ToolCallID      string          `json:"toolCallId,omitempty"`
+	RequestID       json.RawMessage `json:"requestId,omitempty"`
+	Mode            string          `json:"mode"`
+	Message         string          `json:"message"`
+	RequestedSchema json.RawMessage `json:"requestedSchema,omitempty"`
+	URL             string          `json:"url,omitempty"`
+	ElicitationID   string          `json:"elicitationId,omitempty"`
+}
+
+// ElicitationResult 是客户端对 elicitation 的应答。
+type ElicitationResult struct {
+	Action  string         `json:"action"`
+	Content map[string]any `json:"content,omitempty"`
 }
 
 type CancelParams struct {

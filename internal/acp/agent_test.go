@@ -91,10 +91,19 @@ func fakeAgentMain() {
 				}
 			}
 			if os.Getenv("ACP_FAKE_CONFIGOPT") == "1" {
-				res["configOptions"] = []any{map[string]any{
-					"id": "model", "type": "select", "currentValue": "m1",
-					"options": []any{map[string]any{"value": "m1", "name": "Model One"}},
-				}}
+				res["configOptions"] = []any{
+					map[string]any{
+						"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "m1",
+						"options": []any{map[string]any{"value": "m1", "name": "Model One"}},
+					},
+					map[string]any{
+						"id": "mode", "name": "Session Mode", "category": "mode", "type": "select", "currentValue": "build",
+						"options": []any{
+							map[string]any{"value": "build", "name": "build"},
+							map[string]any{"value": "plan", "name": "plan"},
+						},
+					},
+				}
 			}
 			reply(res)
 		case "session/set_model":
@@ -106,9 +115,27 @@ func fakeAgentMain() {
 		case "session/set_config_option":
 			if os.Getenv("ACP_FAKE_NO_CONFIGOPT") == "1" {
 				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(*m.ID), "error": map[string]any{"code": -32601, "message": "method not found"}})
-			} else {
-				reply(map[string]any{})
+				continue
 			}
+			// 校验出站参数形态：字段必须是 configId（写成 optionId 时真实 OpenCode 会 -32602）。
+			var p SetConfigOptionParams
+			if err := json.Unmarshal(m.Params, &p); err != nil || p.ConfigID == "" {
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(*m.ID), "error": map[string]any{"code": -32602, "message": "bad configId"}})
+				continue
+			}
+			reply(map[string]any{"configOptions": []any{
+				map[string]any{
+					"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "m2",
+					"options": []any{map[string]any{"value": "m2", "name": "Model Two"}},
+				},
+				map[string]any{
+					"id": "mode", "name": "Session Mode", "category": "mode", "type": "select", "currentValue": "plan",
+					"options": []any{
+						map[string]any{"value": "build", "name": "build"},
+						map[string]any{"value": "plan", "name": "plan"},
+					},
+				},
+			}})
 		case "session/prompt":
 			if os.Getenv("ACP_FAKE_STDERR_EXIT") == "1" {
 				// 模拟 agent 中途崩溃：先往 stderr 写原因再退出，退出码非 0。
@@ -145,6 +172,41 @@ func fakeAgentMain() {
 					break
 				}
 			}
+			// ACP_FAKE_ELICIT_CANCEL 与 ACP_FAKE_ELICIT 同构：都只把收到的
+			// action/content 回显成文本，供测试区分 accept 与 cancel 兜底。
+			if os.Getenv("ACP_FAKE_ELICIT") == "1" || os.Getenv("ACP_FAKE_ELICIT_CANCEL") == "1" {
+				// elicitation 是反向请求：客户端把用户填写结果作为响应回传，
+				// 这里校验表单往返后的 action/content 能被 agent 读到。
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": 77, "method": "elicitation/create", "params": map[string]any{
+					"sessionId": "sess-new",
+					"mode":      "form",
+					"message":   "Pick",
+					"requestedSchema": map[string]any{
+						"type":       "object",
+						"properties": map[string]any{"pm": map[string]any{"type": "string", "oneOf": []any{map[string]any{"const": "bun", "title": "Bun"}}}},
+						"required":   []any{"pm"},
+					},
+				}})
+				for sc.Scan() {
+					var resp struct {
+						ID     json.RawMessage `json:"id"`
+						Result json.RawMessage `json:"result"`
+					}
+					if json.Unmarshal(sc.Bytes(), &resp) != nil {
+						continue
+					}
+					if strings.TrimSpace(string(resp.ID)) != "77" {
+						continue
+					}
+					var res ElicitationResult
+					_ = json.Unmarshal(resp.Result, &res)
+					_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+						"sessionId": "sess-new",
+						"update":    map[string]any{"sessionUpdate": "agent_message_chunk", "messageId": "m2", "content": map[string]any{"type": "text", "text": fmt.Sprintf("%s:%v", res.Action, res.Content["pm"])}},
+					}})
+					break
+				}
+			}
 			reply(map[string]any{"stopReason": "end_turn"})
 		case "session/cancel":
 			// 通知无响应
@@ -165,6 +227,7 @@ func TestMain(m *testing.M) {
 type captureHandler struct {
 	mu       sync.Mutex
 	updates  []string
+	raw      []string // 原始 update JSON，供需要正文内容的断言使用
 	permDone chan PermissionOutcome
 }
 
@@ -175,6 +238,7 @@ func (h *captureHandler) SessionUpdate(sessionID string, update json.RawMessage)
 	_ = json.Unmarshal(update, &head)
 	h.mu.Lock()
 	h.updates = append(h.updates, sessionID+":"+head.SessionUpdate)
+	h.raw = append(h.raw, string(update))
 	h.mu.Unlock()
 }
 
@@ -679,5 +743,122 @@ func TestAgentAuthStuckReturnsRPCError(t *testing.T) {
 	var rpcErr *RPCError
 	if !errors.As(err, &rpcErr) || rpcErr.Code != ErrCodeAuthRequired {
 		t.Fatalf("重试仍应报 authRequired, got %v", err)
+	}
+}
+
+func TestAgentSetConfigOption(t *testing.T) {
+	a := newTestAgent(t, fakeAgentSpecEnv(t, "ACP_FAKE_CONFIGOPT=1"))
+	ctx, cancel := testCtx()
+	defer cancel()
+	if _, err := a.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ss, err := a.NewSession(ctx, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts, err := a.SetConfigOption(ctx, ss.SessionID, "mode", "plan")
+	if err != nil {
+		t.Fatalf("set config option: %v", err)
+	}
+	if len(opts) != 2 || opts[0].ID != "model" || string(opts[1].CurrentValue) != `"plan"` {
+		t.Fatalf("options = %+v", opts)
+	}
+}
+
+type elicitHandler struct {
+	*captureHandler
+	res ElicitationResult
+}
+
+func (h *elicitHandler) Elicitation(_ context.Context, _ string, p ElicitationParams) (ElicitationResult, error) {
+	if p.Mode != "form" || p.Message != "Pick" {
+		return ElicitationResult{}, fmt.Errorf("bad params: %+v", p)
+	}
+	return h.res, nil
+}
+
+func TestAgentElicitationCreate(t *testing.T) {
+	a := newTestAgent(t, fakeAgentSpecEnv(t, "ACP_FAKE_ELICIT=1"))
+	ctx, cancel := testCtx()
+	defer cancel()
+	h := &elicitHandler{captureHandler: &captureHandler{}, res: ElicitationResult{Action: "accept", Content: map[string]any{"pm": "bun"}}}
+	a.handler = h
+	if _, err := a.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ss, err := a.NewSession(ctx, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop, err := a.Prompt(ctx, ss.SessionID, []ContentBlock{{Type: "text", Text: "go"}})
+	if err != nil || stop != "end_turn" {
+		t.Fatalf("prompt = %q, %v", stop, err)
+	}
+	h.mu.Lock()
+	updates := append([]string(nil), h.raw...)
+	h.mu.Unlock()
+	found := false
+	for _, u := range updates {
+		if strings.Contains(u, "accept:bun") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("elicitation not round-tripped, updates = %v", updates)
+	}
+}
+
+type elicitErrorHandler struct {
+	*captureHandler
+}
+
+func (h *elicitErrorHandler) Elicitation(_ context.Context, _ string, _ ElicitationParams) (ElicitationResult, error) {
+	return ElicitationResult{Action: "accept", Content: map[string]any{"pm": "bun"}}, errors.New("boom")
+}
+
+// 无法处理 elicitation 时（未实现可选接口 / 处理器报错）必须回 cancel，
+// 且不能让 session/prompt 挂死：假 agent 会等这个响应再返回 end_turn。
+func TestAgentElicitationCancelFallback(t *testing.T) {
+	plain := &captureHandler{}
+	errCase := &elicitErrorHandler{captureHandler: &captureHandler{}}
+	cases := []struct {
+		name    string
+		handler Handler
+		capture *captureHandler
+	}{
+		{"handler 未实现 ElicitationHandler", plain, plain},
+		{"handler 返回错误", errCase, errCase.captureHandler},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newTestAgent(t, fakeAgentSpecEnv(t, "ACP_FAKE_ELICIT_CANCEL=1"))
+			a.handler = tc.handler
+			ctx, cancel := testCtx()
+			defer cancel()
+			if _, err := a.Initialize(ctx); err != nil {
+				t.Fatal(err)
+			}
+			ss, err := a.NewSession(ctx, "/tmp")
+			if err != nil {
+				t.Fatal(err)
+			}
+			stop, err := a.Prompt(ctx, ss.SessionID, []ContentBlock{{Type: "text", Text: "go"}})
+			if err != nil || stop != "end_turn" {
+				t.Fatalf("prompt = %q, %v", stop, err)
+			}
+			tc.capture.mu.Lock()
+			updates := append([]string(nil), tc.capture.raw...)
+			tc.capture.mu.Unlock()
+			found := false
+			for _, u := range updates {
+				if strings.Contains(u, "cancel") {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("expected cancel fallback, updates = %v", updates)
+			}
+		})
 	}
 }

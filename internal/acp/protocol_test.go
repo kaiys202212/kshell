@@ -174,3 +174,41 @@ func TestMarshalSetModelParams(t *testing.T) {
 		t.Fatalf("set_model params = %s", b)
 	}
 }
+
+func TestInitializeAdvertisesElicitationForm(t *testing.T) {
+	b, err := json.Marshal(InitializeParams{
+		ProtocolVersion: 1,
+		ClientCapabilities: ClientCapabilities{
+			Elicitation: &ElicitationCapabilities{Form: &struct{}{}},
+		},
+		ClientInfo: Implementation{Name: "kshell"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"elicitation":{"form":{}}`) {
+		t.Fatalf("capabilities = %s", b)
+	}
+}
+
+func TestMarshalSetConfigOptionParamsUsesConfigId(t *testing.T) {
+	b, err := json.Marshal(SetConfigOptionParams{SessionID: "s1", ConfigID: "mode", Value: json.RawMessage(`"plan"`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `{"sessionId":"s1","configId":"mode","value":"plan"}` {
+		t.Fatalf("set_config_option params = %s", b)
+	}
+}
+
+func TestSessionStartKeepsAllConfigOptions(t *testing.T) {
+	raw := json.RawMessage(`{"sessionId":"s1","configOptions":[{"id":"model","name":"Model","category":"model","type":"select","currentValue":"m1","options":[{"value":"m1","name":"One"}]},{"id":"mode","name":"Session Mode","category":"mode","type":"select","currentValue":"build","options":[{"value":"plan","name":"plan"}]}]}`)
+	var res NewSessionResult
+	if err := json.Unmarshal(raw, &res); err != nil {
+		t.Fatal(err)
+	}
+	ss := sessionStartFromResult(res)
+	if len(ss.ConfigOptions) != 2 || ss.ConfigOptions[1].ID != "mode" || ss.ConfigOptions[1].Category != "mode" {
+		t.Fatalf("ConfigOptions = %+v", ss.ConfigOptions)
+	}
+}

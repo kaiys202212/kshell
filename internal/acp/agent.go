@@ -49,6 +49,14 @@ type Handler interface {
 	RequestPermission(ctx context.Context, sessionID, requestID string, p RequestPermissionParams) (PermissionOutcome, error)
 }
 
+// ElicitationHandler 是可选能力：实现了它的 Handler 才会收到 elicitation/create
+// 表单请求。独立接口避免给所有既有实现增加必选方法。
+// requestID 是 JSON-RPC 请求 id；ElicitationParams.RequestID 则是 params 里
+// 单独的 requestId 字段（用于请求范围内的关联），两者不要混淆。
+type ElicitationHandler interface {
+	Elicitation(ctx context.Context, requestID string, p ElicitationParams) (ElicitationResult, error)
+}
+
 // syncBuffer 是带锁的 bytes.Buffer：os/exec 的 stderr 拷贝 goroutine 写入，
 // 而 Stderr() 可能在任意时刻读取，必须互斥避免数据竞争。
 type syncBuffer struct {
@@ -208,6 +216,35 @@ func (a *Agent) handleRequest(m message) {
 		id, _ = json.Marshal(string(*m.ID))
 	}
 	normID := string(*m.ID)
+	// elicitation/create 分支放在权限分支之前，仅为可读性：先处理表单类反向请求，
+	// 再处理权限确认。
+	if m.Method == "elicitation/create" {
+		var p ElicitationParams
+		if err := json.Unmarshal(m.Params, &p); err != nil || p.Mode != "form" {
+			a.writeResponse(id, ElicitationResult{Action: "cancel"}, nil)
+			return
+		}
+		eh, ok := a.handler.(ElicitationHandler)
+		if !ok {
+			a.writeResponse(id, ElicitationResult{Action: "cancel"}, nil)
+			return
+		}
+		res, err := eh.Elicitation(a.baseCtx, normID, p)
+		// action 只接受规范三值；非 accept 时清空 content，避免把已填数据
+		// 误传给放弃/取消的请求。
+		switch res.Action {
+		case "accept":
+		case "decline", "cancel":
+			res.Content = nil
+		default:
+			res = ElicitationResult{Action: "cancel"}
+		}
+		if err != nil {
+			res = ElicitationResult{Action: "cancel"}
+		}
+		a.writeResponse(id, res, nil)
+		return
+	}
 	if m.Method == "session/request_permission" && a.handler != nil {
 		p, err := decodeRequestPermissionParams(m.Params)
 		if err != nil {
@@ -284,7 +321,11 @@ func (a *Agent) Initialize(ctx context.Context) (InitializeResult, error) {
 	var res InitializeResult
 	params := InitializeParams{
 		ProtocolVersion: 1,
-		ClientInfo:      Implementation{Name: "kshell", Title: "Capybara", Version: "0.1.0"},
+		// 只声明 elicitation.form：kshell 能渲染结构化表单，其余可选能力不虚报。
+		ClientCapabilities: ClientCapabilities{
+			Elicitation: &ElicitationCapabilities{Form: &struct{}{}},
+		},
+		ClientInfo: Implementation{Name: "kshell", Title: "Capybara", Version: "0.1.0"},
 	}
 	err := a.call(ctx, "initialize", params, &res)
 	return res, err
@@ -298,7 +339,7 @@ func (a *Agent) SetMCP(servers []McpServerStdio) {
 }
 
 // SetSettingsMeta 设置 session/new 与 session/load 参数里的 _meta 载荷
-//（如 claude 的 {"claudeCode":{"options":{"settings":"..."}}}）。
+// （如 claude 的 {"claudeCode":{"options":{"settings":"..."}}}）。
 // 空串表示不携带。签名用 string：chat 层的可选接口断言按精确签名匹配，
 // json.RawMessage 形参会让 *Agent 不满足 interface{ SetSettingsMeta(string) }。
 func (a *Agent) SetSettingsMeta(raw string) {
@@ -335,7 +376,7 @@ func (a *Agent) mcpParams() []any {
 
 // sessionStartFromResult 从 new/load 响应提取调用方需要的会话信息。
 func sessionStartFromResult(res NewSessionResult) SessionStart {
-	out := SessionStart{SessionID: res.SessionID, Models: res.Models}
+	out := SessionStart{SessionID: res.SessionID, Models: res.Models, ConfigOptions: res.ConfigOptions}
 	for i := range res.ConfigOptions {
 		if res.ConfigOptions[i].ID == "model" {
 			opt := res.ConfigOptions[i]
@@ -374,24 +415,36 @@ func (a *Agent) Prompt(ctx context.Context, sessionID string, blocks []ContentBl
 
 // SetModel 运行时切换会话模型：优先 session/set_model（v1 形态）；
 // agent 返回 -32601（method not found）时回退新式的 session/set_config_option
-//（optionId 固定 "model"，当前官方适配器即此形态）。两条路都不通时错误上抛。
+// （configId 固定 "model"，当前官方适配器即此形态）。两条路都不通时错误上抛。
 func (a *Agent) SetModel(ctx context.Context, sessionID, modelID string) error {
 	err := a.call(ctx, "session/set_model", SetModelParams{SessionID: sessionID, ModelID: modelID}, nil)
 	var rpcErr *RPCError
 	if !errors.As(err, &rpcErr) || rpcErr.Code != -32601 {
 		return err
 	}
-	value, err := json.Marshal(modelID)
+	_, err = a.SetConfigOption(ctx, sessionID, "model", modelID)
+	return err
+}
+
+// SetConfigOption 设置会话配置项（model / mode 等），返回 agent 报告的最新
+// 完整配置状态。value 是 select 选项的字符串值（布尔型配置项当前不声明，
+// 因此不接受非字符串值）。
+func (a *Agent) SetConfigOption(ctx context.Context, sessionID, configID, value string) ([]SessionConfigOption, error) {
+	raw, err := json.Marshal(value)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return a.call(ctx, "session/set_config_option", SetConfigOptionParams{SessionID: sessionID, OptionID: "model", Value: value}, nil)
+	var res SetConfigOptionResult
+	if err := a.call(ctx, "session/set_config_option", SetConfigOptionParams{SessionID: sessionID, ConfigID: configID, Value: raw}, &res); err != nil {
+		return nil, err
+	}
+	return res.ConfigOptions, nil
 }
 
 // Authenticate 用指定登录方式完成认证：未登录的 session/new|load 报
 // -32000 authRequired 后，客户端选 initialize 广播的 authMethod 调本方法，
 // agent 端负责拉起官方登录流程（如 Cursor 的浏览器登录）。out 恒为 nil
-//（规范只回空结果），错误上抛由 chat 层归一化。
+// （规范只回空结果），错误上抛由 chat 层归一化。
 func (a *Agent) Authenticate(ctx context.Context, methodID string) error {
 	return a.call(ctx, "authenticate", AuthenticateParams{MethodID: methodID}, nil)
 }
