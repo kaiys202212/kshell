@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.24 (2026-10-29)
+
+- Fixed agent tools being unusable under Windows install paths containing spaces: the CLI launch entry is unified with automatic `.cmd` batch wrapping — version detection, opencode session enumeration and TUI session launch for tools under `C:\Program Files` all work again; ACP and CodeBuddy / TRAE detection now go through the same entry.
+- Fixed the platform polluting Claude's configuration when only an OpenAI-protocol platform is configured: model keys, top-level `model` and the ACP token are written only when an Anthropic endpoint is configured.
+- Settings keeps a single "set as default" platform badge, and the Active model dropdown now refreshes after saving, so the state is no longer misleading.
+- TUI now syncs the platform model into each tool's own configuration at startup, matching the desktop behavior.
+
 ## v0.1.23 (2026-10-27)
 
 - Fixed the one-click update failure: the update script in v0.1.21 / v0.1.22 always errored on Windows PowerShell 5.1, so the downloaded new version could never be swapped into place (leaving a leftover `kshell-desktop.exe.new` in the install directory) and auto-update kept failing. Updates work normally from this version on.
