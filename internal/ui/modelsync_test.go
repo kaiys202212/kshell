@@ -76,13 +76,14 @@ func TestSyncAgentModelsWritesClaudeSettings(t *testing.T) {
 	syncAgentModels(home, mc, nil)
 
 	env := readSettingsEnv(t, home)
+	// ActiveModel 不在平台列表里：Sonnet 用 ActiveModel，Opus/Haiku 顺延列表前两项。
 	want := map[string]string{
 		"ANTHROPIC_BASE_URL":             "https://ant/",
 		"ANTHROPIC_AUTH_TOKEN":           "k1",
 		"ANTHROPIC_MODEL":                "m-active",
-		"ANTHROPIC_DEFAULT_SONNET_MODEL": "m1",
-		"ANTHROPIC_DEFAULT_OPUS_MODEL":   "m2",
-		"ANTHROPIC_DEFAULT_HAIKU_MODEL":  "m3",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL": "m-active",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":   "m1",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":  "m2",
 	}
 	for k, v := range want {
 		if got, _ := env[k].(string); got != v {

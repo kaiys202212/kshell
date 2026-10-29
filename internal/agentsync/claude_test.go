@@ -187,6 +187,81 @@ func TestClaudeSyncWritesActiveModelAndDefaults(t *testing.T) {
 	}
 }
 
+// active_model 不在列表首位时，Sonnet 别名必须指向它；Opus/Haiku 顺延到其余模型，
+// 否则 Claude 顶层 "model":"sonnet" 会请求用户没选的列表首项。
+func TestClaudeSyncSonnetAliasUsesActiveModel(t *testing.T) {
+	home := t.TempDir()
+	in := SyncInput{
+		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "glm-5.3-flash",
+		Platforms: []config.ModelPlatform{{
+			ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk-1",
+			Models: []string{"deepseek-v4.1-flash", "glm-5.3-flash", "qwen3.8-flash", "glm-5.3"},
+		}},
+	}
+	if err := (Claude{}).Sync(home, in); err != nil {
+		t.Fatal(err)
+	}
+	env := readClaudeSettings(t, home)["env"].(map[string]any)
+	if env["ANTHROPIC_MODEL"] != "glm-5.3-flash" {
+		t.Fatalf("ANTHROPIC_MODEL = %v", env["ANTHROPIC_MODEL"])
+	}
+	if env["ANTHROPIC_DEFAULT_SONNET_MODEL"] != "glm-5.3-flash" {
+		t.Fatalf("SONNET 应等于 ActiveModel: %v", env["ANTHROPIC_DEFAULT_SONNET_MODEL"])
+	}
+	if env["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "deepseek-v4.1-flash" {
+		t.Fatalf("OPUS = %v", env["ANTHROPIC_DEFAULT_OPUS_MODEL"])
+	}
+	if env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "qwen3.8-flash" {
+		t.Fatalf("HAIKU = %v", env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+	}
+}
+
+// ActiveModel 不在平台列表里：Sonnet 仍用它，Opus/Haiku 取列表前两项。
+func TestClaudeSyncSonnetAliasUsesActiveModelNotInList(t *testing.T) {
+	home := t.TempDir()
+	in := SyncInput{
+		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "custom-model",
+		Platforms: []config.ModelPlatform{{
+			ID: "p1", AnthropicBaseURL: "https://ant.example/",
+			Models: []string{"deepseek-v4.1-flash", "glm-5.3-flash"},
+		}},
+	}
+	if err := (Claude{}).Sync(home, in); err != nil {
+		t.Fatal(err)
+	}
+	env := readClaudeSettings(t, home)["env"].(map[string]any)
+	if env["ANTHROPIC_DEFAULT_SONNET_MODEL"] != "custom-model" {
+		t.Fatalf("SONNET = %v", env["ANTHROPIC_DEFAULT_SONNET_MODEL"])
+	}
+	if env["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "deepseek-v4.1-flash" {
+		t.Fatalf("OPUS = %v", env["ANTHROPIC_DEFAULT_OPUS_MODEL"])
+	}
+	if env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "glm-5.3-flash" {
+		t.Fatalf("HAIKU = %v", env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+	}
+}
+
+// 排除 active 后没有剩余模型：Opus/Haiku 回落 Sonnet。
+func TestClaudeSyncAliasFallsBackWhenFewModels(t *testing.T) {
+	home := t.TempDir()
+	in := SyncInput{
+		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "deepseek-v4.1-flash",
+		Platforms: []config.ModelPlatform{{
+			ID: "p1", AnthropicBaseURL: "https://ant.example/",
+			Models: []string{"deepseek-v4.1-flash"},
+		}},
+	}
+	if err := (Claude{}).Sync(home, in); err != nil {
+		t.Fatal(err)
+	}
+	env := readClaudeSettings(t, home)["env"].(map[string]any)
+	for _, k := range []string{"ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"} {
+		if env[k] != "deepseek-v4.1-flash" {
+			t.Fatalf("%s 应回落 ActiveModel: %v", k, env[k])
+		}
+	}
+}
+
 // ActiveModel 空时回落平台模型列表首项；无模型则不写 MODEL 键。
 func TestClaudeSyncModelFallsBackToFirstPlatformModel(t *testing.T) {
 	home := t.TempDir()

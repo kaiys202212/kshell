@@ -190,29 +190,43 @@ func claudeModelManaged(in SyncInput) bool {
 }
 
 // writeModelEnv 写入 ANTHROPIC_MODEL 与三个 DEFAULT 别名；无可用模型名则不写。
+//
+// Sonnet 取 ActiveModel（空则列表首项），Opus/Haiku 顺延到排除 ActiveModel 后的
+// 列表项。Claude 顶层 "model":"sonnet" 会解析到 SONNET 别名；若这里按固定下标
+// 取列表首项，用户在 kshell 选的 active_model 就会被无视，可能请求到未选模型。
 func writeModelEnv(env map[string]any, in SyncInput) {
-	models := platformModelNames(in)
-	active := strings.TrimSpace(in.ActiveModel)
-	if active == "" && len(models) > 0 {
-		active = models[0]
-	}
-	if active == "" {
+	ordered := modelAliasOrder(platformModelNames(in), strings.TrimSpace(in.ActiveModel))
+	if len(ordered) == 0 {
 		return
 	}
-	env["ANTHROPIC_MODEL"] = active
-	sonnet, opus, haiku := active, active, active
-	if len(models) > 0 {
-		sonnet = models[0]
+	env["ANTHROPIC_MODEL"] = ordered[0]
+	env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = ordered[0]
+	env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = aliasAt(ordered, 1)
+	env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = aliasAt(ordered, 2)
+}
+
+// modelAliasOrder 返回 [active] + 排除 active 的模型列表（保持原顺序）。
+// active 为空时直接返回列表，保持原有回落语义。
+func modelAliasOrder(models []string, active string) []string {
+	ordered := make([]string, 0, len(models)+1)
+	if active != "" {
+		ordered = append(ordered, active)
 	}
-	if len(models) > 1 {
-		opus = models[1]
+	for _, m := range models {
+		if m == active {
+			continue
+		}
+		ordered = append(ordered, m)
 	}
-	if len(models) > 2 {
-		haiku = models[2]
+	return ordered
+}
+
+// aliasAt 取下标项，不足时回落首项（Opus/Haiku 没有更多模型可用）。
+func aliasAt(ordered []string, i int) string {
+	if i < len(ordered) {
+		return ordered[i]
 	}
-	env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = sonnet
-	env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = opus
-	env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = haiku
+	return ordered[0]
 }
 
 // platformModelNames 取默认平台的非空模型名列表（顺序保留）。
