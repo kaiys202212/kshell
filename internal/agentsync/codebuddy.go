@@ -25,6 +25,10 @@ func (c CodeBuddy) ConfigExists(home string) bool {
 }
 
 func (c CodeBuddy) Sync(home string, in SyncInput) error {
+	// 从未配置过模型：models.json / settings.json 原样保留。
+	if !in.Managed() {
+		return nil
+	}
 	path := c.configPath(home)
 	doc, err := readJSONObject(path)
 	if err != nil {

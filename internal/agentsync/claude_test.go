@@ -83,7 +83,7 @@ func TestClaudeSyncDisabledRemovesKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := Claude{}
-	if err := c.Sync(home, SyncInput{Enabled: false}); err != nil {
+	if err := c.Sync(home, SyncInput{Enabled: false, Platforms: []config.ModelPlatform{{ID: "p1"}}}); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
 	env := readClaudeSettings(t, home)["env"].(map[string]any)
@@ -317,6 +317,58 @@ func TestClaudeSyncModelFallsBackToFirstPlatformModel(t *testing.T) {
 	}
 }
 
+// 从未配置过模型（无任何 kshell 痕迹）：settings.json 必须原样保留——用户或
+// ccswitch 写入的端点/模型/密钥都不能被清；但仍补写登录标记（只动登录）。
+func TestClaudeSyncUnmanagedLeavesSettingsUntouched(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"env":{"ANTHROPIC_BASE_URL":"https://ccswitch.example/","ANTHROPIC_AUTH_TOKEN":"sk-user","ANTHROPIC_MODEL":"user-model"},"model":"sonnet"}`)
+	settingsPath := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(settingsPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (Claude{}).Sync(home, SyncInput{}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	b, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != string(original) {
+		t.Fatalf("未配置过模型时不得改写 settings.json:\n got=%s\nwant=%s", b, original)
+	}
+	ob, err := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if err != nil {
+		t.Fatalf("应仍补写登录标记: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(ob, &doc); err != nil {
+		t.Fatalf("非法 JSON: %v", err)
+	}
+	if doc["hasCompletedOnboarding"] != true {
+		t.Fatalf("hasCompletedOnboarding = %v", doc["hasCompletedOnboarding"])
+	}
+}
+
+// 未配置过模型且没有 settings.json：连文件都不该创建（只写登录标记）。
+func TestClaudeSyncUnmanagedDoesNotCreateSettings(t *testing.T) {
+	home := t.TempDir()
+	if err := (Claude{}).Sync(home, SyncInput{}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("不应创建 settings.json: err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude.json")); err != nil {
+		t.Fatalf("应写入登录标记: %v", err)
+	}
+}
+
 // Enabled=false 时清除模型键（含用户 settings 里残留的 mimo 等）。
 func TestClaudeSyncDisabledRemovesModelKeys(t *testing.T) {
 	home := t.TempDir()
@@ -328,7 +380,7 @@ func TestClaudeSyncDisabledRemovesModelKeys(t *testing.T) {
 		[]byte(`{"env":{"ANTHROPIC_MODEL":"mimo-v2.5-pro","ANTHROPIC_DEFAULT_SONNET_MODEL":"mimo-v2.5","KEEP":"yes"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := (Claude{}).Sync(home, SyncInput{Enabled: false}); err != nil {
+	if err := (Claude{}).Sync(home, SyncInput{Enabled: false, Platforms: []config.ModelPlatform{{ID: "p1"}}}); err != nil {
 		t.Fatal(err)
 	}
 	env := readClaudeSettings(t, home)["env"].(map[string]any)
@@ -555,7 +607,7 @@ func TestClaudeSyncRemovesStaleDisplayKeys(t *testing.T) {
 func TestClaudeSyncDisabledRemovesDisplayKeys(t *testing.T) {
 	home := t.TempDir()
 	seedDisplayKeys(t, home)
-	if err := (Claude{}).Sync(home, SyncInput{Enabled: false}); err != nil {
+	if err := (Claude{}).Sync(home, SyncInput{Enabled: false, Platforms: []config.ModelPlatform{{ID: "p1"}}}); err != nil {
 		t.Fatal(err)
 	}
 	env := readClaudeSettings(t, home)["env"].(map[string]any)

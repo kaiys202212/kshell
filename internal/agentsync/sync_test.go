@@ -19,6 +19,28 @@ func TestInputFromModelCarriesDefaultPlatform(t *testing.T) {
 	}
 }
 
+// Managed 决定是否允许改写各工具自有模型配置：只有 kshell 留有配置痕迹
+//（启用、平台、默认平台或 ActiveModel）才算接管过；从未配置过必须原样保留。
+func TestSyncInputManaged(t *testing.T) {
+	cases := []struct {
+		name string
+		in   SyncInput
+		want bool
+	}{
+		{"空配置", SyncInput{}, false},
+		{"仅空白", SyncInput{DefaultPlatformID: " ", ActiveModel: "  "}, false},
+		{"启用", SyncInput{Enabled: true}, true},
+		{"有平台", SyncInput{Platforms: []config.ModelPlatform{{ID: "p1"}}}, true},
+		{"仅 ActiveModel 残留", SyncInput{ActiveModel: "m"}, true},
+		{"仅 DefaultPlatform 残留", SyncInput{DefaultPlatformID: "p1"}, true},
+	}
+	for _, c := range cases {
+		if got := c.in.Managed(); got != c.want {
+			t.Fatalf("%s: Managed = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestInputFromModelCarriesActiveModel(t *testing.T) {
 	in := InputFromModel(config.ModelConfig{Enabled: true, ActiveModel: "glm-5.3-flash"})
 	if in.ActiveModel != "glm-5.3-flash" {

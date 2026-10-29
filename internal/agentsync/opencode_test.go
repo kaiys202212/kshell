@@ -134,7 +134,7 @@ func TestOpenCodeSyncDisabledClearsNamespace(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cfgDir, "opencode.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := (OpenCode{}).Sync(home, SyncInput{Enabled: false}); err != nil {
+	if err := (OpenCode{}).Sync(home, SyncInput{Enabled: false, Platforms: []config.ModelPlatform{{ID: "p1"}}}); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
 	doc := readOpenCodeJSON(t, home)
@@ -162,6 +162,31 @@ func TestOpenCodeConfigExists(t *testing.T) {
 	}
 	if !oc.ConfigExists(home) {
 		t.Fatal("有 opencode.json 时 ConfigExists 应为 true")
+	}
+}
+
+// 从未配置过模型：opencode.json 原样保留（不删 kshell-* 残留、不补 $schema）。
+func TestOpenCodeSyncUnmanagedLeavesConfigUntouched(t *testing.T) {
+	home := t.TempDir()
+	cfgDir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"provider":{"kshell-old":{"name":"old"},"user":{"name":"user"}}}`)
+	path := filepath.Join(cfgDir, "opencode.json")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (OpenCode{}).Sync(home, SyncInput{}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != string(original) {
+		t.Fatalf("未配置过模型时不得改写 opencode.json:\n got=%s\nwant=%s", b, original)
 	}
 }
 

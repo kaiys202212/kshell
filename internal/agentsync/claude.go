@@ -67,6 +67,13 @@ var kshellEnvKeys = []string{
 
 func (c Claude) Sync(home string, in SyncInput) error {
 	path := c.configPath(home)
+	// 从未配置过模型：settings.json 整份不碰（不读、不建、不改写），只补写
+	// 登录标记。否则「先删后建」会清掉用户或 ccswitch 写入的 ANTHROPIC_*，
+	// 把本来可用的 Claude Code 弄坏。
+	if !in.Managed() {
+		skipOnboarding(home)
+		return nil
+	}
 	doc, err := readJSONObject(path)
 	if err != nil {
 		return err

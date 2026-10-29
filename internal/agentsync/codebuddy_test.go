@@ -548,6 +548,31 @@ func TestSyncAllSkipsUninstalledWithoutConfig(t *testing.T) {
 	}
 }
 
+// 从未配置过模型：models.json 原样保留（不删 kshell 条目、不校正默认模型）。
+func TestCodeBuddySyncUnmanagedLeavesConfigUntouched(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".codebuddy")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"models":[{"id":"user-m","name":"User","vendor":"openai"},{"id":"glm-x","name":"kshell: glm-x","vendor":"kshell"}],"availableModels":["user-m"]}`)
+	path := filepath.Join(dir, "models.json")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (CodeBuddy{}).Sync(home, SyncInput{}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != string(original) {
+		t.Fatalf("未配置过模型时不得改写 models.json:\n got=%s\nwant=%s", b, original)
+	}
+}
+
 func readCodeBuddyJSON(t *testing.T, home string) map[string]any {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(home, ".codebuddy", "models.json"))

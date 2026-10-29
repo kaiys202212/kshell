@@ -25,6 +25,17 @@ type SyncInput struct {
 	ActiveModel string
 }
 
+// Managed 报告 kshell 是否曾接管过模型配置：启用、留有平台、默认平台或
+// ActiveModel 任一即可。从未配置过（false）时各工具自有配置必须原样保留——
+// 用户或 ccswitch 写入的端点/模型键不能被「先删后建」清掉；Claude 的登录
+// 标记是唯一例外（见 Claude.Sync）。
+func (in SyncInput) Managed() bool {
+	return in.Enabled ||
+		len(in.Platforms) > 0 ||
+		strings.TrimSpace(in.DefaultPlatformID) != "" ||
+		strings.TrimSpace(in.ActiveModel) != ""
+}
+
 // Target 是某一个 agent 的自有配置同步适配器。
 type Target interface {
 	ToolID() string

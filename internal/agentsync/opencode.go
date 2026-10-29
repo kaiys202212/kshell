@@ -22,6 +22,10 @@ func (o OpenCode) ConfigExists(home string) bool {
 }
 
 func (o OpenCode) Sync(home string, in SyncInput) error {
+	// 从未配置过模型：opencode.json 原样保留，不删 kshell-* 残留也不补默认键。
+	if !in.Managed() {
+		return nil
+	}
 	path := o.configPath(home)
 	doc, err := readJSONObject(path)
 	if err != nil {

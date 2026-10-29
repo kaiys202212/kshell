@@ -437,6 +437,48 @@ func TestSetModelConfigSyncsOpenCode(t *testing.T) {
 	}
 }
 
+// 桌面端首轮扫描会无条件同步各工具模型配置；但 kshell 从未配置过模型时
+//（默认 Enabled=false、无平台），必须保留用户/ccswitch 写入的 Claude 配置，
+// 只补写登录标记。
+func TestSyncAgentModelsUnmanagedPreservesClaudeSettings(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"env":{"ANTHROPIC_BASE_URL":"https://ccswitch.example/","ANTHROPIC_AUTH_TOKEN":"sk-user","ANTHROPIC_MODEL":"user-model"},"model":"sonnet"}`)
+	settingsPath := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(settingsPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewAppWith(Options{Home: home, Config: config.Default()})
+	app.mu.Lock()
+	app.tools = []discovery.Tool{{ID: "claude", Installed: true}}
+	app.mu.Unlock()
+
+	app.syncAgentModels()
+
+	b, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != string(original) {
+		t.Fatalf("未配置过模型时不得改写 settings.json:\n got=%s\nwant=%s", b, original)
+	}
+	ob, err := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if err != nil {
+		t.Fatalf("应仍处理登录标记: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(ob, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc["hasCompletedOnboarding"] != true {
+		t.Fatalf("hasCompletedOnboarding = %v", doc["hasCompletedOnboarding"])
+	}
+}
+
 // syncAgentModelTool("claude") 应写入 ~/.claude/settings.json（新装路径底层调用）。
 func TestSyncAgentModelToolClaude(t *testing.T) {
 	home := t.TempDir()

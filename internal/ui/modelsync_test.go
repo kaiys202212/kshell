@@ -164,29 +164,8 @@ func TestSyncAgentModelsRemovesEmptyEnv(t *testing.T) {
 	}
 }
 
-// 门禁：只有配置里还留有 kshell 托管痕迹才同步（禁用后仍要清理）。
-func TestModelManaged(t *testing.T) {
-	cases := []struct {
-		name string
-		mc   config.ModelConfig
-		want bool
-	}{
-		{"空配置", config.ModelConfig{}, false},
-		{"仅空白", config.ModelConfig{ActiveModel: "  ", DefaultPlatform: " "}, false},
-		{"启用", config.ModelConfig{Enabled: true}, true},
-		{"有平台", config.ModelConfig{Platforms: []config.ModelPlatform{{ID: "p1"}}}, true},
-		{"仅 ActiveModel 残留", config.ModelConfig{ActiveModel: "m"}, true},
-		{"仅 DefaultPlatform 残留", config.ModelConfig{DefaultPlatform: "p1"}, true},
-	}
-	for _, c := range cases {
-		if got := modelManaged(c.mc); got != c.want {
-			t.Fatalf("%s: modelManaged = %v, want %v", c.name, got, c.want)
-		}
-	}
-}
-
-// 从未配置过平台模型（默认 Enabled=false、无平台）时不得同步：
-// 否则会清掉用户手写或 ccswitch 写入的 ANTHROPIC_*。
+// 从未配置过平台模型（默认 Enabled=false、无平台）时不得同步模型：
+// 否则会清掉用户手写或 ccswitch 写入的 ANTHROPIC_*。登录标记仍应处理。
 func TestSyncAgentModelsNoopWhenNeverConfigured(t *testing.T) {
 	home := t.TempDir()
 	writeSettings(t, home, map[string]any{"env": map[string]any{
@@ -199,6 +178,17 @@ func TestSyncAgentModelsNoopWhenNeverConfigured(t *testing.T) {
 	env := readSettingsEnv(t, home)
 	if env["ANTHROPIC_BASE_URL"] != "https://mine/" || env["ANTHROPIC_MODEL"] != "mine" {
 		t.Fatalf("未配置过平台模型时不得改动用户 env: %v", env)
+	}
+	raw, err := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if err != nil {
+		t.Fatalf("应仍处理登录标记: %v", err)
+	}
+	var onboarding map[string]any
+	if err := json.Unmarshal(raw, &onboarding); err != nil {
+		t.Fatalf("非法 JSON: %v", err)
+	}
+	if onboarding["hasCompletedOnboarding"] != true {
+		t.Fatalf("hasCompletedOnboarding = %v", onboarding["hasCompletedOnboarding"])
 	}
 }
 
