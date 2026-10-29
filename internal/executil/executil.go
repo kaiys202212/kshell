@@ -1,7 +1,10 @@
 // Package executil 提供跨平台的子进程窗口控制辅助。
 package executil
 
-import "os/exec"
+import (
+	"context"
+	"os/exec"
+)
 
 // HideWindow 阻止子进程弹出控制台黑窗。
 //
@@ -14,3 +17,14 @@ import "os/exec"
 // 控制台父进程（TUI 版 kshell）下子进程直接继承父控制台，本就无新窗口，
 // 设置后亦无副作用，因此所有调用方可以无差别使用。
 func HideWindow(cmd *exec.Cmd) { hideWindow(cmd) }
+
+// NewCLICommand 构造调用外部 CLI 的命令。
+// 相比直接 exec.Command：额外解析 .ps1 shim、隐藏黑窗，并在 Windows 上把
+// .cmd/.bat 交给 %COMSPEC% /S /C（路径含空格时不包装会被截成 C:\Program）。
+func NewCLICommand(ctx context.Context, bin string, args []string) *exec.Cmd {
+	path, resolved := ResolveShim(bin, args)
+	cmd := exec.CommandContext(ctx, path, resolved...)
+	HideWindow(cmd)
+	wrapBatchFile(cmd)
+	return cmd
+}
