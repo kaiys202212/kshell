@@ -65,8 +65,9 @@ type session struct {
 	autoSeq  int    // 合成 messageId 的轮次计数（分片缺 messageId 时用）
 	lastType string // 上一事件类型；用于判断连续同类分片
 
-	pending map[string]chan permissionResult
-	exited  bool
+	pending       map[string]chan permissionResult
+	pendingElicit map[string]chan elicitationResult
+	exited        bool
 
 	openedAt       time.Time
 	knownIDs       map[string]bool // 打开时扫描结果里已有的磁盘会话，禁止绑到本新建聊天
@@ -146,12 +147,13 @@ type Manager struct {
 	onUpdate        func(id string, u Update)
 	onPermission    func(id string, r PermissionRequest)
 	onExit          func(id string, code int, errMsg string)
-	onInfo          func(Info)                      // 锁外；首条用户消息改写标题时
-	onCommands      func(id string, cmds []Command) // 锁外；技能列表推送
-	onModels        func(id string)                 // 锁外；握手完成后模型视图推送
-	onConfig        func(id string)                 // 锁外；配置项变化推送
-	settingsMetaFor func(chatID string) string      // 锁外；_meta 载荷工厂（claude settings 注入）
-	autoAllow       func() bool                     // bypass：自动选 allow 类 option，不弹窗
+	onInfo          func(Info)                            // 锁外；首条用户消息改写标题时
+	onCommands      func(id string, cmds []Command)       // 锁外；技能列表推送
+	onModels        func(id string)                       // 锁外；握手完成后模型视图推送
+	onConfig        func(id string)                       // 锁外；配置项变化推送
+	onElicitation   func(id string, r ElicitationRequest) // 锁外；表单请求推送
+	settingsMetaFor func(chatID string) string            // 锁外；_meta 载荷工厂（claude settings 注入）
+	autoAllow       func() bool                           // bypass：自动选 allow 类 option，不弹窗
 	mcpFor          func(chatID string) []acp.McpServerStdio
 	// Hub 状态回调（锁外执行）：onHubQueued 在投递竞态兜底改入队时触发，
 	// onHubDelivered 在带 hubMsgID 的条目真正发起 conn.Prompt 前触发。
@@ -234,6 +236,13 @@ func (m *Manager) SetOnModels(fn func(id string)) {
 func (m *Manager) SetOnConfig(fn func(id string)) {
 	m.mu.Lock()
 	m.onConfig = fn
+	m.mu.Unlock()
+}
+
+// SetOnElicitation 注册 elicitation 表单请求回调（锁外执行）。
+func (m *Manager) SetOnElicitation(fn func(id string, r ElicitationRequest)) {
+	m.mu.Lock()
+	m.onElicitation = fn
 	m.mu.Unlock()
 }
 
@@ -560,6 +569,7 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 		m:             m,
 		info:          info,
 		pending:       make(map[string]chan permissionResult),
+		pendingElicit: make(map[string]chan elicitationResult),
 		tools:         make(map[string]*ToolCall),
 		inFlightTools: make(map[string]bool),
 		openedAt:      time.Now(),
@@ -732,7 +742,10 @@ func (m *Manager) remove(s *session) {
 	}
 	pending := s.pending
 	s.pending = make(map[string]chan permissionResult)
+	pendingElicit := s.pendingElicit
+	s.pendingElicit = make(map[string]chan elicitationResult)
 	cancelPending(pending)
+	cancelPendingElicitations(pendingElicit)
 	s.stopIdleLocked() // 摘除后定时器不得再触发（防泄漏与悬垂）
 	// 尽力清理该会话的附件落盘缓存：本地小目录，RemoveAll 在锁内执行可接受
 	// （毫秒级，避免引入第二把锁或泄漏 goroutine）；错误忽略（缓存目录非关键数据）。
@@ -774,6 +787,8 @@ func (m *Manager) watchExit(s *session) {
 	s.stopIdleLocked()
 	pending := s.pending
 	s.pending = make(map[string]chan permissionResult)
+	pendingElicit := s.pendingElicit
+	s.pendingElicit = make(map[string]chan elicitationResult)
 	m.mu.Unlock()
 
 	if hadQueue && onQueue != nil {
@@ -781,6 +796,7 @@ func (m *Manager) watchExit(s *session) {
 	}
 	// 进程已消失，等待中的权限请求不可能再被回答，全部以 cancelled 收尾。
 	cancelPending(pending)
+	cancelPendingElicitations(pendingElicit)
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -1093,9 +1109,12 @@ func (m *Manager) Cancel(id string) error {
 	conn := s.conn
 	pending := s.pending
 	s.pending = make(map[string]chan permissionResult)
+	pendingElicit := s.pendingElicit
+	s.pendingElicit = make(map[string]chan elicitationResult)
 	m.mu.Unlock()
 
 	cancelPending(pending)
+	cancelPendingElicitations(pendingElicit)
 	if sid != "" && conn != nil {
 		_ = conn.Cancel(sid)
 	}
@@ -1148,6 +1167,8 @@ func (m *Manager) Close(id string) error {
 	}
 	pending := s.pending
 	s.pending = make(map[string]chan permissionResult)
+	pendingElicit := s.pendingElicit
+	s.pendingElicit = make(map[string]chan elicitationResult)
 	conn := s.conn
 	m.mu.Unlock()
 
@@ -1155,6 +1176,7 @@ func (m *Manager) Close(id string) error {
 		onQueue(id, []QueueItem{})
 	}
 	cancelPending(pending)
+	cancelPendingElicitations(pendingElicit)
 	// 先关连接再摘除：watchExit 看到 exited 后直接返回，不会误推 onExit
 	var closeErr error
 	if conn != nil {
@@ -1530,6 +1552,11 @@ func (h *sessionHandler) SessionUpdate(sessionID string, raw json.RawMessage) {
 
 func (h *sessionHandler) RequestPermission(ctx context.Context, sessionID, requestID string, p acp.RequestPermissionParams) (acp.PermissionOutcome, error) {
 	return h.m.awaitPermission(ctx, h.id, sessionID, requestID, p)
+}
+
+// Elicitation 实现 acp.ElicitationHandler（可选能力）：把表单请求转给宿主。
+func (h *sessionHandler) Elicitation(ctx context.Context, requestID string, p acp.ElicitationParams) (acp.ElicitationResult, error) {
+	return h.m.awaitElicitation(ctx, h.id, requestID, p)
 }
 
 // acpUpdate 按 ACP 规范的小写字段解码 session/update（前端模型是 PascalCase，故单独解码再转换）。

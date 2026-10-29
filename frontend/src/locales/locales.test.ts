@@ -16,6 +16,7 @@ function at(obj: unknown, path: string): unknown {
 
 const PAIRED_KEYS = [
   'err.chat.auth_required',
+  'err.chat.bad_elicitation_action',
   'err.session.acp_only',
   'ui.chat.status_authenticating',
 ];

@@ -33,7 +33,8 @@
       "handshake_timeout": "agent 30 秒内未完成握手（可能已挂死），请重试或更换 agent",
       "agent_died": "agent 进程在启动期间意外退出，请重试；若反复出现请查看 ~/.kshell/logs/desktop.log",
       "model_timeout": "agent 30 秒内未响应切换模型（可能正忙或已挂死），会话保持原样",
-      "auth_required": "Agent 未登录或登录未完成。请在浏览器完成官方登录流程后重试，或在终端运行其 login 命令。"
+      "auth_required": "Agent 未登录或登录未完成。请在浏览器完成官方登录流程后重试，或在终端运行其 login 命令。",
+      "bad_elicitation_action": "无效的表单操作：{{0}}"
     },
     "session": {
       "acp_only": "该会话来自 ACP（如 Cursor acp-sessions），仅能在聊天中打开，无法在终端恢复（会丢失上下文）。"

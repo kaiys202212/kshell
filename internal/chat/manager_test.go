@@ -1698,6 +1698,224 @@ func TestManagerQueueClearedOnCloseEmitsEmpty(t *testing.T) {
 	}
 }
 
+// waitFor 轮询等待条件成立（超时失败）；用于回调在别的 goroutine 里触发的断言。
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("等待超时")
+}
+
+func TestElicitationRoundTrip(t *testing.T) {
+	conn := &fakeConn{newStart: acp.SessionStart{SessionID: "sess-new"}, waitCh: make(chan struct{})}
+	b := &fakeBackend{conn: conn}
+	m := NewManager(b, func(string, Update) {}, func(string, PermissionRequest) {}, func(string, int, string) {})
+	// 回调在 Elicitation 的调用方 goroutine 里执行，与断言 goroutine 需互斥。
+	var mu sync.Mutex
+	var got ElicitationRequest
+	m.SetOnElicitation(func(_ string, r ElicitationRequest) {
+		mu.Lock()
+		got = r
+		mu.Unlock()
+	})
+	info, err := m.Open("new:1", Info{Workspace: "/w", ToolID: "opencode"}, Spec{Path: "x", Dir: "/w"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan acp.ElicitationResult, 1)
+	go func() {
+		out, _ := b.last.(acp.ElicitationHandler).Elicitation(context.Background(), "42", acp.ElicitationParams{
+			SessionID: "sess-new", Mode: "form", Message: "Pick one",
+			RequestedSchema: json.RawMessage(`{"type":"object","properties":{"pm":{"type":"string","oneOf":[{"const":"bun","title":"Bun"},{"const":"npm","title":"NPM"}]}},"required":["pm"]}`),
+		})
+		done <- out
+	}()
+	waitFor(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return got.Message == "Pick one"
+	})
+	mu.Lock()
+	snap := got
+	mu.Unlock()
+	if len(snap.Fields) != 1 || snap.Fields[0].Key != "pm" || len(snap.Fields[0].Options) != 2 || !snap.Fields[0].Required {
+		t.Fatalf("fields = %+v", snap.Fields)
+	}
+	if err := m.RespondElicitation(info.ID, "42", "accept", map[string]any{"pm": "bun"}); err != nil {
+		t.Fatal(err)
+	}
+	out := <-done
+	if out.Action != "accept" || out.Content["pm"] != "bun" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestElicitationCancelOnSessionClose(t *testing.T) {
+	conn := &fakeConn{newStart: acp.SessionStart{SessionID: "sess-new"}, waitCh: make(chan struct{})}
+	b := &fakeBackend{conn: conn}
+	m := NewManager(b, func(string, Update) {}, func(string, PermissionRequest) {}, func(string, int, string) {})
+	got := make(chan ElicitationRequest, 1)
+	m.SetOnElicitation(func(_ string, r ElicitationRequest) { got <- r })
+	info, err := m.Open("new:1", Info{Workspace: "/w", ToolID: "opencode"}, Spec{Path: "x", Dir: "/w"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan acp.ElicitationResult, 1)
+	go func() {
+		out, _ := b.last.(acp.ElicitationHandler).Elicitation(context.Background(), "43", acp.ElicitationParams{SessionID: "sess-new", Mode: "form", Message: "Q"})
+		done <- out
+	}()
+	<-got
+	_ = m.Close(info.ID)
+	if out := <-done; out.Action != "cancel" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+// 非 accept 应答必须丢弃已填内容，避免放弃/取消时把数据误传给 agent。
+func TestElicitationDeclineDropsContent(t *testing.T) {
+	conn := &fakeConn{newStart: acp.SessionStart{SessionID: "sess-new"}, waitCh: make(chan struct{})}
+	b := &fakeBackend{conn: conn}
+	m := NewManager(b, func(string, Update) {}, func(string, PermissionRequest) {}, func(string, int, string) {})
+	got := make(chan ElicitationRequest, 1)
+	m.SetOnElicitation(func(_ string, r ElicitationRequest) { got <- r })
+	info, err := m.Open("new:1", Info{Workspace: "/w", ToolID: "opencode"}, Spec{Path: "x", Dir: "/w"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan acp.ElicitationResult, 1)
+	go func() {
+		out, _ := b.last.(acp.ElicitationHandler).Elicitation(context.Background(), "44", acp.ElicitationParams{SessionID: "sess-new", Mode: "form", Message: "Q"})
+		done <- out
+	}()
+	<-got
+	if err := m.RespondElicitation(info.ID, "44", "decline", map[string]any{"pm": "bun"}); err != nil {
+		t.Fatal(err)
+	}
+	if out := <-done; out.Action != "decline" || out.Content != nil {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+// recvElicitationResult 带超时收取表单应答，避免实现回归时测试永久挂住。
+func recvElicitationResult(t *testing.T, ch <-chan acp.ElicitationResult) acp.ElicitationResult {
+	t.Helper()
+	select {
+	case out := <-ch:
+		return out
+	case <-time.After(2 * time.Second):
+		t.Fatal("elicitation 未在超时内完成")
+		return acp.ElicitationResult{}
+	}
+}
+
+// 未注册回调（desktop 尚未接线）时不能悬挂 agent：直接回 cancel。
+func TestElicitationNoCallbackCancels(t *testing.T) {
+	conn := &fakeConn{newStart: acp.SessionStart{SessionID: "sess-new"}, waitCh: make(chan struct{})}
+	b := &fakeBackend{conn: conn}
+	m := NewManager(b, func(string, Update) {}, func(string, PermissionRequest) {}, func(string, int, string) {})
+	if _, err := m.Open("new:1", Info{Workspace: "/w", ToolID: "opencode"}, Spec{Path: "x", Dir: "/w"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan acp.ElicitationResult, 1)
+	go func() {
+		out, _ := b.last.(acp.ElicitationHandler).Elicitation(context.Background(), "45", acp.ElicitationParams{SessionID: "sess-new", Mode: "form", Message: "Q"})
+		done <- out
+	}()
+	if out := recvElicitationResult(t, done); out.Action != "cancel" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+// ctx 取消后必须摘除等待项：否则后续 Respond 会向无接收方的通道投递。
+func TestElicitationContextCancelClearsPending(t *testing.T) {
+	conn := &fakeConn{newStart: acp.SessionStart{SessionID: "sess-new"}, waitCh: make(chan struct{})}
+	b := &fakeBackend{conn: conn}
+	m := NewManager(b, func(string, Update) {}, func(string, PermissionRequest) {}, func(string, int, string) {})
+	got := make(chan ElicitationRequest, 1)
+	m.SetOnElicitation(func(_ string, r ElicitationRequest) { got <- r })
+	info, err := m.Open("new:1", Info{Workspace: "/w", ToolID: "opencode"}, Spec{Path: "x", Dir: "/w"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan acp.ElicitationResult, 1)
+	go func() {
+		out, _ := b.last.(acp.ElicitationHandler).Elicitation(ctx, "46", acp.ElicitationParams{SessionID: "sess-new", Mode: "form", Message: "Q"})
+		done <- out
+	}()
+	<-got
+	cancel()
+	if out := recvElicitationResult(t, done); out.Action != "cancel" {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if err := m.RespondElicitation(info.ID, "46", "accept", map[string]any{"pm": "bun"}); !errors.Is(err, errNotFound) {
+		t.Fatalf("取消后 Respond 应为 errNotFound，实际 %v", err)
+	}
+}
+
+// 同一请求只能作答一次：重复提交必须报 errNotFound，不能对已摘除项阻塞投递。
+func TestElicitationDuplicateRespond(t *testing.T) {
+	conn := &fakeConn{newStart: acp.SessionStart{SessionID: "sess-new"}, waitCh: make(chan struct{})}
+	b := &fakeBackend{conn: conn}
+	m := NewManager(b, func(string, Update) {}, func(string, PermissionRequest) {}, func(string, int, string) {})
+	got := make(chan ElicitationRequest, 1)
+	m.SetOnElicitation(func(_ string, r ElicitationRequest) { got <- r })
+	info, err := m.Open("new:1", Info{Workspace: "/w", ToolID: "opencode"}, Spec{Path: "x", Dir: "/w"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan acp.ElicitationResult, 1)
+	go func() {
+		out, _ := b.last.(acp.ElicitationHandler).Elicitation(context.Background(), "47", acp.ElicitationParams{SessionID: "sess-new", Mode: "form", Message: "Q"})
+		done <- out
+	}()
+	<-got
+	if err := m.RespondElicitation(info.ID, "47", "accept", map[string]any{"pm": "bun"}); err != nil {
+		t.Fatal(err)
+	}
+	if out := recvElicitationResult(t, done); out.Action != "accept" {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if err := m.RespondElicitation(info.ID, "47", "accept", map[string]any{"pm": "bun"}); !errors.Is(err, errNotFound) {
+		t.Fatalf("重复作答应为 errNotFound，实际 %v", err)
+	}
+}
+
+func TestElicitationInvalidAction(t *testing.T) {
+	conn := &fakeConn{newStart: acp.SessionStart{SessionID: "sess-new"}, waitCh: make(chan struct{})}
+	b := &fakeBackend{conn: conn}
+	m := NewManager(b, func(string, Update) {}, func(string, PermissionRequest) {}, func(string, int, string) {})
+	got := make(chan ElicitationRequest, 1)
+	m.SetOnElicitation(func(_ string, r ElicitationRequest) { got <- r })
+	info, err := m.Open("new:1", Info{Workspace: "/w", ToolID: "opencode"}, Spec{Path: "x", Dir: "/w"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan acp.ElicitationResult, 1)
+	go func() {
+		out, _ := b.last.(acp.ElicitationHandler).Elicitation(context.Background(), "48", acp.ElicitationParams{SessionID: "sess-new", Mode: "form", Message: "Q"})
+		done <- out
+	}()
+	<-got
+	err = m.RespondElicitation(info.ID, "48", "bogus", nil)
+	if err == nil || err.Error() != "err.chat.bad_elicitation_action|bogus" {
+		t.Fatalf("err = %v", err)
+	}
+	// 非法 action 不消费等待项：仍可用合法应答收尾（顺带清理 goroutine）。
+	if err := m.RespondElicitation(info.ID, "48", "cancel", nil); err != nil {
+		t.Fatal(err)
+	}
+	if out := recvElicitationResult(t, done); out.Action != "cancel" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
 // waitForUpdates 等到 collector 收满 n 条更新（超时失败）。
 func waitForUpdates(t *testing.T, c *collector, n int) {
 	t.Helper()

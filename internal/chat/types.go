@@ -173,6 +173,39 @@ type PermissionRequest struct {
 	Options []PermissionOption `json:"Options"`
 }
 
+// ElicitationOption 是表单下拉/多选的一个取值。
+type ElicitationOption struct {
+	Value string `json:"Value"`
+	Title string `json:"Title,omitempty"`
+}
+
+// ElicitationField 是表单的一个字段；Kind 由 JSON Schema 的 type 归一而来，
+// 前端据此决定渲染控件（text/number/integer/boolean/select/multiselect）。
+type ElicitationField struct {
+	Key         string              `json:"Key"`
+	Kind        string              `json:"Kind"`
+	Title       string              `json:"Title,omitempty"`
+	Description string              `json:"Description,omitempty"`
+	Required    bool                `json:"Required,omitempty"`
+	Options     []ElicitationOption `json:"Options,omitempty"`
+	Default     any                 `json:"Default,omitempty"`
+}
+
+// ElicitationRequest 是转发给前端的 elicitation 表单请求。
+type ElicitationRequest struct {
+	RequestID  string             `json:"RequestID"`
+	SessionID  string             `json:"SessionID"`
+	ToolCallID string             `json:"ToolCallID,omitempty"`
+	Message    string             `json:"Message"`
+	Fields     []ElicitationField `json:"Fields"`
+}
+
+// elicitationResult 是会话内等待用户作答的通道载荷；action 取 accept/decline/cancel。
+type elicitationResult struct {
+	action  string
+	content map[string]any
+}
+
 // Conn 是 ACP 连接的高层封装；真实实现是 acp.Agent，测试注入假实现。
 type Conn interface {
 	Initialize(ctx context.Context) (acp.InitializeResult, error)
