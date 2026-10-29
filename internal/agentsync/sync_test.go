@@ -48,6 +48,27 @@ func TestInputFromModelCarriesActiveModel(t *testing.T) {
 	}
 }
 
+// 未配置过模型时 SyncAll 不得创建任何工具配置文件：Claude 只写登录标记
+//（~/.claude.json），settings.json / opencode.json / models.json 都不应出现。
+func TestSyncAllUnmanagedDoesNotCreateModelFiles(t *testing.T) {
+	home := t.TempDir()
+	if err := SyncAll(home, SyncInput{}, []string{"opencode", "codebuddy", "claude"}); err != nil {
+		t.Fatalf("SyncAll: %v", err)
+	}
+	for _, rel := range []string{
+		filepath.Join(".claude", "settings.json"),
+		filepath.Join(".config", "opencode", "opencode.json"),
+		filepath.Join(".codebuddy", "models.json"),
+	} {
+		if _, err := os.Stat(filepath.Join(home, rel)); !os.IsNotExist(err) {
+			t.Fatalf("不应创建 %s: err=%v", rel, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude.json")); err != nil {
+		t.Fatalf("应写入登录标记: %v", err)
+	}
+}
+
 // 并发写同一目标（TUI 与桌面端/多个 goroutine 同时同步）必须全部成功，
 // 文件保持完整 JSON 且不留下临时文件。Windows 上 rename 会因 sharing violation
 // 失败，writeAtomic 需要退避重试；这里用真实并发锁住该行为。

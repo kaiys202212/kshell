@@ -229,8 +229,9 @@ func cleanModels(in []string) []string {
 // SetModelConfig 整包保存模型平台配置：输入列表即最终平台列表，
 // 未出现在输入中的既有平台视为删除；已存在平台 APIKey 空串=保留原值。
 func (a *App) SetModelConfig(in ModelConfigInput) error {
-	old := make(map[string]config.ModelPlatform, len(a.snapshot().Config.Model.Platforms))
-	for _, p := range a.snapshot().Config.Model.Platforms {
+	prev := a.snapshot().Config.Model
+	old := make(map[string]config.ModelPlatform, len(prev.Platforms))
+	for _, p := range prev.Platforms {
 		old[p.ID] = p
 	}
 
@@ -329,7 +330,7 @@ func (a *App) SetModelConfig(in ModelConfigInput) error {
 		return err
 	}
 	// 持久同步到 OpenCode/CodeBuddy 自有配置；失败不回滚本次保存。
-	a.syncAgentModels()
+	a.syncAgentModelsAfterSave(prev)
 	return nil
 }
 

@@ -41,6 +41,9 @@ type Target interface {
 	ToolID() string
 	// ConfigExists 报告用户目录下是否已有该工具配置（曾同步或用户/其它工具写过）。
 	ConfigExists(home string) bool
+	// Sync 按 SyncInput 改写该工具自有配置。实现必须遵守 in.Managed()：
+	// 未托管（从未配置过模型）时不得读取、创建或改写自有配置文件的模型部分；
+	// Claude 的登录标记是唯一例外。
 	Sync(home string, in SyncInput) error
 }
 

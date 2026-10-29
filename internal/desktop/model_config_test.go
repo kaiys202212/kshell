@@ -437,6 +437,57 @@ func TestSetModelConfigSyncsOpenCode(t *testing.T) {
 	}
 }
 
+// 配置过模型后又删光平台并禁用：这次保存必须做一次性清理，不能把 kshell
+// 注入物永久留在各工具配置里（否则会指向已删除的平台端点）。
+func TestSetModelConfigClearsInjectedKeysAfterFullReset(t *testing.T) {
+	home := t.TempDir()
+	dir := t.TempDir()
+	layout := config.Layout{
+		Root: dir, Config: filepath.Join(dir, "config.yaml"), Cache: filepath.Join(dir, "cache"),
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(home, ".claude", "settings.json")
+	if err := os.WriteFile(settings, []byte(`{"env":{"ANTHROPIC_BASE_URL":"https://old/","ANTHROPIC_AUTH_TOKEN":"k","KEEP":"1"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Model = config.ModelConfig{
+		Enabled:         true,
+		DefaultPlatform: "p1",
+		Platforms: []config.ModelPlatform{{
+			ID: "p1", AnthropicBaseURL: "https://old/", APIKey: "k",
+		}},
+	}
+	app := NewAppWith(Options{Home: home, Config: cfg, Layout: layout})
+	app.mu.Lock()
+	app.tools = []discovery.Tool{{ID: "claude", Installed: true}}
+	app.mu.Unlock()
+
+	if err := app.SetModelConfig(ModelConfigInput{Enabled: false}); err != nil {
+		t.Fatalf("SetModelConfig: %v", err)
+	}
+
+	b, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	env, _ := doc["env"].(map[string]any)
+	for _, k := range []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"} {
+		if _, ok := env[k]; ok {
+			t.Fatalf("删光平台并禁用后应清掉 %s: %v", k, env)
+		}
+	}
+	if env["KEEP"] != "1" {
+		t.Fatalf("用户其他 env 键应保留: %v", env)
+	}
+}
+
 // 桌面端首轮扫描会无条件同步各工具模型配置；但 kshell 从未配置过模型时
 //（默认 Enabled=false、无平台），必须保留用户/ccswitch 写入的 Claude 配置，
 // 只补写登录标记。
