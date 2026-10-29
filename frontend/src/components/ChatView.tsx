@@ -517,14 +517,14 @@ export default function ChatView({ chat, active }: Props) {
       else content[f.Key] = v;
     }
     closeElicitation();
-    void respondChatElicitation(id, req.RequestID, 'accept', content);
+    void respondChatElicitation(id, req.RequestID, 'accept', content).catch(() => {});
   };
 
   const declineElicitation = () => {
     if (!elicitation) return;
     const req = elicitation;
     closeElicitation();
-    void respondChatElicitation(id, req.RequestID, 'decline', {});
+    void respondChatElicitation(id, req.RequestID, 'decline', {}).catch(() => {});
   };
 
   // 附件 chip 点击分派（attachmentAction 纯函数归类，副作用在此触发）：
@@ -923,7 +923,7 @@ export default function ChatView({ chat, active }: Props) {
             if (next) return;
             // Esc / 遮罩点击等同放弃：清掉表单并通知后端取消该次请求
             closeElicitation();
-            void cancelChatElicitation(id, elicitation.RequestID);
+            void cancelChatElicitation(id, elicitation.RequestID).catch(() => {});
           }}
           className="w-[28rem]"
         >

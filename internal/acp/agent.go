@@ -220,7 +220,9 @@ func (a *Agent) handleRequest(m message) {
 	// 再处理权限确认。
 	if m.Method == "elicitation/create" {
 		var p ElicitationParams
-		if err := json.Unmarshal(m.Params, &p); err != nil || p.Mode != "form" {
+		// 缺省 mode 按 form 处理：ACP 允许 agent 省略 mode，不能因此把表单
+		// 当成不支持而直接 cancel（用户永远看不到表单）。
+		if err := json.Unmarshal(m.Params, &p); err != nil || (p.Mode != "" && p.Mode != "form") {
 			a.writeResponse(id, ElicitationResult{Action: "cancel"}, nil)
 			return
 		}

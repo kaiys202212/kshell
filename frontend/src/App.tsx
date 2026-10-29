@@ -182,6 +182,11 @@ function App() {
     throttleDropRef.current = throttle.drop;
     const pendingRebuild = new Map<string, ChatUpdate[]>();
     const offU = onChatUpdate(({ id, update }) => {
+      // 一轮结束（含取消/停止/AgentHub/微信中止）或报错后，agent 不会再等这张
+      // 表单；不清掉的话弹窗会挂在已结束的轮次上且无法再被应答。
+      if (update.Type === 'turn_done' || update.Type === 'error') {
+        useAppStore.getState().setChatElicitation(id, null);
+      }
       const rebuildBuf = pendingRebuild.get(id);
       if (rebuildBuf) {
         rebuildBuf.push(update);

@@ -174,19 +174,24 @@ func fakeAgentMain() {
 			}
 			// ACP_FAKE_ELICIT_CANCEL 与 ACP_FAKE_ELICIT 同构：都只把收到的
 			// action/content 回显成文本，供测试区分 accept 与 cancel 兜底。
-			if os.Getenv("ACP_FAKE_ELICIT") == "1" || os.Getenv("ACP_FAKE_ELICIT_CANCEL") == "1" {
+			if os.Getenv("ACP_FAKE_ELICIT") == "1" || os.Getenv("ACP_FAKE_ELICIT_CANCEL") == "1" || os.Getenv("ACP_FAKE_ELICIT_NO_MODE") == "1" {
 				// elicitation 是反向请求：客户端把用户填写结果作为响应回传，
 				// 这里校验表单往返后的 action/content 能被 agent 读到。
-				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": 77, "method": "elicitation/create", "params": map[string]any{
+				params := map[string]any{
 					"sessionId": "sess-new",
-					"mode":      "form",
 					"message":   "Pick",
 					"requestedSchema": map[string]any{
 						"type":       "object",
 						"properties": map[string]any{"pm": map[string]any{"type": "string", "oneOf": []any{map[string]any{"const": "bun", "title": "Bun"}}}},
 						"required":   []any{"pm"},
 					},
-				}})
+				}
+				// ACP_FAKE_ELICIT_NO_MODE 模拟省略 mode 的 agent：客户端应按
+				// form 处理，而不是直接取消。
+				if os.Getenv("ACP_FAKE_ELICIT_NO_MODE") != "1" {
+					params["mode"] = "form"
+				}
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": 77, "method": "elicitation/create", "params": params})
 				for sc.Scan() {
 					var resp struct {
 						ID     json.RawMessage `json:"id"`
@@ -806,6 +811,50 @@ func TestAgentElicitationCreate(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("elicitation not round-tripped, updates = %v", updates)
+	}
+}
+
+type elicitNoModeHandler struct {
+	*captureHandler
+	res ElicitationResult
+}
+
+func (h *elicitNoModeHandler) Elicitation(_ context.Context, _ string, p ElicitationParams) (ElicitationResult, error) {
+	if p.Mode != "" {
+		return ElicitationResult{}, fmt.Errorf("expected empty mode, got %q", p.Mode)
+	}
+	return h.res, nil
+}
+
+// agent 省略 mode 时必须按 form 处理并交给 handler，不能直接 cancel。
+func TestAgentElicitationMissingModeDefaultsToForm(t *testing.T) {
+	a := newTestAgent(t, fakeAgentSpecEnv(t, "ACP_FAKE_ELICIT_NO_MODE=1"))
+	ctx, cancel := testCtx()
+	defer cancel()
+	h := &elicitNoModeHandler{captureHandler: &captureHandler{}, res: ElicitationResult{Action: "accept", Content: map[string]any{"pm": "bun"}}}
+	a.handler = h
+	if _, err := a.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ss, err := a.NewSession(ctx, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop, err := a.Prompt(ctx, ss.SessionID, []ContentBlock{{Type: "text", Text: "go"}})
+	if err != nil || stop != "end_turn" {
+		t.Fatalf("prompt = %q, %v", stop, err)
+	}
+	h.mu.Lock()
+	updates := append([]string(nil), h.raw...)
+	h.mu.Unlock()
+	found := false
+	for _, u := range updates {
+		if strings.Contains(u, "accept:bun") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("缺省 mode 的 elicitation 未往返，updates = %v", updates)
 	}
 }
 

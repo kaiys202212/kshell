@@ -368,6 +368,42 @@ func TestConfigOptionUpdateReplacesState(t *testing.T) {
 	}
 }
 
+func TestConfigOptionUpdateRefreshesModelView(t *testing.T) {
+	conn := &fakeConn{newStart: acp.SessionStart{
+		SessionID: "sess-new",
+		// 同时报告 v1 models：configOptions 是首选表面，update 后不得回落到旧值。
+		Models: &acp.SessionModelState{
+			AvailableModels: []acp.ModelInfo{{ModelID: "m1", Name: "One"}},
+			CurrentModelID:  "m1",
+		},
+		ConfigOptions: []acp.SessionConfigOption{
+			{ID: "model", Type: "select", CurrentValue: json.RawMessage(`"m1"`), Options: []acp.ConfigOptionValue{{Value: "m1", Name: "One"}, {Value: "m2", Name: "Two"}}},
+		},
+	}}
+	b := &fakeBackend{conn: conn}
+	m := NewManager(b, func(string, Update) {}, func(string, PermissionRequest) {}, func(string, int, string) {})
+	var configPushed, modelsPushed bool
+	m.SetOnConfig(func(string) { configPushed = true })
+	m.SetOnModels(func(string) { modelsPushed = true })
+	info, err := m.Open("new:1", Info{Workspace: "/w", ToolID: "opencode"}, Spec{Path: "x", Dir: "/w"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Open 完成后的补偿推送不算本次 config update 的触发。
+	configPushed, modelsPushed = false, false
+	raw := json.RawMessage(`{"sessionUpdate":"config_option_update","configOptions":[{"id":"model","name":"Model","category":"model","type":"select","currentValue":"m2","options":[{"value":"m1","name":"One"},{"value":"m2","name":"Two"}]}]}`)
+	b.last.SessionUpdate(info.SessionID, raw)
+	if !configPushed {
+		t.Fatal("onConfig not called")
+	}
+	if !modelsPushed {
+		t.Fatal("onModels not called for model change")
+	}
+	if v, ok := m.Models(info.ID); !ok || v.Current != "m2" {
+		t.Fatalf("models = %+v ok=%v", v, ok)
+	}
+}
+
 func TestSetConfigOptionUpdatesState(t *testing.T) {
 	conn := &fakeConn{newStart: acp.SessionStart{SessionID: "sess-new", ConfigOptions: []acp.SessionConfigOption{
 		{ID: "model", Type: "select", CurrentValue: json.RawMessage(`"m1"`), Options: []acp.ConfigOptionValue{{Value: "m1", Name: "One"}}},

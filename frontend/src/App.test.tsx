@@ -624,6 +624,29 @@ describe('App', () => {
     expect(useAppStore.getState().chatElicitations.c1?.RequestID).toBe('r1');
   });
 
+  it('chat:update turn_done 清除未应答的 elicitation', async () => {
+    let updateCb: ((p: { id: string; update: { Seq: number; Type: string } }) => void) | undefined;
+    mocks.onChatUpdate.mockImplementation((cb: typeof updateCb) => {
+      updateCb = cb;
+      return () => {};
+    });
+    mocks.listChats.mockResolvedValue([chat]);
+    render(<App />);
+    await waitFor(() => expect(useAppStore.getState().chats).toHaveLength(1));
+
+    act(() => {
+      useAppStore.getState().setChatElicitation('c1', {
+        RequestID: 'r1', SessionID: 's1', Message: 'Q', Fields: [],
+      });
+    });
+    expect(useAppStore.getState().chatElicitations.c1?.RequestID).toBe('r1');
+
+    act(() => {
+      updateCb?.({ id: 'c1', update: { Seq: 1, Type: 'turn_done' } });
+    });
+    expect(useAppStore.getState().chatElicitations.c1).toBeUndefined();
+  });
+
   it('chat:models 事件按会话 ToolID 回写工具模型缓存', async () => {
     localStorage.clear();
     let mdlCb: ((p: { id: string; models: unknown }) => void) | undefined;

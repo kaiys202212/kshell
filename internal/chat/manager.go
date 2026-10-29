@@ -1347,22 +1347,14 @@ func configView(opts []acp.SessionConfigOption) ConfigOptionsView {
 	return out
 }
 
-// configOptionsFromView 是 configView 的逆变换：Current 按 JSON 字符串序列化
-// 回 currentValue（ACP 侧 value 是 JSON 值，不能直接塞裸字符串）。
-func configOptionsFromView(in []ConfigOptionView) []acp.SessionConfigOption {
-	out := make([]acp.SessionConfigOption, 0, len(in))
-	for _, v := range in {
-		raw, _ := json.Marshal(v.Current)
-		o := acp.SessionConfigOption{
-			ID: v.ID, Name: v.Name, Description: v.Description,
-			Category: v.Category, Type: v.Type, CurrentValue: raw,
-		}
-		for _, ov := range v.Options {
-			o.Options = append(o.Options, acp.ConfigOptionValue{Value: ov.Value, Name: ov.Name, Description: ov.Description})
-		}
-		out = append(out, o)
+// configCurrentString 取配置项的字符串当前值；非字符串 JSON 或缺失时返回空串。
+func configCurrentString(opt *acp.SessionConfigOption) string {
+	if opt == nil {
+		return ""
 	}
-	return out
+	var current string
+	_ = json.Unmarshal(opt.CurrentValue, &current)
+	return current
 }
 
 // ConfigOptions 返回会话的通用配置项视图；会话不存在或 agent 未报告时返回空视图。
@@ -1463,13 +1455,8 @@ func (m *Manager) Models(id string) (ModelsView, bool) {
 	if s == nil {
 		return ModelsView{}, false
 	}
-	if ms := s.modelState; ms != nil {
-		out := ModelsView{Current: ms.CurrentModelID, Models: make([]ModelView, 0, len(ms.AvailableModels))}
-		for _, mo := range ms.AvailableModels {
-			out.Models = append(out.Models, ModelView{ID: mo.ModelID, Name: mo.Name, Description: mo.Description})
-		}
-		return out, true
-	}
+	// configOptions(id=model) 是首选 ACP 表面；v1 models 只在 agent 未报告
+	// configOptions 时作为回退，避免两者并存时展示已被 config update 覆盖的旧值。
 	if mc := s.modelConfig; mc != nil {
 		out := ModelsView{Models: make([]ModelView, 0, len(mc.Options))}
 		var current string
@@ -1477,6 +1464,13 @@ func (m *Manager) Models(id string) (ModelsView, bool) {
 		out.Current = current
 		for _, o := range mc.Options {
 			out.Models = append(out.Models, ModelView{ID: o.Value, Name: o.Name, Description: o.Description})
+		}
+		return out, true
+	}
+	if ms := s.modelState; ms != nil {
+		out := ModelsView{Current: ms.CurrentModelID, Models: make([]ModelView, 0, len(ms.AvailableModels))}
+		for _, mo := range ms.AvailableModels {
+			out.Models = append(out.Models, ModelView{ID: mo.ModelID, Name: mo.Name, Description: mo.Description})
 		}
 		return out, true
 	}
@@ -1684,8 +1678,7 @@ func normalizeUpdate(raw json.RawMessage) (Update, *blockDesc, bool) {
 		}
 		return Update{Type: "commands", Commands: cmds}, nil, true
 	case "config_option_update":
-		v := configView(u.ConfigOptions)
-		return Update{Type: "config", ConfigOptions: v.Options}, nil, true
+		return Update{Type: "config", ConfigOptions: u.ConfigOptions}, nil, true
 	default:
 		return Update{}, nil, false
 	}
@@ -1743,18 +1736,29 @@ func (m *Manager) onSessionUpdate(id, sessionID string, raw json.RawMessage) {
 	// 配置项更新同样是会话状态而非时间线事件：替换全量快照、同步模型视图，
 	// 单独推送，不进历史。
 	if u.Type == "config" {
+		var modelChanged bool
 		m.mu.Lock()
 		s := m.byID[id]
 		if s != nil {
-			s.configOptions = configOptionsFromView(u.ConfigOptions)
+			prevModel := configCurrentString(modelConfigFrom(s.configOptions))
+			// 原样保存协议快照：Current 可能是非字符串 JSON，转视图会丢失信息；
+			// ConfigOptions(id) 渲染时再按需降级成字符串。
+			s.configOptions = u.ConfigOptions
 			// config_option_update 是全量快照，模型项随快照重建；没有 model 项
 			// 就清空派生视图，避免残留过期的模型列表。
 			s.modelConfig = modelConfigFrom(s.configOptions)
+			// 模型当前值变化时同步刷新模型选择器（configOptions 是首选视图，
+			// v1 models 只是回退），否则下拉仍显示旧模型。
+			modelChanged = prevModel != configCurrentString(s.modelConfig)
 		}
 		cb := m.onConfig
+		cbModels := m.onModels
 		m.mu.Unlock()
 		if cb != nil {
 			cb(id)
+		}
+		if modelChanged && cbModels != nil {
+			cbModels(id)
 		}
 		return
 	}

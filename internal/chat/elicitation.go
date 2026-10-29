@@ -144,7 +144,8 @@ func optionText(v any) (string, bool) {
 // 已退出、非 form 形态或宿主未注册回调时一律回 cancel，避免 agent 的反向
 // 请求悬挂（与 ACP「不支持即 cancel」的回退语义一致）。
 func (m *Manager) awaitElicitation(ctx context.Context, id, requestID string, p acp.ElicitationParams) (acp.ElicitationResult, error) {
-	if p.Mode != "form" {
+	// 缺省 mode 按 form 处理，与 acp 层保持一致。
+	if p.Mode != "" && p.Mode != "form" {
 		return acp.ElicitationResult{Action: "cancel"}, nil
 	}
 	ch := make(chan elicitationResult, 1)

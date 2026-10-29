@@ -154,8 +154,10 @@ type Update struct {
 	StopReason  string           `json:"StopReason,omitempty"`
 	Commands    []Command        `json:"Commands,omitempty"`
 	Attachments []AttachmentMeta `json:"Attachments,omitempty"`
-	// ConfigOptions 仅 Type=="config" 时携带（配置项全量快照）。
-	ConfigOptions []ConfigOptionView `json:"ConfigOptions,omitempty"`
+	// ConfigOptions 仅 Type=="config" 时携带（配置项全量快照）。保留协议原始
+	// 形态（含非字符串 currentValue 与分组选项），config 事件不进入时间线，
+	// 该字段仅供会话状态同步，前端拿到的是 ConfigOptions(id) 的视图。
+	ConfigOptions []acp.SessionConfigOption `json:"-"`
 }
 
 type PermissionOption struct {

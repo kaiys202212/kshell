@@ -1832,6 +1832,35 @@ func TestElicitationNoCallbackCancels(t *testing.T) {
 	}
 }
 
+// 缺省 mode 应默认为 form：不能因 agent 省略 mode 字段就直接 cancel。
+func TestElicitationEmptyModeDefaultsToForm(t *testing.T) {
+	conn := &fakeConn{newStart: acp.SessionStart{SessionID: "sess-new"}, waitCh: make(chan struct{})}
+	b := &fakeBackend{conn: conn}
+	m := NewManager(b, func(string, Update) {}, func(string, PermissionRequest) {}, func(string, int, string) {})
+	got := make(chan ElicitationRequest, 1)
+	m.SetOnElicitation(func(_ string, r ElicitationRequest) { got <- r })
+	info, err := m.Open("new:1", Info{Workspace: "/w", ToolID: "opencode"}, Spec{Path: "x", Dir: "/w"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan acp.ElicitationResult, 1)
+	go func() {
+		out, _ := b.last.(acp.ElicitationHandler).Elicitation(context.Background(), "49", acp.ElicitationParams{SessionID: "sess-new", Message: "Q"})
+		done <- out
+	}()
+	select {
+	case <-got:
+	case <-time.After(2 * time.Second):
+		t.Fatal("空 mode 应默认为 form 并触发 onElicitation")
+	}
+	if err := m.RespondElicitation(info.ID, "49", "accept", map[string]any{"pm": "bun"}); err != nil {
+		t.Fatal(err)
+	}
+	if out := recvElicitationResult(t, done); out.Action != "accept" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
 // ctx 取消后必须摘除等待项：否则后续 Respond 会向无接收方的通道投递。
 func TestElicitationContextCancelClearsPending(t *testing.T) {
 	conn := &fakeConn{newStart: acp.SessionStart{SessionID: "sess-new"}, waitCh: make(chan struct{})}
