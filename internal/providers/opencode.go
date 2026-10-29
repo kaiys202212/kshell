@@ -109,13 +109,12 @@ func (Opencode) EnumerateSessions(home, bin string) ([]Session, error) {
 
 // runOpencodeQuery 执行查询并返回 stdout（抽成变量便于测试注入）。
 var runOpencodeQuery = func(bin, query string) ([]byte, error) {
-	path, args := executil.ResolveShim(bin, []string{"db", query, "--format", "json"})
-
 	ctx, cancel := context.WithTimeout(context.Background(), opencodeQueryTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, path, args...)
-	executil.HideWindow(cmd) // 桌面端避免黑窗闪烁
+	// 走统一入口：Windows 上 .cmd 需要 %COMSPEC% /S /C 包装，
+	// 否则 `C:\Program Files\...\opencode.cmd` 会被截成 `C:\Program`。
+	cmd := executil.NewCLICommand(ctx, bin, []string{"db", query, "--format", "json"})
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
