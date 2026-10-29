@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -238,8 +237,9 @@ func codeBuddyACPUserId() (string, error) {
 	// 统一走树杀：timer 兜底超时，defer 兜底正常/异常路径。
 	ctx, cancel := context.WithTimeout(context.Background(), codeBuddyAuthProbeTimeout)
 	defer cancel()
-	cmd := exec.Command(bins[0], "--acp")
-	executil.HideWindow(cmd) // 扫描与轮询时避免黑窗闪烁
+	// Background ctx 无 Done：只借统一入口做 shim 解析 / 隐藏黑窗 / 批处理包装，
+	// 超时仍由下方 timer + 树杀负责，避免 CommandContext 只杀 cmd.exe 留下孤儿 node。
+	cmd := executil.NewCLICommand(context.Background(), bins[0], []string{"--acp"})
 	executil.PrepareProcessGroup(cmd) // 独立进程组：超时/收尾树杀连带清理孙 node
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

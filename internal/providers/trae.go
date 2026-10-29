@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -79,8 +78,7 @@ func traeLoginStatus() (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), traeAuthTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bins[0], "login", "status")
-	executil.HideWindow(cmd) // 桌面端扫描时避免黑窗闪烁
+	cmd := executil.NewCLICommand(ctx, bins[0], []string{"login", "status"})
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

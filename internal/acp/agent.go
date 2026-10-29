@@ -113,8 +113,9 @@ func NewAgent(ctx context.Context, spec Spec, h Handler) (*Agent, error) {
 	// 这里用普通 Command + 独立守卫 goroutine：ctx 取消时树杀兜底；
 	// ctx 为 Background（当前唯一调用方 chat.Backend）时 Done() 为 nil，
 	// goroutine 阻塞到连接关闭（done）后退出，不泄漏。
-	cmd := exec.Command(spec.Path, spec.Args...)
-	executil.HideWindow(cmd)
+	// Background ctx 无 Done：与上面「不用 CommandContext 超时杀」的约束一致，
+	// 只借统一入口做 shim 解析 / 隐藏黑窗 / Windows 批处理包装。
+	cmd := executil.NewCLICommand(context.Background(), spec.Path, spec.Args)
 	// 独立进程组：Close/ctx 取消时组杀整棵 ACP 进程树（npx → 适配器 node）。
 	executil.PrepareProcessGroup(cmd)
 	cmd.Dir = spec.Dir
