@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -488,5 +489,158 @@ func TestACPOnlyErr(t *testing.T) {
 	}
 	if got := acpOnlyErr(nil); !errors.Is(got, errSessionACPOnly) {
 		t.Fatalf("nil 应退回 errSessionACPOnly, got %v", got)
+	}
+}
+
+// TestChatManagerEmitsConfigAndElicitation 验证 config_option_update 与表单请求
+// 分别经 chat:config / chat:elicitation 推送，且 CancelElicitation 让等待中的
+// 请求以 cancel 收尾。断言事件载荷（id、options、request 字段），不止事件名。
+func TestChatManagerEmitsConfigAndElicitation(t *testing.T) {
+	log := newEventLog()
+	backend := &fakeChatCaptureBackend{}
+	m := newChatManagerWith(log.emit, backend, nil, nil, nil, nil, nil)
+	t.Cleanup(m.CloseAll)
+	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "/w"}, chat.Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	h := backend.lastHandler()
+
+	h.SessionUpdate(info.SessionID, json.RawMessage(`{"sessionUpdate":"config_option_update","configOptions":[{"id":"mode","name":"Session Mode","category":"mode","type":"select","currentValue":"plan","options":[{"value":"plan","name":"plan"}]}]}`))
+	cfg := log.waitEvent(t, "chat:config")
+	if got := cfg.payload["id"]; got != info.ID {
+		t.Fatalf("chat:config id = %v, want %s", got, info.ID)
+	}
+	view, ok := cfg.payload["options"].(chat.ConfigOptionsView)
+	if !ok {
+		t.Fatalf("chat:config options 类型 = %T", cfg.payload["options"])
+	}
+	var mode *chat.ConfigOptionView
+	for i := range view.Options {
+		if view.Options[i].ID == "mode" {
+			mode = &view.Options[i]
+		}
+	}
+	if mode == nil || mode.Current != "plan" {
+		t.Fatalf("chat:config 未带 mode=plan: %+v", view.Options)
+	}
+
+	elicit, ok := h.(acp.ElicitationHandler)
+	if !ok {
+		t.Fatal("handler 未实现 ElicitationHandler")
+	}
+	done := make(chan acp.ElicitationResult, 1)
+	go func() {
+		out, _ := elicit.Elicitation(context.Background(), "42", acp.ElicitationParams{SessionID: "s1", Mode: "form", Message: "Q"})
+		done <- out
+	}()
+	ev := log.waitEvent(t, "chat:elicitation")
+	if got := ev.payload["id"]; got != info.ID {
+		t.Fatalf("chat:elicitation id = %v, want %s", got, info.ID)
+	}
+	req, ok := ev.payload["request"].(chat.ElicitationRequest)
+	if !ok {
+		t.Fatalf("chat:elicitation request 类型 = %T", ev.payload["request"])
+	}
+	if req.RequestID != "42" || req.Message != "Q" {
+		t.Fatalf("request = %+v", req)
+	}
+	if req.Fields == nil {
+		t.Fatal("Fields 为 nil，JSON 序列化会是 null")
+	}
+	if err := m.CancelElicitation(info.ID, "42"); err != nil {
+		t.Fatal(err)
+	}
+	if out := <-done; out.Action != "cancel" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+// TestChatConfigAndElicitationAliasTranslation 验证重建别名链下出站事件与四个
+// 绑定都按前端持有的旧 ID 工作：manager 内部 ID 经 origID 翻成旧 ID 推出，
+// 绑定收到的旧 ID 经 resolveChatID 解析回内部 ID。
+func TestChatConfigAndElicitationAliasTranslation(t *testing.T) {
+	log := newEventLog()
+	backend := &fakeChatCaptureBackend{}
+	app := NewAppWith(Options{})
+	m := newChatManagerWith(log.emit, backend, nil, nil, nil, app.originalChatID, nil)
+	app.opts.Chats = m
+	t.Cleanup(m.CloseAll)
+
+	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "/w"}, chat.Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	oldID := "old-" + info.ID
+	app.rememberChatAlias(oldID, info.ID)
+
+	h := backend.lastHandler()
+	h.SessionUpdate(info.SessionID, json.RawMessage(`{"sessionUpdate":"config_option_update","configOptions":[{"id":"mode","name":"Session Mode","category":"mode","type":"select","currentValue":"plan","options":[{"value":"plan","name":"plan"}]}]}`))
+	cfg := log.waitEvent(t, "chat:config")
+	if got := cfg.payload["id"]; got != oldID {
+		t.Fatalf("chat:config id = %v, want %s", got, oldID)
+	}
+
+	// 旧 ID 调绑定：应解析到内部会话并触发同样的翻译后事件。
+	if err := app.SetChatConfigOption(oldID, "mode", "build"); err != nil {
+		t.Fatalf("SetChatConfigOption: %v", err)
+	}
+	cfg = log.waitEvent(t, "chat:config")
+	if got := cfg.payload["id"]; got != oldID {
+		t.Fatalf("SetChatConfigOption 事件 id = %v, want %s", got, oldID)
+	}
+	view, ok := cfg.payload["options"].(chat.ConfigOptionsView)
+	if !ok {
+		t.Fatalf("options 类型 = %T", cfg.payload["options"])
+	}
+	found := false
+	for _, o := range view.Options {
+		if o.ID == "mode" && o.Current == "build" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("SetChatConfigOption 后 mode 未乐观更新: %+v", view.Options)
+	}
+	if v, err := app.ListChatConfigOptions(oldID); err != nil || len(v.Options) == 0 {
+		t.Fatalf("ListChatConfigOptions(old) = %+v, %v", v, err)
+	}
+
+	elicit, ok := h.(acp.ElicitationHandler)
+	if !ok {
+		t.Fatal("handler 未实现 ElicitationHandler")
+	}
+	done := make(chan acp.ElicitationResult, 1)
+	go func() {
+		out, _ := elicit.Elicitation(context.Background(), "42", acp.ElicitationParams{SessionID: "s1", Mode: "form", Message: "Q"})
+		done <- out
+	}()
+	ev := log.waitEvent(t, "chat:elicitation")
+	if got := ev.payload["id"]; got != oldID {
+		t.Fatalf("chat:elicitation id = %v, want %s", got, oldID)
+	}
+	if err := app.RespondChatElicitation(oldID, "42", "accept", map[string]any{"pm": "bun"}); err != nil {
+		t.Fatalf("RespondChatElicitation: %v", err)
+	}
+	if out := <-done; out.Action != "accept" || out.Content["pm"] != "bun" {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+// TestChatConfigBindingsRequireChatManager 验证 config/elicitation 绑定在管理器
+// 未就绪时统一返回 errNotReady。
+func TestChatConfigBindingsRequireChatManager(t *testing.T) {
+	app := &App{}
+	if _, err := app.ListChatConfigOptions("c1"); !errors.Is(err, errNotReady) {
+		t.Fatalf("err = %v", err)
+	}
+	if err := app.SetChatConfigOption("c1", "mode", "plan"); !errors.Is(err, errNotReady) {
+		t.Fatalf("err = %v", err)
+	}
+	if err := app.RespondChatElicitation("c1", "r1", "accept", map[string]any{}); !errors.Is(err, errNotReady) {
+		t.Fatalf("err = %v", err)
+	}
+	if err := app.CancelChatElicitation("c1", "r1"); !errors.Is(err, errNotReady) {
+		t.Fatalf("err = %v", err)
 	}
 }

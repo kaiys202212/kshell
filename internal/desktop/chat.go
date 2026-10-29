@@ -98,6 +98,14 @@ func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, aut
 	m.SetOnQueue(func(id string, items []chat.QueueItem) {
 		emit("chat:queue", map[string]any{"id": translate(id), "items": items})
 	})
+	// 通用配置项（mode/effort 等）变化：出站带别名翻译后的 ID，视图按内部 ID 取。
+	m.SetOnConfig(func(id string) {
+		emit("chat:config", map[string]any{"id": translate(id), "options": m.ConfigOptions(id)})
+	})
+	// elicitation 表单请求：同样翻译 ID 后推给前端弹窗。
+	m.SetOnElicitation(func(id string, r chat.ElicitationRequest) {
+		emit("chat:elicitation", map[string]any{"id": translate(id), "request": r})
+	})
 	return m
 }
 
@@ -797,6 +805,46 @@ func (a *App) SetChatModel(id, modelID string) error {
 		a.emitChatOut("chat:models", map[string]any{"id": id, "models": view})
 	}
 	return nil
+}
+
+// ListChatConfigOptions 返回会话的完整 ACP 配置项（model/mode/effort 等）。
+func (a *App) ListChatConfigOptions(id string) (chat.ConfigOptionsView, error) {
+	m := a.chats()
+	if m == nil {
+		return chat.ConfigOptionsView{}, errNotReady
+	}
+	resolved, _ := a.resolveChatID(id)
+	return m.ConfigOptions(resolved), nil
+}
+
+// SetChatConfigOption 切换会话的某个 ACP 配置项（仅 select 字符串值）。
+func (a *App) SetChatConfigOption(id, configID, value string) error {
+	m := a.chats()
+	if m == nil {
+		return errNotReady
+	}
+	resolved, _ := a.resolveChatID(id)
+	return m.SetConfigOption(resolved, configID, value)
+}
+
+// RespondChatElicitation 回答一次 elicitation 表单请求（accept/decline/cancel）。
+func (a *App) RespondChatElicitation(id, requestID, action string, content map[string]any) error {
+	m := a.chats()
+	if m == nil {
+		return errNotReady
+	}
+	resolved, _ := a.resolveChatID(id)
+	return m.RespondElicitation(resolved, requestID, action, content)
+}
+
+// CancelChatElicitation 取消一次待决的 elicitation 表单请求。
+func (a *App) CancelChatElicitation(id, requestID string) error {
+	m := a.chats()
+	if m == nil {
+		return errNotReady
+	}
+	resolved, _ := a.resolveChatID(id)
+	return m.CancelElicitation(resolved, requestID)
 }
 
 // ListChatCommands 返回会话最近的技能/命令列表（available_commands_update）。
