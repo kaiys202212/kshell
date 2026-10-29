@@ -982,10 +982,11 @@ describe('Settings', () => {
         Enabled: true,
         Platforms: [
           platView({ Models: ['m1'], IsDefault: false }),
-          platView({ ID: 'p2', Name: 'GLM', Models: ['m3'], IsDefault: true }),
+          // 新平台也含 m1：保存载荷里的 ActiveModel 仍有效，后端保留
+          platView({ ID: 'p2', Name: 'GLM', Models: ['m1', 'm3'], IsDefault: true }),
         ],
         DefaultPlatform: 'p2',
-        ActiveModel: 'm3',
+        ActiveModel: 'm1',
       });
     render(<Settings />);
     goModel();
@@ -996,8 +997,10 @@ describe('Settings', () => {
     const sel = (await screen.findByLabelText(
       tt('ui.settings.model.active_model'),
     )) as HTMLSelectElement;
-    await waitFor(() => expect(Array.from(sel.options).map((o) => o.value)).toEqual(['m3']));
-    expect(sel.value).toBe('m3');
+    await waitFor(() =>
+      expect(Array.from(sel.options).map((o) => o.value)).toEqual(['m1', 'm3']),
+    );
+    expect(sel.value).toBe('m1');
     const p1 = screen.getAllByText('DeepSeek')[0].closest('li')!;
     expect(within(p1).queryByText(tt('ui.settings.model.default_badge'))).toBeNull();
     expect(within(p2).getByText(tt('ui.settings.model.default_badge'))).toBeInTheDocument();
