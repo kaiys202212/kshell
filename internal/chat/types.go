@@ -119,10 +119,33 @@ type ModelsView struct {
 	Models  []ModelView
 }
 
+// ConfigOptionValueView / ConfigOptionView / ConfigOptionsView 是通用会话配置
+// 选项（model / mode 等）的前端视图：与 ModelsView 分开，避免把非模型选项
+// 硬塞进模型切换语义。
+type ConfigOptionValueView struct {
+	Value       string `json:"Value"`
+	Name        string `json:"Name"`
+	Description string `json:"Description,omitempty"`
+}
+
+type ConfigOptionView struct {
+	ID          string                  `json:"ID"`
+	Name        string                  `json:"Name"`
+	Description string                  `json:"Description,omitempty"`
+	Category    string                  `json:"Category,omitempty"`
+	Type        string                  `json:"Type"`
+	Current     string                  `json:"Current"`
+	Options     []ConfigOptionValueView `json:"Options"`
+}
+
+type ConfigOptionsView struct {
+	Options []ConfigOptionView `json:"Options"`
+}
+
 // Update 是归一化时间线事件，带单调 Seq 供前端去重。
 type Update struct {
 	Seq         int64            `json:"Seq"`
-	Type        string           `json:"Type"` // user | assistant | thought | tool | plan | commands | turn_done | error
+	Type        string           `json:"Type"` // user | assistant | thought | tool | plan | commands | config | turn_done | error
 	MessageID   string           `json:"MessageID,omitempty"`
 	Text        string           `json:"Text,omitempty"`
 	ToolCallID  string           `json:"ToolCallID,omitempty"`
@@ -131,6 +154,8 @@ type Update struct {
 	StopReason  string           `json:"StopReason,omitempty"`
 	Commands    []Command        `json:"Commands,omitempty"`
 	Attachments []AttachmentMeta `json:"Attachments,omitempty"`
+	// ConfigOptions 仅 Type=="config" 时携带（配置项全量快照）。
+	ConfigOptions []ConfigOptionView `json:"ConfigOptions,omitempty"`
 }
 
 type PermissionOption struct {
@@ -155,6 +180,9 @@ type Conn interface {
 	LoadSession(ctx context.Context, sessionID, cwd string) (acp.SessionStart, error)
 	Prompt(ctx context.Context, sessionID string, blocks []acp.ContentBlock) (string, error)
 	SetModel(ctx context.Context, sessionID, modelID string) error
+	// SetConfigOption 设置通用会话配置项（model / mode 等），返回 agent 报告的
+	// 最新全量配置状态。
+	SetConfigOption(ctx context.Context, sessionID, configID, value string) ([]acp.SessionConfigOption, error)
 	// Authenticate 在 session/new|load 报 authRequired（-32000）后用 initialize
 	// 广播的 authMethod 发起登录（agent 端拉起浏览器流程）。
 	Authenticate(ctx context.Context, methodID string) error

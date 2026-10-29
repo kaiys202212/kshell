@@ -24,8 +24,9 @@ type fakeChatConn struct {
 	start      acp.SessionStart
 	modelErr   error
 	modelCalls []string
-	promptGate chan struct{} // 非 nil 时 Prompt 阻塞等待（desktop 测试模拟忙轮次）
-	stopReply  string        // 非 nil 时 Prompt 返回该 stopReason（模拟提前停止等）
+	configSet  []acp.SessionConfigOption // SetConfigOption 返回的配置全量状态
+	promptGate chan struct{}             // 非 nil 时 Prompt 阻塞等待（desktop 测试模拟忙轮次）
+	stopReply  string                    // 非 nil 时 Prompt 返回该 stopReason（模拟提前停止等）
 }
 
 func (c *fakeChatConn) Initialize(ctx context.Context) (acp.InitializeResult, error) {
@@ -54,6 +55,9 @@ func (c *fakeChatConn) Prompt(ctx context.Context, sessionID string, blocks []ac
 func (c *fakeChatConn) SetModel(ctx context.Context, sessionID, modelID string) error {
 	c.modelCalls = append(c.modelCalls, modelID)
 	return c.modelErr
+}
+func (c *fakeChatConn) SetConfigOption(ctx context.Context, sessionID, configID, value string) ([]acp.SessionConfigOption, error) {
+	return c.configSet, nil
 }
 func (c *fakeChatConn) Authenticate(ctx context.Context, methodID string) error { return nil }
 func (c *fakeChatConn) Cancel(sessionID string) error                           { return nil }

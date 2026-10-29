@@ -32,6 +32,9 @@ type fakeConn struct {
 	modelCalls   []string
 	setModelGate chan struct{} // 非 nil 时 SetModel 阻塞等待，直到收到信号或 ctx 取消（模拟 agent 不应答）
 
+	configSet   []acp.SessionConfigOption // SetConfigOption 返回值（模拟 agent 返回的完整配置状态）
+	configCalls []string                  // 记录每次 SetConfigOption 的 configID=value
+
 	initGate   chan struct{} // 非 nil 时 Initialize 阻塞等待，模拟握手耗时
 	initSet    bool
 	initResult acp.InitializeResult
@@ -131,6 +134,12 @@ func (c *fakeConn) SetModel(ctx context.Context, sessionID, modelID string) erro
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.modelErr
+}
+func (c *fakeConn) SetConfigOption(_ context.Context, _, configID, value string) ([]acp.SessionConfigOption, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.configCalls = append(c.configCalls, configID+"="+value)
+	return c.configSet, nil
 }
 func (c *fakeConn) Cancel(sessionID string) error {
 	c.mu.Lock()

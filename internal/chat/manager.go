@@ -77,7 +77,10 @@ type session struct {
 
 	modelState  *acp.SessionModelState   // agent 以 v1 models 形态报告的可用模型
 	modelConfig *acp.SessionConfigOption // agent 以 configOptions(id=model) 形态报告的模型选项
-	commands    []Command                // 最近一次 available_commands_update 的技能列表
+	// configOptions 是 agent 报告的全部配置项（model / mode 等）全量快照，
+	// 支撑通用选择器；modelConfig 是其中 id=model 的派生视图。
+	configOptions []acp.SessionConfigOption
+	commands      []Command // 最近一次 available_commands_update 的技能列表
 
 	// 状态活动跟随：提前返回 prompt 的 agent（codebuddy 等）随后仍推工具/思考
 	// 流水，Info.Status 必须跟随实际活动，否则 ListChats/chat:meta 携带的 ready
@@ -146,6 +149,7 @@ type Manager struct {
 	onInfo          func(Info)                      // 锁外；首条用户消息改写标题时
 	onCommands      func(id string, cmds []Command) // 锁外；技能列表推送
 	onModels        func(id string)                 // 锁外；握手完成后模型视图推送
+	onConfig        func(id string)                 // 锁外；配置项变化推送
 	settingsMetaFor func(chatID string) string      // 锁外；_meta 载荷工厂（claude settings 注入）
 	autoAllow       func() bool                     // bypass：自动选 allow 类 option，不弹窗
 	mcpFor          func(chatID string) []acp.McpServerStdio
@@ -222,6 +226,14 @@ func (m *Manager) SetOnCommands(fn func(id string, cmds []Command)) {
 func (m *Manager) SetOnModels(fn func(id string)) {
 	m.mu.Lock()
 	m.onModels = fn
+	m.mu.Unlock()
+}
+
+// SetOnConfig 注册配置项变化回调（锁外执行）：config_option_update 推送或
+// SetConfigOption 成功后触发，desktop 层据此 emit chat:config。
+func (m *Manager) SetOnConfig(fn func(id string)) {
+	m.mu.Lock()
+	m.onConfig = fn
 	m.mu.Unlock()
 }
 
@@ -642,13 +654,19 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 		m.fail(s.id, 0, err.Error())
 		return Info{}, err
 	}
-	s.modelState = start.Models
-	s.modelConfig = start.ModelConfig
 	if sessionID == "" {
 		sessionID = start.SessionID
 	}
 
 	m.mu.Lock()
+	// 配置/模型状态在锁内发布：session/load 重放可能在握手期就推来
+	// config_option_update，handler 同样持锁写入这些字段，裸写会竞争。
+	s.modelState = start.Models
+	s.modelConfig = start.ModelConfig
+	s.configOptions = start.ConfigOptions
+	if s.modelConfig == nil {
+		s.modelConfig = modelConfigFrom(s.configOptions)
+	}
 	s.sessionID = sessionID
 	// Info.SessionID 统一表示「绑定的磁盘会话 ID」：恢复型聊天传入的就是磁盘 ID，保持不变；
 	// 新建聊天协议层拿到的通常是 ACP 内部 ID（与磁盘会话 ID 不同体系），Info 留空等扫描回填。
@@ -677,6 +695,9 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	items := s.queueItemsLocked()
 	onQueue := m.onQueue
 	onModels := m.onModels
+	// 模型/配置状态可能被 config_option_update 的 handler goroutine 并发改写，
+	// 是否推送要在锁内定好，锁外只读快照布尔值。
+	hasModels := s.modelState != nil || s.modelConfig != nil
 	m.mu.Unlock()
 
 	if onQueue != nil {
@@ -685,10 +706,8 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 
 	// Open 完成后补偿推送一次模型视图：握手期前端拉 ListChatModels 可能拿空
 	// （starting 状态下 modelState/modelConfig 尚未赋值），靠此回调让 desktop
-	// 层 emit chat:models。s.modelState/modelConfig 在本 goroutine 的握手阶段
-	// 已赋值，此处读取无竞态；并发写入方（SetModel 等）最早也要等 Open 返回
-	// 后才可能发生，约束即"Open 返回前不得有其他 goroutine 写这两字段"。
-	if onModels != nil && (s.modelState != nil || s.modelConfig != nil) {
+	// 层 emit chat:models。
+	if onModels != nil && hasModels {
 		onModels(s.id)
 	}
 
@@ -1274,6 +1293,146 @@ func (m *Manager) History(id string) []Update {
 	return out
 }
 
+// modelConfigFrom 从配置项中挑出 id=model 的项（新式模型切换路径）；
+// 未报告模型选项时返回 nil。
+func modelConfigFrom(opts []acp.SessionConfigOption) *acp.SessionConfigOption {
+	for i := range opts {
+		if opts[i].ID == "model" {
+			out := opts[i]
+			return &out
+		}
+	}
+	return nil
+}
+
+// configView 把协议层配置项转成前端视图；Current 取 currentValue 的字符串值
+// （agent 可能用非字符串 JSON，解不出来就留空，不阻塞其它项渲染）。
+func configView(opts []acp.SessionConfigOption) ConfigOptionsView {
+	out := ConfigOptionsView{Options: make([]ConfigOptionView, 0, len(opts))}
+	for _, o := range opts {
+		var current string
+		_ = json.Unmarshal(o.CurrentValue, &current)
+		v := ConfigOptionView{
+			ID: o.ID, Name: o.Name, Description: o.Description,
+			Category: o.Category, Type: o.Type, Current: current,
+			Options: make([]ConfigOptionValueView, 0, len(o.Options)),
+		}
+		for _, ov := range o.Options {
+			v.Options = append(v.Options, ConfigOptionValueView{Value: ov.Value, Name: ov.Name, Description: ov.Description})
+		}
+		out.Options = append(out.Options, v)
+	}
+	return out
+}
+
+// configOptionsFromView 是 configView 的逆变换：Current 按 JSON 字符串序列化
+// 回 currentValue（ACP 侧 value 是 JSON 值，不能直接塞裸字符串）。
+func configOptionsFromView(in []ConfigOptionView) []acp.SessionConfigOption {
+	out := make([]acp.SessionConfigOption, 0, len(in))
+	for _, v := range in {
+		raw, _ := json.Marshal(v.Current)
+		o := acp.SessionConfigOption{
+			ID: v.ID, Name: v.Name, Description: v.Description,
+			Category: v.Category, Type: v.Type, CurrentValue: raw,
+		}
+		for _, ov := range v.Options {
+			o.Options = append(o.Options, acp.ConfigOptionValue{Value: ov.Value, Name: ov.Name, Description: ov.Description})
+		}
+		out = append(out, o)
+	}
+	return out
+}
+
+// ConfigOptions 返回会话的通用配置项视图；会话不存在或 agent 未报告时返回空视图。
+func (m *Manager) ConfigOptions(id string) ConfigOptionsView {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.byID[id]
+	if s == nil {
+		return ConfigOptionsView{Options: []ConfigOptionView{}}
+	}
+	return configView(s.configOptions)
+}
+
+// SetConfigOption 运行时设置会话配置项（model / mode 等）；成功后乐观更新
+// 本地快照供前端即时反映，并推送配置/模型视图。configID=="model" 时额外
+// 沿用 onModels 通路，保持既有模型选择器行为。
+func (m *Manager) SetConfigOption(id, configID, value string) error {
+	m.mu.Lock()
+	s := m.byID[id]
+	if s == nil || s.exited {
+		m.mu.Unlock()
+		return errNotFound
+	}
+	conn := s.conn
+	sid := s.sessionID
+	ctx := s.ctx
+	m.mu.Unlock()
+	if conn == nil || sid == "" {
+		return errNoBackend
+	}
+	rpcCtx, cancel := context.WithTimeout(ctx, modelSetTimeout)
+	defer cancel()
+	opts, err := conn.SetConfigOption(rpcCtx, sid, configID, value)
+	if err != nil {
+		return wrapModelTimeout(err)
+	}
+
+	m.mu.Lock()
+	// RPC 期间会话可能已退出/重建：只更新仍在册的会话，避免写悬垂指针。
+	if cur := m.byID[id]; cur != s || s.exited {
+		m.mu.Unlock()
+		return nil
+	}
+	if len(opts) > 0 {
+		// agent 返回了权威全量状态：原样采用，不能再把请求值盖回去（agent 可能
+		// 规范化或拒绝该值，本地乐观覆盖会与真实状态不一致）。
+		s.configOptions = opts
+	} else {
+		// 应答为空（部分 agent 不回状态）：才用请求值做本地乐观更新，避免
+		// 选择器回弹。
+		applyConfigValue(s.configOptions, configID, value)
+		if configID == "model" && modelConfigFrom(s.configOptions) == nil {
+			applyConfigValuePtr(s.modelConfig, configID, value)
+		}
+	}
+	if configID == "model" {
+		if mc := modelConfigFrom(s.configOptions); mc != nil {
+			s.modelConfig = mc
+		}
+	}
+	onConfig := m.onConfig
+	onModels := m.onModels
+	m.mu.Unlock()
+
+	if onConfig != nil {
+		onConfig(id)
+	}
+	if configID == "model" && onModels != nil {
+		onModels(id)
+	}
+	return nil
+}
+
+// applyConfigValue 就地改写配置项当前值（调用方持锁）。
+func applyConfigValue(opts []acp.SessionConfigOption, configID, value string) {
+	raw, _ := json.Marshal(value)
+	for i := range opts {
+		if opts[i].ID == configID {
+			opts[i].CurrentValue = raw
+		}
+	}
+}
+
+// applyConfigValuePtr 在无法从全量列表重建 modelConfig 时直接改其当前值。
+func applyConfigValuePtr(opt *acp.SessionConfigOption, configID, value string) {
+	if opt == nil || opt.ID != configID {
+		return
+	}
+	raw, _ := json.Marshal(value)
+	opt.CurrentValue = raw
+}
+
 // Models 返回会话的模型切换视图；agent 未报告任何模型信息时 ok=false。
 func (m *Manager) Models(id string) (ModelsView, bool) {
 	m.mu.Lock()
@@ -1349,6 +1508,8 @@ func (m *Manager) SetModel(id, modelID string) error {
 		v, _ := json.Marshal(modelID)
 		s.modelConfig.CurrentValue = v
 	}
+	// 通用配置快照里的 model 项也要同步，否则两个选择器显示不一致。
+	applyConfigValue(s.configOptions, "model", modelID)
 	return nil
 }
 
@@ -1373,18 +1534,19 @@ func (h *sessionHandler) RequestPermission(ctx context.Context, sessionID, reque
 
 // acpUpdate 按 ACP 规范的小写字段解码 session/update（前端模型是 PascalCase，故单独解码再转换）。
 type acpUpdate struct {
-	SessionUpdate     string          `json:"sessionUpdate"`
-	MessageID         string          `json:"messageId"`
-	Content           json.RawMessage `json:"content"`
-	ToolCallID        string          `json:"toolCallId"`
-	Title             string          `json:"title"`
-	Name              string          `json:"name"`
-	Kind              string          `json:"kind"`
-	Status            string          `json:"status"`
-	RawInput          json.RawMessage `json:"rawInput"`
-	RawOutput         json.RawMessage `json:"rawOutput"`
-	Entries           []acpPlanEntry  `json:"entries"`
-	AvailableCommands []acpCommand    `json:"availableCommands"`
+	SessionUpdate     string                    `json:"sessionUpdate"`
+	MessageID         string                    `json:"messageId"`
+	Content           json.RawMessage           `json:"content"`
+	ToolCallID        string                    `json:"toolCallId"`
+	Title             string                    `json:"title"`
+	Name              string                    `json:"name"`
+	Kind              string                    `json:"kind"`
+	Status            string                    `json:"status"`
+	RawInput          json.RawMessage           `json:"rawInput"`
+	RawOutput         json.RawMessage           `json:"rawOutput"`
+	Entries           []acpPlanEntry            `json:"entries"`
+	AvailableCommands []acpCommand              `json:"availableCommands"`
+	ConfigOptions     []acp.SessionConfigOption `json:"configOptions"`
 }
 
 type acpPlanEntry struct {
@@ -1494,6 +1656,9 @@ func normalizeUpdate(raw json.RawMessage) (Update, *blockDesc, bool) {
 			cmds = append(cmds, Command{Name: c.Name, Description: c.Description, InputHint: hint})
 		}
 		return Update{Type: "commands", Commands: cmds}, nil, true
+	case "config_option_update":
+		v := configView(u.ConfigOptions)
+		return Update{Type: "config", ConfigOptions: v.Options}, nil, true
 	default:
 		return Update{}, nil, false
 	}
@@ -1545,6 +1710,24 @@ func (m *Manager) onSessionUpdate(id, sessionID string, raw json.RawMessage) {
 		m.mu.Unlock()
 		if cb != nil {
 			cb(id, u.Commands)
+		}
+		return
+	}
+	// 配置项更新同样是会话状态而非时间线事件：替换全量快照、同步模型视图，
+	// 单独推送，不进历史。
+	if u.Type == "config" {
+		m.mu.Lock()
+		s := m.byID[id]
+		if s != nil {
+			s.configOptions = configOptionsFromView(u.ConfigOptions)
+			// config_option_update 是全量快照，模型项随快照重建；没有 model 项
+			// 就清空派生视图，避免残留过期的模型列表。
+			s.modelConfig = modelConfigFrom(s.configOptions)
+		}
+		cb := m.onConfig
+		m.mu.Unlock()
+		if cb != nil {
+			cb(id)
 		}
 		return
 	}

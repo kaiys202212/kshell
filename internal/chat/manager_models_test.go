@@ -339,3 +339,143 @@ func TestManagerPromptTextStillWorks(t *testing.T) {
 		t.Fatalf("conn blocks = %+v", b.conn.promptBlocks)
 	}
 }
+
+func TestConfigOptionUpdateReplacesState(t *testing.T) {
+	conn := &fakeConn{newStart: acp.SessionStart{SessionID: "sess-new", ConfigOptions: []acp.SessionConfigOption{
+		{ID: "model", Type: "select", CurrentValue: json.RawMessage(`"m1"`), Options: []acp.ConfigOptionValue{{Value: "m1", Name: "One"}}},
+		{ID: "mode", Type: "select", CurrentValue: json.RawMessage(`"build"`), Options: []acp.ConfigOptionValue{{Value: "build", Name: "build"}}},
+	}}}
+	b := &fakeBackend{conn: conn}
+	m := NewManager(b, func(string, Update) {}, func(string, PermissionRequest) {}, func(string, int, string) {})
+	var pushed bool
+	m.SetOnConfig(func(string) { pushed = true })
+	info, err := m.Open("new:1", Info{Workspace: "/w", ToolID: "opencode"}, Spec{Path: "x", Dir: "/w"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := json.RawMessage(`{"sessionUpdate":"config_option_update","configOptions":[{"id":"model","name":"Model","category":"model","type":"select","currentValue":"m2","options":[{"value":"m2","name":"Two"}]},{"id":"mode","name":"Session Mode","category":"mode","type":"select","currentValue":"plan","options":[{"value":"plan","name":"plan"}]}]}`)
+	b.last.SessionUpdate(info.SessionID, raw)
+	if !pushed {
+		t.Fatal("onConfig not called")
+	}
+	v := m.ConfigOptions(info.ID)
+	if len(v.Options) != 2 || v.Options[1].ID != "mode" || v.Options[1].Current != "plan" {
+		t.Fatalf("config view = %+v", v)
+	}
+	models, ok := m.Models(info.ID)
+	if !ok || models.Current != "m2" {
+		t.Fatalf("models = %+v ok=%v", models, ok)
+	}
+}
+
+func TestSetConfigOptionUpdatesState(t *testing.T) {
+	conn := &fakeConn{newStart: acp.SessionStart{SessionID: "sess-new", ConfigOptions: []acp.SessionConfigOption{
+		{ID: "model", Type: "select", CurrentValue: json.RawMessage(`"m1"`), Options: []acp.ConfigOptionValue{{Value: "m1", Name: "One"}}},
+		{ID: "mode", Type: "select", CurrentValue: json.RawMessage(`"build"`), Options: []acp.ConfigOptionValue{{Value: "build", Name: "build"}, {Value: "plan", Name: "plan"}}},
+	}}}
+	b := &fakeBackend{conn: conn}
+	m := NewManager(b, func(string, Update) {}, func(string, PermissionRequest) {}, func(string, int, string) {})
+	info, err := m.Open("new:1", Info{Workspace: "/w", ToolID: "opencode"}, Spec{Path: "x", Dir: "/w"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.configSet = []acp.SessionConfigOption{
+		{ID: "model", Type: "select", CurrentValue: json.RawMessage(`"m1"`)},
+		{ID: "mode", Type: "select", CurrentValue: json.RawMessage(`"plan"`)},
+	}
+	if err := m.SetConfigOption(info.ID, "mode", "plan"); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.ConfigOptions(info.ID).Options[1].Current; got != "plan" {
+		t.Fatalf("mode = %q", got)
+	}
+}
+
+func TestSetConfigOptionResponseWins(t *testing.T) {
+	conn := &fakeConn{newStart: acp.SessionStart{SessionID: "sess-new", ConfigOptions: []acp.SessionConfigOption{
+		{ID: "model", Type: "select", CurrentValue: json.RawMessage(`"m1"`)},
+		{ID: "mode", Type: "select", CurrentValue: json.RawMessage(`"plan"`), Options: []acp.ConfigOptionValue{{Value: "plan", Name: "plan"}, {Value: "build", Name: "build"}}},
+	}}}
+	b := &fakeBackend{conn: conn}
+	m := NewManager(b, func(string, Update) {}, func(string, PermissionRequest) {}, func(string, int, string) {})
+	var configPushed bool
+	m.SetOnConfig(func(string) { configPushed = true })
+	info, err := m.Open("new:1", Info{Workspace: "/w", ToolID: "opencode"}, Spec{Path: "x", Dir: "/w"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// agent 把请求值规范化成了 build：本地必须采用回包，而不是盲目回填 plan。
+	conn.configSet = []acp.SessionConfigOption{
+		{ID: "model", Type: "select", CurrentValue: json.RawMessage(`"m1"`)},
+		{ID: "mode", Type: "select", CurrentValue: json.RawMessage(`"build"`), Options: []acp.ConfigOptionValue{{Value: "plan", Name: "plan"}, {Value: "build", Name: "build"}}},
+	}
+	if err := m.SetConfigOption(info.ID, "mode", "plan"); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.ConfigOptions(info.ID).Options[1].Current; got != "build" {
+		t.Fatalf("mode = %q, want agent response build", got)
+	}
+	if !configPushed {
+		t.Fatal("onConfig not called")
+	}
+}
+
+func TestSetConfigOptionOptimisticWhenResponseEmpty(t *testing.T) {
+	conn := &fakeConn{newStart: acp.SessionStart{SessionID: "sess-new", ConfigOptions: []acp.SessionConfigOption{
+		{ID: "model", Type: "select", CurrentValue: json.RawMessage(`"m1"`)},
+		{ID: "mode", Type: "select", CurrentValue: json.RawMessage(`"plan"`), Options: []acp.ConfigOptionValue{{Value: "plan", Name: "plan"}, {Value: "build", Name: "build"}}},
+	}}}
+	b := &fakeBackend{conn: conn}
+	m := NewManager(b, func(string, Update) {}, func(string, PermissionRequest) {}, func(string, int, string) {})
+	var configPushed bool
+	m.SetOnConfig(func(string) { configPushed = true })
+	info, err := m.Open("new:1", Info{Workspace: "/w", ToolID: "opencode"}, Spec{Path: "x", Dir: "/w"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.configSet = nil
+	if err := m.SetConfigOption(info.ID, "mode", "build"); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.ConfigOptions(info.ID).Options[1].Current; got != "build" {
+		t.Fatalf("mode = %q, want optimistic build", got)
+	}
+	if !configPushed {
+		t.Fatal("onConfig not called")
+	}
+}
+
+func TestSetConfigOptionModelFiresBothCallbacks(t *testing.T) {
+	conn := &fakeConn{newStart: acp.SessionStart{SessionID: "sess-new", ConfigOptions: []acp.SessionConfigOption{
+		{ID: "model", Type: "select", CurrentValue: json.RawMessage(`"m1"`), Options: []acp.ConfigOptionValue{{Value: "m1", Name: "One"}, {Value: "m2", Name: "Two"}}},
+		{ID: "mode", Type: "select", CurrentValue: json.RawMessage(`"build"`)},
+	}}}
+	b := &fakeBackend{conn: conn}
+	m := NewManager(b, func(string, Update) {}, func(string, PermissionRequest) {}, func(string, int, string) {})
+	var configPushed, modelsPushed bool
+	m.SetOnConfig(func(string) { configPushed = true })
+	m.SetOnModels(func(string) { modelsPushed = true })
+	info, err := m.Open("new:1", Info{Workspace: "/w", ToolID: "opencode"}, Spec{Path: "x", Dir: "/w"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.configSet = []acp.SessionConfigOption{
+		{ID: "model", Type: "select", CurrentValue: json.RawMessage(`"m2"`), Options: []acp.ConfigOptionValue{{Value: "m1", Name: "One"}, {Value: "m2", Name: "Two"}}},
+		{ID: "mode", Type: "select", CurrentValue: json.RawMessage(`"build"`)},
+	}
+	if err := m.SetConfigOption(info.ID, "model", "m2"); err != nil {
+		t.Fatal(err)
+	}
+	if !configPushed {
+		t.Fatal("onConfig not called")
+	}
+	if !modelsPushed {
+		t.Fatal("onModels not called for model change")
+	}
+	if got := m.ConfigOptions(info.ID).Options[0].Current; got != "m2" {
+		t.Fatalf("model = %q", got)
+	}
+	if v, ok := m.Models(info.ID); !ok || v.Current != "m2" {
+		t.Fatalf("models = %+v ok=%v", v, ok)
+	}
+}
