@@ -34,8 +34,9 @@ func Build(l providers.Launch) (Spec, error) {
 }
 
 func (s Spec) Cmd(ctx context.Context) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, s.Path, s.Args...)
-	executil.HideWindow(cmd) // GUI 壳下调用不闪黑窗；TUI 下子进程继承父控制台，无副作用
+	// 统一入口：GUI 壳下不闪黑窗；Windows 上 .cmd 经 %COMSPEC% 包装，
+	// 含空格路径 + 需引号参数不会截成 C:\Program。
+	cmd := executil.NewCLICommand(ctx, s.Path, s.Args)
 	if s.Dir != "" {
 		cmd.Dir = s.Dir
 	}
