@@ -15,9 +15,10 @@ import (
 //（即 ccswitch 的「切平台」语义）；kshell 关闭或无 Anthropic 端点时删除
 // 管理键恢复无注入状态。
 //
-// 模型：ANTHROPIC_MODEL = ActiveModel（空则平台列表首项）；Sonnet/Opus/Haiku
-// 三个 DEFAULT 别名依次映射平台模型列表前三项（不足则回落 ActiveModel），
-// 让 Claude TUI /model 能切到 kshell 配置的模型，而不是 settings 里陈旧值。
+// 模型：ANTHROPIC_MODEL 与 Sonnet 别名 = ActiveModel（去首尾空白，空则列表首项）；
+// Opus/Haiku 依次取排除 ActiveModel 后的平台模型列表前两项，不足回落首项。
+// 让 Claude TUI /model 能切到 kshell 配置的模型，且默认的 "sonnet" 就是用户选的
+// ActiveModel，而不是 settings 里陈旧值或列表首项。
 // 模型键与顶层 model 校正仅当默认平台配置了 Anthropic 端点时才启用——只有
 // OpenAI 协议的平台不接管 Claude（否则 OpenAI 模型名会被发给官方端点）。
 type Claude struct{}

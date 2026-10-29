@@ -262,6 +262,31 @@ func TestClaudeSyncAliasFallsBackWhenFewModels(t *testing.T) {
 	}
 }
 
+// ActiveModel 带首尾空白、列表含重复项：active 被 trim 且不重复出现在 Opus。
+func TestClaudeSyncAliasDedupAndTrimActive(t *testing.T) {
+	home := t.TempDir()
+	in := SyncInput{
+		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "  glm-5.3-flash  ",
+		Platforms: []config.ModelPlatform{{
+			ID: "p1", AnthropicBaseURL: "https://ant.example/",
+			Models: []string{"glm-5.3-flash", "glm-5.3-flash", "kimi-k3"},
+		}},
+	}
+	if err := (Claude{}).Sync(home, in); err != nil {
+		t.Fatal(err)
+	}
+	env := readClaudeSettings(t, home)["env"].(map[string]any)
+	if env["ANTHROPIC_MODEL"] != "glm-5.3-flash" {
+		t.Fatalf("ANTHROPIC_MODEL 应 trim: %v", env["ANTHROPIC_MODEL"])
+	}
+	if env["ANTHROPIC_DEFAULT_SONNET_MODEL"] != "glm-5.3-flash" {
+		t.Fatalf("SONNET = %v", env["ANTHROPIC_DEFAULT_SONNET_MODEL"])
+	}
+	if env["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "kimi-k3" {
+		t.Fatalf("OPUS 应跳过重复的 active: %v", env["ANTHROPIC_DEFAULT_OPUS_MODEL"])
+	}
+}
+
 // ActiveModel 空时回落平台模型列表首项；无模型则不写 MODEL 键。
 func TestClaudeSyncModelFallsBackToFirstPlatformModel(t *testing.T) {
 	home := t.TempDir()
