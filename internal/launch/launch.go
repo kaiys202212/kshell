@@ -324,7 +324,7 @@ func isOpencodeGateway(base string) bool {
 	if host != "opencode.ai" && !strings.HasSuffix(host, ".opencode.ai") {
 		return false
 	}
-	return strings.Contains(u.Path, "/inference/")
+	return strings.Contains(u.Path, "/inference")
 }
 
 // newACPSessionID 生成 RFC 4122 v4 形态的会话 ID。仅用于网关路由，不承担认证；

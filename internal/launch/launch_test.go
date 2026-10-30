@@ -1261,6 +1261,57 @@ func TestFinalizeACPClaudeOtherGatewayNoSessionHeader(t *testing.T) {
 	}
 }
 
+// isOpencodeGateway 的域名/路径语义：大小写、端口、子域、伪后缀、无尾斜杠。
+func TestIsOpencodeGateway(t *testing.T) {
+	cases := []struct {
+		base string
+		want bool
+	}{
+		{"https://opencode.ai/inference/go/anthropic", true},
+		{"https://OPENCODE.AI/inference", true},          // 大写 host + 无尾斜杠
+		{"https://opencode.ai:8443/inference/go", true},  // 带端口
+		{"https://api.opencode.ai/inference/anthropic", true}, // 子域
+		{"https://notopencode.ai/inference/go", false},   // 伪后缀
+		{"https://opencode.ai.evil.com/inference/go", false}, // 域名不在末尾
+		{"https://opencode.ai/console", false},           // 非 inference 路径
+		{"https://api.anthropic.com", false},             // 官方端点
+		{"", false},
+		{"::bad-url::", false},
+	}
+	for _, c := range cases {
+		if got := isOpencodeGateway(c.base); got != c.want {
+			t.Errorf("isOpencodeGateway(%q) = %v, want %v", c.base, got, c.want)
+		}
+	}
+}
+
+// 恢复路径（ForSessionACP）同样注入会话头：桌面端恢复历史会话走同一载荷。
+func TestForSessionACPClaudeOpencodeSessionHeader(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"})
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{AnthropicBaseURL: "https://opencode.ai/inference/go/anthropic", APIKey: "k", Model: "glm-5"}, true
+	}}
+	s := providers.Session{ID: "ses_x", ToolID: "claude", Workspace: "/w"}
+	l, err := ForSessionACP(ps, tools, s, mo, PermissionOptions{})
+	if err != nil {
+		t.Fatalf("ForSessionACP: %v", err)
+	}
+	var meta struct {
+		ClaudeCode struct {
+			Options struct {
+				Env map[string]any `json:"env"`
+			} `json:"options"`
+		} `json:"claudeCode"`
+	}
+	if err := json.Unmarshal([]byte(l.ACPSettingsJSON), &meta); err != nil {
+		t.Fatalf("载荷非法 JSON: %v", err)
+	}
+	if h, _ := meta.ClaudeCode.Options.Env["ANTHROPIC_CUSTOM_HEADERS"].(string); !strings.HasPrefix(h, "x-opencode-session: ") {
+		t.Fatalf("恢复路径应补 x-opencode-session 头, got %q", h)
+	}
+}
+
 // 非 claude 工具不得产出 ACPSettingsJSON。
 func TestFinalizeACPNonClaudeNoSettings(t *testing.T) {
 	ps := []providers.Provider{providers.Codex{}}
