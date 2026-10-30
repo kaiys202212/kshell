@@ -956,6 +956,8 @@
       "help_trae_model": "No platform model injection yet; uses TRAE's own account models.",
       "help_cursor_acp": "Official cursor-agent acp (cursor-acp fallback)",
       "help_cursor_model": "Launch rejects --model, so nothing is injected; switch models in-session with #model.",
+      "help_opencode_acp": "Built-in opencode acp subcommand (stdio ndjson)",
+      "help_opencode_model": "Kshell syncs platform models into opencode's own config (provider.kshell-*); pick one in opencode's own model menu.",
       "help_usage_title": "Quick start",
       "help_usage_1": "Click \"New agent\", pick a project, tool, and model to create a chat-capable agent.",
       "help_usage_2": "Use @ to target an agent; otherwise \"Input routing\" picks one automatically. Messages aggregate here; click a session chip to jump.",

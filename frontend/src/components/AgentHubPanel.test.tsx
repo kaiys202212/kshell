@@ -167,10 +167,10 @@ describe('AgentHubPanel', () => {
     render(<AgentHubPanel />);
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.help_aria') }));
     expect(screen.getByText(tt('ui.hub.help_title'))).toBeInTheDocument();
-    for (const tool of ['Claude Code', 'CodeBuddy', 'TRAE CLI', 'Cursor']) {
+    for (const tool of ['Claude Code', 'CodeBuddy', 'TRAE CLI', 'Cursor', 'OpenCode']) {
       expect(screen.getByText(tool)).toBeInTheDocument();
     }
-    expect(screen.getAllByText(tt('ui.hub.help_model_yes'))).toHaveLength(2);
+    expect(screen.getAllByText(tt('ui.hub.help_model_yes'))).toHaveLength(3);
     expect(screen.getAllByText(tt('ui.hub.help_model_no'))).toHaveLength(2);
   });
 

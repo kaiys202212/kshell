@@ -956,6 +956,8 @@
       "help_trae_model": "暂不支持平台模型注入，使用 TRAE 自有账号模型。",
       "help_cursor_acp": "官方 cursor-agent acp（cursor-acp 兜底）",
       "help_cursor_model": "启动不接受 --model，故不注入；请在会话内用 #model 切换模型。",
+      "help_opencode_acp": "CLI 内置 opencode acp 子命令（stdio ndjson）",
+      "help_opencode_model": "平台模型由 kshell 同步进 opencode 自有配置（provider.kshell-*），请在 opencode 自身的模型菜单里选用。",
       "help_usage_title": "简要使用说明",
       "help_usage_1": "点击「新建 agent」，选择项目、工具与模型，即可创建可对话的 agent。",
       "help_usage_2": "输入框用 @ 指定 agent；不指定时按「输入路由」自动选择。消息汇总在本面板，点会话标签可跳转。",

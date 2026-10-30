@@ -1913,7 +1913,7 @@ function DefaultSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
 }
 
 // HelpDialog：说明 AgentHub 的 ACP 支持范围、各工具的平台模型注入情况与常用操作。
-// 内容与后端能力对齐：ACPProvider 目前由 claude / codebuddy / cursor / trae 实现，
+// 内容与后端能力对齐：ACPProvider 目前由 claude / codebuddy / cursor / trae / opencode 实现，
 // 平台模型注入见 launch.finalizeACP 与 providers.ModelInjector。
 function HelpDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const { t } = useTranslation();
@@ -1941,6 +1941,12 @@ function HelpDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: b
       acp: t('ui.hub.help_cursor_acp'),
       injected: false,
       detail: t('ui.hub.help_cursor_model'),
+    },
+    {
+      tool: 'OpenCode',
+      acp: t('ui.hub.help_opencode_acp'),
+      injected: true,
+      detail: t('ui.hub.help_opencode_model'),
     },
   ];
   const usage = [
