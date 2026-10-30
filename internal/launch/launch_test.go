@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yangk/kshell/internal/appearance"
@@ -1177,6 +1178,86 @@ func TestFinalizeACPClaudeSettingsPayload(t *testing.T) {
 	env, _ := envObj["env"].(map[string]any)
 	if env["ANTHROPIC_MODEL"] != "glm-5.3-flash" || env["ANTHROPIC_BASE_URL"] != "https://h/" || env["ANTHROPIC_AUTH_TOKEN"] != "k" {
 		t.Fatalf("env 块不符: %+v", env)
+	}
+}
+
+// OpenCode Go 网关要求请求带 x-opencode-session：旧版 SDK 内置 CLI 不发原生
+// 会话头（实测 2.1.83 无、独立 2.1.301 有），须经 ACP options.env 的
+// ANTHROPIC_CUSTOM_HEADERS 补上，且每次启动生成独立 UUID。
+func TestFinalizeACPClaudeOpencodeSessionHeader(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"})
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{
+			AnthropicBaseURL: "https://opencode.ai/inference/go/anthropic",
+			APIKey:           "k",
+			Model:            "glm-5.3-flash",
+		}, true
+	}}
+	optEnv := func(l providers.Launch) map[string]any {
+		t.Helper()
+		var meta struct {
+			ClaudeCode struct {
+				Options struct {
+					Settings string         `json:"settings"`
+					Env      map[string]any `json:"env"`
+				} `json:"options"`
+			} `json:"claudeCode"`
+		}
+		if err := json.Unmarshal([]byte(l.ACPSettingsJSON), &meta); err != nil {
+			t.Fatalf("载荷非法 JSON: %v (%q)", err, l.ACPSettingsJSON)
+		}
+		var settings map[string]any
+		if err := json.Unmarshal([]byte(meta.ClaudeCode.Options.Settings), &settings); err != nil {
+			t.Fatalf("settings 值应为内联 JSON 字符串: %v", err)
+		}
+		env, _ := settings["env"].(map[string]any)
+		if env["ANTHROPIC_BASE_URL"] != "https://opencode.ai/inference/go/anthropic" {
+			t.Fatalf("settings.env 应保留网关端点: %+v", env)
+		}
+		return meta.ClaudeCode.Options.Env
+	}
+
+	var headers []string
+	for i := 0; i < 2; i++ {
+		l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", mo, PermissionOptions{})
+		if err != nil {
+			t.Fatalf("ForWorkspaceACP: %v", err)
+		}
+		h, _ := optEnv(l)["ANTHROPIC_CUSTOM_HEADERS"].(string)
+		if !strings.HasPrefix(h, "x-opencode-session: ") {
+			t.Fatalf("应补 x-opencode-session 头, got %q", h)
+		}
+		headers = append(headers, h)
+	}
+	if headers[0] == headers[1] {
+		t.Fatalf("不同会话应使用不同 session id: %q", headers[0])
+	}
+}
+
+// 非 OpenCode 网关不注入会话头（官方 Anthropic / 第三方端点无需该头）。
+func TestFinalizeACPClaudeOtherGatewayNoSessionHeader(t *testing.T) {
+	ps := []providers.Provider{providers.Claude{}}
+	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"})
+	mo := ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
+		return providers.ModelConfig{AnthropicBaseURL: "https://h/", APIKey: "k", Model: "glm-5"}, true
+	}}
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "claude", mo, PermissionOptions{})
+	if err != nil {
+		t.Fatalf("ForWorkspaceACP: %v", err)
+	}
+	var meta struct {
+		ClaudeCode struct {
+			Options struct {
+				Env map[string]any `json:"env"`
+			} `json:"options"`
+		} `json:"claudeCode"`
+	}
+	if err := json.Unmarshal([]byte(l.ACPSettingsJSON), &meta); err != nil {
+		t.Fatalf("载荷非法 JSON: %v", err)
+	}
+	if v, ok := meta.ClaudeCode.Options.Env["ANTHROPIC_CUSTOM_HEADERS"]; ok {
+		t.Fatalf("非 OpenCode 网关不应注入会话头: %v", v)
 	}
 }
 

@@ -3,8 +3,11 @@
 package launch
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yangk/kshell/internal/appearance"
 	"github.com/yangk/kshell/internal/claudeenv"
@@ -290,15 +294,59 @@ func acpSettingsPayload(p providers.Provider, mo ModelOptions) string {
 	if err != nil {
 		return ""
 	}
+	options := map[string]any{"settings": string(settingsJSON)}
+	if isOpencodeGateway(cfg.AnthropicBaseURL) {
+		// 适配器内置的旧版 Claude Code CLI 不发原生会话头（实测 2.1.83 无、
+		// 独立安装的 2.1.301 有 x-claude-code-session-id），OpenCode Go 网关会
+		// 直接 400 MissingSessionID。经 SDK options.env 补 x-opencode-session，
+		// 每次启动生成独立 UUID：同一会话内稳定、不同会话互不挤占路由。
+		options["env"] = map[string]string{
+			"ANTHROPIC_CUSTOM_HEADERS": "x-opencode-session: " + newACPSessionID(),
+		}
+	}
 	b, err := json.Marshal(map[string]any{
-		"claudeCode": map[string]any{
-			"options": map[string]any{"settings": string(settingsJSON)},
-		},
+		"claudeCode": map[string]any{"options": options},
 	})
 	if err != nil {
 		return ""
 	}
 	return string(b)
+}
+
+// isOpencodeGateway 判断端点是否为 OpenCode inference 网关（Go 与 Console 两种）。
+// 只认 opencode.ai 域，避免把会话头发给官方 Anthropic 或其他兼容端点。
+func isOpencodeGateway(base string) bool {
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host != "opencode.ai" && !strings.HasSuffix(host, ".opencode.ai") {
+		return false
+	}
+	return strings.Contains(u.Path, "/inference/")
+}
+
+// newACPSessionID 生成 RFC 4122 v4 形态的会话 ID。仅用于网关路由，不承担认证；
+// crypto/rand 失败时退化为时间戳，保证请求仍能带上非空头。
+func newACPSessionID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	dst := make([]byte, 36)
+	hex.Encode(dst[0:8], b[0:4])
+	dst[8] = '-'
+	hex.Encode(dst[9:13], b[4:6])
+	dst[13] = '-'
+	hex.Encode(dst[14:18], b[6:8])
+	dst[18] = '-'
+	hex.Encode(dst[19:23], b[8:10])
+	dst[23] = '-'
+	hex.Encode(dst[24:36], b[10:16])
+	return string(dst)
 }
 
 // ForWorkspaceACP 产出在工作区新建 ACP 会话的启动描述；toolID 为空时用首选工具。
