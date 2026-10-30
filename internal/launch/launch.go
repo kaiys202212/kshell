@@ -255,6 +255,13 @@ func finalizeACP(l providers.Launch, p providers.Provider, tool discovery.Tool, 
 		//（"not wired in v1"），注入与不注入无行为差别，统一跳过防误配。
 		mo = ModelOptions{}
 	}
+	if tool.ID == "opencode" {
+		// opencode 的 acp 是子命令，`--auto` 只能放在默认 TUI 入口；注入后
+		// `opencode --auto acp` 会把 acp 当成项目目录并退出
+		//（Failed to change directory to ...\acp）。ACP 权限本就由 kshell
+		// 的 autoAllow 自动放行，无需该参数。
+		po = PermissionOptions{}
+	}
 	out := finalize(l, p, mo, po)
 	out.ACPSettingsJSON = acpSettingsPayload(p, mo)
 	return reorderACPArgs(out, tool, len(out.Args)-baseLen)

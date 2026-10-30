@@ -677,6 +677,35 @@ func TestForWorkspaceACP_CursorOfficialSkipsModelInjection(t *testing.T) {
 }
 
 // 恢复会话路径同样走官方直连且不注入模型。
+// opencode 的 acp 是子命令，不接受 --auto 这类权限全局参数：注入后
+// `opencode --auto acp` 会把 acp 当成项目目录并退出（Failed to change
+// directory to ...\acp）。ACP 权限由 kshell 自身自动放行，必须整体跳过注入。
+func TestForACP_OpencodeSkipsPermissionFlag(t *testing.T) {
+	ps := []providers.Provider{providers.Opencode{}}
+	tools := []discovery.Tool{{
+		ID: "opencode", Installed: true, BinPath: "opencode.cmd",
+		ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "opencode.cmd", ExtraArgs: []string{"acp"}},
+	}}
+	po := PermissionOptions{Bypass: true}
+
+	l, err := ForWorkspaceACP(ps, tools, discovery.Workspace{Path: "/w"}, "opencode", ModelOptions{}, po)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Args) != 1 || l.Args[0] != "acp" {
+		t.Fatalf("新建 ACP args = %v, want [acp]", l.Args)
+	}
+
+	s := providers.Session{ID: "s1", ToolID: "opencode", Workspace: "/w"}
+	l, err = ForSessionACP(ps, tools, s, ModelOptions{}, po)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Args) != 1 || l.Args[0] != "acp" {
+		t.Fatalf("恢复 ACP args = %v, want [acp]", l.Args)
+	}
+}
+
 func TestForSessionACP_CursorOfficialSkipsModelInjection(t *testing.T) {
 	ps := []providers.Provider{providers.Cursor{}}
 	tools := []discovery.Tool{{
