@@ -714,6 +714,8 @@
       "discard": "丢弃",
       "discard_confirm": "丢弃 {{label}} 的改动？",
       "split_aria": "调整 Git 上下分栏",
+      "refresh_scm": "刷新修改区",
+      "refresh_log": "刷新提交日志",
       "log_filter_aria": "提交图分支筛选",
       "current_branch": "当前分支",
       "all": "全部",

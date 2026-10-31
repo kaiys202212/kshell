@@ -416,6 +416,30 @@ describe('GitPanel', () => {
     });
   });
 
+  it('修改区刷新按钮重新拉取 git 状态', async () => {
+    const ws = 'D:\\proj';
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    await screen.findByText('dirty.go');
+    const calls = mocks.gitSCM.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.git.refresh_scm') }));
+    await waitFor(() => {
+      expect(mocks.gitSCM.mock.calls.length).toBeGreaterThan(calls);
+    });
+    expect(mocks.gitSCM).toHaveBeenLastCalledWith(ws, '', '');
+  });
+
+  it('日志区刷新按钮重新拉取提交日志', async () => {
+    const ws = 'D:\\proj';
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    await screen.findByText('init');
+    const calls = mocks.gitLog.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.git.refresh_log') }));
+    await waitFor(() => {
+      expect(mocks.gitLog.mock.calls.length).toBeGreaterThan(calls);
+    });
+    expect(mocks.gitLog).toHaveBeenLastCalledWith(ws, '', 'current', '', 100, 0);
+  });
+
   it('提交并推送按生效同步源推送', async () => {
     const ws = 'D:\\proj';
     mocks.gitSCM.mockResolvedValue(snap({ SyncRemote: 'gitcode' }));

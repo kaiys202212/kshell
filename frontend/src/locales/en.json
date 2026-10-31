@@ -714,6 +714,8 @@
       "discard": "Discard",
       "discard_confirm": "Discard changes to {{label}}?",
       "split_aria": "Resize Git panes",
+      "refresh_scm": "Refresh changes",
+      "refresh_log": "Refresh commit log",
       "log_filter_aria": "Commit graph branch filter",
       "current_branch": "Current branch",
       "all": "All",

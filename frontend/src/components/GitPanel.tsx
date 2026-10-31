@@ -10,6 +10,7 @@ import {
   Download,
   Ellipsis,
   Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import {
   gitCheckout,
@@ -357,6 +358,20 @@ export default function GitPanel({
             </select>
           )}
           <div className="ml-auto flex items-center gap-0.5">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  disabled={busy}
+                  aria-label={t('ui.git.refresh_scm')}
+                  onClick={() => void load()}
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('ui.git.refresh_scm')}</TooltipContent>
+            </Tooltip>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button size="icon" variant="ghost" aria-label={t('ui.git.actions_aria')} disabled={busy}>
@@ -622,6 +637,20 @@ export default function GitPanel({
                 </Button>
               </TooltipTrigger>
               <TooltipContent>{t('ui.git.fetch_all')}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  disabled={busy}
+                  aria-label={t('ui.git.refresh_log')}
+                  onClick={() => void loadLog()}
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('ui.git.refresh_log')}</TooltipContent>
             </Tooltip>
           </div>
           <GitLogGraph

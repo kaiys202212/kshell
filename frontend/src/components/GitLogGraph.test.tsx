@@ -138,4 +138,18 @@ describe('GitLogGraph', () => {
     fireEvent.mouseEnter(path!);
     expect(await screen.findByRole('tooltip')).toHaveTextContent('topic');
   });
+
+  it('长分支名 chip 带原生 title，悬停详情列出全量分支名', async () => {
+    const long = 'HEAD -> feat/this-is-a-very-long-branch-name-for-tooltip';
+    const withLong = { ...commit, decorations: [long] };
+    render(<GitLogGraph commits={[withLong]} selected="" onSelect={() => {}} />);
+    const row = screen.getByRole('button', { name: /hello graph/ });
+    fireEvent.mouseEnter(row);
+    const tip = await screen.findByRole('tooltip');
+    // 详情中完整分支名出现（chip 截断后仍有入口可看全名）
+    expect(tip).toHaveTextContent(long);
+    // chip 自身有原生 title，直接悬停也能看全名
+    const chip = screen.getByTitle(long);
+    expect(chip).toHaveTextContent(long);
+  });
 });

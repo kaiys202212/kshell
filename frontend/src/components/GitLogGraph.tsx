@@ -176,7 +176,11 @@ export function GitLogGraph({
             >
               <span className="min-w-0 flex-1 truncate">{row.commit.subject || shortHash(row.commit.hash)}</span>
               {row.commit.decorations.slice(0, 2).map((d) => (
-                <span key={d} className="max-w-20 shrink-0 truncate rounded bg-primary/15 px-1 text-[10px] text-primary">
+                <span
+                  key={d}
+                  title={d}
+                  className="max-w-20 shrink-0 truncate rounded bg-primary/15 px-1 text-[10px] text-primary"
+                >
                   {d}
                 </span>
               ))}
@@ -199,6 +203,16 @@ export function GitLogGraph({
               {formatRelativeTime(hovered.date)} ({formatAbsoluteTime(hovered.date)})
             </div>
             <div className="mt-1 font-medium break-words">{hovered.subject}</div>
+            {hovered.decorations.length > 0 && (
+              // 行内 chip 截断到前 2 个且被省略，这里列全量分支名，长名折行展示
+              <div className="mt-1 flex flex-wrap gap-1 break-all text-[10px] text-primary">
+                {hovered.decorations.map((d) => (
+                  <span key={d} className="rounded bg-primary/15 px-1">
+                    {d}
+                  </span>
+                ))}
+              </div>
+            )}
             {stat && formatStat({ files: stat.Files, insertions: stat.Insertions, deletions: stat.Deletions }) && (
               <div className="mt-1 text-muted-foreground">
                 {formatStat({ files: stat.Files, insertions: stat.Insertions, deletions: stat.Deletions })}
