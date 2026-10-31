@@ -649,10 +649,11 @@ func (a *App) modelsView(id string) (chat.ModelsView, error) {
 	if !ok {
 		v = chat.ModelsView{Models: []chat.ModelView{}}
 	}
-	if info, ok := m.Get(resolved); ok && !mergesKshellPlatformModels(info.ToolID) {
+	info, _ := m.Get(resolved)
+	if !mergesKshellPlatformModels(info.ToolID) {
 		return v, nil
 	}
-	return a.mergeConfigModels(v), nil
+	return a.mergeConfigModels(v, info.ToolID), nil
 }
 
 // mergesKshellPlatformModels 报告该工具 ACP 会话是否合并 kshell 平台模型。
@@ -676,22 +677,36 @@ func platformModelDisplayName(platName, model string) string {
 // （向后兼容旧保存的 modelId）；多平台 ID 加 "kshell:<platID>:<model>"，
 // 默认平台条目排最前，其余按列表顺序。Name 一律带平台展示前缀（仅展示）。
 // 不改写 Current：当前模型以 agent 上报为准（默认模型由 agent 自行决定）。
-func (a *App) mergeConfigModels(v chat.ModelsView) chat.ModelsView {
+// opencode 额外按原生 ID 尾段判重：其自报列表已含 kshell 注入 provider 的
+// "kshell-<platID>/<model>" 条目（agentsync 写 opencode.json），配置裸名
+// 副本会造成下拉重复，命中即跳过——选原生条目即可，切换由
+// resolveOpenCodeModelID 兜底。
+func (a *App) mergeConfigModels(v chat.ModelsView, toolID string) chat.ModelsView {
 	cfg := a.snapshot().Config.Model
 	if !cfg.Enabled || len(cfg.Platforms) == 0 {
 		return v
 	}
 	seen := make(map[string]bool, len(v.Models))
 	seenName := make(map[string]bool, len(v.Models))
+	nativeTail := map[string]bool{} // 原生条目尾段(model, '.' 归一 '-') 是否存在
 	for _, mo := range v.Models {
 		seen[mo.ID] = true
 		if mo.Name != "" {
 			seenName[mo.Name] = true
 		}
+		if i := strings.LastIndex(mo.ID, "/"); i >= 0 {
+			nativeTail[strings.ReplaceAll(mo.ID[i+1:], ".", "-")] = true
+		}
 	}
+	dedupeNative := toolID == "opencode"
 	add := func(id, name string) {
 		if id == "" || seen[id] {
 			return
+		}
+		if dedupeNative {
+			if _, hit := nativeTail[strings.ReplaceAll(id, ".", "-")]; hit {
+				return
+			}
 		}
 		// 展示名判重：agent 自报列表可能已含 kshell 注入的条目
 		//（codebuddy 为裸 mid，ACP 层带 custom-local: 前缀；名 "<plat>: <m>"），
@@ -771,9 +786,19 @@ func (a *App) SetChatModel(id, modelID string) error {
 	}
 	resolved, _ := a.resolveChatID(id)
 	platID, model, ok := splitKshellModelID(modelID)
+	if !ok {
+		model = modelID
+	}
+	// 仅 opencode：下拉侧裸名/前缀 ID 需解析成 agent 原生 ID（kshell 注入
+	// provider 的原生形态是 "kshell-<platID>/<model>"，裸名会被 OpenCode 判
+	// model not found，-32602）。其余工具原样透传，不受影响。
+	target := model
+	if info, gok := m.Get(resolved); gok && info.ToolID == "opencode" {
+		target = a.resolveOpenCodeModelID(resolved, platID, model)
+	}
 	var err error
 	if !ok {
-		err = m.SetModel(resolved, modelID)
+		err = m.SetModel(resolved, target)
 	} else {
 		cfg := a.snapshot().Config.Model
 		found := false
@@ -784,6 +809,7 @@ func (a *App) SetChatModel(id, modelID string) error {
 			}
 		}
 		if !found {
+			// platID 已不在配置（配置删除后下拉缓存未刷）：原样透传容错。
 			err = m.SetModel(resolved, modelID)
 		} else if def, _ := cfg.ActivePlatform(); def.ID != platID {
 			if err = a.saveConfig(func(c *config.Config) {
@@ -793,9 +819,9 @@ func (a *App) SetChatModel(id, modelID string) error {
 				return err
 			}
 			a.syncAgentModels() // 默认平台变了，静态注入随之重写
-			err = m.SetModel(resolved, model)
+			err = m.SetModel(resolved, target)
 		} else {
-			err = m.SetModel(resolved, model)
+			err = m.SetModel(resolved, target)
 		}
 	}
 	if err != nil {
@@ -805,6 +831,54 @@ func (a *App) SetChatModel(id, modelID string) error {
 		a.emitChatOut("chat:models", map[string]any{"id": id, "models": view})
 	}
 	return nil
+}
+
+// resolveOpenCodeModelID 把下拉侧的裸名/前缀 ID 解析成 OpenCode 可识别的原生
+// ID。快照取 m.Models（仅 agent 自报，未经 merge）。依次：
+//  1. 裸名精确命中原生列表 → 原样下发（用户本来就在选原生条目）
+//  2. "kshell-<platID>/<model>" 命中（前缀带 platID 用 platID；否则用默认
+//     平台——agentsync 写 opencode.json 的 provider 键即 "kshell-<platID>"）
+//  3. 原生列表尾段（"/" 后）与裸名宽唯一的松散命中（.'/'-' 归一，防 platID
+//     已改名点号/连字符差异）
+//  4. 都不中 → 原样透传：保持 OpenCode 的 -32602 报错原样可见，不盲猜。
+func (a *App) resolveOpenCodeModelID(chatID, platID, model string) string {
+	m := a.chats()
+	if m == nil {
+		return model
+	}
+	view, ok := m.Models(chatID)
+	if !ok {
+		return model
+	}
+	ids := make([]string, 0, len(view.Models))
+	has := make(map[string]bool, len(view.Models))
+	for _, mo := range view.Models {
+		ids = append(ids, mo.ID)
+		has[mo.ID] = true
+	}
+	if has[model] {
+		return model
+	}
+	if platID == "" {
+		if def, dok := a.snapshot().Config.Model.ActivePlatform(); dok {
+			platID = def.ID
+		}
+	}
+	if platID != "" {
+		if cand := "kshell-" + platID + "/" + model; has[cand] {
+			return cand
+		}
+	}
+	var hits []string
+	for _, id := range ids {
+		if i := strings.LastIndex(id, "/"); i >= 0 && modelIDLooseEqual(id[i+1:], model) {
+			hits = append(hits, id)
+		}
+	}
+	if len(hits) == 1 {
+		return hits[0]
+	}
+	return model
 }
 
 // ListChatConfigOptions 返回会话的完整 ACP 配置项（model/mode/effort 等）。

@@ -566,7 +566,12 @@ func TestMergeConfigModelsMultiPlatformDedupe(t *testing.T) {
 // setModelApp 构造带 Layout 的聊天 App，供 SetChatModel 断言配置落盘。
 func setModelApp(t *testing.T, model config.ModelConfig) (*App, *fakeChatConn, config.Layout, string) {
 	t.Helper()
-	conn := &fakeChatConn{start: acpSessionWithModels(), waitCh: make(chan struct{})}
+	return setModelAppTool(t, model, "", acpSessionWithModels())
+}
+
+func setModelAppTool(t *testing.T, model config.ModelConfig, toolID string, start acp.SessionStart) (*App, *fakeChatConn, config.Layout, string) {
+	t.Helper()
+	conn := &fakeChatConn{start: start, waitCh: make(chan struct{})}
 	dir := t.TempDir()
 	layout := config.Layout{
 		Root:   dir,
@@ -575,7 +580,7 @@ func setModelApp(t *testing.T, model config.ModelConfig) (*App, *fakeChatConn, c
 	}
 	m := newChatManagerWith(func(string, ...any) {}, &fakeChatCaptureBackend{conn: conn}, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
-	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "/w"}, chat.Spec{Path: "x"}, "")
+	info, err := m.Open("new:1", chat.Info{Kind: chat.KindNew, Workspace: "/w", ToolID: toolID}, chat.Spec{Path: "x"}, "")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -793,7 +798,7 @@ func TestMergeConfigModelsDedupesByDisplayName(t *testing.T) {
 	in := chat.ModelsView{Models: []chat.ModelView{
 		{ID: "custom-local:glm-x", Name: "openai: glm-x"},
 	}}
-	got := env.app.mergeConfigModels(in)
+	got := env.app.mergeConfigModels(in, "claude")
 	names := map[string]int{}
 	for _, mo := range got.Models {
 		names[mo.Name]++
@@ -809,5 +814,136 @@ func TestMergeConfigModelsDedupesByDisplayName(t *testing.T) {
 	}
 	if !hasDs {
 		t.Fatalf("不同名条目应照常追加，got %#v", got.Models)
+	}
+}
+
+// openCode 配置模型切换：裸名须解析成 agent 原生 ID "kshell-<platID>/<model>"
+// 再下发，否则 OpenCode 报 -32602 model not found。
+func TestSetChatModelOpenCodeMapsBareToNative(t *testing.T) {
+	app, conn, _, id := setModelAppTool(t, config.ModelConfig{
+		Enabled:         true,
+		DefaultPlatform: "p1",
+		Platforms:       []config.ModelPlatform{{ID: "p1", Name: "P1", Models: []string{"glm-5.3-flash"}}},
+	}, "opencode", acp.SessionStart{Models: &acp.SessionModelState{
+		AvailableModels: []acp.ModelInfo{
+			{ModelID: "kshell-p1/glm-5.3-flash", Name: "P1: glm-5.3-flash"},
+			{ModelID: "zhip/glm-4.6", Name: "Zhip: glm-4.6"},
+		},
+		CurrentModelID: "zhip/glm-4.6",
+	}})
+	if err := app.SetChatModel(id, "glm-5.3-flash"); err != nil {
+		t.Fatalf("SetChatModel: %v", err)
+	}
+	if got := conn.modelCalls[0]; got != "kshell-p1/glm-5.3-flash" {
+		t.Fatalf("裸名应解析成原生 ID, got %q", got)
+	}
+}
+
+// 点号/连字符差宽松尾段兜底：platID 构造未命中时按尾段唯一命中。
+func TestSetChatModelOpenCodeLooseTail(t *testing.T) {
+	app, conn, _, id := setModelAppTool(t, config.ModelConfig{
+		Enabled:         true,
+		DefaultPlatform: "p1",
+		Platforms:       []config.ModelPlatform{{ID: "p1", Name: "P1", Models: []string{"glm-5.3-flash"}}},
+	}, "opencode", acp.SessionStart{Models: &acp.SessionModelState{
+		AvailableModels: []acp.ModelInfo{{ModelID: "kshell-p1/glm-5-3-flash", Name: "P1: glm"}},
+	}})
+	if err := app.SetChatModel(id, "glm-5.3-flash"); err != nil {
+		t.Fatalf("SetChatModel: %v", err)
+	}
+	if got := conn.modelCalls[0]; got != "kshell-p1/glm-5-3-flash" {
+		t.Fatalf("应按尾段宽松命中原生 ID, got %q", got)
+	}
+}
+
+// opencode: 精确命中原生列表 → 透传;无任何匹配 → 裸名透传(保持报错可见)。
+func TestSetChatModelOpenCodePassthrough(t *testing.T) {
+	app, conn, _, id := setModelAppTool(t, config.ModelConfig{
+		Enabled:         true,
+		DefaultPlatform: "p1",
+		Platforms:       []config.ModelPlatform{{ID: "p1", Name: "P1", Models: []string{"glm-5.3-flash"}}},
+	}, "opencode", acp.SessionStart{Models: &acp.SessionModelState{
+		AvailableModels: []acp.ModelInfo{
+			{ModelID: "zhip/glm-4.6", Name: "Zhip: glm-4.6"},
+		},
+	}})
+	if err := app.SetChatModel(id, "zhip/glm-4.6"); err != nil {
+		t.Fatalf("SetChatModel: %v", err)
+	}
+	if got := conn.modelCalls[0]; got != "zhip/glm-4.6" {
+		t.Fatalf("原生条目应原样下发, got %q", got)
+	}
+	if err := app.SetChatModel(id, "no-such-model"); err != nil {
+		t.Fatalf("SetChatModel: %v", err)
+	}
+	if got := conn.modelCalls[1]; got != "no-such-model" {
+		t.Fatalf("无匹配应透传裸名(报错可见), got %q", got)
+	}
+}
+
+// 非 opencode 工具(claude 等)不受影响:裸名仍原样透传。
+func TestSetChatModelNonOpenCodeUnaffected(t *testing.T) {
+	app, conn, _, id := setModelAppTool(t, config.ModelConfig{
+		Enabled:         true,
+		DefaultPlatform: "p1",
+		Platforms:       []config.ModelPlatform{{ID: "p1", Name: "P1", Models: []string{"a1"}}},
+	}, "claude", acp.SessionStart{Models: &acp.SessionModelState{
+		AvailableModels: []acp.ModelInfo{
+			{ModelID: "kshell-p1/a1", Name: "P1: a1"},
+		},
+	}})
+	if err := app.SetChatModel(id, "a1"); err != nil {
+		t.Fatalf("SetChatModel: %v", err)
+	}
+	if got := conn.modelCalls[0]; got != "a1" {
+		t.Fatalf("非 opencode 裸名应原样透传, got %q", got)
+	}
+}
+
+// opencode 下拉去重:agent 自报已含 "kshell-<platID>/<model>" 原生条目时,
+// 配置侧裸名副本不再追加(选原生条目即可);无原生条目时照常追加。
+func TestMergeConfigModelsOpencodeNativeDedupe(t *testing.T) {
+	env := newChatTestApp(t, nil, nil)
+	env.app.mu.Lock()
+	env.app.opts.Config.Model = config.ModelConfig{
+		Enabled:         true,
+		DefaultPlatform: "p1",
+		Platforms:       []config.ModelPlatform{{ID: "p1", Name: "openai", Models: []string{"glm-x", "ds-x"}}},
+	}
+	env.app.mu.Unlock()
+
+	got := env.app.mergeConfigModels(chat.ModelsView{Models: []chat.ModelView{
+		{ID: "kshell-p1/glm-x", Name: "openai: glm-x"},
+	}}, "opencode")
+	var hasGlmX, hasNative, hasDs int
+	for _, mo := range got.Models {
+		switch {
+		case mo.Name == "openai: glm-x" && mo.ID != "kshell-p1/glm-x":
+			hasGlmX++
+		case mo.ID == "kshell-p1/glm-x":
+			hasNative++
+		case mo.Name == "openai: ds-x":
+			hasDs++
+		}
+	}
+	if hasNative != 1 || hasGlmX != 0 {
+		t.Fatalf("原生条目应在且裸名副本应被去重, got %#v", got.Models)
+	}
+	if hasDs != 1 {
+		t.Fatalf("无原生条目的配置条目应照常追加, got %#v", got.Models)
+	}
+
+	// 非 opencode(如 claude 裸 mid 上报):不启用原生尾段去重,行为不变。
+	got2 := env.app.mergeConfigModels(chat.ModelsView{Models: []chat.ModelView{
+		{ID: "custom-local:glm-x", Name: "other: glm-x"},
+	}}, "claude")
+	var bare int
+	for _, mo := range got2.Models {
+		if mo.ID == "glm-x" {
+			bare++
+		}
+	}
+	if bare != 1 {
+		t.Fatalf("非 opencode 配置裸名副本应照常追加, got %#v", got2.Models)
 	}
 }
