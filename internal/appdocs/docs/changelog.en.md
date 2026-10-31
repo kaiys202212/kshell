@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.25 (2026-10-31)
+
+- Chat now supports agent config options and interactive forms: config dropdowns and form confirmations (elicitation) raised by the agent can be completed directly in the chat panel.
+- Built-in opencode is promoted to a full ACP chat tool: the login entry works, launching no longer passes `--auto`, and login detection tolerates missing credentials on fresh installs.
+- The Git panel gains manual refresh: one refresh button on the changes toolbar and one on the commit-log toolbar for when data fails to auto-update; overly long branch names show the full name on chip hover, and the row-hover detail card now lists all branch references of the commit.
+- The AgentHub help dialog adds an OpenCode explanation.
+- Model sync fixes: Claude Sonnet alias no longer points to an unselected model when the active model is not first in the list; one-time cleanup when all platforms are deleted and disabled; each tool's own model config is no longer rewritten when no model has ever been configured; dangling ActiveModel is cleared when no platform remains, avoiding wiping third-party config on the next sync.
+- Fixed ACP session header detection not matching paths without a trailing slash.
+
 ## v0.1.24 (2026-10-29)
 
 - Fixed agent tools being unusable under Windows install paths containing spaces: the CLI launch entry is unified with automatic `.cmd` batch wrapping — version detection, opencode session enumeration and TUI session launch for tools under `C:\Program Files` all work again; ACP and CodeBuddy / TRAE detection now go through the same entry.
