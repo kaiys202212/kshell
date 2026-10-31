@@ -42,7 +42,7 @@ import {
   type MentionOption,
 } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
-import { formatPlatformModelName, hubInjectedModelsForTool, loadDefaultCreate, loadLastCreate, loadToolModelOptions, loadToolModels, loadHubRouteMode, mergeHubModelOptions, rememberLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode, type ToolModelOption } from '../lib/agenthubDefaults';
+import { formatPlatformModelName, hubInjectedModelsForTool, lastModelForCreate, loadDefaultCreate, loadLastCreate, loadToolModelOptions, loadToolModels, loadHubRouteMode, mergeHubModelOptions, rememberLastModel, rememberPerToolLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode, type ToolModelOption } from '../lib/agenthubDefaults';
 import { saveHubDefaultCreate } from '../lib/api';
 import { quotePathForShell } from '../lib/dragPath';
 import { decodePercentText } from '../lib/displayText';
@@ -125,8 +125,10 @@ export async function runAgentCreate(
       }
       const chat = result.Chat;
       registerChat(chat);
-      // 成功即记默认值：下次 /easynew 或打开对话框时预填
+      // 成功即记默认值：下次 /easynew 或打开对话框时预填；按工具记忆同步，
+      // 创建模型也算一次「选择」，防止别的工具的记录覆盖后本工具失忆。
       saveLastCreate({ wsPath, toolId, modelId });
+      if (modelId) rememberPerToolLastModel(toolId, modelId);
       // 拉模型列表缓存，供下次预填模型下拉；失败静默（默认值是辅助功能）
       const view = await listChatModels(chat.ID).catch(() => null);
       if (view && view.Models && view.Models.length > 0) {
@@ -690,9 +692,9 @@ export default function AgentHubPanel() {
           openNewAgentDialog();
           return;
         }
-        // 模型：默认设置显式选了模型才恒用之；未选（null）时回落 lastCreate.modelId
-        //（上次模型），再无则 null = 工具默认模型。默认设置只固定工具，不锁死模型。
-        const modelId = defaults?.modelId ?? last?.modelId ?? null;
+        // 模型：默认设置显式选了模型才恒用之；未选（null）按工具记忆回落上次
+        // 模型（跨工具互不覆盖），再无则 null = 工具默认模型。
+        const modelId = lastModelForCreate(defaults?.modelId ?? null, toolId);
         return runAgentCreate(wsPath, toolId, modelId, {
           t,
           registerChat: (chat) => {
@@ -1671,9 +1673,11 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
       if (last && workspaces.some((w) => sameWorkspacePath(w.Path, last.wsPath))) return last.wsPath;
       return workspaces[0]?.Path ?? '';
     });
-    // 模型预选：lastCreate.modelId 在该工具的缓存模型列表里才预选，否则空（默认模型）
-    if (last?.modelId && loadToolModels(last.toolId).includes(last.modelId)) {
-      setModelId(last.modelId);
+    // 模型预选：该工具记忆的上次模型（跨工具不互覆）在缓存列表里才预选，否则空（默认模型）
+    const rememberTool = last?.toolId ?? '';
+    const remembered = lastModelForCreate(null, rememberTool);
+    if (remembered && loadToolModels(rememberTool).includes(remembered)) {
+      setModelId(remembered);
     } else {
       setModelId('');
     }

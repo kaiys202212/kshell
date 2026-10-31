@@ -3,13 +3,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   formatPlatformModelName,
   hubInjectedModelsForTool,
+  lastModelForCreate,
   loadDefaultCreate,
   loadLastCreate,
+  loadPerToolLastModel,
   loadToolModelOptions,
   loadToolModels,
   mergeHubModelOptions,
   rememberChatModels,
   rememberLastModel,
+  rememberPerToolLastModel,
   saveDefaultCreate,
   saveLastCreate,
   saveToolModels,
@@ -202,6 +205,49 @@ describe('agenthubDefaults', () => {
     it('toolId 空串时不写（无法定位工具）', () => {
       rememberLastModel('', 'D:\\ws\\a', 'm1');
       expect(loadLastCreate()).toBeNull();
+    });
+
+    it('按工具记忆双写：跨工具互补覆盖', () => {
+      rememberLastModel('opencode', 'D:\\ws\\a', 'glm-5.3-flash');
+      rememberLastModel('claude', 'D:\\ws\\b', 'claude-m');
+      // lastCreate 被后写的 claude 覆盖，但 opencode 的按工具记忆仍在
+      expect(loadPerToolLastModel('opencode')).toEqual({ modelId: 'glm-5.3-flash' });
+      expect(loadPerToolLastModel('claude')).toEqual({ modelId: 'claude-m' });
+      expect(loadPerToolLastModel('codex')).toBeNull();
+    });
+
+    it('按工具记忆 modelId 空串时不写', () => {
+      rememberPerToolLastModel('opencode', 'glm-5.3-flash');
+      rememberLastModel('opencode', 'D:\\ws\\a', '');
+      expect(loadPerToolLastModel('opencode')).toEqual({ modelId: 'glm-5.3-flash' });
+    });
+
+    it('按工具记忆键损坏 JSON 时返回 null', () => {
+      localStorage.setItem('kshell.agenthub.perToolLastModel', '{bad json');
+      expect(loadPerToolLastModel('opencode')).toBeNull();
+    });
+  });
+
+  describe('lastModelForCreate', () => {
+    it('显式默认设置模型优先', () => {
+      rememberPerToolLastModel('opencode', 'glm-5.3-flash');
+      expect(lastModelForCreate('explicit-m', 'opencode')).toBe('explicit-m');
+    });
+
+    it('默认设置为 null 时回落该工具记忆', () => {
+      rememberPerToolLastModel('opencode', 'glm-5.3-flash');
+      expect(lastModelForCreate(null, 'opencode')).toBe('glm-5.3-flash');
+    });
+
+    it('无按工具记忆时回落 lastCreate 同工具记录', () => {
+      saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'codex', modelId: 'last-m' });
+      expect(lastModelForCreate(null, 'codex')).toBe('last-m');
+      // lastCreate 工具不同则不借用别的工具的记忆
+      expect(lastModelForCreate(null, 'gemini')).toBeNull();
+    });
+
+    it('全部缺失返回 null（用工具默认模型）', () => {
+      expect(lastModelForCreate(null, 'none-tool')).toBeNull();
     });
   });
 

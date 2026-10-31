@@ -5,6 +5,9 @@ const LAST_CREATE_KEY = 'kshell.agenthub.lastCreate';
 const DEFAULT_CREATE_KEY = 'kshell.agenthub.defaultCreate';
 const MODELS_KEY_PREFIX = 'kshell.agenthub.models.';
 const ROUTE_MODE_KEY = 'kshell.agenthub.routeMode';
+// 按工具记忆的上次模型：跨工具互补覆盖（lastCreate 是全局单条，会被其他
+// 工具的创建/切换覆写），每个工具独立一份，供下次新建该工具会话时应用。
+const PER_TOOL_LAST_KEY = 'kshell.agenthub.perToolLastModel';
 
 // Hub 路由模式：auto=自动意图路由（默认）、agent=全部走 ACP agent、
 // force_auto=跳过意图判断直接进工具循环。
@@ -55,16 +58,53 @@ export function saveLastCreate(v: LastAgentCreate): void {
 
 // rememberLastModel 把一次成功的模型切换记为该工具的「上次模型」：
 // lastCreate 同工具时原地更新 modelId（保留 wsPath），否则以传入 wsPath/toolId
-// 新建记录。toolId/modelId 缺失直接忽略——无法定位工具，或语义是回落默认模型
+// 新建记录；同时写入按工具的记忆（跨工具互不覆盖，见 loadPerToolLastModel）。
+// toolId/modelId 缺失直接忽略——无法定位工具，或语义是回落默认模型
 // （切回默认不应把「默认」当成一个被记住的模型）。失败静默（辅助功能）。
 export function rememberLastModel(toolId: string, wsPath: string, modelId: string): void {
   if (!toolId || !modelId) return;
+  rememberPerToolLastModel(toolId, modelId);
   const last = loadLastCreate();
   if (last && last.toolId === toolId) {
     saveLastCreate({ ...last, modelId });
     return;
   }
   saveLastCreate({ wsPath, toolId, modelId });
+}
+
+function readPerToolMap(): Record<string, { modelId: string }> {
+  return readJSON<Record<string, { modelId: string }>>(PER_TOOL_LAST_KEY) ?? {};
+}
+
+// loadPerToolLastModel 读取某工具记忆的上次模型；缺失/损坏返回 null。
+export function loadPerToolLastModel(toolId: string): { modelId: string } | null {
+  if (!toolId) return null;
+  const v = readPerToolMap()[toolId];
+  if (!v || typeof v.modelId !== 'string' || !v.modelId) return null;
+  return { modelId: v.modelId };
+}
+
+// rememberPerToolLastModel 按工具记录上次模型（跨工具独立，不互相覆盖）。
+export function rememberPerToolLastModel(toolId: string, modelId: string): void {
+  if (!toolId || !modelId) return;
+  const map = readPerToolMap();
+  map[toolId] = { modelId };
+  writeJSON(PER_TOOL_LAST_KEY, map);
+}
+
+// lastModelForCreate 新建会话的本次创建模型（应用口径统一）：
+// 显式默认设置优先；其次该工具记忆的上次模型；再次 lastCreate 同工具记录。
+// 依次缺失返回 null = 用工具默认模型（agent 自选，不自动切第一项）。
+export function lastModelForCreate(
+  defaultsModelId: string | null | undefined,
+  toolId: string,
+): string | null {
+  if (defaultsModelId) return defaultsModelId;
+  const per = loadPerToolLastModel(toolId)?.modelId;
+  if (per) return per;
+  const last = loadLastCreate();
+  if (last && last.toolId === toolId && last.modelId) return last.modelId;
+  return null;
 }
 
 // loadDefaultCreate 读取用户显式设置的默认 agent 配置；缺失、损坏或结构不完整时返回 null。
