@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/yangk/kshell/internal/agentsync"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
@@ -345,6 +346,53 @@ func validateHTTPURL(u, label string) error {
 	}
 	if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
 		return fmt.Errorf("err.settings.http_url_required|%s", label)
+	}
+	return nil
+}
+
+// modelSyncTargets 是支持平台模型同步注入的工具（agentsync.DefaultTargets 的 ID）。
+var modelSyncTargets = map[string]bool{"opencode": true, "codebuddy": true, "claude": true}
+
+// GetModelSyncOffTools 返回用户关闭了平台模型同步的工具 ID 列表（副本）。
+func (a *App) GetModelSyncOffTools() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]string, len(a.opts.Config.Model.SyncOffTools))
+	copy(out, a.opts.Config.Model.SyncOffTools)
+	return out
+}
+
+// SetToolModelSync 设置单个工具是否同步平台模型，立即生效：
+// 开启 → 该工具立即按当前平台同步；关闭 → 立即清除该工具里 kshell 注入的
+// 配置（只清不建，与全局禁用的清理同语义），避免悬空注入物指向已删端点。
+func (a *App) SetToolModelSync(toolID string, enabled bool) error {
+	toolID = strings.TrimSpace(toolID)
+	if !modelSyncTargets[toolID] {
+		return fmt.Errorf("err.settings.model_sync_unknown_tool|%s", toolID)
+	}
+	err := a.saveConfig(func(c *config.Config) {
+		out := c.Model.SyncOffTools[:0]
+		for _, id := range c.Model.SyncOffTools {
+			if id != toolID {
+				out = append(out, id)
+			}
+		}
+		if !enabled {
+			out = append(out, toolID)
+		}
+		c.Model.SyncOffTools = out
+	})
+	if err != nil {
+		return err
+	}
+	if enabled {
+		a.syncAgentModelTool(toolID)
+		return nil
+	}
+	// 清理：保存后 SyncOffTools 已含该工具，cleanupFor 走只清不建。
+	o := a.snapshot()
+	if err := agentsync.SyncTool(o.Home, toolID, agentsync.InputFromModel(o.Config.Model)); err != nil {
+		return err
 	}
 	return nil
 }
