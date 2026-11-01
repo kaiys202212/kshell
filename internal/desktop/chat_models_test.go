@@ -375,6 +375,49 @@ func TestListChatModelsDisabledNoConfigModels(t *testing.T) {
 	}
 }
 
+// 用户单独关闭该工具的平台模型同步（model.sync_off_tools）后，ACP 下拉不得
+// 再并配置平台模型：注入通道已被关掉（agentsync 只清不建），列出来是
+// 选了也走不通的假选项——用户实证 codebuddy 关同步后下拉仍在。
+func TestListChatModelsSyncOffSkipsConfigModels(t *testing.T) {
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "claude-agent-acp",
+	}, fakeChatBackend{})
+	env.app.mu.Lock()
+	env.app.opts.Config.SessionMode = config.SessionModeACP
+	env.app.opts.Config.Model = config.ModelConfig{
+		Enabled:      true,
+		ActiveModel:  "glm-5.3-flash",
+		SyncOffTools: []string{"claude"},
+		Platforms:    []config.ModelPlatform{{ID: "p1", Name: "GLM", Models: []string{"glm-5.3-flash", "glm-4.7"}}},
+	}
+	env.app.mu.Unlock()
+
+	opened, err := env.app.OpenSessionACP("s1")
+	if err != nil {
+		t.Fatalf("OpenSessionACP: %v", err)
+	}
+	v, err := env.app.ListChatModels(opened.Chat.ID)
+	if err != nil {
+		t.Fatalf("ListChatModels: %v", err)
+	}
+	for _, mo := range v.Models {
+		if mo.ID == "glm-5.3-flash" || mo.ID == "glm-4.7" || strings.HasPrefix(mo.ID, "kshell:") {
+			t.Fatalf("关闭同步后不应列出配置模型: %+v", v.Models)
+		}
+	}
+	// 未列入关闭名单的工具不受影响：同一配置下 mergeConfigModels 照常并平台模型。
+	v2 := env.app.mergeConfigModels(chat.ModelsView{Models: []chat.ModelView{}}, "opencode")
+	found := false
+	for _, mo := range v2.Models {
+		if mo.ID == "glm-5.3-flash" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("未关闭同步的工具应照常合并平台模型: %+v", v2.Models)
+	}
+}
+
 // openChatEnv 构造一个已打开的聊天会话环境，返回环境与会话 ID。
 func openChatEnv(t *testing.T, conn *fakeChatConn) (*chatTestEnv, string) {
 	t.Helper()

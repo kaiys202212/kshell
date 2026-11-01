@@ -691,6 +691,13 @@ func (a *App) mergeConfigModels(v chat.ModelsView, toolID string) chat.ModelsVie
 	if !cfg.Enabled || len(cfg.Platforms) == 0 {
 		return v
 	}
+	// 该工具被用户单独关闭平台模型同步（model.sync_off_tools）：注入通道已被
+	// agentsync 关掉（只清不建），下拉再并平台模型就是选了也走不通的假选项。
+	for _, off := range cfg.SyncOffTools {
+		if off == toolID {
+			return v
+		}
+	}
 	seen := make(map[string]bool, len(v.Models))
 	seenName := make(map[string]bool, len(v.Models))
 	nativeTail := map[string]bool{} // 原生条目尾段(model, '.' 归一 '-') 是否存在
