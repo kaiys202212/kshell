@@ -301,10 +301,15 @@ func dedupeSessions(sessions []providers.Session) []providers.Session {
 		if first.UpdatedAt.After(updated) {
 			updated = first.UpdatedAt
 		}
+		// 预览与首条用户消息绑定、与代表文件新旧无关：代表行没拿到（legacy 降级）时用最早行补位。
+		preview := base.Preview
+		if preview == "" {
+			preview = first.Preview
+		}
 		merged = append(merged, providers.Session{
 			ID: base.ID, ToolID: base.ToolID, Workspace: base.Workspace,
 			Title: title, CreatedAt: created, UpdatedAt: updated,
-			Messages: g.maxMsgs, Path: base.Path,
+			Messages: g.maxMsgs, Preview: preview, Path: base.Path,
 		})
 	}
 	return merged

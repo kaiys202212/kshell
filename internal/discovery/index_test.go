@@ -343,6 +343,32 @@ func writeCursorMainChat(t *testing.T, home, id, title, ws string) {
 	}
 }
 
+// TestDedupeSessionsCarriesPreview：合并还原路径按字段重建 Session，预览必须随结构一起携带；
+// 代表行（最新文件）没有预览（legacy 降级）时用最早行补位，反之不覆盖。
+func TestDedupeSessionsCarriesPreview(t *testing.T) {
+	now := time.Now()
+	old := time.Now().Add(-time.Hour)
+	// a 是最新文件（best），标题为空；b 标题非空成为 earliest（首条用户消息最完整）
+	merged := dedupeSessions([]providers.Session{
+		{ID: "s1", ToolID: "codex", Workspace: "/w", UpdatedAt: now, Messages: 4, Path: "/a.jsonl"},
+		{ID: "s1", ToolID: "codex", Workspace: "/w", UpdatedAt: old, Messages: 1, Path: "/b.jsonl", Title: "原始任务", Preview: "首条短语"},
+	})
+	if len(merged) != 1 {
+		t.Fatalf("merged = %+v", merged)
+	}
+	if merged[0].Preview != "首条短语" {
+		t.Fatalf("preview = %q, want 最早行补位", merged[0].Preview)
+	}
+	// 反向：代表行已有预览时不覆盖
+	merged = dedupeSessions([]providers.Session{
+		{ID: "s2", ToolID: "codex", Workspace: "/w", UpdatedAt: now, Messages: 4, Path: "/a.jsonl", Preview: "最新行预览"},
+		{ID: "s2", ToolID: "codex", Workspace: "/w", UpdatedAt: old, Messages: 1, Path: "/b.jsonl", Title: "原始任务", Preview: "旧行预览"},
+	})
+	if len(merged) != 1 || merged[0].Preview != "最新行预览" {
+		t.Fatalf("preview = %q, want 最新行优先", merged[0].Preview)
+	}
+}
+
 func TestEnumerateSessionsCallsEvenWithoutBin(t *testing.T) {
 	home := t.TempDir()
 	id := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeffff0303"

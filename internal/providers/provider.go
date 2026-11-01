@@ -54,6 +54,10 @@ type Session struct {
 	UpdatedAt time.Time
 	Messages  int
 	Path      string
+	// Preview 是列表级内容预览：该会话首条真实用户消息（过滤 synthetic）的单行截断文本，
+	// SQL 层 substr 400 字符、Go 层 oneLine 160 截断。opencode 由枚举 SQL 直读 SQLite 产出；
+	// 其余工具暂不提供（零值，UI 不渲染此行）。
+	Preview string
 	// ACPOnly 表示该会话仅能以 ACP 激活（如 Cursor acp-sessions 来源，TUI
 	// chats 库里没有对应记录）：TUI resume 一个不在 chats 库里的 ID 会静默
 	// 起全新会话（不报错、上下文全丢），因此这类会话禁止回退终端。

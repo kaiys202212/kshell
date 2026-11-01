@@ -29,7 +29,7 @@ const (
 	// 还是 `New session - <时间>`；fallback 从 part 表取首条用户消息兜底（走
 	// message(session_id,time_created) 与 part(message_id) 索引，本机 645MB 库实测约 1s）。
 	// 老版本结构差异导致报错时降级 legacyOpencodeSessionsSQL。
-	opencodeSessionsSQL = `select id, directory as cwd, title, time_created as created, time_updated as updated, (select count(*) from message m where m.session_id=session.id) as messages, case when session.title like 'New session%' then (select json_extract(p.data,'$.text') from message m join part p on p.message_id=m.id where m.session_id=session.id and json_extract(m.data,'$.role')='user' and json_extract(p.data,'$.type')='text' order by m.time_created asc limit 1) else null end as fallback from session where parent_id is null and time_archived is null order by time_updated desc`
+	opencodeSessionsSQL = `select id, directory as cwd, title, time_created as created, time_updated as updated, (select count(*) from message m where m.session_id=session.id) as messages, case when session.title like 'New session%' then (select json_extract(p.data,'$.text') from message m join part p on p.message_id=m.id where m.session_id=session.id and json_extract(m.data,'$.role')='user' and json_extract(p.data,'$.type')='text' order by m.time_created asc limit 1) else null end as fallback, (select substr(json_extract(p.data,'$.text'),1,400) from message m join part p on p.message_id=m.id where m.session_id=session.id and json_extract(m.data,'$.role')='user' and json_extract(p.data,'$.type')='text' and json_extract(p.data,'$.synthetic') is null order by m.time_created asc limit 1) as preview from session where parent_id is null and time_archived is null order by time_updated desc`
 
 	// legacyOpencodeSessionsSQL 是新列加进来之前的枚举 SQL：结构降级用，列语义不得改动。
 	legacyOpencodeSessionsSQL = `select id, directory as cwd, title, time_created as created, time_updated as updated from session where parent_id is null and time_archived is null order by time_updated desc`
@@ -216,7 +216,7 @@ var runOpencodeQuery = func(bin, query string) ([]byte, error) {
 }
 
 // opencodeRow 对应 `--format json` 的一行，键名即 SQL 列名（时间字段是毫秒 epoch）。
-// Messages/Fallback 由新 SQL 产出；老版本（或 legacy 降级路径）不给这两个键，保持零值。
+// Messages/Fallback/Preview 由新 SQL 产出；老版本（或 legacy 降级路径）不给键，保持零值。
 type opencodeRow struct {
 	ID       string `json:"id"`
 	CWD      string `json:"cwd"`
@@ -225,6 +225,7 @@ type opencodeRow struct {
 	Updated  int64  `json:"updated"`
 	Messages int    `json:"messages"`
 	Fallback string `json:"fallback"`
+	Preview  string `json:"preview"`
 }
 
 func parseOpencodeSessions(raw []byte, dbPath string) ([]Session, error) {
@@ -259,6 +260,7 @@ func parseOpencodeSessions(raw []byte, dbPath string) ([]Session, error) {
 			CreatedAt: createdAt,
 			UpdatedAt: updatedAt,
 			Messages:  r.Messages,
+			Preview:   oneLine(strings.TrimSpace(r.Preview), 160),
 			Path:      dbPath,
 		})
 	}

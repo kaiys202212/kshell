@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,56 @@ func TestOpencodeSessionsSQLIsSingleLine(t *testing.T) {
 		!strings.Contains(opencodeSessionsSQL, " as messages") ||
 		!strings.Contains(opencodeSessionsSQL, " as fallback") {
 		t.Fatalf("SQL 缺少 messages/fallback 列: %q", opencodeSessionsSQL)
+	}
+	// preview 列：列表级内容预览（首条真实用户消息，过滤 synthetic）
+	if !strings.Contains(opencodeSessionsSQL, " as preview") ||
+		!strings.Contains(opencodeSessionsSQL, "'$.synthetic') is null") {
+		t.Fatalf("SQL 缺少 preview 列: %q", opencodeSessionsSQL)
+	}
+}
+
+// TestOpencodeParsePreview：preview 列进 Session.Preview；换行压成单行并截断
+// 到 160 字符，列缺失（legacy 降级行）保持零值。
+func TestOpencodeParsePreview(t *testing.T) {
+	// 200 个汉字：SQL 层 substr(400) 不截，Go 层 oneLine(160) 截断
+	s := strings.Repeat("汉", 200)
+	body, err := json.Marshal([]map[string]any{
+		{"id": "ses_prev", "cwd": "D:/ws", "title": "t1", "created": 1, "updated": 2, "preview": s},
+		{"id": "ses_none", "cwd": "D:/ws", "title": "t2", "created": 1, "updated": 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessions, err := parseOpencodeSessions(body, "db")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := string([]rune(s)[:160]) + "…"
+	if sessions[0].Preview != want {
+		t.Fatalf("preview = %q, want %q", sessions[0].Preview, want)
+	}
+	if sessions[1].Preview != "" {
+		t.Fatalf("preview 列缺失应取零值: %q", sessions[1].Preview)
+	}
+}
+
+// TestOpencodeParsePreviewFlattensAndTruncates：preview 是多行文本时压成单行。
+func TestOpencodeParsePreviewFlattensAndTruncates(t *testing.T) {
+	body, err := json.Marshal([]map[string]any{
+		{"id": "ses_ml", "cwd": "D:/ws", "title": "t", "created": 1, "updated": 2,
+			"preview": "第一行\n第二行\t第三行"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessions, err := parseOpencodeSessions(body, "db")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if sessions[0].Preview != "第一行 第二行 第三行" {
+		t.Fatalf("preview = %q, want 单行", sessions[0].Preview)
 	}
 }
 
