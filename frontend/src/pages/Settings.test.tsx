@@ -363,7 +363,8 @@ describe('Settings', () => {
     ).toBe(true);
   });
 
-  it('Source=config-dir 的 generic 工具显示「未验证」徽标', async () => {    render(<Settings />);
+  it('Source=config-dir 的 generic 工具显示「未验证」徽标', async () => {
+    render(<Settings />);
     goTools();
 
     const mytool = await screen.findByText('MyTool');

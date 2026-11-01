@@ -3,6 +3,7 @@ package desktop
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -371,7 +372,9 @@ func (a *App) SetToolModelSync(toolID string, enabled bool) error {
 		return fmt.Errorf("err.settings.model_sync_unknown_tool|%s", toolID)
 	}
 	err := a.saveConfig(func(c *config.Config) {
-		out := c.Model.SyncOffTools[:0]
+		// 必须新建 slice：saveConfig 的 cfg 是浅拷贝，原地 [:0] 复用会写穿
+		// 内存配置的共享底层数组（Save 失败时内存被改坏 + 并发读数据竞争）。
+		out := make([]string, 0, len(c.Model.SyncOffTools)+1)
 		for _, id := range c.Model.SyncOffTools {
 			if id != toolID {
 				out = append(out, id)
@@ -389,10 +392,11 @@ func (a *App) SetToolModelSync(toolID string, enabled bool) error {
 		a.syncAgentModelTool(toolID)
 		return nil
 	}
-	// 清理：保存后 SyncOffTools 已含该工具，cleanupFor 走只清不建。
+	// 清理：保存后 SyncOffTools 已含该工具，InputFromModel → cleanupFor 走只清不建。
+	// 失败 log-only：主诉求已持久化，注入物由下次启动 syncAgentModels 兜底补清。
 	o := a.snapshot()
 	if err := agentsync.SyncTool(o.Home, toolID, agentsync.InputFromModel(o.Config.Model)); err != nil {
-		return err
+		log.Printf("agentsync: %s 清理同步失败: %v", toolID, err)
 	}
 	return nil
 }

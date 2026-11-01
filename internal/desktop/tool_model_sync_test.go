@@ -123,6 +123,54 @@ func TestSetToolModelSyncRejectsUnknownTool(t *testing.T) {
 	}
 }
 
+// Save 失败时内存配置不得被改坏：saveConfig 是浅拷贝，mutate 里的 slice
+// 复用若写穿共享底层数组，失败路径会静默损坏内存中的关闭列表。
+func TestSetToolModelSyncSaveFailureLeavesMemoryIntact(t *testing.T) {
+	app, _, _ := newSyncApp(t)
+	setSyncPlatform(t, app)
+	app.mu.Lock()
+	app.opts.Config.Model.SyncOffTools = []string{"opencode", "claude"}
+	// Config 路径指向目录 → config.Save 必失败
+	app.opts.Layout.Config = t.TempDir()
+	app.mu.Unlock()
+
+	if err := app.SetToolModelSync("opencode", false); err == nil {
+		t.Fatal("Save 应失败")
+	}
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	got := app.opts.Config.Model.SyncOffTools
+	if len(got) != 2 || got[0] != "opencode" || got[1] != "claude" {
+		t.Fatalf("Save 失败不得改坏内存配置, got %#v", got)
+	}
+}
+
+// 关闭后的清理同步失败（目标文件损坏等）只记日志不上抛：主诉求「不再同步」
+// 已随配置持久化，注入物残留由下次启动 syncAgentModels 兜底补清；
+// 与 SetModelConfig「失败不回滚本次保存」同语义。
+func TestSetToolModelSyncDisableCleanupFailureIsLogOnly(t *testing.T) {
+	app, layout, home := newSyncApp(t)
+	setSyncPlatform(t, app)
+	ocDir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(ocDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ocDir, "opencode.json"), []byte("{broken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.SetToolModelSync("opencode", false); err != nil {
+		t.Fatalf("清理失败应 log-only, got %v", err)
+	}
+	loaded, err := config.Load(layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Model.SyncOffTools) != 1 || loaded.Model.SyncOffTools[0] != "opencode" {
+		t.Fatalf("关闭状态仍应持久化, got %#v", loaded.Model.SyncOffTools)
+	}
+}
+
 // GetModelSyncOffTools 返回当前关闭列表（前端初始状态的唯一来源）。
 func TestGetModelSyncOffTools(t *testing.T) {
 	app, _, _ := newSyncApp(t)

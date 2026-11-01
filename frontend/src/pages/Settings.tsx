@@ -711,14 +711,16 @@ export default function Settings() {
     }
   };
 
-  // toggleModelSync 切换单个工具的平台模型同步：乐观更新，失败回滚并提示。
+  // toggleModelSync 切换单个工具的平台模型同步：乐观更新；失败后以服务端
+  // 关闭列表为准重拉（后端是唯一事实来源），并提示错误。
   const toggleModelSync = async (toolID: string, on: boolean) => {
-    const prev = syncOff;
-    setSyncOff(on ? prev.filter((id) => id !== toolID) : [...prev, toolID]);
+    setSyncOff((prev) => (on ? prev.filter((id) => id !== toolID) : [...prev, toolID]));
     try {
       await setToolModelSync(toolID, on);
     } catch (e: unknown) {
-      setSyncOff(prev);
+      getModelSyncOffTools()
+        .then((ids) => setSyncOff(ids))
+        .catch(() => {});
       notify(backendError(e), 'error');
     }
   };
