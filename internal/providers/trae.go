@@ -25,9 +25,9 @@ type Trae struct{}
 // Trae 实现 LoginCmdProvider（编译期断言）：登录弹窗据此起官方交互式登录终端。
 var _ LoginCmdProvider = Trae{}
 
-// LoginCmd 返回官方交互式登录命令。traecli login 走企业浏览器 SSO；
+// LoginCmd 返回官方交互式登录命令。trae-cli login 走企业浏览器 SSO；
 // PAT 场景（TRAECLI_PERSONAL_ACCESS_TOKEN）也覆盖，由 CLI 自己引导。
-func (Trae) LoginCmd() []string { return []string{"traecli", "login"} }
+func (Trae) LoginCmd() []string { return []string{"trae-cli", "login"} }
 
 // Trae 实现 AuthProber（编译期断言）。
 var _ AuthProber = Trae{}
@@ -35,7 +35,7 @@ var _ AuthProber = Trae{}
 // traeAuthTimeout 限制 login status 单次探测耗时：CLI 卡死不能拖住扫描与登录弹窗轮询。
 const traeAuthTimeout = 3 * time.Second
 
-var errNoTraeBin = errors.New("trae: 未找到 traecli 可执行文件")
+var errNoTraeBin = errors.New("trae: 未找到 trae-cli 可执行文件")
 
 // ProbeAuth 用官方 `traecli login status` 子命令判定登录态。破例起子进程
 //（auth.go 的约定是只读静态配置文件）：TRAE 登录态没有稳定可读文件——
@@ -64,7 +64,7 @@ func probeTraeAuth(run func() (string, error)) AuthStatus {
 	}
 }
 
-// traeLoginStatus 运行 traecli login status，返回合并输出与进程错误。
+// traeLoginStatus 运行 trae-cli login status，返回合并输出与进程错误。
 // bin 解析复用 FindBins 口径：PATH 命中优先，落空再扫 InstallDirs 候选
 //（官方安装器只写用户 PATH，已运行进程可能持旧值）。
 func traeLoginStatus() (string, error) {
@@ -88,9 +88,14 @@ func (Trae) DisplayName() string { return "TRAE CLI" }
 
 func (Trae) DetectSpec(home string) DetectSpec {
 	spec := DetectSpec{
-		BinName:     "traecli",
-		AltBinNames: []string{"traex"}, // 内部名，官方安装器与 traecli.cmd 同目录落盘（0.211.1 实测）
+		// 新版安装器（stable 渠道实测）入口名是 trae-cli；老版 traecli/traex
+		// 挪进 AltBinNames，仅供 InstallDirs 扫描与卸载 FindBins 兜底。
+		BinName:     "trae-cli",
+		AltBinNames: []string{"traecli", "traex"},
 		ConfigDirs:  []string{"~/.trae"},
+		// config-dir 门槛：~/.trae 可能被 TRAE IDE 共享，只有真实 CLI 数据
+		// 子树 cli/ 才算「用过」。
+		ConfigMarkers: []string{"cli"},
 		// 自动修复的残留信号：会话数据（history.jsonl 不算，用户可能从未开过会话）。
 		ResidueDirs: []string{"~/.trae/cli/sessions"},
 	}
@@ -145,12 +150,12 @@ func (Trae) RemoteResumeArgs(s Session) []string {
 }
 
 // ACPAdapter 声明 TRAE 的 ACP 入口：CLI 自带 acp serve 子命令（stdio）。
-// 注意是两层子命令：`traecli acp` 只打 usage，真正的 stdio server 是
-// `traecli acp serve`（0.211.1 实测握手通过；未登录时 session/new 返回
+// 注意是两层子命令：`trae-cli acp` 只打 usage，真正的 stdio server 是
+// `trae-cli acp serve`（实测握手通过；未登录时 session/new 返回
 // -32000 Authentication required，kshell 侧按普通 ACP 错误呈现）。
 func (Trae) ACPAdapter() ACPAdapter {
 	return ACPAdapter{
-		BinNames:  []string{"traecli", "traex"},
+		BinNames:  []string{"trae-cli", "traecli", "traex"},
 		ExtraArgs: []string{"acp", "serve"},
 	}
 }

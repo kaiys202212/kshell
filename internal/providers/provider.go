@@ -34,6 +34,11 @@ type DetectSpec struct {
 	AltBinNames []string // 备选可执行名：只在 InstallDirs 内匹配，不进 PATH 探测（防误命中同名无关文件）
 	InstallDirs []string // 常见安装目录（支持 ~ 前缀与环境变量）
 	ConfigDirs  []string // 存在即说明装过（支持 ~ 前缀）
+	// ConfigMarkers 是 config-dir 判定的有效产物门槛：相对 ConfigDir 的子路径
+	// （文件或目录均可），任一存在才算「用过」。背景：kshell 技能广场会往
+	// ~/.gemini/skills 等目录写技能，自造的目录不能把未安装的工具判成
+	// 「已损坏」。未声明时保持旧行为（目录存在即命中）。
+	ConfigMarkers []string
 	// ResidueDirs 是「用户还在用这个工具」的残留信号（会话数据/登录态，支持 ~ 与 %VAR%）。
 	// 自动修复残缺安装前必须命中其一，避免把用户刚卸载的又装回来。
 	// 为空时退化为「ConfigDirs 任一存在且非空目录」。

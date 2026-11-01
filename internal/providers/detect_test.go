@@ -356,6 +356,70 @@ func TestDetectAbsentNotBroken(t *testing.T) {
 	}
 }
 
+// config-dir 判定的 marker 门槛：声明 ConfigMarkers 后，配置目录必须含任一
+// 有效产物才算「用过」。kshell 技能广场会往 ~/.gemini/skills 写技能，
+// 不能自造目录就把未安装的工具判成「已损坏」。
+func TestDetectConfigDirMarkerGates(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	// 只有 skills/（kshell 自写产物）：不算安装。
+	if err := os.MkdirAll(filepath.Join(home, ".gemini", "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := DetectSpec{
+		BinName:       "gemini",
+		ConfigDirs:    []string{"~/.gemini"},
+		ConfigMarkers: []string{"settings.json", "oauth_creds.json"},
+	}
+	if got := Detect(spec, home); got.Installed {
+		t.Fatalf("只有 skills/ 不得算安装, got %+v", got)
+	}
+	// 文件 marker 出现 → config-dir 命中（Broken：无可执行入口）。
+	writeRawFile(t, filepath.Join(home, ".gemini", "settings.json"))
+	if got := Detect(spec, home); !got.Installed || got.Source != "config-dir" || !got.Broken {
+		t.Fatalf("marker 命中应 config-dir/Broken, got %+v", got)
+	}
+	// 目录 marker 同理：~/.trae 被 IDE 共享时不算，cli/ 子树存在才算。
+	spec2 := DetectSpec{BinName: "trae-cli", ConfigDirs: []string{"~/.trae"}, ConfigMarkers: []string{"cli"}}
+	if err := os.MkdirAll(filepath.Join(home, ".trae"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := Detect(spec2, home); got.Installed {
+		t.Fatalf("~/.trae 无 cli 子树不得算安装, got %+v", got)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".trae", "cli"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := Detect(spec2, home); !got.Installed || got.Source != "config-dir" {
+		t.Fatalf("cli 子树存在应 config-dir 命中, got %+v", got)
+	}
+}
+
+// 未声明 ConfigMarkers 的 provider 保持旧行为：配置目录存在即命中。
+func TestDetectConfigDirNoMarkersKeepsLegacy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "whatever"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := Detect(DetectSpec{BinName: "claude", ConfigDirs: []string{"~/.claude"}}, home)
+	if !got.Installed || got.Source != "config-dir" {
+		t.Fatalf("无 marker 应保持旧行为, got %+v", got)
+	}
+}
+
+// Gemini 实际规格：技能广场写入的 skills/ 不构成安装信号（用户截图实证的误判）。
+func TestGeminiDetectSpecSkillsOnlyNotInstalled(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	if err := os.MkdirAll(filepath.Join(home, ".gemini", "skills", "demo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := Detect((Gemini{}).DetectSpec(home), home); got.Installed {
+		t.Fatalf("~/.gemini 只有 skills/ 应判未安装, got %+v", got)
+	}
+}
+
 func TestProbeVersion(t *testing.T) {
 	dir := t.TempDir()
 	bin := writeFakeBin(t, dir, "claude", "echo claude 2.1.81")

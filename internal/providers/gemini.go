@@ -92,6 +92,9 @@ func (Gemini) DetectSpec(home string) DetectSpec {
 	return DetectSpec{
 		BinName:    geminiID,
 		ConfigDirs: []string{"~/.gemini"},
+		// config-dir 门槛：Gemini CLI 的真实产物。~/.gemini 可能只有 kshell
+		// 技能广场写入的 skills/，不能据此把未安装判成「已损坏」。
+		ConfigMarkers: []string{"settings.json", "oauth_creds.json"},
 	}
 }
 

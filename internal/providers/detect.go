@@ -61,14 +61,34 @@ func Detect(spec DetectSpec, home string) Detection {
 	}
 
 	for _, dir := range spec.ConfigDirs {
-		if isDir(expandHome(dir, home)) {
-			// 配置目录是用户数据（updater 清入口不碰它），存在只证明「用过」，
-			// 不证明「能跑」——走到这说明所有可执行入口都已失效，标记残缺。
-			return Detection{Installed: true, Source: "config-dir", Broken: true}
+		root := expandHome(dir, home)
+		if !configMarkerHit(spec, root) {
+			continue
 		}
+		// 配置目录是用户数据（updater 清入口不碰它），存在只证明「用过」，
+		// 不证明「能跑」——走到这说明所有可执行入口都已失效，标记残缺。
+		return Detection{Installed: true, Source: "config-dir", Broken: true}
 	}
 
 	return Detection{}
+}
+
+// configMarkerHit 报告配置目录是否带有效产物：未声明 ConfigMarkers 时目录存在
+// 即命中（旧行为）；声明后要求任一 marker（文件或目录）存在。
+func configMarkerHit(spec DetectSpec, root string) bool {
+	if !isDir(root) {
+		return false
+	}
+	if len(spec.ConfigMarkers) == 0 {
+		return true
+	}
+	for _, m := range spec.ConfigMarkers {
+		p := filepath.Join(root, filepath.FromSlash(m))
+		if isFile(p) || isDir(p) {
+			return true
+		}
+	}
+	return false
 }
 
 // updatingZipMaxAge 是更新器下载 zip 到 versions\ 后解压前的最大窗口；

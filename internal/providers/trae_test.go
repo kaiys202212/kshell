@@ -101,10 +101,11 @@ func TestTraeNewSessionCmd(t *testing.T) {
 }
 
 func TestTraeACPAdapter(t *testing.T) {
-	// stdio server 是 acp serve（两层子命令，`traecli acp` 只打 usage），
-	// 0.211.1 实测握手通过；适配器与 CLI 同二进制，无 npx 兜底。
+	// stdio server 是 acp serve（两层子命令，`trae-cli acp` 只打 usage），
+	// 实测握手通过；适配器与 CLI 同二进制，无 npx 兜底。
+	// 新版安装器入口名是 trae-cli，老版 traecli/traex 保留兜底。
 	a := (Trae{}).ACPAdapter()
-	if len(a.BinNames) != 2 || a.BinNames[0] != "traecli" || a.BinNames[1] != "traex" {
+	if len(a.BinNames) != 3 || a.BinNames[0] != "trae-cli" || a.BinNames[1] != "traecli" || a.BinNames[2] != "traex" {
 		t.Fatalf("bin names = %v", a.BinNames)
 	}
 	if len(a.ExtraArgs) != 2 || a.ExtraArgs[0] != "acp" || a.ExtraArgs[1] != "serve" {
@@ -117,7 +118,7 @@ func TestTraeACPAdapter(t *testing.T) {
 
 func TestTraeLoginCmd(t *testing.T) {
 	cmd := (Trae{}).LoginCmd()
-	if len(cmd) != 2 || cmd[0] != "traecli" || cmd[1] != "login" {
+	if len(cmd) != 2 || cmd[0] != "trae-cli" || cmd[1] != "login" {
 		t.Fatalf("LoginCmd = %v", cmd)
 	}
 }
@@ -151,11 +152,18 @@ func TestTraeProbeAuth(t *testing.T) {
 
 func TestTraeDetectSpecInstallDirs(t *testing.T) {
 	spec := (Trae{}).DetectSpec(`C:\home`)
-	if spec.BinName != "traecli" {
+	// 新版安装器（trae-installation.json channel stable 实测）入口是 trae-cli.cmd；
+	// 老版 traecli/traex 挪进 AltBinNames 供 InstallDirs 扫描与卸载 FindBins 兜底。
+	if spec.BinName != "trae-cli" {
 		t.Fatalf("BinName = %q", spec.BinName)
 	}
-	if len(spec.AltBinNames) != 1 || spec.AltBinNames[0] != "traex" {
+	if len(spec.AltBinNames) != 2 || spec.AltBinNames[0] != "traecli" || spec.AltBinNames[1] != "traex" {
 		t.Fatalf("AltBinNames = %v", spec.AltBinNames)
+	}
+	// config-dir 信号加 marker 门槛：~/.trae 可能被 TRAE IDE 共享，
+	// 只有真实 CLI 数据子树 cli/ 才算「用过」。
+	if len(spec.ConfigMarkers) != 1 || spec.ConfigMarkers[0] != "cli" {
+		t.Fatalf("ConfigMarkers = %v, want [cli]", spec.ConfigMarkers)
 	}
 	if runtime.GOOS == "windows" {
 		if len(spec.InstallDirs) != 1 || spec.InstallDirs[0] != `%LOCALAPPDATA%\Programs\TraeCLI\bin` {
