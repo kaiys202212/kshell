@@ -106,8 +106,25 @@ vi.mock('../components/ActiveTerminalsPanel', () => ({
 }));
 vi.mock('../components/GitPanel', () => ({ default: () => <div data-testid="git-panel" /> }));
 vi.mock('../components/SessionList', () => ({
-  default: (p: { showArchived?: boolean }) => (
-    <div data-testid="session-list" data-show-archived={String(!!p.showArchived)} />
+  // 轻桩：暴露 onActivate 触发入口与 activatingSessionID 透传值（恢复 pending 反馈）
+  default: (p: {
+    showArchived?: boolean;
+    activatingSessionID?: string | null;
+    onActivate?: (s: { ID: string; ToolID: string; Path: string }) => void;
+  }) => (
+    <div
+      data-testid="session-list"
+      data-show-archived={String(!!p.showArchived)}
+      data-activating={p.activatingSessionID ?? ''}
+    >
+      <button
+        type="button"
+        data-testid="session-list-activate"
+        onClick={() => p.onActivate?.({ ID: 's1', ToolID: 'claude', Path: 'p1' })}
+      >
+        activate
+      </button>
+    </div>
   ),
 }));
 vi.mock('../components/NewSessionMenu', () => ({ default: () => <div /> }));
@@ -559,5 +576,44 @@ describe('WorkspaceTabView 分割模式', () => {
     expect(useAppStore.getState().layoutMode).toBe('split');
     fireEvent.click(screen.getByRole('button', { name: tt('ui.workspace.layout_toggle_tabs') }));
     expect(useAppStore.getState().layoutMode).toBe('tabs');
+  });
+});
+
+describe('WorkspaceTabView 恢复 pending 反馈', () => {
+  const clickActivate = () => fireEvent.click(screen.getByTestId('session-list-activate'));
+
+  it('点击激活后 openSession 未决期间透传 activatingSessionID，防重复点击', async () => {
+    let resolveOpen: (v: unknown) => void = () => {};
+    mocks.openSession.mockImplementation(
+      () => new Promise((res) => { resolveOpen = res; }),
+    );
+    render(<WorkspaceTabView tab={{ id: 'D:\proj-a', name: 'proj-a' }} visible />);
+
+    clickActivate();
+    expect(mocks.openSession).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('session-list').getAttribute('data-activating')).toBe('s1');
+
+    // pending 未决时再次点击：不重复触发
+    clickActivate();
+    expect(mocks.openSession).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveOpen({ Kind: 'terminal', Terminal: { ID: 't9', Status: 'running' } });
+    });
+    expect(screen.getByTestId('session-list').getAttribute('data-activating')).toBe('');
+  });
+
+  it('恢复成功后清除 pending；失败同样清除并 error toast', async () => {
+    mocks.openSession.mockRejectedValueOnce(new Error('err.launch.failed'));
+    render(<WorkspaceTabView tab={{ id: 'D:\proj-a', name: 'proj-a' }} visible />);
+
+    clickActivate();
+    await act(async () => {});
+    expect(screen.getByTestId('session-list').getAttribute('data-activating')).toBe('');
+    expect(
+      useAppStore.getState().toasts.some(
+        (t) => t.tone === 'error' && t.title.includes(tt('ui.workspace.open_session_failed').split('{{')[0]),
+      ),
+    ).toBe(true);
   });
 });

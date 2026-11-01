@@ -1,5 +1,6 @@
 // 未激活会话的只读 Markdown 预览：顶部激活按钮 + MarkdownPreview。
 import { useEffect, useState } from 'react';
+import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getSessionPreview } from '../lib/api';
 import { backendError } from '../lib/errors';
@@ -13,11 +14,14 @@ export default function SessionTranscript({
   sessionID,
   title,
   workspaceRoot,
+  activating = false,
   onActivate,
 }: {
   sessionID: string;
   title: string;
   workspaceRoot?: string;
+  /** 恢复请求进行中：按钮换 spinner 并禁用，防重复触发 */
+  activating?: boolean;
   onActivate: () => void;
 }) {
   const { t } = useTranslation();
@@ -51,8 +55,9 @@ export default function SessionTranscript({
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
         <p className="min-w-0 flex-1 truncate text-sm font-medium">{title || t('ui.transcript.preview_title')}</p>
-        <Button size="sm" onClick={onActivate}>
-          {t('ui.transcript.activate')}
+        <Button size="sm" disabled={activating} onClick={onActivate}>
+          {activating && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+          {activating ? t('ui.session_list.activating') : t('ui.transcript.activate')}
         </Button>
       </div>
       {/* flex 列布局：预览占满剩余高度可滚动。预览是 h-full 块级元素时会被

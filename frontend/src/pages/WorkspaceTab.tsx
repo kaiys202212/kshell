@@ -318,9 +318,16 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     [notify, tr, tools],
   );
 
-  // 恢复历史会话：优先走 ACP 聊天，Go 侧按可用性决定聊天或回退终端
+  // 恢复历史会话：优先走 ACP 聊天，Go 侧按可用性决定聊天或回退终端。
+  // 进行中置 activatingSessionID：列表行/预览按钮呈 spinner，入口用 ref 挡重复触发
+  // （连点在同一渲染批次内也拦截，仅靠 state 闭包不够）。
+  const [activatingSessionID, setActivatingSessionID] = useState<string | null>(null);
+  const activatingRef = useRef(false);
   const openChatOrTerminal = useCallback(
     (s: Session) => {
+      if (activatingRef.current) return;
+      activatingRef.current = true;
+      setActivatingSessionID(s.ID);
       void openSession(s.ID)
         .then((res) => {
           closeSessionPreview();
@@ -337,6 +344,10 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
         .catch((e: unknown) => {
           notify(tr('ui.workspace.open_session_failed', { err: backendError(e) }), 'error');
           if (isSSHWorkspaceRef(tab.id)) useAppStore.getState().markUnreachable(tab.id);
+        })
+        .finally(() => {
+          activatingRef.current = false;
+          setActivatingSessionID(null);
         });
     },
     [showFallback, selectCenterTab, closeSessionPreview, notify, tr, tab.id],
@@ -512,6 +523,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           sessionID={previewSession.ID}
           workspaceRoot={previewSession.Workspace}
           title={displayTitle(previewSession.Title) || tr('ui.workspace.new_session')}
+          activating={activatingSessionID === previewSession.ID}
           onActivate={() => openChatOrTerminal(previewSession)}
         />
       ) : (
@@ -613,6 +625,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
           workspacePath={tab.id}
           selectedSessionID={selectedSessionID}
           showArchived={showArchived}
+          activatingSessionID={activatingSessionID}
           onSelectRow={(s) => {
             if (s.Path.startsWith('live:')) {
               selectCenterTab(s.Path.slice('live:'.length));
