@@ -62,13 +62,17 @@ beforeEach(() => {
   });
 });
 
-const renderList = (selectedSessionID: string | null = null) =>
+const renderList = (
+  selectedSessionID: string | null = null,
+  extraProps: Partial<React.ComponentProps<typeof SessionList>> = {},
+) =>
   render(
     <SessionList
       workspacePath={'D:\\proj-a'}
       selectedSessionID={selectedSessionID}
       onSelectRow={onSelectRow}
       onActivate={onActivate}
+      {...extraProps}
     />,
   );
 
@@ -641,6 +645,26 @@ describe('SessionList agent 活动图标', () => {
         (t) => t.tone === 'error' && t.title.includes(tt('ui.session_list.remote_scan_failed').split('{{')[0]),
       ),
     ).toBe(true);
+  });
+});
+
+describe('SessionList 恢复 pending 反馈', () => {
+  it('activatingSessionID 命中的行：激活按钮换成 spinner（aria 标注 + 旋转），防重复点击', async () => {
+    renderList(null, { activatingSessionID: 's1' });
+    const row = await findRow('修复上传白名单');
+
+    expect(within(row).queryByRole('button', { name: tt('ui.session_list.activate') })).toBeNull();
+    const spinner = within(row).getByLabelText(tt('ui.session_list.activating'));
+    expect(spinner).toHaveAttribute('aria-busy', 'true');
+    expect(spinner.querySelector('.animate-spin')).toBeTruthy();
+  });
+
+  it('pending 只作用于命中行：其他会话激活按钮行为如旧', async () => {
+    renderList(null, { activatingSessionID: 's1' });
+    const row = await findRow('清理构建缓存');
+    const btn = within(row).getByRole('button', { name: tt('ui.session_list.activate') });
+    fireEvent.click(btn);
+    expect(onActivate).toHaveBeenCalledWith(expect.objectContaining({ ID: 's4' }));
   });
 });
 

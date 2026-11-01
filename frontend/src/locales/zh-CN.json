@@ -546,6 +546,7 @@
       "archive": "归档",
       "restored": "已恢复",
       "activate": "激活",
+      "activating": "恢复中…",
       "select_mode": "多选",
       "select_all": "全选",
       "selected_count": "已选 {{selected}} / 共 {{total}}",

@@ -546,6 +546,7 @@
       "archive": "Archive",
       "restored": "Restored",
       "activate": "Activate",
+      "activating": "Restoring…",
       "select_mode": "Select",
       "select_all": "Select all",
       "selected_count": "Selected {{selected}} of {{total}}",

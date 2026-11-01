@@ -3,6 +3,7 @@
 // 数据流与首页一致：先渲染缓存（GetSessions），收到 "scan:done" 后重调刷新。
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
+import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   batchArchiveSessions,
@@ -106,6 +107,8 @@ interface Props {
   selectedSessionID?: string | null;
   /** 勾选后只看已归档会话 */
   showArchived?: boolean;
+  /** 正在恢复中的磁盘会话 ID：该行激活按钮换成 spinner 并防重复点击 */
+  activatingSessionID?: string | null;
   onSelectRow?(s: Session): void;
   onActivate?(s: Session): void;
   onRestore?(s: Session): void;
@@ -116,6 +119,7 @@ export default function SessionList({
   workspacePath,
   selectedSessionID = null,
   showArchived = false,
+  activatingSessionID = null,
   onSelectRow,
   onActivate,
   onRestore,
@@ -578,6 +582,18 @@ export default function SessionList({
                                 fill="currentColor"
                               />
                             </svg>
+                          </span>
+                        ) : activatingSessionID === s.ID ? (
+                          // 恢复进行中：按钮换成 spinner，天然防重复点击
+                          <span
+                            data-testid="session-activating"
+                            role="status"
+                            aria-busy="true"
+                            aria-label={t('ui.session_list.activating')}
+                            title={t('ui.session_list.activating')}
+                            className="inline-flex h-5 w-5 items-center justify-center text-primary"
+                          >
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
                           </span>
                         ) : (
                           <button
