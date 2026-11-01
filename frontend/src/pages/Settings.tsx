@@ -13,6 +13,7 @@ import {
   getToolInstallJob,
   getToolInstallRecipe,
   getTools,
+  getModelSyncOffTools,
   installBuiltinTool,
   listModelPresets,
   fetchAvailableModels,
@@ -39,6 +40,7 @@ import {
   setModelConfig,
   setPermissionMode,
   setSessionMode,
+  setToolModelSync,
   uninstallBuiltinTool,
 } from '../lib/api';
 import type {
@@ -70,6 +72,9 @@ import { normalizeSpec, withoutBuiltinSpecs, type CustomProviderSpec } from '../
 
 // 语言行内置三选项；system（跟随系统）不是语言码，不在 getLanguageOptions 里
 const BUILTIN_LANGUAGE_CODES = ['en', 'zh-CN', 'system'];
+
+// 支持平台模型同步注入的工具（与后端 agentsync.DefaultTargets 对齐）。
+const MODEL_SYNC_TARGETS = new Set(['opencode', 'codebuddy', 'claude']);
 
 // 安装日志：事件文本是逐行的 wire key，须逐行翻译后再拼接（整块多行串喂
 // translateBackend 会把首行后的内容当参数吞掉，导致漏译）
@@ -112,6 +117,8 @@ export default function Settings() {
   const [section, setSection] = useState<Section>('general');
   const [tools, setTools] = useState<ToolInfo[] | null>(null);
   const [toolsError, setToolsError] = useState('');
+  // 平台模型同步被关闭的工具 ID：开关状态唯一来源是后端配置。
+  const [syncOff, setSyncOff] = useState<string[]>([]);
   const [yaml, setYaml] = useState<string | null>(null);
   const [yamlError, setYamlError] = useState('');
   const [saved, setSaved] = useState(false);
@@ -209,6 +216,11 @@ export default function Settings() {
           // 挂载时后端已有未完成任务的日志（多行 wire key），逐行翻译
           setInstallLog(translateLog(j.Log));
         }
+      })
+      .catch(() => {});
+    getModelSyncOffTools()
+      .then((ids) => {
+        if (!cancelled) setSyncOff(ids);
       })
       .catch(() => {});
     loadProvidersYAML()
@@ -695,6 +707,18 @@ export default function Settings() {
       await installBuiltinTool(id);
     } catch (e: unknown) {
       setPendingId('');
+      notify(backendError(e), 'error');
+    }
+  };
+
+  // toggleModelSync 切换单个工具的平台模型同步：乐观更新，失败回滚并提示。
+  const toggleModelSync = async (toolID: string, on: boolean) => {
+    const prev = syncOff;
+    setSyncOff(on ? prev.filter((id) => id !== toolID) : [...prev, toolID]);
+    try {
+      await setToolModelSync(toolID, on);
+    } catch (e: unknown) {
+      setSyncOff(prev);
       notify(backendError(e), 'error');
     }
   };
@@ -1405,9 +1429,16 @@ export default function Settings() {
                 {tools !== null && tools.length === 0 && (
                   <p className="text-sm text-muted-foreground">{t('ui.settings.tools.empty')}</p>
                 )}
-                {tools !== null && tools.length > 0 && (
-                  <ul className="divide-y divide-border rounded border border-border">
-                    {tools.map((tool) => {
+                {tools !== null && tools.length > 0 && (() => {
+                  // 分区渲染：已安装（含 Broken/未验证）在前，未安装在后；空组不渲染。
+                  const group = (list: ToolInfo[], titleKey: string) =>
+                    list.length > 0 && (
+                      <div className="mb-3 last:mb-0">
+                        <h3 className="mb-1 text-[11px] font-medium text-muted-foreground">
+                          {t(titleKey)}
+                        </h3>
+                        <ul className="divide-y divide-border rounded border border-border">
+                          {list.map((tool) => {
                       const recipe = recipes[tool.ID];
                       const rowBusy =
                         pendingId === tool.ID || (!!job?.Running && job.ToolID === tool.ID);
@@ -1458,6 +1489,20 @@ export default function Settings() {
                               )}
                             </div>
                             <div className="flex shrink-0 items-center gap-1.5">
+                              {/* 平台模型同步开关：仅已安装的同步目标显示；关闭即清理注入物 */}
+                              {tool.Installed && MODEL_SYNC_TARGETS.has(tool.ID) && (
+                                <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                                  <input
+                                    type="checkbox"
+                                    checked={!syncOff.includes(tool.ID)}
+                                    disabled={busyAny}
+                                    onChange={() =>
+                                      void toggleModelSync(tool.ID, syncOff.includes(tool.ID))
+                                    }
+                                  />
+                                  {t('ui.settings.tools.sync_models')}
+                                </label>
+                              )}
                               {/* 未登录的已安装工具：快捷打开登录弹窗（与卡片徽标同源） */}
                               {tool.Installed && !isBroken && tool.Auth === 'out' && (
                                 <Button size="sm" variant="secondary" onClick={() => setLoginTool(tool)}>
@@ -1500,9 +1545,17 @@ export default function Settings() {
                           )}
                         </li>
                       );
-                    })}
-                  </ul>
-                )}
+                      })}
+                        </ul>
+                      </div>
+                    );
+                  return (
+                    <>
+                      {group(tools.filter((t) => t.Installed), 'ui.settings.tools.section_installed')}
+                      {group(tools.filter((t) => !t.Installed), 'ui.settings.tools.section_missing')}
+                    </>
+                  );
+                })()}
                 {uninstallTarget && uninstallRecipe && (
                   <Dialog
                     open

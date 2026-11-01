@@ -29,6 +29,8 @@ const mocks = vi.hoisted(() => ({
   setAutostart: vi.fn(),
   getModelConfig: vi.fn(),
   setModelConfig: vi.fn(),
+  getModelSyncOffTools: vi.fn(),
+  setToolModelSync: vi.fn(),
   listModelPresets: vi.fn(),
   fetchAvailableModels: vi.fn(),
   getSessionMode: vi.fn(),
@@ -237,6 +239,8 @@ beforeEach(() => {
     ActiveModel: '',
   });
   mocks.setModelConfig.mockResolvedValue(undefined);
+  mocks.getModelSyncOffTools.mockResolvedValue([]);
+  mocks.setToolModelSync.mockResolvedValue(undefined);
   mocks.fetchAvailableModels.mockResolvedValue({ Models: [], Errors: [] });
   mocks.getToolInstallJob.mockResolvedValue({
     ToolID: '',
@@ -298,8 +302,68 @@ describe('Settings', () => {
     expect(gemini.closest('li')).toHaveClass('opacity-50');
   });
 
-  it('Source=config-dir 的 generic 工具显示「未验证」徽标', async () => {
+  it('工具列表分已安装/未安装两区，组内互不混排', async () => {
     render(<Settings />);
+    goTools();
+
+    const installedHead = await screen.findByRole('heading', {
+      name: tt('ui.settings.tools.section_installed'),
+    });
+    const missingHead = screen.getByRole('heading', {
+      name: tt('ui.settings.tools.section_missing'),
+    });
+    const installedUl = installedHead.nextElementSibling as HTMLElement;
+    const missingUl = missingHead.nextElementSibling as HTMLElement;
+    expect(within(installedUl).getByText('CodeBuddy')).toBeInTheDocument();
+    expect(within(installedUl).getByText('MyTool')).toBeInTheDocument();
+    expect(within(missingUl).getByText('Gemini')).toBeInTheDocument();
+    expect(within(missingUl).queryByText('CodeBuddy')).not.toBeInTheDocument();
+    expect(within(installedUl).queryByText('Gemini')).not.toBeInTheDocument();
+  });
+
+  it('支持平台模型的已安装工具显示「同步平台模型」开关，勾选态来自关闭列表', async () => {
+    mocks.getModelSyncOffTools.mockResolvedValue(['codebuddy']);
+    render(<Settings />);
+    goTools();
+
+    const cbRow = (await screen.findByText('CodeBuddy')).closest('li')!;
+    const cbCheck = within(cbRow).getByLabelText(tt('ui.settings.tools.sync_models')) as HTMLInputElement;
+    expect(cbCheck.checked).toBe(false);
+    const clRow = screen.getByText('Claude Code').closest('li')!;
+    const clCheck = within(clRow).getByLabelText(tt('ui.settings.tools.sync_models')) as HTMLInputElement;
+    expect(clCheck.checked).toBe(true);
+    // 非同步目标的 generic 工具不出现开关
+    expect(
+      within(screen.getByText('MyTool').closest('li')!).queryByLabelText(tt('ui.settings.tools.sync_models')),
+    ).not.toBeInTheDocument();
+  });
+
+  it('切换同步开关成功：调用后端并乐观更新勾选态', async () => {
+    render(<Settings />);
+    goTools();
+
+    const clRow = (await screen.findByText('Claude Code')).closest('li')!;
+    fireEvent.click(within(clRow).getByLabelText(tt('ui.settings.tools.sync_models')));
+    await waitFor(() => expect(mocks.setToolModelSync).toHaveBeenCalledWith('claude', false));
+    expect(
+      (within(clRow).getByLabelText(tt('ui.settings.tools.sync_models')) as HTMLInputElement).checked,
+    ).toBe(false);
+  });
+
+  it('切换同步开关失败：勾选态回滚', async () => {
+    mocks.setToolModelSync.mockRejectedValueOnce(new Error('boom'));
+    render(<Settings />);
+    goTools();
+
+    const clRow = (await screen.findByText('Claude Code')).closest('li')!;
+    fireEvent.click(within(clRow).getByLabelText(tt('ui.settings.tools.sync_models')));
+    await waitFor(() => expect(mocks.setToolModelSync).toHaveBeenCalledWith('claude', false));
+    expect(
+      (within(clRow).getByLabelText(tt('ui.settings.tools.sync_models')) as HTMLInputElement).checked,
+    ).toBe(true);
+  });
+
+  it('Source=config-dir 的 generic 工具显示「未验证」徽标', async () => {    render(<Settings />);
     goTools();
 
     const mytool = await screen.findByText('MyTool');

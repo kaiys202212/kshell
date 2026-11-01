@@ -93,6 +93,9 @@ const mocks = vi.hoisted(() => ({
   setAutostart: vi.fn(),
   getModelConfig: vi.fn(),
   setModelConfig: vi.fn(),
+  // Settings 工具分区的平台模型同步开关：App 层用例不关心，兜底空列表
+  getModelSyncOffTools: vi.fn().mockResolvedValue([]),
+  setToolModelSync: vi.fn().mockResolvedValue(undefined),
   listModelPresets: vi.fn(),
   getSessionMode: vi.fn(),
   setSessionMode: vi.fn(),
