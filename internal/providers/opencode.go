@@ -289,3 +289,57 @@ func (Opencode) InstallRecipe() InstallRecipe {
 	r.PurgeDirs = []string{"~/.config/opencode", "~/.local/share/opencode"}
 	return r
 }
+
+// opencodeTranscriptSQLFmt 是抽取单个会话全文对话的 SQL 模板。%s 处填单引号双写
+// 转义后的会话 ID。只取 user/assistant 的 text part，合成消息（$.synthetic：
+// 上下文注入、步骤播报等）一律排除，避免非用户内容混进对话。单行硬约束同枚举 SQL。
+const opencodeTranscriptSQLFmt = `select json_extract(m.data, '$.role') as role, json_extract(p.data, '$.text') as text from message m join part p on p.message_id = m.id where m.session_id = '%s' and json_extract(p.data, '$.type') = 'text' and json_extract(m.data, '$.role') in ('user', 'assistant') and json_extract(p.data, '$.synthetic') is null order by m.time_created asc, p.time_created asc, p.id asc`
+
+// opencodeDetectBin 抽出 bin 解析便于测试注入（探不到 CLI 时返回空串 → 预览不可用）。
+var opencodeDetectBin = func(home string) string {
+	return Detect(Opencode{}.DetectSpec(home), home).BinPath
+}
+
+var errOpencodeTranscriptUnavailable = errors.New("opencode: 对话全文预览不可用")
+
+// opencodeTranscriptTurns 从 opencode.db 抽取该会话的 user/assistant 轮次（时间正序）。
+// 任何拿不到全文的情况（远端会话、库口径不符、CLI 缺失、查询/解析失败、零行——
+// 会话 ID 不在本地库即远端或已清库）都返回 errOpencodeTranscriptUnavailable，
+// 由调用方回退占位文案；这条「宁可没有」的口径是为了绝不把别的会话查回来张冠李戴。
+func opencodeTranscriptTurns(s Session) ([]previewTurn, error) {
+	if strings.HasPrefix(s.Workspace, "ssh:") {
+		return nil, errOpencodeTranscriptUnavailable
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" || s.Path != opencodeDBPath(home) {
+		return nil, errOpencodeTranscriptUnavailable
+	}
+	bin := opencodeDetectBin(home)
+	if bin == "" {
+		return nil, errOpencodeTranscriptUnavailable
+	}
+	sql := fmt.Sprintf(opencodeTranscriptSQLFmt, strings.ReplaceAll(s.ID, "'", "''"))
+	raw, err := runOpencodeQuery(bin, sql)
+	if err != nil {
+		return nil, err
+	}
+	var rows []opencodeTranscriptRow
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		return nil, fmt.Errorf("解析 opencode 对话 JSON 失败: %w", err)
+	}
+	turns := make([]previewTurn, 0, len(rows))
+	for _, r := range rows {
+		text := strings.TrimSpace(r.Text)
+		if (r.Role != "user" && r.Role != "assistant") || text == "" {
+			continue
+		}
+		turns = append(turns, previewTurn{Role: r.Role, Text: text})
+	}
+	return turns, nil
+}
+
+// opencodeTranscriptRow 对应 `--format json` 的一行。
+type opencodeTranscriptRow struct {
+	Role string `json:"role"`
+	Text string `json:"text"`
+}

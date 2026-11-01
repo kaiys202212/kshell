@@ -74,6 +74,103 @@ func TestFormatSessionMarkdownGeminiJSON(t *testing.T) {
 	}
 }
 
+// opencodeTranscriptTurns：CLI 读 SQLite 还原 user/assistant 轮次（时间正序），
+// 过滤空文本与非 user/assistant 角色，会话 ID 单引号双写转义，SQL 单行。
+func TestOpencodeTranscriptTurns(t *testing.T) {
+	origQ, origBin := runOpencodeQuery, opencodeDetectBin
+	defer func() { runOpencodeQuery, opencodeDetectBin = origQ, origBin }()
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("无 home: %v", err)
+	}
+	var gotSQL string
+	runOpencodeQuery = func(bin, query string) ([]byte, error) {
+		gotSQL = query
+		return []byte(`[
+			{"role":"user","text":"打开文件"},
+			{"role":"assistant","text":"好的"},
+			{"role":"system","text":"跳过"},
+			{"role":"user","text":"   "},
+			{"role":"user","text":"第二问"}
+		]`), nil
+	}
+	opencodeDetectBin = func(string) string { return "/fake/bin" }
+
+	s := Session{ID: "ses_o'1", ToolID: "opencode", Workspace: "/w", Path: opencodeDBPath(home)}
+	turns, err := opencodeTranscriptTurns(s)
+	if err != nil {
+		t.Fatalf("opencodeTranscriptTurns: %v", err)
+	}
+	if len(turns) != 3 || turns[0].Text != "打开文件" || turns[0].Role != "user" ||
+		turns[1].Text != "好的" || turns[2].Text != "第二问" {
+		t.Fatalf("turns = %+v", turns)
+	}
+	if !strings.Contains(gotSQL, "ses_o''1") || strings.ContainsAny(gotSQL, "\r\n") {
+		t.Fatalf("SQL 转义/单行不符: %q", gotSQL)
+	}
+}
+
+// opencodeTranscriptTurns 的不可用口径：远端会话、库口径不符、CLI 缺失、查询失败，
+// 一律返回 errOpencodeTranscriptUnavailable，且不可用路径不得发查询。
+func TestOpencodeTranscriptUnavailable(t *testing.T) {
+	origQ, origBin := runOpencodeQuery, opencodeDetectBin
+	defer func() { runOpencodeQuery, opencodeDetectBin = origQ, origBin }()
+	called := false
+	runOpencodeQuery = func(_, _ string) ([]byte, error) { called = true; return nil, nil }
+
+	// 远端会话显式拒绝（本地 CLI 查不到远端库，防止串库）
+	if _, err := opencodeTranscriptTurns(Session{ID: "s", ToolID: "opencode", Workspace: "ssh://x", Path: "db"}); err == nil {
+		t.Fatal("ssh 会话应不可用")
+	}
+	// Path 与默认库不符（如其它 home 的 db 或绑定错误）
+	if _, err := opencodeTranscriptTurns(Session{ID: "s", ToolID: "opencode", Workspace: "/w", Path: `D:\fake\opencode.db`}); err == nil {
+		t.Fatal("库口径不符应不可用")
+	}
+	if called {
+		t.Fatal("不可用路径不应发查询")
+	}
+	// CLI 探测为空
+	opencodeDetectBin = func(string) string { return "" }
+	home, _ := os.UserHomeDir()
+	if _, err := opencodeTranscriptTurns(Session{ID: "s", ToolID: "opencode", Workspace: "/w", Path: opencodeDBPath(home)}); err == nil {
+		t.Fatal("无 bin 应不可用")
+	}
+	if called {
+		t.Fatal("不可用路径不应发查询")
+	}
+	// 查询失败
+	opencodeDetectBin = func(string) string { return "/fake/bin" }
+	runOpencodeQuery = func(_, _ string) ([]byte, error) { return nil, errors.New("boom") }
+	if _, err := opencodeTranscriptTurns(Session{ID: "s", ToolID: "opencode", Workspace: "/w", Path: opencodeDBPath(home)}); err == nil {
+		t.Fatal("查询失败应不可用")
+	}
+}
+
+// FormatSessionMarkdown 接线：查询成功时渲染全文轮次。
+func TestFormatSessionMarkdownOpencodeFullTranscript(t *testing.T) {
+	origQ, origBin := runOpencodeQuery, opencodeDetectBin
+	defer func() { runOpencodeQuery, opencodeDetectBin = origQ, origBin }()
+
+	applang.SetForTest(t, "en")
+	runOpencodeQuery = func(_, _ string) ([]byte, error) {
+		return []byte(`[
+			{"role":"user","text":"打开文件"},
+			{"role":"assistant","text":"好的"}
+		]`), nil
+	}
+	opencodeDetectBin = func(string) string { return "/fake/bin" }
+	home, _ := os.UserHomeDir()
+
+	md, err := FormatSessionMarkdown(Session{ID: "oc2", ToolID: "opencode", Title: "重构登录页", Workspace: "/w", Path: opencodeDBPath(home)})
+	if err != nil {
+		t.Fatalf("FormatSessionMarkdown: %v", err)
+	}
+	if !strings.Contains(md, "## User") || !strings.Contains(md, "## Assistant") || !strings.Contains(md, "打开文件") {
+		t.Fatalf("应渲染全文轮次, got:\n%s", md)
+	}
+}
+
 func TestFormatSessionMarkdownOpencodeDB(t *testing.T) {
 	// 正文经 applang 直显：固定 en，避免全局语言态串扰。
 	applang.SetForTest(t, "en")
