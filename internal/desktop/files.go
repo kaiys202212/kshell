@@ -184,7 +184,9 @@ func resolveRealPath(path string) (string, error) {
 func (a *App) resolveWorkspaceFile(wsPath, path string) (string, error) {
 	cleaned := filepath.Clean(path)
 	if !filepath.IsAbs(cleaned) {
-		// 聊天附件分派等前端调用传相对路径：拼回工作区根后再走统一校验
+		// 聊天附件分派等前端调用传相对路径：拼回工作区根后再走统一校验。
+		// 注意勿改回 filepath.Abs——Windows 盘符相对路径（如 D:file）会被 Abs
+		// 解析到该盘 cwd 而逃出根，Join 则按字面段拼入根内，交给下方校验拦截。
 		cleaned = filepath.Join(wsPath, cleaned)
 	}
 	if !underPath(wsPath, cleaned) {
