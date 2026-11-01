@@ -18,7 +18,57 @@ func TestOpencodeSessionsSQLIsSingleLine(t *testing.T) {
 		!strings.Contains(opencodeSessionsSQL, "time_archived is null") {
 		t.Fatalf("SQL 语义被改动: %q", opencodeSessionsSQL)
 	}
+	// 标题兜底与消息条数两列：缺了会退化回 "New session" 展示（见 parse 用例）
+	if !strings.Contains(opencodeSessionsSQL, `like 'New session%'`) ||
+		!strings.Contains(opencodeSessionsSQL, " as messages") ||
+		!strings.Contains(opencodeSessionsSQL, " as fallback") {
+		t.Fatalf("SQL 缺少 messages/fallback 列: %q", opencodeSessionsSQL)
+	}
 }
+
+func TestOpencodeParseHomesMessagesAndFallback(t *testing.T) {
+	raw := []byte(`[
+		{"id":"ses_new","cwd":"D:/ws","title":"New session - 2026-10-31T15:42:42.197Z","created":1759384800000,"updated":1759388400000,"messages":1,"fallback":"修复登录空指针"},
+		{"id":"ses_plain","cwd":"D:/ws","title":"业务标题","created":1759384800000,"updated":1759388400000,"messages":44,"fallback":"不应采用"},
+		{"id":"ses_old","cwd":"D:/ws","title":"New session - 2026-06-10T09:10:24.230Z","created":1759384800000,"updated":1759388400000},
+		{"id":"ses_empty","cwd":"D:/ws","title":"New session - 2026-10-31T14:45:12.367Z","created":1759384800000,"updated":1759388400000,"messages":0,"fallback":""},
+		{"id":"ses_wrapped","cwd":"D:/ws","title":"New session - 2026-10-31T13:00:00.000Z","created":1759384800000,"updated":1759388400000,"messages":2,"fallback":"<user_query>关注性能</user_query>\n第二行不加"}
+	]`)
+
+	sessions, err := parseOpencodeSessions(raw, `C:\home\.local\share\opencode\opencode.db`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(sessions) != 5 {
+		t.Fatalf("len = %d, want 5", len(sessions))
+	}
+
+	// New session + 首条用户消息 → 兜底标题
+	if sessions[0].Title != "修复登录空指针" {
+		t.Fatalf("fallback title = %q", sessions[0].Title)
+	}
+	// 正常标题（即使有 fallback）不覆盖
+	if sessions[1].Title != "业务标题" {
+		t.Fatalf("plain title = %q", sessions[1].Title)
+	}
+	if sessions[1].Messages != 44 || sessions[0].Messages != 1 {
+		t.Fatalf("messages = %d/%d, want 44/1", sessions[1].Messages, sessions[0].Messages)
+	}
+	// 旧版本输出无这批键：零值兼容，标题维持库里默认（枚举本身不失败）
+	if sessions[2].Messages != 0 || !strings.HasPrefix(sessions[2].Title, "New session") {
+		t.Fatalf("旧输出兼容 = %+v", sessions[2])
+	}
+	// New session 但库里没有任何用户消息：保持原标题，不得变空
+	if sessions[3].Title != "New session - 2026-10-31T14:45:12.367Z" {
+		t.Fatalf("empty fallback title = %q", sessions[3].Title)
+	}
+	// fallback 经 ClipPromptTitle 清洗：只取第一行、剥包装标签
+	if sessions[4].Title != "关注性能" {
+		t.Fatalf("wrapped fallback title = %q", sessions[4].Title)
+	}
+}
+
+// 老版本 opencode 的 db 结构可能不支持新列：第一次查询失败时用 legacy SQL 重试。
 
 func TestOpencodeParseSessions(t *testing.T) {
 	raw := []byte(`[
@@ -129,6 +179,35 @@ func TestOpencodeEnumeratePropagatesError(t *testing.T) {
 
 	if _, err := (Opencode{}).EnumerateSessions(`C:\home`, "opencode"); err == nil {
 		t.Fatal("want error")
+	}
+}
+
+func TestOpencodeEnumerateFallsBackToLegacySQL(t *testing.T) {
+	orig := runOpencodeQuery
+	defer func() { runOpencodeQuery = orig }()
+
+	var calls []string
+	runOpencodeQuery = func(bin, query string) ([]byte, error) {
+		calls = append(calls, query)
+		if strings.Contains(query, " as fallback") {
+			// 新 SQL 第一跳失败（模拟老版本 db 结构差异）
+			return nil, errors.New("opencode db 退出码 1: no such column")
+		}
+		return []byte(`[{"id":"ses_a","cwd":"/w","title":"t","created":1,"updated":2}]`), nil
+	}
+
+	sessions, err := Opencode{}.EnumerateSessions("/home/me", "/usr/bin/opencode")
+	if err != nil {
+		t.Fatalf("enumerate: %v", err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("queries = %d (%q)", len(calls), calls)
+	}
+	if strings.Contains(calls[1], " as fallback") {
+		t.Fatalf("重试仍用新 SQL: %q", calls[1])
+	}
+	if len(sessions) != 1 || sessions[0].ToolID != "opencode" {
+		t.Fatalf("sessions = %+v", sessions)
 	}
 }
 

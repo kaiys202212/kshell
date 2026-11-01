@@ -24,8 +24,21 @@ const (
 	// 必须写成**单行**：Windows 上 opencode 是 npm 的 .cmd 包装脚本，命令行最终由 cmd.exe
 	// 重新解析一次，参数里夹带换行会被截断（实测多行 SQL 报 `no such column: id`，
 	// opencode 的会话因此一条都查不出来）——换行只影响可读性，绝不要为了排版拆行。
-	opencodeSessionsSQL = `select id, directory as cwd, title, time_created as created, time_updated as updated from session where parent_id is null and time_archived is null order by time_updated desc`
+	//
+	// messages/fallback 两列：opencode 的业务标题由后台 summarize 异步改写，退出快时库里
+	// 还是 `New session - <时间>`；fallback 从 part 表取首条用户消息兜底（走
+	// message(session_id,time_created) 与 part(message_id) 索引，本机 645MB 库实测约 1s）。
+	// 老版本结构差异导致报错时降级 legacyOpencodeSessionsSQL。
+	opencodeSessionsSQL = `select id, directory as cwd, title, time_created as created, time_updated as updated, (select count(*) from message m where m.session_id=session.id) as messages, case when session.title like 'New session%' then (select json_extract(p.data,'$.text') from message m join part p on p.message_id=m.id where m.session_id=session.id and json_extract(m.data,'$.role')='user' and json_extract(p.data,'$.type')='text' order by m.time_created asc limit 1) else null end as fallback from session where parent_id is null and time_archived is null order by time_updated desc`
+
+	// legacyOpencodeSessionsSQL 是新列加进来之前的枚举 SQL：结构降级用，列语义不得改动。
+	legacyOpencodeSessionsSQL = `select id, directory as cwd, title, time_created as created, time_updated as updated from session where parent_id is null and time_archived is null order by time_updated desc`
 )
+
+// isNewSessionTitle 报告库里的标题是否为 opencode 的懒默认值（适合被首条用户消息替代）。
+func isNewSessionTitle(title string) bool {
+	return strings.HasPrefix(strings.TrimSpace(title), "New session")
+}
 
 var errOpencodeNotFileBased = errors.New("opencode: 会话存放在 SQLite 库中，请走 EnumerateSessions")
 
@@ -164,7 +177,11 @@ func (Opencode) EnumerateSessions(home, bin string) ([]Session, error) {
 	}
 	raw, err := runOpencodeQuery(bin, opencodeSessionsSQL)
 	if err != nil {
-		return nil, err
+		// 新列在老版本 db 上可能报结构错误：降级到 legacy SQL 保住枚举能力。
+		raw, err = runOpencodeQuery(bin, legacyOpencodeSessionsSQL)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return parseOpencodeSessions(raw, opencodeDBPath(home))
 }
@@ -193,12 +210,15 @@ var runOpencodeQuery = func(bin, query string) ([]byte, error) {
 }
 
 // opencodeRow 对应 `--format json` 的一行，键名即 SQL 列名（时间字段是毫秒 epoch）。
+// Messages/Fallback 由新 SQL 产出；老版本（或 legacy 降级路径）不给这两个键，保持零值。
 type opencodeRow struct {
-	ID      string `json:"id"`
-	CWD     string `json:"cwd"`
-	Title   string `json:"title"`
-	Created int64  `json:"created"`
-	Updated int64  `json:"updated"`
+	ID       string `json:"id"`
+	CWD      string `json:"cwd"`
+	Title    string `json:"title"`
+	Created  int64  `json:"created"`
+	Updated  int64  `json:"updated"`
+	Messages int    `json:"messages"`
+	Fallback string `json:"fallback"`
 }
 
 func parseOpencodeSessions(raw []byte, dbPath string) ([]Session, error) {
@@ -213,18 +233,26 @@ func parseOpencodeSessions(raw []byte, dbPath string) ([]Session, error) {
 		if strings.TrimSpace(r.ID) == "" || strings.TrimSpace(r.CWD) == "" {
 			continue
 		}
-		created := time.UnixMilli(r.Created)
-		updated := time.UnixMilli(r.Updated)
+		createdAt := time.UnixMilli(r.Created)
+		updatedAt := time.UnixMilli(r.Updated)
 		if r.Updated == 0 {
-			updated = created
+			updatedAt = createdAt
+		}
+		title := oneLine(cleanTitle(r.Title), 80) // 丢弃 OSC 查色残片等不适合展示的标题
+		// 标题兜底：库里还是懒默认值时用首条用户消息替代（与 Cursor 首条提问取名同一模式）。
+		if s := strings.TrimSpace(r.Fallback); s != "" && isNewSessionTitle(r.Title) {
+			if t := ClipPromptTitle(s); t != "" {
+				title = t
+			}
 		}
 		out = append(out, Session{
 			ID:        r.ID,
 			ToolID:    opencodeID,
 			Workspace: canonicalCWD(r.CWD),
-			Title:     oneLine(cleanTitle(r.Title), 80), // 丢弃 OSC 查色残片等不适合展示的标题
-			CreatedAt: created,
-			UpdatedAt: updated,
+			Title:     title,
+			CreatedAt: createdAt,
+			UpdatedAt: updatedAt,
+			Messages:  r.Messages,
 			Path:      dbPath,
 		})
 	}
