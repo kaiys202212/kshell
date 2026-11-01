@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.26 (2026-11-01)
+
+- OpenCode session experience overhaul: the session list now shows a conversation preview snippet (full text restored from SQLite), and sessions matched via `#find` can be previewed directly; missing titles fall back to the first user message with the message count filled in; empty "New session" sessions with zero messages are filtered out automatically.
+- OpenCode model memory and injection improvements: resuming a history session replays the last-used model, every tool remembers the last-used model and applies it to new sessions; injected models now enable attachment / reasoning / tool_call by default; switching config models resolves by native ID, so the dropdown no longer shows duplicate bare-name copies.
+- Model sync is now per-tool controllable: the tool list is split into installed / not-installed sections, and tools that support platform models can have sync turned off individually — turning it off also removes previously injected models; sync failures are logged instead of silently swallowed.
+- Model sync fixes: fixed codebuddy models.json containing a UTF-8 BOM causing endless rewrites (freeze); dropdown merging now dedupes by ID so platform models colliding with built-in IDs are no longer lost; TRAE detection updated to the new `trae-cli` binary name and requires valid artifacts in its config dir.
+- Session resume guards against double clicks: an inline spinner shows while resuming and repeated triggers are ignored; the activating state is propagated to the session list and preview panel.
+- Fixed chat attachments failing to open files via relative paths due to a false out-of-bounds check.
+
 ## v0.1.25 (2026-10-31)
 
 - Chat now supports agent config options and interactive forms: config dropdowns and form confirmations (elicitation) raised by the agent can be completed directly in the chat panel.
