@@ -310,8 +310,9 @@ func (a *App) openSessionACP(sessionID string, allowFallback bool) (OpenedSessio
 		}, l, s.ID)
 		if err == nil {
 			a.emitChatMeta(info)
-			// 按会话 JSONL 尾部上次真实模型恢复（不在列表则静默跳过）。
-			a.restoreSessionModel(info.ID, s.ToolID, s.Path)
+			// 按工具恢复上次真实模型：claude 解析 JSONL 尾部；opencode 查
+			// kshell state 记忆（不在列表则静默跳过）。
+			a.restoreSessionModel(info.ID, s.ToolID, s.ID, s.Path)
 			return OpenedSession{Kind: "chat", Chat: &info}, nil
 		}
 		if blockTerminal {
@@ -810,6 +811,7 @@ func (a *App) SetChatModel(id, modelID string) error {
 		}
 		if !found {
 			// platID 已不在配置（配置删除后下拉缓存未刷）：原样透传容错。
+			target = modelID
 			err = m.SetModel(resolved, modelID)
 		} else if def, _ := cfg.ActivePlatform(); def.ID != platID {
 			if err = a.saveConfig(func(c *config.Config) {
@@ -826,6 +828,11 @@ func (a *App) SetChatModel(id, modelID string) error {
 	}
 	if err != nil {
 		return err
+	}
+	// opencode 会话级模型记忆：OpenCode 自己不记上次模型，成功切换后把
+	// 「磁盘会话 ID→原生模型」落盘 state，供恢复历史会话时回放。
+	if info, gok := m.Get(resolved); gok && info.ToolID == "opencode" {
+		a.recordOpenCodeSessionModel(info.SessionID, target)
 	}
 	if view, viewErr := a.modelsView(resolved); viewErr == nil {
 		a.emitChatOut("chat:models", map[string]any{"id": id, "models": view})

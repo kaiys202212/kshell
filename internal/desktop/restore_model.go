@@ -51,15 +51,30 @@ func resolveRestoreModelID(last string, models []chat.ModelView, current string)
 	return ""
 }
 
-// restoreSessionModel 在 ACP 恢复历史会话后，按磁盘 JSONL 尾部上次真实助手
-// 模型尝试 SetModel。仅 Claude；模型不在可用列表、与 Current 相同、解析失败
-// 或 SetModel 失败均静默跳过——激活本身已成功，不得挡用户继续对话。
-// JSONL 与列表仅点号/连字符差异时按列表规范裸名恢复（见 resolveRestoreModelID）。
-func (a *App) restoreSessionModel(chatID, toolID, sessionPath string) {
-	if toolID != "claude" || sessionPath == "" || chatID == "" {
+// restoreSessionModel 在 ACP 恢复历史会话后尝试恢复上次模型：
+//   - claude：按磁盘 JSONL 尾部上次真实助手模型；
+//   - opencode：OpenCode 的会话不记模型（resume 后 Current 恒为 agent 默认），
+//     改查 kshell 侧 state 记忆（SetChatModel 成功时落盘，见 session_model_state.go）。
+//
+// 模型不在可用列表、与 Current 相同、解析失败或 SetModel 失败均静默跳过
+// ——激活本身已成功，不得挡用户继续对话。last 与列表仅点号/连字符差异时
+// 按列表规范 ID 恢复（见 resolveRestoreModelID）。
+func (a *App) restoreSessionModel(chatID, toolID, sessionID, sessionPath string) {
+	var last string
+	switch toolID {
+	case "claude":
+		if sessionPath == "" || chatID == "" {
+			return
+		}
+		last = providers.ClaudeLastAssistantModel(sessionPath)
+	case "opencode":
+		if sessionID == "" {
+			return
+		}
+		last = a.lookupOpenCodeSessionModel(sessionID)
+	default:
 		return
 	}
-	last := providers.ClaudeLastAssistantModel(sessionPath)
 	if last == "" {
 		return
 	}
