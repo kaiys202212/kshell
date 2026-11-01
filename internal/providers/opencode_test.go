@@ -30,6 +30,15 @@ func TestOpencodeSessionsSQLIsSingleLine(t *testing.T) {
 		!strings.Contains(opencodeSessionsSQL, "'$.synthetic') is null") {
 		t.Fatalf("SQL 缺少 preview 列: %q", opencodeSessionsSQL)
 	}
+	// 空会话过滤：零消息且懒默认标题（New session…）的行被排除；
+	// legacy SQL 是结构降级路径，语义不得改动，必须不含该过滤。
+	if !strings.Contains(opencodeSessionsSQL, "title not like 'New session%'") ||
+		!strings.Contains(opencodeSessionsSQL, ") > 0") {
+		t.Fatalf("SQL 缺少空会话过滤子句: %q", opencodeSessionsSQL)
+	}
+	if strings.Contains(legacyOpencodeSessionsSQL, "not like") {
+		t.Fatalf("legacy SQL 不应含空会话过滤: %q", legacyOpencodeSessionsSQL)
+	}
 }
 
 // TestOpencodeParsePreview：preview 列进 Session.Preview；换行压成单行并截断

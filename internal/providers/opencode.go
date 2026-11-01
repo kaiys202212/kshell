@@ -29,7 +29,13 @@ const (
 	// 还是 `New session - <时间>`；fallback 从 part 表取首条用户消息兜底（走
 	// message(session_id,time_created) 与 part(message_id) 索引，本机 645MB 库实测约 1s）。
 	// 老版本结构差异导致报错时降级 legacyOpencodeSessionsSQL。
-	opencodeSessionsSQL = `select id, directory as cwd, title, time_created as created, time_updated as updated, (select count(*) from message m where m.session_id=session.id) as messages, case when session.title like 'New session%' then (select json_extract(p.data,'$.text') from message m join part p on p.message_id=m.id where m.session_id=session.id and json_extract(m.data,'$.role')='user' and json_extract(p.data,'$.type')='text' order by m.time_created asc limit 1) else null end as fallback, (select substr(json_extract(p.data,'$.text'),1,400) from message m join part p on p.message_id=m.id where m.session_id=session.id and json_extract(m.data,'$.role')='user' and json_extract(p.data,'$.type')='text' and json_extract(p.data,'$.synthetic') is null order by m.time_created asc limit 1) as preview from session where parent_id is null and time_archived is null order by time_updated desc`
+	//
+	// WHERE 末尾的空会话过滤：打开 TUI/ACP 即建行，没发消息就关会留下 `New session - <时间>`
+	// 噪音记录（实测 146 条根会话里占 15 条）。仅排除「零消息且标题仍是懒默认值」的行——
+	// 有消息的 New session（summarize 未跑完的真会话）与已改名的零消息会话都保留，避免误伤。
+	// SQLite LIKE 对 ASCII 不分大小写，与 isNewSessionTitle 的小写前缀判定同口径；
+	// WHERE 引用不到 SELECT 别名，messages 子查询需重复一份。
+	opencodeSessionsSQL = `select id, directory as cwd, title, time_created as created, time_updated as updated, (select count(*) from message m where m.session_id=session.id) as messages, case when session.title like 'New session%' then (select json_extract(p.data,'$.text') from message m join part p on p.message_id=m.id where m.session_id=session.id and json_extract(m.data,'$.role')='user' and json_extract(p.data,'$.type')='text' order by m.time_created asc limit 1) else null end as fallback, (select substr(json_extract(p.data,'$.text'),1,400) from message m join part p on p.message_id=m.id where m.session_id=session.id and json_extract(m.data,'$.role')='user' and json_extract(p.data,'$.type')='text' and json_extract(p.data,'$.synthetic') is null order by m.time_created asc limit 1) as preview from session where parent_id is null and time_archived is null and (title not like 'New session%' or (select count(*) from message m where m.session_id=session.id) > 0) order by time_updated desc`
 
 	// legacyOpencodeSessionsSQL 是新列加进来之前的枚举 SQL：结构降级用，列语义不得改动。
 	legacyOpencodeSessionsSQL = `select id, directory as cwd, title, time_created as created, time_updated as updated from session where parent_id is null and time_archived is null order by time_updated desc`
