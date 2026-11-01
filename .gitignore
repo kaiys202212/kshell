@@ -24,3 +24,4 @@ node_modules/
 *.log
 AGENTS.md
 .claude/
+CLAUDE.md

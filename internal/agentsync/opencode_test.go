@@ -73,6 +73,17 @@ func TestOpenCodeSyncCreatesProviderNamespace(t *testing.T) {
 	if len(models) != 2 {
 		t.Fatalf("models = %#v", models)
 	}
+	for _, id := range []string{"glm-x", "glm-y"} {
+		m, ok := models[id].(map[string]any)
+		if !ok {
+			t.Fatalf("models[%s] = %#v", id, models[id])
+		}
+		for _, cap := range []string{"attachment", "reasoning", "tool_call"} {
+			if m[cap] != true {
+				t.Fatalf("models[%s].%s = %v, 要为 true", id, cap, m[cap])
+			}
+		}
+	}
 }
 
 func TestOpenCodeSyncRemovesStaleAndSkipsNoOpenAI(t *testing.T) {

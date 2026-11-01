@@ -56,7 +56,14 @@ func (o OpenCode) Sync(home string, in SyncInput) error {
 				if m == "" {
 					continue
 				}
-				models[m] = map[string]any{"name": m}
+				// OpenCode 对目录外自定义模型的能力位默认保守（attachment=false），
+				// 平台模型实际都具备这些能力，这里显式全开，放开图片/推理/工具调用。
+				models[m] = map[string]any{
+					"name":       m,
+					"attachment": true,
+					"reasoning":  true,
+					"tool_call":  true,
+				}
 			}
 			name := strings.TrimSpace(p.Name)
 			if name == "" {
