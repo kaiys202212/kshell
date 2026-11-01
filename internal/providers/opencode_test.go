@@ -32,8 +32,7 @@ func TestOpencodeSessionsSQLIsSingleLine(t *testing.T) {
 	}
 	// 空会话过滤：零消息且懒默认标题（New session…）的行被排除；
 	// legacy SQL 是结构降级路径，语义不得改动，必须不含该过滤。
-	if !strings.Contains(opencodeSessionsSQL, "title not like 'New session%'") ||
-		!strings.Contains(opencodeSessionsSQL, ") > 0") {
+	if !strings.Contains(opencodeSessionsSQL, "title not like 'New session%' or (select count(*) from message m where m.session_id=session.id) > 0") {
 		t.Fatalf("SQL 缺少空会话过滤子句: %q", opencodeSessionsSQL)
 	}
 	if strings.Contains(legacyOpencodeSessionsSQL, "not like") {
