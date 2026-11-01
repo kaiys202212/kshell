@@ -14,6 +14,35 @@ func TestOpenInDefaultAppRejectsOutside(t *testing.T) {
 	}
 }
 
+// 前端聊天附件分派（chatAttachment 的 'default' 分支）传的是相对路径，
+// resolveWorkspaceFile 须先拼回工作区根再校验，否则一律误判越界。
+func TestOpenInDefaultAppAcceptsRelativePath(t *testing.T) {
+	env := newFilesEnv(t)
+
+	var opened string
+	prev := openLocalFile
+	openLocalFile = func(abs string) error {
+		opened = abs
+		return nil
+	}
+	t.Cleanup(func() { openLocalFile = prev })
+
+	if err := env.app.OpenInDefaultApp(env.root, "readme.md"); err != nil {
+		t.Fatalf("相对路径应可打开: %v", err)
+	}
+	if filepath.Base(opened) != "readme.md" {
+		t.Fatalf("opened = %q, want readme.md", opened)
+	}
+}
+
+// 相对路径支持不得引入穿越漏洞：../ 仍须拒绝。
+func TestOpenInDefaultAppRejectsRelativeEscape(t *testing.T) {
+	env := newFilesEnv(t)
+	if err := env.app.OpenInDefaultApp(env.root, filepath.Join("..", "x.html")); err == nil {
+		t.Fatal("相对越界应失败")
+	}
+}
+
 func TestOpenInDefaultAppRejectsMissing(t *testing.T) {
 	env := newFilesEnv(t)
 	if err := env.app.OpenInDefaultApp(env.root, filepath.Join(env.root, "no-such.html")); err == nil {

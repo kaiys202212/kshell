@@ -183,6 +183,10 @@ func resolveRealPath(path string) (string, error) {
 // Windows 上目录 junction 无需管理员权限即可创建，仅词法校验拦不住它。
 func (a *App) resolveWorkspaceFile(wsPath, path string) (string, error) {
 	cleaned := filepath.Clean(path)
+	if !filepath.IsAbs(cleaned) {
+		// 聊天附件分派等前端调用传相对路径：拼回工作区根后再走统一校验
+		cleaned = filepath.Join(wsPath, cleaned)
+	}
 	if !underPath(wsPath, cleaned) {
 		return "", errPathOutsideWorkspace
 	}
