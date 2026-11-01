@@ -58,7 +58,8 @@ export default function FindSessionDialog({ open, initialQuery, onClose, onPick 
       const wsBase = baseName(s.Workspace).toLowerCase();
       const title = (s.Title ?? '').toLowerCase();
       const tool = toolDisplayName(s.ToolID).toLowerCase();
-      return wsBase.includes(q) || title.includes(q) || tool.includes(q);
+      const preview = (s.Preview ?? '').toLowerCase();
+      return wsBase.includes(q) || title.includes(q) || tool.includes(q) || preview.includes(q);
     });
     return matched
       .sort((a, b) => new Date(b.UpdatedAt).getTime() - new Date(a.UpdatedAt).getTime())

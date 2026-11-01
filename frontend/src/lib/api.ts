@@ -49,6 +49,8 @@ export interface Session {
   UpdatedAt: string; // RFC3339
   Messages: number;
   Path: string;
+  // 列表级内容预览：首条真实用户消息的单行截断文本。opencode 提供，其余工具缺省（UI 不渲染）。
+  Preview?: string;
   // 仅 ACP 激活的会话（如 Cursor acp-sessions 来源，终端 resume 会丢上下文）；
   // live 行（Path 以 live: 开头）不带该字段。
   ACPOnly?: boolean;

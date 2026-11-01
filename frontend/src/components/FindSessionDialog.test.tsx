@@ -96,6 +96,16 @@ describe('FindSessionDialog', () => {
     expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ ID: 's2' }));
   });
 
+  it('过滤词命中内容预览 Preview', async () => {
+    api.getSessions.mockResolvedValue([
+      session({ ID: 's1', Title: '无关标题', Preview: '修复登录空指针的根因分析' }),
+    ]);
+    render(<FindSessionDialog open initialQuery="根因分析" onClose={() => {}} onPick={() => {}} />);
+    const options = await screen.findAllByRole('option');
+    expect(options).toHaveLength(1);
+    expect(options[0]).toHaveTextContent('无关标题');
+  });
+
   it('Esc 关闭走 onOpenChange(false) → onClose', async () => {
     api.getSessions.mockResolvedValue([]);
     const onClose = vi.fn();

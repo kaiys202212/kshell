@@ -502,6 +502,15 @@ export default function SessionList({
                       />
                     )}
                   </div>
+                  {/* 列表级内容预览：首条真实用户消息（opencode 提供），无则不渲染 */}
+                  {s.Preview ? (
+                    <p
+                      data-testid="session-preview"
+                      className="min-w-0 truncate text-xs text-muted-foreground"
+                    >
+                      {s.Preview}
+                    </p>
+                  ) : null}
                   <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                     <ToolDot toolID={s.ToolID} className="shrink-0" />
                     {/* 磁盘扫描的 cursor 会话标注激活方式：ACPOnly 仅能 ACP 激活，

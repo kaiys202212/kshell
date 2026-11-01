@@ -144,6 +144,18 @@ describe('SessionList', () => {
     expect(within(row).getByText(msgs(1))).toBeInTheDocument();
   });
 
+  it('opencode 预览小字：有 Preview 的行渲染 session-preview，无则不渲染', async () => {
+    mocks.getSessions.mockResolvedValue([
+      { ...sessions[1], Preview: '首条用户消息截断文本' },
+      sessions[3],
+    ]);
+    renderList();
+    const withPreview = await findRow('重构登录页');
+    expect(within(withPreview).getByTestId('session-preview')).toHaveTextContent('首条用户消息截断文本');
+    const withoutPreview = await findRow('清理构建缓存');
+    expect(within(withoutPreview).queryByTestId('session-preview')).toBeNull();
+  });
+
   it('opencode 的前斜杠 cwd（D:/proj-a）与反斜杠写法视为同一工作区，会话与 chip 都要出现', async () => {
     mocks.getSessions.mockResolvedValue([
       ...sessions,
