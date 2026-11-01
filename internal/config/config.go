@@ -111,7 +111,10 @@ type ModelConfig struct {
 	APIKey           string            `yaml:"api_key,omitempty"`
 	Models           []string          `yaml:"models,omitempty"`
 	ActiveModel      string            `yaml:"active_model"` // 默认模型；仅供 kshell 自身 LLM 调用（hub 自主工具/微信 ASR），不注入给 agent
-	Agents           map[string]string `yaml:"agents,omitempty"`
+	// SyncOffTools 是用户单独关闭平台模型同步的目标工具 ID（opencode/codebuddy/
+	// claude 子集）：命中的目标只清不建，其余照常同步。
+	SyncOffTools []string          `yaml:"sync_off_tools,omitempty"`
+	Agents       map[string]string `yaml:"agents,omitempty"`
 }
 
 type Config struct {
@@ -370,6 +373,19 @@ func (c Config) normalized() Config {
 	c.Model.Agents = nil
 	c.Model.Models = normalizeModels(c.Model.Models)
 	c.Model.ActiveModel = strings.TrimSpace(c.Model.ActiveModel)
+	// 关闭同步列表：TrimSpace、去空、去重，保持出现顺序。
+	if len(c.Model.SyncOffTools) > 0 {
+		seen := map[string]bool{}
+		out := make([]string, 0, len(c.Model.SyncOffTools))
+		for _, id := range c.Model.SyncOffTools {
+			if id = strings.TrimSpace(id); id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			out = append(out, id)
+		}
+		c.Model.SyncOffTools = out
+	}
 
 	// 旧单平台字段迁移：Platforms 为空且 legacy 有任一实质内容时，
 	// 打包成一个 default 平台（Name 用 Preset 展示名，缺省「默认平台」）。

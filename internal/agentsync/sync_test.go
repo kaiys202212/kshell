@@ -48,6 +48,13 @@ func TestInputFromModelCarriesActiveModel(t *testing.T) {
 	}
 }
 
+func TestInputFromModelCarriesSyncOffTools(t *testing.T) {
+	in := InputFromModel(config.ModelConfig{Enabled: true, SyncOffTools: []string{"codebuddy"}})
+	if len(in.ToolOff) != 1 || in.ToolOff[0] != "codebuddy" {
+		t.Fatalf("ToolOff = %v, want [codebuddy]", in.ToolOff)
+	}
+}
+
 // cleanupFor：命中 ToolOff 的目标得到「只清不建」输入（Enabled 关、平台保留
 // 以维持 Managed、默认平台与 ActiveModel 清空）；未命中原样返回。
 func TestSyncInputCleanupFor(t *testing.T) {

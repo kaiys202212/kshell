@@ -269,6 +269,38 @@ func TestModelConfigNormalizes(t *testing.T) {
 	}
 }
 
+// sync_off_tools 记录用户单独关闭平台模型同步的工具 ID：Load 时 TrimSpace、
+// 去空、去重；未写字段保持 nil。
+func TestModelConfigSyncOffToolsNormalize(t *testing.T) {
+	p := tempPaths(t)
+	if err := os.MkdirAll(p.Root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "model:\n  enabled: true\n  sync_off_tools: [\" opencode \", \"opencode\", \"\", \"claude\"]\n"
+	if err := os.WriteFile(p.Config, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"opencode", "claude"}
+	if !reflect.DeepEqual(got.Model.SyncOffTools, want) {
+		t.Fatalf("SyncOffTools = %#v, want %#v", got.Model.SyncOffTools, want)
+	}
+	// 往返：Save 后重读字段不丢。
+	if err := Save(p, got); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	again, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load again: %v", err)
+	}
+	if !reflect.DeepEqual(again.Model.SyncOffTools, want) {
+		t.Fatalf("往返后 SyncOffTools = %#v, want %#v", again.Model.SyncOffTools, want)
+	}
+}
+
 func TestModelConfigLegacyAgentsMigration(t *testing.T) {
 	p := tempPaths(t)
 	if err := os.MkdirAll(p.Root, 0o755); err != nil {

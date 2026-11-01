@@ -104,6 +104,7 @@ func InputFromModel(m config.ModelConfig) SyncInput {
 		Platforms:         m.Platforms,
 		DefaultPlatformID: m.DefaultPlatform,
 		ActiveModel:       m.ActiveModel,
+		ToolOff:           m.SyncOffTools,
 	}
 }
 
