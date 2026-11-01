@@ -1,6 +1,7 @@
 package agentsync
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -101,6 +102,9 @@ func readJSONObject(path string) (map[string]any, error) {
 		}
 		return nil, err
 	}
+	// 剥 UTF-8 BOM：CodeBuddy CLI 自写 models.json 带 BOM，直接 Unmarshal
+	// 必报 invalid character 'ï'，同步自此外部重写起永久冻结（2026-10-29 事故）。
+	b = bytes.TrimPrefix(b, []byte("\xef\xbb\xbf"))
 	if len(strings.TrimSpace(string(b))) == 0 {
 		return map[string]any{}, nil
 	}

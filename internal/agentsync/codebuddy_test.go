@@ -87,6 +87,36 @@ func TestCodeBuddySyncMergesNamespace(t *testing.T) {
 	}
 }
 
+// CodeBuddy CLI 自写 models.json 带 UTF-8 BOM，Sync 必须照常解析改写，
+// 否则同步自该文件被外部重写起永久冻结（2026-10-29 实机事故）。
+func TestCodeBuddySyncToleratesBOM(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".codebuddy")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seed := "\xef\xbb\xbf{\n  \"models\": [\n    {\"id\": \"glm-x\", \"name\": \"opencode: glm-x\", \"vendor\": \"kshell\"}\n  ]\n}"
+	if err := os.WriteFile(filepath.Join(dir, "models.json"), []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (CodeBuddy{}).Sync(home, inDefault("p1")); err != nil {
+		t.Fatalf("Sync 应容忍 BOM: %v", err)
+	}
+
+	ids := map[string]bool{}
+	for _, m := range sliceOfMaps(readCodeBuddyJSON(t, home)["models"]) {
+		id, _ := m["id"].(string)
+		ids[id] = true
+	}
+	if !ids["glm-x"] {
+		t.Fatalf("BOM 文件应照常改写并保留默认平台模型 glm-x, got %v", ids)
+	}
+	if _, ok := ids["ds-x"]; ok {
+		t.Fatalf("非默认平台不应写入, got %v", ids)
+	}
+}
+
 // DefaultPlatformID 命中 p2 时只写 p2；空串或未命中回退第一个平台。
 func TestCodeBuddySyncOnlyDefaultPlatform(t *testing.T) {
 	caseIDs := func(t *testing.T, def string) map[string]bool {
