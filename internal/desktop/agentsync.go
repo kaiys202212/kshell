@@ -1,16 +1,21 @@
 package desktop
 
 import (
+	"log"
+
 	"github.com/yangk/kshell/internal/agentsync"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
 )
 
 // syncAgentModels 把当前模型平台写入已安装（或已有配置）的 OpenCode/CodeBuddy/Claude。
-// 失败只记日志语义：调用方不因同步失败回滚配置保存。
+// 失败只记日志语义：调用方不因同步失败回滚配置保存；但错误必须留痕，
+// 否则目标文件被外部改坏（如 BOM）导致的静默冻结无从排查。
 func (a *App) syncAgentModels() {
 	o := a.snapshot()
-	_ = agentsync.SyncAll(o.Home, agentsync.InputFromModel(o.Config.Model), installedToolIDs(a.toolsSnapshot()))
+	if err := agentsync.SyncAll(o.Home, agentsync.InputFromModel(o.Config.Model), installedToolIDs(a.toolsSnapshot())); err != nil {
+		log.Printf("agentsync: 模型平台同步失败: %v", err)
+	}
 }
 
 // syncAgentModelsAfterSave 处理模型配置保存后的落盘：通常按新配置同步；但若
@@ -22,16 +27,22 @@ func (a *App) syncAgentModelsAfterSave(prev config.ModelConfig) {
 	next := agentsync.InputFromModel(o.Config.Model)
 	if !next.Managed() && agentsync.InputFromModel(prev).Managed() {
 		cleanup := agentsync.SyncInput{Enabled: false, Platforms: prev.Platforms}
-		_ = agentsync.SyncAll(o.Home, cleanup, installedToolIDs(a.toolsSnapshot()))
+		if err := agentsync.SyncAll(o.Home, cleanup, installedToolIDs(a.toolsSnapshot())); err != nil {
+			log.Printf("agentsync: 模型平台清理同步失败: %v", err)
+		}
 		return
 	}
-	_ = agentsync.SyncAll(o.Home, next, installedToolIDs(a.toolsSnapshot()))
+	if err := agentsync.SyncAll(o.Home, next, installedToolIDs(a.toolsSnapshot())); err != nil {
+		log.Printf("agentsync: 模型平台同步失败: %v", err)
+	}
 }
 
 // syncAgentModelTool 安装成功后只同步刚装上的工具。
 func (a *App) syncAgentModelTool(toolID string) {
 	o := a.snapshot()
-	_ = agentsync.SyncTool(o.Home, toolID, agentsync.InputFromModel(o.Config.Model))
+	if err := agentsync.SyncTool(o.Home, toolID, agentsync.InputFromModel(o.Config.Model)); err != nil {
+		log.Printf("agentsync: %s 同步失败: %v", toolID, err)
+	}
 }
 
 func installedToolIDs(tools []discovery.Tool) []string {
