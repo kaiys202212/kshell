@@ -674,14 +674,18 @@ func platformModelDisplayName(platName, model string) string {
 }
 
 // mergeConfigModels 把 kshell 配置的模型列表并入 agent 上报视图：
-// 已存在（按 ID）跳过；数据源为配置的平台列表。单平台 ID 保持裸名
-// （向后兼容旧保存的 modelId）；多平台 ID 加 "kshell:<platID>:<model>"，
-// 默认平台条目排最前，其余按列表顺序。Name 一律带平台展示前缀（仅展示）。
-// 不改写 Current：当前模型以 agent 上报为准（默认模型由 agent 自行决定）。
+// 已存在（按 ID；codebuddy 除外，见下）跳过；数据源为配置的平台列表。
+// 单平台 ID 保持裸名（向后兼容旧保存的 modelId）；多平台 ID 加
+// "kshell:<platID>:<model>"，默认平台条目排最前，其余按列表顺序。
+// Name 一律带平台展示前缀（仅展示）。不改写 Current：当前模型以 agent
+// 上报为准（默认模型由 agent 自行决定）。
 // opencode 额外按原生 ID 尾段判重：其自报列表已含 kshell 注入 provider 的
 // "kshell-<platID>/<model>" 条目（agentsync 写 opencode.json），配置裸名
 // 副本会造成下拉重复，命中即跳过——选原生条目即可，切换由
 // resolveOpenCodeModelID 兜底。
+// codebuddy 不做按 ID 判重：其内置 id 与平台裸 mid 撞名（glm-5.3-flash 等），
+// 判重会把平台副本挤出下拉；防重复交给展示名判重（注入条目上报名
+// "<plat>: <m>" 与配置副本同名）。
 func (a *App) mergeConfigModels(v chat.ModelsView, toolID string) chat.ModelsView {
 	cfg := a.snapshot().Config.Model
 	if !cfg.Enabled || len(cfg.Platforms) == 0 {
@@ -700,8 +704,13 @@ func (a *App) mergeConfigModels(v chat.ModelsView, toolID string) chat.ModelsVie
 		}
 	}
 	dedupeNative := toolID == "opencode"
+	// codebuddy 内置模型 id 可能与平台裸 mid 撞名（glm-5.3-flash 等），其自定义
+	// 条目走 custom-local: 前缀与内置天然区分：按 ID 判重只会把平台副本挤出
+	// 下拉（撞名项选内置走的是自营通道，非用户平台）。故 codebuddy 跳过按 ID
+	// 判重，仅靠展示名判重防「注入条目已上报」的重复。
+	dedupeID := toolID != "codebuddy"
 	add := func(id, name string) {
-		if id == "" || seen[id] {
+		if id == "" || (dedupeID && seen[id]) {
 			return
 		}
 		if dedupeNative {

@@ -947,3 +947,51 @@ func TestMergeConfigModelsOpencodeNativeDedupe(t *testing.T) {
 		t.Fatalf("非 opencode 配置裸名副本应照常追加, got %#v", got2.Models)
 	}
 }
+
+// codebuddy: 配置裸 mid 与其内置模型 id 撞名（glm-5.3-flash 等）时，配置侧
+// 副本仍须追加——codebuddy 的自定义条目走 custom-local: 前缀与内置天然区分，
+// 按 ID 判重只会把平台副本挤出下拉（撞名项选内置走的是自营通道，非用户平台）。
+// 2026-11-01 实机：opencode1 组 7 条只活 3 条。
+func TestMergeConfigModelsCodeBuddyKeepsBuiltinNameCollision(t *testing.T) {
+	env := newChatTestApp(t, nil, nil)
+	env.app.mu.Lock()
+	env.app.opts.Config.Model = config.ModelConfig{
+		Enabled:         true,
+		DefaultPlatform: "p1",
+		Platforms:       []config.ModelPlatform{{ID: "p1", Name: "opencode1", Models: []string{"glm-5.3-flash", "kimi-k3"}}},
+	}
+	env.app.mu.Unlock()
+
+	in := chat.ModelsView{Models: []chat.ModelView{
+		{ID: "glm-5.3-flash", Name: "GLM-5.3-Flash"}, // 内置同名裸 mid
+		{ID: "custom-local:qwen3.8-flash", Name: "opencode: qwen3.8-flash"}, // 旧名注入条目（models.json 冻结场景）
+	}}
+	got := env.app.mergeConfigModels(in, "codebuddy")
+	var hit, bare int
+	for _, mo := range got.Models {
+		if mo.ID == "glm-5.3-flash" && mo.Name == "opencode1: glm-5.3-flash" {
+			hit++
+		}
+		if mo.ID == "kimi-k3" {
+			bare++
+		}
+	}
+	if hit != 1 || bare != 1 {
+		t.Fatalf("撞内置 id 的平台副本应照常追加, got %#v", got.Models)
+	}
+
+	// models.json 新鲜场景：agent 已自报同平台名条目，展示名判重仍生效，不重复。
+	in2 := chat.ModelsView{Models: []chat.ModelView{
+		{ID: "custom-local:glm-5.3-flash", Name: "opencode1: glm-5.3-flash"},
+	}}
+	got2 := env.app.mergeConfigModels(in2, "codebuddy")
+	n := 0
+	for _, mo := range got2.Models {
+		if mo.Name == "opencode1: glm-5.3-flash" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("同名注入条目应去重为一份, got %#v", got2.Models)
+	}
+}
