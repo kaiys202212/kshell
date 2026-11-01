@@ -23,6 +23,9 @@ type SyncInput struct {
 	// ActiveModel 是 Claude 静态注入的 ANTHROPIC_MODEL；空则回落默认平台
 	// 模型列表首项。终端 Claude TUI 的 /model 依赖 settings.json 的这些键。
 	ActiveModel string
+	// ToolOff 是用户单独关闭同步的目标工具 ID：命中的目标走「只清不建」
+	//（清除 kshell 注入物、保留用户自有配置），其余目标照常同步。
+	ToolOff []string
 }
 
 // Managed 报告 kshell 是否曾接管过模型配置：启用、留有平台、默认平台或
@@ -34,6 +37,18 @@ func (in SyncInput) Managed() bool {
 		len(in.Platforms) > 0 ||
 		strings.TrimSpace(in.DefaultPlatformID) != "" ||
 		strings.TrimSpace(in.ActiveModel) != ""
+}
+
+// cleanupFor 返回对单个目标的生效输入：ToolOff 命中时改写为「只清不建」
+//（Enabled 关、平台保留以维持 Managed、静态注入键清空——与全局禁用的清理
+// 分支同一语义），未命中原样返回。
+func (in SyncInput) cleanupFor(toolID string) SyncInput {
+	for _, off := range in.ToolOff {
+		if strings.TrimSpace(off) == toolID {
+			return SyncInput{Platforms: in.Platforms}
+		}
+	}
+	return in
 }
 
 // Target 是某一个 agent 的自有配置同步适配器。
@@ -64,7 +79,7 @@ func SyncAll(home string, in SyncInput, installedIDs []string) error {
 		if !installed[t.ToolID()] && !t.ConfigExists(home) {
 			continue
 		}
-		if err := t.Sync(home, in); err != nil && first == nil {
+		if err := t.Sync(home, in.cleanupFor(t.ToolID())); err != nil && first == nil {
 			first = err
 		}
 	}
@@ -76,7 +91,7 @@ func SyncTool(home, toolID string, in SyncInput) error {
 	toolID = strings.TrimSpace(toolID)
 	for _, t := range DefaultTargets() {
 		if t.ToolID() == toolID {
-			return t.Sync(home, in)
+			return t.Sync(home, in.cleanupFor(toolID))
 		}
 	}
 	return nil
