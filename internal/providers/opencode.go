@@ -292,20 +292,25 @@ func (Opencode) InstallRecipe() InstallRecipe {
 
 // opencodeTranscriptSQLFmt 是抽取单个会话全文对话的 SQL 模板。%s 处填单引号双写
 // 转义后的会话 ID。只取 user/assistant 的 text part，合成消息（$.synthetic：
-// 上下文注入、步骤播报等）一律排除，避免非用户内容混进对话。单行硬约束同枚举 SQL。
-const opencodeTranscriptSQLFmt = `select json_extract(m.data, '$.role') as role, json_extract(p.data, '$.text') as text from message m join part p on p.message_id = m.id where m.session_id = '%s' and json_extract(p.data, '$.type') = 'text' and json_extract(m.data, '$.role') in ('user', 'assistant') and json_extract(p.data, '$.synthetic') is null order by m.time_created asc, p.time_created asc, p.id asc`
+// 上下文注入、步骤播报等）一律排除，避免非用户内容混进对话。排序只用 message
+// 的 time_created + part 的 id（同会话内 part 按写入序递增），避免多押一张列存在性的牌。
+// 单行硬约束同枚举 SQL。
+const opencodeTranscriptSQLFmt = `select json_extract(m.data, '$.role') as role, json_extract(p.data, '$.text') as text from message m join part p on p.message_id = m.id where m.session_id = '%s' and json_extract(p.data, '$.type') = 'text' and json_extract(m.data, '$.role') in ('user', 'assistant') and json_extract(p.data, '$.synthetic') is null order by m.time_created asc, p.id asc`
 
 // opencodeDetectBin 抽出 bin 解析便于测试注入（探不到 CLI 时返回空串 → 预览不可用）。
+// 有意不走枚举传入的 bin：全文预览宁可保守——探测不到与默认口径差一层的 CLI
+// 就不给预览，也不拿「可能不是这份库」的入口去查。
 var opencodeDetectBin = func(home string) string {
 	return Detect(Opencode{}.DetectSpec(home), home).BinPath
 }
 
+// errOpencodeTranscriptUnavailable 是全文预览的统一不可用哨兵：远端会话、库口径
+// 不符、CLI 缺失、查询/解析失败、零行（会话 ID 不在本地库=远端或已清库）。
+// 调用方以此回退占位文案；这条「宁可没有」的口径是为了绝不把别的会话查回来张冠李戴。
 var errOpencodeTranscriptUnavailable = errors.New("opencode: 对话全文预览不可用")
 
-// opencodeTranscriptTurns 从 opencode.db 抽取该会话的 user/assistant 轮次（时间正序）。
-// 任何拿不到全文的情况（远端会话、库口径不符、CLI 缺失、查询/解析失败、零行——
-// 会话 ID 不在本地库即远端或已清库）都返回 errOpencodeTranscriptUnavailable，
-// 由调用方回退占位文案；这条「宁可没有」的口径是为了绝不把别的会话查回来张冠李戴。
+// opencodeTranscriptTurns 从 opencode.db 抽取该会话的 user/assistant 轮次（时间正序），
+// 所有失败路径都 errors.Is errOpencodeTranscriptUnavailable。
 func opencodeTranscriptTurns(s Session) ([]previewTurn, error) {
 	if strings.HasPrefix(s.Workspace, "ssh:") {
 		return nil, errOpencodeTranscriptUnavailable
@@ -321,11 +326,11 @@ func opencodeTranscriptTurns(s Session) ([]previewTurn, error) {
 	sql := fmt.Sprintf(opencodeTranscriptSQLFmt, strings.ReplaceAll(s.ID, "'", "''"))
 	raw, err := runOpencodeQuery(bin, sql)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", errOpencodeTranscriptUnavailable, err)
 	}
 	var rows []opencodeTranscriptRow
 	if err := json.Unmarshal(raw, &rows); err != nil {
-		return nil, fmt.Errorf("解析 opencode 对话 JSON 失败: %w", err)
+		return nil, fmt.Errorf("%w: 解析对话 JSON 失败: %v", errOpencodeTranscriptUnavailable, err)
 	}
 	turns := make([]previewTurn, 0, len(rows))
 	for _, r := range rows {
@@ -334,6 +339,9 @@ func opencodeTranscriptTurns(s Session) ([]previewTurn, error) {
 			continue
 		}
 		turns = append(turns, previewTurn{Role: r.Role, Text: text})
+	}
+	if len(turns) == 0 {
+		return nil, errOpencodeTranscriptUnavailable
 	}
 	return turns, nil
 }

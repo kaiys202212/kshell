@@ -28,10 +28,10 @@ func FormatSessionMarkdown(s Session) (string, error) {
 		}
 	}
 	if s.ToolID == opencodeID || strings.EqualFold(filepath.Ext(s.Path), ".db") {
-		// opencode 走 CLI 读 SQLite 还原全文（拿不到任何轮次时回退占位文案）；
+		// opencode 走 CLI 读 SQLite 还原全文（任何失败路径回退占位文案）；
 		// 其余 .db 场景维持占位。
 		if s.ToolID == opencodeID {
-			if turns, err := opencodeTranscriptTurns(s); err == nil && len(turns) > 0 {
+			if turns, err := opencodeTranscriptTurns(s); err == nil {
 				return renderTurns(s.Title, turns), nil
 			}
 		}

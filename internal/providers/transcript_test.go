@@ -171,6 +171,32 @@ func TestFormatSessionMarkdownOpencodeFullTranscript(t *testing.T) {
 	}
 }
 
+// 零行 / 查询失败 / 解析失败统一是 errOpencodeTranscriptUnavailable（可 errors.Is 命中），
+// FormatSessionMarkdown 落回占位文案，绝不渲染其它会话的内容。
+func TestFormatSessionMarkdownOpencodeEmptyRowsFallback(t *testing.T) {
+	origQ, origBin := runOpencodeQuery, opencodeDetectBin
+	defer func() { runOpencodeQuery, opencodeDetectBin = origQ, origBin }()
+
+	applang.SetForTest(t, "en")
+	runOpencodeQuery = func(_, _ string) ([]byte, error) {
+		return []byte(`[]`), nil
+	}
+	opencodeDetectBin = func(string) string { return "/fake/bin" }
+	home, _ := os.UserHomeDir()
+
+	turns, err := opencodeTranscriptTurns(Session{ID: "oc-empty", ToolID: "opencode", Workspace: "/w", Path: opencodeDBPath(home)})
+	if !errors.Is(err, errOpencodeTranscriptUnavailable) {
+		t.Fatalf("零行应返回哨兵错误, got %v (turns=%d)", err, len(turns))
+	}
+	md, err := FormatSessionMarkdown(Session{ID: "oc-empty", ToolID: "opencode", Title: "重构登录页", Workspace: "/w", Path: opencodeDBPath(home)})
+	if err != nil {
+		t.Fatalf("FormatSessionMarkdown: %v", err)
+	}
+	if !strings.Contains(md, "重构登录页") || !strings.Contains(md, "stored in a database") {
+		t.Fatalf("零行应回退占位文案, got:\n%s", md)
+	}
+}
+
 func TestFormatSessionMarkdownOpencodeDB(t *testing.T) {
 	// 正文经 applang 直显：固定 en，避免全局语言态串扰。
 	applang.SetForTest(t, "en")
