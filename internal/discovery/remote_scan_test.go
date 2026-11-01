@@ -255,6 +255,47 @@ func TestScanRemoteSessionsOpencodeEnumerator(t *testing.T) {
 	}
 }
 
+// 远端老版本 opencode 对新 SQL 报结构错误时，应降级 legacy SQL 重试而不是静默缺失。
+func TestScanRemoteSessionsOpencodeLegacyFallback(t *testing.T) {
+	const remoteHome = "/home/u"
+	const wantWS = "/home/u/proj"
+	jsonOut := `[{"id":"oc1","cwd":"/home/u/proj","title":"远程 兜底","created":1700000000000,"updated":1700000001000}]`
+
+	run := func(_ context.Context, _ remote.Connection, cmd string, _ []byte) ([]byte, []byte, error) {
+		switch {
+		case strings.Contains(cmd, `echo -n "$HOME"`):
+			return []byte(remoteHome), nil, nil
+		case strings.Contains(cmd, "command -v") && strings.Contains(cmd, "opencode"):
+			return []byte("/usr/bin/opencode"), nil, nil
+		case strings.Contains(cmd, "--format json"):
+			if strings.Contains(cmd, " as fallback") {
+				return nil, []byte("opencode db 退出码 1: no such column"), fmt.Errorf("err")
+			}
+			return []byte(jsonOut), nil, nil
+		case strings.Contains(cmd, "find"):
+			return nil, nil, nil // 无文件型会话
+		default:
+			return nil, nil, fmt.Errorf("unexpected: %s", cmd)
+		}
+	}
+
+	got, err := ScanRemoteSessions(
+		context.Background(),
+		remote.Connection{ID: "c1"},
+		ScanOptions{},
+		[]providers.Provider{providers.Opencode{}},
+		wantWS,
+		run,
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Sessions) != 1 || got.Sessions[0].ID != "oc1" || got.Sessions[0].Messages != 0 {
+		t.Fatalf("got %+v", got.Sessions)
+	}
+}
+
 // 确认 Runner 类型与 remotefs 对齐，避免桌面层再包一层签名。
 var _ remotefs.Runner = (RemoteRunner)(nil)
 

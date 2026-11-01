@@ -68,8 +68,6 @@ func TestOpencodeParseHomesMessagesAndFallback(t *testing.T) {
 	}
 }
 
-// 老版本 opencode 的 db 结构可能不支持新列：第一次查询失败时用 legacy SQL 重试。
-
 func TestOpencodeParseSessions(t *testing.T) {
 	raw := []byte(`[
 		{"id":"ses_a","cwd":"D:/data/workspace/moxi/kshell","title":"修复 扫描","created":1759384800000,"updated":1759388400000},

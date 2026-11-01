@@ -36,8 +36,9 @@ const (
 )
 
 // isNewSessionTitle 报告库里的标题是否为 opencode 的懒默认值（适合被首条用户消息替代）。
+// 忽略大小写：SQL LIKE 对 ASCII 本就不分大小写，parse 判定必须一致。
 func isNewSessionTitle(title string) bool {
-	return strings.HasPrefix(strings.TrimSpace(title), "New session")
+	return strings.HasPrefix(strings.ToLower(title), "new session")
 }
 
 var errOpencodeNotFileBased = errors.New("opencode: 会话存放在 SQLite 库中，请走 EnumerateSessions")
@@ -163,6 +164,11 @@ func (Opencode) ThemeOverrides(theme appearance.Theme, cacheDir string) ([]strin
 
 // OpencodeSessionsSQL 返回枚举根会话的单行 SQL（本地/远端共用，勿拆行）。
 func OpencodeSessionsSQL() string { return opencodeSessionsSQL }
+
+// OpencodeSessionsSQLs 返回按兼容顺序的枚举 SQL 列表（远端逐个降级尝试）。
+func OpencodeSessionsSQLs() []string {
+	return []string{opencodeSessionsSQL, legacyOpencodeSessionsSQL}
+}
 
 // ParseOpencodeSessionsJSON 解析 `opencode db … --format json` 的 stdout。
 func ParseOpencodeSessionsJSON(raw []byte, dbPath string) ([]Session, error) {

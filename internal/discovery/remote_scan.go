@@ -321,11 +321,17 @@ func remoteEnumerate(
 		if berr != nil || bin == "" {
 			continue // CLI 不在远端不算整扫失败
 		}
-		sql := providers.OpencodeSessionsSQL()
-		cmd := fmt.Sprintf("%s db %s --format json", shellSingleQuote(bin), shellSingleQuote(sql))
-		stdout, stderr, err := run(ctx, conn, cmd, nil)
-		if err != nil {
-			msg := err.Error()
+		var stdout, stderr []byte
+		var enumErr error
+		for _, sql := range providers.OpencodeSessionsSQLs() {
+			cmd := fmt.Sprintf("%s db %s --format json", shellSingleQuote(bin), shellSingleQuote(sql))
+			stdout, stderr, enumErr = run(ctx, conn, cmd, nil)
+			if enumErr == nil {
+				break
+			}
+		}
+		if enumErr != nil {
+			msg := enumErr.Error()
 			if len(stderr) > 0 {
 				msg = strings.TrimSpace(string(stderr))
 			}
