@@ -647,8 +647,9 @@ func readAllStdout(t *testing.T, a *Agent) string {
 	return out
 }
 
-// session/new 参数必须把 settings 以 _meta.claudeCode.options.settings（字符串
-// 形态）透传——claude-agent-acp 只认这条通路，settings 为空时不得出现 _meta。
+// session/new 参数必须把 _meta.claudeCode.options.settings 原样透传给适配器
+//（settings 的内部形态由 launch 层负责，现为对象；本层只测注入通路，
+// settings 为空时不得出现 _meta）。
 func TestNewSessionCarriesSettingsMeta(t *testing.T) {
 	a := newTestAgent(t, fakeAgentSpecEnv(t, "ACP_FAKE_DUMP_PARAMS=1"))
 	ctx, cancel := testCtx()
@@ -656,7 +657,7 @@ func TestNewSessionCarriesSettingsMeta(t *testing.T) {
 	if _, err := a.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
-	a.SetSettingsMeta(`{"claudeCode":{"options":{"settings":"{\"env\":{\"ANTHROPIC_MODEL\":\"m\"}}"}}}`)
+	a.SetSettingsMeta(`{"claudeCode":{"options":{"settings":{"env":{"ANTHROPIC_MODEL":"m"}}}}}`)
 	if _, err := a.NewSession(ctx, "/tmp"); err != nil {
 		t.Fatalf("new session: %v", err)
 	}
@@ -665,7 +666,7 @@ func TestNewSessionCarriesSettingsMeta(t *testing.T) {
 		Meta struct {
 			ClaudeCode struct {
 				Options struct {
-					Settings string `json:"settings"`
+					Settings map[string]any `json:"settings"`
 				} `json:"options"`
 			} `json:"claudeCode"`
 		} `json:"_meta"`
@@ -673,7 +674,8 @@ func TestNewSessionCarriesSettingsMeta(t *testing.T) {
 	if err := json.Unmarshal(dump, &head); err != nil {
 		t.Fatalf("解析 params: %v", err)
 	}
-	if head.Meta.ClaudeCode.Options.Settings != `{"env":{"ANTHROPIC_MODEL":"m"}}` {
+	env, _ := head.Meta.ClaudeCode.Options.Settings["env"].(map[string]any)
+	if env["ANTHROPIC_MODEL"] != "m" {
 		t.Fatalf("settings 注入错误: %s", dump)
 	}
 }
@@ -703,7 +705,7 @@ func TestLoadSessionCarriesSettingsMeta(t *testing.T) {
 	if _, err := a.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
-	a.SetSettingsMeta(`{"claudeCode":{"options":{"settings":"{\"env\":{\"ANTHROPIC_MODEL\":\"m\"}}"}}}`)
+	a.SetSettingsMeta(`{"claudeCode":{"options":{"settings":{"env":{"ANTHROPIC_MODEL":"m"}}}}}`)
 	if _, err := a.LoadSession(ctx, "sess-load", "/tmp"); err != nil {
 		t.Fatalf("load session: %v", err)
 	}

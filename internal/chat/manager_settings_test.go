@@ -18,8 +18,8 @@ func (c *settingsMetaConn) SetSettingsMeta(raw string) { c.got = raw }
 // Open 必须把 factory 产出的 settings 载荷交给连接（claude ACP 的
 // _meta.claudeCode.options.settings 注入通路）；factory 为 nil 时零调用。
 func TestOpenDeliversSettingsMeta(t *testing.T) {
-	b := newTestManagerWithConn(t, `{"claudeCode":{"options":{"settings":"{\"env\":{}}"}}}`)
-	if b.got != `{"claudeCode":{"options":{"settings":"{\"env\":{}}"}}}` {
+	b := newTestManagerWithConn(t, `{"claudeCode":{"options":{"settings":{"env":{}}}}}`)
+	if b.got != `{"claudeCode":{"options":{"settings":{"env":{}}}}}` {
 		t.Fatalf("SetSettingsMeta got %q", b.got)
 	}
 }
@@ -74,7 +74,7 @@ func TestOpenSpecPayloadDeliversSettingsMeta(t *testing.T) {
 	conn.newStart = acp.SessionStart{SessionID: "sess-new"}
 	b := &recordingBackend{inner: &fakeBackend{conn: &conn.fakeConn}, meta: conn}
 	m := NewManager(b, nil, nil, nil)
-	payload := `{"claudeCode":{"options":{"settings":"{\"env\":{}}"}}}`
+	payload := `{"claudeCode":{"options":{"settings":{"env":{}}}}}`
 	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x", ACPSettingsJSON: payload}, ""); err != nil {
 		t.Fatalf("Open: %v", err)
 	}

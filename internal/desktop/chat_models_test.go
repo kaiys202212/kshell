@@ -151,7 +151,9 @@ func TestOpenWorkspaceACPInjectsBareModelFromPrefix(t *testing.T) {
 			} `json:"options"`
 		} `json:"claudeCode"`
 	}
-	_ = json.Unmarshal([]byte(backend.live.gotMeta), &meta)
+	if err := json.Unmarshal([]byte(backend.live.gotMeta), &meta); err != nil {
+		t.Fatalf("载荷: %v", err)
+	}
 	envMap, _ := meta.ClaudeCode.Options.Settings["env"].(map[string]any)
 	if envMap["ANTHROPIC_MODEL"] != "m-x" {
 		t.Fatalf("前缀应剥成裸名: %v", envMap)
