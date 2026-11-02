@@ -1146,8 +1146,9 @@ func TestForSessionACPClaudeNpxSettingsWithBypass(t *testing.T) {
 }
 
 // claude ACP 必须产出 ACPSettingsJSON 载荷——完整的 _meta 形态
-// {"claudeCode":{"options":{"settings":"{\"env\":{...}}"}}}，settings 值为
-// JSON 字符串（SDK 原样透传进 spawn argv，对象形态会变 "[object Object]"）。
+// {"claudeCode":{"options":{"settings":{"env":{...}}}}}，settings 必须是
+// JSON 对象：适配器（0.99.x）对字符串按设置文件路径读取（ENOENT → -32603），
+// 仅对象走内联 settings。
 func TestFinalizeACPClaudeSettingsPayload(t *testing.T) {
 	ps := []providers.Provider{providers.Claude{}}
 	tools := acpTools(providers.ACPDetection{Available: true, Source: "path", BinPath: "claude-agent-acp"})
@@ -1164,18 +1165,14 @@ func TestFinalizeACPClaudeSettingsPayload(t *testing.T) {
 	var meta struct {
 		ClaudeCode struct {
 			Options struct {
-				Settings string `json:"settings"`
+				Settings map[string]any `json:"settings"`
 			} `json:"options"`
 		} `json:"claudeCode"`
 	}
 	if err := json.Unmarshal([]byte(l.ACPSettingsJSON), &meta); err != nil {
 		t.Fatalf("载荷非法 JSON: %v (%q)", err, l.ACPSettingsJSON)
 	}
-	var envObj map[string]any
-	if err := json.Unmarshal([]byte(meta.ClaudeCode.Options.Settings), &envObj); err != nil {
-		t.Fatalf("settings 值应为内联 JSON 字符串: %v (%q)", err, meta.ClaudeCode.Options.Settings)
-	}
-	env, _ := envObj["env"].(map[string]any)
+	env, _ := meta.ClaudeCode.Options.Settings["env"].(map[string]any)
 	if env["ANTHROPIC_MODEL"] != "glm-5.3-flash" || env["ANTHROPIC_BASE_URL"] != "https://h/" || env["ANTHROPIC_AUTH_TOKEN"] != "k" {
 		t.Fatalf("env 块不符: %+v", env)
 	}
@@ -1199,7 +1196,7 @@ func TestFinalizeACPClaudeOpencodeSessionHeader(t *testing.T) {
 		var meta struct {
 			ClaudeCode struct {
 				Options struct {
-					Settings string         `json:"settings"`
+					Settings map[string]any `json:"settings"`
 					Env      map[string]any `json:"env"`
 				} `json:"options"`
 			} `json:"claudeCode"`
@@ -1207,11 +1204,7 @@ func TestFinalizeACPClaudeOpencodeSessionHeader(t *testing.T) {
 		if err := json.Unmarshal([]byte(l.ACPSettingsJSON), &meta); err != nil {
 			t.Fatalf("载荷非法 JSON: %v (%q)", err, l.ACPSettingsJSON)
 		}
-		var settings map[string]any
-		if err := json.Unmarshal([]byte(meta.ClaudeCode.Options.Settings), &settings); err != nil {
-			t.Fatalf("settings 值应为内联 JSON 字符串: %v", err)
-		}
-		env, _ := settings["env"].(map[string]any)
+		env, _ := meta.ClaudeCode.Options.Settings["env"].(map[string]any)
 		if env["ANTHROPIC_BASE_URL"] != "https://opencode.ai/inference/go/anthropic" {
 			t.Fatalf("settings.env 应保留网关端点: %+v", env)
 		}

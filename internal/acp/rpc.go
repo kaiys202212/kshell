@@ -21,7 +21,19 @@ type RPCError struct {
 	Data    json.RawMessage `json:"data,omitempty"`
 }
 
-func (e *RPCError) Error() string { return fmt.Sprintf("acp rpc error %d: %s", e.Code, e.Message) }
+// Error() 拼上 error.data.details（若有）：适配器把真实失败原因（如 ENOENT
+// 路径）放该字段，字符串化丢失会让上层只剩 "Internal error"。防御式解析，
+// data 缺失/非法/无 details 键时保持纯 code+message。
+func (e *RPCError) Error() string {
+	msg := fmt.Sprintf("acp rpc error %d: %s", e.Code, e.Message)
+	var data struct {
+		Details string `json:"details"`
+	}
+	if len(e.Data) > 0 && json.Unmarshal(e.Data, &data) == nil && data.Details != "" {
+		return msg + " (" + data.Details + ")"
+	}
+	return msg
+}
 
 // idString 统一 id 形态：JSON 数字或字符串都归一为字符串，避免区分数字/字符串 id。
 type idString string

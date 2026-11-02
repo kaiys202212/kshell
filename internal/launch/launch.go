@@ -272,11 +272,12 @@ func finalizeACP(l providers.Launch, p providers.Provider, tool discovery.Tool, 
 }
 
 // acpSettingsPayload 为 claude ACP 组装完整的 _meta 载荷
-// {"claudeCode":{"options":{"settings":"{\"env\":{...}}"}}}：适配器从
-// params._meta.claudeCode.options 读 SDK options，settings 值经 SDK 原样
-// 进 spawn argv → CLI 的 --settings（内联 JSON）。**settings 值必须是 JSON
-// 字符串而非对象**——SDK 无 sandbox 时不序列化，对象会被 Node 变成
-// "[object Object]" 致 CLI 启动失败。非 claude、Resolver 未命中或 env 全空
+// {"claudeCode":{"options":{"settings":{"env":{...}}}}}：适配器（0.99.x）在
+// session/new 阶段自行解析 options.settings——字符串按设置文件路径读取
+//（相对 cwd，读不到即 -32603），对象走内联 settings。**settings 值必须是
+// 对象而非字符串**：旧版适配器曾把该值原样透传进 spawn argv（彼时字符串
+// 内联 JSON 才正确，对象会变 "[object Object]"），契约已在适配器侧翻转，
+// 适配器经 npx 拉最新版不锁版本。非 claude、Resolver 未命中或 env 全空
 // 时返回空串（session/new 不带 _meta）。
 func acpSettingsPayload(p providers.Provider, mo ModelOptions) string {
 	if p.ID() != "claude" || mo.Resolver == nil {
@@ -290,11 +291,7 @@ func acpSettingsPayload(p providers.Provider, mo ModelOptions) string {
 	if len(env) == 0 {
 		return ""
 	}
-	settingsJSON, err := json.Marshal(map[string]any{"env": env})
-	if err != nil {
-		return ""
-	}
-	options := map[string]any{"settings": string(settingsJSON)}
+	options := map[string]any{"settings": map[string]any{"env": env}}
 	if isOpencodeGateway(cfg.AnthropicBaseURL) {
 		// 适配器内置的旧版 Claude Code CLI 不发原生会话头（实测 2.1.83 无、
 		// 独立安装的 2.1.301 有 x-claude-code-session-id），OpenCode Go 网关会

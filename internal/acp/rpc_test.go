@@ -10,6 +10,35 @@ import (
 	"testing/iotest"
 )
 
+// Error() 必须透传 error.data.details：适配器把真实失败原因（如 ENOENT 路径）
+// 放在该字段，kshell 侧 toast/日志只看 Error() 字符串，丢了 details 就只剩
+// "Internal error"，排查要多走整轮抓包弯路。
+func TestRPCErrorDetailsInErrorMessage(t *testing.T) {
+	cases := []struct {
+		name    string
+		e       *RPCError
+		wantSub []string // Error() 必须依次包含
+	}{
+		{
+			name:    "对象 details 透传",
+			e:       &RPCError{Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"details":"ENOENT: no such file or directory, open 'x'"}`)},
+			wantSub: []string{"acp rpc error -32603: Internal error", "ENOENT: no such file or directory, open 'x'"},
+		},
+		{name: "无 data 保持原样", e: &RPCError{Code: -32603, Message: "Internal error"}, wantSub: []string{"acp rpc error -32603: Internal error"}},
+		{name: "data 非 details 键忽略", e: &RPCError{Code: -32603, Message: "Internal error", Data: json.RawMessage(`{"other":1}`)}, wantSub: []string{"acp rpc error -32603: Internal error"}},
+		{name: "data 非法 JSON 忽略", e: &RPCError{Code: -32603, Message: "Internal error", Data: json.RawMessage(`{oops`)}, wantSub: []string{"acp rpc error -32603: Internal error"}},
+		{name: "data 非对象忽略", e: &RPCError{Code: -32603, Message: "Internal error", Data: json.RawMessage(`"plain"`)}, wantSub: []string{"acp rpc error -32603: Internal error"}},
+	}
+	for _, c := range cases {
+		got := c.e.Error()
+		for _, want := range c.wantSub {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s: Error() = %q, 缺 %q", c.name, got, want)
+			}
+		}
+	}
+}
+
 func TestCodecRoundTrip(t *testing.T) {
 	var buf bytes.Buffer
 	c := newCodec(strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}`+"\n"), &buf)

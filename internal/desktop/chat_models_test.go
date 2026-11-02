@@ -70,19 +70,16 @@ func TestOpenWorkspaceACPCarriesSettingsPayload(t *testing.T) {
 	var meta struct {
 		ClaudeCode struct {
 			Options struct {
-				Settings string `json:"settings"`
+				Settings map[string]any `json:"settings"`
 			} `json:"options"`
 		} `json:"claudeCode"`
 	}
 	if err := json.Unmarshal([]byte(backend.live.gotMeta), &meta); err != nil {
 		t.Fatalf("载荷非法 JSON: %v (%q)", err, backend.live.gotMeta)
 	}
-	var envWrap map[string]any
-	if err := json.Unmarshal([]byte(meta.ClaudeCode.Options.Settings), &envWrap); err != nil {
-		t.Fatalf("settings 值应为内联 JSON 字符串: %v (%q)", err, meta.ClaudeCode.Options.Settings)
-	}
+	envWrap := meta.ClaudeCode.Options.Settings
 	if envWrap["env"] == nil {
-		t.Fatalf("settings 缺 env 块: %q", meta.ClaudeCode.Options.Settings)
+		t.Fatalf("settings 缺 env 块: %q", backend.live.gotMeta)
 	}
 	// 无显式 modelID：不得注入 ActiveModel（no-default-model）
 	envMap, _ := envWrap["env"].(map[string]any)
@@ -114,18 +111,14 @@ func TestOpenWorkspaceACPInjectsCreateModel(t *testing.T) {
 	var meta struct {
 		ClaudeCode struct {
 			Options struct {
-				Settings string `json:"settings"`
+				Settings map[string]any `json:"settings"`
 			} `json:"options"`
 		} `json:"claudeCode"`
 	}
 	if err := json.Unmarshal([]byte(backend.live.gotMeta), &meta); err != nil {
 		t.Fatalf("载荷: %v", err)
 	}
-	var envWrap map[string]any
-	if err := json.Unmarshal([]byte(meta.ClaudeCode.Options.Settings), &envWrap); err != nil {
-		t.Fatalf("settings: %v", err)
-	}
-	envMap, _ := envWrap["env"].(map[string]any)
+	envMap, _ := meta.ClaudeCode.Options.Settings["env"].(map[string]any)
 	if envMap["ANTHROPIC_MODEL"] != "deepseek-v4.1-flash" {
 		t.Fatalf("应注入创建模型: %v", envMap)
 	}
@@ -154,14 +147,12 @@ func TestOpenWorkspaceACPInjectsBareModelFromPrefix(t *testing.T) {
 	var meta struct {
 		ClaudeCode struct {
 			Options struct {
-				Settings string `json:"settings"`
+				Settings map[string]any `json:"settings"`
 			} `json:"options"`
 		} `json:"claudeCode"`
 	}
 	_ = json.Unmarshal([]byte(backend.live.gotMeta), &meta)
-	var envWrap map[string]any
-	_ = json.Unmarshal([]byte(meta.ClaudeCode.Options.Settings), &envWrap)
-	envMap, _ := envWrap["env"].(map[string]any)
+	envMap, _ := meta.ClaudeCode.Options.Settings["env"].(map[string]any)
 	if envMap["ANTHROPIC_MODEL"] != "m-x" {
 		t.Fatalf("前缀应剥成裸名: %v", envMap)
 	}
