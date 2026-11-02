@@ -442,7 +442,7 @@ func TestImportProvidersFile(t *testing.T) {
 		if g, ok := p.(providers.Generic); ok {
 			switch g.Spec.ID {
 			case "a":
-				foundA, _ = true, g.Spec.Name == "新 A"
+				foundA = g.Spec.Name == "新 A"
 			case "b":
 				foundB = true
 			}
@@ -516,6 +516,12 @@ func TestExportProvidersTemplate(t *testing.T) {
 	pickSaveFile = func(context.Context, string, string) (string, error) { return "", nil }
 	if got, err := env.app.ExportProvidersTemplate("保存模板"); err != nil || got != "" {
 		t.Fatalf("取消应返回空串, got %q %v", got, err)
+	}
+
+	// 写盘失败（目标是目录）应报稳定 wire key
+	pickSaveFile = func(context.Context, string, string) (string, error) { return t.TempDir(), nil }
+	if _, err := env.app.ExportProvidersTemplate("保存模板"); err == nil || !strings.Contains(err.Error(), "err.settings.template_write_failed") {
+		t.Fatalf("写盘失败应报 template_write_failed, got %v", err)
 	}
 }
 

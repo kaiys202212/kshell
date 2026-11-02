@@ -133,11 +133,15 @@ func (a *App) ImportProvidersFile(path string) (ProvidersImportResult, error) {
 	if o.ProvidersPath == "" {
 		return ProvidersImportResult{}, errNoProvidersPath
 	}
+	// 现有定义按盘上文件解析；文件缺失按空列表。非「不存在」的读失败（权限等）
+	// 不能按空处理——那会让合并基线变成空列表，落盘覆盖丢失旧定义。
 	var existing []providers.GenericSpec
 	if cur, err := os.ReadFile(o.ProvidersPath); err == nil {
 		if existing, err = providers.ParseProvidersYAML(cur); err != nil {
 			return ProvidersImportResult{}, fmt.Errorf("err.settings.yaml_parse_failed|%w", err)
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return ProvidersImportResult{}, fmt.Errorf("err.settings.import_read_failed|%w", err)
 	}
 
 	merged, added, updated, skipped := providers.MergeGenericSpecs(existing, incoming)
@@ -166,7 +170,7 @@ func (a *App) ExportProvidersTemplate(title string) (string, error) {
 		return "", nil // 用户取消
 	}
 	if err := os.WriteFile(target, []byte(providers.DefaultProvidersYAML()), 0o600); err != nil {
-		return "", err
+		return "", fmt.Errorf("err.settings.template_write_failed|%w", err)
 	}
 	return target, nil
 }

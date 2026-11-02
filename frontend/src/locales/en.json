@@ -165,6 +165,7 @@
       "providers_path_unavailable": "providers.yaml path is unavailable (not initialized yet)",
       "yaml_parse_failed": "YAML parse failed: {{0}}",
       "import_read_failed": "Failed to read import file: {{0}}",
+      "template_write_failed": "Failed to write template file: {{0}}",
       "import_empty": "No importable tool definitions found (every entry needs an id field)",
       "http_url_required": "{{0}} must start with http:// or https://",
       "invalid_session_mode": "Invalid session mode: {{0}}",

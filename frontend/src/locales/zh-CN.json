@@ -165,6 +165,7 @@
       "providers_path_unavailable": "providers.yaml 路径不可用（未初始化完成）",
       "yaml_parse_failed": "YAML 解析失败：{{0}}",
       "import_read_failed": "读取导入文件失败：{{0}}",
+      "template_write_failed": "写入模板文件失败：{{0}}",
       "import_empty": "未发现可导入的工具定义（每个条目都需要 id 字段）",
       "http_url_required": "{{0}} 必须以 http:// 或 https:// 开头",
       "invalid_session_mode": "无效的会话模式：{{0}}",
