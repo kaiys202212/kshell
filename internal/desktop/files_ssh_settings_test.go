@@ -397,6 +397,128 @@ func TestSaveProvidersYAMLReloadsProviders(t *testing.T) {
 	}
 }
 
+// TestImportProvidersFile 导入 = 解析 + 合并（同 id 覆盖、新 id 追加）+ 落盘 + 热重载。
+func TestImportProvidersFile(t *testing.T) {
+	env := newFilesEnv(t)
+	if err := env.app.SaveProvidersYAML("providers:\n  - id: a\n    name: 旧 A\n"); err != nil {
+		t.Fatal(err)
+	}
+	importPath := filepath.Join(t.TempDir(), "filled-template.yml")
+	incoming := `providers:
+  - id: a
+    name: 新 A
+  - id: b
+    name: 新 B
+  - name: 无 ID
+  - id: b
+    name: 重复
+  - id: "  "
+    name: 空白 ID
+`
+	if err := os.WriteFile(importPath, []byte(incoming), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := env.app.ImportProvidersFile(importPath)
+	if err != nil {
+		t.Fatalf("ImportProvidersFile error: %v", err)
+	}
+	if res.Added != 1 || res.Updated != 1 || res.Skipped != 3 {
+		t.Fatalf("result = %+v, want {1 1 3}", res)
+	}
+	content, err := env.app.LoadProvidersYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, "name: 新 A") || !strings.Contains(content, "id: b") {
+		t.Fatalf("导入未生效: %s", content)
+	}
+	if strings.Contains(content, "无 ID") || strings.Contains(content, "重复") {
+		t.Fatal("无效/重复条目不应落盘")
+	}
+	// 热重载：provider 表里应同时出现 a（新定义）与 b
+	var foundA, foundB bool
+	for _, p := range env.app.snapshot().Providers {
+		if g, ok := p.(providers.Generic); ok {
+			switch g.Spec.ID {
+			case "a":
+				foundA, _ = true, g.Spec.Name == "新 A"
+			case "b":
+				foundB = true
+			}
+		}
+	}
+	if !foundA || !foundB {
+		t.Fatalf("导入后应热装载 a/b（a=%v b=%v）", foundA, foundB)
+	}
+}
+
+// TestImportProvidersFileErrors 覆盖三类失败：读不到、语法错、无有效条目。
+func TestImportProvidersFileErrors(t *testing.T) {
+	env := newFilesEnv(t)
+	if err := env.app.SaveProvidersYAML("providers:\n  - id: keep\n    name: 保留\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	// 文件不存在
+	if _, err := env.app.ImportProvidersFile(filepath.Join(t.TempDir(), "nope.yml")); err == nil || !strings.Contains(err.Error(), "err.settings.import_read_failed") {
+		t.Fatalf("读文件失败应报 import_read_failed, got %v", err)
+	}
+
+	// YAML 语法错
+	bad := filepath.Join(t.TempDir(), "bad.yml")
+	if err := os.WriteFile(bad, []byte("providers: [unclosed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.app.ImportProvidersFile(bad); err == nil || !strings.Contains(err.Error(), "err.settings.yaml_parse_failed") {
+		t.Fatalf("语法错应报 yaml_parse_failed, got %v", err)
+	}
+
+	// 全是无 id 条目
+	empty := filepath.Join(t.TempDir(), "empty.yml")
+	if err := os.WriteFile(empty, []byte("providers:\n  - name: 只有名字\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.app.ImportProvidersFile(empty); err == nil || !strings.Contains(err.Error(), "err.settings.import_empty") {
+		t.Fatalf("无有效条目应报 import_empty, got %v", err)
+	}
+
+	// 失败路径不得动现有配置
+	if got, _ := env.app.LoadProvidersYAML(); !strings.Contains(got, "id: keep") {
+		t.Fatalf("失败的导入不应改动现有配置: %s", got)
+	}
+}
+
+// TestExportProvidersTemplate 下载模板：写盘内容即标准模板；取消返回空串。
+func TestExportProvidersTemplate(t *testing.T) {
+	origSave := pickSaveFile
+	t.Cleanup(func() { pickSaveFile = origSave })
+
+	env := newFilesEnv(t)
+	target := filepath.Join(t.TempDir(), "kshell-providers-template.yml")
+	pickSaveFile = func(context.Context, string, string) (string, error) { return target, nil }
+	got, err := env.app.ExportProvidersTemplate("保存模板")
+	if err != nil {
+		t.Fatalf("ExportProvidersTemplate error: %v", err)
+	}
+	if got != target {
+		t.Fatalf("返回路径 = %q, want %q", got, target)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "providers:") || !strings.Contains(string(data), "id: cline") {
+		t.Fatalf("写出的不是标准模板: %s", data)
+	}
+
+	// 用户取消：返回空串且不报错
+	pickSaveFile = func(context.Context, string, string) (string, error) { return "", nil }
+	if got, err := env.app.ExportProvidersTemplate("保存模板"); err != nil || got != "" {
+		t.Fatalf("取消应返回空串, got %q %v", got, err)
+	}
+}
+
 func TestPickDirectoryAndFileCancel(t *testing.T) {
 	origDir, origFile := pickDirectory, pickFile
 	t.Cleanup(func() {

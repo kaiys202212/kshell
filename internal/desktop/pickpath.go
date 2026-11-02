@@ -27,6 +27,19 @@ var pickFile = func(ctx context.Context, title string) (string, error) {
 	})
 }
 
+var pickSaveFile = func(ctx context.Context, title, defaultName string) (string, error) {
+	if ctx == nil {
+		return "", errNotReady
+	}
+	return wailsRuntime.SaveFileDialog(ctx, wailsRuntime.SaveDialogOptions{
+		Title:           title,
+		DefaultFilename: defaultName,
+		Filters: []wailsRuntime.FileFilter{
+			{DisplayName: "YAML (*.yml;*.yaml)", Pattern: "*.yml;*.yaml"},
+		},
+	})
+}
+
 func (a *App) dialogContext() context.Context {
 	a.mu.Lock()
 	defer a.mu.Unlock()

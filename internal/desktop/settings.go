@@ -63,12 +63,18 @@ func (a *App) CheckToolAuth(toolID string) (string, error) {
 // 再临时文件原子替换写回，避免写一半崩溃损坏配置。
 // 写盘成功后热重载 provider 表并刷新工具检测，无需重启。
 func (a *App) SaveProvidersYAML(content string) error {
+	if _, err := providers.ParseProvidersYAML([]byte(content)); err != nil {
+		return fmt.Errorf("err.settings.yaml_parse_failed|%w", err)
+	}
+	return a.saveProvidersContent(content)
+}
+
+// saveProvidersContent 把已通过校验的 yaml 内容原子落盘并热重载 provider 表。
+// SaveProvidersYAML 与导入路径共用。
+func (a *App) saveProvidersContent(content string) error {
 	path := a.snapshot().ProvidersPath
 	if path == "" {
 		return errNoProvidersPath
-	}
-	if _, err := providers.ParseProvidersYAML([]byte(content)); err != nil {
-		return fmt.Errorf("err.settings.yaml_parse_failed|%w", err)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -96,6 +102,73 @@ func (a *App) SaveProvidersYAML(content string) error {
 	}
 	a.reloadProviders()
 	return nil
+}
+
+// ProvidersImportResult 是导入汇总：新增/覆盖/跳过的条目数。
+type ProvidersImportResult struct {
+	Added   int `json:"Added"`
+	Updated int `json:"Updated"`
+	Skipped int `json:"Skipped"`
+}
+
+// ImportProvidersFile 导入用户填好的接入模板：解析 → 与现有定义合并
+// （同 id 覆盖更新、新 id 追加）→ 落盘 → 热重载。任何一步失败都不动现有配置。
+func (a *App) ImportProvidersFile(path string) (ProvidersImportResult, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ProvidersImportResult{}, errors.New("err.settings.import_read_failed|")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ProvidersImportResult{}, fmt.Errorf("err.settings.import_read_failed|%w", err)
+	}
+	incoming, err := providers.ParseProvidersYAML(data)
+	if err != nil {
+		return ProvidersImportResult{}, fmt.Errorf("err.settings.yaml_parse_failed|%w", err)
+	}
+
+	// 现有定义按盘上文件解析；文件缺失按空列表。现有文件若损坏，按空处理
+	// 会让导入静默吞掉旧定义，直接报错让用户先修。
+	o := a.snapshot()
+	if o.ProvidersPath == "" {
+		return ProvidersImportResult{}, errNoProvidersPath
+	}
+	var existing []providers.GenericSpec
+	if cur, err := os.ReadFile(o.ProvidersPath); err == nil {
+		if existing, err = providers.ParseProvidersYAML(cur); err != nil {
+			return ProvidersImportResult{}, fmt.Errorf("err.settings.yaml_parse_failed|%w", err)
+		}
+	}
+
+	merged, added, updated, skipped := providers.MergeGenericSpecs(existing, incoming)
+	if added == 0 && updated == 0 {
+		return ProvidersImportResult{}, errors.New("err.settings.import_empty")
+	}
+	content, err := providers.FormatProvidersYAML(merged)
+	if err != nil {
+		return ProvidersImportResult{}, err
+	}
+	if err := a.saveProvidersContent(content); err != nil {
+		return ProvidersImportResult{}, err
+	}
+	return ProvidersImportResult{Added: added, Updated: updated, Skipped: skipped}, nil
+}
+
+// ExportProvidersTemplate 弹原生「另存为」把标准接入模板写到用户选的位置。
+// title 由前端传（走 i18n）；用户取消时返回空串且不报错。
+func (a *App) ExportProvidersTemplate(title string) (string, error) {
+	target, err := pickSaveFile(a.dialogContext(), title, "kshell-providers-template.yml")
+	if err != nil {
+		return "", err
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", nil // 用户取消
+	}
+	if err := os.WriteFile(target, []byte(providers.DefaultProvidersYAML()), 0o600); err != nil {
+		return "", err
+	}
+	return target, nil
 }
 
 // reloadProviders 按磁盘 yaml 重新装配运行中的 provider 表并刷新工具检测。
