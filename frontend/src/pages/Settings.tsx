@@ -18,6 +18,8 @@ import {
   listModelPresets,
   fetchAvailableModels,
   formatProvidersYAML,
+  importProvidersFile,
+  exportProvidersTemplate,
   loadProvidersYAML,
   parseProvidersYAML,
   pickDirectory,
@@ -124,6 +126,7 @@ export default function Settings() {
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [providerMsg, setProviderMsg] = useState('');
   const [editorMode, setEditorMode] = useState<'form' | 'source'>('form');
   const [specs, setSpecs] = useState<CustomProviderSpec[]>([]);
   // 工具检测「重新扫描」进行中；tools:updated（DetectAll 完成才推）到达即恢复
@@ -690,6 +693,44 @@ export default function Settings() {
       setYamlError('');
     } catch (e: unknown) {
       setYamlError(backendError(e));
+    }
+  };
+
+  const handleDownloadTemplate = async () => {
+    setSaved(false);
+    setSaveError('');
+    setProviderMsg('');
+    try {
+      const path = await exportProvidersTemplate(t('ui.providers.template_save_title'));
+      // 空串 = 用户在另存为对话框点了取消，静默即可
+      if (path) setProviderMsg(t('ui.providers.template_saved', { path }));
+    } catch (e: unknown) {
+      setSaveError(backendError(e));
+    }
+  };
+
+  const handleImportProviders = async () => {
+    if (saving) return;
+    setSaved(false);
+    setSaveError('');
+    setProviderMsg('');
+    try {
+      const path = await pickFile(t('ui.providers.import_pick_title'));
+      if (!path) return; // 用户取消
+      const res = await importProvidersFile(path);
+      // 导入已落盘并热重载：回填编辑器，源码/表单两份状态一起刷新
+      const content = await loadProvidersYAML();
+      setYaml(content);
+      setSpecs(withoutBuiltinSpecs(await parseProvidersYAML(content)));
+      setProviderMsg(
+        t('ui.providers.import_result', {
+          added: res.Added,
+          updated: res.Updated,
+          skipped: res.Skipped,
+        }),
+      );
+    } catch (e: unknown) {
+      setSaveError(backendError(e));
     }
   };
 
@@ -1630,16 +1671,23 @@ export default function Settings() {
                   setYaml(v);
                   setSaved(false);
                   setSaveError('');
+                  setProviderMsg('');
                 }}
                 onSpecsChange={(next) => {
                   setSpecs(next);
                   setSaved(false);
                   setSaveError('');
+                  setProviderMsg('');
                 }}
                 onSave={() => void handleSave()}
+                onDownloadTemplate={() => void handleDownloadTemplate()}
+                onImport={() => void handleImportProviders()}
                 onPickDir={pickDirectory}
                 onPickFile={pickFile}
               />
+              {providerMsg && (
+                <p className="mt-2 text-sm text-muted-foreground">{providerMsg}</p>
+              )}
             </>
           )}
 

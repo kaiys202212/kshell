@@ -694,6 +694,8 @@ interface AppBindings {
   GetToolInstallJob(): Promise<ToolInstallJobView>;
   LoadProvidersYAML(): Promise<string>;
   SaveProvidersYAML(content: string): Promise<void>;
+  ExportProvidersTemplate(title: string): Promise<string>;
+  ImportProvidersFile(path: string): Promise<ProvidersImportResult>;
   ParseProvidersYAML(content: string): Promise<import('./providersForm').CustomProviderSpec[]>;
   FormatProvidersYAML(specs: import('./providersForm').CustomProviderSpec[]): Promise<string>;
   PickDirectory(title: string): Promise<string>;
@@ -1412,6 +1414,28 @@ export async function saveProvidersYAML(content: string): Promise<void> {
   const a = app();
   if (!a) return;
   await a.SaveProvidersYAML(content);
+}
+
+// ProvidersImportResult 是导入自定义工具定义的汇总：新增/覆盖/跳过的条目数。
+export interface ProvidersImportResult {
+  Added: number;
+  Updated: number;
+  Skipped: number;
+}
+
+// ExportProvidersTemplate 弹「另存为」把标准接入模板写到用户选的位置；
+// 用户取消返回空串。
+export async function exportProvidersTemplate(title: string): Promise<string> {
+  const a = app();
+  if (!a) return '';
+  return a.ExportProvidersTemplate(title);
+}
+
+// ImportProvidersFile 导入用户填好的接入模板（Go 侧合并落盘并热重载）。错误向上抛。
+export async function importProvidersFile(path: string): Promise<ProvidersImportResult> {
+  const a = app();
+  if (!a) return { Added: 0, Updated: 0, Skipped: 0 };
+  return a.ImportProvidersFile(path);
 }
 
 export async function parseProvidersYAML(

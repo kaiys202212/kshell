@@ -164,6 +164,8 @@
     "settings": {
       "providers_path_unavailable": "providers.yaml 路径不可用（未初始化完成）",
       "yaml_parse_failed": "YAML 解析失败：{{0}}",
+      "import_read_failed": "读取导入文件失败：{{0}}",
+      "import_empty": "未发现可导入的工具定义（每个条目都需要 id 字段）",
       "http_url_required": "{{0}} 必须以 http:// 或 https:// 开头",
       "invalid_session_mode": "无效的会话模式：{{0}}",
       "invalid_permission_mode": "无效的权限模式：{{0}}",
@@ -1161,7 +1163,13 @@
       "id_aria": "工具 ID",
       "name_aria": "工具显示名",
       "save": "保存",
-      "saved": "已保存，已重新加载"
+      "saved": "已保存，已重新加载",
+      "download_template": "下载模板",
+      "import": "导入 yml",
+      "import_pick_title": "选择要导入的 providers yml",
+      "template_save_title": "保存自定义工具接入模板",
+      "template_saved": "模板已保存：{{path}}",
+      "import_result": "导入完成：新增 {{added}} 个、更新 {{updated}} 个、跳过 {{skipped}} 个"
     },
     "workspace": {
       "fallback": "已回退到终端模式：{{reason}}",

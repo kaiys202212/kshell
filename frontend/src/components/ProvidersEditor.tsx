@@ -22,6 +22,8 @@ export function ProvidersEditor(props: {
   onYamlChange: (v: string) => void;
   onSpecsChange: (next: CustomProviderSpec[]) => void;
   onSave: () => void;
+  onDownloadTemplate: () => void;
+  onImport: () => void;
   onPickDir: (title: string) => Promise<string>;
   onPickFile: (title: string) => Promise<string>;
 }) {
@@ -51,23 +53,33 @@ export function ProvidersEditor(props: {
     <section className="rounded border border-border bg-card p-3.5">
       <div className="mb-3 flex items-center justify-between gap-2">
         <h2 className="text-sm font-medium">{t('ui.providers.title')}</h2>
-        <div className="flex gap-1">
-          <Button
-            size="sm"
-            variant={props.mode === 'form' ? 'default' : 'secondary'}
-            aria-pressed={props.mode === 'form'}
-            onClick={() => props.onMode('form')}
-          >
-            {t('ui.providers.mode_form')}
-          </Button>
-          <Button
-            size="sm"
-            variant={props.mode === 'source' ? 'default' : 'secondary'}
-            aria-pressed={props.mode === 'source'}
-            onClick={() => props.onMode('source')}
-          >
-            {t('ui.providers.mode_source')}
-          </Button>
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1">
+            <Button size="sm" variant="secondary" type="button" onClick={props.onDownloadTemplate}>
+              {t('ui.providers.download_template')}
+            </Button>
+            <Button size="sm" variant="secondary" type="button" onClick={props.onImport}>
+              {t('ui.providers.import')}
+            </Button>
+          </div>
+          <div className="flex gap-1">
+            <Button
+              size="sm"
+              variant={props.mode === 'form' ? 'default' : 'secondary'}
+              aria-pressed={props.mode === 'form'}
+              onClick={() => props.onMode('form')}
+            >
+              {t('ui.providers.mode_form')}
+            </Button>
+            <Button
+              size="sm"
+              variant={props.mode === 'source' ? 'default' : 'secondary'}
+              aria-pressed={props.mode === 'source'}
+              onClick={() => props.onMode('source')}
+            >
+              {t('ui.providers.mode_source')}
+            </Button>
+          </div>
         </div>
       </div>
       {props.yamlError && <p className="text-sm text-destructive">{props.yamlError}</p>}

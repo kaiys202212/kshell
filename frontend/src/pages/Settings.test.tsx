@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   getTools: vi.fn(),
   loadProvidersYAML: vi.fn(),
   saveProvidersYAML: vi.fn(),
+  exportProvidersTemplate: vi.fn(),
+  importProvidersFile: vi.fn(),
   parseProvidersYAML: vi.fn(),
   formatProvidersYAML: vi.fn(),
   pickDirectory: vi.fn(),
@@ -190,6 +192,8 @@ beforeEach(() => {
   mocks.pickDirectory.mockResolvedValue('');
   mocks.pickFile.mockResolvedValue('');
   mocks.saveProvidersYAML.mockResolvedValue(undefined);
+  mocks.exportProvidersTemplate.mockResolvedValue('');
+  mocks.importProvidersFile.mockResolvedValue({ Added: 0, Updated: 0, Skipped: 0 });
   mocks.getAppearance.mockResolvedValue({
     mode: 'dark',
     resolved: 'dark',
@@ -594,6 +598,89 @@ describe('Settings', () => {
     expect(mocks.formatProvidersYAML).toHaveBeenCalled();
     expect(mocks.saveProvidersYAML).toHaveBeenCalled();
     expect(await screen.findByText(tt('ui.providers.saved'))).toBeInTheDocument();
+  });
+
+  // 插值断言：tt 只取静态文案，这里手工替换占位符，避免断言写死英文句子
+  const importResultText = (added: number, updated: number, skipped: number) =>
+    tt('ui.providers.import_result')
+      .replace('{{added}}', String(added))
+      .replace('{{updated}}', String(updated))
+      .replace('{{skipped}}', String(skipped));
+  const templateSavedText = (path: string) =>
+    tt('ui.providers.template_saved').replace('{{path}}', path);
+
+  it('下载模板：调用后端另存为并显示保存路径，取消则不提示', async () => {
+    render(<Settings />);
+    goTools();
+    const btn = await screen.findByRole('button', { name: tt('ui.providers.download_template') });
+
+    mocks.exportProvidersTemplate.mockResolvedValueOnce('D:\\tpl\\kshell-providers-template.yml');
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(mocks.exportProvidersTemplate).toHaveBeenCalledWith(tt('ui.providers.template_save_title'));
+    expect(await screen.findByText(templateSavedText('D:\\tpl\\kshell-providers-template.yml'))).toBeInTheDocument();
+
+    // 用户取消（返回空串）：提示消失
+    mocks.exportProvidersTemplate.mockResolvedValueOnce('');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.providers.download_template') }));
+    });
+    await waitFor(() => {
+      expect(screen.queryByText(/kshell-providers-template\.yml/)).not.toBeInTheDocument();
+    });
+  });
+
+  it('导入 yml：显示汇总并回填编辑器', async () => {
+    render(<Settings />);
+    goTools();
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.providers.mode_source') }));
+    const editor = await screen.findByLabelText(tt('ui.providers.yaml_aria'));
+
+    mocks.pickFile.mockResolvedValueOnce('D:\\filled.yml');
+    mocks.importProvidersFile.mockResolvedValueOnce({ Added: 1, Updated: 1, Skipped: 2 });
+    mocks.loadProvidersYAML.mockResolvedValueOnce('providers:\n  - id: b\n    name: B\n');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.providers.import') }));
+    });
+
+    expect(mocks.importProvidersFile).toHaveBeenCalledWith('D:\\filled.yml');
+    expect(await screen.findByText(importResultText(1, 1, 2))).toBeInTheDocument();
+    expect(await screen.findByLabelText(tt('ui.providers.yaml_aria'))).toHaveValue(
+      'providers:\n  - id: b\n    name: B\n',
+    );
+  });
+
+  it('导入取消：静默返回，不提示也不改编辑器', async () => {
+    render(<Settings />);
+    goTools();
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.providers.mode_source') }));
+    const editor = await screen.findByLabelText(tt('ui.providers.yaml_aria'));
+
+    mocks.pickFile.mockResolvedValueOnce('');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.providers.import') }));
+    });
+
+    expect(mocks.importProvidersFile).not.toHaveBeenCalled();
+    expect(editor).toHaveValue('providers: []\n');
+    expect(screen.queryByText(tt('ui.providers.import_result').replace('{{added}}', '0').replace('{{updated}}', '0').replace('{{skipped}}', '0'))).not.toBeInTheDocument();
+  });
+
+  it('导入失败：显示后端错误，不改编辑器', async () => {
+    render(<Settings />);
+    goTools();
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.providers.mode_source') }));
+    const editor = await screen.findByLabelText(tt('ui.providers.yaml_aria'));
+
+    mocks.pickFile.mockResolvedValueOnce('D:\\bad.yml');
+    mocks.importProvidersFile.mockRejectedValueOnce(new Error('err.settings.import_empty'));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.providers.import') }));
+    });
+
+    expect(await screen.findByText(tt('err.settings.import_empty'))).toBeInTheDocument();
+    expect(editor).toHaveValue('providers: []\n');
   });
 
   it('外观选择调用 SetAppearanceMode', async () => {
