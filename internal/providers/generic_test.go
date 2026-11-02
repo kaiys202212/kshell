@@ -158,6 +158,72 @@ func TestDefaultProvidersYAMLCoversPresetTools(t *testing.T) {
 	}
 }
 
+// TestDefaultProvidersYAMLIsStandardTemplate 验证默认模板即「标准接入模板」：
+// 注释字典齐全、自带示例，且整份内容可直接被解析器吃下（保证下载→填写→导入闭环可用）。
+func TestDefaultProvidersYAMLIsStandardTemplate(t *testing.T) {
+	content := DefaultProvidersYAML()
+	// 逐字段注释字典的关键锚点
+	for _, want := range []string{
+		"detect:", "command:", "dirs:", "sessions:", "glob:", "format:",
+		"fields:", "cwd:", "timestamp:", "title:", "titleFallbacks:",
+		"resume:", "args:", "bypassArgs:", "{id}",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("template missing field doc anchor %q", want)
+		}
+	}
+	// 模板本身必须可解析、可产出有效 spec（导入路径复用同一解析器）
+	specs, err := ParseProvidersYAML([]byte(content))
+	if err != nil {
+		t.Fatalf("template must be parseable: %v", err)
+	}
+	if len(specs) == 0 {
+		t.Fatal("template must contain at least one example spec")
+	}
+	if strings.TrimSpace(specs[0].ID) == "" {
+		t.Fatal("template example spec must have id")
+	}
+}
+
+func TestMergeGenericSpecs(t *testing.T) {
+	existing := []GenericSpec{
+		{ID: "a", Name: "旧 A"},
+		{ID: "b", Name: "旧 B"},
+	}
+	incoming := []GenericSpec{
+		{ID: "b", Name: "新 B"}, // 覆盖
+		{ID: "c", Name: "新 C"}, // 追加
+		{ID: "", Name: "无 ID"}, // 跳过
+		{ID: "b", Name: "重复"}, // 文件内重复，首个生效
+		{ID: "  ", Name: "空白 ID"},
+	}
+	merged, added, updated, skipped := MergeGenericSpecs(existing, incoming)
+	if added != 1 || updated != 1 || skipped != 3 {
+		t.Fatalf("counts = (%d,%d,%d), want (1,1,3)", added, updated, skipped)
+	}
+	if len(merged) != 3 {
+		t.Fatalf("merged len = %d, want 3", len(merged))
+	}
+	if merged[0].ID != "a" || merged[0].Name != "旧 A" {
+		t.Fatalf("existing order must be preserved: %+v", merged[0])
+	}
+	if merged[1].ID != "b" || merged[1].Name != "新 B" {
+		t.Fatalf("same-id entry must be replaced in place: %+v", merged[1])
+	}
+	if merged[2].ID != "c" || merged[2].Name != "新 C" {
+		t.Fatalf("new id must be appended: %+v", merged[2])
+	}
+}
+
+// TestMergeGenericSpecsEmptyIncoming 空导入不应改动现有列表。
+func TestMergeGenericSpecsEmptyIncoming(t *testing.T) {
+	existing := []GenericSpec{{ID: "a"}}
+	merged, added, updated, skipped := MergeGenericSpecs(existing, nil)
+	if added != 0 || updated != 0 || skipped != 0 || len(merged) != 1 || merged[0].ID != "a" {
+		t.Fatalf("empty incoming must be a no-op: (%d,%d,%d) %+v", added, updated, skipped, merged)
+	}
+}
+
 func TestEnsureProvidersFileWritesTemplate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "providers.yaml")
 	if err := EnsureProvidersFile(path); err != nil {

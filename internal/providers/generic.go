@@ -318,35 +318,110 @@ func FormatProvidersYAML(specs []GenericSpec) (string, error) {
 	return buf.String(), nil
 }
 
-// DefaultProvidersYAML 是随程序分发的默认模板：预置常见工具的猜测值，全部标 verified: false。
+// DefaultProvidersYAML 是随程序分发的标准接入模板：逐字段注释说明 + 一个可解析的
+// 完整示例（全部标 verified: false）。同一份内容服务三处：文件缺失回填、设置页
+// 「下载模板」、首次写入。用户改完在设置页导入即可接入新工具。
 func DefaultProvidersYAML() string {
-	return `# kshell 自定义工具定义
-# 用法：把下面某项的路径/参数改成你机器上的实际值即可，无需改代码。
-# glob 支持 ~/ 前缀；fields 支持 a.b.c 形式的字段路径；resume 参数里的 {id} 会被替换成会话 ID。
-# permission.bypassArgs：权限模式为 Bypass 时注入的启动参数，位于 provider 参数之前（如 permission: {bypassArgs: ["--trust-all"]}）。
-# verified: false 表示未经实测，kshell 会在界面上标注。
-providers:
-  # codebuddy / opencode 已是内置 provider，不在此处声明；
-  # 老配置里残留的同 ID 段会被内置实现覆盖。
+	return `# ============================================================
+# kshell 自定义工具接入模板
+# ============================================================
+# 这是什么：
+#   kshell 通过这份文件认识「未内置」的 agent CLI 工具（如 Cline、Aider 等）。
+#   填写一个条目 = 接入一个工具，kshell 会自动发现它的会话并支持一键恢复。
+#
+# 怎么用：
+#   1. 把下方示例条目里的路径/参数改成你机器上的实际值（每条 # 注释都写明怎么填）；
+#   2. 在 kshell 设置页「自定义工具」区点【导入 yml】选择本文件：
+#      与现有定义同 id 的条目会覆盖更新，新 id 会追加，完成后有汇总提示。
+#
+# 通用约定（所有路径与字段写法都遵守）：
+#   - 路径支持 ~/ 前缀（展开为当前用户主目录），目录分隔符 / 与 \ 均可；
+#   - fields 里的字段路径支持 a.b.c 形式逐层取值，中途遇到数组会自动取首个非空元素；
+#   - resume.args 里的 {id} 占位符会在恢复会话时替换成真实会话 ID；
+#   - 时间字段兼容 RFC3339 文本与秒/毫秒级数字时间戳；
+#   - verified: false 表示路径/参数未实测，kshell 会在界面上标注，实测通过后可改为 true。
+#
+# 注意：claude / codex / gemini / cursor / opencode / codebuddy 已是内置工具，
+# 不要在这里重复声明；残留的同 ID 条目会被内置实现覆盖。
+# ============================================================
 
+providers:
+  # —— 完整示例：Cline（真实可解析的条目，照着改值即可）——
+  # 接入多个工具时，按同样的缩进再复制一段「- id: ...」条目。
   - id: cline
+    # name：界面上显示的工具名，可省略（省略时显示 id）。
     name: Cline / Roo
+    # detect：kshell 怎么判断这个工具装没装。
     detect:
+      # command：可执行文件名（在 PATH 里即可，如 cline），也可填完整路径。
       command: cline
+      # dirs：该工具的配置/数据目录（辅助判断安装痕迹），可省略，可写多个。
       dirs:
         - ~/.cline
+    # sessions：会话文件在哪里、长什么样。
     sessions:
+      # glob：会话文件匹配模式。* 不跨目录，目录深度决定哪些文件算会话：
+      # 更深的文件一律忽略（避免把子代理记录误当成独立会话）。
       glob: ~/.cline/tasks/*/*.json
+      # format：会话文件格式，二选一——
+      #   jsonl：每行一个 JSON 对象（多数 CLI 工具的会话日志形态）；
+      #   json ：整个文件是一个 JSON 对象。
       format: json
+    # fields：从会话记录里取关键字段的路径（a.b.c 形式）。
     fields:
+      # cwd：会话所属工作区目录，kshell 按它把会话归到对应项目。
       cwd: cwd
+      # id：会话 ID 的字段路径，恢复会话时把它的值传给 resume.args 里的 {id}。
       id: id
+      # timestamp：时间字段，用于会话列表排序与展示。
       timestamp: ts
+      # title：标题字段；取不到时自动回退：首条真实用户消息 → 首条 assistant 消息。
       title: task
+      # titleFallbacks：标题回退字段列表，title 取不到时逐个尝试，可省略。
+      titleFallbacks: []
+    # resume：恢复会话的命令参数。
     resume:
+      # args：参数列表，{id} 会被替换成会话 ID；不需要恢复功能时写 []。
       args: ["--task", "{id}"]
+    # permission：权限模式为 Bypass 时注入的启动参数（全局 flag 形态，
+    # 置于 provider 参数之前）。仅当该工具有「跳过权限确认」类参数时才配置，例如：
+    # permission:
+    #   bypassArgs: ["--trust-all"]
+    # verified：false=未实测（界面标注）；确认可用后改成 true。
     verified: false
 `
+}
+
+// MergeGenericSpecs 把 incoming 合入 existing：同 ID 原位覆盖（视为更新），新 ID 追加。
+// incoming 里 ID 为空（含纯空白）或与同批靠前条目重复的会被跳过。
+// 返回合并结果与统计：added=新增数，updated=覆盖数，skipped=无效/重复条目数。
+func MergeGenericSpecs(existing, incoming []GenericSpec) (merged []GenericSpec, added, updated, skipped int) {
+	merged = append([]GenericSpec(nil), existing...)
+	index := make(map[string]int, len(merged)) // id → merged 下标
+	for i, s := range merged {
+		if s.ID != "" {
+			index[s.ID] = i
+		}
+	}
+	seen := make(map[string]bool)
+	for _, s := range incoming {
+		id := strings.TrimSpace(s.ID)
+		if id == "" || seen[id] {
+			skipped++
+			continue
+		}
+		seen[id] = true
+		s.ID = id
+		if i, ok := index[id]; ok {
+			merged[i] = s
+			updated++
+			continue
+		}
+		index[id] = len(merged)
+		merged = append(merged, s)
+		added++
+	}
+	return merged, added, updated, skipped
 }
 
 // EnsureProvidersFile 在文件不存在时写入默认模板。
