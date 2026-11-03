@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.27 (2026-11-03)
+
+- Easier custom tool onboarding: the settings page now offers an onboarding template download and yml import — fill in the standard template and import it with one click to register a custom agent tool, no manual config editing needed; if the imported file fails to read, existing config is preserved instead of being wiped.
+- Fixed Claude chat failing to start with error -32603: settings are now passed as an object, and agent form validation details are forwarded.
+- Fixed windows becoming visible but unclickable after maximizing on high-DPI displays (e.g. 200% scaling) on Windows: the frameless window now uses the pure frameless mode so the input hit area no longer misaligns.
+
 ## v0.1.26 (2026-11-01)
 
 - OpenCode session experience overhaul: the session list now shows a conversation preview snippet (full text restored from SQLite), and sessions matched via `#find` can be previewed directly; missing titles fall back to the first user message with the message count filled in; empty "New session" sessions with zero messages are filtered out automatically.
