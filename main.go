@@ -14,6 +14,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
 	"github.com/yangk/kshell/internal/agenthook"
 	"github.com/yangk/kshell/internal/cursoragent"
 	"github.com/yangk/kshell/internal/desktop"
@@ -73,6 +74,12 @@ func desktopOptions(src fs.FS, startHidden bool) *options.App {
 		Frameless: true,
 		// 默认最大化启动（2026-10-04 优化轮）
 		WindowStartState: options.Maximised,
+		// frameless 换用纯无框分支：默认 framelessWithDecorations（WS_THICKFRAME 等 DWM
+		// 装饰）在 200% DPI 下最大化时输入命中区会错位（能看不能敲）。纯无框分支不进
+		// 这条 WM 路径，高 DPI 最大化输入正常（2026-11-02 排查轮）。
+		Windows: &windows.Options{
+			DisableFramelessWindowDecorations: true,
+		},
 		// 开机自启动静默拉起：启动即隐藏进托盘，托盘「显示主窗口」照常唤起。
 		// 升级拉起（--after-update）不传该参数，窗口照常出现。
 		StartHidden: startHidden,
