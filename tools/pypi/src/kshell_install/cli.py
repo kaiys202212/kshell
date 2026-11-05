@@ -92,3 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("已取消", file=sys.stderr)
         raise SystemExit(1) from None
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
