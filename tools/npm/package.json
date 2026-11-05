@@ -1,0 +1,21 @@
+{
+  "name": "kshell-install",
+  "version": "0.0.0",
+  "description": "kshell 桌面版一键安装器:下载官方 zip → 校验 SHA-256 → 解压到 ~/.kshell/bin → 启动(npx 直装仓库子目录)",
+  "bin": {
+    "kshell-install": "bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "lib"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^3"
+  }
+}

@@ -1,0 +1,200 @@
+"use strict";
+import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import crypto from "node:crypto";
+
+const { InstallError, download, extract, launch, verify } = require("./installer");
+
+let dirs = [];
+function tempDir() {
+  const d = mkdtempSync(path.join(tmpdir(), "kshell-npm-test-"));
+  dirs.push(d);
+  return d;
+}
+afterEach(() => {
+  for (const d of dirs) rmSync(d, { recursive: true, force: true });
+  dirs = [];
+});
+
+function fakeGetStream(content, tmpRoot) {
+  // 把"下载"实现为直接写一段内容,模拟真实流式落盘。
+  let i = 0;
+  const callUrls = [];
+  const fn = async (url, destPath) => {
+    callUrls.push(url);
+    if (!destPath) throw new Error("fake 期望有目标路径");
+    writeFileSync(destPath, content);
+    i++;
+  };
+  return { fn, callUrls, count: () => i };
+}
+
+describe("download", () => {
+  it("写入临时文件并返回路径", async () => {
+    const { fn } = fakeGetStream(Buffer.from("hello zip"));
+    const p = await download("https://dl/x.zip", fn);
+    expect(typeof p).toBe("string");
+    expect(readFileSync(p).toString()).toBe("hello zip");
+    rmSync(p);
+  });
+
+  it("getStream 抛错 → 包成中文 InstallError 且不残留文件", async () => {
+    const boom = async () => {
+      throw new Error("网络断了");
+    };
+    await expect(download("https://dl/x.zip", boom)).rejects.toThrow(InstallError);
+    await expect(download("https://dl/x.zip", boom)).rejects.toThrow(/下载失败/);
+  });
+});
+
+describe("verify", () => {
+  it("双空格标准格式校验通过", () => {
+    const zip = path.join(tempDir(), "a.zip");
+    const buf = Buffer.from("zip-bytes");
+    writeFileSync(zip, buf);
+    const hex = crypto.createHash("sha256").update(buf).digest("hex");
+    verify(zip, `${hex}  kshell-desktop-windows-amd64.zip\n`, "kshell-desktop-windows-amd64.zip");
+    expect(existsSync(zip)).toBe(true); // 通过时不删
+  });
+
+  it("兜底单空格与二进制标记(*)", () => {
+    const zip = path.join(tempDir(), "a.zip");
+    writeFileSync(zip, "x");
+    const hex = crypto.createHash("sha256").update("x").digest("hex");
+    verify(zip, `${hex} *kshell-desktop-windows-amd64.zip`, "kshell-desktop-windows-amd64.zip");
+  });
+
+  it("不匹配 → 删临时文件并抛 InstallError", () => {
+    const zip = path.join(tempDir(), "a.zip");
+    writeFileSync(zip, "tampered");
+    const goodHex = crypto.createHash("sha256").update("expected").digest("hex");
+    expect(() => verify(zip, `${goodHex}  a.zip`, "a.zip")).toThrow(/校验不匹配/);
+    expect(existsSync(zip)).toBe(false);
+  });
+
+  it("sums 缺条目 → 删临时文件并抛错", () => {
+    const zip = path.join(tempDir(), "a.zip");
+    writeFileSync(zip, "data");
+    expect(() => verify(zip, "00  other.bin", "a.zip")).toThrow(/没有 .* 的校验项/);
+    expect(existsSync(zip)).toBe(false);
+  });
+});
+
+/** 假 unzip/tar:status 可配置,并记录调用;可模拟成功时把入口文件写出来。 */
+function fakeRun({ status = 0, touchDir = null, touchName = "kshell-desktop" } = {}) {
+  const calls = [];
+  const fn = (file, args, opts) => {
+    calls.push({ file, args });
+    if (touchDir && status === 0) {
+      writeFileSync(path.join(String(touchDir), touchName), "binary");
+    }
+    return { status };
+  };
+  fn.calls = calls;
+  return fn;
+}
+
+describe("extract 命令链选型", () => {
+  it("windows → tar -xf <zip> -C <binDir>", () => {
+    const run = fakeRun();
+    const out = extract({ zipPath: "a.zip", binDir: "C:\\k\\bin", osName: "windows", runExtract: run });
+    expect(out.usedFallback).toBe(false);
+    expect(run.calls).toEqual([{ file: "tar", args: ["-xf", "a.zip", "-C", "C:\\k\\bin" ] }]);
+  });
+
+  it("darwin → tar -xf", () => {
+    const run = fakeRun();
+    extract({ zipPath: "a.zip", binDir: "/tmp/bin", osName: "darwin", runExtract: run });
+    expect(run.calls).toEqual([{ file: "tar", args: ["-xf", "a.zip", "-C", "/tmp/bin"] }]);
+  });
+
+  it("linux → 先 unzip -o;成功即结束", () => {
+    const run = fakeRun();
+    extract({ zipPath: "a.zip", binDir: "/tmp/bin", osName: "linux", runExtract: run });
+    expect(run.calls.length).toBe(1);
+    expect(run.calls[0]).toEqual({ file: "unzip", args: ["-o", "a.zip", "-d", "/tmp/bin"] });
+  });
+
+  it("linux unzip 失败 → 降级 tar -xf", () => {
+    let n = 0;
+    const run = (file, args) => {
+      n++;
+      if (file === "unzip") return { status: null }; // ENOENT
+      return { status: 0 };
+    };
+    const out = extract({ zipPath: "a.zip", binDir: "/tmp/bin", osName: "linux", runExtract: run });
+    expect(out.usedFallback).toBe(true);
+    expect(n).toBe(2);
+  });
+
+  it("linux 两者都失败 → 中文提示装 unzip", () => {
+    const run = () => ({ status: 1 });
+    expect(() =>
+      extract({ zipPath: "a.zip", binDir: "/tmp/bin", osName: "linux", runExtract: run })
+    ).toThrow(InstallError);
+    try {
+      extract({ zipPath: "a.zip", binDir: "/tmp/bin", osName: "linux", runExtract: run });
+      throw new Error("should not reach");
+    } catch (exc) {
+      expect(exc instanceof InstallError).toBe(true);
+      expect(exc.message).toContain("unzip");
+      expect(exc.message).toContain("重试");
+    }
+  });
+
+  it("windows tar 失败直接抛错(无降级)", () => {
+    const run = fakeRun({ status: 1 });
+    expect(() =>
+      extract({ zipPath: "a.zip", binDir: "b", osName: "windows", runExtract: run })
+    ).toThrow(/解压失败/);
+  });
+});
+
+describe("launch 三平台参数", () => {
+  it("windows/linux:直接 spawn exe,detached + unref,cwd 家目录", () => {
+    for (const osName of ["windows", "linux"]) {
+      let got;
+      const child = launch(osName, "/home/u/.kshell/bin/kshell-desktop", (cmd, args, opts) => {
+        got = { cmd, args, opts };
+        return { unref() { got.unrefd = true; } };
+      });
+      expect(got.cmd).toBe(path.resolve("/home/u/.kshell/bin/kshell-desktop"));
+      expect(got.args).toEqual([]);
+      expect(got.opts.detached).toBe(true);
+      expect(got.opts.stdio).toBe("ignore");
+      expect(got.opts.cwd).toBeTruthy();
+      expect(got.unrefd).toBe(true);
+      expect(child).toEqual({ unref: expect.any(Function) });
+    }
+  });
+
+  it("darwin:open <appPath>", () => {
+    let got;
+    const child = launch("darwin", "/Applications/kshell-desktop.app", (cmd, args, opts) => {
+      got = { cmd, args, opts };
+      return { unref() {} };
+    });
+    expect(got.cmd).toBe("open");
+    expect(got.args).toEqual([path.resolve("/Applications/kshell-desktop.app")]);
+    expect(got.opts.detached).toBe(true);
+    expect(got.opts.stdio).toBe("ignore");
+    expect(got.opts.cwd).toBeUndefined();
+    expect(typeof child.unref).toBe("function");
+  });
+
+  it("spawn 抛错 → 包成中文 InstallError", () => {
+    const boom = () => {
+      throw new Error("被拦截");
+    };
+    try {
+      launch("windows", "x.exe", boom);
+      throw new Error("should not reach");
+    } catch (exc) {
+      expect(exc instanceof InstallError).toBe(true);
+      expect(exc.message).toContain("无法启动");
+      expect(exc.message).toContain("请到安装目录手动运行或重装");
+    }
+  });
+});
