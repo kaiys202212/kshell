@@ -59,6 +59,8 @@ def verify(zip_path: Path, sums_text: str, zip_name: str) -> None:
         if rest.strip().lstrip("*") == zip_name:
             expected = head.strip().lower()
     if not expected:
+        # 与"校验不匹配"同策略:没验过的包同样删掉,不留临时垃圾。
+        zip_path.unlink(missing_ok=True)
         raise InstallError(f"SHA256SUMS 中没有 {zip_name} 的校验项")
     digest = hashlib.sha256()
     with zip_path.open("rb") as f:
@@ -81,7 +83,9 @@ def extract(zip_path: Path, bin_dir: Path, binary_name: str) -> Path:
     with zipfile.ZipFile(zip_path) as zf:
         for info in zf.infolist():
             target = (bin_dir / info.filename).resolve()
-            if not str(target).startswith(str(resolved_root)):
+            # is_relative_to 按路径组件判断:兄弟目录(bin2 vs bin)、其他盘符的
+            # 绝对路径这类"字符串前缀撞车"都会被正确拒绝,startswith 做不到。
+            if not target.is_relative_to(resolved_root):
                 continue  # 危险成员(../、绝对路径)直接丢弃,不写出根目录。
             zf.extract(info, bin_dir)
     extracted = bin_dir / binary_name
@@ -114,23 +118,24 @@ def launch(os_name: str, binary_path: Path, spawn: Spawn | None = None) -> objec
     spawn = spawn or _default_spawn
     target = str(binary_path.resolve())
     if os_name == "windows":
-        return spawn(
-            [target],
-            cwd=str(Path.home()),
-            creationflags=subprocess.DETACHED_PROCESS
+        args = [target]
+        kwargs = {
+            "cwd": str(Path.home()),
+            "creationflags": subprocess.DETACHED_PROCESS
             | subprocess.CREATE_NEW_PROCESS_GROUP
             | subprocess.CREATE_NO_WINDOW,
-            close_fds=True,
-        )
-    if os_name == "linux":
-        return spawn([target], cwd=str(Path.home()), start_new_session=True)
-    if os_name == "darwin":
-        return spawn(["open", target])
-    raise InstallError(f"未知平台 {os_name}")
-
-
-def latest(os_name: str, bin_dir: Path) -> Path:
-    """按平台给出"装好之后"的入口路径(不触文件系统,给调用方/测试参考)。"""
-    from kshell_install.platform import BINARIES
-
-    return bin_dir / BINARIES[os_name]
+            "close_fds": True,
+        }
+    elif os_name == "linux":
+        args = [target]
+        kwargs = {"cwd": str(Path.home()), "start_new_session": True}
+    elif os_name == "darwin":
+        args, kwargs = ["open", target], {}
+    else:
+        raise InstallError(f"未知平台 {os_name}")
+    try:
+        return spawn(args, **kwargs)
+    except OSError as exc:
+        raise InstallError(
+            f"无法启动 {target}:{exc},请到安装目录手动运行或重装"
+        ) from exc

@@ -119,6 +119,32 @@ def test_bad_zip_checksum_fails(env, tmp_path, capsys):
     assert "校验" in err or "SHA" in err or "sha256" in err.lower()
 
 
+def test_launch_failure_exits_1(monkeypatch, tmp_path, capsys):
+    """拉起阶段 spawn 失败(如二进制缺失)应包装成中文 InstallError,exit 1,不裸 traceback。"""
+    content = real_zip_bytes({"kshell-desktop.exe": EXE_CONTENT})
+    digest = hashlib.sha256(content).hexdigest()
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(cli, "detect",
+                        lambda: ("windows", "amd64", ZIP, "kshell-desktop.exe"))
+    monkeypatch.setattr(
+        cli, "get_bytes",
+        lambda url: (f"{digest}  {ZIP}\n".encode()) if "SHA256SUMS" in url else content,
+    )
+
+    def broken_spawn(args, **kwargs):
+        raise FileNotFoundError(2, "系统找不到指定的文件", args[0])
+
+    # 不替换 cli.installer.launch,让真实 launch 走到 _default_spawn 再失败。
+    monkeypatch.setattr(cli.installer, "_default_spawn", broken_spawn)
+
+    with pytest.raises(SystemExit) as ei:
+        cli.main(["--tag", TAG])
+    assert ei.value.code == 1
+    err = capsys.readouterr().err
+    assert "无法启动" in err and "kshell-install 错误" in err
+
+
 def test_unsupported_platform(monkeypatch, capsys):
     def boom():
         raise UnsupportedPlatform("freebsd/amd64")

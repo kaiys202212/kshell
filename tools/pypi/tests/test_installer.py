@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from kshell_install import installer
-from kshell_install.installer import InstallError, extract, latest, verify
+from kshell_install.installer import InstallError, extract, verify
 
 
 def fake_get_bytes(urls):
@@ -71,6 +71,7 @@ def test_verify_sums_missing_zip_name(tmp_path):
     zip_path = make_zip(tmp_path, "z.zip", {"a": b"1"})
     with pytest.raises(InstallError):
         verify(zip_path, "0" * 64 + "  other.zip\n", "z.zip")
+    assert not zip_path.exists(), "sums 里没有该条目时同样必须删掉未验证的包"
 
 
 def test_verify_ignores_garbage_lines(tmp_path):
@@ -87,7 +88,7 @@ def test_verify_ignores_garbage_lines(tmp_path):
 
 
 def test_extract_windows_binary(tmp_path):
-    zip_path = make_zip(tmp_path, ZIP := "kshell-desktop-windows-amd64.zip",
+    zip_path = make_zip(tmp_path, "kshell-desktop-windows-amd64.zip",
                         {"kshell-desktop.exe": b"MZbin"})
     bin_dir = tmp_path / "bin"
     p = extract(zip_path, bin_dir, "kshell-desktop.exe")
@@ -96,7 +97,7 @@ def test_extract_windows_binary(tmp_path):
 
 
 def test_extract_darwin_app_tree(tmp_path):
-    zip_path = make_zip(tmp_path, ZIP := "kshell-desktop-darwin-arm64.zip", {
+    zip_path = make_zip(tmp_path, "kshell-desktop-darwin-arm64.zip", {
         "kshell-desktop.app/Contents/MacOS/kshell-desktop": b"macho",
         "kshell-desktop.app/Contents/Info.plist": b"plist",
     })
@@ -118,6 +119,30 @@ def test_extract_rejects_zip_slip(tmp_path):
     assert not (tmp_path / "evil.exe").exists()
 
 
+def test_extract_rejects_absolute_member(tmp_path):
+    """zip 内绝对路径成员(Windows 风格盘符 / posix 根路径)必须整条丢弃。"""
+    zip_path = tmp_path / "abs.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("C:/x/evil.exe", b"w")
+        zf.writestr("/abs/evil.exe", b"n")
+    bin_dir = tmp_path / "bin"
+    with pytest.raises(InstallError):
+        extract(zip_path, bin_dir, "kshell-desktop.exe")
+    # 绝对路径成员既不能落在 bin 内,也不能借 resolve 落到其他位置。
+    assert not any("evil.exe" in p.name for p in tmp_path.rglob("*"))
+
+
+def test_extract_rejects_sibling_prefix_member(tmp_path):
+    """兄弟目录前缀撞车:bin2 与 bin 共享字符串前缀,但 bin2 不在 bin 内。"""
+    zip_path = tmp_path / "sibling.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("../bin2/x.exe", b"x")
+    bin_dir = tmp_path / "bin"
+    with pytest.raises(InstallError):
+        extract(zip_path, bin_dir, "kshell-desktop.exe")
+    assert not (tmp_path / "bin2").exists(), "兄弟目录成员不得写出"
+
+
 def test_extract_missing_binary_raises(tmp_path):
     zip_path = make_zip(tmp_path, "good.zip", {"other.txt": b"x"})
     with pytest.raises(InstallError):
@@ -126,7 +151,7 @@ def test_extract_missing_binary_raises(tmp_path):
 
 def test_extract_linux_sets_executable(tmp_path, monkeypatch):
     """让 installer 以"linux"视角运行;Windows 的 chmod 不能真置执行位,改打桩验证。"""
-    zip_path = make_zip(tmp_path, ZIP := "kshell-desktop-linux-amd64.zip",
+    zip_path = make_zip(tmp_path, "kshell-desktop-linux-amd64.zip",
                         {"kshell-desktop": b"elf"})
     bin_dir = tmp_path / "bin"
     chmod_calls = []
@@ -180,16 +205,21 @@ def test_launch_linux():
     assert kwargs["start_new_session"] is True
 
 
+def test_launch_spawn_failure_wrapped(tmp_path):
+    """spawn 抛 OSError(如二进制缺失/权限)时包装为中文 InstallError,不裸 traceback。"""
+
+    def broken_spawn(args, **kwargs):
+        raise FileNotFoundError(2, "系统找不到指定的文件", args[0])
+
+    p = Path(r"D:/bin/kshell-desktop.exe")
+    with pytest.raises(InstallError) as ei:
+        installer.launch("windows", p, spawn=broken_spawn)
+    assert "无法启动" in str(ei.value)
+
+
 def test_launch_darwin_uses_open():
     spawn = FakePopen()
     p = Path("/Users/u/.kshell/bin/kshell-desktop.app")
     installer.launch("darwin", p, spawn=spawn)
     args, _ = FakePopen.calls[0]
     assert args == ["open", str(p.resolve())]
-
-
-def test_latest_returns_extracted_path():
-    bin_dir = Path(r"D:\x\.kshell\bin")
-    assert latest("windows", bin_dir) == bin_dir / "kshell-desktop.exe"
-    assert latest("linux", bin_dir) == bin_dir / "kshell-desktop"
-    assert latest("darwin", bin_dir) == bin_dir / "kshell-desktop.app"
