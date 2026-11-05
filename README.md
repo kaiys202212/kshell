@@ -23,6 +23,27 @@ kshell does **Discover → Choose → Deliver**:
 
 ## Installation
 
+### One-click Install
+
+The installer script resolves the latest Release automatically, downloads `kshell-desktop-<os>-<arch>.zip` for your platform, verifies it against SHA256SUMS, installs it to `~/.kshell/bin/`, then launches the desktop app asynchronously and returns immediately. Options: `--tag vX.Y.Z` (pin a version), `--no-run` (skip launching), `--bin-dir`. Supported platforms match the Release artifacts: windows-amd64 / linux-amd64 / darwin-arm64.
+
+Via npm (recommended, no Python environment needed):
+
+```bash
+npx github:kaiys202212/kshell#path:tools/npm
+```
+
+Via pip:
+
+```bash
+pip install "kshell-install @ git+https://github.com/kaiys202212/kshell.git#subdirectory=tools/pypi" && kshell-install
+```
+
+Notes:
+
+- On networks where GitHub is slow to reach, the script tries the GitCode mirror first and falls back to GitHub automatically.
+- The installer only installs the desktop app; the GitHub Releases page still offers manual downloads.
+
 ### Prebuilt Desktop
 
 Download the `kshell-desktop-<os>-<arch>.zip` for your platform from [GitHub Releases](https://github.com/kaiys202212/kshell/releases) or [GitCode Releases](https://gitcode.com/abraveheart2023/kshell/releases), then unzip and run.

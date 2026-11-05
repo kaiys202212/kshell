@@ -23,6 +23,27 @@ kshell 做 **发现 → 选择 → 交付**：
 
 ## 安装
 
+### 一键安装
+
+安装脚本会自动解析最新 Release，按平台下载 `kshell-desktop-<os>-<arch>.zip` 并校验 SHA256SUMS，安装到 `~/.kshell/bin/`，完成后异步拉起桌面端、脚本立即返回。参数：`--tag vX.Y.Z`（指定版本）、`--no-run`（不拉起桌面端）、`--bin-dir`。支持平台与 Release 产物一致：windows-amd64 / linux-amd64 / darwin-arm64。
+
+通过 npm（推荐，无需 Python 环境）：
+
+```bash
+npx github:kaiys202212/kshell#path:tools/npm
+```
+
+通过 pip：
+
+```bash
+pip install "kshell-install @ git+https://github.com/kaiys202212/kshell.git#subdirectory=tools/pypi" && kshell-install
+```
+
+说明：
+
+- 国内网络下脚本优先走 GitCode 镜像源，失败自动回退 GitHub。
+- 安装器只装桌面版；需要手动下载时仍可前往 GitHub Releases 页。
+
 ### 预编译桌面版
 
 从 [GitHub Releases](https://github.com/kaiys202212/kshell/releases) 或 [GitCode Releases](https://gitcode.com/abraveheart2023/kshell/releases) 下载当前平台的 `kshell-desktop-<os>-<arch>.zip`，解压后运行。
