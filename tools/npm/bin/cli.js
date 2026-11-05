@@ -92,7 +92,9 @@ async function main(argv = [], deps = {}) {
     console.log(`安装完成:kshell 桌面版 ${tag} -> ${entry}`);
     if (args.noRun) return 0;
     console.log("正在启动……");
-    installerLib.launch(osName, entry, deps.spawnFn);
+    // launch 返回 Promise:spawn 的异步 error(如 ENOENT)会 reject 并走下面的 catch,
+    // 避免 child 上无人监听 error 导致假报"已启动"。
+    await installerLib.launch(osName, entry, deps.spawnFn);
     console.log("已启动。");
     return 0;
   } catch (exc) {

@@ -8,6 +8,10 @@
  * 取舍说明:zip 已过 SHA-256 校验、内容可信,故直接解到目标 bin 目录;
  * 不采用"临时目录 → 拷贝"两步法,失败时重复运行整包覆盖即可自愈
  * (unzip -o / tar -xf 本身按归档内布局落文件,不会留半成品入口)。
+ *
+ * 解压信任模型:sha256 校验 + 系统 tar/bsdtar——系统 tar 默认拒绝绝对路径与
+ * `..` 成员,故未像 Python 版那样自己做进程内 zip-slip 防护(文件越是往下游
+ * 解压环节靠,重复防护的收益越低)。
  */
 
 const fs = require("node:fs");
@@ -120,7 +124,12 @@ function verify(zipPath, sumsText, zipName) {
   // 计算完整性校验本来就要全量读;zip 通常几十 MB,一次性读入可接受。
   const digest = crypto.createHash("sha256").update(fs.readFileSync(zipPath)).digest("hex");
   if (digest !== expected) {
-    fs.unlinkSync(zipPath);
+    // 删除失败(如被杀软临时占用)不得顶掉真正的错误文案。
+    try {
+      fs.unlinkSync(zipPath);
+    } catch {
+      /* 已删则忽略 */
+    }
     throw new InstallError(`SHA-256 校验不匹配:下载的 ${zipName} 已删除,请重试或手动下载`);
   }
 }
@@ -204,11 +213,15 @@ function defaultSpawn(cmd, args, opts) {
 }
 
 /**
- * 分离式拉起 GUI,不等它。
+ * 分离式拉起 GUI,不等它;返回 Promise:
  * - windows/linux:直接 spawn 可执行文件({detached:true, stdio:'ignore'}).unref(),
  *   cwd 归到用户家目录,避免继承安装器所在目录。
  * - darwin:`open <app>` 本身立即返回。
- * spawnFn 注入可测;spawn 抛错(如被拦杀软件拦截)包装成中文 InstallError。
+ * - `spawn` 事件即认为已启动,resolve child;
+ * - `error` 事件(node spawn 对 ENOENT 不抛同步异常,而是异步发 error,如可执行文件
+ *   缺失/被杀软拦截)reject 成中文 InstallError;
+ * - spawnFn 同步抛错同样包装成中文 InstallError 并 reject。
+ * 仍然 unref:能否启动由事件感知,但本进程不会被 GUI 拖住。
  */
 function launch(osName, entryPath, spawnFn = defaultSpawn) {
   const target = path.resolve(String(entryPath));
@@ -223,15 +236,32 @@ function launch(osName, entryPath, spawnFn = defaultSpawn) {
     cmd = target;
     args = [];
   }
+  let child;
   try {
-    const child = spawnFn(cmd, args, opts);
+    child = spawnFn(cmd, args, opts);
     if (child && typeof child.unref === "function") child.unref();
-    return child;
   } catch (exc) {
-    throw new InstallError(
-      `无法启动 ${target}:${exc && exc.message ? exc.message : exc},请到安装目录手动运行或重装`
+    return Promise.reject(
+      new InstallError(
+        `无法启动 ${target}:${exc && exc.message ? exc.message : exc},请到安装目录手动运行或重装`
+      )
     );
   }
+  return new Promise((resolve, reject) => {
+    if (!child || typeof child.on !== "function") {
+      // 注入的 fake 没有 on():无从感知事件,保持旧行为直接成功。
+      resolve(child);
+      return;
+    }
+    child.on("error", (exc) => {
+      reject(
+        new InstallError(
+          `无法启动 ${target}:${exc && exc.message ? exc.message : exc},请到安装目录手动运行或重装`
+        )
+      );
+    });
+    child.on("spawn", () => resolve(child));
+  });
 }
 
 /**

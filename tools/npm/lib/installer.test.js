@@ -209,49 +209,76 @@ describe("extract 命令链选型", () => {
 });
 
 describe("launch 三平台参数", () => {
-  it("windows/linux:直接 spawn exe,detached + unref,cwd 家目录", () => {
+  /** 手写 fake child:event gate 模拟 cp.spawn 的异步 error/spawn 事件时序。 */
+  function fakeChild() {
+    const handlers = {};
+    return {
+      handlers,
+      on(ev, cb) { (handlers[ev] ||= []).push(cb); },
+      unref() { this.unrefd = true; },
+      emit(ev, arg) { for (const cb of handlers[ev] || []) cb(arg); },
+    };
+  }
+
+  it("windows/linux:直接 spawn exe,detached + unref,cwd 家目录", async () => {
     for (const osName of ["windows", "linux"]) {
       let got;
-      const child = launch(osName, "/home/u/.kshell/bin/kshell-desktop", (cmd, args, opts) => {
+      const child = fakeChild();
+      const p = launch(osName, "/home/u/.kshell/bin/kshell-desktop", (cmd, args, opts) => {
         got = { cmd, args, opts };
-        return { unref() { got.unrefd = true; } };
+        return child;
       });
       expect(got.cmd).toBe(path.resolve("/home/u/.kshell/bin/kshell-desktop"));
       expect(got.args).toEqual([]);
       expect(got.opts.detached).toBe(true);
       expect(got.opts.stdio).toBe("ignore");
       expect(got.opts.cwd).toBeTruthy();
-      expect(got.unrefd).toBe(true);
-      expect(child).toEqual({ unref: expect.any(Function) });
+      // unref 在 spawn 事件之前就要做完(不阻塞进程退出)
+      expect(child.unrefd).toBe(true);
+      child.emit("spawn");
+      await expect(p).resolves.toBe(child);
     }
   });
 
-  it("darwin:open <appPath>", () => {
+  it("darwin:open <appPath>", async () => {
     let got;
-    const child = launch("darwin", "/Applications/kshell-desktop.app", (cmd, args, opts) => {
+    const child = fakeChild();
+    const p = launch("darwin", "/Applications/kshell-desktop.app", (cmd, args, opts) => {
       got = { cmd, args, opts };
-      return { unref() {} };
+      return child;
     });
     expect(got.cmd).toBe("open");
     expect(got.args).toEqual([path.resolve("/Applications/kshell-desktop.app")]);
     expect(got.opts.detached).toBe(true);
     expect(got.opts.stdio).toBe("ignore");
     expect(got.opts.cwd).toBeUndefined();
-    expect(typeof child.unref).toBe("function");
+    child.emit("spawn");
+    await expect(p).resolves.toBe(child);
   });
 
-  it("spawn 抛错 → 包成中文 InstallError", () => {
+  it("spawn 同步抛错 → reject 包成中文 InstallError", async () => {
     const boom = () => {
       throw new Error("被拦截");
     };
-    try {
-      launch("windows", "x.exe", boom);
-      throw new Error("should not reach");
-    } catch (exc) {
-      expect(exc instanceof InstallError).toBe(true);
-      expect(exc.message).toContain("无法启动");
-      expect(exc.message).toContain("请到安装目录手动运行或重装");
-    }
+    await expect(launch("windows", "x.exe", boom)).rejects.toThrow(InstallError);
+    await expect(launch("windows", "x.exe", boom)).rejects.toThrow(/无法启动/);
+    await expect(launch("windows", "x.exe", boom)).rejects.toThrow(/请到安装目录手动运行或重装/);
+  });
+
+  it("child 异步 error 事件 → reject 中文 InstallError(node spawn ENOENT 走这条路)", async () => {
+    const child = fakeChild();
+    const p = launch("windows", "x.exe", () => child);
+    child.emit("error", Object.assign(new Error("spawn x.exe ENOENT"), { code: "ENOENT" }));
+    await expect(p).rejects.toThrow(InstallError);
+    await expect(p).rejects.toThrow(/无法启动/);
+  });
+
+  it("error 之后又 emit spawn 不改变已 reject 的结果", async () => {
+    const child = fakeChild();
+    const p = launch("windows", "x.exe", () => child);
+    child.emit("error", new Error("早失败"));
+    child.emit("spawn");
+    await expect(p).rejects.toThrow(/无法启动/);
   });
 });
 
