@@ -1,5 +1,10 @@
 # 升级日志
 
+## v0.1.28 (2026-11-06)
+
+- 全新一键安装：无需手动下载解压，`npx github:kaiys202212/kshell`（Node 18+）或 `pip install kshell-install @ git+https://github.com/kaiys202212/kshell.git#subdirectory=tools/pypi` 一行命令即可安装桌面版——自动解析最新发布、按平台下载、SHA-256 校验后安装到 `~/.kshell/bin` 并异步拉起；下载优先 GitCode 国内源、失败自动回退 GitHub。详见 README「一键安装」。
+- README 中英同步新增一键安装章节。
+
 ## v0.1.27 (2026-11-03)
 
 - 自定义工具接入更简单：设置页新增接入模板下载与 yml 导入，下载标准模板填写后一键导入即可接入自定义 agent 工具，无需手动编辑配置文件；导入文件读取失败时保留现有配置，不会误清空。

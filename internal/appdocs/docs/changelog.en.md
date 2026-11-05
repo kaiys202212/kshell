@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.28 (2026-11-06)
+
+- New one-click install: no manual download & unzip anymore — run `npx github:kaiys202212/kshell` (Node 18+) or `pip install kshell-install @ git+https://github.com/kaiys202212/kshell.git#subdirectory=tools/pypi` to install the desktop app in one line: it resolves the latest release, downloads the platform zip, verifies SHA-256, installs to `~/.kshell/bin` and launches it asynchronously; downloads prefer the GitCode mirror and fall back to GitHub. See "One-click Install" in the README.
+- The README (EN / zh-CN) gains matching one-click install sections.
+
 ## v0.1.27 (2026-11-03)
 
 - Easier custom tool onboarding: the settings page now offers an onboarding template download and yml import — fill in the standard template and import it with one click to register a custom agent tool, no manual config editing needed; if the imported file fails to read, existing config is preserved instead of being wiped.
