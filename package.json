@@ -1,0 +1,16 @@
+{
+  "name": "kshell-install",
+  "version": "0.0.0",
+  "private": false,
+  "description": "One-click installer for kshell desktop; run via npx github:kaiys202212/kshell.",
+  "bin": { "kshell-install": "tools/npm/bin/cli.js" },
+  "files": [
+    "tools/npm/bin/cli.js",
+    "tools/npm/lib/installer.js",
+    "tools/npm/lib/platform.js",
+    "tools/npm/lib/sources.js",
+    "tools/npm/package.json"
+  ],
+  "engines": { "node": ">=18" },
+  "scripts": { "test": "cd tools/npm && npm test" }
+}

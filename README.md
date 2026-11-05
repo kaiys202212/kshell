@@ -30,7 +30,7 @@ The installer script resolves the latest Release automatically, downloads `kshel
 Via npm (recommended, no Python environment needed):
 
 ```bash
-npx github:kaiys202212/kshell#path:tools/npm
+npx github:kaiys202212/kshell
 ```
 
 Via pip:
@@ -42,6 +42,7 @@ pip install "kshell-install @ git+https://github.com/kaiys202212/kshell.git#subd
 Notes:
 
 - On networks where GitHub is slow to reach, the script tries the GitCode mirror first and falls back to GitHub automatically.
+- `npx github:...` and `pip install git+...` both reach github.com directly; if that is inconvenient, download the installer manually from the [GitCode Releases page](https://gitcode.com/abraveheart2023/kshell/releases) instead.
 - The installer only installs the desktop app; the GitHub Releases page still offers manual downloads.
 
 ### Prebuilt Desktop

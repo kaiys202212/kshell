@@ -30,7 +30,7 @@ kshell 做 **发现 → 选择 → 交付**：
 通过 npm（推荐，无需 Python 环境）：
 
 ```bash
-npx github:kaiys202212/kshell#path:tools/npm
+npx github:kaiys202212/kshell
 ```
 
 通过 pip：
@@ -42,6 +42,7 @@ pip install "kshell-install @ git+https://github.com/kaiys202212/kshell.git#subd
 说明：
 
 - 国内网络下脚本优先走 GitCode 镜像源，失败自动回退 GitHub。
+- `npx github:...` 与 `pip install git+...` 均直连 github.com；网络不便时可直接从 [GitCode Releases 页](https://gitcode.com/abraveheart2023/kshell/releases)手动下载安装包。
 - 安装器只装桌面版；需要手动下载时仍可前往 GitHub Releases 页。
 
 ### 预编译桌面版
