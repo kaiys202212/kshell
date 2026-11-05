@@ -6,8 +6,10 @@
     "kshell-install": "bin/cli.js"
   },
   "files": [
-    "bin",
-    "lib"
+    "bin/cli.js",
+    "lib/installer.js",
+    "lib/platform.js",
+    "lib/sources.js"
   ],
   "engines": {
     "node": ">=18"

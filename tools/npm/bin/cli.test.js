@@ -8,7 +8,7 @@ import crypto from "node:crypto";
 const { InstallError } = require("../lib/installer");
 const { ReleaseError } = require("../lib/sources");
 const { UnsupportedPlatform } = require("../lib/platform");
-const { main, parseArgs, printHelp } = require("./cli");
+const { main, parseArgs, printHelp, defaultBinDir } = require("./cli");
 
 let dirs = [];
 function tempDir(name = "k") {
@@ -150,9 +150,9 @@ describe("cli 端到端(临时 bin dir,不碰真实 ~/.kshell)", () => {
     expect(out.info.some((l) => l.includes("目标版本 v0.1.25"))).toBe(true);
   });
 
-  it("默认 bin-dir 是 ~/.kshell/bin(仅推断,不入参时可用 temp home 断言)", () => {
-    // 这里只断言默认值表达式,不真正以默认参数运行(避免写真实家目录)。
-    expect(path.join(homedir(), ".kshell", "bin")).toContain(".kshell");
+  it("defaultBinDir() 返回 ~/.kshell/bin", () => {
+    expect(defaultBinDir()).toBe(path.join(homedir(), ".kshell", "bin"));
+    expect(defaultBinDir()).toContain(".kshell");
   });
 
   it("latest 失败 → stderr 中文错误 + exit 1", async () => {

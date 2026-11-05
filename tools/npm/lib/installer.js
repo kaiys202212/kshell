@@ -87,10 +87,11 @@ async function download(url, getStream = defaultGetStream) {
  */
 function verify(zipPath, sumsText, zipName) {
   // 每行 `<hex>  <filename>`;双空格分隔是 sha256sum 标准格式,兜底单空格。
+  // hex 段用定长 64 位十六进制硬校验,格式不对的行整行跳过。
   let expected = "";
   for (const rawLine of String(sumsText || "").trim().split(/\r?\n/)) {
     const line = rawLine.trim();
-    if (!line || line.length < 66) continue;
+    if (!line) continue;
     let sep = line.indexOf("  ");
     let rest;
     if (sep !== -1) {
@@ -100,10 +101,12 @@ function verify(zipPath, sumsText, zipName) {
       if (sep === -1) continue;
       rest = line.slice(sep + 1);
     }
+    const hexSeg = line.slice(0, sep).trim();
+    if (!/^[0-9a-fA-F]{64}$/.test(hexSeg)) continue;
     rest = rest.trim();
     if (!rest || rest.includes(" ")) continue; // 带空格的文件名不在本仓库的发布约定里,跳过。
     const name = rest.replace(/^\*/, "");
-    if (name === zipName) expected = line.slice(0, sep).trim().toLowerCase();
+    if (name === zipName) expected = hexSeg.toLowerCase();
   }
   if (!expected) {
     // 与"校验不匹配"同策略:没验过的包同样删掉,不留临时垃圾。
@@ -122,9 +125,9 @@ function verify(zipPath, sumsText, zipName) {
   }
 }
 
-/** 真实的同步外部命令执行;extract 会按平台补好命令与参数。 */
+/** 真实的同步外部命令执行;extract 会按平台补好命令与参数。stderr 须捕获,失败时带进错误文案。 */
 function defaultRunExtract(file, args, opts) {
-  return cp.spawnSync(file, args, { stdio: "ignore", ...opts });
+  return cp.spawnSync(file, args, { stdio: ["ignore", "ignore", "pipe"], ...opts });
 }
 
 /**
@@ -133,8 +136,8 @@ function defaultRunExtract(file, args, opts) {
  * 选链:
  * - windows:tar -xf <zip> -C <binDir>(环境内 tar.exe 即 bsdtar,认 zip)
  * - darwin: tar -xf ...(bsdtar)
- * - linux:  优先 unzip -o <zip> -d <binDir>,命令缺失时降级 tar -xf;
- *           两者都失败时再给中文提示装 unzip
+ * - linux:  优先 unzip -o <zip> -d <binDir>;命令缺失(ENOENT/status===null)时才降级
+ *           tar -xf,最终再找不到路就提示装 unzip;unzip 存在但解压报错则立即抛 stderr
  *
  * runExtract(file, args, opts) 注入:测试用 fake 模拟命令结果与落盘。
  * 返回 {usedFallback};失败抛 InstallError。
@@ -148,15 +151,30 @@ function extract({ zipPath, binDir, osName, runExtract = defaultRunExtract }) {
   } else {
     first = runExtract("tar", ["-xf", zipPath, "-C", binDir], {});
   }
+  const stderr = first && first.stderr ? String(first.stderr) : "";
   if (first && first.status === 0) return { usedFallback: false };
   if (osName !== "linux") {
-    throw new InstallError(`解压失败:${zipPath} -> ${binDir},请重试或手动下载`);
+    throw new InstallError(
+      `解压失败:${zipPath} -> ${binDir}${stderr ? `,${stderr.trim()}` : ",请重试或手动下载"}`
+    );
   }
-  // linux:unzip 命令缺失(ENOENT)时降级 bsdtar——多数发行版的 tar 认 zip。
+  // 命令缺失是预期的降级路径:spawnSync 对 ENOENT 返回 status===null(并带 error.code);
+  // 带 error 更稳(注入的 fake 可能只给 status)。unzip 存在但退出码非 0 则是真解压失败,
+  // 直接抛带 stderr 的错误,绝不用 tar 去碰一个解压报错过的包。
+  const missing =
+    !first ||
+    first.status === null ||
+    (first.error && first.error.code === "ENOENT");
+  if (!missing) {
+    throw new InstallError(
+      `解压失败(unzip 报错):${zipPath} -> ${binDir}${stderr ? `:${stderr.trim()}` : ",请重试或手动下载"}`
+    );
+  }
   const second = runExtract("tar", ["-xf", zipPath, "-C", binDir], {});
+  const stderr2 = second && second.stderr ? String(second.stderr) : "";
   if (second && second.status === 0) return { usedFallback: true };
   throw new InstallError(
-    `解压失败(unzip 与 tar 均不可用):请先安装 unzip(如 sudo apt install unzip)后重试`
+    `解压失败(unzip 缺失且 tar 也不可用,${stderr2 ? `tar: ${stderr2.trim()};` : ""}请先安装 unzip(如 sudo apt install unzip)后重试`
   );
 }
 
@@ -198,13 +216,12 @@ function launch(osName, entryPath, spawnFn = defaultSpawn) {
 
 /**
  * 完整安装流:latest/tag → download → verify → extract → 入口检查。
- * 返回 {tag, entry};launch 由 CLI 决定是否执行。
+ * 返回 {tag, entry};启动(launch)只归 CLI 层调用,本函数不做任何拉起。
  * 依赖注入:
  * - getJson(url) → Promise<release JSON>(查 latest 用)
  * - getStream(url, destPath)(zip 大文件流式下载)
  * - getBytes(url) → Promise<Buffer>(SHA256SUMS 小文件)
  * - runExtract(file, args, opts)(解压命令,可打桩)
- * - spawnFn(cmd, args, opts)(GUI 拉起,可打桩)
  */
 async function install(opts) {
   const {
@@ -212,7 +229,6 @@ async function install(opts) {
     getStream = defaultGetStream,
     getBytes = defaultGetBytes,
     runExtract,
-    spawnFn,
     tag = "",
     binDir,
     os: osName,
@@ -253,8 +269,6 @@ async function install(opts) {
       `zip 内没有预期的入口 ${binaryName},解压已在 ${binDir} 但内容异常`
     );
   }
-  // 启动放最后单独暴露,便于 CLI 控制输出顺序。
-  if (spawnFn) launch(osName, entry, spawnFn);
   return { tag: tagOut, entry };
 }
 

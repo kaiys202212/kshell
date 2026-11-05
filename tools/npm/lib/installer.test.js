@@ -117,11 +117,29 @@ describe("extract 命令链选型", () => {
     expect(run.calls[0]).toEqual({ file: "unzip", args: ["-o", "a.zip", "-d", "/tmp/bin"] });
   });
 
-  it("linux unzip 失败 → 降级 tar -xf", () => {
+  it("linux unzip 成功但退出码非 0 → 真解压失败,直接抛错不降级 tar", () => {
     let n = 0;
-    const run = (file, args) => {
+    const run = () => {
       n++;
-      if (file === "unzip") return { status: null }; // ENOENT
+      return { status: 1, stderr: Buffer.from("unzip: cannot find zipfile") };
+    };
+    try {
+      extract({ zipPath: "a.zip", binDir: "/tmp/bin", osName: "linux", runExtract: run });
+      throw new Error("should not reach");
+    } catch (exc) {
+      expect(exc).toBeInstanceOf(InstallError);
+      expect(exc.message).toContain("unzip 报错");
+      expect(exc instanceof InstallError).toBe(true);
+      expect(exc.message).toContain("cannot find zipfile"); // 带 stderr
+      expect(n).toBe(1); // 不再尝试 tar
+    }
+  });
+
+  it("linux unzip 缺失(ENOENT, error.code) → 降级 tar -xf", () => {
+    let n = 0;
+    const run = (file) => {
+      n++;
+      if (file === "unzip") return { status: null, error: { code: "ENOENT" } };
       return { status: 0 };
     };
     const out = extract({ zipPath: "a.zip", binDir: "/tmp/bin", osName: "linux", runExtract: run });
@@ -129,8 +147,17 @@ describe("extract 命令链选型", () => {
     expect(n).toBe(2);
   });
 
-  it("linux 两者都失败 → 中文提示装 unzip", () => {
-    const run = () => ({ status: 1 });
+  it("linux unzip 缺失(仅 status===null) → 降级 tar -xf", () => {
+    const run = (file) => (file === "unzip" ? { status: null } : { status: 0 });
+    const out = extract({ zipPath: "a.zip", binDir: "/tmp/bin", osName: "linux", runExtract: run });
+    expect(out.usedFallback).toBe(true);
+  });
+
+  it("linux unzip 缺失且 tar 也失败 → 中文提示装 unzip", () => {
+    const run = (file) =>
+      file === "unzip"
+        ? { status: null, error: { code: "ENOENT" } }
+        : { status: 1, stderr: Buffer.from("tar: invalid") };
     expect(() =>
       extract({ zipPath: "a.zip", binDir: "/tmp/bin", osName: "linux", runExtract: run })
     ).toThrow(InstallError);
@@ -140,6 +167,7 @@ describe("extract 命令链选型", () => {
     } catch (exc) {
       expect(exc instanceof InstallError).toBe(true);
       expect(exc.message).toContain("unzip");
+      expect(exc.message).toContain("tar: invalid");
       expect(exc.message).toContain("重试");
     }
   });

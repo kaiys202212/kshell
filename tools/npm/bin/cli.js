@@ -20,8 +20,8 @@ const sources = require("../lib/sources");
  *   --no-run         只安装不启动(缺省会拉起桌面窗口)
  *   --bin-dir <path> 安装目录;缺省 ~/.kshell/bin
  */
-function parseArgs(argv, defaults = {}) {
-  const args = { tag: "", noRun: false, binDir: "", help: false, ...defaults };
+function parseArgs(argv) {
+  const args = { tag: "", noRun: false, binDir: "", help: false };
   const list = Array.isArray(argv) ? argv : [];
   for (let i = 0; i < list.length; i++) {
     const a = list[i];
@@ -52,6 +52,11 @@ function printHelp() {
   );
 }
 
+/** 默认安装目录:~/.kshell/bin;独立纯函数便于测试断言。 */
+function defaultBinDir() {
+  return path.join(os.homedir(), ".kshell", "bin");
+}
+
 /**
  * 安装主流程;依赖可注入(getJson/getBytes/getStream/runExtract/spawnFn),
  * 测试传 fake 即可全离线跑通。返回退出码。
@@ -70,14 +75,13 @@ async function main(argv = [], deps = {}) {
   }
   try {
     const { os: osName, zipName, binaryName } = platformLib.detect();
-    const binDir = args.binDir
-      ? path.resolve(args.binDir)
-      : path.join(os.homedir(), ".kshell", "bin");
+    const binDir = args.binDir ? path.resolve(args.binDir) : defaultBinDir();
 
     if (!args.tag) console.log("正在查询最新版本……");
     const { spawnFn, ...restDeps } = deps;
+    // spawnFn 只留给下方的 launch:启动唯一归 CLI 层,不通过 install 双轨触发。
     const { tag, entry } = await installerLib.install({
-      ...restDeps, // spawnFn 单独传给 launch,避免 install 内部重复拉起
+      ...restDeps,
       tag: args.tag,
       binDir,
       os: osName,
@@ -115,4 +119,4 @@ if (require.main === module) {
   );
 }
 
-module.exports = { parseArgs, main, printHelp };
+module.exports = { parseArgs, main, printHelp, defaultBinDir };
