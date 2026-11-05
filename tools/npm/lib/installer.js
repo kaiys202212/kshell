@@ -131,10 +131,21 @@ function defaultRunExtract(file, args, opts) {
 }
 
 /**
+ * Windows 解压必须显式走系统自带的 bsdtar(%SystemRoot%\System32\tar.exe,
+ * 认盘符路径且能解 zip),绝不能裸调 "tar" 靠 PATH 命中:Git Bash/MSYS 环境
+ * PATH 先命中 GNU tar,它把 C:\... 解析成远程主机,报
+ * "tar: Cannot connect to C: resolve failed"。
+ */
+function windowsTarPath() {
+  const winRoot = process.env.SystemRoot || String.raw`C:\Windows`;
+  return path.join(winRoot, "System32", "tar.exe");
+}
+
+/**
  * 用系统 tar/unzip 解压 zip 到 binDir。
  *
  * 选链:
- * - windows:tar -xf <zip> -C <binDir>(环境内 tar.exe 即 bsdtar,认 zip)
+ * - windows:System32 下的 tar.exe(系统自带 bsdtar,认 zip)
  * - darwin: tar -xf ...(bsdtar)
  * - linux:  优先 unzip -o <zip> -d <binDir>;命令缺失(ENOENT/status===null)时才降级
  *           tar -xf,最终再找不到路就提示装 unzip;unzip 存在但解压报错则立即抛 stderr
@@ -149,11 +160,20 @@ function extract({ zipPath, binDir, osName, runExtract = defaultRunExtract }) {
     // 优先 unzip(-o 覆盖同名文件,对裸二进制最稳)。
     first = runExtract("unzip", ["-o", zipPath, "-d", binDir], {});
   } else {
-    first = runExtract("tar", ["-xf", zipPath, "-C", binDir], {});
+    const tarFile = osName === "windows" ? windowsTarPath() : "tar";
+    first = runExtract(tarFile, ["-xf", zipPath, "-C", binDir], {});
   }
   const stderr = first && first.stderr ? String(first.stderr) : "";
   if (first && first.status === 0) return { usedFallback: false };
   if (osName !== "linux") {
+    // Windows 上系统自带 tar 缺失(status===null/ENOENT)时直接报错,不引入任何兜底。
+    const missing =
+      !first || first.status === null || (first.error && first.error.code === "ENOENT");
+    if (missing) {
+      throw new InstallError(
+        `解压失败:${zipPath} -> ${binDir},未找到系统自带 tar(应存在于 System32),请重试或手动下载`
+      );
+    }
     throw new InstallError(
       `解压失败:${zipPath} -> ${binDir}${stderr ? `,${stderr.trim()}` : ",请重试或手动下载"}`
     );
@@ -282,6 +302,7 @@ module.exports = {
   defaultSpawn,
   download,
   verify,
+  windowsTarPath,
   extract,
   launch,
   install,

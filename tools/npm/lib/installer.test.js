@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 
-const { InstallError, download, extract, install, launch, verify } = require("./installer");
+const { InstallError, download, extract, install, launch, verify, windowsTarPath } = require("./installer");
 const { GITCODE_LATEST_URL } = require("./sources");
 
 let dirs = [];
@@ -102,11 +102,20 @@ function fakeRun({ status = 0, touchDir = null, touchName = "kshell-desktop" } =
 }
 
 describe("extract 命令链选型", () => {
-  it("windows → tar -xf <zip> -C <binDir>", () => {
+  it("windows → 系统 System32 tar.exe(bsdtar)-xf <zip> -C <binDir>", () => {
     const run = fakeRun();
     const out = extract({ zipPath: "a.zip", binDir: "C:\\k\\bin", osName: "windows", runExtract: run });
     expect(out.usedFallback).toBe(false);
-    expect(run.calls).toEqual([{ file: "tar", args: ["-xf", "a.zip", "-C", "C:\\k\\bin" ] }]);
+    expect(run.calls).toEqual([
+      { file: windowsTarPath(), args: ["-xf", "a.zip", "-C", "C:\\k\\bin"] },
+    ]);
+  });
+
+  it("windowsTarPath() 指向 %SystemRoot%\\System32\\tar.exe;缺 SystemRoot 兜底 C:\\Windows", () => {
+    vi.stubEnv("SystemRoot", "D:\\WinNT");
+    expect(windowsTarPath()).toBe(path.join("D:\\WinNT", "System32", "tar.exe"));
+    vi.stubEnv("SystemRoot", "");
+    expect(windowsTarPath()).toBe(path.join("C:\\Windows", "System32", "tar.exe"));
   });
 
   it("darwin → tar -xf", () => {
@@ -177,11 +186,25 @@ describe("extract 命令链选型", () => {
     }
   });
 
-  it("windows tar 失败直接抛错(无降级)", () => {
+  it("windows tar 失败(status 非 0/null)直接抛错(无降级),文案不变", () => {
     const run = fakeRun({ status: 1 });
     expect(() =>
       extract({ zipPath: "a.zip", binDir: "b", osName: "windows", runExtract: run })
     ).toThrow(/解压失败/);
+  });
+
+  it("windows 系统自带 tar 缺失(status===null)→ 报解压失败并提示未找到系统 tar", () => {
+    const run = () => ({ status: null, stderr: Buffer.from("") });
+    expect(() =>
+      extract({ zipPath: "a.zip", binDir: "b", osName: "windows", runExtract: run })
+    ).toThrow(/解压失败/);
+    try {
+      extract({ zipPath: "a.zip", binDir: "b", osName: "windows", runExtract: run });
+      throw new Error("should not reach");
+    } catch (exc) {
+      expect(exc instanceof InstallError).toBe(true);
+      expect(exc.message).toContain("未找到系统自带 tar");
+    }
   });
 });
 
