@@ -225,7 +225,7 @@ function launch(osName, entryPath, spawnFn = defaultSpawn) {
  */
 async function install(opts) {
   const {
-    getJson,
+    getJson = sources.defaultGetJson,
     getStream = defaultGetStream,
     getBytes = defaultGetBytes,
     runExtract,

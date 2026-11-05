@@ -1,5 +1,5 @@
 "use strict";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const {
   GITCODE_LATEST_URL,
@@ -8,9 +8,14 @@ const {
   ReleaseError,
   canon,
   compareTags,
+  defaultGetJson,
   gitcodeAttachUrl,
   latestRelease,
 } = require("./sources");
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const ZIP = "kshell-desktop-windows-amd64.zip";
 
@@ -125,5 +130,39 @@ describe("latestRelease 源顺序与兜底", () => {
     const getJson = async (url) => (url === GITCODE_LATEST_URL ? "<html>rate limit</html>" : rel("v0.0.9"));
     const out = await latestRelease(getJson, ZIP);
     expect(out.tag).toBe("v0.0.9");
+  });
+});
+
+describe("defaultGetJson 生产实现", () => {
+  it("成功路径:用全局 fetch 拉取并解析 JSON,带 kshell-install UA", async () => {
+    const release = rel("v0.1.27");
+    let gotUrl;
+    let gotHeaders;
+    vi.stubGlobal("fetch", async (url, opts) => {
+      gotUrl = url;
+      gotHeaders = opts && opts.headers;
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(release),
+      };
+    });
+    const out = await defaultGetJson(GITCODE_LATEST_URL);
+    expect(gotUrl).toBe(GITCODE_LATEST_URL);
+    expect(gotHeaders["User-Agent"]).toBe("kshell-install");
+    expect(out).toEqual(release);
+  });
+
+  it("非 2xx → ReleaseError 且消息带 HTTP 状态码", async () => {
+    vi.stubGlobal("fetch", async () => ({ ok: false, status: 500, text: async () => "" }));
+    await expect(defaultGetJson(GITHUB_LATEST_URL)).rejects.toThrow(ReleaseError);
+    await expect(defaultGetJson(GITHUB_LATEST_URL)).rejects.toThrow(/HTTP 500/);
+  });
+
+  it("fetch 网络异常 → 包成 ReleaseError", async () => {
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("ECONNREFUSED");
+    });
+    await expect(defaultGetJson(GITHUB_LATEST_URL)).rejects.toThrow(ReleaseError);
   });
 });

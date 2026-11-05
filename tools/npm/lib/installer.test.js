@@ -1,11 +1,12 @@
 "use strict";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 
-const { InstallError, download, extract, launch, verify } = require("./installer");
+const { InstallError, download, extract, install, launch, verify } = require("./installer");
+const { GITCODE_LATEST_URL } = require("./sources");
 
 let dirs = [];
 function tempDir() {
@@ -16,7 +17,11 @@ function tempDir() {
 afterEach(() => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
   dirs = [];
+  vi.unstubAllGlobals();
 });
+
+const BIN_NAME = "kshell-desktop.exe"; // windows 安装器入口约定名
+const ZIP = "kshell-desktop-windows-amd64.zip";
 
 function fakeGetStream(content, tmpRoot) {
   // 把"下载"实现为直接写一段内容,模拟真实流式落盘。
@@ -224,5 +229,52 @@ describe("launch 三平台参数", () => {
       expect(exc.message).toContain("无法启动");
       expect(exc.message).toContain("请到安装目录手动运行或重装");
     }
+  });
+});
+
+describe("install 无 getJson 注入 → 用 sources.defaultGetJson(全局 fetch)", () => {
+  it("不传 getJson 时走生产 fetch 拉 gitcode latest,整流程 tag 正确", async () => {
+    const fetchUrls = [];
+    vi.stubGlobal("fetch", async (url) => {
+      fetchUrls.push(url);
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            tag_name: "v0.1.27",
+            assets: [{ name: ZIP, browser_download_url: "https://dl/v0.1.27/zip" }],
+          }),
+      };
+    });
+    const urls = [];
+    const stream = fakeGetStream(Buffer.from("zip-bytes"), tempDir());
+    const streamFn = async (url, dest) => {
+      urls.push(url);
+      await stream.fn(url, dest);
+    };
+    const sumsHex = crypto.createHash("sha256").update(Buffer.from("zip-bytes")).digest("hex");
+    await install({
+      // 注意:故意不传 getJson —— 走生产默认 defaultGetJson
+      getStream: streamFn,
+      getBytes: async () => Buffer.from(`${sumsHex}  ${ZIP}\n`),
+      runExtract: (file, args) => {
+        // 把"解压"模拟成直接写入口文件,fs.existsSync(entry) 检查就能过。
+        const dest = args.includes("-C") ? args[args.indexOf("-C") + 1] : args[args.indexOf("-d") + 1];
+        writeFileSync(path.join(dest, BIN_NAME), "entry");
+        return { status: 0, stderr: Buffer.from("") };
+      },
+      binDir: tempDir(),
+      os: "windows",
+      zipName: ZIP,
+      binaryName: BIN_NAME,
+    });
+    // latest 查询走的是生产 defaultGetJson;latestRelease 按设计遍历全部源(防镜像滞后),
+    // 第一个请求必须打在 gitcode 主源上。
+    expect(fetchUrls.length).toBe(2);
+    expect(fetchUrls[0]).toBe(GITCODE_LATEST_URL);
+    // zip 落盘用的是 release JSON 里的 browser_download_url。
+    expect(urls.length).toBe(1);
+    expect(urls[0]).toBe("https://dl/v0.1.27/zip");
   });
 });

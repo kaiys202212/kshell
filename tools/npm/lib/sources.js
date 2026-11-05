@@ -33,6 +33,28 @@ class ReleaseError extends Error {
   }
 }
 
+/**
+ * 生产 getJson:Node18 内置 fetch 拉取 release JSON。
+ * 带 kshell-install UA;非 2xx / 网络异常 / 非 JSON 体统一包成 ReleaseError(中文)。
+ */
+async function defaultGetJson(url) {
+  let res;
+  try {
+    res = await fetch(url, { headers: { "User-Agent": "kshell-install" } });
+  } catch (exc) {
+    throw new ReleaseError(`查询失败 ${url}:${exc && exc.message ? exc.message : exc}`);
+  }
+  if (!res.ok) {
+    throw new ReleaseError(`查询失败 ${url}:HTTP ${res.status}`);
+  }
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch (exc) {
+    throw new ReleaseError(`查询失败 ${url}:返回的不是 JSON`);
+  }
+}
+
 /** GitCode release 附件公开下载链,只依赖 tag。 */
 function gitcodeAttachUrl(tag, fileName) {
   return `https://api.gitcode.com/api/v5/repos/${GITCODE_OWNER}/${GITCODE_REPO}/releases/${tag}/attach_files/${fileName}/download`;
@@ -159,6 +181,7 @@ module.exports = {
   SUMS_NAME,
   SOURCES,
   ReleaseError,
+  defaultGetJson,
   gitcodeAttachUrl,
   canon,
   compareTags,
