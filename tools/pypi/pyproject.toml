@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kshell-install"
+version = "0.1.0"
+description = "kshell 桌面版一键安装器(GitCode/GitHub 下载 + SHA-256 校验 + 解压 + 启动)"
+requires-python = ">=3.10"
+# 零第三方运行依赖:http 由 urllib,zip/sha256 由标准库。
+dependencies = []
+
+[project.scripts]
+kshell-install = "kshell_install.cli:main"
+
+# PEP 735 dependency-groups(本地 pip ≥24.3 可直接 pip install --group dev)。
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kshell_install"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
