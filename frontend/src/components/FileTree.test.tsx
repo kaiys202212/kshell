@@ -7,7 +7,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import FileTree from './FileTree';
 import type { FileNode } from '../lib/api';
-import { DRAG_MIME, REL_MIME } from '../lib/dragPath';
+import { DRAG_MIME, DRAG_ROOT_MIME, REL_MIME } from '../lib/dragPath';
 import { useAppStore } from '../state/store';
 import { tt } from '../test/i18n';
 
@@ -996,6 +996,24 @@ describe('FileTree 树内拖拽移动', () => {
     await act(async () => {});
 
     expect(mocks.moveEntry).not.toHaveBeenCalled();
+  });
+
+  it('dragstart 同时写入绝对路径、相对路径与拖拽源工作区根', async () => {
+    mocks.listFiles.mockResolvedValue(moveRoot);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+
+    const setData = vi.fn();
+    const dataTransfer = {
+      types: [],
+      setData,
+      effectAllowed: '',
+      dropEffect: '',
+    } as unknown as DataTransfer;
+    fireEvent.dragStart(await screen.findByText('main.go'), { dataTransfer });
+
+    expect(setData).toHaveBeenCalledWith(DRAG_MIME, 'D:\\proj\\main.go');
+    expect(setData).toHaveBeenCalledWith(REL_MIME, 'main.go');
+    expect(setData).toHaveBeenCalledWith(DRAG_ROOT_MIME, 'D:\\proj');
   });
 
   it('默认展开虚拟根目录，名称取工作区文件夹名', async () => {

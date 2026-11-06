@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TerminalInfo } from '../lib/api';
 import { bytesToBase64, encodeTerminalInput } from '../lib/base64';
-import { DRAG_MIME } from '../lib/dragPath';
+import { DRAG_MIME, DRAG_ROOT_MIME, REL_MIME } from '../lib/dragPath';
 import { clearTerminalRegistry, dispatchTerminalData } from '../lib/terminalRegistry';
 import { useAppStore } from '../state/store';
 import { bumpTerminalBusy } from '../state/terminalBusy';
@@ -505,6 +505,41 @@ describe('TerminalView', () => {
     drop(root, { path: 'D:\\a.go' });
 
     expect(api.writeTerminal).not.toHaveBeenCalled();
+  });
+
+  // 模拟应用内拖拽：getData 按 mime 分别给值（dragstart 同时写 DRAG/REL/ROOT 三个 MIME）
+  function dropFromTree(root: Element, data: Record<string, string>) {
+    const dataTransfer = {
+      types: Object.keys(data),
+      getData: (mime: string) => data[mime] ?? '',
+    };
+    fireEvent.drop(root, { dataTransfer });
+  }
+
+  it('drop 来自同一工作区的文件树：插入相对路径', () => {
+    const { container } = render(<TerminalView term={TERM} active />);
+    const root = container.firstElementChild as HTMLElement;
+
+    dropFromTree(root, {
+      [DRAG_MIME]: 'D:\\proj\\src\\a.go',
+      [REL_MIME]: 'src/a.go',
+      [DRAG_ROOT_MIME]: 'D:\\proj',
+    });
+
+    expect(api.writeTerminal).toHaveBeenCalledWith(TERM.ID, encodeTerminalInput('src/a.go'));
+  });
+
+  it('drop 来自其他工作区的文件树：回退插入绝对路径', () => {
+    const { container } = render(<TerminalView term={TERM} active />);
+    const root = container.firstElementChild as HTMLElement;
+
+    dropFromTree(root, {
+      [DRAG_MIME]: 'D:\\other\\src\\a.go',
+      [REL_MIME]: 'src/a.go',
+      [DRAG_ROOT_MIME]: 'D:\\other',
+    });
+
+    expect(api.writeTerminal).toHaveBeenCalledWith(TERM.ID, encodeTerminalInput('D:\\other\\src\\a.go'));
   });
 
   it('Status=exited 的终端不接受拖入：drop 不写终端', () => {

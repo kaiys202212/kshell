@@ -14,7 +14,7 @@ import { readClipboardPaste, resizeTerminal, scrollbackTerminal, writeTerminal }
 import { terminalTheme } from '../lib/appearance';
 import { base64ToBytes, encodeTerminalInput } from '../lib/base64';
 import { composeTerminalPaste, isCopyKey, isPasteKey } from '../lib/clipboardPaste';
-import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
+import { DRAG_MIME, pickTerminalDropPath, quotePathForShell } from '../lib/dragPath';
 import { handleHref } from '../lib/openHref';
 import { useAppStore } from '../state/store';
 import { suppressTerminalBusy } from '../state/terminalBusy';
@@ -457,7 +457,8 @@ export default function TerminalView({ term, active }: Props) {
         setDropHint(false);
         if (!e.dataTransfer.types.includes(DRAG_MIME) || term.Status === 'exited') return;
         e.preventDefault();
-        const p = e.dataTransfer.getData(DRAG_MIME);
+        // 同工作区拖拽插入相对路径（agent 会话 cwd = 工作区根），跨工作区回退绝对路径
+        const p = pickTerminalDropPath((m) => e.dataTransfer.getData(m), term.Workspace);
         if (!p) return;
         void writeTerminal(termId, encodeTerminalInput(quotePathForShell(p)));
         termRef.current?.focus();

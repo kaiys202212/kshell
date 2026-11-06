@@ -29,7 +29,7 @@ import {
 } from '../lib/api';
 import type { FileNode, SearchHit } from '../lib/api';
 import { cn } from '../lib/cn';
-import { DRAG_MIME, REL_MIME } from '../lib/dragPath';
+import { DRAG_MIME, DRAG_ROOT_MIME, REL_MIME } from '../lib/dragPath';
 import { backendError } from '../lib/errors';
 import { isNestedGitParent, refreshGitStatus, resolveGitCode, subtreeDirty } from '../lib/git';
 import { sameWorkspacePath } from '../lib/workspacePath';
@@ -253,6 +253,7 @@ function CreateRow({
 interface RowProps {
   item: TreeItem;
   depth: number;
+  wsPath: string; // 拖拽源工作区根：dragstart 写入 DRAG_ROOT_MIME 供终端 drop 比对
   selection: Set<string>; // 选中集（relPath）；行内自行判断命中，递归下传同一集合
   gitMap?: Record<string, string>; // git 状态映射（键为 '/' 分隔 relPath），行内按自身 relPath 查
   rootBranch?: string;
@@ -274,6 +275,7 @@ interface RowProps {
 function TreeRow({
   item,
   depth,
+  wsPath,
   selection,
   gitMap,
   rootBranch,
@@ -366,6 +368,7 @@ function TreeRow({
         onDragStart={(e) => {
           e.dataTransfer.setData(DRAG_MIME, node.Path);
           e.dataTransfer.setData(REL_MIME, item.relPath);
+          e.dataTransfer.setData(DRAG_ROOT_MIME, wsPath);
           e.dataTransfer.effectAllowed = 'move';
         }}
         onDragOver={node.IsDir ? rowDragOver : undefined}
@@ -486,6 +489,7 @@ function TreeRow({
               key={c.node.Path}
               item={c}
               depth={depth + 1}
+              wsPath={wsPath}
               selection={selection}
               gitMap={gitMap}
               rootBranch={rootBranch}
@@ -1181,6 +1185,7 @@ export default function FileTree({
                     key={it.node.Path}
                     item={it}
                     depth={0}
+                    wsPath={wsPath}
                     selection={selected}
                     {...rowProps}
                   />
@@ -1196,6 +1201,7 @@ export default function FileTree({
                 key={it.node.Path}
                 item={it}
                 depth={0}
+                wsPath={wsPath}
                 selection={selected}
                 {...rowProps}
               />
