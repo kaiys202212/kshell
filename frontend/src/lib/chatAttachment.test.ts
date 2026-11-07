@@ -44,20 +44,20 @@ describe('attachmentAction', () => {
       name: '工作区内 file URI → default',
       meta: { Kind: 'file', URI: 'file:///D:/ws/doc.pdf' },
       root: 'D:\\ws',
-      want: { kind: 'default', wsPath: 'D:\\ws', rel: 'doc.pdf' },
+      want: { kind: 'default', wsPath: 'D:\\ws', rel: 'doc.pdf', abs: 'D:\\ws\\doc.pdf' },
     },
     {
       name: '工作区内嵌套路径 file URI → default 带 relative 子路径',
       meta: { Kind: 'file', URI: 'file:///D:/ws/sub/doc.pdf' },
       root: 'D:\\ws',
-      want: { kind: 'default', wsPath: 'D:\\ws', rel: 'sub\\doc.pdf' },
+      want: { kind: 'default', wsPath: 'D:\\ws', rel: 'sub\\doc.pdf', abs: 'D:\\ws\\sub\\doc.pdf' },
     },
     // 两斜杠盘符 URI（file://D:/...，少见但存在）：fileUriToPath 的 /? 可选斜杠须兼容
     {
       name: '两斜杠盘符 file URI → default',
       meta: { Kind: 'file', URI: 'file://D:/x/y.png' },
       root: 'D:\\x',
-      want: { kind: 'default', wsPath: 'D:\\x', rel: 'y.png' },
+      want: { kind: 'default', wsPath: 'D:\\x', rel: 'y.png', abs: 'D:\\x\\y.png' },
     },
     {
       name: '工作区外 file URI → local',

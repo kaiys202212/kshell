@@ -6,7 +6,7 @@ import { isInsideWorkspace, posixNorm, toNative } from './openHref';
 
 export type AttachmentAction =
   | { kind: 'preview'; path: string } // 图片 → lightbox
-  | { kind: 'default'; wsPath: string; rel: string } // 工作区内文件 → OpenInDefaultApp
+  | { kind: 'default'; wsPath: string; rel: string; abs: string } // 工作区内文件 → OpenInDefaultApp（abs 供文件夹定位回退）
   | { kind: 'local'; abs: string } // 工作区外本地文件 → OpenLocalPath
   | { kind: 'external'; url: string } // http(s) 等外链
   | { kind: 'none' };
@@ -49,7 +49,7 @@ export function attachmentAction(meta: ChatAttachmentMeta, workspaceRoot: string
     if (!root || !isInsideWorkspace(root, abs)) return { kind: 'local', abs };
     const posixRoot = posixNorm(root).replace(/\/+$/, '');
     const rel = posixNorm(abs).slice(posixRoot.length).replace(/^\/+/, '');
-    return { kind: 'default', wsPath: toNative(posixRoot, root), rel: toNative(rel, root) };
+    return { kind: 'default', wsPath: toNative(posixRoot, root), rel: toNative(rel, root), abs };
   }
   if (meta.Path) return { kind: 'local', abs: meta.Path };
   return { kind: 'none' };
