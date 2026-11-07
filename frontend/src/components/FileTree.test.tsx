@@ -377,11 +377,25 @@ describe('FileTree', () => {
     const { unmount } = render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
     await screen.findByText('README.md');
     await waitFor(() => {
-      expect(mocks.startFileWatch).toHaveBeenCalledWith('D:\\proj');
+      expect(mocks.startFileWatch).toHaveBeenCalledWith('D:\\proj', true);
     });
     expect(mocks.onFilesChanged).toHaveBeenCalled();
     unmount();
     expect(mocks.stopFileWatch).toHaveBeenCalledWith('D:\\proj');
+  });
+
+  it('显示全部切换时重启文件监视：stop 后按新 showAll 重新 start', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+    await waitFor(() => {
+      expect(mocks.startFileWatch).toHaveBeenCalledWith('D:\\proj', true);
+    });
+    fireEvent.click(screen.getByRole('checkbox', { name: tt('ui.files.show_all_aria') }));
+    await waitFor(() => {
+      expect(mocks.stopFileWatch).toHaveBeenCalledWith('D:\\proj');
+      expect(mocks.startFileWatch).toHaveBeenLastCalledWith('D:\\proj', false);
+    });
   });
 
   it('StartFileWatch 失败时弹出 error toast', async () => {

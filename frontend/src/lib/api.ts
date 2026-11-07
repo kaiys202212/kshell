@@ -629,7 +629,7 @@ interface AppBindings {
   OpenLocalPath(absPath: string): Promise<void>;
   SearchFiles(wsPath: string, query: string, showAll: boolean): Promise<SearchHit[]>;
   RefreshFiles(wsPath: string): Promise<void>;
-  StartFileWatch(wsPath: string): Promise<void>;
+  StartFileWatch(wsPath: string, showAll: boolean): Promise<void>;
   StopFileWatch(wsPath: string): void;
   RevealInExplorer(wsPath: string, path: string): Promise<void>;
   OpenInDefaultApp(wsPath: string, path: string): Promise<void>;
@@ -938,11 +938,12 @@ export async function refreshFiles(wsPath: string): Promise<void> {
   await a.RefreshFiles(wsPath);
 }
 
-// StartFileWatch 订阅工作区目录变更（fsnotify）；无绑定时静默返回。
-export async function startFileWatch(wsPath: string): Promise<void> {
+// StartFileWatch 订阅工作区目录变更（fsnotify）；showAll 决定监视范围（排除目录是否纳入）。
+// 无绑定时静默返回。
+export async function startFileWatch(wsPath: string, showAll: boolean): Promise<void> {
   const a = app();
   if (!a) return;
-  await a.StartFileWatch(wsPath);
+  await a.StartFileWatch(wsPath, showAll);
 }
 
 // StopFileWatch 取消工作区目录监听；无绑定时静默返回。

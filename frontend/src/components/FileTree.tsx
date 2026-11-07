@@ -639,13 +639,21 @@ export default function FileTree({
   const requestReloadRef = useRef(requestReload);
   requestReloadRef.current = requestReload;
 
-  // 监视生命周期仅随 wsPath；showAll 切换不重载 watch（单独 effect 走 requestReload）
+  // 监视生命周期随 wsPath + showAll：显示什么就监视什么（Go 侧按 showAll 收缩/恢复
+  // 排除目录监视），切换 showAll 时 stop→start 重启。disposed 防卸载竞态：
+  // stop 先于 pending 的 start 落地时，start resolve 后补一次 stop 防泄漏。
   useEffect(() => {
-    void startFileWatch(wsPath).catch((e: unknown) => {
-      useAppStore
-        .getState()
-        .notify(e instanceof Error ? backendError(e) : t('ui.files.watch_failed'), 'error');
-    });
+    let disposed = false;
+    const snapshot = showAllRef.current;
+    void startFileWatch(wsPath, snapshot)
+      .then(() => {
+        if (disposed) stopFileWatch(wsPath); // 卸载竞态兜底
+      })
+      .catch((e: unknown) => {
+        useAppStore
+          .getState()
+          .notify(e instanceof Error ? backendError(e) : t('ui.files.watch_failed'), 'error');
+      });
     const unsubFiles = onFilesChanged((path) => {
       if (sameWorkspacePath(path, wsPath)) {
         clearSelection();
@@ -659,6 +667,7 @@ export default function FileTree({
       }
     });
     return () => {
+      disposed = true;
       reloadGenRef.current += 1;
       reloadInFlightRef.current = false;
       reloadPendingRef.current = false;
@@ -666,7 +675,7 @@ export default function FileTree({
       unsubGit();
       stopFileWatch(wsPath);
     };
-  }, [wsPath]);
+  }, [wsPath, showAll]);
 
   useEffect(() => {
     reloadGenRef.current += 1;
