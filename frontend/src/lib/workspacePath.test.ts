@@ -1,7 +1,7 @@
 // 工作区路径归一化测试：会话 cwd 的来源写法并不统一
 // （Claude/Codex 是 `D:\a\b`，opencode 的 SQLite 是 `D:/a/b`，大小写也会漂）。
 import { describe, expect, it } from 'vitest';
-import { normalizeWorkspacePath, sameWorkspacePath } from './workspacePath';
+import { normalizeWorkspacePath, relativeWorkspacePath, sameWorkspacePath } from './workspacePath';
 
 describe('normalizeWorkspacePath', () => {
   it('分隔符统一成 /、末尾分隔符去掉、大小写统一', () => {
@@ -24,5 +24,20 @@ describe('sameWorkspacePath', () => {
   it('空路径只在两边都为空时算相同（避免把未知工作区的会话混进来）', () => {
     expect(sameWorkspacePath('', '')).toBe(true);
     expect(sameWorkspacePath('', 'D:\\proj-a')).toBe(false);
+  });
+});
+
+describe('relativeWorkspacePath', () => {
+  it('反斜杠/前斜杠与大小写差异都能算出 / 分隔相对路径', () => {
+    expect(relativeWorkspacePath('D:\proj', 'D:\proj\src\a.ts')).toBe('src/a.ts');
+    expect(relativeWorkspacePath('d:/proj', 'D:/PROJ/src/a.ts')).toBe('src/a.ts');
+    expect(relativeWorkspacePath('D:\proj', 'D:/proj/dist')).toBe('dist');
+  });
+
+  it('根本身返回空串，区外返回 null', () => {
+    expect(relativeWorkspacePath('D:\proj', 'D:\proj')).toBe('');
+    expect(relativeWorkspacePath('D:\proj', 'D:\proj\')).toBe('');
+    expect(relativeWorkspacePath('D:\proj', 'D:\other\x.ts')).toBeNull();
+    expect(relativeWorkspacePath('D:\proj', 'D:\project\x.ts')).toBeNull();
   });
 });

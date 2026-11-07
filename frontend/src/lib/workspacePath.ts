@@ -14,3 +14,16 @@ export function normalizeWorkspacePath(p: string): string {
 export function sameWorkspacePath(a: string, b: string): boolean {
   return normalizeWorkspacePath(a) === normalizeWorkspacePath(b);
 }
+
+// relativeWorkspacePath 求 abs 相对 root 的 '/' 分隔相对路径（文件树定位用）。
+// 两者写法可能不一致（分隔符/大小写漂移），比较前先归一化；abs 为根本身返回空串，
+// 不在 root 内返回 null（调用方放弃定位）。
+export function relativeWorkspacePath(root: string, abs: string): string | null {
+  const normRoot = normalizeWorkspacePath(root);
+  if (!normRoot) return null;
+  const slashed = abs.replace(/\\/g, '/').replace(/\/+$/, '');
+  const normAbs = slashed.toLowerCase();
+  if (normAbs === normRoot) return '';
+  if (!normAbs.startsWith(`${normRoot}/`)) return null;
+  return slashed.slice(normRoot.length + 1);
+}
