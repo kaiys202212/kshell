@@ -70,7 +70,9 @@ import {
   browserTabPath,
   commitDiffTabPath,
   diffTabPath,
+  revealableFilePath,
 } from '../lib/fileTabs';
+import { revealInTree } from '../lib/treeReveal';
 import { OPEN_FILE_EVENT } from '../lib/openHref';
 
 function isAgentTerm(t: TerminalInfo): boolean {
@@ -427,6 +429,29 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
     selectCenterTab(FILES_TAB);
   };
 
+  // 文件页签 ↔ 文件树联动：激活普通文件页签时（含预览/钉住），文件树逐层展开定位到该文件。
+  // diff/browser 等特殊页签不参与（revealableFilePath 过滤）；树未挂载时 revealInTree 静默忽略。
+  const activeFileForTree = useMemo(
+    () => revealableFilePath(fileTabs.activePath),
+    [fileTabs.activePath],
+  );
+  useEffect(() => {
+    if (!activeFileForTree) return;
+    revealInTree(tab.id, activeFileForTree);
+  }, [activeFileForTree, tab.id]);
+
+  // 聊天文件夹附件点击：先切右栏「文件」页签（hidden 下 scrollIntoView 无效），
+  // 下一帧再定位——reveal 内部 listFiles 异步，天然晚于 pane 可见。
+  const revealFolderInTree = useCallback(
+    (absPath: string) => {
+      setRightPane('files');
+      window.requestAnimationFrame(() => {
+        revealInTree(tab.id, absPath);
+      });
+    },
+    [tab.id],
+  );
+
   useEffect(() => {
     const onOpen = (e: Event) => {
       const d = (e as CustomEvent<{ workspace?: string; path?: string }>).detail;
@@ -562,7 +587,7 @@ export default function WorkspaceTabView({ tab, visible }: { tab: WorkspaceTab; 
   ));
   const chatPanes = chatsForWs.map((c) => (
     <div key={c.ID} className={cn('h-full', !agentVisible(c.ID) && 'hidden')} style={fadeStyle}>
-      <ChatView chat={c} active={agentVisible(c.ID)} />
+      <ChatView chat={c} active={agentVisible(c.ID)} onRevealInTree={revealFolderInTree} />
     </div>
   ));
 

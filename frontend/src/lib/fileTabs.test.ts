@@ -14,6 +14,7 @@ import {
   parseCommitDiffTabPath,
   parseDiffTabPath,
   pinTab,
+  revealableFilePath,
 } from './fileTabs';
 
 describe('fileTabLabel', () => {
@@ -125,5 +126,18 @@ describe('closeTab / activateTab', () => {
     const s = openPreview(file, key, 'browser');
     expect(s.tabs).toHaveLength(2);
     expect(s.tabs[1].kind).toBe('browser');
+  });
+});
+
+describe('revealableFilePath', () => {
+  it('普通文件页签返回原路径，空返回 null', () => {
+    expect(revealableFilePath('D:/p/src/a.ts')).toBe('D:/p/src/a.ts');
+    expect(revealableFilePath(null)).toBeNull();
+  });
+
+  it('diff / commit diff / browser 页签不参与文件树联动', () => {
+    expect(revealableFilePath(diffTabPath('working', 'r', 'a.ts'))).toBeNull();
+    expect(revealableFilePath(commitDiffTabPath('r', 'abcdef1234'))).toBeNull();
+    expect(revealableFilePath(browserTabPath('a.html'))).toBeNull();
   });
 });

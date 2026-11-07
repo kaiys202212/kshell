@@ -77,6 +77,14 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('../lib/api', () => mocks);
 
+// treeReveal 打桩：WorkspaceTab 层只验证联动触发；逐层展开行为见 FileTree.test
+const treeReveal = vi.hoisted(() => ({
+  registerTreeRevealer: vi.fn(() => {}),
+  unregisterTreeRevealer: vi.fn(() => {}),
+  revealInTree: vi.fn(() => true),
+}));
+vi.mock('../lib/treeReveal', () => treeReveal);
+
 // xterm 在 jsdom 下无法真实运行：只保留「页签与激活态」这一层契约
 vi.mock('./TerminalView', () => ({
   default: ({ term, active }: { term: TerminalInfo; active: boolean }) => (
@@ -562,6 +570,31 @@ describe('WorkspaceTab', () => {
     expect(await screen.findByTestId('code-editor')).toBeInTheDocument();
     expect(mocks.readFileForEdit).toHaveBeenCalledWith('D:\\proj-a', 'D:\\proj-a\\main.ts');
   });
+
+  it('激活文件页签时联动文件树定位（revealInTree）；无文件页签时不触发', async () => {
+    const wsWin = 'D:' + String.fromCharCode(92) + String.fromCharCode(92) + 'proj-a';
+    const filePath = wsWin + String.fromCharCode(92) + 'main.ts';
+    mocks.listFiles.mockResolvedValue([
+      {
+        Name: 'main.ts',
+        Path: filePath,
+        IsDir: false,
+        Expanded: false,
+        Loaded: false,
+      },
+    ]);
+    mocks.previewFile.mockResolvedValue({ Lines: [], Err: '' });
+    render(<WorkspaceTabView tab={{ id: wsWin, name: 'proj-a' }} visible />);
+
+    await waitFor(() => expect(treeReveal.registerTreeRevealer).toHaveBeenCalled());
+    expect(treeReveal.revealInTree).not.toHaveBeenCalled();
+
+    fireEvent.click(await screen.findByText('main.ts'));
+    await waitFor(() => {
+      expect(treeReveal.revealInTree).toHaveBeenCalledWith(wsWin, filePath);
+    });
+  });
+
 
   it('SSH 页签渲染连接列表，文件页签渲染文件树；切页签双面板常挂载不卸载', async () => {
     mocks.listConnections.mockResolvedValue([

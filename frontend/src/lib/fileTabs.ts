@@ -90,6 +90,15 @@ export function activateTab(state: FileTabsState, path: string): FileTabsState {
   return { ...state, activePath: path };
 }
 
+/** 激活页签是否可联动文件树定位：普通文件返回其路径；diff/browser 等特殊页签返回 null。 */
+export function revealableFilePath(activePath: string | null): string | null {
+  if (!activePath) return null;
+  if (parseCommitDiffTabPath(activePath)) return null;
+  if (parseBrowserTabPath(activePath) !== null) return null;
+  if (parseDiffTabPath(activePath)) return null;
+  return activePath;
+}
+
 /** 单击：已打开则激活；否则替换现有预览页签（没有则新建）。 */
 export function openPreview(state: FileTabsState, path: string, kind: FileTabKind = 'file'): FileTabsState {
   const existing = state.tabs.find((t) => t.path === path);
