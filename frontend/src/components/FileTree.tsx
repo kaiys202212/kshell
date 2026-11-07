@@ -642,16 +642,21 @@ export default function FileTree({
   requestReloadRef.current = requestReload;
 
   // 监视生命周期随 wsPath + showAll：显示什么就监视什么（Go 侧按 showAll 收缩/恢复
-  // 排除目录监视），切换 showAll 时 stop→start 重启。disposed 防卸载竞态：
-  // stop 先于 pending 的 start 落地时，start resolve 后补一次 stop 防泄漏。
+  // 排除目录监视），切换 showAll 时 stop→start 重启。卸载竞态防泄漏：
+  // stop 先于 pending 的 start 落地时，start resolve 后补一次 stop——但须带序号
+  // 区分「本次 effect 的 start」：若已被 showAll 切换的新 effect 取代（seq 过期），
+  // 迟到的补偿 stop 会误杀新 effect 刚建的 watcher（StrictMode dev 双执行同理）。
+  const watchStartSeqRef = useRef(0);
   useEffect(() => {
     let disposed = false;
+    const seq = ++watchStartSeqRef.current;
     const snapshot = showAllRef.current;
     void startFileWatch(wsPath, snapshot)
       .then(() => {
-        if (disposed) stopFileWatch(wsPath); // 卸载竞态兜底
+        if (disposed && seq === watchStartSeqRef.current) stopFileWatch(wsPath); // 卸载竞态兜底
       })
       .catch((e: unknown) => {
+        if (disposed) return; // 卸载/被取代后的迟到失败不打扰（新 effect 自会重试并提示）
         useAppStore
           .getState()
           .notify(e instanceof Error ? backendError(e) : t('ui.files.watch_failed'), 'error');

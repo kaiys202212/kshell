@@ -595,7 +595,6 @@ describe('WorkspaceTab', () => {
     });
   });
 
-
   it('SSH 页签渲染连接列表，文件页签渲染文件树；切页签双面板常挂载不卸载', async () => {
     mocks.listConnections.mockResolvedValue([
       {

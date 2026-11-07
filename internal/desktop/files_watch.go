@@ -74,7 +74,9 @@ func (a *App) StartFileWatch(wsPath string, showAll bool) error {
 			fw.refs++
 			return nil
 		}
-		// showAll 变化：整体重建，避免运行中改 skip map 的竞态
+		// showAll 变化：整体重建，避免运行中改 skip map 的竞态。
+		// 假定每路径单消费者（当前仅 FileTree 一个实例）：重建后 refs 从 1 起，
+		// 若将来出现第二个消费方，须改为保留 refs 并同步重建。
 		a.closeFileWatcherLocked(cleaned, fw)
 	}
 
