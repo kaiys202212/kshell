@@ -31,7 +31,7 @@ func TestFileWatchEmitsDebounced(t *testing.T) {
 	}
 	env.app.mu.Unlock()
 
-	if err := env.app.StartFileWatch(env.root); err != nil {
+	if err := env.app.StartFileWatch(env.root, false); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { env.app.StopFileWatch(env.root) })
@@ -74,7 +74,7 @@ func TestFileWatchStopPreventsEmit(t *testing.T) {
 	}
 	env.app.mu.Unlock()
 
-	if err := env.app.StartFileWatch(env.root); err != nil {
+	if err := env.app.StartFileWatch(env.root, false); err != nil {
 		t.Fatal(err)
 	}
 	cleaned := filepath.Clean(env.root)
@@ -122,7 +122,7 @@ func TestFileWatchSkipsExcludedDir(t *testing.T) {
 	}
 	env.app.mu.Unlock()
 
-	if err := env.app.StartFileWatch(env.root); err != nil {
+	if err := env.app.StartFileWatch(env.root, false); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { env.app.StopFileWatch(env.root) })
@@ -181,7 +181,7 @@ func TestFileWatchDeepCreateThenWrite(t *testing.T) {
 	}
 	env.app.mu.Unlock()
 
-	if err := env.app.StartFileWatch(env.root); err != nil {
+	if err := env.app.StartFileWatch(env.root, false); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { env.app.StopFileWatch(env.root) })
@@ -236,7 +236,7 @@ func TestFileWatchErrorForcesNotify(t *testing.T) {
 	}
 	env.app.mu.Unlock()
 
-	if err := env.app.StartFileWatch(env.root); err != nil {
+	if err := env.app.StartFileWatch(env.root, false); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { env.app.StopFileWatch(env.root) })
@@ -308,7 +308,7 @@ func TestGitMetaWatchEmitsGitChanged(t *testing.T) {
 	}
 	env.app.mu.Unlock()
 
-	if err := env.app.StartFileWatch(env.root); err != nil {
+	if err := env.app.StartFileWatch(env.root, false); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { env.app.StopFileWatch(env.root) })
@@ -353,4 +353,140 @@ func TestGitMetaWatchEmitsGitChanged(t *testing.T) {
 		t.Fatalf("objects 噪声不应 Emit, git=%d file=%d", gitHits, fileHits)
 	}
 	mu.Unlock()
+}
+
+// TestWatchShowAllWatchesExcludedDir：showAll=true 时排除目录（node_modules 等）也纳入监视，
+// 显示什么就监视什么——修「显示全部默认勾选但排除目录永不刷新」的洞。
+func TestWatchShowAllWatchesExcludedDir(t *testing.T) {
+	env := newFilesEnv(t)
+	fileWatchDebounce = 30 * time.Millisecond
+	t.Cleanup(func() { fileWatchDebounce = 300 * time.Millisecond })
+
+	var mu sync.Mutex
+	var events []string
+	env.app.mu.Lock()
+	env.app.opts.Emit = func(name string, data ...any) {
+		if name != "files:changed" {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if len(data) > 0 {
+			if m, ok := data[0].(map[string]string); ok {
+				events = append(events, m["path"])
+			}
+		}
+	}
+	env.app.mu.Unlock()
+
+	if err := env.app.StartFileWatch(env.root, true); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { env.app.StopFileWatch(env.root) })
+
+	// 丢弃挂表时可能迟到的初始事件
+	time.Sleep(fileWatchDebounce + 100*time.Millisecond)
+	mu.Lock()
+	events = nil
+	mu.Unlock()
+
+	writeFile(t, env.root, filepath.Join("node_modules", "storm2.js"), "noise\n")
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(events)
+		mu.Unlock()
+		if n >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	want := filepath.Clean(env.root)
+	if len(events) < 1 || events[0] != want {
+		t.Fatalf("showAll=true 时排除目录内写入应 files:changed path=%s, got %v", want, events)
+	}
+}
+
+// TestWatchShowAllToggleRecreates：showAll 切换应重建 watcher，false→true 后排除目录生效。
+func TestWatchShowAllToggleRecreates(t *testing.T) {
+	env := newFilesEnv(t)
+	fileWatchDebounce = 30 * time.Millisecond
+	t.Cleanup(func() { fileWatchDebounce = 300 * time.Millisecond })
+
+	var mu sync.Mutex
+	var events []string
+	env.app.mu.Lock()
+	env.app.opts.Emit = func(name string, data ...any) {
+		if name != "files:changed" {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if len(data) > 0 {
+			if m, ok := data[0].(map[string]string); ok {
+				events = append(events, m["path"])
+			}
+		}
+	}
+	env.app.mu.Unlock()
+
+	if err := env.app.StartFileWatch(env.root, false); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { env.app.StopFileWatch(env.root) })
+
+	time.Sleep(fileWatchDebounce + 100*time.Millisecond)
+	mu.Lock()
+	events = nil
+	mu.Unlock()
+
+	writeFile(t, env.root, filepath.Join("node_modules", "before.js"), "a\n")
+	time.Sleep(fileWatchDebounce + 150*time.Millisecond)
+	mu.Lock()
+	if len(events) != 0 {
+		mu.Unlock()
+		t.Fatal("showAll=false 时排除目录内写入不应 files:changed")
+	}
+	mu.Unlock()
+
+	// 切换 showAll：同名 Start 但参数不同 → 重建 watcher
+	if err := env.app.StartFileWatch(env.root, true); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(fileWatchDebounce + 100*time.Millisecond)
+	mu.Lock()
+	events = nil
+	mu.Unlock()
+
+	writeFile(t, env.root, filepath.Join("node_modules", "after.js"), "b\n")
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(events)
+		mu.Unlock()
+		if n >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(events) < 1 {
+		t.Fatal("切换 showAll=true 后排除目录内写入应 files:changed")
+	}
+}
+
+// TestWatchSkipMapTwoStates：watchSkipMap 按 showAll 收缩/恢复。
+func TestWatchSkipMapTwoStates(t *testing.T) {
+	env := newFilesEnv(t)
+	off := env.app.watchSkipMap(false)
+	if !off["node_modules"] || !off[".git"] {
+		t.Fatalf("showAll=false 应跳过内置排除目录: %v", off)
+	}
+	on := env.app.watchSkipMap(true)
+	if len(on) != 1 || !on[".git"] {
+		t.Fatalf("showAll=true 只应跳过 .git: %v", on)
+	}
 }

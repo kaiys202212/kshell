@@ -19,8 +19,8 @@ var fileWatchDebounce = 300 * time.Millisecond
 // 避免 git add 触发整树重建，也避免文件风暴拖住色标刷新。
 var gitWatchDebounce = 300 * time.Millisecond
 
-// watchSkipNames 默认不递归监视的目录名（与 config 默认 Exclude / ignore 内置对齐）。
-// 监视侧永远跳过这些目录，不论 showAll——降事件量、防 Windows 溢出。
+// watchSkipNames showAll=false 时默认不递归监视的目录名（与 config 默认 Exclude / ignore 内置对齐）。
+// showAll=true 时整体收缩为只跳过 .git：树里显示什么就监视什么，否则排除目录永远不刷新。
 var watchSkipNames = map[string]bool{
 	".git": true, "node_modules": true, "vendor": true, "dist": true, "build": true,
 }
@@ -38,14 +38,16 @@ type fileWatcher struct {
 	gitTimer  *time.Timer
 	gitGen    uint64
 
-	root   string
-	skip   map[string]bool // 目录 basename → 跳过递归监视
+	root    string
+	showAll bool            // 监视范围跟随「显示全部」：true 时排除目录也纳入监视
+	skip    map[string]bool // 目录 basename → 跳过递归监视
 }
 
 // StartFileWatch 为工作区启动递归文件监视（引用计数 +1）。
-// 同一路径多次 Start 共享一个 watcher；防抖后作废树缓存并 Emit files:changed。
+// 同一路径多次 Start 共享一个 watcher；showAll 变化时重建（显示什么就监视什么，
+// 修「显示全部默认勾选但排除目录永不刷新」的洞）。防抖后作废树缓存并 Emit files:changed。
 // .git 仅浅监视元数据路径，变更走 git:changed（不重建文件树）。
-func (a *App) StartFileWatch(wsPath string) error {
+func (a *App) StartFileWatch(wsPath string, showAll bool) error {
 	kind, local, _, err := a.parseWSRef(wsPath)
 	if err != nil {
 		return err
@@ -68,29 +70,38 @@ func (a *App) StartFileWatch(wsPath string) error {
 		a.watches = make(map[string]*fileWatcher)
 	}
 	if fw, ok := a.watches[cleaned]; ok {
-		fw.refs++
-		return nil
+		if fw.showAll == showAll {
+			fw.refs++
+			return nil
+		}
+		// showAll 变化：整体重建，避免运行中改 skip map 的竞态
+		a.closeFileWatcherLocked(cleaned, fw)
 	}
 
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
 	}
-	skip := a.watchSkipMap()
+	skip := a.watchSkipMap(showAll)
 	if err := addRecursive(w, cleaned, skip); err != nil {
 		_ = w.Close()
 		return err
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	fw := &fileWatcher{refs: 1, w: w, cancel: cancel, root: cleaned, skip: skip}
+	fw := &fileWatcher{refs: 1, w: w, cancel: cancel, root: cleaned, showAll: showAll, skip: skip}
 	a.watches[cleaned] = fw
 	go a.runFileWatch(ctx, fw)
 	return nil
 }
 
-// watchSkipMap 合并内置跳过名与用户 config.Exclude（仅目录 basename）。
-func (a *App) watchSkipMap() map[string]bool {
+// watchSkipMap 按 showAll 返回跳过名单：
+// showAll=false 跳过内置排除目录 + 用户 config.Exclude（减事件量）；
+// showAll=true 只跳过 .git——树里显示什么就监视什么（.git 元数据仍走 git:changed 分流）。
+func (a *App) watchSkipMap(showAll bool) map[string]bool {
+	if showAll {
+		return map[string]bool{".git": true}
+	}
 	out := make(map[string]bool, len(watchSkipNames)+4)
 	for k, v := range watchSkipNames {
 		out[k] = v
