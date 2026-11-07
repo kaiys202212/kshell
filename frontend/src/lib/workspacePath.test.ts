@@ -29,7 +29,7 @@ describe('sameWorkspacePath', () => {
 
 describe('relativeWorkspacePath', () => {
   it('反斜杠/前斜杠与大小写差异都能算出 / 分隔相对路径', () => {
-    expect(relativeWorkspacePath('D:\proj', 'D:\proj\src\a.ts')).toBe('src/a.ts');
+    expect(relativeWorkspacePath('D:\\proj', 'D:\\proj\\src\\a.ts')).toBe('src/a.ts');
     expect(relativeWorkspacePath('d:/proj', 'D:/PROJ/src/a.ts')).toBe('src/a.ts');
     expect(relativeWorkspacePath('D:/proj', 'D:/proj/dist')).toBe('dist');
   });
