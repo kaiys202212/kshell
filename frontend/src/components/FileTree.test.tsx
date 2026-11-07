@@ -4,11 +4,12 @@
 // api 层整体打桩（vi.mock），与 SessionList.test 同一套模式。
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import FileTree from './FileTree';
 import type { FileNode } from '../lib/api';
 import { DRAG_MIME, DRAG_ROOT_MIME, REL_MIME } from '../lib/dragPath';
 import { useAppStore } from '../state/store';
+import { revealInTree } from '../lib/treeReveal';
 import { tt } from '../test/i18n';
 
 // UI 自有的带参文案：先取 en 模板再替换占位符
@@ -1156,5 +1157,42 @@ describe('FileTree 树内拖拽移动', () => {
     await screen.findByText('src');
     expect(screen.getAllByLabelText(tt('ui.files.uncommitted_change')).length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText('M')).not.toBeInTheDocument();
+  });
+});
+
+describe('FileTree reveal', () => {
+  // jsdom 未实现 scrollIntoView：定位滚动断言只需不抛错
+  beforeAll(() => {
+    HTMLElement.prototype.scrollIntoView = () => {};
+  });
+
+  it('按绝对路径逐层展开并选中目标行（data-tree-rel 可查）', async () => {
+    mocks.listFiles.mockImplementation((_ws: string, rel: string) => {
+      if (rel === '' || rel === 'src') return Promise.resolve(rel === '' ? root : srcChildren);
+      return Promise.resolve([]);
+    });
+    render(<FileTree wsPath={'D:/proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    expect(revealInTree('D:/proj', 'D:/proj/src/main.ts')).toBe(true);
+    await waitFor(() => {
+      // 逐层加载：根层 + src
+      expect(mocks.listFiles).toHaveBeenCalledWith('D:/proj', 'src', true);
+      // 目标行存在且被选中
+      const row = document.querySelector('[data-tree-rel="src/main.ts"]');
+      expect(row).not.toBeNull();
+      expect(row).toHaveAttribute('aria-selected', 'true');
+    });
+  });
+
+  it('工作区外路径静默放弃定位（不发起逐层请求）', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'D:/proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+    expect(revealInTree('D:/proj', 'D:/other/x.ts')).toBe(true); // 已登记即受理
+    await waitFor(() => {
+      // revealPath 内按相对路径判定区外：不发起逐层请求，选中集不变
+      expect(mocks.listFiles).not.toHaveBeenCalledWith('D:/proj', 'other', true);
+    });
   });
 });

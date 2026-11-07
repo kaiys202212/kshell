@@ -32,8 +32,9 @@ import { cn } from '../lib/cn';
 import { DRAG_MIME, DRAG_ROOT_MIME, REL_MIME } from '../lib/dragPath';
 import { backendError } from '../lib/errors';
 import { isNestedGitParent, refreshGitStatus, resolveGitCode, subtreeDirty } from '../lib/git';
-import { sameWorkspacePath } from '../lib/workspacePath';
+import { sameWorkspacePath, relativeWorkspacePath } from '../lib/workspacePath';
 import { collectVisibleRows } from '../lib/treeRows';
+import { registerTreeRevealer, unregisterTreeRevealer } from '../lib/treeReveal';
 import { useAppStore } from '../state/store';
 import ContextMenu, { type MenuItem } from './ContextMenu';
 import { ChevronIcon, FileIcon, FolderIcon } from './treeIcons';
@@ -353,6 +354,7 @@ function TreeRow({
   return (
     <li
       role="treeitem"
+      data-tree-rel={item.relPath}
       aria-selected={isVirtualRoot ? undefined : selected}
       aria-expanded={node.IsDir ? item.expanded : undefined}
     >
@@ -724,6 +726,61 @@ export default function FileTree({
     clearSelection();
     requestReloadRef.current();
   }, [showAll, wsPath]);
+
+  // 定位（reveal）：文件页签联动 / 聊天文件夹附件点击，按绝对路径逐层展开到目标行，
+  // 选中并滚进可视区。工作区外或目标不存在时静默放弃。
+  const scrollRootRef = useRef<HTMLDivElement | null>(null);
+  const pendingScrollRef = useRef<string | null>(null);
+  const revealPath = async (absPath: string): Promise<void> => {
+    const rel = relativeWorkspacePath(wsPath, absPath);
+    if (rel === null) return;
+    setQuery('');
+    setHits(null);
+    const segs = rel ? rel.split('/') : [];
+    let parent = '';
+    for (const seg of segs) {
+      const r = parent ? `${parent}/${seg}` : seg;
+      try {
+        const nodes = await listFiles(wsPath, r, showAllRef.current);
+        setItems(
+          (cur) =>
+            cur &&
+            updateItems(cur, r, (it) => ({
+              ...it,
+              children: toItems(nodes, r),
+              expanded: true,
+              error: undefined,
+            })),
+        );
+      } catch {
+        return; // 任一层不存在/被过滤：放弃定位
+      }
+      parent = r;
+    }
+    if (rel) {
+      setAnchor(rel);
+      setSelected(new Set([rel]));
+    }
+    pendingScrollRef.current = rel;
+  };
+  const revealPathRef = useRef(revealPath);
+  revealPathRef.current = revealPath;
+
+  // 注册表：WorkspaceTab（页签联动）与 ChatView（文件夹附件）经 revealInTree 投递
+  useEffect(() => {
+    registerTreeRevealer(wsPath, { reveal: (abs) => void revealPathRef.current(abs) });
+    return () => unregisterTreeRevealer(wsPath);
+  }, [wsPath]);
+
+  // 定位滚动：等展开状态提交后把目标行滚进可视区（hidden 面板下为 no-op，无害）
+  useEffect(() => {
+    const rel = pendingScrollRef.current;
+    if (rel === null) return;
+    pendingScrollRef.current = null;
+    scrollRootRef.current
+      ?.querySelector(`[data-tree-rel="${CSS.escape(rel)}"]`)
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [items]);
 
   // 搜索防抖：停顿 200ms 后走 Go 递归搜索（未加载的深层目录也能命中）。
   // 换查询即丢弃旧结果，防抖期间显示本地过滤视图，避免「旧结果 + 搜索中」并存。
@@ -1144,7 +1201,7 @@ export default function FileTree({
       {/* 滚动隔离：搜索框行固定，搜索结果 / 本地过滤 / 正常树三分支统一在内部滚动容器中。
           容器可聚焦（tabIndex）：持焦时按 Delete 删除当前选中集（输入控件内不拦截）。
           右键菜单与删除确认弹窗渲染在容器外，不受滚动影响 */}
-      <div className="min-h-0 flex-1 overflow-y-auto" tabIndex={0} onKeyDown={handleTreeKeyDown}>
+      <div ref={scrollRootRef} className="min-h-0 flex-1 overflow-y-auto" tabIndex={0} onKeyDown={handleTreeKeyDown}>
         {showResults ? (
           <>
             <p className="mb-1 px-1 text-xs text-muted-foreground" aria-live="polite">

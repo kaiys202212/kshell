@@ -31,13 +31,13 @@ describe('relativeWorkspacePath', () => {
   it('反斜杠/前斜杠与大小写差异都能算出 / 分隔相对路径', () => {
     expect(relativeWorkspacePath('D:\proj', 'D:\proj\src\a.ts')).toBe('src/a.ts');
     expect(relativeWorkspacePath('d:/proj', 'D:/PROJ/src/a.ts')).toBe('src/a.ts');
-    expect(relativeWorkspacePath('D:\proj', 'D:/proj/dist')).toBe('dist');
+    expect(relativeWorkspacePath('D:/proj', 'D:/proj/dist')).toBe('dist');
   });
 
   it('根本身返回空串，区外返回 null', () => {
-    expect(relativeWorkspacePath('D:\proj', 'D:\proj')).toBe('');
-    expect(relativeWorkspacePath('D:\proj', 'D:\proj\')).toBe('');
-    expect(relativeWorkspacePath('D:\proj', 'D:\other\x.ts')).toBeNull();
-    expect(relativeWorkspacePath('D:\proj', 'D:\project\x.ts')).toBeNull();
+    expect(relativeWorkspacePath('D:/proj', 'D:/proj')).toBe('');
+    expect(relativeWorkspacePath('D:/proj', 'D:/proj/')).toBe('');
+    expect(relativeWorkspacePath('D:/proj', 'D:/other/x.ts')).toBeNull();
+    expect(relativeWorkspacePath('D:/proj', 'D:/project/x.ts')).toBeNull();
   });
 });
