@@ -1,7 +1,6 @@
 package desktop
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,17 +55,14 @@ func relUnderRoot(root, p string) (string, bool) {
 	return rest, true
 }
 
-// OpenLocalPath 用系统默认程序打开任意本地文件：聊天附件引用的工作区外路径用
-//（工作区内文件走 OpenInDefaultApp，带 resolveWorkspaceFile 校验）。
+// OpenLocalPath 用系统默认程序打开任意本地文件/目录：聊天附件引用的工作区外路径用
+//（工作区内文件走 OpenInDefaultApp，带 resolveWorkspaceFile 校验）。目录交系统
+// 默认程序即打开文件管理器（聊天文件夹附件的工作区外兜底）。目录本身仍需存在。
 // 不限制路径范围：agent 本就能在工作区内写任意文件，信任级别一致，加白名单
 // 只挡住合法用途（如打开 agent 生成的报告），挡不住已获信任的 agent。
 func (a *App) OpenLocalPath(absPath string) error {
-	fi, err := os.Stat(absPath)
-	if err != nil {
+	if _, err := os.Stat(absPath); err != nil {
 		return err
-	}
-	if fi.IsDir() {
-		return fmt.Errorf("err.files.dir_not_openable")
 	}
 	return openLocalFile(absPath)
 }

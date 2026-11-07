@@ -2,7 +2,7 @@ package desktop
 
 // 聊天附件缓存读取与本地打开的桌面绑定测试：
 // ReadChatAttachmentData 只允许 ChatAttachmentsDir/<chatID>/ 下的路径
-//（防任意读文件原语），OpenLocalPath 不限路径但拒绝目录。
+//（防任意读文件原语），OpenLocalPath 不限路径（文件/目录均交系统默认程序）。
 
 import (
 	"bytes"
@@ -125,8 +125,13 @@ func TestOpenLocalPath(t *testing.T) {
 	if called != file {
 		t.Fatalf("openLocalFile 收到 %q, want %q", called, file)
 	}
-	if err := app.OpenLocalPath(dir); err == nil || err.Error() != "err.files.dir_not_openable" {
-		t.Fatalf("目录应报 dir_not_openable, got %v", err)
+	// 目录不再拒绝：聊天文件夹附件工作区外兜底走系统文件管理器（ShellExecute 对目录=打开该目录）
+	called = ""
+	if err := app.OpenLocalPath(dir); err != nil {
+		t.Fatalf("目录应可经 OpenLocalPath 打开, got %v", err)
+	}
+	if called != dir {
+		t.Fatalf("openLocalFile 收到 %q, want %q", called, dir)
 	}
 }
 
