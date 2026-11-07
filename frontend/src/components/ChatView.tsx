@@ -47,6 +47,8 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 interface Props {
   chat: ChatInfo;
   active: boolean;
+  // 工作区内文件夹附件点击回调：WorkspaceTab 层先切右栏「文件」页签再定位到目录
+  onRevealInTree?: (absPath: string) => void;
 }
 
 // 模块级稳定空数组：无消息时避免每次渲染返回新引用，防止自动滚动 effect 空转
@@ -132,7 +134,7 @@ function attachmentLabel(att: ChatAttachmentMeta, imageLabel: string): string {
   return att.MimeType ?? '';
 }
 
-export default function ChatView({ chat, active }: Props) {
+export default function ChatView({ chat, active, onRevealInTree }: Props) {
   const { t } = useTranslation();
   const id = chat.ID;
   const items = useAppStore((s) => s.chatItems[id]) ?? EMPTY_ITEMS;
@@ -539,6 +541,12 @@ export default function ChatView({ chat, active }: Props) {
         return;
       case 'default':
         openInDefaultApp(action.wsPath, action.rel).catch((e) => {
+          // 目录没有默认打开应用：工作区内文件夹改走文件树定位（WorkspaceTab 先切右栏再 reveal）
+          const raw = e instanceof Error ? e.message : String(e);
+          if (raw.includes('err.files.dir_not_openable')) {
+            onRevealInTree?.(action.abs);
+            return;
+          }
           useAppStore.getState().notify(t('ui.chat.attachment_open_failed', { err: backendError(e) }), 'error');
         });
         return;

@@ -643,6 +643,21 @@ describe('ChatView', () => {
     });
   });
 
+  it('点击文件夹附件（dir_not_openable）改走 onRevealInTree 定位且不报错', async () => {
+    api.openInDefaultApp.mockRejectedValueOnce(new Error('err.files.dir_not_openable'));
+    const onRevealInTree = vi.fn();
+    useAppStore.setState({
+      chatItems: {
+        c1: [{ key: 'u1', type: 'user', text: '看下这个目录', seq: 1, attachments: [{ Name: '模块', Kind: 'file', URI: 'file:///D:/p/%E6%A8%A1%E5%9D%97' }] }],
+      },
+    });
+    render(<ChatView chat={CHAT} active onRevealInTree={onRevealInTree} />);
+
+    fireEvent.click(screen.getByText('模块'));
+    await waitFor(() => expect(onRevealInTree).toHaveBeenCalledWith('D:\\p\\模块'));
+    expect(useAppStore.getState().toasts.some((t) => t.tone === 'error')).toBe(false);
+  });
+
   it('助手 Markdown 的 http 链接走系统打开', () => {
     useAppStore.setState({
       chatItems: { c1: [{ key: 'm2', type: 'assistant', text: '[x](https://ex.com)', seq: 2 }] },
