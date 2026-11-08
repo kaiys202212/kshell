@@ -39,11 +39,11 @@ func setupDesktopLog() {
 		log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 		log.SetOutput(f)
 		log.Printf("desktop.log 启动 pid=%d", os.Getpid())
-	// ACP 协议层的日志钩子（agent 退出码 / stderr 尾部）同走 desktop.log。
-	acp.Logf = log.Printf
-	// chat 层诊断日志（turn 起止 / 在途工具 / 静默回退）同走 desktop.log。
-	chat.Logf = log.Printf
-	// hubtools 层观测日志（工具化路由进出 / 降级原因 / 工具调用）同走 desktop.log。
-	hubtools.Logf = log.Printf
+		// ACP 协议层的日志钩子（agent 退出码 / stderr 尾部）同走 desktop.log。
+		acp.Logf = log.Printf
+		// chat 层诊断日志（turn 起止 / 在途工具 / 静默回退）同走 desktop.log。
+		chat.Logf = log.Printf
+		// hubtools 层观测日志（工具化路由进出 / 降级原因 / 工具调用）同走 desktop.log。
+		hubtools.Logf = log.Printf
 	})
 }
