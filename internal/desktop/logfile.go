@@ -11,6 +11,7 @@ import (
 
 	"github.com/yangk/kshell/internal/acp"
 	"github.com/yangk/kshell/internal/chat"
+	"github.com/yangk/kshell/internal/hubtools"
 )
 
 var desktopLogOnce sync.Once
@@ -42,5 +43,7 @@ func setupDesktopLog() {
 		acp.Logf = log.Printf
 		// chat 层诊断日志（turn 起止 / 在途工具 / 静默回退）同走 desktop.log。
 		chat.Logf = log.Printf
+		// hubtools 层观测日志（工具化路由进出 / 降级原因 / 工具调用）同走 desktop.log。
+		hubtools.Logf = log.Printf
 	})
 }

@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -52,6 +53,16 @@ func newBridgeTestApp(t *testing.T) (*App, *hub.Store, *notifyRecorder) {
 	app.result = res
 	app.mu.Unlock()
 	return app, store, rec
+}
+
+// setHubModel 把模型三元组以平台式配置写入 App：对齐 normalize 后的真实形态
+// （端点与密钥在平台节点，模型在顶层 ActiveModel），替代已失效的顶层直赋值。
+func setHubModel(a *App, baseURL, apiKey, model string) {
+	a.opts.Config.Model.Platforms = []config.ModelPlatform{
+		{ID: "p-test", OpenAIBaseURL: baseURL, APIKey: apiKey},
+	}
+	a.opts.Config.Model.DefaultPlatform = "p-test"
+	a.opts.Config.Model.ActiveModel = model
 }
 
 // hubLLMMock 是 OpenAI 兼容端点桩：按序回放响应体（choices[0].message.content）。
@@ -215,9 +226,7 @@ func TestHandlePromptForceAuto(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	a, store, rec := newBridgeTestApp(t)
-	a.opts.Config.Model.OpenAIBaseURL = srv.URL
-	a.opts.Config.Model.APIKey = "k-test"
-	a.opts.Config.Model.ActiveModel = "test-model"
+	setHubModel(a, srv.URL, "k-test", "test-model")
 	a.opts.Config.AgentHub.RouteMode = config.RouteModeForceAuto
 	rs := a.getRequirementStore()
 	if _, err := rs.Add(`D:\ws-a`, "修复登录", "high", nil); err != nil {
@@ -297,9 +306,7 @@ func TestHandlePromptConfirm(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	a, store, rec := newBridgeTestApp(t)
-	a.opts.Config.Model.OpenAIBaseURL = srv.URL
-	a.opts.Config.Model.APIKey = "k-test"
-	a.opts.Config.Model.ActiveModel = "test-model"
+	setHubModel(a, srv.URL, "k-test", "test-model")
 	a.opts.Config.AgentHub.RouteMode = config.RouteModeForceAuto
 
 	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
@@ -383,9 +390,7 @@ func TestHandlePromptBusyDegrades(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	a, store, rec := newBridgeTestApp(t)
-	a.opts.Config.Model.OpenAIBaseURL = srv.URL
-	a.opts.Config.Model.APIKey = "k-test"
-	a.opts.Config.Model.ActiveModel = "test-model"
+	setHubModel(a, srv.URL, "k-test", "test-model")
 	a.opts.Config.AgentHub.RouteMode = config.RouteModeForceAuto
 	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
@@ -435,9 +440,7 @@ func TestHandlePromptFailureClearsPending(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	a, store, rec := newBridgeTestApp(t)
-	a.opts.Config.Model.OpenAIBaseURL = srv.URL
-	a.opts.Config.Model.APIKey = "k-test"
-	a.opts.Config.Model.ActiveModel = "test-model"
+	setHubModel(a, srv.URL, "k-test", "test-model")
 	a.opts.Config.AgentHub.RouteMode = config.RouteModeForceAuto
 	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
@@ -464,9 +467,7 @@ func TestHandlePromptFailureClearsPending(t *testing.T) {
 // RouteMode=agent 即时关闭。
 func TestHubToolsReconfigFollowsConfig(t *testing.T) {
 	a, _, _ := newBridgeTestApp(t)
-	a.opts.Config.Model.OpenAIBaseURL = "http://x"
-	a.opts.Config.Model.APIKey = "k"
-	a.opts.Config.Model.ActiveModel = "m1"
+	setHubModel(a, "http://x", "k", "m1")
 	h1 := a.hubTools()
 	if h1 == nil || h1.cfg.Model != "m1" {
 		t.Fatalf("初始路由器不符: %+v", h1)
@@ -494,9 +495,7 @@ func TestHandlePromptEmptyTextDegrades(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	a, store, rec := newBridgeTestApp(t)
-	a.opts.Config.Model.OpenAIBaseURL = srv.URL
-	a.opts.Config.Model.APIKey = "k-test"
-	a.opts.Config.Model.ActiveModel = "test-model"
+	setHubModel(a, srv.URL, "k-test", "test-model")
 	a.opts.Config.AgentHub.RouteMode = config.RouteModeForceAuto
 	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
@@ -522,9 +521,7 @@ func TestHandlePromptAutoRouteAgent(t *testing.T) {
 
 	newApp := func(mode string) (*App, *hub.Store) {
 		a, store, rec := newBridgeTestApp(t)
-		a.opts.Config.Model.OpenAIBaseURL = srv.URL
-		a.opts.Config.Model.APIKey = "k-test"
-		a.opts.Config.Model.ActiveModel = "test-model"
+		setHubModel(a, srv.URL, "k-test", "test-model")
 		a.opts.Config.AgentHub.RouteMode = mode
 		m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
 		t.Cleanup(m.CloseAll)
@@ -618,9 +615,7 @@ func TestHandlePromptDispatchTask(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	a, store, rec := newBridgeTestApp(t)
-	a.opts.Config.Model.OpenAIBaseURL = srv.URL
-	a.opts.Config.Model.APIKey = "k-test"
-	a.opts.Config.Model.ActiveModel = "test-model"
+	setHubModel(a, srv.URL, "k-test", "test-model")
 	a.opts.Config.AgentHub.RouteMode = config.RouteModeAuto
 	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
@@ -671,6 +666,100 @@ func TestHandlePromptDispatchTask(t *testing.T) {
 	}
 	if orig.ID == 0 || ans.ID == 0 {
 		t.Fatalf("原始输入/最终回复未落盘: %+v", store.List())
+	}
+}
+
+// captureHubLogs 注入 hubtools.Logf 收集日志，返回读取快照的函数；测试结束自动还原。
+func captureHubLogs(t *testing.T) func() []string {
+	t.Helper()
+	var mu sync.Mutex
+	var logs []string
+	hubtools.Logf = func(f string, a ...any) {
+		mu.Lock()
+		logs = append(logs, fmt.Sprintf(f, a...))
+		mu.Unlock()
+	}
+	t.Cleanup(func() { hubtools.Logf = nil })
+	return func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), logs...)
+	}
+}
+
+// TestHubToolsObservability 验证工具化链路观测日志：未就绪原因、降级原因、
+// 工具调用均经 hubtools.Logf 输出（desktop 装配后落 desktop.log）——此前
+// 全链路零日志掩盖了平台化失配回归。
+func TestHubToolsObservability(t *testing.T) {
+	read := captureHubLogs(t)
+
+	// 1) 未就绪：空配置 SendChatPrompt，应有原因日志
+	a, _, rec := newBridgeTestApp(t)
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SendChatPrompt(info.ID, "看看需求"); err != nil {
+		t.Fatal(err)
+	}
+	if joined := strings.Join(read(), "\n"); !strings.Contains(joined, "未就绪") {
+		t.Fatalf("未就绪路径应有日志，得到: %v", read())
+	}
+
+	// 2) route=agent 降级：原因可见
+	round := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		round++
+		if round == 1 {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"route\":\"agent\"}"}}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"好的。"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	setHubModel(a, srv.URL, "k-test", "test-model")
+	a.opts.Config.AgentHub.RouteMode = config.RouteModeAuto
+	h := a.hubTools()
+	handled, err := h.HandlePrompt("s1", "帮我写个冒泡排序")
+	if handled || err != nil {
+		t.Fatalf("route=agent 应降级，得到 %v %v", handled, err)
+	}
+	joined := strings.Join(read(), "\n")
+	if !strings.Contains(joined, "route=agent") {
+		t.Fatalf("route=agent 降级应有原因日志，得到: %s", joined)
+	}
+
+	// 3) 工具调用：调用名可见
+	round = 0
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		round++
+		if round == 1 {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"list_requirements","arguments":"{}"}}]}}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"共 1 条需求。"}}]}`))
+	}))
+	t.Cleanup(srv2.Close)
+	a2, _, rec2 := newBridgeTestApp(t)
+	setHubModel(a2, srv2.URL, "k-test", "test-model")
+	m2 := newChatManagerWith(rec2.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
+	t.Cleanup(m2.CloseAll)
+	a2.opts.Chats = m2
+	a2.opts.Config.AgentHub.RouteMode = config.RouteModeAuto
+	h2 := a2.hubTools()
+	if handled, err := h2.HandlePrompt("s1", "列出需求"); !handled || err != nil {
+		t.Fatalf("工具消费应 handled，得到 %v %v", handled, err)
+	}
+	joined = strings.Join(read(), "\n")
+	if !strings.Contains(joined, "list_requirements") {
+		t.Fatalf("工具调用应有日志，得到: %s", joined)
 	}
 }
 
