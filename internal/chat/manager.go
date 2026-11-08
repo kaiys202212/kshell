@@ -1099,7 +1099,13 @@ func (s *session) closeStaleTurnLocked() {
 	if !s.turnOpen {
 		return
 	}
-	if len(s.history) > 0 && s.history[len(s.history)-1].Type == "turn_done" {
+	if len(s.history) == 0 {
+		// 空会话也判 open（load 未重放任何分片）：没有正文可隔离，哨兵只会
+		// 成为无上文的孤立行，直接清位。
+		s.turnOpen = false
+		return
+	}
+	if s.history[len(s.history)-1].Type == "turn_done" {
 		s.turnOpen = false // 已有真实收尾，位残缺来自继承链，就地修正
 		return
 	}

@@ -1056,7 +1056,17 @@ func (a *App) ChatHistory(id string) []chat.Update {
 	if h == nil {
 		return []chat.Update{}
 	}
-	return h
+	// 过滤回合边界哨兵（manager 的 replay_boundary turn_done）：lastAssistantText
+	// 以 turn_done 划界需要它，但它无正文；漏到前端时间线会渲染成
+	// 「replay_boundary」假停止行（表外 stopReason 原样显示）。
+	out := make([]chat.Update, 0, len(h))
+	for _, u := range h {
+		if u.Type == "turn_done" && u.StopReason == "replay_boundary" {
+			continue
+		}
+		out = append(out, u)
+	}
+	return out
 }
 
 // nextChatSeq 给工作区新建聊天生成唯一 key（每次新建都要新进程）。
