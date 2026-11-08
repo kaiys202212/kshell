@@ -427,6 +427,49 @@ func TestManagerLoadReplay(t *testing.T) {
 	}
 }
 
+// load 重放的历史分片不带 turn_done：投递新输入前必须先在时间线补一个回合
+// 边界哨兵，否则 done 摘要（lastAssistantText）会把重放的旧轮正文拼进本轮
+// Summary。哨兵只进 history 不出站推送（避免 desktop 侧触发空气泡通知）。
+func TestManagerLoadReplayGetsTurnBoundaryBeforeNewPrompt(t *testing.T) {
+	m, b, c := newTestManager(t)
+	info, err := m.Open("session:s1", Info{Kind: KindSession, SessionID: "s1", Workspace: "/w"}, Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// agent 重放旧轮（无 turn_done）
+	b.last.SessionUpdate("s1", json.RawMessage(`{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"old"}}`))
+	b.last.SessionUpdate("s1", json.RawMessage(`{"sessionUpdate":"agent_message_chunk","messageId":"a1","content":{"type":"text","text":"旧回复"}}`))
+	if err := m.Prompt(info.ID, "新输入"); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	h := m.History(info.ID)
+	var replayIdx, boundaryIdx, newUserID = -1, -1, -1
+	for i, u := range h {
+		switch {
+		case u.Type == "assistant" && u.Text == "旧回复":
+			if replayIdx < 0 {
+				replayIdx = i
+			}
+		case u.Type == "turn_done":
+			boundaryIdx = i
+		case u.Type == "user" && u.Text == "新输入":
+			newUserID = i
+		}
+	}
+	if replayIdx < 0 || newUserID < 0 {
+		t.Fatalf("前置分片缺失: history=%+v", h)
+	}
+	if boundaryIdx < 0 || boundaryIdx <= replayIdx || boundaryIdx >= newUserID {
+		t.Fatalf("重放旧轮与新输入之间应有 turn_done 边界: replay=%d boundary=%d newUser=%d", replayIdx, boundaryIdx, newUserID)
+	}
+	// 哨兵不得出站推送（否则 desktop 的 turn_done 处理会多触发一条 done 通知）
+	for _, u := range c.updates {
+		if u.Type == "turn_done" && u.StopReason == "replay_boundary" {
+			t.Fatalf("哨兵 turn_done 不应出站推送给前端: %+v", u)
+		}
+	}
+}
+
 func TestManagerPermissionRoundTrip(t *testing.T) {
 	m, b, c := newTestManager(t)
 	c.permCh = make(chan string, 1)

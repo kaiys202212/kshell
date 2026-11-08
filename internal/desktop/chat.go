@@ -142,7 +142,9 @@ func stopFallback(stop string) string {
 // 会分属更早的 MessageID 组，导致 Summary 从正文中间开始（真机证据：live.json
 // 里 done 消息开头从句子中间开始）。也不能拿 user 当边界——本地投递与 agent
 // 回显各有一条 user 分片，以最后一条 user 划界会把本轮正文截丢。thought 仍
-// 不并入（思考过程非回复正文）。返回空串表示尚无回复；全文不截断，供
+// 不并入（思考过程非回复正文）。已知边界：maxHistory 截断把上一轮 turn_done
+// 挤出窗口时，start 扫到窗口头会把窗口内更早轮次一并拼入——截断本身即丢
+// 上下文降级场景，接受。返回空串表示尚无回复；全文不截断，供
 // AgentHub / 微信镜像完整展示。
 func lastAssistantText(h []chat.Update) string {
 	n := len(h)

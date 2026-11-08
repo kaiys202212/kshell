@@ -124,9 +124,13 @@ func TestChatTurnDoneEmitsAgentNotify(t *testing.T) {
 }
 
 // done 通知应带上最后一轮 assistant 回复正文，用户才能直接看到 agent 说了什么。
+// 时序按真实 ACP 流：投递 prompt（gate 阻塞住 turn 收尾）→ agent 回显用户分片
+// → 推正文分片 → 放开 gate 收尾。agent 只在收到 prompt 后才推流，回显分片
+// 恒在投递 user 之后，lastAssistantText 以 turn_done 为回合边界即可取全。
 func TestEmitChatNotifyCarriesAssistantReply(t *testing.T) {
 	rec := &notifyRecorder{}
-	b := &fakeChatCaptureBackend{}
+	conn := &fakeChatConn{waitCh: make(chan struct{}), promptGate: make(chan struct{})}
+	b := &fakeChatCaptureBackend{conn: conn}
 	m := newChatManagerWith(rec.emit, b, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 
@@ -136,17 +140,17 @@ func TestEmitChatNotifyCarriesAssistantReply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	// 经捕获的 handler 推分片进时间线，模拟 agent 回显用户消息 + 回复：
-	// 真实 ACP 流（含 resume 回放）里本轮 user 分片先于 assistant 正文，
-	// lastAssistantText 以上一条 user 为本轮起点。
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	// agent 回显用户消息 + 推正文分片（在投递 user 之后、turn 收尾之前）
 	rawUser := json.RawMessage(`{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"hi"}}`)
 	b.lastHandler().SessionUpdate("s1", rawUser)
 	raw := json.RawMessage(`{"sessionUpdate":"agent_message_chunk","messageId":"a1","content":{"type":"text","text":"回复内容占位"}}`)
 	b.lastHandler().SessionUpdate("s1", raw)
 
-	if err := m.Prompt(info.ID, "hi"); err != nil {
-		t.Fatal(err)
-	}
+	// 放开 gate：Prompt 返回收尾 turn_done → done 通知
+	close(conn.promptGate)
 	p := waitForNotify(t, rec, "done")
 	if !strings.Contains(p.Summary, "回复内容占位") {
 		t.Fatalf("done notify 未带 assistant 正文: %q", p.Summary)
