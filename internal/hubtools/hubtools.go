@@ -13,6 +13,20 @@ import (
 	"github.com/yangk/kshell/internal/config"
 )
 
+// Logf 是宿主注入的日志钩子（desktop 侧重定向到 ~/.kshell/logs/desktop.log），
+// 用于观测工具化链路是否运行、降级原因与工具调用——此前全链路零日志，
+// 掩盖了配置失配类静默回归。nil（默认，含测试）时静默。
+var Logf func(format string, args ...any)
+
+func logf(format string, args ...any) {
+	if Logf != nil {
+		Logf(format, args...)
+	}
+}
+
+// Log 是 logf 的导出入口：desktop 桥层打点与包内同口径，Logf 未注入时静默。
+func Log(format string, args ...any) { logf(format, args...) }
+
 // Config 是自主模型链路的视图配置。hubtools 只关心这三个字段，
 // 不直接持有整个 config.ModelConfig，便于测试与后续替换来源。
 type Config struct {
@@ -29,15 +43,19 @@ func Ready(c Config) bool {
 		strings.TrimSpace(c.Model) != ""
 }
 
-// FromModelConfig 把 internal/config 的 ModelConfig 映射为视图 Config，
-// 取 OpenAI 兼容三元组并去空白。ok 表示映射后链路就绪；
-// 即便不就绪也返回已映射的字段，方便上层展示缺了什么。
+// FromModelConfig 把 internal/config 的 ModelConfig 映射为视图 Config：
+// 端点与密钥取默认平台（ActivePlatform：DefaultPlatform 命中，否则第一个），
+// 模型取顶层 ActiveModel（与默认平台配对写入，见 chat 切模型逻辑）。
+// ok 表示映射后链路就绪；即便不就绪也返回已映射的字段，方便上层展示缺了什么。
 // 放在本包而非 desktop 层：internal/config 是叶子包，此处导入不产生循环依赖，
 // 且映射规则与「就绪」定义强相关，放一起避免两处漂移。
+// 注意：归一化后的配置顶层 legacy 字段恒为空（config normalize 迁入平台后清空），
+// 端点必须从平台节点读取。
 func FromModelConfig(cfg config.ModelConfig) (Config, bool) {
+	plat, _ := cfg.ActivePlatform() // 无平台时 plat 为零值，BaseURL/APIKey 自然为空，Ready 兜底
 	c := Config{
-		BaseURL: strings.TrimSpace(cfg.OpenAIBaseURL),
-		APIKey:  strings.TrimSpace(cfg.APIKey),
+		BaseURL: strings.TrimSpace(plat.OpenAIBaseURL),
+		APIKey:  strings.TrimSpace(plat.APIKey),
 		Model:   strings.TrimSpace(cfg.ActiveModel),
 	}
 	return c, Ready(c)

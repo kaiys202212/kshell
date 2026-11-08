@@ -125,10 +125,12 @@ func (c *Client) ChatWithExecutor(ctx context.Context, msgs []Message, tools []T
 	for round := 0; ; round++ {
 		// 超限判定放在发请求之前，避免触顶后还多发一次往返
 		if round >= maxToolRounds {
+			logf("hubtools: 工具循环触达轮次上限 %d", maxToolRounds)
 			return Response{}, errors.New("err.hubtools.round_limit")
 		}
 		resp, err := c.once(ctx, dialog, tools)
 		if err != nil {
+			logf("hubtools: 请求失败: %v", err)
 			return Response{}, err
 		}
 		// 无工具调用或未注入执行器：直接返回
@@ -136,10 +138,17 @@ func (c *Client) ChatWithExecutor(ctx context.Context, msgs []Message, tools []T
 			return resp, nil
 		}
 
+		names := make([]string, 0, len(resp.ToolCalls))
+		for _, tc := range resp.ToolCalls {
+			names = append(names, tc.Name)
+		}
+		logf("hubtools: 第 %d 轮工具调用: %s", round+1, strings.Join(names, ","))
+
 		dialog = append(dialog, Message{Role: "assistant", ToolCalls: resp.ToolCalls})
 		for _, tc := range resp.ToolCalls {
 			result, err := exec(ctx, tc.Name, tc.Args)
 			if err != nil {
+				logf("hubtools: 工具 %s 执行失败: %v", tc.Name, err)
 				result = "tool error: " + err.Error()
 			}
 			dialog = append(dialog, Message{Role: "tool", Content: result, ToolCallID: tc.ID})

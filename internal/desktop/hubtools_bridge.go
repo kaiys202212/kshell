@@ -244,7 +244,13 @@ func (a *App) hubTools() *hubRouter {
 	a.hubMu.Lock()
 	defer a.hubMu.Unlock()
 	cfg, ok := hubtools.FromModelConfig(a.snapshot().Config.Model)
-	if !ok || a.snapshot().Config.AgentHub.RouteMode == config.RouteModeAgent {
+	if !ok {
+		// 未就绪原因可观测：平台化失配回归（顶层字段被清空）曾因此长期潜伏。
+		hubtools.Log("hubtools: 模型三元组未就绪（平台/端点/密钥/ActiveModel），输入直连 ACP")
+		return nil
+	}
+	if a.snapshot().Config.AgentHub.RouteMode == config.RouteModeAgent {
+		hubtools.Log("hubtools: RouteMode=agent，工具化关闭，输入直连 ACP")
 		return nil
 	}
 	if a.hubRouter != nil && a.hubRouter.cfg == cfg {
@@ -268,6 +274,7 @@ func (h *hubRouter) HandlePrompt(sendID, text string) (bool, error) {
 	// 串行化：已有在途工具化对话时直接降级原链路，不触碰其 session/pending
 	//（否则会互相污染挂起状态与确认卡归属）。
 	if !h.inflight.TryLock() {
+		hubtools.Log("hubtools: 已有在途对话，输入降级原链路")
 		return false, nil
 	}
 	defer h.inflight.Unlock()
@@ -295,6 +302,7 @@ func (h *hubRouter) HandlePrompt(sendID, text string) (bool, error) {
 	exec := func(ctx context.Context, name, argsJSON string) (string, error) {
 		result, pc, err := s.Execute(ctx, name, argsJSON)
 		if pc != nil {
+			hubtools.Log("hubtools: 写操作 %s 挂起待确认（%s）", pc.ToolName, pc.Summary)
 			h.mu.Lock()
 			h.pending = pc
 			h.mu.Unlock()
@@ -314,6 +322,7 @@ func (h *hubRouter) HandlePrompt(sendID, text string) (bool, error) {
 	if err != nil {
 		// LLM 失败：user 消息尚未落盘（延迟写），store 无痕，直接降级；
 		// 同时清除在途会话与挂起，防止从未展示确认卡的操作仍可被 ConfirmHubTool 消费。
+		hubtools.Log("hubtools: LLM 失败降级原链路: %v", err)
 		h.clearTurn()
 		return false, nil
 	}
@@ -324,10 +333,12 @@ func (h *hubRouter) HandlePrompt(sendID, text string) (bool, error) {
 	// 2) auto 模式下模型输出 route=agent = 意图判定为非数据操作，原文转投原链路。
 	if h.currentPending() == nil {
 		if resp.Text == "" {
+			hubtools.Log("hubtools: 模型空回复，降级原链路")
 			h.clearTurn()
 			return false, nil
 		}
 		if h.routeAware() && hubtools.ParseRouteAgent(resp.Text) {
+			hubtools.Log("hubtools: 意图路由 route=agent，降级原链路")
 			h.clearTurn()
 			return false, nil
 		}
@@ -352,6 +363,7 @@ func (h *hubRouter) HandlePrompt(sendID, text string) (bool, error) {
 		pc := h.pending
 		h.mu.Unlock()
 		tail, _ := json.Marshal(map[string]string{"pending": pc.PendingID, "tool": pc.ToolName})
+		hubtools.Log("hubtools: 确认卡落盘 tool=%s pending=%s", pc.ToolName, pc.PendingID)
 		h.app.recordHubMessage(hub.Message{
 			Kind: "agent", Event: "tool_confirm", ChatID: chatID,
 			Tool: userMsg.Tool, Workspace: userMsg.Workspace, SessionTitle: userMsg.SessionTitle,
@@ -360,6 +372,7 @@ func (h *hubRouter) HandlePrompt(sendID, text string) (bool, error) {
 		return true, nil
 	}
 
+	hubtools.Log("hubtools: 工具化回复落盘 len=%d", len(resp.Text))
 	h.app.recordHubMessage(hub.Message{
 		Kind: "agent", ChatID: chatID,
 		Tool: userMsg.Tool, Workspace: userMsg.Workspace, SessionTitle: userMsg.SessionTitle,
@@ -407,6 +420,7 @@ func (a *App) ConfirmHubTool(chatID, pendingID string, approved bool) error {
 	if err != nil {
 		return err
 	}
+	hubtools.Log("hubtools: 确认卡处理 pending=%s approved=%v", pendingID, approved)
 	// 设计要求：确认结果喂回 LLM 组织成自然语言再落盘；LLM 失败/空回复时
 	// 降级直接落工具结果（用户仍能看到发生了什么，只是少了润色）。
 	if approved {
