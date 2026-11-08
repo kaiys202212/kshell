@@ -355,6 +355,15 @@ func (a *App) openWorkspaceACP(wsID, toolID, modelID string, allowFallback bool)
 		return OpenedSession{}, errWorkspaceNotFound
 	}
 	o := a.snapshot()
+	// 空 toolID（=由 launch 选首选工具）时把解析出的首选工具回填：ForWorkspaceACP
+	// 内部自选不落痕，ChatInfo.ToolID 留空会让 hub 归因丢工具身份，前端
+	// replyState 判成非 ACP 工具，AgentHub 整会话误标「永久只读」。解析不出
+	// （无已安装工具）保持原样，让 ForWorkspaceACP 自己报错。
+	if toolID == "" {
+		if _, bt, ok := launch.PreferredTool(o.Providers, tools, ws); ok {
+			toolID = bt.ID
+		}
+	}
 	if m := o.Chats; m != nil {
 		if l, err := launch.ForWorkspaceACP(o.Providers, tools, ws, toolID, a.modelOptionsForCreate(modelID), a.permissionOptions()); err == nil {
 			info, err := openChat(m, "new:"+nextChatSeq(), chat.Info{

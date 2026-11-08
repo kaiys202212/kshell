@@ -86,6 +86,28 @@ func TestOpenWorkspaceACPRecordsHubWelcome(t *testing.T) {
 	}
 }
 
+// OpenWorkspaceACP 空 toolID（=由 launch 选首选工具）时必须把解析出的首选
+// 工具回填进 ChatInfo.ToolID：否则 hub 消息 tool 全空，前端 replyState 判成
+// 非 ACP 工具 → AgentHub 全量标「只读」（2026-11-08 codebuddy 案例）。
+func TestOpenWorkspaceACPBackfillsPreferredToolOnEmptyToolID(t *testing.T) {
+	app, store, _ := newWelcomeTestApp(t)
+
+	got, err := app.OpenWorkspaceACP(`D:\w`, "", "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if got.Kind != "chat" || got.Chat == nil {
+		t.Fatalf("应走聊天路径: %+v", got)
+	}
+	if got.Chat.ToolID != "claude" {
+		t.Fatalf("空 toolID 应回填首选工具 claude，得到 %q", got.Chat.ToolID)
+	}
+	m := waitHubKind(t, store, "agent")
+	if m.Tool != "claude" {
+		t.Fatalf("欢迎词 Tool 应回填: %+v", m)
+	}
+}
+
 // OpenWorkspaceACP 成功后必须主动推 chat:meta：共享命令层（#en/微信）创建会话时
 // 前端拿不到打开结果，不推则 chats 镜像缺失，AgentHub 快捷操作解析不到目标。
 func TestOpenWorkspaceACPEmitChatMeta(t *testing.T) {
