@@ -89,6 +89,10 @@ type session struct {
 	promptInFlight bool            // 是否有在途 session/prompt（投递忙闲唯一依据）
 	inFlightTools  map[string]bool // 未到终态的工具调用（子任务长静默期的运行信号）
 	lastActivity   time.Time       // 最近一次活动类更新时刻
+	// turnOpen 记录历史尾部是否存在未收尾的旧轮内容：会话重建后重放的历史
+	// 分片与崩溃继承的半轮正文都不带 turn_done，若不补回合边界，desktop 的
+	// done 摘要会把旧轮正文拼进本轮。正常 turn 收尾时清零；下次投递前按位补哨兵。
+	turnOpen bool
 	idleTimer      *time.Timer     // 静默回退定时器（持锁操作）
 }
 
@@ -588,6 +592,11 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 		s.history = old.history
 		s.autoSeq = old.autoSeq
 		s.lastType = old.lastType
+		s.turnOpen = old.turnOpen
+	}
+	if sessionID != "" {
+		// 重放路径：agent 将重推的历史分片不带 turn_done，视为存在未收尾旧轮。
+		s.turnOpen = true
 	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.handler = &sessionHandler{m: m, id: s.id}
@@ -988,6 +997,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 	// 在途 prompt 是投递忙闲依据；置位时停掉静默回退定时器（turn_done 会收尾）
 	s.promptInFlight = true
 	s.stopIdleLocked()
+	s.closeStaleTurnLocked()
 	// 标题改写与 record 无关：即使是队列投递（record=false），这也是该新建会话的第一条用户消息。
 	infoSnap, titleChanged := s.notePromptTitle(flattenBlocks(blocks))
 	var userUpdate Update
@@ -1042,6 +1052,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		}
 		s.seq++
 		u := Update{Seq: s.seq, Type: "turn_done", StopReason: stop}
+		s.turnOpen = false // 本轮（含 error 轮）已收尾
 		if err != nil {
 			u.Type = "error"
 			u.Text = err.Error()
@@ -1077,6 +1088,30 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		}
 	}()
 	return nil
+}
+
+// closeStaleTurnLocked 收口未完结的上一轮（调用方持锁，投递新输入前调用）：
+// 重放历史分片、崩溃继承的半轮正文都缺 turn_done，按 turnOpen 位补回合边界
+// 哨兵，否则 desktop 侧 lastAssistantText 会把旧轮正文拼进本轮 done 摘要。
+// 哨兵只进 history 不出站推送（无内容的重复 done 会让 desktop 触发空气泡
+// 通知；前端 Seq 门控只丢小于值，跳号无碍）。
+func (s *session) closeStaleTurnLocked() {
+	if !s.turnOpen {
+		return
+	}
+	if len(s.history) == 0 {
+		// 空会话也判 open（load 未重放任何分片）：没有正文可隔离，哨兵只会
+		// 成为无上文的孤立行，直接清位。
+		s.turnOpen = false
+		return
+	}
+	if s.history[len(s.history)-1].Type == "turn_done" {
+		s.turnOpen = false // 已有真实收尾，位残缺来自继承链，就地修正
+		return
+	}
+	s.seq++
+	s.history = append(s.history, Update{Seq: s.seq, Type: "turn_done", StopReason: "replay_boundary"})
+	s.turnOpen = false
 }
 
 // appendUserBlocksLocked 追加一条 user 消息进时间线并返回该事件（调用方持锁）。
