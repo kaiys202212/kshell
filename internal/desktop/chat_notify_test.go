@@ -136,7 +136,11 @@ func TestEmitChatNotifyCarriesAssistantReply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	// 经捕获的 handler 推一条 assistant 分片进时间线（模拟 agent 回复）
+	// 经捕获的 handler 推分片进时间线，模拟 agent 回显用户消息 + 回复：
+	// 真实 ACP 流（含 resume 回放）里本轮 user 分片先于 assistant 正文，
+	// lastAssistantText 以上一条 user 为本轮起点。
+	rawUser := json.RawMessage(`{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"hi"}}`)
+	b.lastHandler().SessionUpdate("s1", rawUser)
 	raw := json.RawMessage(`{"sessionUpdate":"agent_message_chunk","messageId":"a1","content":{"type":"text","text":"回复内容占位"}}`)
 	b.lastHandler().SessionUpdate("s1", raw)
 
@@ -264,16 +268,75 @@ func TestLastAssistantTextEmptyCases(t *testing.T) {
 	}
 }
 
-// 未超长时不截断，且只取最后一轮（同 MessageID）分片拼接。
+// 未超长时不截断，且只取最后一轮（同 MessageID）分片拼接；上一轮回复以
+// turn_done 为界不得混入。
 func TestLastAssistantTextJoinsLastTurnChunks(t *testing.T) {
 	h := []chat.Update{
 		{Type: "assistant", MessageID: "old", Text: "旧回复"},
+		{Type: "turn_done", StopReason: "end_turn"},
 		{Type: "user", MessageID: "u1", Text: "继续"},
 		{Type: "assistant", MessageID: "new", Text: "第一段"},
 		{Type: "assistant", MessageID: "new", Text: "第二段"},
 	}
 	if got := lastAssistantText(h); got != "第一段第二段" {
 		t.Fatalf("got %q, 想要 第一段第二段", got)
+	}
+}
+
+// 本轮口径：assistant 正文流被 tool_call/plan/thought 切断后会换合成 MessageID
+//（manager.go「连续同类分片」规则），旧实现只取最后一条 assistant 的 MessageID 组，
+// 导致一条回复的前半部分从 Summary（AgentHub 气泡与微信镜像）里消失——真机证据
+// 见 ~/.kshell/hub/live.json 中开头从句子中间开始的 done 消息。改为收集本轮边界
+//（user / turn_done）之后的全部 assistant 分片按序拼接。
+func TestLastAssistantTextCollectsWholeTurn(t *testing.T) {
+	cases := []struct {
+		name string
+		h    []chat.Update
+		want string
+	}{
+		{
+			name: "tool 切组：两段正文按序全拼",
+			h: []chat.Update{
+				{Type: "user", MessageID: "u1", Text: "问"},
+				{Type: "assistant", MessageID: "a1", Text: "前半正文"},
+				{Type: "tool", ToolCallID: "t1"},
+				{Type: "assistant", MessageID: "a2", Text: "后半正文"},
+				{Type: "turn_done", StopReason: "end_turn"},
+			},
+			want: "前半正文后半正文",
+		},
+		{
+			name: "thought 切组：思考不并入，两侧正文全拼",
+			h: []chat.Update{
+				{Type: "user", MessageID: "u1", Text: "问"},
+				{Type: "assistant", MessageID: "a1", Text: "开头段"},
+				{Type: "thought", MessageID: "th1", Text: "思考过程"},
+				{Type: "assistant", MessageID: "a2", Text: "结尾段"},
+			},
+			want: "开头段结尾段",
+		},
+		{
+			name: "上一轮 assistant 与本轮以 turn_done+user 为界，不得混入",
+			h: []chat.Update{
+				{Type: "assistant", MessageID: "old", Text: "旧回复"},
+				{Type: "turn_done", StopReason: "end_turn"},
+				{Type: "user", MessageID: "u1", Text: "继续"},
+				{Type: "assistant", MessageID: "new1", Text: "本轮段一"},
+				{Type: "tool", ToolCallID: "t1"},
+				{Type: "assistant", MessageID: "new2", Text: "本轮段二"},
+			},
+			want: "本轮段一本轮段二",
+		},
+		{
+			name: "无 user 直接收一个 assistant（历史场景）",
+			h:     []chat.Update{{Type: "assistant", MessageID: "m1", Text: "全文"}},
+			want: "全文",
+		},
+	}
+	for _, tc := range cases {
+		if got := lastAssistantText(tc.h); got != tc.want {
+			t.Fatalf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 

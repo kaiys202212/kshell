@@ -134,25 +134,29 @@ func stopFallback(stop string) string {
 	return "ui.notify.turn_stopped_reason|" + stop
 }
 
-// lastAssistantText 取会话时间线中最后一轮 assistant 回复的拼接文本。
-// 「最后一轮」= 最后一条 assistant 的 MessageID；同一 MessageID 的分片按序拼接。
-// 返回空串表示尚无回复。全文保留（不截断），供 AgentHub / 微信镜像完整展示。
+// lastAssistantText 取当前一轮（turn）assistant 回复的拼接正文。
+// 回合边界 = turn_done：从尾部跳过本轮收尾的 turn_done，反向直到上一轮的
+// turn_done（无则到头），区间内全部 assistant 分片按序拼接。不能按「最后一条
+// assistant 的 MessageID 组」取——ACP 流里 thought/tool/plan 会切断连续分片
+//（manager 换新合成 ID），同一回合常并发多条 assistant 消息，回复的前半部分
+// 会分属更早的 MessageID 组，导致 Summary 从正文中间开始（真机证据：live.json
+// 里 done 消息开头从句子中间开始）。也不能拿 user 当边界——本地投递与 agent
+// 回显各有一条 user 分片，以最后一条 user 划界会把本轮正文截丢。thought 仍
+// 不并入（思考过程非回复正文）。返回空串表示尚无回复；全文不截断，供
+// AgentHub / 微信镜像完整展示。
 func lastAssistantText(h []chat.Update) string {
-	lastID := ""
-	idx := -1
-	for i := len(h) - 1; i >= 0; i-- {
-		if h[i].Type == "assistant" {
-			lastID = h[i].MessageID
-			idx = i
-			break
-		}
+	n := len(h)
+	i := n
+	for i > 0 && h[i-1].Type == "turn_done" {
+		i-- // 跳过本轮收尾的 turn_done
 	}
-	if idx < 0 {
-		return ""
+	start := i
+	for start > 0 && h[start-1].Type != "turn_done" {
+		start--
 	}
 	var b strings.Builder
-	for _, u := range h {
-		if u.Type == "assistant" && u.MessageID == lastID {
+	for _, u := range h[start:i] {
+		if u.Type == "assistant" {
 			b.WriteString(u.Text)
 		}
 	}
