@@ -325,10 +325,6 @@ func TestWXExecutorSessionStatuses(t *testing.T) {
 		Kind: "agent", TermKey: hook5.Key,
 		Event: "Notification", Text: "hook 通道权限请求", Ts: t2 + 2,
 	})
-	_ = store.Append(hub.Message{
-		Kind: "agent", ChatID: app.originalChatID(perm4.ID),
-		Event: "Notification", Text: "Allow Bash command?", Ts: t2 + 1,
-	})
 
 	// 甲会话发起一轮并阻塞在 gate：状态 running。
 	go func() { _ = m.Prompt(run1.ID, "跑一轮") }()
