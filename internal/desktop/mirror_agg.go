@@ -71,6 +71,16 @@ func (a *App) mirrorAggregated(r *weixin.Runtime, m hub.Message) bool {
 	for i, t := range targets {
 		row, ok := byChat[t.ChatID] // 群发目标必为 ACP 可投递会话,按链头 ChatID 命中
 		if !ok {
+			// 兜底(chat 重建后链头 ChatID 变了):按触发消息的 termKey /
+			// sessionID 匹配实况行,任一命中即触发会话自身,避免合成 gone。
+			for _, cand := range rows {
+				if cand.Ref.Key == m.TermKey || (m.SessionID != "" && cand.Ref.SessionID == m.SessionID) {
+					row, ok = cand, true
+					break
+				}
+			}
+		}
+		if !ok {
 			// 未命中(会话已关/未产出状态):合成 gone 伪行。
 			row = hub.SessionStatus{
 				Ref:   hub.SessionRef{Num: i + 1, Title: t.Title, SessionID: t.SessionID},

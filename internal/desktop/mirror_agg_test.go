@@ -143,6 +143,8 @@ func TestRecordHubMessageAggregated(t *testing.T) {
 			if strings.Contains(got.Text, "第三步完成") {
 				t.Fatalf("聚合后不应镜像原文: %q", got.Text)
 			}
+			// 50ms 即可:HubSink 是同步调用,聚合摘要已在 select 前投进
+			// 缓冲 8 的 sink,drain 只兜不预期的原文镜像。
 		case <-time.After(50 * time.Millisecond):
 			return
 		}
