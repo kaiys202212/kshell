@@ -730,8 +730,9 @@ func TestGSendFailure(t *testing.T) {
 	c := NewConsole(fe)
 	c.Handle("#l")
 	out := join(c.Handle("#g 1 hi"))
-	if !strings.Contains(out, "发送失败") {
-		t.Fatalf("Send 失败应回发送失败: %q", out)
+	// 单目标 Send 失败透传原因（"1【A】 — offline"）。
+	if !strings.Contains(out, "offline") || strings.Contains(out, "发送失败") {
+		t.Fatalf("Send 失败应透传原因而非兜底: %q", out)
 	}
 }
 

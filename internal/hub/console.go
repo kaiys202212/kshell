@@ -65,8 +65,10 @@ type Console struct {
 	currentMark int64
 	menu *pendingMenu
 	perm *pendingPermission
-	// agg 是群发回执聚合策略：#g 多目标进入聚合，精确投递（单发/直投/引用/
-	// 待选移交）退出。默认自建实例；多渠道可经 SetMirrorPolicy 共享同一份。
+	// agg 是群发回执聚合策略（mu 保护）：#g 多目标进入聚合，精确投递（单发/
+	// 直投/引用/待选移交）退出。默认自建实例；多渠道可经 SetMirrorPolicy
+	// 共享同一份。注意：*MirrorPolicy 指向的策略实例自身非线程安全，共享方
+	// 须保证串行访问；这里加锁只保护指针本身的读写。
 	agg *MirrorPolicy
 	// lastList 是最近一次列表/搜索的编号映射（纯数字与 #g 依据它路由）。
 	lastList []SessionRef
@@ -121,7 +123,12 @@ func (c *Console) OpenPermissionMenu(chatID, reqID, desc string) {
 }
 
 // MirrorPolicy 取出共享聚合策略（渠道装配时把多渠道 Console 指到同一实例）。
-func (c *Console) MirrorPolicy() *MirrorPolicy { return c.agg }
+// 加锁读：与 mu 保护的声明一致，防未来并发调用成真竞争。
+func (c *Console) MirrorPolicy() *MirrorPolicy {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.agg
+}
 
 // SetMirrorPolicy 共享替换（nil 拒绝，保持自建兜底）。
 func (c *Console) SetMirrorPolicy(p *MirrorPolicy) {
@@ -699,6 +706,12 @@ func (c *Console) handleG(arg string) []Reply {
 			c.agg.Discard()
 			return single(fmt.Sprintf(c.text("sent_to"), sessionTag(succRefs[0].Title)))
 		}
+		// 单目标失败时透传具体原因（"3【C】 — 会话正以终端模式运行…"形态），
+		// 兜底文案只在无任何失败原因可列时使用（实际上 failParts 分支都
+		// 会先 append，故仅防御）。
+		if len(failParts) > 0 {
+			return single(failParts[0])
+		}
 		return single(fmt.Sprintf(c.text("send_failed"), c.text("no_current")))
 	}
 	var parts []string
@@ -715,7 +728,7 @@ func (c *Console) handleG(arg string) []Reply {
 }
 
 // parseGTargets 解析 "#g <编号列表> <正文>":编号段为数字串(全角兼容),用
-// 半角逗号/顿号/空白分隔;第一个非编号 token 起为正文,编号段后可紧跟一个
+// 半角逗号/全角逗号/顿号/空白分隔;第一个非编号 token 起为正文,编号段后可紧跟一个
 // 全角/半角冒号(保留旧 "#g 1:hi" 兼容)。已知限制:正文不能以数字开头
 // (数字 token 会被吞进编号段)。逗号/顿号后只接数字;接着是其他文本时该
 // token 起为正文。任一编号非法或正文为空 → ok=false 整条拒绝。
@@ -745,7 +758,7 @@ func (c *Console) parseGTargets(arg string) (nums []int, text string, ok bool) {
 		}
 		r, size := utf8.DecodeRuneInString(arg[i:])
 		switch r {
-		case ',', '、':
+		case ',', '，', '、':
 			i += size
 			for i < len(arg) {
 				r2, s2 := utf8.DecodeRuneInString(arg[i:])
