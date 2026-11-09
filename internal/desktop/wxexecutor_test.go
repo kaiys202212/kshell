@@ -3,6 +3,9 @@ package desktop
 import (
 	"errors"
 	"strings"
+	"sync"
+
+	"github.com/yangk/kshell/internal/acp"
 	"testing"
 	"time"
 
@@ -228,6 +231,127 @@ func TestWXExecutorLastActivityStaleLatestStopsScan(t *testing.T) {
 	_ = store.Append(hub.Message{Kind: "agent", ChatID: "c-gone", Text: "new"})
 	if _, ref, ok := newWXExecutor(app).LastActivity(); ok {
 		t.Fatalf("最新归因失效时不得回落到更旧会话: %+v", ref)
+	}
+}
+
+// wxStatusBackend 记录每次 Start 产出的 fakeChatConn（按 Open 顺序），并为每个
+// conn 预置 promptGate：Prompt 会阻塞在 gate 上，用于驱动 chat.StatusRunning。
+type wxStatusBackend struct {
+	mu    sync.Mutex
+	conns []*fakeChatConn
+	gate  chan struct{}
+}
+
+func (b *wxStatusBackend) Start(spec chat.Spec, h acp.Handler) (chat.Conn, error) {
+	c := &fakeChatConn{waitCh: make(chan struct{}), promptGate: b.gate}
+	b.mu.Lock()
+	b.conns = append(b.conns, c)
+	b.mu.Unlock()
+	return c, nil
+}
+
+func (b *wxStatusBackend) conn(i int) *fakeChatConn {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.conns[i]
+}
+
+// wxWaitStatus 轮询到指定 chat 进入目标状态（向真实 watcher/onInfo 收敛）。
+func wxWaitStatus(t *testing.T, m *chat.Manager, id, want string) chat.Info {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, info := range m.List() {
+			if info.ID == id && info.Status == want {
+				return info
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	list := m.List()
+	t.Fatalf("chat %s 未在限时内进入 %s: %+v", id, want, list)
+	return chat.Info{}
+}
+
+// SessionStatuses 从 ListChats 的 Status 与 hub 每会话最后一条 agent 消息合成
+// #st 逐会话状态：running/idle/gone/perm（Notification 挂起优先）。
+func TestWXExecutorSessionStatuses(t *testing.T) {
+	app := wxApp(t, nil)
+	b := &wxStatusBackend{gate: make(chan struct{})}
+	defer close(b.gate) // 放行阻塞中的 Prompt，避免泄漏 goroutine
+	m := newChatManagerWith(func(string, ...any) {}, b, nil, nil, nil, nil, nil)
+	t.Cleanup(m.CloseAll)
+
+	app.mu.Lock()
+	app.opts.Chats = m
+	app.mu.Unlock()
+
+	open := func(key, title, tool string) chat.Info {
+		t.Helper()
+		info, err := m.Open(key, chat.Info{
+			Kind: chat.KindNew, Workspace: `D:\ws\` + tool, Title: title, ToolID: tool,
+		}, chat.Spec{Path: "x"}, "")
+		if err != nil {
+			t.Fatalf("open %s: %v", key, err)
+		}
+		wxWaitStatus(t, m, info.ID, chat.StatusReady)
+		return info
+	}
+	run1 := open("new:1", "甲会话", "claude")   // 将进 running
+	idle2 := open("new:2", "乙会话", "codex") // ready → idle，带最长摘要
+	gone3 := open("new:3", "丙会话", "claude") // 将退出 → gone
+	perm4 := open("new:4", "丁会话", "codex") // ready + Notification → perm
+
+	store := app.snapshot().HubStore
+	t0 := time.Now().UnixNano()
+	long := strings.Repeat("甲", 70)
+	_ = store.Append(hub.Message{Kind: "agent", ChatID: app.originalChatID(run1.ID), Text: "甲的动作", Ts: t0})
+	// 乙会话：长文本（>60 rune）+ 之后的噪声消息（不得顶掉摘要）+ 更晚的 termKey 消息。
+	t1 := t0 + 1
+	_ = store.Append(hub.Message{Kind: "agent", ChatID: app.originalChatID(idle2.ID), Text: long, Ts: t1})
+	_ = store.Append(hub.Message{Kind: "agent", ChatID: app.originalChatID(idle2.ID), Event: "ui.hub.busy", Text: "噪声", Ts: t1 + 1})
+	t2 := t1 + 2
+	_ = store.Append(hub.Message{Kind: "agent", TermKey: idle2.Key, Text: "更晚的 termKey 消息", Ts: t2})
+	// 丁会话：最新 agent 消息是权限请求 → perm（chat 本身 ready）。
+	_ = store.Append(hub.Message{
+		Kind: "agent", ChatID: app.originalChatID(perm4.ID),
+		Event: "Notification", Text: "Allow Bash command?", Ts: t2 + 1,
+	})
+
+	// 甲会话发起一轮并阻塞在 gate：状态 running。
+	go func() { _ = m.Prompt(run1.ID, "跑一轮") }()
+	wxWaitStatus(t, m, run1.ID, chat.StatusRunning)
+	// 丙会话进程退出（自然退出保留在 List）：状态 exited。
+	_ = b.conn(2).Close()
+	wxWaitStatus(t, m, gone3.ID, chat.StatusExited)
+
+	ex := newWXExecutor(app)
+	statuses := ex.SessionStatuses()
+	byChat := map[string]hub.SessionStatus{}
+	for _, st := range statuses {
+		byChat[st.Ref.ChatID] = st
+	}
+	if len(statuses) != 4 {
+		t.Fatalf("应有 4 条活跃会话状态, got %d: %+v", len(statuses), statuses)
+	}
+	run1Ref := byChat[app.originalChatID(run1.ID)]
+	if run1Ref.State != "running" {
+		t.Fatalf("甲会话应为 running: %+v", run1Ref)
+	}
+	idle2Ref := byChat[app.originalChatID(idle2.ID)]
+	if idle2Ref.State != "idle" || idle2Ref.Summary != long[:180]+"…" || idle2Ref.LastTs != t2 {
+		t.Fatalf("乙会话应为 idle + 60 rune 截断摘要 + 更晚 termKey 水位: %+v", idle2Ref)
+	}
+	if idle2Ref.Ref.Key != idle2.Key || idle2Ref.Ref.SessionID != "" || idle2Ref.Ref.Tool != "codex" || idle2Ref.Ref.Title != "乙会话" {
+		t.Fatalf("乙会话引用字段不全: %+v", idle2Ref.Ref)
+	}
+	gone3Ref := byChat[app.originalChatID(gone3.ID)]
+	if gone3Ref.State != "gone" || gone3Ref.Summary != "" || gone3Ref.LastTs != 0 {
+		t.Fatalf("丙会话应为 gone 无摘要无水位: %+v", gone3Ref)
+	}
+	perm4Ref := byChat[app.originalChatID(perm4.ID)]
+	if perm4Ref.State != "perm" || perm4Ref.Summary != "Allow Bash command?" {
+		t.Fatalf("丁会话应为 perm（Notification 挂起）: %+v", perm4Ref)
 	}
 }
 

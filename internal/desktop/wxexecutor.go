@@ -483,6 +483,88 @@ func (w *wxExecutor) RecentMessages(n int) []hub.Message {
 	return hub.VisibleMessages(store.List(), n)
 }
 
+// SessionStatuses 合成 #st 的逐会话状态：全部活跃 ACP chat 一行。状态取
+// StatusOf（starting/running/authenticating → running、exited → gone、其余 →
+// idle）；修正：该会话 hub 最后一条 agent 消息 Event 为 Notification/attention
+// （权限/人工确认挂起）→ perm。Summary 取该会话最后一条 agent 可见消息（过滤
+// IsHubNoise）的首行截断（≤60 rune）；LastTs 是归因双键（链头 ChatID 与
+// termKey(info.Key)）命中的最新水位。
+func (w *wxExecutor) SessionStatuses() []hub.SessionStatus {
+	store := w.a.snapshot().HubStore
+	last := make(map[string]hub.Message) // key: 链头 chatID 与 termKey 各一份
+	if store != nil {
+		for _, m := range store.List() {
+			if m.Kind != "agent" || hub.IsHubNoise(m) {
+				continue
+			}
+			if m.ChatID != "" {
+				last[m.ChatID] = m
+			}
+			if m.TermKey != "" {
+				last[m.TermKey] = m
+			}
+		}
+	}
+	chats := w.a.ListChats()
+	out := make([]hub.SessionStatus, 0, len(chats))
+	for _, info := range chats {
+		st := statusOf(info.Status)
+		sum := ""
+		var ts int64
+		// ListChats 已把 ID 归一成链头（originalChatID），与 hub 落盘 ChatID 同口径。
+		if m, ok := last[info.ID]; ok {
+			if m.Event == "Notification" || m.Event == "attention" {
+				st = "perm"
+			}
+			sum = truncateFirstLine(m.Text, 60)
+			ts = m.Ts
+		}
+		if m, ok := last[info.Key]; ok && m.Ts > ts {
+			ts = m.Ts
+		}
+		out = append(out, hub.SessionStatus{
+			Ref: hub.SessionRef{
+				ChatID:    info.ID,
+				Key:       info.Key,
+				SessionID: info.SessionID,
+				Workspace: info.Workspace,
+				Tool:      info.ToolID,
+				ToolName:  w.a.toolDisplayName(info.ToolID),
+				Title:     info.Title,
+			},
+			State:   st,
+			Summary: sum,
+			LastTs:  ts,
+		})
+	}
+	return out
+}
+
+// statusOf 把 chat 状态归一成 #st 的四态：启动/运行/认证中 → running，
+// 已退出 → gone，其余（含 ready/未知值/零值）→ idle。
+func statusOf(chatStatus string) (state string) {
+	switch chatStatus {
+	case chat.StatusStarting, chat.StatusRunning, chat.StatusAuthenticating:
+		return "running"
+	case chat.StatusExited:
+		return "gone"
+	default:
+		return "idle"
+	}
+}
+
+// truncateFirstLine 把多行文本压成单行（连续空白折叠为单空格）并按 rune 截断，
+// 超出补省略号。与 hub 包内 truncateOneLine 同一实现（私有不便复用），desktop
+// 内独立一份。
+func truncateFirstLine(s string, max int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
+}
+
 // wxLastBase 取路径末段：与 hub 包内 lastBase 同一实现（跨渠道文本里的路径
 // 分隔不保证与运行平台一致），desktop 包不便导出复用，这里独立一份。
 func wxLastBase(p string) string {
