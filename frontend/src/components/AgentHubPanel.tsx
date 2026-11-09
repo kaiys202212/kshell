@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowUpRight, CircleHelp, Loader2, Settings2 } from 'lucide-react';
+import { ArrowUpRight, CircleHelp, Loader2, PanelRightClose, Settings2 } from 'lucide-react';
 import type { ChatCommand, ChatInfo, ChatModelsView, HubArchiveMonth, HubMessage, Session, TerminalInfo, ToolInfo, Workspace } from '../lib/api';
 import {
   cancelChat,
@@ -262,7 +262,14 @@ function writeAutoScrollPref(v: boolean): void {
   }
 }
 
-export default function AgentHubPanel() {
+// AgentHubPanelProps：Home 折叠联动用。hidden 折叠时隐藏面板本体（保持挂载，
+// 保留草稿/滚动状态）；onCollapse 提供时头部出现折叠按钮，由 Home 负责收起。
+interface AgentHubPanelProps {
+  hidden?: boolean;
+  onCollapse?: () => void;
+}
+
+export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPanelProps) {
   const { t } = useTranslation();
   const chats = useAppStore((s) => s.chats);
   const hubMessages = useAppStore((s) => s.hubMessages);
@@ -1194,8 +1201,11 @@ export default function AgentHubPanel() {
       }}
       onDrop={handleRequirementDrop}
       data-testid="hub-panel"
+      hidden={hidden}
       className={cn(
-        'relative flex min-h-0 flex-1 flex-col gap-2.5 rounded border border-border bg-card p-3 text-sm',
+        // min-w-0：行向 flex 子项默认 min-width:auto，长内容（长 URL/确认卡）会把
+        // 面板撑出右边界（2026-11-09 反馈），允许收缩后由消息流内部截断/折行。
+        'relative flex min-h-0 min-w-0 flex-1 flex-col gap-2.5 rounded border border-border bg-card p-3 text-sm',
         reqDragOver && 'ring-2 ring-primary/40',
       )}
     >
@@ -1214,6 +1224,19 @@ export default function AgentHubPanel() {
           </Button>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {/* 折叠入口：收起整个 AgentHub 面板（Home 记忆状态，竖条可展开） */}
+          {onCollapse && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6 shrink-0 text-muted-foreground"
+              aria-label={t('ui.hub.collapse_aria')}
+              title={t('ui.hub.collapse_aria')}
+              onClick={onCollapse}
+            >
+              <PanelRightClose aria-hidden className="h-3.5 w-3.5" />
+            </Button>
+          )}
           {/* 默认设置入口：设置默认 agent 工具/模型（供 easynew 与需求派发使用） */}
           <Button
             size="sm"
@@ -1294,8 +1317,10 @@ export default function AgentHubPanel() {
       )}
 
       {/* 水平内边距避免气泡贴边/挤滚动条；gap-3 拉开卡片垂直间距。
-          消息流独立 memo：draft 变化不重跑 ReactMarkdown。 */}
-      <div ref={logRef} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-2" role="log" aria-live="polite">
+          消息流独立 memo：draft 变化不重跑 ReactMarkdown。
+          overflow-x-hidden：宽内容（长 URL/表格）横向截断而非把面板撑出边界，
+          代码块自身 overflow-auto 仍可横向滚动。 */}
+      <div ref={logRef} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden px-3 py-2" role="log" aria-live="polite">
         <HubMessageList tools={tools} onRecall={recall} onQuickReply={quickReply} />
       </div>
 
@@ -1563,8 +1588,8 @@ export default function AgentHubPanel() {
             }
           }}
         />
-        {/* 发送行：路由模式 + 自动滚动开关放发送按钮左侧 */}
-        <div className="flex items-center justify-end gap-2">
+        {/* 发送行：路由模式 + 自动滚动开关放发送按钮左侧；flex-wrap 极窄时换行不溢出 */}
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
             {t('ui.hub.route_mode_label')}
             <select

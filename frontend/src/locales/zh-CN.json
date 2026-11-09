@@ -949,6 +949,8 @@
     "hub": {
       "title": "Agent 汇总",
       "help_aria": "使用说明",
+      "collapse_aria": "折叠 Agent Hub",
+      "expand_aria": "展开 Agent Hub",
       "help_title": "Agent 汇总使用说明",
       "help_intro": "AgentHub 仅支持已适配 ACP（Agent Client Protocol）协议的工具。未适配的工具仍可在终端里使用，但无法在 Hub 内对话或汇总。",
       "help_tools_title": "目前支持的工具",

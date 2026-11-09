@@ -949,6 +949,8 @@
     "hub": {
       "title": "Agent Hub",
       "help_aria": "Usage help",
+      "collapse_aria": "Collapse Agent Hub",
+      "expand_aria": "Expand Agent Hub",
       "help_title": "Agent Hub usage",
       "help_intro": "AgentHub only supports tools with an ACP (Agent Client Protocol) adapter. Other tools still work in a terminal, but cannot chat or aggregate in the Hub.",
       "help_tools_title": "Supported tools",

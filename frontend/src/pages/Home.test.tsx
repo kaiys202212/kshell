@@ -130,6 +130,44 @@ describe('Home', () => {
     expect(screen.getByText(tt('ui.hub.title'))).toBeTruthy();
   });
 
+  it('AgentHub 默认折叠：面板隐藏、右列窄竖条可展开，左列铺满（flex-1）', () => {
+    render(<Home />);
+    expect(screen.getByTestId('hub-panel')).toHaveAttribute('hidden');
+    expect(screen.getByTestId('hub-collapse-strip')).toBeInTheDocument();
+    // 折叠态左列铺满剩余宽度，右列退化为窄竖条
+    expect(screen.getByTestId('home-left-col').className).toContain('flex-1');
+    expect(screen.getByTestId('home-right-col').className).toContain('w-9');
+    // 折叠态不应出现面板头部的折叠按钮
+    expect(screen.queryByRole('button', { name: tt('ui.hub.collapse_aria') })).toBeNull();
+  });
+
+  it('折叠状态记忆：localStorage 为 0 时默认展开，为非法值回落默认折叠', () => {
+    localStorage.setItem('kshell.hub.collapsed', '0');
+    const { unmount } = render(<Home />);
+    expect(screen.getByTestId('hub-panel')).not.toHaveAttribute('hidden');
+    expect(screen.queryByTestId('hub-collapse-strip')).toBeNull();
+    unmount();
+
+    localStorage.setItem('kshell.hub.collapsed', 'bogus');
+    render(<Home />);
+    expect(screen.getByTestId('hub-collapse-strip')).toBeInTheDocument();
+  });
+
+  it('展开/折叠切换：布局换档并持久化最新状态', () => {
+    render(<Home />);
+    // 展开：面板可见、左列回到 2/5、持久化 0
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.expand_aria') }));
+    expect(screen.getByTestId('hub-panel')).not.toHaveAttribute('hidden');
+    expect(screen.getByTestId('home-left-col').className).toContain('w-2/5');
+    expect(localStorage.getItem('kshell.hub.collapsed')).toBe('0');
+
+    // 再折叠：竖条回归、持久化 1
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.collapse_aria') }));
+    expect(screen.getByTestId('hub-panel')).toHaveAttribute('hidden');
+    expect(screen.getByTestId('hub-collapse-strip')).toBeInTheDocument();
+    expect(localStorage.getItem('kshell.hub.collapsed')).toBe('1');
+  });
+
   it('按最后活动时间倒序渲染，零值/空值的时间排最后（再按名称）', async () => {
     render(<Home />);
     await screen.findByTitle('D:\\proj-new');

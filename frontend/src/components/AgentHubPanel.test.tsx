@@ -162,6 +162,27 @@ describe('AgentHubPanel', () => {
     expect(screen.queryByText(tt('ui.hub.empty'))).toBeNull();
   });
 
+  it('传 onCollapse 时头部出现折叠按钮，点击触发回调；不传则不渲染', () => {
+    useAppStore.setState({ chats: [] });
+    const onCollapse = vi.fn();
+    const { rerender } = render(<AgentHubPanel onCollapse={onCollapse} />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.collapse_aria') }));
+    expect(onCollapse).toHaveBeenCalledTimes(1);
+
+    rerender(<AgentHubPanel />);
+    expect(screen.queryByRole('button', { name: tt('ui.hub.collapse_aria') })).toBeNull();
+  });
+
+  it('hidden 传 true 时面板隐藏（hidden 属性）但保持挂载；默认可见', () => {
+    useAppStore.setState({ chats: [] });
+    const { rerender } = render(<AgentHubPanel hidden />);
+    const panel = screen.getByTestId('hub-panel');
+    expect(panel).toHaveAttribute('hidden');
+
+    rerender(<AgentHubPanel />);
+    expect(screen.getByTestId('hub-panel')).not.toHaveAttribute('hidden');
+  });
+
   it('标题旁问号按钮：打开使用说明，列出 ACP 工具与平台模型注入状态', () => {
     useAppStore.setState({ chats: [] });
     render(<AgentHubPanel />);

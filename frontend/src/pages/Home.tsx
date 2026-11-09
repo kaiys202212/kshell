@@ -9,7 +9,7 @@
 // 数据流：先渲染缓存（GetWorkspaces），再触发后台扫描，等 "scan:done" 后重调
 // GetWorkspaces 刷新（统一走一条取数路径，事件 payload 只当触发信号用）。
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { SquareArrowOutUpRight } from 'lucide-react';
+import { PanelRightOpen, SquareArrowOutUpRight } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import AgentHubPanel from '../components/AgentHubPanel';
@@ -33,6 +33,7 @@ import { backendError } from '../lib/errors';
 import { formatRelativeTime } from '../lib/format';
 import { badgeFor } from '../lib/toolBadge';
 import { MONO } from '../lib/ui';
+import { cn } from '../lib/cn';
 import { sameWorkspacePath } from '../lib/workspacePath';
 import { SETTINGS_TAB_ID, useAppStore } from '../state/store';
 import { Badge } from '../components/ui/badge';
@@ -45,6 +46,30 @@ import RequirementList from '../components/RequirementList';
 
 // 卡片工具分布最多展示的徽标数，其余折叠成 "+N"
 const TOOL_BADGES_MAX = 3;
+// AgentHub 折叠状态持久化键：'1' 折叠 / '0' 展开，缺失或非法回落默认折叠
+const HUB_COLLAPSED_KEY = 'kshell.hub.collapsed';
+
+// readHubCollapsed 读折叠偏好；写值只可能是 '1'/'0'，其余（含损坏）一律默认折叠。
+function readHubCollapsed(): boolean {
+  try {
+    const v = localStorage.getItem(HUB_COLLAPSED_KEY);
+    if (v === '0') return false;
+    if (v === '1') return true;
+  } catch {
+    // 隐私模式等：静默回落默认
+  }
+  return true;
+}
+
+// writeHubCollapsed 写折叠偏好；写失败静默（辅助功能）。
+function writeHubCollapsed(v: boolean): void {
+  try {
+    localStorage.setItem(HUB_COLLAPSED_KEY, v ? '1' : '0');
+  } catch {
+    // 同上，静默
+  }
+}
+
 // 网格列宽：窄窗口自动降列
 const GRID = 'grid gap-2.5 grid-cols-[repeat(auto-fill,minmax(220px,1fr))]';
 // 卡片分页大小：超过 9 张出分页栏，网格区固定高度不滚动
@@ -135,6 +160,12 @@ export default function Home() {
   const filterRef = useRef<HTMLInputElement>(null);
   // 卡片分页：当前页（1 起）；检索词变化时回第 1 页
   const [page, setPage] = useState(1);
+  // AgentHub 折叠态：默认折叠，记住用户最后一次选择（localStorage）
+  const [hubCollapsed, setHubCollapsed] = useState(readHubCollapsed);
+  const toggleHubCollapsed = useCallback((v: boolean) => {
+    writeHubCollapsed(v);
+    setHubCollapsed(v);
+  }, []);
 
   // 选中态失效清理：selectedProject 不在当前工作区列表（路径归一化后比较）则清除。
   // 列表为空时跳过：工作区是异步加载的，避免启动瞬间把跨重启恢复的选中态误清。
@@ -334,6 +365,7 @@ export default function Home() {
 
   return (
     // 左右布局：左 2/5 项目列表（自身滚动），右 3/5 AgentHub 对话卡（全高）。
+    // AgentHub 折叠时右列退化为窄竖条，左列铺满剩余宽度。
     // 根容器不出滚动条：overflow-hidden + 两列各自 min-h-0 内部滚动。
     <div className="flex flex-1 flex-col overflow-hidden p-6">
       <div className="mb-3 flex shrink-0 items-center justify-between gap-2">
@@ -346,7 +378,7 @@ export default function Home() {
       </div>
       {/* 左右分栏：左列项目（检索+网格，内部滚动），右列 AgentHub 对话卡（全高） */}
       <div className="flex min-h-0 flex-1 gap-3">
-        <div className="flex w-2/5 min-w-0 flex-col">
+        <div data-testid="home-left-col" className={cn('flex min-w-0 flex-col', hubCollapsed ? 'flex-1' : 'w-2/5')}>
           {/* 项目操作行：与卡片放一起（新建项目 / 回收站 / 重新扫描） */}
           <div className="mb-2 flex shrink-0 items-center gap-2">
             <Button size="sm" disabled={creating} onClick={openCreateDialog}>
@@ -680,9 +712,31 @@ export default function Home() {
           {/* 需求列表：占卡片区之外的剩余高度，内部自滚 */}
           <RequirementList className="min-h-0 flex-1" />
         </div>
-        {/* 右列：AgentHub 对话卡，占 3/5 宽、撑满本行剩余高度，聊天内容内部滚动 */}
-        <div className="flex w-3/5 min-w-0">
-          <AgentHubPanel />
+        {/* 右列：AgentHub 对话卡，占 3/5 宽、撑满本行剩余高度，聊天内容内部滚动；
+            折叠时退化为窄竖条（点击展开），面板本体 hidden 保持挂载（保草稿/滚动位）。 */}
+        <div
+          data-testid="home-right-col"
+          className={cn('flex min-w-0', hubCollapsed ? 'w-9 shrink-0' : 'w-3/5')}
+        >
+          {hubCollapsed && (
+            <div
+              data-testid="hub-collapse-strip"
+              className="flex w-9 flex-col items-center gap-2 rounded border border-border bg-card py-2"
+            >
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 text-muted-foreground"
+                aria-label={t('ui.hub.expand_aria')}
+                title={t('ui.hub.expand_aria')}
+                onClick={() => toggleHubCollapsed(false)}
+              >
+                <PanelRightOpen aria-hidden className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
+          {/* 面板常驻挂载（hidden 隐藏）：折叠不丢草稿与滚动位置 */}
+          <AgentHubPanel hidden={hubCollapsed} onCollapse={() => toggleHubCollapsed(true)} />
         </div>
       </div>
     </div>
