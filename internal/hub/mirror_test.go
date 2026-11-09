@@ -64,6 +64,28 @@ func TestMirrorPolicyReEnterReplaces(t *testing.T) {
 	}
 }
 
+func TestMirrorPolicyDuplicateKeyFolds(t *testing.T) {
+	p := NewMirrorPolicy()
+	p.Enter([]SessionRef{
+		{ChatID: "c1", SessionID: "s1"},
+		{ChatID: "c2", SessionID: "s1"},
+	})
+	if p.Count() != 1 {
+		t.Fatalf("同 SessionID 重复引用应折叠, want 1, got %d", p.Count())
+	}
+}
+
+func TestMirrorPolicyTermKeyNonSessionPrefix(t *testing.T) {
+	p := NewMirrorPolicy()
+	p.Enter([]SessionRef{
+		{ChatID: "c1", SessionID: "s1"},
+		{ChatID: "c2", SessionID: "s2"},
+	})
+	if p.Match("", "new:1", "") {
+		t.Fatal("termKey 非 session: 前缀不得命中")
+	}
+}
+
 func TestMirrorPolicyMissingIdentifiers(t *testing.T) {
 	p := NewMirrorPolicy()
 	p.Enter([]SessionRef{

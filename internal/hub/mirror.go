@@ -12,25 +12,25 @@ import (
 // 个)时一切现状行为。并发安全;消费方为 desktop 的出站镜像分派与 Console 自身。
 type MirrorPolicy struct {
 	mu      sync.Mutex
-	targets map[string]targetInfo // 主键优先 SessionID,缺 SessionID 用 ChatID
-	sinceTs int64                 // 群发时刻(UnixNano):「会话有回复」以它为界
+	targets map[string]MirrorTarget // 主键优先 SessionID,缺 SessionID 用 ChatID
+	sinceTs int64                   // 群发时刻(UnixNano):「会话有回复」以它为界
 }
 
-// targetInfo 是聚合目标的一行登记。
-type targetInfo struct {
+// MirrorTarget 是聚合目标的一行登记。
+type MirrorTarget struct {
 	ChatID    string // 链头/前端 ID 空间的 chat ID(群发目标必为 ACP 可投递会话)
 	SessionID string // 磁盘会话 ID:跨 chat 重建仍稳定,匹配优先用
 	Title     string
 }
 
 func NewMirrorPolicy() *MirrorPolicy {
-	return &MirrorPolicy{targets: map[string]targetInfo{}}
+	return &MirrorPolicy{targets: map[string]MirrorTarget{}}
 }
 
 // Enter 登记群发目标集,替换旧目标集并重置时间基准。无稳定标识
 // (ChatID 与 SessionID 皆空)的引用不登记,防误命中。
-// 聚合语义只属于 ≥2 会话:单目标传入是非聚合(单会话精确投递),与
-// Discard 等价。
+// 单目标(len<2)即清空、不登记:单目标传入是非聚合(单会话精确投递),
+// 与 Discard 等价。
 func (p *MirrorPolicy) Enter(refs []SessionRef) {
 	if len(refs) < 2 {
 		p.Discard()
@@ -38,19 +38,23 @@ func (p *MirrorPolicy) Enter(refs []SessionRef) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	m := make(map[string]targetInfo, len(refs))
+	m := make(map[string]MirrorTarget, len(refs))
 	for _, r := range refs {
 		key := r.SessionID
 		if key == "" {
 			key = r.ChatID
 		}
 		if key == "" {
-			continue // 无稳定标识的引用不登记,防误命中
+			continue
 		}
-		m[key] = targetInfo{ChatID: r.ChatID, SessionID: r.SessionID, Title: r.Title}
+		m[key] = MirrorTarget{ChatID: r.ChatID, SessionID: r.SessionID, Title: r.Title}
 	}
 	p.targets = m
-	p.sinceTs = time.Now().UnixNano()
+	if len(m) >= 2 {
+		p.sinceTs = time.Now().UnixNano()
+	} else {
+		p.sinceTs = 0
+	}
 }
 
 // EnterSinceTs 重设群发时间基准(测试注入用)。
@@ -68,14 +72,14 @@ func (p *MirrorPolicy) Discard() {
 	p.mu.Unlock()
 }
 
-// Active 报告是否处于聚合模式(目标集 ≥2 个;单目标是单会话语义,非聚合)。
+// Active 报告是否处于聚合模式(单目标(len<2)即清空、不登记,故不可达)。
 func (p *MirrorPolicy) Active() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return len(p.targets) >= 2
 }
 
-// Count 返回当前已登记目标数(含单目标精确投递登记)。
+// Count 返回当前已登记目标数(单目标(len<2)即清空、不登记)。
 func (p *MirrorPolicy) Count() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -90,10 +94,10 @@ func (p *MirrorPolicy) SinceTs() int64 {
 }
 
 // Targets 返回目标快照(拷贝,调用方可安全持有)。
-func (p *MirrorPolicy) Targets() []targetInfo {
+func (p *MirrorPolicy) Targets() []MirrorTarget {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	out := make([]targetInfo, 0, len(p.targets))
+	out := make([]MirrorTarget, 0, len(p.targets))
 	for _, t := range p.targets {
 		out = append(out, t)
 	}
