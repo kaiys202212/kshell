@@ -31,7 +31,11 @@ func (a *App) mirrorHubPolicy() *hub.MirrorPolicy {
 // 明细覆盖全部目标:命中的用 SessionStatuses 的实况行,未命中的合成 gone 伪行
 //(Title 用登记值),一把编号 1..N(渲染时语境,同 #st 做法)。
 func (a *App) mirrorAggregated(r *weixin.Runtime, m hub.Message) bool {
+	// 锁内只取指针快照(调用方 recordHubMessage 不持 a.mu, 写入方均持锁),
+	// 后续 p.Active()/Match 等用 MirrorPolicy 自身锁, 不在此长时间持 a.mu。
+	a.mu.Lock()
 	p := a.mirrorPolicy
+	a.mu.Unlock()
 	if p == nil || !p.Active() {
 		return false
 	}
