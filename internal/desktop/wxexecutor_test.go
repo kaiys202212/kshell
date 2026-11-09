@@ -301,18 +301,30 @@ func TestWXExecutorSessionStatuses(t *testing.T) {
 	idle2 := open("new:2", "乙会话", "codex") // ready → idle，带最长摘要
 	gone3 := open("new:3", "丙会话", "claude") // 将退出 → gone
 	perm4 := open("new:4", "丁会话", "codex") // ready + Notification → perm
+	hook5 := open("new:5", "戊会话", "codex") // hook 通道 TermKey-only Notification → perm
 
 	store := app.snapshot().HubStore
 	t0 := time.Now().UnixNano()
 	long := strings.Repeat("甲", 70)
 	_ = store.Append(hub.Message{Kind: "agent", ChatID: app.originalChatID(run1.ID), Text: "甲的动作", Ts: t0})
-	// 乙会话：长文本（>60 rune）+ 之后的噪声消息（不得顶掉摘要）+ 更晚的 termKey 消息。
+	// 乙会话：长文本（>60 rune）+ 之后的噪声消息（不得顶掉摘要）+ 更晚的
+	// termKey 消息（双键取 Ts 更新者 → 摘要取 termKey 臂长文本截断）。
 	t1 := t0 + 1
-	_ = store.Append(hub.Message{Kind: "agent", ChatID: app.originalChatID(idle2.ID), Text: long, Ts: t1})
+	_ = store.Append(hub.Message{Kind: "agent", ChatID: app.originalChatID(idle2.ID), Text: "更早的链头消息", Ts: t1})
 	_ = store.Append(hub.Message{Kind: "agent", ChatID: app.originalChatID(idle2.ID), Event: "ui.hub.busy", Text: "噪声", Ts: t1 + 1})
 	t2 := t1 + 2
-	_ = store.Append(hub.Message{Kind: "agent", TermKey: idle2.Key, Text: "更晚的 termKey 消息", Ts: t2})
+	_ = store.Append(hub.Message{Kind: "agent", TermKey: idle2.Key, Text: long, Ts: t2})
 	// 丁会话：最新 agent 消息是权限请求 → perm（chat 本身 ready）。
+	_ = store.Append(hub.Message{
+		Kind: "agent", ChatID: app.originalChatID(perm4.ID),
+		Event: "Notification", Text: "Allow Bash command?", Ts: t2 + 1,
+	})
+	// 戊会话：hook 通道落盘的消息只有 TermKey 没有 ChatID 且 Event 是
+	// Notification → 双键归因命中 → perm。
+	_ = store.Append(hub.Message{
+		Kind: "agent", TermKey: hook5.Key,
+		Event: "Notification", Text: "hook 通道权限请求", Ts: t2 + 2,
+	})
 	_ = store.Append(hub.Message{
 		Kind: "agent", ChatID: app.originalChatID(perm4.ID),
 		Event: "Notification", Text: "Allow Bash command?", Ts: t2 + 1,
@@ -331,15 +343,15 @@ func TestWXExecutorSessionStatuses(t *testing.T) {
 	for _, st := range statuses {
 		byChat[st.Ref.ChatID] = st
 	}
-	if len(statuses) != 4 {
-		t.Fatalf("应有 4 条活跃会话状态, got %d: %+v", len(statuses), statuses)
+	if len(statuses) != 5 {
+		t.Fatalf("应有 5 条活跃会话状态, got %d: %+v", len(statuses), statuses)
 	}
 	run1Ref := byChat[app.originalChatID(run1.ID)]
-	if run1Ref.State != "running" {
-		t.Fatalf("甲会话应为 running: %+v", run1Ref)
+	if run1Ref.State != "running" || run1Ref.Summary != "甲的动作" || run1Ref.LastTs != t0 {
+		t.Fatalf("甲会话应为 running + 摘要「甲的动作」+ t0 水位: %+v", run1Ref)
 	}
 	idle2Ref := byChat[app.originalChatID(idle2.ID)]
-	if idle2Ref.State != "idle" || idle2Ref.Summary != long[:180]+"…" || idle2Ref.LastTs != t2 {
+	if idle2Ref.State != "idle" || idle2Ref.Summary != string([]rune(long)[:60])+"…" || idle2Ref.LastTs != t2 {
 		t.Fatalf("乙会话应为 idle + 60 rune 截断摘要 + 更晚 termKey 水位: %+v", idle2Ref)
 	}
 	if idle2Ref.Ref.Key != idle2.Key || idle2Ref.Ref.SessionID != "" || idle2Ref.Ref.Tool != "codex" || idle2Ref.Ref.Title != "乙会话" {
@@ -352,6 +364,10 @@ func TestWXExecutorSessionStatuses(t *testing.T) {
 	perm4Ref := byChat[app.originalChatID(perm4.ID)]
 	if perm4Ref.State != "perm" || perm4Ref.Summary != "Allow Bash command?" {
 		t.Fatalf("丁会话应为 perm（Notification 挂起）: %+v", perm4Ref)
+	}
+	hook5Ref := byChat[app.originalChatID(hook5.ID)]
+	if hook5Ref.State != "perm" || hook5Ref.Summary != "hook 通道权限请求" || hook5Ref.LastTs != t2+2 {
+		t.Fatalf("戊会话应为 perm（TermKey-only Notification，双键归因命中）: %+v", hook5Ref)
 	}
 }
 

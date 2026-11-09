@@ -488,7 +488,9 @@ func (w *wxExecutor) RecentMessages(n int) []hub.Message {
 // idle）；修正：该会话 hub 最后一条 agent 消息 Event 为 Notification/attention
 // （权限/人工确认挂起）→ perm。Summary 取该会话最后一条 agent 可见消息（过滤
 // IsHubNoise）的首行截断（≤60 rune）；LastTs 是归因双键（链头 ChatID 与
-// termKey(info.Key)）命中的最新水位。
+// termKey(info.Key)）命中的最新水位。已知盲区：hook 通道空正文 Notification
+// 回退落盘的文本（ui.hub.event_waiting_confirm… 前缀）会被 hub.IsHubNoise 的
+// Text 前缀过滤拦下，这类 perm 消息进不了下面的 perm/摘要判定。
 func (w *wxExecutor) SessionStatuses() []hub.SessionStatus {
 	store := w.a.snapshot().HubStore
 	last := make(map[string]hub.Message) // key: 链头 chatID 与 termKey 各一份
@@ -509,18 +511,28 @@ func (w *wxExecutor) SessionStatuses() []hub.SessionStatus {
 	out := make([]hub.SessionStatus, 0, len(chats))
 	for _, info := range chats {
 		st := statusOf(info.Status)
-		sum := ""
+		var summary string
 		var ts int64
 		// ListChats 已把 ID 归一成链头（originalChatID），与 hub 落盘 ChatID 同口径。
+		// 取双键（链头 ChatID 与 termKey(info.Key)）中 Ts 较新的那条做归因：hook
+		// 通道落盘的消息可能只有 TermKey 没有 ChatID，只查链头键会漏掉这类最新
+		// 消息的 perm 判定与摘要。
+		var latest hub.Message
+		hasLatest := false
 		if m, ok := last[info.ID]; ok {
-			if m.Event == "Notification" || m.Event == "attention" {
+			latest = m
+			hasLatest = true
+		}
+		if m, ok := last[info.Key]; ok && (!hasLatest || m.Ts > latest.Ts) {
+			latest = m
+			hasLatest = true
+		}
+		if hasLatest {
+			if latest.Event == "Notification" || latest.Event == "attention" {
 				st = "perm"
 			}
-			sum = truncateFirstLine(m.Text, 60)
-			ts = m.Ts
-		}
-		if m, ok := last[info.Key]; ok && m.Ts > ts {
-			ts = m.Ts
+			summary = truncateFirstLine(latest.Text, 60)
+			ts = latest.Ts
 		}
 		out = append(out, hub.SessionStatus{
 			Ref: hub.SessionRef{
@@ -533,7 +545,7 @@ func (w *wxExecutor) SessionStatuses() []hub.SessionStatus {
 				Title:     info.Title,
 			},
 			State:   st,
-			Summary: sum,
+			Summary: summary,
 			LastTs:  ts,
 		})
 	}
