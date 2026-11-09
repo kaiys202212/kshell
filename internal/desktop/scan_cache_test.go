@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
@@ -157,6 +158,10 @@ func TestEnsureScanReadyWaitsAfterSnapshotRestore(t *testing.T) {
 
 	app.ensureScanReady()
 
+	// 等后台 runScan goroutine 收尾（含快照落盘）完成，避免测试提前返回后
+	// t.TempDir 清理与后台写 snapshot.json 竞争，导致 RemoveAll 报「目录非空」。
+	waitForScanIdle(t, app)
+
 	app.mu.Lock()
 	scanned := app.scanned
 	app.mu.Unlock()
@@ -165,5 +170,25 @@ func TestEnsureScanReadyWaitsAfterSnapshotRestore(t *testing.T) {
 	}
 	if got := app.GetWorkspaces(); len(got) != 1 || got[0].Path != `D:\ws-a` {
 		t.Fatalf("等待结束后应拿到真实扫描结果（覆盖快照）, got %+v", got)
+	}
+}
+
+// waitForScanIdle 等待后台 runScan goroutine 退出（scanning 复位）。
+// scanning 在快照落盘之后的 finishScan 里才复位，复位即代表对 SnapshotPath
+// 的写入已结束，测试可以安全地让 TempDir 清理。
+func waitForScanIdle(t *testing.T, app *App) {
+	t.Helper()
+	deadline := time.Now().Add(scanReadyTimeout)
+	for {
+		app.mu.Lock()
+		idle := !app.scanning
+		app.mu.Unlock()
+		if idle {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("后台扫描未在期限内收尾")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
