@@ -89,7 +89,6 @@ func (a *App) wxRuntime() *weixin.Runtime {
 // 文案语言取当前配置语言（en / zh-CN）。
 func (a *App) wxHubConsole() *hub.Console {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.hubConsole == nil {
 		// 已持 a.mu：直接读 opts，不能再走 snapshot()（会重入 a.mu 死锁）。
 		a.hubConsole = hub.NewConsoleLang(newWXExecutor(a), normalizeLanguage(a.opts.Config.Language))
@@ -98,9 +97,18 @@ func (a *App) wxHubConsole() *hub.Console {
 		if a.mirrorPolicy == nil {
 			a.mirrorPolicy = hub.NewMirrorPolicy()
 		}
-		a.hubConsole.SetMirrorPolicy(a.mirrorPolicy)
+		policy := a.mirrorPolicy
+		a.mu.Unlock()
+		// SetMirrorPolicy 取 Console 内部锁（c.mu），必须移出 a.mu 之外调用：
+		// 反向 Console.Handle 持 c.mu 后经 wxExecutor 同步路径取 a.mu，若这里
+		// 持 a.mu 调 c.mu 会形成 a.mu→c.mu 与 c.mu→a.mu 两条边并存，理论上
+		// ABBA 死锁。仅首次创建时调用一次，与原行为一致。
+		a.hubConsole.SetMirrorPolicy(policy)
+		return a.hubConsole
 	}
-	return a.hubConsole
+	c := a.hubConsole
+	a.mu.Unlock()
+	return c
 }
 
 // WeixinBind 发起扫码绑定，返回二维码内容 URL（前端转二维码图）。
