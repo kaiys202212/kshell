@@ -43,16 +43,16 @@ var cmdTexts = map[string]langPair{
 - 数字  #h 后查看该条全文；#l/#la/#f 后切换会话
 - 直接输入文字 = 发给当前会话`},
 
-	"no_current":        {"No active session", "当前无活跃会话"},
-	"no_current_list":   {"No active session, use #l to list", "当前无活跃会话，#l 查看"},
-	"no_sessions":       {"No sessions yet", "暂无会话"},
+	"no_current":      {"No active session", "当前无活跃会话"},
+	"no_current_list": {"No active session, use #l to list", "当前无活跃会话，#l 查看"},
+	"no_sessions":     {"No sessions yet", "暂无会话"},
 	// AgentHub 只读语义（规则1/2）：列表标记与 Executor 拦截错误。错误 key 用
 	// wire key 原样作键，errText 据此翻译；前端 locales 的 err.hub.* 与此同源，
 	// 一侧改动须同步另一侧。
 	"tag_terminal":            {"terminal", "终端"},
 	"err.hub.terminal_active": {"Session is running in a terminal, close it first", "会话正以终端模式运行，请先关闭对应终端页签"},
 	"err.hub.acp_unsupported": {"This tool has no chat mode", "该工具不支持对话模式"},
-	"no_mapping":        {"No such number, use #l to list", "编号不存在，#l 查看"},
+	"no_mapping":              {"No such number, use #l to list", "编号不存在，#l 查看"},
 	// #h 序号越界专用：no_mapping 引导 #l 是切会话，语境不对（评审 M-1）。
 	"recent_no_mapping": {"No such number, use #h for recent messages", "编号不存在，#h 查看最近消息"},
 	"switch_failed":     {"Switch failed: %s", "切换失败: %s"},
@@ -66,18 +66,18 @@ var cmdTexts = map[string]langPair{
 	"pick_group_new_label": {"new session", "新建 session"},
 	"pick_group_recent":    {"--- Recent sessions ---", "--- 最近会话 ---"},
 	// 分步新建完成并移交暂存正文后的第一人称确认（与 sent_ack 同语气）。
-	"handoff_done":      {"Task handed off — I'll keep you posted here.", "任务移交完成——进展我会随时在这里同步。"},
-	"pick_busy":         {"Finish or cancel the current selection first (#c), then resend", "请先完成或取消当前选择（#c），再重新发送"},
-	"stopped":           {"Interrupt sent", "已发送中断指令"},
-	"unknown_cmd":       {"Unknown command, use #? for help", "未知命令，#? 查看帮助"},
-	"usage_g":           {"Usage: #g <number> <text>", "用法: #g <编号> <内容>"},
-	"usage_f":           {"Usage: #f <keyword>", "用法: #f <关键词>"},
-	"search_no_match":   {"No matching sessions", "未找到匹配会话"},
-	"perm_done":         {"Permission request handled", "已处理权限请求"},
-	"perm_stale":        {"That choice is no longer valid, try again", "该选择已失效，请重新操作"},
-	"perm_hint":         {"Reply 1 (allow) or 2 (deny)", "请回复 1（允许）或 2（拒绝）"},
-	"list_hint":         {"Reply with a number to switch session", "回复数字可切换到对应会话"},
-	"sent_ack":          {"Got your message — I'm on it.", "收到，我马上开始。"},
+	"handoff_done":    {"Task handed off — I'll keep you posted here.", "任务移交完成——进展我会随时在这里同步。"},
+	"pick_busy":       {"Finish or cancel the current selection first (#c), then resend", "请先完成或取消当前选择（#c），再重新发送"},
+	"stopped":         {"Interrupt sent", "已发送中断指令"},
+	"unknown_cmd":     {"Unknown command, use #? for help", "未知命令，#? 查看帮助"},
+	"usage_g":         {"Usage: #g <number> <text>", "用法: #g <编号> <内容>"},
+	"usage_f":         {"Usage: #f <keyword>", "用法: #f <关键词>"},
+	"search_no_match": {"No matching sessions", "未找到匹配会话"},
+	"perm_done":       {"Permission request handled", "已处理权限请求"},
+	"perm_stale":      {"That choice is no longer valid, try again", "该选择已失效，请重新操作"},
+	"perm_hint":       {"Reply 1 (allow) or 2 (deny)", "请回复 1（允许）或 2（拒绝）"},
+	"list_hint":       {"Reply with a number to switch session", "回复数字可切换到对应会话"},
+	"sent_ack":        {"Got your message — I'm on it.", "收到，我马上开始。"},
 
 	// 创建成功后的 agent 第一人称欢迎词（%s = 工具展示名）；文案与 AgentHub
 	// 前端 hub.welcome key 保持一致，一侧改动须同步另一侧与 locales。
@@ -98,6 +98,21 @@ var cmdTexts = map[string]langPair{
 	"sent_to":            {"Sent to: %s", "已发送到: %s"},
 	"status_running":     {"Running tasks: %d", "运行中任务: %d"},
 	"status_undelivered": {"Undelivered messages: %d", "未送达消息: %d"},
+
+	// —— 群发/总览/聚合汇报（一期）——
+	"usage_gx":     {"Usage: #gx <number> [count]", "用法: #gx <会话编号> [条数]"},
+	"gx_none":      {"No recent messages for this session", "该会话最近无消息"},
+	"no_tasks":     {"No tasks", "无任务"},
+	"group_sent":   {"Sent: %s", "已发送: %s"},
+	"group_failed": {"Failed: %s", "失败: %s"},
+	// 聚合摘要行：%1=k/n replied，%2=逐目标明细（逗号接龙）。
+	"agg_line":          {"%d/%d sessions replied — %s", "%d/%d 会话有回复 — %s"},
+	"stat_word_running": {"running", "运行中"},
+	"stat_word_perm":    {"permission pending", "权限待办"},
+	"stat_word_idle":    {"idle", "空闲"},
+	"stat_word_gone":    {"exited", "已断开"},
+	"word_done":         {"done", "已完成"},
+	"word_failed":       {"failed", "失败"},
 
 	// #h 最近消息（Markdown 列表 + 序号查全文详情头）
 	"usage_h":       {"Usage: #h or #h <number>", "用法: #h 或 #h <序号>"},

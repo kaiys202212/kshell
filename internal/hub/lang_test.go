@@ -43,3 +43,20 @@ func TestTextDefaultsChinese(t *testing.T) {
 		t.Fatalf("默认中文态 #l = %q", got)
 	}
 }
+
+// 群发/总览/聚合汇报（一期）新文案 key 存在且 en/zh 成对非空。
+func TestGroupDispatchTexts(t *testing.T) {
+	for _, key := range []string{
+		"usage_gx", "gx_none", "no_tasks", "group_sent", "group_failed",
+		"agg_line", "stat_word_running", "stat_word_perm",
+		"stat_word_idle", "stat_word_gone", "word_done", "word_failed",
+	} {
+		p, ok := cmdTexts[key]
+		if !ok {
+			t.Fatalf("缺少文案 key: %s", key)
+		}
+		if p.En == "" || p.Zh == "" {
+			t.Fatalf("key %s 的 en/zh 之一为空", key)
+		}
+	}
+}
