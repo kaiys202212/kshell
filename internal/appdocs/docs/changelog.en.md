@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.1.29 (2026-11-09)
+
+- The file tree supports locating by path: expanding layer by layer, selecting and scrolling to the target; activating a file tab now auto-locates the file in the tree, and clicking a folder attachment in chat also locates it in the file tree.
+- Dragging files into the terminal now inserts a path relative to the workspace root first, keeping paths shorter.
+- The file tree "show all" toggle takes effect immediately: watchers restart with the toggle, so changes to hidden files are no longer missed.
+- Open now supports directories: opening a directory launches the system file manager.
+- AgentHub panel polish: no more right-edge overflow, and the panel can be collapsed (collapsed by default, state remembered).
+- Fixed truncated openings in the last agent turn for AgentHub and WeChat: replies are now stitched fully by turn boundaries, and boundary sentinels no longer leak into chat history.
+- Fixed silent failure of hubtools internal model resolution after the platform rework (now resolves from the default platform).
+- Fixed new AgentHub sessions being wrongly marked read-only when no tool was specified (the preferred tool is filled in automatically).
+
 ## v0.1.28 (2026-11-06)
 
 - New one-click install: no manual download & unzip anymore — run `npx github:kaiys202212/kshell` (Node 18+) or `pip install kshell-install @ git+https://github.com/kaiys202212/kshell.git#subdirectory=tools/pypi` to install the desktop app in one line: it resolves the latest release, downloads the platform zip, verifies SHA-256, installs to `~/.kshell/bin` and launches it asynchronously; downloads prefer the GitCode mirror and fall back to GitHub. See "One-click Install" in the README.
