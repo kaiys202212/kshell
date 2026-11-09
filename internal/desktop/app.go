@@ -197,6 +197,10 @@ type App struct {
 	wx *weixin.Runtime
 	// hubConsole 是桌面端 AgentHub 命令层（HubCommand 惰性创建）。mu 保护。
 	hubConsole *hub.Console
+	// mirrorPolicy 是群发聚合的共享策略状态:两套 Console(桌面 wxHubConsole
+	// 与微信 bridge console)与出站镜像 mirrorAggregated 指到同一实例,任一
+	// 渠道发起的群发对出站镜像同样生效。mu 保护(惰性创建)。
+	mirrorPolicy *hub.MirrorPolicy
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。

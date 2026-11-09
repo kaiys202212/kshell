@@ -56,7 +56,11 @@ func (a *App) recordHubMessage(m hub.Message) {
 	_ = store.Append(m)
 	a.Emit("hub:changed")
 	if r := a.wxRuntime(); r != nil { // 微信桥出站镜像（异步，不阻塞写入路径）
-		r.OnHubMessage(m)
+		if m.Kind == "agent" && a.mirrorAggregated(r, m) {
+			// 聚合拦截:摘要行已由 mirrorAggregated 出站,不再逐条镜像原文。
+		} else {
+			r.OnHubMessage(m)
+		}
 	}
 }
 

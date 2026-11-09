@@ -53,6 +53,9 @@ type Runtime struct {
 	transcriber Transcriber
 	// toolName 由 desktop 注入：工具展示名（出站标题栏归因，装配到 bridge）。
 	toolName func(string) string
+	// policy 由 desktop 注入：群发聚合策略（桌面 Console 与出站镜像共享同一
+	// 实例，装配到 bridge console）。Configure 创建新 bridge（重绑）时再次注入。
+	policy *hub.MirrorPolicy
 	// lang 文案语言。
 	lang string
 
@@ -68,6 +71,34 @@ type Runtime struct {
 	baseURL           string              // client 的 baseURL（测试指到 httptest）
 	backoff           func(time.Duration) // 退避等待（测试 no-op）
 	sleepBetweenPolls func()              // 绑定轮询间隔（测试 no-op）
+	hubSink           func(hub.Message)   // 桌面集成测试:OnHubMessage 记录桩
+}
+
+// Lang 返回桥文案语言（en / zh-CN）：desktop 出站聚合摘要行组词用。
+func (r *Runtime) Lang() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lang
+}
+
+// SetHubSink 供桌面侧集成测试替换 OnHubMessage 目的地（记录桩，避免搭
+// httptest 全链路）。生产代码不得调用。
+func (r *Runtime) SetHubSink(fn func(hub.Message)) {
+	r.mu.Lock()
+	r.hubSink = fn
+	r.mu.Unlock()
+}
+
+// SetMirrorPolicy 注入群发聚合策略（desktop 与共享 Console 同一实例）：转发给
+// 已存在的 bridge 并记录，Configure 创建新 bridge（重绑）时再次注入。
+func (r *Runtime) SetMirrorPolicy(p *hub.MirrorPolicy) {
+	r.mu.Lock()
+	r.policy = p
+	bridge := r.bridge
+	r.mu.Unlock()
+	if bridge != nil {
+		bridge.console.SetMirrorPolicy(p)
+	}
 }
 
 // NewRuntime 创建微信运行时。lang 为桥文案语言（en / zh-CN）。
@@ -164,6 +195,9 @@ func (r *Runtime) Configure(token, wxid string) {
 	}
 	if r.toolName != nil {
 		r.bridge.SetToolName(r.toolName)
+	}
+	if r.policy != nil {
+		r.bridge.console.SetMirrorPolicy(r.policy)
 	}
 	if r.onLearnWxid != nil {
 		r.bridge.SetOnLearnWxid(r.onLearnWxid)
@@ -420,8 +454,13 @@ func (r *Runtime) Status() WeixinStatus {
 // bridge 未创建时安全跳过。
 func (r *Runtime) OnHubMessage(m hub.Message) {
 	r.mu.Lock()
+	sink := r.hubSink
 	bridge := r.bridge
 	r.mu.Unlock()
+	if sink != nil { // 测试桩:不进 bridge 出站队列
+		sink(m)
+		return
+	}
 	if bridge == nil {
 		return
 	}

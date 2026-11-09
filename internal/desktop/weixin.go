@@ -30,6 +30,9 @@ func (a *App) startWeixin() {
 	})
 	r.SetTranscriber(a.weixinTranscriber())
 	r.SetToolName(a.toolDisplayName)
+	// 共享聚合策略:桌面 Console(wxHubConsole)与微信 bridge Console 与出站
+	// 镜像(mirrorAggregated)指到同一实例;Configure 创建 bridge 时会再注入。
+	r.SetMirrorPolicy(a.mirrorHubPolicy())
 	r.Configure(cfg.Weixin.Token, cfg.Weixin.Wxid)
 
 	a.mu.Lock()
@@ -90,6 +93,12 @@ func (a *App) wxHubConsole() *hub.Console {
 	if a.hubConsole == nil {
 		// 已持 a.mu：直接读 opts，不能再走 snapshot()（会重入 a.mu 死锁）。
 		a.hubConsole = hub.NewConsoleLang(newWXExecutor(a), normalizeLanguage(a.opts.Config.Language))
+		// 共享聚合策略：已持锁，直接判 nil 初始化（不能调 mirrorHubPolicy，
+		// 重入 a.mu 死锁）。微信 bridge Console 同一实例（startWeixin 装配）。
+		if a.mirrorPolicy == nil {
+			a.mirrorPolicy = hub.NewMirrorPolicy()
+		}
+		a.hubConsole.SetMirrorPolicy(a.mirrorPolicy)
 	}
 	return a.hubConsole
 }
