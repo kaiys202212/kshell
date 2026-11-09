@@ -839,7 +839,8 @@ func (c *Console) handleStatus() []Reply {
 	sorted := make([]SessionStatus, len(rows))
 	copy(sorted, rows)
 	sort.SliceStable(sorted, func(i, j int) bool {
-		ri, rj := rank[sorted[i].State], rank[sorted[j].State]
+		ri := statusRank(rank, sorted[i].State)
+		rj := statusRank(rank, sorted[j].State)
 		if ri != rj {
 			return ri < rj
 		}
@@ -858,13 +859,27 @@ func (c *Console) handleStatus() []Reply {
 	}
 	lines := make([]string, 0, len(sorted))
 	for _, r := range sorted {
-		line := formatRef(r.Ref) + " " + c.text("stat_word_"+r.State)
+		stateWord := c.text("stat_word_" + r.State)
+		if strings.HasPrefix(stateWord, "stat_word_") {
+			// 未命中文案表时会原样返回 key(cmdText 语义):此时退回 state 本身。
+			stateWord = "?" + r.State
+		}
+		line := formatRef(r.Ref) + " " + stateWord
 		if r.Summary != "" {
 			line += " — " + r.Summary
 		}
 		lines = append(lines, line)
 	}
 	return single(fmt.Sprintf(c.text("status_running"), running) + "\n\n" + strings.Join(lines, "\n"))
+}
+
+// statusRank 对未知 state 兜底为最大档(排最后),防 desktop 侧拼错把未知态排最前。
+func statusRank(rank map[string]int, state string) int {
+	r, ok := rank[state]
+	if !ok {
+		return 1 << 30
+	}
+	return r
 }
 
 // #h 的条数默认值（列表固定取最近 N 条）与单条正文截断上限（rune 数）。

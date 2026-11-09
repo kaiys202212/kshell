@@ -31,11 +31,16 @@ func TestHandleStatusOrder(t *testing.T) {
 		{Ref: SessionRef{Title: "B", Tool: "x", Workspace: "/w/b"}, State: "perm"},
 	}
 	got := NewConsole(f).Handle("#st")[0].Text
-	if strings.Index(got, "运行中") > strings.Index(got, "权限待办") {
-		t.Fatal("running 应排在 perm 前")
+	// 排序后 Num = i+1:running(A) 重编到会话行首,标题行含"运行中"故必须用
+	// 带编号的会话行做锚点,不能拿"运行中"一词比大小。
+	if !strings.Contains(got, "1. [a]") {
+		t.Fatal("running 应排会话行首")
 	}
-	if strings.Index(got, "权限待办") > strings.Index(got, "空闲") {
-		t.Fatal("perm 应排在 idle 前")
+	if !strings.Contains(got, "2. [b]") {
+		t.Fatal("perm 应排第二")
+	}
+	if !strings.Contains(got, "3. [c]") {
+		t.Fatal("idle 应排第三")
 	}
 }
 
