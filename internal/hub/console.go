@@ -237,6 +237,8 @@ func (c *Console) handleCommand(input string) []Reply {
 		return c.handleSearch(arg)
 	case "#h":
 		return c.handleRecent(arg)
+	case "#gx":
+		return c.handleGX(arg)
 	default:
 		return single(c.text("unknown_cmd"))
 	}
@@ -262,7 +264,7 @@ func splitCmd(input string) (cmd, arg string) {
 // 命令才视为命令意图，避免劫持以全角＃开头的普通文本（发往当前会话）。
 var knownCommands = map[string]bool{
 	"?": true, "？": true, "l": true, "la": true, "en": true, "n": true, "s": true,
-	"m": true, "g": true, "f": true, "st": true, "c": true, "h": true,
+	"m": true, "g": true, "f": true, "st": true, "c": true, "h": true, "gx": true,
 }
 
 // normalizeInput 归一化全角输入（手机输入法常把符号打成全角）：
@@ -928,6 +930,51 @@ func (c *Console) handleRecent(arg string) []Reply {
 		role = c.text("msg_user")
 	}
 	return single(fmt.Sprintf(c.text("msg_detail"), n, role, hubMsgTitle(m)) + "\n\n" + m.Text)
+}
+
+// #gx 的默认条数与上限（超出钳制，防刷屏）。
+const (
+	gxDefault = 5
+	gxMax     = 20
+)
+
+// handleGX 处理 "#gx <编号> [条数]"：按上次列表编号取该会话最近 N 条可见
+// 消息（默认 5、上限 20、越界钳 20），时间正序列出；快照进 lastRecent 且
+// digitRecent=true（后续纯数字查全文与 #h 同语境）。
+func (c *Console) handleGX(arg string) []Reply {
+	fields := strings.Fields(normalizeDigits(arg))
+	if len(fields) == 0 || len(fields) > 2 {
+		return single(c.text("usage_gx"))
+	}
+	n, err := strconv.Atoi(fields[0])
+	if err != nil || n < 1 {
+		return single(c.text("usage_gx"))
+	}
+	count := gxDefault
+	if len(fields) == 2 {
+		cnt, err2 := strconv.Atoi(fields[1])
+		if err2 != nil || cnt < 1 {
+			return single(c.text("usage_gx"))
+		}
+		if cnt > gxMax {
+			cnt = gxMax
+		}
+		count = cnt
+	}
+	ref, ok := c.refByNum(n)
+	if !ok {
+		return single(c.text("no_mapping"))
+	}
+	if ref.ChatID == "" {
+		return single(c.text("gx_none"))
+	}
+	msgs := c.ex.SessionRecentMessages(ref.ChatID, count)
+	if len(msgs) == 0 {
+		return single(c.text("gx_none"))
+	}
+	c.lastRecent = msgs
+	c.digitRecent = true
+	return single(c.renderRecentList(msgs))
 }
 
 // renderRecentList 渲染 #h 列表：加粗表头 + 空行 + 有序列表（1=最旧），

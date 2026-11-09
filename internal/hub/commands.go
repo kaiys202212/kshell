@@ -79,6 +79,9 @@ type Executor interface {
 	// RecentMessages 取 AgentHub 最近 n 条可见消息（时间正序；已滤 ui.hub.* /
 	// hub.welcome / 已撤回）；无历史返回空。实现宜走 VisibleMessages。
 	RecentMessages(n int) []Message
+	// SessionRecentMessages 按会话取最近 n 条可见消息（时间正序，已滤噪声）。
+	// chatID 为链头 ID 空间（ListChats/lastList 口径）。
+	SessionRecentMessages(chatID string, n int) []Message
 }
 
 // —— 用户可见文案统一放 lang.go 的 cmdTexts（双语）——

@@ -483,6 +483,23 @@ func (w *wxExecutor) RecentMessages(n int) []hub.Message {
 	return hub.VisibleMessages(store.List(), n)
 }
 
+// SessionRecentMessages 按 chatID 链头精确匹配取最近 n 条可见消息，供 #gx。
+// chatID 是 ListChats/lastList 口径（hub 落盘 ChatID 同为链头空间）；
+// VisibleMessages 负责滤噪与截尾。store 未装配/无历史/n<=0 时返回空。
+func (w *wxExecutor) SessionRecentMessages(chatID string, n int) []hub.Message {
+	store := w.a.snapshot().HubStore
+	if store == nil || chatID == "" || n <= 0 {
+		return nil
+	}
+	var matched []hub.Message
+	for _, m := range store.List() {
+		if m.ChatID == chatID {
+			matched = append(matched, m)
+		}
+	}
+	return hub.VisibleMessages(matched, n)
+}
+
 // SessionStatuses 合成 #st 的逐会话状态：全部活跃 ACP chat 一行。状态取
 // StatusOf（starting/running/authenticating → running、exited → gone、其余 →
 // idle）；修正：该会话 hub 最后一条 agent 消息 Event 为 Notification/attention

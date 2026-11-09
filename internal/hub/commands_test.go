@@ -46,6 +46,8 @@ type fakeExecutor struct {
 	openSessionRef  SessionRef
 	openSessionErr  error
 	recentMessages  []Message
+	// sessMsgs 是按 ChatID（链头口径）存的会话消息，供 SessionRecentMessages。
+	sessMsgs map[string][]Message
 	// recoverRef/recoverOK 模拟 RecoverSession（引用过期 chatID 恢复）。
 	recoverRef SessionRef
 	recoverOK  bool
@@ -134,6 +136,10 @@ func (f *fakeExecutor) SessionStatuses() []SessionStatus { return f.statuses }
 
 func (f *fakeExecutor) RecentMessages(n int) []Message {
 	return VisibleMessages(f.recentMessages, n)
+}
+
+func (f *fakeExecutor) SessionRecentMessages(chatID string, n int) []Message {
+	return VisibleMessages(f.sessMsgs[chatID], n)
 }
 
 // join 把多条回复拼成一段文本，便于断言。

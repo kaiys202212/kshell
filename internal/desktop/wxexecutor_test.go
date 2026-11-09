@@ -706,3 +706,43 @@ func TestWXExecutorLastActivityNonACPStopsScan(t *testing.T) {
 		t.Fatalf("应带回非 ACP 工具标记: %+v", ref)
 	}
 }
+
+// SessionRecentMessages 按 chatID 链头精确匹配取最近 n 条可见消息：命中/
+// 不命中/滤噪/截尾口径。
+func TestWXExecutorSessionRecentMessages(t *testing.T) {
+	app := wxApp(t, nil)
+	store := app.snapshot().HubStore
+	ex := newWXExecutor(app)
+
+	// c2 会话 4 条可见 + 2 条噪声；c1 会话 1 条（不串）。
+	_ = store.Append(hub.Message{Kind: "user", ChatID: "c2", SessionTitle: "B", Text: "B1"})
+	_ = store.Append(hub.Message{Kind: "user", ChatID: "c1", SessionTitle: "A", Text: "A1"})
+	_ = store.Append(hub.Message{Kind: "agent", ChatID: "c2", SessionTitle: "B", Text: "B2"})
+	_ = store.Append(hub.Message{Kind: "agent", ChatID: "c2", SessionTitle: "B", Text: "hub.welcome|Noise"})
+	_ = store.Append(hub.Message{Kind: "agent", ChatID: "c2", SessionTitle: "B", Event: "ui.hub.ack_queued", Text: "x"})
+	_ = store.Append(hub.Message{Kind: "agent", ChatID: "c2", SessionTitle: "B", Text: "B3"})
+	_ = store.Append(hub.Message{Kind: "agent", ChatID: "c2", SessionTitle: "B", Status: hub.StatusRecalled, Text: "退回"})
+	_ = store.Append(hub.Message{Kind: "agent", ChatID: "c2", SessionTitle: "B", Text: "B4"})
+
+	// 命中：取尾部 n 条（滤噪后 B1..B4 共 4 条）。
+	got := ex.SessionRecentMessages("c2", 3)
+	if len(got) != 3 || got[0].Text != "B2" || got[2].Text != "B4" {
+		t.Fatalf("应取滤噪后最近 3 条 B2/B3/B4: %+v", got)
+	}
+	// n > 可见数：全返。
+	got = ex.SessionRecentMessages("c2", 99)
+	if len(got) != 4 || got[0].Text != "B1" {
+		t.Fatalf("n 超量应全返 4 条: %+v", got)
+	}
+	// 不命中。
+	if got := ex.SessionRecentMessages("nope", 5); len(got) != 0 {
+		t.Fatalf("不命中应返回空: %+v", got)
+	}
+	// 空 chatID / n<=0。
+	if got := ex.SessionRecentMessages("", 5); len(got) != 0 {
+		t.Fatalf("空 chatID 应返回空: %+v", got)
+	}
+	if got := ex.SessionRecentMessages("c2", 0); len(got) != 0 {
+		t.Fatalf("n<=0 应返回空: %+v", got)
+	}
+}

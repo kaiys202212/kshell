@@ -69,8 +69,9 @@ func (f *fakeExec) Send(chatID, text string) error {
 }
 func (f *fakeExec) GrantPermission(string, string, bool) error { return nil }
 func (f *fakeExec) Status() hub.ConsoleStatus                  { return hub.ConsoleStatus{} }
-func (f *fakeExec) RecentMessages(int) []hub.Message           { return nil }
-func (f *fakeExec) SessionStatuses() []hub.SessionStatus       { return nil }
+func (f *fakeExec) RecentMessages(int) []hub.Message                { return nil }
+func (f *fakeExec) SessionStatuses() []hub.SessionStatus            { return nil }
+func (f *fakeExec) SessionRecentMessages(string, int) []hub.Message { return nil }
 
 // reqRecord 记录一次 HTTP 请求的路径与解码后的 JSON 体。
 type reqRecord struct {
