@@ -22,6 +22,20 @@ type SessionRef struct {
 	TerminalActive bool
 }
 
+// SessionStatus 是 #st 逐会话状态的一行数据(desktop 合成,Console 渲染)。
+type SessionStatus struct {
+	Ref SessionRef
+	// State 取 "running" | "perm" | "idle" | "gone"(词义见 cmdTexts 的
+	// stat_word_* 四键)。running 含 starting/authenticating;exited → gone。
+	State string
+	// Summary 是该会话最后一条 agent 可见消息的单行截断(≤60 rune,detail
+	// 截断由实现方负责,Console 不再二次截断)。
+	Summary string
+	// LastTs 是最后一条 agent 可见消息的 UnixNano(无则 0):微信聚合行据此
+	// 判定群发后是否已有回复;#st 不用它。
+	LastTs int64
+}
+
 // MenuOption 是菜单里的一项（工具/项目/模型）。
 type MenuOption struct {
 	ID    string
@@ -58,6 +72,9 @@ type Executor interface {
 	SearchSessions(kw string) []SessionRef
 	Send(chatID, text string) error
 	GrantPermission(chatID, reqID string, allow bool) error
+	// SessionStatuses 返回活跃会话逐个状态(#st 数据源)。实现方按 ListChats
+	// 的 Status 与 hub store 每会话最后一条 agent 消息合成;未装配时返回 nil。
+	SessionStatuses() []SessionStatus
 	Status() ConsoleStatus
 	// RecentMessages 取 AgentHub 最近 n 条可见消息（时间正序；已滤 ui.hub.* /
 	// hub.welcome / 已撤回）；无历史返回空。实现宜走 VisibleMessages。

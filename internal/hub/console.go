@@ -2,6 +2,7 @@ package hub
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -826,11 +827,44 @@ func (c *Console) handleSearch(arg string) []Reply {
 	return single(strings.Join([]string{strings.Join(lines, "\n"), c.text("pick_number")}, "\n\n"))
 }
 
-// handleStatus 文本化状态快照（无序列表，按 Markdown 渲染不挤行）。
+// handleStatus 逐会话状态总览:标题行(运行中计数,复用 status_running) +
+// 每会话一条列表行(formatRef 形态,状态词+摘要)。排序 running > perm >
+// idle > gone,同级按 Num。无任务回 no_tasks。
 func (c *Console) handleStatus() []Reply {
-	st := c.ex.Status()
-	return single(fmt.Sprintf("- "+c.text("current_session")+"\n- "+c.text("status_running")+"\n- "+c.text("status_undelivered"),
-		st.CurrentTitle, st.Running, st.Undelivered))
+	rows := c.ex.SessionStatuses()
+	if len(rows) == 0 {
+		return single(c.text("no_tasks"))
+	}
+	rank := map[string]int{"running": 0, "perm": 1, "idle": 2, "gone": 3}
+	sorted := make([]SessionStatus, len(rows))
+	copy(sorted, rows)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		ri, rj := rank[sorted[i].State], rank[sorted[j].State]
+		if ri != rj {
+			return ri < rj
+		}
+		return sorted[i].Ref.Num < sorted[j].Ref.Num
+	})
+	// 会话编号语境只在渲染时有:按排好序的次序统一编号 1..N(formatRef 缺
+	// Num 会打印 "0.")。
+	for i := range sorted {
+		sorted[i].Ref.Num = i + 1
+	}
+	running := 0
+	for _, r := range sorted {
+		if r.State == "running" {
+			running++
+		}
+	}
+	lines := make([]string, 0, len(sorted))
+	for _, r := range sorted {
+		line := formatRef(r.Ref) + " " + c.text("stat_word_"+r.State)
+		if r.Summary != "" {
+			line += " — " + r.Summary
+		}
+		lines = append(lines, line)
+	}
+	return single(fmt.Sprintf(c.text("status_running"), running) + "\n\n" + strings.Join(lines, "\n"))
 }
 
 // #h 的条数默认值（列表固定取最近 N 条）与单条正文截断上限（rune 数）。

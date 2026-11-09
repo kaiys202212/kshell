@@ -38,6 +38,7 @@ type fakeExecutor struct {
 	listModelsCur   string
 	listModelsErr   error
 	setModelErr     error
+	statuses        []SessionStatus
 	searchResult    []SessionRef
 	sendErr         error
 	grantErr        error
@@ -128,6 +129,8 @@ func (f *fakeExecutor) GrantPermission(chatID, reqID string, allow bool) error {
 }
 
 func (f *fakeExecutor) Status() ConsoleStatus { return f.status }
+
+func (f *fakeExecutor) SessionStatuses() []SessionStatus { return f.statuses }
 
 func (f *fakeExecutor) RecentMessages(n int) []Message {
 	return VisibleMessages(f.recentMessages, n)
@@ -761,13 +764,21 @@ func TestSearch(t *testing.T) {
 }
 
 func TestStatus(t *testing.T) {
+	// 2026-11 #st 重写为逐会话总览:标题行复用 status_running(运行中计数),
+	// 每会话一条列表行。此处覆盖「无状态行摘要」与完整摘要两种形态。
 	c := NewConsole(&fakeExecutor{
-		status: ConsoleStatus{CurrentTitle: "修复登录", Running: 2, Undelivered: 5},
+		statuses: []SessionStatus{
+			{Ref: SessionRef{Title: "修复登录", Tool: "claude", Workspace: `D:\ws\login`}, State: "running"},
+			{Ref: SessionRef{Title: "等待评审", Tool: "codex", Workspace: `D:\ws\review`}, State: "gone", Summary: "已退出"},
+		},
 	})
 	out := join(c.Handle("#st"))
-	want := "- 当前会话: 修复登录\n- 运行中任务: 2\n- 未送达消息: 5"
-	if out != want {
-		t.Fatalf("#st 格式不符:\n得到 %q\n期望 %q", out, want)
+	if !strings.HasPrefix(out, "运行中任务: 1\n\n") {
+		t.Fatalf("#st 标题行不符: %q", out)
+	}
+	want := "1. [login] claude 修复登录 运行中\n2. [review] codex 等待评审 已断开 — 已退出"
+	if !strings.Contains(out, want) {
+		t.Fatalf("#st 会话行不符:\n得到 %q\n期望含 %q", out, want)
 	}
 }
 
