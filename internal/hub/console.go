@@ -63,8 +63,11 @@ type Console struct {
 	// currentMark 是当前上下文采纳时的 hub 归因消息 ID（水位）：只有更新的
 	// 归因才覆盖 current，显式切换（#l/#f 选号、新建）把水位抬到当下。
 	currentMark int64
-	menu        *pendingMenu
-	perm        *pendingPermission
+	menu *pendingMenu
+	perm *pendingPermission
+	// agg 是群发回执聚合策略：#g 多目标进入聚合，精确投递（单发/直投/引用/
+	// 待选移交）退出。默认自建实例；多渠道可经 SetMirrorPolicy 共享同一份。
+	agg *MirrorPolicy
 	// lastList 是最近一次列表/搜索的编号映射（纯数字与 #g 依据它路由）。
 	lastList []SessionRef
 	// lastRecent 是最近一次 #h 列表的消息快照（#h <序号> 查全文依据它索引）。
@@ -88,7 +91,7 @@ func NewConsole(ex Executor) *Console {
 
 // NewConsoleLang 创建指定文案语言的命令状态机（"zh-CN" 中文，其余英文）。
 func NewConsoleLang(ex Executor, lang string) *Console {
-	return &Console{ex: ex, lang: lang}
+	return &Console{ex: ex, lang: lang, agg: NewMirrorPolicy()}
 }
 
 // SetCurrent 显式设置当前会话上下文（渠道初始化时由装配方调用：
@@ -115,6 +118,18 @@ func (c *Console) OpenPermissionMenu(chatID, reqID, desc string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.perm = &pendingPermission{chatID: chatID, reqID: reqID, desc: desc}
+}
+
+// MirrorPolicy 取出共享聚合策略（渠道装配时把多渠道 Console 指到同一实例）。
+func (c *Console) MirrorPolicy() *MirrorPolicy { return c.agg }
+
+// SetMirrorPolicy 共享替换（nil 拒绝，保持自建兜底）。
+func (c *Console) SetMirrorPolicy(p *MirrorPolicy) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if p != nil {
+		c.agg = p
+	}
 }
 
 // Handle 处理一条用户输入，返回要回显的回复（可能多条，按序展示）。
@@ -522,6 +537,8 @@ func (c *Console) handleMenuNumber(n int) []Reply {
 		if err := c.ex.Send(ref.ChatID, pending); err != nil {
 			return single(fmt.Sprintf(c.text("send_failed"), err))
 		}
+		// 待选编号移交成功属精确投递：退出群发聚合。
+		c.agg.Discard()
 		return []Reply{{Text: fmt.Sprintf(c.text("sent_to"), sessionTag(ref.Title)), Sent: true}}
 	}
 	c.menu = nil
@@ -553,6 +570,8 @@ func (c *Console) finishCreate(menu *pendingMenu, model string) []Reply {
 		replies = append(replies, Reply{Text: fmt.Sprintf(c.text("send_failed"), err)})
 		return replies
 	}
+	// 新建移交成功（带暂存正文发送）属精确投递：退出群发聚合。
+	c.agg.Discard()
 	replies = append(replies, Reply{
 		Text: c.text("handoff_done"),
 		Sent: true,
@@ -602,51 +621,167 @@ func (c *Console) handleModelsMenu() []Reply {
 	return c.renderOptionsMarked(c.text("pick_model"), models, curID)
 }
 
-// handleG 处理 "#g <n> <text>"：向编号 n 的会话发送文本（不切 current）。
-// 编号兼容全角数字；编号后允许紧跟一个全角/半角冒号作分隔（"#g 1：hi"），
-// 正文里的冒号不受影响（只在编号后消化一个）。
+// gTag 是群发回执里一个目标的紧凑标签 "N【标题】";标题缺失退裸编号。
+func gTag(r SessionRef) string {
+	if t := sessionTag(r.Title); t != "" {
+		return itoa(r.Num) + t
+	}
+	return itoa(r.Num)
+}
+
+// handleG 处理 "#g <编号列表> <text>"。单编号保持旧语义(sent_to 单行回执、
+// 不进聚合但清聚合一一单发属精确投递);多编号顺序逐目标激活+发送,全部编号
+// 必须有效(任一无效整条拒绝回 usage 风格的 no_mapping/usage_g),标识去重,
+// 部分失败不中断其余(逐目标列出),≥2 成功进入汇报聚合(Enter),否则保持
+// 非聚合(单发成功 Discard,全失败也不进)。群发不改 current、不落归因水位
+// (不调用 activateRef/markCurrent)。
 func (c *Console) handleG(arg string) []Reply {
-	i := 0
-	for i < len(arg) {
-		r, size := utf8.DecodeRuneInString(arg[i:])
-		if (r >= '0' && r <= '9') || (r >= '０' && r <= '９') {
-			i += size
+	nums, text, ok := c.parseGTargets(arg)
+	if !ok {
+		return single(c.text("usage_g"))
+	}
+	refs := make([]SessionRef, 0, len(nums))
+	for _, n := range nums {
+		ref, okN := c.refByNum(n)
+		if !okN {
+			return single(c.text("no_mapping"))
+		}
+		refs = append(refs, ref)
+	}
+	// 按 SessionID(退 ChatID)去重,保持编号升序由调用方输入顺序即可(通常升序)。
+	seen := map[string]bool{}
+	uniq := make([]SessionRef, 0, len(refs))
+	for _, r := range refs {
+		key := r.SessionID
+		if key == "" {
+			key = r.ChatID
+		}
+		if key != "" {
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+		}
+		uniq = append(uniq, r)
+	}
+	var succRefs []SessionRef
+	var sentTags, failParts []string
+	for _, ref := range uniq {
+		if ref.TerminalActive {
+			failParts = append(failParts, gTag(ref)+" — "+c.text("err.hub.terminal_active"))
 			continue
+		}
+		if ref.ChatID == "" && ref.SessionID != "" {
+			opened, err := c.ex.OpenSession(ref.SessionID)
+			if err != nil {
+				failParts = append(failParts, gTag(ref)+" — "+c.errText(err))
+				continue
+			}
+			if opened.ChatID == "" {
+				failParts = append(failParts, gTag(ref)+" — "+c.text("no_mapping"))
+				continue
+			}
+			ref = opened
+		}
+		if ref.ChatID == "" {
+			return []Reply{{Text: c.text("no_mapping")}}
+		}
+		if err := c.ex.Send(ref.ChatID, text); err != nil {
+			failParts = append(failParts, gTag(ref)+" — "+c.errText(err))
+			continue
+		}
+		succRefs = append(succRefs, ref)
+		sentTags = append(sentTags, gTag(ref))
+	}
+	if len(uniq) <= 1 {
+		if len(succRefs) == 1 {
+			// 旧单发语义原样保留：单发属精确投递，退出聚合。
+			c.agg.Discard()
+			return single(fmt.Sprintf(c.text("sent_to"), sessionTag(succRefs[0].Title)))
+		}
+		return single(fmt.Sprintf(c.text("send_failed"), c.text("no_current")))
+	}
+	var parts []string
+	if len(sentTags) > 0 {
+		parts = append(parts, fmt.Sprintf(c.text("group_sent"), strings.Join(sentTags, " ")))
+	}
+	if len(failParts) > 0 {
+		parts = append(parts, fmt.Sprintf(c.text("group_failed"), strings.Join(failParts, "; ")))
+	}
+	if len(succRefs) >= 2 {
+		c.agg.Enter(succRefs)
+	}
+	return single(strings.Join(parts, "\n\n"))
+}
+
+// parseGTargets 解析 "#g <编号列表> <正文>":编号段为数字串(全角兼容),用
+// 半角逗号/顿号/空白分隔;第一个非编号 token 起为正文,编号段后可紧跟一个
+// 全角/半角冒号(保留旧 "#g 1:hi" 兼容)。已知限制:正文不能以数字开头
+// (数字 token 会被吞进编号段)。逗号/顿号后只接数字;接着是其他文本时该
+// token 起为正文。任一编号非法或正文为空 → ok=false 整条拒绝。
+func (c *Console) parseGTargets(arg string) (nums []int, text string, ok bool) {
+	i := 0
+	for {
+		j := i
+		for j < len(arg) {
+			r, size := utf8.DecodeRuneInString(arg[j:])
+			if (r >= '0' && r <= '9') || (r >= '０' && r <= '９') {
+				j += size
+				continue
+			}
+			break
+		}
+		if j == i {
+			return nil, "", false // 无编号(或编号段后无正文)
+		}
+		n, err := strconv.Atoi(normalizeDigits(arg[i:j]))
+		if err != nil || n < 1 {
+			return nil, "", false
+		}
+		nums = append(nums, n)
+		i = j
+		if i >= len(arg) {
+			return nil, "", false // 有编号无正文
+		}
+		r, size := utf8.DecodeRuneInString(arg[i:])
+		switch r {
+		case ',', '、':
+			i += size
+			for i < len(arg) {
+				r2, s2 := utf8.DecodeRuneInString(arg[i:])
+				if r2 != ' ' && r2 != '\t' {
+					break
+				}
+				i += s2
+			}
+			continue
+		case ' ', '\t':
+			// 空白既可能是编号分隔也可能是正文起点:lookahead 首个非空字符。
+			k := i
+			for k < len(arg) {
+				r2, s2 := utf8.DecodeRuneInString(arg[k:])
+				if r2 != ' ' && r2 != '\t' {
+					break
+				}
+				k += s2
+			}
+			if k < len(arg) {
+				r2, _ := utf8.DecodeRuneInString(arg[k:])
+				if (r2 >= '0' && r2 <= '9') || (r2 >= '０' && r2 <= '９') {
+					i = k
+					continue
+				}
+			}
+			i = k // 目录结束,正文从这起
 		}
 		break
 	}
-	nStr := normalizeDigits(arg[:i])
-	text := strings.TrimSpace(arg[i:])
-	text = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(text, "："), ":"))
-	if nStr == "" || text == "" {
-		return single(c.text("usage_g"))
+	text = strings.TrimSpace(arg[i:])
+	text = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(text, ":"), "："))
+	if text == "" {
+		return nil, "", false
 	}
-	n, err := strconv.Atoi(nStr)
-	if err != nil || n < 1 {
-		return single(c.text("usage_g"))
-	}
-	ref, ok := c.refByNum(n)
-	if !ok {
-		return single(c.text("no_mapping"))
-	}
-	// 未激活磁盘会话先 OpenSession；成功后仍不改 current（#g 不切上下文）。
-	if ref.ChatID == "" {
-		if ref.SessionID == "" {
-			return single(c.text("no_mapping"))
-		}
-		opened, err := c.ex.OpenSession(ref.SessionID)
-		if err != nil {
-			return single(fmt.Sprintf(c.text("switch_failed"), c.errText(err)))
-		}
-		if opened.ChatID == "" {
-			return single(fmt.Sprintf(c.text("switch_failed"), c.text("no_mapping")))
-		}
-		ref = opened
-	}
-	if err := c.ex.Send(ref.ChatID, text); err != nil {
-		return single(fmt.Sprintf(c.text("send_failed"), err))
-	}
-	return single(fmt.Sprintf(c.text("sent_to"), sessionTag(ref.Title)))
+	return nums, text, true
 }
 
 // handleSearch 处理 "#f <kw>"：搜索并进入结果选择菜单。
@@ -785,6 +920,8 @@ func (c *Console) sendToCurrent(text string) []Reply {
 	if err := c.ex.Send(ref.ChatID, text); err != nil {
 		return single(fmt.Sprintf(c.text("send_failed"), err))
 	}
+	// 直投当前会话属精确投递：退出群发聚合。
+	c.agg.Discard()
 	return nil
 }
 
@@ -837,6 +974,8 @@ func (c *Console) sendQuoted(r SessionRef, text string) []Reply {
 	if err := c.ex.Send(ref.ChatID, text); err != nil {
 		return single(fmt.Sprintf(c.text("send_failed"), c.errText(err)))
 	}
+	// 引用回复属精确投递：退出群发聚合。
+	c.agg.Discard()
 	return nil
 }
 
