@@ -1321,6 +1321,16 @@ func TestPlainTextWithoutTargetListsSessions(t *testing.T) {
 			t.Fatalf("无目标列表缺少 %q: %q", want, out)
 		}
 	}
+	// Markdown 段落规范：标题/列表条目/引导文案段间均为 \n\n（soft-break 渲染友好）。
+	for _, want := range []string{
+		"未精确匹配到会话——回复编号，将把这条消息发送到所选会话:\n\n1. 新建 session",
+		"1. 新建 session\n\n--- 最近会话 ---",
+		"codex 会话B\n\n请回复数字选择",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("待选菜单应按段落 \\n\\n 排版, 缺少 %q: %q", want, out)
+		}
+	}
 	if len(fe.sendCalls) != 0 {
 		t.Fatalf("列会话时不得投递: %v", fe.sendCalls)
 	}

@@ -1118,9 +1118,11 @@ func (c *Console) listForPending(text string) ([]Reply, bool) {
 		results:     shown,
 		pendingText: text,
 	}
+	// 前端 ReactMarkdown 渲染会把单 \n 折行（soft-break），段间一律 "\n\n"
+	// 段落级拼接（含每条目独立成段）；空行分隔条目在段间拼接下冗余，去掉。
 	lines := []string{"1. " + c.text("pick_group_new_label")}
 	if len(shown) > 0 {
-		lines = append(lines, "", c.text("pick_group_recent"))
+		lines = append(lines, c.text("pick_group_recent"))
 		for _, r := range shown {
 			line := formatRef(r)
 			if r.TerminalActive {
@@ -1131,7 +1133,7 @@ func (c *Console) listForPending(text string) ([]Reply, bool) {
 	}
 	return single(strings.Join([]string{
 		c.text("pick_target"),
-		strings.Join(lines, "\n"),
+		strings.Join(lines, "\n\n"),
 		c.text("pick_number"),
 	}, "\n\n")), true
 }
