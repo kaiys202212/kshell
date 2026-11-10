@@ -131,9 +131,12 @@ func TestAuthFilePathsOrder(t *testing.T) {
 }
 
 func TestExtractAtRestKey(t *testing.T) {
-	orig := atRestKeyRunner
-	defer func() { atRestKeyRunner = orig }()
+	origRunner, origCache := atRestKeyRunner, cachedAtRestKey
+	defer func() { atRestKeyRunner, cachedAtRestKey = origRunner, origCache }()
+	cachedAtRestKey = nil
+	calls := 0
 	atRestKeyRunner = func(exe, script string) ([]byte, error) {
+		calls++
 		if script == "" || exe != "fake.exe" {
 			t.Fatalf("runner 参数不符: exe=%q", exe)
 		}
@@ -146,6 +149,13 @@ func TestExtractAtRestKey(t *testing.T) {
 	want := sha256.Sum256([]byte("s3cret-string"))
 	if !bytes.Equal(key, want[:]) {
 		t.Fatal("key 应为 atRestSecretKey 字符串的 sha256")
+	}
+	// 第二次调用命中进程内缓存，不再 spawn exe。
+	if _, err := extractAtRestKey("fake.exe"); err != nil {
+		t.Fatalf("缓存读取失败: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("runner 应只被调用 1 次，实际 %d", calls)
 	}
 }
 
@@ -162,8 +172,9 @@ func TestLoadCredentialFromFiles(t *testing.T) {
 		},
 	}
 	raw, _ := json.Marshal(doc)
-	orig := atRestKeyRunner
-	defer func() { atRestKeyRunner = orig }()
+	origRunner, origCache := atRestKeyRunner, cachedAtRestKey
+	defer func() { atRestKeyRunner, cachedAtRestKey = origRunner, origCache }()
+	cachedAtRestKey = nil
 	atRestKeyRunner = func(exe, script string) ([]byte, error) {
 		return []byte(`{"atRestSecretKey":"` + secret + `"}`), nil
 	}

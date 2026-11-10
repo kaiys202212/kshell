@@ -469,9 +469,8 @@
       "workbuddy_pick_title": "选择要导入的 WorkBuddy 原生模型（{{0}}）",
       "workbuddy_confirm": "导入所选",
       "workbuddy_cancel": "取消",
-      "workbuddy_imported": "已导入 WorkBuddy 模型，记得保存模型配置",
-      "workbuddy_ctx": "上下文 {{0}}",
-      "workbuddy_credential_err": "WorkBuddy 凭据不可用：{{0}}"
+      "workbuddy_imported": "已导入并保存 WorkBuddy 模型",
+      "workbuddy_ctx": "上下文 {{0}}"
       },
       "tools": {
         "title": "工具检测",

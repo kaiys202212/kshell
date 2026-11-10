@@ -469,9 +469,8 @@
       "workbuddy_pick_title": "Pick WorkBuddy native models to import ({{0}})",
       "workbuddy_confirm": "Import selected",
       "workbuddy_cancel": "Cancel",
-      "workbuddy_imported": "WorkBuddy models imported; remember to save the model config",
-      "workbuddy_ctx": "ctx {{0}}",
-      "workbuddy_credential_err": "WorkBuddy credentials unavailable: {{0}}"
+      "workbuddy_imported": "WorkBuddy models imported and saved",
+      "workbuddy_ctx": "ctx {{0}}"
       },
       "tools": {
         "title": "Tool detection",

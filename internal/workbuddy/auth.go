@@ -244,9 +244,17 @@ func authFilePaths(localAppData, roamingAppData string) []string {
 	return out
 }
 
+// cachedAtRestKey 是 at-rest key 的进程内缓存：key 只随 WorkBuddy 安装/升级
+// 变化，工具循环每轮都会解凭据，不缓存则每轮都 spawn 一次桌面端进程。
+// 只缓存成功值；失败不缓存（装好 WorkBuddy 后无需重启 kshell 即可重试）。
+var cachedAtRestKey []byte
+
 // extractAtRestKey 借 WorkBuddy 桌面端自身导出 at-rest key payload，
 // 再取 atRestSecretKey 字符串（按其 UTF-8 字节，非解码值）的 sha256 作 32 字节密钥。
 func extractAtRestKey(exe string) ([]byte, error) {
+	if len(cachedAtRestKey) == 32 {
+		return cachedAtRestKey, nil
+	}
 	payload, err := atRestKeyRunner(exe, atRestKeyScript)
 	if err != nil {
 		return nil, fmt.Errorf("err.workbuddy.key_unavailable|%v", err)
@@ -258,6 +266,7 @@ func extractAtRestKey(exe string) ([]byte, error) {
 		return nil, errors.New("err.workbuddy.key_unavailable|payload 缺 atRestSecretKey")
 	}
 	sum := sha256.Sum256([]byte(p.AtRestSecretKey))
+	cachedAtRestKey = sum[:]
 	return sum[:], nil
 }
 
