@@ -740,6 +740,7 @@ interface AppBindings {
   GetModelSyncOffTools(): Promise<string[]>;
   SetToolModelSync(toolID: string, enabled: boolean): Promise<void>;
   ListModelPresets(): Promise<ModelPreset[]>;
+  ScanWorkbuddyPlatform(): Promise<WorkbuddyScanView>;
   FetchAvailableModels(platformID: string, openaiURL: string, anthropicURL: string, apiKey: string): Promise<ModelsFetchView>;
   GetSessionMode(): Promise<string>;
   SetSessionMode(mode: string): Promise<void>;
@@ -2144,6 +2145,33 @@ export async function listModelPresets(): Promise<ModelPreset[]> {
   const a = app();
   if (!a) return [];
   return a.ListModelPresets();
+}
+
+// WorkbuddyModelView 是 WorkBuddy 原生模型候选（导入勾选清单的一行）。
+export interface WorkbuddyModelView {
+  ID: string;
+  Name: string;
+  ContextWindow: number;
+}
+
+// WorkbuddyScanView 是「从 WorkBuddy 导入」扫描结果：Installed/CredentialOK
+// 决定入口可用性，ErrKey 为稳定错误 key（translateBackend 渲染）。
+export interface WorkbuddyScanView {
+  Installed: boolean;
+  CredentialOK: boolean;
+  ErrKey: string;
+  Region: string;
+  Models: WorkbuddyModelView[];
+}
+
+// scanWorkbuddyPlatform 扫描本机 WorkBuddy：凭据可用时返回原生模型候选清单。
+// 绑定不可用时返回未安装视图（入口隐藏，与后端语义一致）。
+export async function scanWorkbuddyPlatform(): Promise<WorkbuddyScanView> {
+  const a = app();
+  if (!a) {
+    return { Installed: false, CredentialOK: false, ErrKey: 'err.workbuddy.not_installed', Region: '', Models: [] };
+  }
+  return a.ScanWorkbuddyPlatform();
 }
 
 // fetchAvailableModels 用表单当前值直拉双端点；platformID 仅作后端日志标识，不参与拉取。

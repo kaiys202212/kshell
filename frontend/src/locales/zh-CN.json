@@ -218,6 +218,30 @@
       "asset_missing": "安装包中没有 {{0}}",
       "sums_length_invalid": "SHA256 长度异常: {{0}}",
       "sums_missing_file": "SHA256SUMS 中没有 {{0}}"
+    },
+    "workbuddy": {
+      "not_installed": "未检测到本机 WorkBuddy 桌面端",
+      "exe_not_found": "未检测到 WorkBuddy 桌面端，无法读取登录凭据",
+      "key_unavailable": "无法从 WorkBuddy 桌面端提取凭据密钥（{{0}}）",
+      "bad_auth_file": "WorkBuddy 凭据文件损坏（{{0}}）",
+      "no_token": "WorkBuddy 未登录或凭据缺失",
+      "token_expired": "WorkBuddy 登录已过期：请在 WorkBuddy 内重新登录后重试",
+      "key_mismatch": "WorkBuddy 凭据密钥不匹配（桌面端可能刚换密钥，重启 WorkBuddy 后重试）",
+      "decrypt_failed": "WorkBuddy 凭据解密失败（{{0}}）",
+      "bad_envelope": "WorkBuddy 凭据信封损坏（{{0}}）",
+      "bad_key": "WorkBuddy 凭据密钥格式错误",
+      "empty_catalog": "WorkBuddy 未返回任何模型",
+      "bad_catalog": "WorkBuddy 模型目录解析失败（{{0}}）",
+      "catalog_code": "WorkBuddy 模型目录返回错误码 {{0}}",
+      "catalog_unreachable": "无法连接 WorkBuddy 目录服务（{{0}}）",
+      "catalog_http": "WorkBuddy 模型目录 HTTP {{0}}",
+      "bad_request": "请求体无法解析（{{0}}）",
+      "chat_unreachable": "无法连接 WorkBuddy 网关（{{0}}）",
+      "chat_http": "WorkBuddy 网关 HTTP {{0}}",
+      "chat_stream": "WorkBuddy 响应流中断（{{0}}）",
+      "channel_reject": "被 WorkBuddy 网关渠道校验拒绝（{{0}}）",
+      "queued": "模型排队中（{{0}}），请稍后重试或换一个模型",
+      "gateway_code": "WorkBuddy 网关错误码 {{0}}"
     }
   },
   "update": {
@@ -438,7 +462,16 @@
         "save": "保存模型配置",
         "apply_recommended": "应用推荐模型",
         "desc": "启动时统一注入当前模型与对应协议端点（Claude→Anthropic，Codex→OpenAI）。不改各工具自身配置文件。",
-        "saved": "已保存，对新启动的会话生效"
+        "saved": "已保存，对新启动的会话生效",
+      "workbuddy_import": "从 WorkBuddy 导入",
+      "workbuddy_rescan": "重新扫描",
+      "workbuddy_scanning": "扫描中…",
+      "workbuddy_pick_title": "选择要导入的 WorkBuddy 原生模型（{{0}}）",
+      "workbuddy_confirm": "导入所选",
+      "workbuddy_cancel": "取消",
+      "workbuddy_imported": "已导入 WorkBuddy 模型，记得保存模型配置",
+      "workbuddy_ctx": "上下文 {{0}}",
+      "workbuddy_credential_err": "WorkBuddy 凭据不可用：{{0}}"
       },
       "tools": {
         "title": "工具检测",

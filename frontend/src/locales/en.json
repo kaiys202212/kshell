@@ -218,6 +218,30 @@
       "asset_missing": "The installer package does not contain {{0}}",
       "sums_length_invalid": "Invalid SHA256 length: {{0}}",
       "sums_missing_file": "{{0}} is not present in SHA256SUMS"
+    },
+    "workbuddy": {
+      "not_installed": "WorkBuddy desktop app not detected",
+      "exe_not_found": "WorkBuddy desktop app not found; cannot read credentials",
+      "key_unavailable": "Cannot extract credential key from WorkBuddy ({{0}})",
+      "bad_auth_file": "WorkBuddy credential file corrupted ({{0}})",
+      "no_token": "WorkBuddy not signed in or credentials missing",
+      "token_expired": "WorkBuddy session expired: sign in again in WorkBuddy and retry",
+      "key_mismatch": "WorkBuddy credential key mismatch (WorkBuddy may have rotated it; restart WorkBuddy and retry)",
+      "decrypt_failed": "WorkBuddy credential decryption failed ({{0}})",
+      "bad_envelope": "WorkBuddy credential envelope corrupted ({{0}})",
+      "bad_key": "WorkBuddy credential key malformed",
+      "empty_catalog": "WorkBuddy returned no models",
+      "bad_catalog": "Failed to parse WorkBuddy model catalog ({{0}})",
+      "catalog_code": "WorkBuddy catalog returned code {{0}}",
+      "catalog_unreachable": "Cannot reach WorkBuddy catalog service ({{0}})",
+      "catalog_http": "WorkBuddy catalog HTTP {{0}}",
+      "bad_request": "Request body unparseable ({{0}})",
+      "chat_unreachable": "Cannot reach WorkBuddy gateway ({{0}})",
+      "chat_http": "WorkBuddy gateway HTTP {{0}}",
+      "chat_stream": "WorkBuddy response stream interrupted ({{0}})",
+      "channel_reject": "Rejected by WorkBuddy gateway channel validation ({{0}})",
+      "queued": "Model queued ({{0}}); retry later or pick another model",
+      "gateway_code": "WorkBuddy gateway code {{0}}"
     }
   },
   "update": {
@@ -438,7 +462,16 @@
         "save": "Save model configuration",
         "apply_recommended": "Apply recommended models",
         "desc": "On launch, injects the active model and matching protocol endpoints (Claude→Anthropic, Codex→OpenAI). Does not modify each tool's own config files.",
-        "saved": "Saved; takes effect for sessions started afterward"
+        "saved": "Saved; takes effect for sessions started afterward",
+      "workbuddy_import": "Import from WorkBuddy",
+      "workbuddy_rescan": "Rescan",
+      "workbuddy_scanning": "Scanning…",
+      "workbuddy_pick_title": "Pick WorkBuddy native models to import ({{0}})",
+      "workbuddy_confirm": "Import selected",
+      "workbuddy_cancel": "Cancel",
+      "workbuddy_imported": "WorkBuddy models imported; remember to save the model config",
+      "workbuddy_ctx": "ctx {{0}}",
+      "workbuddy_credential_err": "WorkBuddy credentials unavailable: {{0}}"
       },
       "tools": {
         "title": "Tool detection",

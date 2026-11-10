@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   setToolModelSync: vi.fn(),
   listModelPresets: vi.fn(),
   fetchAvailableModels: vi.fn(),
+  scanWorkbuddyPlatform: vi.fn(),
   getSessionMode: vi.fn(),
   setSessionMode: vi.fn(),
   getPermissionMode: vi.fn(),
@@ -246,6 +247,13 @@ beforeEach(() => {
   mocks.getModelSyncOffTools.mockResolvedValue([]);
   mocks.setToolModelSync.mockResolvedValue(undefined);
   mocks.fetchAvailableModels.mockResolvedValue({ Models: [], Errors: [] });
+  mocks.scanWorkbuddyPlatform.mockResolvedValue({
+    Installed: false,
+    CredentialOK: false,
+    ErrKey: 'err.workbuddy.not_installed',
+    Region: '',
+    Models: [],
+  });
   mocks.getToolInstallJob.mockResolvedValue({
     ToolID: '',
     Action: '',
@@ -1299,6 +1307,120 @@ describe('Settings', () => {
 
     // 拉取完成且显示空列表占位，页面未崩溃
     expect(await screen.findByText(tt('ui.settings.model.fetch_empty'))).toBeInTheDocument();
+  });
+
+  it('WorkBuddy 未安装时行内提示且不出勾选清单', async () => {
+    render(<Settings />);
+    goModel();
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.workbuddy_import') }));
+    expect(await screen.findByText(tt('err.workbuddy.not_installed'))).toBeInTheDocument();
+    expect(screen.queryByText(tt('ui.settings.model.workbuddy_confirm'))).not.toBeInTheDocument();
+  });
+
+  it('WorkBuddy 凭据不可用时行内提示对应错误 key', async () => {
+    mocks.scanWorkbuddyPlatform.mockResolvedValue({
+      Installed: true,
+      CredentialOK: false,
+      ErrKey: 'err.workbuddy.token_expired',
+      Region: '',
+      Models: [],
+    });
+    render(<Settings />);
+    goModel();
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.workbuddy_import') }));
+    expect(await screen.findByText(tt('err.workbuddy.token_expired'))).toBeInTheDocument();
+  });
+
+  it('扫描成功展开勾选清单，导入所选写入 workbuddy 平台', async () => {
+    mocks.scanWorkbuddyPlatform.mockResolvedValue({
+      Installed: true,
+      CredentialOK: true,
+      ErrKey: '',
+      Region: 'cn',
+      Models: [
+        { ID: 'hy3', Name: 'Hy3', ContextWindow: 192000 },
+        { ID: 'glm-5.3', Name: 'GLM-5.3', ContextWindow: 1000000 },
+        { ID: 'deepseek-v4', Name: 'Deepseek-V4', ContextWindow: 1000000 },
+      ],
+    });
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [platView({ Models: ['m1'] })],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
+    });
+    render(<Settings />);
+    goModel();
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.workbuddy_import') }));
+    // 勾选清单展开（pick_title 带插值参数，tt 不支持插值，用确认按钮与行内容断言）
+    expect(
+      await screen.findByRole('button', { name: tt('ui.settings.model.workbuddy_confirm') }),
+    ).toBeInTheDocument();
+    for (const id of ['hy3', 'glm-5.3', 'deepseek-v4']) {
+      const box = screen
+        .getAllByRole('checkbox')
+        .find((el) => el.closest('label')?.textContent?.includes(id));
+      expect(box).toBeDefined();
+    }
+    // 取消勾选 deepseek-v4，只导前两个
+    const deepseekBox = screen
+      .getAllByRole('checkbox')
+      .find((el) => el.closest('label')?.textContent?.includes('deepseek-v4'));
+    fireEvent.click(deepseekBox!);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.workbuddy_confirm') }));
+
+    await waitFor(() => expect(mocks.setModelConfig).toHaveBeenCalledTimes(1));
+    const payload = mocks.setModelConfig.mock.calls[0][0];
+    const wb = payload.Platforms.find((p: { Preset: string }) => p.Preset === 'workbuddy');
+    expect(wb).toBeDefined();
+    expect(wb.Models).toEqual(['hy3', 'glm-5.3']);
+    expect(wb.OpenAIBaseURL).toBe('');
+    // 其余平台原样保留
+    const other = payload.Platforms.find((p: { ID: string }) => p.ID === 'p1');
+    expect(other.Models).toEqual(['m1']);
+  });
+
+  it('已有 workbuddy 平台时按钮变重新扫描，导入只更新其模型清单', async () => {
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [
+        platView({ Models: ['m1'] }),
+        platView({
+          ID: 'workbuddy',
+          Name: 'WorkBuddy',
+          Preset: 'workbuddy',
+          OpenAIBaseURL: '',
+          AnthropicBaseURL: '',
+          Models: ['hy3'],
+          IsDefault: false,
+        }),
+      ],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
+    });
+    mocks.scanWorkbuddyPlatform.mockResolvedValue({
+      Installed: true,
+      CredentialOK: true,
+      ErrKey: '',
+      Region: 'cn',
+      Models: [
+        { ID: 'hy3', Name: 'Hy3', ContextWindow: 192000 },
+        { ID: 'glm-5.3', Name: 'GLM-5.3', ContextWindow: 1000000 },
+      ],
+    });
+    render(<Settings />);
+    goModel();
+    // 已有平台：按钮文案为重新扫描
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.workbuddy_rescan') }));
+    await screen.findByRole('button', { name: tt('ui.settings.model.workbuddy_confirm') });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.workbuddy_confirm') }));
+
+    await waitFor(() => expect(mocks.setModelConfig).toHaveBeenCalledTimes(1));
+    const payload = mocks.setModelConfig.mock.calls[0][0];
+    const wbs = payload.Platforms.filter((p: { Preset: string }) => p.Preset === 'workbuddy');
+    expect(wbs).toHaveLength(1);
+    expect(wbs[0].ID).toBe('workbuddy');
+    expect(wbs[0].Models).toEqual(['hy3', 'glm-5.3']);
   });
 
   it('再次拉取会清空上一轮检索词', async () => {

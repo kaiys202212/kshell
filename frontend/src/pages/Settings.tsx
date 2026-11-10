@@ -33,6 +33,7 @@ import {
   getAppVersion,
   saveProvidersYAML,
   scanSessions,
+  scanWorkbuddyPlatform,
   setAutostart,
   setAppearanceMode,
   setAppearanceFontSize,
@@ -54,6 +55,7 @@ import type {
   ToolInfo,
   ToolInstallJobView,
   UpdateInfo,
+  WorkbuddyScanView,
 } from '../lib/api';
 import { cn } from '../lib/cn';
 import { backendError, translateBackend } from '../lib/errors';
@@ -154,6 +156,11 @@ export default function Settings() {
   const [modelFetching, setModelFetching] = useState(false);
   const [modelDirtyHint, setModelDirtyHint] = useState(false);
   const [modelSaving, setModelSaving] = useState(false);
+  // WorkBuddy 导入：扫描中 / 行内错误 / 勾选清单（null=未展开）与勾选集合
+  const [wbScanning, setWbScanning] = useState(false);
+  const [wbErr, setWbErr] = useState('');
+  const [wbPick, setWbPick] = useState<WorkbuddyScanView | null>(null);
+  const [wbChecked, setWbChecked] = useState<string[]>([]);
   const [recipes, setRecipes] = useState<Record<string, InstallRecipeView>>({});
   const [job, setJob] = useState<ToolInstallJobView | null>(null);
   const [activeId, setActiveId] = useState('');
@@ -656,6 +663,99 @@ export default function Settings() {
       setModelFetchErrors([backendError(e)]);
     } finally {
       setModelFetching(false);
+    }
+  };
+
+  // workbuddyPreset 是 WorkBuddy 平台的 preset 标识（与后端 workbuddy.PresetID 对应）。
+  const workbuddyPreset = 'workbuddy';
+  const hasWorkbuddyPlatform = modelPlatforms.some((p) => p.Preset === workbuddyPreset);
+
+  // handleWorkbuddyScan：扫描本机 WorkBuddy；凭据可用时展开勾选清单（默认全选），
+  // 失败走行内错误（translateBackend 渲染稳定 key），不打断页面其他编辑。
+  const handleWorkbuddyScan = async () => {
+    if (wbScanning) return;
+    setWbScanning(true);
+    setWbErr('');
+    setWbPick(null);
+    try {
+      const v = await scanWorkbuddyPlatform();
+      if (!v.Installed) {
+        setWbErr(v.ErrKey || 'err.workbuddy.not_installed');
+        return;
+      }
+      if (!v.CredentialOK) {
+        setWbErr(v.ErrKey || 'err.workbuddy.no_token');
+        return;
+      }
+      if (!v.Models.length) {
+        setWbErr('err.workbuddy.empty_catalog');
+        return;
+      }
+      setWbPick(v);
+      setWbChecked(v.Models.map((m) => m.ID));
+    } catch (e: unknown) {
+      setWbErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setWbScanning(false);
+    }
+  };
+
+  const toggleWorkbuddyModel = (id: string) => {
+    setWbChecked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  // handleWorkbuddyImport：把勾选模型合并为 workbuddy 平台（已存在则只更新模型
+  // 清单，其余字段原样保留），走整包保存并重拉；不改动其余平台与编辑态。
+  const handleWorkbuddyImport = async () => {
+    if (!wbPick) return;
+    const models = wbPick.Models.filter((m) => wbChecked.includes(m.ID)).map((m) => m.ID);
+    if (!models.length) return;
+    const existing = modelPlatforms.find((p) => p.Preset === workbuddyPreset);
+    const id = existing?.ID ?? 'workbuddy';
+    const inputs: ModelPlatformInput[] = modelPlatforms
+      .filter((p) => p.ID !== id)
+      .map((p) => ({
+        ID: p.ID,
+        Name: p.Name,
+        Preset: p.Preset,
+        OpenAIBaseURL: p.OpenAIBaseURL.trim(),
+        AnthropicBaseURL: p.AnthropicBaseURL.trim(),
+        APIKey: '',
+        ClearAPIKey: false,
+        Models: [...p.Models],
+        ASRModel: p.ASRModel || '',
+      }));
+    inputs.push({
+      ID: id,
+      Name: existing?.Name || 'WorkBuddy',
+      Preset: workbuddyPreset,
+      OpenAIBaseURL: existing?.OpenAIBaseURL.trim() ?? '',
+      AnthropicBaseURL: existing?.AnthropicBaseURL.trim() ?? '',
+      APIKey: '',
+      ClearAPIKey: false,
+      Models: models,
+      ASRModel: existing?.ASRModel || '',
+    });
+    try {
+      await setModelConfig({
+        Enabled: modelEnabled,
+        Platforms: inputs,
+        DefaultPlatform: modelDefault,
+        ActiveModel: modelActive.trim(),
+      });
+      try {
+        const v = await getModelConfig();
+        setModelPlatforms(v.Platforms ?? []);
+        setModelDefault(v.DefaultPlatform || v.Platforms?.[0]?.ID || '');
+        setModelActive(v.ActiveModel ?? '');
+      } catch {
+        // 忽略：保存已成功，仅回显失败
+      }
+      setWbPick(null);
+      setModelDirtyHint(false);
+      notify(t('ui.settings.model.workbuddy_imported'), 'info');
+    } catch (e: unknown) {
+      notify(backendError(e), 'error');
     }
   };
 
@@ -1225,6 +1325,60 @@ export default function Settings() {
                     {t('ui.settings.model.add_platform')}
                   </Button>
                 </div>
+
+                {/* WorkBuddy 导入：可选入口，扫不到 WorkBuddy 时仅行内提示 */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    disabled={!!platDraft || wbScanning}
+                    onClick={() => void handleWorkbuddyScan()}
+                  >
+                    {wbScanning
+                      ? t('ui.settings.model.workbuddy_scanning')
+                      : hasWorkbuddyPlatform
+                        ? t('ui.settings.model.workbuddy_rescan')
+                        : t('ui.settings.model.workbuddy_import')}
+                  </Button>
+                  {wbErr && (
+                    <p className="text-xs text-destructive">{translateBackend(wbErr)}</p>
+                  )}
+                </div>
+                {wbPick && (
+                  <div className="grid gap-1.5 rounded border border-border bg-background p-2.5">
+                    <p className="text-sm font-medium">
+                      {t('ui.settings.model.workbuddy_pick_title', { 0: wbPick.Region })}
+                    </p>
+                    <div className="grid max-h-48 gap-1 overflow-auto">
+                      {wbPick.Models.map((m) => (
+                        <label key={m.ID} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={wbChecked.includes(m.ID)}
+                            onChange={() => toggleWorkbuddyModel(m.ID)}
+                          />
+                          <span className="truncate font-mono text-xs">{m.ID}</span>
+                          {m.Name && m.Name !== m.ID && (
+                            <span className="truncate text-xs text-muted-foreground">{m.Name}</span>
+                          )}
+                          {m.ContextWindow > 0 && (
+                            <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                              {t('ui.settings.model.workbuddy_ctx', { 0: m.ContextWindow })}
+                            </span>
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                    <div className="flex gap-1">
+                      <Button size="sm" type="button" onClick={() => void handleWorkbuddyImport()}>
+                        {t('ui.settings.model.workbuddy_confirm')}
+                      </Button>
+                      <Button size="sm" variant="secondary" type="button" onClick={() => setWbPick(null)}>
+                        {t('ui.settings.model.workbuddy_cancel')}
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {platDraft && (
                   <div className="mt-1 grid gap-2 rounded border border-border bg-background p-2.5">
