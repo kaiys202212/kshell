@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/yangk/kshell/internal/workbuddy"
 )
 
 // maxToolRounds 是单次 Chat 内允许的最大工具调用轮次，
@@ -156,6 +158,13 @@ func (c *Client) ChatWithExecutor(ctx context.Context, msgs []Message, tools []T
 	}
 }
 
+// wbLoadCredential / wbChatOnce 是 WorkBuddy 网关的注入点：测试可替换，
+// 生产路径分别指向 internal/workbuddy 的凭据解密与 SSE 聊天适配。
+var (
+	wbLoadCredential = workbuddy.LoadCredential
+	wbChatOnce       = workbuddy.ChatOnce
+)
+
 // once 发送一次请求并解析响应。
 func (c *Client) once(ctx context.Context, msgs []Message, tools []ToolDef) (Response, error) {
 	wireMsgs := make([]chatMessage, len(msgs))
@@ -174,6 +183,20 @@ func (c *Client) once(ctx context.Context, msgs []Message, tools []ToolDef) (Res
 	body, err := json.Marshal(chatRequest{Model: c.cfg.Model, Messages: wireMsgs, Tools: tools})
 	if err != nil {
 		return Response{}, fmt.Errorf("编码请求: %w", err)
+	}
+
+	// WorkBuddy 平台：端点/凭据由适配器内置，body 复用同一 OpenAI 形状，
+	// 响应已聚合为普通 chat/completion JSON，走同一解析路径。
+	if strings.TrimSpace(c.cfg.Preset) == workbuddy.PresetID {
+		cred, err := wbLoadCredential()
+		if err != nil {
+			return Response{}, err
+		}
+		respBody, err := wbChatOnce(ctx, cred, body, nil)
+		if err != nil {
+			return Response{}, err
+		}
+		return parseChatResponse(respBody)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
@@ -196,7 +219,11 @@ func (c *Client) once(ctx context.Context, msgs []Message, tools []ToolDef) (Res
 	if httpResp.StatusCode != http.StatusOK {
 		return Response{}, fmt.Errorf("err.hubtools.request_failed: 状态码 %d, 响应: %.512s", httpResp.StatusCode, respBody)
 	}
+	return parseChatResponse(respBody)
+}
 
+// parseChatResponse 解析 OpenAI 形状响应为 Response。
+func parseChatResponse(respBody []byte) (Response, error) {
 	var parsed chatResponse
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
 		return Response{}, fmt.Errorf("解析响应: %w", err)

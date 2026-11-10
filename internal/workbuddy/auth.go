@@ -16,6 +16,10 @@ import (
 	"time"
 )
 
+// PresetID 是 kshell 平台配置里 WorkBuddy 平台的 preset 标识：
+// platform.preset == PresetID 即 WorkBuddy 平台（动态凭据，端点/密钥留空）。
+const PresetID = "workbuddy"
+
 // Credential 是从 WorkBuddy 桌面端凭据文件解出的一次性账号凭据。
 // 只存活在 kshell 进程内，绝不落盘、不入 config.yaml。
 type Credential struct {

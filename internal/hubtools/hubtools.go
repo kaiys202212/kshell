@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/yangk/kshell/internal/config"
+	"github.com/yangk/kshell/internal/workbuddy"
 )
 
 // Logf 是宿主注入的日志钩子（desktop 侧重定向到 ~/.kshell/logs/desktop.log），
@@ -27,17 +28,22 @@ func logf(format string, args ...any) {
 // Log 是 logf 的导出入口：desktop 桥层打点与包内同口径，Logf 未注入时静默。
 func Log(format string, args ...any) { logf(format, args...) }
 
-// Config 是自主模型链路的视图配置。hubtools 只关心这三个字段，
+// Config 是自主模型链路的视图配置。hubtools 只关心这四个字段，
 // 不直接持有整个 config.ModelConfig，便于测试与后续替换来源。
 type Config struct {
-	BaseURL string // OpenAI 兼容端点（含 /v1 风格）
-	APIKey  string
+	Preset  string // 平台 preset；workbuddy 表示走 WorkBuddy 网关适配器（动态凭据）
+	BaseURL string // OpenAI 兼容端点（含 /v1 风格）；workbuddy 平台恒空
+	APIKey  string // workbuddy 平台恒空（凭据调用时现解密）
 	Model   string
 }
 
-// Ready 判断自主模型链路是否就绪：三者去空白后均非空。
+// Ready 判断自主模型链路是否就绪。普通平台要求端点/密钥/模型三元组齐全；
+// workbuddy 平台凭据动态解析、端点由适配器内置，只要求模型名非空。
 // 就绪与否决定 AgentHub 输入是否启用意图路由，未就绪时走原有直连对话。
 func Ready(c Config) bool {
+	if strings.TrimSpace(c.Preset) == workbuddy.PresetID {
+		return strings.TrimSpace(c.Model) != ""
+	}
 	return strings.TrimSpace(c.BaseURL) != "" &&
 		strings.TrimSpace(c.APIKey) != "" &&
 		strings.TrimSpace(c.Model) != ""
@@ -54,6 +60,7 @@ func Ready(c Config) bool {
 func FromModelConfig(cfg config.ModelConfig) (Config, bool) {
 	plat, _ := cfg.ActivePlatform() // 无平台时 plat 为零值，BaseURL/APIKey 自然为空，Ready 兜底
 	c := Config{
+		Preset:  strings.TrimSpace(plat.Preset),
 		BaseURL: strings.TrimSpace(plat.OpenAIBaseURL),
 		APIKey:  strings.TrimSpace(plat.APIKey),
 		Model:   strings.TrimSpace(cfg.ActiveModel),
