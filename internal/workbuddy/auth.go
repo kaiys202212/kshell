@@ -285,6 +285,17 @@ func loadCredentialFrom(paths []string, exe string) (Credential, error) {
 	return parseAuthDocument(data, key)
 }
 
+// AuthFilesExist 报告本机是否存在 WorkBuddy 凭据文件（不校验可解密），
+// 供设置页区分「未装 WorkBuddy」与「装了但凭据不可用」。
+func AuthFilesExist() bool {
+	for _, p := range authFilePaths(os.Getenv("LOCALAPPDATA"), os.Getenv("APPDATA")) {
+		if fileExists(p) {
+			return true
+		}
+	}
+	return false
+}
+
 // LoadCredential 定位并解密当前登录凭据（单账号，取文件顶层登录态）。
 func LoadCredential() (Credential, error) {
 	exe, ok := FindAppExecutable()
