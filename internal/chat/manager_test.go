@@ -1010,6 +1010,47 @@ func TestAttachSessionPicksChatClosestToSessionCreation(t *testing.T) {
 	}
 }
 
+// 距离并列时保持先出现者优先（严格小于比较，锁定实现契约）。
+func TestAttachSessionTieKeepsFirstCandidate(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, Title: "先开", ToolID: "claude"}, Spec{Path: "x"}, ""); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := m.Open("new:2", Info{Kind: KindNew, Workspace: `D:\ws`, Title: "后开", ToolID: "claude"}, Spec{Path: "x"}, ""); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	base := time.Now().Add(-time.Hour)
+	m.mu.Lock()
+	m.byKey["new:1"].openedAt = base
+	m.byKey["new:2"].openedAt = base.Add(time.Minute)
+	m.mu.Unlock()
+	// createdAt 恰在两聊天 openedAt 的中点：距离并列
+	sessionAt := base.Add(30 * time.Second)
+	if !m.AttachSession("s-tie", `D:\ws`, "claude", "标题", 1, sessionAt) {
+		t.Fatal("应命中候选聊天")
+	}
+	if got := m.List()[0]; got.SessionID != "s-tie" {
+		t.Fatalf("并列时应保持先出现者优先, got %+v", got)
+	}
+}
+
+// createdAt 零值（provider 未落时间）时距离恒 0，回落旧行为：首个候选绑定。
+func TestAttachSessionZeroCreatedAtKeepsFirstCandidate(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, Title: "先开", ToolID: "claude"}, Spec{Path: "x"}, ""); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := m.Open("new:2", Info{Kind: KindNew, Workspace: `D:\ws`, Title: "后开", ToolID: "claude"}, Spec{Path: "x"}, ""); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if !m.AttachSession("s-zero", `D:\ws`, "claude", "标题", 1, time.Time{}) {
+		t.Fatal("应命中候选聊天")
+	}
+	if got := m.List()[0]; got.SessionID != "s-zero" {
+		t.Fatalf("零值 createdAt 应回落首个候选, got %+v", got)
+	}
+}
+
 func TestAttachSessionKeepsPlaceholderUntilMessages(t *testing.T) {
 	m, _, _ := newTestManager(t)
 	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, Title: "占位", ToolID: "claude"}, Spec{Path: "x"}, ""); err != nil {
