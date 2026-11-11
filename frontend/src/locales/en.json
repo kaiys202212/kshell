@@ -8,6 +8,9 @@
     "backend": {
       "binding_missing": "kshell backend binding not available"
     },
+    "agenthub": {
+      "disabled": "AgentHub is disabled; {{0}} unavailable"
+    },
     "desktop": {
       "not_ready": "Desktop is not initialized yet",
       "session_gone": "Session not found or has been cleaned up",

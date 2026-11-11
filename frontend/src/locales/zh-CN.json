@@ -8,6 +8,9 @@
     "backend": {
       "binding_missing": "未检测到后端绑定"
     },
+    "agenthub": {
+      "disabled": "AgentHub 未启用，无法{{0}}"
+    },
     "desktop": {
       "not_ready": "桌面版尚未初始化完成",
       "session_gone": "会话不存在或已被清理",
