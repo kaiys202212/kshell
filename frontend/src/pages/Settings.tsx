@@ -534,29 +534,39 @@ export default function Settings() {
   };
 
   // handleSetDefault：本地乐观切换 + 立即落盘生效（不依赖整包保存），后端
-  // 调度一次防抖同步。失败 notify 并以服务端为准重拉。
+  // 调度一次防抖同步。失败回退本地默认平台选择并提示。
+  // 注意：本地有未保存的平台编辑（草稿/删除/新增）时跳过重拉——整表替换会
+  // 把用户尚未保存的改动静默冲掉；只按本地状态同步 IsDefault 标记。
   const handleSetDefault = (id: string) => {
+    const prevDefault = modelDefault;
     setModelDefault(id);
     // 切默认平台后，原默认模型若不属于新平台，本地先清空显示（后端兜底清理）。
     const target = modelPlatforms.find((p) => p.ID === id);
     if (target && target.Models.length > 0 && !target.Models.includes(modelActive)) {
       setModelActive('');
     }
+    const applyRefetch = (v: Awaited<ReturnType<typeof getModelConfig>>) => {
+      setModelPlatforms(v.Platforms ?? []);
+      setModelDefault(v.DefaultPlatform || v.Platforms?.[0]?.ID || '');
+      setModelActive(v.ActiveModel ?? '');
+    };
+    const pendingEdits = !!platDraft || modelDirtyHint;
     setDefaultPlatform(id)
-      .then(() => getModelConfig())
-      .then((v) => {
-        setModelPlatforms(v.Platforms ?? []);
-        setModelDefault(v.DefaultPlatform || v.Platforms?.[0]?.ID || '');
-        setModelActive(v.ActiveModel ?? '');
+      .then(() => {
+        if (pendingEdits) {
+          setModelPlatforms((prev) => prev.map((p) => ({ ...p, IsDefault: p.ID === id })));
+          return;
+        }
+        return getModelConfig().then(applyRefetch);
       })
       .catch((e: unknown) => {
         notify(backendError(e), 'error');
+        if (pendingEdits) {
+          setModelDefault(prevDefault);
+          return;
+        }
         getModelConfig()
-          .then((v) => {
-            setModelPlatforms(v.Platforms ?? []);
-            setModelDefault(v.DefaultPlatform || v.Platforms?.[0]?.ID || '');
-            setModelActive(v.ActiveModel ?? '');
-          })
+          .then(applyRefetch)
           .catch(() => {});
       });
   };

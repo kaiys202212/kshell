@@ -505,7 +505,6 @@
         "not_installed": "Not installed",
         "section_installed": "Installed",
         "section_missing": "Not installed",
-        "sync_models": "Sync platform models",
         "model_settings": "Model settings",
         "title_broken": "Usage traces detected but no executable found; the installation is broken",
         "title_config_only": "Only a config directory was detected; no executable, so availability is unverified",

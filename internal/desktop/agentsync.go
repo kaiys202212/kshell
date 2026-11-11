@@ -53,16 +53,38 @@ func (s *modelSyncScheduler) fire() {
 	s.running = true
 	s.mu.Unlock()
 
-	s.syncFn()
+	// running/pending 复位放 defer：syncFn panic 不能让调度器永久卡死
+	//（running 永真后所有 schedule 只累积 pending，本会话同步失效）。
+	defer func() {
+		s.mu.Lock()
+		s.running = false
+		again := s.pending
+		s.pending = false
+		if again {
+			s.timer = time.AfterFunc(0, s.fire)
+		}
+		s.mu.Unlock()
+	}()
 
-	s.mu.Lock()
-	s.running = false
-	again := s.pending
-	s.pending = false
-	if again {
-		s.timer = time.AfterFunc(0, s.fire)
-	}
-	s.mu.Unlock()
+	s.syncFn()
+}
+
+// agentSyncMu 收口本进程全部 agentsync 落盘调用：调度器触发的 SyncAll 与
+// SetToolSyncConfig/SetModelConfig 的立即 SyncTool 都是对同一批文件
+//（~/.claude/settings.json、models.json、opencode.json）的读-改-写，
+// writeAtomic 只防半截文件不防交错 RMW 丢条目，必须串行化。
+var agentSyncMu sync.Mutex
+
+func syncAllSerialized(home string, in agentsync.SyncInput, installed []string) error {
+	agentSyncMu.Lock()
+	defer agentSyncMu.Unlock()
+	return agentsync.SyncAll(home, in, installed)
+}
+
+func syncToolSerialized(home, toolID string, in agentsync.SyncInput) error {
+	agentSyncMu.Lock()
+	defer agentSyncMu.Unlock()
+	return agentsync.SyncTool(home, toolID, in)
 }
 
 // scheduleAgentSync 请求一次防抖合并的模型同步（惰性创建调度器，测试注入的
@@ -82,7 +104,7 @@ func (a *App) scheduleAgentSync() {
 // 否则目标文件被外部改坏（如 BOM）导致的静默冻结无从排查。
 func (a *App) syncAgentModels() {
 	o := a.snapshot()
-	if err := agentsync.SyncAll(o.Home, agentsync.InputFromModel(o.Config.Model), installedToolIDs(a.toolsSnapshot())); err != nil {
+	if err := syncAllSerialized(o.Home, agentsync.InputFromModel(o.Config.Model), installedToolIDs(a.toolsSnapshot())); err != nil {
 		log.Printf("agentsync: 模型平台同步失败: %v", err)
 	}
 }
@@ -96,12 +118,12 @@ func (a *App) syncAgentModelsAfterSave(prev config.ModelConfig) {
 	next := agentsync.InputFromModel(o.Config.Model)
 	if !next.Managed() && agentsync.InputFromModel(prev).Managed() {
 		cleanup := agentsync.SyncInput{Enabled: false, Platforms: prev.Platforms}
-		if err := agentsync.SyncAll(o.Home, cleanup, installedToolIDs(a.toolsSnapshot())); err != nil {
+		if err := syncAllSerialized(o.Home, cleanup, installedToolIDs(a.toolsSnapshot())); err != nil {
 			log.Printf("agentsync: 模型平台清理同步失败: %v", err)
 		}
 		return
 	}
-	if err := agentsync.SyncAll(o.Home, next, installedToolIDs(a.toolsSnapshot())); err != nil {
+	if err := syncAllSerialized(o.Home, next, installedToolIDs(a.toolsSnapshot())); err != nil {
 		log.Printf("agentsync: 模型平台同步失败: %v", err)
 	}
 }
@@ -109,7 +131,7 @@ func (a *App) syncAgentModelsAfterSave(prev config.ModelConfig) {
 // syncAgentModelTool 安装成功后只同步刚装上的工具。
 func (a *App) syncAgentModelTool(toolID string) {
 	o := a.snapshot()
-	if err := agentsync.SyncTool(o.Home, toolID, agentsync.InputFromModel(o.Config.Model)); err != nil {
+	if err := syncToolSerialized(o.Home, toolID, agentsync.InputFromModel(o.Config.Model)); err != nil {
 		log.Printf("agentsync: %s 同步失败: %v", toolID, err)
 	}
 }

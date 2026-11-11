@@ -1043,6 +1043,37 @@ describe('Settings', () => {
     await waitFor(() => expect((sel as HTMLSelectElement).value).toBe('m1'));
   });
 
+  it('本地有未保存改动时设为默认：不重拉整表（不复活已删平台），本地更新默认徽标', async () => {
+    vi.stubGlobal('confirm', () => true);
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [
+        platView({ Models: ['m1'], IsDefault: true }),
+        platView({ ID: 'p2', Name: 'P2', Models: ['m2'], IsDefault: false }),
+        platView({ ID: 'p3', Name: 'P3', Models: ['m3'], IsDefault: false }),
+      ],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
+    });
+    render(<Settings />);
+    goModel();
+
+    // 本地删除 p2（未保存 → dirty）：此时后端仍认为 p2 存在
+    const p2 = (await screen.findByText('P2')).closest('li')!;
+    fireEvent.click(within(p2).getByRole('button', { name: tt('ui.settings.model.delete_platform') }));
+    await waitFor(() => expect(screen.queryByText('P2')).not.toBeInTheDocument());
+
+    // 在 p3 上设为默认：重拉会把 p2 复活——修复后必须保持已删状态
+    const p3 = screen.getByText('P3').closest('li')!;
+    fireEvent.click(within(p3).getByRole('button', { name: tt('ui.settings.model.set_default') }));
+    await waitFor(() => expect(mocks.setDefaultPlatform).toHaveBeenCalledWith('p3'));
+    expect(screen.queryByText('P2')).not.toBeInTheDocument();
+    expect(screen.getByText('P3').closest('li')).toHaveTextContent(
+      tt('ui.settings.model.default_badge'),
+    );
+    vi.unstubAllGlobals();
+  });
+
   it('添加平台→填写→保存：载荷含新平台（UUID 形态 ID）', async () => {
     vi.stubGlobal('crypto', { randomUUID: () => '123e4567-e89b-12d3-a456-426614174000' });
     render(<Settings />);
@@ -1176,6 +1207,16 @@ describe('Settings', () => {
         ],
         DefaultPlatform: 'p1',
         ActiveModel: 'm1',
+      })
+      // 「设为默认」即时生效会先重拉一次：默认平台已切 p2，悬空的 m1 被清空
+      .mockResolvedValueOnce({
+        Enabled: true,
+        Platforms: [
+          platView({ Models: ['m1'], IsDefault: false }),
+          platView({ ID: 'p2', Name: 'GLM', Models: ['m3'], IsDefault: true }),
+        ],
+        DefaultPlatform: 'p2',
+        ActiveModel: '',
       })
       .mockResolvedValueOnce({
         Enabled: true,

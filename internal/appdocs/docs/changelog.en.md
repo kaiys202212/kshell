@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Model sync is now configured per tool: the "Sync platform models" toggle in the tools list becomes a "Model settings" dialog — Claude Code maps models to the 4 preset slots (default / Sonnet / Opus / Haiku), OpenCode picks models per platform (multi-platform supported), CodeBuddy picks models from the default platform. Nothing is injected when disabled or with no models checked, and previously injected entries are cleaned up. Note: after upgrading, previously auto-injected models are removed — please re-check models in each tool's "Model settings".
+- Setting the default platform and the default model in Settings now takes effect immediately, without pressing the global save button; the resulting model sync is debounced, so rapid toggles collapse into one sync.
+- The chat model dropdown now mirrors what is actually injected per tool (claude: default platform models; opencode/codebuddy: checked models) — fake options that could not work are gone.
+
 ## v0.1.29 (2026-11-09)
 
 - The file tree supports locating by path: expanding layer by layer, selecting and scrolling to the target; activating a file tab now auto-locates the file in the tree, and clicking a folder attachment in chat also locates it in the file tree.

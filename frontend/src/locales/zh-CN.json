@@ -505,7 +505,6 @@
         "not_installed": "未安装",
         "section_installed": "已安装",
         "section_missing": "未安装",
-        "sync_models": "同步平台模型",
         "model_settings": "模型设置",
         "title_broken": "检测到使用残留但没有任何可执行文件，安装已损坏",
         "title_config_only": "只检测到配置目录，没有可执行程序，可用性未验证",

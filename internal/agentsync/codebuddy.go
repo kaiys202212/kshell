@@ -105,7 +105,14 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 				platName = def.ID
 			}
 			// 只写勾选条目：id=裸模型名（CLI 原样透传上游）、展示名带平台前缀。
-			for mid := range selected {
+			// 按勾选顺序遍历（map 迭代无序，会让 models.json 每次同步都洗牌）。
+			seenSel := map[string]bool{}
+			for _, mid := range in.ToolSync.CodeBuddy {
+				mid = strings.TrimSpace(mid)
+				if mid == "" || !selected[mid] || seenSel[mid] {
+					continue
+				}
+				seenSel[mid] = true
 				kept = append(kept, map[string]any{
 					"id":     mid,
 					"name":   platName + ": " + mid,

@@ -861,7 +861,10 @@ func (a *App) SetChatModel(id, modelID string) error {
 			}); err != nil {
 				return err
 			}
-			a.scheduleAgentSync() // 默认平台变了，静态注入随之重写（防抖合并）
+			// 默认平台变了，静态注入随之重写（防抖合并）。注：定制同步落地后
+			// 下拉只列当前工具实际可用的模型（claude 仅默认平台），该跨平台
+			// 路径主要被历史下拉缓存/外部调用触发；当前会话不切端点仍是既定边界。
+			a.scheduleAgentSync()
 			err = m.SetModel(resolved, target)
 		} else {
 			err = m.SetModel(resolved, target)
