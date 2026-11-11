@@ -451,7 +451,12 @@ func TestManagerLoadReplayGetsTurnBoundaryBeforeNewPrompt(t *testing.T) {
 				replayIdx = i
 			}
 		case u.Type == "turn_done":
-			boundaryIdx = i
+			// 取重放内容后的第一个 turn_done（即边界哨兵）；新回合的收尾
+			// turn_done 由异步 turn 泵落位，读 History 时是否已写入取决于
+			// 调度，取最后一个会让断言变成竞态（2026-11-11 修复错绑时显形）。
+			if boundaryIdx < 0 {
+				boundaryIdx = i
+			}
 		case u.Type == "user" && u.Text == "新输入":
 			newUserID = i
 		}
@@ -813,10 +818,10 @@ func TestAttachSessionBindsNewChatInfo(t *testing.T) {
 
 func TestUpdateSessionTitleSyncsBound(t *testing.T) {
 	m, _, _ := newTestManager(t)
-	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, ToolID: "codebuddy", Title: "占位"}, Spec{Path: "x"}, ""); err != nil {
+	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, ToolID: "claude", Title: "占位"}, Spec{Path: "x"}, ""); err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if !m.AttachSession("disk-1", `D:\ws`, "codebuddy", "", 0, time.Time{}) {
+	if !m.AttachSession("disk-1", `D:\ws`, "claude", "", 0, time.Time{}) {
 		t.Fatal("前置绑定失败")
 	}
 	if !m.UpdateSessionTitle("disk-1", "真实标题", 1) {
@@ -837,10 +842,10 @@ func TestUpdateSessionTitleFiresOnInfo(t *testing.T) {
 	m, _, _ := newTestManager(t)
 	infos := make(chan Info, 4)
 	m.SetOnInfo(func(info Info) { infos <- info })
-	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, ToolID: "codebuddy", Title: "占位"}, Spec{Path: "x"}, ""); err != nil {
+	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, ToolID: "claude", Title: "占位"}, Spec{Path: "x"}, ""); err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if !m.AttachSession("disk-1", `D:\ws`, "codebuddy", "", 0, time.Time{}) {
+	if !m.AttachSession("disk-1", `D:\ws`, "claude", "", 0, time.Time{}) {
 		t.Fatal("前置绑定失败")
 	}
 
@@ -932,6 +937,22 @@ func TestManagerOpenNewCursorBindsACPSessionID(t *testing.T) {
 	}
 }
 
+// CodeBuddy 与 Cursor 同理：--acp 的 session/new 返回 ID 即磁盘会话 ID
+//（~/.codebuddy/projects/<工作区>/<id>.jsonl，CLI 源码 + 本机实测），
+// 新建握手后立刻写入 Info.SessionID，欢迎/hub 快照与「换个说法」resume
+// 才有真实归属，也避免扫描期把会话抢绑给同工作区更早打开的无主聊天。
+func TestManagerOpenNewCodeBuddyBindsACPSessionID(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	b.conn.newStart.SessionID = "01a1ca21-bd18-7d0d-b596-c1cb4e448cfa"
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w", Title: "新会话", ToolID: "codebuddy"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if info.SessionID != "01a1ca21-bd18-7d0d-b596-c1cb4e448cfa" {
+		t.Fatalf("CodeBuddy KindNew 应绑定 ACP SessionID, got %q", info.SessionID)
+	}
+}
+
 func TestAttachSessionSkipsKnownIDs(t *testing.T) {
 	m, _, _ := newTestManager(t)
 	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, Title: "占位", ToolID: "claude"}, Spec{Path: "x"}, "")
@@ -955,6 +976,37 @@ func TestAttachSessionSkipsOldCreatedAt(t *testing.T) {
 	old := time.Now().Add(-3 * time.Hour)
 	if m.AttachSession("s1", `D:\ws`, "claude", "左侧旧标题", 12, old) {
 		t.Fatal("CreatedAt 早于打开时刻的旧会话不得绑定")
+	}
+}
+
+// 同工作区多个未绑定新建聊天并存时，会话应绑给打开时刻与 会话createdAt 最接近的
+// 聊天，而不是 m.order 里排最前的：事故中无主的旧聊天抢走了新会话
+//（2026-11-11 错绑导致旧卡片标题被新会话的 CLI 英文标题覆盖）。
+func TestAttachSessionPicksChatClosestToSessionCreation(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, Title: "旧无主", ToolID: "claude"}, Spec{Path: "x"}, ""); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := m.Open("new:2", Info{Kind: KindNew, Workspace: `D:\ws`, Title: "真正归属", ToolID: "claude"}, Spec{Path: "x"}, ""); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	earlier := time.Now().Add(-47 * time.Minute)
+	later := time.Now()
+	m.mu.Lock()
+	m.byKey["new:1"].openedAt = earlier
+	m.byKey["new:2"].openedAt = later
+	m.mu.Unlock()
+	sessionAt := later.Add(2 * time.Second)
+	if !m.AttachSession("s-new", `D:\ws`, "claude", "真实标题", 3, sessionAt) {
+		t.Fatal("应命中候选聊天")
+	}
+	for _, it := range m.List() {
+		if it.Title == "真正归属" && it.SessionID != "s-new" {
+			t.Fatalf("会话应绑给打开时刻最接近的聊天, got %+v", it)
+		}
+		if it.Title == "旧无主" && it.SessionID == "s-new" {
+			t.Fatal("无主的更早聊天不得抢绑新会话")
+		}
 	}
 }
 
