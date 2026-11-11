@@ -610,13 +610,20 @@ export default function FileTree({
   const reloadPendingRef = useRef(false);
   const prevShowAllRef = useRef(showAll);
 
-  // Shift 按键跟踪：keydown/keyup + window 失焦兜底（切窗口松键收不到 keyup）
+  // Shift 按键跟踪：keydown/keyup + window 失焦兜底（切窗口松键收不到 keyup）。
+  // keyup 时若焦点在行内复选框上，先移回滚动容器——复选框随后随 shiftHeld 卸载，
+  // 焦点会落回 body，Delete 键处理挂在容器上会因此断链。
   useEffect(() => {
     const down = (e: globalThis.KeyboardEvent) => {
       if (e.key === 'Shift') setShiftHeld(true);
     };
     const up = (e: globalThis.KeyboardEvent) => {
-      if (e.key === 'Shift') setShiftHeld(false);
+      if (e.key !== 'Shift') return;
+      setShiftHeld(false);
+      const active = document.activeElement;
+      if (active instanceof HTMLInputElement && active.type === 'checkbox') {
+        scrollRootRef.current?.focus({ preventScroll: true });
+      }
     };
     const reset = () => setShiftHeld(false);
     window.addEventListener('keydown', down);
@@ -1003,14 +1010,24 @@ export default function FileTree({
 
   // 局部刷新：只重拉受影响目录（去重）并原位替换 children（mergeLoaded 保留更深层展开态），
   // 其余目录的折叠状态不动。rename/create/delete/move 共用，替代整树重建。
+  // gen 守卫与 runReload 一致：期间 wsPath 切换或 watcher 触发整树重载时让位新数据，
+  // 防止在途旧列表 merge 进新树（跨工作区同名目录错乱 / 回退 watcher 已刷新的内容）。
   const refreshDirs = (dirRels: string[]) => {
     const dirs = [...new Set(dirRels)];
+    const path = wsPath;
     void (async () => {
       for (const d of dirs) {
+        const gen = reloadGenRef.current;
         try {
-          const nodes = await listFiles(wsPath, d, showAllRef.current);
+          const nodes = await listFiles(path, d, showAllRef.current);
+          if (gen !== reloadGenRef.current) return;
           setItems((cur) =>
-            cur && updateItems(cur, d, (it) => ({ ...it, children: mergeLoaded(it.children, nodes, d) })),
+            cur &&
+            updateItems(cur, d, (it) => ({
+              ...it,
+              children: mergeLoaded(it.children, nodes, d),
+              error: undefined, // 重拉成功清掉旧的行内加载失败提示
+            })),
           );
         } catch {
           /* 单目录刷新失败保持原树，下次展开会重新拉取 */

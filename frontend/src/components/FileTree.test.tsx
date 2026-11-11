@@ -1214,9 +1214,12 @@ describe('FileTree Shift 复选多选', () => {
     expect(screen.getByText('README.md').closest('li')).toHaveAttribute('aria-selected', 'true');
 
     // 释放 Shift：复选框消失，选中集保留（可继续 Delete 删除）
+    cb.focus(); // 真实浏览器点击即聚焦，jsdom 需显式模拟
     fireEvent.keyUp(window, { key: 'Shift' });
     expect(screen.queryByRole('checkbox', { name: selectAria('README.md') })).not.toBeInTheDocument();
     expect(screen.getByText('README.md').closest('li')).toHaveAttribute('aria-selected', 'true');
+    // 焦点原在复选框上：先移回滚动容器（Delete 键监听所在），不落 body 断链
+    expect(screen.getByRole('tree', { name: tt('ui.files.tree_aria') }).parentElement).toHaveFocus();
 
     // window 失焦兜底清 shift 态
     fireEvent.keyDown(window, { key: 'Shift' });
