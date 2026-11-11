@@ -99,15 +99,39 @@ func (a *App) mirrorAggregated(r *weixin.Runtime, m hub.Message) bool {
 		// 不发一行空骨架(「0/N 会话有回复」无信息量)。
 		return true
 	}
+	// 自然终结汇报:全部目标到达终态(无 running 且无 perm——perm 是「卡住
+	// 待人」的暂停态而非完成态,全 perm 出「全部完成」会误导)且至少一条已
+	// 回复 → 出汇总报告替代摘要行,并结束本轮聚合周期(报告即终点)。明细
+	// 复用 aggDetailRows,编号语境与摘要行一致(report_hint 的 #gx 编号即明细序号)。
+	allTerminal := true
+	for _, row := range detail {
+		if row.State == "running" || row.State == "perm" {
+			allTerminal = false
+			break
+		}
+	}
+	if replied > 0 && allTerminal {
+		lang := r.Lang()
+		line := fmt.Sprintf(hub.CmdText(lang, "report_header"), strings.Join(aggDetailRows(lang, detail), ", "))
+		line += "\n\n" + hub.CmdText(lang, "report_hint")
+		r.OnHubMessage(hub.Message{Kind: "agent", Ts: m.Ts, Text: line})
+		p.Discard()
+		return true
+	}
 	r.OnHubMessage(hub.Message{Kind: "agent", Ts: m.Ts, Text: composeAggLine(r.Lang(), detail, replied, len(targets))})
 	return true
 }
 
 // composeAggLine 组装聚合摘要行: agg_line(%1=replied %2=total %3=明细)。
-// 词源 hub.CmdText(lang,key) 与 Console 文案同源。明细一行一目标
-// `N【标题】状态词`; idle 在聚合行语义=已完成(word_done), gone=已断开,
-// perm 额外带摘要(truncateFirstLine 截到 40)。
+// 词源 hub.CmdText(lang,key) 与 Console 文案同源;明细由 aggDetailRows 提供。
 func composeAggLine(lang string, rows []hub.SessionStatus, replied, total int) string {
+	return fmt.Sprintf(hub.CmdText(lang, "agg_line"), replied, total, strings.Join(aggDetailRows(lang, rows), "，"))
+}
+
+// aggDetailRows 组装逐目标明细行(摘要行与全终态报告共用):一行一目标
+// `N【标题】状态词`; idle 在聚合语义=已完成(word_done), gone=已断开,
+// perm 额外带摘要(truncateFirstLine 截到 40)。
+func aggDetailRows(lang string, rows []hub.SessionStatus) []string {
 	parts := make([]string, 0, len(rows))
 	for _, r := range rows {
 		word := hub.CmdText(lang, "stat_word_"+r.State)
@@ -130,7 +154,7 @@ func composeAggLine(lang string, rows []hub.SessionStatus, replied, total int) s
 		}
 		parts = append(parts, line)
 	}
-	return fmt.Sprintf(hub.CmdText(lang, "agg_line"), replied, total, strings.Join(parts, "，"))
+	return parts
 }
 
 // sessionTagOf desktop 镜像 hub 的编号标签形态(gTag 族):有 Title →
