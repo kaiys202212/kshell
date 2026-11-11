@@ -157,16 +157,19 @@ func TestClaudeSyncSwitchesPlatform(t *testing.T) {
 	}
 }
 
-// ActiveModel 写入 ANTHROPIC_MODEL，并把平台模型列表映射到 Sonnet/Opus/Haiku，
-// 否则 Claude TUI /model 只能看到 settings.json 里陈旧的 mimo 等值。
-func TestClaudeSyncWritesActiveModelAndDefaults(t *testing.T) {
+// 4 个槽位显式映射到对应 env 键（不再从 ActiveModel/平台列表隐式推导）。
+func TestClaudeSyncWritesSlotModels(t *testing.T) {
 	home := t.TempDir()
 	c := Claude{}
 	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "glm-5.3-flash",
+		Enabled: true, DefaultPlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk-1",
-			Models: []string{"glm-5.3-flash", "deepseek-v4.1-flash", "kimi-k3", "glm-5.3"},
+			Models: []string{"glm-5.3-flash", "deepseek-v4.1-flash", "kimi-k3"},
+		}},
+		ToolSync: config.ToolSyncConfig{Claude: config.ClaudeSync{
+			Model: "glm-5.3-flash", Sonnet: "glm-5.3-flash",
+			Opus: "deepseek-v4.1-flash", Haiku: "kimi-k3",
 		}},
 	}
 	if err := c.Sync(home, in); err != nil {
@@ -187,132 +190,32 @@ func TestClaudeSyncWritesActiveModelAndDefaults(t *testing.T) {
 	}
 }
 
-// active_model 不在列表首位时，Sonnet 别名必须指向它；Opus/Haiku 顺延到其余模型，
-// 否则 Claude 顶层 "model":"sonnet" 会请求用户没选的列表首项。
-func TestClaudeSyncSonnetAliasUsesActiveModel(t *testing.T) {
+// 槽位留空 = 不写对应键（先删后建语义下清掉残留）；槽位值带空白时 trim。
+func TestClaudeSyncEmptySlotsNotWrittenAndTrim(t *testing.T) {
 	home := t.TempDir()
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"),
+		[]byte(`{"env":{"ANTHROPIC_MODEL":"stale","ANTHROPIC_DEFAULT_OPUS_MODEL":"stale-opus"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "glm-5.3-flash",
-		Platforms: []config.ModelPlatform{{
-			ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk-1",
-			Models: []string{"deepseek-v4.1-flash", "glm-5.3-flash", "qwen3.8-flash", "glm-5.3"},
-		}},
+		Enabled: true, DefaultPlatformID: "p1",
+		Platforms: []config.ModelPlatform{{ID: "p1", AnthropicBaseURL: "https://ant.example/"}},
+		ToolSync:  config.ToolSyncConfig{Claude: config.ClaudeSync{Model: "  glm-5.3-flash  "}},
 	}
 	if err := (Claude{}).Sync(home, in); err != nil {
 		t.Fatal(err)
 	}
 	env := readClaudeSettings(t, home)["env"].(map[string]any)
 	if env["ANTHROPIC_MODEL"] != "glm-5.3-flash" {
-		t.Fatalf("ANTHROPIC_MODEL = %v", env["ANTHROPIC_MODEL"])
+		t.Fatalf("MODEL 槽应 trim 后写入: %v", env["ANTHROPIC_MODEL"])
 	}
-	if env["ANTHROPIC_DEFAULT_SONNET_MODEL"] != "glm-5.3-flash" {
-		t.Fatalf("SONNET 应等于 ActiveModel: %v", env["ANTHROPIC_DEFAULT_SONNET_MODEL"])
-	}
-	if env["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "deepseek-v4.1-flash" {
-		t.Fatalf("OPUS = %v", env["ANTHROPIC_DEFAULT_OPUS_MODEL"])
-	}
-	if env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "qwen3.8-flash" {
-		t.Fatalf("HAIKU = %v", env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
-	}
-}
-
-// ActiveModel 不在平台列表里：Sonnet 仍用它，Opus/Haiku 取列表前两项。
-func TestClaudeSyncSonnetAliasUsesActiveModelNotInList(t *testing.T) {
-	home := t.TempDir()
-	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "custom-model",
-		Platforms: []config.ModelPlatform{{
-			ID: "p1", AnthropicBaseURL: "https://ant.example/",
-			Models: []string{"deepseek-v4.1-flash", "glm-5.3-flash"},
-		}},
-	}
-	if err := (Claude{}).Sync(home, in); err != nil {
-		t.Fatal(err)
-	}
-	env := readClaudeSettings(t, home)["env"].(map[string]any)
-	if env["ANTHROPIC_DEFAULT_SONNET_MODEL"] != "custom-model" {
-		t.Fatalf("SONNET = %v", env["ANTHROPIC_DEFAULT_SONNET_MODEL"])
-	}
-	if env["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "deepseek-v4.1-flash" {
-		t.Fatalf("OPUS = %v", env["ANTHROPIC_DEFAULT_OPUS_MODEL"])
-	}
-	if env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "glm-5.3-flash" {
-		t.Fatalf("HAIKU = %v", env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
-	}
-}
-
-// 排除 active 后没有剩余模型：Opus/Haiku 回落 Sonnet。
-func TestClaudeSyncAliasFallsBackWhenFewModels(t *testing.T) {
-	home := t.TempDir()
-	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "deepseek-v4.1-flash",
-		Platforms: []config.ModelPlatform{{
-			ID: "p1", AnthropicBaseURL: "https://ant.example/",
-			Models: []string{"deepseek-v4.1-flash"},
-		}},
-	}
-	if err := (Claude{}).Sync(home, in); err != nil {
-		t.Fatal(err)
-	}
-	env := readClaudeSettings(t, home)["env"].(map[string]any)
 	for _, k := range []string{"ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"} {
-		if env[k] != "deepseek-v4.1-flash" {
-			t.Fatalf("%s 应回落 ActiveModel: %v", k, env[k])
-		}
-	}
-}
-
-// ActiveModel 带首尾空白、列表含重复项：active 被 trim 且不重复出现在 Opus。
-func TestClaudeSyncAliasDedupAndTrimActive(t *testing.T) {
-	home := t.TempDir()
-	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "  glm-5.3-flash  ",
-		Platforms: []config.ModelPlatform{{
-			ID: "p1", AnthropicBaseURL: "https://ant.example/",
-			Models: []string{"glm-5.3-flash", "glm-5.3-flash", "kimi-k3"},
-		}},
-	}
-	if err := (Claude{}).Sync(home, in); err != nil {
-		t.Fatal(err)
-	}
-	env := readClaudeSettings(t, home)["env"].(map[string]any)
-	if env["ANTHROPIC_MODEL"] != "glm-5.3-flash" {
-		t.Fatalf("ANTHROPIC_MODEL 应 trim: %v", env["ANTHROPIC_MODEL"])
-	}
-	if env["ANTHROPIC_DEFAULT_SONNET_MODEL"] != "glm-5.3-flash" {
-		t.Fatalf("SONNET = %v", env["ANTHROPIC_DEFAULT_SONNET_MODEL"])
-	}
-	if env["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "kimi-k3" {
-		t.Fatalf("OPUS 应跳过重复的 active: %v", env["ANTHROPIC_DEFAULT_OPUS_MODEL"])
-	}
-}
-
-// ActiveModel 空时回落平台模型列表首项；无模型则不写 MODEL 键。
-func TestClaudeSyncModelFallsBackToFirstPlatformModel(t *testing.T) {
-	home := t.TempDir()
-	c := Claude{}
-	in := SyncInput{Enabled: true, DefaultPlatformID: "p1", Platforms: []config.ModelPlatform{
-		{ID: "p1", AnthropicBaseURL: "https://ant.example/", Models: []string{"kimi-k3"}},
-	}}
-	if err := c.Sync(home, in); err != nil {
-		t.Fatal(err)
-	}
-	env := readClaudeSettings(t, home)["env"].(map[string]any)
-	if env["ANTHROPIC_MODEL"] != "kimi-k3" {
-		t.Fatalf("应回落首项: %v", env["ANTHROPIC_MODEL"])
-	}
-
-	home2 := t.TempDir()
-	in2 := SyncInput{Enabled: true, DefaultPlatformID: "p1", Platforms: []config.ModelPlatform{
-		{ID: "p1", AnthropicBaseURL: "https://ant.example/"},
-	}}
-	if err := c.Sync(home2, in2); err != nil {
-		t.Fatal(err)
-	}
-	env2 := readClaudeSettings(t, home2)["env"].(map[string]any)
-	for _, k := range []string{"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"} {
-		if _, ok := env2[k]; ok {
-			t.Fatalf("无模型名不应写 %s: %v", k, env2)
+		if _, ok := env[k]; ok {
+			t.Fatalf("空槽不应写 %s（残留应被清掉）: %v", k, env)
 		}
 	}
 }
@@ -404,11 +307,12 @@ func TestClaudeSyncClearsStaleTopLevelModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "glm-5.3-flash",
+		Enabled: true, DefaultPlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk",
 			Models: []string{"glm-5.3-flash", "deepseek-v4.1-flash"},
 		}},
+		ToolSync: config.ToolSyncConfig{Claude: config.ClaudeSync{Model: "glm-5.3-flash"}},
 	}
 	if err := (Claude{}).Sync(home, in); err != nil {
 		t.Fatal(err)
@@ -434,21 +338,22 @@ func TestClaudeSyncKeepsTopLevelModelWhenInPlatformList(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "glm-5.3-flash",
+		Enabled: true, DefaultPlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://ant.example/",
 			Models: []string{"glm-5.3-flash"},
 		}},
+		ToolSync: config.ToolSyncConfig{Claude: config.ClaudeSync{Model: "glm-5.3-flash"}},
 	}
 	if err := (Claude{}).Sync(home, in); err != nil {
 		t.Fatal(err)
 	}
 	if got := readClaudeSettings(t, home)["model"]; got != "glm-5.3-flash" {
-		t.Fatalf("列表内 model 应保留, got %v", got)
+		t.Fatalf("槽位内 model 应保留, got %v", got)
 	}
 }
 
-// 默认平台无模型列表：不校验顶层 model（自由输入）。
+// 无任何槽位配置：不校验顶层 model（自由输入）。
 func TestClaudeSyncKeepsTopLevelModelWhenNoPlatformList(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, ".claude")
@@ -460,7 +365,7 @@ func TestClaudeSyncKeepsTopLevelModelWhenNoPlatformList(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "free-form",
+		Enabled: true, DefaultPlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://ant.example/",
 		}},
@@ -469,11 +374,11 @@ func TestClaudeSyncKeepsTopLevelModelWhenNoPlatformList(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := readClaudeSettings(t, home)["model"]; got != "free-form" {
-		t.Fatalf("无列表时应保留顶层 model, got %v", got)
+		t.Fatalf("无槽位时应保留顶层 model, got %v", got)
 	}
 }
 
-// 仅 ActiveModel 命中（不在平台列表）时仍保留顶层 model。
+// 仅 Opus 槽命中（其余槽未配）时仍保留顶层 model。
 func TestClaudeSyncKeepsTopLevelModelMatchingActiveOnly(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, ".claude")
@@ -485,17 +390,18 @@ func TestClaudeSyncKeepsTopLevelModelMatchingActiveOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "active-only",
+		Enabled: true, DefaultPlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://ant.example/",
 			Models: []string{"listed-a", "listed-b"},
 		}},
+		ToolSync: config.ToolSyncConfig{Claude: config.ClaudeSync{Opus: "active-only"}},
 	}
 	if err := (Claude{}).Sync(home, in); err != nil {
 		t.Fatal(err)
 	}
 	if got := readClaudeSettings(t, home)["model"]; got != "active-only" {
-		t.Fatalf("ActiveModel 命中应保留, got %v", got)
+		t.Fatalf("槽位命中应保留, got %v", got)
 	}
 }
 
@@ -580,11 +486,12 @@ func TestClaudeSyncRemovesStaleDisplayKeys(t *testing.T) {
 	home := t.TempDir()
 	seedDisplayKeys(t, home)
 	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "glm-5.3-flash",
+		Enabled: true, DefaultPlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk",
 			Models: []string{"gpt-5", "deepseek-v4.1-flash", "glm-5.3"},
 		}},
+		ToolSync: config.ToolSyncConfig{Claude: config.ClaudeSync{Model: "glm-5.3-flash"}},
 	}
 	if err := (Claude{}).Sync(home, in); err != nil {
 		t.Fatal(err)

@@ -15,10 +15,8 @@ import (
 //（即 ccswitch 的「切平台」语义）；kshell 关闭或无 Anthropic 端点时删除
 // 管理键恢复无注入状态。
 //
-// 模型：ANTHROPIC_MODEL 与 Sonnet 别名 = ActiveModel（去首尾空白，空则列表首项）；
-// Opus/Haiku 依次取排除 ActiveModel 后的平台模型列表前两项，不足回落首项。
-// 让 Claude TUI /model 能切到 kshell 配置的模型，且默认的 "sonnet" 就是用户选的
-// ActiveModel，而不是 settings 里陈旧值或列表首项。
+// 模型：由 ToolSync.Claude 的 4 个槽位（默认/Sonnet/Opus/Haiku）显式映射，
+// 槽位非空才写对应键，全空 = 只清不写；不再从 ActiveModel 或平台列表隐式推导。
 // 模型键与顶层 model 校正仅当默认平台配置了 Anthropic 端点时才启用——只有
 // OpenAI 协议的平台不接管 Claude（否则 OpenAI 模型名会被发给官方端点）。
 type Claude struct{}
@@ -145,8 +143,8 @@ func skipOnboarding(home string) {
 }
 
 // reconcileClaudeTopLevelModel 校正 settings.json 顶层 "model"（Claude /model
-// 会写入）：默认平台有模型列表时，若该值既非内置别名、也不在列表/ActiveModel
-// 中，视为旧平台残留并删除，避免 Custom 悬空。无列表时不校验（自由输入）。
+// 会写入）：配置了槽位模型时，若该值既非内置别名、也不在任何非空槽位中，
+// 视为旧平台残留并删除，避免 Custom 悬空。无任何槽位时不校验（自由输入）。
 func reconcileClaudeTopLevelModel(doc map[string]any, in SyncInput) {
 	cur, ok := doc["model"].(string)
 	if !ok {
@@ -160,19 +158,15 @@ func reconcileClaudeTopLevelModel(doc map[string]any, in SyncInput) {
 	if isClaudeBuiltinModelAlias(cur) {
 		return
 	}
-	models := platformModelNames(in)
-	if len(models) == 0 {
+	slots := claudeSlotModels(in)
+	if len(slots) == 0 {
 		return
 	}
-	active := strings.TrimSpace(in.ActiveModel)
 	bare := bareModelID(cur)
-	for _, m := range models {
+	for _, m := range slots {
 		if cur == m || bare == m {
 			return
 		}
-	}
-	if active != "" && (cur == active || bare == active) {
-		return
 	}
 	delete(doc, "model")
 }
@@ -197,60 +191,32 @@ func claudeModelManaged(in SyncInput) bool {
 	return p != nil && strings.TrimSpace(p.AnthropicBaseURL) != ""
 }
 
-// writeModelEnv 写入 ANTHROPIC_MODEL 与三个 DEFAULT 别名；无可用模型名则不写。
-//
-// Sonnet 取 ActiveModel（空则列表首项），Opus/Haiku 顺延到排除 ActiveModel 后的
-// 列表项。Claude 顶层 "model":"sonnet" 会解析到 SONNET 别名；若这里按固定下标
-// 取列表首项，用户在 kshell 选的 active_model 就会被无视，可能请求到未选模型。
-func writeModelEnv(env map[string]any, in SyncInput) {
-	ordered := modelAliasOrder(platformModelNames(in), strings.TrimSpace(in.ActiveModel))
-	if len(ordered) == 0 {
-		return
-	}
-	env["ANTHROPIC_MODEL"] = ordered[0]
-	env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = ordered[0]
-	env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = aliasAt(ordered, 1)
-	env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = aliasAt(ordered, 2)
-}
-
-// modelAliasOrder 返回 [active] + 排除 active 的模型列表（保持原顺序）。
-// active 为空时直接返回列表，保持原有回落语义。
-func modelAliasOrder(models []string, active string) []string {
-	ordered := make([]string, 0, len(models)+1)
-	if active != "" {
-		ordered = append(ordered, active)
-	}
-	for _, m := range models {
-		if m == active {
-			continue
-		}
-		ordered = append(ordered, m)
-	}
-	return ordered
-}
-
-// aliasAt 取下标项，不足时回落首项（Opus/Haiku 没有更多模型可用）。
-func aliasAt(ordered []string, i int) string {
-	if i < len(ordered) {
-		return ordered[i]
-	}
-	return ordered[0]
-}
-
-// platformModelNames 取默认平台的非空模型名列表（顺序保留）。
-func platformModelNames(in SyncInput) []string {
-	p := pickPlatform(in)
-	if p == nil {
-		return nil
-	}
-	out := make([]string, 0, len(p.Models))
-	for _, m := range p.Models {
-		m = strings.TrimSpace(m)
-		if m != "" {
-			out = append(out, m)
+// claudeSlotModels 返回 ToolSync.Claude 非空槽位值（TrimSpace 后）。
+func claudeSlotModels(in SyncInput) []string {
+	c := in.ToolSync.Claude
+	var out []string
+	for _, v := range []string{c.Model, c.Sonnet, c.Opus, c.Haiku} {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
 		}
 	}
 	return out
+}
+
+// writeModelEnv 按 ToolSync.Claude 的 4 个槽位写入模型 env 键：槽位非空才写，
+// 全空 = 只清不写（模型键已在 Sync 开头统一删除）。
+func writeModelEnv(env map[string]any, in SyncInput) {
+	slots := [][2]string{
+		{"ANTHROPIC_MODEL", in.ToolSync.Claude.Model},
+		{"ANTHROPIC_DEFAULT_SONNET_MODEL", in.ToolSync.Claude.Sonnet},
+		{"ANTHROPIC_DEFAULT_OPUS_MODEL", in.ToolSync.Claude.Opus},
+		{"ANTHROPIC_DEFAULT_HAIKU_MODEL", in.ToolSync.Claude.Haiku},
+	}
+	for _, s := range slots {
+		if v := strings.TrimSpace(s[1]); v != "" {
+			env[s[0]] = v
+		}
+	}
 }
 
 // pickPlatform 按 DefaultPlatformID 线性查找，未命中或空取第一个；无平台返回 nil。

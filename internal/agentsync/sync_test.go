@@ -48,26 +48,27 @@ func TestInputFromModelCarriesActiveModel(t *testing.T) {
 	}
 }
 
-func TestInputFromModelCarriesSyncOffTools(t *testing.T) {
-	in := InputFromModel(config.ModelConfig{Enabled: true, SyncOffTools: []string{"codebuddy"}})
-	if len(in.ToolOff) != 1 || in.ToolOff[0] != "codebuddy" {
-		t.Fatalf("ToolOff = %v, want [codebuddy]", in.ToolOff)
+func TestInputFromModelCarriesToolSync(t *testing.T) {
+	ts := config.ToolSyncConfig{Enabled: map[string]bool{"codebuddy": true}}
+	in := InputFromModel(config.ModelConfig{Enabled: true, ToolSync: ts})
+	if !in.ToolSync.Enabled["codebuddy"] {
+		t.Fatalf("ToolSync = %+v, want codebuddy 启用", in.ToolSync)
 	}
 }
 
-// cleanupFor：命中 ToolOff 的目标得到「只清不建」输入（Enabled 关、平台保留
-// 以维持 Managed、默认平台与 ActiveModel 清空）；未命中原样返回。
+// cleanupFor：ToolSync 未启用的目标得到「只清不建」输入（Enabled 关、平台保留
+// 以维持 Managed、默认平台与 ActiveModel 清空）；已启用的目标原样返回。
 func TestSyncInputCleanupFor(t *testing.T) {
 	in := SyncInput{
 		Enabled:           true,
 		Platforms:         []config.ModelPlatform{{ID: "p1", Name: "P1"}},
 		DefaultPlatformID: "p1",
 		ActiveModel:       "m1",
-		ToolOff:           []string{"codebuddy"},
+		ToolSync:          config.ToolSyncConfig{Enabled: map[string]bool{"opencode": true}},
 	}
 	got := in.cleanupFor("codebuddy")
 	if got.Enabled {
-		t.Fatal("命中 ToolOff 应关闭 Enabled")
+		t.Fatal("未启用的目标应关闭 Enabled")
 	}
 	if len(got.Platforms) != 1 {
 		t.Fatal("平台必须保留以维持 Managed（走只清不建分支）")
@@ -76,12 +77,12 @@ func TestSyncInputCleanupFor(t *testing.T) {
 		t.Fatalf("静态注入键应清空, got %q/%q", got.DefaultPlatformID, got.ActiveModel)
 	}
 	if same := in.cleanupFor("opencode"); !same.Enabled || same.ActiveModel != "m1" {
-		t.Fatalf("未命中应返回原输入, got %+v", same)
+		t.Fatalf("已启用的目标应返回原输入, got %+v", same)
 	}
 }
 
-// ToolOff 命中的目标被「只清不建」：既有 kshell 注入物清除、用户自有内容保留；
-// 未命中的目标照常注入。
+// ToolSync 未启用的目标被「只清不建」：既有 kshell 注入物清除、用户自有内容保留；
+// 已启用的目标照常注入。
 func TestSyncAllToolOffCleansOnlyTarget(t *testing.T) {
 	home := t.TempDir()
 	plat := []config.ModelPlatform{{
@@ -89,7 +90,8 @@ func TestSyncAllToolOffCleansOnlyTarget(t *testing.T) {
 		OpenAIBaseURL: "https://api.example.com",
 		Models:        []string{"m1"},
 	}}
-	in := SyncInput{Enabled: true, Platforms: plat}
+	allOn := config.ToolSyncConfig{Enabled: map[string]bool{"opencode": true, "codebuddy": true}}
+	in := SyncInput{Enabled: true, Platforms: plat, ToolSync: allOn}
 	if err := SyncAll(home, in, []string{"opencode", "codebuddy"}); err != nil {
 		t.Fatalf("预置注入失败: %v", err)
 	}
@@ -112,7 +114,7 @@ func TestSyncAllToolOffCleansOnlyTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	off := SyncInput{Enabled: true, Platforms: plat, ToolOff: []string{"codebuddy"}}
+	off := SyncInput{Enabled: true, Platforms: plat, ToolSync: config.ToolSyncConfig{Enabled: map[string]bool{"opencode": true}}}
 	if err := SyncAll(home, off, []string{"opencode", "codebuddy"}); err != nil {
 		t.Fatalf("ToolOff 同步失败: %v", err)
 	}
@@ -136,11 +138,11 @@ func TestSyncAllToolOffCleansOnlyTarget(t *testing.T) {
 		t.Fatalf("opencode.json 应存在: %v", err)
 	}
 	if !strings.Contains(string(ocRaw), "kshell-p1") {
-		t.Fatalf("未命中 ToolOff 的 opencode 应照常注入, got %s", ocRaw)
+		t.Fatalf("已启用的 opencode 应照常注入, got %s", ocRaw)
 	}
 }
 
-// SyncTool 同样遵守 ToolOff：命中即只清不建。
+// SyncTool 同样遵守 ToolSync：未启用即只清不建。
 func TestSyncToolHonorsToolOff(t *testing.T) {
 	home := t.TempDir()
 	plat := []config.ModelPlatform{{
@@ -148,11 +150,12 @@ func TestSyncToolHonorsToolOff(t *testing.T) {
 		OpenAIBaseURL: "https://api.example.com",
 		Models:        []string{"m1"},
 	}}
-	if err := SyncTool(home, "opencode", SyncInput{Enabled: true, Platforms: plat}); err != nil {
+	on := SyncInput{Enabled: true, Platforms: plat, ToolSync: config.ToolSyncConfig{Enabled: map[string]bool{"opencode": true}}}
+	if err := SyncTool(home, "opencode", on); err != nil {
 		t.Fatalf("预置注入失败: %v", err)
 	}
 	ocPath := filepath.Join(home, ".config", "opencode", "opencode.json")
-	if err := SyncTool(home, "opencode", SyncInput{Enabled: true, Platforms: plat, ToolOff: []string{"opencode"}}); err != nil {
+	if err := SyncTool(home, "opencode", SyncInput{Enabled: true, Platforms: plat}); err != nil {
 		t.Fatalf("SyncTool: %v", err)
 	}
 	raw, err := os.ReadFile(ocPath)
@@ -160,7 +163,7 @@ func TestSyncToolHonorsToolOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(raw), "kshell-p1") {
-		t.Fatalf("ToolOff 命中后 kshell provider 应被清掉, got %s", raw)
+		t.Fatalf("未启用后 kshell provider 应被清掉, got %s", raw)
 	}
 }
 
