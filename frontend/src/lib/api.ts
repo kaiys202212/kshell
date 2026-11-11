@@ -737,8 +737,10 @@ interface AppBindings {
   LoadExternalLocales(): Promise<Record<string, string>>;
   GetModelConfig(): Promise<ModelConfigView>;
   SetModelConfig(input: ModelConfigInput): Promise<void>;
-  GetModelSyncOffTools(): Promise<string[]>;
-  SetToolModelSync(toolID: string, enabled: boolean): Promise<void>;
+  SetDefaultPlatform(platformID: string): Promise<void>;
+  SetActiveModel(model: string): Promise<void>;
+  GetToolSyncConfig(toolID: string): Promise<ToolSyncView>;
+  SetToolSyncConfig(toolID: string, input: ToolSyncInput): Promise<void>;
   ListModelPresets(): Promise<ModelPreset[]>;
   ScanWorkbuddyPlatform(): Promise<WorkbuddyScanView>;
   FetchAvailableModels(platformID: string, openaiURL: string, anthropicURL: string, apiKey: string): Promise<ModelsFetchView>;
@@ -2127,18 +2129,56 @@ export async function setModelConfig(input: ModelConfigInput): Promise<void> {
   await a.SetModelConfig(input);
 }
 
-// getModelSyncOffTools 返回用户关闭了平台模型同步的工具 ID 列表；绑定不可用时兜底空列表。
-export async function getModelSyncOffTools(): Promise<string[]> {
-  const a = app();
-  if (!a) return [];
-  return (await a.GetModelSyncOffTools()) ?? [];
+// ToolSyncView / ToolSyncInput 是按工具定制模型同步的绑定视图。
+export interface ClaudeSlots {
+  Model: string;
+  Sonnet: string;
+  Opus: string;
+  Haiku: string;
 }
 
-// setToolModelSync 设置单个工具是否同步平台模型（关闭即清理该工具的注入物），错误向上抛。
-export async function setToolModelSync(toolID: string, enabled: boolean): Promise<void> {
+export interface ToolSyncView {
+  Enabled: boolean;
+  Claude: ClaudeSlots;
+  OpenCode: Record<string, string[]> | null;
+  CodeBuddy: string[] | null;
+}
+
+export interface ToolSyncInput {
+  Enabled: boolean;
+  Claude: ClaudeSlots;
+  OpenCode: Record<string, string[]>;
+  CodeBuddy: string[];
+}
+
+// setDefaultPlatform 设置默认平台并立即落盘生效（触发防抖同步），错误向上抛。
+export async function setDefaultPlatform(platformID: string): Promise<void> {
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
-  await a.SetToolModelSync(toolID, enabled);
+  await a.SetDefaultPlatform(platformID);
+}
+
+// setActiveModel 设置 kshell 自用默认模型并立即落盘生效（触发防抖同步），错误向上抛。
+export async function setActiveModel(model: string): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.SetActiveModel(model);
+}
+
+// getToolSyncConfig 返回单个工具的定制模型同步配置；绑定不可用时兜底未启用空配置。
+export async function getToolSyncConfig(toolID: string): Promise<ToolSyncView> {
+  const a = app();
+  if (!a) {
+    return { Enabled: false, Claude: { Model: '', Sonnet: '', Opus: '', Haiku: '' }, OpenCode: {}, CodeBuddy: [] };
+  }
+  return a.GetToolSyncConfig(toolID);
+}
+
+// setToolSyncConfig 保存单个工具的定制模型同步配置并立即生效，错误向上抛。
+export async function setToolSyncConfig(toolID: string, input: ToolSyncInput): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.SetToolSyncConfig(toolID, input);
 }
 
 export async function listModelPresets(): Promise<ModelPreset[]> {

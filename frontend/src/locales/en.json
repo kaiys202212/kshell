@@ -295,6 +295,25 @@
     "openrouter": { "name": "OpenRouter", "note": "OpenAI protocol only" }
   },
   "ui": {
+    "toolsync": {
+      "title": "Model settings: {name}",
+      "loading": "Loading…",
+      "enable": "Enable sync",
+      "hint": "Nothing is injected when disabled or with no models checked; existing injected entries are cleaned up.",
+      "slot_model": "Default model",
+      "slot_sonnet": "Sonnet",
+      "slot_opus": "Opus",
+      "slot_haiku": "Haiku",
+      "slot_unset": "Unset",
+      "claude_no_endpoint": "The default platform has no Anthropic endpoint; Claude will not be injected.",
+      "codebuddy_no_endpoint": "The default platform has no OpenAI endpoint; CodeBuddy will not be injected.",
+      "platform_no_endpoint": "{0}: no OpenAI endpoint, will not be injected.",
+      "default_tag": "(default platform)",
+      "models_empty": "This platform has no models yet.",
+      "saved": "Model settings saved",
+      "cancel": "Cancel",
+      "save": "Save"
+    },
     "weixin": {
       "title": "WeChat bridge",
       "desc": "After binding, view agent replies and send commands in WeChat (desktop is the primary view).",
@@ -487,6 +506,7 @@
         "section_installed": "Installed",
         "section_missing": "Not installed",
         "sync_models": "Sync platform models",
+        "model_settings": "Model settings",
         "title_broken": "Usage traces detected but no executable found; the installation is broken",
         "title_config_only": "Only a config directory was detected; no executable, so availability is unverified",
         "install": "Install",

@@ -13,7 +13,8 @@ import {
   getToolInstallJob,
   getToolInstallRecipe,
   getTools,
-  getModelSyncOffTools,
+  setActiveModel,
+  setDefaultPlatform,
   installBuiltinTool,
   listModelPresets,
   fetchAvailableModels,
@@ -43,7 +44,6 @@ import {
   setModelConfig,
   setPermissionMode,
   setSessionMode,
-  setToolModelSync,
   uninstallBuiltinTool,
 } from '../lib/api';
 import type {
@@ -71,6 +71,7 @@ import { HelpSection } from '../components/HelpSection';
 import LoginDialog from '../components/LoginDialog';
 import { ProvidersEditor } from '../components/ProvidersEditor';
 import { SkillPlaza } from '../components/SkillPlaza';
+import { ToolSyncDialog } from '../components/ToolSyncDialog';
 import { WeixinSettings } from '../components/WeixinSettings';
 import { normalizeSpec, withoutBuiltinSpecs, type CustomProviderSpec } from '../lib/providersForm';
 
@@ -121,8 +122,8 @@ export default function Settings() {
   const [section, setSection] = useState<Section>('general');
   const [tools, setTools] = useState<ToolInfo[] | null>(null);
   const [toolsError, setToolsError] = useState('');
-  // 平台模型同步被关闭的工具 ID：开关状态唯一来源是后端配置。
-  const [syncOff, setSyncOff] = useState<string[]>([]);
+  // 工具「模型设置」弹窗目标：null=关闭
+  const [toolSyncTarget, setToolSyncTarget] = useState<ToolInfo | null>(null);
   const [yaml, setYaml] = useState<string | null>(null);
   const [yamlError, setYamlError] = useState('');
   const [saved, setSaved] = useState(false);
@@ -226,11 +227,6 @@ export default function Settings() {
           // 挂载时后端已有未完成任务的日志（多行 wire key），逐行翻译
           setInstallLog(translateLog(j.Log));
         }
-      })
-      .catch(() => {});
-    getModelSyncOffTools()
-      .then((ids) => {
-        if (!cancelled) setSyncOff(ids);
       })
       .catch(() => {});
     loadProvidersYAML()
@@ -537,12 +533,32 @@ export default function Settings() {
     setPlatDraft(next);
   };
 
-  // handleSetDefault：本地改默认平台，随下一次整包保存落盘。
-  // 只切徽标/按钮，不动 ActiveModel 与下拉——它们跟随已保存的默认平台，
-  // 保存后重新拉取时由后端清理悬空模型并刷新列表。
+  // handleSetDefault：本地乐观切换 + 立即落盘生效（不依赖整包保存），后端
+  // 调度一次防抖同步。失败 notify 并以服务端为准重拉。
   const handleSetDefault = (id: string) => {
     setModelDefault(id);
-    setModelDirtyHint(true);
+    // 切默认平台后，原默认模型若不属于新平台，本地先清空显示（后端兜底清理）。
+    const target = modelPlatforms.find((p) => p.ID === id);
+    if (target && target.Models.length > 0 && !target.Models.includes(modelActive)) {
+      setModelActive('');
+    }
+    setDefaultPlatform(id)
+      .then(() => getModelConfig())
+      .then((v) => {
+        setModelPlatforms(v.Platforms ?? []);
+        setModelDefault(v.DefaultPlatform || v.Platforms?.[0]?.ID || '');
+        setModelActive(v.ActiveModel ?? '');
+      })
+      .catch((e: unknown) => {
+        notify(backendError(e), 'error');
+        getModelConfig()
+          .then((v) => {
+            setModelPlatforms(v.Platforms ?? []);
+            setModelDefault(v.DefaultPlatform || v.Platforms?.[0]?.ID || '');
+            setModelActive(v.ActiveModel ?? '');
+          })
+          .catch(() => {});
+      });
   };
 
   // handleDeletePlatform：window.confirm 确认后本地移除；删的是默认平台时清空选择
@@ -852,20 +868,6 @@ export default function Settings() {
     }
   };
 
-  // toggleModelSync 切换单个工具的平台模型同步：乐观更新；失败后以服务端
-  // 关闭列表为准重拉（后端是唯一事实来源），并提示错误。
-  const toggleModelSync = async (toolID: string, on: boolean) => {
-    setSyncOff((prev) => (on ? prev.filter((id) => id !== toolID) : [...prev, toolID]));
-    try {
-      await setToolModelSync(toolID, on);
-    } catch (e: unknown) {
-      getModelSyncOffTools()
-        .then((ids) => setSyncOff(ids))
-        .catch(() => {});
-      notify(backendError(e), 'error');
-    }
-  };
-
   const openUninstall = (tool: ToolInfo) => {
     if (busyAny) return;
     setPurgeConfig(false);
@@ -903,11 +905,10 @@ export default function Settings() {
 
   const busyAny = !!pendingId || !!job?.Running;
 
-  // 徽标跟随本地待保存的默认平台（空时回落第一个），保证点击后全列表只有一个 Default
+  // 徽标跟随当前默认平台（空时回落第一个），保证点击后全列表只有一个 Default。
+  // 「设为默认」已即时落盘，徽标与默认模型下拉都跟随该平台，无需等整包保存。
   const effectiveDefault = modelDefault || modelPlatforms[0]?.ID || '';
-  // 默认模型下拉只跟随已保存的默认平台（IsDefault）：点「设为默认」不立即换列表，
-  // 保存成功重新拉取后才刷新；IsDefault 缺失时回落第一个平台
-  const savedDefaultPlat = modelPlatforms.find((p) => p.IsDefault) ?? modelPlatforms[0];
+  const activePlat = modelPlatforms.find((p) => p.ID === effectiveDefault) ?? modelPlatforms[0];
 
   // 语言选项：内置三项 + 外部语言包（label 用包内 $name，缺省回退语言码）；
   // 配置值不在任何选项里（如外部包被删）时兜底追加该 code，保证选中态可见。
@@ -1242,15 +1243,29 @@ export default function Settings() {
                   aria-label={t('ui.settings.model.active_model')}
                   className={inputClass}
                   value={modelActive}
-                  onChange={(e) => setModelActive(e.target.value)}
+                  onChange={(e) => {
+                    const m = e.target.value;
+                    setModelActive(m);
+                    // 选默认模型立即落盘生效（防抖同步由后端合并）；失败以服务端为准。
+                    setActiveModel(m)
+                      .catch((err: unknown) => {
+                        notify(backendError(err), 'error');
+                        getModelConfig()
+                          .then((v) => {
+                            setModelPlatforms(v.Platforms ?? []);
+                            setModelActive(v.ActiveModel ?? '');
+                          })
+                          .catch(() => {});
+                      });
+                  }}
                 >
-                  {(savedDefaultPlat?.Models ?? []).map((m) => (
+                  {(activePlat?.Models ?? []).map((m) => (
                     <option key={m} value={m}>
                       {m}
                     </option>
                   ))}
                 </select>
-                {(!savedDefaultPlat || savedDefaultPlat.Models.length === 0) && (
+                {(!activePlat || activePlat.Models.length === 0) && (
                   <p className="text-xs text-muted-foreground">{t('ui.settings.model.models_empty')}</p>
                 )}
 
@@ -1686,19 +1701,15 @@ export default function Settings() {
                               )}
                             </div>
                             <div className="flex shrink-0 items-center gap-1.5">
-                              {/* 平台模型同步开关：仅已安装的同步目标显示；关闭即清理注入物 */}
+                              {/* 按工具定制模型同步：仅已安装的同步目标显示入口 */}
                               {tool.Installed && MODEL_SYNC_TARGETS.has(tool.ID) && (
-                                <label className="flex items-center gap-1 text-xs text-muted-foreground">
-                                  <input
-                                    type="checkbox"
-                                    checked={!syncOff.includes(tool.ID)}
-                                    disabled={busyAny}
-                                    onChange={() =>
-                                      void toggleModelSync(tool.ID, syncOff.includes(tool.ID))
-                                    }
-                                  />
-                                  {t('ui.settings.tools.sync_models')}
-                                </label>
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() => setToolSyncTarget(tool)}
+                                >
+                                  {t('ui.settings.tools.model_settings')}
+                                </Button>
                               )}
                               {/* 未登录的已安装工具：快捷打开登录弹窗（与卡片徽标同源） */}
                               {tool.Installed && !isBroken && tool.Auth === 'out' && (
@@ -1854,6 +1865,14 @@ export default function Settings() {
           toolID={loginTool.ID}
           toolName={loginTool.Name}
           onClose={() => setLoginTool(null)}
+        />
+      )}
+      {toolSyncTarget && (
+        <ToolSyncDialog
+          toolID={toolSyncTarget.ID}
+          toolName={toolSyncTarget.Name}
+          platforms={modelPlatforms}
+          onClose={() => setToolSyncTarget(null)}
         />
       )}
     </div>

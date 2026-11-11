@@ -31,8 +31,10 @@ const mocks = vi.hoisted(() => ({
   setAutostart: vi.fn(),
   getModelConfig: vi.fn(),
   setModelConfig: vi.fn(),
-  getModelSyncOffTools: vi.fn(),
-  setToolModelSync: vi.fn(),
+  setDefaultPlatform: vi.fn(),
+  setActiveModel: vi.fn(),
+  getToolSyncConfig: vi.fn(),
+  setToolSyncConfig: vi.fn(),
   listModelPresets: vi.fn(),
   fetchAvailableModels: vi.fn(),
   scanWorkbuddyPlatform: vi.fn(),
@@ -62,6 +64,11 @@ vi.mock('../lib/api', () => mocks);
 // 登录弹窗打桩：Settings 层只验证「登录按钮打开弹窗」；弹窗内部行为见 LoginDialog.test
 vi.mock('../components/LoginDialog', () => ({
   default: ({ toolName }: { toolName: string }) => <div data-testid="login-dialog">{toolName}</div>,
+}));
+
+// 工具模型设置弹窗打桩：Settings 层只验证「模型设置按钮打开弹窗」；弹窗内部行为见 ToolSyncDialog.test
+vi.mock('../components/ToolSyncDialog', () => ({
+  ToolSyncDialog: ({ toolID }: { toolID: string }) => <div data-testid="toolsync-dialog">{toolID}</div>,
 }));
 
 const tools: ToolInfo[] = [
@@ -244,8 +251,15 @@ beforeEach(() => {
     ActiveModel: '',
   });
   mocks.setModelConfig.mockResolvedValue(undefined);
-  mocks.getModelSyncOffTools.mockResolvedValue([]);
-  mocks.setToolModelSync.mockResolvedValue(undefined);
+  mocks.setDefaultPlatform.mockResolvedValue(undefined);
+  mocks.setActiveModel.mockResolvedValue(undefined);
+  mocks.getToolSyncConfig.mockResolvedValue({
+    Enabled: false,
+    Claude: { Model: '', Sonnet: '', Opus: '', Haiku: '' },
+    OpenCode: {},
+    CodeBuddy: [],
+  });
+  mocks.setToolSyncConfig.mockResolvedValue(undefined);
   mocks.fetchAvailableModels.mockResolvedValue({ Models: [], Errors: [] });
   mocks.scanWorkbuddyPlatform.mockResolvedValue({
     Installed: false,
@@ -333,46 +347,21 @@ describe('Settings', () => {
     expect(within(installedUl).queryByText('Gemini')).not.toBeInTheDocument();
   });
 
-  it('支持平台模型的已安装工具显示「同步平台模型」开关，勾选态来自关闭列表', async () => {
-    mocks.getModelSyncOffTools.mockResolvedValue(['codebuddy']);
+  it('支持平台模型的已安装工具显示「模型设置」按钮，点击打开弹窗；非目标不显示', async () => {
     render(<Settings />);
     goTools();
 
     const cbRow = (await screen.findByText('CodeBuddy')).closest('li')!;
-    const cbCheck = within(cbRow).getByLabelText(tt('ui.settings.tools.sync_models')) as HTMLInputElement;
-    expect(cbCheck.checked).toBe(false);
-    const clRow = screen.getByText('Claude Code').closest('li')!;
-    const clCheck = within(clRow).getByLabelText(tt('ui.settings.tools.sync_models')) as HTMLInputElement;
-    expect(clCheck.checked).toBe(true);
-    // 非同步目标的 generic 工具不出现开关
+    fireEvent.click(within(cbRow).getByRole('button', { name: tt('ui.settings.tools.model_settings') }));
+    await waitFor(() =>
+      expect(screen.getByTestId('toolsync-dialog')).toHaveTextContent('codebuddy'),
+    );
+    // 非同步目标的 generic 工具不出现入口
     expect(
-      within(screen.getByText('MyTool').closest('li')!).queryByLabelText(tt('ui.settings.tools.sync_models')),
+      within(screen.getByText('MyTool').closest('li')!).queryByRole('button', {
+        name: tt('ui.settings.tools.model_settings'),
+      }),
     ).not.toBeInTheDocument();
-  });
-
-  it('切换同步开关成功：调用后端并乐观更新勾选态', async () => {
-    render(<Settings />);
-    goTools();
-
-    const clRow = (await screen.findByText('Claude Code')).closest('li')!;
-    fireEvent.click(within(clRow).getByLabelText(tt('ui.settings.tools.sync_models')));
-    await waitFor(() => expect(mocks.setToolModelSync).toHaveBeenCalledWith('claude', false));
-    expect(
-      (within(clRow).getByLabelText(tt('ui.settings.tools.sync_models')) as HTMLInputElement).checked,
-    ).toBe(false);
-  });
-
-  it('切换同步开关失败：勾选态回滚', async () => {
-    mocks.setToolModelSync.mockRejectedValueOnce(new Error('boom'));
-    render(<Settings />);
-    goTools();
-
-    const clRow = (await screen.findByText('Claude Code')).closest('li')!;
-    fireEvent.click(within(clRow).getByLabelText(tt('ui.settings.tools.sync_models')));
-    await waitFor(() => expect(mocks.setToolModelSync).toHaveBeenCalledWith('claude', false));
-    expect(
-      (within(clRow).getByLabelText(tt('ui.settings.tools.sync_models')) as HTMLInputElement).checked,
-    ).toBe(true);
   });
 
   it('Source=config-dir 的 generic 工具显示「未验证」徽标', async () => {
@@ -984,6 +973,76 @@ describe('Settings', () => {
     expect(Array.from(sel.options).map((o) => o.value)).toEqual(['m1', 'm2']);
   });
 
+  it('点「设为默认」立即落盘生效：调 setDefaultPlatform 并刷新默认模型下拉', async () => {
+    mocks.getModelConfig
+      .mockResolvedValueOnce({
+        Enabled: true,
+        Platforms: [
+          platView({ Models: ['m1', 'm2'] }),
+          platView({ ID: 'p2', Name: 'WorkBuddy', Preset: 'workbuddy', OpenAIBaseURL: '', AnthropicBaseURL: '', Models: ['wb-1'], IsDefault: false }),
+        ],
+        DefaultPlatform: 'p1',
+        ActiveModel: 'm1',
+      })
+      // 生效后的重拉：默认平台已切到 p2，悬空的 m1 被清空
+      .mockResolvedValueOnce({
+        Enabled: true,
+        Platforms: [
+          platView({ Models: ['m1', 'm2'], IsDefault: false }),
+          platView({ ID: 'p2', Name: 'WorkBuddy', Preset: 'workbuddy', OpenAIBaseURL: '', AnthropicBaseURL: '', Models: ['wb-1'], IsDefault: true }),
+        ],
+        DefaultPlatform: 'p2',
+        ActiveModel: '',
+      });
+    render(<Settings />);
+    goModel();
+
+    const p2 = (await screen.findByText('WorkBuddy')).closest('li')!;
+    fireEvent.click(within(p2).getByRole('button', { name: tt('ui.settings.model.set_default') }));
+    await waitFor(() => expect(mocks.setDefaultPlatform).toHaveBeenCalledWith('p2'));
+    // 下拉立即跟随新默认平台的模型，不再等整包保存
+    const sel = (await screen.findByLabelText(tt('ui.settings.model.active_model'))) as HTMLSelectElement;
+    await waitFor(() => expect(Array.from(sel.options).map((o) => o.value)).toEqual(['wb-1']));
+  });
+
+  it('选择默认模型立即落盘：调 setActiveModel', async () => {
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [platView({ Models: ['m1', 'm2'] })],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
+    });
+    render(<Settings />);
+    goModel();
+
+    const sel = (await screen.findByLabelText(tt('ui.settings.model.active_model'))) as HTMLSelectElement;
+    await waitFor(() => expect(sel.options).toHaveLength(2));
+    fireEvent.change(sel, { target: { value: 'm2' } });
+    await waitFor(() => expect(mocks.setActiveModel).toHaveBeenCalledWith('m2'));
+  });
+
+  it('设为默认失败：提示错误并按服务端重拉', async () => {
+    mocks.setDefaultPlatform.mockRejectedValueOnce(new Error('err.boom'));
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [
+        platView({ Models: ['m1'] }),
+        platView({ ID: 'p2', Name: 'GLM', Models: ['m3'], IsDefault: false }),
+      ],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
+    });
+    render(<Settings />);
+    goModel();
+
+    const p2 = (await screen.findByText('GLM')).closest('li')!;
+    fireEvent.click(within(p2).getByRole('button', { name: tt('ui.settings.model.set_default') }));
+    await waitFor(() => expect(mocks.setDefaultPlatform).toHaveBeenCalledWith('p2'));
+    // 失败后重拉，默认模型下拉恢复服务端状态（p1 的模型）
+    const sel = await screen.findByLabelText(tt('ui.settings.model.active_model'));
+    await waitFor(() => expect((sel as HTMLSelectElement).value).toBe('m1'));
+  });
+
   it('添加平台→填写→保存：载荷含新平台（UUID 形态 ID）', async () => {
     vi.stubGlobal('crypto', { randomUUID: () => '123e4567-e89b-12d3-a456-426614174000' });
     render(<Settings />);
@@ -1105,26 +1164,6 @@ describe('Settings', () => {
       within(p1).getByRole('button', { name: tt('ui.settings.model.set_default') }),
     ).toBeInTheDocument();
     expect(within(p2).getByText(tt('ui.settings.model.default_badge'))).toBeInTheDocument();
-  });
-
-  it('设为默认后 Active model 下拉在保存前保持已保存平台的模型', async () => {
-    mocks.getModelConfig.mockResolvedValue({
-      Enabled: true,
-      Platforms: [
-        platView({ Models: ['m1'], IsDefault: true }),
-        platView({ ID: 'p2', Name: 'GLM', Models: ['m3'], IsDefault: false }),
-      ],
-      DefaultPlatform: 'p1',
-      ActiveModel: 'm1',
-    });
-    render(<Settings />);
-    goModel();
-    const p2 = (await screen.findByText('GLM')).closest('li')!;
-    fireEvent.click(within(p2).getByRole('button', { name: tt('ui.settings.model.set_default') }));
-
-    const sel = screen.getByLabelText(tt('ui.settings.model.active_model')) as HTMLSelectElement;
-    expect(Array.from(sel.options).map((o) => o.value)).toEqual(['m1']);
-    expect(sel.value).toBe('m1');
   });
 
   it('保存后 Active model 下拉刷新为新默认平台模型且徽标唯一', async () => {

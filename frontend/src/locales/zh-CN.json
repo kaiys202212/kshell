@@ -295,6 +295,25 @@
     "openrouter": { "name": "OpenRouter", "note": "仅 OpenAI 协议" }
   },
   "ui": {
+    "toolsync": {
+      "title": "模型设置：{name}",
+      "loading": "加载中…",
+      "enable": "启用同步",
+      "hint": "未启用或未勾选任何模型时不注入；已注入的配置会被清理。",
+      "slot_model": "默认模型",
+      "slot_sonnet": "Sonnet",
+      "slot_opus": "Opus",
+      "slot_haiku": "Haiku",
+      "slot_unset": "不设置",
+      "claude_no_endpoint": "当前默认平台没有 Anthropic 端点，保存后 Claude 不会被注入。",
+      "codebuddy_no_endpoint": "当前默认平台没有 OpenAI 端点，保存后 CodeBuddy 不会被注入。",
+      "platform_no_endpoint": "{0}：无 OpenAI 端点，不会注入。",
+      "default_tag": "（默认平台）",
+      "models_empty": "该平台还没有模型。",
+      "saved": "模型设置已保存",
+      "cancel": "取消",
+      "save": "保存"
+    },
     "weixin": {
       "title": "微信桥",
       "desc": "绑定后可在微信里查看 agent 回复并发送指令（桌面端为主视角）。",
@@ -487,6 +506,7 @@
         "section_installed": "已安装",
         "section_missing": "未安装",
         "sync_models": "同步平台模型",
+        "model_settings": "模型设置",
         "title_broken": "检测到使用残留但没有任何可执行文件，安装已损坏",
         "title_config_only": "只检测到配置目录，没有可执行程序，可用性未验证",
         "install": "安装",
