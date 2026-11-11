@@ -119,3 +119,28 @@ func routeTextFor(d hubtools.RouteDecision, n int) string {
 	}
 	return d.Text
 }
+
+// routeBriefs 把命令层会话列表映射为路由器快照：编号 = ListSessions 索引+1
+// （与 #l / bridge executeRouteText / executeRoute 的编号语境同源）。Status
+// 只做可投递性粗判：终端占用的会话记 gone（不可投递），其余记 idle——路由器
+// 只需要可投递目标，无需精确运行态。
+func routeBriefs(refs []hub.SessionRef) []hubtools.SessionBrief {
+	out := make([]hubtools.SessionBrief, 0, len(refs))
+	for i := range refs {
+		status := "idle"
+		if refs[i].TerminalActive {
+			status = "gone"
+		}
+		tool := refs[i].Tool
+		if tool == "" {
+			tool = refs[i].ToolName
+		}
+		out = append(out, hubtools.SessionBrief{
+			Num:    i + 1,
+			Tool:   tool,
+			Title:  refs[i].Title,
+			Status: status,
+		})
+	}
+	return out
+}

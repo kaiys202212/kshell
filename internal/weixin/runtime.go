@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yangk/kshell/internal/hub"
+	"github.com/yangk/kshell/internal/hubtools"
 )
 
 // bindPollInterval 是扫码绑定的轮询间隔。
@@ -35,6 +36,11 @@ type WeixinStatus struct {
 	Undelivered int    // 发送失败累计条数
 }
 
+// InputRouter 是微信入站文本的智能路由钩子：返回 (决策, 是否消费)。
+// handled=false 时调用方回落 Console.Handle(原文) 兜底。闭包内自行读配置
+//（照 transcriber 范式每次实时读，改配置即时生效）。
+type InputRouter func(ctx context.Context, input string) (hubtools.RouteDecision, bool)
+
 // Runtime 是微信桥的运行时封装：管理长轮询 goroutine 生命周期、绑定状态与
 // 配置落盘回调。desktop 在 Startup 时创建并注入回调，此后只经绑定方法交互。
 type Runtime struct {
@@ -51,6 +57,10 @@ type Runtime struct {
 	onLearnWxid func(wxid string)
 	// transcriber 由 desktop 注入：语音转写（实时配置，装配到 bridge）。
 	transcriber Transcriber
+	// router 由 desktop 注入：入站文本智能路由（实时读配置，装配到 bridge）。
+	router InputRouter
+	// directPatternsFn 由 desktop 注入：逃生门白名单（实时读配置，装配到 bridge）。
+	directPatternsFn func() []string
 	// toolName 由 desktop 注入：工具展示名（出站标题栏归因，装配到 bridge）。
 	toolName func(string) string
 	// policy 由 desktop 注入：群发聚合策略（桌面 Console 与出站镜像共享同一
@@ -124,6 +134,30 @@ func (r *Runtime) SetTranscriber(fn Transcriber) {
 	}
 }
 
+// SetRouter 装配入站文本智能路由钩子：转发给已存在的 bridge 并记录，
+// Configure 创建新 bridge（重绑）时再次注入。
+func (r *Runtime) SetRouter(fn InputRouter) {
+	r.mu.Lock()
+	r.router = fn
+	bridge := r.bridge
+	r.mu.Unlock()
+	if bridge != nil {
+		bridge.SetRouter(fn)
+	}
+}
+
+// SetDirectPatterns 装配逃生门白名单查询函数：转发给已存在的 bridge 并记录，
+// Configure 创建新 bridge（重绑）时再次注入。
+func (r *Runtime) SetDirectPatterns(fn func() []string) {
+	r.mu.Lock()
+	r.directPatternsFn = fn
+	bridge := r.bridge
+	r.mu.Unlock()
+	if bridge != nil {
+		bridge.SetDirectPatterns(fn)
+	}
+}
+
 // SetToolName 装配工具展示名查询函数（出站标题栏归因用）：转发给已存在的
 // bridge 并记录，Configure 创建新 bridge（重绑）时再次注入。
 func (r *Runtime) SetToolName(fn func(string) string) {
@@ -192,6 +226,12 @@ func (r *Runtime) Configure(token, wxid string) {
 	r.bridge = NewBridge(r.client, r.ex, BridgeConfig{Wxid: wxid, Language: r.lang})
 	if r.transcriber != nil {
 		r.bridge.SetTranscriber(r.transcriber)
+	}
+	if r.router != nil {
+		r.bridge.SetRouter(r.router)
+	}
+	if r.directPatternsFn != nil {
+		r.bridge.SetDirectPatterns(r.directPatternsFn)
 	}
 	if r.toolName != nil {
 		r.bridge.SetToolName(r.toolName)

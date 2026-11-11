@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/yangk/kshell/internal/hub"
+	"github.com/yangk/kshell/internal/hubtools"
 )
 
 // sendRetry 是出站普通失败的额外重试次数（首次 + 2 = 共 3 次尝试）。
@@ -102,6 +104,13 @@ type Bridge struct {
 	filesDir string
 	// transcriber 是语音转写函数（desktop 注入）；nil = 未装配（纯语音回执提示）。
 	transcriber Transcriber
+	// router 是入站文本智能路由钩子（desktop 注入）；nil = 未装配（全部走命令层）。
+	router InputRouter
+	// directPatternsFn 是逃生门白名单查询函数（desktop 注入，实时读配置）；
+	// nil 时回落 hub.DefaultDirectPatterns。
+	directPatternsFn func() []string
+	// routeRound 是连续反问轮次（反问链最多 routeMaxRounds 轮）；mu 保护。
+	routeRound int
 	// toolName 按工具 ID 查展示名（desktop 注入，与欢迎词归因同源）；
 	// nil 或查不到时出站标题栏回落工具 ID。
 	toolName func(string) string
@@ -183,6 +192,62 @@ func (b *Bridge) transcriberFn() Transcriber {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.transcriber
+}
+
+// SetRouter 装配入站文本智能路由钩子（可随时替换：desktop 读实时配置）。
+func (b *Bridge) SetRouter(fn InputRouter) {
+	b.mu.Lock()
+	b.router = fn
+	b.mu.Unlock()
+}
+
+// SetDirectPatterns 装配逃生门白名单查询函数（可随时替换：desktop 读实时配置）。
+func (b *Bridge) SetDirectPatterns(fn func() []string) {
+	b.mu.Lock()
+	b.directPatternsFn = fn
+	b.mu.Unlock()
+}
+
+// routerFn 加锁读当前路由钩子。
+func (b *Bridge) routerFn() InputRouter {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.router
+}
+
+// directPatterns 取当前逃生门白名单：未装配或返回空时回落内置默认集。
+func (b *Bridge) directPatterns() []string {
+	b.mu.Lock()
+	fn := b.directPatternsFn
+	b.mu.Unlock()
+	if fn == nil {
+		return hub.DefaultDirectPatterns()
+	}
+	if pats := fn(); len(pats) > 0 {
+		return pats
+	}
+	return hub.DefaultDirectPatterns()
+}
+
+// routeRoundValue 加锁读连续反问轮次。
+func (b *Bridge) routeRoundValue() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.routeRound
+}
+
+// setRouteRound 覆盖连续反问轮次。
+func (b *Bridge) setRouteRound(n int) {
+	b.mu.Lock()
+	b.routeRound = n
+	b.mu.Unlock()
+}
+
+// incRouteRound 反问轮次 +1。
+func (b *Bridge) incRouteRound() {
+	b.mu.Lock()
+	b.routeRound++
+	b.mu.Unlock()
 }
 
 // QueuedFiles 返回当前待转交附件数（#st 尾注用）。
@@ -330,7 +395,7 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	quoted := m.Ref != nil && isForwardableText(text)
 	if isForwardableText(text) && b.QueuedFiles() > 0 {
 		text = b.queuedPrefix() + text
-		replies = b.dispatchConsole(text, quotedChatID, quotedSession, quoted)
+		replies = b.dispatchConsole(ctx, text, quotedChatID, quotedSession, quoted)
 		if len(replies) == 0 {
 			// 合并成功转发（agent 稍后回复）：清队列，附件信息已在投递文本里，
 			// 不再单独发附件回执；微信侧补既有 sent_ack。
@@ -340,7 +405,7 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 		}
 		// 转发失败（无会话/发送错误等有回复场景）：队列保留，回执照发。
 	} else if trimmed != "" {
-		replies = b.dispatchConsole(text, quotedChatID, quotedSession, quoted)
+		replies = b.dispatchConsole(ctx, text, quotedChatID, quotedSession, quoted)
 		if len(replies) == 0 {
 			// 命令层无回复 = 文本已成功转发给当前会话（agent 稍后回复）。
 			// 微信侧补一条已接收确认，与桌面端 AgentHub 的 ack 卡片同一文案语义
@@ -376,12 +441,17 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	_ = b.client.SendTyping(context.Background(), m.FromUserID, m.ContextToken, 2)
 }
 
+// routeMaxRounds 是反问链的连续轮数上限：达到后下一条自由文本不再进路由，
+// 直接按原文走命令层并清零轮次（避免模型反问无限套娃）。
+const routeMaxRounds = 2
+
 // dispatchConsole 把可转发文本交给命令层。
 // quotedChatID / sessionHint 任一非空时先走引用路由（切换到被引用会话再投递）。
 // quoted 表示用户明确引用了消息：归因失败或 chatID 不在列表时进待选
 //（PickTarget），不得回落发「当前会话」——引用已表明不想跟默认目标。
-// 无引用（quoted=false）仍走普通 Handle（当前或无目标待选）。
-func (b *Bridge) dispatchConsole(text, quotedChatID, sessionHint string, quoted bool) []hub.Reply {
+// 无引用（quoted=false）且非逃生门/菜单挂起时，自由文本先问智能路由器；
+// 路由器消费则按决策落 Console，不消费/决策不可执行则回落 Handle(原文)。
+func (b *Bridge) dispatchConsole(ctx context.Context, text, quotedChatID, sessionHint string, quoted bool) []hub.Reply {
 	if quotedChatID != "" || sessionHint != "" {
 		if handled, replies := b.console.HandleQuoted(quotedChatID, sessionHint, text); handled {
 			return replies
@@ -391,7 +461,131 @@ func (b *Bridge) dispatchConsole(text, quotedChatID, sessionHint string, quoted 
 		replies, _ := b.console.PickTarget(text)
 		return replies
 	}
+	if fn := b.routerFn(); fn != nil {
+		// 反问链已满：本轮直接降级原文，轮次清零。
+		if b.routeRoundValue() >= routeMaxRounds {
+			b.setRouteRound(0)
+		} else if !b.console.Busy() && isForwardableText(text) && !hub.IsDirectPass(text, b.directPatterns()) {
+			if d, handled := fn(ctx, text); handled {
+				if replies := b.executeRouteText(ctx, text, d); len(replies) > 0 {
+					if d.Action == "ask" {
+						b.incRouteRound()
+					} else {
+						b.setRouteRound(0)
+					}
+					return replies
+				}
+				// 路由器消费但决策不可执行：轮次清零，继续走 Handle(原文) 兜底。
+				b.setRouteRound(0)
+			} else {
+				// 路由器明确不消费（未配置/调用失败）：轮次清零，回落原文。
+				b.setRouteRound(0)
+			}
+		}
+	}
 	return b.console.Handle(text)
+}
+
+// executeRouteText 把路由决策落成 bridge 侧 Console 动作（desktop executeRoute
+// 的微信同构实现）。返回空切片/nil 表示无法执行，调用方降级 Handle(原文)。
+//
+//   - group: ListSessions 编号 1..N（与 #l 同源）→ SendGroupTexts；
+//     texts 优先 PerTargetText[num] 退 Text，任一目标空文本整批降级。
+//   - single 非空 targets: 恰 1 个合法编号 → 单目标 SendGroupTexts；空 targets
+//     返回 nil（调用方回落 current 直投）。
+//   - status: 合成 "#st" 经 Console.Handle。
+//   - expand: 合成 "#gx N [count]" 经 Console.Handle（<=0 省略条数）。
+//   - ask: 单条回执 = CmdText(lang, "route_ask_prefix") + Question。
+//
+// 锁纪律：Console 的 Handle/SendGroupTexts 各自持锁且按序调用，本函数不持
+// bridge 锁，也不手写 Console 锁。ctx/original 仅用于接口对齐与未来观测，
+// 降级投递始终由调用方用原文完成。
+func (b *Bridge) executeRouteText(_ context.Context, _ string, d hubtools.RouteDecision) []hub.Reply {
+	switch d.Action {
+	case "group":
+		byNum := b.sessionNumIndex()
+		refs := make([]hub.SessionRef, 0, len(d.Targets))
+		texts := make([]string, 0, len(d.Targets))
+		seen := make(map[int]bool, len(d.Targets))
+		for _, n := range d.Targets {
+			if seen[n] {
+				continue
+			}
+			seen[n] = true
+			ref, ok := byNum[n]
+			if !ok {
+				return nil
+			}
+			text := routeTextFor(d, n)
+			// 任一目标文本为空则整批降级（不做部分投递，避免空串计成功）。
+			if strings.TrimSpace(text) == "" {
+				return nil
+			}
+			refs = append(refs, ref)
+			texts = append(texts, text)
+		}
+		if len(refs) < 2 {
+			return nil
+		}
+		return b.console.SendGroupTexts(refs, texts)
+
+	case "single":
+		if len(d.Targets) != 1 {
+			return nil
+		}
+		n := d.Targets[0]
+		ref, ok := b.sessionNumIndex()[n]
+		if !ok {
+			return nil
+		}
+		text := routeTextFor(d, n)
+		if strings.TrimSpace(text) == "" {
+			return nil
+		}
+		return b.console.SendGroupTexts([]hub.SessionRef{ref}, []string{text})
+
+	case "status":
+		return b.console.Handle("#st")
+
+	case "expand":
+		if d.ExpandNum <= 0 {
+			return nil
+		}
+		if d.ExpandCount > 0 {
+			return b.console.Handle(fmt.Sprintf("#gx %d %d", d.ExpandNum, d.ExpandCount))
+		}
+		return b.console.Handle(fmt.Sprintf("#gx %d", d.ExpandNum))
+
+	case "ask":
+		q := strings.TrimSpace(d.Question)
+		if q == "" {
+			return nil
+		}
+		return []hub.Reply{{Text: hub.CmdText(b.lang, "route_ask_prefix") + q}}
+	}
+	return nil
+}
+
+// sessionNumIndex 构建编号 → SessionRef 映射（编号=ListSessions 索引+1，与
+// #l/路由快照同源）。仅 group/single 分支需要。
+func (b *Bridge) sessionNumIndex() map[int]hub.SessionRef {
+	sessions := b.ex.ListSessions()
+	byNum := make(map[int]hub.SessionRef, len(sessions))
+	for i := range sessions {
+		ref := sessions[i]
+		ref.Num = i + 1
+		byNum[ref.Num] = ref
+	}
+	return byNum
+}
+
+// routeTextFor 取某编号目标的投递文本：PerTargetText 命中且非空用改写文本，
+// 否则退决策里的通用 Text。空改写视同未命中。
+func routeTextFor(d hubtools.RouteDecision, n int) string {
+	if t, ok := d.PerTargetText[strconv.Itoa(n)]; ok && strings.TrimSpace(t) != "" {
+		return t
+	}
+	return d.Text
 }
 
 // deliveredAck 是「文本已成功转发给当前会话」的微信侧回执，与桌面端

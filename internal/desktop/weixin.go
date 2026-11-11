@@ -32,6 +32,10 @@ func (a *App) startWeixin() {
 		})
 	})
 	r.SetTranscriber(a.weixinTranscriber())
+	// 智能路由与逃生门白名单：闭包每次实时读配置（照 transcriber 范式），
+	// 改配置即时生效；Configure 重绑时 Runtime 会再次注入到新 bridge。
+	r.SetRouter(a.weixinInputRouter())
+	r.SetDirectPatterns(func() []string { return a.agenthubDirectPatterns() })
 	r.SetToolName(a.toolDisplayName)
 	// 共享聚合策略:桌面 Console(wxHubConsole)与微信 bridge Console 与出站
 	// 镜像(mirrorAggregated)指到同一实例;Configure 创建 bridge 时会再注入。
@@ -78,6 +82,39 @@ func (a *App) weixinTranscriber() weixin.Transcriber {
 		}
 		return text, nil
 	}
+}
+
+// weixinInputRouter 返回微信入站智能路由闭包：每次调用实时读配置，总开关关闭
+// 或默认模型链未就绪时返回 (zero, false)，入站自由文本回落命令层原文投递。
+// 会话快照编号与 bridge 侧 executeRouteText 同源（均为 ListSessions 索引+1），
+// 保证决策里的编号在两侧指向同一会话。
+func (a *App) weixinInputRouter() weixin.InputRouter {
+	return func(ctx context.Context, input string) (hubtools.RouteDecision, bool) {
+		cfg := a.snapshot().Config
+		if !cfg.AgentHub.EnabledOn() {
+			return hubtools.RouteDecision{}, false
+		}
+		hc, ok := hubtools.FromModelConfig(cfg.Model)
+		if !ok {
+			return hubtools.RouteDecision{}, false
+		}
+		sessions := routeBriefs(newWXExecutor(a).ListSessions())
+		d, err := hubtools.RouteInput(ctx, hc, sessions, input)
+		if err != nil {
+			return hubtools.RouteDecision{}, false
+		}
+		return d, true
+	}
+}
+
+// agenthubDirectPatterns 返回逃生门白名单：实时读配置，空/nil 时回落 hub
+// 内置默认集（# 命令/@ 指名/continue/explain）。
+func (a *App) agenthubDirectPatterns() []string {
+	pats := a.snapshot().Config.AgentHub.DirectPatterns
+	if len(pats) == 0 {
+		return hub.DefaultDirectPatterns()
+	}
+	return append([]string(nil), pats...)
 }
 
 // mapVoiceErr 把 hubtools「模型不支持音频」哨兵映射为 weixin.ErrVoiceUnsupported
