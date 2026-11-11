@@ -18,26 +18,31 @@ import (
 //   - single 非空 targets: 恰 1 个合法编号 → 由编号映射 ref 后直接投递
 //     （等价单发路径，不走 Console.Handle 的编号语义）。
 //   - single 空 targets: 返回 handled=false（调用方回落 current 直投）。
-//   - status: 合成 "#st" 命令经 c.Handle 执行（编号语境由 lastList 提供时才
-//     有效；lastList 过期回 no_mapping 属正确降级，不特殊处理）。
-//   - expand: 合成 "#gx N [count]" 经 c.Handle。
+//   - status: 合成 "#st" 命令经 c.Handle 执行；#st 自行按状态列表渲染，
+//     不读 lastList 编号语境，也不会触发 no_mapping。
+//   - expand: 合成 "#gx N [count]" 经 c.Handle（#gx 依赖 lastList 编号语境，
+//     lastList 过期回 no_mapping 属正确降级，不特殊处理）。
 //   - ask: 单条回执 = hub.CmdText(lang, "route_ask_prefix") + Question。
+//
+// original 为用户原文，仅供调用方降级直投使用；本函数不消费也不改写它。
 func executeRoute(a *App, d hubtools.RouteDecision, original string) ([]hub.Reply, bool) {
-	_ = original // 降级路径由调用方投递用户原文；本函数不消费。
-
-	// 编号映射与 #l 同源：ListSessions 顺序即编号 1..N（SessionRef.Num 由
-	// 展示层赋值，ListSessions 本身不带 Num）。
-	sessions := newWXExecutor(a).ListSessions()
-	byNum := make(map[int]hub.SessionRef, len(sessions))
-	for i := range sessions {
-		ref := sessions[i]
-		ref.Num = i + 1
-		byNum[ref.Num] = ref
-	}
-
 	c := a.wxHubConsole()
+	// sessionNumIndex 构建编号映射（与 #l 同源：ListSessions 顺序即编号
+	// 1..N，SessionRef.Num 由展示层赋值，ListSessions 本身不带 Num）。
+	// 仅 group/single 分支需要编号映射，status/expand/ask 不做 ListSessions。
+	sessionNumIndex := func() map[int]hub.SessionRef {
+		sessions := newWXExecutor(a).ListSessions()
+		byNum := make(map[int]hub.SessionRef, len(sessions))
+		for i := range sessions {
+			ref := sessions[i]
+			ref.Num = i + 1
+			byNum[ref.Num] = ref
+		}
+		return byNum
+	}
 	switch d.Action {
 	case "group":
+		byNum := sessionNumIndex()
 		// 包内已校验 ≥2，此处仍防御：去重后不足 2 个目标无法执行群发语义。
 		refs := make([]hub.SessionRef, 0, len(d.Targets))
 		texts := make([]string, 0, len(d.Targets))
@@ -51,8 +56,14 @@ func executeRoute(a *App, d hubtools.RouteDecision, original string) ([]hub.Repl
 			if !ok {
 				return nil, false
 			}
+			text := routeTextFor(d, n)
+			// 任一目标文本为空则整批降级（发送前判定，不做部分投递），
+			// 避免向某个目标投出空串且回执计成功。
+			if strings.TrimSpace(text) == "" {
+				return nil, false
+			}
 			refs = append(refs, ref)
-			texts = append(texts, routeTextFor(d, n))
+			texts = append(texts, text)
 		}
 		if len(refs) < 2 {
 			return nil, false
@@ -64,6 +75,7 @@ func executeRoute(a *App, d hubtools.RouteDecision, original string) ([]hub.Repl
 			// 空 targets = 投当前会话，交由调用方回落 current 直投；>1 非法。
 			return nil, false
 		}
+		byNum := sessionNumIndex()
 		n := d.Targets[0]
 		ref, ok := byNum[n]
 		if !ok {

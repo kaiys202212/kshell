@@ -153,8 +153,9 @@ func TestExecuteRouteDecision(t *testing.T) {
 		if fx.ex.sendCalls[1] != [2]string{fx.refs[2].ChatID, "统一正文"} {
 			t.Fatalf("目标3应回退统一正文: %+v", fx.ex.sendCalls[1])
 		}
-		if len(replies) != 1 || !strings.Contains(replies[0].Text, "已发送") {
-			t.Fatalf("群发回执 = %+v", replies)
+		wantPrefix := fmt.Sprintf(hub.CmdText("zh-CN", "group_sent"), "")
+		if len(replies) != 1 || !strings.HasPrefix(replies[0].Text, wantPrefix) {
+			t.Fatalf("群发回执 = %+v, want 前缀 %q", replies, wantPrefix)
 		}
 		if p := fx.c.MirrorPolicy(); !p.Active() || p.Count() != 2 {
 			t.Fatalf("群发两目标应进聚合: active=%v count=%d", p.Active(), p.Count())
@@ -185,8 +186,9 @@ func TestExecuteRouteDecision(t *testing.T) {
 		if len(fx.ex.sendCalls) != 1 || fx.ex.sendCalls[0] != [2]string{fx.refs[1].ChatID, "单发正文"} {
 			t.Fatalf("sendCalls = %+v", fx.ex.sendCalls)
 		}
-		if len(replies) != 1 || !strings.Contains(replies[0].Text, "已发送") {
-			t.Fatalf("单发回执 = %+v", replies)
+		wantPrefix := fmt.Sprintf(hub.CmdText("zh-CN", "sent_to"), "")
+		if len(replies) != 1 || !strings.HasPrefix(replies[0].Text, wantPrefix) {
+			t.Fatalf("单发回执 = %+v, want 前缀 %q", replies, wantPrefix)
 		}
 	})
 
@@ -270,6 +272,68 @@ func TestExecuteRouteDecision(t *testing.T) {
 		want := hub.CmdText("zh-CN", "route_ask_prefix") + "你指的是哪个会话？"
 		if len(replies) != 1 || replies[0].Text != want {
 			t.Fatalf("ask 回执 = %+v, want %q", replies, want)
+		}
+	})
+
+	t.Run("group 任一目标空文本整批降级", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		// 目标 2 无 PerTargetText 且通用 Text 为空：发送前判定，整批降级，
+		// 不向目标 1 投递、不做部分投递。
+		_, handled := executeRoute(fx.app, hubtools.RouteDecision{
+			Action:        "group",
+			Targets:       []int{1, 2},
+			Text:          "",
+			PerTargetText: map[string]string{"1": "改写甲"},
+		}, "用户原文")
+		if handled {
+			t.Fatal("group 空文本应 handled=false（整批降级）")
+		}
+		if len(fx.ex.sendCalls) != 0 {
+			t.Fatalf("不得部分投递: %+v", fx.ex.sendCalls)
+		}
+	})
+
+	t.Run("single 空白正文降级", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		_, handled := executeRoute(fx.app, hubtools.RouteDecision{
+			Action: "single", Targets: []int{2}, Text: "   ",
+		}, "用户原文")
+		if handled {
+			t.Fatal("single 空白正文应 handled=false")
+		}
+		if len(fx.ex.sendCalls) != 0 {
+			t.Fatalf("不得发送: %+v", fx.ex.sendCalls)
+		}
+	})
+
+	t.Run("未知 action 降级", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		_, handled := executeRoute(fx.app, hubtools.RouteDecision{
+			Action: "broadcast", Text: "原文",
+		}, "用户原文")
+		if handled {
+			t.Fatal("未知 action 应 handled=false")
+		}
+		if len(fx.ex.sendCalls) != 0 {
+			t.Fatalf("不得发送: %+v", fx.ex.sendCalls)
+		}
+	})
+
+	t.Run("expand 编号非法降级", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		_, handled := executeRoute(fx.app, hubtools.RouteDecision{
+			Action: "expand", ExpandNum: 0,
+		}, "用户原文")
+		if handled {
+			t.Fatal("expand ExpandNum<=0 应 handled=false")
+		}
+	})
+
+	t.Run("status 无会话也 handled", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		_, handled := executeRoute(fx.app, hubtools.RouteDecision{Action: "status"}, "用户原文")
+		if !handled {
+			t.Fatal("status 无会话应 handled=true（#st 自行渲染空态）")
 		}
 	})
 }
