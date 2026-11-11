@@ -385,16 +385,38 @@ func TestMirrorAggregatedNoReportWhilePerm(t *testing.T) {
 	}
 }
 
+// setBase 直接改写基线(测试注入:模拟「已跑满阈值」)。
+func (h *aggHeartbeats) setBase(key string, ts int64) {
+	h.mu.Lock()
+	if h.marks == nil {
+		h.marks = map[string]int64{}
+	}
+	h.marks[key] = ts
+	h.mu.Unlock()
+}
+
+// base 返回该目标的当前基线(0 表示无记录;测试断言用)。
+func (h *aggHeartbeats) base(key string) int64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.marks[key]
+}
+
+// size 返回跟踪表条目数(测试断言用)。
+func (h *aggHeartbeats) size() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.marks)
+}
+
 // hbFixture 是心跳用例的公共装配:目标 A 持续 running(后端 gate 阻塞)、目标 B
 // 空闲并反复触发聚合摘要行。心跳基线由首个摘要行初始化,测试可经 setBase 拨回。
 type hbFixture struct {
-	a       *App
-	store   *hub.Store
-	m       *chat.Manager
-	run     chat.Info // 持续 running 的目标 A
-	idle    chat.Info // 空闲目标 B(每次摘要的触发者)
-	sink    chan hub.Message
-	release func() // 放行 A 的 Prompt,可重复调用(Once)
+	a     *App
+	store *hub.Store
+	run   chat.Info // 持续 running 的目标 A(SessionID 即心跳跟踪 key)
+	idle  chat.Info // 空闲目标 B(每次摘要的触发者)
+	sink  chan hub.Message
 }
 
 func newHBFixture(t *testing.T) *hbFixture {
@@ -424,10 +446,11 @@ func newHBFixture(t *testing.T) *hbFixture {
 		t.Fatalf("append: %v", err)
 	}
 
+	// 收尾先放行 A 的 Prompt 再关会话(Cleanup LIFO):避免 goroutine 卡在
+	// gate 上拖住 CloseAll。
 	var once sync.Once
-	release := func() { once.Do(func() { close(b.gate) }) }
-	t.Cleanup(release)
-	return &hbFixture{a: a, store: store, m: m, run: run, idle: idle, sink: sink, release: release}
+	t.Cleanup(func() { once.Do(func() { close(b.gate) }) })
+	return &hbFixture{a: a, store: store, run: run, idle: idle, sink: sink}
 }
 
 // triggerSummary 从空闲目标 B 触发一次聚合出站并返回该条文本。
@@ -455,7 +478,7 @@ func TestMirrorAggregatedHeartbeat(t *testing.T) {
 			t.Fatalf("首个摘要只记基线,不应出心跳: %q", first)
 		}
 		// 模拟 A 已跑满 6 分钟(阈值默认 5)。
-		f.a.aggHb.setBase("s1", time.Now().Add(-6*time.Minute).UnixNano())
+		f.a.aggHb.setBase(f.run.SessionID, time.Now().Add(-6*time.Minute).UnixNano())
 
 		got := f.triggerSummary(t, "第二次")
 		if !strings.Contains(got, "会话有回复") {
@@ -472,7 +495,7 @@ func TestMirrorAggregatedHeartbeat(t *testing.T) {
 	t.Run("once per window", func(t *testing.T) {
 		f := newHBFixture(t)
 		f.triggerSummary(t, "初始")
-		f.a.aggHb.setBase("s1", time.Now().Add(-6*time.Minute).UnixNano())
+		f.a.aggHb.setBase(f.run.SessionID, time.Now().Add(-6*time.Minute).UnixNano())
 		if got := f.triggerSummary(t, "心跳"); !strings.Contains(got, "仍在运行") {
 			t.Fatalf("超阈值应出心跳: %q", got)
 		}
@@ -495,7 +518,7 @@ func TestMirrorAggregatedHeartbeat(t *testing.T) {
 		// 时间轴放在过去:基线拨到 10 分钟前,随后 A 回复在 8 分钟前(比基线新)
 		// → 窗口重置为回复水位,不出心跳。
 		now := time.Now()
-		f.a.aggHb.setBase("s1", now.Add(-10*time.Minute).UnixNano())
+		f.a.aggHb.setBase(f.run.SessionID, now.Add(-10*time.Minute).UnixNano())
 		replyTs := now.Add(-8 * time.Minute).UnixNano()
 		if err := f.store.Append(hub.Message{
 			Kind: "agent", ChatID: f.a.originalChatID(f.run.ID), TermKey: f.run.Key, Text: "A的新回复", Ts: replyTs,
@@ -505,11 +528,11 @@ func TestMirrorAggregatedHeartbeat(t *testing.T) {
 		if got := f.triggerSummary(t, "触发"); strings.Contains(got, "仍在运行") {
 			t.Fatalf("新回复应重置窗口,不出心跳: %q", got)
 		}
-		if base := f.a.aggHb.base("s1"); base != replyTs {
+		if base := f.a.aggHb.base(f.run.SessionID); base != replyTs {
 			t.Fatalf("基线应前移到最近回复水位: got %d want %d", base, replyTs)
 		}
 		// 模拟回复后又过了 6 分钟(基线已越过回复水位):恢复心跳。
-		f.a.aggHb.setBase("s1", now.Add(-6*time.Minute).UnixNano())
+		f.a.aggHb.setBase(f.run.SessionID, now.Add(-6*time.Minute).UnixNano())
 		if got := f.triggerSummary(t, "再触发"); !strings.Contains(got, "仍在运行") {
 			t.Fatalf("窗口重置后再超阈值应恢复心跳: %q", got)
 		}
@@ -531,7 +554,7 @@ func TestMirrorAggregatedHeartbeat(t *testing.T) {
 		)
 		// 手工预置上一轮摘要留下的基线(同一周期),验证报告 Discard 后清表。
 		a.aggHb.begin(since)
-		a.aggHb.setBase("s1", since-1)
+		a.aggHb.setBase(info1.SessionID, since-1)
 		if a.aggHb.size() != 1 {
 			t.Fatalf("预置基线失败: %d", a.aggHb.size())
 		}
@@ -561,6 +584,40 @@ func TestMirrorAggregatedHeartbeat(t *testing.T) {
 			t.Fatalf("Discard 后心跳跟踪表应清空,残留 %d 项", n)
 		}
 	})
+}
+
+// 多目标同时 running:两条 hb_line 以换行接龙(同一条出站消息内)。
+func TestAggHeartbeatLinesMultiRunning(t *testing.T) {
+	a, _, _ := newHubTestApp(t)
+	now := time.Now()
+	base := now.Add(-6 * time.Minute).UnixNano() // 超过默认阈值 5m
+	a.aggHb.setBase("s1", base)
+	a.aggHb.setBase("s2", base)
+	rows := []hub.SessionStatus{
+		{Ref: hub.SessionRef{Num: 1, Title: "A", SessionID: "s1"}, State: "running", LastTs: base},
+		{Ref: hub.SessionRef{Num: 2, Title: "B", SessionID: "s2"}, State: "running", LastTs: base},
+	}
+	got := a.aggHeartbeatLines("zh-CN", rows)
+	if got != "1【A】 仍在运行 6m\n2【B】 仍在运行 6m" {
+		t.Fatalf("两条心跳应换行接龙: %q", got)
+	}
+}
+
+// SessionID 为空时跟踪 key 回退 ChatID(行无 SessionID 但 ChatID 可归属)。
+func TestAggHeartbeatLinesKeyFallsBackToChatID(t *testing.T) {
+	a, _, _ := newHubTestApp(t)
+	now := time.Now()
+	base := now.Add(-6 * time.Minute).UnixNano()
+	// 基线按 ChatID key 预置;若 aggHeartbeatLines 未回退到 ChatID,则查无此 key
+	// 会走「首次记基线不判定」,心跳不会触发。
+	a.aggHb.setBase("chat-c9", base)
+	rows := []hub.SessionStatus{
+		{Ref: hub.SessionRef{Num: 1, Title: "A", ChatID: "chat-c9"}, State: "running", LastTs: base},
+	}
+	got := a.aggHeartbeatLines("zh-CN", rows)
+	if got != "1【A】 仍在运行 6m" {
+		t.Fatalf("空 SessionID 应回退 ChatID 作跟踪 key: %q", got)
+	}
 }
 
 // 策略不匹配(从未登记的 chat 回复)时按现状逐条镜像,不吞、不聚合。

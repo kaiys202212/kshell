@@ -11,6 +11,10 @@ import (
 	"github.com/yangk/kshell/internal/weixin"
 )
 
+// 微信出站(agent 镜像)聚合:群发目标集活跃时,单目标 agent 回复不再逐条镜像,
+// 改投一条聚合摘要行(agg_line + 逐目标状态明细)。共享 MirrorPolicy 实例的
+// 装配见 weixin.go 的 startWeixin / wxHubConsole。
+
 // aggHeartbeats 跟踪聚合周期内各目标的最近一次心跳/活动基线(纳秒,与 hub
 // 消息 Ts 同单位)。mirrorAggregated 在 recordHubMessage 路径不持 App 锁,
 // 故自持 sync.Mutex,不经 a.mu。
@@ -35,9 +39,9 @@ func (h *aggHeartbeats) begin(cycle int64) {
 	h.mu.Unlock()
 }
 
-// check 判定某目标本轮是否出心跳。now/lastTs/threshold 均为纳秒。
+// tick 判定某目标本轮是否出心跳并推进基线。now/lastTs/threshold 均为纳秒。
 // 返回 (是否触发, 距基线时长)。
-func (h *aggHeartbeats) check(key string, now, lastTs, threshold int64) (bool, int64) {
+func (h *aggHeartbeats) tick(key string, now, lastTs, threshold int64) (bool, int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.marks == nil {
@@ -69,34 +73,6 @@ func (h *aggHeartbeats) reset() {
 	h.marks = nil
 	h.mu.Unlock()
 }
-
-// setBase 直接改写基线(测试注入:模拟「已跑满阈值」)。
-func (h *aggHeartbeats) setBase(key string, ts int64) {
-	h.mu.Lock()
-	if h.marks == nil {
-		h.marks = map[string]int64{}
-	}
-	h.marks[key] = ts
-	h.mu.Unlock()
-}
-
-// base 返回该目标的当前基线(0 表示无记录;测试断言用)。
-func (h *aggHeartbeats) base(key string) int64 {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.marks[key]
-}
-
-// size 返回跟踪表条目数(测试断言用)。
-func (h *aggHeartbeats) size() int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return len(h.marks)
-}
-
-// 微信出站(agent 镜像)聚合:群发目标集活跃时,单目标 agent 回复不再逐条镜像,
-// 改投一条聚合摘要行(agg_line + 逐目标状态明细)。共享 MirrorPolicy 实例的
-// 装配见 weixin.go 的 startWeixin / wxHubConsole。
 
 // mirrorHubPolicy 取 App 级共享聚合策略(惰性创建, mu 内完成, 供 startWeixin
 // 等未持锁场景)。已持 a.mu 的调用点(wxHubConsole)须直接判 nil 初始化字段,
@@ -237,7 +213,7 @@ func (a *App) aggHeartbeatLines(lang string, rows []hub.SessionStatus) string {
 		if key == "" {
 			continue
 		}
-		fired, elapsed := a.aggHb.check(key, now, row.LastTs, threshold)
+		fired, elapsed := a.aggHb.tick(key, now, row.LastTs, threshold)
 		if !fired {
 			continue
 		}
