@@ -30,7 +30,12 @@ func (a *App) startWeixin() {
 	})
 	r.SetTranscriber(a.weixinTranscriber())
 	r.SetToolName(a.toolDisplayName)
-	r.Configure(cfg.Weixin.Token, cfg.Weixin.Wxid)
+	// 总开关关闭：不喂凭据（轮询不启动，绑定入口已被 WeixinBind 拒绝）；开启即恢复正常。
+	if cfg.AgentHub.EnabledOn() {
+		r.Configure(cfg.Weixin.Token, cfg.Weixin.Wxid)
+	} else {
+		r.Configure("", "")
+	}
 
 	a.mu.Lock()
 	a.wx = r
@@ -96,6 +101,10 @@ func (a *App) wxHubConsole() *hub.Console {
 
 // WeixinBind 发起扫码绑定，返回二维码内容 URL（前端转二维码图）。
 func (a *App) WeixinBind() (string, error) {
+	// AgentHub 总开关关闭：绑定入口一并拒绝（轮询已在 startWeixin 停喂凭据）。
+	if !a.snapshot().Config.AgentHub.EnabledOn() {
+		return "", errors.New("err.agenthub.disabled|WeixinBind")
+	}
 	r := a.wxRuntime()
 	if r == nil {
 		return "", errNotReady

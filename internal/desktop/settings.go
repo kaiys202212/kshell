@@ -567,5 +567,8 @@ func (a *App) SetAgentHubEnabled(enabled bool) error {
 	return nil
 }
 
-// applyAgentHubGates 让总开关/白名单改动即时生效（Task 3 填实：重装配微信桥）。
-func (a *App) applyAgentHubGates() {}
+// applyAgentHubGates 让总开关/白名单改动即时生效：微信桥按最新配置重装配
+//（startWeixin 幂等，关闭时不再喂凭据即停轮询；开启时恢复）。
+func (a *App) applyAgentHubGates() {
+	a.startWeixin()
+}

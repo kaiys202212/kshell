@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yangk/kshell/internal/config"
@@ -65,5 +66,37 @@ func TestAgentHubSettingsRoundTrip(t *testing.T) {
 	}
 	if loaded.AgentHub.Enabled == nil || !*loaded.AgentHub.Enabled {
 		t.Fatalf("落盘读回 Enabled=%v, want 非 nil 且 true", loaded.AgentHub.Enabled)
+	}
+}
+
+// agentHubTestApp 构造带落盘 Layout 的 App（saveConfig 需要 Layout.Config，
+// 套路同 TestAgentHubSettingsRoundTrip；无扫描数据）。
+func agentHubTestApp(t *testing.T) *App {
+	t.Helper()
+	dir := t.TempDir()
+	layout := config.Layout{
+		Root:   dir,
+		Config: filepath.Join(dir, "config.yaml"),
+		Cache:  filepath.Join(dir, "cache"),
+	}
+	return NewAppWith(Options{Config: config.Default(), Layout: layout})
+}
+
+// TestAgentHubGateBlocksWeixinBind 验证 AgentHub 总开关关闭时 WeixinBind 被
+// 门控拒绝（错误含 agenthub）；重新开启后放行（未配凭据时返回非门控错误）。
+func TestAgentHubGateBlocksWeixinBind(t *testing.T) {
+	a := agentHubTestApp(t)
+	if err := a.SetAgentHubEnabled(false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if _, err := a.WeixinBind(); err == nil || !strings.Contains(err.Error(), "agenthub") {
+		t.Fatalf("关闭时应被门控拒绝, got %v", err)
+	}
+	if err := a.SetAgentHubEnabled(true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	// 恢复后放行：未配微信凭据时应返回 errNotReady 类错误而非门控错误。
+	if _, err := a.WeixinBind(); err != nil && strings.Contains(err.Error(), "agenthub") {
+		t.Fatalf("开启后仍被门控拦截: %v", err)
 	}
 }
