@@ -193,6 +193,42 @@ type AgentHubConfig struct {
 // EnabledOn 返回总开关的生效值：nil 即启用（对存量配置保持现状）。
 func (c AgentHubConfig) EnabledOn() bool { return c.Enabled == nil || *c.Enabled }
 
+// Normalized 归一化 AgentHub 配置：路由模式非法回落 auto、心跳阈值钳默认/上限、
+// 逃生门白名单去空白项去重（全空置 nil）。供 Config.normalized 与写穿保存共用。
+func (c AgentHubConfig) Normalized() AgentHubConfig {
+	// 路由模式：空值或非法值一律回落 auto。
+	c.RouteMode = strings.TrimSpace(c.RouteMode)
+	switch c.RouteMode {
+	case RouteModeAuto, RouteModeAgent, RouteModeForceAuto:
+	default:
+		c.RouteMode = RouteModeAuto
+	}
+	// 编排参数：心跳阈值钳制、逃生门白名单去空白项去重。
+	if c.HeartbeatMinutes <= 0 {
+		c.HeartbeatMinutes = agenthubHeartbeatDefault
+	}
+	if c.HeartbeatMinutes > agenthubHeartbeatMax {
+		c.HeartbeatMinutes = agenthubHeartbeatMax
+	}
+	if len(c.DirectPatterns) > 0 {
+		seen := map[string]bool{}
+		pats := make([]string, 0, len(c.DirectPatterns))
+		for _, p := range c.DirectPatterns {
+			if p = strings.TrimSpace(p); p == "" || seen[p] {
+				continue
+			}
+			seen[p] = true
+			pats = append(pats, p)
+		}
+		if len(pats) == 0 {
+			c.DirectPatterns = nil
+		} else {
+			c.DirectPatterns = pats
+		}
+	}
+	return c
+}
+
 // isReleaseFn 是发布态判定的包级变量：默认走 version.IsRelease，测试可注入。
 var isReleaseFn = version.IsRelease
 
@@ -348,36 +384,8 @@ func (c Config) normalized() Config {
 	// 消费完即复位：归一化产物（Load 返回值）与手构造的 Config 保持可 DeepEqual；
 	// normalized 只在 Load 末尾调用一次，复位不影响显式 false 的保留语义。
 	c.autostartSet = false
-	// AgentHub 路由模式：空值或非法值一律回落 auto。
-	c.AgentHub.RouteMode = strings.TrimSpace(c.AgentHub.RouteMode)
-	switch c.AgentHub.RouteMode {
-	case RouteModeAuto, RouteModeAgent, RouteModeForceAuto:
-	default:
-		c.AgentHub.RouteMode = RouteModeAuto
-	}
-	// AgentHub 编排参数：心跳阈值钳制、逃生门白名单去空白项去重。
-	if c.AgentHub.HeartbeatMinutes <= 0 {
-		c.AgentHub.HeartbeatMinutes = agenthubHeartbeatDefault
-	}
-	if c.AgentHub.HeartbeatMinutes > agenthubHeartbeatMax {
-		c.AgentHub.HeartbeatMinutes = agenthubHeartbeatMax
-	}
-	if len(c.AgentHub.DirectPatterns) > 0 {
-		seen := map[string]bool{}
-		pats := make([]string, 0, len(c.AgentHub.DirectPatterns))
-		for _, p := range c.AgentHub.DirectPatterns {
-			if p = strings.TrimSpace(p); p == "" || seen[p] {
-				continue
-			}
-			seen[p] = true
-			pats = append(pats, p)
-		}
-		if len(pats) == 0 {
-			c.AgentHub.DirectPatterns = nil
-		} else {
-			c.AgentHub.DirectPatterns = pats
-		}
-	}
+	// AgentHub 路由模式/编排参数归一（抽为 AgentHubConfig.Normalized 共用）。
+	c.AgentHub = c.AgentHub.Normalized()
 	// 模型配置：统一模型列表归一；旧 base_url / agents 迁移后清空。
 	c.Model.Preset = strings.TrimSpace(c.Model.Preset)
 	c.Model.OpenAIBaseURL = sanitizeHTTPURL(c.Model.OpenAIBaseURL)

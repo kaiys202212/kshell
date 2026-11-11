@@ -512,3 +512,60 @@ func (a *App) SetPermissionMode(mode string) error {
 	}
 	return a.saveConfig(func(c *config.Config) { c.PermissionMode = mode })
 }
+
+// AgentHubSettingsView 是 AgentHub 设置的绑定读取形态（Enabled 已解析为 bool）。
+type AgentHubSettingsView struct {
+	Enabled          bool     `json:"enabled"`
+	HeartbeatMinutes int      `json:"heartbeat_minutes"`
+	DirectPatterns   []string `json:"direct_patterns"`
+	DefaultTool      string   `json:"default_tool"`
+	DefaultModel     string   `json:"default_model"`
+	RouteMode        string   `json:"route_mode"`
+}
+
+// AgentHubSettingsInput 是可编辑字段的保存形态；Enabled 走 SetAgentHubEnabled
+// 独立翻转（开关即时生效），DefaultTool/DefaultModel/RouteMode 由既有写穿绑定负责。
+type AgentHubSettingsInput struct {
+	HeartbeatMinutes int      `json:"heartbeat_minutes"`
+	DirectPatterns   []string `json:"direct_patterns"`
+}
+
+// GetAgentHubSettings 返回 AgentHub 设置快照。
+func (a *App) GetAgentHubSettings() AgentHubSettingsView {
+	ah := a.snapshot().Config.AgentHub
+	return AgentHubSettingsView{
+		Enabled:          ah.EnabledOn(),
+		HeartbeatMinutes: ah.HeartbeatMinutes,
+		DirectPatterns:   ah.DirectPatterns,
+		DefaultTool:      ah.DefaultTool,
+		DefaultModel:     ah.DefaultModel,
+		RouteMode:        ah.RouteMode,
+	}
+}
+
+// SaveAgentHubSettings 保存编排参数并即时生效（微信桥门控重读配置）。
+func (a *App) SaveAgentHubSettings(in AgentHubSettingsInput) error {
+	if err := a.saveConfig(func(c *config.Config) {
+		c.AgentHub.HeartbeatMinutes = in.HeartbeatMinutes
+		c.AgentHub.DirectPatterns = in.DirectPatterns
+		c.AgentHub = c.AgentHub.Normalized()
+	}); err != nil {
+		return err
+	}
+	a.applyAgentHubGates()
+	return nil
+}
+
+// SetAgentHubEnabled 翻转总开关并即时生效。
+func (a *App) SetAgentHubEnabled(enabled bool) error {
+	if err := a.saveConfig(func(c *config.Config) {
+		c.AgentHub.Enabled = &enabled
+	}); err != nil {
+		return err
+	}
+	a.applyAgentHubGates()
+	return nil
+}
+
+// applyAgentHubGates 让总开关/白名单改动即时生效（Task 3 填实：重装配微信桥）。
+func (a *App) applyAgentHubGates() {}
