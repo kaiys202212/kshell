@@ -1,8 +1,6 @@
 package desktop
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/yangk/kshell/internal/config"
