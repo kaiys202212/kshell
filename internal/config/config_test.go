@@ -216,6 +216,8 @@ func TestModelConfigDefaultsAndRoundTrip(t *testing.T) {
 		DefaultPlatform: "default",
 		ActiveModel:     "mimo-v2.5",
 		Models:          []string{},
+		// enabled: true 且无旧 sync_off_tools：Load 迁移后三目标全部视为开启。
+		ToolSync: ToolSyncConfig{Enabled: map[string]bool{"opencode": true, "codebuddy": true, "claude": true}},
 	}
 	if err := Save(p, want); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -269,9 +271,9 @@ func TestModelConfigNormalizes(t *testing.T) {
 	}
 }
 
-// sync_off_tools 记录用户单独关闭平台模型同步的工具 ID：Load 时 TrimSpace、
-// 去空、去重；未写字段保持 nil。
-func TestModelConfigSyncOffToolsNormalize(t *testing.T) {
+// 旧 sync_off_tools 迁移为 ToolSync.Enabled：全局启用时未列出的目标视为开启、
+// 列出的视为关闭；旧字段迁移后不再落盘。
+func TestModelToolSyncMigration(t *testing.T) {
 	p := tempPaths(t)
 	if err := os.MkdirAll(p.Root, 0o755); err != nil {
 		t.Fatal(err)
@@ -284,11 +286,88 @@ func TestModelConfigSyncOffToolsNormalize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	want := []string{"opencode", "claude"}
-	if !reflect.DeepEqual(got.Model.SyncOffTools, want) {
-		t.Fatalf("SyncOffTools = %#v, want %#v", got.Model.SyncOffTools, want)
+	want := map[string]bool{"codebuddy": true}
+	if !reflect.DeepEqual(got.Model.ToolSync.Enabled, want) {
+		t.Fatalf("ToolSync.Enabled = %#v, want %#v", got.Model.ToolSync.Enabled, want)
 	}
-	// 往返：Save 后重读字段不丢。
+	// 往返：Save 后旧键消失，ToolSync 保持。
+	if err := Save(p, got); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, err := os.ReadFile(p.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "sync_off_tools") {
+		t.Fatalf("旧键 sync_off_tools 不应再落盘:\n%s", raw)
+	}
+	again, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load again: %v", err)
+	}
+	if !reflect.DeepEqual(again.Model.ToolSync.Enabled, want) {
+		t.Fatalf("往返后 ToolSync.Enabled = %#v, want %#v", again.Model.ToolSync.Enabled, want)
+	}
+}
+
+// 从未全局启用过模型同步（enabled: false）：Enabled 保持空 map（= 全部禁用），
+// 不做「未列出即开启」的迁移。
+func TestModelToolSyncMigrationDisabled(t *testing.T) {
+	p := tempPaths(t)
+	if err := os.MkdirAll(p.Root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "model:\n  enabled: false\n  sync_off_tools: [\"opencode\"]\n"
+	if err := os.WriteFile(p.Config, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(got.Model.ToolSync.Enabled) != 0 {
+		t.Fatalf("未启用时 Enabled 应为空, got %#v", got.Model.ToolSync.Enabled)
+	}
+}
+
+// tool_sync 各字段往返保持。
+func TestModelToolSyncRoundTrip(t *testing.T) {
+	p := tempPaths(t)
+	if err := os.MkdirAll(p.Root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "model:\n" +
+		"  enabled: true\n" +
+		"  tool_sync:\n" +
+		"    enabled:\n" +
+		"      claude: true\n" +
+		"      opencode: false\n" +
+		"    claude:\n" +
+		"      model: glm-x\n" +
+		"      sonnet: glm-s\n" +
+		"    opencode:\n" +
+		"      p1: [m1, m2]\n" +
+		"    codebuddy: [m3]\n"
+	if err := os.WriteFile(p.Config, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	ts := got.Model.ToolSync
+	if !ts.Enabled["claude"] || ts.Enabled["opencode"] {
+		t.Fatalf("Enabled = %#v", ts.Enabled)
+	}
+	if ts.Claude.Model != "glm-x" || ts.Claude.Sonnet != "glm-s" || ts.Claude.Opus != "" || ts.Claude.Haiku != "" {
+		t.Fatalf("Claude = %#v", ts.Claude)
+	}
+	if !reflect.DeepEqual(ts.OpenCode["p1"], []string{"m1", "m2"}) {
+		t.Fatalf("OpenCode = %#v", ts.OpenCode)
+	}
+	if !reflect.DeepEqual(ts.CodeBuddy, []string{"m3"}) {
+		t.Fatalf("CodeBuddy = %#v", ts.CodeBuddy)
+	}
 	if err := Save(p, got); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -296,8 +375,8 @@ func TestModelConfigSyncOffToolsNormalize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load again: %v", err)
 	}
-	if !reflect.DeepEqual(again.Model.SyncOffTools, want) {
-		t.Fatalf("往返后 SyncOffTools = %#v, want %#v", again.Model.SyncOffTools, want)
+	if !reflect.DeepEqual(again.Model.ToolSync, ts) {
+		t.Fatalf("往返后 ToolSync = %#v, want %#v", again.Model.ToolSync, ts)
 	}
 }
 
@@ -624,6 +703,8 @@ func TestModelConfigPlatformsRoundTrip(t *testing.T) {
 		DefaultPlatform: "p2",
 		ActiveModel:     "m2",
 		Models:          []string{},
+		// enabled: true 且无旧 sync_off_tools：Load 迁移后三目标全部视为开启。
+		ToolSync: ToolSyncConfig{Enabled: map[string]bool{"opencode": true, "codebuddy": true, "claude": true}},
 	}
 	if err := Save(p, want); err != nil {
 		t.Fatalf("Save: %v", err)

@@ -96,6 +96,27 @@ type ModelPlatform struct {
 	ASRModel string `yaml:"asr_model,omitempty"`
 }
 
+// ClaudeSync 是 Claude Code 静态注入的 4 类模型槽位映射：每槽取默认平台模型
+// ID；空 = 不写对应 env 键（同步先删后建自然清掉）。
+type ClaudeSync struct {
+	Model  string `yaml:"model,omitempty"`  // ANTHROPIC_MODEL（默认模型槽）
+	Sonnet string `yaml:"sonnet,omitempty"` // ANTHROPIC_DEFAULT_SONNET_MODEL
+	Opus   string `yaml:"opus,omitempty"`   // ANTHROPIC_DEFAULT_OPUS_MODEL
+	Haiku  string `yaml:"haiku,omitempty"`  // ANTHROPIC_DEFAULT_HAIKU_MODEL
+}
+
+// ToolSyncConfig 是按工具定制的模型同步配置：每个同步目标（opencode/codebuddy/
+// claude）独立启用并勾选注入模型。未启用或未勾选任何模型 = 只清不建。
+type ToolSyncConfig struct {
+	// Enabled 每工具启用开关；map 无该键 = 禁用（走既有「只清不建」清理）。
+	Enabled map[string]bool `yaml:"enabled,omitempty"`
+	Claude  ClaudeSync      `yaml:"claude,omitempty"`
+	// OpenCode 平台 ID → 勾选的模型 ID；无勾选的平台不建 provider。
+	OpenCode map[string][]string `yaml:"opencode,omitempty"`
+	// CodeBuddy 默认平台勾选的模型 ID。
+	CodeBuddy []string `yaml:"codebuddy,omitempty"`
+}
+
 // ModelConfig 是模型平台配置集合 + 默认模型选择。
 // Preset/OpenAIBaseURL/AnthropicBaseURL/BaseURL/APIKey/Models/Agents 为旧单平台字段：
 // 仅读取迁移用（归一化时迁入 Platforms 并清空），保存时 omitempty 不再落盘。
@@ -103,6 +124,8 @@ type ModelConfig struct {
 	Enabled         bool            `yaml:"enabled"`
 	Platforms       []ModelPlatform `yaml:"platforms"`
 	DefaultPlatform string          `yaml:"default_platform"` // 平台 ID；空=第一个
+	// ToolSync 是按工具定制的模型同步配置（取代旧 sync_off_tools 总开关语义）。
+	ToolSync ToolSyncConfig `yaml:"tool_sync"`
 	// legacy 单平台字段：读取后迁移进 Platforms，归一化后清空。
 	Preset           string            `yaml:"preset,omitempty"`
 	OpenAIBaseURL    string            `yaml:"openai_base_url,omitempty"`
@@ -111,8 +134,8 @@ type ModelConfig struct {
 	APIKey           string            `yaml:"api_key,omitempty"`
 	Models           []string          `yaml:"models,omitempty"`
 	ActiveModel      string            `yaml:"active_model"` // 默认模型；仅供 kshell 自身 LLM 调用（hub 自主工具/微信 ASR），不注入给 agent
-	// SyncOffTools 是用户单独关闭平台模型同步的目标工具 ID（opencode/codebuddy/
-	// claude 子集）：命中的目标只清不建，其余照常同步。
+	// SyncOffTools 是旧版「按工具关同步」列表：仅读取迁移用（归一化时迁入
+	// ToolSync.Enabled 并清空），保存时 omitempty 不再落盘。
 	SyncOffTools []string          `yaml:"sync_off_tools,omitempty"`
 	Agents       map[string]string `yaml:"agents,omitempty"`
 }
@@ -373,19 +396,30 @@ func (c Config) normalized() Config {
 	c.Model.Agents = nil
 	c.Model.Models = normalizeModels(c.Model.Models)
 	c.Model.ActiveModel = strings.TrimSpace(c.Model.ActiveModel)
-	// 关闭同步列表：TrimSpace、去空、去重，保持出现顺序。
-	if len(c.Model.SyncOffTools) > 0 {
-		seen := map[string]bool{}
-		out := make([]string, 0, len(c.Model.SyncOffTools))
+	// 旧 sync_off_tools 迁移为 ToolSync.Enabled：全局启用过模型同步时，未列出
+	// 的目标视为开启、列出的视为关闭；从未启用过则保持空 map（= 全部禁用）。
+	// Enabled 只存 true 项（缺省即禁用），禁用 = 删键。tool_sync 已有显式配置时
+	// 以新键为准、不再迁移。迁移后旧字段清空，保存时 omitempty 不再落盘。
+	tsZero := len(c.Model.ToolSync.Enabled) == 0 &&
+		c.Model.ToolSync.Claude == ClaudeSync{} &&
+		len(c.Model.ToolSync.OpenCode) == 0 && len(c.Model.ToolSync.CodeBuddy) == 0
+	if tsZero && (c.Model.SyncOffTools != nil || c.Model.Enabled) {
+		off := map[string]bool{}
 		for _, id := range c.Model.SyncOffTools {
-			if id = strings.TrimSpace(id); id == "" || seen[id] {
-				continue
+			if id = strings.TrimSpace(id); id != "" {
+				off[id] = true
 			}
-			seen[id] = true
-			out = append(out, id)
 		}
-		c.Model.SyncOffTools = out
+		if c.Model.Enabled {
+			c.Model.ToolSync.Enabled = map[string]bool{}
+			for _, tool := range []string{"opencode", "codebuddy", "claude"} {
+				if !off[tool] {
+					c.Model.ToolSync.Enabled[tool] = true
+				}
+			}
+		}
 	}
+	c.Model.SyncOffTools = nil
 
 	// 旧单平台字段迁移：Platforms 为空且 legacy 有任一实质内容时，
 	// 打包成一个 default 平台（Name 用 Preset 展示名，缺省「默认平台」）。
