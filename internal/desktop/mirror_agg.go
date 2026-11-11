@@ -29,7 +29,7 @@ func (a *App) mirrorHubPolicy() *hub.MirrorPolicy {
 // agent 回复折叠进摘要并出站(mirror 不转发原文)。返回 true 表示已消费
 // (调用方跳过逐条镜像);store 落盘不受影响(调用方在写入之后才走到这里)。
 // 明细覆盖全部目标:命中的用 SessionStatuses 的实况行,未命中的合成 gone 伪行
-//(Title 用登记值),一把编号 1..N(渲染时语境,同 #st 做法)。
+// (Title 用登记值),一把编号 1..N(渲染时语境,同 #st 做法)。
 func (a *App) mirrorAggregated(r *weixin.Runtime, m hub.Message) bool {
 	// 锁内只取指针快照(调用方 recordHubMessage 不持 a.mu, 写入方均持锁),
 	// 后续 p.Active()/Match 等用 MirrorPolicy 自身锁, 不在此长时间持 a.mu。
@@ -100,9 +100,10 @@ func (a *App) mirrorAggregated(r *weixin.Runtime, m hub.Message) bool {
 		return true
 	}
 	// 自然终结汇报:全部目标到达终态(无 running 且无 perm——perm 是「卡住
-	// 待人」的暂停态而非完成态,全 perm 出「全部完成」会误导)且至少一条已
-	// 回复 → 出汇总报告替代摘要行,并结束本轮聚合周期(报告即终点)。明细
-	// 复用 aggDetailRows,编号语境与摘要行一致(report_hint 的 #gx 编号即明细序号)。
+	// 待人」的暂停态而非完成态,全 perm 出「全部完成」会误导)→ 出汇总报告
+	// 替代摘要行,并结束本轮聚合周期(报告即终点)。此处已过 replied==0 守门
+	// (上方吞行分支保证至少一条已回复),无需再判。明细复用 aggDetailLines,
+	// 编号语境与摘要行一致(report_hint 的 #gx 编号即明细序号)。
 	allTerminal := true
 	for _, row := range detail {
 		if row.State == "running" || row.State == "perm" {
@@ -110,9 +111,9 @@ func (a *App) mirrorAggregated(r *weixin.Runtime, m hub.Message) bool {
 			break
 		}
 	}
-	if replied > 0 && allTerminal {
+	if allTerminal {
 		lang := r.Lang()
-		line := fmt.Sprintf(hub.CmdText(lang, "report_header"), strings.Join(aggDetailRows(lang, detail), ", "))
+		line := fmt.Sprintf(hub.CmdText(lang, "report_header"), strings.Join(aggDetailLines(lang, detail), ", "))
 		line += "\n\n" + hub.CmdText(lang, "report_hint")
 		r.OnHubMessage(hub.Message{Kind: "agent", Ts: m.Ts, Text: line})
 		p.Discard()
@@ -123,15 +124,15 @@ func (a *App) mirrorAggregated(r *weixin.Runtime, m hub.Message) bool {
 }
 
 // composeAggLine 组装聚合摘要行: agg_line(%1=replied %2=total %3=明细)。
-// 词源 hub.CmdText(lang,key) 与 Console 文案同源;明细由 aggDetailRows 提供。
+// 词源 hub.CmdText(lang,key) 与 Console 文案同源;明细由 aggDetailLines 提供。
 func composeAggLine(lang string, rows []hub.SessionStatus, replied, total int) string {
-	return fmt.Sprintf(hub.CmdText(lang, "agg_line"), replied, total, strings.Join(aggDetailRows(lang, rows), "，"))
+	return fmt.Sprintf(hub.CmdText(lang, "agg_line"), replied, total, strings.Join(aggDetailLines(lang, rows), "，"))
 }
 
-// aggDetailRows 组装逐目标明细行(摘要行与全终态报告共用):一行一目标
+// aggDetailLines 组装逐目标明细行(摘要行与全终态报告共用):一行一目标
 // `N【标题】状态词`; idle 在聚合语义=已完成(word_done), gone=已断开,
 // perm 额外带摘要(truncateFirstLine 截到 40)。
-func aggDetailRows(lang string, rows []hub.SessionStatus) []string {
+func aggDetailLines(lang string, rows []hub.SessionStatus) []string {
 	parts := make([]string, 0, len(rows))
 	for _, r := range rows {
 		word := hub.CmdText(lang, "stat_word_"+r.State)

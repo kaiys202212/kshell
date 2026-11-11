@@ -51,6 +51,36 @@ func TestComposeAggLineNoTitle(t *testing.T) {
 	}
 }
 
+// 聚合用例公用 helper:开一个会话并等握手到 Ready(statusOf(ready)=idle,
+// 才可能满足「全终态」)。
+func openReadyChat(t *testing.T, m *chat.Manager, key, ws, title, sid string) chat.Info {
+	t.Helper()
+	info, err := m.Open(key, chat.Info{
+		Kind: chat.KindSession, Workspace: ws, Title: title, ToolID: "claude",
+	}, chat.Spec{Path: "x"}, sid)
+	if err != nil {
+		t.Fatalf("open %s: %v", key, err)
+	}
+	wxWaitStatus(t, m, info.ID, chat.StatusReady)
+	return info
+}
+
+// 聚合用例公用 helper:装镜像捕获桩(sink 收 OnHubMessage)并登记目标集
+// 与 since 水位,返回 sink 供断言。
+func enterAggPolicy(t *testing.T, a *App, since int64, refs ...hub.SessionRef) chan hub.Message {
+	t.Helper()
+	sink := make(chan hub.Message, 8)
+	r := weixin.NewRuntime(newWXExecutor(a), "zh-CN")
+	r.SetHubSink(func(mm hub.Message) { sink <- mm })
+	a.mu.Lock()
+	a.wx = r
+	a.mirrorPolicy = hub.NewMirrorPolicy()
+	a.mirrorPolicy.Enter(refs)
+	a.mirrorPolicy.EnterSinceTs(since)
+	a.mu.Unlock()
+	return sink
+}
+
 // 出站镜像聚合的真集成:两 chat 两目标登记后,单目标 agent 回复逐条被折叠成
 // 聚合摘要行(镜像侧收到合成行,store 仍全量落盘原文)。
 func TestRecordHubMessageAggregated(t *testing.T) {
@@ -171,33 +201,14 @@ func TestMirrorAggregatedReportOnAllTerminal(t *testing.T) {
 	a.opts.Chats = m
 
 	// 等握手完成(Starting→Ready):statusOf(ready)=idle,才满足「全终态」。
-	open := func(key, ws, title, sid string) chat.Info {
-		t.Helper()
-		info, err := m.Open(key, chat.Info{
-			Kind: chat.KindSession, Workspace: ws, Title: title, ToolID: "claude",
-		}, chat.Spec{Path: "x"}, sid)
-		if err != nil {
-			t.Fatalf("open %s: %v", key, err)
-		}
-		wxWaitStatus(t, m, info.ID, chat.StatusReady)
-		return info
-	}
-	info1 := open("session:s1", "D:/w1", "A", "s1")
-	info2 := open("session:s2", "D:/w2", "B", "s2")
+	info1 := openReadyChat(t, m, "session:s1", "D:/w1", "A", "s1")
+	info2 := openReadyChat(t, m, "session:s2", "D:/w2", "B", "s2")
 
-	sink := make(chan hub.Message, 8)
-	r := weixin.NewRuntime(newWXExecutor(a), "zh-CN")
-	r.SetHubSink(func(mm hub.Message) { sink <- mm })
 	since := time.Now().UnixNano()
-	a.mu.Lock()
-	a.wx = r
-	a.mirrorPolicy = hub.NewMirrorPolicy()
-	a.mirrorPolicy.Enter([]hub.SessionRef{
-		{ChatID: info1.ID, SessionID: "s1", Title: "A"},
-		{ChatID: info2.ID, SessionID: "s2", Title: "B"},
-	})
-	a.mirrorPolicy.EnterSinceTs(since)
-	a.mu.Unlock()
+	sink := enterAggPolicy(t, a, since,
+		hub.SessionRef{ChatID: info1.ID, SessionID: "s1", Title: "A"},
+		hub.SessionRef{ChatID: info2.ID, SessionID: "s2", Title: "B"},
+	)
 
 	// 预置两目标的回复水位(直接落 store,不触发镜像):LastTs>=since → 均计入
 	// replied;两 chat 均已 ready(idle),故全终态成立。
@@ -244,6 +255,39 @@ func TestMirrorAggregatedReportOnAllTerminal(t *testing.T) {
 	}
 }
 
+// 反例:全终态但 replied==0(首轮回复水位未过 since,如触发消息正卡在边界):
+// 吞掉触发消息,不发空骨架摘要行、不出报告,也不 Discard(周期仍在,等水位
+// 推进后仍会正常汇总)。
+func TestMirrorAggregatedSwallowWhenNoReplyYet(t *testing.T) {
+	a, _, rec := newHubTestApp(t)
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+
+	info1 := openReadyChat(t, m, "session:s1", "D:/w1", "A", "s1")
+	info2 := openReadyChat(t, m, "session:s2", "D:/w2", "B", "s2")
+
+	// since 钉在 1h 后:两目标均无 LastTs>=since 的回复,replied==0;两 chat
+	// 均 ready(idle),全终态本可成立,但先被 replied 守门拦下。
+	sink := enterAggPolicy(t, a, time.Now().UnixNano()+int64(time.Hour),
+		hub.SessionRef{ChatID: info1.ID, SessionID: "s1", Title: "A"},
+		hub.SessionRef{ChatID: info2.ID, SessionID: "s2", Title: "B"},
+	)
+
+	a.recordHubAgentMessage(agenthook.Payload{
+		Tool: "claude", Event: "Stop", ChatID: info1.ID, TermKey: info1.Key, Summary: "首条",
+	})
+	// HubSink 是同步调用,50ms 未出站即确认吞行(与既有用例同一时序约定)。
+	select {
+	case got := <-sink:
+		t.Fatalf("replied==0 应吞行,却出站了 %q", got.Text)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if !a.mirrorPolicy.Active() {
+		t.Fatal("吞行不应 Discard,聚合周期应仍在")
+	}
+}
+
 // 反例:任一目标 running → 未全终态,仍出 agg_line 摘要行,不 Discard。
 func TestMirrorAggregatedNoReportWhileRunning(t *testing.T) {
 	a, store, rec := newHubTestApp(t)
@@ -254,37 +298,18 @@ func TestMirrorAggregatedNoReportWhileRunning(t *testing.T) {
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m
 
-	open := func(key, ws, title, sid string) chat.Info {
-		t.Helper()
-		info, err := m.Open(key, chat.Info{
-			Kind: chat.KindSession, Workspace: ws, Title: title, ToolID: "claude",
-		}, chat.Spec{Path: "x"}, sid)
-		if err != nil {
-			t.Fatalf("open %s: %v", key, err)
-		}
-		wxWaitStatus(t, m, info.ID, chat.StatusReady)
-		return info
-	}
-	info1 := open("session:s1", "D:/w1", "A", "s1")
-	info2 := open("session:s2", "D:/w2", "B", "s2")
+	info1 := openReadyChat(t, m, "session:s1", "D:/w1", "A", "s1")
+	info2 := openReadyChat(t, m, "session:s2", "D:/w2", "B", "s2")
 
 	// 甲发起一轮并阻塞在 gate:state=running,报告条件不成立。
 	go func() { _ = m.Prompt(info1.ID, "跑一轮") }()
 	wxWaitStatus(t, m, info1.ID, chat.StatusRunning)
 
-	sink := make(chan hub.Message, 8)
-	r := weixin.NewRuntime(newWXExecutor(a), "zh-CN")
-	r.SetHubSink(func(mm hub.Message) { sink <- mm })
 	since := time.Now().UnixNano()
-	a.mu.Lock()
-	a.wx = r
-	a.mirrorPolicy = hub.NewMirrorPolicy()
-	a.mirrorPolicy.Enter([]hub.SessionRef{
-		{ChatID: info1.ID, SessionID: "s1", Title: "A"},
-		{ChatID: info2.ID, SessionID: "s2", Title: "B"},
-	})
-	a.mirrorPolicy.EnterSinceTs(since)
-	a.mu.Unlock()
+	sink := enterAggPolicy(t, a, since,
+		hub.SessionRef{ChatID: info1.ID, SessionID: "s1", Title: "A"},
+		hub.SessionRef{ChatID: info2.ID, SessionID: "s2", Title: "B"},
+	)
 
 	// 预置乙的回复(replied>0),排除「0 回复吞行」分支,专测 running 阻断报告。
 	if err := store.Append(hub.Message{
@@ -320,33 +345,14 @@ func TestMirrorAggregatedNoReportWhilePerm(t *testing.T) {
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m
 
-	open := func(key, ws, title, sid string) chat.Info {
-		t.Helper()
-		info, err := m.Open(key, chat.Info{
-			Kind: chat.KindSession, Workspace: ws, Title: title, ToolID: "claude",
-		}, chat.Spec{Path: "x"}, sid)
-		if err != nil {
-			t.Fatalf("open %s: %v", key, err)
-		}
-		wxWaitStatus(t, m, info.ID, chat.StatusReady)
-		return info
-	}
-	info1 := open("session:s1", "D:/w1", "A", "s1")
-	info2 := open("session:s2", "D:/w2", "B", "s2")
+	info1 := openReadyChat(t, m, "session:s1", "D:/w1", "A", "s1")
+	info2 := openReadyChat(t, m, "session:s2", "D:/w2", "B", "s2")
 
-	sink := make(chan hub.Message, 8)
-	r := weixin.NewRuntime(newWXExecutor(a), "zh-CN")
-	r.SetHubSink(func(mm hub.Message) { sink <- mm })
 	since := time.Now().UnixNano()
-	a.mu.Lock()
-	a.wx = r
-	a.mirrorPolicy = hub.NewMirrorPolicy()
-	a.mirrorPolicy.Enter([]hub.SessionRef{
-		{ChatID: info1.ID, SessionID: "s1", Title: "A"},
-		{ChatID: info2.ID, SessionID: "s2", Title: "B"},
-	})
-	a.mirrorPolicy.EnterSinceTs(since)
-	a.mu.Unlock()
+	sink := enterAggPolicy(t, a, since,
+		hub.SessionRef{ChatID: info1.ID, SessionID: "s1", Title: "A"},
+		hub.SessionRef{ChatID: info2.ID, SessionID: "s2", Title: "B"},
+	)
 
 	// 乙预置回复,保证 replied>0(不落吞行分支)。
 	if err := store.Append(hub.Message{
