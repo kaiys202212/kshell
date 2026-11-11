@@ -388,6 +388,7 @@ func TestRuntimeSetTranscriberForwards(t *testing.T) {
 
 func TestRuntimeSetRouterForwards(t *testing.T) {
 	r := NewRuntime(nil, "zh-CN")
+	defer r.Stop()
 	// Configure 前装配：创建 bridge 时注入。
 	r.SetRouter(func(ctx context.Context, input string) (hubtools.RouteDecision, bool) {
 		return hubtools.RouteDecision{}, false
@@ -406,6 +407,7 @@ func TestRuntimeSetRouterForwards(t *testing.T) {
 
 func TestRuntimeSetDirectPatternsForwards(t *testing.T) {
 	r := NewRuntime(nil, "zh-CN")
+	defer r.Stop()
 	// Configure 前装配：创建 bridge 时注入。
 	r.SetDirectPatterns(func() []string { return []string{"hello"} })
 	r.baseURL = "http://unused" // 不真正轮询

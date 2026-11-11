@@ -297,6 +297,13 @@ func TestBridgeExecuteRouteText(t *testing.T) {
 		if len(replies) == 0 {
 			t.Fatal("expand 应返回命令回复（无消息时也回提示）")
 		}
+		// #gx 依赖 #l 建立的编号语境；语境丢失会回 no_mapping（越界文案）。
+		// 断言回复不含该文案，确保合成命令确实命中会话 1 而非降级。
+		for _, r := range replies {
+			if strings.Contains(r.Text, hub.CmdText("zh-CN", "no_mapping")) {
+				t.Fatalf("expand 不应触发 no_mapping: %v", replies)
+			}
+		}
 	})
 
 	t.Run("status 合成 #st 透传状态行", func(t *testing.T) {

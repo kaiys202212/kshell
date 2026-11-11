@@ -38,6 +38,16 @@ type RouteDecision struct {
 	Question      string            `json:"question,omitempty"`     // ask 时的自由式反问
 }
 
+// TextFor 取某编号目标的投递文本：PerTargetText 命中且非空白用改写文本，
+// 否则退决策里的通用 Text。空改写视同未命中，避免把空串投出去。
+// bridge（internal/weixin）与 desktop（internal/desktop）两处执行路径共用。
+func (d RouteDecision) TextFor(n int) string {
+	if t, ok := d.PerTargetText[strconv.Itoa(n)]; ok && strings.TrimSpace(t) != "" {
+		return t
+	}
+	return d.Text
+}
+
 // RouteInput 调全局活跃模型做一次路由决策。prompt 含会话快照+用户原文+JSON
 // 契约；响应经流式 JSON 解析（仿 ParseRouteAgent）+代码校验
 // （编号必须存在于 snapshot、action 枚举合法）。任何失败返回 error，调用方降级。

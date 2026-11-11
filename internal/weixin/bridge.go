@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -110,6 +109,7 @@ type Bridge struct {
 	// nil 时回落 hub.DefaultDirectPatterns。
 	directPatternsFn func() []string
 	// routeRound 是连续反问轮次（反问链最多 routeMaxRounds 轮）；mu 保护。
+	// 只增不减的正确性依赖入站单 goroutine 串行处理（Stop/重绑前先停轮询）。
 	routeRound int
 	// toolName 按工具 ID 查展示名（desktop 注入，与欢迎词归因同源）；
 	// nil 或查不到时出站标题栏回落工具 ID。
@@ -512,6 +512,8 @@ func (b *Bridge) dispatchConsole(ctx context.Context, text, quotedChatID, sessio
 // 锁纪律：Console 的 Handle/SendGroupTexts 各自持锁且按序调用，本函数不持
 // bridge 锁，也不手写 Console 锁。ctx/original 仅用于接口对齐与未来观测，
 // 降级投递始终由调用方用原文完成。
+//   - 形参 ctx/text 当前未使用：ctx 预留观测埋点，text 保留签名对齐调用方
+//     （降级直投时由调用方持有原文），二者均不消费。
 func (b *Bridge) executeRouteText(_ context.Context, _ string, d hubtools.RouteDecision) []hub.Reply {
 	switch d.Action {
 	case "group":
@@ -528,7 +530,7 @@ func (b *Bridge) executeRouteText(_ context.Context, _ string, d hubtools.RouteD
 			if !ok {
 				return nil
 			}
-			text := routeTextFor(d, n)
+			text := d.TextFor(n)
 			// 任一目标文本为空则整批降级（不做部分投递，避免空串计成功）。
 			if strings.TrimSpace(text) == "" {
 				return nil
@@ -550,7 +552,7 @@ func (b *Bridge) executeRouteText(_ context.Context, _ string, d hubtools.RouteD
 		if !ok {
 			return nil
 		}
-		text := routeTextFor(d, n)
+		text := d.TextFor(n)
 		if strings.TrimSpace(text) == "" {
 			return nil
 		}
@@ -580,6 +582,10 @@ func (b *Bridge) executeRouteText(_ context.Context, _ string, d hubtools.RouteD
 
 // sessionNumIndex 构建编号 → SessionRef 映射（编号=ListSessions 索引+1，与
 // #l/路由快照同源）。仅 group/single 分支需要。
+//
+// 已知暴露面（编号 TOCTOU）：路由快照与执行映射是两次独立的 ListSessions
+// 调用，窗口内会话增删会使编号漂移（决策指向的编号在执行时可能映射到另一
+// 会话）。后续可改为决策随快照一起返回 SessionRef，消除二次映射。
 func (b *Bridge) sessionNumIndex() map[int]hub.SessionRef {
 	sessions := b.ex.ListSessions()
 	byNum := make(map[int]hub.SessionRef, len(sessions))
@@ -589,15 +595,6 @@ func (b *Bridge) sessionNumIndex() map[int]hub.SessionRef {
 		byNum[ref.Num] = ref
 	}
 	return byNum
-}
-
-// routeTextFor 取某编号目标的投递文本：PerTargetText 命中且非空用改写文本，
-// 否则退决策里的通用 Text。空改写视同未命中。
-func routeTextFor(d hubtools.RouteDecision, n int) string {
-	if t, ok := d.PerTargetText[strconv.Itoa(n)]; ok && strings.TrimSpace(t) != "" {
-		return t
-	}
-	return d.Text
 }
 
 // deliveredAck 是「文本已成功转发给当前会话」的微信侧回执，与桌面端

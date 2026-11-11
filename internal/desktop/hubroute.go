@@ -2,7 +2,6 @@ package desktop
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/yangk/kshell/internal/hub"
@@ -30,6 +29,8 @@ func executeRoute(a *App, d hubtools.RouteDecision, original string) ([]hub.Repl
 	// sessionNumIndex 构建编号映射（与 #l 同源：ListSessions 顺序即编号
 	// 1..N，SessionRef.Num 由展示层赋值，ListSessions 本身不带 Num）。
 	// 仅 group/single 分支需要编号映射，status/expand/ask 不做 ListSessions。
+	// 已知暴露面（编号 TOCTOU）：路由快照与执行映射是两次 ListSessions，窗口
+	// 内会话增删会使编号漂移；后续可改为决策随快照返回 refs（同 bridge 侧）。
 	sessionNumIndex := func() map[int]hub.SessionRef {
 		sessions := newWXExecutor(a).ListSessions()
 		byNum := make(map[int]hub.SessionRef, len(sessions))
@@ -56,7 +57,7 @@ func executeRoute(a *App, d hubtools.RouteDecision, original string) ([]hub.Repl
 			if !ok {
 				return nil, false
 			}
-			text := routeTextFor(d, n)
+			text := d.TextFor(n)
 			// 任一目标文本为空则整批降级（发送前判定，不做部分投递），
 			// 避免向某个目标投出空串且回执计成功。
 			if strings.TrimSpace(text) == "" {
@@ -81,7 +82,7 @@ func executeRoute(a *App, d hubtools.RouteDecision, original string) ([]hub.Repl
 		if !ok {
 			return nil, false
 		}
-		text := routeTextFor(d, n)
+		text := d.TextFor(n)
 		if strings.TrimSpace(text) == "" {
 			return nil, false
 		}
@@ -109,15 +110,6 @@ func executeRoute(a *App, d hubtools.RouteDecision, original string) ([]hub.Repl
 		return []hub.Reply{{Text: hub.CmdText(lang, "route_ask_prefix") + q}}, true
 	}
 	return nil, false
-}
-
-// routeTextFor 取某编号目标的投递文本：PerTargetText 命中且非空用改写文本，
-// 否则退决策里的通用 Text。空改写视同未命中，避免把空串投出去。
-func routeTextFor(d hubtools.RouteDecision, n int) string {
-	if t, ok := d.PerTargetText[strconv.Itoa(n)]; ok && strings.TrimSpace(t) != "" {
-		return t
-	}
-	return d.Text
 }
 
 // routeBriefs 把命令层会话列表映射为路由器快照：编号 = ListSessions 索引+1
