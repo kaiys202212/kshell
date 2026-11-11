@@ -60,3 +60,24 @@ func TestGroupDispatchTexts(t *testing.T) {
 		}
 	}
 }
+
+// 智能路由/降级/汇总报告/心跳文案：每个 key 的 en/zh 双语均须非空。
+func TestRouterTexts(t *testing.T) {
+	keys := []string{
+		"route_group_sent", // 路由群发回执（前缀"已智能分派："）
+		"route_degraded",   // 路由失败降级提示
+		"route_ask_prefix", // 反问前缀
+		"report_header",    // 全终态汇总头
+		"report_hint",      // 报告尾部提示
+		"hb_line",          // 心跳行
+		"route_ask_limit",  // 反问超限降级
+	}
+	for _, key := range keys {
+		if got := cmdText("en", key); got == "" || got == key {
+			t.Fatalf("英文文案缺失: %s", key)
+		}
+		if got := cmdText("zh-CN", key); got == "" || got == key {
+			t.Fatalf("中文文案缺失: %s", key)
+		}
+	}
+}

@@ -122,6 +122,22 @@ var cmdTexts = map[string]langPair{
 	"msg_detail":    {"**Message %d** [%s][%s]", "**消息 %d** [%s][%s]"},
 	"msg_user":      {"user", "用户"},
 	"msg_agent":     {"agent", "agent"},
+
+	// 智能路由（二期）：路由回执/降级/反问与全终态汇总、心跳行。
+	// route_group_sent 复用群发回执形态，独立 key 防与手动群发混淆（%s = 明细接龙）。
+	"route_group_sent": {"Smart-dispatched: %s", "已智能分派：%s"},
+	// 路由失败降级：目标模型不可用，直投当前会话。
+	"route_degraded": {"Model unavailable, sent directly to the current session", "模型暂不可用，已直投当前会话"},
+	// 路由不确定时的反问前缀。
+	"route_ask_prefix": {"[AgentHub] ", "[AgentHub] "},
+	// 全终态汇总头（%s = 明细接龙，复用聚合明细形态）。
+	"report_header": {"All done — %s", "全部完成 — %s"},
+	// 报告尾部回看提示。
+	"report_hint": {"Details: #gx <number> [count]", "回看详情：#gx <编号> [条数]"},
+	// 心跳行（%s = 标签，%s = 时长，如 3m）。
+	"hb_line": {"%s still running %s", "%s 仍在运行 %s"},
+	// 反问超限降级：不再追问，直投当前会话并提示 #l。
+	"route_ask_limit": {"Sending to the current session; use #l for session numbers if you want to pick a target", "先直接发送到当前会话；如需指派请用 #l 查看编号"},
 }
 
 // CmdText 按语言取命令层文案：zh-CN 用中文，其余英文；未知 key 原样返回。
