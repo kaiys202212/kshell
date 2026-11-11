@@ -689,12 +689,16 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	s.sessionID = sessionID
 	// Info.SessionID 统一表示「绑定的磁盘会话 ID」：恢复型聊天传入的就是磁盘 ID，保持不变；
 	// 新建聊天协议层拿到的通常是 ACP 内部 ID（与磁盘会话 ID 不同体系），Info 留空等扫描回填。
-	// Cursor 例外：session/new 的 ID 即 ~/.cursor/acp-sessions/<id>，与发现层同一体系，
-	// 立刻写入才能让欢迎词/hub 快照带上 SessionID，关闭后快捷回复可精确 resume。
+	// Cursor / CodeBuddy 例外：session/new 返回的 ID 与磁盘会话文件同一体系
+	//（~/.cursor/acp-sessions/<id>；~/.codebuddy/projects/<工作区>/<id>.jsonl，
+	// 后者经 CLI 源码与本机 2.17x 实测），立刻写入才能让欢迎词/hub 快照带上
+	// SessionID、关闭后快捷回复可精确 resume，并避免扫描期把会话抢绑给
+	// 同工作区更早打开的无主聊天（2026-11-11 错绑事故根因）。
 	if info.SessionID == "" && info.Kind == KindSession {
 		s.info.SessionID = sessionID
 	}
-	if info.SessionID == "" && info.Kind == KindNew && info.ToolID == "cursor" && sessionID != "" {
+	if info.SessionID == "" && info.Kind == KindNew && sessionID != "" &&
+		(info.ToolID == "cursor" || info.ToolID == "codebuddy") {
 		s.info.SessionID = sessionID
 	}
 	s.info.Status = StatusReady
@@ -1280,10 +1284,15 @@ func (m *Manager) RememberKnownIDs(id string, ids []string) {
 // 打开时已知的会话 ID、以及 CreatedAt 明显早于打开时刻的旧对话一律跳过，避免页签套用左侧列表标题。
 // 绑定 SessionID 后，仅当 messages>0 且 title 非空才改页签标题（用户已发言）。
 // 只改 Info：协议层继续用 agent 返回的内部 sessionID，Prompt/Cancel 不受影响。
+// 候选不止一个时，绑给「会话 CreatedAt 与聊天 openedAt 距离最小」的聊天
+//（CreatedAt 零值距离记 0），避免同工作区更早打开的无主聊天按 m.order
+// 抢走新会话（2026-11-11 错绑事故）；距离并列时保持先出现者优先。
 func (m *Manager) AttachSession(sessionID, workspace, toolID, title string, messages int, createdAt time.Time) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ws := discovery.NormalizePath(workspace)
+	var best *session
+	var bestDist time.Duration
 	for _, s := range m.order {
 		info := &s.info
 		if s.exited || info.Kind != KindNew || info.SessionID != "" {
@@ -1301,13 +1310,27 @@ func (m *Manager) AttachSession(sessionID, workspace, toolID, title string, mess
 		if info.ToolID != "" && toolID != "" && info.ToolID != toolID {
 			continue
 		}
-		info.SessionID = sessionID
-		if messages > 0 && title != "" {
-			info.Title = title
+		dist := time.Duration(0)
+		if !createdAt.IsZero() {
+			dist = createdAt.Sub(s.openedAt)
+			if dist < 0 {
+				dist = -dist
+			}
 		}
-		return true
+		if best == nil || dist < bestDist {
+			best = s
+			bestDist = dist
+		}
 	}
-	return false
+	if best == nil {
+		return false
+	}
+	info := &best.info
+	info.SessionID = sessionID
+	if messages > 0 && title != "" {
+		info.Title = title
+	}
+	return true
 }
 
 // UpdateSessionTitle 按磁盘会话 ID 更新已绑定聊天的标题。
