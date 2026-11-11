@@ -2,7 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatInfo, TerminalInfo, ToolInfo } from '../lib/api';
+import type { ChatInfo, HubPickView, TerminalInfo, ToolInfo } from '../lib/api';
 import { useAppStore } from '../state/store';
 import '../test/i18n';
 import { tt } from '../test/i18n';
@@ -2751,5 +2751,30 @@ describe('AgentHubPanel #find', () => {
     expect(screen.getByText('新建需求（项目 D:\\ws-a）：新增需求')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('hub-confirm-approve'));
     await waitFor(() => expect(api.confirmHubTool).toHaveBeenCalledWith('c1', 'p9', true));
+  });
+});
+
+describe('智能路由在途守卫', () => {
+  it('等待中重复 Enter：hubSmartSend 只被调一次', async () => {
+    let release!: (v: HubPickView) => void;
+    api.hubSmartSend.mockImplementation(() => new Promise((res) => { release = res; }));
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '发给大家' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.hubSmartSend).toHaveBeenCalledTimes(1));
+    release({ Replies: [{ Text: '已发送' }], Pending: false });
+    await waitFor(() =>
+      expect(useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '已发送')).toBe(true),
+    );
+    // 守卫已清除：再次 Enter 可正常发起第二次路由。
+    api.hubSmartSend.mockResolvedValue({ Replies: [], Pending: true });
+    api.hubPickTarget.mockResolvedValue({ Replies: [], Pending: true });
+    fireEvent.change(box, { target: { value: '再发一次' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.hubSmartSend).toHaveBeenCalledTimes(2));
   });
 });

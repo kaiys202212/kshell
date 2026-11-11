@@ -207,8 +207,13 @@ type App struct {
 	// weixinInputRouter（与微信桥同款实时读配置快照）。mu 保护。
 	smartRouter smartRouterFunc
 	// smartAskRound 是桌面 Hub 反问链的连续轮数（ask 决策累加，非 ask 清零）。
-	// 达到上限后下一条自由文本不再路由。mu 保护。
+	// 达到上限后下一条自由文本不再路由。仅在智能路由路径复位（直投/@目标/编号
+	// 切换由前端确定性路径处理，不经 HubSmartSend 后端无感知），与微信桥回落
+	// 即清零略有差异——渠道隔离，互不串扰。mu 保护。
 	smartAskRound int
+	// smartBusy 是桌面 Hub 智能路由的在途标记：路由调用期间置位（锁外做
+	// router 调用），并发/重复提交直接返回 Pending=true 不清轮次。mu 保护。
+	smartBusy bool
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。

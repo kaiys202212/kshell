@@ -441,10 +441,6 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	_ = b.client.SendTyping(context.Background(), m.FromUserID, m.ContextToken, 2)
 }
 
-// routeMaxRounds 是反问链的连续轮数上限：达到后下一条自由文本不再进路由，
-// 直接按原文走命令层并清零轮次（避免模型反问无限套娃）。
-const routeMaxRounds = 2
-
 // dispatchConsole 把可转发文本交给命令层。
 // quotedChatID / sessionHint 任一非空时先走引用路由（切换到被引用会话再投递）。
 // quoted 表示用户明确引用了消息：归因失败或 chatID 不在列表时进待选
@@ -475,7 +471,7 @@ func (b *Bridge) dispatchConsole(ctx context.Context, text, quotedChatID, sessio
 		!hub.IsDirectPass(text, b.directPatterns())
 	if routeable {
 		// 反问链已满：本轮直接降级原文，轮次清零。
-		if b.routeRoundValue() >= routeMaxRounds {
+		if b.routeRoundValue() >= hubtools.AskMaxRounds {
 			b.setRouteRound(0)
 		} else if d, handled := fn(ctx, text); handled {
 			if replies := b.executeRouteText(ctx, text, d); len(replies) > 0 {

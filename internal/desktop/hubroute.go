@@ -13,10 +13,6 @@ import (
 // 便于测试注入桩；生产默认使用 weixinInputRouter。
 type smartRouterFunc func(ctx context.Context, input string) (hubtools.RouteDecision, bool)
 
-// smartAskMaxRounds 是桌面 Hub 反问链的连续轮数上限（与微信桥
-// routeMaxRounds 同值）：达到后下一条自由文本直接回落待选，避免反问无限套娃。
-const smartAskMaxRounds = 2
-
 // HubSmartSend 是桌面端 Hub 面板「自由文本无精确目标」的智能路由入口：
 // 路由成功→执行决策返回回执（Pending=false，前端回显并清草稿）；逃生门/
 // 待选菜单挂起/反问超限/未配置/路由不消费/决策不可执行→Pending=true，让
@@ -24,6 +20,9 @@ const smartAskMaxRounds = 2
 //
 // 轮次语义与微信桥 dispatchConsole 对齐：ask 决策累加轮次并返回单条反问；
 // 非 ask 决策/降级路径清零，保证反问链被打断后不悬挂。
+//
+// 在途守卫：同一 App 内路由调用全局串行（smartBusy 置位，锁外做 router 调用），
+// 前端重复提交/并发调用时后到的直接返回 Pending=true，不清轮次、不重复投递。
 func (a *App) HubSmartSend(text string) (HubPickView, error) {
 	if !a.snapshot().ready() {
 		return HubPickView{}, errNotReady
@@ -32,6 +31,19 @@ func (a *App) HubSmartSend(text string) (HubPickView, error) {
 	if text == "" {
 		return HubPickView{Pending: true}, nil
 	}
+	// 在途守卫置位/清理：忙时后到的调用直接回落待选（Pending=true），轮次不动。
+	a.mu.Lock()
+	if a.smartBusy {
+		a.mu.Unlock()
+		return HubPickView{Pending: true}, nil
+	}
+	a.smartBusy = true
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.smartBusy = false
+		a.mu.Unlock()
+	}()
 	// 逃生门（#/@/continue/explain 及用户自定义词）与命令层菜单挂起时不接管，
 	// 交前端回落既有确定性路径；两种情形都视为打断反问链，轮次清零。
 	if hub.IsDirectPass(text, a.agenthubDirectPatterns()) || a.wxHubConsole().Busy() {
@@ -41,11 +53,11 @@ func (a *App) HubSmartSend(text string) (HubPickView, error) {
 	// 反问链已满：本轮不再路由，轮次清零并回落待选（与微信桥一致）。
 	a.mu.Lock()
 	round := a.smartAskRound
-	if round >= smartAskMaxRounds {
+	if round >= hubtools.AskMaxRounds {
 		a.smartAskRound = 0
 	}
 	a.mu.Unlock()
-	if round >= smartAskMaxRounds {
+	if round >= hubtools.AskMaxRounds {
 		return HubPickView{Pending: true}, nil
 	}
 	d, handled := a.smartRoute(a.desktopContext(), text)
@@ -53,7 +65,7 @@ func (a *App) HubSmartSend(text string) (HubPickView, error) {
 		a.setSmartAskRound(0)
 		return HubPickView{Pending: true}, nil
 	}
-	replies, ok := executeRoute(a, d, text)
+	replies, ok := executeRoute(a, d)
 	if !ok || len(replies) == 0 {
 		a.setSmartAskRound(0)
 		return HubPickView{Pending: true}, nil
@@ -67,7 +79,8 @@ func (a *App) HubSmartSend(text string) (HubPickView, error) {
 }
 
 // smartRoute 取路由闭包并执行一次决策：注入桩优先，nil 时惰性用
-// weixinInputRouter（实时读配置，与微信桥同一快照来源）。
+// weixinInputRouter（实时读配置，与微信桥同一快照来源）。故意不缓存闭包——
+// 无状态、实时读配置，缓存会把配置变更/换模型挡在旧快照之外。
 func (a *App) smartRoute(ctx context.Context, input string) (hubtools.RouteDecision, bool) {
 	a.mu.Lock()
 	fn := a.smartRouter
@@ -103,8 +116,7 @@ func (a *App) incSmartAskRound() {
 }
 
 // executeRoute 把路由决策落成 Console 动作。校验失败/无法执行时返回
-// handled=false，调用方降级直投（投递的永远是用户原文，original 仅供调用方
-// 降级使用，本函数不改写它）。
+// handled=false，调用方降级直投（调用方自行持用户原文决定降级投递内容）。
 //
 //   - group: snapshot 编号→SessionRef（ListSessions 全集映射，与 #l 同源）
 //     → c.SendGroupTexts(refs, texts)；texts 优先 PerTargetText[num] 退 Text。
@@ -117,8 +129,7 @@ func (a *App) incSmartAskRound() {
 //     lastList 过期回 no_mapping 属正确降级，不特殊处理）。
 //   - ask: 单条回执 = hub.CmdText(lang, "route_ask_prefix") + Question。
 //
-// original 为用户原文，仅供调用方降级直投使用；本函数不消费也不改写它。
-func executeRoute(a *App, d hubtools.RouteDecision, original string) ([]hub.Reply, bool) {
+func executeRoute(a *App, d hubtools.RouteDecision) ([]hub.Reply, bool) {
 	c := a.wxHubConsole()
 	// sessionNumIndex 构建编号映射（与 #l 同源：ListSessions 顺序即编号
 	// 1..N，SessionRef.Num 由展示层赋值，ListSessions 本身不带 Num）。

@@ -178,7 +178,7 @@ func TestExecuteRouteDecision(t *testing.T) {
 			Text:          "统一正文",
 			PerTargetText: map[string]string{"1": "改写甲"},
 		}
-		replies, handled := executeRoute(fx.app, d, "用户原文")
+		replies, handled := executeRoute(fx.app, d)
 		if !handled {
 			t.Fatal("group 应 handled=true")
 		}
@@ -205,7 +205,7 @@ func TestExecuteRouteDecision(t *testing.T) {
 		fx := newRouteFixture(t)
 		_, handled := executeRoute(fx.app, hubtools.RouteDecision{
 			Action: "group", Targets: []int{1, 9}, Text: "原文",
-		}, "用户原文")
+		})
 		if handled {
 			t.Fatal("含不存在编号应 handled=false")
 		}
@@ -218,7 +218,7 @@ func TestExecuteRouteDecision(t *testing.T) {
 		fx := newRouteFixture(t)
 		replies, handled := executeRoute(fx.app, hubtools.RouteDecision{
 			Action: "single", Targets: []int{2}, Text: "单发正文",
-		}, "用户原文")
+		})
 		if !handled {
 			t.Fatal("single 指定编号应 handled=true")
 		}
@@ -235,7 +235,7 @@ func TestExecuteRouteDecision(t *testing.T) {
 		fx := newRouteFixture(t)
 		_, handled := executeRoute(fx.app, hubtools.RouteDecision{
 			Action: "single", Text: "原文",
-		}, "用户原文")
+		})
 		if handled {
 			t.Fatal("single 空 targets 应 handled=false（调用方回落 current）")
 		}
@@ -250,7 +250,7 @@ func TestExecuteRouteDecision(t *testing.T) {
 			{Ref: fx.refs[0], State: "running", Summary: "状态摘要甲"},
 			{Ref: fx.refs[1], State: "idle", Summary: "状态摘要乙"},
 		}
-		replies, handled := executeRoute(fx.app, hubtools.RouteDecision{Action: "status"}, "用户原文")
+		replies, handled := executeRoute(fx.app, hubtools.RouteDecision{Action: "status"})
 		if !handled {
 			t.Fatal("status 应 handled=true")
 		}
@@ -271,7 +271,7 @@ func TestExecuteRouteDecision(t *testing.T) {
 		// #gx 依赖 Console 最近列表编号语境，先执行一次 #l（fake 列表与
 		// executeRoute 的编号映射同源）。
 		fx.c.Handle("#l")
-		replies, handled := executeRoute(fx.app, hubtools.RouteDecision{Action: "expand", ExpandNum: 2}, "用户原文")
+		replies, handled := executeRoute(fx.app, hubtools.RouteDecision{Action: "expand", ExpandNum: 2})
 		if !handled {
 			t.Fatal("expand 应 handled=true")
 		}
@@ -291,7 +291,7 @@ func TestExecuteRouteDecision(t *testing.T) {
 		fx.c.Handle("#l")
 		_, handled := executeRoute(fx.app, hubtools.RouteDecision{
 			Action: "expand", ExpandNum: 2, ExpandCount: 7,
-		}, "用户原文")
+		})
 		if !handled {
 			t.Fatal("expand 应 handled=true")
 		}
@@ -304,7 +304,7 @@ func TestExecuteRouteDecision(t *testing.T) {
 		fx := newRouteFixture(t)
 		replies, handled := executeRoute(fx.app, hubtools.RouteDecision{
 			Action: "ask", Question: "你指的是哪个会话？",
-		}, "用户原文")
+		})
 		if !handled {
 			t.Fatal("ask 应 handled=true")
 		}
@@ -323,7 +323,7 @@ func TestExecuteRouteDecision(t *testing.T) {
 			Targets:       []int{1, 2},
 			Text:          "",
 			PerTargetText: map[string]string{"1": "改写甲"},
-		}, "用户原文")
+		})
 		if handled {
 			t.Fatal("group 空文本应 handled=false（整批降级）")
 		}
@@ -336,7 +336,7 @@ func TestExecuteRouteDecision(t *testing.T) {
 		fx := newRouteFixture(t)
 		_, handled := executeRoute(fx.app, hubtools.RouteDecision{
 			Action: "single", Targets: []int{2}, Text: "   ",
-		}, "用户原文")
+		})
 		if handled {
 			t.Fatal("single 空白正文应 handled=false")
 		}
@@ -349,7 +349,7 @@ func TestExecuteRouteDecision(t *testing.T) {
 		fx := newRouteFixture(t)
 		_, handled := executeRoute(fx.app, hubtools.RouteDecision{
 			Action: "broadcast", Text: "原文",
-		}, "用户原文")
+		})
 		if handled {
 			t.Fatal("未知 action 应 handled=false")
 		}
@@ -362,7 +362,7 @@ func TestExecuteRouteDecision(t *testing.T) {
 		fx := newRouteFixture(t)
 		_, handled := executeRoute(fx.app, hubtools.RouteDecision{
 			Action: "expand", ExpandNum: 0,
-		}, "用户原文")
+		})
 		if handled {
 			t.Fatal("expand ExpandNum<=0 应 handled=false")
 		}
@@ -370,7 +370,7 @@ func TestExecuteRouteDecision(t *testing.T) {
 
 	t.Run("status 无会话也 handled", func(t *testing.T) {
 		fx := newRouteFixture(t)
-		_, handled := executeRoute(fx.app, hubtools.RouteDecision{Action: "status"}, "用户原文")
+		_, handled := executeRoute(fx.app, hubtools.RouteDecision{Action: "status"})
 		if !handled {
 			t.Fatal("status 无会话应 handled=true（#st 自行渲染空态）")
 		}
@@ -570,4 +570,56 @@ func TestHubSmartSend(t *testing.T) {
 			t.Fatalf("重新 ask 后轮次 = %d, 期望 1", got)
 		}
 	})
+}
+
+// TestHubSmartSendBusyGuard 覆盖智能路由在途守卫：路由调用期间并发提交的第二
+// 次调用直接返回 Pending=true，不调 router、不清轮次（防重复投递）。
+func TestHubSmartSendBusyGuard(t *testing.T) {
+	fx := newRouteFixture(t)
+
+	// 路由桩：首次调用阻塞直到放行；若守卫失效第二次也进来，计数后立即返回。
+	started := make(chan struct{})
+	release := make(chan struct{})
+	fx.app.mu.Lock()
+	fx.app.smartRouter = func(context.Context, string) (hubtools.RouteDecision, bool) {
+		select {
+		case <-started:
+			// 已有第一个调用在途：第二个并发调用不应到达这里，但若到达（守卫
+			// 失效）也立即返回不阻塞，测试用 calls>1 断言失败。
+			return hubtools.RouteDecision{Action: "ask", Question: "不应到这"}, true
+		default:
+		}
+		close(started)
+		<-release
+		return hubtools.RouteDecision{Action: "ask", Question: "第一次问"}, true
+	}
+	fx.app.mu.Unlock()
+
+	first := make(chan HubPickView, 1)
+	go func() {
+		view, _ := fx.app.HubSmartSend("第一次")
+		first <- view
+	}()
+
+	// 等第一个调用真正进入路由（started 关闭即进入）。
+	<-started
+
+	// 并发第二次提交：应被在途守卫拦下，Pending=true。
+	second, err := fx.app.HubSmartSend("第二次")
+	if err != nil {
+		t.Fatalf("第二次 HubSmartSend: %v", err)
+	}
+	if !second.Pending {
+		t.Fatal("在途期间第二次提交应 Pending=true")
+	}
+
+	// 轮次不被后到调用清零：第一个调用是 ask，完成后应为 1。
+	close(release)
+	view := <-first
+	if view.Pending {
+		t.Fatal("第一次调用应正常完成 Pending=false")
+	}
+	if got := smartRoundOf(fx.app); got != 1 {
+		t.Fatalf("ask 后轮次 = %d, 期望 1（busy 期间不得清零）", got)
+	}
 }
