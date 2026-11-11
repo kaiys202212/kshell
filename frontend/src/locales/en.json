@@ -172,7 +172,8 @@
       "invalid_permission_mode": "Invalid permission mode: {{0}}",
       "model_platform_name_required": "Platform name is required",
       "model_platform_id_required": "Platform ID is required",
-      "model_platform_id_duplicated": "Duplicate platform ID: {{0}}"
+      "model_platform_id_duplicated": "Duplicate platform ID: {{0}}",
+      "model_platform_not_found": "Platform not found or already deleted ({{0}})"
     },
     "model_fetch": {
       "no_endpoint": "No Base URL configured; cannot fetch models",

@@ -129,15 +129,10 @@ func TestDeleteModelPlatformSaveFailureLeavesMemoryIntact(t *testing.T) {
 }
 
 // 防抖同步确有被调度：SetModelEnabled 后调度器已创建并排入任务。
+// 清理分支本身的落盘效果由 agentsync 包既有用例覆盖（claude_test.go 等）。
 func TestSetModelEnabledSchedulesSync(t *testing.T) {
-	app, _, home := newSyncApp(t)
+	app, _, _ := newSyncApp(t)
 	setSyncPlatform(t, app)
-	// 预置一次注入物，禁用后应被清理（防抖窗口后落地）。
-	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	_ = os.WriteFile(filepath.Join(home, ".claude", "settings.json"),
-		[]byte(`{"env":{"ANTHROPIC_BASE_URL":"https://stale/","KEEP":"1"}}`), 0o600)
 
 	if err := app.SetModelEnabled(false); err != nil {
 		t.Fatalf("SetModelEnabled: %v", err)

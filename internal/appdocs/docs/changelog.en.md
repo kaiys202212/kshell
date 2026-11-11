@@ -5,6 +5,7 @@
 - Model sync is now configured per tool: the "Sync platform models" toggle in the tools list becomes a "Model settings" dialog — Claude Code maps models to the 4 preset slots (default / Sonnet / Opus / Haiku), OpenCode picks models per platform (multi-platform supported), CodeBuddy picks models from the default platform. Nothing is injected when disabled or with no models checked, and previously injected entries are cleaned up. Note: after upgrading, previously auto-injected models are removed — please re-check models in each tool's "Model settings".
 - Setting the default platform and the default model in Settings now takes effect immediately, without pressing the global save button; the resulting model sync is debounced, so rapid toggles collapse into one sync.
 - The chat model dropdown now mirrors what is actually injected per tool (claude: default platform models; opencode/codebuddy: checked models) — fake options that could not work are gone.
+- The model settings page now uses a two-column layout: platform list on the left, the add/edit platform form expands on the right with its own save button (auto-collapses after saving); the "Enable sync" toggle and platform deletion also take effect immediately — the standalone save button is gone.
 
 ## v0.1.29 (2026-11-09)
 

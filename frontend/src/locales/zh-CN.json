@@ -172,7 +172,8 @@
       "invalid_permission_mode": "无效的权限模式：{{0}}",
       "model_platform_name_required": "平台名称不能为空",
       "model_platform_id_required": "平台标识不能为空",
-      "model_platform_id_duplicated": "平台标识重复：{{0}}"
+      "model_platform_id_duplicated": "平台标识重复：{{0}}",
+      "model_platform_not_found": "平台不存在或已被删除（{{0}}）"
     },
     "model_fetch": {
       "no_endpoint": "尚未配置任何 Base URL，无法拉取模型",
