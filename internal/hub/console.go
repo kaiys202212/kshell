@@ -649,10 +649,9 @@ func gTag(r SessionRef) string {
 
 // handleG 处理 "#g <编号列表> <text>"。单编号保持旧语义(sent_to 单行回执、
 // 不进聚合但清聚合一一单发属精确投递);多编号顺序逐目标激活+发送,全部编号
-// 必须有效(任一无效整条拒绝回 usage 风格的 no_mapping/usage_g),标识去重,
-// 部分失败不中断其余(逐目标列出),≥2 成功进入汇报聚合(Enter),否则保持
-// 非聚合(单发成功 Discard,全失败也不进)。群发不改 current、不落归因水位
-// (不调用 activateRef/markCurrent)。
+// 必须有效(任一无效整条拒绝回 usage 风格的 no_mapping/usage_g)。编号解析后
+// 转调 sendGroupTextsLocked（与 SendGroupTexts 共用核心循环）：标识去重、
+// 部分失败不中断、≥2 成功进入汇报聚合、不改 current/归因水位。
 func (c *Console) handleG(arg string) []Reply {
 	nums, text, ok := c.parseGTargets(arg)
 	if !ok {
@@ -666,10 +665,44 @@ func (c *Console) handleG(arg string) []Reply {
 		}
 		refs = append(refs, ref)
 	}
+	// #g 是同一正文群发给所有目标：texts 与 refs 等长逐项重复。
+	texts := make([]string, len(refs))
+	for i := range texts {
+		texts[i] = text
+	}
+	return c.sendGroupTextsLocked(refs, texts)
+}
+
+// SendGroupTexts 按给定 refs 逐会话投递各自文本（智能路由的群发执行入口）。
+// 语义与 #g 完全同契约：去重（SessionID 退 ChatID）、TerminalActive 拦截、
+// 未激活先 OpenSession、部分失败不中断、≥2 成功进聚合、不改 current 不抬
+// 水位。texts 与 refs 一一对应（长度必须相等；防御性按较短者钳制）。
+func (c *Console) SendGroupTexts(refs []SessionRef, texts []string) []Reply {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sendGroupTextsLocked(refs, texts)
+}
+
+// sendGroupTextsLocked 是 handleG 与 SendGroupTexts 共用的核心循环
+// （从 handleG 抽取，调用方须持 c.mu）：逐目标去重→TerminalActive 拦截→
+// OpenSession→Send→succRefs≥2 时 c.agg.Enter→回执组装（group_sent/
+// group_failed/sent_to）。文案形态与抽取前 handleG 一字不差。
+func (c *Console) sendGroupTextsLocked(refs []SessionRef, texts []string) []Reply {
+	// 长度以调用方保证相等为准；公开入口可能传入不等长，按较短者钳制防御。
+	n := len(refs)
+	if len(texts) < n {
+		n = len(texts)
+	}
+	refs = refs[:n]
+	texts = texts[:n]
+	if n == 0 {
+		return nil
+	}
 	// 按 SessionID(退 ChatID)去重,保持编号升序由调用方输入顺序即可(通常升序)。
 	seen := map[string]bool{}
-	uniq := make([]SessionRef, 0, len(refs))
-	for _, r := range refs {
+	uniq := make([]SessionRef, 0, n)
+	uniqTexts := make([]string, 0, n)
+	for i, r := range refs {
 		key := r.SessionID
 		if key == "" {
 			key = r.ChatID
@@ -681,10 +714,11 @@ func (c *Console) handleG(arg string) []Reply {
 			seen[key] = true
 		}
 		uniq = append(uniq, r)
+		uniqTexts = append(uniqTexts, texts[i])
 	}
 	var succRefs []SessionRef
 	var sentTags, failParts []string
-	for _, ref := range uniq {
+	for i, ref := range uniq {
 		if ref.TerminalActive {
 			failParts = append(failParts, gTag(ref)+" — "+c.text("err.hub.terminal_active"))
 			continue
@@ -704,7 +738,7 @@ func (c *Console) handleG(arg string) []Reply {
 		if ref.ChatID == "" {
 			return []Reply{{Text: c.text("no_mapping")}}
 		}
-		if err := c.ex.Send(ref.ChatID, text); err != nil {
+		if err := c.ex.Send(ref.ChatID, uniqTexts[i]); err != nil {
 			failParts = append(failParts, gTag(ref)+" — "+c.errText(err))
 			continue
 		}

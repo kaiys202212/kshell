@@ -2,6 +2,7 @@ package hub
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -170,6 +171,138 @@ func TestGGroupDoesNotTouchAttribution(t *testing.T) {
 	if c.agg.Count() == 0 {
 		t.Fatal("群发应登记聚合")
 	}
+}
+
+// TestSendGroupTexts 覆盖公开群发入口的 #g 同契约语义：refs 直传（不依赖
+// lastList 编号）、texts 与 refs 一一对应、去重/拦截/激活/部分失败/聚合/不改
+// 归因均与 handleG 一致。
+func TestSendGroupTexts(t *testing.T) {
+	// “两个目标各收各自文本并进聚合”
+	t.Run("两目标各收各自文本并进聚合", func(t *testing.T) {
+		c, f := groupConsole()
+		r1, r2 := f.listSessions[0], f.listSessions[1]
+		replies := c.SendGroupTexts([]SessionRef{r1, r2}, []string{"t1", "t2"})
+		if len(f.sendCalls) != 2 ||
+			f.sendCalls[0] != [2]string{"c1", "t1"} ||
+			f.sendCalls[1] != [2]string{"c2", "t2"} {
+			t.Fatalf("sendCalls = %+v（文本须与 refs 一一对应）", f.sendCalls)
+		}
+		want := fmt.Sprintf(c.text("group_sent"), "1【A】 2【B】")
+		if len(replies) != 1 || replies[0].Text != want {
+			t.Fatalf("群发回执 = %+v, want %q", replies, want)
+		}
+		if !c.MirrorPolicy().Active() || len(c.MirrorPolicy().Targets()) != 2 {
+			t.Fatalf("两目标成功应进聚合: active=%v targets=%d",
+				c.MirrorPolicy().Active(), len(c.MirrorPolicy().Targets()))
+		}
+	})
+
+	// “单 ref 等价单发语义”
+	t.Run("单ref等价单发语义", func(t *testing.T) {
+		c, f := groupConsole()
+		r1 := f.listSessions[0]
+		replies := c.SendGroupTexts([]SessionRef{r1}, []string{"hi"})
+		want := fmt.Sprintf(c.text("sent_to"), sessionTag("A"))
+		if len(replies) != 1 || replies[0].Text != want {
+			t.Fatalf("单发回执 = %+v, want %q", replies, want)
+		}
+		if len(f.sendCalls) != 1 || f.sendCalls[0] != [2]string{"c1", "hi"} {
+			t.Fatalf("sendCalls = %+v", f.sendCalls)
+		}
+		if c.MirrorPolicy().Active() {
+			t.Fatal("单发属精确投递，应退出聚合")
+		}
+	})
+
+	// “未激活目标先 OpenSession 再 Send”
+	t.Run("未激活目标先OpenSession再Send", func(t *testing.T) {
+		c, f := groupConsole()
+		r3 := f.listSessions[2]
+		r3.ChatID = "" // 未激活的磁盘会话
+		f.openSessionRef = SessionRef{
+			Num: 3, ChatID: "c3-open", SessionID: "s3", Title: "C",
+			Tool: "claude", Workspace: "/w3",
+		}
+		replies := c.SendGroupTexts([]SessionRef{r3}, []string{"hi"})
+		if len(f.openSessionCalls) != 1 || f.openSessionCalls[0] != "s3" {
+			t.Fatalf("openSessionCalls = %+v", f.openSessionCalls)
+		}
+		if len(f.sendCalls) != 1 || f.sendCalls[0] != [2]string{"c3-open", "hi"} {
+			t.Fatalf("激活后应发往新 ChatID: %+v", f.sendCalls)
+		}
+		want := fmt.Sprintf(c.text("sent_to"), sessionTag("C"))
+		if len(replies) != 1 || replies[0].Text != want {
+			t.Fatalf("回执 = %+v, want %q", replies, want)
+		}
+	})
+
+	// “终端占用目标失败但不中断其他目标”
+	t.Run("终端占用目标失败但不中断其他", func(t *testing.T) {
+		c, f := groupConsole()
+		term := f.listSessions[0]
+		term.TerminalActive = true
+		r2 := f.listSessions[1]
+		replies := c.SendGroupTexts([]SessionRef{term, r2}, []string{"t1", "t2"})
+		if len(f.sendCalls) != 1 || f.sendCalls[0] != [2]string{"c2", "t2"} {
+			t.Fatalf("终端目标须跳过、其余照发: %+v", f.sendCalls)
+		}
+		got := replies[0].Text
+		if !strings.Contains(got, c.text("err.hub.terminal_active")) {
+			t.Fatalf("回执应含 terminal_active 文案: %q", got)
+		}
+		if !strings.Contains(got, "2【B】") {
+			t.Fatalf("成功目标应列入 group_sent: %q", got)
+		}
+	})
+
+	// “Send 失败的目标记入回执”
+	t.Run("Send失败的目标记入回执", func(t *testing.T) {
+		c, f := groupConsole()
+		r1, r2 := f.listSessions[0], f.listSessions[1]
+		f.sendErr = errors.New("boom")
+		replies := c.SendGroupTexts([]SessionRef{r1, r2}, []string{"t1", "t2"})
+		got := replies[0].Text
+		if !strings.Contains(got, "boom") {
+			t.Fatalf("失败原因应透传: %q", got)
+		}
+		failPrefix := strings.TrimSuffix(c.text("group_failed"), "%s")
+		if !strings.Contains(got, failPrefix) {
+			t.Fatalf("回执应为 group_failed 形态: %q", got)
+		}
+		if c.MirrorPolicy().Active() {
+			t.Fatal("全失败不得进入聚合")
+		}
+	})
+
+	// “不改 current、不落归因水位”
+	t.Run("不改current不落归因水位", func(t *testing.T) {
+		c, f := groupConsole()
+		f.lastActivityID = 7
+		f.lastActivityRef = f.listSessions[1]
+		f.hasActivity = true
+		c.refreshCurrent()
+		beforeMark := c.currentMark
+		beforeTitle := c.current.Title
+		r1, r2 := f.listSessions[0], f.listSessions[1]
+		c.SendGroupTexts([]SessionRef{r1, r2}, []string{"t1", "t2"})
+		if c.currentMark != beforeMark || c.current.Title != beforeTitle {
+			t.Fatalf("群发不得改归因: mark=%d→%d title=%s→%s",
+				beforeMark, c.currentMark, beforeTitle, c.current.Title)
+		}
+		if c.MirrorPolicy().Count() != 2 {
+			t.Fatalf("群发应登记聚合: count=%d", c.MirrorPolicy().Count())
+		}
+	})
+
+	// “texts 短于 refs 时防御性钳制到较短长度”（公开入口防御，handleG 恒等长）
+	t.Run("texts过短防御性钳制", func(t *testing.T) {
+		c, f := groupConsole()
+		r1, r2 := f.listSessions[0], f.listSessions[1]
+		c.SendGroupTexts([]SessionRef{r1, r2}, []string{"only"})
+		if len(f.sendCalls) != 1 || f.sendCalls[0] != [2]string{"c1", "only"} {
+			t.Fatalf("应只投递较短长度: %+v", f.sendCalls)
+		}
+	})
 }
 
 func TestMirrorPolicyShared(t *testing.T) {
