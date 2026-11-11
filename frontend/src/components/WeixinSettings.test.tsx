@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   weixinBind: vi.fn(),
   weixinBindStatus: vi.fn(),
   weixinUnbind: vi.fn(),
+  getAgentHubSettings: vi.fn(),
   qrcodeToDataURL: vi.fn(),
 }));
 
@@ -41,6 +42,7 @@ function mockBound(over: Partial<typeof idleView> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.qrcodeToDataURL.mockResolvedValue(DATA_URL);
+  mocks.getAgentHubSettings.mockResolvedValue({ enabled: true, heartbeat_minutes: 5, direct_patterns: null, default_tool: '', default_model: '', route_mode: '' });
   mockBound();
   mocks.weixinBind.mockResolvedValue('https://login.weixin.qq.com/xyz');
   mocks.weixinBindStatus.mockResolvedValue('pending');

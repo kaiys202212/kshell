@@ -17,6 +17,7 @@ import RemoteDirPicker from '../components/RemoteDirPicker';
 import {
   addSSHProject,
   createProject,
+  getAgentHubSettings,
   getDeletedProjects,
   getWorkspaces,
   hideProject,
@@ -165,6 +166,13 @@ export default function Home() {
   const toggleHubCollapsed = useCallback((v: boolean) => {
     writeHubCollapsed(v);
     setHubCollapsed(v);
+  }, []);
+  // AgentHub 启用开关：关闭时整列（折叠条+面板）不渲染
+  const [hubEnabled, setHubEnabled] = useState(true);
+  useEffect(() => {
+    getAgentHubSettings()
+      .then((s) => setHubEnabled(s.enabled))
+      .catch(() => {});
   }, []);
 
   // 选中态失效清理：selectedProject 不在当前工作区列表（路径归一化后比较）则清除。
@@ -713,7 +721,9 @@ export default function Home() {
           <RequirementList className="min-h-0 flex-1" />
         </div>
         {/* 右列：AgentHub 对话卡，占 3/5 宽、撑满本行剩余高度，聊天内容内部滚动；
-            折叠时退化为窄竖条（点击展开），面板本体 hidden 保持挂载（保草稿/滚动位）。 */}
+            折叠时退化为窄竖条（点击展开），面板本体 hidden 保持挂载（保草稿/滚动位）；
+            设置里关闭 AgentHub 后整列（折叠条+面板）不渲染。 */}
+        {hubEnabled && (
         <div
           data-testid="home-right-col"
           className={cn('flex min-w-0', hubCollapsed ? 'w-9 shrink-0' : 'w-3/5')}
@@ -738,6 +748,7 @@ export default function Home() {
           {/* 面板常驻挂载（hidden 隐藏）：折叠不丢草稿与滚动位置 */}
           <AgentHubPanel hidden={hubCollapsed} onCollapse={() => toggleHubCollapsed(true)} />
         </div>
+        )}
       </div>
     </div>
   );

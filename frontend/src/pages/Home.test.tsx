@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   getWorkspaces: vi.fn(),
   scanSessions: vi.fn(),
   onScanDone: vi.fn(),
+  // Home 拉取 AgentHub 启用状态，默认启用（右列 Hub 正常渲染）
+  getAgentHubSettings: vi.fn().mockResolvedValue({ enabled: true, heartbeat_minutes: 5, direct_patterns: null, default_tool: '', default_model: '', route_mode: '' }),
   createProject: vi.fn(),
   addSSHProject: vi.fn(),
   listConnections: vi.fn(),
