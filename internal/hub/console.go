@@ -652,6 +652,7 @@ func gTag(r SessionRef) string {
 // 必须有效(任一无效整条拒绝回 usage 风格的 no_mapping/usage_g)。编号解析后
 // 转调 sendGroupTextsLocked（与 SendGroupTexts 共用核心循环）：标识去重、
 // 部分失败不中断、≥2 成功进入汇报聚合、不改 current/归因水位。
+// 经 Handle 全程持锁调用，可直接使用 sendGroupTextsLocked。
 func (c *Console) handleG(arg string) []Reply {
 	nums, text, ok := c.parseGTargets(arg)
 	if !ok {
@@ -677,6 +678,7 @@ func (c *Console) handleG(arg string) []Reply {
 // 语义与 #g 完全同契约：去重（SessionID 退 ChatID）、TerminalActive 拦截、
 // 未激活先 OpenSession、部分失败不中断、≥2 成功进聚合、不改 current 不抬
 // 水位。texts 与 refs 一一对应（长度必须相等；防御性按较短者钳制）。
+// refs/texts 为空直接返回 nil（不产生回执）。
 func (c *Console) SendGroupTexts(refs []SessionRef, texts []string) []Reply {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -688,7 +690,6 @@ func (c *Console) SendGroupTexts(refs []SessionRef, texts []string) []Reply {
 // OpenSession→Send→succRefs≥2 时 c.agg.Enter→回执组装（group_sent/
 // group_failed/sent_to）。文案形态与抽取前 handleG 一字不差。
 func (c *Console) sendGroupTextsLocked(refs []SessionRef, texts []string) []Reply {
-	// 长度以调用方保证相等为准；公开入口可能传入不等长，按较短者钳制防御。
 	n := len(refs)
 	if len(texts) < n {
 		n = len(texts)
@@ -698,7 +699,7 @@ func (c *Console) sendGroupTextsLocked(refs []SessionRef, texts []string) []Repl
 	if n == 0 {
 		return nil
 	}
-	// 按 SessionID(退 ChatID)去重,保持编号升序由调用方输入顺序即可(通常升序)。
+	// 按 SessionID(退 ChatID)去重,顺序保持调用方输入顺序（#g 通常为编号升序）。
 	seen := map[string]bool{}
 	uniq := make([]SessionRef, 0, n)
 	uniqTexts := make([]string, 0, n)

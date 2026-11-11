@@ -177,7 +177,6 @@ func TestGGroupDoesNotTouchAttribution(t *testing.T) {
 // lastList 编号）、texts 与 refs 一一对应、去重/拦截/激活/部分失败/聚合/不改
 // 归因均与 handleG 一致。
 func TestSendGroupTexts(t *testing.T) {
-	// “两个目标各收各自文本并进聚合”
 	t.Run("两目标各收各自文本并进聚合", func(t *testing.T) {
 		c, f := groupConsole()
 		r1, r2 := f.listSessions[0], f.listSessions[1]
@@ -197,7 +196,6 @@ func TestSendGroupTexts(t *testing.T) {
 		}
 	})
 
-	// “单 ref 等价单发语义”
 	t.Run("单ref等价单发语义", func(t *testing.T) {
 		c, f := groupConsole()
 		r1 := f.listSessions[0]
@@ -214,7 +212,6 @@ func TestSendGroupTexts(t *testing.T) {
 		}
 	})
 
-	// “未激活目标先 OpenSession 再 Send”
 	t.Run("未激活目标先OpenSession再Send", func(t *testing.T) {
 		c, f := groupConsole()
 		r3 := f.listSessions[2]
@@ -236,7 +233,6 @@ func TestSendGroupTexts(t *testing.T) {
 		}
 	})
 
-	// “终端占用目标失败但不中断其他目标”
 	t.Run("终端占用目标失败但不中断其他", func(t *testing.T) {
 		c, f := groupConsole()
 		term := f.listSessions[0]
@@ -245,6 +241,9 @@ func TestSendGroupTexts(t *testing.T) {
 		replies := c.SendGroupTexts([]SessionRef{term, r2}, []string{"t1", "t2"})
 		if len(f.sendCalls) != 1 || f.sendCalls[0] != [2]string{"c2", "t2"} {
 			t.Fatalf("终端目标须跳过、其余照发: %+v", f.sendCalls)
+		}
+		if len(replies) != 1 {
+			t.Fatalf("应回单条回执, got %+v", replies)
 		}
 		got := replies[0].Text
 		if !strings.Contains(got, c.text("err.hub.terminal_active")) {
@@ -255,17 +254,19 @@ func TestSendGroupTexts(t *testing.T) {
 		}
 	})
 
-	// “Send 失败的目标记入回执”
 	t.Run("Send失败的目标记入回执", func(t *testing.T) {
 		c, f := groupConsole()
 		r1, r2 := f.listSessions[0], f.listSessions[1]
 		f.sendErr = errors.New("boom")
 		replies := c.SendGroupTexts([]SessionRef{r1, r2}, []string{"t1", "t2"})
+		if len(replies) != 1 {
+			t.Fatalf("应回单条回执, got %+v", replies)
+		}
 		got := replies[0].Text
 		if !strings.Contains(got, "boom") {
 			t.Fatalf("失败原因应透传: %q", got)
 		}
-		failPrefix := strings.TrimSuffix(c.text("group_failed"), "%s")
+		failPrefix := strings.SplitN(c.text("group_failed"), "%s", 2)[0]
 		if !strings.Contains(got, failPrefix) {
 			t.Fatalf("回执应为 group_failed 形态: %q", got)
 		}
@@ -274,7 +275,6 @@ func TestSendGroupTexts(t *testing.T) {
 		}
 	})
 
-	// “不改 current、不落归因水位”
 	t.Run("不改current不落归因水位", func(t *testing.T) {
 		c, f := groupConsole()
 		f.lastActivityID = 7
@@ -294,13 +294,39 @@ func TestSendGroupTexts(t *testing.T) {
 		}
 	})
 
-	// “texts 短于 refs 时防御性钳制到较短长度”（公开入口防御，handleG 恒等长）
+	// 公开入口防御，handleG 恒等长。
 	t.Run("texts过短防御性钳制", func(t *testing.T) {
 		c, f := groupConsole()
 		r1, r2 := f.listSessions[0], f.listSessions[1]
 		c.SendGroupTexts([]SessionRef{r1, r2}, []string{"only"})
 		if len(f.sendCalls) != 1 || f.sendCalls[0] != [2]string{"c1", "only"} {
 			t.Fatalf("应只投递较短长度: %+v", f.sendCalls)
+		}
+	})
+
+	t.Run("refs为空返回nil", func(t *testing.T) {
+		c, f := groupConsole()
+		replies := c.SendGroupTexts(nil, nil)
+		if len(replies) != 0 {
+			t.Fatalf("refs 为空应返回 nil(不产生回执), got %+v", replies)
+		}
+		if len(f.sendCalls) != 0 {
+			t.Fatalf("不应发送: %+v", f.sendCalls)
+		}
+	})
+
+	t.Run("去重连带丢弃重复项文案", func(t *testing.T) {
+		c, f := groupConsole()
+		r1, r2 := f.listSessions[0], f.listSessions[1]
+		replies := c.SendGroupTexts([]SessionRef{r1, r1, r2}, []string{"a", "b", "c"})
+		if len(f.sendCalls) != 2 ||
+			f.sendCalls[0] != [2]string{"c1", "a"} ||
+			f.sendCalls[1] != [2]string{"c2", "c"} {
+			t.Fatalf("去重后重复项文案应一并丢弃: %+v", f.sendCalls)
+		}
+		want := fmt.Sprintf(c.text("group_sent"), "1【A】 2【B】")
+		if len(replies) != 1 || replies[0].Text != want {
+			t.Fatalf("群发回执 = %+v, want %q", replies, want)
 		}
 	})
 }
