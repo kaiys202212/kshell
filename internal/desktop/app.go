@@ -203,6 +203,10 @@ type App struct {
 	// 与微信 bridge console)与出站镜像 mirrorAggregated 指到同一实例,任一
 	// 渠道发起的群发对出站镜像同样生效。mu 保护(惰性创建)。
 	mirrorPolicy *hub.MirrorPolicy
+	// aggHb 跟踪聚合周期内 running 目标的心跳基线(SessionID 退 ChatID)。
+	// 自持 sync.Mutex:mirrorAggregated 在 recordHubMessage 路径不持 a.mu,
+	// 不能借用;周期基准变化或报告 Discard 时清表。
+	aggHb aggHeartbeats
 	// smartRouter 是桌面 Hub 智能路由的注入点（测试可覆写）；nil 时惰性使用
 	// weixinInputRouter（与微信桥同款实时读配置快照）。mu 保护。
 	smartRouter smartRouterFunc

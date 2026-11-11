@@ -4,10 +4,95 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/yangk/kshell/internal/hub"
 	"github.com/yangk/kshell/internal/weixin"
 )
+
+// aggHeartbeats 跟踪聚合周期内各目标的最近一次心跳/活动基线(纳秒,与 hub
+// 消息 Ts 同单位)。mirrorAggregated 在 recordHubMessage 路径不持 App 锁,
+// 故自持 sync.Mutex,不经 a.mu。
+//
+// 语义:目标首次以 running 出现时记录 now 为基线且本轮不判定(避免 now-0
+// 巨大导致 Enter 即超时);目标有新回复(LastTs 超过基线)时基线前移到
+// LastTs 重置窗口;距基线达到阈值则本轮出一次心跳并把基线推进到 now。
+type aggHeartbeats struct {
+	mu    sync.Mutex
+	cycle int64            // 当前周期的策略时间基准(SinceTs);变化即清表
+	marks map[string]int64 // key: SessionID 退 ChatID → 最近基线 Ts(纳秒)
+}
+
+// begin 绑定当前聚合周期的基准。周期切换(含 Enter 重设 SinceTs)时清空
+// 跟踪表,避免上一轮基线或已不在目标集的目标残留。
+func (h *aggHeartbeats) begin(cycle int64) {
+	h.mu.Lock()
+	if h.cycle != cycle {
+		h.cycle = cycle
+		h.marks = nil
+	}
+	h.mu.Unlock()
+}
+
+// check 判定某目标本轮是否出心跳。now/lastTs/threshold 均为纳秒。
+// 返回 (是否触发, 距基线时长)。
+func (h *aggHeartbeats) check(key string, now, lastTs, threshold int64) (bool, int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.marks == nil {
+		h.marks = map[string]int64{}
+	}
+	base, ok := h.marks[key]
+	if !ok {
+		// 首次见到该目标 running:从此刻起计时,本轮不判定。
+		h.marks[key] = now
+		return false, 0
+	}
+	if lastTs > base {
+		// 有新回复(活动水位前进):窗口重置,不出心跳。
+		h.marks[key] = lastTs
+		return false, 0
+	}
+	if now-base >= threshold {
+		elapsed := now - base
+		h.marks[key] = now
+		return true, elapsed
+	}
+	return false, 0
+}
+
+// reset 清空跟踪表(聚合周期结束,如报告 Discard)。
+func (h *aggHeartbeats) reset() {
+	h.mu.Lock()
+	h.cycle = 0
+	h.marks = nil
+	h.mu.Unlock()
+}
+
+// setBase 直接改写基线(测试注入:模拟「已跑满阈值」)。
+func (h *aggHeartbeats) setBase(key string, ts int64) {
+	h.mu.Lock()
+	if h.marks == nil {
+		h.marks = map[string]int64{}
+	}
+	h.marks[key] = ts
+	h.mu.Unlock()
+}
+
+// base 返回该目标的当前基线(0 表示无记录;测试断言用)。
+func (h *aggHeartbeats) base(key string) int64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.marks[key]
+}
+
+// size 返回跟踪表条目数(测试断言用)。
+func (h *aggHeartbeats) size() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.marks)
+}
 
 // 微信出站(agent 镜像)聚合:群发目标集活跃时,单目标 agent 回复不再逐条镜像,
 // 改投一条聚合摘要行(agg_line + 逐目标状态明细)。共享 MirrorPolicy 实例的
@@ -51,6 +136,7 @@ func (a *App) mirrorAggregated(r *weixin.Runtime, m hub.Message) bool {
 		}
 	}
 	since := p.SinceTs()
+	a.aggHb.begin(since) // 周期切换时清空心跳跟踪表
 	targets := p.Targets()
 	// 稳定顺序:标题(空在后)→ ChatID → SessionID。Targets 来自 map,无序。
 	sort.SliceStable(targets, func(i, j int) bool {
@@ -111,16 +197,54 @@ func (a *App) mirrorAggregated(r *weixin.Runtime, m hub.Message) bool {
 			break
 		}
 	}
+	lang := r.Lang()
 	if allTerminal {
-		lang := r.Lang()
 		line := fmt.Sprintf(hub.CmdText(lang, "report_header"), strings.Join(aggDetailLines(lang, detail), ", "))
 		line += "\n\n" + hub.CmdText(lang, "report_hint")
 		r.OnHubMessage(hub.Message{Kind: "agent", Ts: m.Ts, Text: line})
 		p.Discard()
+		a.aggHb.reset() // 报告即终点:心跳跟踪表随之清空
 		return true
 	}
-	r.OnHubMessage(hub.Message{Kind: "agent", Ts: m.Ts, Text: composeAggLine(r.Lang(), detail, replied, len(targets))})
+	// 摘要行出站处附加心跳:与摘要共用同一条消息(空行分隔),不另发一条,
+	// 避免微信侧刷两条气泡。报告分支在上方已返回,不会走到这里(报告时无
+	// running 目标,心跳天然无从触发)。
+	text := composeAggLine(lang, detail, replied, len(targets))
+	if hb := a.aggHeartbeatLines(lang, detail); hb != "" {
+		text += "\n\n" + hb
+	}
+	r.OnHubMessage(hub.Message{Kind: "agent", Ts: m.Ts, Text: text})
 	return true
+}
+
+// aggHeartbeatLines 产出本次摘要的心跳附加行:逐 running 目标按
+// HeartbeatMinutes 阈值判定,触发的以 hb_line(%s=标签 %s=时长)成行,多条以
+// 换行接龙。标签复用 sessionTagOf(与明细行同形),时长取纯分钟 "Nm"。
+// 阈值实时读配置快照(缺省/钳制由 config 归一保证)。
+func (a *App) aggHeartbeatLines(lang string, rows []hub.SessionStatus) string {
+	minutes := a.snapshot().Config.AgentHub.Normalized().HeartbeatMinutes
+	threshold := int64(minutes) * int64(time.Minute)
+	now := time.Now().UnixNano()
+	lines := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.State != "running" {
+			continue
+		}
+		key := row.Ref.SessionID
+		if key == "" {
+			key = row.Ref.ChatID
+		}
+		if key == "" {
+			continue
+		}
+		fired, elapsed := a.aggHb.check(key, now, row.LastTs, threshold)
+		if !fired {
+			continue
+		}
+		dur := fmt.Sprintf("%dm", int64(elapsed)/int64(time.Minute))
+		lines = append(lines, fmt.Sprintf(hub.CmdText(lang, "hb_line"), sessionTagOf(row.Ref), dur))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // composeAggLine 组装聚合摘要行: agg_line(%1=replied %2=total %3=明细)。

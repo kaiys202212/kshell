@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -382,6 +383,184 @@ func TestMirrorAggregatedNoReportWhilePerm(t *testing.T) {
 	if !a.mirrorPolicy.Active() {
 		t.Fatal("有 perm 未全终态,不应 Discard")
 	}
+}
+
+// hbFixture 是心跳用例的公共装配:目标 A 持续 running(后端 gate 阻塞)、目标 B
+// 空闲并反复触发聚合摘要行。心跳基线由首个摘要行初始化,测试可经 setBase 拨回。
+type hbFixture struct {
+	a       *App
+	store   *hub.Store
+	m       *chat.Manager
+	run     chat.Info // 持续 running 的目标 A
+	idle    chat.Info // 空闲目标 B(每次摘要的触发者)
+	sink    chan hub.Message
+	release func() // 放行 A 的 Prompt,可重复调用(Once)
+}
+
+func newHBFixture(t *testing.T) *hbFixture {
+	t.Helper()
+	a, store, rec := newHubTestApp(t)
+	b := &wxStatusBackend{gate: make(chan struct{})}
+	m := newChatManagerWith(rec.emit, b, nil, nil, a.recordHubAgentMessage, nil, nil)
+	t.Cleanup(m.CloseAll) // 先注册:Cleanup LIFO,release 会在 CloseAll 之前执行
+	a.opts.Chats = m
+
+	run := openReadyChat(t, m, "session:s1", "D:/w1", "A", "s1")
+	idle := openReadyChat(t, m, "session:s2", "D:/w2", "B", "s2")
+
+	// A 发起一轮并阻塞在 gate:稳定停在 running,不触发全终态报告。
+	go func() { _ = m.Prompt(run.ID, "跑一轮") }()
+	wxWaitStatus(t, m, run.ID, chat.StatusRunning)
+
+	since := time.Now().UnixNano()
+	sink := enterAggPolicy(t, a, since,
+		hub.SessionRef{ChatID: run.ID, SessionID: "s1", Title: "A"},
+		hub.SessionRef{ChatID: idle.ID, SessionID: "s2", Title: "B"},
+	)
+	// B 预置回复:摘要行 replied>0,不落「0 回复吞行」分支。
+	if err := store.Append(hub.Message{
+		Kind: "agent", ChatID: a.originalChatID(idle.ID), TermKey: idle.Key, Text: "预置回复", Ts: since + 1,
+	}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	var once sync.Once
+	release := func() { once.Do(func() { close(b.gate) }) }
+	t.Cleanup(release)
+	return &hbFixture{a: a, store: store, m: m, run: run, idle: idle, sink: sink, release: release}
+}
+
+// triggerSummary 从空闲目标 B 触发一次聚合出站并返回该条文本。
+func (f *hbFixture) triggerSummary(t *testing.T, summary string) string {
+	t.Helper()
+	f.a.recordHubAgentMessage(agenthook.Payload{
+		Tool: "claude", Event: "Stop", ChatID: f.idle.ID, TermKey: f.idle.Key, Summary: summary,
+	})
+	select {
+	case got := <-f.sink:
+		return got.Text
+	default:
+		t.Fatal("应出站聚合摘要行")
+		return ""
+	}
+}
+
+// 心跳主路径:running 目标基线超阈值后,摘要行尾附同一消息里的 hb_line
+// (aggLine + "\n\n" + hbLine),触发原文仍被聚合吞掉;首条摘要只记基线不判定。
+func TestMirrorAggregatedHeartbeat(t *testing.T) {
+	t.Run("fires after threshold", func(t *testing.T) {
+		f := newHBFixture(t)
+		first := f.triggerSummary(t, "第一次")
+		if strings.Contains(first, "仍在运行") {
+			t.Fatalf("首个摘要只记基线,不应出心跳: %q", first)
+		}
+		// 模拟 A 已跑满 6 分钟(阈值默认 5)。
+		f.a.aggHb.setBase("s1", time.Now().Add(-6*time.Minute).UnixNano())
+
+		got := f.triggerSummary(t, "第二次")
+		if !strings.Contains(got, "会话有回复") {
+			t.Fatalf("心跳应附在摘要行后: %q", got)
+		}
+		if !strings.Contains(got, "\n\n1【A】 仍在运行 6m") {
+			t.Fatalf("缺心跳行(同一消息,摘要后空行接): %q", got)
+		}
+		if strings.Contains(got, "第二次") {
+			t.Fatalf("触发原文仍应被聚合吞掉: %q", got)
+		}
+	})
+
+	t.Run("once per window", func(t *testing.T) {
+		f := newHBFixture(t)
+		f.triggerSummary(t, "初始")
+		f.a.aggHb.setBase("s1", time.Now().Add(-6*time.Minute).UnixNano())
+		if got := f.triggerSummary(t, "心跳"); !strings.Contains(got, "仍在运行") {
+			t.Fatalf("超阈值应出心跳: %q", got)
+		}
+		// 心跳后基线推进到 now:紧跟的触发不应重复心跳。
+		if got := f.triggerSummary(t, "紧跟"); strings.Contains(got, "仍在运行") {
+			t.Fatalf("同一窗口只应心跳一次: %q", got)
+		}
+	})
+
+	t.Run("not yet due", func(t *testing.T) {
+		f := newHBFixture(t)
+		if got := f.triggerSummary(t, "初始"); strings.Contains(got, "仍在运行") {
+			t.Fatalf("基线刚记录(未跑满阈值)不应出心跳: %q", got)
+		}
+	})
+
+	t.Run("reply resets window", func(t *testing.T) {
+		f := newHBFixture(t)
+		f.triggerSummary(t, "初始")
+		// 时间轴放在过去:基线拨到 10 分钟前,随后 A 回复在 8 分钟前(比基线新)
+		// → 窗口重置为回复水位,不出心跳。
+		now := time.Now()
+		f.a.aggHb.setBase("s1", now.Add(-10*time.Minute).UnixNano())
+		replyTs := now.Add(-8 * time.Minute).UnixNano()
+		if err := f.store.Append(hub.Message{
+			Kind: "agent", ChatID: f.a.originalChatID(f.run.ID), TermKey: f.run.Key, Text: "A的新回复", Ts: replyTs,
+		}); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+		if got := f.triggerSummary(t, "触发"); strings.Contains(got, "仍在运行") {
+			t.Fatalf("新回复应重置窗口,不出心跳: %q", got)
+		}
+		if base := f.a.aggHb.base("s1"); base != replyTs {
+			t.Fatalf("基线应前移到最近回复水位: got %d want %d", base, replyTs)
+		}
+		// 模拟回复后又过了 6 分钟(基线已越过回复水位):恢复心跳。
+		f.a.aggHb.setBase("s1", now.Add(-6*time.Minute).UnixNano())
+		if got := f.triggerSummary(t, "再触发"); !strings.Contains(got, "仍在运行") {
+			t.Fatalf("窗口重置后再超阈值应恢复心跳: %q", got)
+		}
+	})
+
+	t.Run("discard clears marks", func(t *testing.T) {
+		// 独立装配:两目标均 idle(fakeChatBackend 不阻塞),经报告分支触发 Discard。
+		a, store, rec := newHubTestApp(t)
+		m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
+		t.Cleanup(m.CloseAll)
+		a.opts.Chats = m
+		info1 := openReadyChat(t, m, "session:s1", "D:/w1", "A", "s1")
+		info2 := openReadyChat(t, m, "session:s2", "D:/w2", "B", "s2")
+
+		since := time.Now().UnixNano()
+		sink := enterAggPolicy(t, a, since,
+			hub.SessionRef{ChatID: info1.ID, SessionID: "s1", Title: "A"},
+			hub.SessionRef{ChatID: info2.ID, SessionID: "s2", Title: "B"},
+		)
+		// 手工预置上一轮摘要留下的基线(同一周期),验证报告 Discard 后清表。
+		a.aggHb.begin(since)
+		a.aggHb.setBase("s1", since-1)
+		if a.aggHb.size() != 1 {
+			t.Fatalf("预置基线失败: %d", a.aggHb.size())
+		}
+		for _, info := range []chat.Info{info1, info2} {
+			if err := store.Append(hub.Message{
+				Kind: "agent", ChatID: a.originalChatID(info.ID), TermKey: info.Key, Text: "预置回复", Ts: since + 1,
+			}); err != nil {
+				t.Fatalf("append: %v", err)
+			}
+		}
+
+		a.recordHubAgentMessage(agenthook.Payload{
+			Tool: "claude", Event: "Stop", ChatID: info1.ID, TermKey: info1.Key, Summary: "收尾",
+		})
+		select {
+		case got := <-sink:
+			if !strings.Contains(got.Text, "全部完成") {
+				t.Fatalf("全终态应出报告: %q", got.Text)
+			}
+		default:
+			t.Fatal("全终态应出站报告")
+		}
+		if a.mirrorPolicy.Active() {
+			t.Fatal("报告后应 Discard")
+		}
+		if n := a.aggHb.size(); n != 0 {
+			t.Fatalf("Discard 后心跳跟踪表应清空,残留 %d 项", n)
+		}
+	})
 }
 
 // 策略不匹配(从未登记的 chat 回复)时按现状逐条镜像,不吞、不聚合。
