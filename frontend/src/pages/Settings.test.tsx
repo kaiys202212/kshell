@@ -31,6 +31,8 @@ const mocks = vi.hoisted(() => ({
   setAutostart: vi.fn(),
   getModelConfig: vi.fn(),
   setModelConfig: vi.fn(),
+  setModelEnabled: vi.fn(),
+  deleteModelPlatform: vi.fn(),
   setDefaultPlatform: vi.fn(),
   setActiveModel: vi.fn(),
   getToolSyncConfig: vi.fn(),
@@ -251,6 +253,8 @@ beforeEach(() => {
     ActiveModel: '',
   });
   mocks.setModelConfig.mockResolvedValue(undefined);
+  mocks.setModelEnabled.mockResolvedValue(undefined);
+  mocks.deleteModelPlatform.mockResolvedValue(undefined);
   mocks.setDefaultPlatform.mockResolvedValue(undefined);
   mocks.setActiveModel.mockResolvedValue(undefined);
   mocks.getToolSyncConfig.mockResolvedValue({
@@ -1043,34 +1047,60 @@ describe('Settings', () => {
     await waitFor(() => expect((sel as HTMLSelectElement).value).toBe('m1'));
   });
 
-  it('本地有未保存改动时设为默认：不重拉整表（不复活已删平台），本地更新默认徽标', async () => {
+  it('启用同步开关即时落盘：调 setModelEnabled', async () => {
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [platView()],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
+    });
+    render(<Settings />);
+    goModel();
+    const enable = (await screen.findByRole('checkbox', {
+      name: tt('ui.settings.model.enable'),
+    })) as HTMLInputElement;
+    expect(enable.checked).toBe(true);
+    fireEvent.click(enable);
+    await waitFor(() => expect(mocks.setModelEnabled).toHaveBeenCalledWith(false));
+  });
+
+  it('启用同步开关失败：勾选态回滚', async () => {
+    mocks.setModelEnabled.mockRejectedValueOnce(new Error('boom'));
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [platView()],
+      DefaultPlatform: 'p1',
+      ActiveModel: 'm1',
+    });
+    render(<Settings />);
+    goModel();
+    const enable = (await screen.findByRole('checkbox', {
+      name: tt('ui.settings.model.enable'),
+    })) as HTMLInputElement;
+    fireEvent.click(enable);
+    await waitFor(() => expect(mocks.setModelEnabled).toHaveBeenCalledWith(false));
+    await waitFor(() => expect(enable.checked).toBe(true));
+  });
+
+  it('本地删除平台失败：回滚列表并提示', async () => {
     vi.stubGlobal('confirm', () => true);
+    mocks.deleteModelPlatform.mockRejectedValueOnce(new Error('err.boom'));
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [
         platView({ Models: ['m1'], IsDefault: true }),
-        platView({ ID: 'p2', Name: 'P2', Models: ['m2'], IsDefault: false }),
-        platView({ ID: 'p3', Name: 'P3', Models: ['m3'], IsDefault: false }),
+        platView({ ID: 'p2', Name: 'GLM', IsDefault: false }),
       ],
       DefaultPlatform: 'p1',
       ActiveModel: 'm1',
     });
     render(<Settings />);
     goModel();
-
-    // 本地删除 p2（未保存 → dirty）：此时后端仍认为 p2 存在
-    const p2 = (await screen.findByText('P2')).closest('li')!;
+    const p2 = (await screen.findByText('GLM')).closest('li')!;
     fireEvent.click(within(p2).getByRole('button', { name: tt('ui.settings.model.delete_platform') }));
-    await waitFor(() => expect(screen.queryByText('P2')).not.toBeInTheDocument());
-
-    // 在 p3 上设为默认：重拉会把 p2 复活——修复后必须保持已删状态
-    const p3 = screen.getByText('P3').closest('li')!;
-    fireEvent.click(within(p3).getByRole('button', { name: tt('ui.settings.model.set_default') }));
-    await waitFor(() => expect(mocks.setDefaultPlatform).toHaveBeenCalledWith('p3'));
-    expect(screen.queryByText('P2')).not.toBeInTheDocument();
-    expect(screen.getByText('P3').closest('li')).toHaveTextContent(
-      tt('ui.settings.model.default_badge'),
-    );
+    await waitFor(() => expect(mocks.deleteModelPlatform).toHaveBeenCalledWith('p2'));
+    // 失败回滚：平台仍在列表
+    expect(screen.getByText('GLM')).toBeInTheDocument();
     vi.unstubAllGlobals();
   });
 
@@ -1113,28 +1143,34 @@ describe('Settings', () => {
     expect(arg.Platforms[0]).toEqual(expect.objectContaining({ ID: 'p1', Name: 'DeepSeek2' }));
   });
 
-  it('删除平台需确认，确认后保存载荷不含该平台', async () => {
+  it('删除平台需确认，确认后立即删除并重拉权威态', async () => {
     const confirm = vi.fn(() => true);
     vi.stubGlobal('confirm', confirm);
-    mocks.getModelConfig.mockResolvedValue({
-      Enabled: true,
-      Platforms: [platView(), platView({ ID: 'p2', Name: 'GLM', IsDefault: false })],
-      DefaultPlatform: 'p1',
-      ActiveModel: 'm1',
-    });
+    mocks.getModelConfig
+      .mockResolvedValueOnce({
+        Enabled: true,
+        Platforms: [platView(), platView({ ID: 'p2', Name: 'GLM', IsDefault: false })],
+        DefaultPlatform: 'p1',
+        ActiveModel: 'm1',
+      })
+      // 删除成功后的重拉：p1 已移除（Preset 置空避免「DeepSeek」预设标签干扰断言）
+      .mockResolvedValueOnce({
+        Enabled: true,
+        Platforms: [platView({ ID: 'p2', Name: 'GLM', IsDefault: true, Preset: '' })],
+        DefaultPlatform: 'p2',
+        ActiveModel: '',
+      });
     render(<Settings />);
     goModel();
     const p1 = (await screen.findAllByText('DeepSeek'))[0].closest('li')!;
     fireEvent.click(
-      within(p1.closest('li')!).getByRole('button', { name: tt('ui.settings.model.delete_platform') }),
+      within(p1).getByRole('button', { name: tt('ui.settings.model.delete_platform') }),
     );
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining('DeepSeek'));
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
+    await waitFor(() => expect(mocks.deleteModelPlatform).toHaveBeenCalledWith('p1'));
+    // 重拉后以服务端为准：DeepSeek 移除
+    await waitFor(() => expect(screen.queryByText('DeepSeek')).not.toBeInTheDocument());
     vi.unstubAllGlobals();
-
-    await waitFor(() => expect(mocks.setModelConfig).toHaveBeenCalledTimes(1));
-    const arg = mocks.setModelConfig.mock.calls[0][0];
-    expect(arg.Platforms.map((p: { ID: string }) => p.ID)).toEqual(['p2']);
   });
 
   it('取消删除确认时不改动平台列表', async () => {
@@ -1157,19 +1193,31 @@ describe('Settings', () => {
     expect(screen.getAllByText('DeepSeek').length).toBeGreaterThan(0);
   });
 
-  it('设为默认后保存载荷 DefaultPlatform 更新', async () => {
-    mocks.getModelConfig.mockResolvedValue({
-      Enabled: true,
-      Platforms: [platView(), platView({ ID: 'p2', Name: 'GLM', IsDefault: false })],
-      DefaultPlatform: 'p1',
-      ActiveModel: 'm1',
-    });
+  it('设为默认即时生效，表单保存载荷 DefaultPlatform 更新', async () => {
+    mocks.getModelConfig
+      .mockResolvedValueOnce({
+        Enabled: true,
+        Platforms: [platView(), platView({ ID: 'p2', Name: 'GLM', IsDefault: false })],
+        DefaultPlatform: 'p1',
+        ActiveModel: 'm1',
+      })
+      // 设为默认即时落盘后的重拉：默认平台已是 p2
+      .mockResolvedValueOnce({
+        Enabled: true,
+        Platforms: [platView({ IsDefault: false }), platView({ ID: 'p2', Name: 'GLM', IsDefault: true })],
+        DefaultPlatform: 'p2',
+        ActiveModel: 'm1',
+      });
     render(<Settings />);
     goModel();
     const p2 = (await screen.findByText('GLM')).closest('li')!;
     fireEvent.click(within(p2).getByRole('button', { name: tt('ui.settings.model.set_default') }));
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
+    await waitFor(() => expect(mocks.setDefaultPlatform).toHaveBeenCalledWith('p2'));
 
+    // 打开编辑表单保存：整包载荷携带已即时生效的默认平台
+    const p2row = (await screen.findByText('GLM')).closest('li')!;
+    fireEvent.click(within(p2row).getByRole('button', { name: tt('ui.settings.model.edit_platform') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
     await waitFor(() => expect(mocks.setModelConfig).toHaveBeenCalledTimes(1));
     expect(mocks.setModelConfig.mock.calls[0][0].DefaultPlatform).toBe('p2');
   });
@@ -1232,6 +1280,10 @@ describe('Settings', () => {
     goModel();
     const p2 = (await screen.findByText('GLM')).closest('li')!;
     fireEvent.click(within(p2).getByRole('button', { name: tt('ui.settings.model.set_default') }));
+    // 「设为默认」即时生效后重拉；随后打开 p2 的编辑表单走整包保存
+    await waitFor(() => expect(mocks.setDefaultPlatform).toHaveBeenCalledWith('p2'));
+    const p2row = (await screen.findByText('GLM')).closest('li')!;
+    fireEvent.click(within(p2row).getByRole('button', { name: tt('ui.settings.model.edit_platform') }));
     fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
 
     const sel = (await screen.findByLabelText(
@@ -1266,7 +1318,8 @@ describe('Settings', () => {
     });
     render(<Settings />);
     goModel();
-    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.save') }));
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.settings.model.edit_platform') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
 
     await waitFor(() => {
       expect(

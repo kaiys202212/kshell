@@ -42,6 +42,8 @@ import {
   setCloseBehavior,
   setLanguage,
   setModelConfig,
+  setModelEnabled as saveModelEnabled,
+  deleteModelPlatform,
   setPermissionMode,
   setSessionMode,
   uninstallBuiltinTool,
@@ -545,19 +547,16 @@ export default function Settings() {
     if (target && target.Models.length > 0 && !target.Models.includes(modelActive)) {
       setModelActive('');
     }
-    const applyRefetch = (v: Awaited<ReturnType<typeof getModelConfig>>) => {
-      setModelPlatforms(v.Platforms ?? []);
-      setModelDefault(v.DefaultPlatform || v.Platforms?.[0]?.ID || '');
-      setModelActive(v.ActiveModel ?? '');
-    };
-    const pendingEdits = !!platDraft || modelDirtyHint;
+    // 表单打开时本地有未落盘草稿：跳过重拉（整表替换会冲掉草稿），只按本地
+    // 状态翻默认标记。
+    const pendingEdits = !!platDraft;
     setDefaultPlatform(id)
       .then(() => {
         if (pendingEdits) {
           setModelPlatforms((prev) => prev.map((p) => ({ ...p, IsDefault: p.ID === id })));
           return;
         }
-        return getModelConfig().then(applyRefetch);
+        return getModelConfig().then(applyModelConfigView);
       })
       .catch((e: unknown) => {
         notify(backendError(e), 'error');
@@ -566,24 +565,55 @@ export default function Settings() {
           return;
         }
         getModelConfig()
-          .then(applyRefetch)
+          .then(applyModelConfigView)
           .catch(() => {});
       });
   };
 
-  // handleDeletePlatform：window.confirm 确认后本地移除；删的是默认平台时清空选择
-  //（后端回落第一个），并同步清掉不属于新默认平台的默认模型。
+  // handleDeletePlatform：window.confirm 确认后立即删除落盘（默认平台回落第一个、
+  // 悬空默认模型由后端清理），本地乐观移除随后以服务端重拉为准；失败回滚并提示。
   const handleDeletePlatform = (p: ModelPlatformView) => {
     if (!window.confirm(t('ui.settings.model.delete_confirm', { 0: p.Name }))) return;
+    const prevPlatforms = modelPlatforms;
+    const prevDefault = modelDefault;
+    const prevActive = modelActive;
     const rest = modelPlatforms.filter((x) => x.ID !== p.ID);
     setModelPlatforms(rest);
-    const newDefault = modelDefault === p.ID ? '' : modelDefault;
-    setModelDefault(newDefault);
-    const target = rest.find((x) => x.ID === newDefault) ?? rest[0];
-    if (target && target.Models.length > 0 && !target.Models.includes(modelActive)) {
-      setModelActive('');
+    if (modelDefault === p.ID) {
+      const next = rest[0]?.ID ?? '';
+      setModelDefault(next);
+      const target = rest.find((x) => x.ID === next);
+      if (modelActive && target && target.Models.length > 0 && !target.Models.includes(modelActive)) {
+        setModelActive('');
+      }
     }
-    setModelDirtyHint(true);
+    deleteModelPlatform(p.ID)
+      .then(() => getModelConfig())
+      .then(applyModelConfigView)
+      .catch((e: unknown) => {
+        notify(backendError(e), 'error');
+        setModelPlatforms(prevPlatforms);
+        setModelDefault(prevDefault);
+        setModelActive(prevActive);
+      });
+  };
+
+  // applyModelConfigView：把后端模型配置视图写入本地状态（重拉共用）。
+  const applyModelConfigView = (v: Awaited<ReturnType<typeof getModelConfig>>) => {
+    setModelPlatforms(v.Platforms ?? []);
+    setModelDefault(v.DefaultPlatform || v.Platforms?.[0]?.ID || '');
+    setModelActive(v.ActiveModel ?? '');
+  };
+
+  // handleToggleModelEnabled：启用开关立即落盘生效（关闭即调度清理同步）；
+  // 失败回退并提示。
+  const handleToggleModelEnabled = (on: boolean) => {
+    const prev = modelEnabled;
+    setModelEnabled(on);
+    saveModelEnabled(on).catch((e: unknown) => {
+      notify(backendError(e), 'error');
+      setModelEnabled(prev);
+    });
   };
 
   // mergeDraftPlatforms：把编辑中的平台按 ID 合并进列表并转成提交结构；
@@ -957,8 +987,13 @@ export default function Settings() {
       </nav>
 
       <div className="flex-1 overflow-y-auto p-6">
-        {/* skills / help 内容宽（卡片列表、长文档），放开限宽占满内容区；其余表单类分区保持窄栏易读 */}
-        <div className={cn(section !== 'skills' && section !== 'help' && 'max-w-2xl')}>
+        {/* skills / help 内容宽（卡片列表、长文档）；模型分区在表单展开时放开限宽以容纳左右两栏；其余表单类分区保持窄栏易读 */}
+        <div
+          className={cn(
+            (section !== 'skills' && section !== 'help' && !(section === 'model' && platDraft)) &&
+              'max-w-2xl',
+          )}
+        >
           <h1 className="mb-4 text-lg font-semibold">{t('ui.settings.title')}</h1>
 
           {section === 'general' && (
@@ -1240,11 +1275,13 @@ export default function Settings() {
                 <input
                   type="checkbox"
                   checked={modelEnabled}
-                  onChange={(e) => setModelEnabled(e.target.checked)}
+                  onChange={(e) => handleToggleModelEnabled(e.target.checked)}
                 />
                 {t('ui.settings.model.enable')}
               </label>
-              <div className="grid gap-2">
+              <div className={cn('grid gap-4', platDraft && 'lg:grid-cols-[minmax(0,1fr)_22rem]')}>
+                {/* 左列：默认模型 + 平台列表 + 新增入口 + WorkBuddy 导入 */}
+                <div className="grid min-w-0 content-start gap-2">
                 <label className="text-xs text-muted-foreground" htmlFor="model-active">
                   {t('ui.settings.model.active_model')}
                 </label>
@@ -1405,8 +1442,12 @@ export default function Settings() {
                   </div>
                 )}
 
+                <p className="text-xs text-muted-foreground">{t('ui.settings.model.desc')}</p>
+                </div>
+
+                {/* 右列：新增/编辑平台表单（保存即关闭） */}
                 {platDraft && (
-                  <div className="mt-1 grid gap-2 rounded border border-border bg-background p-2.5">
+                  <div className="grid content-start gap-2 self-start rounded border border-border bg-background p-2.5">
                     <p className="text-sm font-medium">{t('ui.settings.model.edit_platform')}</p>
                     <label className="text-xs text-muted-foreground" htmlFor="platform-name">
                       {t('ui.settings.model.platform_name')}
@@ -1595,6 +1636,9 @@ export default function Settings() {
                       </>
                     )}
                     <div className="flex flex-wrap gap-2">
+                      <Button type="button" onClick={() => void handleSaveModel()} disabled={modelSaving}>
+                        {t('ui.settings.model.save')}
+                      </Button>
                       <Button
                         variant="secondary"
                         type="button"
@@ -1609,13 +1653,6 @@ export default function Settings() {
                     </div>
                   </div>
                 )}
-
-                <div className="mt-1 flex flex-wrap gap-2">
-                  <Button onClick={() => void handleSaveModel()} disabled={modelSaving}>
-                    {t('ui.settings.model.save')}
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">{t('ui.settings.model.desc')}</p>
               </div>
             </section>
           )}

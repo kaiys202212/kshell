@@ -737,6 +737,8 @@ interface AppBindings {
   LoadExternalLocales(): Promise<Record<string, string>>;
   GetModelConfig(): Promise<ModelConfigView>;
   SetModelConfig(input: ModelConfigInput): Promise<void>;
+  SetModelEnabled(enabled: boolean): Promise<void>;
+  DeleteModelPlatform(platformID: string): Promise<void>;
   SetDefaultPlatform(platformID: string): Promise<void>;
   SetActiveModel(model: string): Promise<void>;
   GetToolSyncConfig(toolID: string): Promise<ToolSyncView>;
@@ -2149,6 +2151,20 @@ export interface ToolSyncInput {
   Claude: ClaudeSlots;
   OpenCode: Record<string, string[]>;
   CodeBuddy: string[];
+}
+
+// setModelEnabled 设置模型平台总开关并立即落盘生效（关闭即调度清理同步），错误向上抛。
+export async function setModelEnabled(enabled: boolean): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.SetModelEnabled(enabled);
+}
+
+// deleteModelPlatform 删除单个平台并立即落盘生效（默认平台回落、悬空默认模型清理），错误向上抛。
+export async function deleteModelPlatform(platformID: string): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.DeleteModelPlatform(platformID);
 }
 
 // setDefaultPlatform 设置默认平台并立即落盘生效（触发防抖同步），错误向上抛。
