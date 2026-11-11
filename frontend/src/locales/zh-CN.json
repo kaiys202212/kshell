@@ -8,6 +8,9 @@
     "backend": {
       "binding_missing": "未检测到后端绑定"
     },
+    "agenthub": {
+      "disabled": "AgentHub 未启用，无法{{0}}"
+    },
     "desktop": {
       "not_ready": "桌面版尚未初始化完成",
       "session_gone": "会话不存在或已被清理",
@@ -328,7 +331,8 @@
       "scan_hint": "用微信扫码，确认后自动完成绑定",
       "expired": "二维码已过期",
       "pending_undelivered": "未送达 {{count}} 条",
-      "error": "微信桥操作失败"
+      "error": "微信桥操作失败",
+      "agenthub_disabled_hint": "AgentHub 未启用，无法绑定微信"
     },
     "error_boundary": {
       "title": "界面出现异常",
@@ -340,11 +344,21 @@
       "nav": {
         "aria": "设置分区",
         "general": "通用",
+        "agenthub": "AgentHub",
         "weixin": "微信",
         "model": "模型",
         "tools": "工具",
         "skills": "Skill 广场",
         "help": "帮助"
+      },
+      "agenthub": {
+        "title": "AgentHub",
+        "enabled": "启用 AgentHub",
+        "enabled_hint": "关闭后 Hub 面板收起，微信扫码入口隐藏",
+        "heartbeat": "长任务心跳阈值（分钟）",
+        "patterns": "直通关键词（每行一条，留空用默认集：# 命令 / @ / continue / explain）",
+        "save": "保存",
+        "saved": "已保存"
       },
       "help": {
         "tab": {

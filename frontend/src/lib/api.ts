@@ -613,7 +613,21 @@ export interface WeixinStatusView {
   binding: string;
 }
 
+// desktop.AgentHubSettings 的 JSON 形态（internal/desktop/agenthub_settings.go）：
+// direct_patterns 为 null 表示走内置默认直通集。
+export interface AgentHubSettings {
+  enabled: boolean;
+  heartbeat_minutes: number;
+  direct_patterns: string[] | null;
+  default_tool: string;
+  default_model: string;
+  route_mode: string;
+}
+
 interface AppBindings {
+  GetAgentHubSettings(): Promise<AgentHubSettings>;
+  SaveAgentHubSettings(input: { heartbeat_minutes: number; direct_patterns: string[] }): Promise<void>;
+  SetAgentHubEnabled(enabled: boolean): Promise<void>;
   ScanSessions(): Promise<unknown>;
   GetWorkspaces(): Promise<Workspace[]>;
   GetSessions(): Promise<Session[]>;
@@ -2546,4 +2560,37 @@ export async function weixinStatus(): Promise<WeixinStatusView | null> {
   } catch {
     return null;
   }
+}
+
+// GetAgentHubSettings 返回 AgentHub 设置；无绑定时返回默认值（启用、5 分钟、默认直通集）。
+export async function getAgentHubSettings(): Promise<AgentHubSettings> {
+  const a = app();
+  if (!a) {
+    return {
+      enabled: true,
+      heartbeat_minutes: 5,
+      direct_patterns: null,
+      default_tool: '',
+      default_model: '',
+      route_mode: '',
+    };
+  }
+  return a.GetAgentHubSettings();
+}
+
+// SetAgentHubEnabled 立即翻转启用开关（关闭时 Hub 面板收起、微信扫码门控生效）。
+export async function setAgentHubEnabled(enabled: boolean): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.SetAgentHubEnabled(enabled);
+}
+
+// SaveAgentHubSettings 落盘心跳阈值与直通关键词（每行一条，空行/空白剔除由调用方完成）。
+export async function saveAgentHubSettings(
+  heartbeatMinutes: number,
+  directPatterns: string[],
+): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.SaveAgentHubSettings({ heartbeat_minutes: heartbeatMinutes, direct_patterns: directPatterns });
 }

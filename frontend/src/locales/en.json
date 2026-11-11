@@ -8,6 +8,9 @@
     "backend": {
       "binding_missing": "kshell backend binding not available"
     },
+    "agenthub": {
+      "disabled": "AgentHub is disabled; {{0}} unavailable"
+    },
     "desktop": {
       "not_ready": "Desktop is not initialized yet",
       "session_gone": "Session not found or has been cleaned up",
@@ -328,7 +331,8 @@
       "scan_hint": "Scan with WeChat; binding completes automatically after confirmation",
       "expired": "QR code expired",
       "pending_undelivered": "{{count}} undelivered",
-      "error": "WeChat bridge operation failed"
+      "error": "WeChat bridge operation failed",
+      "agenthub_disabled_hint": "AgentHub is disabled; WeChat binding unavailable"
     },
     "error_boundary": {
       "title": "Something went wrong",
@@ -340,11 +344,21 @@
       "nav": {
         "aria": "Settings sections",
         "general": "General",
+        "agenthub": "AgentHub",
         "weixin": "WeChat",
         "model": "Model",
         "tools": "Tools",
         "skills": "Skill Plaza",
         "help": "Help"
+      },
+      "agenthub": {
+        "title": "AgentHub",
+        "enabled": "Enable AgentHub",
+        "enabled_hint": "When off, the Hub panel collapses and the WeChat QR entry is hidden",
+        "heartbeat": "Heartbeat threshold for long-running tasks (minutes)",
+        "patterns": "Direct-pass keywords (one per line; empty uses defaults: # commands / @ / continue / explain)",
+        "save": "Save",
+        "saved": "Saved"
       },
       "help": {
         "tab": {

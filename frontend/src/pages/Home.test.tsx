@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   getWorkspaces: vi.fn(),
   scanSessions: vi.fn(),
   onScanDone: vi.fn(),
+  // Home 拉取 AgentHub 启用状态，默认启用（右列 Hub 正常渲染）
+  getAgentHubSettings: vi.fn().mockResolvedValue({ enabled: true, heartbeat_minutes: 5, direct_patterns: null, default_tool: '', default_model: '', route_mode: '' }),
   createProject: vi.fn(),
   addSSHProject: vi.fn(),
   listConnections: vi.fn(),
@@ -139,6 +141,22 @@ describe('Home', () => {
     expect(screen.getByTestId('home-right-col').className).toContain('w-9');
     // 折叠态不应出现面板头部的折叠按钮
     expect(screen.queryByRole('button', { name: tt('ui.hub.collapse_aria') })).toBeNull();
+  });
+
+  it('AgentHub 未启用：整列（折叠条+面板）不渲染', async () => {
+    mocks.getAgentHubSettings.mockResolvedValue({
+      enabled: false,
+      heartbeat_minutes: 5,
+      direct_patterns: null,
+      default_tool: '',
+      default_model: '',
+      route_mode: '',
+    });
+    render(<Home />);
+    await waitFor(() => expect(mocks.getAgentHubSettings).toHaveBeenCalled());
+    expect(screen.queryByTestId('hub-panel')).toBeNull();
+    expect(screen.queryByTestId('hub-collapse-strip')).toBeNull();
+    expect(screen.queryByTestId('home-right-col')).toBeNull();
   });
 
   it('折叠状态记忆：localStorage 为 0 时默认展开，为非法值回落默认折叠', () => {

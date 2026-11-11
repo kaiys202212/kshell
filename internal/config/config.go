@@ -192,6 +192,12 @@ const (
 	RouteModeForceAuto = "force_auto" // 全部强制走工具化链路
 )
 
+// AgentHub 编排参数缺省值：心跳阈值默认 5 分钟、上限 120 分钟。
+const (
+	agenthubHeartbeatDefault = 5
+	agenthubHeartbeatMax     = 120
+)
+
 // AgentHubConfig 是 AgentHub 的跨端持久化配置：前端「默认 agent 工具 + 模型」
 // 写穿到这里，微信桥等非浏览器端才能读到（localStorage 只存在于桌面端浏览器上下文）。
 type AgentHubConfig struct {
@@ -199,6 +205,54 @@ type AgentHubConfig struct {
 	DefaultModel string `yaml:"default_model"` // 快速新建默认模型 ID；空=工具自身默认；微信 EasyNew / 桌面写穿共用
 	// RouteMode 是输入路由模式：auto（默认）| agent | force_auto。
 	RouteMode string `yaml:"route_mode"`
+	// Enabled 是 AgentHub 总开关：nil（yaml 未写）=启用，显式 false=关闭。
+	// 关闭时 Hub 面板收起、微信扫码入口隐藏、微信桥不启动轮询。
+	Enabled *bool `yaml:"enabled,omitempty"`
+	// HeartbeatMinutes 是长任务心跳阈值（分钟）：聚合模式下会话持续 running 超过该
+	// 时长中途插一行提示；<=0 视为未配置归一为 5，上限 120。
+	HeartbeatMinutes int `yaml:"heartbeat_minutes,omitempty"`
+	// DirectPatterns 是逃生门白名单（前缀/首词匹配，智能路由不接管这些输入）。
+	// 空/nil = 使用 hub 包内置默认集（# 命令/@/continue/explain 由消费方定义）。
+	DirectPatterns []string `yaml:"direct_patterns,omitempty"`
+}
+
+// EnabledOn 返回总开关的生效值：nil 即启用（对存量配置保持现状）。
+func (c AgentHubConfig) EnabledOn() bool { return c.Enabled == nil || *c.Enabled }
+
+// Normalized 归一化 AgentHub 配置：路由模式非法回落 auto、心跳阈值钳默认/上限、
+// 逃生门白名单去空白项去重（全空置 nil）。供 Config.normalized 与写穿保存共用。
+func (c AgentHubConfig) Normalized() AgentHubConfig {
+	// 路由模式：空值或非法值一律回落 auto。
+	c.RouteMode = strings.TrimSpace(c.RouteMode)
+	switch c.RouteMode {
+	case RouteModeAuto, RouteModeAgent, RouteModeForceAuto:
+	default:
+		c.RouteMode = RouteModeAuto
+	}
+	// 编排参数：心跳阈值钳制、逃生门白名单去空白项去重。
+	if c.HeartbeatMinutes <= 0 {
+		c.HeartbeatMinutes = agenthubHeartbeatDefault
+	}
+	if c.HeartbeatMinutes > agenthubHeartbeatMax {
+		c.HeartbeatMinutes = agenthubHeartbeatMax
+	}
+	if len(c.DirectPatterns) > 0 {
+		seen := map[string]bool{}
+		pats := make([]string, 0, len(c.DirectPatterns))
+		for _, p := range c.DirectPatterns {
+			if p = strings.TrimSpace(p); p == "" || seen[p] {
+				continue
+			}
+			seen[p] = true
+			pats = append(pats, p)
+		}
+		if len(pats) == 0 {
+			c.DirectPatterns = nil
+		} else {
+			c.DirectPatterns = pats
+		}
+	}
+	return c
 }
 
 // isReleaseFn 是发布态判定的包级变量：默认走 version.IsRelease，测试可注入。
@@ -246,7 +300,7 @@ func Default() Config {
 		SessionMode:    SessionModeTUI,
 		PermissionMode: PermissionModeDefault,
 		Model:          ModelConfig{Models: []string{}, Platforms: []ModelPlatform{}},
-		AgentHub:       AgentHubConfig{RouteMode: RouteModeAuto},
+		AgentHub: AgentHubConfig{RouteMode: RouteModeAuto, HeartbeatMinutes: agenthubHeartbeatDefault},
 	}
 }
 
@@ -356,13 +410,8 @@ func (c Config) normalized() Config {
 	// 消费完即复位：归一化产物（Load 返回值）与手构造的 Config 保持可 DeepEqual；
 	// normalized 只在 Load 末尾调用一次，复位不影响显式 false 的保留语义。
 	c.autostartSet = false
-	// AgentHub 路由模式：空值或非法值一律回落 auto。
-	c.AgentHub.RouteMode = strings.TrimSpace(c.AgentHub.RouteMode)
-	switch c.AgentHub.RouteMode {
-	case RouteModeAuto, RouteModeAgent, RouteModeForceAuto:
-	default:
-		c.AgentHub.RouteMode = RouteModeAuto
-	}
+	// AgentHub 路由模式/编排参数归一（抽为 AgentHubConfig.Normalized 共用）。
+	c.AgentHub = c.AgentHub.Normalized()
 	// 模型配置：统一模型列表归一；旧 base_url / agents 迁移后清空。
 	c.Model.Preset = strings.TrimSpace(c.Model.Preset)
 	c.Model.OpenAIBaseURL = sanitizeHTTPURL(c.Model.OpenAIBaseURL)
