@@ -96,6 +96,11 @@ func TestAgentHubGateBlocksWeixinBind(t *testing.T) {
 		t.Fatalf("enable: %v", err)
 	}
 	// 恢复后放行：未配微信凭据时应返回 errNotReady 类错误而非门控错误。
+	// 测试气味说明：SetAgentHubEnabled(true) 会经 applyAgentHubGates 走
+	// startWeixin 内部 new 出的 Runtime，其 iLink baseURL 无注入点
+	//（Runtime.SetBaseURL 只能打在测试自建的 Runtime 上），因此这里
+	// Bind 放行分支会向真实默认端点发一次取二维码请求；不为此新建注入
+	// 基建，仅以断言只关注「非门控错误」来限定观察面。
 	if _, err := a.WeixinBind(); err != nil && strings.Contains(err.Error(), "agenthub") {
 		t.Fatalf("开启后仍被门控拦截: %v", err)
 	}

@@ -12,8 +12,11 @@ import (
 	"github.com/yangk/kshell/internal/weixin"
 )
 
-// startWeixin 装配微信运行时（Startup 末尾调用）：读配置、注入回调，凭据齐全则启动长轮询。
-// 幂等：重复调用只重建 Runtime 的回调装配，不重复 Start（Start 自身幂等）。
+// startWeixin 装配微信运行时（Startup 末尾调用；applyAgentHubGates 在总开关
+// 翻转/保存设置时也会重调）：读配置、注入回调，凭据齐全则启动长轮询。
+// 每次调用都重建一个新 Runtime 替换 a.wx；替换前先 Stop 旧实例——长轮询 goroutine
+// 挂在旧 Runtime 上，不 Stop 的话关闭总开关后旧实例仍会以真实 token 继续收发，
+// 与「关闭即停轮询」意图相悖。旧凭据保留在配置里，重新 Configure 即可恢复。
 func (a *App) startWeixin() {
 	cfg := a.snapshot().Config
 	r := weixin.NewRuntime(newWXExecutor(a), normalizeLanguage(cfg.Language))
@@ -38,8 +41,12 @@ func (a *App) startWeixin() {
 	}
 
 	a.mu.Lock()
+	old := a.wx
 	a.wx = r
 	a.mu.Unlock()
+	if old != nil {
+		old.Stop() // 开关翻转重建：停掉旧长轮询，防止关闭总开关后旧实例继续收发
+	}
 }
 
 // weixinTranscriber 返回语音转写函数：每次调用实时读模型平台配置，改配置即时
