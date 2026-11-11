@@ -35,8 +35,9 @@ func routeCfg(baseURL string) Config {
 }
 
 // TestRouteInputParse 覆盖路由决策的解析与校验：正常群发、越界/非法 action、
-// 无 JSON、JSON 夹杂废话、ask、expand 默认与钳制、group 下限、single 目标数、
-// 空 question、per_target 未知编号、单发超时降级。
+// 无 JSON、JSON 夹杂废话、ask、expand 默认/钳制/负值、group 下限与重复编号、
+// 空 text 空 per_target、single 目标数、空 question、per_target 未知/非法/越界键、
+// 单发超时降级。
 func TestRouteInputParse(t *testing.T) {
 	sessions := routeTestSessions()
 
@@ -44,6 +45,7 @@ func TestRouteInputParse(t *testing.T) {
 		name    string
 		content string
 		wantErr bool
+		errStr  string // wantErr 时断言错误包含该子串（空则不检查）
 		check   func(t *testing.T, d RouteDecision)
 	}{
 		{
@@ -68,16 +70,19 @@ func TestRouteInputParse(t *testing.T) {
 			name:    "编号越界",
 			content: `{"action":"single","targets":[9],"text":"hi"}`,
 			wantErr: true,
+			errStr:  "不在会话快照内",
 		},
 		{
 			name:    "非法 action",
 			content: `{"action":"dance","text":"hi"}`,
 			wantErr: true,
+			errStr:  "未知路由 action",
 		},
 		{
 			name:    "纯文本无 JSON",
 			content: "我觉得应该发到群里",
 			wantErr: true,
+			errStr:  "不含 JSON 对象",
 		},
 		{
 			name:    "JSON 夹杂前后废话",
@@ -119,6 +124,34 @@ func TestRouteInputParse(t *testing.T) {
 			name:    "group 只有 1 个目标",
 			content: `{"action":"group","targets":[1],"text":"hi"}`,
 			wantErr: true,
+			errStr:  "至少 2",
+		},
+		{
+			name:    "group 重复编号去重后不足 2",
+			content: `{"action":"group","targets":[1,1],"text":"hi"}`,
+			wantErr: true,
+			errStr:  "至少 2",
+		},
+		{
+			name:    "group 空 text 空 per_target",
+			content: `{"action":"group","targets":[1,2]}`,
+			wantErr: true,
+			errStr:  "缺少投递内容",
+		},
+		{
+			name:    "expand_num 越界",
+			content: `{"action":"expand","expand_num":9}`,
+			wantErr: true,
+			errStr:  "不在会话快照内",
+		},
+		{
+			name:    "expand_count 负值归默认 5",
+			content: `{"action":"expand","expand_num":2,"expand_count":-3}`,
+			check: func(t *testing.T, d RouteDecision) {
+				if d.ExpandCount != 5 {
+					t.Errorf("ExpandCount = %d, want 5", d.ExpandCount)
+				}
+			},
 		},
 		{
 			name:    "single 留空 targets 投当前",
@@ -147,11 +180,25 @@ func TestRouteInputParse(t *testing.T) {
 			name:    "ask 空 question",
 			content: `{"action":"ask","question":"  "}`,
 			wantErr: true,
+			errStr:  "question",
 		},
 		{
 			name:    "per_target 含快照外编号",
 			content: `{"action":"group","targets":[1,2],"text":"hi","per_target":{"5":"x"}}`,
 			wantErr: true,
+			errStr:  "快照外编号",
+		},
+		{
+			name:    "per_target 非数字键",
+			content: `{"action":"group","targets":[1,2],"text":"hi","per_target":{"abc":"x"}}`,
+			wantErr: true,
+			errStr:  "编号格式非法",
+		},
+		{
+			name:    "per_target 在快照内但不在 targets 内",
+			content: `{"action":"single","targets":[1],"text":"hi","per_target":{"2":"x"}}`,
+			wantErr: true,
+			errStr:  "不在 targets 内",
 		},
 	}
 
@@ -162,6 +209,9 @@ func TestRouteInputParse(t *testing.T) {
 			if c.wantErr {
 				if err == nil {
 					t.Fatalf("期望校验/解析错误，得到决策 %+v", d)
+				}
+				if c.errStr != "" && !strings.Contains(err.Error(), c.errStr) {
+					t.Fatalf("错误 %q 未包含子串 %q", err.Error(), c.errStr)
 				}
 				return
 			}
@@ -175,23 +225,29 @@ func TestRouteInputParse(t *testing.T) {
 	}
 }
 
-// TestRouteInputTimeout 验证 2s 降级时限：假端点挂起 3s，调用必须在时限内
-// 返回错误，调用方据此直投原文。
+// TestRouteInputTimeout 验证 2s 降级时限：假端点挂起 10s，调用必须在时限内
+// 返回错误，调用方据此直投原文。teardown 通道保证 Cleanup 不等满 10s。
 func TestRouteInputTimeout(t *testing.T) {
+	teardown := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
-		case <-time.After(3 * time.Second):
+		case <-time.After(10 * time.Second):
 		case <-r.Context().Done():
+		case <-teardown:
 		}
 	}))
-	t.Cleanup(srv.Close)
+	t.Cleanup(func() {
+		close(teardown)
+		srv.CloseClientConnections()
+		srv.Close()
+	})
 
 	start := time.Now()
 	_, err := RouteInput(context.Background(), routeCfg(srv.URL), routeTestSessions(), "hi")
 	if err == nil {
 		t.Fatal("超时时应返回错误")
 	}
-	if d := time.Since(start); d > 3*time.Second {
+	if d := time.Since(start); d > 2500*time.Millisecond {
 		t.Fatalf("超时降级未生效，耗时 %v", d)
 	}
 }
@@ -207,10 +263,13 @@ func TestRouteInputPrompt(t *testing.T) {
 		"1 claude A running",
 		"2 codex B idle",
 		"3 gemini C gone",
+		"running=运行中",
 		input,
 		"只输出一个 JSON 对象",
 		"至少 2",
 		"ask",
+		"运行/等待授权/闲置状态",
+		"最近消息详情",
 	} {
 		if !strings.Contains(p, want) {
 			t.Errorf("提示词缺少 %q:\n%s", want, p)
