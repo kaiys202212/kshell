@@ -510,6 +510,75 @@ func (a *App) SetActiveModel(model string) error {
 	return nil
 }
 
+// SetModelEnabled 设置模型平台总开关并立即落盘生效，随后调度一次防抖同步：
+// 关闭时 SyncInput.Enabled=false，各目标走既有清理分支清掉 kshell 注入物。
+func (a *App) SetModelEnabled(enabled bool) error {
+	if err := a.saveConfig(func(c *config.Config) {
+		c.Model.Enabled = enabled
+	}); err != nil {
+		return err
+	}
+	a.scheduleAgentSync()
+	return nil
+}
+
+// DeleteModelPlatform 删除单个平台并立即落盘生效，随后调度一次防抖同步。
+// 删除的是默认平台时回落第一个；新默认平台有模型列表且不含 ActiveModel 时
+// 悬空清空，无平台则连同 DefaultPlatform/ActiveModel 一并清空
+//（与 SetModelConfig 归一化同语义）。
+func (a *App) DeleteModelPlatform(platformID string) error {
+	platformID = strings.TrimSpace(platformID)
+	exists := false
+	for _, p := range a.snapshot().Config.Model.Platforms {
+		if p.ID == platformID {
+			exists = true
+			break
+		}
+	}
+	if !exists {
+		return fmt.Errorf("err.settings.model_platform_not_found|%s", platformID)
+	}
+	err := a.saveConfig(func(c *config.Config) {
+		rest := make([]config.ModelPlatform, 0, len(c.Model.Platforms))
+		for _, p := range c.Model.Platforms {
+			if p.ID == platformID {
+				continue
+			}
+			rest = append(rest, p)
+		}
+		c.Model.Platforms = rest
+		if c.Model.DefaultPlatform == platformID {
+			if len(rest) > 0 {
+				c.Model.DefaultPlatform = rest[0].ID
+			} else {
+				c.Model.DefaultPlatform = ""
+			}
+		}
+		if c.Model.ActiveModel != "" {
+			def, _ := c.Model.ActivePlatform()
+			if def.ID == "" {
+				c.Model.ActiveModel = ""
+			} else if len(def.Models) > 0 {
+				hit := false
+				for _, m := range def.Models {
+					if m == c.Model.ActiveModel {
+						hit = true
+						break
+					}
+				}
+				if !hit {
+					c.Model.ActiveModel = ""
+				}
+			}
+		}
+	})
+	if err != nil {
+		return err
+	}
+	a.scheduleAgentSync()
+	return nil
+}
+
 // GetToolSyncConfig 返回单个工具的定制模型同步配置（视图副本）。
 func (a *App) GetToolSyncConfig(toolID string) (ToolSyncView, error) {
 	toolID = strings.TrimSpace(toolID)
