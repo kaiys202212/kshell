@@ -108,7 +108,7 @@ type Bridge struct {
 	// directPatternsFn 是逃生门白名单查询函数（desktop 注入，实时读配置）；
 	// nil 时回落 hub.DefaultDirectPatterns。
 	directPatternsFn func() []string
-	// routeRound 是连续反问轮次（反问链最多 routeMaxRounds 轮）；mu 保护。
+	// routeRound 是连续反问轮次（反问链最多 hubtools.AskMaxRounds 轮）；mu 保护。
 	// 只增不减的正确性依赖入站单 goroutine 串行处理（Stop/重绑前先停轮询）。
 	routeRound int
 	// toolName 按工具 ID 查展示名（desktop 注入，与欢迎词归因同源）；
