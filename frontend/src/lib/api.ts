@@ -798,6 +798,7 @@ interface AppBindings {
   RecallHubMessage(id: number): Promise<void>;
   HubCommand(text: string): Promise<HubReply[]>;
   HubPickTarget(text: string): Promise<HubPickView>;
+  HubSmartSend(text: string): Promise<HubPickView>;
   SaveHubDefaultCreate(toolID: string, modelID: string): Promise<void>;
   SaveHubRouteMode(mode: string): Promise<void>;
   ConfirmHubTool(chatID: string, pendingID: string, approved: boolean): Promise<void>;
@@ -1841,6 +1842,15 @@ export async function hubPickTarget(text: string): Promise<HubPickView> {
   const a = app();
   if (!a) return { Replies: [], Pending: false };
   return a.HubPickTarget(text);
+}
+
+// hubSmartSend 在无精确目标时先试智能路由（internal/desktop/hubroute.go
+// HubSmartSend）：成功则执行决策并返回回执；Pending=true 表示未接管（逃生门/
+// 菜单挂起/反问超限/未配置/不可执行），调用方回落 hubPickTarget 待选菜单。
+export async function hubSmartSend(text: string): Promise<HubPickView> {
+  const a = app();
+  if (!a) return { Replies: [], Pending: true };
+  return a.HubSmartSend(text);
 }
 
 // saveHubDefaultCreate 把「默认 agent 工具 + 模型」写穿到后端 config.yaml

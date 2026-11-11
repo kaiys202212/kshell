@@ -32,6 +32,7 @@ const api = vi.hoisted(() => ({
   recallHubMessage: vi.fn(),
   hubCommand: vi.fn(),
   hubPickTarget: vi.fn(),
+  hubSmartSend: vi.fn(),
   saveHubDefaultCreate: vi.fn().mockResolvedValue(undefined),
   saveHubRouteMode: vi.fn().mockResolvedValue(undefined),
   confirmHubTool: vi.fn().mockResolvedValue(undefined),
@@ -96,6 +97,8 @@ beforeEach(() => {
   api.recallHubMessage.mockResolvedValue(undefined);
   api.hubCommand.mockResolvedValue([]);
   api.hubPickTarget.mockResolvedValue({ Replies: [], Pending: false });
+  // 默认智能路由不接管：既有用例继续走待选菜单回落路径。
+  api.hubSmartSend.mockResolvedValue({ Replies: [], Pending: true });
   api.listRequirements.mockResolvedValue([]);
   api.markRequirementDispatched.mockResolvedValue(undefined);
   dispatchRequirement.mockResolvedValue(undefined);
@@ -466,6 +469,59 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe(''));
     await waitFor(() =>
       expect(useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '未精确匹配到会话——回复编号')).toBe(true),
+    );
+  });
+
+  it('无精确目标：智能路由命中（Pending=false）回显回执、清空草稿且不进待选', async () => {
+    api.hubSmartSend.mockResolvedValue({ Replies: [{ Text: '已发送给 2 个会话' }], Pending: false });
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '发给大家' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.hubSmartSend).toHaveBeenCalledWith('发给大家'));
+    expect(api.hubPickTarget).not.toHaveBeenCalled();
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe(''));
+    await waitFor(() =>
+      expect(useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '已发送给 2 个会话')).toBe(true),
+    );
+  });
+
+  it('无精确目标：智能路由未接管（Pending=true）回落待选菜单', async () => {
+    api.hubSmartSend.mockResolvedValue({ Replies: [], Pending: true });
+    api.hubPickTarget.mockResolvedValue({
+      Replies: [{ Text: '未精确匹配到会话——回复编号' }],
+      Pending: true,
+    });
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '这句给谁' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.hubPickTarget).toHaveBeenCalledWith('这句给谁'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe(''));
+    await waitFor(() =>
+      expect(useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '未精确匹配到会话——回复编号')).toBe(true),
+    );
+  });
+
+  it('无精确目标：智能路由调用失败也回落待选菜单', async () => {
+    api.hubSmartSend.mockRejectedValue(new Error('route boom'));
+    api.hubPickTarget.mockResolvedValue({
+      Replies: [{ Text: '请选编号' }],
+      Pending: true,
+    });
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '别丢' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.hubPickTarget).toHaveBeenCalledWith('别丢'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '请选编号')).toBe(true),
     );
   });
 

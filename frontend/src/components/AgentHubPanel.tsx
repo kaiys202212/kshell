@@ -17,6 +17,7 @@ import {
   getSessions,
   hubCommand,
   hubPickTarget,
+  hubSmartSend,
   listChatCommands,
   listChatModels,
   listHubArchive,
@@ -933,7 +934,7 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
     }
   };
 
-  const send = () => {
+  const send = async () => {
     const text = draft.trim();
     if (!text) return;
     // @ 标签只供 Hub 路由：命令探测与投递正文都用剥离后的 body，
@@ -989,7 +990,17 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
     // 回落链与 currentTargetId 共用 fallbackId（见上）。
     const targetId = resolveMentionTarget(text, options, fallbackId);
     if (!targetId) {
-      // 无精确目标：把正文交给共享命令层列会话并暂存，用户回复数字后由
+      // 无精确目标：先试智能路由（后端处理逃生门/Busy/反问轮次并决定是否
+      // 回落）。Pending=false 表示后端已执行决策并返回回执，直接回显即可；
+      // Pending=true/调用失败则回落既有待选菜单路径（原文仍在草稿里）。
+      const smart = await hubSmartSend(text).catch(() => null);
+      if (smart && !smart.Pending) {
+        for (const r of smart.Replies ?? []) useAppStore.getState().pushHubLocal(r.Text);
+        // 等待期间用户若改了草稿，不覆盖新内容。
+        setDraft((d) => (d.trim() === text ? '' : d));
+        return;
+      }
+      // 回落：把正文交给共享命令层列会话并暂存，用户回复数字后由
       // HubCommand（数字透传路径）完成激活与发送；微信桥同语义。仅当后端
       // 确实建立了待选菜单才清草稿（无会话/其他菜单进行中时保留正文）；
       // 等待期间用户若改了草稿，也不覆盖新内容。

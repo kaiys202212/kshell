@@ -1,12 +1,106 @@
 package desktop
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"github.com/yangk/kshell/internal/hub"
 	"github.com/yangk/kshell/internal/hubtools"
 )
+
+// smartRouterFunc 是智能路由闭包的形态（与 weixin.InputRouter 同签名），
+// 便于测试注入桩；生产默认使用 weixinInputRouter。
+type smartRouterFunc func(ctx context.Context, input string) (hubtools.RouteDecision, bool)
+
+// smartAskMaxRounds 是桌面 Hub 反问链的连续轮数上限（与微信桥
+// routeMaxRounds 同值）：达到后下一条自由文本直接回落待选，避免反问无限套娃。
+const smartAskMaxRounds = 2
+
+// HubSmartSend 是桌面端 Hub 面板「自由文本无精确目标」的智能路由入口：
+// 路由成功→执行决策返回回执（Pending=false，前端回显并清草稿）；逃生门/
+// 待选菜单挂起/反问超限/未配置/路由不消费/决策不可执行→Pending=true，让
+// 前端回落既有待选菜单（原文由前端草稿暂存保留，不丢用户正文）。
+//
+// 轮次语义与微信桥 dispatchConsole 对齐：ask 决策累加轮次并返回单条反问；
+// 非 ask 决策/降级路径清零，保证反问链被打断后不悬挂。
+func (a *App) HubSmartSend(text string) (HubPickView, error) {
+	if !a.snapshot().ready() {
+		return HubPickView{}, errNotReady
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return HubPickView{Pending: true}, nil
+	}
+	// 逃生门（#/@/continue/explain 及用户自定义词）与命令层菜单挂起时不接管，
+	// 交前端回落既有确定性路径；两种情形都视为打断反问链，轮次清零。
+	if hub.IsDirectPass(text, a.agenthubDirectPatterns()) || a.wxHubConsole().Busy() {
+		a.setSmartAskRound(0)
+		return HubPickView{Pending: true}, nil
+	}
+	// 反问链已满：本轮不再路由，轮次清零并回落待选（与微信桥一致）。
+	a.mu.Lock()
+	round := a.smartAskRound
+	if round >= smartAskMaxRounds {
+		a.smartAskRound = 0
+	}
+	a.mu.Unlock()
+	if round >= smartAskMaxRounds {
+		return HubPickView{Pending: true}, nil
+	}
+	d, handled := a.smartRoute(a.desktopContext(), text)
+	if !handled {
+		a.setSmartAskRound(0)
+		return HubPickView{Pending: true}, nil
+	}
+	replies, ok := executeRoute(a, d, text)
+	if !ok || len(replies) == 0 {
+		a.setSmartAskRound(0)
+		return HubPickView{Pending: true}, nil
+	}
+	if d.Action == "ask" {
+		a.incSmartAskRound()
+	} else {
+		a.setSmartAskRound(0)
+	}
+	return HubPickView{Replies: replies, Pending: false}, nil
+}
+
+// smartRoute 取路由闭包并执行一次决策：注入桩优先，nil 时惰性用
+// weixinInputRouter（实时读配置，与微信桥同一快照来源）。
+func (a *App) smartRoute(ctx context.Context, input string) (hubtools.RouteDecision, bool) {
+	a.mu.Lock()
+	fn := a.smartRouter
+	a.mu.Unlock()
+	if fn == nil {
+		fn = smartRouterFunc(a.weixinInputRouter())
+	}
+	return fn(ctx, input)
+}
+
+// desktopContext 取 Wails 启动上下文（未启动/测试为 Background）。
+func (a *App) desktopContext() context.Context {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.ctx != nil {
+		return a.ctx
+	}
+	return context.Background()
+}
+
+// setSmartAskRound 写反问轮次（mu 保护）。
+func (a *App) setSmartAskRound(n int) {
+	a.mu.Lock()
+	a.smartAskRound = n
+	a.mu.Unlock()
+}
+
+// incSmartAskRound 反问轮次自增（mu 保护）。
+func (a *App) incSmartAskRound() {
+	a.mu.Lock()
+	a.smartAskRound++
+	a.mu.Unlock()
+}
 
 // executeRoute 把路由决策落成 Console 动作。校验失败/无法执行时返回
 // handled=false，调用方降级直投（投递的永远是用户原文，original 仅供调用方

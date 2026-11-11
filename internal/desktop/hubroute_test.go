@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -372,6 +373,201 @@ func TestExecuteRouteDecision(t *testing.T) {
 		_, handled := executeRoute(fx.app, hubtools.RouteDecision{Action: "status"}, "用户原文")
 		if !handled {
 			t.Fatal("status 无会话应 handled=true（#st 自行渲染空态）")
+		}
+	})
+}
+
+// smartRoundOf 读取反问轮次（mu 保护）。
+func smartRoundOf(a *App) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.smartAskRound
+}
+
+// injectSmartRouter 注入路由桩并返回调用计数指针。
+func injectSmartRouter(fx *routeFixture, d hubtools.RouteDecision, handled bool) *int {
+	calls := 0
+	fx.app.mu.Lock()
+	fx.app.smartRouter = func(context.Context, string) (hubtools.RouteDecision, bool) {
+		calls++
+		return d, handled
+	}
+	fx.app.mu.Unlock()
+	return &calls
+}
+
+// TestHubSmartSend 覆盖桌面 Hub 智能路由入口：决策执行/反问轮次/降级回落。
+func TestHubSmartSend(t *testing.T) {
+	t.Run("group 决策执行并返回回执", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		calls := injectSmartRouter(fx, hubtools.RouteDecision{
+			Action: "group", Targets: []int{1, 3}, Text: "统一正文",
+		}, true)
+		view, err := fx.app.HubSmartSend("发给大家")
+		if err != nil {
+			t.Fatalf("HubSmartSend: %v", err)
+		}
+		if view.Pending {
+			t.Fatal("成功路由应 Pending=false")
+		}
+		if *calls != 1 {
+			t.Fatalf("router 调用 = %d, 期望 1", *calls)
+		}
+		if len(fx.ex.sendCalls) != 2 {
+			t.Fatalf("sendCalls = %+v", fx.ex.sendCalls)
+		}
+		wantPrefix := fmt.Sprintf(hub.CmdText("zh-CN", "group_sent"), "")
+		if len(view.Replies) != 1 || !strings.HasPrefix(view.Replies[0].Text, wantPrefix) {
+			t.Fatalf("回执 = %+v, want 前缀 %q", view.Replies, wantPrefix)
+		}
+		if got := smartRoundOf(fx.app); got != 0 {
+			t.Fatalf("非 ask 决策后轮次应清零, got %d", got)
+		}
+	})
+
+	t.Run("ask 反问计入轮次，第三次超限回落待选", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		calls := injectSmartRouter(fx, hubtools.RouteDecision{
+			Action: "ask", Question: "你指的是哪个会话？",
+		}, true)
+		want := hub.CmdText("zh-CN", "route_ask_prefix") + "你指的是哪个会话？"
+
+		// 第 1、2 次：仍路由，返回单条反问。
+		for i := 1; i <= 2; i++ {
+			view, err := fx.app.HubSmartSend("这句给谁")
+			if err != nil {
+				t.Fatalf("第 %d 次 HubSmartSend: %v", i, err)
+			}
+			if view.Pending || len(view.Replies) != 1 || view.Replies[0].Text != want {
+				t.Fatalf("第 %d 次回执 = %+v pending=%v", i, view.Replies, view.Pending)
+			}
+			if got := smartRoundOf(fx.app); got != i {
+				t.Fatalf("第 %d 次后轮次 = %d, 期望 %d", i, got, i)
+			}
+		}
+
+		// 第 3 次：轮次已满，不再调 router，Pending=true 且轮次清零。
+		view, err := fx.app.HubSmartSend("第三次")
+		if err != nil {
+			t.Fatalf("第三次 HubSmartSend: %v", err)
+		}
+		if !view.Pending {
+			t.Fatal("轮次超限应 Pending=true")
+		}
+		if *calls != 2 {
+			t.Fatalf("轮次超限不应调 router, calls=%d", *calls)
+		}
+		if got := smartRoundOf(fx.app); got != 0 {
+			t.Fatalf("轮次超限后应清零, got %d", got)
+		}
+	})
+
+	t.Run("router 不消费则回落待选", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		calls := injectSmartRouter(fx, hubtools.RouteDecision{}, false)
+		view, err := fx.app.HubSmartSend("原文不能丢")
+		if err != nil {
+			t.Fatalf("HubSmartSend: %v", err)
+		}
+		if !view.Pending {
+			t.Fatal("handled=false 应 Pending=true 交前端回落待选")
+		}
+		if *calls != 1 {
+			t.Fatalf("router 调用 = %d, 期望 1", *calls)
+		}
+		if len(fx.ex.sendCalls) != 0 {
+			t.Fatalf("不得发送: %+v", fx.ex.sendCalls)
+		}
+	})
+
+	t.Run("模型未配（默认 router）回落待选", func(t *testing.T) {
+		fx := newRouteFixture(t) // 未注入 smartRouter，走 weixinInputRouter
+		view, err := fx.app.HubSmartSend("没配模型")
+		if err != nil {
+			t.Fatalf("HubSmartSend: %v", err)
+		}
+		if !view.Pending {
+			t.Fatal("模型未配应 Pending=true")
+		}
+		if len(fx.ex.sendCalls) != 0 {
+			t.Fatalf("不得发送: %+v", fx.ex.sendCalls)
+		}
+	})
+
+	t.Run("逃生门命令不进路由", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		calls := injectSmartRouter(fx, hubtools.RouteDecision{Action: "group", Targets: []int{1, 2}, Text: "x"}, true)
+		view, err := fx.app.HubSmartSend("#g 1 hi")
+		if err != nil {
+			t.Fatalf("HubSmartSend: %v", err)
+		}
+		if !view.Pending {
+			t.Fatal("逃生门应 Pending=true 交前端走命令路径")
+		}
+		if *calls != 0 {
+			t.Fatalf("逃生门不应调 router, calls=%d", *calls)
+		}
+	})
+
+	t.Run("待选菜单挂起时让路", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		// 先建立待选菜单（Busy=true）。
+		if pick, err := fx.app.HubPickTarget("先选目标"); err != nil || !pick.Pending {
+			t.Fatalf("fixture 应能建立待选菜单: view=%+v err=%v", pick, err)
+		}
+		calls := injectSmartRouter(fx, hubtools.RouteDecision{Action: "status"}, true)
+		view, err := fx.app.HubSmartSend("菜单挂起中的文本")
+		if err != nil {
+			t.Fatalf("HubSmartSend: %v", err)
+		}
+		if !view.Pending {
+			t.Fatal("Busy 应 Pending=true")
+		}
+		if *calls != 0 {
+			t.Fatalf("Busy 不应调 router, calls=%d", *calls)
+		}
+	})
+
+	t.Run("非 ask 决策打断反问链并清零轮次", func(t *testing.T) {
+		fx := newRouteFixture(t)
+
+		// 第一次 ask → 轮次 1。
+		injectSmartRouter(fx, hubtools.RouteDecision{Action: "ask", Question: "问一次"}, true)
+		if _, err := fx.app.HubSmartSend("第一次"); err != nil {
+			t.Fatalf("ask: %v", err)
+		}
+		if got := smartRoundOf(fx.app); got != 1 {
+			t.Fatalf("ask 后轮次 = %d, 期望 1", got)
+		}
+
+		// 换成 status 决策 → 轮次清零。
+		fx.app.mu.Lock()
+		fx.app.smartRouter = func(context.Context, string) (hubtools.RouteDecision, bool) {
+			return hubtools.RouteDecision{Action: "expand", ExpandNum: 1}, true
+		}
+		fx.app.mu.Unlock()
+		fx.ex.recent = map[string][]hub.Message{
+			fx.refs[0].ChatID: {{Kind: "agent", Text: "详情甲"}},
+		}
+		fx.c.Handle("#l")
+		if _, err := fx.app.HubSmartSend("看看详情"); err != nil {
+			t.Fatalf("expand: %v", err)
+		}
+		if got := smartRoundOf(fx.app); got != 0 {
+			t.Fatalf("非 ask 决策后轮次 = %d, 期望 0", got)
+		}
+
+		// 再来一次 ask：应重新从 1 计数（说明上一轮确实清零）。
+		fx.app.mu.Lock()
+		fx.app.smartRouter = func(context.Context, string) (hubtools.RouteDecision, bool) {
+			return hubtools.RouteDecision{Action: "ask", Question: "再问一次"}, true
+		}
+		fx.app.mu.Unlock()
+		if _, err := fx.app.HubSmartSend("第二次问"); err != nil {
+			t.Fatalf("ask 2: %v", err)
+		}
+		if got := smartRoundOf(fx.app); got != 1 {
+			t.Fatalf("重新 ask 后轮次 = %d, 期望 1", got)
 		}
 	})
 }

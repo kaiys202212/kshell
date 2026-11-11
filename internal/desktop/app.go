@@ -203,6 +203,12 @@ type App struct {
 	// 与微信 bridge console)与出站镜像 mirrorAggregated 指到同一实例,任一
 	// 渠道发起的群发对出站镜像同样生效。mu 保护(惰性创建)。
 	mirrorPolicy *hub.MirrorPolicy
+	// smartRouter 是桌面 Hub 智能路由的注入点（测试可覆写）；nil 时惰性使用
+	// weixinInputRouter（与微信桥同款实时读配置快照）。mu 保护。
+	smartRouter smartRouterFunc
+	// smartAskRound 是桌面 Hub 反问链的连续轮数（ask 决策累加，非 ask 清零）。
+	// 达到上限后下一条自由文本不再路由。mu 保护。
+	smartAskRound int
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。
