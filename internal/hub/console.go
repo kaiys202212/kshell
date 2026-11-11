@@ -131,6 +131,14 @@ func (c *Console) MirrorPolicy() *MirrorPolicy {
 	return c.agg
 }
 
+// Busy 报告 Console 是否有未决交互（待选菜单/权限菜单/新建向导等）：
+// 路由层据此让路——菜单流期间输入一律走既有确定性路径，不被智能路由接管。
+func (c *Console) Busy() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.menu != nil || c.perm != nil
+}
+
 // SetMirrorPolicy 共享替换（nil 拒绝，保持自建兜底）。
 func (c *Console) SetMirrorPolicy(p *MirrorPolicy) {
 	c.mu.Lock()
