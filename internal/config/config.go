@@ -173,7 +173,19 @@ type AgentHubConfig struct {
 	DefaultModel string `yaml:"default_model"` // 快速新建默认模型 ID；空=工具自身默认；微信 EasyNew / 桌面写穿共用
 	// RouteMode 是输入路由模式：auto（默认）| agent | force_auto。
 	RouteMode string `yaml:"route_mode"`
+	// Enabled 是 AgentHub 总开关：nil（yaml 未写）=启用，显式 false=关闭。
+	// 关闭时 Hub 面板收起、微信扫码入口隐藏、微信桥不启动轮询。
+	Enabled *bool `yaml:"enabled,omitempty"`
+	// HeartbeatMinutes 是长任务心跳阈值（分钟）：聚合模式下会话持续 running 超过该
+	// 时长中途插一行提示；<=0 视为未配置归一为 5，上限 120。
+	HeartbeatMinutes int `yaml:"heartbeat_minutes,omitempty"`
+	// DirectPatterns 是逃生门白名单（前缀/首词匹配，智能路由不接管这些输入）。
+	// 空/nil = 使用 hub 包内置默认集（# 命令/@/continue/explain 由消费方定义）。
+	DirectPatterns []string `yaml:"direct_patterns,omitempty"`
 }
+
+// EnabledOn 返回总开关的生效值：nil 即启用（对存量配置保持现状）。
+func (c AgentHubConfig) EnabledOn() bool { return c.Enabled == nil || *c.Enabled }
 
 // isReleaseFn 是发布态判定的包级变量：默认走 version.IsRelease，测试可注入。
 var isReleaseFn = version.IsRelease
@@ -336,6 +348,26 @@ func (c Config) normalized() Config {
 	case RouteModeAuto, RouteModeAgent, RouteModeForceAuto:
 	default:
 		c.AgentHub.RouteMode = RouteModeAuto
+	}
+	// AgentHub 编排参数：心跳阈值钳制、逃生门白名单去空白项。
+	if c.AgentHub.HeartbeatMinutes <= 0 {
+		c.AgentHub.HeartbeatMinutes = 5
+	}
+	if c.AgentHub.HeartbeatMinutes > 120 {
+		c.AgentHub.HeartbeatMinutes = 120
+	}
+	if len(c.AgentHub.DirectPatterns) > 0 {
+		pats := make([]string, 0, len(c.AgentHub.DirectPatterns))
+		for _, p := range c.AgentHub.DirectPatterns {
+			if p = strings.TrimSpace(p); p != "" {
+				pats = append(pats, p)
+			}
+		}
+		if len(pats) == 0 {
+			c.AgentHub.DirectPatterns = nil
+		} else {
+			c.AgentHub.DirectPatterns = pats
+		}
 	}
 	// 模型配置：统一模型列表归一；旧 base_url / agents 迁移后清空。
 	c.Model.Preset = strings.TrimSpace(c.Model.Preset)

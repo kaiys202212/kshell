@@ -56,6 +56,8 @@ func TestSaveIsAtomicAndRoundTrips(t *testing.T) {
 	want := Default()
 	want.MaxDepth = 3
 	want.ScanRoots = []string{filepath.Join("D:", "data", "workspace")}
+	// heartbeat_minutes 带 omitempty：零值不落盘，Load 归一补 5，round-trip 基准对齐。
+	want.AgentHub.HeartbeatMinutes = 5
 
 	if err := Save(p, want); err != nil {
 		t.Fatalf("Save() error: %v", err)
