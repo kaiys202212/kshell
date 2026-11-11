@@ -989,11 +989,11 @@ export default function Settings() {
       </nav>
 
       <div className="flex-1 overflow-y-auto p-6">
-        {/* skills / help 内容宽（卡片列表、长文档）；模型分区在表单展开时放开限宽以容纳左右两栏；其余表单类分区保持窄栏易读 */}
+        {/* skills / help 内容宽（卡片列表、长文档）；模型分区在表单展开时放宽到 4xl 容纳左右两栏（有界，不再全宽拉伸）；其余表单类分区保持窄栏易读 */}
         <div
           className={cn(
-            (section !== 'skills' && section !== 'help' && !(section === 'model' && platDraft)) &&
-              'max-w-2xl',
+            section !== 'skills' && section !== 'help' && 'max-w-2xl',
+            section === 'model' && platDraft && 'md:max-w-4xl',
           )}
         >
           <h1 className="mb-4 text-lg font-semibold">{t('ui.settings.title')}</h1>
@@ -1282,7 +1282,7 @@ export default function Settings() {
                 />
                 {t('ui.settings.model.enable')}
               </label>
-              <div className={cn('grid gap-4', platDraft && 'lg:grid-cols-[minmax(0,1fr)_22rem]')}>
+              <div className={cn('grid gap-4', platDraft && 'md:grid-cols-[minmax(0,1fr)_24rem]')}>
                 {/* 左列：默认模型 + 平台列表 + 新增入口 + WorkBuddy 导入 */}
                 <div className="grid min-w-0 content-start gap-2">
                 <label className="text-xs text-muted-foreground" htmlFor="model-active">
@@ -1450,7 +1450,7 @@ export default function Settings() {
 
                 {/* 右列：新增/编辑平台表单（保存即关闭） */}
                 {platDraft && (
-                  <div className="grid content-start gap-2 self-start rounded border border-border bg-background p-2.5">
+                  <div className="grid min-w-0 content-start gap-2 self-start rounded border border-border bg-background p-2.5">
                     <p className="text-sm font-medium">{t('ui.settings.model.edit_platform')}</p>
                     <label className="text-xs text-muted-foreground" htmlFor="platform-name">
                       {t('ui.settings.model.platform_name')}
@@ -1582,7 +1582,7 @@ export default function Settings() {
                       <input
                         aria-label={t('ui.settings.model.add_model')}
                         placeholder={t('ui.settings.model.add_model')}
-                        className={inputClass}
+                        className={cn(inputClass, 'min-w-0 flex-1')}
                         value={modelNewModel}
                         onChange={(e) => setModelNewModel(e.target.value)}
                       />
