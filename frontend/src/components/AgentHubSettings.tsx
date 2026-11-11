@@ -46,8 +46,12 @@ export function AgentHubSettings() {
       .split('\n')
       .map((s) => s.trim())
       .filter(Boolean);
+    // 钳制到 1..120 同步回 UI（非有限数回落 5，后端还会再做一次归一）
+    const hb = Math.round(heartbeat);
+    const clamped = Number.isFinite(hb) ? Math.max(1, Math.min(120, hb)) : 5;
+    setHeartbeat(clamped);
     try {
-      await saveAgentHubSettings(heartbeat, list);
+      await saveAgentHubSettings(clamped, list);
       setDirty(false);
       notify(t('ui.settings.agenthub.saved'), 'info');
     } catch (e: unknown) {

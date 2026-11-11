@@ -159,6 +159,20 @@ describe('WeixinSettings', () => {
     expect(screen.getByRole('button', { name: tt('ui.weixin.rebind') })).toBeInTheDocument();
   });
 
+  it('AgentHub 未启用时渲染禁用提示且不发起绑定', async () => {
+    mocks.getAgentHubSettings.mockResolvedValue({
+      enabled: false,
+      heartbeat_minutes: 5,
+      direct_patterns: null,
+      default_tool: '',
+      default_model: '',
+      route_mode: '',
+    });
+    render(<WeixinSettings />);
+    expect(await screen.findByText(tt('ui.weixin.agenthub_disabled_hint'))).toBeInTheDocument();
+    expect(mocks.weixinBind).not.toHaveBeenCalled();
+  });
+
   it('weixinStatus 调用失败显示错误文案', async () => {
     mocks.weixinStatus.mockRejectedValue(new Error('boom'));
     render(<WeixinSettings />);

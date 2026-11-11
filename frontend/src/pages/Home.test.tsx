@@ -143,6 +143,22 @@ describe('Home', () => {
     expect(screen.queryByRole('button', { name: tt('ui.hub.collapse_aria') })).toBeNull();
   });
 
+  it('AgentHub 未启用：整列（折叠条+面板）不渲染', async () => {
+    mocks.getAgentHubSettings.mockResolvedValue({
+      enabled: false,
+      heartbeat_minutes: 5,
+      direct_patterns: null,
+      default_tool: '',
+      default_model: '',
+      route_mode: '',
+    });
+    render(<Home />);
+    await waitFor(() => expect(mocks.getAgentHubSettings).toHaveBeenCalled());
+    expect(screen.queryByTestId('hub-panel')).toBeNull();
+    expect(screen.queryByTestId('hub-collapse-strip')).toBeNull();
+    expect(screen.queryByTestId('home-right-col')).toBeNull();
+  });
+
   it('折叠状态记忆：localStorage 为 0 时默认展开，为非法值回落默认折叠', () => {
     localStorage.setItem('kshell.hub.collapsed', '0');
     const { unmount } = render(<Home />);
