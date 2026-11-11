@@ -1005,6 +1005,8 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
         // 交给路由器的是剥离 @ 标签后的 body（与 send() 内命令探测口径一致）。
         const smart = await hubSmartSend(body).catch(() => null);
         if (smart && !smart.Pending) {
+          // 与待选回落路径同口径：用户原话先可见（本地瞬态）再回显回执。
+          useAppStore.getState().pushHubLocalUser(text);
           for (const r of smart.Replies ?? []) useAppStore.getState().pushHubLocal(r.Text);
           // 等待期间用户若改了草稿，不覆盖新内容。
           setDraft((d) => (d.trim() === text ? '' : d));

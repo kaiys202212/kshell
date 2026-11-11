@@ -486,6 +486,10 @@ describe('AgentHubPanel', () => {
     await waitFor(() =>
       expect(useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '已发送给 2 个会话')).toBe(true),
     );
+    // 命中分支也要回显用户原话（与待选回落路径同口径）
+    expect(
+      useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.kind === 'user' && m.text === '发给大家'),
+    ).toBe(true);
   });
 
   it('无精确目标：智能路由未接管（Pending=true）回落待选菜单', async () => {
