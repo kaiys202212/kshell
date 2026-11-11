@@ -36,9 +36,17 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 	}
 
 	models := sliceOfMaps(doc["models"])
+	def := pickPlatform(in)
+	// 勾选集：用户在 codebuddy 定制页勾选的模型（裸 mid）。
+	selected := make(map[string]bool, len(in.ToolSync.CodeBuddy))
+	for _, mid := range in.ToolSync.CodeBuddy {
+		if mid = strings.TrimSpace(mid); mid != "" {
+			selected[mid] = true
+		}
+	}
 	// claim：既有 kshell 条目的裸 mid（兼容旧 "kshell-<plat>/<mid>" 与新裸名
-	// 两种格式）∪ 默认平台裸 mid。用于清掉与之碰撞的 vendor=user 镜像
-	//（/model 里的 Custom），以及平台已删后的孤儿。非默认平台的 mid 不 claim：
+	// 两种格式）∪ 本次勾选集。用于清掉与之碰撞的 vendor=user 镜像
+	//（/model 里的 Custom），以及平台已删后的孤儿。未勾选的旧平台 mid 不 claim：
 	// 其模型不再注入，用户的同名自定义条目应保留。claim 构建与 Enabled 无关
 	//（禁用时同样清掉镜像条目，仅不再写入新条目）。
 	claim := map[string]bool{}
@@ -54,13 +62,8 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 			}
 		}
 	}
-	def := pickPlatform(in)
-	if def != nil {
-		for _, mid := range def.Models {
-			if mid = strings.TrimSpace(mid); mid != "" {
-				claim[mid] = true
-			}
-		}
+	for mid := range selected {
+		claim[mid] = true
 	}
 
 	kept := make([]map[string]any, 0, len(models))
@@ -101,11 +104,8 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 			if platName == "" {
 				platName = def.ID
 			}
-			for _, mid := range def.Models {
-				mid = strings.TrimSpace(mid)
-				if mid == "" {
-					continue
-				}
+			// 只写勾选条目：id=裸模型名（CLI 原样透传上游）、展示名带平台前缀。
+			for mid := range selected {
 				kept = append(kept, map[string]any{
 					"id":     mid,
 					"name":   platName + ": " + mid,

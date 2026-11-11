@@ -51,8 +51,14 @@ func (o OpenCode) Sync(home string, in SyncInput) error {
 			if base == "" {
 				continue
 			}
+			// 只注入用户勾选的模型：该平台未勾选任何模型时不建 provider
+			//（先清后建语义下即不出现）。
+			selected := in.ToolSync.OpenCode[p.ID]
+			if len(selected) == 0 {
+				continue
+			}
 			models := map[string]any{}
-			for _, m := range p.Models {
+			for _, m := range selected {
 				m = strings.TrimSpace(m)
 				if m == "" {
 					continue
@@ -65,6 +71,9 @@ func (o OpenCode) Sync(home string, in SyncInput) error {
 					"reasoning":  true,
 					"tool_call":  true,
 				}
+			}
+			if len(models) == 0 {
+				continue
 			}
 			name := strings.TrimSpace(p.Name)
 			if name == "" {

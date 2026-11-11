@@ -9,9 +9,10 @@ import (
 	"github.com/yangk/kshell/internal/config"
 )
 
-// inDefault 构造两平台输入：p1（智谱）与 p2（beta），默认平台由 def 指定。
+// inDefault 构造两平台输入：p1（智谱）与 p2（beta），默认平台由 def 指定；
+// codebuddy 勾选集跟随默认平台全量模型（旧用例语义）。
 func inDefault(def string) SyncInput {
-	return SyncInput{
+	in := SyncInput{
 		Enabled: true,
 		Platforms: []config.ModelPlatform{
 			{ID: "p1", Name: "智谱", OpenAIBaseURL: "https://api.example/v1",
@@ -21,6 +22,12 @@ func inDefault(def string) SyncInput {
 		},
 		DefaultPlatformID: def,
 	}
+	if def == "p2" {
+		in.ToolSync.CodeBuddy = []string{"ds-x", "p2mid"}
+	} else {
+		in.ToolSync.CodeBuddy = []string{"glm-x"}
+	}
+	return in
 }
 
 // CodeBuddy CLI 把自定义条目 id 剥掉 custom-local: 后原样作为上游 model 透传，
@@ -221,6 +228,7 @@ func TestCodeBuddySyncRemovesUserMirrorOfClaimedMids(t *testing.T) {
 			ID: "default", Name: "openai", OpenAIBaseURL: "https://api.example/v1",
 			APIKey: "sk", Models: []string{"glm-5.3-flash"},
 		}},
+		ToolSync: config.ToolSyncConfig{CodeBuddy: []string{"glm-5.3-flash"}},
 	}
 	if err := (CodeBuddy{}).Sync(home, in); err != nil {
 		t.Fatalf("Sync: %v", err)
@@ -269,6 +277,7 @@ func TestCodeBuddySyncRemovesOrphanUserMirrorOfOldKshell(t *testing.T) {
 			ID: "default", Name: "openai", OpenAIBaseURL: "https://api.example/v1",
 			APIKey: "sk", Models: []string{"other"},
 		}},
+		ToolSync: config.ToolSyncConfig{CodeBuddy: []string{"other"}},
 	}
 	if err := (CodeBuddy{}).Sync(home, in); err != nil {
 		t.Fatalf("Sync: %v", err)

@@ -90,7 +90,10 @@ func TestSyncAllToolOffCleansOnlyTarget(t *testing.T) {
 		OpenAIBaseURL: "https://api.example.com",
 		Models:        []string{"m1"},
 	}}
-	allOn := config.ToolSyncConfig{Enabled: map[string]bool{"opencode": true, "codebuddy": true}}
+	allOn := config.ToolSyncConfig{
+		Enabled:  map[string]bool{"opencode": true, "codebuddy": true},
+		OpenCode: map[string][]string{"p1": {"m1"}},
+	}
 	in := SyncInput{Enabled: true, Platforms: plat, ToolSync: allOn}
 	if err := SyncAll(home, in, []string{"opencode", "codebuddy"}); err != nil {
 		t.Fatalf("预置注入失败: %v", err)
@@ -114,7 +117,10 @@ func TestSyncAllToolOffCleansOnlyTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	off := SyncInput{Enabled: true, Platforms: plat, ToolSync: config.ToolSyncConfig{Enabled: map[string]bool{"opencode": true}}}
+	off := SyncInput{Enabled: true, Platforms: plat, ToolSync: config.ToolSyncConfig{
+		Enabled:  map[string]bool{"opencode": true},
+		OpenCode: map[string][]string{"p1": {"m1"}},
+	}}
 	if err := SyncAll(home, off, []string{"opencode", "codebuddy"}); err != nil {
 		t.Fatalf("ToolOff 同步失败: %v", err)
 	}

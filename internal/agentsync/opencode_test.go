@@ -40,8 +40,9 @@ func TestOpenCodeSyncCreatesProviderNamespace(t *testing.T) {
 		Enabled: true,
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", Name: "智谱", OpenAIBaseURL: "https://api.zhipu.example/v1",
-			APIKey: "sk-z", Models: []string{"glm-x", "glm-y"},
+			APIKey: "sk-z", Models: []string{"glm-x", "glm-y", "glm-z"},
 		}},
+		ToolSync: config.ToolSyncConfig{OpenCode: map[string][]string{"p1": {"glm-x", "glm-y"}}},
 	}
 	if err := (OpenCode{}).Sync(home, in); err != nil {
 		t.Fatalf("Sync: %v", err)
@@ -71,7 +72,7 @@ func TestOpenCodeSyncCreatesProviderNamespace(t *testing.T) {
 	}
 	models, _ := ks["models"].(map[string]any)
 	if len(models) != 2 {
-		t.Fatalf("models = %#v", models)
+		t.Fatalf("models 应只含勾选的 2 个: %#v", models)
 	}
 	for _, id := range []string{"glm-x", "glm-y"} {
 		m, ok := models[id].(map[string]any)
@@ -108,7 +109,10 @@ func TestOpenCodeSyncRemovesStaleAndSkipsNoOpenAI(t *testing.T) {
 		Platforms: []config.ModelPlatform{
 			{ID: "ant-only", Name: "仅 Anthropic", AnthropicBaseURL: "https://ant.example", APIKey: "k", Models: []string{"m"}},
 			{ID: "p2", Name: "P2", OpenAIBaseURL: "https://oai.example/v1", APIKey: "k2", Models: []string{"m2"}},
+			{ID: "p3", Name: "P3", OpenAIBaseURL: "https://oai3.example/v1", APIKey: "k3", Models: []string{"m3"}},
 		},
+		// p2 有勾选、p3 无勾选：p3 不建 provider。
+		ToolSync: config.ToolSyncConfig{OpenCode: map[string][]string{"p2": {"m2"}}},
 	}
 	if err := (OpenCode{}).Sync(home, in); err != nil {
 		t.Fatalf("Sync: %v", err)
@@ -120,6 +124,9 @@ func TestOpenCodeSyncRemovesStaleAndSkipsNoOpenAI(t *testing.T) {
 	}
 	if _, ok := prov["kshell-ant-only"]; ok {
 		t.Fatal("无 OpenAI URL 不应写入")
+	}
+	if _, ok := prov["kshell-p3"]; ok {
+		t.Fatal("未勾选平台不应写入")
 	}
 	if _, ok := prov["keep"]; !ok {
 		t.Fatal("应保留 keep")

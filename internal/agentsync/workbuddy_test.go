@@ -11,7 +11,8 @@ import (
 )
 
 // wbDefaultInput 构造「默认平台为 WorkBuddy」的输入：workbuddy 平台无静态
-// 端点/密钥（动态凭据），另一个普通平台不作为默认。
+// 端点/密钥（动态凭据），另一个普通平台不作为默认；opencode 对普通平台 p1
+// 有勾选（验证默认平台为 WorkBuddy 时也不受影响）。
 func wbDefaultInput() SyncInput {
 	return SyncInput{
 		Enabled: true,
@@ -20,6 +21,9 @@ func wbDefaultInput() SyncInput {
 			{ID: "p1", Name: "智谱", OpenAIBaseURL: "https://api.example/v1", APIKey: "sk", Models: []string{"glm-x"}},
 		},
 		DefaultPlatformID: "wb",
+		ToolSync: config.ToolSyncConfig{
+			OpenCode: map[string][]string{"p1": {"glm-x"}},
+		},
 	}
 }
 
