@@ -212,25 +212,33 @@ func TestBridgeRouterHook(t *testing.T) {
 		}
 	})
 
-	t.Run("纯数字与命令不触发路由", func(t *testing.T) {
+	t.Run("命令不进路由而纯数字进路由", func(t *testing.T) {
 		ex := &fakeExec{
 			sessions: []hub.SessionRef{{ChatID: "c1", Title: "会话A"}, {ChatID: "c2", Title: "会话B"}},
 			hasCur:   true, current: hub.SessionRef{ChatID: "c1", Title: "会话A"},
 		}
 		b, _ := newRouteBridge(t, ex)
 		stub := &routerStub{fn: func(context.Context, string) (hubtools.RouteDecision, bool) {
-			return hubtools.RouteDecision{Action: "status"}, true
+			return hubtools.RouteDecision{}, false // 不消费：回落 Handle 原文
 		}}
 		b.SetRouter(stub.router())
 
-		b.HandleInbound("u1", "ct-0", "#l") // 建立编号映射
-		b.HandleInbound("u1", "ct-1", "2")  // 编号切换
+		b.HandleInbound("u1", "ct-0", "#l") // 命令：无条件逃生门，不问路由器
 		if stub.calls != 0 {
-			t.Fatalf("命令与纯数字不应进路由, 实际调用 %d 次 (%v)", stub.calls, stub.inputs)
+			t.Fatalf("命令不应进路由, 实际调用 %d 次 (%v)", stub.calls, stub.inputs)
 		}
-		// 纯数字仍走既有编号切换语义（#l 后 2 → 第二个会话 c2）。
+		b.HandleInbound("u1", "ct-1", "2") // 纯数字：按 T2 规格进路由（语境由路由器决断）
+		if stub.calls != 1 {
+			t.Fatalf("纯数字应进路由, 实际调用 %d 次", stub.calls)
+		}
+		// 路由器不消费：回落 Handle 原文，仍走既有编号切换语义（#l 后 2 → c2）。
 		if len(ex.switchCalls) != 1 || ex.switchCalls[0] != "c2" {
-			t.Fatalf("纯数字应走编号切换: %v", ex.switchCalls)
+			t.Fatalf("纯数字应回落编号切换: %v", ex.switchCalls)
+		}
+		// 全角数字同样进路由（与半角口径一致，语境判断交给路由器）。
+		b.HandleInbound("u1", "ct-2", "２")
+		if stub.calls != 2 {
+			t.Fatalf("全角数字应进路由, 实际调用 %d 次", stub.calls)
 		}
 	})
 }
@@ -288,6 +296,149 @@ func TestBridgeExecuteRouteText(t *testing.T) {
 		})
 		if len(replies) == 0 {
 			t.Fatal("expand 应返回命令回复（无消息时也回提示）")
+		}
+	})
+
+	t.Run("status 合成 #st 透传状态行", func(t *testing.T) {
+		ex.statuses = []hub.SessionStatus{{Ref: ex.sessions[0], State: "running", Summary: "正在修复登录"}}
+		defer func() { ex.statuses = nil }()
+		replies := b.executeRouteText(context.Background(), "原文", hubtools.RouteDecision{Action: "status"})
+		if len(replies) == 0 {
+			t.Fatal("status 应返回 #st 回复")
+		}
+		if !strings.Contains(replies[0].Text, "正在修复登录") {
+			t.Fatalf("status 回复缺状态摘要: %q", replies[0].Text)
+		}
+	})
+
+	t.Run("single 合法编号直投该会话", func(t *testing.T) {
+		b.console.Handle("#l") // 建立编号映射语境
+		before := len(ex.sentTexts)
+		replies := b.executeRouteText(context.Background(), "原文", hubtools.RouteDecision{
+			Action: "single", Targets: []int{2}, Text: "单发乙",
+		})
+		if len(replies) == 0 {
+			t.Fatal("single 应返回回执")
+		}
+		if len(ex.sentTexts) != before+1 || ex.sentTexts[before] != "单发乙" {
+			t.Fatalf("single 应回执目标会话乙: %v", ex.sentTexts)
+		}
+	})
+
+	t.Run("group 优先 PerTargetText", func(t *testing.T) {
+		before := len(ex.sentTexts)
+		replies := b.executeRouteText(context.Background(), "原文", hubtools.RouteDecision{
+			Action:        "group",
+			Targets:       []int{1, 2},
+			Text:          "统一正文",
+			PerTargetText: map[string]string{"1": "甲专属"},
+		})
+		if len(replies) == 0 {
+			t.Fatal("group 应返回回执")
+		}
+		if len(ex.sentTexts) != before+2 || ex.sentTexts[before] != "甲专属" || ex.sentTexts[before+1] != "统一正文" {
+			t.Fatalf("目标1应收到改写文本、目标2退统一正文: %v", ex.sentTexts[before:])
+		}
+	})
+}
+
+// TestBridgeRouteAttachmentBypass 回归：带附件合并的文本一律走确定性 Handle
+// 原路径，不进智能路由（附件说明行与用户文字按原样转交当前会话，队列语义照旧）。
+func TestBridgeRouteAttachmentBypass(t *testing.T) {
+	ex := &fakeExec{
+		sessions: []hub.SessionRef{{ChatID: "c1", Title: "会话A"}, {ChatID: "c2", Title: "会话B"}},
+		hasCur:   true, current: hub.SessionRef{ChatID: "c1", Title: "会话A"},
+	}
+	b, _ := newRouteBridge(t, ex)
+	stub := &routerStub{fn: func(context.Context, string) (hubtools.RouteDecision, bool) {
+		return hubtools.RouteDecision{Action: "group", Targets: []int{1, 2}, Text: "路由正文"}, true
+	}}
+	b.SetRouter(stub.router())
+
+	// 附件入队（直接注入，绕过下载路径）。
+	b.mu.Lock()
+	b.queue = append(b.queue, queuedFile{Name: "需求.pdf", Path: t.TempDir() + "/需求.pdf"})
+	b.mu.Unlock()
+
+	b.HandleInbound("u1", "ct-1", "帮我修复登录")
+	if stub.calls != 0 {
+		t.Fatalf("带附件文本不应进路由, 实际调用 %d 次", stub.calls)
+	}
+	if len(ex.sentTexts) != 1 {
+		t.Fatalf("应走 Handle 原路径合并投递, 实际: %v", ex.sentTexts)
+	}
+	if !strings.Contains(ex.sentTexts[0], "[附件] 需求.pdf") || !strings.Contains(ex.sentTexts[0], "帮我修复登录") {
+		t.Fatalf("合并文本缺附件说明行或用户文字: %q", ex.sentTexts[0])
+	}
+	if b.QueuedFiles() != 0 {
+		t.Fatalf("合并成功后队列应清空, 实际 %d", b.QueuedFiles())
+	}
+}
+
+// TestBridgeRouteRoundClearedByInterruption 回归：ask 反问之后插入逃生门/
+// 命令/引用等不进路由的消息，routeRound 必须清零，轮次不得悬挂。
+func TestBridgeRouteRoundClearedByInterruption(t *testing.T) {
+	newB := func(t *testing.T) (*Bridge, *fakeExec) {
+		t.Helper()
+		ex := &fakeExec{
+			sessions: []hub.SessionRef{{ChatID: "c1", Title: "会话A"}, {ChatID: "c2", Title: "会话B"}},
+			hasCur:   true, current: hub.SessionRef{ChatID: "c1", Title: "会话A"},
+		}
+		b, _ := newRouteBridge(t, ex)
+		stub := &routerStub{fn: func(context.Context, string) (hubtools.RouteDecision, bool) {
+			return hubtools.RouteDecision{Action: "ask", Question: "要发给哪个会话？"}, true
+		}}
+		b.SetRouter(stub.router())
+		return b, ex
+	}
+
+	setup := func(b *Bridge) {
+		b.HandleInbound("u1", "ct-a", "帮我看看") // 反问一轮
+		if b.routeRoundValue() != 1 {
+			t.Fatalf("前置反问轮次 = %d, 期望 1", b.routeRoundValue())
+		}
+	}
+
+	t.Run("逃生门打断清零", func(t *testing.T) {
+		b, ex := newB(t)
+		setup(b)
+		b.HandleInbound("u1", "ct-b", "continue") // 默认逃生门：直发，不进路由
+		if b.routeRoundValue() != 0 {
+			t.Fatalf("逃生门打断后轮次应清零, 实际 %d", b.routeRoundValue())
+		}
+		if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "continue" {
+			t.Fatalf("逃生门应直发当前会话: %v", ex.sentTexts)
+		}
+	})
+
+	t.Run("命令打断清零", func(t *testing.T) {
+		b, _ := newB(t)
+		setup(b)
+		b.HandleInbound("u1", "ct-b", "#l")
+		if b.routeRoundValue() != 0 {
+			t.Fatalf("命令打断后轮次应清零, 实际 %d", b.routeRoundValue())
+		}
+	})
+
+	t.Run("引用打断清零", func(t *testing.T) {
+		b, _ := newB(t)
+		setup(b)
+		b.rememberSvrID("9001", "c2")
+		b.HandleInboundMsg(context.Background(), quoteMsg("ct-b", "9001", "【会话B】旧回复", "续问"))
+		if b.routeRoundValue() != 0 {
+			t.Fatalf("引用打断后轮次应清零, 实际 %d", b.routeRoundValue())
+		}
+	})
+
+	t.Run("菜单挂起打断清零", func(t *testing.T) {
+		b, _ := newB(t)
+		setup(b)
+		if _, pending := b.PickTarget("暂存正文"); !pending {
+			t.Fatal("应成功建立待选菜单")
+		}
+		b.HandleInbound("u1", "ct-b", "自由文本")
+		if b.routeRoundValue() != 0 {
+			t.Fatalf("菜单挂起打断后轮次应清零, 实际 %d", b.routeRoundValue())
 		}
 	})
 }

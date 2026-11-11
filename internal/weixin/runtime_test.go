@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/yangk/kshell/internal/hub"
+	"github.com/yangk/kshell/internal/hubtools"
 )
 
 // fakeExec 已在 bridge_test.go 定义，runtime 测试直接复用。
@@ -382,5 +383,41 @@ func TestRuntimeSetTranscriberForwards(t *testing.T) {
 	r.SetTranscriber(nil)
 	if b := r.GetBridge(); b.transcriberFn() != nil {
 		t.Fatal("SetTranscriber 应即时转发给现有 bridge")
+	}
+}
+
+func TestRuntimeSetRouterForwards(t *testing.T) {
+	r := NewRuntime(nil, "zh-CN")
+	// Configure 前装配：创建 bridge 时注入。
+	r.SetRouter(func(ctx context.Context, input string) (hubtools.RouteDecision, bool) {
+		return hubtools.RouteDecision{}, false
+	})
+	r.baseURL = "http://unused" // 不真正轮询
+	r.Configure("tok", "")
+	if b := r.GetBridge(); b == nil || b.routerFn() == nil {
+		t.Fatal("Configure 后 bridge 应持有 router")
+	}
+	// Configure 后再装配：现有 bridge 即时生效（重绑重建同样生效）。
+	r.SetRouter(nil)
+	if b := r.GetBridge(); b.routerFn() != nil {
+		t.Fatal("SetRouter 应即时转发给现有 bridge")
+	}
+}
+
+func TestRuntimeSetDirectPatternsForwards(t *testing.T) {
+	r := NewRuntime(nil, "zh-CN")
+	// Configure 前装配：创建 bridge 时注入。
+	r.SetDirectPatterns(func() []string { return []string{"hello"} })
+	r.baseURL = "http://unused" // 不真正轮询
+	r.Configure("tok", "")
+	if b := r.GetBridge(); b == nil {
+		t.Fatal("Configure 后应有 bridge")
+	} else if pats := b.directPatterns(); len(pats) != 1 || pats[0] != "hello" {
+		t.Fatalf("Configure 后 bridge 应持有 directPatterns, got %v", pats)
+	}
+	// Configure 后再装配：现有 bridge 即时生效（重绑重建同样生效）。
+	r.SetDirectPatterns(nil)
+	if b := r.GetBridge(); b.directPatterns() == nil {
+		t.Fatal("SetDirectPatterns(nil) 应回落内置默认集")
 	}
 }

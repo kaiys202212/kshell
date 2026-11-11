@@ -121,15 +121,31 @@ func routeTextFor(d hubtools.RouteDecision, n int) string {
 }
 
 // routeBriefs 把命令层会话列表映射为路由器快照：编号 = ListSessions 索引+1
-// （与 #l / bridge executeRouteText / executeRoute 的编号语境同源）。Status
-// 只做可投递性粗判：终端占用的会话记 gone（不可投递），其余记 idle——路由器
-// 只需要可投递目标，无需精确运行态。
-func routeBriefs(refs []hub.SessionRef) []hubtools.SessionBrief {
+// （与 #l / bridge executeRouteText / executeRoute 的编号语境同源），不重排
+// 不增删。Status 取 SessionStatuses 的真实状态（running/perm/idle/gone）：
+// 按活跃 chat 的 ChatID（退 SessionID/Key）对齐；列表里但不在 statuses 的
+// 会话（磁盘会话无活跃 chat）保留可投递性粗判兜底：终端占用 → gone（不可
+// 投递），其余 → idle。
+func routeBriefs(refs []hub.SessionRef, statuses []hub.SessionStatus) []hubtools.SessionBrief {
+	byRef := make(map[string]hub.SessionStatus, len(statuses))
+	for _, s := range statuses {
+		for _, k := range []string{s.Ref.ChatID, s.Ref.SessionID, s.Ref.Key} {
+			if k != "" {
+				byRef[k] = s
+			}
+		}
+	}
 	out := make([]hubtools.SessionBrief, 0, len(refs))
 	for i := range refs {
 		status := "idle"
 		if refs[i].TerminalActive {
 			status = "gone"
+		}
+		for _, k := range []string{refs[i].ChatID, refs[i].SessionID, refs[i].Key} {
+			if s, ok := byRef[k]; ok {
+				status = s.State
+				break
+			}
 		}
 		tool := refs[i].Tool
 		if tool == "" {

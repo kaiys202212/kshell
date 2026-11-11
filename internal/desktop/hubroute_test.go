@@ -129,6 +129,44 @@ func newRouteFixture(t *testing.T) *routeFixture {
 	return &routeFixture{app: app, c: c, ex: ex, refs: refs}
 }
 
+// TestRouteBriefsRealStates 覆盖 routeBriefs 的真实状态映射：statuses 命中的
+// 行用真实 State，未命中（磁盘会话无活跃 chat）保留兜底（终端占用 gone /
+// 其余 idle），编号保持 ListSessions 顺序不重排。
+func TestRouteBriefsRealStates(t *testing.T) {
+	refs := []hub.SessionRef{
+		{ChatID: "c1", SessionID: "s1", Key: "k1", Tool: "claude", Title: "甲", TerminalActive: true},
+		{ChatID: "c2", SessionID: "s2", Key: "k2", Tool: "codex", Title: "乙"},
+		{ChatID: "c3", SessionID: "s3", Key: "k3", Tool: "gemini", Title: "丙"},
+		{ChatID: "c4", SessionID: "s4", Key: "k4", Tool: "cursor", Title: "丁"},
+		{Tool: "claude", Title: "磁盘会话（无 ChatID）", TerminalActive: true},
+	}
+	statuses := []hub.SessionStatus{
+		{Ref: hub.SessionRef{ChatID: "c1", SessionID: "s1"}, State: "running"},
+		{Ref: hub.SessionRef{ChatID: "c2", SessionID: "s2"}, State: "perm"},
+		{Ref: hub.SessionRef{ChatID: "c3", SessionID: "s3"}, State: "idle"},
+	}
+	got := routeBriefs(refs, statuses)
+	if len(got) != len(refs) {
+		t.Fatalf("briefs 条数 = %d, 期望 %d", len(got), len(refs))
+	}
+	wantState := []string{"running", "perm", "idle", "idle", "gone"}
+	// 第 4 个（c4）不在 statuses：兜底 idle；第 5 个磁盘会话终端占用 → gone。
+	for i, w := range wantState {
+		if got[i].Status != w {
+			t.Errorf("brief[%d].Status = %q, 期望 %q", i, got[i].Status, w)
+		}
+		if got[i].Num != i+1 {
+			t.Errorf("brief[%d].Num = %d, 期望 %d（不重排）", i, got[i].Num, i+1)
+		}
+		if got[i].Title != refs[i].Title {
+			t.Errorf("brief[%d].Title = %q, 期望 %q", i, got[i].Title, refs[i].Title)
+		}
+	}
+	if got[0].Tool != "claude" {
+		t.Errorf("brief[0].Tool = %q", got[0].Tool)
+	}
+}
+
 // TestExecuteRouteDecision 覆盖 executeRoute 的五类动作与降级边界。
 func TestExecuteRouteDecision(t *testing.T) {
 	t.Run("group 群发按目标改写且进聚合", func(t *testing.T) {

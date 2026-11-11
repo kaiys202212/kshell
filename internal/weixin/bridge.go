@@ -449,39 +449,51 @@ const routeMaxRounds = 2
 // quotedChatID / sessionHint 任一非空时先走引用路由（切换到被引用会话再投递）。
 // quoted 表示用户明确引用了消息：归因失败或 chatID 不在列表时进待选
 //（PickTarget），不得回落发「当前会话」——引用已表明不想跟默认目标。
-// 无引用（quoted=false）且非逃生门/菜单挂起时，自由文本先问智能路由器；
-// 路由器消费则按决策落 Console，不消费/决策不可执行则回落 Handle(原文)。
+// 无引用（quoted=false）且非逃生门/菜单挂起/无附件队列时，自由文本（含纯
+// 数字，语境由路由器决断）先问智能路由器；路由器消费则按决策落 Console，
+// 不消费/决策不可执行则回落 Handle(原文)。
 func (b *Bridge) dispatchConsole(ctx context.Context, text, quotedChatID, sessionHint string, quoted bool) []hub.Reply {
+	// 引用与待选分支不进路由：反问链被打断，轮次清零（防悬挂）。
 	if quotedChatID != "" || sessionHint != "" {
+		b.setRouteRound(0)
 		if handled, replies := b.console.HandleQuoted(quotedChatID, sessionHint, text); handled {
 			return replies
 		}
 	}
 	if quoted {
+		b.setRouteRound(0)
 		replies, _ := b.console.PickTarget(text)
 		return replies
 	}
-	if fn := b.routerFn(); fn != nil {
+	fn := b.routerFn()
+	// 路由资格判定（T2 规格）：纯数字（菜单/编号切换）也问路由器，语境由路由
+	// 器决断；命令/逃生门、菜单挂起、带附件合并的文本一律走确定性 Handle。
+	// 不进路由的分支同时清零轮次，保证反问链被打断后轮次不悬挂。
+	routeable := fn != nil &&
+		!b.console.Busy() &&
+		b.QueuedFiles() == 0 &&
+		!hub.IsDirectPass(text, b.directPatterns())
+	if routeable {
 		// 反问链已满：本轮直接降级原文，轮次清零。
 		if b.routeRoundValue() >= routeMaxRounds {
 			b.setRouteRound(0)
-		} else if !b.console.Busy() && isForwardableText(text) && !hub.IsDirectPass(text, b.directPatterns()) {
-			if d, handled := fn(ctx, text); handled {
-				if replies := b.executeRouteText(ctx, text, d); len(replies) > 0 {
-					if d.Action == "ask" {
-						b.incRouteRound()
-					} else {
-						b.setRouteRound(0)
-					}
-					return replies
+		} else if d, handled := fn(ctx, text); handled {
+			if replies := b.executeRouteText(ctx, text, d); len(replies) > 0 {
+				if d.Action == "ask" {
+					b.incRouteRound()
+				} else {
+					b.setRouteRound(0)
 				}
-				// 路由器消费但决策不可执行：轮次清零，继续走 Handle(原文) 兜底。
-				b.setRouteRound(0)
-			} else {
-				// 路由器明确不消费（未配置/调用失败）：轮次清零，回落原文。
-				b.setRouteRound(0)
+				return replies
 			}
+			// 路由器消费但决策不可执行：轮次清零，继续走 Handle(原文) 兜底。
+			b.setRouteRound(0)
+		} else {
+			// 路由器明确不消费（未配置/调用失败）：轮次清零，回落原文。
+			b.setRouteRound(0)
 		}
+	} else {
+		b.setRouteRound(0)
 	}
 	return b.console.Handle(text)
 }

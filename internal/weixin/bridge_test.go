@@ -34,6 +34,8 @@ type fakeExec struct {
 	// openSessionRef / openSessionCalls：OpenSession 回执与调用记录。
 	openSessionRef   hub.SessionRef
 	openSessionCalls []string
+	// statuses：SessionStatuses 返回（status 路由正向用例）。
+	statuses []hub.SessionStatus
 }
 
 func (f *fakeExec) ListSessions() []hub.SessionRef              { return f.sessions }
@@ -70,7 +72,7 @@ func (f *fakeExec) Send(chatID, text string) error {
 func (f *fakeExec) GrantPermission(string, string, bool) error { return nil }
 func (f *fakeExec) Status() hub.ConsoleStatus                  { return hub.ConsoleStatus{} }
 func (f *fakeExec) RecentMessages(int) []hub.Message                { return nil }
-func (f *fakeExec) SessionStatuses() []hub.SessionStatus            { return nil }
+func (f *fakeExec) SessionStatuses() []hub.SessionStatus            { return f.statuses }
 func (f *fakeExec) SessionRecentMessages(string, int) []hub.Message { return nil }
 
 // reqRecord 记录一次 HTTP 请求的路径与解码后的 JSON 体。

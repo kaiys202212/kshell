@@ -98,7 +98,8 @@ func (a *App) weixinInputRouter() weixin.InputRouter {
 		if !ok {
 			return hubtools.RouteDecision{}, false
 		}
-		sessions := routeBriefs(newWXExecutor(a).ListSessions())
+		ex := newWXExecutor(a)
+		sessions := routeBriefs(ex.ListSessions(), ex.SessionStatuses())
 		d, err := hubtools.RouteInput(ctx, hc, sessions, input)
 		if err != nil {
 			return hubtools.RouteDecision{}, false
