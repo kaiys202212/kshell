@@ -153,13 +153,16 @@ export default function GitPanel({
       const more = list.length === LOG_PAGE;
       hasMoreRef.current = more;
       setHasMore(more);
-    } catch {
+    } catch (e) {
       if (seq !== logReq.current) return;
+      // 失败不再静默空白：与状态区 load() 一致给出 toast，便于远端排查（如 git 不在 PATH）
+      notify(t('ui.git.log_read_failed', { err: backendError(e) }), 'error');
       setCommits([]);
       hasMoreRef.current = false;
       setHasMore(false);
     }
-  }, [wsPath, repoRel, logMode, logRef]);
+    // t 保留在依赖：与 load() 同款取舍，切语言重拉日志无副作用，可让错误 toast 用当前语言。
+  }, [wsPath, repoRel, logMode, logRef, notify, t]);
 
   const loadMoreLog = useCallback(async () => {
     if (!hasMoreRef.current || loadingMoreRef.current) return;

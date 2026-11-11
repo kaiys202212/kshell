@@ -486,4 +486,18 @@ describe('GitPanel', () => {
     expect(await screen.findByLabelText(tt('ui.git.sync_source_aria'))).toHaveValue('origin');
     expect(localStorage.getItem(key)).toBe('origin');
   });
+
+  it('提交日志加载失败时弹出错误提示', async () => {
+    mocks.gitLog.mockRejectedValue(new Error('boom'));
+    render(<GitPanel wsPath="D:/proj" visible onOpenDiff={() => {}} />);
+    await waitFor(() => {
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some(
+            (x) => x.tone === 'error' && x.title === tt('ui.git.log_read_failed').replace('{{err}}', 'boom'),
+          ),
+      ).toBe(true);
+    });
+  });
 });

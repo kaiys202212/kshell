@@ -733,6 +733,7 @@
     },
     "git": {
       "read_failed": "Failed to read git: {{err}}",
+      "log_read_failed": "Failed to load commit log: {{err}}",
       "committed": "Committed",
       "synced": "Synced",
       "not_a_repo": "Not a git repository",
