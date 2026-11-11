@@ -166,6 +166,12 @@ const (
 	RouteModeForceAuto = "force_auto" // 全部强制走工具化链路
 )
 
+// AgentHub 编排参数缺省值：心跳阈值默认 5 分钟、上限 120 分钟。
+const (
+	agenthubHeartbeatDefault = 5
+	agenthubHeartbeatMax     = 120
+)
+
 // AgentHubConfig 是 AgentHub 的跨端持久化配置：前端「默认 agent 工具 + 模型」
 // 写穿到这里，微信桥等非浏览器端才能读到（localStorage 只存在于桌面端浏览器上下文）。
 type AgentHubConfig struct {
@@ -232,7 +238,7 @@ func Default() Config {
 		SessionMode:    SessionModeTUI,
 		PermissionMode: PermissionModeDefault,
 		Model:          ModelConfig{Models: []string{}, Platforms: []ModelPlatform{}},
-		AgentHub:       AgentHubConfig{RouteMode: RouteModeAuto},
+		AgentHub: AgentHubConfig{RouteMode: RouteModeAuto, HeartbeatMinutes: agenthubHeartbeatDefault},
 	}
 }
 
@@ -349,19 +355,22 @@ func (c Config) normalized() Config {
 	default:
 		c.AgentHub.RouteMode = RouteModeAuto
 	}
-	// AgentHub 编排参数：心跳阈值钳制、逃生门白名单去空白项。
+	// AgentHub 编排参数：心跳阈值钳制、逃生门白名单去空白项去重。
 	if c.AgentHub.HeartbeatMinutes <= 0 {
-		c.AgentHub.HeartbeatMinutes = 5
+		c.AgentHub.HeartbeatMinutes = agenthubHeartbeatDefault
 	}
-	if c.AgentHub.HeartbeatMinutes > 120 {
-		c.AgentHub.HeartbeatMinutes = 120
+	if c.AgentHub.HeartbeatMinutes > agenthubHeartbeatMax {
+		c.AgentHub.HeartbeatMinutes = agenthubHeartbeatMax
 	}
 	if len(c.AgentHub.DirectPatterns) > 0 {
+		seen := map[string]bool{}
 		pats := make([]string, 0, len(c.AgentHub.DirectPatterns))
 		for _, p := range c.AgentHub.DirectPatterns {
-			if p = strings.TrimSpace(p); p != "" {
-				pats = append(pats, p)
+			if p = strings.TrimSpace(p); p == "" || seen[p] {
+				continue
 			}
+			seen[p] = true
+			pats = append(pats, p)
 		}
 		if len(pats) == 0 {
 			c.AgentHub.DirectPatterns = nil
