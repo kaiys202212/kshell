@@ -2,11 +2,80 @@ package desktop
 
 import (
 	"log"
+	"sync"
+	"time"
 
 	"github.com/yangk/kshell/internal/agentsync"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
 )
+
+// agentSyncDebounce 是模型同步的防抖窗口：设置页连续切换默认平台/默认模型时，
+// 窗口内的多次请求合并成窗口结束后的一次同步。
+const agentSyncDebounce = 400 * time.Millisecond
+
+// modelSyncScheduler 把高频的配置变更触发合并成一次同步：防抖窗口内的重复
+// 请求只保留最后一次；同步执行中的请求记为 pending，本次跑完立即补跑一次
+//（最多积压一次，不无限排队）。
+type modelSyncScheduler struct {
+	mu      sync.Mutex
+	timer   *time.Timer
+	running bool
+	pending bool
+	delay   time.Duration
+	syncFn  func()
+}
+
+func newModelSyncScheduler(delay time.Duration, syncFn func()) *modelSyncScheduler {
+	return &modelSyncScheduler{delay: delay, syncFn: syncFn}
+}
+
+// schedule 请求一次同步（并发安全）。
+func (s *modelSyncScheduler) schedule() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running {
+		s.pending = true
+		return
+	}
+	if s.timer != nil {
+		s.timer.Stop()
+	}
+	s.timer = time.AfterFunc(s.delay, s.fire)
+}
+
+func (s *modelSyncScheduler) fire() {
+	s.mu.Lock()
+	if s.running {
+		s.mu.Unlock()
+		return
+	}
+	s.running = true
+	s.mu.Unlock()
+
+	s.syncFn()
+
+	s.mu.Lock()
+	s.running = false
+	again := s.pending
+	s.pending = false
+	if again {
+		s.timer = time.AfterFunc(0, s.fire)
+	}
+	s.mu.Unlock()
+}
+
+// scheduleAgentSync 请求一次防抖合并的模型同步（惰性创建调度器，测试注入的
+// App 也安全）。启动首轮同步与「只清不建」清理不走此路径——它们必须即时。
+func (a *App) scheduleAgentSync() {
+	a.mu.Lock()
+	if a.agentSyncSched == nil {
+		a.agentSyncSched = newModelSyncScheduler(agentSyncDebounce, a.syncAgentModels)
+	}
+	s := a.agentSyncSched
+	a.mu.Unlock()
+	s.schedule()
+}
 
 // syncAgentModels 把当前模型平台写入已安装（或已有配置）的 OpenCode/CodeBuddy/Claude。
 // 失败只记日志语义：调用方不因同步失败回滚配置保存；但错误必须留痕，

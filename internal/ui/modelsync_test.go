@@ -58,7 +58,7 @@ func stubDetect(t *testing.T, tools []discovery.Tool) {
 	t.Cleanup(func() { detectTools = prev })
 }
 
-// Anthropic 端点启用时，平台模型写入 settings.json 的 env（含三个 DEFAULT 别名）。
+// Anthropic 端点启用且 claude 定制同步开启时，按 4 槽位写入 settings.json env。
 func TestSyncAgentModelsWritesClaudeSettings(t *testing.T) {
 	home := t.TempDir()
 	writeSettings(t, home, map[string]any{})
@@ -71,6 +71,12 @@ func TestSyncAgentModelsWritesClaudeSettings(t *testing.T) {
 			AnthropicBaseURL: "https://ant/", APIKey: "k1",
 			Models: []string{"m1", "m2", "m3"},
 		}},
+		ToolSync: config.ToolSyncConfig{
+			Enabled: map[string]bool{"claude": true},
+			Claude: config.ClaudeSync{
+				Model: "m-active", Sonnet: "m-active", Opus: "m1", Haiku: "m2",
+			},
+		},
 	}
 
 	syncAgentModels(home, mc, nil)
@@ -210,6 +216,10 @@ func TestSyncAgentModelsSyncsInstalledToolWithoutConfig(t *testing.T) {
 			ID: "p1", Name: "OpenAI", OpenAIBaseURL: "https://oai/", APIKey: "k1",
 			Models: []string{"gpt-x"},
 		}},
+		ToolSync: config.ToolSyncConfig{
+			Enabled:  map[string]bool{"opencode": true},
+			OpenCode: map[string][]string{"p1": {"gpt-x"}},
+		},
 	}
 
 	syncAgentModels(home, mc, []discovery.Tool{{ID: "opencode", Installed: true}})
@@ -254,6 +264,7 @@ func TestStartupScanCmdSyncsAgentModels(t *testing.T) {
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://ant/", APIKey: "k1", Models: []string{"m1"},
 		}},
+		ToolSync: config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
 	})
 
 	msg, ok := startupScanCmd(o)().(scanDoneMsg)
@@ -308,6 +319,7 @@ func TestInitSyncsAgentModels(t *testing.T) {
 	o := claudeOptions(home, config.ModelConfig{
 		Enabled:   true,
 		Platforms: []config.ModelPlatform{{ID: "p1", AnthropicBaseURL: "https://ant/"}},
+		ToolSync:  config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
 	})
 
 	m := NewModelWith(o)

@@ -84,8 +84,8 @@ const (
 
 // ModelPlatform 是一个模型平台（供应商）配置：独立端点与密钥。
 type ModelPlatform struct {
-	ID               string   `yaml:"id"`      // 稳定标识，前端生成
-	Name             string   `yaml:"name"`    // 展示名（模型前缀用）
+	ID               string   `yaml:"id"`   // 稳定标识，前端生成
+	Name             string   `yaml:"name"` // 展示名（模型前缀用）
 	Preset           string   `yaml:"preset"`
 	OpenAIBaseURL    string   `yaml:"openai_base_url"`
 	AnthropicBaseURL string   `yaml:"anthropic_base_url"`
@@ -108,8 +108,11 @@ type ClaudeSync struct {
 // ToolSyncConfig 是按工具定制的模型同步配置：每个同步目标（opencode/codebuddy/
 // claude）独立启用并勾选注入模型。未启用或未勾选任何模型 = 只清不建。
 type ToolSyncConfig struct {
-	// Enabled 每工具启用开关；map 无该键 = 禁用（走既有「只清不建」清理）。
-	Enabled map[string]bool `yaml:"enabled,omitempty"`
+	// Enabled 每工具启用开关，只存 true 项（缺省即禁用，禁用 = 删键）。
+	// 无 omitempty：空 map 也要落盘为 `enabled: {}`，与「文件里没有 tool_sync
+	// 键」区分——后者才会触发旧 sync_off_tools 的载入迁移，前者是用户的显式
+	// 全禁用状态，不能被迁移重新打开。
+	Enabled map[string]bool `yaml:"enabled"`
 	Claude  ClaudeSync      `yaml:"claude,omitempty"`
 	// OpenCode 平台 ID → 勾选的模型 ID；无勾选的平台不建 provider。
 	OpenCode map[string][]string `yaml:"opencode,omitempty"`
@@ -127,13 +130,13 @@ type ModelConfig struct {
 	// ToolSync 是按工具定制的模型同步配置（取代旧 sync_off_tools 总开关语义）。
 	ToolSync ToolSyncConfig `yaml:"tool_sync"`
 	// legacy 单平台字段：读取后迁移进 Platforms，归一化后清空。
-	Preset           string            `yaml:"preset,omitempty"`
-	OpenAIBaseURL    string            `yaml:"openai_base_url,omitempty"`
-	AnthropicBaseURL string            `yaml:"anthropic_base_url,omitempty"`
-	BaseURL          string            `yaml:"base_url,omitempty"`
-	APIKey           string            `yaml:"api_key,omitempty"`
-	Models           []string          `yaml:"models,omitempty"`
-	ActiveModel      string            `yaml:"active_model"` // 默认模型；仅供 kshell 自身 LLM 调用（hub 自主工具/微信 ASR），不注入给 agent
+	Preset           string   `yaml:"preset,omitempty"`
+	OpenAIBaseURL    string   `yaml:"openai_base_url,omitempty"`
+	AnthropicBaseURL string   `yaml:"anthropic_base_url,omitempty"`
+	BaseURL          string   `yaml:"base_url,omitempty"`
+	APIKey           string   `yaml:"api_key,omitempty"`
+	Models           []string `yaml:"models,omitempty"`
+	ActiveModel      string   `yaml:"active_model"` // 默认模型；仅供 kshell 自身 LLM 调用（hub 自主工具/微信 ASR），不注入给 agent
 	// SyncOffTools 是旧版「按工具关同步」列表：仅读取迁移用（归一化时迁入
 	// ToolSync.Enabled 并清空），保存时 omitempty 不再落盘。
 	SyncOffTools []string          `yaml:"sync_off_tools,omitempty"`
@@ -398,9 +401,10 @@ func (c Config) normalized() Config {
 	c.Model.ActiveModel = strings.TrimSpace(c.Model.ActiveModel)
 	// 旧 sync_off_tools 迁移为 ToolSync.Enabled：全局启用过模型同步时，未列出
 	// 的目标视为开启、列出的视为关闭；从未启用过则保持空 map（= 全部禁用）。
-	// Enabled 只存 true 项（缺省即禁用），禁用 = 删键。tool_sync 已有显式配置时
-	// 以新键为准、不再迁移。迁移后旧字段清空，保存时 omitempty 不再落盘。
-	tsZero := len(c.Model.ToolSync.Enabled) == 0 &&
+	// Enabled 只存 true 项（缺省即禁用），禁用 = 删键。文件里已有 tool_sync
+	//（Enabled 非 nil 即算显式配置）时以新键为准、不再迁移。
+	// 迁移后旧字段清空，保存时 omitempty 不再落盘。
+	tsZero := c.Model.ToolSync.Enabled == nil &&
 		c.Model.ToolSync.Claude == ClaudeSync{} &&
 		len(c.Model.ToolSync.OpenCode) == 0 && len(c.Model.ToolSync.CodeBuddy) == 0
 	if tsZero && (c.Model.SyncOffTools != nil || c.Model.Enabled) {

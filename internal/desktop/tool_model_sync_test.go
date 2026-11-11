@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/yangk/kshell/internal/agentsync"
 	"github.com/yangk/kshell/internal/config"
@@ -33,7 +35,7 @@ func setSyncPlatform(t *testing.T, app *App) {
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", Name: "P1",
 			OpenAIBaseURL: "https://api.example.com",
-			Models:        []string{"m1"},
+			Models:        []string{"m1", "m2"},
 		}},
 	}
 	app.mu.Unlock()
@@ -44,32 +46,67 @@ func opencodeJSON(home string) (string, error) {
 	return string(b), err
 }
 
-// 关闭开关：SyncOffTools 记录工具 ID，且该工具已注入的 kshell 配置立即清除
-//（方案 A：清掉恢复原状）；非 kshell 内容与其他目标不受影响。
-func TestSetToolModelSyncDisableCleansInjections(t *testing.T) {
+// 启用 + 勾选：立即按勾选注入，未勾选模型不出现；配置持久化。
+func TestSetToolSyncConfigEnableInjectsSelection(t *testing.T) {
 	app, layout, home := newSyncApp(t)
 	setSyncPlatform(t, app)
-	in := agentsync.InputFromModel(func() config.ModelConfig {
-		app.mu.Lock()
-		defer app.mu.Unlock()
-		return app.opts.Config.Model
-	}())
-	if err := agentsync.SyncTool(home, "opencode", in); err != nil {
-		t.Fatalf("预置注入失败: %v", err)
-	}
-	if raw, err := opencodeJSON(home); err != nil || !strings.Contains(raw, "kshell-p1") {
-		t.Fatalf("预置注入应存在 kshell-p1: %q err=%v", raw, err)
-	}
 
-	if err := app.SetToolModelSync("opencode", false); err != nil {
-		t.Fatalf("SetToolModelSync(off): %v", err)
+	err := app.SetToolSyncConfig("opencode", ToolSyncInput{
+		Enabled:  true,
+		OpenCode: map[string][]string{"p1": {"m1"}},
+	})
+	if err != nil {
+		t.Fatalf("SetToolSyncConfig: %v", err)
+	}
+	raw, err := opencodeJSON(home)
+	if err != nil || !strings.Contains(raw, "kshell-p1") {
+		t.Fatalf("应注入 kshell-p1: %q err=%v", raw, err)
+	}
+	if strings.Contains(raw, `"m2"`) {
+		t.Fatalf("未勾选的 m2 不应注入: %s", raw)
 	}
 	loaded, err := config.Load(layout)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded.Model.SyncOffTools) != 1 || loaded.Model.SyncOffTools[0] != "opencode" {
-		t.Fatalf("SyncOffTools = %#v, want [opencode]", loaded.Model.SyncOffTools)
+	if !loaded.Model.ToolSync.Enabled["opencode"] {
+		t.Fatalf("ToolSync.Enabled = %#v", loaded.Model.ToolSync.Enabled)
+	}
+	if got := loaded.Model.ToolSync.OpenCode["p1"]; len(got) != 1 || got[0] != "m1" {
+		t.Fatalf("OpenCode = %#v", loaded.Model.ToolSync.OpenCode)
+	}
+}
+
+// 禁用：勾选一并清空，已注入的 kshell 配置立即清除；非 kshell 内容不受影响。
+func TestSetToolSyncConfigDisableCleansInjections(t *testing.T) {
+	app, layout, home := newSyncApp(t)
+	setSyncPlatform(t, app)
+	in := agentsync.InputFromModel(func() config.ModelConfig {
+		app.mu.Lock()
+		defer app.mu.Unlock()
+		mc := app.opts.Config.Model
+		mc.ToolSync = config.ToolSyncConfig{
+			Enabled:  map[string]bool{"opencode": true},
+			OpenCode: map[string][]string{"p1": {"m1"}},
+		}
+		return mc
+	}())
+	if err := agentsync.SyncTool(home, "opencode", in); err != nil {
+		t.Fatalf("预置注入失败: %v", err)
+	}
+
+	if err := app.SetToolSyncConfig("opencode", ToolSyncInput{Enabled: false}); err != nil {
+		t.Fatalf("SetToolSyncConfig(off): %v", err)
+	}
+	loaded, err := config.Load(layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Model.ToolSync.Enabled["opencode"] {
+		t.Fatal("禁用后 Enabled 不应含 opencode")
+	}
+	if len(loaded.Model.ToolSync.OpenCode) != 0 {
+		t.Fatalf("禁用应清空勾选, got %#v", loaded.Model.ToolSync.OpenCode)
 	}
 	raw, err := opencodeJSON(home)
 	if err != nil {
@@ -80,113 +117,225 @@ func TestSetToolModelSyncDisableCleansInjections(t *testing.T) {
 	}
 }
 
-// 重新打开：从 SyncOffTools 移除并立即恢复注入。
-func TestSetToolModelSyncEnableReinjects(t *testing.T) {
-	app, layout, home := newSyncApp(t)
+// claude 槽位：启用后按 4 槽写入 settings.json env；禁用后模型键清掉。
+func TestSetToolSyncConfigClaudeSlots(t *testing.T) {
+	app, _, home := newSyncApp(t)
 	setSyncPlatform(t, app)
 	app.mu.Lock()
-	app.opts.Config.Model.SyncOffTools = []string{"opencode"}
+	app.opts.Config.Model.Platforms[0].AnthropicBaseURL = "https://ant.example/"
 	app.mu.Unlock()
 
-	if err := app.SetToolModelSync("opencode", true); err != nil {
-		t.Fatalf("SetToolModelSync(on): %v", err)
+	err := app.SetToolSyncConfig("claude", ToolSyncInput{
+		Enabled: true,
+		Claude:  ClaudeSlotsView{Model: "m1", Opus: "m2"},
+	})
+	if err != nil {
+		t.Fatalf("SetToolSyncConfig: %v", err)
 	}
-	loaded, err := config.Load(layout)
+	b, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded.Model.SyncOffTools) != 0 {
-		t.Fatalf("SyncOffTools = %#v, want 空", loaded.Model.SyncOffTools)
+	raw := string(b)
+	if !strings.Contains(raw, `"ANTHROPIC_MODEL": "m1"`) || !strings.Contains(raw, `"ANTHROPIC_DEFAULT_OPUS_MODEL": "m2"`) {
+		t.Fatalf("槽位应写入 env: %s", raw)
 	}
-	raw, err := opencodeJSON(home)
-	if err != nil || !strings.Contains(raw, "kshell-p1") {
-		t.Fatalf("开启后应恢复注入: %q err=%v", raw, err)
+	if strings.Contains(raw, "ANTHROPIC_DEFAULT_SONNET_MODEL") {
+		t.Fatalf("空槽不应写键: %s", raw)
+	}
+
+	if err := app.SetToolSyncConfig("claude", ToolSyncInput{Enabled: false}); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	b, err = os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "ANTHROPIC_MODEL") {
+		t.Fatalf("禁用后模型键应清除: %s", b)
 	}
 }
 
 // 非平台模型同步目标的工具 ID 拒绝设置：配置保持不变。
-func TestSetToolModelSyncRejectsUnknownTool(t *testing.T) {
+func TestSetToolSyncConfigRejectsUnknownTool(t *testing.T) {
 	app, _, _ := newSyncApp(t)
 	setSyncPlatform(t, app)
-	app.mu.Lock()
-	app.opts.Config.Model.SyncOffTools = []string{"opencode"}
-	app.mu.Unlock()
 
-	if err := app.SetToolModelSync("codex", false); err == nil {
+	if err := app.SetToolSyncConfig("codex", ToolSyncInput{Enabled: true}); err == nil {
 		t.Fatal("codex 不是同步目标，应报错")
 	}
-	// 报错发生在保存之前：内存配置不得被改动。
 	app.mu.Lock()
 	defer app.mu.Unlock()
-	if len(app.opts.Config.Model.SyncOffTools) != 1 || app.opts.Config.Model.SyncOffTools[0] != "opencode" {
-		t.Fatalf("配置不应被改动, got %#v", app.opts.Config.Model.SyncOffTools)
+	if len(app.opts.Config.Model.ToolSync.Enabled) != 0 {
+		t.Fatalf("配置不应被改动, got %#v", app.opts.Config.Model.ToolSync)
 	}
 }
 
-// Save 失败时内存配置不得被改坏：saveConfig 是浅拷贝，mutate 里的 slice
-// 复用若写穿共享底层数组，失败路径会静默损坏内存中的关闭列表。
-func TestSetToolModelSyncSaveFailureLeavesMemoryIntact(t *testing.T) {
+// Save 失败时内存配置不得被改坏：mutate 里的 map/slice 复用若写穿共享底层数组，
+// 失败路径会静默损坏内存配置。
+func TestSetToolSyncConfigSaveFailureLeavesMemoryIntact(t *testing.T) {
 	app, _, _ := newSyncApp(t)
 	setSyncPlatform(t, app)
 	app.mu.Lock()
-	app.opts.Config.Model.SyncOffTools = []string{"opencode", "claude"}
+	app.opts.Config.Model.ToolSync = config.ToolSyncConfig{
+		Enabled:   map[string]bool{"opencode": true, "claude": true},
+		OpenCode:  map[string][]string{"p1": {"m1"}},
+		CodeBuddy: []string{"m1"},
+	}
 	// Config 路径指向目录 → config.Save 必失败
 	app.opts.Layout.Config = t.TempDir()
 	app.mu.Unlock()
 
-	if err := app.SetToolModelSync("opencode", false); err == nil {
+	if err := app.SetToolSyncConfig("codebuddy", ToolSyncInput{Enabled: true, CodeBuddy: []string{"m2"}}); err == nil {
 		t.Fatal("Save 应失败")
 	}
 	app.mu.Lock()
 	defer app.mu.Unlock()
-	got := app.opts.Config.Model.SyncOffTools
-	if len(got) != 2 || got[0] != "opencode" || got[1] != "claude" {
-		t.Fatalf("Save 失败不得改坏内存配置, got %#v", got)
+	got := app.opts.Config.Model.ToolSync
+	if !got.Enabled["opencode"] || !got.Enabled["claude"] || got.Enabled["codebuddy"] {
+		t.Fatalf("Enabled 被改坏: %#v", got.Enabled)
+	}
+	if got.OpenCode["p1"][0] != "m1" || got.CodeBuddy[0] != "m1" {
+		t.Fatalf("勾选被改坏: %#v / %#v", got.OpenCode, got.CodeBuddy)
 	}
 }
 
-// 关闭后的清理同步失败（目标文件损坏等）只记日志不上抛：主诉求「不再同步」
-// 已随配置持久化，注入物残留由下次启动 syncAgentModels 兜底补清；
-// 与 SetModelConfig「失败不回滚本次保存」同语义。
-func TestSetToolModelSyncDisableCleanupFailureIsLogOnly(t *testing.T) {
-	app, layout, home := newSyncApp(t)
+// GetToolSyncConfig 返回视图副本，调用方改写不得影响内存配置。
+func TestGetToolSyncConfig(t *testing.T) {
+	app, _, _ := newSyncApp(t)
 	setSyncPlatform(t, app)
-	ocDir := filepath.Join(home, ".config", "opencode")
-	if err := os.MkdirAll(ocDir, 0o755); err != nil {
-		t.Fatal(err)
+	app.mu.Lock()
+	app.opts.Config.Model.ToolSync = config.ToolSyncConfig{
+		Enabled:   map[string]bool{"claude": true},
+		Claude:    config.ClaudeSync{Model: "m1", Sonnet: "m2"},
+		OpenCode:  map[string][]string{"p1": {"m1", "m2"}},
+		CodeBuddy: []string{"m1"},
 	}
-	if err := os.WriteFile(filepath.Join(ocDir, "opencode.json"), []byte("{broken"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	app.mu.Unlock()
 
-	if err := app.SetToolModelSync("opencode", false); err != nil {
-		t.Fatalf("清理失败应 log-only, got %v", err)
+	v, err := app.GetToolSyncConfig("claude")
+	if err != nil {
+		t.Fatalf("GetToolSyncConfig: %v", err)
+	}
+	if !v.Enabled || v.Claude.Model != "m1" || v.Claude.Sonnet != "m2" {
+		t.Fatalf("claude 视图 = %+v", v)
+	}
+	v.OpenCode["p1"][0] = "tampered"
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if app.opts.Config.Model.ToolSync.OpenCode["p1"][0] != "m1" {
+		t.Fatal("应返回副本而非内部 map")
+	}
+	if _, err := app.GetToolSyncConfig("codex"); err == nil {
+		t.Fatal("codex 不是同步目标，应报错")
+	}
+}
+
+// SetDefaultPlatform 立即落盘；新默认平台模型列表不含 ActiveModel 时悬空清空。
+func TestSetDefaultPlatformImmediate(t *testing.T) {
+	app, layout, _ := newSyncApp(t)
+	setSyncPlatform(t, app)
+	app.mu.Lock()
+	app.opts.Config.Model.Platforms = append(app.opts.Config.Model.Platforms,
+		config.ModelPlatform{ID: "p2", Name: "P2", OpenAIBaseURL: "https://p2.example", Models: []string{"m9"}})
+	app.opts.Config.Model.ActiveModel = "m1"
+	app.mu.Unlock()
+
+	if err := app.SetDefaultPlatform("p2"); err != nil {
+		t.Fatalf("SetDefaultPlatform: %v", err)
 	}
 	loaded, err := config.Load(layout)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded.Model.SyncOffTools) != 1 || loaded.Model.SyncOffTools[0] != "opencode" {
-		t.Fatalf("关闭状态仍应持久化, got %#v", loaded.Model.SyncOffTools)
+	if loaded.Model.DefaultPlatform != "p2" {
+		t.Fatalf("DefaultPlatform = %q", loaded.Model.DefaultPlatform)
+	}
+	if loaded.Model.ActiveModel != "" {
+		t.Fatalf("悬空 ActiveModel 应清空, got %q", loaded.Model.ActiveModel)
+	}
+
+	// 未知平台回落第一个平台。
+	if err := app.SetDefaultPlatform("nope"); err != nil {
+		t.Fatalf("SetDefaultPlatform(nope): %v", err)
+	}
+	loaded, err = config.Load(layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Model.DefaultPlatform != "p1" {
+		t.Fatalf("未知平台应回落第一个, got %q", loaded.Model.DefaultPlatform)
 	}
 }
 
-// GetModelSyncOffTools 返回当前关闭列表（前端初始状态的唯一来源）。
-func TestGetModelSyncOffTools(t *testing.T) {
-	app, _, _ := newSyncApp(t)
-	app.mu.Lock()
-	app.opts.Config.Model.SyncOffTools = []string{"claude", "codebuddy"}
-	app.mu.Unlock()
+// SetActiveModel 立即落盘并 TrimSpace。
+func TestSetActiveModelImmediate(t *testing.T) {
+	app, layout, _ := newSyncApp(t)
+	setSyncPlatform(t, app)
 
-	got := app.GetModelSyncOffTools()
-	if len(got) != 2 || got[0] != "claude" || got[1] != "codebuddy" {
-		t.Fatalf("GetModelSyncOffTools = %v", got)
+	if err := app.SetActiveModel("  m2  "); err != nil {
+		t.Fatalf("SetActiveModel: %v", err)
 	}
-	// 返回副本：调用方改写不得影响内存配置。
-	got[0] = "tampered"
-	app.mu.Lock()
-	defer app.mu.Unlock()
-	if app.opts.Config.Model.SyncOffTools[0] != "claude" {
-		t.Fatal("应返回副本而非内部 slice")
+	loaded, err := config.Load(layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Model.ActiveModel != "m2" {
+		t.Fatalf("ActiveModel = %q", loaded.Model.ActiveModel)
+	}
+}
+
+// 调度器：防抖窗口内的多次请求合并为一次；执行中的请求记 pending 补跑一次。
+func TestModelSyncSchedulerCoalesceAndRerun(t *testing.T) {
+	var mu sync.Mutex
+	runs := 0
+	started := make(chan struct{}, 8)
+	s := newModelSyncScheduler(30*time.Millisecond, func() {
+		started <- struct{}{}
+		mu.Lock()
+		runs++
+		mu.Unlock()
+		time.Sleep(60 * time.Millisecond) // 模拟同步耗时，制造执行中触发
+	})
+
+	// 窗口内连发 5 次 → 合并为 1 次。
+	for i := 0; i < 5; i++ {
+		s.schedule()
+		time.Sleep(5 * time.Millisecond)
+	}
+	<-started
+	mu.Lock()
+	n := runs
+	mu.Unlock()
+	if n != 1 {
+		t.Fatalf("防抖窗口内 5 次请求应合并为 1 次执行, got %d", n)
+	}
+
+	// 执行中再触发 → 跑完补跑一次，之后收敛。
+	s.schedule()
+	s.schedule()
+	// 等待首跑结束 + 补跑完成（补跑不再 sleep，很快）。
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n = runs
+		mu.Unlock()
+		if n >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	n = runs
+	mu.Unlock()
+	if n != 2 {
+		t.Fatalf("执行中触发应补跑一次, got %d 次执行", n)
+	}
+	time.Sleep(120 * time.Millisecond) // 确认无多余执行
+	mu.Lock()
+	n = runs
+	mu.Unlock()
+	if n != 2 {
+		t.Fatalf("补跑后不应再执行, got %d 次", n)
 	}
 }

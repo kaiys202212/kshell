@@ -404,6 +404,11 @@ func TestSetModelConfigSyncsOpenCode(t *testing.T) {
 	app := NewAppWith(Options{Config: config.Default(), Layout: layout, Home: home})
 	app.mu.Lock()
 	app.tools = []discovery.Tool{{ID: "opencode", Installed: true, BinPath: "opencode"}}
+	// opencode 已在定制页启用并勾选模型：SetModelConfig 保存后同步按勾选注入。
+	app.opts.Config.Model.ToolSync = config.ToolSyncConfig{
+		Enabled:  map[string]bool{"opencode": true},
+		OpenCode: map[string][]string{"p1": {"glm-x"}},
+	}
 	app.mu.Unlock()
 
 	if err := app.SetModelConfig(ModelConfigInput{
@@ -540,6 +545,7 @@ func TestSyncAgentModelToolClaude(t *testing.T) {
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk-1",
 		}},
+		ToolSync: config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
 	}
 	app := NewAppWith(Options{Home: home, Config: cfg})
 	app.syncAgentModelTool("claude")

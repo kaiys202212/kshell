@@ -56,6 +56,8 @@ func TestSaveIsAtomicAndRoundTrips(t *testing.T) {
 	want := Default()
 	want.MaxDepth = 3
 	want.ScanRoots = []string{filepath.Join("D:", "data", "workspace")}
+	// enabled 无 omitempty：落盘 `enabled: {}`，载入后是空 map 而非 nil。
+	want.Model.ToolSync.Enabled = map[string]bool{}
 
 	if err := Save(p, want); err != nil {
 		t.Fatalf("Save() error: %v", err)

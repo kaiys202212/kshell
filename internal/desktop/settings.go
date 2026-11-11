@@ -3,12 +3,10 @@ package desktop
 import (
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/yangk/kshell/internal/agentsync"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
@@ -431,50 +429,184 @@ func validateHTTPURL(u, label string) error {
 // modelSyncTargets 是支持平台模型同步注入的工具（agentsync.DefaultTargets 的 ID）。
 var modelSyncTargets = map[string]bool{"opencode": true, "codebuddy": true, "claude": true}
 
-// GetModelSyncOffTools 返回用户关闭了平台模型同步的工具 ID 列表（副本）。
-func (a *App) GetModelSyncOffTools() []string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]string, len(a.opts.Config.Model.SyncOffTools))
-	copy(out, a.opts.Config.Model.SyncOffTools)
-	return out
+// ClaudeSlotsView / ToolSyncView / ToolSyncInput 是按工具定制模型同步的绑定视图：
+// Claude 为 4 类映射槽位，OpenCode 为平台 ID → 勾选模型，CodeBuddy 为默认平台勾选模型。
+type ClaudeSlotsView struct {
+	Model  string `json:"Model"`
+	Sonnet string `json:"Sonnet"`
+	Opus   string `json:"Opus"`
+	Haiku  string `json:"Haiku"`
 }
 
-// SetToolModelSync 设置单个工具是否同步平台模型，立即生效：
-// 开启 → 该工具立即按当前平台同步；关闭 → 立即清除该工具里 kshell 注入的
-// 配置（只清不建，与全局禁用的清理同语义），避免悬空注入物指向已删端点。
-func (a *App) SetToolModelSync(toolID string, enabled bool) error {
-	toolID = strings.TrimSpace(toolID)
-	if !modelSyncTargets[toolID] {
-		return fmt.Errorf("err.settings.model_sync_unknown_tool|%s", toolID)
-	}
+type ToolSyncView struct {
+	Enabled   bool                `json:"Enabled"`
+	Claude    ClaudeSlotsView     `json:"Claude"`
+	OpenCode  map[string][]string `json:"OpenCode"`
+	CodeBuddy []string            `json:"CodeBuddy"`
+}
+
+type ToolSyncInput struct {
+	Enabled   bool                `json:"Enabled"`
+	Claude    ClaudeSlotsView     `json:"Claude"`
+	OpenCode  map[string][]string `json:"OpenCode"`
+	CodeBuddy []string            `json:"CodeBuddy"`
+}
+
+// SetDefaultPlatform 设置默认平台并立即落盘生效（不走整包保存），随后调度一次
+// 防抖同步（静态注入目标随默认平台重写）。平台不存在时回落第一个平台；
+// 新默认平台有模型列表且不含当前默认模型时，悬空的 ActiveModel 一并清空
+//（与 SetModelConfig 同语义）。
+func (a *App) SetDefaultPlatform(platformID string) error {
+	platformID = strings.TrimSpace(platformID)
 	err := a.saveConfig(func(c *config.Config) {
-		// 必须新建 slice：saveConfig 的 cfg 是浅拷贝，原地 [:0] 复用会写穿
-		// 内存配置的共享底层数组（Save 失败时内存被改坏 + 并发读数据竞争）。
-		out := make([]string, 0, len(c.Model.SyncOffTools)+1)
-		for _, id := range c.Model.SyncOffTools {
-			if id != toolID {
-				out = append(out, id)
+		found := false
+		for _, p := range c.Model.Platforms {
+			if p.ID == platformID {
+				found = true
+				break
 			}
 		}
-		if !enabled {
-			out = append(out, toolID)
+		if !found && len(c.Model.Platforms) > 0 {
+			platformID = c.Model.Platforms[0].ID
 		}
-		c.Model.SyncOffTools = out
+		c.Model.DefaultPlatform = platformID
+		if c.Model.ActiveModel != "" && platformID != "" {
+			for _, p := range c.Model.Platforms {
+				if p.ID != platformID {
+					continue
+				}
+				if len(p.Models) > 0 {
+					hit := false
+					for _, m := range p.Models {
+						if m == c.Model.ActiveModel {
+							hit = true
+							break
+						}
+					}
+					if !hit {
+						c.Model.ActiveModel = ""
+					}
+				}
+				break
+			}
+		}
 	})
 	if err != nil {
 		return err
 	}
-	if enabled {
-		a.syncAgentModelTool(toolID)
-		return nil
+	a.scheduleAgentSync()
+	return nil
+}
+
+// SetActiveModel 设置 kshell 自用默认模型并立即落盘生效，随后调度一次防抖同步。
+func (a *App) SetActiveModel(model string) error {
+	model = strings.TrimSpace(model)
+	if err := a.saveConfig(func(c *config.Config) {
+		c.Model.ActiveModel = model
+	}); err != nil {
+		return err
 	}
-	// 清理：保存后 SyncOffTools 已含该工具，InputFromModel → cleanupFor 走只清不建。
-	// 失败 log-only：主诉求已持久化，注入物由下次启动 syncAgentModels 兜底补清。
-	o := a.snapshot()
-	if err := agentsync.SyncTool(o.Home, toolID, agentsync.InputFromModel(o.Config.Model)); err != nil {
-		log.Printf("agentsync: %s 清理同步失败: %v", toolID, err)
+	a.scheduleAgentSync()
+	return nil
+}
+
+// GetToolSyncConfig 返回单个工具的定制模型同步配置（视图副本）。
+func (a *App) GetToolSyncConfig(toolID string) (ToolSyncView, error) {
+	toolID = strings.TrimSpace(toolID)
+	if !modelSyncTargets[toolID] {
+		return ToolSyncView{}, fmt.Errorf("err.settings.model_sync_unknown_tool|%s", toolID)
 	}
+	m := a.snapshot().Config.Model
+	ts := m.ToolSync
+	var openCode map[string][]string
+	if len(ts.OpenCode) > 0 {
+		openCode = make(map[string][]string, len(ts.OpenCode))
+		for k, v := range ts.OpenCode {
+			openCode[k] = append([]string(nil), v...)
+		}
+	}
+	return ToolSyncView{
+		Enabled:   ts.Enabled[toolID],
+		Claude:    ClaudeSlotsView{Model: ts.Claude.Model, Sonnet: ts.Claude.Sonnet, Opus: ts.Claude.Opus, Haiku: ts.Claude.Haiku},
+		OpenCode:  openCode,
+		CodeBuddy: append([]string(nil), ts.CodeBuddy...),
+	}, nil
+}
+
+// SetToolSyncConfig 持久化单个工具的定制模型同步配置并立即对该工具生效：
+// 启用 → 按勾选注入；禁用 → 只清不建（勾选一并清空，避免残留悬空配置）。
+// 各工具只改写自己的配置段；失败 log-only（主诉求已持久化，下次启动兜底）。
+func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
+	toolID = strings.TrimSpace(toolID)
+	if !modelSyncTargets[toolID] {
+		return fmt.Errorf("err.settings.model_sync_unknown_tool|%s", toolID)
+	}
+	trimList := func(list []string) []string {
+		out := make([]string, 0, len(list))
+		for _, v := range list {
+			if v = strings.TrimSpace(v); v != "" {
+				out = append(out, v)
+			}
+		}
+		return out
+	}
+	err := a.saveConfig(func(c *config.Config) {
+		// saveConfig 的 cfg 是浅拷贝：map/slice 必须新建，原地复用会写穿共享底层数组。
+		ts := config.ToolSyncConfig{
+			Enabled:   map[string]bool{},
+			Claude:    c.Model.ToolSync.Claude,
+			OpenCode:  map[string][]string{},
+			CodeBuddy: append([]string(nil), c.Model.ToolSync.CodeBuddy...),
+		}
+		for k, v := range c.Model.ToolSync.Enabled {
+			ts.Enabled[k] = v
+		}
+		for k, v := range c.Model.ToolSync.OpenCode {
+			ts.OpenCode[k] = append([]string(nil), v...)
+		}
+		switch toolID {
+		case "claude":
+			if in.Enabled {
+				ts.Claude = config.ClaudeSync{
+					Model:  strings.TrimSpace(in.Claude.Model),
+					Sonnet: strings.TrimSpace(in.Claude.Sonnet),
+					Opus:   strings.TrimSpace(in.Claude.Opus),
+					Haiku:  strings.TrimSpace(in.Claude.Haiku),
+				}
+			} else {
+				ts.Claude = config.ClaudeSync{}
+			}
+		case "opencode":
+			// OpenCode 是 tool_sync.opencode 键的唯一属主：禁用即整键清空。
+			ts.OpenCode = map[string][]string{}
+			if in.Enabled {
+				for k, v := range in.OpenCode {
+					if list := trimList(v); len(list) > 0 {
+						ts.OpenCode[k] = list
+					}
+				}
+			}
+			if len(ts.OpenCode) == 0 {
+				ts.OpenCode = nil
+			}
+		case "codebuddy":
+			if in.Enabled {
+				ts.CodeBuddy = trimList(in.CodeBuddy)
+			} else {
+				ts.CodeBuddy = nil
+			}
+		}
+		if in.Enabled {
+			ts.Enabled[toolID] = true
+		} else {
+			delete(ts.Enabled, toolID)
+		}
+		c.Model.ToolSync = ts
+	})
+	if err != nil {
+		return err
+	}
+	a.syncAgentModelTool(toolID)
 	return nil
 }
 

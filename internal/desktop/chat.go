@@ -688,30 +688,28 @@ func platformModelDisplayName(platName, model string) string {
 	return platName + ": " + model
 }
 
-// mergeConfigModels 把 kshell 配置的模型列表并入 agent 上报视图：
-// 已存在（按 ID；codebuddy 除外，见下）跳过；数据源为配置的平台列表。
-// 单平台 ID 保持裸名（向后兼容旧保存的 modelId）；多平台 ID 加
-// "kshell:<platID>:<model>"，默认平台条目排最前，其余按列表顺序。
-// Name 一律带平台展示前缀（仅展示）。不改写 Current：当前模型以 agent
-// 上报为准（默认模型由 agent 自行决定）。
-// opencode 额外按原生 ID 尾段判重：其自报列表已含 kshell 注入 provider 的
-// "kshell-<platID>/<model>" 条目（agentsync 写 opencode.json），配置裸名
-// 副本会造成下拉重复，命中即跳过——选原生条目即可，切换由
-// resolveOpenCodeModelID 兜底。
-// codebuddy 不做按 ID 判重：其内置 id 与平台裸 mid 撞名（glm-5.3-flash 等），
-// 判重会把平台副本挤出下拉；防重复交给展示名判重（注入条目上报名
-// "<plat>: <m>" 与配置副本同名）。
+// mergeConfigModels 把 kshell 配置的模型列表并入 agent 上报视图。
+// 门控与内容都跟随按工具定制同步（ToolSync）：未启用的工具注入通道已被
+// agentsync 关掉（只清不建），下拉再并平台模型就是选了也走不通的假选项。
+// 各工具内容口径与注入物一致：
+//   - opencode：各平台勾选集；单平台保持裸名 ID（向后兼容旧保存的 modelId），
+//     多平台加 "kshell:<platID>:<model>"。opencode 额外按原生 ID 尾段判重：
+//     其自报列表已含注入 provider 的 "kshell-<platID>/<model>" 条目，配置裸名
+//     副本会造成下拉重复，命中即跳过。
+//   - codebuddy：默认平台勾选集（裸 mid，与 models.json 注入条目一致）。
+//     不做按 ID 判重：其内置 id 与平台裸 mid 撞名，判重会把平台副本挤出下拉；
+//     防重复交给展示名判重（注入条目上报名 "<plat>: <m>" 与配置副本同名）。
+//   - claude：默认平台全部模型（静态注入指向默认平台端点，会话均可用；
+//     4 个槽位只影响终端 /model 别名，与 ACP 下拉无关）。
+//
+// Name 一律带平台展示前缀（仅展示）。不改写 Current：当前模型以 agent 上报为准。
 func (a *App) mergeConfigModels(v chat.ModelsView, toolID string) chat.ModelsView {
 	cfg := a.snapshot().Config.Model
 	if !cfg.Enabled || len(cfg.Platforms) == 0 {
 		return v
 	}
-	// 该工具被用户单独关闭平台模型同步（model.sync_off_tools）：注入通道已被
-	// agentsync 关掉（只清不建），下拉再并平台模型就是选了也走不通的假选项。
-	for _, off := range cfg.SyncOffTools {
-		if off == toolID {
-			return v
-		}
+	if !cfg.ToolSync.Enabled[toolID] {
+		return v
 	}
 	seen := make(map[string]bool, len(v.Models))
 	seenName := make(map[string]bool, len(v.Models))
@@ -726,10 +724,6 @@ func (a *App) mergeConfigModels(v chat.ModelsView, toolID string) chat.ModelsVie
 		}
 	}
 	dedupeNative := toolID == "opencode"
-	// codebuddy 内置模型 id 可能与平台裸 mid 撞名（glm-5.3-flash 等），其自定义
-	// 条目走 custom-local: 前缀与内置天然区分：按 ID 判重只会把平台副本挤出
-	// 下拉（撞名项选内置走的是自营通道，非用户平台）。故 codebuddy 跳过按 ID
-	// 判重，仅靠展示名判重防「注入条目已上报」的重复。
 	dedupeID := toolID != "codebuddy"
 	add := func(id, name string) {
 		if id == "" || (dedupeID && seen[id]) {
@@ -752,37 +746,53 @@ func (a *App) mergeConfigModels(v chat.ModelsView, toolID string) chat.ModelsVie
 		}
 		v.Models = append(v.Models, chat.ModelView{ID: id, Name: name})
 	}
-	if len(cfg.Platforms) == 1 {
-		p := cfg.Platforms[0]
-		for _, name := range p.Models {
-			name = strings.TrimSpace(name)
-			add(name, platformModelDisplayName(p.Name, name))
+	switch toolID {
+	case "opencode":
+		// 默认平台排最前（命中 DefaultPlatform，否则第一个），其余按列表顺序。
+		def, _ := cfg.ActivePlatform()
+		ordered := make([]config.ModelPlatform, 0, len(cfg.Platforms))
+		for _, p := range cfg.Platforms {
+			if p.ID != def.ID {
+				ordered = append(ordered, p)
+			}
+		}
+		ordered = append([]config.ModelPlatform{def}, ordered...)
+		single := len(cfg.Platforms) == 1
+		for _, p := range ordered {
+			for _, m := range cfg.ToolSync.OpenCode[p.ID] {
+				m = strings.TrimSpace(m)
+				if m == "" {
+					continue
+				}
+				if single {
+					add(m, platformModelDisplayName(p.Name, m))
+				} else {
+					add("kshell:"+p.ID+":"+m, platformModelDisplayName(p.Name, m))
+				}
+			}
+		}
+		return v
+	case "codebuddy":
+		def, _ := cfg.ActivePlatform()
+		for _, m := range cfg.ToolSync.CodeBuddy {
+			m = strings.TrimSpace(m)
+			if m == "" {
+				continue
+			}
+			add(m, platformModelDisplayName(def.Name, m))
+		}
+		return v
+	default: // claude
+		def, _ := cfg.ActivePlatform()
+		for _, m := range def.Models {
+			m = strings.TrimSpace(m)
+			if m == "" {
+				continue
+			}
+			add(m, platformModelDisplayName(def.Name, m))
 		}
 		return v
 	}
-	// 多平台：默认平台排最前（命中 DefaultPlatform，否则第一个），其余按列表顺序。
-	def, _ := cfg.ActivePlatform()
-	var defPlat *config.ModelPlatform
-	rest := make([]config.ModelPlatform, 0, len(cfg.Platforms))
-	for _, p := range cfg.Platforms {
-		if p.ID == def.ID && defPlat == nil {
-			pc := p
-			defPlat = &pc
-			continue
-		}
-		rest = append(rest, p)
-	}
-	ordered := rest
-	if defPlat != nil {
-		ordered = append([]config.ModelPlatform{*defPlat}, rest...)
-	}
-	for _, p := range ordered {
-		for _, name := range p.Models {
-			name = strings.TrimSpace(name)
-			add("kshell:"+p.ID+":"+name, platformModelDisplayName(p.Name, name))
-		}
-	}
-	return v
 }
 
 // splitKshellModelID 解析下拉前缀 ID "kshell:<platID>:<model>"。
@@ -851,7 +861,7 @@ func (a *App) SetChatModel(id, modelID string) error {
 			}); err != nil {
 				return err
 			}
-			a.syncAgentModels() // 默认平台变了，静态注入随之重写
+			a.scheduleAgentSync() // 默认平台变了，静态注入随之重写（防抖合并）
 			err = m.SetModel(resolved, target)
 		} else {
 			err = m.SetModel(resolved, target)

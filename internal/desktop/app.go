@@ -179,6 +179,8 @@ type App struct {
 	// agentModelsSyncOnce：启动后首轮探测完成时把平台模型同步进各工具自有配置
 	//（尤其 Claude settings.json），避免用户仍读到陈旧 ANTHROPIC_MODEL。
 	agentModelsSyncOnce sync.Once
+	// agentSyncSched 是配置变更触发的防抖同步调度器（scheduleAgentSync 惰性创建）。
+	agentSyncSched *modelSyncScheduler
 	// windowHidden 跟踪主窗口是否已收进托盘（wails v2.16 无 WindowIsVisible 可查）：
 	// 通知 dispatcher 据此决定要不要弹独立置顶气泡。
 	windowHidden bool

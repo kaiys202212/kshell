@@ -51,6 +51,27 @@ func resolveRestoreModelID(last string, models []chat.ModelView, current string)
 	return ""
 }
 
+// restoreCandidates 构造恢复模型的候选项：与下拉合并不同，恢复不依赖按工具
+// 同步开关（ToolSync）——它只是把 JSONL/state 里的模型名映射回配置规范名，
+// 取全部平台模型（裸名 ID）。
+func (a *App) restoreCandidates() []chat.ModelView {
+	cfg := a.snapshot().Config.Model
+	if !cfg.Enabled {
+		return nil
+	}
+	var out []chat.ModelView
+	for _, p := range cfg.Platforms {
+		for _, m := range p.Models {
+			m = strings.TrimSpace(m)
+			if m == "" {
+				continue
+			}
+			out = append(out, chat.ModelView{ID: m, Name: platformModelDisplayName(p.Name, m)})
+		}
+	}
+	return out
+}
+
 // restoreSessionModel 在 ACP 恢复历史会话后尝试恢复上次模型：
 //   - claude：按磁盘 JSONL 尾部上次真实助手模型；
 //   - opencode：OpenCode 的会话不记模型（resume 后 Current 恒为 agent 默认），
@@ -78,19 +99,20 @@ func (a *App) restoreSessionModel(chatID, toolID, sessionID, sessionPath string)
 	if last == "" {
 		return
 	}
-	v, err := a.modelsView(chatID)
-	if err != nil {
-		return
-	}
-	target := resolveRestoreModelID(last, v.Models, v.Current)
-	if target == "" {
-		return
-	}
 	m := a.chats()
 	if m == nil {
 		return
 	}
 	resolved, _ := a.resolveChatID(chatID)
+	av, ok := m.Models(resolved)
+	if !ok {
+		av = chat.ModelsView{Models: []chat.ModelView{}}
+	}
+	models := append(append([]chat.ModelView{}, av.Models...), a.restoreCandidates()...)
+	target := resolveRestoreModelID(last, models, av.Current)
+	if target == "" {
+		return
+	}
 	if err := m.SetModel(resolved, target); err != nil {
 		return
 	}

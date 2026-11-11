@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yangk/kshell/internal/acp"
 	"github.com/yangk/kshell/internal/chat"
@@ -171,6 +172,7 @@ func TestListChatModelsMergesConfigModels(t *testing.T) {
 		Enabled:     true,
 		ActiveModel: "glm-5.3-flash",
 		Platforms:   []config.ModelPlatform{{ID: "p1", Name: "P", Models: []string{"glm-5.3-flash", "deepseek-v4.1-flash", "kimi-k3"}}},
+		ToolSync:    config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
 	}
 	env.app.mu.Unlock()
 
@@ -208,6 +210,7 @@ func TestListChatModelsAgentEmptyStillListsConfig(t *testing.T) {
 		Enabled:     true,
 		ActiveModel: "glm-5.3-flash",
 		Platforms:   []config.ModelPlatform{{ID: "p1", Name: "P", Models: []string{"glm-5.3-flash"}}},
+		ToolSync:    config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
 	}
 	env.app.mu.Unlock()
 
@@ -243,6 +246,7 @@ func TestModelsViewMergesAndNeverNil(t *testing.T) {
 			Enabled:     true,
 			ActiveModel: "cfg1",
 			Platforms:   []config.ModelPlatform{{ID: "p1", Name: "P", Models: []string{"m1", "cfg1"}}},
+			ToolSync:    config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
 		}
 		env.app.mu.Unlock()
 
@@ -368,9 +372,9 @@ func TestListChatModelsDisabledNoConfigModels(t *testing.T) {
 	}
 }
 
-// 用户单独关闭该工具的平台模型同步（model.sync_off_tools）后，ACP 下拉不得
-// 再并配置平台模型：注入通道已被关掉（agentsync 只清不建），列出来是
-// 选了也走不通的假选项——用户实证 codebuddy 关同步后下拉仍在。
+// 该工具未启用按工具定制同步（ToolSync.Enabled 无该键）时，ACP 下拉不得再并
+// 配置平台模型：注入通道已被 agentsync 关掉（只清不建），列出来是选了也走不通
+// 的假选项——用户实证 codebuddy 关同步后下拉仍在。
 func TestListChatModelsSyncOffSkipsConfigModels(t *testing.T) {
 	env := newChatTestApp(t, &providers.ACPDetection{
 		Available: true, Source: "path", BinPath: "claude-agent-acp",
@@ -378,10 +382,13 @@ func TestListChatModelsSyncOffSkipsConfigModels(t *testing.T) {
 	env.app.mu.Lock()
 	env.app.opts.Config.SessionMode = config.SessionModeACP
 	env.app.opts.Config.Model = config.ModelConfig{
-		Enabled:      true,
-		ActiveModel:  "glm-5.3-flash",
-		SyncOffTools: []string{"claude"},
-		Platforms:    []config.ModelPlatform{{ID: "p1", Name: "GLM", Models: []string{"glm-5.3-flash", "glm-4.7"}}},
+		Enabled:     true,
+		ActiveModel: "glm-5.3-flash",
+		Platforms:   []config.ModelPlatform{{ID: "p1", Name: "GLM", Models: []string{"glm-5.3-flash", "glm-4.7"}}},
+		ToolSync: config.ToolSyncConfig{
+			Enabled:  map[string]bool{"opencode": true},
+			OpenCode: map[string][]string{"p1": {"glm-5.3-flash", "glm-4.7"}},
+		},
 	}
 	env.app.mu.Unlock()
 
@@ -395,10 +402,10 @@ func TestListChatModelsSyncOffSkipsConfigModels(t *testing.T) {
 	}
 	for _, mo := range v.Models {
 		if mo.ID == "glm-5.3-flash" || mo.ID == "glm-4.7" || strings.HasPrefix(mo.ID, "kshell:") {
-			t.Fatalf("关闭同步后不应列出配置模型: %+v", v.Models)
+			t.Fatalf("未启用同步的工具不应列出配置模型: %+v", v.Models)
 		}
 	}
-	// 未列入关闭名单的工具不受影响：同一配置下 mergeConfigModels 照常并平台模型。
+	// 已启用的工具不受影响：同一配置下 mergeConfigModels 照常并勾选模型。
 	v2 := env.app.mergeConfigModels(chat.ModelsView{Models: []chat.ModelView{}}, "opencode")
 	found := false
 	for _, mo := range v2.Models {
@@ -407,7 +414,7 @@ func TestListChatModelsSyncOffSkipsConfigModels(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("未关闭同步的工具应照常合并平台模型: %+v", v2.Models)
+		t.Fatalf("已启用的工具应照常合并平台模型: %+v", v2.Models)
 	}
 }
 
@@ -482,6 +489,7 @@ func TestMergeConfigModelsSinglePlatformBareNames(t *testing.T) {
 		Enabled:     true,
 		ActiveModel: "m2",
 		Platforms:   []config.ModelPlatform{{ID: "p1", Name: "P", Models: []string{"m1", " m2 "}}},
+		ToolSync:    config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
 	}
 	env.app.mu.Unlock()
 
@@ -498,8 +506,8 @@ func TestMergeConfigModelsSinglePlatformBareNames(t *testing.T) {
 	}
 }
 
-// 多平台：前缀 ID/Name、默认平台排最前、其余按列表顺序；
-// Current 不回落（agent 上报为准），ActiveModel 不影响 Current。
+// claude 静态注入只指向默认平台端点：下拉只并默认平台全部模型（裸名 ID、
+// Name 带平台前缀）；Current 不回落（agent 上报为准），ActiveModel 不影响 Current。
 func TestMergeConfigModelsMultiPlatformPrefixed(t *testing.T) {
 	platforms := []config.ModelPlatform{
 		{ID: "p1", Name: "Alpha", Models: []string{"a1", "a2"}},
@@ -514,12 +522,12 @@ func TestMergeConfigModelsMultiPlatformPrefixed(t *testing.T) {
 	}{
 		{
 			name: "默认平台排最前", defPlat: "p2", active: "b1",
-			wantIDs:   []string{"kshell:p2:b1", "kshell:p2:b2", "kshell:p1:a1", "kshell:p1:a2"},
-			wantNames: map[string]string{"kshell:p2:b1": "Beta: b1", "kshell:p1:a1": "Alpha: a1"},
+			wantIDs:   []string{"b1", "b2"},
+			wantNames: map[string]string{"b1": "Beta: b1"},
 		},
 		{
 			name: "ActiveModel不影响Current", defPlat: "p2", active: "a1",
-			wantIDs: []string{"kshell:p2:b1", "kshell:p2:b2", "kshell:p1:a1", "kshell:p1:a2"},
+			wantIDs: []string{"b1", "b2"},
 		},
 	}
 	for _, tc := range cases {
@@ -531,6 +539,7 @@ func TestMergeConfigModelsMultiPlatformPrefixed(t *testing.T) {
 				DefaultPlatform: tc.defPlat,
 				ActiveModel:     tc.active,
 				Platforms:       platforms,
+				ToolSync:        config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
 			}
 			env.app.mu.Unlock()
 
@@ -562,6 +571,41 @@ func TestMergeConfigModelsMultiPlatformPrefixed(t *testing.T) {
 	}
 }
 
+// opencode 多平台：按平台勾选集并入，ID 带 "kshell:<platID>:<model>" 前缀，
+// 默认平台排最前、其余按列表顺序。
+func TestMergeConfigModelsOpencodeMultiPlatform(t *testing.T) {
+	env := newChatTestApp(t, nil, nil)
+	env.app.mu.Lock()
+	env.app.opts.Config.Model = config.ModelConfig{
+		Enabled:         true,
+		DefaultPlatform: "p2",
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "Alpha", Models: []string{"a1", "a2"}},
+			{ID: "p2", Name: "Beta", Models: []string{"b1", "b2"}},
+		},
+		ToolSync: config.ToolSyncConfig{
+			Enabled:  map[string]bool{"opencode": true},
+			OpenCode: map[string][]string{"p1": {"a1", "a2"}, "p2": {"b1", "b2"}},
+		},
+	}
+	env.app.mu.Unlock()
+
+	v := env.app.mergeConfigModels(chat.ModelsView{Models: []chat.ModelView{}}, "opencode")
+	var gotIDs []string
+	for _, mo := range v.Models {
+		gotIDs = append(gotIDs, mo.ID)
+	}
+	want := []string{"kshell:p2:b1", "kshell:p2:b2", "kshell:p1:a1", "kshell:p1:a2"}
+	if len(gotIDs) != len(want) {
+		t.Fatalf("条目数不符: got %v", gotIDs)
+	}
+	for i := range want {
+		if gotIDs[i] != want[i] {
+			t.Fatalf("顺序错误: got %v, want %v", gotIDs, want)
+		}
+	}
+}
+
 // 多平台去重：agent 自报 ID 与前缀 ID 相同时只保留 agent 条目。
 func TestMergeConfigModelsMultiPlatformDedupe(t *testing.T) {
 	conn := &fakeChatConn{start: acp.SessionStart{SessionID: "s1",
@@ -569,7 +613,7 @@ func TestMergeConfigModelsMultiPlatformDedupe(t *testing.T) {
 			AvailableModels: []acp.ModelInfo{{ModelID: "kshell:p1:a1", Name: "Ghost"}},
 			CurrentModelID:  "kshell:p1:a1",
 		}}, waitCh: make(chan struct{})}
-	env, id := openChatEnv(t, conn)
+	env, _ := openChatEnv(t, conn)
 	env.app.mu.Lock()
 	env.app.opts.Config.Model = config.ModelConfig{
 		Enabled:     true,
@@ -578,13 +622,16 @@ func TestMergeConfigModelsMultiPlatformDedupe(t *testing.T) {
 			{ID: "p1", Name: "Alpha", Models: []string{"a1"}},
 			{ID: "p2", Name: "Beta", Models: []string{"b1"}},
 		},
+		ToolSync: config.ToolSyncConfig{
+			Enabled:  map[string]bool{"opencode": true},
+			OpenCode: map[string][]string{"p1": {"a1"}, "p2": {"b1"}},
+		},
 	}
 	env.app.mu.Unlock()
 
-	v, err := env.app.ListChatModels(id)
-	if err != nil {
-		t.Fatalf("ListChatModels: %v", err)
-	}
+	v := env.app.mergeConfigModels(chat.ModelsView{Models: []chat.ModelView{
+		{ID: "kshell:p1:a1", Name: "Ghost"},
+	}}, "opencode")
 	count := 0
 	for _, mo := range v.Models {
 		if mo.ID == "kshell:p1:a1" {
@@ -788,6 +835,7 @@ func TestSetChatModelCrossPlatformSyncsClaude(t *testing.T) {
 			{ID: "p1", Name: "Alpha", AnthropicBaseURL: "https://a.example/", APIKey: "ka", Models: []string{"a1"}},
 			{ID: "p2", Name: "Beta", AnthropicBaseURL: "https://b.example/", APIKey: "kb", Models: []string{"b2"}},
 		},
+		ToolSync: config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
 	}
 	if err := config.Save(layout, cfg); err != nil {
 		t.Fatalf("Save 初态: %v", err)
@@ -801,10 +849,19 @@ func TestSetChatModelCrossPlatformSyncsClaude(t *testing.T) {
 		t.Fatalf("SetChatModel: %v", err)
 	}
 
+	// 同步经调度器防抖（400ms）：轮询等待落盘。
 	path := filepath.Join(home, ".claude", "settings.json")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("应写入 settings.json: %v", err)
+	deadline := time.Now().Add(3 * time.Second)
+	var b []byte
+	for {
+		b, err = os.ReadFile(path)
+		if err == nil && strings.Contains(string(b), "https://b.example/") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("应写入 settings.json（含新默认平台端点）: err=%v body=%s", err, b)
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 	var doc map[string]any
 	if err := json.Unmarshal(b, &doc); err != nil {
@@ -828,6 +885,7 @@ func TestMergeConfigModelsDedupesByDisplayName(t *testing.T) {
 		Platforms: []config.ModelPlatform{
 			{ID: "p1", Name: "openai", Models: []string{"glm-x", "ds-x"}},
 		},
+		ToolSync: config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
 	}
 	env.app.mu.Unlock()
 
@@ -945,6 +1003,10 @@ func TestMergeConfigModelsOpencodeNativeDedupe(t *testing.T) {
 		Enabled:         true,
 		DefaultPlatform: "p1",
 		Platforms:       []config.ModelPlatform{{ID: "p1", Name: "openai", Models: []string{"glm-x", "ds-x"}}},
+		ToolSync: config.ToolSyncConfig{
+			Enabled:  map[string]bool{"opencode": true, "claude": true},
+			OpenCode: map[string][]string{"p1": {"glm-x", "ds-x"}},
+		},
 	}
 	env.app.mu.Unlock()
 
@@ -995,6 +1057,10 @@ func TestMergeConfigModelsCodeBuddyKeepsBuiltinNameCollision(t *testing.T) {
 		Enabled:         true,
 		DefaultPlatform: "p1",
 		Platforms:       []config.ModelPlatform{{ID: "p1", Name: "opencode1", Models: []string{"glm-5.3-flash", "kimi-k3"}}},
+		ToolSync: config.ToolSyncConfig{
+			Enabled:   map[string]bool{"codebuddy": true},
+			CodeBuddy: []string{"glm-5.3-flash", "kimi-k3"},
+		},
 	}
 	env.app.mu.Unlock()
 
