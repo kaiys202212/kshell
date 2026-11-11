@@ -21,6 +21,8 @@ func IsDirectPass(input string, patterns []string) bool {
 	if input == "" {
 		return false
 	}
+	// #/＃ 无条件放行：不可经 direct_patterns 配置关闭——# 命令必须由
+	// Console.Handle 解析（是否合法命令由 Handle 自行判定）。
 	if strings.HasPrefix(input, "#") || strings.HasPrefix(input, "＃") {
 		return true
 	}
@@ -45,12 +47,13 @@ func IsDirectPass(input string, patterns []string) bool {
 			continue
 		}
 		if p == "#" || p == "@" {
+			// "#" 分支仅为与 @ 对称：input 以 #/＃ 开头已在上方无条件放行。
 			if strings.HasPrefix(input, p) {
 				return true
 			}
 			continue
 		}
-		if endsWithASCIILetter(p) {
+		if isASCIIWordTail(p) {
 			if strings.EqualFold(first, p) {
 				return true
 			}
@@ -63,9 +66,9 @@ func IsDirectPass(input string, patterns []string) bool {
 	return false
 }
 
-// endsWithASCIILetter 报告 pattern 是否以 ASCII 字母/数字结尾：是则视为
-// 有空格词边界的英文单词，只做整词匹配；否则（中文等）允许前缀匹配。
-func endsWithASCIILetter(p string) bool {
+// isASCIIWordTail 报告 pattern 是否以 ASCII 词尾字符结尾（字母/数字/-/_）：
+// 是则视为有空格词边界的英文单词，只做整词匹配；否则（中文等）允许前缀匹配。
+func isASCIIWordTail(p string) bool {
 	rs := []rune(p)
 	if len(rs) == 0 {
 		return false
