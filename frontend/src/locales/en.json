@@ -708,6 +708,7 @@
       "tree_aria": "Workspace file tree",
       "show_all": "All",
       "show_all_aria": "Show all",
+      "select_aria": "Select {{name}}",
       "refresh": "Refresh file tree",
       "delete_confirm_multi_title": "Delete {{n}} items",
       "delete_confirm_multi_body": "The following {{n}} items will be deleted permanently:",

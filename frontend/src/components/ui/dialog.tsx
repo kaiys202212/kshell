@@ -13,9 +13,12 @@ export interface DialogProps {
   className?: string;
   // false 时拦截 Esc / 点遮罩，只允许调用方主动把 open 设为 false（如向导的「跳过」）。
   dismissible?: boolean;
+  // 打开时初始聚焦回调：preventDefault 阻止 Radix 把焦点放 Content 容器，
+  // 由调用方用 autoFocus 属性决定焦点落点（如删除确认默认聚焦「删除」）。
+  onOpenAutoFocus?: (e: Event) => void;
 }
 
-export function Dialog({ open, onOpenChange, children, className, dismissible = true }: DialogProps) {
+export function Dialog({ open, onOpenChange, children, className, dismissible = true, onOpenAutoFocus }: DialogProps) {
   const lock = (e: Event) => {
     if (!dismissible) e.preventDefault();
   };
@@ -34,6 +37,7 @@ export function Dialog({ open, onOpenChange, children, className, dismissible = 
           )}
           style={{ animation: 'kshell-pop-in var(--duration-base) var(--ease-out)' }}
           onEscapeKeyDown={lock}
+          onOpenAutoFocus={onOpenAutoFocus}
           onPointerDownOutside={lock}
           onInteractOutside={lock}
         >

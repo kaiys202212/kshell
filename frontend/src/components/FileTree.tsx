@@ -3,6 +3,7 @@
 // 展开目录时必须再次调 listFiles(wsPath, 子目录相对路径)。
 // relPath 统一用 / 拼接：Go 侧 filepath.Clean 会归一化为平台分隔符。
 // 交互：点目录展开/收起并选中、单击文件选中 + onOpenFile（预览）、shift+点击以锚点为界范围多选、
+// 按住 Shift 行首显示复选框（勾选切换选中，配合 Delete 键批量删除）、
 // Delete 键删除选中集（确认弹窗，多选逐条执行）、双击 onEditFile（固定编辑页签）、铅笔按钮行内重命名、
 // 右键菜单（新建/删除/重命名/复制路径/在资源管理器显示/加入 git 忽略，删除带确认弹窗）；
 // 树内拖拽：行可拖起（携带绝对/相对路径 MIME），目录行作 drop 目标移入；
@@ -173,6 +174,27 @@ function collectExpanded(items: TreeItem[]): string[] {
   return out;
 }
 
+// relPath 的父目录（顶层为 ''），局部刷新用
+function parentOf(rel: string): string {
+  const i = rel.lastIndexOf('/');
+  return i < 0 ? '' : rel.slice(0, i);
+}
+
+// 用磁盘新列表替换某目录的 children，但保留同名且已展开目录的展开态与已加载孙层：
+// 局部刷新（删除/重命名/新建/移动后）只重拉受影响目录，避免连带折叠更深层
+function mergeLoaded(old: TreeItem[] | null, nodes: FileNode[], parentRel: string): TreeItem[] {
+  return nodes.map((n) => {
+    const rel = parentRel ? `${parentRel}/${n.Name}` : n.Name;
+    const prev = old?.find((k) => k.relPath === rel);
+    return {
+      node: n,
+      relPath: rel,
+      children: n.IsDir && prev?.node.IsDir ? prev.children : null,
+      expanded: prev?.expanded ?? false,
+    };
+  });
+}
+
 // 按名字子串过滤已加载的树（搜索防抖期间的即时反馈；未加载子层搜不到，
 // 由后端递归搜索兜底——结果到达后整树被平铺结果列表替换）
 function filterItems(items: TreeItem[], q: string): TreeItem[] {
@@ -261,6 +283,8 @@ interface RowProps {
   dirBranches?: Record<string, string>;
   renamingPath: string | null; // 受控行内重命名：renamingPath === item.relPath 时该行进入编辑
   creating: { dirRel: string; isDir: boolean } | null; // 行内新建输入的渲染位置
+  showCheckbox: boolean; // 按住 Shift 时行首显示复选框，勾选切换选中（批量删除入口）
+  onToggleSelect(item: TreeItem): void;
   onRenameStart(relPath: string): void;
   onRenameEnd(): void;
   onRowActivate(item: TreeItem, shift: boolean): void; // 行主按钮单击：单选/多选 + 展开或预览
@@ -283,6 +307,8 @@ function TreeRow({
   dirBranches,
   renamingPath,
   creating,
+  showCheckbox,
+  onToggleSelect,
   onRenameStart,
   onRenameEnd,
   onRowActivate,
@@ -377,6 +403,16 @@ function TreeRow({
         onDragLeave={node.IsDir ? () => setDropActive(false) : undefined}
         onDrop={node.IsDir ? rowDrop : undefined}
       >
+        {showCheckbox && !isVirtualRoot && (
+          <input
+            type="checkbox"
+            className="mx-0.5 shrink-0"
+            aria-label={t('ui.files.select_aria', { name: node.Name })}
+            checked={selected}
+            onClick={(e) => e.stopPropagation()} // 不触发容器行为（如拖拽冒泡），切换只看 onChange
+            onChange={() => onToggleSelect(item)}
+          />
+        )}
         {renaming ? (
           <Input
             autoFocus
@@ -508,6 +544,8 @@ function TreeRow({
               onCancelCreate={onCancelCreate}
               onRowContextMenu={onRowContextMenu}
               onMoveInto={onMoveInto}
+              showCheckbox={showCheckbox}
+              onToggleSelect={onToggleSelect}
             />
           ))}
         </ul>
@@ -553,6 +591,8 @@ export default function FileTree({
   // 选中集（relPath）与 shift 范围多选的锚点：锚点是上一次非 shift 单击的行
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
+  // Shift 按住期间行首显示复选框（批量选择入口）；监听 window 级按键与失焦
+  const [shiftHeld, setShiftHeld] = useState(false);
   // 显示全部（含忽略文件），默认勾选；不持久化，切换由下方 effect 走 requestReload 重拉已展开路径
   const [showAll, setShowAll] = useState(true);
   const gitMap = useAppStore((s) => s.gitStatus[wsPath]);
@@ -570,10 +610,39 @@ export default function FileTree({
   const reloadPendingRef = useRef(false);
   const prevShowAllRef = useRef(showAll);
 
+  // Shift 按键跟踪：keydown/keyup + window 失焦兜底（切窗口松键收不到 keyup）
+  useEffect(() => {
+    const down = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Shift') setShiftHeld(true);
+    };
+    const up = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Shift') setShiftHeld(false);
+    };
+    const reset = () => setShiftHeld(false);
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', reset);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', reset);
+    };
+  }, []);
+
   // 选中集清空：树重载/切换视图后旧 relPath 可能已不存在，避免悬挂引用
   const clearSelection = () => {
     setSelected((cur) => (cur.size > 0 ? new Set<string>() : cur));
     setAnchor(null);
+  };
+
+  // 行内复选框切换：加入/移出选中集，不动锚点（与 shift 区间选互不干扰）
+  const toggleSelect = (item: TreeItem) => {
+    setSelected((cur) => {
+      const next = new Set(cur);
+      if (next.has(item.relPath)) next.delete(item.relPath);
+      else next.add(item.relPath);
+      return next;
+    });
   };
 
   // 单轮：作废 Go 缓存 → 重拉根层 → 按原展开路径逐层恢复 → 刷 git
@@ -932,15 +1001,22 @@ export default function FileTree({
     setHits(null);
   };
 
-  // 根层重建树镜像（Go 侧改动后已作废缓存）：rename/create/delete 共用
-  const refreshRoot = () => {
-    listFiles(wsPath, '', showAll)
-      .then((nodes) =>
-        setItems((cur) => asTree(wsPath, nodes, cur?.[0]?.relPath === '' ? cur[0].expanded : true)),
-      )
-      .catch(() => {
-        /* 根层刷新失败保持原树，下次展开会重新拉取 */
-      });
+  // 局部刷新：只重拉受影响目录（去重）并原位替换 children（mergeLoaded 保留更深层展开态），
+  // 其余目录的折叠状态不动。rename/create/delete/move 共用，替代整树重建。
+  const refreshDirs = (dirRels: string[]) => {
+    const dirs = [...new Set(dirRels)];
+    void (async () => {
+      for (const d of dirs) {
+        try {
+          const nodes = await listFiles(wsPath, d, showAllRef.current);
+          setItems((cur) =>
+            cur && updateItems(cur, d, (it) => ({ ...it, children: mergeLoaded(it.children, nodes, d) })),
+          );
+        } catch {
+          /* 单目录刷新失败保持原树，下次展开会重新拉取 */
+        }
+      }
+    })();
   };
 
   // 重命名：Go 侧已作废树缓存，这里重建前端树镜像并刷新 git 状态
@@ -948,7 +1024,7 @@ export default function FileTree({
     renameEntry(wsPath, relPath, newName)
       .then(() => {
         useAppStore.getState().notify(t('ui.files.renamed', { name: newName }), 'success');
-        refreshRoot();
+        refreshDirs([parentOf(relPath)]);
         void refreshGitStatus(wsPath);
       })
       .catch((e: unknown) => {
@@ -964,7 +1040,7 @@ export default function FileTree({
       .then(() => {
         useAppStore.getState().notify(t('ui.files.created', { name }), 'success');
         setCreating(null);
-        refreshRoot();
+        refreshDirs([dirRel]);
         void refreshGitStatus(wsPath);
       })
       .catch((e: unknown) => {
@@ -1015,7 +1091,7 @@ export default function FileTree({
             'error',
           );
       }
-      refreshRoot();
+      refreshDirs(targets.map((it) => parentOf(it.relPath)));
       void refreshGitStatus(wsPath);
     })();
   };
@@ -1046,7 +1122,7 @@ export default function FileTree({
     moveEntry(wsPath, srcRel, dstDirRel)
       .then(() => {
         useAppStore.getState().notify(t('ui.files.moved', { dst: dstDirRel || t('ui.files.root_dir') }), 'success');
-        refreshRoot();
+        refreshDirs([parentOf(srcRel), dstDirRel]);
         void refreshGitStatus(wsPath);
       })
       .catch((e: unknown) => {
@@ -1078,10 +1154,6 @@ export default function FileTree({
 
   const q = query.trim();
   const showResults = q.length > 0 && hits !== null;
-  const dirOf = (rel: string) => {
-    const i = rel.lastIndexOf('/');
-    return i < 0 ? '' : rel.slice(0, i);
-  };
 
   // 右键菜单项：按目标（目录行/文件行/空白处）组装
   const menuItems: MenuItem[] = (() => {
@@ -1154,6 +1226,8 @@ export default function FileTree({
     dirBranches,
     renamingPath,
     creating,
+    showCheckbox: shiftHeld,
+    onToggleSelect: toggleSelect,
     onRenameStart: setRenamingPath,
     onRenameEnd: () => setRenamingPath(null),
     onRowActivate: handleRowActivate,
@@ -1229,9 +1303,9 @@ export default function FileTree({
                       title={h.Path}
                     >
                       <span className="shrink-0 truncate text-foreground/90">{h.Name}</span>
-                      {dirOf(h.RelPath) && (
+                      {parentOf(h.RelPath) && (
                         <span className="min-w-0 truncate text-xs text-muted-foreground">
-                          {dirOf(h.RelPath)}
+                          {parentOf(h.RelPath)}
                         </span>
                       )}
                     </button>
@@ -1286,7 +1360,13 @@ export default function FileTree({
       )}
 
       {deleting && deleting.length > 0 && (
-        <Dialog open onOpenChange={(o) => { if (!o) setDeleting(null); }} className="w-80">
+        <Dialog
+          open
+          onOpenChange={(o) => { if (!o) setDeleting(null); }}
+          className="w-80"
+          // 默认聚焦「删除」：拦掉 Radix 的容器聚焦，由按钮 autoFocus 落焦（Enter 即确认）
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
           <DialogPrimitive.Title className="mb-1 text-sm font-medium">
             {deleting.length === 1
               ? t('ui.files.delete_confirm_title')
@@ -1316,7 +1396,7 @@ export default function FileTree({
             <Button variant="outline" size="sm" onClick={() => setDeleting(null)}>
               {t('ui.files.cancel')}
             </Button>
-            <Button variant="destructive" size="sm" onClick={handleDeleteConfirm}>
+            <Button variant="destructive" size="sm" autoFocus onClick={handleDeleteConfirm}>
               {t('ui.files.delete')}
             </Button>
           </div>

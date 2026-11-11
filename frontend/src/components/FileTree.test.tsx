@@ -1196,3 +1196,110 @@ describe('FileTree reveal', () => {
     });
   });
 });
+
+describe('FileTree Shift 复选多选', () => {
+  const selectAria = (name: string) => tt('ui.files.select_aria').replace('{{name}}', name);
+
+  it('未按 Shift 无行内复选框，按住后出现且勾选切换选中，释放后选中保留', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    expect(screen.queryByRole('checkbox', { name: selectAria('README.md') })).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Shift' });
+    const cb = screen.getByRole('checkbox', { name: selectAria('README.md') });
+    expect(cb).not.toBeChecked();
+    fireEvent.click(cb);
+    expect(cb).toBeChecked();
+    expect(screen.getByText('README.md').closest('li')).toHaveAttribute('aria-selected', 'true');
+
+    // 释放 Shift：复选框消失，选中集保留（可继续 Delete 删除）
+    fireEvent.keyUp(window, { key: 'Shift' });
+    expect(screen.queryByRole('checkbox', { name: selectAria('README.md') })).not.toBeInTheDocument();
+    expect(screen.getByText('README.md').closest('li')).toHaveAttribute('aria-selected', 'true');
+
+    // window 失焦兜底清 shift 态
+    fireEvent.keyDown(window, { key: 'Shift' });
+    expect(screen.getByRole('checkbox', { name: selectAria('README.md') })).toBeInTheDocument();
+    fireEvent.blur(window);
+    expect(screen.queryByRole('checkbox', { name: selectAria('README.md') })).not.toBeInTheDocument();
+  });
+
+  it('勾选多项后 Delete 键弹确认框，确认后逐条删除', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.deleteEntry.mockResolvedValue(undefined);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    fireEvent.keyDown(window, { key: 'Shift' });
+    fireEvent.click(screen.getByRole('checkbox', { name: selectAria('README.md') }));
+    fireEvent.click(screen.getByRole('checkbox', { name: selectAria('src') }));
+    fireEvent.keyUp(window, { key: 'Shift' });
+
+    fireEvent.keyDown(screen.getByRole('tree', { name: tt('ui.files.tree_aria') }), { key: 'Delete' });
+    expect(
+      await screen.findByText(tt('ui.files.delete_confirm_multi_title').replace('{{n}}', '2')),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.files.delete') }));
+    });
+    expect(mocks.deleteEntry).toHaveBeenCalledWith('D:\\proj', 'README.md');
+    expect(mocks.deleteEntry).toHaveBeenCalledWith('D:\\proj', 'src');
+  });
+});
+
+describe('FileTree 删除后局部刷新不折叠', () => {
+  it('删除子目录内文件后只重拉其父目录，其他已展开目录与更深层保持展开', async () => {
+    const twoDirs: FileNode[] = [node('src', true, 'src'), node('pkg', true, 'pkg')];
+    mocks.listFiles
+      .mockResolvedValueOnce(twoDirs) // 根层
+      .mockResolvedValueOnce([node('main.ts', false, 'src/main.ts'), node('lib', true, 'src/lib')]) // src
+      .mockResolvedValueOnce([node('util.go', false, 'pkg/util.go')]) // pkg
+      .mockResolvedValueOnce([node('tree.go', false, 'src/lib/tree.go')]); // src/lib
+    mocks.deleteEntry.mockResolvedValue(undefined);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+
+    fireEvent.click(await screen.findByText('src'));
+    await screen.findByText('main.ts');
+    fireEvent.click(screen.getByText('pkg'));
+    await screen.findByText('util.go');
+    fireEvent.click(screen.getByText('lib'));
+    await screen.findByText('tree.go');
+
+    mocks.listFiles.mockClear();
+    // src 新列表：main.ts 已删，lib 仍在磁盘上
+    mocks.listFiles.mockResolvedValueOnce([
+      node('keep.md', false, 'src/keep.md'),
+      node('lib', true, 'src/lib'),
+    ]);
+
+    // 删除 src/main.ts：仅重拉 src（不刷根层、不刷 pkg）
+    fireEvent.click(screen.getByText('main.ts'));
+    fireEvent.keyDown(screen.getByRole('tree', { name: tt('ui.files.tree_aria') }), { key: 'Delete' });
+    await screen.findByText(tt('ui.files.delete_confirm_title'));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.files.delete') }));
+    });
+
+    await waitFor(() => {
+      expect(mocks.listFiles).toHaveBeenCalledWith('D:\\proj', 'src', true);
+    });
+    expect(mocks.listFiles).toHaveBeenCalledTimes(1);
+    // src 新内容出现；pkg 与 src/lib 的已加载子层未折叠
+    expect(await screen.findByText('keep.md')).toBeInTheDocument();
+    expect(screen.getByText('util.go')).toBeInTheDocument();
+    expect(screen.getByText('tree.go')).toBeInTheDocument();
+  });
+
+  it('删除弹窗打开后默认聚焦「删除」按钮', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    fireEvent.contextMenu(screen.getByText('README.md'));
+    fireEvent.pointerDown(screen.getByRole('menuitem', { name: tt('ui.files.delete') }));
+    await screen.findByText(tt('ui.files.delete_confirm_title'));
+    expect(screen.getByRole('button', { name: tt('ui.files.delete') })).toHaveFocus();
+  });
+});
