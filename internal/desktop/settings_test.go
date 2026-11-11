@@ -18,7 +18,7 @@ func TestAgentHubSettingsRoundTrip(t *testing.T) {
 	}
 	a := NewAppWith(Options{Config: config.Default(), Layout: layout})
 
-	// 缺省视图： EnabledOn(nil)=true，心跳=5
+	// 缺省视图： EnabledOn(nil)=true，心跳=5（config.agenthubHeartbeatDefault 未导出，取字面值）
 	v := a.GetAgentHubSettings()
 	if !v.Enabled {
 		t.Fatalf("缺省 Enabled=false, want true")
@@ -37,7 +37,9 @@ func TestAgentHubSettingsRoundTrip(t *testing.T) {
 	}
 
 	// 非法心跳钳默认而非报错
-	_ = a.SaveAgentHubSettings(AgentHubSettingsInput{HeartbeatMinutes: -1})
+	if err := a.SaveAgentHubSettings(AgentHubSettingsInput{HeartbeatMinutes: -1}); err != nil {
+		t.Fatalf("Save(负值): %v", err)
+	}
 	if v := a.GetAgentHubSettings(); v.HeartbeatMinutes != 5 {
 		t.Fatalf("负值未钳默认: %d", v.HeartbeatMinutes)
 	}
@@ -54,5 +56,14 @@ func TestAgentHubSettingsRoundTrip(t *testing.T) {
 	}
 	if v := a.GetAgentHubSettings(); !v.Enabled {
 		t.Fatalf("开启失败")
+	}
+
+	// 文件级读回：显式 true 应写进 yaml（Enabled 非 nil 且为 true）
+	loaded, err := config.Load(layout)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.AgentHub.Enabled == nil || !*loaded.AgentHub.Enabled {
+		t.Fatalf("落盘读回 Enabled=%v, want 非 nil 且 true", loaded.AgentHub.Enabled)
 	}
 }
