@@ -85,6 +85,10 @@
       "no_image": "No image in the clipboard",
       "get_data_failed": "GetClipboardData failed: {{0}}",
       "global_lock_failed": "GlobalLock failed: {{0}}",
+      "global_alloc_failed": "GlobalAlloc failed: {{0}}",
+      "write_empty": "No file selected",
+      "write_unsupported": "Copying files to the clipboard is not supported on this platform",
+      "write_failed": "Failed to write clipboard: {{0}}",
       "data_empty": "Clipboard data is empty"
     },
     "files": {
@@ -704,6 +708,7 @@
       "deleted": "Deleted {{name}}",
       "path_copied": "Path copied",
       "copy_failed": "Failed to copy",
+      "files_copied": "Copied {{n}} item(s) to clipboard",
       "moved": "Moved to {{dst}}",
       "root_dir": "root directory",
       "menu_new_file": "New file",

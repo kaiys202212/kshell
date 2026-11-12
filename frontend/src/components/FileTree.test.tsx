@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   onFilesChanged: vi.fn<(cb: (path: string) => void) => () => void>(() => () => {}),
   onGitChanged: vi.fn<(cb: (path: string) => void) => () => void>(() => () => {}),
   revealInExplorer: vi.fn().mockResolvedValue(undefined),
+  writeClipboardFiles: vi.fn().mockResolvedValue(undefined),
   isSSHWorkspaceRef: (p: string) => typeof p === 'string' && p.startsWith('ssh://'),
 }));
 vi.mock('../lib/api', () => mocks);
@@ -662,6 +663,76 @@ describe('FileTree Delete 键删除', () => {
 
     fireEvent.keyDown(screen.getByRole('tree', { name: tt('ui.files.tree_aria') }), { key: 'Delete' });
     expect(screen.queryByText(tt('ui.files.delete_confirm_title'))).not.toBeInTheDocument();
+  });
+});
+
+describe('FileTree Ctrl+C 复制文件到系统剪贴板', () => {
+  it('多选中后按 Ctrl+C 调 writeClipboardFiles（relPath 列表）并成功 toast', async () => {
+    mocks.listFiles.mockResolvedValueOnce(root).mockResolvedValueOnce(srcChildren);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+
+    fireEvent.click(await screen.findByText('src')); // 展开目录
+    await screen.findByText('main.ts');
+    fireEvent.click(screen.getByText('main.ts'));
+    fireEvent.click(screen.getByText('README.md'), { shiftKey: true }); // 选中 main.ts, README.md
+
+    fireEvent.keyDown(screen.getByRole('tree', { name: tt('ui.files.tree_aria') }), {
+      key: 'c',
+      ctrlKey: true,
+    });
+    expect(mocks.writeClipboardFiles).toHaveBeenCalledWith('D:\\proj', ['src/main.ts', 'README.md']);
+    await waitFor(() => {
+      expect(
+        useAppStore.getState().toasts.some(
+          (t) => t.tone === 'success' && t.title === tt('ui.files.files_copied').replace('{{n}}', '2'),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it('失败时 toast 错误（backendError 原样透出）', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.writeClipboardFiles.mockRejectedValue(new Error('err.clipboard.write_unsupported'));
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    fireEvent.click(screen.getByText('README.md'));
+    fireEvent.keyDown(screen.getByRole('tree', { name: tt('ui.files.tree_aria') }), {
+      key: 'c',
+      ctrlKey: true,
+    });
+    await waitFor(() => {
+      expect(
+        useAppStore.getState().toasts.some(
+          (t) => t.tone === 'error' && t.title === tt('err.clipboard.write_unsupported'),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it('无选中时不调用 writeClipboardFiles，不拦截默认行为', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    fireEvent.keyDown(screen.getByRole('tree', { name: tt('ui.files.tree_aria') }), {
+      key: 'c',
+      ctrlKey: true,
+    });
+    expect(mocks.writeClipboardFiles).not.toHaveBeenCalled();
+  });
+
+  it('焦点在输入控件（搜索框）时不拦截 Ctrl+C', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    fireEvent.click(screen.getByText('README.md')); // 选中一行
+    fireEvent.keyDown(screen.getByRole('textbox', { name: tt('ui.files.search_aria') }), {
+      key: 'c',
+      ctrlKey: true,
+    });
+    expect(mocks.writeClipboardFiles).not.toHaveBeenCalled();
   });
 });
 

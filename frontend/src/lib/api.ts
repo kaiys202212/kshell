@@ -727,6 +727,7 @@ interface AppBindings {
   OpenShellTerminal(wsPath: string, cols: number, rows: number): Promise<TerminalInfo>;
   WriteTerminal(id: string, data: string): Promise<void>;
   ReadClipboardPaste(): Promise<ClipboardPaste>;
+  WriteClipboardFiles(root: string, rels: string[]): Promise<void>;
   ResizeTerminal(id: string, cols: number, rows: number): Promise<void>;
   CloseTerminal(id: string): Promise<void>;
   ListTerminals(): Promise<TerminalInfo[]>;
@@ -1621,6 +1622,13 @@ export async function readClipboardPaste(): Promise<ClipboardPaste> {
   const a = app();
   if (!a) return { Text: '', Path: '' };
   return a.ReadClipboardPaste();
+}
+
+// writeClipboardFiles 把文件树选中项（relPath 列表）写入系统剪贴板（CF_HDROP），资源管理器可直接粘贴。
+export async function writeClipboardFiles(root: string, rels: string[]): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.WriteClipboardFiles(root, rels);
 }
 
 // writeTerminal 把键盘输入写进终端（data 为 base64 编码的 UTF-8 字节）。
