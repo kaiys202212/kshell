@@ -88,6 +88,22 @@ func (a *App) sessionModelFor(s providers.Session) string {
 	}
 }
 
+// openCodeExplicitModelID 把 opencode 会话模型记忆里的原生 ID
+// "kshell-<platID>/<model>" 转成显式跨平台 ID "kshell:<platID>:<model>"。
+// opencode 原生 provider ID（如 "opencode/grok-code"）不是该形态，返回
+// ok=false，继续按 SessionModel 反查（查不到自然回落每工具/激活平台）。
+func openCodeExplicitModelID(sessionModel string) (string, bool) {
+	rest, found := strings.CutPrefix(sessionModel, "kshell-")
+	if !found {
+		return "", false
+	}
+	platID, model, found := strings.Cut(rest, "/")
+	if !found || platID == "" || model == "" {
+		return "", false
+	}
+	return "kshell:" + platID + ":" + model, true
+}
+
 // restoreSessionModel 在 ACP 恢复历史会话后尝试恢复上次模型：
 //   - claude：按磁盘 JSONL 尾部上次真实助手模型；
 //   - opencode：OpenCode 的会话不记模型（resume 后 Current 恒为 agent 默认），

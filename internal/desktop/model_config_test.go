@@ -9,6 +9,7 @@ import (
 
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
+	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/workbuddy"
 )
 
@@ -449,6 +450,43 @@ func TestModelOptionsPerTool(t *testing.T) {
 	mc, ok = app.modelOptionsForCreate("claude", "kshell:p2:x").Resolver("claude")
 	if !ok || mc.AnthropicBaseURL != "https://ant2/" || mc.Model != "x" {
 		t.Fatalf("前缀模型应命中 p2 且 Model=x: %+v ok=%v", mc, ok)
+	}
+}
+
+// TestModelOptionsForSessionOpenCodeNativeID：opencode state 落盘的原生 ID
+// "kshell-<platID>/<model>" 应归一为显式跨平台模型 ID，恢复端点命中该平台；
+// 非该形态的原生 provider ID 只回落平台、不注入模型名。
+func TestModelOptionsForSessionOpenCodeNativeID(t *testing.T) {
+	app, layout := newModelApp(t)
+	stateDir := filepath.Join(layout.Root, "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	state := `{"s1":"kshell-p2/kimi-k3","s2":"opencode/grok-code"}`
+	if err := os.WriteFile(filepath.Join(stateDir, "opencode-session-models.json"), []byte(state), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app.mu.Lock()
+	app.opts.Layout.State = stateDir
+	app.opts.Config.Model = config.ModelConfig{
+		Enabled:          true,
+		ActivePlatformID: "p1",
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "P1", OpenAIBaseURL: "https://oai1/", AnthropicBaseURL: "https://ant1/", APIKey: "k1"},
+			{ID: "p2", Name: "P2", OpenAIBaseURL: "https://oai2/", AnthropicBaseURL: "https://ant2/", APIKey: "k2", Models: []string{"kimi-k3"}},
+		},
+	}
+	app.mu.Unlock()
+
+	// kshell-p2/kimi-k3 → 显式命中 p2，模型名 kimi-k3。
+	mc, ok := app.modelOptionsForSession(providers.Session{ID: "s1", ToolID: "opencode"}).Resolver("opencode")
+	if !ok || mc.OpenAIBaseURL != "https://oai2/" || mc.APIKey != "k2" || mc.Model != "kimi-k3" {
+		t.Fatalf("kshell-p2 原生 ID 应命中 p2: %+v ok=%v", mc, ok)
+	}
+	// opencode/grok-code 非 kshell 形态：回落激活平台 p1，且不注入模型名。
+	mc, ok = app.modelOptionsForSession(providers.Session{ID: "s2", ToolID: "opencode"}).Resolver("opencode")
+	if !ok || mc.OpenAIBaseURL != "https://oai1/" || mc.Model != "" {
+		t.Fatalf("非 kshell 原生 ID 应回落 p1 且空模型: %+v ok=%v", mc, ok)
 	}
 }
 

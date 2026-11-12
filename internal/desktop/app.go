@@ -775,12 +775,25 @@ func (a *App) modelOptionsForCreate(toolID, createModel string) launch.ModelOpti
 
 // modelOptionsForSession 组装恢复历史会话的模型选项：按会话真实模型反查平台
 // （claude 取 JSONL 尾部，opencode 查会话级 state），反查不中再回落每工具/
-// 全局平台。终端恢复路径仍不注入模型名（launch 侧 composeResume 忽略）。
+// 全局平台。opencode state 记的是原生 ID "kshell-<platID>/<model>"，
+// 归一成显式跨平台 Query.ModelID（平台最高优先级）；其他形态维持
+// SessionModel 反查。模型注入关闭时短路，避免白读 256KB JSONL 尾部。
 func (a *App) modelOptionsForSession(s providers.Session) launch.ModelOptions {
-	return a.modelOptionsForQuery(modelresolve.Query{
-		ToolID:       s.ToolID,
-		SessionModel: a.sessionModelFor(s),
-	})
+	if !a.snapshot().Config.Model.Enabled {
+		return launch.ModelOptions{}
+	}
+	q := modelresolve.Query{ToolID: s.ToolID}
+	sm := a.sessionModelFor(s)
+	if s.ToolID == "opencode" {
+		if id, ok := openCodeExplicitModelID(sm); ok {
+			q.ModelID = id
+		} else {
+			q.SessionModel = sm
+		}
+	} else {
+		q.SessionModel = sm
+	}
+	return a.modelOptionsForQuery(q)
 }
 
 // modelOptionsForQuery 是 modelOptions 系列的统一出口：取配置快照与代理来源，

@@ -245,6 +245,8 @@ func (a *App) launchForSession(s providers.Session, tools []discovery.Tool) (pro
 		return a.resolveRemoteLaunch(conn, remotePath, s.ToolID, &sess, tools)
 	}
 	o := a.snapshot()
+	// 终端恢复路径不注入模型：launch.ForSession 内部忽略 mo（composeResume），
+	// 因此这里不解析会话模型，避免无谓读取 256KB JSONL 尾部。
 	l, err := launch.ForSession(o.Providers, tools, s, a.themeOptions(), a.modelOptions(s.ToolID), a.permissionOptions())
 	if err != nil {
 		return providers.Launch{}, "", err

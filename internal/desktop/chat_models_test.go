@@ -212,6 +212,61 @@ func TestOpenSessionACPResolvesSessionPlatform(t *testing.T) {
 	if envMap["ANTHROPIC_AUTH_TOKEN"] != "k2" {
 		t.Fatalf("应使用 p2 密钥，got %v", envMap["ANTHROPIC_AUTH_TOKEN"])
 	}
+	// 命中配置的会话模型方可作为模型名注入。
+	if envMap["ANTHROPIC_MODEL"] != "kimi-k3" {
+		t.Fatalf("命中的会话模型应注入 ANTHROPIC_MODEL，got %v", envMap["ANTHROPIC_MODEL"])
+	}
+}
+
+// TestOpenSessionACPSkipsUnmatchedSessionModel：会话模型不在任何平台配置时，
+// 平台仍按回落解析，但不得把该模型名注入 ACP settings（必然打不中）。
+func TestOpenSessionACPSkipsUnmatchedSessionModel(t *testing.T) {
+	backend := &recChatBackend{}
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "claude-agent-acp",
+	}, backend)
+
+	path := filepath.Join(t.TempDir(), "s1.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"assistant","message":{"model":"ghost-model"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env.app.mu.Lock()
+	env.app.opts.Config.SessionMode = config.SessionModeACP
+	env.app.opts.Config.Model = config.ModelConfig{
+		Enabled:          true,
+		ActivePlatformID: "p1",
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "P1", AnthropicBaseURL: "https://a1/", APIKey: "k1", Models: []string{"real-model"}},
+		},
+	}
+	env.app.result = &discovery.Result{Sessions: []providers.Session{{
+		ID: "s1", ToolID: "claude", Workspace: `D:\w`, Title: "t", Path: path,
+	}}}
+	env.app.mu.Unlock()
+
+	if _, err := env.app.OpenSessionACP("s1"); err != nil {
+		t.Fatalf("OpenSessionACP: %v", err)
+	}
+	if backend.live == nil || backend.live.gotMeta == "" {
+		t.Fatal("连接未收到 ACP settings 载荷")
+	}
+	var meta struct {
+		ClaudeCode struct {
+			Options struct {
+				Settings map[string]any `json:"settings"`
+			} `json:"options"`
+		} `json:"claudeCode"`
+	}
+	if err := json.Unmarshal([]byte(backend.live.gotMeta), &meta); err != nil {
+		t.Fatalf("载荷非法 JSON: %v (%q)", err, backend.live.gotMeta)
+	}
+	envMap, _ := meta.ClaudeCode.Options.Settings["env"].(map[string]any)
+	if envMap["ANTHROPIC_BASE_URL"] != "https://a1/" {
+		t.Fatalf("应回落激活平台端点，got %v", envMap["ANTHROPIC_BASE_URL"])
+	}
+	if _, ok := envMap["ANTHROPIC_MODEL"]; ok {
+		t.Fatalf("未命中配置的会话模型不应注入 ANTHROPIC_MODEL: %v", envMap)
+	}
 }
 
 // claude 单 provider（官方文档：单会话仅一个端点 + 一份凭证），ACP 下拉不合并

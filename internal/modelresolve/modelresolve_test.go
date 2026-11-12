@@ -236,8 +236,9 @@ func TestOptions(t *testing.T) {
 			t.Fatal("应命 claude 的每工具平台 p1")
 		}
 		// p1 的 OpenAI 端点与全局激活平台 p2 不同，可判别是否用了实参 toolID。
-		if mc.OpenAIBaseURL != "https://p1-oai/" || mc.Model != "no-such-model" {
-			t.Fatalf("resolver = %+v, want p1 端点", mc)
+		// 会话模型未命中任何平台：平台仍回落 p1，但模型名不得下发。
+		if mc.OpenAIBaseURL != "https://p1-oai/" || mc.Model != "" {
+			t.Fatalf("resolver = %+v, want p1 端点且空模型", mc)
 		}
 	})
 

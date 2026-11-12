@@ -38,7 +38,8 @@ var (
 	loadCredential              = workbuddy.LoadCredential
 )
 
-// Server 是进程内单例代理实例；由调用方（desktop/TUI）持有并负责 Close。
+// Server 是本地代理实例：测试可用 New 独立创建；生产经 Get 取得进程单例
+// （见 singleton.go）。单例无需调用方 Close，进程退出即终结。
 type Server struct {
 	mu      sync.Mutex
 	srv     *http.Server
@@ -97,7 +98,8 @@ func (s *Server) Ensure() (base, apiKey string, err error) {
 	return s.base, s.token, nil
 }
 
-// Close 关闭 listener 与 server（测试与 App 关闭时调用；幂等）。
+// Close 关闭 listener 与 server（幂等）。仅供测试或显式重启使用；生产
+// 单例不主动关闭，随进程退出一并终结。
 func (s *Server) Close() error {
 	s.mu.Lock()
 	if !s.started {

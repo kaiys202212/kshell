@@ -1,6 +1,6 @@
 // Package modelresolve 把「工具 + 显式模型 + 会话模型 + 配置」翻译成
-// launch.ModelOptions，供桌面端/TUI 所有启动入口共用，消灭各入口自建
-// Resolver 的漂移。平台解析优先级：显式模型 ID → 会话模型反查 →
+// launch.ModelOptions，消灭各入口自建 Resolver 的漂移。桌面端已接入，
+// TUI 待 Task 7 迁移。平台解析优先级：显式模型 ID → 会话模型反查 →
 // 每工具平台（ToolPlatforms）→ 全局激活平台。
 package modelresolve
 
@@ -120,28 +120,50 @@ func platformByModel(cfg config.ModelConfig, model, toolID string) (config.Model
 	return pick(func(candidate string) bool { return looseModelEqual(candidate, model) })
 }
 
-// ResolvePlatform 按优先级解析平台；任一环悬空继续兜底，全空不命中。
-// 契约：本函数不看 cfg.Enabled（总开关由 Options 负责），纯平台选择可单独复用。
-func ResolvePlatform(cfg config.ModelConfig, q Query) (config.ModelPlatform, bool) {
+// platformSource 记录平台解析的命中来源。Options 据此判断会话模型名能否
+// 安全下发：只有「平台正是由该会话模型反查命中」时才注入，否则查不到配置的
+// 原生模型名会带着回落平台端点发出去（必失败）。
+type platformSource int
+
+const (
+	sourceNone platformSource = iota
+	sourceModelID
+	sourceSessionModel
+	sourceToolPlatform
+	sourceActivePlatform
+)
+
+// resolvePlatform 是 ResolvePlatform 的实现，额外返回命中来源。
+func resolvePlatform(cfg config.ModelConfig, q Query) (config.ModelPlatform, platformSource, bool) {
 	q.ModelID = strings.TrimSpace(q.ModelID)
 	q.SessionModel = strings.TrimSpace(q.SessionModel)
 	// 1. 显式模型 ID 的平台前缀（kshell:<platID>:<model>）。
 	if platID, _, ok := SplitKshellModelID(q.ModelID); ok {
 		if p, found := platformByID(cfg, platID); found {
-			return p, true
+			return p, sourceModelID, true
 		}
 	}
 	// 2. 会话真实模型反查平台（唯一命中；重名时每工具平台优先）。
 	if p, found := platformByModel(cfg, q.SessionModel, q.ToolID); found {
-		return p, true
+		return p, sourceSessionModel, true
 	}
 	// 3. 每工具平台映射。必须走 ToolPlatformID：已知工具空/悬空回落旧字段、
 	// 未知工具返回空，勿直读 map 绕过迁移契约。
 	if p, found := platformByID(cfg, cfg.ToolSync.ToolPlatformID(q.ToolID)); found {
-		return p, true
+		return p, sourceToolPlatform, true
 	}
 	// 4. 全局激活平台（ActivePlatformID 命中否则第一个）。
-	return cfg.ActivePlatform()
+	if p, found := cfg.ActivePlatform(); found {
+		return p, sourceActivePlatform, true
+	}
+	return config.ModelPlatform{}, sourceNone, false
+}
+
+// ResolvePlatform 按优先级解析平台；任一环悬空继续兜底，全空不命中。
+// 契约：本函数不看 cfg.Enabled（总开关由 Options 负责），纯平台选择可单独复用。
+func ResolvePlatform(cfg config.ModelConfig, q Query) (config.ModelPlatform, bool) {
+	p, _, ok := resolvePlatform(cfg, q)
+	return p, ok
 }
 
 // Options 产出 launch.ModelOptions；Resolver 闭包在调用时才解析平台。
@@ -161,16 +183,18 @@ func Options(cfg config.ModelConfig, q Query, px Proxier) launch.ModelOptions {
 		if rq.ToolID == "" {
 			rq.ToolID = strings.TrimSpace(toolID)
 		}
-		p, ok := ResolvePlatform(cfg, rq)
+		p, src, ok := resolvePlatform(cfg, rq)
 		if !ok {
 			return providers.ModelConfig{}, false
 		}
-		// 模型名：显式模型 ID 优先（前缀 ID 取裸名），否则用会话模型裸名。
+		// 模型名：显式模型 ID 优先（前缀 ID 取裸名）。会话模型只在「平台正是
+		// 由它反查命中」时才下发；查不到配置的会话模型（如 agent 原生 provider
+		// ID）只参与平台选择，不能凭空注入成 ANTHROPIC_MODEL。
 		model := rq.ModelID
 		if _, bare, ok := SplitKshellModelID(model); ok {
 			model = bare
 		}
-		if model == "" {
+		if model == "" && src == sourceSessionModel {
 			model = rq.SessionModel
 		}
 		if p.Preset == workbuddy.PresetID {
