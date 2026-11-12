@@ -81,6 +81,8 @@ Each workspace has a file tree on the left and a tabbed file area on the right, 
 ### File tree
 
 - Create / rename / delete files and folders, with confirmation on delete.
+- Multi-select: `Ctrl+click` (`Cmd+click` on macOS) adds or removes individual entries, `Shift+click` selects a range; then `Delete` removes them in bulk and `Ctrl+C` copies the files.
+- The tree layout never shifts while you type (holding Shift or IME composition does not squeeze row content).
 - Copy paths and reveal in the system file manager.
 - Filter the tree by name, or run a full-text search across the workspace with results grouped by file.
 - Files / folders can be added to ignore (writes .gitignore) via the context menu.

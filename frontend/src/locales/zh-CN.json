@@ -727,7 +727,6 @@
       "tree_aria": "工作区文件树",
       "show_all": "全部",
       "show_all_aria": "显示全部",
-      "select_aria": "选择 {{name}}",
       "refresh": "刷新文件树",
       "delete_confirm_multi_title": "删除 {{n}} 项",
       "delete_confirm_multi_body": "将永久删除以下 {{n}} 项，该操作不可恢复：",

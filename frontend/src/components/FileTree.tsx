@@ -3,7 +3,8 @@
 // 展开目录时必须再次调 listFiles(wsPath, 子目录相对路径)。
 // relPath 统一用 / 拼接：Go 侧 filepath.Clean 会归一化为平台分隔符。
 // 交互：点目录展开/收起并选中、单击文件选中 + onOpenFile（预览）、shift+点击以锚点为界范围多选、
-// 按住 Shift 行首显示复选框（勾选切换选中，配合 Delete 键批量删除）、
+// Ctrl/Cmd+点击逐个加选/取消（不移动锚点，可配合 Delete 批量删除）；
+// 按住键盘不会改变行的布局（不插入复选框，避免输入时横向漂移）、
 // Delete 键删除选中集（确认弹窗，多选逐条执行）、双击 onEditFile（固定编辑页签）、铅笔按钮行内重命名、
 // 右键菜单（新建/删除/重命名/复制路径/在资源管理器显示/加入 git 忽略，删除带确认弹窗）；
 // 树内拖拽：行可拖起（携带绝对/相对路径 MIME），目录行作 drop 目标移入；
@@ -284,11 +285,10 @@ interface RowProps {
   dirBranches?: Record<string, string>;
   renamingPath: string | null; // 受控行内重命名：renamingPath === item.relPath 时该行进入编辑
   creating: { dirRel: string; isDir: boolean } | null; // 行内新建输入的渲染位置
-  showCheckbox: boolean; // 按住 Shift 时行首显示复选框，勾选切换选中（批量删除入口）
-  onToggleSelect(item: TreeItem): void;
   onRenameStart(relPath: string): void;
   onRenameEnd(): void;
-  onRowActivate(item: TreeItem, shift: boolean): void; // 行主按钮单击：单选/多选 + 展开或预览
+  // 行主按钮单击：普通点击单选、shift 区间选、Ctrl/Cmd 逐个加选（修饰键由事件读出）
+  onRowActivate(item: TreeItem, mods: { shift: boolean; toggle: boolean }): void;
   onDirToggle(item: TreeItem): void; // 目录展开/收起（加载失败重试按钮复用，不带动选中）
   onEditFile(path: string): void;
   onRename(relPath: string, newName: string): void;
@@ -308,8 +308,6 @@ function TreeRow({
   dirBranches,
   renamingPath,
   creating,
-  showCheckbox,
-  onToggleSelect,
   onRenameStart,
   onRenameEnd,
   onRowActivate,
@@ -404,16 +402,6 @@ function TreeRow({
         onDragLeave={node.IsDir ? () => setDropActive(false) : undefined}
         onDrop={node.IsDir ? rowDrop : undefined}
       >
-        {showCheckbox && !isVirtualRoot && (
-          <input
-            type="checkbox"
-            className="mx-0.5 shrink-0"
-            aria-label={t('ui.files.select_aria', { name: node.Name })}
-            checked={selected}
-            onClick={(e) => e.stopPropagation()} // 不触发容器行为（如拖拽冒泡），切换只看 onChange
-            onChange={() => onToggleSelect(item)}
-          />
-        )}
         {renaming ? (
           <Input
             autoFocus
@@ -440,7 +428,12 @@ function TreeRow({
             <button
               className="flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-0.5 text-left"
               title={node.Path}
-              onClick={(e) => onRowActivate(item, e.shiftKey)}
+              onClick={(e) =>
+                // 逐个加选同时认 Ctrl 与 Cmd：Windows 上 Cmd 即 Win 键（Win+点击通常
+                // 不派发 click，自然无副作用），macOS 上 Ctrl+点击会被系统当右键，
+                // 只有 Cmd 可用——两个都收是跨平台唯一可行的写法。
+                onRowActivate(item, { shift: e.shiftKey, toggle: e.ctrlKey || e.metaKey })
+              }
               onDoubleClick={(e) => {
                 if (node.IsDir) return;
                 e.preventDefault();
@@ -545,8 +538,6 @@ function TreeRow({
               onCancelCreate={onCancelCreate}
               onRowContextMenu={onRowContextMenu}
               onMoveInto={onMoveInto}
-              showCheckbox={showCheckbox}
-              onToggleSelect={onToggleSelect}
             />
           ))}
         </ul>
@@ -592,8 +583,6 @@ export default function FileTree({
   // 选中集（relPath）与 shift 范围多选的锚点：锚点是上一次非 shift 单击的行
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
-  // Shift 按住期间行首显示复选框（批量选择入口）；监听 window 级按键与失焦
-  const [shiftHeld, setShiftHeld] = useState(false);
   // 显示全部（含忽略文件），默认勾选；不持久化，切换由下方 effect 走 requestReload 重拉已展开路径
   const [showAll, setShowAll] = useState(true);
   const gitMap = useAppStore((s) => s.gitStatus[wsPath]);
@@ -611,40 +600,14 @@ export default function FileTree({
   const reloadPendingRef = useRef(false);
   const prevShowAllRef = useRef(showAll);
 
-  // Shift 按键跟踪：keydown/keyup + window 失焦兜底（切窗口松键收不到 keyup）。
-  // keyup 时若焦点在行内复选框上，先移回滚动容器——复选框随后随 shiftHeld 卸载，
-  // 焦点会落回 body，Delete 键处理挂在容器上会因此断链。
-  useEffect(() => {
-    const down = (e: globalThis.KeyboardEvent) => {
-      if (e.key === 'Shift') setShiftHeld(true);
-    };
-    const up = (e: globalThis.KeyboardEvent) => {
-      if (e.key !== 'Shift') return;
-      setShiftHeld(false);
-      const active = document.activeElement;
-      if (active instanceof HTMLInputElement && active.type === 'checkbox') {
-        scrollRootRef.current?.focus({ preventScroll: true });
-      }
-    };
-    const reset = () => setShiftHeld(false);
-    window.addEventListener('keydown', down);
-    window.addEventListener('keyup', up);
-    window.addEventListener('blur', reset);
-    return () => {
-      window.removeEventListener('keydown', down);
-      window.removeEventListener('keyup', up);
-      window.removeEventListener('blur', reset);
-    };
-  }, []);
-
   // 选中集清空：树重载/切换视图后旧 relPath 可能已不存在，避免悬挂引用
   const clearSelection = () => {
     setSelected((cur) => (cur.size > 0 ? new Set<string>() : cur));
     setAnchor(null);
   };
 
-  // 行内复选框切换：加入/移出选中集，不动锚点（与 shift 区间选互不干扰）
-  const toggleSelect = (item: TreeItem) => {
+  // Ctrl/Cmd+点击逐个加选/取消（非连续多选），不动锚点：与 shift 区间选互不干扰
+  const toggleInSelection = (item: TreeItem) => {
     setSelected((cur) => {
       const next = new Set(cur);
       if (next.has(item.relPath)) next.delete(item.relPath);
@@ -924,14 +887,20 @@ export default function FileTree({
   };
 
   // 行主按钮单击：普通点击 = 单选 + 原行为（目录展开/收起、文件预览）；
+  // Ctrl/Cmd+点击 = 逐个加选/取消（非连续多选，不展开、不预览、不动锚点）；
   // shift+点击 = 以锚点为起点在可见平铺行序列上取区间多选（无锚点等价单选，锚点不移动）。
   // 虚拟根行只是容器：仅展开/收起，不参与选中与删除。
-  const handleRowActivate = (item: TreeItem, shift: boolean) => {
+  const handleRowActivate = (item: TreeItem, mods: { shift: boolean; toggle: boolean }) => {
     if (item.relPath === '') {
       handleDirToggle(item);
       return;
     }
-    if (shift) {
+    // 加选优先于区间选：Ctrl/Cmd 与 Shift 同按时按「逐个加选」处理，避免两套语义互相覆盖
+    if (mods.toggle) {
+      toggleInSelection(item);
+      return;
+    }
+    if (mods.shift) {
       const rows = collectVisibleRows(itemsRef.current ?? []);
       const end = rows.indexOf(item.relPath);
       const start = anchor ? rows.indexOf(anchor) : -1;
@@ -1266,8 +1235,6 @@ export default function FileTree({
     dirBranches,
     renamingPath,
     creating,
-    showCheckbox: shiftHeld,
-    onToggleSelect: toggleSelect,
     onRenameStart: setRenamingPath,
     onRenameEnd: () => setRenamingPath(null),
     onRowActivate: handleRowActivate,
@@ -1380,7 +1347,7 @@ export default function FileTree({
             );
           })()
         ) : (
-          <ul role="tree" aria-label={t('ui.files.tree_aria')} className="m-0 list-none p-0 text-sm">
+          <ul role="tree" aria-multiselectable="true" aria-label={t('ui.files.tree_aria')} className="m-0 list-none p-0 text-sm">
             {items.map((it) => (
               <TreeRow
                 key={it.node.Path}

@@ -674,7 +674,7 @@ describe('FileTree Ctrl+C 复制文件到系统剪贴板', () => {
     fireEvent.click(await screen.findByText('src')); // 展开目录
     await screen.findByText('main.ts');
     fireEvent.click(screen.getByText('main.ts'));
-    fireEvent.click(screen.getByText('README.md'), { shiftKey: true }); // 选中 main.ts, README.md
+    fireEvent.click(screen.getByText('README.md'), { ctrlKey: true }); // Ctrl+点击加选：main.ts, README.md
 
     fireEvent.keyDown(screen.getByRole('tree', { name: tt('ui.files.tree_aria') }), {
       key: 'c',
@@ -1268,47 +1268,118 @@ describe('FileTree reveal', () => {
   });
 });
 
-describe('FileTree Shift 复选多选', () => {
-  const selectAria = (name: string) => tt('ui.files.select_aria').replace('{{name}}', name);
-
-  it('未按 Shift 无行内复选框，按住后出现且勾选切换选中，释放后选中保留', async () => {
+// 键盘按键不得改变文件树布局：历史上 Shift 按住会在行首插入复选框，
+// 导致在输入框打字（大写字母 / Shift+Enter / 输入法上屏）时整树横向漂移。
+describe('FileTree 键盘不改变布局', () => {
+  it('按住 Shift 行内不出现复选框且行结构不变', async () => {
     mocks.listFiles.mockResolvedValue(root);
     render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
-    await screen.findByText('README.md');
 
-    expect(screen.queryByRole('checkbox', { name: selectAria('README.md') })).not.toBeInTheDocument();
+    const label = await screen.findByText('README.md');
+    const li = label.closest('li')!;
+    const row = li.firstElementChild as HTMLElement;
+    const before = {
+      inputs: li.querySelectorAll('input').length,
+      kids: row.childElementCount,
+      paddingLeft: row.style.paddingLeft,
+    };
+    expect(before.inputs).toBe(0);
+
     fireEvent.keyDown(window, { key: 'Shift' });
-    const cb = screen.getByRole('checkbox', { name: selectAria('README.md') });
-    expect(cb).not.toBeChecked();
-    fireEvent.click(cb);
-    expect(cb).toBeChecked();
-    expect(screen.getByText('README.md').closest('li')).toHaveAttribute('aria-selected', 'true');
 
-    // 释放 Shift：复选框消失，选中集保留（可继续 Delete 删除）
-    cb.focus(); // 真实浏览器点击即聚焦，jsdom 需显式模拟
+    // 不出现任何与文件行相关的复选框
+    expect(screen.queryByRole('checkbox', { name: /README\.md/ })).not.toBeInTheDocument();
+    expect(li.querySelectorAll('input')).toHaveLength(0);
+    // 行结构与行首缩进完全不变（不插入兄弟节点 → 无横向位移）
+    const rowAfter = li.firstElementChild as HTMLElement;
+    expect(rowAfter.childElementCount).toBe(before.kids);
+    expect(rowAfter.style.paddingLeft).toBe(before.paddingLeft);
+
     fireEvent.keyUp(window, { key: 'Shift' });
-    expect(screen.queryByRole('checkbox', { name: selectAria('README.md') })).not.toBeInTheDocument();
-    expect(screen.getByText('README.md').closest('li')).toHaveAttribute('aria-selected', 'true');
-    // 焦点原在复选框上：先移回滚动容器（Delete 键监听所在），不落 body 断链
-    expect(screen.getByRole('tree', { name: tt('ui.files.tree_aria') }).parentElement).toHaveFocus();
+  });
+});
 
-    // window 失焦兜底清 shift 态
-    fireEvent.keyDown(window, { key: 'Shift' });
-    expect(screen.getByRole('checkbox', { name: selectAria('README.md') })).toBeInTheDocument();
-    fireEvent.blur(window);
-    expect(screen.queryByRole('checkbox', { name: selectAria('README.md') })).not.toBeInTheDocument();
+// Ctrl/Cmd+点击逐个加选/取消（非连续多选），不移动锚点、不预览、不展开目录
+describe('FileTree Ctrl 点击加选', () => {
+  it('Ctrl+点击非连续加选、再次 Ctrl+点击取消', async () => {
+    mocks.listFiles.mockResolvedValueOnce(root).mockResolvedValueOnce(srcChildren);
+    const onOpen = vi.fn();
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={onOpen} />);
+
+    // 先展开 src 加载 main.ts（普通点击目录会单选该目录）
+    fireEvent.click(await screen.findByText('src'));
+    await screen.findByText('main.ts');
+
+    fireEvent.click(screen.getByText('README.md')); // 普通点击：单选
+    expect(screen.getByText('README.md').closest('li')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('src').closest('li')).not.toHaveAttribute('aria-selected', 'true');
+
+    onOpen.mockClear();
+    fireEvent.click(screen.getByText('main.ts'), { ctrlKey: true });
+    // 两项都选中（非连续），中间/其它行不受影响
+    expect(screen.getByText('README.md').closest('li')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('main.ts').closest('li')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('src').closest('li')).not.toHaveAttribute('aria-selected', 'true');
+    // Ctrl+点击不预览
+    expect(onOpen).not.toHaveBeenCalled();
+
+    // 再次 Ctrl+点击同一行 → 取消该项
+    fireEvent.click(screen.getByText('main.ts'), { ctrlKey: true });
+    expect(screen.getByText('main.ts').closest('li')).not.toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('README.md').closest('li')).toHaveAttribute('aria-selected', 'true');
+
+    // Ctrl+点击目录不展开/收起（子层仍可见）
+    fireEvent.click(screen.getByText('src'), { ctrlKey: true });
+    expect(screen.getByText('main.ts')).toBeInTheDocument();
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
-  it('勾选多项后 Delete 键弹确认框，确认后逐条删除', async () => {
-    mocks.listFiles.mockResolvedValue(root);
+  it('Ctrl+点击不移动锚点，Shift 区间选仍从普通点击的行起算', async () => {
+    mocks.listFiles.mockResolvedValueOnce(root).mockResolvedValueOnce(srcChildren);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+
+    fireEvent.click(await screen.findByText('src')); // 展开目录（普通点击：锚点=src）
+    await screen.findByText('main.ts');
+
+    // Ctrl+点击 README.md 只加选，锚点仍是 src
+    fireEvent.click(screen.getByText('README.md'), { ctrlKey: true });
+    expect(screen.getByText('README.md').closest('li')).toHaveAttribute('aria-selected', 'true');
+
+    // Shift+点击 README.md：以锚点 src 为界取区间 → src 与 README.md 都选中
+    fireEvent.click(screen.getByText('README.md'), { shiftKey: true });
+    expect(screen.getByText('src').closest('li')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('README.md').closest('li')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('Ctrl+点击后普通点击收敛为单选', async () => {
+    mocks.listFiles.mockResolvedValueOnce(root).mockResolvedValueOnce(srcChildren);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+
+    fireEvent.click(await screen.findByText('src'));
+    await screen.findByText('main.ts');
+
+    // Ctrl+点击两项构造多选集（普通点击目录会收起，故收敛目标用文件行）
+    fireEvent.click(screen.getByText('main.ts'), { ctrlKey: true });
+    fireEvent.click(screen.getByText('README.md'), { ctrlKey: true });
+    expect(screen.getByText('main.ts').closest('li')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('README.md').closest('li')).toHaveAttribute('aria-selected', 'true');
+
+    // 普通点击另一行：多选集丢弃，只剩新行
+    fireEvent.click(screen.getByText('main.ts'));
+    expect(screen.getByText('main.ts').closest('li')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('README.md').closest('li')).not.toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('src').closest('li')).not.toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('Ctrl+点击两项后 Delete 弹确认框并逐条删除', async () => {
+    mocks.listFiles.mockResolvedValueOnce(root).mockResolvedValueOnce(srcChildren);
     mocks.deleteEntry.mockResolvedValue(undefined);
     render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
-    await screen.findByText('README.md');
 
-    fireEvent.keyDown(window, { key: 'Shift' });
-    fireEvent.click(screen.getByRole('checkbox', { name: selectAria('README.md') }));
-    fireEvent.click(screen.getByRole('checkbox', { name: selectAria('src') }));
-    fireEvent.keyUp(window, { key: 'Shift' });
+    fireEvent.click(await screen.findByText('src')); // 展开目录
+    await screen.findByText('main.ts');
+    fireEvent.click(screen.getByText('README.md')); // 单选 README.md
+    fireEvent.click(screen.getByText('main.ts'), { ctrlKey: true }); // 加选 main.ts
 
     fireEvent.keyDown(screen.getByRole('tree', { name: tt('ui.files.tree_aria') }), { key: 'Delete' });
     expect(
@@ -1319,7 +1390,7 @@ describe('FileTree Shift 复选多选', () => {
       fireEvent.click(screen.getByRole('button', { name: tt('ui.files.delete') }));
     });
     expect(mocks.deleteEntry).toHaveBeenCalledWith('D:\\proj', 'README.md');
-    expect(mocks.deleteEntry).toHaveBeenCalledWith('D:\\proj', 'src');
+    expect(mocks.deleteEntry).toHaveBeenCalledWith('D:\\proj', 'src/main.ts');
   });
 });
 
