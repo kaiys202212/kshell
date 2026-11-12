@@ -193,6 +193,16 @@ func (r *Registry) Execute(ctx context.Context, name, argsJSON string) (string, 
 		return "", fmt.Errorf("参数不是合法 JSON: %w", err)
 	}
 	if mutatingTools[name] {
+		// stop_agent 是破坏性操作：挂起时即用当前列表快照把编号钉成 chatId，
+		// 确认重放按 chatId 执行——挂起到用户点确认之间隔着一次完整 LLM 回合，
+		// 会话列表可能增删，重放时再按编号解析可能静默停错会话。
+		if name == "stop_agent" {
+			pinned, perr := r.pinStopAgent(args)
+			if perr != nil {
+				return "", perr
+			}
+			argsJSON = pinned
+		}
 		return "", &PendingConfirm{ToolName: name, ArgsJSON: argsJSON, Summary: r.summarize(name, args)}
 	}
 
@@ -301,6 +311,13 @@ func (r *Registry) executeMutating(ctx context.Context, name, argsJSON string) (
 		if err == nil {
 			out = map[string]string{"ok": "true", "id": argStr(args, "id")}
 		}
+	case "stop_agent":
+		// chatId 是挂起时钉住的快照（pinStopAgent 注入）：优先按它执行，
+		// 规避挂起窗口内编号漂移；空（快照缺失）退回按编号现解析。
+		err = r.b.StopAgent(argStr(args, "id"), argStr(args, "chatId"))
+		if err == nil {
+			out = map[string]string{"ok": "true"}
+		}
 	default:
 		return "", fmt.Errorf("未知写工具: %s", name)
 	}
@@ -312,6 +329,31 @@ func (r *Registry) executeMutating(ctx context.Context, name, argsJSON string) (
 		return "", fmt.Errorf("序列化结果: %w", err)
 	}
 	return string(data), nil
+}
+
+// pinStopAgent 在 stop_agent 挂起前把编号解析成当前列表的 chatId 并写入
+// args（重序列化为新的 argsJSON）。编号不在列表内或会话未激活时报错——
+// 不给用户一个注定停不下来的确认卡。
+func (r *Registry) pinStopAgent(args map[string]any) (string, error) {
+	agents, err := r.b.ListAgents()
+	if err != nil {
+		return "", err
+	}
+	n := argInt(args, "id")
+	for _, v := range agents {
+		if v.Num == n {
+			if v.ChatID == "" {
+				return "", fmt.Errorf("会话 #%d 未激活，无需停止", n)
+			}
+			args["chatId"] = v.ChatID
+			out, merr := json.Marshal(args)
+			if merr != nil {
+				return "", fmt.Errorf("序列化挂起参数: %w", merr)
+			}
+			return string(out), nil
+		}
+	}
+	return "", fmt.Errorf("会话编号 %d 不在当前列表内", n)
 }
 
 // findTool 查工具名是否存在（返回原名或空串）。

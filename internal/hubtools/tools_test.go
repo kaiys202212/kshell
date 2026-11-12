@@ -26,10 +26,13 @@ type fakeBridge struct {
 	createdWS string
 	created   AgentView
 	createErr error
-	status    *AgentStatusView
-	statusErr error
-	stopID    string
-	stopErr   error
+	status       *AgentStatusView
+	statusErr    error
+	statusID     string
+	statusRecent int
+	stopID       string
+	stopChatID   string
+	stopErr      error
 }
 
 func newFakeBridge() *fakeBridge {
@@ -102,6 +105,7 @@ func (f *fakeBridge) ListAgents() ([]AgentView, error) {
 
 func (f *fakeBridge) GetAgentStatus(id string, recent int) (*AgentStatusView, error) {
 	f.count("GetAgentStatus")
+	f.statusID, f.statusRecent = id, recent
 	if f.statusErr != nil {
 		return nil, f.statusErr
 	}
@@ -120,9 +124,9 @@ func (f *fakeBridge) SendToAgent(id, text string) (string, error) {
 	return f.sendLabel, f.sendErr
 }
 
-func (f *fakeBridge) StopAgent(id string) error {
+func (f *fakeBridge) StopAgent(id, chatID string) error {
 	f.count("StopAgent")
-	f.stopID = id
+	f.stopID, f.stopChatID = id, chatID
 	return f.stopErr
 }
 
@@ -239,11 +243,19 @@ func TestGetAgentStatusExec(t *testing.T) {
 	if f.called("GetAgentStatus") != 1 {
 		t.Fatalf("GetAgentStatus 应被调用 1 次, got %d", f.called("GetAgentStatus"))
 	}
+	if f.statusID != "1" || f.statusRecent != 3 {
+		t.Fatalf("实参未透传（字符串数字应转 int）: id=%q recent=%d", f.statusID, f.statusRecent)
+	}
 }
 
-// TestStopAgentPending 验证 stop_agent 挂起等待确认（Mutating）。
+// TestStopAgentPending 验证 stop_agent 挂起等待确认（Mutating）：挂起时把
+// 编号钉成 chatId 写入 ArgsJSON，且不触达停止通道。
 func TestStopAgentPending(t *testing.T) {
 	s, f := newTestSession()
+	f.agents = []AgentView{
+		{Num: 1, ChatID: "c1", Status: "running"},
+		{Num: 2, ChatID: "c2", Status: "running"},
+	}
 	out, pending, err := s.Execute(context.Background(), "stop_agent", `{"id":"2"}`)
 	if out != "" || err != nil {
 		t.Fatalf("挂起时不应有结果文本或错误: out=%q err=%v", out, err)
@@ -251,11 +263,42 @@ func TestStopAgentPending(t *testing.T) {
 	if pending == nil {
 		t.Fatal("应返回 *PendingConfirm")
 	}
-	if pending.ToolName != "stop_agent" || pending.ArgsJSON != `{"id":"2"}` {
-		t.Fatalf("PendingConfirm 字段不符: %+v", pending)
+	if pending.ToolName != "stop_agent" {
+		t.Fatalf("PendingConfirm 工具名不符: %+v", pending)
+	}
+	if !strings.Contains(pending.ArgsJSON, `"chatId":"c2"`) {
+		t.Fatalf("挂起参数应钉住 chatId: %s", pending.ArgsJSON)
 	}
 	if f.called("StopAgent") != 0 {
 		t.Fatal("挂起时不应触达 Bridge")
+	}
+
+	// 编号不在列表内：挂起前即报错，不出确认卡
+	if _, _, err := s.Execute(context.Background(), "stop_agent", `{"id":"9"}`); err == nil {
+		t.Fatal("编号不在列表内应报错")
+	}
+}
+
+// TestStopAgentConfirmed 验证确认闭环：挂起 → Confirm(approve) → 重放按
+// 钉住的 chatId 执行（不依赖当时列表），Bridge 收到正确实参且结果落 JSON。
+func TestStopAgentConfirmed(t *testing.T) {
+	s, f := newTestSession()
+	f.agents = []AgentView{{Num: 2, ChatID: "c2", Status: "running"}}
+	_, pending, err := s.Execute(context.Background(), "stop_agent", `{"id":"2"}`)
+	if err != nil || pending == nil {
+		t.Fatalf("挂起失败: %v %+v", err, pending)
+	}
+	// 确认前列表变化（编号漂移也不影响：按 chatId 执行）
+	f.agents = nil
+	result, err := s.Confirm(context.Background(), pending.PendingID, true)
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if !strings.Contains(result, `"ok":"true"`) {
+		t.Fatalf("确认结果不符: %s", result)
+	}
+	if f.called("StopAgent") != 1 || f.stopChatID != "c2" {
+		t.Fatalf("重放应按钉住的 chatId 执行: calls=%d chatID=%q", f.called("StopAgent"), f.stopChatID)
 	}
 }
 

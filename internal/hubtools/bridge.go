@@ -47,6 +47,8 @@ type ChatLogEntry struct {
 // AgentView 是 list_agents 的会话视图一行：模型经编号（Num）引用会话完成
 // 状态查询/投递/停止。编号由宿主按 ListSessions 顺序 1..N 赋值，与命令层
 // #l / 智能路由快照同源。Status 与 SessionStatuses 四态一致。
+// Num=0 表示刚创建尚未编号的新会话（create_agent 返回），以下一轮
+// list_agents 的编号为准。
 type AgentView struct {
 	Num           int    `json:"num"`
 	ChatID        string `json:"chatId,omitempty"`
@@ -91,6 +93,8 @@ type Bridge interface {
 	// SendToAgent 投递消息到指定会话；未激活的磁盘会话先激活再投。
 	// 返回目标会话人话标签；编号无法解析或不可投递时返回错误。
 	SendToAgent(id, text string) (string, error)
-	// StopAgent 停止指定会话当前轮次（mutating，确认门禁前置）。
-	StopAgent(id string) error
+	// StopAgent 停止指定会话当前轮次（mutating，确认门禁前置）。chatID 是
+	// 挂起时钉住的快照（pinStopAgent 注入）：非空时按它执行，规避挂起窗口内
+	// 编号漂移；空退回按编号解析。
+	StopAgent(id, chatID string) error
 }

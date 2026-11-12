@@ -268,6 +268,7 @@ func (b *desktopBridge) agentWorkspacePath(workspace string) (string, error) {
 		score int // 2=精确命中 1=包含
 	}
 	var best *hit
+	var fuzzy []string // score=1 的命中路径（用于多义时报错反问）
 	for _, w := range ws {
 		name := strings.ToLower(w.Name)
 		path := strings.ToLower(w.Path)
@@ -277,11 +278,21 @@ func (b *desktopBridge) agentWorkspacePath(workspace string) (string, error) {
 		} else if strings.Contains(name, kw) || strings.Contains(path, kw) {
 			s = 1
 		}
-		if s > 0 && (best == nil || s > best.score) {
+		if s == 0 {
+			continue
+		}
+		if s == 1 {
+			fuzzy = append(fuzzy, w.Path)
+		}
+		if best == nil || s > best.score {
 			best = &hit{path: w.Path, score: s}
 		}
 	}
 	if best != nil {
+		// 多个包含命中且无精确命中：不替用户猜，报候选让模型反问。
+		if best.score == 1 && len(fuzzy) > 1 {
+			return "", fmt.Errorf("工作区 %q 匹配到多个项目，请用户确认: %s", workspace, strings.Join(fuzzy, ", "))
+		}
 		return best.path, nil
 	}
 	names := make([]string, 0, len(ws))
@@ -371,8 +382,13 @@ func (b *desktopBridge) SendToAgent(id, text string) (string, error) {
 	return label, nil
 }
 
-// StopAgent 停止指定编号会话当前轮次（mutating：确认后经此重放）。
-func (b *desktopBridge) StopAgent(id string) error {
+// StopAgent 停止指定会话当前轮次（mutating：确认后经此重放）。chatID 非空
+// 是挂起时钉住的快照：直接按它执行，规避挂起窗口内编号漂移；空（快照缺失）
+// 退回按编号现解析。
+func (b *desktopBridge) StopAgent(id, chatID string) error {
+	if chatID != "" {
+		return b.wxAgentExecutor().Stop(chatID)
+	}
 	ref, err := b.agentByNum(id)
 	if err != nil {
 		return err
