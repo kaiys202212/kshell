@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/yangk/kshell/internal/config"
 )
 
 // CodeBuddy 把默认平台的模型合并进 ~/.codebuddy/models.json。
@@ -14,6 +16,11 @@ import (
 type CodeBuddy struct{}
 
 func (CodeBuddy) ToolID() string { return "codebuddy" }
+
+// pickCodeBuddyPlatform 按 CodeBuddyPlatformID 查找，空/悬空回落第一个。
+func pickCodeBuddyPlatform(in SyncInput) *config.ModelPlatform {
+	return pickPlatform(in, in.CodeBuddyPlatformID)
+}
 
 func (CodeBuddy) configPath(home string) string {
 	return filepath.Join(home, ".codebuddy", "models.json")
@@ -36,7 +43,7 @@ func (c CodeBuddy) Sync(home string, in SyncInput) error {
 	}
 
 	models := sliceOfMaps(doc["models"])
-	def := pickPlatform(in)
+	def := pickCodeBuddyPlatform(in)
 	// 勾选集：用户在 codebuddy 定制页勾选的模型（裸 mid）。
 	selected := make(map[string]bool, len(in.ToolSync.CodeBuddy))
 	for _, mid := range in.ToolSync.CodeBuddy {
@@ -213,7 +220,7 @@ func isKshellModelID(id string) bool {
 }
 
 // kshellBareMid 从 kshell-<plat>/<mid> 取第一个 '/' 之后的整段 mid
-//（mid 本身可含 '/' 或 ':'）；非 kshell id 返回空。
+// （mid 本身可含 '/' 或 ':'）；非 kshell id 返回空。
 func kshellBareMid(id string) string {
 	id = strings.TrimSpace(id)
 	if !isKshellModelID(id) {

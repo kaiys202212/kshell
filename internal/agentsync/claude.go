@@ -12,7 +12,7 @@ import (
 
 // Claude 把默认平台的 Anthropic 端点/密钥/模型写进 ~/.claude/settings.json 的 env 块。
 // settings.json 只有一份 env，无法承载多平台——静态注入只覆盖默认平台
-//（即 ccswitch 的「切平台」语义）；kshell 关闭或无 Anthropic 端点时删除
+// （即 ccswitch 的「切平台」语义）；kshell 关闭或无 Anthropic 端点时删除
 // 管理键恢复无注入状态。
 //
 // 模型：由 ToolSync.Claude 的 4 个槽位（默认/Sonnet/Opus/Haiku）显式映射，
@@ -33,7 +33,7 @@ func (c Claude) ConfigExists(home string) bool {
 }
 
 // kshellEnvKeys 是 kshell 静态注入接管的固定键；先删后建，用户同名键会被覆盖
-//（与 ccswitch 行为一致）。含模型键，避免 settings.json 残留 mimo 等旧值。
+// （与 ccswitch 行为一致）。含模型键，避免 settings.json 残留 mimo 等旧值。
 //
 // 新版 Claude Code 为 sonnet/opus/haiku/fable 四别名引入 _MODEL_NAME/
 // _MODEL_DESCRIPTION/_MODEL_SUPPORTED_CAPABILITIES 显示名键：实际请求走
@@ -84,7 +84,7 @@ func (c Claude) Sync(home string, in SyncInput) error {
 		delete(env, k)
 	}
 	if in.Enabled {
-		if p := pickPlatform(in); p != nil && strings.TrimSpace(p.AnthropicBaseURL) != "" {
+		if p := pickClaudePlatform(in); p != nil && strings.TrimSpace(p.AnthropicBaseURL) != "" {
 			env["ANTHROPIC_BASE_URL"] = p.AnthropicBaseURL
 			if p.APIKey != "" {
 				env["ANTHROPIC_AUTH_TOKEN"] = p.APIKey
@@ -187,7 +187,7 @@ func isClaudeBuiltinModelAlias(s string) bool {
 // 塞给 Claude（官方端点会报模型不存在），也不能按它的列表校验用户自己选定的
 // 顶层 model。
 func claudeModelManaged(in SyncInput) bool {
-	p := pickPlatform(in)
+	p := pickClaudePlatform(in)
 	return p != nil && strings.TrimSpace(p.AnthropicBaseURL) != ""
 }
 
@@ -219,12 +219,12 @@ func writeModelEnv(env map[string]any, in SyncInput) {
 	}
 }
 
-// pickPlatform 按 DefaultPlatformID 线性查找，未命中或空取第一个；无平台返回 nil。
-func pickPlatform(in SyncInput) *config.ModelPlatform {
+// pickPlatform 按显式平台 ID 查找，未命中或空取第一个；无平台返回 nil。
+func pickPlatform(in SyncInput, id string) *config.ModelPlatform {
 	if len(in.Platforms) == 0 {
 		return nil
 	}
-	id := strings.TrimSpace(in.DefaultPlatformID)
+	id = strings.TrimSpace(id)
 	if id != "" {
 		for i := range in.Platforms {
 			if in.Platforms[i].ID == id {
@@ -233,4 +233,9 @@ func pickPlatform(in SyncInput) *config.ModelPlatform {
 		}
 	}
 	return &in.Platforms[0]
+}
+
+// pickClaudePlatform 按 ClaudePlatformID 查找，空/悬空回落第一个。
+func pickClaudePlatform(in SyncInput) *config.ModelPlatform {
+	return pickPlatform(in, in.ClaudePlatformID)
 }

@@ -17,9 +17,10 @@ const renameAttempts = 6
 type SyncInput struct {
 	Enabled   bool
 	Platforms []config.ModelPlatform
-	// DefaultPlatformID 是静态注入类目标（如 Claude settings.json 只有一份
-	// env）需要落盘的平台；空 = 第一个平台。
-	DefaultPlatformID string
+	// ClaudePlatformID / CodeBuddyPlatformID 分别是静态注入目标的平台 ID；
+	// 空/悬空回落第一个平台（Claude settings.json 只有一份 env）。
+	ClaudePlatformID    string
+	CodeBuddyPlatformID string
 	// ActiveModel 是 kshell 自用默认模型；不再注入给 agent，仅参与 Managed
 	// 判定（配置过即视为托管过，清理路径依赖该标记）。
 	ActiveModel string
@@ -28,19 +29,20 @@ type SyncInput struct {
 	ToolSync config.ToolSyncConfig
 }
 
-// Managed 报告 kshell 是否曾接管过模型配置：启用、留有平台、默认平台或
+// Managed 报告 kshell 是否曾接管过模型配置：启用、留有平台、任一工具平台或
 // ActiveModel 任一即可。从未配置过（false）时各工具自有配置必须原样保留——
 // 用户或 ccswitch 写入的端点/模型键不能被「先删后建」清掉；Claude 的登录
 // 标记是唯一例外（见 Claude.Sync）。
 func (in SyncInput) Managed() bool {
 	return in.Enabled ||
 		len(in.Platforms) > 0 ||
-		strings.TrimSpace(in.DefaultPlatformID) != "" ||
+		strings.TrimSpace(in.ClaudePlatformID) != "" ||
+		strings.TrimSpace(in.CodeBuddyPlatformID) != "" ||
 		strings.TrimSpace(in.ActiveModel) != ""
 }
 
 // cleanupFor 返回对单个目标的生效输入：ToolSync 未启用该目标时改写为
-//「只清不建」（Enabled 关、平台保留以维持 Managed、静态注入键清空——与全局
+// 「只清不建」（Enabled 关、平台保留以维持 Managed、静态注入键清空——与全局
 // 禁用的清理分支同一语义），已启用原样返回。
 func (in SyncInput) cleanupFor(toolID string) SyncInput {
 	if !in.ToolSync.Enabled[toolID] {
@@ -98,11 +100,12 @@ func SyncTool(home, toolID string, in SyncInput) error {
 // InputFromModel 从 config.ModelConfig 组装 SyncInput。
 func InputFromModel(m config.ModelConfig) SyncInput {
 	return SyncInput{
-		Enabled:           m.Enabled,
-		Platforms:         m.Platforms,
-		DefaultPlatformID: m.DefaultPlatform,
-		ActiveModel:       m.ActiveModel,
-		ToolSync:          m.ToolSync,
+		Enabled:             m.Enabled,
+		Platforms:           m.Platforms,
+		ClaudePlatformID:    m.ToolSync.ClaudePlatform,
+		CodeBuddyPlatformID: m.ToolSync.CodeBuddyPlatform,
+		ActiveModel:         m.ActiveModel,
+		ToolSync:            m.ToolSync,
 	}
 }
 
