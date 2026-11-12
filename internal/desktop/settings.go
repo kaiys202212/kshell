@@ -10,6 +10,7 @@ import (
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/providers"
+	"github.com/yangk/kshell/internal/workbuddy"
 )
 
 var errNoProvidersPath = errors.New("err.settings.providers_path_unavailable")
@@ -436,14 +437,18 @@ var modelSyncTargets = map[string]bool{
 // platformOnlyTargets 是只承载每工具平台选择、没有静态注入开关的工具。
 var platformOnlyTargets = map[string]bool{"codex": true, "gemini": true}
 
-// validPlatformID 返回命中平台列表的 ID；空或悬空返回空串（运行期回落第一个）。
+// validPlatformID 返回命中平台列表的 ID；空、悬空或 WorkBuddy 特型返回空串
+// （运行期回落第一个）。WorkBuddy 平台是动态凭据特型，端点由进程内代理提供，
+// 不属于静态注入目标；codex/gemini 一期协议也不翻译它。此处排除与前端
+// staticPlats 过滤一致；claude 的 ACP 会话走 modelresolve 代理路径，不经本函数，
+// 仍可使用 WorkBuddy。
 func validPlatformID(platforms []config.ModelPlatform, id string) string {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return ""
 	}
 	for _, p := range platforms {
-		if p.ID == id {
+		if p.ID == id && p.Preset != workbuddy.PresetID {
 			return id
 		}
 	}

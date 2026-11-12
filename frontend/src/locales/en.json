@@ -233,6 +233,7 @@
       "key_unavailable": "Cannot extract credential key from WorkBuddy ({{0}})",
       "bad_auth_file": "WorkBuddy credential file corrupted ({{0}})",
       "no_token": "WorkBuddy not signed in or credentials missing",
+      "credential_unavailable": "WorkBuddy credentials unavailable: sign in again in WorkBuddy and retry",
       "token_expired": "WorkBuddy session expired: sign in again in WorkBuddy and retry",
       "key_mismatch": "WorkBuddy credential key mismatch (WorkBuddy may have rotated it; restart WorkBuddy and retry)",
       "decrypt_failed": "WorkBuddy credential decryption failed ({{0}})",

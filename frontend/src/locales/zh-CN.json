@@ -233,6 +233,7 @@
       "key_unavailable": "无法从 WorkBuddy 桌面端提取凭据密钥（{{0}}）",
       "bad_auth_file": "WorkBuddy 凭据文件损坏（{{0}}）",
       "no_token": "WorkBuddy 未登录或凭据缺失",
+      "credential_unavailable": "WorkBuddy 凭据不可用：请在 WorkBuddy 内重新登录后重试",
       "token_expired": "WorkBuddy 登录已过期：请在 WorkBuddy 内重新登录后重试",
       "key_mismatch": "WorkBuddy 凭据密钥不匹配（桌面端可能刚换密钥，重启 WorkBuddy 后重试）",
       "decrypt_failed": "WorkBuddy 凭据解密失败（{{0}}）",

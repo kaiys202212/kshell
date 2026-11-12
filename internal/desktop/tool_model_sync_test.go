@@ -10,6 +10,7 @@ import (
 
 	"github.com/yangk/kshell/internal/agentsync"
 	"github.com/yangk/kshell/internal/config"
+	"github.com/yangk/kshell/internal/workbuddy"
 )
 
 // newSyncApp 构造带隔离 home 的 App：agentsync 的落盘全部进临时目录。
@@ -81,6 +82,32 @@ func TestSetToolSyncConfigDropsUnknownPlatform(t *testing.T) {
 	}
 	if v.ToolPlatforms["claude"] != "" {
 		t.Fatalf("悬空平台应被丢弃, got %q", v.ToolPlatforms["claude"])
+	}
+}
+
+// WorkBuddy 平台是动态凭据特型，不能作为静态注入目标：设置页保存时与悬空值
+// 一样丢弃，与前端候选过滤一致（claude 的 ACP 会话走 modelresolve，不受影响）。
+func TestSetToolSyncConfigDropsWorkbuddyPlatform(t *testing.T) {
+	app, _, _ := newSyncApp(t)
+	setSyncPlatform(t, app)
+	app.mu.Lock()
+	app.opts.Config.Model.Platforms = append(app.opts.Config.Model.Platforms,
+		config.ModelPlatform{ID: "wb", Name: "WorkBuddy", Preset: workbuddy.PresetID, Models: []string{"hy3"}})
+	app.mu.Unlock()
+
+	if err := app.SetToolSyncConfig("claude", ToolSyncInput{
+		Enabled:       true,
+		Claude:        ClaudeSlotsView{Model: "hy3"},
+		ToolPlatforms: map[string]string{"claude": "wb"},
+	}); err != nil {
+		t.Fatalf("SetToolSyncConfig: %v", err)
+	}
+	v, err := app.GetToolSyncConfig("claude")
+	if err != nil {
+		t.Fatalf("GetToolSyncConfig: %v", err)
+	}
+	if v.ToolPlatforms["claude"] != "" {
+		t.Fatalf("WorkBuddy 平台应被排除, got %q", v.ToolPlatforms["claude"])
 	}
 }
 
