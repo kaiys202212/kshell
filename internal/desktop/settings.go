@@ -691,7 +691,9 @@ func (a *App) GetToolSyncConfig(toolID string) (ToolSyncView, error) {
 
 // SetToolSyncConfig 持久化单个工具的定制模型同步配置并立即对该工具生效：
 // 启用 → 按勾选注入；禁用 → 只清不建（勾选一并清空，避免残留悬空配置）。
-// 各工具只改写自己的配置段；失败 log-only（主诉求已持久化，下次启动兜底）。
+// platformOnlyTargets（codex/gemini）没有注入物，只保存 ToolPlatforms 平台选择，
+// 不受 Enabled 门控；其余工具各只改写自己的配置段。
+// 持久化失败时错误上抛；注入失败 log-only（主诉求已持久化，下次启动兜底）。
 func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 	toolID = strings.TrimSpace(toolID)
 	if !modelSyncTargets[toolID] {
@@ -726,8 +728,12 @@ func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 		for k, v := range c.Model.ToolSync.OpenCode {
 			ts.OpenCode[k] = append([]string(nil), v...)
 		}
-		switch toolID {
-		case config.ToolClaude:
+		switch {
+		case platformOnlyTargets[toolID]:
+			// 没有 agentsync 静态注入，平台选择只供启动端点解析；不受 Enabled
+			// 门控，空选择即删除键（回落消费方的全局默认）。
+			setToolPlatform(ts.ToolPlatforms, toolID, validPlatformID(c.Model.Platforms, in.ToolPlatforms[toolID]))
+		case toolID == config.ToolClaude:
 			if in.Enabled {
 				ts.Claude = config.ClaudeSync{
 					Model:  strings.TrimSpace(in.Claude.Model),
@@ -740,7 +746,7 @@ func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 				ts.Claude = config.ClaudeSync{}
 				delete(ts.ToolPlatforms, config.ToolClaude)
 			}
-		case "opencode":
+		case toolID == "opencode":
 			// OpenCode 是 tool_sync.opencode 键的唯一属主：禁用即整键清空。
 			ts.OpenCode = map[string][]string{}
 			if in.Enabled {
@@ -753,7 +759,7 @@ func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 			if len(ts.OpenCode) == 0 {
 				ts.OpenCode = nil
 			}
-		case config.ToolCodeBuddy:
+		case toolID == config.ToolCodeBuddy:
 			if in.Enabled {
 				ts.CodeBuddy = trimList(in.CodeBuddy)
 				setToolPlatform(ts.ToolPlatforms, config.ToolCodeBuddy, validPlatformID(c.Model.Platforms, in.ToolPlatforms[config.ToolCodeBuddy]))
@@ -761,10 +767,6 @@ func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 				ts.CodeBuddy = nil
 				delete(ts.ToolPlatforms, config.ToolCodeBuddy)
 			}
-		case "codex", "gemini":
-			// 这两个工具没有 agentsync 静态注入，平台选择只供启动端点解析；
-			// 不受 Enabled 门控，空选择即删除键（回落消费方的全局默认）。
-			setToolPlatform(ts.ToolPlatforms, toolID, validPlatformID(c.Model.Platforms, in.ToolPlatforms[toolID]))
 		}
 		if len(ts.ToolPlatforms) == 0 {
 			ts.ToolPlatforms = nil

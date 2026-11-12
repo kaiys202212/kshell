@@ -129,6 +129,55 @@ describe('ToolSyncDialog', () => {
     expect(input.ToolPlatforms.codebuddy).toBe('p2');
   });
 
+  it('claude：悬空平台显示占位并可重选，不静默回落第一个', async () => {
+    mocks.getToolSyncConfig.mockResolvedValue({
+      ...emptyCfg,
+      ToolPlatforms: { claude: 'gone' },
+    });
+    render(
+      <ToolSyncDialog toolID="claude" toolName="Claude Code" platforms={plats} onClose={() => {}} />,
+    );
+
+    const platSel = (await screen.findByLabelText(tt('ui.toolsync.platform'))) as HTMLSelectElement;
+    expect(platSel.value).toBe('gone');
+    expect(platSel.selectedOptions[0].textContent).toBe(tt('ui.toolsync.tool_platform_invalid'));
+    // 悬空平台没有模型列表：槽位只剩「不设置」，不会沿用其它平台模型。
+    const modelSel = screen.getByLabelText(tt('ui.toolsync.slot_model')) as HTMLSelectElement;
+    expect(Array.from(modelSel.options).map((o) => o.value)).toEqual(['']);
+
+    fireEvent.change(platSel, { target: { value: 'p2' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.toolsync.save') }));
+
+    await waitFor(() => expect(mocks.setToolSyncConfig).toHaveBeenCalledTimes(1));
+    const [toolID, input] = mocks.setToolSyncConfig.mock.calls[0];
+    expect(toolID).toBe('claude');
+    expect(input.ToolPlatforms.claude).toBe('p2');
+  });
+
+  it('codebuddy：悬空平台显示占位并可重选', async () => {
+    mocks.getToolSyncConfig.mockResolvedValue({
+      ...emptyCfg,
+      ToolPlatforms: { codebuddy: 'gone' },
+    });
+    render(
+      <ToolSyncDialog toolID="codebuddy" toolName="CodeBuddy" platforms={plats} onClose={() => {}} />,
+    );
+
+    const platSel = (await screen.findByLabelText(tt('ui.toolsync.platform'))) as HTMLSelectElement;
+    expect(platSel.value).toBe('gone');
+    expect(platSel.selectedOptions[0].textContent).toBe(tt('ui.toolsync.tool_platform_invalid'));
+    // 悬空平台无模型列表，不应展示任何平台的勾选区。
+    expect(screen.queryByText(tt('ui.toolsync.models_empty'))).not.toBeInTheDocument();
+
+    fireEvent.change(platSel, { target: { value: 'p1' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.toolsync.save') }));
+
+    await waitFor(() => expect(mocks.setToolSyncConfig).toHaveBeenCalledTimes(1));
+    const [toolID, input] = mocks.setToolSyncConfig.mock.calls[0];
+    expect(toolID).toBe('codebuddy');
+    expect(input.ToolPlatforms.codebuddy).toBe('p1');
+  });
+
   it('codex：只显示平台下拉（无启用开关），候选排除 workbuddy，保存写 ToolPlatforms', async () => {
     mocks.getToolSyncConfig.mockResolvedValue(emptyCfg);
     const withWb: ModelPlatformView[] = [
@@ -146,11 +195,11 @@ describe('ToolSyncDialog', () => {
     ];
     render(<ToolSyncDialog toolID="codex" toolName="Codex" platforms={withWb} onClose={() => {}} />);
 
-    const platSel = (await screen.findByLabelText(tt('ui.settings.tool_platform'))) as HTMLSelectElement;
+    const platSel = (await screen.findByLabelText(tt('ui.toolsync.tool_platform'))) as HTMLSelectElement;
     // 无静态注入的目标不显示「启用同步」开关。
     expect(screen.queryByRole('checkbox', { name: tt('ui.toolsync.enable') })).not.toBeInTheDocument();
     expect(Array.from(platSel.options).map((o) => o.value)).toEqual(['', 'p1', 'p2']);
-    expect(screen.getByText(tt('ui.settings.tool_platform_hint'))).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.toolsync.tool_platform_hint'))).toBeInTheDocument();
 
     fireEvent.change(platSel, { target: { value: 'p2' } });
     fireEvent.click(screen.getByRole('button', { name: tt('ui.toolsync.save') }));
@@ -169,10 +218,10 @@ describe('ToolSyncDialog', () => {
     });
     render(<ToolSyncDialog toolID="gemini" toolName="Gemini" platforms={plats} onClose={() => {}} />);
 
-    const platSel = (await screen.findByLabelText(tt('ui.settings.tool_platform'))) as HTMLSelectElement;
+    const platSel = (await screen.findByLabelText(tt('ui.toolsync.tool_platform'))) as HTMLSelectElement;
     // 悬空值不被静默清空：选中项仍是原 ID，文案显示「已失效」，不会渲染空白。
     expect(platSel.value).toBe('gone');
-    expect(platSel.selectedOptions[0].textContent).toBe(tt('ui.settings.tool_platform_invalid'));
+    expect(platSel.selectedOptions[0].textContent).toBe(tt('ui.toolsync.tool_platform_invalid'));
 
     fireEvent.change(platSel, { target: { value: 'p1' } });
     fireEvent.click(screen.getByRole('button', { name: tt('ui.toolsync.save') }));

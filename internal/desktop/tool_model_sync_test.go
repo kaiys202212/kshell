@@ -260,7 +260,7 @@ func TestSetToolSyncConfigClaudeSlots(t *testing.T) {
 }
 
 // 非平台模型同步目标的工具 ID 拒绝设置：配置保持不变。
-// codex/gemini 自 Task 8 起是「仅每工具平台」目标，不再属于未知工具。
+// codex/gemini 是「仅每工具平台」目标，不再属于未知工具。
 func TestSetToolSyncConfigRejectsUnknownTool(t *testing.T) {
 	app, _, _ := newSyncApp(t)
 	setSyncPlatform(t, app)
@@ -304,9 +304,13 @@ func TestSetToolSyncConfigCodexGeminiToolPlatforms(t *testing.T) {
 	if tp["codex"] != "p2" || tp["gemini"] != "p1" {
 		t.Fatalf("ToolPlatforms = %#v, want codex=p2 gemini=p1", tp)
 	}
-	// codex/gemini 没有静态注入开关，不应写入 Enabled。
-	if loaded.Model.ToolSync.Enabled["codex"] || loaded.Model.ToolSync.Enabled["gemini"] {
-		t.Fatalf("codex/gemini 不应标记 Enabled: %#v", loaded.Model.ToolSync.Enabled)
+	// codex/gemini 没有静态注入开关，不应写入 Enabled（断言键不存在，
+	// 而非仅值为 false）。
+	if _, ok := loaded.Model.ToolSync.Enabled["codex"]; ok {
+		t.Fatalf("codex 不应写入 Enabled: %#v", loaded.Model.ToolSync.Enabled)
+	}
+	if _, ok := loaded.Model.ToolSync.Enabled["gemini"]; ok {
+		t.Fatalf("gemini 不应写入 Enabled: %#v", loaded.Model.ToolSync.Enabled)
 	}
 
 	// 悬空平台：与 claude/codebuddy 一致丢弃该键，而不是落到第一个平台。
@@ -362,10 +366,11 @@ func TestGetToolSyncConfig(t *testing.T) {
 	setSyncPlatform(t, app)
 	app.mu.Lock()
 	app.opts.Config.Model.ToolSync = config.ToolSyncConfig{
-		Enabled:   map[string]bool{"claude": true},
-		Claude:    config.ClaudeSync{Model: "m1", Sonnet: "m2"},
-		OpenCode:  map[string][]string{"p1": {"m1", "m2"}},
-		CodeBuddy: []string{"m1"},
+		Enabled:       map[string]bool{"claude": true},
+		Claude:        config.ClaudeSync{Model: "m1", Sonnet: "m2"},
+		ToolPlatforms: map[string]string{"claude": "p1"},
+		OpenCode:      map[string][]string{"p1": {"m1", "m2"}},
+		CodeBuddy:     []string{"m1"},
 	}
 	app.mu.Unlock()
 
@@ -376,14 +381,55 @@ func TestGetToolSyncConfig(t *testing.T) {
 	if !v.Enabled || v.Claude.Model != "m1" || v.Claude.Sonnet != "m2" {
 		t.Fatalf("claude 视图 = %+v", v)
 	}
+	// 返回 map 必须与内存配置隔离：调用方改写不得污染 ToolSync 配置。
 	v.OpenCode["p1"][0] = "tampered"
+	v.ToolPlatforms["claude"] = "tampered"
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	if app.opts.Config.Model.ToolSync.OpenCode["p1"][0] != "m1" {
 		t.Fatal("应返回副本而非内部 map")
 	}
+	if app.opts.Config.Model.ToolSync.ToolPlatforms["claude"] != "p1" {
+		t.Fatal("ToolPlatforms 应返回副本而非内部 map")
+	}
 	if _, err := app.GetToolSyncConfig("cursor"); err == nil {
 		t.Fatal("cursor 不是同步目标，应报错")
+	}
+}
+
+// 悬空平台 ID 经 config.Load 归一化后仍原样保留，GetToolSyncConfig 必须回传
+// 原始 ID；前端据此把「已失效」占位显示出来（而不是看似已配置、实际回落）。
+func TestGetToolSyncConfigReturnsDanglingToolPlatform(t *testing.T) {
+	app, layout, _ := newSyncApp(t)
+	yamlSrc := `
+model:
+  enabled: true
+  platforms:
+    - id: p1
+      name: P1
+      openai_base_url: https://api.example.com
+  tool_sync:
+    enabled: {}
+    tool_platforms:
+      codex: gone
+`
+	if err := os.WriteFile(layout.Config, []byte(yamlSrc), 0o600); err != nil {
+		t.Fatalf("写配置: %v", err)
+	}
+	cfg, err := config.Load(layout)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	app.mu.Lock()
+	app.opts.Config = cfg
+	app.mu.Unlock()
+
+	v, err := app.GetToolSyncConfig("codex")
+	if err != nil {
+		t.Fatalf("GetToolSyncConfig: %v", err)
+	}
+	if got := v.ToolPlatforms["codex"]; got != "gone" {
+		t.Fatalf("ToolPlatforms[codex] = %q, want 原始悬空 ID gone", got)
 	}
 }
 

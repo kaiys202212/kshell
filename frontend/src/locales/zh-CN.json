@@ -314,6 +314,10 @@
       "slot_haiku": "Haiku",
       "slot_unset": "不设置",
       "platform": "平台",
+      "tool_platform": "平台",
+      "tool_platform_hint": "该工具新建会话时使用的端点平台；未配置时跟随全局默认平台。WorkBuddy 平台使用动态凭据，不在候选中。",
+      "tool_platform_unset": "未配置（跟随全局默认）",
+      "tool_platform_invalid": "已失效（请重新选择）",
       "claude_no_endpoint": "没有可用的 Anthropic 平台，保存后 Claude 不会被注入。",
       "codebuddy_no_endpoint": "没有可用的 OpenAI 平台，保存后 CodeBuddy 不会被注入。",
       "platform_no_endpoint": "{0}：无 OpenAI 端点，不会注入。",
@@ -345,10 +349,6 @@
     },
     "settings": {
       "title": "设置",
-      "tool_platform": "平台",
-      "tool_platform_hint": "该工具新建会话时使用的端点平台；未配置时跟随全局默认平台。WorkBuddy 平台使用动态凭据，不在候选中。",
-      "tool_platform_unset": "未配置（跟随全局默认）",
-      "tool_platform_invalid": "已失效（请重新选择）",
       "nav": {
         "aria": "设置分区",
         "general": "通用",

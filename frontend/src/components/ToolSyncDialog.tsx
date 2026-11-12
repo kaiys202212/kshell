@@ -4,7 +4,8 @@
 // - opencode：按平台勾选模型（OpenCode 支持多 provider 并存），未勾选的平台不建 provider。
 // - codebuddy：先选平台（仅 OpenAI 端点），再勾选该平台模型（CLI 自定义条目按裸模型名透传）。
 // - codex/gemini：没有静态注入，仅保存每工具平台（供启动端点解析），不显示启用开关。
-// 未启用或未勾选任何模型 = 不注入（后端走「只清不建」清理既有注入物）。
+// claude/opencode/codebuddy 未启用或未勾选任何模型 = 不注入（后端走「只清不建」
+// 清理既有注入物）；codex/gemini 无注入物，保存平台选择即生效。
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -16,6 +17,7 @@ import {
   type ToolSyncInput,
 } from '../lib/api';
 import { backendError } from '../lib/errors';
+import { PLATFORM_ONLY_TARGETS } from '../lib/toolSync';
 import { useAppStore } from '../state/store';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
@@ -70,20 +72,36 @@ export function ToolSyncDialog({ toolID, toolName, platforms, onClose }: Props) 
       .then((v) => {
         if (cancelled) return;
         setEnabled(v.Enabled);
-        // 生效平台 = 已保存平台（命中且端点可用）否则第一个可用平台；
-        // 旧平台失效时按新平台模型列表归整，丢弃不可见的陈旧选择。
         const savedPlats = v.ToolPlatforms ?? {};
-        const claudePlat =
-          platforms.find((p) => p.ID === (savedPlats.claude ?? '') && !!p.AnthropicBaseURL.trim()) ??
-          platforms.find((p) => !!p.AnthropicBaseURL.trim());
-        setClaudePlat(claudePlat?.ID ?? '');
-        setClaude(reconcileSlots(claudePlat?.Models ?? [], v.Claude ?? EMPTY_SLOTS));
+        // 已保存值必须命中可用候选才生效。未命中（平台被外部删除/失去端点）
+        // 时保留原始 ID，由下拉显示「已失效」占位；不能静默回落到第一个平台，
+        // 否则用户会误以为仍按自己选的平台注入。
+        const savedClaude = savedPlats.claude ?? '';
+        const claudeHit = platforms.find(
+          (p) => p.ID === savedClaude && !!p.AnthropicBaseURL.trim(),
+        );
+        const claudeDangling = !!savedClaude && !claudeHit;
+        if (claudeDangling) {
+          setClaudePlat(savedClaude);
+          setClaude(EMPTY_SLOTS);
+        } else {
+          const effective =
+            claudeHit ?? platforms.find((p) => !!p.AnthropicBaseURL.trim());
+          setClaudePlat(effective?.ID ?? '');
+          // 生效平台确定后按该平台模型列表归整，丢弃不可见的陈旧槽位值。
+          setClaude(reconcileSlots(effective?.Models ?? [], v.Claude ?? EMPTY_SLOTS));
+        }
 
-        const codebuddyPlat =
-          platforms.find((p) => p.ID === (savedPlats.codebuddy ?? '') && !!p.OpenAIBaseURL.trim()) ??
-          platforms.find((p) => !!p.OpenAIBaseURL.trim());
-        setCodebuddyPlat(codebuddyPlat?.ID ?? '');
-        // codex/gemini 不做端点回落：悬空值保留，供下拉显示占位。
+        const savedCodebuddy = savedPlats.codebuddy ?? '';
+        const codebuddyHit = platforms.find(
+          (p) => p.ID === savedCodebuddy && !!p.OpenAIBaseURL.trim(),
+        );
+        const codebuddyDangling = !!savedCodebuddy && !codebuddyHit;
+        const codebuddyEffective = codebuddyDangling
+          ? undefined
+          : (codebuddyHit ?? platforms.find((p) => !!p.OpenAIBaseURL.trim()));
+        setCodebuddyPlat(codebuddyDangling ? savedCodebuddy : (codebuddyEffective?.ID ?? ''));
+        // codex/gemini 同样保留原始悬空值，供下拉显示占位。
         setToolPlat(savedPlats[toolID] ?? '');
 
         const map: Record<string, string[]> = {};
@@ -91,7 +109,7 @@ export function ToolSyncDialog({ toolID, toolName, platforms, onClose }: Props) 
           map[k] = list ?? [];
         }
         if (toolID === 'codebuddy') {
-          const allowed = new Set(codebuddyPlat?.Models ?? []);
+          const allowed = new Set(codebuddyEffective?.Models ?? []);
           map.__codebuddy__ = (v.CodeBuddy ?? []).filter((m) => allowed.has(m));
         }
         setChecked(map);
@@ -109,18 +127,26 @@ export function ToolSyncDialog({ toolID, toolName, platforms, onClose }: Props) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [toolID]);
 
-  // workbuddy 平台是动态凭据特型（端点由进程内代理提供），不能作为静态注入
-  // 目标的端点来源，统一排除出候选；codex/gemini 也只做每工具平台选择。
-  const platformOnly = toolID === 'codex' || toolID === 'gemini';
+  // workbuddy 平台统一排除出「静态注入目标」候选：它是动态凭据特型，端点由
+  // 进程内代理提供。claude/opencode/codebuddy 属于静态注入场景，天然不选它；
+  // codex/gemini 是一期边界（走 Responses / Gemini 原生协议，本地代理不翻译），
+  // 同样不受理 workbuddy 模型。UI「已失效」判定因此以 staticPlats 为基准。
+  const platformOnly = PLATFORM_ONLY_TARGETS.has(toolID);
   const staticPlats = platforms.filter((p) => p.Preset !== 'workbuddy');
   // 静态注入目标的平台候选：Claude 仅 Anthropic 端点，CodeBuddy 仅 OpenAI 端点。
   const anthropicPlats = staticPlats.filter((p) => !!p.AnthropicBaseURL.trim());
   const openaiPlats = staticPlats.filter((p) => !!p.OpenAIBaseURL.trim());
   const noEndpointPlats = staticPlats.filter((p) => !p.OpenAIBaseURL.trim());
-  // 已保存平台有效则沿用，否则回落第一个可用平台。
-  const claudeEffective = anthropicPlats.find((p) => p.ID === claudePlat) ?? anthropicPlats[0];
-  const codebuddyEffective = openaiPlats.find((p) => p.ID === codebuddyPlat) ?? openaiPlats[0];
+  // 悬空值：已保存 ID 不在候选列表。保留原值并用「已失效」占位，不回落第一个。
+  const claudeDangling = !!claudePlat && !anthropicPlats.some((p) => p.ID === claudePlat);
+  const codebuddyDangling = !!codebuddyPlat && !openaiPlats.some((p) => p.ID === codebuddyPlat);
   const toolPlatDangling = !!toolPlat && !staticPlats.some((p) => p.ID === toolPlat);
+  // 生效平台只服务注入与模型勾选：悬空/无候选时为空，避免拿第一个平台顶替。
+  const claudeEffective = anthropicPlats.find((p) => p.ID === claudePlat);
+  const codebuddyEffective = openaiPlats.find((p) => p.ID === codebuddyPlat);
+  // 下拉显示原始选择（含悬空值与「未配置」），不做隐式回落。
+  const claudeSelectValue = claudePlat;
+  const codebuddySelectValue = codebuddyPlat;
 
   // 切 Claude 平台：新平台不含的槽位值清空，避免保存悬空模型名。
   const handleClaudePlatform = (id: string) => {
@@ -148,8 +174,8 @@ export function ToolSyncDialog({ toolID, toolName, platforms, onClose }: Props) 
     // 平台选择统一走 ToolPlatforms 映射；悬空值原样提交，由后端 validPlatformID
     // 统一丢弃（与 claude/codebuddy 语义一致，不在前端静默改写）。
     const toolPlatforms: Record<string, string> = {};
-    if (toolID === 'claude') toolPlatforms.claude = claudeEffective?.ID ?? '';
-    if (toolID === 'codebuddy') toolPlatforms.codebuddy = codebuddyEffective?.ID ?? '';
+    if (toolID === 'claude') toolPlatforms.claude = claudePlat;
+    if (toolID === 'codebuddy') toolPlatforms.codebuddy = codebuddyPlat;
     if (platformOnly) toolPlatforms[toolID] = toolPlat;
 
     const input: ToolSyncInput = {
@@ -215,20 +241,20 @@ export function ToolSyncDialog({ toolID, toolName, platforms, onClose }: Props) 
           {platformOnly && (
             <div className="grid gap-2">
               <p className="text-xs text-muted-foreground">
-                {t('ui.settings.tool_platform_hint')}
+                {t('ui.toolsync.tool_platform_hint')}
               </p>
               <label className="grid grid-cols-[5rem_1fr] items-center gap-2 text-xs">
-                <span className="text-muted-foreground">{t('ui.settings.tool_platform')}</span>
+                <span className="text-muted-foreground">{t('ui.toolsync.tool_platform')}</span>
                 <select
                   className="rounded border border-input bg-card px-2 py-1 text-sm"
                   value={toolPlat}
                   onChange={(e) => setToolPlat(e.target.value)}
                 >
-                  <option value="">{t('ui.settings.tool_platform_unset')}</option>
+                  <option value="">{t('ui.toolsync.tool_platform_unset')}</option>
                   {/* 悬空值：外部删除了平台，但映射里仍保留该 ID。显示占位而不是
                       空白，用户可直接改选；提交后后端按既有语义丢弃。 */}
                   {toolPlatDangling && (
-                    <option value={toolPlat}>{t('ui.settings.tool_platform_invalid')}</option>
+                    <option value={toolPlat}>{t('ui.toolsync.tool_platform_invalid')}</option>
                   )}
                   {staticPlats.map((p) => (
                     <option key={p.ID} value={p.ID}>
@@ -251,9 +277,13 @@ export function ToolSyncDialog({ toolID, toolName, platforms, onClose }: Props) 
                 <span className="text-muted-foreground">{t('ui.toolsync.platform')}</span>
                 <select
                   className="rounded border border-input bg-card px-2 py-1 text-sm"
-                  value={claudeEffective?.ID ?? ''}
+                  value={claudeSelectValue}
                   onChange={(e) => handleClaudePlatform(e.target.value)}
                 >
+                  <option value="">{t('ui.toolsync.tool_platform_unset')}</option>
+                  {claudeDangling && (
+                    <option value={claudePlat}>{t('ui.toolsync.tool_platform_invalid')}</option>
+                  )}
                   {anthropicPlats.map((p) => (
                     <option key={p.ID} value={p.ID}>
                       {p.Name}
@@ -312,13 +342,17 @@ export function ToolSyncDialog({ toolID, toolName, platforms, onClose }: Props) 
                 <span className="text-muted-foreground">{t('ui.toolsync.platform')}</span>
                 <select
                   className="rounded border border-input bg-card px-2 py-1 text-sm"
-                  value={codebuddyEffective?.ID ?? ''}
+                  value={codebuddySelectValue}
                   onChange={(e) => {
                     setCodebuddyPlat(e.target.value);
                     // 勾选与平台绑定：切平台后清空，避免把旧平台模型写到新平台。
                     setChecked((prev) => ({ ...prev, __codebuddy__: [] }));
                   }}
                 >
+                  <option value="">{t('ui.toolsync.tool_platform_unset')}</option>
+                  {codebuddyDangling && (
+                    <option value={codebuddyPlat}>{t('ui.toolsync.tool_platform_invalid')}</option>
+                  )}
                   {openaiPlats.map((p) => (
                     <option key={p.ID} value={p.ID}>
                       {p.Name}

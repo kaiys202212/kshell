@@ -67,9 +67,17 @@ vi.mock('../components/LoginDialog', () => ({
   default: ({ toolName }: { toolName: string }) => <div data-testid="login-dialog">{toolName}</div>,
 }));
 
-// 工具模型设置弹窗打桩：Settings 层只验证「模型设置按钮打开弹窗」；弹窗内部行为见 ToolSyncDialog.test
+// 工具模型设置弹窗打桩：Settings 层只验证「模型设置按钮打开/关闭弹窗」；
+// 弹窗内部行为见 ToolSyncDialog.test。保留 onClose 以便验证真实模态交互。
 vi.mock('../components/ToolSyncDialog', () => ({
-  ToolSyncDialog: ({ toolID }: { toolID: string }) => <div data-testid="toolsync-dialog">{toolID}</div>,
+  ToolSyncDialog: ({ toolID, onClose }: { toolID: string; onClose: () => void }) => (
+    <div data-testid="toolsync-dialog">
+      {toolID}
+      <button type="button" onClick={onClose}>
+        close-toolsync
+      </button>
+    </div>
+  ),
 }));
 
 const tools: ToolInfo[] = [
@@ -374,7 +382,7 @@ describe('Settings', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('已安装的 codex/gemini 也显示「模型设置」入口（每工具平台目标）', async () => {
+  it('已安装的 codex 显示「模型设置」入口，打开后可关闭', async () => {
     mocks.getTools.mockResolvedValue([
       {
         ID: 'codex',
@@ -384,6 +392,23 @@ describe('Settings', () => {
         Installed: true,
         Source: 'path',
       },
+    ]);
+    render(<Settings />);
+    goTools();
+
+    const codexRow = (await screen.findByText('Codex')).closest('li')!;
+    fireEvent.click(
+      within(codexRow).getByRole('button', { name: tt('ui.settings.tools.model_settings') }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('toolsync-dialog')).toHaveTextContent('codex'),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'close-toolsync' }));
+    await waitFor(() => expect(screen.queryByTestId('toolsync-dialog')).not.toBeInTheDocument());
+  });
+
+  it('已安装的 gemini 显示「模型设置」入口', async () => {
+    mocks.getTools.mockResolvedValue([
       {
         ID: 'gemini',
         Name: 'Gemini',
@@ -396,14 +421,10 @@ describe('Settings', () => {
     render(<Settings />);
     goTools();
 
-    const codexRow = (await screen.findByText('Codex')).closest('li')!;
-    fireEvent.click(within(codexRow).getByRole('button', { name: tt('ui.settings.tools.model_settings') }));
-    await waitFor(() =>
-      expect(screen.getByTestId('toolsync-dialog')).toHaveTextContent('codex'),
+    const geminiRow = (await screen.findByText('Gemini')).closest('li')!;
+    fireEvent.click(
+      within(geminiRow).getByRole('button', { name: tt('ui.settings.tools.model_settings') }),
     );
-
-    const geminiRow = screen.getByText('Gemini').closest('li')!;
-    fireEvent.click(within(geminiRow).getByRole('button', { name: tt('ui.settings.tools.model_settings') }));
     await waitFor(() =>
       expect(screen.getByTestId('toolsync-dialog')).toHaveTextContent('gemini'),
     );
