@@ -961,6 +961,9 @@ export default function Settings() {
     languageOptions.push({ code: languageLocal, label: languageLocal });
   }
 
+  // 编辑平台时左卡片保持原 max-w-2xl，编辑区在右侧空白处展开；页面不再纵向滚动，模型列表在编辑区内滚动。
+  const modelEditorOpen = section === 'model' && platDraft !== null;
+
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
       <nav
@@ -983,12 +986,20 @@ export default function Settings() {
         ))}
       </nav>
 
-      <div className="flex-1 overflow-y-auto p-6">
-        {/* skills / help 内容宽（卡片列表、长文档）；模型分区在表单展开时放宽到 4xl 容纳左右两栏（有界，不再全宽拉伸）；其余表单类分区保持窄栏易读 */}
+      <div
+        data-testid="settings-content"
+        className={cn(
+          'min-h-0 flex-1 p-6',
+          // 编辑平台时锁住页面纵向滚动，模型很多也不把整页撑出滚动条；宽度不够时仅横向滚动以露出右侧编辑区。
+          modelEditorOpen ? 'flex flex-col overflow-x-auto overflow-y-hidden' : 'overflow-y-auto',
+        )}
+      >
+        {/* skills / help 内容宽（卡片列表、长文档）；表单类分区保持窄栏。编辑平台不放宽整页，左卡片仍是 max-w-2xl，编辑区在其右侧展开。 */}
         <div
+          data-testid="settings-main"
           className={cn(
-            section !== 'skills' && section !== 'help' && 'max-w-2xl',
-            section === 'model' && platDraft && 'md:max-w-4xl',
+            section !== 'skills' && section !== 'help' && !modelEditorOpen && 'max-w-2xl',
+            modelEditorOpen && 'grid h-full min-h-0 w-max min-w-full grid-rows-[auto_minmax(0,1fr)]',
           )}
         >
           <h1 className="mb-4 text-lg font-semibold">{t('ui.settings.title')}</h1>
@@ -1267,7 +1278,17 @@ export default function Settings() {
           {section === 'weixin' && <WeixinSettings />}
 
           {section === 'model' && (
-            <section className="mb-5 rounded border border-border bg-card p-3.5">
+            <div
+              className={cn(
+                modelEditorOpen && 'flex h-full min-h-0 w-max min-w-full items-start gap-4 overflow-y-hidden',
+              )}
+            >
+            <section
+              className={cn(
+                'rounded border border-border bg-card p-3.5',
+                modelEditorOpen ? 'max-h-full min-h-0 w-[42rem] max-w-2xl shrink-0 self-start overflow-y-auto' : 'mb-5',
+              )}
+            >
               <h2 className="mb-3 text-sm font-medium">{t('ui.settings.model.title')}</h2>
               <label className="mb-2 flex items-center gap-2 text-sm">
                 <input
@@ -1277,8 +1298,7 @@ export default function Settings() {
                 />
                 {t('ui.settings.model.enable')}
               </label>
-              <div className={cn('grid gap-4', platDraft && 'md:grid-cols-[minmax(0,1fr)_24rem]')}>
-                {/* 左列：当前平台 + 当前模型 + 平台列表 + 新增入口 + WorkBuddy 导入 */}
+                {/* 左列：当前平台 + 当前模型 + 平台列表 + 新增入口 + WorkBuddy 导入。编辑区不进这张卡片，避免挤窄原表单。 */}
                 <div className="grid grid-cols-1 min-w-0 content-start gap-2">
                 {modelPlatforms.length > 0 && (
                   <>
@@ -1436,10 +1456,15 @@ export default function Settings() {
 
                 <p className="text-xs text-muted-foreground">{t('ui.settings.model.desc')}</p>
                 </div>
+            </section>
 
-                {/* 右列：新增/编辑平台表单（保存即关闭） */}
+                {/* 右侧编辑区：不占左卡片宽度；高度不超过视口，模型列表单独滚动 */}
                 {platDraft && (
-                  <div className="grid grid-cols-1 min-w-0 content-start gap-2 self-start rounded border border-border bg-background p-2.5">
+                  <div
+                    data-testid="model-platform-editor"
+                    className="flex h-full max-h-full min-h-0 w-96 shrink-0 flex-col gap-2 self-stretch overflow-hidden rounded border border-border bg-background p-2.5"
+                  >
+                    <div className="grid min-h-0 grid-cols-1 content-start gap-2 overflow-y-auto">
                     <p className="text-sm font-medium">{t('ui.settings.model.edit_platform')}</p>
                     <label className="text-xs text-muted-foreground" htmlFor="platform-name">
                       {t('ui.settings.model.platform_name')}
@@ -1543,11 +1568,15 @@ export default function Settings() {
                       onChange={(e) => setPlatDraft({ ...platDraft, ASRModel: e.target.value })}
                     />
                     <p className="text-xs text-muted-foreground">{t('ui.settings.model.asr_model_hint')}</p>
-                    <p className="text-xs text-muted-foreground">{t('ui.settings.model.models')}</p>
+                    <p className="shrink-0 text-xs text-muted-foreground">{t('ui.settings.model.models')}</p>
                     {platDraft.Models.length === 0 && (
                       <p className="text-xs text-muted-foreground">{t('ui.settings.model.models_empty')}</p>
                     )}
-                    <ul className="grid grid-cols-1 gap-1">
+                    </div>
+                    <ul
+                      data-testid="model-editor-models"
+                      className="grid min-h-32 flex-1 grid-cols-1 content-start gap-1 overflow-y-auto overscroll-contain"
+                    >
                       {platDraft.Models.map((m) => (
                         <li key={m} className="flex items-center gap-2 text-sm">
                           <span className="flex-1 truncate" title={m}>{m}</span>
@@ -1567,6 +1596,7 @@ export default function Settings() {
                         </li>
                       ))}
                     </ul>
+                    <div className="grid shrink-0 grid-cols-1 content-start gap-2">
                     <div className="flex gap-2">
                       <input
                         aria-label={t('ui.settings.model.add_model')}
@@ -1643,10 +1673,10 @@ export default function Settings() {
                         {t('ui.settings.tools.cancel')}
                       </Button>
                     </div>
+                    </div>
                   </div>
                 )}
-              </div>
-            </section>
+            </div>
           )}
 
           {section === 'tools' && (

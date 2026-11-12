@@ -1589,6 +1589,41 @@ describe('Settings', () => {
     expect((formName.closest('div.grid') as HTMLElement).className).toContain('grid-cols-1');
   });
 
+  it('编辑平台在右侧展开且不挤窄原表单，模型列表在编辑区内滚动', async () => {
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [platView({ Name: 'DeepSeek', Models: ['m1', 'm2'] })],
+      ActivePlatformID: 'p1',
+      ActiveModel: 'm1',
+    });
+    render(<Settings />);
+    goModel();
+    const card = await findCard('DeepSeek');
+    const panel = card.closest('section') as HTMLElement;
+    const main = screen.getByTestId('settings-main');
+    expect(main.className).toContain('max-w-2xl');
+    expect(main.className).not.toContain('max-w-4xl');
+
+    fireEvent.click(within(card).getByRole('button', { name: tt('ui.settings.model.edit_platform') }));
+    const editor = await screen.findByTestId('model-platform-editor');
+    const content = screen.getByTestId('settings-content');
+    // 页面本身不再纵向滚动，避免模型一多就整页出滚动条。
+    expect(content.className).not.toContain('overflow-y-auto');
+    expect(content.className).toContain('overflow-y-hidden');
+    // 左卡片保持原来的窄栏宽度，编辑区在卡片外侧。
+    expect(panel.className).toContain('max-w-2xl');
+    expect(panel.className).toContain('w-[42rem]');
+    expect(panel.className).not.toContain('max-w-4xl');
+    expect(main.className).not.toContain('max-w-4xl');
+    expect(panel.contains(editor)).toBe(false);
+    expect(editor.className).toContain('w-96');
+    expect(editor.className).toContain('overflow-hidden');
+    const models = screen.getByTestId('model-editor-models');
+    expect(editor.contains(models)).toBe(true);
+    expect(models.className).toContain('overflow-y-auto');
+    expect(models.className).toContain('min-h-32');
+  });
+
   it('编辑态选择预设填入双 URL 与推荐模型', async () => {
     render(<Settings />);
     goModel();
