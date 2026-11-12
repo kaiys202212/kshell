@@ -999,7 +999,7 @@ export default function Settings() {
           data-testid="settings-main"
           className={cn(
             section !== 'skills' && section !== 'help' && !modelEditorOpen && 'max-w-2xl',
-            modelEditorOpen && 'grid h-full min-h-0 w-max min-w-full grid-rows-[auto_minmax(0,1fr)]',
+            modelEditorOpen && 'grid h-full min-h-0 w-full grid-rows-[auto_minmax(0,1fr)]',
           )}
         >
           <h1 className="mb-4 text-lg font-semibold">{t('ui.settings.title')}</h1>
@@ -1280,7 +1280,7 @@ export default function Settings() {
           {section === 'model' && (
             <div
               className={cn(
-                modelEditorOpen && 'flex h-full min-h-0 w-max min-w-full items-start gap-4 overflow-y-hidden',
+                modelEditorOpen && 'flex h-full min-h-0 w-full min-w-[65rem] items-stretch gap-4',
               )}
             >
             <section
@@ -1462,7 +1462,7 @@ export default function Settings() {
                 {platDraft && (
                   <div
                     data-testid="model-platform-editor"
-                    className="flex h-full max-h-full min-h-0 w-96 shrink-0 flex-col gap-2 self-stretch overflow-hidden rounded border border-border bg-background p-2.5"
+                    className="flex h-full max-h-full min-h-0 min-w-[22rem] flex-1 flex-col gap-2 self-stretch overflow-hidden rounded border border-border bg-background p-2.5"
                   >
                     <div className="grid min-h-0 grid-cols-1 content-start gap-2 overflow-y-auto">
                     <p className="text-sm font-medium">{t('ui.settings.model.edit_platform')}</p>

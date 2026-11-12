@@ -1616,7 +1616,9 @@ describe('Settings', () => {
     expect(panel.className).not.toContain('max-w-4xl');
     expect(main.className).not.toContain('max-w-4xl');
     expect(panel.contains(editor)).toBe(false);
-    expect(editor.className).toContain('w-96');
+    // 编辑区随窗口变宽（flex-1），保证在宽屏下不只是一条窄栏；左卡片仍固定窄栏。
+    expect(editor.className).toContain('flex-1');
+    expect(editor.className).toContain('min-w-[22rem]');
     expect(editor.className).toContain('overflow-hidden');
     const models = screen.getByTestId('model-editor-models');
     expect(editor.contains(models)).toBe(true);
