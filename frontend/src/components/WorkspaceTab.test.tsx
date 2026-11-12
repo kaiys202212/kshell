@@ -46,6 +46,7 @@ const mocks = vi.hoisted(() => ({
   resizeTerminal: vi.fn(),
   closeTerminal: vi.fn(),
   sendChatPrompt: vi.fn(),
+  sendChatPromptDirect: vi.fn(),
   sendChatPromptBlocks: vi.fn(),
   listChatModels: vi.fn().mockResolvedValue(null),
   setChatModel: vi.fn().mockResolvedValue(undefined),

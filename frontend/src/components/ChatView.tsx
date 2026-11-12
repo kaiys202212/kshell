@@ -21,7 +21,7 @@ import {
   removeChatQueued,
   respondChatElicitation,
   respondChatPermission,
-  sendChatPrompt,
+  sendChatPromptDirect,
   sendChatPromptBlocks,
   setChatConfigOption,
   setChatModel,
@@ -517,6 +517,8 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
   };
 
   // doSend 真正发起发送（直接发送与队列出队共用）：乐观置 running，失败回滚并提示。
+  // 纯文本走 sendChatPromptDirect：ACP 窗口直投，不走 AgentHub 工具化路由——否则
+  // user 消息要等整轮 LLM 往返结束才出现在时间线（表现为延迟数十秒）。
   // 出队来源的失败：条目插回队首 + 置 store 暂停标记，阻断后续自动出队——否则
   // fail 置回的 ready（或对账镜像的 ready）会构成新沿，持续性失败会逐条烧穿队列。
   // 暂停放 store：对账/镜像重建可能重挂本组件，组件 ref 会丢状态。
@@ -531,7 +533,7 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
     if (payload.blocks && payload.blocks.length > 0) {
       sendChatPromptBlocks(id, payload.blocks).catch(fail);
     } else {
-      sendChatPrompt(id, payload.text).catch(fail);
+      sendChatPromptDirect(id, payload.text).catch(fail);
     }
   };
 
@@ -588,7 +590,7 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
       useAppStore.getState().upsertChat({ ...chat, Status: 'ready' });
       useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
     };
-    sendChatPrompt(id, t('ui.chat.resume_turn')).catch(fail);
+    sendChatPromptDirect(id, t('ui.chat.resume_turn')).catch(fail);
   }, [running, chat, id, t]);
 
   // lightbox 预览回调：setter 天然稳定，包装成稳定引用传给 memo(ChatTimeline)

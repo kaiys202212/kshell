@@ -10,7 +10,7 @@ import { tt } from '../test/i18n';
 const mocks = vi.hoisted(() => ({
   getTools: vi.fn(),
   openWorkspaceACP: vi.fn(),
-  sendChatPrompt: vi.fn(),
+  sendChatPromptDirect: vi.fn(),
   markRequirementDispatched: vi.fn(),
   setChatModel: vi.fn(),
 }));
@@ -40,7 +40,7 @@ function cleanupStore() {
 beforeEach(() => {
   vi.clearAllMocks();
   cleanupStore();
-  mocks.sendChatPrompt.mockResolvedValue(undefined);
+  mocks.sendChatPromptDirect.mockResolvedValue(undefined);
   mocks.markRequirementDispatched.mockResolvedValue(undefined);
   mocks.setChatModel.mockResolvedValue(undefined);
 });
@@ -77,7 +77,7 @@ describe('dispatchRequirement', () => {
     await dispatchRequirement('r1', '需求文本', 'D:\\ws\\proj');
 
     expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-a', null);
-    expect(mocks.sendChatPrompt).toHaveBeenCalledWith('chat-real', '需求文本');
+    expect(mocks.sendChatPromptDirect).toHaveBeenCalledWith('chat-real', '需求文本');
     // 关键断言：第三参为真实 chat.ID，第四参为会话标题快照
     expect(mocks.markRequirementDispatched).toHaveBeenCalledWith('r1', 'D:\\ws\\proj', 'chat-real', '会话标题', 's1');
     expect(useAppStore.getState().lastAgentId).toBe('chat-real');
@@ -100,7 +100,7 @@ describe('dispatchRequirement', () => {
     expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-def', null);
   });
 
-  it('defaults.modelId 有值：建会话后先 setChatModel 再 sendChatPrompt', async () => {
+  it('defaults.modelId 有值：建会话后先 setChatModel 再 sendChatPromptDirect', async () => {
     useAppStore.setState({ chats: [], lastAgentId: '' });
     mocks.getTools.mockResolvedValue([
       { ID: 'tool-def', ACP: { Available: true, Source: '' } } as unknown as ToolInfo,
@@ -111,9 +111,9 @@ describe('dispatchRequirement', () => {
 
     expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-def', 'm2');
     expect(mocks.setChatModel).toHaveBeenCalledWith('chat-real', 'm2');
-    // 时序：setChatModel 必须先于 sendChatPrompt，确保首轮就用对模型
+    // 时序：setChatModel 必须先于 sendChatPromptDirect，确保首轮就用对模型
     const modelOrder = mocks.setChatModel.mock.invocationCallOrder[0];
-    const sendOrder = mocks.sendChatPrompt.mock.invocationCallOrder[0];
+    const sendOrder = mocks.sendChatPromptDirect.mock.invocationCallOrder[0];
     expect(modelOrder).toBeLessThan(sendOrder);
   });
 
@@ -145,17 +145,17 @@ describe('dispatchRequirement', () => {
 
     await dispatchRequirement('r1', '需求文本', 'D:\\ws\\proj', { toolId: 'tool-def', modelId: 'm2' });
 
-    expect(mocks.sendChatPrompt).toHaveBeenCalledWith('chat-real', '需求文本');
+    expect(mocks.sendChatPromptDirect).toHaveBeenCalledWith('chat-real', '需求文本');
     expect(mocks.markRequirementDispatched).toHaveBeenCalled();
   });
 
-  it('sendChatPrompt 失败：向上抛且不落盘派发标记', async () => {
+  it('sendChatPromptDirect 失败：向上抛且不落盘派发标记', async () => {
     useAppStore.setState({ chats: [], lastAgentId: '' });
     mocks.getTools.mockResolvedValue([
       { ID: 'tool-a', ACP: { Available: true, Source: '' } } as unknown as ToolInfo,
     ]);
     mocks.openWorkspaceACP.mockResolvedValue({ Kind: 'chat', Chat: chat({ ID: 'chat-real' }) });
-    mocks.sendChatPrompt.mockRejectedValue(new Error('send boom'));
+    mocks.sendChatPromptDirect.mockRejectedValue(new Error('send boom'));
 
     await expect(dispatchRequirement('r1', '文本', 'D:\\ws')).rejects.toThrow('send boom');
     expect(mocks.markRequirementDispatched).not.toHaveBeenCalled();
@@ -178,7 +178,7 @@ describe('dispatchRequirement', () => {
     // 第一次仍在途：同 id 第二次调用直接 busy，不建会话不发文本
     await expect(dispatchRequirement('r-busy', '文本', 'D:\\ws\\proj')).resolves.toBe('busy');
     expect(mocks.openWorkspaceACP).toHaveBeenCalledTimes(1);
-    expect(mocks.sendChatPrompt).not.toHaveBeenCalled();
+    expect(mocks.sendChatPromptDirect).not.toHaveBeenCalled();
 
     releaseOpen({ Kind: 'chat', Chat: chat({ ID: 'chat-real' }) });
     await expect(first).resolves.toBe('ok');
@@ -187,7 +187,7 @@ describe('dispatchRequirement', () => {
     mocks.openWorkspaceACP.mockResolvedValue({ Kind: 'chat', Chat: chat({ ID: 'chat-real-2' }) });
     await expect(dispatchRequirement('r-busy', '文本', 'D:\\ws\\proj')).resolves.toBe('ok');
     expect(mocks.openWorkspaceACP).toHaveBeenCalledTimes(2);
-    expect(mocks.sendChatPrompt).toHaveBeenCalledTimes(2);
+    expect(mocks.sendChatPromptDirect).toHaveBeenCalledTimes(2);
   });
 
   it('在途守卫：不同 id 互不影响，可并行派发', async () => {
@@ -208,7 +208,7 @@ describe('dispatchRequirement', () => {
 
     const first = dispatchRequirement('r-a', '文本', 'D:\\ws\\a');
     await expect(dispatchRequirement('r-b', '文本', 'D:\\ws\\b')).resolves.toBe('ok');
-    expect(mocks.sendChatPrompt).toHaveBeenCalledWith('chat-b', '文本');
+    expect(mocks.sendChatPromptDirect).toHaveBeenCalledWith('chat-b', '文本');
 
     releaseA({ Kind: 'chat', Chat: chat({ ID: 'chat-a' }) });
     await expect(first).resolves.toBe('ok');
@@ -241,7 +241,7 @@ describe('reopenRequirementSession', () => {
 
     expect(opened.Chat?.ID).toBe('chat-new');
     expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-last', null);
-    expect(mocks.sendChatPrompt).not.toHaveBeenCalled(); // 重开不发需求文本
+    expect(mocks.sendChatPromptDirect).not.toHaveBeenCalled(); // 重开不发需求文本
     expect(mocks.markRequirementDispatched).toHaveBeenCalledWith('r1', 'D:\\ws\\proj', 'chat-new', '重开标题', 's1');
     expect(useAppStore.getState().lastAgentId).toBe('chat-new');
   });

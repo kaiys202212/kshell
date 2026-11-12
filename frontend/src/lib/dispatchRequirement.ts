@@ -1,7 +1,9 @@
 // 需求派发与重新打开：把一条需求投递到目标工作区的 ACP agent 会话。
 // 派发步骤：选工具 → openWorkspaceACP 建会话 →（可选）setChatModel →
-// sendChatPrompt 发需求文本 → markRequirementDispatched 落盘已派发标记
+// sendChatPromptDirect 发需求文本 → markRequirementDispatched 落盘已派发标记
 // （含会话标题快照）→ setLastAgentId。
+// 用直投而非 sendChatPrompt：需求派发是程序化投递到已确定的 ACP 会话，
+// 没有 AgentHub 分发语义，不能让 LLM 路由拖慢/改写投递。
 // 重开步骤（会话已不存在时）：选工具 → openWorkspaceACP → markRequirementDispatched
 // 更新绑定，不发需求文本（会话历史还在，只是进程没了）。
 // 每步失败直接向上抛，由调用方统一 catch 后 notify。
@@ -10,7 +12,7 @@
 // store.ts 对 lib/* 只有 import type（值链 api→terminalBusy→store 不经过本文件，
 // 且 store 不 import 本文件），因此无循环依赖。
 import i18n from 'i18next';
-import { getTools, markRequirementDispatched, openWorkspaceACP, sendChatPrompt, setChatModel, type OpenedSession, type Requirement } from './api';
+import { getTools, markRequirementDispatched, openWorkspaceACP, sendChatPromptDirect, setChatModel, type OpenedSession, type Requirement } from './api';
 import { backendError } from './errors';
 import { lastModelForCreate } from './agenthubDefaults';
 import { usableForACP } from './toolUsable';
@@ -91,7 +93,7 @@ export async function dispatchRequirement(
           .notify(i18n.t('ui.hub.model_switch_failed', { err: backendError(e) }), 'error');
       }
     }
-    await sendChatPrompt(chat.ID, text);
+    await sendChatPromptDirect(chat.ID, text);
     // 落盘派发标记：关联真实会话 ID 与标题快照、磁盘会话 ID（重启后恢复绑定），
     // 归档时据此判断会话能否自动关闭
     await markRequirementDispatched(id, wsPath, chat.ID, chat.Title, chat.SessionID);

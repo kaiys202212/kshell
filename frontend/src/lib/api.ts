@@ -769,6 +769,7 @@ interface AppBindings {
   OpenWorkspace(wsID: string, toolID: string): Promise<OpenedSession>;
   OpenWorkspaceACP(wsID: string, toolID: string, modelID: string): Promise<OpenedSession>;
   SendChatPrompt(id: string, text: string): Promise<void>;
+  SendChatPromptDirect(id: string, text: string): Promise<void>;
   SendChatPromptBlocks(id: string, blocks: ChatBlock[]): Promise<void>;
   ListChatModels(id: string): Promise<ChatModelsView>;
   ToolPlatformModels(toolId: string): Promise<Array<{ ID: string; Name: string }>>;
@@ -2336,6 +2337,14 @@ export async function sendChatPrompt(id: string, text: string): Promise<void> {
   const a = app();
   if (!a) return;
   await a.SendChatPrompt(id, text);
+}
+
+// sendChatPromptDirect 是 ACP 窗口的直投：跳过 AgentHub 工具化路由（LLM 分发），
+// 也不解析 #f 指令——目标会话已确定，用户消息必须立即到达时间线。
+export async function sendChatPromptDirect(id: string, text: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.SendChatPromptDirect(id, text);
 }
 
 export async function sendChatPromptBlocks(id: string, blocks: ChatBlock[]): Promise<void> {

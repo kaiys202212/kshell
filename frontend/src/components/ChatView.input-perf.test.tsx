@@ -23,6 +23,7 @@ vi.mock('remark-gfm', () => ({ default: () => null }));
 
 const api = vi.hoisted(() => ({
   sendChatPrompt: vi.fn(),
+  sendChatPromptDirect: vi.fn(),
   sendChatPromptBlocks: vi.fn(),
   listChatModels: vi.fn(),
   setChatModel: vi.fn(),

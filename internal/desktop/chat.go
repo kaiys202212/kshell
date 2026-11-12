@@ -444,14 +444,14 @@ func (a *App) SendChatPrompt(id, text string) (err error) {
 			a.clearHubPendingPick()
 		}
 	}()
-	a.ensureSessionHooks()
-	m := a.chats()
-	if m == nil {
-		return errNotReady
-	}
 	// #f 直投指令（follow 最新 agent 会话）：先于工具化路由解析，不走意图
 	// 识别，也不依赖模型配置；目标已退出时经 ensureChatAlive 按快照重建。
 	if rest, ok := parseFollowPrompt(text); ok {
+		// 就绪检查放在 #f 参数校验之前：保持与抽取公共前置前的错误优先级一致
+		//（manager 未就绪时先报 errNotReady，而非 errHubFollowEmpty/None）。
+		if err := a.ensureSendReady(); err != nil {
+			return err
+		}
 		if rest == "" {
 			return errHubFollowEmpty
 		}
@@ -459,16 +459,14 @@ func (a *App) SendChatPrompt(id, text string) (err error) {
 		if target == "" {
 			return errHubFollowNone
 		}
-		resolved, _ := a.resolveChatID(target)
-		sendID, err := a.ensureChatAlive(resolved)
+		sendID, err := a.prepareSendTarget(target)
 		if err != nil {
 			return err
 		}
 		blocks := []acp.ContentBlock{{Type: "text", Text: rest}}
 		return a.sendAndRecord(sendID, blocks, rest)
 	}
-	resolved, _ := a.resolveChatID(id)
-	sendID, err := a.ensureChatAlive(resolved)
+	sendID, err := a.prepareSendTarget(id)
 	if err != nil {
 		return err
 	}
@@ -482,6 +480,52 @@ func (a *App) SendChatPrompt(id, text string) (err error) {
 			return err
 		}
 	}
+	return a.sendAndRecord(sendID, blocks, text)
+}
+
+// prepareSendTarget 是纯文本发送入口的公共前置：确保会话钩子已装、manager 就绪，
+// 再把前端持有的（可能已过期的）会话 ID 解析到最新并按需重建，返回可直接投递的 ID。
+func (a *App) prepareSendTarget(id string) (string, error) {
+	if err := a.ensureSendReady(); err != nil {
+		return "", err
+	}
+	resolved, _ := a.resolveChatID(id)
+	return a.ensureChatAlive(resolved)
+}
+
+// ensureSendReady 是发送链的就绪检查：装会话钩子（幂等）+ manager 必须已装配。
+func (a *App) ensureSendReady() error {
+	a.ensureSessionHooks()
+	if a.chats() == nil {
+		return errNotReady
+	}
+	return nil
+}
+
+// SendChatPromptDirect 是 ACP 窗口的直投入口：与 SendChatPrompt 共用别名解析、
+// 会话重建与 Hub 落盘，但不经过 AgentHub 工具化路由，也不解析 #f 指令——
+// ACP 窗口已明确目标会话，消息必须立即投递，不能被 LLM 分发阻塞（曾导致
+// 用户消息延迟数十秒才出现在时间线）。
+//
+// 边界说明：直投同样不打乱 AgentHub 的在途工具会话（hubtools 的 session/pending
+// 只在 SendChatPrompt 的新输入到来时整体替换），因此 AgentHub 里已挂起的写操作
+// 确认卡仍可被确认——这是有意的：两个入口各自维护自己的在途状态，互不劫持。
+// 纯空白文本视为无操作（前端已拦截空串，绑定层再兜一层）。
+func (a *App) SendChatPromptDirect(id, text string) (err error) {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	// 同 SendChatPrompt：成功直投同样让待选暂存正文失效。
+	defer func() {
+		if err == nil {
+			a.clearHubPendingPick()
+		}
+	}()
+	sendID, err := a.prepareSendTarget(id)
+	if err != nil {
+		return err
+	}
+	blocks := []acp.ContentBlock{{Type: "text", Text: text}}
 	return a.sendAndRecord(sendID, blocks, text)
 }
 
@@ -547,12 +591,10 @@ func chatBlocksToACP(blocks []ChatBlock) []acp.ContentBlock {
 }
 
 // SendChatPromptBlocks 向指定聊天发起一轮多形态内容块输入（文本 + 附件）。
-// 入口别名解析与重建同 SendChatPrompt。
+// 入口别名解析与重建同 SendChatPrompt（共用 prepareSendTarget，避免多处口径漂移）。
 func (a *App) SendChatPromptBlocks(id string, blocks []ChatBlock) (err error) {
-	a.ensureSessionHooks()
-	m := a.chats()
-	if m == nil {
-		return errNotReady
+	if err := a.ensureSendReady(); err != nil {
+		return err
 	}
 	if len(blocks) == 0 {
 		return nil
@@ -563,8 +605,7 @@ func (a *App) SendChatPromptBlocks(id string, blocks []ChatBlock) (err error) {
 			a.clearHubPendingPick()
 		}
 	}()
-	resolved, _ := a.resolveChatID(id)
-	sendID, err := a.ensureChatAlive(resolved)
+	sendID, err := a.prepareSendTarget(id)
 	if err != nil {
 		return err
 	}

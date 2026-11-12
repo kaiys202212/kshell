@@ -12,6 +12,7 @@ import { tt } from '../test/i18n';
 
 const api = vi.hoisted(() => ({
   sendChatPrompt: vi.fn(),
+  sendChatPromptDirect: vi.fn(),
   sendChatPromptBlocks: vi.fn(),
   listChatModels: vi.fn(),
   setChatModel: vi.fn(),
@@ -41,7 +42,7 @@ const CHAT: ChatInfo = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  api.sendChatPrompt.mockResolvedValue(undefined);
+  api.sendChatPromptDirect.mockResolvedValue(undefined);
   api.sendChatPromptBlocks.mockResolvedValue(undefined);
   api.listChatModels.mockResolvedValue(null);
   api.setChatModel.mockResolvedValue(undefined);
@@ -65,12 +66,14 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('ChatView', () => {
-  it('输入并发送调用 sendChatPrompt', () => {
+  it('输入并发送调用 sendChatPromptDirect', () => {
     render(<ChatView chat={CHAT} active />);
     const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder'));
     fireEvent.change(box, { target: { value: 'hello' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', 'hello');
+    expect(api.sendChatPromptDirect).toHaveBeenCalledWith('c1', 'hello');
+    // 核心约束：ACP 窗口直投，不得回退到会触发 AgentHub LLM 分发的入口
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
   it('发送后乐观置 running', () => {
@@ -84,7 +87,7 @@ describe('ChatView', () => {
   });
 
   it('发送失败：回退 ready 并提示错误', async () => {
-    api.sendChatPrompt.mockRejectedValueOnce(new Error('boom'));
+    api.sendChatPromptDirect.mockRejectedValueOnce(new Error('boom'));
     render(<ChatView chat={CHAT} active />);
     const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder'));
     fireEvent.change(box, { target: { value: 'hello' } });
@@ -220,7 +223,7 @@ describe('ChatView', () => {
     });
     render(<ChatView chat={CHAT} active />);
     fireEvent.click(screen.getByTestId('chat-resume'));
-    expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', tt('ui.chat.resume_turn'));
+    expect(api.sendChatPromptDirect).toHaveBeenCalledWith('c1', tt('ui.chat.resume_turn'));
     expect(useAppStore.getState().chats.find((c) => c.ID === 'c1')?.Status).toBe('running');
   });
 
@@ -402,7 +405,7 @@ describe('ChatView', () => {
     expect(list).toHaveTextContent('review');
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(box.value).toBe('/plan ');
-    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    expect(api.sendChatPromptDirect).not.toHaveBeenCalled();
   });
 
   it('补全按前缀过滤且上下键移动高亮', () => {
@@ -430,7 +433,7 @@ describe('ChatView', () => {
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
     fireEvent.change(box, { target: { value: 'hello' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', 'hello');
+    expect(api.sendChatPromptDirect).toHaveBeenCalledWith('c1', 'hello');
   });
 
   it('粘贴图片作为附件 chip，发送时带 image 块', async () => {
@@ -481,7 +484,7 @@ describe('ChatView', () => {
     });
   });
 
-  it('移除附件 chip 后纯文本走 sendChatPrompt', async () => {
+  it('移除附件 chip 后纯文本走 sendChatPromptDirect', async () => {
     render(<ChatView chat={CHAT} active />);
     const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder')) as HTMLTextAreaElement;
     const file = new File(['x'], 'shot.png', { type: 'image/png' });
@@ -492,7 +495,7 @@ describe('ChatView', () => {
 
     fireEvent.change(box, { target: { value: '纯文本' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '纯文本');
+    expect(api.sendChatPromptDirect).toHaveBeenCalledWith('c1', '纯文本');
   });
 
   it('Esc 关闭补全后继续输入可重新弹出', () => {
@@ -673,7 +676,7 @@ describe('ChatView', () => {
     const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder'));
     fireEvent.change(box, { target: { value: '排队消息' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    expect(api.sendChatPromptDirect).not.toHaveBeenCalled();
     const q = useAppStore.getState().chatQueues.c1;
     expect(q).toHaveLength(1);
     expect(q![0]!.text).toBe('排队消息');
@@ -709,7 +712,7 @@ describe('ChatView', () => {
     useAppStore.setState({ chatQueues: { c1: [{ id: 1, text: '第一条' }, { id: 2, text: '第二条' }] } });
     const { rerender } = render(<ChatView chat={{ ...CHAT, Status: 'running' }} active />);
     rerender(<ChatView chat={{ ...CHAT, Status: 'ready' }} active />);
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '第一条'));
+    await waitFor(() => expect(api.sendChatPromptDirect).toHaveBeenCalledWith('c1', '第一条'));
     const q = useAppStore.getState().chatQueues.c1;
     expect(q).toHaveLength(1);
     expect(q![0]!.text).toBe('第二条');
@@ -719,13 +722,13 @@ describe('ChatView', () => {
     useAppStore.setState({ chatQueues: { c1: [{ id: 1, text: '第一条' }, { id: 2, text: '第二条' }] } });
     const { rerender } = render(<ChatView chat={{ ...CHAT, Status: 'ready' }} active />);
     // 首渲染即 ready 也算转换沿（启动期入队可能发生在首渲染前）
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.sendChatPromptDirect).toHaveBeenCalledTimes(1));
     expect(useAppStore.getState().chats.find((c) => c.ID === 'c1')?.Status).toBe('running');
     expect(useAppStore.getState().chatQueues.c1![0]!.text).toBe('第二条');
     // 第一轮结束回 ready：先 running 再 ready，构成新的转换沿
     rerender(<ChatView chat={{ ...CHAT, Status: 'running' }} active />);
     rerender(<ChatView chat={{ ...CHAT, Status: 'ready' }} active />);
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(api.sendChatPromptDirect).toHaveBeenCalledTimes(2));
     expect(useAppStore.getState().chatQueues.c1).toBeUndefined();
   });
 
@@ -738,7 +741,7 @@ describe('ChatView', () => {
   });
 
   it('出队发送失败：提示错误、消息插回队首并置暂停标记', async () => {
-    api.sendChatPrompt.mockRejectedValueOnce(new Error('boom'));
+    api.sendChatPromptDirect.mockRejectedValueOnce(new Error('boom'));
     useAppStore.setState({ chatQueues: { c1: [{ id: 1, text: '会失败的消息' }] } });
     render(<ChatView chat={{ ...CHAT, Status: 'ready' }} active />);
     await waitFor(() => {
@@ -747,7 +750,7 @@ describe('ChatView', () => {
     // 失败消息插回队首，用户可撤回或手动重试；自动出队暂停
     expect(useAppStore.getState().chatQueues.c1).toHaveLength(1);
     expect(useAppStore.getState().queuedPauseActive('c1')).toBe(true);
-    expect(api.sendChatPrompt).toHaveBeenCalledTimes(1);
+    expect(api.sendChatPromptDirect).toHaveBeenCalledTimes(1);
   });
 
   // 级联场景必须经 store 驱动链路复现：doSend 乐观置 running 与失败置 ready
@@ -760,33 +763,33 @@ describe('ChatView', () => {
   }
 
   it('出队失败后暂停自动出队：后续 ready 沿不再烧穿队列', async () => {
-    api.sendChatPrompt.mockRejectedValue(new Error('boom'));
+    api.sendChatPromptDirect.mockRejectedValue(new Error('boom'));
     useAppStore.setState({ chats: [{ ...CHAT, Status: 'running' }], chatQueues: { c1: [{ id: 1, text: '第一条' }, { id: 2, text: '第二条' }] } });
     render(<StoreDrivenParent active />);
     // turn_done：store 置 ready → 出队「第一条」→ 失败 → fail 置 ready 构成新沿
     useAppStore.getState().upsertChat({ ...CHAT, Status: 'ready' });
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.sendChatPromptDirect).toHaveBeenCalledTimes(1));
     // 暂停标记必须拦住级联：失败条目插回队首，队列仍是两条（第一条 + 第二条）。
     // 等 fail 微任务跑完（requeue 完成）再手动发送，模拟真实时序。
     await waitFor(() => expect(useAppStore.getState().chatQueues.c1).toHaveLength(2));
-    expect(api.sendChatPrompt).toHaveBeenCalledTimes(1);
+    expect(api.sendChatPromptDirect).toHaveBeenCalledTimes(1);
     expect(useAppStore.getState().queuedPauseActive('c1')).toBe(true);
     // 用户手动发送一次即解除暂停（重新恢复自动出队）
-    api.sendChatPrompt.mockResolvedValue(undefined);
+    api.sendChatPromptDirect.mockResolvedValue(undefined);
     const box = screen.getByPlaceholderText(tt('ui.chat.input_placeholder'));
     fireEvent.change(box, { target: { value: '手动消息' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '手动消息'));
+    await waitFor(() => expect(api.sendChatPromptDirect).toHaveBeenCalledWith('c1', '手动消息'));
     // 手动消息这轮结束回 ready：暂停已解除，插回队首的「第一条」自动重发，
     // 这次成功；它这轮结束后「第二条」跟着出队（两个 upsert 间 flush 防批处理吞沿）
     useAppStore.getState().upsertChat({ ...CHAT, Status: 'running' });
     await new Promise((r) => setTimeout(r, 0));
     useAppStore.getState().upsertChat({ ...CHAT, Status: 'ready' });
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '第一条'));
+    await waitFor(() => expect(api.sendChatPromptDirect).toHaveBeenCalledWith('c1', '第一条'));
     useAppStore.getState().upsertChat({ ...CHAT, Status: 'running' });
     await new Promise((r) => setTimeout(r, 0));
     useAppStore.getState().upsertChat({ ...CHAT, Status: 'ready' });
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '第二条'));
+    await waitFor(() => expect(api.sendChatPromptDirect).toHaveBeenCalledWith('c1', '第二条'));
     expect(useAppStore.getState().chatQueues.c1).toBeUndefined();
   });
 
