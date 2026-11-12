@@ -955,8 +955,9 @@ describe('ChatView', () => {
     expect(row).toContainElement(screen.getByRole('button', { name: tt('ui.chat.attach') }));
     expect(row).toContainElement(screen.getByRole('button', { name: tt('ui.chat.send') }));
     expect(within(controls).getByText(tt('ui.chat.model_label'))).toBeInTheDocument();
+    expect(within(controls).getByRole('button', { name: new RegExp(tt('ui.chat.model_label')) })).toBeInTheDocument();
     expect(within(controls).getByRole('button', { name: /Session Mode/ })).toBeInTheDocument();
-    expect(screen.queryByTestId('chat-config-row')).not.toBeInTheDocument();
+    expect(screen.getAllByTestId('chat-config-controls')).toHaveLength(1);
   });
 
   it('无模型与参数时不渲染配置区，附件/发送仍可用', async () => {

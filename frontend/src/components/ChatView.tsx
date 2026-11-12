@@ -855,16 +855,17 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
           }}
         />
-        <div data-testid="chat-action-row" className="mt-1 flex flex-wrap items-center gap-2">
+        <div data-testid="chat-action-row" className="mt-1 flex flex-wrap items-center gap-2 text-xs">
           {showConfigRow && (
             <div data-testid="chat-config-controls" className="flex min-w-0 flex-wrap items-center gap-2">
               {models && models.Models && models.Models.length > 0 && (
-                <>
+                <div className="flex items-center gap-1">
                   <span className="shrink-0 text-muted-foreground">{t('ui.chat.model_label')}</span>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <button className="max-w-56 truncate rounded border border-border px-2 py-0.5 hover:bg-muted">
-                        {currentModelName} <span className="text-muted-foreground">▾</span>
+                      <button aria-label={`${t('ui.chat.model_label')} ${currentModelName}`} className="inline-flex max-w-56 items-center gap-1 rounded border border-border px-2 py-0.5 hover:bg-muted">
+                        <span className="min-w-0 truncate">{currentModelName}</span>
+                        <span className="shrink-0 text-muted-foreground">▾</span>
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start">
@@ -876,16 +877,16 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
                       ))}
                     </DropdownMenuContent>
                   </DropdownMenu>
-                </>
+                </div>
               )}
               {configOptions.map((opt) => (
                 <div key={opt.ID} className="flex items-center gap-1">
                   <span className="shrink-0 text-muted-foreground">{opt.Name}</span>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <button aria-label={opt.Name} className="max-w-56 truncate rounded border border-border px-2 py-0.5 hover:bg-muted">
-                        {(opt.Options ?? []).find((o) => o.Value === opt.Current)?.Name ?? opt.Current}{' '}
-                        <span className="text-muted-foreground">▾</span>
+                      <button aria-label={opt.Name} className="inline-flex max-w-56 items-center gap-1 rounded border border-border px-2 py-0.5 hover:bg-muted">
+                        <span className="min-w-0 truncate">{(opt.Options ?? []).find((o) => o.Value === opt.Current)?.Name ?? opt.Current}</span>
+                        <span className="shrink-0 text-muted-foreground">▾</span>
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start">
