@@ -427,8 +427,14 @@ func validateHTTPURL(u, label string) error {
 	return nil
 }
 
-// modelSyncTargets 是支持平台模型同步注入的工具（agentsync.DefaultTargets 的 ID）。
-var modelSyncTargets = map[string]bool{"opencode": true, "codebuddy": true, "claude": true}
+// modelSyncTargets 是设置页「模型设置」可编辑的工具 ID：前三者走 agentsync 静态
+// 注入；codex/gemini 没有注入目标，只保存每工具平台供启动端点解析。
+var modelSyncTargets = map[string]bool{
+	"opencode": true, "codebuddy": true, "claude": true, "codex": true, "gemini": true,
+}
+
+// platformOnlyTargets 是只承载每工具平台选择、没有静态注入开关的工具。
+var platformOnlyTargets = map[string]bool{"codex": true, "gemini": true}
 
 // validPlatformID 返回命中平台列表的 ID；空或悬空返回空串（运行期回落第一个）。
 func validPlatformID(platforms []config.ModelPlatform, id string) string {
@@ -519,21 +525,21 @@ type ClaudeSlotsView struct {
 }
 
 type ToolSyncView struct {
-	Enabled           bool                `json:"Enabled"`
-	Claude            ClaudeSlotsView     `json:"Claude"`
-	ClaudePlatform    string              `json:"ClaudePlatform"`
-	OpenCode          map[string][]string `json:"OpenCode"`
-	CodeBuddy         []string            `json:"CodeBuddy"`
-	CodeBuddyPlatform string              `json:"CodeBuddyPlatform"`
+	Enabled bool            `json:"Enabled"`
+	Claude  ClaudeSlotsView `json:"Claude"`
+	// ToolPlatforms 是统一的每工具平台映射（toolID → 平台 ID），取代旧
+	// ClaudePlatform/CodeBuddyPlatform 单字段；空 = 未配置，消费方回落第一个。
+	ToolPlatforms map[string]string   `json:"ToolPlatforms"`
+	OpenCode      map[string][]string `json:"OpenCode"`
+	CodeBuddy     []string            `json:"CodeBuddy"`
 }
 
 type ToolSyncInput struct {
-	Enabled           bool                `json:"Enabled"`
-	Claude            ClaudeSlotsView     `json:"Claude"`
-	ClaudePlatform    string              `json:"ClaudePlatform"`
-	OpenCode          map[string][]string `json:"OpenCode"`
-	CodeBuddy         []string            `json:"CodeBuddy"`
-	CodeBuddyPlatform string              `json:"CodeBuddyPlatform"`
+	Enabled       bool                `json:"Enabled"`
+	Claude        ClaudeSlotsView     `json:"Claude"`
+	ToolPlatforms map[string]string   `json:"ToolPlatforms"`
+	OpenCode      map[string][]string `json:"OpenCode"`
+	CodeBuddy     []string            `json:"CodeBuddy"`
 }
 
 // SetActiveModelSelection 成对设置 kshell 当前平台与默认模型并立即落盘生效，
@@ -675,12 +681,11 @@ func (a *App) GetToolSyncConfig(toolID string) (ToolSyncView, error) {
 		}
 	}
 	return ToolSyncView{
-		Enabled:           ts.Enabled[toolID],
-		Claude:            ClaudeSlotsView{Model: ts.Claude.Model, Sonnet: ts.Claude.Sonnet, Opus: ts.Claude.Opus, Haiku: ts.Claude.Haiku},
-		ClaudePlatform:    ts.ToolPlatformID("claude"),
-		OpenCode:          openCode,
-		CodeBuddy:         append([]string(nil), ts.CodeBuddy...),
-		CodeBuddyPlatform: ts.ToolPlatformID("codebuddy"),
+		Enabled:       ts.Enabled[toolID],
+		Claude:        ClaudeSlotsView{Model: ts.Claude.Model, Sonnet: ts.Claude.Sonnet, Opus: ts.Claude.Opus, Haiku: ts.Claude.Haiku},
+		ToolPlatforms: toolPlatformsSnapshot(ts),
+		OpenCode:      openCode,
+		CodeBuddy:     append([]string(nil), ts.CodeBuddy...),
 	}, nil
 }
 
@@ -730,7 +735,7 @@ func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 					Opus:   strings.TrimSpace(in.Claude.Opus),
 					Haiku:  strings.TrimSpace(in.Claude.Haiku),
 				}
-				setToolPlatform(ts.ToolPlatforms, config.ToolClaude, validPlatformID(c.Model.Platforms, in.ClaudePlatform))
+				setToolPlatform(ts.ToolPlatforms, config.ToolClaude, validPlatformID(c.Model.Platforms, in.ToolPlatforms[config.ToolClaude]))
 			} else {
 				ts.Claude = config.ClaudeSync{}
 				delete(ts.ToolPlatforms, config.ToolClaude)
@@ -751,19 +756,26 @@ func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 		case config.ToolCodeBuddy:
 			if in.Enabled {
 				ts.CodeBuddy = trimList(in.CodeBuddy)
-				setToolPlatform(ts.ToolPlatforms, config.ToolCodeBuddy, validPlatformID(c.Model.Platforms, in.CodeBuddyPlatform))
+				setToolPlatform(ts.ToolPlatforms, config.ToolCodeBuddy, validPlatformID(c.Model.Platforms, in.ToolPlatforms[config.ToolCodeBuddy]))
 			} else {
 				ts.CodeBuddy = nil
 				delete(ts.ToolPlatforms, config.ToolCodeBuddy)
 			}
+		case "codex", "gemini":
+			// 这两个工具没有 agentsync 静态注入，平台选择只供启动端点解析；
+			// 不受 Enabled 门控，空选择即删除键（回落消费方的全局默认）。
+			setToolPlatform(ts.ToolPlatforms, toolID, validPlatformID(c.Model.Platforms, in.ToolPlatforms[toolID]))
 		}
 		if len(ts.ToolPlatforms) == 0 {
 			ts.ToolPlatforms = nil
 		}
-		if in.Enabled {
-			ts.Enabled[toolID] = true
-		} else {
-			delete(ts.Enabled, toolID)
+		// codex/gemini 没有「启用同步」概念，不写 Enabled，避免制造无消费方的开关。
+		if !platformOnlyTargets[toolID] {
+			if in.Enabled {
+				ts.Enabled[toolID] = true
+			} else {
+				delete(ts.Enabled, toolID)
+			}
 		}
 		c.Model.ToolSync = ts
 	})

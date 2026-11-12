@@ -49,10 +49,9 @@ afterEach(cleanup);
 const emptyCfg = {
   Enabled: false,
   Claude: { Model: '', Sonnet: '', Opus: '', Haiku: '' },
-  ClaudePlatform: '',
+  ToolPlatforms: {},
   OpenCode: {},
   CodeBuddy: [],
-  CodeBuddyPlatform: '',
 };
 
 describe('ToolSyncDialog', () => {
@@ -60,10 +59,9 @@ describe('ToolSyncDialog', () => {
     mocks.getToolSyncConfig.mockResolvedValue({
       Enabled: true,
       Claude: { Model: 'm1', Sonnet: '', Opus: '', Haiku: '' },
-      ClaudePlatform: 'p1',
+      ToolPlatforms: { claude: 'p1', codebuddy: 'p1' },
       OpenCode: { p1: ['m1'] },
       CodeBuddy: ['m2'],
-      CodeBuddyPlatform: 'p1',
     });
     render(<ToolSyncDialog toolID="claude" toolName="Claude Code" platforms={plats} onClose={() => {}} />);
     const enable = await screen.findByRole('checkbox', { name: tt('ui.toolsync.enable') });
@@ -94,7 +92,7 @@ describe('ToolSyncDialog', () => {
     expect(toolID).toBe('claude');
     expect(input.Enabled).toBe(true);
     expect(input.Claude).toEqual({ Model: 'g1', Sonnet: '', Opus: '', Haiku: '' });
-    expect(input.ClaudePlatform).toBe('p2');
+    expect(input.ToolPlatforms.claude).toBe('p2');
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -114,7 +112,7 @@ describe('ToolSyncDialog', () => {
     expect(input.OpenCode).toEqual({ p1: ['m1'], p2: ['g1'] });
   });
 
-  it('codebuddy：选平台后勾该平台模型，载荷带 CodeBuddyPlatform', async () => {
+  it('codebuddy：选平台后勾该平台模型，载荷带 ToolPlatforms.codebuddy', async () => {
     mocks.getToolSyncConfig.mockResolvedValue(emptyCfg);
     render(<ToolSyncDialog toolID="codebuddy" toolName="CodeBuddy" platforms={plats} onClose={() => {}} />);
 
@@ -128,7 +126,61 @@ describe('ToolSyncDialog', () => {
     const [toolID, input] = mocks.setToolSyncConfig.mock.calls[0];
     expect(toolID).toBe('codebuddy');
     expect(input.CodeBuddy).toEqual(['g1']);
-    expect(input.CodeBuddyPlatform).toBe('p2');
+    expect(input.ToolPlatforms.codebuddy).toBe('p2');
+  });
+
+  it('codex：只显示平台下拉（无启用开关），候选排除 workbuddy，保存写 ToolPlatforms', async () => {
+    mocks.getToolSyncConfig.mockResolvedValue(emptyCfg);
+    const withWb: ModelPlatformView[] = [
+      ...plats,
+      {
+        ID: 'wb',
+        Name: 'WorkBuddy',
+        Preset: 'workbuddy',
+        OpenAIBaseURL: '',
+        AnthropicBaseURL: '',
+        Models: ['hy4free'],
+        APIKeySet: false,
+        ASRModel: '',
+      },
+    ];
+    render(<ToolSyncDialog toolID="codex" toolName="Codex" platforms={withWb} onClose={() => {}} />);
+
+    const platSel = (await screen.findByLabelText(tt('ui.settings.tool_platform'))) as HTMLSelectElement;
+    // 无静态注入的目标不显示「启用同步」开关。
+    expect(screen.queryByRole('checkbox', { name: tt('ui.toolsync.enable') })).not.toBeInTheDocument();
+    expect(Array.from(platSel.options).map((o) => o.value)).toEqual(['', 'p1', 'p2']);
+    expect(screen.getByText(tt('ui.settings.tool_platform_hint'))).toBeInTheDocument();
+
+    fireEvent.change(platSel, { target: { value: 'p2' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.toolsync.save') }));
+
+    await waitFor(() => expect(mocks.setToolSyncConfig).toHaveBeenCalledTimes(1));
+    const [toolID, input] = mocks.setToolSyncConfig.mock.calls[0];
+    expect(toolID).toBe('codex');
+    expect(input.ToolPlatforms.codex).toBe('p2');
+    expect(input.Enabled).toBe(false);
+  });
+
+  it('gemini：悬空平台显示占位并可重选，保存提交新平台', async () => {
+    mocks.getToolSyncConfig.mockResolvedValue({
+      ...emptyCfg,
+      ToolPlatforms: { gemini: 'gone' },
+    });
+    render(<ToolSyncDialog toolID="gemini" toolName="Gemini" platforms={plats} onClose={() => {}} />);
+
+    const platSel = (await screen.findByLabelText(tt('ui.settings.tool_platform'))) as HTMLSelectElement;
+    // 悬空值不被静默清空：选中项仍是原 ID，文案显示「已失效」，不会渲染空白。
+    expect(platSel.value).toBe('gone');
+    expect(platSel.selectedOptions[0].textContent).toBe(tt('ui.settings.tool_platform_invalid'));
+
+    fireEvent.change(platSel, { target: { value: 'p1' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.toolsync.save') }));
+
+    await waitFor(() => expect(mocks.setToolSyncConfig).toHaveBeenCalledTimes(1));
+    const [toolID, input] = mocks.setToolSyncConfig.mock.calls[0];
+    expect(toolID).toBe('gemini');
+    expect(input.ToolPlatforms.gemini).toBe('p1');
   });
 
   it('禁用保存：载荷 Enabled=false 且勾选被清空', async () => {

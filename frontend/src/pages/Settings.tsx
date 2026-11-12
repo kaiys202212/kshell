@@ -80,8 +80,9 @@ import { normalizeSpec, withoutBuiltinSpecs, type CustomProviderSpec } from '../
 // 语言行内置三选项；system（跟随系统）不是语言码，不在 getLanguageOptions 里
 const BUILTIN_LANGUAGE_CODES = ['en', 'zh-CN', 'system'];
 
-// 支持平台模型同步注入的工具（与后端 agentsync.DefaultTargets 对齐）。
-const MODEL_SYNC_TARGETS = new Set(['opencode', 'codebuddy', 'claude']);
+// 「模型设置」入口可编辑的工具：claude/opencode/codebuddy 走静态注入，
+// codex/gemini 只选每工具平台（无注入），均与后端 modelSyncTargets 对齐。
+const MODEL_SYNC_TARGETS = new Set(['opencode', 'codebuddy', 'claude', 'codex', 'gemini']);
 
 // 安装日志：事件文本是逐行的 wire key，须逐行翻译后再拼接（整块多行串喂
 // translateBackend 会把首行后的内容当参数吞掉，导致漏译）

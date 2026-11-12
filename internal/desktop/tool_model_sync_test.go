@@ -50,9 +50,9 @@ func TestToolSyncPlatformRoundTrip(t *testing.T) {
 	app, _, _ := newSyncApp(t)
 	setSyncPlatform(t, app)
 	if err := app.SetToolSyncConfig("claude", ToolSyncInput{
-		Enabled:        true,
-		Claude:         ClaudeSlotsView{Model: "m2"},
-		ClaudePlatform: "p1",
+		Enabled:       true,
+		Claude:        ClaudeSlotsView{Model: "m2"},
+		ToolPlatforms: map[string]string{"claude": "p1"},
 	}); err != nil {
 		t.Fatalf("SetToolSyncConfig: %v", err)
 	}
@@ -60,8 +60,8 @@ func TestToolSyncPlatformRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetToolSyncConfig: %v", err)
 	}
-	if v.ClaudePlatform != "p1" {
-		t.Fatalf("ClaudePlatform = %q, want p1", v.ClaudePlatform)
+	if v.ToolPlatforms["claude"] != "p1" {
+		t.Fatalf("ToolPlatforms[claude] = %q, want p1", v.ToolPlatforms["claude"])
 	}
 }
 
@@ -69,9 +69,9 @@ func TestSetToolSyncConfigDropsUnknownPlatform(t *testing.T) {
 	app, _, _ := newSyncApp(t)
 	setSyncPlatform(t, app)
 	if err := app.SetToolSyncConfig("claude", ToolSyncInput{
-		Enabled:        true,
-		Claude:         ClaudeSlotsView{Model: "m1"},
-		ClaudePlatform: "ghost",
+		Enabled:       true,
+		Claude:        ClaudeSlotsView{Model: "m1"},
+		ToolPlatforms: map[string]string{"claude": "ghost"},
 	}); err != nil {
 		t.Fatalf("SetToolSyncConfig: %v", err)
 	}
@@ -79,8 +79,8 @@ func TestSetToolSyncConfigDropsUnknownPlatform(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetToolSyncConfig: %v", err)
 	}
-	if v.ClaudePlatform != "" {
-		t.Fatalf("悬空平台应被丢弃, got %q", v.ClaudePlatform)
+	if v.ToolPlatforms["claude"] != "" {
+		t.Fatalf("悬空平台应被丢弃, got %q", v.ToolPlatforms["claude"])
 	}
 }
 
@@ -115,9 +115,9 @@ func TestSetToolSyncConfigPersistsToolPlatformMap(t *testing.T) {
 	app.mu.Unlock()
 
 	if err := app.SetToolSyncConfig("claude", ToolSyncInput{
-		Enabled:        true,
-		Claude:         ClaudeSlotsView{Model: "m1"},
-		ClaudePlatform: "p1",
+		Enabled:       true,
+		Claude:        ClaudeSlotsView{Model: "m1"},
+		ToolPlatforms: map[string]string{"claude": "p1"},
 	}); err != nil {
 		t.Fatalf("SetToolSyncConfig(claude): %v", err)
 	}
@@ -260,17 +260,70 @@ func TestSetToolSyncConfigClaudeSlots(t *testing.T) {
 }
 
 // 非平台模型同步目标的工具 ID 拒绝设置：配置保持不变。
+// codex/gemini 自 Task 8 起是「仅每工具平台」目标，不再属于未知工具。
 func TestSetToolSyncConfigRejectsUnknownTool(t *testing.T) {
 	app, _, _ := newSyncApp(t)
 	setSyncPlatform(t, app)
 
-	if err := app.SetToolSyncConfig("codex", ToolSyncInput{Enabled: true}); err == nil {
-		t.Fatal("codex 不是同步目标，应报错")
+	if err := app.SetToolSyncConfig("cursor", ToolSyncInput{Enabled: true}); err == nil {
+		t.Fatal("cursor 不是同步目标，应报错")
 	}
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	if len(app.opts.Config.Model.ToolSync.Enabled) != 0 {
 		t.Fatalf("配置不应被改动, got %#v", app.opts.Config.Model.ToolSync)
+	}
+}
+
+// codex/gemini 只承载「每工具平台」选择：即使 Enabled=false 也写入 ToolPlatforms，
+// 供启动端点解析；悬空平台 ID 沿用 setToolPlatform 语义丢弃（不静默改写为第一平台）。
+func TestSetToolSyncConfigCodexGeminiToolPlatforms(t *testing.T) {
+	app, layout, _ := newSyncApp(t)
+	setSyncPlatform(t, app)
+	app.mu.Lock()
+	app.opts.Config.Model.Platforms = append(app.opts.Config.Model.Platforms,
+		config.ModelPlatform{ID: "p2", Name: "P2", OpenAIBaseURL: "https://p2.example", Models: []string{"m9"}})
+	app.mu.Unlock()
+
+	if err := app.SetToolSyncConfig("codex", ToolSyncInput{
+		ToolPlatforms: map[string]string{"codex": "p2"},
+	}); err != nil {
+		t.Fatalf("SetToolSyncConfig(codex): %v", err)
+	}
+	if err := app.SetToolSyncConfig("gemini", ToolSyncInput{
+		ToolPlatforms: map[string]string{"gemini": "p1"},
+	}); err != nil {
+		t.Fatalf("SetToolSyncConfig(gemini): %v", err)
+	}
+
+	loaded, err := config.Load(layout)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	tp := loaded.Model.ToolSync.ToolPlatforms
+	if tp["codex"] != "p2" || tp["gemini"] != "p1" {
+		t.Fatalf("ToolPlatforms = %#v, want codex=p2 gemini=p1", tp)
+	}
+	// codex/gemini 没有静态注入开关，不应写入 Enabled。
+	if loaded.Model.ToolSync.Enabled["codex"] || loaded.Model.ToolSync.Enabled["gemini"] {
+		t.Fatalf("codex/gemini 不应标记 Enabled: %#v", loaded.Model.ToolSync.Enabled)
+	}
+
+	// 悬空平台：与 claude/codebuddy 一致丢弃该键，而不是落到第一个平台。
+	if err := app.SetToolSyncConfig("codex", ToolSyncInput{
+		ToolPlatforms: map[string]string{"codex": "ghost"},
+	}); err != nil {
+		t.Fatalf("SetToolSyncConfig(codex, ghost): %v", err)
+	}
+	v, err := app.GetToolSyncConfig("codex")
+	if err != nil {
+		t.Fatalf("GetToolSyncConfig(codex): %v", err)
+	}
+	if v.ToolPlatforms["codex"] != "" {
+		t.Fatalf("悬空平台应被丢弃, got %q", v.ToolPlatforms["codex"])
+	}
+	if v.ToolPlatforms["gemini"] != "p1" {
+		t.Fatalf("更新 codex 不应抹掉 gemini 映射, got %#v", v.ToolPlatforms)
 	}
 }
 
@@ -329,8 +382,8 @@ func TestGetToolSyncConfig(t *testing.T) {
 	if app.opts.Config.Model.ToolSync.OpenCode["p1"][0] != "m1" {
 		t.Fatal("应返回副本而非内部 map")
 	}
-	if _, err := app.GetToolSyncConfig("codex"); err == nil {
-		t.Fatal("codex 不是同步目标，应报错")
+	if _, err := app.GetToolSyncConfig("cursor"); err == nil {
+		t.Fatal("cursor 不是同步目标，应报错")
 	}
 }
 

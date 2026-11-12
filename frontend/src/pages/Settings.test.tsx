@@ -265,6 +265,7 @@ beforeEach(() => {
   mocks.getToolSyncConfig.mockResolvedValue({
     Enabled: false,
     Claude: { Model: '', Sonnet: '', Opus: '', Haiku: '' },
+    ToolPlatforms: {},
     OpenCode: {},
     CodeBuddy: [],
   });
@@ -371,6 +372,41 @@ describe('Settings', () => {
         name: tt('ui.settings.tools.model_settings'),
       }),
     ).not.toBeInTheDocument();
+  });
+
+  it('已安装的 codex/gemini 也显示「模型设置」入口（每工具平台目标）', async () => {
+    mocks.getTools.mockResolvedValue([
+      {
+        ID: 'codex',
+        Name: 'Codex',
+        BinPath: 'C:\\bin\\codex.exe',
+        Version: '0.9.0',
+        Installed: true,
+        Source: 'path',
+      },
+      {
+        ID: 'gemini',
+        Name: 'Gemini',
+        BinPath: 'C:\\bin\\gemini.cmd',
+        Version: '1.2.0',
+        Installed: true,
+        Source: 'path',
+      },
+    ]);
+    render(<Settings />);
+    goTools();
+
+    const codexRow = (await screen.findByText('Codex')).closest('li')!;
+    fireEvent.click(within(codexRow).getByRole('button', { name: tt('ui.settings.tools.model_settings') }));
+    await waitFor(() =>
+      expect(screen.getByTestId('toolsync-dialog')).toHaveTextContent('codex'),
+    );
+
+    const geminiRow = screen.getByText('Gemini').closest('li')!;
+    fireEvent.click(within(geminiRow).getByRole('button', { name: tt('ui.settings.tools.model_settings') }));
+    await waitFor(() =>
+      expect(screen.getByTestId('toolsync-dialog')).toHaveTextContent('gemini'),
+    );
   });
 
   it('Source=config-dir 的 generic 工具显示「未验证」徽标', async () => {

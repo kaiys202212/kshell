@@ -345,6 +345,10 @@
     },
     "settings": {
       "title": "Settings",
+      "tool_platform": "Platform",
+      "tool_platform_hint": "Endpoint platform for new sessions of this tool; unset follows the global default. WorkBuddy platforms are excluded because they use dynamic credentials.",
+      "tool_platform_unset": "Not set (follow global default)",
+      "tool_platform_invalid": "Unavailable (select again)",
       "nav": {
         "aria": "Settings sections",
         "general": "General",

@@ -2192,19 +2192,19 @@ export interface ClaudeSlots {
 export interface ToolSyncView {
   Enabled: boolean;
   Claude: ClaudeSlots;
-  ClaudePlatform: string;
+  // ToolPlatforms 是统一的每工具平台映射（toolID → 平台 ID），取代旧
+  // ClaudePlatform/CodeBuddyPlatform 单字段；缺失/悬空由消费方回落第一个平台。
+  ToolPlatforms: Record<string, string> | null;
   OpenCode: Record<string, string[]> | null;
   CodeBuddy: string[] | null;
-  CodeBuddyPlatform: string;
 }
 
 export interface ToolSyncInput {
   Enabled: boolean;
   Claude: ClaudeSlots;
-  ClaudePlatform: string;
+  ToolPlatforms: Record<string, string>;
   OpenCode: Record<string, string[]>;
   CodeBuddy: string[];
-  CodeBuddyPlatform: string;
 }
 
 // setModelEnabled 设置模型平台总开关并立即落盘生效（关闭即调度清理同步），错误向上抛。
@@ -2235,10 +2235,9 @@ export async function getToolSyncConfig(toolID: string): Promise<ToolSyncView> {
     return {
       Enabled: false,
       Claude: { Model: '', Sonnet: '', Opus: '', Haiku: '' },
-      ClaudePlatform: '',
+      ToolPlatforms: {},
       OpenCode: {},
       CodeBuddy: [],
-      CodeBuddyPlatform: '',
     };
   }
   return a.GetToolSyncConfig(toolID);
