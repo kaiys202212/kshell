@@ -13,8 +13,7 @@ import {
   getToolInstallJob,
   getToolInstallRecipe,
   getTools,
-  setActiveModel,
-  setDefaultPlatform,
+  setActiveModelSelection,
   installBuiltinTool,
   listModelPresets,
   fetchAvailableModels,
@@ -149,7 +148,7 @@ export default function Settings() {
   const [presets, setPresets] = useState<ModelPreset[]>([]);
   const [modelEnabled, setModelEnabled] = useState(false);
   const [modelPlatforms, setModelPlatforms] = useState<ModelPlatformView[]>([]);
-  const [modelDefault, setModelDefault] = useState('');
+  const [modelPlatform, setModelPlatform] = useState('');
   const [modelActive, setModelActive] = useState('');
   // 平台编辑态：null=未在编辑；草稿字段见 PlatDraft
   const [platDraft, setPlatDraft] = useState<PlatDraft | null>(null);
@@ -291,8 +290,8 @@ export default function Settings() {
         if (cancelled) return;
         setModelEnabled(v.Enabled);
         setModelPlatforms(v.Platforms ?? []);
-        // 默认平台未显式指定时后端回落第一个，前端同样回落保证选中态可见
-        setModelDefault(v.DefaultPlatform || v.Platforms?.[0]?.ID || '');
+        // 当前平台未显式指定时后端回落第一个，前端同样回落保证选中态可见
+        setModelPlatform(v.ActivePlatformID || v.Platforms?.[0]?.ID || '');
         setModelActive(v.ActiveModel ?? '');
       })
       .catch(() => {});
@@ -537,53 +536,51 @@ export default function Settings() {
     setPlatDraft(next);
   };
 
-  // handleSetDefault：本地乐观切换 + 立即落盘生效（不依赖整包保存），后端
-  // 调度一次防抖同步。失败回退本地默认平台选择并提示。
-  // 注意：本地有未保存的平台编辑（草稿/删除/新增）时跳过重拉——整表替换会
-  // 把用户尚未保存的改动静默冲掉；只按本地状态同步 IsDefault 标记。
-  const handleSetDefault = (id: string) => {
-    const prevDefault = modelDefault;
-    setModelDefault(id);
-    // 切默认平台后，原默认模型若不属于新平台，本地先清空显示（后端兜底清理）。
+  // handleSelectActivePlatform：先选平台再选模型。本地乐观切换 + 立即落盘生效，
+  // 后端调度一次防抖同步；模型不属于新平台时清空（后端兜底校验）。失败回滚并提示。
+  const handleSelectActivePlatform = (id: string) => {
+    const prevPlatform = modelPlatform;
+    const prevActive = modelActive;
     const target = modelPlatforms.find((p) => p.ID === id);
-    if (target && target.Models.length > 0 && !target.Models.includes(modelActive)) {
-      setModelActive('');
-    }
-    // 表单打开时本地有未落盘草稿：跳过重拉（整表替换会冲掉草稿），只按本地
-    // 状态翻默认标记。
-    const pendingEdits = !!platDraft;
-    setDefaultPlatform(id)
+    const nextModel =
+      target && target.Models.length > 0 && !target.Models.includes(modelActive) ? '' : modelActive;
+    setModelPlatform(id);
+    setModelActive(nextModel);
+    setActiveModelSelection(id, nextModel)
       .then(() => {
-        if (pendingEdits) {
-          setModelPlatforms((prev) => prev.map((p) => ({ ...p, IsDefault: p.ID === id })));
-          return;
-        }
-        return getModelConfig().then(applyModelConfigView);
+        // 本地有未保存的平台编辑：跳过重拉，避免整表替换冲掉草稿。
+        if (!platDraft) return getModelConfig().then(applyModelConfigView);
       })
       .catch((e: unknown) => {
         notify(backendError(e), 'error');
-        if (pendingEdits) {
-          setModelDefault(prevDefault);
-          return;
-        }
-        getModelConfig()
-          .then(applyModelConfigView)
-          .catch(() => {});
+        setModelPlatform(prevPlatform);
+        setModelActive(prevActive);
       });
   };
 
-  // handleDeletePlatform：window.confirm 确认后立即删除落盘（默认平台回落第一个、
-  // 悬空默认模型由后端清理），本地乐观移除随后以服务端重拉为准；失败回滚并提示。
+  // handleSelectActiveModel：在当前平台下切换默认模型并立即落盘；失败回滚。
+  const handleSelectActiveModel = (m: string) => {
+    const prev = modelActive;
+    setModelActive(m);
+    const plat = modelPlatform || modelPlatforms[0]?.ID || '';
+    setActiveModelSelection(plat, m).catch((e: unknown) => {
+      notify(backendError(e), 'error');
+      setModelActive(prev);
+    });
+  };
+
+  // handleDeletePlatform：window.confirm 确认后立即删除落盘（当前平台回落第一个、
+  // 悬空模型由后端清理），本地乐观移除随后以服务端重拉为准；失败回滚并提示。
   const handleDeletePlatform = (p: ModelPlatformView) => {
     if (!window.confirm(t('ui.settings.model.delete_confirm', { 0: p.Name }))) return;
     const prevPlatforms = modelPlatforms;
-    const prevDefault = modelDefault;
+    const prevPlatform = modelPlatform;
     const prevActive = modelActive;
     const rest = modelPlatforms.filter((x) => x.ID !== p.ID);
     setModelPlatforms(rest);
-    if (modelDefault === p.ID) {
+    if (modelPlatform === p.ID) {
       const next = rest[0]?.ID ?? '';
-      setModelDefault(next);
+      setModelPlatform(next);
       const target = rest.find((x) => x.ID === next);
       if (modelActive && target && target.Models.length > 0 && !target.Models.includes(modelActive)) {
         setModelActive('');
@@ -595,7 +592,7 @@ export default function Settings() {
       .catch((e: unknown) => {
         notify(backendError(e), 'error');
         setModelPlatforms(prevPlatforms);
-        setModelDefault(prevDefault);
+        setModelPlatform(prevPlatform);
         setModelActive(prevActive);
       });
   };
@@ -603,7 +600,7 @@ export default function Settings() {
   // applyModelConfigView：把后端模型配置视图写入本地状态（重拉共用）。
   const applyModelConfigView = (v: Awaited<ReturnType<typeof getModelConfig>>) => {
     setModelPlatforms(v.Platforms ?? []);
-    setModelDefault(v.DefaultPlatform || v.Platforms?.[0]?.ID || '');
+    setModelPlatform(v.ActivePlatformID || v.Platforms?.[0]?.ID || '');
     setModelActive(v.ActiveModel ?? '');
   };
 
@@ -668,14 +665,14 @@ export default function Settings() {
       await setModelConfig({
         Enabled: modelEnabled,
         Platforms: platforms,
-        DefaultPlatform: modelDefault,
+        ActivePlatformID: modelPlatform,
         ActiveModel: modelActive.trim(),
       });
       // 保存后重拉：密钥设置状态只在后端有真相；重拉失败不影响已成功的保存
       try {
         const v = await getModelConfig();
         setModelPlatforms(v.Platforms ?? []);
-        setModelDefault(v.DefaultPlatform || v.Platforms?.[0]?.ID || '');
+        setModelPlatform(v.ActivePlatformID || v.Platforms?.[0]?.ID || '');
         setModelActive(v.ActiveModel ?? '');
       } catch {
         // 忽略：保存已成功，仅回显失败
@@ -798,13 +795,13 @@ export default function Settings() {
       await setModelConfig({
         Enabled: modelEnabled,
         Platforms: inputs,
-        DefaultPlatform: modelDefault,
+        ActivePlatformID: modelPlatform,
         ActiveModel: modelActive.trim(),
       });
       try {
         const v = await getModelConfig();
         setModelPlatforms(v.Platforms ?? []);
-        setModelDefault(v.DefaultPlatform || v.Platforms?.[0]?.ID || '');
+        setModelPlatform(v.ActivePlatformID || v.Platforms?.[0]?.ID || '');
         setModelActive(v.ActiveModel ?? '');
       } catch {
         // 忽略：保存已成功，仅回显失败
@@ -947,10 +944,8 @@ export default function Settings() {
 
   const busyAny = !!pendingId || !!job?.Running;
 
-  // 徽标跟随当前默认平台（空时回落第一个），保证点击后全列表只有一个 Default。
-  // 「设为默认」已即时落盘，徽标与默认模型下拉都跟随该平台，无需等整包保存。
-  const effectiveDefault = modelDefault || modelPlatforms[0]?.ID || '';
-  const activePlat = modelPlatforms.find((p) => p.ID === effectiveDefault) ?? modelPlatforms[0];
+  // kshell 当前平台（空时回落第一个）：两级下拉的模型来源。
+  const activePlat = modelPlatforms.find((p) => p.ID === modelPlatform) ?? modelPlatforms[0];
 
   // 语言选项：内置三项 + 外部语言包（label 用包内 $name，缺省回退语言码）；
   // 配置值不在任何选项里（如外部包被删）时兜底追加该 code，保证选中态可见。
@@ -1283,8 +1278,24 @@ export default function Settings() {
                 {t('ui.settings.model.enable')}
               </label>
               <div className={cn('grid gap-4', platDraft && 'md:grid-cols-[minmax(0,1fr)_24rem]')}>
-                {/* 左列：默认模型 + 平台列表 + 新增入口 + WorkBuddy 导入 */}
+                {/* 左列：当前平台 + 当前模型 + 平台列表 + 新增入口 + WorkBuddy 导入 */}
                 <div className="grid min-w-0 content-start gap-2">
+                <label className="text-xs text-muted-foreground" htmlFor="model-active-platform">
+                  {t('ui.settings.model.active_platform')}
+                </label>
+                <select
+                  id="model-active-platform"
+                  aria-label={t('ui.settings.model.active_platform')}
+                  className={inputClass}
+                  value={modelPlatform}
+                  onChange={(e) => handleSelectActivePlatform(e.target.value)}
+                >
+                  {modelPlatforms.map((p) => (
+                    <option key={p.ID} value={p.ID}>
+                      {p.Name}
+                    </option>
+                  ))}
+                </select>
                 <label className="text-xs text-muted-foreground" htmlFor="model-active">
                   {t('ui.settings.model.active_model')}
                 </label>
@@ -1293,22 +1304,9 @@ export default function Settings() {
                   aria-label={t('ui.settings.model.active_model')}
                   className={inputClass}
                   value={modelActive}
-                  onChange={(e) => {
-                    const m = e.target.value;
-                    setModelActive(m);
-                    // 选默认模型立即落盘生效（防抖同步由后端合并）；失败以服务端为准。
-                    setActiveModel(m)
-                      .catch((err: unknown) => {
-                        notify(backendError(err), 'error');
-                        getModelConfig()
-                          .then((v) => {
-                            setModelPlatforms(v.Platforms ?? []);
-                            setModelActive(v.ActiveModel ?? '');
-                          })
-                          .catch(() => {});
-                      });
-                  }}
+                  onChange={(e) => handleSelectActiveModel(e.target.value)}
                 >
+                  <option value="">{t('ui.settings.model.active_model_unset')}</option>
                   {(activePlat?.Models ?? []).map((m) => (
                     <option key={m} value={m}>
                       {m}
@@ -1329,19 +1327,6 @@ export default function Settings() {
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex min-w-0 items-center gap-2">
                             <span className="truncate text-sm font-medium">{p.Name}</span>
-                            {p.ID === effectiveDefault ? (
-                              <Badge>{t('ui.settings.model.default_badge')}</Badge>
-                            ) : (
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                type="button"
-                                disabled={!!platDraft}
-                                onClick={() => handleSetDefault(p.ID)}
-                              >
-                                {t('ui.settings.model.set_default')}
-                              </Button>
-                            )}
                           </div>
                           <div className="flex shrink-0 gap-1">
                             <Button

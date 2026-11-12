@@ -33,8 +33,7 @@ const mocks = vi.hoisted(() => ({
   setModelConfig: vi.fn(),
   setModelEnabled: vi.fn(),
   deleteModelPlatform: vi.fn(),
-  setDefaultPlatform: vi.fn(),
-  setActiveModel: vi.fn(),
+  setActiveModelSelection: vi.fn(),
   getToolSyncConfig: vi.fn(),
   setToolSyncConfig: vi.fn(),
   listModelPresets: vi.fn(),
@@ -166,6 +165,14 @@ function goModel() {
   fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.nav.model') }));
 }
 
+// 平台名同时出现在「当前平台」下拉与平台卡片中；按名称取列表卡片，避免歧义。
+async function findCard(name: string): Promise<HTMLElement> {
+  const els = await screen.findAllByText(name);
+  const card = els.map((el) => el.closest('li')).find((el): el is HTMLElement => !!el);
+  if (!card) throw new Error(`platform card not found: ${name}`);
+  return card;
+}
+
 // platView：构造后端 ModelConfigView.Platforms 的单平台视图
 const platView = (over: Partial<ModelPlatformView> = {}): ModelPlatformView => ({
   ID: 'p1',
@@ -175,7 +182,6 @@ const platView = (over: Partial<ModelPlatformView> = {}): ModelPlatformView => (
   AnthropicBaseURL: 'https://ant/',
   Models: ['m1'],
   APIKeySet: false,
-  IsDefault: true,
   ASRModel: '',
   ...over,
 });
@@ -249,14 +255,13 @@ beforeEach(() => {
   mocks.getModelConfig.mockResolvedValue({
     Enabled: false,
     Platforms: [],
-    DefaultPlatform: '',
+    ActivePlatformID: '',
     ActiveModel: '',
   });
   mocks.setModelConfig.mockResolvedValue(undefined);
   mocks.setModelEnabled.mockResolvedValue(undefined);
   mocks.deleteModelPlatform.mockResolvedValue(undefined);
-  mocks.setDefaultPlatform.mockResolvedValue(undefined);
-  mocks.setActiveModel.mockResolvedValue(undefined);
+  mocks.setActiveModelSelection.mockResolvedValue(undefined);
   mocks.getToolSyncConfig.mockResolvedValue({
     Enabled: false,
     Claude: { Model: '', Sonnet: '', Opus: '', Haiku: '' },
@@ -914,11 +919,11 @@ describe('Settings', () => {
     expect(await screen.findByText(tt('ui.settings.permission_mode.bypass_warning'))).toBeInTheDocument();
   });
 
-  it('平台卡片渲染：名称/默认徽标/密钥状态/模型数，非默认平台显示设为默认按钮', async () => {
+  it('平台卡片渲染：名称/密钥状态/模型数，不再有默认入口', async () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [
-        platView({ Models: ['a', 'b'], APIKeySet: true, IsDefault: true }),
+        platView({ Models: ['a', 'b'], APIKeySet: true }),
         platView({
           ID: 'p2',
           Name: 'GLM',
@@ -927,28 +932,26 @@ describe('Settings', () => {
           AnthropicBaseURL: '',
           Models: [],
           APIKeySet: false,
-          IsDefault: false,
         }),
       ],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: 'a',
     });
     render(<Settings />);
     goModel();
 
     // 平台名与已知预设译名同为 DeepSeek：取第一个（平台名 span）
-    const p1 = (await screen.findAllByText('DeepSeek'))[0].closest('li')!;
-    expect(within(p1).getByText(tt('ui.settings.model.default_badge'))).toBeInTheDocument();
-    expect(within(p1).queryByRole('button', { name: tt('ui.settings.model.set_default') })).toBeNull();
+    const p1 = await findCard('DeepSeek');
     expect(p1).toHaveTextContent(tt('ui.settings.model.api_key_set'));
     expect(p1).toHaveTextContent(tt('ui.settings.model.models_count').replace('{{0}}', '2'));
     // 已知预设经 preset.<id>.name 翻译
     expect(p1).toHaveTextContent(tt('preset.deepseek.name'));
 
-    const p2 = screen.getByText('GLM').closest('li')!;
-    expect(within(p2).getByRole('button', { name: tt('ui.settings.model.set_default') })).toBeInTheDocument();
+    const p2 = await findCard('GLM');
     // 未知预设显示原始标识
     expect(p2).toHaveTextContent('mystery');
+    // 平台卡片只有编辑/删除按钮，不再有「设为默认」入口
+    expect(within(p2).queryAllByRole('button')).toHaveLength(2);
   });
 
   it('平台列表为空时显示空态与添加入口', async () => {
@@ -959,99 +962,97 @@ describe('Settings', () => {
     expect(screen.getByRole('button', { name: tt('ui.settings.model.add_platform') })).toBeInTheDocument();
   });
 
-  it('默认模型下拉只列默认平台的模型', async () => {
+  it('默认模型下拉只列当前平台的模型', async () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [
         platView({ Models: ['m1', 'm2'] }),
-        platView({ ID: 'p2', Name: 'GLM', Models: ['m3'], IsDefault: false }),
+        platView({ ID: 'p2', Name: 'GLM', Models: ['m3'] }),
       ],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: 'm1',
     });
     render(<Settings />);
     goModel();
 
     const sel = (await screen.findByLabelText(tt('ui.settings.model.active_model'))) as HTMLSelectElement;
-    await waitFor(() => expect(sel.options).toHaveLength(2));
-    expect(Array.from(sel.options).map((o) => o.value)).toEqual(['m1', 'm2']);
+    await waitFor(() => expect(sel.options).toHaveLength(3));
+    expect(Array.from(sel.options).map((o) => o.value)).toEqual(['', 'm1', 'm2']);
   });
 
-  it('点「设为默认」立即落盘生效：调 setDefaultPlatform 并刷新默认模型下拉', async () => {
+  it('切换当前平台立即落盘并刷新模型下拉', async () => {
     mocks.getModelConfig
       .mockResolvedValueOnce({
         Enabled: true,
         Platforms: [
           platView({ Models: ['m1', 'm2'] }),
-          platView({ ID: 'p2', Name: 'WorkBuddy', Preset: 'workbuddy', OpenAIBaseURL: '', AnthropicBaseURL: '', Models: ['wb-1'], IsDefault: false }),
+          platView({ ID: 'p2', Name: 'WorkBuddy', Preset: 'workbuddy', OpenAIBaseURL: '', AnthropicBaseURL: '', Models: ['wb-1'] }),
         ],
-        DefaultPlatform: 'p1',
+        ActivePlatformID: 'p1',
         ActiveModel: 'm1',
       })
-      // 生效后的重拉：默认平台已切到 p2，悬空的 m1 被清空
+      // 生效后的重拉：当前平台已切到 p2，悬空的 m1 被清空
       .mockResolvedValueOnce({
         Enabled: true,
         Platforms: [
-          platView({ Models: ['m1', 'm2'], IsDefault: false }),
-          platView({ ID: 'p2', Name: 'WorkBuddy', Preset: 'workbuddy', OpenAIBaseURL: '', AnthropicBaseURL: '', Models: ['wb-1'], IsDefault: true }),
+          platView({ Models: ['m1', 'm2'] }),
+          platView({ ID: 'p2', Name: 'WorkBuddy', Preset: 'workbuddy', OpenAIBaseURL: '', AnthropicBaseURL: '', Models: ['wb-1'] }),
         ],
-        DefaultPlatform: 'p2',
+        ActivePlatformID: 'p2',
         ActiveModel: '',
       });
     render(<Settings />);
     goModel();
 
-    const p2 = (await screen.findByText('WorkBuddy')).closest('li')!;
-    fireEvent.click(within(p2).getByRole('button', { name: tt('ui.settings.model.set_default') }));
-    await waitFor(() => expect(mocks.setDefaultPlatform).toHaveBeenCalledWith('p2'));
-    // 下拉立即跟随新默认平台的模型，不再等整包保存
+    const platSel = (await screen.findByLabelText(tt('ui.settings.model.active_platform'))) as HTMLSelectElement;
+    fireEvent.change(platSel, { target: { value: 'p2' } });
+    await waitFor(() => expect(mocks.setActiveModelSelection).toHaveBeenCalledWith('p2', ''));
+    // 模型下拉立即跟随新平台，不再等整包保存
     const sel = (await screen.findByLabelText(tt('ui.settings.model.active_model'))) as HTMLSelectElement;
-    await waitFor(() => expect(Array.from(sel.options).map((o) => o.value)).toEqual(['wb-1']));
+    await waitFor(() => expect(Array.from(sel.options).map((o) => o.value)).toEqual(['', 'wb-1']));
   });
 
-  it('选择默认模型立即落盘：调 setActiveModel', async () => {
+  it('选择当前模型立即落盘：调 setActiveModelSelection', async () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [platView({ Models: ['m1', 'm2'] })],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: 'm1',
     });
     render(<Settings />);
     goModel();
 
     const sel = (await screen.findByLabelText(tt('ui.settings.model.active_model'))) as HTMLSelectElement;
-    await waitFor(() => expect(sel.options).toHaveLength(2));
+    await waitFor(() => expect(sel.options).toHaveLength(3));
     fireEvent.change(sel, { target: { value: 'm2' } });
-    await waitFor(() => expect(mocks.setActiveModel).toHaveBeenCalledWith('m2'));
+    await waitFor(() => expect(mocks.setActiveModelSelection).toHaveBeenCalledWith('p1', 'm2'));
   });
 
-  it('设为默认失败：提示错误并按服务端重拉', async () => {
-    mocks.setDefaultPlatform.mockRejectedValueOnce(new Error('err.boom'));
+  it('切换当前平台失败：提示错误并回滚选择', async () => {
+    mocks.setActiveModelSelection.mockRejectedValueOnce(new Error('err.boom'));
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [
         platView({ Models: ['m1'] }),
-        platView({ ID: 'p2', Name: 'GLM', Models: ['m3'], IsDefault: false }),
+        platView({ ID: 'p2', Name: 'GLM', Models: ['m3'] }),
       ],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: 'm1',
     });
     render(<Settings />);
     goModel();
 
-    const p2 = (await screen.findByText('GLM')).closest('li')!;
-    fireEvent.click(within(p2).getByRole('button', { name: tt('ui.settings.model.set_default') }));
-    await waitFor(() => expect(mocks.setDefaultPlatform).toHaveBeenCalledWith('p2'));
-    // 失败后重拉，默认模型下拉恢复服务端状态（p1 的模型）
-    const sel = await screen.findByLabelText(tt('ui.settings.model.active_model'));
-    await waitFor(() => expect((sel as HTMLSelectElement).value).toBe('m1'));
+    const platSel = (await screen.findByLabelText(tt('ui.settings.model.active_platform'))) as HTMLSelectElement;
+    fireEvent.change(platSel, { target: { value: 'p2' } });
+    await waitFor(() => expect(mocks.setActiveModelSelection).toHaveBeenCalledWith('p2', ''));
+    await waitFor(() => expect(platSel.value).toBe('p1'));
   });
 
   it('启用同步开关即时落盘：调 setModelEnabled', async () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [platView()],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: 'm1',
     });
     render(<Settings />);
@@ -1069,7 +1070,7 @@ describe('Settings', () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [platView()],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: 'm1',
     });
     render(<Settings />);
@@ -1088,19 +1089,19 @@ describe('Settings', () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [
-        platView({ Models: ['m1'], IsDefault: true }),
-        platView({ ID: 'p2', Name: 'GLM', IsDefault: false }),
+        platView({ Models: ['m1'] }),
+        platView({ ID: 'p2', Name: 'GLM' }),
       ],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: 'm1',
     });
     render(<Settings />);
     goModel();
-    const p2 = (await screen.findByText('GLM')).closest('li')!;
+    const p2 = await findCard('GLM');
     fireEvent.click(within(p2).getByRole('button', { name: tt('ui.settings.model.delete_platform') }));
     await waitFor(() => expect(mocks.deleteModelPlatform).toHaveBeenCalledWith('p2'));
     // 失败回滚：平台仍在列表
-    expect(screen.getByText('GLM')).toBeInTheDocument();
+    expect(screen.getAllByText('GLM').length).toBeGreaterThan(0);
     vi.unstubAllGlobals();
   });
 
@@ -1127,7 +1128,7 @@ describe('Settings', () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [platView()],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: 'm1',
     });
     render(<Settings />);
@@ -1149,20 +1150,20 @@ describe('Settings', () => {
     mocks.getModelConfig
       .mockResolvedValueOnce({
         Enabled: true,
-        Platforms: [platView(), platView({ ID: 'p2', Name: 'GLM', IsDefault: false })],
-        DefaultPlatform: 'p1',
+        Platforms: [platView(), platView({ ID: 'p2', Name: 'GLM' })],
+        ActivePlatformID: 'p1',
         ActiveModel: 'm1',
       })
       // 删除成功后的重拉：p1 已移除（Preset 置空避免「DeepSeek」预设标签干扰断言）
       .mockResolvedValueOnce({
         Enabled: true,
-        Platforms: [platView({ ID: 'p2', Name: 'GLM', IsDefault: true, Preset: '' })],
-        DefaultPlatform: 'p2',
+        Platforms: [platView({ ID: 'p2', Name: 'GLM', Preset: '' })],
+        ActivePlatformID: 'p2',
         ActiveModel: '',
       });
     render(<Settings />);
     goModel();
-    const p1 = (await screen.findAllByText('DeepSeek'))[0].closest('li')!;
+    const p1 = await findCard('DeepSeek');
     fireEvent.click(
       within(p1).getByRole('button', { name: tt('ui.settings.model.delete_platform') }),
     );
@@ -1177,125 +1178,99 @@ describe('Settings', () => {
     vi.stubGlobal('confirm', vi.fn(() => false));
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
-      Platforms: [platView(), platView({ ID: 'p2', Name: 'GLM', IsDefault: false })],
-      DefaultPlatform: 'p1',
+      Platforms: [platView(), platView({ ID: 'p2', Name: 'GLM' })],
+      ActivePlatformID: 'p1',
       ActiveModel: 'm1',
     });
     render(<Settings />);
     goModel();
-    const p1 = (await screen.findAllByText('DeepSeek'))[0].closest('li')!;
+    const p1 = await findCard('DeepSeek');
     fireEvent.click(
       within(p1.closest('li')!).getByRole('button', { name: tt('ui.settings.model.delete_platform') }),
     );
     vi.unstubAllGlobals();
 
-    expect(screen.getByText('GLM')).toBeInTheDocument();
+    expect(screen.getAllByText('GLM').length).toBeGreaterThan(0);
     expect(screen.getAllByText('DeepSeek').length).toBeGreaterThan(0);
   });
 
-  it('设为默认即时生效，表单保存载荷 DefaultPlatform 更新', async () => {
+  it('切当前平台即时生效，表单保存载荷 ActivePlatformID 更新', async () => {
     mocks.getModelConfig
       .mockResolvedValueOnce({
         Enabled: true,
-        Platforms: [platView(), platView({ ID: 'p2', Name: 'GLM', IsDefault: false })],
-        DefaultPlatform: 'p1',
+        Platforms: [platView(), platView({ ID: 'p2', Name: 'GLM' })],
+        ActivePlatformID: 'p1',
         ActiveModel: 'm1',
       })
-      // 设为默认即时落盘后的重拉：默认平台已是 p2
+      // 切换即时落盘后的重拉：当前平台已是 p2
       .mockResolvedValueOnce({
         Enabled: true,
-        Platforms: [platView({ IsDefault: false }), platView({ ID: 'p2', Name: 'GLM', IsDefault: true })],
-        DefaultPlatform: 'p2',
+        Platforms: [platView(), platView({ ID: 'p2', Name: 'GLM' })],
+        ActivePlatformID: 'p2',
         ActiveModel: 'm1',
       });
     render(<Settings />);
     goModel();
-    const p2 = (await screen.findByText('GLM')).closest('li')!;
-    fireEvent.click(within(p2).getByRole('button', { name: tt('ui.settings.model.set_default') }));
-    await waitFor(() => expect(mocks.setDefaultPlatform).toHaveBeenCalledWith('p2'));
+    const platSel = (await screen.findByLabelText(
+      tt('ui.settings.model.active_platform'),
+    )) as HTMLSelectElement;
+    fireEvent.change(platSel, { target: { value: 'p2' } });
+    await waitFor(() => expect(mocks.setActiveModelSelection).toHaveBeenCalledWith('p2', 'm1'));
 
-    // 打开编辑表单保存：整包载荷携带已即时生效的默认平台
-    const p2row = (await screen.findByText('GLM')).closest('li')!;
+    // 打开编辑表单保存：整包载荷携带已即时生效的当前平台
+    const p2row = await findCard('GLM');
     fireEvent.click(within(p2row).getByRole('button', { name: tt('ui.settings.model.edit_platform') }));
     fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
     await waitFor(() => expect(mocks.setModelConfig).toHaveBeenCalledTimes(1));
-    expect(mocks.setModelConfig.mock.calls[0][0].DefaultPlatform).toBe('p2');
+    expect(mocks.setModelConfig.mock.calls[0][0].ActivePlatformID).toBe('p2');
   });
 
-  it('设为默认后仅新平台显示默认徽标，原默认平台恢复按钮', async () => {
-    mocks.getModelConfig.mockResolvedValue({
-      Enabled: true,
-      Platforms: [
-        platView({ Models: ['m1'], IsDefault: true }),
-        platView({ ID: 'p2', Name: 'GLM', Models: ['m3'], IsDefault: false }),
-      ],
-      DefaultPlatform: 'p1',
-      ActiveModel: 'm1',
-    });
-    render(<Settings />);
-    goModel();
-    const p2 = (await screen.findByText('GLM')).closest('li')!;
-    fireEvent.click(within(p2).getByRole('button', { name: tt('ui.settings.model.set_default') }));
-
-    const p1 = screen.getAllByText('DeepSeek')[0].closest('li')!;
-    expect(within(p1).queryByText(tt('ui.settings.model.default_badge'))).toBeNull();
-    expect(
-      within(p1).getByRole('button', { name: tt('ui.settings.model.set_default') }),
-    ).toBeInTheDocument();
-    expect(within(p2).getByText(tt('ui.settings.model.default_badge'))).toBeInTheDocument();
-  });
-
-  it('保存后 Active model 下拉刷新为新默认平台模型且徽标唯一', async () => {
+  it('切换平台并保存后模型下拉刷新为新平台模型', async () => {
     mocks.getModelConfig
       .mockResolvedValueOnce({
         Enabled: true,
         Platforms: [
-          platView({ Models: ['m1'], IsDefault: true }),
-          platView({ ID: 'p2', Name: 'GLM', Models: ['m3'], IsDefault: false }),
+          platView({ Models: ['m1'] }),
+          platView({ ID: 'p2', Name: 'GLM', Models: ['m3'] }),
         ],
-        DefaultPlatform: 'p1',
+        ActivePlatformID: 'p1',
         ActiveModel: 'm1',
       })
-      // 「设为默认」即时生效会先重拉一次：默认平台已切 p2，悬空的 m1 被清空
+      // 切换即时生效会先重拉一次：当前平台已切 p2，悬空的 m1 被清空
       .mockResolvedValueOnce({
         Enabled: true,
         Platforms: [
-          platView({ Models: ['m1'], IsDefault: false }),
-          platView({ ID: 'p2', Name: 'GLM', Models: ['m3'], IsDefault: true }),
+          platView({ Models: ['m1'] }),
+          platView({ ID: 'p2', Name: 'GLM', Models: ['m3'] }),
         ],
-        DefaultPlatform: 'p2',
+        ActivePlatformID: 'p2',
         ActiveModel: '',
       })
       .mockResolvedValueOnce({
         Enabled: true,
         Platforms: [
-          platView({ Models: ['m1'], IsDefault: false }),
-          // 新平台也含 m1：保存载荷里的 ActiveModel 仍有效，后端保留
-          platView({ ID: 'p2', Name: 'GLM', Models: ['m1', 'm3'], IsDefault: true }),
+          platView({ Models: ['m1'] }),
+          platView({ ID: 'p2', Name: 'GLM', Models: ['m3'] }),
         ],
-        DefaultPlatform: 'p2',
-        ActiveModel: 'm1',
+        ActivePlatformID: 'p2',
+        ActiveModel: '',
       });
     render(<Settings />);
     goModel();
-    const p2 = (await screen.findByText('GLM')).closest('li')!;
-    fireEvent.click(within(p2).getByRole('button', { name: tt('ui.settings.model.set_default') }));
-    // 「设为默认」即时生效后重拉；随后打开 p2 的编辑表单走整包保存
-    await waitFor(() => expect(mocks.setDefaultPlatform).toHaveBeenCalledWith('p2'));
-    const p2row = (await screen.findByText('GLM')).closest('li')!;
+    const platSel = (await screen.findByLabelText(
+      tt('ui.settings.model.active_platform'),
+    )) as HTMLSelectElement;
+    fireEvent.change(platSel, { target: { value: 'p2' } });
+    await waitFor(() => expect(mocks.setActiveModelSelection).toHaveBeenCalledWith('p2', ''));
+    const p2row = await findCard('GLM');
     fireEvent.click(within(p2row).getByRole('button', { name: tt('ui.settings.model.edit_platform') }));
     fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.model.save') }));
 
     const sel = (await screen.findByLabelText(
       tt('ui.settings.model.active_model'),
     )) as HTMLSelectElement;
-    await waitFor(() =>
-      expect(Array.from(sel.options).map((o) => o.value)).toEqual(['m1', 'm3']),
-    );
-    expect(sel.value).toBe('m1');
-    const p1 = screen.getAllByText('DeepSeek')[0].closest('li')!;
-    expect(within(p1).queryByText(tt('ui.settings.model.default_badge'))).toBeNull();
-    expect(within(p2).getByText(tt('ui.settings.model.default_badge'))).toBeInTheDocument();
+    await waitFor(() => expect(Array.from(sel.options).map((o) => o.value)).toEqual(['', 'm3']));
+    expect(sel.value).toBe('');
   });
 
   it('平台名称必填：为空时前端拦截，不调用保存', async () => {
@@ -1313,7 +1288,7 @@ describe('Settings', () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [platView()],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: 'm1',
     });
     render(<Settings />);
@@ -1334,7 +1309,7 @@ describe('Settings', () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [platView({ APIKeySet: true })],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: 'm1',
     });
     mocks.fetchAvailableModels.mockResolvedValue({
@@ -1361,7 +1336,7 @@ describe('Settings', () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [platView({ Models: ['m1'] })],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: 'm1',
     });
     render(<Settings />);
@@ -1387,7 +1362,7 @@ describe('Settings', () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [platView({ Models: [] })],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: '',
     });
     render(<Settings />);
@@ -1409,7 +1384,7 @@ describe('Settings', () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [platView({ Models: [] })],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: '',
     });
     render(<Settings />);
@@ -1430,7 +1405,7 @@ describe('Settings', () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [platView({ Models: [] })],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: '',
     });
     render(<Settings />);
@@ -1479,7 +1454,7 @@ describe('Settings', () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [platView({ Models: ['m1'] })],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: 'm1',
     });
     render(<Settings />);
@@ -1525,10 +1500,9 @@ describe('Settings', () => {
           OpenAIBaseURL: '',
           AnthropicBaseURL: '',
           Models: ['hy3'],
-          IsDefault: false,
         }),
       ],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: 'm1',
     });
     mocks.scanWorkbuddyPlatform.mockResolvedValue({
@@ -1561,7 +1535,7 @@ describe('Settings', () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [platView({ Models: [] })],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: '',
     });
     render(<Settings />);
@@ -1583,7 +1557,7 @@ describe('Settings', () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [platView({ Models: [] })],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: '',
     });
     render(<Settings />);
@@ -1619,7 +1593,7 @@ describe('Settings', () => {
     mocks.getModelConfig.mockResolvedValue({
       Enabled: true,
       Platforms: [platView({ APIKeySet: true })],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: 'm1',
     });
     render(<Settings />);
