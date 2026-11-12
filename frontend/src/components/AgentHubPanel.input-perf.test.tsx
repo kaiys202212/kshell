@@ -77,7 +77,7 @@ beforeEach(() => {
   api.getModelConfig.mockResolvedValue({
     Enabled: false,
     Platforms: [],
-    DefaultPlatform: '',
+    ActivePlatformID: '',
     ActiveModel: '',
   });
   api.listHubMessages.mockImplementation(async () => useAppStore.getState().hubMessages);

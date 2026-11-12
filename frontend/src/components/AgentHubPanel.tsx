@@ -1705,10 +1705,10 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
         });
       })
       .catch(() => {});
-    // kshell 注入模型（设置页默认平台的模型列表）：拉取失败静默，回落仅缓存
+    // kshell 注入模型（kshell 当前平台的模型列表）：拉取失败静默，回落仅缓存
     void getModelConfig()
       .then((cfg) => {
-        const def = cfg.Platforms?.find((p) => p.ID === cfg.DefaultPlatform) ?? cfg.Platforms?.[0];
+        const def = cfg.Platforms?.find((p) => p.ID === cfg.ActivePlatformID) ?? cfg.Platforms?.[0];
         const platName = def?.Name ?? '';
         const opts: ToolModelOption[] = [];
         for (const raw of def?.Models ?? []) {
@@ -1880,7 +1880,7 @@ function DefaultSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
       .catch(() => {});
     void getModelConfig()
       .then((cfg) => {
-        const def = cfg.Platforms?.find((p) => p.ID === cfg.DefaultPlatform) ?? cfg.Platforms?.[0];
+        const def = cfg.Platforms?.find((p) => p.ID === cfg.ActivePlatformID) ?? cfg.Platforms?.[0];
         const platName = def?.Name ?? '';
         const opts: ToolModelOption[] = [];
         for (const raw of def?.Models ?? []) {

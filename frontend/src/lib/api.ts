@@ -470,15 +470,14 @@ export interface ModelPlatformView {
   AnthropicBaseURL: string;
   Models: string[];
   APIKeySet: boolean;
-  IsDefault: boolean;
   ASRModel: string;
 }
 
-// desktop.ModelConfigView 的 JSON 形态：平台列表 + 全局默认平台/模型。
+// desktop.ModelConfigView 的 JSON 形态：平台列表 + kshell 当前平台/模型。
 export interface ModelConfigView {
   Enabled: boolean;
   Platforms: ModelPlatformView[];
-  DefaultPlatform: string;
+  ActivePlatformID: string;
   ActiveModel: string;
 }
 
@@ -500,7 +499,7 @@ export interface ModelPlatformInput {
 export interface ModelConfigInput {
   Enabled: boolean;
   Platforms: ModelPlatformInput[];
-  DefaultPlatform: string;
+  ActivePlatformID: string;
   ActiveModel: string;
 }
 
@@ -753,8 +752,7 @@ interface AppBindings {
   SetModelConfig(input: ModelConfigInput): Promise<void>;
   SetModelEnabled(enabled: boolean): Promise<void>;
   DeleteModelPlatform(platformID: string): Promise<void>;
-  SetDefaultPlatform(platformID: string): Promise<void>;
-  SetActiveModel(model: string): Promise<void>;
+  SetActiveModelSelection(platformID: string, model: string): Promise<void>;
   GetToolSyncConfig(toolID: string): Promise<ToolSyncView>;
   SetToolSyncConfig(toolID: string, input: ToolSyncInput): Promise<void>;
   ListModelPresets(): Promise<ModelPreset[]>;
@@ -2140,7 +2138,7 @@ export async function getModelConfig(): Promise<ModelConfigView> {
     return {
       Enabled: false,
       Platforms: [],
-      DefaultPlatform: '',
+      ActivePlatformID: '',
       ActiveModel: '',
     };
   }
@@ -2166,15 +2164,19 @@ export interface ClaudeSlots {
 export interface ToolSyncView {
   Enabled: boolean;
   Claude: ClaudeSlots;
+  ClaudePlatform: string;
   OpenCode: Record<string, string[]> | null;
   CodeBuddy: string[] | null;
+  CodeBuddyPlatform: string;
 }
 
 export interface ToolSyncInput {
   Enabled: boolean;
   Claude: ClaudeSlots;
+  ClaudePlatform: string;
   OpenCode: Record<string, string[]>;
   CodeBuddy: string[];
+  CodeBuddyPlatform: string;
 }
 
 // setModelEnabled 设置模型平台总开关并立即落盘生效（关闭即调度清理同步），错误向上抛。
@@ -2191,25 +2193,25 @@ export async function deleteModelPlatform(platformID: string): Promise<void> {
   await a.DeleteModelPlatform(platformID);
 }
 
-// setDefaultPlatform 设置默认平台并立即落盘生效（触发防抖同步），错误向上抛。
-export async function setDefaultPlatform(platformID: string): Promise<void> {
+// setActiveModelSelection 成对设置 kshell 当前平台/默认模型并立即落盘生效，错误向上抛。
+export async function setActiveModelSelection(platformID: string, model: string): Promise<void> {
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
-  await a.SetDefaultPlatform(platformID);
-}
-
-// setActiveModel 设置 kshell 自用默认模型并立即落盘生效（触发防抖同步），错误向上抛。
-export async function setActiveModel(model: string): Promise<void> {
-  const a = app();
-  if (!a) throw new Error(ERR_NO_BINDING);
-  await a.SetActiveModel(model);
+  await a.SetActiveModelSelection(platformID, model);
 }
 
 // getToolSyncConfig 返回单个工具的定制模型同步配置；绑定不可用时兜底未启用空配置。
 export async function getToolSyncConfig(toolID: string): Promise<ToolSyncView> {
   const a = app();
   if (!a) {
-    return { Enabled: false, Claude: { Model: '', Sonnet: '', Opus: '', Haiku: '' }, OpenCode: {}, CodeBuddy: [] };
+    return {
+      Enabled: false,
+      Claude: { Model: '', Sonnet: '', Opus: '', Haiku: '' },
+      ClaudePlatform: '',
+      OpenCode: {},
+      CodeBuddy: [],
+      CodeBuddyPlatform: '',
+    };
   }
   return a.GetToolSyncConfig(toolID);
 }

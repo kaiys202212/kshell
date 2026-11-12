@@ -79,7 +79,7 @@ beforeEach(() => {
   api.getModelConfig.mockResolvedValue({
     Enabled: false,
     Platforms: [],
-    DefaultPlatform: '',
+    ActivePlatformID: '',
     ActiveModel: '',
   });
   api.readClipboardPaste.mockResolvedValue({ Text: '', Path: '' });
@@ -1160,6 +1160,45 @@ describe('AgentHubPanel', () => {
     expect(useAppStore.getState().lastAgentId).toBe('n1');
   });
 
+  it('新建 agent：注入模型来自 ActivePlatformID 指定平台', async () => {
+    api.getTools.mockResolvedValue([acpTool()]);
+    api.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [
+        {
+          ID: 'p1',
+          Name: '甲',
+          Preset: 'openai',
+          OpenAIBaseURL: 'https://a/',
+          AnthropicBaseURL: 'https://a/',
+          Models: ['m-a'],
+          APIKeySet: true,
+          ASRModel: '',
+        },
+        {
+          ID: 'p2',
+          Name: '乙',
+          Preset: 'openai',
+          OpenAIBaseURL: 'https://b/',
+          AnthropicBaseURL: 'https://b/',
+          Models: ['m-b'],
+          APIKeySet: true,
+          ASRModel: '',
+        },
+      ],
+      ActivePlatformID: 'p2',
+      ActiveModel: 'm-b',
+    });
+    useAppStore.setState({ workspaces: [workspaceA] });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
+    const select = (await screen.findByLabelText(tt('ui.hub.field_model'))) as HTMLSelectElement;
+    await waitFor(() => expect(select.options).toHaveLength(1));
+    expect(select.options[0].value).toBe('m-b');
+    expect(select.options[0].textContent).toBe('乙: m-b');
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.cancel') }));
+  });
+
   it('新建 agent：模型下拉合并 kshell 注入模型并去重', async () => {
     api.getTools.mockResolvedValue([acpTool()]);
     api.getModelConfig.mockResolvedValue({
@@ -1173,10 +1212,9 @@ describe('AgentHubPanel', () => {
           AnthropicBaseURL: 'https://h/',
           Models: ['glm-5.3-flash', 'deepseek-v4.1-flash'],
           APIKeySet: true,
-          IsDefault: true,
         },
       ],
-      DefaultPlatform: 'p1',
+      ActivePlatformID: 'p1',
       ActiveModel: 'glm-5.3-flash',
     });
     useAppStore.setState({ workspaces: [workspaceA] });

@@ -55,7 +55,7 @@ beforeEach(() => {
   api.getModelConfig.mockResolvedValue({
     Enabled: false,
     Platforms: [],
-    DefaultPlatform: '',
+    ActivePlatformID: '',
     ActiveModel: '',
   });
   api.listHubMessages.mockResolvedValue([]);
