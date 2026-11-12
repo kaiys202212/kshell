@@ -125,6 +125,7 @@ func (s *Server) Close() error {
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", s.withAuth(s.handleChatCompletions))
+	mux.HandleFunc("POST /v1/messages", s.withAuth(s.handleMessages))
 	return mux
 }
 
@@ -182,6 +183,77 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(out)
+}
+
+// handleMessages 接 Anthropic Messages 协议：请求翻译成 OpenAI 形状后复用
+// ChatOnce，响应再翻译回 Anthropic；stream:true 时整段合成 SSE 事件流。
+func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeAnthropicError(w, http.StatusRequestEntityTooLarge, "invalid_request_error", "request body too large")
+			return
+		}
+		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "read request body: "+err.Error())
+		return
+	}
+
+	// 先取原始请求的 model/stream：翻译后的 OpenAI body 不再保留 stream。
+	var meta struct {
+		Model  string `json:"model"`
+		Stream bool   `json:"stream"`
+	}
+	_ = json.Unmarshal(body, &meta)
+
+	openaiBody, err := anthropicToOpenAI(body)
+	if err != nil {
+		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	cred, err := loadCredential()
+	if err != nil {
+		// 与 /v1/chat/completions 一致：凭据问题对外等同鉴权失败，
+		// 完整错误可能含本机路径，只丢弃不回传。
+		writeAnthropicError(w, http.StatusUnauthorized, "authentication_error", credentialUnavailableMessage)
+		return
+	}
+	out, err := chatOnce(r.Context(), cred, openaiBody, nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "token_expired") {
+			writeAnthropicError(w, http.StatusUnauthorized, "authentication_error", err.Error())
+		} else {
+			writeAnthropicError(w, http.StatusBadGateway, "api_error", err.Error())
+		}
+		return
+	}
+
+	if meta.Stream {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, synthAnthropicSSE(out, meta.Model))
+		return
+	}
+	payload, err := json.Marshal(openAIToAnthropic(out, meta.Model))
+	if err != nil {
+		writeAnthropicError(w, http.StatusBadGateway, "api_error", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(payload)
+}
+
+// writeAnthropicError 输出 Anthropic 错误信封（注意与 OpenAI 的 writeError 形状不同），
+// Anthropic SDK 依赖 type:"error" 与 error.type 做错误分类。
+func writeAnthropicError(w http.ResponseWriter, status int, typ, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"type":  "error",
+		"error": map[string]string{"type": typ, "message": message},
+	})
 }
 
 // writeError 统一输出 OpenAI 错误信封，客户端可按 error.message 展示。
