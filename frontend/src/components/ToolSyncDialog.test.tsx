@@ -80,6 +80,10 @@ describe('ToolSyncDialog', () => {
     fireEvent.click(await screen.findByRole('checkbox', { name: tt('ui.toolsync.enable') }));
     const platSel = screen.getByLabelText(tt('ui.toolsync.platform')) as HTMLSelectElement;
     const modelSel = screen.getByLabelText(tt('ui.toolsync.slot_model')) as HTMLSelectElement;
+    // 静态注入没有「未配置」语义：无保存值时渲染期回落到第一个可用平台，
+    // 下拉不提供空选项。
+    expect(Array.from(platSel.options).map((o) => o.value)).toEqual(['p1', 'p2']);
+    expect(platSel.value).toBe('p1');
     expect(Array.from(modelSel.options).map((o) => o.value)).toEqual(['', 'm1', 'm2']);
     // 切到 p2：槽位值清空，选项改为该平台模型
     fireEvent.change(platSel, { target: { value: 'p2' } });
@@ -141,6 +145,8 @@ describe('ToolSyncDialog', () => {
     const platSel = (await screen.findByLabelText(tt('ui.toolsync.platform'))) as HTMLSelectElement;
     expect(platSel.value).toBe('gone');
     expect(platSel.selectedOptions[0].textContent).toBe(tt('ui.toolsync.tool_platform_invalid'));
+    // 悬空时只有「已失效」占位 + 现有平台，没有「未配置」空选项。
+    expect(Array.from(platSel.options).map((o) => o.value)).toEqual(['gone', 'p1', 'p2']);
     // 悬空平台没有模型列表：槽位只剩「不设置」，不会沿用其它平台模型。
     const modelSel = screen.getByLabelText(tt('ui.toolsync.slot_model')) as HTMLSelectElement;
     expect(Array.from(modelSel.options).map((o) => o.value)).toEqual(['']);
@@ -166,6 +172,8 @@ describe('ToolSyncDialog', () => {
     const platSel = (await screen.findByLabelText(tt('ui.toolsync.platform'))) as HTMLSelectElement;
     expect(platSel.value).toBe('gone');
     expect(platSel.selectedOptions[0].textContent).toBe(tt('ui.toolsync.tool_platform_invalid'));
+    // 悬空时只有「已失效」占位 + 现有平台，没有「未配置」空选项。
+    expect(Array.from(platSel.options).map((o) => o.value)).toEqual(['gone', 'p1', 'p2']);
     // 悬空平台无模型列表，不应展示任何平台的勾选区。
     expect(screen.queryByText(tt('ui.toolsync.models_empty'))).not.toBeInTheDocument();
 
@@ -195,7 +203,7 @@ describe('ToolSyncDialog', () => {
     ];
     render(<ToolSyncDialog toolID="codex" toolName="Codex" platforms={withWb} onClose={() => {}} />);
 
-    const platSel = (await screen.findByLabelText(tt('ui.toolsync.tool_platform'))) as HTMLSelectElement;
+    const platSel = (await screen.findByLabelText(tt('ui.toolsync.platform'))) as HTMLSelectElement;
     // 无静态注入的目标不显示「启用同步」开关。
     expect(screen.queryByRole('checkbox', { name: tt('ui.toolsync.enable') })).not.toBeInTheDocument();
     expect(Array.from(platSel.options).map((o) => o.value)).toEqual(['', 'p1', 'p2']);
@@ -218,7 +226,7 @@ describe('ToolSyncDialog', () => {
     });
     render(<ToolSyncDialog toolID="gemini" toolName="Gemini" platforms={plats} onClose={() => {}} />);
 
-    const platSel = (await screen.findByLabelText(tt('ui.toolsync.tool_platform'))) as HTMLSelectElement;
+    const platSel = (await screen.findByLabelText(tt('ui.toolsync.platform'))) as HTMLSelectElement;
     // 悬空值不被静默清空：选中项仍是原 ID，文案显示「已失效」，不会渲染空白。
     expect(platSel.value).toBe('gone');
     expect(platSel.selectedOptions[0].textContent).toBe(tt('ui.toolsync.tool_platform_invalid'));
