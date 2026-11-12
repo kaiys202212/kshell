@@ -8,9 +8,16 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yangk/kshell/internal/workbuddy"
 )
+
+// chatCall 是 fake ChatOnce 回传给测试 goroutine 的调用快照。
+type chatCall struct {
+	cred workbuddy.Credential
+	body []byte
+}
 
 // stubCredential 让测试绕过真实的 WorkBuddy 桌面端凭据文件；
 // 生产路径仍由 workbuddy.LoadCredential 提供凭据，这里只替换注入点。
@@ -34,7 +41,8 @@ func postJSON(t *testing.T, url, body string, headers map[string]string) (int, [
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("发请求失败: %v", err)
 	}
@@ -105,11 +113,13 @@ func TestEnsureIdempotentAndAuth(t *testing.T) {
 
 func TestOpenAIPassthrough(t *testing.T) {
 	stubCredential(t)
-	var gotBody []byte
+	// handler 在独立 goroutine 执行，禁止在其内部调 t.Fatalf；
+	// 用带缓冲 channel 把调用快照回传给测试 goroutine 断言。
+	calls := make(chan chatCall, 1)
 	restore := SetChatOnceForTest(func(ctx context.Context, cred workbuddy.Credential, body []byte, hc *http.Client) ([]byte, error) {
-		gotBody = append([]byte(nil), body...)
+		calls <- chatCall{cred: cred, body: append([]byte(nil), body...)}
 		if cred.AccessToken != "test-token" {
-			t.Fatalf("ChatOnce 收到的凭据 = %q，期望 test-token", cred.AccessToken)
+			return nil, errors.New("unexpected credential")
 		}
 		return []byte(`{"id":"chatcmpl-test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"pong"},"finish_reason":"stop"}]}`), nil
 	})
@@ -135,11 +145,20 @@ func TestOpenAIPassthrough(t *testing.T) {
 	}
 
 	// fake 必须真的收到请求体，且 model/messages 保持 OpenAI 形状。
-	if len(gotBody) == 0 {
+	var call chatCall
+	select {
+	case call = <-calls:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ChatOnce 未被调用")
+	}
+	if call.cred.AccessToken != "test-token" {
+		t.Fatalf("ChatOnce 收到的凭据 = %q，期望 test-token", call.cred.AccessToken)
+	}
+	if len(call.body) == 0 {
 		t.Fatal("ChatOnce 未收到请求体")
 	}
 	var sent map[string]any
-	if err := json.Unmarshal(gotBody, &sent); err != nil {
+	if err := json.Unmarshal(call.body, &sent); err != nil {
 		t.Fatalf("透传 body 不是合法 JSON: %v", err)
 	}
 	if sent["model"] != "glm-5.3" {
@@ -207,6 +226,111 @@ func TestChatOnceErrorMapping(t *testing.T) {
 				t.Fatalf("错误 message 未包含底层错误: %s", data)
 			}
 		})
+	}
+}
+
+func TestCredentialUnavailable(t *testing.T) {
+	prev := loadCredential
+	loadCredential = func() (workbuddy.Credential, error) {
+		return workbuddy.Credential{}, errors.New(`open C:\Users\secret\appstate.json: access denied`)
+	}
+	t.Cleanup(func() { loadCredential = prev })
+	restore := SetChatOnceForTest(func(ctx context.Context, cred workbuddy.Credential, body []byte, hc *http.Client) ([]byte, error) {
+		return nil, errors.New("ChatOnce 不应被调用")
+	})
+	t.Cleanup(restore)
+
+	s := New()
+	t.Cleanup(func() { _ = s.Close() })
+	base, key, err := s.Ensure()
+	if err != nil {
+		t.Fatalf("Ensure 失败: %v", err)
+	}
+
+	status, data := postJSON(t, base+"/v1/chat/completions", `{"model":"m","messages":[]}`, map[string]string{
+		"Authorization": "Bearer " + key,
+	})
+	if status != http.StatusUnauthorized {
+		t.Fatalf("凭据不可用状态码 = %d，期望 401，body=%s", status, data)
+	}
+	e := decodeErrorBody(t, data)
+	if e.Error.Message != credentialUnavailableMessage {
+		t.Fatalf("错误文案 = %q，期望稳定文案 %q", e.Error.Message, credentialUnavailableMessage)
+	}
+	// 完整错误可能含本机路径，绝不能回传给调用方。
+	if strings.Contains(string(data), "secret") || strings.Contains(string(data), "appstate") {
+		t.Fatalf("响应泄露本机路径细节: %s", data)
+	}
+}
+
+func TestBodyTooLarge(t *testing.T) {
+	stubCredential(t)
+	restore := SetChatOnceForTest(func(ctx context.Context, cred workbuddy.Credential, body []byte, hc *http.Client) ([]byte, error) {
+		return []byte(`{"choices":[]}`), nil
+	})
+	t.Cleanup(restore)
+
+	s := New()
+	t.Cleanup(func() { _ = s.Close() })
+	base, key, err := s.Ensure()
+	if err != nil {
+		t.Fatalf("Ensure 失败: %v", err)
+	}
+
+	oversized := strings.Repeat("x", maxBodyBytes+1)
+	status, data := postJSON(t, base+"/v1/chat/completions", oversized, map[string]string{
+		"Authorization": "Bearer " + key,
+	})
+	if status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("超限 body 状态码 = %d，期望 413，body=%s", status, data)
+	}
+	e := decodeErrorBody(t, data)
+	if e.Error.Message != "request body too large" {
+		t.Fatalf("错误文案 = %q，期望稳定文案", e.Error.Message)
+	}
+}
+
+func TestCloseThenEnsureRotatesToken(t *testing.T) {
+	stubCredential(t)
+	restore := SetChatOnceForTest(func(ctx context.Context, cred workbuddy.Credential, body []byte, hc *http.Client) ([]byte, error) {
+		return []byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`), nil
+	})
+	t.Cleanup(restore)
+
+	s := New()
+	t.Cleanup(func() { _ = s.Close() })
+	_, key1, err := s.Ensure()
+	if err != nil {
+		t.Fatalf("首次 Ensure 失败: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close 失败: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close 应幂等: %v", err)
+	}
+
+	base2, key2, err := s.Ensure()
+	if err != nil {
+		t.Fatalf("重新 Ensure 失败: %v", err)
+	}
+	if key2 == key1 {
+		t.Fatal("重新 Ensure 应轮换 token")
+	}
+
+	// 旧 token 对新实例必须被拒。
+	status, data := postJSON(t, base2+"/v1/chat/completions", `{"model":"m","messages":[]}`, map[string]string{
+		"Authorization": "Bearer " + key1,
+	})
+	if status != http.StatusUnauthorized {
+		t.Fatalf("旧 token 状态码 = %d，期望 401，body=%s", status, data)
+	}
+	// 新 token 可用。
+	status, data = postJSON(t, base2+"/v1/chat/completions", `{"model":"m","messages":[]}`, map[string]string{
+		"Authorization": "Bearer " + key2,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("新 token 状态码 = %d，期望 200，body=%s", status, data)
 	}
 }
 

@@ -6,9 +6,12 @@ package workbuddyproxy
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -18,8 +21,13 @@ import (
 	"github.com/yangk/kshell/internal/workbuddy"
 )
 
-// maxBodyBytes 限制单次请求体上限，防止本地端口被滥用打满内存。
-const maxBodyBytes = 32 << 20
+const (
+	// maxBodyBytes 限制单次请求体上限，防止本地端口被滥用打满内存。
+	maxBodyBytes = 32 << 20
+	// credentialUnavailableMessage 是凭据不可用时对外的稳定文案：
+	// 完整错误可能含本机路径/账号细节，只丢弃不回传。
+	credentialUnavailableMessage = "err.workbuddy.credential_unavailable"
+)
 
 // chatOnceFunc 与 workbuddy.ChatOnce 同签名，抽成类型便于测试注入。
 type chatOnceFunc func(ctx context.Context, cred workbuddy.Credential, body []byte, hc *http.Client) ([]byte, error)
@@ -71,8 +79,21 @@ func (s *Server) Ensure() (base, apiKey string, err error) {
 	s.base = "http://" + ln.Addr().String()
 	s.token = token
 	s.started = true
-	// Serve 在后台阻塞；Shutdown 时返回 http.ErrServerClosed，按正常退出忽略。
-	go func() { _ = srv.Serve(ln) }()
+	go func() {
+		err := srv.Serve(ln)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("workbuddyproxy: serve exited: %v", err)
+		}
+		// listener 自然故障时重置状态，允许下次 Ensure 重启；
+		// 若已被 Close/重新 Ensure 替换则不动当前实例。
+		s.mu.Lock()
+		if s.srv == srv {
+			s.srv, s.ln = nil, nil
+			s.base, s.token = "", ""
+			s.started = false
+		}
+		s.mu.Unlock()
+	}()
 	return s.base, s.token, nil
 }
 
@@ -92,16 +113,12 @@ func (s *Server) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	err := srv.Shutdown(ctx)
+	if err != nil {
+		// Shutdown 超时：放弃在途请求，强制断连以释放端口。
+		_ = srv.Close()
+	}
 	_ = ln.Close()
 	return err
-}
-
-// SetChatOnceForTest 替换 ChatOnce 注入点，返回恢复函数。
-// 生产实现 = 每请求 workbuddy.LoadCredential + workbuddy.ChatOnce。
-func SetChatOnceForTest(fn func(ctx context.Context, cred workbuddy.Credential, body []byte, hc *http.Client) ([]byte, error)) (restore func()) {
-	prev := chatOnce
-	chatOnce = fn
-	return func() { chatOnce = prev }
 }
 
 // routes 注册代理路由；鉴权中间件对路径无关，Task 4 的 /v1/messages 可直接复用。
@@ -118,7 +135,7 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 		if token == "" {
 			token = strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 		}
-		if token == "" || token != s.currentToken() {
+		if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(s.currentToken())) != 1 {
 			writeError(w, http.StatusUnauthorized, "invalid api key", "authentication_error")
 			return
 		}
@@ -138,13 +155,19 @@ func (s *Server) currentToken() string {
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large", "invalid_request_error")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "read request body: "+err.Error(), "invalid_request_error")
 		return
 	}
 	cred, err := loadCredential()
 	if err != nil {
-		// 凭据缺失/解密失败对调用方等同鉴权失败，避免暴露本机路径细节。
-		writeError(w, http.StatusUnauthorized, err.Error(), "authentication_error")
+		// 凭据缺失/解密失败对调用方等同鉴权失败；完整错误可能含本机路径，
+		// 只丢弃不回传，仅返回稳定文案。
+		writeError(w, http.StatusUnauthorized, credentialUnavailableMessage, "authentication_error")
 		return
 	}
 	out, err := chatOnce(r.Context(), cred, body, nil)
