@@ -46,16 +46,22 @@ func SplitKshellModelID(id string) (platID, model string, ok bool) {
 	return rest[:i], model, true
 }
 
-// ModelIDLooseEqual 字面相等或 '.'/'-' 归一后相等（自 desktop/restore_model.go 迁入）。
-// Claude/网关常把配置里的 glm-5.3 写进 JSONL 成 glm-5-3；部分工具回报的模型名
-// 大小写也与配置不一致，故归一后忽略大小写比较。
+// ModelIDLooseEqual 字面相等或 '.'/'-' 归一后相等（自 desktop/restore_model.go 原样迁入）。
+// Claude/网关常把配置里的 glm-5.3 写进 JSONL 成 glm-5-3。仅做归一，不改大小写语义：
+// desktop 调用方依赖原比较行为。
 func ModelIDLooseEqual(a, b string) bool {
 	if a == b {
 		return true
 	}
-	na := strings.ReplaceAll(a, ".", "-")
-	nb := strings.ReplaceAll(b, ".", "-")
-	return strings.EqualFold(na, nb)
+	return strings.ReplaceAll(a, ".", "-") == strings.ReplaceAll(b, ".", "-")
+}
+
+// looseModelEqual 是会话模型反查专用的宽松比较：在 ModelIDLooseEqual 的
+// 点号/连字符归一之上再忽略大小写（部分工具回报的模型名与配置大小写不一致）。
+// 仅用于 platformByModel，不改变导出函数的原语义。
+func looseModelEqual(a, b string) bool {
+	return ModelIDLooseEqual(a, b) || strings.EqualFold(a, b) ||
+		strings.EqualFold(strings.ReplaceAll(a, ".", "-"), strings.ReplaceAll(b, ".", "-"))
 }
 
 // platformByID 按平台 ID 查找；查不到返回 false。
@@ -110,7 +116,7 @@ func platformByModel(cfg config.ModelConfig, model, toolID string) (config.Model
 	if p, ok := pick(func(candidate string) bool { return candidate == model }); ok {
 		return p, true
 	}
-	return pick(func(candidate string) bool { return ModelIDLooseEqual(candidate, model) })
+	return pick(func(candidate string) bool { return looseModelEqual(candidate, model) })
 }
 
 // ResolvePlatform 按优先级解析平台；任一环悬空继续兜底，全空不命中。

@@ -181,6 +181,8 @@ func TestModelIDLooseEqual(t *testing.T) {
 		{"m1", "m2", false},
 		{"", "", true},
 		{"glm-5.3-flash", "glm-5.3", false},
+		// 大小写不参与宽松匹配：导出函数保持原语义（会话模型反查另有专用比较器）。
+		{"GPT-4O", "gpt-4o", false},
 	}
 	for _, tc := range cases {
 		if got := modelresolve.ModelIDLooseEqual(tc.a, tc.b); got != tc.want {
