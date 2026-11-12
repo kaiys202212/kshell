@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/yangk/kshell/internal/acp"
 	"github.com/yangk/kshell/internal/chat"
@@ -806,6 +805,52 @@ func TestMergeConfigModelsUsesToolPlatform(t *testing.T) {
 	}
 }
 
+// 聊天内跨平台切模型只作用于当前会话：不得回写全局默认平台/模型，
+// 也不应触发各工具静态注入的同步；opencode 原生 ID 解析口径保持不变。
+func TestSetChatModelNoGlobalWrite(t *testing.T) {
+	app, conn, layout, id := setModelAppTool(t, config.ModelConfig{
+		Enabled:          true,
+		ActivePlatformID: "p1",
+		ActiveModel:      "a1",
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "Alpha", Models: []string{"a1"}},
+			{ID: "p2", Name: "Beta", Models: []string{"glm-5.3"}},
+		},
+	}, "opencode", acp.SessionStart{Models: &acp.SessionModelState{
+		AvailableModels: []acp.ModelInfo{
+			{ModelID: "kshell-p1/a1", Name: "Alpha: a1"},
+			{ModelID: "kshell-p2/glm-5.3", Name: "Beta: glm-5.3"},
+		},
+		CurrentModelID: "kshell-p1/a1",
+	}})
+
+	if err := app.SetChatModel(id, "kshell:p2:glm-5.3"); err != nil {
+		t.Fatalf("SetChatModel: %v", err)
+	}
+	// opencode 原生 ID 下发逻辑不变。
+	if len(conn.modelCalls) != 1 || conn.modelCalls[0] != "kshell-p2/glm-5.3" {
+		t.Fatalf("SetModel 应收到解析后的原生 ID: %v", conn.modelCalls)
+	}
+	// 全局默认平台/模型保持原值（内存 + 落盘）。
+	if got := app.snapshot().Config.Model; got.ActivePlatformID != "p1" || got.ActiveModel != "a1" {
+		t.Fatalf("聊天内切模型不得回写内存全局默认: %+v", got)
+	}
+	loaded, err := config.Load(layout)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Model.ActivePlatformID != "p1" || loaded.Model.ActiveModel != "a1" {
+		t.Fatalf("聊天内切模型不得回写落盘全局默认: %+v", loaded.Model)
+	}
+	// 同步调度器惰性创建：仍为 nil 表示从未触发 scheduleAgentSync。
+	app.mu.Lock()
+	sched := app.agentSyncSched
+	app.mu.Unlock()
+	if sched != nil {
+		t.Fatal("聊天内切模型不应触发 agent 模型同步")
+	}
+}
+
 func TestSetChatModelPlatformPrefix(t *testing.T) {
 	app, conn, layout, id := setModelApp(t, config.ModelConfig{
 		Enabled:          true,
@@ -829,7 +874,7 @@ func TestSetChatModelPlatformPrefix(t *testing.T) {
 		t.Fatalf("默认平台切换不应改配置: %+v", loaded.Model)
 	}
 
-	// 2. 跨平台前缀：落盘 ActivePlatformID/ActiveModel，SetModel 收到裸名。
+	// 2. 跨平台前缀：只切当前会话模型，SetModel 收到裸名，全局配置不变。
 	if err := app.SetChatModel(id, "kshell:p2:b2"); err != nil {
 		t.Fatalf("SetChatModel: %v", err)
 	}
@@ -837,11 +882,11 @@ func TestSetChatModelPlatformPrefix(t *testing.T) {
 		t.Fatalf("跨平台 SetModel 应收到裸名: %v", conn.modelCalls)
 	}
 	loaded, _ = config.Load(layout)
-	if loaded.Model.ActivePlatformID != "p2" || loaded.Model.ActiveModel != "b2" {
-		t.Fatalf("跨平台切换应落盘: %+v", loaded.Model)
+	if loaded.Model.ActivePlatformID != "p1" || loaded.Model.ActiveModel != "a1" {
+		t.Fatalf("跨平台切换不得回写全局默认: %+v", loaded.Model)
 	}
-	if got := app.snapshot().Config.Model.ActivePlatformID; got != "p2" {
-		t.Fatalf("内存配置应同步更新: %q", got)
+	if got := app.snapshot().Config.Model.ActivePlatformID; got != "p1" {
+		t.Fatalf("内存全局默认不应改变: %q", got)
 	}
 
 	// 3. 前缀含未知 platID：透传不落盘。
@@ -852,7 +897,7 @@ func TestSetChatModelPlatformPrefix(t *testing.T) {
 		t.Fatalf("未知平台应原样透传: %v", conn.modelCalls)
 	}
 	loaded, _ = config.Load(layout)
-	if loaded.Model.ActivePlatformID != "p2" {
+	if loaded.Model.ActivePlatformID != "p1" {
 		t.Fatalf("未知平台不应误存: %+v", loaded.Model)
 	}
 
@@ -864,13 +909,13 @@ func TestSetChatModelPlatformPrefix(t *testing.T) {
 		t.Fatalf("非前缀应原样透传: %v", conn.modelCalls)
 	}
 	loaded, _ = config.Load(layout)
-	if loaded.Model.ActivePlatformID != "p2" || loaded.Model.ActiveModel != "b2" {
+	if loaded.Model.ActivePlatformID != "p1" || loaded.Model.ActiveModel != "a1" {
 		t.Fatalf("透传不应改配置: %+v", loaded.Model)
 	}
 }
 
-// 跨平台前缀但 saveConfig 失败（无 Layout）：返回错误且不切模型。
-func TestSetChatModelSaveFailsKeepsModel(t *testing.T) {
+// 跨平台前缀不再依赖全局配置落盘：未装配 Layout 时也应正常切换会话模型。
+func TestSetChatModelCrossPlatformWithoutLayout(t *testing.T) {
 	conn := &fakeChatConn{start: acpSessionWithModels(), waitCh: make(chan struct{})}
 	m := newChatManagerWith(func(string, ...any) {}, &fakeChatCaptureBackend{conn: conn}, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
@@ -886,19 +931,19 @@ func TestSetChatModelSaveFailsKeepsModel(t *testing.T) {
 			{ID: "p2", Name: "Beta", Models: []string{"b1"}},
 		},
 	}
-	app := NewAppWith(Options{Chats: m, Config: cfg}) // 无 Layout → saveConfig 失败
+	app := NewAppWith(Options{Chats: m, Config: cfg}) // 无 Layout：切模型不应依赖全局配置落盘
 
-	if err := app.SetChatModel(info.ID, "kshell:p2:b1"); err == nil {
-		t.Fatal("保存失败应返回错误")
+	if err := app.SetChatModel(info.ID, "kshell:p2:b1"); err != nil {
+		t.Fatalf("SetChatModel: %v", err)
 	}
-	if len(conn.modelCalls) != 0 {
-		t.Fatalf("保存失败不应切模型: %v", conn.modelCalls)
+	if len(conn.modelCalls) != 1 || conn.modelCalls[0] != "b1" {
+		t.Fatalf("跨平台应切模型: %v", conn.modelCalls)
 	}
 }
 
-// 跨平台切 kshell 当前平台不应改变 Claude 的静态注入平台（各工具平台独立）。
+// 跨平台切模型不回写全局配置、不调度同步：Claude 的静态注入平台
+// （ClaudePlatform p1）保持独立，不随聊天内切到 p2 而改变。
 func TestSetChatModelCrossPlatformKeepsClaudePlatform(t *testing.T) {
-	home := t.TempDir()
 	conn := &fakeChatConn{start: acpSessionWithModels(), waitCh: make(chan struct{})}
 	dir := t.TempDir()
 	layout := config.Layout{
@@ -929,7 +974,7 @@ func TestSetChatModelCrossPlatformKeepsClaudePlatform(t *testing.T) {
 	if err := config.Save(layout, cfg); err != nil {
 		t.Fatalf("Save 初态: %v", err)
 	}
-	app := NewAppWith(Options{Chats: m, Config: cfg, Layout: layout, Home: home})
+	app := NewAppWith(Options{Chats: m, Config: cfg, Layout: layout})
 	app.mu.Lock()
 	app.tools = []discovery.Tool{{ID: "claude", Installed: true}}
 	app.mu.Unlock()
@@ -938,27 +983,23 @@ func TestSetChatModelCrossPlatformKeepsClaudePlatform(t *testing.T) {
 		t.Fatalf("SetChatModel: %v", err)
 	}
 
-	// 同步经调度器防抖（400ms）：轮询等待落盘。
-	path := filepath.Join(home, ".claude", "settings.json")
-	deadline := time.Now().Add(3 * time.Second)
-	var b []byte
-	for {
-		b, err = os.ReadFile(path)
-		if err == nil && strings.Contains(string(b), "https://a.example/") {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("应写入 settings.json（Claude 自有平台 p1）: err=%v body=%s", err, b)
-		}
-		time.Sleep(25 * time.Millisecond)
+	// 会话切到 p2，但全局默认与 Claude 自有平台仍是 p1。
+	got := app.snapshot().Config.Model
+	if got.ActivePlatformID != "p1" || got.ActiveModel != "a1" || got.ToolSync.ClaudePlatform != "p1" {
+		t.Fatalf("不应改变全局默认/Claude 平台: %+v", got)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(b, &doc); err != nil {
-		t.Fatal(err)
+	loaded, err := config.Load(layout)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
 	}
-	env, _ := doc["env"].(map[string]any)
-	if env["ANTHROPIC_BASE_URL"] != "https://a.example/" || env["ANTHROPIC_AUTH_TOKEN"] != "ka" {
-		t.Fatalf("Claude env 应保持自有平台 p1，got %#v", env)
+	if loaded.Model.ActivePlatformID != "p1" || loaded.Model.ActiveModel != "a1" {
+		t.Fatalf("落盘全局默认不应改变: %+v", loaded.Model)
+	}
+	app.mu.Lock()
+	sched := app.agentSyncSched
+	app.mu.Unlock()
+	if sched != nil {
+		t.Fatal("聊天内切模型不应调度 agent 同步")
 	}
 }
 

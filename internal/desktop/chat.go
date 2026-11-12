@@ -841,9 +841,9 @@ func (a *App) ToolPlatformModels(toolID string) ([]chat.ModelView, error) {
 }
 
 // SetChatModel 运行时切换会话模型。入口别名解析同 ListChatModels。
-// 下拉前缀 ID 在转发前解析：默认平台只切模型；跨平台先落盘切换默认平台
-// 与活跃模型再切（保存失败则不切）；platID 已不在配置（配置删除后下拉
-// 缓存未刷）时原样透传容错，不崩、不误存。
+// 下拉前缀 ID 在转发前解析，跨平台与默认平台一致：只切当前会话模型，
+// 不回写全局默认平台/模型（默认值由设置页维护）；platID 已不在配置
+// （配置删除后下拉缓存未刷）时原样透传容错，不崩、不误存。
 // 成功后推 chat:models，与 restoreSessionModel 同口径——否则 easynew 建后
 // SetModel 成功但前端仍停在握手期的 Current=default。
 func (a *App) SetChatModel(id, modelID string) error {
@@ -864,9 +864,7 @@ func (a *App) SetChatModel(id, modelID string) error {
 		target = a.resolveOpenCodeModelID(resolved, platID, model)
 	}
 	var err error
-	if !ok {
-		err = m.SetModel(resolved, target)
-	} else {
+	if ok {
 		cfg := a.snapshot().Config.Model
 		found := false
 		for _, p := range cfg.Platforms {
@@ -878,23 +876,11 @@ func (a *App) SetChatModel(id, modelID string) error {
 		if !found {
 			// platID 已不在配置（配置删除后下拉缓存未刷）：原样透传容错。
 			target = modelID
-			err = m.SetModel(resolved, modelID)
-		} else if cur, _ := cfg.ActivePlatform(); cur.ID != platID {
-			if err = a.saveConfig(func(c *config.Config) {
-				c.Model.ActivePlatformID = platID
-				c.Model.ActiveModel = model
-			}); err != nil {
-				return err
-			}
-			// kshell 当前平台变了，调度一次同步；各工具静态注入按各自平台重写。
-			// 注：下拉只列当前工具实际可用的模型（claude 用 ClaudePlatform），
-			// 该跨平台路径主要被历史下拉缓存/外部调用触发；当前会话不切端点仍是既定边界。
-			a.scheduleAgentSync()
-			err = m.SetModel(resolved, target)
-		} else {
-			err = m.SetModel(resolved, target)
 		}
 	}
+	// 聊天内切模型只作用于当前会话：默认平台/模型由设置页维护，这里不再
+	// 回写全局默认，也不触发各工具静态注入的同步。
+	err = m.SetModel(resolved, target)
 	if err != nil {
 		return err
 	}
