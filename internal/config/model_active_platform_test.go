@@ -84,6 +84,28 @@ model:
 	}
 }
 
+func TestToolPlatformMigratesForEnabledToolsWithEmptySlots(t *testing.T) {
+	c := decodeModelConfig(t, `
+model:
+  platforms:
+    - id: p1
+      name: A
+      anthropic_base_url: https://a.example.com
+    - id: p2
+      name: B
+      anthropic_base_url: https://b.example.com
+  default_platform: p2
+  tool_sync:
+    enabled: {claude: true, codebuddy: true}
+`)
+	if c.Model.ToolSync.ClaudePlatform != "p2" {
+		t.Fatalf("ClaudePlatform = %q, want p2", c.Model.ToolSync.ClaudePlatform)
+	}
+	if c.Model.ToolSync.CodeBuddyPlatform != "p2" {
+		t.Fatalf("CodeBuddyPlatform = %q, want p2", c.Model.ToolSync.CodeBuddyPlatform)
+	}
+}
+
 func TestNoPlatformsClearsAllSelections(t *testing.T) {
 	c := decodeModelConfig(t, `
 model:

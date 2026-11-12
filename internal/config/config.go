@@ -567,13 +567,16 @@ func (c Config) normalized() Config {
 		}
 	}
 
-	// 工具平台迁移：旧全局默认平台只在对应工具确有配置时下放，
-	// 避免给从未用过的工具写无关平台 ID。
+	// 工具平台迁移：旧全局默认平台只在对应工具已启用或确有选择时下放，
+	// 避免给从未用过的工具写无关平台 ID。Claude 的端点/密钥注入只看 Enabled，
+	// 槽位可以为空，因此启用即视为「配置过」，否则升级后会静默回落到第一个平台。
 	if legacyDefault != "" {
-		if c.Model.ToolSync.ClaudePlatform == "" && c.Model.ToolSync.Claude != (ClaudeSync{}) {
+		if c.Model.ToolSync.ClaudePlatform == "" &&
+			(c.Model.ToolSync.Claude != (ClaudeSync{}) || c.Model.ToolSync.Enabled["claude"]) {
 			c.Model.ToolSync.ClaudePlatform = legacyDefault
 		}
-		if c.Model.ToolSync.CodeBuddyPlatform == "" && len(c.Model.ToolSync.CodeBuddy) > 0 {
+		if c.Model.ToolSync.CodeBuddyPlatform == "" &&
+			(len(c.Model.ToolSync.CodeBuddy) > 0 || c.Model.ToolSync.Enabled["codebuddy"]) {
 			c.Model.ToolSync.CodeBuddyPlatform = legacyDefault
 		}
 	}

@@ -1280,41 +1280,45 @@ export default function Settings() {
               <div className={cn('grid gap-4', platDraft && 'md:grid-cols-[minmax(0,1fr)_24rem]')}>
                 {/* 左列：当前平台 + 当前模型 + 平台列表 + 新增入口 + WorkBuddy 导入 */}
                 <div className="grid min-w-0 content-start gap-2">
-                <label className="text-xs text-muted-foreground" htmlFor="model-active-platform">
-                  {t('ui.settings.model.active_platform')}
-                </label>
-                <select
-                  id="model-active-platform"
-                  aria-label={t('ui.settings.model.active_platform')}
-                  className={inputClass}
-                  value={modelPlatform}
-                  onChange={(e) => handleSelectActivePlatform(e.target.value)}
-                >
-                  {modelPlatforms.map((p) => (
-                    <option key={p.ID} value={p.ID}>
-                      {p.Name}
-                    </option>
-                  ))}
-                </select>
-                <label className="text-xs text-muted-foreground" htmlFor="model-active">
-                  {t('ui.settings.model.active_model')}
-                </label>
-                <select
-                  id="model-active"
-                  aria-label={t('ui.settings.model.active_model')}
-                  className={inputClass}
-                  value={modelActive}
-                  onChange={(e) => handleSelectActiveModel(e.target.value)}
-                >
-                  <option value="">{t('ui.settings.model.active_model_unset')}</option>
-                  {(activePlat?.Models ?? []).map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-                {(!activePlat || activePlat.Models.length === 0) && (
-                  <p className="text-xs text-muted-foreground">{t('ui.settings.model.models_empty')}</p>
+                {modelPlatforms.length > 0 && (
+                  <>
+                    <label className="text-xs text-muted-foreground" htmlFor="model-active-platform">
+                      {t('ui.settings.model.active_platform')}
+                    </label>
+                    <select
+                      id="model-active-platform"
+                      aria-label={t('ui.settings.model.active_platform')}
+                      className={inputClass}
+                      value={modelPlatform}
+                      onChange={(e) => handleSelectActivePlatform(e.target.value)}
+                    >
+                      {modelPlatforms.map((p) => (
+                        <option key={p.ID} value={p.ID}>
+                          {p.Name}
+                        </option>
+                      ))}
+                    </select>
+                    <label className="text-xs text-muted-foreground" htmlFor="model-active">
+                      {t('ui.settings.model.active_model')}
+                    </label>
+                    <select
+                      id="model-active"
+                      aria-label={t('ui.settings.model.active_model')}
+                      className={inputClass}
+                      value={modelActive}
+                      onChange={(e) => handleSelectActiveModel(e.target.value)}
+                    >
+                      <option value="">{t('ui.settings.model.active_model_unset')}</option>
+                      {(activePlat?.Models ?? []).map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                    {(!activePlat || activePlat.Models.length === 0) && (
+                      <p className="text-xs text-muted-foreground">{t('ui.settings.model.models_empty')}</p>
+                    )}
+                  </>
                 )}
 
                 {modelPlatforms.length === 0 && (

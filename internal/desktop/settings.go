@@ -366,6 +366,9 @@ func (a *App) SetModelConfig(in ModelConfigInput) error {
 		c.Model.Enabled = in.Enabled
 		c.Model.Platforms = platforms
 		c.Model.ActivePlatformID = activeID
+		// 平台列表整体替换后，指向已删平台的工具选择一并置空（运行期回落第一个）。
+		c.Model.ToolSync.ClaudePlatform = validPlatformID(platforms, c.Model.ToolSync.ClaudePlatform)
+		c.Model.ToolSync.CodeBuddyPlatform = validPlatformID(platforms, c.Model.ToolSync.CodeBuddyPlatform)
 		c.Model.ActiveModel = strings.TrimSpace(in.ActiveModel)
 		// 当前模型必须属于当前平台，否则清空：悬空模型名会拿着新平台端点
 		// 调用一个不存在的模型（删当前平台 / 换当前平台后的典型悬空场景）。
@@ -424,6 +427,20 @@ func validateHTTPURL(u, label string) error {
 
 // modelSyncTargets 是支持平台模型同步注入的工具（agentsync.DefaultTargets 的 ID）。
 var modelSyncTargets = map[string]bool{"opencode": true, "codebuddy": true, "claude": true}
+
+// validPlatformID 返回命中平台列表的 ID；空或悬空返回空串（运行期回落第一个）。
+func validPlatformID(platforms []config.ModelPlatform, id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	for _, p := range platforms {
+		if p.ID == id {
+			return id
+		}
+	}
+	return ""
+}
 
 // ClaudeSlotsView / ToolSyncView / ToolSyncInput 是按工具定制模型同步的绑定视图：
 // Claude 为 4 类映射槽位，OpenCode 为平台 ID → 勾选模型，CodeBuddy 为所选平台勾选模型。
@@ -645,7 +662,7 @@ func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 					Opus:   strings.TrimSpace(in.Claude.Opus),
 					Haiku:  strings.TrimSpace(in.Claude.Haiku),
 				}
-				ts.ClaudePlatform = strings.TrimSpace(in.ClaudePlatform)
+				ts.ClaudePlatform = validPlatformID(c.Model.Platforms, in.ClaudePlatform)
 			} else {
 				ts.Claude = config.ClaudeSync{}
 				ts.ClaudePlatform = ""
@@ -666,7 +683,7 @@ func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 		case "codebuddy":
 			if in.Enabled {
 				ts.CodeBuddy = trimList(in.CodeBuddy)
-				ts.CodeBuddyPlatform = strings.TrimSpace(in.CodeBuddyPlatform)
+				ts.CodeBuddyPlatform = validPlatformID(c.Model.Platforms, in.CodeBuddyPlatform)
 			} else {
 				ts.CodeBuddy = nil
 				ts.CodeBuddyPlatform = ""

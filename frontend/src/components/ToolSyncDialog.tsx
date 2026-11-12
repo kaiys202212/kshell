@@ -35,6 +35,18 @@ const CLAUDE_SLOT_FIELDS: { key: keyof ClaudeSlots; labelKey: string }[] = [
   { key: 'Haiku', labelKey: 'ui.toolsync.slot_haiku' },
 ];
 
+// reconcileSlots 丢弃不属于指定平台模型列表的槽位值：旧平台被删/失去端点后
+// 回落首个可用平台时，避免把不可见的旧模型名连同新平台端点写入工具配置。
+function reconcileSlots(models: string[], slots: ClaudeSlots): ClaudeSlots {
+  const has = new Set(models);
+  return {
+    Model: has.has(slots.Model) ? slots.Model : '',
+    Sonnet: has.has(slots.Sonnet) ? slots.Sonnet : '',
+    Opus: has.has(slots.Opus) ? slots.Opus : '',
+    Haiku: has.has(slots.Haiku) ? slots.Haiku : '',
+  };
+}
+
 export function ToolSyncDialog({ toolID, toolName, platforms, onClose }: Props) {
   const { t } = useTranslation();
   const notify = useAppStore((s) => s.notify);
@@ -54,15 +66,26 @@ export function ToolSyncDialog({ toolID, toolName, platforms, onClose }: Props) 
       .then((v) => {
         if (cancelled) return;
         setEnabled(v.Enabled);
-        setClaude(v.Claude ?? EMPTY_SLOTS);
-        setClaudePlat(v.ClaudePlatform ?? '');
-        setCodebuddyPlat(v.CodeBuddyPlatform ?? '');
+        // 生效平台 = 已保存平台（命中且端点可用）否则第一个可用平台；
+        // 旧平台失效时按新平台模型列表归整，丢弃不可见的陈旧选择。
+        const claudePlat =
+          platforms.find((p) => p.ID === (v.ClaudePlatform ?? '') && !!p.AnthropicBaseURL.trim()) ??
+          platforms.find((p) => !!p.AnthropicBaseURL.trim());
+        setClaudePlat(claudePlat?.ID ?? '');
+        setClaude(reconcileSlots(claudePlat?.Models ?? [], v.Claude ?? EMPTY_SLOTS));
+
+        const codebuddyPlat =
+          platforms.find((p) => p.ID === (v.CodeBuddyPlatform ?? '') && !!p.OpenAIBaseURL.trim()) ??
+          platforms.find((p) => !!p.OpenAIBaseURL.trim());
+        setCodebuddyPlat(codebuddyPlat?.ID ?? '');
+
         const map: Record<string, string[]> = {};
         for (const [k, list] of Object.entries(v.OpenCode ?? {})) {
           map[k] = list ?? [];
         }
         if (toolID === 'codebuddy') {
-          map.__codebuddy__ = v.CodeBuddy ?? [];
+          const allowed = new Set(codebuddyPlat?.Models ?? []);
+          map.__codebuddy__ = (v.CodeBuddy ?? []).filter((m) => allowed.has(m));
         }
         setChecked(map);
         setLoading(false);

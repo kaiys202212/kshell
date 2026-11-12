@@ -65,6 +65,43 @@ func TestToolSyncPlatformRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSetToolSyncConfigDropsUnknownPlatform(t *testing.T) {
+	app, _, _ := newSyncApp(t)
+	setSyncPlatform(t, app)
+	if err := app.SetToolSyncConfig("claude", ToolSyncInput{
+		Enabled:        true,
+		Claude:         ClaudeSlotsView{Model: "m1"},
+		ClaudePlatform: "ghost",
+	}); err != nil {
+		t.Fatalf("SetToolSyncConfig: %v", err)
+	}
+	v, err := app.GetToolSyncConfig("claude")
+	if err != nil {
+		t.Fatalf("GetToolSyncConfig: %v", err)
+	}
+	if v.ClaudePlatform != "" {
+		t.Fatalf("悬空平台应被丢弃, got %q", v.ClaudePlatform)
+	}
+}
+
+func TestDeletePlatformClearsToolPlatforms(t *testing.T) {
+	app, _, _ := newSyncApp(t)
+	setSyncPlatform(t, app)
+	app.mu.Lock()
+	app.opts.Config.Model.ToolSync.ClaudePlatform = "p1"
+	app.opts.Config.Model.ToolSync.CodeBuddyPlatform = "p1"
+	app.mu.Unlock()
+
+	if err := app.DeleteModelPlatform("p1"); err != nil {
+		t.Fatalf("DeleteModelPlatform: %v", err)
+	}
+	m := app.snapshot().Config.Model
+	if m.ToolSync.ClaudePlatform != "" || m.ToolSync.CodeBuddyPlatform != "" {
+		t.Fatalf("删除平台应清空工具平台, got %q/%q",
+			m.ToolSync.ClaudePlatform, m.ToolSync.CodeBuddyPlatform)
+	}
+}
+
 // 启用 + 勾选：立即按勾选注入，未勾选模型不出现；配置持久化。
 func TestSetToolSyncConfigEnableInjectsSelection(t *testing.T) {
 	app, layout, home := newSyncApp(t)

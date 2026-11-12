@@ -64,7 +64,7 @@ func TestSyncAgentModelsWritesClaudeSettings(t *testing.T) {
 	writeSettings(t, home, map[string]any{})
 	mc := config.ModelConfig{
 		Enabled:         true,
-		DefaultPlatform: "p1",
+		ActivePlatformID: "p1",
 		ActiveModel:     "m-active",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", Name: "智谱",
@@ -107,7 +107,7 @@ func TestSyncAgentModelsSkipsClaudeWithoutAnthropicEndpoint(t *testing.T) {
 	}})
 	mc := config.ModelConfig{
 		Enabled:         true,
-		DefaultPlatform: "p1",
+		ActivePlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", OpenAIBaseURL: "https://oai/", APIKey: "k1",
 			Models: []string{"gpt-x"},
@@ -211,7 +211,7 @@ func TestSyncAgentModelsSyncsInstalledToolWithoutConfig(t *testing.T) {
 	home := t.TempDir()
 	mc := config.ModelConfig{
 		Enabled:         true,
-		DefaultPlatform: "p1",
+		ActivePlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", Name: "OpenAI", OpenAIBaseURL: "https://oai/", APIKey: "k1",
 			Models: []string{"gpt-x"},
@@ -260,7 +260,7 @@ func TestStartupScanCmdSyncsAgentModels(t *testing.T) {
 	writeSettings(t, home, map[string]any{})
 	o := claudeOptions(home, config.ModelConfig{
 		Enabled:         true,
-		DefaultPlatform: "p1",
+		ActivePlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://ant/", APIKey: "k1", Models: []string{"m1"},
 		}},

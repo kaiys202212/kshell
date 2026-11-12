@@ -50,8 +50,8 @@ func Ready(c Config) bool {
 }
 
 // FromModelConfig 把 internal/config 的 ModelConfig 映射为视图 Config：
-// 端点与密钥取默认平台（ActivePlatform：DefaultPlatform 命中，否则第一个），
-// 模型取顶层 ActiveModel（与默认平台配对写入，见 chat 切模型逻辑）。
+// 端点与密钥取当前平台（ActivePlatform：ActivePlatformID 命中，否则第一个），
+// 模型取顶层 ActiveModel（与当前平台配对写入，见 chat 切模型逻辑）。
 // ok 表示映射后链路就绪；即便不就绪也返回已映射的字段，方便上层展示缺了什么。
 // 放在本包而非 desktop 层：internal/config 是叶子包，此处导入不产生循环依赖，
 // 且映射规则与「就绪」定义强相关，放一起避免两处漂移。
