@@ -226,16 +226,15 @@ type ModelPlatformView struct {
 	AnthropicBaseURL string   `json:"AnthropicBaseURL"`
 	Models           []string `json:"Models"`
 	APIKeySet        bool     `json:"APIKeySet"`
-	IsDefault        bool     `json:"IsDefault"`
 	ASRModel         string   `json:"ASRModel"`
 }
 
 // ModelConfigView 是回传前端的模型配置视图。
 type ModelConfigView struct {
-	Enabled         bool                `json:"Enabled"`
-	Platforms       []ModelPlatformView `json:"Platforms"`
-	DefaultPlatform string              `json:"DefaultPlatform"`
-	ActiveModel     string              `json:"ActiveModel"`
+	Enabled          bool                `json:"Enabled"`
+	Platforms        []ModelPlatformView `json:"Platforms"`
+	ActivePlatformID string              `json:"ActivePlatformID"`
+	ActiveModel      string              `json:"ActiveModel"`
 }
 
 // ModelPlatformInput 是前端提交的单平台：APIKey 空串=保持原值（仅对已存在平台），ClearAPIKey 显式清除。
@@ -253,21 +252,20 @@ type ModelPlatformInput struct {
 
 // ModelConfigInput 是前端提交的模型配置：整体保存语义。
 type ModelConfigInput struct {
-	Enabled         bool                 `json:"Enabled"`
-	Platforms       []ModelPlatformInput `json:"Platforms"`
-	DefaultPlatform string               `json:"DefaultPlatform"`
-	ActiveModel     string               `json:"ActiveModel"`
+	Enabled          bool                 `json:"Enabled"`
+	Platforms        []ModelPlatformInput `json:"Platforms"`
+	ActivePlatformID string               `json:"ActivePlatformID"`
+	ActiveModel      string               `json:"ActiveModel"`
 }
 
 func (a *App) GetModelConfig() (ModelConfigView, error) {
 	m := a.snapshot().Config.Model
 	views := make([]ModelPlatformView, 0, len(m.Platforms))
-	for i, p := range m.Platforms {
+	for _, p := range m.Platforms {
 		models := p.Models
 		if models == nil {
 			models = []string{}
 		}
-		// 默认平台未显式指定时与 ActivePlatform() 一致回落第一个。
 		views = append(views, ModelPlatformView{
 			ID:               p.ID,
 			Name:             p.Name,
@@ -276,15 +274,14 @@ func (a *App) GetModelConfig() (ModelConfigView, error) {
 			AnthropicBaseURL: p.AnthropicBaseURL,
 			Models:           models,
 			APIKeySet:        p.APIKey != "",
-			IsDefault:        p.ID == m.DefaultPlatform || (m.DefaultPlatform == "" && i == 0),
 			ASRModel:         p.ASRModel,
 		})
 	}
 	return ModelConfigView{
-		Enabled:         m.Enabled,
-		Platforms:       views,
-		DefaultPlatform: m.DefaultPlatform,
-		ActiveModel:     m.ActiveModel,
+		Enabled:          m.Enabled,
+		Platforms:        views,
+		ActivePlatformID: m.ActivePlatformID,
+		ActiveModel:      m.ActiveModel,
 	}, nil
 }
 
@@ -356,29 +353,28 @@ func (a *App) SetModelConfig(in ModelConfigInput) error {
 		platforms = append(platforms, p)
 	}
 
-	// DefaultPlatform 必须命中某个平台，否则回落第一个；无平台则置空。
-	def := strings.TrimSpace(in.DefaultPlatform)
-	switch {
-	case def != "" && seen[def]:
-	case len(platforms) > 0:
-		def = platforms[0].ID
-	default:
-		def = ""
+	// ActivePlatformID 必须命中某个平台，否则回落第一个；无平台则置空。
+	activeID := strings.TrimSpace(in.ActivePlatformID)
+	if activeID != "" && !seen[activeID] {
+		activeID = ""
+	}
+	if activeID == "" && len(platforms) > 0 {
+		activeID = platforms[0].ID
 	}
 
 	err := a.saveConfig(func(c *config.Config) {
 		c.Model.Enabled = in.Enabled
 		c.Model.Platforms = platforms
-		c.Model.DefaultPlatform = def
+		c.Model.ActivePlatformID = activeID
 		c.Model.ActiveModel = strings.TrimSpace(in.ActiveModel)
-		// 默认模型必须属于默认平台，否则清空：悬空模型名会拿着新平台端点
-		// 注入一个不存在的模型（删默认平台 / 换默认平台后的典型悬空场景）。
-		// 默认平台未配模型列表时不校验（保留旧版自由输入模型名的用法）。
-		if c.Model.ActiveModel != "" && def != "" {
+		// 当前模型必须属于当前平台，否则清空：悬空模型名会拿着新平台端点
+		// 调用一个不存在的模型（删当前平台 / 换当前平台后的典型悬空场景）。
+		// 当前平台未配模型列表时不校验（保留旧版自由输入模型名的用法）。
+		if c.Model.ActiveModel != "" && activeID != "" {
 			found := false
 			hasList := false
 			for _, p := range platforms {
-				if p.ID != def {
+				if p.ID != activeID {
 					continue
 				}
 				hasList = len(p.Models) > 0
@@ -430,7 +426,7 @@ func validateHTTPURL(u, label string) error {
 var modelSyncTargets = map[string]bool{"opencode": true, "codebuddy": true, "claude": true}
 
 // ClaudeSlotsView / ToolSyncView / ToolSyncInput 是按工具定制模型同步的绑定视图：
-// Claude 为 4 类映射槽位，OpenCode 为平台 ID → 勾选模型，CodeBuddy 为默认平台勾选模型。
+// Claude 为 4 类映射槽位，OpenCode 为平台 ID → 勾选模型，CodeBuddy 为所选平台勾选模型。
 type ClaudeSlotsView struct {
 	Model  string `json:"Model"`
 	Sonnet string `json:"Sonnet"`
@@ -439,25 +435,29 @@ type ClaudeSlotsView struct {
 }
 
 type ToolSyncView struct {
-	Enabled   bool                `json:"Enabled"`
-	Claude    ClaudeSlotsView     `json:"Claude"`
-	OpenCode  map[string][]string `json:"OpenCode"`
-	CodeBuddy []string            `json:"CodeBuddy"`
+	Enabled           bool                `json:"Enabled"`
+	Claude            ClaudeSlotsView     `json:"Claude"`
+	ClaudePlatform    string              `json:"ClaudePlatform"`
+	OpenCode          map[string][]string `json:"OpenCode"`
+	CodeBuddy         []string            `json:"CodeBuddy"`
+	CodeBuddyPlatform string              `json:"CodeBuddyPlatform"`
 }
 
 type ToolSyncInput struct {
-	Enabled   bool                `json:"Enabled"`
-	Claude    ClaudeSlotsView     `json:"Claude"`
-	OpenCode  map[string][]string `json:"OpenCode"`
-	CodeBuddy []string            `json:"CodeBuddy"`
+	Enabled           bool                `json:"Enabled"`
+	Claude            ClaudeSlotsView     `json:"Claude"`
+	ClaudePlatform    string              `json:"ClaudePlatform"`
+	OpenCode          map[string][]string `json:"OpenCode"`
+	CodeBuddy         []string            `json:"CodeBuddy"`
+	CodeBuddyPlatform string              `json:"CodeBuddyPlatform"`
 }
 
-// SetDefaultPlatform 设置默认平台并立即落盘生效（不走整包保存），随后调度一次
-// 防抖同步（静态注入目标随默认平台重写）。平台不存在时回落第一个平台；
-// 新默认平台有模型列表且不含当前默认模型时，悬空的 ActiveModel 一并清空
-//（与 SetModelConfig 同语义）。
-func (a *App) SetDefaultPlatform(platformID string) error {
+// SetActiveModelSelection 成对设置 kshell 当前平台与默认模型并立即落盘生效，
+// 随后调度一次防抖同步。平台不存在时回落第一个；模型不在生效平台模型列表时
+// 清空（列表为空保留自由输入），无平台则两者一并清空。
+func (a *App) SetActiveModelSelection(platformID, model string) error {
 	platformID = strings.TrimSpace(platformID)
+	model = strings.TrimSpace(model)
 	err := a.saveConfig(func(c *config.Config) {
 		found := false
 		for _, p := range c.Model.Platforms {
@@ -466,11 +466,15 @@ func (a *App) SetDefaultPlatform(platformID string) error {
 				break
 			}
 		}
-		if !found && len(c.Model.Platforms) > 0 {
-			platformID = c.Model.Platforms[0].ID
+		if !found {
+			platformID = ""
+			if len(c.Model.Platforms) > 0 {
+				platformID = c.Model.Platforms[0].ID
+			}
 		}
-		c.Model.DefaultPlatform = platformID
-		if c.Model.ActiveModel != "" && platformID != "" {
+		if platformID == "" {
+			model = ""
+		} else {
 			for _, p := range c.Model.Platforms {
 				if p.ID != platformID {
 					continue
@@ -478,32 +482,22 @@ func (a *App) SetDefaultPlatform(platformID string) error {
 				if len(p.Models) > 0 {
 					hit := false
 					for _, m := range p.Models {
-						if m == c.Model.ActiveModel {
+						if m == model {
 							hit = true
 							break
 						}
 					}
 					if !hit {
-						c.Model.ActiveModel = ""
+						model = ""
 					}
 				}
 				break
 			}
 		}
+		c.Model.ActivePlatformID = platformID
+		c.Model.ActiveModel = model
 	})
 	if err != nil {
-		return err
-	}
-	a.scheduleAgentSync()
-	return nil
-}
-
-// SetActiveModel 设置 kshell 自用默认模型并立即落盘生效，随后调度一次防抖同步。
-func (a *App) SetActiveModel(model string) error {
-	model = strings.TrimSpace(model)
-	if err := a.saveConfig(func(c *config.Config) {
-		c.Model.ActiveModel = model
-	}); err != nil {
 		return err
 	}
 	a.scheduleAgentSync()
@@ -523,9 +517,8 @@ func (a *App) SetModelEnabled(enabled bool) error {
 }
 
 // DeleteModelPlatform 删除单个平台并立即落盘生效，随后调度一次防抖同步。
-// 删除的是默认平台时回落第一个；新默认平台有模型列表且不含 ActiveModel 时
-// 悬空清空，无平台则连同 DefaultPlatform/ActiveModel 一并清空
-//（与 SetModelConfig 归一化同语义）。
+// 删除的是当前平台时回落第一个；新当前平台有模型列表且不含 ActiveModel 时
+// 悬空清空；指向被删平台的工具平台一并置空（运行期回落第一个）。
 func (a *App) DeleteModelPlatform(platformID string) error {
 	platformID = strings.TrimSpace(platformID)
 	exists := false
@@ -547,12 +540,18 @@ func (a *App) DeleteModelPlatform(platformID string) error {
 			rest = append(rest, p)
 		}
 		c.Model.Platforms = rest
-		if c.Model.DefaultPlatform == platformID {
+		if c.Model.ActivePlatformID == platformID {
 			if len(rest) > 0 {
-				c.Model.DefaultPlatform = rest[0].ID
+				c.Model.ActivePlatformID = rest[0].ID
 			} else {
-				c.Model.DefaultPlatform = ""
+				c.Model.ActivePlatformID = ""
 			}
+		}
+		if c.Model.ToolSync.ClaudePlatform == platformID {
+			c.Model.ToolSync.ClaudePlatform = ""
+		}
+		if c.Model.ToolSync.CodeBuddyPlatform == platformID {
+			c.Model.ToolSync.CodeBuddyPlatform = ""
 		}
 		if c.Model.ActiveModel != "" {
 			def, _ := c.Model.ActivePlatform()
@@ -595,10 +594,12 @@ func (a *App) GetToolSyncConfig(toolID string) (ToolSyncView, error) {
 		}
 	}
 	return ToolSyncView{
-		Enabled:   ts.Enabled[toolID],
-		Claude:    ClaudeSlotsView{Model: ts.Claude.Model, Sonnet: ts.Claude.Sonnet, Opus: ts.Claude.Opus, Haiku: ts.Claude.Haiku},
-		OpenCode:  openCode,
-		CodeBuddy: append([]string(nil), ts.CodeBuddy...),
+		Enabled:           ts.Enabled[toolID],
+		Claude:            ClaudeSlotsView{Model: ts.Claude.Model, Sonnet: ts.Claude.Sonnet, Opus: ts.Claude.Opus, Haiku: ts.Claude.Haiku},
+		ClaudePlatform:    ts.ClaudePlatform,
+		OpenCode:          openCode,
+		CodeBuddy:         append([]string(nil), ts.CodeBuddy...),
+		CodeBuddyPlatform: ts.CodeBuddyPlatform,
 	}, nil
 }
 
@@ -622,10 +623,12 @@ func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 	err := a.saveConfig(func(c *config.Config) {
 		// saveConfig 的 cfg 是浅拷贝：map/slice 必须新建，原地复用会写穿共享底层数组。
 		ts := config.ToolSyncConfig{
-			Enabled:   map[string]bool{},
-			Claude:    c.Model.ToolSync.Claude,
-			OpenCode:  map[string][]string{},
-			CodeBuddy: append([]string(nil), c.Model.ToolSync.CodeBuddy...),
+			Enabled:           map[string]bool{},
+			Claude:            c.Model.ToolSync.Claude,
+			ClaudePlatform:    c.Model.ToolSync.ClaudePlatform,
+			OpenCode:          map[string][]string{},
+			CodeBuddy:         append([]string(nil), c.Model.ToolSync.CodeBuddy...),
+			CodeBuddyPlatform: c.Model.ToolSync.CodeBuddyPlatform,
 		}
 		for k, v := range c.Model.ToolSync.Enabled {
 			ts.Enabled[k] = v
@@ -642,8 +645,10 @@ func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 					Opus:   strings.TrimSpace(in.Claude.Opus),
 					Haiku:  strings.TrimSpace(in.Claude.Haiku),
 				}
+				ts.ClaudePlatform = strings.TrimSpace(in.ClaudePlatform)
 			} else {
 				ts.Claude = config.ClaudeSync{}
+				ts.ClaudePlatform = ""
 			}
 		case "opencode":
 			// OpenCode 是 tool_sync.opencode 键的唯一属主：禁用即整键清空。
@@ -661,8 +666,10 @@ func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 		case "codebuddy":
 			if in.Enabled {
 				ts.CodeBuddy = trimList(in.CodeBuddy)
+				ts.CodeBuddyPlatform = strings.TrimSpace(in.CodeBuddyPlatform)
 			} else {
 				ts.CodeBuddy = nil
+				ts.CodeBuddyPlatform = ""
 			}
 		}
 		if in.Enabled {
@@ -769,7 +776,7 @@ func (a *App) SetAgentHubEnabled(enabled bool) error {
 }
 
 // applyAgentHubGates 让总开关/白名单改动即时生效：微信桥按最新配置重装配
-//（微信桥按最新配置重建实例：startWeixin 替换前 Stop 旧实例，关闭总开关时旧长轮询随之停止；开启时恢复）。
+// （微信桥按最新配置重建实例：startWeixin 替换前 Stop 旧实例，关闭总开关时旧长轮询随之停止；开启时恢复）。
 func (a *App) applyAgentHubGates() {
 	a.startWeixin()
 }

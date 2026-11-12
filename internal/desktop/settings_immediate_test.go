@@ -39,9 +39,9 @@ func TestDeleteModelPlatformImmediate(t *testing.T) {
 	app, layout, _ := newSyncApp(t)
 	app.mu.Lock()
 	app.opts.Config.Model = config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p1",
-		ActiveModel:     "m1",
+		Enabled:          true,
+		ActivePlatformID: "p1",
+		ActiveModel:      "m1",
 		Platforms: []config.ModelPlatform{
 			{ID: "p1", Name: "P1", OpenAIBaseURL: "https://p1.example", Models: []string{"m1"}},
 			{ID: "p2", Name: "P2", OpenAIBaseURL: "https://p2.example", Models: []string{"m2"}},
@@ -59,8 +59,8 @@ func TestDeleteModelPlatformImmediate(t *testing.T) {
 	if len(loaded.Model.Platforms) != 1 || loaded.Model.Platforms[0].ID != "p2" {
 		t.Fatalf("p1 应被删除: %#v", loaded.Model.Platforms)
 	}
-	if loaded.Model.DefaultPlatform != "p2" {
-		t.Fatalf("默认平台应回落 p2, got %q", loaded.Model.DefaultPlatform)
+	if loaded.Model.ActivePlatformID != "p2" {
+		t.Fatalf("默认平台应回落 p2, got %q", loaded.Model.ActivePlatformID)
 	}
 	if loaded.Model.ActiveModel != "" {
 		t.Fatalf("悬空 ActiveModel 应清空, got %q", loaded.Model.ActiveModel)
@@ -69,9 +69,9 @@ func TestDeleteModelPlatformImmediate(t *testing.T) {
 	// 归属正确的 ActiveModel 保留。
 	app.mu.Lock()
 	app.opts.Config.Model = config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p1",
-		ActiveModel:     "m1",
+		Enabled:          true,
+		ActivePlatformID: "p1",
+		ActiveModel:      "m1",
 		Platforms: []config.ModelPlatform{
 			{ID: "p1", Name: "P1", OpenAIBaseURL: "https://p1.example", Models: []string{"m1"}},
 			{ID: "p2", Name: "P2", OpenAIBaseURL: "https://p2.example", Models: []string{"m2"}},

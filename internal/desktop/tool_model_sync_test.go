@@ -30,8 +30,8 @@ func setSyncPlatform(t *testing.T, app *App) {
 	t.Helper()
 	app.mu.Lock()
 	app.opts.Config.Model = config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p1",
+		Enabled:          true,
+		ActivePlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", Name: "P1",
 			OpenAIBaseURL: "https://api.example.com",
@@ -44,6 +44,25 @@ func setSyncPlatform(t *testing.T, app *App) {
 func opencodeJSON(home string) (string, error) {
 	b, err := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.json"))
 	return string(b), err
+}
+
+func TestToolSyncPlatformRoundTrip(t *testing.T) {
+	app, _, _ := newSyncApp(t)
+	setSyncPlatform(t, app)
+	if err := app.SetToolSyncConfig("claude", ToolSyncInput{
+		Enabled:        true,
+		Claude:         ClaudeSlotsView{Model: "m2"},
+		ClaudePlatform: "p1",
+	}); err != nil {
+		t.Fatalf("SetToolSyncConfig: %v", err)
+	}
+	v, err := app.GetToolSyncConfig("claude")
+	if err != nil {
+		t.Fatalf("GetToolSyncConfig: %v", err)
+	}
+	if v.ClaudePlatform != "p1" {
+		t.Fatalf("ClaudePlatform = %q, want p1", v.ClaudePlatform)
+	}
 }
 
 // 启用 + 勾选：立即按勾选注入，未勾选模型不出现；配置持久化。
@@ -231,8 +250,8 @@ func TestGetToolSyncConfig(t *testing.T) {
 	}
 }
 
-// SetDefaultPlatform 立即落盘；新默认平台模型列表不含 ActiveModel 时悬空清空。
-func TestSetDefaultPlatformImmediate(t *testing.T) {
+// SetActiveModelSelection 立即落盘；新平台模型列表不含模型时悬空清空。
+func TestSetActiveModelSelectionImmediate(t *testing.T) {
 	app, layout, _ := newSyncApp(t)
 	setSyncPlatform(t, app)
 	app.mu.Lock()
@@ -241,47 +260,48 @@ func TestSetDefaultPlatformImmediate(t *testing.T) {
 	app.opts.Config.Model.ActiveModel = "m1"
 	app.mu.Unlock()
 
-	if err := app.SetDefaultPlatform("p2"); err != nil {
-		t.Fatalf("SetDefaultPlatform: %v", err)
+	if err := app.SetActiveModelSelection("p2", "m1"); err != nil {
+		t.Fatalf("SetActiveModelSelection: %v", err)
 	}
 	loaded, err := config.Load(layout)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Model.DefaultPlatform != "p2" {
-		t.Fatalf("DefaultPlatform = %q", loaded.Model.DefaultPlatform)
+	if loaded.Model.ActivePlatformID != "p2" {
+		t.Fatalf("ActivePlatformID = %q", loaded.Model.ActivePlatformID)
 	}
 	if loaded.Model.ActiveModel != "" {
 		t.Fatalf("悬空 ActiveModel 应清空, got %q", loaded.Model.ActiveModel)
 	}
 
-	// 未知平台回落第一个平台。
-	if err := app.SetDefaultPlatform("nope"); err != nil {
-		t.Fatalf("SetDefaultPlatform(nope): %v", err)
+	// 未知平台回落第一个平台；模型属于 p1 时保留。
+	if err := app.SetActiveModelSelection("nope", "m2"); err != nil {
+		t.Fatalf("SetActiveModelSelection(nope): %v", err)
 	}
 	loaded, err = config.Load(layout)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Model.DefaultPlatform != "p1" {
-		t.Fatalf("未知平台应回落第一个, got %q", loaded.Model.DefaultPlatform)
+	if loaded.Model.ActivePlatformID != "p1" || loaded.Model.ActiveModel != "m2" {
+		t.Fatalf("未知平台应回落第一个并保留合法模型, got %q/%q",
+			loaded.Model.ActivePlatformID, loaded.Model.ActiveModel)
 	}
 }
 
-// SetActiveModel 立即落盘并 TrimSpace。
-func TestSetActiveModelImmediate(t *testing.T) {
+// SetActiveModelSelection 立即落盘并 TrimSpace。
+func TestSetActiveModelSelectionTrimSpace(t *testing.T) {
 	app, layout, _ := newSyncApp(t)
 	setSyncPlatform(t, app)
 
-	if err := app.SetActiveModel("  m2  "); err != nil {
-		t.Fatalf("SetActiveModel: %v", err)
+	if err := app.SetActiveModelSelection("  p1  ", "  m2  "); err != nil {
+		t.Fatalf("SetActiveModelSelection: %v", err)
 	}
 	loaded, err := config.Load(layout)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Model.ActiveModel != "m2" {
-		t.Fatalf("ActiveModel = %q", loaded.Model.ActiveModel)
+	if loaded.Model.ActivePlatformID != "p1" || loaded.Model.ActiveModel != "m2" {
+		t.Fatalf("selection = %q/%q", loaded.Model.ActivePlatformID, loaded.Model.ActiveModel)
 	}
 }
 
