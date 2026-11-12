@@ -1708,10 +1708,19 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
       })
       .catch(() => {});
     // kshell 平台注入模型按 toolId 另行拉取（见下方 effect），此处不再拼装。
+    // 项目预填优先级：selectedProject（首页当前选中项目）→ 上次弹窗残留 →
+    // lastCreate → workspaces[0]，与 /easynew 的取值口径对齐（2026-11-12 误建
+    // 事故：用户切到 kshell 后点「+ 新建」，弹窗仍预填上次创建的 silkworm）。
+    // 命中一律回写选项现值（canonical Path）：lastCreate/残留可能带旧拼写
+    //（盘符大小写漂移），select 值匹配不到任何 option 时显示与提交脱节。
+    const pickWs = (candidate: string | null | undefined): string => {
+      if (!candidate) return '';
+      const hit = workspaces.find((w) => sameWorkspacePath(w.Path, candidate));
+      return hit ? hit.Path : '';
+    };
     setWsPath((cur) => {
-      if (cur && workspaces.some((w) => sameWorkspacePath(w.Path, cur))) return cur;
-      if (last && workspaces.some((w) => sameWorkspacePath(w.Path, last.wsPath))) return last.wsPath;
-      return workspaces[0]?.Path ?? '';
+      const sel = useAppStore.getState().selectedProject;
+      return pickWs(sel) || pickWs(cur) || pickWs(last?.wsPath) || workspaces[0]?.Path || '';
     });
     // 模型预选：该工具记忆的上次模型（跨工具不互覆）在缓存列表里才预选，否则空（默认模型）
     const rememberTool = last?.toolId ?? '';

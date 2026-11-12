@@ -1364,6 +1364,34 @@ describe('AgentHubPanel', () => {
     });
   });
 
+  it('新建 agent：首页选中项目（selectedProject）优先于 lastCreate 预填', async () => {
+    // 2026-11-12 误建事故：用户在首页切到 kshell 后点「+ 新建 Agent」，弹窗却预填
+    // 上次创建的 silkworm（lastCreate），直接点创建就建错项目。预填必须跟随
+    // 当前选中项目，与 /easynew 的取值口径（selectedProject 优先）对齐。
+    api.getTools.mockResolvedValue([acpTool()]);
+    const workspaceB = { ...workspaceA, Path: 'D:\\ws\\b', Name: 'b' };
+    saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: null });
+    useAppStore.setState({ workspaces: [workspaceA, workspaceB], selectedProject: 'D:\\ws\\b' });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
+    await waitFor(() => {
+      expect((screen.getByLabelText(tt('ui.hub.field_project')) as HTMLSelectElement).value).toBe('D:\\ws\\b');
+    });
+  });
+
+  it('新建 agent：selectedProject 失效回落 lastCreate；拼写漂移时回写归一后的选项值', async () => {
+    // lastCreate 记的是小写盘符拼写、列表选项是大写：预填必须回写选项现值，
+    // 否则 select 的值匹配不到任何 option，显示与提交脱节。
+    api.getTools.mockResolvedValue([acpTool()]);
+    saveLastCreate({ wsPath: 'd:\\ws\\a', toolId: 'claude', modelId: null });
+    useAppStore.setState({ workspaces: [workspaceA], selectedProject: 'D:\\ws\\gone' });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
+    await waitFor(() => {
+      expect((screen.getByLabelText(tt('ui.hub.field_project')) as HTMLSelectElement).value).toBe('D:\\ws\\a');
+    });
+  });
+
   it('新建 agent：确定未登录（Auth=out）的工具不进下拉，unknown 保守放行', async () => {
     // codebuddy out（确定未登录）、codex unknown（探测不稳）、claude 缺省（老快照形态）
     api.getTools.mockResolvedValue([
