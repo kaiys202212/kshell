@@ -1166,6 +1166,29 @@ func TestToolPlatformModels(t *testing.T) {
 		}
 	})
 
+	t.Run("codebuddy 按默认平台勾选集", func(t *testing.T) {
+		env := newChatTestApp(t, nil, nil)
+		env.app.mu.Lock()
+		env.app.opts.Config.Model = config.ModelConfig{
+			Enabled:         true,
+			DefaultPlatform: "p1",
+			Platforms:       platforms,
+			ToolSync: config.ToolSyncConfig{
+				Enabled:   map[string]bool{"codebuddy": true},
+				CodeBuddy: []string{"a2"},
+			},
+		}
+		env.app.mu.Unlock()
+
+		got, err := env.app.ToolPlatformModels("codebuddy")
+		if err != nil {
+			t.Fatalf("ToolPlatformModels: %v", err)
+		}
+		if len(got) != 1 || got[0].ID != "a2" || got[0].Name != "Alpha: a2" {
+			t.Fatalf("应只列默认平台勾选集（裸 mid + 前缀名）: %+v", got)
+		}
+	})
+
 	t.Run("cursor 恒为空", func(t *testing.T) {
 		env := newChatTestApp(t, nil, nil)
 		env.app.mu.Lock()

@@ -16,7 +16,7 @@ const api = vi.hoisted(() => ({
   getTools: vi.fn(),
   onToolsUpdated: vi.fn(),
   onHubBusy: vi.fn(() => () => {}),
-  getModelConfig: vi.fn(),
+  listToolPlatformModels: vi.fn(),
   readClipboardPaste: vi.fn(),
   listChatCommands: vi.fn(),
   listChatModels: vi.fn(),
@@ -52,12 +52,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   api.getTools.mockResolvedValue([]);
   api.onToolsUpdated.mockImplementation(() => () => {});
-  api.getModelConfig.mockResolvedValue({
-    Enabled: false,
-    Platforms: [],
-    DefaultPlatform: '',
-    ActiveModel: '',
-  });
+  api.listToolPlatformModels.mockResolvedValue([]);
   api.listHubMessages.mockResolvedValue([]);
   api.listHubArchive.mockResolvedValue([]);
   api.loadHubArchive.mockResolvedValue([]);

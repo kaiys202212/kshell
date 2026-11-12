@@ -27,7 +27,7 @@ const api = vi.hoisted(() => ({
   getTools: vi.fn(),
   onToolsUpdated: vi.fn(),
   onHubBusy: vi.fn(() => () => {}),
-  getModelConfig: vi.fn(),
+  listToolPlatformModels: vi.fn(),
   readClipboardPaste: vi.fn(),
   listChatCommands: vi.fn(),
   listChatModels: vi.fn(),
@@ -74,12 +74,7 @@ beforeEach(() => {
     { ID: 'claude', Name: 'Claude', Installed: true, ACP: { Available: true } },
   ]);
   api.onToolsUpdated.mockImplementation(() => () => {});
-  api.getModelConfig.mockResolvedValue({
-    Enabled: false,
-    Platforms: [],
-    DefaultPlatform: '',
-    ActiveModel: '',
-  });
+  api.listToolPlatformModels.mockResolvedValue([]);
   api.listHubMessages.mockImplementation(async () => useAppStore.getState().hubMessages);
   api.listHubArchive.mockResolvedValue([]);
   api.readClipboardPaste.mockResolvedValue({ Text: '', Path: '' });
