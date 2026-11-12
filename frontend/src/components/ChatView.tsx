@@ -741,51 +741,6 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
           {t('ui.chat.status_authenticating')}
         </div>
       )}
-      {showConfigRow && (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-1 text-xs">
-          {models && models.Models && models.Models.length > 0 && (
-            <>
-              <span className="text-muted-foreground">{t('ui.chat.model_label')}</span>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button className="rounded border border-border px-2 py-0.5 hover:bg-muted">
-                    {currentModelName} <span className="text-muted-foreground">▾</span>
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  {models.Models?.map((m) => (
-                    <DropdownMenuItem key={m.ID} onSelect={() => void switchModel(m.ID)}>
-                      <span className={cn(m.ID === models.Current && 'font-medium')}>{m.Name}</span>
-                      {m.Description && <span className="ml-2 text-muted-foreground">{m.Description}</span>}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </>
-          )}
-          {configOptions.map((opt) => (
-            <div key={opt.ID} className="flex items-center gap-1">
-              <span className="text-muted-foreground">{opt.Name}</span>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button aria-label={opt.Name} className="rounded border border-border px-2 py-0.5 hover:bg-muted">
-                    {(opt.Options ?? []).find((o) => o.Value === opt.Current)?.Name ?? opt.Current}{' '}
-                    <span className="text-muted-foreground">▾</span>
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  {(opt.Options ?? []).map((o) => (
-                    <DropdownMenuItem key={o.Value} onSelect={() => void switchConfig(opt.ID, o.Value)}>
-                      <span className={cn(o.Value === opt.Current && 'font-medium')}>{o.Name}</span>
-                      {o.Description && <span className="ml-2 text-muted-foreground">{o.Description}</span>}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          ))}
-        </div>
-      )}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-2">
         <ChatTimeline
           items={items}
@@ -900,13 +855,60 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
           }}
         />
-        <div className="mt-1 flex items-center justify-end gap-2">
-          <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => void attachByPicker()}>
-            {t('ui.chat.attach')}
-          </Button>
-          {running
-            ? <Button variant="outline" size="sm" onClick={() => void cancelChat(id)}>{t('ui.chat.stop')}</Button>
-            : <Button size="sm" onClick={send}>{t('ui.chat.send')}</Button>}
+        <div data-testid="chat-action-row" className="mt-1 flex flex-wrap items-center gap-2">
+          {showConfigRow && (
+            <div data-testid="chat-config-controls" className="flex min-w-0 flex-wrap items-center gap-2">
+              {models && models.Models && models.Models.length > 0 && (
+                <>
+                  <span className="shrink-0 text-muted-foreground">{t('ui.chat.model_label')}</span>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button className="max-w-56 truncate rounded border border-border px-2 py-0.5 hover:bg-muted">
+                        {currentModelName} <span className="text-muted-foreground">▾</span>
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start">
+                      {models.Models?.map((m) => (
+                        <DropdownMenuItem key={m.ID} onSelect={() => void switchModel(m.ID)}>
+                          <span className={cn(m.ID === models.Current && 'font-medium')}>{m.Name}</span>
+                          {m.Description && <span className="ml-2 text-muted-foreground">{m.Description}</span>}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </>
+              )}
+              {configOptions.map((opt) => (
+                <div key={opt.ID} className="flex items-center gap-1">
+                  <span className="shrink-0 text-muted-foreground">{opt.Name}</span>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button aria-label={opt.Name} className="max-w-56 truncate rounded border border-border px-2 py-0.5 hover:bg-muted">
+                        {(opt.Options ?? []).find((o) => o.Value === opt.Current)?.Name ?? opt.Current}{' '}
+                        <span className="text-muted-foreground">▾</span>
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start">
+                      {(opt.Options ?? []).map((o) => (
+                        <DropdownMenuItem key={o.Value} onSelect={() => void switchConfig(opt.ID, o.Value)}>
+                          <span className={cn(o.Value === opt.Current && 'font-medium')}>{o.Name}</span>
+                          {o.Description && <span className="ml-2 text-muted-foreground">{o.Description}</span>}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => void attachByPicker()}>
+              {t('ui.chat.attach')}
+            </Button>
+            {running
+              ? <Button variant="outline" size="sm" onClick={() => void cancelChat(id)}>{t('ui.chat.stop')}</Button>
+              : <Button size="sm" onClick={send}>{t('ui.chat.send')}</Button>}
+          </div>
         </div>
       </div>
 
