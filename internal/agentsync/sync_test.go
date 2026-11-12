@@ -13,6 +13,7 @@ import (
 )
 
 func TestInputFromModelCarriesToolPlatforms(t *testing.T) {
+	// 旧单字段兜底：未归一化的程序内构造配置仍要能读到平台。
 	in := InputFromModel(config.ModelConfig{
 		Enabled: true,
 		ToolSync: config.ToolSyncConfig{
@@ -22,6 +23,20 @@ func TestInputFromModelCarriesToolPlatforms(t *testing.T) {
 	})
 	if in.ClaudePlatformID != "p1" || in.CodeBuddyPlatformID != "p1" {
 		t.Fatalf("tool platforms = %q/%q, want p1/p1", in.ClaudePlatformID, in.CodeBuddyPlatformID)
+	}
+}
+
+// 新格式唯一来源是 ToolPlatforms 映射：归一化后的真实配置旧字段已清空，
+// InputFromModel 必须从映射取值，否则静态注入在真实路径永远落第一个平台。
+func TestInputFromModelCarriesToolPlatformMap(t *testing.T) {
+	in := InputFromModel(config.ModelConfig{
+		Enabled: true,
+		ToolSync: config.ToolSyncConfig{
+			ToolPlatforms: map[string]string{"claude": "p2", "codebuddy": "p1"},
+		},
+	})
+	if in.ClaudePlatformID != "p2" || in.CodeBuddyPlatformID != "p1" {
+		t.Fatalf("tool platforms = %q/%q, want p2/p1", in.ClaudePlatformID, in.CodeBuddyPlatformID)
 	}
 }
 

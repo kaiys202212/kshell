@@ -748,11 +748,31 @@ func TestToolPlatformsMigration(t *testing.T) {
 			wantCodeBuddy: "p2",
 		},
 		{
-			// 只有旧键、没有平台列表时也必须保留用户选择：悬空判定交给消费方回落，
-			// 迁移层不做校验，否则这类老配置会在升级时静默丢数据。
-			name: "仅旧键无平台列表",
+			// 新格式已有部分键时逐 key 补缺：只补旧键里缺失的工具，不覆盖新值。
+			name: "部分映射仅补缺",
 			content: "model:\n" +
+				"  platforms:\n" +
+				"    - id: p1\n" +
+				"      name: A\n" +
+				"    - id: p2\n" +
+				"      name: B\n" +
 				"  tool_sync:\n" +
+				"    tool_platforms:\n" +
+				"      codebuddy: p2\n" +
+				"    claude_platform: p1\n",
+			wantClaude:    "p1",
+			wantCodeBuddy: "p2",
+		},
+		{
+			// 显式空映射（tool_platforms: {}）也算「尚未配置」，旧键仍要迁入；
+			// 否则升级时老配置会被空映射挡住而丢数据。
+			name: "空映射仍迁移旧键",
+			content: "model:\n" +
+				"  platforms:\n" +
+				"    - id: p1\n" +
+				"      name: A\n" +
+				"  tool_sync:\n" +
+				"    tool_platforms: {}\n" +
 				"    claude_platform: p1\n" +
 				"    codebuddy_platform: p1\n",
 			wantClaude:    "p1",

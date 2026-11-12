@@ -88,17 +88,64 @@ func TestDeletePlatformClearsToolPlatforms(t *testing.T) {
 	app, _, _ := newSyncApp(t)
 	setSyncPlatform(t, app)
 	app.mu.Lock()
-	app.opts.Config.Model.ToolSync.ClaudePlatform = "p1"
-	app.opts.Config.Model.ToolSync.CodeBuddyPlatform = "p1"
+	app.opts.Config.Model.ToolSync.ToolPlatforms = map[string]string{"claude": "p1", "codebuddy": "p1"}
 	app.mu.Unlock()
 
 	if err := app.DeleteModelPlatform("p1"); err != nil {
 		t.Fatalf("DeleteModelPlatform: %v", err)
 	}
 	m := app.snapshot().Config.Model
+	if len(m.ToolSync.ToolPlatforms) != 0 {
+		t.Fatalf("删除平台应清空对应工具平台映射, got %#v", m.ToolSync.ToolPlatforms)
+	}
 	if m.ToolSync.ClaudePlatform != "" || m.ToolSync.CodeBuddyPlatform != "" {
-		t.Fatalf("删除平台应清空工具平台, got %q/%q",
-			m.ToolSync.ClaudePlatform, m.ToolSync.CodeBuddyPlatform)
+		t.Fatalf("旧字段不应复活: %q/%q", m.ToolSync.ClaudePlatform, m.ToolSync.CodeBuddyPlatform)
+	}
+}
+
+// 真实 SetToolSyncConfig → saveConfig 路径：映射必须保留（更新一个工具不能抹掉
+// 其它工具），落盘只出现 tool_platforms，旧 claude_platform/codebuddy_platform 不回写。
+func TestSetToolSyncConfigPersistsToolPlatformMap(t *testing.T) {
+	app, layout, _ := newSyncApp(t)
+	setSyncPlatform(t, app)
+	// 预置新格式映射，并用旧字段模拟未归一化的内存配置（应被迁入映射、随后清空）。
+	app.mu.Lock()
+	app.opts.Config.Model.ToolSync.ToolPlatforms = map[string]string{"codebuddy": "p1"}
+	app.opts.Config.Model.ToolSync.ClaudePlatform = "p1"
+	app.mu.Unlock()
+
+	if err := app.SetToolSyncConfig("claude", ToolSyncInput{
+		Enabled:        true,
+		Claude:         ClaudeSlotsView{Model: "m1"},
+		ClaudePlatform: "p1",
+	}); err != nil {
+		t.Fatalf("SetToolSyncConfig(claude): %v", err)
+	}
+	// 再更新另一个工具：不能抹掉 claude/codebuddy 的映射。
+	if err := app.SetToolSyncConfig("opencode", ToolSyncInput{
+		Enabled:  true,
+		OpenCode: map[string][]string{"p1": {"m1"}},
+	}); err != nil {
+		t.Fatalf("SetToolSyncConfig(opencode): %v", err)
+	}
+
+	loaded, err := config.Load(layout)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	tp := loaded.Model.ToolSync.ToolPlatforms
+	if tp["claude"] != "p1" || tp["codebuddy"] != "p1" {
+		t.Fatalf("ToolPlatforms = %#v, want claude/codebuddy 均为 p1", tp)
+	}
+	raw, err := os.ReadFile(layout.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "claude_platform") || strings.Contains(string(raw), "codebuddy_platform") {
+		t.Fatalf("保存后不应回写旧字段:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), "tool_platforms") {
+		t.Fatalf("保存后应写 tool_platforms:\n%s", raw)
 	}
 }
 

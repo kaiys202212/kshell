@@ -127,4 +127,38 @@ model:
 	if c.Model.ToolSync.ClaudePlatform != "" || c.Model.ToolSync.CodeBuddyPlatform != "" {
 		t.Fatalf("tool platform not cleared: %+v", c.Model.ToolSync)
 	}
+	if len(c.Model.ToolSync.ToolPlatforms) != 0 {
+		t.Fatalf("无平台时 ToolPlatforms 应清空: %#v", c.Model.ToolSync.ToolPlatforms)
+	}
+}
+
+// TestToolPlatformKnownAndUnknownTools 锁定 ToolPlatform 契约：已知工具
+// （映射里显式出现的键，或旧字段兜底的 claude/codebuddy）空/悬空回落第一个；
+// 拼错的未知 toolID 返回 false，不能静默拿到第一平台。
+func TestToolPlatformKnownAndUnknownTools(t *testing.T) {
+	m := ModelConfig{
+		Platforms: []ModelPlatform{{ID: "p1"}, {ID: "p2"}},
+		ToolSync: ToolSyncConfig{ToolPlatforms: map[string]string{
+			"claude":    "p2",
+			"codebuddy": "gone",
+			"codex":     "p1",
+		}},
+	}
+	cases := []struct {
+		toolID string
+		wantID string
+		wantOK bool
+	}{
+		{"claude", "p2", true},
+		{"codebuddy", "p1", true}, // 悬空回落第一个
+		{"codex", "p1", true},
+		{"claud", "", false}, // 拼错：未知工具
+		{"gemini", "", false},
+	}
+	for _, tc := range cases {
+		got, ok := m.ToolPlatform(tc.toolID)
+		if ok != tc.wantOK || got.ID != tc.wantID {
+			t.Fatalf("ToolPlatform(%q) = %+v, %v; want %q, %v", tc.toolID, got, ok, tc.wantID, tc.wantOK)
+		}
+	}
 }

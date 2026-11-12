@@ -102,8 +102,8 @@ func InputFromModel(m config.ModelConfig) SyncInput {
 	return SyncInput{
 		Enabled:             m.Enabled,
 		Platforms:           m.Platforms,
-		ClaudePlatformID:    m.ToolSync.ClaudePlatform,
-		CodeBuddyPlatformID: m.ToolSync.CodeBuddyPlatform,
+		ClaudePlatformID:    m.ToolSync.ToolPlatformID("claude"),
+		CodeBuddyPlatformID: m.ToolSync.ToolPlatformID("codebuddy"),
 		ActiveModel:         m.ActiveModel,
 		ToolSync:            m.ToolSync,
 	}

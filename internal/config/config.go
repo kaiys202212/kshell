@@ -468,15 +468,23 @@ func (c Config) normalized() Config {
 	// 旧单工具平台字段迁移为 ToolPlatforms 映射：只有映射尚未出现（nil）时才迁移，
 	// 已有新键时以新键为准（不合并旧值）。迁移后旧字段统一清空，保存只落新格式。
 	ts := &c.Model.ToolSync
-	claudeLegacy := strings.TrimSpace(ts.ClaudePlatform)
-	codeBuddyLegacy := strings.TrimSpace(ts.CodeBuddyPlatform)
-	if ts.ToolPlatforms == nil && (claudeLegacy != "" || codeBuddyLegacy != "") {
-		ts.ToolPlatforms = map[string]string{}
-		if claudeLegacy != "" {
-			ts.ToolPlatforms["claude"] = claudeLegacy
+	// len==0 而非 ==nil：显式空映射（tool_platforms: {}）也视为「尚未配置」，
+	// 否则升级时旧键会被空映射挡住而丢数据。逐 key 补缺，已有新键不覆盖。
+	if len(ts.ToolPlatforms) == 0 {
+		ts.ToolPlatforms = nil
+	}
+	for _, legacy := range []struct{ tool, id string }{
+		{"claude", strings.TrimSpace(ts.ClaudePlatform)},
+		{"codebuddy", strings.TrimSpace(ts.CodeBuddyPlatform)},
+	} {
+		if legacy.id == "" {
+			continue
 		}
-		if codeBuddyLegacy != "" {
-			ts.ToolPlatforms["codebuddy"] = codeBuddyLegacy
+		if ts.ToolPlatforms == nil {
+			ts.ToolPlatforms = map[string]string{}
+		}
+		if _, ok := ts.ToolPlatforms[legacy.tool]; !ok {
+			ts.ToolPlatforms[legacy.tool] = legacy.id
 		}
 	}
 	ts.ClaudePlatform = ""
@@ -633,6 +641,8 @@ func (c Config) normalized() Config {
 	if len(c.Model.Platforms) == 0 {
 		c.Model.ActivePlatformID = ""
 		c.Model.ActiveModel = ""
+		// 无平台时工具平台选择全部悬空，映射一并清空（消费方本来也无可回落）。
+		c.Model.ToolSync.ToolPlatforms = nil
 	}
 	c.Model.DefaultPlatform = ""
 	c.Model.Preset = ""
@@ -670,24 +680,40 @@ func (m ModelConfig) effectivePlatform() *ModelPlatform {
 	return &m.Platforms[0]
 }
 
-// ToolPlatform 返回工具（ToolPlatforms 中的任意 toolID，如 claude/codebuddy/
-// codex/gemini/cursor）选定平台；映射为空或悬空时回落第一个。
-// 无平台返回 false。
+// ToolPlatformID 返回工具选定的平台 ID：优先新映射，旧单字段仅作未归一化
+// 配置的兜底。未配置返回空串，由消费方回落第一个平台。
+func (t ToolSyncConfig) ToolPlatformID(toolID string) string {
+	toolID = strings.TrimSpace(toolID)
+	if id := strings.TrimSpace(t.ToolPlatforms[toolID]); id != "" {
+		return id
+	}
+	switch toolID {
+	case "claude":
+		return strings.TrimSpace(t.ClaudePlatform)
+	case "codebuddy":
+		return strings.TrimSpace(t.CodeBuddyPlatform)
+	}
+	return ""
+}
+
+// ToolPlatform 返回已知工具选定平台；空/悬空回落第一个，无平台或未知
+// toolID 返回 false。已知 = ToolPlatforms 中显式出现的键，或兼容旧字段的
+// claude/codebuddy：拼错的 toolID 若静默拿第一个平台，会掩盖调用方 bug。
 func (m ModelConfig) ToolPlatform(toolID string) (ModelPlatform, bool) {
-	id := strings.TrimSpace(m.ToolSync.ToolPlatforms[toolID])
-	// 兼容旧字段：归一化后的配置已迁入映射并清空，但程序内构造的旧配置仍可读到。
-	if id == "" {
+	toolID = strings.TrimSpace(toolID)
+	id, known := m.ToolSync.ToolPlatforms[toolID]
+	if !known {
 		switch toolID {
-		case "claude":
-			id = strings.TrimSpace(m.ToolSync.ClaudePlatform)
-		case "codebuddy":
-			id = strings.TrimSpace(m.ToolSync.CodeBuddyPlatform)
+		case "claude", "codebuddy":
+			id = m.ToolSync.ToolPlatformID(toolID)
+		default:
+			return ModelPlatform{}, false
 		}
 	}
 	if len(m.Platforms) == 0 {
 		return ModelPlatform{}, false
 	}
-	if id != "" {
+	if id = strings.TrimSpace(id); id != "" {
 		for _, p := range m.Platforms {
 			if p.ID == id {
 				return p, true

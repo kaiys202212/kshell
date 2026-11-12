@@ -366,9 +366,11 @@ func (a *App) SetModelConfig(in ModelConfigInput) error {
 		c.Model.Enabled = in.Enabled
 		c.Model.Platforms = platforms
 		c.Model.ActivePlatformID = activeID
-		// 平台列表整体替换后，指向已删平台的工具选择一并置空（运行期回落第一个）。
-		c.Model.ToolSync.ClaudePlatform = validPlatformID(platforms, c.Model.ToolSync.ClaudePlatform)
-		c.Model.ToolSync.CodeBuddyPlatform = validPlatformID(platforms, c.Model.ToolSync.CodeBuddyPlatform)
+		// 平台列表整体替换后，指向已删平台的工具选择一并清理（运行期回落第一个）。
+		// 统一读写 ToolPlatforms 映射，旧单字段清空，避免真实保存路径把旧键写回盘。
+		c.Model.ToolSync.ToolPlatforms = pruneToolPlatforms(platforms, c.Model.ToolSync)
+		c.Model.ToolSync.ClaudePlatform = ""
+		c.Model.ToolSync.CodeBuddyPlatform = ""
 		c.Model.ActiveModel = strings.TrimSpace(in.ActiveModel)
 		// 当前模型必须属于当前平台，否则清空：悬空模型名会拿着新平台端点
 		// 调用一个不存在的模型（删当前平台 / 换当前平台后的典型悬空场景）。
@@ -440,6 +442,71 @@ func validPlatformID(platforms []config.ModelPlatform, id string) string {
 		}
 	}
 	return ""
+}
+
+// toolPlatformsSnapshot 返回工具平台映射副本（含旧字段兜底）：旧
+// claude_platform/codebuddy_platform 只在映射缺少对应键时补入。必须新建 map，
+// saveConfig 的浅拷贝下原地改写会写穿内存配置。
+func toolPlatformsSnapshot(ts config.ToolSyncConfig) map[string]string {
+	out := make(map[string]string, len(ts.ToolPlatforms)+2)
+	for tool, id := range ts.ToolPlatforms {
+		tool = strings.TrimSpace(tool)
+		if id = strings.TrimSpace(id); tool != "" && id != "" {
+			out[tool] = id
+		}
+	}
+	for _, tool := range []string{"claude", "codebuddy"} {
+		if _, ok := out[tool]; ok {
+			continue
+		}
+		if id := ts.ToolPlatformID(tool); id != "" {
+			out[tool] = id
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// pruneToolPlatforms 返回剔除悬空平台后的映射副本：平台列表整体替换后，
+// 指向已删平台的选择置空（运行期回落第一个）。
+func pruneToolPlatforms(platforms []config.ModelPlatform, ts config.ToolSyncConfig) map[string]string {
+	out := toolPlatformsSnapshot(ts)
+	for tool, id := range out {
+		if valid := validPlatformID(platforms, id); valid == "" {
+			delete(out, tool)
+		} else {
+			out[tool] = valid
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// removeToolPlatforms 返回剔除指定平台的映射副本（删除平台/多平台编辑共用）。
+func removeToolPlatforms(ts config.ToolSyncConfig, platformID string) map[string]string {
+	out := toolPlatformsSnapshot(ts)
+	for tool, id := range out {
+		if strings.TrimSpace(id) == platformID {
+			delete(out, tool)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// setToolPlatform 写入单个工具平台；空 ID 表示删除该键（回落第一个）。
+func setToolPlatform(m map[string]string, toolID, id string) {
+	if id = strings.TrimSpace(id); id == "" {
+		delete(m, toolID)
+		return
+	}
+	m[toolID] = id
 }
 
 // ClaudeSlotsView / ToolSyncView / ToolSyncInput 是按工具定制模型同步的绑定视图：
@@ -564,12 +631,9 @@ func (a *App) DeleteModelPlatform(platformID string) error {
 				c.Model.ActivePlatformID = ""
 			}
 		}
-		if c.Model.ToolSync.ClaudePlatform == platformID {
-			c.Model.ToolSync.ClaudePlatform = ""
-		}
-		if c.Model.ToolSync.CodeBuddyPlatform == platformID {
-			c.Model.ToolSync.CodeBuddyPlatform = ""
-		}
+		c.Model.ToolSync.ToolPlatforms = removeToolPlatforms(c.Model.ToolSync, platformID)
+		c.Model.ToolSync.ClaudePlatform = ""
+		c.Model.ToolSync.CodeBuddyPlatform = ""
 		if c.Model.ActiveModel != "" {
 			def, _ := c.Model.ActivePlatform()
 			if def.ID == "" {
@@ -613,10 +677,10 @@ func (a *App) GetToolSyncConfig(toolID string) (ToolSyncView, error) {
 	return ToolSyncView{
 		Enabled:           ts.Enabled[toolID],
 		Claude:            ClaudeSlotsView{Model: ts.Claude.Model, Sonnet: ts.Claude.Sonnet, Opus: ts.Claude.Opus, Haiku: ts.Claude.Haiku},
-		ClaudePlatform:    ts.ClaudePlatform,
+		ClaudePlatform:    ts.ToolPlatformID("claude"),
 		OpenCode:          openCode,
 		CodeBuddy:         append([]string(nil), ts.CodeBuddy...),
-		CodeBuddyPlatform: ts.CodeBuddyPlatform,
+		CodeBuddyPlatform: ts.ToolPlatformID("codebuddy"),
 	}, nil
 }
 
@@ -639,13 +703,17 @@ func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 	}
 	err := a.saveConfig(func(c *config.Config) {
 		// saveConfig 的 cfg 是浅拷贝：map/slice 必须新建，原地复用会写穿共享底层数组。
+		// 平台选择统一读写 ToolPlatforms；旧字段只作兜底迁入、不再写回盘。
+		toolPlatforms := toolPlatformsSnapshot(c.Model.ToolSync)
+		if toolPlatforms == nil {
+			toolPlatforms = map[string]string{}
+		}
 		ts := config.ToolSyncConfig{
-			Enabled:           map[string]bool{},
-			Claude:            c.Model.ToolSync.Claude,
-			ClaudePlatform:    c.Model.ToolSync.ClaudePlatform,
-			OpenCode:          map[string][]string{},
-			CodeBuddy:         append([]string(nil), c.Model.ToolSync.CodeBuddy...),
-			CodeBuddyPlatform: c.Model.ToolSync.CodeBuddyPlatform,
+			Enabled:       map[string]bool{},
+			Claude:        c.Model.ToolSync.Claude,
+			ToolPlatforms: toolPlatforms,
+			OpenCode:      map[string][]string{},
+			CodeBuddy:     append([]string(nil), c.Model.ToolSync.CodeBuddy...),
 		}
 		for k, v := range c.Model.ToolSync.Enabled {
 			ts.Enabled[k] = v
@@ -662,10 +730,10 @@ func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 					Opus:   strings.TrimSpace(in.Claude.Opus),
 					Haiku:  strings.TrimSpace(in.Claude.Haiku),
 				}
-				ts.ClaudePlatform = validPlatformID(c.Model.Platforms, in.ClaudePlatform)
+				setToolPlatform(ts.ToolPlatforms, "claude", validPlatformID(c.Model.Platforms, in.ClaudePlatform))
 			} else {
 				ts.Claude = config.ClaudeSync{}
-				ts.ClaudePlatform = ""
+				delete(ts.ToolPlatforms, "claude")
 			}
 		case "opencode":
 			// OpenCode 是 tool_sync.opencode 键的唯一属主：禁用即整键清空。
@@ -683,11 +751,14 @@ func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 		case "codebuddy":
 			if in.Enabled {
 				ts.CodeBuddy = trimList(in.CodeBuddy)
-				ts.CodeBuddyPlatform = validPlatformID(c.Model.Platforms, in.CodeBuddyPlatform)
+				setToolPlatform(ts.ToolPlatforms, "codebuddy", validPlatformID(c.Model.Platforms, in.CodeBuddyPlatform))
 			} else {
 				ts.CodeBuddy = nil
-				ts.CodeBuddyPlatform = ""
+				delete(ts.ToolPlatforms, "codebuddy")
 			}
+		}
+		if len(ts.ToolPlatforms) == 0 {
+			ts.ToolPlatforms = nil
 		}
 		if in.Enabled {
 			ts.Enabled[toolID] = true
