@@ -1,6 +1,6 @@
 // 中心区 ACP 聊天页签：时间线 + 输入区 + 权限弹窗。常挂载、由父级 hidden 切换。
 // 模型下拉 / 技能补全 / 附件（粘贴、拖拽、选择按钮）在本组件内实现。
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -133,6 +133,177 @@ function attachmentLabel(att: ChatAttachmentMeta, imageLabel: string): string {
   if (att.MimeType?.startsWith('image/')) return imageLabel;
   return att.MimeType ?? '';
 }
+
+// 时间线独立 memo：draft 变化不重跑已有消息的 ReactMarkdown（与 HubMessageList 同思路）。
+// 翻译在本组件内部自取，避免 t 引用进 props；附件点击分派也内聚在此
+//（openAttachment/renderAttachmentChips 仅时间线使用）。items 与回调引用稳定时整段子树跳过重渲染。
+interface ChatTimelineProps {
+  items: TimelineItem[];
+  workspace: string;
+  onResume: () => void;
+  onPreview: (p: { name?: string; path: string }) => void;
+  onRevealInTree?: (absPath: string) => void;
+}
+
+const ChatTimeline = memo(function ChatTimeline({ items, workspace, onResume, onPreview, onRevealInTree }: ChatTimelineProps) {
+  const { t } = useTranslation();
+  // 附件 chip 点击分派（attachmentAction 纯函数归类，副作用在此触发）：
+  // preview → lightbox；default/local → 系统打开（失败 toast）；external → 外链
+  // （openExternalURL 内部失败静默）；none → 不响应。
+  const openAttachment = (meta: ChatAttachmentMeta) => {
+    const action = attachmentAction(meta, workspace);
+    switch (action.kind) {
+      case 'preview':
+        // meta.Name 可能为空，与 chip 展示同样用 attachmentLabel 兜底
+        onPreview({ name: attachmentLabel(meta, t('ui.chat.attachment_image')), path: action.path });
+        return;
+      case 'default':
+        openInDefaultApp(action.wsPath, action.rel).catch((e) => {
+          // 目录没有默认打开应用：工作区内文件夹改走文件树定位（WorkspaceTab 先切右栏再 reveal）
+          const raw = e instanceof Error ? e.message : String(e);
+          if (raw.includes('err.files.dir_not_openable')) {
+            onRevealInTree?.(action.abs);
+            return;
+          }
+          useAppStore.getState().notify(t('ui.chat.attachment_open_failed', { err: backendError(e) }), 'error');
+        });
+        return;
+      case 'local':
+        openLocalPath(action.abs).catch((e) => {
+          useAppStore.getState().notify(t('ui.chat.attachment_open_failed', { err: backendError(e) }), 'error');
+        });
+        return;
+      case 'external':
+        void openExternalURL(action.url).catch(() => {});
+        return;
+      case 'none':
+        return;
+    }
+  };
+
+  // 时间线附件 chips：user 靠右（justify-end）、assistant 靠左（justify-start）。
+  // 可点的 meta 渲染 button，旧数据（attachmentAction 归 none）保持 span 不可点。
+  const renderAttachmentChips = (atts: ChatAttachmentMeta[] | undefined, align: 'start' | 'end') => {
+    if (!atts || atts.length === 0) return null;
+    return (
+      <div className={cn('mt-0.5 flex flex-wrap gap-1 text-xs text-muted-foreground', align === 'end' ? 'justify-end' : 'justify-start')}>
+        {atts.map((att, i) => {
+          const label = attachmentLabel(att, t('ui.chat.attachment_image'));
+          const clickable = attachmentAction(att, workspace).kind !== 'none';
+          return clickable ? (
+            <button
+              key={i}
+              className="cursor-pointer rounded border border-border px-1 py-0.5 hover:bg-muted"
+              onClick={() => openAttachment(att)}
+            >
+              {label}
+            </button>
+          ) : (
+            <span key={i} className="rounded border border-border px-1 py-0.5">
+              {label}
+            </span>
+          );
+        })}
+      </div>
+    );
+  };
+
+  return (
+    <>
+      {items.map((it) => {
+        if (it.type === 'user' || it.type === 'assistant') {
+          return (
+            <div key={it.key} className={cn('mb-3', it.type === 'user' ? 'text-right' : '')}>
+              {/* wrapper 用 text-right 让气泡靠右；气泡本体 text-left 保证文字左对齐 */}
+              <div className={cn('selectable inline-block max-w-[85%] break-words overflow-hidden rounded-md px-3 py-1.5 text-left text-sm [&_pre]:whitespace-pre-wrap',
+                it.type === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
+              {/* markdown 内容元素样式与 AgentHub/预览共用 markdownBubbleClass；pre 折行策略归容器管 */}
+              {/* 展示层还原百分号编码文件名；存储原文不动 */}
+              {it.type === 'assistant'
+                ? <div className={markdownBubbleClass}><ReactMarkdown remarkPlugins={[remarkGfm]}>{decodePercentText(it.text ?? '')}</ReactMarkdown></div>
+                : <span className="whitespace-pre-wrap">{decodePercentText(it.text ?? '')}</span>}
+            </div>
+            {renderAttachmentChips(it.attachments, it.type === 'user' ? 'end' : 'start')}
+          </div>
+          );
+        }
+        if (it.type === 'thought') {
+          return (
+            <details key={it.key} className="mb-3 text-xs text-muted-foreground">
+              <summary className="cursor-pointer select-none italic">{t('ui.chat.thought')}</summary>
+              <div className="selectable mt-1 whitespace-pre-wrap break-words rounded border border-border px-2 py-1 italic">
+                {decodePercentText(it.text ?? '')}
+              </div>
+            </details>
+          );
+        }
+        if (it.type === 'tool' && it.tool) {
+          const content = toolContentText(it.tool);
+          return (
+            <div key={it.key} className="mb-2 rounded border border-border px-2 py-1 text-xs">
+              <span className="font-medium">{it.tool.Title || it.tool.Name || t('ui.chat.tool_fallback')}</span>
+              <span className="ml-2 text-muted-foreground">{it.tool.Kind}{it.tool.Status ? ` · ${it.tool.Status}` : ''}</span>
+              {content && (
+                <pre className="selectable mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-muted-foreground">
+                  {content}
+                </pre>
+              )}
+            </div>
+          );
+        }
+        if (it.type === 'plan') {
+          return (
+            <ul key={it.key} className="selectable mb-2 list-disc break-words pl-5 text-xs text-muted-foreground">
+              {(it.plan ?? []).map((e, i) => <li key={i}>{e.Content}</li>)}
+            </ul>
+          );
+        }
+        if (it.type === 'error') {
+          return (
+            <div key={it.key} className="selectable mb-2 break-words text-xs text-destructive">
+              {t('ui.chat.error_prefix', { text: translateBackend(it.text ?? '') })}
+            </div>
+          );
+        }
+        if (it.type === 'turn_done') {
+          // 此前 turn_done 完全不渲染：agent 因 max_turn_requests / max_tokens
+          // 等提前停止时毫无提示。正常结束（end_turn/空）维持不渲染。
+          const stop = it.stopReason ?? '';
+          if (stop === '' || stop === 'end_turn') return null;
+          const known = STOP_REASON_KEYS[stop];
+          return (
+            <div
+              key={it.key}
+              data-testid="chat-turn-stopped"
+              className="selectable mb-2 break-words text-xs text-muted-foreground"
+            >
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1">{t('ui.chat.turn_stopped', { reason: known ? t(known) : stop })}</span>
+                <button
+                  data-testid="chat-resume"
+                  className="shrink-0 rounded border border-border px-2 py-0.5 hover:bg-muted"
+                  onClick={onResume}
+                >
+                  {t('ui.chat.resume_turn')}
+                </button>
+              </div>
+              {it.text && (
+                // 后端在异常停止时附带 agent stderr 尾部（如 429 限流文本），折叠展示避免刷屏。
+                <details data-testid="chat-stderr-detail" className="mt-1">
+                  <summary className="cursor-pointer select-none">{t('ui.chat.agent_stderr')}</summary>
+                  <pre className="selectable mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words">
+                    {it.text}
+                  </pre>
+                </details>
+              )}
+            </div>
+          );
+        }
+        return null;
+      })}
+    </>
+  );
+});
 
 export default function ChatView({ chat, active, onRevealInTree }: Props) {
   const { t } = useTranslation();
@@ -409,7 +580,8 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
 
   // resume 在 agent 提前停止后一键续做：向同一会话再发一轮「继续」。
   // 会话上下文完整，agent 自然从断点接着做；时间线照常补录 user「继续」，透明可追溯。
-  const resume = () => {
+  // useCallback 稳定引用交给 memo(ChatTimeline)：draft 重渲时不拖时间线。
+  const resume = useCallback(() => {
     if (running) return;
     useAppStore.getState().upsertChat({ ...chat, Status: 'running' });
     const fail = (e: unknown) => {
@@ -417,7 +589,10 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
       useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
     };
     sendChatPrompt(id, t('ui.chat.resume_turn')).catch(fail);
-  };
+  }, [running, chat, id, t]);
+
+  // lightbox 预览回调：setter 天然稳定，包装成稳定引用传给 memo(ChatTimeline)
+  const handlePreview = useCallback((p: { name?: string; path: string }) => setPreview(p), []);
 
   // 撤销后端排队条目：先乐观移除，失败提示并按后端真实快照重拉对齐
   // （失败多为竞态：条目刚被投递/已在别处撤回）。
@@ -529,67 +704,6 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
     void respondChatElicitation(id, req.RequestID, 'decline', {}).catch(() => {});
   };
 
-  // 附件 chip 点击分派（attachmentAction 纯函数归类，副作用在此触发）：
-  // preview → lightbox；default/local → 系统打开（失败 toast）；external → 外链
-  // （openExternalURL 内部失败静默）；none → 不响应。
-  const openAttachment = (meta: ChatAttachmentMeta) => {
-    const action = attachmentAction(meta, chat.Workspace);
-    switch (action.kind) {
-      case 'preview':
-        // meta.Name 可能为空，与 chip 展示同样用 attachmentLabel 兜底
-        setPreview({ name: attachmentLabel(meta, t('ui.chat.attachment_image')), path: action.path });
-        return;
-      case 'default':
-        openInDefaultApp(action.wsPath, action.rel).catch((e) => {
-          // 目录没有默认打开应用：工作区内文件夹改走文件树定位（WorkspaceTab 先切右栏再 reveal）
-          const raw = e instanceof Error ? e.message : String(e);
-          if (raw.includes('err.files.dir_not_openable')) {
-            onRevealInTree?.(action.abs);
-            return;
-          }
-          useAppStore.getState().notify(t('ui.chat.attachment_open_failed', { err: backendError(e) }), 'error');
-        });
-        return;
-      case 'local':
-        openLocalPath(action.abs).catch((e) => {
-          useAppStore.getState().notify(t('ui.chat.attachment_open_failed', { err: backendError(e) }), 'error');
-        });
-        return;
-      case 'external':
-        void openExternalURL(action.url).catch(() => {});
-        return;
-      case 'none':
-        return;
-    }
-  };
-
-  // 时间线附件 chips：user 靠右（justify-end）、assistant 靠左（justify-start）。
-  // 可点的 meta 渲染 button，旧数据（attachmentAction 归 none）保持 span 不可点。
-  const renderAttachmentChips = (atts: ChatAttachmentMeta[] | undefined, align: 'start' | 'end') => {
-    if (!atts || atts.length === 0) return null;
-    return (
-      <div className={cn('mt-0.5 flex flex-wrap gap-1 text-xs text-muted-foreground', align === 'end' ? 'justify-end' : 'justify-start')}>
-        {atts.map((att, i) => {
-          const label = attachmentLabel(att, t('ui.chat.attachment_image'));
-          const clickable = attachmentAction(att, chat.Workspace).kind !== 'none';
-          return clickable ? (
-            <button
-              key={i}
-              className="cursor-pointer rounded border border-border px-1 py-0.5 hover:bg-muted"
-              onClick={() => openAttachment(att)}
-            >
-              {label}
-            </button>
-          ) : (
-            <span key={i} className="rounded border border-border px-1 py-0.5">
-              {label}
-            </span>
-          );
-        })}
-      </div>
-    );
-  };
-
   return (
     <div
       className="relative flex h-full min-h-0 flex-col"
@@ -673,97 +787,13 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
         </div>
       )}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-2">
-        {items.map((it) => {
-          if (it.type === 'user' || it.type === 'assistant') {
-            return (
-              <div key={it.key} className={cn('mb-3', it.type === 'user' ? 'text-right' : '')}>
-                {/* wrapper 用 text-right 让气泡靠右；气泡本体 text-left 保证文字左对齐 */}
-                <div className={cn('selectable inline-block max-w-[85%] break-words overflow-hidden rounded-md px-3 py-1.5 text-left text-sm [&_pre]:whitespace-pre-wrap',
-                  it.type === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
-                {/* markdown 内容元素样式与 AgentHub/预览共用 markdownBubbleClass；pre 折行策略归容器管 */}
-                {/* 展示层还原百分号编码文件名；存储原文不动 */}
-                {it.type === 'assistant'
-                  ? <div className={markdownBubbleClass}><ReactMarkdown remarkPlugins={[remarkGfm]}>{decodePercentText(it.text ?? '')}</ReactMarkdown></div>
-                  : <span className="whitespace-pre-wrap">{decodePercentText(it.text ?? '')}</span>}
-              </div>
-              {renderAttachmentChips(it.attachments, it.type === 'user' ? 'end' : 'start')}
-            </div>
-          );
-          }
-          if (it.type === 'thought') {
-            return (
-              <details key={it.key} className="mb-3 text-xs text-muted-foreground">
-                <summary className="cursor-pointer select-none italic">{t('ui.chat.thought')}</summary>
-                <div className="selectable mt-1 whitespace-pre-wrap break-words rounded border border-border px-2 py-1 italic">
-                  {decodePercentText(it.text ?? '')}
-                </div>
-              </details>
-            );
-          }
-          if (it.type === 'tool' && it.tool) {
-            const content = toolContentText(it.tool);
-            return (
-              <div key={it.key} className="mb-2 rounded border border-border px-2 py-1 text-xs">
-                <span className="font-medium">{it.tool.Title || it.tool.Name || t('ui.chat.tool_fallback')}</span>
-                <span className="ml-2 text-muted-foreground">{it.tool.Kind}{it.tool.Status ? ` · ${it.tool.Status}` : ''}</span>
-                {content && (
-                  <pre className="selectable mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-muted-foreground">
-                    {content}
-                  </pre>
-                )}
-              </div>
-            );
-          }
-          if (it.type === 'plan') {
-            return (
-              <ul key={it.key} className="selectable mb-2 list-disc break-words pl-5 text-xs text-muted-foreground">
-                {(it.plan ?? []).map((e, i) => <li key={i}>{e.Content}</li>)}
-              </ul>
-            );
-          }
-          if (it.type === 'error') {
-            return (
-              <div key={it.key} className="selectable mb-2 break-words text-xs text-destructive">
-                {t('ui.chat.error_prefix', { text: translateBackend(it.text ?? '') })}
-              </div>
-            );
-          }
-          if (it.type === 'turn_done') {
-            // 此前 turn_done 完全不渲染：agent 因 max_turn_requests / max_tokens
-            // 等提前停止时毫无提示。正常结束（end_turn/空）维持不渲染。
-            const stop = it.stopReason ?? '';
-            if (stop === '' || stop === 'end_turn') return null;
-            const known = STOP_REASON_KEYS[stop];
-            return (
-              <div
-                key={it.key}
-                data-testid="chat-turn-stopped"
-                className="selectable mb-2 break-words text-xs text-muted-foreground"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1">{t('ui.chat.turn_stopped', { reason: known ? t(known) : stop })}</span>
-                  <button
-                    data-testid="chat-resume"
-                    className="shrink-0 rounded border border-border px-2 py-0.5 hover:bg-muted"
-                    onClick={resume}
-                  >
-                    {t('ui.chat.resume_turn')}
-                  </button>
-                </div>
-                {it.text && (
-                  // 后端在异常停止时附带 agent stderr 尾部（如 429 限流文本），折叠展示避免刷屏。
-                  <details data-testid="chat-stderr-detail" className="mt-1">
-                    <summary className="cursor-pointer select-none">{t('ui.chat.agent_stderr')}</summary>
-                    <pre className="selectable mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words">
-                      {it.text}
-                    </pre>
-                  </details>
-                )}
-              </div>
-            );
-          }
-          return null;
-        })}
+        <ChatTimeline
+          items={items}
+          workspace={chat.Workspace}
+          onResume={resume}
+          onPreview={handlePreview}
+          onRevealInTree={onRevealInTree}
+        />
       </div>
 
       <div className="shrink-0 border-t border-border p-2">
