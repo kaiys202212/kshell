@@ -1279,7 +1279,7 @@ export default function Settings() {
               </label>
               <div className={cn('grid gap-4', platDraft && 'md:grid-cols-[minmax(0,1fr)_24rem]')}>
                 {/* 左列：当前平台 + 当前模型 + 平台列表 + 新增入口 + WorkBuddy 导入 */}
-                <div className="grid min-w-0 content-start gap-2">
+                <div className="grid grid-cols-1 min-w-0 content-start gap-2">
                 {modelPlatforms.length > 0 && (
                   <>
                     <label className="text-xs text-muted-foreground" htmlFor="model-active-platform">
@@ -1325,7 +1325,7 @@ export default function Settings() {
                   <p className="text-xs text-muted-foreground">{t('ui.settings.model.platforms_empty')}</p>
                 )}
                 {modelPlatforms.length > 0 && (
-                  <ul className="grid gap-2">
+                  <ul className="grid grid-cols-1 gap-2">
                     {modelPlatforms.map((p) => (
                       <li key={p.ID} className="rounded border border-border p-2.5">
                         <div className="flex items-center justify-between gap-2">
@@ -1399,11 +1399,11 @@ export default function Settings() {
                   )}
                 </div>
                 {wbPick && (
-                  <div className="grid gap-1.5 rounded border border-border bg-background p-2.5">
+                  <div className="grid grid-cols-1 gap-1.5 rounded border border-border bg-background p-2.5">
                     <p className="text-sm font-medium">
                       {t('ui.settings.model.workbuddy_pick_title', { 0: wbPick.Region })}
                     </p>
-                    <div className="grid max-h-48 gap-1 overflow-auto">
+                    <div className="grid grid-cols-1 max-h-48 gap-1 overflow-auto">
                       {wbPick.Models.map((m) => (
                         <label key={m.ID} className="flex items-center gap-2 text-sm">
                           <input
@@ -1439,7 +1439,7 @@ export default function Settings() {
 
                 {/* 右列：新增/编辑平台表单（保存即关闭） */}
                 {platDraft && (
-                  <div className="grid min-w-0 content-start gap-2 self-start rounded border border-border bg-background p-2.5">
+                  <div className="grid grid-cols-1 min-w-0 content-start gap-2 self-start rounded border border-border bg-background p-2.5">
                     <p className="text-sm font-medium">{t('ui.settings.model.edit_platform')}</p>
                     <label className="text-xs text-muted-foreground" htmlFor="platform-name">
                       {t('ui.settings.model.platform_name')}
@@ -1547,7 +1547,7 @@ export default function Settings() {
                     {platDraft.Models.length === 0 && (
                       <p className="text-xs text-muted-foreground">{t('ui.settings.model.models_empty')}</p>
                     )}
-                    <ul className="grid gap-1">
+                    <ul className="grid grid-cols-1 gap-1">
                       {platDraft.Models.map((m) => (
                         <li key={m} className="flex items-center gap-2 text-sm">
                           <span className="flex-1 truncate" title={m}>{m}</span>
@@ -1604,7 +1604,7 @@ export default function Settings() {
                         />
                         <ul
                           data-testid="model-fetch-list"
-                          className="grid max-h-64 gap-1 overflow-y-auto rounded border border-border p-1"
+                          className="grid grid-cols-1 max-h-64 gap-1 overflow-y-auto rounded border border-border p-1"
                         >
                           {modelFetched.length === 0 && modelFetchErrors.length === 0 && (
                             <li className="px-1 text-xs text-muted-foreground">{t('ui.settings.model.fetch_empty')}</li>

@@ -1569,6 +1569,26 @@ describe('Settings', () => {
     expect(list.className).toContain('max-h-');
   });
 
+  // 模型分区的栅格容器必须显式单列（grid-cols-1 = minmax(0,1fr)）：
+  // 隐式 auto 列按 max-content 定宽，长 URL/nowrap 文本会把左列卡片撑到相邻表单上方造成叠加。
+  it('模型分区栅格显式单列，避免内容按 max-content 撑出列宽', async () => {
+    mocks.getModelConfig.mockResolvedValue({
+      Enabled: true,
+      Platforms: [platView({ Name: 'DeepSeek', Models: [] })],
+      ActivePlatformID: 'p1',
+      ActiveModel: '',
+    });
+    render(<Settings />);
+    goModel();
+    const card = await findCard('DeepSeek');
+    const list = card.closest('ul') as HTMLElement;
+    expect(list.className).toContain('grid-cols-1');
+    expect((list.parentElement as HTMLElement).className).toContain('grid-cols-1');
+    fireEvent.click(within(list).getByRole('button', { name: tt('ui.settings.model.edit_platform') }));
+    const formName = await screen.findByLabelText(tt('ui.settings.model.platform_name'));
+    expect((formName.closest('div.grid') as HTMLElement).className).toContain('grid-cols-1');
+  });
+
   it('编辑态选择预设填入双 URL 与推荐模型', async () => {
     render(<Settings />);
     goModel();
