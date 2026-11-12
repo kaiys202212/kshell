@@ -795,6 +795,18 @@ func (a *App) mergeConfigModels(v chat.ModelsView, toolID string) chat.ModelsVie
 	}
 }
 
+// ToolPlatformModels 返回某工具在 ACP 模型下拉中出现的 kshell 平台注入模型，
+// 供 Hub 新建/默认设置弹窗使用。复用 mergeConfigModels（空自报视图），
+// 与 ListChatModels 的合并口径完全同源；cursor 与未启用 ToolSync 的工具
+// 返回空切片（此时 ACP 下拉同样只有 agent 自报模型，口径一致）。
+func (a *App) ToolPlatformModels(toolID string) ([]chat.ModelView, error) {
+	if !mergesKshellPlatformModels(toolID) {
+		return []chat.ModelView{}, nil
+	}
+	v := a.mergeConfigModels(chat.ModelsView{Models: []chat.ModelView{}}, toolID)
+	return v.Models, nil
+}
+
 // splitKshellModelID 解析下拉前缀 ID "kshell:<platID>:<model>"。
 // platID 是平台 ID（不含冒号），model 可能含冒号，因此去掉 "kshell:" 头后
 // 按第一个冒号切分，剩余全部视为 model。非前缀或 platID 为空返回 ok=false。

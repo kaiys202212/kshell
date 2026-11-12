@@ -1065,7 +1065,7 @@ func TestMergeConfigModelsCodeBuddyKeepsBuiltinNameCollision(t *testing.T) {
 	env.app.mu.Unlock()
 
 	in := chat.ModelsView{Models: []chat.ModelView{
-		{ID: "glm-5.3-flash", Name: "GLM-5.3-Flash"}, // 内置同名裸 mid
+		{ID: "glm-5.3-flash", Name: "GLM-5.3-Flash"},                        // 内置同名裸 mid
 		{ID: "custom-local:qwen3.8-flash", Name: "opencode: qwen3.8-flash"}, // 旧名注入条目（models.json 冻结场景）
 	}}
 	got := env.app.mergeConfigModels(in, "codebuddy")
@@ -1096,4 +1096,133 @@ func TestMergeConfigModelsCodeBuddyKeepsBuiltinNameCollision(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("同名注入条目应去重为一份, got %#v", got2.Models)
 	}
+}
+
+// ToolPlatformModels 供 Hub 新建/默认设置弹窗取平台注入模型：
+// 复用 mergeConfigModels（空自报视图），与 ACP 会话下拉（ListChatModels）
+// 的合并口径完全同源；cursor 与未启用 ToolSync 的工具返回空切片。
+func TestToolPlatformModels(t *testing.T) {
+	platforms := []config.ModelPlatform{
+		{ID: "p1", Name: "Alpha", Models: []string{"a1", "a2"}},
+		{ID: "p2", Name: "Beta", Models: []string{"b1"}},
+	}
+
+	t.Run("claude 按默认平台全部模型", func(t *testing.T) {
+		env := newChatTestApp(t, nil, nil)
+		env.app.mu.Lock()
+		env.app.opts.Config.Model = config.ModelConfig{
+			Enabled:         true,
+			DefaultPlatform: "p1",
+			Platforms:       platforms,
+			ToolSync:        config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
+		}
+		env.app.mu.Unlock()
+
+		got, err := env.app.ToolPlatformModels("claude")
+		if err != nil {
+			t.Fatalf("ToolPlatformModels: %v", err)
+		}
+		if got == nil {
+			t.Fatal("应返回非 nil 空切片语义，got nil")
+		}
+		if len(got) != 2 || got[0].ID != "a1" || got[1].ID != "a2" {
+			t.Fatalf("应列默认平台 p1 全部模型: %+v", got)
+		}
+		if got[0].Name != "Alpha: a1" {
+			t.Fatalf("Name 应带平台前缀: %+v", got[0])
+		}
+	})
+
+	t.Run("opencode 多平台带 kshell 前缀", func(t *testing.T) {
+		env := newChatTestApp(t, nil, nil)
+		env.app.mu.Lock()
+		env.app.opts.Config.Model = config.ModelConfig{
+			Enabled:         true,
+			DefaultPlatform: "p2",
+			Platforms:       platforms,
+			ToolSync: config.ToolSyncConfig{
+				Enabled:  map[string]bool{"opencode": true},
+				OpenCode: map[string][]string{"p1": {"a1"}, "p2": {"b1"}},
+			},
+		}
+		env.app.mu.Unlock()
+
+		got, err := env.app.ToolPlatformModels("opencode")
+		if err != nil {
+			t.Fatalf("ToolPlatformModels: %v", err)
+		}
+		var ids []string
+		for _, mo := range got {
+			ids = append(ids, mo.ID)
+		}
+		want := []string{"kshell:p2:b1", "kshell:p1:a1"} // 默认平台排最前
+		if len(ids) != len(want) {
+			t.Fatalf("条目数不符: got %v", ids)
+		}
+		for i := range want {
+			if ids[i] != want[i] {
+				t.Fatalf("顺序/前缀错误: got %v, want %v", ids, want)
+			}
+		}
+	})
+
+	t.Run("cursor 恒为空", func(t *testing.T) {
+		env := newChatTestApp(t, nil, nil)
+		env.app.mu.Lock()
+		env.app.opts.Config.Model = config.ModelConfig{
+			Enabled:         true,
+			DefaultPlatform: "p1",
+			Platforms:       platforms,
+			ToolSync:        config.ToolSyncConfig{Enabled: map[string]bool{"cursor": true}},
+		}
+		env.app.mu.Unlock()
+
+		got, err := env.app.ToolPlatformModels("cursor")
+		if err != nil {
+			t.Fatalf("ToolPlatformModels: %v", err)
+		}
+		if got == nil || len(got) != 0 {
+			t.Fatalf("cursor 应返回空切片: %+v", got)
+		}
+	})
+
+	t.Run("工具未启用 ToolSync 返回空", func(t *testing.T) {
+		env := newChatTestApp(t, nil, nil)
+		env.app.mu.Lock()
+		env.app.opts.Config.Model = config.ModelConfig{
+			Enabled:         true,
+			DefaultPlatform: "p1",
+			Platforms:       platforms,
+			ToolSync:        config.ToolSyncConfig{Enabled: map[string]bool{"codebuddy": true}},
+		}
+		env.app.mu.Unlock()
+
+		got, err := env.app.ToolPlatformModels("claude")
+		if err != nil {
+			t.Fatalf("ToolPlatformModels: %v", err)
+		}
+		if got == nil || len(got) != 0 {
+			t.Fatalf("未启用 ToolSync 的工具应返回空切片: %+v", got)
+		}
+	})
+
+	t.Run("模型配置未启用返回空", func(t *testing.T) {
+		env := newChatTestApp(t, nil, nil)
+		env.app.mu.Lock()
+		env.app.opts.Config.Model = config.ModelConfig{
+			Enabled:         false,
+			DefaultPlatform: "p1",
+			Platforms:       platforms,
+			ToolSync:        config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
+		}
+		env.app.mu.Unlock()
+
+		got, err := env.app.ToolPlatformModels("claude")
+		if err != nil {
+			t.Fatalf("ToolPlatformModels: %v", err)
+		}
+		if got == nil || len(got) != 0 {
+			t.Fatalf("配置未启用应返回空切片: %+v", got)
+		}
+	})
 }
