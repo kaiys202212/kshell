@@ -111,6 +111,28 @@ func TestResolvePlatform(t *testing.T) {
 			q:    Query{ToolID: "gemini"},
 			want: "p2",
 		},
+		{
+			name: "ModelID 两侧空白先修剪再切前缀",
+			q:    Query{ToolID: "claude", ModelID: " kshell:p2:kimi-k3 "},
+			want: "p2",
+		},
+		{
+			// 宽松别名平台排在配置前面：两遍匹配必须精确优先，而非首个别名命中。
+			name: "精确匹配优先于顺序在前的宽松别名",
+			cfg: config.ModelConfig{
+				Enabled:          true,
+				ActivePlatformID: "loose",
+				Platforms: []config.ModelPlatform{
+					{ID: "loose", Models: []string{"glm-5-3"}},
+					{ID: "exact", Models: []string{"glm-5.3"}},
+				},
+				ToolSync: config.ToolSyncConfig{
+					ToolPlatforms: map[string]string{"claude": "gone"},
+				},
+			},
+			q:    Query{ToolID: "claude", SessionModel: "glm-5.3"},
+			want: "exact",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -207,6 +229,18 @@ func TestOptions(t *testing.T) {
 		}
 	})
 
+	t.Run("Query.ToolID 为空时用 Resolver 实参兜底每工具平台", func(t *testing.T) {
+		mo := Options(testModelConfig(), Query{SessionModel: "no-such-model"}, nil)
+		mc, ok := mo.Resolver("claude")
+		if !ok {
+			t.Fatal("应命 claude 的每工具平台 p1")
+		}
+		// p1 的 OpenAI 端点与全局激活平台 p2 不同，可判别是否用了实参 toolID。
+		if mc.OpenAIBaseURL != "https://p1-oai/" || mc.Model != "no-such-model" {
+			t.Fatalf("resolver = %+v, want p1 端点", mc)
+		}
+	})
+
 	t.Run("代理 Ensure 出错返回 false", func(t *testing.T) {
 		px := &fakeProxier{err: errors.New("boom")}
 		mo := Options(testModelConfig(), Query{ToolID: "claude", ModelID: "kshell:wb:hy4free"}, px)
@@ -214,4 +248,50 @@ func TestOptions(t *testing.T) {
 			t.Fatal("Ensure 出错时不应命中")
 		}
 	})
+}
+
+// TestSplitKshellModelID 锁定前缀解析边界：畸形 ID 一律 ok=false，模型名可含冒号。
+func TestSplitKshellModelID(t *testing.T) {
+	cases := []struct {
+		id                  string
+		wantPlat, wantModel string
+		wantOK              bool
+	}{
+		{"kshell:p1:glm-5.3", "p1", "glm-5.3", true},
+		{"kshell:", "", "", false},
+		{"kshell::m", "", "", false},
+		{"kshell:p:", "", "", false},
+		{"glm-5.3", "", "", false},
+		{"kshell:p:a:b", "p", "a:b", true},
+	}
+	for _, tc := range cases {
+		plat, model, ok := SplitKshellModelID(tc.id)
+		if plat != tc.wantPlat || model != tc.wantModel || ok != tc.wantOK {
+			t.Errorf("SplitKshellModelID(%q) = (%q,%q,%v), want (%q,%q,%v)",
+				tc.id, plat, model, ok, tc.wantPlat, tc.wantModel, tc.wantOK)
+		}
+	}
+}
+
+// TestModelIDLooseEqual 锁定导出函数的原语义：只做 '.'/'-' 归一，大小写敏感
+// （大小写宽松是会话模型反查内部专用的 looseModelEqual）。
+func TestModelIDLooseEqual(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"glm-5.3-flash", "glm-5.3-flash", true},
+		{"glm-5.3-flash", "glm-5-3-flash", true},
+		{"glm-5-3-flash", "glm-5.3-flash", true},
+		{"a.b.c", "a-b-c", true},
+		{"m1", "m2", false},
+		{"", "", true},
+		{"glm-5.3-flash", "glm-5.3", false},
+		{"GPT-4O", "gpt-4o", false},
+	}
+	for _, tc := range cases {
+		if got := ModelIDLooseEqual(tc.a, tc.b); got != tc.want {
+			t.Errorf("ModelIDLooseEqual(%q,%q)=%v want %v", tc.a, tc.b, got, tc.want)
+		}
+	}
 }

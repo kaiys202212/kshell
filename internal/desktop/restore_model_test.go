@@ -10,7 +10,6 @@ import (
 	"github.com/yangk/kshell/internal/acp"
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
-	"github.com/yangk/kshell/internal/modelresolve"
 	"github.com/yangk/kshell/internal/providers"
 )
 
@@ -166,28 +165,6 @@ func TestRebuildChatRestoresLastModelFromJSONL(t *testing.T) {
 	}
 	if len(c1.modelCalls) != 1 || c1.modelCalls[0] != "m2" {
 		t.Fatalf("重建应 SetModel(m2): %v", c1.modelCalls)
-	}
-}
-
-func TestModelIDLooseEqual(t *testing.T) {
-	cases := []struct {
-		a, b string
-		want bool
-	}{
-		{"glm-5.3-flash", "glm-5.3-flash", true},
-		{"glm-5.3-flash", "glm-5-3-flash", true},
-		{"glm-5-3-flash", "glm-5.3-flash", true},
-		{"a.b.c", "a-b-c", true},
-		{"m1", "m2", false},
-		{"", "", true},
-		{"glm-5.3-flash", "glm-5.3", false},
-		// 大小写不参与宽松匹配：导出函数保持原语义（会话模型反查另有专用比较器）。
-		{"GPT-4O", "gpt-4o", false},
-	}
-	for _, tc := range cases {
-		if got := modelresolve.ModelIDLooseEqual(tc.a, tc.b); got != tc.want {
-			t.Errorf("ModelIDLooseEqual(%q,%q)=%v want %v", tc.a, tc.b, got, tc.want)
-		}
 	}
 }
 

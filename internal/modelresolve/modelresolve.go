@@ -14,7 +14,9 @@ import (
 )
 
 // Proxier 是 workbuddy 本地代理的最小接口：modelresolve 命中 workbuddy
-// 平台时惰性调用（不选 workbuddy 模型不起代理）。Task 3/5 会提供实现。
+// 平台时惰性调用 Ensure（不选 workbuddy 模型就不起代理），由实现方提供
+// 代理端点与临时 token。实现须保证接口值本身非 nil：把 nil 指针装进接口
+// 仍是非 nil 接口（typed-nil 陷阱），此时调用 Ensure 会 panic。
 type Proxier interface {
 	Ensure() (base, apiKey string, err error)
 }
@@ -23,7 +25,7 @@ type Proxier interface {
 type Query struct {
 	ToolID       string
 	ModelID      string // 显式模型 ID，可带 kshell:<platID>: 前缀
-	SessionModel string // 会话真实模型裸名（恢复路径）；空 = 走每工具平台
+	SessionModel string // 会话真实模型裸名（恢复路径）；空时依次回落每工具平台与全局激活平台
 }
 
 // SplitKshellModelID 解析 "kshell:<platID>:<model>" 前缀 ID（自 desktop/chat.go 迁入）。
@@ -60,8 +62,7 @@ func ModelIDLooseEqual(a, b string) bool {
 // 点号/连字符归一之上再忽略大小写（部分工具回报的模型名与配置大小写不一致）。
 // 仅用于 platformByModel，不改变导出函数的原语义。
 func looseModelEqual(a, b string) bool {
-	return ModelIDLooseEqual(a, b) || strings.EqualFold(a, b) ||
-		strings.EqualFold(strings.ReplaceAll(a, ".", "-"), strings.ReplaceAll(b, ".", "-"))
+	return strings.EqualFold(strings.ReplaceAll(a, ".", "-"), strings.ReplaceAll(b, ".", "-"))
 }
 
 // platformByID 按平台 ID 查找；查不到返回 false。
@@ -120,7 +121,10 @@ func platformByModel(cfg config.ModelConfig, model, toolID string) (config.Model
 }
 
 // ResolvePlatform 按优先级解析平台；任一环悬空继续兜底，全空不命中。
+// 契约：本函数不看 cfg.Enabled（总开关由 Options 负责），纯平台选择可单独复用。
 func ResolvePlatform(cfg config.ModelConfig, q Query) (config.ModelPlatform, bool) {
+	q.ModelID = strings.TrimSpace(q.ModelID)
+	q.SessionModel = strings.TrimSpace(q.SessionModel)
 	// 1. 显式模型 ID 的平台前缀（kshell:<platID>:<model>）。
 	if platID, _, ok := SplitKshellModelID(q.ModelID); ok {
 		if p, found := platformByID(cfg, platID); found {
@@ -146,18 +150,28 @@ func Options(cfg config.ModelConfig, q Query, px Proxier) launch.ModelOptions {
 	if !cfg.Enabled {
 		return launch.ModelOptions{}
 	}
-	return launch.ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
-		p, ok := ResolvePlatform(cfg, q)
+	// 统一在入口 trim 一次：同一份 ModelID 既用于切前缀也用作模型名，避免
+	// 空白前缀 ID 整串下发（与迁移前 desktop「先 TrimSpace 再切分」语义一致）。
+	q.ModelID = strings.TrimSpace(q.ModelID)
+	q.SessionModel = strings.TrimSpace(q.SessionModel)
+	return launch.ModelOptions{Resolver: func(toolID string) (providers.ModelConfig, bool) {
+		// 每次调用都从外层 q 复制一份：调用方未显式给工具 ID 时，用 launch
+		// 传入的真实 toolID 兜底每工具平台；不污染后续调用。
+		rq := q
+		if rq.ToolID == "" {
+			rq.ToolID = strings.TrimSpace(toolID)
+		}
+		p, ok := ResolvePlatform(cfg, rq)
 		if !ok {
 			return providers.ModelConfig{}, false
 		}
 		// 模型名：显式模型 ID 优先（前缀 ID 取裸名），否则用会话模型裸名。
-		model := strings.TrimSpace(q.ModelID)
-		if _, bare, ok := SplitKshellModelID(q.ModelID); ok {
+		model := rq.ModelID
+		if _, bare, ok := SplitKshellModelID(model); ok {
 			model = bare
 		}
 		if model == "" {
-			model = strings.TrimSpace(q.SessionModel)
+			model = rq.SessionModel
 		}
 		if p.Preset == workbuddy.PresetID {
 			if px == nil {
