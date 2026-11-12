@@ -29,8 +29,8 @@ func TestSetModelConfigDropsActiveModelWithoutPlatforms(t *testing.T) {
 	}
 	cfg := config.Default()
 	cfg.Model = config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p1",
+		Enabled:          true,
+		ActivePlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://old/", APIKey: "k",
 		}},

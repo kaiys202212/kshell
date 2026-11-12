@@ -20,7 +20,8 @@ func wbDefaultInput() SyncInput {
 			{ID: "wb", Name: "WorkBuddy", Preset: workbuddy.PresetID, Models: []string{"hy3"}},
 			{ID: "p1", Name: "智谱", OpenAIBaseURL: "https://api.example/v1", APIKey: "sk", Models: []string{"glm-x"}},
 		},
-		DefaultPlatformID: "wb",
+		ClaudePlatformID:    "wb",
+		CodeBuddyPlatformID: "wb",
 		ToolSync: config.ToolSyncConfig{
 			OpenCode: map[string][]string{"p1": {"glm-x"}},
 		},

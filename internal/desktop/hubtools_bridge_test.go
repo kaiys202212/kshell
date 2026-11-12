@@ -61,7 +61,7 @@ func setHubModel(a *App, baseURL, apiKey, model string) {
 	a.opts.Config.Model.Platforms = []config.ModelPlatform{
 		{ID: "p-test", OpenAIBaseURL: baseURL, APIKey: apiKey},
 	}
-	a.opts.Config.Model.DefaultPlatform = "p-test"
+	a.opts.Config.Model.ActivePlatformID = "p-test"
 	a.opts.Config.Model.ActiveModel = model
 }
 
@@ -488,7 +488,7 @@ func TestHubToolsReconfigFollowsConfig(t *testing.T) {
 }
 
 // TestHandlePromptEmptyTextDegrades 验证模型完成但无文本且无挂起时降级原链路
-//（user 消息尚未落盘，store 无痕）。
+// （user 消息尚未落盘，store 无痕）。
 func TestHandlePromptEmptyTextDegrades(t *testing.T) {
 	mock := &hubLLMMock{bodies: []string{`""`}}
 	srv := httptest.NewServer(http.HandlerFunc(mock.handler))

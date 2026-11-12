@@ -201,7 +201,7 @@ func TestWeixinTranscriberMapsAudioUnsupported(t *testing.T) {
 	app.opts.Config.Model.Platforms = []config.ModelPlatform{{
 		ID: "p1", Name: "p", OpenAIBaseURL: "http://unused", APIKey: "k", Models: []string{"m1"},
 	}}
-	app.opts.Config.Model.DefaultPlatform = "p1"
+	app.opts.Config.Model.ActivePlatformID = "p1"
 	app.mu.Unlock()
 	defer func() {
 		app.mu.Lock()

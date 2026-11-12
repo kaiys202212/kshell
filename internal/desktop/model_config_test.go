@@ -22,13 +22,43 @@ func newModelApp(t *testing.T) (*App, config.Layout) {
 	return NewAppWith(Options{Config: config.Default(), Layout: layout}), layout
 }
 
+func TestSetActiveModelSelectionValidatesPlatform(t *testing.T) {
+	app, _ := newModelApp(t)
+	if err := app.SetModelConfig(ModelConfigInput{
+		Enabled: true,
+		Platforms: []ModelPlatformInput{
+			{ID: "p1", Name: "A", Models: []string{"m1"}},
+			{ID: "p2", Name: "B", Models: []string{"m2"}},
+		},
+		ActivePlatformID: "p1",
+		ActiveModel:      "m1",
+	}); err != nil {
+		t.Fatalf("SetModelConfig: %v", err)
+	}
+	if err := app.SetActiveModelSelection("p2", "m2"); err != nil {
+		t.Fatalf("SetActiveModelSelection: %v", err)
+	}
+	m := app.snapshot().Config.Model
+	if m.ActivePlatformID != "p2" || m.ActiveModel != "m2" {
+		t.Fatalf("selection = %q/%q, want p2/m2", m.ActivePlatformID, m.ActiveModel)
+	}
+	// 模型不属于新平台：清空模型但仍切平台。
+	if err := app.SetActiveModelSelection("p1", "m2"); err != nil {
+		t.Fatalf("SetActiveModelSelection: %v", err)
+	}
+	m = app.snapshot().Config.Model
+	if m.ActivePlatformID != "p1" || m.ActiveModel != "" {
+		t.Fatalf("after invalid model = %q/%q, want p1/empty", m.ActivePlatformID, m.ActiveModel)
+	}
+}
+
 func TestGetModelConfigMultiPlatformView(t *testing.T) {
 	app, _ := newModelApp(t)
 	app.mu.Lock()
 	app.opts.Config.Model = config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p2",
-		ActiveModel:     "m",
+		Enabled:          true,
+		ActivePlatformID: "p2",
+		ActiveModel:      "m",
 		Platforms: []config.ModelPlatform{
 			{ID: "p1", Name: "A", OpenAIBaseURL: "https://a/", APIKey: "secret"},
 			{ID: "p2", Name: "B", Models: []string{"m"}},
@@ -40,7 +70,7 @@ func TestGetModelConfigMultiPlatformView(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetModelConfig: %v", err)
 	}
-	if !v.Enabled || v.ActiveModel != "m" || v.DefaultPlatform != "p2" {
+	if !v.Enabled || v.ActiveModel != "m" || v.ActivePlatformID != "p2" {
 		t.Fatalf("顶层字段错误: %+v", v)
 	}
 	if len(v.Platforms) != 2 {
@@ -49,9 +79,6 @@ func TestGetModelConfigMultiPlatformView(t *testing.T) {
 	p1, p2 := v.Platforms[0], v.Platforms[1]
 	if !p1.APIKeySet || p2.APIKeySet {
 		t.Fatalf("APIKeySet 标记错误: %+v %+v", p1, p2)
-	}
-	if p1.IsDefault || !p2.IsDefault {
-		t.Fatalf("IsDefault 标记错误: %+v %+v", p1, p2)
 	}
 	if p2.Models == nil || len(p2.Models) != 1 {
 		t.Fatalf("nil Models 应返回空 slice: %#v", p2.Models)
@@ -85,7 +112,7 @@ func TestSetModelConfigPlatformCRUD(t *testing.T) {
 			OpenAIBaseURL: "https://oai/", AnthropicBaseURL: "https://ant/",
 			APIKey: "k1", Models: []string{" m ", "gpt-x", "m", ""},
 		}},
-		DefaultPlatform: "p1", ActiveModel: " gpt-x ",
+		ActivePlatformID: "p1", ActiveModel: " gpt-x ",
 	}); err != nil {
 		t.Fatalf("Set 新增: %v", err)
 	}
@@ -103,7 +130,7 @@ func TestSetModelConfigPlatformCRUD(t *testing.T) {
 	if len(pl.Models) != 2 || pl.Models[0] != "m" || pl.Models[1] != "gpt-x" {
 		t.Fatalf("models 应 TrimSpace/去空/去重: %#v", pl.Models)
 	}
-	if loaded.Model.DefaultPlatform != "p1" || loaded.Model.ActiveModel != "gpt-x" {
+	if loaded.Model.ActivePlatformID != "p1" || loaded.Model.ActiveModel != "gpt-x" {
 		t.Fatalf("默认平台/活跃模型错误: %+v", loaded.Model)
 	}
 	// legacy 字段应全部清空。
@@ -120,7 +147,7 @@ func TestSetModelConfigPlatformCRUD(t *testing.T) {
 			{ID: "p1", Name: "DeepSeek", OpenAIBaseURL: "https://oai/"},
 			{ID: "p2", Name: "GLM", AnthropicBaseURL: "https://zhipu/", APIKey: "k2"},
 		},
-		DefaultPlatform: "p2",
+		ActivePlatformID: "p2",
 	}); err != nil {
 		t.Fatalf("Set 更新: %v", err)
 	}
@@ -141,7 +168,7 @@ func TestSetModelConfigPlatformCRUD(t *testing.T) {
 		Platforms: []ModelPlatformInput{
 			{ID: "p1", Name: "DeepSeek", OpenAIBaseURL: "https://oai2/", APIKey: "k1-new"},
 		},
-		DefaultPlatform: "p1",
+		ActivePlatformID: "p1",
 	}); err != nil {
 		t.Fatalf("Set 更新: %v", err)
 	}
@@ -167,15 +194,15 @@ func TestSetModelConfigPlatformCRUD(t *testing.T) {
 
 	// 4. DefaultPlatform 非法回落第一个平台。
 	if err := app.SetModelConfig(ModelConfigInput{
-		Enabled:         true,
-		Platforms:       []ModelPlatformInput{{ID: "p1", Name: "DeepSeek"}, {ID: "p2", Name: "GLM"}},
-		DefaultPlatform: "nope",
+		Enabled:          true,
+		Platforms:        []ModelPlatformInput{{ID: "p1", Name: "DeepSeek"}, {ID: "p2", Name: "GLM"}},
+		ActivePlatformID: "nope",
 	}); err != nil {
 		t.Fatalf("Set 默认平台: %v", err)
 	}
 	loaded, _ = config.Load(layout)
-	if loaded.Model.DefaultPlatform != "p1" {
-		t.Fatalf("非法默认平台应回落第一个，got %q", loaded.Model.DefaultPlatform)
+	if loaded.Model.ActivePlatformID != "p1" {
+		t.Fatalf("非法默认平台应回落第一个，got %q", loaded.Model.ActivePlatformID)
 	}
 }
 
@@ -192,8 +219,8 @@ func TestSetModelConfigDanglingActiveModel(t *testing.T) {
 			{ID: "p1", Name: "A", Models: []string{"m-a"}},
 			{ID: "p2", Name: "B", Models: []string{"m-b"}},
 		},
-		DefaultPlatform: "p2",
-		ActiveModel:     "m-a",
+		ActivePlatformID: "p2",
+		ActiveModel:      "m-a",
 	}); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
@@ -204,10 +231,10 @@ func TestSetModelConfigDanglingActiveModel(t *testing.T) {
 
 	// 归属正确时保留。
 	if err := app.SetModelConfig(ModelConfigInput{
-		Enabled:         true,
-		Platforms:       []ModelPlatformInput{{ID: "p2", Name: "B", Models: []string{"m-b"}}},
-		DefaultPlatform: "p2",
-		ActiveModel:     "m-b",
+		Enabled:          true,
+		Platforms:        []ModelPlatformInput{{ID: "p2", Name: "B", Models: []string{"m-b"}}},
+		ActivePlatformID: "p2",
+		ActiveModel:      "m-b",
 	}); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
@@ -218,10 +245,10 @@ func TestSetModelConfigDanglingActiveModel(t *testing.T) {
 
 	// 默认平台无模型列表时不校验（自由输入）。
 	if err := app.SetModelConfig(ModelConfigInput{
-		Enabled:         true,
-		Platforms:       []ModelPlatformInput{{ID: "p2", Name: "B"}},
-		DefaultPlatform: "p2",
-		ActiveModel:     "custom-x",
+		Enabled:          true,
+		Platforms:        []ModelPlatformInput{{ID: "p2", Name: "B"}},
+		ActivePlatformID: "p2",
+		ActiveModel:      "custom-x",
 	}); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
@@ -291,7 +318,7 @@ func TestSetModelConfigEmptyPlatformsClearsDefault(t *testing.T) {
 		Platforms: []ModelPlatformInput{
 			{ID: "p1", Name: "A", APIKey: "k"},
 		},
-		DefaultPlatform: "p1", ActiveModel: "m",
+		ActivePlatformID: "p1", ActiveModel: "m",
 	}); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
@@ -300,7 +327,7 @@ func TestSetModelConfigEmptyPlatformsClearsDefault(t *testing.T) {
 		t.Fatalf("Set 空: %v", err)
 	}
 	loaded, _ := config.Load(layout)
-	if len(loaded.Model.Platforms) != 0 || loaded.Model.DefaultPlatform != "" {
+	if len(loaded.Model.Platforms) != 0 || loaded.Model.ActivePlatformID != "" {
 		t.Fatalf("应为空: %+v", loaded.Model)
 	}
 	if loaded.Model.ActiveModel != "" {
@@ -320,8 +347,8 @@ func TestModelOptionsUsesActivePlatform(t *testing.T) {
 	app, _ := newModelApp(t)
 	app.mu.Lock()
 	app.opts.Config.Model = config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p1",
+		Enabled:          true,
+		ActivePlatformID: "p1",
 		Platforms: []config.ModelPlatform{
 			{ID: "p1", OpenAIBaseURL: "https://oai/", AnthropicBaseURL: "https://ant/", APIKey: "k"},
 			{ID: "p2", OpenAIBaseURL: "https://oai2/", APIKey: "k2"},
@@ -340,7 +367,7 @@ func TestModelOptionsUsesActivePlatform(t *testing.T) {
 	}
 	// 未启用时不注入。
 	app.mu.Lock()
-	app.opts.Config.Model = config.ModelConfig{Enabled: false, DefaultPlatform: "p1", ActiveModel: "glm-5"}
+	app.opts.Config.Model = config.ModelConfig{Enabled: false, ActivePlatformID: "p1", ActiveModel: "glm-5"}
 	app.mu.Unlock()
 	if mo := app.modelOptions(); mo.Resolver != nil {
 		t.Fatal("未启用时不应注入")
@@ -412,8 +439,8 @@ func TestSetModelConfigSyncsOpenCode(t *testing.T) {
 	app.mu.Unlock()
 
 	if err := app.SetModelConfig(ModelConfigInput{
-		Enabled:         true,
-		DefaultPlatform: "p1",
+		Enabled:          true,
+		ActivePlatformID: "p1",
 		Platforms: []ModelPlatformInput{{
 			ID: "p1", Name: "智谱", OpenAIBaseURL: "https://api.example/v1",
 			APIKey: "sk-test", Models: []string{"glm-x"},
@@ -459,8 +486,8 @@ func TestSetModelConfigClearsInjectedKeysAfterFullReset(t *testing.T) {
 	}
 	cfg := config.Default()
 	cfg.Model = config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p1",
+		Enabled:          true,
+		ActivePlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://old/", APIKey: "k",
 		}},
@@ -494,7 +521,7 @@ func TestSetModelConfigClearsInjectedKeysAfterFullReset(t *testing.T) {
 }
 
 // 桌面端首轮扫描会无条件同步各工具模型配置；但 kshell 从未配置过模型时
-//（默认 Enabled=false、无平台），必须保留用户/ccswitch 写入的 Claude 配置，
+// （默认 Enabled=false、无平台），必须保留用户/ccswitch 写入的 Claude 配置，
 // 只补写登录标记。
 func TestSyncAgentModelsUnmanagedPreservesClaudeSettings(t *testing.T) {
 	home := t.TempDir()
@@ -540,8 +567,8 @@ func TestSyncAgentModelToolClaude(t *testing.T) {
 	home := t.TempDir()
 	cfg := config.Default()
 	cfg.Model = config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p1",
+		Enabled:          true,
+		ActivePlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk-1",
 		}},

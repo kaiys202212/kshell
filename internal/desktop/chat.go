@@ -138,7 +138,7 @@ func stopFallback(stop string) string {
 // 回合边界 = turn_done：从尾部跳过本轮收尾的 turn_done，反向直到上一轮的
 // turn_done（无则到头），区间内全部 assistant 分片按序拼接。不能按「最后一条
 // assistant 的 MessageID 组」取——ACP 流里 thought/tool/plan 会切断连续分片
-//（manager 换新合成 ID），同一回合常并发多条 assistant 消息，回复的前半部分
+// （manager 换新合成 ID），同一回合常并发多条 assistant 消息，回复的前半部分
 // 会分属更早的 MessageID 组，导致 Summary 从正文中间开始（真机证据：live.json
 // 里 done 消息开头从句子中间开始）。也不能拿 user 当边界——本地投递与 agent
 // 回显各有一条 user 分片，以最后一条 user 划界会把本轮正文截丢。thought 仍
@@ -748,7 +748,7 @@ func (a *App) mergeConfigModels(v chat.ModelsView, toolID string) chat.ModelsVie
 	}
 	switch toolID {
 	case "opencode":
-		// 默认平台排最前（命中 DefaultPlatform，否则第一个），其余按列表顺序。
+		// kshell 当前平台排最前（命中 ActivePlatformID，否则第一个），其余按列表顺序。
 		def, _ := cfg.ActivePlatform()
 		ordered := make([]config.ModelPlatform, 0, len(cfg.Platforms))
 		for _, p := range cfg.Platforms {
@@ -773,23 +773,23 @@ func (a *App) mergeConfigModels(v chat.ModelsView, toolID string) chat.ModelsVie
 		}
 		return v
 	case "codebuddy":
-		def, _ := cfg.ActivePlatform()
+		plat, _ := cfg.ToolPlatform("codebuddy")
 		for _, m := range cfg.ToolSync.CodeBuddy {
 			m = strings.TrimSpace(m)
 			if m == "" {
 				continue
 			}
-			add(m, platformModelDisplayName(def.Name, m))
+			add(m, platformModelDisplayName(plat.Name, m))
 		}
 		return v
 	default: // claude
-		def, _ := cfg.ActivePlatform()
-		for _, m := range def.Models {
+		plat, _ := cfg.ToolPlatform("claude")
+		for _, m := range plat.Models {
 			m = strings.TrimSpace(m)
 			if m == "" {
 				continue
 			}
-			add(m, platformModelDisplayName(def.Name, m))
+			add(m, platformModelDisplayName(plat.Name, m))
 		}
 		return v
 	}
@@ -866,16 +866,16 @@ func (a *App) SetChatModel(id, modelID string) error {
 			// platID 已不在配置（配置删除后下拉缓存未刷）：原样透传容错。
 			target = modelID
 			err = m.SetModel(resolved, modelID)
-		} else if def, _ := cfg.ActivePlatform(); def.ID != platID {
+		} else if cur, _ := cfg.ActivePlatform(); cur.ID != platID {
 			if err = a.saveConfig(func(c *config.Config) {
-				c.Model.DefaultPlatform = platID
+				c.Model.ActivePlatformID = platID
 				c.Model.ActiveModel = model
 			}); err != nil {
 				return err
 			}
-			// 默认平台变了，静态注入随之重写（防抖合并）。注：定制同步落地后
-			// 下拉只列当前工具实际可用的模型（claude 仅默认平台），该跨平台
-			// 路径主要被历史下拉缓存/外部调用触发；当前会话不切端点仍是既定边界。
+			// kshell 当前平台变了，调度一次同步；各工具静态注入按各自平台重写。
+			// 注：下拉只列当前工具实际可用的模型（claude 用 ClaudePlatform），
+			// 该跨平台路径主要被历史下拉缓存/外部调用触发；当前会话不切端点仍是既定边界。
 			a.scheduleAgentSync()
 			err = m.SetModel(resolved, target)
 		} else {

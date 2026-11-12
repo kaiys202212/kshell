@@ -249,7 +249,7 @@ beforeEach(() => {
   mocks.getModelConfig.mockResolvedValue({
     Enabled: false,
     Platforms: [],
-    DefaultPlatform: '',
+    ActivePlatformID: '',
     ActiveModel: '',
   });
   mocks.setModelConfig.mockResolvedValue(undefined);

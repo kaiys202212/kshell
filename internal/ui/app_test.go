@@ -44,7 +44,7 @@ func TestModelOptionsPlatformInjection(t *testing.T) {
 	// DefaultPlatform 命中：注入该平台端点与密钥，ActiveModel 不注入。
 	m := newWithModel(config.ModelConfig{
 		Enabled:         true,
-		DefaultPlatform: "p1",
+		ActivePlatformID: "p1",
 		ActiveModel:     "glm-5",
 		Platforms: []config.ModelPlatform{
 			{ID: "p1", OpenAIBaseURL: "https://oai/", AnthropicBaseURL: "https://ant/", APIKey: "k"},

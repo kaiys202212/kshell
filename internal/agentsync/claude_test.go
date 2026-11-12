@@ -27,7 +27,7 @@ func readClaudeSettings(t *testing.T, home string) map[string]any {
 func TestClaudeSyncFreshWrite(t *testing.T) {
 	home := t.TempDir()
 	c := Claude{}
-	in := SyncInput{Enabled: true, DefaultPlatformID: "p1", Platforms: []config.ModelPlatform{
+	in := SyncInput{Enabled: true, ClaudePlatformID: "p1", Platforms: []config.ModelPlatform{
 		{ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk-1"},
 		{ID: "p2", AnthropicBaseURL: "https://other.example/", APIKey: "sk-2"},
 	}}
@@ -55,7 +55,7 @@ func TestClaudeSyncPreservesUserContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := Claude{}
-	in := SyncInput{Enabled: true, DefaultPlatformID: "p1", Platforms: []config.ModelPlatform{
+	in := SyncInput{Enabled: true, ClaudePlatformID: "p1", Platforms: []config.ModelPlatform{
 		{ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk-1"},
 	}}
 	if err := c.Sync(home, in); err != nil {
@@ -102,7 +102,7 @@ func TestClaudeSyncDisabledRemovesKeys(t *testing.T) {
 func TestClaudeSyncNoAnthropicURLWritesNothing(t *testing.T) {
 	home := t.TempDir()
 	c := Claude{}
-	in := SyncInput{Enabled: true, DefaultPlatformID: "p1", Platforms: []config.ModelPlatform{
+	in := SyncInput{Enabled: true, ClaudePlatformID: "p1", Platforms: []config.ModelPlatform{
 		{ID: "p1", OpenAIBaseURL: "https://oai.example/", APIKey: "sk-1"},
 	}}
 	if err := c.Sync(home, in); err != nil {
@@ -114,7 +114,7 @@ func TestClaudeSyncNoAnthropicURLWritesNothing(t *testing.T) {
 	}
 }
 
-// DefaultPlatformID 缺省回落第一个平台（与 config.ActivePlatform 语义一致）。
+// ClaudePlatformID 缺省回落第一个平台（与 config.ActivePlatform 语义一致）。
 func TestClaudeSyncDefaultsToFirstPlatform(t *testing.T) {
 	home := t.TempDir()
 	c := Claude{}
@@ -141,13 +141,13 @@ func TestClaudeSyncSwitchesPlatform(t *testing.T) {
 	}}
 	in1 := base
 	in1.Enabled = true
-	in1.DefaultPlatformID = "p1"
+	in1.ClaudePlatformID = "p1"
 	if err := c.Sync(home, in1); err != nil {
 		t.Fatal(err)
 	}
 	in2 := base
 	in2.Enabled = true
-	in2.DefaultPlatformID = "p2"
+	in2.ClaudePlatformID = "p2"
 	if err := c.Sync(home, in2); err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestClaudeSyncWritesSlotModels(t *testing.T) {
 	home := t.TempDir()
 	c := Claude{}
 	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1",
+		Enabled: true, ClaudePlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk-1",
 			Models: []string{"glm-5.3-flash", "deepseek-v4.1-flash", "kimi-k3"},
@@ -202,7 +202,7 @@ func TestClaudeSyncEmptySlotsNotWrittenAndTrim(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1",
+		Enabled: true, ClaudePlatformID: "p1",
 		Platforms: []config.ModelPlatform{{ID: "p1", AnthropicBaseURL: "https://ant.example/"}},
 		ToolSync:  config.ToolSyncConfig{Claude: config.ClaudeSync{Model: "  glm-5.3-flash  "}},
 	}
@@ -307,7 +307,7 @@ func TestClaudeSyncClearsStaleTopLevelModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1",
+		Enabled: true, ClaudePlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk",
 			Models: []string{"glm-5.3-flash", "deepseek-v4.1-flash"},
@@ -338,7 +338,7 @@ func TestClaudeSyncKeepsTopLevelModelWhenInPlatformList(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1",
+		Enabled: true, ClaudePlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://ant.example/",
 			Models: []string{"glm-5.3-flash"},
@@ -365,7 +365,7 @@ func TestClaudeSyncKeepsTopLevelModelWhenNoPlatformList(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1",
+		Enabled: true, ClaudePlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://ant.example/",
 		}},
@@ -390,7 +390,7 @@ func TestClaudeSyncKeepsTopLevelModelMatchingActiveOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1",
+		Enabled: true, ClaudePlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://ant.example/",
 			Models: []string{"listed-a", "listed-b"},
@@ -416,7 +416,7 @@ func TestClaudeSyncKeepsBuiltinAliasTopLevelModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1",
+		Enabled: true, ClaudePlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://ant.example/",
 			Models: []string{"glm-5.3-flash"},
@@ -486,7 +486,7 @@ func TestClaudeSyncRemovesStaleDisplayKeys(t *testing.T) {
 	home := t.TempDir()
 	seedDisplayKeys(t, home)
 	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1",
+		Enabled: true, ClaudePlatformID: "p1",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk",
 			Models: []string{"gpt-5", "deepseek-v4.1-flash", "glm-5.3"},
@@ -633,7 +633,7 @@ func TestClaudeSyncSkipsModelKeysWithoutAnthropicEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := SyncInput{
-		Enabled: true, DefaultPlatformID: "p1", ActiveModel: "gpt-5",
+		Enabled: true, ClaudePlatformID: "p1", ActiveModel: "gpt-5",
 		Platforms: []config.ModelPlatform{{
 			ID: "p1", OpenAIBaseURL: "https://oai.example/v1", APIKey: "sk-oai",
 			Models: []string{"gpt-5", "deepseek-v4.1-flash"},

@@ -26,8 +26,8 @@ func TestSyncAgentModelsLogsFailure(t *testing.T) {
 	env.app.opts.Home = home
 	env.app.tools = append(env.app.tools, discovery.Tool{ID: "codebuddy", Installed: true})
 	env.app.opts.Config.Model = config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p1",
+		Enabled:          true,
+		ActivePlatformID: "p1",
 		Platforms: []config.ModelPlatform{
 			{ID: "p1", Name: "P", OpenAIBaseURL: "https://x.example/v1", APIKey: "k", Models: []string{"m1"}},
 		},

@@ -23,7 +23,6 @@ const plats: ModelPlatformView[] = [
     AnthropicBaseURL: 'https://ant/',
     Models: ['m1', 'm2'],
     APIKeySet: true,
-    IsDefault: true,
     ASRModel: '',
   },
   {
@@ -31,10 +30,9 @@ const plats: ModelPlatformView[] = [
     Name: 'GLM',
     Preset: '',
     OpenAIBaseURL: 'https://glm-oai/',
-    AnthropicBaseURL: '',
+    AnthropicBaseURL: 'https://glm-ant/',
     Models: ['g1'],
     APIKeySet: true,
-    IsDefault: false,
     ASRModel: '',
   },
 ];
@@ -51,8 +49,10 @@ afterEach(cleanup);
 const emptyCfg = {
   Enabled: false,
   Claude: { Model: '', Sonnet: '', Opus: '', Haiku: '' },
+  ClaudePlatform: '',
   OpenCode: {},
   CodeBuddy: [],
+  CodeBuddyPlatform: '',
 };
 
 describe('ToolSyncDialog', () => {
@@ -60,32 +60,41 @@ describe('ToolSyncDialog', () => {
     mocks.getToolSyncConfig.mockResolvedValue({
       Enabled: true,
       Claude: { Model: 'm1', Sonnet: '', Opus: '', Haiku: '' },
+      ClaudePlatform: 'p1',
       OpenCode: { p1: ['m1'] },
       CodeBuddy: ['m2'],
+      CodeBuddyPlatform: 'p1',
     });
     render(<ToolSyncDialog toolID="claude" toolName="Claude Code" platforms={plats} onClose={() => {}} />);
     const enable = await screen.findByRole('checkbox', { name: tt('ui.toolsync.enable') });
     expect(enable).toBeChecked();
+    const platSel = screen.getByLabelText(tt('ui.toolsync.platform')) as HTMLSelectElement;
+    expect(platSel.value).toBe('p1');
     const modelSel = screen.getByLabelText(tt('ui.toolsync.slot_model')) as HTMLSelectElement;
     expect(modelSel.value).toBe('m1');
   });
 
-  it('claude：4 槽位选项来自默认平台，保存载荷带槽位值', async () => {
+  it('claude：先选平台，槽位选项来自该平台，保存载荷带平台', async () => {
     mocks.getToolSyncConfig.mockResolvedValue(emptyCfg);
     const onClose = vi.fn();
     render(<ToolSyncDialog toolID="claude" toolName="Claude Code" platforms={plats} onClose={onClose} />);
 
     fireEvent.click(await screen.findByRole('checkbox', { name: tt('ui.toolsync.enable') }));
+    const platSel = screen.getByLabelText(tt('ui.toolsync.platform')) as HTMLSelectElement;
     const modelSel = screen.getByLabelText(tt('ui.toolsync.slot_model')) as HTMLSelectElement;
     expect(Array.from(modelSel.options).map((o) => o.value)).toEqual(['', 'm1', 'm2']);
-    fireEvent.change(modelSel, { target: { value: 'm1' } });
+    // 切到 p2：槽位值清空，选项改为该平台模型
+    fireEvent.change(platSel, { target: { value: 'p2' } });
+    expect(Array.from(modelSel.options).map((o) => o.value)).toEqual(['', 'g1']);
+    fireEvent.change(modelSel, { target: { value: 'g1' } });
     fireEvent.click(screen.getByRole('button', { name: tt('ui.toolsync.save') }));
 
     await waitFor(() => expect(mocks.setToolSyncConfig).toHaveBeenCalledTimes(1));
     const [toolID, input] = mocks.setToolSyncConfig.mock.calls[0];
     expect(toolID).toBe('claude');
     expect(input.Enabled).toBe(true);
-    expect(input.Claude).toEqual({ Model: 'm1', Sonnet: '', Opus: '', Haiku: '' });
+    expect(input.Claude).toEqual({ Model: 'g1', Sonnet: '', Opus: '', Haiku: '' });
+    expect(input.ClaudePlatform).toBe('p2');
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -105,18 +114,21 @@ describe('ToolSyncDialog', () => {
     expect(input.OpenCode).toEqual({ p1: ['m1'], p2: ['g1'] });
   });
 
-  it('codebuddy：勾选默认平台模型，载荷进 CodeBuddy', async () => {
+  it('codebuddy：选平台后勾该平台模型，载荷带 CodeBuddyPlatform', async () => {
     mocks.getToolSyncConfig.mockResolvedValue(emptyCfg);
     render(<ToolSyncDialog toolID="codebuddy" toolName="CodeBuddy" platforms={plats} onClose={() => {}} />);
 
     fireEvent.click(await screen.findByRole('checkbox', { name: tt('ui.toolsync.enable') }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'm2' }));
+    const platSel = screen.getByLabelText(tt('ui.toolsync.platform')) as HTMLSelectElement;
+    fireEvent.change(platSel, { target: { value: 'p2' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'g1' }));
     fireEvent.click(screen.getByRole('button', { name: tt('ui.toolsync.save') }));
 
     await waitFor(() => expect(mocks.setToolSyncConfig).toHaveBeenCalledTimes(1));
     const [toolID, input] = mocks.setToolSyncConfig.mock.calls[0];
     expect(toolID).toBe('codebuddy');
-    expect(input.CodeBuddy).toEqual(['m2']);
+    expect(input.CodeBuddy).toEqual(['g1']);
+    expect(input.CodeBuddyPlatform).toBe('p2');
   });
 
   it('禁用保存：载荷 Enabled=false 且勾选被清空', async () => {

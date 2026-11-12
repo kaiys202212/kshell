@@ -32,7 +32,7 @@ func TestReady(t *testing.T) {
 
 // platCfg 构造平台式 ModelConfig 的便捷函数：三元组位于平台节点。
 func platCfg(plats []config.ModelPlatform, defPlatform, activeModel string) config.ModelConfig {
-	return config.ModelConfig{Platforms: plats, DefaultPlatform: defPlatform, ActiveModel: activeModel}
+	return config.ModelConfig{Platforms: plats, ActivePlatformID: defPlatform, ActiveModel: activeModel}
 }
 
 func TestFromModelConfig(t *testing.T) {

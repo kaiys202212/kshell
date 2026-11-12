@@ -20,7 +20,7 @@ func inDefault(def string) SyncInput {
 			{ID: "p2", Name: "beta", OpenAIBaseURL: "https://p2.example/v1",
 				APIKey: "sk2", Models: []string{"ds-x", "p2mid"}},
 		},
-		DefaultPlatformID: def,
+		CodeBuddyPlatformID: def,
 	}
 	if def == "p2" {
 		in.ToolSync.CodeBuddy = []string{"ds-x", "p2mid"}
@@ -124,7 +124,7 @@ func TestCodeBuddySyncToleratesBOM(t *testing.T) {
 	}
 }
 
-// DefaultPlatformID 命中 p2 时只写 p2；空串或未命中回退第一个平台。
+// CodeBuddyPlatformID 命中 p2 时只写 p2；空串或未命中回退第一个平台。
 func TestCodeBuddySyncOnlyDefaultPlatform(t *testing.T) {
 	caseIDs := func(t *testing.T, def string) map[string]bool {
 		t.Helper()

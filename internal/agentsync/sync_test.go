@@ -12,15 +12,21 @@ import (
 	"github.com/yangk/kshell/internal/config"
 )
 
-func TestInputFromModelCarriesDefaultPlatform(t *testing.T) {
-	in := InputFromModel(config.ModelConfig{Enabled: true, DefaultPlatform: "p1"})
-	if in.DefaultPlatformID != "p1" {
-		t.Fatalf("DefaultPlatformID = %q, want p1", in.DefaultPlatformID)
+func TestInputFromModelCarriesToolPlatforms(t *testing.T) {
+	in := InputFromModel(config.ModelConfig{
+		Enabled: true,
+		ToolSync: config.ToolSyncConfig{
+			ClaudePlatform:    "p1",
+			CodeBuddyPlatform: "p1",
+		},
+	})
+	if in.ClaudePlatformID != "p1" || in.CodeBuddyPlatformID != "p1" {
+		t.Fatalf("tool platforms = %q/%q, want p1/p1", in.ClaudePlatformID, in.CodeBuddyPlatformID)
 	}
 }
 
 // Managed 决定是否允许改写各工具自有模型配置：只有 kshell 留有配置痕迹
-//（启用、平台、默认平台或 ActiveModel）才算接管过；从未配置过必须原样保留。
+// （启用、平台、默认平台或 ActiveModel）才算接管过；从未配置过必须原样保留。
 func TestSyncInputManaged(t *testing.T) {
 	cases := []struct {
 		name string
@@ -28,11 +34,11 @@ func TestSyncInputManaged(t *testing.T) {
 		want bool
 	}{
 		{"空配置", SyncInput{}, false},
-		{"仅空白", SyncInput{DefaultPlatformID: " ", ActiveModel: "  "}, false},
+		{"仅空白", SyncInput{ClaudePlatformID: " ", CodeBuddyPlatformID: " ", ActiveModel: "  "}, false},
 		{"启用", SyncInput{Enabled: true}, true},
 		{"有平台", SyncInput{Platforms: []config.ModelPlatform{{ID: "p1"}}}, true},
 		{"仅 ActiveModel 残留", SyncInput{ActiveModel: "m"}, true},
-		{"仅 DefaultPlatform 残留", SyncInput{DefaultPlatformID: "p1"}, true},
+		{"仅工具平台残留", SyncInput{ClaudePlatformID: "p1"}, true},
 	}
 	for _, c := range cases {
 		if got := c.in.Managed(); got != c.want {
@@ -60,11 +66,12 @@ func TestInputFromModelCarriesToolSync(t *testing.T) {
 // 以维持 Managed、默认平台与 ActiveModel 清空）；已启用的目标原样返回。
 func TestSyncInputCleanupFor(t *testing.T) {
 	in := SyncInput{
-		Enabled:           true,
-		Platforms:         []config.ModelPlatform{{ID: "p1", Name: "P1"}},
-		DefaultPlatformID: "p1",
-		ActiveModel:       "m1",
-		ToolSync:          config.ToolSyncConfig{Enabled: map[string]bool{"opencode": true}},
+		Enabled:             true,
+		Platforms:           []config.ModelPlatform{{ID: "p1", Name: "P1"}},
+		ClaudePlatformID:    "p1",
+		CodeBuddyPlatformID: "p1",
+		ActiveModel:         "m1",
+		ToolSync:            config.ToolSyncConfig{Enabled: map[string]bool{"opencode": true}},
 	}
 	got := in.cleanupFor("codebuddy")
 	if got.Enabled {
@@ -73,8 +80,8 @@ func TestSyncInputCleanupFor(t *testing.T) {
 	if len(got.Platforms) != 1 {
 		t.Fatal("平台必须保留以维持 Managed（走只清不建分支）")
 	}
-	if got.DefaultPlatformID != "" || got.ActiveModel != "" {
-		t.Fatalf("静态注入键应清空, got %q/%q", got.DefaultPlatformID, got.ActiveModel)
+	if got.ClaudePlatformID != "" || got.CodeBuddyPlatformID != "" || got.ActiveModel != "" {
+		t.Fatalf("静态注入键应清空, got %q/%q/%q", got.ClaudePlatformID, got.CodeBuddyPlatformID, got.ActiveModel)
 	}
 	if same := in.cleanupFor("opencode"); !same.Enabled || same.ActiveModel != "m1" {
 		t.Fatalf("已启用的目标应返回原输入, got %+v", same)
@@ -174,7 +181,7 @@ func TestSyncToolHonorsToolOff(t *testing.T) {
 }
 
 // 未配置过模型时 SyncAll 不得创建任何工具配置文件：Claude 只写登录标记
-//（~/.claude.json），settings.json / opencode.json / models.json 都不应出现。
+// （~/.claude.json），settings.json / opencode.json / models.json 都不应出现。
 func TestSyncAllUnmanagedDoesNotCreateModelFiles(t *testing.T) {
 	home := t.TempDir()
 	if err := SyncAll(home, SyncInput{}, []string{"opencode", "codebuddy", "claude"}); err != nil {

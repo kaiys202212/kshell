@@ -506,7 +506,7 @@ func TestMergeConfigModelsSinglePlatformBareNames(t *testing.T) {
 	}
 }
 
-// claude 静态注入只指向默认平台端点：下拉只并默认平台全部模型（裸名 ID、
+// claude 静态注入只指向 ClaudePlatform 端点：下拉只并该平台全部模型（裸名 ID、
 // Name 带平台前缀）；Current 不回落（agent 上报为准），ActiveModel 不影响 Current。
 func TestMergeConfigModelsMultiPlatformPrefixed(t *testing.T) {
 	platforms := []config.ModelPlatform{
@@ -514,19 +514,19 @@ func TestMergeConfigModelsMultiPlatformPrefixed(t *testing.T) {
 		{ID: "p2", Name: "Beta", Models: []string{"b1", "b2"}},
 	}
 	cases := []struct {
-		name      string
-		defPlat   string
-		active    string
-		wantIDs   []string
-		wantNames map[string]string
+		name       string
+		claudePlat string
+		active     string
+		wantIDs    []string
+		wantNames  map[string]string
 	}{
 		{
-			name: "默认平台排最前", defPlat: "p2", active: "b1",
+			name: "Claude平台排最前", claudePlat: "p2", active: "b1",
 			wantIDs:   []string{"b1", "b2"},
 			wantNames: map[string]string{"b1": "Beta: b1"},
 		},
 		{
-			name: "ActiveModel不影响Current", defPlat: "p2", active: "a1",
+			name: "ActiveModel不影响Current", claudePlat: "p2", active: "a1",
 			wantIDs: []string{"b1", "b2"},
 		},
 	}
@@ -535,11 +535,14 @@ func TestMergeConfigModelsMultiPlatformPrefixed(t *testing.T) {
 			env, id := openChatEnv(t, nil)
 			env.app.mu.Lock()
 			env.app.opts.Config.Model = config.ModelConfig{
-				Enabled:         true,
-				DefaultPlatform: tc.defPlat,
-				ActiveModel:     tc.active,
-				Platforms:       platforms,
-				ToolSync:        config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
+				Enabled:          true,
+				ActivePlatformID: "p1",
+				ActiveModel:      tc.active,
+				Platforms:        platforms,
+				ToolSync: config.ToolSyncConfig{
+					Enabled:        map[string]bool{"claude": true},
+					ClaudePlatform: tc.claudePlat,
+				},
 			}
 			env.app.mu.Unlock()
 
@@ -577,8 +580,8 @@ func TestMergeConfigModelsOpencodeMultiPlatform(t *testing.T) {
 	env := newChatTestApp(t, nil, nil)
 	env.app.mu.Lock()
 	env.app.opts.Config.Model = config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p2",
+		Enabled:          true,
+		ActivePlatformID: "p2",
 		Platforms: []config.ModelPlatform{
 			{ID: "p1", Name: "Alpha", Models: []string{"a1", "a2"}},
 			{ID: "p2", Name: "Beta", Models: []string{"b1", "b2"}},
@@ -720,11 +723,40 @@ func TestSetChatModelEmitsChatModels(t *testing.T) {
 	}
 }
 
+func TestMergeConfigModelsUsesToolPlatform(t *testing.T) {
+	app, _ := newModelApp(t)
+	app.mu.Lock()
+	app.opts.Config.Model = config.ModelConfig{
+		Enabled: true,
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "A", Models: []string{"m1"}},
+			{ID: "p2", Name: "B", Models: []string{"m2"}},
+		},
+		ActivePlatformID: "p1",
+		ToolSync: config.ToolSyncConfig{
+			Enabled:           map[string]bool{"claude": true, "codebuddy": true},
+			ClaudePlatform:    "p2",
+			CodeBuddy:         []string{"m2"},
+			CodeBuddyPlatform: "p2",
+		},
+	}
+	app.mu.Unlock()
+
+	claude := app.mergeConfigModels(chat.ModelsView{Models: []chat.ModelView{}}, "claude")
+	if len(claude.Models) != 1 || claude.Models[0].ID != "m2" {
+		t.Fatalf("claude models = %+v, want m2", claude.Models)
+	}
+	cb := app.mergeConfigModels(chat.ModelsView{Models: []chat.ModelView{}}, "codebuddy")
+	if len(cb.Models) != 1 || cb.Models[0].ID != "m2" {
+		t.Fatalf("codebuddy models = %+v, want m2", cb.Models)
+	}
+}
+
 func TestSetChatModelPlatformPrefix(t *testing.T) {
 	app, conn, layout, id := setModelApp(t, config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p1",
-		ActiveModel:     "a1",
+		Enabled:          true,
+		ActivePlatformID: "p1",
+		ActiveModel:      "a1",
 		Platforms: []config.ModelPlatform{
 			{ID: "p1", Name: "Alpha", Models: []string{"a1"}},
 			{ID: "p2", Name: "Beta", Models: []string{"b1", "b2"}},
@@ -739,7 +771,7 @@ func TestSetChatModelPlatformPrefix(t *testing.T) {
 		t.Fatalf("SetModel 应收到裸名: %v", conn.modelCalls)
 	}
 	loaded, _ := config.Load(layout)
-	if loaded.Model.DefaultPlatform != "p1" || loaded.Model.ActiveModel != "a1" {
+	if loaded.Model.ActivePlatformID != "p1" || loaded.Model.ActiveModel != "a1" {
 		t.Fatalf("默认平台切换不应改配置: %+v", loaded.Model)
 	}
 
@@ -751,10 +783,10 @@ func TestSetChatModelPlatformPrefix(t *testing.T) {
 		t.Fatalf("跨平台 SetModel 应收到裸名: %v", conn.modelCalls)
 	}
 	loaded, _ = config.Load(layout)
-	if loaded.Model.DefaultPlatform != "p2" || loaded.Model.ActiveModel != "b2" {
+	if loaded.Model.ActivePlatformID != "p2" || loaded.Model.ActiveModel != "b2" {
 		t.Fatalf("跨平台切换应落盘: %+v", loaded.Model)
 	}
-	if got := app.snapshot().Config.Model.DefaultPlatform; got != "p2" {
+	if got := app.snapshot().Config.Model.ActivePlatformID; got != "p2" {
 		t.Fatalf("内存配置应同步更新: %q", got)
 	}
 
@@ -766,7 +798,7 @@ func TestSetChatModelPlatformPrefix(t *testing.T) {
 		t.Fatalf("未知平台应原样透传: %v", conn.modelCalls)
 	}
 	loaded, _ = config.Load(layout)
-	if loaded.Model.DefaultPlatform != "p2" {
+	if loaded.Model.ActivePlatformID != "p2" {
 		t.Fatalf("未知平台不应误存: %+v", loaded.Model)
 	}
 
@@ -778,7 +810,7 @@ func TestSetChatModelPlatformPrefix(t *testing.T) {
 		t.Fatalf("非前缀应原样透传: %v", conn.modelCalls)
 	}
 	loaded, _ = config.Load(layout)
-	if loaded.Model.DefaultPlatform != "p2" || loaded.Model.ActiveModel != "b2" {
+	if loaded.Model.ActivePlatformID != "p2" || loaded.Model.ActiveModel != "b2" {
 		t.Fatalf("透传不应改配置: %+v", loaded.Model)
 	}
 }
@@ -810,8 +842,8 @@ func TestSetChatModelSaveFailsKeepsModel(t *testing.T) {
 	}
 }
 
-// 跨平台切默认平台后，应把新默认平台的 Anthropic 端点写入 ~/.claude/settings.json。
-func TestSetChatModelCrossPlatformSyncsClaude(t *testing.T) {
+// 跨平台切 kshell 当前平台不应改变 Claude 的静态注入平台（各工具平台独立）。
+func TestSetChatModelCrossPlatformKeepsClaudePlatform(t *testing.T) {
 	home := t.TempDir()
 	conn := &fakeChatConn{start: acpSessionWithModels(), waitCh: make(chan struct{})}
 	dir := t.TempDir()
@@ -828,14 +860,17 @@ func TestSetChatModelCrossPlatformSyncsClaude(t *testing.T) {
 	}
 	cfg := config.Default()
 	cfg.Model = config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p1",
-		ActiveModel:     "a1",
+		Enabled:          true,
+		ActivePlatformID: "p1",
+		ActiveModel:      "a1",
 		Platforms: []config.ModelPlatform{
 			{ID: "p1", Name: "Alpha", AnthropicBaseURL: "https://a.example/", APIKey: "ka", Models: []string{"a1"}},
 			{ID: "p2", Name: "Beta", AnthropicBaseURL: "https://b.example/", APIKey: "kb", Models: []string{"b2"}},
 		},
-		ToolSync: config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
+		ToolSync: config.ToolSyncConfig{
+			Enabled:        map[string]bool{"claude": true},
+			ClaudePlatform: "p1",
+		},
 	}
 	if err := config.Save(layout, cfg); err != nil {
 		t.Fatalf("Save 初态: %v", err)
@@ -855,11 +890,11 @@ func TestSetChatModelCrossPlatformSyncsClaude(t *testing.T) {
 	var b []byte
 	for {
 		b, err = os.ReadFile(path)
-		if err == nil && strings.Contains(string(b), "https://b.example/") {
+		if err == nil && strings.Contains(string(b), "https://a.example/") {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("应写入 settings.json（含新默认平台端点）: err=%v body=%s", err, b)
+			t.Fatalf("应写入 settings.json（Claude 自有平台 p1）: err=%v body=%s", err, b)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
@@ -868,8 +903,8 @@ func TestSetChatModelCrossPlatformSyncsClaude(t *testing.T) {
 		t.Fatal(err)
 	}
 	env, _ := doc["env"].(map[string]any)
-	if env["ANTHROPIC_BASE_URL"] != "https://b.example/" || env["ANTHROPIC_AUTH_TOKEN"] != "kb" {
-		t.Fatalf("跨平台后 Claude env = %#v", env)
+	if env["ANTHROPIC_BASE_URL"] != "https://a.example/" || env["ANTHROPIC_AUTH_TOKEN"] != "ka" {
+		t.Fatalf("Claude env 应保持自有平台 p1，got %#v", env)
 	}
 }
 
@@ -879,9 +914,9 @@ func TestMergeConfigModelsDedupesByDisplayName(t *testing.T) {
 	env := newChatTestApp(t, nil, nil)
 	env.app.mu.Lock()
 	env.app.opts.Config.Model = config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p1",
-		ActiveModel:     "glm-x",
+		Enabled:          true,
+		ActivePlatformID: "p1",
+		ActiveModel:      "glm-x",
 		Platforms: []config.ModelPlatform{
 			{ID: "p1", Name: "openai", Models: []string{"glm-x", "ds-x"}},
 		},
@@ -915,9 +950,9 @@ func TestMergeConfigModelsDedupesByDisplayName(t *testing.T) {
 // 再下发，否则 OpenCode 报 -32602 model not found。
 func TestSetChatModelOpenCodeMapsBareToNative(t *testing.T) {
 	app, conn, _, id := setModelAppTool(t, config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p1",
-		Platforms:       []config.ModelPlatform{{ID: "p1", Name: "P1", Models: []string{"glm-5.3-flash"}}},
+		Enabled:          true,
+		ActivePlatformID: "p1",
+		Platforms:        []config.ModelPlatform{{ID: "p1", Name: "P1", Models: []string{"glm-5.3-flash"}}},
 	}, "opencode", acp.SessionStart{Models: &acp.SessionModelState{
 		AvailableModels: []acp.ModelInfo{
 			{ModelID: "kshell-p1/glm-5.3-flash", Name: "P1: glm-5.3-flash"},
@@ -936,9 +971,9 @@ func TestSetChatModelOpenCodeMapsBareToNative(t *testing.T) {
 // 点号/连字符差宽松尾段兜底：platID 构造未命中时按尾段唯一命中。
 func TestSetChatModelOpenCodeLooseTail(t *testing.T) {
 	app, conn, _, id := setModelAppTool(t, config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p1",
-		Platforms:       []config.ModelPlatform{{ID: "p1", Name: "P1", Models: []string{"glm-5.3-flash"}}},
+		Enabled:          true,
+		ActivePlatformID: "p1",
+		Platforms:        []config.ModelPlatform{{ID: "p1", Name: "P1", Models: []string{"glm-5.3-flash"}}},
 	}, "opencode", acp.SessionStart{Models: &acp.SessionModelState{
 		AvailableModels: []acp.ModelInfo{{ModelID: "kshell-p1/glm-5-3-flash", Name: "P1: glm"}},
 	}})
@@ -953,9 +988,9 @@ func TestSetChatModelOpenCodeLooseTail(t *testing.T) {
 // opencode: 精确命中原生列表 → 透传;无任何匹配 → 裸名透传(保持报错可见)。
 func TestSetChatModelOpenCodePassthrough(t *testing.T) {
 	app, conn, _, id := setModelAppTool(t, config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p1",
-		Platforms:       []config.ModelPlatform{{ID: "p1", Name: "P1", Models: []string{"glm-5.3-flash"}}},
+		Enabled:          true,
+		ActivePlatformID: "p1",
+		Platforms:        []config.ModelPlatform{{ID: "p1", Name: "P1", Models: []string{"glm-5.3-flash"}}},
 	}, "opencode", acp.SessionStart{Models: &acp.SessionModelState{
 		AvailableModels: []acp.ModelInfo{
 			{ModelID: "zhip/glm-4.6", Name: "Zhip: glm-4.6"},
@@ -978,9 +1013,9 @@ func TestSetChatModelOpenCodePassthrough(t *testing.T) {
 // 非 opencode 工具(claude 等)不受影响:裸名仍原样透传。
 func TestSetChatModelNonOpenCodeUnaffected(t *testing.T) {
 	app, conn, _, id := setModelAppTool(t, config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p1",
-		Platforms:       []config.ModelPlatform{{ID: "p1", Name: "P1", Models: []string{"a1"}}},
+		Enabled:          true,
+		ActivePlatformID: "p1",
+		Platforms:        []config.ModelPlatform{{ID: "p1", Name: "P1", Models: []string{"a1"}}},
 	}, "claude", acp.SessionStart{Models: &acp.SessionModelState{
 		AvailableModels: []acp.ModelInfo{
 			{ModelID: "kshell-p1/a1", Name: "P1: a1"},
@@ -1000,9 +1035,9 @@ func TestMergeConfigModelsOpencodeNativeDedupe(t *testing.T) {
 	env := newChatTestApp(t, nil, nil)
 	env.app.mu.Lock()
 	env.app.opts.Config.Model = config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p1",
-		Platforms:       []config.ModelPlatform{{ID: "p1", Name: "openai", Models: []string{"glm-x", "ds-x"}}},
+		Enabled:          true,
+		ActivePlatformID: "p1",
+		Platforms:        []config.ModelPlatform{{ID: "p1", Name: "openai", Models: []string{"glm-x", "ds-x"}}},
 		ToolSync: config.ToolSyncConfig{
 			Enabled:  map[string]bool{"opencode": true, "claude": true},
 			OpenCode: map[string][]string{"p1": {"glm-x", "ds-x"}},
@@ -1054,9 +1089,9 @@ func TestMergeConfigModelsCodeBuddyKeepsBuiltinNameCollision(t *testing.T) {
 	env := newChatTestApp(t, nil, nil)
 	env.app.mu.Lock()
 	env.app.opts.Config.Model = config.ModelConfig{
-		Enabled:         true,
-		DefaultPlatform: "p1",
-		Platforms:       []config.ModelPlatform{{ID: "p1", Name: "opencode1", Models: []string{"glm-5.3-flash", "kimi-k3"}}},
+		Enabled:          true,
+		ActivePlatformID: "p1",
+		Platforms:        []config.ModelPlatform{{ID: "p1", Name: "opencode1", Models: []string{"glm-5.3-flash", "kimi-k3"}}},
 		ToolSync: config.ToolSyncConfig{
 			Enabled:   map[string]bool{"codebuddy": true},
 			CodeBuddy: []string{"glm-5.3-flash", "kimi-k3"},
