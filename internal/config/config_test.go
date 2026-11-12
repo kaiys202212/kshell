@@ -215,9 +215,9 @@ func TestModelConfigDefaultsAndRoundTrip(t *testing.T) {
 			APIKey:           "tp-secret",
 			Models:           []string{"mimo-v2.5", "kimi-k2"},
 		}},
-		DefaultPlatform: "default",
-		ActiveModel:     "mimo-v2.5",
-		Models:          []string{},
+		ActivePlatformID: "default",
+		ActiveModel:      "mimo-v2.5",
+		Models:           []string{},
 		// enabled: true 且无旧 sync_off_tools：Load 迁移后三目标全部视为开启。
 		ToolSync: ToolSyncConfig{Enabled: map[string]bool{"opencode": true, "codebuddy": true, "claude": true}},
 	}
@@ -268,8 +268,8 @@ func TestModelConfigNormalizes(t *testing.T) {
 	if !reflect.DeepEqual(pl.Models, want) {
 		t.Fatalf("平台 models 应 TrimSpace/去空/去重：got %#v want %#v", pl.Models, want)
 	}
-	if got.Model.DefaultPlatform != "default" {
-		t.Fatalf("DefaultPlatform = %q, want default", got.Model.DefaultPlatform)
+	if got.Model.ActivePlatformID != "default" {
+		t.Fatalf("ActivePlatformID = %q, want default", got.Model.ActivePlatformID)
 	}
 }
 
@@ -404,8 +404,8 @@ func TestModelConfigLegacyAgentsMigration(t *testing.T) {
 		t.Fatalf("迁移后 Agents 应清空，got %#v", got.Model.Agents)
 	}
 	// agents 迁入的 Models 连同其他 legacy 字段一起迁入 default 平台。
-	if got.Model.DefaultPlatform != "default" {
-		t.Fatalf("DefaultPlatform = %q, want default", got.Model.DefaultPlatform)
+	if got.Model.ActivePlatformID != "default" {
+		t.Fatalf("ActivePlatformID = %q, want default", got.Model.ActivePlatformID)
 	}
 	if len(got.Model.Platforms) != 1 || got.Model.Platforms[0].ID != "default" {
 		t.Fatalf("应迁移出 default 平台，got %#v", got.Model.Platforms)
@@ -484,8 +484,8 @@ func TestModelConfigLegacyFullMigration(t *testing.T) {
 	if !reflect.DeepEqual(got.Model.Platforms[0], wantPlatform) {
 		t.Fatalf("平台迁移结果不符:\ngot  %+v\nwant %+v", got.Model.Platforms[0], wantPlatform)
 	}
-	if got.Model.DefaultPlatform != "default" {
-		t.Fatalf("DefaultPlatform = %q, want default", got.Model.DefaultPlatform)
+	if got.Model.ActivePlatformID != "default" {
+		t.Fatalf("ActivePlatformID = %q, want default", got.Model.ActivePlatformID)
 	}
 	if got.Model.ActiveModel != "mimo-v2.5" {
 		t.Fatalf("ActiveModel 应保留（TrimSpace），got %q", got.Model.ActiveModel)
@@ -525,8 +525,8 @@ func TestModelConfigLegacyEmptyStaysEmpty(t *testing.T) {
 	if got.Model.Platforms == nil || len(got.Model.Platforms) != 0 {
 		t.Fatalf("无 legacy 内容时不应生成平台，got %#v", got.Model.Platforms)
 	}
-	if got.Model.DefaultPlatform != "" || got.Model.ActiveModel != "" {
-		t.Fatalf("DefaultPlatform/ActiveModel 应为空，got %q/%q", got.Model.DefaultPlatform, got.Model.ActiveModel)
+	if got.Model.ActivePlatformID != "" || got.Model.ActiveModel != "" {
+		t.Fatalf("ActivePlatformID/ActiveModel 应为空，got %q/%q", got.Model.ActivePlatformID, got.Model.ActiveModel)
 	}
 }
 
@@ -573,8 +573,8 @@ func TestModelConfigPlatformsNormalize(t *testing.T) {
 	}
 }
 
-// TestModelConfigDefaultPlatformFallback 覆盖 DefaultPlatform 校验。
-func TestModelConfigDefaultPlatformFallback(t *testing.T) {
+// TestModelConfigActivePlatformFallback 覆盖旧 default_platform 迁移与 ActivePlatformID 校验。
+func TestModelConfigActivePlatformFallback(t *testing.T) {
 	t.Run("指向不存在ID回落第一个", func(t *testing.T) {
 		p := tempPaths(t)
 		if err := os.MkdirAll(p.Root, 0o755); err != nil {
@@ -588,8 +588,8 @@ func TestModelConfigDefaultPlatformFallback(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if got.Model.DefaultPlatform != "a" {
-			t.Fatalf("DefaultPlatform 应回落第一个平台，got %q", got.Model.DefaultPlatform)
+		if got.Model.ActivePlatformID != "a" {
+			t.Fatalf("ActivePlatformID 应回落第一个平台，got %q", got.Model.ActivePlatformID)
 		}
 	})
 	t.Run("合法ID去空白后保持", func(t *testing.T) {
@@ -605,8 +605,8 @@ func TestModelConfigDefaultPlatformFallback(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if got.Model.DefaultPlatform != "b" {
-			t.Fatalf("DefaultPlatform 应 TrimSpace 后保持，got %q", got.Model.DefaultPlatform)
+		if got.Model.ActivePlatformID != "b" {
+			t.Fatalf("ActivePlatformID 应 TrimSpace 后保持，got %q", got.Model.ActivePlatformID)
 		}
 	})
 	t.Run("无平台时连同ActiveModel清空", func(t *testing.T) {
@@ -622,14 +622,14 @@ func TestModelConfigDefaultPlatformFallback(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if got.Model.DefaultPlatform != "" || got.Model.ActiveModel != "" {
-			t.Fatalf("无平台时应清空 DefaultPlatform/ActiveModel，got %q/%q",
-				got.Model.DefaultPlatform, got.Model.ActiveModel)
+		if got.Model.ActivePlatformID != "" || got.Model.ActiveModel != "" {
+			t.Fatalf("无平台时应清空 ActivePlatformID/ActiveModel，got %q/%q",
+				got.Model.ActivePlatformID, got.Model.ActiveModel)
 		}
 	})
 }
 
-// TestActivePlatform 覆盖默认平台取值：命中、回落第一个、空列表返回 false。
+// TestActivePlatform 覆盖当前平台取值：命中、回落第一个、空列表返回 false。
 func TestActivePlatform(t *testing.T) {
 	ps := []ModelPlatform{{ID: "a", Name: "A"}, {ID: "b", Name: "B"}}
 	cases := []struct {
@@ -638,9 +638,9 @@ func TestActivePlatform(t *testing.T) {
 		wantID string
 		wantOK bool
 	}{
-		{"命中DefaultPlatform", ModelConfig{Platforms: ps, DefaultPlatform: "b"}, "b", true},
+		{"命中ActivePlatformID", ModelConfig{Platforms: ps, ActivePlatformID: "b"}, "b", true},
 		{"未指定回落第一个", ModelConfig{Platforms: ps}, "a", true},
-		{"指向缺失回落第一个", ModelConfig{Platforms: ps, DefaultPlatform: "zzz"}, "a", true},
+		{"指向缺失回落第一个", ModelConfig{Platforms: ps, ActivePlatformID: "zzz"}, "a", true},
 		{"空列表返回false", ModelConfig{}, "", false},
 	}
 	for _, tc := range cases {
@@ -667,7 +667,7 @@ func TestModelPlatformASRModelRoundTrip(t *testing.T) {
 				ASRModel: "FunAudioLLM/SenseVoiceSmall", Models: []string{"m1"}},
 			{ID: "p2", Name: "B", OpenAIBaseURL: "https://b.example.com/v1", Models: []string{"m2"}},
 		},
-		DefaultPlatform: "p1",
+		ActivePlatformID: "p1",
 	}
 	if err := Save(p, want); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -702,9 +702,9 @@ func TestModelConfigPlatformsRoundTrip(t *testing.T) {
 			{ID: "p1", Name: "A", OpenAIBaseURL: "https://a.example.com/v1", Models: []string{"m1"}},
 			{ID: "p2", Name: "B", AnthropicBaseURL: "https://b.example.com", APIKey: "k2", Models: []string{"m2", "m3"}},
 		},
-		DefaultPlatform: "p2",
-		ActiveModel:     "m2",
-		Models:          []string{},
+		ActivePlatformID: "p2",
+		ActiveModel:      "m2",
+		Models:           []string{},
 		// enabled: true 且无旧 sync_off_tools：Load 迁移后三目标全部视为开启。
 		ToolSync: ToolSyncConfig{Enabled: map[string]bool{"opencode": true, "codebuddy": true, "claude": true}},
 	}

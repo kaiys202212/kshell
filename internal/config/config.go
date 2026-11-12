@@ -96,8 +96,8 @@ type ModelPlatform struct {
 	ASRModel string `yaml:"asr_model,omitempty"`
 }
 
-// ClaudeSync 是 Claude Code 静态注入的 4 类模型槽位映射：每槽取默认平台模型
-// ID；空 = 不写对应 env 键（同步先删后建自然清掉）。
+// ClaudeSync 是 Claude Code 静态注入的 4 类模型槽位映射：每槽取 ClaudePlatform
+// 选定平台的模型 ID；空 = 不写对应 env 键（同步先删后建自然清掉）。
 type ClaudeSync struct {
 	Model  string `yaml:"model,omitempty"`  // ANTHROPIC_MODEL（默认模型槽）
 	Sonnet string `yaml:"sonnet,omitempty"` // ANTHROPIC_DEFAULT_SONNET_MODEL
@@ -114,19 +114,24 @@ type ToolSyncConfig struct {
 	// 全禁用状态，不能被迁移重新打开。
 	Enabled map[string]bool `yaml:"enabled"`
 	Claude  ClaudeSync      `yaml:"claude,omitempty"`
+	// ClaudePlatform 是 Claude 静态注入选定的平台 ID；空/悬空回落第一个平台。
+	ClaudePlatform string `yaml:"claude_platform,omitempty"`
 	// OpenCode 平台 ID → 勾选的模型 ID；无勾选的平台不建 provider。
 	OpenCode map[string][]string `yaml:"opencode,omitempty"`
-	// CodeBuddy 默认平台勾选的模型 ID。
+	// CodeBuddy 是 CodeBuddyPlatform 选定平台勾选的模型 ID。
 	CodeBuddy []string `yaml:"codebuddy,omitempty"`
+	// CodeBuddyPlatform 是 CodeBuddy 注入选定的平台 ID；空/悬空回落第一个平台。
+	CodeBuddyPlatform string `yaml:"codebuddy_platform,omitempty"`
 }
 
-// ModelConfig 是模型平台配置集合 + 默认模型选择。
+// ModelConfig 是模型平台配置集合 + kshell 当前平台/模型选择。
 // Preset/OpenAIBaseURL/AnthropicBaseURL/BaseURL/APIKey/Models/Agents 为旧单平台字段：
 // 仅读取迁移用（归一化时迁入 Platforms 并清空），保存时 omitempty 不再落盘。
 type ModelConfig struct {
-	Enabled         bool            `yaml:"enabled"`
-	Platforms       []ModelPlatform `yaml:"platforms"`
-	DefaultPlatform string          `yaml:"default_platform"` // 平台 ID；空=第一个
+	Enabled   bool            `yaml:"enabled"`
+	Platforms []ModelPlatform `yaml:"platforms"`
+	// ActivePlatformID 是 kshell 自身使用的平台，与 ActiveModel 成对；空=第一个。
+	ActivePlatformID string `yaml:"active_platform"`
 	// ToolSync 是按工具定制的模型同步配置（取代旧 sync_off_tools 总开关语义）。
 	ToolSync ToolSyncConfig `yaml:"tool_sync"`
 	// legacy 单平台字段：读取后迁移进 Platforms，归一化后清空。
@@ -136,7 +141,11 @@ type ModelConfig struct {
 	BaseURL          string   `yaml:"base_url,omitempty"`
 	APIKey           string   `yaml:"api_key,omitempty"`
 	Models           []string `yaml:"models,omitempty"`
-	ActiveModel      string   `yaml:"active_model"` // 默认模型；仅供 kshell 自身 LLM 调用（hub 自主工具/微信 ASR），不注入给 agent
+	// ActiveModel 是 kshell 自身默认模型；仅供 hub 自主工具/微信 ASR 等自身
+	// LLM 调用，不注入给 agent；语义上属于 ActivePlatformID。
+	ActiveModel string `yaml:"active_model"`
+	// DefaultPlatform 是旧全局默认平台：仅读取迁移，归一化后清空、不再落盘。
+	DefaultPlatform string `yaml:"default_platform,omitempty"`
 	// SyncOffTools 是旧版「按工具关同步」列表：仅读取迁移用（归一化时迁入
 	// ToolSync.Enabled 并清空），保存时 omitempty 不再落盘。
 	SyncOffTools []string          `yaml:"sync_off_tools,omitempty"`
@@ -300,7 +309,7 @@ func Default() Config {
 		SessionMode:    SessionModeTUI,
 		PermissionMode: PermissionModeDefault,
 		Model:          ModelConfig{Models: []string{}, Platforms: []ModelPlatform{}},
-		AgentHub: AgentHubConfig{RouteMode: RouteModeAuto, HeartbeatMinutes: agenthubHeartbeatDefault},
+		AgentHub:       AgentHubConfig{RouteMode: RouteModeAuto, HeartbeatMinutes: agenthubHeartbeatDefault},
 	}
 }
 
@@ -455,7 +464,10 @@ func (c Config) normalized() Config {
 	// 迁移后旧字段清空，保存时 omitempty 不再落盘。
 	tsZero := c.Model.ToolSync.Enabled == nil &&
 		c.Model.ToolSync.Claude == ClaudeSync{} &&
-		len(c.Model.ToolSync.OpenCode) == 0 && len(c.Model.ToolSync.CodeBuddy) == 0
+		c.Model.ToolSync.ClaudePlatform == "" &&
+		len(c.Model.ToolSync.OpenCode) == 0 &&
+		len(c.Model.ToolSync.CodeBuddy) == 0 &&
+		c.Model.ToolSync.CodeBuddyPlatform == ""
 	if tsZero && (c.Model.SyncOffTools != nil || c.Model.Enabled) {
 		off := map[string]bool{}
 		for _, id := range c.Model.SyncOffTools {
@@ -532,35 +544,72 @@ func (c Config) normalized() Config {
 		c.Model.Platforms = []ModelPlatform{}
 	}
 
-	// DefaultPlatform 校验：指向不存在的平台时回落第一个；无平台则连同 ActiveModel 清空。
-	c.Model.DefaultPlatform = strings.TrimSpace(c.Model.DefaultPlatform)
-	if c.Model.DefaultPlatform != "" {
+	// ActivePlatformID 迁移：旧 default_platform 优先，其次校验悬空回落第一个。
+	c.Model.ActivePlatformID = strings.TrimSpace(c.Model.ActivePlatformID)
+	legacyDefault := strings.TrimSpace(c.Model.DefaultPlatform)
+	if c.Model.ActivePlatformID == "" {
+		c.Model.ActivePlatformID = legacyDefault
+	}
+	if c.Model.ActivePlatformID != "" {
 		found := false
 		for _, p := range c.Model.Platforms {
-			if p.ID == c.Model.DefaultPlatform {
+			if p.ID == c.Model.ActivePlatformID {
 				found = true
 				break
 			}
 		}
 		if !found {
 			if len(c.Model.Platforms) > 0 {
-				c.Model.DefaultPlatform = c.Model.Platforms[0].ID
+				c.Model.ActivePlatformID = c.Model.Platforms[0].ID
 			} else {
-				c.Model.DefaultPlatform = ""
-				c.Model.ActiveModel = ""
+				c.Model.ActivePlatformID = ""
 			}
 		}
 	}
 
+	// 工具平台迁移：旧全局默认平台只在对应工具确有配置时下放，
+	// 避免给从未用过的工具写无关平台 ID。
+	if legacyDefault != "" {
+		if c.Model.ToolSync.ClaudePlatform == "" && c.Model.ToolSync.Claude != (ClaudeSync{}) {
+			c.Model.ToolSync.ClaudePlatform = legacyDefault
+		}
+		if c.Model.ToolSync.CodeBuddyPlatform == "" && len(c.Model.ToolSync.CodeBuddy) > 0 {
+			c.Model.ToolSync.CodeBuddyPlatform = legacyDefault
+		}
+	}
+	// 悬空工具平台置空：运行期与 UI 统一按「空=第一个」回落。
+	validPlatform := func(id string) bool {
+		if id == "" {
+			return false
+		}
+		for _, p := range c.Model.Platforms {
+			if p.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	c.Model.ToolSync.ClaudePlatform = strings.TrimSpace(c.Model.ToolSync.ClaudePlatform)
+	c.Model.ToolSync.CodeBuddyPlatform = strings.TrimSpace(c.Model.ToolSync.CodeBuddyPlatform)
+	if !validPlatform(c.Model.ToolSync.ClaudePlatform) {
+		c.Model.ToolSync.ClaudePlatform = ""
+	}
+	if !validPlatform(c.Model.ToolSync.CodeBuddyPlatform) {
+		c.Model.ToolSync.CodeBuddyPlatform = ""
+	}
+
 	// legacy 字段已完成迁移/归一，全部清空（保存时 omitempty 不再落盘）。
 	// Models 保持非 nil 空 slice，与 Default() 及旧版归一化行为一致。
-	// 无平台时 ActiveModel 必然悬空（端点/密钥都不存在），一并清空：否则它会
-	// 作为「kshell 托管过模型」的唯一痕迹，让启动同步反复清掉用户或 ccswitch
-	// 写入的 ANTHROPIC_*。真正清理历史注入由保存路径用旧配置做一次性同步。
+	// 无平台时所有选择悬空（端点/密钥都不存在），一并清空：否则 ActiveModel
+	// 会作为「kshell 托管过模型」的唯一痕迹，让启动同步反复清掉用户或
+	// ccswitch 写入的 ANTHROPIC_*。真正清理历史注入由保存路径用旧配置做一次性同步。
 	if len(c.Model.Platforms) == 0 {
-		c.Model.DefaultPlatform = ""
+		c.Model.ActivePlatformID = ""
 		c.Model.ActiveModel = ""
+		c.Model.ToolSync.ClaudePlatform = ""
+		c.Model.ToolSync.CodeBuddyPlatform = ""
 	}
+	c.Model.DefaultPlatform = ""
 	c.Model.Preset = ""
 	c.Model.OpenAIBaseURL = ""
 	c.Model.AnthropicBaseURL = ""
@@ -571,15 +620,49 @@ func (c Config) normalized() Config {
 	return c
 }
 
-// ActivePlatform 返回默认平台（DefaultPlatform 命中，否则第一个）。
+// ActivePlatform 返回 kshell 当前平台（ActivePlatformID 命中，否则第一个）。
 // 无平台时返回 false。
 func (m ModelConfig) ActivePlatform() (ModelPlatform, bool) {
+	if p := m.effectivePlatform(); p != nil {
+		return *p, true
+	}
+	return ModelPlatform{}, false
+}
+
+// effectivePlatform 返回 ActivePlatformID 命中的平台指针；空/悬空回落第一个。
+// 无平台返回 nil。
+func (m ModelConfig) effectivePlatform() *ModelPlatform {
+	if len(m.Platforms) == 0 {
+		return nil
+	}
+	if m.ActivePlatformID != "" {
+		for i := range m.Platforms {
+			if m.Platforms[i].ID == m.ActivePlatformID {
+				return &m.Platforms[i]
+			}
+		}
+	}
+	return &m.Platforms[0]
+}
+
+// ToolPlatform 返回工具（claude/codebuddy）选定平台；空/悬空回落第一个。
+// 未支持的工具或无平台返回 false。
+func (m ModelConfig) ToolPlatform(toolID string) (ModelPlatform, bool) {
+	var id string
+	switch toolID {
+	case "claude":
+		id = m.ToolSync.ClaudePlatform
+	case "codebuddy":
+		id = m.ToolSync.CodeBuddyPlatform
+	default:
+		return ModelPlatform{}, false
+	}
 	if len(m.Platforms) == 0 {
 		return ModelPlatform{}, false
 	}
-	if m.DefaultPlatform != "" {
+	if id != "" {
 		for _, p := range m.Platforms {
-			if p.ID == m.DefaultPlatform {
+			if p.ID == id {
 				return p, true
 			}
 		}
