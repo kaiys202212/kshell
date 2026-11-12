@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatInfo } from '../lib/api';
 import { DRAG_MIME } from '../lib/dragPath';
@@ -933,6 +933,40 @@ describe('ChatView', () => {
     expect(screen.getByText('助手句').closest('.selectable')).not.toBeNull();
     expect(screen.getByText('思考句').closest('.selectable')).not.toBeNull();
     expect(screen.getByText(/工具输出/).closest('.selectable')).not.toBeNull();
+  });
+
+  it('模型与参数控件和附件/发送同处底部操作行', async () => {
+    api.listChatModels.mockResolvedValue({
+      Current: 'm1',
+      Models: [{ ID: 'm1', Name: 'Sonnet' }],
+    });
+    api.listChatConfigOptions.mockResolvedValue({
+      Options: [
+        { ID: 'mode', Name: 'Session Mode', Type: 'select', Current: 'build', Options: [
+          { Value: 'build', Name: 'build' }, { Value: 'plan', Name: 'plan' },
+        ] },
+      ],
+    });
+    render(<ChatView chat={CHAT} active />);
+
+    const row = await screen.findByTestId('chat-action-row');
+    const controls = await screen.findByTestId('chat-config-controls');
+    expect(row).toContainElement(controls);
+    expect(row).toContainElement(screen.getByRole('button', { name: tt('ui.chat.attach') }));
+    expect(row).toContainElement(screen.getByRole('button', { name: tt('ui.chat.send') }));
+    expect(within(controls).getByText(tt('ui.chat.model_label'))).toBeInTheDocument();
+    expect(within(controls).getByRole('button', { name: /Session Mode/ })).toBeInTheDocument();
+    expect(screen.queryByTestId('chat-config-row')).not.toBeInTheDocument();
+  });
+
+  it('无模型与参数时不渲染配置区，附件/发送仍可用', async () => {
+    render(<ChatView chat={CHAT} active />);
+    await waitFor(() => expect(api.listChatModels).toHaveBeenCalledWith('c1'));
+
+    expect(screen.queryByTestId('chat-config-controls')).not.toBeInTheDocument();
+    const row = screen.getByTestId('chat-action-row');
+    expect(within(row).getByRole('button', { name: tt('ui.chat.attach') })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: tt('ui.chat.send') })).toBeInTheDocument();
   });
 
   it('渲染并切换 mode 配置项', async () => {
