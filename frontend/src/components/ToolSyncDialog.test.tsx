@@ -147,6 +147,8 @@ describe('ToolSyncDialog', () => {
     expect(platSel.selectedOptions[0].textContent).toBe(tt('ui.toolsync.tool_platform_invalid'));
     // 悬空时只有「已失效」占位 + 现有平台，没有「未配置」空选项。
     expect(Array.from(platSel.options).map((o) => o.value)).toEqual(['gone', 'p1', 'p2']);
+    // 候选平台存在时悬空只表示「待重选」：不应误报「保存后不会被注入」。
+    expect(screen.queryByText(tt('ui.toolsync.claude_no_endpoint'))).not.toBeInTheDocument();
     // 悬空平台没有模型列表：槽位只剩「不设置」，不会沿用其它平台模型。
     const modelSel = screen.getByLabelText(tt('ui.toolsync.slot_model')) as HTMLSelectElement;
     expect(Array.from(modelSel.options).map((o) => o.value)).toEqual(['']);
@@ -174,6 +176,8 @@ describe('ToolSyncDialog', () => {
     expect(platSel.selectedOptions[0].textContent).toBe(tt('ui.toolsync.tool_platform_invalid'));
     // 悬空时只有「已失效」占位 + 现有平台，没有「未配置」空选项。
     expect(Array.from(platSel.options).map((o) => o.value)).toEqual(['gone', 'p1', 'p2']);
+    // 候选平台存在时不误报 no-endpoint 告警。
+    expect(screen.queryByText(tt('ui.toolsync.codebuddy_no_endpoint'))).not.toBeInTheDocument();
     // 悬空平台无模型列表，不应展示任何平台的勾选区。
     expect(screen.queryByText(tt('ui.toolsync.models_empty'))).not.toBeInTheDocument();
 

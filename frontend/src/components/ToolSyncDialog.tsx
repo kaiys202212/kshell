@@ -211,8 +211,10 @@ export function ToolSyncDialog({ toolID, toolName, platforms, onClose }: Props) 
   };
 
   const slotOptions = claudeEffective?.Models ?? [];
-  const claudeInjectable = !!claudeEffective;
-  const codebuddyInjectable = !!codebuddyEffective;
+  // 告警只在「根本没有候选平台」时出现：悬空属于「待重选」，由「已失效」占位
+  // 表达，保存时会删键并回落第一平台，并不会停止注入。
+  const noAnthropicPlatform = anthropicPlats.length === 0;
+  const noOpenAIPlatform = openaiPlats.length === 0;
 
   const checkboxRow = (group: string, model: string) => (
     <label key={model} className="flex items-center gap-2 text-xs">
@@ -278,7 +280,7 @@ export function ToolSyncDialog({ toolID, toolName, platforms, onClose }: Props) 
 
           {toolID === 'claude' && (
             <div className="grid gap-2">
-              {!claudeInjectable && (
+              {noAnthropicPlatform && (
                 <p className="text-xs text-amber-600 dark:text-amber-400">
                   {t('ui.toolsync.claude_no_endpoint')}
                 </p>
@@ -344,7 +346,7 @@ export function ToolSyncDialog({ toolID, toolName, platforms, onClose }: Props) 
 
           {toolID === 'codebuddy' && (
             <div className="grid gap-2">
-              {!codebuddyInjectable && (
+              {noOpenAIPlatform && (
                 <p className="text-xs text-amber-600 dark:text-amber-400">
                   {t('ui.toolsync.codebuddy_no_endpoint')}
                 </p>
