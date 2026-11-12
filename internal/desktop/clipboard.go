@@ -2,11 +2,14 @@ package desktop
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"image"
 	"image/png"
 	"os"
+	"path/filepath"
 	"strings"
+	"unicode/utf16"
 )
 
 // ClipboardPaste 是终端粘贴用的剪贴板快照：Path 优先（资源管理器文件或剪贴板位图落盘），否则 Text。
@@ -72,4 +75,39 @@ func encodePNG(img image.Image) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// WriteClipboardFiles 把文件/文件夹写入系统剪贴板（CF_HDROP），供文件树 Ctrl+C 与资源管理器互操作。
+// paths 必须是已拼好的绝对路径（前端只传 relPath，由本层 filepath.Join 拼接）。
+func (a *App) WriteClipboardFiles(root string, rels []string) error {
+	paths := make([]string, 0, len(rels))
+	for _, rel := range rels {
+		rel = strings.TrimSpace(rel)
+		if rel == "" {
+			continue
+		}
+		paths = append(paths, filepath.Join(root, filepath.FromSlash(rel)))
+	}
+	if len(paths) == 0 {
+		return fmt.Errorf("err.clipboard.write_empty")
+	}
+	return writeClipboardFiles(paths)
+}
+
+// dropfilesBuffer 构造 CF_HDROP 缓冲：20 字节 DROPFILES 头（pFiles=20、pt=0、fNC=0、fWide=1），
+// 后接每个路径的 UTF-16LE 编码（\0 结尾），整体以双 \0 结束，资源管理器按此约定解析。
+func dropfilesBuffer(paths []string) []byte {
+	var u16 []uint16
+	for _, p := range paths {
+		u16 = append(u16, utf16.Encode([]rune(p))...)
+		u16 = append(u16, 0)
+	}
+	u16 = append(u16, 0)
+	buf := make([]byte, 20, 20+len(u16)*2)
+	binary.LittleEndian.PutUint32(buf[0:4], 20)
+	binary.LittleEndian.PutUint16(buf[18:20], 1)
+	for _, v := range u16 {
+		buf = binary.LittleEndian.AppendUint16(buf, v)
+	}
+	return buf
 }

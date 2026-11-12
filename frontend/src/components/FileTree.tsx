@@ -27,6 +27,7 @@ import {
   searchFiles,
   startFileWatch,
   stopFileWatch,
+  writeClipboardFiles,
 } from '../lib/api';
 import type { FileNode, SearchHit } from '../lib/api';
 import { cn } from '../lib/cn';
@@ -973,13 +974,35 @@ export default function FileTree({
     if (found.length > 0) setDeleting(found);
   };
 
+  // Ctrl+C 把选中集（文件/文件夹本体）写入系统剪贴板，资源管理器可直接粘贴；
+  // 焦点在输入控件（搜索/重命名/新建行内输入）时不拦截，保持默认复制行为。
+  const copySelectedToClipboard = () => {
+    if (selected.size === 0) return;
+    const rels = [...selected].filter((rel) => rel !== '');
+    if (rels.length === 0) return;
+    writeClipboardFiles(wsPath, rels)
+      .then(() => {
+        useAppStore.getState().notify(t('ui.files.files_copied', { n: rels.length }), 'success');
+      })
+      .catch((e: unknown) => {
+        useAppStore.getState().notify(backendError(e), 'error');
+      });
+  };
+
   const handleTreeKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== 'Delete') return;
     const el = e.target as HTMLElement;
     if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable) return;
-    if (selected.size === 0) return;
-    e.preventDefault();
-    startDeleteSelected();
+    if (e.key === 'Delete') {
+      if (selected.size === 0) return;
+      e.preventDefault();
+      startDeleteSelected();
+      return;
+    }
+    if (e.key === 'c' && (e.ctrlKey || e.metaKey)) {
+      if (selected.size === 0) return;
+      e.preventDefault();
+      copySelectedToClipboard();
+    }
   };
 
   // 搜索结果里的目录：逐层加载并展开，然后清空搜索回到树视图定位

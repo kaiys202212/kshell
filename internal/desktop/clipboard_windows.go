@@ -32,6 +32,10 @@ var (
 	procGlobalLock                 = modKernel32.NewProc("GlobalLock")
 	procGlobalUnlock               = modKernel32.NewProc("GlobalUnlock")
 	procGlobalSize                 = modKernel32.NewProc("GlobalSize")
+	procGlobalAlloc                = modKernel32.NewProc("GlobalAlloc")
+	procGlobalFree                 = modKernel32.NewProc("GlobalFree")
+	procEmptyClipboard             = modUser32.NewProc("EmptyClipboard")
+	procSetClipboardData           = modUser32.NewProc("SetClipboardData")
 	procDragQueryFileW             = modShell32.NewProc("DragQueryFileW")
 )
 
@@ -134,6 +138,40 @@ func clipboardPNG() ([]byte, error) {
 	return dibToPNG(dib)
 }
 
+const gmemMoveable = 0x0002
+
+// writeClipboardFiles 把绝对路径列表以 CF_HDROP 写入系统剪贴板：
+// GlobalAlloc 分配 DROPFILES 缓冲 → 打开剪贴板 → EmptyClipboard → SetClipboardData（成功后所有权归系统）。
+func writeClipboardFiles(paths []string) error {
+	data := dropfilesBuffer(paths)
+	h, _, err := procGlobalAlloc.Call(gmemMoveable, uintptr(len(data)))
+	if h == 0 {
+		return fmt.Errorf("err.clipboard.global_alloc_failed|%w", callErr(err))
+	}
+	ptr, _, err := procGlobalLock.Call(h)
+	if ptr == 0 {
+		_, _, _ = procGlobalFree.Call(h)
+		return fmt.Errorf("err.clipboard.global_lock_failed|%w", callErr(err))
+	}
+	writeLocked(ptr, data)
+	procGlobalUnlock.Call(h)
+
+	if err := openClipboardRetry(); err != nil {
+		_, _, _ = procGlobalFree.Call(h)
+		return err
+	}
+	defer procCloseClipboard.Call()
+
+	procEmptyClipboard.Call()
+	r, _, err := procSetClipboardData.Call(cfHDROP, h)
+	if r == 0 {
+		// 数据未被系统接管，释放避免泄漏
+		_, _, _ = procGlobalFree.Call(h)
+		return fmt.Errorf("err.clipboard.write_failed|%w", callErr(err))
+	}
+	return nil
+}
+
 func clipboardBytes(format uint32) ([]byte, error) {
 	h, _, err := procGetClipboardData.Call(uintptr(format))
 	if h == 0 {
@@ -160,8 +198,8 @@ func callErr(err error) error {
 	return err
 }
 
-// copyLocked 从 GlobalLock 得到的 uintptr 拷出一份，避免 uintptr→unsafe.Pointer 触发 vet。
-func copyLocked(ptr uintptr, size int) []byte {
+// lockedView 把 GlobalLock 得到的 uintptr 视作 size 长的字节切片（只作类型视图，不拷贝）。
+func lockedView(ptr uintptr, size int) []byte {
 	var sl struct {
 		data uintptr
 		len  int
@@ -170,10 +208,19 @@ func copyLocked(ptr uintptr, size int) []byte {
 	sl.data = ptr
 	sl.len = size
 	sl.cap = size
-	src := *(*[]byte)(unsafe.Pointer(&sl))
+	return *(*[]byte)(unsafe.Pointer(&sl))
+}
+
+// copyLocked 从 GlobalLock 得到的 uintptr 拷出一份，避免 uintptr→unsafe.Pointer 触发 vet。
+func copyLocked(ptr uintptr, size int) []byte {
 	out := make([]byte, size)
-	copy(out, src)
+	copy(out, lockedView(ptr, size))
 	return out
+}
+
+// writeLocked 把 data 写进 GlobalLock 得到的缓冲区（写剪贴板用）。
+func writeLocked(ptr uintptr, data []byte) {
+	copy(lockedView(ptr, len(data)), data)
 }
 
 func bytesToUint16(b []byte) []uint16 {

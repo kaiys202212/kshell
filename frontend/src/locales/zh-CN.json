@@ -85,6 +85,10 @@
       "no_image": "无图片",
       "get_data_failed": "GetClipboardData 失败: {{0}}",
       "global_lock_failed": "GlobalLock 失败: {{0}}",
+      "global_alloc_failed": "GlobalAlloc 失败: {{0}}",
+      "write_empty": "未选中文件",
+      "write_unsupported": "当前平台不支持复制文件到剪贴板",
+      "write_failed": "写入剪贴板失败: {{0}}",
       "data_empty": "剪贴板数据为空"
     },
     "files": {
@@ -704,6 +708,7 @@
       "deleted": "已删除 {{name}}",
       "path_copied": "已复制路径",
       "copy_failed": "复制失败",
+      "files_copied": "已复制 {{n}} 项到剪贴板",
       "moved": "已移动到 {{dst}}",
       "root_dir": "根目录",
       "menu_new_file": "新建文件",

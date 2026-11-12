@@ -79,3 +79,8 @@ func readUnixClipboard() (clipboardSnapshot, error) {
 func isPNG(b []byte) bool {
 	return bytes.HasPrefix(b, []byte{0x89, 'P', 'N', 'G'})
 }
+
+// writeClipboardFiles 非 Windows 平台暂不支持写文件列表到剪贴板，返回稳定 key 由前端翻译。
+func writeClipboardFiles(paths []string) error {
+	return fmt.Errorf("err.clipboard.write_unsupported")
+}
