@@ -96,8 +96,8 @@ type ModelPlatform struct {
 	ASRModel string `yaml:"asr_model,omitempty"`
 }
 
-// ClaudeSync 是 Claude Code 静态注入的 4 类模型槽位映射：每槽取 ClaudePlatform
-// 选定平台的模型 ID；空 = 不写对应 env 键（同步先删后建自然清掉）。
+// ClaudeSync 是 Claude Code 静态注入的 4 类模型槽位映射：每槽取
+// ToolPlatforms["claude"] 选定平台的模型 ID；空 = 不写对应 env 键（同步先删后建自然清掉）。
 type ClaudeSync struct {
 	Model  string `yaml:"model,omitempty"`  // ANTHROPIC_MODEL（默认模型槽）
 	Sonnet string `yaml:"sonnet,omitempty"` // ANTHROPIC_DEFAULT_SONNET_MODEL
@@ -114,13 +114,15 @@ type ToolSyncConfig struct {
 	// 全禁用状态，不能被迁移重新打开。
 	Enabled map[string]bool `yaml:"enabled"`
 	Claude  ClaudeSync      `yaml:"claude,omitempty"`
-	// ClaudePlatform 是 Claude 静态注入选定的平台 ID；空/悬空回落第一个平台。
-	ClaudePlatform string `yaml:"claude_platform,omitempty"`
+	// ToolPlatforms 是每工具静态注入/端点解析的平台 ID 映射（toolID → 平台 ID）。
+	// 取代旧 ClaudePlatform/CodeBuddyPlatform 单字段；空/悬空回落第一个平台。
+	ToolPlatforms map[string]string `yaml:"tool_platforms,omitempty"`
 	// OpenCode 平台 ID → 勾选的模型 ID；无勾选的平台不建 provider。
 	OpenCode map[string][]string `yaml:"opencode,omitempty"`
-	// CodeBuddy 是 CodeBuddyPlatform 选定平台勾选的模型 ID。
+	// CodeBuddy 是 ToolPlatforms["codebuddy"] 选定平台勾选的模型 ID。
 	CodeBuddy []string `yaml:"codebuddy,omitempty"`
-	// CodeBuddyPlatform 是 CodeBuddy 注入选定的平台 ID；空/悬空回落第一个平台。
+	// legacy：仅读取迁移用，归一化时迁入 ToolPlatforms 并清空，保存不再落盘。
+	ClaudePlatform    string `yaml:"claude_platform,omitempty"`
 	CodeBuddyPlatform string `yaml:"codebuddy_platform,omitempty"`
 }
 
@@ -463,17 +465,32 @@ func (c Config) normalized() Config {
 	c.Model.Agents = nil
 	c.Model.Models = normalizeModels(c.Model.Models)
 	c.Model.ActiveModel = strings.TrimSpace(c.Model.ActiveModel)
+	// 旧单工具平台字段迁移为 ToolPlatforms 映射：只有映射尚未出现（nil）时才迁移，
+	// 已有新键时以新键为准（不合并旧值）。迁移后旧字段统一清空，保存只落新格式。
+	ts := &c.Model.ToolSync
+	claudeLegacy := strings.TrimSpace(ts.ClaudePlatform)
+	codeBuddyLegacy := strings.TrimSpace(ts.CodeBuddyPlatform)
+	if ts.ToolPlatforms == nil && (claudeLegacy != "" || codeBuddyLegacy != "") {
+		ts.ToolPlatforms = map[string]string{}
+		if claudeLegacy != "" {
+			ts.ToolPlatforms["claude"] = claudeLegacy
+		}
+		if codeBuddyLegacy != "" {
+			ts.ToolPlatforms["codebuddy"] = codeBuddyLegacy
+		}
+	}
+	ts.ClaudePlatform = ""
+	ts.CodeBuddyPlatform = ""
 	// 旧 sync_off_tools 迁移为 ToolSync.Enabled：全局启用过模型同步时，未列出
 	// 的目标视为开启、列出的视为关闭；从未启用过则保持空 map（= 全部禁用）。
 	// Enabled 只存 true 项（缺省即禁用），禁用 = 删键。文件里已有 tool_sync
 	//（Enabled 非 nil 即算显式配置）时以新键为准、不再迁移。
 	// 迁移后旧字段清空，保存时 omitempty 不再落盘。
-	tsZero := c.Model.ToolSync.Enabled == nil &&
-		c.Model.ToolSync.Claude == ClaudeSync{} &&
-		c.Model.ToolSync.ClaudePlatform == "" &&
-		len(c.Model.ToolSync.OpenCode) == 0 &&
-		len(c.Model.ToolSync.CodeBuddy) == 0 &&
-		c.Model.ToolSync.CodeBuddyPlatform == ""
+	tsZero := ts.Enabled == nil &&
+		ts.Claude == ClaudeSync{} &&
+		len(ts.ToolPlatforms) == 0 &&
+		len(ts.OpenCode) == 0 &&
+		len(ts.CodeBuddy) == 0
 	if tsZero && (c.Model.SyncOffTools != nil || c.Model.Enabled) {
 		off := map[string]bool{}
 		for _, id := range c.Model.SyncOffTools {
@@ -577,34 +594,35 @@ func (c Config) normalized() Config {
 	// 避免给从未用过的工具写无关平台 ID。Claude 的端点/密钥注入只看 Enabled，
 	// 槽位可以为空，因此启用即视为「配置过」，否则升级后会静默回落到第一个平台。
 	if legacyDefault != "" {
-		if c.Model.ToolSync.ClaudePlatform == "" &&
+		if c.Model.ToolSync.ToolPlatforms == nil {
+			c.Model.ToolSync.ToolPlatforms = map[string]string{}
+		}
+		if id, ok := c.Model.ToolSync.ToolPlatforms["claude"]; (!ok || strings.TrimSpace(id) == "") &&
 			(c.Model.ToolSync.Claude != (ClaudeSync{}) || c.Model.ToolSync.Enabled["claude"]) {
-			c.Model.ToolSync.ClaudePlatform = legacyDefault
+			c.Model.ToolSync.ToolPlatforms["claude"] = legacyDefault
 		}
-		if c.Model.ToolSync.CodeBuddyPlatform == "" &&
+		if id, ok := c.Model.ToolSync.ToolPlatforms["codebuddy"]; (!ok || strings.TrimSpace(id) == "") &&
 			(len(c.Model.ToolSync.CodeBuddy) > 0 || c.Model.ToolSync.Enabled["codebuddy"]) {
-			c.Model.ToolSync.CodeBuddyPlatform = legacyDefault
+			c.Model.ToolSync.ToolPlatforms["codebuddy"] = legacyDefault
 		}
 	}
-	// 悬空工具平台置空：运行期与 UI 统一按「空=第一个」回落。
-	validPlatform := func(id string) bool {
-		if id == "" {
-			return false
-		}
-		for _, p := range c.Model.Platforms {
-			if p.ID == id {
-				return true
+	// 工具平台映射归一：key/value 去空白、丢空项。悬空 ID 不在此处校验，
+	// 由消费方统一按「空/悬空回落第一个」处理，避免迁移层静默丢用户数据。
+	if len(c.Model.ToolSync.ToolPlatforms) > 0 {
+		clean := make(map[string]string, len(c.Model.ToolSync.ToolPlatforms))
+		for tool, id := range c.Model.ToolSync.ToolPlatforms {
+			if tool = strings.TrimSpace(tool); tool == "" {
+				continue
 			}
+			if id = strings.TrimSpace(id); id == "" {
+				continue
+			}
+			clean[tool] = id
 		}
-		return false
-	}
-	c.Model.ToolSync.ClaudePlatform = strings.TrimSpace(c.Model.ToolSync.ClaudePlatform)
-	c.Model.ToolSync.CodeBuddyPlatform = strings.TrimSpace(c.Model.ToolSync.CodeBuddyPlatform)
-	if !validPlatform(c.Model.ToolSync.ClaudePlatform) {
-		c.Model.ToolSync.ClaudePlatform = ""
-	}
-	if !validPlatform(c.Model.ToolSync.CodeBuddyPlatform) {
-		c.Model.ToolSync.CodeBuddyPlatform = ""
+		if len(clean) == 0 {
+			clean = nil
+		}
+		c.Model.ToolSync.ToolPlatforms = clean
 	}
 
 	// legacy 字段已完成迁移/归一，全部清空（保存时 omitempty 不再落盘）。
@@ -615,8 +633,6 @@ func (c Config) normalized() Config {
 	if len(c.Model.Platforms) == 0 {
 		c.Model.ActivePlatformID = ""
 		c.Model.ActiveModel = ""
-		c.Model.ToolSync.ClaudePlatform = ""
-		c.Model.ToolSync.CodeBuddyPlatform = ""
 	}
 	c.Model.DefaultPlatform = ""
 	c.Model.Preset = ""
@@ -654,17 +670,19 @@ func (m ModelConfig) effectivePlatform() *ModelPlatform {
 	return &m.Platforms[0]
 }
 
-// ToolPlatform 返回工具（claude/codebuddy）选定平台；空/悬空回落第一个。
-// 未支持的工具或无平台返回 false。
+// ToolPlatform 返回工具（ToolPlatforms 中的任意 toolID，如 claude/codebuddy/
+// codex/gemini/cursor）选定平台；映射为空或悬空时回落第一个。
+// 无平台返回 false。
 func (m ModelConfig) ToolPlatform(toolID string) (ModelPlatform, bool) {
-	var id string
-	switch toolID {
-	case "claude":
-		id = m.ToolSync.ClaudePlatform
-	case "codebuddy":
-		id = m.ToolSync.CodeBuddyPlatform
-	default:
-		return ModelPlatform{}, false
+	id := strings.TrimSpace(m.ToolSync.ToolPlatforms[toolID])
+	// 兼容旧字段：归一化后的配置已迁入映射并清空，但程序内构造的旧配置仍可读到。
+	if id == "" {
+		switch toolID {
+		case "claude":
+			id = strings.TrimSpace(m.ToolSync.ClaudePlatform)
+		case "codebuddy":
+			id = strings.TrimSpace(m.ToolSync.CodeBuddyPlatform)
+		}
 	}
 	if len(m.Platforms) == 0 {
 		return ModelPlatform{}, false

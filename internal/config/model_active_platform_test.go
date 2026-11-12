@@ -73,11 +73,14 @@ model:
     claude: {model: m2}
     codebuddy: [m2]
 `)
-	if c.Model.ToolSync.ClaudePlatform != "p2" {
-		t.Fatalf("ClaudePlatform = %q, want p2", c.Model.ToolSync.ClaudePlatform)
+	if c.Model.ToolSync.ToolPlatforms["claude"] != "p2" {
+		t.Fatalf("ToolPlatforms[claude] = %q, want p2", c.Model.ToolSync.ToolPlatforms["claude"])
 	}
-	if c.Model.ToolSync.CodeBuddyPlatform != "p2" {
-		t.Fatalf("CodeBuddyPlatform = %q, want p2", c.Model.ToolSync.CodeBuddyPlatform)
+	if c.Model.ToolSync.ToolPlatforms["codebuddy"] != "p2" {
+		t.Fatalf("ToolPlatforms[codebuddy] = %q, want p2", c.Model.ToolSync.ToolPlatforms["codebuddy"])
+	}
+	if c.Model.ToolSync.ClaudePlatform != "" || c.Model.ToolSync.CodeBuddyPlatform != "" {
+		t.Fatalf("旧字段应清空: %+v", c.Model.ToolSync)
 	}
 	if got, ok := c.Model.ToolPlatform("claude"); !ok || got.ID != "p2" {
 		t.Fatalf("ToolPlatform(claude) = %+v, %v", got, ok)
@@ -98,11 +101,14 @@ model:
   tool_sync:
     enabled: {claude: true, codebuddy: true}
 `)
-	if c.Model.ToolSync.ClaudePlatform != "p2" {
-		t.Fatalf("ClaudePlatform = %q, want p2", c.Model.ToolSync.ClaudePlatform)
+	if c.Model.ToolSync.ToolPlatforms["claude"] != "p2" {
+		t.Fatalf("ToolPlatforms[claude] = %q, want p2", c.Model.ToolSync.ToolPlatforms["claude"])
 	}
-	if c.Model.ToolSync.CodeBuddyPlatform != "p2" {
-		t.Fatalf("CodeBuddyPlatform = %q, want p2", c.Model.ToolSync.CodeBuddyPlatform)
+	if c.Model.ToolSync.ToolPlatforms["codebuddy"] != "p2" {
+		t.Fatalf("ToolPlatforms[codebuddy] = %q, want p2", c.Model.ToolSync.ToolPlatforms["codebuddy"])
+	}
+	if c.Model.ToolSync.ClaudePlatform != "" || c.Model.ToolSync.CodeBuddyPlatform != "" {
+		t.Fatalf("旧字段应清空: %+v", c.Model.ToolSync)
 	}
 }
 

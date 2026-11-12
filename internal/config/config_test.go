@@ -723,3 +723,85 @@ func TestModelConfigPlatformsRoundTrip(t *testing.T) {
 		t.Fatalf("往返后 legacy 字段不应复活，got %+v", got.Model)
 	}
 }
+
+// TestToolPlatformsMigration 覆盖旧 claude_platform/codebuddy_platform 单字段迁移为
+// ToolPlatforms 映射：老配置载入不丢数据、旧字段清空；保存只落新键、不写旧键。
+func TestToolPlatformsMigration(t *testing.T) {
+	cases := []struct {
+		name          string
+		content       string
+		wantClaude    string
+		wantCodeBuddy string
+	}{
+		{
+			name: "旧键与平台列表",
+			content: "model:\n" +
+				"  platforms:\n" +
+				"    - id: p1\n" +
+				"      name: A\n" +
+				"    - id: p2\n" +
+				"      name: B\n" +
+				"  tool_sync:\n" +
+				"    claude_platform: p1\n" +
+				"    codebuddy_platform: p2\n",
+			wantClaude:    "p1",
+			wantCodeBuddy: "p2",
+		},
+		{
+			// 只有旧键、没有平台列表时也必须保留用户选择：悬空判定交给消费方回落，
+			// 迁移层不做校验，否则这类老配置会在升级时静默丢数据。
+			name: "仅旧键无平台列表",
+			content: "model:\n" +
+				"  tool_sync:\n" +
+				"    claude_platform: p1\n" +
+				"    codebuddy_platform: p1\n",
+			wantClaude:    "p1",
+			wantCodeBuddy: "p1",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := tempPaths(t)
+			if err := os.MkdirAll(p.Root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p.Config, []byte(tc.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := Load(p)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			tp := got.Model.ToolSync.ToolPlatforms
+			if tp["claude"] != tc.wantClaude || tp["codebuddy"] != tc.wantCodeBuddy {
+				t.Fatalf("ToolPlatforms = %#v, want claude=%q codebuddy=%q", tp, tc.wantClaude, tc.wantCodeBuddy)
+			}
+			if got.Model.ToolSync.ClaudePlatform != "" || got.Model.ToolSync.CodeBuddyPlatform != "" {
+				t.Fatalf("旧字段迁移后应清空: %+v", got.Model.ToolSync)
+			}
+
+			// 保存路径：旧键不再落盘，新键出现；重载后映射保持。
+			if err := Save(p, got); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			raw, err := os.ReadFile(p.Config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(raw), "claude_platform") || strings.Contains(string(raw), "codebuddy_platform") {
+				t.Fatalf("保存后不应再写旧字段:\n%s", raw)
+			}
+			if !strings.Contains(string(raw), "tool_platforms") {
+				t.Fatalf("保存后应写 tool_platforms:\n%s", raw)
+			}
+			again, err := Load(p)
+			if err != nil {
+				t.Fatalf("Load again: %v", err)
+			}
+			if !reflect.DeepEqual(again.Model.ToolSync.ToolPlatforms, tp) {
+				t.Fatalf("往返后 ToolPlatforms = %#v, want %#v", again.Model.ToolSync.ToolPlatforms, tp)
+			}
+		})
+	}
+}
