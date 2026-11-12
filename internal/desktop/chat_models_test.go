@@ -897,7 +897,7 @@ func TestSetChatModelPlatformPrefix(t *testing.T) {
 		t.Fatalf("未知平台应原样透传: %v", conn.modelCalls)
 	}
 	loaded, _ = config.Load(layout)
-	if loaded.Model.ActivePlatformID != "p1" {
+	if loaded.Model.ActivePlatformID != "p1" || loaded.Model.ActiveModel != "a1" {
 		t.Fatalf("未知平台不应误存: %+v", loaded.Model)
 	}
 
@@ -975,9 +975,6 @@ func TestSetChatModelCrossPlatformKeepsClaudePlatform(t *testing.T) {
 		t.Fatalf("Save 初态: %v", err)
 	}
 	app := NewAppWith(Options{Chats: m, Config: cfg, Layout: layout})
-	app.mu.Lock()
-	app.tools = []discovery.Tool{{ID: "claude", Installed: true}}
-	app.mu.Unlock()
 
 	if err := app.SetChatModel(info.ID, "kshell:p2:b2"); err != nil {
 		t.Fatalf("SetChatModel: %v", err)

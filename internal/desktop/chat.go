@@ -844,6 +844,8 @@ func (a *App) ToolPlatformModels(toolID string) ([]chat.ModelView, error) {
 // 下拉前缀 ID 在转发前解析，跨平台与默认平台一致：只切当前会话模型，
 // 不回写全局默认平台/模型（默认值由设置页维护）；platID 已不在配置
 // （配置删除后下拉缓存未刷）时原样透传容错，不崩、不误存。
+// 边界：这里仅切换模型（及 opencode 的 provider 路由），ACP 会话端点仍在
+// 启动时按工具/会话模型定死，不随切模型改变。
 // 成功后推 chat:models，与 restoreSessionModel 同口径——否则 easynew 建后
 // SetModel 成功但前端仍停在握手期的 Current=default。
 func (a *App) SetChatModel(id, modelID string) error {
@@ -863,7 +865,7 @@ func (a *App) SetChatModel(id, modelID string) error {
 	if info, gok := m.Get(resolved); gok && info.ToolID == "opencode" {
 		target = a.resolveOpenCodeModelID(resolved, platID, model)
 	}
-	var err error
+	rememberModel := true
 	if ok {
 		cfg := a.snapshot().Config.Model
 		found := false
@@ -876,17 +878,19 @@ func (a *App) SetChatModel(id, modelID string) error {
 		if !found {
 			// platID 已不在配置（配置删除后下拉缓存未刷）：原样透传容错。
 			target = modelID
+			// 冒号形态无法在恢复侧还原平台（恢复只认 kshell-<platID>/<model>），
+			// 不写会话级记忆，避免下次恢复回放错误模型。
+			rememberModel = false
 		}
 	}
 	// 聊天内切模型只作用于当前会话：默认平台/模型由设置页维护，这里不再
 	// 回写全局默认，也不触发各工具静态注入的同步。
-	err = m.SetModel(resolved, target)
-	if err != nil {
+	if err := m.SetModel(resolved, target); err != nil {
 		return err
 	}
 	// opencode 会话级模型记忆：OpenCode 自己不记上次模型，成功切换后把
 	// 「磁盘会话 ID→原生模型」落盘 state，供恢复历史会话时回放。
-	if info, gok := m.Get(resolved); gok && info.ToolID == "opencode" {
+	if info, gok := m.Get(resolved); rememberModel && gok && info.ToolID == "opencode" {
 		a.recordOpenCodeSessionModel(info.SessionID, target)
 	}
 	if view, viewErr := a.modelsView(resolved); viewErr == nil {

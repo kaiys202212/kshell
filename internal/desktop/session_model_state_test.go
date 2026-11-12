@@ -192,6 +192,31 @@ func TestSetChatModelOpenCodeRecordsSessionModel(t *testing.T) {
 	}
 }
 
+// 悬空前缀（platID 已不在配置）走原样透传，形态无法在恢复侧还原平台，
+// 不得写入会话级模型记忆。
+func TestSetChatModelOpenCodeDanglingPlatformSkipsState(t *testing.T) {
+	env := newOpenCodeChatTestEnv(t, opencodeModels(), "opencode/big-pickle")
+	env.app.mu.Lock()
+	env.app.opts.Config.Model = config.ModelConfig{
+		Enabled:          true,
+		ActivePlatformID: "p1",
+		ActiveModel:      "glm-5.3-flash",
+		Platforms:        []config.ModelPlatform{{ID: "p1", Name: "P1", Models: []string{"glm-5.3-flash"}}},
+	}
+	env.app.mu.Unlock()
+
+	opened, err := env.app.OpenSessionACP("s1")
+	if err != nil {
+		t.Fatalf("OpenSessionACP: %v", err)
+	}
+	if err := env.app.SetChatModel(opened.Chat.ID, "kshell:px:m"); err != nil {
+		t.Fatalf("SetChatModel: %v", err)
+	}
+	if got := env.readModelState(t); len(got) != 0 {
+		t.Fatalf("悬空前缀不应写会话级模型记忆: %v", got)
+	}
+}
+
 // 非 opencode 工具（claude）SetChatModel 不得写该 state 文件。
 func TestSetChatModelClaudeDoesNotRecordSessionModel(t *testing.T) {
 	env := newChatTestApp(t, &providers.ACPDetection{
