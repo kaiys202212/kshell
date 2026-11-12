@@ -465,11 +465,11 @@ func (c Config) normalized() Config {
 	c.Model.Agents = nil
 	c.Model.Models = normalizeModels(c.Model.Models)
 	c.Model.ActiveModel = strings.TrimSpace(c.Model.ActiveModel)
-	// 旧单工具平台字段迁移为 ToolPlatforms 映射：只有映射尚未出现（nil）时才迁移，
-	// 已有新键时以新键为准（不合并旧值）。迁移后旧字段统一清空，保存只落新格式。
+	// 旧单工具平台字段迁移为 ToolPlatforms 映射：len==0 时视为尚未配置
+	//（nil 与显式空映射 tool_platforms: {} 同等），逐 key 补缺合并；已有非空
+	// 新键不覆盖，键存在但值为空白则允许旧字段补缺（空值随后会被归一化丢弃）。
+	// 迁移后旧字段统一清空，保存只落新格式。
 	ts := &c.Model.ToolSync
-	// len==0 而非 ==nil：显式空映射（tool_platforms: {}）也视为「尚未配置」，
-	// 否则升级时旧键会被空映射挡住而丢数据。逐 key 补缺，已有新键不覆盖。
 	if len(ts.ToolPlatforms) == 0 {
 		ts.ToolPlatforms = nil
 	}
@@ -483,7 +483,7 @@ func (c Config) normalized() Config {
 		if ts.ToolPlatforms == nil {
 			ts.ToolPlatforms = map[string]string{}
 		}
-		if _, ok := ts.ToolPlatforms[legacy.tool]; !ok {
+		if cur, ok := ts.ToolPlatforms[legacy.tool]; !ok || strings.TrimSpace(cur) == "" {
 			ts.ToolPlatforms[legacy.tool] = legacy.id
 		}
 	}

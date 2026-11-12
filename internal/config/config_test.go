@@ -778,6 +778,21 @@ func TestToolPlatformsMigration(t *testing.T) {
 			wantClaude:    "p1",
 			wantCodeBuddy: "p1",
 		},
+		{
+			// 键存在但值为空白视同未配置：旧键必须补缺，否则空值会被归一化
+			// 丢弃后用户选择凭空消失。
+			name: "空白值键不挡旧键补缺",
+			content: "model:\n" +
+				"  platforms:\n" +
+				"    - id: p1\n" +
+				"      name: A\n" +
+				"  tool_sync:\n" +
+				"    tool_platforms:\n" +
+				"      claude: \"\"\n" +
+				"    claude_platform: p1\n",
+			wantClaude:    "p1",
+			wantCodeBuddy: "",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
