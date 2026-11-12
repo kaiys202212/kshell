@@ -168,7 +168,7 @@ function goModel() {
 // 平台名同时出现在「当前平台」下拉与平台卡片中；按名称取列表卡片，避免歧义。
 async function findCard(name: string): Promise<HTMLElement> {
   const els = await screen.findAllByText(name);
-  const card = els.map((el) => el.closest('li')).find((el): el is HTMLElement => !!el);
+  const card = els.map((el) => el.closest('li')).find((el): el is HTMLLIElement => !!el);
   if (!card) throw new Error(`platform card not found: ${name}`);
   return card;
 }
