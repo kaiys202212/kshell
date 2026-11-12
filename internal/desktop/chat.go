@@ -298,7 +298,7 @@ func (a *App) openSessionACP(sessionID string, allowFallback bool) (OpenedSessio
 	blockTerminal := allowFallback && shouldBlockTerminalFallback(s)
 	o := a.snapshot()
 	if m := o.Chats; m != nil {
-		l, launchErr := launch.ForSessionACP(o.Providers, tools, s, a.modelOptions(), a.permissionOptions())
+		l, launchErr := launch.ForSessionACP(o.Providers, tools, s, a.modelOptionsForSession(s), a.permissionOptions())
 		if launchErr != nil {
 			if blockTerminal {
 				return OpenedSession{}, acpOnlyErr(launchErr)
@@ -372,7 +372,7 @@ func (a *App) openWorkspaceACP(wsID, toolID, modelID string, allowFallback bool)
 		}
 	}
 	if m := o.Chats; m != nil {
-		if l, err := launch.ForWorkspaceACP(o.Providers, tools, ws, toolID, a.modelOptionsForCreate(modelID), a.permissionOptions()); err == nil {
+		if l, err := launch.ForWorkspaceACP(o.Providers, tools, ws, toolID, a.modelOptionsForCreate(toolID, modelID), a.permissionOptions()); err == nil {
 			info, err := openChat(m, "new:"+nextChatSeq(), chat.Info{
 				Kind:            chat.KindNew,
 				Workspace:       ws.Path,

@@ -64,6 +64,30 @@ func (a *App) restoreCandidates() []chat.ModelView {
 	return out
 }
 
+// sessionModelFor 解析会话上次的真实模型裸名：
+//   - claude：按磁盘 JSONL 尾部上次真实助手模型；
+//   - opencode：OpenCode 的会话不记模型（resume 后 Current 恒为 agent 默认），
+//     改查 kshell 侧 state 记忆（SetChatModel 成功时落盘，见 session_model_state.go）；
+//   - 其他工具暂不提供，返回空串。
+//
+// 供「恢复模型」与「按会话模型解析平台」两条链路共用，保证口径一致。
+func (a *App) sessionModelFor(s providers.Session) string {
+	switch s.ToolID {
+	case "claude":
+		if s.Path == "" {
+			return ""
+		}
+		return providers.ClaudeLastAssistantModel(s.Path)
+	case "opencode":
+		if s.ID == "" {
+			return ""
+		}
+		return a.lookupOpenCodeSessionModel(s.ID)
+	default:
+		return ""
+	}
+}
+
 // restoreSessionModel 在 ACP 恢复历史会话后尝试恢复上次模型：
 //   - claude：按磁盘 JSONL 尾部上次真实助手模型；
 //   - opencode：OpenCode 的会话不记模型（resume 后 Current 恒为 agent 默认），
@@ -73,21 +97,10 @@ func (a *App) restoreCandidates() []chat.ModelView {
 // ——激活本身已成功，不得挡用户继续对话。last 与列表仅点号/连字符差异时
 // 按列表规范 ID 恢复（见 resolveRestoreModelID）。
 func (a *App) restoreSessionModel(chatID, toolID, sessionID, sessionPath string) {
-	var last string
-	switch toolID {
-	case "claude":
-		if sessionPath == "" || chatID == "" {
-			return
-		}
-		last = providers.ClaudeLastAssistantModel(sessionPath)
-	case "opencode":
-		if sessionID == "" {
-			return
-		}
-		last = a.lookupOpenCodeSessionModel(sessionID)
-	default:
+	if chatID == "" {
 		return
 	}
+	last := a.sessionModelFor(providers.Session{ToolID: toolID, ID: sessionID, Path: sessionPath})
 	if last == "" {
 		return
 	}

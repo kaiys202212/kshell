@@ -9,6 +9,7 @@ import (
 
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
+	"github.com/yangk/kshell/internal/workbuddy"
 )
 
 func newModelApp(t *testing.T) (*App, config.Layout) {
@@ -357,7 +358,7 @@ func TestModelOptionsUsesActivePlatform(t *testing.T) {
 	}
 	app.mu.Unlock()
 
-	mo := app.modelOptions()
+	mo := app.modelOptions("claude")
 	for _, toolID := range []string{"claude", "codex", "anything"} {
 		mc, ok := mo.Resolver(toolID)
 		// ActiveModel 不再注入给 agent（默认模型由 agent 自行决定），仅注入端点与密钥。
@@ -369,15 +370,19 @@ func TestModelOptionsUsesActivePlatform(t *testing.T) {
 	app.mu.Lock()
 	app.opts.Config.Model = config.ModelConfig{Enabled: false, ActivePlatformID: "p1", ActiveModel: "glm-5"}
 	app.mu.Unlock()
-	if mo := app.modelOptions(); mo.Resolver != nil {
+	if mo := app.modelOptions("claude"); mo.Resolver != nil {
 		t.Fatal("未启用时不应注入")
 	}
-	// 启用但未配置任何平台：不注入。
+	// 启用但未配置任何平台：resolver 存在但解析不命中（不注入）。
 	app.mu.Lock()
 	app.opts.Config.Model = config.ModelConfig{Enabled: true, ActiveModel: "glm-5"}
 	app.mu.Unlock()
-	if mo := app.modelOptions(); mo.Resolver != nil {
-		t.Fatal("无平台时不应注入")
+	mo = app.modelOptions("claude")
+	if mo.Resolver == nil {
+		t.Fatal("启用时应有 resolver")
+	}
+	if _, ok := mo.Resolver("claude"); ok {
+		t.Fatal("无平台时 resolver 不应命中")
 	}
 }
 
@@ -395,9 +400,82 @@ func TestModelOptionsDefaultPlatformFallback(t *testing.T) {
 	}
 	app.mu.Unlock()
 
-	mc, ok := app.modelOptions().Resolver("claude")
+	mc, ok := app.modelOptions("claude").Resolver("claude")
 	if !ok || mc.Model != "" || mc.OpenAIBaseURL != "https://oai1/" || mc.APIKey != "k1" {
 		t.Fatalf("应回落第一个平台且不带模型名: %+v ok=%v", mc, ok)
+	}
+}
+
+// fakeProxier 记录 Ensure 调用并返回固定端点/token，替代 workbuddy 本地代理。
+type fakeProxier struct {
+	base  string
+	token string
+	err   error
+	calls int
+}
+
+func (f *fakeProxier) Ensure() (string, string, error) {
+	f.calls++
+	return f.base, f.token, f.err
+}
+
+// TestModelOptionsPerTool：端点按每工具平台解析（ToolPlatforms），
+// 未映射工具回落全局激活平台；kshell 前缀显式模型仍按前缀选平台。
+func TestModelOptionsPerTool(t *testing.T) {
+	app, _ := newModelApp(t)
+	app.mu.Lock()
+	app.opts.Config.Model = config.ModelConfig{
+		Enabled:          true,
+		ActivePlatformID: "p2",
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", OpenAIBaseURL: "https://oai1/", AnthropicBaseURL: "https://ant1/", APIKey: "k1"},
+			{ID: "p2", OpenAIBaseURL: "https://oai2/", AnthropicBaseURL: "https://ant2/", APIKey: "k2"},
+		},
+		ToolSync: config.ToolSyncConfig{ToolPlatforms: map[string]string{"claude": "p1"}},
+	}
+	app.mu.Unlock()
+
+	// claude 映射到 p1。
+	mc, ok := app.modelOptions("claude").Resolver("claude")
+	if !ok || mc.AnthropicBaseURL != "https://ant1/" || mc.APIKey != "k1" || mc.Model != "" {
+		t.Fatalf("claude 应命中 p1: %+v ok=%v", mc, ok)
+	}
+	// codex 无每工具映射 → 全局激活平台 p2。
+	mc, ok = app.modelOptions("codex").Resolver("codex")
+	if !ok || mc.AnthropicBaseURL != "https://ant2/" || mc.APIKey != "k2" {
+		t.Fatalf("codex 应命中激活平台 p2: %+v ok=%v", mc, ok)
+	}
+	// 显式 kshell 前缀优先于每工具平台，并剥出裸模型名。
+	mc, ok = app.modelOptionsForCreate("claude", "kshell:p2:x").Resolver("claude")
+	if !ok || mc.AnthropicBaseURL != "https://ant2/" || mc.Model != "x" {
+		t.Fatalf("前缀模型应命中 p2 且 Model=x: %+v ok=%v", mc, ok)
+	}
+}
+
+// TestModelOptionsWorkbuddyProxy：workbuddy preset 平台的端点/密钥由代理提供。
+func TestModelOptionsWorkbuddyProxy(t *testing.T) {
+	app, _ := newModelApp(t)
+	app.mu.Lock()
+	app.opts.Config.Model = config.ModelConfig{
+		Enabled:          true,
+		ActivePlatformID: "wb",
+		Platforms: []config.ModelPlatform{
+			{ID: "wb", Name: "WorkBuddy", Preset: workbuddy.PresetID},
+		},
+	}
+	app.mu.Unlock()
+	fake := &fakeProxier{base: "http://127.0.0.1:12345", token: "tok-wb"}
+	app.wxProxy = fake
+
+	mc, ok := app.modelOptions("claude").Resolver("claude")
+	if !ok {
+		t.Fatal("workbuddy 平台应命中代理配置")
+	}
+	if mc.OpenAIBaseURL != fake.base || mc.AnthropicBaseURL != fake.base || mc.APIKey != fake.token {
+		t.Fatalf("应使用代理端点/密钥: %+v", mc)
+	}
+	if fake.calls == 0 {
+		t.Fatal("应调用 Proxier.Ensure")
 	}
 }
 

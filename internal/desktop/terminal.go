@@ -221,7 +221,7 @@ func (a *App) launchForWorkspace(ws discovery.Workspace, toolID string, tools []
 		return a.resolveRemoteLaunch(conn, remotePath, toolID, nil, tools)
 	}
 	o := a.snapshot()
-	l, err := launch.ForWorkspaceTool(o.Providers, tools, ws, toolID, a.themeOptions(), a.modelOptions(), a.permissionOptions())
+	l, err := launch.ForWorkspaceTool(o.Providers, tools, ws, toolID, a.themeOptions(), a.modelOptions(toolID), a.permissionOptions())
 	if err != nil {
 		return providers.Launch{}, "", err
 	}
@@ -245,7 +245,7 @@ func (a *App) launchForSession(s providers.Session, tools []discovery.Tool) (pro
 		return a.resolveRemoteLaunch(conn, remotePath, s.ToolID, &sess, tools)
 	}
 	o := a.snapshot()
-	l, err := launch.ForSession(o.Providers, tools, s, a.themeOptions(), a.modelOptions(), a.permissionOptions())
+	l, err := launch.ForSession(o.Providers, tools, s, a.themeOptions(), a.modelOptions(s.ToolID), a.permissionOptions())
 	if err != nil {
 		return providers.Launch{}, "", err
 	}

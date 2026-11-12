@@ -161,6 +161,59 @@ func TestOpenWorkspaceACPInjectsBareModelFromPrefix(t *testing.T) {
 	}
 }
 
+// TestOpenSessionACPResolvesSessionPlatform：恢复历史会话时按磁盘 JSONL 尾部
+// 真实模型反查平台，而非全局激活平台/每工具平台。
+func TestOpenSessionACPResolvesSessionPlatform(t *testing.T) {
+	backend := &recChatBackend{}
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "claude-agent-acp",
+	}, backend)
+
+	// 会话 JSONL 尾部模型为 kimi-k3，仅 p2 配置了该模型。
+	path := filepath.Join(t.TempDir(), "s1.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"assistant","message":{"model":"kimi-k3"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env.app.mu.Lock()
+	env.app.opts.Config.SessionMode = config.SessionModeACP
+	env.app.opts.Config.Model = config.ModelConfig{
+		Enabled:          true,
+		ActivePlatformID: "p1",
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "P1", AnthropicBaseURL: "https://a1/", APIKey: "k1"},
+			{ID: "p2", Name: "P2", AnthropicBaseURL: "https://a2/", APIKey: "k2", Models: []string{"kimi-k3"}},
+		},
+	}
+	env.app.result = &discovery.Result{Sessions: []providers.Session{{
+		ID: "s1", ToolID: "claude", Workspace: `D:\w`, Title: "t", Path: path,
+	}}}
+	env.app.mu.Unlock()
+
+	if _, err := env.app.OpenSessionACP("s1"); err != nil {
+		t.Fatalf("OpenSessionACP: %v", err)
+	}
+	if backend.live == nil || backend.live.gotMeta == "" {
+		t.Fatal("连接未收到 ACP settings 载荷")
+	}
+	var meta struct {
+		ClaudeCode struct {
+			Options struct {
+				Settings map[string]any `json:"settings"`
+			} `json:"options"`
+		} `json:"claudeCode"`
+	}
+	if err := json.Unmarshal([]byte(backend.live.gotMeta), &meta); err != nil {
+		t.Fatalf("载荷非法 JSON: %v (%q)", err, backend.live.gotMeta)
+	}
+	envMap, _ := meta.ClaudeCode.Options.Settings["env"].(map[string]any)
+	if envMap["ANTHROPIC_BASE_URL"] != "https://a2/" {
+		t.Fatalf("应按会话模型命中 p2 端点，got %v", envMap["ANTHROPIC_BASE_URL"])
+	}
+	if envMap["ANTHROPIC_AUTH_TOKEN"] != "k2" {
+		t.Fatalf("应使用 p2 密钥，got %v", envMap["ANTHROPIC_AUTH_TOKEN"])
+	}
+}
+
 // claude 单 provider（官方文档：单会话仅一个端点 + 一份凭证），ACP 下拉不合并
 // kshell 平台模型——即使 ToolSync 已启用 claude，下拉也只留 agent 自报模型。
 func TestListChatModelsClaudeSkipsConfigModels(t *testing.T) {

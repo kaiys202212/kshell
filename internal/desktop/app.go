@@ -29,6 +29,7 @@ import (
 	"github.com/yangk/kshell/internal/sessionarchive"
 	"github.com/yangk/kshell/internal/terminal"
 	"github.com/yangk/kshell/internal/weixin"
+	"github.com/yangk/kshell/internal/workbuddyproxy"
 	"github.com/yangk/kshell/internal/workspace"
 )
 
@@ -221,13 +222,17 @@ type App struct {
 	// smartCancels 是按请求 ID 登记的在途路由取消句柄（支持前端「中断」）。
 	// 每轮 HubSmartSend 进入时登记、退出时注销；mu 保护。
 	smartCancels map[string]*hubCanceller
+	// wxProxy 是 modelresolve 命中 workbuddy 平台时的本地代理来源：生产固定指向
+	// 进程内单例（workbuddyproxy.Get），非导出字段便于测试注入 fake Proxier。
+	// App 不负责关闭：代理生命周期与进程（agent 子进程）天然对齐。
+	wxProxy modelresolve.Proxier
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。
-func NewApp() *App { return &App{} }
+func NewApp() *App { return &App{wxProxy: workbuddyproxy.Get()} }
 
 // NewAppWith 用给定选项创建绑定对象（测试注入用）。
-func NewAppWith(o Options) *App { return &App{opts: o} }
+func NewAppWith(o Options) *App { return &App{opts: o, wxProxy: workbuddyproxy.Get()} }
 
 // newWindowManagerWithEmit 创建带 onClosed→Emit 回调的窗口管理器：
 // 回收死亡窗口后经回调推送 window:closed，让前端把对应行状态还原。
@@ -753,44 +758,39 @@ func (a *App) themeOptions() launch.ThemeOptions {
 	}
 }
 
-// modelOptions 组装模型注入 resolver：未启用或无可用平台时返回空（不注入）。
-// 只注入端点与密钥（取当前平台，ActivePlatformID 命中否则第一个），不注入模型名——
+// modelOptions 组装模型注入 resolver：统一委托 modelresolve，按该工具的
+// 每工具平台解析端点/密钥，未映射时回落全局激活平台。不注入模型名——
 // 默认模型由 agent 自行决定；settings 配置的模型仅经聊天下拉提供切换。
-func (a *App) modelOptions() launch.ModelOptions {
-	return a.modelOptionsForCreate("")
+// 未启用时 Options 返回空；无可用平台时 resolver 存在但解析不命中（不注入）。
+func (a *App) modelOptions(toolID string) launch.ModelOptions {
+	return a.modelOptionsForQuery(modelresolve.Query{ToolID: toolID})
 }
 
-// modelOptionsForCreate 组装本次启动的模型选项：端点/密钥照常；createModel
-// 非空时写入 Model（剥 kshell 前缀），供 Claude settings 注入 ANTHROPIC_MODEL。
-// 空 createModel = 不注入模型名（no-default-model）。
-func (a *App) modelOptionsForCreate(createModel string) launch.ModelOptions {
-	m := a.snapshot().Config.Model
-	if !m.Enabled {
-		return launch.ModelOptions{}
+// modelOptionsForCreate 组装本次新建会话的模型选项：createModel 非空时作为
+// 显式模型 ID 传入（保留 kshell:<platID>: 前缀的跨平台语义），供 Claude
+// settings 注入 ANTHROPIC_MODEL。空 createModel = 不注入模型名（no-default-model）。
+func (a *App) modelOptionsForCreate(toolID, createModel string) launch.ModelOptions {
+	return a.modelOptionsForQuery(modelresolve.Query{ToolID: toolID, ModelID: createModel})
+}
+
+// modelOptionsForSession 组装恢复历史会话的模型选项：按会话真实模型反查平台
+// （claude 取 JSONL 尾部，opencode 查会话级 state），反查不中再回落每工具/
+// 全局平台。终端恢复路径仍不注入模型名（launch 侧 composeResume 忽略）。
+func (a *App) modelOptionsForSession(s providers.Session) launch.ModelOptions {
+	return a.modelOptionsForQuery(modelresolve.Query{
+		ToolID:       s.ToolID,
+		SessionModel: a.sessionModelFor(s),
+	})
+}
+
+// modelOptionsForQuery 是 modelOptions 系列的统一出口：取配置快照与代理来源，
+// 委托 modelresolve.Options。wxProxy 为空（零值 App）时回落到进程内单例。
+func (a *App) modelOptionsForQuery(q modelresolve.Query) launch.ModelOptions {
+	px := a.wxProxy
+	if px == nil {
+		px = workbuddyproxy.Get()
 	}
-	p, ok := m.ActivePlatform()
-	if !ok {
-		return launch.ModelOptions{}
-	}
-	model := strings.TrimSpace(createModel)
-	if platID, bare, ok := modelresolve.SplitKshellModelID(model); ok {
-		// 跨平台前缀：端点改用目标平台（若仍在配置中），模型用裸名。
-		model = bare
-		for _, x := range m.Platforms {
-			if x.ID == platID {
-				p = x
-				break
-			}
-		}
-	}
-	return launch.ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
-		return providers.ModelConfig{
-			OpenAIBaseURL:    p.OpenAIBaseURL,
-			AnthropicBaseURL: p.AnthropicBaseURL,
-			APIKey:           p.APIKey,
-			Model:            model,
-		}, true
-	}}
+	return modelresolve.Options(a.snapshot().Config.Model, q, px)
 }
 
 // permissionOptions 组装权限注入：bypass 时按工具追加跳过确认参数。

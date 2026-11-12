@@ -46,7 +46,7 @@ func (a *App) rebuildChat(m *chat.Manager, info chat.Info) (string, error) {
 	// KindSession：优先按原会话 resume，保住上下文。
 	if info.Kind == chat.KindSession && info.SessionID != "" {
 		if s, tools, ok := a.sessionByIDReady(info.SessionID); ok {
-			if l, err := launch.ForSessionACP(o.Providers, tools, s, a.modelOptions(), a.permissionOptions()); err == nil {
+			if l, err := launch.ForSessionACP(o.Providers, tools, s, a.modelOptionsForSession(s), a.permissionOptions()); err == nil {
 				out, err := openChat(m, key, chat.Info{
 					Kind:      chat.KindSession,
 					SessionID: s.ID,
@@ -87,7 +87,7 @@ func (a *App) rebuildChat(m *chat.Manager, info chat.Info) (string, error) {
 		// 扫描结果里没有该工作区：用 Info 里的路径合成一个，路径仍是最可靠的锚点
 		ws = discovery.Workspace{Path: info.Workspace}
 	}
-	l, err := launch.ForWorkspaceACP(o.Providers, tools, ws, info.ToolID, a.modelOptions(), a.permissionOptions())
+	l, err := launch.ForWorkspaceACP(o.Providers, tools, ws, info.ToolID, a.modelOptions(info.ToolID), a.permissionOptions())
 	if err != nil {
 		// 未登录是用户可自助修复的前置状态，不是重建链路故障：返回裸 wire key，
 		// 前端 translateBackend 直译并引导去登录，不当「重建失败」复合错误展示。
