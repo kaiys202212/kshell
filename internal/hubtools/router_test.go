@@ -28,7 +28,7 @@ func TestBuildSystemPromptContainsTools(t *testing.T) {
 }
 
 // TestBuildSystemPromptWithRecent 验证聊天记录注入：auto 模式渲染编号记录 +
-// 派发规则；force_auto 带记录但不含路由/派发规则段。
+// 记忆定性说明；force_auto 带记录但不含路由规则段。
 func TestBuildSystemPromptWithRecent(t *testing.T) {
 	recent := []ChatLogEntry{
 		{Agent: "Cursor「修复登录」", Sender: "用户", Text: "帮我修下登录页报错"},
@@ -41,8 +41,14 @@ func TestBuildSystemPromptWithRecent(t *testing.T) {
 	if !strings.Contains(p, "[2] 会话=Cursor「修复登录」 方向=助手") {
 		t.Errorf("第二条记录未渲染:\n%s", p)
 	}
-	if !strings.Contains(p, "dispatch_task") {
-		t.Errorf("auto 模式缺派发规则:\n%s", p)
+	if !strings.Contains(p, "不是本轮指令") {
+		t.Errorf("缺记忆定性说明（仅供语境参考）:\n%s", p)
+	}
+	if !strings.Contains(p, "create_agent") {
+		t.Errorf("auto 模式缺新建会话指引:\n%s", p)
+	}
+	if !strings.Contains(p, "send_to_agent") {
+		t.Errorf("auto 模式缺投递指引:\n%s", p)
 	}
 	if !strings.Contains(p, RouteAgentJSON) {
 		t.Errorf("auto 模式缺转投兜底约定:\n%s", p)
@@ -50,7 +56,7 @@ func TestBuildSystemPromptWithRecent(t *testing.T) {
 
 	pf := BuildSystemPrompt(nil, false, recent)
 	if strings.Contains(pf, RouteAgentJSON) || strings.Contains(pf, "路由规则") {
-		t.Errorf("force_auto 不应含路由/派发规则:\n%s", pf)
+		t.Errorf("force_auto 不应含路由/投递规则:\n%s", pf)
 	}
 	if !strings.Contains(pf, "[1] 会话=Cursor「修复登录」") {
 		t.Errorf("force_auto 也应带聊天记录:\n%s", pf)

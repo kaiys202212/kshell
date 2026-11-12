@@ -5,11 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/yangk/kshell/internal/acp"
-	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/hub"
@@ -18,11 +17,8 @@ import (
 )
 
 // desktopBridge 把 App 既有能力适配为 hubtools.Bridge：只做视图映射，不重复实现查询。
-// chatRefs 是本轮提示词的记录编号→ChatID 映射（HandlePrompt 构建上下文时注入），
-// 供 dispatch_task 解析 ref。
 type desktopBridge struct {
-	app      *App
-	chatRefs map[string]string
+	app *App
 }
 
 // toRequirementView 把 requirements.Item 映射为 hubtools 视图（字段同名对齐）。
@@ -122,43 +118,6 @@ func (b *desktopBridge) GetWorkspace(id string) (*hubtools.WorkspaceView, error)
 	return nil, nil
 }
 
-// runningTasks 枚举运行中会话并映射为任务视图；List/Get 共用。
-// starting/running（正在干活）才算任务；exited/ready 不进列表。
-func (b *desktopBridge) runningTasks() []hubtools.TaskView {
-	m := b.app.chats()
-	if m == nil {
-		return nil
-	}
-	var out []hubtools.TaskView
-	for _, info := range m.List() {
-		if info.Status != chat.StatusRunning && info.Status != chat.StatusStarting {
-			continue
-		}
-		out = append(out, hubtools.TaskView{
-			ID:        info.ID,
-			Title:     info.Title,
-			ToolID:    info.ToolID,
-			Workspace: info.Workspace,
-			Status:    info.Status,
-		})
-	}
-	return out
-}
-
-func (b *desktopBridge) ListRunningTasks() ([]hubtools.TaskView, error) {
-	return b.runningTasks(), nil
-}
-
-func (b *desktopBridge) GetTaskDetail(id string) (*hubtools.TaskView, error) {
-	for _, tk := range b.runningTasks() {
-		if tk.ID == id {
-			v := tk
-			return &v, nil
-		}
-	}
-	return nil, nil
-}
-
 // RecentMessages 从 hub store 取最近 n 条纯文本消息映射为提示词摘要。
 func (b *desktopBridge) RecentMessages(n int) []hubtools.ChatLogEntry {
 	store := b.app.snapshot().HubStore
@@ -192,29 +151,236 @@ func (b *desktopBridge) RecentMessages(n int) []hubtools.ChatLogEntry {
 	return out
 }
 
-// DispatchTask 把任务派发到 ref 对应会话（ref 由本轮提示词编号定义），
-// 返回目标会话标签供模型组织回复。
-func (b *desktopBridge) DispatchTask(ref, task string) (string, error) {
-	chatID, ok := b.chatRefs[ref]
-	if !ok {
-		return "", fmt.Errorf("未知的会话编号: %s", ref)
+// wxAgentExecutor 返回命令层执行后端：agent 会话工具与 #l/#st/#g 同源
+//（编号语境、ACP 能力过滤、激活链路都复用 wxExecutor，不复制业务）。
+func (b *desktopBridge) wxAgentExecutor() *wxExecutor { return newWXExecutor(b.app) }
+
+// ListAgents 把命令层会话列表 + 状态合成映射为 agent 视图：编号 = ListSessions
+// 索引+1（与 #l/智能路由同源），状态取 SessionStatuses（活跃 chat 精确命中），
+// 磁盘未激活会话退可投递性粗判（终端占用 → gone，其余 idle）。
+func (b *desktopBridge) ListAgents() ([]hubtools.AgentView, error) {
+	w := b.wxAgentExecutor()
+	refs := w.ListSessions()
+	byKey := make(map[string]hub.SessionStatus)
+	for _, s := range w.SessionStatuses() {
+		for _, k := range []string{s.Ref.ChatID, s.Ref.Key, s.Ref.SessionID} {
+			if k != "" {
+				byKey[k] = s
+			}
+		}
 	}
-	resolved, _ := b.app.resolveChatID(chatID)
-	sendID, err := b.app.ensureChatAlive(resolved)
+	out := make([]hubtools.AgentView, 0, len(refs))
+	for i, r := range refs {
+		v := hubtools.AgentView{
+			Num:           i + 1,
+			ChatID:        r.ChatID,
+			Tool:          r.Tool,
+			ToolName:      r.ToolName,
+			WorkspaceName: wxLastBase(r.Workspace),
+			WorkspacePath: r.Workspace,
+			Title:         r.Title,
+			Status:        "idle",
+		}
+		if r.TerminalActive {
+			v.Status = "gone"
+		}
+		for _, k := range []string{r.ChatID, r.Key, r.SessionID} {
+			if s, ok := byKey[k]; ok {
+				v.Status = s.State
+				v.Summary = s.Summary
+				break
+			}
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+// agentByNum 解析编号字符串为命令层会话引用（与 list_agents 编号同源）。
+func (b *desktopBridge) agentByNum(id string) (hub.SessionRef, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(id))
+	if err != nil {
+		return hub.SessionRef{}, fmt.Errorf("会话编号必须是数字: %s", id)
+	}
+	w := b.wxAgentExecutor()
+	refs := w.ListSessions()
+	if n < 1 || n > len(refs) {
+		return hub.SessionRef{}, fmt.Errorf("会话编号 %d 不在 1..%d 内", n, len(refs))
+	}
+	return refs[n-1], nil
+}
+
+// GetAgentStatus 查单个会话状态；recent>0 时附该会话最近 recent 条可见消息
+//（活跃 chat 才有 hub 历史，磁盘未激活会话无 recent）。
+func (b *desktopBridge) GetAgentStatus(id string, recent int) (*hubtools.AgentStatusView, error) {
+	agents, err := b.ListAgents()
+	if err != nil {
+		return nil, err
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(id))
+	if err != nil {
+		return nil, fmt.Errorf("会话编号必须是数字: %s", id)
+	}
+	for _, v := range agents {
+		if v.Num != n {
+			continue
+		}
+		out := &hubtools.AgentStatusView{Agent: v}
+		if recent > 0 && v.ChatID != "" {
+			// recent 上限 20（与 schema 描述一致），防模型传大数拖垮提示词。
+			if recent > 20 {
+				recent = 20
+			}
+			for _, m := range b.wxAgentExecutor().SessionRecentMessages(v.ChatID, recent) {
+				sender := "助手"
+				if m.Kind == "user" {
+					sender = "用户"
+				}
+				text := []rune(m.Text)
+				if len(text) > 200 {
+					text = text[:200]
+				}
+				out.Recent = append(out.Recent, hubtools.ChatLogEntry{
+					Agent: v.Title, Sender: sender, Text: string(text), ChatID: v.ChatID,
+				})
+			}
+		}
+		return out, nil
+	}
+	return nil, nil
+}
+
+// agentWorkspacePath 把 create_agent 的 workspace 参数解析为工作区路径：
+// 空 → 第一个工作区；非空按 Name/Path 精确（不区分大小写）优先、包含次之
+// 模糊匹配（如「策略」命中名称含策略的工作区）。无命中报错并附可选列表，
+// 由模型转述给用户确认。
+func (b *desktopBridge) agentWorkspacePath(workspace string) (string, error) {
+	ws := b.app.GetWorkspaces()
+	if len(ws) == 0 {
+		return "", fmt.Errorf("err.weixin.no_workspaces")
+	}
+	if strings.TrimSpace(workspace) == "" {
+		return ws[0].Path, nil
+	}
+	kw := strings.ToLower(strings.TrimSpace(workspace))
+	type hit struct {
+		path  string
+		score int // 2=精确命中 1=包含
+	}
+	var best *hit
+	for _, w := range ws {
+		name := strings.ToLower(w.Name)
+		path := strings.ToLower(w.Path)
+		s := 0
+		if name == kw || path == kw {
+			s = 2
+		} else if strings.Contains(name, kw) || strings.Contains(path, kw) {
+			s = 1
+		}
+		if s > 0 && (best == nil || s > best.score) {
+			best = &hit{path: w.Path, score: s}
+		}
+	}
+	if best != nil {
+		return best.path, nil
+	}
+	names := make([]string, 0, len(ws))
+	for _, w := range ws {
+		names = append(names, w.Name)
+	}
+	return "", fmt.Errorf("工作区匹配不到 %q，可选: %s", workspace, strings.Join(names, ", "))
+}
+
+// agentToolID 解析 create_agent 的 tool 参数：空 → AgentHub 默认工具（失效
+// 回落第一个已安装，与 EasyNew 同口径）；非空校验已安装。
+func (b *desktopBridge) agentToolID(tool string) (string, error) {
+	w := b.wxAgentExecutor()
+	if strings.TrimSpace(tool) == "" {
+		id := w.easyNewToolID()
+		if id == "" {
+			return "", fmt.Errorf("err.weixin.no_tools")
+		}
+		return id, nil
+	}
+	if !w.toolInstalled(tool) {
+		return "", fmt.Errorf("工具未安装或不存在: %s", tool)
+	}
+	return tool, nil
+}
+
+// CreateAgent 新建会话：workspace/tool/model 解析后走命令层 CreateNew
+//（与 #n 新建同链路，含 hub:busy 事件与 SetModel 对齐）。
+func (b *desktopBridge) CreateAgent(workspace, tool, model string) (hubtools.AgentView, error) {
+	wsPath, err := b.agentWorkspacePath(workspace)
+	if err != nil {
+		return hubtools.AgentView{}, err
+	}
+	toolID, err := b.agentToolID(tool)
+	if err != nil {
+		return hubtools.AgentView{}, err
+	}
+	ref, err := b.wxAgentExecutor().CreateNew(toolID, wsPath, model)
+	if err != nil {
+		return hubtools.AgentView{}, err
+	}
+	// 新会话即最新列表末位（活跃 chat 补充在磁盘之后或按 ListChats 顺序），
+	// 编号语境易漂移，返回 num=0 让模型以 ChatID 语义感知「刚创建」，
+	// 下一轮 list_agents 重新取编号。
+	return hubtools.AgentView{
+		ChatID:        ref.ChatID,
+		Tool:          ref.Tool,
+		ToolName:      ref.ToolName,
+		WorkspaceName: wxLastBase(ref.Workspace),
+		WorkspacePath: ref.Workspace,
+		Title:         ref.Title,
+		Status:        "running",
+	}, nil
+}
+
+// SendToAgent 投递消息到指定编号会话：活跃 chat 直接走命令层 Send（含
+// ensureChatAlive/hub 落盘/忙时入队）；未激活磁盘会话先 OpenSession 激活。
+// 终端占用（gone）不可投递，显性报错。
+func (b *desktopBridge) SendToAgent(id, text string) (string, error) {
+	ref, err := b.agentByNum(id)
 	if err != nil {
 		return "", err
 	}
-	blocks := []acp.ContentBlock{{Type: "text", Text: task}}
-	if err := b.app.sendAndRecord(sendID, blocks, task); err != nil {
-		return "", err
+	w := b.wxAgentExecutor()
+	if ref.TerminalActive {
+		return "", fmt.Errorf("会话 #%s 正在终端中运行，不可投递", id)
 	}
-	label := resolved
-	if m := b.app.chats(); m != nil {
-		if info, ok := m.Get(sendID); ok {
-			label = info.ToolID + "「" + info.Title + "」"
+	if ref.ChatID == "" {
+		if ref.SessionID == "" {
+			return "", fmt.Errorf("会话 #%s 无可激活目标", id)
+		}
+		ref, err = w.OpenSession(ref.SessionID)
+		if err != nil {
+			return "", err
 		}
 	}
+	if err := w.Send(ref.ChatID, text); err != nil {
+		return "", err
+	}
+	label := ref.Tool
+	if ref.ToolName != "" {
+		label = ref.ToolName
+	}
+	if ref.Title != "" {
+		label += "「" + ref.Title + "」"
+	}
 	return label, nil
+}
+
+// StopAgent 停止指定编号会话当前轮次（mutating：确认后经此重放）。
+func (b *desktopBridge) StopAgent(id string) error {
+	ref, err := b.agentByNum(id)
+	if err != nil {
+		return err
+	}
+	if ref.ChatID == "" {
+		return fmt.Errorf("会话 #%s 未激活，无需停止", id)
+	}
+	return b.wxAgentExecutor().Stop(ref.ChatID)
 }
 
 // hubPromptTimeout 是单条输入完整工具循环（含 LLM 多轮请求）的超时上限。
@@ -279,16 +445,10 @@ func (h *hubRouter) HandlePrompt(sendID, text string) (bool, error) {
 	}
 	defer h.inflight.Unlock()
 
-	// 聊天记录上下文：取最近 10 条纯文本消息构建编号→ChatID 映射，
-	// 注入本次 desktopBridge 供 dispatch_task 解析 ref；同时渲染进系统提示词。
+	// 聊天记录上下文：取最近 10 条纯文本消息作为记忆渲染进系统提示词
+	//（仅语境参考；会话定位改由 list_agents 编号承担）。
 	recent := (&desktopBridge{app: h.app}).RecentMessages(10)
-	refs := make(map[string]string, len(recent))
-	for i, it := range recent {
-		if it.ChatID != "" {
-			refs[strconv.Itoa(i+1)] = it.ChatID
-		}
-	}
-	reg := hubtools.NewRegistry(&desktopBridge{app: h.app, chatRefs: refs})
+	reg := hubtools.NewRegistry(&desktopBridge{app: h.app})
 
 	// 会话生命周期：每条输入一轮，替换旧会话（旧 pending 失效）
 	h.mu.Lock()

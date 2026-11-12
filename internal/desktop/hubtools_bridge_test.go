@@ -152,9 +152,9 @@ func TestBridgeAdaptsRequirements(t *testing.T) {
 		t.Fatalf("不存在的 ssh 工作区应返回 nil: %+v err=%v", got, err)
 	}
 
-	// 运行中任务：对齐 chat.Info（running 状态会话）。
+	// agent 会话列表：对齐 chat.Info（running 状态会话）。
 	// 用 promptGate 钳住 running：无门闩时 fake conn 的 Prompt 秒回，
-	// running 是瞬态，轮询错过就偶发「未进入 running / GetTaskDetail 未命中」。
+	// running 是瞬态，轮询错过就偶发「未进入 running / 状态未命中」。
 	conn := &fakeChatConn{waitCh: make(chan struct{})}
 	conn.promptGate = make(chan struct{})
 	m := newChatManagerWith(func(string, ...any) {}, &queueGateBackend{conn: conn}, nil, nil, nil, nil, nil)
@@ -171,24 +171,58 @@ func TestBridgeAdaptsRequirements(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitStatusDesktop(t, m, info.ID)
-	tasks, err := b.ListRunningTasks()
+	agents, err := b.ListAgents()
 	if err != nil {
 		t.Fatal(err)
 	}
-	var found bool
-	for _, tk := range tasks {
-		if tk.ID == info.ID {
-			found = true
-			if tk.Title != "跑任务" || tk.ToolID != "claude" || tk.Status != chat.StatusRunning {
-				t.Fatalf("任务映射不符: %+v", tk)
-			}
+	var found *hubtools.AgentView
+	for i := range agents {
+		if agents[i].ChatID == info.ID {
+			found = &agents[i]
 		}
 	}
-	if !found {
-		t.Fatalf("运行中会话应出现在任务列表: %+v", tasks)
+	if found == nil {
+		t.Fatalf("运行中会话应出现在 agent 列表: %+v", agents)
 	}
-	if got, err := b.GetTaskDetail(info.ID); err != nil || got == nil || got.ID != info.ID {
-		t.Fatalf("GetTaskDetail 未命中: %+v err=%v", got, err)
+	if found.Title != "跑任务" || found.Tool != "claude" || found.Status != "running" {
+		t.Fatalf("agent 视图映射不符: %+v", found)
+	}
+	if found.Num != 1 {
+		t.Fatalf("编号应从 1 起: %+v", found)
+	}
+	if found.WorkspaceName != "w" {
+		t.Fatalf("工作区名应取末段: %+v", found)
+	}
+	st, err := b.GetAgentStatus("1", 0)
+	if err != nil || st == nil || st.Agent.ChatID != info.ID {
+		t.Fatalf("GetAgentStatus 未命中: %+v err=%v", st, err)
+	}
+}
+
+// TestAgentWorkspacePath 验证 create_agent 的工作区解析：空=第一个、
+// 名称/路径精确优先、包含次之、无命中报错并附可选列表。
+func TestAgentWorkspacePath(t *testing.T) {
+	a, _, _ := newBridgeTestApp(t)
+	a.mu.Lock()
+	a.rawWorkspaces = discovery.GroupSessions([]providers.Session{
+		{ID: "s1", ToolID: "claude", Workspace: `D:\proj\策略研究`, Title: "t1", UpdatedAt: time.Now()},
+		{ID: "s2", ToolID: "codex", Workspace: `D:\proj\kshell`, Title: "t2", UpdatedAt: time.Now()},
+	})
+	a.mu.Unlock()
+	b := &desktopBridge{app: a}
+
+	if p, err := b.agentWorkspacePath(""); err != nil || p == "" {
+		t.Fatalf("空参数应取第一个工作区: %q %v", p, err)
+	}
+	if p, err := b.agentWorkspacePath("策略研究"); err != nil || !strings.Contains(p, "策略研究") {
+		t.Fatalf("名称精确匹配失败: %q %v", p, err)
+	}
+	if p, err := b.agentWorkspacePath("策略"); err != nil || !strings.Contains(p, "策略研究") {
+		t.Fatalf("名称包含匹配失败: %q %v", p, err)
+	}
+	_, err := b.agentWorkspacePath("不存在")
+	if err == nil || !strings.Contains(err.Error(), "可选") {
+		t.Fatalf("无命中应报错并附可选列表: %v", err)
 	}
 }
 
@@ -598,16 +632,16 @@ func TestRecentMessagesFilters(t *testing.T) {
 	}
 }
 
-// TestHandlePromptDispatchTask 验证意图派发端到端：auto 模式模型第一轮发起
-// dispatch_task，任务文本直投记录编号对应会话（落一条 queued user 消息），
-// 第二轮收尾文本照常落盘。
-func TestHandlePromptDispatchTask(t *testing.T) {
+// TestHandlePromptSendToAgent 验证投递端到端：auto 模式模型第一轮发起
+// send_to_agent，任务文本直投 list_agents 编号对应会话（落一条 queued user
+// 消息），第二轮收尾文本照常落盘。
+func TestHandlePromptSendToAgent(t *testing.T) {
 	round := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		round++
 		if round == 1 {
-			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"dispatch_task","arguments":"{\"ref\":\"1\",\"task\":\"继续修复登录\"}"}}]}}]}`))
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"send_to_agent","arguments":"{\"id\":\"1\",\"text\":\"继续修复登录\"}"}}]}}]}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"已派发给 Cursor。"}}]}`))
@@ -626,18 +660,12 @@ func TestHandlePromptDispatchTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 预置一条归因到该会话的 agent 消息：记录编号 [1] → info.ID
-	if err := store.Append(hub.Message{
-		Kind: "agent", ChatID: info.ID, Tool: "cursor", SessionTitle: "修复登录", Text: "我在修",
-	}); err != nil {
-		t.Fatal(err)
-	}
 
 	if err := a.SendChatPrompt(info.ID, "继续修"); err != nil {
 		t.Fatal(err)
 	}
 
-	// 派发任务直投目标会话：落一条 queued user 消息，正文为 task 文本
+	// 投递直落目标会话：queued user 消息，正文为 text 参数
 	var dispatched hub.Message
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) && dispatched.ID == 0 {
@@ -649,10 +677,10 @@ func TestHandlePromptDispatchTask(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if dispatched.ID == 0 {
-		t.Fatalf("派发任务未落盘: %+v", store.List())
+		t.Fatalf("投递消息未落盘: %+v", store.List())
 	}
 	if dispatched.ChatID != info.ID || dispatched.Status != hub.StatusQueued {
-		t.Fatalf("派发消息应归因目标会话且排队: %+v", dispatched)
+		t.Fatalf("投递消息应归因目标会话且排队: %+v", dispatched)
 	}
 	// 原始输入与最终回复照常落盘
 	var orig, ans hub.Message

@@ -16,14 +16,20 @@ type fakeBridge struct {
 	calls     map[string]int
 	reqs      []RequirementView
 	workspace *WorkspaceView
-	tasks     []TaskView
-	task      *TaskView
+	agents    []AgentView
 	recent    []ChatLogEntry
-	// dispatch 桩：记录实参并返回预置结果
-	dispatchRef      string
-	dispatchTaskText string
-	dispatchLabel    string
-	dispatchErr      error
+	// agent 会话工具桩：记录实参并返回预置结果
+	sendID    string
+	sendText  string
+	sendLabel string
+	sendErr   error
+	createdWS string
+	created   AgentView
+	createErr error
+	status    *AgentStatusView
+	statusErr error
+	stopID    string
+	stopErr   error
 }
 
 func newFakeBridge() *fakeBridge {
@@ -84,25 +90,40 @@ func (f *fakeBridge) GetWorkspace(id string) (*WorkspaceView, error) {
 	return f.workspace, nil
 }
 
-func (f *fakeBridge) ListRunningTasks() ([]TaskView, error) {
-	f.count("ListRunningTasks")
-	return f.tasks, nil
-}
-
-func (f *fakeBridge) GetTaskDetail(id string) (*TaskView, error) {
-	f.count("GetTaskDetail")
-	return f.task, nil
-}
-
 func (f *fakeBridge) RecentMessages(n int) []ChatLogEntry {
 	f.count("RecentMessages")
 	return f.recent
 }
 
-func (f *fakeBridge) DispatchTask(ref, task string) (string, error) {
-	f.count("DispatchTask")
-	f.dispatchRef, f.dispatchTaskText = ref, task
-	return f.dispatchLabel, f.dispatchErr
+func (f *fakeBridge) ListAgents() ([]AgentView, error) {
+	f.count("ListAgents")
+	return f.agents, nil
+}
+
+func (f *fakeBridge) GetAgentStatus(id string, recent int) (*AgentStatusView, error) {
+	f.count("GetAgentStatus")
+	if f.statusErr != nil {
+		return nil, f.statusErr
+	}
+	return f.status, nil
+}
+
+func (f *fakeBridge) CreateAgent(workspace, tool, model string) (AgentView, error) {
+	f.count("CreateAgent")
+	f.createdWS = workspace
+	return f.created, f.createErr
+}
+
+func (f *fakeBridge) SendToAgent(id, text string) (string, error) {
+	f.count("SendToAgent")
+	f.sendID, f.sendText = id, text
+	return f.sendLabel, f.sendErr
+}
+
+func (f *fakeBridge) StopAgent(id string) error {
+	f.count("StopAgent")
+	f.stopID = id
+	return f.stopErr
 }
 
 func TestToolsRegistered(t *testing.T) {
@@ -112,8 +133,8 @@ func TestToolsRegistered(t *testing.T) {
 		"list_requirements": false, "get_requirement": false,
 		"create_requirement": false, "update_requirement": false, "delete_requirement": false,
 		"list_workspaces": false, "get_workspace": false,
-		"list_running_tasks": false, "get_task_detail": false,
-		"dispatch_task": false,
+		"list_agents": false, "get_agent_status": false,
+		"create_agent": false, "send_to_agent": false, "stop_agent": false,
 	}
 	seen := map[string]bool{}
 	for _, td := range got {
@@ -154,29 +175,87 @@ func fmtJSON(v any) string {
 	return string(b)
 }
 
-// TestDispatchTaskExec 验证 dispatch_task 即时执行：透传 ref/task 给 Bridge，
+// TestSendToAgentExec 验证 send_to_agent 即时执行：透传 id/text 给 Bridge，
 // 结果包装为 {"chat": label}；Bridge 错误原样透传；不是 Mutating（无挂起）。
-func TestDispatchTaskExec(t *testing.T) {
+func TestSendToAgentExec(t *testing.T) {
 	s, f := newTestSession()
-	f.dispatchLabel = "Cursor「修复登录」"
-	result, pending, err := s.Execute(context.Background(), "dispatch_task", `{"ref":"3","task":"修复登录"}`)
+	f.sendLabel = "Cursor「修复登录」"
+	result, pending, err := s.Execute(context.Background(), "send_to_agent", `{"id":"3","text":"修复登录"}`)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if pending != nil {
-		t.Fatalf("dispatch_task 不应产生 pending: %+v", pending)
+		t.Fatalf("send_to_agent 不应产生 pending: %+v", pending)
 	}
 	if !strings.Contains(result, `"chat":"Cursor「修复登录」"`) {
 		t.Fatalf("结果应含目标标签: %s", result)
 	}
-	if f.dispatchRef != "3" || f.dispatchTaskText != "修复登录" {
-		t.Fatalf("实参未透传: ref=%q task=%q", f.dispatchRef, f.dispatchTaskText)
+	if f.sendID != "3" || f.sendText != "修复登录" {
+		t.Fatalf("实参未透传: id=%q text=%q", f.sendID, f.sendText)
 	}
 
-	// ref 无法解析：错误透传给模型
-	f.dispatchErr = errors.New("未知的会话编号: 9")
-	if _, _, err := s.Execute(context.Background(), "dispatch_task", `{"ref":"9","task":"x"}`); err == nil {
+	// 编号无法解析：错误透传给模型
+	f.sendErr = errors.New("会话编号 9 不在 1..2 内")
+	if _, _, err := s.Execute(context.Background(), "send_to_agent", `{"id":"9","text":"x"}`); err == nil {
 		t.Fatal("Bridge 错误应透传")
+	}
+}
+
+// TestCreateAgentExec 验证 create_agent 即时执行：参数透传、结果原样序列化。
+func TestCreateAgentExec(t *testing.T) {
+	s, f := newTestSession()
+	f.created = AgentView{Num: 4, Tool: "claude", WorkspaceName: "策略", Title: "新会话", Status: "running"}
+	result, pending, err := s.Execute(context.Background(), "create_agent", `{"workspace":"策略"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if pending != nil {
+		t.Fatalf("create_agent 不应产生 pending: %+v", pending)
+	}
+	if !strings.Contains(result, `"workspaceName":"策略"`) {
+		t.Fatalf("结果应含新会话视图: %s", result)
+	}
+	if f.createdWS != "策略" {
+		t.Fatalf("workspace 未透传: %q", f.createdWS)
+	}
+
+	f.createErr = errors.New("工作区匹配不到 策略")
+	if _, _, err := s.Execute(context.Background(), "create_agent", `{"workspace":"策略"}`); err == nil {
+		t.Fatal("Bridge 错误应透传")
+	}
+}
+
+// TestGetAgentStatusExec 验证 get_agent_status：透传 id 与 recent（兼容字符串数字）。
+func TestGetAgentStatusExec(t *testing.T) {
+	s, f := newTestSession()
+	f.status = &AgentStatusView{Agent: AgentView{Num: 1, Tool: "claude", Status: "running"}}
+	out, _, err := s.Execute(context.Background(), "get_agent_status", `{"id":"1","recent":3}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, `"status":"running"`) {
+		t.Fatalf("输出缺少状态: %s", out)
+	}
+	if f.called("GetAgentStatus") != 1 {
+		t.Fatalf("GetAgentStatus 应被调用 1 次, got %d", f.called("GetAgentStatus"))
+	}
+}
+
+// TestStopAgentPending 验证 stop_agent 挂起等待确认（Mutating）。
+func TestStopAgentPending(t *testing.T) {
+	s, f := newTestSession()
+	out, pending, err := s.Execute(context.Background(), "stop_agent", `{"id":"2"}`)
+	if out != "" || err != nil {
+		t.Fatalf("挂起时不应有结果文本或错误: out=%q err=%v", out, err)
+	}
+	if pending == nil {
+		t.Fatal("应返回 *PendingConfirm")
+	}
+	if pending.ToolName != "stop_agent" || pending.ArgsJSON != `{"id":"2"}` {
+		t.Fatalf("PendingConfirm 字段不符: %+v", pending)
+	}
+	if f.called("StopAgent") != 0 {
+		t.Fatal("挂起时不应触达 Bridge")
 	}
 }
 
@@ -187,12 +266,12 @@ func TestMutatingFlag(t *testing.T) {
 	for name, m := range r.mutating {
 		mutating[name] = m
 	}
-	for _, name := range []string{"create_requirement", "update_requirement", "delete_requirement"} {
+	for _, name := range []string{"create_requirement", "update_requirement", "delete_requirement", "stop_agent"} {
 		if !mutating[name] {
 			t.Fatalf("%s 应标记为 Mutating", name)
 		}
 	}
-	for _, name := range []string{"list_requirements", "get_requirement", "list_workspaces", "get_workspace", "list_running_tasks", "get_task_detail"} {
+	for _, name := range []string{"list_requirements", "get_requirement", "list_workspaces", "get_workspace", "list_agents", "get_agent_status", "create_agent", "send_to_agent"} {
 		if mutating[name] {
 			t.Fatalf("%s 不应标记为 Mutating", name)
 		}
@@ -228,15 +307,18 @@ func TestGetWorkspaceExec(t *testing.T) {
 	}
 }
 
-func TestListRunningTasksExec(t *testing.T) {
+func TestListAgentsExec(t *testing.T) {
 	f := newFakeBridge()
-	f.tasks = []TaskView{{ID: "t1", Title: "重构 hubtools", ToolID: "claude", Workspace: "/w/a", Status: "running"}}
+	f.agents = []AgentView{
+		{Num: 1, Tool: "claude", WorkspaceName: "策略", Title: "重构 hubtools", Status: "running", Summary: "正在改代码"},
+		{Num: 2, Tool: "codex", WorkspaceName: "kshell", Title: "旧会话", Status: "gone"},
+	}
 	r := NewRegistry(f)
-	out, err := r.Execute(context.Background(), "list_running_tasks", `{}`)
+	out, err := r.Execute(context.Background(), "list_agents", `{}`)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(out, `"id":"t1"`) || !strings.Contains(out, `"status":"running"`) {
+	if !strings.Contains(out, `"workspaceName":"策略"`) || !strings.Contains(out, `"status":"gone"`) {
 		t.Fatalf("输出缺少关键字段: %s", out)
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 )
 
 // ErrConfirmationRequired 是 Mutating 工具的挂起哨兵：本任务不直接执行写操作，
@@ -27,11 +29,14 @@ func (p *PendingConfirm) Error() string {
 
 func (p *PendingConfirm) Unwrap() error { return ErrConfirmationRequired }
 
-// mutatingTools 是一期写工具集合：调用即挂起等待确认。
+// mutatingTools 是写工具集合：调用即挂起等待确认。stop_agent 停掉 agent
+// 正在跑的轮次属破坏性；create_agent/send_to_agent 直接执行（创建可逆、
+// 投递即既有 dispatch 语义，挂确认会把「新建对话」拆成两步）。
 var mutatingTools = map[string]bool{
 	"create_requirement": true,
 	"update_requirement": true,
 	"delete_requirement": true,
+	"stop_agent":         true,
 }
 
 // Registry 持有 Bridge 并对外暴露工具 schema 与执行入口。
@@ -129,24 +134,41 @@ func (r *Registry) Tools() []ToolDef {
 			}, "id"),
 		},
 		{
-			Name:        "list_running_tasks",
-			Description: "列出当前运行中的会话/任务（标题、工具、工作区、状态）。",
+			Name:        "list_agents",
+			Description: "列出全部 agent 会话（活跃在前，编号 1..N）：工具、工作区、标题、状态（running=运行中 perm=等待授权 idle=空闲 gone=不可用）与最后一条消息摘要。投递/停止/查状态都引用这里的编号。",
 			Parameters:  schema(map[string]any{}),
 		},
 		{
-			Name:        "get_task_detail",
-			Description: "按 ID 查看单个运行中会话/任务的详情。",
+			Name:        "get_agent_status",
+			Description: "查单个 agent 会话的实时状态，可附最近几条消息看它在干什么。",
 			Parameters: schema(map[string]any{
-				"id": strProp("任务（会话）ID，必填"),
+				"id":     strProp("会话编号，取 list_agents 的 num，必填"),
+				"recent": map[string]any{"type": "integer", "description": "可选。附该会话最近 n 条消息（0-20，0=不附）"},
 			}, "id"),
 		},
 		{
-			Name:        "dispatch_task",
-			Description: "把一个明确任务派发到聊天记录中的某个 agent 会话执行（ref 为近期聊天记录里的编号）。立即执行，无需确认。",
+			Name:        "create_agent",
+			Description: "新建一个 agent 会话（立即执行，无需确认）。workspace 按名称或路径匹配 list_workspaces，匹配不到时先用自然语言向用户确认项目，不要猜；tool/model 可省略走默认。",
 			Parameters: schema(map[string]any{
-				"ref":  strProp("目标会话编号，取近期聊天记录列表里的 [n]，必填"),
-				"task": strProp("派发的任务描述，必填"),
-			}, "ref", "task"),
+				"workspace": strProp("可选。工作区名称或路径（匹配 list_workspaces）；省略=默认工作区"),
+				"tool":      strProp("可选。agent 工具 ID（如 claude/codex/gemini）；省略=默认工具"),
+				"model":     strProp("可选。该会话使用的模型；省略=工具默认"),
+			}),
+		},
+		{
+			Name:        "send_to_agent",
+			Description: "把消息/任务投递到指定 agent 会话执行（立即执行，无需确认）。未激活的磁盘会话会先自动激活。",
+			Parameters: schema(map[string]any{
+				"id":   strProp("目标会话编号，取 list_agents 的 num，必填"),
+				"text": strProp("投递的消息正文，必填"),
+			}, "id", "text"),
+		},
+		{
+			Name:        "stop_agent",
+			Description: "停止指定 agent 会话当前正在执行的轮次。写操作，需要用户确认后执行。",
+			Parameters: schema(map[string]any{
+				"id": strProp("目标会话编号，取 list_agents 的 num，必填"),
+			}, "id"),
 		},
 	}
 }
@@ -210,18 +232,25 @@ func (r *Registry) Execute(ctx context.Context, name, argsJSON string) (string, 
 		if out == nil {
 			return "", errors.New("工作区不存在")
 		}
-	case "list_running_tasks":
-		out, err = r.b.ListRunningTasks()
-	case "get_task_detail":
-		out, err = r.b.GetTaskDetail(argStr(args, "id"))
-		if err != nil {
-			break
+	case "list_agents":
+		out, err = r.b.ListAgents()
+	case "get_agent_status":
+		v, serr := r.b.GetAgentStatus(argStr(args, "id"), argInt(args, "recent"))
+		if serr != nil {
+			return "", serr
 		}
-		if out == nil {
-			return "", errors.New("任务不存在")
+		if v == nil {
+			return "", errors.New("会话不存在")
 		}
-	case "dispatch_task":
-		label, derr := r.b.DispatchTask(argStr(args, "ref"), argStr(args, "task"))
+		out = v
+	case "create_agent":
+		v, cerr := r.b.CreateAgent(argStr(args, "workspace"), argStr(args, "tool"), argStr(args, "model"))
+		if cerr != nil {
+			return "", cerr
+		}
+		out = v
+	case "send_to_agent":
+		label, derr := r.b.SendToAgent(argStr(args, "id"), argStr(args, "text"))
 		if derr != nil {
 			return "", derr
 		}
@@ -301,6 +330,22 @@ func argStr(args map[string]any, key string) string {
 	return s
 }
 
+// argInt 取整数参数：兼容模型传 "5"（字符串）与 5（数值）两种形态，缺省返回 0。
+func argInt(args map[string]any, key string) int {
+	switch v := args[key].(type) {
+	case float64:
+		return int(v)
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return 0
+		}
+		return n
+	default:
+		return 0
+	}
+}
+
 // summarize 生成写操作的人话参数摘要，供确认 UI 展示。
 func (r *Registry) summarize(name string, args map[string]any) string {
 	switch name {
@@ -310,6 +355,8 @@ func (r *Registry) summarize(name string, args map[string]any) string {
 		return fmt.Sprintf("修改需求 #%s：%s", argStr(args, "id"), argStr(args, "text"))
 	case "delete_requirement":
 		return fmt.Sprintf("删除需求 #%s", argStr(args, "id"))
+	case "stop_agent":
+		return fmt.Sprintf("停止会话 #%s 当前轮次", argStr(args, "id"))
 	}
 	return name
 }
