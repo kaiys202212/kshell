@@ -161,8 +161,9 @@ func TestOpenWorkspaceACPInjectsBareModelFromPrefix(t *testing.T) {
 	}
 }
 
-// ListChatModels 必须合并 kshell 配置模型：agent 上报缺的追加，已存在的不重复。
-func TestListChatModelsMergesConfigModels(t *testing.T) {
+// claude 单 provider（官方文档：单会话仅一个端点 + 一份凭证），ACP 下拉不合并
+// kshell 平台模型——即使 ToolSync 已启用 claude，下拉也只留 agent 自报模型。
+func TestListChatModelsClaudeSkipsConfigModels(t *testing.T) {
 	env := newChatTestApp(t, &providers.ACPDetection{
 		Available: true, Source: "path", BinPath: "claude-agent-acp",
 	}, fakeChatBackend{})
@@ -180,27 +181,17 @@ func TestListChatModelsMergesConfigModels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSessionACP: %v", err)
 	}
-	if opened.Kind != "chat" || opened.Chat == nil {
-		t.Fatalf("应走聊天: %+v", opened)
-	}
 	v, err := env.app.ListChatModels(opened.Chat.ID)
 	if err != nil {
 		t.Fatalf("ListChatModels: %v", err)
 	}
-	ids := map[string]bool{}
-	for _, mo := range v.Models {
-		ids[mo.ID] = true
-	}
-	for _, want := range []string{"glm-5.3-flash", "deepseek-v4.1-flash", "kimi-k3"} {
-		if !ids[want] {
-			t.Fatalf("合并后缺配置模型 %s: %+v", want, v)
-		}
+	if len(v.Models) != 0 {
+		t.Fatalf("claude 不应合并配置模型: %+v", v.Models)
 	}
 }
 
-// agent 无模型视图但 kshell 有配置时，仍应返回 kshell 列表；
-// Current 保持空（当前模型以 agent 上报为准，不再回落 ActiveModel）。
-func TestListChatModelsAgentEmptyStillListsConfig(t *testing.T) {
+// claude：agent 无模型视图时返回非 nil 空切片，Current 保持空。
+func TestListChatModelsClaudeAgentEmpty(t *testing.T) {
 	env := newChatTestApp(t, &providers.ACPDetection{
 		Available: true, Source: "path", BinPath: "claude-agent-acp",
 	}, fakeChatBackend{})
@@ -222,17 +213,20 @@ func TestListChatModelsAgentEmptyStillListsConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListChatModels: %v", err)
 	}
-	if len(v.Models) != 1 || v.Models[0].ID != "glm-5.3-flash" {
-		t.Fatalf("应回 kshell 配置模型: %+v", v)
+	if v.Models == nil {
+		t.Fatal("Models 为 nil，JSON 序列化会是 null")
+	}
+	if len(v.Models) != 0 {
+		t.Fatalf("claude 应返回空切片: %+v", v.Models)
 	}
 	if v.Current != "" {
 		t.Fatalf("agent 未上报时 Current 应保持空: %+v", v)
 	}
 }
 
-// modelsView 合并视图与非 nil 空切片行为（ListChatModels 与 chat:models 推送共用同一函数）。
+// modelsView 视图与非 nil 空切片行为（ListChatModels 与 chat:models 推送共用同一函数）。
 func TestModelsViewMergesAndNeverNil(t *testing.T) {
-	t.Run("合并配置模型", func(t *testing.T) {
+	t.Run("claude 仅 agent 自报", func(t *testing.T) {
 		conn := &fakeChatConn{start: acp.SessionStart{SessionID: "s1",
 			Models: &acp.SessionModelState{
 				AvailableModels: []acp.ModelInfo{{ModelID: "m1", Name: "One"}}, CurrentModelID: "m1",
@@ -261,12 +255,8 @@ func TestModelsViewMergesAndNeverNil(t *testing.T) {
 		if v.Current != "m1" {
 			t.Fatalf("Current 应为 agent 上报的 m1: %+v", v)
 		}
-		ids := map[string]bool{}
-		for _, mo := range v.Models {
-			ids[mo.ID] = true
-		}
-		if !ids["m1"] || !ids["cfg1"] {
-			t.Fatalf("合并后应含 m1 与 cfg1: %+v", v)
+		if len(v.Models) != 1 || v.Models[0].ID != "m1" {
+			t.Fatalf("claude 应只保留 agent 自报模型: %+v", v.Models)
 		}
 	})
 	t.Run("无模型时非nil空切片", func(t *testing.T) {
@@ -481,96 +471,52 @@ func TestCursorSkipsMergeConfigModels(t *testing.T) {
 	}
 }
 
-// 单平台：ID 仍裸名（兼容旧 modelId）；Name 带平台展示前缀（仅展示，不进 ID）。
+// opencode 单平台：ID 仍裸名（兼容旧 modelId）；Name 带平台展示前缀（仅展示，不进 ID）。
 func TestMergeConfigModelsSinglePlatformBareNames(t *testing.T) {
-	env, id := openChatEnv(t, nil)
+	env, _ := openChatEnv(t, nil)
 	env.app.mu.Lock()
 	env.app.opts.Config.Model = config.ModelConfig{
 		Enabled:     true,
 		ActiveModel: "m2",
 		Platforms:   []config.ModelPlatform{{ID: "p1", Name: "P", Models: []string{"m1", " m2 "}}},
-		ToolSync:    config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
+		ToolSync: config.ToolSyncConfig{
+			Enabled:  map[string]bool{"opencode": true},
+			OpenCode: map[string][]string{"p1": {"m1", "m2"}},
+		},
 	}
 	env.app.mu.Unlock()
 
-	v, err := env.app.ListChatModels(id)
-	if err != nil {
-		t.Fatalf("ListChatModels: %v", err)
-	}
-	if v.Current != "" {
-		t.Fatalf("agent 未上报时 Current 应保持空: %+v", v)
-	}
+	v := env.app.mergeConfigModels(chat.ModelsView{Models: []chat.ModelView{}}, "opencode")
 	if len(v.Models) != 2 || v.Models[0].ID != "m1" || v.Models[0].Name != "P: m1" ||
 		v.Models[1].ID != "m2" || v.Models[1].Name != "P: m2" {
 		t.Fatalf("单平台 ID 裸名、Name 带平台前缀: %+v", v.Models)
 	}
 }
 
-// claude 静态注入只指向 ClaudePlatform 端点：下拉只并该平台全部模型（裸名 ID、
-// Name 带平台前缀）；Current 不回落（agent 上报为准），ActiveModel 不影响 Current。
-func TestMergeConfigModelsMultiPlatformPrefixed(t *testing.T) {
-	platforms := []config.ModelPlatform{
-		{ID: "p1", Name: "Alpha", Models: []string{"a1", "a2"}},
-		{ID: "p2", Name: "Beta", Models: []string{"b1", "b2"}},
-	}
-	cases := []struct {
-		name       string
-		claudePlat string
-		active     string
-		wantIDs    []string
-		wantNames  map[string]string
-	}{
-		{
-			name: "Claude平台排最前", claudePlat: "p2", active: "b1",
-			wantIDs:   []string{"b1", "b2"},
-			wantNames: map[string]string{"b1": "Beta: b1"},
+// claude 单 provider：即使选定自有平台（ClaudePlatform）也不并平台模型，
+// mergeConfigModels 原样返回输入视图。
+func TestMergeConfigModelsClaudeNoMerge(t *testing.T) {
+	env, _ := openChatEnv(t, nil)
+	env.app.mu.Lock()
+	env.app.opts.Config.Model = config.ModelConfig{
+		Enabled:          true,
+		ActivePlatformID: "p1",
+		ActiveModel:      "b1",
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "Alpha", Models: []string{"a1", "a2"}},
+			{ID: "p2", Name: "Beta", Models: []string{"b1", "b2"}},
 		},
-		{
-			name: "ActiveModel不影响Current", claudePlat: "p2", active: "a1",
-			wantIDs: []string{"b1", "b2"},
+		ToolSync: config.ToolSyncConfig{
+			Enabled:        map[string]bool{"claude": true},
+			ClaudePlatform: "p2",
 		},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			env, id := openChatEnv(t, nil)
-			env.app.mu.Lock()
-			env.app.opts.Config.Model = config.ModelConfig{
-				Enabled:          true,
-				ActivePlatformID: "p1",
-				ActiveModel:      tc.active,
-				Platforms:        platforms,
-				ToolSync: config.ToolSyncConfig{
-					Enabled:        map[string]bool{"claude": true},
-					ClaudePlatform: tc.claudePlat,
-				},
-			}
-			env.app.mu.Unlock()
+	env.app.mu.Unlock()
 
-			v, err := env.app.ListChatModels(id)
-			if err != nil {
-				t.Fatalf("ListChatModels: %v", err)
-			}
-			var gotIDs []string
-			for _, mo := range v.Models {
-				gotIDs = append(gotIDs, mo.ID)
-			}
-			if len(gotIDs) != len(tc.wantIDs) {
-				t.Fatalf("条目数不符: got %v", gotIDs)
-			}
-			for i, want := range tc.wantIDs {
-				if gotIDs[i] != want {
-					t.Fatalf("顺序错误: got %v, want %v", gotIDs, tc.wantIDs)
-				}
-			}
-			for _, mo := range v.Models {
-				if want, ok := tc.wantNames[mo.ID]; ok && mo.Name != want {
-					t.Fatalf("%s Name = %q, want %q", mo.ID, mo.Name, want)
-				}
-			}
-			if v.Current != "" {
-				t.Fatalf("agent 未上报时 Current 应保持空，got %q", v.Current)
-			}
-		})
+	in := chat.ModelsView{Models: []chat.ModelView{{ID: "agent-only", Name: "Agent"}}}
+	got := env.app.mergeConfigModels(in, "claude")
+	if len(got.Models) != 1 || got.Models[0].ID != "agent-only" || got.Models[0].Name != "Agent" {
+		t.Fatalf("claude 应原样返回输入视图: %+v", got.Models)
 	}
 }
 
@@ -743,8 +689,8 @@ func TestMergeConfigModelsUsesToolPlatform(t *testing.T) {
 	app.mu.Unlock()
 
 	claude := app.mergeConfigModels(chat.ModelsView{Models: []chat.ModelView{}}, "claude")
-	if len(claude.Models) != 1 || claude.Models[0].ID != "m2" {
-		t.Fatalf("claude models = %+v, want m2", claude.Models)
+	if len(claude.Models) != 0 {
+		t.Fatalf("claude 不应再并平台模型: %+v", claude.Models)
 	}
 	cb := app.mergeConfigModels(chat.ModelsView{Models: []chat.ModelView{}}, "codebuddy")
 	if len(cb.Models) != 1 || cb.Models[0].ID != "m2" {
@@ -908,7 +854,7 @@ func TestSetChatModelCrossPlatformKeepsClaudePlatform(t *testing.T) {
 	}
 }
 
-// mergeConfigModels 对 agent 已上报的同名条目（kshell 注入的裸 mid，ACP 层
+// mergeConfigModels 对 codebuddy 已上报的同名条目（kshell 注入的裸 mid，ACP 层
 // 带 custom-local: 前缀，名 "openai: <m>"）不再追加配置侧副本，消除下拉重复。
 func TestMergeConfigModelsDedupesByDisplayName(t *testing.T) {
 	env := newChatTestApp(t, nil, nil)
@@ -920,14 +866,17 @@ func TestMergeConfigModelsDedupesByDisplayName(t *testing.T) {
 		Platforms: []config.ModelPlatform{
 			{ID: "p1", Name: "openai", Models: []string{"glm-x", "ds-x"}},
 		},
-		ToolSync: config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
+		ToolSync: config.ToolSyncConfig{
+			Enabled:   map[string]bool{"codebuddy": true},
+			CodeBuddy: []string{"glm-x", "ds-x"},
+		},
 	}
 	env.app.mu.Unlock()
 
 	in := chat.ModelsView{Models: []chat.ModelView{
 		{ID: "custom-local:glm-x", Name: "openai: glm-x"},
 	}}
-	got := env.app.mergeConfigModels(in, "claude")
+	got := env.app.mergeConfigModels(in, "codebuddy")
 	names := map[string]int{}
 	for _, mo := range got.Models {
 		names[mo.Name]++
@@ -1066,18 +1015,12 @@ func TestMergeConfigModelsOpencodeNativeDedupe(t *testing.T) {
 		t.Fatalf("无原生条目的配置条目应照常追加, got %#v", got.Models)
 	}
 
-	// 非 opencode(如 claude 裸 mid 上报):不启用原生尾段去重,行为不变。
+	// claude：不再并平台模型，输入视图原样返回。
 	got2 := env.app.mergeConfigModels(chat.ModelsView{Models: []chat.ModelView{
 		{ID: "custom-local:glm-x", Name: "other: glm-x"},
 	}}, "claude")
-	var bare int
-	for _, mo := range got2.Models {
-		if mo.ID == "glm-x" {
-			bare++
-		}
-	}
-	if bare != 1 {
-		t.Fatalf("非 opencode 配置裸名副本应照常追加, got %#v", got2.Models)
+	if len(got2.Models) != 1 || got2.Models[0].ID != "custom-local:glm-x" {
+		t.Fatalf("claude 应原样返回输入视图, got %#v", got2.Models)
 	}
 }
 
@@ -1135,14 +1078,14 @@ func TestMergeConfigModelsCodeBuddyKeepsBuiltinNameCollision(t *testing.T) {
 
 // ToolPlatformModels 供 Hub 新建/默认设置弹窗取平台注入模型：
 // 复用 mergeConfigModels（空自报视图），与 ACP 会话下拉（ListChatModels）
-// 的合并口径完全同源；cursor 与未启用 ToolSync 的工具返回空切片。
+// 的合并口径完全同源；claude/cursor 与未启用 ToolSync 的工具返回空切片。
 func TestToolPlatformModels(t *testing.T) {
 	platforms := []config.ModelPlatform{
 		{ID: "p1", Name: "Alpha", Models: []string{"a1", "a2"}},
 		{ID: "p2", Name: "Beta", Models: []string{"b1"}},
 	}
 
-	t.Run("claude 按选定平台全部模型", func(t *testing.T) {
+	t.Run("claude 恒为空（单 provider 不并平台模型）", func(t *testing.T) {
 		env := newChatTestApp(t, nil, nil)
 		env.app.mu.Lock()
 		env.app.opts.Config.Model = config.ModelConfig{
@@ -1160,14 +1103,8 @@ func TestToolPlatformModels(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ToolPlatformModels: %v", err)
 		}
-		if got == nil {
-			t.Fatal("应返回非 nil 空切片语义，got nil")
-		}
-		if len(got) != 2 || got[0].ID != "a1" || got[1].ID != "a2" {
-			t.Fatalf("应列默认平台 p1 全部模型: %+v", got)
-		}
-		if got[0].Name != "Alpha: a1" {
-			t.Fatalf("Name 应带平台前缀: %+v", got[0])
+		if got == nil || len(got) != 0 {
+			t.Fatalf("claude 应返回空切片: %+v", got)
 		}
 	})
 
