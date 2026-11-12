@@ -3,12 +3,16 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 	"github.com/yangk/kshell/internal/appearance"
 	"github.com/yangk/kshell/internal/config"
+	"github.com/yangk/kshell/internal/discovery"
+	"github.com/yangk/kshell/internal/providers"
+	"github.com/yangk/kshell/internal/workbuddy"
 )
 
 func TestAppRendersThreeRegions(t *testing.T) {
@@ -41,7 +45,7 @@ func TestModelOptionsPlatformInjection(t *testing.T) {
 		return NewModelWith(Options{Config: config.Config{MaxDepth: 10, Model: mc}})
 	}
 
-	// DefaultPlatform 命中：注入该平台端点与密钥，ActiveModel 不注入。
+	// ActivePlatformID 命中：注入该平台端点与密钥，ActiveModel 不注入。
 	m := newWithModel(config.ModelConfig{
 		Enabled:         true,
 		ActivePlatformID: "p1",
@@ -78,6 +82,106 @@ func TestModelOptionsPlatformInjection(t *testing.T) {
 	// 未启用：直接不注入。
 	if got := newWithModel(config.ModelConfig{Enabled: false, Platforms: []config.ModelPlatform{{ID: "p1"}}}).modelOptions("claude").Resolver; got != nil {
 		t.Fatal("未启用不应注入")
+	}
+}
+
+// tuiPerToolConfig 构造 TUI 每工具平台测试配置：全局激活 p2，codex 映射 p1。
+// 端点形状与 modelresolve/desktop 测试保持一致，便于对照口径。
+func tuiPerToolConfig() config.ModelConfig {
+	return config.ModelConfig{
+		Enabled:          true,
+		ActivePlatformID: "p2",
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "P1", OpenAIBaseURL: "https://o1/v1", AnthropicBaseURL: "https://a1/v1", APIKey: "k1"},
+			{ID: "p2", Name: "P2", OpenAIBaseURL: "https://o2/v1", AnthropicBaseURL: "https://a2/v1", APIKey: "k2"},
+		},
+		ToolSync: config.ToolSyncConfig{ToolPlatforms: map[string]string{"codex": "p1"}},
+	}
+}
+
+// tuiModelWithCodex 准备一个只有 codex 可用的 TUI 模型（含一个 codex 会话）。
+func tuiModelWithCodex(cfg config.ModelConfig) Model {
+	sessions := []providers.Session{{
+		ID: "s-codex", ToolID: "codex", Workspace: `D:\ws-codex`,
+		Title: "codex 会话", UpdatedAt: time.Now(),
+	}}
+	m := NewModelWith(Options{Config: config.Config{MaxDepth: 10, Model: cfg}})
+	m.tools = []discovery.Tool{{ID: "codex", Installed: true, BinPath: "codex"}}
+	m.workspaces = discovery.GroupSessions(sessions)
+	m.sessions = sessions
+	m.focus = focusWorkspaces
+	return m
+}
+
+// fakeTUIProxier 是 modelresolve.Proxier 的测试替身，记录 Ensure 调用次数。
+type fakeTUIProxier struct {
+	base, token string
+	calls       int
+}
+
+func (f *fakeTUIProxier) Ensure() (string, string, error) {
+	f.calls++
+	return f.base, f.token, nil
+}
+
+// TUI 模型注入必须按工具解析平台：codex 映射 p1 时，即便全局激活 p2，
+// 新建会话也吃 p1 端点；恢复路径的来源同样以会话 ToolID 为准。
+// 注意恢复路径本身维持 launch.ForSession「不注入模型」现状（见下方断言）。
+func TestModelOptionsPerToolTUI(t *testing.T) {
+	m := tuiModelWithCodex(tuiPerToolConfig())
+
+	// 恢复路径的 modelOptions 来源必须是会话所属工具，而不是全局激活平台。
+	s, ok := m.selectedSession()
+	if !ok {
+		t.Fatal("应选中 codex 会话")
+	}
+	mc, ok := m.modelOptions(s.ToolID).Resolver(s.ToolID)
+	if !ok || mc.OpenAIBaseURL != "https://o1/v1" || mc.APIKey != "k1" {
+		t.Fatalf("modelOptions(codex) = %+v ok=%v, want p1 端点", mc, ok)
+	}
+
+	// 新建会话经 PreferredTool 解析首选工具（codex），同样按 p1 注入环境变量。
+	l, err := m.newSessionLaunch()
+	if err != nil {
+		t.Fatalf("newSessionLaunch error: %v", err)
+	}
+	if got := l.Env["OPENAI_BASE_URL"]; got != "https://o1/v1" {
+		t.Fatalf("新建会话 OPENAI_BASE_URL = %q, want https://o1/v1（env=%v）", got, l.Env)
+	}
+	if l.Env["OPENAI_API_KEY"] != "k1" {
+		t.Fatalf("新建会话 OPENAI_API_KEY = %q, want k1（env=%v）", l.Env["OPENAI_API_KEY"], l.Env)
+	}
+
+	// 边界：恢复路径沿用会话原模型，launch.ForSession 故意不注入模型端点。
+	rl, err := m.resumeLaunch()
+	if err != nil {
+		t.Fatalf("resumeLaunch error: %v", err)
+	}
+	if v, ok := rl.Env["OPENAI_BASE_URL"]; ok {
+		t.Fatalf("恢复会话不应注入模型端点，got %q（env=%v）", v, rl.Env)
+	}
+}
+
+// 激活 workbuddy 平台时，TUI 的 Resolver 必须经注入的 Proxier 取端点与令牌。
+func TestModelOptionsTUIUsesProxierForWorkbuddy(t *testing.T) {
+	cfg := tuiPerToolConfig()
+	cfg.ActivePlatformID = "wb"
+	cfg.Platforms = append(cfg.Platforms, config.ModelPlatform{ID: "wb", Name: "WorkBuddy", Preset: workbuddy.PresetID})
+	// 去掉 codex 映射，让解析回落到全局激活的 workbuddy 平台。
+	delete(cfg.ToolSync.ToolPlatforms, "codex")
+	m := tuiModelWithCodex(cfg)
+	px := &fakeTUIProxier{base: "http://127.0.0.1:9999", token: "tk"}
+	m.modelProxy = px
+
+	l, err := m.newSessionLaunch()
+	if err != nil {
+		t.Fatalf("newSessionLaunch error: %v", err)
+	}
+	if px.calls == 0 {
+		t.Fatal("workbuddy 平台应经 Proxier.Ensure 取端点")
+	}
+	if l.Env["OPENAI_BASE_URL"] != px.base || l.Env["OPENAI_API_KEY"] != px.token {
+		t.Fatalf("env = %v, want 代理端点 %q / 令牌 %q", l.Env, px.base, px.token)
 	}
 }
 
