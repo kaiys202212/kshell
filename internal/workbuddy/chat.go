@@ -190,12 +190,20 @@ func ChatOnce(ctx context.Context, cred Credential, body []byte, hc *http.Client
 	return aggregateSSE(resp.Body)
 }
 
+// usageTokens 是网关流式 chunk 里可能携带的用量；OpenAI 惯例是只在末尾
+// 带 usage 的 chunk 里给出一次。
+type usageTokens struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+}
+
 // sseAgg 聚合一次 SSE 会话的增量。
 type sseAgg struct {
 	content      strings.Builder
 	finishReason string
 	toolOrders   []int
 	toolCalls    map[int]*sseToolCall
+	usage        *usageTokens
 }
 
 type sseToolCall struct {
@@ -246,6 +254,13 @@ func (a *sseAgg) result() ([]byte, error) {
 			"finish_reason": a.finishReason,
 		}},
 	}
+	// 取不到 usage 时省略字段（OpenAI 非流式响应惯例），由调用方按 0 处理。
+	if a.usage != nil {
+		out["usage"] = map[string]any{
+			"prompt_tokens":     a.usage.PromptTokens,
+			"completion_tokens": a.usage.CompletionTokens,
+		}
+	}
 	return json.Marshal(out)
 }
 
@@ -270,7 +285,10 @@ func aggregateSSE(r io.Reader) ([]byte, error) {
 		var chunk struct {
 			Code     *int `json:"code"`
 			Position *int `json:"position"`
-			Choices  []struct {
+			// usage 可能出现在 chunk 顶层（OpenAI 标准位置），也可能被网关
+			// 塞进 choices 内；两处都尝试解析，取到为准。
+			Usage   *usageTokens `json:"usage"`
+			Choices []struct {
 				Delta struct {
 					Content   string `json:"content"`
 					ToolCalls []struct {
@@ -283,7 +301,8 @@ func aggregateSSE(r io.Reader) ([]byte, error) {
 						} `json:"function"`
 					} `json:"tool_calls"`
 				} `json:"delta"`
-				FinishReason *string `json:"finish_reason"`
+				FinishReason *string      `json:"finish_reason"`
+				Usage        *usageTokens `json:"usage"`
 			} `json:"choices"`
 		}
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
@@ -292,7 +311,13 @@ func aggregateSSE(r io.Reader) ([]byte, error) {
 		if chunk.Code != nil && *chunk.Code != 0 {
 			return nil, mapGatewayError(*chunk.Code)
 		}
+		if chunk.Usage != nil {
+			agg.usage = chunk.Usage
+		}
 		for _, ch := range chunk.Choices {
+			if ch.Usage != nil {
+				agg.usage = ch.Usage
+			}
 			if ch.Delta.Content != "" {
 				agg.content.WriteString(ch.Delta.Content)
 			}

@@ -37,7 +37,7 @@ func openAIToAnthropic(resp []byte, model string) map[string]any {
 
 	id := in.ID
 	if id == "" {
-		// Anthropic 客户端按 msg_ 前缀识别消息 id；上游缺 id 时本地生成。
+		// 兜底仅防上游缺 id；真实路径透传 ChatOnce 生成的 workbuddy-<id>。
 		id = newMessageID()
 	}
 
@@ -50,15 +50,23 @@ func openAIToAnthropic(resp []byte, model string) map[string]any {
 		}
 		for _, tc := range ch.Message.ToolCalls {
 			input := map[string]any{}
-			if strings.TrimSpace(tc.Function.Arguments) != "" {
-				if err := json.Unmarshal([]byte(tc.Function.Arguments), &input); err != nil {
-					// 网关偶发截断参数：input 必须是对象，降级为空对象而不是回传字符串。
-					input = map[string]any{}
+			if args := strings.TrimSpace(tc.Function.Arguments); args != "" {
+				// 网关偶发截断参数或直接给 "null"：Anthropic 的 input 必须是对象，
+				// 反序列化失败或结果为 nil 时都降级为空对象。
+				var parsed map[string]any
+				if err := json.Unmarshal([]byte(args), &parsed); err != nil || parsed == nil {
+					parsed = map[string]any{}
 				}
+				input = parsed
+			}
+			callID := tc.ID
+			if callID == "" {
+				// 上游缺 tool_call id 时本地补充，避免 Anthropic 侧 tool_use id 为空。
+				callID = newToolUseID()
 			}
 			content = append(content, map[string]any{
 				"type":  "tool_use",
-				"id":    tc.ID,
+				"id":    callID,
 				"name":  tc.Function.Name,
 				"input": input,
 			})
@@ -100,6 +108,15 @@ func newMessageID() string {
 		return "msg_local"
 	}
 	return "msg_" + token
+}
+
+// newToolUseID 生成本地 tool_use id（toolu_ + 32 位 hex），仅上游缺 id 时兜底。
+func newToolUseID() string {
+	token, err := randomToken()
+	if err != nil {
+		return "toolu_local"
+	}
+	return "toolu_" + token
 }
 
 // synthAnthropicSSE 把一次聚合响应合成合法的 Anthropic SSE 事件流。

@@ -36,6 +36,11 @@ func TestAnthropicToOpenAI(t *testing.T) {
 			want: `{"model":"claude-sonnet-4","max_tokens":1024,"messages":[{"role":"system","content":"你是一个助手"},{"role":"user","content":"你好"}]}`,
 		},
 		{
+			name: "content 为 null 时跳过该消息",
+			in:   `{"model":"m","max_tokens":8,"messages":[{"role":"user","content":null}]}`,
+			want: `{"model":"m","max_tokens":8,"messages":[]}`,
+		},
+		{
 			name: "system blocks 拼接",
 			in:   `{"model":"m","max_tokens":16,"system":[{"type":"text","text":"第一行"},{"type":"text","text":"第二行"}],"messages":[{"role":"user","content":"hi"}]}`,
 			want: `{"model":"m","max_tokens":16,"messages":[{"role":"system","content":"第一行\n第二行"},{"role":"user","content":"hi"}]}`,
@@ -81,6 +86,17 @@ func TestAnthropicToOpenAI(t *testing.T) {
 				]},
 				{"role":"tool","tool_call_id":"toolu_a","content":"ra"},
 				{"role":"tool","tool_call_id":"toolu_b","content":"rb"}
+			]}`,
+		},
+		{
+			name: "tool_result 与文本混排时 tool 消息优先",
+			in: `{"model":"m","max_tokens":8,"messages":[{"role":"user","content":[
+				{"type":"text","text":"note"},
+				{"type":"tool_result","tool_use_id":"toolu_1","content":"r"}
+			]}]}`,
+			want: `{"model":"m","max_tokens":8,"messages":[
+				{"role":"tool","tool_call_id":"toolu_1","content":"r"},
+				{"role":"user","content":"note"}
 			]}`,
 		},
 		{
@@ -136,8 +152,23 @@ func TestAnthropicToOpenAI(t *testing.T) {
 }
 
 func TestAnthropicToOpenAIBadRequest(t *testing.T) {
-	if _, err := anthropicToOpenAI([]byte("not json")); err == nil {
-		t.Fatal("非法 JSON 应返回错误")
+	tests := []struct {
+		name string
+		in   string
+	}{
+		{name: "非法 JSON", in: "not json"},
+		{name: "model 缺失", in: `{"messages":[]}`},
+		{name: "model 非字符串", in: `{"model":123,"messages":[]}`},
+		{name: "messages 缺失", in: `{"model":"m"}`},
+		{name: "messages 非数组", in: `{"model":"m","messages":null}`},
+		{name: "tool_choice tool 缺 name", in: `{"model":"m","messages":[],"tool_choice":{"type":"tool"}}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := anthropicToOpenAI([]byte(tt.in)); err == nil {
+				t.Fatalf("应返回翻译错误: %s", tt.in)
+			}
+		})
 	}
 }
 
@@ -172,6 +203,24 @@ func TestOpenAIToAnthropic(t *testing.T) {
 			model: "claude-x",
 			want:  `{"id":"c4","type":"message","role":"assistant","model":"claude-x","content":[{"type":"tool_use","id":"call_x","name":"f","input":{}}],"stop_reason":"tool_use","stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}`,
 		},
+		{
+			name:  "arguments 为 null 回退空对象",
+			resp:  `{"id":"c5","choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_y","function":{"name":"f","arguments":"null"}}]},"finish_reason":"tool_calls"}]}`,
+			model: "claude-x",
+			want:  `{"id":"c5","type":"message","role":"assistant","model":"claude-x","content":[{"type":"tool_use","id":"call_y","name":"f","input":{}}],"stop_reason":"tool_use","stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}`,
+		},
+		{
+			name:  "真实 ChatOnce 形状无 usage",
+			resp:  `{"id":"workbuddy-0192abc","object":"chat.completion","created":1,"model":"workbuddy","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`,
+			model: "claude-x",
+			want:  `{"id":"workbuddy-0192abc","type":"message","role":"assistant","model":"claude-x","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}`,
+		},
+		{
+			name:  "真实 ChatOnce 形状含 usage 映射",
+			resp:  `{"id":"workbuddy-0192def","object":"chat.completion","created":1,"model":"workbuddy","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":21,"completion_tokens":13}}`,
+			model: "claude-x",
+			want:  `{"id":"workbuddy-0192def","type":"message","role":"assistant","model":"claude-x","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":21,"output_tokens":13}}`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -184,6 +233,21 @@ func TestOpenAIToAnthropic(t *testing.T) {
 				t.Fatalf("响应翻译不符:\n got=%s\nwant=%s", raw, tt.want)
 			}
 		})
+	}
+}
+
+// TestOpenAIToAnthropicToolIDFallback 覆盖上游缺 tool_call id 的兜底：
+// 生成 toolu_ 前缀 id，保证 Anthropic tool_use 的 id 非空。
+func TestOpenAIToAnthropicToolIDFallback(t *testing.T) {
+	got := openAIToAnthropic([]byte(`{"id":"c","choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"f","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`), "m")
+	content, _ := got["content"].([]any)
+	if len(content) != 1 {
+		t.Fatalf("content 数量 = %d，期望 1", len(content))
+	}
+	block, _ := content[0].(map[string]any)
+	id, _ := block["id"].(string)
+	if !strings.HasPrefix(id, "toolu_") || len(id) != len("toolu_")+32 {
+		t.Fatalf("tool_call id 兜底格式不符: %q", id)
 	}
 }
 
@@ -281,6 +345,11 @@ func TestMessagesJSON(t *testing.T) {
 	}
 	if resp["model"] != "claude-sonnet-4" {
 		t.Fatalf("model 未回填请求模型: %v", resp["model"])
+	}
+	// usage 必须从聚合响应映射到 Anthropic 字段，避免客户端统计恒为 0。
+	usage, _ := resp["usage"].(map[string]any)
+	if usage["input_tokens"] != float64(5) || usage["output_tokens"] != float64(2) {
+		t.Fatalf("usage 映射不符: %v", resp["usage"])
 	}
 
 	// fake 必须收到翻译后的 OpenAI 请求：system 前置、stream 已剥离。
@@ -391,6 +460,65 @@ func TestMessagesStream(t *testing.T) {
 	usage, _ := frames[7].data["usage"].(map[string]any)
 	if usage["output_tokens"] != float64(4) {
 		t.Fatalf("message_delta.usage.output_tokens = %v，期望 4", usage["output_tokens"])
+	}
+}
+
+// TestSynthAnthropicSSEThreeToolUses 验证连续 3 个 tool_use 时 content index 递增。
+func TestSynthAnthropicSSEThreeToolUses(t *testing.T) {
+	resp := `{"id":"workbuddy-3tools","choices":[{"message":{"role":"assistant","content":"","tool_calls":[
+		{"id":"call_1","function":{"name":"a","arguments":"{\"i\":1}"}},
+		{"id":"call_2","function":{"name":"b","arguments":"{\"i\":2}"}},
+		{"id":"call_3","function":{"name":"c","arguments":"{\"i\":3}"}}
+	]},"finish_reason":"tool_calls"}]}`
+	frames := parseSSE(t, synthAnthropicSSE([]byte(resp), "claude-x"))
+
+	// message_start(1) + 3*(start/delta/stop) + message_delta + message_stop = 12 帧。
+	if len(frames) != 12 {
+		t.Fatalf("SSE 帧数 = %d，期望 12", len(frames))
+	}
+	for i := 0; i < 3; i++ {
+		start := frames[1+i*3]
+		block, _ := start.data["content_block"].(map[string]any)
+		if start.data["index"] != float64(i) || block["type"] != "tool_use" {
+			t.Fatalf("第 %d 个工具块 start 不符: %v", i, start.data)
+		}
+		delta := frames[2+i*3]
+		if delta.data["index"] != float64(i) {
+			t.Fatalf("第 %d 个工具块 delta index 不符: %v", i, delta.data)
+		}
+		stop := frames[3+i*3]
+		if stop.data["index"] != float64(i) {
+			t.Fatalf("第 %d 个工具块 stop index 不符: %v", i, stop.data)
+		}
+	}
+	if frames[10].event != "message_delta" || frames[11].event != "message_stop" {
+		t.Fatalf("结尾事件序列不符: %q, %q", frames[10].event, frames[11].event)
+	}
+}
+
+// TestSynthAnthropicSSEEmptyChoices 验证 choices:[] 仍产出合法的最小事件流。
+func TestSynthAnthropicSSEEmptyChoices(t *testing.T) {
+	frames := parseSSE(t, synthAnthropicSSE([]byte(`{"id":"workbuddy-empty","choices":[]}`), "claude-x"))
+	wantEvents := []string{"message_start", "message_delta", "message_stop"}
+	if len(frames) != len(wantEvents) {
+		t.Fatalf("SSE 帧数 = %d，期望 %d", len(frames), len(wantEvents))
+	}
+	for i, want := range wantEvents {
+		if frames[i].event != want {
+			t.Fatalf("第 %d 帧 event = %q，期望 %q", i, frames[i].event, want)
+		}
+	}
+	startMsg, _ := frames[0].data["message"].(map[string]any)
+	if startMsg["id"] != "workbuddy-empty" {
+		t.Fatalf("message_start.id = %v，期望透传 workbuddy- id", startMsg["id"])
+	}
+	delta, _ := frames[1].data["delta"].(map[string]any)
+	if delta["stop_reason"] != "end_turn" {
+		t.Fatalf("空响应 stop_reason = %v，期望 end_turn", delta["stop_reason"])
+	}
+	usage, _ := frames[1].data["usage"].(map[string]any)
+	if usage["output_tokens"] != float64(0) {
+		t.Fatalf("空响应 output_tokens = %v，期望 0", usage["output_tokens"])
 	}
 }
 
@@ -514,12 +642,25 @@ func TestMessagesBadRequestAndAuth(t *testing.T) {
 	})
 	t.Cleanup(restore)
 
-	status, _, data = postAnthropic(t, base+"/v1/messages", "not json", key)
-	if status != http.StatusBadRequest {
-		t.Fatalf("非法请求体状态码 = %d，期望 400，body=%s", status, data)
+	badBodies := []struct {
+		name string
+		body string
+	}{
+		{name: "非法 JSON", body: "not json"},
+		{name: "model 缺失", body: `{"messages":[]}`},
+		{name: "messages 缺失", body: `{"model":"m"}`},
+		{name: "tool_choice tool 缺 name", body: `{"model":"m","messages":[],"tool_choice":{"type":"tool"}}`},
 	}
-	e := decodeAnthropicError(t, data)
-	if e.Error.Type != "invalid_request_error" {
-		t.Fatalf("非法请求体错误类型 = %q，期望 invalid_request_error", e.Error.Type)
+	for _, tt := range badBodies {
+		t.Run(tt.name, func(t *testing.T) {
+			status, _, data := postAnthropic(t, base+"/v1/messages", tt.body, key)
+			if status != http.StatusBadRequest {
+				t.Fatalf("状态码 = %d，期望 400，body=%s", status, data)
+			}
+			e := decodeAnthropicError(t, data)
+			if e.Error.Type != "invalid_request_error" {
+				t.Fatalf("错误类型 = %q，期望 invalid_request_error", e.Error.Type)
+			}
+		})
 	}
 }

@@ -199,7 +199,8 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 先取原始请求的 model/stream：翻译后的 OpenAI body 不再保留 stream。
+	// 先取原始请求 body 的 model/stream：翻译后的 OpenAI body 不再保留 stream；
+	// stream 判定只看 body 字段，与请求头无关。
 	var meta struct {
 		Model  string `json:"model"`
 		Stream bool   `json:"stream"`

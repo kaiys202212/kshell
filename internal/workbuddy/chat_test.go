@@ -227,3 +227,68 @@ func TestChatOnceExpiredToken(t *testing.T) {
 		t.Fatalf("过期 token 应提前报错: %v", err)
 	}
 }
+
+// TestAggregateSSEUsage 验证用量从流式 chunk 聚合进非流式响应：
+// 顶层与 choices 内两种位置都要兼容；取不到时省略字段。
+func TestAggregateSSEUsage(t *testing.T) {
+	tests := []struct {
+		name           string
+		sse            string
+		wantUsage      bool
+		wantPrompt     int
+		wantCompletion int
+	}{
+		{
+			name: "chunk 顶层 usage",
+			sse: "data: " + `{"choices":[{"delta":{"content":"hi"}}]}` + "\n\n" +
+				"data: " + `{"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":3}}` + "\n\n" +
+				"data: [DONE]\n\n",
+			wantUsage:      true,
+			wantPrompt:     12,
+			wantCompletion: 3,
+		},
+		{
+			name: "choices 内 usage",
+			sse: "data: " + `{"choices":[{"delta":{"content":"hi"},"usage":{"prompt_tokens":7,"completion_tokens":2}}]}` + "\n\n" +
+				"data: [DONE]\n\n",
+			wantUsage:      true,
+			wantPrompt:     7,
+			wantCompletion: 2,
+		},
+		{
+			name: "无 usage 时省略",
+			sse: "data: " + `{"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}` + "\n\n" +
+				"data: [DONE]\n\n",
+			wantUsage: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := aggregateSSE(strings.NewReader(tt.sse))
+			if err != nil {
+				t.Fatalf("聚合失败: %v", err)
+			}
+			var resp struct {
+				Usage *struct {
+					PromptTokens     int `json:"prompt_tokens"`
+					CompletionTokens int `json:"completion_tokens"`
+				} `json:"usage"`
+			}
+			if err := json.Unmarshal(out, &resp); err != nil {
+				t.Fatalf("聚合响应非法: %v", err)
+			}
+			if !tt.wantUsage {
+				if resp.Usage != nil {
+					t.Fatalf("无 usage 时应省略字段: %s", out)
+				}
+				return
+			}
+			if resp.Usage == nil {
+				t.Fatalf("缺少 usage 字段: %s", out)
+			}
+			if resp.Usage.PromptTokens != tt.wantPrompt || resp.Usage.CompletionTokens != tt.wantCompletion {
+				t.Fatalf("usage 映射不符: %+v", resp.Usage)
+			}
+		})
+	}
+}

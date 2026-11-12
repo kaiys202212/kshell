@@ -17,10 +17,17 @@ func anthropicToOpenAI(body []byte) ([]byte, error) {
 		return nil, fmt.Errorf("err.workbuddyproxy.bad_request|%v", err)
 	}
 
-	out := map[string]any{}
-	if v, ok := in["model"]; ok {
-		out["model"] = v
+	// Anthropic Messages 必须有字符串 model 与 messages 数组；缺失直接视为
+	// 非法请求，由 handleMessages 映射为 400 invalid_request_error。
+	model, ok := in["model"].(string)
+	if !ok || strings.TrimSpace(model) == "" {
+		return nil, fmt.Errorf("err.workbuddyproxy.bad_request|model 缺失或不是字符串")
 	}
+	if _, ok := in["messages"].([]any); !ok {
+		return nil, fmt.Errorf("err.workbuddyproxy.bad_request|messages 缺失或不是数组")
+	}
+
+	out := map[string]any{"model": model}
 	// max_tokens / temperature / top_p 语义与 OpenAI 一致，直接透传；
 	// 其余 Anthropic 专有字段（stop_sequences、metadata 等）不透传，避免网关拒收。
 	for _, key := range []string{"max_tokens", "temperature", "top_p"} {
@@ -48,13 +55,17 @@ func anthropicToOpenAI(body []byte) ([]byte, error) {
 		out["tools"] = translateTools(tools)
 	}
 	if choice, ok := in["tool_choice"]; ok {
-		if mapped, ok := translateToolChoice(choice); ok {
+		mapped, keep, err := translateToolChoice(choice)
+		if err != nil {
+			return nil, err
+		}
+		if keep {
 			out["tool_choice"] = mapped
 		}
 	}
 
-	// 主动剥掉 stream：ChatOnce 内部强制 stream:true 并聚合，代理是否合成 SSE
-	// 由原始 Anthropic 请求头/字段决定（见 handleMessages），与转发体无关。
+	// 主动剥掉 stream：ChatOnce 内部强制 stream:true 并聚合；代理是否合成 SSE
+	// 只看原始 Anthropic 请求 body 的 stream 字段（见 handleMessages），与转发体无关。
 	return json.Marshal(out)
 }
 
@@ -133,19 +144,13 @@ func translateAssistantBlocks(blocks []any) []any {
 	return []any{msg}
 }
 
-// translateUserBlocks 按块顺序翻译 user 消息；遇到 tool_result 时先把已累积的
-// 文本/图片 flush 成一条 user 消息，再输出独立的 tool 消息，保证 OpenAI 侧
-// tool 消息紧跟 assistant tool_calls 的顺序语义。
+// translateUserBlocks 翻译 user 消息：tool_result 统一先输出为独立的 role:"tool"
+// 消息，保证它们紧跟 assistant tool_calls（OpenAI 协议要求 tool 消息紧随其后）；
+// 其余 text/image 片段合并成一条 user 消息放在 tool 消息之后。
+// Anthropic 允许 tool_result 与文本混排，这里重排是刻意取舍：工具协议正确性优先。
 func translateUserBlocks(role string, blocks []any) []any {
-	var out []any
+	var toolMsgs []any
 	var parts []any
-	flush := func() {
-		if len(parts) == 0 {
-			return
-		}
-		out = append(out, map[string]any{"role": role, "content": partsToContent(parts)})
-		parts = nil
-	}
 	for _, raw := range blocks {
 		block, ok := raw.(map[string]any)
 		if !ok {
@@ -161,12 +166,15 @@ func translateUserBlocks(role string, blocks []any) []any {
 				parts = append(parts, part)
 			}
 		case "tool_result":
-			flush()
-			out = append(out, toolResultToOpenAIMessage(block))
+			toolMsgs = append(toolMsgs, toolResultToOpenAIMessage(block))
+		default:
 			// thinking 等未知块丢弃：一期不还原推理内容。
 		}
 	}
-	flush()
+	out := toolMsgs
+	if len(parts) > 0 {
+		out = append(out, map[string]any{"role": role, "content": partsToContent(parts)})
+	}
 	return out
 }
 
@@ -262,7 +270,8 @@ func imageBlockToOpenAI(block map[string]any) (map[string]any, bool) {
 	case "base64":
 		media, _ := source["media_type"].(string)
 		data, _ := source["data"].(string)
-		if data == "" {
+		// 缺 media_type 无法构造合法 data URI，直接丢弃该图片块（一期尽力透传）。
+		if media == "" || data == "" {
 			return nil, false
 		}
 		url = "data:" + media + ";base64," + data
@@ -306,25 +315,29 @@ func translateTools(tools []any) []any {
 
 // translateToolChoice 映射 Anthropic tool_choice：
 // auto→"auto"、any→"required"、{"type":"tool","name":X}→指定 function。
-func translateToolChoice(v any) (any, bool) {
+// 返回 (映射值, 是否保留, 错误)：不支持的类型静默丢弃；
+// type=tool 缺 name 属于非法请求，必须报错而不是被静默忽略。
+func translateToolChoice(v any) (any, bool, error) {
 	switch tc := v.(type) {
 	case string:
-		return mapToolChoiceType(tc)
+		mapped, ok := mapToolChoiceType(tc)
+		return mapped, ok, nil
 	case map[string]any:
 		typ, _ := tc["type"].(string)
 		if typ == "tool" {
 			name, _ := tc["name"].(string)
-			if name == "" {
-				return nil, false
+			if strings.TrimSpace(name) == "" {
+				return nil, false, fmt.Errorf("err.workbuddyproxy.bad_tool_choice|tool_choice.type=tool 缺少 name")
 			}
 			return map[string]any{
 				"type":     "function",
 				"function": map[string]any{"name": name},
-			}, true
+			}, true, nil
 		}
-		return mapToolChoiceType(typ)
+		mapped, ok := mapToolChoiceType(typ)
+		return mapped, ok, nil
 	default:
-		return nil, false
+		return nil, false, nil
 	}
 }
 
