@@ -775,7 +775,7 @@ func TestSetChatModelPlatformPrefix(t *testing.T) {
 		t.Fatalf("默认平台切换不应改配置: %+v", loaded.Model)
 	}
 
-	// 2. 跨平台前缀：落盘 DefaultPlatform/ActiveModel，SetModel 收到裸名。
+	// 2. 跨平台前缀：落盘 ActivePlatformID/ActiveModel，SetModel 收到裸名。
 	if err := app.SetChatModel(id, "kshell:p2:b2"); err != nil {
 		t.Fatalf("SetChatModel: %v", err)
 	}
@@ -1142,14 +1142,17 @@ func TestToolPlatformModels(t *testing.T) {
 		{ID: "p2", Name: "Beta", Models: []string{"b1"}},
 	}
 
-	t.Run("claude 按默认平台全部模型", func(t *testing.T) {
+	t.Run("claude 按选定平台全部模型", func(t *testing.T) {
 		env := newChatTestApp(t, nil, nil)
 		env.app.mu.Lock()
 		env.app.opts.Config.Model = config.ModelConfig{
-			Enabled:         true,
-			DefaultPlatform: "p1",
-			Platforms:       platforms,
-			ToolSync:        config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
+			Enabled:          true,
+			ActivePlatformID: "p1",
+			Platforms:        platforms,
+			ToolSync: config.ToolSyncConfig{
+				Enabled:        map[string]bool{"claude": true},
+				ClaudePlatform: "p1",
+			},
 		}
 		env.app.mu.Unlock()
 
@@ -1172,9 +1175,9 @@ func TestToolPlatformModels(t *testing.T) {
 		env := newChatTestApp(t, nil, nil)
 		env.app.mu.Lock()
 		env.app.opts.Config.Model = config.ModelConfig{
-			Enabled:         true,
-			DefaultPlatform: "p2",
-			Platforms:       platforms,
+			Enabled:          true,
+			ActivePlatformID: "p2",
+			Platforms:        platforms,
 			ToolSync: config.ToolSyncConfig{
 				Enabled:  map[string]bool{"opencode": true},
 				OpenCode: map[string][]string{"p1": {"a1"}, "p2": {"b1"}},
@@ -1201,16 +1204,17 @@ func TestToolPlatformModels(t *testing.T) {
 		}
 	})
 
-	t.Run("codebuddy 按默认平台勾选集", func(t *testing.T) {
+	t.Run("codebuddy 按选定平台勾选集", func(t *testing.T) {
 		env := newChatTestApp(t, nil, nil)
 		env.app.mu.Lock()
 		env.app.opts.Config.Model = config.ModelConfig{
-			Enabled:         true,
-			DefaultPlatform: "p1",
-			Platforms:       platforms,
+			Enabled:          true,
+			ActivePlatformID: "p1",
+			Platforms:        platforms,
 			ToolSync: config.ToolSyncConfig{
-				Enabled:   map[string]bool{"codebuddy": true},
-				CodeBuddy: []string{"a2"},
+				Enabled:           map[string]bool{"codebuddy": true},
+				CodeBuddy:         []string{"a2"},
+				CodeBuddyPlatform: "p1",
 			},
 		}
 		env.app.mu.Unlock()
@@ -1220,7 +1224,7 @@ func TestToolPlatformModels(t *testing.T) {
 			t.Fatalf("ToolPlatformModels: %v", err)
 		}
 		if len(got) != 1 || got[0].ID != "a2" || got[0].Name != "Alpha: a2" {
-			t.Fatalf("应只列默认平台勾选集（裸 mid + 前缀名）: %+v", got)
+			t.Fatalf("应只列所选平台勾选集（裸 mid + 前缀名）: %+v", got)
 		}
 	})
 
@@ -1228,10 +1232,10 @@ func TestToolPlatformModels(t *testing.T) {
 		env := newChatTestApp(t, nil, nil)
 		env.app.mu.Lock()
 		env.app.opts.Config.Model = config.ModelConfig{
-			Enabled:         true,
-			DefaultPlatform: "p1",
-			Platforms:       platforms,
-			ToolSync:        config.ToolSyncConfig{Enabled: map[string]bool{"cursor": true}},
+			Enabled:          true,
+			ActivePlatformID: "p1",
+			Platforms:        platforms,
+			ToolSync:         config.ToolSyncConfig{Enabled: map[string]bool{"cursor": true}},
 		}
 		env.app.mu.Unlock()
 
@@ -1248,10 +1252,10 @@ func TestToolPlatformModels(t *testing.T) {
 		env := newChatTestApp(t, nil, nil)
 		env.app.mu.Lock()
 		env.app.opts.Config.Model = config.ModelConfig{
-			Enabled:         true,
-			DefaultPlatform: "p1",
-			Platforms:       platforms,
-			ToolSync:        config.ToolSyncConfig{Enabled: map[string]bool{"codebuddy": true}},
+			Enabled:          true,
+			ActivePlatformID: "p1",
+			Platforms:        platforms,
+			ToolSync:         config.ToolSyncConfig{Enabled: map[string]bool{"codebuddy": true}},
 		}
 		env.app.mu.Unlock()
 
@@ -1268,10 +1272,10 @@ func TestToolPlatformModels(t *testing.T) {
 		env := newChatTestApp(t, nil, nil)
 		env.app.mu.Lock()
 		env.app.opts.Config.Model = config.ModelConfig{
-			Enabled:         false,
-			DefaultPlatform: "p1",
-			Platforms:       platforms,
-			ToolSync:        config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
+			Enabled:          false,
+			ActivePlatformID: "p1",
+			Platforms:        platforms,
+			ToolSync:         config.ToolSyncConfig{Enabled: map[string]bool{"claude": true}},
 		}
 		env.app.mu.Unlock()
 
