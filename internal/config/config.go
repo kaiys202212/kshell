@@ -126,6 +126,24 @@ type ToolSyncConfig struct {
 	CodeBuddyPlatform string `yaml:"codebuddy_platform,omitempty"`
 }
 
+// 旧单字段对应的工具 ID：迁移与消费方兜底共用的稳定键名，避免多处硬编码。
+const (
+	ToolClaude    = "claude"
+	ToolCodeBuddy = "codebuddy"
+)
+
+// legacyToolPlatformKeys 是仍带旧单字段兜底的工具集合。
+var legacyToolPlatformKeys = []string{ToolClaude, ToolCodeBuddy}
+
+// ToolPlatformKeys 返回需要旧单字段兜底的工具 ID 副本；调用方可安全修改返回值。
+func ToolPlatformKeys() []string { return append([]string(nil), legacyToolPlatformKeys...) }
+
+// MissingOrBlank 报告映射中 key 缺失或值为空白：迁移补缺与消费方兜底统一用它判断。
+func MissingOrBlank(m map[string]string, key string) bool {
+	v, ok := m[key]
+	return !ok || strings.TrimSpace(v) == ""
+}
+
 // ModelConfig 是模型平台配置集合 + kshell 当前平台/模型选择。
 // Preset/OpenAIBaseURL/AnthropicBaseURL/BaseURL/APIKey/Models/Agents 为旧单平台字段：
 // 仅读取迁移用（归一化时迁入 Platforms 并清空），保存时 omitempty 不再落盘。
@@ -473,18 +491,20 @@ func (c Config) normalized() Config {
 	if len(ts.ToolPlatforms) == 0 {
 		ts.ToolPlatforms = nil
 	}
-	for _, legacy := range []struct{ tool, id string }{
-		{"claude", strings.TrimSpace(ts.ClaudePlatform)},
-		{"codebuddy", strings.TrimSpace(ts.CodeBuddyPlatform)},
-	} {
-		if legacy.id == "" {
+	legacyIDs := map[string]string{
+		ToolClaude:    strings.TrimSpace(ts.ClaudePlatform),
+		ToolCodeBuddy: strings.TrimSpace(ts.CodeBuddyPlatform),
+	}
+	for _, tool := range legacyToolPlatformKeys {
+		id := legacyIDs[tool]
+		if id == "" {
 			continue
 		}
 		if ts.ToolPlatforms == nil {
 			ts.ToolPlatforms = map[string]string{}
 		}
-		if cur, ok := ts.ToolPlatforms[legacy.tool]; !ok || strings.TrimSpace(cur) == "" {
-			ts.ToolPlatforms[legacy.tool] = legacy.id
+		if MissingOrBlank(ts.ToolPlatforms, tool) {
+			ts.ToolPlatforms[tool] = id
 		}
 	}
 	ts.ClaudePlatform = ""
@@ -605,13 +625,16 @@ func (c Config) normalized() Config {
 		if c.Model.ToolSync.ToolPlatforms == nil {
 			c.Model.ToolSync.ToolPlatforms = map[string]string{}
 		}
-		if id, ok := c.Model.ToolSync.ToolPlatforms["claude"]; (!ok || strings.TrimSpace(id) == "") &&
-			(c.Model.ToolSync.Claude != (ClaudeSync{}) || c.Model.ToolSync.Enabled["claude"]) {
-			c.Model.ToolSync.ToolPlatforms["claude"] = legacyDefault
+		configured := map[string]bool{
+			ToolClaude: c.Model.ToolSync.Claude != (ClaudeSync{}) ||
+				c.Model.ToolSync.Enabled[ToolClaude],
+			ToolCodeBuddy: len(c.Model.ToolSync.CodeBuddy) > 0 ||
+				c.Model.ToolSync.Enabled[ToolCodeBuddy],
 		}
-		if id, ok := c.Model.ToolSync.ToolPlatforms["codebuddy"]; (!ok || strings.TrimSpace(id) == "") &&
-			(len(c.Model.ToolSync.CodeBuddy) > 0 || c.Model.ToolSync.Enabled["codebuddy"]) {
-			c.Model.ToolSync.ToolPlatforms["codebuddy"] = legacyDefault
+		for _, tool := range legacyToolPlatformKeys {
+			if configured[tool] && MissingOrBlank(c.Model.ToolSync.ToolPlatforms, tool) {
+				c.Model.ToolSync.ToolPlatforms[tool] = legacyDefault
+			}
 		}
 	}
 	// 工具平台映射归一：key/value 去空白、丢空项。悬空 ID 不在此处校验，
@@ -688,9 +711,9 @@ func (t ToolSyncConfig) ToolPlatformID(toolID string) string {
 		return id
 	}
 	switch toolID {
-	case "claude":
+	case ToolClaude:
 		return strings.TrimSpace(t.ClaudePlatform)
-	case "codebuddy":
+	case ToolCodeBuddy:
 		return strings.TrimSpace(t.CodeBuddyPlatform)
 	}
 	return ""
@@ -704,7 +727,7 @@ func (m ModelConfig) ToolPlatform(toolID string) (ModelPlatform, bool) {
 	id, known := m.ToolSync.ToolPlatforms[toolID]
 	if !known {
 		switch toolID {
-		case "claude", "codebuddy":
+		case ToolClaude, ToolCodeBuddy:
 			id = m.ToolSync.ToolPlatformID(toolID)
 		default:
 			return ModelPlatform{}, false

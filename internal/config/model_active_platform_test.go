@@ -1,6 +1,7 @@
 package config
 
 import (
+	"reflect"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -129,6 +130,74 @@ model:
 	}
 	if len(c.Model.ToolSync.ToolPlatforms) != 0 {
 		t.Fatalf("无平台时 ToolPlatforms 应清空: %#v", c.Model.ToolSync.ToolPlatforms)
+	}
+}
+
+// TestToolPlatformsNormalize 直测 normalized() 的映射归一块：空白 key/value
+// 丢弃、key/value 去首尾空白、全空归一为 nil（不是空 map，保证 omitempty 不落盘）。
+func TestToolPlatformsNormalize(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want map[string]string
+	}{
+		{
+			name: "空白key丢弃",
+			raw: `
+model:
+  platforms:
+    - id: p1
+  tool_sync:
+    tool_platforms:
+      " ": p1
+`,
+			want: nil,
+		},
+		{
+			name: "空白value丢弃",
+			raw: `
+model:
+  platforms:
+    - id: p1
+  tool_sync:
+    tool_platforms:
+      claude: " "
+`,
+			want: nil,
+		},
+		{
+			name: "key与value去空白",
+			raw: `
+model:
+  platforms:
+    - id: p1
+  tool_sync:
+    tool_platforms:
+      " claude ": " p1 "
+`,
+			want: map[string]string{"claude": "p1"},
+		},
+		{
+			name: "空白key丢弃且有效值去空白",
+			raw: `
+model:
+  platforms:
+    - id: p1
+  tool_sync:
+    tool_platforms:
+      " ": p1
+      " claude ": " p1 "
+`,
+			want: map[string]string{"claude": "p1"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := decodeModelConfig(t, tc.raw)
+			if !reflect.DeepEqual(c.Model.ToolSync.ToolPlatforms, tc.want) {
+				t.Fatalf("ToolPlatforms = %#v, want %#v", c.Model.ToolSync.ToolPlatforms, tc.want)
+			}
+		})
 	}
 }
 

@@ -455,8 +455,8 @@ func toolPlatformsSnapshot(ts config.ToolSyncConfig) map[string]string {
 			out[tool] = id
 		}
 	}
-	for _, tool := range []string{"claude", "codebuddy"} {
-		if _, ok := out[tool]; ok {
+	for _, tool := range config.ToolPlatformKeys() {
+		if !config.MissingOrBlank(out, tool) {
 			continue
 		}
 		if id := ts.ToolPlatformID(tool); id != "" {
@@ -722,7 +722,7 @@ func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 			ts.OpenCode[k] = append([]string(nil), v...)
 		}
 		switch toolID {
-		case "claude":
+		case config.ToolClaude:
 			if in.Enabled {
 				ts.Claude = config.ClaudeSync{
 					Model:  strings.TrimSpace(in.Claude.Model),
@@ -730,10 +730,10 @@ func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 					Opus:   strings.TrimSpace(in.Claude.Opus),
 					Haiku:  strings.TrimSpace(in.Claude.Haiku),
 				}
-				setToolPlatform(ts.ToolPlatforms, "claude", validPlatformID(c.Model.Platforms, in.ClaudePlatform))
+				setToolPlatform(ts.ToolPlatforms, config.ToolClaude, validPlatformID(c.Model.Platforms, in.ClaudePlatform))
 			} else {
 				ts.Claude = config.ClaudeSync{}
-				delete(ts.ToolPlatforms, "claude")
+				delete(ts.ToolPlatforms, config.ToolClaude)
 			}
 		case "opencode":
 			// OpenCode 是 tool_sync.opencode 键的唯一属主：禁用即整键清空。
@@ -748,13 +748,13 @@ func (a *App) SetToolSyncConfig(toolID string, in ToolSyncInput) error {
 			if len(ts.OpenCode) == 0 {
 				ts.OpenCode = nil
 			}
-		case "codebuddy":
+		case config.ToolCodeBuddy:
 			if in.Enabled {
 				ts.CodeBuddy = trimList(in.CodeBuddy)
-				setToolPlatform(ts.ToolPlatforms, "codebuddy", validPlatformID(c.Model.Platforms, in.CodeBuddyPlatform))
+				setToolPlatform(ts.ToolPlatforms, config.ToolCodeBuddy, validPlatformID(c.Model.Platforms, in.CodeBuddyPlatform))
 			} else {
 				ts.CodeBuddy = nil
-				delete(ts.ToolPlatforms, "codebuddy")
+				delete(ts.ToolPlatforms, config.ToolCodeBuddy)
 			}
 		}
 		if len(ts.ToolPlatforms) == 0 {
