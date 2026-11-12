@@ -34,8 +34,8 @@ func TestViewNamesMatchViewCount(t *testing.T) {
 }
 
 // TestModelOptionsPlatformInjection 覆盖 TUI 侧模型注入的平台语义：
-// 端点与密钥取默认平台（DefaultPlatform 命中，否则第一个），
-// 不注入模型名（默认模型由 agent 自行决定）；无平台或未启用时不注入。
+// 端点与密钥取激活平台（ActivePlatformID 命中，否则第一个），
+// 不注入模型名（默认模型由 agent 自行决定）；无平台时不命中，未启用时不注入。
 func TestModelOptionsPlatformInjection(t *testing.T) {
 	newWithModel := func(mc config.ModelConfig) Model {
 		return NewModelWith(Options{Config: config.Config{MaxDepth: 10, Model: mc}})
@@ -51,29 +51,33 @@ func TestModelOptionsPlatformInjection(t *testing.T) {
 			{ID: "p2", OpenAIBaseURL: "https://oai2/", APIKey: "k2"},
 		},
 	})
-	mc, ok := m.modelOptions().Resolver("claude")
+	mc, ok := m.modelOptions("claude").Resolver("claude")
 	if !ok || mc.Model != "" || mc.OpenAIBaseURL != "https://oai/" || mc.AnthropicBaseURL != "https://ant/" || mc.APIKey != "k" {
 		t.Fatalf("resolver(claude) = %+v ok=%v", mc, ok)
 	}
 
-	// DefaultPlatform 为空：回落第一个平台。
+	// ActivePlatformID 为空：回落第一个平台。
 	m = newWithModel(config.ModelConfig{
 		Enabled:   true,
 		Platforms: []config.ModelPlatform{{ID: "p1", OpenAIBaseURL: "https://oai1/", APIKey: "k1"}},
 	})
-	mc, ok = m.modelOptions().Resolver("claude")
+	mc, ok = m.modelOptions("claude").Resolver("claude")
 	if !ok || mc.OpenAIBaseURL != "https://oai1/" || mc.APIKey != "k1" {
 		t.Fatalf("应回落第一个平台: %+v ok=%v", mc, ok)
 	}
 
-	// 启用但无平台 / 未启用：不注入。
-	for _, mc := range []config.ModelConfig{
-		{Enabled: true},
-		{Enabled: false, Platforms: []config.ModelPlatform{{ID: "p1"}}},
-	} {
-		if got := newWithModel(mc).modelOptions().Resolver; got != nil {
-			t.Fatalf("Enabled=%v Platforms=%d 不应注入", mc.Enabled, len(mc.Platforms))
-		}
+	// 启用但无平台：解析委托 modelresolve，Resolver 存在但调用时不命中。
+	mo := newWithModel(config.ModelConfig{Enabled: true}).modelOptions("claude")
+	if mo.Resolver == nil {
+		t.Fatal("启用时应有 resolver（平台解析延迟到调用时）")
+	}
+	if _, ok := mo.Resolver("claude"); ok {
+		t.Fatal("无平台时不应命中")
+	}
+
+	// 未启用：直接不注入。
+	if got := newWithModel(config.ModelConfig{Enabled: false, Platforms: []config.ModelPlatform{{ID: "p1"}}}).modelOptions("claude").Resolver; got != nil {
+		t.Fatal("未启用不应注入")
 	}
 }
 

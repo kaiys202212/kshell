@@ -13,8 +13,10 @@ import (
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/launcher"
+	"github.com/yangk/kshell/internal/modelresolve"
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/remote"
+	"github.com/yangk/kshell/internal/workbuddyproxy"
 	"github.com/yangk/kshell/internal/workspace"
 )
 
@@ -109,6 +111,10 @@ type Model struct {
 	fileCursor   int
 	lastFileErr  error
 
+	// modelProxy 是 modelresolve 命中 workbuddy 平台时的本地代理来源：
+	// 生产固定指向进程内单例（workbuddyproxy.Get），非导出字段便于测试注入 fake。
+	modelProxy modelresolve.Proxier
+
 	store        *remote.Store
 	conns        []remote.Connection
 	connCursor   int
@@ -140,14 +146,15 @@ func NewModelWith(o Options) Model {
 	}
 
 	return Model{
-		width:  120,
-		height: 40,
-		view:   ViewSessions,
-		theme:  NewTheme(appearance.ParseMode(o.Config.Appearance.Mode)),
-		opts:   o,
-		store:  o.Store,
-		focus:  focusWorkspaces,
-		status: "就绪",
+		width:      120,
+		height:     40,
+		view:       ViewSessions,
+		theme:      NewTheme(appearance.ParseMode(o.Config.Appearance.Mode)),
+		opts:       o,
+		modelProxy: workbuddyproxy.Get(),
+		store:      o.Store,
+		focus:      focusWorkspaces,
+		status:     "就绪",
 	}
 }
 
@@ -581,25 +588,16 @@ func (m Model) themeOptions() launch.ThemeOptions {
 	}
 }
 
-// modelOptions 组装模型注入 resolver：未启用或无可用平台时返回空（不注入）。
-// 只注入端点与密钥（取当前平台，ActivePlatformID 命中否则第一个），不注入模型名——
-// 默认模型由 agent 自行决定；settings 配置的模型仅经聊天下拉提供切换。
-func (m Model) modelOptions() launch.ModelOptions {
-	cfg := m.opts.Config.Model
-	if !cfg.Enabled {
-		return launch.ModelOptions{}
+// modelOptions 组装模型注入 resolver：按工具委托 modelresolve.Options 解析平台
+// （每工具平台 → 全局激活平台）。TUI 不注入模型名，默认模型由 agent 自行决定；
+// 未启用时返回空 resolver，平台解析延迟到调用时（无可用平台则不注入）。
+// proxier 取进程内 workbuddy 单例，Model 上留非导出字段便于测试注入 fake。
+func (m Model) modelOptions(toolID string) launch.ModelOptions {
+	px := m.modelProxy
+	if px == nil {
+		px = workbuddyproxy.Get()
 	}
-	p, ok := cfg.ActivePlatform()
-	if !ok {
-		return launch.ModelOptions{}
-	}
-	return launch.ModelOptions{Resolver: func(string) (providers.ModelConfig, bool) {
-		return providers.ModelConfig{
-			OpenAIBaseURL:    p.OpenAIBaseURL,
-			AnthropicBaseURL: p.AnthropicBaseURL,
-			APIKey:           p.APIKey,
-		}, true
-	}}
+	return modelresolve.Options(m.opts.Config.Model, modelresolve.Query{ToolID: toolID}, px)
 }
 
 func (m Model) permissionOptions() launch.PermissionOptions {
@@ -612,7 +610,7 @@ func (m Model) resumeLaunch() (providers.Launch, error) {
 	if !ok {
 		return providers.Launch{}, errNoSessionSelected
 	}
-	return launch.ForSession(m.opts.Providers, m.tools, s, m.themeOptions(), m.modelOptions(), m.permissionOptions())
+	return launch.ForSession(m.opts.Providers, m.tools, s, m.themeOptions(), m.modelOptions(s.ToolID), m.permissionOptions())
 }
 
 func (m Model) newSessionLaunch() (providers.Launch, error) {
@@ -620,7 +618,13 @@ func (m Model) newSessionLaunch() (providers.Launch, error) {
 	if !ok {
 		return providers.Launch{}, errNoWorkspaceSelected
 	}
-	return launch.ForWorkspace(m.opts.Providers, m.tools, ws, m.themeOptions(), m.modelOptions(), m.permissionOptions())
+	// 新建会话的模型平台要按实际选中的首选工具解析。解析不出时传空，
+	// modelresolve 会用 launch 回调传入的真实 toolID 兜底每工具平台。
+	toolID := ""
+	if _, tool, ok := launch.PreferredTool(m.opts.Providers, m.tools, ws); ok {
+		toolID = tool.ID
+	}
+	return launch.ForWorkspace(m.opts.Providers, m.tools, ws, m.themeOptions(), m.modelOptions(toolID), m.permissionOptions())
 }
 
 func (m Model) launchSelectedCmd() tea.Cmd {

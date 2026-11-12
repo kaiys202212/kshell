@@ -1,6 +1,6 @@
 // Package modelresolve 把「工具 + 显式模型 + 会话模型 + 配置」翻译成
-// launch.ModelOptions，消灭各入口自建 Resolver 的漂移。桌面端已接入，
-// TUI 待 Task 7 迁移。平台解析优先级：显式模型 ID → 会话模型反查 →
+// launch.ModelOptions，消灭各入口自建 Resolver 的漂移。桌面端与 TUI 均已接入。
+// 平台解析优先级：显式模型 ID → 会话模型反查 →
 // 每工具平台（ToolPlatforms）→ 全局激活平台。
 package modelresolve
 
