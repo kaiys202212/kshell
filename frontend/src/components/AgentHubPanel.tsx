@@ -13,7 +13,6 @@ import {
   clearHubMessages,
   closeChat,
   getTools,
-  getModelConfig,
   getSessions,
   hubCommand,
   hubPickTarget,
@@ -22,6 +21,7 @@ import {
   listChatModels,
   listHubArchive,
   listHubMessages,
+  listToolPlatformModels,
   loadHubArchive,
   onToolsUpdated,
   onHubBusy,
@@ -43,7 +43,7 @@ import {
   type MentionOption,
 } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
-import { formatPlatformModelName, hubInjectedModelsForTool, lastModelForCreate, loadDefaultCreate, loadLastCreate, loadToolModelOptions, loadToolModels, loadHubRouteMode, mergeHubModelOptions, rememberLastModel, rememberPerToolLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode, type ToolModelOption } from '../lib/agenthubDefaults';
+import { lastModelForCreate, loadDefaultCreate, loadLastCreate, loadToolModelOptions, loadToolModels, loadHubRouteMode, mergeHubModelOptions, rememberLastModel, rememberPerToolLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode, type ToolModelOption } from '../lib/agenthubDefaults';
 import { saveHubDefaultCreate } from '../lib/api';
 import { quotePathForShell } from '../lib/dragPath';
 import { decodePercentText } from '../lib/displayText';
@@ -1659,8 +1659,9 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
 
 // NewAgentDialog：单窗体新建。项目/工具/模型三字段同屏，一次点击完成创建
 // （session/new 不接受模型参数，模型在 runAgentCreate 里建会话后再 SetModel）。
-// 打开时按 lastCreate 预填；模型下拉合并 kshell 注入模型（设置页 model.models，
-// 打开时拉 getModelConfig）与本地缓存（loadToolModels），空值即「默认模型」。
+// 打开时按 lastCreate 预填；模型下拉合并 kshell 平台注入模型（按 toolId 调
+// listToolPlatformModels，与 ACP 会话窗口下拉同源）与本地缓存（loadToolModels），
+// 空值即「默认模型」。
 function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const { t } = useTranslation();
   const workspaces = useAppStore((s) => s.workspaces);
@@ -1669,9 +1670,10 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
   const [toolId, setToolId] = useState('');
   const [busy, setBusy] = useState(false);
   const [modelId, setModelId] = useState('');
-  // kshell 注入模型清单：打开时拉取，失败静默（下拉是辅助功能，回落纯缓存）
-  // name 带平台展示前缀，id 仍为裸模型名（SetModel 用）。
-  const [injectedModels, setInjectedModels] = useState<ToolModelOption[]>([]);
+  // kshell 平台注入模型（与 ACP 会话窗口下拉同源，后端 ToolSync 门控）：
+  // 按 toolId 键控拉取，失败静默（下拉是辅助功能，回落纯缓存）。
+  // 渲染期仅当键与当前 toolId 一致才使用，避免切工具瞬间残留旧工具选项。
+  const [injected, setInjected] = useState<{ toolId: string; opts: ToolModelOption[] }>({ toolId: '', opts: [] });
   // seq 使关闭后在途的 create 失效，避免其 setState 污染下次打开。
   const seqRef = useRef(0);
   // 记录上次 open 值：预填只在 open 从 false→true 时执行，
@@ -1705,20 +1707,7 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
         });
       })
       .catch(() => {});
-    // kshell 注入模型（设置页默认平台的模型列表）：拉取失败静默，回落仅缓存
-    void getModelConfig()
-      .then((cfg) => {
-        const def = cfg.Platforms?.find((p) => p.ID === cfg.DefaultPlatform) ?? cfg.Platforms?.[0];
-        const platName = def?.Name ?? '';
-        const opts: ToolModelOption[] = [];
-        for (const raw of def?.Models ?? []) {
-          const id = typeof raw === 'string' ? raw.trim() : '';
-          if (!id) continue;
-          opts.push({ id, name: formatPlatformModelName(platName, id) });
-        }
-        setInjectedModels(opts);
-      })
-      .catch(() => setInjectedModels([]));
+    // kshell 平台注入模型按 toolId 另行拉取（见下方 effect），此处不再拼装。
     setWsPath((cur) => {
       if (cur && workspaces.some((w) => sameWorkspacePath(w.Path, cur))) return cur;
       if (last && workspaces.some((w) => sameWorkspacePath(w.Path, last.wsPath))) return last.wsPath;
@@ -1741,6 +1730,23 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     setBusy(false);
   }, [open]);
 
+  // 平台注入模型随 toolId 变化拉取：与 ACP 会话窗口下拉同源（后端 ToolSync
+  // 门控与各工具口径，cursor 恒空），失败静默回落纯缓存。
+  useEffect(() => {
+    if (!open || !toolId) return;
+    let cancelled = false;
+    void listToolPlatformModels(toolId)
+      .then((opts) => {
+        if (!cancelled) setInjected({ toolId, opts });
+      })
+      .catch(() => {
+        if (!cancelled) setInjected({ toolId, opts: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, toolId]);
+
   // 卸载兜底：面板被整个卸载（切页/测试清理）时释放模块级互斥锁，
   // 覆盖创建长挂/测试隔离场景；常规释放路径是创建 Promise 自己的 finally。
   useEffect(() => {
@@ -1760,10 +1766,11 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     if (ok && seq === seqRef.current) onOpenChange(false);
   };
 
-  // 模型下拉选项：kshell 注入模型在前、工具缓存模型在后，按 id 去重；文案用 name。
-  // Cursor 不合并平台注入（ACP 不支持该通道）。渲染期同步读 localStorage。
+  // 模型下拉选项：kshell 平台注入模型在前、工具缓存模型在后，按 id 去重；
+  // 文案用 name。注入清单按 toolId 键控，工具切换瞬间不残留旧工具选项。
+  // 渲染期同步读 localStorage。
   const modelOptions = mergeHubModelOptions(
-    hubInjectedModelsForTool(toolId, injectedModels),
+    injected.toolId === toolId ? injected.opts : [],
     toolId ? loadToolModelOptions(toolId) : [],
   );
 
@@ -1857,9 +1864,9 @@ function DefaultSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [toolId, setToolId] = useState('');
   const [modelId, setModelId] = useState('');
-  // kshell 注入模型清单：打开时拉取，失败静默（与 NewAgentDialog 同语义）
-  // name 带平台展示前缀，id 仍为裸模型名。
-  const [injectedModels, setInjectedModels] = useState<ToolModelOption[]>([]);
+  // kshell 平台注入模型（与 ACP 会话窗口下拉同源，后端 ToolSync 门控）：
+  // 按 toolId 键控拉取，失败静默（与 NewAgentDialog 同语义）。
+  const [injected, setInjected] = useState<{ toolId: string; opts: ToolModelOption[] }>({ toolId: '', opts: [] });
   // 预填只在 open 从 false→true 时执行一次，开着期间后台刷新不重置用户已选字段
   const prevOpenRef = useRef(false);
 
@@ -1878,22 +1885,25 @@ function DefaultSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         setToolId(saved && acp.some((x) => x.ID === saved.toolId) ? saved.toolId : '');
       })
       .catch(() => {});
-    void getModelConfig()
-      .then((cfg) => {
-        const def = cfg.Platforms?.find((p) => p.ID === cfg.DefaultPlatform) ?? cfg.Platforms?.[0];
-        const platName = def?.Name ?? '';
-        const opts: ToolModelOption[] = [];
-        for (const raw of def?.Models ?? []) {
-          const id = typeof raw === 'string' ? raw.trim() : '';
-          if (!id) continue;
-          opts.push({ id, name: formatPlatformModelName(platName, id) });
-        }
-        setInjectedModels(opts);
-      })
-      .catch(() => setInjectedModels([]));
     // 模型预选：已存 modelId 在该工具的缓存模型列表里才预选，否则空（默认模型）
     setModelId(saved?.modelId && loadToolModels(saved.toolId).includes(saved.modelId) ? saved.modelId : '');
   }, [open]);
+
+  // 平台注入模型随 toolId 变化拉取（与 NewAgentDialog 同一 effect 口径）。
+  useEffect(() => {
+    if (!open || !toolId) return;
+    let cancelled = false;
+    void listToolPlatformModels(toolId)
+      .then((opts) => {
+        if (!cancelled) setInjected({ toolId, opts });
+      })
+      .catch(() => {
+        if (!cancelled) setInjected({ toolId, opts: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, toolId]);
 
   const save = () => {
     if (!toolId) return;
@@ -1904,9 +1914,9 @@ function DefaultSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     onOpenChange(false);
   };
 
-  // 模型下拉选项：与 NewAgentDialog 同口径（Cursor 不合并平台注入）
+  // 模型下拉选项：与 NewAgentDialog 同口径（注入清单按 toolId 键控）
   const modelOptions = mergeHubModelOptions(
-    hubInjectedModelsForTool(toolId, injectedModels),
+    injected.toolId === toolId ? injected.opts : [],
     toolId ? loadToolModelOptions(toolId) : [],
   );
 

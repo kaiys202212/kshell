@@ -1,8 +1,6 @@
 // agenthubDefaults：新建 agent 默认值与模型列表缓存的 localStorage 读写测试。
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  formatPlatformModelName,
-  hubInjectedModelsForTool,
   lastModelForCreate,
   loadDefaultCreate,
   loadLastCreate,
@@ -135,20 +133,6 @@ describe('agenthubDefaults', () => {
       { id: 'glm-x', name: '智谱: glm-x' },
       { id: 'cache-only', name: 'Cache' },
     ]);
-  });
-
-  it('formatPlatformModelName：有平台名则加前缀，空名回落裸 id', () => {
-    expect(formatPlatformModelName('智谱', 'glm-x')).toBe('智谱: glm-x');
-    expect(formatPlatformModelName('  ', 'glm-x')).toBe('glm-x');
-    expect(formatPlatformModelName('', 'glm-x')).toBe('glm-x');
-  });
-
-  it('hubInjectedModelsForTool：cursor 不展示平台注入模型', () => {
-    expect(hubInjectedModelsForTool('cursor', ['glm-5.3-flash', 'cfg2'])).toEqual([]);
-    expect(hubInjectedModelsForTool('claude', ['glm-5.3-flash'])).toEqual(['glm-5.3-flash']);
-    expect(
-      hubInjectedModelsForTool('cursor', [{ id: 'glm-x', name: '智谱: glm-x' }]),
-    ).toEqual([]);
   });
 
   describe('rememberChatModels', () => {

@@ -165,24 +165,6 @@ export function saveToolModels(toolId: string, models: Array<string | ToolModelO
   writeJSON(MODELS_KEY_PREFIX + toolId, opts);
 }
 
-// formatPlatformModelName：平台配置模型的展示名（「平台名: 模型」）。
-// 仅 UI 文案；平台名为空则回落裸 modelId，绝不把平台名写进 id。
-export function formatPlatformModelName(platformName: string, modelId: string): string {
-  const plat = platformName.trim();
-  if (!plat) return modelId;
-  return `${plat}: ${modelId}`;
-}
-
-// hubInjectedModelsForTool：平台注入模型仅给支持 Claude settings 注入的工具。
-// Cursor ACP 不支持该通道，返回空以免下拉出现无效平台模型。
-export function hubInjectedModelsForTool<T extends string | ToolModelOption>(
-  toolId: string,
-  injected: T[],
-): T[] {
-  if (toolId === 'cursor') return [];
-  return injected;
-}
-
 // rememberChatModels 把一次模型视图回写到工具缓存：新建路径之外的模型上报
 // （chat:models 补偿推送、ChatView 挂载拉取）也落缓存，旧格式缓存（裸 ID 无
 // 展示名）得以自愈。视图缺模型或 toolId 为空一律忽略，不覆盖既有缓存。

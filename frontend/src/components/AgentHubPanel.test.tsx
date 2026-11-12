@@ -18,7 +18,7 @@ const api = vi.hoisted(() => ({
   getTools: vi.fn(),
   onToolsUpdated: vi.fn(),
   onHubBusy: vi.fn(() => () => {}),
-  getModelConfig: vi.fn(),
+  listToolPlatformModels: vi.fn(),
   readClipboardPaste: vi.fn(),
   listChatCommands: vi.fn(),
   listChatModels: vi.fn(),
@@ -76,12 +76,8 @@ beforeEach(() => {
     { ...acpTool('codex'), Name: 'Codex' },
   ]);
   api.onToolsUpdated.mockImplementation(() => () => {});
-  api.getModelConfig.mockResolvedValue({
-    Enabled: false,
-    Platforms: [],
-    DefaultPlatform: '',
-    ActiveModel: '',
-  });
+  // 平台注入模型默认为空：需要注入模型的用例自行覆盖
+  api.listToolPlatformModels.mockResolvedValue([]);
   api.readClipboardPaste.mockResolvedValue({ Text: '', Path: '' });
   api.listChatCommands.mockResolvedValue([]);
   api.listChatModels.mockResolvedValue({ Current: '', Models: [] });
@@ -1160,25 +1156,12 @@ describe('AgentHubPanel', () => {
     expect(useAppStore.getState().lastAgentId).toBe('n1');
   });
 
-  it('新建 agent：模型下拉合并 kshell 注入模型并去重', async () => {
+  it('新建 agent：模型下拉合并平台注入模型并去重（与 ACP 窗口同源）', async () => {
     api.getTools.mockResolvedValue([acpTool()]);
-    api.getModelConfig.mockResolvedValue({
-      Enabled: true,
-      Platforms: [
-        {
-          ID: 'p1',
-          Name: '智谱',
-          Preset: 'openai',
-          OpenAIBaseURL: 'https://h/',
-          AnthropicBaseURL: 'https://h/',
-          Models: ['glm-5.3-flash', 'deepseek-v4.1-flash'],
-          APIKeySet: true,
-          IsDefault: true,
-        },
-      ],
-      DefaultPlatform: 'p1',
-      ActiveModel: 'glm-5.3-flash',
-    });
+    api.listToolPlatformModels.mockResolvedValue([
+      { id: 'glm-5.3-flash', name: '智谱: glm-5.3-flash' },
+      { id: 'deepseek-v4.1-flash', name: '智谱: deepseek-v4.1-flash' },
+    ]);
     useAppStore.setState({ workspaces: [workspaceA] });
     render(<AgentHubPanel />);
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
@@ -1206,15 +1189,35 @@ describe('AgentHubPanel', () => {
     expect(glmOpt?.textContent).toBe('智谱: glm-5.3-flash');
   });
 
-  it('新建 agent：getModelConfig 失败时静默回退仅默认选项', async () => {
+  it('新建 agent：listToolPlatformModels 失败时静默回退仅默认选项', async () => {
     api.getTools.mockResolvedValue([acpTool()]);
-    api.getModelConfig.mockRejectedValue(new Error('no binding'));
+    api.listToolPlatformModels.mockRejectedValue(new Error('no binding'));
     useAppStore.setState({ workspaces: [workspaceA] });
     render(<AgentHubPanel />);
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
     const select = (await screen.findByLabelText(tt('ui.hub.field_model'))) as HTMLSelectElement;
     await waitFor(() => expect(select.options).toHaveLength(1)); // 仅「默认模型」
     expect(select.value).toBe('');
+  });
+
+  it('新建 agent：切换工具后按新工具拉取注入模型，旧选项不残留', async () => {
+    api.getTools.mockResolvedValue([acpTool(), { ...acpTool('cursor'), Name: 'Cursor' }]);
+    api.listToolPlatformModels.mockImplementation(async (toolId: string) =>
+      toolId === 'claude' ? [{ id: 'a1', name: 'Alpha: a1' }] : [],
+    );
+    useAppStore.setState({ workspaces: [workspaceA] });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
+    const toolSel = await screen.findByLabelText(tt('ui.hub.field_tool'));
+    await waitFor(() => {
+      const sel = screen.getByLabelText(tt('ui.hub.field_model')) as HTMLSelectElement;
+      expect(Array.from(sel.options).some((o) => o.value === 'a1')).toBe(true);
+    });
+    fireEvent.change(toolSel, { target: { value: 'cursor' } });
+    await waitFor(() => {
+      const sel = screen.getByLabelText(tt('ui.hub.field_model')) as HTMLSelectElement;
+      expect(Array.from(sel.options).some((o) => o.value === 'a1')).toBe(false);
+    });
   });
 
   it('新建 agent：模型下拉文案用 Name，value 仍为 ID（Cursor Auto→default[]）', async () => {

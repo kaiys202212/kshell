@@ -8,6 +8,7 @@
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { bumpTerminalBusy, suppressTerminalBusy } from '../state/terminalBusy';
 import type { AppearanceInfo } from './appearance';
+import type { ToolModelOption } from './agenthubDefaults';
 
 // 绑定不可用的统一错误 key：Error.message 经 backendError/translateBackend 翻译后展示。
 const ERR_NO_BINDING = 'err.backend.binding_missing';
@@ -771,6 +772,7 @@ interface AppBindings {
   SendChatPrompt(id: string, text: string): Promise<void>;
   SendChatPromptBlocks(id: string, blocks: ChatBlock[]): Promise<void>;
   ListChatModels(id: string): Promise<ChatModelsView>;
+  ToolPlatformModels(toolId: string): Promise<Array<{ ID: string; Name: string }>>;
   SetChatModel(id: string, modelID: string): Promise<void>;
   ListChatConfigOptions(id: string): Promise<ChatConfigOptionsView>;
   SetChatConfigOption(id: string, configID: string, value: string): Promise<void>;
@@ -2336,6 +2338,16 @@ export async function listChatModels(id: string): Promise<ChatModelsView | null>
   const a = app();
   if (!a) return null;
   return a.ListChatModels(id);
+}
+
+// listToolPlatformModels 返回某工具在 ACP 模型下拉中出现的 kshell 平台注入模型
+// （后端复用 mergeConfigModels，与 ACP 会话窗口下拉口径完全同源；ToolSync 门控
+// 在后端）。绑定不可用兜底空数组，调用方回落纯缓存列表。
+export async function listToolPlatformModels(toolId: string): Promise<ToolModelOption[]> {
+  const a = app();
+  if (!a || !toolId) return [];
+  const view = await a.ToolPlatformModels(toolId);
+  return (view ?? []).map((m) => ({ id: m.ID, name: m.Name || m.ID }));
 }
 
 export async function setChatModel(id: string, modelID: string): Promise<void> {
