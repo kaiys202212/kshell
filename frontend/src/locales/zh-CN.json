@@ -45,7 +45,7 @@
     "hub": {
       "not_found": "消息不存在或已归档",
       "not_queued": "消息已送达，无法撤回",
-      "invalid_route_mode": "无效的路由模式 {{0}}（可选 auto、agent、force_auto）",
+      "invalid_route_mode": "无效的路由模式 {{0}}（可选 auto、agent）",
       "follow_empty": "#f 后缺少要发送的内容",
       "follow_none": "没有可跟踪的 agent 会话",
       "terminal_active": "会话正以终端模式运行，请先关闭对应终端页签",
@@ -1121,13 +1121,12 @@
       "route_mode_label": "输入路由",
       "route_mode_auto": "自动",
       "route_mode_agent": "仅 agent",
-      "route_mode_force_auto": "强制工具",
       "route_save_failed": "路由模式保存失败：{{err}}",
-      "confirm_title": "待确认操作",
-      "confirm_approve": "确认执行",
-      "confirm_reject": "拒绝",
-      "confirm_done": "该操作已处理",
-      "confirm_failed": "操作失败：{{err}}"
+      "thinking_route": "正在判断该发给哪个会话…",
+      "thinking_execute": "已选定目标，正在投递…",
+      "thinking_pick": "正在列出会话，等你选择…",
+      "thinking_cancel": "中断",
+      "thinking_cancelled": "已中断本次分发，原话仍留在输入框里。"
     },
     "requirements": {
       "title": "需求",

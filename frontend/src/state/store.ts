@@ -63,6 +63,16 @@ export interface Toast {
   tone: 'info' | 'success' | 'error';
 }
 
+// HubPendingSend 是 AgentHub 一轮「无目标自由文本」的思考态（仅前端内存）：
+// reqID 与后端 hubSmartSend 的请求标识一致，step 是稳定 i18n key（ui.hub.thinking_*）。
+// 它的存在本身就表示「这一轮还在途」——用户气泡已可见，但还没有任何回执。
+export interface HubPendingSend {
+  reqID: string;
+  step: string;
+  // text 是用户原话（中断后用来恢复草稿；也便于调试定位是哪一轮）。
+  text: string;
+}
+
 // ChatView 本地队列的排队消息：running 时用户发送的消息先进队列，
 // 出队（会话回 ready）时才真正调 sendChatPrompt*，不进时间线。
 // blocks 有值表示带附件（发送走 sendChatPromptBlocks），否则走 sendChatPrompt。
@@ -251,6 +261,11 @@ interface AppState {
   // pushHubLocalUser 同上，但 kind='user'：待选场景用户原话的即时可见性
   //（权威落盘在发送链 sendAndRecord，重拉历史后由落盘记录接管显示）。
   pushHubLocalUser(text: string): void;
+  // hubPendingSend 是「无目标自由文本」一轮在途的思考态（不持久化）：
+  // 让用户在等首 token 期间看到用户气泡 + 当前阶段，并可中断。
+  // reqID 与后端 hubSmartSend 的请求标识一致；step 是稳定 i18n key。
+  hubPendingSend: HubPendingSend | null;
+  setHubPendingSend(p: HubPendingSend | null): void;
 
   // 通知气泡点击后的「切到对应页签」请求（termKey = 终端/聊天 manager 的 key）。
   // 中心区页签选中态在各 WorkspaceTabView 的本地 state 里，只能经这里中转：
@@ -726,6 +741,8 @@ export const useAppStore = create<AppState>()(
             { id: nextHubLocalId--, kind: 'user', text, workspace: '', chatId: '', ts: Date.now() },
           ],
         })),
+      hubPendingSend: null,
+      setHubPendingSend: (p) => set({ hubPendingSend: p }),
 
       notifySound: true,
       setNotifySound: (notifySound) => set({ notifySound }),

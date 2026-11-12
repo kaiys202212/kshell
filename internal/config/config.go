@@ -194,12 +194,16 @@ type WeixinConfig struct {
 	Wxid    string `yaml:"wxid"`  // 白名单用户（首扫即绑）
 }
 
-// AgentHub 路由模式：输入是直连 agent 还是先经本地模型工具化处理。
+// AgentHub 路由模式：无目标自由文本是直接投递还是先经本地模型挑目标。
+// 精确目标（@会话 / 编号选择 / 引用回复 / ACP 窗口）永远直投，不受此开关影响。
 const (
-	RouteModeAuto      = "auto"       // 默认：Task 6 的意图路由决定走向（当前暂按工具化）
-	RouteModeAgent     = "agent"      // 全部直连 agent，不启用工具化
-	RouteModeForceAuto = "force_auto" // 全部强制走工具化链路
+	RouteModeAuto  = "auto"  // 默认：先问意图路由，路由不接管才回落待选/直投
+	RouteModeAgent = "agent" // 关闭智能路由：无目标自由文本一律进待选让用户选
 )
+
+// routeModeForceAutoLegacy 是已下线的历史取值：它原先表示「跳过意图判定直接进
+// 工具循环」，工具循环删除后语义消失，归一化时按 auto 处理（旧配置因此自动兼容）。
+const routeModeForceAutoLegacy = "force_auto"
 
 // AgentHub 编排参数缺省值：心跳阈值默认 5 分钟、上限 120 分钟。
 const (
@@ -228,13 +232,15 @@ type AgentHubConfig struct {
 // EnabledOn 返回总开关的生效值：nil 即启用（对存量配置保持现状）。
 func (c AgentHubConfig) EnabledOn() bool { return c.Enabled == nil || *c.Enabled }
 
-// Normalized 归一化 AgentHub 配置：路由模式非法回落 auto、心跳阈值钳默认/上限、
+// Normalized 归一化 AgentHub 配置：路由模式非法/已下线回落 auto、心跳阈值钳默认/上限、
 // 逃生门白名单去空白项去重（全空置 nil）。供 Config.normalized 与写穿保存共用。
 func (c AgentHubConfig) Normalized() AgentHubConfig {
-	// 路由模式：空值或非法值一律回落 auto。
+	// 路由模式：空值或非法值一律回落 auto；已下线的 force_auto 同样按 auto 处理。
 	c.RouteMode = strings.TrimSpace(c.RouteMode)
 	switch c.RouteMode {
-	case RouteModeAuto, RouteModeAgent, RouteModeForceAuto:
+	case RouteModeAuto, RouteModeAgent:
+	case routeModeForceAutoLegacy:
+		c.RouteMode = RouteModeAuto
 	default:
 		c.RouteMode = RouteModeAuto
 	}

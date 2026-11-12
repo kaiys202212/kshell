@@ -1,4 +1,4 @@
-// App 主框架测试：挂载时调 ListTerminals 重建终端镜像、
+﻿// App 主框架测试：挂载时调 ListTerminals 重建终端镜像、
 // 标题栏「首页/设置/工作区页签」切换与关闭（关闭工作区页签连带结束其内嵌终端）、
 // 终端事件总线（terminal:exit 更新镜像并提示）、
 // 全局快捷键 Ctrl+K 打开快速切换器 / Ctrl+F 派发聚焦搜索事件。
@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   getAgentHubSettings: vi.fn().mockResolvedValue({ enabled: true, heartbeat_minutes: 5, direct_patterns: null, default_tool: '', default_model: '', route_mode: '' }),
   onToolsUpdated: vi.fn(),
   onHubBusy: vi.fn(() => () => {}),
+  onHubProgress: vi.fn(() => () => {}),
   onWindowClosed: vi.fn(),
   listFiles: vi.fn(),
   previewFile: vi.fn(),

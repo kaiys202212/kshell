@@ -1,4 +1,4 @@
-package desktop
+﻿package desktop
 
 import (
 	"context"
@@ -403,7 +403,7 @@ func TestHubSmartSend(t *testing.T) {
 		calls := injectSmartRouter(fx, hubtools.RouteDecision{
 			Action: "group", Targets: []int{1, 3}, Text: "统一正文",
 		}, true)
-		view, err := fx.app.HubSmartSend("发给大家")
+		view, err := fx.app.HubSmartSend("req", "发给大家")
 		if err != nil {
 			t.Fatalf("HubSmartSend: %v", err)
 		}
@@ -434,7 +434,7 @@ func TestHubSmartSend(t *testing.T) {
 
 		// 第 1、2 次：仍路由，返回单条反问。
 		for i := 1; i <= 2; i++ {
-			view, err := fx.app.HubSmartSend("这句给谁")
+			view, err := fx.app.HubSmartSend("req", "这句给谁")
 			if err != nil {
 				t.Fatalf("第 %d 次 HubSmartSend: %v", i, err)
 			}
@@ -447,7 +447,7 @@ func TestHubSmartSend(t *testing.T) {
 		}
 
 		// 第 3 次：轮次已满，不再调 router，Pending=true 且轮次清零。
-		view, err := fx.app.HubSmartSend("第三次")
+		view, err := fx.app.HubSmartSend("req", "第三次")
 		if err != nil {
 			t.Fatalf("第三次 HubSmartSend: %v", err)
 		}
@@ -465,7 +465,7 @@ func TestHubSmartSend(t *testing.T) {
 	t.Run("router 不消费则回落待选", func(t *testing.T) {
 		fx := newRouteFixture(t)
 		calls := injectSmartRouter(fx, hubtools.RouteDecision{}, false)
-		view, err := fx.app.HubSmartSend("原文不能丢")
+		view, err := fx.app.HubSmartSend("req", "原文不能丢")
 		if err != nil {
 			t.Fatalf("HubSmartSend: %v", err)
 		}
@@ -482,7 +482,7 @@ func TestHubSmartSend(t *testing.T) {
 
 	t.Run("模型未配（默认 router）回落待选", func(t *testing.T) {
 		fx := newRouteFixture(t) // 未注入 smartRouter，走 weixinInputRouter
-		view, err := fx.app.HubSmartSend("没配模型")
+		view, err := fx.app.HubSmartSend("req", "没配模型")
 		if err != nil {
 			t.Fatalf("HubSmartSend: %v", err)
 		}
@@ -497,7 +497,7 @@ func TestHubSmartSend(t *testing.T) {
 	t.Run("逃生门命令不进路由", func(t *testing.T) {
 		fx := newRouteFixture(t)
 		calls := injectSmartRouter(fx, hubtools.RouteDecision{Action: "group", Targets: []int{1, 2}, Text: "x"}, true)
-		view, err := fx.app.HubSmartSend("#g 1 hi")
+		view, err := fx.app.HubSmartSend("req", "#g 1 hi")
 		if err != nil {
 			t.Fatalf("HubSmartSend: %v", err)
 		}
@@ -516,7 +516,7 @@ func TestHubSmartSend(t *testing.T) {
 			t.Fatalf("fixture 应能建立待选菜单: view=%+v err=%v", pick, err)
 		}
 		calls := injectSmartRouter(fx, hubtools.RouteDecision{Action: "status"}, true)
-		view, err := fx.app.HubSmartSend("菜单挂起中的文本")
+		view, err := fx.app.HubSmartSend("req", "菜单挂起中的文本")
 		if err != nil {
 			t.Fatalf("HubSmartSend: %v", err)
 		}
@@ -533,7 +533,7 @@ func TestHubSmartSend(t *testing.T) {
 
 		// 第一次 ask → 轮次 1。
 		injectSmartRouter(fx, hubtools.RouteDecision{Action: "ask", Question: "问一次"}, true)
-		if _, err := fx.app.HubSmartSend("第一次"); err != nil {
+		if _, err := fx.app.HubSmartSend("req", "第一次"); err != nil {
 			t.Fatalf("ask: %v", err)
 		}
 		if got := smartRoundOf(fx.app); got != 1 {
@@ -550,7 +550,7 @@ func TestHubSmartSend(t *testing.T) {
 			fx.refs[0].ChatID: {{Kind: "agent", Text: "详情甲"}},
 		}
 		fx.c.Handle("#l")
-		if _, err := fx.app.HubSmartSend("看看详情"); err != nil {
+		if _, err := fx.app.HubSmartSend("req", "看看详情"); err != nil {
 			t.Fatalf("expand: %v", err)
 		}
 		if got := smartRoundOf(fx.app); got != 0 {
@@ -563,12 +563,114 @@ func TestHubSmartSend(t *testing.T) {
 			return hubtools.RouteDecision{Action: "ask", Question: "再问一次"}, true
 		}
 		fx.app.mu.Unlock()
-		if _, err := fx.app.HubSmartSend("第二次问"); err != nil {
+		if _, err := fx.app.HubSmartSend("req", "第二次问"); err != nil {
 			t.Fatalf("ask 2: %v", err)
 		}
 		if got := smartRoundOf(fx.app); got != 1 {
 			t.Fatalf("重新 ask 后轮次 = %d, 期望 1", got)
 		}
+	})
+}
+
+// TestHubSmartSendProgressAndCancel 覆盖「思考态」后端契约：
+//   - 每轮按阶段推 hub:progress（route → execute），供前端显示正在做什么；
+//   - 回调型 router（模拟真实模型往返）在途中可被 CancelHubSmartSend 打断，
+//     该轮返回 Cancelled 且不投递任何消息。
+func TestHubSmartSendProgressAndCancel(t *testing.T) {
+	t.Run("阶段事件按序推送", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		var steps []string
+		fx.app.mu.Lock()
+		fx.app.opts.Emit = func(name string, data ...any) {
+			if name != "hub:progress" || len(data) == 0 {
+				return
+			}
+			if p, ok := data[0].(hubProgress); ok && p.ID == "r1" {
+				steps = append(steps, p.Step)
+			}
+		}
+		fx.app.mu.Unlock()
+		fx.app.smartRouter = func(context.Context, string) (hubtools.RouteDecision, bool) {
+			return hubtools.RouteDecision{Action: "group", Targets: []int{1, 2}, Text: "统一正文"}, true
+		}
+
+		if _, err := fx.app.HubSmartSend("r1", "发给大家"); err != nil {
+			t.Fatalf("HubSmartSend: %v", err)
+		}
+		want := []string{hubStepRoute, hubStepExecute}
+		if len(steps) != len(want) {
+			t.Fatalf("阶段事件 = %v, want %v", steps, want)
+		}
+		for i := range want {
+			if steps[i] != want[i] {
+				t.Fatalf("阶段事件 = %v, want %v", steps, want)
+			}
+		}
+	})
+
+	t.Run("路由不接管时推 pick 阶段", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		var steps []string
+		fx.app.mu.Lock()
+		fx.app.opts.Emit = func(name string, data ...any) {
+			if name == "hub:progress" && len(data) > 0 {
+				if p, ok := data[0].(hubProgress); ok {
+					steps = append(steps, p.Step)
+				}
+			}
+		}
+		fx.app.mu.Unlock()
+		fx.app.smartRouter = func(context.Context, string) (hubtools.RouteDecision, bool) {
+			return hubtools.RouteDecision{}, false
+		}
+
+		view, err := fx.app.HubSmartSend("r2", "这句话给谁")
+		if err != nil {
+			t.Fatalf("HubSmartSend: %v", err)
+		}
+		if !view.Pending {
+			t.Fatal("路由不接管应 Pending=true")
+		}
+		want := []string{hubStepRoute, hubStepPick}
+		if len(steps) != len(want) || steps[0] != want[0] || steps[1] != want[1] {
+			t.Fatalf("阶段事件 = %v, want %v", steps, want)
+		}
+	})
+
+	t.Run("在途取消返回 Cancelled 且不投递", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		inRoute := make(chan struct{})
+		fx.app.smartRouter = func(ctx context.Context, _ string) (hubtools.RouteDecision, bool) {
+			close(inRoute)
+			// 等取消传播：真实模型请求同样以 ctx 结束
+			<-ctx.Done()
+			return hubtools.RouteDecision{}, false
+		}
+
+		done := make(chan HubPickView, 1)
+		go func() {
+			view, _ := fx.app.HubSmartSend("r3", "先别发")
+			done <- view
+		}()
+		<-inRoute
+		fx.app.CancelHubSmartSend("r3")
+
+		view := <-done
+		if !view.Cancelled {
+			t.Fatalf("取消后应返回 Cancelled, got %+v", view)
+		}
+		if view.Pending {
+			t.Fatal("取消不应回落待选（Pending 必须为 false）")
+		}
+		if len(fx.ex.sendCalls) != 0 {
+			t.Fatalf("取消后不得投递: %+v", fx.ex.sendCalls)
+		}
+	})
+
+	t.Run("取消不存在的请求静默忽略", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		fx.app.CancelHubSmartSend("")
+		fx.app.CancelHubSmartSend("never-started")
 	})
 }
 
@@ -597,7 +699,7 @@ func TestHubSmartSendBusyGuard(t *testing.T) {
 
 	first := make(chan HubPickView, 1)
 	go func() {
-		view, _ := fx.app.HubSmartSend("第一次")
+		view, _ := fx.app.HubSmartSend("req", "第一次")
 		first <- view
 	}()
 
@@ -605,7 +707,7 @@ func TestHubSmartSendBusyGuard(t *testing.T) {
 	<-started
 
 	// 并发第二次提交：应被在途守卫拦下，Pending=true。
-	second, err := fx.app.HubSmartSend("第二次")
+	second, err := fx.app.HubSmartSend("req", "第二次")
 	if err != nil {
 		t.Fatalf("第二次 HubSmartSend: %v", err)
 	}

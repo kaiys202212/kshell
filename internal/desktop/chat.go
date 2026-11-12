@@ -471,15 +471,10 @@ func (a *App) SendChatPrompt(id, text string) (err error) {
 		return err
 	}
 	blocks := []acp.ContentBlock{{Type: "text", Text: text}}
-	// 工具化路由分支：仅纯文本路径参与（Blocks 附件路径直接走原链路）。
-	// handled=true 时输入已被 hubtools 消费（含落盘）；false = 模型未配置 /
-	// RouteMode=agent / LLM 失败降级，落回原直连链路。
-	if h := a.hubTools(); h != nil {
-		handled, err := h.HandlePrompt(sendID, text)
-		if handled {
-			return err
-		}
-	}
+	// 目标已由调用方精确指定（Hub @目标 / 编号选择 / 引用回复）：直接投递，
+	// 不再经任何模型分发。AgentHub 的智能路由只服务「无目标自由文本」
+	// （HubSmartSend），一旦拿到确定目标就必须立刻送到，否则用户消息要等
+	// 一整轮 LLM 往返才出现在时间线，且模型可能把消息转投到别的会话。
 	return a.sendAndRecord(sendID, blocks, text)
 }
 

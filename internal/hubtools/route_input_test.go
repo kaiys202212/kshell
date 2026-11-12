@@ -23,7 +23,7 @@ func routeTestSessions() []SessionBrief {
 func routeServer(t *testing.T, content string) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, mockChoice(content, nil))
+		writeJSON(t, w, mockChoice(content))
 	}))
 	t.Cleanup(srv.Close)
 	return srv.URL

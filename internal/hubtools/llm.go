@@ -14,80 +14,42 @@ import (
 	"github.com/yangk/kshell/internal/workbuddy"
 )
 
-// maxToolRounds 是单次 Chat 内允许的最大工具调用轮次，
-// 防止模型无限循环调用工具拖垮链路。
-const maxToolRounds = 6
-
-// Executor 由上层注入：执行单个工具调用并返回结果文本。llm.go 不关心具体工具。
-type Executor func(ctx context.Context, name, argsJSON string) (string, error)
-
-// ToolDef 描述一个暴露给模型的工具，Parameters 是 JSON Schema。
-type ToolDef struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Parameters  map[string]any `json:"parameters"`
-}
-
-// ToolCall 是模型发起的一次工具调用，Args 是原始 JSON 参数串（原样透传给执行器）。
-type ToolCall struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Args string `json:"args"`
-}
-
-// Response 是一轮完整对话的最终结果：要么是文本，要么是待调用方执行的 tool_calls。
-type Response struct {
-	Text      string
-	ToolCalls []ToolCall
-}
-
-// Message 是对话消息。role=tool 时 ToolCallID 回传对应 call ID；
-// role=assistant 且发起调用时 ToolCalls 携带调用列表。
+// Message 是对话消息（OpenAI 兼容的最小形态）。
+// 本包只做「一次请求 → 一次文本回复」：工具调用循环（Executor/ToolDef/
+// maxToolRounds）已随 AgentHub 工具化路由下线删除——精确目标直投 ACP，
+// 无目标自由文本只走 RouteInput 的单发 JSON 决策，不需要多轮工具会话。
 type Message struct {
-	Role       string
-	Content    string
-	ToolCallID string
-	ToolCalls  []ToolCall
+	Role    string
+	Content string
+}
+
+// Response 是一轮对话的结果文本。
+type Response struct {
+	Text string
 }
 
 // chatMessage 是 OpenAI 兼容 wire 格式的消息。
 type chatMessage struct {
-	Role       string         `json:"role"`
-	Content    string         `json:"content"`
-	ToolCallID string         `json:"tool_call_id,omitempty"`
-	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
-// wireToolCall 是 assistant 消息里回传的 tool_calls wire 格式。
-type wireToolCall struct {
-	ID       string           `json:"id"`
-	Type     string           `json:"type"`
-	Function wireToolCallFunc `json:"function"`
-}
-
-type wireToolCallFunc struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
-
-// chatRequest 是请求体；tools 为空时整个字段省略（部分网关对空数组报错）。
+// chatRequest 是请求体。
 type chatRequest struct {
 	Model    string        `json:"model"`
 	Messages []chatMessage `json:"messages"`
-	Tools    []ToolDef     `json:"tools,omitempty"`
 }
 
-// chatResponse 是响应体的最小解析：只取 choices[0].message。
+// chatResponse 是响应体的最小解析：只取 choices[0].message.content。
 type chatResponse struct {
 	Choices []struct {
 		Message struct {
-			Content   string         `json:"content"`
-			ToolCalls []wireToolCall `json:"tool_calls"`
+			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
 }
 
-// Client 是 OpenAI 兼容 chat/completions 客户端（含工具调用循环）。
+// Client 是 OpenAI 兼容 chat/completions 客户端。
 type Client struct {
 	http *http.Client
 	cfg  Config
@@ -110,52 +72,9 @@ func (c *Client) endpoint() string {
 	return strings.TrimSuffix(c.cfg.BaseURL, "/") + "/chat/completions"
 }
 
-// Chat 执行一轮完整对话：循环请求直到模型给出纯文本或触达轮次上限。
-// exec 为 nil 时收到 tool_calls 直接原样返回给调用方，不进入循环。
-func (c *Client) Chat(ctx context.Context, msgs []Message, tools []ToolDef) (Response, error) {
-	return c.ChatWithExecutor(ctx, msgs, tools, nil)
-}
-
-// ChatWithExecutor 承载工具调用循环：响应带 tool_calls 时执行每个调用，
-// 把 assistant 消息与 tool 结果追加进对话继续请求，直到纯文本或超限。
-// 执行器报错不中断循环，把错误文本喂回模型，由模型组织回复。
-func (c *Client) ChatWithExecutor(ctx context.Context, msgs []Message, tools []ToolDef, exec Executor) (Response, error) {
-	// 对话底稿在循环中追加，拷贝一份避免污染调用方切片
-	dialog := make([]Message, len(msgs))
-	copy(dialog, msgs)
-
-	for round := 0; ; round++ {
-		// 超限判定放在发请求之前，避免触顶后还多发一次往返
-		if round >= maxToolRounds {
-			logf("hubtools: 工具循环触达轮次上限 %d", maxToolRounds)
-			return Response{}, errors.New("err.hubtools.round_limit")
-		}
-		resp, err := c.once(ctx, dialog, tools)
-		if err != nil {
-			logf("hubtools: 请求失败: %v", err)
-			return Response{}, err
-		}
-		// 无工具调用或未注入执行器：直接返回
-		if len(resp.ToolCalls) == 0 || exec == nil {
-			return resp, nil
-		}
-
-		names := make([]string, 0, len(resp.ToolCalls))
-		for _, tc := range resp.ToolCalls {
-			names = append(names, tc.Name)
-		}
-		logf("hubtools: 第 %d 轮工具调用: %s", round+1, strings.Join(names, ","))
-
-		dialog = append(dialog, Message{Role: "assistant", ToolCalls: resp.ToolCalls})
-		for _, tc := range resp.ToolCalls {
-			result, err := exec(ctx, tc.Name, tc.Args)
-			if err != nil {
-				logf("hubtools: 工具 %s 执行失败: %v", tc.Name, err)
-				result = "tool error: " + err.Error()
-			}
-			dialog = append(dialog, Message{Role: "tool", Content: result, ToolCallID: tc.ID})
-		}
-	}
+// Chat 发一次对话请求并返回文本回复。
+func (c *Client) Chat(ctx context.Context, msgs []Message) (Response, error) {
+	return c.once(ctx, msgs)
 }
 
 // wbLoadCredential / wbChatOnce 是 WorkBuddy 网关的注入点：测试可替换，
@@ -166,21 +85,13 @@ var (
 )
 
 // once 发送一次请求并解析响应。
-func (c *Client) once(ctx context.Context, msgs []Message, tools []ToolDef) (Response, error) {
+func (c *Client) once(ctx context.Context, msgs []Message) (Response, error) {
 	wireMsgs := make([]chatMessage, len(msgs))
 	for i, m := range msgs {
-		wm := chatMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID}
-		for _, tc := range m.ToolCalls {
-			wm.ToolCalls = append(wm.ToolCalls, wireToolCall{
-				ID:       tc.ID,
-				Type:     "function",
-				Function: wireToolCallFunc{Name: tc.Name, Arguments: tc.Args},
-			})
-		}
-		wireMsgs[i] = wm
+		wireMsgs[i] = chatMessage{Role: m.Role, Content: m.Content}
 	}
 
-	body, err := json.Marshal(chatRequest{Model: c.cfg.Model, Messages: wireMsgs, Tools: tools})
+	body, err := json.Marshal(chatRequest{Model: c.cfg.Model, Messages: wireMsgs})
 	if err != nil {
 		return Response{}, fmt.Errorf("编码请求: %w", err)
 	}
@@ -231,11 +142,5 @@ func parseChatResponse(respBody []byte) (Response, error) {
 	if len(parsed.Choices) == 0 {
 		return Response{}, errors.New("LLM 响应无 choices")
 	}
-
-	msg := parsed.Choices[0].Message
-	out := Response{Text: msg.Content}
-	for _, tc := range msg.ToolCalls {
-		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: tc.ID, Name: tc.Function.Name, Args: tc.Function.Arguments})
-	}
-	return out, nil
+	return Response{Text: parsed.Choices[0].Message.Content}, nil
 }

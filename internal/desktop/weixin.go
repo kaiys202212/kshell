@@ -235,6 +235,8 @@ func (a *App) HubCommand(text string) ([]hub.Reply, error) {
 type HubPickView struct {
 	Replies []hub.Reply
 	Pending bool
+	// Cancelled 表示本轮智能路由被用户中断：前端既不清草稿也不回落待选菜单。
+	Cancelled bool
 }
 
 // HubPickTarget 是 AgentHub 无精确目标时的待选入口：共享 Console 输出分组

@@ -2,14 +2,15 @@ package config
 
 import "testing"
 
-// RouteModeNormalize 验证 AgentHub 路由模式归一：空/非法值回落 auto。
+// RouteModeNormalize 验证 AgentHub 路由模式归一：空/非法值回落 auto；
+// 已下线的 force_auto 也按 auto 处理（旧配置自动兼容）。
 func TestAgentHubRouteModeNormalize(t *testing.T) {
 	cases := map[string]string{
 		"":           RouteModeAuto,
 		"  ":         RouteModeAuto,
 		"bogus":      RouteModeAuto,
 		"agent":      RouteModeAgent,
-		"force_auto": RouteModeForceAuto,
+		"force_auto": RouteModeAuto, // 工具循环已下线：退化为默认智能路由
 		" auto ":     RouteModeAuto,
 	}
 	for in, want := range cases {

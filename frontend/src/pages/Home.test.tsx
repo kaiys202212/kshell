@@ -1,4 +1,4 @@
-// 首页工作区卡片测试：按最后活动时间倒序（零值排最后，再按名称）/ 卡片信息（会话数、
+﻿// 首页工作区卡片测试：按最后活动时间倒序（零值排最后，再按名称）/ 卡片信息（会话数、
 // 相对时间、git 徽标、工具分布折叠）/ 点卡片选中项目、「打开项目页签」图标开页签 /
 // 重新扫描的扫描状态机 /
 // 项目表操作（新建、删除、回收站还原、projects:changed 刷新）。
@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   getTools: vi.fn().mockResolvedValue([]),
   onToolsUpdated: vi.fn().mockImplementation(() => () => {}),
   onHubBusy: vi.fn(() => () => {}),
+  onHubProgress: vi.fn(() => () => {}),
   // RequirementList 被 Home 渲染，api mock 需补齐其依赖
   listRequirements: vi.fn().mockResolvedValue([]),
   addRequirement: vi.fn(),

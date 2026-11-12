@@ -13,17 +13,88 @@ import (
 // 便于测试注入桩；生产默认使用 weixinInputRouter。
 type smartRouterFunc func(ctx context.Context, input string) (hubtools.RouteDecision, bool)
 
+// 智能路由的进度里程碑：稳定 wire key，前端经 i18n 翻译后作为「思考中」气泡
+// 的阶段文案。前端在等首 token 期间靠它看到「正在做什么」，而不是一片空白。
+const (
+	hubStepRoute   = "ui.hub.thinking_route"   // 正在判定该发给哪个会话
+	hubStepExecute = "ui.hub.thinking_execute" // 决策已产出，正在投递
+	hubStepPick    = "ui.hub.thinking_pick"    // 未接管，转为列会话待用户选
+)
+
+// hubProgress 是 hub:progress 事件的 payload（前端 HubProgress 同构）。
+type hubProgress struct {
+	ID   string `json:"id"`
+	Step string `json:"step"`
+}
+
+// emitHubProgress 推送一轮路由的阶段变化（未指定 reqID 时不推：无主可归）。
+func (a *App) emitHubProgress(reqID, step string) {
+	if reqID == "" {
+		return
+	}
+	a.Emit("hub:progress", hubProgress{ID: reqID, Step: step})
+}
+
+// hubCanceller 是一轮在途路由的取消句柄。用指针身份比对，避免同一 reqID
+// 被后来的请求覆盖时，旧请求的注销把新句柄删掉（func 值不可比较）。
+type hubCanceller struct {
+	cancel context.CancelFunc
+}
+
+// registerSmartCancel 登记一轮路由的取消句柄，返回注销闭包（defer 用）。
+// 同 reqID 重复登记时后者覆盖前者：前端每次发送都生成新 ID，重复即重复提交。
+func (a *App) registerSmartCancel(reqID string, cancel context.CancelFunc) func() {
+	if reqID == "" {
+		return func() {}
+	}
+	handle := &hubCanceller{cancel: cancel}
+	a.mu.Lock()
+	if a.smartCancels == nil {
+		a.smartCancels = make(map[string]*hubCanceller)
+	}
+	a.smartCancels[reqID] = handle
+	a.mu.Unlock()
+	return func() {
+		a.mu.Lock()
+		// 只删自己登记的那一个：若已被后来的请求覆盖，删掉别人的会让新一轮
+		// 失去中断能力，因此必须比对指针身份而不是只看 key 存在。
+		if a.smartCancels[reqID] == handle {
+			delete(a.smartCancels, reqID)
+		}
+		a.mu.Unlock()
+	}
+}
+
+// CancelHubSmartSend 中断一轮进行中的智能路由：取消该轮 ctx，路由请求随即
+// 以 context.Canceled 失败，HubSmartSend 识别后返回 Cancelled（不回落待选、
+// 不清草稿、不重复投递）。reqID 无对应在途轮次时静默忽略（已完成/从未开始）。
+func (a *App) CancelHubSmartSend(reqID string) {
+	reqID = strings.TrimSpace(reqID)
+	if reqID == "" {
+		return
+	}
+	a.mu.Lock()
+	handle := a.smartCancels[reqID]
+	a.mu.Unlock()
+	if handle != nil {
+		handle.cancel()
+	}
+}
+
 // HubSmartSend 是桌面端 Hub 面板「自由文本无精确目标」的智能路由入口：
 // 路由成功→执行决策返回回执（Pending=false，前端回显并清草稿）；逃生门/
 // 待选菜单挂起/反问超限/未配置/路由不消费/决策不可执行→Pending=true，让
 // 前端回落既有待选菜单（原文由前端草稿暂存保留，不丢用户正文）。
+//
+// reqID 是本轮请求标识：用于推送 hub:progress 阶段事件与支持中途取消；
+// 空串时行为与旧版一致（不推进度、不可取消）。
 //
 // 轮次语义与微信桥 dispatchConsole 对齐：ask 决策累加轮次并返回单条反问；
 // 非 ask 决策/降级路径清零，保证反问链被打断后不悬挂。
 //
 // 在途守卫：同一 App 内路由调用全局串行（smartBusy 置位，锁外做 router 调用），
 // 前端重复提交/并发调用时后到的直接返回 Pending=true，不清轮次、不重复投递。
-func (a *App) HubSmartSend(text string) (HubPickView, error) {
+func (a *App) HubSmartSend(reqID, text string) (HubPickView, error) {
 	if !a.snapshot().ready() {
 		return HubPickView{}, errNotReady
 	}
@@ -60,14 +131,33 @@ func (a *App) HubSmartSend(text string) (HubPickView, error) {
 	if round >= hubtools.AskMaxRounds {
 		return HubPickView{Pending: true}, nil
 	}
-	d, handled := a.smartRoute(a.desktopContext(), text)
+	// 可取消 ctx：用户点「中断」时整轮（含模型往返）立即结束。
+	ctx, cancel := context.WithCancel(a.desktopContext())
+	defer cancel()
+	unregister := a.registerSmartCancel(reqID, cancel)
+	defer unregister()
+
+	a.emitHubProgress(reqID, hubStepRoute)
+	d, handled := a.smartRoute(ctx, text)
 	if !handled {
 		a.setSmartAskRound(0)
+		if ctx.Err() != nil {
+			return HubPickView{Cancelled: true}, nil
+		}
+		a.emitHubProgress(reqID, hubStepPick)
 		return HubPickView{Pending: true}, nil
 	}
+	// 路由已产出决策：后续执行是本地快速动作，取消窗口到此为止不再有意义，
+	// 但仍按 ctx 状态判定一次，避免「刚判出决策就被取消」时既投递又报取消。
+	if ctx.Err() != nil {
+		a.setSmartAskRound(0)
+		return HubPickView{Cancelled: true}, nil
+	}
+	a.emitHubProgress(reqID, hubStepExecute)
 	replies, ok := executeRoute(a, d)
 	if !ok || len(replies) == 0 {
 		a.setSmartAskRound(0)
+		a.emitHubProgress(reqID, hubStepPick)
 		return HubPickView{Pending: true}, nil
 	}
 	if d.Action == "ask" {

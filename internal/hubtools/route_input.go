@@ -62,7 +62,7 @@ func RouteInput(ctx context.Context, cfg Config, sessions []SessionBrief, input 
 	resp, err := c.Chat(ctx, []Message{
 		{Role: "system", Content: BuildRoutePrompt(sessions, input)},
 		{Role: "user", Content: input},
-	}, nil)
+	})
 	if err != nil {
 		return RouteDecision{}, err
 	}

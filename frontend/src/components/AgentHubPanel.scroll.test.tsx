@@ -1,4 +1,4 @@
-// 自动滚动：默认开启时新消息把消息流滚到底；取消勾选暂停；重新勾选立即滚底；
+﻿// 自动滚动：默认开启时新消息把消息流滚到底；取消勾选暂停；重新勾选立即滚底；
 // 状态持久化到 localStorage。
 import '@testing-library/jest-dom/vitest';
 import { act } from '@testing-library/react';
@@ -16,6 +16,7 @@ const api = vi.hoisted(() => ({
   getTools: vi.fn(),
   onToolsUpdated: vi.fn(),
   onHubBusy: vi.fn(() => () => {}),
+  onHubProgress: vi.fn(() => () => {}),
   listToolPlatformModels: vi.fn(),
   readClipboardPaste: vi.fn(),
   listChatCommands: vi.fn(),

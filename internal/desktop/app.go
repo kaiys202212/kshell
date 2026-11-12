@@ -131,9 +131,8 @@ type App struct {
 	ctx  context.Context
 	opts Options
 
-	// hubMu/hubRouter 是 AgentHub 工具化路由的懒初始化单例（见 hubtools_bridge.go）。
-	hubMu     sync.Mutex
-	hubRouter *hubRouter
+	// hubMu/hubRouter 已随工具循环下线移除：AgentHub 只剩「无目标自由文本」
+	// 的意图路由（hubroute.go + hubtools.RouteInput），不再有常驻工具会话。
 
 	tools []discovery.Tool
 	// rawWorkspaces 是**未叠加项目表**的扫描结果：项目列表永远从它派生，
@@ -218,6 +217,9 @@ type App struct {
 	// smartBusy 是桌面 Hub 智能路由的在途标记：路由调用期间置位（锁外做
 	// router 调用），并发/重复提交直接返回 Pending=true 不清轮次。mu 保护。
 	smartBusy bool
+	// smartCancels 是按请求 ID 登记的在途路由取消句柄（支持前端「中断」）。
+	// 每轮 HubSmartSend 进入时登记、退出时注销；mu 保护。
+	smartCancels map[string]*hubCanceller
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。

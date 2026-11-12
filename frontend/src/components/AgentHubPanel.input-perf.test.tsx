@@ -1,4 +1,4 @@
-// 输入框按键不得拖着重跑整表 ReactMarkdown（卡顿根因回归）。
+﻿// 输入框按键不得拖着重跑整表 ReactMarkdown（卡顿根因回归）。
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -27,6 +27,7 @@ const api = vi.hoisted(() => ({
   getTools: vi.fn(),
   onToolsUpdated: vi.fn(),
   onHubBusy: vi.fn(() => () => {}),
+  onHubProgress: vi.fn(() => () => {}),
   listToolPlatformModels: vi.fn(),
   readClipboardPaste: vi.fn(),
   listChatCommands: vi.fn(),

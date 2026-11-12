@@ -9,9 +9,11 @@ const ROUTE_MODE_KEY = 'kshell.agenthub.routeMode';
 // 工具的创建/切换覆写），每个工具独立一份，供下次新建该工具会话时应用。
 const PER_TOOL_LAST_KEY = 'kshell.agenthub.perToolLastModel';
 
-// Hub 路由模式：auto=自动意图路由（默认）、agent=全部走 ACP agent、
-// force_auto=跳过意图判断直接进工具循环。
-export type HubRouteMode = 'auto' | 'agent' | 'force_auto';
+// Hub 路由模式：auto=无目标自由文本先问智能路由（默认）、
+// agent=关闭智能路由（无目标文本直接进待选菜单）。
+// 精确目标（@会话 / 编号选择 / 引用回复 / ACP 窗口）永远直投，不受此开关影响。
+// 历史取值 'force_auto' 已随工具循环下线，读取时按 auto 处理。
+export type HubRouteMode = 'auto' | 'agent';
 
 export interface LastAgentCreate {
   wsPath: string;
@@ -199,9 +201,10 @@ export function mergeHubModelOptions(
 }
 
 // loadHubRouteMode 读取路由模式；缺失/非法回落 auto（与后端 Normalize 同语义）。
+// 已下线的 'force_auto' 也读成 auto：工具循环删除后它不再有独立行为。
 export function loadHubRouteMode(): HubRouteMode {
   const v = localStorage.getItem(ROUTE_MODE_KEY);
-  if (v === 'agent' || v === 'force_auto') return v;
+  if (v === 'agent') return v;
   return 'auto';
 }
 

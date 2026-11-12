@@ -1,4 +1,4 @@
-package hubtools
+﻿package hubtools
 
 import (
 	"context"
@@ -64,7 +64,7 @@ func TestOnceWorkbuddyBranch(t *testing.T) {
 	}
 
 	c := NewClient(Config{Preset: workbuddy.PresetID, Model: "hy3"})
-	resp, err := c.Chat(context.Background(), []Message{{Role: "user", Content: "你好"}}, nil)
+	resp, err := c.Chat(context.Background(), []Message{{Role: "user", Content: "你好"}})
 	if err != nil {
 		t.Fatalf("workbuddy 分支请求失败: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestOnceWorkbuddyErrorPropagates(t *testing.T) {
 		return workbuddy.Credential{}, context.DeadlineExceeded
 	}
 	c := NewClient(Config{Preset: workbuddy.PresetID, Model: "hy3"})
-	if _, err := c.Chat(context.Background(), []Message{{Role: "user", Content: "x"}}, nil); err == nil {
+	if _, err := c.Chat(context.Background(), []Message{{Role: "user", Content: "x"}}); err == nil {
 		t.Fatal("凭据失败应透传错误")
 	}
 }

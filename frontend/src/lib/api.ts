@@ -800,10 +800,10 @@ interface AppBindings {
   RecallHubMessage(id: number): Promise<void>;
   HubCommand(text: string): Promise<HubReply[]>;
   HubPickTarget(text: string): Promise<HubPickView>;
-  HubSmartSend(text: string): Promise<HubPickView>;
+  HubSmartSend(reqID: string, text: string): Promise<HubPickView>;
+  CancelHubSmartSend(reqID: string): Promise<void>;
   SaveHubDefaultCreate(toolID: string, modelID: string): Promise<void>;
   SaveHubRouteMode(mode: string): Promise<void>;
-  ConfirmHubTool(chatID: string, pendingID: string, approved: boolean): Promise<void>;
   ListRequirements(): Promise<Requirement[]>;
   AddRequirement(project: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
   UpdateRequirement(id: string, project: string, text: string, priority: string, tags: string[]): Promise<Requirement>;
@@ -1829,12 +1829,14 @@ export interface HubReply {
   Sent?: boolean;
 }
 
-// HubPickView 是 HubPickTarget 的返回（internal/desktop.HubPickView）：
+// HubPickView 是 HubPickTarget / HubSmartSend 的返回（internal/desktop.HubPickView）：
 // Pending=true 表示正文已暂存进待选菜单，可清空草稿；false 时（无会话/
 // 其他菜单进行中）应保留草稿，避免用户正文丢失。
+// Cancelled=true 表示本轮智能路由已被用户中断，调用方既不清草稿也不回落待选。
 export interface HubPickView {
   Replies: HubReply[];
   Pending: boolean;
+  Cancelled?: boolean;
 }
 
 // hubCommand 把输入透传给 Go 侧共享命令层（internal/desktop/weixin.go HubCommand）。
@@ -1856,10 +1858,19 @@ export async function hubPickTarget(text: string): Promise<HubPickView> {
 // hubSmartSend 在无精确目标时先试智能路由（internal/desktop/hubroute.go
 // HubSmartSend）：成功则执行决策并返回回执；Pending=true 表示未接管（逃生门/
 // 菜单挂起/反问超限/未配置/不可执行），调用方回落 hubPickTarget 待选菜单。
-export async function hubSmartSend(text: string): Promise<HubPickView> {
+// reqID 是本轮请求标识：后端据此推送 hub:progress 里程碑，并支持中途取消。
+export async function hubSmartSend(reqID: string, text: string): Promise<HubPickView> {
   const a = app();
   if (!a) return { Replies: [], Pending: true };
-  return a.HubSmartSend(text);
+  return a.HubSmartSend(reqID, text);
+}
+
+// cancelHubSmartSend 中断一轮进行中的智能路由（用户点「中断」按钮）。
+// 后端取消 ctx 并让该轮返回 Cancelled，调用方据此不回落待选、不清草稿。
+export async function cancelHubSmartSend(reqID: string): Promise<void> {
+  const a = app();
+  if (!a) return;
+  await a.CancelHubSmartSend(reqID);
 }
 
 // saveHubDefaultCreate 把「默认 agent 工具 + 模型」写穿到后端 config.yaml
@@ -1878,13 +1889,6 @@ export async function saveHubRouteMode(mode: string): Promise<void> {
   await a.SaveHubRouteMode(mode);
 }
 
-// confirmHubTool 提交/拒绝一个挂起的写操作确认（后端确认状态机消费）。
-export async function confirmHubTool(chatID: string, pendingID: string, approved: boolean): Promise<void> {
-  const a = app();
-  if (!a) throw new Error('err.desktop.not_ready');
-  await a.ConfirmHubTool(chatID, pendingID, approved);
-}
-
 // recallHubMessage 撤回一条排队中的 Hub 用户消息（后端从队列真移除并标记已撤回）。
 export async function recallHubMessage(id: number): Promise<void> {
   const a = app();
@@ -1901,6 +1905,19 @@ export function onHubChanged(cb: () => void): () => void {
 // 前端据此显示「正在启动 agent」动画；返回取消订阅函数。
 export function onHubBusy(cb: (busy: boolean) => void): () => void {
   return EventsOn('hub:busy', (busy: boolean) => cb(!!busy));
+}
+
+// HubProgress 是一轮智能路由的进度里程碑（internal/desktop.hubProgress 的 JSON 形态）。
+// id 对应 hubSmartSend 的 reqID；step 是稳定 key（ui.hub.thinking_*），前端据此
+// 展示当前阶段，让用户在等首 token 期间看到「正在做什么」而不是空白。
+export interface HubProgress {
+  id: string;
+  step: string;
+}
+
+// onHubProgress 订阅智能路由进度（Go 侧 Emit hub:progress），返回取消订阅函数。
+export function onHubProgress(cb: (p: HubProgress) => void): () => void {
+  return EventsOn('hub:progress', (p: HubProgress) => cb(p));
 }
 
 // Requirement 是需求列表里的一条（internal/requirements.Item 的 JSON 形态）。

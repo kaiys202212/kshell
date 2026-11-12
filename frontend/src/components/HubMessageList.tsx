@@ -6,7 +6,6 @@ import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { HubMessage, ToolInfo } from '../lib/api';
-import { confirmHubTool } from '../lib/api';
 import {
   buildMentionOptions,
   displayMentionTitles,
@@ -21,7 +20,6 @@ import { attributionText, resolveAttribution } from '../lib/hubAttribution';
 import { isHubWelcome, replyState, type HubReplyState } from '../lib/hubReply';
 import { markdownBubbleClass } from '../lib/markdownStyles';
 import { useAppStore } from '../state/store';
-import HubConfirmCard from './HubConfirmCard';
 
 // hubHeaderLine：工具名 · 项目/会话归因 · 绝对时间；缺项跳过。用户/agent 共用。
 function hubHeaderLine(m: HubMessage, attr: string): string {
@@ -109,16 +107,9 @@ const HubMessageItem = memo(function HubMessageItem({
               </span>
             )}
           </div>
-          {m.event === 'tool_confirm' ? (
-            <HubConfirmCard
-              message={m}
-              onConfirm={(pendingID, approved) => confirmHubTool(m.chatId ?? '', pendingID, approved)}
-            />
-          ) : (
-            <div className={markdownBubbleClass}>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{decodePercentText(translateBackend(m.text))}</ReactMarkdown>
-            </div>
-          )}
+          <div className={markdownBubbleClass}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{decodePercentText(translateBackend(m.text))}</ReactMarkdown>
+          </div>
         </div>
         {st === 'acp' && !isHubWelcome(m.text) && (
           <div className="mt-1 flex flex-wrap gap-1">

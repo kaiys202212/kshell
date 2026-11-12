@@ -10,6 +10,7 @@ import { ArrowUpRight, CircleHelp, Loader2, PanelRightClose, Settings2 } from 'l
 import type { ChatCommand, ChatInfo, ChatModelsView, HubArchiveMonth, HubMessage, Session, TerminalInfo, ToolInfo, Workspace } from '../lib/api';
 import {
   cancelChat,
+  cancelHubSmartSend,
   clearHubMessages,
   closeChat,
   getTools,
@@ -25,6 +26,7 @@ import {
   loadHubArchive,
   onToolsUpdated,
   onHubBusy,
+  onHubProgress,
   openSessionACP,
   openWorkspaceACP,
   readClipboardPaste,
@@ -201,6 +203,12 @@ function wsBaseName(ws: string): string {
 // 快捷操作（activatePending），不再作为无 @ 发送的默认回落目标。
 const PENDING_PREFIX = 'pending:';
 
+// newSmartReqID 生成一轮智能路由的请求标识：后端据此推送 hub:progress 阶段
+// 事件并支持「中断」。只需进程内唯一，故用时间戳+随机后缀，避免引入 uuid 依赖。
+function newSmartReqID(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 // hubPendingSessionId 从一条 hub 消息解析待激活磁盘会话 ID（同步可得的两种来源）：
 // sessionId 快照优先，其次 termKey 的 session: 前缀。都没有返回 null。
 function hubPendingSessionId(m: HubMessage): string | null {
@@ -312,6 +320,21 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
   // hub:busy：后端激活/新建会话期间的动画提示（OpenSession/CreateNew 前后 Emit）。
   const [hubBusy, setHubBusy] = useState(false);
   useEffect(() => onHubBusy(setHubBusy), []);
+  // 本轮「无目标自由文本」的思考态（在途阶段 + 可中断）；源在 store，跨重挂保留。
+  const hubPendingSend = useAppStore((s) => s.hubPendingSend);
+  useEffect(
+    () =>
+      onHubProgress((p) => {
+        const cur = useAppStore.getState().hubPendingSend;
+        // 只认自己那一轮：并发/过期事件不得改写当前思考态文案。
+        if (!cur || cur.reqID !== p.id) return;
+        useAppStore.getState().setHubPendingSend({ ...cur, step: p.step });
+      }),
+    [],
+  );
+  // 面板卸载（切到设置页/项目页）时清掉在途思考态：否则重新挂载会一直显示
+  // 上一轮的转圈气泡（其请求的 finally 可能早已跑过或被丢弃）。
+  useEffect(() => () => useAppStore.getState().setHubPendingSend(null), []);
   // 归档入口：展开时列出月份，选中月份后加载该月旧消息内联展示。
   const [historyOpen, setHistoryOpen] = useState(false);
   const [archiveMonths, setArchiveMonths] = useState<HubArchiveMonth[]>([]);
@@ -319,7 +342,8 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
   const [activeMonth, setActiveMonth] = useState<string | null>(null);
   // 自动滚动：开启时新消息把消息流滚到底；关闭后自由翻历史不被打断。
   const [autoScroll, setAutoScroll] = useState(readAutoScrollPref);
-  // 输入路由模式：auto=意图路由（默认）、agent=全部走 ACP、force_auto=直接工具循环。
+  // 输入路由模式：auto=无目标自由文本先问智能路由（默认）、agent=关闭智能路由。
+  // 精确目标（@会话/编号/引用）永远直投，不受此开关影响。
   // localStorage 为 UI 侧真值，变更时写穿后端 config.yaml（跨端副本，微信桥可读）。
   const [routeMode, setRouteMode] = useState<HubRouteMode>(loadHubRouteMode);
   const changeRouteMode = (mode: HubRouteMode) => {
@@ -998,15 +1022,26 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
       // 在途守卫：上一次智能路由/待选请求未返回时，重复 Enter 直接忽略。
       if (smartInFlight.current) return;
       smartInFlight.current = true;
+      // 这一轮没有精确目标：用户气泡必须立刻可见 + 出现「思考中」占位气泡，
+      // 而不是等模型首 token 回来才突然冒出两段内容（曾让用户以为没发出去）。
+      const reqID = newSmartReqID();
+      useAppStore.getState().pushHubLocalUser(text);
+      useAppStore.getState().setHubPendingSend({ reqID, step: 'ui.hub.thinking_route', text });
       try {
         // 无精确目标：先试智能路由（后端处理逃生门/Busy/反问轮次并决定是否
         // 回落）。Pending=false 表示后端已执行决策并返回回执，直接回显即可；
         // Pending=true/调用失败则回落既有待选菜单路径（原文仍在草稿里）。
         // 交给路由器的是剥离 @ 标签后的 body（与 send() 内命令探测口径一致）。
-        const smart = await hubSmartSend(body).catch(() => null);
+        const smart = await hubSmartSend(reqID, body).catch(() => null);
+        // 本轮思考态到此结束（无论成功/取消/回落），先清掉占位气泡。
+        useAppStore.getState().setHubPendingSend(null);
+        if (smart && smart.Cancelled) {
+          // 用户主动中断：不回落待选、不清草稿（原话仍在草稿里可改写重发），
+          // 用户气泡保留（已可见），再补一条提示说明这轮被中止。
+          useAppStore.getState().pushHubLocal(t('ui.hub.thinking_cancelled'));
+          return;
+        }
         if (smart && !smart.Pending) {
-          // 与待选回落路径同口径：用户原话先可见（本地瞬态）再回显回执。
-          useAppStore.getState().pushHubLocalUser(text);
           for (const r of smart.Replies ?? []) useAppStore.getState().pushHubLocal(r.Text);
           // 等待期间用户若改了草稿，不覆盖新内容。
           setDraft((d) => (d.trim() === text ? '' : d));
@@ -1018,15 +1053,14 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
         // 等待期间用户若改了草稿，也不覆盖新内容。
         await hubPickTarget(text)
           .then((view) => {
-            if (view.Pending) {
-              // 原话先于菜单即时可见（本地瞬态；权威落盘在数字选中后的发送链）。
-              useAppStore.getState().pushHubLocalUser(text);
-            }
+            // 用户气泡已在进入无目标分支时推过，这里只回显菜单/回执。
             for (const r of view.Replies) useAppStore.getState().pushHubLocal(r.Text);
             if (view.Pending) setDraft((d) => (d.trim() === text ? '' : d));
           })
           .catch((e: unknown) => useAppStore.getState().notify(backendError(e), 'error'));
       } finally {
+        // 异常路径（组件卸载/请求抛错）也必须清掉思考态，否则占位气泡永久转圈。
+        useAppStore.getState().setHubPendingSend(null);
         smartInFlight.current = false;
       }
       return;
@@ -1348,6 +1382,25 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
           代码块自身 overflow-auto 仍可横向滚动。 */}
       <div ref={logRef} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden px-3 py-2" role="log" aria-live="polite">
         <HubMessageList tools={tools} onRecall={recall} onQuickReply={quickReply} />
+        {/* 思考态占位气泡：无目标自由文本发出后立刻出现，逐阶段更新文案，
+            可中断。它只在内存里（store.hubPendingSend），权威消息仍由 Go 落盘。 */}
+        {hubPendingSend && (
+          <div className="text-left" data-testid="hub-thinking">
+            <div className="inline-flex max-w-[85%] items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+              <span className="min-w-0 break-words">{t(hubPendingSend.step)}</span>
+              <button
+                type="button"
+                className="shrink-0 rounded border border-border px-1.5 py-0.5 hover:text-destructive"
+                onClick={() => {
+                  void cancelHubSmartSend(hubPendingSend.reqID);
+                }}
+              >
+                {t('ui.hub.thinking_cancel')}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div data-testid="hub-input-area" className="flex flex-col gap-1 border-t border-border pt-2">
@@ -1626,7 +1679,6 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
             >
               <option value="auto">{t('ui.hub.route_mode_auto')}</option>
               <option value="agent">{t('ui.hub.route_mode_agent')}</option>
-              <option value="force_auto">{t('ui.hub.route_mode_force_auto')}</option>
             </select>
           </label>
           <label className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground">

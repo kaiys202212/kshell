@@ -170,15 +170,15 @@ Type `#` to open the command palette:
 
 ### Input routing modes
 
-Three routing modes are switchable per session:
+Two routing modes are switchable per session (they only affect free text with **no explicit target**):
 
-- Auto: short phrase commands prefer built-in tools; everything else goes to the agent.
-- Agent-only: everything is handed to the agent to interpret.
-- Force tool: built-in commands are matched first.
+- Auto: first decide which session the message belongs to; only if that fails does it list sessions for you to pick.
+- Agent-only: skip the decision and list sessions straight away.
 
-### Confirmation cards & session management
+Input that already has a target (@ a session, replying with a number, quoting a message, or sending from a session's chat page) is always delivered directly, without any routing decision.
 
-- When an agent requests a write operation (writing files, running commands, etc.), a "Pending confirmation" card pops up; nothing proceeds until you approve or reject, keeping things safe and controllable.
+### Session management
+
 - The sidebar lists all Hub sessions for jumping and closing.
 - The view can auto-scroll to follow output.
 

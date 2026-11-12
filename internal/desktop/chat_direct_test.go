@@ -1,34 +1,37 @@
 package desktop
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/hub"
 )
 
-// TestSendChatPromptDirectSkipsHubRoute 验证 ACP 直投入口完全绕过 AgentHub 的
-// 工具化路由：即便路由模式是 force_auto（最激进）、模型配置就绪，LLM 端点也
-// 一次都不该被调用；用户消息立即落盘并推送 hub:changed。
-func TestSendChatPromptDirectSkipsHubRoute(t *testing.T) {
-	mock := &hubLLMMock{bodies: []string{`"不该被调用"`}}
-	srv := httptest.NewServer(http.HandlerFunc(mock.handler))
-	t.Cleanup(srv.Close)
+// newDirectTestApp 构造直投用例所需的最小 App：Hub 记忆存储 + 事件收集。
+// 工具循环下线后不再需要需求库/工作区扫描等工具侧依赖。
+func newDirectTestApp(t *testing.T) (*App, *hub.Store, *notifyRecorder) {
+	t.Helper()
+	store := hub.New(t.TempDir(), 0)
+	if err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	rec := &notifyRecorder{}
+	app := NewAppWith(Options{Home: t.TempDir(), HubStore: store, Emit: rec.emit})
+	return app, store, rec
+}
 
-	a, store, rec := newBridgeTestApp(t)
-	setHubModel(a, srv.URL, "k-test", "test-model")
-	a.opts.Config.AgentHub.RouteMode = config.RouteModeForceAuto
+// TestSendChatPromptDirectRecordsImmediately 验证直投入口：跳过一切模型分发，
+// 用户消息立即落盘并推送 hub:changed，ack 回调不被绕过。
+func TestSendChatPromptDirectRecordsImmediately(t *testing.T) {
+	a, store, rec := newDirectTestApp(t)
 
 	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m
-	// ack 回调必须接线：直投走的仍是 sendAndRecord，投递成功后应补 ack_delivered
 	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
+
 	info, err := m.Open("session:s1", chat.Info{
 		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
 	}, chat.Spec{Path: "x"}, "s1")
@@ -40,16 +43,8 @@ func TestSendChatPromptDirectSkipsHubRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// LLM 一次都不该被调用：直投不经过工具化路由
-	mock.mu.Lock()
-	calls := mock.calls
-	mock.mu.Unlock()
-	if calls != 0 {
-		t.Fatalf("直投不应触达 LLM，实际调用 %d 次", calls)
-	}
-
 	u := waitHubText(t, store, "直投测试")
-	if u.Kind != "user" || !strings.Contains(u.Text, "直投测试") {
+	if u.Kind != "user" {
 		t.Fatalf("应落盘 user 消息: %+v", u)
 	}
 	// 直投必须仍走完整投递链：ack 卡片与 queued 清空都不能被绕过
@@ -94,57 +89,11 @@ func TestSendChatPromptDirectReactivatesAndDelivers(t *testing.T) {
 	waitPromptText(t, b.connAt(1), "再查一下")
 }
 
-
-// TestSendChatPromptStillRoutesHub 守住 AgentHub 面板语义：SendChatPrompt 在
-// force_auto 下仍应走工具化路由——LLM 被调用，且模型回复作为 agent 消息落盘
-//（证明路由真正消费了本轮输入，而不是只触达端点后退化成直连）。
-func TestSendChatPromptStillRoutesHub(t *testing.T) {
-	mock := &hubLLMMock{bodies: []string{`"好的。"`}}
-	srv := httptest.NewServer(http.HandlerFunc(mock.handler))
-	t.Cleanup(srv.Close)
-
-	a, store, rec := newBridgeTestApp(t)
-	setHubModel(a, srv.URL, "k-test", "test-model")
-	a.opts.Config.AgentHub.RouteMode = config.RouteModeForceAuto
-	if _, err := a.getRequirementStore().Add(`D:\ws-a`, "修复登录", "high", nil); err != nil {
-		t.Fatal(err)
-	}
-
-	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
-	t.Cleanup(m.CloseAll)
-	a.opts.Chats = m
-	info, err := m.Open("session:s1", chat.Info{
-		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
-	}, chat.Spec{Path: "x"}, "s1")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := a.SendChatPrompt(info.ID, "列出需求"); err != nil {
-		t.Fatal(err)
-	}
-
-	// 工具化路径是异步收尾的：等模型最终回复落盘（LLM 调用 + 结果消费都成立）
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		for _, mm := range store.List() {
-			if mm.Kind == "agent" && mm.Event == "" && strings.Contains(mm.Text, "好的。") {
-				return
-			}
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	mock.mu.Lock()
-	calls := mock.calls
-	mock.mu.Unlock()
-	t.Fatalf("SendChatPrompt 应仍走 AgentHub 工具化路由并落模型回复（LLM 调用 %d 次）", calls)
-}
-
 // TestSendChatPromptDirectIgnoresFollowCommand 验证直投不做 #f 指令解析：
 // 即使文本以 "#f " 开头，也原样投给入参指定的会话，而不是被转到「最近一条
 // agent 消息归属」的会话。
 func TestSendChatPromptDirectIgnoresFollowCommand(t *testing.T) {
-	a, store, rec := newBridgeTestApp(t)
+	a, store, rec := newDirectTestApp(t)
 	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, nil, nil, nil)
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m
@@ -177,5 +126,37 @@ func TestSendChatPromptDirectIgnoresFollowCommand(t *testing.T) {
 	}
 	if !strings.Contains(u.Text, "#f 直投") {
 		t.Fatalf("文本应原样落盘: %q", u.Text)
+	}
+}
+
+// TestSendChatPromptHasNoLLMStep 守住本次修复的核心契约：普通发送入口
+// （AgentHub @目标 / 编号选择 / 引用回复都经它）不再有任何模型分发步骤——
+// 即便模型配置完全就绪，发送也必须是纯本地投递。
+func TestSendChatPromptHasNoLLMStep(t *testing.T) {
+	a, store, rec := newDirectTestApp(t)
+	// 配置一个语法上"就绪"的模型端点：修复前它会触发工具循环；现在不应触达。
+	a.opts.Config.Model.Platforms = []config.ModelPlatform{
+		{ID: "p-test", OpenAIBaseURL: "http://127.0.0.1:1", APIKey: "k-test"},
+	}
+	a.opts.Config.Model.ActivePlatformID = "p-test"
+	a.opts.Config.Model.ActiveModel = "test-model"
+
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.SendChatPrompt(info.ID, "精确投递"); err != nil {
+		t.Fatal(err)
+	}
+	// 同步落盘即可：一旦有 LLM 往返，这里要么阻塞 90s 超时、要么消息延后出现。
+	u := waitHubText(t, store, "精确投递")
+	if u.ChatID != info.ID {
+		t.Fatalf("消息应投给指定会话 %s，实际 %s", info.ID, u.ChatID)
 	}
 }

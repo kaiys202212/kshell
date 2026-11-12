@@ -29,12 +29,15 @@ func (a *App) SaveHubDefaultCreate(toolID, modelID string) error {
 	})
 }
 
-// SaveHubRouteMode 持久化 AgentHub 输入路由模式（auto | agent | force_auto）
-// 到 config.yaml：前端 localStorage 之外的跨端副本，工具化路由层动态读这里。
-// 非法值报 wire key（前端 translateBackend 翻译）。
+// SaveHubRouteMode 持久化 AgentHub 输入路由模式（auto | agent）到 config.yaml：
+// 前端 localStorage 之外的跨端副本，智能路由动态读这里。非法值报 wire key
+// （前端 translateBackend 翻译）；已下线的 force_auto 按 auto 落盘，不报错
+// （旧版前端缓存仍可能提交它）。
 func (a *App) SaveHubRouteMode(mode string) error {
 	switch mode {
-	case config.RouteModeAuto, config.RouteModeAgent, config.RouteModeForceAuto:
+	case config.RouteModeAuto, config.RouteModeAgent:
+	case "force_auto":
+		mode = config.RouteModeAuto
 	default:
 		return errors.New("err.hub.invalid_route_mode")
 	}

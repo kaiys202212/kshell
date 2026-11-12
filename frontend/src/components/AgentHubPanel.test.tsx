@@ -1,4 +1,4 @@
-// AgentHubPanel：跨项目汇总运行中的 ACP agent，@ 指定目标发消息、跳转定位、新建 agent、粘贴。
+﻿// AgentHubPanel：跨项目汇总运行中的 ACP agent，@ 指定目标发消息、跳转定位、新建 agent、粘贴。
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -35,7 +35,8 @@ const api = vi.hoisted(() => ({
   hubSmartSend: vi.fn(),
   saveHubDefaultCreate: vi.fn().mockResolvedValue(undefined),
   saveHubRouteMode: vi.fn().mockResolvedValue(undefined),
-  confirmHubTool: vi.fn().mockResolvedValue(undefined),
+  cancelHubSmartSend: vi.fn().mockResolvedValue(undefined),
+  onHubProgress: vi.fn((_cb: (p: { id: string; step: string }) => void) => () => {}),
   listRequirements: vi.fn(),
   markRequirementDispatched: vi.fn(),
 }));
@@ -472,10 +473,12 @@ describe('AgentHubPanel', () => {
     api.hubSmartSend.mockResolvedValue({ Replies: [{ Text: '已发送给 2 个会话' }], Pending: false });
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
     render(<AgentHubPanel />);
+    // 等挂载时的历史拉取落定：本地乐观气泡在推送后不能被更早的历史快照覆盖
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '发给大家' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.hubSmartSend).toHaveBeenCalledWith('发给大家'));
+    await waitFor(() => expect(api.hubSmartSend).toHaveBeenCalledWith(expect.any(String), '发给大家'));
     expect(api.hubPickTarget).not.toHaveBeenCalled();
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
     await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe(''));
@@ -2761,31 +2764,101 @@ describe('AgentHubPanel #find', () => {
     await waitFor(() => expect(api.saveHubRouteMode).toHaveBeenCalledWith('agent'));
   });
 
-  it('tool_confirm 消息渲染为确认卡：确认点击调 confirmHubTool', async () => {
-    api.confirmHubTool.mockResolvedValue(undefined);
-    useAppStore.setState({
-      hubMessages: [
-        {
-          id: 1,
-          kind: 'user',
-          chatId: 'c1',
-          text: '帮我新建需求',
-          ts: 1,
-        },
-        {
-          id: 2,
-          kind: 'agent',
-          chatId: 'c1',
-          event: 'tool_confirm',
-          text: '新建需求（项目 D:\\ws-a）：新增需求\n{"pending":"p9","tool":"create_requirement"}',
-          ts: 2,
-        },
-      ],
-    });
+  it('路由模式只保留 auto / agent 两档', async () => {
     render(<AgentHubPanel />);
-    expect(screen.getByText('新建需求（项目 D:\\ws-a）：新增需求')).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('hub-confirm-approve'));
-    await waitFor(() => expect(api.confirmHubTool).toHaveBeenCalledWith('c1', 'p9', true));
+    const sel = screen.getByTestId('hub-route-mode') as HTMLSelectElement;
+    const values = Array.from(sel.options).map((o) => o.value);
+    expect(values).toEqual(['auto', 'agent']);
+  });
+});
+
+// 思考态：无目标自由文本发出后必须立刻看到「用户气泡 + 正在做什么」，
+// 而不是等模型首 token 返回才突然出现两段内容（用户曾以为没发出去）。
+describe('AgentHub 思考态', () => {
+  it('发送后用户气泡与思考气泡立即出现，且早于路由返回', async () => {
+    let release!: (v: HubPickView) => void;
+    api.hubSmartSend.mockImplementation(() => new Promise((res) => { release = res; }));
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '发给大家' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    // 路由尚未返回：用户原话已可见 + 思考气泡显示第一阶段文案
+    await waitFor(() =>
+      expect(
+        useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.kind === 'user' && m.text === '发给大家'),
+      ).toBe(true),
+    );
+    expect(screen.getByTestId('hub-thinking')).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.hub.thinking_route'))).toBeInTheDocument();
+
+    release({ Replies: [{ Text: '已发送给 2 个会话' }], Pending: false });
+    // 回执到达后思考气泡消失，回执可见
+    await waitFor(() => expect(screen.queryByTestId('hub-thinking')).not.toBeInTheDocument());
+    expect(
+      useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '已发送给 2 个会话'),
+    ).toBe(true);
+  });
+
+  it('后端进度事件推进思考气泡阶段文案', async () => {
+    let release!: (v: HubPickView) => void;
+    api.hubSmartSend.mockImplementation(() => new Promise((res) => { release = res; }));
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '发给大家' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByText(tt('ui.hub.thinking_route'))).toBeInTheDocument());
+
+    // 取出面板注册的进度回调，模拟 Go 侧 Emit("hub:progress")
+    const handler = api.onHubProgress.mock.calls.at(-1)![0];
+    const reqID = useAppStore.getState().hubPendingSend!.reqID;
+    act(() => handler({ id: reqID, step: 'ui.hub.thinking_execute' }));
+
+    await waitFor(() => expect(screen.getByText(tt('ui.hub.thinking_execute'))).toBeInTheDocument());
+    release({ Replies: [], Pending: true });
+  });
+
+  it('其它请求的进度事件不得改写当前思考态', async () => {
+    let release!: (v: HubPickView) => void;
+    api.hubSmartSend.mockImplementation(() => new Promise((res) => { release = res; }));
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '发给大家' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByTestId('hub-thinking')).toBeInTheDocument());
+
+    const handler = api.onHubProgress.mock.calls.at(-1)![0];
+    act(() => handler({ id: 'someone-else', step: 'ui.hub.thinking_pick' }));
+
+    expect(screen.getByText(tt('ui.hub.thinking_route'))).toBeInTheDocument();
+    release({ Replies: [], Pending: true });
+  });
+
+  it('点「中断」调 cancelHubSmartSend；取消返回后不回落待选、保留草稿', async () => {
+    let release!: (v: HubPickView) => void;
+    api.hubSmartSend.mockImplementation(() => new Promise((res) => { release = res; }));
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '发给大家' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByTestId('hub-thinking')).toBeInTheDocument());
+    const reqID = useAppStore.getState().hubPendingSend!.reqID;
+
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.thinking_cancel') }));
+    await waitFor(() => expect(api.cancelHubSmartSend).toHaveBeenCalledWith(reqID));
+
+    // 后端取消收尾：返回 Cancelled
+    release({ Replies: [], Pending: false, Cancelled: true });
+    await waitFor(() => expect(screen.queryByTestId('hub-thinking')).not.toBeInTheDocument());
+    expect(api.hubPickTarget).not.toHaveBeenCalled();
+    expect((box as HTMLTextAreaElement).value).toBe('发给大家');
+    expect(
+      useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.kind === 'agent' && m.text === tt('ui.hub.thinking_cancelled')),
+    ).toBe(true);
   });
 });
 
