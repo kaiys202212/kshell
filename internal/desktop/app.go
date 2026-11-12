@@ -21,6 +21,7 @@ import (
 	"github.com/yangk/kshell/internal/hub"
 	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/mcparchive"
+	"github.com/yangk/kshell/internal/modelresolve"
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/remote"
 	remotefs "github.com/yangk/kshell/internal/remote/fs"
@@ -772,7 +773,7 @@ func (a *App) modelOptionsForCreate(createModel string) launch.ModelOptions {
 		return launch.ModelOptions{}
 	}
 	model := strings.TrimSpace(createModel)
-	if platID, bare, ok := splitKshellModelID(model); ok {
+	if platID, bare, ok := modelresolve.SplitKshellModelID(model); ok {
 		// 跨平台前缀：端点改用目标平台（若仍在配置中），模型用裸名。
 		model = bare
 		for _, x := range m.Platforms {

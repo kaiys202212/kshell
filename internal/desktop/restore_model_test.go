@@ -10,6 +10,7 @@ import (
 	"github.com/yangk/kshell/internal/acp"
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
+	"github.com/yangk/kshell/internal/modelresolve"
 	"github.com/yangk/kshell/internal/providers"
 )
 
@@ -182,8 +183,8 @@ func TestModelIDLooseEqual(t *testing.T) {
 		{"glm-5.3-flash", "glm-5.3", false},
 	}
 	for _, tc := range cases {
-		if got := modelIDLooseEqual(tc.a, tc.b); got != tc.want {
-			t.Errorf("modelIDLooseEqual(%q,%q)=%v want %v", tc.a, tc.b, got, tc.want)
+		if got := modelresolve.ModelIDLooseEqual(tc.a, tc.b); got != tc.want {
+			t.Errorf("ModelIDLooseEqual(%q,%q)=%v want %v", tc.a, tc.b, got, tc.want)
 		}
 	}
 }

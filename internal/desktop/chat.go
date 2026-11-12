@@ -14,6 +14,7 @@ import (
 	"github.com/yangk/kshell/internal/hub"
 	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/launcher"
+	"github.com/yangk/kshell/internal/modelresolve"
 	"github.com/yangk/kshell/internal/providers"
 	"github.com/yangk/kshell/internal/terminal"
 )
@@ -839,26 +840,6 @@ func (a *App) ToolPlatformModels(toolID string) ([]chat.ModelView, error) {
 	return v.Models, nil
 }
 
-// splitKshellModelID 解析下拉前缀 ID "kshell:<platID>:<model>"。
-// platID 是平台 ID（不含冒号），model 可能含冒号，因此去掉 "kshell:" 头后
-// 按第一个冒号切分，剩余全部视为 model。非前缀或 platID 为空返回 ok=false。
-func splitKshellModelID(id string) (platID, model string, ok bool) {
-	rest, found := strings.CutPrefix(id, "kshell:")
-	if !found {
-		return "", "", false
-	}
-	i := strings.Index(rest, ":")
-	if i <= 0 {
-		return "", "", false
-	}
-	model = rest[i+1:]
-	if model == "" {
-		// 畸形 ID（如 "kshell:plat:"）：空模型名不应下发给 SetModel，按透传容错。
-		return "", "", false
-	}
-	return rest[:i], model, true
-}
-
 // SetChatModel 运行时切换会话模型。入口别名解析同 ListChatModels。
 // 下拉前缀 ID 在转发前解析：默认平台只切模型；跨平台先落盘切换默认平台
 // 与活跃模型再切（保存失败则不切）；platID 已不在配置（配置删除后下拉
@@ -871,7 +852,7 @@ func (a *App) SetChatModel(id, modelID string) error {
 		return errNotReady
 	}
 	resolved, _ := a.resolveChatID(id)
-	platID, model, ok := splitKshellModelID(modelID)
+	platID, model, ok := modelresolve.SplitKshellModelID(modelID)
 	if !ok {
 		model = modelID
 	}
@@ -966,7 +947,7 @@ func (a *App) resolveOpenCodeModelID(chatID, platID, model string) string {
 	}
 	var hits []string
 	for _, id := range ids {
-		if i := strings.LastIndex(id, "/"); i >= 0 && modelIDLooseEqual(id[i+1:], model) {
+		if i := strings.LastIndex(id, "/"); i >= 0 && modelresolve.ModelIDLooseEqual(id[i+1:], model) {
 			hits = append(hits, id)
 		}
 	}

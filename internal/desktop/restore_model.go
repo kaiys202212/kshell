@@ -4,21 +4,13 @@ import (
 	"strings"
 
 	"github.com/yangk/kshell/internal/chat"
+	"github.com/yangk/kshell/internal/modelresolve"
 	"github.com/yangk/kshell/internal/providers"
 )
 
-// modelIDLooseEqual 比较模型 ID：字面相等，或把 '.' 归一成 '-' 后相等。
-// Claude/网关常把配置里的 glm-5.3-flash 写进 JSONL 成 glm-5-3-flash。
-func modelIDLooseEqual(a, b string) bool {
-	if a == b {
-		return true
-	}
-	return strings.ReplaceAll(a, ".", "-") == strings.ReplaceAll(b, ".", "-")
-}
-
 // restoreModelBareID 多平台前缀 ID 剥成裸名；非前缀原样返回。
 func restoreModelBareID(id string) string {
-	if _, model, ok := splitKshellModelID(id); ok {
+	if _, model, ok := modelresolve.SplitKshellModelID(id); ok {
 		return model
 	}
 	return id
@@ -27,11 +19,11 @@ func restoreModelBareID(id string) string {
 // resolveRestoreModelID 在可用列表中找与 JSONL last 对应、可下发给 SetModel 的裸名。
 // 先精确再点号/连字符宽松；多平台比裸名。已与 Current 宽松相同或找不到返回 ""。
 func resolveRestoreModelID(last string, models []chat.ModelView, current string) string {
-	if last == "" || modelIDLooseEqual(last, current) {
+	if last == "" || modelresolve.ModelIDLooseEqual(last, current) {
 		return ""
 	}
 	accept := func(bare, id string) string {
-		if modelIDLooseEqual(bare, current) || bare == current || id == current || modelIDLooseEqual(id, current) {
+		if modelresolve.ModelIDLooseEqual(bare, current) || bare == current || id == current || modelresolve.ModelIDLooseEqual(id, current) {
 			return ""
 		}
 		return bare
@@ -44,7 +36,7 @@ func resolveRestoreModelID(last string, models []chat.ModelView, current string)
 	}
 	for _, mo := range models {
 		bare := restoreModelBareID(mo.ID)
-		if modelIDLooseEqual(mo.ID, last) || modelIDLooseEqual(bare, last) {
+		if modelresolve.ModelIDLooseEqual(mo.ID, last) || modelresolve.ModelIDLooseEqual(bare, last) {
 			return accept(bare, mo.ID)
 		}
 	}
