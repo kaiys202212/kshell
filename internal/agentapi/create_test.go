@@ -38,7 +38,7 @@ func mockChat(api *API, replies ...string) {
 
 func TestCreateNLNotReady(t *testing.T) {
 	api := New(newFake())
-	_, err := api.CreateNL("建个会话", NLCreate{})
+	_, err := api.CreateNL(context.Background(), "建个会话", NLCreate{})
 	if !errors.Is(err, ErrLLMNotReady) {
 		t.Fatalf("期望 ErrLLMNotReady: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestCreateNLNotReady(t *testing.T) {
 func TestCreateNLLLMNotReady(t *testing.T) {
 	api := New(newFake())
 	api.UpdateLLM(hubtools.Config{Model: "m"}) // 缺端点/密钥：Ready 判不就绪
-	_, err := api.CreateNL("建个会话", NLCreate{})
+	_, err := api.CreateNL(context.Background(), "建个会话", NLCreate{})
 	if !errors.Is(err, ErrLLMNotReady) {
 		t.Fatalf("期望 ErrLLMNotReady: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestCreateNLToolAmbiguous(t *testing.T) {
 	api.UpdateLLM(hubtools.Config{BaseURL: "http://x", APIKey: "k", Model: "m"})
 	// 模型给了不存在的工具。
 	mockChat(api, `{"tool":"unknown","workspace":"d:/ws/a","task":"","ready":true}`)
-	res, err := api.CreateNL("建个会话", NLCreate{})
+	res, err := api.CreateNL(context.Background(), "建个会话", NLCreate{})
 	if err != nil {
 		t.Fatalf("不应报错而应返回确认: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestCreateNLWorkspaceAmbiguous(t *testing.T) {
 	api := New(f)
 	api.UpdateLLM(hubtools.Config{BaseURL: "http://x", APIKey: "k", Model: "m"})
 	mockChat(api, `{"tool":"claude","workspace":"","task":"跑测试","ready":false}`)
-	res, err := api.CreateNL("在 a 建会话跑测试", NLCreate{})
+	res, err := api.CreateNL(context.Background(), "在 a 建会话跑测试", NLCreate{})
 	if err != nil {
 		t.Fatalf("CreateNL: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestCreateNLSuccess(t *testing.T) {
 	api := New(f)
 	api.UpdateLLM(hubtools.Config{BaseURL: "http://x", APIKey: "k", Model: "m"})
 	mockChat(api, `{"tool":"claude","workspace":"d:/ws/a","task":"修复登录 bug","ready":true}`)
-	res, err := api.CreateNL("在 a 工作区用 claude 建会话修复登录 bug", NLCreate{})
+	res, err := api.CreateNL(context.Background(), "在 a 工作区用 claude 建会话修复登录 bug", NLCreate{})
 	if err != nil {
 		t.Fatalf("CreateNL: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestCreateNLConfirmPath(t *testing.T) {
 	api.UpdateLLM(hubtools.Config{BaseURL: "http://x", APIKey: "k", Model: "m"})
 	// Confirm 携带用户选择：不再走 LLM（mock 回复耗尽即失败，若走了会报错）。
 	mockChat(api)
-	res, err := api.CreateNL("随便", NLCreate{Confirm: &CreatePlan{
+	res, err := api.CreateNL(context.Background(), "随便", NLCreate{Confirm: &CreatePlan{
 		ToolID: "codex", Workspace: "d:/ws/b", Task: "写文档",
 	}})
 	if err != nil {
@@ -130,8 +130,28 @@ func TestCreateNLBadJSON(t *testing.T) {
 	api := New(newFake())
 	api.UpdateLLM(hubtools.Config{BaseURL: "http://x", APIKey: "k", Model: "m"})
 	mockChat(api, `完全不是 JSON`)
-	if _, err := api.CreateNL("建会话", NLCreate{}); err == nil {
+	if _, err := api.CreateNL(context.Background(), "建会话", NLCreate{}); err == nil {
 		t.Fatal("坏 JSON 应报错")
+	}
+}
+
+// 会话已创建但首条任务投递失败：错误上抛，同时 Created 有效（调用方据此知道
+// 会话已存在，可重投或改走 Watch/Messages）。
+func TestCreateNLTaskSendFailedKeepsCreated(t *testing.T) {
+	f := newFake()
+	f.failSendOn = "chat-new"
+	api := New(f)
+	api.UpdateLLM(hubtools.Config{BaseURL: "http://x", APIKey: "k", Model: "m"})
+	mockChat(api, `{"tool":"claude","workspace":"d:/ws/a","task":"修复 bug","ready":true}`)
+	res, err := api.CreateNL(context.Background(), "建会话修 bug", NLCreate{})
+	if err == nil {
+		t.Fatal("投递失败应上抛错误")
+	}
+	if res.Created == nil || res.Created.ID != "chat-new" {
+		t.Fatalf("错误路径应携带 Created: %+v", res)
+	}
+	if len(f.created) != 1 {
+		t.Fatalf("会话应已创建一次: %v", f.created)
 	}
 }
 
@@ -141,7 +161,7 @@ func TestRouteDecide(t *testing.T) {
 	api.UpdateLLM(hubtools.Config{BaseURL: "http://x", APIKey: "k", Model: "m"})
 	// 编号 1=chat-a, 2=chat-b（ActiveSessions 顺序）。
 	mockChat(api, `{"action":"group","targets":[1,2],"text":"全体注意"}`)
-	plan, err := api.RouteDecide("通知所有人")
+	plan, err := api.RouteDecide(context.Background(), "通知所有人")
 	if err != nil {
 		t.Fatalf("RouteDecide: %v", err)
 	}
@@ -155,7 +175,7 @@ func TestRouteDecide(t *testing.T) {
 
 func TestRouteDecideNotReady(t *testing.T) {
 	api := New(newFake())
-	if _, err := api.RouteDecide("x"); !errors.Is(err, ErrLLMNotReady) {
+	if _, err := api.RouteDecide(context.Background(), "x"); !errors.Is(err, ErrLLMNotReady) {
 		t.Fatalf("期望 ErrLLMNotReady: %v", err)
 	}
 }

@@ -18,7 +18,7 @@ type RoutePlan struct {
 // RouteDecide 调 LLM 对一条用户消息做投递决策：应发给哪些会话（single/group）、
 // 需要反问（ask）、还是只是查状态/展开详情（status/expand，调用方用
 // List/Messages 原语消化）。LLM 未就绪返回 ErrLLMNotReady。
-func (a *API) RouteDecide(text string) (RoutePlan, error) {
+func (a *API) RouteDecide(ctx context.Context, text string) (RoutePlan, error) {
 	cfg := a.llmCfg()
 	if !hubtools.Ready(cfg) {
 		return RoutePlan{}, ErrLLMNotReady
@@ -31,7 +31,7 @@ func (a *API) RouteDecide(text string) (RoutePlan, error) {
 	for i, s := range active {
 		briefs[i] = hubtools.SessionBrief{Num: i + 1, Tool: s.Tool, Title: s.Title, Status: string(s.Status)}
 	}
-	resp, err := a.chat(context.Background(), []hubtools.Message{
+	resp, err := a.chat(ctx, []hubtools.Message{
 		{Role: "system", Content: hubtools.BuildRoutePrompt(briefs, text)},
 		{Role: "user", Content: text},
 	})

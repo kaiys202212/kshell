@@ -179,14 +179,22 @@ func (a *App) agentFeedSource() *agentapi.Feed {
 func (a *App) wireAgentFeed(m *chat.Manager) {
 	feed := a.agentFeedSource()
 	ts := func() int64 { return time.Now().UnixNano() }
+	// publish 前先翻链头 ID；翻译结果为空（无归因）的事件直接丢弃——
+	// 空键事件订阅者永远匹配不到，只会在 pending 权限快照里堆积。
+	publish := func(e agentapi.Event) {
+		if id := a.originalChatID(e.SessionID); id != "" {
+			e.SessionID = id
+			feed.Publish(e)
+		}
+	}
 	m.SetOnUpdateTap(func(id string, u chat.Update) {
-		feed.Publish(agentapi.Event{SessionID: a.originalChatID(id), Kind: agentapi.EventUpdate, Type: u.Type, Text: u.Text, Ts: ts()})
+		publish(agentapi.Event{SessionID: id, Kind: agentapi.EventUpdate, Type: u.Type, Text: u.Text, Ts: ts()})
 	})
 	m.SetOnPermissionTap(func(id string, r chat.PermissionRequest) {
-		feed.Publish(agentapi.Event{SessionID: a.originalChatID(id), Kind: agentapi.EventPermission, Type: r.RequestID, Text: r.ToolCall.Title, Ts: ts()})
+		publish(agentapi.Event{SessionID: id, Kind: agentapi.EventPermission, Type: r.RequestID, Text: r.ToolCall.Title, Ts: ts()})
 	})
 	m.SetOnExitTap(func(id string, code int, errMsg string) {
-		feed.Publish(agentapi.Event{SessionID: a.originalChatID(id), Kind: agentapi.EventExit, Type: strconv.Itoa(code), Text: errMsg, Ts: ts()})
+		publish(agentapi.Event{SessionID: id, Kind: agentapi.EventExit, Type: strconv.Itoa(code), Text: errMsg, Ts: ts()})
 	})
 }
 
@@ -194,11 +202,11 @@ func (a *App) wireAgentFeed(m *chat.Manager) {
 // 桥路由「实时读配置」同口径；未配置自主模型时 CreateNL/RouteDecide 返回
 // ErrLLMNotReady。
 func (a *App) AgentAPI() *agentapi.API {
-	a.agentFeedOnce.Do(func() { a.agentFeed = agentapi.NewFeed() })
+	feed := a.agentFeedSource()
 	a.mu.Lock()
 	api := a.agentAPIV
 	if api == nil {
-		api = agentapi.New(&agentBackend{a: a, w: newWXExecutor(a), feed: a.agentFeed})
+		api = agentapi.New(&agentBackend{a: a, w: newWXExecutor(a), feed: feed})
 		a.agentAPIV = api
 	}
 	a.mu.Unlock()

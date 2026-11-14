@@ -15,6 +15,7 @@ type fakeBackend struct {
 	archived   []string
 	msgs       map[string][]Message // chatID → 消息
 	sent       []string             // Send 调用记录 "chatID|text"
+	failSendOn string               // Send 对该 chatID 返回错误（测试失败路径）
 	stopped    []string
 	recalled   []int64
 	models     []ModelOption
@@ -41,6 +42,9 @@ func (f *fakeBackend) ArchivedIDs() []string     { return f.archived }
 func (f *fakeBackend) SessionMessages(chatID string) []Message { return f.msgs[chatID] }
 
 func (f *fakeBackend) Send(chatID, text string) error {
+	if f.failSendOn == chatID {
+		return errors.New("err.chat.gone")
+	}
 	f.sent = append(f.sent, chatID+"|"+text)
 	return nil
 }

@@ -5,13 +5,12 @@ import "sync"
 // Feed 是会话事件的多播源：desktop 在 chat.Manager 的更新/权限回调链上
 // 转发一帧进来，API.Watch 的订阅者按会话领取。
 //
-// 投递策略是非阻塞：订阅通道缓冲满时丢弃该帧（计数）而不阻塞回调链——
+// 投递策略是非阻塞：订阅通道缓冲满时丢弃该帧而不阻塞回调链——
 // 回调链是聊天主路径，绝不能被慢消费者拖住。盯输出的消费方用缓冲通道 +
 // 持续取用即可，丢帧兜底靠 Messages/LastFullOutput 的拉取原语。
 type Feed struct {
 	mu      sync.Mutex
 	subs    map[string]map[chan Event]struct{} // chatID → 订阅集合
-	dropped map[chan Event]int                 // 各订阅的累计丢帧数
 	pending map[string][]Permission            // chatID → 未处理权限请求（cap pendingCap）
 }
 
@@ -22,7 +21,6 @@ const pendingCap = 10
 func NewFeed() *Feed {
 	return &Feed{
 		subs:    map[string]map[chan Event]struct{}{},
-		dropped: map[chan Event]int{},
 		pending: map[string][]Permission{},
 	}
 }
@@ -44,8 +42,7 @@ func (f *Feed) Publish(e Event) {
 	for ch := range f.subs[e.SessionID] {
 		select {
 		case ch <- e:
-		default:
-			f.dropped[ch]++
+		default: // 缓冲满：丢弃该帧，不阻塞聊天主路径
 		}
 	}
 }
@@ -74,7 +71,6 @@ func (f *Feed) Subscribe(chatID string, buf int) (<-chan Event, func()) {
 				delete(f.subs, chatID)
 			}
 		}
-		delete(f.dropped, ch)
 		close(ch)
 	}
 	return ch, cancel

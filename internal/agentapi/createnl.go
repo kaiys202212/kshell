@@ -38,7 +38,7 @@ type CreateResult struct {
 // 代码侧校验候选。LLM 未就绪返回 ErrLLMNotReady；解析失败返回错误（不静默
 // 回落）；工具不存在或工作区歧义返回 NeedsConfirm，调用方确认后带
 // NLCreate.Confirm 重发。
-func (a *API) CreateNL(text string, opts NLCreate) (CreateResult, error) {
+func (a *API) CreateNL(ctx context.Context, text string, opts NLCreate) (CreateResult, error) {
 	cfg := a.llmCfg()
 	if !hubtools.Ready(cfg) {
 		return CreateResult{}, ErrLLMNotReady
@@ -47,17 +47,17 @@ func (a *API) CreateNL(text string, opts NLCreate) (CreateResult, error) {
 	if opts.Confirm != nil {
 		plan = *opts.Confirm // 用户已确认：不再问模型
 	} else {
-		parsed, err := a.parseNL(text)
+		parsed, err := a.parseNL(ctx, text)
 		if err != nil {
 			return CreateResult{}, err
 		}
 		plan = parsed
 	}
-	return a.validateAndCreate(plan)
+	return a.validateAndCreate(ctx, plan)
 }
 
 // parseNL 调 LLM 解析用户文本为创建计划。
-func (a *API) parseNL(text string) (CreatePlan, error) {
+func (a *API) parseNL(ctx context.Context, text string) (CreatePlan, error) {
 	tools := a.b.Tools()
 	workspaces := a.b.Workspaces()
 	var b strings.Builder
@@ -80,7 +80,7 @@ func (a *API) parseNL(text string) (CreatePlan, error) {
 		b.WriteString("- " + w.ID + " " + w.Label + "\n")
 	}
 
-	resp, err := a.chat(context.Background(), []hubtools.Message{
+	resp, err := a.chat(ctx, []hubtools.Message{
 		{Role: "system", Content: b.String()},
 		{Role: "user", Content: text},
 	})
@@ -114,8 +114,9 @@ func (a *API) parseNL(text string) (CreatePlan, error) {
 
 // validateAndCreate 校验计划并执行创建：工具必须存在；工作区精确命中或
 // 小写包含唯一命中；未定/歧义返回 NeedsConfirm。创建成功且 Task 非空时
-// 立即投递首条任务。
-func (a *API) validateAndCreate(plan CreatePlan) (CreateResult, error) {
+// 立即投递首条任务——投递失败时错误上抛，但 Created 仍有效（会话已存在，
+// 调用方可据此继续盯输出或重投）。
+func (a *API) validateAndCreate(ctx context.Context, plan CreatePlan) (CreateResult, error) {
 	tools := a.b.Tools()
 	workspaces := a.b.Workspaces()
 
@@ -155,7 +156,8 @@ func (a *API) validateAndCreate(plan CreatePlan) (CreateResult, error) {
 	}
 	if plan.Task != "" {
 		if err := a.b.Send(s.ID, plan.Task); err != nil {
-			return CreateResult{}, fmt.Errorf("投递首条任务: %w", err)
+			// 会话已创建：错误与 Created 同时返回，调用方按 Created != nil 区分。
+			return CreateResult{Created: &s}, fmt.Errorf("投递首条任务: %w", err)
 		}
 	}
 	return CreateResult{Created: &s}, nil
