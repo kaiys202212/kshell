@@ -9,10 +9,10 @@ import "sync"
 // 回调链是聊天主路径，绝不能被慢消费者拖住。盯输出的消费方用缓冲通道 +
 // 持续取用即可，丢帧兜底靠 Messages/LastFullOutput 的拉取原语。
 type Feed struct {
-	mu       sync.Mutex
-	subs     map[string]map[chan Event]struct{} // chatID → 订阅集合
-	dropped  map[chan Event]int                 // 各订阅的累计丢帧数
-	pending  map[string][]Permission            // chatID → 未处理权限请求（cap pendingCap）
+	mu      sync.Mutex
+	subs    map[string]map[chan Event]struct{} // chatID → 订阅集合
+	dropped map[chan Event]int                 // 各订阅的累计丢帧数
+	pending map[string][]Permission            // chatID → 未处理权限请求（cap pendingCap）
 }
 
 // pendingCap 是单个会话记录的权限请求数上限（防旧请求无限堆积）。

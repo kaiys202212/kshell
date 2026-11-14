@@ -69,6 +69,13 @@ func RouteInput(ctx context.Context, cfg Config, sessions []SessionBrief, input 
 	return parseRouteDecision(resp.Text, sessions)
 }
 
+// ParseRouteDecision 是 parseRouteDecision 的导出入口：agentapi 等消费方
+// 自带 LLM 通道（可注入 chatFn）时，复用同一份决策 JSON 校验逻辑，避免
+// 两处口径漂移。
+func ParseRouteDecision(text string, sessions []SessionBrief) (RouteDecision, error) {
+	return parseRouteDecision(text, sessions)
+}
+
 // parseRouteDecision 从模型回复中取出首个 JSON 对象并做代码侧校验：
 // action 枚举、目标编号必须存在于快照、group 至少 2 个目标、single 至多 1 个、
 // expand 编号合法并钳制条数、ask 必须有具体问题、per_target 键必须是快照编号。

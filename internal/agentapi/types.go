@@ -96,6 +96,6 @@ const (
 
 // 哨兵错误：调用方按 errors.Is 分支处理。
 var (
-	ErrNotFound   = errors.New("agentapi: 会话不存在")
+	ErrNotFound    = errors.New("agentapi: 会话不存在")
 	ErrLLMNotReady = errors.New("agentapi: LLM 未配置")
 )

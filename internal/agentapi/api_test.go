@@ -10,22 +10,22 @@ import (
 
 // fakeBackend 是行为测试共用的 Backend 桩：记录调用参数、返回预制数据。
 type fakeBackend struct {
-	active    []Session
-	disk      []Session
-	archived  []string
-	msgs      map[string][]Message // chatID → 消息
-	sent      []string             // Send 调用记录 "chatID|text"
-	stopped   []string
-	recalled  []int64
-	models    []ModelOption
-	curModel  string
-	setModels [][2]string // [chatID, model]
-	grants    []grantCall
-	created   [][3]string // [toolID, wsID, model]
-	opened    []string
-	tools     []Option
+	active     []Session
+	disk       []Session
+	archived   []string
+	msgs       map[string][]Message // chatID → 消息
+	sent       []string             // Send 调用记录 "chatID|text"
+	stopped    []string
+	recalled   []int64
+	models     []ModelOption
+	curModel   string
+	setModels  [][2]string // [chatID, model]
+	grants     []grantCall
+	created    [][3]string // [toolID, wsID, model]
+	opened     []string
+	tools      []Option
 	workspaces []Option
-	feed      *Feed
+	feed       *Feed
 }
 
 type grantCall struct {

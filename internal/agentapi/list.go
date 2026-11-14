@@ -6,7 +6,7 @@ import (
 )
 
 // List 按范围返回会话列表。archived 名单同时作用于活跃与磁盘会话
-//（归档的会话若仍活跃，标记为 archived 优先呈现归档语义）。
+// （归档的会话若仍活跃，标记为 archived 优先呈现归档语义）。
 func (a *API) List(scope Scope) ([]Session, error) {
 	switch scope {
 	case ScopeActive, ScopeDisk, ScopeArchived, ScopeAll:
