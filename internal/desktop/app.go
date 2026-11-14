@@ -26,6 +26,7 @@ import (
 	"github.com/yangk/kshell/internal/remote"
 	remotefs "github.com/yangk/kshell/internal/remote/fs"
 	"github.com/yangk/kshell/internal/requirements"
+	"github.com/yangk/kshell/internal/agentapi"
 	"github.com/yangk/kshell/internal/sessionarchive"
 	"github.com/yangk/kshell/internal/terminal"
 	"github.com/yangk/kshell/internal/weixin"
@@ -171,6 +172,11 @@ type App struct {
 	sshHub         *SSHHub
 	pendingArchive map[string]bool
 	hooksOnce      sync.Once
+	// agent 工具 API（internal/agentapi）：Feed 经 chat.Manager 旁路 tap 转发，
+	// API 懒构造（AgentAPI），LLM 配置每次访问实时刷新。
+	agentFeedOnce sync.Once
+	agentFeed     *agentapi.Feed
+	agentAPIV     *agentapi.API
 	// keepInstallTools：安装/卸载刚用 DetectAll 写过 a.tools。进行中的 runScan
 	// 开头拿到的是旧快照，结束时不得覆盖这份更新结果。
 	keepInstallTools bool

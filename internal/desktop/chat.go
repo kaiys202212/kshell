@@ -47,6 +47,9 @@ func newChatManager(a *App, b chat.Backend) *chat.Manager {
 		}
 		a.emitChatOut("chat:models", map[string]any{"id": id, "models": v})
 	})
+	// agent 工具 API 的事件旁路：update/permission/exit 转发进 Feed，
+	// 供 AgentAPI().Watch 订阅（不影响既有前端事件链路）。
+	a.wireAgentFeed(m)
 	return m
 }
 

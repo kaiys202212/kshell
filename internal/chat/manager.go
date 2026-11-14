@@ -166,6 +166,12 @@ type Manager struct {
 	// onQueue 在队列变化时推送全量快照（锁外执行），供前端展示/撤销。
 	onQueue func(id string, items []QueueItem)
 
+	// onUpdateTap / onPermissionTap / onExitTap 是旁路多播监听（agentapi Feed
+	// 转发用）：在对应单回调之前触发，不影响既有链路。经 mu 读写。
+	onUpdateTap     func(id string, u Update)
+	onPermissionTap func(id string, r PermissionRequest)
+	onExitTap       func(id string, code int, errMsg string)
+
 	// attachmentsRoot 是附件落盘缓存的根目录（desktop 装配时注入；空串=不落盘，
 	// 仅保留元数据）。装配发生在任何会话打开之前，读取不持锁（见 PromptBlocksHub）。
 	attachmentsRoot string
@@ -186,11 +192,80 @@ func NewManager(b Backend,
 	onUpdate func(id string, u Update),
 	onPermission func(id string, r PermissionRequest),
 	onExit func(id string, code int, errMsg string)) *Manager {
-	return &Manager{
-		backend: b, onUpdate: onUpdate, onPermission: onPermission, onExit: onExit,
-		byKey: make(map[string]*session), byID: make(map[string]*session),
+	m := &Manager{
+		backend: b, byKey: make(map[string]*session), byID: make(map[string]*session),
 		bootID: fmt.Sprintf("%s%x_%x", strconv.FormatInt(time.Now().UnixNano(), 36), os.Getpid(), managerSeq.Add(1)),
 	}
+	// 包装基础回调：旁路 tap（SetOnUpdateTap 等，agentapi Feed 转发用）在原
+	// 单回调之前执行。包装后字段恒非空，既有「判 nil 再调」的调用点行为不变
+	//（tap 与基础回调都为空时闭包是空操作）。
+	m.onUpdate = func(id string, u Update) {
+		if fn := m.takeUpdateTap(); fn != nil {
+			fn(id, u)
+		}
+		if onUpdate != nil {
+			onUpdate(id, u)
+		}
+	}
+	m.onPermission = func(id string, r PermissionRequest) {
+		if fn := m.takePermissionTap(); fn != nil {
+			fn(id, r)
+		}
+		if onPermission != nil {
+			onPermission(id, r)
+		}
+	}
+	m.onExit = func(id string, code int, errMsg string) {
+		if fn := m.takeExitTap(); fn != nil {
+			fn(id, code, errMsg)
+		}
+		if onExit != nil {
+			onExit(id, code, errMsg)
+		}
+	}
+	return m
+}
+
+// —— 旁路 tap：在既有单回调链之外提供多播观察点（装配后注册）——
+
+func (m *Manager) takeUpdateTap() func(id string, u Update) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.onUpdateTap
+}
+
+func (m *Manager) takePermissionTap() func(id string, r PermissionRequest) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.onPermissionTap
+}
+
+func (m *Manager) takeExitTap() func(id string, code int, errMsg string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.onExitTap
+}
+
+// SetOnUpdateTap 注册更新旁路监听：每帧 update 在既有 onUpdate 之外触发一次
+//（agentapi Feed 转发用，nil 取消）。
+func (m *Manager) SetOnUpdateTap(fn func(id string, u Update)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onUpdateTap = fn
+}
+
+// SetOnPermissionTap 注册权限请求旁路监听（同上）。
+func (m *Manager) SetOnPermissionTap(fn func(id string, r PermissionRequest)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onPermissionTap = fn
+}
+
+// SetOnExitTap 注册进程退出旁路监听（同上）。
+func (m *Manager) SetOnExitTap(fn func(id string, code int, errMsg string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onExitTap = fn
 }
 
 // managerSeq 是包级 Manager 实例计数，混入 bootID 防同一计时器刻度内
