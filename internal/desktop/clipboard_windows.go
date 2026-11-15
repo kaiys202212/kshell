@@ -58,6 +58,49 @@ func readClipboardSnapshot() (clipboardSnapshot, error) {
 	return snap, nil
 }
 
+func init() {
+	// 文件树粘贴用的注入点：同一打开周期读 HDROP + Preferred DropEffect，
+	// 保证「剪切」语义（资源管理器剪切后 DropEffect=DROPEFFECT_MOVE）不丢。
+	readClipboardFilesFn = func() ([]string, bool, error) {
+		if err := openClipboardRetry(); err != nil {
+			return nil, false, err
+		}
+		defer procCloseClipboard.Call()
+		files, err := clipboardFiles()
+		if err != nil {
+			return nil, false, err
+		}
+		return files, clipboardCutMarked(), nil
+	}
+}
+
+// clipboardCutMarked 读 Preferred DropEffect（注册剪贴板格式），判定是否剪切。
+// 格式缺失或解析失败一律视为复制——宁可多复制也不误删源。
+func clipboardCutMarked() bool {
+	name, err := windows.UTF16PtrFromString("Preferred DropEffect")
+	if err != nil {
+		return false
+	}
+	fmtID, _, _ := procRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(name)))
+	if fmtID == 0 || !formatAvailable(uint32(fmtID)) {
+		return false
+	}
+	b, err := clipboardBytes(uint32(fmtID))
+	if err != nil {
+		return false
+	}
+	return parseDropEffect(b)
+}
+
+// parseDropEffect 解析 DropEffect DWORD：DROPEFFECT_MOVE(2) 置位即为剪切。
+func parseDropEffect(b []byte) bool {
+	if len(b) < 4 {
+		return false
+	}
+	effect := uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
+	return effect&2 != 0
+}
+
 func openClipboardRetry() error {
 	var last error
 	for i := 0; i < 8; i++ {
