@@ -1026,7 +1026,7 @@ func (a *App) attachDiscoveredSessions(sessions []providers.Session, prevIDs map
 
 // backfillHubSessionID 在扫描把磁盘会话绑定到新建聊天后，回填 hub 历史消息的
 // SessionID 快照：新建会话落盘欢迎词时还没有磁盘 ID，若不回填，会话关闭或
-// 重启后 AgentHub 的「继续 / 换个说法」只能靠标题猜测（新建占位标题与磁盘
+// 重启后 AgentHub 的「继续 / 引用」只能靠标题猜测（新建占位标题与磁盘
 // summary 不一致，必然失败），无法精确 resume 原会话。
 func (a *App) backfillHubSessionID(m *chat.Manager, sessionID string) {
 	store := a.snapshot().HubStore

@@ -13,7 +13,6 @@ import {
   loadLastCreate,
   loadPerToolLastModel,
   loadToolModelOptions,
-  rememberPerToolLastModel,
   saveDefaultCreate,
   saveLastCreate,
   saveToolModels,
@@ -1394,7 +1393,11 @@ describe('AgentHubPanel', () => {
       { id: 'default', name: 'Default (recommended)' },
       { id: 'glm-5.3-flash', name: 'glm-5.3-flash' },
     ]);
-    rememberPerToolLastModel('claude', 'default');
+    // 直接造旧版本遗留的原始存储（rememberPerToolLastModel 现在会删除，无法模拟）
+    localStorage.setItem(
+      'kshell.agenthub.perToolLastModel',
+      JSON.stringify({ claude: { modelId: 'default' } }),
+    );
     saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'default' });
     useAppStore.setState({ workspaces: [workspaceA] });
     render(<AgentHubPanel />);

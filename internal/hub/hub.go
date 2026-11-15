@@ -269,7 +269,7 @@ func (s *Store) ClearQueuedByChat(chatID string) {
 
 // BackfillSessionID 给指定会话中尚未绑定磁盘会话的消息补上 SessionID 快照。
 // 新建会话（KindNew）落盘欢迎词时还没有磁盘会话 ID，扫描把磁盘会话绑定到
-// 运行中的聊天后由 desktop 层调用回填；前端「继续 / 换个说法」在会话关闭或
+// 运行中的聊天后由 desktop 层调用回填；前端「继续 / 引用」在会话关闭或
 // 重启后靠该快照精确 resume。只改 ChatID 匹配且 SessionID 为空的消息，
 // 已有快照不覆盖（避免旧会话串号）；返回更新条数。
 func (s *Store) BackfillSessionID(chatID, sessionID string) int {

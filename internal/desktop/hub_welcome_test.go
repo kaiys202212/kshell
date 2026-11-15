@@ -150,7 +150,7 @@ func TestOpenSessionACPEmitChatMeta(t *testing.T) {
 }
 
 // 扫描把磁盘会话绑定到新建聊天后，欢迎词的 SessionID 快照要同步回填：
-// 会话关闭/重启后「继续/换个说法」靠它精确 resume。
+// 会话关闭/重启后「继续/引用」靠它精确 resume。
 func TestAttachBackfillsHubSessionID(t *testing.T) {
 	app, store, rec := newWelcomeTestApp(t)
 

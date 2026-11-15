@@ -957,7 +957,7 @@ func TestManagerOpenNewKeepsInfoSessionIDEmpty(t *testing.T) {
 }
 
 // Cursor ACP 的 session/new ID 即 acp-sessions 目录名：新建时立刻写入 Info.SessionID，
-// 欢迎词与后续 hub 消息才能带快照，关闭页签后「换个说法」才能精确 resume。
+// 欢迎词与后续 hub 消息才能带快照，关闭页签后「继续/引用」才能精确 resume。
 func TestManagerOpenNewCursorBindsACPSessionID(t *testing.T) {
 	m, b, _ := newTestManager(t)
 	b.conn.newStart.SessionID = "2ce99fcb-7257-4521-bb55-8b9b1a86f48b"
@@ -972,7 +972,7 @@ func TestManagerOpenNewCursorBindsACPSessionID(t *testing.T) {
 
 // CodeBuddy 与 Cursor 同理：--acp 的 session/new 返回 ID 即磁盘会话 ID
 //（~/.codebuddy/projects/<工作区>/<id>.jsonl，CLI 源码 + 本机实测），
-// 新建握手后立刻写入 Info.SessionID，欢迎/hub 快照与「换个说法」resume
+// 新建握手后立刻写入 Info.SessionID，欢迎/hub 快照与「继续/引用」resume
 // 才有真实归属，也避免扫描期把会话抢绑给同工作区更早打开的无主聊天。
 func TestManagerOpenNewCodeBuddyBindsACPSessionID(t *testing.T) {
 	m, b, _ := newTestManager(t)

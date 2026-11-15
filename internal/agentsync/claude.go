@@ -205,6 +205,8 @@ func claudeSlotModels(in SyncInput) []string {
 
 // writeModelEnv 按 ToolSync.Claude 的 4 个槽位写入模型 env 键：槽位非空才写，
 // 全空 = 只清不写（模型键已在 Sync 开头统一删除）。
+// "default" 是 ACP 的「让 agent 自选」占位值，经环境变量进入 CLI 不会被解析成
+// 具体模型，会字面发往 API（网关 400）；与 providers.Claude.SettingsEnv 同规则跳过。
 func writeModelEnv(env map[string]any, in SyncInput) {
 	slots := [][2]string{
 		{"ANTHROPIC_MODEL", in.ToolSync.Claude.Model},
@@ -213,9 +215,11 @@ func writeModelEnv(env map[string]any, in SyncInput) {
 		{"ANTHROPIC_DEFAULT_HAIKU_MODEL", in.ToolSync.Claude.Haiku},
 	}
 	for _, s := range slots {
-		if v := strings.TrimSpace(s[1]); v != "" {
-			env[s[0]] = v
+		v := strings.TrimSpace(s[1])
+		if v == "" || strings.EqualFold(v, "default") {
+			continue
 		}
+		env[s[0]] = v
 	}
 }
 

@@ -36,7 +36,7 @@ export function terminalActive(
 
 // isHubWelcome 判定合成欢迎词 wire key：与 Go hub.recent / 微信镜像跳过口径一致
 //（精确 hub.welcome 或 hub.welcome|<工具名>）。欢迎词不是一轮任务完成，
-// AgentHub 不得显示 Continue / Explain differently（点了常发往已退出会话报错）。
+// AgentHub 不得显示 Continue / Quote（点了常发往已退出会话报错）。
 export function isHubWelcome(text: string | undefined): boolean {
   if (!text) return false;
   return text === 'hub.welcome' || text.startsWith('hub.welcome|');

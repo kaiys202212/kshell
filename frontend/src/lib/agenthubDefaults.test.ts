@@ -255,9 +255,15 @@ describe('agenthubDefaults', () => {
     });
 
     it('claude 的历史 default 一律过滤，按优先级继续回落', () => {
+      // 直接造旧版本遗留的原始存储：rememberPerToolLastModel 现在会删除，
+      // 不能用来模拟「历史遗留 default」。
+      localStorage.setItem(
+        'kshell.agenthub.perToolLastModel',
+        JSON.stringify({ claude: { modelId: 'default' } }),
+      );
       saveDefaultCreate({ toolId: 'claude', modelId: 'default' });
       saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'default' });
-      // 显式默认设置是 default → 跳过；按工具记忆无 → 跳过；lastCreate 也是 → null
+      // 显式默认设置是 default → 跳过；按工具记忆也是 → 跳过；lastCreate 也是 → null
       expect(lastModelForCreate(loadDefaultCreate()?.modelId, 'claude')).toBeNull();
       expect(lastModelForCreate(null, 'claude')).toBeNull();
     });

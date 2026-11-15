@@ -110,17 +110,26 @@ export function loadPerToolLastModel(toolId: string): { modelId: string } | null
   return { modelId: v.modelId };
 }
 
+// forgetPerToolLastModel 删除某工具的上次模型记忆（无条目时不写盘）。
+// claude 选「默认模型」时用：语义是回落默认，不能留着旧的具体模型继续预填。
+export function forgetPerToolLastModel(toolId: string): void {
+  if (!toolId) return;
+  const map = readPerToolMap();
+  if (!(toolId in map)) return;
+  delete map[toolId];
+  writeJSON(PER_TOOL_LAST_KEY, map);
+}
+
 // rememberPerToolLastModel 按工具记录上次模型（跨工具独立，不互相覆盖）。
 // claude 的 default 是伪模型：语义为「回落默认」，删除该工具的记忆而不是
 // 记下这个字符串。
 export function rememberPerToolLastModel(toolId: string, modelId: string): void {
   if (!toolId || !modelId) return;
-  const map = readPerToolMap();
   if (isClaudeDefaultModel(toolId, modelId)) {
-    delete map[toolId];
-    writeJSON(PER_TOOL_LAST_KEY, map);
+    forgetPerToolLastModel(toolId);
     return;
   }
+  const map = readPerToolMap();
   map[toolId] = { modelId };
   writeJSON(PER_TOOL_LAST_KEY, map);
 }
