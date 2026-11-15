@@ -49,13 +49,16 @@ type Session struct {
 
 // Message 是工具层可见的一条会话消息（来自 hub store，已滤噪）。
 type Message struct {
-	ID        int64  `json:"id"` // hub 消息 ID（Recall 用）
-	SessionID string `json:"sessionId,omitempty"`
-	Kind      string `json:"kind,omitempty"` // user | agent
-	Text      string `json:"text,omitempty"`
-	Event     string `json:"event,omitempty"` // agent 消息的事件语义（Stop/Notification/error...）
-	Status    string `json:"status,omitempty"`
-	Ts        int64  `json:"ts,omitempty"`
+	ID           int64  `json:"id"` // hub 消息 ID（Recall 用）
+	SessionID    string `json:"sessionId,omitempty"`
+	Kind         string `json:"kind,omitempty"` // user | agent
+	Text         string `json:"text,omitempty"`
+	Event        string `json:"event,omitempty"` // agent 消息的事件语义（Stop/Notification/error...）
+	Status       string `json:"status,omitempty"`
+	Ts           int64  `json:"ts,omitempty"`
+	Tool         string `json:"tool,omitempty"`         // 归属工具 ID（AgentHub 归因用）
+	SessionTitle string `json:"sessionTitle,omitempty"` // 会话标题快照（AgentHub 归因用）
+	ViaHub       bool   `json:"viaHub,omitempty"`       // 管理者代发标记
 }
 
 // ModelOption 是会话可切换的一个模型。

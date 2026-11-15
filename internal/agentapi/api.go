@@ -19,6 +19,9 @@ type Backend interface {
 	ArchivedIDs() []string
 	// SessionMessages 返回指定活跃 chat 的全部可见消息（时间正序，已滤噪）。
 	SessionMessages(chatID string) []Message
+	// RecentHubMessages 返回 AgentHub 最近 n 条可见消息（时间正序，已滤噪），
+	// 供管理者循环注入投递语境。
+	RecentHubMessages(n int) []Message
 	// Send 向活跃 chat 发送一轮用户输入。
 	Send(chatID, text string) error
 	// Stop 中断指定 chat 当前轮次。

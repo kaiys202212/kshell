@@ -3,6 +3,7 @@ package agentapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -523,5 +524,115 @@ func TestRunLoopContinuationChannelGuard(t *testing.T) {
 	}
 	if !strings.Contains(sc.sysSeen[1], "续轮语境") {
 		t.Fatalf("同渠道显式续轮应注入语境: %q", sc.sysSeen[1])
+	}
+}
+
+// 最近 AgentHub 消息注入：标签归因、旧→新顺序、本轮 input 回显去重。
+func TestManagerSystemInjectsRecentHubMessages(t *testing.T) {
+	api, f := newLoopAPI(t)
+	f.recent = []Message{
+		{ID: 1, Kind: "user", SessionID: "chat-a", SessionTitle: "修复登录", Text: "继续修一下"},
+		{ID: 2, Kind: "agent", SessionID: "chat-a", SessionTitle: "修复登录", Text: "改完了，要合并吗？"},
+		{ID: 3, Kind: "user", SessionID: "chat-b", SessionTitle: "文档", Text: "补 README", ViaHub: true},
+		{ID: 4, Kind: "agent", Event: "hub_manager_reply", Text: "已投递到「修复登录」"},
+		{ID: 5, Kind: "user", Text: "继续刚才那个"}, // 本轮 input 的回显
+	}
+	sc := &scriptChat{resps: []hubtools.Response{{Text: "好的"}}}
+	chatToolsHook = sc.hook
+	if _, err := api.Run(context.Background(), "继续刚才那个", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	sys := sc.sysSeen[0]
+	for _, want := range []string{
+		"【最近 AgentHub 消息】",
+		"用户→「修复登录」",
+		"管理者代发→「文档」",
+		"不要再调用 session_messages 或 search_memory",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Fatalf("system 缺少 %q:\n%s", want, sys)
+		}
+	}
+	if strings.Contains(sys, "继续刚才那个") {
+		t.Fatalf("本轮 input 回显应从最近消息段丢弃:\n%s", sys)
+	}
+	// 旧→新：第一条用户消息在会话回复之前。
+	if strings.Index(sys, "继续修一下") > strings.Index(sys, "改完了") {
+		t.Fatalf("最近消息应按时间正序:\n%s", sys)
+	}
+}
+
+// 最近消息单条截断、空正文跳过、无历史不出段。
+func TestRecentHubContextTruncateAndEmpty(t *testing.T) {
+	long := strings.Repeat("长", 300)
+	api, f := newLoopAPI(t)
+	f.recent = []Message{
+		{ID: 1, Kind: "user", Text: long},
+		{ID: 2, Kind: "agent", Text: "   "},
+	}
+	sec := api.recentContextSection("新输入")
+	if !strings.Contains(sec, "…") {
+		t.Fatalf("超长正文应截断并带省略号: %q", sec)
+	}
+	if strings.Contains(sec, long) {
+		t.Fatal("超长正文不应整段注入")
+	}
+	if strings.Contains(sec, "[会话]") {
+		t.Fatalf("空正文消息应跳过: %q", sec)
+	}
+
+	f.recent = nil
+	if got := api.recentContextSection("新输入"); got != "" {
+		t.Fatalf("无历史不应输出段: %q", got)
+	}
+}
+
+// 可见历史超过条数上限时只渲染最后 6 条（多取的一条仅用于回显去重）。
+func TestRecentHubContextKeepsLastSix(t *testing.T) {
+	api, f := newLoopAPI(t)
+	for i := 1; i <= 8; i++ {
+		f.recent = append(f.recent, Message{ID: int64(i), Kind: "user", Text: fmt.Sprintf("消息%d", i)})
+	}
+	sec := api.recentContextSection("新输入")
+	if strings.Contains(sec, "消息2") || !strings.Contains(sec, "消息3") || !strings.Contains(sec, "消息8") {
+		t.Fatalf("应只保留最后 6 条（消息3..8）:\n%s", sec)
+	}
+	if !strings.Contains(sec, "6. [用户] 消息8") {
+		t.Fatalf("编号应按 1..6 重新连续:\n%s", sec)
+	}
+}
+
+// 末尾代发消息即使文本等于本轮 input 也必须保留（只有非代发的用户回显才丢）。
+func TestRecentHubContextKeepsViaHubEcho(t *testing.T) {
+	api, f := newLoopAPI(t)
+	f.recent = []Message{{Kind: "user", ViaHub: true, SessionTitle: "甲", Text: "继续"}}
+	sec := api.recentContextSection("继续")
+	if !strings.Contains(sec, "管理者代发→「甲」") || !strings.Contains(sec, "继续") {
+		t.Fatalf("代发消息不应被回显去重误删:\n%s", sec)
+	}
+}
+
+// 全部空正文消息：段整体不输出。
+func TestRecentHubContextAllBlank(t *testing.T) {
+	api, f := newLoopAPI(t)
+	f.recent = []Message{{Kind: "user", Text: " "}, {Kind: "agent", Text: "\n"}}
+	if got := api.recentContextSection("x"); got != "" {
+		t.Fatalf("全空正文不应输出段: %q", got)
+	}
+}
+
+// hub 与 wechat 两个渠道都注入同一份最近消息语境。
+func TestManagerSystemRecentContextBothChannels(t *testing.T) {
+	api, f := newLoopAPI(t)
+	f.recent = []Message{{ID: 1, Kind: "user", Text: "上一条"}}
+	sc := &scriptChat{resps: []hubtools.Response{{Text: "结论"}, {Text: "结论"}}}
+	chatToolsHook = sc.hook
+	for i, ch := range []string{"hub", "wechat"} {
+		if _, err := api.Run(context.Background(), "下一条", RunOpts{Channel: ch}); err != nil {
+			t.Fatalf("%s Run: %v", ch, err)
+		}
+		if !strings.Contains(sc.sysSeen[i], "【最近 AgentHub 消息】") {
+			t.Fatalf("%s 渠道应注入最近消息段:\n%s", ch, sc.sysSeen[i])
+		}
 	}
 }
