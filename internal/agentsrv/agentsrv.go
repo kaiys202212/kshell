@@ -123,13 +123,11 @@ func (s *Server) auth(next http.Handler) http.Handler {
 // mux 构建全部路由。路径带会话 id，手工解析（数量少，不引第三方路由）。
 func (s *Server) mux(api *agentapi.API) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/sessions/search", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, nonNil(api.Search(r.URL.Query().Get("q"))))
+	})
 	mux.HandleFunc("/api/v1/sessions", func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Query().Get("q") != "" || r.URL.Path == "/api/v1/sessions/search":
-			writeJSON(w, nonNil(api.Search(r.URL.Query().Get("q"))))
-		default:
-			s.handleList(w, r, api)
-		}
+		s.handleList(w, r, api)
 	})
 	mux.HandleFunc("/api/v1/sessions/", func(w http.ResponseWriter, r *http.Request) {
 		s.handleSession(w, r, api)
