@@ -97,6 +97,19 @@ func (c *Client) do(method, path string, body any, out any) error {
 	return nil
 }
 
+// sentinelErr 让错误同时满足 errors.Is(agentapi 哨兵) 与 errors.As(*APIError)；
+// 显示文本只取服务端干净消息——服务端消息本身已含哨兵语义（如「会话不存在: <id>」），
+// 再叠加哨兵 Error() 会输出「agentapi: 会话不存在: agentapi: 会话不存在: …」双层前缀。
+type sentinelErr struct {
+	sentinel error
+	apiErr   *APIError
+}
+
+func (e *sentinelErr) Error() string { return e.apiErr.Message }
+
+// Unwrap 返回两个分支：errors.Is 走哨兵，errors.As 走 APIError。
+func (e *sentinelErr) Unwrap() []error { return []error{e.sentinel, e.apiErr} }
+
 func decodeAPIError(status int, data []byte) error {
 	var wrap struct {
 		Error struct {
@@ -113,9 +126,9 @@ func decodeAPIError(status int, data []byte) error {
 	apiErr := &APIError{Status: status, Code: code, Message: msg}
 	switch code {
 	case "not_found":
-		return fmt.Errorf("%w: %s", agentapi.ErrNotFound, msg)
+		return &sentinelErr{sentinel: agentapi.ErrNotFound, apiErr: apiErr}
 	case "llm_not_ready":
-		return fmt.Errorf("%w: %s", agentapi.ErrLLMNotReady, msg)
+		return &sentinelErr{sentinel: agentapi.ErrLLMNotReady, apiErr: apiErr}
 	}
 	return apiErr
 }

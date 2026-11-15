@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,9 +72,17 @@ func TestClientMessagesLastFull(t *testing.T) {
 	if err != nil || m.Text != "回复" {
 		t.Fatalf("LastFullOutput: %+v err=%v", m, err)
 	}
-	// 磁盘会话无 agent 回复 → ErrNotFound 哨兵穿透到客户端。
+	// 磁盘会话无 agent 回复 → ErrNotFound 哨兵穿透到客户端，且显示文本干净
+	//（无双层前缀，服务端 message 剥掉 agentapi: 前缀）。
 	if _, err = c.LastFullOutput("sess-c"); !errors.Is(err, agentapi.ErrNotFound) {
 		t.Fatalf("期望 ErrNotFound: %v", err)
+	}
+	var apiErr *agentcli.APIError
+	if !errors.As(err, &apiErr) || !strings.Contains(apiErr.Message, "会话无 agent 回复") {
+		t.Fatalf("期望 APIError 携带干净消息: %+v", apiErr)
+	}
+	if strings.Contains(err.Error(), "agentapi:") {
+		t.Fatalf("显示文本不应含哨兵前缀: %q", err.Error())
 	}
 }
 

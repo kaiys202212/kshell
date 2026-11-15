@@ -377,13 +377,15 @@ type errBody struct {
 	Message string `json:"message"`
 }
 
-// writeAPIErr 把 agentapi 哨兵错误映射为 HTTP 状态码与错误码。
+// writeAPIErr 把 agentapi 哨兵错误映射为 HTTP 状态码与错误码。message 剥掉
+// "agentapi: " 前缀：客户端会把哨兵语义包回来，不剥会出现双层前缀。
 func writeAPIErr(w http.ResponseWriter, err error) {
+	msg := strings.TrimPrefix(err.Error(), "agentapi: ")
 	switch {
 	case errors.Is(err, agentapi.ErrNotFound):
-		writeErr(w, http.StatusNotFound, "not_found", err.Error())
+		writeErr(w, http.StatusNotFound, "not_found", msg)
 	case errors.Is(err, agentapi.ErrLLMNotReady):
-		writeErr(w, http.StatusServiceUnavailable, "llm_not_ready", err.Error())
+		writeErr(w, http.StatusServiceUnavailable, "llm_not_ready", msg)
 	default:
 		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 	}
