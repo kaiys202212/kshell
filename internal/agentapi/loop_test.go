@@ -50,6 +50,34 @@ func newLoopAPI(t *testing.T) (*API, *fakeBackend) {
 // backend 取桩（测试白盒便捷访问）。
 func (a *API) backend() *fakeBackend { return a.b.(*fakeBackend) }
 
+// 转述上限：会话消息正文 2000 rune 内完整呈现（原 200 截断会把模块回复掐头）；
+// 摘要从 SessionMessages 末条直取、300 rune 内完整（不再用 60 rune 的预算摘要）。
+func TestRenderMessagesTailKeepsLongText(t *testing.T) {
+	long := strings.Repeat("长", 1500)
+	msgs := []Message{{Kind: "agent", Text: long}}
+	out := renderMessagesTail(msgs, 5)
+	if !strings.Contains(out, "长长长长长长长长") || len([]rune(out)) < 1500 {
+		t.Fatalf("1500 rune 正文不应被截断: len=%d", len([]rune(out)))
+	}
+	huge := strings.Repeat("超", 3000)
+	trimmed := renderMessagesTail([]Message{{Kind: "agent", Text: huge}}, 5)
+	if len([]rune(trimmed)) > 2010 {
+		t.Fatalf("超过 2000 rune 仍应截断到上限附近: len=%d", len([]rune(trimmed)))
+	}
+}
+
+func TestLastSummaryPrefersSessionMessages(t *testing.T) {
+	long := strings.Repeat("回", 250)
+	api := New(&fakeBackend{
+		active: []Session{{ID: "c1", Tool: "claude", Title: "甲", Status: StatusIdle, Summary: "60字预算摘要"}},
+		msgs:   map[string][]Message{"c1": {{Kind: "agent", Text: long}}},
+	})
+	got := api.lastSummary(api.backend().active[0])
+	if len([]rune(got)) < 250 || !strings.HasPrefix(got, "回回回") {
+		t.Fatalf("lastSummary 应取 SessionMessages 末条全文: len=%d head=%q", len([]rune(got)), got[:min(20, len([]rune(got)))])
+	}
+}
+
 // 测试 1：多步工具调用——list_sessions → send → 结论。
 func TestRunLoopMultiStep(t *testing.T) {
 	api, f := newLoopAPI(t)

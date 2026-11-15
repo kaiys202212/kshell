@@ -493,6 +493,8 @@ func dedupeStrings(in []string) []string {
 }
 
 // renderMessagesTail 渲染会话消息的尾部 n 条（保持时间正序）。
+// 单条正文上限 2000 rune：模块回复要完整转述进 hub（200 rune 曾把回复掐成
+// 半截），2000 兼顾模型上下文预算。
 func renderMessagesTail(msgs []Message, n int) string {
 	if n <= 0 {
 		n = 5
@@ -502,25 +504,23 @@ func renderMessagesTail(msgs []Message, n int) string {
 	}
 	var b strings.Builder
 	for i, m := range msgs {
-		fmt.Fprintf(&b, "%d. [%s] %s\n", i+1, m.Kind, oneLineText(m.Text, 200))
+		fmt.Fprintf(&b, "%d. [%s] %s\n", i+1, m.Kind, oneLineText(m.Text, 2000))
 	}
 	return b.String()
 }
 
-// lastSummary 取会话最后一条可见消息的单行摘要：优先后端预算的 Summary，
-// 缺失时从 SessionMessages 现算。
+// lastSummary 取会话最后一条可见消息的单行摘要：优先从 SessionMessages 末条
+// 直取（300 rune，模块近况要可读），无消息时回退后端预算的 Summary（60 rune）。
 func (a *API) lastSummary(s Session) string {
+	if s.ID != "" {
+		if msgs := a.b.SessionMessages(s.ID); len(msgs) > 0 {
+			return oneLineText(msgs[len(msgs)-1].Text, 300)
+		}
+	}
 	if s.Summary != "" {
-		return oneLineText(s.Summary, 80)
+		return oneLineText(s.Summary, 300)
 	}
-	if s.ID == "" {
-		return ""
-	}
-	msgs := a.b.SessionMessages(s.ID)
-	if len(msgs) == 0 {
-		return ""
-	}
-	return oneLineText(msgs[len(msgs)-1].Text, 80)
+	return ""
 }
 
 // waitingUser 判断会话是否在等用户：perm 状态，或最后一条 agent 可见消息
