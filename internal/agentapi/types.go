@@ -35,57 +35,60 @@ const (
 // Session 是工具层可见的一个会话。ID 是活跃 chat 的链头 ID（未激活为空）；
 // SessionID 是磁盘会话 ID。两者都可能作为寻址键（resolve 归一）。
 type Session struct {
-	ID             string
-	SessionID      string
-	Tool           string
-	ToolName       string
-	Title          string
-	Workspace      string
-	Status         Status
-	TerminalActive bool // 以终端模式运行（不可投递）
-	LastTs         int64
-	Summary        string // 最后一条 agent 可见消息的单行截断
+	ID             string `json:"id"`
+	SessionID      string `json:"sessionId,omitempty"`
+	Tool           string `json:"tool,omitempty"`
+	ToolName       string `json:"toolName,omitempty"`
+	Title          string `json:"title,omitempty"`
+	Workspace      string `json:"workspace,omitempty"`
+	Status         Status `json:"status"`
+	TerminalActive bool   `json:"terminalActive,omitempty"`
+	LastTs         int64  `json:"lastTs,omitempty"`
+	Summary        string `json:"summary,omitempty"` // 最后一条 agent 可见消息的单行截断
 }
 
 // Message 是工具层可见的一条会话消息（来自 hub store，已滤噪）。
 type Message struct {
-	ID        int64  // hub 消息 ID（Recall 用）
-	SessionID string // 会话锚：活跃 chat 链头 ID（无归因时为空）
-	Kind      string // user | agent
-	Text      string
-	Event     string // agent 消息的事件语义（Stop/Notification/error...）
-	Status    string // 用户消息投递状态（queued/recalled）
-	Ts        int64
+	ID        int64  `json:"id"` // hub 消息 ID（Recall 用）
+	SessionID string `json:"sessionId,omitempty"`
+	Kind      string `json:"kind,omitempty"` // user | agent
+	Text      string `json:"text,omitempty"`
+	Event     string `json:"event,omitempty"` // agent 消息的事件语义（Stop/Notification/error...）
+	Status    string `json:"status,omitempty"`
+	Ts        int64  `json:"ts,omitempty"`
 }
 
 // ModelOption 是会话可切换的一个模型。
 type ModelOption struct {
-	ID   string
-	Name string
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
 }
 
 // Option 是通用选项（工具/工作区候选）。
 type Option struct {
-	ID    string
-	Label string
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
 }
 
 // Permission 是一条待处理的权限请求。
 type Permission struct {
-	ChatID    string
-	RequestID string
-	Title     string
-	Ts        int64
+	ChatID    string `json:"chatId"`
+	RequestID string `json:"requestId"`
+	Title     string `json:"title,omitempty"`
+	Ts        int64  `json:"ts,omitempty"`
 }
 
 // Event 是 Watch 订阅到的一帧会话事件。
 type Event struct {
-	SessionID string // chat 链头 ID
-	Kind      string // update | permission | exit
-	Type      string // Kind=update 时的更新类型（assistant/turn_done/error...）
-	Text      string
-	Ts        int64
+	SessionID string `json:"sessionId"`
+	Kind      string `json:"kind"` // update | permission | exit | open
+	Type      string `json:"type,omitempty"`
+	Text      string `json:"text,omitempty"`
+	Ts        int64  `json:"ts,omitempty"`
 }
+
+// EventOpen 是服务端流建立后立即推送的握手帧（客户端据此拿到响应头）。
+const EventOpen = "open"
 
 // Event Kind 取值。
 const (

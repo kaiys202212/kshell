@@ -39,6 +39,29 @@ func TestControlWrappers(t *testing.T) {
 	if err := api.Stop("nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("未知会话 Stop 期望 ErrNotFound: %v", err)
 	}
+	// 未激活磁盘会话：操控类原语拒绝（须先 Open），不会以空 chatID 透传。
+	f.sent = nil // 清掉前面合法调用的记录，断言守卫不产生新的 Send
+	if err := api.Send("sess-c", "x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("未激活会话 Send 期望 ErrNotFound: %v", err)
+	}
+	if err := api.Stop("sess-c"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("未激活会话 Stop 期望 ErrNotFound: %v", err)
+	}
+	if n := len(f.sent); n != 0 {
+		t.Fatalf("未激活会话不应产生 Send 调用: %v", f.sent)
+	}
+	// Watch/PendingPermissions 对未激活会话返回空，不订阅空键。
+	if ch, cancel := api.Watch("sess-c", 8); cancel != nil {
+		cancel()
+		if _, ok := <-ch; ok {
+			t.Fatal("未激活会话 Watch 通道应关闭")
+		}
+	} else {
+		t.Fatal("Watch 应返回 cancel 函数")
+	}
+	if n := len(api.PendingPermissions("sess-c")); n != 0 {
+		t.Fatalf("未激活会话 pending 应为空: %d", n)
+	}
 }
 
 func TestWatch(t *testing.T) {

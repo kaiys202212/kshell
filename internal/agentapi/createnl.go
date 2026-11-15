@@ -19,19 +19,19 @@ type NLCreate struct {
 // ToolOptions/WorkspaceOptions 仅在 NeedsConfirm 时填充（多候选让调用方
 // 展示给用户挑选）。
 type CreatePlan struct {
-	ToolID           string
-	Workspace        string
-	Model            string
-	Task             string // 创建成功后投给新会话的首条任务（可空）
-	Question         string // NeedsConfirm 时给调用方的反问
-	ToolOptions      []Option
-	WorkspaceOptions []Option
+	ToolID           string   `json:"toolId,omitempty"`
+	Workspace        string   `json:"workspace,omitempty"`
+	Model            string   `json:"model,omitempty"`
+	Task             string   `json:"task,omitempty"`    // 创建成功后投给新会话的首条任务（可空）
+	Question         string   `json:"question,omitempty"` // NeedsConfirm 时给调用方的反问
+	ToolOptions      []Option `json:"toolOptions,omitempty"`
+	WorkspaceOptions []Option `json:"workspaceOptions,omitempty"`
 }
 
 // CreateResult 是自然语言创建的结果：要么已创建，要么需要调用方跟用户确认。
 type CreateResult struct {
-	Created      *Session
-	NeedsConfirm *CreatePlan
+	Created      *Session    `json:"created,omitempty"`
+	NeedsConfirm *CreatePlan `json:"needsConfirm,omitempty"`
 }
 
 // CreateNL 根据自然语言创建会话：LLM 解析出工具/工作区/模型/首个任务，
