@@ -405,7 +405,9 @@ func TestWeixinManagerRouter(t *testing.T) {
 		if !gotOpts.Continuation {
 			t.Fatal("AskPending 语境下的短输入应传 Continuation=true")
 		}
-		// 再次 ask 后长输入：新需求，不传标志（agentapi 内部清 pending）。
+		// 第三条（10 rune 短输入）走一次普通循环：此时续轮标记已随上一轮非
+		// ask 结果刷新为 false，本条按新输入处理；第四条才是被断言的长输入
+		// ——同样不传 Continuation（标记为 false，agentapi 内部清 pending）。
 		first = true
 		mgr(context.Background(), "重新帮我修复登录问题")
 		mgr(context.Background(), "这是一个远超二十个字的长输入需要按新需求处理")
@@ -458,7 +460,7 @@ func TestWeixinManagerRouter(t *testing.T) {
 			t.Fatalf("单轮应最多推送一次, 实际 %d 次 (%v)", len(pushes), pushes)
 		}
 		if pushes[0] != 1 {
-			t.Fatalf("推送步数 = %d, 期望触发时刻的最新步数 1", pushes[0])
+			t.Fatalf("推送轮次 = %d, 期望触发时刻的最新轮次 1", pushes[0])
 		}
 		// 下一轮：pushed 重置，仍只推一次。
 		mgr(context.Background(), "第二轮")
