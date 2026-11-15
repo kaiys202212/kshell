@@ -4,7 +4,8 @@
     "hostsync": {
       "stale_copy": "Found another kshell copy on PATH (may take precedence): {{0}}",
       "unknown_host": "Unknown host: {{0}}",
-      "skill_write": "Failed to write skill: {{0}}"
+      "skill_write": "Failed to write skill: {{0}}",
+      "guide_write": "Failed to write install guide: {{0}}"
     },
     "requirements": {
       "project_required": "Please select a project",
@@ -521,11 +522,11 @@
       },
       "hostsync": {
         "title": "Agent host sync",
-        "desc": "One-click setup for agent hosts: release the kshell agent CLI, keep it on PATH, and install the kshell skill so host agents can manage kshell sessions directly.",
-        "sync": "Sync",
+        "desc": "Release the kshell agent CLI, configure PATH and install the kshell skill for WorkBuddy, so agents inside WorkBuddy can manage kshell sessions directly.",
+        "workbuddy": "WorkBuddy",
+        "sync": "Sync to WorkBuddy",
         "syncing": "Syncing…",
-        "all": "Sync all",
-        "done": "Synced",
+        "done": "Synced to WorkBuddy",
         "cli": "CLI",
         "path": "PATH",
         "state_released": "Released",
@@ -539,7 +540,13 @@
         "state_skipped": "Skipped",
         "state_missing": "Not on PATH",
         "state_error": "Failed",
-        "restart_note": "PATH changes apply to newly opened terminals/sessions only."
+        "restart_note": "PATH changes apply to newly opened terminals/sessions only.",
+        "selfhelp_title": "Self-install for other hosts",
+        "selfhelp_desc": "One-click sync is WorkBuddy-only. For other hosts (Claude Code / Cursor etc.), paste the text below to the AI inside that host — it will read the install guide kshell generated and set itself up.",
+        "selfhelp_instruction": "Please read ~/.kshell/host-install.md and follow its steps to install the kshell skill into your own skills directory. Strictly obey its Safety boundary section: only write to your own skills/kshell/ subdirectory and touch nothing else.",
+        "copy": "Copy instruction",
+        "copied": "Copied",
+        "copy_failed": "Copy failed; please select and copy the text manually"
       },
       "tools": {
         "title": "Tool detection",

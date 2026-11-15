@@ -4,7 +4,8 @@
     "hostsync": {
       "stale_copy": "PATH 中发现其它 kshell 副本（可能抢先命中）: {{0}}",
       "unknown_host": "未知宿主: {{0}}",
-      "skill_write": "技能写入失败: {{0}}"
+      "skill_write": "技能写入失败: {{0}}",
+      "guide_write": "安装说明书写入失败: {{0}}"
     },
     "requirements": {
       "project_required": "请选择项目",
@@ -521,11 +522,11 @@
       },
       "hostsync": {
         "title": "Agent 宿主同步",
-        "desc": "一键为 agent 宿主安装 kshell agent CLI 与使用技能：释放命令行、配置 PATH，让宿主的 agent 直接管理 kshell 会话。",
-        "sync": "同步",
+        "desc": "为 WorkBuddy 释放 kshell agent CLI、配置 PATH 并安装使用技能，让 WorkBuddy 中的 agent 直接管理 kshell 会话。",
+        "workbuddy": "WorkBuddy",
+        "sync": "同步到 WorkBuddy",
         "syncing": "同步中…",
-        "all": "全部同步",
-        "done": "已同步",
+        "done": "已同步到 WorkBuddy",
         "cli": "CLI",
         "path": "PATH",
         "state_released": "已释放",
@@ -539,7 +540,13 @@
         "state_skipped": "已跳过",
         "state_missing": "不在 PATH 上",
         "state_error": "失败",
-        "restart_note": "PATH 变更对新开的终端/会话生效。"
+        "restart_note": "PATH 变更对新开的终端/会话生效。",
+        "selfhelp_title": "其它平台自助安装",
+        "selfhelp_desc": "主动同步仅支持 WorkBuddy。其它平台（Claude Code / Cursor 等）：把下面这段话发给该平台里的 AI，它会阅读 kshell 生成的安装指引自助完成安装。",
+        "selfhelp_instruction": "请阅读 ~/.kshell/host-install.md，按其中步骤把 kshell 技能安装到你自己的技能目录。严格遵守文中 Safety boundary 一节：只允许写你自己的 skills/kshell/ 子目录，不得改动其它任何配置。",
+        "copy": "复制指令",
+        "copied": "已复制",
+        "copy_failed": "复制失败，请手动选择文本复制"
       },
       "tools": {
         "title": "工具检测",
