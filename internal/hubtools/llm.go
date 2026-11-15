@@ -24,7 +24,8 @@ type Message struct {
 	ToolCalls  []ToolCall // role=assistant 发起工具调用时携带
 }
 
-// ToolFunc 是提供给模型的工具定义（JSON Schema 形式）。命名避开关键字 tools。
+// ToolFunc 是提供给模型的工具定义。Parameters 必须是完整 JSON schema：
+// 无 omitempty，nil 会 wire 输出 null，严格网关可能拒收。命名避开关键字 tools。
 type ToolFunc struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
@@ -108,7 +109,11 @@ func toWireToolCalls(tcs []ToolCall) []wireToolCall {
 
 // fromWireToolCalls 把嵌套 wire 形状映射回扁平调用；不按 type 分支，
 // 非 function 条目（理论上不出现）自然退化为空名调用而非报错。
+// 空/nil 输入返回 nil 而非空切片，避免循环层用 != nil 判「有无调用」误判。
 func fromWireToolCalls(ws []wireToolCall) []ToolCall {
+	if len(ws) == 0 {
+		return nil
+	}
 	out := make([]ToolCall, len(ws))
 	for i, w := range ws {
 		out[i] = ToolCall{ID: w.ID, Name: w.Function.Name, Arguments: w.Function.Arguments}
