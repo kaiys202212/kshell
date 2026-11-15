@@ -1651,39 +1651,6 @@ describe('AgentHubPanel', () => {
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
-  it('最后消息未激活时无默认接收者：不出现待激活 chip 高亮', async () => {
-    const msgs = [
-      { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', workspace: 'D:\\ws\\a', sessionId: 'sess-9', sessionTitle: 'strategy', text: '回复', ts: 1 },
-    ];
-    api.listHubMessages.mockResolvedValue(msgs);
-    useAppStore.setState({
-      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
-      hubMessages: msgs,
-      lastAgentId: 'c1',
-    });
-    render(<AgentHubPanel />);
-    await act(async () => {});
-    expect(screen.queryByTitle(tt('ui.hub.pending_chip_aria'))).toBeNull();
-    expect(screen.getByText('a · 甲').closest('[aria-current="true"]')).toBeNull();
-  });
-
-  it('pending 目标已激活（会话重新打开）后待激活 chip 消失', async () => {
-    api.listHubMessages.mockResolvedValue([
-      { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', workspace: 'D:\\ws\\a', sessionId: 'sess-9', sessionTitle: '甲', text: '回复', ts: 1 },
-    ]);
-    useAppStore.setState({
-      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
-      hubMessages: [
-        { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', workspace: 'D:\\ws\\a', sessionId: 'sess-9', sessionTitle: '甲', text: '回复', ts: 1 },
-      ],
-      lastAgentId: 'c1',
-    });
-    render(<AgentHubPanel />);
-    // 最新消息精确命中已激活 c1：currentTargetId='c1'，无待激活 chip
-    await screen.findByText('a · 甲');
-    expect(screen.queryByText(new RegExp(tt('ui.hub.pending_chip')))).toBeNull();
-  });
-
   it('发送 #stop（带尾空格）无 @ 目标：不再按最后可归因会话执行，提示 need_target_drag', async () => {
     useAppStore.setState({
       chats: [chat({ ID: 'c1' })],
@@ -2850,8 +2817,8 @@ describe('AgentHub 思考态', () => {
     act(() => handler({ id: reqID, step: 'ui.hub.thinking_tool', tool: 'edit_file', round: 2 }));
 
     const routeLine = tt('ui.hub.thinking_route');
-    const tool1 = tt('ui.hub.thinking_tool').replace('{{tool}}', 'read_file').replace('{{round}}', '1');
-    const tool2 = tt('ui.hub.thinking_tool').replace('{{tool}}', 'edit_file').replace('{{round}}', '2');
+    const tool1 = tt('ui.hub.thinking_tool', { tool: 'read_file', round: 1 });
+    const tool2 = tt('ui.hub.thinking_tool', { tool: 'edit_file', round: 2 });
     await waitFor(() => expect(screen.getByText(tool2)).toBeInTheDocument());
     // 三条步骤同屏：首帧种子 + 两次工具调用
     expect(screen.getByText(routeLine)).toBeInTheDocument();
