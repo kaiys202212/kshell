@@ -58,13 +58,37 @@ export function saveLastCreate(v: LastAgentCreate): void {
   writeJSON(LAST_CREATE_KEY, v);
 }
 
+// isClaudeDefaultModel 判断是否为 Claude ACP 的「默认模型」占位 ID。
+// 只认 claude 的精确 "default"（trim + 大小写归一）：cursor 的 "default[]"
+// 等字面值不是它，其它工具可能真有同名模型，不拦。
+export function isClaudeDefaultModel(toolId: string, modelId: string | null | undefined): boolean {
+  return toolId === 'claude' && typeof modelId === 'string' && modelId.trim().toLowerCase() === 'default';
+}
+
+// normalizeCreateModel 把创建流程的显式模型归一：claude 的 default 等价于
+// 不显式指定（后端不得注入 ANTHROPIC_MODEL=default，否则网关 400）。
+// 其它工具原样返回；空值统一为 null。
+export function normalizeCreateModel(toolId: string, modelId: string | null | undefined): string | null {
+  if (!modelId) return null;
+  if (isClaudeDefaultModel(toolId, modelId)) return null;
+  return modelId;
+}
+
 // rememberLastModel 把一次成功的模型切换记为该工具的「上次模型」：
 // lastCreate 同工具时原地更新 modelId（保留 wsPath），否则以传入 wsPath/toolId
 // 新建记录；同时写入按工具的记忆（跨工具互不覆盖，见 loadPerToolLastModel）。
 // toolId/modelId 缺失直接忽略——无法定位工具，或语义是回落默认模型
 // （切回默认不应把「默认」当成一个被记住的模型）。失败静默（辅助功能）。
+// claude 的 default 伪模型同样按「回落默认」处理：清掉按工具记忆，
+// lastCreate 同工具时把 modelId 置 null，避免下次新建被预填成显式模型。
 export function rememberLastModel(toolId: string, wsPath: string, modelId: string): void {
   if (!toolId || !modelId) return;
+  if (isClaudeDefaultModel(toolId, modelId)) {
+    rememberPerToolLastModel(toolId, modelId);
+    const last = loadLastCreate();
+    if (last && last.toolId === toolId) saveLastCreate({ ...last, modelId: null });
+    return;
+  }
   rememberPerToolLastModel(toolId, modelId);
   const last = loadLastCreate();
   if (last && last.toolId === toolId) {
@@ -87,9 +111,16 @@ export function loadPerToolLastModel(toolId: string): { modelId: string } | null
 }
 
 // rememberPerToolLastModel 按工具记录上次模型（跨工具独立，不互相覆盖）。
+// claude 的 default 是伪模型：语义为「回落默认」，删除该工具的记忆而不是
+// 记下这个字符串。
 export function rememberPerToolLastModel(toolId: string, modelId: string): void {
   if (!toolId || !modelId) return;
   const map = readPerToolMap();
+  if (isClaudeDefaultModel(toolId, modelId)) {
+    delete map[toolId];
+    writeJSON(PER_TOOL_LAST_KEY, map);
+    return;
+  }
   map[toolId] = { modelId };
   writeJSON(PER_TOOL_LAST_KEY, map);
 }
@@ -97,15 +128,18 @@ export function rememberPerToolLastModel(toolId: string, modelId: string): void 
 // lastModelForCreate 新建会话的本次创建模型（应用口径统一）：
 // 显式默认设置优先；其次该工具记忆的上次模型；再次 lastCreate 同工具记录。
 // 依次缺失返回 null = 用工具默认模型（agent 自选，不自动切第一项）。
+// 历史遗留的 claude default 伪模型视为缺失，继续按优先级回落。
 export function lastModelForCreate(
   defaultsModelId: string | null | undefined,
   toolId: string,
 ): string | null {
-  if (defaultsModelId) return defaultsModelId;
+  if (defaultsModelId && !isClaudeDefaultModel(toolId, defaultsModelId)) return defaultsModelId;
   const per = loadPerToolLastModel(toolId)?.modelId;
-  if (per) return per;
+  if (per && !isClaudeDefaultModel(toolId, per)) return per;
   const last = loadLastCreate();
-  if (last && last.toolId === toolId && last.modelId) return last.modelId;
+  if (last && last.toolId === toolId && last.modelId && !isClaudeDefaultModel(toolId, last.modelId)) {
+    return last.modelId;
+  }
   return null;
 }
 

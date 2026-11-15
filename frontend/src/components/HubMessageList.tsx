@@ -27,15 +27,14 @@ function hubHeaderLine(m: HubMessage, attr: string): string {
   return [tool, attr, formatHubTime(m.ts)].filter(Boolean).join(' · ');
 }
 
-// 快捷操作区：继续（直发续做）/ 换个说法（保留式追加 @ 目标）/ 引用（草稿置为
-// 仅 @ 目标，就这条回复开新话题）。三者显示条件一致：ACP 可投递且非欢迎词。
+// 快捷操作区：继续（直发续做）/ 引用（草稿置为仅 @ 目标，就这条回复开新话题）。
+// 两者显示条件一致：ACP 可投递且非欢迎词。
 const QUICK_REPLIES: { key: string; action: HubQuickAction }[] = [
   { key: 'ui.hub.quick_continue', action: 'send' },
-  { key: 'ui.hub.quick_rephrase', action: 'rephrase' },
   { key: 'ui.hub.quote_reply', action: 'quote' },
 ];
 
-export type HubQuickAction = 'send' | 'rephrase' | 'quote';
+export type HubQuickAction = 'send' | 'quote';
 
 interface HubMessageListProps {
   tools: ToolInfo[];

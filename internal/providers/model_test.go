@@ -92,6 +92,24 @@ func TestInjectModelClaudeIgnoresOpenAIURL(t *testing.T) {
 	}
 }
 
+// TestClaudeSettingsEnvSkipsDefaultModel 锁定伪模型防线：default 是 Claude ACP
+// 的「让 agent 自选」占位值，写进 ANTHROPIC_MODEL 会被 CLI 字面发给 API
+// （网关 400）。此时只注入端点/密钥，模型键整组不写。
+func TestClaudeSettingsEnvSkipsDefaultModel(t *testing.T) {
+	for _, model := range []string{"default", " Default "} {
+		env := Claude{}.SettingsEnv(ModelConfig{
+			AnthropicBaseURL: "https://ant/", APIKey: "k", Model: model,
+		})
+		want := map[string]string{
+			"ANTHROPIC_BASE_URL":   "https://ant/",
+			"ANTHROPIC_AUTH_TOKEN": "k",
+		}
+		if !reflect.DeepEqual(env, want) {
+			t.Fatalf("SettingsEnv(Model=%q) = %+v, want %+v", model, env, want)
+		}
+	}
+}
+
 func TestInjectModelEmptyInjectsNothing(t *testing.T) {
 	for _, p := range []interface {
 		InjectModel(ModelConfig) ([]string, map[string]string)

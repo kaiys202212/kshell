@@ -45,7 +45,7 @@ import {
   type MentionOption,
 } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
-import { lastModelForCreate, loadDefaultCreate, loadLastCreate, loadToolModelOptions, loadToolModels, loadHubRouteMode, mergeHubModelOptions, rememberLastModel, rememberPerToolLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode, type ToolModelOption } from '../lib/agenthubDefaults';
+import { lastModelForCreate, loadDefaultCreate, loadLastCreate, loadToolModelOptions, loadToolModels, loadHubRouteMode, mergeHubModelOptions, normalizeCreateModel, rememberLastModel, rememberPerToolLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode, type ToolModelOption } from '../lib/agenthubDefaults';
 import { saveHubDefaultCreate } from '../lib/api';
 import { quotePathForShell } from '../lib/dragPath';
 import { decodePercentText } from '../lib/displayText';
@@ -120,8 +120,11 @@ export async function runAgentCreate(
   // 避免旧创建的 finally 清掉期间新创建已持有的锁。
   async function doCreate(): Promise<boolean> {
     try {
-      // modelId 同步传给后端：Claude 经 settings 注入 ANTHROPIC_MODEL，避免仅靠建后 SetModel
-      const result = await openWorkspaceACP(wsPath, toolId, modelId);
+      // 创建模型归一：claude 的 default 是 ACP 伪模型，等价于「不显式指定」。
+      // 作为 ANTHROPIC_MODEL 下发会被 CLI 字面发给网关（OpenCode Go 400）。
+      const createModel = normalizeCreateModel(toolId, modelId);
+      // createModel 同步传给后端：Claude 经 settings 注入 ANTHROPIC_MODEL，避免仅靠建后 SetModel
+      const result = await openWorkspaceACP(wsPath, toolId, createModel);
       if (!result.Chat) {
         onClose();
         return true;
@@ -130,8 +133,9 @@ export async function runAgentCreate(
       registerChat(chat);
       // 成功即记默认值：下次 /easynew 或打开对话框时预填；按工具记忆同步，
       // 创建模型也算一次「选择」，防止别的工具的记录覆盖后本工具失忆。
-      saveLastCreate({ wsPath, toolId, modelId });
-      if (modelId) rememberPerToolLastModel(toolId, modelId);
+      // claude 的 default 归一为 null（回落默认，不留显式记忆）。
+      saveLastCreate({ wsPath, toolId, modelId: createModel });
+      if (createModel) rememberPerToolLastModel(toolId, createModel);
       // 拉模型列表缓存，供下次预填模型下拉；失败静默（默认值是辅助功能）
       const view = await listChatModels(chat.ID).catch(() => null);
       if (view && view.Models && view.Models.length > 0) {
@@ -143,12 +147,12 @@ export async function runAgentCreate(
       }
       // 用户选了模型且与 agent 当前模型不同：建后再 SetModel。
       // view 拉取失败（null）也要切——否则握手竞态会让 easynew 永远停在 default。
-      if (modelId && (!view || view.Current !== modelId)) {
+      if (createModel && (!view || view.Current !== createModel)) {
         try {
-          await setChatModel(chat.ID, modelId);
+          await setChatModel(chat.ID, createModel);
           // 乐观更新 store：后端会推 chat:models，这里立刻反映，避免下拉卡在 default
           if (view) {
-            useAppStore.getState().setChatModels(chat.ID, { ...view, Current: modelId });
+            useAppStore.getState().setChatModels(chat.ID, { ...view, Current: createModel });
           } else {
             const refreshed = await listChatModels(chat.ID).catch(() => null);
             if (refreshed) useAppStore.getState().setChatModels(chat.ID, refreshed);
@@ -700,8 +704,8 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
     return opt?.insert ?? (c.Title || wsBaseName(c.Workspace) || emptyTarget);
   };
 
-  // mentionSession 把会话的 @ 标签保留式追加进输入框（语义同 quickReply rephrase：
-  // 不清空已有草稿，空格分隔），聚焦输入框，待用户补写后手动发送。
+  // mentionSession 把会话的 @ 标签保留式追加进输入框（不清空已有草稿，
+  // 空格分隔），聚焦输入框，待用户补写后手动发送。
   // chips 平铺后点击 chip 主体即触发本函数（原 @ 图标行为并入主体）。
   const mentionSession = (c: ChatInfo) => {
     const label = sessionDragLabel(c);
@@ -1008,24 +1012,16 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
       });
   };
 
-  // fillMention 把 @ 标签写入草稿并聚焦输入框，按快捷动作区分写入方式：
-  // - quote（引用）：草稿覆盖为仅 `@标签 `——就这条回复开新话题，用户补写正文；
-  // - rephrase（换个说法）：保留式追加（既有草稿空格分隔），语义是让同会话重写。
-  // 两者都不自动发送。
-  const fillMention = (label: string, action: HubQuickAction) => {
-    if (action === 'quote') {
-      setDraft(`@${label} `);
-    } else {
-      setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
-    }
+  // fillQuoteMention 把 @ 标签写入草稿并聚焦输入框：草稿覆盖为仅 `@标签 `，
+  // 就这条回复开新话题，用户补写正文；不自动发送。
+  const fillQuoteMention = (label: string) => {
+    setDraft(`@${label} `);
     inputRef.current?.focus();
   };
 
   // quickReply 处理快捷回复点击：
   // - send：把 quick_continue_text（实际文本，与按钮文案解耦）发给归因 agent；
   //   目标未激活（chats 反查不到，如会话已关闭/重启后未恢复）时先激活再发送；
-  // - rephrase：保留式追加 @目标 到输入框（不清空用户正在输入的草稿），聚焦由用户
-  //   补写后手动发送；目标未激活时同样先激活，激活后填新会话的 @ 标签，不自动发送。
   // - quote：草稿覆盖为仅 @目标，聚焦后用户补写正文；目标未激活时先激活再填入。
   // 只读态（非 ACP / 终端占用）直接 return：快捷按钮应已隐藏；勿把 quickTarget
   // 的 null 误当成「待激活」去 openSessionACP。
@@ -1044,13 +1040,13 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
           });
           return;
         }
-        // rephrase/quote：激活成功后填 @ 标签。走到此分支说明点击时目标未激活，
+        // quote：激活成功后填 @ 标签。走到此分支说明点击时目标未激活，
         // 闭包里的 options 必不含新 chat，按实时 store 的全量列表构造（同名消歧
-        // 与补全一致）。quote 与 rephrase 的差异在草稿写入方式（见下方 fillMention）。
+        // 与补全一致）。
         activateAndThen(m, (chat) => {
           const label = mentionLabelForChat(chat);
           if (!label) return;
-          fillMention(label, action);
+          fillQuoteMention(label);
         });
         return;
       }
@@ -1064,13 +1060,13 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
           });
         return;
       }
-      // rephrase/quote：从 mention 候选反查展示标签（会话标题）；找不到兜底提示。
+      // quote：从 mention 候选反查展示标签（会话标题）；找不到兜底提示。
       const label = options.find((o) => o.id === targetId)?.insert;
       if (!label) {
         useAppStore.getState().notify(t('ui.hub.need_target_drag'), 'error');
         return;
       }
-      fillMention(label, action);
+      fillQuoteMention(label);
     },
     // quickTarget / activateAndThen / mentionLabelForChat 闭包随 render；依赖会随
     // chats/tools/terminals/options/t 变化——消息有更新时本应刷新回调，draft 不变这些时稳定。
@@ -1743,16 +1739,14 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
             onChange={(e) => setModelId(e.target.value)}
             disabled={busy}
           >
-            {/* 无缓存只显示「默认模型」空选项；有缓存则直接列缓存模型（文案用 name） */}
-            {modelOptions.length === 0 ? (
-              <option value="">{t('ui.hub.default_model')}</option>
-            ) : (
-              modelOptions.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))
-            )}
+            {/* 「默认模型」空选项恒在头部（与默认设置对话框一致）：claude 的
+                Default 伪模型会被记忆过滤为空串，需有对应 option 才不会显示脱节 */}
+            <option value="">{t('ui.hub.default_model')}</option>
+            {modelOptions.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
           </select>
         </label>
         {tools.length === 0 && <p className="mb-3 text-xs text-muted-foreground">{t('ui.hub.no_tools')}</p>}

@@ -1,6 +1,7 @@
 // agenthubDefaults：新建 agent 默认值与模型列表缓存的 localStorage 读写测试。
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  isClaudeDefaultModel,
   lastModelForCreate,
   loadDefaultCreate,
   loadLastCreate,
@@ -8,6 +9,7 @@ import {
   loadToolModelOptions,
   loadToolModels,
   mergeHubModelOptions,
+  normalizeCreateModel,
   rememberChatModels,
   rememberLastModel,
   rememberPerToolLastModel,
@@ -210,6 +212,24 @@ describe('agenthubDefaults', () => {
       localStorage.setItem('kshell.agenthub.perToolLastModel', '{bad json');
       expect(loadPerToolLastModel('opencode')).toBeNull();
     });
+
+    it('claude 的 default 不落记忆：清按工具条目且同工具 lastCreate 置 null', () => {
+      rememberLastModel('claude', 'D:\\ws\\a', 'm1');
+      rememberLastModel('claude', 'D:\\ws\\b', 'default');
+      expect(loadPerToolLastModel('claude')).toBeNull();
+      expect(loadLastCreate()).toEqual({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: null });
+    });
+
+    it('claude 的 Default（大小写/空白）同样不落记忆', () => {
+      rememberPerToolLastModel('claude', ' Default ');
+      expect(loadPerToolLastModel('claude')).toBeNull();
+    });
+
+    it('非 claude 工具的 default 照常记忆', () => {
+      rememberLastModel('codex', 'D:\\ws\\a', 'default');
+      expect(loadPerToolLastModel('codex')).toEqual({ modelId: 'default' });
+      expect(loadLastCreate()).toEqual({ wsPath: 'D:\\ws\\a', toolId: 'codex', modelId: 'default' });
+    });
   });
 
   describe('lastModelForCreate', () => {
@@ -232,6 +252,40 @@ describe('agenthubDefaults', () => {
 
     it('全部缺失返回 null（用工具默认模型）', () => {
       expect(lastModelForCreate(null, 'none-tool')).toBeNull();
+    });
+
+    it('claude 的历史 default 一律过滤，按优先级继续回落', () => {
+      saveDefaultCreate({ toolId: 'claude', modelId: 'default' });
+      saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'default' });
+      // 显式默认设置是 default → 跳过；按工具记忆无 → 跳过；lastCreate 也是 → null
+      expect(lastModelForCreate(loadDefaultCreate()?.modelId, 'claude')).toBeNull();
+      expect(lastModelForCreate(null, 'claude')).toBeNull();
+    });
+
+    it('非 claude 工具的 default 原样返回', () => {
+      rememberPerToolLastModel('codex', 'default');
+      expect(lastModelForCreate(null, 'codex')).toBe('default');
+      // cursor 的 default[] 不是伪模型
+      expect(lastModelForCreate('default[]', 'cursor')).toBe('default[]');
+    });
+  });
+
+  describe('isClaudeDefaultModel / normalizeCreateModel', () => {
+    it('只认 claude 的精确 default（trim + 大小写归一）', () => {
+      expect(isClaudeDefaultModel('claude', 'default')).toBe(true);
+      expect(isClaudeDefaultModel('claude', ' Default ')).toBe(true);
+      expect(isClaudeDefaultModel('claude', 'default[]')).toBe(false);
+      expect(isClaudeDefaultModel('cursor', 'default')).toBe(false);
+      expect(isClaudeDefaultModel('claude', 'glm-5.3-flash')).toBe(false);
+      expect(isClaudeDefaultModel('claude', null)).toBe(false);
+    });
+
+    it('创建模型归一：claude default → null，其余原样', () => {
+      expect(normalizeCreateModel('claude', 'default')).toBeNull();
+      expect(normalizeCreateModel('claude', '')).toBeNull();
+      expect(normalizeCreateModel('claude', 'glm-5.3-flash')).toBe('glm-5.3-flash');
+      expect(normalizeCreateModel('cursor', 'default[]')).toBe('default[]');
+      expect(normalizeCreateModel('codex', 'default')).toBe('default');
     });
   });
 
