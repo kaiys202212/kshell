@@ -447,6 +447,52 @@ func TestHubSmartSendShortcut(t *testing.T) {
 		}
 	})
 
+	t.Run("英文 continue 唯一 perm 会话直投（捷径先于逃生门）", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		setPermSession(t, fx, fx.refs[2])
+		calls := injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			return agentapi.RunResult{Replies: []string{"不应进循环"}}, nil
+		})
+		view, err := fx.app.HubSmartSend("req", "Continue")
+		if err != nil {
+			t.Fatalf("HubSmartSend: %v", err)
+		}
+		if view.Pending {
+			t.Fatal("英文 continue 命中捷径应 Pending=false（不得被逃生门拦下）")
+		}
+		if *calls != 0 {
+			t.Fatalf("捷径不应进循环, calls=%d", *calls)
+		}
+		msg, ok := lastUserMessage(t, fx, fx.refs[2].ChatID)
+		if !ok || msg.Text != "Continue" {
+			t.Fatalf("捷径应直投原文（hub store 用户消息）: %v %+v", ok, msg)
+		}
+		want := fmt.Sprintf(hub.CmdText("zh-CN", "shortcut_sent"), "Continue", "丙")
+		if len(view.Replies) != 1 || view.Replies[0].Text != want {
+			t.Fatalf("捷径回执 = %+v, want %q", view.Replies, want)
+		}
+	})
+
+	t.Run("英文 continue 零 perm 会话仍回落逃生门", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		calls := injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			return agentapi.RunResult{Replies: []string{"不应进循环"}}, nil
+		})
+		view, err := fx.app.HubSmartSend("req", "continue")
+		if err != nil {
+			t.Fatalf("HubSmartSend: %v", err)
+		}
+		if !view.Pending {
+			t.Fatal("零 perm 时英文 continue 应回落逃生门（Pending=true）")
+		}
+		if *calls != 0 {
+			t.Fatalf("逃生门不应进循环, calls=%d", *calls)
+		}
+		if len(fx.ex.sendCalls) != 0 {
+			t.Fatalf("不得发送: %+v", fx.ex.sendCalls)
+		}
+	})
+
 	t.Run("两个等待会话不进捷径", func(t *testing.T) {
 		fx := newRouteFixture(t)
 		setPermSession(t, fx, fx.refs[0])

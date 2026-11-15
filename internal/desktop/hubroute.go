@@ -105,7 +105,9 @@ func (a *App) CancelHubSmartSend(reqID string) {
 // 捷径直投成功同样返回确认回执；逃生门/待选菜单挂起/未配置模型/循环失败 →
 // Pending=true，让前端回落既有待选菜单（原文由前端草稿暂存保留，不丢用户正文）。
 //
-// 处理顺序：捷径（继续类短确认 + 唯一等待会话）→ 管理者循环 → 降级回落。
+// 处理顺序：待选菜单挂起让位 → 捷径（继续类短确认 + 唯一等待会话，先于
+// 逃生门：英文 continue 本身是逃生门词，必须先判才能直投）→ 逃生门（#/@ 等
+// 其余词）→ 管理者循环 → 降级回落。
 //
 // reqID 是本轮请求标识：用于推送 hub:progress 阶段事件与支持中途取消；
 // 空串时行为一致（不推进度、不可取消）。
@@ -136,17 +138,11 @@ func (a *App) HubSmartSend(reqID, text string) (HubPickView, error) {
 		a.smartBusy = false
 		a.mu.Unlock()
 	}()
-	// 逃生门（#/@/continue 及用户自定义词）与命令层菜单挂起时不接管，
-	// 交前端回落既有确定性路径。
-	if hub.IsDirectPass(text, a.agenthubDirectPatterns()) || a.wxHubConsole().Busy() {
+	// 待选菜单挂起时让位：命令层未决交互期间所有文本不接管，交前端回落既有
+	// 确定性路径（捷径也不例外——直投会让 pending pick 草稿失效）。
+	if a.wxHubConsole().Busy() {
 		return HubPickView{Pending: true}, nil
 	}
-	// 可取消 ctx：用户点「中断」时整轮（含模型往返）立即结束。
-	ctx, cancel := context.WithCancel(a.desktopContext())
-	defer cancel()
-	unregister := a.registerSmartCancel(reqID, cancel)
-	defer unregister()
-
 	// 续轮衔接：上次 Run 返回 AskPending 且本条是短输入 → 显式传 Continuation，
 	// 让循环带上上一轮反问语境（选项/候选编号）。长输入不传标志，agentapi 内部
 	// 清 pending 按新需求处理。
@@ -155,13 +151,25 @@ func (a *App) HubSmartSend(reqID, text string) (HubPickView, error) {
 	a.mu.Unlock()
 	cont := askPending && (hub.IsContinueConfirm(text) || len([]rune(text)) <= hubContinuationMax)
 
-	// 捷径：非续轮语境的「继续类短确认」+ 恰好一个等待会话 → 直接投递原文，
-	// 不经 LLM（零等待会话时「继续」仍可能指向会话恢复等意图，交循环判）。
+	// 捷径（先于逃生门）：非续轮语境的「继续类短确认」+ 恰好一个等待会话 →
+	// 直接投递原文，不经 LLM。必须排在 IsDirectPass 之前——「continue」本身
+	// 是默认逃生门词，否则英文确认词永远到不了捷径；#/@ 等其它词不受影响
+	//（词表无 # 前缀，# 命令不会误触捷径）。零/多个等待会话不进捷径，
+	// continue 语境词仍按逃生门回落待选（正确降级）。
 	if !cont && hub.IsContinueConfirm(text) {
 		if view, handled := a.shortcutSend(text); handled {
 			return view, nil
 		}
 	}
+	// 逃生门（#/@/continue 及用户自定义词）不接管，交前端走命令路径。
+	if hub.IsDirectPass(text, a.agenthubDirectPatterns()) {
+		return HubPickView{Pending: true}, nil
+	}
+	// 可取消 ctx：用户点「中断」时整轮（含模型往返）立即结束。
+	ctx, cancel := context.WithCancel(a.desktopContext())
+	defer cancel()
+	unregister := a.registerSmartCancel(reqID, cancel)
+	defer unregister()
 
 	a.emitHubProgress(reqID, hubStepRoute)
 	res, err := a.runHubLoop(ctx, text, agentapi.RunOpts{
