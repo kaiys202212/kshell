@@ -146,7 +146,7 @@ func clipboardFiles() ([]string, error) {
 	}
 	n, _, _ := procDragQueryFileW.Call(h, uintptr(^uint32(0)), 0, 0)
 	if n == 0 {
-		return nil, fmt.Errorf("err.clipboard.file_list_empty")
+		return nil, errClipboardFileListEmpty
 	}
 	files := make([]string, 0, n)
 	for i := uintptr(0); i < n; i++ {

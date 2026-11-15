@@ -13,7 +13,7 @@ import (
 
 // readClipboardFilesFn 读系统剪贴板文件列表：返回 (绝对路径列表, 是否剪切, err)。
 // 平台文件 init 赋真实实现（Windows 同周期读 HDROP + Preferred DropEffect）；
-// 定义为包级变量便于单测注入假剪贴板。
+// 定义为包级变量便于单测注入假剪贴板。注意：注入仅限无 t.Parallel 的测试使用。
 var readClipboardFilesFn = func() ([]string, bool, error) {
 	return nil, false, errors.New("err.clipboard.unsupported")
 }
@@ -83,7 +83,7 @@ func (a *App) PasteFiles(wsPath, dirRel string, treeRels []string, move bool) (P
 		}
 	}
 	if len(items) == 0 {
-		return PasteSummary{}, fmt.Errorf("err.clipboard.file_list_empty")
+		return PasteSummary{}, errClipboardFileListEmpty
 	}
 
 	sum := PasteSummary{}
@@ -135,6 +135,8 @@ func uniqueDestName(dir, name string) (string, bool) {
 
 // copyAll 递归复制 src（文件或目录）到 dst；dst 由调用方保证不冲突。
 // 复制过程中跳过 dst 自身子树（把目录复制进自己内部时防无限递归）。
+// 语义取舍：不保留 symlink（symlink 目标按普通文件物化，目录内文件 symlink 变普通副本；
+// 指向目录的 symlink 复制会失败并中止该项，fail-safe）；目录权限固定 0o755，不保源权限位。
 func copyAll(src, dst string) error {
 	fi, err := os.Stat(src) // 跟随 symlink 取目标属性
 	if err != nil {
@@ -172,14 +174,16 @@ func copyAll(src, dst string) error {
 	})
 }
 
-// copyFile 按源权限位复制单个文件内容。
+// copyFile 按源权限位复制单个文件内容。O_EXCL 保证不覆盖已存在文件：
+// uniqueDestName 检查与写入之间的并发创建（TOCTOU）会以单项失败收场而非静默覆盖，
+// 与「不覆盖已有内容」的确认弹窗承诺一致。
 func copyFile(src, dst string, mode os.FileMode) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode.Perm())
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode.Perm())
 	if err != nil {
 		return err
 	}

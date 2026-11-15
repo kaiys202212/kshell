@@ -94,6 +94,7 @@
       "global_alloc_failed": "GlobalAlloc failed: {{0}}",
       "write_empty": "No file selected",
       "write_unsupported": "Copying files to the clipboard is not supported on this platform",
+      "unsupported": "Pasting files from the clipboard is not supported on this platform",
       "write_failed": "Failed to write clipboard: {{0}}",
       "data_empty": "Clipboard data is empty"
     },
@@ -783,6 +784,7 @@
       "paste_confirm_source_tree": "Source: {{action}} in tree, {{n}} item(s)",
       "paste_confirm_source_clipboard": "Source: system clipboard (copied or cut in Explorer)",
       "paste_confirm_note": "Name conflicts are auto-suffixed; existing files are never overwritten.",
+      "paste_confirm_cut_warning": "Sources will be removed after a cut-paste.",
       "paste": "Paste",
       "pasted": "Pasted: {{moved}} moved, {{copied}} copied",
       "pasted_renamed_suffix": ", {{n}} renamed",

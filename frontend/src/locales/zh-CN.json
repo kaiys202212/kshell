@@ -94,6 +94,7 @@
       "global_alloc_failed": "GlobalAlloc 失败: {{0}}",
       "write_empty": "未选中文件",
       "write_unsupported": "当前平台不支持复制文件到剪贴板",
+      "unsupported": "当前平台不支持从剪贴板粘贴文件",
       "write_failed": "写入剪贴板失败: {{0}}",
       "data_empty": "剪贴板数据为空"
     },
@@ -783,6 +784,7 @@
       "paste_confirm_source_tree": "来源：树内{{action}}，共 {{n}} 项",
       "paste_confirm_source_clipboard": "来源：系统剪贴板（资源管理器复制/剪切）",
       "paste_confirm_note": "同名文件将自动加后缀，不会覆盖已有内容。",
+      "paste_confirm_cut_warning": "剪切粘贴后源将被移除。",
       "paste": "粘贴",
       "pasted": "已粘贴：移动 {{moved}} 项、复制 {{copied}} 项",
       "pasted_renamed_suffix": "，改名 {{n}} 项",

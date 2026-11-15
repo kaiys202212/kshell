@@ -34,7 +34,7 @@ import {
 import type { FileNode, SearchHit } from '../lib/api';
 import { cn } from '../lib/cn';
 import { DRAG_MIME, DRAG_ROOT_MIME, REL_MIME } from '../lib/dragPath';
-import { backendError } from '../lib/errors';
+import { backendError, translateBackend } from '../lib/errors';
 import { isNestedGitParent, refreshGitStatus, resolveGitCode, subtreeDirty } from '../lib/git';
 import { sameWorkspacePath, relativeWorkspacePath } from '../lib/workspacePath';
 import { collectVisibleRows } from '../lib/treeRows';
@@ -747,6 +747,10 @@ export default function FileTree({
     setCreating(null);
     setDeleting(null);
     setRenamingPath(null);
+    // 树内剪贴板与粘贴弹窗随工作区一并清空：rels 只对当前工作区有意义，
+    // 跨工作区残留会把「移动」落到新工作区的同名路径上，静默搬错文件
+    setTreeClipboard(null);
+    setPasteConfirm(null);
     clearSelection();
     listFiles(wsPath, '', showAllRef.current)
       .then((nodes) => {
@@ -1010,7 +1014,7 @@ export default function FileTree({
   };
 
   // 确认执行：调 Go 侧 PasteFiles（作废树缓存），成功后局部刷新目标目录 + git 状态；
-  // 移动语义完成后清空树内剪贴板；部分失败弹错误 toast（首条错误文本）
+  // 移动语义完成后清空树内剪贴板；部分失败弹错误 toast（首条错误文本经 translateBackend）
   const handlePasteConfirm = () => {
     if (!pasteConfirm) return;
     const { target, move, count } = pasteConfirm;
@@ -1026,10 +1030,15 @@ export default function FileTree({
           useAppStore.getState().notify(title, 'success');
         }
         if (sum.Errors.length > 0) {
-          useAppStore.getState().notify(sum.Errors[0], 'error');
+          useAppStore
+            .getState()
+            .notify(t('ui.files.paste_failed', { err: translateBackend(sum.Errors[0]) }), 'error');
         }
         if (move && sum.Moved > 0) setTreeClipboard(null);
-        refreshDirs([target]);
+        // move 同时刷目标与各源父目录（与 rename 双刷同型），避免源目录残留幽灵行等 watcher 兜底
+        const dirs = new Set([target]);
+        if (move) for (const rel of rels) dirs.add(parentOf(rel));
+        refreshDirs([...dirs]);
         void refreshGitStatus(wsPath);
       })
       .catch((e: unknown) => {
@@ -1569,7 +1578,7 @@ export default function FileTree({
                   action: pasteConfirm.move ? t('ui.files.action_cut') : t('ui.files.action_copy'),
                   n: pasteConfirm.count,
                 })}
-                {pasteConfirm.move && <span>（{t('ui.files.action_cut')}后源将被移除）</span>}
+                {pasteConfirm.move && <span> {t('ui.files.paste_confirm_cut_warning')}</span>}
               </p>
             ) : (
               <p>{t('ui.files.paste_confirm_source_clipboard')}</p>

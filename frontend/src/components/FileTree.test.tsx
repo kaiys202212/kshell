@@ -1542,6 +1542,29 @@ describe('FileTree paste', () => {
     expect(mocks.pasteFiles).toHaveBeenCalledWith('D:\\proj', '', [], false);
   });
 
+  it('切换工作区后树内剪贴板清空（防跨工作区静默搬错文件）', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    const { rerender } = render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    fireEvent.click(await screen.findByText('README.md'));
+    fireEvent.keyDown(treeEl(), { key: 'x', ctrlKey: true });
+
+    rerender(<FileTree wsPath={'D:\\proj2'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+    fireEvent.keyDown(treeEl(), { key: 'v', ctrlKey: true });
+
+    // 剪贴板已随工作区清空：来源应回落为系统剪贴板，而非残留的树内剪切
+    expect(
+      await screen.findByText(tt('ui.files.paste_confirm_source_clipboard')),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(sourceTree(tt('ui.files.action_cut'), 1)),
+    ).not.toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.files.paste') }));
+    });
+    expect(mocks.pasteFiles).toHaveBeenCalledWith('D:\\proj2', '', [], false);
+  });
+
   it('行右键菜单含复制/剪切项，空白右键菜单含粘贴项', async () => {
     mocks.listFiles.mockResolvedValue(root);
     render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
