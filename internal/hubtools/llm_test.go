@@ -60,13 +60,17 @@ func TestChatOnce(t *testing.T) {
 	}
 }
 
-// mockToolCalls 是带 tool_calls 的 mock 响应（arguments 保持原始字符串）。
+// mockToolCalls 是带 tool_calls 的 mock 响应（OpenAI 嵌套 wire 形状，
+// arguments 保持原始字符串）。
 func mockToolCalls() map[string]any {
 	return map[string]any{"choices": []map[string]any{{"message": map[string]any{
 		"role":    "assistant",
 		"content": "",
 		"tool_calls": []map[string]any{
-			{"id": "call_1", "name": "get_weather", "arguments": `{"city":"北京"}`},
+			{"id": "call_1", "type": "function", "function": map[string]any{
+				"name":      "get_weather",
+				"arguments": `{"city":"北京"}`,
+			}},
 		},
 	}}}}
 }
@@ -115,12 +119,17 @@ func TestChatWithToolsRequestBody(t *testing.T) {
 	if !ok || len(arr) != 1 {
 		t.Fatalf("请求体 tools 数组缺失或长度不符: %s", gotBody)
 	}
+	// OpenAI 严格 wire 形状：{"type":"function","function":{name,description,parameters}}
 	t0, ok := arr[0].(map[string]any)
-	if !ok || t0["name"] != "get_weather" {
-		t.Fatalf("tools[0].name 缺失或不符: %s", gotBody)
+	if !ok || t0["type"] != "function" {
+		t.Fatalf("tools[0].type 缺失或不符: %s", gotBody)
 	}
-	if _, ok := t0["parameters"].(map[string]any); !ok {
-		t.Fatalf("tools[0].parameters 缺失: %s", gotBody)
+	fn, ok := t0["function"].(map[string]any)
+	if !ok || fn["name"] != "get_weather" {
+		t.Fatalf("tools[0].function.name 缺失或不符: %s", gotBody)
+	}
+	if _, ok := fn["parameters"].(map[string]any); !ok {
+		t.Fatalf("tools[0].function.parameters 缺失: %s", gotBody)
 	}
 }
 

@@ -44,29 +44,76 @@ type Response struct {
 	ToolCalls []ToolCall
 }
 
+// wireTool / wireToolCall 是 OpenAI 严格的嵌套 wire 形状。内部 ToolFunc/ToolCall
+// 保持扁平，嵌套映射集中在此，调用方无需关心协议细节。
+type wireTool struct {
+	Type     string   `json:"type"`
+	Function ToolFunc `json:"function"`
+}
+
+type wireToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
 // chatMessage 是 OpenAI 兼容 wire 格式的消息。
 type chatMessage struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	Role       string         `json:"role"`
+	Content    string         `json:"content"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
 }
 
 // chatRequest 是请求体。Tools 为空时 omitempty 不输出字段，旧网关零影响。
 type chatRequest struct {
 	Model    string        `json:"model"`
 	Messages []chatMessage `json:"messages"`
-	Tools    []ToolFunc    `json:"tools,omitempty"`
+	Tools    []wireTool    `json:"tools,omitempty"`
 }
 
 // chatResponse 是响应体的最小解析：取 choices[0].message 的 content 与 tool_calls。
 type chatResponse struct {
 	Choices []struct {
 		Message struct {
-			Content   string     `json:"content"`
-			ToolCalls []ToolCall `json:"tool_calls"`
+			Content   string         `json:"content"`
+			ToolCalls []wireToolCall `json:"tool_calls"`
 		} `json:"message"`
 	} `json:"choices"`
+}
+
+// toWireTools 把扁平工具定义映射为 OpenAI 嵌套 wire 形状。
+func toWireTools(tools []ToolFunc) []wireTool {
+	out := make([]wireTool, len(tools))
+	for i, t := range tools {
+		out[i] = wireTool{Type: "function", Function: t}
+	}
+	return out
+}
+
+// toWireToolCalls 把扁平调用映射为嵌套 wire 形状（assistant 消息用）。
+func toWireToolCalls(tcs []ToolCall) []wireToolCall {
+	out := make([]wireToolCall, len(tcs))
+	for i, tc := range tcs {
+		out[i].ID = tc.ID
+		out[i].Type = "function"
+		out[i].Function.Name = tc.Name
+		out[i].Function.Arguments = tc.Arguments
+	}
+	return out
+}
+
+// fromWireToolCalls 把嵌套 wire 形状映射回扁平调用；不按 type 分支，
+// 非 function 条目（理论上不出现）自然退化为空名调用而非报错。
+func fromWireToolCalls(ws []wireToolCall) []ToolCall {
+	out := make([]ToolCall, len(ws))
+	for i, w := range ws {
+		out[i] = ToolCall{ID: w.ID, Name: w.Function.Name, Arguments: w.Function.Arguments}
+	}
+	return out
 }
 
 // Client 是 OpenAI 兼容 chat/completions 客户端。
@@ -114,10 +161,17 @@ var (
 func (c *Client) once(ctx context.Context, msgs []Message, tools []ToolFunc) (Response, error) {
 	wireMsgs := make([]chatMessage, len(msgs))
 	for i, m := range msgs {
-		wireMsgs[i] = chatMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID, ToolCalls: m.ToolCalls}
+		wireMsgs[i] = chatMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID}
+		if len(m.ToolCalls) > 0 {
+			wireMsgs[i].ToolCalls = toWireToolCalls(m.ToolCalls)
+		}
 	}
 
-	body, err := json.Marshal(chatRequest{Model: c.cfg.Model, Messages: wireMsgs, Tools: tools})
+	var wireTools []wireTool
+	if len(tools) > 0 {
+		wireTools = toWireTools(tools)
+	}
+	body, err := json.Marshal(chatRequest{Model: c.cfg.Model, Messages: wireMsgs, Tools: wireTools})
 	if err != nil {
 		return Response{}, fmt.Errorf("编码请求: %w", err)
 	}
@@ -168,5 +222,5 @@ func parseChatResponse(respBody []byte) (Response, error) {
 	if len(parsed.Choices) == 0 {
 		return Response{}, errors.New("LLM 响应无 choices")
 	}
-	return Response{Text: parsed.Choices[0].Message.Content, ToolCalls: parsed.Choices[0].Message.ToolCalls}, nil
+	return Response{Text: parsed.Choices[0].Message.Content, ToolCalls: fromWireToolCalls(parsed.Choices[0].Message.ToolCalls)}, nil
 }
