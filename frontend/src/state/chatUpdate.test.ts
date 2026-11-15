@@ -48,6 +48,42 @@ describe('applyChatUpdate', () => {
     expect(items.find((it) => it.key === 'u1')?.text).toBe('你好吗');
   });
 
+  // agent 跨轮复用 messageId 时，新分片会命中时间线上方的旧消息并把文本
+  // 「长进历史」，auto-scroll 钉在底部表现为界面停止输出。turn_done/error 是
+  // 轮次分界：分界之后同 key 的文本分片必须新建尾条目，不得并入旧轮消息。
+  it('turn_done 分界后同 MessageID 的文本分片新建条目，不并入旧轮消息', () => {
+    let items = emptyChatItems();
+    items = applyChatUpdate(items, { Seq: 1, Type: 'assistant', MessageID: 'm1', Text: 'A' });
+    items = applyChatUpdate(items, { Seq: 2, Type: 'turn_done', StopReason: 'end_turn' });
+    items = applyChatUpdate(items, { Seq: 3, Type: 'assistant', MessageID: 'm1', Text: 'B' });
+    expect(items).toHaveLength(3);
+    expect(items[0].text).toBe('A');
+    expect(items[2].key).toBe('m1');
+    expect(items[2].text).toBe('B');
+    expect(items[2].seq).toBe(3);
+  });
+
+  it('error 分界后同 MessageID 的文本分片同样新建条目', () => {
+    let items = emptyChatItems();
+    items = applyChatUpdate(items, { Seq: 1, Type: 'assistant', MessageID: 'm1', Text: 'A' });
+    items = applyChatUpdate(items, { Seq: 2, Type: 'error', Text: '崩了' });
+    items = applyChatUpdate(items, { Seq: 3, Type: 'assistant', MessageID: 'm1', Text: '重试' });
+    expect(items).toHaveLength(3);
+    expect(items[2].type).toBe('assistant');
+    expect(items[2].text).toBe('重试');
+  });
+
+  // 同轮内 text-tool-text 交错（messageId 不变）是合法流式形态：无分界事件
+  // 时仍必须合并进原消息，不能拆成两个气泡。
+  it('同轮内跨工具调用交错仍合并进原消息', () => {
+    let items = emptyChatItems();
+    items = applyChatUpdate(items, { Seq: 1, Type: 'assistant', MessageID: 'm1', Text: 'A' });
+    items = applyChatUpdate(items, { Seq: 2, Type: 'tool', ToolCallID: 'c1', Tool: { ToolCallID: 'c1', Title: 'Read' } });
+    items = applyChatUpdate(items, { Seq: 3, Type: 'assistant', MessageID: 'm1', Text: 'B' });
+    expect(items).toHaveLength(2);
+    expect(items[0].text).toBe('AB');
+  });
+
   it('plan 追加为 plan 项并带条目', () => {
     const plan = [{ Content: '第一步', Status: 'pending' }];
     const items = applyChatUpdate(emptyChatItems(), { Seq: 1, Type: 'plan', Plan: plan });

@@ -565,6 +565,31 @@ describe('App', () => {
     expect(useAppStore.getState().chatItems.c1?.some((it) => it.text === 'hi')).toBe(true);
   });
 
+  // 种子落位（setChatItems 的 reduce / store 动作）一旦抛异常，挂载回放循环
+  // 若不收口 pending 窗口，该聊天的实时更新会被永久缓冲——时间线冻结而后台
+  // agent 照跑（ACP 长任务「界面不再输出」的成因之一）。
+  it('挂载种子落位异常后窗口必须关闭：实时更新不被永久缓冲', async () => {
+    let updateCb: ((p: { id: string; update: { Seq: number; Type: string; MessageID?: string; Text?: string } }) => void) | undefined;
+    mocks.onChatUpdate.mockImplementation((cb: typeof updateCb) => {
+      updateCb = cb;
+      return () => {};
+    });
+    mocks.listChats.mockResolvedValue([chat]);
+    // 历史含 null 载荷：applyChatUpdate 访问 u.Type 时抛 TypeError，模拟落位失败
+    mocks.chatHistory.mockResolvedValue([null as unknown as { Seq: number; Type: string }]);
+    render(<App />);
+    await waitFor(() => expect(mocks.chatHistory).toHaveBeenCalledWith('c1'));
+    // 让落位失败的拒绝链路（catch/finally）跑完
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => {
+      updateCb?.({ id: 'c1', update: { Seq: 1, Type: 'assistant', MessageID: 'm1', Text: 'live' } });
+    });
+    expect(useAppStore.getState().chatItems.c1?.some((it) => it.text === 'live')).toBe(true);
+  });
+
   it('chat:commands 事件写入 store', async () => {
     let cmdCb: ((p: { id: string; commands: { Name: string; Description?: string }[] }) => void) | undefined;
     mocks.onChatCommands.mockImplementation((cb: typeof cmdCb) => {

@@ -287,13 +287,20 @@ function App() {
         for (const c of list) {
           const buf: ChatUpdate[] = [];
           pending.set(c.ID, buf); // 进入种子窗口
-          const hist = await chatHistory(c.ID).catch(() => [] as ChatUpdate[]);
-          useAppStore.getState().setChatItems(
-            c.ID,
-            hist.reduce((acc, u) => applyChatUpdate(acc, u), [] as TimelineItem[]),
-          );
-          pending.delete(c.ID); // 退出种子窗口
-          for (const u of buf) useAppStore.getState().applyChat(c.ID, u);
+          try {
+            const hist = await chatHistory(c.ID).catch(() => [] as ChatUpdate[]);
+            useAppStore.getState().setChatItems(
+              c.ID,
+              hist.reduce((acc, u) => applyChatUpdate(acc, u), [] as TimelineItem[]),
+            );
+          } catch {
+            // 落位失败（如历史载荷畸形令 reduce 抛错）只影响种子，不能外抛：
+            // 外抛会中止整个循环，让本聊天及后续所有聊天的窗口永不关闭，
+            // 实时更新被永久缓冲——时间线冻结而后台 agent 照跑。
+          } finally {
+            pending.delete(c.ID); // 退出种子窗口：任何路径都必须执行
+            for (const u of buf) useAppStore.getState().applyChat(c.ID, u);
+          }
         }
       })
       .catch(() => {});

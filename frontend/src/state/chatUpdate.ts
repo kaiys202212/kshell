@@ -26,7 +26,14 @@ export function applyChatUpdate(items: TimelineItem[], u: ChatUpdate): TimelineI
   if (u.Type === 'assistant' || u.Type === 'thought' || u.Type === 'user') {
     const key = u.MessageID ?? `${u.Type}:${u.Seq}`;
     const idx = items.findIndex((it) => it.key === key && it.type === u.Type);
-    if (idx >= 0) {
+    // turn_done/error 是轮次分界：命中条目之后若存在分界项，说明这是旧轮的旧
+    // 消息（agent 跨轮复用 messageId），再合并会把新文本「长进历史」——auto-scroll
+    // 钉在底部时表现为界面停止输出。此时新建尾条目。同轮 text-tool-text 交错
+    // 中间只有 tool/plan 项，仍正常合并。
+    const separated =
+      idx >= 0 &&
+      items.slice(idx + 1).some((it) => it.type === 'turn_done' || it.type === 'error');
+    if (idx >= 0 && !separated) {
       const next = items.slice();
       const cur = next[idx];
       const merged: TimelineItem = { ...cur, text: (cur.text ?? '') + (u.Text ?? ''), seq: u.Seq };
