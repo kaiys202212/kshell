@@ -382,6 +382,47 @@ func TestLoadV2LiveWithoutSessionID(t *testing.T) {
 	}
 }
 
+// TestViaHubRoundtrip：代发标记落盘并重载保留。
+func TestViaHubRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir, 0)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(Message{Kind: "user", Text: "auto", ViaHub: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(Message{Kind: "user", Text: "manual"}); err != nil {
+		t.Fatal(err)
+	}
+	s2 := New(dir, 0)
+	if err := s2.Load(); err != nil {
+		t.Fatal(err)
+	}
+	got := s2.List()
+	if len(got) != 2 || !got[0].ViaHub || got[1].ViaHub {
+		t.Fatalf("ViaHub 应落盘并重载保留: %+v", got)
+	}
+}
+
+// TestLoadV3LiveWithoutViaHub：v3 旧文件（无 viaHub 字段）加载兼容，
+// 消息完整、ViaHub 零值；下次写入按当前版本重写。
+func TestLoadV3LiveWithoutViaHub(t *testing.T) {
+	dir := t.TempDir()
+	v3 := `{"version":3,"messages":[{"id":1,"kind":"user","text":"old","ts":100}]}`
+	if err := os.WriteFile(filepath.Join(dir, "live.json"), []byte(v3), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := New(dir, 0)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	got := s.List()
+	if len(got) != 1 || got[0].Text != "old" || got[0].ViaHub {
+		t.Fatalf("v3 消息应完整保留且 ViaHub 为零值: %+v", got)
+	}
+}
+
 // TestLoadRejectsUnknownVersions：version=0（缺失/非本程序产出）与大于当前版本的
 // live.json 都按空处理，防止误解析未知结构。
 func TestLoadRejectsUnknownVersions(t *testing.T) {

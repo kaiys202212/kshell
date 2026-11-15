@@ -25,7 +25,9 @@ import (
 // v3：Message 增加 sessionId（磁盘会话 ID 快照，供「继续」按钮在会话未激活时
 // 精确 resume）；旧 v1/v2 文件可直接读取（仅新增可选字段），下次写入时以当前
 // 版本重写完成迁移。
-const fileVersion = 3
+// v4：Message 增加 viaHub（管理者代发标记，目标会话卡片/hub 气泡据此打标签）；
+// 旧 v1..v3 文件可直接读取（缺失字段读为零值）。
+const fileVersion = 4
 
 // defaultLiveCap 是 live 文件保留的消息条数上限（超出按月归档）。
 const defaultLiveCap = 500
@@ -64,6 +66,9 @@ type Message struct {
 	Event string `json:"event,omitempty"`
 	// Status 是用户消息的投递状态：空 = 已送达，queued = 排队中，recalled = 已撤回。
 	Status string `json:"status,omitempty"`
+	// ViaHub 标记该用户消息由 AgentHub 管理者代发（send 工具投递），而非用户
+	// 在 hub 直接 @ 发送；前端在消息卡片上渲染「由 AgentHub 自动发送」标签。
+	ViaHub bool `json:"viaHub,omitempty"`
 	// Ts 是消息时刻的 UnixNano。
 	Ts int64 `json:"ts"`
 }
