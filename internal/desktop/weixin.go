@@ -5,12 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/yangk/kshell/internal/agentapi"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/hub"
 	"github.com/yangk/kshell/internal/hubtools"
 	"github.com/yangk/kshell/internal/weixin"
 )
+
+// managerProgressInterval 是微信管理者循环的中途进度推送阈值：循环开始后
+// 超过该时长且尚未推送过时，借 Progress 回调推一条「仍在处理」；单轮最多
+// 一次。包级变量便于测试注入极短值。
+var managerProgressInterval = 15 * time.Second
 
 // startWeixin 装配微信运行时（Startup 末尾调用；applyAgentHubGates 在总开关
 // 翻转/保存设置时也会重调）：读配置、注入回调，凭据齐全则启动长轮询。
@@ -35,6 +42,7 @@ func (a *App) startWeixin() {
 	// 智能路由与逃生门白名单：闭包每次实时读配置（照 transcriber 范式），
 	// 改配置即时生效；Configure 重绑时 Runtime 会再次注入到新 bridge。
 	r.SetRouter(a.weixinInputRouter())
+	r.SetManagerRouter(a.weixinManagerRouter())
 	r.SetDirectPatterns(func() []string { return a.agenthubDirectPatterns() })
 	r.SetToolName(a.toolDisplayName)
 	// 共享聚合策略:桌面 Console(wxHubConsole)与微信 bridge Console 与出站
@@ -105,6 +113,101 @@ func (a *App) weixinInputRouter() weixin.InputRouter {
 			return hubtools.RouteDecision{}, false
 		}
 		return d, true
+	}
+}
+
+// weixinManagerRouter 返回微信管理者循环路由闭包（逃生门之后、InputRouter
+// 单发之前）：循环成功 → Replies 直接回显（正文已是自然语言结论/选项列表）；
+// ErrLoopBusy/ErrLLMNotReady/其它错误一律 (zero,false) 回落 InputRouter
+//（RouteInput 单发路径，现状行为）。Channel 固定 "wechat"，与桌面 Hub 的
+// pendingAsk 渠道隔离；跨渠道陈旧续轮标记由 agentapi Run 的 Channel 守卫兜底。
+func (a *App) weixinManagerRouter() weixin.ManagerRouter {
+	return func(ctx context.Context, input string) (weixin.ManagerOutcome, bool) {
+		if !a.snapshot().Config.AgentHub.EnabledOn() {
+			return weixin.ManagerOutcome{}, false
+		}
+		// 续轮衔接（与 hubroute 同款）：上次 Run 返回 AskPending 且本条是短
+		// 输入 → 显式传 Continuation，让循环带上上一轮反问语境。置位时刻超过
+		// PendingAskTTL 视为语境失效：不传标志并清零标记——显式标志会绕过
+		// agentapi Run 内部的 TTL 检查，过期判定必须在此完成。长输入不传标志，
+		// agentapi 内部清 pending 按新需求处理。
+		a.mu.Lock()
+		askPending := a.wxAskPending
+		askedAt := a.wxAskPendingAt
+		a.mu.Unlock()
+		cont := false
+		if askPending {
+			if time.Since(askedAt) <= agentapi.PendingAskTTL {
+				cont = hub.IsContinueConfirm(input) || len([]rune(input)) <= hubContinuationMax
+			} else {
+				a.mu.Lock()
+				a.wxAskPending = false
+				a.mu.Unlock()
+			}
+		}
+		start := time.Now()
+		progressed, pushed := 0, false
+		res, err := a.runWXLoop(ctx, input, agentapi.RunOpts{
+			Channel:      "wechat",
+			Continuation: cont,
+			Progress: func(p agentapi.LoopProgress) {
+				progressed = p.Round
+				// 中途进度推送（单轮最多一次）：循环开始计时，超过阈值且尚未
+				// 推送过才推一条「仍在处理」，经 bridge 出站 worker 异步投递。
+				if !pushed && time.Since(start) >= managerProgressInterval {
+					pushed = true
+					a.pushWXManagerProgress(progressed)
+				}
+			},
+		})
+		if err != nil {
+			// 续轮标记维护：ErrLLMNotReady 时 agentapi 保留 pending（用户配好
+			// 模型后原语境仍在），desktop 同步保留；其余错误（含 busy/取消）
+			// 语境已断，清零。
+			if !errors.Is(err, agentapi.ErrLLMNotReady) {
+				a.mu.Lock()
+				a.wxAskPending = false
+				a.mu.Unlock()
+			}
+			return weixin.ManagerOutcome{}, false
+		}
+		// 记录 AskPending 结果供下一条输入续轮（选项回执本身由 bridge 回显），
+		// 置位时刻一并记录供 TTL 判定。
+		a.mu.Lock()
+		a.wxAskPending = res.AskPending
+		if res.AskPending {
+			a.wxAskPendingAt = time.Now()
+		}
+		a.mu.Unlock()
+		return weixin.ManagerOutcome{Replies: res.Replies, AskPending: res.AskPending}, true
+	}
+}
+
+// runWXLoop 取微信管理者循环闭包并执行一次：注入桩优先（测试），nil 时用
+// AgentAPI().Run（LLM 配置每次访问实时刷新，与桌面 Hub 同口径）。
+func (a *App) runWXLoop(ctx context.Context, input string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
+	a.mu.Lock()
+	fn := a.wxRunner
+	a.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, input, opts)
+	}
+	return a.AgentAPI().Run(ctx, input, opts)
+}
+
+// pushWXManagerProgress 推送一条微信侧中途进度：wxNotify 注入点（测试观察）
+// 优先，生产走 Runtime.NotifyProgress 经 bridge 既有出站 worker 异步投递
+//（Runtime/bridge 未装配时安全跳过）。
+func (a *App) pushWXManagerProgress(step int) {
+	a.mu.Lock()
+	fn := a.wxNotify
+	a.mu.Unlock()
+	if fn != nil {
+		fn(step)
+		return
+	}
+	if r := a.wxRuntime(); r != nil {
+		r.NotifyProgress(step)
 	}
 }
 

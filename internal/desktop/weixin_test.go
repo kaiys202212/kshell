@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yangk/kshell/internal/agentapi"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/hub"
@@ -288,4 +289,195 @@ func TestWeixinHubPickTarget(t *testing.T) {
 	if len(view.Replies) != 1 || !strings.Contains(view.Replies[0].Text, "1. 新建 session") {
 		t.Fatalf("无会话应回仅新建入口待选: %+v", view.Replies)
 	}
+}
+
+// injectWXRunner 注入微信管理者循环桩并返回调用计数指针。
+func injectWXRunner(app *App, fn func(ctx context.Context, input string, opts agentapi.RunOpts) (agentapi.RunResult, error)) *int {
+	calls := 0
+	app.mu.Lock()
+	app.wxRunner = func(ctx context.Context, input string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
+		calls++
+		return fn(ctx, input, opts)
+	}
+	app.mu.Unlock()
+	return &calls
+}
+
+// wxAskPendingOf 读取微信渠道续轮标记（mu 保护）。
+func wxAskPendingOf(a *App) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.wxAskPending
+}
+
+// setWXAskPending 预置微信渠道续轮标记与置位时刻（TTL 测试用）。
+func setWXAskPending(a *App, at time.Time) {
+	a.mu.Lock()
+	a.wxAskPending = true
+	a.wxAskPendingAt = at
+	a.mu.Unlock()
+}
+
+// TestWeixinManagerRouter 覆盖微信管理者路由闭包：回显/降级/续轮衔接/TTL/
+// 中途进度推送。bridge 侧挂钩（逃生门/优先级/回显）由 weixin 包测试覆盖。
+func TestWeixinManagerRouter(t *testing.T) {
+	newApp := func(t *testing.T) *App {
+		app := wxStatusApp(t)
+		app.mu.Lock()
+		app.opts.Config = config.Default()
+		app.mu.Unlock()
+		return app
+	}
+
+	t.Run("循环成功回显 Replies 并记录 AskPending", func(t *testing.T) {
+		app := newApp(t)
+		calls := injectWXRunner(app, func(_ context.Context, _ string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
+			if opts.Channel != "wechat" {
+				t.Errorf("Channel = %q, 期望 wechat", opts.Channel)
+			}
+			return agentapi.RunResult{Replies: []string{"要发给哪个会话？\n1. 甲"}, AskPending: true}, nil
+		})
+		out, handled := app.weixinManagerRouter()(context.Background(), "帮我把任务分给甲")
+		if !handled {
+			t.Fatal("循环成功应接管")
+		}
+		if len(out.Replies) != 1 || out.Replies[0] != "要发给哪个会话？\n1. 甲" {
+			t.Fatalf("Replies 未透传: %+v", out)
+		}
+		if !out.AskPending || !wxAskPendingOf(app) {
+			t.Fatal("AskPending 应记录进续轮标记")
+		}
+		if *calls != 1 {
+			t.Fatalf("Run 调用次数 = %d, 期望 1", *calls)
+		}
+	})
+
+	t.Run("ErrLLMNotReady 回落且保留续轮标记", func(t *testing.T) {
+		app := newApp(t)
+		setWXAskPending(app, time.Now())
+		injectWXRunner(app, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			return agentapi.RunResult{}, agentapi.ErrLLMNotReady
+		})
+		out, handled := app.weixinManagerRouter()(context.Background(), "随便看看")
+		if handled {
+			t.Fatal("ErrLLMNotReady 应回落 InputRouter")
+		}
+		if out.Replies != nil {
+			t.Fatalf("回落应返回零值: %+v", out)
+		}
+		if !wxAskPendingOf(app) {
+			t.Fatal("ErrLLMNotReady 应保留续轮标记（agentapi 侧 pending 同样保留）")
+		}
+	})
+
+	t.Run("其它错误回落并清零续轮标记", func(t *testing.T) {
+		app := newApp(t)
+		setWXAskPending(app, time.Now())
+		injectWXRunner(app, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			return agentapi.RunResult{}, errors.New("boom")
+		})
+		if _, handled := app.weixinManagerRouter()(context.Background(), "随便看看"); handled {
+			t.Fatal("其它错误应回落 InputRouter")
+		}
+		if wxAskPendingOf(app) {
+			t.Fatal("非 NotReady 错误应清零续轮标记")
+		}
+	})
+
+	t.Run("AskPending 后短输入续轮长输入新开", func(t *testing.T) {
+		app := newApp(t)
+		var gotOpts agentapi.RunOpts
+		first := true
+		injectWXRunner(app, func(_ context.Context, _ string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
+			if first {
+				first = false
+				return agentapi.RunResult{Replies: []string{"确认吗？"}, AskPending: true}, nil
+			}
+			gotOpts = opts
+			return agentapi.RunResult{Replies: []string{"完成"}}, nil
+		})
+		mgr := app.weixinManagerRouter()
+		mgr(context.Background(), "帮我修复登录") // ask 落地
+		// 短输入：显式 Continuation 续轮。
+		if _, handled := mgr(context.Background(), "1"); !handled {
+			t.Fatal("短输入续轮应接管")
+		}
+		if !gotOpts.Continuation {
+			t.Fatal("AskPending 语境下的短输入应传 Continuation=true")
+		}
+		// 再次 ask 后长输入：新需求，不传标志（agentapi 内部清 pending）。
+		first = true
+		mgr(context.Background(), "重新帮我修复登录问题")
+		mgr(context.Background(), "这是一个远超二十个字的长输入需要按新需求处理")
+		if gotOpts.Continuation {
+			t.Fatal("长输入不应传 Continuation=true")
+		}
+		if wxAskPendingOf(app) {
+			t.Fatal("长输入成功运行后应刷新续轮标记为 false")
+		}
+	})
+
+	t.Run("超过 TTL 后短输入不再续轮", func(t *testing.T) {
+		app := newApp(t)
+		var gotOpts agentapi.RunOpts
+		injectWXRunner(app, func(_ context.Context, _ string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
+			gotOpts = opts
+			return agentapi.RunResult{Replies: []string{"完成"}}, nil
+		})
+		setWXAskPending(app, time.Now().Add(-agentapi.PendingAskTTL-time.Minute))
+		if _, handled := app.weixinManagerRouter()(context.Background(), "1"); !handled {
+			t.Fatal("TTL 过期仍应由循环接管（按新输入处理）")
+		}
+		if gotOpts.Continuation {
+			t.Fatal("超过 TTL 的标记不得传 Continuation=true（显式标志会绕过 agentapi 内部 TTL 检查）")
+		}
+		if wxAskPendingOf(app) {
+			t.Fatal("TTL 过期应清零续轮标记")
+		}
+	})
+
+	t.Run("中途进度推送单轮一次", func(t *testing.T) {
+		app := newApp(t)
+		var pushes []int
+		app.mu.Lock()
+		app.wxNotify = func(step int) { pushes = append(pushes, step) }
+		app.mu.Unlock()
+		old := managerProgressInterval
+		managerProgressInterval = 0 // 注入极短阈值：首个 Progress 即触发
+		defer func() { managerProgressInterval = old }()
+		injectWXRunner(app, func(_ context.Context, _ string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
+			if opts.Progress != nil {
+				opts.Progress(agentapi.LoopProgress{Tool: "list_sessions", Round: 1})
+				opts.Progress(agentapi.LoopProgress{Tool: "send", Round: 2})
+			}
+			return agentapi.RunResult{Replies: []string{"完成"}}, nil
+		})
+		mgr := app.weixinManagerRouter()
+		mgr(context.Background(), "第一轮")
+		if len(pushes) != 1 {
+			t.Fatalf("单轮应最多推送一次, 实际 %d 次 (%v)", len(pushes), pushes)
+		}
+		if pushes[0] != 1 {
+			t.Fatalf("推送步数 = %d, 期望触发时刻的最新步数 1", pushes[0])
+		}
+		// 下一轮：pushed 重置，仍只推一次。
+		mgr(context.Background(), "第二轮")
+		if len(pushes) != 2 {
+			t.Fatalf("第二轮应再推一次, 累计 %d 次 (%v)", len(pushes), pushes)
+		}
+	})
+
+	t.Run("总开关关闭不接管", func(t *testing.T) {
+		app := newApp(t)
+		off := false
+		app.mu.Lock()
+		app.opts.Config.AgentHub.Enabled = &off
+		app.mu.Unlock()
+		injectWXRunner(app, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			return agentapi.RunResult{Replies: []string{"不应到达"}}, nil
+		})
+		if _, handled := app.weixinManagerRouter()(context.Background(), "随便看看"); handled {
+			t.Fatal("AgentHub 关闭时管理者路由不应接管")
+		}
+	})
 }

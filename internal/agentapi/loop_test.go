@@ -466,3 +466,33 @@ func TestRunLoopRoundGuard(t *testing.T) {
 		t.Fatalf("超限应返回指引文案: %+v", res2)
 	}
 }
+
+// 测试：显式续轮与 pending 渠道不符时按新输入处理——跨渠道陈旧标记不得把
+// 他渠道的反问语境注入模型（desktop/hub 各自维护渠道标记，agentapi 守卫兜底）。
+func TestRunLoopContinuationChannelGuard(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	sc := &scriptChat{resps: []hubtools.Response{{Text: "结论"}, {Text: "结论"}}}
+	chatToolsHook = sc.hook
+
+	// hub 渠道的 pending 在场，wechat 输入带显式续轮：不得注入 hub 语境，
+	// 且按新输入清 pending。
+	api.setPending(&pendingAsk{Question: "发给哪个？", Channel: "hub", Ts: now().UnixNano()})
+	if _, err := api.Run(context.Background(), "1", RunOpts{Channel: "wechat", Continuation: true}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Contains(sc.sysSeen[0], "续轮语境") {
+		t.Fatalf("跨渠道显式续轮不得注入他渠道语境: %q", sc.sysSeen[0])
+	}
+	if api.getPending() != nil {
+		t.Fatal("跨渠道输入应按新需求清 pending")
+	}
+
+	// 渠道一致时显式续轮照常注入语境。
+	api.setPending(&pendingAsk{Question: "发给哪个？", Channel: "wechat", Ts: now().UnixNano()})
+	if _, err := api.Run(context.Background(), "1", RunOpts{Channel: "wechat", Continuation: true}); err != nil {
+		t.Fatalf("Run2: %v", err)
+	}
+	if !strings.Contains(sc.sysSeen[1], "续轮语境") {
+		t.Fatalf("同渠道显式续轮应注入语境: %q", sc.sysSeen[1])
+	}
+}

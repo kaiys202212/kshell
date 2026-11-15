@@ -15,6 +15,8 @@ var bridgeTexts = map[string]langPair{
 	"voice.unsupported":  {"Voice received, but the current chat model does not accept audio input. Please configure a dedicated ASR model (Settings → Model platform → ASR model).", "已收到语音，但当前对话模型不支持音频输入，请在设置 → 模型平台 → 语音转写模型（asr_model）中配置专用转写模型"},
 	"voice.failed":       {"Voice transcription failed: %v", "语音转写失败：%v"},
 	"voice.empty":        {"Empty transcription result", "转写结果为空"},
+	// 管理者循环中途进度（15s 节流单轮一条；%d=已完成的工具步数）。
+	"manager.progress": {"Still working: completed step %d", "仍在处理：已完成第 %d 步"},
 }
 
 // bridgeText 按语言取文案；zh-CN 用中文，其余用英文；未知 key 原样返回。

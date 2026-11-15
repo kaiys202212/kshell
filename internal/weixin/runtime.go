@@ -3,6 +3,7 @@ package weixin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -41,6 +42,18 @@ type WeixinStatus struct {
 //（照 transcriber 范式每次实时读，改配置即时生效）。
 type InputRouter func(ctx context.Context, input string) (hubtools.RouteDecision, bool)
 
+// ManagerOutcome 是管理者循环的执行结果（直接回显，不走决策执行）。
+type ManagerOutcome struct {
+	Replies    []string
+	AskPending bool
+}
+
+// ManagerRouter 是管理者循环路由钩子：返回 (结果, 是否接管)。优先级在
+// DirectPatterns 逃生门之后、InputRouter（RouteInput 单发）之前：命中即把
+// Replies 逐条推回微信（正文已是自然语言结论/选项列表）；未接管（false）
+// 回落 InputRouter 路径。
+type ManagerRouter func(ctx context.Context, input string) (ManagerOutcome, bool)
+
 // Runtime 是微信桥的运行时封装：管理长轮询 goroutine 生命周期、绑定状态与
 // 配置落盘回调。desktop 在 Startup 时创建并注入回调，此后只经绑定方法交互。
 type Runtime struct {
@@ -59,6 +72,8 @@ type Runtime struct {
 	transcriber Transcriber
 	// router 由 desktop 注入：入站文本智能路由（实时读配置，装配到 bridge）。
 	router InputRouter
+	// managerRouter 由 desktop 注入：管理者循环路由（优先于 router，装配到 bridge）。
+	managerRouter ManagerRouter
 	// directPatternsFn 由 desktop 注入：逃生门白名单（实时读配置，装配到 bridge）。
 	directPatternsFn func() []string
 	// toolName 由 desktop 注入：工具展示名（出站标题栏归因，装配到 bridge）。
@@ -158,6 +173,32 @@ func (r *Runtime) SetDirectPatterns(fn func() []string) {
 	}
 }
 
+// SetManagerRouter 装配管理者循环路由钩子：转发给已存在的 bridge 并记录，
+// Configure 创建新 bridge（重绑）时再次注入。
+func (r *Runtime) SetManagerRouter(fn ManagerRouter) {
+	r.mu.Lock()
+	r.managerRouter = fn
+	bridge := r.bridge
+	r.mu.Unlock()
+	if bridge != nil {
+		bridge.SetManagerRouter(fn)
+	}
+}
+
+// NotifyProgress 向微信推送一条中途进度提示（管理者循环 15s 节流后调用）：
+// 经既有出站串行 worker 异步投递（不阻塞循环，失败计 undelivered），凭据取
+// 最近一次入站消息的发送上下文——进度推送发生在处理该入站期间，上下文即正确。
+// bridge 未创建时 no-op。
+func (r *Runtime) NotifyProgress(step int) {
+	bridge := r.GetBridge()
+	if bridge == nil {
+		return
+	}
+	bridge.enqueueOutbound(outMsg{
+		text: fmt.Sprintf(bridgeText(bridge.lang, "manager.progress"), step),
+	})
+}
+
 // SetToolName 装配工具展示名查询函数（出站标题栏归因用）：转发给已存在的
 // bridge 并记录，Configure 创建新 bridge（重绑）时再次注入。
 func (r *Runtime) SetToolName(fn func(string) string) {
@@ -229,6 +270,9 @@ func (r *Runtime) Configure(token, wxid string) {
 	}
 	if r.router != nil {
 		r.bridge.SetRouter(r.router)
+	}
+	if r.managerRouter != nil {
+		r.bridge.SetManagerRouter(r.managerRouter)
 	}
 	if r.directPatternsFn != nil {
 		r.bridge.SetDirectPatterns(r.directPatternsFn)

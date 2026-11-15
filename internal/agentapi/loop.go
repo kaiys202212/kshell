@@ -158,8 +158,15 @@ func (a *API) Run(ctx context.Context, input string, opts RunOpts) (RunResult, e
 
 	// 续轮判定：显式 Continuation 标志，或「短输入 + 同渠道未过期 pendingAsk」。
 	// 短文本大概率是用户在回复上一轮的编号选项；新长需求清 pending 开新轮。
+	// 显式标志须与 pending 渠道一致才采信：hub/wechat 渠道各自维护标记，可能
+	// 陈旧（如 hub 渠道 ask 后另一渠道抢先开新轮）——跨渠道语境不得注入模型，
+	// 按新输入处理（下方清 pending）。pending 为空时保留标志：clearPending
+	// 变为 no-op，且续轮不降级 4xx 的纪律不受影响。
 	pend := a.getPending()
 	cont := opts.Continuation
+	if cont && pend != nil && pend.Channel != opts.Channel {
+		cont = false
+	}
 	if !cont && pend != nil && pend.Channel == opts.Channel &&
 		time.Duration(now().UnixNano()-pend.Ts) <= PendingAskTTL &&
 		len([]rune(strings.TrimSpace(input))) <= shortInputMax {
