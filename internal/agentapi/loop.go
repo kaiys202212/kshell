@@ -198,8 +198,14 @@ func (a *API) Run(ctx context.Context, input string, opts RunOpts) (RunResult, e
 		// 也不写记忆（避免每次未配置都污染 journal）。
 		return res, err
 	}
-	// 收尾：非 ask 结局（结论/超限/错误）一律清 pending；写入记忆。
-	if err != nil || !res.AskPending {
+	// 收尾清 pending：结论/超限/新轮错误都说明本轮语境已走到头；ask 落地
+	// 保留等续轮。**续轮错误例外保留**——短回复的确认链路（候选编号 →
+	// create_session）不应因一次瞬时错误作废，用户重试同一输入还能续上；
+	// 否则 Confirm/Candidates 被清掉，创建确认链路就此打断。
+	if err == nil && !res.AskPending {
+		a.clearPending()
+	}
+	if err != nil && !st.cont {
 		a.clearPending()
 	}
 	a.memoryAppend(st, res, err)
@@ -234,10 +240,13 @@ func (a *API) runLoop(ctx context.Context, input string, opts RunOpts, st *loopS
 			if errors.Is(err, ErrLLMNotReady) {
 				return RunResult{}, err
 			}
-			// 4xx 降级仅限首轮：协议不被网关支持时第 1 轮就会失败；mid-loop
-			// 的 4xx（如 429 限流）更可能是瞬时错误，且此时工具可能已真实
-			// 投递，再走 RouteDecide 会把用户原文重复投出——直接上抛。
-			if st.steps == 0 && strings.Contains(err.Error(), "状态码 4") {
+			// 4xx 降级仅限非续轮的首轮：协议不被网关支持时第 1 轮就会失败；
+			// mid-loop 的 4xx（如 429 限流）更可能是瞬时错误，且此时工具可能
+			// 已真实投递，再走 RouteDecide 会把用户原文重复投出——直接上抛。
+			// 续轮一律不降级：RouteDecide 没有上一轮问题与候选语境（用户短
+			// 回复如 "1" 进去决策不可控），且降级 ask 分支会用新 pendingAsk
+			// 覆盖 Confirm/Candidates，打断创建确认链路。
+			if !st.cont && st.steps == 0 && strings.Contains(err.Error(), "状态码 4") {
 				st.degraded = true
 				return a.degradeRoute(ctx, input, st)
 			}

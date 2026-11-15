@@ -367,6 +367,51 @@ func TestRunLoopDegradeOnlyFirstRound(t *testing.T) {
 	}
 }
 
+// 测试 7c：续轮不降级——续轮首轮 chatTools 4xx 应上抛错误。RouteDecide 没有
+// 上一轮问题与候选语境（用户短回复如 "1" 进去决策不可控），且降级 ask 分支
+// 会用新 pendingAsk 覆盖 Confirm/Candidates，打断创建确认链路。
+func TestRunLoopDegradeSkipContinuation(t *testing.T) {
+	api, f := newLoopAPI(t)
+
+	// 第一轮：create_session 缺参数 → 候选存 pendingAsk → ask 终止
+	sc1 := &scriptChat{resps: []hubtools.Response{
+		{ToolCalls: []hubtools.ToolCall{tc("c1", "create_session", `{"task":"写周报"}`)}},
+		{ToolCalls: []hubtools.ToolCall{tc("c2", "ask", `{"question":"请选择工具","options":["claude Claude Code"]}`)}},
+	}}
+	chatToolsHook = sc1.hook
+	if _, err := api.Run(context.Background(), "新建会话写周报", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run1: %v", err)
+	}
+	if p := api.getPending(); p == nil || p.Confirm == nil || p.Candidates[1] != "claude" {
+		t.Fatalf("第一轮后候选语境缺失: %+v", p)
+	}
+
+	// 续轮：chatTools 直接 4xx → 应上抛错误，不进 RouteDecide
+	chatToolsHook = func(context.Context, hubtools.Config, []hubtools.Message, []hubtools.ToolFunc) (hubtools.Response, error) {
+		return hubtools.Response{}, errors.New("err.hubtools.request_failed: 状态码 400, 响应: bad request")
+	}
+	api.setChatFn(func(context.Context, []hubtools.Message) (hubtools.Response, error) {
+		// 降级若误触发会走这里：投递决策 + ask 分支覆盖 pendingAsk 双重破坏。
+		t.Error("续轮不应触发降级 RouteDecide")
+		return hubtools.Response{Text: `{"action":"single","targets":[1],"text":"误投"}`}, nil
+	})
+
+	_, err := api.Run(context.Background(), "1", RunOpts{Channel: "hub", Continuation: true})
+	if err == nil || !strings.Contains(err.Error(), "状态码 400") {
+		t.Fatalf("续轮 4xx 应上抛错误, got %v", err)
+	}
+	// 候选语境未被降级路径破坏（Confirm/Candidates/Options 原样保留）
+	p := api.getPending()
+	if p == nil || p.Confirm == nil || p.Candidates[1] != "claude" ||
+		len(p.Options) != 1 || p.Question != "请选择工具" {
+		t.Fatalf("续轮错误后候选语境应保留: %+v", p)
+	}
+	// 无 RouteSend 副作用
+	if len(f.sent) != 0 {
+		t.Fatalf("续轮错误不应产生投递: %v", f.sent)
+	}
+}
+
 // 测试 8：ErrLoopBusy 并发重入；ErrLLMNotReady 原样上抛。
 func TestRunLoopBusyAndNotReady(t *testing.T) {
 	// 未配置 LLM
