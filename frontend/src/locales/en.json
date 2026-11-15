@@ -773,7 +773,20 @@
       "delete_partial_failed": "Deleted {{ok}} items, {{n}} failed: {{err}}",
       "menu_ignore": "Add to git ignore",
       "ignored": "Added to git ignore: {{name}}",
-      "ignore_failed": "Failed to add to git ignore"
+      "ignore_failed": "Failed to add to git ignore",
+      "menu_copy": "Copy",
+      "menu_cut": "Cut",
+      "menu_paste": "Paste",
+      "action_copy": "Copy",
+      "action_cut": "Cut",
+      "paste_confirm_title": "Paste into {{target}}",
+      "paste_confirm_source_tree": "Source: {{action}} in tree, {{n}} item(s)",
+      "paste_confirm_source_clipboard": "Source: system clipboard (copied or cut in Explorer)",
+      "paste_confirm_note": "Name conflicts are auto-suffixed; existing files are never overwritten.",
+      "paste": "Paste",
+      "pasted": "Pasted: {{moved}} moved, {{copied}} copied",
+      "pasted_renamed_suffix": ", {{n}} renamed",
+      "paste_failed": "Paste failed"
     },
     "terminal": {
       "tabs_aria": "Terminal tabs",

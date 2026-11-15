@@ -752,6 +752,7 @@ interface AppBindings {
   WriteTerminal(id: string, data: string): Promise<void>;
   ReadClipboardPaste(): Promise<ClipboardPaste>;
   WriteClipboardFiles(root: string, rels: string[]): Promise<void>;
+  PasteFiles(wsPath: string, dirRel: string, treeRels: string[], move: boolean): Promise<PasteSummary>;
   ResizeTerminal(id: string, cols: number, rows: number): Promise<void>;
   CloseTerminal(id: string): Promise<void>;
   ListTerminals(): Promise<TerminalInfo[]>;
@@ -1668,6 +1669,27 @@ export async function writeClipboardFiles(root: string, rels: string[]): Promise
   const a = app();
   if (!a) return;
   await a.WriteClipboardFiles(root, rels);
+}
+
+// PasteSummary 粘贴结果汇总（Go 侧 PasteFiles 返回）。
+export interface PasteSummary {
+  Moved: number;
+  Copied: number;
+  Renamed: string[]; // "a.txt → a (1).txt"
+  Errors: string[];
+}
+
+// pasteFiles 把来源项粘贴进工作区目录 dirRel：
+// treeRels 非空走树内剪贴板（move 由调用方决定），否则读系统剪贴板（剪切语义由 Go 侧 DropEffect 判定）。
+export async function pasteFiles(
+  wsPath: string,
+  dirRel: string,
+  treeRels: string[],
+  move: boolean,
+): Promise<PasteSummary> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  return a.PasteFiles(wsPath, dirRel, treeRels, move);
 }
 
 // writeTerminal 把键盘输入写进终端（data 为 base64 编码的 UTF-8 字节）。

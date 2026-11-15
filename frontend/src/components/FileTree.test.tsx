@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => ({
   onGitChanged: vi.fn<(cb: (path: string) => void) => () => void>(() => () => {}),
   revealInExplorer: vi.fn().mockResolvedValue(undefined),
   writeClipboardFiles: vi.fn().mockResolvedValue(undefined),
+  pasteFiles: vi.fn(),
   isSSHWorkspaceRef: (p: string) => typeof p === 'string' && p.startsWith('ssh://'),
 }));
 vi.mock('../lib/api', () => mocks);
@@ -1446,5 +1447,153 @@ describe('FileTree 删除后局部刷新不折叠', () => {
     fireEvent.pointerDown(screen.getByRole('menuitem', { name: tt('ui.files.delete') }));
     await screen.findByText(tt('ui.files.delete_confirm_title'));
     expect(screen.getByRole('button', { name: tt('ui.files.delete') })).toHaveFocus();
+  });
+});
+
+describe('FileTree paste', () => {
+  const treeEl = () => screen.getByRole('tree', { name: tt('ui.files.tree_aria') });
+  const pasteTitle = (target: string) =>
+    tt('ui.files.paste_confirm_title').replace('{{target}}', target);
+  const rootTarget = () => tt('ui.files.root_dir');
+  const sourceTree = (action: string, n: number) =>
+    tt('ui.files.paste_confirm_source_tree')
+      .replace('{{action}}', action)
+      .replace('{{n}}', String(n));
+
+  it('Ctrl+C 复制选中集后 Ctrl+V 弹确认框，确认后按复制语义调 pasteFiles 并 toast 汇总', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.writeClipboardFiles.mockResolvedValue(undefined);
+    mocks.pasteFiles.mockResolvedValue({ Moved: 0, Copied: 1, Renamed: [], Errors: [] });
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+
+    fireEvent.click(await screen.findByText('README.md')); // 选中
+    fireEvent.keyDown(treeEl(), { key: 'c', ctrlKey: true }); // 复制
+    expect(mocks.writeClipboardFiles).toHaveBeenCalledWith('D:\\proj', ['README.md']);
+
+    fireEvent.keyDown(treeEl(), { key: 'v', ctrlKey: true });
+    expect(await screen.findByText(pasteTitle(rootTarget()))).toBeInTheDocument();
+    expect(screen.getByText(sourceTree(tt('ui.files.action_copy'), 1))).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.files.paste') }));
+    });
+    expect(mocks.pasteFiles).toHaveBeenCalledWith('D:\\proj', '', ['README.md'], false);
+    await waitFor(() => {
+      expect(
+        useAppStore.getState().toasts.some(
+          (t) =>
+            t.tone === 'success' &&
+            t.title ===
+              tt('ui.files.pasted')
+                .replace('{{moved}}', '0')
+                .replace('{{copied}}', '1'),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it('Ctrl+X 剪切只写树内剪贴板（不碰系统剪贴板），粘贴走移动语义', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.pasteFiles.mockResolvedValue({ Moved: 1, Copied: 0, Renamed: [], Errors: [] });
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+
+    fireEvent.click(await screen.findByText('README.md'));
+    fireEvent.keyDown(treeEl(), { key: 'x', ctrlKey: true });
+    expect(mocks.writeClipboardFiles).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(treeEl(), { key: 'v', ctrlKey: true });
+    expect(await screen.findByText(sourceTree(tt('ui.files.action_cut'), 1))).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.files.paste') }));
+    });
+    expect(mocks.pasteFiles).toHaveBeenCalledWith('D:\\proj', '', ['README.md'], true);
+  });
+
+  it('恰选中一个目录时 Ctrl+V 以该目录为粘贴目标', async () => {
+    mocks.listFiles.mockResolvedValueOnce(root).mockResolvedValueOnce(srcChildren);
+    mocks.pasteFiles.mockResolvedValue({ Moved: 0, Copied: 1, Renamed: [], Errors: [] });
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+
+    fireEvent.click(await screen.findByText('src')); // 选中并展开
+    await screen.findByText('main.ts');
+    fireEvent.keyDown(treeEl(), { key: 'c', ctrlKey: true });
+    fireEvent.keyDown(treeEl(), { key: 'v', ctrlKey: true });
+
+    expect(await screen.findByText(pasteTitle('src'))).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.files.paste') }));
+    });
+    expect(mocks.pasteFiles).toHaveBeenCalledWith('D:\\proj', 'src', ['src'], false);
+  });
+
+  it('树内剪贴板为空时 Ctrl+V 走系统剪贴板来源', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.pasteFiles.mockResolvedValue({ Moved: 0, Copied: 2, Renamed: [], Errors: [] });
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    fireEvent.keyDown(treeEl(), { key: 'v', ctrlKey: true });
+    expect(await screen.findByText(tt('ui.files.paste_confirm_source_clipboard'))).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.files.paste') }));
+    });
+    expect(mocks.pasteFiles).toHaveBeenCalledWith('D:\\proj', '', [], false);
+  });
+
+  it('行右键菜单含复制/剪切项，空白右键菜单含粘贴项', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    fireEvent.contextMenu(screen.getByText('README.md'));
+    expect(screen.getByRole('menuitem', { name: tt('ui.files.menu_copy') })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: tt('ui.files.menu_cut') })).toBeInTheDocument();
+
+    fireEvent.contextMenu(treeEl()); // 空白处
+    expect(screen.getByRole('menuitem', { name: tt('ui.files.menu_paste') })).toBeInTheDocument();
+
+    // 菜单粘贴走系统剪贴板来源
+    fireEvent.pointerDown(screen.getByRole('menuitem', { name: tt('ui.files.menu_paste') }));
+    expect(await screen.findByText(tt('ui.files.paste_confirm_source_clipboard'))).toBeInTheDocument();
+  });
+
+  it('SSH 工作区不显示复制/剪切/粘贴入口', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    render(<FileTree wsPath={'ssh://c1/root'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    fireEvent.contextMenu(screen.getByText('README.md'));
+    expect(screen.queryByRole('menuitem', { name: tt('ui.files.menu_copy') })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: tt('ui.files.menu_cut') })).not.toBeInTheDocument();
+
+    fireEvent.contextMenu(treeEl());
+    expect(screen.queryByRole('menuitem', { name: tt('ui.files.menu_paste') })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(treeEl(), { key: 'v', ctrlKey: true });
+    expect(screen.queryByText(pasteTitle(rootTarget()))).not.toBeInTheDocument();
+    expect(mocks.pasteFiles).not.toHaveBeenCalled();
+  });
+
+  it('粘贴部分失败时弹错误 toast', async () => {
+    mocks.listFiles.mockResolvedValue(root);
+    mocks.pasteFiles.mockResolvedValue({
+      Moved: 0,
+      Copied: 0,
+      Renamed: [],
+      Errors: ['err.files.paste_failed|boom'],
+    });
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+    await screen.findByText('README.md');
+
+    fireEvent.keyDown(treeEl(), { key: 'v', ctrlKey: true });
+    await screen.findByText(tt('ui.files.paste_confirm_source_clipboard'));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.files.paste') }));
+    });
+    await waitFor(() => {
+      expect(useAppStore.getState().toasts.some((t) => t.tone === 'error')).toBe(true);
+    });
   });
 });
