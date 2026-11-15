@@ -120,6 +120,12 @@ func platformByModel(cfg config.ModelConfig, model, toolID string) (config.Model
 	return pick(func(candidate string) bool { return looseModelEqual(candidate, model) })
 }
 
+// isClaudeDefaultModel 判断是否为 Claude ACP 的「默认模型」占位 ID。
+// 只认精确的 default（大小写/空白归一）：cursor 的 "default[]" 等字面值不是它。
+func isClaudeDefaultModel(model string) bool {
+	return strings.EqualFold(strings.TrimSpace(model), "default")
+}
+
 // platformSource 记录平台解析的命中来源。Options 据此判断会话模型名能否
 // 安全下发：只有「平台正是由该会话模型反查命中」时才注入，否则查不到配置的
 // 原生模型名会带着回落平台端点发出去（必失败）。
@@ -196,6 +202,13 @@ func Options(cfg config.ModelConfig, q Query, px Proxier) launch.ModelOptions {
 		}
 		if model == "" && src == sourceSessionModel {
 			model = rq.SessionModel
+		}
+		// Claude ACP 自报的 "default" 是「让 agent 自选」的占位 ID，不是具体
+		// 模型名。作为 ANTHROPIC_MODEL 下发时 Claude CLI 不做别名解析，网关会
+		// 收到字面 "default" 并 400（OpenCode Go 实测）；按「未显式指定」处理，
+		// 实际模型交给静态 settings/会话默认。其它工具可能真有同名模型，不拦。
+		if rq.ToolID == "claude" && isClaudeDefaultModel(model) {
+			model = ""
 		}
 		if p.Preset == workbuddy.PresetID {
 			if px == nil {

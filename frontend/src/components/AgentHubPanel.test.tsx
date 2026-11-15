@@ -8,7 +8,15 @@ import zhLocale from '../locales/zh-CN.json';
 import { useAppStore } from '../state/store';
 import '../test/i18n';
 import { tt } from '../test/i18n';
-import { loadDefaultCreate, loadLastCreate, loadToolModelOptions, saveDefaultCreate, saveLastCreate, saveToolModels } from '../lib/agenthubDefaults';
+import {
+  loadDefaultCreate,
+  loadLastCreate,
+  loadPerToolLastModel,
+  loadToolModelOptions,
+  saveDefaultCreate,
+  saveLastCreate,
+  saveToolModels,
+} from '../lib/agenthubDefaults';
 import { REQUIREMENT_MIME } from './RequirementList';
 import AgentHubPanel from './AgentHubPanel';
 
@@ -255,7 +263,7 @@ describe('AgentHubPanel', () => {
     // chip 主体按钮（aria-current 标注高亮态，名称含标题+工具名）
     const main = within(chips).getByRole('button', { name: /重构认证/ });
     fireEvent.click(main);
-    // 尾随空格便于继续输入（与 quickReply rephrase 同语义）
+    // 尾随空格便于继续输入
     expect(box.value).toBe('帮我看看 @Claude Code#重构认证 ');
     expect(document.activeElement).toBe(box);
   });
@@ -865,7 +873,7 @@ describe('AgentHubPanel', () => {
     expect(screen.getByText('普通回复正文')).toBeTruthy();
   });
 
-  it('欢迎词气泡不显示 Continue / Explain differently（合成就绪提示无任务可续）', async () => {
+  it('欢迎词气泡不显示 Continue / Quote（合成就绪提示无任务可续）', async () => {
     useAppStore.setState({
       chats: [chat({ ID: 'c-cur', Key: 'new:1', ToolID: 'cursor', Title: 'kshell · Cursor' })],
     });
@@ -883,9 +891,9 @@ describe('AgentHubPanel', () => {
     ]);
     render(<AgentHubPanel />);
     expect(await screen.findByText(tt('hub.welcome').replace('{{0}}', 'Cursor'))).toBeTruthy();
-    // 普通完成气泡仍有快捷按钮；欢迎词气泡不得有（共一对，不是两对）
+    // 普通完成气泡仍有快捷按钮；欢迎词气泡不得有（各一个，不是各两个）
     expect(screen.getAllByRole('button', { name: tt('ui.hub.quick_continue') })).toHaveLength(1);
-    expect(screen.getAllByRole('button', { name: tt('ui.hub.quick_rephrase') })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: tt('ui.hub.quote_reply') })).toHaveLength(1);
   });
 
   it('agent 回复归因：气泡头部展示 工具 · 项目 · 会话标题', async () => {
@@ -1199,21 +1207,22 @@ describe('AgentHubPanel', () => {
     render(<AgentHubPanel />);
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
     const select = (await screen.findByLabelText(tt('ui.hub.field_model'))) as HTMLSelectElement;
-    // 有模型时直接列模型（无空「默认」选项，既有行为）；无模型时才只剩「默认模型」
-    await waitFor(() => expect(select.options).toHaveLength(2));
+    // 头部恒有「默认模型」空选项，其后列注入模型
+    await waitFor(() => expect(select.options).toHaveLength(3));
     const values = Array.from(select.options).map((o) => o.value);
+    expect(values[0]).toBe('');
     expect(values).toContain('glm-5.3-flash');
     expect(values).toContain('deepseek-v4.1-flash');
-    expect(values[0]).toBe('glm-5.3-flash'); // 注入模型在前；value 仍为裸 ID
+    expect(values[1]).toBe('glm-5.3-flash'); // 注入模型在前；value 仍为裸 ID
     // 展示名带平台前缀，不得把平台名写进 value
-    expect(select.options[0].textContent).toBe('智谱: glm-5.3-flash');
-    expect(select.options[1].textContent).toBe('智谱: deepseek-v4.1-flash');
+    expect(select.options[1].textContent).toBe('智谱: glm-5.3-flash');
+    expect(select.options[2].textContent).toBe('智谱: deepseek-v4.1-flash');
     // 缓存模型与注入模型重复时去重：缓存 m1 与注入 glm 重名（用不同 key 模拟不重复）
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.cancel') }));
     saveToolModels('claude', ['glm-5.3-flash', 'cache-only']);
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
     const refreshed = (await screen.findByLabelText(tt('ui.hub.field_model'))) as HTMLSelectElement;
-    await waitFor(() => expect(refreshed.options).toHaveLength(3)); // 2 注入 + cache-only，glm 去重
+    await waitFor(() => expect(refreshed.options).toHaveLength(4)); // 空默认 + 2 注入 + cache-only，glm 去重
     const merged = Array.from(refreshed.options).map((o) => o.value).filter(Boolean);
     expect(new Set(merged).size).toBe(merged.length);
     expect(merged[0]).toBe('glm-5.3-flash'); // 注入模型在前
@@ -1331,9 +1340,10 @@ describe('AgentHubPanel', () => {
     saveToolModels('claude', ['m1', 'm2']);
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
     const refreshed = (await screen.findByLabelText(tt('ui.hub.field_model'))) as HTMLSelectElement;
-    await waitFor(() => expect(refreshed.options).toHaveLength(2));
+    await waitFor(() => expect(refreshed.options).toHaveLength(3));
     // 无 lastCreate.modelId 预选：modelId 状态仍为空串（建会话后不触发 SetModel）；
-    // 注意有缓存时下拉无空选项，浏览器显示值会回落到第一项，属既有展示行为
+    // 头部恒有空「默认模型」选项，与空状态一致
+    expect(refreshed.value).toBe('');
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.create') }));
     await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'claude', null));
     await waitFor(() => expect(api.setChatModel).not.toHaveBeenCalled());
@@ -1362,6 +1372,45 @@ describe('AgentHubPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.create') }));
     await waitFor(() => expect(api.setChatModel).toHaveBeenCalledWith('n4', 'm2'));
     expect(useAppStore.getState().chats.some((c) => c.ID === 'n4')).toBe(true);
+  });
+
+  it('新建 agent：claude 历史记忆里的 default 不注入模型，且不留显式记忆', async () => {
+    // 事故回归：Claude ACP 自报的 "default" 被记成「上次模型」后，新建时作为
+    // 显式 ANTHROPIC_MODEL 下发，OpenCode Go 网关 400。归一后必须传 null。
+    api.getTools.mockResolvedValue([acpTool()]);
+    api.openWorkspaceACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'n-def', Workspace: 'D:\\ws\\a', ToolID: 'claude' }),
+    });
+    api.listChatModels.mockResolvedValue({
+      Current: 'default',
+      Models: [
+        { ID: 'default', Name: 'Default (recommended)' },
+        { ID: 'glm-5.3-flash', Name: 'glm-5.3-flash' },
+      ],
+    });
+    saveToolModels('claude', [
+      { id: 'default', name: 'Default (recommended)' },
+      { id: 'glm-5.3-flash', name: 'glm-5.3-flash' },
+    ]);
+    // 直接造旧版本遗留的原始存储（rememberPerToolLastModel 现在会删除，无法模拟）
+    localStorage.setItem(
+      'kshell.agenthub.perToolLastModel',
+      JSON.stringify({ claude: { modelId: 'default' } }),
+    );
+    saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'default' });
+    useAppStore.setState({ workspaces: [workspaceA] });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
+    const sel = (await screen.findByLabelText(tt('ui.hub.field_model'))) as HTMLSelectElement;
+    // 历史 default 被过滤：回落到空「默认模型」，不作为显式选中项
+    await waitFor(() => expect(sel.value).toBe(''));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.create') }));
+    await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'claude', null));
+    expect(api.setChatModel).not.toHaveBeenCalled();
+    // default 不写进两种记忆：按工具记忆被清，lastCreate 同工具置 null
+    expect(loadPerToolLastModel('claude')).toBeNull();
+    expect(loadLastCreate()).toEqual({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: null });
   });
 
   it('新建 agent：打开时按 lastCreate 预填，创建成功后保存默认值与模型缓存', async () => {
@@ -1954,20 +2003,21 @@ describe('AgentHubPanel', () => {
     expect(await screen.findByLabelText(tt('ui.hub.field_project'))).toBeTruthy();
   });
 
-  it('agent 卡片快捷回复常显：「继续」「换个说法」「引用」，无「好的」，且无需 hover', async () => {
+  it('agent 卡片快捷回复常显：「继续」「引用」，无「好的」，且无需 hover', async () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1', Key: 'new:1', ToolID: 'claude' })] });
     api.listHubMessages.mockResolvedValue([
       { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', text: 'done', ts: 2 },
     ]);
     render(<AgentHubPanel />);
     expect(await screen.findByRole('button', { name: tt('ui.hub.quick_continue') })).toBeTruthy();
-    expect(screen.getByRole('button', { name: tt('ui.hub.quick_rephrase') })).toBeTruthy();
     expect(screen.getByRole('button', { name: tt('ui.hub.quote_reply') })).toBeTruthy();
+    // 快捷操作只剩两项：Explain differently/换个说法 已移除
+    expect(screen.queryByRole('button', { name: /^(Explain differently|换个说法|重新说明)$/ })).toBeNull();
     // quick_ok 死 key 已删，无法走 tt；按字面文案断言不存在「好的」按钮
     expect(screen.queryByRole('button', { name: /^(好的|Sounds good)$/ })).toBeNull();
     // 容器常显：不再依赖 group-hover（hidden/absolute 移除）
-    const rephraseBtn = screen.getByRole('button', { name: tt('ui.hub.quick_rephrase') });
-    const container = rephraseBtn.parentElement as HTMLElement;
+    const quoteBtn = screen.getByRole('button', { name: tt('ui.hub.quote_reply') });
+    const container = quoteBtn.parentElement as HTMLElement;
     expect(container.className).toContain('flex');
     expect(container.className).not.toContain('hidden');
   });
@@ -1979,7 +2029,7 @@ describe('AgentHubPanel', () => {
     ]);
     render(<AgentHubPanel />);
     const btn = await screen.findByRole('button', { name: tt('ui.hub.quote_reply') });
-    // 先写好草稿再点引用：覆盖为仅 @ 目标（与换个说法的保留式追加不同）
+    // 先写好草稿再点引用：覆盖为仅 @ 目标（不顺延原草稿）
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '已有草稿' } });
     fireEvent.click(btn);
@@ -2030,36 +2080,6 @@ describe('AgentHubPanel', () => {
     // 发送的是 quick_continue_text（给 agent 的实际文本），而非按钮显示文案 quick_continue
     await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', tt('ui.hub.quick_continue_text')));
     expect(useAppStore.getState().lastAgentId).toBe('c1');
-  });
-
-  it('agent 卡片点「换个说法」：@ 目标填入输入框并聚焦，不发送', async () => {
-    useAppStore.setState({ chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '重构认证' })] });
-    api.listHubMessages.mockResolvedValue([
-      { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', text: 'done', ts: 2 },
-    ]);
-    render(<AgentHubPanel />);
-    const btn = await screen.findByRole('button', { name: tt('ui.hub.quick_rephrase') });
-    fireEvent.click(btn);
-    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#重构认证 ');
-    expect(api.sendChatPrompt).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(box);
-  });
-
-  it('agent 卡片点「换个说法」：保留既有草稿，追加 @ 目标并聚焦', async () => {
-    useAppStore.setState({ chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '重构认证' })] });
-    api.listHubMessages.mockResolvedValue([
-      { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', text: 'done', ts: 2 },
-    ]);
-    render(<AgentHubPanel />);
-    const btn = await screen.findByRole('button', { name: tt('ui.hub.quick_rephrase') });
-    // 先在输入框写好草稿，再点「换个说法」：原有内容必须保留
-    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '帮我看看' } });
-    fireEvent.click(btn);
-    expect((box as HTMLTextAreaElement).value).toBe('帮我看看 @Claude Code#重构认证 ');
-    expect(api.sendChatPrompt).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(box);
   });
 
   it('agent 卡片缺 chatId 时按 termKey 反查 chat ID', async () => {
@@ -2163,7 +2183,7 @@ describe('AgentHubPanel', () => {
     await screen.findByText('done');
     expect(screen.getAllByText(tt('ui.hub.readonly_badge'))).toHaveLength(1);
     expect(screen.queryByRole('button', { name: tt('ui.hub.quick_continue') })).toBeNull();
-    expect(screen.queryByRole('button', { name: tt('ui.hub.quick_rephrase') })).toBeNull();
+    expect(screen.queryByRole('button', { name: tt('ui.hub.quote_reply') })).toBeNull();
     expect(screen.queryByRole('button', { name: tt('ui.hub.quote_reply') })).toBeNull();
   });
 
@@ -2179,7 +2199,7 @@ describe('AgentHubPanel', () => {
     await screen.findByText('done');
     expect(screen.getAllByText(tt('ui.hub.readonly_badge'))).toHaveLength(1);
     expect(screen.queryByRole('button', { name: tt('ui.hub.quick_continue') })).toBeNull();
-    expect(screen.queryByRole('button', { name: tt('ui.hub.quick_rephrase') })).toBeNull();
+    expect(screen.queryByRole('button', { name: tt('ui.hub.quote_reply') })).toBeNull();
     expect(screen.queryByRole('button', { name: tt('ui.hub.quote_reply') })).toBeNull();
   });
 
@@ -2217,7 +2237,7 @@ describe('AgentHubPanel', () => {
     // 仅终端激活那条带徽标；离线那条快捷按钮照常
     expect(screen.getAllByText(tt('ui.hub.readonly_badge'))).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: tt('ui.hub.quick_continue') })).toHaveLength(1);
-    expect(screen.getAllByRole('button', { name: tt('ui.hub.quick_rephrase') })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: tt('ui.hub.quote_reply') })).toHaveLength(1);
   });
 
   it('快速回复无目标 agent 时提示 need_target 且不发送', async () => {
@@ -2225,35 +2245,14 @@ describe('AgentHubPanel', () => {
       { id: 4, kind: 'agent', tool: 'codex', event: 'Stop', text: 'x', ts: 4 },
     ]);
     render(<AgentHubPanel />);
-    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_rephrase') }));
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quote_reply') }));
     await waitFor(() =>
       expect(useAppStore.getState().toasts.some((t) => t.title === tt('ui.hub.need_target'))).toBe(true),
     );
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
-  it('「换个说法」目标未激活时先激活会话再填 @ 新标签并聚焦，不发送', async () => {
-    // 记录的 chatId 不在 chats（会话已关闭/重启后未恢复）：走激活路径
-    api.listHubMessages.mockResolvedValue([
-      { id: 10, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c-dead', termKey: 'session:s-r1', text: 'ok', ts: 10 },
-    ]);
-    api.openSessionACP.mockResolvedValue({
-      Kind: 'chat',
-      Chat: chat({ ID: 'c-r1', Key: 'session:s-r1', Kind: 'session', SessionID: 's-r1' }),
-    });
-    render(<AgentHubPanel />);
-    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_rephrase') }));
-    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('s-r1'));
-    // 激活后新 chat 的 @ 标签填入输入框并聚焦（既有草稿保留式追加），不自动发送
-    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#重构认证 '));
-    expect(document.activeElement).toBe(box);
-    expect(api.sendChatPrompt).not.toHaveBeenCalled();
-    // 激活后的会话登记进 store，后续消息可直达
-    expect(useAppStore.getState().chats.some((c) => c.ID === 'c-r1')).toBe(true);
-  });
-
-  it('「换个说法」激活成功但 options 暂无新 chat 时按会话标题构造 @ 标签', async () => {
+  it('「引用」激活成功但 options 暂无新 chat 时按会话标题构造 @ 标签', async () => {
     api.listHubMessages.mockResolvedValue([
       { id: 11, kind: 'agent', tool: 'cursor', event: 'Stop', chatId: 'c-dead', sessionId: 's-r2', text: 'ok', ts: 11 },
     ]);
@@ -2262,19 +2261,19 @@ describe('AgentHubPanel', () => {
       Chat: chat({ ID: 'c-r2', Key: 'session:s-r2', Kind: 'session', SessionID: 's-r2', ToolID: 'cursor' }),
     });
     render(<AgentHubPanel />);
-    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_rephrase') }));
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quote_reply') }));
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe('@Cursor#重构认证 '));
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
-  it('「换个说法」目标未激活且激活链路解析不到会话时提示 need_target 且不填入', async () => {
+  it('「引用」目标未激活且激活链路解析不到会话时提示 need_target 且不填入', async () => {
     // 无 sessionId / termKey 前缀 / workspace+标题：三级解析全落空
     api.listHubMessages.mockResolvedValue([
       { id: 12, kind: 'agent', tool: 'codex', event: 'Stop', text: 'x', ts: 12 },
     ]);
     render(<AgentHubPanel />);
-    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quick_rephrase') }));
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quote_reply') }));
     await waitFor(() =>
       expect(useAppStore.getState().toasts.some((t) => t.title === tt('ui.hub.need_target'))).toBe(true),
     );

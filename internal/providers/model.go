@@ -1,5 +1,7 @@
 package providers
 
+import "strings"
+
 // ModelConfig 是按工具适配后的模型注入值（双协议端点/密钥 + 该工具的模型名）。
 type ModelConfig struct {
 	OpenAIBaseURL    string
@@ -37,7 +39,10 @@ func (Claude) SettingsEnv(cfg ModelConfig) map[string]string {
 	if cfg.APIKey != "" {
 		env["ANTHROPIC_AUTH_TOKEN"] = cfg.APIKey
 	}
-	if cfg.Model != "" {
+	// "default" 是 Claude ACP 的「让 agent 自选」占位 ID：经环境变量进入时
+	// CLI 不做别名解析，会把它字面发给 API（OpenCode Go 网关 400），因此按
+	// 未指定模型处理（只写端点/密钥，模型键留给静态 settings/会话默认）。
+	if cfg.Model != "" && !strings.EqualFold(strings.TrimSpace(cfg.Model), "default") {
 		env["ANTHROPIC_MODEL"] = cfg.Model
 		env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = cfg.Model
 		env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = cfg.Model

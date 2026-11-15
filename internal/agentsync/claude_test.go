@@ -190,6 +190,33 @@ func TestClaudeSyncWritesSlotModels(t *testing.T) {
 	}
 }
 
+// default 是 ACP 的伪模型占位值：静态注入同样跳过，避免 CLI 把它字面发给 API。
+func TestClaudeSyncSkipsDefaultSlot(t *testing.T) {
+	home := t.TempDir()
+	c := Claude{}
+	in := SyncInput{
+		Enabled: true, ClaudePlatformID: "p1",
+		Platforms: []config.ModelPlatform{{
+			ID: "p1", AnthropicBaseURL: "https://ant.example/", APIKey: "sk-1",
+		}},
+		ToolSync: config.ToolSyncConfig{Claude: config.ClaudeSync{
+			Model: "default", Sonnet: " Default ", Haiku: "kimi-k3",
+		}},
+	}
+	if err := c.Sync(home, in); err != nil {
+		t.Fatal(err)
+	}
+	env := readClaudeSettings(t, home)["env"].(map[string]any)
+	for _, k := range []string{"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL"} {
+		if _, ok := env[k]; ok {
+			t.Fatalf("%s 不应写入，env=%v", k, env)
+		}
+	}
+	if env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "kimi-k3" {
+		t.Fatalf("HAIKU = %v", env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+	}
+}
+
 // 槽位留空 = 不写对应键（先删后建语义下清掉残留）；槽位值带空白时 trim。
 func TestClaudeSyncEmptySlotsNotWrittenAndTrim(t *testing.T) {
 	home := t.TempDir()

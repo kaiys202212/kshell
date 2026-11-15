@@ -242,6 +242,32 @@ func TestOptions(t *testing.T) {
 		}
 	})
 
+	t.Run("claude 的 default 伪模型不注入模型名", func(t *testing.T) {
+		// Claude ACP 自报的 "default" 表示「让 agent 自选」，不是具体模型名。
+		// 作为 ANTHROPIC_MODEL 下发时 CLI 不做别名解析，网关会收到字面
+		// "default" 并 400（OpenCode Go 实测）。必须按「未指定」处理。
+		mo := Options(testModelConfig(), Query{ToolID: "claude", ModelID: "default"}, nil)
+		mc, ok := mo.Resolver("claude")
+		if !ok {
+			t.Fatal("平台仍应命中")
+		}
+		if mc.Model != "" {
+			t.Fatalf("claude default 不应注入模型名，got %q", mc.Model)
+		}
+		if mc.AnthropicBaseURL != "https://p1-ant/" {
+			t.Fatalf("端点应仍按每工具平台解析，got %q", mc.AnthropicBaseURL)
+		}
+	})
+
+	t.Run("非 claude 工具的 default 保持原样", func(t *testing.T) {
+		// 同一字符串在其它工具里可能是真实模型名，不得被 claude 专用规则误伤。
+		mo := Options(testModelConfig(), Query{ToolID: "opencode", ModelID: "default"}, nil)
+		mc, ok := mo.Resolver("opencode")
+		if !ok || mc.Model != "default" {
+			t.Fatalf("resolver = %+v ok=%v, want 模型 default", mc, ok)
+		}
+	})
+
 	t.Run("代理 Ensure 出错返回 false", func(t *testing.T) {
 		px := &fakeProxier{err: errors.New("boom")}
 		mo := Options(testModelConfig(), Query{ToolID: "claude", ModelID: "kshell:wb:hy4free"}, px)
