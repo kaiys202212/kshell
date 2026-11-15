@@ -10,6 +10,8 @@ export interface TimelineItem {
   plan?: ChatPlanEntry[];
   attachments?: ChatAttachmentMeta[];
   stopReason?: string;
+  // viaHub 标记该 user 条目由 AgentHub 代发（ChatUpdate.ViaHub），卡片渲染代发标签
+  viaHub?: boolean;
   seq: number;
 }
 
@@ -52,6 +54,7 @@ export function applyChatUpdate(items: TimelineItem[], u: ChatUpdate): TimelineI
         type: u.Type as TimelineItem['type'],
         text: u.Text ?? '',
         attachments: u.Attachments,
+        viaHub: u.Type === 'user' ? u.ViaHub : undefined,
         seq: u.Seq,
       },
     ];

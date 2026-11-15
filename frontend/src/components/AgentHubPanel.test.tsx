@@ -2934,3 +2934,25 @@ describe('AgentHub i18n 资源', () => {
     expect(hubOf(zhLocale).thinking_tool).toContain('{{round}}');
   });
 });
+
+describe('AgentHub 消息卡片标记', () => {
+  it('viaHub 用户消息渲染代发标签；hub_manager 消息渲染管理者徽标', async () => {
+    render(<AgentHubPanel />);
+    await act(async () => {}); // 等挂载历史拉取落定，避免覆盖预置消息
+    await act(async () => {
+      useAppStore.setState({
+        hubMessages: [
+          { id: 1, kind: 'user', text: '代发内容', viaHub: true, ts: 1 },
+          { id: 2, kind: 'agent', event: 'hub_manager_reply', text: '结论正文', ts: 2 },
+          { id: 3, kind: 'user', text: '本人消息', ts: 3 },
+          { id: 4, kind: 'agent', event: 'done', text: '普通回复', ts: 4 },
+        ],
+      });
+    });
+    // 恰一条用户代发标签（本人消息不带）
+    expect(screen.getAllByText(tt('ui.chat.via_hub'))).toHaveLength(1);
+    // hub_manager_* 消息带管理者徽标，普通 agent 消息不带
+    expect(screen.getAllByText(tt('ui.hub.manager_badge'))).toHaveLength(1);
+    expect(screen.getByText('结论正文')).toBeInTheDocument();
+  });
+});

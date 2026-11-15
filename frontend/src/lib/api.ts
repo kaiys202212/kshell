@@ -359,6 +359,8 @@ export interface ChatUpdate {
   Plan?: ChatPlanEntry[];
   StopReason?: string;
   Attachments?: ChatAttachmentMeta[];
+  // ViaHub 标记该 user 消息由 AgentHub 投递（代发），消息卡片渲染「由 AgentHub 自动发送」标签
+  ViaHub?: boolean;
 }
 
 // chat.ModelsView / chat.Command 的 JSON 形态（internal/chat/types.go）
@@ -1821,6 +1823,8 @@ export interface HubMessage {
   text: string;
   event?: string;
   status?: string;
+  // viaHub 标记该 user 消息由 AgentHub 管理者代发（非用户直接 @ 发送）
+  viaHub?: boolean;
   ts: number;
 }
 

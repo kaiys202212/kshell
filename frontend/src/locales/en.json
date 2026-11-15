@@ -1047,7 +1047,8 @@
       "attachment_file": "File",
       "attachment_open_failed": "Failed to open attachment: {{err}}",
       "attachment_preview_failed": "Failed to load image preview",
-      "attachment_close": "Close preview"
+      "attachment_close": "Close preview",
+      "via_hub": "Sent automatically via AgentHub"
     },
     "hub": {
       "title": "Agent Hub",
@@ -1125,6 +1126,7 @@
       "quick_continue": "Continue",
       "quick_rephrase": "Explain differently",
       "quote_reply": "Quote",
+      "manager_badge": "AgentHub manager",
       "ack_delivered": "Got your message — I'm on it.",
       "ack_queued": "I'm still on the current task; your message is queued and I'll get to it in order.",
       "event_done": "I've finished the task.",

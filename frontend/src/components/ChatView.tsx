@@ -221,7 +221,13 @@ const ChatTimeline = memo(function ChatTimeline({ items, workspace, onResume, on
               {/* 展示层还原百分号编码文件名；存储原文不动 */}
               {it.type === 'assistant'
                 ? <div className={markdownBubbleClass}><ReactMarkdown remarkPlugins={[remarkGfm]}>{decodePercentText(it.text ?? '')}</ReactMarkdown></div>
-                : <span className="whitespace-pre-wrap">{decodePercentText(it.text ?? '')}</span>}
+                : <>
+                    {/* AgentHub 代发的消息在卡片上打标签（不打进正文） */}
+                    {it.viaHub && (
+                      <div className="mb-0.5 text-[10px] opacity-80">{t('ui.chat.via_hub')}</div>
+                    )}
+                    <span className="whitespace-pre-wrap">{decodePercentText(it.text ?? '')}</span>
+                  </>}
             </div>
             {renderAttachmentChips(it.attachments, it.type === 'user' ? 'end' : 'start')}
           </div>

@@ -1047,7 +1047,8 @@
       "attachment_file": "文件",
       "attachment_open_failed": "打开附件失败：{{err}}",
       "attachment_preview_failed": "图片预览加载失败",
-      "attachment_close": "关闭预览"
+      "attachment_close": "关闭预览",
+      "via_hub": "由 AgentHub 自动发送"
     },
     "hub": {
       "title": "Agent 汇总",
@@ -1125,6 +1126,7 @@
       "quick_continue": "继续",
       "quick_rephrase": "重新说明",
       "quote_reply": "引用",
+      "manager_badge": "AgentHub 管理者",
       "ack_delivered": "收到，我马上开始。",
       "ack_queued": "我还在忙手头的任务，你的消息已排队，我会按顺序处理。",
       "event_done": "我把任务做完了。",

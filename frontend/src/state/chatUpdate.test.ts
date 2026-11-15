@@ -27,6 +27,13 @@ describe('applyChatUpdate', () => {
     expect(items[0].type).toBe('turn_done');
   });
 
+  it('user 更新带 ViaHub 时时间线条目带 viaHub 标记，普通 user 不带', () => {
+    const items = applyChatUpdate(emptyChatItems(), { Seq: 1, Type: 'user', MessageID: 'u1', Text: 'hi', ViaHub: true });
+    expect(items[0].viaHub).toBe(true);
+    const plain = applyChatUpdate(emptyChatItems(), { Seq: 1, Type: 'user', MessageID: 'u2', Text: 'hi' });
+    expect(plain[0].viaHub).toBeUndefined();
+  });
+
   it('upsert 后重放旧 Seq：用真实最大值去重，文本不重复累积', () => {
     let items = emptyChatItems();
     items = applyChatUpdate(items, { Seq: 1, Type: 'assistant', MessageID: 'm1', Text: 'A' });

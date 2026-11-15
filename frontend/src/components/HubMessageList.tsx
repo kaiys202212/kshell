@@ -76,6 +76,10 @@ const HubMessageItem = memo(function HubMessageItem({
             </div>
           ) : (
             <div className="selectable inline-block break-words overflow-hidden rounded-md bg-primary px-3 py-1.5 text-left text-primary-foreground">
+              {/* 管理者代发的消息在卡片上打标签（不打进正文） */}
+              {m.viaHub && (
+                <div className="mb-0.5 text-[10px] opacity-80">{t('ui.chat.via_hub')}</div>
+              )}
               <span className="whitespace-pre-wrap">{userText}</span>
             </div>
           )}
@@ -101,6 +105,12 @@ const HubMessageItem = memo(function HubMessageItem({
         <div className="selectable break-words overflow-hidden rounded-md bg-muted px-3 py-1.5 [&_pre]:whitespace-pre-wrap">
           <div className="mb-0.5 text-[11px] text-muted-foreground">
             {header}
+            {/* 管理者循环的思考/结论消息（hub_manager_*）打徽标，与会话回复区分 */}
+            {m.event?.startsWith('hub_manager') && (
+              <span className="ml-1 rounded bg-background px-1 text-[10px] text-muted-foreground ring-1 ring-border">
+                {t('ui.hub.manager_badge')}
+              </span>
+            )}
             {st !== 'acp' && (
               <span
                 className="ml-1 rounded bg-background px-1 text-[10px] text-muted-foreground ring-1 ring-border"

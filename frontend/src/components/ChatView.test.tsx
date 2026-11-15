@@ -121,6 +121,19 @@ describe('ChatView', () => {
     expect(api.respondChatPermission).toHaveBeenCalledWith('c1', 'r1', 'allow');
   });
 
+  it('viaHub 用户消息卡片渲染「由 AgentHub 自动发送」标签', () => {
+    useAppStore.setState({
+      chatItems: { c1: [
+        { key: 'm1', type: 'user', text: '代发任务', viaHub: true, seq: 1 },
+        { key: 'm2', type: 'user', text: '本人输入', seq: 2 },
+      ] },
+    });
+    render(<ChatView chat={CHAT} active />);
+    expect(screen.getByText(tt('ui.chat.via_hub'))).toBeInTheDocument();
+    // 普通用户消息不带标签：全文恰一处
+    expect(screen.getAllByText(tt('ui.chat.via_hub'))).toHaveLength(1);
+  });
+
   it('选择权限选项后立即清除弹窗状态（乐观关闭）', () => {
     useAppStore.setState({
       chatItems: {},
