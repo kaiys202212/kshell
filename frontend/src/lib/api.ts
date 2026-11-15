@@ -1946,9 +1946,13 @@ export function onHubBusy(cb: (busy: boolean) => void): () => void {
 // HubProgress 是一轮智能路由的进度里程碑（internal/desktop.hubProgress 的 JSON 形态）。
 // id 对应 hubSmartSend 的 reqID；step 是稳定 key（ui.hub.thinking_*），前端据此
 // 展示当前阶段，让用户在等首 token 期间看到「正在做什么」而不是空白。
+// tool/round 是 thinking_tool 帧的扩展字段（循环内一次工具调用；旧帧缺省），
+// 前端累积成步骤时间线逐条渲染，不再只显示最后一帧。
 export interface HubProgress {
   id: string;
   step: string;
+  tool?: string;
+  round?: number;
 }
 
 // onHubProgress 订阅智能路由进度（Go 侧 Emit hub:progress），返回取消订阅函数。

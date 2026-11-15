@@ -2,6 +2,7 @@ package weixin
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -422,4 +423,53 @@ func TestRuntimeSetDirectPatternsForwards(t *testing.T) {
 	if b := r.GetBridge(); b.directPatterns() == nil {
 		t.Fatal("SetDirectPatterns(nil) 应回落内置默认集")
 	}
+}
+
+func TestRuntimeSetManagerRouterForwards(t *testing.T) {
+	r := NewRuntime(nil, "zh-CN")
+	defer r.Stop()
+	// Configure 前装配：创建 bridge 时注入。
+	r.SetManagerRouter(func(ctx context.Context, input string) (ManagerOutcome, bool) {
+		return ManagerOutcome{}, false
+	})
+	r.baseURL = "http://unused" // 不真正轮询
+	r.Configure("tok", "")
+	if b := r.GetBridge(); b == nil || b.managerRouterFn() == nil {
+		t.Fatal("Configure 后 bridge 应持有 managerRouter")
+	}
+	// Configure 后再装配：现有 bridge 即时生效（重绑重建同样生效）。
+	r.SetManagerRouter(nil)
+	if b := r.GetBridge(); b.managerRouterFn() != nil {
+		t.Fatal("SetManagerRouter 应即时转发给现有 bridge")
+	}
+}
+
+// NotifyProgress 经 bridge 出站 worker 异步推送进度文案（语言取桥配置）；
+// bridge 未创建或无发送上下文时安全（no-op / 计 undelivered）。
+func TestRuntimeNotifyProgress(t *testing.T) {
+	rc := &recorder{}
+	r, _ := newTestRuntime(t, &fakeExec{hasCur: true}, rc.handler(t))
+	// bridge 未创建：no-op 不 panic。
+	r.NotifyProgress(2)
+	r.Configure("tok", "u1")
+	b := r.GetBridge()
+	if b == nil {
+		t.Fatal("Configure 后应有 bridge")
+	}
+	// 无入站上下文：出站丢弃计 undelivered，不 panic。
+	r.NotifyProgress(2)
+	waitFor(t, 2*time.Second, func() bool { return b.Undelivered() >= 1 }, "无上下文推送应计 undelivered")
+	// 入站建立发送上下文后：推送一条桥语言（zh-CN）进度文案（入站本身会
+	// 触发命令层回执，按文案内容匹配进度消息）。
+	b.HandleInbound("u1", "ct-1", "hi")
+	want := fmt.Sprintf(bridgeText("zh-CN", "manager.progress"), 3)
+	r.NotifyProgress(3)
+	waitFor(t, 2*time.Second, func() bool {
+		for _, s := range rc.sends() {
+			if sendText(t, s.body) == want {
+				return true
+			}
+		}
+		return false
+	}, "进度推送应出站")
 }

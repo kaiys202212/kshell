@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowUpRight, CircleHelp, Loader2, PanelRightClose, Settings2 } from 'lucide-react';
+import { ArrowUpRight, Check, CircleHelp, Loader2, PanelRightClose, Settings2 } from 'lucide-react';
 import type { ChatCommand, ChatInfo, ChatModelsView, HubArchiveMonth, HubMessage, Session, TerminalInfo, ToolInfo, Workspace } from '../lib/api';
 import {
   cancelChat,
@@ -199,53 +199,10 @@ function wsBaseName(ws: string): string {
   return baseName(ws);
 }
 
-// PENDING_PREFIX 标记「目标会话存在但未激活」：仅用于用户显式点「继续」等
-// 快捷操作（activatePending），不再作为无 @ 发送的默认回落目标。
-const PENDING_PREFIX = 'pending:';
-
 // newSmartReqID 生成一轮智能路由的请求标识：后端据此推送 hub:progress 阶段
 // 事件并支持「中断」。只需进程内唯一，故用时间戳+随机后缀，避免引入 uuid 依赖。
 function newSmartReqID(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-// hubPendingSessionId 从一条 hub 消息解析待激活磁盘会话 ID（同步可得的两种来源）：
-// sessionId 快照优先，其次 termKey 的 session: 前缀。都没有返回 null。
-function hubPendingSessionId(m: HubMessage): string | null {
-  if (m.sessionId) return m.sessionId;
-  if (m.termKey?.startsWith('session:')) return m.termKey.slice('session:'.length);
-  return null;
-}
-
-// hubMessageAttributed 消息是否带可解析归因（有 chatId / termKey / sessionId）。
-// 本地提示/回执无归因，不算「最后一条可归因消息」。
-function hubMessageAttributed(m: HubMessage): boolean {
-  return !!(m.chatId || m.termKey || m.sessionId);
-}
-
-// lastHubAgentId 只看「最后一条可归因消息」：
-// - 已激活且在 mention 候选中 → 返回 chat ID（默认接收者）
-// - 未激活 / TUI·终端 / 非 ACP / 归因失效 → null（无默认，走 hubPickTarget）
-// 不向前扫描更旧 ACP，也不用 store.lastAgentId 顶替。
-function lastHubAgentId(
-  messages: HubMessage[],
-  options: MentionOption[],
-  chats: ChatInfo[],
-  tools: ToolInfo[],
-  terminals: TerminalInfo[],
-): string | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (!hubMessageAttributed(m)) continue;
-    // 最后一条可归因即止：不可投递则无默认接收者。
-    if (m.kind === 'agent' && replyState(m, tools, terminals) !== 'acp') return null;
-    const c =
-      chats.find((x) => x.ID === m.chatId) ??
-      chats.find((x) => m.termKey && x.Key === m.termKey);
-    if (c && options.some((o) => o.id === c.ID)) return c.ID;
-    return null;
-  }
-  return null;
 }
 
 // 自动滚动偏好的 localStorage key（JSON 布尔；缺省 true = 默认跟随最新消息）
@@ -326,9 +283,16 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
     () =>
       onHubProgress((p) => {
         const cur = useAppStore.getState().hubPendingSend;
-        // 只认自己那一轮：并发/过期事件不得改写当前思考态文案。
+        // 只认自己那一轮：并发/过期事件不得改写当前思考态时间线。
         if (!cur || cur.reqID !== p.id) return;
-        useAppStore.getState().setHubPendingSend({ ...cur, step: p.step });
+        // 重复帧不追加：首帧 thinking_route 由前端种子，后端开场里程碑可能再发一次；
+        // 同 key 同 tool 同 round 视为同一帧（thinking_tool 的 tool/round 组合区分轮次）。
+        const last = cur.steps[cur.steps.length - 1];
+        if (last && last.key === p.step && last.tool === p.tool && last.round === p.round) return;
+        useAppStore.getState().setHubPendingSend({
+          ...cur,
+          steps: [...cur.steps, { key: p.step, tool: p.tool, round: p.round }],
+        });
       }),
     [],
   );
@@ -494,50 +458,10 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
   const hashQuery = /^#([^\s]*)$/.exec(draft)?.[1] ?? null;
   const inSlashMode = slashQuery !== null;
   const inHashMode = hashQuery !== null;
-  // 默认投递目标：仅最后一条可归因且已激活 ACP；否则 null（走待选含 en）。
-  // 不用 store.lastAgentId——与微信 Console 一致，避免空 hub 时桌面直发、微信待选分叉。
-  const fallbackId = useMemo(
-    () => lastHubAgentId(hubMessages, options, chats, tools, terminals),
-    [hubMessages, options, chats, tools, terminals],
-  );
-  // 目标解析：优先 @ 提及，其次回落链（与 send 一致）。
-  const currentTargetId = useMemo(
-    () => resolveMentionTarget(draft, options, fallbackId),
-    [draft, options, fallbackId],
-  );
-  // 待激活 chip 数据：currentTargetId 为 pending: 前缀时，从命中的那条 hub 消息
-  // 取展示信息（会话标题快照 / 工具名）。精确命中已激活 chat 时为 null（普通 chip
-  // 高亮接管）。取「lastHubAgentId 所看的那条」最稳妥：同样倒序扫，命中 pending
-  // 的第一条消息即 chip 的来源。
-  const pendingTarget = useMemo(() => {
-    if (!currentTargetId?.startsWith(PENDING_PREFIX)) return null;
-    const sessionID = currentTargetId.slice(PENDING_PREFIX.length);
-    for (let i = hubMessages.length - 1; i >= 0; i--) {
-      const m = hubMessages[i];
-      if (hubPendingSessionId(m) !== sessionID) continue;
-      return {
-        sessionID,
-        title: m.sessionTitle || sessionID,
-        tool: m.tool || '',
-        workspace: m.workspace || '',
-      };
-    }
-    return { sessionID, title: sessionID, tool: '', workspace: '' };
-  }, [currentTargetId, hubMessages]);
-  // mentionPending 待激活 chip 点击：先激活原会话，成功后按普通 chip 语义把
-  // 新会话的 @ 标签追加进输入框。
-  const mentionPending = () => {
-    if (!pendingTarget) return;
-    void activatePending(pendingTarget.sessionID).then((chat) => {
-      if (!chat) return;
-      // 不调 mentionSession：then 回调捕获的是点击轮渲染的旧闭包，其 options
-      // 还不含刚激活的 chat；按实时 store 的全量列表构造，保证同名消歧与补全一致。
-      const label = mentionLabelForChat(chat);
-      if (!label) return;
-      setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
-      inputRef.current?.focus();
-    });
-  };
+  // 目标解析：只认 @ 提及（含精确标签命中），不再回落「最后可归因会话」——
+  // 无精确目标一律走智能路由（后端处理捷径/逃生门/循环/回落，见 send）。
+  // 第三参传 null：resolveMentionTarget 的回落参数从此无人使用。
+  const currentTargetId = useMemo(() => resolveMentionTarget(draft, options, null), [draft, options]);
   // 命令模式打开且目标变化时拉取 agent 技能；失败静默。
   // 依赖用 inSlashMode 而非 slashQuery：避免每次按键都重拉。
   useEffect(() => {
@@ -640,34 +564,6 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
       return;
     }
     if (!currentTargetId) return; // 理论不可达；保底
-    // pending: 目标 = 最近交互的会话未激活但有磁盘会话 ID 快照：先激活原会话，
-    // 再对激活出的真实 chat ID 执行命令；激活失败报错且不执行（与 send 同语义，
-    // 绝不把命令落到 pending: 前缀串上或同 workspace 其他会话上）。
-    if (currentTargetId.startsWith(PENDING_PREFIX)) {
-      const sessionID = currentTargetId.slice(PENDING_PREFIX.length);
-      if (name !== 'stop' && name !== 'model') return; // 其余命令无 pending 语义，防御
-      void activatePending(sessionID).then((chat) => {
-        if (!chat) return;
-        if (name === 'stop') {
-          void cancelChat(chat.ID)
-            .then(() => useAppStore.getState().notify(t('ui.hub.stop_done'), 'info'))
-            .catch((e: unknown) =>
-              useAppStore.getState().notify(t('ui.hub.stop_failed', { err: backendError(e) }), 'error'),
-            );
-          return;
-        }
-        void listChatModels(chat.ID)
-          .then((view) => {
-            if (!view || !view.Models || view.Models.length === 0) {
-              useAppStore.getState().notify(t('ui.hub.no_models'), 'error');
-              return;
-            }
-            setModelMenu({ targetId: chat.ID, view });
-          })
-          .catch((e: unknown) => useAppStore.getState().notify(backendError(e), 'error'));
-      });
-      return;
-    }
     if (name === 'stop') {
       void cancelChat(currentTargetId)
         .then(() => useAppStore.getState().notify(t('ui.hub.stop_done'), 'info'))
@@ -944,25 +840,6 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
       });
   };
 
-  // activatePending 激活一个 pending 会话（磁盘会话 ID）并登记进 store：
-  // send() 的 pending 分支与 #stop/#model 的 pending 处理共用。激活成功返回
-  // 新 chat Info（调用方继续对 chat.ID 操作）；失败 toast find_activate_failed
-  // 并返回 null（调用方必须停止后续动作，不落模糊匹配误投）。
-  const activatePending = async (sessionID: string): Promise<ChatInfo | null> => {
-    if (refuseTerminalSession(sessionID)) return null;
-    try {
-      const res = await openSessionACP(sessionID);
-      if (!res.Chat) return null;
-      const chat = res.Chat;
-      useAppStore.getState().upsertChat(chat);
-      useAppStore.getState().setLastAgentId(chat.ID);
-      return chat;
-    } catch (e: unknown) {
-      useAppStore.getState().notify(t('ui.hub.find_activate_failed', { err: backendError(e) }), 'error');
-      return null;
-    }
-  };
-
   const send = async () => {
     const text = draft.trim();
     if (!text) return;
@@ -1016,8 +893,8 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
     }
     // 用户主动发消息即视为已接管，清掉 /easynew 的进行中提示
     setEasynewRunning(false);
-    // 回落链与 currentTargetId 共用 fallbackId（见上）。
-    const targetId = resolveMentionTarget(text, options, fallbackId);
+    // 目标解析只认 @ 提及（与 currentTargetId 同链路）；无精确目标一律走智能路由。
+    const targetId = resolveMentionTarget(text, options, null);
     if (!targetId) {
       // 在途守卫：上一次智能路由/待选请求未返回时，重复 Enter 直接忽略。
       if (smartInFlight.current) return;
@@ -1026,7 +903,11 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
       // 而不是等模型首 token 回来才突然冒出两段内容（曾让用户以为没发出去）。
       const reqID = newSmartReqID();
       useAppStore.getState().pushHubLocalUser(text);
-      useAppStore.getState().setHubPendingSend({ reqID, step: 'ui.hub.thinking_route', text });
+      // 种子首帧 thinking_route：路由请求尚未返回也要有可看的阶段；后端开场
+      // 里程碑若重复推送同帧，监听处的去重会跳过，时间线不出现两条 route。
+      useAppStore
+        .getState()
+        .setHubPendingSend({ reqID, text, steps: [{ key: 'ui.hub.thinking_route' }] });
       try {
         // 无精确目标：先试智能路由（后端处理逃生门/Busy/反问轮次并决定是否
         // 回落）。Pending=false 表示后端已执行决策并返回回执，直接回显即可；
@@ -1063,29 +944,6 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
         useAppStore.getState().setHubPendingSend(null);
         smartInFlight.current = false;
       }
-      return;
-    }
-    // pending: 目标 = 最近交互的会话未激活（chats 查不到），但有磁盘会话 ID 快照：
-    // 先 openSessionACP 激活原会话，再向新 chat 投递。激活失败报错不投递——
-    // 上下文丢失必须可见，绝不落 workspace 模糊匹配误投同项目会话。
-    if (targetId.startsWith(PENDING_PREFIX)) {
-      const sessionID = targetId.slice(PENDING_PREFIX.length);
-      // 激活前再查一次终端在册（渲染与点击之间终端可能已打开）：终端激活态会话
-      // 不允许从 Hub 抢激活（会与终端 PTY 形成双写方），提示后不投递、不清草稿。
-      if (refuseTerminalSession(sessionID)) return;
-      setDraft('');
-      void activatePending(sessionID).then((chat) => {
-        if (!chat) return;
-        // 激活与发送分开 catch：失败阶段不同，文案不同（激活失败 vs 发送失败），
-        // 混在一个 catch 里会把投递失败误报成「激活会话失败」误导排查。
-        void sendChatPrompt(chat.ID, body)
-          .then(() => {
-            useAppStore.getState().setLastAgentId(chat.ID);
-          })
-          .catch((e: unknown) => {
-            useAppStore.getState().notify(t('ui.chat.send_failed', { err: backendError(e) }), 'error');
-          });
-      });
       return;
     }
     setDraft('');
@@ -1150,11 +1008,25 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
       });
   };
 
+  // fillMention 把 @ 标签写入草稿并聚焦输入框，按快捷动作区分写入方式：
+  // - quote（引用）：草稿覆盖为仅 `@标签 `——就这条回复开新话题，用户补写正文；
+  // - rephrase（换个说法）：保留式追加（既有草稿空格分隔），语义是让同会话重写。
+  // 两者都不自动发送。
+  const fillMention = (label: string, action: HubQuickAction) => {
+    if (action === 'quote') {
+      setDraft(`@${label} `);
+    } else {
+      setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
+    }
+    inputRef.current?.focus();
+  };
+
   // quickReply 处理快捷回复点击：
   // - send：把 quick_continue_text（实际文本，与按钮文案解耦）发给归因 agent；
   //   目标未激活（chats 反查不到，如会话已关闭/重启后未恢复）时先激活再发送；
   // - rephrase：保留式追加 @目标 到输入框（不清空用户正在输入的草稿），聚焦由用户
   //   补写后手动发送；目标未激活时同样先激活，激活后填新会话的 @ 标签，不自动发送。
+  // - quote：草稿覆盖为仅 @目标，聚焦后用户补写正文；目标未激活时先激活再填入。
   // 只读态（非 ACP / 终端占用）直接 return：快捷按钮应已隐藏；勿把 quickTarget
   // 的 null 误当成「待激活」去 openSessionACP。
   // useCallback：稳定引用交给 memo(HubMessageList)，draft 重渲时不拖消息树。
@@ -1172,13 +1044,13 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
           });
           return;
         }
-        // rephrase：激活成功后填 @ 标签。走到此分支说明点击时目标未激活，闭包里的
-        // options 必不含新 chat，按实时 store 的全量列表构造（同名消歧与补全一致）。
+        // rephrase/quote：激活成功后填 @ 标签。走到此分支说明点击时目标未激活，
+        // 闭包里的 options 必不含新 chat，按实时 store 的全量列表构造（同名消歧
+        // 与补全一致）。quote 与 rephrase 的差异在草稿写入方式（见下方 fillMention）。
         activateAndThen(m, (chat) => {
           const label = mentionLabelForChat(chat);
           if (!label) return;
-          setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
-          inputRef.current?.focus();
+          fillMention(label, action);
         });
         return;
       }
@@ -1192,14 +1064,13 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
           });
         return;
       }
-      // rephrase：从 mention 候选反查展示标签（会话标题）；找不到兜底提示。
+      // rephrase/quote：从 mention 候选反查展示标签（会话标题）；找不到兜底提示。
       const label = options.find((o) => o.id === targetId)?.insert;
       if (!label) {
         useAppStore.getState().notify(t('ui.hub.need_target_drag'), 'error');
         return;
       }
-      setDraft((d) => (d.trim() ? `${d.trimEnd()} @${label} ` : `@${label} `));
-      inputRef.current?.focus();
+      fillMention(label, action);
     },
     // quickTarget / activateAndThen / mentionLabelForChat 闭包随 render；依赖会随
     // chats/tools/terminals/options/t 变化——消息有更新时本应刷新回调，draft 不变这些时稳定。
@@ -1382,13 +1253,31 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
           代码块自身 overflow-auto 仍可横向滚动。 */}
       <div ref={logRef} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden px-3 py-2" role="log" aria-live="polite">
         <HubMessageList tools={tools} onRecall={recall} onQuickReply={quickReply} />
-        {/* 思考态占位气泡：无目标自由文本发出后立刻出现，逐阶段更新文案，
-            可中断。它只在内存里（store.hubPendingSend），权威消息仍由 Go 落盘。 */}
+        {/* 思考态占位气泡：无目标自由文本发出后立刻出现，hub:progress 逐帧
+            累积成步骤时间线（已完成打勾、最后一步转圈），可中断。它只在内存里
+            （store.hubPendingSend），权威消息仍由 Go 落盘。 */}
         {hubPendingSend && (
           <div className="text-left" data-testid="hub-thinking">
-            <div className="inline-flex max-w-[85%] items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-              <span className="min-w-0 break-words">{t(hubPendingSend.step)}</span>
+            <div className="inline-flex max-w-[85%] items-start gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground">
+              <div className="flex min-w-0 flex-col gap-1">
+                {hubPendingSend.steps.map((s, i) => {
+                  // 最后一步是进行中：转圈；之前的步骤视为已完成：打勾
+                  const inProgress = i === hubPendingSend.steps.length - 1;
+                  return (
+                    <div key={i} className="flex items-center gap-1.5">
+                      {inProgress ? (
+                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                      ) : (
+                        <Check className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                      )}
+                      <span className="min-w-0 break-words">
+                        {/* thinking_tool 帧带 tool/round 插值；其余阶段为纯文案 key */}
+                        {t(s.key, s.tool !== undefined ? { tool: s.tool, round: s.round ?? 0 } : undefined)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
               <button
                 type="button"
                 className="shrink-0 rounded border border-border px-1.5 py-0.5 hover:text-destructive"
@@ -1502,7 +1391,7 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
           </ul>
         )}
         {/* 会话 chips 平铺：每个会话一枚，点击主体即 @ 该会话（原 @ 图标行为并入主体）；
-            默认接收目标（下一句话的投递对象，@ 提及优先于回落链）高亮标注。
+            @ 提及目标（下一句话的投递对象，仅认 @ 标签精确命中）高亮标注。
             flex-wrap 超宽自动换行继续平铺；拖拽 chip 仍可把 @ 标签放进输入框。
             容器限高自滚（同归档区口径）：会话多时约两行后滚动，不挤压消息流。 */}
         <div
@@ -1523,7 +1412,7 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
                   }}
                   className={cn(
                     LIST_ROW,
-                    // 默认接收目标高亮：下一句话将投给该会话，需一眼可辨
+                    // @ 提及目标高亮：下一句话将投给该会话，需一眼可辨
                     isTarget ? 'border-primary/60 bg-primary/10' : '',
                     'flex max-w-[21rem] min-w-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs',
                   )}
@@ -1572,33 +1461,6 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
                 </div>
               );
             })}
-          {/* 待激活 chip：默认投递目标命中未激活会话（pending: 前缀）时出现，
-              虚线边框区分已激活 chips；点击先激活原会话再 @ 填入（mentionPending）。
-              无已激活会话时也可出现：空状态下用户仍能看到待激活目标。 */}
-          {pendingTarget && (
-            <div className="flex max-w-[21rem] min-w-0 items-center gap-1 rounded-full border border-dashed border-primary/60 bg-primary/10 px-2.5 py-1 text-xs">
-              <button
-                type="button"
-                title={t('ui.hub.pending_chip_aria')}
-                aria-current="true"
-                className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-                onClick={mentionPending}
-              >
-                <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/40" />
-                <span className="min-w-0 truncate font-medium">
-                  {chipSessionLabel(pendingTarget.title, pendingTarget.workspace)}
-                  <span className="ml-1 text-[11px] font-normal text-muted-foreground">
-                    {t('ui.hub.pending_chip')}
-                  </span>
-                </span>
-                {pendingTarget.tool && (
-                  <span className="shrink-0" title={toolDisplayName(pendingTarget.tool)}>
-                    <ToolIcon toolID={pendingTarget.tool} label={toolDisplayName(pendingTarget.tool)} />
-                  </span>
-                )}
-              </button>
-            </div>
-          )}
         </div>
         <textarea
           ref={inputRef}

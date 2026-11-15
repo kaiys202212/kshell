@@ -105,6 +105,9 @@ type Bridge struct {
 	transcriber Transcriber
 	// router 是入站文本智能路由钩子（desktop 注入）；nil = 未装配（全部走命令层）。
 	router InputRouter
+	// managerRouter 是管理者循环路由钩子（desktop 注入）；nil = 未装配。
+	// 优先级在 router 之前：命中即回显结论 Replies，不走决策执行。
+	managerRouter ManagerRouter
 	// directPatternsFn 是逃生门白名单查询函数（desktop 注入，实时读配置）；
 	// nil 时回落 hub.DefaultDirectPatterns。
 	directPatternsFn func() []string
@@ -199,6 +202,20 @@ func (b *Bridge) SetRouter(fn InputRouter) {
 	b.mu.Lock()
 	b.router = fn
 	b.mu.Unlock()
+}
+
+// SetManagerRouter 装配管理者循环路由钩子（可随时替换：desktop 读实时装配）。
+func (b *Bridge) SetManagerRouter(fn ManagerRouter) {
+	b.mu.Lock()
+	b.managerRouter = fn
+	b.mu.Unlock()
+}
+
+// managerRouterFn 加锁读当前管理者路由钩子。
+func (b *Bridge) managerRouterFn() ManagerRouter {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.managerRouter
 }
 
 // SetDirectPatterns 装配逃生门白名单查询函数（可随时替换：desktop 读实时配置）。
@@ -470,6 +487,20 @@ func (b *Bridge) dispatchConsole(ctx context.Context, text, quotedChatID, sessio
 		b.QueuedFiles() == 0 &&
 		!hub.IsDirectPass(text, b.directPatterns())
 	if routeable {
+		// 管理者循环优先（逃生门之后、单发路由之前）：命中即把结论 Replies
+		// 逐条回显，不再走 executeRouteText 决策执行；接管同时清零 InputRouter
+		// 反问轮次（反问链已移交 agentapi pendingAsk 管理）。Replies 为空的
+		// 接管属异常形态，回落单发路由防「空回复触发已送达回执」误报。
+		if mgr := b.managerRouterFn(); mgr != nil {
+			if out, handled := mgr(ctx, text); handled && len(out.Replies) > 0 {
+				b.setRouteRound(0)
+				replies := make([]hub.Reply, 0, len(out.Replies))
+				for _, r := range out.Replies {
+					replies = append(replies, hub.Reply{Text: r})
+				}
+				return replies
+			}
+		}
 		// 反问链已满：本轮直接降级原文，轮次清零。
 		if b.routeRoundValue() >= hubtools.AskMaxRounds {
 			b.setRouteRound(0)

@@ -206,9 +206,14 @@ func TestBridgeRouterHook(t *testing.T) {
 		b.SetRouter(stub.router())
 		b.SetDirectPatterns(func() []string { return nil })
 
-		b.HandleInbound("u1", "ct-1", "explain 一下")
+		// explain 已移出默认集（进管理者循环）；continue 仍是默认逃生门词。
+		b.HandleInbound("u1", "ct-1", "continue 一下")
 		if stub.calls != 0 {
-			t.Fatalf("默认逃生门 explain 不应进路由, 实际调用 %d 次", stub.calls)
+			t.Fatalf("默认逃生门 continue 不应进路由, 实际调用 %d 次", stub.calls)
+		}
+		b.HandleInbound("u1", "ct-1", "explain 一下")
+		if stub.calls != 1 {
+			t.Fatalf("默认集已无 explain, 应进路由, 实际调用 %d 次", stub.calls)
 		}
 	})
 
@@ -239,6 +244,99 @@ func TestBridgeRouterHook(t *testing.T) {
 		b.HandleInbound("u1", "ct-2", "２")
 		if stub.calls != 2 {
 			t.Fatalf("全角数字应进路由, 实际调用 %d 次", stub.calls)
+		}
+	})
+}
+
+// TestBridgeManagerRouter 覆盖微信桥管理者循环挂钩：优先级（逃生门之后、
+// InputRouter 之前）、命中即逐条回显 Replies 不走决策执行、未接管回落单发路由。
+func TestBridgeManagerRouter(t *testing.T) {
+	// managerRouterStub 记录管理者路由调用次数/入参，并按 fn 回放结果。
+	type managerRouterStub struct {
+		calls  int
+		inputs []string
+		fn     func(ctx context.Context, input string) (ManagerOutcome, bool)
+	}
+	mgrStub := func(fn func(ctx context.Context, input string) (ManagerOutcome, bool)) (*managerRouterStub, ManagerRouter) {
+		s := &managerRouterStub{fn: fn}
+		return s, func(ctx context.Context, input string) (ManagerOutcome, bool) {
+			s.calls++
+			s.inputs = append(s.inputs, input)
+			if s.fn == nil {
+				return ManagerOutcome{}, false
+			}
+			return s.fn(ctx, input)
+		}
+	}
+
+	t.Run("命中即回显 Replies 且不进 InputRouter", func(t *testing.T) {
+		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1", Title: "会话A"}}
+		b, rc := newRouteBridge(t, ex)
+		mgr, mfn := mgrStub(func(context.Context, string) (ManagerOutcome, bool) {
+			return ManagerOutcome{Replies: []string{"已投递给「甲」。", "还需要什么？"}, AskPending: true}, true
+		})
+		router := &routerStub{}
+		b.SetManagerRouter(mfn)
+		b.SetRouter(router.router())
+
+		b.HandleInbound("u1", "ct-1", "把任务发给甲")
+		if mgr.calls != 1 || router.calls != 0 {
+			t.Fatalf("管理者命中后 InputRouter 不应被调: mgr=%d router=%d", mgr.calls, router.calls)
+		}
+		// Replies 逐条推回微信（不经决策执行，不落 ex.Send）。
+		sends := rc.sends()
+		if len(sends) != 2 {
+			t.Fatalf("应逐条回显 2 条 Replies, 实际 %d", len(sends))
+		}
+		if got := sendText(t, sends[0].body); got != "已投递给「甲」。" {
+			t.Fatalf("第一条回复 = %q", got)
+		}
+		if got := sendText(t, sends[1].body); got != "还需要什么？" {
+			t.Fatalf("第二条回复 = %q", got)
+		}
+		if len(ex.sentTexts) != 0 {
+			t.Fatalf("管理者接管不应触发决策执行: %v", ex.sentTexts)
+		}
+		if b.routeRoundValue() != 0 {
+			t.Fatalf("管理者接管应清零反问轮次, 实际 %d", b.routeRoundValue())
+		}
+	})
+
+	t.Run("逃生门词不进管理者路由", func(t *testing.T) {
+		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1", Title: "会话A"}}
+		b, _ := newRouteBridge(t, ex)
+		mgr, mfn := mgrStub(nil)
+		router := &routerStub{}
+		b.SetManagerRouter(mfn)
+		b.SetRouter(router.router())
+
+		for _, in := range []string{"#st", "@1 hi", "continue"} {
+			b.HandleInbound("u1", "ct-1", in)
+		}
+		if mgr.calls != 0 {
+			t.Fatalf("逃生门输入不应进管理者路由, 实际调用 %d 次 (%v)", mgr.calls, mgr.inputs)
+		}
+		if router.calls != 0 {
+			t.Fatalf("逃生门输入也不应进 InputRouter, 实际调用 %d 次", router.calls)
+		}
+	})
+
+	t.Run("未接管回落 InputRouter", func(t *testing.T) {
+		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1", Title: "会话A"}}
+		b, _ := newRouteBridge(t, ex)
+		mgr, mfn := mgrStub(nil) // 不接管
+		router := &routerStub{fn: func(context.Context, string) (hubtools.RouteDecision, bool) {
+			return hubtools.RouteDecision{}, false
+		}}
+		b.SetManagerRouter(mfn)
+		b.SetRouter(router.router())
+
+		b.HandleInbound("u1", "ct-1", "普通消息")
+		if mgr.calls != 1 || router.calls != 1 {
+			t.Fatalf("未接管应回落 InputRouter: mgr=%d router=%d", mgr.calls, router.calls)
+		}
+		if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "普通消息" {
+			t.Fatalf("回落应走 Handle(原文): %v", ex.sentTexts)
 		}
 	})
 }

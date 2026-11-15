@@ -3,6 +3,8 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatInfo, HubPickView, TerminalInfo, ToolInfo } from '../lib/api';
+import enLocale from '../locales/en.json';
+import zhLocale from '../locales/zh-CN.json';
 import { useAppStore } from '../state/store';
 import '../test/i18n';
 import { tt } from '../test/i18n';
@@ -36,7 +38,7 @@ const api = vi.hoisted(() => ({
   saveHubDefaultCreate: vi.fn().mockResolvedValue(undefined),
   saveHubRouteMode: vi.fn().mockResolvedValue(undefined),
   cancelHubSmartSend: vi.fn().mockResolvedValue(undefined),
-  onHubProgress: vi.fn((_cb: (p: { id: string; step: string }) => void) => () => {}),
+  onHubProgress: vi.fn((_cb: (p: { id: string; step: string; tool?: string; round?: number }) => void) => () => {}),
   listRequirements: vi.fn(),
   markRequirementDispatched: vi.fn(),
 }));
@@ -258,7 +260,7 @@ describe('AgentHubPanel', () => {
     expect(document.activeElement).toBe(box);
   });
 
-  it('默认接收目标 chip 高亮：最后可归因已激活会话 aria-current=true；草稿含 @ 提及时提及目标高亮', async () => {
+  it('chip 高亮只认 @ 提及：无 @ 时无高亮；草稿含 @ 提及时提及目标高亮', async () => {
     useAppStore.setState({
       chats: [
         chat({ ID: 'c1', Title: '甲', ToolID: 'claude' }),
@@ -272,8 +274,8 @@ describe('AgentHubPanel', () => {
     const chips = screen.getByTestId('hub-session-chips');
     const chipOf = (id: string) =>
       within(chips).getByRole('button', { name: new RegExp(id === 'c1' ? '甲' : '乙') });
-    // 无 @：最后可归因 c1 高亮（不用 lastAgentId=c2）
-    expect(chipOf('c1')).toHaveAttribute('aria-current', 'true');
+    // 无 @：不再回落「最后可归因会话」，无任何默认高亮（即便 hub 里最近是 c1）
+    expect(chipOf('c1')).not.toHaveAttribute('aria-current');
     expect(chipOf('c2')).not.toHaveAttribute('aria-current');
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '@Cursor#c2 看看' } });
@@ -543,7 +545,7 @@ describe('AgentHubPanel', () => {
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
-  it('未 @ 但最后可归因为已激活会话：直发该会话', async () => {
+  it('未 @ 但最后可归因为已激活会话：不再默认直发，走智能路由', async () => {
     useAppStore.setState({
       chats: [chat({ ID: 'c9' })],
       hubMessages: [{ id: 1, kind: 'user', chatId: 'c9', text: '先前', ts: 1 }],
@@ -554,7 +556,9 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c9', '继续'));
+    // 默认选中已删除：无 @ 一律智能路由，绝不按 hub 归因直发
+    await waitFor(() => expect(api.hubSmartSend).toHaveBeenCalledWith(expect.any(String), '继续'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
   it('新命令别名 #l：透传 HubCommand、清空输入框且不投给 agent', async () => {
@@ -605,7 +609,7 @@ describe('AgentHubPanel', () => {
     expect(screen.getByRole('dialog')).toBeTruthy();
   });
 
-  it('未 @ 时回落到 hub 消息里最近一次 agent 回复的会话，而非 store.lastAgentId', async () => {
+  it('未 @ 时不回落 hub 消息里最近一次 agent 回复的会话（也非 store.lastAgentId），走智能路由', async () => {
     useAppStore.setState({
       chats: [
         chat({ ID: 'c1', ToolID: 'claude', Title: '甲' }),
@@ -622,10 +626,11 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c2', '继续'));
+    await waitFor(() => expect(api.hubSmartSend).toHaveBeenCalledWith(expect.any(String), '继续'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
-  it('未 @ 时回落也匹配 hub 里的用户消息（最后一条是 user 也生效）', async () => {
+  it('未 @ 时最后一条是 user 消息同样不回落，走智能路由', async () => {
     useAppStore.setState({
       chats: [
         chat({ ID: 'c1', ToolID: 'claude', Title: '甲' }),
@@ -642,10 +647,11 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c2', '继续'));
+    await waitFor(() => expect(api.hubSmartSend).toHaveBeenCalledWith(expect.any(String), '继续'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
-  it('hub 消息经 termKey 反查 chat 后参与默认投递目标回落', async () => {
+  it('hub 消息经 termKey 反查 chat 也不再参与默认投递回落，走智能路由', async () => {
     useAppStore.setState({
       chats: [
         chat({ ID: 'c1', ToolID: 'claude', Title: '甲' }),
@@ -659,7 +665,8 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '继续' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c2', '继续'));
+    await waitFor(() => expect(api.hubSmartSend).toHaveBeenCalledWith(expect.any(String), '继续'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
   it('hub 消息只有 workspace 归因：不再模糊猜同项目会话，改为列会话待选', async () => {
@@ -1060,7 +1067,7 @@ describe('AgentHubPanel', () => {
     expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#甲 ');
   });
 
-  it('@ 补全 Esc 关闭后，Enter 恢复发送语义（回落最后可归因会话）', async () => {
+  it('@ 补全 Esc 关闭后，Enter 恢复发送语义（无精确 @ 命中走智能路由）', async () => {
     useAppStore.setState({
       chats: [
         chat({ ID: 'c1', ToolID: 'claude', Title: '甲' }),
@@ -1077,8 +1084,9 @@ describe('AgentHubPanel', () => {
     fireEvent.keyDown(box, { key: 'Escape' });
     expect(screen.queryByRole('listbox', { name: tt('ui.hub.mention_aria') })).toBeNull();
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c2', '@'));
-    expect((box as HTMLTextAreaElement).value).toBe('');
+    // 裸 @ 不构成精确目标：不再回落 c2，走智能路由
+    await waitFor(() => expect(api.hubSmartSend).toHaveBeenCalledWith(expect.any(String), '@'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
   it('@ 补全键盘切换时高亮项 scrollIntoView 跟随（保持可见）', () => {
@@ -1521,15 +1529,11 @@ describe('AgentHubPanel', () => {
   });
 
   it('/ 补全不再混入客户端命令（/ 前缀只留给 agent 技能）', async () => {
-    useAppStore.setState({
-      chats: [chat({ ID: 'c1' })],
-      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
-      lastAgentId: 'c1',
-    });
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })] });
     render(<AgentHubPanel />);
-    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '/' } });
+    // @ 提及在前：slash 技能补全需要精确目标（技能按目标会话拉取）
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 /' } });
     await waitFor(() => expect(api.listChatCommands).toHaveBeenCalledWith('c1'));
     // 无 agent 技能时 slash 模式无候选，补全面板不出现（client 命令已迁到 # 模式）
     expect(screen.queryByRole('listbox', { name: tt('ui.hub.cmd_aria') })).toBeNull();
@@ -1556,15 +1560,10 @@ describe('AgentHubPanel', () => {
 
   it('agent 技能与客户端命令同名时不去重也不冲突（/ 只列 agent 技能）', async () => {
     api.listChatCommands.mockResolvedValue([{ Name: 'Clear', Description: 'agent clear' }]);
-    useAppStore.setState({
-      chats: [chat({ ID: 'c1' })],
-      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
-      lastAgentId: 'c1',
-    });
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })] });
     render(<AgentHubPanel />);
-    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '/' } });
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 /' } });
     await waitFor(() => expect(api.listChatCommands).toHaveBeenCalledWith('c1'));
     // slash 模式只列 agent 技能：agent 的 Clear 原样出现（不再被客户端命令过滤）
     await waitFor(() => {
@@ -1573,16 +1572,12 @@ describe('AgentHubPanel', () => {
     });
   });
 
-  it('选中 #stop：对目标 agent 调 cancelChat', async () => {
-    useAppStore.setState({
-      chats: [chat({ ID: 'c1' })],
-      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
-      lastAgentId: 'c1',
-    });
+  it('选中 #stop：对 @ 提及目标调 cancelChat', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })] });
     render(<AgentHubPanel />);
-    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '#stop' } });
+    // #stop 需要精确目标：@ 标签在前时命令探测剥标签、目标按提及解析
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 #stop' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(api.cancelChat).toHaveBeenCalledWith('c1'));
   });
@@ -1629,15 +1624,10 @@ describe('AgentHubPanel', () => {
   });
 
   it('行中 # 词（颜色值）不拦截：正常投递给 agent', async () => {
-    useAppStore.setState({
-      chats: [chat({ ID: 'c1' })],
-      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
-      lastAgentId: 'c1',
-    });
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })] });
     render(<AgentHubPanel />);
-    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '把按钮颜色改成 #333' } });
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 把按钮颜色改成 #333' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '把按钮颜色改成 #333'));
     expect(
@@ -1661,40 +1651,7 @@ describe('AgentHubPanel', () => {
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
-  it('最后消息未激活时无默认接收者：不出现待激活 chip 高亮', async () => {
-    const msgs = [
-      { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', workspace: 'D:\\ws\\a', sessionId: 'sess-9', sessionTitle: 'strategy', text: '回复', ts: 1 },
-    ];
-    api.listHubMessages.mockResolvedValue(msgs);
-    useAppStore.setState({
-      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
-      hubMessages: msgs,
-      lastAgentId: 'c1',
-    });
-    render(<AgentHubPanel />);
-    await act(async () => {});
-    expect(screen.queryByTitle(tt('ui.hub.pending_chip_aria'))).toBeNull();
-    expect(screen.getByText('a · 甲').closest('[aria-current="true"]')).toBeNull();
-  });
-
-  it('pending 目标已激活（会话重新打开）后待激活 chip 消失', async () => {
-    api.listHubMessages.mockResolvedValue([
-      { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', workspace: 'D:\\ws\\a', sessionId: 'sess-9', sessionTitle: '甲', text: '回复', ts: 1 },
-    ]);
-    useAppStore.setState({
-      chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '甲' })],
-      hubMessages: [
-        { id: 1, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', workspace: 'D:\\ws\\a', sessionId: 'sess-9', sessionTitle: '甲', text: '回复', ts: 1 },
-      ],
-      lastAgentId: 'c1',
-    });
-    render(<AgentHubPanel />);
-    // 最新消息精确命中已激活 c1：currentTargetId='c1'，无待激活 chip
-    await screen.findByText('a · 甲');
-    expect(screen.queryByText(new RegExp(tt('ui.hub.pending_chip')))).toBeNull();
-  });
-
-  it('发送 #stop（带尾空格）：对最后可归因已激活会话 cancelChat，不投递', async () => {
+  it('发送 #stop（带尾空格）无 @ 目标：不再按最后可归因会话执行，提示 need_target_drag', async () => {
     useAppStore.setState({
       chats: [chat({ ID: 'c1' })],
       hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
@@ -1705,8 +1662,12 @@ describe('AgentHubPanel', () => {
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '#stop ' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.cancelChat).toHaveBeenCalledWith('c1'));
+    // 默认选中已删除：无 @ 提及时 #stop 无目标，提示且不激活、不 cancelChat
+    expect(api.cancelChat).not.toHaveBeenCalled();
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(useAppStore.getState().toasts.some((x) => x.title === tt('ui.hub.need_target_drag'))).toBe(true),
+    );
   });
 
   it('#stop 在无默认目标（未激活最后消息）时提示无目标且不激活', async () => {
@@ -1761,13 +1722,11 @@ describe('AgentHubPanel', () => {
     saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'm1' });
     useAppStore.setState({
       chats: [chat({ ID: 'c1', ToolID: 'claude', Workspace: 'D:\\ws\\a' })],
-      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
-      lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
-    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '#model' } });
+    // #model 需要精确目标：@ 提及在前，命令探测剥标签后按提及解析目标
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 #model' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(api.listChatModels).toHaveBeenCalledWith('c1'));
     // 模型菜单出现，点选 Model Two
@@ -1792,13 +1751,10 @@ describe('AgentHubPanel', () => {
     saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'm1' });
     useAppStore.setState({
       chats: [chat({ ID: 'c1', ToolID: 'claude', Workspace: 'D:\\ws\\a' })],
-      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
-      lastAgentId: 'c1',
     });
     render(<AgentHubPanel />);
-    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '#model' } });
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 #model' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     const menu = await screen.findByRole('list', { name: tt('ui.hub.model_label') });
     fireEvent.click(within(menu).getByRole('button', { name: 'Model Two' }));
@@ -1815,40 +1771,34 @@ describe('AgentHubPanel', () => {
     expect(list).not.toHaveTextContent('#new');
   });
 
-  it('hash 补全键盘导航：# → ArrowDown×2 选中 stop，Enter 执行', async () => {
-    useAppStore.setState({
-      chats: [chat({ ID: 'c1' })],
-      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
-      lastAgentId: 'c1',
-    });
+  it('hash 补全键盘导航：# → ArrowDown×2 选中 stop，Enter 执行（无 @ 目标则提示）', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })] });
     render(<AgentHubPanel />);
-    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '#' } });
     fireEvent.keyDown(box, { key: 'ArrowDown' });
     fireEvent.keyDown(box, { key: 'ArrowDown' });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(api.cancelChat).toHaveBeenCalledWith('c1'));
+    // 默认选中已删除：无 @ 目标时 stop 不再按最后可归因会话执行
+    expect(api.cancelChat).not.toHaveBeenCalled();
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(useAppStore.getState().toasts.some((x) => x.title === tt('ui.hub.need_target_drag'))).toBe(true),
+    );
   });
 
   it('agent 技能出现在命令列表，选中后切入草稿并可投递', async () => {
     api.listChatCommands.mockResolvedValue([{ Name: 'commit', Description: 'Commit changes' }]);
-    useAppStore.setState({
-      chats: [chat({ ID: 'c1' })],
-      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
-      lastAgentId: 'c1',
-    });
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })] });
     render(<AgentHubPanel />);
-    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '/' } });
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 /' } });
     await waitFor(() =>
       expect(screen.getByRole('listbox', { name: tt('ui.hub.cmd_aria') })).toHaveTextContent('/commit'),
     );
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect((box as HTMLTextAreaElement).value).toBe('/commit ');
-    fireEvent.change(box, { target: { value: '/commit fix bug' } });
+    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#重构认证 /commit ');
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 /commit fix bug' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '/commit fix bug'));
   });
@@ -1934,15 +1884,11 @@ describe('AgentHubPanel', () => {
 
   it('/ 开头但不匹配任何 agent 技能：不拦截，原样发送给 agent', async () => {
     api.listChatCommands.mockResolvedValue([]);
-    useAppStore.setState({
-      chats: [chat({ ID: 'c1' })],
-      hubMessages: [{ id: 1, kind: 'user', chatId: 'c1', text: '先前', ts: 1 }],
-      lastAgentId: 'c1',
-    });
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })] });
     render(<AgentHubPanel />);
-    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
-    fireEvent.change(box, { target: { value: '/agent-only-cmd arg' } });
+    // @ 提及在前保证精确目标；slash 补全因无候选不弹层，Enter 原样投递
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 /agent-only-cmd arg' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '/agent-only-cmd arg'));
   });
@@ -1986,7 +1932,7 @@ describe('AgentHubPanel', () => {
     expect(await screen.findByLabelText(tt('ui.hub.field_project'))).toBeTruthy();
   });
 
-  it('agent 卡片快捷回复常显：仅「继续」「换个说法」，无「好的」，且无需 hover', async () => {
+  it('agent 卡片快捷回复常显：「继续」「换个说法」「引用」，无「好的」，且无需 hover', async () => {
     useAppStore.setState({ chats: [chat({ ID: 'c1', Key: 'new:1', ToolID: 'claude' })] });
     api.listHubMessages.mockResolvedValue([
       { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', text: 'done', ts: 2 },
@@ -1994,6 +1940,7 @@ describe('AgentHubPanel', () => {
     render(<AgentHubPanel />);
     expect(await screen.findByRole('button', { name: tt('ui.hub.quick_continue') })).toBeTruthy();
     expect(screen.getByRole('button', { name: tt('ui.hub.quick_rephrase') })).toBeTruthy();
+    expect(screen.getByRole('button', { name: tt('ui.hub.quote_reply') })).toBeTruthy();
     // quick_ok 死 key 已删，无法走 tt；按字面文案断言不存在「好的」按钮
     expect(screen.queryByRole('button', { name: /^(好的|Sounds good)$/ })).toBeNull();
     // 容器常显：不再依赖 group-hover（hidden/absolute 移除）
@@ -2001,6 +1948,53 @@ describe('AgentHubPanel', () => {
     const container = rephraseBtn.parentElement as HTMLElement;
     expect(container.className).toContain('flex');
     expect(container.className).not.toContain('hidden');
+  });
+
+  it('agent 卡片点「引用」：草稿覆盖为仅 @ 目标并聚焦，不发送', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '重构认证' })] });
+    api.listHubMessages.mockResolvedValue([
+      { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', text: 'done', ts: 2 },
+    ]);
+    render(<AgentHubPanel />);
+    const btn = await screen.findByRole('button', { name: tt('ui.hub.quote_reply') });
+    // 先写好草稿再点引用：覆盖为仅 @ 目标（与换个说法的保留式追加不同）
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '已有草稿' } });
+    fireEvent.click(btn);
+    expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#重构认证 ');
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(box);
+  });
+
+  it('agent 卡片点「引用」后补写正文发送：走 @ 目标精确直投', async () => {
+    useAppStore.setState({ chats: [chat({ ID: 'c1', ToolID: 'claude', Title: '重构认证' })] });
+    api.listHubMessages.mockResolvedValue([
+      { id: 2, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c1', text: 'done', ts: 2 },
+    ]);
+    render(<AgentHubPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quote_reply') }));
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '@Claude Code#重构认证 就这个方案展开说说' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.sendChatPrompt).toHaveBeenCalledWith('c1', '就这个方案展开说说'));
+  });
+
+  it('「引用」目标未激活时先激活会话再覆盖草稿为 @ 标签，不发送', async () => {
+    // 记录的 chatId 不在 chats（会话已关闭/重启后未恢复）：走激活路径
+    api.listHubMessages.mockResolvedValue([
+      { id: 13, kind: 'agent', tool: 'claude', event: 'Stop', chatId: 'c-dead', termKey: 'session:s-q1', text: 'ok', ts: 13 },
+    ]);
+    api.openSessionACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'c-q1', Key: 'session:s-q1', Kind: 'session', SessionID: 's-q1' }),
+    });
+    render(<AgentHubPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.hub.quote_reply') }));
+    await waitFor(() => expect(api.openSessionACP).toHaveBeenCalledWith('s-q1'));
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe('@Claude Code#重构认证 '));
+    expect(document.activeElement).toBe(box);
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
   it('agent 卡片点「继续」：直接发送 quick_continue_text 到归因 agent', async () => {
@@ -2148,6 +2142,7 @@ describe('AgentHubPanel', () => {
     expect(screen.getAllByText(tt('ui.hub.readonly_badge'))).toHaveLength(1);
     expect(screen.queryByRole('button', { name: tt('ui.hub.quick_continue') })).toBeNull();
     expect(screen.queryByRole('button', { name: tt('ui.hub.quick_rephrase') })).toBeNull();
+    expect(screen.queryByRole('button', { name: tt('ui.hub.quote_reply') })).toBeNull();
   });
 
   it('终端激活态的 agent 气泡：只读徽标 + 隐藏快捷按钮（规则2）', async () => {
@@ -2163,6 +2158,7 @@ describe('AgentHubPanel', () => {
     expect(screen.getAllByText(tt('ui.hub.readonly_badge'))).toHaveLength(1);
     expect(screen.queryByRole('button', { name: tt('ui.hub.quick_continue') })).toBeNull();
     expect(screen.queryByRole('button', { name: tt('ui.hub.quick_rephrase') })).toBeNull();
+    expect(screen.queryByRole('button', { name: tt('ui.hub.quote_reply') })).toBeNull();
   });
 
   it('终端在册 + 消息仅 sessionId（termKey 为 new:N）：只读，不调 openSessionACP', async () => {
@@ -2801,7 +2797,7 @@ describe('AgentHub 思考态', () => {
     ).toBe(true);
   });
 
-  it('后端进度事件推进思考气泡阶段文案', async () => {
+  it('hub:progress 多帧事件累积为思考步骤时间线：已完成打勾、最后一步进行中', async () => {
     let release!: (v: HubPickView) => void;
     api.hubSmartSend.mockImplementation(() => new Promise((res) => { release = res; }));
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
@@ -2814,9 +2810,22 @@ describe('AgentHub 思考态', () => {
     // 取出面板注册的进度回调，模拟 Go 侧 Emit("hub:progress")
     const handler = api.onHubProgress.mock.calls.at(-1)![0];
     const reqID = useAppStore.getState().hubPendingSend!.reqID;
-    act(() => handler({ id: reqID, step: 'ui.hub.thinking_execute' }));
+    // 后端开场里程碑重复推送首帧：去重后不出现第二条 route
+    act(() => handler({ id: reqID, step: 'ui.hub.thinking_route' }));
+    // 循环内两次工具调用：逐帧累积为时间线（带 tool/round 插值）
+    act(() => handler({ id: reqID, step: 'ui.hub.thinking_tool', tool: 'read_file', round: 1 }));
+    act(() => handler({ id: reqID, step: 'ui.hub.thinking_tool', tool: 'edit_file', round: 2 }));
 
-    await waitFor(() => expect(screen.getByText(tt('ui.hub.thinking_execute'))).toBeInTheDocument());
+    const routeLine = tt('ui.hub.thinking_route');
+    const tool1 = tt('ui.hub.thinking_tool', { tool: 'read_file', round: 1 });
+    const tool2 = tt('ui.hub.thinking_tool', { tool: 'edit_file', round: 2 });
+    await waitFor(() => expect(screen.getByText(tool2)).toBeInTheDocument());
+    // 三条步骤同屏：首帧种子 + 两次工具调用
+    expect(screen.getByText(routeLine)).toBeInTheDocument();
+    expect(screen.getByText(tool1)).toBeInTheDocument();
+    // 进行中样式只有最后一步：转圈动画节点数恰为 1
+    const thinking = screen.getByTestId('hub-thinking');
+    expect(thinking.querySelectorAll('.animate-spin')).toHaveLength(1);
     release({ Replies: [], Pending: true });
   });
 
@@ -2884,5 +2893,20 @@ describe('智能路由在途守卫', () => {
     fireEvent.change(box, { target: { value: '再发一次' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(api.hubSmartSend).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe('AgentHub i18n 资源', () => {
+  it('新增 ui.hub key 两份 locale 同步存在（quote_reply / thinking_tool）', () => {
+    const hubOf = (loc: unknown) => (loc as { ui: { hub: Record<string, unknown> } }).ui.hub;
+    for (const key of ['quote_reply', 'thinking_tool']) {
+      expect(hubOf(enLocale)[key]).toBeTruthy();
+      expect(hubOf(zhLocale)[key]).toBeTruthy();
+    }
+    // thinking_tool 带插值占位符：两份资源都要有 tool 与 round
+    expect(hubOf(enLocale).thinking_tool).toContain('{{tool}}');
+    expect(hubOf(enLocale).thinking_tool).toContain('{{round}}');
+    expect(hubOf(zhLocale).thinking_tool).toContain('{{tool}}');
+    expect(hubOf(zhLocale).thinking_tool).toContain('{{round}}');
   });
 });

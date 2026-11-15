@@ -12,7 +12,9 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/yangk/kshell/internal/agentapi"
 	"github.com/yangk/kshell/internal/agenthook"
+	"github.com/yangk/kshell/internal/agentsrv"
 	"github.com/yangk/kshell/internal/appearance"
 	"github.com/yangk/kshell/internal/applang"
 	"github.com/yangk/kshell/internal/chat"
@@ -26,8 +28,6 @@ import (
 	"github.com/yangk/kshell/internal/remote"
 	remotefs "github.com/yangk/kshell/internal/remote/fs"
 	"github.com/yangk/kshell/internal/requirements"
-	"github.com/yangk/kshell/internal/agentapi"
-	"github.com/yangk/kshell/internal/agentsrv"
 	"github.com/yangk/kshell/internal/sessionarchive"
 	"github.com/yangk/kshell/internal/terminal"
 	"github.com/yangk/kshell/internal/weixin"
@@ -143,7 +143,7 @@ type App struct {
 	opts Options
 
 	// hubMu/hubRouter 已随工具循环下线移除：AgentHub 只剩「无目标自由文本」
-	// 的意图路由（hubroute.go + hubtools.RouteInput），不再有常驻工具会话。
+	// 的管理者循环入口（hubroute.go + agentapi.Run），不再有常驻工具会话。
 
 	tools []discovery.Tool
 	// rawWorkspaces 是**未叠加项目表**的扫描结果：项目列表永远从它派生，
@@ -225,16 +225,32 @@ type App struct {
 	// 自持 sync.Mutex:mirrorAggregated 在 recordHubMessage 路径不持 a.mu,
 	// 不能借用;周期基准变化或报告 Discard 时清表。
 	aggHb aggHeartbeats
-	// smartRouter 是桌面 Hub 智能路由的注入点（测试可覆写）；nil 时惰性使用
-	// weixinInputRouter（与微信桥同款实时读配置快照）。mu 保护。
-	smartRouter smartRouterFunc
-	// smartAskRound 是桌面 Hub 反问链的连续轮数（ask 决策累加，非 ask 清零）。
-	// 达到上限后下一条自由文本不再路由。仅在智能路由路径复位（直投/@目标/编号
-	// 切换由前端确定性路径处理，不经 HubSmartSend 后端无感知），与微信桥回落
-	// 即清零略有差异——渠道隔离，互不串扰。mu 保护。
-	smartAskRound int
-	// smartBusy 是桌面 Hub 智能路由的在途标记：路由调用期间置位（锁外做
-	// router 调用），并发/重复提交直接返回 Pending=true 不清轮次。mu 保护。
+	// hubRunner 是桌面 Hub 管理者循环的注入点（测试可覆写）；nil 时调用
+	// AgentAPI().Run。mu 保护。
+	hubRunner hubRunnerFunc
+	// hubAskPending 是桌面 Hub 的续轮衔接标记：上次循环 Run 返回 AskPending
+	// 时置位，下一条短输入以 Continuation=true 进循环；成功 Run 后随结果刷新，
+	// 错误路径的处理见 HubSmartSend。hubAskPendingAt 是置位时刻，用于 TTL 判定
+	//（显式 Continuation 会绕过 agentapi 的 pendingAskTTL 检查，desktop 必须自判
+	// 过期）。mu 保护。
+	hubAskPending   bool
+	hubAskPendingAt time.Time
+	// wxRunner 是微信管理者循环的注入点（测试可覆写）；nil 时调用
+	// AgentAPI().Run。mu 保护。
+	wxRunner hubRunnerFunc
+	// wxNotify 是微信中途进度推送的注入点（测试观察用）；nil 时走
+	// Runtime.NotifyProgress 经 bridge 出站 worker 投递。mu 保护。
+	wxNotify func(step int)
+	// wxAskPending 是微信渠道的续轮衔接标记（与 hub 渠道独立）：上次循环 Run
+	// 返回 AskPending 时置位，下一条短输入以 Continuation=true 进循环。
+	// wxAskPendingAt 是置位时刻，用于 TTL 判定（显式 Continuation 会绕过
+	// agentapi 的内部 TTL 检查，desktop 必须自判过期）。跨渠道的陈旧标记由
+	// agentapi Run 的 pendingAsk.Channel 守卫兜底，desktop 不重复判渠道。
+	// mu 保护。
+	wxAskPending   bool
+	wxAskPendingAt time.Time
+	// smartBusy 是桌面 Hub 智能入口的在途标记：循环调用期间置位（锁外做
+	// LLM 调用），并发/重复提交直接返回 Pending=true 不清续轮标记。mu 保护。
 	smartBusy bool
 	// smartCancels 是按请求 ID 登记的在途路由取消句柄（支持前端「中断」）。
 	// 每轮 HubSmartSend 进入时登记、退出时注销；mu 保护。

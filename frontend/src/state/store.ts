@@ -63,12 +63,21 @@ export interface Toast {
   tone: 'info' | 'success' | 'error';
 }
 
+// HubPendingStep 是思考时间线上的一条步骤帧：key 为稳定 i18n key（ui.hub.thinking_*），
+// tool/round 仅 thinking_tool 帧携带（渲染时经 ui.hub.thinking_tool 插值）。
+export interface HubPendingStep {
+  key: string;
+  tool?: string;
+  round?: number;
+}
+
 // HubPendingSend 是 AgentHub 一轮「无目标自由文本」的思考态（仅前端内存）：
-// reqID 与后端 hubSmartSend 的请求标识一致，step 是稳定 i18n key（ui.hub.thinking_*）。
+// reqID 与后端 hubSmartSend 的请求标识一致；steps 累积本轮全部进度帧——
+// 首帧 thinking_route 由前端种子，后续 hub:progress 事件逐帧追加。
 // 它的存在本身就表示「这一轮还在途」——用户气泡已可见，但还没有任何回执。
 export interface HubPendingSend {
   reqID: string;
-  step: string;
+  steps: HubPendingStep[];
   // text 是用户原话（中断后用来恢复草稿；也便于调试定位是哪一轮）。
   text: string;
 }
@@ -262,8 +271,8 @@ interface AppState {
   //（权威落盘在发送链 sendAndRecord，重拉历史后由落盘记录接管显示）。
   pushHubLocalUser(text: string): void;
   // hubPendingSend 是「无目标自由文本」一轮在途的思考态（不持久化）：
-  // 让用户在等首 token 期间看到用户气泡 + 当前阶段，并可中断。
-  // reqID 与后端 hubSmartSend 的请求标识一致；step 是稳定 i18n key。
+  // 让用户在等首 token 期间看到用户气泡 + 已累积的步骤时间线，并可中断。
+  // reqID 与后端 hubSmartSend 的请求标识一致；steps 内是稳定 i18n key（ui.hub.thinking_*）。
   hubPendingSend: HubPendingSend | null;
   setHubPendingSend(p: HubPendingSend | null): void;
 

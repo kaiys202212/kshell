@@ -138,6 +138,9 @@ var cmdTexts = map[string]langPair{
 	"hb_line": {"%s still running %s", "%s 仍在运行 %s"},
 	// 反问超限降级：不再追问，直投当前会话并提示 #l。
 	"route_ask_limit": {"Sending to the current session; use #l for session numbers if you want to pick a target", "先直接发送到当前会话；如需指派请用 #l 查看编号"},
+
+	// 「继续类短确认」捷径直投回执（%s = 投递原文，%s = 会话标题）。
+	"shortcut_sent": {"Sent \"%s\" to [%s]", "已将「%s」投递给【%s】"},
 }
 
 // CmdText 按语言取命令层文案：zh-CN 用中文，其余英文；未知 key 原样返回。

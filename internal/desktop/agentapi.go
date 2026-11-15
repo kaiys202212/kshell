@@ -231,17 +231,42 @@ func (a *App) startAgentSrv() {
 
 // AgentAPI 返回 agent 工具 API（懒构造）。LLM 配置每次访问实时刷新，与微信
 // 桥路由「实时读配置」同口径；未配置自主模型时 CreateNL/RouteDecide 返回
-// ErrLLMNotReady。
+// ErrLLMNotReady。构造时注入管理者记忆 journal（~/.kshell/hub/agent），
+// 供管理者循环读写历史轮次。
 func (a *App) AgentAPI() *agentapi.API {
 	feed := a.agentFeedSource()
 	a.mu.Lock()
 	api := a.agentAPIV
 	if api == nil {
 		api = agentapi.New(&agentBackend{a: a, w: newWXExecutor(a), feed: feed})
+		api.SetMemory(agentapi.NewManagerMemory(a.hubAgentMemoryDir()))
 		a.agentAPIV = api
 	}
 	a.mu.Unlock()
 	hc, _ := hubtools.FromModelConfig(a.snapshot().Config.Model)
 	api.UpdateLLM(hc)
 	return api
+}
+
+// hubAgentMemoryDir 返回管理者记忆 journal 目录 ~/.kshell/hub/agent：
+// ~/.kshell 根的取法与 agentAPIEndpointPath 同链路（Layout.Root 优先，测试
+// 用 Home 拼装），无配置来源时兜底 os.UserHomeDir。目录不存在时创建
+//（NewManagerMemory.Append 内部还会兜一次，这里提前建好让 load 阶段就绪）。
+func (a *App) hubAgentMemoryDir() string {
+	root := a.opts.Layout.Root
+	if root == "" && a.opts.Home != "" {
+		root = filepath.Join(a.opts.Home, ".kshell")
+	}
+	if root == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			home = os.TempDir()
+		}
+		root = filepath.Join(home, ".kshell")
+	}
+	dir := filepath.Join(root, "hub", "agent")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		log.Printf("创建管理者记忆目录失败（记忆将不可用）: %v", err)
+	}
+	return dir
 }
