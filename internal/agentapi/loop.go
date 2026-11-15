@@ -92,11 +92,10 @@ const loopFinalHint = "已到轮次上限：必须立即调用 ask 向用户确�
 const loopGuidance = "这一轮没有形成明确结论。请换一种说法描述需求，或直接指定目标会话（例如「发给修复登录那个会话」）。"
 
 // LoopProgress 是一次工具调用的进度帧：Total 在循环里天然未知（模型可能
-// 一直追加调用），恒为 0，调用方按「第 Round 步」渲染。
+// 一直追加调用），Round 表示当前 LLM 轮次，调用方按「第 Round 轮」渲染。
 type LoopProgress struct {
 	Tool  string
 	Round int
-	Total int
 }
 
 // RunOpts 是 Run 的可选参数。
