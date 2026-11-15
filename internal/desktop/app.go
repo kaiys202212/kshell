@@ -80,6 +80,13 @@ type Options struct {
 	Chats         *chat.Manager     // ACP 聊天管理器；nil 时 Startup 装配真实后端（测试可注入桩）
 	Emit          func(name string, data ...any)
 	TrayIcon      []byte // 托盘图标数据（Windows 用 ICO，其它平台用 PNG）；nil 表示不启用托盘
+	// CLIBinary 是内嵌的最小 agent CLI 二进制（根 main.go 经 go:embed 注入）；
+	// nil 表示 dev 构建未嵌真实二进制，释放步骤跳过。
+	CLIBinary []byte
+	// ClisyncEnsurePath 注入 clisync 的 PATH 配置实现（测试打桩用）；nil 走平台默认。
+	ClisyncEnsurePath func(binDir string) (string, error)
+	// ClisyncPathEntries 注入用户级 PATH 条目读取（测试打桩用）；nil 走平台默认。
+	ClisyncPathEntries func() []string
 	SignalPath    string // 退出信号文件路径；nil/空时 Startup 补齐真实路径（测试可不启用）
 	// SnapshotPath 是扫描结果快照文件：启动时先端出上次结果让界面秒开，后台扫描再覆盖。
 	// 空字符串表示禁用快照（测试默认如此，避免互相污染）。
@@ -289,6 +296,7 @@ func (a *App) Startup(ctx context.Context) {
 	go a.reapLoop()
 	go a.scheduleUpdateCheck()
 	go a.ensureDesktopShortcutOnStartup()
+	go a.ensureCliSync() // 释放最小 agent CLI（幂等；dev 构建无内嵌则跳过）
 
 	// agent 通知：先清掉超龄残留（收件箱文件 + opencode 插件临时目录），再起收件箱
 	// 轮询（随进程存活，无需取消）

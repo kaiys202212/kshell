@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"os"
 	"runtime"
-
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -32,6 +31,43 @@ var appIconPNG []byte
 //go:embed build/windows/icon.ico
 var trayIconICO []byte
 
+//go:embed build/cli
+var cliDir embed.FS
+
+// cliBinary 从 build/cli 挑出内嵌的最小 agent CLI 二进制（build.ps1 -Desktop
+// 先编 cmd/kshell-cli 放入该目录；README.md 是编译占位）。按可执行魔数识别，
+// 只嵌到占位文件（dev 构建）时返回 nil，释放步骤据此跳过。
+func cliBinary() []byte {
+	entries, err := fs.ReadDir(cliDir, "build/cli")
+	if err != nil {
+		return nil
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		b, err := fs.ReadFile(cliDir, "build/cli/"+e.Name())
+		if err != nil || len(b) < 4 || !isExecutableMagic(b) {
+			continue
+		}
+		return b
+	}
+	return nil
+}
+
+// isExecutableMagic 识别 PE / ELF / Mach-O 文件头。
+func isExecutableMagic(b []byte) bool {
+	switch {
+	case b[0] == 'M' && b[1] == 'Z': // PE（Windows）
+		return true
+	case b[0] == 0x7f && b[1] == 'E' && b[2] == 'L' && b[3] == 'F': // ELF（Linux）
+		return true
+	case b[0] == 0xCF && b[1] == 0xFA, b[0] == 0xCA && b[1] == 0xFE: // Mach-O 64/32 位
+		return true
+	}
+	return false
+}
+
 // trayIcon 按平台选择托盘图标：Windows 通知区只认 ICO（见 energye/systray Windows 实现），
 // 其它平台（Linux 走 dbus）用 PNG。
 func trayIcon() []byte {
@@ -48,6 +84,7 @@ func trayIcon() []byte {
 var desktopApp = desktop.NewAppWith(desktop.Options{
 	TrayIcon:    trayIcon(),
 	StartHidden: startHiddenFromArgs(os.Args),
+	CLIBinary:   cliBinary(),
 })
 
 // startHiddenFromArgs 判定本次是否为开机自启动的静默拉起：只认 os.Args[1]
