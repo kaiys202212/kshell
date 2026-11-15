@@ -9,6 +9,7 @@ import (
 
 	"github.com/yangk/kshell/internal/agentapi"
 	"github.com/yangk/kshell/internal/chat"
+	"github.com/yangk/kshell/internal/hub"
 	"github.com/yangk/kshell/internal/providers"
 )
 
@@ -152,5 +153,37 @@ func TestStartAgentSrv(t *testing.T) {
 	srv.Close()
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatal("Close 后 endpoint 文件应删除")
+	}
+}
+
+// RecentHubMessages 映射归因字段并沿用 store 的滤噪口径。
+func TestAgentBackendRecentHubMessages(t *testing.T) {
+	app := agentApp(t, nil)
+	store := app.snapshot().HubStore
+	if store == nil {
+		t.Fatal("HubStore 未装配")
+	}
+	for _, m := range []hub.Message{
+		{Kind: "user", ChatID: "c1", Tool: "claude", SessionTitle: "修复登录", Text: "继续修"},
+		{Kind: "agent", Event: "hub_manager_reply", Text: "已投递"},
+		{Kind: "agent", Event: "ui.hub.ack_delivered", Text: "ui.hub.ack_delivered"}, // 噪声
+	} {
+		if err := store.Append(m); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	b := &agentBackend{a: app, w: newWXExecutor(app), feed: app.agentFeedSource()}
+	got := b.RecentHubMessages(10)
+	if len(got) != 2 {
+		t.Fatalf("应滤掉 ui.hub.* 噪声，剩 2 条: %+v", got)
+	}
+	if got[0].SessionID != "c1" || got[0].SessionTitle != "修复登录" || got[0].Tool != "claude" || got[0].Kind != "user" {
+		t.Fatalf("归因字段映射不符: %+v", got[0])
+	}
+	if got[1].Event != "hub_manager_reply" || got[1].Kind != "agent" {
+		t.Fatalf("agent 消息映射不符: %+v", got[1])
+	}
+	if got := b.RecentHubMessages(0); got != nil {
+		t.Fatalf("n<=0 应返回空: %+v", got)
 	}
 }

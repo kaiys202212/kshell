@@ -15,6 +15,7 @@ type FakeBackend struct {
 	Disk        []agentapi.Session
 	Archived    []string
 	Msgs        map[string][]agentapi.Message
+	Recent      []agentapi.Message // RecentHubMessages 返回
 	Sent        []string // Send 调用记录 "chatID|text"
 	FailSendOn  string   // Send 对该 chatID 返回错误
 	Stopped     []string
@@ -31,6 +32,17 @@ func (f *FakeBackend) DiskSessions() []agentapi.Session   { return f.Disk }
 func (f *FakeBackend) ArchivedIDs() []string              { return f.Archived }
 func (f *FakeBackend) SessionMessages(chatID string) []agentapi.Message {
 	return f.Msgs[chatID]
+}
+
+// RecentHubMessages 返回预制的最近消息；n<=0 返回空（与真实实现同口径）。
+func (f *FakeBackend) RecentHubMessages(n int) []agentapi.Message {
+	if n <= 0 || len(f.Recent) == 0 {
+		return nil
+	}
+	if len(f.Recent) > n {
+		return f.Recent[len(f.Recent)-n:]
+	}
+	return f.Recent
 }
 
 func (f *FakeBackend) Send(chatID, text string) error {

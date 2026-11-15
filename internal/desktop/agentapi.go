@@ -101,6 +101,32 @@ func (b *agentBackend) SessionMessages(chatID string) []agentapi.Message {
 	return out
 }
 
+// RecentHubMessages 返回 AgentHub 最近 n 条可见消息（时间正序，已滤噪），
+// 映射归因字段供管理者 system 注入「最近投递语境」。取数复用
+// wxExecutor.RecentMessages（与 #h 命令同源，IsHubNoise 过滤一致）。
+func (b *agentBackend) RecentHubMessages(n int) []agentapi.Message {
+	msgs := b.w.RecentMessages(n)
+	if len(msgs) == 0 {
+		return nil
+	}
+	out := make([]agentapi.Message, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, agentapi.Message{
+			ID:           m.ID,
+			SessionID:    m.ChatID,
+			Kind:         m.Kind,
+			Text:         m.Text,
+			Event:        m.Event,
+			Status:       m.Status,
+			Ts:           m.Ts,
+			Tool:         m.Tool,
+			SessionTitle: m.SessionTitle,
+			ViaHub:       m.ViaHub,
+		})
+	}
+	return out
+}
+
 // Send 是管理者 send 工具的投递路径：经 sendChatPromptVia 标记代发，
 // 目标会话的 user 消息与 hub 落盘记录均带 ViaHub（前端打「由 AgentHub 自动发送」标签）。
 func (b *agentBackend) Send(chatID, text string) error { return b.a.sendChatPromptVia(chatID, text, true) }

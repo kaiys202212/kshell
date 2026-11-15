@@ -14,6 +14,7 @@ type fakeBackend struct {
 	disk       []Session
 	archived   []string
 	msgs       map[string][]Message // chatID → 消息
+	recent     []Message            // RecentHubMessages 返回
 	sent       []string             // Send 调用记录 "chatID|text"
 	failSendOn string               // Send 对该 chatID 返回错误（测试失败路径）
 	stopped    []string
@@ -40,6 +41,17 @@ func (f *fakeBackend) DiskSessions() []Session   { return f.disk }
 func (f *fakeBackend) ArchivedIDs() []string     { return f.archived }
 
 func (f *fakeBackend) SessionMessages(chatID string) []Message { return f.msgs[chatID] }
+
+// RecentHubMessages 模拟 hub 取尾 n 条（n<=0 返回空，与真实实现同口径）。
+func (f *fakeBackend) RecentHubMessages(n int) []Message {
+	if n <= 0 || len(f.recent) == 0 {
+		return nil
+	}
+	if len(f.recent) > n {
+		return f.recent[len(f.recent)-n:]
+	}
+	return f.recent
+}
 
 func (f *fakeBackend) Send(chatID, text string) error {
 	if f.failSendOn == chatID {
