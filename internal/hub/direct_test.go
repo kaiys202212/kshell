@@ -3,7 +3,7 @@ package hub
 import "testing"
 
 func TestIsDirectPass(t *testing.T) {
-	def := DefaultDirectPatterns() // ["#","@","continue","explain"]
+	def := DefaultDirectPatterns() // ["#","@","continue"]
 	cases := []struct {
 		in   string
 		want bool
@@ -13,7 +13,7 @@ func TestIsDirectPass(t *testing.T) {
 		{"@1 帮我看看", true},         // @ 指名
 		{"continue", true},        // 首词
 		{"Continue please", true}, // 首词大小写不敏感
-		{"explain this", true},
+		{"explain this", false},   // explain 已移出默认集：进管理者循环
 		{"你好", false},
 		{"1", false},            // 纯数字进路由(语境由路由器决断)
 		{"continuation", false}, // 非首词完整匹配
@@ -55,7 +55,7 @@ func TestIsDirectPass(t *testing.T) {
 
 func TestDefaultDirectPatterns(t *testing.T) {
 	got := DefaultDirectPatterns()
-	for _, want := range []string{"#", "@", "continue", "explain"} {
+	for _, want := range []string{"#", "@", "continue"} {
 		found := false
 		for _, p := range got {
 			if p == want {
@@ -64,6 +64,27 @@ func TestDefaultDirectPatterns(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("默认集缺 %q: %v", want, got)
+		}
+	}
+	// explain 已移出默认集（该语境交管理者循环处理）。
+	for _, p := range got {
+		if p == "explain" {
+			t.Fatalf("默认集不应再含 explain: %v", got)
+		}
+	}
+}
+
+// TestIsContinueConfirm 覆盖「继续类短确认」捷径判定：去空白后整词匹配，
+// 大小写不敏感；非确认词不命中。
+func TestIsContinueConfirm(t *testing.T) {
+	for _, in := range []string{"继续", "  继续  ", "继续吧", "continue", "Continue", "好", "好的", "行", "ok", "OK", "Ok"} {
+		if !IsContinueConfirm(in) {
+			t.Fatalf("IsContinueConfirm(%q) 应命中", in)
+		}
+	}
+	for _, in := range []string{"", "   ", "继续一下", "continue please", "好呀", "好吧", "不行", "okay", "继续任务"} {
+		if IsContinueConfirm(in) {
+			t.Fatalf("IsContinueConfirm(%q) 不应命中", in)
 		}
 	}
 }

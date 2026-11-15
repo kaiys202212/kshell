@@ -109,7 +109,7 @@ func (a *App) weixinInputRouter() weixin.InputRouter {
 }
 
 // agenthubDirectPatterns 返回逃生门白名单：实时读配置，空/nil 时回落 hub
-// 内置默认集（# 命令/@ 指名/continue/explain）。
+// 内置默认集（# 命令/@ 指名/continue）。
 func (a *App) agenthubDirectPatterns() []string {
 	pats := a.snapshot().Config.AgentHub.DirectPatterns
 	if len(pats) == 0 {

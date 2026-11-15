@@ -206,9 +206,14 @@ func TestBridgeRouterHook(t *testing.T) {
 		b.SetRouter(stub.router())
 		b.SetDirectPatterns(func() []string { return nil })
 
-		b.HandleInbound("u1", "ct-1", "explain 一下")
+		// explain 已移出默认集（进管理者循环）；continue 仍是默认逃生门词。
+		b.HandleInbound("u1", "ct-1", "continue 一下")
 		if stub.calls != 0 {
-			t.Fatalf("默认逃生门 explain 不应进路由, 实际调用 %d 次", stub.calls)
+			t.Fatalf("默认逃生门 continue 不应进路由, 实际调用 %d 次", stub.calls)
+		}
+		b.HandleInbound("u1", "ct-1", "explain 一下")
+		if stub.calls != 1 {
+			t.Fatalf("默认集已无 explain, 应进路由, 实际调用 %d 次", stub.calls)
 		}
 	})
 

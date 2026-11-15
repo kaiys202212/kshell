@@ -3,9 +3,10 @@ package hub
 import "strings"
 
 // DefaultDirectPatterns 返回逃生门白名单内置默认集：# 命令族、@ 指名、
-// continue/explain 语境词（config.AgentHub.DirectPatterns 空/nil 时使用）。
+// continue 语境词（config.AgentHub.DirectPatterns 空/nil 时使用）。explain
+// 不再内置：该类自由文本交管理者循环处理，用户仍可用 DirectPatterns 配置加回。
 func DefaultDirectPatterns() []string {
-	return []string{"#", "@", "continue", "explain"}
+	return []string{"#", "@", "continue"}
 }
 
 // IsDirectPass 判定输入是否命中逃生门白名单（命中=不经智能路由，走既有
@@ -75,4 +76,25 @@ func isASCIIWordTail(p string) bool {
 	}
 	r := rs[len(rs)-1]
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-'
+}
+
+// continueConfirms 是「继续类短确认」捷径的白名单：去空白后整词命中即视为
+// 用户对上一轮反问/等待会话的继续确认（ASCII 项统一小写，匹配用 EqualFold）。
+var continueConfirms = []string{"继续", "继续吧", "continue", "好", "好的", "行", "ok"}
+
+// IsContinueConfirm 判定输入是否为「继续类短确认」：去首尾空白后与白名单
+// 整词匹配（大小写不敏感）。供桌面 Hub 捷径直投使用——用户对等待中的会话
+// 说「继续」时无需进 LLM 循环，直接投递原文。子串/带后缀变体（如「继续
+// 一下」）不命中：确认语义必须明确，模糊输入交循环或待选处理。
+func IsContinueConfirm(input string) bool {
+	s := strings.TrimSpace(input)
+	if s == "" {
+		return false
+	}
+	for _, p := range continueConfirms {
+		if strings.EqualFold(s, p) {
+			return true
+		}
+	}
+	return false
 }
