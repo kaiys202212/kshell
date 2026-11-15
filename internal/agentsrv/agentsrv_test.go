@@ -178,8 +178,11 @@ func TestAuthRequired(t *testing.T) {
 	// 错 token 同样 401。
 	req, _ := http.NewRequest(http.MethodGet, srv.URL()+"/api/v1/sessions", nil)
 	req.Header.Set("Authorization", "Bearer wrong")
-	resp2, _ := http.DefaultClient.Do(req)
-	defer resp2.Body.Close()
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
 	if resp2.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("错 token 应 401: %d", resp2.StatusCode)
 	}
