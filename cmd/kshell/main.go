@@ -5,6 +5,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/yangk/kshell/internal/agentcli"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/cursoragent"
 	"github.com/yangk/kshell/internal/discovery"
@@ -21,6 +22,11 @@ func main() {
 	}
 	if cursoragent.ShouldProxy() {
 		os.Exit(cursoragent.Main())
+	}
+	// agent CLI：外部 agent 经 shell 调用 kshell agent <cmd>，早退不进 TUI
+	//（薄客户端，经本地 HTTP 调桌面端 agentsrv；见 internal/agentcli）。
+	if len(os.Args) > 1 && os.Args[1] == "agent" {
+		os.Exit(agentcli.Main(os.Args[2:]))
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
