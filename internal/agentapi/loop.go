@@ -234,8 +234,10 @@ func (a *API) runLoop(ctx context.Context, input string, opts RunOpts, st *loopS
 			if errors.Is(err, ErrLLMNotReady) {
 				return RunResult{}, err
 			}
-			// 4xx 降级：工具协议不被网关支持时回退既有 RouteDecide 单发路径。
-			if strings.Contains(err.Error(), "状态码 4") {
+			// 4xx 降级仅限首轮：协议不被网关支持时第 1 轮就会失败；mid-loop
+			// 的 4xx（如 429 限流）更可能是瞬时错误，且此时工具可能已真实
+			// 投递，再走 RouteDecide 会把用户原文重复投出——直接上抛。
+			if st.steps == 0 && strings.Contains(err.Error(), "状态码 4") {
 				st.degraded = true
 				return a.degradeRoute(ctx, input, st)
 			}

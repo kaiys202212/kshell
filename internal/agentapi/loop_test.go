@@ -334,6 +334,39 @@ func TestRunLoopDegrade4xx(t *testing.T) {
 	}
 }
 
+// 测试 7b：mid-loop 4xx 不降级——第 1 轮 send 已真实投递，第 2 轮 chatTools
+// 返回 429 时应上抛错误，而不是对原文重新 RouteDecide + RouteSend 重复投递。
+func TestRunLoopDegradeOnlyFirstRound(t *testing.T) {
+	api, f := newLoopAPI(t)
+	err429 := errors.New("err.hubtools.request_failed: 状态码 429, 响应: too many requests")
+	// 第 1 轮正常返回 send 工具调用，第 2 轮起返回 429 错误。
+	calls := 0
+	chatToolsHook = func(context.Context, hubtools.Config, []hubtools.Message, []hubtools.ToolFunc) (hubtools.Response, error) {
+		calls++
+		if calls == 1 {
+			return hubtools.Response{ToolCalls: []hubtools.ToolCall{tc("c1", "send", `{"chat_id":"chat-a","text":"先投一轮"}`)}}, nil
+		}
+		return hubtools.Response{}, err429
+	}
+	api.setChatFn(func(context.Context, []hubtools.Message) (hubtools.Response, error) {
+		// 降级若误触发会走这里：返回一个会再次投递的决策，用于暴露重复投递。
+		return hubtools.Response{Text: `{"action":"single","targets":[1],"text":"重复投递的原文"}`}, nil
+	})
+
+	_, err := api.Run(context.Background(), "原始需求", RunOpts{Channel: "hub"})
+	if err == nil || !strings.Contains(err.Error(), "状态码 429") {
+		t.Fatalf("mid-loop 4xx 应上抛错误, got %v", err)
+	}
+	// Backend 只有第 1 轮那一次 Send，没有降级带来的第二次投递
+	if len(f.sent) != 1 || f.sent[0] != "chat-a|先投一轮" {
+		t.Fatalf("不应重复投递: %v", f.sent)
+	}
+	// 已执行过工具的错误路径照常写记忆（Actions 非空、Outcome 为失败）
+	if got := api.memoryNow().Recent(1); len(got) != 1 || got[0].Actions != "send" || !strings.Contains(got[0].Outcome, "失败") {
+		t.Fatalf("错误路径记忆条目错误: %+v", got)
+	}
+}
+
 // 测试 8：ErrLoopBusy 并发重入；ErrLLMNotReady 原样上抛。
 func TestRunLoopBusyAndNotReady(t *testing.T) {
 	// 未配置 LLM
