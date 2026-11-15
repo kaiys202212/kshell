@@ -60,6 +60,17 @@ func TestChatOnce(t *testing.T) {
 	}
 }
 
+// mockToolCalls 是带 tool_calls 的 mock 响应（arguments 保持原始字符串）。
+func mockToolCalls() map[string]any {
+	return map[string]any{"choices": []map[string]any{{"message": map[string]any{
+		"role":    "assistant",
+		"content": "",
+		"tool_calls": []map[string]any{
+			{"id": "call_1", "name": "get_weather", "arguments": `{"city":"北京"}`},
+		},
+	}}}}
+}
+
 func TestChatServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"boom"}`, http.StatusInternalServerError)
@@ -73,5 +84,67 @@ func TestChatServerError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "500") {
 		t.Fatalf("期望含 500 的错误，得到 %v", err)
+	}
+}
+
+// TestChatWithToolsRequestBody 验证带工具的请求体含 tools 数组且形状正确。
+func TestChatWithToolsRequestBody(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		writeJSON(t, w, mockChoice("好"))
+	}))
+	defer srv.Close()
+
+	tools := []ToolFunc{{
+		Name:        "get_weather",
+		Description: "查询天气",
+		Parameters:  map[string]any{"type": "object", "properties": map[string]any{"city": map[string]any{"type": "string"}}},
+	}}
+	c := newTestClient(srv.URL)
+	if _, err := c.ChatWithTools(context.Background(), []Message{{Role: "user", Content: "hi"}}, tools); err != nil {
+		t.Fatalf("ChatWithTools: %v", err)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal([]byte(gotBody), &body); err != nil {
+		t.Fatalf("请求体非 JSON: %v\n%s", err, gotBody)
+	}
+	arr, ok := body["tools"].([]any)
+	if !ok || len(arr) != 1 {
+		t.Fatalf("请求体 tools 数组缺失或长度不符: %s", gotBody)
+	}
+	t0, ok := arr[0].(map[string]any)
+	if !ok || t0["name"] != "get_weather" {
+		t.Fatalf("tools[0].name 缺失或不符: %s", gotBody)
+	}
+	if _, ok := t0["parameters"].(map[string]any); !ok {
+		t.Fatalf("tools[0].parameters 缺失: %s", gotBody)
+	}
+}
+
+// TestChatWithToolsResponseParsing 验证响应含 tool_calls 时解析到 Response.ToolCalls，
+// arguments 原样保留字符串（解析归循环层）。
+func TestChatWithToolsResponseParsing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, mockToolCalls())
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	resp, err := c.ChatWithTools(context.Background(), []Message{{Role: "user", Content: "hi"}}, []ToolFunc{{Name: "get_weather"}})
+	if err != nil {
+		t.Fatalf("ChatWithTools: %v", err)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls 数量 = %d", len(resp.ToolCalls))
+	}
+	tc := resp.ToolCalls[0]
+	if tc.ID != "call_1" || tc.Name != "get_weather" {
+		t.Fatalf("ToolCalls 解析不符: %+v", tc)
+	}
+	if tc.Arguments != `{"city":"北京"}` {
+		t.Fatalf("arguments 应原样保留字符串, 得到 %q", tc.Arguments)
 	}
 }
