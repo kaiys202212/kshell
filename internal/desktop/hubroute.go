@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/yangk/kshell/internal/agentapi"
 	"github.com/yangk/kshell/internal/hub"
@@ -144,12 +145,25 @@ func (a *App) HubSmartSend(reqID, text string) (HubPickView, error) {
 		return HubPickView{Pending: true}, nil
 	}
 	// 续轮衔接：上次 Run 返回 AskPending 且本条是短输入 → 显式传 Continuation，
-	// 让循环带上上一轮反问语境（选项/候选编号）。长输入不传标志，agentapi 内部
-	// 清 pending 按新需求处理。
+	// 让循环带上上一轮反问语境（选项/候选编号）。置位时刻超过 PendingAskTTL
+	// 视为语境失效：不传 Continuation 并清零标记——显式标志会绕过 agentapi Run
+	// 内部的 TTL 检查（loop.go 对显式 Continuation 直接采用），过期判定必须在
+	// desktop 侧完成，避免隔了几小时的「继续」把陈年反问语境注入模型。
+	// 长输入不传标志，agentapi 内部清 pending 按新需求处理。
 	a.mu.Lock()
 	askPending := a.hubAskPending
+	askedAt := a.hubAskPendingAt
 	a.mu.Unlock()
-	cont := askPending && (hub.IsContinueConfirm(text) || len([]rune(text)) <= hubContinuationMax)
+	cont := false
+	if askPending {
+		if time.Since(askedAt) <= agentapi.PendingAskTTL {
+			cont = hub.IsContinueConfirm(text) || len([]rune(text)) <= hubContinuationMax
+		} else {
+			a.mu.Lock()
+			a.hubAskPending = false
+			a.mu.Unlock()
+		}
+	}
 
 	// 捷径（先于逃生门）：非续轮语境的「继续类短确认」+ 恰好一个等待会话 →
 	// 直接投递原文，不经 LLM。必须排在 IsDirectPass 之前——「continue」本身
@@ -194,9 +208,13 @@ func (a *App) HubSmartSend(reqID, text string) (HubPickView, error) {
 		a.emitHubProgress(reqID, hubStepPick)
 		return HubPickView{Pending: true}, nil
 	}
-	// 记录 AskPending 结果供下一条输入续轮（选项回执本身 Pending=false）。
+	// 记录 AskPending 结果供下一条输入续轮（选项回执本身 Pending=false），
+	// 置位时刻一并记录供 TTL 判定。
 	a.mu.Lock()
 	a.hubAskPending = res.AskPending
+	if res.AskPending {
+		a.hubAskPendingAt = time.Now()
+	}
 	a.mu.Unlock()
 	replies := make([]hub.Reply, 0, len(res.Replies))
 	for _, r := range res.Replies {
@@ -206,10 +224,11 @@ func (a *App) HubSmartSend(reqID, text string) (HubPickView, error) {
 }
 
 // shortcutSend 处理「继续类短确认」的确定性捷径：SessionStatuses 里恰好一个
-// 等待会话（State=="perm"）时，把用户原文经 wxExecutor 的 Send 既有链路直接
-// 投递给该会话，返回单条确认回执（含会话名）。零个/多个等待会话返回
-// handled=false 交管理者循环；Send 失败返回 Pending=true 让前端回落待选
-// （草稿保留，不做部分投递、不重复进循环二次投递）。
+// 等待会话时，把用户原文经 wxExecutor 的 Send 既有链路直接投递给该会话，
+// 返回单条确认回执（含会话名）。等待会话收敛为 perm 状态，不做问号启发
+//（问号启发在 agentapi waitingUser，仅服务循环内的模型语境）。零个/多个等待
+// 会话返回 handled=false 交管理者循环；Send 失败返回 Pending=true 让前端回落
+// 待选（草稿保留，不做部分投递、不重复进循环二次投递）。
 func (a *App) shortcutSend(text string) (HubPickView, bool) {
 	ex := newWXExecutor(a)
 	var waiting hub.SessionRef

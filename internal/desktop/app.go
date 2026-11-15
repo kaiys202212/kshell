@@ -12,7 +12,9 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/yangk/kshell/internal/agentapi"
 	"github.com/yangk/kshell/internal/agenthook"
+	"github.com/yangk/kshell/internal/agentsrv"
 	"github.com/yangk/kshell/internal/appearance"
 	"github.com/yangk/kshell/internal/applang"
 	"github.com/yangk/kshell/internal/chat"
@@ -26,8 +28,6 @@ import (
 	"github.com/yangk/kshell/internal/remote"
 	remotefs "github.com/yangk/kshell/internal/remote/fs"
 	"github.com/yangk/kshell/internal/requirements"
-	"github.com/yangk/kshell/internal/agentapi"
-	"github.com/yangk/kshell/internal/agentsrv"
 	"github.com/yangk/kshell/internal/sessionarchive"
 	"github.com/yangk/kshell/internal/terminal"
 	"github.com/yangk/kshell/internal/weixin"
@@ -223,8 +223,11 @@ type App struct {
 	hubRunner hubRunnerFunc
 	// hubAskPending 是桌面 Hub 的续轮衔接标记：上次循环 Run 返回 AskPending
 	// 时置位，下一条短输入以 Continuation=true 进循环；成功 Run 后随结果刷新，
-	// 错误路径的处理见 HubSmartSend。mu 保护。
-	hubAskPending bool
+	// 错误路径的处理见 HubSmartSend。hubAskPendingAt 是置位时刻，用于 TTL 判定
+	//（显式 Continuation 会绕过 agentapi 的 pendingAskTTL 检查，desktop 必须自判
+	// 过期）。mu 保护。
+	hubAskPending   bool
+	hubAskPendingAt time.Time
 	// smartBusy 是桌面 Hub 智能入口的在途标记：循环调用期间置位（锁外做
 	// LLM 调用），并发/重复提交直接返回 Pending=true 不清续轮标记。mu 保护。
 	smartBusy bool

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/yangk/kshell/internal/acp"
 	"github.com/yangk/kshell/internal/agentapi"
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
@@ -82,6 +84,27 @@ func (f *routeFakeExecutor) SessionRecentMessages(chatID string, n int) []hub.Me
 	f.lastN = n
 	return f.recent[chatID]
 }
+
+// exitSoonBackend 返回「进程已消失」的连接：watchExit 立即把会话标记为已退出
+//（仍在册、仍出现在 ListChats/SessionStatuses 里）。配合 hub store 的
+// Notification 消息可合成「perm 行 + Send 必败」的会话（ensureChatAlive 走
+// rebuild，fixture 无磁盘会话与已装工具 → ErrToolNotRunnable），供捷径 Send
+// 失败路径测试。
+type exitSoonBackend struct{}
+
+func (exitSoonBackend) Start(chat.Spec, acp.Handler) (chat.Conn, error) {
+	return &exitSoonConn{fakeChatConn{waitCh: make(chan struct{})}}, nil
+}
+
+// exitSoonConn 复用 fakeChatConn 的握手行为，仅覆写 Wait/Close：Wait 立即返回
+// 模拟进程退出；Close 空操作（退出已发生，不能重复关 waitCh——fakeChatConn.Close
+// 会对预关 channel panic）。
+type exitSoonConn struct {
+	fakeChatConn
+}
+
+func (c *exitSoonConn) Wait() (int, error) { return 0, nil }
+func (c *exitSoonConn) Close() error       { return nil }
 
 // routeFixture 装配 fake App（真实 chat manager 提供 3 个活跃会话，供
 // ListSessions 编号映射与捷径路径复用）+ 真 hub.Console + fake Executor。
@@ -328,6 +351,74 @@ func TestHubSmartSend(t *testing.T) {
 		}
 	})
 
+	t.Run("ErrLLMNotReady 保留续轮标记，下一短输入仍续轮", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		// 先 ask 落地置位续轮标记。
+		injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			return agentapi.RunResult{Replies: []string{"确认吗？"}, AskPending: true}, nil
+		})
+		if _, err := fx.app.HubSmartSend("req", "问一下"); err != nil {
+			t.Fatalf("ask HubSmartSend: %v", err)
+		}
+		if !hubAskPendingOf(fx.app) {
+			t.Fatal("ask 后应置位续轮标记")
+		}
+		// 模型未就绪错误：标记保留（agentapi 同样保留 pending，语境不断）。
+		injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			return agentapi.RunResult{}, agentapi.ErrLLMNotReady
+		})
+		if view, err := fx.app.HubSmartSend("req", "1"); err != nil || !view.Pending {
+			t.Fatalf("ErrLLMNotReady 应 Pending=true: view=%+v err=%v", view, err)
+		}
+		if !hubAskPendingOf(fx.app) {
+			t.Fatal("ErrLLMNotReady 不应清零续轮标记")
+		}
+		// 恢复后下一短输入仍以 Continuation 进循环。
+		var gotOpts agentapi.RunOpts
+		fx.app.mu.Lock()
+		fx.app.hubRunner = func(_ context.Context, _ string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
+			gotOpts = opts
+			return agentapi.RunResult{Replies: []string{"完成"}}, nil
+		}
+		fx.app.mu.Unlock()
+		if _, err := fx.app.HubSmartSend("req", "1"); err != nil {
+			t.Fatalf("恢复后 HubSmartSend: %v", err)
+		}
+		if !gotOpts.Continuation {
+			t.Fatal("ErrLLMNotReady 后下一短输入应传 Continuation=true")
+		}
+	})
+
+	t.Run("AskPending 超过 TTL 后短输入不再续轮", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			return agentapi.RunResult{Replies: []string{"确认吗？"}, AskPending: true}, nil
+		})
+		if _, err := fx.app.HubSmartSend("req", "问一下"); err != nil {
+			t.Fatalf("ask HubSmartSend: %v", err)
+		}
+		// 把置位时间改旧（超 PendingAskTTL）：语境视为失效。
+		fx.app.mu.Lock()
+		fx.app.hubAskPendingAt = time.Now().Add(-agentapi.PendingAskTTL - time.Minute)
+		fx.app.mu.Unlock()
+		var gotOpts agentapi.RunOpts
+		fx.app.mu.Lock()
+		fx.app.hubRunner = func(_ context.Context, _ string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
+			gotOpts = opts
+			return agentapi.RunResult{Replies: []string{"新轮"}}, nil
+		}
+		fx.app.mu.Unlock()
+		if _, err := fx.app.HubSmartSend("req", "1"); err != nil {
+			t.Fatalf("过期后续轮 HubSmartSend: %v", err)
+		}
+		if gotOpts.Continuation {
+			t.Fatal("超过 TTL 的标记不得传 Continuation=true（agentapi 显式标志会绕过其内部 TTL 检查）")
+		}
+		if hubAskPendingOf(fx.app) {
+			t.Fatal("过期标记应在判定时清零")
+		}
+	})
+
 	t.Run("模型未配（默认循环）回落待选", func(t *testing.T) {
 		fx := newRouteFixture(t) // 未注入 hubRunner，走真实 AgentAPI().Run
 		view, err := fx.app.HubSmartSend("req", "没配模型")
@@ -490,6 +581,53 @@ func TestHubSmartSendShortcut(t *testing.T) {
 		}
 		if len(fx.ex.sendCalls) != 0 {
 			t.Fatalf("不得发送: %+v", fx.ex.sendCalls)
+		}
+	})
+
+	t.Run("捷径 Send 失败回落待选且不进循环", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		// 换「打开即退出」后端的 manager：会话已退出但在册 + Notification 消息
+		// → SessionStatuses 判 perm，但 Send 链路 ensureChatAlive 重建必败
+		//（fixture 无磁盘会话与已装工具）。
+		m2 := newChatManagerWith(func(string, ...any) {}, exitSoonBackend{}, nil, nil, nil, nil, nil)
+		t.Cleanup(m2.CloseAll)
+		if _, err := m2.Open("session:gone", chat.Info{
+			Kind: chat.KindSession, SessionID: "gone", Workspace: "D:/wx", Title: "丁", ToolID: "claude",
+		}, chat.Spec{Path: "x"}, "gone"); err != nil {
+			t.Fatalf("open gone: %v", err)
+		}
+		fx.app.mu.Lock()
+		fx.app.opts.Chats = m2
+		fx.app.mu.Unlock()
+		refs := newWXExecutor(fx.app).ListSessions()
+		if len(refs) != 1 {
+			t.Fatalf("应有 1 个会话, got %d: %+v", len(refs), refs)
+		}
+		// 等 watchExit 真正标记退出（异步 goroutine），保证状态确定性。
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			if info, ok := m2.Get(refs[0].ChatID); ok && info.Status == chat.StatusExited {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("会话未按预期退出")
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		setPermSession(t, fx, refs[0])
+
+		calls := injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			return agentapi.RunResult{Replies: []string{"不应进循环"}}, nil
+		})
+		view, err := fx.app.HubSmartSend("req", "继续")
+		if err != nil {
+			t.Fatalf("HubSmartSend: %v", err)
+		}
+		if !view.Pending {
+			t.Fatalf("捷径 Send 失败应 Pending=true 回落待选: %+v", view)
+		}
+		if *calls != 0 {
+			t.Fatalf("Send 失败不得再进循环（避免重复投递）, calls=%d", *calls)
 		}
 	})
 

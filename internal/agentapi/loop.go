@@ -76,8 +76,10 @@ var ErrLoopBusy = errors.New("agentapi: 管理者循环已在运行")
 // 仍不收敛则交还用户，避免模型在工具调用里打转烧钱。
 const loopMaxRounds = 6
 
-// pendingAskTTL 是未决反问语境的有效期：过期后短输入不再自动续轮。
-const pendingAskTTL = 30 * time.Minute
+// PendingAskTTL 是未决反问语境的有效期：过期后短输入不再自动续轮。desktop
+// 侧续轮判定（hubroute.go）引用同一常量，两边过期口径同源——显式传
+// Continuation 会绕过 Run 内部的 TTL 检查，调用方必须自行判过期。
+const PendingAskTTL = 30 * time.Minute
 
 // shortInputMax 是自动续轮判定的输入长度上限（rune）：超过视为新需求。
 const shortInputMax = 20
@@ -159,7 +161,7 @@ func (a *API) Run(ctx context.Context, input string, opts RunOpts) (RunResult, e
 	pend := a.getPending()
 	cont := opts.Continuation
 	if !cont && pend != nil && pend.Channel == opts.Channel &&
-		time.Duration(now().UnixNano()-pend.Ts) <= pendingAskTTL &&
+		time.Duration(now().UnixNano()-pend.Ts) <= PendingAskTTL &&
 		len([]rune(strings.TrimSpace(input))) <= shortInputMax {
 		cont = true
 	}
