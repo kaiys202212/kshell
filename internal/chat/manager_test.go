@@ -1309,6 +1309,62 @@ func TestPromptHubQueueAndRecall(t *testing.T) {
 	t.Fatal("first 未投递")
 }
 
+// ViaHub 标记：hubMsgID 非空的投递（立即/入队/竞态兜底）在时间线 user 更新上
+// 置 ViaHub，普通 Prompt 不置。
+func TestPromptHubMarksViaHub(t *testing.T) {
+	t.Run("立即投递", func(t *testing.T) {
+		m, _, _ := newTestManager(t)
+		info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.PromptHub(info.ID, "hi", "h1"); err != nil {
+			t.Fatal(err)
+		}
+		h := m.History(info.ID)
+		last := h[len(h)-1]
+		if last.Type != "user" || !last.ViaHub {
+			t.Fatalf("hub 投递的 user 更新应带 ViaHub: %+v", last)
+		}
+	})
+	t.Run("忙时入队", func(t *testing.T) {
+		m, b, _ := newTestManager(t)
+		b.conn.promptGate = make(chan struct{})
+		defer close(b.conn.promptGate)
+		info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Prompt(info.ID, "first"); err != nil {
+			t.Fatal(err)
+		}
+		waitStatus(t, m, info.ID, StatusRunning)
+		if _, err := m.PromptHub(info.ID, "second", "h2"); err != nil {
+			t.Fatal(err)
+		}
+		for _, u := range m.History(info.ID) {
+			if u.Type == "user" && u.Text == "second" && !u.ViaHub {
+				t.Fatalf("入队路径的 user 更新应带 ViaHub: %+v", u)
+			}
+		}
+	})
+	t.Run("普通 Prompt 不带标记", func(t *testing.T) {
+		m, _, _ := newTestManager(t)
+		info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Prompt(info.ID, "hi"); err != nil {
+			t.Fatal(err)
+		}
+		h := m.History(info.ID)
+		last := h[len(h)-1]
+		if last.Type != "user" || last.ViaHub {
+			t.Fatalf("普通 Prompt 的 user 更新不应带 ViaHub: %+v", last)
+		}
+	})
+}
+
 // 空闲时 PromptHub 返回 queued=false；投递时触发 onHubDelivered。
 func TestPromptHubImmediateDeliversWithCallback(t *testing.T) {
 	m, _, _ := newTestManager(t)

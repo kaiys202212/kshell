@@ -108,6 +108,7 @@ type queuedMsg struct {
 	id          string // Hub 条目复用 hubMsgID，其余为 qN
 	blocks      []acp.ContentBlock
 	hubMsgID    string
+	viaHub      bool // hubMsgID 非空即 AgentHub 代发，时间线 user 更新据此打标
 	attachments []AttachmentMeta
 }
 
@@ -962,7 +963,7 @@ func (m *Manager) PromptBlocksHub(id string, blocks []acp.ContentBlock, hubMsgID
 	root := m.attachmentsRoot
 	m.mu.Unlock()
 	metas := persistBlocks(root, id, blocks)
-	qm := queuedMsg{id: hubMsgID, blocks: blocks, hubMsgID: hubMsgID, attachments: metas}
+	qm := queuedMsg{id: hubMsgID, blocks: blocks, hubMsgID: hubMsgID, viaHub: hubMsgID != "", attachments: metas}
 	m.mu.Lock()
 	s := m.byID[id]
 	if s == nil || s.exited {
@@ -974,7 +975,7 @@ func (m *Manager) PromptBlocksHub(id string, blocks []acp.ContentBlock, hubMsgID
 	// 后仍为 running，此时 agent 已结束当前 turn，新消息必须立即投递而非卡队。
 	if s.info.Status == StatusStarting || s.promptInFlight {
 		s.enqueueLocked(qm)
-		userUpdate := s.appendUserBlocksLocked(blocks, qm.attachments)
+		userUpdate := s.appendUserBlocksLocked(blocks, qm.attachments, qm.viaHub)
 		items := s.queueItemsLocked()
 		onUpdate := m.onUpdate
 		onQueue := m.onQueue
@@ -1055,7 +1056,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		var userUpdate Update
 		onUpdate := m.onUpdate
 		if record {
-			userUpdate = s.appendUserBlocksLocked(blocks, qm.attachments)
+			userUpdate = s.appendUserBlocksLocked(blocks, qm.attachments, qm.viaHub)
 		}
 		items := s.queueItemsLocked()
 		onQueue := m.onQueue
@@ -1081,7 +1082,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 	infoSnap, titleChanged := s.notePromptTitle(flattenBlocks(blocks))
 	var userUpdate Update
 	if record {
-		userUpdate = s.appendUserBlocksLocked(blocks, qm.attachments)
+		userUpdate = s.appendUserBlocksLocked(blocks, qm.attachments, qm.viaHub)
 	}
 	sid := s.sessionID
 	conn := s.conn
@@ -1195,8 +1196,9 @@ func (s *session) closeStaleTurnLocked() {
 
 // appendUserBlocksLocked 追加一条 user 消息进时间线并返回该事件（调用方持锁）。
 // 文本取 text 块拼接；非文本块记入 Attachments（预计算的 metas，含落盘 Path）。
-// 超过 maxHistory 时截断保留尾部，避免长会话内存无限增长。
-func (s *session) appendUserBlocksLocked(blocks []acp.ContentBlock, metas []AttachmentMeta) Update {
+// viaHub 时事件带 ViaHub 标记（AgentHub 代发）。超过 maxHistory 时截断保留尾部，
+// 避免长会话内存无限增长。
+func (s *session) appendUserBlocksLocked(blocks []acp.ContentBlock, metas []AttachmentMeta, viaHub bool) Update {
 	s.seq++
 	u := Update{
 		Seq:         s.seq,
@@ -1204,6 +1206,7 @@ func (s *session) appendUserBlocksLocked(blocks []acp.ContentBlock, metas []Atta
 		MessageID:   fmt.Sprintf("user:%d", s.seq),
 		Text:        flattenBlocks(blocks),
 		Attachments: metas,
+		ViaHub:      viaHub,
 	}
 	s.history = append(s.history, u)
 	if len(s.history) > maxHistory {
