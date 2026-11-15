@@ -899,6 +899,9 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
       // 在途守卫：上一次智能路由/待选请求未返回时，重复 Enter 直接忽略。
       if (smartInFlight.current) return;
       smartInFlight.current = true;
+      // 发送受理即清空输入框（与直投路径一致）：原话已进本地气泡（下方推送）
+      // 并由 Go 侧 HubSmartSend 落盘，无需靠草稿暂存正文。
+      setDraft('');
       // 这一轮没有精确目标：用户气泡必须立刻可见 + 出现「思考中」占位气泡，
       // 而不是等模型首 token 回来才突然冒出两段内容（曾让用户以为没发出去）。
       const reqID = newSmartReqID();
@@ -910,33 +913,29 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
         .setHubPendingSend({ reqID, text, steps: [{ key: 'ui.hub.thinking_route' }] });
       try {
         // 无精确目标：先试智能路由（后端处理逃生门/Busy/反问轮次并决定是否
-        // 回落）。Pending=false 表示后端已执行决策并返回回执，直接回显即可；
-        // Pending=true/调用失败则回落既有待选菜单路径（原文仍在草稿里）。
+        // 回落）。Pending=false 表示后端已执行决策，回执由落盘回流展示；
+        // Pending=true/调用失败则回落既有待选菜单路径（原文已由后端暂存）。
         // 交给路由器的是剥离 @ 标签后的 body（与 send() 内命令探测口径一致）。
         const smart = await hubSmartSend(reqID, body).catch(() => null);
         // 本轮思考态到此结束（无论成功/取消/回落），先清掉占位气泡。
         useAppStore.getState().setHubPendingSend(null);
         if (smart && smart.Cancelled) {
-          // 用户主动中断：不回落待选、不清草稿（原话仍在草稿里可改写重发），
-          // 用户气泡保留（已可见），再补一条提示说明这轮被中止。
+          // 用户主动中断：不回落待选；原文塞回草稿供改写重发，用户气泡保留。
+          setDraft(text);
           useAppStore.getState().pushHubLocal(t('ui.hub.thinking_cancelled'));
           return;
         }
         if (smart && !smart.Pending) {
-          for (const r of smart.Replies ?? []) useAppStore.getState().pushHubLocal(r.Text);
-          // 等待期间用户若改了草稿，不覆盖新内容。
-          setDraft((d) => (d.trim() === text ? '' : d));
+          // 回执（结论/反问/捷径确认）由 Go 侧落盘（hub_manager_reply），
+          // hub:changed 回流展示，前端不再本地瞬态推送。
           return;
         }
         // 回落：把正文交给共享命令层列会话并暂存，用户回复数字后由
-        // HubCommand（数字透传路径）完成激活与发送；微信桥同语义。仅当后端
-        // 确实建立了待选菜单才清草稿（无会话/其他菜单进行中时保留正文）；
-        // 等待期间用户若改了草稿，也不覆盖新内容。
+        // HubCommand（数字透传路径）完成激活与发送；微信桥同语义。
         await hubPickTarget(text)
           .then((view) => {
             // 用户气泡已在进入无目标分支时推过，这里只回显菜单/回执。
             for (const r of view.Replies) useAppStore.getState().pushHubLocal(r.Text);
-            if (view.Pending) setDraft((d) => (d.trim() === text ? '' : d));
           })
           .catch((e: unknown) => useAppStore.getState().notify(backendError(e), 'error'));
       } finally {

@@ -471,6 +471,21 @@ describe('AgentHubPanel', () => {
     );
   });
 
+  it('发送受理即清空输入框（不等智能路由返回）', async () => {
+    // 永不返回的智能路由：草稿仍应在受理后立刻清空（原话已进本地气泡与落盘）
+    api.hubSmartSend.mockImplementation(() => new Promise(() => {}));
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '发给大家' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect((box as HTMLTextAreaElement).value).toBe('');
+    // 用户原话以本地气泡即时可见
+    expect(
+      useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.kind === 'user' && m.text === '发给大家'),
+    ).toBe(true);
+  });
+
   it('无精确目标：智能路由命中（Pending=false）回显回执、清空草稿且不进待选', async () => {
     api.hubSmartSend.mockResolvedValue({ Replies: [{ Text: '已发送给 2 个会话' }], Pending: false });
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
@@ -484,9 +499,10 @@ describe('AgentHubPanel', () => {
     expect(api.hubPickTarget).not.toHaveBeenCalled();
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
     await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe(''));
-    await waitFor(() =>
-      expect(useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '已发送给 2 个会话')).toBe(true),
-    );
+    // 回执由 Go 侧落盘（hub_manager_reply）经 hub:changed 回流，前端不再本地瞬态推送
+    expect(
+      useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '已发送给 2 个会话'),
+    ).toBe(false);
     // 命中分支也要回显用户原话（与待选回落路径同口径）
     expect(
       useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.kind === 'user' && m.text === '发给大家'),
@@ -530,10 +546,12 @@ describe('AgentHubPanel', () => {
     );
   });
 
-  it('待选列表未能建立（Pending=false）：保留草稿，避免用户正文丢失', async () => {
+  it('待选列表未能建立（Pending=false）：草稿已在受理时清空，正文由本地气泡保留', async () => {
     api.hubPickTarget.mockResolvedValue({ Replies: [{ Text: '请先完成当前选择' }], Pending: false });
     useAppStore.setState({ chats: [], lastAgentId: null });
     render(<AgentHubPanel />);
+    // 等挂载时的历史拉取落定：本地乐观气泡不能被更早的历史快照覆盖
+    await act(async () => {});
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
     fireEvent.change(box, { target: { value: '别弄丢我' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -541,7 +559,11 @@ describe('AgentHubPanel', () => {
     await waitFor(() =>
       expect(useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '请先完成当前选择')).toBe(true),
     );
-    expect((box as HTMLTextAreaElement).value).toBe('别弄丢我');
+    expect((box as HTMLTextAreaElement).value).toBe('');
+    // 正文不丢：用户原话仍在本地气泡里
+    expect(
+      useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.kind === 'user' && m.text === '别弄丢我'),
+    ).toBe(true);
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
@@ -2790,11 +2812,11 @@ describe('AgentHub 思考态', () => {
     expect(screen.getByText(tt('ui.hub.thinking_route'))).toBeInTheDocument();
 
     release({ Replies: [{ Text: '已发送给 2 个会话' }], Pending: false });
-    // 回执到达后思考气泡消失，回执可见
+    // 回执到达后思考气泡消失；回执由 Go 落盘回流，前端不再本地瞬态推送
     await waitFor(() => expect(screen.queryByTestId('hub-thinking')).not.toBeInTheDocument());
     expect(
       useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '已发送给 2 个会话'),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('hub:progress 多帧事件累积为思考步骤时间线：已完成打勾、最后一步进行中', async () => {
@@ -2846,7 +2868,7 @@ describe('AgentHub 思考态', () => {
     release({ Replies: [], Pending: true });
   });
 
-  it('点「中断」调 cancelHubSmartSend；取消返回后不回落待选、保留草稿', async () => {
+  it('点「中断」调 cancelHubSmartSend；取消返回后不回落待选、原文塞回草稿', async () => {
     let release!: (v: HubPickView) => void;
     api.hubSmartSend.mockImplementation(() => new Promise((res) => { release = res; }));
     useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
@@ -2855,12 +2877,14 @@ describe('AgentHub 思考态', () => {
     fireEvent.change(box, { target: { value: '发给大家' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(screen.getByTestId('hub-thinking')).toBeInTheDocument());
+    // 受理即清空
+    expect((box as HTMLTextAreaElement).value).toBe('');
     const reqID = useAppStore.getState().hubPendingSend!.reqID;
 
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.thinking_cancel') }));
     await waitFor(() => expect(api.cancelHubSmartSend).toHaveBeenCalledWith(reqID));
 
-    // 后端取消收尾：返回 Cancelled
+    // 后端取消收尾：返回 Cancelled，原文塞回草稿可改写重发
     release({ Replies: [], Pending: false, Cancelled: true });
     await waitFor(() => expect(screen.queryByTestId('hub-thinking')).not.toBeInTheDocument());
     expect(api.hubPickTarget).not.toHaveBeenCalled();
@@ -2885,7 +2909,7 @@ describe('智能路由在途守卫', () => {
     await waitFor(() => expect(api.hubSmartSend).toHaveBeenCalledTimes(1));
     release({ Replies: [{ Text: '已发送' }], Pending: false });
     await waitFor(() =>
-      expect(useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '已发送')).toBe(true),
+      expect(useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === '已发送')).toBe(false),
     );
     // 守卫已清除：再次 Enter 可正常发起第二次路由。
     api.hubSmartSend.mockResolvedValue({ Replies: [], Pending: true });
