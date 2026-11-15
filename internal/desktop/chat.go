@@ -190,7 +190,13 @@ func emitChatNotify(emit func(name string, data ...any), m *chat.Manager, id, ev
 		return
 	}
 	if (event == "done" || event == "stopped") && summary == "" {
-		summary = lastAssistantText(m.History(id))
+		// 优先取会话累计的本回合正文：maxHistory 窗口驱逐把长回合开头挤出
+		// history 时，按回合边界扫描会缺头；turnText 全量留底不受影响。
+		// 重放/旧会话（turnText 为空）回退按回合边界扫描。
+		summary = m.TurnText(id)
+		if summary == "" {
+			summary = lastAssistantText(m.History(id))
+		}
 	}
 	if summary == "" && event == "stopped" {
 		summary = "ui.notify.turn_stopped_reason"

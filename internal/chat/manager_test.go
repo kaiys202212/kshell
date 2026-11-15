@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -424,6 +425,38 @@ func TestManagerLoadReplay(t *testing.T) {
 	got := m.History(info.ID)
 	if len(got) == 0 || got[0].Type != "user" || got[0].Text != "old" {
 		t.Fatalf("history = %+v", got)
+	}
+}
+
+// TurnText 累计当前回合 assistant 正文：maxHistory 窗口驱逐把回合开头挤出
+// history 时，TurnText 仍含全部分片（done 摘要不再被截断）；新回合起轮清零。
+func TestTurnTextSurvivesHistoryWindowEviction(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	info, err := m.Open("session:s1", Info{Kind: KindSession, SessionID: "s1", Workspace: "/w"}, Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	// 灌超过 maxHistory 的 assistant 分片：history 只留尾部，turnText 全量累计
+	for i := 0; i < maxHistory+50; i++ {
+		b.last.SessionUpdate("s1", json.RawMessage(fmt.Sprintf(
+			`{"sessionUpdate":"agent_message_chunk","messageId":"a%d","content":{"type":"text","text":"片段%d"}}`, i, i)))
+	}
+	if got := len(m.History(info.ID)); got != maxHistory {
+		t.Fatalf("history 应被窗口截断到 %d，得到 %d", maxHistory, got)
+	}
+	got := m.TurnText(info.ID)
+	if !strings.Contains(got, "片段0") || !strings.Contains(got, fmt.Sprintf("片段%d", maxHistory+49)) {
+		t.Fatalf("TurnText 应含窗口外最早与最新分片: len=%d head=%q", len(got), got[:min(60, len(got))])
+	}
+	// 新回合起轮清零
+	if err := m.Prompt(info.ID, "第二轮"); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.TurnText(info.ID); got != "" {
+		t.Fatalf("新回合 TurnText 应清零，得到 %q", got)
 	}
 }
 

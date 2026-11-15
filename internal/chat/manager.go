@@ -61,6 +61,9 @@ type session struct {
 	seq     int64
 	history []Update
 	tools   map[string]*ToolCall
+	// turnText 累计当前回合 assistant 正文（起轮清零）：done 摘要取它，
+	// 不随 maxHistory 窗口驱逐截断（长回合把回合开头挤出窗口曾致摘要缺头）。
+	turnText []string
 
 	autoSeq  int    // 合成 messageId 的轮次计数（分片缺 messageId 时用）
 	lastType string // 上一事件类型；用于判断连续同类分片
@@ -1078,6 +1081,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 	s.promptInFlight = true
 	s.stopIdleLocked()
 	s.closeStaleTurnLocked()
+	s.turnText = nil // 新回合起轮清零正文累计
 	// 标题改写与 record 无关：即使是队列投递（record=false），这也是该新建会话的第一条用户消息。
 	infoSnap, titleChanged := s.notePromptTitle(flattenBlocks(blocks))
 	var userUpdate Update
@@ -1449,6 +1453,18 @@ func (m *Manager) History(id string) []Update {
 	out := make([]Update, len(s.history))
 	copy(out, s.history)
 	return out
+}
+
+// TurnText 返回当前回合 assistant 正文的拼接（起轮清零，窗口驱逐不影响）。
+// 供 desktop 的 done/stopped 摘要取用；会话不存在返回空串。
+func (m *Manager) TurnText(id string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.byID[id]
+	if s == nil {
+		return ""
+	}
+	return strings.TrimSpace(strings.Join(s.turnText, ""))
 }
 
 // modelConfigFrom 从配置项中挑出 id=model 的项（新式模型切换路径）；
@@ -1928,6 +1944,10 @@ func (m *Manager) onSessionUpdate(id, sessionID string, raw json.RawMessage) {
 	s.history = append(s.history, u)
 	if len(s.history) > maxHistory {
 		s.history = append([]Update(nil), s.history[len(s.history)-maxHistory:]...)
+	}
+	// 回合正文累计：assistant 分片全量留底（窗口驱逐不影响），done 摘要取用
+	if u.Type == "assistant" {
+		s.turnText = append(s.turnText, u.Text)
 	}
 	// 状态活动跟随（与前端 5474856 同规则）：活动类更新把 ready 拉回 running，
 	// 并维护在途工具集合与静默回退定时器。user/commands 不算 agent 活动。

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -154,6 +155,47 @@ func TestEmitChatNotifyCarriesAssistantReply(t *testing.T) {
 	p := waitForNotify(t, rec, "done")
 	if !strings.Contains(p.Summary, "回复内容占位") {
 		t.Fatalf("done notify 未带 assistant 正文: %q", p.Summary)
+	}
+}
+
+// 长回合窗口驱逐场景：回合 assistant 分片超过 maxHistory（chat 包 500 条），
+// history 被截尾后 lastAssistantText 取不到回合开头；done 摘要须取会话累计
+// 正文（TurnText）完整呈现。
+func TestEmitChatNotifySummarySurvivesWindowEviction(t *testing.T) {
+	rec := &notifyRecorder{}
+	b := &fakeChatCaptureBackend{}
+	m := newChatManagerWith(rec.emit, b, nil, nil, nil, nil, nil)
+	t.Cleanup(m.CloseAll)
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 550; i++ {
+		b.lastHandler().SessionUpdate("s1", json.RawMessage(fmt.Sprintf(
+			`{"sessionUpdate":"agent_message_chunk","messageId":"a%d","content":{"type":"text","text":"片段%d"}}`, i, i)))
+	}
+	// 局部收集器直连 emitChatNotify：Prompt 收尾已发过一条空 done，notifyRecorder
+	// 会一直返回最早的 payload，waitForNotify 拿不到后发的那条。
+	var got agenthook.Payload
+	emitChatNotify(func(name string, data ...any) {
+		if p, ok := data[0].(agenthook.Payload); ok {
+			got = p
+		}
+	}, m, info.ID, "done", "", nil, nil, nil)
+	if got.Summary == "" {
+		t.Fatal("done 摘要不应为空")
+	}
+	if !strings.Contains(got.Summary, "片段0") {
+		t.Fatalf("done 摘要应含被窗口驱逐的回合开头: head=%q", got.Summary[:min(60, len(got.Summary))])
+	}
+	if !strings.Contains(got.Summary, "片段549") {
+		t.Fatal("done 摘要应含回合结尾")
 	}
 }
 
