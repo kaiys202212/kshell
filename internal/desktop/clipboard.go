@@ -3,6 +3,7 @@ package desktop
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"image"
 	"image/png"
@@ -11,6 +12,9 @@ import (
 	"strings"
 	"unicode/utf16"
 )
+
+// errClipboardFileListEmpty 剪贴板文件列表为空（读取与粘贴绑定共用）。
+var errClipboardFileListEmpty = errors.New("err.clipboard.file_list_empty")
 
 // ClipboardPaste 是终端粘贴用的剪贴板快照：Path 优先（资源管理器文件或剪贴板位图落盘），否则 Text。
 type ClipboardPaste struct {

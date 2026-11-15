@@ -22,6 +22,7 @@ import {
   moveEntry,
   onFilesChanged,
   onGitChanged,
+  pasteFiles,
   refreshFiles,
   renameEntry,
   revealInExplorer,
@@ -33,7 +34,7 @@ import {
 import type { FileNode, SearchHit } from '../lib/api';
 import { cn } from '../lib/cn';
 import { DRAG_MIME, DRAG_ROOT_MIME, REL_MIME } from '../lib/dragPath';
-import { backendError } from '../lib/errors';
+import { backendError, translateBackend } from '../lib/errors';
 import { isNestedGitParent, refreshGitStatus, resolveGitCode, subtreeDirty } from '../lib/git';
 import { sameWorkspacePath, relativeWorkspacePath } from '../lib/workspacePath';
 import { collectVisibleRows } from '../lib/treeRows';
@@ -280,6 +281,7 @@ interface RowProps {
   depth: number;
   wsPath: string; // 拖拽源工作区根：dragstart 写入 DRAG_ROOT_MIME 供终端 drop 比对
   selection: Set<string>; // 选中集（relPath）；行内自行判断命中，递归下传同一集合
+  cutSet?: Set<string> | null; // 树内剪切中的项（relPath）：整行变暗提示待粘贴
   gitMap?: Record<string, string>; // git 状态映射（键为 '/' 分隔 relPath），行内按自身 relPath 查
   rootBranch?: string;
   dirBranches?: Record<string, string>;
@@ -303,6 +305,7 @@ function TreeRow({
   depth,
   wsPath,
   selection,
+  cutSet,
   gitMap,
   rootBranch,
   dirBranches,
@@ -329,6 +332,7 @@ function TreeRow({
   const dirtyFolder = node.IsDir && !gitCode && subtreeDirty(gitMap, item.relPath, dirBranches);
   const isVirtualRoot = item.relPath === '';
   const selected = !isVirtualRoot && selection.has(item.relPath);
+  const cut = !isVirtualRoot && !!cutSet?.has(item.relPath);
   const renaming = renamingPath === item.relPath;
   const [draft, setDraft] = useState(node.Name);
   const [dropActive, setDropActive] = useState(false);
@@ -387,6 +391,7 @@ function TreeRow({
         className={cn(
           'group flex h-6 items-center gap-0.5 rounded pr-1 transition-colors hover:bg-muted',
           selected && 'bg-primary/15 hover:bg-primary/15',
+          cut && 'opacity-50',
           dropActive && 'ring-1 ring-primary',
         )}
         style={{ paddingLeft: depth * 14 }}
@@ -580,6 +585,10 @@ export default function FileTree({
   const [creating, setCreating] = useState<{ dirRel: string; isDir: boolean } | null>(null);
   const [deleting, setDeleting] = useState<TreeItem[] | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  // 树内剪贴板：rels 为 / 分隔 relPath；与系统剪贴板相互独立（Ctrl+C 双写两处）
+  const [treeClipboard, setTreeClipboard] = useState<{ rels: string[]; move: boolean } | null>(null);
+  // 粘贴确认弹窗：count 为 null 表示来源是系统剪贴板（条数未知）
+  const [pasteConfirm, setPasteConfirm] = useState<{ target: string; move: boolean; count: number | null } | null>(null);
   // 选中集（relPath）与 shift 范围多选的锚点：锚点是上一次非 shift 单击的行
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
@@ -738,6 +747,10 @@ export default function FileTree({
     setCreating(null);
     setDeleting(null);
     setRenamingPath(null);
+    // 树内剪贴板与粘贴弹窗随工作区一并清空：rels 只对当前工作区有意义，
+    // 跨工作区残留会把「移动」落到新工作区的同名路径上，静默搬错文件
+    setTreeClipboard(null);
+    setPasteConfirm(null);
     clearSelection();
     listFiles(wsPath, '', showAllRef.current)
       .then((nodes) => {
@@ -944,14 +957,89 @@ export default function FileTree({
   };
 
   // Ctrl+C 把选中集（文件/文件夹本体）写入系统剪贴板，资源管理器可直接粘贴；
-  // 焦点在输入控件（搜索/重命名/新建行内输入）时不拦截，保持默认复制行为。
-  const copySelectedToClipboard = () => {
-    if (selected.size === 0) return;
-    const rels = [...selected].filter((rel) => rel !== '');
+  // 同时写入树内剪贴板（复制语义），树上 Ctrl+V 也能粘。焦点在输入控件
+  // （搜索/重命名/新建行内输入）时不拦截，保持默认复制行为。
+  const copyRels = (rels: string[]) => {
     if (rels.length === 0) return;
-    writeClipboardFiles(wsPath, rels)
+    const absRels = rels.filter((rel) => rel !== '');
+    if (absRels.length === 0) return;
+    setTreeClipboard({ rels: absRels, move: false });
+    writeClipboardFiles(wsPath, absRels)
       .then(() => {
-        useAppStore.getState().notify(t('ui.files.files_copied', { n: rels.length }), 'success');
+        useAppStore.getState().notify(t('ui.files.files_copied', { n: absRels.length }), 'success');
+      })
+      .catch((e: unknown) => {
+        useAppStore.getState().notify(backendError(e), 'error');
+      });
+  };
+  const copySelectedToClipboard = () => copyRels([...selected]);
+
+  // Ctrl+X 树内剪切：只记树内剪贴板，不写系统剪贴板（CF_HDROP 无剪切语义，
+  // 写入会让资源管理器把剪切当复制，粘贴出多余副本）
+  const cutRels = (rels: string[]) => {
+    const absRels = rels.filter((rel) => rel !== '');
+    if (absRels.length === 0 || isSSHWorkspaceRef(wsPath)) return;
+    setTreeClipboard({ rels: absRels, move: true });
+  };
+
+  // 判断 relPath 是否为目录（决定 Ctrl+V 的粘贴目标）；树上找不到按文件处理
+  const isDirRel = (rel: string): boolean => {
+    if (rel === '') return true;
+    let found: boolean | null = null;
+    const walk = (list: TreeItem[]) => {
+      for (const it of list) {
+        if (it.relPath === rel) {
+          found = it.node.IsDir;
+          return;
+        }
+        if (it.children) walk(it.children);
+      }
+    };
+    if (itemsRef.current) walk(itemsRef.current);
+    return found ?? false;
+  };
+
+  // 打开粘贴确认弹窗：目标 = 恰选中一个目录时该目录，否则根目录。
+  // 树内剪贴板有内容优先按其来源描述；为空则粘贴时由 Go 侧读系统剪贴板。
+  const openPasteConfirm = (targetOverride?: string) => {
+    if (isSSHWorkspaceRef(wsPath)) return;
+    const sel = [...selected].filter((rel) => rel !== '');
+    const target =
+      targetOverride ?? (sel.length === 1 && isDirRel(sel[0]) ? sel[0] : '');
+    setPasteConfirm({
+      target,
+      move: treeClipboard?.move ?? false,
+      count: treeClipboard ? treeClipboard.rels.length : null,
+    });
+  };
+
+  // 确认执行：调 Go 侧 PasteFiles（作废树缓存），成功后局部刷新目标目录 + git 状态；
+  // 移动语义完成后清空树内剪贴板；部分失败弹错误 toast（首条错误文本经 translateBackend）
+  const handlePasteConfirm = () => {
+    if (!pasteConfirm) return;
+    const { target, move, count } = pasteConfirm;
+    const rels = count !== null && treeClipboard ? treeClipboard.rels : [];
+    setPasteConfirm(null);
+    pasteFiles(wsPath, target, rels, move)
+      .then((sum) => {
+        if (sum.Moved + sum.Copied > 0) {
+          let title = t('ui.files.pasted', { moved: sum.Moved, copied: sum.Copied });
+          if (sum.Renamed.length > 0) {
+            title += t('ui.files.pasted_renamed_suffix', { n: sum.Renamed.length });
+          }
+          useAppStore.getState().notify(title, 'success');
+        }
+        if (sum.Errors.length > 0) {
+          useAppStore
+            .getState()
+            .notify(t('ui.files.paste_failed', { err: translateBackend(sum.Errors[0]) }), 'error');
+        }
+        if (move && sum.Moved > 0) setTreeClipboard(null);
+        // move 同时刷目标与各源父目录（与 rename 双刷同型），避免源目录残留幽灵行等 watcher 兜底
+        const dirs = new Set([target]);
+        if (move) for (const rel of rels) dirs.add(parentOf(rel));
+        refreshDirs([...dirs]);
+        void refreshGitStatus(wsPath);
       })
       .catch((e: unknown) => {
         useAppStore.getState().notify(backendError(e), 'error');
@@ -968,9 +1056,20 @@ export default function FileTree({
       return;
     }
     if (e.key === 'c' && (e.ctrlKey || e.metaKey)) {
-      if (selected.size === 0) return;
+      if (selected.size === 0 || isSSHWorkspaceRef(wsPath)) return;
       e.preventDefault();
       copySelectedToClipboard();
+      return;
+    }
+    if (e.key === 'x' && (e.ctrlKey || e.metaKey)) {
+      if (selected.size === 0) return;
+      e.preventDefault();
+      cutRels([...selected]);
+      return;
+    }
+    if (e.key === 'v' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      openPasteConfirm();
     }
   };
 
@@ -1194,38 +1293,87 @@ export default function FileTree({
         });
     };
     const it = menu?.item;
+    const ssh = isSSHWorkspaceRef(wsPath);
     if (!it) {
-      // 空白处：根目录新建
+      // 空白处：根目录新建 + 粘贴（目标根目录）；SSH 工作区无剪贴板互操作
       return [
         { label: t('ui.files.menu_new_file'), onSelect: () => startCreate('', false) },
         { label: t('ui.files.menu_new_folder'), onSelect: () => startCreate('', true) },
+        ...(ssh
+          ? []
+          : [
+              {
+                label: t('ui.files.menu_paste'),
+                onSelect: () => {
+                  setMenu(null);
+                  openPasteConfirm();
+                },
+              } satisfies MenuItem,
+            ]),
       ];
     }
-    if (it.relPath === '') {
+    const cur = it; // 收窄为非空的局部 const，供下方闭包引用
+    // 粘贴项：目标取被右键的目录（根 = 根目录）
+    const pasteEntries: MenuItem[] = ssh
+      ? []
+      : [
+          {
+            label: t('ui.files.menu_paste'),
+            onSelect: () => {
+              setMenu(null);
+              openPasteConfirm(cur.node.IsDir && cur.relPath !== '' ? cur.relPath : undefined);
+            },
+          },
+        ];
+    // 复制/剪切项：作用于被右键的行（单条）
+    const clipEntries: MenuItem[] =
+      ssh || cur.relPath === ''
+        ? []
+        : [
+            {
+              label: t('ui.files.menu_copy'),
+              onSelect: () => {
+                setMenu(null);
+                copyRels([cur.relPath]);
+              },
+            },
+            {
+              label: t('ui.files.menu_cut'),
+              onSelect: () => {
+                setMenu(null);
+                cutRels([cur.relPath]);
+              },
+            },
+          ];
+    if (cur.relPath === '') {
       return [
         { label: t('ui.files.menu_new_file'), onSelect: () => startCreate('', false) },
         { label: t('ui.files.menu_new_folder'), onSelect: () => startCreate('', true) },
-        { label: t('ui.files.copy_path'), onSelect: () => copyPath(it) },
-        { label: t('ui.files.reveal'), onSelect: () => reveal(it) },
+        ...pasteEntries,
+        { label: t('ui.files.copy_path'), onSelect: () => copyPath(cur) },
+        { label: t('ui.files.reveal'), onSelect: () => reveal(cur) },
       ];
     }
-    if (it.node.IsDir) {
+    if (cur.node.IsDir) {
       return [
-        { label: t('ui.files.menu_new_file'), onSelect: () => startCreate(it.relPath, false) },
-        { label: t('ui.files.menu_new_folder'), onSelect: () => startCreate(it.relPath, true) },
-        { label: t('ui.files.rename'), onSelect: () => startRename(it) },
-        { label: t('ui.files.delete'), danger: true, onSelect: () => startDelete(it) },
-        { label: t('ui.files.menu_ignore'), onSelect: () => ignoreEntry(it) },
-        { label: t('ui.files.copy_path'), onSelect: () => copyPath(it) },
-        { label: t('ui.files.reveal'), onSelect: () => reveal(it) },
+        { label: t('ui.files.menu_new_file'), onSelect: () => startCreate(cur.relPath, false) },
+        { label: t('ui.files.menu_new_folder'), onSelect: () => startCreate(cur.relPath, true) },
+        ...pasteEntries,
+        ...clipEntries,
+        { label: t('ui.files.rename'), onSelect: () => startRename(cur) },
+        { label: t('ui.files.delete'), danger: true, onSelect: () => startDelete(cur) },
+        { label: t('ui.files.menu_ignore'), onSelect: () => ignoreEntry(cur) },
+        { label: t('ui.files.copy_path'), onSelect: () => copyPath(cur) },
+        { label: t('ui.files.reveal'), onSelect: () => reveal(cur) },
       ];
     }
     return [
-      { label: t('ui.files.rename'), onSelect: () => startRename(it) },
-      { label: t('ui.files.delete'), danger: true, onSelect: () => startDelete(it) },
-      { label: t('ui.files.menu_ignore'), onSelect: () => ignoreEntry(it) },
-      { label: t('ui.files.copy_path'), onSelect: () => copyPath(it) },
-      { label: t('ui.files.reveal'), onSelect: () => reveal(it) },
+      ...clipEntries,
+      { label: t('ui.files.rename'), onSelect: () => startRename(cur) },
+      { label: t('ui.files.delete'), danger: true, onSelect: () => startDelete(cur) },
+      { label: t('ui.files.menu_ignore'), onSelect: () => ignoreEntry(cur) },
+      { label: t('ui.files.copy_path'), onSelect: () => copyPath(cur) },
+      { label: t('ui.files.reveal'), onSelect: () => reveal(cur) },
     ];
   })();
 
@@ -1233,6 +1381,7 @@ export default function FileTree({
     gitMap,
     rootBranch,
     dirBranches,
+    cutSet: treeClipboard?.move ? new Set(treeClipboard.rels) : null,
     renamingPath,
     creating,
     onRenameStart: setRenamingPath,
@@ -1405,6 +1554,43 @@ export default function FileTree({
             </Button>
             <Button variant="destructive" size="sm" autoFocus onClick={handleDeleteConfirm}>
               {t('ui.files.delete')}
+            </Button>
+          </div>
+        </Dialog>
+      )}
+
+      {pasteConfirm && (
+        <Dialog
+          open
+          onOpenChange={(o) => { if (!o) setPasteConfirm(null); }}
+          className="w-80"
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
+          <DialogPrimitive.Title className="mb-1 text-sm font-medium">
+            {t('ui.files.paste_confirm_title', {
+              target: pasteConfirm.target === '' ? t('ui.files.root_dir') : pasteConfirm.target,
+            })}
+          </DialogPrimitive.Title>
+          <div className="mb-2 text-xs text-muted-foreground">
+            {pasteConfirm.count !== null ? (
+              <p>
+                {t('ui.files.paste_confirm_source_tree', {
+                  action: pasteConfirm.move ? t('ui.files.action_cut') : t('ui.files.action_copy'),
+                  n: pasteConfirm.count,
+                })}
+                {pasteConfirm.move && <span> {t('ui.files.paste_confirm_cut_warning')}</span>}
+              </p>
+            ) : (
+              <p>{t('ui.files.paste_confirm_source_clipboard')}</p>
+            )}
+            <p className="mt-1">{t('ui.files.paste_confirm_note')}</p>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setPasteConfirm(null)}>
+              {t('ui.files.cancel')}
+            </Button>
+            <Button variant="default" size="sm" autoFocus onClick={handlePasteConfirm}>
+              {t('ui.files.paste')}
             </Button>
           </div>
         </Dialog>
