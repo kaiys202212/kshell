@@ -3,6 +3,7 @@ package agentapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -583,6 +584,40 @@ func TestRecentHubContextTruncateAndEmpty(t *testing.T) {
 	f.recent = nil
 	if got := api.recentContextSection("新输入"); got != "" {
 		t.Fatalf("无历史不应输出段: %q", got)
+	}
+}
+
+// 可见历史超过条数上限时只渲染最后 6 条（多取的一条仅用于回显去重）。
+func TestRecentHubContextKeepsLastSix(t *testing.T) {
+	api, f := newLoopAPI(t)
+	for i := 1; i <= 8; i++ {
+		f.recent = append(f.recent, Message{ID: int64(i), Kind: "user", Text: fmt.Sprintf("消息%d", i)})
+	}
+	sec := api.recentContextSection("新输入")
+	if strings.Contains(sec, "消息2") || !strings.Contains(sec, "消息3") || !strings.Contains(sec, "消息8") {
+		t.Fatalf("应只保留最后 6 条（消息3..8）:\n%s", sec)
+	}
+	if !strings.Contains(sec, "6. [用户] 消息8") {
+		t.Fatalf("编号应按 1..6 重新连续:\n%s", sec)
+	}
+}
+
+// 末尾代发消息即使文本等于本轮 input 也必须保留（只有非代发的用户回显才丢）。
+func TestRecentHubContextKeepsViaHubEcho(t *testing.T) {
+	api, f := newLoopAPI(t)
+	f.recent = []Message{{Kind: "user", ViaHub: true, SessionTitle: "甲", Text: "继续"}}
+	sec := api.recentContextSection("继续")
+	if !strings.Contains(sec, "管理者代发→「甲」") || !strings.Contains(sec, "继续") {
+		t.Fatalf("代发消息不应被回显去重误删:\n%s", sec)
+	}
+}
+
+// 全部空正文消息：段整体不输出。
+func TestRecentHubContextAllBlank(t *testing.T) {
+	api, f := newLoopAPI(t)
+	f.recent = []Message{{Kind: "user", Text: " "}, {Kind: "agent", Text: "\n"}}
+	if got := api.recentContextSection("x"); got != "" {
+		t.Fatalf("全空正文不应输出段: %q", got)
 	}
 }
 

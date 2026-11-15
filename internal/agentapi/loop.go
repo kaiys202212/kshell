@@ -407,7 +407,7 @@ func (a *API) buildManagerSystem(st *loopState) string {
 	b.WriteString("规则：\n")
 	b.WriteString("- 会话编号语境：活跃会话按 list_sessions 输出顺序编号 #1..#N。send/stop/set_model/session_messages 的 chat_id 参数一律用 list_sessions 输出的 ID 字符串，不要传编号。\n")
 	b.WriteString("- 等待信号：状态 perm 表示会话在等权限确认；最后一条 agent 消息以 ？/? 结尾表示会话在向用户提问。等待中的会话仍可投递新指令。\n")
-	b.WriteString("- 最近消息语境：【最近 AgentHub 消息】已列出最近的投递与回复；若已足以判断目标，不要再调用 session_messages 或 search_memory 查历史，直接投递。\n")
+	b.WriteString("- 最近消息语境：【最近 AgentHub 消息】段存在且已足以判断目标时，不要再调用 session_messages 或 search_memory 查历史，直接投递；该段不存在或不足时照常查历史。\n")
 	b.WriteString("- 末轮必须产出自然语言结论：不再调用工具时，直接输出结论文本。\n")
 	b.WriteString("- 意图不确定时必须调用 ask 列编号选项向用户确认，禁止猜测性群发。\n")
 
