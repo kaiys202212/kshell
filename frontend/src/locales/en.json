@@ -1097,6 +1097,7 @@
       "archive_empty": "No archived messages",
       "quick_continue": "Continue",
       "quick_rephrase": "Explain differently",
+      "quote_reply": "Quote",
       "ack_delivered": "Got your message — I'm on it.",
       "ack_queued": "I'm still on the current task; your message is queued and I'll get to it in order.",
       "event_done": "I've finished the task.",
@@ -1129,6 +1130,7 @@
       "thinking_route": "Deciding which session should get this…",
       "thinking_execute": "Target chosen, delivering…",
       "thinking_pick": "Listing sessions for you to pick…",
+      "thinking_tool": "Calling {{tool}} (round {{round}})",
       "thinking_cancel": "Stop",
       "thinking_cancelled": "Routing stopped. Your message is still in the input box."
     },
