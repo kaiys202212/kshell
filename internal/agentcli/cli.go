@@ -185,7 +185,7 @@ func (e *cmdEnv) cmdList(args []string, search bool) int {
 	if *ws != "" {
 		sessions = filterSessions(sessions, func(s agentapi.Session) bool { return s.Workspace == *ws })
 	}
-	if *asJSON || search && !*asJSON {
+	if *asJSON || search {
 		// search 默认也 JSON（关键字场景多是机器调用）。
 		e.printJSON(sessions)
 		return exitOK
@@ -616,7 +616,7 @@ func (e *cmdEnv) cmdRoute(args []string) int {
 		default:
 			fmt.Fprintf(e.err, "kshell agent: action %q 无投递语义，未投递\n", plan.Action)
 			e.printJSON(plan)
-			return exitErr
+			return exitConfirm // ask/status/expand 需调用方另行确认/消化
 		}
 	}
 	e.printJSON(plan)

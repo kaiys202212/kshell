@@ -6,6 +6,7 @@ package agentsrv
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -108,11 +109,13 @@ func (s *Server) writeEndpoint() error {
 	return os.WriteFile(s.epPath, ep, 0o600)
 }
 
-// auth 是 Bearer 校验中间件。
+// auth 是 Bearer 校验中间件（token 比较用常量时间，防时序侧信道——虽仅本机）。
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
-		if !strings.HasPrefix(authHeader, "Bearer ") || strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer ")) != s.token {
+		given := strings.TrimPrefix(authHeader, "Bearer ")
+		if !strings.HasPrefix(authHeader, "Bearer ") ||
+			subtle.ConstantTimeCompare([]byte(given), []byte(s.token)) != 1 {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -334,8 +337,9 @@ func parseI64(s string) int64 {
 	return v
 }
 
-// readBody 解码 JSON 请求体，非法时已写 400。
+// readBody 解码 JSON 请求体（限长 8MB，防恶意超大payload），非法时已写 400。
 func readBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", "请求体 JSON 非法: "+err.Error())
 		return false

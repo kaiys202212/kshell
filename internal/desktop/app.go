@@ -268,6 +268,7 @@ func (a *App) Startup(ctx context.Context) {
 	a.mu.Unlock()
 
 	a.initRealDeps()
+	a.startAgentSrv() // agent CLI 服务随启动常驻：桌面端开着就该可被 CLI 操作
 	a.markStartHidden()
 	// 原生气泡点击 → 恢复主窗 + 前端聚焦；必须在通知轮询启动前绑好。
 	bubbleActivate = a.activateFromBubble

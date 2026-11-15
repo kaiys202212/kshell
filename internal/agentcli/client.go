@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yangk/kshell/internal/agentapi"
@@ -193,9 +194,9 @@ func (c *Client) Watch(id string) (<-chan agentapi.Event, func(), error) {
 	}
 	ch := make(chan agentapi.Event, 32)
 	done := make(chan struct{})
+	var closeOnce sync.Once
 	go func() {
 		defer close(ch)
-		defer close(done)
 		defer resp.Body.Close()
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 4<<20)
@@ -211,7 +212,14 @@ func (c *Client) Watch(id string) (<-chan agentapi.Event, func(), error) {
 			}
 		}
 	}()
-	cancel := func() { _ = resp.Body.Close() }
+	// cancel 必须同时 close(done)：读协程可能阻塞在 ch<-e（消费方已停），仅关
+	// body 解不了该阻塞，会泄漏协程。
+	cancel := func() {
+		closeOnce.Do(func() {
+			close(done)
+			_ = resp.Body.Close()
+		})
+	}
 	return ch, cancel, nil
 }
 
