@@ -63,7 +63,13 @@ func installSkill(home, ver string) (string, error) {
 	if cur, err := os.ReadFile(target); err == nil && string(cur) == string(content) {
 		return stateCurrent, nil
 	}
-	if err := os.WriteFile(target, content, 0o644); err != nil {
+	// 临时文件 + rename：技能扫描/Status 读到半截文件的窗口最小化。
+	tmp := target + ".tmp"
+	if err := os.WriteFile(tmp, content, 0o644); err != nil {
+		return stateError, err
+	}
+	if err := os.Rename(tmp, target); err != nil {
+		_ = os.Remove(tmp)
 		return stateError, err
 	}
 	return skillInstalled, nil

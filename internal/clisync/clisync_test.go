@@ -125,6 +125,53 @@ func TestSyncNotEmbedded(t *testing.T) {
 	}
 }
 
+// TestSyncNotEmbeddedSkipsPath：dev 构建没有 CLI，即使显式请求也不配 PATH
+//（指向空目录毫无意义）。
+func TestSyncNotEmbeddedSkipsPath(t *testing.T) {
+	rec := &ensureRecorder{state: "ready"}
+	res, err := clisync.Sync(clisync.Options{
+		Home:          t.TempDir(),
+		Version:       "dev",
+		ConfigurePath: true,
+		EnsurePath:    rec.ensure,
+		PathLookup:    func() []string { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.BinaryState != "not_embedded" || res.PathState != "skipped" || len(rec.calls) != 0 {
+		t.Fatalf("res = %+v calls = %v", res, rec.calls)
+	}
+}
+
+// TestSyncStaleCopyWarningWireKey：PATH 体检警告走 err.wbsync.* wire key，
+// 由前端 translateBackend 渲染，Go 侧不输出自然语言。
+func TestSyncStaleCopyWarningWireKey(t *testing.T) {
+	home := t.TempDir()
+	binDir := clisync.BinDir(home)
+	stale := filepath.Join(home, "stale")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, clisync.BinaryName()), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res, err := clisync.Sync(clisync.Options{
+		Home:          home,
+		Binary:        fakeBinary(),
+		Version:       "v1.0.0",
+		ConfigurePath: true,
+		EnsurePath:    func(string) (string, error) { return "ready", nil },
+		PathLookup:    func() []string { return []string{stale, binDir} },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Warnings) != 1 || !strings.HasPrefix(res.Warnings[0], "err.wbsync.stale_copy|") {
+		t.Fatalf("Warnings = %v, want err.wbsync.stale_copy|<dir>", res.Warnings)
+	}
+}
+
 // TestSyncConfigurePathOff：不配 PATH 时该步 skipped，EnsurePath 不被调用。
 func TestSyncConfigurePathOff(t *testing.T) {
 	home := t.TempDir()

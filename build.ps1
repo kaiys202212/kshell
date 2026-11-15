@@ -117,6 +117,9 @@ if ($Desktop) {
     }
     $out = Get-Item dist\kshell-desktop.exe
     $size = $out.Length / 1MB
+    # 清理注入用 CLI 二进制：避免残留的 kshell-cli.exe 被后续 wails dev /
+    # go build 误当成「已内嵌」embed 进 dev 构建。
+    Remove-Item build\cli\kshell-cli.exe -Force -ErrorAction SilentlyContinue
     Write-Host ("==> 完成: {0} ({1:N1} MB, {2:yyyy-MM-dd HH:mm:ss})" -f $out.FullName, $size, $out.LastWriteTime) -ForegroundColor Green
     exit 0
 }

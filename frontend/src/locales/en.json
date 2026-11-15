@@ -1,6 +1,9 @@
 {
   "err": {
     "session_not_found": "Session not found or has been cleaned up",
+    "wbsync": {
+      "stale_copy": "Found another kshell copy on PATH (may take precedence): {{0}}"
+    },
     "requirements": {
       "project_required": "Please select a project",
       "text_required": "Requirement text cannot be empty"

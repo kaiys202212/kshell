@@ -1,6 +1,9 @@
 {
   "err": {
     "session_not_found": "会话不存在或已被清理",
+    "wbsync": {
+      "stale_copy": "PATH 中发现其它 kshell 副本（可能抢先命中）: {{0}}"
+    },
     "requirements": {
       "project_required": "请选择项目",
       "text_required": "需求文本不能为空"

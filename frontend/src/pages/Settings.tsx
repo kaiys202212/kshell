@@ -1732,7 +1732,7 @@ export default function Settings() {
                 {wbSync ? (
                   <div className="space-y-1 text-xs">
                     <WbSyncRow label={t('ui.settings.wbsync.cli')} state={wbSync.binaryState} err={wbSync.binaryErr} path={wbSync.binaryPath} />
-                    <WbSyncRow label={t('ui.settings.wbsync.path')} state={wbSync.pathState} err={wbSync.pathErr} path={wbSync.binaryPath} />
+                    <WbSyncRow label={t('ui.settings.wbsync.path')} state={wbSync.pathState} err={wbSync.pathErr} />
                     <WbSyncRow label={t('ui.settings.wbsync.skill')} state={wbSync.skillState} err={wbSync.skillErr} path={wbSync.skillPath} />
                     {(wbSync.warnings ?? []).map((w) => (
                       <p key={w} className="text-warning">
@@ -2013,14 +2013,14 @@ export default function Settings() {
 }
 
 // WbSyncRow 是 WorkBuddy 同步卡片里单步状态的行：标签 + 状态文案（失败标红）+ 可选路径。
-function WbSyncRow({ label, state, err, path }: { label: string; state: string; err?: string; path: string }) {
+function WbSyncRow({ label, state, err, path }: { label: string; state: string; err?: string; path?: string }) {
   const { t } = useTranslation();
   const failed = state === 'error' || !!err;
   return (
     <div className="flex items-center gap-2">
       <span className="w-10 shrink-0 text-muted-foreground">{label}</span>
       <span className={failed ? 'text-destructive' : ''}>
-        {err ? err : t(`ui.settings.wbsync.state_${state}`, { defaultValue: state })}
+        {err ? translateBackend(err) : t(`ui.settings.wbsync.state_${state}`, { defaultValue: state })}
       </span>
       {path && <span className="truncate font-mono text-muted-foreground" title={path}>{path}</span>}
     </div>

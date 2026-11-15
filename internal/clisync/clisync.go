@@ -110,8 +110,9 @@ func Sync(opts Options) (Result, error) {
 		res.BinaryErr = err.Error()
 	}
 
-	// 2. PATH（仅显式请求时）。
-	if opts.ConfigurePath {
+	// 2. PATH（仅显式请求且有内嵌二进制时；dev 构建没有 CLI，配 PATH 只会
+	// 指向空目录，跳过）。
+	if opts.ConfigurePath && len(opts.Binary) > 0 {
 		pstate, perr := ensure(binDir)
 		res.PathState = pstate
 		if perr != nil {
@@ -183,7 +184,8 @@ func auditWarnings(binDir string, lookup func() []string) []string {
 	}
 	out := make([]string, 0, len(stale))
 	for _, d := range stale {
-		out = append(out, fmt.Sprintf("PATH 中发现其它 kshell 副本（可能抢先命中）: %s", d))
+		// wire key 形态：前端经 translateBackend 渲染成用户语言。
+		out = append(out, fmt.Sprintf("err.wbsync.stale_copy|%s", d))
 	}
 	return out
 }
