@@ -514,6 +514,28 @@
       "workbuddy_imported": "已导入并保存 WorkBuddy 模型",
       "workbuddy_ctx": "上下文 {{0}}"
       },
+      "wbsync": {
+        "title": "WorkBuddy 同步",
+        "desc": "一键为 WorkBuddy 安装 kshell agent CLI 与使用技能：释放命令行、配置 PATH，让 WorkBuddy 的 agent 直接管理 kshell 会话。",
+        "sync": "同步到 WorkBuddy",
+        "syncing": "同步中…",
+        "done": "已同步到 WorkBuddy",
+        "cli": "CLI",
+        "path": "PATH",
+        "skill": "技能",
+        "state_released": "已释放",
+        "state_current": "已是最新",
+        "state_not_embedded": "未内置（dev 构建）",
+        "state_present": "已安装",
+        "state_absent": "未安装",
+        "state_installed": "已安装",
+        "state_added": "已写入 PATH",
+        "state_ready": "就绪",
+        "state_skipped": "已跳过",
+        "state_missing": "不在 PATH 上",
+        "state_error": "失败",
+        "restart_note": "PATH 变更对新开的终端/会话生效。"
+      },
       "tools": {
         "title": "工具检测",
         "rescan": "刷新",

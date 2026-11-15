@@ -514,6 +514,28 @@
       "workbuddy_imported": "WorkBuddy models imported and saved",
       "workbuddy_ctx": "ctx {{0}}"
       },
+      "wbsync": {
+        "title": "WorkBuddy sync",
+        "desc": "One-click setup for WorkBuddy agents: release the kshell agent CLI, keep it on PATH, and install the kshell skill so WorkBuddy can manage kshell sessions directly.",
+        "sync": "Sync to WorkBuddy",
+        "syncing": "Syncing…",
+        "done": "Synced to WorkBuddy",
+        "cli": "CLI",
+        "path": "PATH",
+        "skill": "Skill",
+        "state_released": "Released",
+        "state_current": "Up to date",
+        "state_not_embedded": "Not bundled (dev build)",
+        "state_present": "Installed",
+        "state_absent": "Not installed",
+        "state_installed": "Installed",
+        "state_added": "PATH updated",
+        "state_ready": "Ready",
+        "state_skipped": "Skipped",
+        "state_missing": "Not on PATH",
+        "state_error": "Failed",
+        "restart_note": "PATH changes apply to newly opened terminals/sessions only."
+      },
       "tools": {
         "title": "Tool detection",
         "rescan": "Refresh",

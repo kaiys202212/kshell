@@ -59,6 +59,8 @@ const mocks = vi.hoisted(() => ({
   checkToolAuth: vi.fn().mockResolvedValue('unknown'),
   openLoginTerminal: vi.fn(),
   openExternalURL: vi.fn().mockResolvedValue(undefined),
+  getWorkBuddySyncStatus: vi.fn(),
+  syncWorkBuddy: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -205,6 +207,8 @@ afterEach(async () => {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getTools.mockResolvedValue(tools);
+  mocks.getWorkBuddySyncStatus.mockResolvedValue(null);
+  mocks.syncWorkBuddy.mockResolvedValue(null);
   mocks.loadProvidersYAML.mockResolvedValue('providers: []\n');
   mocks.parseProvidersYAML.mockResolvedValue([]);
   mocks.formatProvidersYAML.mockImplementation(async (specs: { ID?: string; Name?: string }[]) => {
@@ -332,6 +336,50 @@ beforeEach(() => {
 });
 
 describe('Settings', () => {
+  it('WorkBuddy 同步卡片：进入工具分区显示状态，点击同步调用后端并刷新', async () => {
+    mocks.getWorkBuddySyncStatus.mockResolvedValue({
+      binaryState: 'absent',
+      pathState: 'missing',
+      skillState: 'absent',
+      binaryPath: 'C:/u/.kshell/bin/kshell.exe',
+      skillPath: 'C:/u/.codebuddy/skills/kshell/SKILL.md',
+    });
+    mocks.syncWorkBuddy.mockResolvedValue({
+      binaryState: 'released',
+      pathState: 'added',
+      skillState: 'installed',
+      binaryPath: 'C:/u/.kshell/bin/kshell.exe',
+      skillPath: 'C:/u/.codebuddy/skills/kshell/SKILL.md',
+      warnings: ['PATH stale copy'],
+    });
+    render(<Settings />);
+    goTools();
+
+    expect(await screen.findByText(tt('ui.settings.wbsync.title'))).toBeInTheDocument();
+    // 「未安装」同时出现在工具列表与同步卡片的两行（CLI/技能均为 absent）。
+    const wbCard = screen.getByText(tt('ui.settings.wbsync.title')).closest('section');
+    const absentRows = within(wbCard!).getAllByText(tt('ui.settings.wbsync.state_absent'));
+    expect(absentRows.length).toBeGreaterThanOrEqual(2);
+
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.wbsync.sync') }));
+    expect(mocks.syncWorkBuddy).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText(tt('ui.settings.wbsync.state_released'))).toBeInTheDocument();
+    expect(screen.getByText('PATH stale copy')).toBeInTheDocument();
+  });
+
+  it('WorkBuddy 同步失败：单步错误原样展示不误报成功', async () => {
+    mocks.getWorkBuddySyncStatus.mockResolvedValue({
+      binaryState: 'error',
+      binaryErr: 'disk full',
+      pathState: 'missing',
+      skillState: 'absent',
+    });
+    render(<Settings />);
+    goTools();
+    expect(await screen.findByText('disk full')).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.settings.wbsync.state_missing'))).toBeInTheDocument();
+  });
+
   it('渲染工具检测状态：已安装带版本，未安装灰显「未安装」', async () => {
     render(<Settings />);
     goTools();

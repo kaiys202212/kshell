@@ -4,6 +4,7 @@
 #   .\build.ps1 -Test        # 先跑全量测试再编译
 #   .\build.ps1 -Clean       # 先清空 dist 再编译
 #   .\build.ps1 -Desktop     # wails build 桌面版（自动构建前端），产物拷到 dist\kshell-desktop.exe
+#                            # 注：先编 cmd/kshell-cli 到 build/cli/ 供桌面端内嵌
 #   .\build.ps1 -Desktop -Version v0.2.0  # 注入版本号（GitHub Release 用）
 # 桌面版构建不会退出运行中的实例（用户构建期间常仍在使用桌面端）；
 # 若 dist\kshell-desktop.exe 被占用（旧实例从 dist 运行），最后的拷贝会失败并提示。
@@ -79,6 +80,17 @@ if ($Test) {
 if ($Desktop) {
     # 构建期间不退出运行中的实例，只做提示；拷贝失败由下方 catch 兜底
     Warn-RunningKshellDesktop
+
+    # 先编最小 agent CLI（cmd/kshell-cli）供桌面端内嵌：wails build 时经根
+    # main.go 的 //go:embed build/cli 打进 exe，运行时自我释放到用户 bin 目录。
+    Write-Host '==> go build kshell-cli' -ForegroundColor Cyan
+    $cliArgs = @('build')
+    if ($Version) {
+        $cliArgs += @('-ldflags', "-X github.com/yangk/kshell/internal/version.Version=$Version")
+    }
+    $cliArgs += @('-o', 'build/cli/kshell-cli.exe', './cmd/kshell-cli')
+    & go @cliArgs
+    if ($LASTEXITCODE -ne 0) { exit 1 }
 
     # wails build 会按 wails.json 自动执行 frontend 的 npm install / build，再绑定打包。
     # 经 cmd /c 间接执行：wails 把进度日志（KnownStructs 等）写到 stderr，

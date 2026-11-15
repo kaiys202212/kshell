@@ -24,6 +24,8 @@ import {
   parseProvidersYAML,
   pickDirectory,
   pickFile,
+  getWorkBuddySyncStatus,
+  syncWorkBuddy,
   onScanDone,
   onToolsUpdated,
   onToolInstallDone,
@@ -56,6 +58,7 @@ import type {
   ToolInfo,
   ToolInstallJobView,
   UpdateInfo,
+  WorkBuddySyncResult,
   WorkbuddyScanView,
 } from '../lib/api';
 import { cn } from '../lib/cn';
@@ -136,6 +139,9 @@ export default function Settings() {
   const [specs, setSpecs] = useState<CustomProviderSpec[]>([]);
   // 工具检测「重新扫描」进行中；tools:updated（DetectAll 完成才推）到达即恢复
   const [rescanning, setRescanning] = useState(false);
+  // WorkBuddy 同步：状态（null=未加载/绑定缺失）与执行中标志
+  const [wbSync, setWbSync] = useState<WorkBuddySyncResult | null>(null);
+  const [wbBusy, setWbBusy] = useState(false);
   const [appearance, setAppearanceLocal] = useState<string>('dark');
   const [fontSize, setFontSizeLocal] = useState(13);
   const [showWhitespace, setShowWhitespaceLocal] = useState(false);
@@ -179,6 +185,34 @@ export default function Settings() {
   const [updateError, setUpdateError] = useState('');
   const notify = useAppStore((s) => s.notify);
   const notifySound = useAppStore((s) => s.notifySound);
+
+  // WorkBuddy 同步：进入工具分区时拉一次状态；同步完成后刷新为最新结果。
+  useEffect(() => {
+    if (section !== 'tools') return;
+    let cancelled = false;
+    getWorkBuddySyncStatus()
+      .then((s) => {
+        if (!cancelled) setWbSync(s);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [section]);
+
+  const handleWbSync = async () => {
+    setWbBusy(true);
+    try {
+      const res = await syncWorkBuddy();
+      setWbSync(res);
+      notify(t('ui.settings.wbsync.done'), 'info');
+    } catch (e) {
+      notify(translateBackend(backendError(e)), 'error');
+    } finally {
+      setWbBusy(false);
+    }
+  };
+
   const setNotifySound = useAppStore((s) => s.setNotifySound);
   const layoutMode = useAppStore((s) => s.layoutMode);
   const setLayoutMode = useAppStore((s) => s.setLayoutMode);
@@ -1682,6 +1716,37 @@ export default function Settings() {
             <>
               <section className="mb-5 rounded border border-border bg-card p-3.5">
                 <div className="mb-3 flex items-center justify-between gap-2">
+                  <h2 className="text-sm font-medium">{t('ui.settings.wbsync.title')}</h2>
+                  <Button
+                    type="button"
+                    disabled={wbBusy}
+                    onClick={() => {
+                      if (wbBusy) return;
+                      void handleWbSync();
+                    }}
+                  >
+                    {wbBusy ? t('ui.settings.wbsync.syncing') : t('ui.settings.wbsync.sync')}
+                  </Button>
+                </div>
+                <p className="mb-3 text-xs text-muted-foreground">{t('ui.settings.wbsync.desc')}</p>
+                {wbSync ? (
+                  <div className="space-y-1 text-xs">
+                    <WbSyncRow label={t('ui.settings.wbsync.cli')} state={wbSync.binaryState} err={wbSync.binaryErr} path={wbSync.binaryPath} />
+                    <WbSyncRow label={t('ui.settings.wbsync.path')} state={wbSync.pathState} err={wbSync.pathErr} path={wbSync.binaryPath} />
+                    <WbSyncRow label={t('ui.settings.wbsync.skill')} state={wbSync.skillState} err={wbSync.skillErr} path={wbSync.skillPath} />
+                    {(wbSync.warnings ?? []).map((w) => (
+                      <p key={w} className="text-warning">
+                        {translateBackend(w)}
+                      </p>
+                    ))}
+                    {(wbSync.pathState === 'added' || wbSync.pathState === 'ready') && (
+                      <p className="text-muted-foreground">{t('ui.settings.wbsync.restart_note')}</p>
+                    )}
+                  </div>
+                ) : null}
+              </section>
+              <section className="mb-5 rounded border border-border bg-card p-3.5">
+                <div className="mb-3 flex items-center justify-between gap-2">
                   <h2 className="text-sm font-medium">{t('ui.settings.tools.title')}</h2>
                   <Button
                     variant="secondary"
@@ -1943,6 +2008,21 @@ export default function Settings() {
           onClose={() => setToolSyncTarget(null)}
         />
       )}
+    </div>
+  );
+}
+
+// WbSyncRow 是 WorkBuddy 同步卡片里单步状态的行：标签 + 状态文案（失败标红）+ 可选路径。
+function WbSyncRow({ label, state, err, path }: { label: string; state: string; err?: string; path: string }) {
+  const { t } = useTranslation();
+  const failed = state === 'error' || !!err;
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-10 shrink-0 text-muted-foreground">{label}</span>
+      <span className={failed ? 'text-destructive' : ''}>
+        {err ? err : t(`ui.settings.wbsync.state_${state}`, { defaultValue: state })}
+      </span>
+      {path && <span className="truncate font-mono text-muted-foreground" title={path}>{path}</span>}
     </div>
   );
 }
