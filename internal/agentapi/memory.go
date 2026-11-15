@@ -29,9 +29,10 @@ type MemoryEntry struct {
 // 文件缺失/损坏按空处理（对齐 hub.Store.Load 口径），不让历史文件问题
 // 变成管理者循环的启动问题。
 type ManagerMemory struct {
-	mu      sync.Mutex
-	path    string
-	entries []MemoryEntry // 内存副本，旧→新
+	mu          sync.Mutex
+	path        string
+	entries     []MemoryEntry // 内存副本，旧→新
+	needNewline bool          // 文件缺尾换行（崩溃残尾），下次追加前先补
 }
 
 // NewManagerMemory 打开指定目录下的记忆 journal 并加载已有条目。
@@ -60,11 +61,26 @@ func (m *ManagerMemory) load() {
 		}
 		m.entries = append(m.entries, e)
 	}
+	// 崩溃残尾防护：文件非空但最后一字节不是 '\n'，说明上次写入中途崩溃，
+	// 追加前需先补一个换行，否则新行会粘在残尾上变成无法解析的一行。
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		m.needNewline = true
+	}
+	// 启动收敛：加载后若超 cap 也在内存里截一刀，让 Recent/Search 立即
+	// 遵守上限；磁盘上多余的旧行不会立即消失，会在下次 cap 触发的整体
+	// 重写时与坏行一并清除（写入时收敛是主路径，此处只是兜底对齐）。
+	if len(m.entries) > memoryCap {
+		m.entries = append([]MemoryEntry(nil), m.entries[len(m.entries)-memoryCap:]...)
+	}
 }
 
 // Append 追加一条记忆并落盘（jsonl 逐行追加）；超过 memoryCap 时截断
 // 最旧溢出部分并整体重写文件（同目录唯一 tmp + rename 原子替换，对齐
 // hub.Store.writeFile 范式）。写失败返回错误，调用方决定只记日志不 panic。
+//
+// 失败语义：写盘失败时错误上抛，但条目已保留在内存——Recent/Search 仍可见，
+// 磁盘上缺失该条；下次成功的整体重写会把内存版带回磁盘；进程重启后该条
+// 消失。即内存保证本轮会话内可用，持久化尽力而为。
 func (m *ManagerMemory) Append(e MemoryEntry) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -90,11 +106,15 @@ func (m *ManagerMemory) Append(e MemoryEntry) error {
 	return m.rewriteFile(dir)
 }
 
-// appendLine 以追加模式写一行 JSON。
+// appendLine 以追加模式写一行 JSON；若文件有崩溃残尾（缺尾换行），
+// 先补一个 '\n' 再写，避免新行粘在残尾上。
 func (m *ManagerMemory) appendLine(e MemoryEntry) error {
 	data, err := json.Marshal(e)
 	if err != nil {
 		return err
+	}
+	if m.needNewline {
+		data = append([]byte{'\n'}, data...)
 	}
 	data = append(data, '\n')
 	f, err := os.OpenFile(m.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
@@ -105,7 +125,11 @@ func (m *ManagerMemory) appendLine(e MemoryEntry) error {
 		_ = f.Close()
 		return err
 	}
-	return f.Close()
+	if err := f.Close(); err != nil {
+		return err
+	}
+	m.needNewline = false // 残尾已补齐
+	return nil
 }
 
 // rewriteFile 原子重写整个 journal：先写同目录唯一临时文件再改名，

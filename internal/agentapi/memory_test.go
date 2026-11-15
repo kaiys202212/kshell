@@ -1,12 +1,12 @@
 package agentapi
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 func TestMemoryAppendRecentSearch(t *testing.T) {
@@ -85,16 +85,16 @@ func TestMemorySearchLimit(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManagerMemory(dir)
 	for i := 0; i < 30; i++ {
-		if err := m.Append(MemoryEntry{Channel: "hub", Input: "重复关键词任务"}); err != nil {
+		if err := m.Append(MemoryEntry{Channel: "hub", Input: fmt.Sprintf("任务%d", i)}); err != nil {
 			t.Fatalf("Append: %v", err)
 		}
 	}
-	if got := m.Search("关键词"); len(got) != 20 {
+	if got := m.Search("任务"); len(got) != 20 {
 		t.Fatalf("Search 上限 = %d, want 20", len(got))
 	}
-	// 结果新在前：第一条应是最后写入的
-	if got := m.Recent(1); got[0].Ts != m.Search("关键词")[0].Ts {
-		t.Fatal("Search 结果顺序不是新在前")
+	// 结果新在前：第一条应是最后写入的一条
+	if got := m.Search("任务"); got[0].Input != "任务29" {
+		t.Fatalf("Search 结果顺序不是新在前: %q", got[0].Input)
 	}
 }
 
@@ -213,7 +213,32 @@ func TestMemoryAppendPersistence(t *testing.T) {
 	if got[0].Ts <= 0 {
 		t.Fatal("落盘 Ts 未补")
 	}
-	if time.Unix(0, got[0].Ts).IsZero() {
-		t.Fatal("Ts 无法解析")
+}
+
+func TestMemoryAppendAfterCrashTail(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "memory.jsonl")
+	// 模拟崩溃残尾：合法单行 JSON 但缺尾换行
+	if err := os.WriteFile(path, []byte(`{"ts":1,"channel":"hub","input":"残尾"}`), 0o600); err != nil {
+		t.Fatalf("写残尾文件: %v", err)
+	}
+	m := NewManagerMemory(dir)
+	if got := m.Recent(1); len(got) != 1 || got[0].Input != "残尾" {
+		t.Fatalf("残尾文件应可解析一条: %v", got)
+	}
+
+	// 追加前应先补换行，否则新行会粘在残尾上
+	if err := m.Append(MemoryEntry{Channel: "hub", Input: "补换行后追加"}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	// 重新加载：两条都可解析
+	m2 := NewManagerMemory(dir)
+	got := m2.Recent(10)
+	if len(got) != 2 {
+		t.Fatalf("补换行后应有 2 条, got %d", len(got))
+	}
+	if got[0].Input != "补换行后追加" || got[1].Input != "残尾" {
+		t.Fatalf("加载内容错误: %v", got)
 	}
 }
