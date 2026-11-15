@@ -132,6 +132,40 @@ func TestSendChatPromptRecordsHubUserMessage(t *testing.T) {
 	waitHubKind(t, store, "agent")
 }
 
+// 管理者代发（sendChatPromptVia viaHub=true）落盘的 user 消息带 ViaHub 标记；
+// 普通 SendChatPrompt 不带。
+func TestSendChatPromptViaHubFlag(t *testing.T) {
+	a, store, rec := newHubTestApp(t)
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := a.sendChatPromptVia(info.ID, "代发文本", true); err != nil {
+		t.Fatal(err)
+	}
+	u := waitHubKind(t, store, "user")
+	if u.Text != "代发文本" || !u.ViaHub {
+		t.Fatalf("代发 user 消息应带 ViaHub: %+v", u)
+	}
+	// 等 turn goroutine 收尾，避免 TempDir 清理与异步落盘竞争。
+	waitHubKind(t, store, "agent")
+
+	if err := a.SendChatPrompt(info.ID, "普通文本"); err != nil {
+		t.Fatal(err)
+	}
+	u2 := waitHubUserText(t, store, "普通文本")
+	if u2.ViaHub {
+		t.Fatalf("普通 SendChatPrompt 的 user 消息不应带 ViaHub: %+v", u2)
+	}
+	waitHubKind(t, store, "agent")
+}
+
 // emitChatNotify 通过 allow 后落 agent 消息（含 assistant 回复正文与会话标题快照）。
 func TestEmitChatNotifyRecordsHubMessage(t *testing.T) {
 	a, store, rec := newHubTestApp(t)
@@ -175,6 +209,28 @@ func waitHubKind(t *testing.T, store *hub.Store, kind string) hub.Message {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("超时未等到 hub %s 消息", kind)
+	return hub.Message{}
+}
+
+// waitHubUserText 等到第一条指定正文的 user 消息（同文本多条时取最新一条）。
+func waitHubUserText(t *testing.T, store *hub.Store, text string) hub.Message {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var last hub.Message
+		found := false
+		for _, m := range store.List() {
+			if m.Kind == "user" && m.Text == text {
+				last = m
+				found = true
+			}
+		}
+		if found {
+			return last
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("超时未等到正文为 %q 的 hub user 消息", text)
 	return hub.Message{}
 }
 

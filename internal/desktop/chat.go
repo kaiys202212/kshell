@@ -441,6 +441,12 @@ func (a *App) fallbackTerminalWorkspace(wsID, toolID, reason string) (OpenedSess
 // 入口先按别名链把旧 ID 解析到最新：重建过的会话前端仍持旧 ID 也能继续发送；
 // 已退出时自动重建（ensureChatAlive）。
 func (a *App) SendChatPrompt(id, text string) (err error) {
+	return a.sendChatPromptVia(id, text, false)
+}
+
+// sendChatPromptVia 是纯文本发送的公共实现：viaHub 标记管理者代发（agentapi
+// send 工具路径），落盘的 hub user 消息据此带 ViaHub，前端打「代发」标签。
+func (a *App) sendChatPromptVia(id, text string, viaHub bool) (err error) {
 	// 成功投递即视为用户已转向另一条消息：AgentHub 的待选暂存正文失效，
 	// 否则之后的纯数字可能把旧正文发给错误会话。失败时保留待选，便于重试。
 	defer func() {
@@ -468,7 +474,7 @@ func (a *App) SendChatPrompt(id, text string) (err error) {
 			return err
 		}
 		blocks := []acp.ContentBlock{{Type: "text", Text: rest}}
-		return a.sendAndRecord(sendID, blocks, rest)
+		return a.sendAndRecord(sendID, blocks, rest, false)
 	}
 	sendID, err := a.prepareSendTarget(id)
 	if err != nil {
@@ -479,7 +485,7 @@ func (a *App) SendChatPrompt(id, text string) (err error) {
 	// 不再经任何模型分发。AgentHub 的智能路由只服务「无目标自由文本」
 	// （HubSmartSend），一旦拿到确定目标就必须立刻送到，否则用户消息要等
 	// 一整轮 LLM 往返才出现在时间线，且模型可能把消息转投到别的会话。
-	return a.sendAndRecord(sendID, blocks, text)
+	return a.sendAndRecord(sendID, blocks, text, viaHub)
 }
 
 // prepareSendTarget 是纯文本发送入口的公共前置：确保会话钩子已装、manager 就绪，
@@ -525,7 +531,7 @@ func (a *App) SendChatPromptDirect(id, text string) (err error) {
 		return err
 	}
 	blocks := []acp.ContentBlock{{Type: "text", Text: text}}
-	return a.sendAndRecord(sendID, blocks, text)
+	return a.sendAndRecord(sendID, blocks, text, false)
 }
 
 // parseFollowPrompt 解析 #f 直投指令：输入整串为 "#f" 时返回空消息体；
@@ -609,7 +615,7 @@ func (a *App) SendChatPromptBlocks(id string, blocks []ChatBlock) (err error) {
 		return err
 	}
 	acpBlocks := chatBlocksToACP(blocks)
-	return a.sendAndRecord(sendID, acpBlocks, hubTextFromBlocks(blocks))
+	return a.sendAndRecord(sendID, acpBlocks, hubTextFromBlocks(blocks), false)
 }
 
 // sendAndRecord 统一发送与 Hub 落盘：预留消息 ID → 先落 user 消息（queued 状态，
@@ -617,7 +623,8 @@ func (a *App) SendChatPromptBlocks(id string, blocks []ChatBlock) (err error) {
 // 空闲投递 / 竞态入队两条路径的状态修正与 ack 卡片都由 onHubDelivered / onHubQueued
 // 回调统一处理，这里不再区分 queued 与否，避免回调先于落盘的竞态。
 // hubText 为空时（纯附件）不落 Hub 消息，也不预留 ID。
-func (a *App) sendAndRecord(chatID string, blocks []acp.ContentBlock, hubText string) error {
+// viaHub 标记管理者代发（agentapi send 工具路径），hub 消息带 ViaHub。
+func (a *App) sendAndRecord(chatID string, blocks []acp.ContentBlock, hubText string, viaHub bool) error {
 	m := a.chats()
 	if m == nil {
 		return errNotReady
@@ -625,7 +632,7 @@ func (a *App) sendAndRecord(chatID string, blocks []acp.ContentBlock, hubText st
 	hubID := ""
 	if store := a.snapshot().HubStore; store != nil && hubText != "" {
 		hubID = strconv.FormatInt(store.ReserveID(), 10)
-		a.recordHubUserMessageStatus(chatID, hubText, hubID, hub.StatusQueued)
+		a.recordHubUserMessageStatus(chatID, hubText, hubID, hub.StatusQueued, viaHub)
 	}
 	queued, err := m.PromptBlocksHub(chatID, blocks, hubID)
 	if err != nil {

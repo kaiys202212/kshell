@@ -101,7 +101,9 @@ func (b *agentBackend) SessionMessages(chatID string) []agentapi.Message {
 	return out
 }
 
-func (b *agentBackend) Send(chatID, text string) error { return b.a.SendChatPrompt(chatID, text) }
+// Send 是管理者 send 工具的投递路径：经 sendChatPromptVia 标记代发，
+// 目标会话的 user 消息与 hub 落盘记录均带 ViaHub（前端打「由 AgentHub 自动发送」标签）。
+func (b *agentBackend) Send(chatID, text string) error { return b.a.sendChatPromptVia(chatID, text, true) }
 func (b *agentBackend) Stop(chatID string) error       { return b.a.CancelChat(chatID) }
 func (b *agentBackend) Recall(msgID int64) error       { return b.a.RecallHubMessage(msgID) }
 

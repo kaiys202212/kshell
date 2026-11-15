@@ -70,18 +70,19 @@ func (a *App) recordHubMessage(m hub.Message) {
 // recordHubUserMessage 记录一条用户发出的消息：从 chat manager 反查归因字段。
 // chatID 不存在（会话已关闭）时仍记录文本，只是 workspace/tool 缺失。
 func (a *App) recordHubUserMessage(chatID, text string) {
-	a.recordHubUserMessageStatus(chatID, text, "", "")
+	a.recordHubUserMessageStatus(chatID, text, "", "", false)
 }
 
 // recordHubUserMessageStatus 同上，但带投递状态（queued / 空）；hubID 非空时用预分配 ID。
-// ChatID 统一翻回原始 ID（别名链头）：前端 hub 归因与撤回都按落盘 ID 查，
-// 重建后新 ID 必须回到前端认识的旧 ID 空间（与出站事件同一口径）；
-// 归因反查仍用最新 ID（manager 只认它），发消息入口已解析过，通常本就是最新。
-func (a *App) recordHubUserMessageStatus(chatID, text, hubID, status string) {
+// viaHub 标记管理者代发（agentapi send 路径）。ChatID 统一翻回原始 ID（别名链头）：
+// 前端 hub 归因与撤回都按落盘 ID 查，重建后新 ID 必须回到前端认识的旧 ID 空间
+// （与出站事件同一口径）；归因反查仍用最新 ID（manager 只认它），发消息入口已解析过，
+// 通常本就是最新。
+func (a *App) recordHubUserMessageStatus(chatID, text, hubID, status string, viaHub bool) {
 	if text == "" {
 		return
 	}
-	m := hub.Message{Kind: "user", ChatID: a.originalChatID(chatID), Text: text, Status: status}
+	m := hub.Message{Kind: "user", ChatID: a.originalChatID(chatID), Text: text, Status: status, ViaHub: viaHub}
 	if mgr := a.chats(); mgr != nil {
 		if info, ok := mgr.Get(chatID); ok {
 			m.Tool = info.ToolID
