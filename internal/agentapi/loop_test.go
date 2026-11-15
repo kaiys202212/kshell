@@ -61,7 +61,8 @@ func TestRenderMessagesTailKeepsLongText(t *testing.T) {
 	}
 	huge := strings.Repeat("超", 3000)
 	trimmed := renderMessagesTail([]Message{{Kind: "agent", Text: huge}}, 5)
-	if len([]rune(trimmed)) > 2010 {
+	// oneLineText 截到 2000 rune + 省略号，行首还有序号前缀
+	if len([]rune(trimmed)) > 2020 {
 		t.Fatalf("超过 2000 rune 仍应截断到上限附近: len=%d", len([]rune(trimmed)))
 	}
 }
