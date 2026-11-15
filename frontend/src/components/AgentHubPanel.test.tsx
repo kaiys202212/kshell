@@ -2868,6 +2868,22 @@ describe('AgentHub 思考态', () => {
     release({ Replies: [], Pending: true });
   });
 
+  it('取消返回时若用户已在草稿输入新内容，不覆盖新输入', async () => {
+    let release!: (v: HubPickView) => void;
+    api.hubSmartSend.mockImplementation(() => new Promise((res) => { release = res; }));
+    useAppStore.setState({ chats: [chat({ ID: 'c1' })], lastAgentId: null });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '发给大家' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByTestId('hub-thinking')).toBeInTheDocument());
+    // 在途期间用户另打了新内容
+    fireEvent.change(box, { target: { value: '换个说法' } });
+    release({ Replies: [], Pending: false, Cancelled: true });
+    await waitFor(() => expect(screen.queryByTestId('hub-thinking')).not.toBeInTheDocument());
+    expect((box as HTMLTextAreaElement).value).toBe('换个说法');
+  });
+
   it('点「中断」调 cancelHubSmartSend；取消返回后不回落待选、原文塞回草稿', async () => {
     let release!: (v: HubPickView) => void;
     api.hubSmartSend.mockImplementation(() => new Promise((res) => { release = res; }));

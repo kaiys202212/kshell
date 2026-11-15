@@ -921,7 +921,8 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
         useAppStore.getState().setHubPendingSend(null);
         if (smart && smart.Cancelled) {
           // 用户主动中断：不回落待选；原文塞回草稿供改写重发，用户气泡保留。
-          setDraft(text);
+          // 在途期间用户若已输入新内容，不覆盖（守卫只在受理时清过一次草稿）。
+          setDraft((d) => (d ? d : text));
           useAppStore.getState().pushHubLocal(t('ui.hub.thinking_cancelled'));
           return;
         }
