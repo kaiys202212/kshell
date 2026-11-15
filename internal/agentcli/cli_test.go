@@ -19,6 +19,7 @@ type cliHarness struct {
 	t         *testing.T
 	fake      *apitest.FakeBackend
 	api       *agentapi.API
+	client    *agentcli.Client // connectFn 返回的同一实例，供用例注入 Client 侧状态
 	connectFn func() (*agentcli.Client, error)
 	out       bytes.Buffer
 	errb      bytes.Buffer
@@ -41,6 +42,7 @@ func newCliHarness(t *testing.T) *cliHarness {
 		t:    t,
 		fake: fake,
 		api:  api,
+		client: client,
 		connectFn: func() (*agentcli.Client, error) {
 			return client, nil
 		},

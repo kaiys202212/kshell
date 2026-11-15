@@ -14,6 +14,8 @@ type Endpoint struct {
 	Token   string `json:"token"`
 	PID     int    `json:"pid"`
 	Version int    `json:"version"`
+	// App 是桌面端应用版本（可选字段；旧桌面端不写，缺省空串 = 跳过版本比对）。
+	App string `json:"app"`
 }
 
 // endpointVersion 必须与 agentsrv 的写入版本一致。
@@ -54,5 +56,7 @@ func Connect() (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewClient(ep.URL, ep.Token), nil
+	c := NewClient(ep.URL, ep.Token)
+	c.App = ep.App
+	return c, nil
 }

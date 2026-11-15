@@ -131,7 +131,7 @@ func readAll(resp *http.Response) []byte {
 func TestStartWritesEndpointFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agentapi", "endpoint.json")
-	srv, err := Start(Options{API: agentapi.New(newFake()), EndpointPath: path})
+	srv, err := Start(Options{API: agentapi.New(newFake()), EndpointPath: path, AppVersion: "v1.2.3"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,6 +156,9 @@ func TestStartWritesEndpointFile(t *testing.T) {
 	}
 	if pid, _ := ep["pid"].(float64); int(pid) != os.Getpid() {
 		t.Fatalf("pid 不符: %v", ep["pid"])
+	}
+	if ep["app"] != "v1.2.3" {
+		t.Fatalf("app 版本应写入 endpoint: %v", ep["app"])
 	}
 
 	// Close 后 endpoint 文件删除。

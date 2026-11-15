@@ -12,6 +12,7 @@ import (
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/hub"
 	"github.com/yangk/kshell/internal/hubtools"
+	"github.com/yangk/kshell/internal/version"
 )
 
 // agentapi.go 装配 agent 工具 API（internal/agentapi）：agentBackend 复用
@@ -218,7 +219,7 @@ func (a *App) agentAPIEndpointPath() string {
 // startAgentSrv 启动本机 agent API 服务并写发现文件。失败仅记日志：服务缺席
 // 只影响 CLI（endpoint 文件缺失 → exit 3），不能拖垮桌面端启动。
 func (a *App) startAgentSrv() {
-	srv, err := agentsrv.Start(agentsrv.Options{API: a.AgentAPI(), EndpointPath: a.agentAPIEndpointPath()})
+	srv, err := agentsrv.Start(agentsrv.Options{API: a.AgentAPI(), EndpointPath: a.agentAPIEndpointPath(), AppVersion: version.Current()})
 	if err != nil {
 		log.Printf("agentsrv 启动失败（CLI 将不可用）: %v", err)
 		return

@@ -30,6 +30,9 @@ type Client struct {
 	base  string
 	token string
 	hc    *http.Client
+	// App 是 endpoint.json 里携带的桌面端应用版本（空 = 旧桌面端未写）。
+	// 由 Connect 填充，供版本自检比对；测试可直接注入。
+	App string
 }
 
 // NewClient 构造客户端。

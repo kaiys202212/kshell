@@ -33,15 +33,19 @@ const watchBuf = 64
 type Options struct {
 	API          *agentapi.API
 	EndpointPath string // 发现文件路径（目录不存在自动创建）
+	// AppVersion 写入发现文件的 "app" 字段（桌面端应用版本），供 CLI 版本
+	// 自检比对；空串照写（dev 构建恒为 dev，与 CLI 的 dev 相等不告警）。
+	AppVersion string
 }
 
 // Server 是常驻服务句柄。
 type Server struct {
-	url      string
-	token    string
-	srv      *http.Server
-	epPath   string
-	closeOnce sync.Once
+	url        string
+	token      string
+	appVersion string
+	srv        *http.Server
+	epPath     string
+	closeOnce  sync.Once
 }
 
 // URL 返回服务根地址（http://127.0.0.1:<port>）。
@@ -74,9 +78,10 @@ func Start(opts Options) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
-		url:    "http://" + ln.Addr().String(),
-		token:  hex.EncodeToString(token),
-		epPath: opts.EndpointPath,
+		url:        "http://" + ln.Addr().String(),
+		token:      hex.EncodeToString(token),
+		epPath:     opts.EndpointPath,
+		appVersion: opts.AppVersion,
 	}
 	s.srv = &http.Server{Handler: s.auth(s.mux(opts.API))}
 	go func() {
@@ -105,6 +110,7 @@ func (s *Server) writeEndpoint() error {
 		"token":   s.token,
 		"pid":     os.Getpid(),
 		"version": endpointVersion,
+		"app":     s.appVersion,
 	})
 	return os.WriteFile(s.epPath, ep, 0o600)
 }

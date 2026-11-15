@@ -92,9 +92,15 @@ func (e *cmdEnv) run(args []string) int {
 	}
 }
 
-// usage 输出命令清单。
+// usage 输出命令清单（正文见 UsageText）。
 func (e *cmdEnv) usage() {
-	fmt.Fprint(e.out, `kshell agent —— 供外部 agent 操作 kshell 的命令行（硬依赖桌面端运行）
+	fmt.Fprint(e.out, UsageText())
+}
+
+// UsageText 返回完整用法文本：既是 CLI 的 usage 输出，也被同步功能拼进
+// WorkBuddy 的 SKILL.md——单一事实源，文档永不与命令面脱节。
+func UsageText() string {
+	return `kshell agent —— 供外部 agent 操作 kshell 的命令行（硬依赖桌面端运行）
 
 用法: kshell agent <命令> [参数]
 
@@ -112,7 +118,7 @@ func (e *cmdEnv) usage() {
 路由:  route [--send] "<消息>"
 
 退出码: 0 成功 | 1 错误 | 2 需要确认 | 3 未就绪（桌面端未运行/LLM 未配置）
-`)
+`
 }
 
 // connectOrFail 连接桌面端服务；失败输出提示并返回 false。
@@ -121,6 +127,10 @@ func (e *cmdEnv) connectOrFail() (*Client, int) {
 	if err != nil {
 		fmt.Fprintf(e.err, "kshell agent: 无法连接桌面端（%v）——请先启动 kshell 桌面端\n", err)
 		return nil, exitNotReady
+	}
+	// 版本自检：CLI 与桌面端版本漂移（升级未重释放 / PATH 命中旧副本）时提醒。
+	if w := versionWarn(c.App); w != "" {
+		fmt.Fprint(e.err, w)
 	}
 	return c, exitOK
 }
