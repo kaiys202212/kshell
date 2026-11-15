@@ -1342,8 +1342,50 @@ func TestPromptHubQueueAndRecall(t *testing.T) {
 	t.Fatal("first 未投递")
 }
 
-// ViaHub 标记：hubMsgID 非空的投递（立即/入队/竞态兜底）在时间线 user 更新上
-// 置 ViaHub，普通 Prompt 不置。
+// ViaHub 标记与 hubMsgID 解耦：聊天页普通发送（sendAndRecord 预留 hubMsgID
+// 用于队列撤回与 hub 镜像）不是管理者代发，时间线不得打代发标签；只有显式
+// viaHub=true 才置标记。
+func TestPromptBlocksHubViaHubDecoupled(t *testing.T) {
+	t.Run("立即投递_带hubMsgID但viaHub_false不打标", func(t *testing.T) {
+		m, _, _ := newTestManager(t)
+		info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.PromptBlocksHub(info.ID, []acp.ContentBlock{{Type: "text", Text: "hi"}}, "h1", false); err != nil {
+			t.Fatal(err)
+		}
+		h := m.History(info.ID)
+		last := h[len(h)-1]
+		if last.Type != "user" || last.ViaHub {
+			t.Fatalf("hubMsgID 非空但 viaHub=false 不应带 ViaHub: %+v", last)
+		}
+	})
+	t.Run("忙时入队_viaHub_false不打标", func(t *testing.T) {
+		m, b, _ := newTestManager(t)
+		b.conn.promptGate = make(chan struct{})
+		defer close(b.conn.promptGate)
+		info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Prompt(info.ID, "first"); err != nil {
+			t.Fatal(err)
+		}
+		waitStatus(t, m, info.ID, StatusRunning)
+		if _, err := m.PromptBlocksHub(info.ID, []acp.ContentBlock{{Type: "text", Text: "second"}}, "h2", false); err != nil {
+			t.Fatal(err)
+		}
+		for _, u := range m.History(info.ID) {
+			if u.Type == "user" && u.Text == "second" && u.ViaHub {
+				t.Fatalf("入队路径 viaHub=false 不应带 ViaHub: %+v", u)
+			}
+		}
+	})
+}
+
+// ViaHub 标记：hub 投递（PromptHub 显式 viaHub=true，立即/入队/竞态兜底）在
+// 时间线 user 更新上置 ViaHub，普通 Prompt 不置。
 func TestPromptHubMarksViaHub(t *testing.T) {
 	t.Run("立即投递", func(t *testing.T) {
 		m, _, _ := newTestManager(t)

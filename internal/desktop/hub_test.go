@@ -153,6 +153,12 @@ func TestSendChatPromptViaHubFlag(t *testing.T) {
 	if u.Text != "代发文本" || !u.ViaHub {
 		t.Fatalf("代发 user 消息应带 ViaHub: %+v", u)
 	}
+	// 聊天时间线同步落 user 更新，可直接断言（无需等 turn 收尾）。
+	for _, it := range m.History(info.ID) {
+		if it.Type == "user" && it.Text == "代发文本" && !it.ViaHub {
+			t.Fatalf("代发的时间线 user 更新应带 ViaHub: %+v", it)
+		}
+	}
 	// 等 turn goroutine 收尾，避免 TempDir 清理与异步落盘竞争。
 	waitHubKind(t, store, "agent")
 
@@ -162,6 +168,12 @@ func TestSendChatPromptViaHubFlag(t *testing.T) {
 	u2 := waitHubUserText(t, store, "普通文本")
 	if u2.ViaHub {
 		t.Fatalf("普通 SendChatPrompt 的 user 消息不应带 ViaHub: %+v", u2)
+	}
+	// 回归锚点：普通发送也预留 hubMsgID（队列撤回用），但时间线不得打代发标签。
+	for _, it := range m.History(info.ID) {
+		if it.Type == "user" && it.Text == "普通文本" && it.ViaHub {
+			t.Fatalf("普通发送的时间线 user 更新不应带 ViaHub: %+v", it)
+		}
 	}
 	waitHubKind(t, store, "agent")
 }

@@ -158,7 +158,8 @@ type Update struct {
 	// 形态（含非字符串 currentValue 与分组选项），config 事件不进入时间线，
 	// 该字段仅供会话状态同步，前端拿到的是 ConfigOptions(id) 的视图。
 	ConfigOptions []acp.SessionConfigOption `json:"-"`
-	// ViaHub 标记该 user 消息由 AgentHub 投递（PromptBlocksHub 且带 hubMsgID），
+	// ViaHub 标记该 user 消息由 AgentHub 管理者代发（PromptBlocksHub 显式
+	// viaHub，与 hubMsgID 解耦：聊天页普通发送也预留 hubMsgID 但不是代发），
 	// 前端在目标会话的消息卡片上渲染「由 AgentHub 自动发送」标签。
 	ViaHub bool `json:"ViaHub,omitempty"`
 }

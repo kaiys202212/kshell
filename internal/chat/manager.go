@@ -111,7 +111,7 @@ type queuedMsg struct {
 	id          string // Hub 条目复用 hubMsgID，其余为 qN
 	blocks      []acp.ContentBlock
 	hubMsgID    string
-	viaHub      bool // hubMsgID 非空即 AgentHub 代发，时间线 user 更新据此打标
+	viaHub      bool // 调用方显式标记 AgentHub 代发（与 hubMsgID 解耦），时间线据此打标
 	attachments []AttachmentMeta
 }
 
@@ -938,24 +938,26 @@ func flattenBlocks(blocks []acp.ContentBlock) string {
 
 // Prompt 向会话发起一轮纯文本输入；忙时入队，当前轮结束后自动投递。
 func (m *Manager) Prompt(id, text string) error {
-	_, err := m.PromptBlocksHub(id, []acp.ContentBlock{{Type: "text", Text: text}}, "")
+	_, err := m.PromptBlocksHub(id, []acp.ContentBlock{{Type: "text", Text: text}}, "", false)
 	return err
 }
 
 // PromptBlocks 向会话发起一轮多形态内容块输入（文本 + 附件）；忙时入队。
 func (m *Manager) PromptBlocks(id string, blocks []acp.ContentBlock) error {
-	_, err := m.PromptBlocksHub(id, blocks, "")
+	_, err := m.PromptBlocksHub(id, blocks, "", false)
 	return err
 }
 
-// PromptHub 向会话发起一轮纯文本输入并携带 AgentHub 消息 ID：
-// 返回 queued=true 表示忙时已入队（false 为立即投递）。
+// PromptHub 向会话发起一轮纯文本输入并携带 AgentHub 消息 ID，时间线打代发
+// 标记：返回 queued=true 表示忙时已入队（false 为立即投递）。
 func (m *Manager) PromptHub(id, text, hubMsgID string) (bool, error) {
-	return m.PromptBlocksHub(id, []acp.ContentBlock{{Type: "text", Text: text}}, hubMsgID)
+	return m.PromptBlocksHub(id, []acp.ContentBlock{{Type: "text", Text: text}}, hubMsgID, true)
 }
 
 // PromptBlocksHub 同 PromptBlocks，但队列条目携带 hubMsgID；返回是否入队。
-func (m *Manager) PromptBlocksHub(id string, blocks []acp.ContentBlock, hubMsgID string) (bool, error) {
+// viaHub 显式标记是否 AgentHub 代发，与 hubMsgID 解耦：聊天页普通发送也预留
+// hubMsgID（队列撤回与 hub 镜像用），但不是代发，不得打标记。
+func (m *Manager) PromptBlocksHub(id string, blocks []acp.ContentBlock, hubMsgID string, viaHub bool) (bool, error) {
 	if len(blocks) == 0 {
 		return false, nil
 	}
@@ -966,7 +968,7 @@ func (m *Manager) PromptBlocksHub(id string, blocks []acp.ContentBlock, hubMsgID
 	root := m.attachmentsRoot
 	m.mu.Unlock()
 	metas := persistBlocks(root, id, blocks)
-	qm := queuedMsg{id: hubMsgID, blocks: blocks, hubMsgID: hubMsgID, viaHub: hubMsgID != "", attachments: metas}
+	qm := queuedMsg{id: hubMsgID, blocks: blocks, hubMsgID: hubMsgID, viaHub: viaHub, attachments: metas}
 	m.mu.Lock()
 	s := m.byID[id]
 	if s == nil || s.exited {

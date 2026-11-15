@@ -629,7 +629,8 @@ func (a *App) SendChatPromptBlocks(id string, blocks []ChatBlock) (err error) {
 // 空闲投递 / 竞态入队两条路径的状态修正与 ack 卡片都由 onHubDelivered / onHubQueued
 // 回调统一处理，这里不再区分 queued 与否，避免回调先于落盘的竞态。
 // hubText 为空时（纯附件）不落 Hub 消息，也不预留 ID。
-// viaHub 标记管理者代发（agentapi send 工具路径），hub 消息带 ViaHub。
+// viaHub 标记管理者代发（agentapi send 工具路径），hub 消息与聊天时间线
+// user 更新均带 ViaHub（前端打「代发」标签）；聊天页普通发送不打标。
 func (a *App) sendAndRecord(chatID string, blocks []acp.ContentBlock, hubText string, viaHub bool) error {
 	m := a.chats()
 	if m == nil {
@@ -640,7 +641,7 @@ func (a *App) sendAndRecord(chatID string, blocks []acp.ContentBlock, hubText st
 		hubID = strconv.FormatInt(store.ReserveID(), 10)
 		a.recordHubUserMessageStatus(chatID, hubText, hubID, hub.StatusQueued, viaHub)
 	}
-	queued, err := m.PromptBlocksHub(chatID, blocks, hubID)
+	queued, err := m.PromptBlocksHub(chatID, blocks, hubID, viaHub)
 	if err != nil {
 		return err
 	}
