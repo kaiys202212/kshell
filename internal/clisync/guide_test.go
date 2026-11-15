@@ -37,6 +37,10 @@ func TestInstallGuideWrites(t *testing.T) {
 			t.Fatalf("说明书缺少 %q", want)
 		}
 	}
+	// SKILL.md 内文含三反引号围栏，外层必须用四反引号才能完整包裹。
+	if strings.Count(text, "````") < 2 {
+		t.Fatal("SKILL.md 全文应用四反引号围栏包裹")
+	}
 }
 
 // installGuide 幂等：同版本重复生成跳过（current）；版本变化重写。

@@ -47,7 +47,9 @@ kshell skill into your own skills directory. Follow the steps below exactly.
 
 ## SKILL.md content (copy verbatim)
 
-§%s§
+§§§§
+%s
+§§§§
 
 ---
 

@@ -228,6 +228,29 @@ func TestSyncWritesGuide(t *testing.T) {
 	}
 }
 
+// TestSyncGuideSkippedWhenReleaseFails：释放失败（bin 目录被文件占用）时不写
+// 说明书——指引指向的命令不存在，写了反而误导。
+func TestSyncGuideSkippedWhenReleaseFails(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 把 bin 目录位置占成文件 → MkdirAll 失败 → 释放失败。
+	if err := os.WriteFile(filepath.Join(home, ".kshell"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := clisync.Sync(clisync.Options{Home: home, Binary: fakeBinary(), Version: "v1.0.0", Targets: []string{"codebuddy"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.BinaryState == "released" || res.BinaryState == "current" {
+		t.Fatalf("预置占用应使释放失败: %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".kshell", "host-install.md")); !os.IsNotExist(err) {
+		t.Fatal("释放失败不应写说明书")
+	}
+}
+
 // TestSyncGuideFailureWarning：说明书写失败以 wire key 进 Warnings，不阻断同步。
 func TestSyncGuideFailureWarning(t *testing.T) {
 	home := t.TempDir()

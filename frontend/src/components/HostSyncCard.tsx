@@ -1,7 +1,7 @@
 // 宿主同步卡片：主动同步仅支持 WorkBuddy（释放最小 agent CLI + PATH + 技能）；
 // 其它宿主走自助安装——复制一句话指令发给该平台的 AI，它读 kshell 生成的
 // ~/.kshell/host-install.md 自助完成安装（只写自己的 skills/kshell/ 子目录）。
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getHostSyncStatuses, syncHosts } from '../lib/api';
 import type { HostSyncResult } from '../lib/api';
@@ -18,6 +18,11 @@ export default function HostSyncCard() {
   const [hostSync, setHostSync] = useState<HostSyncResult | null>(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  // copied 反馈计时器：连点时清掉上一轮，避免第一次计时提前收起第二次反馈。
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (copiedTimer.current) clearTimeout(copiedTimer.current);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,8 +55,9 @@ export default function HostSyncCard() {
   const copyInstruction = async () => {
     try {
       await navigator.clipboard.writeText(instruction);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      copiedTimer.current = setTimeout(() => setCopied(false), 2000);
     } catch {
       notify(translateBackend(t('ui.settings.hostsync.copy_failed')), 'error');
     }
