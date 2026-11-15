@@ -179,17 +179,26 @@ func (a *App) HubSmartSend(reqID, text string) (HubPickView, error) {
 	if hub.IsDirectPass(text, a.agenthubDirectPatterns()) {
 		return HubPickView{Pending: true}, nil
 	}
+	// 用户原话落盘（问题 1）：进入管理者循环前把原文写进 hub 历史——循环内
+	// send 工具投递的是模型改写文本，落盘的是那份；只查状态/反问时此前完全不落。
+	// 原话无投递目标（ChatID 空 → hub 自身归因）。捷径分支上面已让位：
+	// 捷径直投的原文由发送链 sendAndRecord 落盘，这里不再重复。
+	a.recordHubMessageWithID(hub.Message{Kind: "user", Text: text}, "")
 	// 可取消 ctx：用户点「中断」时整轮（含模型往返）立即结束。
 	ctx, cancel := context.WithCancel(a.desktopContext())
 	defer cancel()
 	unregister := a.registerSmartCancel(reqID, cancel)
 	defer unregister()
 
+	// 循环步骤累计（问题 3）：思考时间线随 hub:progress 推给前端的同时留底，
+	// 循环成功后作为 hub_manager_think 消息落盘，重启后仍可读。
+	var mgrSteps []string
 	a.emitHubProgress(reqID, hubStepRoute)
 	res, err := a.runHubLoop(ctx, text, agentapi.RunOpts{
 		Channel:      "hub",
 		Continuation: cont,
 		Progress: func(p agentapi.LoopProgress) {
+			mgrSteps = append(mgrSteps, fmt.Sprintf("%s@%d", p.Tool, p.Round))
 			a.emitHubToolProgress(reqID, p.Tool, p.Round)
 		},
 	})
@@ -216,6 +225,16 @@ func (a *App) HubSmartSend(reqID, text string) (HubPickView, error) {
 		a.hubAskPendingAt = time.Now()
 	}
 	a.mu.Unlock()
+	// 思考与结论落盘（问题 3）：此前回执只走前端瞬态气泡，重拉/重启即丢。
+	// 思考消息是语言中立的步骤序列（前端打「AgentHub 管理者」徽标），结论逐条落。
+	if len(mgrSteps) > 0 {
+		a.recordHubMessage(hub.Message{
+			Kind: "agent", Event: "hub_manager_think", Text: strings.Join(mgrSteps, " → "),
+		})
+	}
+	for _, r := range res.Replies {
+		a.recordHubMessage(hub.Message{Kind: "agent", Event: "hub_manager_reply", Text: r})
+	}
 	replies := make([]hub.Reply, 0, len(res.Replies))
 	for _, r := range res.Replies {
 		replies = append(replies, hub.Reply{Text: r})
@@ -248,6 +267,8 @@ func (a *App) shortcutSend(text string) (HubPickView, bool) {
 	}
 	lang := normalizeLanguage(a.snapshot().Config.Language)
 	reply := fmt.Sprintf(hub.CmdText(lang, "shortcut_sent"), text, waiting.Title)
+	// 捷径回执同样落盘（hub_manager_reply）：重启后历史仍可读。
+	a.recordHubMessage(hub.Message{Kind: "agent", Event: "hub_manager_reply", Text: reply})
 	return HubPickView{Replies: []hub.Reply{{Text: reply}}, Pending: false}, true
 }
 

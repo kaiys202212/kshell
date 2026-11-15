@@ -12,6 +12,7 @@ import (
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/hub"
+	"github.com/yangk/kshell/internal/weixin"
 )
 
 // routeFakeExecutor 是命令层 Executor 的桌面测试替身：只记录 Send 与
@@ -243,6 +244,138 @@ func lastUserMessage(t *testing.T, fx *routeFixture, chatID string) (hub.Message
 		}
 	}
 	return found, ok
+}
+
+// TestHubSmartSendRecordsHistory 覆盖 hub 历史落盘：用户原话进历史、思考/结论
+// 以 hub_manager_* 消息落盘、捷径不重复落原话、失败只落原话。
+func TestHubSmartSendRecordsHistory(t *testing.T) {
+	t.Run("循环成功落原话与思考结论", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		injectHubRunner(fx, func(_ context.Context, _ string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
+			opts.Progress(agentapi.LoopProgress{Tool: "list_sessions", Round: 1})
+			opts.Progress(agentapi.LoopProgress{Tool: "send", Round: 2})
+			return agentapi.RunResult{Replies: []string{"已把任务发给「甲」。"}, ToolSteps: 2}, nil
+		})
+		view, err := fx.app.HubSmartSend("req", "把任务发给甲")
+		if err != nil || view.Pending {
+			t.Fatalf("view=%+v err=%v", view, err)
+		}
+		msgs := fx.app.snapshot().HubStore.List()
+		var userMsg, thinkMsg *hub.Message
+		replies := 0
+		for i := range msgs {
+			m := msgs[i]
+			if m.Kind == "user" && m.Text == "把任务发给甲" {
+				userMsg = &msgs[i]
+			}
+			if m.Event == "hub_manager_think" {
+				thinkMsg = &msgs[i]
+			}
+			if m.Event == "hub_manager_reply" && m.Text == "已把任务发给「甲」。" {
+				replies++
+			}
+		}
+		if userMsg == nil || userMsg.ChatID != "" {
+			t.Fatalf("用户原话应落盘且无会话归因: %+v", msgs)
+		}
+		if thinkMsg == nil || thinkMsg.Text != "list_sessions@1 → send@2" {
+			t.Fatalf("思考消息应为步骤序列: %+v", msgs)
+		}
+		if replies != 1 {
+			t.Fatalf("结论应落一条 hub_manager_reply: %+v", msgs)
+		}
+	})
+
+	t.Run("循环失败只落原话", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			return agentapi.RunResult{}, fmt.Errorf("boom")
+		})
+		if _, err := fx.app.HubSmartSend("req", "失败输入"); err != nil {
+			t.Fatalf("HubSmartSend 失败应回落而非报错: %v", err)
+		}
+		var thinkOrReply bool
+		var userOK bool
+		for _, m := range fx.app.snapshot().HubStore.List() {
+			if m.Kind == "user" && m.Text == "失败输入" {
+				userOK = true
+			}
+			if m.Event == "hub_manager_think" || m.Event == "hub_manager_reply" {
+				thinkOrReply = true
+			}
+		}
+		if !userOK {
+			t.Fatal("失败路径用户原话仍应落盘")
+		}
+		if thinkOrReply {
+			t.Fatal("失败路径不应落思考/结论消息")
+		}
+	})
+
+	t.Run("捷径直投不重复落原话但落回执", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		calls := injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			t.Fatal("捷径命中不应进循环")
+			return agentapi.RunResult{}, nil
+		})
+		setPermSession(t, fx, fx.refs[0])
+		view, err := fx.app.HubSmartSend("req", "继续")
+		if err != nil || view.Pending {
+			t.Fatalf("捷径应直投: view=%+v err=%v", view, err)
+		}
+		if *calls != 0 {
+			t.Fatal("捷径不应调用循环")
+		}
+		var users, replies int
+		for _, m := range fx.app.snapshot().HubStore.List() {
+			if m.Kind == "user" {
+				users++
+			}
+			if m.Event == "hub_manager_reply" {
+				replies++
+			}
+		}
+		// user 消息仅来自捷径的 SendChatPrompt（真实发送链落盘），HubSmartSend 不得重复落；
+		// 回执落一条 hub_manager_reply。
+		if users != 1 {
+			t.Fatalf("捷径应恰好一条 user 消息（发送链落盘），得到 %d", users)
+		}
+		if replies != 1 {
+			t.Fatalf("捷径回执应落一条 hub_manager_reply，得到 %d", replies)
+		}
+	})
+}
+
+// TestRecordHubMessageManagerEventsSkipMirror：hub_manager_* 消息不出站镜像
+//（微信桥路由器已自行推送结论），普通 agent 消息仍镜像。
+func TestRecordHubMessageManagerEventsSkipMirror(t *testing.T) {
+	a, _, rec := newHubTestApp(t)
+	sink := make(chan hub.Message, 8)
+	r := weixin.NewRuntime(newWXExecutor(a), "zh-CN")
+	r.SetHubSink(func(mm hub.Message) { sink <- mm })
+	a.mu.Lock()
+	a.wx = r
+	a.mu.Unlock()
+
+	a.recordHubMessage(hub.Message{Kind: "agent", Event: "hub_manager_reply", Text: "结论"})
+	a.recordHubMessage(hub.Message{Kind: "agent", Event: "done", Text: "普通回复"})
+	select {
+	case mm := <-sink:
+		if mm.Event != "done" {
+			t.Fatalf("镜像只应收到普通 agent 消息: %+v", mm)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("普通 agent 消息应出站镜像")
+	}
+	// hub_manager_reply 不进镜像：sink 中 done 已消费，再等即超时。
+	select {
+	case mm := <-sink:
+		t.Fatalf("hub_manager 消息不应出站镜像: %+v", mm)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if rec.count("hub:changed") < 2 {
+		t.Fatalf("两条消息都应 emit hub:changed: %v", rec.names)
+	}
 }
 
 // TestHubSmartSend 覆盖桌面 Hub 管理者循环入口：回执回显/续轮衔接/降级回落。

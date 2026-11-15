@@ -59,6 +59,11 @@ func (a *App) recordHubMessage(m hub.Message) {
 	_ = store.Append(m)
 	a.Emit("hub:changed")
 	if r := a.wxRuntime(); r != nil { // 微信桥出站镜像（异步，不阻塞写入路径）
+		// hub_manager_* 是管理者循环的思考/结论消息：桥的路由器已自行推送结论，
+		// 这里不再镜像，避免微信侧重复收到。
+		if strings.HasPrefix(m.Event, "hub_manager") {
+			return
+		}
 		if m.Kind == "agent" && a.mirrorAggregated(r, m) {
 			// 聚合拦截:摘要行已由 mirrorAggregated 出站,不再逐条镜像原文。
 		} else {
