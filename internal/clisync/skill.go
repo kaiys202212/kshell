@@ -22,6 +22,9 @@ description: Manage kshell agent sessions - list/search/open/create agent coding
 本机运行（CLI 是薄客户端，经 ` + "`~/.kshell/agentapi/endpoint.json`" + ` 自动发现连接与
 鉴权，无需任何配置）。桌面端未运行时命令返回退出码 3。
 
+若 ` + "`kshell`" + ` 不在 PATH 上，用绝对路径调用：Windows
+` + "`%%USERPROFILE%%\\.kshell\\bin\\kshell.exe`" + `，macOS/Linux ` + "`~/.kshell/bin/kshell`" + `。
+
 ## 命令一览
 
 ` + "```" + `

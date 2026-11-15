@@ -170,6 +170,13 @@ func Sync(opts Options) (Result, error) {
 		step.State, step.Err = installSkillFor(opts.Home, toolID, opts.Version)
 		res.Skills = append(res.Skills, step)
 	}
+
+	// 4. 自助安装说明书（dev 构建无内嵌 CLI 时跳过——指引指向的命令不存在）。
+	if len(opts.Binary) > 0 {
+		if _, gerr := installGuide(opts.Home, opts.Version); gerr != "" {
+			res.Warnings = append(res.Warnings, gerr)
+		}
+	}
 	return res, nil
 }
 

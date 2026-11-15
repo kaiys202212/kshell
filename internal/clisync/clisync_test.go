@@ -206,6 +206,53 @@ func TestSyncStaleCopyWarningWireKey(t *testing.T) {
 	}
 }
 
+// TestSyncWritesGuide：同步时生成自助安装说明书；dev 构建（未嵌 CLI）跳过。
+func TestSyncWritesGuide(t *testing.T) {
+	home := t.TempDir()
+	guide := filepath.Join(home, ".kshell", "host-install.md")
+	if _, err := clisync.Sync(clisync.Options{Home: home, Version: "v1.0.0", Targets: []string{"codebuddy"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(guide); !os.IsNotExist(err) {
+		t.Fatal("dev 构建不应写说明书")
+	}
+	if _, err := clisync.Sync(clisync.Options{Home: home, Binary: fakeBinary(), Version: "v1.0.0", Targets: []string{"codebuddy"}}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(guide)
+	if err != nil {
+		t.Fatalf("说明书未写入: %v", err)
+	}
+	if !strings.Contains(string(raw), "name: kshell") {
+		t.Fatal("说明书应内嵌 SKILL.md 全文")
+	}
+}
+
+// TestSyncGuideFailureWarning：说明书写失败以 wire key 进 Warnings，不阻断同步。
+func TestSyncGuideFailureWarning(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".kshell", "host-install.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res, err := clisync.Sync(clisync.Options{Home: home, Binary: fakeBinary(), Version: "v1.0.0", Targets: []string{"codebuddy"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.HasPrefix(w, "err.hostsync.guide_write|") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Warnings 应含 guide_write: %v", res.Warnings)
+	}
+	// 同步本身不受影响。
+	if res.BinaryState != "released" || len(res.Skills) != 1 {
+		t.Fatalf("说明书失败不应影响其它步骤: %+v", res)
+	}
+}
+
 // TestStatus：只读状态查询，不触发任何写入；Skills 覆盖全部已知宿主。
 func TestStatus(t *testing.T) {
 	home := t.TempDir()
