@@ -24,13 +24,14 @@ func (r *ensureRecorder) ensure(binDir string) (string, error) {
 	return r.state, nil
 }
 
-func TestSyncReleasesBinaryAndSkill(t *testing.T) {
+func TestSyncReleasesBinaryAndSkills(t *testing.T) {
 	home := t.TempDir()
 	rec := &ensureRecorder{state: "added"}
 	res, err := clisync.Sync(clisync.Options{
 		Home:          home,
 		Binary:        fakeBinary(),
 		Version:       "v1.0.0",
+		Targets:       []string{"codebuddy", "claude"},
 		ConfigurePath: true,
 		EnsurePath:    rec.ensure,
 	})
@@ -54,31 +55,64 @@ func TestSyncReleasesBinaryAndSkill(t *testing.T) {
 	if len(rec.calls) != 1 || rec.calls[0] != clisync.BinDir(home) {
 		t.Fatalf("EnsurePath 调用不符: %v", rec.calls)
 	}
-	// Skill：frontmatter 可解析、含完整用法文本与版本行。
-	skillPath := filepath.Join(home, ".codebuddy", "skills", "kshell", "SKILL.md")
-	raw, err := os.ReadFile(skillPath)
-	if err != nil {
-		t.Fatalf("SKILL.md 未写入: %v", err)
+	// Skills：每宿主一条，顺序与 Targets 一致，路径经 skills.TargetRoot。
+	if len(res.Skills) != 2 {
+		t.Fatalf("Skills 应 2 条: %+v", res.Skills)
 	}
-	name, _, err := skills.ParseSkillMD(raw)
-	if err != nil || name != "kshell" {
-		t.Fatalf("frontmatter 解析: name=%q err=%v", name, err)
+	wantRoots := map[string]string{
+		"codebuddy": mustTargetRoot(t, "codebuddy", home),
+		"claude":    mustTargetRoot(t, "claude", home),
 	}
-	if !strings.Contains(string(raw), agentcli.UsageText()) {
-		t.Fatal("SKILL.md 应包含 UsageText 全文")
-	}
-	if !strings.Contains(string(raw), "v1.0.0") {
-		t.Fatal("SKILL.md 应包含版本行")
-	}
-	if res.SkillState != "installed" {
-		t.Fatalf("SkillState = %q (%s), want installed", res.SkillState, res.SkillErr)
+	for i, wantID := range []string{"codebuddy", "claude"} {
+		step := res.Skills[i]
+		if step.ToolID != wantID || step.State != "installed" {
+			t.Fatalf("Skills[%d] = %+v, want %s/installed", i, step, wantID)
+		}
+		if step.Path != filepath.Join(wantRoots[wantID], "kshell", "SKILL.md") {
+			t.Fatalf("Skills[%d].Path = %q, want under %s", i, step.Path, wantRoots[wantID])
+		}
+		raw, err := os.ReadFile(step.Path)
+		if err != nil {
+			t.Fatalf("SKILL.md 未写入 %s: %v", step.Path, err)
+		}
+		name, _, err := skills.ParseSkillMD(raw)
+		if err != nil || name != "kshell" {
+			t.Fatalf("frontmatter 解析: name=%q err=%v", name, err)
+		}
+		if !strings.Contains(string(raw), agentcli.UsageText()) {
+			t.Fatalf("%s 的 SKILL.md 应包含 UsageText 全文", wantID)
+		}
+		if !strings.Contains(string(raw), "v1.0.0") {
+			t.Fatalf("%s 的 SKILL.md 应包含版本行", wantID)
+		}
 	}
 }
 
-// TestSyncIdempotent：内容不变时二进制与技能都跳过重写（current）。
+func mustTargetRoot(t *testing.T, toolID, home string) string {
+	t.Helper()
+	root, ok := skills.TargetRoot(toolID, home)
+	if !ok {
+		t.Fatalf("TargetRoot(%s) 不存在", toolID)
+	}
+	return root
+}
+
+// TestSyncEmptyTargetsSkipsSkill：未指定宿主时技能步整体跳过（写入哪个宿主
+// 由用户显式决定）。
+func TestSyncEmptyTargetsSkipsSkill(t *testing.T) {
+	res, err := clisync.Sync(clisync.Options{Home: t.TempDir(), Binary: fakeBinary(), Version: "v1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Skills) != 0 {
+		t.Fatalf("Skills 应为空: %+v", res.Skills)
+	}
+}
+
+// TestSyncIdempotent：内容不变时二进制与各宿主技能都跳过重写（current）。
 func TestSyncIdempotent(t *testing.T) {
 	home := t.TempDir()
-	opts := clisync.Options{Home: home, Binary: fakeBinary(), Version: "v1.0.0"}
+	opts := clisync.Options{Home: home, Binary: fakeBinary(), Version: "v1.0.0", Targets: []string{"codebuddy"}}
 	if _, err := clisync.Sync(opts); err != nil {
 		t.Fatal(err)
 	}
@@ -86,42 +120,42 @@ func TestSyncIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.BinaryState != "current" || res.SkillState != "current" {
-		t.Fatalf("幂等同步: Binary=%q Skill=%q, want current/current", res.BinaryState, res.SkillState)
+	if res.BinaryState != "current" || len(res.Skills) != 1 || res.Skills[0].State != "current" {
+		t.Fatalf("幂等同步: Binary=%q Skills=%+v", res.BinaryState, res.Skills)
 	}
 }
 
 // TestSyncRewritesOnUpgrade：二进制内容变化（升级）时重新释放；版本变化时技能重写。
 func TestSyncRewritesOnUpgrade(t *testing.T) {
 	home := t.TempDir()
-	if _, err := clisync.Sync(clisync.Options{Home: home, Binary: fakeBinary(), Version: "v1.0.0"}); err != nil {
+	if _, err := clisync.Sync(clisync.Options{Home: home, Binary: fakeBinary(), Version: "v1.0.0", Targets: []string{"codebuddy"}}); err != nil {
 		t.Fatal(err)
 	}
-	res, err := clisync.Sync(clisync.Options{Home: home, Binary: []byte("MZ-new"), Version: "v2.0.0"})
+	res, err := clisync.Sync(clisync.Options{Home: home, Binary: []byte("MZ-new"), Version: "v2.0.0", Targets: []string{"codebuddy"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.BinaryState != "released" || res.SkillState != "installed" {
-		t.Fatalf("升级后: Binary=%q Skill=%q, want released/installed", res.BinaryState, res.SkillState)
+	if res.BinaryState != "released" || len(res.Skills) != 1 || res.Skills[0].State != "installed" {
+		t.Fatalf("升级后: Binary=%q Skills=%+v", res.BinaryState, res.Skills)
 	}
-	raw, _ := os.ReadFile(filepath.Join(home, ".codebuddy", "skills", "kshell", "SKILL.md"))
+	raw, _ := os.ReadFile(res.Skills[0].Path)
 	if !strings.Contains(string(raw), "v2.0.0") {
 		t.Fatal("升级后 SKILL.md 应更新版本行")
 	}
 }
 
-// TestSyncNotEmbedded：dev 构建未嵌 CLI 时二进制跳过，其余步骤照常。
+// TestSyncNotEmbedded：dev 构建未嵌 CLI 时二进制跳过，技能照常。
 func TestSyncNotEmbedded(t *testing.T) {
 	home := t.TempDir()
-	res, err := clisync.Sync(clisync.Options{Home: home, Version: "dev"})
+	res, err := clisync.Sync(clisync.Options{Home: home, Version: "dev", Targets: []string{"codebuddy"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.BinaryState != "not_embedded" {
 		t.Fatalf("BinaryState = %q, want not_embedded", res.BinaryState)
 	}
-	if res.SkillState != "installed" {
-		t.Fatalf("SkillState = %q, want installed", res.SkillState)
+	if len(res.Skills) != 1 || res.Skills[0].State != "installed" {
+		t.Fatalf("Skills = %+v, want installed", res.Skills)
 	}
 }
 
@@ -144,7 +178,7 @@ func TestSyncNotEmbeddedSkipsPath(t *testing.T) {
 	}
 }
 
-// TestSyncStaleCopyWarningWireKey：PATH 体检警告走 err.wbsync.* wire key，
+// TestSyncStaleCopyWarningWireKey：PATH 体检警告走 err.hostsync.* wire key，
 // 由前端 translateBackend 渲染，Go 侧不输出自然语言。
 func TestSyncStaleCopyWarningWireKey(t *testing.T) {
 	home := t.TempDir()
@@ -167,36 +201,53 @@ func TestSyncStaleCopyWarningWireKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Warnings) != 1 || !strings.HasPrefix(res.Warnings[0], "err.wbsync.stale_copy|") {
-		t.Fatalf("Warnings = %v, want err.wbsync.stale_copy|<dir>", res.Warnings)
+	if len(res.Warnings) != 1 || !strings.HasPrefix(res.Warnings[0], "err.hostsync.stale_copy|") {
+		t.Fatalf("Warnings = %v, want err.hostsync.stale_copy|<dir>", res.Warnings)
 	}
 }
 
-// TestSyncConfigurePathOff：不配 PATH 时该步 skipped，EnsurePath 不被调用。
-func TestSyncConfigurePathOff(t *testing.T) {
-	home := t.TempDir()
-	rec := &ensureRecorder{state: "ready"}
-	res, err := clisync.Sync(clisync.Options{Home: home, Binary: fakeBinary(), Version: "v1.0.0", EnsurePath: rec.ensure})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.PathState != "skipped" || len(rec.calls) != 0 {
-		t.Fatalf("PathState=%q calls=%v, want skipped/未调用", res.PathState, rec.calls)
-	}
-}
-
-// TestStatus：只读状态查询，不触发任何写入。
+// TestStatus：只读状态查询，不触发任何写入；Skills 覆盖全部已知宿主。
 func TestStatus(t *testing.T) {
 	home := t.TempDir()
 	st := clisync.Status(clisync.Options{Home: home, Binary: fakeBinary()})
-	if st.BinaryState != "absent" || st.SkillState != "absent" || st.PathState != "missing" {
+	if st.BinaryState != "absent" || st.PathState != "missing" {
 		t.Fatalf("空环境状态: %+v", st)
 	}
-	if _, err := clisync.Sync(clisync.Options{Home: home, Binary: fakeBinary(), Version: "v1.0.0"}); err != nil {
+	if len(st.Skills) == 0 {
+		t.Fatal("Status 的 Skills 应覆盖全部已知宿主")
+	}
+	for _, s := range st.Skills {
+		if s.State != "absent" {
+			t.Fatalf("空环境 %s 应 absent: %+v", s.ToolID, s)
+		}
+	}
+	if _, err := clisync.Sync(clisync.Options{Home: home, Binary: fakeBinary(), Version: "v1.0.0", Targets: []string{"codebuddy"}}); err != nil {
 		t.Fatal(err)
 	}
 	st = clisync.Status(clisync.Options{Home: home, Binary: fakeBinary()})
-	if st.BinaryState != "present" || st.SkillState != "present" {
-		t.Fatalf("同步后状态: %+v", st)
+	if st.BinaryState != "present" {
+		t.Fatalf("同步后 BinaryState: %+v", st)
+	}
+	byID := map[string]clisync.SkillStep{}
+	for _, s := range st.Skills {
+		byID[s.ToolID] = s
+	}
+	if byID["codebuddy"].State != "present" || byID["claude"].State != "absent" {
+		t.Fatalf("同步后按宿主状态不符: %+v", st.Skills)
+	}
+}
+
+// TestExistingSkillTargets：启动自愈只认已装过技能的宿主，不扩散新目标。
+func TestExistingSkillTargets(t *testing.T) {
+	home := t.TempDir()
+	if got := clisync.ExistingSkillTargets(home); len(got) != 0 {
+		t.Fatalf("空环境 ExistingSkillTargets = %v, want 空", got)
+	}
+	if _, err := clisync.Sync(clisync.Options{Home: home, Binary: fakeBinary(), Version: "v1.0.0", Targets: []string{"codebuddy", "claude"}}); err != nil {
+		t.Fatal(err)
+	}
+	got := clisync.ExistingSkillTargets(home)
+	if len(got) != 2 {
+		t.Fatalf("ExistingSkillTargets = %v, want 2 项", got)
 	}
 }

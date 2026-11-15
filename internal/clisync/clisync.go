@@ -1,7 +1,8 @@
 // Package clisync 把 kshell 的 agent CLI 与使用技能同步给外部 agent 宿主
-// （WorkBuddy / CodeBuddy 内核）：释放最小 CLI 二进制到用户 bin 目录、保证
-// PATH 可达、生成 SKILL.md 到 ~/.codebuddy/skills/kshell/。全部步骤幂等
-//（内容哈希门控），可随桌面端每次启动重复执行。
+//（WorkBuddy / Claude Code / Cursor 等）：释放最小 CLI 二进制到用户 bin 目录、
+// 保证 PATH 可达、按宿主列表生成 SKILL.md（目录经 internal/skills 的
+// targetRel 映射，新增宿主零改动）。全部步骤幂等（内容哈希门控），可随桌面端
+// 每次启动重复执行。
 package clisync
 
 import (
@@ -11,6 +12,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+
+	"github.com/yangk/kshell/internal/skills"
 )
 
 // Options 是同步输入。Binary 为空表示当前构建未内嵌 CLI（dev 构建）。
@@ -18,6 +21,9 @@ type Options struct {
 	Home    string
 	Binary  []byte // 内嵌的最小 CLI 二进制（经根 main.go 的 embed 注入）
 	Version string // 桌面端应用版本，写进 SKILL.md 版本行
+	// Targets 是技能写入的宿主列表（toolID，经 skills.TargetRoot 解析目录）。
+	// 空 = 技能步整体跳过——装到哪些宿主由用户显式决定，绝不擅自扩散。
+	Targets []string
 	// ConfigurePath 为 true 时执行 PATH 配置（设置页按钮；启动自动路径恒 false
 	// ——环境变量变更必须用户显式触发）。
 	ConfigurePath bool
@@ -28,19 +34,25 @@ type Options struct {
 	PathLookup func() []string
 }
 
+// SkillStep 是单个宿主的技能安装状态。
+type SkillStep struct {
+	ToolID string `json:"toolID"`
+	Path   string `json:"path"`
+	State  string `json:"state"`
+	Err    string `json:"err,omitempty"`
+}
+
 // Result 是一次同步/状态查询的逐步结果。State 取值：
 // 二进制 released|current|not_embedded|present|absent|error；
 // PATH added|ready|skipped|missing|error；技能 installed|current|present|absent|error。
 type Result struct {
-	BinaryPath  string `json:"binaryPath"`
-	BinaryState string `json:"binaryState"`
-	BinaryErr   string `json:"binaryErr,omitempty"`
-	PathState   string `json:"pathState"`
-	PathErr     string `json:"pathErr,omitempty"`
-	SkillPath   string `json:"skillPath"`
-	SkillState  string `json:"skillState"`
-	SkillErr    string `json:"skillErr,omitempty"`
-	Warnings    []string `json:"warnings,omitempty"`
+	BinaryPath  string      `json:"binaryPath"`
+	BinaryState string      `json:"binaryState"`
+	BinaryErr   string      `json:"binaryErr,omitempty"`
+	PathState   string      `json:"pathState"`
+	PathErr     string      `json:"pathErr,omitempty"`
+	Skills      []SkillStep `json:"skills,omitempty"`
+	Warnings    []string    `json:"warnings,omitempty"`
 }
 
 // 各步骤状态常量。
@@ -80,14 +92,33 @@ func BinDir(home string) string {
 	return filepath.Join(home, ".local", "bin")
 }
 
-// skillDir 返回 WorkBuddy（CodeBuddy 内核）用户级技能目录下本技能的位置。
-// 目录口径与 internal/skills 的 targetRel["codebuddy"] 一致。
-func skillDir(home string) string {
-	return filepath.Join(home, ".codebuddy", "skills", "kshell")
+// skillPathFor 返回某宿主技能目录下本技能的 SKILL.md 路径。目录解析完全
+// 委托 skills.TargetRoot——宿主目录知识只存在一处（internal/skills/targetRel）。
+func skillPathFor(home, toolID string) (string, bool) {
+	root, ok := skills.TargetRoot(toolID, home)
+	if !ok {
+		return "", false
+	}
+	return filepath.Join(root, "kshell", "SKILL.md"), true
 }
 
-// Sync 执行完整同步：释放二进制 + （可选）配置 PATH + 安装技能。单步失败
-// 记入对应字段的 Err/State，不中断其余步骤；仅 Home 为空时返回顶层错误。
+// KnownHostIDs 返回支持技能安装的宿主列表（透传 internal/skills 的稳定顺序）。
+func KnownHostIDs() []string { return skills.KnownToolIDs() }
+
+// ExistingSkillTargets 扫描已装过 kshell 技能的宿主（启动自愈口径：只刷新
+// 装过的，不扩散新目标）。
+func ExistingSkillTargets(home string) []string {
+	var out []string
+	for _, id := range KnownHostIDs() {
+		if p, ok := skillPathFor(home, id); ok && fileExists(p) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// Sync 执行完整同步：释放二进制 + （可选）配置 PATH + 按宿主列表安装技能。
+// 单宿主失败记入对应 SkillStep.Err，不中断其余步骤；仅 Home 为空时返回顶层错误。
 func Sync(opts Options) (Result, error) {
 	if opts.Home == "" {
 		return Result{}, fmt.Errorf("clisync: home 为空")
@@ -101,7 +132,7 @@ func Sync(opts Options) (Result, error) {
 		ensure = ensurePath
 	}
 
-	// 1. 释放二进制。
+	// 1. 释放二进制（全局一次，所有宿主共用同一份 CLI）。
 	binDir := BinDir(opts.Home)
 	res.BinaryPath = filepath.Join(binDir, BinaryName())
 	state, err := releaseBinary(binDir, opts.Binary)
@@ -125,17 +156,25 @@ func Sync(opts Options) (Result, error) {
 		res.PathState = pathSkipped
 	}
 
-	// 3. 技能文档。
-	res.SkillPath = filepath.Join(skillDir(opts.Home), "SKILL.md")
-	sstate, serr := installSkill(opts.Home, opts.Version)
-	res.SkillState = sstate
-	if serr != nil {
-		res.SkillErr = serr.Error()
+	// 3. 技能文档：按宿主列表逐个安装，单宿主失败不拖垮其余。
+	for _, toolID := range opts.Targets {
+		step := SkillStep{ToolID: toolID}
+		p, ok := skillPathFor(opts.Home, toolID)
+		if !ok {
+			step.State = stateError
+			step.Err = "err.hostsync.unknown_host|" + toolID
+			res.Skills = append(res.Skills, step)
+			continue
+		}
+		step.Path = p
+		step.State, step.Err = installSkillFor(opts.Home, toolID, opts.Version)
+		res.Skills = append(res.Skills, step)
 	}
 	return res, nil
 }
 
-// Status 只读查询当前同步状态，不触发任何写入。
+// Status 只读查询当前同步状态，不触发任何写入；Skills 覆盖全部已知宿主
+//（前端按检测到的宿主筛选展示）。
 func Status(opts Options) Result {
 	res := Result{}
 	binDir := BinDir(opts.Home)
@@ -148,11 +187,19 @@ func Status(opts Options) Result {
 		res.BinaryState = stateAbsent
 	}
 
-	res.SkillPath = filepath.Join(skillDir(opts.Home), "SKILL.md")
-	if fileExists(res.SkillPath) {
-		res.SkillState = statePresent
-	} else {
-		res.SkillState = stateAbsent
+	for _, toolID := range KnownHostIDs() {
+		step := SkillStep{ToolID: toolID}
+		if p, ok := skillPathFor(opts.Home, toolID); ok {
+			step.Path = p
+			if fileExists(p) {
+				step.State = statePresent
+			} else {
+				step.State = stateAbsent
+			}
+		} else {
+			step.State = stateAbsent
+		}
+		res.Skills = append(res.Skills, step)
 	}
 
 	res.PathState = pathStatusWith(opts.pathLookup(), binDir)
@@ -185,7 +232,7 @@ func auditWarnings(binDir string, lookup func() []string) []string {
 	out := make([]string, 0, len(stale))
 	for _, d := range stale {
 		// wire key 形态：前端经 translateBackend 渲染成用户语言。
-		out = append(out, fmt.Sprintf("err.wbsync.stale_copy|%s", d))
+		out = append(out, fmt.Sprintf("err.hostsync.stale_copy|%s", d))
 	}
 	return out
 }

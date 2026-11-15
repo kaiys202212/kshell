@@ -8,9 +8,9 @@ import (
 	"github.com/yangk/kshell/internal/agentcli"
 )
 
-// skillMDTemplate 生成 WorkBuddy 的 kshell 技能文档。命令面正文直接复用
-// agentcli.UsageText()——单一事实源，CLI 命令变更时文档同步演进；
-// 版本行写进正文，应用升级后内容哈希变化自然触发重写。
+// skillMDTemplate 生成各宿主通用的 kshell 技能文档（agentskills 规范各宿主
+// 共享同一格式）。命令面正文直接复用 agentcli.UsageText()——单一事实源，
+// CLI 命令变更时文档同步演进；版本行写进正文，应用升级后内容哈希变化自然触发重写。
 const skillMDTemplate = `---
 name: kshell
 description: Manage kshell agent sessions - list/search/open/create agent coding sessions, send instructions, read or watch output, stop sessions, switch models, grant permissions, and route messages. Use whenever the user asks to operate, inspect, or manage kshell or its agent sessions.
@@ -51,28 +51,31 @@ description: Manage kshell agent sessions - list/search/open/create agent coding
 > 本文件由 kshell %s 同步生成；在 kshell 设置页重新同步即可更新。
 `
 
-// installSkill 把 SKILL.md 写入 ~/.codebuddy/skills/kshell/。内容与版本绑定
-//（版本行参与哈希），升级后重同步即更新；内容相同跳过。
-func installSkill(home, ver string) (string, error) {
-	dir := skillDir(home)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return stateError, err
+// installSkillFor 把 SKILL.md 写入指定宿主的技能目录（路径经 skills.TargetRoot
+// 解析）。内容与版本绑定（版本行参与哈希），升级后重同步即更新；内容相同跳过。
+// 返回状态与错误（错误已按 wire key 化，前端 translateBackend 渲染）。
+func installSkillFor(home, toolID, ver string) (string, string) {
+	target, ok := skillPathFor(home, toolID)
+	if !ok {
+		return stateError, "err.hostsync.unknown_host|" + toolID
 	}
-	target := filepath.Join(dir, "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return stateError, "err.hostsync.skill_write|" + err.Error()
+	}
 	content := buildSkillMD(ver)
 	if cur, err := os.ReadFile(target); err == nil && string(cur) == string(content) {
-		return stateCurrent, nil
+		return stateCurrent, ""
 	}
 	// 临时文件 + rename：技能扫描/Status 读到半截文件的窗口最小化。
 	tmp := target + ".tmp"
 	if err := os.WriteFile(tmp, content, 0o644); err != nil {
-		return stateError, err
+		return stateError, "err.hostsync.skill_write|" + err.Error()
 	}
 	if err := os.Rename(tmp, target); err != nil {
 		_ = os.Remove(tmp)
-		return stateError, err
+		return stateError, "err.hostsync.skill_write|" + err.Error()
 	}
-	return skillInstalled, nil
+	return skillInstalled, ""
 }
 
 // buildSkillMD 组装 SKILL.md 内容。Version 为空（异常路径）时用 "unknown" 占位，
