@@ -1,8 +1,10 @@
 {
   "err": {
     "session_not_found": "Session not found or has been cleaned up",
-    "wbsync": {
-      "stale_copy": "Found another kshell copy on PATH (may take precedence): {{0}}"
+    "hostsync": {
+      "stale_copy": "Found another kshell copy on PATH (may take precedence): {{0}}",
+      "unknown_host": "Unknown host: {{0}}",
+      "skill_write": "Failed to write skill: {{0}}"
     },
     "requirements": {
       "project_required": "Please select a project",
@@ -517,15 +519,15 @@
       "workbuddy_imported": "WorkBuddy models imported and saved",
       "workbuddy_ctx": "ctx {{0}}"
       },
-      "wbsync": {
-        "title": "WorkBuddy sync",
-        "desc": "One-click setup for WorkBuddy agents: release the kshell agent CLI, keep it on PATH, and install the kshell skill so WorkBuddy can manage kshell sessions directly.",
-        "sync": "Sync to WorkBuddy",
+      "hostsync": {
+        "title": "Agent host sync",
+        "desc": "One-click setup for agent hosts: release the kshell agent CLI, keep it on PATH, and install the kshell skill so host agents can manage kshell sessions directly.",
+        "sync": "Sync",
         "syncing": "Syncing…",
-        "done": "Synced to WorkBuddy",
+        "all": "Sync all",
+        "done": "Synced",
         "cli": "CLI",
         "path": "PATH",
-        "skill": "Skill",
         "state_released": "Released",
         "state_current": "Up to date",
         "state_not_embedded": "Not bundled (dev build)",

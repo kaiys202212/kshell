@@ -1,8 +1,10 @@
 {
   "err": {
     "session_not_found": "会话不存在或已被清理",
-    "wbsync": {
-      "stale_copy": "PATH 中发现其它 kshell 副本（可能抢先命中）: {{0}}"
+    "hostsync": {
+      "stale_copy": "PATH 中发现其它 kshell 副本（可能抢先命中）: {{0}}",
+      "unknown_host": "未知宿主: {{0}}",
+      "skill_write": "技能写入失败: {{0}}"
     },
     "requirements": {
       "project_required": "请选择项目",
@@ -517,15 +519,15 @@
       "workbuddy_imported": "已导入并保存 WorkBuddy 模型",
       "workbuddy_ctx": "上下文 {{0}}"
       },
-      "wbsync": {
-        "title": "WorkBuddy 同步",
-        "desc": "一键为 WorkBuddy 安装 kshell agent CLI 与使用技能：释放命令行、配置 PATH，让 WorkBuddy 的 agent 直接管理 kshell 会话。",
-        "sync": "同步到 WorkBuddy",
+      "hostsync": {
+        "title": "Agent 宿主同步",
+        "desc": "一键为 agent 宿主安装 kshell agent CLI 与使用技能：释放命令行、配置 PATH，让宿主的 agent 直接管理 kshell 会话。",
+        "sync": "同步",
         "syncing": "同步中…",
-        "done": "已同步到 WorkBuddy",
+        "all": "全部同步",
+        "done": "已同步",
         "cli": "CLI",
         "path": "PATH",
-        "skill": "技能",
         "state_released": "已释放",
         "state_current": "已是最新",
         "state_not_embedded": "未内置（dev 构建）",

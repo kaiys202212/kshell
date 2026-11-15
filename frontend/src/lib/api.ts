@@ -541,17 +541,23 @@ export interface ToolInstallJobView {
   Trigger?: string;
 }
 
-// clisync.Result 的 JSON 形态：WorkBuddy 同步三步（CLI/PATH/技能）各自状态。
-// 状态取值见 internal/clisync 的 Result 注释；Err 非空表示该步失败。
-export interface WorkBuddySyncResult {
+// clisync.SkillStep 的 JSON 形态：单个宿主的技能安装状态。
+export interface HostSkillStep {
+  toolID: string;
+  path: string;
+  state: string;
+  err?: string;
+}
+
+// clisync.Result 的 JSON 形态：宿主同步各步状态（CLI/PATH 全局一次，
+// skills 每宿主一条）。状态取值见 internal/clisync 的 Result 注释。
+export interface HostSyncResult {
   binaryPath: string;
   binaryState: string;
   binaryErr?: string;
   pathState: string;
   pathErr?: string;
-  skillPath: string;
-  skillState: string;
-  skillErr?: string;
+  skills?: HostSkillStep[];
   warnings?: string[];
 }
 
@@ -720,8 +726,8 @@ interface AppBindings {
   InstallBuiltinTool(id: string): Promise<void>;
   UninstallBuiltinTool(id: string, purgeConfig: boolean): Promise<void>;
   GetToolInstallJob(): Promise<ToolInstallJobView>;
-  GetWorkBuddySyncStatus(): Promise<WorkBuddySyncResult>;
-  SyncWorkBuddy(): Promise<WorkBuddySyncResult>;
+  GetHostSyncStatuses(): Promise<HostSyncResult>;
+  SyncHosts(toolIDs: string[]): Promise<HostSyncResult>;
   LoadProvidersYAML(): Promise<string>;
   SaveProvidersYAML(content: string): Promise<void>;
   ExportProvidersTemplate(title: string): Promise<string>;
@@ -916,18 +922,18 @@ export async function focusSession(id: string): Promise<boolean> {
   return a.FocusSession(id);
 }
 
-// GetWorkBuddySyncStatus 返回 WorkBuddy 同步状态（只读；绑定缺失返回 null 交由 UI 降级）
-export async function getWorkBuddySyncStatus(): Promise<WorkBuddySyncResult | null> {
+// GetHostSyncStatuses 返回各宿主同步状态（只读；绑定缺失返回 null 交由 UI 降级）
+export async function getHostSyncStatuses(): Promise<HostSyncResult | null> {
   const a = app();
-  if (!a?.GetWorkBuddySyncStatus) return null;
-  return a.GetWorkBuddySyncStatus();
+  if (!a?.GetHostSyncStatuses) return null;
+  return a.GetHostSyncStatuses();
 }
 
-// SyncWorkBuddy 执行「同步到 WorkBuddy」：释放 CLI + PATH + 技能
-export async function syncWorkBuddy(): Promise<WorkBuddySyncResult> {
+// SyncHosts 执行宿主同步：释放 CLI + PATH + 技能到指定宿主列表
+export async function syncHosts(toolIDs: string[]): Promise<HostSyncResult> {
   const a = app();
-  if (!a?.SyncWorkBuddy) throw new Error('binding_missing');
-  return a.SyncWorkBuddy();
+  if (!a?.SyncHosts) throw new Error('binding_missing');
+  return a.SyncHosts(toolIDs);
 }
 
 // onScanDone 订阅扫描完成事件，返回取消订阅函数

@@ -59,8 +59,8 @@ const mocks = vi.hoisted(() => ({
   checkToolAuth: vi.fn().mockResolvedValue('unknown'),
   openLoginTerminal: vi.fn(),
   openExternalURL: vi.fn().mockResolvedValue(undefined),
-  getWorkBuddySyncStatus: vi.fn(),
-  syncWorkBuddy: vi.fn(),
+  getHostSyncStatuses: vi.fn(),
+  syncHosts: vi.fn(),
 }));
 vi.mock('../lib/api', () => mocks);
 
@@ -207,8 +207,8 @@ afterEach(async () => {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getTools.mockResolvedValue(tools);
-  mocks.getWorkBuddySyncStatus.mockResolvedValue(null);
-  mocks.syncWorkBuddy.mockResolvedValue(null);
+  mocks.getHostSyncStatuses.mockResolvedValue(null);
+  mocks.syncHosts.mockResolvedValue(null);
   mocks.loadProvidersYAML.mockResolvedValue('providers: []\n');
   mocks.parseProvidersYAML.mockResolvedValue([]);
   mocks.formatProvidersYAML.mockImplementation(async (specs: { ID?: string; Name?: string }[]) => {
@@ -336,48 +336,71 @@ beforeEach(() => {
 });
 
 describe('Settings', () => {
-  it('WorkBuddy 同步卡片：进入工具分区显示状态，点击同步调用后端并刷新', async () => {
-    mocks.getWorkBuddySyncStatus.mockResolvedValue({
-      binaryState: 'absent',
-      pathState: 'missing',
-      skillState: 'absent',
-      binaryPath: 'C:/u/.kshell/bin/kshell.exe',
-      skillPath: 'C:/u/.codebuddy/skills/kshell/SKILL.md',
-    });
-    mocks.syncWorkBuddy.mockResolvedValue({
+  // 宿主同步状态：codebuddy 常显；claude 已安装故显示；gemini 未安装被隐藏；
+  // trae 已知宿主但未检测到同样隐藏；mytool 不在已知宿主列表里天然不出现。
+  const hostStatus = {
+    binaryState: 'absent',
+    pathState: 'missing',
+    binaryPath: 'C:/u/.kshell/bin/kshell.exe',
+    skills: [
+      { toolID: 'codebuddy', state: 'absent', path: 'C:/u/.codebuddy/skills/kshell/SKILL.md' },
+      { toolID: 'claude', state: 'absent', path: 'C:/u/.claude/skills/kshell/SKILL.md' },
+      { toolID: 'gemini', state: 'absent', path: 'C:/u/.gemini/skills/kshell/SKILL.md' },
+      { toolID: 'trae', state: 'absent', path: 'C:/u/.traecli/skills/kshell/SKILL.md' },
+    ],
+  };
+
+  it('宿主同步卡片：codebuddy+已装宿主逐行显示，全部同步带全部可见宿主', async () => {
+    mocks.getHostSyncStatuses.mockResolvedValue(hostStatus);
+    mocks.syncHosts.mockResolvedValue({
+      ...hostStatus,
       binaryState: 'released',
       pathState: 'added',
-      skillState: 'installed',
-      binaryPath: 'C:/u/.kshell/bin/kshell.exe',
-      skillPath: 'C:/u/.codebuddy/skills/kshell/SKILL.md',
+      skills: hostStatus.skills.map((s) => ({ ...s, state: 'installed' })),
       warnings: ['PATH stale copy'],
     });
     render(<Settings />);
     goTools();
 
-    expect(await screen.findByText(tt('ui.settings.wbsync.title'))).toBeInTheDocument();
-    // 「未安装」同时出现在工具列表与同步卡片的两行（CLI/技能均为 absent）。
-    const wbCard = screen.getByText(tt('ui.settings.wbsync.title')).closest('section');
-    const absentRows = within(wbCard!).getAllByText(tt('ui.settings.wbsync.state_absent'));
-    expect(absentRows.length).toBeGreaterThanOrEqual(2);
+    expect(await screen.findByText(tt('ui.settings.hostsync.title'))).toBeInTheDocument();
+    // 「未安装」出现在 CLI 摘要行与 codebuddy/claude 两个宿主行（gemini/trae 被隐藏）。
+    const card = screen.getByText(tt('ui.settings.hostsync.title')).closest('section')!;
+    const absentRows = within(card).getAllByText(tt('ui.settings.hostsync.state_absent'));
+    expect(absentRows.length).toBe(3);
+    expect(within(card).getByText('CodeBuddy')).toBeInTheDocument();
+    expect(within(card).getByText('Claude Code')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.wbsync.sync') }));
-    expect(mocks.syncWorkBuddy).toHaveBeenCalledTimes(1);
-    expect(await screen.findByText(tt('ui.settings.wbsync.state_released'))).toBeInTheDocument();
+    // 全部同步：只带可见宿主（gemini/trae 未检测到，不扩散）。
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.hostsync.all') }));
+    expect(mocks.syncHosts).toHaveBeenCalledWith(['codebuddy', 'claude']);
+    expect(await screen.findByText(tt('ui.settings.hostsync.state_released'))).toBeInTheDocument();
     expect(screen.getByText('PATH stale copy')).toBeInTheDocument();
   });
 
-  it('WorkBuddy 同步失败：单步错误原样展示不误报成功', async () => {
-    mocks.getWorkBuddySyncStatus.mockResolvedValue({
+  it('宿主同步卡片：单宿主同步按钮只带该宿主', async () => {
+    mocks.getHostSyncStatuses.mockResolvedValue(hostStatus);
+    mocks.syncHosts.mockResolvedValue({ ...hostStatus, skills: hostStatus.skills });
+    render(<Settings />);
+    goTools();
+    const card = (await screen.findByText(tt('ui.settings.hostsync.title'))).closest('section')!;
+    const rowButtons = within(card).getAllByRole('button', { name: tt('ui.settings.hostsync.sync') });
+    expect(rowButtons.length).toBe(2); // 每个可见宿主一个
+    fireEvent.click(rowButtons[1]); // claude 行
+    expect(mocks.syncHosts).toHaveBeenCalledWith(['claude']);
+  });
+
+  it('宿主同步失败：单宿主错误原样展示不误报成功', async () => {
+    mocks.getHostSyncStatuses.mockResolvedValue({
       binaryState: 'error',
       binaryErr: 'disk full',
       pathState: 'missing',
-      skillState: 'absent',
+      skills: [{ toolID: 'codebuddy', state: 'error', err: 'skill boom', path: 'x' }],
     });
     render(<Settings />);
     goTools();
     expect(await screen.findByText('disk full')).toBeInTheDocument();
-    expect(screen.getByText(tt('ui.settings.wbsync.state_missing'))).toBeInTheDocument();
+    expect(screen.getByText('skill boom')).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.settings.hostsync.state_missing'))).toBeInTheDocument();
   });
 
   it('渲染工具检测状态：已安装带版本，未安装灰显「未安装」', async () => {
