@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/yangk/kshell/internal/hubtools"
@@ -18,61 +17,39 @@ import (
 // loop.go：管理者循环——把 hubtools 的 function calling 协议与 Backend 原语
 // 缝合成一个「会看会话、会发消息、会建会话、会反问」的自主 agent 循环。
 //
-// 状态挂载说明：busy/pendingAsk/memory 是 API 级状态，但 api.go 的 API 结构体
-// 不在本任务的提交范围内（commit 只含 loop.go/loop_test.go），故经
-// loopCtlReg 按 *API 指针挂载；字段读写仍复用 a.mu 互斥，语义与
-// 「API 字段（mu 保护）」一致。
-
-// loopCtlReg 按 API 实例挂载循环级状态（一个桌面进程通常只有一个 API）。
-var loopCtlReg sync.Map // *API → *loopCtl
-
-// loopCtl 是管理者循环的 API 级状态（字段由 a.mu 保护）。
-type loopCtl struct {
-	busy    bool           // Run 重入门禁
-	pending *pendingAsk    // 未决反问语境（跨 Run 存续，续轮时消费）
-	memory  *ManagerMemory // 管理者记忆 journal（nil = 未启用）
-}
-
-// ctl 取（或惰性创建）本 API 的循环状态。
-func (a *API) ctl() *loopCtl {
-	if v, ok := loopCtlReg.Load(a); ok {
-		return v.(*loopCtl)
-	}
-	v, _ := loopCtlReg.LoadOrStore(a, &loopCtl{})
-	return v.(*loopCtl)
-}
+// 循环级状态（busy/pending/memory）挂在 API 结构体字段上（mu 保护），见 api.go。
 
 // SetMemory 注入管理者记忆 journal（desktop 启动时创建并注入；nil 关闭记忆）。
 func (a *API) SetMemory(m *ManagerMemory) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.ctl().memory = m
+	a.mem = m
 }
 
 // memoryNow 测试白盒：取当前记忆实例。
 func (a *API) memoryNow() *ManagerMemory {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.ctl().memory
+	return a.mem
 }
 
 // getPending / setPending / clearPending 是 pendingAsk 的互斥访问口。
 func (a *API) getPending() *pendingAsk {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.ctl().pending
+	return a.pending
 }
 
 func (a *API) setPending(p *pendingAsk) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.ctl().pending = p
+	a.pending = p
 }
 
 func (a *API) clearPending() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.ctl().pending = nil
+	a.pending = nil
 }
 
 // chatToolsHook 仅测试用：注入带工具定义的假 LLM（镜像 api.go 的 chatFn
@@ -164,17 +141,16 @@ type loopState struct {
 // Run 执行一次管理者循环：把用户输入交给带工具的 LLM，模型按需调用
 // list/send/create/ask 等工具，直到给出结论或反问。
 func (a *API) Run(ctx context.Context, input string, opts RunOpts) (RunResult, error) {
-	ctl := a.ctl()
 	a.mu.Lock()
-	if ctl.busy {
+	if a.busy {
 		a.mu.Unlock()
 		return RunResult{}, ErrLoopBusy
 	}
-	ctl.busy = true
+	a.busy = true
 	a.mu.Unlock()
 	defer func() {
 		a.mu.Lock()
-		ctl.busy = false
+		a.busy = false
 		a.mu.Unlock()
 	}()
 
@@ -385,7 +361,7 @@ func (a *API) renderExpandReply(plan RoutePlan) string {
 // 摘要；写失败只记日志（记忆尽力而为，不影响返回）。
 func (a *API) memoryAppend(st *loopState, res RunResult, runErr error) {
 	a.mu.Lock()
-	m := a.ctl().memory
+	m := a.mem
 	a.mu.Unlock()
 	if m == nil {
 		return
@@ -449,7 +425,7 @@ func (a *API) buildManagerSystem(st *loopState) string {
 // memoryRecent 取最近 10 条记忆（新在前）；未启用记忆返回空。
 func (a *API) memoryRecent() []MemoryEntry {
 	a.mu.Lock()
-	m := a.ctl().memory
+	m := a.mem
 	a.mu.Unlock()
 	if m == nil {
 		return nil
@@ -460,7 +436,7 @@ func (a *API) memoryRecent() []MemoryEntry {
 // memorySearch 供 search_memory 工具检索 journal；未启用返回空。
 func (a *API) memorySearch(kw string) []MemoryEntry {
 	a.mu.Lock()
-	m := a.ctl().memory
+	m := a.mem
 	a.mu.Unlock()
 	if m == nil {
 		return nil
@@ -1007,11 +983,11 @@ func (a *API) translateCandidate(v string) string {
 func (a *API) updatePendingCandidates(channel string, confirm *CreatePlan, cands map[int]string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	p := a.ctl().pending
+	p := a.pending
 	if p == nil {
 		p = &pendingAsk{Channel: channel, Ts: now().UnixNano()}
 	}
 	p.Confirm = confirm
 	p.Candidates = cands
-	a.ctl().pending = p
+	a.pending = p
 }

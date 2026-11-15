@@ -423,7 +423,7 @@ func TestRunLoopBusyAndNotReady(t *testing.T) {
 	// 重入
 	api2, _ := newLoopAPI(t)
 	api2.mu.Lock()
-	api2.ctl().busy = true
+	api2.busy = true
 	api2.mu.Unlock()
 	_, err = api2.Run(context.Background(), "hi", RunOpts{})
 	if !errors.Is(err, ErrLoopBusy) {

@@ -50,6 +50,11 @@ type API struct {
 	mu     sync.Mutex
 	llm    hubtools.Config
 	chatFn func(ctx context.Context, msgs []hubtools.Message) (hubtools.Response, error)
+
+	// —— 管理者循环级状态（mu 保护；语义见 loop.go）——
+	busy    bool           // Run 重入门禁
+	pending *pendingAsk    // 未决反问语境（跨 Run 存续，续轮时消费）
+	mem     *ManagerMemory // 管理者记忆 journal（nil = 未启用，Run 跳过记忆读写）
 }
 
 // New 构造 API。b 必须非 nil。
