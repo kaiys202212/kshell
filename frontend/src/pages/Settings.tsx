@@ -204,7 +204,13 @@ export default function Settings() {
     setSyncBusy(ids.length > 1 ? '__all__' : (ids[0] ?? '__all__'));
     try {
       const res = await syncHosts(ids);
-      setHostSync(res);
+      // 单宿主同步的响应 Skills 只含该宿主：合并进现有状态，其余宿主行不消失
+      //（release/PATH 是全局步骤，直接取响应最新值）。
+      setHostSync((prev) => {
+        if (!prev) return res;
+        const fresh = new Map((res.skills ?? []).map((s) => [s.toolID, s]));
+        return { ...res, skills: (prev.skills ?? []).map((s) => fresh.get(s.toolID) ?? s) };
+      });
       notify(t('ui.settings.hostsync.done'), 'info');
     } catch (e) {
       notify(translateBackend(backendError(e)), 'error');

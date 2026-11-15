@@ -377,9 +377,15 @@ describe('Settings', () => {
     expect(screen.getByText('PATH stale copy')).toBeInTheDocument();
   });
 
-  it('宿主同步卡片：单宿主同步按钮只带该宿主', async () => {
+  it('宿主同步卡片：单宿主同步按钮只带该宿主，且不顶掉其它宿主行', async () => {
     mocks.getHostSyncStatuses.mockResolvedValue(hostStatus);
-    mocks.syncHosts.mockResolvedValue({ ...hostStatus, skills: hostStatus.skills });
+    // 单宿主响应只含该宿主的 Skills（后端 SyncHosts([id]) 的真实形状）
+    mocks.syncHosts.mockResolvedValue({
+      ...hostStatus,
+      binaryState: 'released',
+      pathState: 'added',
+      skills: [{ toolID: 'claude', state: 'installed', path: 'C:/u/.claude/skills/kshell/SKILL.md' }],
+    });
     render(<Settings />);
     goTools();
     const card = (await screen.findByText(tt('ui.settings.hostsync.title'))).closest('section')!;
@@ -387,6 +393,13 @@ describe('Settings', () => {
     expect(rowButtons.length).toBe(2); // 每个可见宿主一个
     fireEvent.click(rowButtons[1]); // claude 行
     expect(mocks.syncHosts).toHaveBeenCalledWith(['claude']);
+    // claude 更新为已安装，codebuddy 行保持原状不消失
+    await waitFor(() => {
+      expect(within(card).getAllByText(tt('ui.settings.hostsync.state_installed')).length).toBe(1);
+    });
+    expect(within(card).getByText('CodeBuddy')).toBeInTheDocument();
+    // 同步后 CLI 行显示「已释放」，剩余 absent 只有 codebuddy 宿主行
+    expect(within(card).getAllByText(tt('ui.settings.hostsync.state_absent')).length).toBe(1);
   });
 
   it('宿主同步失败：单宿主错误原样展示不误报成功', async () => {
