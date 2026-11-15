@@ -27,6 +27,7 @@ import (
 	remotefs "github.com/yangk/kshell/internal/remote/fs"
 	"github.com/yangk/kshell/internal/requirements"
 	"github.com/yangk/kshell/internal/agentapi"
+	"github.com/yangk/kshell/internal/agentsrv"
 	"github.com/yangk/kshell/internal/sessionarchive"
 	"github.com/yangk/kshell/internal/terminal"
 	"github.com/yangk/kshell/internal/weixin"
@@ -177,6 +178,9 @@ type App struct {
 	agentFeedOnce sync.Once
 	agentFeed     *agentapi.Feed
 	agentAPIV     *agentapi.API
+	// agentSrv 是本机 HTTP 服务（kshell agent CLI 薄客户端的后端）；启动失败
+	// 仅记日志，CLI 侧按 endpoint 文件缺失感知。
+	agentSrv *agentsrv.Server
 	// keepInstallTools：安装/卸载刚用 DetectAll 写过 a.tools。进行中的 runScan
 	// 开头拿到的是旧快照，结束时不得覆盖这份更新结果。
 	keepInstallTools bool
@@ -639,14 +643,19 @@ var runShutdownCleanup = func(a *App) {
 	a.mu.Lock()
 	archiveHub := a.archiveHub
 	sshHub := a.sshHub
+	agentSrv := a.agentSrv
 	a.archiveHub = nil
 	a.sshHub = nil
+	a.agentSrv = nil
 	a.mu.Unlock()
 	if archiveHub != nil {
 		archiveHub.Close()
 	}
 	if sshHub != nil {
 		sshHub.Close()
+	}
+	if agentSrv != nil {
+		agentSrv.Close() // 连发现文件一起删除，CLI 侧据此感知桌面端已退出
 	}
 	if r := a.wxRuntime(); r != nil { // 微信桥：停长轮询（凭据保留，重启恢复）
 		r.Stop()

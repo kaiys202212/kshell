@@ -1,10 +1,14 @@
 package desktop
 
 import (
+	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/yangk/kshell/internal/agentapi"
+	"github.com/yangk/kshell/internal/agentsrv"
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/hub"
 	"github.com/yangk/kshell/internal/hubtools"
@@ -196,6 +200,32 @@ func (a *App) wireAgentFeed(m *chat.Manager) {
 	m.SetOnExitTap(func(id string, code int, errMsg string) {
 		publish(agentapi.Event{SessionID: id, Kind: agentapi.EventExit, Type: strconv.Itoa(code), Text: errMsg, Ts: ts()})
 	})
+}
+
+// agentAPIEndpointPath 返回连接发现文件路径：Layout.Root/agentapi/endpoint.json
+//（Root 缺省回落 temp，与 archives 同兜底口径）。
+func (a *App) agentAPIEndpointPath() string {
+	root := a.opts.Layout.Root
+	if root == "" && a.opts.Home != "" {
+		root = filepath.Join(a.opts.Home, ".kshell")
+	}
+	if root == "" {
+		root = os.TempDir()
+	}
+	return filepath.Join(root, "agentapi", "endpoint.json")
+}
+
+// startAgentSrv 启动本机 agent API 服务并写发现文件。失败仅记日志：服务缺席
+// 只影响 CLI（endpoint 文件缺失 → exit 3），不能拖垮桌面端启动。
+func (a *App) startAgentSrv() {
+	srv, err := agentsrv.Start(agentsrv.Options{API: a.AgentAPI(), EndpointPath: a.agentAPIEndpointPath()})
+	if err != nil {
+		log.Printf("agentsrv 启动失败（CLI 将不可用）: %v", err)
+		return
+	}
+	a.mu.Lock()
+	a.agentSrv = srv
+	a.mu.Unlock()
 }
 
 // AgentAPI 返回 agent 工具 API（懒构造）。LLM 配置每次访问实时刷新，与微信

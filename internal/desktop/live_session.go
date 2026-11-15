@@ -40,6 +40,8 @@ func (a *App) ensureSessionHooks() {
 			a.sshHub = sh
 			a.mu.Unlock()
 		}
+		// agent CLI 的本地 API 服务（endpoint 文件缺失时 CLI 报桌面端未运行）。
+		a.startAgentSrv()
 		if m := a.terminals(); m != nil {
 			m.SetOnInfo(func(info terminal.Info) {
 				a.Emit("terminal:meta", info)

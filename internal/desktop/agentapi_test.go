@@ -1,6 +1,9 @@
 package desktop
 
 import (
+	"encoding/json"
+	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -102,5 +105,52 @@ func TestAgentAPISingletonAndSend(t *testing.T) {
 	}
 	if err := api1.Send(info.ID, "工具指令"); err != nil {
 		t.Fatalf("Send: %v", err)
+	}
+}
+
+// startAgentSrv：endpoint 文件写入且服务可访问；Shutdown 清理。
+func TestStartAgentSrv(t *testing.T) {
+	app := agentApp(t, nil)
+	path := app.agentAPIEndpointPath()
+	app.startAgentSrv()
+	t.Cleanup(func() {
+		app.mu.Lock()
+		srv := app.agentSrv
+		app.agentSrv = nil
+		app.mu.Unlock()
+		if srv != nil {
+			srv.Close()
+		}
+	})
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("endpoint 文件未写入: %v", err)
+	}
+	var ep struct {
+		URL   string `json:"url"`
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(raw, &ep); err != nil || ep.URL == "" || ep.Token == "" {
+		t.Fatalf("endpoint 内容不符: %s", raw)
+	}
+	// 经 endpoint 访问服务。
+	req, _ := http.NewRequest(http.MethodGet, ep.URL+"/api/v1/sessions?scope=active", nil)
+	req.Header.Set("Authorization", "Bearer "+ep.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("endpoint 访问失败: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("list 应 200: %d", resp.StatusCode)
+	}
+	// Shutdown 清理路径：agentSrv.Close 删文件。
+	app.mu.Lock()
+	srv := app.agentSrv
+	app.mu.Unlock()
+	srv.Close()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("Close 后 endpoint 文件应删除")
 	}
 }
