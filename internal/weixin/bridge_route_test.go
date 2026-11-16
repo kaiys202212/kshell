@@ -102,7 +102,7 @@ func TestBridgeRouterHook(t *testing.T) {
 		}
 	})
 
-	t.Run("ask 反问轮次与第三轮降级", func(t *testing.T) {
+	t.Run("ask 反问轮次与第四轮降级", func(t *testing.T) {
 		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1", Title: "会话A"}}
 		b, rc := newRouteBridge(t, ex)
 		stub := &routerStub{fn: func(context.Context, string) (hubtools.RouteDecision, bool) {
@@ -120,22 +120,26 @@ func TestBridgeRouterHook(t *testing.T) {
 			t.Fatalf("反问文本 = %q, 期望 %q", got, want)
 		}
 
-		// 第二轮：自由文本再进路由（轮次 2）。
+		// 第二、三轮：自由文本再进路由（轮次 2、3，AskMaxRounds=3 放行到 3）。
 		b.HandleInbound("u1", "ct-2", "第一个")
 		if stub.calls != 2 || b.routeRoundValue() != 2 {
 			t.Fatalf("第二轮 calls=%d round=%d, 期望 2/2", stub.calls, b.routeRoundValue())
 		}
+		b.HandleInbound("u1", "ct-3", "还是第一个")
+		if stub.calls != 3 || b.routeRoundValue() != 3 {
+			t.Fatalf("第三轮 calls=%d round=%d, 期望 3/3", stub.calls, b.routeRoundValue())
+		}
 
-		// 第三轮：不再进路由，原文走 console.Handle 降级，轮次清零。
-		b.HandleInbound("u1", "ct-3", "就这个")
-		if stub.calls != 2 {
-			t.Fatalf("第三轮不应进路由, calls=%d", stub.calls)
+		// 第四轮：不再进路由，原文走 console.Handle 降级，轮次清零。
+		b.HandleInbound("u1", "ct-4", "就这个")
+		if stub.calls != 3 {
+			t.Fatalf("第四轮不应进路由, calls=%d", stub.calls)
 		}
 		if b.routeRoundValue() != 0 {
-			t.Fatalf("第三轮降级后轮次应清零, 实际 %d", b.routeRoundValue())
+			t.Fatalf("第四轮降级后轮次应清零, 实际 %d", b.routeRoundValue())
 		}
 		if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "就这个" {
-			t.Fatalf("第三轮应把原文发当前会话: %v", ex.sentTexts)
+			t.Fatalf("第四轮应把原文发当前会话: %v", ex.sentTexts)
 		}
 	})
 

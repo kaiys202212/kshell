@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yangk/kshell/internal/hubtools"
 )
@@ -51,6 +52,23 @@ func newLoopAPI(t *testing.T) (*API, *fakeBackend) {
 // backend 取桩（测试白盒便捷访问）。
 func (a *API) backend() *fakeBackend { return a.b.(*fakeBackend) }
 
+// fakeClock 把包级 now 替换为可推进的假钟，返回推进函数；测试结束自动还原。
+func fakeClock(t *testing.T, start time.Time) func(time.Duration) {
+	t.Helper()
+	cur := start
+	t.Cleanup(func() { now = time.Now })
+	now = func() time.Time { return cur }
+	return func(d time.Duration) { cur = cur.Add(d) }
+}
+
+// askScript 构造一个首轮就调用 ask 的脚本（挂起链测试的最小起点）。
+func askScript(q string) *scriptChat {
+	args := fmt.Sprintf(`{"question":%q,"options":["a","b"]}`, q)
+	return &scriptChat{resps: []hubtools.Response{
+		{ToolCalls: []hubtools.ToolCall{tc("c", "ask", args)}},
+	}}
+}
+
 // 转述上限：会话消息正文 2000 rune 内完整呈现（原 200 截断会把模块回复掐头）；
 // 摘要从 SessionMessages 末条直取、300 rune 内完整（不再用 60 rune 的预算摘要）。
 func TestRenderMessagesTailKeepsLongText(t *testing.T) {
@@ -80,7 +98,7 @@ func TestLastSummaryPrefersSessionMessages(t *testing.T) {
 	}
 }
 
-// 测试 1：多步工具调用——list_sessions → send → 结论。
+// 测试：多步工具调用——list_sessions → send → 结论。
 func TestRunLoopMultiStep(t *testing.T) {
 	api, f := newLoopAPI(t)
 	sc := &scriptChat{resps: []hubtools.Response{
@@ -98,8 +116,8 @@ func TestRunLoopMultiStep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if res.AskPending {
-		t.Fatal("纯执行轮不应 AskPending")
+	if res.AskPending || res.Suspended || res.Ask != nil {
+		t.Fatal("纯执行轮不应挂起")
 	}
 	if res.Replies[0] != "已把「继续修复」投递给修复登录会话。" {
 		t.Fatalf("Replies[0] = %q", res.Replies[0])
@@ -139,7 +157,7 @@ func TestRunLoopMultiStep(t *testing.T) {
 	}
 }
 
-// 测试 2：create_session 全参数 → Backend.Create + 首条任务 Send。
+// 测试：create_session 全参数 → Backend.Create + 首条任务 Send。
 func TestRunLoopCreateFullParams(t *testing.T) {
 	api, f := newLoopAPI(t)
 	sc := &scriptChat{resps: []hubtools.Response{
@@ -152,8 +170,8 @@ func TestRunLoopCreateFullParams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if res.AskPending {
-		t.Fatal("全参数创建不应 AskPending")
+	if res.Suspended {
+		t.Fatal("全参数创建不应挂起")
 	}
 	if len(f.created) != 1 || f.created[0] != [3]string{"claude", "d:/ws/a", ""} {
 		t.Fatalf("f.created = %v", f.created)
@@ -166,12 +184,85 @@ func TestRunLoopCreateFullParams(t *testing.T) {
 	}
 }
 
-// 测试 3：create_session 缺参数 → NeedsConfirm → ask 呈现候选；
-// 续轮回编号 → Candidates 翻译 → CreateNL{Confirm} 落地 Create。
-func TestRunLoopCreateNeedsConfirmContinuation(t *testing.T) {
+// 测试 1（新）：ask 落地 → Suspended/Ask 载荷/编号选项回执；HasSuspendedAsk
+// 渠道口径；AskPending 兼容 shim 与 Ask 同步置位。
+func TestSuspendAskLanding(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	chatToolsHook = askScript("选哪个？").hook
+	res, err := api.Run(context.Background(), "看着办", RunOpts{Channel: "hub"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Suspended || res.Ask == nil {
+		t.Fatalf("ask 落地应挂起: %+v", res)
+	}
+	if res.Ask.Mode != "single" {
+		t.Fatalf("mode 缺省应归一 single: %+v", res.Ask)
+	}
+	if res.Ask.Question != "选哪个？" || len(res.Ask.Options) != 2 {
+		t.Fatalf("Ask 载荷错误: %+v", res.Ask)
+	}
+	if !res.AskPending {
+		t.Fatal("AskPending shim 应与 Ask 同步置 true")
+	}
+	if !strings.Contains(res.Replies[0], "1. a") || !strings.Contains(res.Replies[0], "2. b") {
+		t.Fatalf("Replies 应含编号选项: %q", res.Replies[0])
+	}
+	if !api.HasSuspendedAsk("hub") {
+		t.Fatal("同渠道应报告挂起在场")
+	}
+	if api.HasSuspendedAsk("wechat") {
+		t.Fatal("跨渠道不应报告挂起在场")
+	}
+}
+
+// 测试 2（新）：Resume 续跑 msgs 延续——请求 = 挂起前完整序列（含 system/
+// user/assistant/tool）+ 用户回复原话（无前缀、不重建 system）。
+func TestResumeMsgsContinuity(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	sc1 := &scriptChat{resps: []hubtools.Response{
+		{ToolCalls: []hubtools.ToolCall{tc("c1", "list_sessions", "{}")}},
+		{ToolCalls: []hubtools.ToolCall{tc("c2", "ask", `{"question":"发给哪个？","options":["甲","乙"]}`)}},
+	}}
+	chatToolsHook = sc1.hook
+	if _, err := api.Run(context.Background(), "把结论发过去", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run1: %v", err)
+	}
+	suspended := sc1.last // 挂起前最后一次请求的序列（ask 的 assistant/tool 结果在其后追加）
+
+	sc2 := &scriptChat{resps: []hubtools.Response{{Text: "已发给甲。"}}}
+	chatToolsHook = sc2.hook
+	res, err := api.Resume("hub", "1", RunOpts{})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if res.Suspended || res.Ask != nil {
+		t.Fatalf("结论收尾不应挂起: %+v", res)
+	}
+	// 续跑请求 = 挂起前序列 + assistant(tool_calls) + tool(ask 结果) + 用户回复原话
+	if len(sc2.last) != len(suspended)+3 {
+		t.Fatalf("续跑消息序列长度 = %d, want %d", len(sc2.last), len(suspended)+3)
+	}
+	for i, m := range suspended {
+		if sc2.last[i].Role != m.Role || sc2.last[i].Content != m.Content {
+			t.Fatalf("续跑消息[%d] 与挂起前不一致: got %+v want %+v", i, sc2.last[i], m)
+		}
+	}
+	askTool := sc2.last[len(suspended)+1]
+	if askTool.Role != "tool" || !strings.Contains(askTool.Content, "发给哪个") {
+		t.Fatalf("挂起前的 ask 工具结果应原样延续: %+v", askTool)
+	}
+	reply := sc2.last[len(sc2.last)-1]
+	if reply.Role != "user" || reply.Content != "1" {
+		t.Fatalf("续跑应追加用户回复原话: %+v", reply)
+	}
+}
+
+// 测试 3（新）：create_session 缺参数 → NeedsConfirm → ask 挂起（候选语境
+// 挂在挂起态上）；Resume 回编号 → Candidates 翻译 → 创建落地。
+func TestRunLoopCreateNeedsConfirmResume(t *testing.T) {
 	api, f := newLoopAPI(t)
 
-	// 第一轮：缺工具参数 → 编号候选 → ask 终止
 	sc1 := &scriptChat{resps: []hubtools.Response{
 		{ToolCalls: []hubtools.ToolCall{tc("c1", "create_session", `{"task":"写周报"}`)}},
 		{ToolCalls: []hubtools.ToolCall{tc("c2", "ask", `{"question":"请选择工具","options":["claude Claude Code","codex Codex"]}`)}},
@@ -181,32 +272,31 @@ func TestRunLoopCreateNeedsConfirmContinuation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run1: %v", err)
 	}
-	if !res1.AskPending {
-		t.Fatal("NeedsConfirm + ask 后应 AskPending")
+	if !res1.Suspended || res1.Ask == nil {
+		t.Fatalf("NeedsConfirm + ask 后应挂起: %+v", res1)
 	}
 	if !strings.Contains(res1.Replies[0], "请选择工具") || !strings.Contains(res1.Replies[0], "1. claude") {
 		t.Fatalf("Replies[0] 缺问题或编号选项: %q", res1.Replies[0])
 	}
-	p := api.getPending()
-	if p == nil || p.Confirm == nil || p.Candidates[1] != "claude" || p.Candidates[2] != "codex" {
-		t.Fatalf("pendingAsk 候选语境缺失: %+v", p)
+	s := api.getSuspend()
+	if s == nil || s.st.confirm == nil || s.st.candidates[1] != "claude" || s.st.candidates[2] != "codex" {
+		t.Fatalf("挂起态候选语境缺失: %+v", s)
 	}
-	if p.Round != 1 {
-		t.Fatalf("首轮 ask Round = %d, want 1", p.Round)
+	if s.st.askRound != 1 {
+		t.Fatalf("首轮 ask askRound = %d, want 1", s.st.askRound)
 	}
 
-	// 第二轮：Continuation，模型回编号 → 翻译成 ID → Confirm 落地
 	sc2 := &scriptChat{resps: []hubtools.Response{
 		{ToolCalls: []hubtools.ToolCall{tc("c3", "create_session", `{"tool_id":"1","workspace":"d:/ws/a","task":"写周报"}`)}},
-		{Text: "已创建 codex… 不对，是 claude 会话。"},
+		{Text: "已创建 claude 会话。"},
 	}}
 	chatToolsHook = sc2.hook
-	res2, err := api.Run(context.Background(), "1", RunOpts{Channel: "hub", Continuation: true})
+	res2, err := api.Resume("hub", "1", RunOpts{})
 	if err != nil {
-		t.Fatalf("Run2: %v", err)
+		t.Fatalf("Resume: %v", err)
 	}
-	if res2.AskPending {
-		t.Fatal("创建落地后不应 AskPending")
+	if res2.Suspended {
+		t.Fatal("创建落地后不应挂起")
 	}
 	if len(f.created) != 1 || f.created[0] != [3]string{"claude", "d:/ws/a", ""} {
 		t.Fatalf("编号未翻译，f.created = %v", f.created)
@@ -214,89 +304,345 @@ func TestRunLoopCreateNeedsConfirmContinuation(t *testing.T) {
 	if len(f.sent) != 1 || f.sent[0] != "chat-new|写周报" {
 		t.Fatalf("首条任务未投递: %v", f.sent)
 	}
-	// 续轮 system 注入上一轮问题与候选
-	sys := sc2.sysSeen[0]
-	if !strings.Contains(sys, "请选择工具") || !strings.Contains(sys, "claude") {
-		t.Fatalf("续轮 system 缺上一轮 ask 语境: %q", sys)
-	}
-	if api.getPending() != nil {
-		t.Fatal("创建落地后 pendingAsk 应清除")
+	if api.HasSuspendedAsk("hub") {
+		t.Fatal("结论落地后挂起应清除")
 	}
 }
 
-// 测试 4：ask 工具落地 + 数字短输入自动续轮（无 Continuation 标志）。
-func TestRunLoopAskAndShortInputContinuation(t *testing.T) {
+// 测试 4（新）：ask 挂起后数字短输入 Run 自动续跑（无需显式标志）。
+func TestRunLoopAskAndShortInputAutoResume(t *testing.T) {
 	api, _ := newLoopAPI(t)
-
-	sc1 := &scriptChat{resps: []hubtools.Response{
-		{ToolCalls: []hubtools.ToolCall{tc("c1", "ask", `{"question":"选哪个？","options":["继续","新建"]}`)}},
-	}}
+	sc1 := askScript("选哪个？")
 	chatToolsHook = sc1.hook
 	res1, err := api.Run(context.Background(), "看着办", RunOpts{Channel: "hub"})
 	if err != nil {
 		t.Fatalf("Run1: %v", err)
 	}
-	if !res1.AskPending || !strings.Contains(res1.Replies[0], "1. 继续") {
-		t.Fatalf("ask 未落地: %+v", res1)
+	if !res1.Suspended {
+		t.Fatalf("ask 未挂起: %+v", res1)
 	}
 
-	// 数字短输入自动续轮（Continuation 未设置）
 	sc2 := &scriptChat{resps: []hubtools.Response{{Text: "好的，按新建处理。"}}}
 	chatToolsHook = sc2.hook
 	res2, err := api.Run(context.Background(), "2", RunOpts{Channel: "hub"})
 	if err != nil {
 		t.Fatalf("Run2: %v", err)
 	}
-	if res2.AskPending {
-		t.Fatal("续轮给结论后不应 AskPending")
+	if res2.Suspended {
+		t.Fatal("续轮给结论后不应挂起")
 	}
-	if !strings.Contains(sc2.sysSeen[0], "选哪个？") || !strings.Contains(sc2.sysSeen[0], "2. 新建") {
-		t.Fatalf("自动续轮 system 缺上一轮 ask 语境: %q", sc2.sysSeen[0])
+	// 续跑消息序列含挂起前全部消息（+ask 的 assistant/tool 结果）+ 用户短回复
+	if len(sc2.last) != len(sc1.last)+3 {
+		t.Fatalf("自动续跑消息序列长度 = %d, want %d", len(sc2.last), len(sc1.last)+3)
 	}
-	if api.getPending() != nil {
-		t.Fatal("结论落地后 pendingAsk 应清除")
+	if sc2.last[len(sc2.last)-1].Content != "2" {
+		t.Fatalf("续跑应追加用户回复: %+v", sc2.last[len(sc2.last)-1])
+	}
+	if api.HasSuspendedAsk("hub") {
+		t.Fatal("结论落地后挂起应清除")
 	}
 }
 
-// 测试 5：AskMaxRounds 超限禁 ask，降级返回待选指引文案。
+// 测试 5（新）：AskMaxRounds 门禁——挂起链内 3 连问放行，第 4 问被拒：
+// 清挂起 + 结构化指引（含上限与上一问），正常返回不挂起。
 func TestRunLoopAskMaxRounds(t *testing.T) {
 	api, _ := newLoopAPI(t)
-	askCall := hubtools.Response{ToolCalls: []hubtools.ToolCall{tc("c", "ask", `{"question":"还要什么？","options":["a","b"]}`)}}
-	newAskHook := func() func(context.Context, hubtools.Config, []hubtools.Message, []hubtools.ToolFunc) (hubtools.Response, error) {
-		return (&scriptChat{resps: []hubtools.Response{askCall}}).hook
-	}
 
-	// 第一问
-	chatToolsHook = newAskHook()
-	if _, err := api.Run(context.Background(), "起点", RunOpts{Channel: "hub"}); err != nil {
-		t.Fatalf("Run1: %v", err)
+	// 三连问均在门禁内（每次短输入自动续跑）
+	for i, input := range []string{"起点", "a", "b"} {
+		chatToolsHook = askScript("还要什么？").hook
+		res, err := api.Run(context.Background(), input, RunOpts{Channel: "hub"})
+		if err != nil {
+			t.Fatalf("第 %d 问 Run: %v", i+1, err)
+		}
+		if !res.Suspended {
+			t.Fatalf("第 %d 问应挂起: %+v", i+1, res)
+		}
 	}
-	// 第二问（续轮）
-	chatToolsHook = newAskHook()
-	if _, err := api.Run(context.Background(), "a", RunOpts{Channel: "hub", Continuation: true}); err != nil {
-		t.Fatalf("Run2: %v", err)
-	}
-	if p := api.getPending(); p == nil || p.Round != 2 {
-		t.Fatalf("第二轮 ask 后 Round = %+v, want 2", p)
-	}
-	// 第三问被拒：AskPending=false，返回指引文案，pending 清除
-	chatToolsHook = newAskHook()
-	res, err := api.Run(context.Background(), "b", RunOpts{Channel: "hub", Continuation: true})
+	// 第四问被拒
+	chatToolsHook = askScript("还要什么？").hook
+	res, err := api.Run(context.Background(), "c", RunOpts{Channel: "hub"})
 	if err != nil {
-		t.Fatalf("Run3: %v", err)
+		t.Fatalf("第 4 问 Run: %v", err)
 	}
-	if res.AskPending {
-		t.Fatal("超限后不应再 AskPending")
+	if res.Suspended || res.Ask != nil || res.AskPending {
+		t.Fatalf("超限后不应挂起: %+v", res)
 	}
-	if res.Replies[0] != loopGuidance {
-		t.Fatalf("超限应返回指引文案, got %q", res.Replies[0])
+	if !strings.Contains(res.Replies[0], fmt.Sprintf("连续反问已达上限（%d）", hubtools.AskMaxRounds)) {
+		t.Fatalf("指引缺上限说明: %q", res.Replies[0])
 	}
-	if api.getPending() != nil {
-		t.Fatal("超限拒绝后 pendingAsk 应清除")
+	if !strings.Contains(res.Replies[0], "刚才的问题是：还要什么？") {
+		t.Fatalf("指引缺上一问原文: %q", res.Replies[0])
+	}
+	if api.HasSuspendedAsk("hub") {
+		t.Fatal("超限拒绝后挂起应清除")
 	}
 }
 
-// 测试 6：记忆——首轮后 journal 有条目；第二轮 system 含记忆尾；search_memory 命中。
+// 测试 6（新）：挂起超时——Resume 返回 ErrNoSuspend 且挂起被清；之后的
+// 短输入 Run 按全新循环跑（不携带旧语境）。
+func TestSuspendTimeout(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	advance := fakeClock(t, time.Now())
+
+	chatToolsHook = askScript("选哪个？").hook
+	if _, err := api.Run(context.Background(), "看着办", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run1: %v", err)
+	}
+	advance(SuspendTTL + time.Minute)
+	if api.HasSuspendedAsk("hub") {
+		t.Fatal("超时后不应报告挂起在场")
+	}
+	_, err := api.Resume("hub", "1", RunOpts{})
+	if !errors.Is(err, ErrNoSuspend) {
+		t.Fatalf("超时期望 ErrNoSuspend, got %v", err)
+	}
+	if api.getSuspend() != nil {
+		t.Fatal("超时 Resume 应清挂起")
+	}
+	sc2 := &scriptChat{resps: []hubtools.Response{{Text: "好的"}}}
+	chatToolsHook = sc2.hook
+	if _, err := api.Run(context.Background(), "1", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run2: %v", err)
+	}
+	if len(sc2.last) != 2 {
+		t.Fatalf("超时后短输入应按全新循环跑（[sys,user]）: len=%d", len(sc2.last))
+	}
+}
+
+// 测试 7（新）：挂起在场 + 长输入 → 清挂起按全新输入跑（新 system、
+// round=1，消息序列不带旧语境）。
+func TestRunLongInputClearsSuspend(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	chatToolsHook = askScript("选哪个？").hook
+	if _, err := api.Run(context.Background(), "看着办", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run1: %v", err)
+	}
+	sc2 := &scriptChat{resps: []hubtools.Response{{Text: "结论"}}}
+	chatToolsHook = sc2.hook
+	long := strings.Repeat("长", shortInputMax+1)
+	if _, err := api.Run(context.Background(), long, RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run2: %v", err)
+	}
+	if len(sc2.last) != 2 {
+		t.Fatalf("长输入应全新开循环（[sys,user]）: len=%d", len(sc2.last))
+	}
+	if api.HasSuspendedAsk("hub") {
+		t.Fatal("长输入应清挂起")
+	}
+}
+
+// 测试 8（新）：mode 三态落地——multi/confirm 原样进载荷，非法值归一 single。
+func TestAskModeVariants(t *testing.T) {
+	cases := []struct {
+		mode string
+		want string
+	}{
+		{"multi", "multi"},
+		{"confirm", "confirm"},
+		{"bogus", "single"},
+	}
+	for _, c := range cases {
+		api, _ := newLoopAPI(t)
+		args := fmt.Sprintf(`{"question":"选哪个？","options":["a"],"mode":%q}`, c.mode)
+		chatToolsHook = (&scriptChat{resps: []hubtools.Response{
+			{ToolCalls: []hubtools.ToolCall{tc("c", "ask", args)}},
+		}}).hook
+		res, err := api.Run(context.Background(), "看着办", RunOpts{Channel: "hub"})
+		if err != nil {
+			t.Fatalf("mode=%s Run: %v", c.mode, err)
+		}
+		if res.Ask == nil || res.Ask.Mode != c.want {
+			t.Fatalf("mode=%s 应归一为 %s: %+v", c.mode, c.want, res.Ask)
+		}
+	}
+}
+
+// 测试 9（新）：Resume 瞬时错误 → 挂起保留（候选语境不丢），重试同一输入
+// 可续且不产生重复的 user 回复；ErrLLMNotReady 同样保留挂起且不写记忆。
+func TestResumeTransientErrorKeepsSuspend(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	chatToolsHook = askScript("选哪个？").hook
+	if _, err := api.Run(context.Background(), "看着办", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run1: %v", err)
+	}
+
+	// 瞬时错误：挂起保留
+	chatToolsHook = (&scriptChat{err: errors.New("err.hubtools.request_failed: 状态码 500, 响应: oops")}).hook
+	_, err := api.Resume("hub", "1", RunOpts{})
+	if err == nil || !strings.Contains(err.Error(), "状态码 500") {
+		t.Fatalf("瞬时错误应上抛, got %v", err)
+	}
+	if !api.HasSuspendedAsk("hub") {
+		t.Fatal("瞬时错误应保留挂起")
+	}
+
+	// 重试同一输入：续跑成功，且 msgs 里只有一条 user 回复（无重复）
+	sc2 := &scriptChat{resps: []hubtools.Response{{Text: "已按 1 处理。"}}}
+	chatToolsHook = sc2.hook
+	if _, err := api.Resume("hub", "1", RunOpts{}); err != nil {
+		t.Fatalf("重试 Resume: %v", err)
+	}
+	dup := 0
+	for _, m := range sc2.last {
+		if m.Role == "user" && m.Content == "1" {
+			dup++
+		}
+	}
+	if dup != 1 {
+		t.Fatalf("重试后 user 回复应只出现一次, got %d", dup)
+	}
+
+	// ErrLLMNotReady：保留挂起且不写记忆
+	chatToolsHook = askScript("再问一次").hook
+	if _, err := api.Run(context.Background(), "b", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run2: %v", err)
+	}
+	api.UpdateLLM(hubtools.Config{})
+	_, err = api.Resume("hub", "b", RunOpts{})
+	if !errors.Is(err, ErrLLMNotReady) {
+		t.Fatalf("未配置 LLM 期望 ErrLLMNotReady, got %v", err)
+	}
+	if !api.HasSuspendedAsk("hub") {
+		t.Fatal("ErrLLMNotReady 应保留挂起")
+	}
+}
+
+// 测试 10（新）：无挂起时 Resume 返回 ErrNoSuspend。
+func TestResumeNoSuspend(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	if _, err := api.Resume("hub", "1", RunOpts{}); !errors.Is(err, ErrNoSuspend) {
+		t.Fatalf("无挂起期望 ErrNoSuspend, got %v", err)
+	}
+}
+
+// 测试 11（新）：跨渠道输入清挂起按全新跑；同渠道短输入照常自动续跑。
+func TestSuspendChannelGuard(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	sc := &scriptChat{resps: []hubtools.Response{{Text: "结论"}, {Text: "结论"}}}
+
+	// hub 渠道的挂起在场，wechat 输入：不得携带 hub 语境，且清挂起。
+	chatToolsHook = askScript("发给哪个？").hook
+	if _, err := api.Run(context.Background(), "看着办", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run1: %v", err)
+	}
+	chatToolsHook = sc.hook
+	if _, err := api.Run(context.Background(), "1", RunOpts{Channel: "wechat"}); err != nil {
+		t.Fatalf("Run2: %v", err)
+	}
+	if len(sc.last) != 2 {
+		t.Fatalf("跨渠道输入应全新开循环: len=%d", len(sc.last))
+	}
+	if api.HasSuspendedAsk("hub") {
+		t.Fatal("跨渠道输入应清挂起")
+	}
+
+	// 同渠道短输入自动续跑（挂起态整体延续，msgs 不带旧语境的断言见测试 4）。
+	chatToolsHook = askScript("发给哪个？").hook
+	if _, err := api.Run(context.Background(), "看着办", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run3: %v", err)
+	}
+	sc2 := &scriptChat{resps: []hubtools.Response{{Text: "结论"}}}
+	chatToolsHook = sc2.hook
+	if _, err := api.Run(context.Background(), "1", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run4: %v", err)
+	}
+	if len(sc2.last) <= 2 {
+		t.Fatalf("同渠道短输入应自动续跑: len=%d", len(sc2.last))
+	}
+}
+
+// 测试 12（重写）：续跑首轮 chatTools 4xx 应上抛错误，不进 RouteDecide。
+// RouteDecide 没有上一轮问题与候选语境（用户短回复如 "1" 进去决策不可控）；
+// 挂起与候选语境在错误后保留，用户重试可续。
+func TestRunLoopDegradeSkipResume(t *testing.T) {
+	api, f := newLoopAPI(t)
+
+	sc1 := &scriptChat{resps: []hubtools.Response{
+		{ToolCalls: []hubtools.ToolCall{tc("c1", "create_session", `{"task":"写周报"}`)}},
+		{ToolCalls: []hubtools.ToolCall{tc("c2", "ask", `{"question":"请选择工具","options":["claude Claude Code"]}`)}},
+	}}
+	chatToolsHook = sc1.hook
+	if _, err := api.Run(context.Background(), "新建会话写周报", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run1: %v", err)
+	}
+	s := api.getSuspend()
+	if s == nil || s.st.confirm == nil || s.st.candidates[1] != "claude" {
+		t.Fatalf("第一轮后挂起候选语境缺失: %+v", s)
+	}
+
+	// 续跑：chatTools 直接 4xx → 应上抛错误，不进 RouteDecide
+	chatToolsHook = func(context.Context, hubtools.Config, []hubtools.Message, []hubtools.ToolFunc) (hubtools.Response, error) {
+		return hubtools.Response{}, errors.New("err.hubtools.request_failed: 状态码 400, 响应: bad request")
+	}
+	api.setChatFn(func(context.Context, []hubtools.Message) (hubtools.Response, error) {
+		// 降级若误触发会走这里。
+		t.Error("续跑不应触发降级 RouteDecide")
+		return hubtools.Response{Text: `{"action":"single","targets":[1],"text":"误投"}`}, nil
+	})
+
+	_, err := api.Resume("hub", "1", RunOpts{})
+	if err == nil || !strings.Contains(err.Error(), "状态码 400") {
+		t.Fatalf("续跑 4xx 应上抛错误, got %v", err)
+	}
+	// 挂起与候选语境未被降级路径破坏（瞬时错误保留挂起）
+	s = api.getSuspend()
+	if s == nil || s.st.confirm == nil || s.st.candidates[1] != "claude" {
+		t.Fatalf("续跑错误后挂起候选语境应保留: %+v", s)
+	}
+	// 无 RouteSend 副作用
+	if len(f.sent) != 0 {
+		t.Fatalf("续跑错误不应产生投递: %v", f.sent)
+	}
+}
+
+// 测试 13（新）：降级 ask 分支同样挂起（msgs=[system,user]），下一条短输入
+// 能从同一语境续跑。
+func TestRunLoopDegradeAskSuspends(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	chatToolsHook = func(context.Context, hubtools.Config, []hubtools.Message, []hubtools.ToolFunc) (hubtools.Response, error) {
+		return hubtools.Response{}, errors.New("err.hubtools.request_failed: 状态码 400, 响应: bad request")
+	}
+	api.setChatFn(func(context.Context, []hubtools.Message) (hubtools.Response, error) {
+		return hubtools.Response{Text: `{"action":"ask","question":"发给哪个会话？"}`}, nil
+	})
+
+	res, err := api.Run(context.Background(), "发一下进度", RunOpts{Channel: "hub"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Suspended || res.Ask == nil || res.Ask.Question != "发给哪个会话？" {
+		t.Fatalf("降级反问应挂起: %+v", res)
+	}
+	if !api.HasSuspendedAsk("hub") {
+		t.Fatal("降级反问应记挂起")
+	}
+
+	// 短输入续跑：chatTools 恢复 → 结论；msgs = 降级时的 [sys,user] + 回复
+	sc2 := &scriptChat{resps: []hubtools.Response{{Text: "已发给修复登录。"}}}
+	chatToolsHook = sc2.hook
+	if _, err := api.Run(context.Background(), "1", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run2: %v", err)
+	}
+	if len(sc2.last) != 3 {
+		t.Fatalf("降级续跑消息序列长度 = %d, want 3", len(sc2.last))
+	}
+}
+
+// 测试：挂起返回也写记忆，outcome 记「反问：<question>」。
+func TestMemorySuspendOutcome(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	chatToolsHook = askScript("选哪个？").hook
+	if _, err := api.Run(context.Background(), "看着办", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got := api.memoryNow().Recent(1)
+	if len(got) != 1 || !strings.Contains(got[0].Outcome, "反问：选哪个？") {
+		t.Fatalf("挂起返回的记忆 outcome 应记反问: %+v", got)
+	}
+}
+
+// 测试：记忆——首轮后 journal 有条目；第二轮 system 含记忆尾；search_memory 命中。
 func TestRunLoopMemory(t *testing.T) {
 	api, _ := newLoopAPI(t)
 
@@ -338,7 +684,7 @@ func TestRunLoopMemory(t *testing.T) {
 	}
 }
 
-// 测试 7：ChatWithTools 4xx → RouteDecide 降级单发生效。
+// 测试：ChatWithTools 4xx → RouteDecide 降级单发生效。
 func TestRunLoopDegrade4xx(t *testing.T) {
 	api, f := newLoopAPI(t)
 	chatToolsHook = func(context.Context, hubtools.Config, []hubtools.Message, []hubtools.ToolFunc) (hubtools.Response, error) {
@@ -364,7 +710,7 @@ func TestRunLoopDegrade4xx(t *testing.T) {
 	}
 }
 
-// 测试 7b：mid-loop 4xx 不降级——第 1 轮 send 已真实投递，第 2 轮 chatTools
+// 测试：mid-loop 4xx 不降级——第 1 轮 send 已真实投递，第 2 轮 chatTools
 // 返回 429 时应上抛错误，而不是对原文重新 RouteDecide + RouteSend 重复投递。
 func TestRunLoopDegradeOnlyFirstRound(t *testing.T) {
 	api, f := newLoopAPI(t)
@@ -397,52 +743,7 @@ func TestRunLoopDegradeOnlyFirstRound(t *testing.T) {
 	}
 }
 
-// 测试 7c：续轮不降级——续轮首轮 chatTools 4xx 应上抛错误。RouteDecide 没有
-// 上一轮问题与候选语境（用户短回复如 "1" 进去决策不可控），且降级 ask 分支
-// 会用新 pendingAsk 覆盖 Confirm/Candidates，打断创建确认链路。
-func TestRunLoopDegradeSkipContinuation(t *testing.T) {
-	api, f := newLoopAPI(t)
-
-	// 第一轮：create_session 缺参数 → 候选存 pendingAsk → ask 终止
-	sc1 := &scriptChat{resps: []hubtools.Response{
-		{ToolCalls: []hubtools.ToolCall{tc("c1", "create_session", `{"task":"写周报"}`)}},
-		{ToolCalls: []hubtools.ToolCall{tc("c2", "ask", `{"question":"请选择工具","options":["claude Claude Code"]}`)}},
-	}}
-	chatToolsHook = sc1.hook
-	if _, err := api.Run(context.Background(), "新建会话写周报", RunOpts{Channel: "hub"}); err != nil {
-		t.Fatalf("Run1: %v", err)
-	}
-	if p := api.getPending(); p == nil || p.Confirm == nil || p.Candidates[1] != "claude" {
-		t.Fatalf("第一轮后候选语境缺失: %+v", p)
-	}
-
-	// 续轮：chatTools 直接 4xx → 应上抛错误，不进 RouteDecide
-	chatToolsHook = func(context.Context, hubtools.Config, []hubtools.Message, []hubtools.ToolFunc) (hubtools.Response, error) {
-		return hubtools.Response{}, errors.New("err.hubtools.request_failed: 状态码 400, 响应: bad request")
-	}
-	api.setChatFn(func(context.Context, []hubtools.Message) (hubtools.Response, error) {
-		// 降级若误触发会走这里：投递决策 + ask 分支覆盖 pendingAsk 双重破坏。
-		t.Error("续轮不应触发降级 RouteDecide")
-		return hubtools.Response{Text: `{"action":"single","targets":[1],"text":"误投"}`}, nil
-	})
-
-	_, err := api.Run(context.Background(), "1", RunOpts{Channel: "hub", Continuation: true})
-	if err == nil || !strings.Contains(err.Error(), "状态码 400") {
-		t.Fatalf("续轮 4xx 应上抛错误, got %v", err)
-	}
-	// 候选语境未被降级路径破坏（Confirm/Candidates/Options 原样保留）
-	p := api.getPending()
-	if p == nil || p.Confirm == nil || p.Candidates[1] != "claude" ||
-		len(p.Options) != 1 || p.Question != "请选择工具" {
-		t.Fatalf("续轮错误后候选语境应保留: %+v", p)
-	}
-	// 无 RouteSend 副作用
-	if len(f.sent) != 0 {
-		t.Fatalf("续轮错误不应产生投递: %v", f.sent)
-	}
-}
-
-// 测试 8：ErrLoopBusy 并发重入；ErrLLMNotReady 原样上抛。
+// 测试：ErrLoopBusy 并发重入；ErrLLMNotReady 原样上抛。
 func TestRunLoopBusyAndNotReady(t *testing.T) {
 	// 未配置 LLM
 	api := New(newFake())
@@ -461,7 +762,7 @@ func TestRunLoopBusyAndNotReady(t *testing.T) {
 	}
 }
 
-// 测试 9：轮次守卫——模型连调 6 轮工具后超限，最后一轮仍无结论返回指引文案。
+// 测试：轮次守卫——模型连调 6 轮工具后超限，最后一轮仍无结论返回指引文案。
 func TestRunLoopRoundGuard(t *testing.T) {
 	api, _ := newLoopAPI(t)
 	loopCall := hubtools.Response{ToolCalls: []hubtools.ToolCall{tc("c", "list_sessions", "{}")}}
@@ -492,38 +793,8 @@ func TestRunLoopRoundGuard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run2: %v", err)
 	}
-	if res2.AskPending || res2.Replies[0] != loopGuidance {
+	if res2.Suspended || res2.Replies[0] != loopGuidance {
 		t.Fatalf("超限应返回指引文案: %+v", res2)
-	}
-}
-
-// 测试：显式续轮与 pending 渠道不符时按新输入处理——跨渠道陈旧标记不得把
-// 他渠道的反问语境注入模型（desktop/hub 各自维护渠道标记，agentapi 守卫兜底）。
-func TestRunLoopContinuationChannelGuard(t *testing.T) {
-	api, _ := newLoopAPI(t)
-	sc := &scriptChat{resps: []hubtools.Response{{Text: "结论"}, {Text: "结论"}}}
-	chatToolsHook = sc.hook
-
-	// hub 渠道的 pending 在场，wechat 输入带显式续轮：不得注入 hub 语境，
-	// 且按新输入清 pending。
-	api.setPending(&pendingAsk{Question: "发给哪个？", Channel: "hub", Ts: now().UnixNano()})
-	if _, err := api.Run(context.Background(), "1", RunOpts{Channel: "wechat", Continuation: true}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if strings.Contains(sc.sysSeen[0], "续轮语境") {
-		t.Fatalf("跨渠道显式续轮不得注入他渠道语境: %q", sc.sysSeen[0])
-	}
-	if api.getPending() != nil {
-		t.Fatal("跨渠道输入应按新需求清 pending")
-	}
-
-	// 渠道一致时显式续轮照常注入语境。
-	api.setPending(&pendingAsk{Question: "发给哪个？", Channel: "wechat", Ts: now().UnixNano()})
-	if _, err := api.Run(context.Background(), "1", RunOpts{Channel: "wechat", Continuation: true}); err != nil {
-		t.Fatalf("Run2: %v", err)
-	}
-	if !strings.Contains(sc.sysSeen[1], "续轮语境") {
-		t.Fatalf("同渠道显式续轮应注入语境: %q", sc.sysSeen[1])
 	}
 }
 

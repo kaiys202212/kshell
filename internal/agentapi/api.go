@@ -55,8 +55,8 @@ type API struct {
 	chatFn func(ctx context.Context, msgs []hubtools.Message) (hubtools.Response, error)
 
 	// —— 管理者循环级状态（mu 保护；语义见 loop.go）——
-	busy    bool           // Run 重入门禁
-	pending *pendingAsk    // 未决反问语境（跨 Run 存续，续轮时消费）
+	busy    bool          // Run/Resume 重入门禁
+	suspend *suspendState // 挂起-续跑语境（ask 落地时写入，Resume/短输入 Run 消费）
 	mem     *ManagerMemory // 管理者记忆 journal（nil = 未启用，Run 跳过记忆读写）
 }
 

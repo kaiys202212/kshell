@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -17,7 +16,7 @@ import (
 // loop.go：管理者循环——把 hubtools 的 function calling 协议与 Backend 原语
 // 缝合成一个「会看会话、会发消息、会建会话、会反问」的自主 agent 循环。
 //
-// 循环级状态（busy/pending/memory）挂在 API 结构体字段上（mu 保护），见 api.go。
+// 循环级状态（busy/suspend/memory）挂在 API 结构体字段上（mu 保护），见 api.go。
 
 // SetMemory 注入管理者记忆 journal（desktop 启动时创建并注入；nil 关闭记忆）。
 func (a *API) SetMemory(m *ManagerMemory) {
@@ -33,23 +32,31 @@ func (a *API) memoryNow() *ManagerMemory {
 	return a.mem
 }
 
-// getPending / setPending / clearPending 是 pendingAsk 的互斥访问口。
-func (a *API) getPending() *pendingAsk {
+// getSuspend / setSuspend / clearSuspend 是挂起态的互斥访问口。
+func (a *API) getSuspend() *suspendState {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.pending
+	return a.suspend
 }
 
-func (a *API) setPending(p *pendingAsk) {
+func (a *API) setSuspend(s *suspendState) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.pending = p
+	a.suspend = s
 }
 
-func (a *API) clearPending() {
+func (a *API) clearSuspend() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.pending = nil
+	a.suspend = nil
+}
+
+// HasSuspendedAsk 报告是否存在可续跑的挂起反问：挂起在场、渠道匹配且未超
+// SuspendTTL。调用方（desktop/weixin）可用它在分发前判断该走续跑还是新轮。
+func (a *API) HasSuspendedAsk(channel string) bool {
+	s := a.getSuspend()
+	return s != nil && s.st.channel == channel &&
+		time.Duration(now().UnixNano()-s.ts) <= SuspendTTL
 }
 
 // chatToolsHook 仅测试用：注入带工具定义的假 LLM（镜像 api.go 的 chatFn
@@ -70,15 +77,22 @@ func (a *API) chatTools(ctx context.Context, msgs []hubtools.Message, tools []hu
 }
 
 // 哨兵与常量。
-var ErrLoopBusy = errors.New("agentapi: 管理者循环已在运行")
+var (
+	ErrLoopBusy = errors.New("agentapi: 管理者循环已在运行")
+	// ErrNoSuspend 表示当前没有可续跑的挂起反问（无挂起 / 已超时 / 渠道不符）。
+	ErrNoSuspend = errors.New("agentapi: 无挂起中的反问")
+)
 
 // loopMaxRounds 是工具循环的轮次上限：超限后注入末轮提示再给一轮，
 // 仍不收敛则交还用户，避免模型在工具调用里打转烧钱。
 const loopMaxRounds = 6
 
-// PendingAskTTL 是未决反问语境的有效期：过期后短输入不再自动续轮。desktop
-// 侧续轮判定（hubroute.go）引用同一常量，两边过期口径同源——显式传
-// Continuation 会绕过 Run 内部的 TTL 检查，调用方必须自行判过期。
+// SuspendTTL 是挂起反问的有效期：过期后 Resume 返回 ErrNoSuspend，同渠道
+// 短输入也不再自动续跑（按全新输入处理）。
+const SuspendTTL = 15 * time.Minute
+
+// PendingAskTTL 是旧「未决反问语境」的有效期：挂起-续跑语义上线后仅剩
+// desktop 侧续轮标记自判 TTL 在引用（T4 改造后删除）。
 const PendingAskTTL = 30 * time.Minute
 
 // shortInputMax 是自动续轮判定的输入长度上限（rune）：超过视为新需求。
@@ -105,141 +119,201 @@ type LoopProgress struct {
 	Round int
 }
 
-// RunOpts 是 Run 的可选参数。
+// RunOpts 是 Run/Resume 的可选参数。
 type RunOpts struct {
-	Channel      string // hub | wechat（区分记忆与续轮语境归属）
-	Continuation bool   // 本输入是对上一轮 ask 的回复
+	Channel string // hub | wechat（区分记忆与语境归属）
+	// Continuation 已废弃：挂起-续跑语义下 Run 自行判定（同渠道未过期挂起 +
+	// 短输入即续跑），Resume 显式续跑。字段暂留避免 desktop 编译破坏，T4 删。
+	Continuation bool
 	Progress     func(LoopProgress)
+}
+
+// AskPayload 是 ask 落地的结构化交互载荷。
+type AskPayload struct {
+	Question string   `json:"question"`
+	Options  []string `json:"options,omitempty"`
+	Mode     string   `json:"mode"` // single | multi | confirm（空=single）
 }
 
 // RunResult 是一次管理者循环的产出：Replies[0] 为最终结论（ask 时为
 // 问题+编号选项列表）。
 type RunResult struct {
-	Replies    []string
+	Replies []string
+	ToolSteps int
+	// Ask 非 nil 表示本轮以挂起反问收束，Suspended 与之同步；用户回复经
+	// Resume（或同渠道短输入 Run）从同一 msgs 续跑。
+	Ask       *AskPayload `json:"ask,omitempty"`
+	Suspended bool        `json:"suspended,omitempty"`
+	// AskPending 是兼容 shim：= Ask != nil（挂起反问别名），desktop/weixin
+	// 旧引用过渡用，T4 删。
 	AskPending bool
-	ToolSteps  int
 }
 
-// pendingAsk 是跨 Run 存续的未决反问语境：ask 工具落地时写入，续轮时
-// 注入 system，创建落地/结论/超限/错误时清除。Options 携带 ask 的编号
-// 选项原文（续轮注入必需）；Confirm/Candidates 由 create_session 的
-// NeedsConfirm 填充，供续轮把用户回复的编号翻译回 ID。
-type pendingAsk struct {
-	Question   string
-	Options    []string
-	Channel    string
-	Round      int // 连续 ask 轮数（AskMaxRounds 门禁计数）
-	Ts         int64
-	Confirm    *CreatePlan
-	Candidates map[int]string // 候选编号 → 工具/工作区 ID
+// suspendState 是挂起-续跑语境：ask 落地时保存完整循环状态（含本轮全部
+// system/user/assistant/tool 消息），用户回复后从同一 msgs 续跑同一循环，
+// 上下文不断裂。
+type suspendState struct {
+	st  *loopState // 完整循环内状态（msgs/round/steps/askRound/confirm/candidates）
+	ask AskPayload // 挂起时向用户提出的问题（门禁文案引用上一问原文）
+	ts  int64      // 挂起时刻（UnixNano，now() 假钟可测）
 }
 
-// loopState 是单次 Run 的循环内状态：工具注册表闭包与收尾记忆摘要共用。
+// loopState 是管理者循环的可挂起状态：Run 全新构建，ask 落地时整体存入
+// 挂起态，Resume 从同一实例续跑（msgs 天然延续，不重建 system）。
 type loopState struct {
 	channel  string
-	input    string
-	cont     bool        // 本轮是上一轮 ask 的续轮
-	pending  *pendingAsk // Run 开始时的语境快照（system 注入用）
-	steps    int         // 已执行工具步数
-	actions  []string    // 工具名序列（去重后作记忆摘要）
-	degraded bool        // 本轮走了 RouteDecide 降级（不写工具摘要）
-	ask      *RunResult  // ask 落地/被禁时置位，循环立即终止
+	input    string     // 本轮用户输入（记忆落盘用；Resume 时改为用户回复）
+	steps    int        // 已执行工具步数
+	actions  []string   // 工具名序列（去重后作记忆摘要）
+	degraded bool       // 本轮走了 RouteDecide 降级（不写工具摘要）
+	ask      *RunResult // ask 落地/被禁时置位，循环立即终止
+	// —— 挂起延续的循环位置与语境 ——
+	msgs       []hubtools.Message
+	round      int            // 当前 LLM 轮号（续跑时接着走）
+	askRound   int            // 连续 ask 计数（AskMaxRounds 门禁，跨挂起链累计）
+	confirm    *CreatePlan    // create_session 待确认计划（跨挂起延续）
+	candidates map[int]string // 候选编号 → 工具/工作区 ID（跨挂起延续）
 }
 
 // Run 执行一次管理者循环：把用户输入交给带工具的 LLM，模型按需调用
-// list/send/create/ask 等工具，直到给出结论或反问。
+// list/send/create/ask 等工具，直到给出结论或反问（挂起）。
 func (a *API) Run(ctx context.Context, input string, opts RunOpts) (RunResult, error) {
+	if err := a.enterLoop(); err != nil {
+		return RunResult{}, err
+	}
+	defer a.exitLoop()
+
+	// 挂起续跑判定：同渠道未过期挂起 + 短输入 → 从同一 msgs 续跑（短文本
+	// 大概率是回复上一轮的编号选项）。超时/跨渠道/长输入一律清挂起按全新
+	// 输入跑：新长需求不应被旧反问语境带偏。
+	resume := false
+	if s := a.getSuspend(); s != nil {
+		resume = s.st.channel == opts.Channel &&
+			time.Duration(now().UnixNano()-s.ts) <= SuspendTTL &&
+			len([]rune(strings.TrimSpace(input))) <= shortInputMax
+		if !resume {
+			a.clearSuspend()
+		}
+	}
+	if resume {
+		return a.resumeLoop(ctx, input, opts, opts.Channel)
+	}
+	return a.startLoop(ctx, input, opts, opts.Channel)
+}
+
+// Resume 用用户回复显式续跑挂起中的反问循环：无挂起/渠道不符返回
+// ErrNoSuspend，超时返回 ErrNoSuspend 并同时清挂起。收尾规则与 Run 一致。
+// 与 Run 共用 busy 重入门禁。签名沿用设计文档（无 ctx 参数，内部用
+// context.Background() 跑 LLM 请求；desktop 接入 T2 时如需取消语义再扩展）。
+func (a *API) Resume(channel, input string, opts RunOpts) (RunResult, error) {
+	if err := a.enterLoop(); err != nil {
+		return RunResult{}, err
+	}
+	defer a.exitLoop()
+	return a.resumeLoop(context.Background(), input, opts, channel)
+}
+
+// enterLoop / exitLoop 是 Run/Resume 共用的 busy 重入门禁。
+func (a *API) enterLoop() error {
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.busy {
-		a.mu.Unlock()
-		return RunResult{}, ErrLoopBusy
+		return ErrLoopBusy
 	}
 	a.busy = true
+	return nil
+}
+
+func (a *API) exitLoop() {
+	a.mu.Lock()
+	a.busy = false
 	a.mu.Unlock()
-	defer func() {
-		a.mu.Lock()
-		a.busy = false
-		a.mu.Unlock()
-	}()
+}
 
-	// 续轮判定：显式 Continuation 标志，或「短输入 + 同渠道未过期 pendingAsk」。
-	// 短文本大概率是用户在回复上一轮的编号选项；新长需求清 pending 开新轮。
-	// 显式标志须与 pending 渠道一致才采信：hub/wechat 渠道各自维护标记，可能
-	// 陈旧（如 hub 渠道 ask 后另一渠道抢先开新轮）——跨渠道语境不得注入模型，
-	// 按新输入处理（下方清 pending）。pending 为空时保留标志：clearPending
-	// 变为 no-op，且续轮不降级 4xx 的纪律不受影响。
-	pend := a.getPending()
-	cont := opts.Continuation
-	if cont && pend != nil && pend.Channel != opts.Channel {
-		cont = false
+// startLoop 全新开循环：装配 system 与首条 user 消息，round 从 1 计。
+func (a *API) startLoop(ctx context.Context, input string, opts RunOpts, channel string) (RunResult, error) {
+	st := &loopState{channel: channel, input: input, round: 1}
+	st.msgs = []hubtools.Message{
+		{Role: "system", Content: a.buildManagerSystem(st)},
+		{Role: "user", Content: input},
 	}
-	if !cont && pend != nil && pend.Channel == opts.Channel &&
-		time.Duration(now().UnixNano()-pend.Ts) <= PendingAskTTL &&
-		len([]rune(strings.TrimSpace(input))) <= shortInputMax {
-		cont = true
-	}
-	if !cont {
-		a.clearPending()
-	}
-	st := &loopState{channel: opts.Channel, input: input, cont: cont, pending: pend}
+	res, err := a.runLoop(ctx, st, opts)
+	return a.finishLoop(st, res, err)
+}
 
-	res, err := a.runLoop(ctx, input, opts, st)
+// resumeLoop 从挂起态续跑：用户回复以原话追加进原 msgs（不重建 system，
+// 上下文天然延续），从保存的轮号继续同一循环。
+func (a *API) resumeLoop(ctx context.Context, input string, opts RunOpts, channel string) (RunResult, error) {
+	s := a.getSuspend()
+	if s == nil || s.st.channel != channel {
+		return RunResult{}, ErrNoSuspend
+	}
+	if time.Duration(now().UnixNano()-s.ts) > SuspendTTL {
+		a.clearSuspend()
+		return RunResult{}, ErrNoSuspend
+	}
+	st := s.st
+	st.input = input
+	st.ask = nil // 清掉上一轮 ask 的终止标记，否则续跑首轮会立即返回旧挂起结果
+	// 末条已是同文 user 消息时跳过追加：上次续跑因瞬时错误中断后重试同一
+	// 输入，避免同一回复在 msgs 里重复出现（见 finishLoop 的保留规则）。
+	if n := len(st.msgs); n == 0 || st.msgs[n-1].Role != "user" ||
+		strings.TrimSpace(st.msgs[n-1].Content) != strings.TrimSpace(input) {
+		st.msgs = append(st.msgs, hubtools.Message{Role: "user", Content: input})
+	}
+	res, err := a.runLoop(ctx, st, opts)
+	return a.finishLoop(st, res, err)
+}
+
+// finishLoop 是 Run/Resume 共用的收尾：结论/超限/门禁 → 清挂起；ask 落地
+// 已由 ask 工具重新挂起；错误保留挂起（用户重试同一输入可续；全新 Run 入口
+// 已清陈旧挂起，此处为 no-op）；ErrLLMNotReady 属调用方环境问题，不动挂起
+// 也不写记忆（避免每次未配置都污染 journal）。
+func (a *API) finishLoop(st *loopState, res RunResult, err error) (RunResult, error) {
 	if errors.Is(err, ErrLLMNotReady) {
-		// 环境未配置属调用方错误：不动 pending（用户配好模型后原语境仍在），
-		// 也不写记忆（避免每次未配置都污染 journal）。
 		return res, err
 	}
-	// 收尾清 pending：结论/超限/新轮错误都说明本轮语境已走到头；ask 落地
-	// 保留等续轮。**续轮错误例外保留**——短回复的确认链路（候选编号 →
-	// create_session）不应因一次瞬时错误作废，用户重试同一输入还能续上；
-	// 否则 Confirm/Candidates 被清掉，创建确认链路就此打断。
-	if err == nil && !res.AskPending {
-		a.clearPending()
-	}
-	if err != nil && !st.cont {
-		a.clearPending()
+	if err == nil && !res.Suspended {
+		a.clearSuspend()
 	}
 	a.memoryAppend(st, res, err)
 	return res, err
 }
 
-// runLoop 是工具循环主体：装配 system → 循环 chatTools → 执行工具 →
-// 终止于结论 / ask / 降级 / 轮次超限。
-func (a *API) runLoop(ctx context.Context, input string, opts RunOpts, st *loopState) (RunResult, error) {
+// runLoop 是工具循环主体：从 st.msgs / st.round 续转（全新 Run 由 startLoop
+// 装配初始 msgs，Resume 复用挂起时的 msgs）→ chatTools → 执行工具 →
+// 终止于结论 / ask 挂起 / 降级 / 轮次超限。
+func (a *API) runLoop(ctx context.Context, st *loopState, opts RunOpts) (RunResult, error) {
 	tools := a.buildLoopTools(ctx, st)
 	defs := make([]hubtools.ToolFunc, len(tools))
 	for i, t := range tools {
 		defs[i] = t.def
 	}
-	msgs := []hubtools.Message{
-		{Role: "system", Content: a.buildManagerSystem(st)},
-		{Role: "user", Content: input},
-	}
 
-	for round := 1; ; round++ {
+	for {
 		// 轮次守卫：正常轮 1..loopMaxRounds；第 loopMaxRounds+1 轮注入末轮
-		// 提示强制收敛；第 loopMaxRounds+2 轮仍不收敛则交还用户。
-		if round == loopMaxRounds+1 {
-			msgs = append(msgs, hubtools.Message{Role: "user", Content: loopFinalHint})
+		// 提示强制收敛；第 loopMaxRounds+2 轮仍不收敛则交还用户。轮号挂在
+		// st 上跨挂起延续，每轮结束后自增。
+		if st.round == loopMaxRounds+1 {
+			st.msgs = append(st.msgs, hubtools.Message{Role: "user", Content: loopFinalHint})
 		}
-		if round > loopMaxRounds+1 {
+		if st.round > loopMaxRounds+1 {
 			return RunResult{Replies: []string{loopGuidance}, ToolSteps: st.steps}, nil
 		}
 
-		resp, err := a.chatTools(ctx, msgs, defs)
+		resp, err := a.chatTools(ctx, st.msgs, defs)
 		if err != nil {
 			if errors.Is(err, ErrLLMNotReady) {
 				return RunResult{}, err
 			}
-			// 4xx 降级仅限非续轮的首轮：协议不被网关支持时第 1 轮就会失败；
-			// mid-loop 的 4xx（如 429 限流）更可能是瞬时错误，且此时工具可能
-			// 已真实投递，再走 RouteDecide 会把用户原文重复投出——直接上抛。
-			// 续轮一律不降级：RouteDecide 没有上一轮问题与候选语境（用户短
-			// 回复如 "1" 进去决策不可控），且降级 ask 分支会用新 pendingAsk
-			// 覆盖 Confirm/Candidates，打断创建确认链路。
-			if !st.cont && st.steps == 0 && strings.Contains(err.Error(), "状态码 4") {
+			// 4xx 降级仅限全新 Run 的首轮（协议不被网关支持时第 1 轮就会失败；
+			// 挂起续跑的 st.round >= 2 不会命中）。mid-loop 的 4xx（如 429 限
+			// 流）更可能是瞬时错误，且此时工具可能已真实投递，再走 RouteDecide
+			// 会把用户原文重复投出——直接上抛。续跑一律不降级：RouteDecide 没
+			// 有上一轮问题与候选语境（用户短回复如 "1" 进去决策不可控）。
+			if st.round == 1 && st.steps == 0 && strings.Contains(err.Error(), "状态码 4") {
 				st.degraded = true
-				return a.degradeRoute(ctx, input, st)
+				return a.degradeRoute(ctx, st)
 			}
 			return RunResult{}, err
 		}
@@ -249,27 +323,29 @@ func (a *API) runLoop(ctx context.Context, input string, opts RunOpts, st *loopS
 		if len(resp.ToolCalls) == 0 {
 			text := strings.TrimSpace(resp.Text)
 			if text == "" {
-				msgs = append(msgs, hubtools.Message{Role: "user", Content: "回复为空：请给出自然语言结论，或调用工具继续。"})
+				st.msgs = append(st.msgs, hubtools.Message{Role: "user", Content: "回复为空：请给出自然语言结论，或调用工具继续。"})
+				st.round++
 				continue
 			}
 			return RunResult{Replies: []string{text}, ToolSteps: st.steps}, nil
 		}
 
 		// 追加 assistant(tool_calls) 与逐个 tool 结果（hubtools wire 已支持）。
-		msgs = append(msgs, hubtools.Message{Role: "assistant", Content: resp.Text, ToolCalls: resp.ToolCalls})
+		st.msgs = append(st.msgs, hubtools.Message{Role: "assistant", Content: resp.Text, ToolCalls: resp.ToolCalls})
 		for _, call := range resp.ToolCalls {
 			st.steps++
 			st.actions = append(st.actions, call.Name)
 			if opts.Progress != nil {
-				opts.Progress(LoopProgress{Tool: call.Name, Round: round})
+				opts.Progress(LoopProgress{Tool: call.Name, Round: st.round})
 			}
-			msgs = append(msgs, hubtools.Message{
+			st.msgs = append(st.msgs, hubtools.Message{
 				Role:       "tool",
 				ToolCallID: call.ID,
 				Content:    a.execTool(st, call, tools),
 			})
 		}
-		// ask 是终止性工具：落地或被禁都立即结束循环。
+		st.round++
+		// ask 是终止性工具：落地（挂起）或被禁都立即结束循环。
 		if st.ask != nil {
 			st.ask.ToolSteps = st.steps
 			return *st.ask, nil
@@ -295,8 +371,8 @@ func (a *API) execTool(st *loopState, call hubtools.ToolCall, tools []loopTool) 
 
 // degradeRoute 是 4xx 降级路径：回退 RouteDecide 单发决策并按 action 执行。
 // 该轮不写工具摘要（st.degraded 已标记），status/expand 用 Backend 原语合成文本。
-func (a *API) degradeRoute(ctx context.Context, input string, st *loopState) (RunResult, error) {
-	plan, err := a.RouteDecide(ctx, input)
+func (a *API) degradeRoute(ctx context.Context, st *loopState) (RunResult, error) {
+	plan, err := a.RouteDecide(ctx, st.input)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -317,13 +393,18 @@ func (a *API) degradeRoute(ctx context.Context, input string, st *loopState) (Ru
 	case "expand":
 		return RunResult{Replies: []string{a.renderExpandReply(plan)}}, nil
 	case "ask":
-		// 降级反问同样记 pending，让下一条短输入能续上（轮次计数沿用）。
-		round := 1
-		if p := a.getPending(); p != nil {
-			round = p.Round + 1
-		}
-		a.setPending(&pendingAsk{Question: plan.Question, Channel: st.channel, Round: round, Ts: now().UnixNano()})
-		return RunResult{Replies: []string{plan.Question}, AskPending: true}, nil
+		// 降级反问同样挂起（msgs=[system,user]，候选语境为空），让下一条
+		// 短输入能从同一语境续跑（askRound 计数沿用 st）。
+		payload := AskPayload{Question: plan.Question, Mode: "single"}
+		st.askRound++
+		st.round++ // 降级发生在首轮 LLM 调用前，续跑从下一轮开始
+		a.setSuspend(&suspendState{st: st, ask: payload, ts: now().UnixNano()})
+		return RunResult{
+			Replies:    []string{plan.Question},
+			Ask:        &payload,
+			Suspended:  true,
+			AskPending: true, // 兼容 shim：= Ask != nil
+		}, nil
 	}
 	return RunResult{}, fmt.Errorf("agentapi: 未知降级路由 action %q", plan.Action)
 }
@@ -385,6 +466,9 @@ func (a *API) memoryAppend(st *loopState, res RunResult, runErr error) {
 	switch {
 	case runErr != nil:
 		outcome = "失败: " + runErr.Error()
+	case res.Ask != nil:
+		// 挂起返回记反问摘要：最终结论要等续跑轮落盘，journal 不留空档。
+		outcome = "反问：" + res.Ask.Question
 	case len(res.Replies) > 0:
 		outcome = res.Replies[0]
 	}
@@ -398,9 +482,10 @@ func (a *API) memoryAppend(st *loopState, res RunResult, runErr error) {
 	}
 }
 
-// buildManagerSystem 装配管理者 system 提示：角色 + 规则 +（续轮语境）+
-// 最近 AgentHub 消息 + 记忆尾。记忆尾与最近消息都渲染进 system 而非独立
-// 消息，保持消息序列简单可断言。
+// buildManagerSystem 装配管理者 system 提示：角色 + 规则 + 最近 AgentHub
+// 消息 + 记忆尾，全部渲染进 system 而非独立消息，保持消息序列简单可断言。
+// 反问续跑不在此注入语境：挂起-续跑从同一 msgs 延续上下文（旧问题、选项与
+// 候选编号都在 assistant/tool 消息里），不重建 system。
 func (a *API) buildManagerSystem(st *loopState) string {
 	var b strings.Builder
 	b.WriteString("你是 AgentHub 的管理者 agent：根据用户消息决定投递、查询或创建 agent 会话，并给出自然语言结论。\n")
@@ -410,28 +495,6 @@ func (a *API) buildManagerSystem(st *loopState) string {
 	b.WriteString("- 最近消息语境：【最近 AgentHub 消息】段存在且已足以判断目标时，不要再调用 session_messages 或 search_memory 查历史，直接投递；该段不存在或不足时照常查历史。\n")
 	b.WriteString("- 末轮必须产出自然语言结论：不再调用工具时，直接输出结论文本。\n")
 	b.WriteString("- 意图不确定时必须调用 ask 列编号选项向用户确认，禁止猜测性群发。\n")
-
-	if st.cont && st.pending != nil {
-		b.WriteString("\n【续轮语境】你上一轮向用户提问：\n" + st.pending.Question + "\n")
-		if len(st.pending.Options) > 0 {
-			b.WriteString("选项：\n")
-			for i, o := range st.pending.Options {
-				fmt.Fprintf(&b, "%d. %s\n", i+1, o)
-			}
-		}
-		if len(st.pending.Candidates) > 0 {
-			keys := make([]int, 0, len(st.pending.Candidates))
-			for k := range st.pending.Candidates {
-				keys = append(keys, k)
-			}
-			sort.Ints(keys)
-			b.WriteString("创建候选编号：")
-			for _, k := range keys {
-				fmt.Fprintf(&b, " %d=%s", k, st.pending.Candidates[k])
-			}
-			b.WriteString("\n用户回复编号时，把编号作为 tool_id/workspace 传给 create_session，系统会翻译成实际 ID。\n")
-		}
-	}
 
 	if sec := a.recentContextSection(st.input); sec != "" {
 		b.WriteString("\n" + sec)
@@ -811,7 +874,8 @@ func (a *API) buildLoopTools(ctx context.Context, st *loopState) []loopTool {
 		})
 
 	// 6. create_session：薄包 CreateNL（结构化参数直接走 Confirm 校验路径，
-	// 不再二次 LLM 解析）；NeedsConfirm 渲染编号候选并存 pendingAsk 语境。
+	// 不再二次 LLM 解析）；NeedsConfirm 渲染编号候选并存入 st 候选语境
+	//（随挂起跨轮延续）。
 	add("create_session", "创建新会话并投递首条任务；参数不全时返回编号候选，用 ask 呈现给用户，用户回复后按编号重调。",
 		schemaObj(map[string]any{
 			"tool_id":   strProp("工具 ID，或上一轮候选编号"),
@@ -825,17 +889,17 @@ func (a *API) buildLoopTools(ctx context.Context, st *loopState) []loopTool {
 				return "", err
 			}
 			// 组装计划：候选语境存在时继承已定字段（如工具已定只缺工作区），
-			// 编号参数经 Candidates 翻译回 ID。
+			// 编号参数经候选表翻译回 ID。
 			plan := CreatePlan{}
-			if p := a.getPending(); p != nil && p.Confirm != nil {
-				plan = *p.Confirm
+			if st.confirm != nil {
+				plan = *st.confirm
 			}
 			plan.Question = "" // 旧反问不带入新一轮校验
 			if v := argStr(m, "tool_id"); v != "" {
-				plan.ToolID = a.translateCandidate(v)
+				plan.ToolID = translateCandidate(st, v)
 			}
 			if v := argStr(m, "workspace"); v != "" {
-				plan.Workspace = a.translateCandidate(v)
+				plan.Workspace = translateCandidate(st, v)
 			}
 			if v := argStr(m, "model"); v != "" {
 				plan.Model = v
@@ -848,7 +912,7 @@ func (a *API) buildLoopTools(ctx context.Context, st *loopState) []loopTool {
 				return "", err
 			}
 			if res.Created != nil {
-				a.clearPending() // 创建落地：候选语境已消费
+				st.confirm, st.candidates = nil, nil // 创建落地：候选语境已消费
 				reply := fmt.Sprintf("已创建会话（chat_id=%s，工具=%s）。", res.Created.ID, res.Created.Tool)
 				if err != nil {
 					// 会话已存在但首条任务投递失败：如实告知，模型可重试 send。
@@ -872,7 +936,7 @@ func (a *API) buildLoopTools(ctx context.Context, st *loopState) []loopTool {
 				num++
 			}
 			b.WriteString("请用 ask 把以上编号选项呈现给用户；用户回复后按编号调用 create_session。")
-			a.updatePendingCandidates(st.channel, need, cands)
+			st.confirm, st.candidates = need, cands
 			return b.String(), nil
 		})
 
@@ -928,6 +992,7 @@ func (a *API) buildLoopTools(ctx context.Context, st *loopState) []loopTool {
 		schemaObj(map[string]any{
 			"question": strProp("要问用户的问题"),
 			"options":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "编号选项文本列表"},
+			"mode":     strProp("交互模式：single 单选（默认）/ multi 多选 / confirm 确认"),
 		}, "question"),
 		func(args string) (string, error) {
 			m, err := parseArgs(args)
@@ -944,38 +1009,30 @@ func (a *API) buildLoopTools(ctx context.Context, st *loopState) []loopTool {
 					options = append(options, fmt.Sprint(v))
 				}
 			}
-			// 连续反问达到上限：禁用 ask，返回待选指引文案并清除语境。
-			if p := a.getPending(); p != nil && p.Round >= hubtools.AskMaxRounds {
-				a.clearPending()
-				st.ask = &RunResult{Replies: []string{loopGuidance}}
-				return loopGuidance, nil
+			// 连续反问达到上限：清挂起并返回结构化指引，循环正常收尾（不挂起）。
+			if st.askRound >= hubtools.AskMaxRounds {
+				prev := ""
+				if s := a.getSuspend(); s != nil {
+					prev = s.ask.Question
+				}
+				a.clearSuspend()
+				guide := fmt.Sprintf("连续反问已达上限（%d）。刚才的问题是：%s。请直接补充剩余信息，或换一种说法描述需求。", hubtools.AskMaxRounds, prev)
+				st.ask = &RunResult{Replies: []string{guide}}
+				return guide, nil
 			}
-			// 落地：轮次 +1，继承 create_session 留下的候选语境（用户回编号
-			// 时续轮要把编号翻译回 ID）。
-			newRound := 1
-			var confirm *CreatePlan
-			var cands map[int]string
-			if p := a.getPending(); p != nil {
-				newRound = p.Round + 1
-				confirm, cands = p.Confirm, p.Candidates
+			// 落地：挂起整个循环状态（msgs 含本轮全部 system/user/assistant/
+			// tool 消息），用户回复后从同一 msgs 续跑；候选语境随 st 跨挂起
+			// 延续（用户回编号时 create_session 要把编号翻译回 ID）。
+			payload := AskPayload{Question: q, Options: options, Mode: askMode(argStr(m, "mode"))}
+			st.askRound++
+			st.ask = &RunResult{
+				Replies:    []string{renderAskReply(q, options)},
+				Ask:        &payload,
+				Suspended:  true,
+				AskPending: true, // 兼容 shim：= Ask != nil
 			}
-			a.setPending(&pendingAsk{
-				Question:   q,
-				Options:    options,
-				Channel:    st.channel,
-				Round:      newRound,
-				Ts:         now().UnixNano(),
-				Confirm:    confirm,
-				Candidates: cands,
-			})
-			var b strings.Builder
-			b.WriteString(q + "\n")
-			for i, o := range options {
-				fmt.Fprintf(&b, "%d. %s\n", i+1, o)
-			}
-			reply := strings.TrimRight(b.String(), "\n")
-			st.ask = &RunResult{Replies: []string{reply}, AskPending: true}
-			return reply, nil
+			a.setSuspend(&suspendState{st: st, ask: payload, ts: now().UnixNano()})
+			return st.ask.Replies[0], nil
 		})
 
 	// 10. search_memory：检索历史轮次 journal。
@@ -1048,31 +1105,38 @@ func (a *API) renderSessionSnapshot() string {
 
 // translateCandidate 把候选编号（如 "1"）翻译为对应 ID：非编号、无候选语境
 // 或编号越界时原样返回，让 CreateNL 校验给出明确错误（而非静默猜）。
-func (a *API) translateCandidate(v string) string {
+func translateCandidate(st *loopState, v string) string {
 	n, err := strconv.Atoi(strings.TrimSpace(v))
 	if err != nil {
 		return v
 	}
-	p := a.getPending()
-	if p == nil || p.Candidates == nil {
+	if st.candidates == nil {
 		return v
 	}
-	if id, ok := p.Candidates[n]; ok {
+	if id, ok := st.candidates[n]; ok {
 		return id
 	}
 	return v
 }
 
-// updatePendingCandidates 把 create_session 的待确认候选写入 pendingAsk
-// （跨 Run 存续）：已有 ask 语境时只补 Confirm/Candidates，不破坏轮次计数。
-func (a *API) updatePendingCandidates(channel string, confirm *CreatePlan, cands map[int]string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	p := a.pending
-	if p == nil {
-		p = &pendingAsk{Channel: channel, Ts: now().UnixNano()}
+// askMode 归一 ask 的 mode 参数：仅 single/multi/confirm 合法，非法值按
+// single（空缺省同）。
+func askMode(v string) string {
+	switch v {
+	case "multi", "confirm":
+		return v
+	default:
+		return "single"
 	}
-	p.Confirm = confirm
-	p.Candidates = cands
-	a.pending = p
+}
+
+// renderAskReply 渲染 ask 的用户可见回执：问题 + 编号选项列表（微信桥与
+// desktop 都按纯文本回显）。
+func renderAskReply(q string, options []string) string {
+	var b strings.Builder
+	b.WriteString(q + "\n")
+	for i, o := range options {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, o)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }

@@ -13,9 +13,10 @@ import (
 // hubRouteTimeout 是路由单发请求的降级时限：超时即降级直投，不阻塞用户。
 const hubRouteTimeout = 2 * time.Second
 
-// AskMaxRounds 是反问链的连续轮数上限（桌面 Hub 与微信桥共用）：达到后下一
-// 条自由文本不再进路由，直接回落确定性路径并清零轮次（避免模型反问无限套娃）。
-const AskMaxRounds = 2
+// AskMaxRounds 是反问链的连续轮数上限（桌面 Hub 与微信桥共用）：挂起链内
+// 达到后下一次 ask 被拒，agentapi 返回结构化指引并把决定权交还用户（避免
+// 模型反问无限套娃；计数跨挂起链累计，3 次够走完「创建会话」确认链）。
+const AskMaxRounds = 3
 
 // 与 #gx 同规范的展开条数默认值与上限，避免两处口径漂移。
 const (
