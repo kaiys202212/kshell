@@ -3089,7 +3089,8 @@ describe('AgentHub 反问卡片', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'a' }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'b' }));
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.ask_confirm') }));
-    await waitFor(() => expect(api.hubAskAnswer).toHaveBeenCalledWith(expect.any(String), 'a、b'));
+    // 分隔符随 UI 语言（测试环境 en → ', '；zh 环境为顿号）
+    await waitFor(() => expect(api.hubAskAnswer).toHaveBeenCalledWith(expect.any(String), 'a, b'));
   });
 
   it('confirm 反问卡：点「是」答复为按钮文案', async () => {

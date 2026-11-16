@@ -180,6 +180,9 @@ func (a *App) HubSmartSend(reqID, text string) (HubPickView, error) {
 	// 循环结束后作为 hub_manager_think 消息结构化落盘，重启后仍可读。
 	var mgrSteps []hub.Step
 	a.emitHubProgress(reqID, hubStepRoute)
+	// 发送前是否有挂起反问：有且本轮正常返回（无论结论还是再次反问），
+	// 说明用户已用自由文本回答了旧卡——先关旧卡再落新卡，防止误标。
+	suspendWas := a.hubAskSuspended()
 	res, err := a.runHubLoop(ctx, text, agentapi.RunOpts{
 		Channel: "hub",
 		Progress: func(p agentapi.LoopProgress) {
@@ -196,6 +199,9 @@ func (a *App) HubSmartSend(reqID, text string) (HubPickView, error) {
 		}
 		a.emitHubProgress(reqID, hubStepPick)
 		return HubPickView{Pending: true}, nil
+	}
+	if suspendWas {
+		a.markLastAskAnswered()
 	}
 	// 思考与结论落盘（问题 3）：此前回执只走前端瞬态气泡，重拉/重启即丢。
 	// 挂起反问落 hub_manager_ask 卡片，结论逐条落 hub_manager_reply。

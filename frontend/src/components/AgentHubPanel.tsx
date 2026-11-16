@@ -1102,6 +1102,11 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
   // err.hub.ask_expired）经 backendError 翻译后 toast。
   const askAnswer = useCallback(
     (answer: string) => {
+      // 在途守卫与自由发送共用 smartInFlight：任一方向在途时另一方向直接
+      // 忽略——后端 smartBusy 虽会兜底，但前端思考气泡会互相覆盖、自由发送
+      // 还会回落待选菜单与续跑并存，视觉混乱。
+      if (smartInFlight.current) return;
+      smartInFlight.current = true;
       const reqID = newSmartReqID();
       useAppStore
         .getState()
@@ -1116,6 +1121,9 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
         .catch((e: unknown) => {
           useAppStore.getState().setHubPendingSend(null);
           useAppStore.getState().notify(backendError(e), 'error');
+        })
+        .finally(() => {
+          smartInFlight.current = false;
         });
     },
     [t],

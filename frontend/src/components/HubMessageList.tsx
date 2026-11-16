@@ -2,6 +2,7 @@
 // 自身订阅 hubMessages/chats/terminals；外层用 memo + 稳定回调，父组件
 // 因 draft 重渲时跳过本树，避免整表 ReactMarkdown 重跑。
 import { memo, useMemo, useState } from 'react';
+import i18n from 'i18next';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -35,6 +36,12 @@ const QUICK_REPLIES: { key: string; action: HubQuickAction }[] = [
 ];
 
 export type HubQuickAction = 'send' | 'quote';
+
+// listSeparator 按 UI 语言返回多选答复的连接符：答复原话会发给管理者 LLM，
+// 分隔符跟随语言风格（中文顿号、其余逗号加空格）。
+function listSeparator(): string {
+  return i18n.language.startsWith('zh') ? '、' : ', ';
+}
 
 interface HubMessageListProps {
   tools: ToolInfo[];
@@ -83,7 +90,12 @@ function ManagerAskCard({
           </label>
         ))}
         <div>
-          <button type="button" className={optionBtn} disabled={answered} onClick={() => onAnswer(picked.join('、'))}>
+          <button
+            type="button"
+            className={optionBtn}
+            disabled={answered || picked.length === 0}
+            onClick={() => onAnswer(picked.join(listSeparator()))}
+          >
             {t('ui.hub.ask_confirm')}
           </button>
         </div>
