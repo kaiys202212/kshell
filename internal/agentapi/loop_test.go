@@ -232,7 +232,7 @@ func TestResumeMsgsContinuity(t *testing.T) {
 
 	sc2 := &scriptChat{resps: []hubtools.Response{{Text: "已发给甲。"}}}
 	chatToolsHook = sc2.hook
-	res, err := api.Resume("hub", "1", RunOpts{})
+	res, err := api.Resume(context.Background(), "hub", "1", RunOpts{})
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestRunLoopCreateNeedsConfirmResume(t *testing.T) {
 		{Text: "已创建 claude 会话。"},
 	}}
 	chatToolsHook = sc2.hook
-	res2, err := api.Resume("hub", "1", RunOpts{})
+	res2, err := api.Resume(context.Background(), "hub", "1", RunOpts{})
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
@@ -393,7 +393,7 @@ func TestSuspendTimeout(t *testing.T) {
 	if api.HasSuspendedAsk("hub") {
 		t.Fatal("超时后不应报告挂起在场")
 	}
-	_, err := api.Resume("hub", "1", RunOpts{})
+	_, err := api.Resume(context.Background(), "hub", "1", RunOpts{})
 	if !errors.Is(err, ErrNoSuspend) {
 		t.Fatalf("超时期望 ErrNoSuspend, got %v", err)
 	}
@@ -469,7 +469,7 @@ func TestResumeTransientErrorKeepsSuspend(t *testing.T) {
 
 	// 瞬时错误：挂起保留
 	chatToolsHook = (&scriptChat{err: errors.New("err.hubtools.request_failed: 状态码 500, 响应: oops")}).hook
-	_, err := api.Resume("hub", "1", RunOpts{})
+	_, err := api.Resume(context.Background(), "hub", "1", RunOpts{})
 	if err == nil || !strings.Contains(err.Error(), "状态码 500") {
 		t.Fatalf("瞬时错误应上抛, got %v", err)
 	}
@@ -480,7 +480,7 @@ func TestResumeTransientErrorKeepsSuspend(t *testing.T) {
 	// 重试同一输入：续跑成功，且 msgs 里只有一条 user 回复（无重复）
 	sc2 := &scriptChat{resps: []hubtools.Response{{Text: "已按 1 处理。"}}}
 	chatToolsHook = sc2.hook
-	if _, err := api.Resume("hub", "1", RunOpts{}); err != nil {
+	if _, err := api.Resume(context.Background(), "hub", "1", RunOpts{}); err != nil {
 		t.Fatalf("重试 Resume: %v", err)
 	}
 	dup := 0
@@ -499,7 +499,7 @@ func TestResumeTransientErrorKeepsSuspend(t *testing.T) {
 		t.Fatalf("Run2: %v", err)
 	}
 	api.UpdateLLM(hubtools.Config{})
-	_, err = api.Resume("hub", "b", RunOpts{})
+	_, err = api.Resume(context.Background(), "hub", "b", RunOpts{})
 	if !errors.Is(err, ErrLLMNotReady) {
 		t.Fatalf("未配置 LLM 期望 ErrLLMNotReady, got %v", err)
 	}
@@ -511,7 +511,7 @@ func TestResumeTransientErrorKeepsSuspend(t *testing.T) {
 // 测试 10（新）：无挂起时 Resume 返回 ErrNoSuspend。
 func TestResumeNoSuspend(t *testing.T) {
 	api, _ := newLoopAPI(t)
-	if _, err := api.Resume("hub", "1", RunOpts{}); !errors.Is(err, ErrNoSuspend) {
+	if _, err := api.Resume(context.Background(), "hub", "1", RunOpts{}); !errors.Is(err, ErrNoSuspend) {
 		t.Fatalf("无挂起期望 ErrNoSuspend, got %v", err)
 	}
 }
@@ -581,7 +581,7 @@ func TestRunLoopDegradeSkipResume(t *testing.T) {
 		return hubtools.Response{Text: `{"action":"single","targets":[1],"text":"误投"}`}, nil
 	})
 
-	_, err := api.Resume("hub", "1", RunOpts{})
+	_, err := api.Resume(context.Background(), "hub", "1", RunOpts{})
 	if err == nil || !strings.Contains(err.Error(), "状态码 400") {
 		t.Fatalf("续跑 4xx 应上抛错误, got %v", err)
 	}

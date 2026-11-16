@@ -913,7 +913,7 @@ func TestHubSmartSendProgressAndCancel(t *testing.T) {
 }
 
 // TestHubSmartSendBusyGuard 覆盖管理者循环入口的在途守卫：循环调用期间并发
-// 提交的第二次调用直接返回 Pending=true，不调循环、不清续轮标记（防重复投递）。
+// 提交的第二次调用直接返回 Pending=true，不调循环、不清挂起语境（防重复投递）。
 func TestHubSmartSendBusyGuard(t *testing.T) {
 	fx := newRouteFixture(t)
 	defer withHubSuspend(true)()
@@ -969,7 +969,7 @@ func TestHubSmartSendBusyGuard(t *testing.T) {
 
 // TestHubSmartSendBareNumber 覆盖裸数字输入的语境分流（管理者 ask 反问编号
 // 菜单后用户回数字曾经被前端劫持进命令层、续轮永远收不到答案）：
-//   - ask 反问语境：数字进续轮（Continuation），原话与回执落盘；
+//   - ask 反问语境：数字自动续跑（Run 内部挂起分流），原话与回执落盘；
 //   - 无语境：让位命令层（菜单/编号切换/no_mapping 语义），不喂 LLM、不落盘；
 //   - 待选菜单挂起：让位命令层（Busy 让位原则，用户已显式转向命令流）。
 func TestHubSmartSendBareNumber(t *testing.T) {
@@ -1133,7 +1133,7 @@ func TestHubAskAnswer(t *testing.T) {
 	if _, err := fx.app.HubSmartSend("req", "新建任务"); err != nil {
 		t.Fatalf("ask HubSmartSend: %v", err)
 	}
-	view, err := fx.app.HubAskAnswer("1")
+	view, err := fx.app.HubAskAnswer("req", "1")
 	if err != nil {
 		t.Fatalf("HubAskAnswer: %v", err)
 	}
@@ -1185,14 +1185,14 @@ func TestHubAskAnswer(t *testing.T) {
 func TestHubAskAnswerNoSuspend(t *testing.T) {
 	t.Run("无挂起返回过期错误", func(t *testing.T) {
 		fx := newRouteFixture(t) // 未注桩：走真实 AgentAPI().Resume → ErrNoSuspend
-		_, err := fx.app.HubAskAnswer("1")
+		_, err := fx.app.HubAskAnswer("req", "1")
 		if !errors.Is(err, agentapi.ErrNoSuspend) {
 			t.Fatalf("无挂起期望 ErrNoSuspend, got %v", err)
 		}
 	})
 	t.Run("空白答复报错", func(t *testing.T) {
 		fx := newRouteFixture(t)
-		if _, err := fx.app.HubAskAnswer("   "); err == nil {
+		if _, err := fx.app.HubAskAnswer("req", "   "); err == nil {
 			t.Fatal("空白答复应报错")
 		}
 	})
@@ -1210,7 +1210,7 @@ func TestHubAskAnswerBusy(t *testing.T) {
 	fx.app.mu.Lock()
 	fx.app.smartBusy = true
 	fx.app.mu.Unlock()
-	view, err := fx.app.HubAskAnswer("1")
+	view, err := fx.app.HubAskAnswer("req", "1")
 	if err != nil {
 		t.Fatalf("busy 应静默回落而非报错: %v", err)
 	}

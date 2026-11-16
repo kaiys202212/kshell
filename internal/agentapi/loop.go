@@ -203,14 +203,13 @@ func (a *API) Run(ctx context.Context, input string, opts RunOpts) (RunResult, e
 
 // Resume 用用户回复显式续跑挂起中的反问循环：无挂起/渠道不符返回
 // ErrNoSuspend，超时返回 ErrNoSuspend 并同时清挂起。收尾规则与 Run 一致。
-// 与 Run 共用 busy 重入门禁。签名沿用设计文档（无 ctx 参数，内部用
-// context.Background() 跑 LLM 请求；desktop 接入 T2 时如需取消语义再扩展）。
-func (a *API) Resume(channel, input string, opts RunOpts) (RunResult, error) {
+// 与 Run 共用 busy 重入门禁。ctx 取消语义与 Run 相同（取消即中断续跑）。
+func (a *API) Resume(ctx context.Context, channel, input string, opts RunOpts) (RunResult, error) {
 	if err := a.enterLoop(); err != nil {
 		return RunResult{}, err
 	}
 	defer a.exitLoop()
-	return a.resumeLoop(context.Background(), input, opts, channel)
+	return a.resumeLoop(ctx, input, opts, channel)
 }
 
 // enterLoop / exitLoop 是 Run/Resume 共用的 busy 重入门禁。

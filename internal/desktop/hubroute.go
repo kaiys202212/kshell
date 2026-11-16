@@ -205,22 +205,26 @@ func (a *App) HubSmartSend(reqID, text string) (HubPickView, error) {
 // managerToolNames 是管理者循环工具名 → 中文显示名映射（思考链摘要用）；
 // 未收录的工具保留原名。
 var managerToolNames = map[string]string{
-	"list_sessions":   "查会话列表",
-	"send":            "投递",
-	"create_session":  "建会话",
-	"open_session":    "开会话",
-	"stop":            "停止",
-	"set_model":       "切模型",
+	"list_sessions":    "查会话列表",
+	"send":             "投递",
+	"create_session":   "建会话",
+	"open_session":     "开会话",
+	"stop":             "停止",
+	"set_model":        "切模型",
 	"session_messages": "读消息",
-	"search_memory":   "查记忆",
-	"status":          "查状态",
-	"ask":             "反问",
+	"search_memory":    "查记忆",
+	"status":           "查状态",
+	"ask":              "反问",
 }
 
 // summarizeManagerSteps 把思考链步骤聚合成一行中文摘要：按顺序遍历，相邻同名
 // 步骤合并为「名称×N」（挂起-续跑跨轮后同一工具可能多次出现，合并相邻即可
 // 还原「先做什么、再做什么」的主线）；工具名经映射表转中文，未知工具显示原名。
+// 调用方保证 steps 非空（finishManagerLoop 有 len>0 门禁），空输入返回空摘要。
 func summarizeManagerSteps(steps []hub.Step) string {
+	if len(steps) == 0 {
+		return ""
+	}
 	groups := make([]string, 0, len(steps))
 	for i := 0; i < len(steps); {
 		j := i

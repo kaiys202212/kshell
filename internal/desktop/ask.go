@@ -30,15 +30,15 @@ func (a *App) hubAskSuspended() bool {
 
 // resumeHubLoop 续跑挂起反问：注入桩优先（复用 hubRunner——测试在同一桩内
 // 按输入区分 Run/Resume 语义），nil 时用 AgentAPI().Resume（无挂起/超时/
-// 渠道不符由 agentapi 校验，返回 ErrNoSuspend）。
-func (a *App) resumeHubLoop(input string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
+// 渠道不符由 agentapi 校验，返回 ErrNoSuspend）。ctx 支持用户中断。
+func (a *App) resumeHubLoop(ctx context.Context, input string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
 	a.mu.Lock()
 	fn := a.hubRunner
 	a.mu.Unlock()
 	if fn != nil {
-		return fn(context.Background(), input, opts)
+		return fn(ctx, input, opts)
 	}
-	return a.AgentAPI().Resume("hub", input, opts)
+	return a.AgentAPI().Resume(ctx, "hub", input, opts)
 }
 
 // finishManagerLoop 落盘管理者循环产出并转 HubPickView（HubSmartSend 与
@@ -107,10 +107,12 @@ func (a *App) markLastAskAnswered() {
 // hub 历史 user 流（卡片本身已呈现问题，再落一份答复会造成重复视觉）；
 // 自由文本答复走 HubSmartSend 才正常落盘。
 //
+// reqID 与 HubSmartSend 同语义：推送 hub:progress 里程碑并支持中途取消。
+//
 // 空答复报错；在途处理（smartBusy，与 HubSmartSend 共用门禁）静默回落
 // Pending=true；无挂起（超时/已被消费/渠道不符）返回 err.hub.ask_expired
 //（wrap ErrNoSuspend 供归因），其余错误原样透传。
-func (a *App) HubAskAnswer(answer string) (HubPickView, error) {
+func (a *App) HubAskAnswer(reqID, answer string) (HubPickView, error) {
 	if !a.snapshot().ready() {
 		return HubPickView{}, errNotReady
 	}
@@ -132,14 +134,26 @@ func (a *App) HubAskAnswer(answer string) (HubPickView, error) {
 		a.smartBusy = false
 		a.mu.Unlock()
 	}()
+	// 可取消 ctx 与进度推送和 HubSmartSend 同款：续跑同样是多轮 LLM 长操作，
+	// 前端不该一片空白也不该无法中断。
+	ctx, cancel := context.WithCancel(a.desktopContext())
+	defer cancel()
+	unregister := a.registerSmartCancel(reqID, cancel)
+	defer unregister()
+	a.emitHubProgress(reqID, hubStepRoute)
 	var mgrSteps []hub.Step
-	res, err := a.resumeHubLoop(answer, agentapi.RunOpts{
+	res, err := a.resumeHubLoop(ctx, answer, agentapi.RunOpts{
 		Channel: "hub",
 		Progress: func(p agentapi.LoopProgress) {
 			mgrSteps = append(mgrSteps, hub.Step{Tool: p.Tool, Round: p.Round})
+			a.emitHubToolProgress(reqID, p.Tool, p.Round)
 		},
 	})
 	if err != nil {
+		if ctx.Err() != nil {
+			// 用户主动中断：Cancelled 语义与 HubSmartSend 一致（不回落、不清草稿）。
+			return HubPickView{Cancelled: true}, nil
+		}
 		if errors.Is(err, agentapi.ErrNoSuspend) {
 			// 卡片已过期：wire key 供前端翻译成「反问已过期」toast，ErrNoSuspend
 			// 留在错误链上供测试/日志归因。
