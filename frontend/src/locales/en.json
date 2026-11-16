@@ -1152,6 +1152,8 @@
       "ask_yes": "Yes",
       "ask_no": "No",
       "ask_answered": "Answered",
+      "think_steps": "Thought {{n}} steps",
+      "think_round": "Round {{n}}",
       "quote_reply": "Quote",
       "manager_badge": "AgentHub manager",
       "ack_delivered": "Got your message — I'm on it.",

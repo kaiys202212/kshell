@@ -2998,6 +2998,17 @@ describe('AgentHub i18n 资源', () => {
     expect(hubOf(zhLocale).thinking_tool).toContain('{{round}}');
   });
 
+  it('思考链卡片 key 两份 locale 同步存在（think_steps / think_round）', () => {
+    const hubOf = (loc: unknown) => (loc as { ui: { hub: Record<string, unknown> } }).ui.hub;
+    // 步数聚合摘要与轮次小标题均带 {{n}} 插值
+    for (const key of ['think_steps', 'think_round']) {
+      expect(hubOf(enLocale)[key]).toBeTruthy();
+      expect(hubOf(zhLocale)[key]).toBeTruthy();
+      expect(hubOf(enLocale)[key]).toContain('{{n}}');
+      expect(hubOf(zhLocale)[key]).toContain('{{n}}');
+    }
+  });
+
   it('反问卡片 key 两份 locale 同步存在（ui.hub.ask_* 与 err.hub.ask_*）', () => {
     const hubOf = (loc: unknown) => (loc as { ui: { hub: Record<string, unknown> } }).ui.hub;
     for (const key of ['ask_confirm', 'ask_yes', 'ask_no', 'ask_answered']) {
@@ -3126,5 +3137,88 @@ describe('AgentHub 反问卡片', () => {
       expect(useAppStore.getState().toasts.some((x) => x.title === tt('err.hub.ask_expired'))).toBe(true),
     );
     await waitFor(() => expect(screen.queryByTestId('hub-thinking')).not.toBeInTheDocument());
+  });
+});
+
+// 思考链卡片：hub_manager_think + steps（管理者循环落盘的工具调用序列）按轮分组
+// 折叠渲染；折叠态一行紧凑条目（步数 + 箭头），展开态按轮分组 chips；旧消息
+// 无 steps 字段回退 markdown 渲染。
+describe('AgentHub 思考链卡片', () => {
+  const thinkMsg = (over: {
+    id?: number;
+    text?: string;
+    steps?: { tool: string; round: number }[] | null;
+  }) => ({
+    id: over.id ?? 20,
+    kind: 'agent',
+    event: 'hub_manager_think',
+    text: over.text ?? '思考 3 步：list_sessions×1 · search_memory×2',
+    ts: 1,
+    steps: over.steps === null ? undefined : over.steps,
+  });
+
+  // 与反问卡片同款：先预置 store 再挂载，排干挂载 effect 的历史回显微任务
+  async function renderWithThink(msg: ReturnType<typeof thinkMsg>) {
+    useAppStore.setState({ hubMessages: [msg] });
+    render(<AgentHubPanel />);
+    await act(async () => {});
+  }
+
+  it('折叠态渲染步数与箭头、chips 不在文档流；点击展开按轮分组、再点收起', async () => {
+    const steps = [
+      { tool: 'list_sessions', round: 1 },
+      { tool: 'search_memory', round: 1 },
+      { tool: 'read_file', round: 2 },
+    ];
+    await renderWithThink(thinkMsg({ steps }));
+
+    // 折叠态：紧凑条目带展开箭头，chips 与轮次标题均不渲染
+    const row = screen.getByRole('button', { name: tt('ui.hub.think_steps', { n: 3 }) });
+    expect(row.textContent).toContain('▸');
+    expect(screen.queryByText('search_memory')).toBeNull();
+    expect(screen.queryByText(tt('ui.hub.think_round', { n: 1 }))).toBeNull();
+    // 管理者徽标照旧在 header
+    expect(screen.getAllByText(tt('ui.hub.manager_badge'))).toHaveLength(1);
+
+    // 展开：按轮分组（Round 1 / Round 2），chips 可见
+    fireEvent.click(row);
+    expect(screen.getByText(tt('ui.hub.think_round', { n: 1 }))).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.hub.think_round', { n: 2 }))).toBeInTheDocument();
+    expect(screen.getByText('list_sessions')).toBeInTheDocument();
+    expect(screen.getByText('search_memory')).toBeInTheDocument();
+
+    // 再点收起
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.think_steps', { n: 3 }) }));
+    expect(screen.queryByText(tt('ui.hub.think_round', { n: 1 }))).toBeNull();
+    expect(screen.queryByText('search_memory')).toBeNull();
+  });
+
+  it('同轮相邻同名工具合并计数：search_memory ×3', async () => {
+    const steps = Array.from({ length: 3 }, () => ({ tool: 'search_memory', round: 2 }));
+    await renderWithThink(thinkMsg({ steps }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.think_steps', { n: 3 }) }));
+    expect(screen.getByText('search_memory ×3')).toBeInTheDocument();
+  });
+
+  it('跨轮分组：round 1/2/3 交替出现三个轮次标题', async () => {
+    const steps = [
+      { tool: 'a_tool', round: 1 },
+      { tool: 'b_tool', round: 2 },
+      { tool: 'a_tool', round: 3 },
+    ];
+    await renderWithThink(thinkMsg({ steps }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.think_steps', { n: 3 }) }));
+    expect(screen.getByText(tt('ui.hub.think_round', { n: 1 }))).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.hub.think_round', { n: 2 }))).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.hub.think_round', { n: 3 }))).toBeInTheDocument();
+    // 同名工具跨轮不合并：第 1 / 第 3 轮各一枚 a_tool chip
+    expect(screen.getAllByText('a_tool')).toHaveLength(2);
+  });
+
+  it('无 steps 的旧 think 消息：markdown 渲染原文，无折叠行', async () => {
+    await renderWithThink(thinkMsg({ id: 21, text: '旧思考正文', steps: null }));
+    expect(screen.getByText('旧思考正文')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: tt('ui.hub.think_steps', { n: 1 }) })).toBeNull();
+    expect(screen.queryByText(/×\d/)).toBeNull();
   });
 });

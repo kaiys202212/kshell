@@ -1851,6 +1851,10 @@ export interface HubMessage {
   // Ask 是管理者反问卡片的持久化载荷（Event=hub_manager_ask 时有值，internal/hub.AskWire）：
   // 前端据此渲染选项按钮；status=answered 表示已答复（按钮置灰）。
   ask?: HubAskWire;
+  // Steps 是管理者思考链的工具调用序列（Event=hub_manager_think 时有值，
+  // internal/hub.Step 的 JSON 形态，时间正序）：前端按轮分组折叠渲染；
+  // 旧消息无此字段走纯 markdown。
+  steps?: HubStep[];
   ts: number;
 }
 
@@ -1860,6 +1864,13 @@ export interface HubAskWire {
   question: string;
   options?: string[];
   mode: string;
+}
+
+// HubStep 是管理者思考链的单步工具调用（internal/hub.Step 的 JSON 形态）。
+// tool 为 wire 原名（chips 保持原名供技术用户对照）；round 为管理者循环轮次。
+export interface HubStep {
+  tool: string;
+  round: number;
 }
 
 // HubArchiveMonth 是一个归档月份及其条数（internal/hub.ArchiveMonth 的 JSON 形态）。

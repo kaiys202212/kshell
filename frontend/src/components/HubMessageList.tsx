@@ -6,7 +6,7 @@ import i18n from 'i18next';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { HubAskWire, HubMessage, ToolInfo } from '../lib/api';
+import type { HubAskWire, HubMessage, HubStep, ToolInfo } from '../lib/api';
 import {
   buildMentionOptions,
   displayMentionTitles,
@@ -140,6 +140,60 @@ interface HubMessageItemProps {
   onAskAnswer: (answer: string) => void;
 }
 
+// ManagerThinkCard：管理者思考链的按轮分组折叠渲染（hub_manager_think 且带 steps
+// 时替换默认 markdown 正文）。折叠态一行紧凑条目（步数 + 箭头，整行可点切换）；
+// 展开态按轮次分组 chips——round 变化即开新组，组内相邻同名工具合并计数 ×N；
+// chips 用 span 保持 ManagerAskCard optionBtn 的外观但不可点、无 hover 变色，
+// 工具名保持 wire 原名（中文映射只在后端聚合摘要里，前端不再维护一份）。
+// 摘要文本展开时展示，避免聚合信息被卡片替换后丢失。
+// 独立组件而非内联：折叠/展开是本地受控状态，HubMessageItem 是无状态 memo 纯函数。
+function ManagerThinkCard({ steps, summary }: { steps: HubStep[]; summary: string }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const groups = useMemo(() => {
+    const out: { round: number; items: { tool: string; count: number }[] }[] = [];
+    for (const s of steps) {
+      const g = out[out.length - 1];
+      if (!g || g.round !== s.round) {
+        out.push({ round: s.round, items: [{ tool: s.tool, count: 1 }] });
+        continue;
+      }
+      const tail = g.items[g.items.length - 1];
+      if (tail && tail.tool === s.tool) tail.count += 1;
+      else g.items.push({ tool: s.tool, count: 1 });
+    }
+    return out;
+  }, [steps]);
+  const chip = 'rounded border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground';
+  return (
+    <div className="mt-1 flex flex-col gap-1" data-testid="hub-think-card">
+      <button
+        type="button"
+        className="flex items-center gap-1 self-start text-[11px] text-muted-foreground hover:text-foreground"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span>{t('ui.hub.think_steps', { n: steps.length })}</span>
+        <span aria-hidden="true">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="flex flex-col gap-1">
+          <div className="text-[11px] text-muted-foreground">{decodePercentText(summary)}</div>
+          {groups.map((g) => (
+            <div key={g.round} className="flex flex-wrap items-center gap-1">
+              <span className="text-[10px] text-muted-foreground">{t('ui.hub.think_round', { n: g.round })}</span>
+              {g.items.map((it, i) => (
+                <span key={`${it.tool}-${i}`} className={chip}>
+                  {it.count > 1 ? `${it.tool} ×${it.count}` : it.tool}
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const HubMessageItem = memo(function HubMessageItem({
   message: m,
   attr,
@@ -155,6 +209,9 @@ const HubMessageItem = memo(function HubMessageItem({
   // 管理者反问卡片：问题正文走既有 markdown 渲染，选项交互区由 ManagerAskCard 提供；
   // 无 ask 载荷的旧消息（历史文本）不进入本分支，按普通 markdown 消息展示。
   const isAskCard = m.event === 'hub_manager_ask' && !!m.ask;
+  // 管理者思考链卡片：带 steps 的 hub_manager_think 走按轮分组折叠渲染；
+  // 无 steps 的旧消息（历史文本）不进入本分支，按普通 markdown 消息展示。
+  const isThinkCard = m.event === 'hub_manager_think' && !!m.steps?.length;
 
   if (m.kind === 'user') {
     return (
@@ -212,9 +269,13 @@ const HubMessageItem = memo(function HubMessageItem({
               </span>
             )}
           </div>
-          <div className={markdownBubbleClass}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{decodePercentText(translateBackend(m.text))}</ReactMarkdown>
-          </div>
+          {isThinkCard ? (
+            <ManagerThinkCard steps={m.steps!} summary={m.text} />
+          ) : (
+            <div className={markdownBubbleClass}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{decodePercentText(translateBackend(m.text))}</ReactMarkdown>
+            </div>
+          )}
         </div>
         {isAskCard && m.ask && (
           <ManagerAskCard ask={m.ask} answered={m.status === 'answered'} onAnswer={onAskAnswer} />

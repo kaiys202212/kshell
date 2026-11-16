@@ -1152,6 +1152,8 @@
       "ask_yes": "是",
       "ask_no": "否",
       "ask_answered": "已答复",
+      "think_steps": "思考 {{n}} 步",
+      "think_round": "第 {{n}} 轮",
       "quote_reply": "引用",
       "manager_badge": "AgentHub 管理者",
       "ack_delivered": "收到，我马上开始。",
