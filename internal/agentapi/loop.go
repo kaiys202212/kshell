@@ -1082,7 +1082,7 @@ func (a *API) buildLoopTools(ctx context.Context, st *loopState) []loopTool {
 	//（一次下发多个问题，用户逐步作答后一次性提交）。
 	add("ask", "向用户提出问题并结束本轮（等待用户回复）。可以一次下发多个问题（steps 多步问卷，用户逐题作答一次提交）。意图不确定时必须用它确认，禁止猜测性群发。",
 		schemaObj(map[string]any{
-			"question": strProp("要问用户的问题（单问时必填）"),
+			"question": strProp("要问用户的问题（单问时必填；给 steps 时可省略，此时忽略顶层 question/options/mode）"),
 			"options":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "编号选项文本列表（单问时使用）"},
 			"mode":     strProp("交互模式：single 单选（默认）/ multi 多选 / confirm 确认（单问时使用）"),
 			"steps": map[string]any{
@@ -1107,9 +1107,13 @@ func (a *API) buildLoopTools(ctx context.Context, st *loopState) []loopTool {
 			// steps 多步解析：每项 question 必填、mode 归一；空/缺省回落单问字段。
 			// 恰 1 步折叠为单问载荷（前端渲染与历史卡片口径一致）。
 			var steps []AskStep
-			if arr, ok := m["steps"].([]any); ok {
-				for _, v := range arr {
-					sm, ok := v.(map[string]any)
+			if v, ok := m["steps"]; ok && v != nil {
+				arr, ok := v.([]any)
+				if !ok {
+					return "", errors.New("ask steps 应为数组，每项含 question/options/mode")
+				}
+				for _, sv := range arr {
+					sm, ok := sv.(map[string]any)
 					if !ok {
 						return "", errors.New("ask steps 每项必须是对象")
 					}

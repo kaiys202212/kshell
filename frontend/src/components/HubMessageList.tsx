@@ -183,7 +183,7 @@ function ManagerAskCard({
   if (wizardSteps) {
     const steps = wizardSteps;
     const current = steps[stepIdx];
-    const picked = answers[stepIdx] ?? [];
+    const stepPicked = answers[stepIdx] ?? [];
     const allAnswered = answers.every((a) => a.length > 0);
     // 提交文案：每步「问题：答案」，多选顿号/逗号连接，步间换行。
     const composed = steps.map((s, i) => `${s.question}：${(answers[i] ?? []).join(listSeparator())}`).join('\n');
@@ -199,6 +199,12 @@ function ManagerAskCard({
         return next;
       });
     };
+    // 该步的可选项：confirm 步（或未配 options 的步）回落是/否，与单问 confirm
+    // 卡片同口径——避免模型只给 question+mode 时该步无按钮可选、提交永久禁用。
+    const stepOptions =
+      current.mode === 'confirm' || (current.options ?? []).length === 0
+        ? [t('ui.hub.ask_yes'), t('ui.hub.ask_no')]
+        : (current.options ?? []);
     return (
       <div
         className="mt-1 flex flex-col gap-2 rounded-md border border-border/60 bg-background/40 p-2"
@@ -211,7 +217,7 @@ function ManagerAskCard({
             const isCur = i === stepIdx;
             return (
               <button
-                key={s.question}
+                key={`${i}-${s.question}`}
                 type="button"
                 aria-label={t('ui.hub.ask_step', { i: i + 1, n: steps.length })}
                 onClick={() => setStepIdx(i)}
@@ -235,11 +241,11 @@ function ManagerAskCard({
         {/* 当前步问题 + 该步模式的选项 */}
         <div className="text-xs font-medium text-foreground">{current.question}</div>
         <div className="flex flex-col items-start gap-1.5">
-          {(current.options ?? []).map((o) => (
+          {stepOptions.map((o) => (
             <AskOptionButton
               key={o}
               label={o}
-              selected={picked.includes(o)}
+              selected={stepPicked.includes(o)}
               multi={current.mode === 'multi'}
               disabled={false}
               onClick={() => pick(o)}

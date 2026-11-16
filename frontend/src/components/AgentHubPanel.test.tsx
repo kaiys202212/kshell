@@ -3207,6 +3207,31 @@ describe('AgentHub 反问卡片', () => {
     release({ Replies: [], Pending: false });
   });
 
+  it('多步问卷：confirm 步未配 options 时回落是/否按钮（不出现无按钮死路）', async () => {
+    const confirmAsk = (): HubAskWire => ({
+      question: '继续吗？；用哪个工具？',
+      mode: '',
+      steps: [
+        { question: '继续吗？', mode: 'confirm' },
+        { question: '用哪个工具？', options: ['claude'], mode: 'single' },
+      ],
+    });
+    await renderWithAsk(askMsg({ text: '请回答两个问题', ask: confirmAsk() }));
+    // 第 1 步（confirm 无 options）渲染是/否
+    expect(screen.getByRole('button', { name: tt('ui.hub.ask_yes') })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: tt('ui.hub.ask_no') })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.ask_yes') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.ask_next') }));
+    fireEvent.click(screen.getByRole('button', { name: 'claude' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.ask_submit') }));
+    await waitFor(() =>
+      expect(api.hubAskAnswer).toHaveBeenCalledWith(
+        expect.any(String),
+        `继续吗？：${tt('ui.hub.ask_yes')}\n用哪个工具？：claude`,
+      ),
+    );
+  });
+
   it('多步问卷：single 步点选即互斥（重复点同项不重复计数），multi 步可勾选多项', async () => {
     await renderWithAsk(askMsg({ text: '请回答两个问题', ask: wizardAsk() }));
     const claude = screen.getByRole('button', { name: 'claude' });

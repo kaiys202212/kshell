@@ -267,6 +267,27 @@ func TestAskStepsMultiLanding(t *testing.T) {
 	}
 }
 
+// 测试 6（新）：steps 非数组（如对象/字符串）→ 工具错误带「应为数组」线索。
+func TestAskStepsNonArray(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	sc := &scriptChat{resps: []hubtools.Response{
+		{ToolCalls: []hubtools.ToolCall{tc("c1", "ask", `{"steps":{"question":"x"}}`)}},
+		{Text: "直接给结论。"},
+	}}
+	chatToolsHook = sc.hook
+	res, err := api.Run(context.Background(), "看着办", RunOpts{Channel: "hub"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Suspended || res.Ask != nil {
+		t.Fatalf("坏 steps 不应挂起: %+v", res)
+	}
+	toolMsg := sc.last[len(sc.last)-1]
+	if toolMsg.Role != "tool" || !strings.Contains(toolMsg.Content, "应为数组") {
+		t.Fatalf("工具错误应带 steps 类型线索: %+v", toolMsg)
+	}
+}
+
 // 测试 4（新）：steps 恰 1 项折叠为单问载荷（Steps 空、顶层三字段生效）。
 func TestAskStepsSingleCollapses(t *testing.T) {
 	api, _ := newLoopAPI(t)
