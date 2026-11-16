@@ -148,9 +148,10 @@ func (a *App) weixinManagerRouter() weixin.ManagerRouter {
 			// 用户重试会自动续跑；desktop 无需也不得清理。
 			return weixin.ManagerOutcome{}, false
 		}
-		// 挂起反问（Suspended ⇔ Ask 非 nil ⇔ AskPending shim）透传给 bridge，
-		// 桥据此标记待答语境；选项回执本身由 bridge 回显。
-		return weixin.ManagerOutcome{Replies: res.Replies, AskPending: res.Suspended}, true
+		// 挂起反问（Suspended ⇔ Ask 非 nil）时 Replies 已是「问题+编号选项」
+		// 文本，直接透传给 bridge 回显；挂起-续跑语境由 agentapi 自持
+		//（同渠道短输入 Run 内部自动续跑），桥侧零特殊逻辑。
+		return weixin.ManagerOutcome{Replies: res.Replies}, true
 	}
 }
 

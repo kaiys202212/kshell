@@ -277,7 +277,7 @@ func TestBridgeManagerRouter(t *testing.T) {
 		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1", Title: "会话A"}}
 		b, rc := newRouteBridge(t, ex)
 		mgr, mfn := mgrStub(func(context.Context, string) (ManagerOutcome, bool) {
-			return ManagerOutcome{Replies: []string{"已投递给「甲」。", "还需要什么？"}, AskPending: true}, true
+			return ManagerOutcome{Replies: []string{"已投递给「甲」。", "还需要什么？"}}, true
 		})
 		router := &routerStub{}
 		b.SetManagerRouter(mfn)

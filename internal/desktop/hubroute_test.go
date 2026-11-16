@@ -385,8 +385,9 @@ func TestHubSmartSendRecordsHistory(t *testing.T) {
 	})
 }
 
-// TestRecordHubMessageManagerEventsSkipMirror：hub_manager_* 消息不出站镜像
-//（微信桥路由器已自行推送结论），普通 agent 消息仍镜像。
+// TestRecordHubMessageManagerEventsSkipMirror：hub_manager_* 消息（含 ask
+// 卡片）不出站镜像（微信桥路由器已自行推送结论/反问文案），普通 agent 消息
+// 仍镜像。
 func TestRecordHubMessageManagerEventsSkipMirror(t *testing.T) {
 	a, _, rec := newHubTestApp(t)
 	sink := make(chan hub.Message, 8)
@@ -397,6 +398,7 @@ func TestRecordHubMessageManagerEventsSkipMirror(t *testing.T) {
 	a.mu.Unlock()
 
 	a.recordHubMessage(hub.Message{Kind: "agent", Event: "hub_manager_reply", Text: "结论"})
+	a.recordHubMessage(hub.Message{Kind: "agent", Event: "hub_manager_ask", Text: "要发给哪个会话？"})
 	a.recordHubMessage(hub.Message{Kind: "agent", Event: "done", Text: "普通回复"})
 	select {
 	case mm := <-sink:
@@ -412,8 +414,8 @@ func TestRecordHubMessageManagerEventsSkipMirror(t *testing.T) {
 		t.Fatalf("hub_manager 消息不应出站镜像: %+v", mm)
 	case <-time.After(200 * time.Millisecond):
 	}
-	if rec.count("hub:changed") < 2 {
-		t.Fatalf("两条消息都应 emit hub:changed: %v", rec.names)
+	if rec.count("hub:changed") < 3 {
+		t.Fatalf("三条消息都应 emit hub:changed: %v", rec.names)
 	}
 }
 

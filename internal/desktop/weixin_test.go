@@ -2,11 +2,13 @@ package desktop
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -303,6 +305,142 @@ func injectWXRunner(app *App, fn func(ctx context.Context, input string, opts ag
 	return &calls
 }
 
+// wxSendText 从 sendmessage 请求体提取文本（msg.item_list[0].text_item.text）。
+func wxSendText(t *testing.T, body map[string]any) string {
+	t.Helper()
+	msg, ok := body["msg"].(map[string]any)
+	if !ok {
+		t.Fatalf("请求体缺少 msg 包裹: %v", body)
+	}
+	items, _ := msg["item_list"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("item_list 应只有一项: %v", msg["item_list"])
+	}
+	item := items[0].(map[string]any)
+	ti := item["text_item"].(map[string]any)
+	text, _ := ti["text"].(string)
+	return text
+}
+
+// TestWeixinBridgeAskSuspendFlow 端到端覆盖微信桥 × 管理者循环挂起-续跑语义：
+// ask 挂起回显问题+编号选项 → 短输入经 managerRouter 原样透传（Run 内部按
+// 渠道自动续跑，桥零特殊逻辑）→ 长输入同样原样透传（新跑判定也在 agentapi，
+// 见 loop_test 的超时/长度门禁）。超时惰性过期不在此重复（agentapi 已覆盖）。
+func TestWeixinBridgeAskSuspendFlow(t *testing.T) {
+	app := wxStatusApp(t)
+	app.mu.Lock()
+	app.opts.Config = config.Default()
+	app.mu.Unlock()
+
+	var mu sync.Mutex
+	var bodies []map[string]any
+	notify := make(chan struct{}, 16)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ilink/bot/sendmessage" {
+			var m map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&m)
+			mu.Lock()
+			bodies = append(bodies, m)
+			mu.Unlock()
+			notify <- struct{}{}
+		}
+		_, _ = w.Write([]byte(`{"code":0}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	calls, inputs := 0, []string(nil)
+	injectWXRunner(app, func(_ context.Context, input string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
+		calls++
+		inputs = append(inputs, input)
+		if opts.Channel != "wechat" {
+			t.Errorf("Channel = %q, 期望 wechat", opts.Channel)
+		}
+		switch calls {
+		case 1: // ask 落地：挂起反问
+			return agentapi.RunResult{
+				Replies:   []string{"要发给哪个会话？\n1. 甲\n2. 乙"},
+				Ask:       &agentapi.AskPayload{Question: "要发给哪个会话？", Options: []string{"甲", "乙"}, Mode: "single"},
+				Suspended: true,
+			}, nil
+		case 2: // 短输入自动续跑：同渠道 Run 内部从挂起 msgs 续
+			return agentapi.RunResult{Replies: []string{"已把任务发给甲。"}}, nil
+		default: // 长输入清挂起新跑
+			return agentapi.RunResult{Replies: []string{"新的结论。"}}, nil
+		}
+	})
+
+	r := weixin.NewRuntime(newWXExecutor(app), "zh-CN")
+	r.SetPersist(func(weixin.WeixinPersist) error { return nil })
+	r.SetBaseURL(srv.URL)
+	// routeable 判定要求 InputRouter 已装配（bridge.go：routerFn 为 nil 时
+	// 整段路由跳过）：注入不消费的桩，让 managerRouter 始终是第一站。
+	r.SetRouter(func(context.Context, string) (hubtools.RouteDecision, bool) {
+		return hubtools.RouteDecision{}, false
+	})
+	r.SetManagerRouter(app.weixinManagerRouter())
+	r.Configure("tok", "u1")
+	defer r.Stop()
+	app.mu.Lock()
+	app.wx = r
+	app.mu.Unlock()
+	bridge := r.GetBridge()
+	if bridge == nil {
+		t.Fatal("Configure 后应有 bridge")
+	}
+
+	// 等到 sendmessage 出站条数达 n（deliver 异步）。
+	waitSend := func(n int) {
+		t.Helper()
+		for {
+			mu.Lock()
+			n0 := len(bodies)
+			mu.Unlock()
+			if n0 >= n {
+				return
+			}
+			select {
+			case <-notify:
+			case <-time.After(2 * time.Second):
+				t.Fatalf("sendmessage 数量 %d < 期望 %d", n0, n)
+			}
+		}
+	}
+
+	// 1) ask 挂起：桥回显问题与编号选项文本（Replies 已是渲染后的待答文案）。
+	bridge.HandleInbound("u1", "ct-1", "把任务分给甲")
+	waitSend(1)
+	// 2) 下一条短输入自动续：原样透传 managerRouter，桩返回结论即回显，
+	//    证明续跑不需要桥侧任何挂起状态。
+	bridge.HandleInbound("u1", "ct-2", "2")
+	waitSend(2)
+	// 3) 长输入清挂起新跑：同样原样透传，桩收到新开请求（RunOpts 无续跑标记）。
+	longInput := "请把任务分给所有还没跑过回归测试的会话，然后把结果汇总发我"
+	bridge.HandleInbound("u1", "ct-3", longInput)
+	waitSend(3)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 3 {
+		t.Fatalf("Run 调用次数 = %d, 期望 3 (inputs=%v)", calls, inputs)
+	}
+	if inputs[1] != "2" {
+		t.Fatalf("短输入应原样透传 managerRouter: %q", inputs[1])
+	}
+	if inputs[2] != longInput {
+		t.Fatalf("长输入应原样透传 managerRouter: %q", inputs[2])
+	}
+	if text := wxSendText(t, bodies[0]); !strings.Contains(text, "要发给哪个会话？") ||
+		!strings.Contains(text, "1. 甲") || !strings.Contains(text, "2. 乙") {
+		t.Fatalf("挂起反问应回显问题与编号选项: %q", text)
+	}
+	if text := wxSendText(t, bodies[1]); !strings.Contains(text, "已把任务发给甲。") {
+		t.Fatalf("短输入续跑结论应回显: %q", text)
+	}
+	if text := wxSendText(t, bodies[2]); !strings.Contains(text, "新的结论。") {
+		t.Fatalf("长输入新跑结论应回显: %q", text)
+	}
+}
+
 // TestWeixinManagerRouter 覆盖微信管理者路由闭包：回显/挂起透传/降级/中途
 // 进度推送。续轮衔接已改挂起-续跑语义（agentapi Run 内部按渠道+SuspendTTL
 // 自动续跑，见 loop_test），desktop 不再维护续轮标记。bridge 侧挂钩（逃生门/
@@ -316,7 +454,7 @@ func TestWeixinManagerRouter(t *testing.T) {
 		return app
 	}
 
-	t.Run("循环成功回显 Replies，挂起反问透传 AskPending", func(t *testing.T) {
+	t.Run("循环成功回显 Replies，挂起反问照常回显", func(t *testing.T) {
 		app := newApp(t)
 		calls := injectWXRunner(app, func(_ context.Context, _ string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
 			if opts.Channel != "wechat" {
@@ -330,9 +468,6 @@ func TestWeixinManagerRouter(t *testing.T) {
 		}
 		if len(out.Replies) != 1 || out.Replies[0] != "要发给哪个会话？\n1. 甲" {
 			t.Fatalf("Replies 未透传: %+v", out)
-		}
-		if !out.AskPending {
-			t.Fatal("挂起反问应透传 AskPending（bridge 据此标记待答语境）")
 		}
 		if *calls != 1 {
 			t.Fatalf("Run 调用次数 = %d, 期望 1", *calls)

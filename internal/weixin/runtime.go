@@ -43,9 +43,10 @@ type WeixinStatus struct {
 type InputRouter func(ctx context.Context, input string) (hubtools.RouteDecision, bool)
 
 // ManagerOutcome 是管理者循环的执行结果（直接回显，不走决策执行）。
+// Replies 已是渲染后的自然语言结论/反问文案；挂起-续跑语境由 agentapi
+// 自持，桥侧不感知。
 type ManagerOutcome struct {
-	Replies    []string
-	AskPending bool
+	Replies []string
 }
 
 // ManagerRouter 是管理者循环路由钩子：返回 (结果, 是否接管)。优先级在

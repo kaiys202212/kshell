@@ -116,7 +116,7 @@ func TestRunLoopMultiStep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if res.AskPending || res.Suspended || res.Ask != nil {
+	if res.Suspended || res.Ask != nil {
 		t.Fatal("纯执行轮不应挂起")
 	}
 	if res.Replies[0] != "已把「继续修复」投递给修复登录会话。" {
@@ -185,7 +185,7 @@ func TestRunLoopCreateFullParams(t *testing.T) {
 }
 
 // 测试 1（新）：ask 落地 → Suspended/Ask 载荷/编号选项回执；HasSuspendedAsk
-// 渠道口径；AskPending 兼容 shim 与 Ask 同步置位。
+// 渠道口径。
 func TestSuspendAskLanding(t *testing.T) {
 	api, _ := newLoopAPI(t)
 	chatToolsHook = askScript("选哪个？").hook
@@ -201,9 +201,6 @@ func TestSuspendAskLanding(t *testing.T) {
 	}
 	if res.Ask.Question != "选哪个？" || len(res.Ask.Options) != 2 {
 		t.Fatalf("Ask 载荷错误: %+v", res.Ask)
-	}
-	if !res.AskPending {
-		t.Fatal("AskPending shim 应与 Ask 同步置 true")
 	}
 	if !strings.Contains(res.Replies[0], "1. a") || !strings.Contains(res.Replies[0], "2. b") {
 		t.Fatalf("Replies 应含编号选项: %q", res.Replies[0])
@@ -365,7 +362,7 @@ func TestRunLoopAskMaxRounds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("第 4 问 Run: %v", err)
 	}
-	if res.Suspended || res.Ask != nil || res.AskPending {
+	if res.Suspended || res.Ask != nil {
 		t.Fatalf("超限后不应挂起: %+v", res)
 	}
 	if !strings.Contains(res.Replies[0], fmt.Sprintf("连续反问已达上限（%d）", hubtools.AskMaxRounds)) {

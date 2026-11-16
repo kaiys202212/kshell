@@ -91,10 +91,6 @@ const loopMaxRounds = 6
 // 短输入也不再自动续跑（按全新输入处理）。
 const SuspendTTL = 15 * time.Minute
 
-// PendingAskTTL 是旧「未决反问语境」的有效期：挂起-续跑语义上线后 desktop
-// 侧续轮标记已删（引用清零），常量暂留、T4 删。
-const PendingAskTTL = 30 * time.Minute
-
 // shortInputMax 是自动续轮判定的输入长度上限（rune）：超过视为新需求。
 const shortInputMax = 20
 
@@ -122,10 +118,7 @@ type LoopProgress struct {
 // RunOpts 是 Run/Resume 的可选参数。
 type RunOpts struct {
 	Channel string // hub | wechat（区分记忆与语境归属）
-	// Continuation 已废弃：挂起-续跑语义下 Run 自行判定（同渠道未过期挂起 +
-	// 短输入即续跑），Resume 显式续跑。desktop 已不再传该标志，字段暂留、T4 删。
-	Continuation bool
-	Progress     func(LoopProgress)
+	Progress func(LoopProgress)
 }
 
 // AskPayload 是 ask 落地的结构化交互载荷。
@@ -144,9 +137,6 @@ type RunResult struct {
 	// Resume（或同渠道短输入 Run）从同一 msgs 续跑。
 	Ask       *AskPayload `json:"ask,omitempty"`
 	Suspended bool        `json:"suspended,omitempty"`
-	// AskPending 是兼容 shim：= Ask != nil（挂起反问别名），desktop/weixin
-	// 旧引用过渡用，T4 删。
-	AskPending bool
 }
 
 // suspendState 是挂起-续跑语境：ask 落地时保存完整循环状态（含本轮全部
@@ -399,10 +389,9 @@ func (a *API) degradeRoute(ctx context.Context, st *loopState) (RunResult, error
 		st.round++ // 降级发生在首轮 LLM 调用前，续跑从下一轮开始
 		a.setSuspend(&suspendState{st: st, ask: payload, ts: now().UnixNano()})
 		return RunResult{
-			Replies:    []string{plan.Question},
-			Ask:        &payload,
-			Suspended:  true,
-			AskPending: true, // 兼容 shim：= Ask != nil
+			Replies:   []string{plan.Question},
+			Ask:       &payload,
+			Suspended: true,
 		}, nil
 	}
 	return RunResult{}, fmt.Errorf("agentapi: 未知降级路由 action %q", plan.Action)
@@ -1025,10 +1014,9 @@ func (a *API) buildLoopTools(ctx context.Context, st *loopState) []loopTool {
 			payload := AskPayload{Question: q, Options: options, Mode: askMode(argStr(m, "mode"))}
 			st.askRound++
 			st.ask = &RunResult{
-				Replies:    []string{renderAskReply(q, options)},
-				Ask:        &payload,
-				Suspended:  true,
-				AskPending: true, // 兼容 shim：= Ask != nil
+				Replies:   []string{renderAskReply(q, options)},
+				Ask:       &payload,
+				Suspended: true,
 			}
 			a.setSuspend(&suspendState{st: st, ask: payload, ts: now().UnixNano()})
 			return st.ask.Replies[0], nil
