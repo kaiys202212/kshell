@@ -138,7 +138,7 @@ type AskPayload struct {
 // RunResult 是一次管理者循环的产出：Replies[0] 为最终结论（ask 时为
 // 问题+编号选项列表）。
 type RunResult struct {
-	Replies []string
+	Replies   []string
 	ToolSteps int
 	// Ask 非 nil 表示本轮以挂起反问收束，Suspended 与之同步；用户回复经
 	// Resume（或同渠道短输入 Run）从同一 msgs 续跑。
