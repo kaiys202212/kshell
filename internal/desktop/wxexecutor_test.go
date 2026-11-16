@@ -660,7 +660,8 @@ func TestWXExecutorNewMenuOptionsACPOnly(t *testing.T) {
 }
 
 // CreateNew 对已知不支持 ACP 的工具直接拒绝（err.hub.acp_unsupported），
-// 不再进 launch 层试错报 no_acp_adapter。
+// 不再进 launch 层试错报 no_acp_adapter；能力未知（工具表查无）保守放行，
+// 交 launch 层权威判定（此处表现为 workspace 校验错误而非 acp_unsupported）。
 func TestWXExecutorCreateNewRejectsNonACP(t *testing.T) {
 	app := wxApp(t, nil)
 	ex := newWXExecutor(app)
@@ -670,6 +671,10 @@ func TestWXExecutorCreateNewRejectsNonACP(t *testing.T) {
 	_, err := ex.CreateNew("codex", `D:\ws\a`, "")
 	if err == nil || !strings.Contains(err.Error(), "err.hub.acp_unsupported") {
 		t.Fatalf("非 ACP 工具应报 err.hub.acp_unsupported, got %v", err)
+	}
+	_, err = ex.CreateNew("mystery", `D:\ws\a`, "")
+	if err == nil || strings.Contains(err.Error(), "err.hub.acp_unsupported") {
+		t.Fatalf("能力未知的工具应保守放行（不报 acp_unsupported）, got %v", err)
 	}
 }
 

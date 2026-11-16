@@ -341,16 +341,6 @@ func (w *wxExecutor) EasyNew() (hub.SessionRef, error) {
 	return w.CreateNew(toolID, ws[0].Path, model)
 }
 
-// toolInstalled 报告工具 ID 是否在已安装列表里。
-func (w *wxExecutor) toolInstalled(id string) bool {
-	for _, t := range w.a.GetTools() {
-		if t.ID == id {
-			return t.Installed
-		}
-	}
-	return false
-}
-
 // toolACPUsable 报告工具 ID 已安装且 ACP 可用（新建目标资格判定）。
 func (w *wxExecutor) toolACPUsable(id string) bool {
 	for _, t := range w.a.GetTools() {
