@@ -2,7 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatInfo, HubPickView, TerminalInfo, ToolInfo } from '../lib/api';
+import type { ChatInfo, HubAskWire, HubPickView, TerminalInfo, ToolInfo } from '../lib/api';
 import enLocale from '../locales/en.json';
 import zhLocale from '../locales/zh-CN.json';
 import { useAppStore } from '../state/store';
@@ -43,6 +43,7 @@ const api = vi.hoisted(() => ({
   hubCommand: vi.fn(),
   hubPickTarget: vi.fn(),
   hubSmartSend: vi.fn(),
+  hubAskAnswer: vi.fn(),
   saveHubDefaultCreate: vi.fn().mockResolvedValue(undefined),
   saveHubRouteMode: vi.fn().mockResolvedValue(undefined),
   cancelHubSmartSend: vi.fn().mockResolvedValue(undefined),
@@ -106,6 +107,8 @@ beforeEach(() => {
   api.hubPickTarget.mockResolvedValue({ Replies: [], Pending: false });
   // 默认智能路由不接管：既有用例继续走待选菜单回落路径。
   api.hubSmartSend.mockResolvedValue({ Replies: [], Pending: true });
+  // 默认反问答复成功收尾：回执由落盘回流，前端不本地推送。
+  api.hubAskAnswer.mockResolvedValue({ Replies: [], Pending: false });
   api.listRequirements.mockResolvedValue([]);
   api.markRequirementDispatched.mockResolvedValue(undefined);
   dispatchRequirement.mockResolvedValue(undefined);
@@ -2994,6 +2997,20 @@ describe('AgentHub i18n 资源', () => {
     expect(hubOf(zhLocale).thinking_tool).toContain('{{tool}}');
     expect(hubOf(zhLocale).thinking_tool).toContain('{{round}}');
   });
+
+  it('反问卡片 key 两份 locale 同步存在（ui.hub.ask_* 与 err.hub.ask_*）', () => {
+    const hubOf = (loc: unknown) => (loc as { ui: { hub: Record<string, unknown> } }).ui.hub;
+    for (const key of ['ask_confirm', 'ask_yes', 'ask_no', 'ask_answered']) {
+      expect(hubOf(enLocale)[key]).toBeTruthy();
+      expect(hubOf(zhLocale)[key]).toBeTruthy();
+    }
+    // 后端可翻译 wire key（HubAskAnswer 错误路径）：err.hub 区段同样成对
+    const errOf = (loc: unknown) => (loc as { err: { hub: Record<string, unknown> } }).err.hub;
+    for (const key of ['ask_expired', 'ask_empty']) {
+      expect(errOf(enLocale)[key]).toBeTruthy();
+      expect(errOf(zhLocale)[key]).toBeTruthy();
+    }
+  });
 });
 
 describe('AgentHub 消息卡片标记', () => {
@@ -3015,5 +3032,98 @@ describe('AgentHub 消息卡片标记', () => {
     // hub_manager_* 消息带管理者徽标，普通 agent 消息不带
     expect(screen.getAllByText(tt('ui.hub.manager_badge'))).toHaveLength(1);
     expect(screen.getByText('结论正文')).toBeInTheDocument();
+  });
+});
+
+// 反问卡片：管理者循环挂起反问（hub_manager_ask + ask 载荷）的交互答复。
+// 卡片按钮即答复原话，经 hubAskAnswer 续跑管理者循环；回执由落盘回流展示，
+// 前端只需复用 hubPendingSend 思考态与 notify 错误路径。
+describe('AgentHub 反问卡片', () => {
+  const askMsg = (over: {
+    id?: number;
+    status?: string;
+    ask?: HubAskWire | null;
+    text?: string;
+  }) => ({
+    id: over.id ?? 10,
+    kind: 'agent',
+    event: 'hub_manager_ask',
+    status: over.status,
+    text: over.text ?? '用哪个工具？',
+    ts: 1,
+    ask: over.ask === null ? undefined : (over.ask ?? { question: '用哪个工具？', options: ['claude', 'codebuddy'], mode: 'single' }),
+  });
+
+  // 挂载 effect 会调 listHubMessages 回显（mock 回显 store 当前值），同步 act
+  // 不 flush 其微任务会冲掉交互期间推的本地气泡：交互前先排干（既有惯例）。
+  async function renderWithAsk(msg: ReturnType<typeof askMsg>) {
+    useAppStore.setState({ hubMessages: [msg] });
+    render(<AgentHubPanel />);
+    await act(async () => {});
+  }
+
+  it('single 反问卡：渲染选项按钮；点击选项即答复并进入思考态、完成后清除', async () => {
+    let release!: (v: HubPickView) => void;
+    api.hubAskAnswer.mockImplementation(() => new Promise((res) => { release = res; }));
+    await renderWithAsk(askMsg({}));
+
+    fireEvent.click(screen.getByRole('button', { name: 'claude' }));
+    await waitFor(() => expect(api.hubAskAnswer).toHaveBeenCalledWith(expect.any(String), 'claude'));
+    // 续跑是多轮 LLM 长操作：思考态气泡立即出现（种子 thinking_route）
+    expect(screen.getByTestId('hub-thinking')).toBeInTheDocument();
+    expect(screen.getByText(tt('ui.hub.thinking_route'))).toBeInTheDocument();
+
+    release({ Replies: [], Pending: false });
+    // 回执由落盘（hub_manager_reply / 新反问卡）经 hub:changed 回流，思考态到此结束
+    await waitFor(() => expect(screen.queryByTestId('hub-thinking')).not.toBeInTheDocument());
+    // 卡片答复不落 user 气泡（后端口径：卡片交互不进 hub 历史 user 流）
+    expect(
+      useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.kind === 'user' && m.text === 'claude'),
+    ).toBe(false);
+  });
+
+  it('multi 反问卡：勾选两项后点确认，答案为选中项顿号连接', async () => {
+    await renderWithAsk(
+      askMsg({ text: '要改哪些？', ask: { question: '要改哪些？', options: ['a', 'b', 'c'], mode: 'multi' } }),
+    );
+    fireEvent.click(screen.getByRole('checkbox', { name: 'a' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'b' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.ask_confirm') }));
+    await waitFor(() => expect(api.hubAskAnswer).toHaveBeenCalledWith(expect.any(String), 'a、b'));
+  });
+
+  it('confirm 反问卡：点「是」答复为按钮文案', async () => {
+    await renderWithAsk(
+      askMsg({ text: '继续吗？', ask: { question: '继续吗？', options: [], mode: 'confirm' } }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.ask_yes') }));
+    await waitFor(() => expect(api.hubAskAnswer).toHaveBeenCalledWith(expect.any(String), tt('ui.hub.ask_yes')));
+  });
+
+  it('已答复卡片：按钮禁用、不触发调用、显示已答复文案', async () => {
+    await renderWithAsk(askMsg({ status: 'answered' }));
+    const btn = screen.getByRole('button', { name: 'claude' });
+    expect(btn).toBeDisabled();
+    fireEvent.click(btn);
+    expect(api.hubAskAnswer).not.toHaveBeenCalled();
+    expect(screen.getByText(tt('ui.hub.ask_answered'))).toBeInTheDocument();
+  });
+
+  it('无 ask 字段的旧反问消息：纯 markdown 渲染，无选项按钮', async () => {
+    await renderWithAsk(askMsg({ id: 11, text: '旧问题正文', ask: null }));
+    expect(screen.getByText('旧问题正文')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'claude' })).toBeNull();
+    expect(screen.queryByRole('button', { name: tt('ui.hub.ask_confirm') })).toBeNull();
+    expect(api.hubAskAnswer).not.toHaveBeenCalled();
+  });
+
+  it('答复失败（反问已过期）：notify 展示翻译后 wire 文案并清掉思考态', async () => {
+    api.hubAskAnswer.mockRejectedValue(new Error('err.hub.ask_expired'));
+    await renderWithAsk(askMsg({}));
+    fireEvent.click(screen.getByRole('button', { name: 'claude' }));
+    await waitFor(() =>
+      expect(useAppStore.getState().toasts.some((x) => x.title === tt('err.hub.ask_expired'))).toBe(true),
+    );
+    await waitFor(() => expect(screen.queryByTestId('hub-thinking')).not.toBeInTheDocument());
   });
 });

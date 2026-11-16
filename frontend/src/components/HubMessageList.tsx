@@ -1,11 +1,11 @@
 // HubMessageList：AgentHub 消息流（与输入区 draft 解耦）。
 // 自身订阅 hubMessages/chats/terminals；外层用 memo + 稳定回调，父组件
 // 因 draft 重渲时跳过本树，避免整表 ReactMarkdown 重跑。
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { HubMessage, ToolInfo } from '../lib/api';
+import type { HubAskWire, HubMessage, ToolInfo } from '../lib/api';
 import {
   buildMentionOptions,
   displayMentionTitles,
@@ -40,6 +40,82 @@ interface HubMessageListProps {
   tools: ToolInfo[];
   onRecall: (m: HubMessage) => void;
   onQuickReply: (m: HubMessage, action: HubQuickAction) => void;
+  onAskAnswer: (answer: string) => void;
+}
+
+// ManagerAskCard：管理者反问卡片的选项交互区（hub_manager_ask 且带 ask 载荷时
+// 渲染在问题正文下方）。按钮文案即答复原话：single 直接发选项，multi 勾选后
+// 「确认」以顿号连接，confirm 发是/否文案。答复经 onAnswer 交 AgentHubPanel 调
+// HubAskAnswer 续跑管理者循环；answered（status=answered）时整卡只读。
+// 独立组件而非内联：multi 的勾选是本地受控状态，HubMessageItem 是无状态 memo 纯函数。
+function ManagerAskCard({
+  ask,
+  answered,
+  onAnswer,
+}: {
+  ask: HubAskWire;
+  answered: boolean;
+  onAnswer: (answer: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [picked, setPicked] = useState<string[]>([]);
+  // 按钮样式对齐既有 quick replies；disabled 保持可读但不可点
+  const optionBtn =
+    'rounded border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60';
+  const answeredBadge = answered && (
+    <span className="text-[10px] text-muted-foreground">{t('ui.hub.ask_answered')}</span>
+  );
+
+  if (ask.mode === 'multi') {
+    return (
+      <div className="mt-1 flex flex-col gap-1" data-testid="hub-ask-card">
+        {(ask.options ?? []).map((o) => (
+          <label key={o} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={picked.includes(o)}
+              disabled={answered}
+              onChange={(e) =>
+                setPicked((p) => (e.target.checked ? [...p, o] : p.filter((x) => x !== o)))
+              }
+            />
+            <span>{o}</span>
+          </label>
+        ))}
+        <div>
+          <button type="button" className={optionBtn} disabled={answered} onClick={() => onAnswer(picked.join('、'))}>
+            {t('ui.hub.ask_confirm')}
+          </button>
+        </div>
+        {answeredBadge}
+      </div>
+    );
+  }
+
+  if (ask.mode === 'confirm') {
+    return (
+      <div className="mt-1 flex flex-wrap gap-1" data-testid="hub-ask-card">
+        {[t('ui.hub.ask_yes'), t('ui.hub.ask_no')].map((label) => (
+          <button key={label} type="button" className={optionBtn} disabled={answered} onClick={() => onAnswer(label)}>
+            {label}
+          </button>
+        ))}
+        {answeredBadge}
+      </div>
+    );
+  }
+
+  // single（含 mode 缺省）：每个选项一枚按钮，点击即答复
+  return (
+    <div className="mt-1 flex flex-wrap gap-1" data-testid="hub-ask-card">
+      {(ask.options ?? []).map((o) => (
+        <button key={o} type="button" className={optionBtn} disabled={answered} onClick={() => onAnswer(o)}>
+          {o}
+        </button>
+      ))}
+      {answeredBadge}
+    </div>
+  );
 }
 
 interface HubMessageItemProps {
@@ -49,6 +125,7 @@ interface HubMessageItemProps {
   userText: string;
   onRecall: (m: HubMessage) => void;
   onQuickReply: (m: HubMessage, action: HubQuickAction) => void;
+  onAskAnswer: (answer: string) => void;
 }
 
 const HubMessageItem = memo(function HubMessageItem({
@@ -58,10 +135,14 @@ const HubMessageItem = memo(function HubMessageItem({
   userText,
   onRecall,
   onQuickReply,
+  onAskAnswer,
 }: HubMessageItemProps) {
   const { t } = useTranslation();
 
   const header = hubHeaderLine(m, attr);
+  // 管理者反问卡片：问题正文走既有 markdown 渲染，选项交互区由 ManagerAskCard 提供；
+  // 无 ask 载荷的旧消息（历史文本）不进入本分支，按普通 markdown 消息展示。
+  const isAskCard = m.event === 'hub_manager_ask' && !!m.ask;
 
   if (m.kind === 'user') {
     return (
@@ -123,7 +204,11 @@ const HubMessageItem = memo(function HubMessageItem({
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{decodePercentText(translateBackend(m.text))}</ReactMarkdown>
           </div>
         </div>
-        {st === 'acp' && !isHubWelcome(m.text) && (
+        {isAskCard && m.ask && (
+          <ManagerAskCard ask={m.ask} answered={m.status === 'answered'} onAnswer={onAskAnswer} />
+        )}
+        {/* 反问卡的续跑由卡片按钮驱动（答复即续轮），不再叠 quick replies 入口 */}
+        {st === 'acp' && !isHubWelcome(m.text) && !isAskCard && (
           <div className="mt-1 flex flex-wrap gap-1">
             {QUICK_REPLIES.map((q) => (
               <button
@@ -142,7 +227,7 @@ const HubMessageItem = memo(function HubMessageItem({
   );
 });
 
-function HubMessageList({ tools, onRecall, onQuickReply }: HubMessageListProps) {
+function HubMessageList({ tools, onRecall, onQuickReply, onAskAnswer }: HubMessageListProps) {
   const hubMessages = useAppStore((s) => s.hubMessages);
   const chats = useAppStore((s) => s.chats);
   const terminals = useAppStore((s) => s.terminals);
@@ -177,6 +262,7 @@ function HubMessageList({ tools, onRecall, onQuickReply }: HubMessageListProps) 
             userText={userText}
             onRecall={onRecall}
             onQuickReply={onQuickReply}
+            onAskAnswer={onAskAnswer}
           />
         );
       })}

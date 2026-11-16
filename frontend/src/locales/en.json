@@ -55,7 +55,9 @@
       "follow_empty": "#f is missing the message to send",
       "follow_none": "No agent session to follow",
       "terminal_active": "Session is running in a terminal; close that terminal tab first",
-      "acp_unsupported": "This tool does not support chat mode"
+      "acp_unsupported": "This tool does not support chat mode",
+      "ask_expired": "The question has expired; please restate your request",
+      "ask_empty": "Answer cannot be empty"
     },
     "hubtools": {
       "unknown_pending": "This confirmation is no longer valid (already handled or replaced)",
@@ -1146,6 +1148,10 @@
       "archive_title": "Archived by month",
       "archive_empty": "No archived messages",
       "quick_continue": "Continue",
+      "ask_confirm": "Confirm",
+      "ask_yes": "Yes",
+      "ask_no": "No",
+      "ask_answered": "Answered",
       "quote_reply": "Quote",
       "manager_badge": "AgentHub manager",
       "ack_delivered": "Got your message — I'm on it.",

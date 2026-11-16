@@ -55,7 +55,9 @@
       "follow_empty": "#f 后缺少要发送的内容",
       "follow_none": "没有可跟踪的 agent 会话",
       "terminal_active": "会话正以终端模式运行，请先关闭对应终端页签",
-      "acp_unsupported": "该工具不支持对话模式"
+      "acp_unsupported": "该工具不支持对话模式",
+      "ask_expired": "反问已过期，请重新描述需求",
+      "ask_empty": "答复不能为空"
     },
     "hubtools": {
       "unknown_pending": "该确认已失效（已被处理或被新对话替换）",
@@ -1146,6 +1148,10 @@
       "archive_title": "按月归档",
       "archive_empty": "暂无归档消息",
       "quick_continue": "继续",
+      "ask_confirm": "确认",
+      "ask_yes": "是",
+      "ask_no": "否",
+      "ask_answered": "已答复",
       "quote_reply": "引用",
       "manager_badge": "AgentHub 管理者",
       "ack_delivered": "收到，我马上开始。",

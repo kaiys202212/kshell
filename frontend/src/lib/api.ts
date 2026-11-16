@@ -827,6 +827,7 @@ interface AppBindings {
   HubPickTarget(text: string): Promise<HubPickView>;
   HubSmartSend(reqID: string, text: string): Promise<HubPickView>;
   CancelHubSmartSend(reqID: string): Promise<void>;
+  HubAskAnswer(reqID: string, answer: string): Promise<HubPickView>;
   SaveHubDefaultCreate(toolID: string, modelID: string): Promise<void>;
   SaveHubRouteMode(mode: string): Promise<void>;
   ListRequirements(): Promise<Requirement[]>;
@@ -1847,7 +1848,18 @@ export interface HubMessage {
   status?: string;
   // viaHub 标记该 user 消息由 AgentHub 管理者代发（非用户直接 @ 发送）
   viaHub?: boolean;
+  // Ask 是管理者反问卡片的持久化载荷（Event=hub_manager_ask 时有值，internal/hub.AskWire）：
+  // 前端据此渲染选项按钮；status=answered 表示已答复（按钮置灰）。
+  ask?: HubAskWire;
   ts: number;
+}
+
+// HubAskWire 是管理者反问卡片载荷（internal/hub.AskWire 的 JSON 形态）。
+// mode 取值 single（单选按钮，缺省）/ multi（多选+确认）/ confirm（是/否）。
+export interface HubAskWire {
+  question: string;
+  options?: string[];
+  mode: string;
 }
 
 // HubArchiveMonth 是一个归档月份及其条数（internal/hub.ArchiveMonth 的 JSON 形态）。
@@ -1933,6 +1945,17 @@ export async function cancelHubSmartSend(reqID: string): Promise<void> {
   const a = app();
   if (!a) return;
   await a.CancelHubSmartSend(reqID);
+}
+
+// hubAskAnswer 答复管理者反问卡片（internal/desktop/ask.go HubAskAnswer）：
+// 后端从挂起态续跑管理者循环并把产出落盘（回执/新卡片经 hub:changed 回流），
+// 同时把卡片标记为已答复。reqID 与 hubSmartSend 同语义：推送 hub:progress
+// 里程碑并支持中途取消。Pending=true = 在途守卫命中（静默回落）；
+// 卡片已过期报 err.hub.ask_expired（reject，调用方经 backendError 提示）。
+export async function hubAskAnswer(reqID: string, answer: string): Promise<HubPickView> {
+  const a = app();
+  if (!a) return { Replies: [], Pending: true };
+  return a.HubAskAnswer(reqID, answer);
 }
 
 // saveHubDefaultCreate 把「默认 agent 工具 + 模型」写穿到后端 config.yaml

@@ -16,6 +16,7 @@ import {
   getTools,
   getSessions,
   hubCommand,
+  hubAskAnswer,
   hubPickTarget,
   hubSmartSend,
   listChatCommands,
@@ -1093,6 +1094,33 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
       });
   }, [t]);
 
+  // askAnswer 答复管理者反问卡片：与自由发送同视觉——点击即进入思考态
+  //（复用 hubPendingSend，hub:progress 逐帧累积、可中断），后端从挂起态续跑
+  // 管理者循环并把回执/新卡片落盘（hub:changed 回流展示）。卡片交互不落
+  // user 气泡（后端口径：卡片本身已呈现问题）。Pending=true = 在途守卫命中
+  //（静默回落）；Cancelled = 用户中断（notify 既有取消文案）；错误（含
+  // err.hub.ask_expired）经 backendError 翻译后 toast。
+  const askAnswer = useCallback(
+    (answer: string) => {
+      const reqID = newSmartReqID();
+      useAppStore
+        .getState()
+        .setHubPendingSend({ reqID, text: answer, steps: [{ key: 'ui.hub.thinking_route' }] });
+      void hubAskAnswer(reqID, answer)
+        .then((view) => {
+          useAppStore.getState().setHubPendingSend(null);
+          if (view.Cancelled) {
+            useAppStore.getState().notify(t('ui.hub.thinking_cancelled'), 'info');
+          }
+        })
+        .catch((e: unknown) => {
+          useAppStore.getState().setHubPendingSend(null);
+          useAppStore.getState().notify(backendError(e), 'error');
+        });
+    },
+    [t],
+  );
+
   // openHistory 展开归档入口：拉月份列表。
   const openHistory = () => {
     const next = !historyOpen;
@@ -1253,7 +1281,7 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
           overflow-x-hidden：宽内容（长 URL/表格）横向截断而非把面板撑出边界，
           代码块自身 overflow-auto 仍可横向滚动。 */}
       <div ref={logRef} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden px-3 py-2" role="log" aria-live="polite">
-        <HubMessageList tools={tools} onRecall={recall} onQuickReply={quickReply} />
+        <HubMessageList tools={tools} onRecall={recall} onQuickReply={quickReply} onAskAnswer={askAnswer} />
         {/* 思考态占位气泡：无目标自由文本发出后立刻出现，hub:progress 逐帧
             累积成步骤时间线（已完成打勾、最后一步转圈），可中断。它只在内存里
             （store.hubPendingSend），权威消息仍由 Go 落盘。 */}
