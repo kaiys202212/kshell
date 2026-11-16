@@ -9,6 +9,7 @@ import (
 
 	"github.com/yangk/kshell/internal/agentapi"
 	"github.com/yangk/kshell/internal/chat"
+	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/hub"
 	"github.com/yangk/kshell/internal/providers"
 )
@@ -51,6 +52,24 @@ func TestAgentBackendDiskAndArchive(t *testing.T) {
 	// Info 按 SessionID 解析磁盘会话。
 	if s, ok := api.Info("s1"); !ok || s.Title != "甲" {
 		t.Fatalf("Info 磁盘会话失败: %+v ok=%v", s, ok)
+	}
+}
+
+// AgentBackend Tools 候选只含 ACP 可用的已安装工具（管理者 create_session 的
+// 候选与校验同源，非 ACP 工具不得进入，否则创建必报错）。
+func TestAgentBackendToolsACPOnly(t *testing.T) {
+	app := agentApp(t, nil)
+	b := &agentBackend{a: app, w: newWXExecutor(app), feed: app.agentFeedSource()}
+	app.mu.Lock()
+	app.tools = []discovery.Tool{
+		{ID: "claude", Name: "Claude Code", Installed: true, ACP: &providers.ACPDetection{Available: true}},
+		{ID: "codex", Name: "Codex", Installed: true}, // 无 ACP
+		{ID: "gone", Name: "Gone", Installed: false, ACP: &providers.ACPDetection{Available: true}},
+	}
+	app.mu.Unlock()
+	opts := b.Tools()
+	if len(opts) != 1 || opts[0].ID != "claude" {
+		t.Fatalf("Tools 应只含 ACP 可用的已安装工具 [claude], got %+v", opts)
 	}
 }
 

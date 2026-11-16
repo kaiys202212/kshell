@@ -307,16 +307,17 @@ func (w *wxExecutor) OpenSession(sessionID string) (hub.SessionRef, error) {
 	}, nil
 }
 
-// easyNewToolID 选快速新建的工具：配置里的 AgentHub 默认工具优先（已安装
-// 校验，失效回落），未配置回落第一个已安装工具。
+// easyNewToolID 选快速新建的工具：配置里的 AgentHub 默认工具优先（已安装且
+// ACP 可用校验，失效回落），未配置回落第一个已安装且 ACP 可用的工具。
+// 已知不支持 ACP 的工具不能作新建目标（选中必报 no_acp_adapter）。
 func (w *wxExecutor) easyNewToolID() string {
 	toolID := w.a.snapshot().Config.AgentHub.DefaultTool
-	if toolID != "" && !w.toolInstalled(toolID) {
-		toolID = "" // 配置的工具已卸载：回落第一个已安装
+	if toolID != "" && !w.toolACPUsable(toolID) {
+		toolID = "" // 配置的工具未安装或不支持 ACP：回落第一个可用的
 	}
 	if toolID == "" {
 		for _, t := range w.a.GetTools() {
-			if t.Installed {
+			if t.Installed && launch.ACPCapable(t) {
 				toolID = t.ID
 				break
 			}
@@ -350,11 +351,22 @@ func (w *wxExecutor) toolInstalled(id string) bool {
 	return false
 }
 
-// NewMenuOptions 返回 #n 分步新建的选项：工具（已安装）、工作区（末段路径展示）、
-// 模型恒空（新建时不指定模型，由 launch 默认）。
+// toolACPUsable 报告工具 ID 已安装且 ACP 可用（新建目标资格判定）。
+func (w *wxExecutor) toolACPUsable(id string) bool {
+	for _, t := range w.a.GetTools() {
+		if t.ID == id {
+			return t.Installed && launch.ACPCapable(t)
+		}
+	}
+	return false
+}
+
+// NewMenuOptions 返回 #n 分步新建的选项：工具（已安装且 ACP 可用，已知不支持
+// ACP 的工具不进候选）、工作区（末段路径展示）、模型恒空（新建时不指定模型，
+// 由 launch 默认）。
 func (w *wxExecutor) NewMenuOptions() (tools, workspaces, models []hub.MenuOption) {
 	for _, t := range w.a.GetTools() {
-		if !t.Installed {
+		if !t.Installed || !launch.ACPCapable(t) {
 			continue
 		}
 		label := t.ID
@@ -370,8 +382,13 @@ func (w *wxExecutor) NewMenuOptions() (tools, workspaces, models []hub.MenuOptio
 }
 
 // CreateNew 在指定工作区以指定工具新建 ACP 会话；model 非空时注入该次创建模型。
-// 新建耗时（agent 启动）期间发 hub:busy 事件，桌面端 AgentHub 据此显示动画。
+// 已知不支持 ACP 的工具先预检拒绝（与 OpenSession 规则1同款双保险），能力未知
+// 保守放行交 launch 层权威判定。新建耗时（agent 启动）期间发 hub:busy 事件，
+// 桌面端 AgentHub 据此显示动画。
 func (w *wxExecutor) CreateNew(toolID, wsID, model string) (hub.SessionRef, error) {
+	if capable, known := w.acpCapableTool(toolID); known && !capable {
+		return hub.SessionRef{}, errors.New("err.hub.acp_unsupported")
+	}
 	w.a.Emit("hub:busy", true)
 	o, err := w.a.OpenWorkspaceACP(wsID, toolID, model)
 	w.a.Emit("hub:busy", false)

@@ -581,29 +581,38 @@ func TestWXExecutorGrantPermissionOptionIDs(t *testing.T) {
 	}
 }
 
-// easyNewToolID：配置的 AgentHub 默认工具优先，失效（未安装）回落第一个已安装。
+// easyNewToolID：配置的 AgentHub 默认工具优先；默认工具与回落目标都须 ACP 可用
+//（已知不支持 ACP 的工具不能作 #en 的新建目标，否则创建必报错）。
 func TestWXExecutorEasyNewDefaultTool(t *testing.T) {
 	app := wxApp(t, nil)
 	ex := newWXExecutor(app)
 	app.mu.Lock()
 	app.tools = []discovery.Tool{
-		{ID: "claude", Installed: true},
-		{ID: "codex", Installed: true},
+		{ID: "claude", Installed: true, ACP: &providers.ACPDetection{Available: true}},
+		{ID: "codex", Installed: true}, // 无 ACP 探测 → 不支持
+		{ID: "trae", Installed: true, ACP: &providers.ACPDetection{Available: true}},
 	}
 	app.mu.Unlock()
 
-	// 未配置：回落第一个已安装（字母序 claude 在前）。
+	// 未配置：回落第一个已安装且 ACP 可用（字母序 claude 在前）。
 	if got := ex.easyNewToolID(); got != "claude" {
-		t.Fatalf("未配置默认工具应回落 claude, got %q", got)
+		t.Fatalf("未配置默认工具应回落 ACP 可用的 claude, got %q", got)
 	}
-	// 配置 codex：优先使用配置。
+	// 配置 codex（已安装但不支持 ACP）：回落第一个 ACP 可用工具，不得选中 codex。
 	app.mu.Lock()
 	app.opts.Config.AgentHub.DefaultTool = "codex"
 	app.mu.Unlock()
-	if got := ex.easyNewToolID(); got != "codex" {
-		t.Fatalf("配置的默认工具应生效, got %q", got)
+	if got := ex.easyNewToolID(); got != "claude" {
+		t.Fatalf("非 ACP 默认工具应回落 claude, got %q", got)
 	}
-	// 配置的工具未安装：回落第一个已安装。
+	// 配置 trae（ACP 可用）：优先使用配置。
+	app.mu.Lock()
+	app.opts.Config.AgentHub.DefaultTool = "trae"
+	app.mu.Unlock()
+	if got := ex.easyNewToolID(); got != "trae" {
+		t.Fatalf("配置的 ACP 默认工具应生效, got %q", got)
+	}
+	// 配置的工具未安装：回落第一个已安装且 ACP 可用。
 	app.mu.Lock()
 	app.opts.Config.AgentHub.DefaultTool = "gone"
 	app.mu.Unlock()
@@ -616,6 +625,51 @@ func TestWXExecutorEasyNewDefaultTool(t *testing.T) {
 	app.mu.Unlock()
 	if got := ex.easyNewToolID(); got != "claude" {
 		t.Fatalf("未知默认工具应回落 claude, got %q", got)
+	}
+	// 全部已安装工具都不支持 ACP：返回空（EasyNew 报 no_tools）。
+	app.mu.Lock()
+	app.opts.Config.AgentHub.DefaultTool = ""
+	app.tools = []discovery.Tool{{ID: "codex", Installed: true}}
+	app.mu.Unlock()
+	if got := ex.easyNewToolID(); got != "" {
+		t.Fatalf("无 ACP 可用工具应返回空, got %q", got)
+	}
+}
+
+// NewMenuOptions（#n 分步新建与待选「新建」的工具候选）：已知不支持 ACP 的
+// 工具不进候选，避免选中后创建报 no_acp_adapter。
+func TestWXExecutorNewMenuOptionsACPOnly(t *testing.T) {
+	app := wxApp(t, nil)
+	ex := newWXExecutor(app)
+	app.mu.Lock()
+	app.tools = []discovery.Tool{
+		{ID: "claude", Name: "Claude Code", Installed: true, ACP: &providers.ACPDetection{Available: true}},
+		{ID: "codex", Name: "Codex", Installed: true}, // 无 ACP
+		{ID: "trae", Name: "Trae", Installed: true, ACP: &providers.ACPDetection{Available: true}},
+		{ID: "gone", Name: "Gone", Installed: false, ACP: &providers.ACPDetection{Available: true}},
+	}
+	app.mu.Unlock()
+	tools, _, _ := ex.NewMenuOptions()
+	var ids []string
+	for _, o := range tools {
+		ids = append(ids, o.ID)
+	}
+	if len(ids) != 2 || ids[0] != "claude" || ids[1] != "trae" {
+		t.Fatalf("工具候选应只含 ACP 可用的已安装工具 [claude trae], got %v", ids)
+	}
+}
+
+// CreateNew 对已知不支持 ACP 的工具直接拒绝（err.hub.acp_unsupported），
+// 不再进 launch 层试错报 no_acp_adapter。
+func TestWXExecutorCreateNewRejectsNonACP(t *testing.T) {
+	app := wxApp(t, nil)
+	ex := newWXExecutor(app)
+	app.mu.Lock()
+	app.tools = []discovery.Tool{{ID: "codex", Name: "Codex", Installed: true}} // 无 ACP
+	app.mu.Unlock()
+	_, err := ex.CreateNew("codex", `D:\ws\a`, "")
+	if err == nil || !strings.Contains(err.Error(), "err.hub.acp_unsupported") {
+		t.Fatalf("非 ACP 工具应报 err.hub.acp_unsupported, got %v", err)
 	}
 }
 

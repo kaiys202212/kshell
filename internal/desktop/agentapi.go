@@ -12,6 +12,7 @@ import (
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/hub"
 	"github.com/yangk/kshell/internal/hubtools"
+	"github.com/yangk/kshell/internal/launch"
 	"github.com/yangk/kshell/internal/version"
 )
 
@@ -174,11 +175,12 @@ func (b *agentBackend) Open(sessionID string) (agentapi.Session, error) {
 	return refToSession(r, agentapi.StatusRunning, "", 0), nil
 }
 
-// Tools 返回已安装工具候选。
+// Tools 返回已安装工具候选；仅含 ACP 可用工具（create_session 的候选与校验
+// 同源，非 ACP 工具被模型选中后创建必报错，提前从候选中剔除）。
 func (b *agentBackend) Tools() []agentapi.Option {
 	var out []agentapi.Option
 	for _, t := range b.a.GetTools() {
-		if !t.Installed {
+		if !t.Installed || !launch.ACPCapable(t) {
 			continue
 		}
 		label := t.ID
