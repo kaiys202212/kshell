@@ -280,6 +280,15 @@ var knownCommands = map[string]bool{
 //   - 纯全角数字串 → 半角（编号切换 / 菜单与权限回复）
 //   - 全角＃ → 半角 #（仅当 ＃ 后首词是已知命令时；带参数命令的编号后的
 //     全角冒号由 handleG 消化，命令词后的冒号由 splitCmd 消化）
+// IsBareNumber 判定输入是否为裸数字（正整数，全角数字归一化后）——与前端
+// isHubNumber / Handle 的 strconv.Atoi+n>0 判定同口径。智能路由层据此分流：
+// 反问语境下的数字是「回答编号」，非语境数字是「命令层菜单/编号切换」语义。
+// 不代做 TrimSpace：调用方（HubSmartSend 入口）已保证无首尾空白。
+func IsBareNumber(input string) bool {
+	n, err := strconv.Atoi(normalizeDigits(input))
+	return err == nil && n > 0
+}
+
 func normalizeInput(input string) string {
 	input = strings.ReplaceAll(input, "　", " ")
 	if input != "" {
