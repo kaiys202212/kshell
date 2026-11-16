@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -420,6 +421,122 @@ func TestLoadV3LiveWithoutViaHub(t *testing.T) {
 	got := s.List()
 	if len(got) != 1 || got[0].Text != "old" || got[0].ViaHub {
 		t.Fatalf("v3 消息应完整保留且 ViaHub 为零值: %+v", got)
+	}
+}
+
+// TestLoadV4LegacyWithoutStepsAsk：v4 旧文件（无 steps/ask 字段）加载兼容，
+// 消息完整、新字段零值；下次写入按当前版本（v5）重写完成迁移。
+func TestLoadV4LegacyWithoutStepsAsk(t *testing.T) {
+	dir := t.TempDir()
+	v4 := `{"version":4,"messages":[` +
+		`{"id":1,"kind":"agent","event":"hub_manager_reply","text":"旧结论","ts":100}]}`
+	if err := os.WriteFile(filepath.Join(dir, "live.json"), []byte(v4), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := New(dir, 0)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	got := s.List()
+	if len(got) != 1 || got[0].Text != "旧结论" || got[0].Event != "hub_manager_reply" {
+		t.Fatalf("v4 旧文件应可读: %+v", got)
+	}
+	if got[0].Steps != nil || got[0].Ask != nil {
+		t.Fatalf("缺失字段应读为零值: %+v", got[0])
+	}
+	// 下一次写入以当前版本重写，历史不丢。
+	if err := s.Append(Message{Kind: "user", Text: "new"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "live.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f file
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatal(err)
+	}
+	if f.Version != fileVersion {
+		t.Fatalf("重写后 version = %d, want %d", f.Version, fileVersion)
+	}
+	if len(f.Messages) != 2 || f.Messages[0].Text != "旧结论" {
+		t.Fatalf("旧消息应保留，got %d 条", len(f.Messages))
+	}
+}
+
+// TestStepsAskRoundtrip：v5 结构化字段（思考链 Steps / 反问卡片 Ask）落盘后
+// 重载原样保留；空 Steps/Ask 不写出 null 键（omitempty）。
+func TestStepsAskRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir, 0)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(Message{
+		Kind: "agent", Event: "hub_manager_ask", Text: "用哪个工具？",
+		Ask: &AskWire{Question: "用哪个工具？", Options: []string{"claude", "codebuddy"}, Mode: "single"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(Message{
+		Kind: "agent", Event: "hub_manager_think", Text: "思考 2 步",
+		Steps: []Step{{Tool: "list_sessions", Round: 1}, {Tool: "send", Round: 2}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(Message{Kind: "agent", Event: "hub_manager_reply", Text: "结论"}); err != nil {
+		t.Fatal(err)
+	}
+	s2 := New(dir, 0)
+	if err := s2.Load(); err != nil {
+		t.Fatal(err)
+	}
+	got := s2.List()
+	if len(got) != 3 {
+		t.Fatalf("应保留 3 条, got %d", len(got))
+	}
+	if got[0].Ask == nil || got[0].Ask.Question != "用哪个工具？" ||
+		len(got[0].Ask.Options) != 2 || got[0].Ask.Options[1] != "codebuddy" ||
+		got[0].Ask.Mode != "single" {
+		t.Fatalf("Ask 载荷未原样保留: %+v", got[0])
+	}
+	if len(got[1].Steps) != 2 || got[1].Steps[0].Tool != "list_sessions" ||
+		got[1].Steps[0].Round != 1 || got[1].Steps[1].Tool != "send" ||
+		got[1].Steps[1].Round != 2 {
+		t.Fatalf("Steps 未原样保留: %+v", got[1])
+	}
+	if got[2].Ask != nil || got[2].Steps != nil {
+		t.Fatalf("未设置的字段应为零值: %+v", got[2])
+	}
+	// omitempty：零值字段不得写出 null 键（前端按缺省渲染）。
+	data, err := os.ReadFile(filepath.Join(dir, "live.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"steps":null`, `"ask":null`} {
+		if bytes.Contains(data, []byte(key)) {
+			t.Fatalf("零值字段不应写出 %s", key)
+		}
+	}
+}
+
+// TestSetStatusAnswered：管理者反问卡片的已答复标记（SetStatus 写入）落盘并重载保留。
+func TestSetStatusAnswered(t *testing.T) {
+	s := newTestStore(t, 10)
+	if err := s.Append(Message{Kind: "agent", Event: "hub_manager_ask", Text: "确认？"}); err != nil {
+		t.Fatal(err)
+	}
+	id := s.List()[0].ID
+	if !s.SetStatus(id, StatusAnswered) {
+		t.Fatal("SetStatus answered 应命中")
+	}
+	if got := s.List()[0].Status; got != StatusAnswered {
+		t.Fatalf("Status = %q, want answered", got)
+	}
+	s2 := New(s.dir, 10)
+	_ = s2.Load()
+	if got := s2.List()[0].Status; got != StatusAnswered {
+		t.Fatalf("重载后 Status = %q, want answered", got)
 	}
 }
 

@@ -27,17 +27,35 @@ import (
 // 版本重写完成迁移。
 // v4：Message 增加 viaHub（管理者代发标记，目标会话卡片/hub 气泡据此打标签）；
 // 旧 v1..v3 文件可直接读取（缺失字段读为零值）。
-const fileVersion = 4
+// v5：Message 增加 steps（管理者思考链结构化步骤）与 ask（反问卡片持久化
+// 载荷），并新增 answered 消息状态（反问卡片已答复标记）；旧 v1..v4 文件
+// 可直接读取（缺失字段零值），下次写入以当前版本重写完成迁移。
+const fileVersion = 5
 
 // defaultLiveCap 是 live 文件保留的消息条数上限（超出按月归档）。
 const defaultLiveCap = 500
 
 // 用户消息状态（Status 字段）：空串 = 已送达（旧数据兼容），queued = 排队中可撤回，
-// recalled = 已撤回（原消息保留只做标记）。
+// recalled = 已撤回（原消息保留只做标记）；answered = 管理者反问卡片的已答复
+// 标记（SetStatus 写入，前端据此把卡片按钮置灰为「已答复」）。
 const (
 	StatusQueued   = "queued"
 	StatusRecalled = "recalled"
+	StatusAnswered = "answered"
 )
+
+// Step 是管理者思考链的单次工具调用快照（hub_manager_think 消息专用）。
+type Step struct {
+	Tool  string `json:"tool"`
+	Round int    `json:"round"`
+}
+
+// AskWire 是管理者反问卡片的持久化载荷（hub_manager_ask 消息专用）。
+type AskWire struct {
+	Question string   `json:"question"`
+	Options  []string `json:"options,omitempty"`
+	Mode     string   `json:"mode"` // single | multi | confirm
+}
 
 // Message 是一条 AgentHub 消息，两类共用。
 type Message struct {
@@ -69,6 +87,12 @@ type Message struct {
 	// ViaHub 标记该用户消息由 AgentHub 管理者代发（send 工具投递），而非用户
 	// 在 hub 直接 @ 发送；前端在消息卡片上渲染「由 AgentHub 自动发送」标签。
 	ViaHub bool `json:"viaHub,omitempty"`
+	// Steps 是管理者思考链的工具调用快照（Event=hub_manager_think 时有值）：
+	// Text 只存聚合摘要，重启后前端仍可还原逐步时间线。
+	Steps []Step `json:"steps,omitempty"`
+	// Ask 是管理者反问卡片的持久化载荷（Event=hub_manager_ask 时有值）：
+	// 前端据此渲染选项按钮，答复后由 SetStatus(answered) 标记。
+	Ask *AskWire `json:"ask,omitempty"`
 	// Ts 是消息时刻的 UnixNano。
 	Ts int64 `json:"ts"`
 }
