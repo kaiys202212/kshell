@@ -164,12 +164,14 @@ function ManagerThinkCard({ steps, summary }: { steps: HubStep[]; summary: strin
     }
     return out;
   }, [steps]);
-  const chip = 'rounded border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground';
+  const chip =
+    'cursor-default rounded border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground';
   return (
     <div className="mt-1 flex flex-col gap-1" data-testid="hub-think-card">
       <button
         type="button"
         className="flex items-center gap-1 self-start text-[11px] text-muted-foreground hover:text-foreground"
+        aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
         <span>{t('ui.hub.think_steps', { n: steps.length })}</span>
@@ -178,8 +180,8 @@ function ManagerThinkCard({ steps, summary }: { steps: HubStep[]; summary: strin
       {open && (
         <div className="flex flex-col gap-1">
           <div className="text-[11px] text-muted-foreground">{decodePercentText(summary)}</div>
-          {groups.map((g) => (
-            <div key={g.round} className="flex flex-wrap items-center gap-1">
+          {groups.map((g, gi) => (
+            <div key={`${g.round}-${gi}`} className="flex flex-wrap items-center gap-1">
               <span className="text-[10px] text-muted-foreground">{t('ui.hub.think_round', { n: g.round })}</span>
               {g.items.map((it, i) => (
                 <span key={`${it.tool}-${i}`} className={chip}>

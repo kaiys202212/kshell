@@ -3215,6 +3215,19 @@ describe('AgentHub 思考链卡片', () => {
     expect(screen.getAllByText('a_tool')).toHaveLength(2);
   });
 
+  it('round 回跳（1→2→1）各自成组且不产生重复 React key', async () => {
+    const steps = [
+      { tool: 'a_tool', round: 1 },
+      { tool: 'b_tool', round: 2 },
+      { tool: 'c_tool', round: 1 },
+    ];
+    await renderWithThink(thinkMsg({ steps }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.think_steps', { n: 3 }) }));
+    // 回跳的两个 round:1 组各自渲染（getAllByText 长度 2 即两组都在）
+    expect(screen.getAllByText(tt('ui.hub.think_round', { n: 1 }))).toHaveLength(2);
+    expect(screen.getByText(tt('ui.hub.think_round', { n: 2 }))).toBeInTheDocument();
+  });
+
   it('无 steps 的旧 think 消息：markdown 渲染原文，无折叠行', async () => {
     await renderWithThink(thinkMsg({ id: 21, text: '旧思考正文', steps: null }));
     expect(screen.getByText('旧思考正文')).toBeInTheDocument();
