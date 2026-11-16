@@ -501,7 +501,7 @@ func (a *API) buildManagerSystem(st *loopState) string {
 	b.WriteString("规则：\n")
 	b.WriteString("- 会话编号语境：活跃会话按 list_sessions 输出顺序编号 #1..#N。send/stop/set_model/session_messages 的 chat_id 参数一律用 list_sessions 输出的 ID 字符串，不要传编号。\n")
 	b.WriteString("- 等待信号：状态 perm 表示会话在等权限确认；最后一条 agent 消息以 ？/? 结尾表示会话在向用户提问。等待中的会话仍可投递新指令。\n")
-	b.WriteString("- 查历史纪律：仅当用户消息明确指向历史/既往对话（如「上次那个」「之前的会话」「刚才说的任务」）时才调用 search_memory 或 session_messages 查历史；否则上面四段语境通常已足够定位目标——直接投递（send）、开会话（open_session）或反问（ask），不要用工具探索。\n")
+	b.WriteString("- 查历史纪律：仅当用户消息明确指向历史/既往对话（如「上次那个」「之前的会话」「刚才说的任务」）时才调用 search_memory 或 session_messages 查历史；否则上面四段语境通常已足够定位目标——直接投递（send）、开会话（open_session）或反问（ask），不要用工具探索。四段都定位不到目标时才回退查历史。\n")
 	b.WriteString("- 末轮必须产出自然语言结论：不再调用工具时，直接输出结论文本。\n")
 	b.WriteString("- 意图不确定时必须调用 ask 列编号选项向用户确认，禁止猜测性群发。\n")
 

@@ -57,8 +57,8 @@ func (b *agentBackend) ActiveSessions() []agentapi.Session {
 	return out
 }
 
-// sessionMtimes 取磁盘会话 ID → 最后修改时间：providers.Session 的 UpdatedAt
-// 是扫描产物里磁盘会话唯一可靠的时间字段（收集列表 wxChatInfo 本身不带时间）。
+// sessionMtimes 取磁盘会话 ID → 最后活跃时间：providers.Session 的 UpdatedAt
+// 是解析会话记录得到的最大时间戳（收集列表 wxChatInfo 本身不带时间）。
 func (b *agentBackend) sessionMtimes() map[string]int64 {
 	mt := make(map[string]int64)
 	for _, s := range b.a.GetSessions() {
@@ -82,10 +82,10 @@ func (b *agentBackend) DiskSessions() []agentapi.Session {
 	return out
 }
 
-// WorkspaceSessions 返回指定工作区最近 n 个磁盘会话（按最后修改时间新→旧）。
+// WorkspaceSessions 返回指定工作区最近 n 个磁盘会话（按最后活跃时间新→旧）。
 // 与 DiskSessions 同源（collectAllSessions + sessionRefs，已做 ACP 能力过滤
-// 与终端占用标记），时间取扫描产物的 UpdatedAt（mtime；个别工具解析不出
-// UpdatedAt 时为 0，排序时与有时间的条目混排不保证相对次序，可接受）。
+// 与终端占用标记），时间取解析记录的 UpdatedAt（个别工具解析不出时为 0，
+// 排序时与有时间的条目混排不保证相对次序，故用稳定排序保证确定性输出）。
 func (b *agentBackend) WorkspaceSessions(wsPath string, n int) []agentapi.Session {
 	if n <= 0 {
 		return nil
@@ -98,7 +98,7 @@ func (b *agentBackend) WorkspaceSessions(wsPath string, n int) []agentapi.Sessio
 		}
 		matched = append(matched, refToSession(r, agentapi.StatusDisk, "", mt[r.SessionID]))
 	}
-	sort.Slice(matched, func(i, j int) bool { return matched[i].LastTs > matched[j].LastTs })
+	sort.SliceStable(matched, func(i, j int) bool { return matched[i].LastTs > matched[j].LastTs })
 	if len(matched) > n {
 		matched = matched[:n]
 	}

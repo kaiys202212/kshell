@@ -864,9 +864,10 @@ func TestRecentHubContextKeepsTail(t *testing.T) {
 		f.recent = append(f.recent, Message{ID: int64(i), Kind: "user", Text: fmt.Sprintf("消息%d", i)})
 	}
 	sec := api.recentContextSection("新输入")
-	if strings.Contains(sec, fmt.Sprintf("消息%d", total-recentContextN)) ||
-		!strings.Contains(sec, fmt.Sprintf("消息%d", total-recentContextN+1)) {
-		t.Fatalf("应只保留最后 %d 条:\n%s", recentContextN, sec)
+	// 首行带编号断言边界：仅保留最后 N 条时最旧应为 消息3（消息2 已溢出）。
+	// 不用 Contains("消息2")——它是 消息20..22 的前缀，会假阳性。
+	if !strings.Contains(sec, fmt.Sprintf("1. [用户] 消息%d", total-recentContextN+1)) {
+		t.Fatalf("最旧一条应为 消息%d:\n%s", total-recentContextN+1, sec)
 	}
 	if !strings.Contains(sec, fmt.Sprintf("%d. [用户] 消息%d", recentContextN, total)) {
 		t.Fatalf("编号应按 1..%d 重新连续:\n%s", recentContextN, sec)
