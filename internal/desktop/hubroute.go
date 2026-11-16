@@ -165,6 +165,14 @@ func (a *App) HubSmartSend(reqID, text string) (HubPickView, error) {
 		}
 	}
 
+	// 裸数字守卫：数字只在反问续轮语境接管（编号是 ask 菜单的「回答」）。
+	// 无语境数字是命令层语义（#l 编号切换/待选菜单/no_mapping），让位回前端
+	// 命令路径——既有数字曾被前端无条件劫持进命令层、续轮收不到答案；反向
+	// 修正后也不能把裸数字当新需求喂给 LLM。
+	if hub.IsBareNumber(text) && !cont {
+		return HubPickView{Pending: true}, nil
+	}
+
 	// 捷径（先于逃生门）：非续轮语境的「继续类短确认」+ 恰好一个等待会话 →
 	// 直接投递原文，不经 LLM。必须排在 IsDirectPass 之前——「continue」本身
 	// 是默认逃生门词，否则英文确认词永远到不了捷径；#/@ 等其它词不受影响

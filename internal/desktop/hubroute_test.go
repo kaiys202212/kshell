@@ -960,3 +960,103 @@ func TestHubSmartSendBusyGuard(t *testing.T) {
 		t.Fatal("AskPending 结果应记录（busy 期间不得清零）")
 	}
 }
+
+// TestHubSmartSendBareNumber 覆盖裸数字输入的语境分流（管理者 ask 反问编号
+// 菜单后用户回数字曾经被前端劫持进命令层、续轮永远收不到答案）：
+//   - ask 反问语境：数字进续轮（Continuation），原话与回执落盘；
+//   - 无语境：让位命令层（菜单/编号切换/no_mapping 语义），不喂 LLM、不落盘；
+//   - 待选菜单挂起：让位命令层（Busy 让位原则，用户已显式转向命令流）。
+func TestHubSmartSendBareNumber(t *testing.T) {
+	t.Run("反问语境下数字续轮接管并落盘", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		// 第一轮 ask 落地置位续轮标记。
+		injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			return agentapi.RunResult{Replies: []string{"用哪个工具来跑？\n1. claude\n2. codebuddy"}, AskPending: true}, nil
+		})
+		if _, err := fx.app.HubSmartSend("req", "新建任务"); err != nil {
+			t.Fatalf("ask HubSmartSend: %v", err)
+		}
+		if !hubAskPendingOf(fx.app) {
+			t.Fatal("ask 后应置位续轮标记")
+		}
+		// 用户裸回数字：应进续轮。
+		var gotInput string
+		var gotOpts agentapi.RunOpts
+		fx.app.mu.Lock()
+		fx.app.hubRunner = func(_ context.Context, input string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
+			gotInput, gotOpts = input, opts
+			return agentapi.RunResult{Replies: []string{"已用 codebuddy 新建会话并发送任务。"}}, nil
+		}
+		fx.app.mu.Unlock()
+		view, err := fx.app.HubSmartSend("req", "2")
+		if err != nil {
+			t.Fatalf("数字续轮 HubSmartSend: %v", err)
+		}
+		if view.Pending {
+			t.Fatal("反问语境下的数字应被续轮接管（Pending=false）")
+		}
+		if gotInput != "2" || !gotOpts.Continuation || gotOpts.Channel != "hub" {
+			t.Fatalf("续轮参数不符: input=%q opts=%+v", gotInput, gotOpts)
+		}
+		var userMsg, replyMsg bool
+		for _, m := range fx.app.snapshot().HubStore.List() {
+			if m.Kind == "user" && m.Text == "2" {
+				userMsg = true
+			}
+			if m.Event == "hub_manager_reply" && m.Text == "已用 codebuddy 新建会话并发送任务。" {
+				replyMsg = true
+			}
+		}
+		if !userMsg {
+			t.Fatal("数字原话应落盘（消息流可见）")
+		}
+		if !replyMsg {
+			t.Fatal("续轮回执应落盘")
+		}
+	})
+
+	t.Run("无反问语境数字让位命令层", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		calls := injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			t.Fatal("无语境数字不得进管理者循环")
+			return agentapi.RunResult{}, nil
+		})
+		view, err := fx.app.HubSmartSend("req", "2")
+		if err != nil {
+			t.Fatalf("HubSmartSend: %v", err)
+		}
+		if !view.Pending {
+			t.Fatal("无语境数字应 Pending=true 交前端回落命令层")
+		}
+		if *calls != 0 {
+			t.Fatalf("runner 调用 = %d, 期望 0", *calls)
+		}
+		for _, m := range fx.app.snapshot().HubStore.List() {
+			if m.Kind == "user" && m.Text == "2" {
+				t.Fatal("让位路径不得落盘数字（可见性归命令层本地渲染）")
+			}
+		}
+	})
+
+	t.Run("待选挂起时数字让位命令层", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		calls := injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			t.Fatal("待选挂起时数字不得进管理者循环")
+			return agentapi.RunResult{}, nil
+		})
+		// 建立待选菜单（Console Busy）。
+		if _, err := fx.app.HubPickTarget("先选目标"); err != nil {
+			t.Fatalf("HubPickTarget: %v", err)
+		}
+		view, err := fx.app.HubSmartSend("req", "2")
+		if err != nil {
+			t.Fatalf("HubSmartSend: %v", err)
+		}
+		if !view.Pending {
+			t.Fatal("待选挂起时数字应 Pending=true（Busy 让位）")
+		}
+		if *calls != 0 {
+			t.Fatalf("runner 调用 = %d, 期望 0", *calls)
+		}
+	})
+}
