@@ -135,8 +135,8 @@ func (a *App) weixinManagerRouter() weixin.ManagerRouter {
 				progressed = p.Round
 				// 中途进度推送（单轮最多一次）：循环开始计时，超过阈值且尚未
 				// 推送过才推一条「仍在处理」，经 bridge 出站 worker 异步投递。
-				// 传的是循环轮次（LoopProgress 无累计工具步数字段；文案按
-				// 「第 N 轮」语义渲染，扩字段属 Task 3 范围不做）。
+				// 传的是循环轮次（LoopProgress 无累计工具步数字段，文案即
+				// 「第 N 轮」语义）。
 				if !pushed && time.Since(start) >= managerProgressInterval {
 					pushed = true
 					a.pushWXManagerProgress(progressed)

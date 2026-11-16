@@ -349,6 +349,8 @@ func TestWeixinBridgeAskSuspendFlow(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	calls, inputs := 0, []string(nil)
+	// 桩内 calls/inputs 无锁：依赖 HandleInboundMsg 在调用方 goroutine 同步执行
+	//（bridge.go 入站处理非异步），出站 bodies 因出站 worker 异步已单独加锁。
 	injectWXRunner(app, func(_ context.Context, input string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
 		calls++
 		inputs = append(inputs, input)
