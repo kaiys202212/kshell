@@ -895,6 +895,9 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
     const targetId = resolveMentionTarget(text, options, null);
     if (!targetId) {
       // 在途守卫：上一次智能路由/待选请求未返回时，重复 Enter 直接忽略。
+      // 已知取舍：数字并入智能路由后，在途期间数字不再提前透传命令层
+      //（旧路径能立刻拿到 no_mapping 回音），此时静默忽略——在途轮次通常
+      // 正是反问续轮语境，抢跑命令层反而会把编号答案吞掉。
       if (smartInFlight.current) return;
       smartInFlight.current = true;
       // 发送受理即清空输入框（与直投路径一致）：原话已进本地气泡（下方推送）
