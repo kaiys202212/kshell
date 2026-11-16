@@ -2,11 +2,9 @@ package desktop
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"strings"
-	"time"
 
 	"github.com/yangk/kshell/internal/agentapi"
 	"github.com/yangk/kshell/internal/hub"
@@ -24,11 +22,6 @@ const (
 	hubStepTool  = "ui.hub.thinking_tool"  // 循环内一次工具调用（payload 带 tool/round）
 	hubStepPick  = "ui.hub.thinking_pick"  // 未接管/降级，转为列会话待用户选
 )
-
-// hubContinuationMax 是 desktop 续轮衔接判定的输入长度上限（rune），与
-// agentapi 的 shortInputMax 对齐：AskPending 语境下只有短输入才显式传
-// Continuation=true，长输入不传标志、由 agentapi 内部清 pending 开新轮。
-const hubContinuationMax = 20
 
 // hubProgress 是 hub:progress 事件的 payload（前端 HubProgress 同构）。
 // Tool/Round 是循环工具调用的扩展字段（旧 step 字段保留，前端向后兼容）。
@@ -102,22 +95,24 @@ func (a *App) CancelHubSmartSend(reqID string) {
 }
 
 // HubSmartSend 是桌面端 Hub 面板「自由文本无精确目标」的智能入口：
-// 循环成功（含 AskPending 的选项回执）→ Pending=false，前端回显并清草稿；
-// 捷径直投成功同样返回确认回执；逃生门/待选菜单挂起/未配置模型/循环失败 →
+// 循环成功（含挂起反问的回执）→ Pending=false，前端回显并清草稿；捷径直投
+// 成功同样返回确认回执；逃生门/待选菜单挂起/未配置模型/循环失败 →
 // Pending=true，让前端回落既有待选菜单（原文由前端草稿暂存保留，不丢用户正文）。
 //
-// 处理顺序：待选菜单挂起让位 → 捷径（继续类短确认 + 唯一等待会话，先于
-// 逃生门：英文 continue 本身是逃生门词，必须先判才能直投）→ 逃生门（#/@ 等
-// 其余词）→ 管理者循环 → 降级回落。
+// 处理顺序：待选菜单挂起让位 → 挂起反问语境判定（裸数字守卫，编号是 ask
+// 菜单的「回答」）→ 捷径（继续类短确认 + 唯一等待会话，先于逃生门：英文
+// continue 本身是逃生门词，必须先判才能直投）→ 逃生门（#/@ 等其余词）→
+// 管理者循环 → 降级回落。
+//
+// 反问采用挂起-续跑语义（T1）：ask 落地由 agentapi 记挂起态（SuspendTTL 内
+// 同渠道短输入自动续跑），desktop 只经 HasSuspendedAsk 查询语境，不再维护
+// 续轮标记与 TTL。
 //
 // reqID 是本轮请求标识：用于推送 hub:progress 阶段事件与支持中途取消；
 // 空串时行为一致（不推进度、不可取消）。
 //
-// 反问轮次语义由 agentapi 的 pendingAsk 接管（ask 工具落地记语境、续轮消费、
-// AskMaxRounds 门禁在循环内判），desktop 不再维护轮次计数。
-//
 // 在途守卫：同一 App 内循环调用全局串行（smartBusy 置位，锁外做 LLM 调用），
-// 前端重复提交/并发调用时后到的直接返回 Pending=true，不清续轮标记、不重复投递。
+// 前端重复提交/并发调用时后到的直接返回 Pending=true，不重复投递。
 func (a *App) HubSmartSend(reqID, text string) (HubPickView, error) {
 	if !a.snapshot().ready() {
 		return HubPickView{}, errNotReady
@@ -144,41 +139,24 @@ func (a *App) HubSmartSend(reqID, text string) (HubPickView, error) {
 	if a.wxHubConsole().Busy() {
 		return HubPickView{Pending: true}, nil
 	}
-	// 续轮衔接：上次 Run 返回 AskPending 且本条是短输入 → 显式传 Continuation，
-	// 让循环带上上一轮反问语境（选项/候选编号）。置位时刻超过 PendingAskTTL
-	// 视为语境失效：不传 Continuation 并清零标记——显式标志会绕过 agentapi Run
-	// 内部的 TTL 检查（loop.go 对显式 Continuation 直接采用），过期判定必须在
-	// desktop 侧完成，避免隔了几小时的「继续」把陈年反问语境注入模型。
-	// 长输入不传标志，agentapi 内部清 pending 按新需求处理。
-	a.mu.Lock()
-	askPending := a.hubAskPending
-	askedAt := a.hubAskPendingAt
-	a.mu.Unlock()
-	cont := false
-	if askPending {
-		if time.Since(askedAt) <= agentapi.PendingAskTTL {
-			cont = hub.IsContinueConfirm(text) || len([]rune(text)) <= hubContinuationMax
-		} else {
-			a.mu.Lock()
-			a.hubAskPending = false
-			a.mu.Unlock()
-		}
-	}
+	// 挂起反问语境（探针查询 agentapi 挂起态）：裸数字/「继续」类短确认属于
+	// 反问语境的「回答」，不进捷径、不让位命令层，由 Run 自动续跑消费。
+	suspend := a.hubAskSuspended()
 
 	// 裸数字守卫：数字只在反问续轮语境接管（编号是 ask 菜单的「回答」）。
 	// 无语境数字是命令层语义（#l 编号切换/待选菜单/no_mapping），让位回前端
 	// 命令路径——既有数字曾被前端无条件劫持进命令层、续轮收不到答案；反向
 	// 修正后也不能把裸数字当新需求喂给 LLM。
-	if hub.IsBareNumber(text) && !cont {
+	if hub.IsBareNumber(text) && !suspend {
 		return HubPickView{Pending: true}, nil
 	}
 
-	// 捷径（先于逃生门）：非续轮语境的「继续类短确认」+ 恰好一个等待会话 →
+	// 捷径（先于逃生门）：非反问语境的「继续类短确认」+ 恰好一个等待会话 →
 	// 直接投递原文，不经 LLM。必须排在 IsDirectPass 之前——「continue」本身
 	// 是默认逃生门词，否则英文确认词永远到不了捷径；#/@ 等其它词不受影响
 	//（词表无 # 前缀，# 命令不会误触捷径）。零/多个等待会话不进捷径，
 	// continue 语境词仍按逃生门回落待选（正确降级）。
-	if !cont && hub.IsContinueConfirm(text) {
+	if !suspend && hub.IsContinueConfirm(text) {
 		if view, handled := a.shortcutSend(text); handled {
 			return view, nil
 		}
@@ -199,25 +177,19 @@ func (a *App) HubSmartSend(reqID, text string) (HubPickView, error) {
 	defer unregister()
 
 	// 循环步骤累计（问题 3）：思考时间线随 hub:progress 推给前端的同时留底，
-	// 循环成功后作为 hub_manager_think 消息落盘，重启后仍可读。
-	var mgrSteps []string
+	// 循环结束后作为 hub_manager_think 消息结构化落盘，重启后仍可读。
+	var mgrSteps []hub.Step
 	a.emitHubProgress(reqID, hubStepRoute)
 	res, err := a.runHubLoop(ctx, text, agentapi.RunOpts{
-		Channel:      "hub",
-		Continuation: cont,
+		Channel: "hub",
 		Progress: func(p agentapi.LoopProgress) {
-			mgrSteps = append(mgrSteps, fmt.Sprintf("%s@%d", p.Tool, p.Round))
+			mgrSteps = append(mgrSteps, hub.Step{Tool: p.Tool, Round: p.Round})
 			a.emitHubToolProgress(reqID, p.Tool, p.Round)
 		},
 	})
 	if err != nil {
-		// 续轮标记维护：ErrLLMNotReady 时 agentapi 保留 pending（用户配好模型
-		// 后原语境仍在），desktop 同步保留；其余错误（含取消）语境已断，清零。
-		if !errors.Is(err, agentapi.ErrLLMNotReady) {
-			a.mu.Lock()
-			a.hubAskPending = false
-			a.mu.Unlock()
-		}
+		// 挂起态归 agentapi 所有：瞬时错误（如 ErrLLMNotReady）保留挂起，
+		// 用户重试会自动续跑；desktop 无需也不得清理。
 		// 取消在途中触发：返回 Cancelled（不回落待选、不重复投递）。
 		if ctx.Err() != nil {
 			return HubPickView{Cancelled: true}, nil
@@ -225,29 +197,44 @@ func (a *App) HubSmartSend(reqID, text string) (HubPickView, error) {
 		a.emitHubProgress(reqID, hubStepPick)
 		return HubPickView{Pending: true}, nil
 	}
-	// 记录 AskPending 结果供下一条输入续轮（选项回执本身 Pending=false），
-	// 置位时刻一并记录供 TTL 判定。
-	a.mu.Lock()
-	a.hubAskPending = res.AskPending
-	if res.AskPending {
-		a.hubAskPendingAt = time.Now()
-	}
-	a.mu.Unlock()
 	// 思考与结论落盘（问题 3）：此前回执只走前端瞬态气泡，重拉/重启即丢。
-	// 思考消息是语言中立的步骤序列（前端打「AgentHub 管理者」徽标），结论逐条落。
-	if len(mgrSteps) > 0 {
-		a.recordHubMessage(hub.Message{
-			Kind: "agent", Event: "hub_manager_think", Text: strings.Join(mgrSteps, " → "),
-		})
+	// 挂起反问落 hub_manager_ask 卡片，结论逐条落 hub_manager_reply。
+	return a.finishManagerLoop(res, mgrSteps), nil
+}
+
+// managerToolNames 是管理者循环工具名 → 中文显示名映射（思考链摘要用）；
+// 未收录的工具保留原名。
+var managerToolNames = map[string]string{
+	"list_sessions":   "查会话列表",
+	"send":            "投递",
+	"create_session":  "建会话",
+	"open_session":    "开会话",
+	"stop":            "停止",
+	"set_model":       "切模型",
+	"session_messages": "读消息",
+	"search_memory":   "查记忆",
+	"status":          "查状态",
+	"ask":             "反问",
+}
+
+// summarizeManagerSteps 把思考链步骤聚合成一行中文摘要：按顺序遍历，相邻同名
+// 步骤合并为「名称×N」（挂起-续跑跨轮后同一工具可能多次出现，合并相邻即可
+// 还原「先做什么、再做什么」的主线）；工具名经映射表转中文，未知工具显示原名。
+func summarizeManagerSteps(steps []hub.Step) string {
+	groups := make([]string, 0, len(steps))
+	for i := 0; i < len(steps); {
+		j := i
+		for j+1 < len(steps) && steps[j+1].Tool == steps[i].Tool {
+			j++
+		}
+		name := steps[i].Tool
+		if zh, ok := managerToolNames[name]; ok {
+			name = zh
+		}
+		groups = append(groups, fmt.Sprintf("%s×%d", name, j-i+1))
+		i = j + 1
 	}
-	for _, r := range res.Replies {
-		a.recordHubMessage(hub.Message{Kind: "agent", Event: "hub_manager_reply", Text: r})
-	}
-	replies := make([]hub.Reply, 0, len(res.Replies))
-	for _, r := range res.Replies {
-		replies = append(replies, hub.Reply{Text: r})
-	}
-	return HubPickView{Replies: replies, Pending: false}, nil
+	return fmt.Sprintf("思考 %d 步：%s", len(steps), strings.Join(groups, " · "))
 }
 
 // shortcutSend 处理「继续类短确认」的确定性捷径：SessionStatuses 里恰好一个

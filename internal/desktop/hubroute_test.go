@@ -2,6 +2,7 @@
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -221,11 +222,13 @@ func injectHubRunner(fx *routeFixture, fn func(ctx context.Context, input string
 	return &calls
 }
 
-// hubAskPendingOf 读取 desktop 续轮衔接标记（mu 保护）。
-func hubAskPendingOf(a *App) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.hubAskPending
+// withHubSuspend 模拟 hub 渠道挂起反问在场（替换挂起探针），返回还原函数。
+// 真实挂起态在 agentapi API 内部（unexported），desktop 循环桩无法触达，
+// 测试经探针注入模拟「ask 已挂起」与「无挂起」两种语境。
+func withHubSuspend(v bool) func() {
+	prev := hubSuspendProbe
+	hubSuspendProbe = func(*App, string) bool { return v }
+	return func() { hubSuspendProbe = prev }
 }
 
 // lastUserMessage 取 hub store 里最后一条指定 ChatID 的用户消息（无则 ok=false）。
@@ -278,11 +281,47 @@ func TestHubSmartSendRecordsHistory(t *testing.T) {
 		if userMsg == nil || userMsg.ChatID != "" {
 			t.Fatalf("用户原话应落盘且无会话归因: %+v", msgs)
 		}
-		if thinkMsg == nil || thinkMsg.Text != "list_sessions@1 → send@2" {
-			t.Fatalf("思考消息应为步骤序列: %+v", msgs)
+		if thinkMsg == nil || thinkMsg.Text != "思考 2 步：查会话列表×1 · 投递×1" {
+			t.Fatalf("思考消息应为聚合摘要: %+v", msgs)
+		}
+		if len(thinkMsg.Steps) != 2 || thinkMsg.Steps[0].Tool != "list_sessions" ||
+			thinkMsg.Steps[1].Tool != "send" {
+			t.Fatalf("思考消息应携带结构化 Steps: %+v", thinkMsg)
 		}
 		if replies != 1 {
 			t.Fatalf("结论应落一条 hub_manager_reply: %+v", msgs)
+		}
+	})
+
+	t.Run("思考链聚合摘要与结构化 Steps", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		injectHubRunner(fx, func(_ context.Context, _ string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
+			opts.Progress(agentapi.LoopProgress{Tool: "list_sessions", Round: 1})
+			for i := 0; i < 3; i++ {
+				opts.Progress(agentapi.LoopProgress{Tool: "search_memory", Round: 2})
+			}
+			opts.Progress(agentapi.LoopProgress{Tool: "open_session", Round: 3})
+			return agentapi.RunResult{Replies: []string{"完成"}}, nil
+		})
+		if _, err := fx.app.HubSmartSend("req", "查一下记忆再打开会话"); err != nil {
+			t.Fatalf("HubSmartSend: %v", err)
+		}
+		var think *hub.Message
+		for i := range fx.app.snapshot().HubStore.List() {
+			m := fx.app.snapshot().HubStore.List()[i]
+			if m.Event == "hub_manager_think" {
+				think = &m
+			}
+		}
+		if think == nil {
+			t.Fatal("应落 hub_manager_think")
+		}
+		if !strings.Contains(think.Text, "思考 5 步") || !strings.Contains(think.Text, "查记忆×3") {
+			t.Fatalf("聚合摘要不符: %q", think.Text)
+		}
+		if len(think.Steps) != 5 || think.Steps[0].Tool != "list_sessions" ||
+			think.Steps[4].Tool != "open_session" {
+			t.Fatalf("Steps 应保留原始 5 步: %+v", think.Steps)
 		}
 	})
 
@@ -403,27 +442,32 @@ func TestHubSmartSend(t *testing.T) {
 		}
 	})
 
-	t.Run("AskPending 回执即选项列表，短输入续轮", func(t *testing.T) {
+	t.Run("挂起反问落地，短输入自动续跑", func(t *testing.T) {
 		fx := newRouteFixture(t)
-		injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
-			return agentapi.RunResult{Replies: []string{"要发给哪个会话？\n1. 甲\n2. 乙"}, AskPending: true}, nil
+		defer withHubSuspend(true)()
+		injectHubRunner(fx, func(_ context.Context, input string, _ agentapi.RunOpts) (agentapi.RunResult, error) {
+			if input == "发一下" {
+				return agentapi.RunResult{
+					Replies: []string{"要发给哪个会话？\n1. 甲\n2. 乙"},
+					Ask:     &agentapi.AskPayload{Question: "要发给哪个会话？", Options: []string{"甲", "乙"}, Mode: "single"},
+					Suspended: true,
+				}, nil
+			}
+			return agentapi.RunResult{Replies: []string{"已发给甲"}}, nil
 		})
 		view, err := fx.app.HubSmartSend("req", "发一下")
 		if err != nil {
 			t.Fatalf("HubSmartSend: %v", err)
 		}
 		if view.Pending {
-			t.Fatal("AskPending 应 Pending=false（选项列表就是回执）")
-		}
-		if !hubAskPendingOf(fx.app) {
-			t.Fatal("AskPending 结果应记录进续轮衔接标记")
+			t.Fatal("挂起反问应 Pending=false（卡片已落盘，回执照常回显）")
 		}
 
-		// 长输入：新需求，不传 Continuation（agentapi 内部清 pending 开新轮）。
-		var gotOpts agentapi.RunOpts
+		// 长输入：按新需求处理（agentapi Run 内部对长输入清挂起开新轮）。
+		var gotInput string
 		fx.app.mu.Lock()
-		fx.app.hubRunner = func(_ context.Context, _ string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
-			gotOpts = opts
+		fx.app.hubRunner = func(_ context.Context, input string, _ agentapi.RunOpts) (agentapi.RunResult, error) {
+			gotInput = input
 			return agentapi.RunResult{Replies: []string{"好的"}}, nil
 		}
 		fx.app.mu.Unlock()
@@ -431,36 +475,32 @@ func TestHubSmartSend(t *testing.T) {
 		if _, err := fx.app.HubSmartSend("req", long); err != nil {
 			t.Fatalf("长输入 HubSmartSend: %v", err)
 		}
-		if gotOpts.Continuation {
-			t.Fatal("长输入不应传 Continuation=true")
-		}
-		if hubAskPendingOf(fx.app) {
-			t.Fatal("非 ask 结果应清零续轮衔接标记")
+		if gotInput != long {
+			t.Fatalf("长输入应作为新输入进循环, got %q", gotInput)
 		}
 
-		// 再次 ask 后短输入：Continuation=true 续轮衔接。
+		// 再次反问后短输入：反问语境仍在（探针模拟挂起在场），数字照常进循环续跑。
 		fx.app.mu.Lock()
-		fx.app.hubRunner = func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
-			return agentapi.RunResult{Replies: []string{"要发给哪个会话？\n1. 甲"}, AskPending: true}, nil
+		fx.app.hubRunner = func(_ context.Context, input string, _ agentapi.RunOpts) (agentapi.RunResult, error) {
+			if input == "再问一次" {
+				return agentapi.RunResult{
+					Replies: []string{"要发给哪个会话？\n1. 甲"},
+					Ask:     &agentapi.AskPayload{Question: "要发给哪个会话？", Mode: "single"},
+					Suspended: true,
+				}, nil
+			}
+			gotInput = input
+			return agentapi.RunResult{Replies: []string{"完成"}}, nil
 		}
 		fx.app.mu.Unlock()
 		if _, err := fx.app.HubSmartSend("req", "再问一次"); err != nil {
 			t.Fatalf("ask HubSmartSend: %v", err)
 		}
-		fx.app.mu.Lock()
-		fx.app.hubRunner = func(_ context.Context, _ string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
-			gotOpts = opts
-			return agentapi.RunResult{Replies: []string{"完成"}}, nil
-		}
-		fx.app.mu.Unlock()
 		if _, err := fx.app.HubSmartSend("req", "1"); err != nil {
 			t.Fatalf("短输入 HubSmartSend: %v", err)
 		}
-		if !gotOpts.Continuation {
-			t.Fatal("AskPending 语境下的短输入应传 Continuation=true")
-		}
-		if gotOpts.Channel != "hub" {
-			t.Fatalf("Channel = %q, 期望 hub", gotOpts.Channel)
+		if gotInput != "1" {
+			t.Fatalf("反问语境短输入应进循环续跑, got %q", gotInput)
 		}
 	})
 
@@ -484,71 +524,32 @@ func TestHubSmartSend(t *testing.T) {
 		}
 	})
 
-	t.Run("ErrLLMNotReady 保留续轮标记，下一短输入仍续轮", func(t *testing.T) {
+	t.Run("ErrLLMNotReady 挂起保留，恢复后短输入续跑", func(t *testing.T) {
 		fx := newRouteFixture(t)
-		// 先 ask 落地置位续轮标记。
-		injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
-			return agentapi.RunResult{Replies: []string{"确认吗？"}, AskPending: true}, nil
-		})
-		if _, err := fx.app.HubSmartSend("req", "问一下"); err != nil {
-			t.Fatalf("ask HubSmartSend: %v", err)
-		}
-		if !hubAskPendingOf(fx.app) {
-			t.Fatal("ask 后应置位续轮标记")
-		}
-		// 模型未就绪错误：标记保留（agentapi 同样保留 pending，语境不断）。
+		defer withHubSuspend(true)()
 		injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
 			return agentapi.RunResult{}, agentapi.ErrLLMNotReady
 		})
 		if view, err := fx.app.HubSmartSend("req", "1"); err != nil || !view.Pending {
 			t.Fatalf("ErrLLMNotReady 应 Pending=true: view=%+v err=%v", view, err)
 		}
-		if !hubAskPendingOf(fx.app) {
-			t.Fatal("ErrLLMNotReady 不应清零续轮标记")
+		// 挂起态归 agentapi 所有，desktop 错误路径不得破坏语境（探针保持在场）。
+		if !hubSuspendProbe(fx.app, "hub") {
+			t.Fatal("挂起语境应保留（用户配好模型后原反问仍在）")
 		}
-		// 恢复后下一短输入仍以 Continuation 进循环。
-		var gotOpts agentapi.RunOpts
+		// 恢复后下一短输入仍进循环续跑。
+		var gotInput string
 		fx.app.mu.Lock()
-		fx.app.hubRunner = func(_ context.Context, _ string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
-			gotOpts = opts
+		fx.app.hubRunner = func(_ context.Context, input string, _ agentapi.RunOpts) (agentapi.RunResult, error) {
+			gotInput = input
 			return agentapi.RunResult{Replies: []string{"完成"}}, nil
 		}
 		fx.app.mu.Unlock()
 		if _, err := fx.app.HubSmartSend("req", "1"); err != nil {
 			t.Fatalf("恢复后 HubSmartSend: %v", err)
 		}
-		if !gotOpts.Continuation {
-			t.Fatal("ErrLLMNotReady 后下一短输入应传 Continuation=true")
-		}
-	})
-
-	t.Run("AskPending 超过 TTL 后短输入不再续轮", func(t *testing.T) {
-		fx := newRouteFixture(t)
-		injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
-			return agentapi.RunResult{Replies: []string{"确认吗？"}, AskPending: true}, nil
-		})
-		if _, err := fx.app.HubSmartSend("req", "问一下"); err != nil {
-			t.Fatalf("ask HubSmartSend: %v", err)
-		}
-		// 把置位时间改旧（超 PendingAskTTL）：语境视为失效。
-		fx.app.mu.Lock()
-		fx.app.hubAskPendingAt = time.Now().Add(-agentapi.PendingAskTTL - time.Minute)
-		fx.app.mu.Unlock()
-		var gotOpts agentapi.RunOpts
-		fx.app.mu.Lock()
-		fx.app.hubRunner = func(_ context.Context, _ string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
-			gotOpts = opts
-			return agentapi.RunResult{Replies: []string{"新轮"}}, nil
-		}
-		fx.app.mu.Unlock()
-		if _, err := fx.app.HubSmartSend("req", "1"); err != nil {
-			t.Fatalf("过期后续轮 HubSmartSend: %v", err)
-		}
-		if gotOpts.Continuation {
-			t.Fatal("超过 TTL 的标记不得传 Continuation=true（agentapi 显式标志会绕过其内部 TTL 检查）")
-		}
-		if hubAskPendingOf(fx.app) {
-			t.Fatal("过期标记应在判定时清零")
+		if gotInput != "1" {
+			t.Fatalf("恢复后短输入应进循环续跑, got %q", gotInput)
 		}
 	})
 
@@ -799,27 +800,29 @@ func TestHubSmartSendShortcut(t *testing.T) {
 		}
 	})
 
-	t.Run("AskPending 语境下「继续」走续轮不走捷径", func(t *testing.T) {
+	t.Run("反问语境下「继续」走续轮不走捷径", func(t *testing.T) {
 		fx := newRouteFixture(t)
+		defer withHubSuspend(true)()
 		setPermSession(t, fx, fx.refs[0]) // 有唯一等待会话也不得劫持续轮
 		injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
-			return agentapi.RunResult{Replies: []string{"确认吗？"}, AskPending: true}, nil
+			return agentapi.RunResult{Replies: []string{"确认吗？"},
+				Ask: &agentapi.AskPayload{Question: "确认吗？", Mode: "confirm"}, Suspended: true}, nil
 		})
 		if _, err := fx.app.HubSmartSend("req", "继续修吗"); err != nil {
 			t.Fatalf("ask HubSmartSend: %v", err)
 		}
-		var gotOpts agentapi.RunOpts
+		var gotInput string
 		fx.app.mu.Lock()
-		fx.app.hubRunner = func(_ context.Context, _ string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
-			gotOpts = opts
+		fx.app.hubRunner = func(_ context.Context, input string, _ agentapi.RunOpts) (agentapi.RunResult, error) {
+			gotInput = input
 			return agentapi.RunResult{Replies: []string{"收到"}}, nil
 		}
 		fx.app.mu.Unlock()
 		if _, err := fx.app.HubSmartSend("req", "继续"); err != nil {
 			t.Fatalf("续轮 HubSmartSend: %v", err)
 		}
-		if !gotOpts.Continuation {
-			t.Fatal("AskPending 语境下「继续」应以 Continuation 进循环")
+		if gotInput != "继续" {
+			t.Fatal("反问语境下「继续」应以原话进循环续跑（Run 自动续轮）")
 		}
 		if _, ok := lastUserMessage(t, fx, fx.refs[0].ChatID); ok {
 			t.Fatal("续轮语境下捷径不得直投")
@@ -913,6 +916,7 @@ func TestHubSmartSendProgressAndCancel(t *testing.T) {
 // 提交的第二次调用直接返回 Pending=true，不调循环、不清续轮标记（防重复投递）。
 func TestHubSmartSendBusyGuard(t *testing.T) {
 	fx := newRouteFixture(t)
+	defer withHubSuspend(true)()
 
 	// 循环桩：首次调用阻塞直到放行；若守卫失效第二次也进来，计数后立即返回。
 	started := make(chan struct{})
@@ -928,7 +932,8 @@ func TestHubSmartSendBusyGuard(t *testing.T) {
 		}
 		close(started)
 		<-release
-		return agentapi.RunResult{Replies: []string{"第一次问"}, AskPending: true}, nil
+		return agentapi.RunResult{Replies: []string{"第一次问"},
+			Ask: &agentapi.AskPayload{Question: "第一次问？", Mode: "single"}, Suspended: true}, nil
 	}
 	fx.app.mu.Unlock()
 
@@ -950,14 +955,15 @@ func TestHubSmartSendBusyGuard(t *testing.T) {
 		t.Fatal("在途期间第二次提交应 Pending=true")
 	}
 
-	// 续轮标记不被后到调用清零：第一个调用是 AskPending，完成后应为 true。
+	// 挂起语境不被后到调用破坏：第一个调用挂起反问落地，探针应保持在场
+	//（挂起态归 agentapi 所有，desktop 任何路径都不得清除）。
 	close(release)
 	view := <-first
 	if view.Pending {
 		t.Fatal("第一次调用应正常完成 Pending=false")
 	}
-	if !hubAskPendingOf(fx.app) {
-		t.Fatal("AskPending 结果应记录（busy 期间不得清零）")
+	if !hubSuspendProbe(fx.app, "hub") {
+		t.Fatal("挂起语境应保留（busy 期间不得破坏）")
 	}
 }
 
@@ -969,17 +975,17 @@ func TestHubSmartSendBusyGuard(t *testing.T) {
 func TestHubSmartSendBareNumber(t *testing.T) {
 	t.Run("反问语境下数字续轮接管并落盘", func(t *testing.T) {
 		fx := newRouteFixture(t)
-		// 第一轮 ask 落地置位续轮标记。
+		defer withHubSuspend(true)()
+		// 第一轮 ask 落地（挂起反问在场）。
 		injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
-			return agentapi.RunResult{Replies: []string{"用哪个工具来跑？\n1. claude\n2. codebuddy"}, AskPending: true}, nil
+			return agentapi.RunResult{Replies: []string{"用哪个工具来跑？\n1. claude\n2. codebuddy"},
+				Ask: &agentapi.AskPayload{Question: "用哪个工具来跑？", Options: []string{"claude", "codebuddy"}, Mode: "single"},
+				Suspended: true}, nil
 		})
 		if _, err := fx.app.HubSmartSend("req", "新建任务"); err != nil {
 			t.Fatalf("ask HubSmartSend: %v", err)
 		}
-		if !hubAskPendingOf(fx.app) {
-			t.Fatal("ask 后应置位续轮标记")
-		}
-		// 用户裸回数字：应进续轮。
+		// 用户裸回数字：应进续轮（探针模拟挂起在场）。
 		var gotInput string
 		var gotOpts agentapi.RunOpts
 		fx.app.mu.Lock()
@@ -995,7 +1001,7 @@ func TestHubSmartSendBareNumber(t *testing.T) {
 		if view.Pending {
 			t.Fatal("反问语境下的数字应被续轮接管（Pending=false）")
 		}
-		if gotInput != "2" || !gotOpts.Continuation || gotOpts.Channel != "hub" {
+		if gotInput != "2" || gotOpts.Channel != "hub" {
 			t.Fatalf("续轮参数不符: input=%q opts=%+v", gotInput, gotOpts)
 		}
 		var userMsg, replyMsg bool
@@ -1017,6 +1023,7 @@ func TestHubSmartSendBareNumber(t *testing.T) {
 
 	t.Run("无反问语境数字让位命令层", func(t *testing.T) {
 		fx := newRouteFixture(t)
+		// 未替换探针：走真实 AgentAPI().HasSuspendedAsk（无挂起 → false）。
 		calls := injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
 			t.Fatal("无语境数字不得进管理者循环")
 			return agentapi.RunResult{}, nil
@@ -1059,4 +1066,158 @@ func TestHubSmartSendBareNumber(t *testing.T) {
 			t.Fatalf("runner 调用 = %d, 期望 0", *calls)
 		}
 	})
+}
+
+// TestHubSmartSendAskCard：挂起反问落地 → store 出现 hub_manager_ask 卡片
+//（Ask 载荷完整），问题文本不再落 hub_manager_reply（卡片承载交互）。
+func TestHubSmartSendAskCard(t *testing.T) {
+	fx := newRouteFixture(t)
+	injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+		return agentapi.RunResult{
+			Replies: []string{"要发给哪个会话？\n1. 甲\n2. 乙"},
+			Ask:     &agentapi.AskPayload{Question: "要发给哪个会话？", Options: []string{"甲", "乙"}, Mode: "single"},
+			Suspended: true,
+		}, nil
+	})
+	view, err := fx.app.HubSmartSend("req", "发一下")
+	if err != nil {
+		t.Fatalf("HubSmartSend: %v", err)
+	}
+	if view.Pending {
+		t.Fatal("挂起反问应 Pending=false（前端清草稿，卡片承载交互）")
+	}
+	var askCard *hub.Message
+	for i := range fx.app.snapshot().HubStore.List() {
+		m := fx.app.snapshot().HubStore.List()[i]
+		if m.Event == "hub_manager_ask" {
+			askCard = &m
+		}
+	}
+	if askCard == nil {
+		t.Fatal("应落 hub_manager_ask 卡片")
+	}
+	if askCard.Text != "要发给哪个会话？" || askCard.Ask == nil ||
+		askCard.Ask.Question != "要发给哪个会话？" ||
+		askCard.Ask.Mode != "single" || len(askCard.Ask.Options) != 2 {
+		t.Fatalf("卡片载荷不符: %+v", askCard)
+	}
+	for _, m := range fx.app.snapshot().HubStore.List() {
+		if m.Event == "hub_manager_reply" && strings.Contains(m.Text, "要发给哪个会话") {
+			t.Fatalf("反问问题不得落 hub_manager_reply（卡片承载）: %+v", m)
+		}
+	}
+}
+
+// TestHubAskAnswer：反问卡片交互答复 → Resume 续跑 → 结论落盘、卡片标记
+// 已答复、思考链落盘；答复本身不落 user 消息（卡片交互不进 hub 历史 user 流，
+// 自由文本答复走 HubSmartSend 才正常落盘）。
+func TestHubAskAnswer(t *testing.T) {
+	fx := newRouteFixture(t)
+	defer withHubSuspend(true)()
+	var resumeInput string
+	injectHubRunner(fx, func(_ context.Context, input string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
+		if input == "新建任务" {
+			opts.Progress(agentapi.LoopProgress{Tool: "list_sessions", Round: 1})
+			return agentapi.RunResult{
+				Replies: []string{"用哪个工具？\n1. claude\n2. codebuddy"},
+				Ask:     &agentapi.AskPayload{Question: "用哪个工具？", Options: []string{"claude", "codebuddy"}, Mode: "single"},
+				Suspended: true,
+			}, nil
+		}
+		// Resume 续跑桩：确认编号后走两步工具并给出结论。
+		resumeInput = input
+		opts.Progress(agentapi.LoopProgress{Tool: "create_session", Round: 1})
+		opts.Progress(agentapi.LoopProgress{Tool: "send", Round: 2})
+		return agentapi.RunResult{Replies: []string{"已用 codebuddy 新建会话并发送任务。"}}, nil
+	})
+	if _, err := fx.app.HubSmartSend("req", "新建任务"); err != nil {
+		t.Fatalf("ask HubSmartSend: %v", err)
+	}
+	view, err := fx.app.HubAskAnswer("1")
+	if err != nil {
+		t.Fatalf("HubAskAnswer: %v", err)
+	}
+	if view.Pending || len(view.Replies) != 1 ||
+		view.Replies[0].Text != "已用 codebuddy 新建会话并发送任务。" {
+		t.Fatalf("续跑结论应回显: %+v", view)
+	}
+	if resumeInput != "1" {
+		t.Fatalf("Resume 应收到答复原文, got %q", resumeInput)
+	}
+	msgs := fx.app.snapshot().HubStore.List()
+	var think, reply, askCard *hub.Message
+	var askCount int
+	for i := range msgs {
+		m := msgs[i]
+		if m.Event == "hub_manager_ask" {
+			askCard = &msgs[i]
+			askCount++
+		}
+		if m.Event == "hub_manager_reply" && m.Text == "已用 codebuddy 新建会话并发送任务。" {
+			reply = &msgs[i]
+		}
+		if m.Event == "hub_manager_think" {
+			think = &msgs[i]
+		}
+	}
+	if askCount != 1 {
+		t.Fatalf("应恰好一张反问卡片, got %d", askCount)
+	}
+	if askCard == nil || askCard.Status != hub.StatusAnswered {
+		t.Fatalf("答复后卡片应标记 answered: %+v", askCard)
+	}
+	if reply == nil {
+		t.Fatal("结论应落盘 hub_manager_reply")
+	}
+	if think == nil || len(think.Steps) != 2 ||
+		think.Steps[0].Tool != "create_session" || think.Steps[1].Tool != "send" {
+		t.Fatalf("续跑思考链应落盘且含 Steps: %+v", think)
+	}
+	for _, m := range msgs {
+		if m.Kind == "user" && m.Text == "1" {
+			t.Fatal("卡片交互答复不得落 user 消息（自由文本走 HubSmartSend 才落盘）")
+		}
+	}
+}
+
+// TestHubAskAnswerNoSuspend：无挂起时卡片答复返回错误（前端提示「反问已过期」）；
+// 空白答复直接拒绝。
+func TestHubAskAnswerNoSuspend(t *testing.T) {
+	t.Run("无挂起返回过期错误", func(t *testing.T) {
+		fx := newRouteFixture(t) // 未注桩：走真实 AgentAPI().Resume → ErrNoSuspend
+		_, err := fx.app.HubAskAnswer("1")
+		if !errors.Is(err, agentapi.ErrNoSuspend) {
+			t.Fatalf("无挂起期望 ErrNoSuspend, got %v", err)
+		}
+	})
+	t.Run("空白答复报错", func(t *testing.T) {
+		fx := newRouteFixture(t)
+		if _, err := fx.app.HubAskAnswer("   "); err == nil {
+			t.Fatal("空白答复应报错")
+		}
+	})
+}
+
+// TestHubAskAnswerBusy：在途处理期间（smartBusy 置位）卡片答复静默回落
+// Pending=true，不进循环、不清挂起。
+func TestHubAskAnswerBusy(t *testing.T) {
+	fx := newRouteFixture(t)
+	defer withHubSuspend(true)()
+	calls := injectHubRunner(fx, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+		t.Fatal("busy 期间卡片答复不得进循环")
+		return agentapi.RunResult{}, nil
+	})
+	fx.app.mu.Lock()
+	fx.app.smartBusy = true
+	fx.app.mu.Unlock()
+	view, err := fx.app.HubAskAnswer("1")
+	if err != nil {
+		t.Fatalf("busy 应静默回落而非报错: %v", err)
+	}
+	if !view.Pending {
+		t.Fatal("在途期间卡片答复应 Pending=true")
+	}
+	if *calls != 0 {
+		t.Fatalf("runner 调用 = %d, 期望 0", *calls)
+	}
 }

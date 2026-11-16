@@ -228,29 +228,15 @@ type App struct {
 	// hubRunner 是桌面 Hub 管理者循环的注入点（测试可覆写）；nil 时调用
 	// AgentAPI().Run。mu 保护。
 	hubRunner hubRunnerFunc
-	// hubAskPending 是桌面 Hub 的续轮衔接标记：上次循环 Run 返回 AskPending
-	// 时置位，下一条短输入以 Continuation=true 进循环；成功 Run 后随结果刷新，
-	// 错误路径的处理见 HubSmartSend。hubAskPendingAt 是置位时刻，用于 TTL 判定
-	//（显式 Continuation 会绕过 agentapi 的 pendingAskTTL 检查，desktop 必须自判
-	// 过期）。mu 保护。
-	hubAskPending   bool
-	hubAskPendingAt time.Time
 	// wxRunner 是微信管理者循环的注入点（测试可覆写）；nil 时调用
 	// AgentAPI().Run。mu 保护。
 	wxRunner hubRunnerFunc
 	// wxNotify 是微信中途进度推送的注入点（测试观察用）；nil 时走
 	// Runtime.NotifyProgress 经 bridge 出站 worker 投递。mu 保护。
 	wxNotify func(step int)
-	// wxAskPending 是微信渠道的续轮衔接标记（与 hub 渠道独立）：上次循环 Run
-	// 返回 AskPending 时置位，下一条短输入以 Continuation=true 进循环。
-	// wxAskPendingAt 是置位时刻，用于 TTL 判定（显式 Continuation 会绕过
-	// agentapi 的内部 TTL 检查，desktop 必须自判过期）。跨渠道的陈旧标记由
-	// agentapi Run 的 pendingAsk.Channel 守卫兜底，desktop 不重复判渠道。
-	// mu 保护。
-	wxAskPending   bool
-	wxAskPendingAt time.Time
 	// smartBusy 是桌面 Hub 智能入口的在途标记：循环调用期间置位（锁外做
-	// LLM 调用），并发/重复提交直接返回 Pending=true 不清续轮标记。mu 保护。
+	// LLM 调用），并发/重复提交直接返回 Pending=true。卡片答复 HubAskAnswer
+	// 共用同一门禁，防反问续跑与自由发送并发重复进循环。mu 保护。
 	smartBusy bool
 	// smartCancels 是按请求 ID 登记的在途路由取消句柄（支持前端「中断」）。
 	// 每轮 HubSmartSend 进入时登记、退出时注销；mu 保护。

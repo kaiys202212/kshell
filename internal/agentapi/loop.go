@@ -91,8 +91,8 @@ const loopMaxRounds = 6
 // 短输入也不再自动续跑（按全新输入处理）。
 const SuspendTTL = 15 * time.Minute
 
-// PendingAskTTL 是旧「未决反问语境」的有效期：挂起-续跑语义上线后仅剩
-// desktop 侧续轮标记自判 TTL 在引用（T4 改造后删除）。
+// PendingAskTTL 是旧「未决反问语境」的有效期：挂起-续跑语义上线后 desktop
+// 侧续轮标记已删（引用清零），常量暂留、T4 删。
 const PendingAskTTL = 30 * time.Minute
 
 // shortInputMax 是自动续轮判定的输入长度上限（rune）：超过视为新需求。
@@ -123,7 +123,7 @@ type LoopProgress struct {
 type RunOpts struct {
 	Channel string // hub | wechat（区分记忆与语境归属）
 	// Continuation 已废弃：挂起-续跑语义下 Run 自行判定（同渠道未过期挂起 +
-	// 短输入即续跑），Resume 显式续跑。字段暂留避免 desktop 编译破坏，T4 删。
+	// 短输入即续跑），Resume 显式续跑。desktop 已不再传该标志，字段暂留、T4 删。
 	Continuation bool
 	Progress     func(LoopProgress)
 }

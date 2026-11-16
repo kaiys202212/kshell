@@ -120,36 +120,17 @@ func (a *App) weixinInputRouter() weixin.InputRouter {
 // 单发之前）：循环成功 → Replies 直接回显（正文已是自然语言结论/选项列表）；
 // ErrLoopBusy/ErrLLMNotReady/其它错误一律 (zero,false) 回落 InputRouter
 //（RouteInput 单发路径，现状行为）。Channel 固定 "wechat"，与桌面 Hub 的
-// pendingAsk 渠道隔离；跨渠道陈旧续轮标记由 agentapi Run 的 Channel 守卫兜底。
+// 挂起态渠道隔离；反问采用挂起-续跑语义（agentapi Run 内部按渠道+SuspendTTL
+// 对短输入自动续跑），desktop 不再维护续轮标记与 TTL。
 func (a *App) weixinManagerRouter() weixin.ManagerRouter {
 	return func(ctx context.Context, input string) (weixin.ManagerOutcome, bool) {
 		if !a.snapshot().Config.AgentHub.EnabledOn() {
 			return weixin.ManagerOutcome{}, false
 		}
-		// 续轮衔接（与 hubroute 同款）：上次 Run 返回 AskPending 且本条是短
-		// 输入 → 显式传 Continuation，让循环带上上一轮反问语境。置位时刻超过
-		// PendingAskTTL 视为语境失效：不传标志并清零标记——显式标志会绕过
-		// agentapi Run 内部的 TTL 检查，过期判定必须在此完成。长输入不传标志，
-		// agentapi 内部清 pending 按新需求处理。
-		a.mu.Lock()
-		askPending := a.wxAskPending
-		askedAt := a.wxAskPendingAt
-		a.mu.Unlock()
-		cont := false
-		if askPending {
-			if time.Since(askedAt) <= agentapi.PendingAskTTL {
-				cont = hub.IsContinueConfirm(input) || len([]rune(input)) <= hubContinuationMax
-			} else {
-				a.mu.Lock()
-				a.wxAskPending = false
-				a.mu.Unlock()
-			}
-		}
 		start := time.Now()
 		progressed, pushed := 0, false
 		res, err := a.runWXLoop(ctx, input, agentapi.RunOpts{
-			Channel:      "wechat",
-			Continuation: cont,
+			Channel: "wechat",
 			Progress: func(p agentapi.LoopProgress) {
 				progressed = p.Round
 				// 中途进度推送（单轮最多一次）：循环开始计时，超过阈值且尚未
@@ -163,25 +144,13 @@ func (a *App) weixinManagerRouter() weixin.ManagerRouter {
 			},
 		})
 		if err != nil {
-			// 续轮标记维护：ErrLLMNotReady 时 agentapi 保留 pending（用户配好
-			// 模型后原语境仍在），desktop 同步保留；其余错误（含 busy/取消）
-			// 语境已断，清零。
-			if !errors.Is(err, agentapi.ErrLLMNotReady) {
-				a.mu.Lock()
-				a.wxAskPending = false
-				a.mu.Unlock()
-			}
+			// 挂起态归 agentapi 所有：瞬时错误（如 ErrLLMNotReady）保留挂起，
+			// 用户重试会自动续跑；desktop 无需也不得清理。
 			return weixin.ManagerOutcome{}, false
 		}
-		// 记录 AskPending 结果供下一条输入续轮（选项回执本身由 bridge 回显），
-		// 置位时刻一并记录供 TTL 判定。
-		a.mu.Lock()
-		a.wxAskPending = res.AskPending
-		if res.AskPending {
-			a.wxAskPendingAt = time.Now()
-		}
-		a.mu.Unlock()
-		return weixin.ManagerOutcome{Replies: res.Replies, AskPending: res.AskPending}, true
+		// 挂起反问（Suspended ⇔ Ask 非 nil ⇔ AskPending shim）透传给 bridge，
+		// 桥据此标记待答语境；选项回执本身由 bridge 回显。
+		return weixin.ManagerOutcome{Replies: res.Replies, AskPending: res.Suspended}, true
 	}
 }
 
