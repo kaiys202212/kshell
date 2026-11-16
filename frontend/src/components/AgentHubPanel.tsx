@@ -856,14 +856,6 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
       useAppStore.getState().notify(t('ui.hub.empty_message'), 'error');
       return;
     }
-    // 纯数字输入：命令层的「编号切换/菜单选择」语义，透传给共享命令层处理
-    //（#l/#f 的编号映射在 Go 侧，前端无从判断，统一透传）。
-    // 判定用原始草稿：`@目标 3` 是回答 agent 的正文（剥离后恰为 "3"），
-    // 不应被误当成菜单编号命令。
-    if (isHubNumber(text)) {
-      runSharedCommand(text);
-      return;
-    }
     // 仅当 trim 后以 #（含全角＃）开头才视为 kshell 客户端命令意图；行中 # 词
     // （如颜色 #333、issue #123）原样透传给 agent。命令探测用全角归一化副本
     // （＃/全角空格/冒号/数字，与 Go 侧 normalizeInput 同口径），原文透传不改写。
@@ -937,14 +929,22 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
           // hub:changed 回流展示，前端不再本地瞬态推送。
           return;
         }
-        // 回落：把正文交给共享命令层列会话并暂存，用户回复数字后由
-        // HubCommand（数字透传路径）完成激活与发送；微信桥同语义。
-        await hubPickTarget(text)
-          .then((view) => {
-            // 用户气泡已在进入无目标分支时推过，这里只回显菜单/回执。
-            for (const r of view.Replies) useAppStore.getState().pushHubLocal(r.Text);
-          })
-          .catch((e: unknown) => useAppStore.getState().notify(backendError(e), 'error'));
+        // 回落（Pending=true = 后端不接管）：裸数字按命令层语义透传
+        //（编号切换/待选菜单/no_mapping；判定用原始草稿，`@目标 3` 有精确
+        // 目标时走下方直投，不会进本分支）。其余正文交共享命令层列会话并
+        // 暂存，用户回复数字后由 HubCommand（数字透传路径）完成激活与发送；
+        // 微信桥同语义。反问续轮语境下后端会直接接管（Pending=false），
+        // 不会落到这里——管理者的编号菜单回答不再被命令层误吞。
+        if (isHubNumber(text)) {
+          runSharedCommand(text);
+        } else {
+          await hubPickTarget(text)
+            .then((view) => {
+              // 用户气泡已在进入无目标分支时推过，这里只回显菜单/回执。
+              for (const r of view.Replies) useAppStore.getState().pushHubLocal(r.Text);
+            })
+            .catch((e: unknown) => useAppStore.getState().notify(backendError(e), 'error'));
+        }
       } finally {
         // 异常路径（组件卸载/请求抛错）也必须清掉思考态，否则占位气泡永久转圈。
         useAppStore.getState().setHubPendingSend(null);

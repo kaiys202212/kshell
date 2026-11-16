@@ -626,6 +626,52 @@ describe('AgentHubPanel', () => {
     expect(api.sendChatPrompt).not.toHaveBeenCalled();
   });
 
+  it('裸数字先试智能路由（管理者反问续轮），Pending 才回落 HubCommand', async () => {
+    api.hubCommand.mockResolvedValue([{ Text: '编号不存在，#l 查看' }]);
+    render(<AgentHubPanel />);
+    // 排干挂载 effect 的 listHubMessages 回填（同步 act 不 flush 其微任务，
+    // 滞留到交互后的首个 await 才 setHubMessages，会冲掉受理时推的用户气泡）。
+    await act(async () => {});
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '2' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    // 数字先进智能路由：后端按语境分流（反问续轮 / 让位命令层）。
+    await waitFor(() => expect(api.hubSmartSend).toHaveBeenCalledWith(expect.any(String), '2'));
+    // 默认 mock Pending=true：回落命令层，现状语义不变。
+    await waitFor(() => expect(api.hubCommand).toHaveBeenCalledWith('2'));
+    expect(api.sendChatPrompt).not.toHaveBeenCalled();
+    // 用户数字气泡即时可见（瞬态，与待选路径同款）。
+    expect(useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.kind === 'user' && m.text === '2')).toBe(true);
+  });
+
+  it('智能路由接管数字（续轮语境）：不回落 HubCommand、思考态清除', async () => {
+    api.hubSmartSend.mockResolvedValue({ Replies: [{ Text: '已用 codebuddy 新建会话。' }], Pending: false });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '2' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(api.hubSmartSend).toHaveBeenCalledWith(expect.any(String), '2'));
+    // 接管：回执由后端落盘回流，命令层不感知。
+    await waitFor(() => expect(useAppStore.getState().hubPendingSend).toBeNull());
+    expect(api.hubCommand).not.toHaveBeenCalled();
+    expect(api.hubPickTarget).not.toHaveBeenCalled();
+  });
+
+  it('智能路由取消数字轮次：草稿塞回', async () => {
+    api.hubSmartSend.mockResolvedValue({ Replies: [], Pending: false, Cancelled: true });
+    render(<AgentHubPanel />);
+    // 排干挂载回填（同上，防止滞留的 setHubMessages 冲掉本地气泡）。
+    await act(async () => {});
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '2' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() =>
+      expect(useAppStore.getState().hubMessages.some((m) => m.id < 0 && m.text === tt('ui.hub.thinking_cancelled'))).toBe(true),
+    );
+    expect((box as HTMLTextAreaElement).value).toBe('2');
+    expect(api.hubCommand).not.toHaveBeenCalled();
+  });
+
   it('旧命令 #new 优先命中，不走 HubCommand', () => {
     useAppStore.setState({ chats: [], workspaces: [workspaceA], selectedProject: 'D:\\ws\\a' });
     render(<AgentHubPanel />);
