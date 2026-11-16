@@ -15,6 +15,10 @@ type Backend interface {
 	ActiveSessions() []Session
 	// DiskSessions 返回未激活的磁盘会话（已按 ACP 能力过滤、终端占用已标记）。
 	DiskSessions() []Session
+	// WorkspaceSessions 返回指定工作区最近 n 个磁盘会话（按最后修改时间
+	// 新→旧），供管理者 system 注入「各项目最近会话」段（模型据此理解
+	// 投递/恢复目标）。
+	WorkspaceSessions(wsPath string, n int) []Session
 	// ArchivedIDs 返回已归档的磁盘会话 ID 名单。
 	ArchivedIDs() []string
 	// SessionMessages 返回指定活跃 chat 的全部可见消息（时间正序，已滤噪）。

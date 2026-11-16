@@ -815,7 +815,8 @@ func TestManagerSystemInjectsRecentHubMessages(t *testing.T) {
 		"【最近 AgentHub 消息】",
 		"用户→「修复登录」",
 		"管理者代发→「文档」",
-		"不要再调用 session_messages 或 search_memory",
+		"查历史纪律",
+		"明确指向历史",
 	} {
 		if !strings.Contains(sys, want) {
 			t.Fatalf("system 缺少 %q:\n%s", want, sys)
@@ -855,18 +856,20 @@ func TestRecentHubContextTruncateAndEmpty(t *testing.T) {
 	}
 }
 
-// 可见历史超过条数上限时只渲染最后 6 条（多取的一条仅用于回显去重）。
-func TestRecentHubContextKeepsLastSix(t *testing.T) {
+// 可见历史超过条数上限时只渲染最后 recentContextN 条（多取的一条仅用于回显去重）。
+func TestRecentHubContextKeepsTail(t *testing.T) {
 	api, f := newLoopAPI(t)
-	for i := 1; i <= 8; i++ {
+	total := recentContextN + 2
+	for i := 1; i <= total; i++ {
 		f.recent = append(f.recent, Message{ID: int64(i), Kind: "user", Text: fmt.Sprintf("消息%d", i)})
 	}
 	sec := api.recentContextSection("新输入")
-	if strings.Contains(sec, "消息2") || !strings.Contains(sec, "消息3") || !strings.Contains(sec, "消息8") {
-		t.Fatalf("应只保留最后 6 条（消息3..8）:\n%s", sec)
+	if strings.Contains(sec, fmt.Sprintf("消息%d", total-recentContextN)) ||
+		!strings.Contains(sec, fmt.Sprintf("消息%d", total-recentContextN+1)) {
+		t.Fatalf("应只保留最后 %d 条:\n%s", recentContextN, sec)
 	}
-	if !strings.Contains(sec, "6. [用户] 消息8") {
-		t.Fatalf("编号应按 1..6 重新连续:\n%s", sec)
+	if !strings.Contains(sec, fmt.Sprintf("%d. [用户] 消息%d", recentContextN, total)) {
+		t.Fatalf("编号应按 1..%d 重新连续:\n%s", recentContextN, sec)
 	}
 }
 
@@ -886,6 +889,179 @@ func TestRecentHubContextAllBlank(t *testing.T) {
 	f.recent = []Message{{Kind: "user", Text: " "}, {Kind: "agent", Text: "\n"}}
 	if got := api.recentContextSection("x"); got != "" {
 		t.Fatalf("全空正文不应输出段: %q", got)
+	}
+}
+
+// 测试：system 注入最近 AgentHub 消息——20 条口径：可见历史 25 条时只保留
+// 最后 20 条（多取的一条仅用于回显去重），编号按 1..20 重新连续。
+func TestManagerSystemRecentContextTwenty(t *testing.T) {
+	api, f := newLoopAPI(t)
+	for i := 1; i <= 25; i++ {
+		f.recent = append(f.recent, Message{ID: int64(i), Kind: "user", Text: fmt.Sprintf("消息%d", i)})
+	}
+	sc := &scriptChat{resps: []hubtools.Response{{Text: "结论"}}}
+	chatToolsHook = sc.hook
+	if _, err := api.Run(context.Background(), "新输入", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	sys := sc.sysSeen[0]
+	if strings.Contains(sys, "消息5") || !strings.Contains(sys, "消息6") {
+		t.Fatalf("应只保留最后 20 条（消息6..25）:\n%s", sys)
+	}
+	if !strings.Contains(sys, "20. [用户] 消息25") {
+		t.Fatalf("编号应按 1..20 重新连续:\n%s", sys)
+	}
+}
+
+// 测试：system 注入【打开的项目】段（workspace 名 → 路径）。
+func TestManagerSystemInjectsWorkspaces(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	sc := &scriptChat{resps: []hubtools.Response{{Text: "结论"}}}
+	chatToolsHook = sc.hook
+	if _, err := api.Run(context.Background(), "看看项目", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	sys := sc.sysSeen[0]
+	for _, want := range []string{"【打开的项目】", "- a → d:/ws/a", "- b → d:/ws/b"} {
+		if !strings.Contains(sys, want) {
+			t.Fatalf("system 缺少 %q:\n%s", want, sys)
+		}
+	}
+}
+
+// 测试：system 注入【各项目最近会话】段——id/标题/工具行格式；无会话项目
+// 该行缺失；全部为空整段缺失；每项目最多 5 条。
+func TestManagerSystemInjectsWorkspaceSessions(t *testing.T) {
+	api, f := newLoopAPI(t)
+	f.wsSessions = map[string][]Session{
+		"d:/ws/a": {
+			{SessionID: "sess-1", Tool: "claude", Title: "修复登录页", Status: StatusDisk},
+			{SessionID: "sess-2", Tool: "codex", Title: "补 README", Status: StatusDisk},
+			{SessionID: "sess-3", Tool: "gemini", Title: "重构模块", Status: StatusDisk},
+			{SessionID: "sess-4", Tool: "claude", Title: "任务4", Status: StatusDisk},
+			{SessionID: "sess-5", Tool: "claude", Title: "任务5", Status: StatusDisk},
+			{SessionID: "sess-6", Tool: "claude", Title: "任务6", Status: StatusDisk},
+		},
+		// d:/ws/b 无会话：该项目的行整行跳过
+	}
+	sc := &scriptChat{resps: []hubtools.Response{{Text: "结论"}}}
+	chatToolsHook = sc.hook
+	if _, err := api.Run(context.Background(), "新需求", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	sys := sc.sysSeen[0]
+	for _, want := range []string{
+		"【各项目最近会话】",
+		"项目 a（d:/ws/a）：",
+		"「修复登录页」 id=sess-1 工具=claude",
+		"id=sess-5",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Fatalf("system 缺少 %q:\n%s", want, sys)
+		}
+	}
+	if strings.Contains(sys, "id=sess-6") {
+		t.Fatalf("每项目最多 5 条，不应出现第 6 条:\n%s", sys)
+	}
+	if strings.Contains(sys, "项目 b（") {
+		t.Fatalf("无会话项目不应出现在该段:\n%s", sys)
+	}
+
+	// 全部为空：整段缺失
+	f.wsSessions = nil
+	sc2 := &scriptChat{resps: []hubtools.Response{{Text: "结论"}}}
+	chatToolsHook = sc2.hook
+	if _, err := api.Run(context.Background(), "新需求", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run2: %v", err)
+	}
+	if strings.Contains(sc2.sysSeen[0], "【各项目最近会话】") {
+		t.Fatalf("全部项目无会话时整段不应出现:\n%s", sc2.sysSeen[0])
+	}
+}
+
+// 测试：system 注入【活跃会话】段——chat_id/工具/状态/摘要；无活跃会话整段缺失。
+func TestManagerSystemInjectsActiveSessions(t *testing.T) {
+	api, f := newLoopAPI(t) // newFake 自带两个活跃会话（chat-a running / chat-b perm）
+	sc := &scriptChat{resps: []hubtools.Response{{Text: "结论"}}}
+	chatToolsHook = sc.hook
+	if _, err := api.Run(context.Background(), "看看状态", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	sys := sc.sysSeen[0]
+	for _, want := range []string{
+		"【活跃会话】",
+		"「修复登录」 chat_id=chat-a 工具=claude 状态=running",
+		"「写文档」 chat_id=chat-b 工具=codex 状态=perm 摘要:等待授权",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Fatalf("system 缺少 %q:\n%s", want, sys)
+		}
+	}
+
+	// 无活跃会话：整段缺失
+	f.active = nil
+	f.workspaces = nil
+	sc2 := &scriptChat{resps: []hubtools.Response{{Text: "结论"}}}
+	chatToolsHook = sc2.hook
+	if _, err := api.Run(context.Background(), "看看状态", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run2: %v", err)
+	}
+	if strings.Contains(sc2.sysSeen[0], "【活跃会话】") {
+		t.Fatalf("无活跃会话时整段不应出现:\n%s", sc2.sysSeen[0])
+	}
+}
+
+// 测试：查历史纪律文案替换旧「最近消息语境」条目。
+func TestManagerSystemHistoryDiscipline(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	sc := &scriptChat{resps: []hubtools.Response{{Text: "结论"}}}
+	chatToolsHook = sc.hook
+	if _, err := api.Run(context.Background(), "随便看看", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	sys := sc.sysSeen[0]
+	for _, want := range []string{"查历史纪律", "明确指向历史"} {
+		if !strings.Contains(sys, want) {
+			t.Fatalf("system 缺少 %q:\n%s", want, sys)
+		}
+	}
+	if strings.Contains(sys, "最近消息语境：") {
+		t.Fatalf("旧「最近消息语境」条目应已被查历史纪律替换:\n%s", sys)
+	}
+}
+
+// 测试：空转软抑制——同工具累计第 3 次调用起结果带提示前缀（只提示不阻断），
+// 第 1/2 次不带，不同工具计数互不影响。
+func TestExecToolRepeatHint(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	st := &loopState{toolCalls: map[string]int{}}
+	tools := api.buildLoopTools(context.Background(), st)
+
+	for i, call := range []hubtools.ToolCall{
+		tc("c1", "list_sessions", "{}"),
+		tc("c2", "list_sessions", "{}"),
+		tc("c3", "list_sessions", "{}"),
+	} {
+		out := api.execTool(st, call, tools)
+		if i < 2 {
+			if strings.Contains(out, "提示：") {
+				t.Fatalf("第 %d 次调用不应带提示: %q", i+1, out)
+			}
+			continue
+		}
+		if !strings.HasPrefix(out, "（提示：list_sessions 已第 3 次调用，请基于已有结果决策，或用 ask 向用户确认）\n") {
+			t.Fatalf("第 3 次调用结果应带提示前缀: %q", out)
+		}
+	}
+	// 不同工具互不影响
+	other := api.execTool(st, tc("c4", "search_memory", `{"keyword":"x"}`), tools)
+	if strings.Contains(other, "提示：") {
+		t.Fatalf("不同工具的首次调用不应带提示: %q", other)
+	}
+	// 第 4 次提示计数继续累计
+	out4 := api.execTool(st, tc("c5", "list_sessions", "{}"), tools)
+	if !strings.Contains(out4, "已第 4 次调用") {
+		t.Fatalf("第 4 次调用提示计数应继续累计: %q", out4)
 	}
 }
 

@@ -27,6 +27,9 @@ type fakeBackend struct {
 	opened     []string
 	tools      []Option
 	workspaces []Option
+	// wsSessions 是 WorkspaceSessions 的预制数据：工作区路径 → 会话列表
+	//（列表顺序即返回顺序，由测试数据保证新→旧）。
+	wsSessions map[string][]Session
 	feed       *Feed
 }
 
@@ -92,6 +95,18 @@ func (f *fakeBackend) Open(sessionID string) (Session, error) {
 }
 func (f *fakeBackend) Tools() []Option      { return f.tools }
 func (f *fakeBackend) Workspaces() []Option { return f.workspaces }
+
+// WorkspaceSessions 按预制的 工作区→会话 列表返回前 n 个。
+func (f *fakeBackend) WorkspaceSessions(wsPath string, n int) []Session {
+	all := f.wsSessions[wsPath]
+	if n <= 0 {
+		return nil
+	}
+	if len(all) > n {
+		return all[:n]
+	}
+	return all
+}
 func (f *fakeBackend) Feed() *Feed {
 	if f.feed == nil {
 		f.feed = NewFeed()

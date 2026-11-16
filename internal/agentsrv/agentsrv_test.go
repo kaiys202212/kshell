@@ -36,6 +36,7 @@ func (f *fakeBackend) SessionMessages(chatID string) []agentapi.Message {
 	return f.msgs[chatID]
 }
 func (f *fakeBackend) RecentHubMessages(n int) []agentapi.Message { return nil }
+func (f *fakeBackend) WorkspaceSessions(string, int) []agentapi.Session { return nil }
 func (f *fakeBackend) Send(chatID, text string) error {
 	if f.failSendOn == chatID {
 		return fmt.Errorf("err.chat.gone")

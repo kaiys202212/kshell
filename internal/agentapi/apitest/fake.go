@@ -22,6 +22,8 @@ type FakeBackend struct {
 	Recalled    []int64
 	ToolsV      []agentapi.Option
 	WorkspacesV []agentapi.Option
+	// WorkspaceSessionsV 是 WorkspaceSessions 的预制数据：工作区路径 → 会话列表。
+	WorkspaceSessionsV map[string][]agentapi.Session
 	Created     [][3]string
 	Opened      []string
 	FeedV       *agentapi.Feed // 惰性初始化，经 Feed() 访问
@@ -80,6 +82,19 @@ func (f *FakeBackend) Open(sessionID string) (agentapi.Session, error) {
 }
 func (f *FakeBackend) Tools() []agentapi.Option      { return f.ToolsV }
 func (f *FakeBackend) Workspaces() []agentapi.Option { return f.WorkspacesV }
+
+// WorkspaceSessions 按预制的 工作区→会话 列表返回前 n 个（列表顺序即返回
+// 顺序，由测试数据保证新→旧）。
+func (f *FakeBackend) WorkspaceSessions(wsPath string, n int) []agentapi.Session {
+	all := f.WorkspaceSessionsV[wsPath]
+	if n <= 0 {
+		return nil
+	}
+	if len(all) > n {
+		return all[:n]
+	}
+	return all
+}
 func (f *FakeBackend) Feed() *agentapi.Feed {
 	if f.FeedV == nil {
 		f.FeedV = agentapi.NewFeed()
