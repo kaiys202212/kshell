@@ -520,6 +520,101 @@ func TestStepsAskRoundtrip(t *testing.T) {
 	}
 }
 
+// TestAskStepsRoundtrip：v6 多步反问载荷（AskWire.Steps）落盘后重载原样保留；
+// 单步反问 Steps 缺省不写出 null 键。
+func TestAskStepsRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir, 0)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append(Message{
+		Kind: "agent", Event: "hub_manager_ask",
+		Text: "用哪个工具？；要改哪些文件？",
+		Ask: &AskWire{
+			Question: "用哪个工具？；要改哪些文件？",
+			Steps: []AskStepWire{
+				{Question: "用哪个工具？", Options: []string{"claude", "codebuddy"}, Mode: "single"},
+				{Question: "要改哪些文件？", Options: []string{"a.go", "b.go"}, Mode: "multi"},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s2 := New(dir, 0)
+	if err := s2.Load(); err != nil {
+		t.Fatal(err)
+	}
+	got := s2.List()
+	if len(got) != 1 || got[0].Ask == nil || len(got[0].Ask.Steps) != 2 {
+		t.Fatalf("多步 Ask 载荷未原样保留: %+v", got)
+	}
+	st := got[0].Ask.Steps
+	if st[0].Question != "用哪个工具？" || st[0].Mode != "single" || len(st[0].Options) != 2 {
+		t.Fatalf("步骤 1 载荷错误: %+v", st[0])
+	}
+	if st[1].Question != "要改哪些文件？" || st[1].Mode != "multi" {
+		t.Fatalf("步骤 2 载荷错误: %+v", st[1])
+	}
+	// 单步反问（Steps 为空）不写出 null 键。
+	s3 := New(t.TempDir(), 0)
+	_ = s3.Load()
+	if err := s3.Append(Message{
+		Kind: "agent", Event: "hub_manager_ask",
+		Ask: &AskWire{Question: "单问", Mode: "single"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(s3.dir, "live.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte(`"steps":null`)) {
+		t.Fatal("Steps 零值不应写出 null 键")
+	}
+}
+
+// TestLoadV5LegacyWithoutAskSteps：v5 旧文件（AskWire 无 steps 字段）加载兼容，
+// 消息完整、Steps 零值；下次写入按当前版本（v6）重写完成迁移。
+func TestLoadV5LegacyWithoutAskSteps(t *testing.T) {
+	dir := t.TempDir()
+	v5 := `{"version":5,"messages":[` +
+		`{"id":1,"kind":"agent","event":"hub_manager_ask","text":"旧反问",` +
+		`"ask":{"question":"旧反问","options":["甲","乙"],"mode":"single"},"ts":100}]}`
+	if err := os.WriteFile(filepath.Join(dir, "live.json"), []byte(v5), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := New(dir, 0)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	got := s.List()
+	if len(got) != 1 || got[0].Ask == nil || got[0].Ask.Question != "旧反问" ||
+		len(got[0].Ask.Options) != 2 {
+		t.Fatalf("v5 旧文件应可读: %+v", got)
+	}
+	if got[0].Ask.Steps != nil {
+		t.Fatalf("缺失字段应读为零值: %+v", got[0].Ask)
+	}
+	if err := s.Append(Message{Kind: "user", Text: "new"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "live.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f file
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatal(err)
+	}
+	if f.Version != fileVersion {
+		t.Fatalf("重写后 version = %d, want %d", f.Version, fileVersion)
+	}
+	if len(f.Messages) != 2 || f.Messages[0].Ask == nil || f.Messages[0].Ask.Question != "旧反问" {
+		t.Fatalf("旧消息应保留，got %d 条", len(f.Messages))
+	}
+}
+
 // TestSetStatusAnswered：管理者反问卡片的已答复标记（SetStatus 写入）落盘并重载保留。
 func TestSetStatusAnswered(t *testing.T) {
 	s := newTestStore(t, 10)

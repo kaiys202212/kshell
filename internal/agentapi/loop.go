@@ -126,11 +126,20 @@ type RunOpts struct {
 	Progress func(LoopProgress)
 }
 
-// AskPayload 是 ask 落地的结构化交互载荷。
-type AskPayload struct {
+// AskStep 是多步反问中单步的载荷：问题 + 该步的选项与交互模式。
+type AskStep struct {
 	Question string   `json:"question"`
 	Options  []string `json:"options,omitempty"`
 	Mode     string   `json:"mode"` // single | multi | confirm（空=single）
+}
+
+// AskPayload 是 ask 落地的结构化交互载荷。Steps 非空表示多步反问（模型一次
+// 下发多个问题，用户逐步作答后一次性提交）；单步反问只填顶层三字段。
+type AskPayload struct {
+	Question string    `json:"question"`
+	Options  []string  `json:"options,omitempty"`
+	Mode     string    `json:"mode"` // single | multi | confirm（空=single）
+	Steps    []AskStep `json:"steps,omitempty"`
 }
 
 // RunResult 是一次管理者循环的产出：Replies[0] 为最终结论（ask 时为
@@ -1069,27 +1078,76 @@ func (a *API) buildLoopTools(ctx context.Context, st *loopState) []loopTool {
 			return fmt.Sprintf("已把 「%s」 切换到模型 %s。", s.Title, model), nil
 		})
 
-	// 9. ask：终止性反问；AskMaxRounds 门禁防无限套娃。
-	add("ask", "向用户提出带编号选项的问题并结束本轮（等待用户回复）。意图不确定时必须用它确认，禁止猜测性群发。",
+	// 9. ask：终止性反问；AskMaxRounds 门禁防无限套娃。支持 steps 多步问卷
+	//（一次下发多个问题，用户逐步作答后一次性提交）。
+	add("ask", "向用户提出问题并结束本轮（等待用户回复）。可以一次下发多个问题（steps 多步问卷，用户逐题作答一次提交）。意图不确定时必须用它确认，禁止猜测性群发。",
 		schemaObj(map[string]any{
-			"question": strProp("要问用户的问题"),
-			"options":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "编号选项文本列表"},
-			"mode":     strProp("交互模式：single 单选（默认）/ multi 多选 / confirm 确认"),
+			"question": strProp("要问用户的问题（单问时必填）"),
+			"options":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "编号选项文本列表（单问时使用）"},
+			"mode":     strProp("交互模式：single 单选（默认）/ multi 多选 / confirm 确认（单问时使用）"),
+			"steps": map[string]any{
+				"type":     "array",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"question": strProp("该步要问的问题"),
+						"options":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "该步的编号选项文本列表"},
+						"mode":     strProp("该步交互模式：single 单选（默认）/ multi 多选 / confirm 确认"),
+					},
+					"required": []string{"question"},
+				},
+				"description": "多步问卷：每项一步，用户逐题作答后一次性提交。给出 steps 时忽略顶层 question/options/mode",
+			},
 		}, "question"),
 		func(args string) (string, error) {
 			m, err := parseArgs(args)
 			if err != nil {
 				return "", err
 			}
-			q := argStr(m, "question")
-			if q == "" {
-				return "", errors.New("ask 缺少 question")
-			}
-			var options []string
-			if arr, ok := m["options"].([]any); ok {
+			// steps 多步解析：每项 question 必填、mode 归一；空/缺省回落单问字段。
+			// 恰 1 步折叠为单问载荷（前端渲染与历史卡片口径一致）。
+			var steps []AskStep
+			if arr, ok := m["steps"].([]any); ok {
 				for _, v := range arr {
-					options = append(options, fmt.Sprint(v))
+					sm, ok := v.(map[string]any)
+					if !ok {
+						return "", errors.New("ask steps 每项必须是对象")
+					}
+					sq := argStr(sm, "question")
+					if sq == "" {
+						return "", errors.New("ask steps 某步缺少 question")
+					}
+					var sopts []string
+					if sarr, ok := sm["options"].([]any); ok {
+						for _, sv := range sarr {
+							sopts = append(sopts, fmt.Sprint(sv))
+						}
+					}
+					steps = append(steps, AskStep{Question: sq, Options: sopts, Mode: askMode(argStr(sm, "mode"))})
 				}
+			}
+			var payload AskPayload
+			switch {
+			case len(steps) >= 2:
+				qs := make([]string, len(steps))
+				for i, s := range steps {
+					qs[i] = s.Question
+				}
+				payload = AskPayload{Question: strings.Join(qs, "；"), Steps: steps}
+			case len(steps) == 1:
+				payload = AskPayload{Question: steps[0].Question, Options: steps[0].Options, Mode: steps[0].Mode}
+			default:
+				q := argStr(m, "question")
+				if q == "" {
+					return "", errors.New("ask 缺少 question")
+				}
+				var options []string
+				if arr, ok := m["options"].([]any); ok {
+					for _, v := range arr {
+						options = append(options, fmt.Sprint(v))
+					}
+				}
+				payload = AskPayload{Question: q, Options: options, Mode: askMode(argStr(m, "mode"))}
 			}
 			// 连续反问达到上限：清挂起并返回结构化指引，循环正常收尾（不挂起）。
 			if st.askRound >= hubtools.AskMaxRounds {
@@ -1105,10 +1163,15 @@ func (a *API) buildLoopTools(ctx context.Context, st *loopState) []loopTool {
 			// 落地：挂起整个循环状态（msgs 含本轮全部 system/user/assistant/
 			// tool 消息），用户回复后从同一 msgs 续跑；候选语境随 st 跨挂起
 			// 延续（用户回编号时 create_session 要把编号翻译回 ID）。
-			payload := AskPayload{Question: q, Options: options, Mode: askMode(argStr(m, "mode"))}
+			var reply string
+			if len(payload.Steps) >= 2 {
+				reply = renderAskReplySteps(payload.Steps)
+			} else {
+				reply = renderAskReply(payload.Question, payload.Options)
+			}
 			st.askRound++
 			st.ask = &RunResult{
-				Replies:   []string{renderAskReply(q, options)},
+				Replies:   []string{reply},
 				Ask:       &payload,
 				Suspended: true,
 			}
@@ -1218,6 +1281,20 @@ func renderAskReply(q string, options []string) string {
 	b.WriteString(q + "\n")
 	for i, o := range options {
 		fmt.Fprintf(&b, "%d. %s\n", i+1, o)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// renderAskReplySteps 渲染多步反问的回执：每步【问题N】+ 编号选项（微信桥
+// 纯文本形态下用户逐条作答）。
+func renderAskReplySteps(steps []AskStep) string {
+	var b strings.Builder
+	for i, s := range steps {
+		fmt.Fprintf(&b, "【问题%d】%s\n", i+1, s.Question)
+		for j, o := range s.Options {
+			fmt.Fprintf(&b, "%d. %s\n", j+1, o)
+		}
+		b.WriteString("\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

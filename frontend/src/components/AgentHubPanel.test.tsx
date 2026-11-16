@@ -3011,7 +3011,7 @@ describe('AgentHub i18n 资源', () => {
 
   it('反问卡片 key 两份 locale 同步存在（ui.hub.ask_* 与 err.hub.ask_*）', () => {
     const hubOf = (loc: unknown) => (loc as { ui: { hub: Record<string, unknown> } }).ui.hub;
-    for (const key of ['ask_confirm', 'ask_yes', 'ask_no', 'ask_answered']) {
+    for (const key of ['ask_confirm', 'ask_yes', 'ask_no', 'ask_answered', 'ask_step', 'ask_prev', 'ask_next', 'ask_submit', 'ask_processing']) {
       expect(hubOf(enLocale)[key]).toBeTruthy();
       expect(hubOf(zhLocale)[key]).toBeTruthy();
     }
@@ -3073,13 +3073,16 @@ describe('AgentHub 反问卡片', () => {
     await act(async () => {});
   }
 
-  it('single 反问卡：渲染选项按钮；点击选项即答复并进入思考态、完成后清除', async () => {
+  it('single 反问卡：渲染选项按钮；点击选项即答复、选项区即刻收起并进入思考态', async () => {
     let release!: (v: HubPickView) => void;
     api.hubAskAnswer.mockImplementation(() => new Promise((res) => { release = res; }));
     await renderWithAsk(askMsg({}));
 
     fireEvent.click(screen.getByRole('button', { name: 'claude' }));
     await waitFor(() => expect(api.hubAskAnswer).toHaveBeenCalledWith(expect.any(String), 'claude'));
+    // 点击瞬间选项区收起：原选项按钮不再出现，卡片原地只留「处理中」指示
+    expect(screen.queryByRole('button', { name: 'claude' })).toBeNull();
+    expect(screen.getByText(tt('ui.hub.ask_processing'))).toBeInTheDocument();
     // 续跑是多轮 LLM 长操作：思考态气泡立即出现（种子 thinking_route）
     expect(screen.getByTestId('hub-thinking')).toBeInTheDocument();
     expect(screen.getByText(tt('ui.hub.thinking_route'))).toBeInTheDocument();
@@ -3093,12 +3096,16 @@ describe('AgentHub 反问卡片', () => {
     ).toBe(false);
   });
 
-  it('multi 反问卡：勾选两项后点确认，答案为选中项顿号连接', async () => {
+  it('multi 反问卡：选项按钮可勾选两项后点确认，答案为选中项连接', async () => {
     await renderWithAsk(
       askMsg({ text: '要改哪些？', ask: { question: '要改哪些？', options: ['a', 'b', 'c'], mode: 'multi' } }),
     );
-    fireEvent.click(screen.getByRole('checkbox', { name: 'a' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'b' }));
+    const btnA = screen.getByRole('button', { name: 'a' });
+    fireEvent.click(btnA);
+    fireEvent.click(screen.getByRole('button', { name: 'b' }));
+    // 勾选态可视觉切换（aria-pressed），未选不影响
+    expect(btnA).toHaveAttribute('aria-pressed', 'true');
+    // 全未选时确认不可点（此处已选 a/b，可点）
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.ask_confirm') }));
     // 分隔符随 UI 语言（测试环境 en → ', '；zh 环境为顿号）
     await waitFor(() => expect(api.hubAskAnswer).toHaveBeenCalledWith(expect.any(String), 'a, b'));
@@ -3112,13 +3119,21 @@ describe('AgentHub 反问卡片', () => {
     await waitFor(() => expect(api.hubAskAnswer).toHaveBeenCalledWith(expect.any(String), tt('ui.hub.ask_yes')));
   });
 
-  it('已答复卡片：按钮禁用、不触发调用、显示已答复文案', async () => {
+  it('已答复卡片：选项区收起、只留已答复标记，不触发调用', async () => {
     await renderWithAsk(askMsg({ status: 'answered' }));
-    const btn = screen.getByRole('button', { name: 'claude' });
-    expect(btn).toBeDisabled();
-    fireEvent.click(btn);
+    expect(screen.queryByRole('button', { name: 'claude' })).toBeNull();
     expect(api.hubAskAnswer).not.toHaveBeenCalled();
     expect(screen.getByText(tt('ui.hub.ask_answered'))).toBeInTheDocument();
+  });
+
+  it('答复失败：选项区恢复可重试（先收起再回来）', async () => {
+    api.hubAskAnswer.mockRejectedValue(new Error('err.hub.ask_expired'));
+    await renderWithAsk(askMsg({}));
+    fireEvent.click(screen.getByRole('button', { name: 'claude' }));
+    // 点击瞬间收起
+    expect(screen.queryByRole('button', { name: 'claude' })).toBeNull();
+    // 失败后恢复选项按钮，可重试
+    await waitFor(() => expect(screen.getByRole('button', { name: 'claude' })).toBeInTheDocument());
   });
 
   it('无 ask 字段的旧反问消息：纯 markdown 渲染，无选项按钮', async () => {
@@ -3137,6 +3152,74 @@ describe('AgentHub 反问卡片', () => {
       expect(useAppStore.getState().toasts.some((x) => x.title === tt('err.hub.ask_expired'))).toBe(true),
     );
     await waitFor(() => expect(screen.queryByTestId('hub-thinking')).not.toBeInTheDocument());
+  });
+
+  // —— 多步问卷（ask.steps ≥2）向导交互 ——
+  const wizardAsk = (): HubAskWire => ({
+    question: '用哪个工具？；要改哪些文件？',
+    mode: '',
+    steps: [
+      { question: '用哪个工具？', options: ['claude', 'codebuddy'], mode: 'single' },
+      { question: '要改哪些文件？', options: ['a.go', 'b.go'], mode: 'multi' },
+    ],
+  });
+
+  it('多步问卷：默认第 1 步、chips 可跳转；未全部作答提交禁用', async () => {
+    await renderWithAsk(askMsg({ text: '请回答两个问题', ask: wizardAsk() }));
+    // 默认展示第 1 步问题与选项，第 2 步选项不可见
+    expect(screen.getByText('用哪个工具？')).toBeInTheDocument();
+    expect(screen.queryByText('要改哪些文件？')).toBeNull();
+    expect(screen.getByRole('button', { name: 'claude' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'a.go' })).toBeNull();
+    // 未作答提交禁用
+    const submit = screen.getByRole('button', { name: tt('ui.hub.ask_submit') });
+    expect(submit).toBeDisabled();
+    // chips 直跳第 2 步
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.ask_step', { i: 2, n: 2 }) }));
+    expect(screen.getByText('要改哪些文件？')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'a.go' })).toBeInTheDocument();
+    expect(submit).toBeDisabled();
+  });
+
+  it('多步问卷：每步作答可来回切换修改，全选后提交组合文案并即刻收起', async () => {
+    let release!: (v: HubPickView) => void;
+    api.hubAskAnswer.mockImplementation(() => new Promise((res) => { release = res; }));
+    await renderWithAsk(askMsg({ text: '请回答两个问题', ask: wizardAsk() }));
+    // 第 1 步（single）选 claude → 下一步
+    fireEvent.click(screen.getByRole('button', { name: 'claude' }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.ask_next') }));
+    // 第 2 步（multi）选 a.go、b.go
+    fireEvent.click(screen.getByRole('button', { name: 'a.go' }));
+    fireEvent.click(screen.getByRole('button', { name: 'b.go' }));
+    // 回上一步：第 1 步选择保留（暂存），可修改
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.ask_prev') }));
+    expect(screen.getByRole('button', { name: 'claude' })).toHaveAttribute('aria-pressed', 'true');
+    // 回到第 2 步提交
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.ask_next') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.ask_submit') }));
+    // 一次性组合发送：每步「问题：答案」，multi 多选连接符随 UI 语言
+    await waitFor(() =>
+      expect(api.hubAskAnswer).toHaveBeenCalledWith(expect.any(String), '用哪个工具？：claude\n要改哪些文件？：a.go, b.go'),
+    );
+    // 提交瞬间整个向导收起为处理中指示
+    expect(screen.queryByRole('button', { name: tt('ui.hub.ask_submit') })).toBeNull();
+    expect(screen.getByText(tt('ui.hub.ask_processing'))).toBeInTheDocument();
+    release({ Replies: [], Pending: false });
+  });
+
+  it('多步问卷：single 步点选即互斥（重复点同项不重复计数），multi 步可勾选多项', async () => {
+    await renderWithAsk(askMsg({ text: '请回答两个问题', ask: wizardAsk() }));
+    const claude = screen.getByRole('button', { name: 'claude' });
+    fireEvent.click(claude);
+    fireEvent.click(screen.getByRole('button', { name: 'codebuddy' }));
+    // single 互斥：codebuddy 选中、claude 取消
+    expect(screen.getByRole('button', { name: 'codebuddy' })).toHaveAttribute('aria-pressed', 'true');
+    expect(claude).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.ask_next') }));
+    fireEvent.click(screen.getByRole('button', { name: 'a.go' }));
+    fireEvent.click(screen.getByRole('button', { name: 'a.go' }));
+    // multi 可取消勾选
+    expect(screen.getByRole('button', { name: 'a.go' })).toHaveAttribute('aria-pressed', 'false');
   });
 });
 

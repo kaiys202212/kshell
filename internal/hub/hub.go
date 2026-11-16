@@ -30,7 +30,9 @@ import (
 // v5：Message 增加 steps（管理者思考链结构化步骤）与 ask（反问卡片持久化
 // 载荷），并新增 answered 消息状态（反问卡片已答复标记）；旧 v1..v4 文件
 // 可直接读取（缺失字段零值），下次写入以当前版本重写完成迁移。
-const fileVersion = 5
+// v6：AskWire 增加 steps（多步反问的每步载荷）；旧 v1..v5 文件可直接读取
+//（缺失字段零值），下次写入以当前版本重写完成迁移。
+const fileVersion = 6
 
 // defaultLiveCap 是 live 文件保留的消息条数上限（超出按月归档）。
 const defaultLiveCap = 500
@@ -50,11 +52,21 @@ type Step struct {
 	Round int    `json:"round"`
 }
 
-// AskWire 是管理者反问卡片的持久化载荷（hub_manager_ask 消息专用）。
-type AskWire struct {
+// AskStepWire 是多步反问中单步的载荷：问题 + 该步的选项与交互模式。
+type AskStepWire struct {
 	Question string   `json:"question"`
 	Options  []string `json:"options,omitempty"`
 	Mode     string   `json:"mode"` // single | multi | confirm
+}
+
+// AskWire 是管理者反问卡片的持久化载荷（hub_manager_ask 消息专用）。
+// 多步反问（模型一次下发多个问题）走 Steps；单步反问只填顶层三字段，
+// Steps 为空。Question 在多步时为各步问题的连接串（卡片正文与门禁指引复用）。
+type AskWire struct {
+	Question string        `json:"question"`
+	Options  []string      `json:"options,omitempty"`
+	Mode     string        `json:"mode"` // single | multi | confirm
+	Steps    []AskStepWire `json:"steps,omitempty"`
 }
 
 // Message 是一条 AgentHub 消息，两类共用。

@@ -213,6 +213,110 @@ func TestSuspendAskLanding(t *testing.T) {
 	}
 }
 
+// 测试 3（新）：ask steps 多步问卷——payload 带各步载荷、Question 为各问连接、
+// 回执按步渲染；挂起在场，Resume 复合答复续跑 msgs 延续。
+func TestAskStepsMultiLanding(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	sc := &scriptChat{resps: []hubtools.Response{
+		{ToolCalls: []hubtools.ToolCall{tc("c1", "ask", `{"steps":[` +
+			`{"question":"用哪个工具？","options":["claude","codebuddy"],"mode":"single"},` +
+			`{"question":"要改哪些文件？","options":["a.go","b.go"],"mode":"multi"}]}`)}},
+	}}
+	chatToolsHook = sc.hook
+	res, err := api.Run(context.Background(), "确认一下需求", RunOpts{Channel: "hub"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Suspended || res.Ask == nil {
+		t.Fatalf("多步 ask 应挂起: %+v", res)
+	}
+	if len(res.Ask.Steps) != 2 || res.Ask.Steps[0].Question != "用哪个工具？" ||
+		res.Ask.Steps[0].Mode != "single" || res.Ask.Steps[1].Mode != "multi" {
+		t.Fatalf("Steps 载荷错误: %+v", res.Ask)
+	}
+	if res.Ask.Question != "用哪个工具？；要改哪些文件？" {
+		t.Fatalf("多步 Question 应为各问连接: %q", res.Ask.Question)
+	}
+	if res.Ask.Options != nil || res.Ask.Mode != "" {
+		t.Fatalf("多步时顶层 Options/Mode 应为零值: %+v", res.Ask)
+	}
+	for _, seg := range []string{"【问题1】用哪个工具？", "1. claude", "【问题2】要改哪些文件？"} {
+		if !strings.Contains(res.Replies[0], seg) {
+			t.Fatalf("回执缺 %q: %q", seg, res.Replies[0])
+		}
+	}
+	if !api.HasSuspendedAsk("hub") {
+		t.Fatal("多步 ask 应置位挂起")
+	}
+	// Resume 复合答复续跑：答复原话（含每问答案）进入同一 msgs。
+	sc2 := &scriptChat{resps: []hubtools.Response{{Text: "已按选择执行。"}}}
+	chatToolsHook = sc2.hook
+	res2, err := api.Resume(context.Background(), "hub", "用哪个工具？：claude\n要改哪些文件？：a.go", RunOpts{Channel: "hub"})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if res2.Suspended || res2.Replies[0] != "已按选择执行。" {
+		t.Fatalf("续跑结果异常: %+v", res2)
+	}
+	last := sc2.last[len(sc2.last)-1]
+	if last.Role != "user" || !strings.Contains(last.Content, "要改哪些文件？：a.go") {
+		t.Fatalf("复合答复未进入 msgs: %+v", last)
+	}
+	if api.HasSuspendedAsk("hub") {
+		t.Fatal("续跑收尾应清挂起")
+	}
+}
+
+// 测试 4（新）：steps 恰 1 项折叠为单问载荷（Steps 空、顶层三字段生效）。
+func TestAskStepsSingleCollapses(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	sc := &scriptChat{resps: []hubtools.Response{
+		{ToolCalls: []hubtools.ToolCall{tc("c1", "ask", `{"steps":[{"question":"选哪个？","options":["x","y"],"mode":"multi"}]}`)}},
+	}}
+	chatToolsHook = sc.hook
+	res, err := api.Run(context.Background(), "看着办", RunOpts{Channel: "hub"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Suspended || res.Ask == nil {
+		t.Fatalf("应挂起: %+v", res)
+	}
+	if res.Ask.Steps != nil {
+		t.Fatalf("单项 steps 应折叠, Steps = %+v", res.Ask.Steps)
+	}
+	if res.Ask.Question != "选哪个？" || res.Ask.Mode != "multi" || len(res.Ask.Options) != 2 {
+		t.Fatalf("折叠后载荷错误: %+v", res.Ask)
+	}
+}
+
+// 测试 5（新）：steps 某步缺 question → 工具错误喂回模型，不挂起；
+// 模型下一轮文本收尾。
+func TestAskStepsMissingQuestion(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	sc := &scriptChat{resps: []hubtools.Response{
+		{ToolCalls: []hubtools.ToolCall{tc("c1", "ask", `{"steps":[{"options":["x"]}]}`)}},
+		{Text: "直接给结论。"},
+	}}
+	chatToolsHook = sc.hook
+	res, err := api.Run(context.Background(), "看着办", RunOpts{Channel: "hub"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Suspended || res.Ask != nil {
+		t.Fatalf("坏 steps 不应挂起: %+v", res)
+	}
+	if res.Replies[0] != "直接给结论。" {
+		t.Fatalf("应文本收尾: %q", res.Replies[0])
+	}
+	toolMsg := sc.last[len(sc.last)-1]
+	if toolMsg.Role != "tool" || !strings.Contains(toolMsg.Content, "执行失败") {
+		t.Fatalf("工具错误应喂回模型: %+v", toolMsg)
+	}
+	if api.HasSuspendedAsk("hub") {
+		t.Fatal("坏 steps 不应置位挂起")
+	}
+}
+
 // 测试 2（新）：Resume 续跑 msgs 延续——请求 = 挂起前完整序列（含 system/
 // user/assistant/tool）+ 用户回复原话（无前缀、不重建 system）。
 func TestResumeMsgsContinuity(t *testing.T) {

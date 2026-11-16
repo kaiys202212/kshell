@@ -1858,12 +1858,22 @@ export interface HubMessage {
   ts: number;
 }
 
+// HubAskStepWire 是多步反问中单步的载荷（internal/hub.AskStepWire 的 JSON 形态）。
+export interface HubAskStepWire {
+  question: string;
+  options?: string[];
+  mode: string;
+}
+
 // HubAskWire 是管理者反问卡片载荷（internal/hub.AskWire 的 JSON 形态）。
 // mode 取值 single（单选按钮，缺省）/ multi（多选+确认）/ confirm（是/否）。
+// steps 非空（≥2 项）表示多步问卷：用户逐题作答后一次性提交；单步反问只填
+// 顶层三字段。
 export interface HubAskWire {
   question: string;
   options?: string[];
   mode: string;
+  steps?: HubAskStepWire[];
 }
 
 // HubStep 是管理者思考链的单步工具调用（internal/hub.Step 的 JSON 形态）。

@@ -1100,18 +1100,20 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
   // user 气泡（后端口径：卡片本身已呈现问题）。Pending=true = 在途守卫命中
   //（静默回落）；Cancelled = 用户中断（notify 既有取消文案）；错误（含
   // err.hub.ask_expired）经 backendError 翻译后 toast。
+  // 返回 promise 供卡片做「点击即收起」：守卫命中立即 resolve（卡片恢复原样），
+  // 成功 resolve（卡片保持收起直到 answered 回流），失败 reject（卡片恢复可重试）。
   const askAnswer = useCallback(
-    (answer: string) => {
+    (answer: string): Promise<void> => {
       // 在途守卫与自由发送共用 smartInFlight：任一方向在途时另一方向直接
       // 忽略——后端 smartBusy 虽会兜底，但前端思考气泡会互相覆盖、自由发送
       // 还会回落待选菜单与续跑并存，视觉混乱。
-      if (smartInFlight.current) return;
+      if (smartInFlight.current) return Promise.resolve();
       smartInFlight.current = true;
       const reqID = newSmartReqID();
       useAppStore
         .getState()
         .setHubPendingSend({ reqID, text: answer, steps: [{ key: 'ui.hub.thinking_route' }] });
-      void hubAskAnswer(reqID, answer)
+      return hubAskAnswer(reqID, answer)
         .then((view) => {
           useAppStore.getState().setHubPendingSend(null);
           if (view.Cancelled) {
@@ -1121,6 +1123,7 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
         .catch((e: unknown) => {
           useAppStore.getState().setHubPendingSend(null);
           useAppStore.getState().notify(backendError(e), 'error');
+          throw e;
         })
         .finally(() => {
           smartInFlight.current = false;

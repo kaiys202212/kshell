@@ -61,6 +61,10 @@ func (a *App) finishManagerLoop(res agentapi.RunResult, steps []hub.Step) HubPic
 		})
 	}
 	if res.Suspended && res.Ask != nil {
+		var wireSteps []hub.AskStepWire
+		for _, s := range res.Ask.Steps {
+			wireSteps = append(wireSteps, hub.AskStepWire{Question: s.Question, Options: s.Options, Mode: s.Mode})
+		}
 		a.recordHubMessage(hub.Message{
 			Kind:  "agent",
 			Event: "hub_manager_ask",
@@ -69,6 +73,7 @@ func (a *App) finishManagerLoop(res agentapi.RunResult, steps []hub.Step) HubPic
 				Question: res.Ask.Question,
 				Options:  res.Ask.Options,
 				Mode:     res.Ask.Mode,
+				Steps:    wireSteps,
 			},
 		})
 	} else {
