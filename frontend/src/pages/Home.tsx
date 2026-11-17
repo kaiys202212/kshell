@@ -173,13 +173,25 @@ export default function Home() {
   // 否则切回首页仍显示旧状态。
   const [hubEnabled, setHubEnabled] = useState(true);
   useEffect(() => {
+    let alive = true;
     const load = () => {
       getAgentHubSettings()
-        .then((s) => setHubEnabled(s.enabled))
+        .then((s) => {
+          if (alive) setHubEnabled(s.enabled);
+        })
         .catch(() => {});
     };
     load();
-    return onAgentHubChanged(load);
+    const off = onAgentHubChanged((enabled) => {
+      if (!alive) return;
+      // 事件载荷优先（重读失败也不影响显隐）；旧后端无载荷时回读兜底。
+      if (typeof enabled === 'boolean') setHubEnabled(enabled);
+      else load();
+    });
+    return () => {
+      alive = false;
+      off();
+    };
   }, []);
 
   // 选中态失效清理：selectedProject 不在当前工作区列表（路径归一化后比较）则清除。
@@ -734,30 +746,30 @@ export default function Home() {
             折叠时退化为窄竖条（点击展开），面板本体 hidden 保持挂载（保草稿/滚动位）；
             设置里关闭 AgentHub 后整列（折叠条+面板）不渲染。 */}
         {hubEnabled && (
-        <div
-          data-testid="home-right-col"
-          className={cn('flex min-w-0', hubCollapsed ? 'w-9 shrink-0' : 'w-3/5')}
-        >
-          {hubCollapsed && (
-            <div
-              data-testid="hub-collapse-strip"
-              className="flex w-9 flex-col items-center gap-2 rounded border border-border bg-card py-2"
-            >
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-7 w-7 text-muted-foreground"
-                aria-label={t('ui.hub.expand_aria')}
-                title={t('ui.hub.expand_aria')}
-                onClick={() => toggleHubCollapsed(false)}
+          <div
+            data-testid="home-right-col"
+            className={cn('flex min-w-0', hubCollapsed ? 'w-9 shrink-0' : 'w-3/5')}
+          >
+            {hubCollapsed && (
+              <div
+                data-testid="hub-collapse-strip"
+                className="flex w-9 flex-col items-center gap-2 rounded border border-border bg-card py-2"
               >
-                <PanelRightOpen aria-hidden className="h-4 w-4" />
-              </Button>
-            </div>
-          )}
-          {/* 面板常驻挂载（hidden 隐藏）：折叠不丢草稿与滚动位置 */}
-          <AgentHubPanel hidden={hubCollapsed} onCollapse={() => toggleHubCollapsed(true)} />
-        </div>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7 text-muted-foreground"
+                  aria-label={t('ui.hub.expand_aria')}
+                  title={t('ui.hub.expand_aria')}
+                  onClick={() => toggleHubCollapsed(false)}
+                >
+                  <PanelRightOpen aria-hidden className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+            {/* 面板常驻挂载（hidden 隐藏）：折叠不丢草稿与滚动位置 */}
+            <AgentHubPanel hidden={hubCollapsed} onCollapse={() => toggleHubCollapsed(true)} />
+          </div>
         )}
       </div>
     </div>

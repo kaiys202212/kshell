@@ -92,6 +92,12 @@ type Runtime struct {
 	bindStatus string
 	// bindDone 关闭表示绑定 goroutine 已结束（防并发重复 Bind）。
 	bindCancel context.CancelFunc
+	// bindGen 是绑定代次：Bind/Unbind 递增。bindLoop 的成功回调据此丢弃
+	// 过期结果，避免解绑后扫码回调把 token 写回并复活绑定。
+	bindGen uint64
+	// persistMu 串行化「凭据落盘 + 绑定态校验」：bindLoop 成功回调与 Unbind
+	// 走同一把锁，保证解绑总是最后生效（不会出现 token 回写晚于清空）。
+	persistMu sync.Mutex
 
 	// —— 测试注入点（零值即生产行为）——
 	baseURL           string              // client 的 baseURL（测试指到 httptest）
@@ -408,6 +414,8 @@ func (r *Runtime) Bind(ctx context.Context) (string, error) {
 	r.stopLocked()
 	tmp := NewClient("", r.baseURL)
 	r.bindStatus = "pending"
+	r.bindGen++
+	gen := r.bindGen
 	bctx, bcancel := context.WithCancel(context.Background())
 	r.bindCancel = bcancel
 	r.mu.Unlock()
@@ -415,38 +423,62 @@ func (r *Runtime) Bind(ctx context.Context) (string, error) {
 	qr, err := tmp.GetQRCode(ctx)
 	if err != nil {
 		r.mu.Lock()
-		r.bindStatus = "expired"
-		bcancel()
+		if gen == r.bindGen {
+			r.bindStatus = "expired"
+		}
+		if r.bindGen == gen {
+			bcancel()
+		}
 		r.mu.Unlock()
 		return "", err
 	}
-	go r.bindLoop(bctx, tmp, qr.Key)
+	go r.bindLoop(bctx, tmp, qr.Key, gen)
 	return qr.ImgContent, nil
 }
 
+// bindSucceeded 处理扫码成功：校验绑定代次后落盘并转正。
+// 与 Unbind 共享 persistMu，保证解绑（清空 + 取消）不会被迟到的成功回调覆盖；
+// 代次已过期（期间发生解绑/重绑）时直接丢弃。
+func (r *Runtime) bindSucceeded(gen uint64, token string) {
+	r.persistMu.Lock()
+	defer r.persistMu.Unlock()
+	r.mu.Lock()
+	if gen != r.bindGen {
+		r.mu.Unlock()
+		return
+	}
+	r.bindStatus = "ok"
+	fn := r.persist
+	r.mu.Unlock()
+	if fn != nil {
+		if err := fn(WeixinPersist{Enabled: true, Token: token, Wxid: ""}); err != nil {
+			log.Printf("[weixin] 绑定凭据落盘失败: %v", err)
+		}
+	}
+	r.Configure(token, "")
+}
+
 // bindLoop 轮询扫码状态直至拿到 token（→ ok + 转正）或出错（→ expired）。
-func (r *Runtime) bindLoop(ctx context.Context, tmp *Client, key string) {
+func (r *Runtime) bindLoop(ctx context.Context, tmp *Client, key string, gen uint64) {
 	defer func() {
 		r.mu.Lock()
-		r.bindCancel = nil
+		if gen == r.bindGen {
+			r.bindCancel = nil
+		}
 		r.mu.Unlock()
 	}()
 	sleep := r.sleepBetweenPolls
 	for {
 		st, err := tmp.PollQRCodeStatus(ctx, key)
 		if err == nil && st.Scanned {
-			r.mu.Lock()
-			r.bindStatus = "ok"
-			r.mu.Unlock()
-			if r.persist != nil {
-				_ = r.persist(WeixinPersist{Enabled: true, Token: st.BotToken, Wxid: ""})
-			}
-			r.Configure(st.BotToken, "")
+			r.bindSucceeded(gen, st.BotToken)
 			return
 		}
 		if err != nil || ctx.Err() != nil {
 			r.mu.Lock()
-			r.bindStatus = "expired"
+			if gen == r.bindGen {
+				r.bindStatus = "expired"
+			}
 			r.mu.Unlock()
 			return
 		}
@@ -456,7 +488,9 @@ func (r *Runtime) bindLoop(ctx context.Context, tmp *Client, key string) {
 			select {
 			case <-ctx.Done():
 				r.mu.Lock()
-				r.bindStatus = "expired"
+				if gen == r.bindGen {
+					r.bindStatus = "expired"
+				}
 				r.mu.Unlock()
 				return
 			case <-time.After(bindPollInterval):
@@ -476,8 +510,11 @@ func (r *Runtime) BindStatus() string {
 }
 
 // Unbind 解绑：停轮询与绑定轮询、persist 清空凭据、清 client/bridge。
+// bindGen 递增使迟到的扫码成功回调失效；persist 在 persistMu 内进行，
+// 与 bindSucceeded 串行，保证解绑结果最终生效。
 func (r *Runtime) Unbind() {
 	r.mu.Lock()
+	r.bindGen++
 	r.stopLocked()
 	if r.bindCancel != nil {
 		r.bindCancel()
@@ -488,8 +525,12 @@ func (r *Runtime) Unbind() {
 	r.bridge = nil
 	fn := r.persist
 	r.mu.Unlock()
+	r.persistMu.Lock()
+	defer r.persistMu.Unlock()
 	if fn != nil {
-		_ = fn(WeixinPersist{Enabled: false, Token: "", Wxid: ""})
+		if err := fn(WeixinPersist{Enabled: false, Token: "", Wxid: ""}); err != nil {
+			log.Printf("[weixin] 解绑凭据落盘失败: %v", err)
+		}
 	}
 }
 

@@ -2008,9 +2008,9 @@ export function onHubChanged(cb: () => void): () => void {
 }
 
 // onAgentHubChanged 订阅 AgentHub 配置变更（总开关/参数保存后由后端广播）。
-// 首页据此实时显隐 Hub 列，不依赖页签重新挂载。
-export function onAgentHubChanged(cb: () => void): () => void {
-  return EventsOn('agenthub:changed', () => cb());
+// 载荷带 enabled 时首页直接采用，避免重读失败导致仍显示旧状态。
+export function onAgentHubChanged(cb: (enabled?: boolean) => void): () => void {
+  return EventsOn('agenthub:changed', (p?: { enabled?: boolean }) => cb(p?.enabled));
 }
 
 // onHubBusy 订阅 AgentHub 忙碌状态（Go 激活/新建会话前后 Emit hub:busy true/false），

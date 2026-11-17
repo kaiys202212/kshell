@@ -473,3 +473,35 @@ func TestRuntimeNotifyProgress(t *testing.T) {
 		return false
 	}, "进度推送应出站")
 }
+
+// TestUnbindInvalidatesLateBindSuccess 验证解绑后迟到的扫码成功回调被丢弃：
+// bindSucceeded 以解绑前代次调用不写凭据、不把状态改回 ok。
+func TestUnbindInvalidatesLateBindSuccess(t *testing.T) {
+	r := NewRuntime(nil, "en")
+	var mu sync.Mutex
+	var persisted []WeixinPersist
+	r.SetPersist(func(p WeixinPersist) error {
+		mu.Lock()
+		persisted = append(persisted, p)
+		mu.Unlock()
+		return nil
+	})
+	r.mu.Lock()
+	gen := r.bindGen
+	r.mu.Unlock()
+
+	r.Unbind()
+	mu.Lock()
+	persisted = nil // 只观察解绑之后是否还有写回
+	mu.Unlock()
+
+	r.bindSucceeded(gen, "late-token")
+	mu.Lock()
+	defer mu.Unlock()
+	if len(persisted) != 0 {
+		t.Fatalf("解绑后不应再写凭据: %+v", persisted)
+	}
+	if got := r.BindStatus(); got == "ok" {
+		t.Fatalf("解绑后迟到成功不应把状态置回 ok, got %q", got)
+	}
+}

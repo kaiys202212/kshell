@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/yangk/kshell/internal/config"
+	"github.com/yangk/kshell/internal/weixin"
 )
 
 // TestAgentHubSettingsRoundTrip 验证 AgentHub 设置绑定：缺省视图、保存归一
@@ -81,13 +82,32 @@ func TestSetAgentHubEnabledOffUnlinksWeixin(t *testing.T) {
 	cfg := config.Default()
 	cfg.Weixin = config.WeixinConfig{Enabled: true, Token: "tok", Wxid: "wxid"}
 	var events []string
+	var payloads []map[string]any
 	a := NewAppWith(Options{
 		Config: cfg,
 		Layout: layout,
-		Emit: func(name string, _ ...any) {
+		Emit: func(name string, data ...any) {
 			events = append(events, name)
+			if name == "agenthub:changed" && len(data) == 1 {
+				if m, ok := data[0].(map[string]any); ok {
+					payloads = append(payloads, m)
+				}
+			}
 		},
 	})
+	// 注入真实 Runtime 并记录 Unbind 落盘：NewAppWith 不跑 Startup，a.wx 需手工装配，
+	// 否则 SetAgentHubEnabled 里的取消绑定/清凭据分支在测试中不会被执行（假绿）。
+	wx := weixin.NewRuntime(nil, "en")
+	unbound := false
+	wx.SetPersist(func(p weixin.WeixinPersist) error {
+		if p.Token == "" {
+			unbound = true
+		}
+		return nil
+	})
+	a.mu.Lock()
+	a.wx = wx
+	a.mu.Unlock()
 
 	if err := a.SetAgentHubEnabled(false); err != nil {
 		t.Fatalf("disable: %v", err)
@@ -99,6 +119,18 @@ func TestSetAgentHubEnabledOffUnlinksWeixin(t *testing.T) {
 	if loaded.Weixin.Token != "" || loaded.Weixin.Wxid != "" || loaded.Weixin.Enabled {
 		t.Fatalf("关闭后微信凭据未清空: %+v", loaded.Weixin)
 	}
+	if !unbound {
+		t.Fatal("关闭时未调用 Runtime.Unbind 清空凭据")
+	}
+	if len(payloads) == 0 || payloads[len(payloads)-1]["enabled"] != false {
+		t.Fatalf("事件载荷应为 enabled=false, payloads=%v", payloads)
+	}
+
+	// SaveAgentHubSettings 同样广播变更（首页无需区分来源）。
+	events = events[:0]
+	if err := a.SaveAgentHubSettings(AgentHubSettingsInput{HeartbeatMinutes: 7}); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
 	found := false
 	for _, e := range events {
 		if e == "agenthub:changed" {
@@ -106,7 +138,7 @@ func TestSetAgentHubEnabledOffUnlinksWeixin(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("未广播 agenthub:changed, events=%v", events)
+		t.Fatalf("SaveAgentHubSettings 未广播 agenthub:changed, events=%v", events)
 	}
 
 	// 重新开启不恢复旧凭据：必须重新扫码。
@@ -119,6 +151,31 @@ func TestSetAgentHubEnabledOffUnlinksWeixin(t *testing.T) {
 	}
 	if loaded2.Weixin.Token != "" || loaded2.Weixin.Wxid != "" {
 		t.Fatalf("开启后凭据被复活: %+v", loaded2.Weixin)
+	}
+}
+
+// TestStartWeixinClearsLegacyCredsWhenDisabled 验证旧版本遗留 token 在总开关
+// 关闭态启动时被清空：重新开启不会意外恢复旧绑定。
+func TestStartWeixinClearsLegacyCredsWhenDisabled(t *testing.T) {
+	dir := t.TempDir()
+	layout := config.Layout{
+		Root:   dir,
+		Config: filepath.Join(dir, "config.yaml"),
+		Cache:  filepath.Join(dir, "cache"),
+	}
+	cfg := config.Default()
+	off := false
+	cfg.AgentHub.Enabled = &off
+	cfg.Weixin = config.WeixinConfig{Enabled: true, Token: "legacy", Wxid: "wxid"}
+	a := NewAppWith(Options{Config: cfg, Layout: layout})
+
+	a.startWeixin()
+	loaded, err := config.Load(layout)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Weixin.Token != "" || loaded.Weixin.Wxid != "" || loaded.Weixin.Enabled {
+		t.Fatalf("关闭态启动未清理遗留凭据: %+v", loaded.Weixin)
 	}
 }
 

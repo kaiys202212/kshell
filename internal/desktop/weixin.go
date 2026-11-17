@@ -23,16 +23,23 @@ var managerProgressInterval = 15 * time.Second
 // 翻转/保存设置时也会重调）：读配置、注入回调，凭据齐全则启动长轮询。
 // 每次调用都重建一个新 Runtime 替换 a.wx；替换前先 Stop 旧实例——长轮询 goroutine
 // 挂在旧 Runtime 上，不 Stop 的话关闭总开关后旧实例仍会以真实 token 继续收发，
-// 与「关闭即停轮询」意图相悖。旧凭据保留在配置里，重新 Configure 即可恢复。
+// 与「关闭即停轮询」意图相悖。总开关关闭时凭据一并清空（解绑），重新开启需重新扫码。
 func (a *App) startWeixin() {
 	cfg := a.snapshot().Config
 	r := weixin.NewRuntime(newWXExecutor(a), normalizeLanguage(cfg.Language))
 	r.SetPersist(func(p weixin.WeixinPersist) error {
+		// 关闭态拒绝写回 token：扫码成功回调可能晚于解绑，不能把绑定复活。
+		if p.Token != "" && !a.snapshot().Config.AgentHub.EnabledOn() {
+			return errors.New("err.weixin.agenthub_disabled")
+		}
 		return a.saveConfig(func(c *config.Config) {
 			c.Weixin = config.WeixinConfig{Enabled: p.Enabled, Token: p.Token, Wxid: p.Wxid}
 		})
 	})
 	r.SetOnLearnWxid(func(wxid string) {
+		if !a.snapshot().Config.AgentHub.EnabledOn() {
+			return
+		}
 		_ = a.saveConfig(func(c *config.Config) {
 			c.Weixin.Wxid = wxid
 			c.Weixin.Enabled = true
@@ -53,6 +60,12 @@ func (a *App) startWeixin() {
 		r.Configure(cfg.Weixin.Token, cfg.Weixin.Wxid)
 	} else {
 		r.Configure("", "")
+		// 旧版本可能留下 token：关闭态下清空，避免重新开启时意外复活旧绑定。
+		if cfg.Weixin.Token != "" || cfg.Weixin.Wxid != "" || cfg.Weixin.Enabled {
+			_ = a.saveConfig(func(c *config.Config) {
+				c.Weixin = config.WeixinConfig{}
+			})
+		}
 	}
 
 	a.mu.Lock()

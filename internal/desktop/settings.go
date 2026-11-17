@@ -875,13 +875,6 @@ func (a *App) SaveAgentHubSettings(in AgentHubSettingsInput) error {
 // SetAgentHubEnabled 翻转总开关并即时生效。关闭时一并解绑微信：
 // 取消可能进行中的扫码绑定、清空 token/wxid，重新开启不恢复旧凭据。
 func (a *App) SetAgentHubEnabled(enabled bool) error {
-	if !enabled {
-		// 先 Unbind 再落盘：bindLoop 可能正轮询扫码结果，缓存的成功回调
-		// 会把凭据写回配置；Unbind 会 cancel 它并持久化空凭据。
-		if r := a.wxRuntime(); r != nil {
-			r.Unbind()
-		}
-	}
 	if err := a.saveConfig(func(c *config.Config) {
 		c.AgentHub.Enabled = &enabled
 		if !enabled {
@@ -889,6 +882,13 @@ func (a *App) SetAgentHubEnabled(enabled bool) error {
 		}
 	}); err != nil {
 		return err
+	}
+	if !enabled {
+		// 落盘后立即 Unbind：bindLoop 可能正轮询扫码结果，其成功回调会把
+		// 凭据写回配置；Unbind 取消它并再次持久化空凭据，保证不被复活。
+		if r := a.wxRuntime(); r != nil {
+			r.Unbind()
+		}
 	}
 	a.applyAgentHubGates()
 	a.emitAgentHubChanged()
@@ -901,7 +901,8 @@ func (a *App) emitAgentHubChanged() {
 }
 
 // applyAgentHubGates 让总开关/白名单改动即时生效：微信桥按最新配置重装配
-// （微信桥按最新配置重建实例：startWeixin 替换前 Stop 旧实例，关闭总开关时旧长轮询随之停止；开启时恢复）。
+// （startWeixin 替换前 Stop 旧实例：关闭总开关时旧长轮询停止且凭据已清空，
+// 开启时不恢复旧绑定，需要重新扫码）。
 func (a *App) applyAgentHubGates() {
 	a.startWeixin()
 }
