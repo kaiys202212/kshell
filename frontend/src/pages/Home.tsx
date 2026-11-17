@@ -22,6 +22,7 @@ import {
   getWorkspaces,
   hideProject,
   listConnections,
+  onAgentHubChanged,
   onProjectsChanged,
   onScanDone,
   restoreProject,
@@ -167,12 +168,18 @@ export default function Home() {
     writeHubCollapsed(v);
     setHubCollapsed(v);
   }, []);
-  // AgentHub 启用开关：关闭时整列（折叠条+面板）不渲染
+  // AgentHub 启用开关：关闭时整列（折叠条+面板）不渲染。
+  // Home 常驻挂载，设置页翻转开关后必须靠 agenthub:changed 事件重读，
+  // 否则切回首页仍显示旧状态。
   const [hubEnabled, setHubEnabled] = useState(true);
   useEffect(() => {
-    getAgentHubSettings()
-      .then((s) => setHubEnabled(s.enabled))
-      .catch(() => {});
+    const load = () => {
+      getAgentHubSettings()
+        .then((s) => setHubEnabled(s.enabled))
+        .catch(() => {});
+    };
+    load();
+    return onAgentHubChanged(load);
   }, []);
 
   // 选中态失效清理：selectedProject 不在当前工作区列表（路径归一化后比较）则清除。
@@ -386,7 +393,10 @@ export default function Home() {
       </div>
       {/* 左右分栏：左列项目（检索+网格，内部滚动），右列 AgentHub 对话卡（全高） */}
       <div className="flex min-h-0 flex-1 gap-3">
-        <div data-testid="home-left-col" className={cn('flex min-w-0 flex-col', hubCollapsed ? 'flex-1' : 'w-2/5')}>
+        <div
+          data-testid="home-left-col"
+          className={cn('flex min-w-0 flex-col', hubCollapsed || !hubEnabled ? 'flex-1' : 'w-2/5')}
+        >
           {/* 项目操作行：与卡片放一起（新建项目 / 回收站 / 重新扫描） */}
           <div className="mb-2 flex shrink-0 items-center gap-2">
             <Button size="sm" disabled={creating} onClick={openCreateDialog}>

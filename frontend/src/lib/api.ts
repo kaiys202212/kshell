@@ -2007,6 +2007,12 @@ export function onHubChanged(cb: () => void): () => void {
   return EventsOn('hub:changed', () => cb());
 }
 
+// onAgentHubChanged 订阅 AgentHub 配置变更（总开关/参数保存后由后端广播）。
+// 首页据此实时显隐 Hub 列，不依赖页签重新挂载。
+export function onAgentHubChanged(cb: () => void): () => void {
+  return EventsOn('agenthub:changed', () => cb());
+}
+
 // onHubBusy 订阅 AgentHub 忙碌状态（Go 激活/新建会话前后 Emit hub:busy true/false），
 // 前端据此显示「正在启动 agent」动画；返回取消订阅函数。
 export function onHubBusy(cb: (busy: boolean) => void): () => void {

@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   onScanDone: vi.fn(),
   // Home 拉取 AgentHub 启用状态，默认启用（右列 Hub 正常渲染）
   getAgentHubSettings: vi.fn().mockResolvedValue({ enabled: true, heartbeat_minutes: 5, direct_patterns: null, default_tool: '', default_model: '', route_mode: '' }),
+  onAgentHubChanged: vi.fn(),
   createProject: vi.fn(),
   addSSHProject: vi.fn(),
   listConnections: vi.fn(),
@@ -82,6 +83,7 @@ const workspaces: Workspace[] = [
 ];
 
 let scanDoneCb: (payload: unknown) => void = () => {};
+let hubChangedCb: () => void = () => {};
 
 // 整卡是一个 button，用 title=完整路径定位，避免与卡片内文案撞车
 const card = (path: string) => screen.getByTitle(path);
@@ -100,7 +102,19 @@ beforeEach(() => {
   });
   mocks.getWorkspaces.mockResolvedValue(workspaces);
   mocks.scanSessions.mockResolvedValue(undefined);
+  mocks.getAgentHubSettings.mockResolvedValue({
+    enabled: true,
+    heartbeat_minutes: 5,
+    direct_patterns: null,
+    default_tool: '',
+    default_model: '',
+    route_mode: '',
+  });
   mocks.onProjectsChanged.mockImplementation(() => () => {});
+  mocks.onAgentHubChanged.mockImplementation((cb: () => void) => {
+    hubChangedCb = cb;
+    return () => {};
+  });
   mocks.createProject.mockResolvedValue('');
   mocks.addSSHProject.mockResolvedValue('');
   mocks.listConnections.mockResolvedValue([]);
@@ -158,6 +172,23 @@ describe('Home', () => {
     expect(screen.queryByTestId('hub-panel')).toBeNull();
     expect(screen.queryByTestId('hub-collapse-strip')).toBeNull();
     expect(screen.queryByTestId('home-right-col')).toBeNull();
+  });
+
+  it('收到 agenthub:changed 后按最新设置实时隐藏，左列铺满', async () => {
+    render(<Home />);
+    await waitFor(() => expect(mocks.getAgentHubSettings).toHaveBeenCalled());
+    expect(screen.getByTestId('home-right-col')).toBeInTheDocument();
+    mocks.getAgentHubSettings.mockResolvedValue({
+      enabled: false,
+      heartbeat_minutes: 5,
+      direct_patterns: null,
+      default_tool: '',
+      default_model: '',
+      route_mode: '',
+    });
+    act(() => hubChangedCb());
+    await waitFor(() => expect(screen.queryByTestId('home-right-col')).toBeNull());
+    expect(screen.getByTestId('home-left-col').className).toContain('flex-1');
   });
 
   it('折叠状态记忆：localStorage 为 0 时默认展开，为非法值回落默认折叠', () => {
