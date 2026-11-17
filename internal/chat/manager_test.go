@@ -1729,6 +1729,71 @@ func TestManagerCancelledTurnClosesInFlightTools(t *testing.T) {
 	if info, ok := m.Get(info.ID); !ok || info.Status != StatusReady {
 		t.Fatalf("取消轮收口后状态应保持 ready: %+v", info)
 	}
+	// 合成终态必须先于 turn_done 推送（时间线顺序与 history 一致）
+	c.mu.Lock()
+	synIdx, doneIdx := -1, -1
+	for i := range c.updates {
+		u := &c.updates[i]
+		if u.Type == "tool" && u.ToolCallID == "orphan1" && u.Tool != nil && u.Tool.Status == "cancelled" {
+			synIdx = i
+		}
+		if u.Type == "turn_done" && u.StopReason == "cancelled" {
+			doneIdx = i
+		}
+	}
+	c.mu.Unlock()
+	if synIdx < 0 || doneIdx < 0 || synIdx > doneIdx {
+		t.Fatalf("合成终态应在 turn_done 之前推送: syn=%d done=%d", synIdx, doneIdx)
+	}
+}
+
+// refusal/max_tokens 等异常提前停止轮与取消轮同族：在途工具不会再有终态，
+// 同样合成 failed 终态收口（评审 Important #1：429 常被上游映射成 refusal）。
+func TestManagerAbnormalStopTurnClosesInFlightTools(t *testing.T) {
+	m, b, c, _ := newIdleTestManager(t)
+	b.conn.promptGate = make(chan struct{})
+	b.conn.stop = "refusal"
+	b.conn.stderr = "429 too many requests"
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, info.ID, StatusRunning)
+	b.last.SessionUpdate("sess-new", json.RawMessage(`{"sessionUpdate":"tool_call","toolCallId":"orphan1","title":"Bash","status":"in_progress"}`))
+	close(b.conn.promptGate)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		found := false
+		for _, u := range c.updates {
+			if u.Type == "turn_done" && u.StopReason == "refusal" {
+				found = true
+			}
+		}
+		c.mu.Unlock()
+		if found {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	c.mu.Lock()
+	var synthetic *Update
+	for i := range c.updates {
+		u := &c.updates[i]
+		if u.Type == "tool" && u.ToolCallID == "orphan1" && u.Tool != nil && u.Tool.Status == "failed" {
+			synthetic = u
+		}
+	}
+	c.mu.Unlock()
+	if synthetic == nil {
+		t.Fatalf("refusal 轮未合成在途工具 failed 终态更新: %+v", c.updates)
+	}
+	waitStatus(t, m, info.ID, StatusReady)
 }
 
 // 异常轮（prompt 报错）同理：在途工具合成 failed 终态收口，既有「清在途集合」

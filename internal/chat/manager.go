@@ -1126,13 +1126,17 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		logf("chat: turn 结束 id=%s err=%v stop=%q inFlightTools=%d %v",
 			id, err, stop, len(s.inFlightTools), s.inFlightTools)
 		// 轮次以取消或异常终结时，agent 不会再给在途工具推终态：合成终态收口
-		// （时间线卡片 + 在途清空），防孤儿把状态永久钉在 running。end_turn 且
-		// 有在途工具是 codebuddy 子任务的合法形态，保持现状等真实终态 + 静默回退。
+		// （时间线卡片 + 在途清空），防孤儿把状态永久钉在 running。refusal/
+		// max_tokens 等提前停止与取消同族（上游常把 429 映射成 refusal）。
+		// end_turn 且有在途工具是 codebuddy 子任务的合法形态，保持现状等真实
+		// 终态 + 静默回退。
 		var closed []Update
 		if err != nil {
 			closed = s.closeOrphanToolsLocked("failed")
 		} else if stop == "cancelled" {
 			closed = s.closeOrphanToolsLocked("cancelled")
+		} else if stop != "" && stop != "end_turn" {
+			closed = s.closeOrphanToolsLocked("failed")
 		}
 		// 提前返回 prompt 的 agent（codebuddy 等）可能仍有在途工具（子任务）：
 		// 保持 running，等工具终态后的静默回退收尾；否则照旧回 ready。
