@@ -348,8 +348,7 @@
       "scan_hint": "Scan with WeChat; binding completes automatically after confirmation",
       "expired": "QR code expired",
       "pending_undelivered": "{{count}} undelivered",
-      "error": "WeChat bridge operation failed",
-      "agenthub_disabled_hint": "AgentHub is disabled; WeChat binding unavailable"
+      "error": "WeChat bridge operation failed"
     },
     "error_boundary": {
       "title": "Something went wrong",
@@ -362,7 +361,6 @@
         "aria": "Settings sections",
         "general": "General",
         "agenthub": "AgentHub",
-        "weixin": "WeChat",
         "model": "Model",
         "tools": "Tools",
         "skills": "Skill Plaza",
@@ -371,11 +369,15 @@
       "agenthub": {
         "title": "AgentHub",
         "enabled": "Enable AgentHub",
-        "enabled_hint": "When off, the Hub panel collapses and the WeChat QR entry is hidden",
+        "enabled_hint": "When off, the Hub panel collapses and the linked WeChat account is unlinked (scan again to re-link)",
         "heartbeat": "Heartbeat threshold for long-running tasks (minutes)",
         "patterns": "Direct-pass keywords (one per line; empty uses defaults: # commands / @ / continue / explain)",
         "save": "Save",
-        "saved": "Saved"
+        "saved": "Saved",
+        "disable_confirm_title": "Disable AgentHub?",
+        "disable_confirm_desc": "The Hub panel will be hidden and the linked WeChat account will be unlinked. You will need to scan the QR code again to re-link.",
+        "disable_confirm_ok": "Disable & unlink",
+        "cancel": "Cancel"
       },
       "help": {
         "tab": {

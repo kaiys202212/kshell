@@ -74,6 +74,7 @@ const mocks = vi.hoisted(() => ({
   markRequirementDispatched: vi.fn(),
   onRequirementsChanged: vi.fn(() => () => {}),
   onHubChanged: vi.fn(() => () => {}),
+  onAgentHubChanged: vi.fn(() => () => {}),
   onChatMeta: vi.fn(() => () => {}),
   onArchiveSuggest: vi.fn(() => () => {}),
   onArchiveChanged: vi.fn(() => () => {}),

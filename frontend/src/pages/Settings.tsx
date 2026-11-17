@@ -73,7 +73,6 @@ import LoginDialog from '../components/LoginDialog';
 import { ProvidersEditor } from '../components/ProvidersEditor';
 import { SkillPlaza } from '../components/SkillPlaza';
 import { ToolSyncDialog } from '../components/ToolSyncDialog';
-import { WeixinSettings } from '../components/WeixinSettings';
 import { AgentHubSettings } from '../components/AgentHubSettings';
 import HostSyncCard from '../components/HostSyncCard';
 import { normalizeSpec, withoutBuiltinSpecs, type CustomProviderSpec } from '../lib/providersForm';
@@ -87,7 +86,7 @@ const BUILTIN_LANGUAGE_CODES = ['en', 'zh-CN', 'system'];
 // translateBackend 会把首行后的内容当参数吞掉，导致漏译）
 const translateLog = (text: string): string => text.split('\n').map(translateBackend).join('\n');
 
-type Section = 'general' | 'agenthub' | 'weixin' | 'model' | 'tools' | 'skills' | 'help';
+type Section = 'general' | 'agenthub' | 'model' | 'tools' | 'skills' | 'help';
 
 // PlatDraft：平台编辑态草稿（新增/编辑共用）。APIKey 只在表单里流转（空串=保持原值），
 // APIKeySet / IsNew 仅为占位与交互辅助，不参与提交。
@@ -114,7 +113,6 @@ const genPlatformID = (): string =>
 const SECTIONS: { id: Section; labelKey: string }[] = [
   { id: 'general', labelKey: 'ui.settings.nav.general' },
   { id: 'agenthub', labelKey: 'ui.settings.nav.agenthub' },
-  { id: 'weixin', labelKey: 'ui.settings.nav.weixin' },
   { id: 'model', labelKey: 'ui.settings.nav.model' },
   { id: 'tools', labelKey: 'ui.settings.nav.tools' },
   { id: 'skills', labelKey: 'ui.settings.nav.skills' },
@@ -1281,8 +1279,6 @@ export default function Settings() {
               <HostSyncCard />
             </>
           )}
-          {section === 'weixin' && <WeixinSettings />}
-
           {section === 'model' && (
             <div
               className={cn(
