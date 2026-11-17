@@ -5,7 +5,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { useTranslation } from 'react-i18next';
 import {
-  getAgentHubSettings,
   weixinBind,
   weixinBindStatus,
   weixinStatus,
@@ -31,8 +30,6 @@ export function WeixinSettings() {
   const notify = useAppStore((s) => s.notify);
   const [status, setStatus] = useState<WeixinStatusView | null>(null);
   const [failed, setFailed] = useState(false);
-  // AgentHub 门控：未启用时整段绑定流换成提示行（默认 true，加载后以设置为准）
-  const [hubEnabled, setHubEnabled] = useState(true);
   const [qrUrl, setQrUrl] = useState(''); // 二维码 dataURL
   const [qrError, setQrError] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -50,9 +47,6 @@ export function WeixinSettings() {
 
   useEffect(() => {
     void refresh();
-    getAgentHubSettings()
-      .then((s) => setHubEnabled(s.enabled))
-      .catch(() => {});
     return () => window.clearTimeout(confirmTimer.current);
   }, [refresh]);
 
@@ -119,15 +113,9 @@ export function WeixinSettings() {
       <h2 className="mb-1 text-sm font-medium">{t('ui.weixin.title')}</h2>
       <p className="mb-3 text-xs text-muted-foreground">{t('ui.weixin.desc')}</p>
 
-      {!hubEnabled && (
-        <p className="text-xs text-muted-foreground">
-          {t('ui.weixin.agenthub_disabled_hint')}
-        </p>
-      )}
+      {failed && <p className="text-sm text-destructive">{t('ui.weixin.error')}</p>}
 
-      {hubEnabled && failed && <p className="text-sm text-destructive">{t('ui.weixin.error')}</p>}
-
-      {hubEnabled && !failed && !bound && (
+      {!failed && !bound && (
         <div>
           {!qrUrl && (
             <Button size="sm" onClick={() => void startBind()}>
@@ -159,7 +147,7 @@ export function WeixinSettings() {
         </div>
       )}
 
-      {hubEnabled && !failed && bound && (
+      {!failed && bound && (
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2 text-sm">
             <span
