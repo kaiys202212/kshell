@@ -69,6 +69,59 @@ func TestAgentHubSettingsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSetAgentHubEnabledOffUnlinksWeixin 验证关闭总开关会解绑微信：
+// 清空 token/wxid 并广播 agenthub:changed；重新开启不会复活旧凭据。
+func TestSetAgentHubEnabledOffUnlinksWeixin(t *testing.T) {
+	dir := t.TempDir()
+	layout := config.Layout{
+		Root:   dir,
+		Config: filepath.Join(dir, "config.yaml"),
+		Cache:  filepath.Join(dir, "cache"),
+	}
+	cfg := config.Default()
+	cfg.Weixin = config.WeixinConfig{Enabled: true, Token: "tok", Wxid: "wxid"}
+	var events []string
+	a := NewAppWith(Options{
+		Config: cfg,
+		Layout: layout,
+		Emit: func(name string, _ ...any) {
+			events = append(events, name)
+		},
+	})
+
+	if err := a.SetAgentHubEnabled(false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	loaded, err := config.Load(layout)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Weixin.Token != "" || loaded.Weixin.Wxid != "" || loaded.Weixin.Enabled {
+		t.Fatalf("关闭后微信凭据未清空: %+v", loaded.Weixin)
+	}
+	found := false
+	for _, e := range events {
+		if e == "agenthub:changed" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("未广播 agenthub:changed, events=%v", events)
+	}
+
+	// 重新开启不恢复旧凭据：必须重新扫码。
+	if err := a.SetAgentHubEnabled(true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	loaded2, err := config.Load(layout)
+	if err != nil {
+		t.Fatalf("Load after enable: %v", err)
+	}
+	if loaded2.Weixin.Token != "" || loaded2.Weixin.Wxid != "" {
+		t.Fatalf("开启后凭据被复活: %+v", loaded2.Weixin)
+	}
+}
+
 // agentHubTestApp 构造带落盘 Layout 的 App（saveConfig 需要 Layout.Config，
 // 套路同 TestAgentHubSettingsRoundTrip；无扫描数据）。
 func agentHubTestApp(t *testing.T) *App {

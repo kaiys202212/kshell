@@ -868,18 +868,36 @@ func (a *App) SaveAgentHubSettings(in AgentHubSettingsInput) error {
 		return err
 	}
 	a.applyAgentHubGates()
+	a.emitAgentHubChanged()
 	return nil
 }
 
-// SetAgentHubEnabled 翻转总开关并即时生效。
+// SetAgentHubEnabled 翻转总开关并即时生效。关闭时一并解绑微信：
+// 取消可能进行中的扫码绑定、清空 token/wxid，重新开启不恢复旧凭据。
 func (a *App) SetAgentHubEnabled(enabled bool) error {
+	if !enabled {
+		// 先 Unbind 再落盘：bindLoop 可能正轮询扫码结果，缓存的成功回调
+		// 会把凭据写回配置；Unbind 会 cancel 它并持久化空凭据。
+		if r := a.wxRuntime(); r != nil {
+			r.Unbind()
+		}
+	}
 	if err := a.saveConfig(func(c *config.Config) {
 		c.AgentHub.Enabled = &enabled
+		if !enabled {
+			c.Weixin = config.WeixinConfig{}
+		}
 	}); err != nil {
 		return err
 	}
 	a.applyAgentHubGates()
+	a.emitAgentHubChanged()
 	return nil
+}
+
+// emitAgentHubChanged 广播 AgentHub 配置变更（首页据此实时显隐 Hub 列）。
+func (a *App) emitAgentHubChanged() {
+	a.Emit("agenthub:changed", map[string]any{"enabled": a.snapshot().Config.AgentHub.EnabledOn()})
 }
 
 // applyAgentHubGates 让总开关/白名单改动即时生效：微信桥按最新配置重装配
