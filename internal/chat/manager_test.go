@@ -1672,6 +1672,113 @@ func TestManagerTurnDoneKeepsRunningWhileToolInFlight(t *testing.T) {
 	t.Fatal("工具终态回退未推送 meta")
 }
 
+// 取消轮（stop=cancelled）后在途工具不会再有 agent 终态：必须合成 cancelled
+// 终态收口（合并保留卡片信息、进时间线推送），在途清空、状态直接回 ready。
+// 否则孤儿把状态永久钉在 running，前端本地队列永不自动出队（2026-11-17 排队事故：
+// call_4743fecc 残留导致状态卡 running、新消息排队数小时）。
+func TestManagerCancelledTurnClosesInFlightTools(t *testing.T) {
+	m, b, c, _ := newIdleTestManager(t)
+	b.conn.promptGate = make(chan struct{})
+	b.conn.stop = "cancelled"
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, info.ID, StatusRunning)
+	// 工具在途后取消轮：prompt 返回 stop=cancelled
+	b.last.SessionUpdate("sess-new", json.RawMessage(`{"sessionUpdate":"tool_call","toolCallId":"orphan1","title":"Bash","status":"in_progress"}`))
+	close(b.conn.promptGate)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		found := false
+		for _, u := range c.updates {
+			if u.Type == "turn_done" && u.StopReason == "cancelled" {
+				found = true
+			}
+		}
+		c.mu.Unlock()
+		if found {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// 合成终态 tool 更新已推送（Title 由合并保留）
+	c.mu.Lock()
+	var synthetic *Update
+	for i := range c.updates {
+		u := &c.updates[i]
+		if u.Type == "tool" && u.ToolCallID == "orphan1" && u.Tool != nil && u.Tool.Status == "cancelled" {
+			synthetic = u
+		}
+	}
+	c.mu.Unlock()
+	if synthetic == nil {
+		t.Fatalf("取消轮未合成在途工具终态更新: %+v", c.updates)
+	}
+	if synthetic.Tool.Title != "Bash" {
+		t.Fatalf("合成终态未保留卡片 Title: %+v", synthetic.Tool)
+	}
+	// 状态必须直接回 ready（不等静默期），且不被再拉回
+	waitStatus(t, m, info.ID, StatusReady)
+	time.Sleep(100 * time.Millisecond)
+	if info, ok := m.Get(info.ID); !ok || info.Status != StatusReady {
+		t.Fatalf("取消轮收口后状态应保持 ready: %+v", info)
+	}
+}
+
+// 异常轮（prompt 报错）同理：在途工具合成 failed 终态收口，既有「清在途集合」
+// 之外还需补时间线卡片，否则前端该工具卡永远转圈。
+func TestManagerErrorTurnClosesInFlightTools(t *testing.T) {
+	m, b, c, _ := newIdleTestManager(t)
+	b.conn.promptGate = make(chan struct{})
+	b.conn.promptErr = errors.New("boom")
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, info.ID, StatusRunning)
+	b.last.SessionUpdate("sess-new", json.RawMessage(`{"sessionUpdate":"tool_call","toolCallId":"orphan1","title":"Bash","status":"in_progress"}`))
+	close(b.conn.promptGate)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		found := false
+		for _, u := range c.updates {
+			if u.Type == "error" {
+				found = true
+			}
+		}
+		c.mu.Unlock()
+		if found {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	c.mu.Lock()
+	var synthetic *Update
+	for i := range c.updates {
+		u := &c.updates[i]
+		if u.Type == "tool" && u.ToolCallID == "orphan1" && u.Tool != nil && u.Tool.Status == "failed" {
+			synthetic = u
+		}
+	}
+	c.mu.Unlock()
+	if synthetic == nil {
+		t.Fatalf("异常轮未合成在途工具 failed 终态更新: %+v", c.updates)
+	}
+	waitStatus(t, m, info.ID, StatusReady)
+}
+
 // 投递解耦：活动拉回 running 期间再发消息必须立即投递（agent 已结束当前 turn，
 // ACP 层合法），不得因展示状态 running 卡死队列。
 func TestManagerPromptDeliversWhileActivityRunning(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1124,9 +1125,14 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		s.promptInFlight = false
 		logf("chat: turn 结束 id=%s err=%v stop=%q inFlightTools=%d %v",
 			id, err, stop, len(s.inFlightTools), s.inFlightTools)
+		// 轮次以取消或异常终结时，agent 不会再给在途工具推终态：合成终态收口
+		// （时间线卡片 + 在途清空），防孤儿把状态永久钉在 running。end_turn 且
+		// 有在途工具是 codebuddy 子任务的合法形态，保持现状等真实终态 + 静默回退。
+		var closed []Update
 		if err != nil {
-			// 轮次异常结束：在途工具不会再有终态更新，清掉防状态永久卡 running
-			s.inFlightTools = make(map[string]bool)
+			closed = s.closeOrphanToolsLocked("failed")
+		} else if stop == "cancelled" {
+			closed = s.closeOrphanToolsLocked("cancelled")
 		}
 		// 提前返回 prompt 的 agent（codebuddy 等）可能仍有在途工具（子任务）：
 		// 保持 running，等工具终态后的静默回退收尾；否则照旧回 ready。
@@ -1164,6 +1170,10 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		onQueue := m.onQueue
 		m.mu.Unlock()
 		if m.onUpdate != nil {
+			// 合成终态先于 turn_done/error 推送：时间线顺序与 history 一致
+			for _, cu := range closed {
+				m.onUpdate(id, cu)
+			}
 			m.onUpdate(id, u)
 		}
 		if hasNext && onQueue != nil {
@@ -1174,6 +1184,36 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		}
 	}()
 	return nil
+}
+
+// closeOrphanToolsLocked 轮次以取消或异常终结时，agent 不会再给在途工具推终态：
+// 对每个在途工具合成终态更新（经 mergeToolCall 合并保留卡片信息），追加时间线
+// 并返回待推送更新，同时清空在途集合。status 取 cancelled/failed 区分收口原因。
+// 调用方持锁；无孤儿时返回 nil。孤儿不收口会让状态永久卡 running（前端本地队列
+// 等 ready 沿出队，永不出现——2026-11-17 排队事故根因）。
+func (s *session) closeOrphanToolsLocked(status string) []Update {
+	if len(s.inFlightTools) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(s.inFlightTools))
+	for id := range s.inFlightTools {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids) // 固定顺序，时间线与测试可复现
+	out := make([]Update, 0, len(ids))
+	for _, id := range ids {
+		merged := mergeToolCall(s.tools[id], &ToolCall{ToolCallID: id, Status: status})
+		s.tools[id] = merged
+		s.seq++
+		u := Update{Seq: s.seq, Type: "tool", ToolCallID: merged.ToolCallID, Tool: merged}
+		s.history = append(s.history, u)
+		if len(s.history) > maxHistory {
+			s.history = append([]Update(nil), s.history[len(s.history)-maxHistory:]...)
+		}
+		out = append(out, u)
+	}
+	s.inFlightTools = make(map[string]bool)
+	return out
 }
 
 // closeStaleTurnLocked 收口未完结的上一轮（调用方持锁，投递新输入前调用）：
