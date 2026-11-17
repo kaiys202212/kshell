@@ -505,3 +505,64 @@ func TestUnbindInvalidatesLateBindSuccess(t *testing.T) {
 		t.Fatalf("解绑后迟到成功不应把状态置回 ok, got %q", got)
 	}
 }
+
+// TestUnbindDuringBindPersistStopsRuntime 锁定 persistMu 的交错保护：
+// bindSucceeded 已通过代次检查并在落盘时，Unbind 必须等其完成后再停掉
+// 刚 Configure 出来的运行时，最终不得留下在线的 client/轮询。
+func TestUnbindDuringBindPersistStopsRuntime(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(500) // 若解绑漏停轮询，这里只会记录请求，不发外网
+	}))
+	defer srv.Close()
+
+	r := NewRuntime(nil, "en")
+	r.SetBaseURL(srv.URL)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	var mu sync.Mutex
+	var persisted []WeixinPersist
+	r.SetPersist(func(p WeixinPersist) error {
+		mu.Lock()
+		persisted = append(persisted, p)
+		mu.Unlock()
+		if p.Token != "" {
+			once.Do(func() { close(entered) })
+			<-release
+		}
+		return nil
+	})
+
+	r.mu.Lock()
+	gen := r.bindGen
+	r.mu.Unlock()
+
+	bindDone := make(chan struct{})
+	go func() {
+		r.bindSucceeded(gen, "tok")
+		close(bindDone)
+	}()
+	<-entered // 已进入落盘，持 persistMu
+
+	unbindDone := make(chan struct{})
+	go func() {
+		r.Unbind()
+		close(unbindDone)
+	}()
+	close(release) // 放行绑定落盘；Unbind 随后应停掉 Configure 出的运行时
+	<-bindDone
+	<-unbindDone
+
+	mu.Lock()
+	last := persisted[len(persisted)-1]
+	mu.Unlock()
+	if last.Token != "" || last.Enabled {
+		t.Fatalf("最后一次落盘应为空凭据, got %+v", last)
+	}
+	if r.Client() != nil {
+		t.Fatal("解绑后不应残留 client")
+	}
+	if r.Running() {
+		t.Fatal("解绑后不应仍有长轮询在跑")
+	}
+}

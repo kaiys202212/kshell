@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -62,9 +63,11 @@ func (a *App) startWeixin() {
 		r.Configure("", "")
 		// 旧版本可能留下 token：关闭态下清空，避免重新开启时意外复活旧绑定。
 		if cfg.Weixin.Token != "" || cfg.Weixin.Wxid != "" || cfg.Weixin.Enabled {
-			_ = a.saveConfig(func(c *config.Config) {
+			if err := a.saveConfig(func(c *config.Config) {
 				c.Weixin = config.WeixinConfig{}
-			})
+			}); err != nil {
+				log.Printf("[weixin] 清理关闭态遗留凭据失败: %v", err)
+			}
 		}
 	}
 
@@ -132,7 +135,7 @@ func (a *App) weixinInputRouter() weixin.InputRouter {
 // weixinManagerRouter 返回微信管理者循环路由闭包（逃生门之后、InputRouter
 // 单发之前）：循环成功 → Replies 直接回显（正文已是自然语言结论/选项列表）；
 // ErrLoopBusy/ErrLLMNotReady/其它错误一律 (zero,false) 回落 InputRouter
-//（RouteInput 单发路径，现状行为）。Channel 固定 "wechat"，与桌面 Hub 的
+// （RouteInput 单发路径，现状行为）。Channel 固定 "wechat"，与桌面 Hub 的
 // 挂起态渠道隔离；反问采用挂起-续跑语义（agentapi Run 内部按渠道+SuspendTTL
 // 对短输入自动续跑），desktop 不再维护续轮标记与 TTL。
 func (a *App) weixinManagerRouter() weixin.ManagerRouter {
@@ -182,7 +185,7 @@ func (a *App) runWXLoop(ctx context.Context, input string, opts agentapi.RunOpts
 
 // pushWXManagerProgress 推送一条微信侧中途进度：wxNotify 注入点（测试观察）
 // 优先，生产走 Runtime.NotifyProgress 经 bridge 既有出站 worker 异步投递
-//（Runtime/bridge 未装配时安全跳过）。
+// （Runtime/bridge 未装配时安全跳过）。
 func (a *App) pushWXManagerProgress(step int) {
 	a.mu.Lock()
 	fn := a.wxNotify
@@ -207,7 +210,7 @@ func (a *App) agenthubDirectPatterns() []string {
 }
 
 // mapVoiceErr 把 hubtools「模型不支持音频」哨兵映射为 weixin.ErrVoiceUnsupported
-//（%w 双层包裹，两层哨兵都在链上：桥层归因到 weixin 哨兵，日志仍可归因到
+// （%w 双层包裹，两层哨兵都在链上：桥层归因到 weixin 哨兵，日志仍可归因到
 // hubtools 原始 key）。其余错误原样透传。
 func mapVoiceErr(err error) error {
 	if err != nil && errors.Is(err, hubtools.ErrChatAudioUnsupported) {

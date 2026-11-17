@@ -883,9 +883,9 @@ func (a *App) SetAgentHubEnabled(enabled bool) error {
 	}); err != nil {
 		return err
 	}
+	// 先落盘再 Unbind：落盘失败时不执行破坏性解绑；Unbind 在关闭态下取消
+	// 进行中的扫码绑定并再次持久化空凭据，persist 门禁同时拒绝迟到的 token 写回。
 	if !enabled {
-		// 落盘后立即 Unbind：bindLoop 可能正轮询扫码结果，其成功回调会把
-		// 凭据写回配置；Unbind 取消它并再次持久化空凭据，保证不被复活。
 		if r := a.wxRuntime(); r != nil {
 			r.Unbind()
 		}

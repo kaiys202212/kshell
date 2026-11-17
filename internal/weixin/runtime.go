@@ -39,7 +39,7 @@ type WeixinStatus struct {
 
 // InputRouter 是微信入站文本的智能路由钩子：返回 (决策, 是否消费)。
 // handled=false 时调用方回落 Console.Handle(原文) 兜底。闭包内自行读配置
-//（照 transcriber 范式每次实时读，改配置即时生效）。
+// （照 transcriber 范式每次实时读，改配置即时生效）。
 type InputRouter func(ctx context.Context, input string) (hubtools.RouteDecision, bool)
 
 // ManagerOutcome 是管理者循环的执行结果（直接回显，不走决策执行）。
@@ -325,7 +325,7 @@ const backlogWindow = 2 * time.Minute
 var startedAt = time.Now()
 
 // isBacklog 报告消息是否为历史积压：服务端未给时间戳（CreateMs==0）时保守放行
-//（宁可投给白名单用户也不能吞正常消息；错绑风险由白名单机制兜底）。
+// （宁可投给白名单用户也不能吞正常消息；错绑风险由白名单机制兜底）。
 func isBacklog(m InboundMsg) bool {
 	if m.CreateMs == 0 {
 		return false
@@ -411,10 +411,9 @@ func (r *Runtime) Bind(ctx context.Context) (string, error) {
 		return "", errors.New("err.weixin.bind_in_progress")
 	}
 	// 已有凭据（正常绑定或 -14 过期）：停旧轮询，等待扫码结果覆盖。
-	r.stopLocked()
+	r.stopLocked() // 同时作废旧绑定代次并取消上一次绑定轮询
 	tmp := NewClient("", r.baseURL)
 	r.bindStatus = "pending"
-	r.bindGen++
 	gen := r.bindGen
 	bctx, bcancel := context.WithCancel(context.Background())
 	r.bindCancel = bcancel
@@ -426,10 +425,8 @@ func (r *Runtime) Bind(ctx context.Context) (string, error) {
 		if gen == r.bindGen {
 			r.bindStatus = "expired"
 		}
-		if r.bindGen == gen {
-			bcancel()
-		}
 		r.mu.Unlock()
+		bcancel()
 		return "", err
 	}
 	go r.bindLoop(bctx, tmp, qr.Key, gen)
@@ -447,14 +444,29 @@ func (r *Runtime) bindSucceeded(gen uint64, token string) {
 		r.mu.Unlock()
 		return
 	}
-	r.bindStatus = "ok"
 	fn := r.persist
 	r.mu.Unlock()
 	if fn != nil {
 		if err := fn(WeixinPersist{Enabled: true, Token: token, Wxid: ""}); err != nil {
+			// 写回被拒（如关闭态门禁）时中止：不把运行时重新配置成在线，
+			// 否则配置虽为空、桥却仍在收发。
 			log.Printf("[weixin] 绑定凭据落盘失败: %v", err)
+			r.mu.Lock()
+			if gen == r.bindGen {
+				r.bindStatus = "idle"
+			}
+			r.mu.Unlock()
+			return
 		}
 	}
+	// 落盘期间可能有新的 Bind/Stop：代次变了就不要再把本实例配置成在线。
+	r.mu.Lock()
+	if gen != r.bindGen {
+		r.mu.Unlock()
+		return
+	}
+	r.bindStatus = "ok"
+	r.mu.Unlock()
 	r.Configure(token, "")
 }
 
@@ -513,20 +525,18 @@ func (r *Runtime) BindStatus() string {
 // bindGen 递增使迟到的扫码成功回调失效；persist 在 persistMu 内进行，
 // 与 bindSucceeded 串行，保证解绑结果最终生效。
 func (r *Runtime) Unbind() {
+	// 先拿 persistMu 再动状态，与 bindSucceeded 的「persistMu → mu」同序：
+	// 若成功回调已进入落盘+Configure，本函数会等它完成后再做停轮询/清状态，
+	// 保证解绑是最后生效的一步（不会有内存里的桥复活）。
+	r.persistMu.Lock()
+	defer r.persistMu.Unlock()
 	r.mu.Lock()
-	r.bindGen++
 	r.stopLocked()
-	if r.bindCancel != nil {
-		r.bindCancel()
-		r.bindCancel = nil
-	}
 	r.bindStatus = "idle"
 	r.client = nil
 	r.bridge = nil
 	fn := r.persist
 	r.mu.Unlock()
-	r.persistMu.Lock()
-	defer r.persistMu.Unlock()
 	if fn != nil {
 		if err := fn(WeixinPersist{Enabled: false, Token: "", Wxid: ""}); err != nil {
 			log.Printf("[weixin] 解绑凭据落盘失败: %v", err)
@@ -534,8 +544,12 @@ func (r *Runtime) Unbind() {
 	}
 }
 
-// Stop 停止长轮询（Shutdown 时调用；凭据保留，重启后 Configure 即可恢复）。
+// Stop 停止长轮询与进行中的扫码绑定（Shutdown / 桌面重建 Runtime 时调用；
+// 凭据保留，重启后 Configure 即可恢复）。与 bindSucceeded 共享 persistMu，
+// 避免「Stop 之后迟到的绑定回调又把本实例 Configure 成活」。
 func (r *Runtime) Stop() {
+	r.persistMu.Lock()
+	defer r.persistMu.Unlock()
 	r.mu.Lock()
 	r.stopLocked()
 	r.mu.Unlock()
@@ -545,6 +559,14 @@ func (r *Runtime) Stop() {
 // bridge.Close 会等 worker 排空退出；持锁调用安全：worker 的 deliver 只
 // 竞争 bridge 自身的 mu，不会回头取 Runtime.mu。
 func (r *Runtime) stopLocked() {
+	// 作废进行中的扫码绑定：代次递增让迟到的成功回调失效，并取消轮询。
+	// 必须在这里做：Configure/Bind/Stop 都经本函数，重建 Runtime 时（desktop
+	// startWeixin 换实例）孤儿绑定不能继续活着。
+	r.bindGen++
+	if r.bindCancel != nil {
+		r.bindCancel()
+		r.bindCancel = nil
+	}
 	if r.cancel != nil {
 		r.cancel()
 		r.cancel = nil

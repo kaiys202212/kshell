@@ -83,7 +83,7 @@ const workspaces: Workspace[] = [
 ];
 
 let scanDoneCb: (payload: unknown) => void = () => {};
-let hubChangedCb: () => void = () => {};
+let hubChangedCb: (enabled?: boolean) => void = () => {};
 
 // 整卡是一个 button，用 title=完整路径定位，避免与卡片内文案撞车
 const card = (path: string) => screen.getByTitle(path);
@@ -111,7 +111,7 @@ beforeEach(() => {
     route_mode: '',
   });
   mocks.onProjectsChanged.mockImplementation(() => () => {});
-  mocks.onAgentHubChanged.mockImplementation((cb: () => void) => {
+  mocks.onAgentHubChanged.mockImplementation((cb: (enabled?: boolean) => void) => {
     hubChangedCb = cb;
     return () => {};
   });
@@ -189,6 +189,15 @@ describe('Home', () => {
     act(() => hubChangedCb());
     await waitFor(() => expect(screen.queryByTestId('home-right-col')).toBeNull());
     expect(screen.getByTestId('home-left-col').className).toContain('flex-1');
+  });
+
+  it('事件载荷 enabled=false 时直接隐藏，不依赖重读成功', async () => {
+    render(<Home />);
+    await waitFor(() => expect(mocks.getAgentHubSettings).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId('home-right-col')).toBeInTheDocument();
+    act(() => hubChangedCb(false));
+    await waitFor(() => expect(screen.queryByTestId('home-right-col')).toBeNull());
+    expect(mocks.getAgentHubSettings).toHaveBeenCalledTimes(1);
   });
 
   it('折叠状态记忆：localStorage 为 0 时默认展开，为非法值回落默认折叠', () => {
