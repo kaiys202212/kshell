@@ -111,6 +111,10 @@ type Bridge struct {
 	// directPatternsFn 是逃生门白名单查询函数（desktop 注入，实时读配置）；
 	// nil 时回落 hub.DefaultDirectPatterns。
 	directPatternsFn func() []string
+	// routeGate 是智能链路启用门禁（desktop 注入，实时读 AgentHub 总开关）；
+	// nil 视为允许（未改造的旧装配路径零影响）。false 时自由文本不进智能链路，
+	// 按旧语义直投当前会话——"未启用智能路由"是正常用法，不能拦截。
+	routeGate RouteGate
 	// routeRound 是连续反问轮次（反问链最多 hubtools.AskMaxRounds 轮）；mu 保护。
 	// 只增不减的正确性依赖入站单 goroutine 串行处理（Stop/重绑前先停轮询）。
 	routeRound int
@@ -223,6 +227,25 @@ func (b *Bridge) SetDirectPatterns(fn func() []string) {
 	b.mu.Lock()
 	b.directPatternsFn = fn
 	b.mu.Unlock()
+}
+
+// SetRouteGate 装配智能链路启用门禁（可随时替换：desktop 读实时配置）。
+func (b *Bridge) SetRouteGate(fn RouteGate) {
+	b.mu.Lock()
+	b.routeGate = fn
+	b.mu.Unlock()
+}
+
+// routeGateAllows 报告智能链路是否启用：未装配门禁（nil）视为允许，
+// 保持既有装配路径零影响；装配了则实时问一次（改配置即时生效）。
+func (b *Bridge) routeGateAllows() bool {
+	b.mu.Lock()
+	fn := b.routeGate
+	b.mu.Unlock()
+	if fn == nil {
+		return true
+	}
+	return fn()
 }
 
 // routerFn 加锁读当前路由钩子。
@@ -463,8 +486,15 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 // quoted 表示用户明确引用了消息：归因失败或 chatID 不在列表时进待选
 //（PickTarget），不得回落发「当前会话」——引用已表明不想跟默认目标。
 // 无引用（quoted=false）且非逃生门/菜单挂起/无附件队列时，自由文本（含纯
-// 数字，语境由路由器决断）先问智能路由器；路由器消费则按决策落 Console，
-// 不消费/决策不可执行则回落 Handle(原文)。
+// 数字，语境由路由器决断）先问智能路由器；路由器消费则按决策落 Console。
+//
+// 智能链路失败的处理（2026-11-18 真机事故复盘）：管理者循环与单发路由都未
+// 接管时**不得**回落 Handle(原文)——那会按归因水位把正文直投"当前会话"，
+// 与用户正文里点名的项目/工具无关（事故里投给了 strategy 的 agent，它再用
+// kshell CLI 跨项目自建会话，看起来像"多路投递"）。失败一律转 PickTarget
+// 待选并附一条说明原因的回执，让用户自己指目标。
+//
+// 门禁关闭（AgentHub 总开关 off）时整条智能链路不参与，保持旧直投语义。
 func (b *Bridge) dispatchConsole(ctx context.Context, text, quotedChatID, sessionHint string, quoted bool) []hub.Reply {
 	// 引用与待选分支不进路由：反问链被打断，轮次清零（防悬挂）。
 	if quotedChatID != "" || sessionHint != "" {
@@ -479,10 +509,14 @@ func (b *Bridge) dispatchConsole(ctx context.Context, text, quotedChatID, sessio
 		return replies
 	}
 	fn := b.routerFn()
+	mgr := b.managerRouterFn()
 	// 路由资格判定（T2 规格）：纯数字（菜单/编号切换）也问路由器，语境由路由
 	// 器决断；命令/逃生门、菜单挂起、带附件合并的文本一律走确定性 Handle。
 	// 不进路由的分支同时清零轮次，保证反问链被打断后轮次不悬挂。
-	routeable := fn != nil &&
+	// 门禁关闭等同于"未启用智能路由"：不参与，走旧直投语义。
+	// 两个钩子都没装配时同样不参与（未接入智能链路的渠道保持旧行为）。
+	routeable := (fn != nil || mgr != nil) &&
+		b.routeGateAllows() &&
 		!b.console.Busy() &&
 		b.QueuedFiles() == 0 &&
 		!hub.IsDirectPass(text, b.directPatterns())
@@ -490,9 +524,11 @@ func (b *Bridge) dispatchConsole(ctx context.Context, text, quotedChatID, sessio
 		// 管理者循环优先（逃生门之后、单发路由之前）：命中即把结论 Replies
 		// 逐条回显，不再走 executeRouteText 决策执行；接管同时清零 InputRouter
 		// 反问轮次（反问链已移交 agentapi pendingAsk 管理）。Replies 为空的
-		// 接管属异常形态，回落单发路由防「空回复触发已送达回执」误报。
-		if mgr := b.managerRouterFn(); mgr != nil {
-			if out, handled := mgr(ctx, text); handled && len(out.Replies) > 0 {
+		// 接管属异常形态，记一条失败原因继续走单发路由，避免误报"已送达"。
+		failureKey := ""
+		if mgr != nil {
+			out, handled := mgr(ctx, text)
+			if handled && len(out.Replies) > 0 {
 				b.setRouteRound(0)
 				replies := make([]hub.Reply, 0, len(out.Replies))
 				for _, r := range out.Replies {
@@ -500,47 +536,86 @@ func (b *Bridge) dispatchConsole(ctx context.Context, text, quotedChatID, sessio
 				}
 				return replies
 			}
+			failureKey = out.FailureKey
 		}
-		// 反问链已满：本轮直接降级原文，轮次清零。
+		// 反问链已满：本轮不再走路由，直接进待选（不再降级直投原文）。
 		if b.routeRoundValue() >= hubtools.AskMaxRounds {
 			b.setRouteRound(0)
-		} else if d, handled := fn(ctx, text); handled {
-			if replies := b.executeRouteText(ctx, text, d); len(replies) > 0 {
-				if d.Action == "ask" {
-					b.incRouteRound()
-				} else {
-					b.setRouteRound(0)
+		} else if fn != nil {
+			if d, handled := fn(ctx, text); handled {
+				if replies := b.executeRouteText(ctx, text, d); len(replies) > 0 {
+					if d.Action == "ask" {
+						b.incRouteRound()
+					} else {
+						b.setRouteRound(0)
+					}
+					return replies
 				}
-				return replies
+				// 路由器消费但决策不可执行（编号漂移等）：轮次清零，转待选。
 			}
-			// 路由器消费但决策不可执行：轮次清零，继续走 Handle(原文) 兜底。
-			b.setRouteRound(0)
-		} else {
-			// 路由器明确不消费（未配置/调用失败）：轮次清零，回落原文。
 			b.setRouteRound(0)
 		}
-	} else {
-		b.setRouteRound(0)
+		return b.degradeToPick(text, failureKey)
 	}
+	b.setRouteRound(0)
 	return b.console.Handle(text)
 }
 
+// degradeToPick 是智能链路失败的统一出口：把原文暂存进待选菜单并回一条
+// 说明失败原因的降级回执。**绝不直投当前会话**——正文点名的目标与归因水位
+// 无关，猜错会把任务投进无关项目（真机事故）。
+//
+// 裸数字例外：数字是既有确定性语义（#l/#h 后的编号切换、菜单选择），不是
+// "猜目标"的自由文本。把它塞进新待选菜单会把编号答案当正文再挂一层菜单，
+// 破坏命令层语境，故数字仍交 Handle 按编号处理。
+//
+// 待选建立失败（无会话 / 其他菜单占用）时仍回执说明，正文交给 PickTarget
+// 的既有回复（pick_busy 等）体现；用户可 #l 自行指目标。
+func (b *Bridge) degradeToPick(text, failureKey string) []hub.Reply {
+	if hub.IsBareNumber(text) {
+		return b.console.Handle(text)
+	}
+	reason := b.routeFailureReason(failureKey)
+	replies, pending := b.console.PickTarget(text)
+	if !pending {
+		out := make([]hub.Reply, 0, len(replies)+1)
+		out = append(out, hub.Reply{Text: fmt.Sprintf(bridgeText(b.lang, "route.pick_unavailable"), reason)})
+		out = append(out, replies...)
+		return out
+	}
+	out := make([]hub.Reply, 0, len(replies)+1)
+	out = append(out, hub.Reply{Text: fmt.Sprintf(bridgeText(b.lang, "route.pick_degraded"), reason)})
+	out = append(out, replies...)
+	return out
+}
+
+// routeFailureReason 把失败 key 渲染成用户可读原因；空/未知 key 回落
+// 「未识别到投递目标」（模型都没跑起来的缺省归因）。未知 key 必须回落而不是
+// 原样透出——wire key 直接显示给用户比没有原因更糟。
+func (b *Bridge) routeFailureReason(key string) string {
+	if _, ok := bridgeTexts[key]; !ok {
+		key = "err.router.no_target"
+	}
+	return bridgeText(b.lang, key)
+}
+
 // executeRouteText 把路由决策落成 bridge 侧 Console 动作（desktop executeRoute
-// 的微信同构实现）。返回空切片/nil 表示无法执行，调用方降级 Handle(原文)。
+// 的微信同构实现）。返回空切片/nil 表示无法执行，调用方转待选（degradeToPick，
+// 不再直投当前会话）。
 //
 //   - group: ListSessions 编号 1..N（与 #l 同源）→ SendGroupTexts；
 //     texts 优先 PerTargetText[num] 退 Text，任一目标空文本整批降级。
 //   - single 非空 targets: 恰 1 个合法编号 → 单目标 SendGroupTexts；空 targets
-//     返回 nil（调用方回落 current 直投）。
+//     返回 nil（调用方转待选，不猜当前会话）。
 //   - status: 合成 "#st" 经 Console.Handle。
 //   - expand: 合成 "#gx N [count]" 经 Console.Handle（<=0 省略条数）。
 //   - ask: 单条回执 = CmdText(lang, "route_ask_prefix") + Question。
 //
 // 锁纪律：Console 的 Handle/SendGroupTexts 各自持锁且按序调用，本函数不持
 // bridge 锁，也不手写 Console 锁。ctx/original 仅用于接口对齐与未来观测，
-// 降级投递始终由调用方用原文完成。
+// 降级处理始终由调用方用原文完成（degradeToPick）。
 //   - 形参 ctx/text 当前未使用：ctx 预留观测埋点，text 保留签名对齐调用方
-//     （降级直投时由调用方持有原文），二者均不消费。
+//     （降级转待选时由调用方持有原文），二者均不消费。
 func (b *Bridge) executeRouteText(_ context.Context, _ string, d hubtools.RouteDecision) []hub.Reply {
 	switch d.Action {
 	case "group":

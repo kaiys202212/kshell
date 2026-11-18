@@ -45,8 +45,13 @@ type InputRouter func(ctx context.Context, input string) (hubtools.RouteDecision
 // ManagerOutcome 是管理者循环的执行结果（直接回显，不走决策执行）。
 // Replies 已是渲染后的自然语言结论/反问文案；挂起-续跑语境由 agentapi
 // 自持，桥侧不感知。
+//
+// FailureKey 是 handled=false 时携带的失败原因（稳定 wire key，由桥层按语言
+// 渲染）：管理者循环"尝试过但失败"与环境问题（模型不可用）必须让用户看见，
+// 而不是静默降级成"投给当前会话"。空串表示未尝试或非失败回落（如总开关关闭）。
 type ManagerOutcome struct {
-	Replies []string
+	Replies    []string
+	FailureKey string
 }
 
 // ManagerRouter 是管理者循环路由钩子：返回 (结果, 是否接管)。优先级在
@@ -54,6 +59,11 @@ type ManagerOutcome struct {
 // Replies 逐条推回微信（正文已是自然语言结论/选项列表）；未接管（false）
 // 回落 InputRouter 路径。
 type ManagerRouter func(ctx context.Context, input string) (ManagerOutcome, bool)
+
+// RouteGate 是智能链路的启用门禁（desktop 注入，实时读 AgentHub 总开关）。
+// false 表示"未启用智能路由"：自由文本按旧语义直投当前会话，不拦截、不
+// 进待选。智能链路一旦启用（true），任何失败都必须转待选（不再猜目标）。
+type RouteGate func() bool
 
 // Runtime 是微信桥的运行时封装：管理长轮询 goroutine 生命周期、绑定状态与
 // 配置落盘回调。desktop 在 Startup 时创建并注入回调，此后只经绑定方法交互。
@@ -77,6 +87,8 @@ type Runtime struct {
 	managerRouter ManagerRouter
 	// directPatternsFn 由 desktop 注入：逃生门白名单（实时读配置，装配到 bridge）。
 	directPatternsFn func() []string
+	// routeGate 由 desktop 注入：智能链路启用门禁（实时读总开关，装配到 bridge）。
+	routeGate RouteGate
 	// toolName 由 desktop 注入：工具展示名（出站标题栏归因，装配到 bridge）。
 	toolName func(string) string
 	// policy 由 desktop 注入：群发聚合策略（桌面 Console 与出站镜像共享同一
@@ -192,6 +204,18 @@ func (r *Runtime) SetManagerRouter(fn ManagerRouter) {
 	}
 }
 
+// SetRouteGate 装配智能链路启用门禁：转发给已存在的 bridge 并记录，
+// Configure 创建新 bridge（重绑）时再次注入。
+func (r *Runtime) SetRouteGate(fn RouteGate) {
+	r.mu.Lock()
+	r.routeGate = fn
+	bridge := r.bridge
+	r.mu.Unlock()
+	if bridge != nil {
+		bridge.SetRouteGate(fn)
+	}
+}
+
 // NotifyProgress 向微信推送一条中途进度提示（管理者循环 15s 节流后调用）：
 // 经既有出站串行 worker 异步投递（不阻塞循环，失败计 undelivered），凭据取
 // 最近一次入站消息的发送上下文——进度推送发生在处理该入站期间，上下文即正确。
@@ -283,6 +307,9 @@ func (r *Runtime) Configure(token, wxid string) {
 	}
 	if r.directPatternsFn != nil {
 		r.bridge.SetDirectPatterns(r.directPatternsFn)
+	}
+	if r.routeGate != nil {
+		r.bridge.SetRouteGate(r.routeGate)
 	}
 	if r.toolName != nil {
 		r.bridge.SetToolName(r.toolName)
