@@ -17,8 +17,10 @@ import (
 
 // ApplyOptions 控制下载、校验与替换调度。
 type ApplyOptions struct {
+	Tag             string
 	ZipURL, SumsURL string
 	DestExe         string
+	CacheDir        string
 	Get             GetFunc
 	SpawnReplace    func(currentExe, newExe string) error
 }
@@ -45,29 +47,37 @@ func applyExe(ctx context.Context, opts ApplyOptions) error {
 	}
 	zipName := CurrentPackageZip()
 	binName := currentBinaryName()
-	cli := Client{Get: opts.Get, HTTP: &http.Client{Timeout: applyTimeout}}
-	sumsBody, err := cli.getThroughSources(ctx, opts.SumsURL)
-	if err != nil {
-		if errors.Is(err, errNoDownloadSource) {
+	zipBody := cachedZipBody(opts)
+	if zipBody == nil {
+		cli := Client{Get: opts.Get, HTTP: &http.Client{Timeout: applyTimeout}}
+		sumsBody, err := cli.getThroughSources(ctx, opts.SumsURL)
+		if err != nil {
+			if errors.Is(err, errNoDownloadSource) {
+				return err
+			}
+			return fmt.Errorf("err.update.download_sums|%w", err)
+		}
+		want, err := ParseSHA256SUMS(sumsBody, zipName)
+		if err != nil {
 			return err
 		}
-		return fmt.Errorf("err.update.download_sums|%w", err)
-	}
-	want, err := ParseSHA256SUMS(sumsBody, zipName)
-	if err != nil {
-		return err
-	}
-	zipBody, err := cli.getThroughSources(ctx, opts.ZipURL)
-	if err != nil {
-		if errors.Is(err, errNoDownloadSource) {
-			return err
+		zipBody, err = cli.getThroughSources(ctx, opts.ZipURL)
+		if err != nil {
+			if errors.Is(err, errNoDownloadSource) {
+				return err
+			}
+			return fmt.Errorf("err.update.download_package|%w", err)
 		}
-		return fmt.Errorf("err.update.download_package|%w", err)
-	}
-	sum := sha256.Sum256(zipBody)
-	got := hex.EncodeToString(sum[:])
-	if got != want {
-		return fmt.Errorf("err.update.checksum_mismatch")
+		sum := sha256.Sum256(zipBody)
+		got := hex.EncodeToString(sum[:])
+		if got != want {
+			return fmt.Errorf("err.update.checksum_mismatch")
+		}
+		if opts.CacheDir != "" && opts.Tag != "" {
+			if err := storeCache(opts.CacheDir, opts.Tag, zipName, zipBody, got); err != nil {
+				return fmt.Errorf("err.update.write_cache|%w", err)
+			}
+		}
 	}
 	exeBytes, err := extractPackageBinary(zipBody, binName)
 	if err != nil {

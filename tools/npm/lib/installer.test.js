@@ -328,3 +328,97 @@ describe("install 无 getJson 注入 → 用 sources.defaultGetJson(全局 fetch
     expect(urls[0]).toBe("https://dl/v0.1.27/zip");
   });
 });
+
+describe("install 回退上一版", () => {
+  const GITCODE_RELEASES_URL = "https://api.gitcode.com/api/v5/repos/abraveheart2023/kshell/releases?per_page=5&direction=desc";
+  const GITHUB_RELEASES_URL = "https://api.github.com/repos/kaiys202212/kshell/releases?per_page=5";
+  const latestJson = (tag) => ({
+    tag_name: tag,
+    assets: [{ name: ZIP, browser_download_url: `https://dl/${tag}/${ZIP}` }],
+  });
+  const sums = () =>
+    Buffer.from(
+      `${crypto.createHash("sha256").update(Buffer.from("zip-bytes")).digest("hex")}  ${ZIP}\n`
+    );
+  const extractTo = (file, args) => {
+    const dest = args.includes("-C") ? args[args.indexOf("-C") + 1] : args[args.indexOf("-d") + 1];
+    writeFileSync(path.join(dest, BIN_NAME), "entry");
+    return { status: 0, stderr: Buffer.from("") };
+  };
+
+  it("最新版下载失败时改用上一个 release", async () => {
+    const getJson = async (url) => {
+      if (url === GITCODE_RELEASES_URL || url === GITHUB_RELEASES_URL) {
+        return [{ tag_name: "v0.1.30" }, { tag_name: "v0.1.29" }];
+      }
+      return latestJson("v0.1.30");
+    };
+    const urls = [];
+    const getStream = async (url, destPath) => {
+      urls.push(url);
+      if (url.includes("v0.1.30")) throw new Error("404");
+      writeFileSync(destPath, "zip-bytes");
+    };
+    const r = await install({
+      getJson,
+      getStream,
+      getBytes: async () => sums(),
+      runExtract: extractTo,
+      binDir: tempDir(),
+      os: "windows",
+      zipName: ZIP,
+      binaryName: BIN_NAME,
+    });
+    expect(r.tag).toBe("v0.1.29");
+    expect(urls.some((u) => u.includes("v0.1.29"))).toBe(true);
+  });
+
+  it("最新版与上一版都失败时报错并说明两版均不可用", async () => {
+    const getJson = async (url) => {
+      if (url === GITCODE_RELEASES_URL || url === GITHUB_RELEASES_URL) {
+        return [{ tag_name: "v0.1.30" }, { tag_name: "v0.1.29" }];
+      }
+      return latestJson("v0.1.30");
+    };
+    const getStream = async () => {
+      throw new Error("404");
+    };
+    await expect(
+      install({
+        getJson,
+        getStream,
+        getBytes: async () => sums(),
+        runExtract: extractTo,
+        binDir: tempDir(),
+        os: "windows",
+        zipName: ZIP,
+        binaryName: BIN_NAME,
+      })
+    ).rejects.toThrow(/v0\.1\.30 与上一版 v0\.1\.29/);
+  });
+
+  it("显式 tag 不回退", async () => {
+    let jsonCalls = 0;
+    const getJson = async () => {
+      jsonCalls++;
+      return [];
+    };
+    const getStream = async () => {
+      throw new Error("404");
+    };
+    await expect(
+      install({
+        getJson,
+        getStream,
+        getBytes: async () => sums(),
+        runExtract: extractTo,
+        tag: "v0.1.28",
+        binDir: tempDir(),
+        os: "windows",
+        zipName: ZIP,
+        binaryName: BIN_NAME,
+      })
+    ).rejects.toThrow(InstallError);
+    expect(jsonCalls).toBe(0);
+  });
+});

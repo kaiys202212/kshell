@@ -17,6 +17,8 @@ const GITHUB_REPO = "kshell";
 
 const GITCODE_LATEST_URL = `https://api.gitcode.com/api/v5/repos/${GITCODE_OWNER}/${GITCODE_REPO}/releases/latest`;
 const GITHUB_LATEST_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
+const GITCODE_RELEASES_URL = `https://api.gitcode.com/api/v5/repos/${GITCODE_OWNER}/${GITCODE_REPO}/releases?per_page=5&direction=desc`;
+const GITHUB_RELEASES_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=5`;
 
 const SUMS_NAME = "SHA256SUMS";
 
@@ -25,6 +27,17 @@ const SOURCES = [
   ["gitcode", GITCODE_LATEST_URL],
   ["github", GITHUB_LATEST_URL],
 ];
+
+// 发布列表源：用于 latest 拉不到包时回退到上一个 release。
+const LIST_SOURCES = [
+  ["gitcode", GITCODE_RELEASES_URL],
+  ["github", GITHUB_RELEASES_URL],
+];
+
+/** GitHub Release 附件直链（只依赖 tag，无需先拉 assets）。 */
+function githubAssetUrl(tag, fileName) {
+  return `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/${tag}/${fileName}`;
+}
 
 class ReleaseError extends Error {
   constructor(message) {
@@ -175,15 +188,53 @@ async function latestRelease(getJson, zipName) {
   return best;
 }
 
+/**
+ * 拉取各源 release 列表并按 semver 倒序返回 tag。
+ * 单源失败不影响另一源；全部失败抛 ReleaseError。
+ */
+async function releaseTags(getJson) {
+  const seen = new Set();
+  const out = [];
+  let lastErr = null;
+  for (const [name, url] of LIST_SOURCES) {
+    let list;
+    try {
+      list = await getJson(url);
+    } catch (exc) {
+      lastErr = new ReleaseError(`${name} 列表查询失败:${exc && exc.message ? exc.message : exc}`);
+      continue;
+    }
+    if (!Array.isArray(list)) {
+      lastErr = new ReleaseError(`${name} 返回的不是 release 列表`);
+      continue;
+    }
+    for (const rel of list) {
+      if (!rel) continue;
+      const tag = String(rel.tag_name || "").trim();
+      if (!tag || seen.has(tag)) continue;
+      seen.add(tag);
+      out.push(tag);
+    }
+  }
+  if (out.length === 0) {
+    throw lastErr || new ReleaseError("没有可用的发布列表");
+  }
+  return out.sort((a, b) => compareTags(b, a));
+}
+
 module.exports = {
   GITCODE_LATEST_URL,
   GITHUB_LATEST_URL,
+  GITCODE_RELEASES_URL,
+  GITHUB_RELEASES_URL,
   SUMS_NAME,
   SOURCES,
   ReleaseError,
   defaultGetJson,
   gitcodeAttachUrl,
+  githubAssetUrl,
   canon,
   compareTags,
   latestRelease,
+  releaseTags,
 };

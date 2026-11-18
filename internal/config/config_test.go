@@ -38,6 +38,9 @@ func TestPathsUnderHome(t *testing.T) {
 	if p.CacheIndex != filepath.Join(p.Root, "cache", "index.json") {
 		t.Fatalf("cache index = %s", p.CacheIndex)
 	}
+	if p.Update != filepath.Join(p.Root, "update") {
+		t.Fatalf("update = %s", p.Update)
+	}
 }
 
 func TestLoadDefaultWhenMissing(t *testing.T) {

@@ -10,7 +10,9 @@ const {
   compareTags,
   defaultGetJson,
   gitcodeAttachUrl,
+  githubAssetUrl,
   latestRelease,
+  releaseTags,
 } = require("./sources");
 
 afterEach(() => {
@@ -164,5 +166,43 @@ describe("defaultGetJson 生产实现", () => {
       throw new Error("ECONNREFUSED");
     });
     await expect(defaultGetJson(GITHUB_LATEST_URL)).rejects.toThrow(ReleaseError);
+  });
+});
+
+describe("releaseTags 回退候选", () => {
+  const GITCODE_RELEASES_URL = "https://api.gitcode.com/api/v5/repos/abraveheart2023/kshell/releases?per_page=5&direction=desc";
+  const GITHUB_RELEASES_URL = "https://api.github.com/repos/kaiys202212/kshell/releases?per_page=5";
+
+  it("合并双源、去重并按 semver 倒序", async () => {
+    const getJson = async (url) => {
+      if (url === GITCODE_RELEASES_URL) return [{ tag_name: "v0.1.29" }, { tag_name: "v0.1.28" }];
+      if (url === GITHUB_RELEASES_URL) return [{ tag_name: "v0.1.30" }, { tag_name: "v0.1.29" }];
+      throw new Error(url);
+    };
+    expect(await releaseTags(getJson)).toEqual(["v0.1.30", "v0.1.29", "v0.1.28"]);
+  });
+
+  it("单源失败仍返回另一源结果", async () => {
+    const getJson = async (url) => {
+      if (url === GITCODE_RELEASES_URL) throw new Error("断网");
+      if (url === GITHUB_RELEASES_URL) return [{ tag_name: "v0.1.30" }, { tag_name: "v0.1.29" }];
+      throw new Error(url);
+    };
+    expect(await releaseTags(getJson)).toEqual(["v0.1.30", "v0.1.29"]);
+  });
+
+  it("全部源失败时抛 ReleaseError", async () => {
+    const getJson = async () => {
+      throw new Error("断网");
+    };
+    await expect(releaseTags(getJson)).rejects.toThrow(ReleaseError);
+  });
+});
+
+describe("githubAssetUrl", () => {
+  it("按 tag 构造 GitHub Release 下载直链", () => {
+    expect(githubAssetUrl("v0.1.29", ZIP)).toBe(
+      "https://github.com/kaiys202212/kshell/releases/download/v0.1.29/kshell-desktop-windows-amd64.zip"
+    );
   });
 });

@@ -6,12 +6,13 @@ import (
 	"os"
 	"time"
 
+	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/update"
 	"github.com/yangk/kshell/internal/version"
 )
 
 // checkOverallTimeout 限制单次检查的整体耗时：跨源取最大后不再提前返回，
-// 6 源 × 单源 12s 的最坏串行等待对同步 UI 调用不可接受。
+// 6 个源 × 单源 12s 的最坏串行等待对同步 UI 调用不可接受。
 const checkOverallTimeout = 25 * time.Second
 
 // UpdateInfo 给前端的检查结果（JSON 字段名与绑定一致）。
@@ -21,8 +22,19 @@ type UpdateInfo struct {
 	Notes     string
 	Source    string
 	Available bool
-	Skipped   bool
-	Reason    string
+	// Ready 表示当前平台的升级包已预下载并通过 SHA-256 校验，可直接安装。
+	Ready   bool
+	Skipped bool
+	Reason  string
+}
+
+// updateCacheDir 返回预下载缓存目录；解析失败返回空串（缓存失效但升级仍可用）。
+func updateCacheDir() string {
+	p, err := config.Paths()
+	if err != nil {
+		return ""
+	}
+	return p.Update
 }
 
 var checkUpdateFn = func() (update.CheckResult, error) {
@@ -31,51 +43,107 @@ var checkUpdateFn = func() (update.CheckResult, error) {
 	return update.Client{Current: version.Current()}.Check(ctx)
 }
 
+var prepareUpdateFn = func(ctx context.Context, r update.CheckResult) error {
+	return update.Prepare(ctx, update.PrepareOptions{
+		Tag:      r.Latest,
+		ZipURL:   r.ZipURL,
+		SumsURL:  r.SumsURL,
+		CacheDir: updateCacheDir(),
+	})
+}
+
 var applyUpdateFn = func(ctx context.Context, dest string, r update.CheckResult) error {
 	return update.Apply(ctx, update.ApplyOptions{
-		ZipURL:  r.ZipURL,
-		SumsURL: r.SumsURL,
-		DestExe: dest,
+		Tag:      r.Latest,
+		ZipURL:   r.ZipURL,
+		SumsURL:  r.SumsURL,
+		DestExe:  dest,
+		CacheDir: updateCacheDir(),
 	})
 }
 
 var executablePath = os.Executable
 
 func toUpdateInfo(r update.CheckResult) UpdateInfo {
+	ready := r.Available && update.IsCached(updateCacheDir(), r.Latest)
 	return UpdateInfo{
 		Current:   r.Current,
 		Latest:    r.Latest,
 		Notes:     r.Notes,
 		Source:    r.Source,
 		Available: r.Available,
+		Ready:     ready,
 		Skipped:   r.Skipped,
 		Reason:    r.Reason,
 	}
 }
 
-// GetAppVersion 返回当前构建注入的版本。
+// GetAppVersion 返回当前构建注入的版本号。
 func (a *App) GetAppVersion() string { return version.Current() }
 
-// CheckForUpdate 按代理链检查 GitHub latest；有更新时推送 update:available。
+// CheckForUpdate 只查询版本信息，不下载、不弹窗；供设置页手动检查。
 func (a *App) CheckForUpdate() (UpdateInfo, error) {
 	r, err := checkUpdateFn()
 	if err != nil {
 		return UpdateInfo{Current: version.Current()}, err
 	}
-	info := toUpdateInfo(r)
-	if info.Available {
-		a.Emit("update:available", info)
-	}
-	return info, nil
+	return toUpdateInfo(r), nil
 }
 
-// ApplyUpdate 再次确认有更新后下载替换，成功则退出当前进程。
+// checkAndPrepare 是自动轮询入口：有新版本时先下载并校验当前平台包，
+// 成功后才推 update:available（前端据此弹「安装并重启」）。失败静默等下轮。
+func (a *App) checkAndPrepare() {
+	r, err := checkUpdateFn()
+	if err != nil || !r.Available {
+		return
+	}
+	if err := a.prepare(r); err != nil {
+		return
+	}
+	info := toUpdateInfo(r)
+	info.Ready = true
+	a.Emit("update:available", info)
+}
+
+// prepare 串行下载并校验升级包；已缓存则直接复用。
+func (a *App) prepare(r update.CheckResult) error {
+	a.updateMu.Lock()
+	defer a.updateMu.Unlock()
+	if update.IsCached(updateCacheDir(), r.Latest) {
+		return nil
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return prepareUpdateFn(ctx, r)
+}
+
+// PrepareUpdate 供设置页「下载并安装」：先确认有更新，再下载校验到缓存。
+func (a *App) PrepareUpdate() error {
+	r, err := checkUpdateFn()
+	if err != nil {
+		return err
+	}
+	if !r.Available {
+		return fmt.Errorf("err.update.no_update")
+	}
+	return a.prepare(r)
+}
+
+// ApplyUpdate 再次确认有更新后安装（优先用已预下载的包），成功则退出当前进程。
 // 签名不带 context.Context：Wails v2 绑定会把 ctx 计成一个入参，
 // 而前端以 0 参调用，导致 "received 0 arguments, expected 1"。
 func (a *App) ApplyUpdate() error {
 	r, err := checkUpdateFn()
 	if err != nil {
-		return err
+		// 网络抖动时仍允许安装已预下载并校验过的包（弹窗本就基于该包出现）。
+		dir := updateCacheDir()
+		if tag := update.CachedTag(dir); tag != "" && update.IsCached(dir, tag) {
+			r = update.CheckResult{Current: version.Current(), Latest: tag, Available: true}
+		} else {
+			return err
+		}
 	}
 	if !r.Available {
 		return fmt.Errorf("err.update.no_update")

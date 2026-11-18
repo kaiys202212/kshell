@@ -475,6 +475,9 @@
         "feedback": "Report an issue",
         "open_source": "Open source",
         "upgrade_now": "Upgrade now",
+        "upgrade_ready": "Install and restart",
+        "download_install": "Download and install",
+        "downloading": "Downloading...",
         "up_to_date": "Up to date",
         "new_version": "New version {{0}}",
         "source": "(source: {{0}})"
@@ -1032,10 +1035,14 @@
     "update_prompt": {
       "title": "New version {{version}} found",
       "body": "Current {{current}}. If you postpone, this session will not remind you again; it will check again next launch.",
+      "ready_title": "Version {{version}} is ready",
+      "ready_body": "Current {{current}}. The package is downloaded and verified. Install now and the app will restart.",
       "unknown": "unknown",
       "later": "Later",
       "upgrading": "Upgrading…",
-      "upgrade": "Upgrade now"
+      "installing": "Installing…",
+      "upgrade": "Upgrade now",
+      "install_restart": "Install and restart"
     },
     "chat": {
       "send_failed": "Failed to send: {{err}}",

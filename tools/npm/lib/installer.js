@@ -286,26 +286,74 @@ async function install(opts) {
     binaryName,
   } = opts;
 
-  let tagOut = tag;
-  let zipUrl;
-  let sumsUrl;
+  const ctx = { getStream, getBytes, runExtract, binDir, osName, zipName };
+  const finish = (tagOut) => {
+    const entry = path.join(binDir, binaryName);
+    if (!fs.existsSync(entry)) {
+      throw new InstallError(
+        `zip 内没有预期的入口 ${binaryName},解压已在 ${binDir} 但内容异常`
+      );
+    }
+    return { tag: tagOut, entry };
+  };
+
   if (tag) {
-    // 固定版本:不再查 latest,GitCode 附件链只依赖 tag 即可构造。
-    tagOut = sources.canon(tag);
-    zipUrl = sources.gitcodeAttachUrl(tagOut, zipName);
-    sumsUrl = sources.gitcodeAttachUrl(tagOut, SUMS_NAME);
-  } else {
-    const rel = await sources.latestRelease(getJson, zipName);
-    tagOut = rel.tag;
-    zipUrl = rel.zipUrl;
-    sumsUrl = rel.sumsUrl;
+    // 固定版本:不再查 latest,不回退;GitCode 附件链只依赖 tag 即可构造。
+    const tagOut = sources.canon(tag);
+    await installFrom(
+      {
+        tag: tagOut,
+        zipUrl: sources.gitcodeAttachUrl(tagOut, zipName),
+        sumsUrl: sources.gitcodeAttachUrl(tagOut, SUMS_NAME),
+      },
+      ctx
+    );
+    return finish(tagOut);
   }
 
-  const zipPath = await download(zipUrl, getStream);
+  const rel = await sources.latestRelease(getJson, zipName);
   try {
-    const sumsText = (await getBytes(sumsUrl)).toString("utf8");
-    verify(zipPath, sumsText, zipName);
-    extract({ zipPath, binDir, osName, runExtract });
+    await installFrom(rel, ctx);
+    return finish(rel.tag);
+  } catch (latestErr) {
+    // 最新版拿不到当前平台包:只回退一个 release,仍失败则报错。
+    let prevTag = "";
+    try {
+      const tags = await sources.releaseTags(getJson);
+      prevTag =
+        tags.find((t) => sources.compareTags(t, rel.tag) < 0) || "";
+    } catch {
+      /* 列表不可用:无回退候选 */
+    }
+    if (!prevTag) {
+      throw latestErr instanceof InstallError
+        ? latestErr
+        : new InstallError(
+            `最新版 ${rel.tag} 的安装包不可用:${latestErr && latestErr.message ? latestErr.message : latestErr}`
+          );
+    }
+    let lastErr = latestErr;
+    for (const cand of fallbackCandidates(prevTag, zipName)) {
+      try {
+        await installFrom(cand, ctx);
+        return finish(prevTag);
+      } catch (exc) {
+        lastErr = exc;
+      }
+    }
+    throw new InstallError(
+      `最新版 ${rel.tag} 与上一版 ${prevTag} 的安装包均不可用:${lastErr && lastErr.message ? lastErr.message : lastErr}`
+    );
+  }
+}
+
+/** installFrom 下载单个候选包并校验解压;临时 zip 用完即删。 */
+async function installFrom(cand, ctx) {
+  const zipPath = await download(cand.zipUrl, ctx.getStream);
+  try {
+    const sumsText = (await ctx.getBytes(cand.sumsUrl)).toString("utf8");
+    verify(zipPath, sumsText, ctx.zipName);
+    extract({ zipPath, binDir: ctx.binDir, osName: ctx.osName, runExtract: ctx.runExtract });
   } finally {
     try {
       fs.unlinkSync(zipPath);
@@ -313,13 +361,22 @@ async function install(opts) {
       /* 已删则忽略 */
     }
   }
-  const entry = path.join(binDir, binaryName);
-  if (!fs.existsSync(entry)) {
-    throw new InstallError(
-      `zip 内没有预期的入口 ${binaryName},解压已在 ${binDir} 但内容异常`
-    );
-  }
-  return { tag: tagOut, entry };
+}
+
+/** 回退版本的候选下载链:GitCode 附件优先,GitHub 直链兜底。 */
+function fallbackCandidates(tag, zipName) {
+  return [
+    {
+      tag,
+      zipUrl: sources.gitcodeAttachUrl(tag, zipName),
+      sumsUrl: sources.gitcodeAttachUrl(tag, SUMS_NAME),
+    },
+    {
+      tag,
+      zipUrl: sources.githubAssetUrl(tag, zipName),
+      sumsUrl: sources.githubAssetUrl(tag, SUMS_NAME),
+    },
+  ];
 }
 
 module.exports = {

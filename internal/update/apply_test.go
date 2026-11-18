@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -299,4 +300,97 @@ func TestApplyRefusesDarwin(t *testing.T) {
 	if err.Error() != "err.update.platform_unsupported" {
 		t.Fatalf("应原样返回单层 wire key, got %q", err.Error())
 	}
+}
+
+func TestApplyUsesCachedZipWithoutDownload(t *testing.T) {
+	pinWindowsPackage(t)
+	dir := t.TempDir()
+	cacheDir := t.TempDir()
+	dest := filepath.Join(dir, "kshell-desktop.exe")
+	if err := os.WriteFile(dest, []byte("OLD"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	zipBytes := mustZip(t, map[string][]byte{"kshell-desktop.exe": []byte("NEWBIN")})
+	if err := writeCacheForTest(cacheDir, "v0.2.0", zipBytes); err != nil {
+		t.Fatal(err)
+	}
+
+	err := Apply(context.Background(), ApplyOptions{
+		Tag:      "v0.2.0",
+		ZipURL:   "https://example/" + ZipName,
+		SumsURL:  "https://example/" + SumsName,
+		DestExe:  dest,
+		CacheDir: cacheDir,
+		Get: func(context.Context, string) ([]byte, error) {
+			t.Fatal("缓存命中时不应下载")
+			return nil, nil
+		},
+		SpawnReplace: func(string, string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(dest + ".new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "NEWBIN" {
+		t.Fatalf("new exe = %q", got)
+	}
+}
+
+func TestApplyRedownloadsWhenCacheCorrupt(t *testing.T) {
+	pinWindowsPackage(t)
+	dir := t.TempDir()
+	cacheDir := t.TempDir()
+	dest := filepath.Join(dir, "kshell-desktop.exe")
+	if err := os.WriteFile(dest, []byte("OLD"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	zipBytes := mustZip(t, map[string][]byte{"kshell-desktop.exe": []byte("NEWBIN")})
+	if err := writeCacheForTest(cacheDir, "v0.2.0", zipBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, ZipName), []byte("BROKEN"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(zipBytes)
+	sums := []byte(hex.EncodeToString(sum[:]) + "  " + ZipName + "\n")
+
+	downloads := 0
+	err := Apply(context.Background(), ApplyOptions{
+		Tag:      "v0.2.0",
+		ZipURL:   "https://example/" + ZipName,
+		SumsURL:  "https://example/" + SumsName,
+		DestExe:  dest,
+		CacheDir: cacheDir,
+		Get: func(_ context.Context, url string) ([]byte, error) {
+			if strings.Contains(url, SumsName) {
+				return sums, nil
+			}
+			downloads++
+			return zipBytes, nil
+		},
+		SpawnReplace: func(string, string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if downloads != 1 {
+		t.Fatalf("应重新下载一次，got %d", downloads)
+	}
+}
+
+func writeCacheForTest(cacheDir, tag string, zipBytes []byte) error {
+	zipName := CurrentPackageZip()
+	if err := os.WriteFile(filepath.Join(cacheDir, zipName), zipBytes, 0o644); err != nil {
+		return err
+	}
+	sum := sha256.Sum256(zipBytes)
+	meta := cacheMeta{Tag: tag, Zip: zipName, SHA256: hex.EncodeToString(sum[:])}
+	raw, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(cacheDir, "meta.json"), raw, 0o644)
 }

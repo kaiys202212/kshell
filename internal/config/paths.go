@@ -40,6 +40,8 @@ type Layout struct {
 	// Requirements 是首页需求列表的落盘文件（~/.kshell/requirements.json）：
 	// 用户录入的需求条目（文本/优先级/标签）及派发目标。
 	Requirements string
+	// Update 是桌面端升级包预下载缓存目录（~/.kshell/update）。
+	Update string
 }
 
 func Paths() (Layout, error) {
@@ -67,6 +69,7 @@ func Paths() (Layout, error) {
 		Locales:         filepath.Join(root, "locales"),
 		Hub:             filepath.Join(root, "hub"),
 		Requirements:    filepath.Join(root, "requirements.json"),
+		Update:          filepath.Join(root, "update"),
 	}, nil
 }
 

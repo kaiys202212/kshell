@@ -570,6 +570,8 @@ export interface UpdateInfo {
   Notes: string;
   Source: string;
   Available: boolean;
+  // Ready 表示当前平台升级包已预下载并校验通过，可直接安装。
+  Ready: boolean;
   Skipped: boolean;
   Reason: string;
 }
@@ -746,6 +748,7 @@ interface AppBindings {
   GetLastSeenVersion(): Promise<string>;
   MarkVersionSeen(version: string): Promise<void>;
   CheckForUpdate(): Promise<UpdateInfo>;
+  PrepareUpdate(): Promise<void>;
   ApplyUpdate(): Promise<void>;
   OpenSessionTerminal(sessionId: string, cols: number, rows: number): Promise<TerminalInfo>;
   OpenWorkspaceTerminal(wsPath: string, toolId: string, cols: number, rows: number): Promise<TerminalInfo>;
@@ -1592,11 +1595,18 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
       Notes: '',
       Source: '',
       Available: false,
+      Ready: false,
       Skipped: true,
       Reason: ERR_NO_BINDING,
     };
   }
   return a.CheckForUpdate();
+}
+
+export async function prepareUpdate(): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.PrepareUpdate();
 }
 
 export async function applyUpdate(): Promise<void> {

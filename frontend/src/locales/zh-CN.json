@@ -475,6 +475,9 @@
         "feedback": "反馈问题",
         "open_source": "开源地址",
         "upgrade_now": "立即升级",
+        "upgrade_ready": "安装并重启",
+        "download_install": "下载并安装",
+        "downloading": "下载中…",
         "up_to_date": "已是最新",
         "new_version": "新版本 {{0}}",
         "source": "（来源：{{0}}）"
@@ -1032,10 +1035,14 @@
     "update_prompt": {
       "title": "发现新版本 {{version}}",
       "body": "当前 {{current}}。稍后则本会话不再提醒，下次启动仍会检查。",
+      "ready_title": "新版本 {{version}} 已就绪",
+      "ready_body": "当前 {{current}}。安装包已下载并校验完成，点击安装后应用会自动重启。",
       "unknown": "未知",
       "later": "稍后",
       "upgrading": "升级中…",
-      "upgrade": "立即升级"
+      "installing": "安装中…",
+      "upgrade": "立即升级",
+      "install_restart": "安装并重启"
     },
     "chat": {
       "send_failed": "发送失败：{{err}}",

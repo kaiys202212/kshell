@@ -142,6 +142,9 @@ type App struct {
 	ctx  context.Context
 	opts Options
 
+	// updateMu 串行化升级包预下载：自动轮询与设置页手动下载可能并发。
+	updateMu sync.Mutex
+
 	// hubMu/hubRouter 已随工具循环下线移除：AgentHub 只剩「无目标自由文本」
 	// 的管理者循环入口（hubroute.go + agentapi.Run），不再有常驻工具会话。
 
@@ -324,7 +327,7 @@ func (a *App) scheduleUpdateCheck() {
 	if updateCheckDelay > 0 {
 		time.Sleep(updateCheckDelay)
 	}
-	_, _ = a.CheckForUpdate()
+	a.checkAndPrepare()
 	if updateCheckInterval <= 0 {
 		return
 	}
@@ -341,7 +344,7 @@ func (a *App) scheduleUpdateCheck() {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			_, _ = a.CheckForUpdate()
+			a.checkAndPrepare()
 		}
 	}
 }

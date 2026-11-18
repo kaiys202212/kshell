@@ -30,6 +30,7 @@ import {
   onToolInstallLog,
   applyUpdate,
   checkForUpdate,
+  prepareUpdate,
   getAppVersion,
   saveProvidersYAML,
   scanSessions,
@@ -1227,6 +1228,8 @@ export default function Settings() {
                           setUpdateBusy(true);
                           setUpdateError('');
                           try {
+                            // 未预下载时先下载校验，再安装；已就绪直接安装。
+                            if (!updateInfo.Ready) await prepareUpdate();
                             await applyUpdate();
                             // 重启被拦截时 busy 复位，避免按钮永久禁用（同 App.tsx）。
                             setUpdateBusy(false);
@@ -1237,7 +1240,17 @@ export default function Settings() {
                         })();
                       }}
                     >
-                      {t('ui.settings.about.upgrade_now')}
+                      {updateBusy
+                        ? t(
+                            updateInfo.Ready
+                              ? 'ui.update_prompt.installing'
+                              : 'ui.settings.about.downloading',
+                          )
+                        : t(
+                            updateInfo.Ready
+                              ? 'ui.settings.about.upgrade_ready'
+                              : 'ui.settings.about.download_install',
+                          )}
                     </Button>
                   )}
                 </div>

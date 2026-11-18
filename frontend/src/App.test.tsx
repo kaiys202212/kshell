@@ -1,4 +1,4 @@
-﻿// App 主框架测试：挂载时调 ListTerminals 重建终端镜像、
+// App 主框架测试：挂载时调 ListTerminals 重建终端镜像、
 // 标题栏「首页/设置/工作区页签」切换与关闭（关闭工作区页签连带结束其内嵌终端）、
 // 终端事件总线（terminal:exit 更新镜像并提示）、
 // 全局快捷键 Ctrl+K 打开快速切换器 / Ctrl+F 派发聚焦搜索事件。
@@ -833,7 +833,7 @@ describe('App', () => {
 
   it('收到 update:available 时弹出升级对话框', async () => {
     useAppStore.setState({ toasts: [] });
-    let avail: ((info: { Latest: string; Available: boolean; Current?: string; Notes?: string }) => void) | undefined;
+    let avail: ((info: { Latest: string; Available: boolean; Ready?: boolean; Current?: string; Notes?: string }) => void) | undefined;
     mocks.onUpdateAvailable.mockImplementation((cb: unknown) => {
       avail = cb as typeof avail;
       return () => {};
@@ -841,27 +841,27 @@ describe('App', () => {
     mocks.applyUpdate.mockResolvedValue(undefined);
     render(<App />);
     act(() => {
-      avail?.({ Latest: 'v0.2.0', Available: true, Current: 'v0.1.0', Notes: '' });
+      avail?.({ Latest: 'v0.2.0', Available: true, Ready: true, Current: 'v0.1.0', Notes: '' });
     });
     expect(
       screen.getByRole('heading', {
-        name: tt('ui.update_prompt.title').replace('{{version}}', 'v0.2.0'),
+        name: tt('ui.update_prompt.ready_title').replace('{{version}}', 'v0.2.0'),
       }),
     ).toBeInTheDocument();
     expect(useAppStore.getState().toasts.some((t) => t.title.includes(tt('ui.titlebar.settings')))).toBe(
       false,
     );
     fireEvent.click(screen.getByRole('button', { name: tt('ui.update_prompt.later') }));
-    const updateHeading = (n: string) => n.startsWith(tt('ui.update_prompt.title').split('{{')[0]);
+    const updateHeading = (n: string) => n.startsWith(tt('ui.update_prompt.ready_title').split('{{')[0]);
     expect(screen.queryByRole('heading', { name: updateHeading })).not.toBeInTheDocument();
     act(() => {
-      avail?.({ Latest: 'v0.2.0', Available: true, Current: 'v0.1.0', Notes: '' });
+      avail?.({ Latest: 'v0.2.0', Available: true, Ready: true, Current: 'v0.1.0', Notes: '' });
     });
     expect(screen.queryByRole('heading', { name: updateHeading })).not.toBeInTheDocument();
   });
 
   it('升级弹窗立即升级调用 applyUpdate', async () => {
-    let avail: ((info: { Latest: string; Available: boolean }) => void) | undefined;
+    let avail: ((info: { Latest: string; Available: boolean; Ready?: boolean }) => void) | undefined;
     mocks.onUpdateAvailable.mockImplementation((cb: unknown) => {
       avail = cb as typeof avail;
       return () => {};
@@ -869,14 +869,14 @@ describe('App', () => {
     mocks.applyUpdate.mockResolvedValue(undefined);
     render(<App />);
     act(() => {
-      avail?.({ Latest: 'v0.2.0', Available: true });
+      avail?.({ Latest: 'v0.2.0', Available: true, Ready: true });
     });
-    fireEvent.click(screen.getByRole('button', { name: tt('ui.update_prompt.upgrade') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.update_prompt.install_restart') }));
     await waitFor(() => expect(mocks.applyUpdate).toHaveBeenCalledTimes(1));
   });
 
   it('applyUpdate 成功但进程未重启时 busy 复位、升级按钮恢复可点', async () => {
-    let avail: ((info: { Latest: string; Available: boolean }) => void) | undefined;
+    let avail: ((info: { Latest: string; Available: boolean; Ready?: boolean }) => void) | undefined;
     mocks.onUpdateAvailable.mockImplementation((cb: unknown) => {
       avail = cb as typeof avail;
       return () => {};
@@ -885,14 +885,14 @@ describe('App', () => {
     mocks.applyUpdate.mockResolvedValue(undefined);
     render(<App />);
     act(() => {
-      avail?.({ Latest: 'v0.2.0', Available: true });
+      avail?.({ Latest: 'v0.2.0', Available: true, Ready: true });
     });
-    const upgradeBtn = screen.getByRole('button', { name: tt('ui.update_prompt.upgrade') });
+    const upgradeBtn = screen.getByRole('button', { name: tt('ui.update_prompt.install_restart') });
     fireEvent.click(upgradeBtn);
     await waitFor(() => expect(mocks.applyUpdate).toHaveBeenCalledTimes(1));
     // resolve 后 busy 必须复位：按钮回到可点状态，用户可重试或点「稍后」
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: tt('ui.update_prompt.upgrade') })).toBeEnabled(),
+      expect(screen.getByRole('button', { name: tt('ui.update_prompt.install_restart') })).toBeEnabled(),
     );
   });
 

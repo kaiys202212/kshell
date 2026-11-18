@@ -55,6 +55,7 @@ const mocks = vi.hoisted(() => ({
   scanSessions: vi.fn(),
   getAppVersion: vi.fn(),
   checkForUpdate: vi.fn(),
+  prepareUpdate: vi.fn(),
   applyUpdate: vi.fn(),
   checkToolAuth: vi.fn().mockResolvedValue('unknown'),
   openLoginTerminal: vi.fn(),
@@ -240,10 +241,12 @@ beforeEach(() => {
     Notes: '',
     Source: '',
     Available: false,
+    Ready: false,
     Skipped: true,
     Reason: 'update.reason.dev_build',
   });
   mocks.applyUpdate.mockResolvedValue(undefined);
+  mocks.prepareUpdate.mockResolvedValue(undefined);
   mocks.getCloseBehavior.mockResolvedValue('tray');
   mocks.setCloseBehavior.mockResolvedValue(undefined);
   // 自启动默认不支持（dev 构建形态），区块整体隐藏；支持态用例各自覆写
@@ -1962,6 +1965,7 @@ describe('Settings', () => {
       Notes: '修复升级',
       Source: 'ghfast',
       Available: true,
+      Ready: true,
       Skipped: false,
       Reason: '',
     });
@@ -1975,8 +1979,33 @@ describe('Settings', () => {
       screen.getByText(tt('ui.settings.about.source').replace('{{0}}', 'ghfast'), { exact: false }),
     ).toBeInTheDocument();
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.about.upgrade_now') }));
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.about.upgrade_ready') }));
     });
+    expect(mocks.prepareUpdate).not.toHaveBeenCalled();
+    expect(mocks.applyUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('检查更新后包未就绪：下载并安装先 prepare 再 apply', async () => {
+    mocks.getAppVersion.mockResolvedValue('v0.1.0');
+    mocks.checkForUpdate.mockResolvedValue({
+      Current: 'v0.1.0',
+      Latest: 'v0.2.0',
+      Notes: '修复升级',
+      Source: 'ghfast',
+      Available: true,
+      Ready: false,
+      Skipped: false,
+      Reason: '',
+    });
+    render(<Settings />);
+    await screen.findByRole('heading', { name: tt('ui.settings.about.title') });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.about.check_update') }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: tt('ui.settings.about.download_install') }));
+    });
+    expect(mocks.prepareUpdate).toHaveBeenCalledTimes(1);
     expect(mocks.applyUpdate).toHaveBeenCalledTimes(1);
   });
 
