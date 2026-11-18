@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## v0.1.31 (2026-11-18)
+
+- AgentHub manager questions can now be answered inline: when an ask card appears in the thinking chain, answer it in the card (single choice, multi-select or free text) and the manager continues automatically — no manual follow-up in the session; progress updates live and can be interrupted, and the WeChat bridge works the same way.
+- Ask-form improvements: multi-step questionnaires (a confirm step without options falls back to Yes/No); choosing "Other" expands its text box on demand; card titles show the project and session; cards collapse on click, answered cards show a clear state, and submitting an empty multi-select is disabled.
+- The manager's thinking chain is grouped and collapsible per round, so long tasks no longer fill the chat with one endless block; the manager also considers recent session messages plus project and session context, reducing idle repeated reasoning.
+- Fixed in-progress tools staying in "running" after a cancelled or abnormally stopped round (refusal, max tokens, etc.), which froze the frontend queue.
+- Fixed AgentHub's new-session entry offering tools that don't support ACP and therefore could not chat; unsupported tools are filtered out automatically.
+- Bare numbers typed into AgentHub are no longer treated as commands: while an answer is pending, replying with a number counts as the answer.
+- WeChat binding is now part of AgentHub settings: turning AgentHub off unbinds WeChat and updates the home page; a confirmation is shown before closing, late scan callbacks can no longer write credentials back, and unbind/scan flows are fully ordered, fixing leftover bindings and orphan polling.
+- The Git commit box gains AI-generated commit messages: generate a single-line `type: summary` from staged changes and fill it in with one click, for both local and SSH remote repos; malformed diffs or remote rate limits now produce clear errors instead of sending git error text to the model.
+- Chat elicitation forms now understand `anyOf` enums, so union-typed options returned by agents parse and display correctly.
+
+## v0.1.30 (2026-11-16)
 
 - The file tree now supports copy/cut/paste: Ctrl+C copies selected files to the system clipboard (paste them in Explorer directly), Ctrl+X cuts within the tree and pasting moves them; name conflicts on paste are auto-renamed with a numeric suffix instead of overwriting, and moving a folder into its own subtree is rejected.
 - The settings page gains an AgentHub section: master switch, heartbeat threshold and host sync in one place; WorkBuddy syncs kshell capabilities with one click, while other hosts get a self-install guide (a generated `~/.kshell/host-install.md` — send the one-line command shown in the UI to the platform's AI and it installs itself).
