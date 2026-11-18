@@ -51,6 +51,9 @@ func (a *App) startWeixin() {
 	// 改配置即时生效；Configure 重绑时 Runtime 会再次注入到新 bridge。
 	r.SetRouter(a.weixinInputRouter())
 	r.SetManagerRouter(a.weixinManagerRouter())
+	// 智能链路门禁：总开关关闭时微信侧不进智能路由（按旧语义直投当前会话），
+	// 与桌面端 AgentHub 的「未启用即不智能分发」口径一致。
+	r.SetRouteGate(func() bool { return a.snapshot().Config.AgentHub.EnabledOn() })
 	r.SetDirectPatterns(func() []string { return a.agenthubDirectPatterns() })
 	r.SetToolName(a.toolDisplayName)
 	// 共享聚合策略:桌面 Console(wxHubConsole)与微信 bridge Console 与出站
@@ -135,9 +138,11 @@ func (a *App) weixinInputRouter() weixin.InputRouter {
 // weixinManagerRouter 返回微信管理者循环路由闭包（逃生门之后、InputRouter
 // 单发之前）：循环成功 → Replies 直接回显（正文已是自然语言结论/选项列表）；
 // ErrLoopBusy/ErrLLMNotReady/其它错误一律 (zero,false) 回落 InputRouter
-// （RouteInput 单发路径，现状行为）。Channel 固定 "wechat"，与桌面 Hub 的
-// 挂起态渠道隔离；反问采用挂起-续跑语义（agentapi Run 内部按渠道+SuspendTTL
-// 对短输入自动续跑），desktop 不再维护续轮标记与 TTL。
+// （RouteInput 单发路径），但带失败原因 FailureKey——桥层据此把降级转成
+// 待选 + 可读回执，不再静默直投当前会话（2026-11-18 真机事故）。
+// Channel 固定 "wechat"，与桌面 Hub 的挂起态渠道隔离；反问采用挂起-续跑语义
+// （agentapi Run 内部按渠道+SuspendTTL 对短输入自动续跑），desktop 不再维护
+// 续轮标记与 TTL。
 func (a *App) weixinManagerRouter() weixin.ManagerRouter {
 	return func(ctx context.Context, input string) (weixin.ManagerOutcome, bool) {
 		if !a.snapshot().Config.AgentHub.EnabledOn() {
@@ -162,13 +167,25 @@ func (a *App) weixinManagerRouter() weixin.ManagerRouter {
 		if err != nil {
 			// 挂起态归 agentapi 所有：瞬时错误（如 ErrLLMNotReady）保留挂起，
 			// 用户重试会自动续跑；desktop 无需也不得清理。
-			return weixin.ManagerOutcome{}, false
+			// 失败原因带上 FailureKey：桥层据此把降级转成待选 + 可读回执，
+			// 而不是静默直投当前会话（2026-11-18 真机事故）。
+			return weixin.ManagerOutcome{FailureKey: wxManagerFailureKey(err)}, false
 		}
 		// 挂起反问（Suspended ⇔ Ask 非 nil）时 Replies 已是「问题+编号选项」
 		// 文本，直接透传给 bridge 回显；挂起-续跑语境由 agentapi 自持
 		//（同渠道短输入 Run 内部自动续跑），桥侧零特殊逻辑。
 		return weixin.ManagerOutcome{Replies: res.Replies}, true
 	}
+}
+
+// wxManagerFailureKey 把管理者循环错误分类成用户可读的稳定 key（桥层按语言
+// 渲染）：模型未配置属用户可自助修复的环境问题，与网关/网络/解析失败分开，
+// 让微信回执能给出「去设置换模型」这种可操作指引。
+func wxManagerFailureKey(err error) string {
+	if errors.Is(err, agentapi.ErrLLMNotReady) {
+		return "err.router.llm_not_ready"
+	}
+	return "err.router.loop_failed"
 }
 
 // runWXLoop 取微信管理者循环闭包并执行一次：注入桩优先（测试），nil 时用

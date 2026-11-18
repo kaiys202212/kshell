@@ -444,6 +444,39 @@ func TestRuntimeSetManagerRouterForwards(t *testing.T) {
 	}
 }
 
+// TestRuntimeSetRouteGateForwards 覆盖智能链路门禁的转发与重绑再注入：
+// desktop 依赖「改配置即时生效」，门禁必须能直接换掉现有 bridge 上的那份。
+func TestRuntimeSetRouteGateForwards(t *testing.T) {
+	r := NewRuntime(nil, "zh-CN")
+	defer r.Stop()
+	allowed := false
+	// Configure 前装配：创建 bridge 时注入。
+	r.SetRouteGate(func() bool { return allowed })
+	r.baseURL = "http://unused" // 不真正轮询
+	r.Configure("tok", "")
+	b := r.GetBridge()
+	if b == nil {
+		t.Fatal("Configure 后应有 bridge")
+	}
+	if b.routeGateAllows() {
+		t.Fatal("门禁闭时应报告不允许")
+	}
+	allowed = true
+	if !b.routeGateAllows() {
+		t.Fatal("门禁开闭变化应实时生效（闭包重读外部状态）")
+	}
+	// Configure 后再装配：现有 bridge 即时生效。
+	r.SetRouteGate(func() bool { return false })
+	if b.routeGateAllows() {
+		t.Fatal("SetRouteGate 应即时转发给现有 bridge")
+	}
+	// 未装配：视为允许（旧装配路径零影响）。
+	r.SetRouteGate(nil)
+	if !b.routeGateAllows() {
+		t.Fatal("nil 门禁应视为允许")
+	}
+}
+
 // NotifyProgress 经 bridge 出站 worker 异步推送进度文案（语言取桥配置）；
 // bridge 未创建或无发送上下文时安全（no-op / 计 undelivered）。
 func TestRuntimeNotifyProgress(t *testing.T) {

@@ -130,7 +130,7 @@ func TestBridgeRouterHook(t *testing.T) {
 			t.Fatalf("第三轮 calls=%d round=%d, 期望 3/3", stub.calls, b.routeRoundValue())
 		}
 
-		// 第四轮：不再进路由，原文走 console.Handle 降级，轮次清零。
+		// 第四轮：不再进路由，转待选（不得按归因水位直投当前会话）。
 		b.HandleInbound("u1", "ct-4", "就这个")
 		if stub.calls != 3 {
 			t.Fatalf("第四轮不应进路由, calls=%d", stub.calls)
@@ -138,12 +138,15 @@ func TestBridgeRouterHook(t *testing.T) {
 		if b.routeRoundValue() != 0 {
 			t.Fatalf("第四轮降级后轮次应清零, 实际 %d", b.routeRoundValue())
 		}
-		if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "就这个" {
-			t.Fatalf("第四轮应把原文发当前会话: %v", ex.sentTexts)
+		if len(ex.sentTexts) != 0 {
+			t.Fatalf("第四轮不得直投当前会话: %v", ex.sentTexts)
+		}
+		if !b.console.Busy() {
+			t.Fatal("第四轮应进待选菜单")
 		}
 	})
 
-	t.Run("handled=false 回落原文", func(t *testing.T) {
+	t.Run("handled=false 转待选而非直投", func(t *testing.T) {
 		ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1", Title: "会话A"}}
 		b, _ := newRouteBridge(t, ex)
 		stub := &routerStub{fn: func(context.Context, string) (hubtools.RouteDecision, bool) {
@@ -155,8 +158,11 @@ func TestBridgeRouterHook(t *testing.T) {
 		if stub.calls != 1 {
 			t.Fatalf("路由调用次数 = %d, 期望 1", stub.calls)
 		}
-		if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "普通消息" {
-			t.Fatalf("handled=false 应回落 Handle(原文): %v", ex.sentTexts)
+		if len(ex.sentTexts) != 0 {
+			t.Fatalf("handled=false 不得直投当前会话: %v", ex.sentTexts)
+		}
+		if !b.console.Busy() {
+			t.Fatal("handled=false 应转待选菜单")
 		}
 	})
 
@@ -228,7 +234,7 @@ func TestBridgeRouterHook(t *testing.T) {
 		}
 		b, _ := newRouteBridge(t, ex)
 		stub := &routerStub{fn: func(context.Context, string) (hubtools.RouteDecision, bool) {
-			return hubtools.RouteDecision{}, false // 不消费：回落 Handle 原文
+			return hubtools.RouteDecision{}, false // 不消费：转待选
 		}}
 		b.SetRouter(stub.router())
 
@@ -240,7 +246,8 @@ func TestBridgeRouterHook(t *testing.T) {
 		if stub.calls != 1 {
 			t.Fatalf("纯数字应进路由, 实际调用 %d 次", stub.calls)
 		}
-		// 路由器不消费：回落 Handle 原文，仍走既有编号切换语义（#l 后 2 → c2）。
+		// 路由器不消费：裸数字仍走既有编号切换语义（#l 后 2 → c2）；
+		// 非数字才转待选（degradeToPick 的数字例外）。
 		if len(ex.switchCalls) != 1 || ex.switchCalls[0] != "c2" {
 			t.Fatalf("纯数字应回落编号切换: %v", ex.switchCalls)
 		}
@@ -248,6 +255,28 @@ func TestBridgeRouterHook(t *testing.T) {
 		b.HandleInbound("u1", "ct-2", "２")
 		if stub.calls != 2 {
 			t.Fatalf("全角数字应进路由, 实际调用 %d 次", stub.calls)
+		}
+	})
+
+	t.Run("反问挂起时数字是答案不进待选", func(t *testing.T) {
+		// 反问语境（管理者循环挂起）下回答编号：管理者若成功会接管；失败时
+		// 数字仍属命令层编号语义，不能被塞进新待选菜单（否则答案被当正文）。
+		ex := &fakeExec{
+			sessions: []hub.SessionRef{{ChatID: "c1", Title: "会话A"}, {ChatID: "c2", Title: "会话B"}},
+			hasCur:   true, current: hub.SessionRef{ChatID: "c1", Title: "会话A"},
+		}
+		b, _ := newRouteBridge(t, ex)
+		b.SetManagerRouter(func(context.Context, string) (ManagerOutcome, bool) {
+			return ManagerOutcome{FailureKey: "err.router.loop_failed"}, false
+		})
+		b.SetRouter((&routerStub{}).router())
+
+		b.HandleInbound("u1", "ct-1", "1")
+		if b.console.Busy() {
+			t.Fatal("裸数字不应建立待选菜单")
+		}
+		if len(ex.sentTexts) != 0 {
+			t.Fatalf("裸数字不应作为正文投递: %v", ex.sentTexts)
 		}
 	})
 }
@@ -339,8 +368,12 @@ func TestBridgeManagerRouter(t *testing.T) {
 		if mgr.calls != 1 || router.calls != 1 {
 			t.Fatalf("未接管应回落 InputRouter: mgr=%d router=%d", mgr.calls, router.calls)
 		}
-		if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "普通消息" {
-			t.Fatalf("回落应走 Handle(原文): %v", ex.sentTexts)
+		// 两者都不接管：转待选，不按归因水位直投当前会话（2026-11-18 事故）。
+		if len(ex.sentTexts) != 0 {
+			t.Fatalf("回落不得直投当前会话: %v", ex.sentTexts)
+		}
+		if !b.console.Busy() {
+			t.Fatal("回落应建立待选菜单")
 		}
 	})
 }

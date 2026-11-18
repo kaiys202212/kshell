@@ -476,7 +476,7 @@ func TestWeixinManagerRouter(t *testing.T) {
 		}
 	})
 
-	t.Run("ErrLLMNotReady 回落", func(t *testing.T) {
+	t.Run("ErrLLMNotReady 回落并标记原因", func(t *testing.T) {
 		app := newApp(t)
 		injectWXRunner(app, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
 			return agentapi.RunResult{}, agentapi.ErrLLMNotReady
@@ -486,17 +486,40 @@ func TestWeixinManagerRouter(t *testing.T) {
 			t.Fatal("ErrLLMNotReady 应回落 InputRouter")
 		}
 		if out.Replies != nil {
-			t.Fatalf("回落应返回零值: %+v", out)
+			t.Fatalf("回落应无 Replies: %+v", out)
+		}
+		if out.FailureKey != "err.router.llm_not_ready" {
+			t.Fatalf("失败原因 key = %q, 期望 err.router.llm_not_ready", out.FailureKey)
 		}
 	})
 
-	t.Run("其它错误回落", func(t *testing.T) {
+	t.Run("其它错误回落并标记原因", func(t *testing.T) {
 		app := newApp(t)
 		injectWXRunner(app, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
-			return agentapi.RunResult{}, errors.New("boom")
+			return agentapi.RunResult{}, errors.New("err.workbuddy.chat_http|400")
 		})
-		if _, handled := app.weixinManagerRouter()(context.Background(), "随便看看"); handled {
+		out, handled := app.weixinManagerRouter()(context.Background(), "随便看看")
+		if handled {
 			t.Fatal("其它错误应回落 InputRouter")
+		}
+		if out.FailureKey != "err.router.loop_failed" {
+			t.Fatalf("失败原因 key = %q, 期望 err.router.loop_failed", out.FailureKey)
+		}
+	})
+
+	t.Run("总开关关闭不标记失败原因", func(t *testing.T) {
+		app := newApp(t)
+		off := false
+		app.mu.Lock()
+		app.opts.Config.AgentHub.Enabled = &off
+		app.mu.Unlock()
+		injectWXRunner(app, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			t.Fatal("总开关关闭不应调用管理者循环")
+			return agentapi.RunResult{}, nil
+		})
+		out, handled := app.weixinManagerRouter()(context.Background(), "随便看看")
+		if handled || out.FailureKey != "" {
+			t.Fatalf("关闭态应是「未尝试」而非「失败」: handled=%v out=%+v", handled, out)
 		}
 	})
 
