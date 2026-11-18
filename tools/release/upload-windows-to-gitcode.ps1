@@ -177,7 +177,8 @@ try {
     $env:GITCODE_REPO = $Repo
     Push-Location $RepoRoot
     try {
-        & go run ./cmd/syncgitcode -dir $tmp -tag $Tag
+        $goLine = 'go run ./cmd/syncgitcode -dir "' + $tmp + '" -tag "' + $Tag + '" 2>&1'
+        & cmd /c $goLine
         if ($LASTEXITCODE -ne 0) { Fail "syncgitcode 失败（exit $LASTEXITCODE）" }
     } finally {
         Pop-Location
