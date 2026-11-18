@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.33 (2026-11-18)
+
+- Unified default tool and model selection: new sessions in the desktop app, WeChat `#en`, and AgentHub dispatches now all use the defaults from AgentHub's "⚙ Defaults" settings; when nothing is chosen explicitly kshell no longer picks "the tool with the most sessions" or the first item in a list, and only falls back to the first installed ACP tool when the configured default is unavailable.
+- AgentHub's new-session project now defaults to the most recently used project; new OpenCode sessions reuse the model chosen last time instead of falling back to big-pickle.
+- Fixed WeChat messages being silently delivered to the current session when smart routing failed: routing failures now go to the "pick a target" flow with an explanation, preventing wrong-session or multi-target delivery; with AgentHub disabled the original direct-delivery behavior is unchanged.
+
 ## v0.1.32 (2026-11-18)
 
 - More reliable updates: after detecting a new version, kshell first downloads and verifies this platform's package and only then shows "version ready"; choosing "Later" keeps the downloaded package and reuses it on the next launch or check instead of downloading again.
