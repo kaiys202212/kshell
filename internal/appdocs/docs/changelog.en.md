@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.32 (2026-11-18)
+
+- More reliable updates: after detecting a new version, kshell first downloads and verifies this platform's package and only then shows "version ready"; choosing "Later" keeps the downloaded package and reuses it on the next launch or check instead of downloading again.
+- Upgrade prompts now appear only when the package is actually available: if the latest release does not provide a package for this platform, kshell shows no prompt and never falls back to an older version.
+- "Check for updates" in Settings now distinguishes "Download and install" from "Install and restart": the package is downloaded and verified first when needed, and installed directly once ready; a ready package can even be installed offline.
+- The npx installer falls back to the previous release when the latest one has no package for the current platform.
+- Fixed "Restart app" on Windows failing to start the new process under PowerShell 5.1 and leaving no running app.
+
 ## v0.1.31 (2026-11-18)
 
 - AgentHub manager questions can now be answered inline: when an ask card appears in the thinking chain, answer it in the card (single choice, multi-select or free text) and the manager continues automatically — no manual follow-up in the session; progress updates live and can be interrupted, and the WeChat bridge works the same way.
