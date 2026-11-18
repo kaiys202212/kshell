@@ -238,6 +238,7 @@
       "unzip_failed": "Failed to extract the installer package: {{0}}",
       "asset_empty": "{{0}} is empty",
       "asset_missing": "The installer package does not contain {{0}}",
+      "asset_too_large": "Package member {{0}} is too large",
       "sums_length_invalid": "Invalid SHA256 length: {{0}}",
       "sums_missing_file": "{{0}} is not present in SHA256SUMS",
       "write_cache": "Failed to save the downloaded package: {{0}}",
@@ -274,7 +275,8 @@
     "reason": {
       "dev_build": "Development build; update check skipped",
       "platform_unsupported": "In-app update is not supported on macOS yet, please download from the releases page",
-      "up_to_date": "Up to date"
+      "up_to_date": "Up to date",
+      "package_not_ready": "The latest version does not have a package for this platform yet"
     }
   },
   "time": {

@@ -3,6 +3,7 @@ package desktop
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -103,10 +104,13 @@ func (a *App) checkAndPrepare() {
 		return
 	}
 	if err := a.prepare(r); err != nil {
+		log.Printf("update: 预下载 %s 失败: %v", r.Latest, err)
 		return
 	}
 	info := a.toUpdateInfo(r)
-	info.Ready = true
+	if !info.Ready {
+		return
+	}
 	a.Emit("update:available", info)
 }
 
@@ -142,19 +146,29 @@ func (a *App) PrepareUpdate() error {
 // 而前端以 0 参调用，导致 "received 0 arguments, expected 1"。
 func (a *App) ApplyUpdate() error {
 	dir := a.updateCacheDir()
+	// 弹窗只会在预下载就绪后出现；优先安装那份已就绪的缓存包。
+	cached := ""
+	if tag := update.CachedTag(dir); tag != "" && update.IsCached(dir, tag) &&
+		(!version.IsRelease() || update.Newer(version.Current(), tag)) {
+		cached = tag
+	}
 	r, err := checkUpdateFn()
-	if err != nil {
+	switch {
+	case err != nil:
 		// 网络抖动时仍允许安装已预下载并校验过的包（弹窗本就基于该包出现）。
-		// 仅接受比当前版本新的缓存，避免离线时被旧缓存降级。
-		if tag := update.CachedTag(dir); tag != "" && update.IsCached(dir, tag) &&
-			(!version.IsRelease() || update.Newer(version.Current(), tag)) {
-			r = update.CheckResult{Current: version.Current(), Latest: tag, Available: true}
-		} else {
+		if cached == "" {
 			return err
 		}
-	}
-	if !r.Available {
-		return fmt.Errorf("err.update.no_update")
+		r = update.CheckResult{Current: version.Current(), Latest: cached, Available: true}
+	case !r.Available:
+		if cached == "" {
+			return fmt.Errorf("err.update.no_update")
+		}
+		r = update.CheckResult{Current: version.Current(), Latest: cached, Available: true}
+	case cached != "" && update.Newer(cached, r.Latest):
+		// 检查到更新的版本但还没预下载：仍安装用户确认过的缓存版本，
+		// 避免「弹窗说已就绪」却因新版本缺包/下载失败而装不上。
+		r = update.CheckResult{Current: version.Current(), Latest: cached, Available: true}
 	}
 	exe, err := executablePath()
 	if err != nil {

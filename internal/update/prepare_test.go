@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -149,5 +150,63 @@ func TestCachedZipRejectsCorruptedFile(t *testing.T) {
 
 	if _, _, ok := readCachedZip(dir, "v0.2.0", zipName); ok {
 		t.Fatal("损坏的缓存不应命中")
+	}
+}
+
+func TestPrepareFallsBackToGitHubSameTag(t *testing.T) {
+	zipName := CurrentPackageZip()
+	zipBytes := mustZip(t, map[string][]byte{PackageBinaryName(runtime.GOOS): []byte("NEWBIN")})
+	sum := sha256.Sum256(zipBytes)
+	sums := []byte(hex.EncodeToString(sum[:]) + "  " + zipName + "\n")
+	dir := t.TempDir()
+
+	err := Prepare(context.Background(), PrepareOptions{
+		Tag:      "v0.2.0",
+		ZipURL:   "https://api.gitcode.com/api/v5/missing.zip",
+		SumsURL:  "https://api.gitcode.com/api/v5/missing-sums",
+		CacheDir: dir,
+		Get: func(_ context.Context, url string) ([]byte, error) {
+			// GitCode 附件链全部 404；只有 GitHub 官方直链可用（代理链也失败）。
+			if strings.HasPrefix(url, "https://github.com/") {
+				if strings.Contains(url, SumsName) {
+					return sums, nil
+				}
+				return zipBytes, nil
+			}
+			return nil, errors.New("404")
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsCached(dir, "v0.2.0") {
+		t.Fatal("GitHub 同版本兜底成功后应写入缓存")
+	}
+}
+
+func TestPrepareRejectsNonInstallablePackage(t *testing.T) {
+	zipName := CurrentPackageZip()
+	zipBytes := mustZip(t, map[string][]byte{"other.bin": []byte("NEWBIN")})
+	sum := sha256.Sum256(zipBytes)
+	sums := []byte(hex.EncodeToString(sum[:]) + "  " + zipName + "\n")
+	dir := t.TempDir()
+
+	err := Prepare(context.Background(), PrepareOptions{
+		Tag:      "v0.2.0",
+		ZipURL:   "https://example/x/" + zipName,
+		SumsURL:  "https://example/x/" + SumsName,
+		CacheDir: dir,
+		Get: func(_ context.Context, url string) ([]byte, error) {
+			if strings.Contains(url, SumsName) {
+				return sums, nil
+			}
+			return zipBytes, nil
+		},
+	})
+	if err == nil {
+		t.Fatal("缺少入口二进制时不应视为可安装")
+	}
+	if IsCached(dir, "v0.2.0") {
+		t.Fatal("不可安装的包不应写入缓存")
 	}
 }

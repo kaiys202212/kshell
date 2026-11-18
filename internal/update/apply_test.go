@@ -394,3 +394,39 @@ func writeCacheForTest(cacheDir, tag string, zipBytes []byte) error {
 	}
 	return os.WriteFile(filepath.Join(cacheDir, "meta.json"), raw, 0o644)
 }
+
+func TestApplyDropsUninstallableCache(t *testing.T) {
+	pinWindowsPackage(t)
+	dir := t.TempDir()
+	cacheDir := t.TempDir()
+	dest := filepath.Join(dir, "kshell-desktop.exe")
+	if err := os.WriteFile(dest, []byte("OLD"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	badZip := mustZip(t, map[string][]byte{"other.bin": []byte("NEWBIN")})
+	if err := writeCacheForTest(cacheDir, "v0.2.0", badZip); err != nil {
+		t.Fatal(err)
+	}
+	if !IsCached(cacheDir, "v0.2.0") {
+		t.Fatal("准备条件：缓存应命中")
+	}
+
+	err := Apply(context.Background(), ApplyOptions{
+		Tag:      "v0.2.0",
+		ZipURL:   "https://example/" + ZipName,
+		SumsURL:  "https://example/" + SumsName,
+		DestExe:  dest,
+		CacheDir: cacheDir,
+		Get: func(context.Context, string) ([]byte, error) {
+			t.Fatal("缓存命中时不应下载")
+			return nil, nil
+		},
+		SpawnReplace: func(string, string) error { return nil },
+	})
+	if err == nil {
+		t.Fatal("缺少入口应失败")
+	}
+	if IsCached(cacheDir, "v0.2.0") {
+		t.Fatal("坏包应被清理，否则会反复提示却永远装不上")
+	}
+}

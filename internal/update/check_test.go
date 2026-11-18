@@ -233,8 +233,8 @@ func TestCheckTakesMaxAcrossSources(t *testing.T) {
 	}
 }
 
-// 胜出源（最大 tag）缺 zip 资产时，应退而取下一个有资产的次新源，而不是整体失败。
-func TestCheckFallsBackWhenMaxSourceMissingAsset(t *testing.T) {
+// 最新 tag 缺当前平台包时，不允许用镜像滞后的旧版本顶上来提示升级。
+func TestCheckRefusesOlderFallbackWhenNewestSourceMissingAsset(t *testing.T) {
 	pinCheckWindowsPackage(t)
 	freshNoAsset := `{"tag_name":"v0.1.18","body":"","assets":[]}`
 	stale := githubLatestJSON("v0.1.17", "https://github.com/kaiys202212/kshell/releases/download/v0.1.17/"+ZipName)
@@ -255,11 +255,14 @@ func TestCheckFallsBackWhenMaxSourceMissingAsset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Latest != "v0.1.17" {
-		t.Fatalf("Latest = %q, want v0.1.17（最大源缺资产时退回次新可用源）", got.Latest)
+	if got.Latest != "v0.1.18" {
+		t.Fatalf("Latest = %q, want 全局最新 v0.1.18", got.Latest)
 	}
-	if !got.Available {
-		t.Fatalf("Available = false: %+v", got)
+	if got.Available {
+		t.Fatalf("最新版缺包时不应把旧版当升级目标: %+v", got)
+	}
+	if got.Reason != "update.reason.package_not_ready" {
+		t.Fatalf("Reason = %q", got.Reason)
 	}
 }
 
@@ -370,5 +373,37 @@ func TestCheckSkipsDarwinWithoutNetwork(t *testing.T) {
 	}
 	if got.Available {
 		t.Fatal("darwin 上不应报有可用更新")
+	}
+}
+
+func TestCheckDoesNotFallBackToOlderWhenLatestPackageMissing(t *testing.T) {
+	pinCheckWindowsPackage(t)
+	gitBody := `{"tag_name":"v0.3.0","assets":[]}`
+	githubBody := `{"tag_name":"v0.3.1","assets":[]}`
+	c := Client{
+		Current: "v0.2.9",
+		Sources: []Source{
+			{Name: "gitcode", LatestURL: "https://gitcode/latest", Attach: true},
+			{Name: "github", LatestURL: "https://github/latest"},
+		},
+		Get: func(_ context.Context, url string) ([]byte, error) {
+			if url == "https://gitcode/latest" {
+				return []byte(gitBody), nil
+			}
+			return []byte(githubBody), nil
+		},
+	}
+	got, err := c.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Available {
+		t.Fatalf("最新版缺包时不应提示升级: %+v", got)
+	}
+	if got.Latest != "v0.3.1" {
+		t.Fatalf("Latest = %q，应为全局最新 v0.3.1", got.Latest)
+	}
+	if got.Reason != "update.reason.package_not_ready" {
+		t.Fatalf("Reason = %q", got.Reason)
 	}
 }

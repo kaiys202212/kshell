@@ -28,6 +28,10 @@ func TestRestartWaitStartPowerShell(t *testing.T) {
 	if !strings.Contains(ps, "-ArgumentList '--after-update'") {
 		t.Fatalf("应带升级/重启标记: %q", ps)
 	}
+	// PS 5.1 的 Start-Process 没有 -LiteralPath，用了会直接报错导致重启后无进程。
+	if !strings.Contains(ps, "Start-Process -FilePath") || strings.Contains(ps, "-LiteralPath") {
+		t.Fatalf("Start-Process 必须用 -FilePath（PS 5.1）: %q", ps)
+	}
 
 	pid = os.Getpid()
 	ps = restartWaitStartPowerShell(pid, exe)

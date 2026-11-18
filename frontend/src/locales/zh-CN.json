@@ -238,6 +238,7 @@
       "unzip_failed": "解压安装包失败: {{0}}",
       "asset_empty": "{{0}} 为空",
       "asset_missing": "安装包中没有 {{0}}",
+      "asset_too_large": "安装包成员 {{0}} 超出大小上限",
       "sums_length_invalid": "SHA256 长度异常: {{0}}",
       "sums_missing_file": "SHA256SUMS 中没有 {{0}}",
       "write_cache": "保存下载的安装包失败: {{0}}",
@@ -274,7 +275,8 @@
     "reason": {
       "dev_build": "开发构建不检查更新",
       "platform_unsupported": "macOS 暂不支持应用内更新，请到发布页下载",
-      "up_to_date": "已是最新"
+      "up_to_date": "已是最新",
+      "package_not_ready": "最新版本暂未提供当前平台的安装包"
     }
   },
   "time": {

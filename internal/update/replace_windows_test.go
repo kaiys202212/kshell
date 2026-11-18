@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestReplaceWaitStartPowerShell(t *testing.T) {
@@ -222,4 +223,70 @@ func TestSpawnReplaceCmd_脱离父进程(t *testing.T) {
 	if cmd.SysProcAttr.CreationFlags&0x01000000 == 0 {
 		t.Fatalf("CreationFlags = %#x 缺少 CREATE_BREAKAWAY_FROM_JOB", cmd.SysProcAttr.CreationFlags)
 	}
+}
+
+// TestReplaceWaitStartPowerShell_LiveImageHeldByChild 模拟真实场景：
+// 旧 exe 被助手子进程（mcp/askpass 等）持有映像时，脚本必须仍能把旧 exe
+// 改名让位、让新 exe 落位并拉起，而不是因占用失败卡死升级。
+func TestReplaceWaitStartPowerShell_LiveImageHeldByChild(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	cur := filepath.Join(dir, "kshell-desktop.exe")
+	nxt := cur + ".new"
+	marker := []byte("KSHLL-NEW-BUILD")
+	newBytes := append(append([]byte{}, src...), marker...)
+	if err := os.WriteFile(cur, src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nxt, newBytes, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	child := exec.Command(cur, "-test.run=^TestReplaceLiveHelper$")
+	child.Env = append(os.Environ(), "KSHLL_REPLACE_HELPER=1")
+	if err := child.Start(); err != nil {
+		t.Fatalf("拉起持有映像的子进程失败: %v", err)
+	}
+	t.Cleanup(func() {
+		if child.Process != nil {
+			_ = child.Process.Kill()
+			_, _ = child.Process.Wait()
+		}
+	})
+	time.Sleep(500 * time.Millisecond) // 等子进程加载并持有 exe 映像
+
+	logPath := filepath.Join(dir, "logs", "update.log")
+	ps := replaceWaitStartPowerShell(999999, cur, nxt, logPath)
+	out, err := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps).CombinedOutput()
+	logBody, _ := os.ReadFile(logPath)
+	// 子进程仍持有 .upgrade-old 时，finally 的清理会失败并把退出码置 1；
+	// 升级本身成功以日志与文件状态为准（生产侧也不看该退出码）。
+	if !strings.Contains(string(logBody), "update done") {
+		t.Fatalf("旧映像被占用时升级未完成: %v\n脚本输出: %s\n升级日志:\n%s", err, out, logBody)
+	}
+	got, err := os.ReadFile(cur)
+	if err != nil {
+		t.Fatalf("新 exe 未落位: %v", err)
+	}
+	if !bytes.HasSuffix(got, marker) {
+		t.Fatal("落位 exe 不是新构建")
+	}
+	if _, err := os.Stat(nxt); !os.IsNotExist(err) {
+		t.Fatal(".new 应已改名落位")
+	}
+}
+
+// TestReplaceLiveHelper 只作为被拉起的“持有旧映像”子进程，不参与正常测试。
+func TestReplaceLiveHelper(t *testing.T) {
+	if os.Getenv("KSHLL_REPLACE_HELPER") != "1" {
+		t.Skip("helper process only")
+	}
+	time.Sleep(8 * time.Second)
 }

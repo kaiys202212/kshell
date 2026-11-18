@@ -204,6 +204,9 @@ func (c Client) Check(ctx context.Context) (CheckResult, error) {
 	}
 	wantZip := CurrentPackageZip()
 	var best *checkCandidate
+	// newestTag 记录所有源里见过的最新 tag，与「是否有当前平台包」解耦：
+	// 最新版缺包时必须不提示，而不是让镜像滞后的旧版本顶上来。
+	var newestTag string
 	var last error
 	for _, s := range src {
 		u := s.checkURL()
@@ -216,6 +219,10 @@ func (c Client) Check(ctx context.Context) (CheckResult, error) {
 		if err := json.Unmarshal(raw, &rel); err != nil {
 			last = err
 			continue
+		}
+		if rel.TagName != "" &&
+			(newestTag == "" || semver.Compare(canon(rel.TagName), canon(newestTag)) > 0) {
+			newestTag = rel.TagName
 		}
 		cand := checkCandidate{tagName: rel.TagName, notes: rel.Body, source: s.Name}
 		for _, a := range rel.Assets {
@@ -246,6 +253,13 @@ func (c Client) Check(ctx context.Context) (CheckResult, error) {
 			last = fmt.Errorf("err.update.no_source")
 		}
 		return out, last
+	}
+	// 最新 tag 的当前平台包缺失：只报最新版本号，不提示升级（也不下探旧版本）。
+	if newestTag != "" && canon(best.tagName) != canon(newestTag) {
+		out.Latest = newestTag
+		out.Available = false
+		out.Reason = "update.reason.package_not_ready"
+		return out, nil
 	}
 	out.Latest = best.tagName
 	out.Notes = best.notes
@@ -335,6 +349,10 @@ func (c Client) httpGet(ctx context.Context, url string) ([]byte, error) {
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxGetBytes))
 	if err != nil {
 		return nil, err
+	}
+	// 达到上限说明被截断；静默截断会让哈希校验永远失败，必须显式报错。
+	if int64(len(b)) >= maxGetBytes {
+		return nil, fmt.Errorf("%s: 响应超过 %d 字节上限", url, maxGetBytes)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("%s: HTTP %d", url, resp.StatusCode)

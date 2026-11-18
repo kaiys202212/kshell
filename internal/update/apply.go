@@ -4,12 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,31 +45,13 @@ func applyExe(ctx context.Context, opts ApplyOptions) error {
 	zipName := CurrentPackageZip()
 	binName := currentBinaryName()
 	zipBody := cachedZipBody(opts)
+	usedCache := zipBody != nil
 	if zipBody == nil {
-		cli := Client{Get: opts.Get, HTTP: &http.Client{Timeout: applyTimeout}}
-		sumsBody, err := cli.getThroughSources(ctx, opts.SumsURL)
-		if err != nil {
-			if errors.Is(err, errNoDownloadSource) {
-				return err
-			}
-			return fmt.Errorf("err.update.download_sums|%w", err)
-		}
-		want, err := ParseSHA256SUMS(sumsBody, zipName)
+		body, got, err := downloadPackage(ctx, opts.Get, opts.Tag, opts.ZipURL, opts.SumsURL, zipName)
 		if err != nil {
 			return err
 		}
-		zipBody, err = cli.getThroughSources(ctx, opts.ZipURL)
-		if err != nil {
-			if errors.Is(err, errNoDownloadSource) {
-				return err
-			}
-			return fmt.Errorf("err.update.download_package|%w", err)
-		}
-		sum := sha256.Sum256(zipBody)
-		got := hex.EncodeToString(sum[:])
-		if got != want {
-			return fmt.Errorf("err.update.checksum_mismatch")
-		}
+		zipBody = body
 		if opts.CacheDir != "" && opts.Tag != "" {
 			// 缓存只是加速下次安装；写盘失败不应阻断本次升级。
 			_ = storeCache(opts.CacheDir, opts.Tag, zipName, zipBody, got)
@@ -80,6 +59,10 @@ func applyExe(ctx context.Context, opts ApplyOptions) error {
 	}
 	exeBytes, err := extractPackageBinary(zipBody, binName)
 	if err != nil {
+		// 缓存包不可安装（缺入口/损坏）：删掉，逼迫下次重新下载而不是永远失败。
+		if usedCache {
+			dropCache(opts.CacheDir)
+		}
 		return err
 	}
 	next := opts.DestExe + ".new"
@@ -161,12 +144,24 @@ func extractDarwinAppBinary(zipBody []byte) ([]byte, error) {
 	return nil, fmt.Errorf("err.update.asset_missing|Contents/MacOS")
 }
 
+const maxMemberBytes = 200 << 20
+
 func readZipFile(f *zip.File) ([]byte, error) {
+	// 超限必须报错而不是静默截断：截断的二进制会被写进 .new 并替换掉可用的旧程序。
+	if f.UncompressedSize64 > maxMemberBytes {
+		return nil, fmt.Errorf("err.update.asset_too_large|%s", filepath.Base(f.Name))
+	}
 	rc, err := f.Open()
 	if err != nil {
 		return nil, err
 	}
-	b, err := io.ReadAll(io.LimitReader(rc, 200<<20))
+	b, err := io.ReadAll(io.LimitReader(rc, maxMemberBytes+1))
 	_ = rc.Close()
-	return b, err
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxMemberBytes {
+		return nil, fmt.Errorf("err.update.asset_too_large|%s", filepath.Base(f.Name))
+	}
+	return b, nil
 }

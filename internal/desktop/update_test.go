@@ -98,8 +98,9 @@ func TestCheckAndPrepareEmitsAfterDownload(t *testing.T) {
 
 	prepared := 0
 	origP := prepareUpdateFn
-	prepareUpdateFn = func(context.Context, update.CheckResult, string) error {
+	prepareUpdateFn = func(_ context.Context, r update.CheckResult, dir string) error {
 		prepared++
+		seedUpdateCache(t, dir, r.Latest)
 		return nil
 	}
 	t.Cleanup(func() { prepareUpdateFn = origP })
@@ -384,5 +385,69 @@ func TestApplyUpdateUsesCacheWhenCheckFails(t *testing.T) {
 	}
 	if applied != "v0.2.0" {
 		t.Fatalf("applied tag = %q", applied)
+	}
+}
+
+// seedUpdateCache 写入一份当前平台的可安装缓存包，供自动预下载成功后 Ready 判定。
+func seedUpdateCache(t *testing.T, dir, tag string) {
+	t.Helper()
+	zipName := update.CurrentPackageZip()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create(update.PackageBinaryName(runtime.GOOS))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("BIN")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	zipBytes := buf.Bytes()
+	sum := sha256.Sum256(zipBytes)
+	sums := []byte(hex.EncodeToString(sum[:]) + "  " + zipName + "\n")
+	if err := update.Prepare(context.Background(), update.PrepareOptions{
+		Tag:      tag,
+		ZipURL:   "https://x/" + zipName,
+		SumsURL:  "https://x/" + update.SumsName,
+		CacheDir: dir,
+		Get: func(_ context.Context, url string) ([]byte, error) {
+			if strings.Contains(url, update.SumsName) {
+				return sums, nil
+			}
+			return zipBytes, nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestApplyUpdatePrefersCachedPreparedTag(t *testing.T) {
+	app, _, _ := newTestApp(t)
+	seedUpdateCache(t, app.updateCacheDir(), "v0.2.0")
+
+	origC := checkUpdateFn
+	checkUpdateFn = func() (update.CheckResult, error) {
+		return update.CheckResult{Current: "v0.1.0", Latest: "v0.3.0", Available: true}, nil
+	}
+	t.Cleanup(func() { checkUpdateFn = origC })
+
+	var applied string
+	origA := applyUpdateFn
+	applyUpdateFn = func(_ context.Context, _ string, r update.CheckResult, _ string) error {
+		applied = r.Latest
+		return nil
+	}
+	t.Cleanup(func() { applyUpdateFn = origA })
+	origQ := quitRuntime
+	quitRuntime = func(context.Context) {}
+	t.Cleanup(func() { quitRuntime = origQ })
+
+	if err := app.ApplyUpdate(); err != nil {
+		t.Fatal(err)
+	}
+	if applied != "v0.2.0" {
+		t.Fatalf("应安装弹窗对应的已就绪版本 v0.2.0，实际 %q", applied)
 	}
 }

@@ -41,35 +41,106 @@ func Prepare(ctx context.Context, opts PrepareOptions) error {
 		return fmt.Errorf("err.update.tag_empty")
 	}
 	zipName := CurrentPackageZip()
-	// 大文件用 applyTimeout（3 分钟），避免慢镜像触发 check 的 12s 短超时。
-	cli := Client{Get: opts.Get, HTTP: &http.Client{Timeout: applyTimeout}}
-	sumsBody, err := cli.getThroughSources(ctx, opts.SumsURL)
-	if err != nil {
-		if errors.Is(err, errNoDownloadSource) {
-			return err
-		}
-		return fmt.Errorf("err.update.download_sums|%w", err)
-	}
-	want, err := ParseSHA256SUMS(sumsBody, zipName)
+	zipBody, got, err := downloadPackage(ctx, opts.Get, tag, opts.ZipURL, opts.SumsURL, zipName)
 	if err != nil {
 		return err
 	}
-	zipBody, err := cli.getThroughSources(ctx, opts.ZipURL)
-	if err != nil {
-		if errors.Is(err, errNoDownloadSource) {
-			return err
-		}
-		return fmt.Errorf("err.update.download_package|%w", err)
-	}
-	sum := sha256.Sum256(zipBody)
-	got := hex.EncodeToString(sum[:])
-	if got != want {
-		return fmt.Errorf("err.update.checksum_mismatch")
+	// 哈希正确不等于可安装：先确认 zip 内确实有当前平台的入口二进制，
+	// 否则会把「已就绪」的假象推给前端，安装永远失败且每次轮询重复提示。
+	if _, err := extractPackageBinary(zipBody, currentBinaryName()); err != nil {
+		return err
 	}
 	if err := storeCache(dir, tag, zipName, zipBody, got); err != nil {
 		return fmt.Errorf("err.update.write_cache|%w", err)
 	}
 	return nil
+}
+
+// dropCache 删除缓存 zip 与 meta（尽力而为）；用于清理不可安装的坏包。
+func dropCache(dir string) {
+	if dir == "" {
+		return
+	}
+	_ = os.Remove(filepath.Join(dir, CurrentPackageZip()))
+	_ = os.Remove(filepath.Join(dir, cacheMetaName))
+}
+
+// downloadCandidate 是同版本的一种下载地址组合。
+type downloadCandidate struct {
+	zipURL, sumsURL string
+}
+
+// githubReleaseURL 按 tag 构造 GitHub Release 官方附件直链。
+// 发布产物命名固定，不依赖先拉到 assets 列表。
+func githubReleaseURL(tag, fileName string) string {
+	return "https://github.com/" + Owner + "/" + Repo + "/releases/download/" + tag + "/" + fileName
+}
+
+// packageCandidates 列出同版本可尝试的下载地址：调用方给的、GitCode 附件、GitHub 官方。
+// GitCode 同步偶发漏附件，不能因为主源缺 zip 就让用户永远升不了级。
+func packageCandidates(tag, zipURL, sumsURL, zipName string) []downloadCandidate {
+	var out []downloadCandidate
+	add := func(zip, sums string) {
+		if zip == "" {
+			return
+		}
+		for _, c := range out {
+			if c.zipURL == zip {
+				return
+			}
+		}
+		out = append(out, downloadCandidate{zipURL: zip, sumsURL: sums})
+	}
+	add(zipURL, sumsURL)
+	if tag != "" {
+		add(GitCodeAttachURL(tag, zipName), GitCodeAttachURL(tag, SumsName))
+		add(githubReleaseURL(tag, zipName), githubReleaseURL(tag, SumsName))
+	}
+	return out
+}
+
+// downloadPackage 依次尝试候选地址，返回校验通过的 zip 内容与 sha256。
+func downloadPackage(ctx context.Context, get GetFunc, tag, zipURL, sumsURL, zipName string) ([]byte, string, error) {
+	// 大文件用 applyTimeout（3 分钟），避免慢镜像触发 check 的 12s 短超时。
+	cli := Client{Get: get, HTTP: &http.Client{Timeout: applyTimeout}}
+	candidates := packageCandidates(tag, zipURL, sumsURL, zipName)
+	var last error
+	stage := ""
+	for _, cand := range candidates {
+		sumsBody, err := cli.getThroughSources(ctx, cand.sumsURL)
+		if err != nil {
+			last, stage = err, "sums"
+			continue
+		}
+		want, err := ParseSHA256SUMS(sumsBody, zipName)
+		if err != nil {
+			last, stage = err, "parse"
+			continue
+		}
+		zipBody, err := cli.getThroughSources(ctx, cand.zipURL)
+		if err != nil {
+			last, stage = err, "zip"
+			continue
+		}
+		sum := sha256.Sum256(zipBody)
+		got := hex.EncodeToString(sum[:])
+		if got != want {
+			last, stage = fmt.Errorf("err.update.checksum_mismatch"), "checksum"
+			continue
+		}
+		return zipBody, got, nil
+	}
+	if last == nil {
+		return nil, "", errNoDownloadSource
+	}
+	// 保持既有 wire key 单层约定：哨兵与 sums/checksum 类 key 原样返回。
+	if errors.Is(last, errNoDownloadSource) || stage == "parse" || stage == "checksum" {
+		return nil, "", last
+	}
+	if stage == "sums" {
+		return nil, "", fmt.Errorf("err.update.download_sums|%w", last)
+	}
+	return nil, "", fmt.Errorf("err.update.download_package|%w", last)
 }
 
 // storeCache 原子写入 zip 与 meta，并清理旧发布包。

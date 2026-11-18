@@ -1229,7 +1229,10 @@ export default function Settings() {
                           setUpdateError('');
                           try {
                             // 未预下载时先下载校验，再安装；已就绪直接安装。
-                            if (!updateInfo.Ready) await prepareUpdate();
+                            if (!updateInfo.Ready) {
+                              await prepareUpdate();
+                              setUpdateInfo({ ...updateInfo, Ready: true });
+                            }
                             await applyUpdate();
                             // 重启被拦截时 busy 复位，避免按钮永久禁用（同 App.tsx）。
                             setUpdateBusy(false);
