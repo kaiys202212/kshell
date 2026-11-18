@@ -1462,29 +1462,66 @@ describe('AgentHubPanel', () => {
     expect(loadLastCreate()).toEqual({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: null });
   });
 
-  it('新建 agent：打开时按 lastCreate 预填，创建成功后保存默认值与模型缓存', async () => {
+  it('新建 agent：默认工具与模型取默认设置（不读 lastCreate），创建成功后保存模型缓存', async () => {
     api.getTools.mockResolvedValue([acpTool(), { ...acpTool('codex'), Name: 'Codex' }]);
     api.openWorkspaceACP.mockResolvedValue({
       Kind: 'chat',
-      Chat: chat({ ID: 'n5', Workspace: 'D:\\ws\\a', ToolID: 'claude' }),
+      Chat: chat({ ID: 'n5', Workspace: 'D:\\ws\\a', ToolID: 'codex' }),
     });
-    api.listChatModels.mockResolvedValue({ Current: '', Models: [] });
+    api.listChatModels.mockResolvedValue({ Current: 'm-x', Models: [{ ID: 'm-x', Name: 'X' }] });
+    // 默认设置（右上角齿轮）显式配置 codex + m-x；lastCreate 的 claude/m9 不得参与预填
+    saveDefaultCreate({ toolId: 'codex', modelId: 'm-x' });
+    saveToolModels('codex', ['m-x', 'm-y']);
     saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'm9' });
     useAppStore.setState({ workspaces: [workspaceA] });
     render(<AgentHubPanel />);
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
-    // 打开即预填 lastCreate 的项目与工具
     await waitFor(() => {
       expect((screen.getByLabelText(tt('ui.hub.field_project')) as HTMLSelectElement).value).toBe('D:\\ws\\a');
-      expect((screen.getByLabelText(tt('ui.hub.field_tool')) as HTMLSelectElement).value).toBe('claude');
+      expect((screen.getByLabelText(tt('ui.hub.field_tool')) as HTMLSelectElement).value).toBe('codex');
+      expect((screen.getByLabelText(tt('ui.hub.field_model')) as HTMLSelectElement).value).toBe('m-x');
     });
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.create') }));
-    await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'claude', null));
+    await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'codex', 'm-x'));
     // listChatModels 拉到的模型列表落缓存，供下次预填
     await waitFor(() => expect(useAppStore.getState().chats.some((c) => c.ID === 'n5')).toBe(true));
   });
 
-  it('新建 agent：lastCreate 的项目已不在工作区列表时不预填', async () => {
+  it('新建 agent：无默认设置时工具回落首个可用 ACP 工具、模型为空；项目取最近新建会话', async () => {
+    // 最近新建会话来自任意入口（这里模拟 CLI/其他入口写入的会话扫描结果），
+    // 其项目必须优先于 selectedProject 与 lastCreate。
+    api.getTools.mockResolvedValue([acpTool(), { ...acpTool('codex'), Name: 'Codex' }]);
+    api.getSessions.mockResolvedValue([
+      { ID: 's-old', ToolID: 'claude', Workspace: 'D:\\ws\\a', CreatedAt: '2026-11-15T10:00:00Z' },
+      { ID: 's-new', ToolID: 'codex', Workspace: 'D:\\ws\\b', CreatedAt: '2026-11-17T10:00:00Z' },
+    ]);
+    const workspaceB = { ...workspaceA, Path: 'D:\\ws\\b', Name: 'b' };
+    saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'codex', modelId: 'm9' });
+    useAppStore.setState({ workspaces: [workspaceA, workspaceB], selectedProject: 'D:\\ws\\a' });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
+    await waitFor(() => {
+      expect((screen.getByLabelText(tt('ui.hub.field_project')) as HTMLSelectElement).value).toBe('D:\\ws\\b');
+      expect((screen.getByLabelText(tt('ui.hub.field_tool')) as HTMLSelectElement).value).toBe('claude');
+      expect((screen.getByLabelText(tt('ui.hub.field_model')) as HTMLSelectElement).value).toBe('');
+    });
+  });
+
+  it('新建 agent：最近新建会话的项目已不在工作区列表时回落 selectedProject', async () => {
+    api.getTools.mockResolvedValue([acpTool()]);
+    const workspaceB = { ...workspaceA, Path: 'D:\\ws\\b', Name: 'b' };
+    api.getSessions.mockResolvedValue([
+      { ID: 's-new', ToolID: 'claude', Workspace: 'D:\\ws\\gone', CreatedAt: '2026-11-17T10:00:00Z' },
+    ]);
+    useAppStore.setState({ workspaces: [workspaceA, workspaceB], selectedProject: 'D:\\ws\\b' });
+    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
+    await waitFor(() => {
+      expect((screen.getByLabelText(tt('ui.hub.field_project')) as HTMLSelectElement).value).toBe('D:\\ws\\b');
+    });
+  });
+
+  it('新建 agent：无会话且无选中项目时回落工作区首项', async () => {
     api.getTools.mockResolvedValue([acpTool()]);
     saveLastCreate({ wsPath: 'D:\\ws\\gone', toolId: 'claude', modelId: null });
     useAppStore.setState({ workspaces: [workspaceA] });
@@ -1495,10 +1532,7 @@ describe('AgentHubPanel', () => {
     });
   });
 
-  it('新建 agent：首页选中项目（selectedProject）优先于 lastCreate 预填', async () => {
-    // 2026-11-12 误建事故：用户在首页切到 kshell 后点「+ 新建 Agent」，弹窗却预填
-    // 上次创建的 silkworm（lastCreate），直接点创建就建错项目。预填必须跟随
-    // 当前选中项目，与 /easynew 的取值口径（selectedProject 优先）对齐。
+  it('新建 agent：selectedProject 在无会话时仍是默认项目；失效则回落工作区首项', async () => {
     api.getTools.mockResolvedValue([acpTool()]);
     const workspaceB = { ...workspaceA, Path: 'D:\\ws\\b', Name: 'b' };
     saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: null });
@@ -1508,15 +1542,8 @@ describe('AgentHubPanel', () => {
     await waitFor(() => {
       expect((screen.getByLabelText(tt('ui.hub.field_project')) as HTMLSelectElement).value).toBe('D:\\ws\\b');
     });
-  });
-
-  it('新建 agent：selectedProject 失效回落 lastCreate；拼写漂移时回写归一后的选项值', async () => {
-    // lastCreate 记的是小写盘符拼写、列表选项是大写：预填必须回写选项现值，
-    // 否则 select 的值匹配不到任何 option，显示与提交脱节。
-    api.getTools.mockResolvedValue([acpTool()]);
-    saveLastCreate({ wsPath: 'd:\\ws\\a', toolId: 'claude', modelId: null });
-    useAppStore.setState({ workspaces: [workspaceA], selectedProject: 'D:\\ws\\gone' });
-    render(<AgentHubPanel />);
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.cancel') }));
+    useAppStore.setState({ selectedProject: 'D:\\ws\\gone' });
     fireEvent.click(screen.getByRole('button', { name: tt('ui.hub.new_agent') }));
     await waitFor(() => {
       expect((screen.getByLabelText(tt('ui.hub.field_project')) as HTMLSelectElement).value).toBe('D:\\ws\\a');

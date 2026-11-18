@@ -380,8 +380,11 @@ func (a *App) openWorkspaceACP(wsID, toolID, modelID string, allowFallback bool)
 			toolID = bt.ID
 		}
 	}
+	// opencode 的 ACP launch 不接受模型参数（原生 provider 注入由 agentsync 完成），
+	// 未显式给模型时沿用上次 opencode 模型 / 默认设置，建会话后再 SetModel。
+	createModel := a.effectiveOpenCodeCreateModel(toolID, modelID)
 	if m := o.Chats; m != nil {
-		if l, err := launch.ForWorkspaceACP(o.Providers, tools, ws, toolID, a.modelOptionsForCreate(toolID, modelID), a.permissionOptions()); err == nil {
+		if l, err := launch.ForWorkspaceACP(o.Providers, tools, ws, toolID, a.modelOptionsForCreate(toolID, createModel), a.permissionOptions()); err == nil {
 			info, err := openChat(m, "new:"+nextChatSeq(), chat.Info{
 				Kind:            chat.KindNew,
 				Workspace:       ws.Path,
@@ -392,6 +395,9 @@ func (a *App) openWorkspaceACP(wsID, toolID, modelID string, allowFallback bool)
 			if err == nil {
 				// 先让前端登记会话再落欢迎词：欢迎卡一旦可见，快捷操作就能解析到目标。
 				a.emitChatMeta(info)
+				// opencode 建后落模型：否则 ACP 会话停在 agent 默认 big-pickle。
+				// 失败静默（不得挡用户继续对话）。
+				a.applyOpenCodeCreateModel(info.ID, createModel)
 				a.recordHubWelcome(info)
 				return OpenedSession{Kind: "chat", Chat: &info}, nil
 			}
@@ -415,6 +421,55 @@ func (a *App) openWorkspaceACP(wsID, toolID, modelID string, allowFallback bool)
 		return a.fallbackTerminalWorkspace(wsID, toolID, "")
 	}
 	return OpenedSession{}, errNotReady
+}
+
+// effectiveOpenCodeCreateModel 为新建 opencode ACP 会话补默认模型：
+// 显式 modelID 原样返回；否则默认设置（AgentHub.DefaultTool=opencode 时的
+// DefaultModel）优先，其次全局「上次 opencode 模型」，都没有返回空
+//（保持 agent 自身默认）。非 opencode 工具原样返回。
+func (a *App) effectiveOpenCodeCreateModel(toolID, modelID string) string {
+	if toolID != "opencode" || strings.TrimSpace(modelID) != "" {
+		return modelID
+	}
+	cfg := a.snapshot().Config.AgentHub
+	if cfg.DefaultTool == "opencode" {
+		if m := strings.TrimSpace(cfg.DefaultModel); m != "" {
+			return m
+		}
+	}
+	return a.lastOpenCodeModel()
+}
+
+// applyOpenCodeCreateModel 在 opencode 会话建好后把创建模型落到 agent：
+// 下拉侧裸名 / "kshell:<platID>:<model>" 需解析成原生 ID（"kshell-<platID>/<model>"
+// 或内建 provider 条目），否则 OpenCode 报 -32602。成功后记录全局上次模型并推
+// chat:models；失败静默，不挡会话激活。
+func (a *App) applyOpenCodeCreateModel(chatID, modelID string) {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return
+	}
+	m := a.chats()
+	if m == nil {
+		return
+	}
+	info, ok := m.Get(chatID)
+	if !ok || info.ToolID != "opencode" {
+		return
+	}
+	platID, model, hasPrefix := modelresolve.SplitKshellModelID(modelID)
+	if !hasPrefix {
+		model = modelID
+	}
+	target := a.resolveOpenCodeModelID(chatID, platID, model)
+	if err := m.SetModel(chatID, target); err != nil {
+		return
+	}
+	a.recordOpenCodeSessionModel(info.SessionID, target)
+	a.recordOpenCodeLastModel(target)
+	if view, err := a.modelsView(chatID); err == nil {
+		a.emitChatOut("chat:models", map[string]any{"id": chatID, "models": view})
+	}
 }
 
 func openChat(m *chat.Manager, key string, info chat.Info, l providers.Launch, sessionID string) (chat.Info, error) {
@@ -905,10 +960,12 @@ func (a *App) SetChatModel(id, modelID string) error {
 	if err := m.SetModel(resolved, target); err != nil {
 		return err
 	}
-	// opencode 会话级模型记忆：OpenCode 自己不记上次模型，成功切换后把
-	// 「磁盘会话 ID→原生模型」落盘 state，供恢复历史会话时回放。
+	// opencode 模型记忆：OpenCode 自己不记上次模型，成功切换后把
+	// 「磁盘会话 ID→原生模型」落盘 state 供恢复历史会话回放；
+	// 同时写全局「上次模型」，新建会话（尚无磁盘 ID）也能沿用。
 	if info, gok := m.Get(resolved); rememberModel && gok && info.ToolID == "opencode" {
 		a.recordOpenCodeSessionModel(info.SessionID, target)
+		a.recordOpenCodeLastModel(target)
 	}
 	if view, viewErr := a.modelsView(resolved); viewErr == nil {
 		a.emitChatOut("chat:models", map[string]any{"id": id, "models": view})

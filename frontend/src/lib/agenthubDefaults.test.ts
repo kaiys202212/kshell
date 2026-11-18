@@ -9,6 +9,7 @@ import {
   loadToolModelOptions,
   loadToolModels,
   mergeHubModelOptions,
+  mostRecentCreatedWorkspace,
   normalizeCreateModel,
   rememberChatModels,
   rememberLastModel,
@@ -273,6 +274,50 @@ describe('agenthubDefaults', () => {
       expect(lastModelForCreate(null, 'codex')).toBe('default');
       // cursor 的 default[] 不是伪模型
       expect(lastModelForCreate('default[]', 'cursor')).toBe('default[]');
+    });
+  });
+
+  describe('mostRecentCreatedWorkspace', () => {
+    const known = new Set(['d:\\ws\\a', 'd:\\ws\\b', 'd:\\ws\\c']);
+    const isKnown = (ws: string) => known.has(ws.toLowerCase());
+
+    it('取 CreatedAt 最新且命中工作区列表的会话项目', () => {
+      expect(
+        mostRecentCreatedWorkspace(
+          [
+            { Workspace: 'D:\\ws\\a', CreatedAt: '2026-11-15T10:00:00Z' },
+            { Workspace: 'D:\\ws\\b', CreatedAt: '2026-11-17T10:00:00Z' },
+            { Workspace: 'D:\\ws\\c', CreatedAt: '2026-11-16T10:00:00Z' },
+          ],
+          isKnown,
+        ),
+      ).toBe('D:\\ws\\b');
+    });
+
+    it('最新会话项目已不在工作区列表时跳过，取次新的已知项目', () => {
+      expect(
+        mostRecentCreatedWorkspace(
+          [
+            { Workspace: 'D:\\ws\\a', CreatedAt: '2026-11-15T10:00:00Z' },
+            { Workspace: 'D:\\ws\\gone', CreatedAt: '2026-11-17T10:00:00Z' },
+          ],
+          isKnown,
+        ),
+      ).toBe('D:\\ws\\a');
+    });
+
+    it('忽略空项目 / 非法时间；无候选返回空串', () => {
+      expect(
+        mostRecentCreatedWorkspace(
+          [
+            { Workspace: '', CreatedAt: '2026-11-18T10:00:00Z' },
+            { Workspace: 'D:\\ws\\a', CreatedAt: 'not-a-time' },
+            { Workspace: 'D:\\ws\\b' },
+          ],
+          isKnown,
+        ),
+      ).toBe('');
+      expect(mostRecentCreatedWorkspace([], isKnown)).toBe('');
     });
   });
 

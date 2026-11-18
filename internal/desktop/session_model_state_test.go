@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -263,5 +264,153 @@ func TestRecordOpenCodeSessionModelOverwrites(t *testing.T) {
 	app.recordOpenCodeSessionModel("sd1", "m2")
 	if got := app.lookupOpenCodeSessionModel("sd1"); got != "m2" {
 		t.Fatalf("后写应覆盖, got %q", got)
+	}
+}
+
+// 全局「上次 opencode 模型」独立于会话 ID：新建会话尚未绑定磁盘 ID 时也要记住，
+// 供下一次新建沿用；后续写入覆盖旧值，空值忽略。
+func TestRecordOpenCodeLastModel(t *testing.T) {
+	home := t.TempDir()
+	app := NewAppWith(Options{Home: home})
+	app.mu.Lock()
+	app.opts.Layout.State = filepath.Join(home, ".kshell", "state")
+	app.mu.Unlock()
+
+	native := opencodeModels()[1].ModelID
+	if got := app.lookupOpenCodeLastModel(); got != "" {
+		t.Fatalf("未写入时 last 应为空, got %q", got)
+	}
+	app.recordOpenCodeLastModel(native)
+	app.recordOpenCodeLastModel("kshell-p1/kimi-k3")
+	if got := app.lookupOpenCodeLastModel(); got != "kshell-p1/kimi-k3" {
+		t.Fatalf("后写应覆盖, got %q", got)
+	}
+	app.recordOpenCodeLastModel("")
+	if got := app.lookupOpenCodeLastModel(); got != "kshell-p1/kimi-k3" {
+		t.Fatalf("空模型不得覆盖, got %q", got)
+	}
+}
+
+// Layout.State 未装配时全局记录同样空转。
+func TestRecordOpenCodeLastModelGuards(t *testing.T) {
+	app := NewAppWith(Options{Home: t.TempDir()})
+	app.recordOpenCodeLastModel("m")
+	if got := app.lookupOpenCodeLastModel(); got != "" {
+		t.Fatalf("未装配 Layout.State 时应跳过, got %q", got)
+	}
+}
+
+// 新建 opencode 会话（尚无磁盘会话 ID）切模型成功后必须记全局 last。
+func TestSetChatModelOpenCodeRecordsLastModelWithoutSessionID(t *testing.T) {
+	env := newOpenCodeChatTestEnv(t, opencodeModels(), "opencode/big-pickle")
+	opened, err := env.app.OpenWorkspaceACP(`D:\w`, "opencode", "")
+	if err != nil {
+		t.Fatalf("OpenWorkspaceACP: %v", err)
+	}
+	if opened.Chat.SessionID != "" {
+		t.Fatalf("新建 opencode 会话此时不应有磁盘 SessionID, got %q", opened.Chat.SessionID)
+	}
+	native := opencodeModels()[1].ModelID
+	if err := env.app.SetChatModel(opened.Chat.ID, native); err != nil {
+		t.Fatalf("SetChatModel: %v", err)
+	}
+	if got := env.app.lookupOpenCodeLastModel(); got != native {
+		t.Fatalf("全局 last = %q, want %q", got, native)
+	}
+	if got := env.readModelState(t); len(got) != 0 {
+		t.Fatalf("无磁盘会话 ID 时不应写会话级记忆: %v", got)
+	}
+}
+
+// writeOpenCodeLastModel 写全局 last 状态文件（测试直造历史状态）。
+func writeOpenCodeLastModel(t *testing.T, env *opencodeChatTestEnv, model string) {
+	t.Helper()
+	if err := os.MkdirAll(env.stateRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(env.stateRoot, "opencode-last-model.json"), []byte(`{"modelId":"`+model+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// 新建 opencode 会话未显式给模型时沿用「上一次 opencode 会话用过的模型」，
+// 且必须转成 OpenCode 原生 ID 再 SetModel（否则 -32602 / 停在 big-pickle）。
+func TestOpenWorkspaceACPAppliesLastOpenCodeModel(t *testing.T) {
+	env := newOpenCodeChatTestEnv(t, opencodeModels(), "opencode/big-pickle")
+	native := opencodeModels()[1].ModelID
+	writeOpenCodeLastModel(t, env, native)
+
+	if _, err := env.app.OpenWorkspaceACP(`D:\w`, "opencode", ""); err != nil {
+		t.Fatalf("OpenWorkspaceACP: %v", err)
+	}
+	calls := env.modelCalls.all()
+	if len(calls) != 1 || calls[0] != native {
+		t.Fatalf("应建后 SetModel(%s), got %v", native, calls)
+	}
+}
+
+// 全局 last 缺失时，回落到最近一条 opencode 会话的会话级模型记忆。
+func TestOpenWorkspaceACPUsesLatestOpenCodeSessionModel(t *testing.T) {
+	env := newOpenCodeChatTestEnv(t, opencodeModels(), "opencode/big-pickle")
+	if err := os.MkdirAll(env.stateRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(env.statePath, []byte(`{"s1":"kshell-p1/kimi-k3"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := env.app.OpenWorkspaceACP(`D:\w`, "opencode", ""); err != nil {
+		t.Fatalf("OpenWorkspaceACP: %v", err)
+	}
+	calls := env.modelCalls.all()
+	if len(calls) != 1 || calls[0] != "kshell-p1/kimi-k3" {
+		t.Fatalf("应回落到最近会话模型 kshell-p1/kimi-k3, got %v", calls)
+	}
+}
+
+// 默认设置为 opencode 且显式配了模型时优先级最高（跨端 config.yaml 副本）。
+func TestOpenWorkspaceACPUsesConfiguredDefaultOpenCodeModel(t *testing.T) {
+	env := newOpenCodeChatTestEnv(t, opencodeModels(), "opencode/big-pickle")
+	native := opencodeModels()[1].ModelID
+	bare := strings.TrimPrefix(native, "kshell-p1/")
+	writeOpenCodeLastModel(t, env, "kshell-p1/kimi-k3")
+	env.app.mu.Lock()
+	env.app.opts.Config.AgentHub.DefaultTool = "opencode"
+	env.app.opts.Config.AgentHub.DefaultModel = bare
+	env.app.mu.Unlock()
+
+	if _, err := env.app.OpenWorkspaceACP(`D:\w`, "opencode", ""); err != nil {
+		t.Fatalf("OpenWorkspaceACP: %v", err)
+	}
+	calls := env.modelCalls.all()
+	if len(calls) != 1 || calls[0] != native {
+		t.Fatalf("默认设置裸名应解析为原生 ID %s, got %v", native, calls)
+	}
+}
+
+// 显式 kshell:<plat>:<model> 创建模型同样要在建后落到 OpenCode 原生 ID。
+func TestOpenWorkspaceACPResolvesExplicitOpenCodeModel(t *testing.T) {
+	env := newOpenCodeChatTestEnv(t, opencodeModels(), "opencode/big-pickle")
+	native := opencodeModels()[1].ModelID
+	bare := strings.TrimPrefix(native, "kshell-p1/")
+
+	if _, err := env.app.OpenWorkspaceACP(`D:\w`, "opencode", "kshell:p1:"+bare); err != nil {
+		t.Fatalf("OpenWorkspaceACP: %v", err)
+	}
+	calls := env.modelCalls.all()
+	if len(calls) != 1 || calls[0] != native {
+		t.Fatalf("显式前缀应解析为原生 ID %s, got %v", native, calls)
+	}
+}
+
+// 既无默认设置也无历史记忆：保持 agent 默认，不额外 SetModel。
+func TestOpenWorkspaceACPOpenCodeWithoutHistoryKeepsAgentDefault(t *testing.T) {
+	env := newOpenCodeChatTestEnv(t, opencodeModels(), "opencode/big-pickle")
+
+	if _, err := env.app.OpenWorkspaceACP(`D:\w`, "opencode", ""); err != nil {
+		t.Fatalf("OpenWorkspaceACP: %v", err)
+	}
+	if calls := env.modelCalls.all(); len(calls) != 0 {
+		t.Fatalf("无历史模型不应 SetModel, got %v", calls)
 	}
 }

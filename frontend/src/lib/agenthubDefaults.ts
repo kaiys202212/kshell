@@ -152,6 +152,33 @@ export function lastModelForCreate(
   return null;
 }
 
+// SessionRecency：只取构建「最近一次新建会话」所需的两个字段（避免 lib 依赖 api 运行时）。
+export interface SessionRecency {
+  Workspace?: string;
+  CreatedAt?: string;
+}
+
+// mostRecentCreatedWorkspace 返回「最近一次新建会话」所使用的项目（任意入口/工具）。
+// 口径：在 CreatedAt 有效的会话里取最新一条，且其 Workspace 仍须在当前工作区列表
+// （isKnown）；最新的一条已失效时继续向前找。全部缺失/失效返回空串。
+// 时间用 Date.parse（RFC3339 / 带时区都可比）；无法解析的历史数据直接跳过。
+export function mostRecentCreatedWorkspace(
+  sessions: ReadonlyArray<SessionRecency>,
+  isKnown: (workspace: string) => boolean,
+): string {
+  let best = '';
+  let bestTime = Number.NEGATIVE_INFINITY;
+  for (const s of sessions) {
+    const ws = s.Workspace?.trim();
+    if (!ws || !isKnown(ws)) continue;
+    const t = Date.parse(s.CreatedAt ?? '');
+    if (!Number.isFinite(t) || t <= bestTime) continue;
+    best = ws;
+    bestTime = t;
+  }
+  return best;
+}
+
 // loadDefaultCreate 读取用户显式设置的默认 agent 配置；缺失、损坏或结构不完整时返回 null。
 export function loadDefaultCreate(): DefaultAgentCreate | null {
   const v = readJSON<Partial<DefaultAgentCreate>>(DEFAULT_CREATE_KEY);

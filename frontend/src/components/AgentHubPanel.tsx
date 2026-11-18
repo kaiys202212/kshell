@@ -46,7 +46,7 @@ import {
   type MentionOption,
 } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
-import { forgetPerToolLastModel, lastModelForCreate, loadDefaultCreate, loadLastCreate, loadToolModelOptions, loadToolModels, loadHubRouteMode, mergeHubModelOptions, normalizeCreateModel, rememberLastModel, rememberPerToolLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode, type ToolModelOption } from '../lib/agenthubDefaults';
+import { forgetPerToolLastModel, isClaudeDefaultModel, lastModelForCreate, loadDefaultCreate, loadLastCreate, loadToolModelOptions, loadToolModels, loadHubRouteMode, mergeHubModelOptions, mostRecentCreatedWorkspace, normalizeCreateModel, rememberLastModel, rememberPerToolLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode, type ToolModelOption } from '../lib/agenthubDefaults';
 import { saveHubDefaultCreate } from '../lib/api';
 import { quotePathForShell } from '../lib/dragPath';
 import { decodePercentText } from '../lib/displayText';
@@ -1640,50 +1640,62 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     useAppStore.getState().setLastAgentId(chat.ID);
   };
 
-  // 打开对话框时才拉工具列表（避免常驻首页也发请求），并按 lastCreate 预填。
-  // 预填校验：wsPath 仍在工作区列表、toolId 仍在可用工具列表，失效置空该字段（回落默认选中）。
+  // 打开对话框时才拉工具/会话列表（避免常驻首页也发请求），并按默认值与最近会话预填。
   // 仅在 open 从 false→true 时跑一次；开着期间 workspaces 刷新不重跑预填。
+  // 工具/模型只认右上角默认设置（loadDefaultCreate），不读 lastCreate 等别处逻辑：
+  //   - 工具：默认工具仍可用则用之，否则首个可用 ACP 工具；
+  //   - 模型：默认工具同一份配置里的 modelId，空 = 工具默认模型。
+  // 项目：所有入口（AgentHub / WorkspaceTab / CLI 等扫描结果）最近一次新建会话的
+  // Workspace；失效再回落 selectedProject / 工作区首项。命中一律回写选项现值
+  // （canonical Path），避免旧拼写导致 select 显示与提交脱节。
   useEffect(() => {
     const opening = open && !prevOpenRef.current;
     prevOpenRef.current = open;
     if (!opening) return;
-    const last = loadLastCreate();
-    void getTools()
-      .then((list) => {
-        // 通用规则：确定未登录（Auth=out）的工具不进新建下拉（unknown 保守放行），
-        // 登录入口收敛到设置页工具分区；口径见 lib/toolUsable。
-        const acp = list.filter(usableForACP);
-        setTools(acp);
-        setToolId((cur) => {
-          if (cur && acp.some((x) => x.ID === cur)) return cur;
-          if (last && acp.some((x) => x.ID === last.toolId)) return last.toolId;
-          return acp[0]?.ID ?? '';
-        });
-      })
-      .catch(() => {});
-    // kshell 平台注入模型按 toolId 另行拉取（见下方 effect），此处不再拼装。
-    // 项目预填优先级：selectedProject（首页当前选中项目）→ 上次弹窗残留 →
-    // lastCreate → workspaces[0]，与 /easynew 的取值口径对齐（2026-11-12 误建
-    // 事故：用户切到 kshell 后点「+ 新建」，弹窗仍预填上次创建的 silkworm）。
-    // 命中一律回写选项现值（canonical Path）：lastCreate/残留可能带旧拼写
-    //（盘符大小写漂移），select 值匹配不到任何 option 时显示与提交脱节。
+    let cancelled = false;
+    const defaults = loadDefaultCreate();
     const pickWs = (candidate: string | null | undefined): string => {
       if (!candidate) return '';
       const hit = workspaces.find((w) => sameWorkspacePath(w.Path, candidate));
       return hit ? hit.Path : '';
     };
-    setWsPath((cur) => {
-      const sel = useAppStore.getState().selectedProject;
-      return pickWs(sel) || pickWs(cur) || pickWs(last?.wsPath) || workspaces[0]?.Path || '';
-    });
-    // 模型预选：该工具记忆的上次模型（跨工具不互覆）在缓存列表里才预选，否则空（默认模型）
-    const rememberTool = last?.toolId ?? '';
-    const remembered = lastModelForCreate(null, rememberTool);
-    if (remembered && loadToolModels(rememberTool).includes(remembered)) {
-      setModelId(remembered);
-    } else {
-      setModelId('');
-    }
+    // 同步初值：选中项目 → 首项；会话缓存随后覆盖为「最近新建会话」。
+    setWsPath(pickWs(useAppStore.getState().selectedProject) || workspaces[0]?.Path || '');
+    void getSessions()
+      .then((sessions) => {
+        if (cancelled) return;
+        const latest = mostRecentCreatedWorkspace(sessions, (p) =>
+          workspaces.some((w) => sameWorkspacePath(w.Path, p)),
+        );
+        setWsPath(
+          pickWs(latest) ||
+            pickWs(useAppStore.getState().selectedProject) ||
+            workspaces[0]?.Path ||
+            '',
+        );
+      })
+      .catch(() => {});
+    void getTools()
+      .then((list) => {
+        if (cancelled) return;
+        // 通用规则：确定未登录（Auth=out）的工具不进新建下拉（unknown 保守放行），
+        // 登录入口收敛到设置页工具分区；口径见 lib/toolUsable。
+        const acp = list.filter(usableForACP);
+        setTools(acp);
+        const defTool =
+          defaults?.toolId && acp.some((x) => x.ID === defaults.toolId) ? defaults.toolId : '';
+        setToolId(defTool || acp[0]?.ID || '');
+        // claude 的 default 是「让 agent 自选」占位，不能预填成显式模型。
+        const defModel =
+          defTool && defaults?.modelId && !isClaudeDefaultModel(defTool, defaults.modelId)
+            ? defaults.modelId
+            : '';
+        setModelId(defModel);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [open, workspaces]);
 
   // 关闭时重置内部状态；runAgentCreate 已把会话登记进 store，这里只做清场。

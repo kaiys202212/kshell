@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/yangk/kshell/internal/providers"
 )
 
 // opencode-session-models.json：OpenCode 会话级模型记忆。
@@ -58,14 +61,18 @@ func readOpenCodeModelState(path string) map[string]string {
 
 // writeOpencodeModelState 原子写 state JSON（temp+rename，与 SaveProvidersYAML 同口径）。
 func writeOpencodeModelState(path string, state map[string]string) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return
-	}
 	raw, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return
 	}
-	raw = append(raw, '\n')
+	writeStateJSONAtomic(path, append(raw, '\n'))
+}
+
+// writeStateJSONAtomic 原子写任意 JSON 载荷；失败静默（记忆类状态是辅助功能）。
+func writeStateJSONAtomic(path string, raw []byte) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp")
 	if err != nil {
 		return
@@ -83,4 +90,87 @@ func writeOpencodeModelState(path string, state map[string]string) {
 	if err := os.Rename(tmpName, path); err != nil {
 		os.Remove(tmpName)
 	}
+}
+
+// opencodeLastModelStateFile：全局「上次 opencode 模型」记忆。
+// 与按会话记忆分开的原因：新建会话在扫描绑定前拿不到磁盘会话 ID，
+// 按会话记录会静默丢失；全局键保证同一工具的下一次新建总能沿用。
+const opencodeLastModelStateFile = "opencode-last-model.json"
+
+// openCodeLastModelState 是全局记忆的落盘形态（原生 OpenCode 模型 ID）。
+type openCodeLastModelState struct {
+	ModelID string `json:"modelId"`
+}
+
+func (a *App) openCodeLastModelStatePath() string {
+	root := a.opts.Layout.State
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(root, opencodeLastModelStateFile)
+}
+
+// recordOpenCodeLastModel 记录上一次在 opencode 会话里成功使用的模型；
+// 空值忽略，覆盖旧值。写失败静默。
+func (a *App) recordOpenCodeLastModel(modelID string) {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return
+	}
+	path := a.openCodeLastModelStatePath()
+	if path == "" {
+		return
+	}
+	raw, err := json.MarshalIndent(openCodeLastModelState{ModelID: modelID}, "", "  ")
+	if err != nil {
+		return
+	}
+	writeStateJSONAtomic(path, append(raw, '\n'))
+}
+
+// lastOpenCodeModel 返回新建 opencode 会话应沿用的模型（原生 ID）：
+// 全局「上次模型」优先；老版本没有该文件时回落到扫描结果里最近一条
+// opencode 会话的会话级记忆；都没有返回空串（保持 agent 默认）。
+func (a *App) lastOpenCodeModel() string {
+	if m := a.lookupOpenCodeLastModel(); m != "" {
+		return m
+	}
+	a.mu.Lock()
+	res := a.result // Result 整体替换、替换后只读；取指针快照即可
+	a.mu.Unlock()
+	if res == nil {
+		return ""
+	}
+	var latest providers.Session
+	found := false
+	for _, s := range res.Sessions {
+		if s.ToolID != "opencode" || s.ID == "" {
+			continue
+		}
+		if !found || s.UpdatedAt.After(latest.UpdatedAt) {
+			latest = s
+			found = true
+		}
+	}
+	if !found {
+		return ""
+	}
+	return a.lookupOpenCodeSessionModel(latest.ID)
+}
+
+// lookupOpenCodeLastModel 读取全局上次模型；缺失/损坏返回空串。
+func (a *App) lookupOpenCodeLastModel() string {
+	path := a.openCodeLastModelStatePath()
+	if path == "" {
+		return ""
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var st openCodeLastModelState
+	if json.Unmarshal(b, &st) != nil {
+		return ""
+	}
+	return strings.TrimSpace(st.ModelID)
 }
