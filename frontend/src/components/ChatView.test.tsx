@@ -1113,11 +1113,32 @@ describe('ChatView', () => {
     // 默认隐藏：下拉在，Other 输入框不在
     expect(screen.getByLabelText('question_0')).toBeInTheDocument();
     expect(screen.queryByLabelText('Other')).not.toBeInTheDocument();
-    // 点击切换按钮后展开
+    // 点击切换按钮后展开；收起再展开，已填内容保留
     fireEvent.click(screen.getByRole('button', { name: tt('ui.chat.elicitation_other') }));
     fireEvent.change(screen.getByLabelText('Other'), { target: { value: 'pnpm' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.chat.elicitation_other') }));
+    expect(screen.queryByLabelText('Other')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.chat.elicitation_other') }));
+    expect(screen.getByLabelText('Other')).toHaveValue('pnpm');
     fireEvent.click(screen.getByRole('button', { name: tt('ui.chat.elicitation_submit') }));
     await waitFor(() => expect(api.respondChatElicitation).toHaveBeenCalledWith('c1', 'r6', 'accept', { question_0_custom: 'pnpm' }));
+  });
+
+  it('elicitation 多选伴随文本框默认隐藏，展开后提交并入', async () => {
+    useAppStore.setState({ chatElicitations: { c1: {
+      RequestID: 'ra', SessionID: 's1', Message: 'Pick',
+      Fields: [
+        { Key: 'question_0', Kind: 'multiselect', Options: [{ Value: 'A' }, { Value: 'B' }] },
+        { Key: 'question_0_custom', Kind: 'text', Title: 'Other' },
+      ],
+    } } });
+    render(<ChatView chat={CHAT} active />);
+    expect(screen.queryByLabelText('Other')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.chat.elicitation_other') }));
+    fireEvent.click(screen.getByLabelText('question_0:A'));
+    fireEvent.change(screen.getByLabelText('Other'), { target: { value: 'C' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.chat.elicitation_submit') }));
+    await waitFor(() => expect(api.respondChatElicitation).toHaveBeenCalledWith('c1', 'ra', 'accept', { question_0: ['A'], question_0_custom: 'C' }));
   });
 
   it('elicitation 下拉选中 other 类选项时自动展开文本框', () => {
