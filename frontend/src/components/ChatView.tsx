@@ -32,6 +32,7 @@ import { decodePercentText } from '../lib/displayText';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
 import { isOtherLikeText, isOtherOption, otherCompanionKey } from '../lib/elicitationOther';
+import { workspaceName } from '../lib/workspaceName';
 import { markdownBubbleClass } from '../lib/markdownStyles';
 import { rememberChatModels, rememberLastModel } from '../lib/agenthubDefaults';
 import { useAppStore } from '../state/store';
@@ -990,7 +991,9 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
           }}
           className="w-[28rem]"
         >
-          <DialogPrimitive.Title className="mb-1 text-sm font-medium">{t('ui.chat.elicitation_title')}</DialogPrimitive.Title>
+          <DialogPrimitive.Title className="mb-1 text-sm font-medium">
+            {[workspaceName(chat.Workspace), chat.Title].filter(Boolean).join(' · ') || t('ui.chat.elicitation_title')}
+          </DialogPrimitive.Title>
           <p className="mb-3 break-words text-xs text-muted-foreground">{elicitation.Message}</p>
           <div className="flex flex-col gap-3">
             {(elicitation.Fields ?? []).map((f) => {

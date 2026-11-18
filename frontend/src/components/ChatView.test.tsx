@@ -1150,4 +1150,13 @@ describe('ChatView', () => {
     expect(screen.queryByLabelText('Other')).not.toBeInTheDocument();
     expect(screen.getByLabelText('note')).toBeInTheDocument();
   });
+
+  it('反问弹窗标题显示项目名与会话标题', () => {
+    useAppStore.setState({ chatElicitations: { c1: {
+      RequestID: 'r9', SessionID: 's1', Message: 'Q', Fields: [],
+    } } });
+    render(<ChatView chat={CHAT} active />);
+    // CHAT fixture：Workspace=D:\p（目录名 p）+ Title=新会话 → 「p · 新会话」
+    expect(screen.getByText('p · 新会话')).toBeInTheDocument();
+  });
 });
