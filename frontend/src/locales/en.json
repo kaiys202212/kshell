@@ -134,6 +134,7 @@
       "sync_remote_branch_missing": "Branch \"{{1}}\" does not exist on sync source \"{{0}}\"; push cancelled",
       "ai_model_not_ready": "Configure a model platform and default model in Settings first",
       "ai_no_staged": "No staged changes to generate a commit message from",
+      "ai_diff_failed": "Failed to read staged changes: {{0}}",
       "ai_failed": "Failed to generate commit message: {{0}}",
       "ai_empty": "The model returned no usable commit message"
     },

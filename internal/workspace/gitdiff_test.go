@@ -96,6 +96,14 @@ func TestStagedDiff(t *testing.T) {
 	}
 }
 
+func TestStagedDiff_非仓库报错(t *testing.T) {
+	skipIfNoGit(t)
+	root := t.TempDir()
+	if _, err := StagedDiff(root, ""); err == nil {
+		t.Fatal("非 git 仓库应报错，不能把 git 输出当 diff")
+	}
+}
+
 func TestFileDiff_untracked(t *testing.T) {
 	skipIfNoGit(t)
 	root := t.TempDir()

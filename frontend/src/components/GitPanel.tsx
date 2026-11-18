@@ -500,6 +500,7 @@ export default function GitPanel({
                   disabled={genBusy || busy || staged.length === 0}
                   aria-busy={genBusy}
                   aria-label={t('ui.git.ai_generate_aria')}
+                  title={t('ui.git.ai_generate')}
                   onClick={() => void doGenerateMsg()}
                 >
                   {genBusy ? (
@@ -516,7 +517,7 @@ export default function GitPanel({
             <Button
               size="sm"
               className="h-8 min-w-0 flex-1 rounded-r-none"
-              disabled={busy || (dirty ? !canCommit : !canSync)}
+              disabled={busy || genBusy || (dirty ? !canCommit : !canSync)}
               aria-label={t('ui.git.primary_action_aria')}
               onClick={() => {
                 if (dirty) doCommit();
@@ -537,18 +538,18 @@ export default function GitPanel({
                 <Button
                   size="sm"
                   className="h-8 w-8 shrink-0 rounded-l-none border-l border-primary-foreground/25 px-0"
-                  disabled={busy}
+                  disabled={busy || genBusy}
                   aria-label={t('ui.git.more_commit_aria')}
                 >
                   <ChevronDown className="h-3.5 w-3.5" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem disabled={!canCommit} onSelect={() => doCommit()}>
+                <DropdownMenuItem disabled={!canCommit || genBusy} onSelect={() => doCommit()}>
                   {t('ui.git.commit')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  disabled={!canCommit}
+                  disabled={!canCommit || genBusy}
                   onSelect={() => {
                     const m = msg.trim();
                     if (!m) return;
@@ -561,7 +562,7 @@ export default function GitPanel({
                 >
                   {t('ui.git.commit_and_push')}
                 </DropdownMenuItem>
-                <DropdownMenuItem disabled={!canSync} onSelect={() => void sync()}>
+                <DropdownMenuItem disabled={!canSync || genBusy} onSelect={() => void sync()}>
                   {t('ui.git.sync')}
                 </DropdownMenuItem>
               </DropdownMenuContent>

@@ -134,6 +134,7 @@
       "sync_remote_branch_missing": "同步源 \"{{0}}\" 上没有分支 \"{{1}}\"，已取消推送",
       "ai_model_not_ready": "请先在设置中配置模型平台与默认模型",
       "ai_no_staged": "没有已暂存变更，无法生成提交信息",
+      "ai_diff_failed": "读取暂存变更失败：{{0}}",
       "ai_failed": "生成提交信息失败：{{0}}",
       "ai_empty": "模型未返回有效的提交信息"
     },

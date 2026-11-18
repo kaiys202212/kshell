@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yangk/kshell/internal/commitmsg"
 	remotefs "github.com/yangk/kshell/internal/remote/fs"
 	"github.com/yangk/kshell/internal/workspace"
 )
@@ -561,6 +562,7 @@ func (g *remoteGit) fileDiff(ctx context.Context, repoRel, filePath, side string
 }
 
 // stagedDiff 取远端仓库整体已暂存 diff，供 AI 生成提交信息使用。
+// 在远端用 head 限制输出量，避免大 diff 全量回传后再截断。
 func (g *remoteGit) stagedDiff(ctx context.Context, repoRel string) (workspace.DiffResult, error) {
 	if err := g.ensureGit(ctx); err != nil {
 		return workspace.DiffResult{}, err
@@ -569,15 +571,21 @@ func (g *remoteGit) stagedDiff(ctx context.Context, repoRel string) (workspace.D
 	if err != nil {
 		return workspace.DiffResult{}, err
 	}
-	stdout, stderr, err := g.run(ctx, abs, nil, "diff", "--cached", "--no-color", "--no-ext-diff", "--")
-	out := append(stdout, stderr...)
-	if err != nil && len(out) == 0 {
+	cmd := fmt.Sprintf("git -C %s diff --cached --no-color --no-ext-diff -- | head -c %d",
+		shellSingleQuote(abs), commitmsg.MaxDiffBytes+1)
+	stdout, stderr, err := g.app.remoteRunner()(ctx, g.r.conn, cmd, nil)
+	if err != nil {
+		out := append(stdout, stderr...)
 		if isGitNotFound(err, stderr) {
 			return workspace.DiffResult{}, errRemoteGitUnavailable
 		}
 		return workspace.DiffResult{}, remoteGitErr(out, err)
 	}
-	text := string(out)
+	// 管道退出码取 head 的，git 自身失败只会体现在 stderr；空输出+有 stderr 视为失败。
+	if len(stdout) == 0 && strings.TrimSpace(string(stderr)) != "" {
+		return workspace.DiffResult{}, remoteGitErr(stderr, nil)
+	}
+	text := string(stdout)
 	binary := strings.Contains(text, "Binary files ") || strings.Contains(text, "GIT binary patch")
 	return workspace.DiffResult{Text: text, Binary: binary}, nil
 }

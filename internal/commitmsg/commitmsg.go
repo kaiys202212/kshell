@@ -97,7 +97,10 @@ func TruncateDiff(text string, maxBytes int) string {
 	if len(text) <= maxBytes {
 		return text
 	}
-	cut := maxBytes
+	cut := maxBytes - len(truncatedMarker)
+	if cut <= 0 {
+		cut = maxBytes
+	}
 	for cut > 0 && !utf8.RuneStart(text[cut]) {
 		cut--
 	}

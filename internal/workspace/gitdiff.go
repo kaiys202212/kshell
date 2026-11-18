@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 var (
@@ -56,6 +57,9 @@ func FileDiff(wsRoot, repoRel, path, side string) (DiffResult, error) {
 	return DiffResult{Text: text, Binary: binary}, nil
 }
 
+// stagedDiffTimeout 整仓 diff 可能远大于 status，给更宽松的上限。
+const stagedDiffTimeout = 30 * time.Second
+
 // StagedDiff 取整个仓库的已暂存 unified diff（为空表示没有暂存变更）。
 // 供 AI 生成提交信息等需要整体变更上下文的场景使用。
 func StagedDiff(wsRoot, repoRel string) (DiffResult, error) {
@@ -63,10 +67,12 @@ func StagedDiff(wsRoot, repoRel string) (DiffResult, error) {
 	if err != nil {
 		return DiffResult{}, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), stagedDiffTimeout)
 	defer cancel()
 	out, err := gitCmd(ctx, abs, "diff", "--cached", "--no-color", "--no-ext-diff", "--").CombinedOutput()
-	if err != nil && len(out) == 0 {
+	// 一次性读整仓 diff 没有「部分输出仍可用」语义：非 0 退出的 usage/fatal
+	// 文本绝不能被当成 diff 发给模型。
+	if err != nil {
 		return DiffResult{}, gitErr(out, err)
 	}
 	text := string(out)

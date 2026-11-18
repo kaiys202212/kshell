@@ -153,14 +153,25 @@ describe('GitPanel', () => {
       }),
     );
     render(<GitPanel wsPath="D:/proj" visible onOpenDiff={() => {}} />);
-    expect(
-      await screen.findByRole('button', { name: tt('ui.git.ai_generate_aria') }),
-    ).toBeDisabled();
+    expect(await screen.findByText('dirty.go')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: tt('ui.git.ai_generate_aria') })).toBeDisabled();
   });
 
-  it('AI 生成：成功后回填提交说明', async () => {
+  it('AI 生成：生成中禁用提交，成功后回填提交说明', async () => {
+    let resolveGen!: (v: string) => void;
+    mocks.generateCommitMessage.mockReturnValue(
+      new Promise<string>((resolve) => {
+        resolveGen = resolve;
+      }),
+    );
     render(<GitPanel wsPath="D:/proj" visible onOpenDiff={() => {}} />);
-    fireEvent.click(await screen.findByRole('button', { name: tt('ui.git.ai_generate_aria') }));
+    expect(await screen.findByText('staged.go')).toBeInTheDocument();
+    const input = screen.getByLabelText(tt('ui.git.commit_message_aria'));
+    fireEvent.change(input, { target: { value: 'wip' } });
+    const primary = screen.getByRole('button', { name: tt('ui.git.primary_action_aria') });
+    expect(primary).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.git.ai_generate_aria') }));
     await waitFor(() =>
       expect(mocks.generateCommitMessage).toHaveBeenCalledWith(
         'D:/proj',
@@ -168,17 +179,20 @@ describe('GitPanel', () => {
         expect.stringMatching(/^(zh|en)$/),
       ),
     );
-    await waitFor(() =>
-      expect(screen.getByLabelText(tt('ui.git.commit_message_aria'))).toHaveValue('feat: 自动生成'),
-    );
+    expect(primary).toBeDisabled();
+
+    resolveGen('feat: 自动生成');
+    await waitFor(() => expect(input).toHaveValue('feat: 自动生成'));
+    await waitFor(() => expect(primary).toBeEnabled());
   });
 
   it('AI 生成：失败提示错误且保留已有输入', async () => {
     mocks.generateCommitMessage.mockRejectedValue(new Error('err.git.ai_model_not_ready'));
     render(<GitPanel wsPath="D:/proj" visible onOpenDiff={() => {}} />);
+    expect(await screen.findByText('staged.go')).toBeInTheDocument();
     const input = screen.getByLabelText(tt('ui.git.commit_message_aria'));
     fireEvent.change(input, { target: { value: 'wip' } });
-    fireEvent.click(await screen.findByRole('button', { name: tt('ui.git.ai_generate_aria') }));
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.git.ai_generate_aria') }));
     await waitFor(() => {
       expect(
         useAppStore

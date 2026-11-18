@@ -44,7 +44,7 @@ func (a *App) GenerateCommitMessage(wsPath, repoRel, lang string) (string, error
 		diff, err = workspace.StagedDiff(local, repoRel)
 	}
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("err.git.ai_diff_failed|%s", oneLine(err.Error()))
 	}
 	if strings.TrimSpace(diff.Text) == "" {
 		return "", errCommitMsgNoStaged
