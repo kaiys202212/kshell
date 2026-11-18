@@ -1073,6 +1073,7 @@
       "elicitation_title": "Agent 提问",
       "elicitation_submit": "提交",
       "elicitation_decline": "拒绝",
+      "elicitation_other": "Other · 自定义回答",
       "attach": "添加附件",
       "attach_paste_failed": "无法读取粘贴的文件，请改用附件按钮。",
       "remove_attachment": "移除附件",

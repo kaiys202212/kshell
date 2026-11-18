@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { ChatAttachmentMeta, ChatBlock, ChatInfo, ChatQueueItem, ChatToolCall } from '../lib/api';
+import type { ChatAttachmentMeta, ChatBlock, ChatElicitationField, ChatInfo, ChatQueueItem, ChatToolCall } from '../lib/api';
 import {
   cancelChat,
   cancelChatElicitation,
@@ -31,6 +31,7 @@ import { attachmentAction } from '../lib/chatAttachment';
 import { decodePercentText } from '../lib/displayText';
 import { DRAG_MIME, quotePathForShell } from '../lib/dragPath';
 import { backendError, translateBackend } from '../lib/errors';
+import { isOtherLikeText, isOtherOption, otherCompanionKey } from '../lib/elicitationOther';
 import { markdownBubbleClass } from '../lib/markdownStyles';
 import { rememberChatModels, rememberLastModel } from '../lib/agenthubDefaults';
 import { useAppStore } from '../state/store';
@@ -325,6 +326,8 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   // elicitation 表单的本地作答状态：按 RequestID 变化重置默认值
   const [elicitationValues, setElicitationValues] = useState<Record<string, unknown>>({});
+  // Other 伴随文本框的手动展开状态，按 select 字段 key 记；随请求重置
+  const [elicitationOtherOpen, setElicitationOtherOpen] = useState<Record<string, boolean>>({});
   // 图片附件 lightbox：Path 为落盘缓存绝对路径
   const [preview, setPreview] = useState<{ name?: string; path: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -435,6 +438,7 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
       else init[f.Key] = '';
     }
     setElicitationValues(init);
+    setElicitationOtherOpen({});
     // 仅按 RequestID 重置：同一次请求内的其它字段变化不应清空用户作答
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [elicitation?.RequestID]);
@@ -662,6 +666,16 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
   // 配置行只展示 select 型非 model 项：模型已有独立下拉，避免重复选择器
   const configOptions = (configs?.Options ?? []).filter((o) => o.ID !== 'model' && o.Type === 'select');
   const showConfigRow = (models?.Models?.length ?? 0) > 0 || configOptions.length > 0;
+
+  // 下拉当前值是否命中 other 类选项：选中即自动展开伴随文本框
+  const companionAutoOpen = (f: ChatElicitationField, value: unknown): boolean => {
+    if (f.Kind === 'multiselect') {
+      return Array.isArray(value) && value.some((v) =>
+        isOtherLikeText(v) || isOtherOption({ Value: String(v), Title: (f.Options ?? []).find((o) => o.Value === v)?.Title }));
+    }
+    const sel = (f.Options ?? []).find((o) => String(value) === o.Value);
+    return isOtherLikeText(sel?.Title) || isOtherLikeText(String(value ?? ''));
+  };
 
   const setElicitationValue = (key: string, value: unknown) => {
     setElicitationValues((v) => ({ ...v, [key]: value }));
@@ -980,9 +994,49 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
           <p className="mb-3 break-words text-xs text-muted-foreground">{elicitation.Message}</p>
           <div className="flex flex-col gap-3">
             {(elicitation.Fields ?? []).map((f) => {
+              const fields = elicitation.Fields ?? [];
               const label = f.Title || f.Key;
               const controlId = `elicitation-${id}-${f.Key}`;
               const value = elicitationValues[f.Key];
+              // Other 伴随文本字段由配对的 select/multiselect 代管，不在常规流渲染
+              if (f.Kind === 'text' && fields.some((p) =>
+                (p.Kind === 'select' || p.Kind === 'multiselect') && otherCompanionKey(fields, p.Key) === f.Key)) {
+                return null;
+              }
+              const companionKey = f.Kind === 'select' || f.Kind === 'multiselect'
+                ? otherCompanionKey(fields, f.Key)
+                : undefined;
+              const companion = companionKey ? fields.find((x) => x.Key === companionKey) : undefined;
+              const expanded = companionKey !== undefined &&
+                (elicitationOtherOpen[f.Key] || companionAutoOpen(f, value));
+              const companionNode = companionKey && companion ? (
+                <>
+                  <button
+                    type="button"
+                    className="self-start text-xs text-muted-foreground hover:text-foreground"
+                    aria-expanded={expanded}
+                    onClick={() => setElicitationOtherOpen((m) => ({ ...m, [f.Key]: !expanded }))}
+                  >
+                    {t('ui.chat.elicitation_other')}
+                  </button>
+                  {expanded && (
+                    <div className="flex flex-col gap-1 pl-3">
+                      <input
+                        id={`elicitation-${id}-${companionKey}`}
+                        type="text"
+                        aria-label={companion.Title || companionKey}
+                        className="rounded border border-border bg-card px-2 py-1 text-sm"
+                        value={elicitationValues[companionKey] === undefined || elicitationValues[companionKey] === null
+                          ? '' : String(elicitationValues[companionKey])}
+                        onChange={(e) => setElicitationValue(companionKey, e.target.value)}
+                      />
+                      {companion.Description && (
+                        <span className="text-xs text-muted-foreground">{companion.Description}</span>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : null;
               if (f.Kind === 'boolean') {
                 return (
                   <label key={f.Key} className="flex items-center gap-2 text-sm">
@@ -1012,6 +1066,7 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
                         <option key={o.Value} value={o.Value}>{o.Title || o.Value}</option>
                       ))}
                     </select>
+                    {companionNode}
                   </label>
                 );
               }
@@ -1031,6 +1086,7 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
                         <span>{o.Title || o.Value}</span>
                       </label>
                     ))}
+                    {companionNode}
                   </fieldset>
                 );
               }

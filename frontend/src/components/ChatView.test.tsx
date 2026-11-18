@@ -1098,4 +1098,56 @@ describe('ChatView', () => {
     await waitFor(() => expect(api.cancelChatElicitation).toHaveBeenCalledWith('c1', 'r5'));
     expect(useAppStore.getState().chatElicitations.c1 ?? null).toBeNull();
   });
+
+  const CLAUDE_FIELDS = [
+    { Key: 'question_0', Kind: 'select' as const, Options: [{ Value: 'Bun', Title: 'Bun' }, { Value: 'npm', Title: 'npm' }] },
+    { Key: 'question_0_custom', Kind: 'text' as const, Title: 'Other' },
+  ];
+
+  it('elicitation Other 伴随文本框默认隐藏，点击切换按钮后展开并可提交', async () => {
+    useAppStore.setState({ chatElicitations: { c1: {
+      RequestID: 'r6', SessionID: 's1', Message: 'Which package manager?',
+      Fields: [...CLAUDE_FIELDS],
+    } } });
+    render(<ChatView chat={CHAT} active />);
+    // 默认隐藏：下拉在，Other 输入框不在
+    expect(screen.getByLabelText('question_0')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Other')).not.toBeInTheDocument();
+    // 点击切换按钮后展开
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.chat.elicitation_other') }));
+    fireEvent.change(screen.getByLabelText('Other'), { target: { value: 'pnpm' } });
+    fireEvent.click(screen.getByRole('button', { name: tt('ui.chat.elicitation_submit') }));
+    await waitFor(() => expect(api.respondChatElicitation).toHaveBeenCalledWith('c1', 'r6', 'accept', { question_0_custom: 'pnpm' }));
+  });
+
+  it('elicitation 下拉选中 other 类选项时自动展开文本框', () => {
+    useAppStore.setState({ chatElicitations: { c1: {
+      RequestID: 'r7', SessionID: 's1', Message: 'Q',
+      Fields: [
+        { Key: 'q', Kind: 'select', Options: [{ Value: 'A' }, { Value: 'Other', Title: 'Other' }] },
+        { Key: 'q_custom', Kind: 'text', Title: 'Other' },
+      ],
+    } } });
+    render(<ChatView chat={CHAT} active />);
+    expect(screen.queryByLabelText('Other')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('q'), { target: { value: 'Other' } });
+    expect(screen.getByLabelText('Other')).toBeInTheDocument();
+  });
+
+  it('elicitation 无伴随字段的独立文本框照常常驻渲染', () => {
+    useAppStore.setState({ chatElicitations: { c1: {
+      RequestID: 'r8', SessionID: 's1', Message: 'Q',
+      Fields: [
+        { Key: 'q', Kind: 'select', Options: [{ Value: 'A' }, { Value: 'Other' }] },
+        { Key: 'note', Kind: 'text', Title: 'Notes' },
+      ],
+    } } });
+    render(<ChatView chat={CHAT} active />);
+    // 独立文本字段不被误绑成伴随字段，仍常驻渲染
+    expect(screen.getByLabelText('note')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('q'), { target: { value: 'Other' } });
+    // 无伴随字段：不出现名为 Other 的输入框，note 仍是唯一文本框
+    expect(screen.queryByLabelText('Other')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('note')).toBeInTheDocument();
+  });
 });
