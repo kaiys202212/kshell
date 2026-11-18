@@ -25,3 +25,13 @@ node_modules/
 AGENTS.md
 .claude/
 CLAUDE.md
+
+# 本地凭据/环境文件（勿入库）
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
