@@ -25,6 +25,7 @@ type elicitationProp struct {
 	Description string             `json:"description"`
 	Enum        []any              `json:"enum"`
 	OneOf       []elicitationOneOf `json:"oneOf"`
+	AnyOf       []elicitationOneOf `json:"anyOf"`
 	Items       *elicitationProp   `json:"items"`
 	Default     any                `json:"default"`
 }
@@ -98,20 +99,31 @@ func elicitationKind(p *elicitationProp, opts []ElicitationOption) string {
 
 // optionsFromSchema 取可选项：数组取 items 的枚举，标量取自身枚举；值为数字/
 // 布尔时用 fmt.Sprint 归一成字符串（ACP content 的 key 只能是字符串）。
-// oneOf 的 title 缺失时退回 const，保证下拉永远有可读文案；nil 与空串 const
-// 无法作为有效取值，直接跳过。
+// oneOf/anyOf 的 title 缺失时退回 const，保证下拉永远有可读文案（claude 多选题
+// 用 items.anyOf 形态）；nil 与空串 const 无法作为有效取值，直接跳过。
 func optionsFromSchema(p *elicitationProp) []ElicitationOption {
 	src := p
 	if p.Type == "array" && p.Items != nil {
 		src = p.Items
 	}
-	out := make([]ElicitationOption, 0, len(src.Enum)+len(src.OneOf))
+	out := make([]ElicitationOption, 0, len(src.Enum)+len(src.OneOf)+len(src.AnyOf))
 	for _, e := range src.Enum {
 		if v, ok := optionText(e); ok {
 			out = append(out, ElicitationOption{Value: v, Title: v})
 		}
 	}
 	for _, o := range src.OneOf {
+		v, ok := optionText(o.Const)
+		if !ok {
+			continue
+		}
+		title := o.Title
+		if title == "" {
+			title = v
+		}
+		out = append(out, ElicitationOption{Value: v, Title: title})
+	}
+	for _, o := range src.AnyOf {
 		v, ok := optionText(o.Const)
 		if !ok {
 			continue

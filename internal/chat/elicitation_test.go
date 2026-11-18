@@ -55,6 +55,23 @@ func TestParseElicitationFields(t *testing.T) {
 			}},
 		},
 		{
+			// claude-agent-acp 的多选题形态：items.anyOf 列举 {const,title}
+			name:   "array items anyOf -> multiselect (claude 多选形态)",
+			schema: `{"type":"object","properties":{"lang":{"type":"array","items":{"anyOf":[{"const":"Go","title":"Golang"},{"const":"TS","title":"TypeScript"}]}}}}`,
+			want: []ElicitationField{{
+				Key: "lang", Kind: "multiselect",
+				Options: []ElicitationOption{{Value: "Go", Title: "Golang"}, {Value: "TS", Title: "TypeScript"}},
+			}},
+		},
+		{
+			name:   "scalar anyOf -> select",
+			schema: `{"type":"object","properties":{"x":{"type":"string","anyOf":[{"const":"a","title":"A"},{"const":"b"}]}}}`,
+			want: []ElicitationField{{
+				Key: "x", Kind: "select",
+				Options: []ElicitationOption{{Value: "a", Title: "A"}, {Value: "b", Title: "b"}},
+			}},
+		},
+		{
 			name:   "default value preserved",
 			schema: `{"type":"object","properties":{"n":{"type":"number","default":3},"s":{"type":"string","default":"hi"}}}`,
 			want: []ElicitationField{
