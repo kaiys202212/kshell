@@ -211,6 +211,10 @@ func (b *agentBackend) Open(sessionID string) (agentapi.Session, error) {
 	return refToSession(r, agentapi.StatusRunning, "", 0), nil
 }
 
+// DefaultCreate 返回 AgentHub ⚙ 默认设置（toolID/modelID），供管理者循环
+// create_session 在用户未点名工具/模型时填空。config.yaml 是唯一权威。
+func (b *agentBackend) DefaultCreate() (string, string) { return b.a.agenthubDefaultCreate() }
+
 // Tools 返回已安装工具候选；仅含 ACP 可用工具（create_session 的候选与校验
 // 同源，非 ACP 工具被模型选中后创建必报错，提前从候选中剔除）。
 func (b *agentBackend) Tools() []agentapi.Option {

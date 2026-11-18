@@ -127,9 +127,9 @@ describe('dispatchRequirement', () => {
 
     await dispatchRequirement('r1', '需求文本', 'D:\\ws\\proj', { toolId: 'tool-def', modelId: 'm2' });
 
-    // 回落到 resolveToolID 自动选择（无 lastAgentId → 第一个 ACP 可用工具）
-    // 工具回落后仍带上 defaults.modelId（创建注入 + 建后 SetModel）
-    expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-a', 'm2');
+    // 回落到 resolveToolID 自动选择（无 lastAgentId → 第一个 ACP 可用工具）；
+    // 默认模型与默认工具成对，工具回落后不跨工具套用。
+    expect(mocks.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\proj', 'tool-a', null);
     expect(
       useAppStore.getState().toasts.some((t) => t.title.includes(tt('ui.hub.default_tool_unavailable'))),
     ).toBe(true);

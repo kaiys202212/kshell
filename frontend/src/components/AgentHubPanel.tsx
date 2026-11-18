@@ -46,7 +46,7 @@ import {
   type MentionOption,
 } from '../lib/agentMentions';
 import { toolDisplayName } from '../lib/agentNotify';
-import { forgetPerToolLastModel, isClaudeDefaultModel, lastModelForCreate, loadDefaultCreate, loadLastCreate, loadToolModelOptions, loadToolModels, loadHubRouteMode, mergeHubModelOptions, mostRecentCreatedWorkspace, normalizeCreateModel, rememberLastModel, rememberPerToolLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode, type ToolModelOption } from '../lib/agenthubDefaults';
+import { forgetPerToolLastModel, isClaudeDefaultModel, loadDefaultCreate, loadLastCreate, loadToolModelOptions, loadToolModels, loadHubRouteMode, mergeHubModelOptions, mostRecentCreatedWorkspace, normalizeCreateModel, rememberLastModel, rememberPerToolLastModel, saveDefaultCreate, saveHubRouteMode as persistRouteModeLocal, saveLastCreate, saveToolModels, type HubRouteMode, type ToolModelOption } from '../lib/agenthubDefaults';
 import { saveHubDefaultCreate } from '../lib/api';
 import { quotePathForShell } from '../lib/dragPath';
 import { decodePercentText } from '../lib/displayText';
@@ -592,10 +592,11 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
     }
   };
 
-  // runEasyNew /easynew 快建：默认设置/上次记录仍有效时直接走创建流程（不弹窗），
-  // 失效或没有默认值则打开新建弹窗让用户补选（补选后同样落默认值）。
-  // 取值优先级：toolId/modelId 来自显式默认设置（loadDefaultCreate），缺失回落
-  // lastCreate 全量；wsPath 优先当前选中项目（首页卡片点击），否则 lastCreate.wsPath。
+  // runEasyNew /easynew 快建：⚙ 默认设置（config.yaml 唯一权威）有效时直接
+  // 走创建流程（不弹窗）；未配置/不可用时显式回落首个可用 ACP 工具，仅当
+  // 没有任何可用工具才打开新建弹窗让用户补选。
+  // 工具/模型只认 ⚙ 默认设置，不再读 lastCreate 这类隐式「上次记录」；
+  // wsPath 优先当前选中项目（首页卡片点击），否则 lastCreate.wsPath。
   // 创建互斥：runAgentCreate 内部持锁；这里对弹窗入口另查锁，避免创建中又打开对话框重复操作。
   const runEasyNew = () => {
     if (createPromise !== null) {
@@ -614,27 +615,29 @@ export default function AgentHubPanel({ hidden = false, onCollapse }: AgentHubPa
       return;
     }
     setEasynewRunning(true);
-    // 工具有效性需异步拉工具列表校验（store 无镜像）：默认设置的工具可用则用之，
-    // 不可用提示回落；无默认设置时回落 lastCreate.toolId，再不可用才弹窗补选。
+    // 工具有效性需异步拉工具列表校验（store 无镜像）：⚙ 默认工具可用则用之；
+    // 不可用提示并按既有回落取首个已安装且 ACP 可用的工具（明确不是猜测）。
     // 过滤口径与 NewAgentDialog 一致：确定未登录（Auth=out）的工具不可见。
     void getTools()
       .then((list) => list.filter(usableForACP))
       .then((acp) => {
         let toolId = defaults?.toolId && acp.some((x) => x.ID === defaults.toolId) ? defaults.toolId : '';
         if (!toolId && defaults?.toolId) {
-          // 默认工具不可用（卸载/ACP 掉线）：提示后回落自动选择
+          // 默认工具不可用（卸载/ACP 掉线）：提示后回落首个可用 ACP 工具。
           useAppStore.getState().notify(t('ui.hub.default_tool_unavailable'), 'info');
         }
-        if (!toolId && last && acp.some((x) => x.ID === last.toolId)) {
-          toolId = last.toolId;
+        if (!toolId) {
+          // ⚙ 未配置或不可用：显式回落首个已安装且 ACP 可用的工具。
+          toolId = acp[0]?.ID ?? '';
         }
         if (!toolId) {
           openNewAgentDialog();
           return;
         }
-        // 模型：默认设置显式选了模型才恒用之；未选（null）按工具记忆回落上次
-        // 模型（跨工具互不覆盖），再无则 null = 工具默认模型。
-        const modelId = lastModelForCreate(defaults?.modelId ?? null, toolId);
+        // 模型：只认 ⚙ 默认模型（与默认工具成对，工具回落后不跨工具套用）；
+        // null = 工具自身默认模型。claude 的 default 伪值归一为空。
+        const modelId =
+          toolId === defaults?.toolId ? normalizeCreateModel(toolId, defaults?.modelId ?? null) : null;
         return runAgentCreate(wsPath, toolId, modelId, {
           t,
           registerChat: (chat) => {
@@ -1642,8 +1645,9 @@ function NewAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
 
   // 打开对话框时才拉工具/会话列表（避免常驻首页也发请求），并按默认值与最近会话预填。
   // 仅在 open 从 false→true 时跑一次；开着期间 workspaces 刷新不重跑预填。
-  // 工具/模型只认右上角默认设置（loadDefaultCreate），不读 lastCreate 等别处逻辑：
-  //   - 工具：默认工具仍可用则用之，否则首个可用 ACP 工具；
+  // 工具/模型只认右上角 ⚙ 默认设置（loadDefaultCreate，权威副本在 config.yaml），
+  // 不读 lastCreate 等别处逻辑：
+  //   - 工具：默认工具仍可用则用之；未配置/不可用时显式回落首个可用 ACP 工具；
   //   - 模型：默认工具同一份配置里的 modelId，空 = 工具默认模型。
   // 项目：所有入口（AgentHub / WorkspaceTab / CLI 等扫描结果）最近一次新建会话的
   // Workspace；失效再回落 selectedProject / 工作区首项。命中一律回写选项现值

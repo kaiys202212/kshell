@@ -2409,7 +2409,7 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect(api.setChatModel).toHaveBeenCalledWith('n7', 'm2'));
   });
 
-  it('#easynew：默认设置未显式选模型时回落 lastCreate.modelId（上次模型）', async () => {
+  it('#easynew：默认设置未选模型时不读 lastCreate.modelId（用工具默认模型）', async () => {
     api.getTools.mockResolvedValue([acpTool()]);
     api.openWorkspaceACP.mockResolvedValue({
       Kind: 'chat',
@@ -2424,19 +2424,19 @@ describe('AgentHubPanel', () => {
     fireEvent.change(box, { target: { value: '#easynew' } });
     fireEvent.keyDown(box, { key: 'Enter' });
 
-    await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'claude', 'm9'));
-    // 默认设置只固定工具；模型跟随上次创建记录
-    await waitFor(() => expect(api.setChatModel).toHaveBeenCalledWith('n10', 'm9'));
+    await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'claude', null));
+    expect(api.setChatModel).not.toHaveBeenCalled();
   });
 
-  it('#easynew：listChatModels 失败仍 setChatModel，且 open 传入 modelId', async () => {
+  it('#easynew：listChatModels 失败仍 setChatModel，且 open 传入 ⚙ 默认模型', async () => {
     api.getTools.mockResolvedValue([acpTool()]);
     api.openWorkspaceACP.mockResolvedValue({
       Kind: 'chat',
       Chat: chat({ ID: 'n11', Workspace: 'D:\\ws\\a', ToolID: 'claude' }),
     });
     api.listChatModels.mockRejectedValue(new Error('not ready'));
-    saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: 'deepseek-v4.1-flash' });
+    saveDefaultCreate({ toolId: 'claude', modelId: 'deepseek-v4.1-flash' });
+    saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: null });
     useAppStore.setState({ workspaces: [workspaceA], selectedProject: 'D:\\ws\\a' });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
@@ -2466,15 +2466,36 @@ describe('AgentHubPanel', () => {
     await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'claude', null));
   });
 
-  it('#easynew：默认设置工具不可用时提示回落并沿用 lastCreate 工具', async () => {
+  it('#easynew：默认设置工具不可用时提示并回落首个可用 ACP 工具（不读 lastCreate）', async () => {
     api.getTools.mockResolvedValue([acpTool()]); // 只有 claude 可用，默认设置指向 gone-tool
     api.openWorkspaceACP.mockResolvedValue({
       Kind: 'chat',
       Chat: chat({ ID: 'n9', Workspace: 'D:\\ws\\a', ToolID: 'claude' }),
     });
     api.listChatModels.mockResolvedValue({ Current: '', Models: [] });
-    saveDefaultCreate({ toolId: 'gone-tool', modelId: null });
-    saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'claude', modelId: null });
+    saveDefaultCreate({ toolId: 'gone-tool', modelId: 'm-default' });
+    // 故意让 lastCreate 指向另一个工具：不得被借用。
+    saveLastCreate({ wsPath: 'D:\\ws\\a', toolId: 'codex', modelId: 'm9' });
+    useAppStore.setState({ workspaces: [workspaceA], selectedProject: 'D:\\ws\\a' });
+    render(<AgentHubPanel />);
+    const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
+    fireEvent.change(box, { target: { value: '#easynew' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    // 回落到 claude；默认模型与默认工具成对，不跨工具套用。
+    await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'claude', null));
+    expect(
+      useAppStore.getState().toasts.some((x) => x.title === tt('ui.hub.default_tool_unavailable')),
+    ).toBe(true);
+  });
+
+  it('#easynew：默认设置完全未配置时回落首个可用 ACP 工具', async () => {
+    api.getTools.mockResolvedValue([acpTool(), { ...acpTool('codex'), Name: 'Codex' }]);
+    api.openWorkspaceACP.mockResolvedValue({
+      Kind: 'chat',
+      Chat: chat({ ID: 'n12', Workspace: 'D:\\ws\\a', ToolID: 'claude' }),
+    });
+    api.listChatModels.mockResolvedValue({ Current: '', Models: [] });
     useAppStore.setState({ workspaces: [workspaceA], selectedProject: 'D:\\ws\\a' });
     render(<AgentHubPanel />);
     const box = screen.getByPlaceholderText(tt('ui.hub.input_placeholder'));
@@ -2482,9 +2503,10 @@ describe('AgentHubPanel', () => {
     fireEvent.keyDown(box, { key: 'Enter' });
 
     await waitFor(() => expect(api.openWorkspaceACP).toHaveBeenCalledWith('D:\\ws\\a', 'claude', null));
+    // 没有默认工具时不得提示「默认工具不可用」（那是配错而非未配置）。
     expect(
       useAppStore.getState().toasts.some((x) => x.title === tt('ui.hub.default_tool_unavailable')),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   // ---- 面板级需求拖放派发 ----

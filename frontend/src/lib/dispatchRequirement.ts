@@ -14,7 +14,7 @@
 import i18n from 'i18next';
 import { getTools, markRequirementDispatched, openWorkspaceACP, sendChatPromptDirect, setChatModel, type OpenedSession, type Requirement } from './api';
 import { backendError } from './errors';
-import { lastModelForCreate } from './agenthubDefaults';
+import { normalizeCreateModel } from './agenthubDefaults';
 import { usableForACP } from './toolUsable';
 import { useAppStore } from '../state/store';
 
@@ -77,9 +77,10 @@ export async function dispatchRequirement(
     }
     if (!toolID) toolID = await resolveToolID();
     if (!toolID) throw new Error('no_acp_tool');
-    // 建会话模型：显式默认设置优先，否则回落该工具记忆的上次模型（口径与
-    // runEasyNew 一致）；都没有则 null = 工具默认模型。
-    const modelId = lastModelForCreate(defaults?.modelId ?? null, toolID);
+    // 建会话模型只认 ⚙ 默认模型（与默认工具成对）：工具回落到别的工具时
+    // 不跨工具套用；null = 工具默认模型。
+    const modelId =
+      defaults?.toolId === toolID ? normalizeCreateModel(toolID, defaults?.modelId ?? null) : null;
     const result = await openWorkspaceACP(wsPath, toolID, modelId);
     if (!result.Chat) throw new Error('no_chat');
     const chat = result.Chat;

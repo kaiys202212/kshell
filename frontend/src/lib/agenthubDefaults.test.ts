@@ -11,6 +11,7 @@ import {
   mergeHubModelOptions,
   mostRecentCreatedWorkspace,
   normalizeCreateModel,
+  reconcileDefaultCreate,
   rememberChatModels,
   rememberLastModel,
   rememberPerToolLastModel,
@@ -378,5 +379,37 @@ describe('agenthubDefaults', () => {
     });
     expect(() => saveDefaultCreate({ toolId: 'claude', modelId: null })).not.toThrow();
     spy.mockRestore();
+  });
+
+  it('reconcileDefaultCreate：config 有值时镜像到 localStorage（config 为权威）', () => {
+    expect(
+      reconcileDefaultCreate(
+        { default_tool: 'trae', default_model: 'm-x' },
+        { toolId: 'claude', modelId: 'm-local' },
+      ),
+    ).toEqual({ mirror: { toolId: 'trae', modelId: 'm-x' }, writeThrough: null });
+  });
+
+  it('reconcileDefaultCreate：config 只有工具时 modelId 为 null', () => {
+    expect(reconcileDefaultCreate({ default_tool: 'codex', default_model: '' }, null)).toEqual({
+      mirror: { toolId: 'codex', modelId: null },
+      writeThrough: null,
+    });
+  });
+
+  it('reconcileDefaultCreate：config 为空且本地有旧值时迁移写穿', () => {
+    const local = { toolId: 'claude', modelId: 'm1' };
+    expect(reconcileDefaultCreate({ default_tool: '', default_model: '' }, local)).toEqual({
+      mirror: local,
+      writeThrough: local,
+    });
+  });
+
+  it('reconcileDefaultCreate：两端都为空时不动', () => {
+    expect(reconcileDefaultCreate({ default_tool: '', default_model: '' }, null)).toEqual({
+      mirror: null,
+      writeThrough: null,
+    });
+    expect(reconcileDefaultCreate(null, null)).toEqual({ mirror: null, writeThrough: null });
   });
 });

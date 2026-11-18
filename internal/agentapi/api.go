@@ -50,6 +50,13 @@ type Backend interface {
 	Feed() *Feed
 }
 
+// DefaultCreateProvider 是可选端口：返回 AgentHub ⚙ 默认设置（工具/模型）。
+// 实现方（desktop 后端）已把 claude 的 default 伪模型归一为空。未实现的
+// Backend（测试桩等）保持既有「缺工具转候选反问」行为。
+type DefaultCreateProvider interface {
+	DefaultCreate() (toolID, modelID string)
+}
+
 // API 是工具层服务。所有方法并发安全。
 type API struct {
 	b Backend

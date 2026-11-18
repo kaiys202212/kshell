@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/yangk/kshell/internal/hubtools"
@@ -120,23 +121,45 @@ func (a *API) validateAndCreate(ctx context.Context, plan CreatePlan) (CreateRes
 	tools := a.b.Tools()
 	workspaces := a.b.Workspaces()
 
-	need := CreatePlan{Model: plan.Model, Task: plan.Task}
+	// 用户未点名工具/模型时取 AgentHub ⚙ 默认设置（config.yaml 唯一权威）。
+	// 默认工具为空或不可用时显式回落首个候选（已安装且 ACP 可用），不再反问
+	// 逼用户重选；显式工具/模型永远优先，不受默认值覆盖。
+	defTool, defModel := "", ""
+	hasDefaults := false
+	if p, ok := a.b.(DefaultCreateProvider); ok {
+		hasDefaults = true
+		defTool, defModel = p.DefaultCreate()
+	}
+	toolID := strings.TrimSpace(plan.ToolID)
+	if toolID == "" && hasDefaults && len(tools) > 0 {
+		if defTool != "" && toolExists(tools, defTool) {
+			toolID = defTool
+		} else {
+			if defTool != "" {
+				log.Printf("agenthub 默认工具 %q 不可用，回落首个可用工具", defTool)
+			} else {
+				log.Printf("agenthub 默认设置未配置，回落首个已安装 ACP 工具")
+			}
+			toolID = tools[0].ID
+		}
+	}
+	rawModel := strings.TrimSpace(plan.Model)
+	model := normalizeCreateModel(toolID, rawModel)
+	// 只有「完全未指定模型」才补默认模型；显式 claude "default" 是明确要求
+	// 工具自选，归一为空后不得再被默认值覆盖。
+	if rawModel == "" && defTool != "" && strings.EqualFold(toolID, defTool) {
+		model = defModel
+	}
+	need := CreatePlan{Model: model, Task: plan.Task}
 
 	// 工具：ID 必须精确命中候选。
-	if plan.ToolID == "" {
+	if toolID == "" {
 		need.Question = strings.TrimSpace(plan.Question + " 请选择要使用的工具。")
 		need.ToolOptions = tools
 		return CreateResult{NeedsConfirm: &need}, nil
 	}
-	found := false
-	for _, t := range tools {
-		if t.ID == plan.ToolID {
-			found = true
-			break
-		}
-	}
-	if !found {
-		need.Question = fmt.Sprintf("工具 %q 不存在，请从候选中选择。", plan.ToolID)
+	if !toolExists(tools, toolID) {
+		need.Question = fmt.Sprintf("工具 %q 不存在，请从候选中选择。", toolID)
 		need.ToolOptions = tools
 		return CreateResult{NeedsConfirm: &need}, nil
 	}
@@ -144,13 +167,13 @@ func (a *API) validateAndCreate(ctx context.Context, plan CreatePlan) (CreateRes
 	// 工作区：精确路径命中；否则小写包含唯一命中自动采用，歧义/零命中进确认。
 	ws, ok := matchWorkspace(plan.Workspace, workspaces)
 	if !ok {
-		need.ToolID = plan.ToolID
+		need.ToolID = toolID
 		need.Question = strings.TrimSpace(plan.Question + " 请选择工作区。")
 		need.WorkspaceOptions = capOptions(workspaces, 10)
 		return CreateResult{NeedsConfirm: &need}, nil
 	}
 
-	s, err := a.b.Create(plan.ToolID, ws, plan.Model)
+	s, err := a.b.Create(toolID, ws, model)
 	if err != nil {
 		return CreateResult{}, err
 	}
@@ -161,6 +184,26 @@ func (a *API) validateAndCreate(ctx context.Context, plan CreatePlan) (CreateRes
 		}
 	}
 	return CreateResult{Created: &s}, nil
+}
+
+// toolExists 判断工具 ID 是否在候选列表内。
+func toolExists(tools []Option, id string) bool {
+	for _, t := range tools {
+		if t.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeCreateModel 与桌面端同口径：claude 的 "default" 是「工具自选」
+// 伪值，不能作为显式模型下发；其它工具原样保留。
+func normalizeCreateModel(toolID, model string) string {
+	model = strings.TrimSpace(model)
+	if toolID == "claude" && strings.EqualFold(model, "default") {
+		return ""
+	}
+	return model
 }
 
 // matchWorkspace 按精确路径 → 唯一小写包含命中两级匹配工作区。

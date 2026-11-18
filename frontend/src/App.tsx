@@ -15,6 +15,7 @@ import {
   closeChat,
   closeTerminal,
   confirmArchive,
+  getAgentHubSettings,
   getAppearance,
   getAppVersion,
   getLastSeenVersion,
@@ -42,6 +43,7 @@ import {
   onTerminalExit,
   onTerminalMeta,
   onUpdateAvailable,
+  saveHubDefaultCreate,
   writeTerminal,
 } from './lib/api';
 import type { AppearanceInfo } from './lib/appearance';
@@ -54,7 +56,12 @@ import { handleGlobalKey } from './lib/keybindings';
 import { OnFileDrop, OnFileDropOff } from '../wailsjs/runtime/runtime';
 import { handleAnchorClick } from './lib/openHref';
 import { eventLabel } from './lib/agentNotify';
-import { rememberChatModels } from './lib/agenthubDefaults';
+import {
+  loadDefaultCreate,
+  reconcileDefaultCreate,
+  rememberChatModels,
+  saveDefaultCreate,
+} from './lib/agenthubDefaults';
 import { playNotifySound } from './lib/notifySound';
 import { backendError, translateBackend } from './lib/errors';
 import { applyChatUpdate, type TimelineItem } from './state/chatUpdate';
@@ -101,6 +108,21 @@ function App() {
   useEffect(() => {
     listTerminals()
       .then((list) => useAppStore.getState().setTerminals(list))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    // AgentHub ⚙ 默认设置的唯一权威是后端 config.yaml（微信链路也读它）：
+    // 启动时回填 localStorage 缓存；老版本只写过 localStorage 的用户，
+    // 首次升级后迁移写穿到 config，避免两端默认值分叉。
+    getAgentHubSettings()
+      .then((s) => {
+        const plan = reconcileDefaultCreate(s, loadDefaultCreate());
+        if (plan.mirror) saveDefaultCreate(plan.mirror);
+        if (plan.writeThrough) {
+          void saveHubDefaultCreate(plan.writeThrough.toolId, plan.writeThrough.modelId).catch(() => {});
+        }
+      })
       .catch(() => {});
   }, []);
 

@@ -104,7 +104,8 @@ func (a *App) OpenSessionTerminal(sessionID string, cols, rows int) (terminal.In
 	}, terminal.Spec{Path: spec.Path, Args: spec.Args, Dir: spec.Dir, Env: spec.Env}, cols, rows)
 }
 
-// OpenWorkspaceTerminal 在中心区为工作区新开一个内嵌终端；toolID 为空时用工作区首选工具。
+// OpenWorkspaceTerminal 在中心区为工作区新开一个内嵌终端；toolID 为空时取
+// AgentHub ⚙ 默认工具（未配置/不可用时由解析器显式回落并记日志）。
 func (a *App) OpenWorkspaceTerminal(wsID string, toolID string, cols, rows int) (terminal.Info, error) {
 	a.ensureSessionHooks()
 	ws, tools, ok := a.workspaceByIDReady(wsID)
@@ -115,6 +116,7 @@ func (a *App) OpenWorkspaceTerminal(wsID string, toolID string, cols, rows int) 
 	if m == nil {
 		return terminal.Info{}, errNotReady
 	}
+	toolID = a.resolveCreateToolID(toolID, false)
 
 	o := a.snapshot()
 	l, injectToolID, err := a.launchForWorkspace(ws, toolID, tools)
@@ -197,12 +199,13 @@ func (a *App) ScrollbackTerminal(id string) (string, error) {
 }
 
 // NewSessionWithTool 在指定工作区用指定工具新建会话（外部终端窗口路径）；
-// toolID 为空时等价于 NewSession（交给 launch 选首选工具）。
+// toolID 为空时取 AgentHub ⚙ 默认工具（未配置/不可用时显式回落）。
 func (a *App) NewSessionWithTool(wsID string, toolID string) error {
 	ws, tools, ok := a.workspaceByIDReady(wsID)
 	if !ok {
 		return errWorkspaceNotFound
 	}
+	toolID = a.resolveCreateToolID(toolID, false)
 	o := a.snapshot()
 	l, injectToolID, err := a.launchForWorkspace(ws, toolID, tools)
 	if err != nil {
@@ -225,13 +228,8 @@ func (a *App) launchForWorkspace(ws discovery.Workspace, toolID string, tools []
 	if err != nil {
 		return providers.Launch{}, "", err
 	}
-	inject := toolID
-	if inject == "" {
-		if p, _, ok := launch.PreferredTool(o.Providers, tools, ws); ok {
-			inject = p.ID()
-		}
-	}
-	return l, inject, nil
+	// 调用方已用 ⚙ 默认设置解析过空 toolID；此处不再按工作区会话数隐式猜测。
+	return l, toolID, nil
 }
 
 // launchForSession 本地走 launch 包；会话工作区为 ssh Ref 时走远程恢复策略。

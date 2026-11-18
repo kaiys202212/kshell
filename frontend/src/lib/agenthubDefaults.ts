@@ -191,6 +191,37 @@ export function saveDefaultCreate(v: DefaultAgentCreate): void {
   writeJSON(DEFAULT_CREATE_KEY, v);
 }
 
+// DefaultCreateSettings 是后端 config.yaml agenthub.* 的读取形态（仅本文件用到的字段）。
+export interface DefaultCreateSettings {
+  default_tool: string;
+  default_model: string;
+}
+
+// DefaultCreateSyncPlan 是启动同步动作：mirror 写 localStorage 缓存，
+// writeThrough 把存量本地设置迁移到后端 config.yaml。
+export interface DefaultCreateSyncPlan {
+  mirror: DefaultAgentCreate | null;
+  writeThrough: DefaultAgentCreate | null;
+}
+
+// reconcileDefaultCreate 计算启动时的默认设置同步：config.yaml 是 ⚙ 默认
+// 设置的唯一权威（微信端也读它）。后端有值 → 镜像到 localStorage 供桌面端
+// 同步读取；后端为空且本地有旧值 → 迁移写穿，保持存量用户设置不丢。
+export function reconcileDefaultCreate(
+  settings: DefaultCreateSettings | null | undefined,
+  local: DefaultAgentCreate | null,
+): DefaultCreateSyncPlan {
+  const toolId = typeof settings?.default_tool === 'string' ? settings.default_tool.trim() : '';
+  const rawModel = typeof settings?.default_model === 'string' ? settings.default_model.trim() : '';
+  if (toolId) {
+    return { mirror: { toolId, modelId: rawModel || null }, writeThrough: null };
+  }
+  if (local?.toolId) {
+    return { mirror: local, writeThrough: local };
+  }
+  return { mirror: null, writeThrough: null };
+}
+
 // ToolModelOption：模型下拉一项；id 用于 SetModel，name 用于展示（Cursor Auto 等）。
 export interface ToolModelOption {
   id: string;

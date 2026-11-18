@@ -36,6 +36,80 @@ func mockChat(api *API, replies ...string) {
 	})
 }
 
+// defaultFake 给 fakeBackend 补上 DefaultCreateProvider：模拟 desktop 后端
+// 提供 AgentHub ⚙ 默认工具/模型。
+type defaultFake struct {
+	*fakeBackend
+	tool, model string
+}
+
+func (f *defaultFake) DefaultCreate() (string, string) { return f.tool, f.model }
+
+// 未点名工具/模型：取 ⚙ 默认设置（config.yaml 唯一权威）。
+func TestCreateNLUsesDefaultCreate(t *testing.T) {
+	f := &defaultFake{fakeBackend: newFake(), tool: "claude", model: "m-default"}
+	api := New(f)
+	api.UpdateLLM(hubtools.Config{BaseURL: "http://x", APIKey: "k", Model: "m"})
+	mockChat(api, `{"tool":"","workspace":"d:/ws/a","model":"","task":"","ready":false}`)
+	res, err := api.CreateNL(context.Background(), "建个会话", NLCreate{})
+	if err != nil {
+		t.Fatalf("CreateNL: %v", err)
+	}
+	if res.Created == nil {
+		t.Fatalf("默认设置应直接创建: %+v", res)
+	}
+	if len(f.created) != 1 || f.created[0] != [3]string{"claude", "d:/ws/a", "m-default"} {
+		t.Fatalf("应使用默认工具+默认模型创建: %v", f.created)
+	}
+}
+
+// 默认工具不可用：显式回落首个候选工具（不再反问），且不套用默认模型。
+func TestCreateNLDefaultToolUnavailableFallsBack(t *testing.T) {
+	f := &defaultFake{fakeBackend: newFake(), tool: "gone", model: "m-default"}
+	api := New(f)
+	api.UpdateLLM(hubtools.Config{BaseURL: "http://x", APIKey: "k", Model: "m"})
+	mockChat(api, `{"tool":"","workspace":"d:/ws/a","model":"","task":"","ready":false}`)
+	res, err := api.CreateNL(context.Background(), "建个会话", NLCreate{})
+	if err != nil {
+		t.Fatalf("CreateNL: %v", err)
+	}
+	if res.Created == nil {
+		t.Fatalf("应回落创建而非反问: %+v", res)
+	}
+	if len(f.created) != 1 || f.created[0] != [3]string{"claude", "d:/ws/a", ""} {
+		t.Fatalf("应回落首个工具且不带默认模型: %v", f.created)
+	}
+}
+
+// 显式工具/模型优先：默认设置不得覆盖用户点名。
+func TestCreateNLExplicitWins(t *testing.T) {
+	f := &defaultFake{fakeBackend: newFake(), tool: "claude", model: "m-default"}
+	api := New(f)
+	api.UpdateLLM(hubtools.Config{BaseURL: "http://x", APIKey: "k", Model: "m"})
+	mockChat(api, `{"tool":"codex","workspace":"d:/ws/a","model":"m-user","task":"","ready":true}`)
+	res, err := api.CreateNL(context.Background(), "用 codex 和 m-user 建会话", NLCreate{})
+	if err != nil {
+		t.Fatalf("CreateNL: %v", err)
+	}
+	if res.Created == nil || len(f.created) != 1 || f.created[0] != [3]string{"codex", "d:/ws/a", "m-user"} {
+		t.Fatalf("显式工具/模型应优先: %+v %v", res, f.created)
+	}
+}
+
+// claude 的 default 伪值归一为空，不能写入非法模型 ID。
+func TestCreateNLNormalizesClaudeDefault(t *testing.T) {
+	f := &defaultFake{fakeBackend: newFake(), tool: "claude", model: "default"}
+	api := New(f)
+	api.UpdateLLM(hubtools.Config{BaseURL: "http://x", APIKey: "k", Model: "m"})
+	mockChat(api, `{"tool":"claude","workspace":"d:/ws/a","model":"default","task":"","ready":true}`)
+	if _, err := api.CreateNL(context.Background(), "建个 claude 会话", NLCreate{}); err != nil {
+		t.Fatalf("CreateNL: %v", err)
+	}
+	if len(f.created) != 1 || f.created[0] != [3]string{"claude", "d:/ws/a", ""} {
+		t.Fatalf("claude default 应归一为空: %v", f.created)
+	}
+}
+
 func TestCreateNLNotReady(t *testing.T) {
 	api := New(newFake())
 	_, err := api.CreateNL(context.Background(), "建个会话", NLCreate{})

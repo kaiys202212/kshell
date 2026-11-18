@@ -352,7 +352,8 @@ func (a *App) openSessionACP(sessionID string, allowFallback bool) (OpenedSessio
 // OpenWorkspace 在工作区新建会话：偏好 ACP 且可用时走聊天，否则终端。
 func (a *App) OpenWorkspace(wsID, toolID string) (OpenedSession, error) {
 	if !a.preferACP() {
-		return a.fallbackTerminalWorkspace(wsID, toolID, "")
+		// 终端模式同样以 ⚙ 默认工具为默认值（显式 toolID 优先）。
+		return a.fallbackTerminalWorkspace(wsID, a.resolveCreateToolID(toolID, false), "")
 	}
 	return a.openWorkspaceACP(wsID, toolID, "", true)
 }
@@ -371,15 +372,14 @@ func (a *App) openWorkspaceACP(wsID, toolID, modelID string, allowFallback bool)
 		return OpenedSession{}, errWorkspaceNotFound
 	}
 	o := a.snapshot()
-	// 空 toolID（=由 launch 选首选工具）时把解析出的首选工具回填：ForWorkspaceACP
-	// 内部自选不落痕，ChatInfo.ToolID 留空会让 hub 归因丢工具身份，前端
-	// replyState 判成非 ACP 工具，AgentHub 整会话误标「永久只读」。解析不出
-	// （无已安装工具）保持原样，让 ForWorkspaceACP 自己报错。
-	if toolID == "" {
-		if _, bt, ok := launch.PreferredTool(o.Providers, tools, ws); ok {
-			toolID = bt.ID
-		}
-	}
+	// 空 toolID/modelID 统一取 AgentHub ⚙ 默认设置（唯一权威）；解析器在默认
+	// 设置未配置/不可用时显式回落首个已安装 ACP 工具并打日志。解析出的工具
+	// 必须回填 ToolID：ForWorkspaceACP 内部自选不落痕，ChatInfo.ToolID 留空
+	// 会让 hub 归因丢工具身份，前端 replyState 判成非 ACP 工具，AgentHub 整
+	// 会话误标「永久只读」。解析不出（无已安装工具）保持原样，让
+	// ForWorkspaceACP 自己报错。
+	toolID = a.resolveCreateToolID(toolID, true)
+	modelID = a.resolveCreateModelID(toolID, modelID)
 	// opencode 的 ACP launch 不接受模型参数（原生 provider 注入由 agentsync 完成），
 	// 未显式给模型时沿用上次 opencode 模型 / 默认设置，建会话后再 SetModel。
 	createModel := a.effectiveOpenCodeCreateModel(toolID, modelID)

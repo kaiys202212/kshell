@@ -307,27 +307,15 @@ func (w *wxExecutor) OpenSession(sessionID string) (hub.SessionRef, error) {
 	}, nil
 }
 
-// easyNewToolID 选快速新建的工具：配置里的 AgentHub 默认工具优先（已安装且
-// ACP 可用校验，失效回落），未配置回落第一个已安装且 ACP 可用的工具。
-// 已知不支持 ACP 的工具不能作新建目标（选中必报 no_acp_adapter）。
+// easyNewToolID 选快速新建的工具：统一走 resolveCreateToolID（⚙ 默认工具
+// 优先；未配置/不可用时显式回落首个已安装 ACP 工具并记日志）。已知不支持
+// ACP 的工具不能作新建目标（选中必报 no_acp_adapter）。
 func (w *wxExecutor) easyNewToolID() string {
-	toolID := w.a.snapshot().Config.AgentHub.DefaultTool
-	if toolID != "" && !w.toolACPUsable(toolID) {
-		toolID = "" // 配置的工具未安装或不支持 ACP：回落第一个可用的
-	}
-	if toolID == "" {
-		for _, t := range w.a.GetTools() {
-			if t.Installed && launch.ACPCapable(t) {
-				toolID = t.ID
-				break
-			}
-		}
-	}
-	return toolID
+	return w.a.resolveCreateToolID("", true)
 }
 
-// EasyNew 快速新建：默认工具 = easyNewToolID（配置默认优先），默认工作区 =
-// 第一个工作区；模型取 AgentHub.DefaultModel（空 = 工具默认）。
+// EasyNew 快速新建：默认工具 = ⚙ 默认工具（回落规则见 easyNewToolID），
+// 默认工作区 = 第一个工作区；模型取 ⚙ 默认模型（空 = 工具默认）。
 func (w *wxExecutor) EasyNew() (hub.SessionRef, error) {
 	toolID := w.easyNewToolID()
 	if toolID == "" {
@@ -337,18 +325,8 @@ func (w *wxExecutor) EasyNew() (hub.SessionRef, error) {
 	if len(ws) == 0 {
 		return hub.SessionRef{}, fmt.Errorf("err.weixin.no_workspaces")
 	}
-	model := w.a.snapshot().Config.AgentHub.DefaultModel
+	model := w.a.resolveCreateModelID(toolID, "")
 	return w.CreateNew(toolID, ws[0].Path, model)
-}
-
-// toolACPUsable 报告工具 ID 已安装且 ACP 可用（新建目标资格判定）。
-func (w *wxExecutor) toolACPUsable(id string) bool {
-	for _, t := range w.a.GetTools() {
-		if t.ID == id {
-			return t.Installed && launch.ACPCapable(t)
-		}
-	}
-	return false
 }
 
 // NewMenuOptions 返回 #n 分步新建的选项：工具（已安装且 ACP 可用，已知不支持
@@ -376,6 +354,9 @@ func (w *wxExecutor) NewMenuOptions() (tools, workspaces, models []hub.MenuOptio
 // 保守放行交 launch 层权威判定。新建耗时（agent 启动）期间发 hub:busy 事件，
 // 桌面端 AgentHub 据此显示动画。
 func (w *wxExecutor) CreateNew(toolID, wsID, model string) (hub.SessionRef, error) {
+	// 空值走 ⚙ 默认设置（显式值优先）；#n 手选工具/模型不受影响。
+	toolID = w.a.resolveCreateToolID(toolID, true)
+	model = w.a.resolveCreateModelID(toolID, model)
 	if capable, known := w.acpCapableTool(toolID); known && !capable {
 		return hub.SessionRef{}, errors.New("err.hub.acp_unsupported")
 	}

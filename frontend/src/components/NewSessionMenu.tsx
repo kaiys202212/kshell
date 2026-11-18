@@ -109,7 +109,7 @@ export default function NewSessionMenu({
           aria-label={tr('ui.new_session.menu_aria')}
           className="absolute left-0 top-full z-20 mt-1 w-full min-w-40 rounded border border-border bg-card py-0.5 shadow-sm"
         >
-          {/* 「自动」= 交给 Go 侧按该工作区最常用的工具挑（value 为空串） */}
+          {/* 「自动」= Go 侧取 AgentHub ⚙ 默认工具（未配置时回落首个已安装 ACP 工具） */}
           <button
             type="button"
             role="menuitemradio"
