@@ -74,9 +74,8 @@ func applyExe(ctx context.Context, opts ApplyOptions) error {
 			return fmt.Errorf("err.update.checksum_mismatch")
 		}
 		if opts.CacheDir != "" && opts.Tag != "" {
-			if err := storeCache(opts.CacheDir, opts.Tag, zipName, zipBody, got); err != nil {
-				return fmt.Errorf("err.update.write_cache|%w", err)
-			}
+			// 缓存只是加速下次安装；写盘失败不应阻断本次升级。
+			_ = storeCache(opts.CacheDir, opts.Tag, zipName, zipBody, got)
 		}
 	}
 	exeBytes, err := extractPackageBinary(zipBody, binName)

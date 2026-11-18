@@ -239,7 +239,10 @@
       "asset_empty": "{{0}} is empty",
       "asset_missing": "The installer package does not contain {{0}}",
       "sums_length_invalid": "Invalid SHA256 length: {{0}}",
-      "sums_missing_file": "{{0}} is not present in SHA256SUMS"
+      "sums_missing_file": "{{0}} is not present in SHA256SUMS",
+      "write_cache": "Failed to save the downloaded package: {{0}}",
+      "cache_dir_empty": "Update cache directory is unavailable",
+      "tag_empty": "Release tag is empty"
     },
     "workbuddy": {
       "not_installed": "WorkBuddy desktop app not detected",

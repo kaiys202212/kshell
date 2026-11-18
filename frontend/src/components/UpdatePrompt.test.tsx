@@ -31,6 +31,24 @@ describe('UpdatePrompt', () => {
     expect(onUpgrade).toHaveBeenCalledTimes(1);
   });
 
+  it('未就绪时回退旧文案（兜底）', () => {
+    render(
+      <UpdatePrompt
+        info={{ ...info, Ready: false }}
+        busy={false}
+        error=""
+        onLater={() => {}}
+        onUpgrade={() => {}}
+      />,
+    );
+    expect(
+      screen.getByText(tt('ui.update_prompt.title').replace('{{version}}', 'v0.2.0')),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: tt('ui.update_prompt.upgrade') }),
+    ).toBeInTheDocument();
+  });
+
   it('安装中禁用按钮并显示错误', () => {
     render(
       <UpdatePrompt info={info} busy error="校验失败" onLater={() => {}} onUpgrade={() => {}} />,

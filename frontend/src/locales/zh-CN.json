@@ -239,7 +239,10 @@
       "asset_empty": "{{0}} 为空",
       "asset_missing": "安装包中没有 {{0}}",
       "sums_length_invalid": "SHA256 长度异常: {{0}}",
-      "sums_missing_file": "SHA256SUMS 中没有 {{0}}"
+      "sums_missing_file": "SHA256SUMS 中没有 {{0}}",
+      "write_cache": "保存下载的安装包失败: {{0}}",
+      "cache_dir_empty": "升级缓存目录不可用",
+      "tag_empty": "版本 tag 为空"
     },
     "workbuddy": {
       "not_installed": "未检测到本机 WorkBuddy 桌面端",

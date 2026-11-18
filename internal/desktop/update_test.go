@@ -98,7 +98,7 @@ func TestCheckAndPrepareEmitsAfterDownload(t *testing.T) {
 
 	prepared := 0
 	origP := prepareUpdateFn
-	prepareUpdateFn = func(context.Context, update.CheckResult) error {
+	prepareUpdateFn = func(context.Context, update.CheckResult, string) error {
 		prepared++
 		return nil
 	}
@@ -128,7 +128,7 @@ func TestCheckAndPrepareSilentWhenDownloadFails(t *testing.T) {
 	t.Cleanup(func() { checkUpdateFn = origC })
 
 	origP := prepareUpdateFn
-	prepareUpdateFn = func(context.Context, update.CheckResult) error {
+	prepareUpdateFn = func(context.Context, update.CheckResult, string) error {
 		return errors.New("网络断了")
 	}
 	t.Cleanup(func() { prepareUpdateFn = origP })
@@ -164,7 +164,7 @@ func TestPrepareUpdateDownloadsWhenAvailable(t *testing.T) {
 
 	prepared := 0
 	origP := prepareUpdateFn
-	prepareUpdateFn = func(context.Context, update.CheckResult) error {
+	prepareUpdateFn = func(context.Context, update.CheckResult, string) error {
 		prepared++
 		return nil
 	}
@@ -200,7 +200,7 @@ func TestApplyUpdateQuitsAfterSpawn(t *testing.T) {
 	t.Cleanup(func() { checkUpdateFn = origC })
 
 	origA := applyUpdateFn
-	applyUpdateFn = func(context.Context, string, update.CheckResult) error { return nil }
+	applyUpdateFn = func(context.Context, string, update.CheckResult, string) error { return nil }
 	t.Cleanup(func() { applyUpdateFn = origA })
 
 	origQ := quitRuntime
@@ -224,7 +224,7 @@ func TestApplyUpdatePropagatesError(t *testing.T) {
 	}
 	t.Cleanup(func() { checkUpdateFn = origC })
 	origA := applyUpdateFn
-	applyUpdateFn = func(context.Context, string, update.CheckResult) error { return errors.New("校验失败") }
+	applyUpdateFn = func(context.Context, string, update.CheckResult, string) error { return errors.New("校验失败") }
 	t.Cleanup(func() { applyUpdateFn = origA })
 	origQ := quitRuntime
 	quitRuntime = func(context.Context) { t.Fatal("失败不应退出") }
@@ -280,9 +280,7 @@ func TestScheduleUpdateCheckRepeatsUntilCancel(t *testing.T) {
 }
 
 func TestCheckForUpdateReadyFromCache(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("HOME", home)
+	app, _, _ := newTestApp(t)
 
 	zipName := update.CurrentPackageZip()
 	var buf bytes.Buffer
@@ -304,7 +302,7 @@ func TestCheckForUpdateReadyFromCache(t *testing.T) {
 		Tag:      "v0.2.0",
 		ZipURL:   "https://x/" + zipName,
 		SumsURL:  "https://x/" + update.SumsName,
-		CacheDir: filepath.Join(home, ".kshell", "update"),
+		CacheDir: filepath.Join(app.opts.Home, ".kshell", "update"),
 		Get: func(_ context.Context, url string) ([]byte, error) {
 			if strings.Contains(url, update.SumsName) {
 				return sums, nil
@@ -315,7 +313,6 @@ func TestCheckForUpdateReadyFromCache(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app, _, _ := newTestApp(t)
 	orig := checkUpdateFn
 	checkUpdateFn = func() (update.CheckResult, error) {
 		return update.CheckResult{Current: "v0.1.0", Latest: "v0.2.0", Available: true}, nil
@@ -332,9 +329,7 @@ func TestCheckForUpdateReadyFromCache(t *testing.T) {
 }
 
 func TestApplyUpdateUsesCacheWhenCheckFails(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("HOME", home)
+	app, _, _ := newTestApp(t)
 
 	zipName := update.CurrentPackageZip()
 	var buf bytes.Buffer
@@ -356,7 +351,7 @@ func TestApplyUpdateUsesCacheWhenCheckFails(t *testing.T) {
 		Tag:      "v0.2.0",
 		ZipURL:   "https://x/" + zipName,
 		SumsURL:  "https://x/" + update.SumsName,
-		CacheDir: filepath.Join(home, ".kshell", "update"),
+		CacheDir: filepath.Join(app.opts.Home, ".kshell", "update"),
 		Get: func(_ context.Context, url string) ([]byte, error) {
 			if strings.Contains(url, update.SumsName) {
 				return sums, nil
@@ -367,7 +362,6 @@ func TestApplyUpdateUsesCacheWhenCheckFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app, _, _ := newTestApp(t)
 	origC := checkUpdateFn
 	checkUpdateFn = func() (update.CheckResult, error) {
 		return update.CheckResult{}, errors.New("网络断了")
@@ -376,7 +370,7 @@ func TestApplyUpdateUsesCacheWhenCheckFails(t *testing.T) {
 
 	var applied string
 	origA := applyUpdateFn
-	applyUpdateFn = func(_ context.Context, _ string, r update.CheckResult) error {
+	applyUpdateFn = func(_ context.Context, _ string, r update.CheckResult, _ string) error {
 		applied = r.Latest
 		return nil
 	}

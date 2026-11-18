@@ -316,6 +316,22 @@ async function install(opts) {
     await installFrom(rel, ctx);
     return finish(rel.tag);
   } catch (latestErr) {
+    let lastErr = latestErr;
+    // latestRelease 命中 GitCode 时 zipUrl 是附件链;先换 GitHub 同版本直链再试,
+    // 避免明明有最新版却直接回退到上一版。
+    const sameTagGithub = {
+      tag: rel.tag,
+      zipUrl: sources.githubAssetUrl(rel.tag, zipName),
+      sumsUrl: sources.githubAssetUrl(rel.tag, SUMS_NAME),
+    };
+    if (sameTagGithub.zipUrl !== rel.zipUrl) {
+      try {
+        await installFrom(sameTagGithub, ctx);
+        return finish(rel.tag);
+      } catch (exc) {
+        lastErr = exc;
+      }
+    }
     // 最新版拿不到当前平台包:只回退一个 release,仍失败则报错。
     let prevTag = "";
     try {
@@ -326,13 +342,12 @@ async function install(opts) {
       /* 列表不可用:无回退候选 */
     }
     if (!prevTag) {
-      throw latestErr instanceof InstallError
-        ? latestErr
+      throw lastErr instanceof InstallError
+        ? lastErr
         : new InstallError(
-            `最新版 ${rel.tag} 的安装包不可用:${latestErr && latestErr.message ? latestErr.message : latestErr}`
+            `最新版 ${rel.tag} 的安装包不可用:${lastErr && lastErr.message ? lastErr.message : lastErr}`
           );
     }
-    let lastErr = latestErr;
     for (const cand of fallbackCandidates(prevTag, zipName)) {
       try {
         await installFrom(cand, ctx);

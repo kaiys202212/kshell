@@ -422,3 +422,41 @@ describe("install 回退上一版", () => {
     expect(jsonCalls).toBe(0);
   });
 });
+
+describe("install 同版本 GitHub 兜底", () => {
+  it("最新版 GitCode 附件失败时先试 GitHub 同版本直链，不回退旧版", async () => {
+    const ZIP = "kshell-desktop-windows-amd64.zip";
+    const BIN_NAME = "kshell-desktop.exe";
+    const getJson = async () => ({
+      tag_name: "v0.1.30",
+      assets: [{ name: ZIP, browser_download_url: `https://dl/v0.1.30/${ZIP}` }],
+    });
+    const urls = [];
+    const getStream = async (url, destPath) => {
+      urls.push(url);
+      if (url.includes("github.com")) {
+        writeFileSync(destPath, "zip-bytes");
+        return;
+      }
+      throw new Error("404");
+    };
+    const sumsHex = crypto.createHash("sha256").update(Buffer.from("zip-bytes")).digest("hex");
+    const r = await install({
+      getJson,
+      getStream,
+      getBytes: async () => Buffer.from(`${sumsHex}  ${ZIP}\n`),
+      runExtract: (file, args) => {
+        const dest = args.includes("-C") ? args[args.indexOf("-C") + 1] : args[args.indexOf("-d") + 1];
+        writeFileSync(path.join(dest, BIN_NAME), "entry");
+        return { status: 0, stderr: Buffer.from("") };
+      },
+      binDir: tempDir(),
+      os: "windows",
+      zipName: ZIP,
+      binaryName: BIN_NAME,
+    });
+    expect(r.tag).toBe("v0.1.30");
+    expect(urls.some((u) => u.includes("github.com") && u.includes("v0.1.30"))).toBe(true);
+    expect(urls.some((u) => u.includes("v0.1.29"))).toBe(false);
+  });
+});

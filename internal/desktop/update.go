@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/yangk/kshell/internal/config"
@@ -28,8 +29,12 @@ type UpdateInfo struct {
 	Reason  string
 }
 
-// updateCacheDir 返回预下载缓存目录；解析失败返回空串（缓存失效但升级仍可用）。
-func updateCacheDir() string {
+// updateCacheDir 返回预下载缓存目录；优先 opts.Home（测试隔离），
+// 解析失败返回空串（缓存失效但升级仍可用）。
+func (a *App) updateCacheDir() string {
+	if a.opts.Home != "" {
+		return filepath.Join(a.opts.Home, ".kshell", "update")
+	}
 	p, err := config.Paths()
 	if err != nil {
 		return ""
@@ -43,29 +48,29 @@ var checkUpdateFn = func() (update.CheckResult, error) {
 	return update.Client{Current: version.Current()}.Check(ctx)
 }
 
-var prepareUpdateFn = func(ctx context.Context, r update.CheckResult) error {
+var prepareUpdateFn = func(ctx context.Context, r update.CheckResult, cacheDir string) error {
 	return update.Prepare(ctx, update.PrepareOptions{
 		Tag:      r.Latest,
 		ZipURL:   r.ZipURL,
 		SumsURL:  r.SumsURL,
-		CacheDir: updateCacheDir(),
+		CacheDir: cacheDir,
 	})
 }
 
-var applyUpdateFn = func(ctx context.Context, dest string, r update.CheckResult) error {
+var applyUpdateFn = func(ctx context.Context, dest string, r update.CheckResult, cacheDir string) error {
 	return update.Apply(ctx, update.ApplyOptions{
 		Tag:      r.Latest,
 		ZipURL:   r.ZipURL,
 		SumsURL:  r.SumsURL,
 		DestExe:  dest,
-		CacheDir: updateCacheDir(),
+		CacheDir: cacheDir,
 	})
 }
 
 var executablePath = os.Executable
 
-func toUpdateInfo(r update.CheckResult) UpdateInfo {
-	ready := r.Available && update.IsCached(updateCacheDir(), r.Latest)
+func (a *App) toUpdateInfo(r update.CheckResult) UpdateInfo {
+	ready := r.Available && update.IsCached(a.updateCacheDir(), r.Latest)
 	return UpdateInfo{
 		Current:   r.Current,
 		Latest:    r.Latest,
@@ -87,7 +92,7 @@ func (a *App) CheckForUpdate() (UpdateInfo, error) {
 	if err != nil {
 		return UpdateInfo{Current: version.Current()}, err
 	}
-	return toUpdateInfo(r), nil
+	return a.toUpdateInfo(r), nil
 }
 
 // checkAndPrepare 是自动轮询入口：有新版本时先下载并校验当前平台包，
@@ -100,7 +105,7 @@ func (a *App) checkAndPrepare() {
 	if err := a.prepare(r); err != nil {
 		return
 	}
-	info := toUpdateInfo(r)
+	info := a.toUpdateInfo(r)
 	info.Ready = true
 	a.Emit("update:available", info)
 }
@@ -109,14 +114,15 @@ func (a *App) checkAndPrepare() {
 func (a *App) prepare(r update.CheckResult) error {
 	a.updateMu.Lock()
 	defer a.updateMu.Unlock()
-	if update.IsCached(updateCacheDir(), r.Latest) {
+	dir := a.updateCacheDir()
+	if update.IsCached(dir, r.Latest) {
 		return nil
 	}
 	ctx := a.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return prepareUpdateFn(ctx, r)
+	return prepareUpdateFn(ctx, r, dir)
 }
 
 // PrepareUpdate 供设置页「下载并安装」：先确认有更新，再下载校验到缓存。
@@ -135,11 +141,13 @@ func (a *App) PrepareUpdate() error {
 // 签名不带 context.Context：Wails v2 绑定会把 ctx 计成一个入参，
 // 而前端以 0 参调用，导致 "received 0 arguments, expected 1"。
 func (a *App) ApplyUpdate() error {
+	dir := a.updateCacheDir()
 	r, err := checkUpdateFn()
 	if err != nil {
 		// 网络抖动时仍允许安装已预下载并校验过的包（弹窗本就基于该包出现）。
-		dir := updateCacheDir()
-		if tag := update.CachedTag(dir); tag != "" && update.IsCached(dir, tag) {
+		// 仅接受比当前版本新的缓存，避免离线时被旧缓存降级。
+		if tag := update.CachedTag(dir); tag != "" && update.IsCached(dir, tag) &&
+			(!version.IsRelease() || update.Newer(version.Current(), tag)) {
 			r = update.CheckResult{Current: version.Current(), Latest: tag, Available: true}
 		} else {
 			return err
@@ -152,7 +160,10 @@ func (a *App) ApplyUpdate() error {
 	if err != nil {
 		return err
 	}
-	if err := applyUpdateFn(a.ctx, exe, r); err != nil {
+	// 与自动预下载共用锁：避免两份缓存写入交叉。
+	a.updateMu.Lock()
+	defer a.updateMu.Unlock()
+	if err := applyUpdateFn(a.ctx, exe, r, dir); err != nil {
 		return err
 	}
 	a.quitApp(a.ctx)

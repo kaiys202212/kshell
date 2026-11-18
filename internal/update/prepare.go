@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,10 +41,11 @@ func Prepare(ctx context.Context, opts PrepareOptions) error {
 		return fmt.Errorf("err.update.tag_empty")
 	}
 	zipName := CurrentPackageZip()
-	cli := Client{Get: opts.Get}
+	// 大文件用 applyTimeout（3 分钟），避免慢镜像触发 check 的 12s 短超时。
+	cli := Client{Get: opts.Get, HTTP: &http.Client{Timeout: applyTimeout}}
 	sumsBody, err := cli.getThroughSources(ctx, opts.SumsURL)
 	if err != nil {
-		if err == errNoDownloadSource {
+		if errors.Is(err, errNoDownloadSource) {
 			return err
 		}
 		return fmt.Errorf("err.update.download_sums|%w", err)
@@ -53,7 +56,7 @@ func Prepare(ctx context.Context, opts PrepareOptions) error {
 	}
 	zipBody, err := cli.getThroughSources(ctx, opts.ZipURL)
 	if err != nil {
-		if err == errNoDownloadSource {
+		if errors.Is(err, errNoDownloadSource) {
 			return err
 		}
 		return fmt.Errorf("err.update.download_package|%w", err)
@@ -63,9 +66,6 @@ func Prepare(ctx context.Context, opts PrepareOptions) error {
 	if got != want {
 		return fmt.Errorf("err.update.checksum_mismatch")
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("err.update.write_cache|%w", err)
-	}
 	if err := storeCache(dir, tag, zipName, zipBody, got); err != nil {
 		return fmt.Errorf("err.update.write_cache|%w", err)
 	}
@@ -74,6 +74,9 @@ func Prepare(ctx context.Context, opts PrepareOptions) error {
 
 // storeCache 原子写入 zip 与 meta，并清理旧发布包。
 func storeCache(dir, tag, zipName string, body []byte, sha string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
 	if err := writeFileAtomic(filepath.Join(dir, zipName), body); err != nil {
 		return err
 	}
@@ -159,8 +162,17 @@ func readCachedZip(dir, tag, zipName string) ([]byte, cacheMeta, bool) {
 }
 
 func writeFileAtomic(path string, body []byte) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, body, 0o644); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer func() { _ = os.Remove(tmp) }()
+	if _, err := f.Write(body); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)
@@ -173,7 +185,7 @@ func cleanupCache(dir, keepZip string) {
 		return
 	}
 	for _, e := range entries {
-		if e.IsDir() || e.Name() == keepZip || e.Name() == cacheMetaName {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") || e.Name() == keepZip || e.Name() == cacheMetaName {
 			continue
 		}
 		_ = os.Remove(filepath.Join(dir, e.Name()))

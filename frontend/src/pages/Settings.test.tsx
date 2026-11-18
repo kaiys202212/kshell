@@ -2007,6 +2007,9 @@ describe('Settings', () => {
     });
     expect(mocks.prepareUpdate).toHaveBeenCalledTimes(1);
     expect(mocks.applyUpdate).toHaveBeenCalledTimes(1);
+    expect(mocks.prepareUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.applyUpdate.mock.invocationCallOrder[0],
+    );
   });
 
   it('气泡提示音开关：勾选态绑定 store，切换写入', () => {
