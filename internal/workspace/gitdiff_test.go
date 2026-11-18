@@ -56,6 +56,46 @@ func TestFileDiff_workingAndStaged(t *testing.T) {
 	}
 }
 
+func TestStagedDiff(t *testing.T) {
+	skipIfNoGit(t)
+	root := t.TempDir()
+	initRepo(t, root)
+	writeFile(t, filepath.Join(root, "a.txt"), "v1\n")
+	gitRun(t, root, "add", "a.txt")
+	gitRun(t, root, "commit", "-m", "init")
+
+	d, err := StagedDiff(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(d.Text) != "" {
+		t.Fatalf("无暂存变更应为空: %+v", d)
+	}
+
+	// 仅工作区改动、未暂存时仍应为空。
+	writeFile(t, filepath.Join(root, "a.txt"), "v2\n")
+	d, err = StagedDiff(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(d.Text) != "" {
+		t.Fatalf("未暂存改动不应出现: %+v", d)
+	}
+
+	gitRun(t, root, "add", "a.txt")
+	d, err = StagedDiff(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(d.Text, "diff --git") || !strings.Contains(d.Text, "+v2") {
+		t.Fatalf("staged diff 缺失内容: %+v", d)
+	}
+
+	if _, err := StagedDiff(root, ".."); err == nil {
+		t.Fatal("越权 repoRel 应失败")
+	}
+}
+
 func TestFileDiff_untracked(t *testing.T) {
 	skipIfNoGit(t)
 	root := t.TempDir()

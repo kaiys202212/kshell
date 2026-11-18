@@ -702,6 +702,7 @@ interface AppBindings {
   GitFetchAll(wsPath: string, repoRel: string): Promise<void>;
   GitCommitStat(wsPath: string, repoRel: string, hash: string): Promise<GitCommitStat>;
   GitCommitDiff(wsPath: string, repoRel: string, hash: string): Promise<GitDiffResult>;
+  GenerateCommitMessage(wsPath: string, repoRel: string, lang: string): Promise<string>;
   NewSession(wsPath: string): Promise<void>;
   ListConnections(wsID: string): Promise<SshConnection[]>;
   OpenSSH(connID: string): Promise<void>;
@@ -1154,6 +1155,15 @@ export async function gitDiscard(wsPath: string, repoRel: string, paths: string[
 
 export async function gitCommit(wsPath: string, repoRel: string, message: string): Promise<void> {
   await requireApp().GitCommit(wsPath, repoRel, message);
+}
+
+// generateCommitMessage 按已暂存变更调用平台默认模型生成单行提交信息。
+export async function generateCommitMessage(
+  wsPath: string,
+  repoRel: string,
+  lang: string,
+): Promise<string> {
+  return requireApp().GenerateCommitMessage(wsPath, repoRel, lang);
 }
 
 export async function gitStageHunk(

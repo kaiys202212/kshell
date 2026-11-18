@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   gitUnstage: vi.fn().mockResolvedValue(undefined),
   gitDiscard: vi.fn().mockResolvedValue(undefined),
   gitCommit: vi.fn().mockResolvedValue(undefined),
+  generateCommitMessage: vi.fn().mockResolvedValue('feat: 自动生成'),
   gitBranches: vi.fn().mockResolvedValue(['main']),
   gitCheckout: vi.fn().mockResolvedValue(undefined),
   gitCreateBranch: vi.fn().mockResolvedValue(undefined),
@@ -97,6 +98,7 @@ beforeEach(() => {
   mocks.gitSCM.mockResolvedValue(snap());
   mocks.gitPull.mockResolvedValue(undefined);
   mocks.gitPush.mockResolvedValue(undefined);
+  mocks.generateCommitMessage.mockResolvedValue('feat: 自动生成');
   ioCallback = null;
   vi.stubGlobal(
     'IntersectionObserver',
@@ -140,6 +142,51 @@ describe('GitPanel', () => {
     render(<GitPanel wsPath="D:\\proj" visible onOpenDiff={() => {}} />);
     expect(await screen.findByText('dirty.go')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: tt('ui.git.primary_action_aria') })).toBeDisabled();
+  });
+
+  it('AI 生成：无 staged 时按钮禁用', async () => {
+    mocks.gitSCM.mockResolvedValue(
+      snap({
+        Entries: [
+          { Path: 'dirty.go', X: ' ', Y: 'M', Staged: false, Unstaged: true, Untracked: false, Conflicted: false },
+        ],
+      }),
+    );
+    render(<GitPanel wsPath="D:/proj" visible onOpenDiff={() => {}} />);
+    expect(
+      await screen.findByRole('button', { name: tt('ui.git.ai_generate_aria') }),
+    ).toBeDisabled();
+  });
+
+  it('AI 生成：成功后回填提交说明', async () => {
+    render(<GitPanel wsPath="D:/proj" visible onOpenDiff={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.git.ai_generate_aria') }));
+    await waitFor(() =>
+      expect(mocks.generateCommitMessage).toHaveBeenCalledWith(
+        'D:/proj',
+        '',
+        expect.stringMatching(/^(zh|en)$/),
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText(tt('ui.git.commit_message_aria'))).toHaveValue('feat: 自动生成'),
+    );
+  });
+
+  it('AI 生成：失败提示错误且保留已有输入', async () => {
+    mocks.generateCommitMessage.mockRejectedValue(new Error('err.git.ai_model_not_ready'));
+    render(<GitPanel wsPath="D:/proj" visible onOpenDiff={() => {}} />);
+    const input = screen.getByLabelText(tt('ui.git.commit_message_aria'));
+    fireEvent.change(input, { target: { value: 'wip' } });
+    fireEvent.click(await screen.findByRole('button', { name: tt('ui.git.ai_generate_aria') }));
+    await waitFor(() => {
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((x) => x.tone === 'error' && x.title === tt('err.git.ai_model_not_ready')),
+      ).toBe(true);
+    });
+    expect(input).toHaveValue('wip');
   });
 
   it('单击 Changes 行打开 working diff', async () => {

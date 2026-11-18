@@ -131,7 +131,11 @@
       "no_sync_source": "No sync source available",
       "no_branch": "Not on a local branch",
       "sync_remote_missing": "Sync source \"{{0}}\" does not exist",
-      "sync_remote_branch_missing": "Branch \"{{1}}\" does not exist on sync source \"{{0}}\"; push cancelled"
+      "sync_remote_branch_missing": "Branch \"{{1}}\" does not exist on sync source \"{{0}}\"; push cancelled",
+      "ai_model_not_ready": "Configure a model platform and default model in Settings first",
+      "ai_no_staged": "No staged changes to generate a commit message from",
+      "ai_failed": "Failed to generate commit message: {{0}}",
+      "ai_empty": "The model returned no usable commit message"
     },
     "terminal": {
       "popup_windows_only": "Desktop terminal popups are only supported on Windows",
@@ -837,6 +841,8 @@
       "pop_latest": "Pop latest",
       "commit_placeholder": "Message (Ctrl+Enter to commit on '{{branch}}')",
       "commit_message_aria": "Commit message",
+      "ai_generate": "Generate commit message with AI",
+      "ai_generate_aria": "Generate commit message from staged changes",
       "primary_action_aria": "Primary Git action",
       "sync": "Sync",
       "more_commit_aria": "More commit actions",

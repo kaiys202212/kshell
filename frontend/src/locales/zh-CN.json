@@ -131,7 +131,11 @@
       "no_sync_source": "无可用同步源",
       "no_branch": "不在本地分支上",
       "sync_remote_missing": "同步源 \"{{0}}\" 不存在",
-      "sync_remote_branch_missing": "同步源 \"{{0}}\" 上没有分支 \"{{1}}\"，已取消推送"
+      "sync_remote_branch_missing": "同步源 \"{{0}}\" 上没有分支 \"{{1}}\"，已取消推送",
+      "ai_model_not_ready": "请先在设置中配置模型平台与默认模型",
+      "ai_no_staged": "没有已暂存变更，无法生成提交信息",
+      "ai_failed": "生成提交信息失败：{{0}}",
+      "ai_empty": "模型未返回有效的提交信息"
     },
     "terminal": {
       "popup_windows_only": "桌面版终端弹窗目前仅支持 Windows",
@@ -837,6 +841,8 @@
       "pop_latest": "Pop 最新",
       "commit_placeholder": "消息 (Ctrl+Enter 在 '{{branch}}' 提交)",
       "commit_message_aria": "提交说明",
+      "ai_generate": "AI 生成提交信息",
+      "ai_generate_aria": "根据已暂存变更生成提交信息",
       "primary_action_aria": "主 Git 操作",
       "sync": "同步",
       "more_commit_aria": "更多提交操作",

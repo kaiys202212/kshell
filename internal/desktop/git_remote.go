@@ -560,6 +560,28 @@ func (g *remoteGit) fileDiff(ctx context.Context, repoRel, filePath, side string
 	return workspace.DiffResult{Text: text, Binary: binary}, nil
 }
 
+// stagedDiff 取远端仓库整体已暂存 diff，供 AI 生成提交信息使用。
+func (g *remoteGit) stagedDiff(ctx context.Context, repoRel string) (workspace.DiffResult, error) {
+	if err := g.ensureGit(ctx); err != nil {
+		return workspace.DiffResult{}, err
+	}
+	abs, err := resolveRemoteRepo(g.r.root, repoRel)
+	if err != nil {
+		return workspace.DiffResult{}, err
+	}
+	stdout, stderr, err := g.run(ctx, abs, nil, "diff", "--cached", "--no-color", "--no-ext-diff", "--")
+	out := append(stdout, stderr...)
+	if err != nil && len(out) == 0 {
+		if isGitNotFound(err, stderr) {
+			return workspace.DiffResult{}, errRemoteGitUnavailable
+		}
+		return workspace.DiffResult{}, remoteGitErr(out, err)
+	}
+	text := string(out)
+	binary := strings.Contains(text, "Binary files ") || strings.Contains(text, "GIT binary patch")
+	return workspace.DiffResult{Text: text, Binary: binary}, nil
+}
+
 func (g *remoteGit) untrackedDiff(ctx context.Context, root, rel string) (workspace.DiffResult, error) {
 	full, err := remotefs.ResolveUnderRoot(root, rel)
 	if err != nil {

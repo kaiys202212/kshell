@@ -56,6 +56,24 @@ func FileDiff(wsRoot, repoRel, path, side string) (DiffResult, error) {
 	return DiffResult{Text: text, Binary: binary}, nil
 }
 
+// StagedDiff 取整个仓库的已暂存 unified diff（为空表示没有暂存变更）。
+// 供 AI 生成提交信息等需要整体变更上下文的场景使用。
+func StagedDiff(wsRoot, repoRel string) (DiffResult, error) {
+	abs, err := ResolveRepo(wsRoot, repoRel)
+	if err != nil {
+		return DiffResult{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), gitStatusTimeout)
+	defer cancel()
+	out, err := gitCmd(ctx, abs, "diff", "--cached", "--no-color", "--no-ext-diff", "--").CombinedOutput()
+	if err != nil && len(out) == 0 {
+		return DiffResult{}, gitErr(out, err)
+	}
+	text := string(out)
+	binary := strings.Contains(text, "Binary files ") || strings.Contains(text, "GIT binary patch")
+	return DiffResult{Text: text, Binary: binary}, nil
+}
+
 func untrackedDiff(root, rel string) (DiffResult, error) {
 	full := filepath.Join(root, filepath.FromSlash(rel))
 	b, err := os.ReadFile(full)

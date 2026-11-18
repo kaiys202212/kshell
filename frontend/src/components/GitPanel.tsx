@@ -11,8 +11,10 @@ import {
   Ellipsis,
   Loader2,
   RefreshCw,
+  Sparkles,
 } from 'lucide-react';
 import {
+  generateCommitMessage,
   gitCheckout,
   gitCommit,
   gitCommitStat,
@@ -88,12 +90,13 @@ export default function GitPanel({
   visible: boolean;
   onOpenDiff: (spec: GitDiffSpec) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const notify = useAppStore((s) => s.notify);
   const [snap, setSnap] = useState<GitSCMSnapshot | null>(null);
   const [repoRel, setRepoRel] = useState('');
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [genBusy, setGenBusy] = useState(false);
   const [refs, setRefs] = useState<GitRef[]>([]);
   const [commits, setCommits] = useState<GitLogCommit[]>([]);
   const [hasMore, setHasMore] = useState(true);
@@ -246,6 +249,23 @@ export default function GitPanel({
     if (!m || staged.length === 0) return;
     setMsg('');
     void run(() => gitCommit(wsPath, repoRel, m), t('ui.git.committed'));
+  };
+
+  const doGenerateMsg = async () => {
+    if (genBusy || busy || staged.length === 0) return;
+    setGenBusy(true);
+    try {
+      const m = await generateCommitMessage(
+        wsPath,
+        repoRel,
+        i18n.language.toLowerCase().startsWith('zh') ? 'zh' : 'en',
+      );
+      if (m.trim()) setMsg(m.trim());
+    } catch (e) {
+      notify(backendError(e), 'error');
+    } finally {
+      setGenBusy(false);
+    }
   };
 
   const openEntry = (e: GitSCMEntry, side: GitDiffSide, preview: boolean) => {
@@ -460,15 +480,38 @@ export default function GitPanel({
         </div>
 
         <div className="flex min-h-0 flex-col" style={{ height: `${split * 100}%` }}>
-          <Input
-            size="sm"
-            className="mb-1 w-full shrink-0"
-            placeholder={t('ui.git.commit_placeholder', { branch: branchLabel })}
-            value={msg}
-            onChange={(e) => setMsg(e.target.value)}
-            onKeyDown={onMsgKey}
-            aria-label={t('ui.git.commit_message_aria')}
-          />
+          <div className="mb-1 flex w-full shrink-0 items-center gap-1">
+            <Input
+              size="sm"
+              className="w-full min-w-0 flex-1"
+              placeholder={t('ui.git.commit_placeholder', { branch: branchLabel })}
+              value={msg}
+              onChange={(e) => setMsg(e.target.value)}
+              onKeyDown={onMsgKey}
+              aria-label={t('ui.git.commit_message_aria')}
+            />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 w-8 shrink-0 px-0"
+                  disabled={genBusy || busy || staged.length === 0}
+                  aria-busy={genBusy}
+                  aria-label={t('ui.git.ai_generate_aria')}
+                  onClick={() => void doGenerateMsg()}
+                >
+                  {genBusy ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('ui.git.ai_generate')}</TooltipContent>
+            </Tooltip>
+          </div>
           <div className="mb-1 flex w-full shrink-0">
             <Button
               size="sm"
