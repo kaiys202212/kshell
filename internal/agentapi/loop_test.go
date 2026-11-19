@@ -211,6 +211,54 @@ func TestSuspendAskLanding(t *testing.T) {
 	if api.HasSuspendedAsk("wechat") {
 		t.Fatal("跨渠道不应报告挂起在场")
 	}
+	if res.TaskTitle != "看着办" {
+		t.Fatalf("挂起应带任务标题 = %q", res.TaskTitle)
+	}
+}
+
+// 挂起反问的任务标题取原始输入首行、跨续跑保留：微信桥据此标注
+// 「待回答：<任务>」，避免多任务并行时回答对象不明。
+func TestSuspendTaskTitleAcrossResume(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	chatToolsHook = askScript("选哪个？").hook
+	first := "分析 RPA 自动登录定时任务失败的原因，并给出修复建议\n第二行补充"
+	res, err := api.Run(context.Background(), first, RunOpts{Channel: "hub"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Suspended {
+		t.Fatalf("首轮应挂起: %+v", res)
+	}
+	if res.TaskTitle != "分析 RPA 自动登录定时任务失败的原因，并给出修复建议" {
+		t.Fatalf("TaskTitle 应取首行: %q", res.TaskTitle)
+	}
+
+	// 续跑后再次挂起：标题仍是原任务，不能被用户回答覆盖。
+	chatToolsHook = askScript("还要哪个？").hook
+	res2, err := api.Resume(context.Background(), "hub", "1", RunOpts{Channel: "hub"})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if !res2.Suspended {
+		t.Fatalf("续跑应再次挂起: %+v", res2)
+	}
+	if res2.TaskTitle != res.TaskTitle {
+		t.Fatalf("续跑后标题漂移: %q -> %q", res.TaskTitle, res2.TaskTitle)
+	}
+}
+
+// 超长任务标题截断到 30 rune + 省略号，回执前缀不至于淹没问题正文。
+func TestSuspendTaskTitleTruncated(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	chatToolsHook = askScript("选哪个？").hook
+	res, err := api.Run(context.Background(), strings.Repeat("长", 40), RunOpts{Channel: "hub"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := strings.Repeat("长", 30) + "…"
+	if res.TaskTitle != want {
+		t.Fatalf("TaskTitle = %q, want %q", res.TaskTitle, want)
+	}
 }
 
 // 测试 3（新）：ask steps 多步问卷——payload 带各步载荷、Question 为各问连接、
@@ -218,8 +266,8 @@ func TestSuspendAskLanding(t *testing.T) {
 func TestAskStepsMultiLanding(t *testing.T) {
 	api, _ := newLoopAPI(t)
 	sc := &scriptChat{resps: []hubtools.Response{
-		{ToolCalls: []hubtools.ToolCall{tc("c1", "ask", `{"steps":[` +
-			`{"question":"用哪个工具？","options":["claude","codebuddy"],"mode":"single"},` +
+		{ToolCalls: []hubtools.ToolCall{tc("c1", "ask", `{"steps":[`+
+			`{"question":"用哪个工具？","options":["claude","codebuddy"],"mode":"single"},`+
 			`{"question":"要改哪些文件？","options":["a.go","b.go"],"mode":"multi"}]}`)}},
 	}}
 	chatToolsHook = sc.hook

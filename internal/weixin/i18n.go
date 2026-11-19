@@ -19,6 +19,10 @@ var bridgeTexts = map[string]langPair{
 	// LoopProgress 无累计工具步数字段，一轮多工具时轮次是最低成本近似）。
 	"manager.progress": {"Still working: on round %d", "仍在处理：第 %d 轮"},
 
+	// 挂起反问回执的任务归因前缀（%s=任务标题）：多任务并行时让用户看清
+	// 回答将续跑哪条任务（2026-11-19 误投复盘）。后缀换行与问题正文分隔。
+	"ask.attribution": {"[AgentHub · awaiting answer: %s]\n", "【AgentHub·待回答：%s】\n"},
+
 	// 智能链路失败降级（2026-11-18 真机事故后新增）：路由/管理者循环都未接管
 	// 时必须转待选并说明原因，绝不直投当前会话。%s = 失败原因（见下方 err.router.*）。
 	"route.pick_degraded":    {"Smart routing unavailable (%s). Pick a target session by number — your message is kept:", "智能路由不可用（%s）。请回复编号选择目标会话，原文已暂存："},
@@ -28,6 +32,8 @@ var bridgeTexts = map[string]langPair{
 	"err.router.llm_not_ready": {"no usable model configured", "未配置可用模型"},
 	"err.router.loop_failed":   {"model call failed", "模型调用失败"},
 	"err.router.no_target":     {"no target recognized", "未识别到投递目标"},
+	// 附件合并文本在智能链路启用但无挂起反问时：不自动猜目标，转待选。
+	"err.router.attachment_needs_target": {"attachment message needs an explicit target session", "附件消息需要指定目标会话"},
 }
 
 // bridgeText 按语言取文案；zh-CN 用中文，其余用英文；未知 key 原样返回。

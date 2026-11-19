@@ -484,8 +484,9 @@ func TestBridgeExecuteRouteText(t *testing.T) {
 	})
 }
 
-// TestBridgeRouteAttachmentBypass 回归：带附件合并的文本一律走确定性 Handle
-// 原路径，不进智能路由（附件说明行与用户文字按原样转交当前会话，队列语义照旧）。
+// TestBridgeRouteAttachmentBypass 回归：智能链路启用时，带附件合并的文本
+// 不再直投当前会话（2026-11-19 修复 2）：转待选让用户指定目标，附件队列保留。
+// 未装配任何路由钩子的旧装配仍直投当前会话，见 TestBridgeAttachmentMergeWithText。
 func TestBridgeRouteAttachmentBypass(t *testing.T) {
 	ex := &fakeExec{
 		sessions: []hub.SessionRef{{ChatID: "c1", Title: "会话A"}, {ChatID: "c2", Title: "会话B"}},
@@ -506,14 +507,14 @@ func TestBridgeRouteAttachmentBypass(t *testing.T) {
 	if stub.calls != 0 {
 		t.Fatalf("带附件文本不应进路由, 实际调用 %d 次", stub.calls)
 	}
-	if len(ex.sentTexts) != 1 {
-		t.Fatalf("应走 Handle 原路径合并投递, 实际: %v", ex.sentTexts)
+	if len(ex.sentTexts) != 0 {
+		t.Fatalf("智能链路启用时不得直投当前会话: %v", ex.sentTexts)
 	}
-	if !strings.Contains(ex.sentTexts[0], "[附件] 需求.pdf") || !strings.Contains(ex.sentTexts[0], "帮我修复登录") {
-		t.Fatalf("合并文本缺附件说明行或用户文字: %q", ex.sentTexts[0])
+	if !b.console.Busy() {
+		t.Fatal("应转待选菜单")
 	}
-	if b.QueuedFiles() != 0 {
-		t.Fatalf("合并成功后队列应清空, 实际 %d", b.QueuedFiles())
+	if b.QueuedFiles() != 1 {
+		t.Fatalf("待选阶段队列应保留, 实际 %d", b.QueuedFiles())
 	}
 }
 

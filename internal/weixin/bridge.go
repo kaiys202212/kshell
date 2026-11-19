@@ -49,7 +49,7 @@ type ctxInfo struct {
 }
 
 // ErrTranscriberNotConfigured 是语音转写未配置的哨兵：transcriber 实现方
-//（desktop 装配）在模型平台缺 ASR 模型时返回它，桥据此回执「未配置」而非「失败」。
+// （desktop 装配）在模型平台缺 ASR 模型时返回它，桥据此回执「未配置」而非「失败」。
 var ErrTranscriberNotConfigured = errors.New("err.weixin.voice_asr_unconfigured")
 
 // ErrVoiceUnsupported 是「默认对话模型不支持音频输入」的哨兵：transcriber
@@ -108,6 +108,12 @@ type Bridge struct {
 	// managerRouter 是管理者循环路由钩子（desktop 注入）；nil = 未装配。
 	// 优先级在 router 之前：命中即回显结论 Replies，不走决策执行。
 	managerRouter ManagerRouter
+	// askResumer 是挂起反问显式续跑钩子（desktop 注入）；nil = 回落
+	// managerRouter。合并文本超过 agentapi 短输入门槛，必须走 Resume。
+	askResumer AskResumer
+	// askPendingFn 报告是否有未过期挂起反问（desktop 实时问 agentapi）；
+	// nil 视为无挂起（未改造的旧装配路径零影响）。
+	askPendingFn func() bool
 	// directPatternsFn 是逃生门白名单查询函数（desktop 注入，实时读配置）；
 	// nil 时回落 hub.DefaultDirectPatterns。
 	directPatternsFn func() []string
@@ -220,6 +226,35 @@ func (b *Bridge) managerRouterFn() ManagerRouter {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.managerRouter
+}
+
+// SetAskResumer 装配挂起反问显式续跑钩子（可随时替换：desktop 读实时装配）。
+func (b *Bridge) SetAskResumer(fn AskResumer) {
+	b.mu.Lock()
+	b.askResumer = fn
+	b.mu.Unlock()
+}
+
+// askResumerFn 加锁读当前挂起续跑钩子。
+func (b *Bridge) askResumerFn() AskResumer {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.askResumer
+}
+
+// SetAskPending 装配挂起反问存在性查询（可随时替换：desktop 实时问 agentapi）。
+func (b *Bridge) SetAskPending(fn func() bool) {
+	b.mu.Lock()
+	b.askPendingFn = fn
+	b.mu.Unlock()
+}
+
+// askPending 报告当前是否有未过期挂起反问；未装配视为无。
+func (b *Bridge) askPending() bool {
+	b.mu.Lock()
+	fn := b.askPendingFn
+	b.mu.Unlock()
+	return fn != nil && fn()
 }
 
 // SetDirectPatterns 装配逃生门白名单查询函数（可随时替换：desktop 读实时配置）。
@@ -436,14 +471,25 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	if isForwardableText(text) && b.QueuedFiles() > 0 {
 		text = b.queuedPrefix() + text
 		replies = b.dispatchConsole(ctx, text, quotedChatID, quotedSession, quoted)
-		if len(replies) == 0 {
-			// 合并成功转发（agent 稍后回复）：清队列，附件信息已在投递文本里，
-			// 不再单独发附件回执；微信侧补既有 sent_ack。
+		// 合并成功的三种形态：确定性直投（无回复）、管理者/反问续跑接管
+		// （dispatchConsole 已消费队列）、路由决策已发送（Sent 回执）。
+		// 任一成立都不再补「附件待转交」回执，避免刚转交又提示仍在队列。
+		forwarded := len(replies) == 0 || b.QueuedFiles() == 0
+		for _, r := range replies {
+			if r.Sent {
+				forwarded = true
+				break
+			}
+		}
+		if forwarded {
 			b.clearQueue()
 			merged = true
-			replies = []hub.Reply{{Text: b.deliveredAck()}}
+			if len(replies) == 0 {
+				// 合并成功转发（agent 稍后回复）：微信侧补既有 sent_ack。
+				replies = []hub.Reply{{Text: b.deliveredAck()}}
+			}
 		}
-		// 转发失败（无会话/发送错误等有回复场景）：队列保留，回执照发。
+		// 转发失败/待选/反问（有回复但未发送）：队列保留，回执照发。
 	} else if trimmed != "" {
 		replies = b.dispatchConsole(ctx, text, quotedChatID, quotedSession, quoted)
 		if len(replies) == 0 {
@@ -484,7 +530,7 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 // dispatchConsole 把可转发文本交给命令层。
 // quotedChatID / sessionHint 任一非空时先走引用路由（切换到被引用会话再投递）。
 // quoted 表示用户明确引用了消息：归因失败或 chatID 不在列表时进待选
-//（PickTarget），不得回落发「当前会话」——引用已表明不想跟默认目标。
+// （PickTarget），不得回落发「当前会话」——引用已表明不想跟默认目标。
 // 无引用（quoted=false）且非逃生门/菜单挂起/无附件队列时，自由文本（含纯
 // 数字，语境由路由器决断）先问智能路由器；路由器消费则按决策落 Console。
 //
@@ -510,15 +556,21 @@ func (b *Bridge) dispatchConsole(ctx context.Context, text, quotedChatID, sessio
 	}
 	fn := b.routerFn()
 	mgr := b.managerRouterFn()
+	ask := b.askResumerFn()
+	queued := b.QueuedFiles() > 0
+	// 智能链路是否启用：任一钩子装配且门禁允许。未启用按旧语义直投当前会话
+	//（"未启用智能路由"是正常用法，不能拦截）。
+	smartOn := (fn != nil || mgr != nil || ask != nil) && b.routeGateAllows()
+	// 只有合并文本且智能链路启用才需要问挂起态；其余保持既有路由开销。
+	pendingAsk := queued && smartOn && b.askPending()
 	// 路由资格判定（T2 规格）：纯数字（菜单/编号切换）也问路由器，语境由路由
-	// 器决断；命令/逃生门、菜单挂起、带附件合并的文本一律走确定性 Handle。
+	// 器决断；命令/逃生门、菜单挂起一律走确定性 Handle。
+	// 附件合并文本只在「有挂起反问」时进入智能链路——回答必须续跑原任务；
+	// 无挂起时不自动猜目标（下方 smartOn+queued 分支转待选）。
 	// 不进路由的分支同时清零轮次，保证反问链被打断后轮次不悬挂。
-	// 门禁关闭等同于"未启用智能路由"：不参与，走旧直投语义。
-	// 两个钩子都没装配时同样不参与（未接入智能链路的渠道保持旧行为）。
-	routeable := (fn != nil || mgr != nil) &&
-		b.routeGateAllows() &&
+	routeable := smartOn &&
 		!b.console.Busy() &&
-		b.QueuedFiles() == 0 &&
+		(!queued || pendingAsk) &&
 		!hub.IsDirectPass(text, b.directPatterns())
 	if routeable {
 		// 管理者循环优先（逃生门之后、单发路由之前）：命中即把结论 Replies
@@ -526,15 +578,28 @@ func (b *Bridge) dispatchConsole(ctx context.Context, text, quotedChatID, sessio
 		// 反问轮次（反问链已移交 agentapi pendingAsk 管理）。Replies 为空的
 		// 接管属异常形态，记一条失败原因继续走单发路由，避免误报"已送达"。
 		failureKey := ""
-		if mgr != nil {
+		switch {
+		case queued && pendingAsk && ask != nil:
+			// 2026-11-19 真机复盘：合并文本带附件说明行，必然超过 agentapi
+			// 的短输入门槛（20 rune），Run 会当成新需求清挂起。必须显式
+			// Resume 才能把回答续进原任务。
+			out, handled := ask(ctx, text)
+			if handled && len(out.Replies) > 0 {
+				b.setRouteRound(0)
+				// 续跑成功 = 合并文本（含附件说明行）已被循环接收，附件不再
+				// 等下一条文字，直接消费队列。
+				b.clearQueue()
+				return b.managerReplies(out)
+			}
+			failureKey = out.FailureKey
+		case mgr != nil:
 			out, handled := mgr(ctx, text)
 			if handled && len(out.Replies) > 0 {
 				b.setRouteRound(0)
-				replies := make([]hub.Reply, 0, len(out.Replies))
-				for _, r := range out.Replies {
-					replies = append(replies, hub.Reply{Text: r})
+				if queued {
+					b.clearQueue()
 				}
-				return replies
+				return b.managerReplies(out)
 			}
 			failureKey = out.FailureKey
 		}
@@ -557,8 +622,28 @@ func (b *Bridge) dispatchConsole(ctx context.Context, text, quotedChatID, sessio
 		}
 		return b.degradeToPick(text, failureKey)
 	}
+	// 智能链路启用时，附件合并文本绝不直投当前会话：没有挂起反问就无法
+	// 确定目标，转待选让用户指。附件队列保留（待选成功后由 Sent 逻辑消费）。
+	// 未启用智能链路（门禁关闭/无钩子）时保持旧语义，由 Console.Handle 处理。
+	if queued && smartOn {
+		b.setRouteRound(0)
+		return b.degradeToPick(text, "err.router.attachment_needs_target")
+	}
 	b.setRouteRound(0)
 	return b.console.Handle(text)
+}
+
+// managerReplies 把管理者接管结果转成桥回复：挂起反问在首条加任务归因
+// 前缀，让用户看清「回答将续跑哪条任务」；非挂起结论原样回显。
+func (b *Bridge) managerReplies(out ManagerOutcome) []hub.Reply {
+	replies := make([]hub.Reply, 0, len(out.Replies))
+	for i, r := range out.Replies {
+		if i == 0 && out.Suspended && out.Attribution != "" {
+			r = fmt.Sprintf(bridgeText(b.lang, "ask.attribution"), out.Attribution) + r
+		}
+		replies = append(replies, hub.Reply{Text: r})
+	}
+	return replies
 }
 
 // degradeToPick 是智能链路失败的统一出口：把原文暂存进待选菜单并回一条
@@ -883,8 +968,8 @@ func isForwardableText(text string) bool {
 // DeliverHubMessage 把 hub 的 agent 消息镜像到微信出站队列（串行 worker
 // 按序发送，保证顺序；队列满则丢弃计 undelivered，不阻塞调用方）。
 // 只镜像 agent 正文：用户消息、已撤回、ui.hub.* 事件、hub.welcome 欢迎词
-//（微信侧由命令层欢迎词覆盖，避免重复问候）与 wire key 形态文本
-//（后端稳定 key，非自然语言）一律跳过，防止刷屏。
+// （微信侧由命令层欢迎词覆盖，避免重复问候）与 wire key 形态文本
+// （后端稳定 key，非自然语言）一律跳过，防止刷屏。
 func (b *Bridge) DeliverHubMessage(m hub.Message) {
 	if m.Kind != "agent" || m.Status == hub.StatusRecalled {
 		return

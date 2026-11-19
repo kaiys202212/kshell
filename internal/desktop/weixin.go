@@ -51,6 +51,10 @@ func (a *App) startWeixin() {
 	// 改配置即时生效；Configure 重绑时 Runtime 会再次注入到新 bridge。
 	r.SetRouter(a.weixinInputRouter())
 	r.SetManagerRouter(a.weixinManagerRouter())
+	// 挂起反问：附件合并回答走显式 Resume（短输入门槛会被附件说明行突破），
+	// askPending 让桥层在合并分支决策时知道「当前是在回答反问」。
+	r.SetAskResumer(a.weixinAskResumer())
+	r.SetAskPending(a.weixinAskPending())
 	// 智能链路门禁：总开关关闭时微信侧不进智能路由（按旧语义直投当前会话），
 	// 与桌面端 AgentHub 的「未启用即不智能分发」口径一致。
 	r.SetRouteGate(func() bool { return a.snapshot().Config.AgentHub.EnabledOn() })
@@ -148,22 +152,7 @@ func (a *App) weixinManagerRouter() weixin.ManagerRouter {
 		if !a.snapshot().Config.AgentHub.EnabledOn() {
 			return weixin.ManagerOutcome{}, false
 		}
-		start := time.Now()
-		progressed, pushed := 0, false
-		res, err := a.runWXLoop(ctx, input, agentapi.RunOpts{
-			Channel: "wechat",
-			Progress: func(p agentapi.LoopProgress) {
-				progressed = p.Round
-				// 中途进度推送（单轮最多一次）：循环开始计时，超过阈值且尚未
-				// 推送过才推一条「仍在处理」，经 bridge 出站 worker 异步投递。
-				// 传的是循环轮次（LoopProgress 无累计工具步数字段，文案即
-				// 「第 N 轮」语义）。
-				if !pushed && time.Since(start) >= managerProgressInterval {
-					pushed = true
-					a.pushWXManagerProgress(progressed)
-				}
-			},
-		})
+		res, err := a.runWXManager(ctx, input, false)
 		if err != nil {
 			// 挂起态归 agentapi 所有：瞬时错误（如 ErrLLMNotReady）保留挂起，
 			// 用户重试会自动续跑；desktop 无需也不得清理。
@@ -172,10 +161,63 @@ func (a *App) weixinManagerRouter() weixin.ManagerRouter {
 			return weixin.ManagerOutcome{FailureKey: wxManagerFailureKey(err)}, false
 		}
 		// 挂起反问（Suspended ⇔ Ask 非 nil）时 Replies 已是「问题+编号选项」
-		// 文本，直接透传给 bridge 回显；挂起-续跑语境由 agentapi 自持
-		//（同渠道短输入 Run 内部自动续跑），桥侧零特殊逻辑。
-		return weixin.ManagerOutcome{Replies: res.Replies}, true
+		// 文本，直接透传给 bridge 回显；Suspended/Attribution 让桥层在回执上
+		// 标注「待回答：<任务>」。挂起-续跑语境由 agentapi 自持。
+		return weixin.ManagerOutcome{
+			Replies:     res.Replies,
+			Suspended:   res.Suspended,
+			Attribution: res.TaskTitle,
+		}, true
 	}
+}
+
+// weixinAskResumer 返回挂起反问显式续跑闭包：带附件说明行的回答会超过
+// agentapi 的短输入门槛（Run 会判为新需求），必须用 Resume 才能续进原任务。
+// Resume 无挂起（判定后过期）时 runWXResume 回落 Run 新开循环。
+func (a *App) weixinAskResumer() weixin.AskResumer {
+	return func(ctx context.Context, input string) (weixin.ManagerOutcome, bool) {
+		if !a.snapshot().Config.AgentHub.EnabledOn() {
+			return weixin.ManagerOutcome{}, false
+		}
+		res, err := a.runWXManager(ctx, input, true)
+		if err != nil {
+			return weixin.ManagerOutcome{FailureKey: wxManagerFailureKey(err)}, false
+		}
+		return weixin.ManagerOutcome{
+			Replies:     res.Replies,
+			Suspended:   res.Suspended,
+			Attribution: res.TaskTitle,
+		}, true
+	}
+}
+
+// weixinAskPending 报告微信渠道是否有未过期挂起反问：桥层据此判断附件合并
+// 文本应走显式续跑而不是转待选。实时问 agentapi，与 Run 的续跑判定同源。
+func (a *App) weixinAskPending() func() bool {
+	return func() bool { return a.AgentAPI().HasSuspendedAsk("wechat") }
+}
+
+// runWXManager 执行一次微信管理者循环（Run 或显式 Resume），并负责中途进度
+// 推送（单轮最多一次）：循环开始计时，超过阈值且尚未推送过才推一条
+// 「仍在处理」，经 bridge 出站 worker 异步投递。传的是循环轮次（LoopProgress
+// 无累计工具步数字段，文案即「第 N 轮」语义）。
+func (a *App) runWXManager(ctx context.Context, input string, resume bool) (agentapi.RunResult, error) {
+	start := time.Now()
+	progressed, pushed := 0, false
+	opts := agentapi.RunOpts{
+		Channel: "wechat",
+		Progress: func(p agentapi.LoopProgress) {
+			progressed = p.Round
+			if !pushed && time.Since(start) >= managerProgressInterval {
+				pushed = true
+				a.pushWXManagerProgress(progressed)
+			}
+		},
+	}
+	if resume {
+		return a.runWXResume(ctx, input, opts)
+	}
+	return a.runWXLoop(ctx, input, opts)
 }
 
 // wxManagerFailureKey 把管理者循环错误分类成用户可读的稳定 key（桥层按语言
@@ -198,6 +240,26 @@ func (a *App) runWXLoop(ctx context.Context, input string, opts agentapi.RunOpts
 		return fn(ctx, input, opts)
 	}
 	return a.AgentAPI().Run(ctx, input, opts)
+}
+
+// runWXResume 取微信挂起续跑闭包并执行一次：注入桩优先（测试），nil 时用
+// AgentAPI().Resume。ErrNoSuspend（挂起在桥层判定与本调用之间过期）回落
+// Run 新开循环——附件与回答仍被处理，不静默丢失。
+func (a *App) runWXResume(ctx context.Context, input string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
+	a.mu.Lock()
+	fn := a.wxResumeRunner
+	a.mu.Unlock()
+	var res agentapi.RunResult
+	var err error
+	if fn != nil {
+		res, err = fn(ctx, input, opts)
+	} else {
+		res, err = a.AgentAPI().Resume(ctx, "wechat", input, opts)
+	}
+	if errors.Is(err, agentapi.ErrNoSuspend) {
+		return a.runWXLoop(ctx, input, opts)
+	}
+	return res, err
 }
 
 // pushWXManagerProgress 推送一条微信侧中途进度：wxNotify 注入点（测试观察）

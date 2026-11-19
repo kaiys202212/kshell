@@ -44,7 +44,7 @@ type InputRouter func(ctx context.Context, input string) (hubtools.RouteDecision
 
 // ManagerOutcome 是管理者循环的执行结果（直接回显，不走决策执行）。
 // Replies 已是渲染后的自然语言结论/反问文案；挂起-续跑语境由 agentapi
-// 自持，桥侧不感知。
+// 自持，桥侧只消费 Suspended/Attribution 做回执标注。
 //
 // FailureKey 是 handled=false 时携带的失败原因（稳定 wire key，由桥层按语言
 // 渲染）：管理者循环"尝试过但失败"与环境问题（模型不可用）必须让用户看见，
@@ -52,7 +52,19 @@ type InputRouter func(ctx context.Context, input string) (hubtools.RouteDecision
 type ManagerOutcome struct {
 	Replies    []string
 	FailureKey string
+	// Suspended 表示本次接管是一场挂起反问（等待用户回答）；桥层据此在
+	// 回执上标注任务归因，非挂起结论不加前缀。
+	Suspended bool
+	// Attribution 是挂起反问所属任务的标题（agentapi RunResult.TaskTitle）：
+	// 多任务并行时让用户看清「回答将续跑哪一条任务」。
+	Attribution string
 }
+
+// AskResumer 是挂起反问的显式续跑钩子（与 ManagerRouter 同构）：用于输入
+// 超过 agentapi 短输入门槛（如带附件说明行的回答）也必须续跑原任务。desktop
+// 用 AgentAPI().Resume 实现；ErrNoSuspend 时其内部回落 Run 新开循环。
+// 未装配时桥层回落 ManagerRouter（Run 的短输入自动续跑语义）。
+type AskResumer func(ctx context.Context, input string) (ManagerOutcome, bool)
 
 // ManagerRouter 是管理者循环路由钩子：返回 (结果, 是否接管)。优先级在
 // DirectPatterns 逃生门之后、InputRouter（RouteInput 单发）之前：命中即把
@@ -85,6 +97,11 @@ type Runtime struct {
 	router InputRouter
 	// managerRouter 由 desktop 注入：管理者循环路由（优先于 router，装配到 bridge）。
 	managerRouter ManagerRouter
+	// askResumer 由 desktop 注入：挂起反问显式续跑（装配到 bridge）。
+	askResumer AskResumer
+	// askPending 由 desktop 注入：实时报告管理者循环是否有未过期挂起反问
+	//（装配到 bridge）；nil 视为无挂起。
+	askPending func() bool
 	// directPatternsFn 由 desktop 注入：逃生门白名单（实时读配置，装配到 bridge）。
 	directPatternsFn func() []string
 	// routeGate 由 desktop 注入：智能链路启用门禁（实时读总开关，装配到 bridge）。
@@ -204,6 +221,30 @@ func (r *Runtime) SetManagerRouter(fn ManagerRouter) {
 	}
 }
 
+// SetAskResumer 装配挂起反问显式续跑钩子：转发给已存在的 bridge 并记录，
+// Configure 创建新 bridge（重绑）时再次注入。
+func (r *Runtime) SetAskResumer(fn AskResumer) {
+	r.mu.Lock()
+	r.askResumer = fn
+	bridge := r.bridge
+	r.mu.Unlock()
+	if bridge != nil {
+		bridge.SetAskResumer(fn)
+	}
+}
+
+// SetAskPending 装配挂起反问存在性查询：转发给已存在的 bridge 并记录，
+// Configure 创建新 bridge（重绑）时再次注入。
+func (r *Runtime) SetAskPending(fn func() bool) {
+	r.mu.Lock()
+	r.askPending = fn
+	bridge := r.bridge
+	r.mu.Unlock()
+	if bridge != nil {
+		bridge.SetAskPending(fn)
+	}
+}
+
 // SetRouteGate 装配智能链路启用门禁：转发给已存在的 bridge 并记录，
 // Configure 创建新 bridge（重绑）时再次注入。
 func (r *Runtime) SetRouteGate(fn RouteGate) {
@@ -304,6 +345,12 @@ func (r *Runtime) Configure(token, wxid string) {
 	}
 	if r.managerRouter != nil {
 		r.bridge.SetManagerRouter(r.managerRouter)
+	}
+	if r.askResumer != nil {
+		r.bridge.SetAskResumer(r.askResumer)
+	}
+	if r.askPending != nil {
+		r.bridge.SetAskPending(r.askPending)
 	}
 	if r.directPatternsFn != nil {
 		r.bridge.SetDirectPatterns(r.directPatternsFn)

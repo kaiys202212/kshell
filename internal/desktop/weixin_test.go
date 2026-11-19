@@ -305,6 +305,18 @@ func injectWXRunner(app *App, fn func(ctx context.Context, input string, opts ag
 	return &calls
 }
 
+// injectWXResumeRunner 注入微信挂起反问显式续跑桩并返回调用计数指针。
+func injectWXResumeRunner(app *App, fn func(ctx context.Context, input string, opts agentapi.RunOpts) (agentapi.RunResult, error)) *int {
+	calls := 0
+	app.mu.Lock()
+	app.wxResumeRunner = func(ctx context.Context, input string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
+		calls++
+		return fn(ctx, input, opts)
+	}
+	app.mu.Unlock()
+	return &calls
+}
+
 // wxSendText 从 sendmessage 请求体提取文本（msg.item_list[0].text_item.text）。
 func wxSendText(t *testing.T, body map[string]any) string {
 	t.Helper()
@@ -462,7 +474,10 @@ func TestWeixinManagerRouter(t *testing.T) {
 			if opts.Channel != "wechat" {
 				t.Errorf("Channel = %q, 期望 wechat", opts.Channel)
 			}
-			return agentapi.RunResult{Replies: []string{"要发给哪个会话？\n1. 甲"}, Suspended: true}, nil
+			return agentapi.RunResult{
+				Replies:   []string{"要发给哪个会话？\n1. 甲"},
+				Suspended: true, TaskTitle: "帮我把任务分给甲",
+			}, nil
 		})
 		out, handled := app.weixinManagerRouter()(context.Background(), "帮我把任务分给甲")
 		if !handled {
@@ -470,6 +485,9 @@ func TestWeixinManagerRouter(t *testing.T) {
 		}
 		if len(out.Replies) != 1 || out.Replies[0] != "要发给哪个会话？\n1. 甲" {
 			t.Fatalf("Replies 未透传: %+v", out)
+		}
+		if !out.Suspended || out.Attribution != "帮我把任务分给甲" {
+			t.Fatalf("挂起反问应透传 Suspended/Attribution: %+v", out)
 		}
 		if *calls != 1 {
 			t.Fatalf("Run 调用次数 = %d, 期望 1", *calls)
@@ -565,6 +583,81 @@ func TestWeixinManagerRouter(t *testing.T) {
 		})
 		if _, handled := app.weixinManagerRouter()(context.Background(), "随便看看"); handled {
 			t.Fatal("AgentHub 关闭时管理者路由不应接管")
+		}
+	})
+}
+
+// TestWeixinAskResumer 覆盖微信挂起反问显式续跑闭包：Resume 成功回显、
+// 挂起在判定与续跑之间过期时回落 Run 新开循环、总开关关闭不接管。
+func TestWeixinAskResumer(t *testing.T) {
+	newApp := func(t *testing.T) *App {
+		app := wxStatusApp(t)
+		app.mu.Lock()
+		app.opts.Config = config.Default()
+		app.mu.Unlock()
+		return app
+	}
+
+	t.Run("Resume 成功接管并透传归因", func(t *testing.T) {
+		app := newApp(t)
+		calls := injectWXResumeRunner(app, func(_ context.Context, input string, opts agentapi.RunOpts) (agentapi.RunResult, error) {
+			if opts.Channel != "wechat" {
+				t.Errorf("Channel = %q, 期望 wechat", opts.Channel)
+			}
+			if !strings.Contains(input, "[附件] image.jpg") {
+				t.Errorf("合并文本应原样透传 Resume: %q", input)
+			}
+			return agentapi.RunResult{
+				Replies: []string{"【问题1】交给哪个会话？"}, Suspended: true, TaskTitle: "分析 RPA 任务",
+			}, nil
+		})
+		out, handled := app.weixinAskResumer()(context.Background(), "[附件] image.jpg 已保存至 x\n\n问题1给1")
+		if !handled {
+			t.Fatal("Resume 成功应接管")
+		}
+		if *calls != 1 {
+			t.Fatalf("Resume 调用次数 = %d, 期望 1", *calls)
+		}
+		if !out.Suspended || out.Attribution != "分析 RPA 任务" {
+			t.Fatalf("挂起归因未透传: %+v", out)
+		}
+		if len(out.Replies) != 1 || out.Replies[0] != "【问题1】交给哪个会话？" {
+			t.Fatalf("Replies 未透传: %+v", out)
+		}
+	})
+
+	t.Run("ErrNoSuspend 回落 Run 新开循环", func(t *testing.T) {
+		app := newApp(t)
+		resumeCalls := injectWXResumeRunner(app, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			return agentapi.RunResult{}, agentapi.ErrNoSuspend
+		})
+		runCalls := injectWXRunner(app, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			return agentapi.RunResult{Replies: []string{"已作为新任务处理。"}}, nil
+		})
+		out, handled := app.weixinAskResumer()(context.Background(), "问题1给1")
+		if !handled {
+			t.Fatal("回落 Run 成功应接管")
+		}
+		if *resumeCalls != 1 || *runCalls != 1 {
+			t.Fatalf("调用次数 resume=%d run=%d, 期望 1/1", *resumeCalls, *runCalls)
+		}
+		if len(out.Replies) != 1 || out.Replies[0] != "已作为新任务处理。" {
+			t.Fatalf("兜底 Run 结果未透传: %+v", out)
+		}
+	})
+
+	t.Run("总开关关闭不接管", func(t *testing.T) {
+		app := newApp(t)
+		off := false
+		app.mu.Lock()
+		app.opts.Config.AgentHub.Enabled = &off
+		app.mu.Unlock()
+		injectWXResumeRunner(app, func(context.Context, string, agentapi.RunOpts) (agentapi.RunResult, error) {
+			t.Fatal("AgentHub 关闭时不应调用 Resume")
+			return agentapi.RunResult{}, nil
+		})
+		if _, handled := app.weixinAskResumer()(context.Background(), "问题1给1"); handled {
+			t.Fatal("AgentHub 关闭时续跑路由不应接管")
 		}
 	})
 }

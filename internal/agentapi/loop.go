@@ -122,7 +122,7 @@ type LoopProgress struct {
 
 // RunOpts 是 Run/Resume 的可选参数。
 type RunOpts struct {
-	Channel string // hub | wechat（区分记忆与语境归属）
+	Channel  string // hub | wechat（区分记忆与语境归属）
 	Progress func(LoopProgress)
 }
 
@@ -151,6 +151,10 @@ type RunResult struct {
 	// Resume（或同渠道短输入 Run）从同一 msgs 续跑。
 	Ask       *AskPayload `json:"ask,omitempty"`
 	Suspended bool        `json:"suspended,omitempty"`
+	// TaskTitle 是挂起反问所属任务的标题（原始输入首行，截断 30 rune）。
+	// 微信桥据此在反问回执上标注「待回答：<任务>」，多任务并行时用户能
+	// 看清回答将续跑哪一条；续跑不覆盖（回答不是新任务标题）。
+	TaskTitle string `json:"task_title,omitempty"`
 }
 
 // suspendState 是挂起-续跑语境：ask 落地时保存完整循环状态（含本轮全部
@@ -165,12 +169,13 @@ type suspendState struct {
 // loopState 是管理者循环的可挂起状态：Run 全新构建，ask 落地时整体存入
 // 挂起态，Resume 从同一实例续跑（msgs 天然延续，不重建 system）。
 type loopState struct {
-	channel  string
-	input    string     // 本轮用户输入（记忆落盘用；Resume 时改为用户回复）
-	steps    int        // 已执行工具步数
-	actions  []string   // 工具名序列（去重后作记忆摘要）
-	degraded bool       // 本轮走了 RouteDecide 降级（不写工具摘要）
-	ask      *RunResult // ask 落地/被禁时置位，循环立即终止
+	channel   string
+	input     string     // 本轮用户输入（记忆落盘用；Resume 时改为用户回复）
+	taskTitle string     // 原始任务标题（首行截断）；续跑只覆盖 input，不动它
+	steps     int        // 已执行工具步数
+	actions   []string   // 工具名序列（去重后作记忆摘要）
+	degraded  bool       // 本轮走了 RouteDecide 降级（不写工具摘要）
+	ask       *RunResult // ask 落地/被禁时置位，循环立即终止
 	// —— 挂起延续的循环位置与语境 ——
 	msgs       []hubtools.Message
 	round      int            // 当前 LLM 轮号（续跑时接着走）
@@ -239,7 +244,13 @@ func (a *API) exitLoop() {
 
 // startLoop 全新开循环：装配 system 与首条 user 消息，round 从 1 计。
 func (a *API) startLoop(ctx context.Context, input string, opts RunOpts, channel string) (RunResult, error) {
-	st := &loopState{channel: channel, input: input, round: 1, toolCalls: map[string]int{}}
+	st := &loopState{
+		channel:   channel,
+		input:     input,
+		taskTitle: taskTitleFromInput(input),
+		round:     1,
+		toolCalls: map[string]int{},
+	}
 	st.msgs = []hubtools.Message{
 		{Role: "system", Content: a.buildManagerSystem(st)},
 		{Role: "user", Content: input},
@@ -280,11 +291,32 @@ func (a *API) finishLoop(st *loopState, res RunResult, err error) (RunResult, er
 	if errors.Is(err, ErrLLMNotReady) {
 		return res, err
 	}
+	// 挂起回执带任务标题：多渠道/多任务并行时，用户能看清回答将续跑哪条。
+	// 非挂起结论不填（结论正文自带上下文，前缀只会添噪）。
+	if res.Suspended {
+		res.TaskTitle = st.taskTitle
+	}
 	if err == nil && !res.Suspended {
 		a.clearSuspend()
 	}
 	a.memoryAppend(st, res, err)
 	return res, err
+}
+
+// taskTitleMax 是回执任务标题的最大 rune 数（超出截断 + 省略号）。
+const taskTitleMax = 30
+
+// taskTitleFromInput 取原始输入首行并截断成回执标签；空输入返回空串。
+func taskTitleFromInput(input string) string {
+	s := strings.TrimSpace(input)
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = s[:i]
+	}
+	r := []rune(strings.TrimSpace(s))
+	if len(r) > taskTitleMax {
+		return string(r[:taskTitleMax]) + "…"
+	}
+	return string(r)
 }
 
 // runLoop 是工具循环主体：从 st.msgs / st.round 续转（全新 Run 由 startLoop
@@ -1086,7 +1118,7 @@ func (a *API) buildLoopTools(ctx context.Context, st *loopState) []loopTool {
 			"options":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "编号选项文本列表（单问时使用）"},
 			"mode":     strProp("交互模式：single 单选（默认）/ multi 多选 / confirm 确认（单问时使用）"),
 			"steps": map[string]any{
-				"type":     "array",
+				"type": "array",
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{

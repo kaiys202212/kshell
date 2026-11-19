@@ -87,7 +87,7 @@ type Options struct {
 	ClisyncEnsurePath func(binDir string) (string, error)
 	// ClisyncPathEntries 注入用户级 PATH 条目读取（测试打桩用）；nil 走平台默认。
 	ClisyncPathEntries func() []string
-	SignalPath    string // 退出信号文件路径；nil/空时 Startup 补齐真实路径（测试可不启用）
+	SignalPath         string // 退出信号文件路径；nil/空时 Startup 补齐真实路径（测试可不启用）
 	// SnapshotPath 是扫描结果快照文件：启动时先端出上次结果让界面秒开，后台扫描再覆盖。
 	// 空字符串表示禁用快照（测试默认如此，避免互相污染）。
 	SnapshotPath string
@@ -234,6 +234,9 @@ type App struct {
 	// wxRunner 是微信管理者循环的注入点（测试可覆写）；nil 时调用
 	// AgentAPI().Run。mu 保护。
 	wxRunner hubRunnerFunc
+	// wxResumeRunner 是微信挂起反问显式续跑的注入点（测试可覆写）；nil 时
+	// 调用 AgentAPI().Resume。mu 保护。
+	wxResumeRunner hubRunnerFunc
 	// wxNotify 是微信中途进度推送的注入点（测试观察用）；nil 时走
 	// Runtime.NotifyProgress 经 bridge 出站 worker 投递。mu 保护。
 	wxNotify func(step int)
