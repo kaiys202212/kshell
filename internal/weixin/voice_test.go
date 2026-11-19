@@ -3,6 +3,7 @@ package weixin
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"testing"
 
 	silk "github.com/yoshino-s/silk-go"
@@ -78,5 +79,71 @@ func TestSilkToWAVInvalid(t *testing.T) {
 	}
 	if _, err := silkToWAV(nil); err == nil {
 		t.Error("空数据应报错")
+	}
+}
+
+// TestDetectAudioFormat 覆盖解码前嗅探：silkcc 只认 SILK v3，其余格式必须
+// 在解码前识别出来，供回执与日志给出可定位信息。
+func TestDetectAudioFormat(t *testing.T) {
+	cases := []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{"腾讯兼容 SILK", append([]byte{0x02}, []byte("#!SILK_V3")...), audioFormatSilk},
+		{"标准 SILK", []byte("#!SILK_V3\x00\x00"), audioFormatSilk},
+		{"AMR", []byte("#!AMR\n\x00\x00"), audioFormatAMR},
+		{"AMR-WB", []byte("#!AMR-WB\n\x00\x00"), audioFormatAMR},
+		{"MP3 ID3", []byte("ID3\x04\x00\x00"), audioFormatMP3},
+		{"MP3 帧同步", []byte{0xFF, 0xFB, 0x90, 0x64}, audioFormatMP3},
+		{"M4A ftyp", []byte{0x00, 0x00, 0x00, 0x20, 'f', 't', 'y', 'p', 'M', '4', 'A', ' '}, audioFormatM4A},
+		{"OGG", []byte("OggS\x00\x02"), audioFormatOGG},
+		{"WAV", append([]byte("RIFF\x00\x00\x00\x00"), []byte("WAVEfmt ")...), audioFormatWAV},
+		{"未知", []byte{0x00, 0x01, 0x02, 0x03}, audioFormatUnknown},
+		{"空", nil, audioFormatUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := detectAudioFormat(tc.data); got != tc.want {
+				t.Fatalf("detectAudioFormat = %q, 期望 %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSilkToWAVNonSilkIsTyped 非 SILK 载荷必须返回可归因错误，携带实际格式
+// 与首部字节，而不是原始的 silkcc -1000。
+func TestSilkToWAVNonSilkIsTyped(t *testing.T) {
+	amr := []byte("#!AMR\n\x01\x02\x03\x04")
+	_, err := silkToWAV(amr)
+	if err == nil {
+		t.Fatal("非 SILK 载荷应报错")
+	}
+	var uf *UnsupportedVoiceFormatError
+	if !errors.As(err, &uf) {
+		t.Fatalf("错误应为 *UnsupportedVoiceFormatError, 实际 %T: %v", err, err)
+	}
+	if uf.Format != audioFormatAMR {
+		t.Errorf("格式 = %q, 期望 %q", uf.Format, audioFormatAMR)
+	}
+	if !bytes.HasPrefix(uf.Head, amr[:8]) {
+		t.Errorf("首部字节应保留原始前 8 字节: %X", uf.Head)
+	}
+}
+
+// TestSilkToWAVSilkDecodeFailureKeepsRawErr 头部分形似 SILK 但解码失败时，
+// 仍保留底层 silkcc 错误供日志排查。
+func TestSilkToWAVSilkDecodeFailureKeepsRawErr(t *testing.T) {
+	data := []byte("#!SILK_V3" + "\x00\x00\x00")
+	_, err := silkToWAV(data)
+	if err == nil {
+		t.Fatal("非法 SILK 载荷应报错")
+	}
+	var uf *UnsupportedVoiceFormatError
+	if !errors.As(err, &uf) {
+		t.Fatalf("错误应为 *UnsupportedVoiceFormatError, 实际 %T: %v", err, err)
+	}
+	if uf.Err == nil {
+		t.Error("silk 解码失败时应保留底层错误")
 	}
 }

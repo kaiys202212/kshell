@@ -69,8 +69,8 @@ func (f *fakeExec) Send(chatID, text string) error {
 	f.sentTexts = append(f.sentTexts, text)
 	return f.sendErr
 }
-func (f *fakeExec) GrantPermission(string, string, bool) error { return nil }
-func (f *fakeExec) Status() hub.ConsoleStatus                  { return hub.ConsoleStatus{} }
+func (f *fakeExec) GrantPermission(string, string, bool) error      { return nil }
+func (f *fakeExec) Status() hub.ConsoleStatus                       { return hub.ConsoleStatus{} }
 func (f *fakeExec) RecentMessages(int) []hub.Message                { return nil }
 func (f *fakeExec) SessionStatuses() []hub.SessionStatus            { return f.statuses }
 func (f *fakeExec) SessionRecentMessages(string, int) []hub.Message { return nil }
@@ -864,7 +864,7 @@ func TestQuoteTitle(t *testing.T) {
 		"没有前缀的普通文本":   "",
 		// 微信摘要常截断：无闭合】时仍取出栏内前缀供前缀匹配。
 		"【proj · Claude Code · 会": "proj · Claude Code · 会",
-		"【外层【内层】】正文":      "外层【内层",
+		"【外层【内层】】正文":              "外层【内层",
 	} {
 		if got := quoteTitle(in); got != want {
 			t.Errorf("quoteTitle(%q) = %q, 期望 %q", in, got, want)
@@ -1317,6 +1317,57 @@ func TestBridgeVoiceEmptyTranscriptKeepsFile(t *testing.T) {
 	sends := rc.sends()
 	if len(sends) != 2 {
 		t.Fatalf("sendmessage 次数 = %d, 期望 2（空转写回执 + ack）", len(sends))
+	}
+}
+
+// TestBridgeVoiceNonSilkFormatReceipt 非 SILK 语音不能被笼统报「转写失败」：
+// 回执要给出识别到的格式与落盘样本，方便用户与开发者定位。
+func TestBridgeVoiceNonSilkFormatReceipt(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	amr := []byte("#!AMR\n\x01\x02\x03\x04\x05\x06\x07\x08")
+	b, rc := newAttachBridge(t, ex, amr, 200)
+
+	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
+	if len(ex.sentTexts) != 0 {
+		t.Fatalf("解码失败不应投递: %v", ex.sentTexts)
+	}
+	if n := b.QueuedFiles(); n != 0 {
+		t.Fatalf("非 SILK 未生成 wav，队列应为 0, 实际 %d", n)
+	}
+	sends := rc.sends()
+	if len(sends) == 0 {
+		t.Fatal("应给用户可定位的回执")
+	}
+	text := sendText(t, sends[0].body)
+	if !strings.Contains(text, "不受支持") || !strings.Contains(text, audioFormatAMR) {
+		t.Fatalf("回执应包含「不受支持」与实际格式 %s: %q", audioFormatAMR, text)
+	}
+	if strings.Contains(text, "silkcc") || strings.Contains(text, "-1000") {
+		t.Fatalf("回执不应透传底层 silkcc 报错: %q", text)
+	}
+	// 原始解密载荷落盘，便于后续确认真实编码。
+	entries, err := os.ReadDir(b.filesDir)
+	if err != nil {
+		t.Fatalf("读取落盘目录: %v", err)
+	}
+	var dump string
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "voice-raw") {
+			dump = filepath.Join(b.filesDir, e.Name())
+		}
+	}
+	if dump == "" {
+		t.Fatalf("应落盘原始语音载荷, 目录内容: %v", entries)
+	}
+	got, err := os.ReadFile(dump)
+	if err != nil {
+		t.Fatalf("读取 dump: %v", err)
+	}
+	if !bytes.Equal(got, amr) {
+		t.Fatalf("dump 内容应与解密载荷一致: %X != %X", got, amr)
+	}
+	if !strings.Contains(text, filepath.Base(dump)) {
+		t.Errorf("回执应包含 dump 文件名便于定位: %q", text)
 	}
 }
 

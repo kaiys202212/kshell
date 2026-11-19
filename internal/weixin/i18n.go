@@ -15,6 +15,10 @@ var bridgeTexts = map[string]langPair{
 	"voice.unsupported":  {"Voice received, but the current chat model does not accept audio input. Please configure a dedicated ASR model (Settings → Model platform → ASR model).", "已收到语音，但当前对话模型不支持音频输入，请在设置 → 模型平台 → 语音转写模型（asr_model）中配置专用转写模型"},
 	"voice.failed":       {"Voice transcription failed: %v", "语音转写失败：%v"},
 	"voice.empty":        {"Empty transcription result", "转写结果为空"},
+	// 非 SILK 载荷降级（%s=嗅探到的实际格式）：不明说底层 silkcc 报错，
+	// 给出可定位的格式与样本路径。
+	"voice.unsupported_format":      {"Voice received, but its audio format is not supported (%s). Expected SILK v3.", "已收到语音，但音频格式不受支持（%s）。预期为 SILK v3。"},
+	"voice.unsupported_format_dump": {"Voice received, but its audio format is not supported (%s). Expected SILK v3. The raw payload was saved for diagnosis: %s", "已收到语音，但音频格式不受支持（%s）。预期为 SILK v3。原始载荷已保存以便排查：%s"},
 	// 管理者循环中途进度（15s 节流单轮一条；%d=当前 LLM 循环轮次——
 	// LoopProgress 无累计工具步数字段，一轮多工具时轮次是最低成本近似）。
 	"manager.progress": {"Still working: on round %d", "仍在处理：第 %d 轮"},

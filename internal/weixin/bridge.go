@@ -438,7 +438,12 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	if m.Voice != nil {
 		note, transcript, terr := b.ingestVoice(ctx, m.Voice, strings.TrimSpace(text) == "")
 		receipt = joinNotes(receipt, note)
-		if strings.TrimSpace(text) == "" {
+		var uf *UnsupportedVoiceFormatError
+		if errors.As(terr, &uf) {
+			// 非 SILK 载荷：无论服务端是否给了转写文本都要回执，避免
+			// 解码失败被静默吞掉（用户至少能看到真实格式与落盘样本）。
+			receipt = joinNotes(receipt, voiceFormatReceipt(b.lang, uf))
+		} else if strings.TrimSpace(text) == "" {
 			switch {
 			case errors.Is(terr, ErrTranscriberNotConfigured):
 				receipt = joinNotes(receipt, bridgeText(b.lang, "voice.unconfigured"))
@@ -887,6 +892,7 @@ func (b *Bridge) ingestVoice(ctx context.Context, v *InboundAttachment, needTran
 	name := "voice.wav"
 	path, err := saveAttachment(b.filesDir, name, wav)
 	if err != nil {
+		log.Printf("[weixin] 语音落盘失败 dir=%s err=%v", b.filesDir, err)
 		return "", "", err
 	}
 	b.mu.Lock()
@@ -900,22 +906,70 @@ func (b *Bridge) ingestVoice(ctx context.Context, v *InboundAttachment, needTran
 	}
 	fn := b.transcriberFn()
 	if fn == nil {
+		log.Printf("[weixin] 语音转写未配置（无 ASR 模型） path=%s", path)
 		return note, "", ErrTranscriberNotConfigured
 	}
 	transcript, err = fn(ctx, wav)
 	if err != nil {
+		log.Printf("[weixin] 语音转写失败 path=%s err=%v", path, err)
 		return note, "", err
+	}
+	if strings.TrimSpace(transcript) == "" {
+		log.Printf("[weixin] 语音转写结果为空 path=%s", path)
 	}
 	return note, transcript, nil
 }
 
+// maxVoiceDumpSize 是失败语音原始载荷的落盘上限：保留足够识别格式的前缀
+// 即可，避免异常大载荷反复占满 weixin-files。
+const maxVoiceDumpSize = 1 << 20
+
+// dumpRawVoice 把解密后的失败语音载荷落盘（限 1MB），返回绝对路径；
+// 落盘失败只记日志并返回空串（诊断信息不应阻断回执）。
+func (b *Bridge) dumpRawVoice(data []byte) string {
+	raw := data
+	if len(raw) > maxVoiceDumpSize {
+		raw = raw[:maxVoiceDumpSize]
+	}
+	path, err := saveAttachment(b.filesDir, "voice-raw.bin", raw)
+	if err != nil {
+		log.Printf("[weixin] 语音失败样本落盘失败 len=%d err=%v", len(data), err)
+		return ""
+	}
+	return path
+}
+
 // voiceWAV 下载语音媒体并解码为 WAV（SILK → 24kHz 单声道 PCM，voice.go）。
+// 失败按阶段落日志：下载与解码分开记录，解码失败附带格式与首部字节，
+// 非 SILK 载荷额外保存原始样本，供后续确认微信实际编码。
 func (b *Bridge) voiceWAV(ctx context.Context, v *InboundAttachment) ([]byte, error) {
 	data, err := b.client.DownloadMedia(ctx, *v)
 	if err != nil {
+		log.Printf("[weixin] 语音下载失败 size=%d err=%v", v.Size, err)
 		return nil, fmt.Errorf("下载语音: %w", err)
 	}
-	return silkToWAV(data)
+	wav, err := silkToWAV(data)
+	if err != nil {
+		var uf *UnsupportedVoiceFormatError
+		if errors.As(err, &uf) {
+			uf.DumpPath = b.dumpRawVoice(data)
+			log.Printf("[weixin] 语音解码失败 format=%s len=%d head=%X dump=%s err=%v",
+				uf.Format, len(data), uf.Head, uf.DumpPath, err)
+		} else {
+			log.Printf("[weixin] 语音解码失败 len=%d head=%X err=%v", len(data), voiceHeadBytes(data), err)
+		}
+		return nil, err
+	}
+	return wav, nil
+}
+
+// voiceFormatReceipt 生成非 SILK 载荷的用户回执：有失败样本时给出路径，
+// 便于用户把文件交给开发者确认实际编码。
+func voiceFormatReceipt(lang string, uf *UnsupportedVoiceFormatError) string {
+	if uf.DumpPath != "" {
+		return fmt.Sprintf(bridgeText(lang, "voice.unsupported_format_dump"), uf.Format, uf.DumpPath)
+	}
+	return fmt.Sprintf(bridgeText(lang, "voice.unsupported_format"), uf.Format)
 }
 
 // joinNotes 用换行合并回执片段（忽略空片段）。
