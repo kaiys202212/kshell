@@ -100,6 +100,9 @@ func TestDetectAudioFormat(t *testing.T) {
 		{"M4A ftyp", []byte{0x00, 0x00, 0x00, 0x20, 'f', 't', 'y', 'p', 'M', '4', 'A', ' '}, audioFormatM4A},
 		{"OGG", []byte("OggS\x00\x02"), audioFormatOGG},
 		{"WAV", append([]byte("RIFF\x00\x00\x00\x00"), []byte("WAVEfmt ")...), audioFormatWAV},
+		{"OPUS 原始帧", []byte("#!OPUS_RAW_V1\x02\x01\x00"), audioFormatOpusRaw},
+		// 魔数不完整时不能误判为 OPUS。
+		{"OPUS 魔数前缀不足", []byte("#!OPUS_RAW"), audioFormatUnknown},
 		{"未知", []byte{0x00, 0x01, 0x02, 0x03}, audioFormatUnknown},
 		{"空", nil, audioFormatUnknown},
 	}
@@ -147,5 +150,106 @@ func TestSilkToWAVSilkDecodeFailureKeepsRawErr(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "SILK 解码") {
 		t.Errorf("错误应保留 SILK 解码语义: %v", err)
+	}
+}
+
+// opusSilencePacket 是 3 字节 Opus 包（TOC 0xB8 + 0xFF 0xFE），解码为 20ms
+// 静音。用它合成测试容器，不依赖真实录音。
+var opusSilencePacket = []byte{0xB8, 0xFF, 0xFE}
+
+// opusRawStream 按上游容器格式拼一份 OPUS 原始帧载荷：
+// "#!OPUS_RAW_V1" + 3 字节版本头 + 重复 [uint16LE 长度 + Opus 包]。
+func opusRawStream(frames ...[]byte) []byte {
+	out := append([]byte("#!OPUS_RAW_V1"), 0x02, 0x01, 0x00)
+	for _, f := range frames {
+		out = append(out, byte(len(f)), byte(len(f)>>8))
+		out = append(out, f...)
+	}
+	return out
+}
+
+// TestParseOpusRawFrames 校验容器按 uint16LE 长度逐帧消费。
+func TestParseOpusRawFrames(t *testing.T) {
+	data := opusRawStream(opusSilencePacket, opusSilencePacket, opusSilencePacket)
+	frames, err := parseOpusRawFrames(data)
+	if err != nil {
+		t.Fatalf("parseOpusRawFrames: %v", err)
+	}
+	if len(frames) != 3 {
+		t.Fatalf("帧数 = %d, 期望 3", len(frames))
+	}
+	for i, f := range frames {
+		if !bytes.Equal(f, opusSilencePacket) {
+			t.Errorf("帧 %d = % x, 期望 % x", i, f, opusSilencePacket)
+		}
+	}
+}
+
+// TestParseOpusRawFramesErrors 覆盖畸形容器：必须返回明确错误且不 panic。
+func TestParseOpusRawFramesErrors(t *testing.T) {
+	header := append([]byte("#!OPUS_RAW_V1"), 0x02, 0x01, 0x00)
+	cases := []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{"魔数不符", []byte("#!OPUS_RAW"), "魔数"},
+		{"只有头没有帧", header, "没有 Opus 帧"},
+		{"帧长度越界", append(append([]byte{}, header...), 0x03, 0x00, 0xB8, 0xFF), "越界"},
+		{"长度前缀后无载荷", append(append([]byte{}, header...), 0xFF, 0xFF), "越界"},
+		{"残余字节", append(opusRawStream(opusSilencePacket), 0x01), "残余"},
+		{"空帧", append(append([]byte{}, header...), 0x00, 0x00), "空 Opus 帧"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parseOpusRawFrames(tc.data)
+			if err == nil {
+				t.Fatal("畸形容器应报错")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("错误 %q 应包含 %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// repeatPackets 把同一 Opus 包重复 n 份，供合成多帧容器。
+func repeatPackets(p []byte, n int) [][]byte {
+	out := make([][]byte, n)
+	for i := range out {
+		out[i] = p
+	}
+	return out
+}
+
+// TestDecodeVoiceOpusToWAV 校验 Opus 容器解码输出与 SILK 一致的 WAV 形态：
+// 24kHz 单声道 16-bit PCM，每帧 20ms（480 采样）。
+func TestDecodeVoiceOpusToWAV(t *testing.T) {
+	const frames = 5
+	stream := opusRawStream(repeatPackets(opusSilencePacket, frames)...)
+	wav, err := decodeVoice(stream)
+	if err != nil {
+		t.Fatalf("decodeVoice: %v", err)
+	}
+	pcm := assertWAV(t, wav, 24000)
+	if want := frames * 480 * 2; len(pcm) != want {
+		t.Errorf("PCM 长度 = %d, 期望 %d", len(pcm), want)
+	}
+}
+
+// TestDecodeVoiceOpusBadPacket 单帧解码失败必须保留「解码失败」语义，
+// 不能误归因为「格式不受支持」。
+func TestDecodeVoiceOpusBadPacket(t *testing.T) {
+	stream := opusRawStream([]byte{0xFF})
+	_, err := decodeVoice(stream)
+	if err == nil {
+		t.Fatal("非法 Opus 包应报错")
+	}
+	var uf *UnsupportedVoiceFormatError
+	if errors.As(err, &uf) {
+		t.Fatalf("Opus 解码失败不应归因为格式不受支持: %v", err)
+	}
+	if !strings.Contains(err.Error(), "OPUS 解码") {
+		t.Errorf("错误应保留 OPUS 解码语义: %v", err)
 	}
 }

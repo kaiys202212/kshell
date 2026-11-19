@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/pion/opus"
 	silk "github.com/yoshino-s/silk-go"
 )
 
@@ -20,10 +21,20 @@ const (
 	audioFormatM4A     = "M4A"
 	audioFormatOGG     = "OGG"
 	audioFormatWAV     = "WAV"
+	audioFormatOpusRaw = "OPUS"
 	audioFormatUnknown = "unknown"
 )
 
-// UnsupportedVoiceFormatError 表示解密后的语音载荷不是可解码的 SILK v3。
+// opusRawMagic 是上游媒体 CDN 对语音下发的「Opus 原始帧」容器魔数
+// （2026-11-19 真机样本确认）：魔数后跟 3 字节版本头（当前为 02 01 00，
+// 语义未公开，按固定长度跳过），再是重复的 [uint16LE 长度 + Opus 包]。
+const (
+	opusRawMagic     = "#!OPUS_RAW_V1"
+	opusRawHeaderLen = 3
+)
+
+// UnsupportedVoiceFormatError 表示解密后的语音载荷不是可解码的格式
+//（当前支持 SILK v3 与 OPUS_RAW_V1）。
 // Format 是嗅探到的实际格式，Head 是前 16 字节，DumpPath 是失败样本落盘
 // 路径（由桥层填充），Err 仅在“头部分形似 SILK 但解码失败”时保留底层错误。
 type UnsupportedVoiceFormatError struct {
@@ -65,6 +76,8 @@ func detectAudioFormat(data []byte) string {
 		return audioFormatSilk
 	case bytes.HasPrefix(data, []byte("#!SILK_V3")):
 		return audioFormatSilk
+	case bytes.HasPrefix(data, []byte(opusRawMagic)):
+		return audioFormatOpusRaw
 	case bytes.HasPrefix(data, []byte("#!AMR")):
 		return audioFormatAMR
 	case bytes.HasPrefix(data, []byte("ID3")):
@@ -109,6 +122,92 @@ func silkToWAV(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("SILK 解码结果为空")
 	}
 	return wavFromPCM(pcm, voiceSampleRate), nil
+}
+
+// decodeVoice 按嗅探到的格式分派解码：SILK 走既有 silkToWAV（行为不变），
+// OPUS_RAW_V1 走 decodeOpusRaw，其余格式返回可归因的
+// UnsupportedVoiceFormatError（供回执与失败样本落盘）。
+func decodeVoice(data []byte) ([]byte, error) {
+	switch format := detectAudioFormat(data); format {
+	case audioFormatSilk:
+		return silkToWAV(data)
+	case audioFormatOpusRaw:
+		pcm, err := decodeOpusRaw(data)
+		if err != nil {
+			return nil, err
+		}
+		return wavFromPCM(pcm, voiceSampleRate), nil
+	default:
+		return nil, &UnsupportedVoiceFormatError{Format: format, Head: voiceHeadBytes(data)}
+	}
+}
+
+// parseOpusRawFrames 把 OPUS_RAW_V1 容器拆成 Opus 包切片：校验魔数与版本头，
+// 其后按 uint16LE 长度逐帧消费。长度越界、残余字节、空帧都返回明确错误，
+// 不做任何越界读取（异常载荷不能 panic）。
+func parseOpusRawFrames(data []byte) ([][]byte, error) {
+	magic := []byte(opusRawMagic)
+	if !bytes.HasPrefix(data, magic) {
+		return nil, fmt.Errorf("OPUS 原始帧魔数不符（首部 %X）", voiceHeadBytes(data))
+	}
+	off := len(magic)
+	if len(data) < off+opusRawHeaderLen {
+		return nil, fmt.Errorf("OPUS 原始帧头不完整（共 %d 字节）", len(data))
+	}
+	off += opusRawHeaderLen
+	var frames [][]byte
+	for off < len(data) {
+		if len(data)-off < 2 {
+			return nil, fmt.Errorf("OPUS 原始帧残余 %d 字节长度前缀", len(data)-off)
+		}
+		n := int(binary.LittleEndian.Uint16(data[off:]))
+		off += 2
+		if n == 0 {
+			return nil, fmt.Errorf("空 Opus 帧（第 %d 帧）", len(frames)+1)
+		}
+		if n > len(data)-off {
+			return nil, fmt.Errorf("OPUS 原始帧第 %d 帧长度 %d 越界（剩余 %d 字节）",
+				len(frames)+1, n, len(data)-off)
+		}
+		frames = append(frames, data[off:off+n])
+		off += n
+	}
+	if len(frames) == 0 {
+		return nil, fmt.Errorf("OPUS 原始帧没有 Opus 帧")
+	}
+	return frames, nil
+}
+
+// decodeOpusRaw 把 OPUS_RAW_V1 容器解码为 16-bit LE 单声道 PCM（24kHz，
+// 与 SILK 输出一致）。pion/opus 是纯 Go 实现，无 cgo 依赖。单帧失败保留
+//「解码失败」语义并带帧号与首部字节，区别于「格式不受支持」。
+func decodeOpusRaw(data []byte) ([]byte, error) {
+	frames, err := parseOpusRawFrames(data)
+	if err != nil {
+		return nil, err
+	}
+	dec, err := opus.NewDecoderWithOutput(voiceSampleRate, 1)
+	if err != nil {
+		return nil, fmt.Errorf("初始化 OPUS 解码器: %w", err)
+	}
+	// 单包最长 120ms；24kHz 下 2880 采样足够容纳任意合法帧。
+	buf := make([]int16, voiceSampleRate*120/1000)
+	pcm := make([]int16, 0, len(frames)*voiceSampleRate*20/1000)
+	for i, f := range frames {
+		n, err := dec.DecodeToInt16(f, buf)
+		if err != nil {
+			return nil, fmt.Errorf("OPUS 解码失败（第 %d 帧，首部 %X）: %w", i+1, voiceHeadBytes(f), err)
+		}
+		pcm = append(pcm, buf[:n]...)
+	}
+	if len(pcm) == 0 {
+		return nil, fmt.Errorf("OPUS 解码结果为空")
+	}
+	out := make([]byte, len(pcm)*2)
+	for i, s := range pcm {
+		binary.LittleEndian.PutUint16(out[i*2:], uint16(s))
+	}
+	return out, nil
 }
 
 // wavFromPCM 给 16-bit LE 单声道 PCM 拼 44 字节 RIFF/WAV 头。

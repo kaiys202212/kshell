@@ -1399,6 +1399,32 @@ func TestBridgeVoiceNonSilkFormatReceipt(t *testing.T) {
 	}
 }
 
+// TestBridgeVoiceOpusRaw 上游下发 OPUS 原始帧容器时应正常解码为 WAV：
+// 转写函数收到合法 WAV，音频落盘且与转写文本合并投递。
+func TestBridgeVoiceOpusRaw(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	stream := opusRawStream(repeatPackets(opusSilencePacket, 3)...)
+	b, _ := newAttachBridge(t, ex, stream, 200)
+	var gotWAV []byte
+	b.SetTranscriber(func(ctx context.Context, wav []byte) (string, error) {
+		gotWAV = wav
+		return "opus 转写内容", nil
+	})
+
+	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
+	assertWAV(t, gotWAV, 24000)
+	if len(ex.sentTexts) != 1 {
+		t.Fatalf("转写文本应合并投递, 实际 %v", ex.sentTexts)
+	}
+	if !strings.Contains(ex.sentTexts[0], "[附件] voice.wav 已保存至 ") ||
+		!strings.Contains(ex.sentTexts[0], "opus 转写内容") {
+		t.Fatalf("合并文本应含语音文件说明行与转写文本: %q", ex.sentTexts[0])
+	}
+	if b.QueuedFiles() != 0 {
+		t.Errorf("队列应已清空: %d", b.QueuedFiles())
+	}
+}
+
 // 普通文本无精确目标：桥层转发待选列表（而非「收到」ack），不调用 Send。
 func TestBridgeInboundNoTargetListsSessions(t *testing.T) {
 	rc := &recorder{}

@@ -947,16 +947,16 @@ func (b *Bridge) dumpRawVoice(data []byte) string {
 	return path
 }
 
-// voiceWAV 下载语音媒体并解码为 WAV（SILK → 24kHz 单声道 PCM，voice.go）。
-// 失败按阶段落日志：下载与解码分开记录，解码失败附带格式与首部字节，
-// 非 SILK 载荷额外保存原始样本，供后续确认微信实际编码。
+// voiceWAV 下载语音媒体并解码为 WAV（SILK / OPUS_RAW_V1 → 24kHz 单声道 PCM，
+// voice.go）。失败按阶段落日志：下载与解码分开记录，解码失败附带格式与首部
+// 字节，不支持的载荷额外保存原始样本，供后续确认上游实际编码。
 func (b *Bridge) voiceWAV(ctx context.Context, v *InboundAttachment) ([]byte, error) {
 	data, err := b.client.DownloadMedia(ctx, *v)
 	if err != nil {
 		log.Printf("[weixin] 语音下载失败 size=%d err=%v", v.Size, err)
 		return nil, fmt.Errorf("下载语音: %w", err)
 	}
-	wav, err := silkToWAV(data)
+	wav, err := decodeVoice(data)
 	if err != nil {
 		var uf *UnsupportedVoiceFormatError
 		if errors.As(err, &uf) {
