@@ -435,6 +435,7 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	// 音频作为文件随下一条可转发文字转交模型（不依赖 ASR 可用性）；文本为
 	// 空时再走本地转写，转写文本按可转发文字处理（参与附件队列合并）；
 	// 转写失败/未配置转回执。
+	var formatNote string
 	if m.Voice != nil {
 		note, transcript, terr := b.ingestVoice(ctx, m.Voice, strings.TrimSpace(text) == "")
 		receipt = joinNotes(receipt, note)
@@ -442,7 +443,9 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 		if errors.As(terr, &uf) {
 			// 非 SILK 载荷：无论服务端是否给了转写文本都要回执，避免
 			// 解码失败被静默吞掉（用户至少能看到真实格式与落盘样本）。
-			receipt = joinNotes(receipt, voiceFormatReceipt(b.lang, uf))
+			// 单独存为 formatNote：即使后续走合并投递（merged），该回执
+			// 也不能被 `!merged` 条件抑制。
+			formatNote = voiceFormatReceipt(b.lang, uf)
 		} else if strings.TrimSpace(text) == "" {
 			switch {
 			case errors.Is(terr, ErrTranscriberNotConfigured):
@@ -507,6 +510,11 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	// 未合并时补附件回执（收到/失败）；合并成功时已含说明行不再重复。
 	if !merged && receipt != "" {
 		replies = append(replies, hub.Reply{Text: receipt})
+	}
+	// 非 SILK 格式回执独立于 merged 抑制：即便语音文本已随附件合并投递，
+	// 也要让用户知道音频未解码，并给出可定位的样本。
+	if formatNote != "" {
+		replies = append(replies, hub.Reply{Text: formatNote})
 	}
 	// #st 末尾追加待转交附件数，防用户遗忘队列（N>0 才追加）。按空白取第一
 	// 段与 "#st"/"＃st" 精确比较，避免 "#stop" 等未来命令误伤。

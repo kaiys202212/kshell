@@ -1320,6 +1320,34 @@ func TestBridgeVoiceEmptyTranscriptKeepsFile(t *testing.T) {
 	}
 }
 
+// TestBridgeVoiceNonSilkMergedStillReceipt 非 SILK 语音带服务端转写文本、
+// 且队列已有附件时会走合并投递；格式回执不能因 merged 被静默丢弃。
+func TestBridgeVoiceNonSilkMergedStillReceipt(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	amr := []byte("#!AMR\n\x01\x02\x03\x04\x05\x06\x07\x08")
+	b, rc := newAttachBridge(t, ex, amr, 200)
+
+	b.HandleInboundMsg(context.Background(), attachMsg("ct-1", "a.pdf"))
+	m := voiceMsg("ct-2")
+	m.Text = "服务端转写内容"
+	b.HandleInboundMsg(context.Background(), m)
+
+	if len(ex.sentTexts) != 1 || !strings.Contains(ex.sentTexts[0], "[附件] a.pdf") ||
+		!strings.Contains(ex.sentTexts[0], "服务端转写内容") {
+		t.Fatalf("服务端转写应与附件队列合并投递: %v", ex.sentTexts)
+	}
+	var found bool
+	for _, s := range rc.sends() {
+		txt := sendText(t, s.body)
+		if strings.Contains(txt, "不受支持") && strings.Contains(txt, audioFormatAMR) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("合并投递时格式回执仍应发出: %v", rc.sends())
+	}
+}
+
 // TestBridgeVoiceNonSilkFormatReceipt 非 SILK 语音不能被笼统报「转写失败」：
 // 回执要给出识别到的格式与落盘样本，方便用户与开发者定位。
 func TestBridgeVoiceNonSilkFormatReceipt(t *testing.T) {

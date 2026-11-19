@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"strings"
 	"testing"
 
 	silk "github.com/yoshino-s/silk-go"
@@ -132,7 +133,8 @@ func TestSilkToWAVNonSilkIsTyped(t *testing.T) {
 }
 
 // TestSilkToWAVSilkDecodeFailureKeepsRawErr 头部分形似 SILK 但解码失败时，
-// 仍保留底层 silkcc 错误供日志排查。
+// 必须保留「解码失败」语义，不能被误归因为「格式不受支持」（否则回执会
+// 出现「格式不受支持（SILK）」的自相矛盾表述）。
 func TestSilkToWAVSilkDecodeFailureKeepsRawErr(t *testing.T) {
 	data := []byte("#!SILK_V3" + "\x00\x00\x00")
 	_, err := silkToWAV(data)
@@ -140,10 +142,10 @@ func TestSilkToWAVSilkDecodeFailureKeepsRawErr(t *testing.T) {
 		t.Fatal("非法 SILK 载荷应报错")
 	}
 	var uf *UnsupportedVoiceFormatError
-	if !errors.As(err, &uf) {
-		t.Fatalf("错误应为 *UnsupportedVoiceFormatError, 实际 %T: %v", err, err)
+	if errors.As(err, &uf) {
+		t.Fatalf("SILK 解码失败不应归因为格式不受支持: %v", err)
 	}
-	if uf.Err == nil {
-		t.Error("silk 解码失败时应保留底层错误")
+	if !strings.Contains(err.Error(), "SILK 解码") {
+		t.Errorf("错误应保留 SILK 解码语义: %v", err)
 	}
 }

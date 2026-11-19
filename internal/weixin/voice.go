@@ -101,11 +101,9 @@ func silkToWAV(data []byte) ([]byte, error) {
 	}
 	pcm, err := silk.DecodePCM(data, silk.DecodeOptions{SampleRateHz: voiceSampleRate})
 	if err != nil {
-		return nil, &UnsupportedVoiceFormatError{
-			Format: audioFormatSilk,
-			Head:   voiceHeadBytes(data),
-			Err:    fmt.Errorf("SILK 解码: %w", err),
-		}
+		// 头部分形似 SILK 但解码失败：保留「解码失败」语义（区别于格式
+		// 不受支持），首部字节供日志定位损坏/截断的实际位置。
+		return nil, fmt.Errorf("SILK 解码失败（首部 %X）: %w", voiceHeadBytes(data), err)
 	}
 	if len(pcm) == 0 {
 		return nil, fmt.Errorf("SILK 解码结果为空")
