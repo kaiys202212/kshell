@@ -5,16 +5,19 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yangk/kshell/internal/hub"
 	"github.com/yangk/kshell/internal/hubtools"
 )
 
 // queueAttachment 直接注入一条待转交附件（绕过下载/解密路径）。
+// queueAt 记为当前时间：预填等价「刚入队」，避免被惰性过期立即清掉。
 func queueAttachment(t *testing.T, b *Bridge, name string) {
 	t.Helper()
 	b.mu.Lock()
 	b.queue = append(b.queue, queuedFile{Name: name, Path: t.TempDir() + "/" + name})
+	b.queueAt = time.Now()
 	b.mu.Unlock()
 }
 

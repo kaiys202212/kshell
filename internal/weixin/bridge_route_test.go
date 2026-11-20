@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yangk/kshell/internal/hub"
 	"github.com/yangk/kshell/internal/hubtools"
@@ -498,9 +499,10 @@ func TestBridgeRouteAttachmentBypass(t *testing.T) {
 	}}
 	b.SetRouter(stub.router())
 
-	// 附件入队（直接注入，绕过下载路径）。
+	// 附件入队（直接注入，绕过下载路径；queueAt 记当前时间等价刚入队）。
 	b.mu.Lock()
 	b.queue = append(b.queue, queuedFile{Name: "需求.pdf", Path: t.TempDir() + "/需求.pdf"})
+	b.queueAt = time.Now()
 	b.mu.Unlock()
 
 	b.HandleInbound("u1", "ct-1", "帮我修复登录")
