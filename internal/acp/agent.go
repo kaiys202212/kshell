@@ -76,6 +76,24 @@ func (s *syncBuffer) String() string {
 	return s.b.String()
 }
 
+// Len 返回当前缓冲字节数：供上层按轮次取 stderr 增量，避免整段复制与旧错误串轮。
+func (s *syncBuffer) Len() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Len()
+}
+
+// Since 返回 mark 之后的增量与当前总长度；同一次加锁取齐，避免与并发写入错位。
+func (s *syncBuffer) Since(mark int) (string, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	full := s.b.String()
+	if mark < 0 || mark > len(full) {
+		return full, len(full)
+	}
+	return full[mark:], len(full)
+}
+
 // Agent 是一个已启动的 ACP agent 连接（一个子进程）。
 type Agent struct {
 	cmd     *exec.Cmd
@@ -341,7 +359,7 @@ func (a *Agent) SetMCP(servers []McpServerStdio) {
 }
 
 // SetSettingsMeta 设置 session/new 与 session/load 参数里的 _meta 载荷
-//（如 claude 的 {"claudeCode":{"options":{"settings":{...}}}}，载荷内部
+// （如 claude 的 {"claudeCode":{"options":{"settings":{...}}}}，载荷内部
 // 形态由 launch 层负责）。空串表示不携带。签名用 string：chat 层的可选
 // 接口断言按精确签名匹配，json.RawMessage 形参会让 *Agent 不满足
 // interface{ SetSettingsMeta(string) }。
@@ -457,6 +475,21 @@ func (a *Agent) Cancel(sessionID string) error {
 }
 
 func (a *Agent) Stderr() string { return a.stderr.String() }
+
+// StderrLen 返回 stderr 累计字节数（O(1)）：上层按轮次记录水位后只取增量。
+func (a *Agent) StderrLen() int { return a.stderr.Len() }
+
+// StderrSince 返回 mark 之后的 stderr 增量与当前总长度（同一次加锁取齐）。
+func (a *Agent) StderrSince(mark int) (string, int) { return a.stderr.Since(mark) }
+
+// Alive 报告连接是否仍可发起调用：读循环结束/主动 Close 后为 false。
+// 进程退出的 Wait 是独立 goroutine，单靠 exited 标志会留下定时器早于退出标记
+// 触发的窗口；自动续跑在调度与触发时都应先问 Alive。
+func (a *Agent) Alive() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return !a.closed
+}
 
 func (a *Agent) waitLoop() {
 	// 必须等 stdout 读完再 Wait：否则 os/exec 可能提前关闭管道丢弃尾部输出。

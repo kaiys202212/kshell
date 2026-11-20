@@ -16,6 +16,7 @@ var en = map[string]string{
 	"role.assistant":          "Assistant",
 	"transcript.sqlite_body":  `This session is stored in a database; the full conversation cannot be expanded as a file. Click "Activate" to resume, then view it.`,
 	"transcript.empty_body":   "No conversation content could be parsed. Click \"Activate\" to resume.",
+	"chat.auto_resume_prompt": "Auto-resume: continue the unfinished task. Do not repeat completed steps; if everything is done, give the final answer.",
 }
 
 var zhCN = map[string]string{
@@ -33,4 +34,5 @@ var zhCN = map[string]string{
 	"role.assistant":          "助手",
 	"transcript.sqlite_body":  "该会话保存在数据库中，无法以文件形式展开完整对话。请点击「激活」恢复后再查看。",
 	"transcript.empty_body":   "未解析到对话正文。请点击「激活」恢复后查看。",
+	"chat.auto_resume_prompt": "自动继续：请继续未完成的任务，不要重复已完成的步骤；若已完成，直接给出结论。",
 }

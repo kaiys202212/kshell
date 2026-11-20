@@ -9,6 +9,7 @@ import (
 
 	"github.com/yangk/kshell/internal/acp"
 	"github.com/yangk/kshell/internal/agenthook"
+	"github.com/yangk/kshell/internal/applang"
 	"github.com/yangk/kshell/internal/chat"
 	"github.com/yangk/kshell/internal/config"
 	"github.com/yangk/kshell/internal/hub"
@@ -23,6 +24,10 @@ import (
 // 注入桩）。Hub 投递回调在此接线：排队消息真正投递时改状态并补 ack 卡片。
 // 各回调的出站事件经 emitChatOut 统一翻译：manager 侧新 ID 翻回前端持有的
 // 原始 ID，重建后前端按旧 ID 索引的时间线/权限/退出状态才能继续收到。
+//
+// desktopAutoResumeDelay 供测试缩短；生产固定 2s，避免失败后立刻重发打断用户阅读。
+var desktopAutoResumeDelay = 2 * time.Second
+
 func newChatManager(a *App, b chat.Backend) *chat.Manager {
 	m := newChatManagerWith(a.emitChatOut, b, func() bool {
 		return a.snapshot().Config.PermissionMode == config.PermissionModeBypass
@@ -33,6 +38,7 @@ func newChatManager(a *App, b chat.Backend) *chat.Manager {
 			}
 		})
 	m.SetOnHubCallbacks(a.onHubQueued, a.onHubDelivered)
+	m.SetAutoResume(true, desktopAutoResumeDelay, func() string { return applang.T("chat.auto_resume_prompt") })
 	// 附件落盘缓存根目录：persistBlocks 按会话写入 <root>/<chatID>/，读回走
 	// ReadChatAttachmentData（同前缀校验）。本函数只在 initRealDeps 持锁期间
 	// 被调用，这里直读 a.opts（走 a.snapshot() 会重入 a.mu 死锁）。
