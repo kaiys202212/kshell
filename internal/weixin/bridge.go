@@ -917,15 +917,36 @@ func (b *Bridge) ingestVoice(ctx context.Context, v *InboundAttachment, needTran
 		log.Printf("[weixin] 语音转写未配置（无 ASR 模型） path=%s", path)
 		return note, "", ErrTranscriberNotConfigured
 	}
+	// 转写结果与耗时必须可观测：2026-11-20 真机事故里，网关 200 返回的
+	// 「拒答」被当成转写投递，日志只有「已落盘」，完全看不出中间发生过什么。
+	start := time.Now()
 	transcript, err = fn(ctx, wav)
+	elapsed := time.Since(start).Round(time.Millisecond)
+	trimmedTranscript := strings.TrimSpace(transcript)
 	if err != nil {
-		log.Printf("[weixin] 语音转写失败 path=%s err=%v", path, err)
+		// rejected 标记这轮是「模型/网关拒绝音频」而非网络或鉴权故障，
+		// 便于日志侧区分偶发失败与配置性缺陷。
+		log.Printf("[weixin] 语音转写失败 path=%s elapsed=%s rejected=%t err=%v",
+			path, elapsed, errors.Is(err, ErrVoiceUnsupported), err)
 		return note, "", err
 	}
-	if strings.TrimSpace(transcript) == "" {
-		log.Printf("[weixin] 语音转写结果为空 path=%s", path)
+	if trimmedTranscript == "" {
+		log.Printf("[weixin] 语音转写结果为空 path=%s elapsed=%s", path, elapsed)
+		return note, transcript, nil
 	}
+	log.Printf("[weixin] 语音转写完成 path=%s len=%d elapsed=%s prefix=%q",
+		path, len([]rune(trimmedTranscript)), elapsed, voicePrefix(trimmedTranscript))
 	return note, transcript, nil
+}
+
+// voicePrefix 取转写文本前 40 个字符（按字符截断），供日志快速判断内容是
+// 真实转写还是模型拒答。
+func voicePrefix(s string) string {
+	r := []rune(s)
+	if len(r) > 40 {
+		return string(r[:40]) + "…"
+	}
+	return s
 }
 
 // maxVoiceDumpSize 是失败语音原始载荷的落盘上限：保留足够识别格式的前缀

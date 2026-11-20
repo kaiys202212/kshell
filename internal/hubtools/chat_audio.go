@@ -110,7 +110,101 @@ func TranscribeViaChat(ctx context.Context, cfg Config, model string, wav []byte
 	if len(out.Choices) == 0 {
 		return "", fmt.Errorf("chat 转写响应无 choices")
 	}
-	return out.Choices[0].Message.Content, nil
+	content := out.Choices[0].Message.Content
+	if isTranscriptRejection(content) {
+		// 200 + 拒答：网关吞掉了音频，模型只能回「没收到语音」。绝不能把
+		// 这段文本当转写结果投递（2026-11-20 真机缺陷），归因为音频不支持。
+		return "", fmt.Errorf("%w: 模型返回拒答而非转写（%q）",
+			ErrChatAudioUnsupported, headRunes(strings.TrimSpace(content), 80))
+	}
+	return content, nil
+}
+
+// maxRejectionRunes 是拒答识别的长度上限：真机拒答都很短（数十字符），
+// 长文本即使命中关键词也按正常转写放行，避免把长篇陈述误判成拒绝。
+const maxRejectionRunes = 160
+
+// rejectionPhrases 是「模型声称没收到/听不了音频」的高置信短语。只收录
+// 指向「输入缺失、无法转写」的表述，不收裸「上传/重新发送」这类正常口语
+// （用户口述任务时完全可能说「帮我重新上传一下」）。
+var rejectionPhrases = []string{
+	"没有收到语音", "没有收到音频", "未收到语音", "未收到音频",
+	"没有提供语音", "没有提供音频", "还没有提供语音", "你还没有提供",
+	"没有语音内容", "没有音频内容",
+	"看不到任何音频", "看不到音频附件", "看不到语音", "无法看到音频",
+	"没有附带音频", "没有附带语音", "未附带音频", "没有附带任何音频",
+	"请把语音文件发上来", "把语音文件发上来", "请重新上传一次", "请重新发送语音",
+	// 英文（统一小写比较）。
+	"no audio", "no voice", "no speech",
+	"didn't receive", "did not receive", "haven't received", "have not received",
+	"cannot transcribe", "can't transcribe", "unable to transcribe",
+	"please upload the file", "please resend",
+}
+
+// rejectionVoiceWords 是「无法转写」类泛化表述的限定词：单独出现可能只是
+// 转述内容（如「讨论中出现了『无法转写』这个词」），必须同时提到语音/音频
+// 等音频载体时才判定为拒答。
+var rejectionVoiceWords = []string{"语音", "音频", "附件", "这段", "此", "内容"}
+
+// rejectionAbsence 是「没收到/没提供」类否定词，与音频载体词共现即判为拒答
+// （真机 200 拒答的真实措辞每次略有差异，靠固定短语穷举不可靠）。
+// 特意不收「没看到」：用户口述「我没看到你的语音消息」是正常指示，不是拒答。
+var rejectionAbsence = []string{"没有收到", "未收到", "还没有收到", "没有提供", "还没有提供", "没有附带", "未附带"}
+
+// rejectionAudioWords 是音频载体词（中英），供否定词共现规则使用。
+var rejectionAudioWords = []string{"语音", "音频", "audio", "voice"}
+
+// isTranscriptRejection 判断多模态 chat 返回的文本是不是「模型拒答」而非
+// 转写结果。判定条件：短文本（≤maxRejectionRunes）+ 命中拒答短语（或
+// 「无法转写」与音频载体词共现）。
+func isTranscriptRejection(text string) bool {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return false
+	}
+	if len([]rune(t)) > maxRejectionRunes {
+		return false
+	}
+	lower := strings.ToLower(t)
+	for _, p := range rejectionPhrases {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	if strings.Contains(lower, "无法转写") || strings.Contains(lower, "无法转录") {
+		for _, w := range rejectionVoiceWords {
+			if strings.Contains(lower, w) {
+				return true
+			}
+		}
+	}
+	// 否定词 + 音频载体：覆盖「我还没有收到需要转写的语音内容…没有附带
+	// 音频文件」这类真实措辞变体。
+	hasAbsence := false
+	for _, a := range rejectionAbsence {
+		if strings.Contains(lower, a) {
+			hasAbsence = true
+			break
+		}
+	}
+	if hasAbsence {
+		for _, w := range rejectionAudioWords {
+			if strings.Contains(lower, w) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// headRunes 取文本前 n 个字符（按字符而非字节，中文不被截半），用于错误与
+// 日志前缀。
+func headRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
 }
 
 // isAudioUnsupportedStatus 判定状态码是否可能是「模型不支持音频」：主流网关

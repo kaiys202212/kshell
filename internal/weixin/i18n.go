@@ -12,7 +12,9 @@ var bridgeTexts = map[string]langPair{
 	"file.queued_st": {"%d attachment(s) queued for forwarding", "待转交附件 %d 个"},
 	// 语音转写回执。
 	"voice.unconfigured": {"Voice received but no ASR model configured (Settings → Model platform → ASR model)", "已收到语音，但未配置语音转写模型（设置 → 模型平台 → 语音转写模型）"},
-	"voice.unsupported":  {"Voice received, but the current chat model does not accept audio input. Please configure a dedicated ASR model (Settings → Model platform → ASR model).", "已收到语音，但当前对话模型不支持音频输入，请在设置 → 模型平台 → 语音转写模型（asr_model）中配置专用转写模型"},
+	// 拒答与「不支持音频」共用此回执：两者都属于「这次没转出来」。语音文件
+	// 仍留在队列里，用户发一条文字说明需求即可连带转交，不必重发语音。
+	"voice.unsupported": {"Voice received, but transcription is unavailable (the chat model does not accept audio or refused it). The audio file is saved and will be forwarded together with your next text message.", "已收到语音，但未能转写（当前对话模型不支持或拒绝了音频）。语音文件已保存，发送一条文字说明需求后会连同文件一并转交"},
 	"voice.failed":       {"Voice transcription failed: %v", "语音转写失败：%v"},
 	"voice.empty":        {"Empty transcription result", "转写结果为空"},
 	// 非 SILK 载荷降级（%s=嗅探到的实际格式）：不明说底层 silkcc 报错，
