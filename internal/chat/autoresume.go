@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/yangk/kshell/internal/acp"
 )
@@ -64,4 +65,55 @@ func containsAny(s string, hints []string) bool {
 		}
 	}
 	return false
+}
+
+const autoResumeDefaultText = "Continue the unfinished task. Do not repeat completed steps; if everything is done, give the final answer."
+
+// cancelAutoResumeLocked 停止待执行的续跑并让已触发的定时器失效。调用方持锁。
+func (s *session) cancelAutoResumeLocked() {
+	if s.autoResumeTimer != nil {
+		s.autoResumeTimer.Stop()
+		s.autoResumeTimer = nil
+	}
+	s.autoResumeToken++
+}
+
+// scheduleAutoResumeLocked 在失败收尾后安排一次续跑；调用方持锁。
+func (m *Manager) scheduleAutoResumeLocked(s *session, err error, stop, stderr string) {
+	if !m.autoResume || s.exited || s.info.Status != StatusReady || s.promptInFlight ||
+		len(s.queue) > 0 || len(s.pending) > 0 || len(s.pendingElicit) > 0 {
+		return
+	}
+	if s.autoResumeCount >= 1 || !shouldAutoResume(err, stop, stderr) {
+		return
+	}
+	text := autoResumeDefaultText
+	if m.autoResumeText != nil {
+		if v := strings.TrimSpace(m.autoResumeText()); v != "" {
+			text = v
+		}
+	}
+	s.autoResumeCount++
+	s.cancelAutoResumeLocked()
+	token := s.autoResumeToken
+	turn := s.turnSeq
+	delay := m.autoResumeDelay
+	s.autoResumeTimer = time.AfterFunc(delay, func() { m.fireAutoResume(s.id, s, token, turn, text) })
+}
+
+// fireAutoResume 定时器触发：重新校验状态后投递自动续跑；任何一项不满足都静默放弃。
+func (m *Manager) fireAutoResume(id string, s *session, token, turn int64, text string) {
+	m.mu.Lock()
+	if m.byID[id] != s || s.exited || s.info.Status != StatusReady || s.promptInFlight ||
+		len(s.queue) > 0 || len(s.pending) > 0 || len(s.pendingElicit) > 0 ||
+		s.autoResumeToken != token || s.turnSeq != turn {
+		m.mu.Unlock()
+		return
+	}
+	s.autoResumeTimer = nil
+	m.mu.Unlock()
+	_ = m.deliverTurn(id, s, queuedMsg{
+		blocks: []acp.ContentBlock{{Type: "text", Text: text}},
+		auto:   true,
+	}, true)
 }

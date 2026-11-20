@@ -96,8 +96,14 @@ type session struct {
 	// turnOpen 记录历史尾部是否存在未收尾的旧轮内容：会话重建后重放的历史
 	// 分片与崩溃继承的半轮正文都不带 turn_done，若不补回合边界，desktop 的
 	// done 摘要会把旧轮正文拼进本轮。正常 turn 收尾时清零；下次投递前按位补哨兵。
-	turnOpen bool
-	idleTimer      *time.Timer     // 静默回退定时器（持锁操作）
+	turnOpen  bool
+	idleTimer *time.Timer // 静默回退定时器（持锁操作）
+
+	// 自动续跑：turnSeq 标识轮次，token 让过期定时器失效，count 限制每轮次数。
+	turnSeq         int64
+	autoResumeCount int
+	autoResumeToken int64
+	autoResumeTimer *time.Timer
 }
 
 type permissionResult struct {
@@ -114,6 +120,7 @@ type queuedMsg struct {
 	hubMsgID    string
 	viaHub      bool // 调用方显式标记 AgentHub 代发（与 hubMsgID 解耦），时间线据此打标
 	attachments []AttachmentMeta
+	auto        bool // 自动续跑生成的「继续」消息：不计入用户新输入、不重置续跑上限
 }
 
 // enqueueLocked 把条目追加到队尾并补齐稳定 ID（调用方持锁）。
@@ -170,6 +177,11 @@ type Manager struct {
 	onHubDelivered func(hubMsgID string)
 	// onQueue 在队列变化时推送全量快照（锁外执行），供前端展示/撤销。
 	onQueue func(id string, items []QueueItem)
+
+	// 自动续跑配置（SetAutoResume）：默认关闭，desktop 装配时开启。
+	autoResume      bool
+	autoResumeDelay time.Duration
+	autoResumeText  func() string
 
 	// onUpdateTap / onPermissionTap / onExitTap 是旁路多播监听（agentapi Feed
 	// 转发用）：在对应单回调之前触发，不影响既有链路。经 mu 读写。
@@ -271,6 +283,16 @@ func (m *Manager) SetOnExitTap(fn func(id string, code int, errMsg string)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onExitTap = fn
+}
+
+// SetAutoResume 配置瞬时失败自动续跑。默认关闭；text 为 nil 时用英文兜底。
+// delay<=0 时立即调度（测试用；生产传 2s）。
+func (m *Manager) SetAutoResume(enabled bool, delay time.Duration, text func() string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.autoResume = enabled
+	m.autoResumeDelay = delay
+	m.autoResumeText = text
 }
 
 // managerSeq 是包级 Manager 实例计数，混入 bootID 防同一计时器刻度内
@@ -840,6 +862,7 @@ func (m *Manager) remove(s *session) {
 	cancelPending(pending)
 	cancelPendingElicitations(pendingElicit)
 	s.stopIdleLocked() // 摘除后定时器不得再触发（防泄漏与悬垂）
+	s.cancelAutoResumeLocked()
 	// 尽力清理该会话的附件落盘缓存：本地小目录，RemoveAll 在锁内执行可接受
 	// （毫秒级，避免引入第二把锁或泄漏 goroutine）；错误忽略（缓存目录非关键数据）。
 	if m.attachmentsRoot != "" {
@@ -878,6 +901,7 @@ func (m *Manager) watchExit(s *session) {
 	s.queue = nil // 进程已退出，排队的消息不再有投递机会
 	onQueue := m.onQueue
 	s.stopIdleLocked()
+	s.cancelAutoResumeLocked()
 	pending := s.pending
 	s.pending = make(map[string]chan permissionResult)
 	pendingElicit := s.pendingElicit
@@ -912,6 +936,7 @@ func (m *Manager) fail(id string, code int, msg string) {
 	hadQueue := len(s.queue) > 0
 	s.queue = nil // 失败会话不再投递排队消息
 	onQueue := m.onQueue
+	s.cancelAutoResumeLocked()
 	m.mu.Unlock()
 
 	if hadQueue && onQueue != nil {
@@ -1055,6 +1080,19 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		m.mu.Unlock()
 		return errNotFound
 	}
+	if qm.auto {
+		// 自动续跑只在完全空闲时落地：期间用户已发新消息/排队/等权限，就放弃，
+		// 避免把自动消息插到用户意图前面。
+		if s.info.Status != StatusReady || s.promptInFlight || len(s.queue) > 0 ||
+			len(s.pending) > 0 || len(s.pendingElicit) > 0 {
+			m.mu.Unlock()
+			return nil
+		}
+	} else {
+		// 用户新输入开启新轮次：重置自动续跑预算并让过期定时器失效。
+		s.autoResumeCount = 0
+		s.cancelAutoResumeLocked()
+	}
 	if s.info.Status == StatusStarting || s.promptInFlight {
 		// 竞态兜底：期间又有轮次启动，改入队；补时间线与 emit 与 PromptBlocksHub 忙分支一致，
 		// 否则该消息要等下一轮收尾才可见。
@@ -1082,6 +1120,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 	s.info.Status = StatusRunning
 	// 在途 prompt 是投递忙闲依据；置位时停掉静默回退定时器（turn_done 会收尾）
 	s.promptInFlight = true
+	s.turnSeq++
 	s.stopIdleLocked()
 	s.closeStaleTurnLocked()
 	s.turnText = nil // 新回合起轮清零正文累计
@@ -1123,6 +1162,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 			return
 		}
 		s.promptInFlight = false
+		stderr := strings.TrimSpace(acp.StderrTail(conn.Stderr(), stderrTailLimit))
 		logf("chat: turn 结束 id=%s err=%v stop=%q inFlightTools=%d %v",
 			id, err, stop, len(s.inFlightTools), s.inFlightTools)
 		// 轮次以取消或异常终结时，agent 不会再给在途工具推终态：合成终态收口
@@ -1156,7 +1196,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		} else if stop != "" && stop != "end_turn" && stop != "cancelled" {
 			// 异常提前停止（refusal/max_tokens 等）：上游 CLI 常把 429 等 API 错误
 			// 映射成 refusal，具体原因只在 stderr 里，附尾部供前端归因展示。
-			u.Text = strings.TrimSpace(acp.StderrTail(conn.Stderr(), stderrTailLimit))
+			u.Text = stderr
 		}
 		s.history = append(s.history, u)
 		if len(s.history) > maxHistory {
@@ -1172,6 +1212,9 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		}
 		items := s.queueItemsLocked()
 		onQueue := m.onQueue
+		if !hasNext {
+			m.scheduleAutoResumeLocked(s, err, stop, stderr)
+		}
 		m.mu.Unlock()
 		if m.onUpdate != nil {
 			// 合成终态先于 turn_done/error 推送：时间线顺序与 history 一致
@@ -1274,6 +1317,7 @@ func (m *Manager) Cancel(id string) error {
 	}
 	sid := s.sessionID
 	conn := s.conn
+	s.cancelAutoResumeLocked()
 	pending := s.pending
 	s.pending = make(map[string]chan permissionResult)
 	pendingElicit := s.pendingElicit
@@ -1329,6 +1373,7 @@ func (m *Manager) Close(id string) error {
 	hadQueue := len(s.queue) > 0
 	s.queue = nil // 关闭后不再投递已排队的消息
 	onQueue := m.onQueue
+	s.cancelAutoResumeLocked()
 	if s.cancel != nil {
 		s.cancel()
 	}

@@ -15,16 +15,17 @@ import (
 
 // fakeConn 按脚本记录调用；Wait 阻塞到 Close（模拟真实进程生命周期）。
 type fakeConn struct {
-	mu        sync.Mutex
-	newStart  acp.SessionStart
-	loadErr   error
-	promptErr error
-	stop      string
-	stderr    string
-	cancelled []string
-	closed    bool
-	waitCh    chan struct{}
-	waitOnce  sync.Once
+	mu         sync.Mutex
+	newStart   acp.SessionStart
+	loadErr    error
+	promptErr  error
+	promptErrs []error // 按调用序号返回错误；缺省回退 promptErr
+	stop       string
+	stderr     string
+	cancelled  []string
+	closed     bool
+	waitCh     chan struct{}
+	waitOnce   sync.Once
 
 	promptGate   chan struct{}        // 非 nil 时 Prompt 阻塞等待，直到收到信号或 Close
 	prompts      []string             // 记录每次 Prompt 的展开文本（断言投递顺序）
@@ -100,8 +101,13 @@ func (c *fakeConn) Authenticate(ctx context.Context, methodID string) error {
 }
 func (c *fakeConn) Prompt(ctx context.Context, sessionID string, blocks []acp.ContentBlock) (string, error) {
 	c.mu.Lock()
+	call := len(c.prompts)
 	c.promptBlocks = append(c.promptBlocks, blocks)
 	c.prompts = append(c.prompts, flattenBlocks(blocks))
+	err := c.promptErr
+	if call < len(c.promptErrs) {
+		err = c.promptErrs[call]
+	}
 	gate := c.promptGate
 	c.mu.Unlock()
 	if gate != nil {
@@ -110,7 +116,7 @@ func (c *fakeConn) Prompt(ctx context.Context, sessionID string, blocks []acp.Co
 	if c.stop == "" {
 		c.stop = "end_turn"
 	}
-	return c.stop, c.promptErr
+	return c.stop, err
 }
 
 // promptCount 取某连接的 Prompt 调用次数（断言投递顺序用）。
