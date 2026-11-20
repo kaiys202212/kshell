@@ -21,6 +21,7 @@ func TestShouldAutoResume(t *testing.T) {
 		{name: "timeout", err: errors.New("context deadline exceeded"), want: true},
 		{name: "connection reset", err: errors.New("read tcp: connection reset by peer"), want: true},
 		{name: "refusal with 429 stderr", stop: "refusal", stderr: "error: 429 too many requests", want: true},
+		{name: "refusal with quota", stop: "refusal", stderr: "error: 429 insufficient quota", want: false},
 		{name: "refusal without transient", stop: "refusal", stderr: "model refused", want: false},
 		{name: "auth required", err: &acp.RPCError{Code: acp.ErrCodeAuthRequired, Message: "authRequired"}, want: false},
 		{name: "invalid params", err: &acp.RPCError{Code: -32602, Message: "invalid params"}, want: false},

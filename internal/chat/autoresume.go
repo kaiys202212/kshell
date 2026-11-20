@@ -30,8 +30,9 @@ func shouldAutoResume(err error, stop, stderr string) bool {
 		case "", "end_turn", "cancelled", "max_tokens", "max_turn_requests":
 			return false
 		case "refusal":
-			// 上游常把 429 映射成 refusal；只在 stderr 有瞬时特征时续跑。
-			return containsAny(text, transientHints)
+			// 上游常把 429 映射成 refusal；只在 stderr 有瞬时特征、且不是配额等
+			// 确定性失败时续跑。
+			return !containsAny(text, deterministicHints) && containsAny(text, transientHints)
 		default:
 			return false
 		}
