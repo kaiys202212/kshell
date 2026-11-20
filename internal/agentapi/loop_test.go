@@ -1254,3 +1254,115 @@ func TestManagerSystemRecentContextBothChannels(t *testing.T) {
 		}
 	}
 }
+
+// 测试：唯一会话在向用户提问时，system 注入【本轮投递判定】并把用户回复
+// 默认投递给提问会话；【活跃会话】段标注 [等待回答]。
+func TestManagerSystemAnswerHintForUniqueQuestion(t *testing.T) {
+	api, f := newLoopAPI(t)
+	f.active = []Session{
+		{ID: "chat-a", Tool: "claude", Title: "修复登录", Status: StatusIdle},
+		{ID: "chat-b", Tool: "codex", Title: "写文档", Status: StatusIdle},
+	}
+	f.msgs = map[string][]Message{
+		"chat-a": {{Kind: "agent", Text: "登录页还是登录接口？"}},
+		"chat-b": {{Kind: "agent", Text: "文档已完成。"}},
+	}
+	sc := &scriptChat{resps: []hubtools.Response{{Text: "已发给修复登录会话。"}}}
+	chatToolsHook = sc.hook
+	if _, err := api.Run(context.Background(), "改成接口吧", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	sys := sc.sysSeen[0]
+	for _, want := range []string{
+		"【本轮投递判定】",
+		"唯一在向用户提问的会话是「修复登录」",
+		"chat_id=chat-a",
+		"登录页还是登录接口？",
+		"默认直接 send",
+		"[等待回答]",
+	} {
+		if !strings.Contains(sys, want) {
+			t.Fatalf("system 缺少 %q:\n%s", want, sys)
+		}
+	}
+}
+
+// 测试：用户消息点名了其它会话时，不做「默认投递给提问会话」的提示，
+// 避免抢走用户明确指定的目标。
+func TestManagerSystemAnswerHintSuppressedByOtherTarget(t *testing.T) {
+	api, f := newLoopAPI(t)
+	f.active = []Session{
+		{ID: "chat-a", Tool: "claude", Title: "修复登录", Status: StatusIdle},
+		{ID: "chat-b", Tool: "codex", Title: "写文档", Status: StatusIdle},
+	}
+	f.msgs = map[string][]Message{
+		"chat-a": {{Kind: "agent", Text: "登录页还是登录接口？"}},
+		"chat-b": {{Kind: "agent", Text: "文档已完成。"}},
+	}
+	sc := &scriptChat{resps: []hubtools.Response{{Text: "结论"}}}
+	chatToolsHook = sc.hook
+	if _, err := api.Run(context.Background(), "写文档那个先继续", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Contains(sc.sysSeen[0], "【本轮投递判定】") {
+		t.Fatalf("用户已点名其它会话，不应注入默认投递提示:\n%s", sc.sysSeen[0])
+	}
+}
+
+// 测试：多个会话同时提问时列出全部提问供按关键词匹配，不擅自默认。
+func TestManagerSystemAnswerHintMultipleQuestions(t *testing.T) {
+	api, f := newLoopAPI(t)
+	f.active = []Session{
+		{ID: "chat-a", Tool: "claude", Title: "修复登录", Status: StatusIdle},
+		{ID: "chat-b", Tool: "codex", Title: "写文档", Status: StatusIdle},
+	}
+	f.msgs = map[string][]Message{
+		"chat-a": {{Kind: "agent", Text: "登录页还是登录接口？"}},
+		"chat-b": {{Kind: "agent", Text: "用中文还是英文？"}},
+	}
+	sc := &scriptChat{resps: []hubtools.Response{{Text: "结论"}}}
+	chatToolsHook = sc.hook
+	if _, err := api.Run(context.Background(), "都行", RunOpts{Channel: "hub"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	sys := sc.sysSeen[0]
+	for _, want := range []string{"【本轮投递判定】", "多个会话在向用户提问", "chat_id=chat-a", "chat_id=chat-b"} {
+		if !strings.Contains(sys, want) {
+			t.Fatalf("system 缺少 %q:\n%s", want, sys)
+		}
+	}
+	if strings.Contains(sys, "唯一在向用户提问的会话是") {
+		t.Fatalf("多个提问时不应给出唯一默认:\n%s", sys)
+	}
+}
+
+// 测试：questionWaiting 只看最后一条 agent 可见消息是否以问号结尾。
+func TestQuestionWaiting(t *testing.T) {
+	cases := []struct {
+		name string
+		msgs []Message
+		want bool
+	}{
+		{"中文问号", []Message{{Kind: "agent", Text: "要 A 还是 B？"}}, true},
+		{"英文问号", []Message{{Kind: "agent", Text: "continue?  "}}, true},
+		{"非问句", []Message{{Kind: "agent", Text: "已完成。"}}, false},
+		{"只看最后一条 agent", []Message{
+			{Kind: "agent", Text: "要 A 还是 B？"},
+			{Kind: "agent", Text: "已按 A 执行。"},
+		}, false},
+		{"忽略 user 尾条", []Message{
+			{Kind: "agent", Text: "要 A 还是 B？"},
+			{Kind: "user", Text: "A"},
+		}, true},
+		{"无消息", nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			api := New(&fakeBackend{msgs: map[string][]Message{"c1": c.msgs}})
+			_, got := api.questionWaiting(Session{ID: "c1"})
+			if got != c.want {
+				t.Fatalf("questionWaiting = %v, want %v", got, c.want)
+			}
+		})
+	}
+}

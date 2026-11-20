@@ -250,7 +250,7 @@ func summarizeManagerSteps(steps []hub.Step) string {
 // shortcutSend 处理「继续类短确认」的确定性捷径：SessionStatuses 里恰好一个
 // 等待会话时，把用户原文经 wxExecutor 的 Send 既有链路直接投递给该会话，
 // 返回单条确认回执（含会话名）。等待会话收敛为 perm 状态，不做问号启发
-//（问号启发在 agentapi waitingUser，仅服务循环内的模型语境）。零个/多个等待
+//（问号启发在 agentapi questionWaiting，仅服务循环内的模型语境）。零个/多个等待
 // 会话返回 handled=false 交管理者循环；Send 失败返回 Pending=true 让前端回落
 // 待选（草稿保留，不做部分投递、不重复进循环二次投递）。
 func (a *App) shortcutSend(text string) (HubPickView, bool) {

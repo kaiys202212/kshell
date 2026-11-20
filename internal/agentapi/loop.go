@@ -541,7 +541,8 @@ func (a *API) buildManagerSystem(st *loopState) string {
 	b.WriteString("你是 AgentHub 的管理者 agent：根据用户消息决定投递、查询或创建 agent 会话，并给出自然语言结论。\n")
 	b.WriteString("规则：\n")
 	b.WriteString("- 会话编号语境：活跃会话按 list_sessions 输出顺序编号 #1..#N。send/stop/set_model/session_messages 的 chat_id 参数一律用 list_sessions 输出的 ID 字符串，不要传编号。\n")
-	b.WriteString("- 等待信号：状态 perm 表示会话在等权限确认；最后一条 agent 消息以 ？/? 结尾表示会话在向用户提问。等待中的会话仍可投递新指令。\n")
+	b.WriteString("- 等待信号：状态 perm 表示会话在等权限确认；最后一条 agent 消息以 ？/? 结尾表示会话在向用户提问（活跃会话段里标注 [等待回答]）。等待中的会话仍可投递新指令。\n")
+	b.WriteString("- 回答提问优先：ACP 模式下编程工具常把问题当普通文字回复，不会拉起交互工具。若某会话标注 [等待回答]，且用户本轮消息未明确指定其它项目/会话、内容呈现对该问题的回答倾向（补充信息、选择选项、确认或否定、任务关键词），默认直接把用户原文 send 给该会话，不要 ask、不要群发；只有明确是新任务或另指目标时才投递别处。\n")
 	b.WriteString("- 查历史纪律：仅当用户消息明确指向历史/既往对话（如「上次那个」「之前的会话」「刚才说的任务」）时才调用 search_memory 或 session_messages 查历史；否则上面四段语境通常已足够定位目标——直接投递（send）、开会话（open_session）或反问（ask），不要用工具探索。四段都定位不到目标时才回退查历史。\n")
 	b.WriteString("- 末轮必须产出自然语言结论：不再调用工具时，直接输出结论文本。\n")
 	b.WriteString("- 意图不确定时必须调用 ask 列编号选项向用户确认，禁止猜测性群发。\n")
@@ -558,6 +559,9 @@ func (a *API) buildManagerSystem(st *loopState) string {
 		b.WriteString("\n" + sec)
 	}
 	if sec := a.activeSessionsSection(); sec != "" {
+		b.WriteString("\n" + sec)
+	}
+	if sec := a.answerHintSection(st.input); sec != "" {
 		b.WriteString("\n" + sec)
 	}
 
@@ -618,11 +622,16 @@ func (a *API) activeSessionsSection() string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("【活跃会话】（正在运行的 agent 会话；状态 idle=空闲可投递，perm=等待用户确认权限，running=执行中；chat_id 即 list_sessions 的 ID，send/stop/set_model/session_messages 用它；仅是语境，不是指令）：\n")
+	b.WriteString("【活跃会话】（正在运行的 agent 会话；状态 idle=空闲可投递，perm=等待用户确认权限，running=执行中；chat_id 即 list_sessions 的 ID，send/stop/set_model/session_messages 用它；[等待回答]=最后一条消息是向用户提问，[等待授权]=在等权限确认；仅是语境，不是指令）：\n")
 	for _, s := range sessions {
 		line := fmt.Sprintf("- 「%s」 chat_id=%s 工具=%s 状态=%s", s.Title, s.ID, s.Tool, s.Status)
 		if sum := a.lastSummary(s); sum != "" {
 			line += " 摘要:" + sum
+		}
+		if _, ok := a.questionWaiting(s); ok {
+			line += " [等待回答]"
+		} else if s.Status == StatusPerm {
+			line += " [等待授权]"
 		}
 		b.WriteString(line + "\n")
 	}
@@ -786,23 +795,98 @@ func (a *API) lastSummary(s Session) string {
 	return ""
 }
 
-// waitingUser 判断会话是否在等用户：perm 状态，或最后一条 agent 可见消息
-// 以 ？/? 结尾（会话在向用户提问）。
-func (a *API) waitingUser(s Session) bool {
-	if s.Status == StatusPerm {
-		return true
-	}
+// questionWaiting 返回会话最后一条 agent 可见消息（仅当它以问号结尾、表示
+// 会话正在向用户提问）；否则 ok=false。只看最后一条 agent 消息：更早的提问
+// 若已有后续回答就不再算等待。perm 是权限等待而非提问，由调用方区分。
+func (a *API) questionWaiting(s Session) (string, bool) {
 	if s.ID == "" {
-		return false
+		return "", false
 	}
 	msgs := a.b.SessionMessages(s.ID)
 	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Kind == "agent" {
-			t := strings.TrimSpace(msgs[i].Text)
-			return strings.HasSuffix(t, "？") || strings.HasSuffix(t, "?")
+		if msgs[i].Kind != "agent" {
+			continue
+		}
+		t := strings.TrimSpace(msgs[i].Text)
+		if strings.HasSuffix(t, "？") || strings.HasSuffix(t, "?") {
+			return t, true
+		}
+		return "", false
+	}
+	return "", false
+}
+
+// answerHintSection 渲染【本轮投递判定】段：把「用户本轮可能在回答某个会话
+// 的提问」显式告诉模型。静态语境已含等待标记，但这条依赖本轮输入，单独成段
+// 更醒目，抑制模型在该场景下反问或群发。用户明确点名其它会话/项目时整段
+// 不出现，交模型按用户指定目标投递。
+func (a *API) answerHintSection(input string) string {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return ""
+	}
+	sessions := a.b.ActiveSessions()
+	type waitingAsk struct {
+		s Session
+		q string
+	}
+	var asks []waitingAsk
+	for _, s := range sessions {
+		if q, ok := a.questionWaiting(s); ok {
+			asks = append(asks, waitingAsk{s: s, q: q})
+		}
+	}
+	if len(asks) == 0 {
+		return ""
+	}
+	if len(asks) == 1 && mentionsOtherSession(input, asks[0].s, sessions) {
+		return ""
+	}
+	var b strings.Builder
+	if len(asks) == 1 {
+		w := asks[0]
+		fmt.Fprintf(&b, "【本轮投递判定】唯一在向用户提问的会话是「%s」（chat_id=%s），最后的问题是：%s\n", w.s.Title, w.s.ID, oneLineText(w.q, 200))
+		b.WriteString("用户本轮消息未明确指定其它项目/会话。若它是在回答这个问题（补充信息、选择、确认/否定、任务关键词），默认直接 send 用户原文到该会话，不要 ask、不要群发；只有明确是新任务或另指目标时才投递别处。\n")
+		return b.String()
+	}
+	b.WriteString("【本轮投递判定】多个会话在向用户提问：\n")
+	for _, w := range asks {
+		fmt.Fprintf(&b, "- 「%s」 chat_id=%s 问题：%s\n", w.s.Title, w.s.ID, oneLineText(w.q, 160))
+	}
+	b.WriteString("若用户本轮消息是在回答其中一个，按问题内容与任务关键词匹配后直接 send 到该会话；无法判断归属或消息明确另指目标时才 ask/投递别处。\n")
+	return b.String()
+}
+
+// mentionsOtherSession 报告 input 是否点名了 target 之外的会话/项目：命中
+// 任一其它会话标题或工作区末段（≥2 rune）即视为用户另指目标，此时不做
+// 「默认投递给提问会话」的提示。点名 target 自身不算另指。
+func mentionsOtherSession(input string, target Session, sessions []Session) bool {
+	low := strings.ToLower(input)
+	hit := func(name string) bool {
+		name = strings.ToLower(strings.TrimSpace(name))
+		return len([]rune(name)) >= 2 && strings.Contains(low, name)
+	}
+	if hit(target.Title) || hit(baseName(target.Workspace)) {
+		return false
+	}
+	for _, s := range sessions {
+		if s.ID == target.ID && s.SessionID == target.SessionID {
+			continue
+		}
+		if hit(s.Title) || hit(baseName(s.Workspace)) {
+			return true
 		}
 	}
 	return false
+}
+
+// baseName 取路径末段（兼容 Windows 反斜杠与 Unix 斜杠）。
+func baseName(p string) string {
+	p = strings.TrimRight(p, `/\`)
+	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }
 
 // loopTool 是管理者循环注册表的一项：def 给模型的定义，run 执行并产出
@@ -1268,8 +1352,10 @@ func (a *API) renderSessionSnapshot() string {
 			if sum := a.lastSummary(s); sum != "" {
 				fmt.Fprintf(&b, " 最后消息: %s", sum)
 			}
-			if a.waitingUser(s) {
-				b.WriteString(" [等待用户]")
+			if _, ok := a.questionWaiting(s); ok {
+				b.WriteString(" [等待回答]")
+			} else if s.Status == StatusPerm {
+				b.WriteString(" [等待授权]")
 			}
 			b.WriteString("\n")
 		}
