@@ -22,6 +22,7 @@ type fakeConn struct {
 	promptErrs      []error // 按调用序号返回错误；缺省回退 promptErr
 	deadOnPromptErr bool    // 非 nil 时 Prompt 出错即把连接标记为已死（模拟进程退出）
 	dead            bool
+	stderrOnPrompt  []string // 按调用序号在 Prompt 内追加 stderr（模拟真实时序）
 	stop            string
 	stderr          string
 	cancelled       []string
@@ -112,6 +113,9 @@ func (c *fakeConn) Prompt(ctx context.Context, sessionID string, blocks []acp.Co
 	}
 	if err != nil && c.deadOnPromptErr {
 		c.dead = true
+	}
+	if call < len(c.stderrOnPrompt) {
+		c.stderr += c.stderrOnPrompt[call]
 	}
 	gate := c.promptGate
 	c.mu.Unlock()
@@ -345,9 +349,9 @@ func TestManagerOpenNewAndPrompt(t *testing.T) {
 // 上游 CLI 把 429 等 API 错误映射成 refusal，具体原因只在 stderr 里。
 func TestManagerTurnDoneAttachesStderrTail(t *testing.T) {
 	b := &fakeBackend{conn: &fakeConn{
-		waitCh: make(chan struct{}),
-		stop:   "refusal",
-		stderr: "2026-10-16 10:00:00 error: 429 Requests are too frequent. Please retry",
+		waitCh:         make(chan struct{}),
+		stop:           "refusal",
+		stderrOnPrompt: []string{"2026-10-16 10:00:00 error: 429 Requests are too frequent. Please retry"},
 	}}
 	c := &collector{}
 	m := NewManager(b, c.onUpdate, c.onPermission, c.onExit)

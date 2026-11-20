@@ -104,7 +104,6 @@ type session struct {
 	autoResumeCount int
 	autoResumeToken int64
 	autoResumeTimer *time.Timer
-	stderrMark      int // 上一轮结束时的 stderr 水位：本轮只看增量，防旧 429 串轮误判
 }
 
 type permissionResult struct {
@@ -1138,7 +1137,6 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 	conn := s.conn
 	ctx := s.ctx
 	turnToken := s.autoResumeToken
-	stderrMark := s.stderrMark
 	onInfo := m.onInfo
 	onUpdate := m.onUpdate
 	m.mu.Unlock()
@@ -1161,6 +1159,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 			}
 		}
 		logf("chat: turn 发起 id=%s inFlightTools=%d", id, len(s.inFlightTools))
+		stderrMark := connStderrLen(conn)
 		stop, err := conn.Prompt(ctx, sid, blocks)
 		m.mu.Lock()
 		if cur := m.byID[id]; cur != s || s.exited {
@@ -1170,9 +1169,9 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		s.promptInFlight = false
 		stderr := ""
 		if err != nil || (stop != "" && stop != "end_turn" && stop != "cancelled") || m.autoResume {
-			stderr = strings.TrimSpace(acp.StderrTail(connStderrSince(conn, stderrMark), stderrTailLimit))
+			raw, _ := connStderrDelta(conn, stderrMark)
+			stderr = strings.TrimSpace(acp.StderrTail(raw, stderrTailLimit))
 		}
-		s.stderrMark = connStderrLen(conn)
 		logf("chat: turn 结束 id=%s err=%v stop=%q inFlightTools=%d %v",
 			id, err, stop, len(s.inFlightTools), s.inFlightTools)
 		// 轮次以取消或异常终结时，agent 不会再给在途工具推终态：合成终态收口

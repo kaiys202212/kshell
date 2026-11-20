@@ -28,9 +28,9 @@ func promptAt(c *fakeConn, i int) string {
 
 func TestAutoResumeIgnoresPreviousTurnStderr(t *testing.T) {
 	c := &fakeConn{
-		waitCh:     make(chan struct{}),
-		stderr:     "old error: 429 too many requests",
-		promptErrs: []error{errors.New("invalid params"), errors.New("Internal error")},
+		waitCh:         make(chan struct{}),
+		stderrOnPrompt: []string{"old error: 429 too many requests", ""},
+		promptErrs:     []error{errors.New("invalid params"), errors.New("Internal error")},
 	}
 	m := newAutoResumeTestManager(t, c)
 	defer m.CloseAll()
@@ -83,7 +83,7 @@ func TestAutoResumeTimelineOrder(t *testing.T) {
 	b := &fakeBackend{conn: c}
 	col := &collector{}
 	m := NewManager(b, col.onUpdate, col.onPermission, col.onExit)
-	m.SetAutoResume(true, 20*time.Millisecond, func() string { return autoResumeTextForTest })
+	m.SetAutoResume(true, 100*time.Millisecond, func() string { return autoResumeTextForTest })
 	defer m.CloseAll()
 	info, _ := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
 	_ = m.Prompt(info.ID, "hi")
@@ -263,7 +263,7 @@ func TestAutoResumeSkipsWhenUserQueued(t *testing.T) {
 }
 
 func TestAutoResumeOnRefusalWithTransientStderr(t *testing.T) {
-	c := &fakeConn{waitCh: make(chan struct{}), stop: "refusal", stderr: "error: 429 too many requests"}
+	c := &fakeConn{waitCh: make(chan struct{}), stop: "refusal", stderrOnPrompt: []string{"error: 429 too many requests"}}
 	m := newAutoResumeTestManager(t, c)
 	defer m.CloseAll()
 	info, _ := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")

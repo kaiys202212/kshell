@@ -83,6 +83,17 @@ func (s *syncBuffer) Len() int {
 	return s.b.Len()
 }
 
+// Since 返回 mark 之后的增量与当前总长度；同一次加锁取齐，避免与并发写入错位。
+func (s *syncBuffer) Since(mark int) (string, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	full := s.b.String()
+	if mark < 0 || mark > len(full) {
+		return full, len(full)
+	}
+	return full[mark:], len(full)
+}
+
 // Agent 是一个已启动的 ACP agent 连接（一个子进程）。
 type Agent struct {
 	cmd     *exec.Cmd
@@ -467,6 +478,9 @@ func (a *Agent) Stderr() string { return a.stderr.String() }
 
 // StderrLen 返回 stderr 累计字节数（O(1)）：上层按轮次记录水位后只取增量。
 func (a *Agent) StderrLen() int { return a.stderr.Len() }
+
+// StderrSince 返回 mark 之后的 stderr 增量与当前总长度（同一次加锁取齐）。
+func (a *Agent) StderrSince(mark int) (string, int) { return a.stderr.Since(mark) }
 
 // Alive 报告连接是否仍可发起调用：读循环结束/主动 Close 后为 false。
 // 进程退出的 Wait 是独立 goroutine，单靠 exited 标志会留下定时器早于退出标记

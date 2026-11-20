@@ -45,8 +45,11 @@ func shouldAutoResume(err error, stop, stderr string) bool {
 
 var transientHints = []string{
 	"rate limit", "too many requests", "too frequent", "throttl",
-	"http 429", "status 429", "status code 429",
-	"http 5", "status 5", "service unavailable", "bad gateway", "gateway timeout",
+	"http 429", "status 429", "status: 429", "status code 429", "code 429", "code: 429",
+	"error 429", "error: 429", "response 429", "response code 429",
+	"http 5", "status 5", "status: 5", "status code 5", "code 5", "code: 5",
+	"error 5", "error: 5", "response 5", "response code 5",
+	"unavailable", "bad gateway", "gateway timeout",
 	"overloaded", "temporarily unavailable",
 	"timeout", "timed out", "deadline exceeded",
 	"connection reset", "connection refused", "connection closed",
@@ -72,8 +75,8 @@ func containsAny(s string, hints []string) bool {
 
 const autoResumeDefaultText = "Auto-resume: continue the unfinished task. Do not repeat completed steps; if everything is done, give the final answer."
 
-// connStderrLen / connStderrSince 取 stderr 水位与增量。*acp.Agent 提供 O(1) 的
-// StderrLen；其他实现退化为整段字符串长度（仅测试桩会走到）。
+// connStderrLen / connStderrDelta 取 stderr 水位与增量。*acp.Agent 提供 O(1)
+// StderrLen 与原子 StderrSince；其他实现退化为整段字符串（仅测试桩会走到）。
 func connStderrLen(c Conn) int {
 	if c == nil {
 		return 0
@@ -84,15 +87,20 @@ func connStderrLen(c Conn) int {
 	return len(c.Stderr())
 }
 
-func connStderrSince(c Conn, mark int) string {
+func connStderrDelta(c Conn, mark int) (string, int) {
 	if c == nil {
-		return ""
+		return "", 0
+	}
+	if x, ok := c.(interface {
+		StderrSince(int) (string, int)
+	}); ok {
+		return x.StderrSince(mark)
 	}
 	full := c.Stderr()
 	if mark < 0 || mark > len(full) {
-		return full
+		return full, len(full)
 	}
-	return full[mark:]
+	return full[mark:], len(full)
 }
 
 // connAlive 判断连接是否还能发下一轮；不支持 Alive 的实现按存活处理（测试桩）。
@@ -146,6 +154,7 @@ func (m *Manager) fireAutoResume(id string, s *session, token, turn int64, text 
 	if !m.autoResume || m.byID[id] != s || s.exited || s.info.Status != StatusReady || s.promptInFlight ||
 		len(s.queue) > 0 || len(s.pending) > 0 || len(s.pendingElicit) > 0 ||
 		s.autoResumeToken != token || s.turnSeq != turn || !connAlive(s.conn) {
+		s.autoResumeTimer = nil
 		m.mu.Unlock()
 		return
 	}
