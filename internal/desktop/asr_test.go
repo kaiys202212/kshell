@@ -1,8 +1,10 @@
 package desktop
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/yangk/kshell/internal/config"
 )
@@ -88,6 +90,38 @@ func TestGetASRInstallLogEmpty(t *testing.T) {
 	app := newASRTestApp(t)
 	if log := app.GetASRInstallLog(); log != "" {
 		t.Fatalf("初始日志应为空: %q", log)
+	}
+}
+
+// TestInstallASRLocalReturnsPromptly 守住回归：InstallASRLocal 若在持有 a.mu 时再调
+// runCtx()（内部重复加同一把不可重入锁），绑定会永久挂起，进而卡死整个 App。
+func TestInstallASRLocalReturnsPromptly(t *testing.T) {
+	app := newASRTestApp(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	app.mu.Lock()
+	app.ctx = ctx
+	app.mu.Unlock()
+
+	done := make(chan error, 1)
+	go func() { done <- app.InstallASRLocal() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("InstallASRLocal: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("InstallASRLocal 超过 2s 未返回：疑似持有 a.mu 时调 runCtx 造成自死锁")
+	}
+
+	// 立即取消下载并等任务收尾，避免 goroutine 写盘与 TempDir 清理竞争。
+	cancel()
+	deadline := time.Now().Add(2 * time.Second)
+	for app.GetASRStatus().Running && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if app.GetASRStatus().Running {
+		t.Fatal("后台安装任务未在 2s 内结束")
 	}
 }
 

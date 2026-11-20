@@ -115,6 +115,9 @@ func (a *App) InstallASRLocal() error {
 	if _, err := asrlocal.RuntimeAsset(runtime.GOOS, runtime.GOARCH); err != nil {
 		return err
 	}
+	// runCtx 内部也加 a.mu，必须在拿锁之前取：Go 的 Mutex 不可重入，持锁再调
+	// 会让绑定永久挂起，进而卡死所有依赖 a.mu 的 Wails 调用。
+	ctx := a.runCtx()
 	a.mu.Lock()
 	if a.asrJob.running {
 		a.mu.Unlock()
@@ -122,7 +125,6 @@ func (a *App) InstallASRLocal() error {
 	}
 	a.asrJob = asrInstallJob{running: true}
 	cfg := a.opts.Config.ASR
-	ctx := a.runCtx()
 	a.mu.Unlock()
 
 	go a.execASRInstall(ctx, dir, cfg)
