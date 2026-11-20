@@ -543,6 +543,8 @@ func (a *API) buildManagerSystem(st *loopState) string {
 	b.WriteString("- 会话编号语境：活跃会话按 list_sessions 输出顺序编号 #1..#N。send/stop/set_model/session_messages 的 chat_id 参数一律用 list_sessions 输出的 ID 字符串，不要传编号。\n")
 	b.WriteString("- 等待信号：状态 perm 表示会话在等权限确认；最后一条 agent 消息以 ？/? 结尾表示会话在向用户提问（活跃会话段里标注 [等待回答]）。等待中的会话仍可投递新指令。\n")
 	b.WriteString("- 回答提问优先：ACP 模式下编程工具常把问题当普通文字回复，不会拉起交互工具。若某会话标注 [等待回答]，且用户本轮消息未明确指定其它项目/会话、内容呈现对该问题的回答倾向（补充信息、选择选项、确认或否定、任务关键词），默认直接把用户原文 send 给该会话，不要 ask、不要群发；只有明确是新任务或另指目标时才投递别处。\n")
+	b.WriteString("- 非投递请求：用户询问某任务的执行情况/进度/结果时，用 list_sessions（必要时 session_messages）读取现状后直接回答，不要为了“有动作”而 send，也不要反问用户自己能查到的状态；用户要求停止/取消/中断/叫停某任务时，确定目标会话后调用 stop，不要 send。\n")
+	b.WriteString("- 能直接回答就直接回答：无需投递的解释、总结、状态查询，直接基于上面语境或工具结果产出结论。\n")
 	b.WriteString("- 查历史纪律：仅当用户消息明确指向历史/既往对话（如「上次那个」「之前的会话」「刚才说的任务」）时才调用 search_memory 或 session_messages 查历史；否则上面四段语境通常已足够定位目标——直接投递（send）、开会话（open_session）或反问（ask），不要用工具探索。四段都定位不到目标时才回退查历史。\n")
 	b.WriteString("- 末轮必须产出自然语言结论：不再调用工具时，直接输出结论文本。\n")
 	b.WriteString("- 意图不确定时必须调用 ask 列编号选项向用户确认，禁止猜测性群发。\n")
@@ -948,7 +950,7 @@ func (a *API) buildLoopTools(ctx context.Context, st *loopState) []loopTool {
 	}
 
 	// 1. list_sessions：活跃+磁盘快照，附编号语境与等待信号。
-	add("list_sessions", "列出全部会话快照：编号/ID/工具/标题/状态/最后消息/是否等用户。send 等工具的 chat_id 用输出的 ID 值。",
+	add("list_sessions", "列出全部会话快照：编号/ID/工具/标题/状态/最后消息/是否等用户。用户询问任务执行情况时用它读取现状后汇报。send 等工具的 chat_id 用输出的 ID 值。",
 		schemaObj(map[string]any{}),
 		func(string) (string, error) { return a.renderSessionSnapshot(), nil })
 
@@ -1060,7 +1062,7 @@ func (a *API) buildLoopTools(ctx context.Context, st *loopState) []loopTool {
 		})
 
 	// 5. stop：中断会话当前轮次。
-	add("stop", "中断某活跃会话当前正在运行的轮次。",
+	add("stop", "中断某活跃会话当前正在运行的轮次（用户要求停止/取消/中断/叫停某任务时用，不要改用 send）。",
 		schemaObj(map[string]any{"chat_id": strProp("目标会话 chat_id")}, "chat_id"),
 		func(args string) (string, error) {
 			m, err := parseArgs(args)

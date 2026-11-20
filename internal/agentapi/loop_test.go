@@ -1336,6 +1336,22 @@ func TestManagerSystemAnswerHintMultipleQuestions(t *testing.T) {
 	}
 }
 
+// 测试：非投递任务（状态汇报 / 叫停）有明确行为规则。
+func TestManagerSystemNonDeliveryGuidance(t *testing.T) {
+	api, _ := newLoopAPI(t)
+	sc := &scriptChat{resps: []hubtools.Response{{Text: "结论"}}}
+	chatToolsHook = sc.hook
+	if _, err := api.Run(context.Background(), "看看修复登录到什么进度了", RunOpts{Channel: "wechat"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	sys := sc.sysSeen[0]
+	for _, want := range []string{"非投递请求", "执行情况", "调用 stop", "不要 send"} {
+		if !strings.Contains(sys, want) {
+			t.Fatalf("system 缺少 %q:\n%s", want, sys)
+		}
+	}
+}
+
 // 测试：questionWaiting 只看最后一条 agent 可见消息是否以问号结尾。
 func TestQuestionWaiting(t *testing.T) {
 	cases := []struct {
