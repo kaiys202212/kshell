@@ -10,6 +10,9 @@ var bridgeTexts = map[string]langPair{
 	"file.failed":    {"Failed to fetch attachment %s", "附件 %s 获取失败"},
 	"file.line":      {"[Attachment] %s saved at %s", "[附件] %s 已保存至 %s"},
 	"file.queued_st": {"%d attachment(s) queued for forwarding", "待转交附件 %d 个"},
+	// 附件超时惰性过期回执（%d=丢弃个数，%s=文件名列表）：只发附件没有配文字
+	// 超过 1 分钟，下一条消息入口整批丢弃，不再挂队列弹待选。
+	"file.expired": {"%d attachment(s) dropped after 1m without accompanying text: %s. Resend with your text if still needed.", "附件已超时忽略（%d 个，1 分钟内未收到配套文字）：%s。如仍需转交，请随文字重新发送。"},
 	// 语音转写回执。
 	"voice.unconfigured": {"Voice received but no ASR model configured (Settings → Model platform → ASR model)", "已收到语音，但未配置语音转写模型（设置 → 模型平台 → 语音转写模型）"},
 	// 拒答与「不支持音频」共用此回执：两者都属于「这次没转出来」。语音文件

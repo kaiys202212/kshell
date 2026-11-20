@@ -92,6 +92,7 @@ type Bridge struct {
 	pending     []pendingMsg // -14 时缓存的待发
 	undelivered int          // 发送失败计数（#st 用）
 	queue       []queuedFile // 待转交附件（等下一条可转发文字合并投递）
+	queueAt     time.Time    // 最近一次附件入队时间（整批以最新一张为基准的过期计时）；mu 保护
 	// svrMap 是「出站消息 ID（message_id）→ 会话归因」映射（rememberSvrAttr
 	// 写，resolveQuote 读）。按 wxid 落盘到 svrMapPath，跨重启仍可按
 	// SessionID 恢复已关会话。svrOrder 记录插入序，超上限丢最旧。
@@ -147,6 +148,8 @@ type Bridge struct {
 
 	// sleep 供测试注入 no-op，避免重试真实等待。
 	sleep func(time.Duration)
+	// nowFn 供测试注入假时钟（附件过期判定用），避免真实等待；nil 回落 time.Now。
+	nowFn func() time.Time
 }
 
 // outboundCap 是出站队列容量：满时新消息直接丢弃计 undelivered，
@@ -428,6 +431,10 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 
 	b.flushPending()
 
+	// 惰性过期：先清超时附件批（回执随本条消息回复发出），再处理本条消息
+	// 的附件/文字，保证下游所有队列读取方看到的是过期后的状态。
+	expiredNote := b.purgeExpiredQueue()
+
 	receipt := b.ingestAttachments(ctx, m.Attachments)
 
 	text := m.Text
@@ -515,6 +522,11 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	// 也要让用户知道音频未解码，并给出可定位的样本。
 	if formatNote != "" {
 		replies = append(replies, hub.Reply{Text: formatNote})
+	}
+	// 超时丢弃回执独立于 merged 抑制（与 formatNote 同待遇）：即便本条消息
+	// 合并/投递成功，也要让用户知道上一批附件已被忽略，不静默消失。
+	if expiredNote != "" {
+		replies = append(replies, hub.Reply{Text: expiredNote})
 	}
 	// #st 末尾追加待转交附件数，防用户遗忘队列（N>0 才追加）。按空白取第一
 	// 段与 "#st"/"＃st" 精确比较，避免 "#stop" 等未来命令误伤。
@@ -862,6 +874,7 @@ func (b *Bridge) ingestAttachments(ctx context.Context, atts []InboundAttachment
 			if err == nil {
 				b.mu.Lock()
 				b.queue = append(b.queue, queuedFile{Name: name, Path: path})
+				b.queueAt = b.now() // 整批以最新一张为基准：新附件续期过期计时
 				total := len(b.queue)
 				b.mu.Unlock()
 				log.Printf("[weixin] 附件已落盘待转交 name=%s path=%s 队列=%d", name, path, total)
@@ -905,6 +918,7 @@ func (b *Bridge) ingestVoice(ctx context.Context, v *InboundAttachment, needTran
 	}
 	b.mu.Lock()
 	b.queue = append(b.queue, queuedFile{Name: name, Path: path})
+	b.queueAt = b.now() // 语音与附件同队列同待遇：入队即续期过期计时
 	total := len(b.queue)
 	b.mu.Unlock()
 	log.Printf("[weixin] 语音已落盘待转交 path=%s 队列=%d", path, total)
@@ -1030,7 +1044,55 @@ func (b *Bridge) queuedPrefix() string {
 func (b *Bridge) clearQueue() {
 	b.mu.Lock()
 	b.queue = nil
+	b.queueAt = time.Time{}
 	b.mu.Unlock()
+}
+
+// now 取当前时间：测试注入假时钟（nowFn），nil 回落 time.Now。
+func (b *Bridge) now() time.Time {
+	if b.nowFn != nil {
+		return b.nowFn()
+	}
+	return time.Now()
+}
+
+// attachmentTTL 是附件等待配套文字的最长时间；超时在下一条消息入口惰性丢弃。
+const attachmentTTL = time.Minute
+
+// purgeExpiredQueue 惰性过期：距最近一次附件入队超过 TTL 且期间无可转发文字
+// 消费时，整批丢弃队列附件并返回给用户的超时回执（无过期返回空串）。
+// 计时以最新一张入队时间为基准（新附件续期整批）＝空闲超时语义，多图连发
+// （微信逐条推送 + 下载秒级耗时）不会被最早一张的计时误伤。
+//
+// 两个守卫期间不丢：挂起反问（askPending）是 2026-11-19 续跑流要保护的
+// 「用户思考后补文字回答」，且此时附件本就不会触发待选菜单；待选菜单挂起
+// （console Busy）的暂存正文已含附件说明行，丢弃会造成悬空引用。守卫在持
+// b.mu 之前无锁快照（console 回调进 bridge 有持锁回调死锁前科）；入站单
+// goroutine 串行保证快照与清理之间队列无并发写。
+//
+// 只在 HandleInboundMsg 入口调用：合并判定、queued 标记、待选分支、#st 尾注
+// 全部在其后执行，看到的都是过期后的队列状态——附件丢弃后不再弹
+// 「附件消息需要指定目标会话」待选菜单正是靠这个时序。
+func (b *Bridge) purgeExpiredQueue() string {
+	busy := b.console.Busy()
+	askPending := b.askPendingFn != nil && b.askPendingFn()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.queue) == 0 || busy || askPending {
+		return ""
+	}
+	if now := b.now(); now.Sub(b.queueAt) < attachmentTTL {
+		return ""
+	}
+	names := make([]string, 0, len(b.queue))
+	for _, q := range b.queue {
+		names = append(names, q.Name)
+	}
+	n := len(b.queue)
+	b.queue = nil
+	b.queueAt = time.Time{}
+	log.Printf("[weixin] 附件超时忽略 count=%d names=%s", n, strings.Join(names, "、"))
+	return fmt.Sprintf(bridgeText(b.lang, "file.expired"), n, strings.Join(names, "、"))
 }
 
 // isForwardableText 判断文本是否可携带附件队列转发：非空、非命令（# 与全角＃）、
