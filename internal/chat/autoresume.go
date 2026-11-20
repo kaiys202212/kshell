@@ -44,8 +44,10 @@ func shouldAutoResume(err error, stop, stderr string) bool {
 }
 
 var transientHints = []string{
-	"429", "rate limit", "too many requests", "too frequent",
-	"502", "503", "504", "overloaded", "temporarily unavailable",
+	"rate limit", "too many requests", "too frequent", "throttl",
+	"http 429", "status 429", "status code 429",
+	"http 5", "status 5", "service unavailable", "bad gateway", "gateway timeout",
+	"overloaded", "temporarily unavailable",
 	"timeout", "timed out", "deadline exceeded",
 	"connection reset", "connection refused", "connection closed",
 	"socket hang up", "unexpected eof", "stream error", "network error",
@@ -68,7 +70,41 @@ func containsAny(s string, hints []string) bool {
 	return false
 }
 
-const autoResumeDefaultText = "Continue the unfinished task. Do not repeat completed steps; if everything is done, give the final answer."
+const autoResumeDefaultText = "Auto-resume: continue the unfinished task. Do not repeat completed steps; if everything is done, give the final answer."
+
+// connStderrLen / connStderrSince 取 stderr 水位与增量。*acp.Agent 提供 O(1) 的
+// StderrLen；其他实现退化为整段字符串长度（仅测试桩会走到）。
+func connStderrLen(c Conn) int {
+	if c == nil {
+		return 0
+	}
+	if x, ok := c.(interface{ StderrLen() int }); ok {
+		return x.StderrLen()
+	}
+	return len(c.Stderr())
+}
+
+func connStderrSince(c Conn, mark int) string {
+	if c == nil {
+		return ""
+	}
+	full := c.Stderr()
+	if mark < 0 || mark > len(full) {
+		return full
+	}
+	return full[mark:]
+}
+
+// connAlive 判断连接是否还能发下一轮；不支持 Alive 的实现按存活处理（测试桩）。
+func connAlive(c Conn) bool {
+	if c == nil {
+		return false
+	}
+	if x, ok := c.(interface{ Alive() bool }); ok {
+		return x.Alive()
+	}
+	return true
+}
 
 // cancelAutoResumeLocked 停止待执行的续跑并让已触发的定时器失效。调用方持锁。
 func (s *session) cancelAutoResumeLocked() {
@@ -80,9 +116,11 @@ func (s *session) cancelAutoResumeLocked() {
 }
 
 // scheduleAutoResumeLocked 在失败收尾后安排一次续跑；调用方持锁。
-func (m *Manager) scheduleAutoResumeLocked(s *session, err error, stop, stderr string) {
+// turnToken 是本轮开始时的 token：用户 Cancel/关闭会递增 token，使本轮不再续跑。
+func (m *Manager) scheduleAutoResumeLocked(s *session, turnToken int64, err error, stop, stderr string) {
 	if !m.autoResume || s.exited || s.info.Status != StatusReady || s.promptInFlight ||
-		len(s.queue) > 0 || len(s.pending) > 0 || len(s.pendingElicit) > 0 {
+		len(s.queue) > 0 || len(s.pending) > 0 || len(s.pendingElicit) > 0 ||
+		s.autoResumeToken != turnToken || !connAlive(s.conn) {
 		return
 	}
 	if s.autoResumeCount >= 1 || !shouldAutoResume(err, stop, stderr) {
@@ -105,16 +143,18 @@ func (m *Manager) scheduleAutoResumeLocked(s *session, err error, stop, stderr s
 // fireAutoResume 定时器触发：重新校验状态后投递自动续跑；任何一项不满足都静默放弃。
 func (m *Manager) fireAutoResume(id string, s *session, token, turn int64, text string) {
 	m.mu.Lock()
-	if m.byID[id] != s || s.exited || s.info.Status != StatusReady || s.promptInFlight ||
+	if !m.autoResume || m.byID[id] != s || s.exited || s.info.Status != StatusReady || s.promptInFlight ||
 		len(s.queue) > 0 || len(s.pending) > 0 || len(s.pendingElicit) > 0 ||
-		s.autoResumeToken != token || s.turnSeq != turn {
+		s.autoResumeToken != token || s.turnSeq != turn || !connAlive(s.conn) {
 		m.mu.Unlock()
 		return
 	}
 	s.autoResumeTimer = nil
 	m.mu.Unlock()
 	_ = m.deliverTurn(id, s, queuedMsg{
-		blocks: []acp.ContentBlock{{Type: "text", Text: text}},
-		auto:   true,
+		blocks:    []acp.ContentBlock{{Type: "text", Text: text}},
+		auto:      true,
+		autoToken: token,
+		autoTurn:  turn,
 	}, true)
 }

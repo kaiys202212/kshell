@@ -18,6 +18,9 @@ func TestShouldAutoResume(t *testing.T) {
 	}{
 		{name: "429 error", err: errors.New("acp rpc error -32603: 429 Requests are too frequent"), want: true},
 		{name: "503 error", err: errors.New("upstream 503 Service Unavailable"), want: true},
+		{name: "http 503", err: errors.New("HTTP 503 from upstream"), want: true},
+		{name: "bare number token count", err: errors.New("max tokens exceeded 5024"), want: false},
+		{name: "bare number line", err: errors.New("failed at line 429"), want: false},
 		{name: "timeout", err: errors.New("context deadline exceeded"), want: true},
 		{name: "connection reset", err: errors.New("read tcp: connection reset by peer"), want: true},
 		{name: "refusal with 429 stderr", stop: "refusal", stderr: "error: 429 too many requests", want: true},

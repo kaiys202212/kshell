@@ -104,6 +104,7 @@ type session struct {
 	autoResumeCount int
 	autoResumeToken int64
 	autoResumeTimer *time.Timer
+	stderrMark      int // 上一轮结束时的 stderr 水位：本轮只看增量，防旧 429 串轮误判
 }
 
 type permissionResult struct {
@@ -120,7 +121,9 @@ type queuedMsg struct {
 	hubMsgID    string
 	viaHub      bool // 调用方显式标记 AgentHub 代发（与 hubMsgID 解耦），时间线据此打标
 	attachments []AttachmentMeta
-	auto        bool // 自动续跑生成的「继续」消息：不计入用户新输入、不重置续跑上限
+	auto        bool  // 自动续跑生成的「继续」消息：不计入用户新输入、不重置续跑上限
+	autoToken   int64 // 自动续跑的调度 token：投递前再校验，防止用户轮次已在间隙完成
+	autoTurn    int64 // 调度时的 turnSeq：同上
 }
 
 // enqueueLocked 把条目追加到队尾并补齐稳定 ID（调用方持锁）。
@@ -264,7 +267,7 @@ func (m *Manager) takeExitTap() func(id string, code int, errMsg string) {
 }
 
 // SetOnUpdateTap 注册更新旁路监听：每帧 update 在既有 onUpdate 之外触发一次
-//（agentapi Feed 转发用，nil 取消）。
+// （agentapi Feed 转发用，nil 取消）。
 func (m *Manager) SetOnUpdateTap(fn func(id string, u Update)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1081,10 +1084,11 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		return errNotFound
 	}
 	if qm.auto {
-		// 自动续跑只在完全空闲时落地：期间用户已发新消息/排队/等权限，就放弃，
-		// 避免把自动消息插到用户意图前面。
+		// 自动续跑只在完全空闲时落地：期间用户已发新消息/排队/等权限，或 token/turn
+		// 已变（用户轮次已在 fire 与本次加锁之间完成），就放弃，避免插到用户意图前面。
 		if s.info.Status != StatusReady || s.promptInFlight || len(s.queue) > 0 ||
-			len(s.pending) > 0 || len(s.pendingElicit) > 0 {
+			len(s.pending) > 0 || len(s.pendingElicit) > 0 ||
+			s.autoResumeToken != qm.autoToken || s.turnSeq != qm.autoTurn {
 			m.mu.Unlock()
 			return nil
 		}
@@ -1133,6 +1137,8 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 	sid := s.sessionID
 	conn := s.conn
 	ctx := s.ctx
+	turnToken := s.autoResumeToken
+	stderrMark := s.stderrMark
 	onInfo := m.onInfo
 	onUpdate := m.onUpdate
 	m.mu.Unlock()
@@ -1162,7 +1168,11 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 			return
 		}
 		s.promptInFlight = false
-		stderr := strings.TrimSpace(acp.StderrTail(conn.Stderr(), stderrTailLimit))
+		stderr := ""
+		if err != nil || (stop != "" && stop != "end_turn" && stop != "cancelled") || m.autoResume {
+			stderr = strings.TrimSpace(acp.StderrTail(connStderrSince(conn, stderrMark), stderrTailLimit))
+		}
+		s.stderrMark = connStderrLen(conn)
 		logf("chat: turn 结束 id=%s err=%v stop=%q inFlightTools=%d %v",
 			id, err, stop, len(s.inFlightTools), s.inFlightTools)
 		// 轮次以取消或异常终结时，agent 不会再给在途工具推终态：合成终态收口
@@ -1213,7 +1223,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		items := s.queueItemsLocked()
 		onQueue := m.onQueue
 		if !hasNext {
-			m.scheduleAutoResumeLocked(s, err, stop, stderr)
+			m.scheduleAutoResumeLocked(s, turnToken, err, stop, stderr)
 		}
 		m.mu.Unlock()
 		if m.onUpdate != nil {
@@ -1458,7 +1468,7 @@ func (m *Manager) RememberKnownIDs(id string, ids []string) {
 // 绑定 SessionID 后，仅当 messages>0 且 title 非空才改页签标题（用户已发言）。
 // 只改 Info：协议层继续用 agent 返回的内部 sessionID，Prompt/Cancel 不受影响。
 // 候选不止一个时，绑给「会话 CreatedAt 与聊天 openedAt 距离最小」的聊天
-//（CreatedAt 零值距离记 0），避免同工作区更早打开的无主聊天按 m.order
+// （CreatedAt 零值距离记 0），避免同工作区更早打开的无主聊天按 m.order
 // 抢走新会话（2026-11-11 错绑事故）；距离并列时保持先出现者优先。
 func (m *Manager) AttachSession(sessionID, workspace, toolID, title string, messages int, createdAt time.Time) bool {
 	m.mu.Lock()

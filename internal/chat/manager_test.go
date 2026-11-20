@@ -15,17 +15,19 @@ import (
 
 // fakeConn 按脚本记录调用；Wait 阻塞到 Close（模拟真实进程生命周期）。
 type fakeConn struct {
-	mu         sync.Mutex
-	newStart   acp.SessionStart
-	loadErr    error
-	promptErr  error
-	promptErrs []error // 按调用序号返回错误；缺省回退 promptErr
-	stop       string
-	stderr     string
-	cancelled  []string
-	closed     bool
-	waitCh     chan struct{}
-	waitOnce   sync.Once
+	mu              sync.Mutex
+	newStart        acp.SessionStart
+	loadErr         error
+	promptErr       error
+	promptErrs      []error // 按调用序号返回错误；缺省回退 promptErr
+	deadOnPromptErr bool    // 非 nil 时 Prompt 出错即把连接标记为已死（模拟进程退出）
+	dead            bool
+	stop            string
+	stderr          string
+	cancelled       []string
+	closed          bool
+	waitCh          chan struct{}
+	waitOnce        sync.Once
 
 	promptGate   chan struct{}        // 非 nil 时 Prompt 阻塞等待，直到收到信号或 Close
 	prompts      []string             // 记录每次 Prompt 的展开文本（断言投递顺序）
@@ -108,6 +110,9 @@ func (c *fakeConn) Prompt(ctx context.Context, sessionID string, blocks []acp.Co
 	if call < len(c.promptErrs) {
 		err = c.promptErrs[call]
 	}
+	if err != nil && c.deadOnPromptErr {
+		c.dead = true
+	}
 	gate := c.promptGate
 	c.mu.Unlock()
 	if gate != nil {
@@ -158,6 +163,18 @@ func (c *fakeConn) Stderr() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.stderr
+}
+
+func (c *fakeConn) StderrLen() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.stderr)
+}
+
+func (c *fakeConn) Alive() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.dead
 }
 func (c *fakeConn) Wait() (int, error) {
 	<-c.waitCh
@@ -977,7 +994,7 @@ func TestManagerOpenNewCursorBindsACPSessionID(t *testing.T) {
 }
 
 // CodeBuddy 与 Cursor 同理：--acp 的 session/new 返回 ID 即磁盘会话 ID
-//（~/.codebuddy/projects/<工作区>/<id>.jsonl，CLI 源码 + 本机实测），
+// （~/.codebuddy/projects/<工作区>/<id>.jsonl，CLI 源码 + 本机实测），
 // 新建握手后立刻写入 Info.SessionID，欢迎/hub 快照与「继续/引用」resume
 // 才有真实归属，也避免扫描期把会话抢绑给同工作区更早打开的无主聊天。
 func TestManagerOpenNewCodeBuddyBindsACPSessionID(t *testing.T) {
@@ -1020,7 +1037,7 @@ func TestAttachSessionSkipsOldCreatedAt(t *testing.T) {
 
 // 同工作区多个未绑定新建聊天并存时，会话应绑给打开时刻与 会话createdAt 最接近的
 // 聊天，而不是 m.order 里排最前的：事故中无主的旧聊天抢走了新会话
-//（2026-11-11 错绑导致旧卡片标题被新会话的 CLI 英文标题覆盖）。
+// （2026-11-11 错绑导致旧卡片标题被新会话的 CLI 英文标题覆盖）。
 func TestAttachSessionPicksChatClosestToSessionCreation(t *testing.T) {
 	m, _, _ := newTestManager(t)
 	if _, err := m.Open("new:1", Info{Kind: KindNew, Workspace: `D:\ws`, Title: "旧无主", ToolID: "claude"}, Spec{Path: "x"}, ""); err != nil {
@@ -1187,7 +1204,7 @@ func waitAnyStatus(t *testing.T, m *Manager, want string) string {
 }
 
 // TestManagerPromptQueuesWhileStarting 验证 starting 态 Prompt 入队、就绪后投递
-//（否则握手期消息会静默卡死）。
+// （否则握手期消息会静默卡死）。
 func TestManagerPromptQueuesWhileStarting(t *testing.T) {
 	m, b, _ := newTestManager(t)
 	b.conn.initGate = make(chan struct{}) // 卡住 Initialize，让会话停在 StatusStarting
@@ -1968,7 +1985,7 @@ func TestManagerActivityDoesNotResurrectExited(t *testing.T) {
 
 // 重建（同 key 重开）后新会话必须继承旧会话的 Seq 水位：前端按 Seq 门控去重，
 // 旧 ID 的 chatSeq 已被抬到 k，重建后新事件若 Seq 从 1 重新计数会被全部丢弃
-//（时间线冻结）。非重放重建（sessionID 为空）agent 不会重推历史，继承旧 history
+// （时间线冻结）。非重放重建（sessionID 为空）agent 不会重推历史，继承旧 history
 // 让新事件续在旧时间线之后。
 func TestManagerReopenInheritsSeqWatermark(t *testing.T) {
 	m, b, c := newTestManager(t)
