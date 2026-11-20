@@ -1145,25 +1145,33 @@ func TestBridgeVoiceTranscribedForward(t *testing.T) {
 	})
 
 	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
-	// 语音落盘入队后与转写文本合并投递：附件说明行 + 转写文本，一条 ack。
-	if len(ex.sentTexts) != 1 {
-		t.Fatalf("转写文本应合并投递, 实际 %v", ex.sentTexts)
-	}
-	merged := ex.sentTexts[0]
-	if !strings.Contains(merged, "[附件] voice.wav 已保存至 ") || !strings.Contains(merged, "语音说的需求") {
-		t.Fatalf("合并文本应含语音文件说明行与转写文本: %q", merged)
+	// 2026-11-20 真机复盘：转写成功必须按纯文字直投，不能再把语音塞进
+	// 附件队列——带附件说明行的文本会被智能链路判成「附件消息」而降级
+	// 待选（用户看到「Smart routing unavailable」并被迫回编号）。
+	if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "语音说的需求" {
+		t.Fatalf("转写文本应作为纯文字直投, 实际 %v", ex.sentTexts)
 	}
 	if !bytes.HasPrefix(gotWAV, []byte("RIFF")) {
 		t.Errorf("transcriber 收到的不是 WAV: % x", gotWAV[:min(4, len(gotWAV))])
 	}
 	if b.QueuedFiles() != 0 {
-		t.Errorf("队列应已清空: %d", b.QueuedFiles())
+		t.Errorf("转写成功不应占用附件队列: %d", b.QueuedFiles())
 	}
-	// 落盘语音文件可读且是合法 WAV（说明行后跟空行与转写文本）。
-	i := strings.Index(merged, "已保存至 ")
-	rest := merged[i+len("已保存至 "):]
-	path := rest[:strings.IndexAny(rest, "\n")]
-	data, err := os.ReadFile(path)
+	// 音频仍落盘留档（复盘/回放用），但不参与转交。
+	var wavPath string
+	entries, err := os.ReadDir(b.filesDir)
+	if err != nil {
+		t.Fatalf("读取落盘目录: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), "-voice.wav") {
+			wavPath = filepath.Join(b.filesDir, e.Name())
+		}
+	}
+	if wavPath == "" {
+		t.Fatalf("语音应落盘留档, 目录内容: %v", entries)
+	}
+	data, err := os.ReadFile(wavPath)
 	if err != nil {
 		t.Fatalf("语音文件未落盘: %v", err)
 	}
@@ -1173,6 +1181,41 @@ func TestBridgeVoiceTranscribedForward(t *testing.T) {
 	sends := rc.sends()
 	if len(sends) != 1 {
 		t.Fatalf("sendmessage 次数 = %d, 期望 1（ack）", len(sends))
+	}
+}
+
+// TestBridgeVoiceTranscriptRoutesWhenSmart 是 2026-11-20 真机事故的回归锚点：
+// 智能链路启用时，语音转写成功的文本必须能被正常路由/管理者接管；不得因为
+// 语音文件被塞进附件队列而走「附件消息需要指定目标会话」降级。
+func TestBridgeVoiceTranscriptRoutesWhenSmart(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	pcm := bytes.Repeat([]byte{0x10, 0x02}, 1200)
+	b, rc := newAttachBridge(t, ex, encodeSilk(t, pcm, true), 200)
+	b.SetTranscriber(func(ctx context.Context, wav []byte) (string, error) {
+		return "在 kshell 项目里修一下语音投递", nil
+	})
+	var routed []string
+	b.SetManagerRouter(func(ctx context.Context, text string) (ManagerOutcome, bool) {
+		routed = append(routed, text)
+		return ManagerOutcome{Replies: []string{"已转交管理者"}}, true
+	})
+
+	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
+	if len(routed) != 1 || routed[0] != "在 kshell 项目里修一下语音投递" {
+		t.Fatalf("转写文本应进入管理者路由, 实际路由入参 %v", routed)
+	}
+	if b.console.Busy() {
+		t.Fatal("转写成功不得降级为待选菜单")
+	}
+	all := ""
+	for _, s := range rc.sends() {
+		all += sendText(t, s.body)
+	}
+	if strings.Contains(all, "附件消息") || strings.Contains(all, "attachment") {
+		t.Fatalf("不应出现附件降级回执: %q", all)
+	}
+	if !strings.Contains(all, "已转交管理者") {
+		t.Fatalf("管理者结论应回显: %q", all)
 	}
 }
 
@@ -1282,13 +1325,12 @@ func TestBridgeVoiceServerTextSkipsASR(t *testing.T) {
 	m := voiceMsg("ct-1")
 	m.Text = "服务端转写内容"
 	b.HandleInboundMsg(context.Background(), m)
-	// 服务端转写直通，且语音文件同样落盘随行转交。
-	if len(ex.sentTexts) != 1 || !strings.Contains(ex.sentTexts[0], "[附件] voice.wav 已保存至 ") ||
-		!strings.Contains(ex.sentTexts[0], "服务端转写内容") {
-		t.Fatalf("服务端转写应直通并携带语音文件: %v", ex.sentTexts)
+	// 服务端已给文本：按纯文字直投，语音只留档不占附件队列。
+	if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "服务端转写内容" {
+		t.Fatalf("服务端转写应作为纯文字直投: %v", ex.sentTexts)
 	}
 	if b.QueuedFiles() != 0 {
-		t.Fatalf("队列应清空: %d", b.QueuedFiles())
+		t.Fatalf("已有转写文本时不应占用附件队列: %d", b.QueuedFiles())
 	}
 }
 
@@ -1413,15 +1455,11 @@ func TestBridgeVoiceOpusRaw(t *testing.T) {
 
 	b.HandleInboundMsg(context.Background(), voiceMsg("ct-1"))
 	assertWAV(t, gotWAV, 24000)
-	if len(ex.sentTexts) != 1 {
-		t.Fatalf("转写文本应合并投递, 实际 %v", ex.sentTexts)
-	}
-	if !strings.Contains(ex.sentTexts[0], "[附件] voice.wav 已保存至 ") ||
-		!strings.Contains(ex.sentTexts[0], "opus 转写内容") {
-		t.Fatalf("合并文本应含语音文件说明行与转写文本: %q", ex.sentTexts[0])
+	if len(ex.sentTexts) != 1 || ex.sentTexts[0] != "opus 转写内容" {
+		t.Fatalf("转写文本应按纯文字直投, 实际 %v", ex.sentTexts)
 	}
 	if b.QueuedFiles() != 0 {
-		t.Errorf("队列应已清空: %d", b.QueuedFiles())
+		t.Errorf("转写成功不应占用附件队列: %d", b.QueuedFiles())
 	}
 }
 

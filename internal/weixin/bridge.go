@@ -438,10 +438,9 @@ func (b *Bridge) HandleInboundMsg(ctx context.Context, m InboundMsg) {
 	receipt := b.ingestAttachments(ctx, m.Attachments)
 
 	text := m.Text
-	// 语音（无论服务端有无转写文本）：下载 → SILK→WAV → 落盘入附件队列，
-	// 音频作为文件随下一条可转发文字转交模型（不依赖 ASR 可用性）；文本为
-	// 空时再走本地转写，转写文本按可转发文字处理（参与附件队列合并）；
-	// 转写失败/未配置转回执。
+	// 语音：下载 → SILK→WAV → 落盘留档。文本为空时走本地/云端转写，转写
+	// 成功即按可转发文字投递（不占附件队列，保证智能路由正常）；转写失败/
+	// 未配置/结果为空才把音频入队，等用户下一条文字一并转交给多模态模型。
 	var formatNote string
 	if m.Voice != nil {
 		note, transcript, terr := b.ingestVoice(ctx, m.Voice, strings.TrimSpace(text) == "")
@@ -899,12 +898,16 @@ func (b *Bridge) ingestAttachments(ctx context.Context, atts []InboundAttachment
 	return strings.Join(parts, "\n")
 }
 
-// ingestVoice 完成语音的文件化与转写：CDN 下载 → SILK 解码转 WAV → 落盘
-// 入附件队列（音频作为文件随下一条可转发文字转交模型），needTranscribe 时
-// 再交给注入的 transcriber 得转写文本。返回微信侧回执片段（file.received）、
-// 转写文本与转写错误：未装配 transcriber 时 err 为哨兵；下载/解码/落盘失败
-// 时回执为空、err 为底层错误（调用方转 voice.failed 回执）。落盘结果不受
-// 转写可用性影响，语音转交不依赖 ASR 配置。
+// ingestVoice 完成语音的文件化与转写：CDN 下载 → SILK 解码转 WAV → 落盘留档。
+// needTranscribe 时交给注入的 transcriber 得转写文本。
+//
+// 队列语义（2026-11-20 真机复盘）：**只有拿不到可用文字时**才把音频放进
+// 附件转交队列（转写失败/未配置/结果为空），作为「发一条文字即可连带转交
+// 音频给多模态模型」的兜底。转写成功（含服务端直给文本）时音频仅留档、
+// 不入队——否则文本会带附件说明行，被智能链路判成「附件消息」而降级待选。
+//
+// 返回：note 是微信侧回执片段（仅入队时非空，file.received 的「待转交」
+// 不能对已直接投递的语音发送）；transcript 与 err 语义同前。
 func (b *Bridge) ingestVoice(ctx context.Context, v *InboundAttachment, needTranscribe bool) (note, transcript string, err error) {
 	wav, err := b.voiceWAV(ctx, v)
 	if err != nil {
@@ -916,20 +919,25 @@ func (b *Bridge) ingestVoice(ctx context.Context, v *InboundAttachment, needTran
 		log.Printf("[weixin] 语音落盘失败 dir=%s err=%v", b.filesDir, err)
 		return "", "", err
 	}
-	b.mu.Lock()
-	b.queue = append(b.queue, queuedFile{Name: name, Path: path})
-	b.queueAt = b.now() // 语音与附件同队列同待遇：入队即续期过期计时
-	total := len(b.queue)
-	b.mu.Unlock()
-	log.Printf("[weixin] 语音已落盘待转交 path=%s 队列=%d", path, total)
-	note = fmt.Sprintf(bridgeText(b.lang, "file.received"), name, total)
+	// enqueue 把音频放进附件队列并返回「已收到」回执；仅兜底路径调用。
+	enqueue := func() string {
+		b.mu.Lock()
+		b.queue = append(b.queue, queuedFile{Name: name, Path: path})
+		b.queueAt = b.now() // 语音与附件同队列同待遇：入队即续期过期计时
+		total := len(b.queue)
+		b.mu.Unlock()
+		log.Printf("[weixin] 语音已落盘待转交 path=%s 队列=%d", path, total)
+		return fmt.Sprintf(bridgeText(b.lang, "file.received"), name, total)
+	}
 	if !needTranscribe {
-		return note, "", nil
+		// 服务端已提供转写文本：音频只留档，不占队列。
+		log.Printf("[weixin] 语音已留档（服务端转写可用，不入队） path=%s", path)
+		return "", "", nil
 	}
 	fn := b.transcriberFn()
 	if fn == nil {
 		log.Printf("[weixin] 语音转写未配置（无 ASR 模型） path=%s", path)
-		return note, "", ErrTranscriberNotConfigured
+		return enqueue(), "", ErrTranscriberNotConfigured
 	}
 	// 转写结果与耗时必须可观测：2026-11-20 真机事故里，网关 200 返回的
 	// 「拒答」被当成转写投递，日志只有「已落盘」，完全看不出中间发生过什么。
@@ -942,15 +950,15 @@ func (b *Bridge) ingestVoice(ctx context.Context, v *InboundAttachment, needTran
 		// 便于日志侧区分偶发失败与配置性缺陷。
 		log.Printf("[weixin] 语音转写失败 path=%s elapsed=%s rejected=%t err=%v",
 			path, elapsed, errors.Is(err, ErrVoiceUnsupported), err)
-		return note, "", err
+		return enqueue(), "", err
 	}
 	if trimmedTranscript == "" {
 		log.Printf("[weixin] 语音转写结果为空 path=%s elapsed=%s", path, elapsed)
-		return note, transcript, nil
+		return enqueue(), transcript, nil
 	}
 	log.Printf("[weixin] 语音转写完成 path=%s len=%d elapsed=%s prefix=%q",
 		path, len([]rune(trimmedTranscript)), elapsed, voicePrefix(trimmedTranscript))
-	return note, transcript, nil
+	return "", transcript, nil
 }
 
 // voicePrefix 取转写文本前 40 个字符（按字符截断），供日志快速判断内容是

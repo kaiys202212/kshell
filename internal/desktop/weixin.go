@@ -100,6 +100,9 @@ func (a *App) weixinTranscriber() weixin.Transcriber {
 		opts := hubtools.TranscribeOptions{
 			Local:       a.localTranscriber(),
 			PreferCloud: snap.Config.ASR.PreferCloud,
+			// 来源归因进 desktop.log：本地失败静默回落云端/多模态时，
+			// 日志要能说明本轮究竟由哪条链路转出来的。
+			Logf: func(line string) { log.Printf("[weixin] %s", line) },
 		}
 		var hcfg hubtools.Config
 		if plat, ok := cfgModel.ActivePlatform(); ok && strings.TrimSpace(plat.OpenAIBaseURL) != "" {

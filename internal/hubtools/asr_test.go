@@ -254,6 +254,40 @@ func TestTranscribeAutoPriority(t *testing.T) {
 	}
 }
 
+// TestTranscribeAutoLogsSource 守住「静默降级」的可观测性：每次尝试都要记录
+// 来源结果，成功时能看出是哪条链路转出来的。
+func TestTranscribeAutoLogsSource(t *testing.T) {
+	cfg := Config{BaseURL: "http://127.0.0.1:1", APIKey: "k"}
+	var logs []string
+	text, err := TranscribeAuto(context.Background(), cfg, TranscribeOptions{
+		ASRModel: "asr-m",
+		Local: func(context.Context, []byte) (string, error) {
+			return "", ErrLocalNotInstalled
+		},
+		Logf: func(line string) { logs = append(logs, line) },
+	}, []byte("x"))
+	// 本地未装会被跳过；云端地址不可达，最终失败，但日志应覆盖两条链路。
+	if err == nil {
+		t.Fatalf("不可达端点不应成功: %q", text)
+	}
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "跳过 local") || !strings.Contains(joined, "失败 source=asr") {
+		t.Fatalf("日志应记录本地跳过与云端失败: %v", logs)
+	}
+
+	logs = nil
+	text, err = TranscribeAuto(context.Background(), cfg, TranscribeOptions{
+		Local: func(context.Context, []byte) (string, error) { return "本地结果", nil },
+		Logf:  func(line string) { logs = append(logs, line) },
+	}, []byte("x"))
+	if err != nil || text != "本地结果" {
+		t.Fatalf("本地成功: %q %v", text, err)
+	}
+	if !strings.Contains(strings.Join(logs, "\n"), "来源=local") {
+		t.Fatalf("成功日志应标明来源: %v", logs)
+	}
+}
+
 func TestTranscribeAutoLocalChain(t *testing.T) {
 	var asrHits, chatHits, localHits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

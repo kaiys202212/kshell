@@ -32,6 +32,9 @@ type TranscribeOptions struct {
 	Local LocalTranscriber
 	// PreferCloud 为真且 ASRModel 非空时，云端排在本地之前。
 	PreferCloud bool
+	// Logf 可选：记录每次来源尝试的结果（成功来源、失败原因）。转写是
+	// 「静默降级」的高发路径，没有来源归因时排障只能靠猜。
+	Logf func(string)
 }
 
 // TranscribeAuto 是语音转写的优先级链聚合（desktop 装配唯一入口）。
@@ -73,16 +76,23 @@ func TranscribeAuto(ctx context.Context, cfg Config, opts TranscribeOptions, wav
 		return "", fmt.Errorf("err.hubtools.voice_no_source")
 	}
 
+	logf := opts.Logf
+	if logf == nil {
+		logf = func(string) {}
+	}
 	var errs []error
 	for _, s := range order {
 		text, err := s.fn()
 		if err == nil {
+			logf("语音转写来源=" + s.name)
 			return text, nil
 		}
 		if errors.Is(err, ErrLocalNotInstalled) {
 			// 本地引擎未安装是正常形态（用户没装），不作为失败累积。
+			logf("语音转写跳过 local: 未安装")
 			continue
 		}
+		logf(fmt.Sprintf("语音转写失败 source=%s err=%v", s.name, err))
 		errs = append(errs, fmt.Errorf("%s: %w", s.name, err))
 	}
 	if len(errs) == 1 {
