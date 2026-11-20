@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.1.34 (2026-11-20)
+
+- More reliable WeChat voice: Opus-encoded voice messages are supported; when a format cannot be decoded the receipt names the actual format (AMR/MP3/M4A/OGG, etc.) and keeps the raw file for troubleshooting; when the transcription model refuses, the bridge now says "could not transcribe — the file is saved and will be forwarded with your next text" instead of passing the refusal text off as a transcript.
+- New local voice transcription: the AgentHub settings page gains a "Local voice transcription" card that installs the sherpa-onnx engine in one click (not bundled; mirror downloads, SHA-256 verification, resumable transfers, with stage and percentage progress); voice is transcribed locally first and falls back to the cloud when the engine is not installed or fails.
+- The WeChat attachment queue now expires lazily after one minute: sending only attachments without text no longer pops the "pick a target session" menu at arbitrary later times.
+- Audio is no longer queued as an attachment after a successful transcription, so the smart router no longer downgrades it to "pick a target session".
+- ACP sessions auto-continue once on transient failures (enabled by default on desktop): transient errors are detected from this round's stderr delta, cancellation and exit are guarded during the retry, and long tasks are no longer broken by a single network hiccup.
+- The AgentHub manager now recognizes sessions "awaiting an answer": when an agent message ends with a question mark, the user's next reply goes back to that session by default instead of being mistaken for a new request; progress queries and stop requests are answered or executed directly without extra deliveries.
+- Fixed WeChat "attachment + text" combined replies being delivered to an unrelated session while an AgentHub question is pending: with a pending question the combined reply resumes it, otherwise it becomes "pick a session" — it is never sent to the current session directly.
+- Fixed a self-deadlock during local voice engine installation that froze new-session, session-preview and other operations.
+
 ## v0.1.33 (2026-11-18)
 
 - Unified default tool and model selection: new sessions in the desktop app, WeChat `#en`, and AgentHub dispatches now all use the defaults from AgentHub's "⚙ Defaults" settings; when nothing is chosen explicitly kshell no longer picks "the tool with the most sessions" or the first item in a list, and only falls back to the first installed ACP tool when the configured default is unavailable.
