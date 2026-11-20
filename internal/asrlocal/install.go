@@ -39,12 +39,12 @@ type manifest struct {
 // Status 是本地引擎状态。Installed 要求引擎与两份模型文件齐全；Partial 表示
 // 只装了一部分（上次中断），UI 提示重新安装。
 type Status struct {
-	Installed  bool  `json:"installed"`
-	Partial    bool  `json:"partial"`
+	Installed  bool   `json:"installed"`
+	Partial    bool   `json:"partial"`
 	EnginePath string `json:"enginePath"`
 	ModelPath  string `json:"modelPath"`
 	Version    string `json:"version"`
-	SizeBytes  int64 `json:"sizeBytes"`
+	SizeBytes  int64  `json:"sizeBytes"`
 }
 
 // engineName 返回平台可执行文件名。
@@ -93,6 +93,10 @@ func Install(ctx context.Context, rootDir string, opts Options) error {
 	}
 	runtimeDir := filepath.Join(rootDir, runtimeSubdir, asset.Stem)
 	logf("解压运行时到 " + runtimeDir)
+	// 解压没有字节级进度：发一次阶段事件，让 UI 把进度条停在 99% 并换文案。
+	if err := reportProgress(opts, "extract"); err != nil {
+		return err
+	}
 	if err := extractRuntime(archive, runtimeDir); err != nil {
 		return err
 	}

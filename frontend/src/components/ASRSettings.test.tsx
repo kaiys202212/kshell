@@ -4,10 +4,12 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tt } from '../test/i18n';
+import { useAppStore } from '../state/store';
 import { ASRSettings } from './ASRSettings';
 
 type LogCb = (text: string) => void;
 type DoneCb = (p: { ok: boolean; error?: string }) => void;
+type ProgressCb = (p: { phase: string; pct: number; overall: number }) => void;
 
 const mocks = vi.hoisted(() => ({
   getASRStatus: vi.fn(),
@@ -16,8 +18,10 @@ const mocks = vi.hoisted(() => ({
   uninstallASRLocal: vi.fn(),
   saveASRSettings: vi.fn(),
   onASRInstallLog: vi.fn(),
+  onASRInstallProgress: vi.fn(),
   onASRInstallDone: vi.fn(),
   logCbs: [] as LogCb[],
+  progressCbs: [] as ProgressCb[],
   doneCbs: [] as DoneCb[],
 }));
 
@@ -52,9 +56,14 @@ function mockStatus(over: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.logCbs.length = 0;
+  mocks.progressCbs.length = 0;
   mocks.doneCbs.length = 0;
   mocks.onASRInstallLog.mockImplementation((cb: LogCb) => {
     mocks.logCbs.push(cb);
+    return () => {};
+  });
+  mocks.onASRInstallProgress.mockImplementation((cb: ProgressCb) => {
+    mocks.progressCbs.push(cb);
     return () => {};
   });
   mocks.onASRInstallDone.mockImplementation((cb: DoneCb) => {
@@ -97,6 +106,22 @@ describe('ASRSettings', () => {
     const before = mocks.getASRStatus.mock.calls.length;
     act(() => mocks.doneCbs[0]({ ok: true }));
     await waitFor(() => expect(mocks.getASRStatus.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it('安装中按事件更新进度条与阶段，done 后弹出完成提示', async () => {
+    mockStatus({ running: true, progress: { phase: 'extract', pct: 0, overall: 99 } });
+    render(<ASRSettings />);
+    const bar = await screen.findByRole('progressbar', { name: tt('ui.asr.progress') });
+    expect(bar).toHaveAttribute('aria-valuenow', '99');
+    expect(screen.getByText(tt('ui.asr.phase_extract'))).toBeInTheDocument();
+    act(() => mocks.progressCbs[0]({ phase: 'runtime', pct: 10, overall: 1 }));
+    expect(bar).toHaveAttribute('aria-valuenow', '1');
+    expect(screen.getByText(tt('ui.asr.phase_runtime'))).toBeInTheDocument();
+    act(() => mocks.progressCbs[0]({ phase: 'model.int8.onnx', pct: 50, overall: 66 }));
+    expect(bar).toHaveAttribute('aria-valuenow', '66');
+    expect(screen.getByText('66%')).toBeInTheDocument();
+    act(() => mocks.doneCbs[0]({ ok: true }));
+    expect(useAppStore.getState().toasts.some((x) => x.title === tt('ui.asr.install_done'))).toBe(true);
   });
 
   it('保存把镜像按行拆分并传归一化配置', async () => {

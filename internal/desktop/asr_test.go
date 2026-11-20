@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yangk/kshell/internal/asrlocal"
 	"github.com/yangk/kshell/internal/config"
 )
 
@@ -122,6 +123,55 @@ func TestInstallASRLocalReturnsPromptly(t *testing.T) {
 	}
 	if app.GetASRStatus().Running {
 		t.Fatal("后台安装任务未在 2s 内结束")
+	}
+}
+
+// TestASROverallPct 覆盖体积加权的总体进度换算：三份文件接续、解压与封顶。
+func TestASROverallPct(t *testing.T) {
+	const runtimeSize = 1000
+	model := asrlocal.ModelFiles[asrPhaseModel].Size
+	tokens := asrlocal.ModelFiles[asrPhaseTokens].Size
+	total := runtimeSize + model + tokens
+
+	cases := []struct {
+		name  string
+		phase string
+		done  int64
+		want  int
+	}{
+		{"引擎起点", asrPhaseRuntime, 0, 0},
+		{"引擎半程", asrPhaseRuntime, runtimeSize / 2, int(int64(runtimeSize/2) * 100 / total)},
+		{"模型起点", asrPhaseModel, 0, int(runtimeSize * 100 / total)},
+		{"模型完成封顶 99", asrPhaseModel, model, 99},
+		{"词表完成封顶 99", asrPhaseTokens, tokens, 99},
+		{"解压固定 99", asrPhaseExtract, 0, 99},
+		{"未知阶段", "mystery", 5, 0},
+	}
+	for _, c := range cases {
+		if got := asrOverallPct(c.phase, c.done, runtimeSize, total); got != c.want {
+			t.Fatalf("%s: asrOverallPct(%q,%d) = %d, want %d", c.name, c.phase, c.done, got, c.want)
+		}
+	}
+	if got := asrOverallPct(asrPhaseRuntime, 10, runtimeSize, 0); got != 0 {
+		t.Fatalf("总大小为 0 时应返回 0, 得到 %d", got)
+	}
+}
+
+// TestASRStatusReportsProgress 保证切页回来时进度条能按状态回填。
+func TestASRStatusReportsProgress(t *testing.T) {
+	app := newASRTestApp(t)
+	app.mu.Lock()
+	app.asrJob = asrInstallJob{
+		running:  true,
+		progress: ASRProgressView{Phase: asrPhaseModel, Pct: 40, Overall: 25},
+	}
+	app.mu.Unlock()
+	st := app.GetASRStatus()
+	if !st.Running {
+		t.Fatal("状态应标记安装中")
+	}
+	if st.Progress != (ASRProgressView{Phase: asrPhaseModel, Pct: 40, Overall: 25}) {
+		t.Fatalf("进度回填错误: %+v", st.Progress)
 	}
 }
 

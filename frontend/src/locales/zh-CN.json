@@ -403,7 +403,13 @@
       "saved": "语音设置已保存",
       "error": "语音设置操作失败",
       "install_done": "本地语音引擎安装完成",
-      "install_failed": "本地语音引擎安装失败"
+      "install_failed": "本地语音引擎安装失败",
+      "progress": "安装进度",
+      "phase_runtime": "下载语音引擎",
+      "phase_model": "下载语音模型",
+      "phase_tokens": "下载词表",
+      "phase_extract": "解压语音引擎",
+      "phase_done": "安装完成"
     },
     "error_boundary": {
       "title": "界面出现异常",

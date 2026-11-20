@@ -9,8 +9,10 @@ import {
   installASRLocal,
   onASRInstallDone,
   onASRInstallLog,
+  onASRInstallProgress,
   saveASRSettings,
   uninstallASRLocal,
+  type ASRProgressView,
   type ASRStatusView,
 } from '../lib/api';
 import { backendError } from '../lib/errors';
@@ -25,6 +27,17 @@ const inputClass = 'rounded border border-input bg-card px-2 py-1 text-sm';
 // 语言取值与后端 config.asrLanguages 一致：auto/zh/en/ja/ko/yue。
 const LANGS = ['auto', 'zh', 'en', 'ja', 'ko', 'yue'] as const;
 
+// 阶段标识 → i18n key（与 internal/desktop/asr.go 的 asrPhase* 常量一致）。
+const PHASE_KEYS: Record<string, string> = {
+  runtime: 'ui.asr.phase_runtime',
+  'model.int8.onnx': 'ui.asr.phase_model',
+  'tokens.txt': 'ui.asr.phase_tokens',
+  extract: 'ui.asr.phase_extract',
+  done: 'ui.asr.phase_done',
+};
+
+const EMPTY_PROGRESS: ASRProgressView = { phase: '', pct: 0, overall: 0 };
+
 export function ASRSettings() {
   const { t } = useTranslation();
   const notify = useAppStore((s) => s.notify);
@@ -32,6 +45,7 @@ export function ASRSettings() {
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState('');
+  const [progress, setProgress] = useState<ASRProgressView>(EMPTY_PROGRESS);
   const [confirming, setConfirming] = useState(false);
   const confirmTimer = useRef(0);
   // 草稿态：dirty 才允许保存（避免误触改写配置）
@@ -51,6 +65,7 @@ export function ASRSettings() {
     setItn(s.itn);
     setMirrors((s.mirrors ?? []).join('\n'));
     setCommand(s.command ?? '');
+    setProgress(s.progress ?? EMPTY_PROGRESS);
     setDirty(false);
   }, []);
 
@@ -70,9 +85,11 @@ export function ASRSettings() {
       .then((text) => setLog(text))
       .catch(() => {});
     const offLog = onASRInstallLog((text) => setLog((prev) => (prev ? `${prev}\n${text}` : text)));
+    const offProgress = onASRInstallProgress((p) => setProgress(p));
     const offDone = onASRInstallDone((p) => {
       setBusy(false);
       if (p.ok) {
+        setProgress({ phase: 'done', pct: 100, overall: 100 });
         notify(t('ui.asr.install_done'), 'info');
       } else {
         notify(p.error ? backendError(new Error(p.error)) : t('ui.asr.install_failed'), 'error');
@@ -82,6 +99,7 @@ export function ASRSettings() {
     return () => {
       window.clearTimeout(confirmTimer.current);
       offLog();
+      offProgress();
       offDone();
     };
   }, [refresh, notify, t]);
@@ -90,6 +108,7 @@ export function ASRSettings() {
     setBusy(true);
     setConfirming(false);
     setLog('');
+    setProgress(EMPTY_PROGRESS);
     try {
       await installASRLocal();
       await refresh();
@@ -155,6 +174,8 @@ export function ASRSettings() {
         ? t('ui.asr.partial')
         : t('ui.asr.not_installed');
   const disabled = busy || running;
+  const phaseKey = PHASE_KEYS[progress.phase];
+  const phaseLabel = phaseKey ? t(phaseKey) : '';
 
   return (
     <section className="mb-5 rounded border border-border bg-card p-3.5">
@@ -218,6 +239,28 @@ export function ASRSettings() {
             )}
             {running && <span className="text-sm text-muted-foreground">{t('ui.asr.installing')}</span>}
           </div>
+
+          {running && (
+            <div className="mb-2">
+              <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+                <span>{phaseLabel}</span>
+                <span aria-live="polite">{progress.overall}%</span>
+              </div>
+              <div
+                role="progressbar"
+                aria-label={t('ui.asr.progress')}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={progress.overall}
+                className="h-2 w-full overflow-hidden rounded bg-muted"
+              >
+                <div
+                  className="h-full rounded bg-primary transition-all"
+                  style={{ width: `${progress.overall}%` }}
+                />
+              </div>
+            </div>
+          )}
 
           {!status.supported && (
             <p className="mb-2 text-xs text-muted-foreground">{t('ui.asr.unsupported_hint')}</p>

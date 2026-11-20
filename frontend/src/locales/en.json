@@ -403,7 +403,13 @@
       "saved": "Voice settings saved",
       "error": "Voice settings operation failed",
       "install_done": "Local voice engine installed",
-      "install_failed": "Local voice engine install failed"
+      "install_failed": "Local voice engine install failed",
+      "progress": "Install progress",
+      "phase_runtime": "Downloading engine",
+      "phase_model": "Downloading model",
+      "phase_tokens": "Downloading tokens",
+      "phase_extract": "Extracting engine",
+      "phase_done": "Installed"
     },
     "error_boundary": {
       "title": "Something went wrong",

@@ -637,6 +637,15 @@ export interface WeixinStatusView {
   binding: string;
 }
 
+// desktop.ASRProgressView：安装进度。phase 为当前阶段标识（runtime /
+// model.int8.onnx / tokens.txt / extract / done），pct 为阶段内百分比，
+// overall 为按文件体积加权的总体百分比。
+export interface ASRProgressView {
+  phase: string;
+  pct: number;
+  overall: number;
+}
+
 // desktop.ASRStatusView 的 JSON 形态（internal/desktop/asr.go，字段带 json tag）：
 // 本地语音转写引擎状态 + 持久化配置。installed 为真时 enginePath/modelPath 可用。
 export interface ASRStatusView {
@@ -656,6 +665,7 @@ export interface ASRStatusView {
   command: string;
   running: boolean;
   error: string;
+  progress: ASRProgressView;
 }
 
 // desktop.ASRSettingsInput：设置页提交的本地转写配置（json tag 同名小写）。
@@ -2864,6 +2874,14 @@ export async function saveASRSettings(input: ASRSettingsInput): Promise<ASRStatu
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
   return a.SaveASRSettings(input);
+}
+
+// onASRInstallProgress 订阅安装进度（asr:install:progress）：百分比粒度由后端
+// 限制在快照变化时，前端直接渲染即可。
+export function onASRInstallProgress(cb: (p: ASRProgressView) => void): () => void {
+  return EventsOn('asr:install:progress', (p?: Partial<ASRProgressView>) =>
+    cb({ phase: p?.phase ?? '', pct: Number(p?.pct ?? 0), overall: Number(p?.overall ?? 0) }),
+  );
 }
 
 // onASRInstallLog 订阅安装日志行（asr:install:log）。

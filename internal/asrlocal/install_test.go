@@ -58,7 +58,7 @@ func installFixture(t *testing.T) (dir string, opts Options) {
 	}
 	ModelFiles = map[string]ModelFileMeta{
 		"model.int8.onnx": {sum(model), int64(len(model))},
-		"tokens.txt":     {sum(tokens), int64(len(tokens))},
+		"tokens.txt":      {sum(tokens), int64(len(tokens))},
 	}
 	modelHosts = []string{srv.URL + "/"}
 
@@ -96,6 +96,22 @@ func TestInstallAndDetect(t *testing.T) {
 	// 幂等：再次安装不应失败（命中哈希跳过）。
 	if err := Install(context.Background(), dir, Options{}); err != nil {
 		t.Fatalf("重复安装: %v", err)
+	}
+}
+
+// TestInstallReportsProgressPhases 守住 UI 依赖的阶段序列：下载引擎 → 解压 →
+// 下载模型 → 下载词表，缺任何一个前端进度条都会停在错误阶段。
+func TestInstallReportsProgressPhases(t *testing.T) {
+	dir, opts := installFixture(t)
+	seen := map[string]bool{}
+	opts.Progress = func(phase string, done, total int64) { seen[phase] = true }
+	if err := Install(context.Background(), dir, opts); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	for _, want := range []string{"runtime", "extract", "model.int8.onnx", "tokens.txt"} {
+		if !seen[want] {
+			t.Fatalf("缺少进度阶段 %q: %v", want, seen)
+		}
 	}
 }
 
