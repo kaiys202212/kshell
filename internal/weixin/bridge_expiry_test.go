@@ -2,6 +2,7 @@ package weixin
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -9,11 +10,25 @@ import (
 	"github.com/yangk/kshell/internal/hub"
 )
 
+// expiredReceiptNeedle 取 file.expired 文案里最长的静态片段（按格式化动词
+// %d/%s 切开后取最长段）作断言锚点：断言经语言表取值，不写死某语言句子。
+func expiredReceiptNeedle(lang string) string {
+	parts := regexp.MustCompile(`%[ds]`).Split(bridgeText(lang, "file.expired"), -1)
+	longest := ""
+	for _, p := range parts {
+		if len(p) > len(longest) {
+			longest = p
+		}
+	}
+	return longest
+}
+
 // hasExpiredReceipt 扫描出站发送里是否含附件超时回执文案。
-func hasExpiredReceipt(t *testing.T, texts []string) bool {
+func hasExpiredReceipt(t *testing.T, lang string, texts []string) bool {
 	t.Helper()
+	needle := expiredReceiptNeedle(lang)
 	for _, s := range texts {
-		if strings.Contains(s, "超时忽略") {
+		if strings.Contains(s, needle) {
 			return true
 		}
 	}
@@ -56,13 +71,41 @@ func TestBridgeAttachmentExpiredDropped(t *testing.T) {
 	for _, s := range rc.sends() {
 		texts = append(texts, sendText(t, s.body))
 	}
-	if !hasExpiredReceipt(t, texts) {
+	if !hasExpiredReceipt(t, b.lang, texts) {
 		t.Errorf("缺少超时丢弃回执: %v", texts)
 	}
 	for _, s := range texts {
-		if strings.Contains(s, "请回复编号选择目标会话") {
+		if strings.Contains(s, bridgeText(b.lang, "route.pick_degraded")) {
 			t.Errorf("过期后不应再弹待选菜单: %q", s)
 		}
+	}
+}
+
+// 单图入队 30 秒内补文字：未过期，照常合并投递，无超时回执（非过期路径）。
+func TestBridgeAttachmentWithinTTLStillMerges(t *testing.T) {
+	ex := &fakeExec{hasCur: true, current: hub.SessionRef{ChatID: "c1"}}
+	b, rc := newAttachBridge(t, ex, []byte("内容"), 200)
+
+	base := time.Now()
+	clock := base
+	b.nowFn = func() time.Time { return clock }
+
+	b.HandleInboundMsg(t.Context(), attachMsg("ct-1", "a.pdf"))
+	clock = base.Add(30 * time.Second)
+
+	b.HandleInboundMsg(t.Context(), InboundMsg{FromUserID: "u1", ContextToken: "ct-2", Text: "修复登录"})
+	if len(ex.sentTexts) != 1 || !strings.Contains(ex.sentTexts[0], "[附件] a.pdf") {
+		t.Fatalf("TTL 内补文字应照常合并: %v", ex.sentTexts)
+	}
+	if b.QueuedFiles() != 0 {
+		t.Errorf("合并成功后队列应清空: %d", b.QueuedFiles())
+	}
+	var texts []string
+	for _, s := range rc.sends() {
+		texts = append(texts, sendText(t, s.body))
+	}
+	if hasExpiredReceipt(t, b.lang, texts) {
+		t.Errorf("未过期不应有超时回执: %v", texts)
 	}
 }
 
@@ -95,7 +138,7 @@ func TestBridgeAttachmentExpiryRenewal(t *testing.T) {
 		t.Errorf("缺少用户文字: %q", ex.sentTexts[0])
 	}
 	for _, s := range rc.sends() {
-		if strings.Contains(sendText(t, s.body), "超时忽略") {
+		if strings.Contains(sendText(t, s.body), expiredReceiptNeedle(b.lang)) {
 			t.Errorf("未过期批不应有超时回执: %q", sendText(t, s.body))
 		}
 	}
@@ -135,7 +178,7 @@ func TestBridgeAttachmentExpiryKeptWhileAskPending(t *testing.T) {
 	for _, s := range rc.sends() {
 		texts = append(texts, sendText(t, s.body))
 	}
-	if hasExpiredReceipt(t, texts) {
+	if hasExpiredReceipt(t, b.lang, texts) {
 		t.Errorf("askPending 期间不应有超时回执: %v", texts)
 	}
 }
@@ -180,7 +223,7 @@ func TestBridgeExpiredDroppedOnCommand(t *testing.T) {
 	for _, s := range rc.sends() {
 		texts = append(texts, sendText(t, s.body))
 	}
-	if !hasExpiredReceipt(t, texts) {
+	if !hasExpiredReceipt(t, b.lang, texts) {
 		t.Errorf("命令消息也应收到超时回执: %v", texts)
 	}
 }
@@ -203,7 +246,7 @@ func TestBridgePrefilledExpiredQueueDropped(t *testing.T) {
 	for _, s := range rc.sends() {
 		texts = append(texts, sendText(t, s.body))
 	}
-	if !hasExpiredReceipt(t, texts) {
+	if !hasExpiredReceipt(t, b.lang, texts) {
 		t.Errorf("缺少超时丢弃回执: %v", texts)
 	}
 }
