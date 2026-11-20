@@ -16,6 +16,10 @@ vi.mock('../lib/api', () => mocks);
 vi.mock('./WeixinSettings', () => ({
   WeixinSettings: () => <div data-testid="weixin-settings" />,
 }));
+// 本地语音区自带安装事件订阅与 api 调用，同样用占位组件隔离
+vi.mock('./ASRSettings', () => ({
+  ASRSettings: () => <div data-testid="asr-settings" />,
+}));
 
 const settings = (over: Record<string, unknown> = {}) => ({
   enabled: true,

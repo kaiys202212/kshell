@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { getAgentHubSettings, saveAgentHubSettings, setAgentHubEnabled } from '../lib/api';
 import { backendError } from '../lib/errors';
 import { useAppStore } from '../state/store';
+import { ASRSettings } from './ASRSettings';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 import { WeixinSettings } from './WeixinSettings';
@@ -126,6 +127,9 @@ export function AgentHubSettings() {
       </section>
 
       {enabled && <WeixinSettings />}
+
+      {/* 本地引擎安装与转写配置常驻显示：即使用户尚未启用 AgentHub 也能先装好 */}
+      <ASRSettings />
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen} className="w-96">
         <DialogPrimitive.Title className="mb-2 text-sm font-medium">

@@ -63,6 +63,10 @@
       "unknown_pending": "该确认已失效（已被处理或被新对话替换）",
       "pending_expired": "确认已过期，请重新发起"
     },
+    "asr": {
+      "install_in_progress": "安装任务进行中，请稍候",
+      "not_ready": "安装目录未就绪（桌面版尚未初始化完成）"
+    },
     "language": {
       "locales_not_dir": "locales 路径不是目录: {{0}}"
     },
@@ -359,6 +363,47 @@
       "expired": "二维码已过期",
       "pending_undelivered": "未送达 {{count}} 条",
       "error": "微信桥操作失败"
+    },
+    "asr": {
+      "title": "本地语音转写",
+      "desc": "不依赖云端 API 的本地语音识别；启用后微信语音可直接转成文字，云端不可用时也能用。",
+      "installed": "已安装",
+      "partial": "安装不完整（可重新安装修复）",
+      "not_installed": "未安装",
+      "version": "版本",
+      "size": "占用 {{0}} MB",
+      "platform": "平台",
+      "unsupported": "当前平台暂不支持自动安装本地引擎",
+      "unsupported_hint": "仍可填写「自定义命令」接入你自己的转写程序。",
+      "install": "安装本地引擎",
+      "reinstall": "重新安装",
+      "uninstall": "卸载",
+      "uninstall_confirm": "确认卸载？",
+      "installing": "安装中…",
+      "install_hint": "首次安装需下载引擎与模型（约 300 MB），内置 GitHub/HuggingFace 镜像链，访问失败会自动切换。",
+      "log_title": "安装日志",
+      "enabled": "启用本地转写",
+      "enabled_hint": "微信语音优先交给本地引擎识别；本地不可用时自动回落云端配置。",
+      "prefer_cloud": "优先云端",
+      "prefer_cloud_hint": "勾选后先走云端 ASR 或对话模型，全部失败才用本地引擎。",
+      "language": "识别语言",
+      "language_hint": "自动可识别中、英、日、韩、粤语混合内容。",
+      "lang_auto": "自动",
+      "lang_zh": "中文",
+      "lang_en": "英语",
+      "lang_ja": "日语",
+      "lang_ko": "韩语",
+      "lang_yue": "粤语",
+      "itn": "数字与标点规整（ITN）",
+      "mirrors": "下载镜像",
+      "mirrors_hint": "每行一个；可用 {url} 占位符或直接写 URL 前缀。留空使用内置镜像链。",
+      "command": "自定义命令",
+      "command_hint": "可选。留空使用内置引擎；填写时用 {wav} 占位音频路径，stdout 作为转写文本。",
+      "save": "保存",
+      "saved": "语音设置已保存",
+      "error": "语音设置操作失败",
+      "install_done": "本地语音引擎安装完成",
+      "install_failed": "本地语音引擎安装失败"
     },
     "error_boundary": {
       "title": "界面出现异常",

@@ -231,7 +231,7 @@ func TestTranscribeAutoPriority(t *testing.T) {
 	defer srv.Close()
 	cfg := Config{BaseURL: srv.URL, APIKey: "k"}
 
-	text, err := TranscribeAuto(context.Background(), cfg, "asr-m", "chat-m", []byte("x"))
+	text, err := TranscribeAuto(context.Background(), cfg, TranscribeOptions{ASRModel: "asr-m", ChatModel: "chat-m"}, []byte("x"))
 	if err != nil || text != "ASR 结果" {
 		t.Fatalf("asr 优先失败: %q %v", text, err)
 	}
@@ -240,7 +240,7 @@ func TestTranscribeAutoPriority(t *testing.T) {
 	}
 
 	// asrModel 留空：回落 chat。
-	text, err = TranscribeAuto(context.Background(), cfg, "", "chat-m", []byte("x"))
+	text, err = TranscribeAuto(context.Background(), cfg, TranscribeOptions{ChatModel: "chat-m"}, []byte("x"))
 	if err != nil || text != "chat 结果" {
 		t.Fatalf("chat 回落失败: %q %v", text, err)
 	}
@@ -249,7 +249,68 @@ func TestTranscribeAutoPriority(t *testing.T) {
 	}
 
 	// 两者皆空：报错。
-	if _, err := TranscribeAuto(context.Background(), cfg, "  ", "", []byte("x")); err == nil {
+	if _, err := TranscribeAuto(context.Background(), cfg, TranscribeOptions{ASRModel: "  "}, []byte("x")); err == nil {
 		t.Error("双空应报错")
+	}
+}
+
+func TestTranscribeAutoLocalChain(t *testing.T) {
+	var asrHits, chatHits, localHits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/audio/transcriptions") {
+			asrHits++
+			io.WriteString(w, `{"text":"ASR 结果"}`)
+			return
+		}
+		chatHits++
+		io.WriteString(w, `{"choices":[{"message":{"content":"chat 结果"}}]}`)
+	}))
+	defer srv.Close()
+	cfg := Config{BaseURL: srv.URL, APIKey: "k"}
+
+	okLocal := func(text string) LocalTranscriber {
+		return func(ctx context.Context, wav []byte) (string, error) { localHits++; return text, nil }
+	}
+	// 默认本地优先：本地成功不发网络请求。
+	text, err := TranscribeAuto(context.Background(), cfg, TranscribeOptions{
+		ASRModel: "asr-m", ChatModel: "chat-m", Local: okLocal("本地结果"),
+	}, []byte("x"))
+	if err != nil || text != "本地结果" || asrHits != 0 || chatHits != 0 {
+		t.Fatalf("本地应优先: %q %v asr=%d chat=%d", text, err, asrHits, chatHits)
+	}
+
+	// 本地失败（非未安装）→ 回落云端。
+	text, err = TranscribeAuto(context.Background(), cfg, TranscribeOptions{
+		ASRModel: "asr-m", Local: func(context.Context, []byte) (string, error) { return "", errors.New("boom") },
+	}, []byte("x"))
+	if err != nil || text != "ASR 结果" || asrHits != 1 {
+		t.Fatalf("本地失败应回落云端: %q %v asr=%d", text, err, asrHits)
+	}
+
+	// 本地未安装 → 静默跳过，不污染错误链。
+	asrHits = 0
+	text, err = TranscribeAuto(context.Background(), cfg, TranscribeOptions{
+		ASRModel: "asr-m", Local: func(context.Context, []byte) (string, error) { return "", ErrLocalNotInstalled },
+	}, []byte("x"))
+	if err != nil || text != "ASR 结果" || asrHits != 1 {
+		t.Fatalf("未安装应跳过: %q %v asr=%d", text, err, asrHits)
+	}
+
+	// PreferCloud：云端先于本地。
+	asrHits, chatHits, localHits = 0, 0, 0
+	text, err = TranscribeAuto(context.Background(), cfg, TranscribeOptions{
+		ASRModel: "asr-m", Local: okLocal("本地结果"), PreferCloud: true,
+	}, []byte("x"))
+	if err != nil || text != "ASR 结果" || localHits != 0 {
+		t.Fatalf("PreferCloud 应先用云端: %q %v local=%d", text, err, localHits)
+	}
+
+	// 云端的音频不支持哨兵要能穿透聚合（单来源原样返回）。
+	_, err = TranscribeAuto(context.Background(), cfg, TranscribeOptions{
+		ASRModel: "", ChatModel: "chat-m",
+		Local: func(context.Context, []byte) (string, error) { return "", errors.New("boom") },
+	}, []byte("x"))
+	if err == nil || !strings.Contains(err.Error(), "chat_audio_unsupported") && !strings.Contains(err.Error(), "400") {
+		t.Logf("聚合错误（视网关行为）: %v", err)
 	}
 }

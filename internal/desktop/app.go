@@ -177,6 +177,8 @@ type App struct {
 	appearanceCancel context.CancelFunc // system 模式下的明暗监听取消函数
 
 	installJob installJob // 当前一键安装/卸载任务；绑定并发，由 mu 保护
+	// asrJob 是本地语音引擎的安装任务（与 agent 工具安装分开，互不占忙）。
+	asrJob asrInstallJob
 	// 归档名单、本机 MCP 回调，以及「会话还没落盘就点了归档」的待绑定 ref。
 	archiveStore   *sessionarchive.Store
 	archiveHub     *mcparchive.Hub

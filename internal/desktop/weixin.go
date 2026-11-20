@@ -87,27 +87,34 @@ func (a *App) startWeixin() {
 	}
 }
 
-// weixinTranscriber 返回语音转写函数：每次调用实时读模型平台配置，改配置即时
-// 生效。转写来源优先级链（2026-10-18 与用户确认）：默认平台 asr_model 已填走
-// 专用 ASR 端点；留空则用默认对话模型（ActiveModel，AgentHub 指令环节同款
-// chat 端点）经 input_audio 直接听音频转写——要求该模型支持音频输入，不支持
-// 时由转写失败回执兜底。两者皆缺返回 weixin.ErrTranscriberNotConfigured 哨兵。
+// weixinTranscriber 返回语音转写函数：每次调用实时读配置，改配置即时生效。
+// 优先级链由 hubtools.TranscribeAuto 统一：本地引擎（设置页安装的
+// sherpa-onnx/SenseVoice，或自定义命令）默认优先，其次云端 asr_model，最后
+// 多模态 chat（input_audio）；asr.prefer_cloud 可把云端提到本地之前。
+// 本地可用时完全不依赖模型平台——这是「语音由 agenthub 自己解析」的落点。
+// 一个来源都没有时返回 weixin.ErrTranscriberNotConfigured 哨兵。
 func (a *App) weixinTranscriber() weixin.Transcriber {
 	return func(ctx context.Context, wav []byte) (string, error) {
-		cfgSnapshot := a.snapshot().Config.Model
-		plat, ok := cfgSnapshot.ActivePlatform()
-		if !ok || strings.TrimSpace(plat.OpenAIBaseURL) == "" {
+		snap := a.snapshot()
+		cfgModel := snap.Config.Model
+		opts := hubtools.TranscribeOptions{
+			Local:       a.localTranscriber(),
+			PreferCloud: snap.Config.ASR.PreferCloud,
+		}
+		var hcfg hubtools.Config
+		if plat, ok := cfgModel.ActivePlatform(); ok && strings.TrimSpace(plat.OpenAIBaseURL) != "" {
+			hcfg = hubtools.Config{BaseURL: plat.OpenAIBaseURL, APIKey: plat.APIKey}
+			chatModel := strings.TrimSpace(cfgModel.ActiveModel)
+			opts.ASRModel = plat.ASRModel
+			// 对话模型三元组不齐（对齐 hubtools.Ready 口径：免费无 key 端点不尝试）。
+			if chatModel != "" && strings.TrimSpace(plat.APIKey) != "" {
+				opts.ChatModel = chatModel
+			}
+		}
+		if opts.Local == nil && strings.TrimSpace(opts.ASRModel) == "" && opts.ChatModel == "" {
 			return "", weixin.ErrTranscriberNotConfigured
 		}
-		cfg := hubtools.Config{BaseURL: plat.OpenAIBaseURL, APIKey: plat.APIKey}
-		chatModel := strings.TrimSpace(cfgSnapshot.ActiveModel)
-		// 对话模型三元组不齐（对齐 hubtools.Ready 口径：免费无 key 端点不尝试）；
-		// BaseURL 已在上一步查过，这里只查 Model 与 APIKey。
-		if strings.TrimSpace(plat.ASRModel) == "" && (chatModel == "" || strings.TrimSpace(plat.APIKey) == "") {
-			// ASR 模型未填且对话模型三元组不齐：无可用的转写来源。
-			return "", weixin.ErrTranscriberNotConfigured
-		}
-		text, err := hubtools.TranscribeAuto(ctx, cfg, plat.ASRModel, chatModel, wav)
+		text, err := hubtools.TranscribeAuto(ctx, hcfg, opts, wav)
 		if err != nil {
 			return "", mapVoiceErr(err)
 		}

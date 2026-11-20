@@ -843,3 +843,64 @@ func TestToolPlatformsMigration(t *testing.T) {
 		})
 	}
 }
+
+func TestASRConfigRoundTripAndDefaults(t *testing.T) {
+	p := tempPaths(t)
+	// 缺省：未配置时本地转写关闭、语言 auto、ITN 默认开启、无镜像。
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.ASR.Enabled || c.ASR.PreferCloud || c.ASR.NoITN {
+		t.Fatalf("ASR 缺省值错误: %+v", c.ASR)
+	}
+	if c.ASR.Language != "auto" {
+		t.Fatalf("语言缺省应为 auto: %q", c.ASR.Language)
+	}
+	if !c.ASR.ITNEnabled() {
+		t.Fatal("默认应启用 ITN")
+	}
+
+	// 显式配置往返。
+	c.ASR = ASRConfig{
+		Enabled:     true,
+		PreferCloud: true,
+		Language:    "zh",
+		NoITN:       true,
+		Mirrors:     []string{" https://m.example/{url} ", "", "https://m.example/{url}"},
+		Command:     "my-asr {wav}",
+	}
+	if err := Save(p, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !got.ASR.Enabled || !got.ASR.PreferCloud || !got.ASR.NoITN || got.ASR.Language != "zh" {
+		t.Fatalf("往返丢失: %+v", got.ASR)
+	}
+	if got.ASR.ITNEnabled() {
+		t.Fatal("NoITN=true 时 ITN 应关闭")
+	}
+	// 镜像去空白与去重。
+	if len(got.ASR.Mirrors) != 1 || got.ASR.Mirrors[0] != "https://m.example/{url}" {
+		t.Fatalf("镜像归一化错误: %v", got.ASR.Mirrors)
+	}
+	if got.ASR.Command != "my-asr {wav}" {
+		t.Fatalf("命令未保留: %q", got.ASR.Command)
+	}
+
+	// 非法语言回落 auto。
+	raw := []byte("asr:\n    enabled: true\n    language: klingon\n")
+	if err := os.WriteFile(p.Config, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err = Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.ASR.Language != "auto" {
+		t.Fatalf("非法语言应回落 auto: %q", got.ASR.Language)
+	}
+}

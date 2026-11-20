@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -18,19 +19,84 @@ const asrResponseLimit = 1 << 20
 // timeoutASR 是单次语音转写请求的超时。
 const timeoutASR = 60 * time.Second
 
-// TranscribeAuto 是语音转写的优先级链聚合（desktop 装配唯一入口）：
-// asrModel 非空走专用 ASR 端点；否则 chatModel 非空走多模态 chat 转写；
-// 两者皆空报错（desktop 层通常先行判断哨兵，不走到这里）。
-// 返回错误用 err.hubtools.voice_no_source 标识双空，便于上层归因。
-func TranscribeAuto(ctx context.Context, cfg Config, asrModel, chatModel string, wav []byte) (string, error) {
-	if strings.TrimSpace(asrModel) != "" {
-		return TranscribeAudio(ctx, cfg, asrModel, wav)
-	}
-	if strings.TrimSpace(chatModel) != "" {
-		return TranscribeViaChat(ctx, cfg, chatModel, wav)
-	}
-	return "", fmt.Errorf("err.hubtools.voice_no_source")
+// LocalTranscriber 是本地转写实现（desktop 注入 asrlocal），nil 表示未装配。
+type LocalTranscriber func(ctx context.Context, wav []byte) (string, error)
+
+// TranscribeOptions 是转写优先级链的输入。
+type TranscribeOptions struct {
+	// ASRModel 非空走专用 /audio/transcriptions 端点。
+	ASRModel string
+	// ChatModel 非空走多模态 chat（input_audio）转写。
+	ChatModel string
+	// Local 非空时作为本地引擎来源（未安装时返回 asrlocal.ErrNotInstalled）。
+	Local LocalTranscriber
+	// PreferCloud 为真且 ASRModel 非空时，云端排在本地之前。
+	PreferCloud bool
 }
+
+// TranscribeAuto 是语音转写的优先级链聚合（desktop 装配唯一入口）。
+// 默认顺序：本地 → 云端 ASR → 多模态 chat；PreferCloud 时云端优先。
+// 单个来源失败不中断：继续下一个来源；本地未安装（ErrNotInstalled）静默跳过。
+// 全部不可用/失败返回聚合错误（单来源失败原样返回，保留哨兵可归因）。
+func TranscribeAuto(ctx context.Context, cfg Config, opts TranscribeOptions, wav []byte) (string, error) {
+	type source struct {
+		name string
+		fn   func() (string, error)
+	}
+	var cloud, chat, local *source
+	if m := strings.TrimSpace(opts.ASRModel); m != "" {
+		cloud = &source{"asr", func() (string, error) { return TranscribeAudio(ctx, cfg, m, wav) }}
+	}
+	if m := strings.TrimSpace(opts.ChatModel); m != "" {
+		chat = &source{"chat", func() (string, error) { return TranscribeViaChat(ctx, cfg, m, wav) }}
+	}
+	if opts.Local != nil {
+		local = &source{"local", func() (string, error) { return opts.Local(ctx, wav) }}
+	}
+
+	var order []*source
+	if opts.PreferCloud && cloud != nil {
+		order = append(order, cloud)
+	}
+	if local != nil {
+		order = append(order, local)
+	}
+	if !opts.PreferCloud || cloud == nil {
+		if cloud != nil {
+			order = append(order, cloud)
+		}
+	}
+	if chat != nil {
+		order = append(order, chat)
+	}
+	if len(order) == 0 {
+		return "", fmt.Errorf("err.hubtools.voice_no_source")
+	}
+
+	var errs []error
+	for _, s := range order {
+		text, err := s.fn()
+		if err == nil {
+			return text, nil
+		}
+		if errors.Is(err, ErrLocalNotInstalled) {
+			// 本地引擎未安装是正常形态（用户没装），不作为失败累积。
+			continue
+		}
+		errs = append(errs, fmt.Errorf("%s: %w", s.name, err))
+	}
+	if len(errs) == 1 {
+		return "", errs[0]
+	}
+	if len(errs) == 0 {
+		return "", fmt.Errorf("err.hubtools.voice_no_source")
+	}
+	return "", errors.Join(errs...)
+}
+
+// ErrLocalNotInstalled 与 asrlocal.ErrNotInstalled 同义：避免 hubtools 依赖
+// asrlocal（本地引擎包较重），desktop 注入时做 errors.Is 透传即可。
+var ErrLocalNotInstalled = errors.New("err.hubtools.local_not_installed")
 
 // TranscribeAudio 调 OpenAI 兼容 /audio/transcriptions 端点把 WAV 转成文字。
 // 复用 chat 的平台配置：BaseURL 带 /chat/completions 尾巴时剥掉再拼端点。

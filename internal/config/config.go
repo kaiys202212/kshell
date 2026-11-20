@@ -205,7 +205,34 @@ type Config struct {
 	Weixin WeixinConfig `yaml:"weixin"`
 	// AgentHub 是 AgentHub 的跨端持久化配置（默认工具/模型）。
 	AgentHub AgentHubConfig `yaml:"agenthub"`
+	// ASR 是语音转写的持久化配置（云端 asr_model 之外的本地引擎优先链）。
+	ASR ASRConfig `yaml:"asr"`
 }
+
+// asrLanguages 是 SenseVoice 支持的转写语言集合。
+var asrLanguages = map[string]bool{
+	"auto": true, "zh": true, "en": true, "ja": true, "ko": true, "yue": true,
+}
+
+// ASRConfig 是语音转写配置。
+//
+//   - Enabled：本地引擎总开关；安装完成后 desktop 自动置真。
+//   - PreferCloud：存在云端 asr_model 时先走云端（默认本地优先）。
+//   - NoITN：关闭逆文本规整（数字/标点更接近书写习惯）。用否定字段是因为
+//     yaml 无法区分「未写」与「写了 false」，默认开启只能用 NoITN 表达。
+//   - Mirrors：下载镜像（含 {url} 占位则替换，否则前缀拼接）；空 = 内置链。
+//   - Command：自定义转写命令（含 {wav} 占位），非空时替代内置引擎调用。
+type ASRConfig struct {
+	Enabled     bool     `yaml:"enabled"`
+	PreferCloud bool     `yaml:"prefer_cloud"`
+	Language    string   `yaml:"language"`
+	NoITN       bool     `yaml:"no_itn"`
+	Mirrors     []string `yaml:"mirrors"`
+	Command     string   `yaml:"command"`
+}
+
+// ITNEnabled 返回是否启用逆文本规整（默认开）。
+func (a ASRConfig) ITNEnabled() bool { return !a.NoITN }
 
 // WeixinConfig 是微信桥（iLink）的持久化配置。
 type WeixinConfig struct {
@@ -336,6 +363,7 @@ func Default() Config {
 		PermissionMode: PermissionModeDefault,
 		Model:          ModelConfig{Models: []string{}, Platforms: []ModelPlatform{}},
 		AgentHub:       AgentHubConfig{RouteMode: RouteModeAuto, HeartbeatMinutes: agenthubHeartbeatDefault},
+		ASR:            ASRConfig{Language: "auto"},
 	}
 }
 
@@ -447,6 +475,17 @@ func (c Config) normalized() Config {
 	c.autostartSet = false
 	// AgentHub 路由模式/编排参数归一（抽为 AgentHubConfig.Normalized 共用）。
 	c.AgentHub = c.AgentHub.Normalized()
+	// 语音转写：语言非法回落 auto；镜像去空白与重复，保持输入顺序。
+	if !asrLanguages[c.ASR.Language] {
+		c.ASR.Language = "auto"
+	}
+	c.ASR.Command = strings.TrimSpace(c.ASR.Command)
+	// 空列表归一为 nil：Default() 与落盘读回（yaml 写 `mirrors: []`）保持相等。
+	if len(c.ASR.Mirrors) == 0 {
+		c.ASR.Mirrors = nil
+	} else {
+		c.ASR.Mirrors = normalizeModels(c.ASR.Mirrors)
+	}
 	// 模型配置：统一模型列表归一；旧 base_url / agents 迁移后清空。
 	c.Model.Preset = strings.TrimSpace(c.Model.Preset)
 	c.Model.OpenAIBaseURL = sanitizeHTTPURL(c.Model.OpenAIBaseURL)

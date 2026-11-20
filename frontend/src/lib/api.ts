@@ -637,6 +637,37 @@ export interface WeixinStatusView {
   binding: string;
 }
 
+// desktop.ASRStatusView 的 JSON 形态（internal/desktop/asr.go，字段带 json tag）：
+// 本地语音转写引擎状态 + 持久化配置。installed 为真时 enginePath/modelPath 可用。
+export interface ASRStatusView {
+  installed: boolean;
+  partial: boolean;
+  enginePath: string;
+  modelPath: string;
+  version: string;
+  sizeMB: number;
+  supported: boolean;
+  platform: string;
+  enabled: boolean;
+  preferCloud: boolean;
+  language: string;
+  itn: boolean;
+  mirrors: string[];
+  command: string;
+  running: boolean;
+  error: string;
+}
+
+// desktop.ASRSettingsInput：设置页提交的本地转写配置（json tag 同名小写）。
+export interface ASRSettingsInput {
+  enabled: boolean;
+  preferCloud: boolean;
+  language: string;
+  itn: boolean;
+  mirrors: string[];
+  command: string;
+}
+
 // desktop.AgentHubSettings 的 JSON 形态（internal/desktop/agenthub_settings.go）：
 // direct_patterns 为 null 表示走内置默认直通集。
 export interface AgentHubSettings {
@@ -731,6 +762,12 @@ interface AppBindings {
   InstallBuiltinTool(id: string): Promise<void>;
   UninstallBuiltinTool(id: string, purgeConfig: boolean): Promise<void>;
   GetToolInstallJob(): Promise<ToolInstallJobView>;
+  // 本地语音转写引擎（internal/desktop/asr.go）
+  GetASRStatus(): Promise<ASRStatusView>;
+  GetASRInstallLog(): Promise<string>;
+  InstallASRLocal(): Promise<void>;
+  UninstallASRLocal(): Promise<void>;
+  SaveASRSettings(input: ASRSettingsInput): Promise<ASRStatusView>;
   GetHostSyncStatuses(): Promise<HostSyncResult>;
   SyncHosts(toolIDs: string[]): Promise<HostSyncResult>;
   LoadProvidersYAML(): Promise<string>;
@@ -2786,4 +2823,57 @@ export async function saveAgentHubSettings(
   const a = app();
   if (!a) throw new Error(ERR_NO_BINDING);
   await a.SaveAgentHubSettings({ heartbeat_minutes: heartbeatMinutes, direct_patterns: directPatterns });
+}
+
+// 本地语音转写（internal/desktop/asr.go）
+// GetASRStatus 返回引擎安装状态与持久化配置；无绑定时返回 null，调用本身失败也
+// 返回 null（与 weixinStatus 同口径，由调用方呈现错误态）。
+export async function getASRStatus(): Promise<ASRStatusView | null> {
+  const a = app();
+  if (!a) return null;
+  try {
+    return await a.GetASRStatus();
+  } catch {
+    return null;
+  }
+}
+
+// GetASRInstallLog 读取当前/上次安装任务日志（切页恢复进度用）。
+export async function getASRInstallLog(): Promise<string> {
+  const a = app();
+  if (!a) return '';
+  return a.GetASRInstallLog();
+}
+
+// InstallASRLocal 启动后台安装（下载引擎+模型）。重复点击由后端忙锁兜底。
+export async function installASRLocal(): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.InstallASRLocal();
+}
+
+// UninstallASRLocal 删除本地引擎目录并关闭 asr.enabled。
+export async function uninstallASRLocal(): Promise<void> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  await a.UninstallASRLocal();
+}
+
+// SaveASRSettings 落盘本地转写配置，返回归一化后的最新状态。
+export async function saveASRSettings(input: ASRSettingsInput): Promise<ASRStatusView> {
+  const a = app();
+  if (!a) throw new Error(ERR_NO_BINDING);
+  return a.SaveASRSettings(input);
+}
+
+// onASRInstallLog 订阅安装日志行（asr:install:log）。
+export function onASRInstallLog(cb: (text: string) => void): () => void {
+  return EventsOn('asr:install:log', (p: { text?: string }) => cb(p?.text ?? ''));
+}
+
+// onASRInstallDone 订阅安装结束（asr:install:done）：ok=false 时带 error。
+export function onASRInstallDone(cb: (p: { ok: boolean; error?: string }) => void): () => void {
+  return EventsOn('asr:install:done', (p: { ok?: boolean; error?: string }) =>
+    cb({ ok: Boolean(p?.ok), error: p?.error }),
+  );
 }

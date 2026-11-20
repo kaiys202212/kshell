@@ -63,6 +63,10 @@
       "unknown_pending": "This confirmation is no longer valid (already handled or replaced)",
       "pending_expired": "Confirmation expired; please start again"
     },
+    "asr": {
+      "install_in_progress": "An install task is already running; please wait",
+      "not_ready": "Install directory is not ready (desktop not initialized)"
+    },
     "language": {
       "locales_not_dir": "Locales path is not a directory: {{0}}"
     },
@@ -359,6 +363,47 @@
       "expired": "QR code expired",
       "pending_undelivered": "{{count}} undelivered",
       "error": "WeChat bridge operation failed"
+    },
+    "asr": {
+      "title": "Local voice transcription",
+      "desc": "On-device speech recognition without a cloud API. Once enabled, WeChat voice can be transcribed locally even when the cloud is unavailable.",
+      "installed": "Installed",
+      "partial": "Install incomplete (reinstall to repair)",
+      "not_installed": "Not installed",
+      "version": "Version",
+      "size": "{{0}} MB",
+      "platform": "Platform",
+      "unsupported": "Automatic local engine install is not supported on this platform",
+      "unsupported_hint": "You can still configure a custom command to plug in your own transcriber.",
+      "install": "Install local engine",
+      "reinstall": "Reinstall",
+      "uninstall": "Uninstall",
+      "uninstall_confirm": "Confirm uninstall?",
+      "installing": "Installing…",
+      "install_hint": "First install downloads the engine and model (about 300 MB). Built-in GitHub/HuggingFace mirror chains switch automatically on failure.",
+      "log_title": "Install log",
+      "enabled": "Enable local transcription",
+      "enabled_hint": "WeChat voice is transcribed by the local engine first; falls back to the cloud setup when unavailable.",
+      "prefer_cloud": "Prefer cloud",
+      "prefer_cloud_hint": "Try the cloud ASR or chat model first; use the local engine only after all cloud paths fail.",
+      "language": "Recognition language",
+      "language_hint": "Auto detects mixed Chinese, English, Japanese, Korean and Cantonese audio.",
+      "lang_auto": "Auto",
+      "lang_zh": "Chinese",
+      "lang_en": "English",
+      "lang_ja": "Japanese",
+      "lang_ko": "Korean",
+      "lang_yue": "Cantonese",
+      "itn": "Normalize numbers and punctuation (ITN)",
+      "mirrors": "Download mirrors",
+      "mirrors_hint": "One per line; {url} placeholder or URL prefix. Leave empty to use built-in mirrors.",
+      "command": "Custom command",
+      "command_hint": "Optional. Empty uses the built-in engine; otherwise {wav} is replaced with the audio path and stdout is the transcript.",
+      "save": "Save",
+      "saved": "Voice settings saved",
+      "error": "Voice settings operation failed",
+      "install_done": "Local voice engine installed",
+      "install_failed": "Local voice engine install failed"
     },
     "error_boundary": {
       "title": "Something went wrong",
