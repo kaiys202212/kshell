@@ -201,6 +201,9 @@ func (c *Client) once(ctx context.Context, msgs []Message, tools []ToolFunc) (Re
 	}
 	req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
+	if c.cfg.SessionID != "" {
+		req.Header.Set("x-opencode-session", c.cfg.SessionID)
+	}
 
 	httpResp, err := c.http.Do(req)
 	if err != nil {

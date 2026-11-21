@@ -219,3 +219,33 @@ func TestChatMultiTurnToolMessagesWireShape(t *testing.T) {
 		t.Fatalf("第三条消息应为 role=tool 且带 tool_call_id: %+v", m3)
 	}
 }
+
+// TestChatSessionHeader 验证 SessionID 与 x-opencode-session 头的对应关系：
+// 非空必带（opencode GO 网关缺失该头直接 400），空值不发（其它网关零影响）。
+func TestChatSessionHeader(t *testing.T) {
+	var gotSession string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSession = r.Header.Get("x-opencode-session")
+		writeJSON(t, w, mockChoice("好"))
+	}))
+	defer srv.Close()
+
+	// 非空：必须带上该头
+	c := NewClient(Config{BaseURL: srv.URL, APIKey: "k", Model: "m", SessionID: "sess-1"})
+	if _, err := c.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if gotSession != "sess-1" {
+		t.Fatalf("x-opencode-session = %q, 期望 sess-1", gotSession)
+	}
+
+	// 空：不得发该头
+	gotSession = ""
+	c2 := newTestClient(srv.URL)
+	if _, err := c2.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if gotSession != "" {
+		t.Fatalf("SessionID 为空时不应发送 x-opencode-session, got %q", gotSession)
+	}
+}

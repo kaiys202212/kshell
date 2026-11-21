@@ -35,6 +35,10 @@ type Config struct {
 	BaseURL string // OpenAI 兼容端点（含 /v1 风格）；workbuddy 平台恒空
 	APIKey  string // workbuddy 平台恒空（凭据调用时现解密）
 	Model   string
+	// SessionID 可选：随请求发送 x-opencode-session。opencode GO 网关要求
+	// 稳定会话头做路由优化，缺失直接 400（MissingSessionID）；其它网关忽略
+	// 未知头，零影响。空值不发。由调用方注入，本包不负责生成与持久化。
+	SessionID string
 }
 
 // Ready 判断自主模型链路是否就绪。普通平台要求端点/密钥/模型三元组齐全；
