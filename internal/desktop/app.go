@@ -253,6 +253,9 @@ type App struct {
 	// 进程内单例（workbuddyproxy.Get），非导出字段便于测试注入 fake Proxier。
 	// App 不负责关闭：代理生命周期与进程（agent 子进程）天然对齐。
 	wxProxy modelresolve.Proxier
+	// llmSessionIDCache 是应用级 LLM 会话 ID 的进程内缓存：首次调用生成并落盘
+	// state 目录（llm-session.go），之后直接取缓存。mu 保护。
+	llmSessionIDCache string
 }
 
 // NewApp 创建绑定对象；真实依赖延迟到 Startup 装配（包级初始化时还拿不到用户目录）。
