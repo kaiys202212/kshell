@@ -254,7 +254,7 @@ type App struct {
 	// App 不负责关闭：代理生命周期与进程（agent 子进程）天然对齐。
 	wxProxy modelresolve.Proxier
 	// llmSessionIDCache 是应用级 LLM 会话 ID 的进程内缓存：首次调用生成并落盘
-	// state 目录（llm-session.go），之后直接取缓存。mu 保护。
+	// state 目录（llm_session.go），之后直接取缓存。mu 保护。
 	llmSessionIDCache string
 }
 

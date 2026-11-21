@@ -3,9 +3,11 @@ package desktop
 import (
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // llm-session.json：应用级稳定 LLM 会话 ID。
@@ -23,7 +25,9 @@ type llmSessionState struct {
 
 // llmSessionID 返回应用级稳定 LLM 会话 ID：首次调用生成 UUIDv4 并原子落盘
 // state 目录，之后跨重启沿用；Layout.State 未装配时退化为进程内临时 ID
-//（不落盘）。缓存 + mu 保护，并发调用只生成一次。
+//（不落盘）。缓存不随后续 Layout 装配刷新：生产时序 Layout 装配先于任何
+// hubtools 调用，临时 ID 仅测试零值 App 可达。缓存 + mu 保护，并发首次
+// 调用只生成一次。
 func (a *App) llmSessionID() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -85,9 +89,9 @@ func (a *App) saveLLMSessionID(id string) {
 func newUUIDv4() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		// crypto/rand 失败极罕见（系统熵源不可用）：回退到固定前缀+时间戳，
-		// 保证 ID 非空可用（网关只要求稳定字符串，不校验版本位）。
-		return "kshell-llm-session-fallback"
+		// crypto/rand 失败极罕见（系统熵源不可用）：回退进程唯一字符串，
+		// 保证 ID 非空且跨安装不同值（网关只要求稳定字符串，不校验版本位）。
+		return fmt.Sprintf("kshell-llm-%d-%d", os.Getpid(), time.Now().UnixNano())
 	}
 	b[6] = (b[6] & 0x0f) | 0x40 // version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // variant 10

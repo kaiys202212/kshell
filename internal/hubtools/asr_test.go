@@ -288,6 +288,52 @@ func TestTranscribeAutoLogsSource(t *testing.T) {
 	}
 }
 
+// TestTranscribeSessionHeader 验证两条转写链路对 x-opencode-session 头的处理：
+// Config.SessionID 非空必带（opencode GO 网关全端点校验），空值不发。
+func TestTranscribeSessionHeader(t *testing.T) {
+	var gotSession string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSession = r.Header.Get("x-opencode-session")
+		if strings.HasSuffix(r.URL.Path, "/audio/transcriptions") {
+			io.WriteString(w, `{"text":"ok"}`)
+			return
+		}
+		io.WriteString(w, `{"choices":[{"message":{"content":"转写内容"}}]}`)
+	}))
+	defer srv.Close()
+
+	// 非空：asr 与 chat 两条链路都必须带上。
+	cfg := Config{BaseURL: srv.URL, APIKey: "k", SessionID: "sess-1"}
+	if _, err := TranscribeAudio(context.Background(), cfg, "m", []byte("x")); err != nil {
+		t.Fatalf("TranscribeAudio: %v", err)
+	}
+	if gotSession != "sess-1" {
+		t.Fatalf("asr x-opencode-session = %q", gotSession)
+	}
+	if _, err := TranscribeViaChat(context.Background(), cfg, "m", []byte("x")); err != nil {
+		t.Fatalf("TranscribeViaChat: %v", err)
+	}
+	if gotSession != "sess-1" {
+		t.Fatalf("chat x-opencode-session = %q", gotSession)
+	}
+
+	// 空：两条链路都不发。
+	gotSession = ""
+	cfg2 := Config{BaseURL: srv.URL, APIKey: "k"}
+	if _, err := TranscribeAudio(context.Background(), cfg2, "m", []byte("x")); err != nil {
+		t.Fatalf("TranscribeAudio: %v", err)
+	}
+	if gotSession != "" {
+		t.Fatalf("SessionID 为空时 asr 不应发会话头, got %q", gotSession)
+	}
+	if _, err := TranscribeViaChat(context.Background(), cfg2, "m", []byte("x")); err != nil {
+		t.Fatalf("TranscribeViaChat: %v", err)
+	}
+	if gotSession != "" {
+		t.Fatalf("SessionID 为空时 chat 不应发会话头, got %q", gotSession)
+	}
+}
+
 func TestTranscribeAutoLocalChain(t *testing.T) {
 	var asrHits, chatHits, localHits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

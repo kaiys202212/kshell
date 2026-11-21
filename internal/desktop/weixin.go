@@ -107,6 +107,8 @@ func (a *App) weixinTranscriber() weixin.Transcriber {
 		var hcfg hubtools.Config
 		if plat, ok := cfgModel.ActivePlatform(); ok && strings.TrimSpace(plat.OpenAIBaseURL) != "" {
 			hcfg = hubtools.Config{BaseURL: plat.OpenAIBaseURL, APIKey: plat.APIKey}
+			// opencode GO 网关要求稳定会话头，缺失直接 400（见 llm_session.go）。
+			hcfg.SessionID = a.llmSessionID()
 			chatModel := strings.TrimSpace(cfgModel.ActiveModel)
 			opts.ASRModel = plat.ASRModel
 			// 对话模型三元组不齐（对齐 hubtools.Ready 口径：免费无 key 端点不尝试）。
@@ -139,6 +141,9 @@ func (a *App) weixinInputRouter() weixin.InputRouter {
 		if !ok {
 			return hubtools.RouteDecision{}, false
 		}
+		// opencode GO 网关要求稳定会话头，缺失直接 400（见 llm_session.go）；
+		// 漏了会让意图识别 400 静默回落命令层原文投递。
+		hc.SessionID = a.llmSessionID()
 		ex := newWXExecutor(a)
 		sessions := routeBriefs(ex.ListSessions(), ex.SessionStatuses())
 		d, err := hubtools.RouteInput(ctx, hc, sessions, input)

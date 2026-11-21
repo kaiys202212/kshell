@@ -147,6 +147,9 @@ func TranscribeAudio(ctx context.Context, cfg Config, model string, wav []byte) 
 	if cfg.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	}
+	if cfg.SessionID != "" {
+		req.Header.Set("x-opencode-session", cfg.SessionID)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
