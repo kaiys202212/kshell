@@ -29,6 +29,8 @@ func (a *App) GenerateCommitMessage(wsPath, repoRel, lang string) (string, error
 	if !ok {
 		return "", errCommitMsgModelNotReady
 	}
+	// opencode GO 网关要求稳定会话头，缺失直接 400（见 llm_session.go）。
+	cfg.SessionID = a.llmSessionID()
 
 	local, remote, err := a.gitLocalRoot(wsPath)
 	if err != nil {

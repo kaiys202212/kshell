@@ -314,6 +314,9 @@ func (a *App) AgentAPI() *agentapi.API {
 	}
 	a.mu.Unlock()
 	hc, _ := hubtools.FromModelConfig(a.snapshot().Config.Model)
+	// opencode GO 网关要求稳定会话头，缺失直接 400（见 llm_session.go）；
+	// 每次访问随 LLM 配置一起刷新，管理者循环与微信桥同源生效。
+	hc.SessionID = a.llmSessionID()
 	api.UpdateLLM(hc)
 	return api
 }
