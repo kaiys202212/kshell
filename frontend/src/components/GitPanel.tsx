@@ -220,12 +220,18 @@ export default function GitPanel({
     try {
       await fn();
       if (ok) notify(ok, 'success');
-      await refreshGitStatus(wsPath);
-      await load();
-      await loadLog();
     } catch (e) {
       notify(backendError(e), 'error');
     } finally {
+      // 失败也要刷新：fetch/pull 可能已改动远端跟踪引用，留着旧 ↑↓ 会与磁盘状态不符，
+      // 用户只能靠手动刷新才发现。刷新本身出错就保持原状，由下次手动刷新兜底。
+      try {
+        await refreshGitStatus(wsPath);
+        await load();
+        await loadLog();
+      } catch {
+        /* 忽略刷新失败 */
+      }
       setBusy(false);
     }
   };
@@ -308,11 +314,19 @@ export default function GitPanel({
     window.addEventListener('pointerup', up);
   };
 
+  // 先 fetch 再同步：面板里的 ↑↓ 来自本地缓存的远端跟踪引用，可能已过期；
+  // 直接按旧计数 pull/push 会出现「远端已有新提交却什么都不做」。fetch 后重取快照，
+  // 按最新差异决定拉取/推送；pull 产生合并提交会改变领先数，需再取一次。
   const sync = () =>
     run(async () => {
       const remote = snap?.SyncRemote ?? '';
-      if ((snap?.Behind ?? 0) > 0) await gitPull(wsPath, repoRel, remote);
-      if ((snap?.Ahead ?? 0) > 0) await gitPush(wsPath, repoRel, remote);
+      await gitFetch(wsPath, repoRel, remote);
+      let next = await gitSCM(wsPath, repoRel, remote);
+      if ((next?.Behind ?? 0) > 0) {
+        await gitPull(wsPath, repoRel, remote);
+        next = await gitSCM(wsPath, repoRel, remote);
+      }
+      if ((next?.Ahead ?? 0) > 0) await gitPush(wsPath, repoRel, remote);
     }, t('ui.git.synced'));
 
   const onMsgKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -562,7 +576,7 @@ export default function GitPanel({
                 >
                   {t('ui.git.commit_and_push')}
                 </DropdownMenuItem>
-                <DropdownMenuItem disabled={!canSync || genBusy} onSelect={() => void sync()}>
+                <DropdownMenuItem disabled={!canSync || busy || genBusy} onSelect={() => void sync()}>
                   {t('ui.git.sync')}
                 </DropdownMenuItem>
               </DropdownMenuContent>

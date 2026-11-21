@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import GitPanel from './GitPanel';
-import type { GitLogCommit, GitSCMSnapshot } from '../lib/api';
+import type { GitLogCommit, GitRef, GitSCMSnapshot } from '../lib/api';
 import { useAppStore } from '../state/store';
 import { tt } from '../test/i18n';
 
@@ -28,6 +28,24 @@ function fakeCommit(i: number): GitLogCommit {
   };
 }
 
+const DEFAULT_LOG: GitLogCommit[] = [
+  {
+    Hash: 'abc1234deadbeef',
+    Parents: [],
+    Author: 't',
+    Email: 't@t',
+    Date: '2026-01-01T00:00:00Z',
+    Subject: 'init',
+    Decorations: ['main'],
+  },
+];
+
+const DEFAULT_REFS: GitRef[] = [
+  { Name: 'main', Short: 'main', Kind: 'local', Current: true },
+  { Name: 'topic', Short: 'topic', Kind: 'local', Current: false },
+  { Name: 'origin/main', Short: 'origin/main', Kind: 'remote', Current: false },
+];
+
 const mocks = vi.hoisted(() => ({
   gitSCM: vi.fn(),
   gitStage: vi.fn().mockResolvedValue(undefined),
@@ -45,22 +63,8 @@ const mocks = vi.hoisted(() => ({
   gitStashPop: vi.fn().mockResolvedValue(undefined),
   gitStashApply: vi.fn().mockResolvedValue(undefined),
   gitStashDrop: vi.fn().mockResolvedValue(undefined),
-  gitLog: vi.fn().mockResolvedValue([
-    {
-      Hash: 'abc1234deadbeef',
-      Parents: [],
-      Author: 't',
-      Email: 't@t',
-      Date: '2026-01-01T00:00:00Z',
-      Subject: 'init',
-      Decorations: ['main'],
-    },
-  ]),
-  gitRefs: vi.fn().mockResolvedValue([
-    { Name: 'main', Short: 'main', Kind: 'local', Current: true },
-    { Name: 'topic', Short: 'topic', Kind: 'local', Current: false },
-    { Name: 'origin/main', Short: 'origin/main', Kind: 'remote', Current: false },
-  ]),
+  gitLog: vi.fn(),
+  gitRefs: vi.fn(),
   gitFetchAll: vi.fn().mockResolvedValue(undefined),
   gitCommitStat: vi.fn().mockResolvedValue({ Files: 19, Insertions: 1867, Deletions: 202 }),
 }));
@@ -95,10 +99,29 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   useAppStore.setState({ toasts: [] });
-  mocks.gitSCM.mockResolvedValue(snap());
+  // clearAllMocks 只清调用记录，不清 mockImplementation/mockRejectedValue；用例各自改写过的
+  // 实现会漏到后续用例。统一 reset 后重设全部默认值，避免顺序依赖。
+  for (const m of Object.values(mocks)) m.mockReset();
+  mocks.gitStage.mockResolvedValue(undefined);
+  mocks.gitUnstage.mockResolvedValue(undefined);
+  mocks.gitDiscard.mockResolvedValue(undefined);
+  mocks.gitCommit.mockResolvedValue(undefined);
+  mocks.generateCommitMessage.mockResolvedValue('feat: 自动生成');
+  mocks.gitBranches.mockResolvedValue(['main']);
+  mocks.gitCheckout.mockResolvedValue(undefined);
+  mocks.gitCreateBranch.mockResolvedValue(undefined);
+  mocks.gitFetch.mockResolvedValue(undefined);
   mocks.gitPull.mockResolvedValue(undefined);
   mocks.gitPush.mockResolvedValue(undefined);
-  mocks.generateCommitMessage.mockResolvedValue('feat: 自动生成');
+  mocks.gitStashPush.mockResolvedValue(undefined);
+  mocks.gitStashPop.mockResolvedValue(undefined);
+  mocks.gitStashApply.mockResolvedValue(undefined);
+  mocks.gitStashDrop.mockResolvedValue(undefined);
+  mocks.gitLog.mockResolvedValue(DEFAULT_LOG);
+  mocks.gitRefs.mockResolvedValue(DEFAULT_REFS);
+  mocks.gitFetchAll.mockResolvedValue(undefined);
+  mocks.gitCommitStat.mockResolvedValue({ Files: 19, Insertions: 1867, Deletions: 202 });
+  mocks.gitSCM.mockResolvedValue(snap());
   ioCallback = null;
   vi.stubGlobal(
     'IntersectionObserver',
@@ -325,17 +348,122 @@ describe('GitPanel', () => {
     expect(await screen.findByLabelText(tt('ui.git.sync_source_aria'))).toHaveValue('gitcode');
   });
 
-  it('同步按钮按生效同步源拉取推送', async () => {
+  it('Fetch and Sync：先取远端，再按 fetch 后的差异拉取推送', async () => {
     const ws = 'D:\\proj';
-    mocks.gitSCM.mockResolvedValue(
-      snap({ Entries: [], Ahead: 1, Behind: 1, HasUpstream: true, SyncRemote: 'gitcode' }),
+    let fetched = false;
+    mocks.gitFetch.mockImplementation(() => {
+      fetched = true;
+      return Promise.resolve();
+    });
+    // fetch 前快照只有领先（按钮可用），fetch 后同时落后 → 需要先拉再推。
+    mocks.gitSCM.mockImplementation(() =>
+      Promise.resolve(
+        snap({
+          Entries: [],
+          Ahead: 1,
+          Behind: fetched ? 1 : 0,
+          HasUpstream: true,
+          SyncRemote: 'gitcode',
+        }),
+      ),
     );
     render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
-    fireEvent.click(await screen.findByRole('button', { name: tt('ui.git.primary_action_aria') }));
+    const btn = await screen.findByRole('button', { name: tt('ui.git.primary_action_aria') });
+    await waitFor(() => expect(btn).toBeEnabled());
+    fireEvent.click(btn);
     await waitFor(() => {
+      expect(mocks.gitFetch).toHaveBeenCalledWith(ws, '', 'gitcode');
       expect(mocks.gitPull).toHaveBeenCalledWith(ws, '', 'gitcode');
       expect(mocks.gitPush).toHaveBeenCalledWith(ws, '', 'gitcode');
     });
+    const order = (fn: { mock: { invocationCallOrder: number[] } }) => fn.mock.invocationCallOrder[0];
+    expect(order(mocks.gitFetch)).toBeLessThan(order(mocks.gitPull));
+    expect(order(mocks.gitPull)).toBeLessThan(order(mocks.gitPush));
+  });
+
+  it('Fetch and Sync：fetch 后已无差异则不再拉取推送', async () => {
+    const ws = 'D:\\proj';
+    let fetched = false;
+    mocks.gitFetch.mockImplementation(() => {
+      fetched = true;
+      return Promise.resolve();
+    });
+    mocks.gitSCM.mockImplementation(() =>
+      Promise.resolve(
+        snap({
+          Entries: [],
+          Ahead: fetched ? 0 : 1,
+          Behind: 0,
+          HasUpstream: true,
+          SyncRemote: 'gitcode',
+        }),
+      ),
+    );
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    const btn = await screen.findByRole('button', { name: tt('ui.git.primary_action_aria') });
+    await waitFor(() => expect(btn).toBeEnabled());
+    fireEvent.click(btn);
+    // 必须等整条链路收尾（成功 toast）再断言未调用，否则只覆盖「与 fetch 同 tick」的误调用，
+    // 延迟发生的误拉/误推会漏掉。
+    await waitFor(() => {
+      expect(useAppStore.getState().toasts.some((x) => x.title === tt('ui.git.synced'))).toBe(true);
+    });
+    expect(mocks.gitFetch).toHaveBeenCalledWith(ws, '', 'gitcode');
+    expect(mocks.gitPull).not.toHaveBeenCalled();
+    expect(mocks.gitPush).not.toHaveBeenCalled();
+  });
+
+  it('Fetch and Sync：pull 后按新快照推送（合并提交产生新的领先）', async () => {
+    const ws = 'D:\\proj';
+    let fetched = false;
+    let pulled = false;
+    mocks.gitFetch.mockImplementation(() => {
+      fetched = true;
+      return Promise.resolve();
+    });
+    mocks.gitPull.mockImplementation(() => {
+      pulled = true;
+      return Promise.resolve();
+    });
+    // fetch 前只有领先；fetch 后落后（无领先）；pull 合并后重新产生领先 → 必须 push。
+    mocks.gitSCM.mockImplementation(() =>
+      Promise.resolve(
+        snap({
+          Entries: [],
+          Ahead: pulled ? 1 : fetched ? 0 : 1,
+          Behind: fetched && !pulled ? 1 : 0,
+          HasUpstream: true,
+          SyncRemote: 'gitcode',
+        }),
+      ),
+    );
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    const btn = await screen.findByRole('button', { name: tt('ui.git.primary_action_aria') });
+    await waitFor(() => expect(btn).toBeEnabled());
+    fireEvent.click(btn);
+    await waitFor(() => expect(mocks.gitPush).toHaveBeenCalledWith(ws, '', 'gitcode'));
+    expect(mocks.gitPull).toHaveBeenCalledWith(ws, '', 'gitcode');
+  });
+
+  it('Fetch and Sync：fetch 失败时报错并停止后续操作', async () => {
+    const ws = 'D:\\proj';
+    mocks.gitFetch.mockRejectedValue(new Error('boom'));
+    mocks.gitSCM.mockResolvedValue(
+      snap({ Entries: [], Ahead: 1, Behind: 0, HasUpstream: true, SyncRemote: 'gitcode' }),
+    );
+    render(<GitPanel wsPath={ws} visible onOpenDiff={() => {}} />);
+    const btn = await screen.findByRole('button', { name: tt('ui.git.primary_action_aria') });
+    await waitFor(() => expect(btn).toBeEnabled());
+    fireEvent.click(btn);
+    await waitFor(() => {
+      expect(
+        useAppStore
+          .getState()
+          .toasts.some((x) => x.tone === 'error' && x.title === 'boom'),
+      ).toBe(true);
+    });
+    expect(mocks.gitPull).not.toHaveBeenCalled();
+    expect(mocks.gitPush).not.toHaveBeenCalled();
   });
 
   it('同步进行中主按钮显示转圈图标', async () => {
