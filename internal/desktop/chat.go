@@ -391,13 +391,23 @@ func (a *App) openWorkspaceACP(wsID, toolID, modelID string, allowFallback bool)
 	createModel := a.effectiveOpenCodeCreateModel(toolID, modelID)
 	if m := o.Chats; m != nil {
 		if l, err := launch.ForWorkspaceACP(o.Providers, tools, ws, toolID, a.modelOptionsForCreate(toolID, createModel), a.permissionOptions()); err == nil {
-			info, err := openChat(m, "new:"+nextChatSeq(), chat.Info{
-				Kind:            chat.KindNew,
-				Workspace:       ws.Path,
-				Title:           workspaceTerminalTitle(o.Providers, tools, ws, toolID),
-				ToolID:          toolID,
-				KnownSessionIDs: a.knownSessionIDs(),
-			}, l, "")
+			// newInfo 每次调用新建：openChat 会把 Manager 侧 ID 写回入参副本，
+			// 重试必须用干净的一份额度，不能带上首次失败留下的痕迹。
+			newInfo := func() chat.Info {
+				return chat.Info{
+					Kind:            chat.KindNew,
+					Workspace:       ws.Path,
+					Title:           workspaceTerminalTitle(o.Providers, tools, ws, toolID),
+					ToolID:          toolID,
+					KnownSessionIDs: a.knownSessionIDs(),
+				}
+			}
+			info, err := openChat(m, "new:"+nextChatSeq(), newInfo(), l, "")
+			// 握手超时不代表会话没建起来：cursor 的 session/new 会因 MCP 初始化
+			// 变慢（实测 156~202s）。重试一次，仍失败才降级，避免白丢上下文。
+			if err != nil && isHandshakeTimeout(err) {
+				info, err = openChat(m, "new:"+nextChatSeq(), newInfo(), l, "")
+			}
 			if err == nil {
 				// 先让前端登记会话再落欢迎词：欢迎卡一旦可见，快捷操作就能解析到目标。
 				a.emitChatMeta(info)

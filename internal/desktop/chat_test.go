@@ -644,3 +644,154 @@ func TestChatConfigBindingsRequireChatManager(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// flakyConn 第一次 NewSession 返回握手超时，之后正常；用于验证「超时重试一次」。
+type flakyConn struct {
+	fakeChatConn
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *flakyConn) NewSession(ctx context.Context, cwd string) (acp.SessionStart, error) {
+	c.mu.Lock()
+	c.calls++
+	n := c.calls
+	c.mu.Unlock()
+	if n == 1 {
+		return acp.SessionStart{}, errors.New("err.chat.handshake_timeout")
+	}
+	return c.fakeChatConn.NewSession(ctx, cwd)
+}
+
+func (c *flakyConn) newSessionCalls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+// sequenceBackend 按序返回预置连接，并在用尽后复用最后一个。
+type sequenceBackend struct {
+	mu    sync.Mutex
+	conns []chat.Conn
+	idx   int
+}
+
+func (b *sequenceBackend) Start(spec chat.Spec, h acp.Handler) (chat.Conn, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.conns) == 0 {
+		return &fakeChatConn{waitCh: make(chan struct{})}, nil
+	}
+	i := b.idx
+	if i >= len(b.conns) {
+		i = len(b.conns) - 1
+	}
+	b.idx++
+	return b.conns[i], nil
+}
+
+// openWorkspaceACP 在握手超时时必须重试一次：cursor 的 session/new 可能因
+// MCP 初始化而慢到超时，但会话往往已在磁盘落地，直接降级终端会白丢上下文。
+func TestOpenWorkspaceACPRetriesOnceOnHandshakeTimeout(t *testing.T) {
+	first := &flakyConn{fakeChatConn: fakeChatConn{waitCh: make(chan struct{})}}
+	second := &fakeChatConn{waitCh: make(chan struct{})}
+	backend := &sequenceBackend{conns: []chat.Conn{first, second}}
+
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "cursor-agent",
+	}, backend)
+	env.app.mu.Lock()
+	env.app.opts.Config.SessionMode = config.SessionModeACP
+	env.app.opts.Providers = []providers.Provider{providers.Cursor{}}
+	env.app.tools = []discovery.Tool{{
+		ID: "cursor", Name: "Cursor", BinPath: "cursor-agent", Installed: true,
+		ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "cursor-agent"},
+	}}
+	env.app.mu.Unlock()
+
+	opened, err := env.app.OpenWorkspaceACP(`D:\w`, "cursor", "")
+	if err != nil {
+		t.Fatalf("OpenWorkspaceACP: %v", err)
+	}
+	if opened.Kind != "chat" {
+		t.Fatalf("超时重试成功后应走聊天，got %+v", opened)
+	}
+	if got := first.newSessionCalls(); got != 1 {
+		t.Fatalf("首次连接应尝试过一次 session/new，got %d", got)
+	}
+}
+
+// 非超时错误不做重试：避免把确定性失败（如 agent 进程已死）拖成两倍耗时。
+// 显式 ACP 路径（allowFallback=false）本就该原样上抛错误。
+func TestOpenWorkspaceACPNoRetryOnNonTimeoutError(t *testing.T) {
+	conn := &alwaysFailConn{fakeChatConn: fakeChatConn{waitCh: make(chan struct{})}}
+	backend := &sequenceBackend{conns: []chat.Conn{conn}}
+
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "cursor-agent",
+	}, backend)
+	env.app.mu.Lock()
+	env.app.opts.Config.SessionMode = config.SessionModeACP
+	env.app.opts.Providers = []providers.Provider{providers.Cursor{}}
+	env.app.tools = []discovery.Tool{{
+		ID: "cursor", Name: "Cursor", BinPath: "cursor-agent", Installed: true,
+		ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "cursor-agent"},
+	}}
+	env.app.mu.Unlock()
+
+	if _, err := env.app.OpenWorkspaceACP(`D:\w`, "cursor", ""); err == nil {
+		t.Fatal("显式 ACP 路径遇非超时错误应上抛")
+	}
+	if got := conn.newSessionCalls(); got != 1 {
+		t.Fatalf("非超时错误不应重试，session/new 调用 %d 次", got)
+	}
+}
+
+// 偏好路径（allowFallback=true）下非超时错误仍照旧降级终端，且同样不重试。
+func TestOpenWorkspaceFallbackNoRetryOnNonTimeoutError(t *testing.T) {
+	conn := &alwaysFailConn{fakeChatConn: fakeChatConn{waitCh: make(chan struct{})}}
+	backend := &sequenceBackend{conns: []chat.Conn{conn}}
+
+	env := newChatTestApp(t, &providers.ACPDetection{
+		Available: true, Source: "path", BinPath: "cursor-agent",
+	}, backend)
+	env.app.mu.Lock()
+	env.app.opts.Config.SessionMode = config.SessionModeACP
+	env.app.opts.Providers = []providers.Provider{providers.Cursor{}}
+	env.app.tools = []discovery.Tool{{
+		ID: "cursor", Name: "Cursor", BinPath: "cursor-agent", Installed: true,
+		ACP: &providers.ACPDetection{Available: true, Source: "path", BinPath: "cursor-agent"},
+	}}
+	env.app.mu.Unlock()
+
+	opened, err := env.app.openWorkspaceACP(`D:\w`, "cursor", "", true)
+	if err != nil {
+		t.Fatalf("偏好路径应降级终端而非报错，got %v", err)
+	}
+	if opened.Kind != "terminal" {
+		t.Fatalf("非超时错误应降级终端，got Kind=%q", opened.Kind)
+	}
+	if got := conn.newSessionCalls(); got != 1 {
+		t.Fatalf("非超时错误不应重试，session/new 调用 %d 次", got)
+	}
+}
+
+// alwaysFailConn 的 session/new 恒返回非超时错误。
+type alwaysFailConn struct {
+	fakeChatConn
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *alwaysFailConn) NewSession(context.Context, string) (acp.SessionStart, error) {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+	return acp.SessionStart{}, errors.New("err.chat.agent_died")
+}
+
+func (c *alwaysFailConn) newSessionCalls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
