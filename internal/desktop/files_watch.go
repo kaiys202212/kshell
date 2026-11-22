@@ -25,6 +25,12 @@ var watchSkipNames = map[string]bool{
 	".git": true, "node_modules": true, "vendor": true, "dist": true, "build": true,
 }
 
+// watchBufferSize 是每个被监视目录的事件缓冲（fsnotify Windows 后端按目录独占一份）。
+// fsnotify 默认 64KiB：本机约 1.8 万个目录时仅缓冲就占 1GiB+，是主进程内存偏高的主因。
+// 16KiB 已够日常文件操作；若目录风暴导致溢出，fsnotify 会发 ErrEventOverflow，
+// runFileWatch 现有分支退化为一次整树刷新，不会漏事件。非 Windows 后端该选项 no-op。
+const watchBufferSize = 16 * 1024
+
 // fileWatcher 跟踪单个工作区根的 fsnotify 引用与防抖定时器。
 type fileWatcher struct {
 	refs    int
@@ -277,20 +283,25 @@ func addRecursive(w *fsnotify.Watcher, root string, skip map[string]bool) error 
 		if skip[name] && path != root {
 			return filepath.SkipDir
 		}
-		return w.Add(path)
+		return addWatch(w, path)
 	})
+}
+
+// addWatch 统一以收敛的缓冲大小挂监视；缓冲是 AddWith 参数，NewWatcher 无法预设。
+func addWatch(w *fsnotify.Watcher, path string) error {
+	return w.AddWith(path, fsnotify.WithBufferSize(watchBufferSize))
 }
 
 // addGitMetaWatches 只挂 .git 根与 refs 浅层，不进 objects（控性能）。
 func addGitMetaWatches(w *fsnotify.Watcher, gitDir string) {
-	_ = w.Add(gitDir)
+	_ = addWatch(w, gitDir)
 	refs := filepath.Join(gitDir, "refs")
 	if st, err := os.Stat(refs); err == nil && st.IsDir() {
-		_ = w.Add(refs)
+		_ = addWatch(w, refs)
 	}
 	heads := filepath.Join(gitDir, "refs", "heads")
 	if st, err := os.Stat(heads); err == nil && st.IsDir() {
-		_ = w.Add(heads)
+		_ = addWatch(w, heads)
 	}
 }
 
