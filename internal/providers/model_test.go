@@ -144,9 +144,44 @@ func TestClaudeSettingsEnvSkipsBuiltinAliases(t *testing.T) {
 	}
 }
 
-// TestClaudeSettingsEnvInjectsConcreteModel 具体模型名写入 ANTHROPIC_MODEL，
-// 但**不覆盖** DEFAULT_* 槽位：槽位是别名解析表（由 agentsync 按平台同步到
-// 静态 settings.json），ACP 覆盖会让会话内切 sonnet/opus/haiku 全部失效。
+// TestClaudeSettingsEnvNeverOverridesAliasSlots 锁定关键契约：ACP 载荷绝不写
+// ANTHROPIC_DEFAULT_{SONNET,OPUS,HAIKU}_MODEL。
+// 依据实测（claude-agent-acp 0.23.1）：三槽若被钉成同一具体模型，会话内切
+// sonnet/opus/haiku 全部落回该模型，用户看到的是「切模型没反应」。
+// 槽位必须由 agentsync 按平台写入静态 settings.json。
+func TestClaudeSettingsEnvNeverOverridesAliasSlots(t *testing.T) {
+	models := []string{
+		"", "default", "claude", "sonnet", "opus[1m]", "haiku-1m",
+		"glm-5.3-flash", "deepseek-v4.1-flash-1017", "claude-sonnet-4-6",
+	}
+	slotKeys := []string{
+		"ANTHROPIC_DEFAULT_SONNET_MODEL",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+	}
+	for _, model := range models {
+		env := Claude{}.SettingsEnv(ModelConfig{
+			AnthropicBaseURL: "https://ant/", APIKey: "k", Model: model,
+		})
+		for _, key := range slotKeys {
+			if v, ok := env[key]; ok {
+				t.Errorf("Model=%q 时不应写槽位 %s（got %q）：覆盖槽位会让会话内切别名失效", model, key, v)
+			}
+		}
+		// 端点与密钥始终要写（否则会话连不上用户配置的平台）
+		if env["ANTHROPIC_BASE_URL"] != "https://ant/" {
+			t.Errorf("Model=%q 时应保留端点，got %q", model, env["ANTHROPIC_BASE_URL"])
+		}
+		// 别名与裸名不入 ANTHROPIC_MODEL；具体模型名要入。
+		_, has := env["ANTHROPIC_MODEL"]
+		if IsClaudeUnpinnableModel(model) && has {
+			t.Errorf("Model=%q 不应写入 ANTHROPIC_MODEL", model)
+		}
+		if model != "" && !IsClaudeUnpinnableModel(model) && env["ANTHROPIC_MODEL"] != model {
+			t.Errorf("Model=%q 应写入 ANTHROPIC_MODEL，got %q", model, env["ANTHROPIC_MODEL"])
+		}
+	}
+}
 func TestClaudeSettingsEnvInjectsConcreteModel(t *testing.T) {
 	env := Claude{}.SettingsEnv(ModelConfig{
 		AnthropicBaseURL: "https://ant/", APIKey: "k", Model: "glm-5.3-flash",

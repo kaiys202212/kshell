@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/yangk/kshell/internal/config"
+	"github.com/yangk/kshell/internal/providers"
 )
 
 // Claude 把默认平台的 Anthropic 端点/密钥/模型写进 ~/.claude/settings.json 的 env 块。
@@ -172,14 +173,9 @@ func reconcileClaudeTopLevelModel(doc map[string]any, in SyncInput) {
 }
 
 func isClaudeBuiltinModelAlias(s string) bool {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "default", "sonnet", "opus", "haiku",
-		"sonnet[1m]", "opus[1m]", "haiku[1m]",
-		"sonnet-1m", "opus-1m", "haiku-1m":
-		return true
-	default:
-		return false
-	}
+	// 与 providers.IsClaudeBuiltinAlias 同口径；此处保留薄封装以免
+	// agentsync 的所有调用点都改 import 别名，实际判定逻辑单一来源。
+	return providers.IsClaudeBuiltinAlias(s)
 }
 
 // claudeModelManaged 报告默认平台是否配置了 Anthropic 端点——只有此时 kshell

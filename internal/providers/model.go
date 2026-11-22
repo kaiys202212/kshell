@@ -39,13 +39,13 @@ func (Claude) SettingsEnv(cfg ModelConfig) map[string]string {
 		env["ANTHROPIC_AUTH_TOKEN"] = cfg.APIKey
 	}
 	// ANTHROPIC_MODEL 与 ANTHROPIC_DEFAULT_{SONNET,OPUS,HAIKU}_MODEL 的职责不同
-	//（2026-11-22 对 claude-agent-acp 0.23.1 实测）：
-	//   - ANTHROPIC_MODEL 只影响「会话未显式选过模型」时的取值，会话内
-	//     set_config_option(model, X) 之后完全被 X 接管 —— 可以随创建模型下发。
-	//   - DEFAULT_* 槽位是别名解析表：把 haiku 映射到平台真模型。一旦四个槽位
-	//     被钉成同一个具体模型，会话内切 sonnet/opus/haiku 拿到的都是那个模型，
-	//     表现为「切模型没反应」——必须留给静态 settings.json（agentsync 按
-	//     平台同步），ACP 不覆盖。
+	//（2026-11-22 对 claude-agent-acp 0.23.1 逐项实测）：
+	//   - ANTHROPIC_MODEL 决定「新会话初始模型」；会话内 set_config_option
+	//     之后由所选值接管，因此**可以**随创建模型下发（实测切换仍生效）。
+	//   - DEFAULT_* 三个槽位是别名解析表（haiku → 平台真模型）。若把三个槽位
+	//     钉成同一个具体模型，会话内切 sonnet/opus/haiku 拿到的都是那一个，
+	//     表现为「切模型没反应」。槽位留给 agentsync 按平台写入静态
+	//     settings.json，ACP 不覆盖。
 	// 内置别名与裸名 "claude" 不能作为 ANTHROPIC_MODEL：该值不经别名解析，
 	// 会被字面发往网关（400 "Model claude isn't included"）。
 	if cfg.Model != "" && !IsClaudeUnpinnableModel(cfg.Model) {
