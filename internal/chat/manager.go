@@ -828,9 +828,11 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	}
 
 	// 已退出的旧会话：先整体摘除再重建，避免 byID/order 泄漏。
+	// 连接已死（进程没了但 watchExit 尚未标记 exited）同样按退出处理：
+	// 否则调用方会拿到陈旧的 running 快照，界面永远停在运行中。
 	m.mu.Lock()
 	old, ok := m.byKey[key]
-	if ok && !old.exited {
+	if ok && !old.exited && (old.conn == nil || connAlive(old.conn)) {
 		out := old.info
 		m.mu.Unlock()
 		return out, nil

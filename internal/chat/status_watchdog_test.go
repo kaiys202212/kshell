@@ -156,6 +156,27 @@ func hasToolStatus(c *collector, toolID, status string) bool {
 	return false
 }
 
+// 同 key 的旧会话若连接已死（进程没了但 watchExit 尚未标记 exited），Open 必须
+// 重建而不是把陈旧 running 快照返回给调用方。
+func TestOpenRebuildsWhenConnDead(t *testing.T) {
+	m, b, _ := newTestManager(t)
+	first, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.conn.mu.Lock()
+	b.conn.dead = true // 连接已不可用，但 Wait 未返回（模拟 watchExit 未完成）
+	b.conn.mu.Unlock()
+
+	out, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ID == first.ID {
+		t.Fatalf("连接已死应重建，实际仍复用旧会话 %s", out.ID)
+	}
+}
+
 // countTurnDone 统计时间线中指定 stopReason 的 turn_done 数量。
 func countTurnDone(c *collector, stop string) int {
 	c.mu.Lock()
