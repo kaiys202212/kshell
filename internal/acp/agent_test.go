@@ -22,10 +22,12 @@ func fakeAgentMain() {
 		// 拉起一个继承 stdout 的孙进程后立刻退出：父进程已死，但管道写端仍被
 		// 孙进程持有，kshell 侧看不到 EOF（npx→node / MCP 孙进程的真实形态）。
 		var c *exec.Cmd
+		// 持管时长必须显著大于断言 deadline（2s），否则旧实现「等 EOF 再 Wait」
+		// 在 Unix 上 3s 就返回，回归用例修复前也会绿（假红）。
 		if runtime.GOOS == "windows" {
-			c = exec.Command("cmd", "/c", "ping -n 6 127.0.0.1 >nul")
+			c = exec.Command("cmd", "/c", "ping -n 10 127.0.0.1 >nul")
 		} else {
-			c = exec.Command("sh", "-c", "sleep 3")
+			c = exec.Command("sh", "-c", "sleep 8")
 		}
 		c.Stdout = os.Stdout
 		c.Stderr = os.Stdout
@@ -961,7 +963,7 @@ func TestAgentDeathNotGatedOnStdoutEOF(t *testing.T) {
 		if !errors.As(err, &rpcErr) || rpcErr.Code != -32603 {
 			t.Fatalf("进程退出后 call 应快速返回 -32603，得到 %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(2 * time.Second):
 		t.Fatal("进程退出后 call 仍阻塞：waitLoop 被 stdout EOF 卡住")
 	}
 }

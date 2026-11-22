@@ -118,8 +118,8 @@ func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, aut
 	})
 	// 状态变化走独立轻量通道：前端据此在丢失 turn_done 时也能回落 running。
 	// 不走 chat:meta，避免每次状态切换触发标题更新钩子里的重扫。
-	m.SetOnStatus(func(id, status string) {
-		emit("chat:status", map[string]any{"id": translate(id), "status": status})
+	m.SetOnStatus(func(id, status string, seq int64) {
+		emit("chat:status", map[string]any{"id": translate(id), "status": status, "seq": seq})
 	})
 	return m
 }
@@ -145,6 +145,11 @@ func turnEvent(stop string) string {
 func stopFallback(stop string) string {
 	if turnEvent(stop) != "stopped" || stop == "" {
 		return ""
+	}
+	// 看门狗合成的原因不是协议值，前端停止原因表里没有对应项；给独立文案 key，
+	// 避免通知气泡露出裸 "turn_timeout"。
+	if stop == "turn_timeout" {
+		return "ui.notify.turn_timeout"
 	}
 	return "ui.notify.turn_stopped_reason|" + stop
 }

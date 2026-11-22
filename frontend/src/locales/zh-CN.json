@@ -1335,7 +1335,8 @@
       "session_exited_err": "会话进程异常退出：{{err}}（详情见 ~/.kshell/logs/desktop.log）",
       "terminal_exited": "终端已退出",
       "terminal_exited_code": "终端异常退出（退出码 {{0}}）",
-      "turn_stopped_reason": "我提前停止了这轮回复（原因：{{0}}），没有可展示的内容。"
+      "turn_stopped_reason": "我提前停止了这轮回复（原因：{{0}}），没有可展示的内容。",
+      "turn_timeout": "我提前停止了这轮回复（agent 长时间无响应），没有可展示的内容。"
     },
     "toast": {
       "close_aria": "关闭提示"

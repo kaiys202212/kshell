@@ -175,7 +175,10 @@ interface AppState {
   markChatExited(id: string, exitCode: number, error: string): void;
   setChats(list: ChatInfo[]): void;
   // 后端权威状态推送（chat:status）：只改 Status，未知 ID 忽略，exited 为终态。
-  setChatStatus(id: string, status: string): void;
+  // seq 是后端递增的状态版本号，乱序到达的旧版本会被丢弃。
+  setChatStatus(id: string, status: string, seq?: number): void;
+  // 每个聊天已消费的最大状态版本号（chat:status 乱序丢弃用）
+  chatStatusSeq: Record<string, number>;
 
   // 每个聊天的流式时间线与已消费的最大 Seq（去重/断线续传用）
   chatItems: Record<string, TimelineItem[]>;
@@ -448,6 +451,7 @@ export const useAppStore = create<AppState>()(
           chats: s.chats.filter((c) => c.ID !== id),
           chatItems: omitKey(s.chatItems, id),
           chatSeq: omitKey(s.chatSeq, id),
+          chatStatusSeq: omitKey(s.chatStatusSeq, id),
           chatPermissions: omitKey(s.chatPermissions, id),
           chatModels: omitKey(s.chatModels, id),
           chatCommands: omitKey(s.chatCommands, id),
@@ -465,13 +469,23 @@ export const useAppStore = create<AppState>()(
           ),
         })),
       setChats: (list) => set((s) => ({ chats: mergeMirrorList(s.chats, list) })),
-      setChatStatus: (id, status) =>
+      chatStatusSeq: {},
+      setChatStatus: (id, status, seq = 0) =>
         set((s) => {
+          const last = s.chatStatusSeq[id] ?? 0;
+          if (seq > 0 && seq <= last) return {}; // 乱序到达的旧状态
           const row = s.chats.find((c) => c.ID === id);
-          if (!row || row.Status === status) return {};
+          const nextSeq = seq > last ? seq : last;
+          if (!row) return {};
           // exited 是终态：迟到的 running/ready 不得把已退出会话复活。
           if (row.Status === 'exited' && status !== 'exited') return {};
-          return { chats: s.chats.map((c) => (c.ID === id ? { ...c, Status: status } : c)) };
+          if (row.Status === status) {
+            return nextSeq === last ? {} : { chatStatusSeq: { ...s.chatStatusSeq, [id]: nextSeq } };
+          }
+          return {
+            chats: s.chats.map((c) => (c.ID === id ? { ...c, Status: status } : c)),
+            chatStatusSeq: { ...s.chatStatusSeq, [id]: nextSeq },
+          };
         }),
 
       chatItems: {},
@@ -535,6 +549,7 @@ export const useAppStore = create<AppState>()(
         set((s) => ({
           chatItems: omitKey(s.chatItems, id),
           chatSeq: omitKey(s.chatSeq, id),
+          chatStatusSeq: omitKey(s.chatStatusSeq, id),
           chatModels: omitKey(s.chatModels, id),
           chatCommands: omitKey(s.chatCommands, id),
           chatConfigs: omitKey(s.chatConfigs, id),

@@ -90,10 +90,13 @@ type session struct {
 	// 状态活动跟随：提前返回 prompt 的 agent（codebuddy 等）随后仍推工具/思考
 	// 流水，Info.Status 必须跟随实际活动，否则 ListChats/chat:meta 携带的 ready
 	// 会在前端镜像同步时冲掉已拉回的 running（任务在跑却显示「空闲」）。
-	promptInFlight bool               // 是否有在途 session/prompt（投递忙闲唯一依据）
-	inFlightTools  map[string]bool    // 未到终态的工具调用（子任务长静默期的运行信号）
+	promptInFlight bool                 // 是否有在途 session/prompt（投递忙闲唯一依据）
+	inFlightTools  map[string]bool      // 未到终态的工具调用（子任务长静默期的运行信号）
 	inFlightSince  map[string]time.Time // 各在途工具首次登记时刻（最大存活期判定）
-	lastActivity   time.Time       // 最近一次活动类更新时刻
+	lastActivity   time.Time            // 最近一次活动类更新时刻
+	// statusSeq 是 Info.Status 的单调版本号：随 chat:status 下发，前端按号
+	// 丢弃乱序到达的旧状态（收尾线程与并发的活动更新会在锁外乱序发出）。
+	statusSeq int64
 	// turnOpen 记录历史尾部是否存在未收尾的旧轮内容：会话重建后重放的历史
 	// 分片与崩溃继承的半轮正文都不带 turn_done，若不补回合边界，desktop 的
 	// done 摘要会把旧轮正文拼进本轮。正常 turn 收尾时清零；下次投递前按位补哨兵。
@@ -172,7 +175,7 @@ type Manager struct {
 	onPermission    func(id string, r PermissionRequest)
 	onExit          func(id string, code int, errMsg string)
 	onInfo          func(Info)                            // 锁外；首条用户消息改写标题时
-	onStatus        func(id, status string)               // 锁外；状态真变化时（轻量通道，不触发扫描）
+	onStatus        func(id, status string, seq int64)    // 锁外；状态真变化时（seq 用于前端丢弃乱序旧值）
 	onCommands      func(id string, cmds []Command)       // 锁外；技能列表推送
 	onModels        func(id string)                       // 锁外；握手完成后模型视图推送
 	onConfig        func(id string)                       // 锁外；配置项变化推送
@@ -334,7 +337,7 @@ func (m *Manager) SetOnInfo(fn func(Info)) {
 // SetOnStatus 注册状态变化回调（锁外执行）：running/ready 切换经此轻量通道
 // 推给前端，不触发 title/扫描等 onInfo 副作用。前端据此在丢失 turn_done
 // 事件时也能把状态回落，避免永久「运行中」。
-func (m *Manager) SetOnStatus(fn func(id, status string)) {
+func (m *Manager) SetOnStatus(fn func(id, status string, seq int64)) {
 	m.mu.Lock()
 	m.onStatus = fn
 	m.mu.Unlock()
@@ -453,14 +456,16 @@ func (s *session) notePromptTitle(text string) (Info, bool) {
 	return s.info, true
 }
 
-// setStatusLocked 更新会话状态并报告是否真的变化（调用方持锁）。
-// 只在变化时外推，高频活动分片不会造成状态事件刷屏。
-func (s *session) setStatusLocked(st string) bool {
+// setStatusLocked 更新会话状态并返回（是否变化, 状态版本号）；调用方持锁。
+// 只在变化时递增版本并外推，高频活动分片不会造成状态事件刷屏。版本号随
+// chat:status 下发，前端据此丢弃在锁外乱序发出的旧状态。
+func (s *session) setStatusLocked(st string) (bool, int64) {
 	if s.info.Status == st {
-		return false
+		return false, s.statusSeq
 	}
 	s.info.Status = st
-	return true
+	s.statusSeq++
+	return true, s.statusSeq
 }
 
 // stopTurnWatchdogLocked 停掉 turn 看门狗（调用方持锁）。
@@ -497,8 +502,9 @@ func (s *session) armTurnWatchdogLocked() {
 func (m *Manager) expireTurn(s *session, epoch int64, stopReason string, rearmOnActivity bool) {
 	m.mu.Lock()
 	if m.byID[s.id] != s || s.exited || !s.promptInFlight || s.promptEpoch != epoch {
-		s.stopTurnWatchdogLocked()
-		s.stopCancelTimerLocked()
+		// 本回调已过期（新一轮已接手 / 已由其他路径收口）：绝不能动
+		// turnTimer/cancelTimer 字段——它们可能指向新轮的定时器，停掉会让
+		// 新一轮彻底失去出口。定时器已触发即自行结束，无需清理。
 		m.mu.Unlock()
 		logf("chat: 看门狗放弃 id=%s 在册=%v 已退出=%v 状态=%s 在途=%v epoch=%d/%d",
 			s.id, m.byID[s.id] == s, s.exited, s.info.Status, s.promptInFlight, s.promptEpoch, epoch)
@@ -516,7 +522,7 @@ func (m *Manager) expireTurn(s *session, epoch int64, stopReason string, rearmOn
 	logf("chat: turn 超时收口 id=%s stop=%s 静默=%v", s.id, stopReason, time.Since(s.lastActivity))
 	s.promptEpoch++ // 迟到响应失效
 	s.promptInFlight = false
-	s.turnTimer = nil
+	s.stopTurnWatchdogLocked()
 	s.stopCancelTimerLocked()
 	closed := s.closeOrphanToolsLocked("failed")
 	s.seq++
@@ -526,7 +532,7 @@ func (m *Manager) expireTurn(s *session, epoch int64, stopReason string, rearmOn
 	if len(s.history) > maxHistory {
 		s.history = append([]Update(nil), s.history[len(s.history)-maxHistory:]...)
 	}
-	statusChanged := s.setStatusLocked(StatusReady)
+	statusChanged, statusSeq := s.setStatusLocked(StatusReady)
 	var next queuedMsg
 	hasNext := false
 	if !s.exited && len(s.queue) > 0 {
@@ -541,7 +547,7 @@ func (m *Manager) expireTurn(s *session, epoch int64, stopReason string, rearmOn
 	m.mu.Unlock()
 
 	if statusChanged && onStatus != nil {
-		onStatus(s.id, StatusReady)
+		onStatus(s.id, StatusReady, statusSeq)
 	}
 	if onUpdate != nil {
 		for _, cu := range closed {
@@ -556,7 +562,6 @@ func (m *Manager) expireTurn(s *session, epoch int64, stopReason string, rearmOn
 		_ = m.deliverTurn(s.id, s, next, false)
 	}
 }
-
 
 // stopIdleLocked 停掉静默回退定时器（调用方持锁）。
 func (s *session) stopIdleLocked() {
@@ -581,25 +586,50 @@ func (s *session) scheduleIdleFallbackLocked() {
 	s.idleTimer = time.AfterFunc(activityIdleFallback, func() { sess.m.idleFallback(sess) })
 }
 
-// oldestInFlightLocked 返回最早登记的在途工具年龄；无在途工具返回 ok=false。
-func (s *session) oldestInFlightLocked() (time.Duration, bool) {
-	var oldest time.Duration
-	found := false
+// pruneExpiredToolsLocked 收口已超过最大存活期的在途工具：合成 failed 终态
+// 并写回时间线，未超龄的保留。返回本次收口的更新与最年轻的剩余工具年龄。
+// 缺 inFlightSince 记录的工具按「刚登记」补齐，避免失配项永不超龄。
+func (s *session) pruneExpiredToolsLocked(now time.Time) ([]Update, time.Duration, bool) {
+	var out []Update
+	ids := make([]string, 0, len(s.inFlightTools))
 	for id := range s.inFlightTools {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	remaining := time.Duration(0)
+	hasRemaining := false
+	for _, id := range ids {
 		at, ok := s.inFlightSince[id]
 		if !ok {
-			at = time.Now()
+			at = now
+			s.inFlightSince[id] = at
 		}
-		if age := time.Since(at); !found || age > oldest {
-			oldest = age
-			found = true
+		age := now.Sub(at)
+		if age < orphanToolTimeout {
+			if remain := orphanToolTimeout - age; !hasRemaining || remain < remaining {
+				remaining = remain
+				hasRemaining = true
+			}
+			continue
 		}
+		merged := mergeToolCall(s.tools[id], &ToolCall{ToolCallID: id, Status: "failed"})
+		s.tools[id] = merged
+		s.seq++
+		u := Update{Seq: s.seq, Type: "tool", ToolCallID: merged.ToolCallID, Tool: merged}
+		s.history = append(s.history, u)
+		out = append(out, u)
+		delete(s.inFlightTools, id)
+		delete(s.inFlightSince, id)
 	}
-	return oldest, found
+	if len(s.history) > maxHistory {
+		s.history = append([]Update(nil), s.history[len(s.history)-maxHistory:]...)
+	}
+	return out, remaining, hasRemaining
 }
 
 // idleFallback 静默回退：running 会话持续无活动时回 ready。在途工具有最大存活期：
-// 未超龄则重排定时器继续等（不放弃兜底），超龄则按 failed 合成终态收口。
+// 未超龄的保留并重排定时器继续等（不放弃兜底），超龄的按 failed 合成终态收口；
+// 仍有未超龄工具时保持 running。
 func (m *Manager) idleFallback(s *session) {
 	m.mu.Lock()
 	if m.byID[s.id] != s || s.exited || s.info.Status != StatusRunning ||
@@ -610,23 +640,25 @@ func (m *Manager) idleFallback(s *session) {
 		m.mu.Unlock()
 		return
 	}
-	var closed []Update
-	if age, ok := s.oldestInFlightLocked(); ok {
-		if remain := orphanToolTimeout - age; remain > 0 {
-			// 未超龄：按剩余时长与常规静默阈值取小者重排，到点再判定。
-			d := activityIdleFallback
-			if remain < d {
-				d = remain
-			}
-			sess := s
-			s.idleTimer = time.AfterFunc(d, func() { m.idleFallback(sess) })
-			m.mu.Unlock()
-			return
+	closed, remaining, hasRemaining := s.pruneExpiredToolsLocked(time.Now())
+	if hasRemaining {
+		// 还有未超龄工具：按最近一个超龄时刻重排，届时再判定。
+		d := remaining
+		if d < activityIdleFallback {
+			d = activityIdleFallback
 		}
-		// 超过最大存活期：agent 不会再有终态，按 failed 合成收口。
-		closed = s.closeOrphanToolsLocked("failed")
+		sess := s
+		s.idleTimer = time.AfterFunc(d, func() { m.idleFallback(sess) })
+		onUpdate := m.onUpdate
+		m.mu.Unlock()
+		if len(closed) > 0 && onUpdate != nil {
+			for _, cu := range closed {
+				onUpdate(s.id, cu)
+			}
+		}
+		return
 	}
-	statusChanged := s.setStatusLocked(StatusReady)
+	statusChanged, statusSeq := s.setStatusLocked(StatusReady)
 	s.stopIdleLocked()
 	onInfo := m.onInfo
 	onStatus := m.onStatus
@@ -635,7 +667,7 @@ func (m *Manager) idleFallback(s *session) {
 	m.mu.Unlock()
 	logf("chat: 静默回退生效 id=%s 状态回 ready 收口工具=%d", s.id, len(closed))
 	if statusChanged && onStatus != nil {
-		onStatus(s.id, StatusReady)
+		onStatus(s.id, StatusReady, statusSeq)
 	}
 	if onInfo != nil {
 		onInfo(out)
@@ -836,6 +868,12 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 		out := old.info
 		m.mu.Unlock()
 		return out, nil
+	}
+	if ok {
+		// 先标记退出再摘除：下面的 Close 会唤醒 watchExit，若不先置位，
+		// watchExit 会把「正在重建的旧会话」当成异常退出回调 onExit，
+		// 前端按别名链头收到 chat:exit 会把重建后的同一行打成 exited。
+		old.exited = true
 	}
 	m.mu.Unlock()
 	if ok {
@@ -1307,7 +1345,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		}
 		return nil
 	}
-	statusChanged := s.setStatusLocked(StatusRunning)
+	statusChanged, statusSeq := s.setStatusLocked(StatusRunning)
 	// 在途 prompt 是投递忙闲依据；置位时停掉静默回退定时器（turn_done 会收尾）
 	s.promptInFlight = true
 	// 新轮次：递增 epoch 并起看门狗。lastActivity 从起轮算起，看门狗到点时
@@ -1330,6 +1368,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 	ctx := s.ctx
 	turnToken := s.autoResumeToken
 	epoch := s.promptEpoch
+	inFlightAtStart := len(s.inFlightTools)
 	onInfo := m.onInfo
 	onStatus := m.onStatus
 	onUpdate := m.onUpdate
@@ -1339,7 +1378,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		onInfo(infoSnap)
 	}
 	if statusChanged && onStatus != nil {
-		onStatus(id, StatusRunning)
+		onStatus(id, StatusRunning, statusSeq)
 	}
 	if record && onUpdate != nil {
 		onUpdate(id, userUpdate)
@@ -1355,7 +1394,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 				onDelivered(qm.hubMsgID)
 			}
 		}
-		logf("chat: turn 发起 id=%s inFlightTools=%d", id, len(s.inFlightTools))
+		logf("chat: turn 发起 id=%s inFlightTools=%d", id, inFlightAtStart)
 		stderrMark := connStderrLen(conn)
 		stop, err := conn.Prompt(ctx, sid, blocks)
 		m.mu.Lock()
@@ -1397,10 +1436,11 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		// 保持 running，等工具终态后的静默回退收尾；否则照旧回 ready。
 		// turn_done 事件两种情况都照发，前端由后续活动更新拉回（5474856 规则）。
 		statusNowChanged := false
+		var statusNowSeq int64
 		if len(s.inFlightTools) > 0 {
 			s.scheduleIdleFallbackLocked()
 		} else {
-			statusNowChanged = s.setStatusLocked(StatusReady)
+			statusNowChanged, statusNowSeq = s.setStatusLocked(StatusReady)
 		}
 		s.seq++
 		u := Update{Seq: s.seq, Type: "turn_done", StopReason: stop}
@@ -1434,7 +1474,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		}
 		m.mu.Unlock()
 		if statusNowChanged && onStatus != nil {
-			onStatus(id, StatusReady)
+			onStatus(id, StatusReady, statusNowSeq)
 		}
 		if m.onUpdate != nil {
 			// 合成终态先于 turn_done/error 推送：时间线顺序与 history 一致
@@ -2272,11 +2312,12 @@ func (m *Manager) onSessionUpdate(id, sessionID string, raw json.RawMessage) {
 	// 状态活动跟随（与前端 5474856 同规则）：活动类更新把 ready 拉回 running，
 	// 并维护在途工具集合与静默回退定时器。user/commands 不算 agent 活动。
 	statusPulled := false
+	var statusPulledSeq int64
 	switch u.Type {
 	case "thought", "assistant", "plan":
 		s.lastActivity = time.Now()
 		if s.info.Status == StatusReady && !s.exited {
-			statusPulled = s.setStatusLocked(StatusRunning)
+			statusPulled, statusPulledSeq = s.setStatusLocked(StatusRunning)
 		}
 		s.scheduleIdleFallbackLocked()
 	case "tool":
@@ -2296,14 +2337,14 @@ func (m *Manager) onSessionUpdate(id, sessionID string, raw json.RawMessage) {
 			}
 		}
 		if s.info.Status == StatusReady && !s.exited {
-			statusPulled = s.setStatusLocked(StatusRunning)
+			statusPulled, statusPulledSeq = s.setStatusLocked(StatusRunning)
 		}
 		s.scheduleIdleFallbackLocked()
 	}
 	onStatus := m.onStatus
 	m.mu.Unlock()
 	if statusPulled && onStatus != nil {
-		onStatus(id, StatusRunning)
+		onStatus(id, StatusRunning, statusPulledSeq)
 	}
 	if m.onUpdate != nil {
 		m.onUpdate(id, u)

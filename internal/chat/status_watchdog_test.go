@@ -10,7 +10,7 @@ import (
 func TestManagerStatusChangePushedViaOnStatus(t *testing.T) {
 	m, b, _ := newTestManager(t)
 	statuses := make(chan string, 32)
-	m.SetOnStatus(func(id, st string) {
+	m.SetOnStatus(func(id, st string, seq int64) {
 		select {
 		case statuses <- st:
 		default:
@@ -188,4 +188,43 @@ func countTurnDone(c *collector, stop string) int {
 		}
 	}
 	return n
+}
+
+// 过期（上一轮）的看门狗回调绝不能停掉当前轮的看门狗：否则新一轮无任何出口，
+// 「永久运行中」在下一轮复现。守卫失败分支只允许静默返回。
+func TestStaleWatchdogCallbackKeepsCurrentTimer(t *testing.T) {
+	old := turnWatchdogTimeout
+	turnWatchdogTimeout = 250 * time.Millisecond
+	t.Cleanup(func() { turnWatchdogTimeout = old })
+
+	m, b, _, _ := newIdleTestManager(t)
+	b.conn.promptGate = make(chan struct{})
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, info.ID, StatusRunning)
+
+	m.mu.Lock()
+	s := m.byID[info.ID]
+	stale := s.promptEpoch - 1 // 上一轮的 epoch
+	m.mu.Unlock()
+	m.expireTurn(s, stale, "turn_timeout", true) // 模拟迟到回调
+
+	m.mu.Lock()
+	armed := s.turnTimer != nil
+	inFlight := s.promptInFlight
+	m.mu.Unlock()
+	if !inFlight {
+		t.Fatal("过期回调不得影响当前轮的在途状态")
+	}
+	if !armed {
+		t.Fatal("过期回调不得停掉当前轮的看门狗定时器")
+	}
+
+	// 当前轮看门狗仍须能正常收口。
+	waitStatus(t, m, info.ID, StatusReady)
 }

@@ -640,6 +640,30 @@ describe('setChatStatus（chat:status 后端权威状态）', () => {
     useAppStore.getState().setChatStatus('c1', 'ready');
     expect(useAppStore.getState().chats[0].Status).toBe('exited');
   });
+
+  it('乱序到达的旧状态版本被丢弃（后到的高版本为准）', () => {
+    const chat = {
+      ID: 'c1',
+      Kind: 'new',
+      SessionID: '',
+      Workspace: 'D:\w',
+      Title: 't',
+      ToolID: 'claude',
+      Status: 'ready',
+      ExitCode: 0,
+      Error: '',
+    };
+    useAppStore.setState({ chats: [chat], chatStatusSeq: {} });
+    // 高版本先到：ready -> running（seq=5）
+    useAppStore.getState().setChatStatus('c1', 'running', 5);
+    expect(useAppStore.getState().chats[0].Status).toBe('running');
+    // 旧版本（ready，seq=4）迟到：必须被丢弃，不能把 running 打回 ready
+    useAppStore.getState().setChatStatus('c1', 'ready', 4);
+    expect(useAppStore.getState().chats[0].Status).toBe('running');
+    // 更新版本（ready，seq=6）正常生效
+    useAppStore.getState().setChatStatus('c1', 'ready', 6);
+    expect(useAppStore.getState().chats[0].Status).toBe('ready');
+  });
 });
 
 describe('lastAgentId', () => {

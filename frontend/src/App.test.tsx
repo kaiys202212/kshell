@@ -115,7 +115,7 @@ const mocks = vi.hoisted(() => ({
   onChatUpdate: vi.fn(),
   onChatPermission: vi.fn(),
   onChatExit: vi.fn(),
-  onChatStatus: vi.fn((_cb: (p: { id: string; status: string }) => void) => () => {}),
+  onChatStatus: vi.fn((_cb: (p: { id: string; status: string; seq: number }) => void) => () => {}),
   onChatCommands: vi.fn(),
   onChatConfig: vi.fn(),
   onChatElicitation: vi.fn(),
@@ -568,7 +568,7 @@ describe('App', () => {
   });
 
   it('chat:status 事件把后端权威状态写回镜像（丢失 turn_done 也能回落）', async () => {
-    let statusCb: ((p: { id: string; status: string }) => void) | undefined;
+    let statusCb: ((p: { id: string; status: string; seq: number }) => void) | undefined;
     mocks.onChatStatus.mockImplementation((cb: typeof statusCb) => {
       statusCb = cb;
       return () => {};
@@ -578,7 +578,7 @@ describe('App', () => {
     await waitFor(() => expect(useAppStore.getState().chats[0]?.Status).toBe('running'));
 
     act(() => {
-      statusCb?.({ id: 'c1', status: 'ready' });
+      statusCb?.({ id: 'c1', status: 'ready', seq: 1 });
     });
     expect(useAppStore.getState().chats[0]?.Status).toBe('ready');
   });
