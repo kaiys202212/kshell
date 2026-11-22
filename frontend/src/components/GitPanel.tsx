@@ -33,10 +33,13 @@ import {
   gitStashPop,
   gitStashPush,
   gitUnstage,
+  onFilesChanged,
+  onGitChanged,
 } from '../lib/api';
 import type { GitDiffSide, GitLogCommit, GitRef, GitSCMEntry, GitSCMSnapshot } from '../lib/api';
 import { backendError } from '../lib/errors';
 import { refreshGitStatus } from '../lib/git';
+import { sameWorkspacePath } from '../lib/workspacePath';
 import { loadLogSel, resolveLogFilter, saveLogSel } from '../lib/gitLogSel';
 import { loadSyncRemote, saveSyncRemote } from '../lib/gitSyncRemote';
 import { clampSplit, loadSplit, saveSplit } from '../lib/gitSplit';
@@ -209,6 +212,26 @@ export default function GitPanel({
   useEffect(() => {
     if (visible) void loadLog();
   }, [visible, loadLog]);
+
+  // 主动发现 git 变化：.git 元数据变更（stage/commit/checkout/fetch）刷新状态与日志；
+  // 工作区文件变更只影响 staged/working 列表（不影响提交历史），只刷状态。
+  // 后端已按 300ms 去抖；仅可见时订阅，隐藏页签不重复请求。
+  useEffect(() => {
+    if (!visible) return;
+    const offGit = onGitChanged((path) => {
+      if (!sameWorkspacePath(path, wsPath)) return;
+      void load();
+      void loadLog();
+    });
+    const offFiles = onFilesChanged((path) => {
+      if (!sameWorkspacePath(path, wsPath)) return;
+      void load();
+    });
+    return () => {
+      offGit();
+      offFiles();
+    };
+  }, [visible, wsPath, load, loadLog]);
 
   const setLogSelPersist = (sel: string) => {
     setLogSel(sel);

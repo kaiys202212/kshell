@@ -870,31 +870,48 @@ export default function FileTree({
     };
   }, [query, wsPath, showAll]);
 
-  // 目录展开/收起：首次展开才调 ListFiles（懒加载），之后读本地缓存。
+  // 目录展开/收起：收起只切展开态；展开时主动重拉本层与「已展开的直接子目录」，
+  // 避免读到旧缓存看不到磁盘上新增的文件。首次展开仍走懒加载。
+  // 有缓存时先落地展开态立即显示，再后台刷新（refreshDirs 自带 gen 守卫）。
   // 加载失败只记到该目录行内（error 字段），不动整树；重试复用同一入口。
   const handleDirToggle = (item: TreeItem) => {
-    if (item.children || item.relPath === '') {
-      setItems((cur) =>
-        cur && updateItems(cur, item.relPath, (it) => ({ ...it, expanded: !it.expanded })),
-      );
+    const rel = item.relPath;
+    // children 非空才是「已加载」：expanded=true 且无 children 表示首载在途或行内报错，
+    // 此时点击（含重试按钮）应继续/重试加载，不能折叠。
+    if (item.expanded && item.children) {
+      setItems((cur) => cur && updateItems(cur, rel, (it) => ({ ...it, expanded: false })));
       return;
     }
-    listFiles(wsPath, item.relPath, showAll)
+    // 已展开的直接子目录也要重拉，否则其内部新增文件仍停在旧缓存
+    const expandedChildDirs = (item.children ?? [])
+      .filter((c) => c.node.IsDir && c.expanded && c.children)
+      .map((c) => c.relPath);
+    setItems((cur) => cur && updateItems(cur, rel, (it) => ({ ...it, expanded: true })));
+
+    if (item.children) {
+      refreshDirs([rel, ...expandedChildDirs]);
+      return;
+    }
+
+    const gen = reloadGenRef.current;
+    listFiles(wsPath, rel, showAll)
       .then((nodes) => {
+        if (gen !== reloadGenRef.current) return; // 期间切换工作区/整树重载：让位新数据
         setItems((cur) =>
           cur &&
-          updateItems(cur, item.relPath, (it) => ({
+          updateItems(cur, rel, (it) => ({
             ...it,
-            children: toItems(nodes, it.relPath),
+            children: toItems(nodes, rel),
             expanded: true,
             error: undefined,
           })),
         );
       })
       .catch((e: unknown) => {
+        if (gen !== reloadGenRef.current) return;
         const msg = backendError(e);
         setItems((cur) =>
-          cur && updateItems(cur, item.relPath, (it) => ({ ...it, error: msg, expanded: true })),
+          cur && updateItems(cur, rel, (it) => ({ ...it, error: msg, expanded: true })),
         );
       });
   };

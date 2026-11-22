@@ -99,17 +99,48 @@ describe('FileTree', () => {
     expect(mocks.listFiles).toHaveBeenLastCalledWith('D:\\proj', 'src/lib', true);
   });
 
-  it('收起再展开已加载的目录不重复请求（子层缓存）', async () => {
-    mocks.listFiles.mockResolvedValueOnce(root).mockResolvedValueOnce(srcChildren);
+  it('收起再展开已加载目录会主动重拉，看到新增文件', async () => {
+    const withNew = [...srcChildren, node('new.ts', false, 'src/new.ts')];
+    mocks.listFiles
+      .mockResolvedValueOnce(root)
+      .mockResolvedValueOnce(srcChildren)
+      .mockResolvedValueOnce(withNew);
     render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
 
     fireEvent.click(await screen.findByText('src'));
     await screen.findByText('main.ts');
     fireEvent.click(screen.getByText('src')); // 收起
     expect(screen.queryByText('main.ts')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText('src')); // 再展开
-    expect(await screen.findByText('main.ts')).toBeInTheDocument();
-    expect(mocks.listFiles).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByText('src')); // 再展开：主动刷新
+    expect(await screen.findByText('new.ts')).toBeInTheDocument();
+    expect(mocks.listFiles).toHaveBeenCalledTimes(3);
+    expect(mocks.listFiles).toHaveBeenLastCalledWith('D:\\proj', 'src', true);
+  });
+
+  it('展开外层目录时，已展开的直接子目录也会重拉', async () => {
+    let childHasNew = false;
+    mocks.listFiles.mockImplementation(async (_ws: string, rel: string) => {
+      if (rel === '') return [node('a', true, 'a')];
+      if (rel === 'a') return [node('b', true, 'a/b')];
+      if (rel === 'a/b') {
+        return [
+          node('old.txt', false, 'a/b/old.txt'),
+          ...(childHasNew ? [node('new.txt', false, 'a/b/new.txt')] : []),
+        ];
+      }
+      return [];
+    });
+    render(<FileTree wsPath={'D:\\proj'} onOpenFile={() => {}} />);
+
+    fireEvent.click(await screen.findByText('a'));
+    fireEvent.click(await screen.findByText('b'));
+    await screen.findByText('old.txt');
+
+    // 子目录折叠后磁盘上新增文件；重新展开外层 a 时应连带刷新已展开的 a/b
+    childHasNew = true;
+    fireEvent.click(screen.getByText('a')); // 收起 a（b 的展开态保留）
+    fireEvent.click(screen.getByText('a')); // 展开 a
+    expect(await screen.findByText('new.txt')).toBeInTheDocument();
   });
 
   it('点文件回调 onOpenFile（绝对路径）', async () => {

@@ -67,6 +67,8 @@ const mocks = vi.hoisted(() => ({
   gitRefs: vi.fn(),
   gitFetchAll: vi.fn().mockResolvedValue(undefined),
   gitCommitStat: vi.fn().mockResolvedValue({ Files: 19, Insertions: 1867, Deletions: 202 }),
+  onFilesChanged: vi.fn<(cb: (path: string) => void) => () => void>(() => () => {}),
+  onGitChanged: vi.fn<(cb: (path: string) => void) => () => void>(() => () => {}),
 }));
 vi.mock('../lib/api', () => mocks);
 vi.mock('../lib/git', () => ({ refreshGitStatus: vi.fn().mockResolvedValue(undefined) }));
@@ -121,6 +123,8 @@ beforeEach(() => {
   mocks.gitRefs.mockResolvedValue(DEFAULT_REFS);
   mocks.gitFetchAll.mockResolvedValue(undefined);
   mocks.gitCommitStat.mockResolvedValue({ Files: 19, Insertions: 1867, Deletions: 202 });
+  mocks.onFilesChanged.mockReturnValue(() => {});
+  mocks.onGitChanged.mockReturnValue(() => {});
   mocks.gitSCM.mockResolvedValue(snap());
   ioCallback = null;
   vi.stubGlobal(
@@ -688,5 +692,44 @@ describe('GitPanel', () => {
           ),
       ).toBe(true);
     });
+  });
+
+  it('可见时主动订阅 git:changed（刷状态+日志）与 files:changed（刷状态）', async () => {
+    const gitCbs: Array<(path: string) => void> = [];
+    const fileCbs: Array<(path: string) => void> = [];
+    mocks.onGitChanged.mockImplementation((cb) => {
+      gitCbs.push(cb);
+      return () => {};
+    });
+    mocks.onFilesChanged.mockImplementation((cb) => {
+      fileCbs.push(cb);
+      return () => {};
+    });
+    render(<GitPanel wsPath={'D:\\proj'} visible onOpenDiff={() => {}} />);
+    await screen.findByText('staged.go');
+    expect(gitCbs).toHaveLength(1);
+    expect(fileCbs).toHaveLength(1);
+
+    const scmBefore = mocks.gitSCM.mock.calls.length;
+    const logBefore = mocks.gitLog.mock.calls.length;
+    act(() => gitCbs.forEach((cb) => cb('D:\\proj')));
+    await waitFor(() => {
+      expect(mocks.gitSCM.mock.calls.length).toBeGreaterThan(scmBefore);
+      expect(mocks.gitLog.mock.calls.length).toBeGreaterThan(logBefore);
+    });
+
+    // 工作区文件变更只影响 staged/working 列表，不重拉提交历史
+    const scmAfter = mocks.gitSCM.mock.calls.length;
+    const logAfter = mocks.gitLog.mock.calls.length;
+    act(() => fileCbs.forEach((cb) => cb('D:\\proj')));
+    await waitFor(() => expect(mocks.gitSCM.mock.calls.length).toBeGreaterThan(scmAfter));
+    expect(mocks.gitLog.mock.calls.length).toBe(logAfter);
+  });
+
+  it('不可见时不订阅变更事件', () => {
+    render(<GitPanel wsPath="D:\\proj" visible={false} onOpenDiff={() => {}} />);
+    expect(mocks.onGitChanged).not.toHaveBeenCalled();
+    expect(mocks.onFilesChanged).not.toHaveBeenCalled();
+    expect(mocks.gitSCM).not.toHaveBeenCalled();
   });
 });
