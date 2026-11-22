@@ -42,7 +42,9 @@ func (Claude) SettingsEnv(cfg ModelConfig) map[string]string {
 	// "default" 是 Claude ACP 的「让 agent 自选」占位 ID：经环境变量进入时
 	// CLI 不做别名解析，会把它字面发给 API（OpenCode Go 网关 400），因此按
 	// 未指定模型处理（只写端点/密钥，模型键留给静态 settings/会话默认）。
-	if cfg.Model != "" && !strings.EqualFold(strings.TrimSpace(cfg.Model), "default") {
+	// 同一逻辑适用于全部内置别名（sonnet/opus/haiku 及 1m 变体）与裸名
+	// "claude"——它们同样不被 ANTHROPIC_MODEL 通道解析（2026-11-22 实测）。
+	if cfg.Model != "" && !IsClaudeUnpinnableModel(cfg.Model) {
 		env["ANTHROPIC_MODEL"] = cfg.Model
 		env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = cfg.Model
 		env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = cfg.Model

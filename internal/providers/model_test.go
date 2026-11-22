@@ -110,6 +110,57 @@ func TestClaudeSettingsEnvSkipsDefaultModel(t *testing.T) {
 	}
 }
 
+// TestClaudeSettingsEnvSkipsClaudeLiteral 锁定 "claude" 这个裸名同样不可钉死。
+// 现场事故：会话内 `/model claude` 把字面值写进配置后，ANTHROPIC_MODEL=claude
+// 被原样发给 OpenCode Go 网关，返回 400 "Model claude isn't included"。
+func TestClaudeSettingsEnvSkipsClaudeLiteral(t *testing.T) {
+	for _, model := range []string{"claude", "Claude", " claude "} {
+		env := Claude{}.SettingsEnv(ModelConfig{
+			AnthropicBaseURL: "https://ant/", APIKey: "k", Model: model,
+		})
+		want := map[string]string{
+			"ANTHROPIC_BASE_URL":   "https://ant/",
+			"ANTHROPIC_AUTH_TOKEN": "k",
+		}
+		if !reflect.DeepEqual(env, want) {
+			t.Fatalf("SettingsEnv(Model=%q) = %+v, want %+v", model, env, want)
+		}
+	}
+}
+
+// TestClaudeSettingsEnvSkipsBuiltinAliases 别名同样不可钉死：ANTHROPIC_MODEL
+// 不经 CLI 别名解析，写 sonnet 会被字面发往 API。具体平台模型名才写模型键。
+func TestClaudeSettingsEnvSkipsBuiltinAliases(t *testing.T) {
+	for _, model := range []string{"sonnet", "opus", "haiku", "sonnet[1m]", "opus-1m"} {
+		env := Claude{}.SettingsEnv(ModelConfig{
+			AnthropicBaseURL: "https://ant/", APIKey: "k", Model: model,
+		})
+		if _, ok := env["ANTHROPIC_MODEL"]; ok {
+			t.Fatalf("SettingsEnv(Model=%q) 不应注入 ANTHROPIC_MODEL: %+v", model, env)
+		}
+		if _, ok := env["ANTHROPIC_DEFAULT_SONNET_MODEL"]; ok {
+			t.Fatalf("SettingsEnv(Model=%q) 不应注入 DEFAULT_* 模型键: %+v", model, env)
+		}
+	}
+}
+
+// TestClaudeSettingsEnvInjectsConcreteModel 具体模型名照旧全量注入 4 个模型键。
+func TestClaudeSettingsEnvInjectsConcreteModel(t *testing.T) {
+	env := Claude{}.SettingsEnv(ModelConfig{
+		AnthropicBaseURL: "https://ant/", APIKey: "k", Model: "glm-5.3-flash",
+	})
+	for _, key := range []string{
+		"ANTHROPIC_MODEL",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+	} {
+		if env[key] != "glm-5.3-flash" {
+			t.Fatalf("%s = %q, want glm-5.3-flash（env=%+v）", key, env[key], env)
+		}
+	}
+}
+
 func TestInjectModelEmptyInjectsNothing(t *testing.T) {
 	for _, p := range []interface {
 		InjectModel(ModelConfig) ([]string, map[string]string)
