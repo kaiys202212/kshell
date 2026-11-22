@@ -76,6 +76,42 @@ func TestTurnWatchdogExpiresStuckPrompt(t *testing.T) {
 	}
 }
 
+// 取消后 agent 不回包时，取消超时必须收口：状态回 ready、时间线补 cancelled，
+// 之后迟到的真实响应不得重复收尾。
+func TestCancelTimeoutFinishesTurn(t *testing.T) {
+	oldCancel := cancelTimeout
+	cancelTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { cancelTimeout = oldCancel })
+
+	m, b, c, _ := newIdleTestManager(t)
+	b.conn.promptGate = make(chan struct{}) // agent 收取消通知但不回包
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, info.ID, StatusRunning)
+
+	if err := m.Cancel(info.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, info.ID, StatusReady)
+	if n := countTurnDone(c, "cancelled"); n != 1 {
+		t.Fatalf("取消超时应恰好一条 cancelled turn_done，实际=%d", n)
+	}
+
+	close(b.conn.promptGate)
+	time.Sleep(150 * time.Millisecond)
+	if n := countTurnDone(c, "cancelled"); n != 1 {
+		t.Fatalf("迟到响应不得重复收尾，实际=%d", n)
+	}
+	if st, ok := m.Get(info.ID); !ok || st.Status != StatusReady {
+		t.Fatalf("取消超时后状态应保持 ready，实际=%+v", st)
+	}
+}
+
 // countTurnDone 统计时间线中指定 stopReason 的 turn_done 数量。
 func countTurnDone(c *collector, stop string) int {
 	c.mu.Lock()

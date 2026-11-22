@@ -102,6 +102,7 @@ type session struct {
 	// 迟到的真实响应失效（不得重复追加 turn_done 或把状态拉回 running）。
 	promptEpoch int64
 	turnTimer   *time.Timer // turn 看门狗（prompt 无回包的硬超时）
+	cancelTimer *time.Timer // 取消闭环超时（agent 收 cancel 通知后仍不回包）
 
 	// 自动续跑：turnSeq 标识轮次，token 让过期定时器失效，count 限制每轮次数。
 	turnSeq         int64
@@ -469,6 +470,14 @@ func (s *session) stopTurnWatchdogLocked() {
 	}
 }
 
+// stopCancelTimerLocked 停掉取消超时定时器（调用方持锁）。
+func (s *session) stopCancelTimerLocked() {
+	if s.cancelTimer != nil {
+		s.cancelTimer.Stop()
+		s.cancelTimer = nil
+	}
+}
+
 // armTurnWatchdogLocked 为当前在途 prompt 排硬超时（调用方持锁）。
 func (s *session) armTurnWatchdogLocked() {
 	s.stopTurnWatchdogLocked()
@@ -477,32 +486,37 @@ func (s *session) armTurnWatchdogLocked() {
 	}
 	sess := s
 	epoch := s.promptEpoch
-	s.turnTimer = time.AfterFunc(turnWatchdogTimeout, func() { sess.m.expireTurn(sess, epoch, "turn_timeout") })
+	s.turnTimer = time.AfterFunc(turnWatchdogTimeout, func() { sess.m.expireTurn(sess, epoch, "turn_timeout", true) })
 }
 
 // expireTurn 是看门狗/取消超时的统一收口入口：只有会话在册、未退出、仍在途且
-// epoch 一致时才动作；有近期活动则按剩余时长重排。收口时递增 epoch，随后到达
-// 的真实 prompt 响应被 deliverTurn 的守卫丢弃。
-func (m *Manager) expireTurn(s *session, epoch int64, stopReason string) {
+// epoch 一致时才动作。rearmOnActivity 为真（看门狗）时，近期有活动则按剩余时长
+// 重排，避免打断合法长任务；取消超时传 false——用户已要求取消，不应因活动续命。
+// 收口时递增 epoch，随后到达的真实 prompt 响应被 deliverTurn 的守卫丢弃。
+func (m *Manager) expireTurn(s *session, epoch int64, stopReason string, rearmOnActivity bool) {
 	m.mu.Lock()
 	if m.byID[s.id] != s || s.exited || !s.promptInFlight || s.promptEpoch != epoch {
-		s.turnTimer = nil
+		s.stopTurnWatchdogLocked()
+		s.stopCancelTimerLocked()
 		m.mu.Unlock()
 		logf("chat: 看门狗放弃 id=%s 在册=%v 已退出=%v 状态=%s 在途=%v epoch=%d/%d",
 			s.id, m.byID[s.id] == s, s.exited, s.info.Status, s.promptInFlight, s.promptEpoch, epoch)
 		return
 	}
-	if since := time.Since(s.lastActivity); since < turnWatchdogTimeout {
-		remain := turnWatchdogTimeout - since
-		sess := s
-		s.turnTimer = time.AfterFunc(remain, func() { m.expireTurn(sess, epoch, stopReason) })
-		m.mu.Unlock()
-		return
+	if rearmOnActivity {
+		if since := time.Since(s.lastActivity); since < turnWatchdogTimeout {
+			remain := turnWatchdogTimeout - since
+			sess := s
+			s.turnTimer = time.AfterFunc(remain, func() { m.expireTurn(sess, epoch, stopReason, true) })
+			m.mu.Unlock()
+			return
+		}
 	}
 	logf("chat: turn 超时收口 id=%s stop=%s 静默=%v", s.id, stopReason, time.Since(s.lastActivity))
 	s.promptEpoch++ // 迟到响应失效
 	s.promptInFlight = false
 	s.turnTimer = nil
+	s.stopCancelTimerLocked()
 	closed := s.closeOrphanToolsLocked("failed")
 	s.seq++
 	u := Update{Seq: s.seq, Type: "turn_done", StopReason: stopReason}
@@ -621,6 +635,10 @@ func handshakeTimeoutFor(toolID string) time.Duration {
 // 活动（字面意义上的无回包）时收口，保证 running 必有出口。有持续活动时
 // 看门狗按剩余时间重排，不会打断合法长任务。var 仅为测试可缩短。
 var turnWatchdogTimeout = 20 * time.Minute
+
+// cancelTimeout 是取消闭环的等待上限：session/cancel 是通知语义，agent 可能
+// 忽略或不回包；超时后本地按 cancelled 收口，避免取消后永远停在运行中。
+var cancelTimeout = 20 * time.Second
 
 // activityIdleFallback 是「活动拉回 running 后」的静默回退阈值：turn_done 后
 // agent 仍推流水使状态保持 running，若持续无活动且无在途信号（在途 prompt /
@@ -982,6 +1000,7 @@ func (m *Manager) remove(s *session) {
 	cancelPendingElicitations(pendingElicit)
 	s.stopIdleLocked() // 摘除后定时器不得再触发（防泄漏与悬垂）
 	s.stopTurnWatchdogLocked()
+	s.stopCancelTimerLocked()
 	s.cancelAutoResumeLocked()
 	// 尽力清理该会话的附件落盘缓存：本地小目录，RemoveAll 在锁内执行可接受
 	// （毫秒级，避免引入第二把锁或泄漏 goroutine）；错误忽略（缓存目录非关键数据）。
@@ -1022,6 +1041,7 @@ func (m *Manager) watchExit(s *session) {
 	onQueue := m.onQueue
 	s.stopIdleLocked()
 	s.stopTurnWatchdogLocked()
+	s.stopCancelTimerLocked()
 	s.cancelAutoResumeLocked()
 	pending := s.pending
 	s.pending = make(map[string]chan permissionResult)
@@ -1304,6 +1324,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		}
 		s.promptInFlight = false
 		s.stopTurnWatchdogLocked()
+		s.stopCancelTimerLocked()
 		stderr := ""
 		if err != nil || (stop != "" && stop != "end_turn" && stop != "cancelled") || m.autoResume {
 			raw, _ := connStderrDelta(conn, stderrMark)
@@ -1469,6 +1490,14 @@ func (m *Manager) Cancel(id string) error {
 	sid := s.sessionID
 	conn := s.conn
 	s.cancelAutoResumeLocked()
+	// 取消闭环：agent 收通知后可能不回包，排超时按 cancelled 本地收口。
+	// epoch 一致才允许收口，正常返回的响应路径会停表。
+	if s.promptInFlight {
+		epoch := s.promptEpoch
+		sess := s
+		s.stopCancelTimerLocked()
+		s.cancelTimer = time.AfterFunc(cancelTimeout, func() { m.expireTurn(sess, epoch, "cancelled", false) })
+	}
 	pending := s.pending
 	s.pending = make(map[string]chan permissionResult)
 	pendingElicit := s.pendingElicit
