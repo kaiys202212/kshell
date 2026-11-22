@@ -1,4 +1,4 @@
-package desktop
+﻿package desktop
 
 import (
 	"strings"
@@ -160,3 +160,49 @@ func TestSendChatPromptHasNoLLMStep(t *testing.T) {
 		t.Fatalf("消息应投给指定会话 %s，实际 %s", info.ID, u.ChatID)
 	}
 }
+
+// 端到端验证 /model 守卫真的拦在投递之前：claude 会话收到 /model claude
+// 应返回稳定 key 且不产生任何 Hub user 消息（= 没投递）。
+func TestSendChatPromptRejectsUnparsableModelCommand(t *testing.T) {
+	a, store, rec := newDirectTestApp(t)
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	err = a.SendChatPrompt(info.ID, "/model claude")
+	if err == nil {
+		t.Fatal("/model claude 应被拒绝")
+	}
+	if !strings.Contains(err.Error(), "err.chat.model_not_available") {
+		t.Fatalf("应返回 err.chat.model_not_available，got %v", err)
+	}
+	if got := store.List(); len(got) != 0 {
+		t.Fatalf("被拒绝的指令不应落 Hub 用户消息，got %d 条", len(got))
+	}
+}
+
+// 内置别名与平台模型名必须放行：/model opus 是 CLI 能解析的合法指令。
+func TestSendChatPromptAllowsBuiltinAliasModelCommand(t *testing.T) {
+	a, _, rec := newDirectTestApp(t)
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := a.SendChatPrompt(info.ID, "/model opus"); err != nil {
+		t.Fatalf("/model opus 应放行，got %v", err)
+	}
+}
+

@@ -547,6 +547,16 @@ func (a *App) sendChatPromptVia(id, text string, viaHub bool) (err error) {
 	if err != nil {
 		return err
 	}
+	// /model 指令守卫：claude 的 ACP 会话里，CLI 无法解析的模型名会被字面
+	// 发给网关（400）；而 ANTHROPIC_MODEL 钉死又会让会话内切换失效，用户
+	// 切回也无法自愈。投递前拦掉此类值，引导走下拉选择。
+	if arg, isCmd := parseModelSlash(text); isCmd {
+		if info, ok := a.chats().Get(sendID); ok && info.ToolID == "claude" {
+			if err := checkModelSlash(arg, a.snapshot().Config.Model); err != nil {
+				return err
+			}
+		}
+	}
 	blocks := []acp.ContentBlock{{Type: "text", Text: text}}
 	// 目标已由调用方精确指定（Hub @目标 / 编号选择 / 引用回复）：直接投递，
 	// 不再经任何模型分发。AgentHub 的智能路由只服务「无目标自由文本」
