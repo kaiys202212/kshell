@@ -1122,7 +1122,8 @@
         "max_tokens": "达到输出长度上限",
         "max_turn_requests": "达到本轮步数上限（agent 内部限制）",
         "refusal": "agent 提前停止（未登录、API 限流等均可能，详见下方归因）",
-        "cancelled": "已取消"
+        "cancelled": "已取消",
+        "turn_timeout": "轮次超时（agent 长时间无响应）"
       },
       "input_placeholder": "输入消息，Enter 发送，Shift+Enter 换行",
       "stop": "停止",

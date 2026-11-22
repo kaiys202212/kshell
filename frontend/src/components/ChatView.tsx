@@ -98,6 +98,8 @@ const STOP_REASON_KEYS: Record<string, string> = {
   max_turn_requests: 'ui.chat.stop_reason.max_turn_requests',
   refusal: 'ui.chat.stop_reason.refusal',
   cancelled: 'ui.chat.stop_reason.cancelled',
+  // kshell 看门狗合成：agent 长时间无响应，轮次被本地收口。
+  turn_timeout: 'ui.chat.stop_reason.turn_timeout',
 };
 
 // readAsDataURLBase64 读文件为 base64 载荷（去掉 data URL 前缀）；失败返回 null。
@@ -410,6 +412,24 @@ export default function ChatView({ chat, active, onRevealInTree }: Props) {
     // chat.Status 有意不进依赖，见上。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, id]);
+
+  // running 会话在窗口重新聚焦/重新可见时再对账一次：turn_done 丢失后用户
+  // 往往就是「切回窗口继续用」，此时活动页签不会重新激活，必须靠这条兜底。
+  useEffect(() => {
+    if (!active || chat.Status !== 'running') return;
+    const reconcile = () => {
+      if (document.visibilityState === 'hidden') return;
+      void listChats()
+        .then((list) => useAppStore.getState().setChats(list))
+        .catch(() => {});
+    };
+    window.addEventListener('focus', reconcile);
+    document.addEventListener('visibilitychange', reconcile);
+    return () => {
+      window.removeEventListener('focus', reconcile);
+      document.removeEventListener('visibilitychange', reconcile);
+    };
+  }, [active, id, chat.Status]);
 
   useEffect(() => {
     if (!active) return;

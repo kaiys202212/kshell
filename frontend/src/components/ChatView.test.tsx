@@ -206,6 +206,30 @@ describe('ChatView', () => {
     expect(line.textContent).toContain(tt('ui.chat.stop_reason.max_turn_requests'));
   });
 
+  // 后端看门狗收口的轮次（agent 长时间无响应）也要有可读原因，不能显示裸原因值。
+  it('turn_done stopReason=turn_timeout 渲染「轮次超时」文案', () => {
+    useAppStore.setState({
+      chatItems: { c1: [{ key: 'td1', type: 'turn_done', stopReason: 'turn_timeout', seq: 1 }] },
+      chatSeq: { c1: 1 },
+    });
+    render(<ChatView chat={CHAT} active />);
+    const line = screen.getByTestId('chat-turn-stopped');
+    expect(line.textContent).toContain(tt('ui.chat.stop_reason.turn_timeout'));
+  });
+
+  // running 会话在窗口重新聚焦时对账后端：turn_done 若丢失，前端会一直转圈。
+  it('窗口重新聚焦时对 running 会话重新对账', async () => {
+    api.listChats.mockResolvedValue([{ ...CHAT, Status: 'ready' }]);
+    render(<ChatView chat={{ ...CHAT, Status: 'running' }} active />);
+    // 激活时已有一次对账，清掉记录后专门验证 focus 触发
+    await waitFor(() => expect(api.listChats).toHaveBeenCalled());
+    api.listChats.mockClear();
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    await waitFor(() => expect(api.listChats).toHaveBeenCalled());
+  });
+
   // 异常停止时后端会把 agent stderr 尾部附在 turn_done.Text（如 429 限流文本），
   // 前端以可折叠 details 展示，帮助用户归因。
   it('turn_done 附带 stderr 详情时渲染可折叠的 agent 输出', () => {
