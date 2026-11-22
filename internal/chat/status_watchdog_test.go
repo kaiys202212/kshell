@@ -112,6 +112,50 @@ func TestCancelTimeoutFinishesTurn(t *testing.T) {
 	}
 }
 
+// 在途工具永远等不到终态时，超过最大存活期必须合成 failed 收口并回 ready，
+// 不能靠「有在途工具就永远不排兜底」把状态钉死。
+func TestOrphanToolExpiresToReady(t *testing.T) {
+	old := orphanToolTimeout
+	orphanToolTimeout = 180 * time.Millisecond
+	t.Cleanup(func() { orphanToolTimeout = old })
+
+	m, b, c, _ := newIdleTestManager(t)
+	b.conn.promptGate = make(chan struct{})
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, info.ID, StatusRunning)
+	// 子任务工具在途；prompt 提前返回 end_turn（codebuddy 形态）
+	b.last.SessionUpdate("sess-new", []byte(`{"sessionUpdate":"tool_call","toolCallId":"sub1","name":"Task","status":"in_progress"}`))
+	close(b.conn.promptGate)
+	// turn_done 已发但不得立即回 ready
+	waitTurnDone(t, c)
+	if st, _ := m.Get(info.ID); st.Status != StatusRunning {
+		t.Fatalf("在途工具期间不应回 ready: %+v", st)
+	}
+	// 超过最大存活期：合成 failed 终态并回 ready
+	waitStatus(t, m, info.ID, StatusReady)
+	if !hasToolStatus(c, "sub1", "failed") {
+		t.Fatal("孤儿工具应收口为 failed")
+	}
+}
+
+// hasToolStatus 报告时间线里是否出现过指定工具与状态的更新。
+func hasToolStatus(c *collector, toolID, status string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, u := range c.updates {
+		if u.Type == "tool" && u.ToolCallID == toolID && u.Tool != nil && u.Tool.Status == status {
+			return true
+		}
+	}
+	return false
+}
+
 // countTurnDone 统计时间线中指定 stopReason 的 turn_done 数量。
 func countTurnDone(c *collector, stop string) int {
 	c.mu.Lock()

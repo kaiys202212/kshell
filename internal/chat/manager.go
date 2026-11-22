@@ -90,8 +90,9 @@ type session struct {
 	// 状态活动跟随：提前返回 prompt 的 agent（codebuddy 等）随后仍推工具/思考
 	// 流水，Info.Status 必须跟随实际活动，否则 ListChats/chat:meta 携带的 ready
 	// 会在前端镜像同步时冲掉已拉回的 running（任务在跑却显示「空闲」）。
-	promptInFlight bool            // 是否有在途 session/prompt（投递忙闲唯一依据）
-	inFlightTools  map[string]bool // 未到终态的工具调用（子任务长静默期的运行信号）
+	promptInFlight bool               // 是否有在途 session/prompt（投递忙闲唯一依据）
+	inFlightTools  map[string]bool    // 未到终态的工具调用（子任务长静默期的运行信号）
+	inFlightSince  map[string]time.Time // 各在途工具首次登记时刻（最大存活期判定）
 	lastActivity   time.Time       // 最近一次活动类更新时刻
 	// turnOpen 记录历史尾部是否存在未收尾的旧轮内容：会话重建后重放的历史
 	// 分片与崩溃继承的半轮正文都不带 turn_done，若不补回合边界，desktop 的
@@ -566,11 +567,11 @@ func (s *session) stopIdleLocked() {
 }
 
 // scheduleIdleFallbackLocked 重排静默回退定时器（调用方持锁）。
-// 有明确在途信号（在途 prompt / 在途工具）时不安排：前者由 turn_done 收尾，
-// 后者等工具终态后再排。
+// 在途 prompt 期间不排：由 turn 看门狗负责收口。有在途工具仍要排——
+// idleFallback 到点后按工具存活期决定「重排等超龄」还是「按孤儿收口」。
 func (s *session) scheduleIdleFallbackLocked() {
 	s.stopIdleLocked()
-	if s.promptInFlight || len(s.inFlightTools) > 0 {
+	if s.promptInFlight {
 		// 诊断：不排定时器的原因必须留痕，否则「在途信号永久悬挂 → 兜底失效」不可见
 		logf("chat: idle 定时不排 id=%s promptInFlight=%v inFlightTools=%d %v",
 			s.id, s.promptInFlight, len(s.inFlightTools), s.inFlightTools)
@@ -580,31 +581,69 @@ func (s *session) scheduleIdleFallbackLocked() {
 	s.idleTimer = time.AfterFunc(activityIdleFallback, func() { sess.m.idleFallback(sess) })
 }
 
-// idleFallback 静默回退：running 会话持续无活动且无在途信号时回 ready，
-// 并经 onInfo 推送（desktop 层 Emit chat:meta，前端既有通路同步状态）。
+// oldestInFlightLocked 返回最早登记的在途工具年龄；无在途工具返回 ok=false。
+func (s *session) oldestInFlightLocked() (time.Duration, bool) {
+	var oldest time.Duration
+	found := false
+	for id := range s.inFlightTools {
+		at, ok := s.inFlightSince[id]
+		if !ok {
+			at = time.Now()
+		}
+		if age := time.Since(at); !found || age > oldest {
+			oldest = age
+			found = true
+		}
+	}
+	return oldest, found
+}
+
+// idleFallback 静默回退：running 会话持续无活动时回 ready。在途工具有最大存活期：
+// 未超龄则重排定时器继续等（不放弃兜底），超龄则按 failed 合成终态收口。
 func (m *Manager) idleFallback(s *session) {
 	m.mu.Lock()
 	if m.byID[s.id] != s || s.exited || s.info.Status != StatusRunning ||
-		s.promptInFlight || len(s.inFlightTools) > 0 ||
-		time.Since(s.lastActivity) < activityIdleFallback {
+		s.promptInFlight || time.Since(s.lastActivity) < activityIdleFallback {
 		// 诊断：定时器到点却放弃回退，原因必须留痕（哪个守卫没过）
 		logf("chat: 静默回退放弃 id=%s 在册=%v 已退出=%v 状态=%s promptInFlight=%v inFlightTools=%d 近期活动=%v",
 			s.id, m.byID[s.id] == s, s.exited, s.info.Status, s.promptInFlight, len(s.inFlightTools), time.Since(s.lastActivity))
 		m.mu.Unlock()
 		return
 	}
-	s.info.Status = StatusReady
+	var closed []Update
+	if age, ok := s.oldestInFlightLocked(); ok {
+		if remain := orphanToolTimeout - age; remain > 0 {
+			// 未超龄：按剩余时长与常规静默阈值取小者重排，到点再判定。
+			d := activityIdleFallback
+			if remain < d {
+				d = remain
+			}
+			sess := s
+			s.idleTimer = time.AfterFunc(d, func() { m.idleFallback(sess) })
+			m.mu.Unlock()
+			return
+		}
+		// 超过最大存活期：agent 不会再有终态，按 failed 合成收口。
+		closed = s.closeOrphanToolsLocked("failed")
+	}
+	statusChanged := s.setStatusLocked(StatusReady)
 	s.stopIdleLocked()
 	onInfo := m.onInfo
 	onStatus := m.onStatus
+	onUpdate := m.onUpdate
 	out := s.info
 	m.mu.Unlock()
-	logf("chat: 静默回退生效 id=%s 状态回 ready", s.id)
+	logf("chat: 静默回退生效 id=%s 状态回 ready 收口工具=%d", s.id, len(closed))
+	if statusChanged && onStatus != nil {
+		onStatus(s.id, StatusReady)
+	}
 	if onInfo != nil {
 		onInfo(out)
 	}
-	if onStatus != nil {
-		onStatus(s.id, StatusReady)
+	if onUpdate != nil {
+		for _, cu := range closed {
+			onUpdate(s.id, cu)
+		}
 	}
 }
 
@@ -639,6 +678,11 @@ var turnWatchdogTimeout = 20 * time.Minute
 // cancelTimeout 是取消闭环的等待上限：session/cancel 是通知语义，agent 可能
 // 忽略或不回包；超时后本地按 cancelled 收口，避免取消后永远停在运行中。
 var cancelTimeout = 20 * time.Second
+
+// orphanToolTimeout 是在途工具的最大存活期：turn 已收尾、agent 却再也不推该
+// 工具终态时，超过此期限按 failed 合成收口，防状态永久卡 running。
+// 必须显著大于最长合法工具耗时，避免误杀真正在跑的子任务。
+var orphanToolTimeout = 30 * time.Minute
 
 // activityIdleFallback 是「活动拉回 running 后」的静默回退阈值：turn_done 后
 // agent 仍推流水使状态保持 running，若持续无活动且无在途信号（在途 prompt /
@@ -815,6 +859,7 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 		pendingElicit: make(map[string]chan elicitationResult),
 		tools:         make(map[string]*ToolCall),
 		inFlightTools: make(map[string]bool),
+		inFlightSince: make(map[string]time.Time),
 		openedAt:      time.Now(),
 		knownIDs:      map[string]bool{},
 	}
@@ -944,6 +989,7 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 	// session/load 重放可能在握手期推来历史工具更新并登记进 inFlightTools；
 	// 重放的执行态在本进程并不真实在跑，清空防 turn_done 因「在途非空」永久保持 running
 	s.inFlightTools = make(map[string]bool)
+	s.inFlightSince = make(map[string]time.Time)
 	out := s.info
 	// starting 期间入队的消息没有 turn_done 可等，必须在此主动投递首条，
 	// 否则会静默永不投递（队列里已补过时间线，投递时不再补）。
@@ -1432,6 +1478,7 @@ func (s *session) closeOrphanToolsLocked(status string) []Update {
 		out = append(out, u)
 	}
 	s.inFlightTools = make(map[string]bool)
+	s.inFlightSince = make(map[string]time.Time)
 	return out
 }
 
@@ -2235,10 +2282,14 @@ func (m *Manager) onSessionUpdate(id, sessionID string, raw json.RawMessage) {
 		if u.Tool != nil {
 			if isTerminalToolStatus(u.Tool.Status) {
 				delete(s.inFlightTools, u.ToolCallID)
+				delete(s.inFlightSince, u.ToolCallID)
 				// 诊断：终态摘除后剩余在途数决定兜底定时器能否重排
 				logf("chat: 工具终态 id=%s tool=%s status=%s 剩余在途=%d",
 					id, u.Tool.Name, u.Tool.Status, len(s.inFlightTools))
 			} else {
+				if _, ok := s.inFlightTools[u.ToolCallID]; !ok {
+					s.inFlightSince[u.ToolCallID] = time.Now()
+				}
 				s.inFlightTools[u.ToolCallID] = true
 			}
 		}
