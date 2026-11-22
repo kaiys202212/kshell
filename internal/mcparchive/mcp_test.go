@@ -193,6 +193,9 @@ func TestInitializeEchoesClientProtocolVersion(t *testing.T) {
 		{"回显旧客户端版本", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}`, "2024-11-05"},
 		{"缺省回落常量", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`, mcpProtocolVersion},
 		{"无 params 回落常量", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`, mcpProtocolVersion},
+		{"未知版本回落常量", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}`, mcpProtocolVersion},
+		{"垃圾版本回落常量", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"not-a-version"}}`, mcpProtocolVersion},
+		{"2025-03-26 原样回显", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`, "2025-03-26"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -214,4 +217,5 @@ func TestInitializeEchoesClientProtocolVersion(t *testing.T) {
 		})
 	}
 }
+
 

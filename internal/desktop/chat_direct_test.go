@@ -215,3 +215,87 @@ func TestSendChatPromptAllowsBuiltinAliasModelCommand(t *testing.T) {
 	waitHubKind(t, store, "agent")
 }
 
+
+// Bugbot 审查发现的回归保护：ACP 聊天窗口的纯文本主路径是 SendChatPromptDirect，
+// 守卫若只加在 sendChatPromptVia，用户从聊天框输入 /model claude 会打穿并触发 400。
+func TestSendChatPromptDirectRejectsUnparsableModelCommand(t *testing.T) {
+	a, store, rec := newDirectTestApp(t)
+	a.opts.Config.Model = config.ModelConfig{
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "P", Models: []string{"glm-5.3-flash"}},
+		},
+	}
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	err = a.SendChatPromptDirect(info.ID, "/model claude")
+	if err == nil {
+		t.Fatal("直投入口也必须拒绝 /model claude")
+	}
+	if !strings.Contains(err.Error(), "err.chat.model_not_available") {
+		t.Fatalf("应返回 err.chat.model_not_available，got %v", err)
+	}
+	if got := store.List(); len(got) != 0 {
+		t.Fatalf("被拒绝的指令不应落 Hub 用户消息，got %d 条", len(got))
+	}
+}
+
+// 直投入口的合法用法不能被误拦：内置别名与普通正文都要放行。
+func TestSendChatPromptDirectAllowsNormalInput(t *testing.T) {
+	a, store, rec := newDirectTestApp(t)
+	a.opts.Config.Model = config.ModelConfig{
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "P", Models: []string{"glm-5.3-flash"}},
+		},
+	}
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// 普通正文里提到 /model 不应被当成指令
+	if err := a.SendChatPromptDirect(info.ID, "请把 /model claude 改掉"); err != nil {
+		t.Fatalf("普通正文应放行，got %v", err)
+	}
+	waitHubKind(t, store, "agent")
+}
+
+// 附件路径（SendChatPromptBlocks）同样要过守卫。
+func TestSendChatPromptBlocksRejectsUnparsableModelCommand(t *testing.T) {
+	a, store, rec := newDirectTestApp(t)
+	a.opts.Config.Model = config.ModelConfig{
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "P", Models: []string{"glm-5.3-flash"}},
+		},
+	}
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	err = a.SendChatPromptBlocks(info.ID, []ChatBlock{{Type: "text", Text: "/model claude"}})
+	if err == nil || !strings.Contains(err.Error(), "err.chat.model_not_available") {
+		t.Fatalf("附件路径也应拒绝，got %v", err)
+	}
+	if got := store.List(); len(got) != 0 {
+		t.Fatalf("被拒绝的指令不应落 Hub 用户消息，got %d 条", len(got))
+	}
+}

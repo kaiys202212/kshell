@@ -560,12 +560,8 @@ func (a *App) sendChatPromptVia(id, text string, viaHub bool) (err error) {
 	// /model 指令守卫：claude 的 ACP 会话里，CLI 无法解析的模型名会被字面
 	// 发给网关（400）；而 ANTHROPIC_MODEL 钉死又会让会话内切换失效，用户
 	// 切回也无法自愈。投递前拦掉此类值，引导走下拉选择。
-	if arg, isCmd := parseModelSlash(text); isCmd {
-		if info, ok := a.chats().Get(sendID); ok && info.ToolID == "claude" {
-			if err := checkModelSlash(arg, a.snapshot().Config.Model); err != nil {
-				return err
-			}
-		}
+	if err := a.guardModelSlash(sendID, text); err != nil {
+		return err
 	}
 	blocks := []acp.ContentBlock{{Type: "text", Text: text}}
 	// 目标已由调用方精确指定（Hub @目标 / 编号选择 / 引用回复）：直接投递，
@@ -573,6 +569,27 @@ func (a *App) sendChatPromptVia(id, text string, viaHub bool) (err error) {
 	// （HubSmartSend），一旦拿到确定目标就必须立刻送到，否则用户消息要等
 	// 一整轮 LLM 往返才出现在时间线，且模型可能把消息转投到别的会话。
 	return a.sendAndRecord(sendID, blocks, text, viaHub)
+}
+
+// guardModelSlash 是 /model 指令守卫的公共实现：claude 会话里 CLI 无法解析的
+// 模型名会被字面发给网关（400）。三条发送入口（Hub 路由 / ACP 直投 / 附件）
+// 都必须在投递前调用它，否则从 ACP 窗口输入 `/model claude` 仍会打穿。
+//
+// 只对 claude 工具生效：其它工具的别名语义各不相同（如 cursor 的 default[]）。
+// resolvedID 必须是 Manager 侧在册 ID（sendID），以便取到真实 ToolID。
+func (a *App) guardModelSlash(resolvedID, text string) error {
+	arg, isCmd := parseModelSlash(text)
+	if !isCmd {
+		return nil
+	}
+	m := a.chats()
+	if m == nil {
+		return nil
+	}
+	if info, ok := m.Get(resolvedID); !ok || info.ToolID != "claude" {
+		return nil
+	}
+	return checkModelSlash(arg, a.snapshot().Config.Model)
 }
 
 // prepareSendTarget 是纯文本发送入口的公共前置：确保会话钩子已装、manager 就绪，
@@ -615,6 +632,10 @@ func (a *App) SendChatPromptDirect(id, text string) (err error) {
 	}()
 	sendID, err := a.prepareSendTarget(id)
 	if err != nil {
+		return err
+	}
+	// ACP 窗口主路径也必须过守卫：用户在聊天框输入 `/model claude` 走的是这里。
+	if err := a.guardModelSlash(sendID, text); err != nil {
 		return err
 	}
 	blocks := []acp.ContentBlock{{Type: "text", Text: text}}
@@ -699,6 +720,10 @@ func (a *App) SendChatPromptBlocks(id string, blocks []ChatBlock) (err error) {
 	}()
 	sendID, err := a.prepareSendTarget(id)
 	if err != nil {
+		return err
+	}
+	// 附件路径同样可能是整串 `/model <x>`（纯文本块 + 附件），一并守卫。
+	if err := a.guardModelSlash(sendID, hubTextFromBlocks(blocks)); err != nil {
 		return err
 	}
 	acpBlocks := chatBlocksToACP(blocks)

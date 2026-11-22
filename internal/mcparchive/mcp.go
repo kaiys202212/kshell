@@ -137,10 +137,28 @@ type rpcReq struct {
 }
 
 // mcpProtocolVersion 是客户端未声明 protocolVersion 时的兜底版本。
-// 正常情况下必须回显客户端请求的版本：cursor-agent 1.0.0 发 2025-11-25，
-// 若服务端坚持回旧版本，它会进入长退避重试（实测 session/new 156–202s，
-// 越过 kshell 的握手超时上限并降级为终端）。
+// 正常情况下应回显客户端请求的版本：cursor-agent 1.0.0 发 2025-11-25，若服务端
+// 坚持回旧版本，它会进入长退避重试（实测 session/new 156–202s，越过 kshell 的
+// 握手超时上限并降级为终端）。
 const mcpProtocolVersion = "2024-11-05"
+
+// mcpSupportedVersions 是 kshell MCP 服务真正实现过的协议版本。
+// 只回显这个集合里的值：对未知版本回落到兜底常量，避免向客户端谎称支持它
+// 可能并不兼容的协议（回显垃圾值会让客户端按该版本语义行事，行为差异更难排查）。
+// 本服务只用到 initialize / tools/list / tools/call 三个方法，语义在这些版本间
+// 保持一致，因此无需随 MCP 规范演进频繁扩表。
+var mcpSupportedVersions = []string{"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}
+
+// echoProtocolVersion 在客户端版本属于已知集合时原样回显，否则回落兜底常量。
+func echoProtocolVersion(requested string) string {
+	v := strings.TrimSpace(requested)
+	for _, known := range mcpSupportedVersions {
+		if v == known {
+			return v
+		}
+	}
+	return mcpProtocolVersion
+}
 
 // Handle 处理一条 MCP JSON-RPC 消息。通知（无 id）返回 ok=false，调用方不回包。
 func Handle(msg []byte, suggest func(summary string) error) ([]byte, bool) {
@@ -153,16 +171,14 @@ func Handle(msg []byte, suggest func(summary string) error) ([]byte, bool) {
 	}
 	switch req.Method {
 	case "initialize":
-		// 回显客户端声明的协议版本；缺失时才用兜底常量。MCP 规范允许服务端
-		// 回退到自身支持的版本，但部分客户端（cursor-agent）会因此长时间重试。
+		// 回显客户端声明的协议版本（限已知集合，见 echoProtocolVersion）；
+		// 缺失或未知时才用兜底常量。部分客户端（cursor-agent）对回落的旧版本
+		// 会长时间退避重试，因此已知的新版本必须原样回显。
 		var p struct {
 			ProtocolVersion string `json:"protocolVersion"`
 		}
 		_ = json.Unmarshal(req.Params, &p)
-		version := p.ProtocolVersion
-		if version == "" {
-			version = mcpProtocolVersion
-		}
+		version := echoProtocolVersion(p.ProtocolVersion)
 		return rpcResult(req.ID, map[string]any{
 			"protocolVersion": version,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
