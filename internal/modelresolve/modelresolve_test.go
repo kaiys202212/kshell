@@ -322,3 +322,45 @@ func TestModelIDLooseEqual(t *testing.T) {
 		}
 	}
 }
+
+// 下拉里选到别名（如 claude / sonnet）时不得注入成 ANTHROPIC_MODEL：
+// ANTHROPIC_MODEL 不经 CLI 别名解析，字面值会被发往网关（400）。
+func TestOptionsSkipsClaudeAliases(t *testing.T) {
+	cfg := config.ModelConfig{
+		Enabled: true,
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "P", AnthropicBaseURL: "https://ant/", APIKey: "k", Models: []string{"glm-5.3-flash"}},
+		},
+	}
+	for _, model := range []string{"claude", "default", "sonnet", "opus[1m]", "haiku-1m"} {
+		mo := Options(cfg, Query{ToolID: "claude", ModelID: model}, nil)
+		if mo.Resolver == nil {
+			t.Fatal("Resolver 不应为 nil")
+		}
+		got, ok := mo.Resolver("claude")
+		if !ok {
+			t.Fatalf("ModelID=%q 应解析命中", model)
+		}
+		if got.Model != "" {
+			t.Errorf("ModelID=%q 不应下发为模型名，got %q", model, got.Model)
+		}
+		if got.AnthropicBaseURL != "https://ant/" {
+			t.Errorf("ModelID=%q 端点应保留，got %q", model, got.AnthropicBaseURL)
+		}
+	}
+}
+
+// 具体模型名照旧下发。
+func TestOptionsKeepsConcreteClaudeModel(t *testing.T) {
+	cfg := config.ModelConfig{
+		Enabled: true,
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "P", AnthropicBaseURL: "https://ant/", APIKey: "k", Models: []string{"glm-5.3-flash"}},
+		},
+	}
+	mo := Options(cfg, Query{ToolID: "claude", ModelID: "glm-5.3-flash"}, nil)
+	got, ok := mo.Resolver("claude")
+	if !ok || got.Model != "glm-5.3-flash" {
+		t.Fatalf("应下发具体模型名，got %+v ok=%v", got, ok)
+	}
+}
