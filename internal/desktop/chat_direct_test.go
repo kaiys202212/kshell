@@ -299,3 +299,44 @@ func TestSendChatPromptBlocksRejectsUnparsableModelCommand(t *testing.T) {
 		t.Fatalf("被拒绝的指令不应落 Hub 用户消息，got %d 条", len(got))
 	}
 }
+
+// Bugbot 第二轮审查发现：`#f` 会剥掉指令前缀后直接 sendAndRecord，
+// 剥出的正文若是 /model 指令会绕过守卫（`#f /model claude`）。
+func TestSendChatPromptFollowRejectsUnparsableModelCommand(t *testing.T) {
+	a, store, rec := newDirectTestApp(t)
+	a.opts.Config.Model = config.ModelConfig{
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "P", Models: []string{"glm-5.3-flash"}},
+		},
+	}
+	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
+	t.Cleanup(m.CloseAll)
+	a.opts.Chats = m
+
+	info, err := m.Open("session:s1", chat.Info{
+		Kind: chat.KindSession, Workspace: "D:/w", Title: "t", ToolID: "claude",
+	}, chat.Spec{Path: "x"}, "s1")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// #f 的目标是「最近的 agent 会话」，先落一条 agent 消息把它指到这个会话。
+	if err := store.Append(hub.Message{
+		Kind: "agent", ChatID: info.ID, Tool: "claude", SessionTitle: "t", Text: "上一条回复",
+	}); err != nil {
+		t.Fatalf("append agent message: %v", err)
+	}
+
+	err = a.SendChatPrompt(info.ID, "#f /model claude")
+	if err == nil {
+		t.Fatal("#f 剥出的 /model claude 也必须被拒绝")
+	}
+	if !strings.Contains(err.Error(), "err.chat.model_not_available") {
+		t.Fatalf("应返回 err.chat.model_not_available，got %v", err)
+	}
+	// 被拒绝时不应产生新的 user 消息（只有那条 agent 回复）
+	for _, mm := range store.List() {
+		if mm.Kind == "user" {
+			t.Fatalf("#f 被拒绝后不应落 user 消息: %+v", mm)
+		}
+	}
+}

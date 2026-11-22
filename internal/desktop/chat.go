@@ -550,6 +550,11 @@ func (a *App) sendChatPromptVia(id, text string, viaHub bool) (err error) {
 		if err != nil {
 			return err
 		}
+		// #f 会剥掉指令前缀后投递，剥出的正文同样可能是一条 /model 指令
+		//（`#f /model claude`），必须与其它入口一致地过守卫。
+		if err := a.guardModelSlash(sendID, rest); err != nil {
+			return err
+		}
 		blocks := []acp.ContentBlock{{Type: "text", Text: rest}}
 		return a.sendAndRecord(sendID, blocks, rest, false)
 	}
