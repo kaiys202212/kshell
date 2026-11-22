@@ -42,3 +42,49 @@ func TestManagerStatusChangePushedViaOnStatus(t *testing.T) {
 	}
 	t.Fatalf("onStatus 未收到 running+ready，实际=%v", got)
 }
+
+// prompt 永不回包时看门狗必须收口：状态回 ready、时间线补 turn_timeout；
+// 之后迟到的真实响应不得重复收尾，也不得把状态拉回 running。
+func TestTurnWatchdogExpiresStuckPrompt(t *testing.T) {
+	old := turnWatchdogTimeout
+	turnWatchdogTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { turnWatchdogTimeout = old })
+
+	m, b, c, _ := newIdleTestManager(t)
+	b.conn.promptGate = make(chan struct{}) // Prompt 卡住，模拟 agent 不回包
+	info, err := m.Open("new:1", Info{Kind: KindNew, Workspace: "/w"}, Spec{Path: "x"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Prompt(info.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, info.ID, StatusRunning)
+	waitStatus(t, m, info.ID, StatusReady) // 看门狗收口
+
+	if n := countTurnDone(c, "turn_timeout"); n != 1 {
+		t.Fatalf("应恰好一条 turn_timeout turn_done，实际=%d", n)
+	}
+	// 放行迟到的真实响应：不得重复 turn_done、不得回 running。
+	close(b.conn.promptGate)
+	time.Sleep(150 * time.Millisecond)
+	if n := countTurnDone(c, "end_turn"); n != 0 {
+		t.Fatalf("迟到响应不得追加 end_turn turn_done，实际=%d", n)
+	}
+	if st, ok := m.Get(info.ID); !ok || st.Status != StatusReady {
+		t.Fatalf("迟到响应后状态应保持 ready，实际=%+v", st)
+	}
+}
+
+// countTurnDone 统计时间线中指定 stopReason 的 turn_done 数量。
+func countTurnDone(c *collector, stop string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, u := range c.updates {
+		if u.Type == "turn_done" && (stop == "" || u.StopReason == stop) {
+			n++
+		}
+	}
+	return n
+}

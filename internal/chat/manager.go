@@ -98,6 +98,10 @@ type session struct {
 	// done 摘要会把旧轮正文拼进本轮。正常 turn 收尾时清零；下次投递前按位补哨兵。
 	turnOpen  bool
 	idleTimer *time.Timer // 静默回退定时器（持锁操作）
+	// promptEpoch 标识当前在途 prompt 轮次：看门狗/取消超时收口时递增，让随后
+	// 迟到的真实响应失效（不得重复追加 turn_done 或把状态拉回 running）。
+	promptEpoch int64
+	turnTimer   *time.Timer // turn 看门狗（prompt 无回包的硬超时）
 
 	// 自动续跑：turnSeq 标识轮次，token 让过期定时器失效，count 限制每轮次数。
 	turnSeq         int64
@@ -457,6 +461,88 @@ func (s *session) setStatusLocked(st string) bool {
 	return true
 }
 
+// stopTurnWatchdogLocked 停掉 turn 看门狗（调用方持锁）。
+func (s *session) stopTurnWatchdogLocked() {
+	if s.turnTimer != nil {
+		s.turnTimer.Stop()
+		s.turnTimer = nil
+	}
+}
+
+// armTurnWatchdogLocked 为当前在途 prompt 排硬超时（调用方持锁）。
+func (s *session) armTurnWatchdogLocked() {
+	s.stopTurnWatchdogLocked()
+	if !s.promptInFlight {
+		return
+	}
+	sess := s
+	epoch := s.promptEpoch
+	s.turnTimer = time.AfterFunc(turnWatchdogTimeout, func() { sess.m.expireTurn(sess, epoch, "turn_timeout") })
+}
+
+// expireTurn 是看门狗/取消超时的统一收口入口：只有会话在册、未退出、仍在途且
+// epoch 一致时才动作；有近期活动则按剩余时长重排。收口时递增 epoch，随后到达
+// 的真实 prompt 响应被 deliverTurn 的守卫丢弃。
+func (m *Manager) expireTurn(s *session, epoch int64, stopReason string) {
+	m.mu.Lock()
+	if m.byID[s.id] != s || s.exited || !s.promptInFlight || s.promptEpoch != epoch {
+		s.turnTimer = nil
+		m.mu.Unlock()
+		logf("chat: 看门狗放弃 id=%s 在册=%v 已退出=%v 状态=%s 在途=%v epoch=%d/%d",
+			s.id, m.byID[s.id] == s, s.exited, s.info.Status, s.promptInFlight, s.promptEpoch, epoch)
+		return
+	}
+	if since := time.Since(s.lastActivity); since < turnWatchdogTimeout {
+		remain := turnWatchdogTimeout - since
+		sess := s
+		s.turnTimer = time.AfterFunc(remain, func() { m.expireTurn(sess, epoch, stopReason) })
+		m.mu.Unlock()
+		return
+	}
+	logf("chat: turn 超时收口 id=%s stop=%s 静默=%v", s.id, stopReason, time.Since(s.lastActivity))
+	s.promptEpoch++ // 迟到响应失效
+	s.promptInFlight = false
+	s.turnTimer = nil
+	closed := s.closeOrphanToolsLocked("failed")
+	s.seq++
+	u := Update{Seq: s.seq, Type: "turn_done", StopReason: stopReason}
+	s.turnOpen = false // 本轮已由兜底收尾
+	s.history = append(s.history, u)
+	if len(s.history) > maxHistory {
+		s.history = append([]Update(nil), s.history[len(s.history)-maxHistory:]...)
+	}
+	statusChanged := s.setStatusLocked(StatusReady)
+	var next queuedMsg
+	hasNext := false
+	if !s.exited && len(s.queue) > 0 {
+		next = s.queue[0]
+		s.queue = s.queue[1:]
+		hasNext = true
+	}
+	items := s.queueItemsLocked()
+	onStatus := m.onStatus
+	onUpdate := m.onUpdate
+	onQueue := m.onQueue
+	m.mu.Unlock()
+
+	if statusChanged && onStatus != nil {
+		onStatus(s.id, StatusReady)
+	}
+	if onUpdate != nil {
+		for _, cu := range closed {
+			onUpdate(s.id, cu)
+		}
+		onUpdate(s.id, u)
+	}
+	if hasNext {
+		if onQueue != nil {
+			onQueue(s.id, items)
+		}
+		_ = m.deliverTurn(s.id, s, next, false)
+	}
+}
+
+
 // stopIdleLocked 停掉静默回退定时器（调用方持锁）。
 func (s *session) stopIdleLocked() {
 	if s.idleTimer != nil {
@@ -530,6 +616,11 @@ func handshakeTimeoutFor(toolID string) time.Duration {
 	}
 	return handshakeTimeout
 }
+
+// turnWatchdogTimeout 是「session/prompt 在途」的硬超时：agent 长时间无任何
+// 活动（字面意义上的无回包）时收口，保证 running 必有出口。有持续活动时
+// 看门狗按剩余时间重排，不会打断合法长任务。var 仅为测试可缩短。
+var turnWatchdogTimeout = 20 * time.Minute
 
 // activityIdleFallback 是「活动拉回 running 后」的静默回退阈值：turn_done 后
 // agent 仍推流水使状态保持 running，若持续无活动且无在途信号（在途 prompt /
@@ -890,6 +981,7 @@ func (m *Manager) remove(s *session) {
 	cancelPending(pending)
 	cancelPendingElicitations(pendingElicit)
 	s.stopIdleLocked() // 摘除后定时器不得再触发（防泄漏与悬垂）
+	s.stopTurnWatchdogLocked()
 	s.cancelAutoResumeLocked()
 	// 尽力清理该会话的附件落盘缓存：本地小目录，RemoveAll 在锁内执行可接受
 	// （毫秒级，避免引入第二把锁或泄漏 goroutine）；错误忽略（缓存目录非关键数据）。
@@ -929,6 +1021,7 @@ func (m *Manager) watchExit(s *session) {
 	s.queue = nil // 进程已退出，排队的消息不再有投递机会
 	onQueue := m.onQueue
 	s.stopIdleLocked()
+	s.stopTurnWatchdogLocked()
 	s.cancelAutoResumeLocked()
 	pending := s.pending
 	s.pending = make(map[string]chan permissionResult)
@@ -1149,6 +1242,11 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 	statusChanged := s.setStatusLocked(StatusRunning)
 	// 在途 prompt 是投递忙闲依据；置位时停掉静默回退定时器（turn_done 会收尾）
 	s.promptInFlight = true
+	// 新轮次：递增 epoch 并起看门狗。lastActivity 从起轮算起，看门狗到点时
+	// 若期间无任何活动即收口，有活动则重排剩余时长。
+	s.promptEpoch++
+	s.lastActivity = time.Now()
+	s.armTurnWatchdogLocked()
 	s.turnSeq++
 	s.stopIdleLocked()
 	s.closeStaleTurnLocked()
@@ -1163,6 +1261,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 	conn := s.conn
 	ctx := s.ctx
 	turnToken := s.autoResumeToken
+	epoch := s.promptEpoch
 	onInfo := m.onInfo
 	onStatus := m.onStatus
 	onUpdate := m.onUpdate
@@ -1196,7 +1295,15 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 			m.mu.Unlock()
 			return
 		}
+		// 看门狗/取消超时已收口：这轮响应迟到，丢弃即可。不追加 turn_done、
+		// 不改状态，避免「收口后迟到回包把状态打回 running / 摘要重复」。
+		if s.promptEpoch != epoch || !s.promptInFlight {
+			m.mu.Unlock()
+			logf("chat: 迟到 prompt 响应丢弃 id=%s epoch=%d/%d 在途=%v", id, s.promptEpoch, epoch, s.promptInFlight)
+			return
+		}
 		s.promptInFlight = false
+		s.stopTurnWatchdogLocked()
 		stderr := ""
 		if err != nil || (stop != "" && stop != "end_turn" && stop != "cancelled") || m.autoResume {
 			raw, _ := connStderrDelta(conn, stderrMark)
