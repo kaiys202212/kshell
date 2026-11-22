@@ -220,3 +220,29 @@ func TestServeIOStreamingFlush(t *testing.T) {
 		t.Fatalf("ServeIO: %v", err)
 	}
 }
+
+// 同 mcparchive：MCP initialize 必须回显客户端 protocolVersion，否则 cursor
+// 走长退避重试，拖垮 ACP 握手。
+func TestSSHInitializeEchoesClientProtocolVersion(t *testing.T) {
+	b := &fakeBackend{}
+	for _, c := range []struct{ in, want string }{
+		{`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`, "2025-11-25"},
+		{`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`, mcpProtocolVersion},
+	} {
+		resp, ok := Handle([]byte(c.in), NewTools(b))
+		if !ok {
+			t.Fatal("initialize 应有应答")
+		}
+		var got struct {
+			Result struct {
+				ProtocolVersion string `json:"protocolVersion"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(resp, &got); err != nil {
+			t.Fatalf("应答非法 JSON: %v (%s)", err, resp)
+		}
+		if got.Result.ProtocolVersion != c.want {
+			t.Fatalf("protocolVersion = %q, want %q", got.Result.ProtocolVersion, c.want)
+		}
+	}
+}

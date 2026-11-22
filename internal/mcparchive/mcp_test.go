@@ -1,6 +1,7 @@
-package mcparchive
+﻿package mcparchive
 
 import (
+	"encoding/json"
 	"bytes"
 	"io"
 	"net/http"
@@ -178,3 +179,39 @@ func TestHubSuggestAuth(t *testing.T) {
 		t.Fatalf("status=%d ref=%q summary=%q", res.StatusCode, ref, summary)
 	}
 }
+
+// cursor-agent 1.0.0 发 protocolVersion 2025-11-25；服务端硬编码回 2024-11-05
+// 会让它进入长退避重试，实测把 ACP 的 session/new 从 ~10s 拖到 156–202s，
+// 越过 kshell 的握手超时后降级终端。必须原样回显客户端版本。
+func TestInitializeEchoesClientProtocolVersion(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"回显客户端版本", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`, "2025-11-25"},
+		{"回显旧客户端版本", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}`, "2024-11-05"},
+		{"缺省回落常量", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`, mcpProtocolVersion},
+		{"无 params 回落常量", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`, mcpProtocolVersion},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			resp, ok := Handle([]byte(c.in), nil)
+			if !ok {
+				t.Fatal("initialize 应有应答")
+			}
+			var got struct {
+				Result struct {
+					ProtocolVersion string `json:"protocolVersion"`
+				} `json:"result"`
+			}
+			if err := json.Unmarshal(resp, &got); err != nil {
+				t.Fatalf("应答非法 JSON: %v (%s)", err, resp)
+			}
+			if got.Result.ProtocolVersion != c.want {
+				t.Fatalf("protocolVersion = %q, want %q", got.Result.ProtocolVersion, c.want)
+			}
+		})
+	}
+}
+
