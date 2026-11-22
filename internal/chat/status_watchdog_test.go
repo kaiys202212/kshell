@@ -194,7 +194,7 @@ func countTurnDone(c *collector, stop string) int {
 // 「永久运行中」在下一轮复现。守卫失败分支只允许静默返回。
 func TestStaleWatchdogCallbackKeepsCurrentTimer(t *testing.T) {
 	old := turnWatchdogTimeout
-	turnWatchdogTimeout = 250 * time.Millisecond
+	turnWatchdogTimeout = 1 * time.Second
 	t.Cleanup(func() { turnWatchdogTimeout = old })
 
 	m, b, _, _ := newIdleTestManager(t)

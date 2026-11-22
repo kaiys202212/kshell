@@ -19,6 +19,8 @@ const PAIRED_KEYS = [
   'err.chat.bad_elicitation_action',
   'err.session.acp_only',
   'ui.chat.status_authenticating',
+  'ui.chat.stop_reason.turn_timeout',
+  'ui.notify.turn_timeout',
   'ui.git.refresh_scm',
   'ui.git.refresh_log',
 ];

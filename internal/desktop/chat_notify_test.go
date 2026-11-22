@@ -580,3 +580,20 @@ func TestTurnEventMapping(t *testing.T) {
 		}
 	}
 }
+
+// stopFallback 的 wire key 选择：turn_timeout 是 kshell 合成原因，不能用
+// 通用「原因：{{0}}」模板露出裸英文值，必须走独立文案 key。
+func TestStopFallbackWireKeys(t *testing.T) {
+	cases := []struct{ stop, want string }{
+		{"", ""},
+		{"end_turn", ""},
+		{"cancelled", ""},
+		{"turn_timeout", "ui.notify.turn_timeout"},
+		{"max_tokens", "ui.notify.turn_stopped_reason|max_tokens"},
+	}
+	for _, c := range cases {
+		if got := stopFallback(c.stop); got != c.want {
+			t.Fatalf("stopFallback(%q) = %q, want %q", c.stop, got, c.want)
+		}
+	}
+}

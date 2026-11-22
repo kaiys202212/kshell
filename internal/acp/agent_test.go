@@ -23,7 +23,8 @@ func fakeAgentMain() {
 		// 孙进程持有，kshell 侧看不到 EOF（npx→node / MCP 孙进程的真实形态）。
 		var c *exec.Cmd
 		// 持管时长必须显著大于断言 deadline（2s），否则旧实现「等 EOF 再 Wait」
-		// 在 Unix 上 3s 就返回，回归用例修复前也会绿（假红）。
+		// 在 Unix 上 8s 才返回，回归用例修复前也会绿（假绿）。孙进程不 kill，
+		// 靠自然退出（≤9s）。
 		if runtime.GOOS == "windows" {
 			c = exec.Command("cmd", "/c", "ping -n 10 127.0.0.1 >nul")
 		} else {

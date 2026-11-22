@@ -476,9 +476,10 @@ export const useAppStore = create<AppState>()(
           if (seq > 0 && seq <= last) return {}; // 乱序到达的旧状态
           const row = s.chats.find((c) => c.ID === id);
           const nextSeq = seq > last ? seq : last;
-          if (!row) return {};
+          const seqState = nextSeq === last ? {} : { chatStatusSeq: { ...s.chatStatusSeq, [id]: nextSeq } };
+          if (!row) return seqState;
           // exited 是终态：迟到的 running/ready 不得把已退出会话复活。
-          if (row.Status === 'exited' && status !== 'exited') return {};
+          if (row.Status === 'exited' && status !== 'exited') return seqState;
           if (row.Status === status) {
             return nextSeq === last ? {} : { chatStatusSeq: { ...s.chatStatusSeq, [id]: nextSeq } };
           }

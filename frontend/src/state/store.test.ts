@@ -646,7 +646,7 @@ describe('setChatStatus（chat:status 后端权威状态）', () => {
       ID: 'c1',
       Kind: 'new',
       SessionID: '',
-      Workspace: 'D:\w',
+      Workspace: 'D:\\w',
       Title: 't',
       ToolID: 'claude',
       Status: 'ready',

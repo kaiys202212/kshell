@@ -587,7 +587,7 @@ func (s *session) scheduleIdleFallbackLocked() {
 }
 
 // pruneExpiredToolsLocked 收口已超过最大存活期的在途工具：合成 failed 终态
-// 并写回时间线，未超龄的保留。返回本次收口的更新与最年轻的剩余工具年龄。
+// 并写回时间线，未超龄的保留。返回本次收口的更新、最早到期工具的剩余时长。
 // 缺 inFlightSince 记录的工具按「刚登记」补齐，避免失配项永不超龄。
 func (s *session) pruneExpiredToolsLocked(now time.Time) ([]Update, time.Duration, bool) {
 	var out []Update
@@ -642,11 +642,9 @@ func (m *Manager) idleFallback(s *session) {
 	}
 	closed, remaining, hasRemaining := s.pruneExpiredToolsLocked(time.Now())
 	if hasRemaining {
-		// 还有未超龄工具：按最近一个超龄时刻重排，届时再判定。
+		// 还有未超龄工具：按最早到期工具的剩余时长重排，届时再判定。
+		// lastActivity 静默已由上面的守卫保证，无需再叠加 activityIdleFallback。
 		d := remaining
-		if d < activityIdleFallback {
-			d = activityIdleFallback
-		}
 		sess := s
 		s.idleTimer = time.AfterFunc(d, func() { m.idleFallback(sess) })
 		onUpdate := m.onUpdate
@@ -917,6 +915,11 @@ func (m *Manager) Open(key string, info Info, spec Spec, sessionID string) (Info
 		s.autoSeq = old.autoSeq
 		s.lastType = old.lastType
 		s.turnOpen = old.turnOpen
+	}
+	// 状态版本号跨重建继承：前端按别名链头沿用旧水位，新会话若从 0 起算，
+	// 前若干次状态推送会被当作旧值丢弃，chat:status 兜底失效。
+	if ok {
+		s.statusSeq = old.statusSeq
 	}
 	if sessionID != "" {
 		// 重放路径：agent 将重推的历史分片不带 turn_done，视为存在未收尾旧轮。
