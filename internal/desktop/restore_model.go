@@ -19,6 +19,11 @@ func restoreModelBareID(id string) string {
 // resolveRestoreModelID 在可用列表中找与 JSONL last 对应、可下发给 SetModel 的裸名。
 // 先精确再点号/连字符宽松；多平台比裸名。已与 Current 宽松相同或找不到返回 ""。
 func resolveRestoreModelID(last string, models []chat.ModelView, current string) string {
+	// 别名 / 裸名 claude 不能作为具体模型回放：SetModel 对它无效，
+	// 还会被字面下发到网关（400）。具体模型名才继续走匹配。
+	if providers.IsClaudeUnpinnableModel(last) {
+		return ""
+	}
 	if last == "" || modelresolve.ModelIDLooseEqual(last, current) {
 		return ""
 	}

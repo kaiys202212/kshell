@@ -242,3 +242,21 @@ func TestOpenSessionACPRestoresModelLooseDotHyphen(t *testing.T) {
 		t.Fatalf("应 SetModel(glm-5.3-flash): %v", conn.modelCalls)
 	}
 }
+
+// 恢复会话时若 JSONL 尾部/state 里的模型是别名或裸名 claude，不得回放：
+// 它无法通过 SetModel 生效，且会被当成具体模型下发（网关 400）。
+func TestResolveRestoreModelIDSkipsUnpinnable(t *testing.T) {
+	models := []chat.ModelView{
+		{ID: "claude", Name: "claude"},
+		{ID: "sonnet", Name: "sonnet"},
+		{ID: "glm-5.3-flash", Name: "glm-5.3-flash"},
+	}
+	for _, last := range []string{"claude", "Claude", "sonnet", "opus[1m]", "default"} {
+		if got := resolveRestoreModelID(last, models, "glm-5.3-flash"); got != "" {
+			t.Errorf("last=%q 应跳过，got %q", last, got)
+		}
+	}
+	if got := resolveRestoreModelID("glm-5.3-flash", models, "other"); got != "glm-5.3-flash" {
+		t.Errorf("具体模型名应恢复，got %q", got)
+	}
+}
