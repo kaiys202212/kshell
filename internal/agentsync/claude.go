@@ -199,24 +199,59 @@ func claudeSlotModels(in SyncInput) []string {
 	return out
 }
 
-// writeModelEnv 按 ToolSync.Claude 的 4 个槽位写入模型 env 键：槽位非空才写，
-// 全空 = 只清不写（模型键已在 Sync 开头统一删除）。
-// "default" 是 ACP 的「让 agent 自选」占位值，经环境变量进入 CLI 不会被解析成
-// 具体模型，会字面发往 API（网关 400）；与 providers.Claude.SettingsEnv 同规则跳过。
+// writeModelEnv 按 ToolSync.Claude 的 4 个槽位写入模型 env 键。
+//
+// 槽位语义（2026-11-22 实测定档，见 docs/plans/2026-11-22-acp-model-fix-design.md）：
+//   - ANTHROPIC_MODEL 是「新会话初始模型」；
+//   - ANTHROPIC_DEFAULT_{SONNET,OPUS,HAIKU}_MODEL 是别名解析表，会话内切
+//     sonnet/opus/haiku 时按槽位取具体模型。
+//
+// 由此得出两条硬约束：
+//  1. **三个槽位必须都有值**。空槽位会让 Claude 回落到内置真模型名
+//     （claude-sonnet-4-6），发往第三方网关必然 400（实测）。
+//  2. 槽位值全相同会让三个别名指向同一模型，用户切哪个都没变化（实测）。
+//     这取决于用户的分档映射，kshell 不替用户编造差异，只如实写入。
+//
+// 因此这里用「首个非空槽位」补齐空缺槽位，保证别名表可解析、不 400；
+// 想要真正的分档切换需在设置页把三个槽位映射到不同模型。
+// "default" 是 ACP 的「让 agent 自选」占位值，经环境变量进入 CLI 不被解析，
+// 会字面发往 API（网关 400），故按未填处理。
 func writeModelEnv(env map[string]any, in SyncInput) {
-	slots := [][2]string{
-		{"ANTHROPIC_MODEL", in.ToolSync.Claude.Model},
-		{"ANTHROPIC_DEFAULT_SONNET_MODEL", in.ToolSync.Claude.Sonnet},
-		{"ANTHROPIC_DEFAULT_OPUS_MODEL", in.ToolSync.Claude.Opus},
-		{"ANTHROPIC_DEFAULT_HAIKU_MODEL", in.ToolSync.Claude.Haiku},
+	c := in.ToolSync.Claude
+	model := cleanClaudeSlotValue(c.Model)
+	sonnet := cleanClaudeSlotValue(c.Sonnet)
+	opus := cleanClaudeSlotValue(c.Opus)
+	haiku := cleanClaudeSlotValue(c.Haiku)
+
+	if model != "" {
+		env["ANTHROPIC_MODEL"] = model
 	}
-	for _, s := range slots {
-		v := strings.TrimSpace(s[1])
-		if v == "" || strings.EqualFold(v, "default") {
-			continue
+	fallback := firstNonEmpty(model, sonnet, opus, haiku)
+	if fallback == "" {
+		return // 四个槽位全空：只清不写（模型键已在 Sync 开头统一删除）
+	}
+	env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = firstNonEmpty(sonnet, fallback)
+	env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = firstNonEmpty(opus, fallback)
+	env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = firstNonEmpty(haiku, fallback)
+}
+
+// cleanClaudeSlotValue 归一槽位值：trim 后为空或 "default"（含大小写）视为未填。
+func cleanClaudeSlotValue(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || strings.EqualFold(v, "default") {
+		return ""
+	}
+	return v
+}
+
+// firstNonEmpty 返回首个非空参数；全空返回空串。
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
 		}
-		env[s[0]] = v
 	}
+	return ""
 }
 
 // pickPlatform 按显式平台 ID 查找，未命中或空取第一个；无平台返回 nil。

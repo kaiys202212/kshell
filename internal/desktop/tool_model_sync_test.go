@@ -270,8 +270,13 @@ func TestSetToolSyncConfigClaudeSlots(t *testing.T) {
 	if !strings.Contains(raw, `"ANTHROPIC_MODEL": "m1"`) || !strings.Contains(raw, `"ANTHROPIC_DEFAULT_OPUS_MODEL": "m2"`) {
 		t.Fatalf("槽位应写入 env: %s", raw)
 	}
-	if strings.Contains(raw, "ANTHROPIC_DEFAULT_SONNET_MODEL") {
-		t.Fatalf("空槽不应写键: %s", raw)
+	// 未配置的 SONNET 槽必须用首个有效值兜底：空槽位会让 Claude 回落内置真
+	// 模型名（claude-sonnet-4-6）并 400（2026-11-22 实测）。
+	if !strings.Contains(raw, `"ANTHROPIC_DEFAULT_SONNET_MODEL": "m1"`) {
+		t.Fatalf("空槽应兜底为 m1（不能留空，否则 400）: %s", raw)
+	}
+	if !strings.Contains(raw, `"ANTHROPIC_DEFAULT_HAIKU_MODEL": "m1"`) {
+		t.Fatalf("空槽应兜底为 m1（不能留空，否则 400）: %s", raw)
 	}
 
 	if err := app.SetToolSyncConfig("claude", ToolSyncInput{Enabled: false}); err != nil {

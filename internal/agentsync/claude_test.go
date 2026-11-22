@@ -191,6 +191,8 @@ func TestClaudeSyncWritesSlotModels(t *testing.T) {
 }
 
 // default 是 ACP 的伪模型占位值：静态注入同样跳过，避免 CLI 把它字面发给 API。
+// 但其余槽位必须补齐（2026-11-22 定档）：空槽位会让 Claude 回落内置真模型名
+// （claude-sonnet-4-6）并 400，因此空缺槽位用首个有效值兜底。
 func TestClaudeSyncSkipsDefaultSlot(t *testing.T) {
 	home := t.TempDir()
 	c := Claude{}
@@ -207,17 +209,23 @@ func TestClaudeSyncSkipsDefaultSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := readClaudeSettings(t, home)["env"].(map[string]any)
-	for _, k := range []string{"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL"} {
-		if _, ok := env[k]; ok {
-			t.Fatalf("%s 不应写入，env=%v", k, env)
-		}
+	// ANTHROPIC_MODEL 是 default（伪值）→ 不写。
+	if _, ok := env["ANTHROPIC_MODEL"]; ok {
+		t.Fatalf("ANTHROPIC_MODEL 为 default 伪值时不应写入，env=%v", env)
 	}
-	if env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "kimi-k3" {
-		t.Fatalf("HAIKU = %v", env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+	// 三个别名槽位必须都有值：唯一有效值是 kimi-k3，空缺的 SONNET/OPUS 用它兜底。
+	for _, k := range []string{
+		"ANTHROPIC_DEFAULT_SONNET_MODEL",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+	} {
+		if env[k] != "kimi-k3" {
+			t.Fatalf("%s = %v，应兜底为 kimi-k3（空槽位会 400）: %v", k, env[k], env)
+		}
 	}
 }
 
-// 槽位留空 = 不写对应键（先删后建语义下清掉残留）；槽位值带空白时 trim。
+// 槽位值带空白时 trim；空缺的别名槽位用首个有效值兜底（空槽位会 400）。
 func TestClaudeSyncEmptySlotsNotWrittenAndTrim(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, ".claude")
@@ -240,9 +248,13 @@ func TestClaudeSyncEmptySlotsNotWrittenAndTrim(t *testing.T) {
 	if env["ANTHROPIC_MODEL"] != "glm-5.3-flash" {
 		t.Fatalf("MODEL 槽应 trim 后写入: %v", env["ANTHROPIC_MODEL"])
 	}
+	// 旧残留 stale/stale-opus 必须被覆盖；未配置的别名槽用 MODEL 值兜底。
 	for _, k := range []string{"ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"} {
-		if _, ok := env[k]; ok {
-			t.Fatalf("空槽不应写 %s（残留应被清掉）: %v", k, env)
+		if env[k] != "glm-5.3-flash" {
+			t.Fatalf("%s = %v，应覆盖残留并兜底为 glm-5.3-flash: %v", k, env[k], env)
+		}
+		if env[k] == "stale" || env[k] == "stale-opus" {
+			t.Fatalf("%s 残留未被清除: %v", k, env)
 		}
 	}
 }
@@ -685,5 +697,58 @@ func TestClaudeSyncSkipsModelKeysWithoutAnthropicEndpoint(t *testing.T) {
 	}
 	if doc["model"] != "my-choice" {
 		t.Fatalf("不接管时顶层 model 应保留, got %v", doc["model"])
+	}
+}
+
+// 空槽位会让 Claude 回落内置真模型名（claude-sonnet-4-6），发往第三方网关必然
+// 400（2026-11-22 实测）。因此只要有任一模型值，三个别名槽位就必须全部有值。
+// 这条契约防止将来「只写用户填的槽位」的改动悄悄重新引入 400。
+func TestClaudeSyncAlwaysFillsAliasSlots(t *testing.T) {
+	cases := []struct {
+		name  string
+		sync  config.ClaudeSync
+		wantM string // 期望的 ANTHROPIC_MODEL（空=不写）
+	}{
+		{"只填 MODEL", config.ClaudeSync{Model: "m1"}, "m1"},
+		{"只填 HAIKU", config.ClaudeSync{Haiku: "m-h"}, ""},
+		{"只填 SONNET", config.ClaudeSync{Sonnet: "m-s"}, ""},
+		{"填三个不同值", config.ClaudeSync{Sonnet: "s1", Opus: "o1", Haiku: "h1"}, ""},
+		{"全填 default", config.ClaudeSync{Model: "default", Sonnet: "default", Opus: "default", Haiku: "default"}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			home := t.TempDir()
+			in := SyncInput{
+				Enabled: true, ClaudePlatformID: "p1",
+				Platforms: []config.ModelPlatform{{ID: "p1", AnthropicBaseURL: "https://ant/", APIKey: "k"}},
+				ToolSync:  config.ToolSyncConfig{Claude: c.sync},
+			}
+			if err := (Claude{}).Sync(home, in); err != nil {
+				t.Fatal(err)
+			}
+			env, _ := readClaudeSettings(t, home)["env"].(map[string]any)
+			if c.wantM != "" && env["ANTHROPIC_MODEL"] != c.wantM {
+				t.Errorf("ANTHROPIC_MODEL = %v, want %q", env["ANTHROPIC_MODEL"], c.wantM)
+			}
+			// 全 default（无任何有效值）时不应写任何模型键。
+			allDefault := c.sync.Model == "default" && c.sync.Sonnet == "default" &&
+				c.sync.Opus == "default" && c.sync.Haiku == "default"
+			for _, k := range []string{
+				"ANTHROPIC_DEFAULT_SONNET_MODEL",
+				"ANTHROPIC_DEFAULT_OPUS_MODEL",
+				"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+			} {
+				v, ok := env[k]
+				if allDefault {
+					if ok {
+						t.Errorf("%s 不应写入（全为 default）: %v", k, v)
+					}
+					continue
+				}
+				if !ok || v == "" || v == "default" {
+					t.Errorf("%s 必须非空且非 default（空槽位会 400），got %v", k, v)
+				}
+			}
+		})
 	}
 }
