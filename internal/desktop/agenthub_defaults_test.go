@@ -110,3 +110,31 @@ func TestResolveCreateModelID(t *testing.T) {
 		t.Fatalf("非 claude 的 default 字面值应保留, got %q", got)
 	}
 }
+
+// 现场事故：AgentHub 新建 claude 会话时 modelId 传入字面 "claude"，
+// 旧实现只拦 "default"，于是被当合法模型名下发，网关 400。
+func TestNormalizeCreateModelIDClaudeAliases(t *testing.T) {
+	cases := []struct {
+		toolID, in, want string
+	}{
+		{"claude", "default", ""},
+		{"claude", "claude", ""},
+		{"claude", " Claude ", ""},
+		{"claude", "sonnet", ""},
+		{"claude", "opus[1m]", ""},
+		{"claude", "haiku-1m", ""},
+		// 具体平台模型名保留
+		{"claude", "glm-5.3-flash", "glm-5.3-flash"},
+		{"claude", "claude-sonnet-4-6", "claude-sonnet-4-6"},
+		// 非 claude 工具不拦（可能真有同名模型）
+		{"cursor", "default", "default"},
+		{"cursor", "claude", "claude"},
+		{"opencode", "sonnet", "sonnet"},
+		{"", "", ""},
+	}
+	for _, c := range cases {
+		if got := normalizeCreateModelID(c.toolID, c.in); got != c.want {
+			t.Errorf("normalizeCreateModelID(%q, %q) = %q, want %q", c.toolID, c.in, got, c.want)
+		}
+	}
+}

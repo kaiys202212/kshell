@@ -6,6 +6,7 @@ import (
 
 	"github.com/yangk/kshell/internal/discovery"
 	"github.com/yangk/kshell/internal/launch"
+	"github.com/yangk/kshell/internal/providers"
 )
 
 // AgentHub ⚙ 默认设置（config.yaml agenthub.default_tool/default_model）是
@@ -21,13 +22,15 @@ func (a *App) agenthubDefaultCreate() (toolID, modelID string) {
 	return toolID, normalizeCreateModelID(toolID, strings.TrimSpace(cfg.DefaultModel))
 }
 
-// normalizeCreateModelID 归一创建模型：只把 claude 的精确 "default"
-// （trim + 大小写归一）视为未指定；其它工具可能真有同名模型，不拦。
+// normalizeCreateModelID 归一创建模型：claude 的内置别名（default/sonnet/
+// opus/haiku 及 1m 变体）与裸名 "claude" 都视为未指定——它们经 ANTHROPIC_MODEL
+// 下发时不被 CLI 解析，会被字面发给网关（400）。其它工具可能真有同名模型，不拦。
 func normalizeCreateModelID(toolID, modelID string) string {
 	if modelID == "" {
 		return ""
 	}
-	if toolID == "claude" && strings.EqualFold(modelID, "default") {
+	// 统一走 providers 的判定，避免与 SettingsEnv / modelresolve 三处口径漂移。
+	if toolID == "claude" && providers.IsClaudeUnpinnableModel(modelID) {
 		return ""
 	}
 	return modelID
