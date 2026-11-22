@@ -113,3 +113,36 @@ func (CodeBuddy) InjectModel(ModelConfig) ([]string, map[string]string) {
 func (Opencode) InjectModel(ModelConfig) ([]string, map[string]string) {
 	return nil, nil
 }
+
+// claudeBuiltinAliases 是 Claude CLI 能自行解析成真模型的内置别名。
+// 依据：CLI 对 /model opus 回显 "Set model to opus (claude-opus-4-6)"（括号为
+// 解析结果），对 /model claude 只回显 "Set model to claude"（无解析，字面透传）。
+var claudeBuiltinAliases = []string{"default", "sonnet", "opus", "haiku"}
+
+// IsClaudeBuiltinAlias 报告 s 是否为 Claude 内置模型别名（含 [1m] / -1m 变体）。
+// 大小写不敏感、忽略首尾空白。与 agentsync 的槽位校正同口径，此处导出供
+// desktop / modelresolve 复用，避免三处各写一份。
+func IsClaudeBuiltinAlias(s string) bool {
+	v := strings.ToLower(strings.TrimSpace(s))
+	if v == "" {
+		return false
+	}
+	for _, base := range claudeBuiltinAliases {
+		if v == base || v == base+"[1m]" || v == base+"-1m" {
+			return true
+		}
+	}
+	return false
+}
+
+// IsClaudeUnpinnableModel 报告 s 不可作为 ANTHROPIC_MODEL 下发。
+// ANTHROPIC_MODEL 不经 CLI 的别名解析，写别名会被字面发往 API：内置别名
+// （default/sonnet/opus/haiku 及变体）与裸名 "claude" 都属于此类，网关实测 400
+//（"Model claude isn't included in ..."）。具体平台模型名不受限。
+func IsClaudeUnpinnableModel(s string) bool {
+	v := strings.TrimSpace(s)
+	if v == "" {
+		return false
+	}
+	return strings.EqualFold(v, "claude") || IsClaudeBuiltinAlias(v)
+}
