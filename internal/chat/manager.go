@@ -492,9 +492,11 @@ var handshakeTimeout = 30 * time.Second
 
 // handshakeTimeoutSlow 是「合法慢」工具的握手超时上限。cursor 官方 ACP 的
 // session/new 返回前要串行完成一串云端请求（auth 校验 → 模型列表/配置拉取），
-// 实测 14~20s、网络差时超 30s——不是死锁，不该被默认超时误杀（2026-10-20 排查）。
+// 并且会在 session/new 阶段初始化每个注入的 stdio MCP 子进程；实测无 MCP 时
+// 14~20s，带 MCP 且服务端回包版本不被认可时可达 156~202s（2026-11-22 排查）。
+// 这不是死锁，不该被默认超时误杀，故取 240s 留出余量。
 // var 仅为测试可缩短；生产代码不得修改。
-var handshakeTimeoutSlow = 120 * time.Second
+var handshakeTimeoutSlow = 240 * time.Second
 
 // handshakeTimeoutFor 按工具选握手超时：已知「合法慢」的工具（cursor）用
 // slow 上限，其余（含空/未知工具）用默认值。

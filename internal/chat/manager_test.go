@@ -2426,3 +2426,16 @@ func waitForUpdates(t *testing.T, c *collector, n int) {
 	}
 	t.Fatalf("超时未等到 %d 条更新", n)
 }
+
+// cursor 的 session/new 在带 MCP 时需要逐个初始化 MCP 子进程，实测最坏
+// 202s（MCP 协议版本未回显时的退避重试）。超时上限必须覆盖这个量级，
+// 否则会把合法慢误判成死锁并让上层降级终端。
+func TestCursorHandshakeTimeoutCoversSlowMCP(t *testing.T) {
+	got := handshakeTimeoutFor("cursor")
+	if got < 240*time.Second {
+		t.Fatalf("cursor 握手超时 = %v，应 ≥ 240s（覆盖 MCP 初始化最坏 202s）", got)
+	}
+	if other := handshakeTimeoutFor("claude"); other != handshakeTimeout {
+		t.Fatalf("非 cursor 工具应保持默认超时 %v，got %v", handshakeTimeout, other)
+	}
+}
