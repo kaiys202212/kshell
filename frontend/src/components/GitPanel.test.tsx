@@ -697,18 +697,28 @@ describe('GitPanel', () => {
   it('可见时主动订阅 git:changed（刷状态+日志）与 files:changed（刷状态）', async () => {
     const gitCbs: Array<(path: string) => void> = [];
     const fileCbs: Array<(path: string) => void> = [];
+    const gitOff = vi.fn();
+    const fileOff = vi.fn();
     mocks.onGitChanged.mockImplementation((cb) => {
       gitCbs.push(cb);
-      return () => {};
+      return gitOff;
     });
     mocks.onFilesChanged.mockImplementation((cb) => {
       fileCbs.push(cb);
-      return () => {};
+      return fileOff;
     });
-    render(<GitPanel wsPath={'D:\\proj'} visible onOpenDiff={() => {}} />);
+    const { unmount } = render(<GitPanel wsPath={'D:\\proj'} visible onOpenDiff={() => {}} />);
     await screen.findByText('staged.go');
     expect(gitCbs).toHaveLength(1);
     expect(fileCbs).toHaveLength(1);
+
+    // 其它工作区的路径不触发请求
+    const mismatchScm = mocks.gitSCM.mock.calls.length;
+    await act(async () => {
+      gitCbs.forEach((cb) => cb('D:\\other'));
+      fileCbs.forEach((cb) => cb('D:/other'));
+    });
+    expect(mocks.gitSCM.mock.calls.length).toBe(mismatchScm);
 
     const scmBefore = mocks.gitSCM.mock.calls.length;
     const logBefore = mocks.gitLog.mock.calls.length;
@@ -724,6 +734,11 @@ describe('GitPanel', () => {
     act(() => fileCbs.forEach((cb) => cb('D:\\proj')));
     await waitFor(() => expect(mocks.gitSCM.mock.calls.length).toBeGreaterThan(scmAfter));
     expect(mocks.gitLog.mock.calls.length).toBe(logAfter);
+
+    // 卸载时退订，避免隐藏后的泄漏
+    unmount();
+    expect(gitOff).toHaveBeenCalled();
+    expect(fileOff).toHaveBeenCalled();
   });
 
   it('不可见时不订阅变更事件', () => {

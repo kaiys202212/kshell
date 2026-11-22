@@ -99,7 +99,7 @@ describe('FileTree', () => {
     expect(mocks.listFiles).toHaveBeenLastCalledWith('D:\\proj', 'src/lib', true);
   });
 
-  it('收起再展开已加载目录会主动重拉，看到新增文件', async () => {
+  it('收起再展开已加载目录：先作废后端缓存再重拉，看到新增文件', async () => {
     const withNew = [...srcChildren, node('new.ts', false, 'src/new.ts')];
     mocks.listFiles
       .mockResolvedValueOnce(root)
@@ -115,6 +115,11 @@ describe('FileTree', () => {
     expect(await screen.findByText('new.ts')).toBeInTheDocument();
     expect(mocks.listFiles).toHaveBeenCalledTimes(3);
     expect(mocks.listFiles).toHaveBeenLastCalledWith('D:\\proj', 'src', true);
+    // Go 树对已 Loaded 节点直接回缓存：必须在其后重拉之前作废，否则读到旧快照
+    expect(mocks.refreshFiles).toHaveBeenCalledWith('D:\\proj');
+    const refreshAt = mocks.refreshFiles.mock.invocationCallOrder[0];
+    const relistAt = mocks.listFiles.mock.invocationCallOrder[2];
+    expect(refreshAt).toBeLessThan(relistAt);
   });
 
   it('展开外层目录时，已展开的直接子目录也会重拉', async () => {
@@ -141,6 +146,7 @@ describe('FileTree', () => {
     fireEvent.click(screen.getByText('a')); // 收起 a（b 的展开态保留）
     fireEvent.click(screen.getByText('a')); // 展开 a
     expect(await screen.findByText('new.txt')).toBeInTheDocument();
+    expect(mocks.refreshFiles).toHaveBeenCalledWith('D:\\proj');
   });
 
   it('点文件回调 onOpenFile（绝对路径）', async () => {

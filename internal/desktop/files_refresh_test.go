@@ -44,6 +44,41 @@ func TestRefreshFilesSeesExternalCreate(t *testing.T) {
 	}
 }
 
+// 已加载的子目录：ListFiles 直接命中 Go 树缓存，看不到外部新增文件；
+// 前端「展开时主动刷新」依赖先调 RefreshFiles 作废缓存再重拉（FileTree.handleDirToggle），
+// 本用例把这条契约钉住——若哪天缓存语义变化导致不作废也能读到新文件，这里会先失败提醒。
+func TestRefreshFilesSeesExternalCreateInLoadedSubdir(t *testing.T) {
+	env := newFilesEnv(t)
+	if _, err := env.app.ListFiles(env.root, "pkg", false); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, env.root, filepath.Join("pkg", "ext.go"), "package pkg\n")
+
+	before, err := env.app.ListFiles(env.root, "pkg", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range before {
+		if n.Name == "ext.go" {
+			t.Fatal("缓存未作废时不应看到 pkg/ext.go（前端展开刷新须先 RefreshFiles）")
+		}
+	}
+
+	if err := env.app.RefreshFiles(env.root); err != nil {
+		t.Fatal(err)
+	}
+	after, err := env.app.ListFiles(env.root, "pkg", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range after {
+		if n.Name == "ext.go" {
+			return
+		}
+	}
+	t.Fatal("RefreshFiles 后应看到 pkg/ext.go")
+}
+
 func TestListFilesShowAllRevealsIgnored(t *testing.T) {
 	env := newFilesEnv(t)
 	// newFilesEnv 已有 node_modules；再写 .gitignore 条目与 .git 目录

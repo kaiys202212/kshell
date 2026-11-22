@@ -872,12 +872,14 @@ export default function FileTree({
 
   // 目录展开/收起：收起只切展开态；展开时主动重拉本层与「已展开的直接子目录」，
   // 避免读到旧缓存看不到磁盘上新增的文件。首次展开仍走懒加载。
-  // 有缓存时先落地展开态立即显示，再后台刷新（refreshDirs 自带 gen 守卫）。
+  // 有缓存时先落地展开态立即显示，再「作废 Go 树缓存 → 重拉」：
+  // ListFiles 对已 Loaded 的节点直接回缓存，不作废就看不到磁盘新增项。
+  // 作废失败不阻断刷新（沿用缓存重拉，不比原行为差）；gen 守卫在 refreshDirs 内。
   // 加载失败只记到该目录行内（error 字段），不动整树；重试复用同一入口。
   const handleDirToggle = (item: TreeItem) => {
     const rel = item.relPath;
-    // children 非空才是「已加载」：expanded=true 且无 children 表示首载在途或行内报错，
-    // 此时点击（含重试按钮）应继续/重试加载，不能折叠。
+    // children 非 null 才是「已加载」：expanded=true 且 children 为 undefined 表示
+    // 首载在途或行内报错，此时点击（含重试按钮）应继续/重试加载，不能折叠。
     if (item.expanded && item.children) {
       setItems((cur) => cur && updateItems(cur, rel, (it) => ({ ...it, expanded: false })));
       return;
@@ -889,7 +891,9 @@ export default function FileTree({
     setItems((cur) => cur && updateItems(cur, rel, (it) => ({ ...it, expanded: true })));
 
     if (item.children) {
-      refreshDirs([rel, ...expandedChildDirs]);
+      void refreshFiles(wsPath)
+        .catch(() => undefined)
+        .then(() => refreshDirs([rel, ...expandedChildDirs]));
       return;
     }
 
