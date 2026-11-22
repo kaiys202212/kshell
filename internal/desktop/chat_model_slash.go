@@ -10,9 +10,10 @@ import (
 )
 
 // errChatModelNotAvailable 是 /model 参数不可用的稳定错误 key 前缀。
-// 现场事故：会话内 `/model claude` 把字面值写入 Claude 配置，ANTHROPIC_MODEL
-// 被字面发给网关返回 400；而 ANTHROPIC_MODEL 钉死又会令会话内切模型失效，
-// 用户切回也无法自愈。因此在投递前就拦掉 CLI 无法解析的值。
+// 现场事故：会话内执行 `/model claude`，Claude CLI 不认这个裸名（不是内置
+// 别名），把它字面作为模型名发给 OpenCode Go 网关，返回 400
+// "Model claude isn't included"。这类字面值一旦写进会话配置，后续消息会持续
+// 失败；因此在投递前就拦掉 CLI 无法解析的值，引导用户用下拉选择。
 var errChatModelNotAvailable = errors.New("err.chat.model_not_available")
 
 // parseModelSlash 识别「整串就是一条 /model 指令」的输入，返回其参数与是否命中。

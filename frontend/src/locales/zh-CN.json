@@ -42,6 +42,7 @@
       "handshake_timeout": "agent 30 秒内未完成握手（可能已挂死），请重试或更换 agent",
       "agent_died": "agent 进程在启动期间意外退出，请重试；若反复出现请查看 ~/.kshell/logs/desktop.log",
       "model_timeout": "agent 30 秒内未响应切换模型（可能正忙或已挂死），会话保持原样",
+      "model_not_available": "{{0}} 不是可用模型：Claude 不认这个名字，会被原样发给网关并报错。请用会话内的模型下拉选择，或改用 sonnet / opus / haiku 等内置别名。",
       "auth_required": "Agent 未登录或登录未完成。请在浏览器完成官方登录流程后重试，或在终端运行其 login 命令。",
       "bad_elicitation_action": "无效的表单操作：{{0}}"
     },
