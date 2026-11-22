@@ -115,7 +115,7 @@ const mocks = vi.hoisted(() => ({
   onChatUpdate: vi.fn(),
   onChatPermission: vi.fn(),
   onChatExit: vi.fn(),
-  onChatStatus: vi.fn(() => () => {}),
+  onChatStatus: vi.fn((_cb: (p: { id: string; status: string }) => void) => () => {}),
   onChatCommands: vi.fn(),
   onChatConfig: vi.fn(),
   onChatElicitation: vi.fn(),

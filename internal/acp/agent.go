@@ -203,7 +203,9 @@ func (a *Agent) readLoop() {
 	for {
 		m, err := a.codec.read()
 		if err != nil {
-			if !errors.Is(err, io.EOF) { // 进程退出的正常 EOF 不打，避免与退出日志重复
+			// 进程退出的正常 EOF 不打，避免与退出日志重复；waitLoop/Close 主动
+			// 关读端产生的 ErrClosed 同属正常收尾，也不该记成异常。
+			if !errors.Is(err, io.EOF) && !errors.Is(err, os.ErrClosed) {
 				logf("acp: 读循环异常结束 err=%v", err)
 			}
 			a.failPending(err)
