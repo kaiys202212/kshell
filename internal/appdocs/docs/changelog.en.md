@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.1.35 (2026-11-22)
+
+- More reliable ACP sessions: process exit no longer depends on stdout EOF, so a session can no longer get stuck waiting; turns that are cancelled or receive no response are closed out on timeout instead of staying "running" forever.
+- In-flight tools now have a maximum lifetime: over-age tools are closed as failed and returned to ready, so a stuck tool can no longer hold up the whole session.
+- More resilient connections and handshakes: dead connections with the same key are rebuilt instead of reused; a handshake timeout is retried once before falling back to the terminal; the Cursor handshake timeout is raised to 240 seconds to cover MCP initialization; the MCP server now echoes the client protocol version, fixing Cursor ACP handshake timeouts.
+- Clearer turn status: the desktop app shows the reason a turn timed out and re-syncs session state when the window regains focus; ACP session state changes are pushed proactively via `chat:status`, so the UI no longer lags behind.
+- Fixed Claude alias and model-name injection: aliases and bare model names are no longer written to `ANTHROPIC_MODEL`, and restoring a session no longer replays aliases; `/model` with a model name the CLI cannot parse is blocked with a clear message in Chinese and English; missing alias slots are filled automatically, avoiding a 400 from falling back to the built-in real model name; switching models inside a session works again.
+- Timelier file tree and Git panel refresh: expanding a directory proactively refreshes its direct children and invalidates the old tree cache first; the Git panel subscribes to repository changes; the sync button now fetches before syncing so it does not push while behind the remote.
+- Lower desktop memory usage: file watching buffers are now bounded.
+- More complete OpenCode session association: the desktop app persists an application-level LLM session ID, and AgentHub, Git commit-message generation, and the WeChat bridge all send the `x-opencode-session` header.
+
 ## v0.1.34 (2026-11-20)
 
 - More reliable WeChat voice: Opus-encoded voice messages are supported; when a format cannot be decoded the receipt names the actual format (AMR/MP3/M4A/OGG, etc.) and keeps the raw file for troubleshooting; when the transcription model refuses, the bridge now says "could not transcribe — the file is saved and will be forwarded with your next text" instead of passing the refusal text off as a transcript.
