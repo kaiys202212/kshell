@@ -174,6 +174,8 @@ interface AppState {
   removeChat(id: string): void;
   markChatExited(id: string, exitCode: number, error: string): void;
   setChats(list: ChatInfo[]): void;
+  // 后端权威状态推送（chat:status）：只改 Status，未知 ID 忽略，exited 为终态。
+  setChatStatus(id: string, status: string): void;
 
   // 每个聊天的流式时间线与已消费的最大 Seq（去重/断线续传用）
   chatItems: Record<string, TimelineItem[]>;
@@ -463,6 +465,14 @@ export const useAppStore = create<AppState>()(
           ),
         })),
       setChats: (list) => set((s) => ({ chats: mergeMirrorList(s.chats, list) })),
+      setChatStatus: (id, status) =>
+        set((s) => {
+          const row = s.chats.find((c) => c.ID === id);
+          if (!row || row.Status === status) return {};
+          // exited 是终态：迟到的 running/ready 不得把已退出会话复活。
+          if (row.Status === 'exited' && status !== 'exited') return {};
+          return { chats: s.chats.map((c) => (c.ID === id ? { ...c, Status: status } : c)) };
+        }),
 
       chatItems: {},
       chatSeq: {},

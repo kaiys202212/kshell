@@ -116,6 +116,11 @@ func newChatManagerWith(emit func(name string, data ...any), b chat.Backend, aut
 	m.SetOnElicitation(func(id string, r chat.ElicitationRequest) {
 		emit("chat:elicitation", map[string]any{"id": translate(id), "request": r})
 	})
+	// 状态变化走独立轻量通道：前端据此在丢失 turn_done 时也能回落 running。
+	// 不走 chat:meta，避免每次状态切换触发标题更新钩子里的重扫。
+	m.SetOnStatus(func(id, status string) {
+		emit("chat:status", map[string]any{"id": translate(id), "status": status})
+	})
 	return m
 }
 

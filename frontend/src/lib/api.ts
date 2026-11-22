@@ -2731,6 +2731,14 @@ export function onChatExit(cb: (p: { id: string; exitCode: number; error: string
   );
 }
 
+// chat:status 是后端权威状态推送（running/ready），与时间线 Seq 解耦。
+// 前端据此在丢失 turn_done 事件时也能回落，不再永久停在运行中。
+export function onChatStatus(cb: (p: { id: string; status: string }) => void): () => void {
+  return EventsOn('chat:status', (p: { id?: string; status?: string }) =>
+    cb({ id: p?.id ?? '', status: p?.status ?? '' }),
+  );
+}
+
 export function onChatCommands(cb: (p: { id: string; commands: ChatCommand[] }) => void): () => void {
   return EventsOn('chat:commands', (p: { id?: string; commands?: ChatCommand[] }) =>
     cb({ id: p?.id ?? '', commands: p?.commands ?? [] }),

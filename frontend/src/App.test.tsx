@@ -115,6 +115,7 @@ const mocks = vi.hoisted(() => ({
   onChatUpdate: vi.fn(),
   onChatPermission: vi.fn(),
   onChatExit: vi.fn(),
+  onChatStatus: vi.fn(() => () => {}),
   onChatCommands: vi.fn(),
   onChatConfig: vi.fn(),
   onChatElicitation: vi.fn(),
@@ -564,6 +565,22 @@ describe('App', () => {
       updateCb?.({ id: 'c1', update: { Seq: 1, Type: 'assistant', MessageID: 'm1', Text: 'hi' } });
     });
     expect(useAppStore.getState().chatItems.c1?.some((it) => it.text === 'hi')).toBe(true);
+  });
+
+  it('chat:status 事件把后端权威状态写回镜像（丢失 turn_done 也能回落）', async () => {
+    let statusCb: ((p: { id: string; status: string }) => void) | undefined;
+    mocks.onChatStatus.mockImplementation((cb: typeof statusCb) => {
+      statusCb = cb;
+      return () => {};
+    });
+    mocks.listChats.mockResolvedValue([{ ...chat, Status: 'running' }]);
+    render(<App />);
+    await waitFor(() => expect(useAppStore.getState().chats[0]?.Status).toBe('running'));
+
+    act(() => {
+      statusCb?.({ id: 'c1', status: 'ready' });
+    });
+    expect(useAppStore.getState().chats[0]?.Status).toBe('ready');
   });
 
   // 种子落位（setChatItems 的 reduce / store 动作）一旦抛异常，挂载回放循环

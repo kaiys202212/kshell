@@ -166,6 +166,7 @@ type Manager struct {
 	onPermission    func(id string, r PermissionRequest)
 	onExit          func(id string, code int, errMsg string)
 	onInfo          func(Info)                            // 锁外；首条用户消息改写标题时
+	onStatus        func(id, status string)               // 锁外；状态真变化时（轻量通道，不触发扫描）
 	onCommands      func(id string, cmds []Command)       // 锁外；技能列表推送
 	onModels        func(id string)                       // 锁外；握手完成后模型视图推送
 	onConfig        func(id string)                       // 锁外；配置项变化推送
@@ -324,6 +325,15 @@ func (m *Manager) SetOnInfo(fn func(Info)) {
 	m.mu.Unlock()
 }
 
+// SetOnStatus 注册状态变化回调（锁外执行）：running/ready 切换经此轻量通道
+// 推给前端，不触发 title/扫描等 onInfo 副作用。前端据此在丢失 turn_done
+// 事件时也能把状态回落，避免永久「运行中」。
+func (m *Manager) SetOnStatus(fn func(id, status string)) {
+	m.mu.Lock()
+	m.onStatus = fn
+	m.mu.Unlock()
+}
+
 // SetOnCommands 注册技能列表推送回调（锁外执行）。
 func (m *Manager) SetOnCommands(fn func(id string, cmds []Command)) {
 	m.mu.Lock()
@@ -437,6 +447,16 @@ func (s *session) notePromptTitle(text string) (Info, bool) {
 	return s.info, true
 }
 
+// setStatusLocked 更新会话状态并报告是否真的变化（调用方持锁）。
+// 只在变化时外推，高频活动分片不会造成状态事件刷屏。
+func (s *session) setStatusLocked(st string) bool {
+	if s.info.Status == st {
+		return false
+	}
+	s.info.Status = st
+	return true
+}
+
 // stopIdleLocked 停掉静默回退定时器（调用方持锁）。
 func (s *session) stopIdleLocked() {
 	if s.idleTimer != nil {
@@ -476,11 +496,15 @@ func (m *Manager) idleFallback(s *session) {
 	s.info.Status = StatusReady
 	s.stopIdleLocked()
 	onInfo := m.onInfo
+	onStatus := m.onStatus
 	out := s.info
 	m.mu.Unlock()
 	logf("chat: 静默回退生效 id=%s 状态回 ready", s.id)
 	if onInfo != nil {
 		onInfo(out)
+	}
+	if onStatus != nil {
+		onStatus(s.id, StatusReady)
 	}
 }
 
@@ -1122,7 +1146,7 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		}
 		return nil
 	}
-	s.info.Status = StatusRunning
+	statusChanged := s.setStatusLocked(StatusRunning)
 	// 在途 prompt 是投递忙闲依据；置位时停掉静默回退定时器（turn_done 会收尾）
 	s.promptInFlight = true
 	s.turnSeq++
@@ -1140,11 +1164,15 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 	ctx := s.ctx
 	turnToken := s.autoResumeToken
 	onInfo := m.onInfo
+	onStatus := m.onStatus
 	onUpdate := m.onUpdate
 	m.mu.Unlock()
 
 	if titleChanged && onInfo != nil {
 		onInfo(infoSnap)
+	}
+	if statusChanged && onStatus != nil {
+		onStatus(id, StatusRunning)
 	}
 	if record && onUpdate != nil {
 		onUpdate(id, userUpdate)
@@ -1192,10 +1220,11 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		// 提前返回 prompt 的 agent（codebuddy 等）可能仍有在途工具（子任务）：
 		// 保持 running，等工具终态后的静默回退收尾；否则照旧回 ready。
 		// turn_done 事件两种情况都照发，前端由后续活动更新拉回（5474856 规则）。
+		statusNowChanged := false
 		if len(s.inFlightTools) > 0 {
 			s.scheduleIdleFallbackLocked()
 		} else {
-			s.info.Status = StatusReady
+			statusNowChanged = s.setStatusLocked(StatusReady)
 		}
 		s.seq++
 		u := Update{Seq: s.seq, Type: "turn_done", StopReason: stop}
@@ -1223,10 +1252,14 @@ func (m *Manager) deliverTurn(id string, s *session, qm queuedMsg, record bool) 
 		}
 		items := s.queueItemsLocked()
 		onQueue := m.onQueue
+		onStatus := m.onStatus
 		if !hasNext {
 			m.scheduleAutoResumeLocked(s, turnToken, err, stop, stderr)
 		}
 		m.mu.Unlock()
+		if statusNowChanged && onStatus != nil {
+			onStatus(id, StatusReady)
+		}
 		if m.onUpdate != nil {
 			// 合成终态先于 turn_done/error 推送：时间线顺序与 history 一致
 			for _, cu := range closed {
@@ -2053,11 +2086,12 @@ func (m *Manager) onSessionUpdate(id, sessionID string, raw json.RawMessage) {
 	}
 	// 状态活动跟随（与前端 5474856 同规则）：活动类更新把 ready 拉回 running，
 	// 并维护在途工具集合与静默回退定时器。user/commands 不算 agent 活动。
+	statusPulled := false
 	switch u.Type {
 	case "thought", "assistant", "plan":
 		s.lastActivity = time.Now()
 		if s.info.Status == StatusReady && !s.exited {
-			s.info.Status = StatusRunning
+			statusPulled = s.setStatusLocked(StatusRunning)
 		}
 		s.scheduleIdleFallbackLocked()
 	case "tool":
@@ -2073,11 +2107,15 @@ func (m *Manager) onSessionUpdate(id, sessionID string, raw json.RawMessage) {
 			}
 		}
 		if s.info.Status == StatusReady && !s.exited {
-			s.info.Status = StatusRunning
+			statusPulled = s.setStatusLocked(StatusRunning)
 		}
 		s.scheduleIdleFallbackLocked()
 	}
+	onStatus := m.onStatus
 	m.mu.Unlock()
+	if statusPulled && onStatus != nil {
+		onStatus(id, StatusRunning)
+	}
 	if m.onUpdate != nil {
 		m.onUpdate(id, u)
 	}

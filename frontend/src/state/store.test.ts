@@ -601,6 +601,47 @@ describe('store', () => {
   });
 });
 
+describe('setChatStatus（chat:status 后端权威状态）', () => {
+  it('只改目标会话 Status，其余字段保持不变；未知 ID 静默忽略', () => {
+    const chat = {
+      ID: 'c1',
+      Kind: 'new',
+      SessionID: 's1',
+      Workspace: 'D:\\w',
+      Title: '标题',
+      ToolID: 'claude',
+      Status: 'running',
+      ExitCode: 0,
+      Error: '',
+    };
+    useAppStore.setState({ chats: [chat] });
+    useAppStore.getState().setChatStatus('c1', 'ready');
+    const row = useAppStore.getState().chats[0];
+    expect(row.Status).toBe('ready');
+    expect(row.Title).toBe('标题');
+    expect(row.SessionID).toBe('s1');
+    useAppStore.getState().setChatStatus('nope', 'running');
+    expect(useAppStore.getState().chats).toHaveLength(1);
+  });
+
+  it('exited 是终态：迟到的 ready 不得把已退出会话复活', () => {
+    const chat = {
+      ID: 'c1',
+      Kind: 'new',
+      SessionID: '',
+      Workspace: 'D:\\w',
+      Title: 't',
+      ToolID: 'claude',
+      Status: 'exited',
+      ExitCode: 1,
+      Error: 'boom',
+    };
+    useAppStore.setState({ chats: [chat] });
+    useAppStore.getState().setChatStatus('c1', 'ready');
+    expect(useAppStore.getState().chats[0].Status).toBe('exited');
+  });
+});
+
 describe('lastAgentId', () => {
   it('记录最后交互的 agent，未设时为 null', () => {
     expect(useAppStore.getState().lastAgentId).toBeNull();

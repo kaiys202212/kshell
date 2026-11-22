@@ -33,6 +33,7 @@ import {
   onChatMeta,
   onChatPermission,
   onChatQueue,
+  onChatStatus,
   onChatUpdate,
   onHubChanged,
   onNotifyAgent,
@@ -247,6 +248,11 @@ function App() {
       }
       notify(reason, error ? 'error' : 'info');
     });
+    // 后端权威状态（running/ready）：轻量通道、不参与 Seq 门控。turn_done 事件
+    // 若被缓冲/去重丢失，这里仍能把状态回落，避免会话永久显示运行中。
+    const offSt = onChatStatus(({ id, status }) => {
+      if (id && status) useAppStore.getState().setChatStatus(id, status);
+    });
     // 技能命令列表：agent 的 available_commands_update，存 store 供输入框补全
     const offC = onChatCommands(({ id, commands }) => {
       useAppStore.getState().setChatCommands(id, commands);
@@ -331,6 +337,7 @@ function App() {
       offU();
       offP();
       offX();
+      offSt();
       offC();
       offMdl();
       offCfg();
