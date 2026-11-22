@@ -126,6 +126,9 @@ func TestAgentAPISingletonAndSend(t *testing.T) {
 	if err := api1.Send(info.ID, "工具指令"); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
+	// Send 会异步起一轮 turn 并落盘 Hub 消息；不等它收尾就直接返回，TempDir
+	// 清理会与异步写盘竞争（flaky "RemoveAll cleanup: directory not empty"）。
+	waitHubKind(t, app.snapshot().HubStore, "agent")
 }
 
 // startAgentSrv：endpoint 文件写入且服务可访问；Shutdown 清理。
