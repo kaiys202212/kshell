@@ -196,7 +196,7 @@ func TestSendChatPromptRejectsUnparsableModelCommand(t *testing.T) {
 
 // 内置别名与平台模型名必须放行：/model opus 是 CLI 能解析的合法指令。
 func TestSendChatPromptAllowsBuiltinAliasModelCommand(t *testing.T) {
-	a, _, rec := newDirectTestApp(t)
+	a, store, rec := newDirectTestApp(t)
 	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m
@@ -210,5 +210,8 @@ func TestSendChatPromptAllowsBuiltinAliasModelCommand(t *testing.T) {
 	if err := a.SendChatPrompt(info.ID, "/model opus"); err != nil {
 		t.Fatalf("/model opus 应放行，got %v", err)
 	}
+	// 等异步 turn 收尾：投递在 goroutine 里跑，测试提前返回会让 TempDir 清理
+	// 与异步落盘竞争（flaky "RemoveAll cleanup: directory not empty"）。
+	waitHubKind(t, store, "agent")
 }
 
