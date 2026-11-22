@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/yangk/kshell/internal/executil"
 )
@@ -98,6 +99,7 @@ func (s *syncBuffer) Since(mark int) (string, int) {
 type Agent struct {
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
+	stdout  io.ReadCloser // os.Pipe 读端：宽限期后可强制关闭，避免读循环永久悬挂
 	codec   *codec
 	stderr  *syncBuffer
 	handler Handler
@@ -150,19 +152,29 @@ func NewAgent(ctx context.Context, spec Spec, h Handler) (*Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	stdout, err := cmd.StdoutPipe()
+	// 显式 os.Pipe 作 stdout（而非 cmd.StdoutPipe）：exec.Wait 不认识这对管道，
+	// 进程退出时不会因孙进程仍持有写端而让读端永久阻塞在 Read 上；宽限期后
+	// waitLoop 可主动关读端收尾。StdoutPipe + 「先等 EOF 再 Wait」正是
+	// 「进程已死但 watchExit 永不返回」的根因。
+	stdout, pw, err := os.Pipe()
 	if err != nil {
 		return nil, err
 	}
+	cmd.Stdout = pw
 	sb := &syncBuffer{}
 	cmd.Stderr = sb
 	if err := cmd.Start(); err != nil {
+		_ = stdout.Close()
+		_ = pw.Close()
 		return nil, fmt.Errorf("err.acp.start_failed|%w", err)
 	}
+	// 父进程只保留读端：写端已复制给子进程（及继承它的孙进程）。
+	_ = pw.Close()
 	baseCtx, baseCancel := context.WithCancel(context.Background())
 	a := &Agent{
 		cmd:        cmd,
 		stdin:      stdin,
+		stdout:     stdout,
 		codec:      newCodec(bufio.NewReaderSize(stdout, 1<<20), stdin),
 		stderr:     sb,
 		handler:    h,
@@ -491,10 +503,31 @@ func (a *Agent) Alive() bool {
 	return !a.closed
 }
 
+// pipeDrainGrace 是进程退出后等待 stdout 读尽的宽限期：正常路径下读循环
+// 立即 EOF；孙进程仍持有写端时，超过宽限期强制关读端收尾（丢的只能是
+// 残余输出，不能因此让 watchExit 永久阻塞）。
+var pipeDrainGrace = 500 * time.Millisecond
+
 func (a *Agent) waitLoop() {
-	// 必须等 stdout 读完再 Wait：否则 os/exec 可能提前关闭管道丢弃尾部输出。
-	<-a.readDone
-	err := a.cmd.Wait()
+	// Wait 与读循环解耦：进程退出（Wait 返回）是退出检测的唯一权威信号，
+	// 不能把它押在 stdout EOF 上——npx→node 或 MCP 孙进程会继承写端。
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- a.cmd.Wait() }()
+	var err error
+	select {
+	case err = <-waitCh:
+		select {
+		case <-a.readDone: // 正常：尾部输出已读尽
+		case <-time.After(pipeDrainGrace):
+			logf("acp: stdout 未在宽限期内关闭 label=%s（孙进程持有管道？），强制收尾", a.label)
+			if a.stdout != nil {
+				_ = a.stdout.Close()
+			}
+		}
+	case <-a.readDone:
+		// 读循环先结束（EOF/错误）：等进程退出，保持既有语义。
+		err = <-waitCh
+	}
 	a.mu.Lock()
 	a.waitErr = err
 	if a.cmd.ProcessState != nil {
@@ -554,6 +587,10 @@ func (a *Agent) Close() error {
 		a.deliberate.Store(true)
 		_ = a.stdin.Close()
 		executil.KillProcessTree(a.cmd)
+		// 关读端叫醒可能还阻塞在 Read 上的读循环（孙进程持管道时 EOF 不会来）。
+		if a.stdout != nil {
+			_ = a.stdout.Close()
+		}
 	})
 	a.failPending(io.EOF)
 	return nil

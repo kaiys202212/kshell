@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +18,20 @@ import (
 
 // fakeAgentMain 是被测 Agent 拉起的假 agent：按行读 JSON-RPC 并脚本化应答。
 func fakeAgentMain() {
+	if os.Getenv("ACP_FAKE_STDOUT_HANG") == "1" {
+		// 拉起一个继承 stdout 的孙进程后立刻退出：父进程已死，但管道写端仍被
+		// 孙进程持有，kshell 侧看不到 EOF（npx→node / MCP 孙进程的真实形态）。
+		var c *exec.Cmd
+		if runtime.GOOS == "windows" {
+			c = exec.Command("cmd", "/c", "ping -n 6 127.0.0.1 >nul")
+		} else {
+			c = exec.Command("sh", "-c", "sleep 3")
+		}
+		c.Stdout = os.Stdout
+		c.Stderr = os.Stdout
+		_ = c.Start()
+		os.Exit(0)
+	}
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	enc := json.NewEncoder(os.Stdout)
@@ -922,5 +938,30 @@ func TestAgentElicitationCancelFallback(t *testing.T) {
 				t.Fatalf("expected cancel fallback, updates = %v", updates)
 			}
 		})
+	}
+}
+
+// 进程已退出但孙进程仍持有 stdout 管道时，watchExit 不得被 EOF 永久卡住：
+// 连接必须在宽限期后关闭，call 返回 err.acp.closed 而不是一直阻塞。
+func TestAgentDeathNotGatedOnStdoutEOF(t *testing.T) {
+	a, err := NewAgent(context.Background(), fakeAgentSpecEnv(t, "ACP_FAKE_STDOUT_HANG=1"), &captureHandler{})
+	if err != nil {
+		t.Fatalf("NewAgent: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- a.call(context.Background(), "ping", nil, nil)
+	}()
+	select {
+	case err := <-errCh:
+		// 进程退出的标准信号：-32603（EOF），由 failPending 投递。
+		var rpcErr *RPCError
+		if !errors.As(err, &rpcErr) || rpcErr.Code != -32603 {
+			t.Fatalf("进程退出后 call 应快速返回 -32603，得到 %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("进程退出后 call 仍阻塞：waitLoop 被 stdout EOF 卡住")
 	}
 }
