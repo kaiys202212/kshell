@@ -18,12 +18,12 @@ func TestInjectModelMappings(t *testing.T) {
 		t.Fatalf("claude InjectModel 应不再产出 env（改走 SettingsEnv）: args=%v env=%+v", args, env)
 	}
 	wantClaude := map[string]string{
-		"ANTHROPIC_BASE_URL":             "https://ant.example/",
-		"ANTHROPIC_AUTH_TOKEN":           "k",
-		"ANTHROPIC_MODEL":                "m",
-		"ANTHROPIC_DEFAULT_SONNET_MODEL": "m",
-		"ANTHROPIC_DEFAULT_OPUS_MODEL":   "m",
-		"ANTHROPIC_DEFAULT_HAIKU_MODEL":  "m",
+		"ANTHROPIC_BASE_URL":   "https://ant.example/",
+		"ANTHROPIC_AUTH_TOKEN": "k",
+		"ANTHROPIC_MODEL":      "m",
+		// 刻意不含 ANTHROPIC_DEFAULT_{SONNET,OPUS,HAIKU}_MODEL：槽位是别名解析表，
+		// 由 agentsync 按平台写进静态 settings.json。ACP 若把三个槽位钉成同一个
+		// 具体模型，会话内切 sonnet/opus/haiku 会全部落回该模型（切模型没反应）。
 	}
 	env = Claude{}.SettingsEnv(cfg)
 	if !reflect.DeepEqual(env, wantClaude) {
@@ -144,19 +144,23 @@ func TestClaudeSettingsEnvSkipsBuiltinAliases(t *testing.T) {
 	}
 }
 
-// TestClaudeSettingsEnvInjectsConcreteModel 具体模型名照旧全量注入 4 个模型键。
+// TestClaudeSettingsEnvInjectsConcreteModel 具体模型名写入 ANTHROPIC_MODEL，
+// 但**不覆盖** DEFAULT_* 槽位：槽位是别名解析表（由 agentsync 按平台同步到
+// 静态 settings.json），ACP 覆盖会让会话内切 sonnet/opus/haiku 全部失效。
 func TestClaudeSettingsEnvInjectsConcreteModel(t *testing.T) {
 	env := Claude{}.SettingsEnv(ModelConfig{
 		AnthropicBaseURL: "https://ant/", APIKey: "k", Model: "glm-5.3-flash",
 	})
+	if env["ANTHROPIC_MODEL"] != "glm-5.3-flash" {
+		t.Fatalf("ANTHROPIC_MODEL = %q, want glm-5.3-flash（env=%+v）", env["ANTHROPIC_MODEL"], env)
+	}
 	for _, key := range []string{
-		"ANTHROPIC_MODEL",
 		"ANTHROPIC_DEFAULT_SONNET_MODEL",
 		"ANTHROPIC_DEFAULT_OPUS_MODEL",
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
 	} {
-		if env[key] != "glm-5.3-flash" {
-			t.Fatalf("%s = %q, want glm-5.3-flash（env=%+v）", key, env[key], env)
+		if _, ok := env[key]; ok {
+			t.Fatalf("不应覆盖槽位 %s（会话内切别名会失效）: %+v", key, env)
 		}
 	}
 }

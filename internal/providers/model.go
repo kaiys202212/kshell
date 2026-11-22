@@ -25,9 +25,8 @@ type SettingsEnvInjector interface {
 }
 
 // Claude.SettingsEnv 返回 ACP _meta 载荷用的 env（只含非空字段）。
-// 模型同步三个 DEFAULT 别名，兼容只认单一模型的代理端点。
-// 静态 settings.json 由 agentsync.Claude 写入同名键（含 ActiveModel 与
-// 平台列表映射的 DEFAULT 别名）；ACP 会话级仍可经本方法覆盖。
+// 静态 settings.json 由 agentsync.Claude 写入 4 个槽位映射；ACP 会话级只
+// 覆盖端点/密钥与「本次创建模型」，**不碰 DEFAULT_* 槽位**——原因见下方注释。
 func (Claude) SettingsEnv(cfg ModelConfig) map[string]string {
 	env := map[string]string{}
 	// 无 Anthropic 端点时整组不注入：只配 OpenAI 协议的平台，其 key/模型名
@@ -39,16 +38,18 @@ func (Claude) SettingsEnv(cfg ModelConfig) map[string]string {
 	if cfg.APIKey != "" {
 		env["ANTHROPIC_AUTH_TOKEN"] = cfg.APIKey
 	}
-	// "default" 是 Claude ACP 的「让 agent 自选」占位 ID：经环境变量进入时
-	// CLI 不做别名解析，会把它字面发给 API（OpenCode Go 网关 400），因此按
-	// 未指定模型处理（只写端点/密钥，模型键留给静态 settings/会话默认）。
-	// 同一逻辑适用于全部内置别名（sonnet/opus/haiku 及 1m 变体）与裸名
-	// "claude"——它们同样不被 ANTHROPIC_MODEL 通道解析（2026-11-22 实测）。
+	// ANTHROPIC_MODEL 与 ANTHROPIC_DEFAULT_{SONNET,OPUS,HAIKU}_MODEL 的职责不同
+	//（2026-11-22 对 claude-agent-acp 0.23.1 实测）：
+	//   - ANTHROPIC_MODEL 只影响「会话未显式选过模型」时的取值，会话内
+	//     set_config_option(model, X) 之后完全被 X 接管 —— 可以随创建模型下发。
+	//   - DEFAULT_* 槽位是别名解析表：把 haiku 映射到平台真模型。一旦四个槽位
+	//     被钉成同一个具体模型，会话内切 sonnet/opus/haiku 拿到的都是那个模型，
+	//     表现为「切模型没反应」——必须留给静态 settings.json（agentsync 按
+	//     平台同步），ACP 不覆盖。
+	// 内置别名与裸名 "claude" 不能作为 ANTHROPIC_MODEL：该值不经别名解析，
+	// 会被字面发往网关（400 "Model claude isn't included"）。
 	if cfg.Model != "" && !IsClaudeUnpinnableModel(cfg.Model) {
 		env["ANTHROPIC_MODEL"] = cfg.Model
-		env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = cfg.Model
-		env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = cfg.Model
-		env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = cfg.Model
 	}
 	return env
 }

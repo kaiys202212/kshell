@@ -165,6 +165,12 @@ func TestSendChatPromptHasNoLLMStep(t *testing.T) {
 // 应返回稳定 key 且不产生任何 Hub user 消息（= 没投递）。
 func TestSendChatPromptRejectsUnparsableModelCommand(t *testing.T) {
 	a, store, rec := newDirectTestApp(t)
+	// 必须配置平台模型：未配置时守卫按「无从判断」放行（见 checkModelSlash）。
+	a.opts.Config.Model = config.ModelConfig{
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "P", Models: []string{"glm-5.3-flash"}},
+		},
+	}
 	m := newChatManagerWith(rec.emit, fakeChatBackend{}, nil, nil, a.recordHubAgentMessage, nil, nil)
 	t.Cleanup(m.CloseAll)
 	a.opts.Chats = m

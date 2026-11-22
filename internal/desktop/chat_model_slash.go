@@ -36,6 +36,9 @@ func parseModelSlash(text string) (arg string, isCmd bool) {
 //   - 当前平台模型列表里的具体模型名：放行；
 //   - 其余（如裸名 claude）：拒绝，返回带参数的稳定 key。
 //
+// 平台模型列表为空时（用户没配任何平台）不做判断：无从区分「合法模型名」
+// 与「CLI 不认识的裸名」，交给 agent 自己报错比误拦合法模型更好。
+//
 // 非 claude 工具不做拦截：别名语义由各工具自定（cursor 的 default[] 等）。
 func checkModelSlash(arg string, cfg config.ModelConfig) error {
 	if arg == "" {
@@ -44,12 +47,20 @@ func checkModelSlash(arg string, cfg config.ModelConfig) error {
 	if providers.IsClaudeBuiltinAlias(arg) {
 		return nil
 	}
+	hasAnyModel := false
 	for _, p := range cfg.Platforms {
 		for _, m := range p.Models {
+			if strings.TrimSpace(m) == "" {
+				continue
+			}
+			hasAnyModel = true
 			if strings.EqualFold(strings.TrimSpace(m), arg) {
 				return nil
 			}
 		}
+	}
+	if !hasAnyModel {
+		return nil
 	}
 	return fmt.Errorf("%w|%s", errChatModelNotAvailable, arg)
 }

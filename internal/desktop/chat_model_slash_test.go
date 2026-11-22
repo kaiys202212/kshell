@@ -65,7 +65,12 @@ func TestCheckModelSlash(t *testing.T) {
 
 // 拒绝时的稳定 key 应带参数，便于前端提示具体是哪个值不可用。
 func TestCheckModelSlashErrorKey(t *testing.T) {
-	err := checkModelSlash("claude", config.ModelConfig{})
+	cfg := config.ModelConfig{
+		Platforms: []config.ModelPlatform{
+			{ID: "p1", Name: "P", Models: []string{"glm-5.3-flash"}},
+		},
+	}
+	err := checkModelSlash("claude", cfg)
 	if err == nil {
 		t.Fatal("claude 应被拒绝")
 	}
@@ -75,5 +80,13 @@ func TestCheckModelSlashErrorKey(t *testing.T) {
 	}
 	if !errors.Is(err, errChatModelNotAvailable) {
 		t.Errorf("应可 errors.Is 识别为 errChatModelNotAvailable")
+	}
+}
+
+// 平台未配置任何模型时不做判断：无从区分合法模型名与裸名，交给 agent 报错
+// 比误拦合法模型更好。
+func TestCheckModelSlashNoPlatformsSkips(t *testing.T) {
+	if err := checkModelSlash("claude", config.ModelConfig{}); err != nil {
+		t.Fatalf("未配置平台时不应拦截，got %v", err)
 	}
 }
